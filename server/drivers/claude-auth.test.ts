@@ -2,7 +2,37 @@
 // runner, so they never read or mutate the developer's real credentials.
 import { describe, expect, it } from "vitest";
 
-import { claudeAuthFailure, claudeSignedIn, claudeVersionTooOld } from "./claude.ts";
+import { claudeAuthFailure, claudeAuthStatus, claudeSignedIn, claudeVersionTooOld } from "./claude.ts";
+import { CLAUDE_UPDATE_MESSAGE } from "./claude-guards.ts";
+
+describe("claudeAuthStatus", () => {
+  const refusing = (stderr: string) => ((_cli, _args, _options, callback) => {
+    callback(new Error("Command failed: exit code 1"), "", stderr);
+  }) satisfies typeof import("../procs.ts").execCli;
+
+  it("reads a refusal of the launch flags as an update, not a lost login", async () => {
+    // rig, 2.1.281 and 2.1.295: `claude --<unknown> auth status --json` prints this on stderr, exit 1
+    const status = await claudeAuthStatus("claude", {}, refusing("error: unknown option '--strict-mcp-config'\n"), ["--strict-mcp-config"]);
+    expect(status).toMatchObject({ signedIn: false, refusal: { stopReason: "update_required", message: CLAUDE_UPDATE_MESSAGE } });
+    expect(status.error).toBeUndefined();
+  });
+
+  it("reads a managed MCP policy's refusal as that conflict", async () => {
+    const status = await claudeAuthStatus("claude", {}, refusing("You cannot use --strict-mcp-config when an enterprise MCP config is present\n"));
+    expect(status.refusal).toMatchObject({ stopReason: "managed_mcp_conflict" });
+  });
+
+  it("keeps any other failure as the CLI's own words, signed out and no refusal", async () => {
+    expect(await claudeAuthStatus("claude", {}, refusing("error: unknown option '--some-owner-flag'\n"))).toEqual({ signedIn: false, error: "error: unknown option '--some-owner-flag'" });
+    expect(await claudeAuthStatus("claude", {}, refusing("error: unknown command 'auth'\n"))).toEqual({ signedIn: false, error: "error: unknown command 'auth'" });
+    expect(await claudeAuthStatus("claude", {}, refusing(""))).toEqual({ signedIn: false, error: "Command failed: exit code 1" });
+  });
+
+  it("returns the status itself when the CLI gives one, even with a non-zero exit", async () => {
+    const out = ((_cli, _args, _options, callback) => callback(new Error("exit code 1"), '{"loggedIn":false}', "")) satisfies typeof import("../procs.ts").execCli;
+    expect(await claudeAuthStatus("claude", {}, out)).toEqual({ signedIn: false });
+  });
+});
 
 describe("claudeSignedIn", () => {
   it("uses the CLI's machine-readable auth status", async () => {

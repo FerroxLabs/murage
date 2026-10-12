@@ -13,6 +13,7 @@ import { handleToolCall, request, validateBaseUrl } from "./mcp-server.ts";
 import { readMcpAccessKey } from "../server/mcp-access.ts";
 import { removeTempDir, waitForExit } from "../server/testing/cleanup.ts";
 import { freePortBlock } from "../server/testing/ports.ts";
+import { TERMS_VERSION } from "../shared/terms.ts";
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), "..");
 const FAKE_CLI = join(ROOT, "server", "testing", "fake-claude-cli.ts");
@@ -295,6 +296,14 @@ export function seedWhatsNewSeen(dataDir: string): void {
   writeFileSync(join(dataDir, "whats-new.json"), `${JSON.stringify({ seen: [version], lastVersion: version }, null, 2)}\n`, { mode: 0o600 });
 }
 
+/** Record the current Terms of Service version as accepted in a fixture data
+ * folder, before its server starts: a fixture install has no one to tick the
+ * box (server/terms.ts), and the screen would stand over whatever a spec is
+ * driving. */
+export function seedTermsAccepted(dataDir: string): void {
+  writeFileSync(join(dataDir, "terms-acceptance.json"), `${JSON.stringify({ accepted: [{ version: TERMS_VERSION, acceptedAt: new Date().toISOString() }] }, null, 2)}\n`, { mode: 0o600 });
+}
+
 /** How long a fixture server may take to answer its health check. Loaded
  * machines (a build running beside it) need far more than the old 20 s. */
 export const DEFAULT_READY_TIMEOUT_MS = 120_000;
@@ -352,6 +361,9 @@ export async function launchVerificationServer(
      * workspace otherwise reads as an update from before 0.1.59 and the page
      * opens over every spec. "pending" keeps the real first-launch answer. */
     whatsNew?: "seen" | "pending";
+    /** "accepted" (the default): the current terms are on record, as for an
+     * install past its first screen. "pending" keeps the real first-run answer. */
+    terms?: "accepted" | "pending";
   } = {},
 ): Promise<VerificationServer> {
   const port = await freePortBlock([0, 1], options.portRange?.from, options.portRange?.span);
@@ -378,6 +390,7 @@ export async function launchVerificationServer(
   mkdirSync(evidenceDir, { recursive: true });
   let logPath = join(evidenceDir, `server-${Date.now()}-${process.pid}.log`);
   if ((options.whatsNew ?? "seen") === "seen") seedWhatsNewSeen(dataDir);
+  if ((options.terms ?? "accepted") === "accepted") seedTermsAccepted(dataDir);
   writeFileSync(join(dataDir, "config.json"), JSON.stringify({
     instances: {
       verification: {
@@ -420,6 +433,9 @@ export async function launchVerificationServer(
     // The suite's stand-in for the companion door's launch secret (audit C5):
     // only a test run carries it, so a launcher outside one adds nothing.
     ...(parentEnv.MURAGE_TEST_DOOR_TOKEN ? { MURAGE_COMPANION_TOKEN: parentEnv.MURAGE_TEST_DOOR_TOKEN } : {}),
+    // The suite's stand-in for the native engine-exclusion addon (server/testing/engine-exclusion-stub.cjs), which a deletion of
+    // an engine's files needs before it changes anything.
+    ...(parentEnv.MURAGE_TEST_DOOR_TOKEN && parentEnv.MURAGE_ENGINE_EXCLUSION_PATH ? { MURAGE_ENGINE_EXCLUSION_PATH: parentEnv.MURAGE_ENGINE_EXCLUSION_PATH } : {}),
     ...options.env,
   });
   // Optional fixture-owned observation only. Existing callers retain exactly

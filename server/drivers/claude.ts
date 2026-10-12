@@ -9,12 +9,16 @@ import { CLAUDE_TOOL_SURFACE, renderMurageTurn } from "../murage-tool-surface.ts
 //   - Composio Sessions (connected apps → tools) over streamable HTTP
 //   - the bot's cloud computer (box.ascii.dev) via server/computer-proxy.ts
 //     — screenshot/exec/open_url, the CUA-on-the-box bridge
+import { boundedEnvMs } from "./env-ms.ts";
+import { awaitRequiredMcp, isUnsupportedAnswer, McpBackoff, mcpReconnectWaitMs, McpStatusSupport, mcpWaitChipTitle, parseMcpStatus, splitMcpServers, toolsMayBeLoadingNotice, toolsUnavailableNotice, unavailableLabels, type McpReadiness, type McpStatusAnswer } from "./mcp-readiness.ts";
 import { applyProviderRoute, type ProviderTurnRoute } from "../provider-routing.ts";
 import { claudeTextOnlyTurn } from "./headless-text-only.ts";
 import { execFileSync } from "node:child_process";
 import { createHash, randomBytes } from "node:crypto";
-import { chmodSync, mkdtempSync, readdirSync, readFileSync, realpathSync, rmSync, statSync, unlinkSync, writeFileSync } from "node:fs";
+import { chmodSync, closeSync, existsSync, mkdtempSync, openSync, readdirSync, readFileSync, readSync, realpathSync, renameSync, rmSync, statSync, unlinkSync, writeFileSync } from "node:fs";
+import { parseDocument as parseYamlDocument } from "yaml";
 import { createServer as createNetServer } from "node:net";
+import { CLAUDE_UPDATE_MESSAGE, claudeExecutableIdentity, claudeLaunchRefusal, claudeLaunchRefusalError, ClaudeUpdateRequired, claudeVersionVerdict, requireClaudeCliVersion, type ClaudeLaunchRefusal } from "./claude-guards.ts";
 import { homedir, tmpdir } from "node:os";
 import { isAbsolute, join, dirname, resolve } from "node:path";
 import { backgroundCapNote, backgroundWaitCapMs, SubtaskTracker } from "../subtasks.ts";
@@ -27,9 +31,11 @@ import { customMountEntries } from "../custom-mcp-mounts.ts";
 import { toolFilePaths } from "../own-workspace-approval.ts";
 import { fluxKey } from "../flux-config.ts";
 import { applyFluxSurface, isFluxModel } from "../flux-routing.ts";
+import { claudeCustomHeadersValue, fluxMemoryContextForTurn, fluxMemoryDecision, logFluxMemoryHeaders, type FluxMemoryDecision } from "../flux-memory-headers.ts";
 import { mergeFluxCatalog } from "../flux-surface.ts";
-import { awaitCliTreeStopped, brokerSocketPath, describeSpawnFailure, execCli, killCliTree, spawnCli } from "../procs.ts";
-import { bindCredentialPath, createTurnCredentialStore, splitTurnSecrets, type TurnCredentialStore } from "./turn-credentials.ts";
+import { awaitCliTreeStopped, CLI_CALLER_DEADLINE_MS, cliTreeConfirmedStopped, cliTreeStoppedSignal, forceCliTreeStopped, brokerSocketPath, describeSpawnFailure, execCli, killCliTree, spawnCli } from "../procs.ts";
+import { cachedCliVersion } from "../cli-version-cache.ts";
+import { anyMountIncomplete, bindCredentialPath, clearMountsIncomplete, connectorMountRefsOf, connectorScopeOf, createTurnCredentialStore, splitTurnSecrets, type TurnCredentialStore } from "./turn-credentials.ts";
 import { descendantBaseline, untrackedDescendants, processNames } from "./process-tree.ts";
 import { createPrewarmGate, createTurnMemory, spawnInputsOf, warmPool, pastWarmMaxAge, spawnedAtOf } from "./warm-pool.ts";
 import { credentialDigest, diffWarmKey, warmKey, type WarmKey } from "./warm-key.ts";
@@ -80,6 +86,7 @@ import {
 } from "./local-inject.ts";
 import { appendNative } from "./native.ts";
 import { createBoundedLineSplitter, FRAME_TOO_LARGE, frameOverflowMessage } from "./bounded-lines.ts";
+import { registerIntake } from "../harness/intake.ts";
 import { SPAWNED_PROXIES } from "../proxy-paths.ts";
 import { normalizeEngineCommands } from "../engine-commands.ts";
 import { engineCommandText } from "../../shared/engine-commands.ts";
@@ -97,17 +104,40 @@ export function claudeSignedIn(
   cli: string,
   env: NodeJS.ProcessEnv,
   run: typeof execCli = execCli,
+  leadArgs: string[] = [],
 ): Promise<boolean> {
+  return claudeAuthStatus(cli, env, run, leadArgs).then((status) => status.signedIn);
+}
+
+/** What `auth status --json` said, with its failures kept apart from "signed out": a CLI that
+ * refused Murage's launch flags (claudeLaunchRefusal: too old, or a managed MCP policy) is not a
+ * lost login, and the snapshot must offer the update rather than a sign-in. `error` is the CLI's
+ * own words (stderr or the spawn error) when it gave no status at all. */
+export interface ClaudeAuthStatus {
+  signedIn: boolean;
+  refusal?: ClaudeLaunchRefusal;
+  error?: string;
+}
+
+export function claudeAuthStatus(
+  cli: string,
+  env: NodeJS.ProcessEnv,
+  run: typeof execCli = execCli,
+  leadArgs: string[] = [],
+): Promise<ClaudeAuthStatus> {
   return new Promise((resolve) => {
-    run(cli, ["auth", "status", "--json"], { timeout: 8000, maxBuffer:65536, env }, (_error, stdout) => {
+    run(cli, [...leadArgs, "auth", "status", "--json"], { timeout: 8000, maxBuffer:65536, env }, (error, stdout, stderr) => {
       try {
         const status: unknown = JSON.parse(stdout);
-        resolve(
-          typeof status === "object" && status !== null && "loggedIn" in status && status.loggedIn === true,
-        );
-      } catch {
-        resolve(false);
-      }
+        if (typeof status === "object" && status !== null && "loggedIn" in status) {
+          resolve({ signedIn: status.loggedIn === true });
+          return;
+        }
+      } catch { /* no status: read the failure below */ }
+      const said = `${stderr ?? ""}\n${stdout ?? ""}`;
+      const refusal = claudeLaunchRefusal(said);
+      if (refusal) resolve({ signedIn: false, refusal });
+      else resolve({ signedIn: false, error: (stderr ?? "").trim().slice(-300) || error?.message || "auth status printed no status" });
     });
   });
 }
@@ -141,10 +171,16 @@ function claudeEnvironment(
   model?: string | null,
   source: NodeJS.ProcessEnv = process.env,
   providerRoute?: ProviderTurnRoute,
+  // Flux Memory headers for this process. A caller with no turn (a reflection,
+  // a catalog probe) gets the unknown-purpose default: off/off.
+  fluxMemory: FluxMemoryDecision = fluxMemoryDecision(),
 ): NodeJS.ProcessEnv {
   const env: NodeJS.ProcessEnv = { ...source, PATH: augmentedPath(), NPM_CONFIG_LOGLEVEL: "error" };
   delete env.CLAUDECODE;
   delete env.CLAUDE_CODE_ENTRYPOINT;
+  // Plugins loaded from this variable need no settings entry, so the isolation's per-id disable
+  // cannot reach them (claudeIsolation also sets it empty at flag level, over a settings `env`).
+  delete env.CLAUDE_CODE_PLUGIN_DIRS;
   // The harness process may hold workspace credentials (xai/box/voice keys,
   // env-injected at boot); none of them are this CLI's to see.
   stripWorkspaceCredentialEnv(env);
@@ -154,9 +190,45 @@ function claudeEnvironment(
   // identity as the API key deleted below, so that guard needs this to hold.
   // Must run before applyClaudeInject: the inject re-sets what it means to.
   stripRoutingEnv(env);
-  if (providerRoute) applyProviderRoute(DRIVER_KIND, env, providerRoute);
-  else claudeRouting(env, model);
+  // Claude's own auto memory stays off in every Murage process: what a bot remembers is Murage's
+  // to fence, and this store is shared by every bot and person that uses this CLI login.
+  env.CLAUDE_CODE_DISABLE_AUTO_MEMORY = "1";
+  // ANTHROPIC_CUSTOM_HEADERS is set AFTER the account strip and the routing
+  // strip, only for a Flux route (the headers mean nothing to another host),
+  // and it replaces whatever the user's shell held: those belonged to a
+  // different endpoint. It is part of the spawn contract (see the warm key).
+  if (providerRoute) {
+    applyProviderRoute(DRIVER_KIND, env, providerRoute);
+    if (providerRoute.preset === "flux") env.ANTHROPIC_CUSTOM_HEADERS = claudeCustomHeadersValue(fluxMemory.headers);
+  } else if (claudeRouting(env, model).flux) {
+    env.ANTHROPIC_CUSTOM_HEADERS = claudeCustomHeadersValue(fluxMemory.headers);
+  }
   return env;
+}
+
+/** The MCP start-up settings for a turn's CLI. Murage waits for the servers
+ * itself (gateMcpServers): required ones up to MCP_REQUIRED_WAIT_MS, optional
+ * ones up to MCP_OPTIONAL_WAIT_MS, all within one recovery deadline. So the
+ * CLI's own first-prompt hold, which otherwise waits for EVERY pending server
+ * up to MCP_TIMEOUT (a slow optional server held a turn for 20 s on 2.1.280),
+ * is off (0, honoured from 2.1.280 on), and MCP_TIMEOUT, which ends a connect
+ * and the CLI's reconnect, is the reconnect bound. A build known not to answer
+ * `mcp_status` (`statusSupported` false) keeps the CLI's own hold, bounded by
+ * the same MCP_TIMEOUT: Murage cannot check for it, so the CLI waits instead. */
+export function claudeMcpStartupEnv(statusSupported = true): Record<string, string> {
+  return statusSupported
+    ? { CLAUDE_CODE_MCP_STARTUP_WAIT_MS: "0", MCP_TIMEOUT: String(mcpReconnectWaitMs()) }
+    : { MCP_TIMEOUT: String(mcpReconnectWaitMs()) };
+}
+
+/** Per CLI build (path and version): does it answer `mcp_status`. */
+const claudeMcpStatusSupport = new McpStatusSupport();
+/** Required servers that keep failing, per thread (mcp-readiness.ts McpBackoff). */
+const claudeMcpBackoff = new McpBackoff();
+/** Test hook: forget what was learned about CLI builds and failing servers. */
+export function resetClaudeMcpReadinessForTests(): void {
+  claudeMcpStatusSupport.clear();
+  claudeMcpBackoff.clear();
 }
 
 /** How long a settle check waits for the init-time baseline probe. */
@@ -175,6 +247,17 @@ const DRIVER_KIND = "claudeAgent";
 /** Errors thrown by a turn's submission fence (SendTurnInput.beforeSubmit):
  * nothing was written, so a relaunch refused by one shows no engine error. */
 const submissionRefusals = new WeakSet<object>();
+/** How long a hold waits for an idle engine to exit (longer than the 5 s the close itself allows before it kills). */
+const HOLD_CLOSE_MS = 9_000;
+/** Resolves true when the child has exited, false when it has not within `ms`. */
+const childExited = (child: { exitCode: number | null; signalCode: unknown; once(event: "close", listener: () => void): unknown; off?(event: "close", listener: () => void): unknown }, ms: number): Promise<boolean> =>
+  new Promise<boolean>((resolve) => {
+    if (child.exitCode !== null || child.signalCode) { resolve(true); return; }
+    const done = () => { clearTimeout(timer); resolve(true); };
+    const timer = setTimeout(() => { child.off?.("close", done); resolve(false); }, ms);
+    timer.unref?.();
+    child.once("close", done);
+  });
 class StoppedBeforeLaunch extends Error {
   constructor() { super("the turn was stopped before it launched"); }
 }
@@ -204,9 +287,9 @@ class StoppedBeforeLaunch extends Error {
 function claudeRouting(
   env: NodeJS.ProcessEnv,
   model: string | null | undefined,
-): { model: string | null; injected: boolean } {
+): { model: string | null; injected: boolean; flux?: boolean } {
   const flux = applyFluxSurface(DRIVER_KIND, env, model, fluxKey());
-  if (flux.applied) return { model: flux.model, injected: true };
+  if (flux.applied) return { model: flux.model, injected: true, flux: true };
   const applied = applyClaudeInject(env, model);
   // Neither routed: the CLI runs on its own login, and an inherited API key
   // would silently bill a subscription account pay-as-you-go.
@@ -289,6 +372,9 @@ function extrasFromUnknown(value: unknown): Array<{ id: string; label: string }>
   });
 }
 
+/** Official Anthropic model ids, e.g. claude-sonnet-5-5 (no host:: inject prefix). */
+const OFFICIAL_CLAUDE_ID = /^claude-[a-z0-9.-]+$/;
+
 /** Extra ids from ~/.claude/settings.json. Official cloud rows stay untagged.
  *  `model` is Claude Code's last-used slug, not a catalog — listing it as
  *  Custom put a non-inject id in the picker and the turn then had no
@@ -316,7 +402,9 @@ export function readClaudeModelCatalog(env: Record<string, string | undefined> =
   for (const extra of extras) {
     if (seen.has(extra.id)) continue;
     seen.add(extra.id);
-    options.push({ id: extra.id, label: extra.label, custom: true });
+    // An Anthropic model id (claude-*) runs on the signed-in account like the
+    // static rows; only other ids are local/custom models (OpenMausBot #1990).
+    options.push(OFFICIAL_CLAUDE_ID.test(extra.id) ? { id: extra.id, label: extra.label } : { id: extra.id, label: extra.label, custom: true });
   }
   return { default: STATIC_CLAUDE_MODELS.default, options };
 }
@@ -931,6 +1019,269 @@ export function claudeSettingsRevision(env: NodeJS.ProcessEnv, cwd: string, mana
   ].join("|");
 }
 
+/** The version of the isolation contract below. A Claude session made under an older contract (or
+ * before there was one) may carry the owner's personal setup in its recorded prompt, which
+ * `--resume` restores whatever flags the new process gets, so it is never resumed: the harness
+ * starts a fresh engine session and replays the conversation (session.started carries this number,
+ * the store keeps it beside the cursor, and index.ts compares it). Bump it whenever
+ * claudeIsolation changes what a session may contain. 2: the personal main agent (`agent`) and
+ * account-synced skills are off too (a resumed session restores its recorded main agent). */
+export const CLAUDE_ISOLATION_CONTRACT = 2;
+
+/** Bounds on reading the owner's personal folders, so a huge or looping tree cannot stall a spawn. */
+const PERSONAL_SCAN_DEPTH = 8;
+const PERSONAL_SCAN_FILES = 2000;
+/** Front matter longer than this is not read (the CLI's agents and skills keep theirs short). */
+const FRONT_MATTER_BYTES = 64 * 1024;
+
+/** The CLI's own agents (2.1.281 and 2.1.295 binaries, `agentType:"..."`, and the agent list a
+ * session prints). A personal agent file that names one of these is never denied by name: an
+ * `Agent(Explore)` rule would switch the built-in off for the bot too. */
+export const CLAUDE_BUILT_IN_AGENTS: ReadonlySet<string> = new Set([
+  "claude", "claude-code-guide", "comment-thread-analyst", "Explore", "general-purpose", "Plan", "statusline-setup",
+]);
+
+const scanWarned = new Set<string>();
+/** Logs once per folder and reason, then carries on: a partial list still switches most of the
+ * owner's setup off, and refusing the turn would cost the owner their chat. */
+function scanWarn(key: string, message: string): void {
+  if (scanWarned.has(key)) return;
+  scanWarned.add(key);
+  console.warn(`claude isolation: ${message}`);
+}
+
+/** Markdown files under `dir`, as paths relative to it ("sub/name.md"), recursively. Bounded (depth,
+ * count); reaching a bound is logged and the files found so far are used. */
+function personalMarkdown(dir: string, depth = 0, prefix = "", out: string[] = []): string[] {
+  if (depth > PERSONAL_SCAN_DEPTH) { scanWarn(`${dir}:depth`, `${dir} is nested deeper than ${PERSONAL_SCAN_DEPTH} folders; deeper files are not switched off`); return out; }
+  let names: string[] = [];
+  try { names = readdirSync(dir); } catch { return out; }
+  for (const name of names) {
+    if (out.length >= PERSONAL_SCAN_FILES) { scanWarn(`${dir}:count`, `more than ${PERSONAL_SCAN_FILES} files under ${dir}; the rest are not switched off`); return out; }
+    const path = join(dir, name);
+    let stats: ReturnType<typeof statSync>;
+    try { stats = statSync(path); } catch { continue; }
+    if (stats.isDirectory()) personalMarkdown(path, depth + 1, `${prefix}${name}/`, out);
+    else if (stats.isFile() && name.toLowerCase().endsWith(".md")) out.push(`${prefix}${name}`);
+  }
+  return out;
+}
+
+/** A Markdown file's front-matter `name`, read with a YAML parser as the CLI reads it (comments,
+ * quoting, escapes and block scalars included). Undefined when the file has no front matter, no
+ * string name, or front matter past FRONT_MATTER_BYTES or that does not parse (logged). */
+export function declaredName(path: string): string | undefined {
+  let head: string;
+  try {
+    const fd = openSync(path, "r");
+    try {
+      const buffer = Buffer.alloc(FRONT_MATTER_BYTES + 8);
+      head = buffer.subarray(0, readSync(fd, buffer, 0, buffer.length, 0)).toString("utf8");
+    } finally { closeSync(fd); }
+  } catch { return undefined; }
+  head = head.replace(/^\uFEFF/, "");
+  if (!/^---[ \t]*\r?\n/.test(head)) return undefined;
+  const close = /\r?\n---[ \t]*(?:\r?\n|$)/.exec(head.slice(3));
+  if (!close) {
+    if (head.length > FRONT_MATTER_BYTES) scanWarn(`${path}:long`, `${path}: front matter longer than ${FRONT_MATTER_BYTES} bytes; switched off by file name only`);
+    return undefined;
+  }
+  try {
+    const doc = parseYamlDocument(head.slice(3, 3 + close.index));
+    if (doc.errors.length) throw doc.errors[0];
+    const data: unknown = doc.toJS({ maxAliasCount: 50 });
+    const name = data && typeof data === "object" ? (data as { name?: unknown }).name : undefined;
+    return typeof name === "string" && name.trim() ? name.trim() : undefined;
+  } catch {
+    scanWarn(`${path}:yaml`, `${path}: front matter does not parse; switched off by file name only`);
+    return undefined;
+  }
+}
+
+/** A name that fits `Agent(<name>)` without changing the rule: no parentheses, line breaks or
+ * control characters. */
+const ruleSafe = (name: string): boolean => !/[()\u0000-\u001f\u007f]/.test(name);
+
+/** A folder under `<config dir>/skills/` that holds `.claude-plugin/plugin.json` is auto-loaded by
+ * the CLI as the plugin `<manifest name>@skills-dir`, with no enabledPlugins entry (rig, 2.1.280
+ * and 2.1.295: the id uses the manifest's `name`, not the folder's). Returns that name (the folder
+ * name when the manifest names none), or null when the folder is not a plugin. */
+function skillsDirPluginName(folder: string, folderName: string): string | null {
+  let raw: string;
+  try { raw = readFileSync(join(folder, ".claude-plugin", "plugin.json"), "utf8"); } catch { return null; }
+  try {
+    const name = (JSON.parse(raw) as { name?: unknown } | null)?.name;
+    return typeof name === "string" && name.trim() ? name.trim() : folderName;
+  } catch { return folderName; }
+}
+
+/** Folder names of the owner's account-synced skills (claude.ai skills the CLI keeps under
+ * `<config dir>/skills/synced`), at any depth up to the scan bound: a folder holding a SKILL.md is
+ * a skill, the CLI's own bookkeeping folders (`.trash`, `.staging`, `.bucket-*`) are not. Each is
+ * returned with its declared name too. */
+function syncedSkillNames(root: string): string[] {
+  const out: string[] = [];
+  const walk = (dir: string, depth: number) => {
+    if (depth > 3) return;
+    let names: string[] = [];
+    try { names = readdirSync(dir); } catch { return; }
+    for (const name of names) {
+      if (name.startsWith(".")) continue;
+      if (out.length >= PERSONAL_SCAN_FILES) { scanWarn(`${root}:count`, `more than ${PERSONAL_SCAN_FILES} synced skills under ${root}; the rest are not switched off`); return; }
+      const path = join(dir, name);
+      try { if (!statSync(path).isDirectory()) continue; } catch { continue; }
+      const skill = join(path, "SKILL.md");
+      let isSkill = false;
+      try { isSkill = statSync(skill).isFile(); } catch { /* a container folder */ }
+      if (isSkill) {
+        out.push(name);
+        const declared = declaredName(skill);
+        if (declared) out.push(declared);
+      } else walk(path, depth + 1);
+    }
+  };
+  walk(root, 0);
+  return out;
+}
+
+/** The flag-settings overlay that keeps the owner's personal Claude Code setup out of every CLI
+ * Murage spawns, while the CLI loads its default setting sources (user, project, local) exactly as
+ * the owner's own Claude Code does. Login, apiKeyHelper and its env, gateways, provider model
+ * mappings and project-over-user precedence are therefore the CLI's own, and nothing secret is
+ * copied anywhere: the overlay carries only switches.
+ *
+ * - `disableAllHooks` (hooks and statusLine);
+ * - every plugin id named in a personal or local settings file mapped to `false` (read at spawn
+ *   time, so the process-reuse key changes when the owner's plugins do);
+ * - `env.CLAUDE_CODE_PLUGIN_DIRS = ""`: plugins loaded from that variable need no settings entry,
+ *   so it is also removed from the inherited environment (claudeEnvironment) and this empty
+ *   value outranks one set in a settings file's `env`;
+ * - `enabledPlugins["<name>@skills-dir"] = false` for each personal skill folder that is a plugin
+ *   (`<config dir>/skills/<folder>/.claude-plugin/plugin.json`): the CLI auto-loads it with no
+ *   enabledPlugins entry, so its skills and agents would otherwise reach the request;
+ * - `claudeMdExcludes` for the personal `CLAUDE.md` and `rules/`;
+ * - `outputStyle: "default"`, so a personal output style never rewrites the main prompt;
+ * - `agent: ""`, so a personal main-thread agent (`"agent": "x"` in the owner's settings) is not
+ *   selected: the bot runs the CLI's default main agent (rig, 2.1.281 and 2.1.295: the agent's
+ *   prompt is in the request without the key and absent with it);
+ * - `skillOverrides` turning "off" each personal skill (`<config dir>/skills/<name>`, by folder
+ *   and declared name), each account-synced skill (`<config dir>/skills/synced/**`, by the name
+ *   the CLI gives it, `anthropic-skills:<name>`) and each personal command
+ *   (`<config dir>/commands/**.md`, named as the CLI names it: `sub/name.md` is `sub:name`);
+ * - `permissions.deny` with `Agent(<name>)` for each personal subagent (`<config dir>/agents/**.md`,
+ *   by the `name` its YAML front matter declares, or its file name when it declares none): the
+ *   agent's description leaves the prompt and a call to it is refused by the CLI.
+ *
+ * Accepted limits (MurageMain, 2026-10-10; the threat is the owner's own setup reaching the owner's
+ * own bots, a behaviour problem, so a partial list never refuses the turn):
+ * - Project-scope plugins (enabled in the workspace's own committed `.claude/settings.json`) are
+ *   the bot workspace's own and stay on; only personal and local enablement is switched off.
+ * - skillOverrides works by name, so a workspace skill or command with the same name as a personal
+ *   one is switched off too. A rare collision, accepted over leaking the personal one.
+ * - A personal agent file named like a built-in agent (CLAUDE_BUILT_IN_AGENTS) is not denied, so
+ *   the built-in stays usable; its description can still reach the prompt (rig: present with and
+ *   without the overlay).
+ * - Synced skills that arrive in the middle of a session are not in that session's overlay; the
+ *   next spawn lists them. Murage never writes the owner's settings and never sets
+ *   syncClaudeAiSkills (setting it false moves the owner's synced skills to trash).
+ * - Folders past the scan bounds, and front matter that does not parse, are logged and the files
+ *   found so far are used.
+ * - Managed settings outrank flag settings by design: an organisation's policy (managed plugins,
+ *   managed hooks, managed-mcp.json) wins over this overlay. Murage does not fight the policy; a
+ *   conflict it can see (managed-mcp.json refusing --strict-mcp-config) is reported to the owner
+ *   as CLAUDE_MANAGED_MCP_CONFLICT (claudeLaunchRefusal).
+ *
+ * Rig evidence (build host stub API, CLI 2.1.280, 2.1.281 and 2.1.295, each case with and without the flags so
+ * the baseline proves the marker loads; logs in /root/mb-0161-hz/m102-rig4/logs, rig6 and rig7):
+ * user plugin with hooks and a skill, plugins enabled only in personal or project-local
+ * settings.local.json, a user hook, a user MCP server, `~/.claude/CLAUDE.md` and `rules/*.md`, a
+ * personal skill, a top-level and a nested personal command, a personal output style, a personal
+ * agent (description absent and its invocation answered "denied by permission rule
+ * 'Agent(uagent)' from flagSettings"), an agent whose YAML name carries a comment, a personal main
+ * agent selected by `agent`, and CLAUDE_CODE_PLUGIN_DIRS inherited or set in user settings env: all
+ * present in the baseline and absent with the flags, the overlay passed inline or as a file.
+ * Unchanged by the flags: apiKeyHelper reading a settings-only env var, ANTHROPIC_DEFAULT_SONNET_MODEL,
+ * custom headers, a project gateway winning over the user's, a stored claude.ai OAuth login, and
+ * `auth status` with these flags. */
+export function claudeIsolationSettings(env: NodeJS.ProcessEnv, cwd: string, platform: NodeJS.Platform = process.platform): Record<string, unknown> {
+  const personal = [...new Set([env.CLAUDE_CONFIG_DIR || join(homedir(), ".claude"), join(homedir(), ".claude")])];
+  const files = [
+    ...personal.flatMap((dir) => [join(dir, "settings.json"), join(dir, "settings.local.json")]),
+    ...[...new Set([cwd, ...claudeGitRoots(cwd)])].map((root) => join(root, ".claude", "settings.local.json")),
+  ];
+  const plugins = new Set<string>();
+  for (const file of files) {
+    try {
+      const enabled = (JSON.parse(readFileSync(file, "utf8")) as { enabledPlugins?: unknown } | null)?.enabledPlugins;
+      if (enabled && typeof enabled === "object" && !Array.isArray(enabled)) for (const id of Object.keys(enabled)) plugins.add(id);
+    } catch { /* absent or unreadable: nothing of the owner's to switch off */ }
+  }
+  const skills = new Set<string>();
+  const agents = new Set<string>();
+  for (const dir of personal) {
+    let names: string[] = [];
+    try { names = readdirSync(join(dir, "skills")); } catch { names = []; }
+    for (const name of names) {
+      if (name === "synced" || name.startsWith(".")) continue;
+      skills.add(name);
+      const skillsDirPlugin = skillsDirPluginName(join(dir, "skills", name), name);
+      if (skillsDirPlugin) plugins.add(`${skillsDirPlugin}@skills-dir`);
+      const declared = declaredName(join(dir, "skills", name, "SKILL.md"));
+      if (declared) skills.add(declared);
+    }
+    for (const name of syncedSkillNames(join(dir, "skills", "synced"))) skills.add(`anthropic-skills:${name}`);
+    for (const file of personalMarkdown(join(dir, "commands"))) skills.add(file.slice(0, -3).split("/").join(":"));
+    for (const file of personalMarkdown(join(dir, "agents"))) {
+      const name = declaredName(join(dir, "agents", file)) ?? file.slice(0, -3).split("/").pop()!;
+      if (CLAUDE_BUILT_IN_AGENTS.has(name)) { scanWarn(`${dir}/agents/${file}:builtin`, `${join(dir, "agents", file)} is named like the built-in agent '${name}'; not denied, so the built-in stays available`); continue; }
+      if (!ruleSafe(name)) { scanWarn(`${dir}/agents/${file}:rule`, `${join(dir, "agents", file)}: agent name cannot be written as a permission rule; not denied`); continue; }
+      agents.add(name);
+    }
+  }
+  const excludes = personal.flatMap((dir) => [join(dir, "CLAUDE.md"), join(dir, "rules", "**")]);
+  // the CLI matches these as globs; on Windows give the forward-slash spelling too
+  const claudeMdExcludes = [...new Set(platform === "win32" ? excludes.flatMap((p) => [p, p.replace(/\\/g, "/")]) : excludes)];
+  return {
+    disableAllHooks: true,
+    enabledPlugins: Object.fromEntries([...plugins].sort().map((id) => [id, false])),
+    env: { CLAUDE_CODE_PLUGIN_DIRS: "" },
+    claudeMdExcludes,
+    outputStyle: "default",
+    agent: "",
+    ...(skills.size ? { skillOverrides: Object.fromEntries([...skills].sort().map((name) => [name, "off"])) } : {}),
+    ...(agents.size ? { permissions: { deny: [...agents].sort().map((name) => `Agent(${name})`) } } : {}),
+  };
+}
+
+let isolationDir: string | null = null;
+/** Writes the overlay to a private file named by its content hash and returns the path. A large
+ * personal inventory inline on argv would pass Windows' command-line limit and cost the owner
+ * their chat. The file holds no secret (switches and names only); it is 0600 in a 0700 folder made
+ * for this process, never rewritten (a new overlay is a new file, so a live CLI never sees its
+ * settings change underneath it) and removed when the server exits. */
+function isolationSettingsFile(settings: Record<string, unknown>): { path: string; hash: string } {
+  const text = JSON.stringify(settings);
+  const hash = createHash("sha256").update(text).digest("hex").slice(0, 32);
+  if (!isolationDir || !existsSync(isolationDir)) {
+    isolationDir = mkdtempSync(join(tmpdir(), "murage-claude-isolation-"));
+    const dir = isolationDir;
+    process.once("exit", () => { try { rmSync(dir, { recursive: true, force: true }); } catch { /* best effort */ } });
+  }
+  const path = join(isolationDir, `${hash}.json`);
+  if (!existsSync(path)) {
+    const temp = `${path}.${process.pid}.${randomBytes(4).toString("hex")}`;
+    writeFileSync(temp, text, { mode: 0o600 });
+    renameSync(temp, path);
+  }
+  return { path, hash };
+}
+
+/** The isolation flags for a spawn: `--strict-mcp-config` (only Murage's own `--mcp-config`
+ * servers run, never the owner's) and `--settings <file>` with claudeIsolationSettings. */
+export function claudeIsolation(env: NodeJS.ProcessEnv, cwd: string, platform: NodeJS.Platform = process.platform): string[] {
+  return ["--strict-mcp-config", "--settings", isolationSettingsFile(claudeIsolationSettings(env, cwd, platform)).path];
+}
+
 export const ClaudeDriver: ProviderDriver<ClaudeConfig> = {
   driverKind: DRIVER_KIND,
   metadata: { displayName: "Claude", supportsMultipleInstances: true },
@@ -959,10 +1310,13 @@ export const ClaudeDriver: ProviderDriver<ClaudeConfig> = {
       const account = accountEnvironment();
       const env = claudeEnvironment(providerRoute?.model || selection, account, providerRoute);
       const model = providerRoute?.model || claudeRouting({ ...env }, selection).model || selection;
-      return { model, turn: (turn: import("../memory/pip-transport.ts").TextOnlyTurnInput) => claudeTextOnlyTurn({ ...turn, model, providerRoute }, {
-        cli: config.cli, tmpBase: join(DATA_DIR, "pip-tmp"), env,
-        credentialsDir: providerRoute ? undefined : resolveClaudeConfigDir(config.configDir, account),
-      }) };
+      return { model, turn: async (turn: import("../memory/pip-transport.ts").TextOnlyTurnInput) => {
+        await requireClaudeCliVersion(config.cli, env, turn.signal);
+        return claudeTextOnlyTurn({ ...turn, model, providerRoute }, {
+          cli: config.cli, tmpBase: join(DATA_DIR, "pip-tmp"), env,
+          credentialsDir: providerRoute ? undefined : resolveClaudeConfigDir(config.configDir, account),
+        });
+      } };
     };
     const catalogEnv: Record<string, string | undefined> = accountEnvironment();
     // readClaudeModelCatalog reads `env.ANTHROPIC_MODEL` into an extra picker
@@ -1051,6 +1405,12 @@ export const ClaudeDriver: ProviderDriver<ClaudeConfig> = {
       /** A notice for a task this turn does not own arrived: the process
        * carried earlier work into this turn, so it is not kept after it. */
       foreignNotice?: boolean;
+      /** Required MCP servers (connected apps, memory, bot messaging) that were
+       * still not connected when this turn's prompt was written, by plain name.
+       * Reported on turn.completed so a routine run does not read "Completed". */
+      toolsUnavailable?: string[];
+      /** "unknown": the CLI could not say whether they were up (see GateOutcome). */
+      mcpReadiness?: "unknown";
     }
     interface BackgroundState {
       tracker: SubtaskTracker;
@@ -1104,6 +1464,12 @@ export const ClaudeDriver: ProviderDriver<ClaudeConfig> = {
        * undefined until the first result; null when the start is unknown. */
       costTotal: number | null | undefined;
       finishClose?: () => Promise<void>;
+      /** A confirmation already proved this process tree stopped: finishClose
+       * must not run another one that could disagree and quarantine it again. */
+      stopProven?: boolean;
+      /** Quarantine this process (tree not confirmed stopped) and settle its
+       * open turn, so the turn is never left busy behind it. */
+      quarantine?: () => void;
       /** Claude Code's "/" commands. `init` names them (`slash_commands`,
        * and `terminal_slash_commands` for the ones bound to a terminal
        * screen); the `initialize` control response describes them. Either
@@ -1116,6 +1482,16 @@ export const ClaudeDriver: ProviderDriver<ClaudeConfig> = {
         details?: Map<string, { description?: unknown; argumentHint?: unknown }>;
         reported?: string;
       };
+      /** Our own control requests (`mcp_status`, `mcp_reconnect`) waiting for
+       * the CLI's control_response, by request id. */
+      control?: Map<string, (response: any) => void>;
+      /** The CLI build this process runs (claudeExecutableIdentity): what
+       * `mcp_status` support is remembered under. */
+      cliIdentity?: string;
+      /** Spawned with the CLI's own first-prompt hold off (claudeMcpStartupEnv):
+       * a process of a build later learned not to answer `mcp_status` has no
+       * hold at all, so it is replaced, not kept. */
+      startupHoldOff?: boolean;
     }
     const sessions = new Map<string, Session>();
     /** Sessions that were closed or replaced and whose process is not yet
@@ -1124,11 +1500,53 @@ export const ClaudeDriver: ProviderDriver<ClaudeConfig> = {
      * so Stop, reset and dispose still reach a predecessor whose shutdown is
      * pending or failed, and can report that it could not be stopped. */
     const retiring = new Map<Session, string>();
+    /** The same registry indexed by thread, so per-thread lookups on release do
+     * not scan every retiring session. Only retire/unretire touch either. */
+    const retiringByThread = new Map<string, Set<Session>>();
+    const retire = (session: Session, threadId: string) => {
+      const before = retiring.get(session);
+      if (before !== undefined && before !== threadId) retiringByThread.get(before)?.delete(session);
+      retiring.set(session, threadId);
+      let set = retiringByThread.get(threadId);
+      if (!set) retiringByThread.set(threadId, set = new Set());
+      set.add(session);
+    };
+    const unretire = (session: Session) => {
+      const owner = retiring.get(session);
+      if (owner === undefined) return;
+      retiring.delete(session);
+      const set = retiringByThread.get(owner);
+      set?.delete(session);
+      if (set && set.size === 0) retiringByThread.delete(owner);
+    };
+    /** Threads whose reset could not confirm the old process tree stopped. The
+     * slot stays held: the next turn waits briefly for the confirmation and
+     * otherwise fails retryably, never running beside a live old tree. */
+    const resetBlocked = new Map<string, Session>();
+    /** A reset in progress on a thread: installed synchronously, before the
+     * reset's first await, and held until it finishes. A send or prewarm waits
+     * for it and rechecks ownership right before it launches or writes, so
+     * nothing starts beside the tree being reset. */
+    const resetBarriers = new Map<string, Promise<void>>();
+    /** Quarantine is about the PROCESS tree; the turn is a separate matter. A
+     * turn always settles, even when its old tree is not confirmed stopped; a
+     * quarantined thread then refuses a new launch until a later confirmation
+     * succeeds, and the person gets the retryable CLAUDE_SESSION_NOT_STOPPED. */
+    const NOT_STOPPED_MESSAGE = "CLAUDE_SESSION_NOT_STOPPED: the earlier Claude process for this thread could not be confirmed stopped yet; retry shortly";
     const configuredIdleMinimum = Number(process.env.MURAGE_CLAUDE_SESSION_IDLE_MIN_MS);
     const sessionIdleMinimum = Number.isFinite(configuredIdleMinimum) && configuredIdleMinimum > 0
       ? configuredIdleMinimum
       : 10_000;
-    const SESSION_IDLE_MS = Math.max(sessionIdleMinimum, Number(process.env.MURAGE_CLAUDE_SESSION_IDLE_MS) || 15 * 60_000);
+    const SESSION_IDLE_MS = Math.max(sessionIdleMinimum, boundedEnvMs(process.env.MURAGE_CLAUDE_SESSION_IDLE_MS, 15 * 60_000));
+    /** How long a reset lets the old CLI exit on stdin EOF before killing its tree. */
+    const CLAUDE_RESET_GRACE_MS = 1_500;
+    /** How long a reset waits for the killed tree's confirmation before going on without it. */
+    const CLAUDE_RESET_KILL_WAIT_MS = 2_000;
+    /** How long a turn on a reset-blocked thread waits for the old tree's confirmation. */
+    const CLAUDE_RESET_BLOCK_WAIT_MS = 3_000;
+    /** How long a launch that finds the thread quarantined waits for it to
+     * clear (revalidating ownership after) before the retryable refusal. */
+    const CLAUDE_LAUNCH_CLEAR_WAIT_MS = 3_000;
 
     const backgroundCapMs = backgroundWaitCapMs(config.backgroundTaskCapMs);
     const backgroundOf = (t: SessionTurn): BackgroundState =>
@@ -1141,8 +1559,12 @@ export const ClaudeDriver: ProviderDriver<ClaudeConfig> = {
     const stopSession = (session: Session) => {
       warmPool.release(session);
       killCliTree(session.child);
-      void awaitCliTreeStopped(session.child).then((stopped) => {
+      const confirmed = awaitCliTreeStopped(session.child, undefined, CLI_CALLER_DEADLINE_MS);
+      void confirmed.then((stopped) => {
         if (stopped) void session.finishClose?.();
+        // Termination failed and the root's close may never arrive: do not rely
+        // on the child's close handler to settle the turn.
+        else { session.quarantine?.(); watchLateStop(session); }
       });
     };
     const closeSession = (threadId: string, why: string) => {
@@ -1150,7 +1572,7 @@ export const ClaudeDriver: ProviderDriver<ClaudeConfig> = {
       if (!s || s.closing) return;
       s.closing = true;
       warmPool.release(s);
-      retiring.set(s, threadId);
+      retire(s, threadId);
       if (s.idleTimer) clearTimeout(s.idleTimer);
       s.idleTimer = null;
       if (s.startupTimer) clearTimeout(s.startupTimer);
@@ -1178,25 +1600,115 @@ export const ClaudeDriver: ProviderDriver<ClaudeConfig> = {
     /** Kill and confirm every retiring session (of one thread, or all); the
      * number that could NOT be confirmed stopped stay registered. */
     const stopRetiring = async (threadId?: string): Promise<number> => {
-      const targets = [...retiring].filter(([, owner]) => threadId === undefined || owner === threadId).map(([session]) => session);
+      const targets = threadId === undefined ? [...retiring.keys()] : [...(retiringByThread.get(threadId) ?? [])];
       const confirmed = await Promise.all(targets.map(async (session) => {
         killCliTree(session.child);
-        const stopped = await awaitCliTreeStopped(session.child);
+        const stopped = await awaitCliTreeStopped(session.child, undefined, CLI_CALLER_DEADLINE_MS);
         if (stopped) {
-          retiring.delete(session);
+          unretire(session);
           void session.finishClose?.();
-        }
+        } else watchLateStop(session);
         return stopped;
       }));
       return confirmed.filter((stopped) => !stopped).length;
+    };
+    /** The thread has no older process left unconfirmed: lift the quarantine,
+     * or hand it to the next predecessor still retiring. */
+    const refreshBlocked = (threadId: string, gone: Session) => {
+      if (resetBlocked.get(threadId) !== gone) return;
+      let next: Session | undefined;
+      for (const s of retiringByThread.get(threadId) ?? []) if (s !== gone) { next = s; break; }
+      if (next) resetBlocked.set(threadId, next); else resetBlocked.delete(threadId);
+    };
+    /** A quarantined session is released whenever its stop is finally confirmed,
+     * however late (past any caller deadline or the pending-attempt cache): the
+     * durable success signal IS the proof, so the slot is freed and the quarantine
+     * lifted with no second confirmation that could disagree, and no manual Retry. */
+    const lateStopWatch = new WeakMap<Session, Promise<void>>();
+    const watchLateStop = (session: Session, ownerThread?: string): Promise<void> => {
+      const existing = lateStopWatch.get(session);
+      if (existing) return existing; // ONE subscription per session, however many attempts fail
+      const release = async (delayMs: number): Promise<void> => {
+        const threadId = retiring.get(session) ?? ownerThread;
+        if (threadId === undefined) return;
+        try { await releaseResetSlot(threadId, session, true); }
+        catch {
+          // Only a real timer with backoff may retry, never the microtask queue.
+          if (delayMs > 4_000) return;
+          const timer = setTimeout(() => { void release(delayMs * 2); }, delayMs);
+          timer.unref?.();
+        }
+      };
+      const watch = cliTreeStoppedSignal(session.child).then(() => release(250));
+      lateStopWatch.set(session, watch);
+      return watch;
+    };
+    /** The old tree is confirmed gone: free the thread's slot. */
+    const releaseResetSlot = async (threadId: string, session: Session, proven = false) => {
+      if (proven) session.stopProven = true;
+      unretire(session);
+      refreshBlocked(threadId, session);
+      if (sessions.get(threadId) === session) sessions.delete(threadId);
+      await session.finishClose?.();
+    };
+    /** Confirm (killing outright) EVERY process of the thread that is retiring
+     * or quarantined, not just the current one: the 1.0.1 guarantee that a
+     * thread never launches beside an older tree. Returns those that could not
+     * be confirmed within the cap; the thread then stays quarantined. */
+    const confirmThreadStopped = async (threadId: string, capMs: number, extra?: Session): Promise<Session[]> => {
+      const targets = new Set<Session>();
+      for (const s of retiringByThread.get(threadId) ?? []) targets.add(s);
+      const blocked = resetBlocked.get(threadId);
+      if (blocked) targets.add(blocked);
+      if (extra) targets.add(extra);
+      const left: Session[] = [];
+      await Promise.all([...targets].map(async (target) => {
+        const stoppedP = forceCliTreeStopped(target.child);
+        // The slot is freed the moment the stop is confirmed (even after the
+        // cap); finishing the old session's close is awaited only briefly, so a
+        // slow close can never turn a confirmed stop into "unconfirmed".
+        // A confirmation after the cap still frees the slot (durable signal).
+        const released = watchLateStop(target, threadId);
+        let timer: NodeJS.Timeout | undefined;
+        const ok = await Promise.race([stoppedP, new Promise<boolean>((resolve) => { timer = setTimeout(() => resolve(false), capMs); })]).finally(() => clearTimeout(timer));
+        if (ok) {
+          let settleTimer: NodeJS.Timeout | undefined;
+          await Promise.race([released, new Promise<void>((resolve) => { settleTimer = setTimeout(resolve, 500); })]).finally(() => clearTimeout(settleTimer));
+        }
+        if (!ok) left.push(target);
+      }));
+      // A target whose stop was confirmed after its own cap (while another was
+      // still pending) was already released from proof: it must not be
+      // re-registered, so drop proven targets before failing or quarantining.
+      const stillLeft = left.filter((s) => !s.stopProven && !cliTreeConfirmedStopped(s.child));
+      if (stillLeft.length) { retire(stillLeft[0], threadId); resetBlocked.set(threadId, stillLeft[0]); }
+      return stillLeft;
+    };
+    /** A reset left this thread blocked: wait for the old trees' confirmation
+     * (killing them again outright), retrying with a fresh attempt while the
+     * budget lasts, else say so retryably. */
+    const awaitResetUnblocked = async (threadId: string, budgetMs = CLAUDE_RESET_BLOCK_WAIT_MS) => {
+      const deadline = Date.now() + budgetMs;
+      for (;;) {
+        if (!resetBlocked.has(threadId)) return;
+        const remaining = deadline - Date.now();
+        if (remaining <= 0) throw new Error(NOT_STOPPED_MESSAGE);
+        const left = await confirmThreadStopped(threadId, remaining);
+        if (!left.length) { resetBlocked.delete(threadId); return; }
+        if (deadline - Date.now() <= 0) throw new Error(NOT_STOPPED_MESSAGE);
+        await new Promise<void>((resolve) => { const t = setTimeout(resolve, Math.min(250, Math.max(0, deadline - Date.now()))); t.unref?.(); });
+      }
     };
     const requireRetiredStopped = async (threadId?: string) => {
       const failed = await stopRetiring(threadId);
       if (failed) throw new Error(`CLAUDE_SESSION_NOT_STOPPED: ${failed} earlier Claude process${failed === 1 ? "" : "es"} could not be confirmed stopped`);
     };
+    /** > 0 while Murage removes a deleted conversation from the engine's files: no idle process is kept or warmed (holdIdle). */
+    let idleHeld = 0;
     const armIdle = (threadId: string, hold = false) => {
       const s = sessions.get(threadId);
       if (!s || s.turn || s.closing || s.child.exitCode !== null) return;
+      if (idleHeld > 0) { closeSession(threadId, "deletion-hold"); return; }
       if (s.idleTimer) clearTimeout(s.idleTimer);
       s.idleTimer = setTimeout(() => {
         if (sessions.get(threadId) === s) closeSession(threadId, "idle");
@@ -1273,6 +1785,94 @@ export const ClaudeDriver: ProviderDriver<ClaudeConfig> = {
         else void writeUser(s, threadId, item.text).then(item.resolve);
       }
     };
+    /** One control request to the CLI, answered by its control_response (the
+     * `response` object: subtype, request_id, response or error), or null when
+     * the bound passes, stdin is gone or the process is closing. */
+    const controlRequest = (s: Session, threadId: string, request: Record<string, unknown>, timeoutMs: number): Promise<any | null> =>
+      new Promise((resolve) => {
+        if (s.closing || s.child.exitCode !== null || !s.child.stdin.writable || s.child.stdin.destroyed) return resolve(null);
+        const id = `murage-ctl-${newId()}`;
+        const waiters = (s.control ??= new Map());
+        const done = (response: any | null) => {
+          clearTimeout(timer);
+          waiters.delete(id);
+          resolve(response);
+        };
+        const timer = setTimeout(() => done(null), timeoutMs);
+        timer.unref?.();
+        waiters.set(id, done);
+        const message = { type: "control_request", request_id: id, request };
+        try {
+          s.child.stdin.write(JSON.stringify(message) + "\n");
+          appendNative(threadId, { dir: "out", source: "claude.sdk.message", msg: message });
+        } catch {
+          done(null);
+        }
+      });
+
+    /** Before a turn's prompt is written: wait (bounded) until the CLI reports
+     * the turn's required MCP servers connected, reconnect the failed ones
+     * (together, under one deadline), and return the plain names of those
+     * still missing and what the turn knows. Claude Code connects servers in
+     * the background and sends a prompt without the ones still pending (see
+     * mcp-readiness.ts). A chip shows the wait once it is long enough to
+     * notice: `chipTurn` gives the turn to show it on (a kept process starts
+     * its turn then), or null where there is none. */
+    interface GateOutcome { missing: string[]; readiness: McpReadiness; required: string[] }
+    const gateMcpServers = async (s: Session, threadId: string, servers: string[], chipTurn: () => string | null, stopped: () => boolean): Promise<GateOutcome> => {
+      const plan = splitMcpServers(servers);
+      const requiredLabels = unavailableLabels(plan.required);
+      if (!plan.required.length && !plan.optional.length) return { missing: [], readiness: "ready", required: requiredLabels };
+      const identity = s.cliIdentity ?? "";
+      let chipId: string | null = null;
+      let chipTurnId: string | null = null;
+      const outcome = await awaitRequiredMcp(plan, {
+        status: async (ms): Promise<McpStatusAnswer> => {
+          // A build known not to answer is not asked: it costs nothing per turn.
+          if (claudeMcpStatusSupport.get(identity) === "unsupported") return "unsupported";
+          const answer = await controlRequest(s, threadId, { subtype: "mcp_status" }, ms);
+          if (answer?.subtype === "success") {
+            // An answer that names none of the mounted servers cannot say
+            // whether they are up: the same as no per-server status at all.
+            const states = parseMcpStatus(answer.response);
+            return states && servers.some((name) => states.has(name)) ? states : "unsupported";
+          }
+          if (answer?.subtype === "error" && isUnsupportedAnswer(answer.error)) return "unsupported";
+          return null;
+        },
+        // The CLI answers a reconnect when it ends, and ends it at its own
+        // MCP_TIMEOUT; ours ends at the turn's recovery deadline.
+        reconnect: async (name, ms) => { await controlRequest(s, threadId, { subtype: "mcp_reconnect", serverName: name }, ms); },
+        stopped: () => stopped() || s.closing || s.child.exitCode !== null,
+        backoff: { store: claudeMcpBackoff, key: (name) => `${threadId}\0${name}` },
+        onSlow: (waitingFor) => {
+          chipTurnId = chipTurn();
+          if (!chipTurnId) return;
+          chipId = `mcp-wait-${chipTurnId}`;
+          emit({ ...base(threadId, chipTurnId), type: "item.started", itemType: "tool", itemId: chipId, title: mcpWaitChipTitle(unavailableLabels(waitingFor)) });
+        },
+      });
+      if (!outcome.stopped) {
+        claudeMcpStatusSupport.observe(identity, !outcome.unchecked ? "answered" : outcome.uncheckedReason === "unsupported" ? "unsupported" : "no-answer");
+      }
+      if (chipId && chipTurnId) emit({ ...base(threadId, chipTurnId), type: "item.completed", itemType: "tool", itemId: chipId, ok: outcome.missing.length === 0 });
+      if (outcome.waitedMs >= 1_000 || outcome.missing.length || outcome.reconnected.length || outcome.unchecked || outcome.backedOff.length) {
+        const line = `claude mcp gate thread=${threadId} waitedMs=${outcome.waitedMs} readiness=${outcome.readiness} reconnected=${outcome.reconnected.join(",") || "none"} backedOff=${outcome.backedOff.join(",") || "none"} missing=${outcome.missing.join(",") || "none"}${outcome.unchecked ? ` unchecked=${outcome.uncheckedReason}` : ""}`;
+        console.info(line);
+        appendNative(threadId, { dir: "out", source: "claude.session", msg: { mcpGate: line } });
+      }
+      if (outcome.stopped) return { missing: [], readiness: "ready", required: requiredLabels };
+      return { missing: unavailableLabels(outcome.missing), readiness: outcome.readiness, required: requiredLabels };
+    };
+    /** The prompt with the plain notice in front when required tools are missing. */
+    const withToolsNotice = (text: string, gate: GateOutcome, engineCommand: boolean): string => {
+      if (engineCommand) return text;
+      if (gate.missing.length) return `${toolsUnavailableNotice(gate.missing)}\n\n${text}`;
+      // The CLI could not say: the bot hears its tools may still be loading.
+      if (gate.readiness === "unknown" && gate.required.length) return `${toolsMayBeLoadingNotice(gate.required)}\n\n${text}`;
+      return text;
+    };
+
     /** A steer's fence (steer's `beforeWrite`), run right before its write. */
     const steerFenceHolds = (beforeWrite: (() => void) | undefined): boolean => {
       try { beforeWrite?.(); return true; } catch { return false; }
@@ -1340,14 +1940,21 @@ export const ClaudeDriver: ProviderDriver<ClaudeConfig> = {
         // first, and Windows ends it through an asynchronous taskkill. That
         // turn is not "already running": wait for its close, bounded by the
         // same deadline the harness gives a stopped child, then proceed.
+        let pastDeadline = false;
         await Promise.race([
           running.closed,
-          new Promise<void>((_, reject) => {
-            const timer = setTimeout(() => reject(new Error("the stopped turn has not closed yet; wait a moment and send again")), providerCloseDeadlineMs());
+          new Promise<void>((resolve) => {
+            const timer = setTimeout(() => { pastDeadline = true; resolve(); }, providerCloseDeadlineMs());
             timer.unref?.();
             void running.closed.finally(() => clearTimeout(timer));
           }),
         ]);
+        // Past the deadline the old process is not confirmed stopped: that is
+        // the quarantine path, not a dead end. Quarantine settles the stopped
+        // turn (freeing the thread); the dispatch below then waits, bounded,
+        // for the confirmation before it launches anything.
+        if (pastDeadline && active.get(threadId) === running) sessions.get(threadId)?.quarantine?.();
+        if (pastDeadline && active.has(threadId)) throw new Error("the stopped turn has not closed yet; wait a moment and send again");
         if (active.has(threadId)) throw new Error("a turn is already running on this thread");
       }
       const turnId = relaunch?.turnId ?? newId();
@@ -1378,6 +1985,15 @@ export const ClaudeDriver: ProviderDriver<ClaudeConfig> = {
             emit({ ...base(threadId, turnId), type: "item.completed", itemType: "tool", itemId: `wake-${turnId}`, ok: true });
           }
           emit({ ...base(threadId, turnId), type: "turn.completed", ok: true, stopReason: "cancelled", cost: null });
+          return { turnId };
+        }
+        // A Claude Code older than the qualified minimum: the same update offer a refused model gets.
+        if (error instanceof ClaudeUpdateRequired && !turn.prewarm) {
+          if (active.get(threadId)?.turnId === turnId) forgetActive(threadId);
+          retryState.delete(threadId);
+          if (!relaunch) emit({ ...base(threadId, turnId), type: "turn.started" });
+          emit({ ...base(threadId, turnId), type: "runtime.error", message: error.message, setup: true, claudeUpdate: true });
+          emit({ ...base(threadId, turnId), type: "turn.completed", ok: false, stopReason: "update_required", cost: null });
           return { turnId };
         }
         // Any other failure before launch releases the reservation it made.
@@ -1472,6 +2088,13 @@ export const ClaudeDriver: ProviderDriver<ClaudeConfig> = {
         if (previous && previous === ctl.reservation) previous.close();
       };
       const turnModel = turn.providerRoute ? turn.providerRoute.model : await resolveClaudeTurnModel(turn.model, turnEnvironment);
+      assertSoleDispatch();
+      // The isolation flags were qualified from 2.1.280 up (the floor 1.0.1 already had); an older CLI is refused before anything
+      // is written or launched (claude-guards.ts CLAUDE_MIN_VERSION). Held per executable identity;
+      // a Stop during the probe ends the wait and assertSoleDispatch reports it.
+      const probeStop = new AbortController();
+      void ctl.stopped.then(() => probeStop.abort());
+      await requireClaudeCliVersion(config.cli, claudeEnvironment(undefined, turnEnvironment), probeStop.signal);
       assertSoleDispatch();
       // argv and the process-reuse key below must come from the SAME routing
       // decision the spawn env gets from `claudeEnvironment`. A throwaway copy
@@ -1593,8 +2216,24 @@ export const ClaudeDriver: ProviderDriver<ClaudeConfig> = {
         args.push("--allowedTools", allowed.join(","));
       }
 
-      const env = claudeEnvironment(turnModel, turnEnvironment, turn.providerRoute);
+      // Flux Memory headers are decided per thread audience and are part of the
+      // spawn contract: a change of audience, purpose or memory choice differs
+      // in the warm key below and forces a respawn.
+      const fluxMemory = fluxMemoryDecision(fluxMemoryContextForTurn(turn));
+      const env = claudeEnvironment(turnModel, turnEnvironment, turn.providerRoute, fluxMemory);
+      // MCP start-up is Murage's to wait for (gateMcpServers, before the prompt):
+      // the CLI's own first-prompt hold is off, and a connect or reconnect ends
+      // at the reconnect bound, so neither can hold a turn past the budgets in
+      // mcp-readiness.ts (claudeMcpStartupEnv).
+      const cliIdentity = claudeExecutableIdentity(config.cli, env);
+      Object.assign(env, claudeMcpStartupEnv(claudeMcpStatusSupport.get(cliIdentity) !== "unsupported"));
       const cwd = turn.cwd ?? homedir();
+      // The owner's own Claude setup stays out of the bot's turns (claudeIsolation); with no Murage
+      // server mounted the strict flag still needs an (empty) config to mean "none". The isolation
+      // settings file is named by its content hash and its path stays in the key's argv, so a change
+      // to the owner's plugins, skills or agents ends reuse.
+      if (!mcpConfigPath) args.push("--mcp-config", '{"mcpServers":{}}');
+      args.push(...claudeIsolation(env, cwd));
       // Everything that shapes the process, minus session/turn-specific temp
       // paths. Their contents are represented directly in the key instead.
       const privateFileFlags = new Set(["--mcp-config"]);
@@ -1604,6 +2243,7 @@ export const ClaudeDriver: ProviderDriver<ClaudeConfig> = {
       // `diffWarmKey` reports: identity first, then the cheap named fields,
       // then the raw argv.
       const { stableServers, secrets } = splitTurnSecrets(mcpServers);
+      const mountRefs = connectorMountRefsOf(stableServers, secrets, threadId);
       const warm = warmKey({
         bot: turn.warmIdentity?.botId ?? null,
         thread: threadId,
@@ -1614,13 +2254,18 @@ export const ClaudeDriver: ProviderDriver<ClaudeConfig> = {
         model: injected.model ?? null,
         providerRoute: turn.providerRoute ? [turn.providerRoute.connectionId, turn.providerRoute.revision] : null,
         baseUrl: env.ANTHROPIC_BASE_URL ?? null,
+        fluxMemory: env.ANTHROPIC_CUSTOM_HEADERS ? fluxMemory.signature : null,
         // The credential the process was launched with, whichever route put it
         // in env (local host, Flux, a provider connection, the CLI's own
         // token): a digest, so a rotated key respawns without the key being
         // kept anywhere. The base URL above stays readable for the reason.
-        credentials: credentialDigest(Object.fromEntries(Object.entries(env).filter(([name]) => /^(ANTHROPIC_|CLAUDE_CODE_)/.test(name)))),
+        // The MCP start-up hold (claudeMcpStartupEnv) is not a credential and
+        // only matters at spawn: learning a build's status support never recycles.
+        credentials: credentialDigest(Object.fromEntries(Object.entries(env).filter(([name]) => /^(ANTHROPIC_|CLAUDE_CODE_)/.test(name) && name !== "CLAUDE_CODE_MCP_STARTUP_WAIT_MS"))),
         cwd,
         mcp: stableServers,
+        // the bot's connected-app access: a change relists the tools by recycling
+        connectorScope: connectorScopeOf(secrets),
         system: turn.system ?? null,
         args: keyArgs,
         settingsRev: claudeSettingsRevision(env, cwd),
@@ -1633,7 +2278,7 @@ export const ClaudeDriver: ProviderDriver<ClaudeConfig> = {
       // rebuilt conversation says so explicitly: without the reset an edit,
       // branch switch, cwd or engine change replayed the transcript on top
       // of the idle process's old context (upstream 581a740b, #1562).
-      const live = sessions.get(threadId);
+      let live = sessions.get(threadId);
       // A settle-time process probe may still be deciding whether this process
       // can be kept; the answer comes before this turn picks a process.
       if (live?.settleCheck) {
@@ -1650,6 +2295,24 @@ export const ClaudeDriver: ProviderDriver<ClaudeConfig> = {
           throw error;
         }
       }
+      if (resetBarriers.has(threadId) || resetBlocked.has(threadId)) {
+        try {
+          // A reset in progress finishes first (a Stop ends the wait at once);
+          // a reset that left the old tree unconfirmed is retried, bounded.
+          while (resetBarriers.has(threadId)) {
+            await Promise.race([resetBarriers.get(threadId)!, ctl.stopped]);
+            assertSoleDispatch();
+          }
+          await awaitResetUnblocked(threadId);
+          assertSoleDispatch();
+        } catch (error) {
+          if (mcpConfigPath) {
+            try { rmSync(dirname(mcpConfigPath), { recursive: true, force: true }); } catch {}
+          }
+          throw error;
+        }
+      }
+      live = sessions.get(threadId);
       if (turn.prewarm && live && !live.closing && live.child.exitCode === null) {
         // an engine is already live on this thread: nothing to warm
         if (mcpConfigPath) {
@@ -1663,52 +2326,130 @@ export const ClaudeDriver: ProviderDriver<ClaudeConfig> = {
         : live.turn ? "busy"
         : live.closing || live.child.exitCode !== null ? "process-exited"
         : pastWarmMaxAge(spawnedAtOf(live.child)) ? "max-age"
-        : diffWarmKey(live.warm, warm) ?? (sessionId && sessionId !== live.sessionId ? "cursor" : null);
+        : live.startupHoldOff && Object.keys(mcpServers).length > 0 && claudeMcpStatusSupport.get(cliIdentity) === "unsupported" ? "mcp-startup-hold"
+        : diffWarmKey(live.warm, warm) ?? (sessionId && sessionId !== live.sessionId ? "cursor" : null)
+          // the bridge filed that this engine was handed only the stand-in list and has not listed again since
+          ?? (anyMountIncomplete(mountRefs) ? "connector-mount-incomplete" : null);
+      if (spawnReason !== null && live) clearMountsIncomplete(mountRefs);
       const dispatchTrace = `claude dispatch thread=${threadId} process=${spawnReason === null ? "reused reason=unchanged" : `spawned reason=${spawnReason}`}`;
       console.info(dispatchTrace);
+      if (spawnReason !== null && env.ANTHROPIC_CUSTOM_HEADERS) logFluxMemoryHeaders(DRIVER_KIND, fluxMemory);
       appendNative(threadId, { dir: "out", source: "claude.session", msg: { dispatch: dispatchTrace } });
       if (live && spawnReason === null) {
-        // The submission fence (SendTurnInput.beforeSubmit): no await
-        // separates it from the write below. A refusal writes nothing and
-        // leaves the idle process in the warm pool as it was; the harness resets it.
+        // A kept process connected its servers when it started, but one may
+        // have failed since: the same readiness check a new process gets, while
+        // the process is held out of the pool so nothing retires it meanwhile.
+        warmPool.release(live);
+        if (live.idleTimer) clearTimeout(live.idleTimer);
+        live.idleTimer = null;
+        // This turn's credentials go in BEFORE the check: a server the check
+        // reconnects (a connected-apps bridge that died between turns) starts
+        // again and lists its tools with them. Settlement emptied the file.
         try {
-          turn.beforeSubmit?.();
+          live.cred?.write(secrets);
         } catch (error) {
+          closeSession(threadId, "credential write failed");
           if (mcpConfigPath) {
             try { rmSync(dirname(mcpConfigPath), { recursive: true, force: true }); } catch {}
           }
           throw error;
         }
-        warmPool.release(live);
+        /** Nothing is written for this dispatch: its credentials leave the file
+         * again, and a process whose file cannot be emptied is not kept. */
+        const withdrawCredentials = () => {
+          try {
+            live.cred?.clear();
+            return true;
+          } catch {
+            if (sessions.get(threadId) === live) closeSession(threadId, "credential clear failed");
+            return false;
+          }
+        };
+        const dropConfig = () => {
+          if (mcpConfigPath) {
+            try { rmSync(dirname(mcpConfigPath), { recursive: true, force: true }); } catch {}
+          }
+        };
+        let startedTurn: SessionTurn | null = null;
+        /** The turn starts here: before the write, or as soon as the check
+         * takes long enough to show its chip (which belongs to a turn). */
+        const startLiveTurn = (): SessionTurn => {
+          if (startedTurn) return startedTurn;
+          const started: SessionTurn = {
+            turnId,
+            settled: false,
+            sawStreamDelta: false,
+            boundary: createAttemptBoundary(),
+            submission: null,
+            engineCommand: Boolean(turn.engineCommand),
+            holdPermissionAsks: turn.holdPermissionAsks === true,
+            holdProjectAsks: turn.holdProjectAsks === true,
+          };
+          startedTurn = started;
+          live.turn = started;
+          claimActive(activeTurn(turnId, live.broker, () => {
+            started.stopRequested = true;
+            stopSession(live);
+          }, () => started.stopRequested === true));
+          emit({ ...base(threadId, turnId), type: "turn.started" });
+          // an intent-warmed engine's init frame arrived before any turn existed: report it now
+          const held = heldStarted.get(threadId);
+          if (held) { heldStarted.delete(threadId); emit({ ...held, turnId, eventId: newEventId(), createdAt: new Date().toISOString() } as RuntimeEvent); }
+          return started;
+        };
+        const reused = await gateMcpServers(live, threadId, Object.keys(mcpServers), () => startLiveTurn().turnId,
+          () => ctl.isStopped() || (startedTurn as SessionTurn | null)?.stopRequested === true);
+        const early = startedTurn as SessionTurn | null;
+        if (early) {
+          // The turn started during the check. A Stop killed the process and
+          // its close settles the turn as cancelled; a process that ended is
+          // settled by its close. Nothing is written either way.
+          if (early.stopRequested || live.turn !== early || live.closing || live.child.exitCode !== null || sessions.get(threadId) !== live) {
+            dropConfig();
+            if (!early.stopRequested && live.turn === early) early.submission = Promise.resolve(false);
+            return { turnId };
+          }
+        } else {
+          // The wait let a Stop or another dispatch in, or the process ended.
+          try {
+            if (ctl.isStopped()) throw new StoppedBeforeLaunch();
+            assertSoleDispatch();
+            if (sessions.get(threadId) !== live || live.turn || live.closing || live.child.exitCode !== null) {
+              throw new Error("the Claude session closed while its tools were loading; send again");
+            }
+          } catch (error) {
+            dropConfig();
+            if (withdrawCredentials() && sessions.get(threadId) === live && !live.turn) armIdle(threadId);
+            throw error;
+          }
+        }
+        // The submission fence (SendTurnInput.beforeSubmit): no await
+        // separates it from the write below. A refusal writes nothing and
+        // takes this turn's credentials back out of the file. Before the turn
+        // started the idle process goes back to the warm pool as it was; once
+        // it started (a slow check) the process ends, as a new one's does.
         try {
-          live.cred?.write(secrets);
+          turn.beforeSubmit?.();
         } catch (error) {
-          closeSession(threadId, "credential write failed");
+          dropConfig();
+          if (early) {
+            if (typeof error === "object" && error !== null) submissionRefusals.add(error);
+            early.settled = true;
+            live.turn = null;
+            forgetActive(threadId);
+            retryState.delete(threadId);
+            withdrawCredentials();
+            if (sessions.get(threadId) === live) closeSession(threadId, "submission refused");
+          } else if (withdrawCredentials()) armIdle(threadId);
           throw error;
         }
         if (live.idleTimer) clearTimeout(live.idleTimer);
         live.idleTimer = null;
-        const liveTurn: SessionTurn = {
-          turnId,
-          settled: false,
-          sawStreamDelta: false,
-          boundary: createAttemptBoundary(),
-          submission: null,
-          engineCommand: Boolean(turn.engineCommand),
-          holdPermissionAsks: turn.holdPermissionAsks === true,
-          holdProjectAsks: turn.holdProjectAsks === true,
-        };
-        live.turn = liveTurn;
-        claimActive(activeTurn(turnId, live.broker, () => {
-          liveTurn.stopRequested = true;
-          stopSession(live);
-        }, () => liveTurn.stopRequested === true));
-        emit({ ...base(threadId, turnId), type: "turn.started" });
-        // an intent-warmed engine's init frame arrived before any turn existed: report it now
-        const held = heldStarted.get(threadId);
-        if (held) { heldStarted.delete(threadId); emit({ ...held, turnId, eventId: newEventId(), createdAt: new Date().toISOString() } as RuntimeEvent); }
+        const liveTurn = startLiveTurn();
+        if (reused.missing.length) liveTurn.toolsUnavailable = reused.missing;
+        if (reused.readiness === "unknown" && reused.required.length) liveTurn.mcpReadiness = "unknown";
         // A Stop inside the turn.started listeners writes nothing.
-        liveTurn.submission = liveTurn.stopRequested ? Promise.resolve(false) : writeUser(live, threadId, turnPrompt, liveTurn.boundary, turn.images);
+        liveTurn.submission = liveTurn.stopRequested ? Promise.resolve(false) : writeUser(live, threadId, withToolsNotice(turnPrompt, reused, Boolean(turn.engineCommand)), liveTurn.boundary, turn.images);
         const written = await liveTurn.submission;
         // A Stop during the write kills the pipe, so the write fails. That is
         // the Stop, not a broken session: the child's close settles this turn
@@ -1841,6 +2582,24 @@ export const ClaudeDriver: ProviderDriver<ClaudeConfig> = {
         // Headroom for one more engine: evicts an idle one if needed, never refuses.
         await warmPool.beforeSpawn();
         assertSoleDispatch();
+        // A quarantine or reset that arose during setup: wait for it to clear
+        // (bounded), then revalidate ownership and the Stop fence before the
+        // submission. Only an expired wait ends in the retryable refusal.
+        if (resetBarriers.has(threadId) || resetBlocked.has(threadId)) {
+          const waitDeadline = Date.now() + CLAUDE_LAUNCH_CLEAR_WAIT_MS;
+          while (resetBarriers.has(threadId) || resetBlocked.has(threadId)) {
+            const remaining = waitDeadline - Date.now();
+            if (remaining <= 0) throw new Error(NOT_STOPPED_MESSAGE);
+            const barrier = resetBarriers.get(threadId);
+            if (barrier) {
+              let timer: NodeJS.Timeout | undefined;
+              await Promise.race([barrier, ctl.stopped, new Promise<void>((resolve) => { timer = setTimeout(resolve, remaining); })]).finally(() => clearTimeout(timer));
+            } else {
+              await awaitResetUnblocked(threadId, remaining);
+            }
+            assertSoleDispatch();
+          }
+        }
 
         // This process's credential file, holding the first turn's tokens.
         if (Object.keys(secrets).length) {
@@ -1866,6 +2625,11 @@ export const ClaudeDriver: ProviderDriver<ClaudeConfig> = {
         cleanupUnownedLaunch();
         throw new StoppedBeforeLaunch();
       }
+      // A prewarm never starts an engine while Murage removes a deleted conversation from the engine's files (holdIdle).
+      if (turn.prewarm && idleHeld > 0) {
+        cleanupUnownedLaunch();
+        throw new StoppedBeforeLaunch();
+      }
       // The submission fence (SendTurnInput.beforeSubmit), on every launch
       // (a relaunch too). No await separates it from the spawn and the first
       // write below, so it holds at the write; a refusal spawns nothing.
@@ -1879,6 +2643,10 @@ export const ClaudeDriver: ProviderDriver<ClaudeConfig> = {
 
       let child: ReturnType<typeof spawnCli>;
       try {
+        // Ownership is rechecked right here, with no await before the spawn: a
+        // reset that began during setup, or a quarantined predecessor, means
+        // this launch would run beside a tree that may still be live.
+        if (resetBarriers.has(threadId) || resetBlocked.has(threadId)) throw new Error(NOT_STOPPED_MESSAGE);
         child = spawnCli(config.cli, args, {
           cwd,
           env,
@@ -1912,8 +2680,14 @@ export const ClaudeDriver: ProviderDriver<ClaudeConfig> = {
         stderr: "",
         commands: { requestId: `murage-commands-${newId()}` },
         costTotal: undefined,
+        cliIdentity,
+        startupHoldOff: env.CLAUDE_CODE_MCP_STARTUP_WAIT_MS === "0",
       };
       sessions.set(threadId, session);
+      // A control request the process can no longer answer ends now, not at its bound.
+      child.once("exit", () => {
+        for (const answer of [...(session.control?.values() ?? [])]) answer(null);
+      });
 
       /** The files the CLI read at its start (MCP config with its credentials, system prompt):
        * nothing needs them once it is running, so none sits on disk while it is idle. */
@@ -2037,7 +2811,7 @@ export const ClaudeDriver: ProviderDriver<ClaudeConfig> = {
             session.settleCheck = check;
           }
         }
-        emit({ ...base(threadId, t.turnId), type: "turn.completed", ok, stopReason, cost, ...(usage ? { usage } : {}) });
+        emit({ ...base(threadId, t.turnId), type: "turn.completed", ok, stopReason, cost, ...(usage ? { usage } : {}), ...(t.toolsUnavailable?.length ? { toolsUnavailable: t.toolsUnavailable } : {}), ...(t.mcpReadiness ? { mcpReadiness: t.mcpReadiness } : {}) });
       };
       const currentTurnId = () => session.turn?.turnId ?? turnId;
       const emitSubtask = (t: SessionTurn, subtask: ReturnType<SubtaskTracker["end"]>) => {
@@ -2116,6 +2890,11 @@ export const ClaudeDriver: ProviderDriver<ClaudeConfig> = {
           if (!session.turn) dropStartFiles();
         }
         appendNative(threadId, { dir: "in", source: "claude.sdk.message", msg: o });
+        // A retired session (closing, or replaced in the thread's slot) with
+        // no open turn can no longer speak for the thread: its system/init must
+        // not become session.started, which writes the thread's resume cursor.
+        // That holds even with a stopped, unsettled turn still open.
+        if ((session.closing || sessions.get(threadId) !== session) && ((o.type === "system" && o.subtype === "init") || !session.turn || session.turn.settled)) return;
         const contentFrame = o.type === "stream_event" || o.type === "assistant" || o.type === "user";
         const taskFrame = o.type === "system" && typeof o.subtype === "string" && (o.subtype.startsWith("task_") || o.subtype === "background_tasks_changed");
         // Frames with no open turn were not asked for: a background task's
@@ -2160,7 +2939,7 @@ export const ClaudeDriver: ProviderDriver<ClaudeConfig> = {
                 flushQueuedSteers(session, threadId);
               }
               if (typeof o.session_id === "string") session.sessionId = o.session_id;
-              emit({ ...base(threadId, currentTurnId()), type: "session.started", sessionId: o.session_id, model: o.model });
+              emit({ ...base(threadId, currentTurnId()), type: "session.started", sessionId: o.session_id, model: o.model, sessionContract: CLAUDE_ISOLATION_CONTRACT });
               if (Array.isArray(o.slash_commands) && session.commands) {
                 session.commands.names = o.slash_commands;
                 session.commands.terminalOnly = Array.isArray(o.terminal_slash_commands)
@@ -2298,9 +3077,15 @@ export const ClaudeDriver: ProviderDriver<ClaudeConfig> = {
             }
             break;
           case "control_response": {
-            // Only the answer to our own `initialize` is read, and only its
-            // command descriptions: nothing else rides on it.
             const response = o.response ?? {};
+            // An answer to one of our own control requests (mcp_status, mcp_reconnect).
+            const waiter = typeof response.request_id === "string" ? session.control?.get(response.request_id) : undefined;
+            if (waiter) {
+              waiter(response);
+              break;
+            }
+            // Otherwise only the answer to our own `initialize` is read, and
+            // only its command descriptions: nothing else rides on it.
             if (!session.commands || response.request_id !== session.commands.requestId) break;
             const described = response.response?.commands;
             if (response.subtype === "success" && Array.isArray(described)) {
@@ -2413,6 +3198,7 @@ export const ClaudeDriver: ProviderDriver<ClaudeConfig> = {
         },
       });
       child.stdout.on("data", (chunk: Buffer) => stdoutLines.push(chunk));
+      registerIntake(threadId, child.stdout, child);
 
       child.stderr.on("data", (c) => {
         session.stderr += c;
@@ -2445,6 +3231,18 @@ export const ClaudeDriver: ProviderDriver<ClaudeConfig> = {
           // error card would contradict the update offer (audit round 1, Kimi 2).
           retryState.delete(threadId);
           settle(false, "update_required");
+        } else if (session.turn && !session.turn.settled && code !== 0 && !session.initHandled && claudeLaunchRefusal(session.stderr)) {
+          // The CLI refused its own command line at startup (it exited before any `init`): one of
+          // Murage's launch flags it does not know (too old: the update offer) or a managed MCP
+          // policy that forbids --strict-mcp-config. Neither is transient, so no retry and no
+          // generic exit card. A process that got as far as `init` is never read this way.
+          const refusal = claudeLaunchRefusal(session.stderr)!;
+          retryState.delete(threadId);
+          emit({
+            ...base(threadId, currentTurnId()), type: "runtime.error", message: refusal.message, setup: true,
+            ...(refusal.claudeUpdate ? { claudeUpdate: true } : {}), ...(refusal.errorKind ? { errorKind: refusal.errorKind } : {}),
+          });
+          settle(false, refusal.stopReason);
         } else if (session.turn && !session.turn.settled) {
           const closingTurn = session.turn;
           const message = `claude exited ${code} before result${session.stderr ? `: ${session.stderr.trim().slice(-300)}` : ""}`;
@@ -2580,6 +3378,22 @@ export const ClaudeDriver: ProviderDriver<ClaudeConfig> = {
         if (sessions.get(threadId) === session) sessions.delete(threadId);
       };
       let closeFinalized = false;
+      // Quarantine the process, settle the turn. The slot stays held and no new
+      // launch starts until a later confirmation succeeds, but the turn is never
+      // left busy behind it. Callable from the close handler and, when the root
+      // never closes, from the stop path itself.
+      const quarantineSession = () => {
+        if (closeFinalized) return;
+        session.closing = true;
+        retire(session, threadId);
+        if (!resetBlocked.has(threadId)) resetBlocked.set(threadId, session);
+        const open = session.turn;
+        if (open && !open.settled) {
+          emit({ ...base(threadId, currentTurnId()), type: "runtime.error", message: NOT_STOPPED_MESSAGE });
+          settle(false, "session_not_stopped");
+        }
+      };
+      session.quarantine = quarantineSession;
       child.on("close", (code) => {
         warmPool.release(session);
         // A user-message write still in flight when the process died has an
@@ -2592,13 +3406,16 @@ export const ClaudeDriver: ProviderDriver<ClaudeConfig> = {
           if (closingTurn && !closingTurn.settled && closingTurn.boundary.submission === "in-flight" && closingTurn.submission) {
             await closingTurn.submission;
           }
-          if (!(await awaitCliTreeStopped(child))) {
-            emit({ ...base(threadId, currentTurnId()), type: "runtime.error", message: `${ENGINE} has not finished closing yet, so this conversation stays busy until it does. Restart Murage if it stays stuck.` });
+          const confirmed = session.stopProven ? Promise.resolve(true) : awaitCliTreeStopped(child, undefined, CLI_CALLER_DEADLINE_MS);
+          if (!(await confirmed)) {
+            quarantineSession();
+            watchLateStop(session);
             return;
           }
           if (closeFinalized) return;
           closeFinalized = true;
-          retiring.delete(session);
+          unretire(session);
+          refreshBlocked(threadId, session);
           onChildClose(code);
         };
         void session.finishClose();
@@ -2685,7 +3502,34 @@ export const ClaudeDriver: ProviderDriver<ClaudeConfig> = {
         launchTurn.submission = Promise.resolve(false);
         return { turnId };
       }
-      launchTurn.submission = writeUser(session, threadId, turnPrompt, launchTurn.boundary, turn.images);
+      // The new process connects its MCP servers in the background: wait
+      // (bounded) for the ones this turn needs before the prompt goes in.
+      const gate = await gateMcpServers(session, threadId, Object.keys(mcpServers), () => turnId, cancelledBeforeWrite);
+      // A Stop during the wait killed the child: its close settles the turn as
+      // cancelled. A child that died during it is settled (or relaunched) by its
+      // close as a prompt that never reached it: nothing is written either way.
+      if (cancelledBeforeWrite()) {
+        launchTurn.submission = Promise.resolve(false);
+        return { turnId };
+      }
+      if (session.turn !== launchTurn || session.closing || session.child.exitCode !== null) return { turnId };
+      // The wait was an await after the fence above: the fence runs again, with
+      // none between it and the write. A refusal writes nothing and ends this
+      // process; the turn is the harness's to re-run.
+      try {
+        turn.beforeSubmit?.();
+      } catch (error) {
+        if (typeof error === "object" && error !== null) submissionRefusals.add(error);
+        launchTurn.settled = true;
+        session.turn = null;
+        forgetActive(threadId);
+        retryState.delete(threadId);
+        if (sessions.get(threadId) === session) closeSession(threadId, "submission refused");
+        throw error;
+      }
+      if (gate.missing.length) launchTurn.toolsUnavailable = gate.missing;
+      if (gate.readiness === "unknown" && gate.required.length) launchTurn.mcpReadiness = "unknown";
+      launchTurn.submission = writeUser(session, threadId, withToolsNotice(turnPrompt, gate, Boolean(turn.engineCommand)), launchTurn.boundary, turn.images);
       if (!(await launchTurn.submission)) {
         // The message never reached the CLI whole. End the session and let
         // its close decide: a transient pre-accept failure may relaunch
@@ -2711,7 +3555,7 @@ export const ClaudeDriver: ProviderDriver<ClaudeConfig> = {
     const prewarm = async (threadId: string): Promise<boolean> => {
       const mem = lastTurns.get(threadId);
       const held = sessions.get(threadId);
-      if (!mem || active.has(threadId) || (held && !held.closing && held.child.exitCode === null) || !prewarming.begin(threadId)) return false;
+      if (idleHeld > 0 || !mem || active.has(threadId) || resetBarriers.has(threadId) || resetBlocked.has(threadId) || (held && !held.closing && held.child.exitCode === null) || !prewarming.begin(threadId)) return false;
       const turnId = newId();
       let stoppedBeforeLaunch = false;
       let wake = () => {};
@@ -2744,15 +3588,62 @@ export const ClaudeDriver: ProviderDriver<ClaudeConfig> = {
       return writeUser(s, threadId, text);
     };
 
+    /** The reset itself; resetSession wraps it in the thread barrier. */
+    const resetSessionBody = async (threadId: string): Promise<void> => {
+      // interruptTurn alone ignores retained idle sessions. Cancel any
+      // active retry as well, then await this thread's existing close path.
+      const session = sessions.get(threadId);
+      active.get(threadId)?.stop();
+      // A reset never fails the owner's turn (1.0.1.1). It used to wait
+      // up to 10 s for the old CLI to close, then throw
+      // CLAUDE_SESSION_RESET_TIMEOUT. Now the old process gets a short
+      // grace to exit on stdin EOF; past it, its whole tree is killed
+      // outright (no SIGTERM grace) and confirmed in the background.
+      // Either way it leaves this thread's slot at once, so the next send
+      // spawns a fresh session. It can no longer answer for the thread:
+      // closeSession took its broker and credentials, its turn was
+      // stopped, and frames with no open turn are dropped.
+      // A SIGKILL'd tree is confirmed within CLI_FORCE_WAIT_MS, and its
+      // close settles any turn it still held before the fresh session
+      // starts. Only a process the kernel cannot end in that time leaves
+      // the slot unconfirmed; its confirmation then finishes behind.
+      const started = Date.now();
+      let exited = true;
+      if (session) {
+        closeSession(threadId, "memory context reset");
+        exited = session.finishClose !== undefined || await new Promise<boolean>((resolve) => {
+          const done = (value: boolean) => { clearTimeout(timer); session.child.off("close", closed); resolve(value); };
+          const closed = () => done(true);
+          const timer = setTimeout(() => done(false), CLAUDE_RESET_GRACE_MS);
+          session.child.once("close", closed);
+        });
+      }
+      // Force: a stop the child's own close already started (3 s SIGTERM
+      // grace) is escalated to SIGKILL of the whole tree right now. EVERY
+      // process of the thread is confirmed, the current one and any older
+      // predecessor still retiring (1.0.1's requireRetiredStopped guarantee):
+      // the barrier is only released once none is left, else the thread stays
+      // quarantined and the next turn waits for the confirmation.
+      const left = await confirmThreadStopped(threadId, CLAUDE_RESET_KILL_WAIT_MS, session);
+      if (left.length) console.warn(`claude reset thread=${threadId} ${left.length} old process${left.length === 1 ? "" : "es"} not confirmed stopped; this thread stays blocked until confirmed`);
+      if (session || left.length) console.info(`claude reset thread=${threadId} ms=${Date.now() - started} old=${exited ? "exited" : "killed"}${left.length ? " unconfirmed" : ""}`);
+    };
+
     const snapshot = async (): Promise<ProviderSnapshot> => {
       const env = claudeEnvironment(undefined, accountEnvironment());
-      const version = await new Promise<string | null>((resolve) => {
-        execCli(config.cli, ["--version"], { timeout: 8000, env }, (err, stdout) =>
-          resolve(err ? null : stdout.trim()),
-        );
-      });
+      const probed = await cachedCliVersion(config.cli, env, execCli);
+      const version = probed.error ? null : probed.stdout.trim();
       if (!version) return { state: "unavailable", reason: `\`${config.cli}\` CLI not found` };
-      const authenticated = await claudeSignedIn(config.cli, env);
+      // Below the qualified minimum a turn would be refused: offer the update, not a sign-in.
+      if (claudeVersionVerdict(version) === "below") return { state: "unavailable", version, reason: CLAUDE_UPDATE_MESSAGE };
+      // The probe runs with the flags a turn gets, so it judges the login a turn will have.
+      const auth = await claudeAuthStatus(config.cli, env, execCli, ["--mcp-config", '{"mcpServers":{}}', ...claudeIsolation(env, process.cwd())]);
+      // A CLI that refused those flags is not signed out: say what will fix it.
+      if (auth.refusal) return { state: "unavailable", version, reason: auth.refusal.message };
+      // A probe that gave no status at all (a spawn error, a crash, a launch the OS refused) is not
+      // a lost login: the CLI's own words, and "not verified" rather than "sign in", so chat stays open.
+      if (auth.error) return { state: "available", version, reason: auth.error, billing: "subscription" };
+      const authenticated = auth.signedIn;
       // claudeEnvironment strips ANTHROPIC_API_KEY, so turns run on the
       // CLI's own login (Pro/Max): the cost it reports is what the call
       // WOULD bill, not a charge
@@ -2763,19 +3654,33 @@ export const ClaudeDriver: ProviderDriver<ClaudeConfig> = {
      * summaries can contain paths, commands, or secrets, so the generic
      * `claude -p "prompt"` shape is not safe for review. No tools or MCP
      * servers are mounted in this isolated process. */
-    const generateReview = (prompt: string, signal?: AbortSignal, proposalModel?: string): Promise<string> =>
+    const generateReview = async (prompt: string, signal?: AbortSignal, proposalModel?: string): Promise<string> => {
+      // Below the qualified minimum the call is refused with code update_required, before any launch.
+      await requireClaudeCliVersion(config.cli, claudeEnvironment(proposalModel ?? "claude-haiku-4-5", accountEnvironment()), signal);
+      return runReview(prompt, signal, proposalModel);
+    };
+    const runReview = (prompt: string, signal?: AbortSignal, proposalModel?: string): Promise<string> =>
       new Promise((resolve, reject) => {
+        const env = claudeEnvironment(proposalModel ?? "claude-haiku-4-5", accountEnvironment());
+        // Same isolation as a turn: no MCP server, hook, plugin or personal CLAUDE.md of the
+        // owner's, with the owner's login untouched. A proposal also gets no tools at all.
         const child = spawnCli(
           config.cli,
-          ["-p", "--model", proposalModel ?? "claude-haiku-4-5", "--output-format", "text",
-            ...(proposalModel ? ["--tools", "", "--strict-mcp-config", "--mcp-config", '{"mcpServers":{}}', "--no-session-persistence", "--settings", '{"disableAllHooks":true}'] : [])],
+          // stream-json so the call knows when the CLI started work (`init`): only what it printed
+          // before then is read as a refusal of Murage's own flags, the same rule as a turn.
+          ["-p", "--model", proposalModel ?? "claude-haiku-4-5", "--output-format", "stream-json", "--verbose",
+            ...(proposalModel ? ["--tools", "", "--no-session-persistence"] : []),
+            "--mcp-config", '{"mcpServers":{}}', ...claudeIsolation(env, process.cwd())],
           {
             stdio: ["pipe", "pipe", "pipe"],
-            env: claudeEnvironment(proposalModel ?? "claude-haiku-4-5", accountEnvironment()),
+            env,
           },
         );
         let stdout = "";
         let stderr = "";
+        /** stderr as it stood when `init` arrived; null until then */
+        let preInitStderr: string | null = null;
+        let result: { text: string; isError: boolean } | null = null;
         let settled = false;
         const finish = (error?: Error) => {
           if (settled) return;
@@ -2783,7 +3688,13 @@ export const ClaudeDriver: ProviderDriver<ClaudeConfig> = {
           clearTimeout(timer);
           signal?.removeEventListener("abort", onAbort);
           if (error) reject(error);
-          else resolve(stdout.trim());
+          else resolve((result?.text ?? "").trim());
+        };
+        const readLine = (line: string) => {
+          let frame: { type?: unknown; subtype?: unknown; result?: unknown; is_error?: unknown };
+          try { frame = JSON.parse(line); } catch { return; }
+          if (frame.type === "system" && frame.subtype === "init" && preInitStderr === null) preInitStderr = stderr;
+          if (frame.type === "result") result = { text: typeof frame.result === "string" ? frame.result : "", isError: frame.is_error === true };
         };
         const onAbort = () => {
           killCliTree(child);
@@ -2796,11 +3707,20 @@ export const ClaudeDriver: ProviderDriver<ClaudeConfig> = {
         timer.unref?.();
         child.stdout.setEncoding("utf8");
         child.stderr.setEncoding("utf8");
+        let seen = 0;
         child.stdout.on("data", (chunk: string) => {
-          stdout += chunk;
-          if (stdout.length > 1_000_000) {
+          seen += chunk.length;
+          if (seen > 1_000_000) {
             killCliTree(child);
             finish(new Error("Claude review output exceeded 1 MB"));
+            return;
+          }
+          stdout += chunk;
+          let newline = stdout.indexOf("\n");
+          while (newline >= 0) {
+            readLine(stdout.slice(0, newline));
+            stdout = stdout.slice(newline + 1);
+            newline = stdout.indexOf("\n");
           }
         });
         child.stderr.on("data", (chunk: string) => {
@@ -2808,8 +3728,12 @@ export const ClaudeDriver: ProviderDriver<ClaudeConfig> = {
         });
         child.on("error", (error) => finish(error));
         child.on("close", (code) => {
-          if (code === 0) finish();
-          else finish(new Error(stderr.trim() || `Claude review exited ${code}`));
+          if (stdout.trim()) readLine(stdout);
+          const failed = result?.isError ? (result.text.trim() || `Claude review failed`) : null;
+          if (code === 0 && result && !failed) { finish(); return; }
+          // a refusal of the launch flags only counts from before the CLI's `init`
+          const refusal = claudeLaunchRefusalError(preInitStderr ?? stderr);
+          finish(refusal ?? new Error(failed ?? (stderr.trim() || (code === 0 ? "Claude review gave no result" : `Claude review exited ${code}`))));
         });
         if (signal?.aborted) onAbort();
         else {
@@ -2823,6 +3747,7 @@ export const ClaudeDriver: ProviderDriver<ClaudeConfig> = {
       driverKind: DRIVER_KIND,
       displayName: input.displayName,
       enabled: input.enabled,
+      sessionContract: CLAUDE_ISOLATION_CONTRACT,
       get models() {
         return models;
       },
@@ -2860,42 +3785,43 @@ export const ClaudeDriver: ProviderDriver<ClaudeConfig> = {
         interruptTurn: async (threadId) => {
           active.get(threadId)?.stop();
           // A replaced predecessor still shutting down is this thread's too.
-          if ([...retiring.values()].includes(threadId)) await requireRetiredStopped(threadId);
+          if (retiringByThread.has(threadId)) await requireRetiredStopped(threadId);
+        },
+        holdIdle: async () => {
+          idleHeld++;
+          let confirmed = true;
+          // A prewarm already starting meets the hold at its spawn, or parks and is closed on the spot (armIdle): let it end first.
+          for (const threadId of [...new Set([...sessions.keys(), ...active.keys()])]) {
+            if (prewarming.has(threadId) && !(await prewarming.wait(threadId, HOLD_CLOSE_MS))) confirmed = false;
+          }
+          // Close every idle engine and wait for each one to actually exit: only then is its transcript no longer being written.
+          const exits: Array<Promise<boolean>> = [];
+          for (const [threadId, kept] of [...sessions]) {
+            if (kept.turn || active.has(threadId)) continue;
+            closeSession(threadId, "deletion-hold");
+            exits.push(childExited(kept.child, HOLD_CLOSE_MS));
+          }
+          if ((await Promise.all(exits)).some((exited) => !exited)) confirmed = false;
+          // A replaced predecessor still shutting down (retiringByThread) may still be writing the transcript.
+          if ((retiring.size > 0 || retiringByThread.size > 0) && (await stopRetiring()) > 0) confirmed = false;
+          let released = false;
+          return { confirmed, release: () => { if (!released) { released = true; idleHeld = Math.max(0, idleHeld - 1); } } };
         },
         resetSession: async (threadId) => {
-          // interruptTurn alone ignores retained idle sessions. Cancel any
-          // active retry as well, then await this thread's existing close path.
-          const session = sessions.get(threadId);
-          active.get(threadId)?.stop();
-          if (!session) return;
-          // The child already closed (it exited, or an earlier close is still
-          // confirming its tree stopped before the session leaves the map):
-          // its "close" has fired and never fires again, so waiting for it
-          // only timed out 10 s later and failed the next send. Confirm the
-          // tree instead, and finish the close so the thread is free.
-          if (session.finishClose) {
-            closeSession(threadId, "memory context reset");
-            if (!(await awaitCliTreeStopped(session.child))) throw new Error("CLAUDE_SESSION_RESET_TIMEOUT");
-            await session.finishClose();
-            await requireRetiredStopped(threadId);
-            return;
+          // The barrier is installed before this function's first await, so no
+          // send or prewarm can slip in beside the tree being reset.
+          let release = () => {};
+          const barrier = new Promise<void>((resolve) => { release = resolve; });
+          const previousBarrier = resetBarriers.get(threadId);
+          resetBarriers.set(threadId, previousBarrier ? Promise.all([previousBarrier, barrier]).then(() => undefined) : barrier);
+          try {
+            await resetSessionBody(threadId);
+          } finally {
+            release();
+            // the latest barrier on a thread clears itself once it has settled
+            const current = resetBarriers.get(threadId);
+            if (current) void current.then(() => { if (resetBarriers.get(threadId) === current) resetBarriers.delete(threadId); });
           }
-          await new Promise<void>((resolve, reject) => {
-            const timeout = setTimeout(() => {
-              session.child.off("close", closed);
-              reject(new Error("CLAUDE_SESSION_RESET_TIMEOUT"));
-            }, 10_000);
-            const closed = () => {
-              void awaitCliTreeStopped(session.child).then((stopped) => {
-                clearTimeout(timeout);
-                if (stopped) resolve();
-                else reject(new Error("CLAUDE_SESSION_RESET_TIMEOUT"));
-              });
-            };
-            session.child.once("close", closed);
-            closeSession(threadId, "memory context reset");
-          });
-          await requireRetiredStopped(threadId);
         },
         respondToRequest: async (threadId, requestId, decision) => {
           // fail-closed by construction: no broker, or an ask that already

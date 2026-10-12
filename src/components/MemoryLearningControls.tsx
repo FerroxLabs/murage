@@ -1,3 +1,4 @@
+import { workerSentence } from "@/lib/memory-words";
 export interface MemoryHealthStatus {
   captured: { sources: number; lastAt: number | null };
   processed: { sources: number; lastAt: number | null };
@@ -26,7 +27,7 @@ export function MemoryHealth({ status }: { status: {
         <p>Synthesis: {health.synthesis.state === "configured" ? "connection configured; successful learning is not confirmed by configuration alone" : health.synthesis.state === "not-configured" ? "no connection configured; choose a connection in Settings, then Memory" : health.synthesis.state === "budget-limited" ? "waiting for available budget" : "disabled"}.{health.synthesis.reason && ` ${health.synthesis.reason}`}</p>
       </>}
       <p>{status.backlog.pending} queued · {status.backlog.leased} processing · {status.backlog.deferred} deferred · {status.backlog.failed} failed</p>
-      {(status.workerError || status.runtime?.error) && <p role="status" className="break-words text-danger">Processing needs attention: {status.workerError || status.runtime?.error}</p>}
+      {(status.workerError || status.runtime?.error) && <p role="status" className="break-words text-ink-secondary">{workerSentence(status.workerError || status.runtime?.error)}</p>}
       {status.runtime?.indexing && <p>Search index is updating. Recent records may not appear yet.</p>}
     </div>
   </details>;

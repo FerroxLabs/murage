@@ -13,6 +13,7 @@ import { detectActionClaims } from "../shared/reply-action-claims.ts";
 import { checkReplyActions, toolAction } from "./reply-action-guard.ts";
 import { routePolicy } from "./route-policy.ts";
 import { CONNECTED_APP_TOOLS } from "../shared/bot-access.ts";
+import { eligibleResultMessage } from "./card-result-source.ts";
 
 const source = readFileSync(new URL("./index.ts", import.meta.url), "utf8");
 function execute(code: string, scope: Record<string, unknown>) { return runInNewContext(stripTypeScriptTypes(code), scope); }
@@ -124,7 +125,8 @@ it("N4 primary shared-question delivery remains in tool-less history", () => {
   const result = store.appendMessage(target.threadId, { role: "bot", kind: "text", text: "Which format?" });
   const deliver = execute(definition("deliverSharedResult", "configureSharedDrain(") + "\ndeliverSharedResult;", { store,
     requestSourceThread: () => bot.threadId, authorizeWork: () => ({ ok: true }), mirrorReply: noop, commsBus: {},
-    database: () => ({ prepare: () => ({ run: noop }) }), SHARED_RESULT_DELIVERED: "delivered", recordDelegationReceipt: noop, clearSharedFinishing: noop });
+    database: () => ({ prepare: () => ({ run: noop }) }), SHARED_RESULT_DELIVERED: "delivered", recordDelegationReceipt: noop, clearSharedFinishing: noop,
+    eligibleResultMessage, partitionSourcesAllowed: () => true });
   deliver({ id: "question", toBotId: target.id, targetThreadId: target.threadId, resultMessageId: result.id, verb: "ask", state: "done", admissionKey: "ask:question" });
   expect(promptRows(store.messagesFor(bot.threadId), false).map(row => row.text)).toEqual(["Which format?"]);
 });

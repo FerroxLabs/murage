@@ -5,8 +5,8 @@ import path from "node:path";
 import { createPrivateWindowsDirectory, readPrivateWindowsJson, writePrivateWindowsJson } from "../electron/browser-extension-windows.mjs";
 import type { ApprovalBus } from "./peer-approval.ts";
 import type { BotRecord } from "./store.ts";
-// A person decides in their own time (two minutes on a card); the tool call's own deadline is separate.
-const MAX_WAIT_MS = 180000, MAX_SUMMARY = 12000;
+// A person decides in their own time (fifteen minutes on a card, then it stays open for 24 hours); the tool call's own deadline is separate.
+const MAX_WAIT_MS = 15 * 60_000, MAX_SUMMARY = 12000;
 export const BROWSER_EXTENSION_APPROVAL_TOOL = "browser_extension_action";
 /** T22 (spec 2.8): a card the person has not answered stays answerable this long, even across a restart. */
 export const CARD_LIFETIME_MS = 24 * 3600_000;
@@ -68,7 +68,26 @@ export type BrowserExtensionApprovalRequest = {
   kind?: ApprovalKind;
   /** D1: the card is for a step Murage asks about every time, in every mode (deleting, or a send to a recipient the owner never named). */
   cardKind?: "delete" | "newRecipient";
+  /** The card's heading when the caller can say it better than the default (see browserActionCardTitle). */
+  title?: string;
 };
+const hostOf = (value: unknown): string | undefined => { try { return typeof value === "string" && value ? new URL(value).host || undefined : undefined; } catch { return undefined; } };
+const ACTION_PHRASE: Record<string, string> = {
+  click: "click on", dblclick: "double-click on", hover: "point at something on", focus: "select a field on", fill: "type into", type: "type into",
+  keyboard_type: "type on", keyboard_insert_text: "type on", press: "press a key on", keydown: "press a key on", keyup: "press a key on",
+  select: "choose an option on", check: "tick a box on", uncheck: "untick a box on", scroll: "scroll", scroll_into_view: "scroll",
+  back: "go back on", forward: "go forward on", reload: "reload", tab_close: "close a tab on",
+};
+/** The plain heading for an action card: what the bot wants to do and where. Never the tool's internal name. */
+export function browserActionCardTitle(botName: string, action: { name: string; arguments?: unknown; document?: { url?: string; origin?: string } }): string {
+  const verb = action.name.replace(/^agent_browser_/, "");
+  const args = (action.arguments ?? {}) as Record<string, unknown>;
+  const where = hostOf(action.document?.url) ?? hostOf(action.document?.origin);
+  if (verb === "open" || verb === "tab_new") { const target = hostOf(args.url) ?? where; return target ? `${botName} wants to open ${target}` : `${botName} wants to open a page in your browser`; }
+  const phrase = ACTION_PHRASE[verb];
+  if (phrase) return where ? `${botName} wants to ${phrase} ${where}` : `${botName} wants to ${phrase} a page in your browser`;
+  return where ? `${botName} wants to use your browser on ${where}` : `${botName} wants to use your browser`;
+}
 type Pending = {
   threadId: string; bindingId: string; generation: number; digest: string; botId: string;
   requestId: string; messageId: string; finish: (allow: boolean, user: boolean) => void;
@@ -114,7 +133,7 @@ export class BrowserExtensionApprovals {
     const message = this.bus.store.appendMessage(input.threadId, {
       role: "bot", kind: "options",
       from: { botId: input.bot.id, name: input.bot.name, color: input.bot.color },
-      card: { title: input.scope === "site" ? `${input.bot.name} wants to use this site` : `${input.bot.name} needs your approval`, subtitle: summary,
+      card: { title: input.title ?? (input.scope === "site" ? `${input.bot.name} wants to use this site` : `${input.bot.name} needs your approval`), subtitle: summary,
         options: ["Allow", "Deny"], requestId, tool: BROWSER_EXTENSION_APPROVAL_TOOL, ...(input.pushSummary ? { pushBody: input.pushSummary.slice(0, 300) } : {}), ...(input.cardKind && input.scope !== "site" ? { browserCardKind: input.cardKind } : {}),
         held: input.scope === "site" ? "Allow remembers site access for this browser task. You can revoke it in Browser settings. Sending, purchasing and other changes have separate approvals." : "Allow applies to this action once. Site access does not approve actions. Text marked \"From the page\" was written by the website, not by Murage or the bot." + (input.cardKind ? " Murage asks every time for this, in every mode." : "") },
     });
