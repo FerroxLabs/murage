@@ -33,6 +33,9 @@ describe("parseDecideResponse", () => {
     ["a probability above one", choiceBody("theo", { theo: 1.5, maya: 0 })],
     ["a negative probability, even when the map sums to one", choiceBody("theo", { theo: 1.2, maya: -0.2 })],
     ["a choice that is not the most likely option", choiceBody("maya", { maya: 0.2, theo: 0.8 })],
+    ["a partial map: an offered option has no probability", choiceBody("theo", { theo: 1 })],
+    ["a non-finite probability", choiceBody("theo", { theo: Number.POSITIVE_INFINITY, maya: 0 })],
+    ["a NaN probability", choiceBody("theo", { theo: 0.9, maya: Number.NaN })],
     ["probabilities that do not add up", choiceBody("theo", { theo: 0.3, maya: 0.2 })],
     ["no answer for the question", { answers: {} }],
     ["an answer of the wrong type", { answers: { answer: { type: "noul", noul: 0.9 } } }],
@@ -54,6 +57,7 @@ describe("parseDecideResponse", () => {
     const question: Record<string, DeciderQuestion> = { answer: { type: "score", instructions: "?", levels: ["a", "b", "c"] } };
     const ok = parseDecideResponse({ answers: { answer: { type: "score", score: 1.2, probabilities: { 0: 0.1, 1: 0.6, 2: 0.3 } } } }, question);
     expect(ok).toMatchObject({ ok: true, answers: { answer: { level: 1 } } });
+    expect(parseDecideResponse({ answers: { answer: { type: "score", score: 1, probabilities: { 1: 1 } } } }, question)).toEqual({ ok: false });
     expect(parseDecideResponse({ answers: { answer: { type: "score", score: 5, probabilities: { 0: 0.1, 1: 0.6, 2: 0.3 } } } }, question)).toEqual({ ok: false });
     expect(parseDecideResponse({ answers: { answer: { type: "score", score: 1, probabilities: { 0: 0.5, 7: 0.5 } } } }, question)).toEqual({ ok: false });
   });

@@ -1,8 +1,9 @@
-import { database, transaction } from "../database.ts";
+import { database, onDatabaseClose, transaction } from "../database.ts";
 import type { MemoryBundle } from "../../shared/memory.ts";
-import { accessIncludesRoom, assertMemoryAccess, memoryAccessIsOwnerAudience, memoryAccessNotOwnerAudience, type MemoryAccess } from "./policy.ts";
+import { accessIncludesRoom, assertMemoryAccess, inMemoryAccessPass, memoryAccessIsOwnerAudience, memoryAccessNotOwnerAudience, type MemoryAccess } from "./policy.ts";
 import { assertMemoryBundle, hydrateDisclosedMemoryRecord } from "./bundle.ts";
-import { contentRevoked, databaseStamp, messageCopy, messageSourceForgotten, outputRootsBad, preLineageSessionRevoked, replayExclusions, sessionLineageBad, sessionOutputRoots, type Disclosure, type ReplayAudience, type ReplayMessage } from "./replay-lineage.ts";
+import { authorityParts, authorityStamp, softChangedSince } from "./authority-epoch.ts";
+import { contentRevoked, messageCopy, messageSourceForgotten, outputRootsBad, outputRootsFor, recordSessionRoots, preLineageSessionRevoked, replayExclusions, sessionLineageBad, sessionOutputRoots, type Disclosure, type ReplayAudience, type ReplayMessage } from "./replay-lineage.ts";
 import { isWorkspaceOwner, threadHumanPrincipal } from "../human-principals.ts";
 
 /** Persist before dispatch; records contain references, never duplicated memory text. */
@@ -20,6 +21,10 @@ export function bindMemoryDisclosureSession(bundleId: string, nativeSession: str
   if (!result.changes) throw new Error("MEMORY_DISCLOSURE_SESSION_CONFLICT");
   // its companion receipt (lookups, quoted working context) joins the session too
   database().prepare("UPDATE memory_disclosures SET native_session=? WHERE bundle_id=? AND native_session IS NULL").run(nativeSession,`${bundleId}:lookup`);
+  // a receipt this build wrote on the session marks it as one lineage knows; a legacy session is told apart by lacking this row
+  // (it was reset before any new receipt reached it), never by a clock
+  const row = database().prepare("SELECT thread_id,driver_instance FROM memory_disclosures WHERE bundle_id=?").get(bundleId);
+  if (row) recordSessionRoots(String(row.thread_id), String(row.driver_instance), nativeSession, outputRootsFor([]));
 }
 
 /** Record actual adapter acceptance while dispatch authority is still live.
@@ -44,44 +49,117 @@ export function assertMemoryDisclosureCurrent(bundleId: string, access: MemoryAc
   if (!row || revoked(row,access)) throw new Error("MEMORY_CONTEXT_REVOKED");
 }
 
-function revoked(row: Disclosure, access: MemoryAccess): boolean {
-  return revokedReason(row, access) !== null;
+function revoked(row: Disclosure, access: MemoryAccess, seen?: Seen): boolean {
+  return revokedReason(row, access, seen) !== null;
 }
+
+type Seen = { records: Set<string>; sources: Set<string>; added?: string[]; addedSources?: string[] };
 
 /** Why a receipt no longer holds, as ids and states only (no content), or
  * null when it still holds. Each branch is the same test revoked() made. */
-function revokedReason(row: Disclosure, access: MemoryAccess): string | null {
+function revokedReason(row: Disclosure, access: MemoryAccess, seen?: Seen): string | null {
   if (row.state === "revoked") return "receipt-already-revoked";
   if (row.policy_revision !== access.policyRevision) return "policy-revision";
   if (row.deletion_epoch !== access.deletionEpoch) return "deletion-epoch";
   let step = "parse";
   try {
     const records: Array<{id:string;version:number}> = JSON.parse(String(row.record_versions));
-    for (const record of records) { step = `record ${record.id}@${record.version}`; hydrateDisclosedMemoryRecord(record.id,record.version,access); }
+    // One session's receipts cite the same records again and again: each is looked at once per check.
+    for (const record of records) {
+      const key = `${record.id}@${record.version}`;
+      if (seen?.records.has(key)) continue;
+      step = `record ${key}`; hydrateDisclosedMemoryRecord(record.id,record.version,access); seen?.records.add(key); seen?.added?.push(key);
+    }
     const sources: Array<{id:string;revision:number}> = JSON.parse(String(row.source_versions));
     for (const source of sources) {
       step = `source ${source.id}@${source.revision}`;
+      if (seen?.sources.has(step)) continue;
       const current = database().prepare("SELECT scope_id,state,revision FROM memory_sources WHERE id=?").get(source.id);
       if (!current) return `${step} missing`;
       if (current.state!=="active") return `${step} state=${String(current.state)}`;
       if (current.revision!==source.revision) return `${step} now@${String(current.revision)}`;
       if (database().prepare("SELECT 1 FROM memory_tombstones WHERE target_type='source' AND target_id=? AND (revision IS NULL OR revision=?)").get(source.id,source.revision)) return `${step} tombstoned`;
       assertMemoryAccess(access,String(current.scope_id));
+      seen?.sources.add(step); seen?.addedSources?.push(step);
     }
     return null;
   } catch (error) { return `${step} ${error instanceof Error ? error.message.slice(0, 60) : "error"}`; }
 }
 
+/** Sessions whose whole disclosure set passed the full check, and what the check rested on. Keyed by session and by who is asking, since what
+ * a reader may hydrate depends on the reader. A hold answers the next turn two ways (authority-epoch.ts):
+ * - the stamp has not moved: nothing that could take a receipt away was written, so no check is repeated;
+ * - only SOFT writes moved it (a source taking a new revision, joining the active branch, a lookup receipt replaced by its grown successor)
+ *   and none of them touched a source the session cites or rests on: the receipts already judged still hold, so only the receipts written
+ *   since are judged (the work follows the new receipts, not the length of the session). Anything else is a full check, as before.
+ * A miss (restart, eviction, no triggers, inside a transaction) is a full check too. Process-local and bounded. */
+type Hold = {
+  stamp: string; hard: string; seq: number;
+  /** newest receipt rowid the session's receipts were judged up to */
+  upTo: number;
+  seen: Seen;
+  /** ids of the sources the session cites, of the sources its cited records rest on, and (as record:<id>) of the records it cites */
+  sourceIds: Set<string>;
+};
+const sessionHolds = new Map<string, Hold>();
+const SESSION_HOLDS_MAX = 512;
+const HOLD_KEYS_MAX = 20000;
+const sessionHoldKey = (threadId: string, driverInstance: string, nativeSession: string, access: MemoryAccess) =>
+  JSON.stringify([threadId, driverInstance, nativeSession, access.botId, access.humanPrincipal, memoryAccessNotOwnerAudience(access), access.scopeIds, access.policyRevision, access.deletionEpoch]);
+
 /** Unknown historical sessions also require a fresh replay: legacy disclosure is unproven. */
 export function continuationMemoryRevoked(threadId: string, driverInstance: string, nativeSession: string, access: MemoryAccess, why?: { reason?: string }): boolean {
   assertMemoryAccess(access);
   if (threadId !== access.threadId) throw new Error("MEMORY_SCOPE_DENIED");
-  const rows = database().prepare("SELECT * FROM memory_disclosures WHERE thread_id=? AND driver_instance=? AND native_session=?").all(threadId,driverInstance,nativeSession);
-  if (!rows.length) { if (why) why.reason = "no-receipts"; return true; }
+  const parts = authorityParts(), key = sessionHoldKey(threadId, driverInstance, nativeSession, access);
+  const hold = sessionHolds.get(key);
+  if (parts && hold && hold.stamp === parts.stamp) { sessionHolds.delete(key); sessionHolds.set(key, hold); return false; }
+  let resume: Hold | undefined;
+  if (parts && hold && hold.hard === parts.hard) {
+    const touched = softChangedSince(hold.seq);
+    if (touched && ![...touched].some(id => hold.sourceIds.has(id))) resume = hold;
+  }
+  sessionHolds.delete(key);
+  // One pass: the reader's audience is worked out once, not once per cited record.
+  const progress: { upTo: number; seen: Seen; resumed: boolean } = { upTo: resume?.upTo ?? 0, seen: resume?.seen ?? { records: new Set<string>(), sources: new Set<string>() }, resumed: resume !== undefined };
+  progress.seen.added = []; progress.seen.addedSources = [];
+  const revoked = inMemoryAccessPass(() => fullContinuationCheck(threadId, driverInstance, nativeSession, access, why, progress));
+  if (!revoked && parts) {
+    const now = authorityParts();
+    if (now && now.stamp === parts.stamp && progress.seen.records.size + progress.seen.sources.size <= HOLD_KEYS_MAX) {
+      const sourceIds = resume ? resume.sourceIds : new Set<string>();
+      for (const step of progress.seen.addedSources ?? []) sourceIds.add(step.slice("source ".length, step.lastIndexOf("@")));
+      const added = progress.seen.added ?? [];
+      if (added.length) {
+        const pairs = added.map(record => { const at = record.lastIndexOf("@"); return [record.slice(0, at), Number(record.slice(at + 1))]; });
+        for (const [id] of pairs) sourceIds.add(`record:${id}`);
+        for (const row of database().prepare("SELECT DISTINCT source_id FROM memory_evidence WHERE (record_id,record_version) IN (SELECT value->>0,value->>1 FROM json_each(?))").all(JSON.stringify(pairs))) sourceIds.add(String(row.source_id));
+      }
+      progress.seen.added = []; progress.seen.addedSources = [];
+      if (sessionHolds.size >= SESSION_HOLDS_MAX) sessionHolds.delete(sessionHolds.keys().next().value!);
+      if (!closeHooked) { closeHooked = true; onDatabaseClose(resetSessionHolds); }
+      sessionHolds.set(key, { stamp: parts.stamp, hard: parts.hard, seq: parts.seq, upTo: progress.upTo, seen: progress.seen, sourceIds });
+    }
+  }
+  return revoked;
+}
+/** Test hook: forget which sessions passed. */
+export function resetSessionHolds(): void { sessionHolds.clear(); }
+// A hold rests on what one connection saw: closing or replacing the connection forgets every hold (stamps also carry the connection id).
+let closeHooked = false;
+
+/** `progress` carries what an earlier check of this session already judged (a resumed check judges only the receipts written since, and
+ * `seen` starts with what they cited) and takes back the newest receipt it judged. */
+function fullContinuationCheck(threadId: string, driverInstance: string, nativeSession: string, access: MemoryAccess, why: { reason?: string } | undefined, progress: { upTo: number; seen: Seen; resumed: boolean }): boolean {
+  // Every column the receipt checks read, never the output list (it grows with every reply of the session).
+  const rows = database().prepare("SELECT rowid AS rid,bundle_id,thread_id,driver_instance,native_session,record_versions,source_versions,policy_revision,deletion_epoch,state,created_at FROM memory_disclosures WHERE thread_id=? AND driver_instance=? AND native_session=? AND rowid>?").all(threadId,driverInstance,nativeSession,progress.upTo);
+  if (!rows.length && !progress.resumed) { if (why) why.reason = "no-receipts"; return true; }
+  for (const row of rows) progress.upTo = Math.max(progress.upTo, Number(row.rid));
   let invalid = false;
+  const seen = progress.seen;
   const persist = !memoryAccessNotOwnerAudience(access);
   for (const row of rows) {
-    const reason = revokedReason(row,access);
+    const reason = revokedReason(row,access,seen);
     if (reason === null) continue;
     if (why && !why.reason) why.reason = `memory-changed (${reason})`;
     if (persist) database().prepare("UPDATE memory_disclosures SET state='revoked' WHERE bundle_id=?").run(row.bundle_id);
@@ -93,7 +171,17 @@ export function continuationMemoryRevoked(threadId: string, driverInstance: stri
   // are judged here, every one of them; a check that cannot finish resets the
   // session (0.1.61.1 memreplay review M1).
   const bad = new Set<string>();
-  invalid = sessionLineageBad(threadId, driverInstance, nativeSession, readerAudience(access), bad);
+  // The owner's own direct chat judges what the session's receipts cite by
+  // the content rule, as its replay does (filterDirectReplay, 1.0.1): a reply
+  // the session's memory rests on stays vouched for unless content it used was
+  // forgotten, deleted or changed. Judged by receipt state instead, one
+  // install-wide revoke (a roster or settings change) left every earlier reply
+  // unvouched forever, so each fresh session's first frame, which cites them
+  // through the thread checkpoint and recall, failed here on the next turn and
+  // the thread reset its engine on every turn (1.0.1.1). This session's own
+  // receipts were judged on state, policy and epoch just above.
+  // (the records and sources the loop above just passed are not hydrated a second time for the lineage's own-receipt verdicts)
+  invalid = sessionLineageBad(threadId, driverInstance, nativeSession, ownerDirectChat(threadId, access) ? null : readerAudience(access, seen), bad);
   if (persist) for (const id of bad) database().prepare("UPDATE memory_disclosures SET state='revoked' WHERE bundle_id=?").run(id);
   if (invalid && why) why.reason = "lineage";
   if (invalid) return true;
@@ -102,7 +190,7 @@ export function continuationMemoryRevoked(threadId: string, driverInstance: stri
   const held = sessionOutputRoots(threadId, driverInstance, nativeSession);
   if (held.over) { if (why) why.reason = "root-ceiling"; return true; }
   if (outputRootsBad(held)) { if (why) why.reason = "session-roots"; return true; }
-  if (preLineageSessionRevoked(rows, threadId, driverInstance, nativeSession)) { if (why) why.reason = "pre-lineage"; return true; }
+  if (preLineageSessionRevoked(rows.length || !progress.resumed ? rows : [{}], threadId, driverInstance, nativeSession)) { if (why) why.reason = "pre-lineage"; return true; }
   return false;
 }
 
@@ -118,6 +206,7 @@ export function noteMemoryLookup(frameBundleId: string, lookupBundleId: string, 
     const existing = db.prepare("SELECT record_versions,source_versions FROM memory_disclosures WHERE bundle_id=?").get(lookupBundleId);
     const recordsBefore: Array<{id:string;version:number}> = existing ? JSON.parse(String(existing.record_versions)) : [];
     const sourcesBefore: Array<{id:string;revision:number}> = existing ? JSON.parse(String(existing.source_versions)) : [];
+    const recordKeysBefore = recordsBefore.length, sourceKeysBefore = sourcesBefore.length;
     const recordKeys = new Set(recordsBefore.map(item => `${item.id}\u0000${item.version}`));
     const sourceKeys = new Set(sourcesBefore.map(item => `${item.id}\u0000${item.revision}`));
     const addSource = (handle: {sourceId:string;revision:number}) => { if (!sourceKeys.has(`${handle.sourceId}\u0000${handle.revision}`)) { sourceKeys.add(`${handle.sourceId}\u0000${handle.revision}`); sourcesBefore.push({id:handle.sourceId,revision:handle.revision}); } };
@@ -130,7 +219,17 @@ export function noteMemoryLookup(frameBundleId: string, lookupBundleId: string, 
     // caller must not hand the turn what it looked up (Astra r1 #9).
     if (recordsBefore.length > 256 || sourcesBefore.length > 1024) return false;
     if (existing) {
-      db.prepare("UPDATE memory_disclosures SET record_versions=?,source_versions=? WHERE bundle_id=?").run(JSON.stringify(recordsBefore),JSON.stringify(sourcesBefore),lookupBundleId);
+      // A companion that gains a record is rewritten as a new row, so receipt order (rowid) is also the order records came
+      // to be cited: an update in place would keep the old position and hide the citation from "cited since" checks.
+      const grew = recordsBefore.length !== recordKeysBefore || sourcesBefore.length !== sourceKeysBefore;
+      if (!grew) return true;
+      const old = db.prepare("SELECT * FROM memory_disclosures WHERE bundle_id=?").get(lookupBundleId)!;
+      // inserted first under a temporary id so it takes a rowid above every row (deleting the old one first could hand its rowid back)
+      const temp = `${lookupBundleId}\u0000grown`;
+      db.prepare("INSERT INTO memory_disclosures(bundle_id,thread_id,driver_instance,native_session,record_versions,source_versions,output_message_ids,policy_revision,deletion_epoch,token_count,state,created_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?)")
+        .run(temp,old.thread_id,old.driver_instance,old.native_session ?? null,JSON.stringify(recordsBefore),JSON.stringify(sourcesBefore),old.output_message_ids,old.policy_revision,old.deletion_epoch,old.token_count,old.state,old.created_at);
+      db.prepare("DELETE FROM memory_disclosures WHERE bundle_id=?").run(lookupBundleId);
+      db.prepare("UPDATE memory_disclosures SET bundle_id=? WHERE bundle_id=?").run(lookupBundleId,temp);
       return true;
     }
     const outputs = String(frame.output_message_ids);
@@ -140,25 +239,32 @@ export function noteMemoryLookup(frameBundleId: string, lookupBundleId: string, 
   });
 }
 
+/** (Receipt order is the write sequence, rowid, never created_at: a clock that went back, or a lookup companion dated a millisecond before its frame, must not decide which receipt is the session's newest.) */
 /** A reply made with no receipt on a resumed session that holds receipts
  * (memory not active): it rests on everything the session was shown, so it
  * joins the session's receipts as an output (memory schema v6). */
 export function linkRetainedSessionOutput(threadId: string, driverInstance: string, nativeSession: string, messageId: string) {
-  const row = database().prepare("SELECT bundle_id FROM memory_disclosures WHERE thread_id=? AND driver_instance=? AND native_session=? ORDER BY created_at DESC, rowid DESC LIMIT 1").get(threadId, driverInstance, nativeSession);
+  const row = database().prepare("SELECT bundle_id FROM memory_disclosures WHERE thread_id=? AND driver_instance=? AND native_session=? ORDER BY rowid DESC LIMIT 1").get(threadId, driverInstance, nativeSession);
   if (row) linkMemoryDisclosureOutput(String(row.bundle_id), messageId);
 }
 
 /** Link every generated output, including tool-result/checkpoint message IDs where applicable.
- * A continuation's output inherits all earlier disclosures in that same native session.
+ * A continuation's output inherits all earlier disclosures in that same native session: it is
+ * listed on this receipt and on the session's newest, and every reader takes the session's
+ * receipts made no later than a receipt listing a reply as listing it too (replay-lineage.ts
+ * listing/listingAny, the only readers: they read the output index, never this column). Writing
+ * it into every receipt of the session instead made each reply rewrite the session's whole
+ * history (perf102 scale #1: quadratic in the session's turns).
  */
 export function linkMemoryDisclosureOutput(bundleId: string, messageId: string) {
   if (!messageId) throw new Error("INVALID_MEMORY_OUTPUT");
   transaction(db => {
-    const current = db.prepare("SELECT * FROM memory_disclosures WHERE bundle_id=?").get(bundleId);
+    const current = db.prepare("SELECT bundle_id,thread_id,driver_instance,native_session,output_message_ids FROM memory_disclosures WHERE bundle_id=?").get(bundleId);
     if (!current) throw new Error("MEMORY_DISCLOSURE_UNKNOWN");
-    const rows = current.native_session
-      ? db.prepare("SELECT bundle_id,output_message_ids FROM memory_disclosures WHERE thread_id=? AND driver_instance=? AND native_session=?").all(current.thread_id,current.driver_instance,current.native_session)
-      : [current];
+    const newest = current.native_session
+      ? db.prepare("SELECT bundle_id,output_message_ids FROM memory_disclosures WHERE thread_id=? AND driver_instance=? AND native_session=? ORDER BY rowid DESC LIMIT 1").get(current.thread_id,current.driver_instance,current.native_session)
+      : undefined;
+    const rows = newest && newest.bundle_id !== current.bundle_id ? [current, newest] : [current];
     for (const row of rows) {
       const ids: string[] = JSON.parse(String(row.output_message_ids));
       if (!ids.includes(messageId)) db.prepare("UPDATE memory_disclosures SET output_message_ids=? WHERE bundle_id=?").run(JSON.stringify([...ids,messageId]),row.bundle_id);
@@ -187,14 +293,20 @@ export function filterMemoryReplay<T extends ReplayMessage>(threadId: string, me
   return messages.filter(message=>!excluded.has(message.id));
 }
 
-function readerAudience(access: MemoryAccess): ReplayAudience {
+function readerAudience(access: MemoryAccess, seen?: Seen): ReplayAudience {
   // One check, one answer per distinct receipt content: the receipts of a
   // resumed session cite the same frame (0.1.61.1 memreplay).
   const verdicts = new Map<string, boolean>();
-  return { policyRevision: access.policyRevision, deletionEpoch: access.deletionEpoch, revoked: row => {
+  return { policyRevision: access.policyRevision, deletionEpoch: access.deletionEpoch,
+    // The key is the reader's stable authority (bot, scopes, principal, policy and deletion epochs, audience flags), never the turn's
+    // generation: that renews every turn and defeated the cache (1.0.2 r2 P2). The live capability is checked by assertMemoryAccess
+    // before and after every replay (filterMemoryReplay), so a stale generation cannot ride a kept verdict.
+    // kept verdicts are shared only by a reader judged on its own: one carrying `seen` has its answers shaped by what the pass saw before
+    ...(seen ? {} : { cacheKey: JSON.stringify([access.botId, access.policyRevision, access.deletionEpoch, access.scopeIds, access.humanPrincipal, memoryAccessIsOwnerAudience(access), memoryAccessNotOwnerAudience(access)]) }),
+    revoked: row => {
     const key = JSON.stringify([row.state, row.policy_revision, row.deletion_epoch, row.record_versions, row.source_versions]);
     let verdict = verdicts.get(key);
-    if (verdict === undefined) { verdict = revoked(row, access); verdicts.set(key, verdict); }
+    if (verdict === undefined) { verdict = revoked(row, access, seen); verdicts.set(key, verdict); }
     return verdict;
   },
   // An owner-audience reader sees the replies of the owner's bots, so a copy's
@@ -362,7 +474,7 @@ export function readerWithheldMessage(access: MemoryAccess): ((threadId: string,
   let stamp: string | undefined;
   return (threadId, messageId) => {
     if (threadId !== access.threadId) return false;
-    const now = databaseStamp();
+    const now = authorityStamp();
     if (now === undefined || now !== stamp) { verdicts.clear(); stamp = now; }
     let known = verdicts.get(messageId);
     if (known === undefined) {

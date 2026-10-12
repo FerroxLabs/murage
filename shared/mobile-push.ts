@@ -4,7 +4,7 @@
 
 export const PUSH_CATEGORIES = ["approval", "approval-open", "question", "done", "resolved"] as const;
 export type PushCategory = (typeof PUSH_CATEGORIES)[number];
-export type PushKind = "approval" | "question" | "done" | "routine-failed" | "turn-failed" | "takeover" | "backup-waiting";
+export type PushKind = "approval" | "question" | "done" | "routine-failed" | "turn-failed" | "takeover" | "backup-waiting" | "memories-waiting";
 export type PushRisk = "low" | "risky" | "unrated";
 
 export const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;

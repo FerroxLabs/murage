@@ -12,12 +12,15 @@
 // the one pass today (the idle procedure-review poll) only reads it. Outside
 // a pass every ask is computed fresh, as before.
 import type { DatabaseSync, StatementSync } from "node:sqlite";
+import { withStatementReuse, writeStamp } from "../io-budget.ts";
 
 interface Pass { db: DatabaseSync; changes: number; roster: object | null; groups: object | null; shape: string; answers: Map<string, string[]>; lookups: Map<string, unknown>; lookupChanges: number }
 let active: Pass | null = null;
 const counters = new WeakMap<object, StatementSync>();
 
 function totalChanges(db: DatabaseSync): number {
+  const stamp = writeStamp(db);  // a counter of this connection's writes, when the handle is instrumented: no statement to run
+  if (stamp !== undefined) return stamp;
   let statement = counters.get(db);
   if (!statement) { statement = db.prepare("SELECT total_changes() AS n"); counters.set(db, statement); }
   return Number(statement.get()?.n);
@@ -28,7 +31,7 @@ const shapeOf = (roster: { bots: readonly unknown[]; groups: readonly unknown[] 
 export function inEligibilityPass<T>(db: DatabaseSync, work: () => T): T {
   if (active) return work();
   active = { db, changes: totalChanges(db), roster: null, groups: null, shape: "", answers: new Map(), lookups: new Map(), lookupChanges: -1 };
-  try { return work(); } finally { active = null; }
+  try { return withStatementReuse(work); } finally { active = null; }
 }
 
 /** The remembered answer for `key` under this roster, or `compute()` (remembered when nothing changed meanwhile). */

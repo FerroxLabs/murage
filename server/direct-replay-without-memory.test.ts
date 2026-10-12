@@ -47,7 +47,7 @@ it("a direct reply made with memory the owner then forgot is withheld from the r
   expect(replayDeclaration).toContain("(replayFloor?.messages ?? activeMessages)");
   expect(replayDeclaration).toContain("opts?.projectCardRun ? [] : (replayFloor?.messages ?? activeMessages)");
   // Astra r1 #5: an owner line answering the withheld reply quotes the withheld line
-  expect(index).toContain("const quoteTargets: ReadonlyMap<string, Message> = replayFloor ? new Map(replayFloor.messages.map((message) => [message.id, message])) : messagesById;");
+  expect(index).toContain("const quoteTargets: MessageLookup = replayFloor ? new Map(replayFloor.messages.map((message) => [message.id, message])) : messagesById;");
   const answer = { id: "m-thanks", role: "user", kind: "text", text: "thanks", replyToId: "m-reply", at: 3 } as Message;
   const floor = roomTranscriptWithoutMemory("dax-direct", [...lines, answer], true)!;
   const quoted = transcriptText(answer, new Map(floor.messages.map(m => [m.id, m])));

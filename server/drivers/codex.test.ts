@@ -6,7 +6,7 @@ import { fixtureCredentialFingerprint } from "../testing/fixture-dump.ts";
 //
 // The fake is a shebang script — the same constraint codex.cmd itself
 // hits on Windows. resolveCliSpawn covers both, so these run everywhere.
-import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -449,7 +449,7 @@ describe("CodexDriver turns (fake app-server)", () => {
       const dump = join(scratch, "flux.json");
       process.env.FAKE_CODEX_DUMP = dump;
 
-      await instance.adapter.sendTurn({ threadId: "t-flux", text: "hi", model: "flux::flux-auto" });
+      await instance.adapter.sendTurn({ threadId: "t-flux", text: "hi", model: "flux::flux-auto", warmIdentity: { botId: "b", audience: "owner", decidedOwner: true } });
       await recorder.until((event) => event.type === "turn.completed");
 
       const seen = JSON.parse(readFileSync(dump, "utf8"));
@@ -585,7 +585,10 @@ describe("CodexDriver turns (fake app-server)", () => {
     await instance.adapter.sendTurn({ threadId: "t-environment", text: "hi" });
     await recorder.until((event) => event.type === "turn.completed");
 
-    expect(JSON.parse(readFileSync(dump, "utf8")).env.CODEX_HOME).toBe(codexHome);
+    // The child runs in a scoped CODEX_HOME (codex-isolation.ts) whose login links to the instance's home.
+    const childHome = JSON.parse(readFileSync(dump, "utf8")).env.CODEX_HOME as string;
+    expect(childHome).not.toBe(codexHome);
+    expect(readlinkSync(join(childHome, "auth.json"))).toBe(join(codexHome, "auth.json"));
   });
 
   // S3b: Ask, Auto and Full bots see their connected-app calls as approval cards.
@@ -692,9 +695,10 @@ describe("CodexDriver turns (fake app-server)", () => {
     }
     expect(CODEX_MCP_TOOL_TIMEOUT_SEC).toBeGreaterThan(24 * 60 * 60);
     // a custom stdio server often downloads on its first turn: it gets 60 s
-    // to start; Murage's own (already installed) servers keep codex's default
+    // to start; Murage's own (already installed) servers get 20 s, at least twice
+    // the connector bridge's absolute list deadline (codex's default is 10 s)
     expect(seen.argv).toContain("mcp_servers.notes.startup_timeout_sec=60");
-    expect(argv).not.toContain("mcp_servers.murage_connectors.startup_timeout_sec");
+    expect(seen.argv).toContain("mcp_servers.murage_connectors.startup_timeout_sec=20");
   });
 
   it("mounts two link servers as the proxy: names in argv, one shared child environment without a collision, no secret anywhere", async () => {
@@ -762,7 +766,9 @@ describe("CodexDriver turns (fake app-server)", () => {
     // the colliding server moves aside, and nothing is written into the
     // owner's own table
     expect(joined).toContain("mcp_servers.fibery_murage.command");
-    expect(argv.some((arg) => arg.startsWith("mcp_servers.fibery."))).toBe(false);
+    expect(argv.some((arg) => arg.startsWith("mcp_servers.fibery.") && arg !== "mcp_servers.fibery.enabled=false")).toBe(false);
+    // the owner's own server is switched off for the bot (codex-isolation.ts), never redefined
+    expect(argv).toContain("mcp_servers.fibery.enabled=false");
     // still no approval mode of its own: the moved server is carded, and it
     // can no longer inherit "auto" from the owner's entry
     expect(joined).not.toContain("mcp_servers.fibery_murage.default_tools_approval_mode");
@@ -810,7 +816,7 @@ describe("CodexDriver turns (fake app-server)", () => {
     expect(movedAside).not.toBe("");
     expect(movedAside).not.toBe(ownServer);
     // and nothing is written into the owner's own table
-    expect(argv.some((arg) => arg.startsWith("mcp_servers.fibery."))).toBe(false);
+    expect(argv.some((arg) => arg.startsWith("mcp_servers.fibery.") && arg !== "mcp_servers.fibery.enabled=false")).toBe(false);
   });
 
   const mountPrefixes = (dump: string): string[] => {
@@ -1061,6 +1067,36 @@ describe("CodexDriver turns (fake app-server)", () => {
     const started = await recorder.until((e) => e.type === "session.started");
     expect(started).toMatchObject({ sessionId: "codex-thread-1" });
     await recorder.until((e) => e.type === "turn.completed");
+  });
+
+  // Isolation-all round 3: a cursor from an earlier root is not in the bot's state root. Real Codex 0.162.1
+  // (fake CODEX_HOME, build host container) answers thread/resume with -32600 "no rollout found for thread id …".
+  it("replays the conversation into the one fresh thread when resume fails, and a resumed thread gets no replay", async () => {
+    await create(); // fake rejects thread/resume outside resume mode
+    const dump = join(scratch, "r3-dump.json");
+    process.env.FAKE_CODEX_DUMP = dump;
+    await instance.adapter.sendTurn({
+      threadId: "t-r3-replay", text: "What did I say?", resumeCursor: "gone-thread",
+      transcript: [{ role: "user", text: "Remember ALPHA." }, { role: "assistant", text: "Remembered." }],
+    });
+    await recorder.until((e) => e.type === "turn.completed");
+    const calls = JSON.parse(readFileSync(dump, "utf8")).calls as Array<{ method: string; params: any }>;
+    expect(calls.filter((c) => c.method === "thread/start")).toHaveLength(1);
+    const sent = calls.find((c) => c.method === "turn/start")!.params.input[0].text as string;
+    expect(sent).toMatch(/could not be restored[\s\S]*User: Remember ALPHA\.\nAssistant: Remembered\.[\s\S]*What did I say\?$/);
+  });
+
+  it("does not replay when the resume worked", async () => {
+    await create({ mode: "resume" });
+    const dump = join(scratch, "r3-dump-ok.json");
+    process.env.FAKE_CODEX_DUMP = dump;
+    await instance.adapter.sendTurn({
+      threadId: "t-r3-noreplay", text: "again", resumeCursor: "codex-thread-9",
+      transcript: [{ role: "user", text: "Remember ALPHA." }],
+    });
+    await recorder.until((e) => e.type === "turn.completed");
+    const calls = JSON.parse(readFileSync(dump, "utf8")).calls as Array<{ method: string; params: any }>;
+    expect(calls.find((c) => c.method === "turn/start")!.params.input[0].text).toBe("again");
   });
 
   it("surfaces an approval request and forwards the user's decision", async () => {

@@ -396,6 +396,7 @@ describe("CF-5 history is fixed (I-24)", () => {
       "peer-approval.ts",
       "publish/publish-ops.ts",
       "routine-requests.ts",
+      "steer-late.ts",
       "steer-queue.ts",
       "store.ts",
     ]);
