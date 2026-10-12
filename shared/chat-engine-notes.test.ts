@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import { describe, expect, it } from "vitest";
 
-import { claimExcerpts, ENGINE_LABEL_NOTICE, engineChangedLine, engineDividers, engineHoverLabel } from "./chat-engine-notes";
+import { unmatchedClaims, claimExcerpts, ENGINE_LABEL_NOTICE, engineChangedLine, engineDividers, engineHoverLabel } from "./chat-engine-notes";
 
 const bot = (id: string, instanceId?: string) => ({ id, role: "bot" as const, ...(instanceId ? { engine: { instanceId } } : {}) });
 
@@ -30,4 +30,21 @@ describe("engine notes", () => {
     ] };
     expect(claimExcerpts("I sent, I saved ran it", check).map((e) => e.state)).toEqual(["flagged", "earlier"]);
   });
+});
+
+it("unmatchedClaims lists only flagged claims, with the sentence from the piece that holds them", () => {
+  const piece = { id: "p1", text: "Working on it. I ran the weekly report and sent it.", turnId: "t" };
+  const reply = { id: "r1", text: "Done.", turnId: "t", actionCheck: { state: "flagged" as const, claims: [
+    { class: "run" as const, span: [15, 20] as [number, number], state: "flagged" as const, pieceId: "p1", text: "I ran" },
+    { class: "send" as const, span: [0, 4] as [number, number], state: "recorded" as const, pieceId: "r1" },
+  ] } };
+  const found = unmatchedClaims([piece, reply]);
+  expect(found).toHaveLength(1);
+  expect(found[0]).toMatchObject({ words: "I ran", messageId: "p1" });
+  expect(found[0]!.sentence).toContain("I ran the weekly report");
+  expect(found[0]!.sentence).not.toContain("Working on it");
+});
+
+it("unmatchedClaims returns nothing for a bot whose messages are not loaded (the Inspector must not crash)", () => {
+  expect(unmatchedClaims(undefined)).toEqual([]);
 });

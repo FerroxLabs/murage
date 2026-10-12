@@ -6,7 +6,7 @@ import { useDesktopSurface } from "@/lib/use-surface";
 import { useCallback, useEffect, useId, useMemo, useRef, useState, useSyncExternalStore, type SetStateAction } from "react";
 import { ArrowUp, BookOpen, Clock, ListChecks, Mic, Paperclip, Square, Target, Terminal, Users, X } from "lucide-react";
 import { useWarmIntent } from "@/hooks/use-warm-intent";
-import { api, useStore, visibleMessages, type Bot, type Group, type Message } from "@/state/store";
+import { api, olderOpenCards, useStore, visibleMessages, type Bot, type Group, type Message } from "@/state/store";
 import { cn } from "@/lib/cn";
 import { compactPlaceholder } from "@/lib/composer-placeholder";
 import { enterSends } from "@/lib/composer-enter";
@@ -17,10 +17,17 @@ import {
   draftRevision,
   appendComposerDraftAttachments,
   forgetFailedComposerSend,
-  markDraftEdited,
+  freezeDraft,
+isDraftFrozen,
+markDraftEdited,
+subscribeDraftFrozen,
+thawDraft,
+  clearAcknowledgedDraft,
+  pinDraftSendId,
   recoverFailedComposerSend,
   rememberFailedComposerSend,
   restoredSendId,
+releaseRecoveredSend,
   useComposerDraft,
   useComposerChannelMode,
   useFailedComposerSends,
@@ -231,6 +238,18 @@ export function Composer({
   const closedWork = !group && bot ? closedComposerLine(bot) : null;
   const locked = setupLocked || Boolean(bot?.awaitingThreadSnapshot) || closedWork !== null;
   const { state, dispatch, refreshAfterKey } = useStore();
+  // The words stay in the box until the server acknowledges the send (they are the
+  // person's, and a failed admission must never erase them). While one is out, the box is
+  // read-only and a second press cannot start another.
+  const [sendingId, setSendingId] = useState<string | null>(null);
+  const sendingRef = useRef<string | null>(null);
+  // A send out of this draft freezes it at module level (lib/drafts.ts), so a composer mounted
+  // mid-send (a thread switch and back) is read-only too, and thaws when the send settles.
+  const draftId0 = group
+    ? `group:${group.id}:${group.threadId}`
+    : `bot:${bot?.id ?? ""}:${bot?.threadId ?? ""}`;
+  const draftFrozen = useSyncExternalStore(subscribeDraftFrozen, () => isDraftFrozen(draftId0), () => false);
+  const sendPending = sendingId !== null || draftFrozen;
   const { capabilities } = useDesktopCapabilities();
   // Unified target: a 1:1 bot thread or a room. In a room the @ picker
   // offers members plus @everyone; explicit mentions override the room's
@@ -243,8 +262,9 @@ export function Composer({
   // a pending approval blocks the prompt until it is answered
   const threadId = group?.threadId ?? bot?.threadId ?? "";
   // the VISIBLE branch only — an approval left on a branch you edited away
-  // from must not keep blocking the composer
-  const approvals = pendingApprovals(group ? group.messages : bot ? visibleMessages(bot) : []);
+  // from must not keep blocking the composer. Cards older than the held page
+  // ride beside it (openCards) and count while that branch reaches them.
+  const approvals = pendingApprovals(group ? olderOpenCards(group, group.messages) : bot ? olderOpenCards(bot, visibleMessages(bot)) : []);
   const approval = approvals[0];
   const approvalBot = group
     ? members?.find((member) => member.id === approval?.message.from?.botId) ??
@@ -257,9 +277,7 @@ export function Composer({
   const coarsePointer = useCoarsePointer();
   // Per-thread draft: switching bots unmounts this component, so both the
   // text and its attachment chips have to outlive it (see lib/drafts).
-  const draftId = group
-    ? `group:${group.id}:${group.threadId}`
-    : `bot:${bot?.id ?? ""}:${bot?.threadId ?? ""}`;
+  const draftId = draftId0;
   const [text, setText, attachments, setAttachments] = useComposerDraft(
     draftId,
     !group && bot ? `bot:${bot.id}` : undefined,
@@ -300,6 +318,7 @@ export function Composer({
   useWarmIntent(bot?.id, threadId, text);
   const editText = useCallback(
     (next: string) => {
+      if (isDraftFrozen(draftId)) return;
       markDraftEdited(draftId);
       setSendNotice(null);
       setText(next);
@@ -308,6 +327,7 @@ export function Composer({
   );
   const editAttachments = useCallback(
     (next: SetStateAction<Attachment[]>) => {
+      if (isDraftFrozen(draftId)) return;
       markDraftEdited(draftId);
       setSendNotice(null);
       setAttachments(next);
@@ -644,7 +664,10 @@ export function Composer({
   // Busy sends are owned by the harness immediately for both channels and
   // 1:1 chats. Keeping a channel follow-up in this component used to lose its
   // auto-send intent whenever navigation unmounted the composer.
-  const queuedMessages = state.pendingQueued[threadId] ?? [];
+  const shownQueued = state.pendingQueued[threadId] ?? [];
+  // A line still being sent is shown but is not yet something Inject can name.
+  // (a refused one is waiting for the person, not for a turn)
+  const queuedMessages = shownQueued.filter((entry) => !entry.sending && !entry.refused);
   const pendingCount = queuedMessages.length;
   const canInject = composerCanInjectNow(busy, locked, pendingCount);
   const interruptTurn = () => {
@@ -763,7 +786,7 @@ export function Composer({
     }
   };
   const send = () => {
-    if (locked) return;
+    if (locked || sendingRef.current || isDraftFrozen(draftId)) return;
     // WHAT HAS TO BE SETTLED BEFORE A DRAFT IS COMPOSED.
     //
     // A pasted Flux Router key must never reach the transcript, and an image
@@ -838,19 +861,52 @@ export function Composer({
       threadId,
       channelMode: group ? effectiveChannelMode : undefined,
     };
+    // Nothing is cleared here. The box empties only when the server acknowledges THIS send
+    // (its row is committed); a refusal, or a send the outbox cannot hold, leaves every word
+    // exactly where it was.
+    pinDraftSendId(draftId, sentDraft.sendId);
+    // Frozen from here to the acknowledgement or the failure: what the server is given is what gets cleared.
+    freezeDraft(draftId);
+    sendingRef.current = sentDraft.sendId;
+    setSendingId(sentDraft.sendId);
+    const settleSending = () => {
+      if (sendingRef.current === sentDraft.sendId) { sendingRef.current = null; setSendingId(null); }
+    };
+    const acknowledged = () => {
+      settleSending();
+      if (clearAcknowledgedDraft(draftId, sentDraft.revision)) {
+        setSendNotice(null);
+        onConsumeReply?.();
+        if (group) setChannelMode("chat");
+        refocusInput();
+      }
+      thawDraft(draftId);
+    };
+    const failedSend = (error: unknown) => {
+      settleSending();
+      restoreDraft(sentDraft);
+      thawDraft(draftId);
+      return refusedForSize(error);
+    };
     if (group) {
       dispatch({
         type: "sendGroup",
         groupId: group.id,
         text: t,
         sendId: sentDraft.sendId,
+        outboxDraft: {
+          draftId: sentDraft.draftId,
+          text: sentDraft.text,
+          requestText: sentDraft.requestText,
+          attachments: sentDraft.attachments,
+          ...(sentDraft.channelMode ? { channelMode: sentDraft.channelMode } : {}),
+          ...(sentDraft.replyToId ? { replyToId: sentDraft.replyToId } : {}),
+        },
         replyToId: replyTo?.id,
         threadId,
         mode: effectiveChannelMode,
-        onError: (error: unknown) => {
-          restoreDraft(sentDraft);
-          return refusedForSize(error);
-        },
+        onReceipt: acknowledged,
+        onError: failedSend,
       });
       track("message_sent", { room: true, mode: effectiveChannelMode, queued: busy });
     } else if (bot) {
@@ -890,21 +946,22 @@ export function Composer({
         botId: bot.id,
         text: t,
         sendId: sentDraft.sendId,
+        outboxDraft: {
+          draftId: sentDraft.draftId,
+          text: sentDraft.text,
+          requestText: sentDraft.requestText,
+          attachments: sentDraft.attachments,
+          ...(sentDraft.channelMode ? { channelMode: sentDraft.channelMode } : {}),
+          ...(sentDraft.replyToId ? { replyToId: sentDraft.replyToId } : {}),
+        },
         replyToId: replyTo?.id,
         threadId,
-        onError: (error: unknown) => {
-          restoreDraft(sentDraft);
-          return refusedForSize(error);
-        },
+        onSent: acknowledged,
+        onError: failedSend,
       });
       if (question) void replyToIntake(bot.id, question.id, t, api, { alongside: true }).catch(() => {});
       track("message_sent", { driver: bot.modelSelection?.instanceId, queued: busy && !canSteer });
     }
-    setText("");
-    setAttachments([]);
-    setSendNotice(null);
-    onConsumeReply?.();
-    if (group) setChannelMode("chat");
   };
 
   // native dictation: partials stream into the input while the Swift
@@ -1184,6 +1241,7 @@ export function Composer({
           notice={attachmentNotice}
           onNotice={setAttachmentNotice}
           onAudioFile={queueAudioFile}
+          frozen={sendPending}
         />
         {audioFile && <AudioAttachmentIntake file={audioFile} configured={Boolean(state.config?.flux?.configured)}
           onAddTranscript={transcript => addAttachments([pasteAttachment(transcript)])} onRemove={removeAudioFile}
@@ -1209,10 +1267,20 @@ export function Composer({
               inside that row, and not at the far end of a transcript the
               user has scrolled away from. */}
           <QueuedComposerMessages
-            items={queuedMessages}
+            items={shownQueued}
             onCancel={(queueId) => {
               if (group) dispatch({ type: "cancelGroupQueued", groupId: group.id, threadId, queueId });
               else if (bot) dispatch({ type: "cancelQueued", botId: bot.id, queueId });
+            }}
+            onResend={(item) => {
+              // The same send id, words, reply, mode and responder: the server treats it as the new attempt.
+              const again = state.pendingQueued[threadId]?.find((entry) => entry.queueId === item.queueId);
+              const sendId = again?.sendId;
+              if (!again?.refused || !sendId) return;
+              // the chip is the one recovery surface for these words: no restored draft or retry item keeps a second copy
+              releaseRecoveredSend(sendId, { includeFrozen: true });
+              if (group) dispatch({ type: "sendGroup", groupId: group.id, text: again.text, sendId, threadId, mode: again.refused.mode ?? "chat", ...(again.refused.replyToId ? { replyToId: again.refused.replyToId } : {}), ...(again.refused.responderId ? { responderId: again.refused.responderId } : {}) });
+              else if (bot) dispatch({ type: "send", botId: bot.id, text: again.text, sendId, threadId, ...(again.refused.replyToId ? { replyToId: again.refused.replyToId } : {}) });
             }}
           />
           <input
@@ -1334,7 +1402,8 @@ export function Composer({
             if (e.key === "Escape" && recording) stopDictation();
           }}
           disabled={Boolean(approval) || locked}
-          aria-busy={bot?.awaitingThreadSnapshot || undefined}
+          readOnly={sendPending}
+          aria-busy={bot?.awaitingThreadSnapshot || sendPending || undefined}
           placeholder={((placeholder: { lead: string; hint?: string }) => compactPlaceholder(placeholder.lead, placeholder.hint, narrowPlaceholder))(
             closedWork
               ? { lead: closedWork }
@@ -1373,6 +1442,7 @@ export function Composer({
               <button
                 type="button"
                 onClick={() => fileInput.current?.click()}
+                disabled={sendPending}
                 aria-label="Attach a file"
                 title="Attach a file"
                 className="flex size-8 shrink-0 items-center justify-center rounded-full text-ink-secondary hover:bg-control hover:text-ink"
@@ -1383,6 +1453,7 @@ export function Composer({
                 <button
                   type="button"
                   aria-pressed={effectiveChannelMode === "goal"}
+                  disabled={sendPending}
                   aria-label="Finish together"
                   title="Finish together: the team keeps working until the goal is complete"
                   onClick={() => {
@@ -1482,6 +1553,7 @@ export function Composer({
         {hasContent && !locked && (
           <button
             onClick={send}
+            disabled={sendPending}
             aria-label={
               busy && canSteer
                   ? "Send into the running turn"

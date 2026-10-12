@@ -1,0 +1,52 @@
+# TEST ONLY. Checks engine deletion's "is the engine running" detection (server/engine-closed.ts + the native addon) against the REAL
+# Claude Code and Codex CLIs on a real Windows runner. Manual dispatch only: never on push, never on release. It needs no secrets: the
+# engines only have to run (no sign-in), and every home is a temp folder.
+name: Engine real Windows
+
+permissions:
+  contents: read
+
+on:
+  workflow_dispatch:
+
+jobs:
+  real-engines:
+    name: closed() against real engines
+    runs-on: windows-latest
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: pnpm/action-setup@ff378ebe6b225b0680b81c1ad4498ae0d1d3a5e3 # v6.0.10
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 24
+          cache: pnpm
+      - name: Install dependencies
+        shell: bash
+        env:
+          ELECTRON_SKIP_BINARY_DOWNLOAD: "1"
+        run: pnpm install --frozen-lockfile
+      - name: Node headers for the engine-exclusion addon
+        shell: bash
+        run: |
+          v=$(node -p process.version)
+          dir="$(cygpath -u "$RUNNER_TEMP")/node-headers"; mkdir -p "$dir"
+          curl -fsSL "https://nodejs.org/dist/$v/node-$v-headers.tar.gz" -o "$dir/h.tgz"
+          curl -fsSL "https://nodejs.org/dist/$v/SHASUMS256.txt" -o "$dir/sums"
+          (cd "$dir" && want=$(grep " node-$v-headers.tar.gz\$" sums | cut -d' ' -f1) && echo "$want  h.tgz" | sha256sum -c - && tar xzf h.tgz)
+          echo "NODE_HEADERS_DIR=$(cygpath -w "$dir/node-$v/include/node")" >> "$GITHUB_ENV"
+      - name: Build the engine-exclusion addon
+        shell: bash
+        run: pnpm build:engine-exclusion
+      - name: Install the real engines (no credentials)
+        shell: bash
+        run: |
+          npm i -g @anthropic-ai/claude-code @openai/codex
+          echo "npm global prefix: $(npm prefix -g)"
+          claude --version
+          codex --version
+      - name: Real-engine tests
+        shell: bash
+        env:
+          MURAGE_REAL_ENGINES: "1"
+        run: pnpm exec vitest run server/engine-real-windows.test.ts --reporter=verbose

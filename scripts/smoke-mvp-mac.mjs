@@ -30,6 +30,17 @@ try {
   assert.equal(realpathSync(actual.home), realpathSync(homedir()));
   const window = await app.firstWindow({ timeout: 30000 });
   await window.waitForLoadState("domcontentloaded");
+  // A fresh profile shows the terms screen over everything. This is the one packaged
+  // smoke that accepts through the UI (the others seed the record: scripts/terms-fixture.mjs).
+  const gate = window.locator("[data-terms-card]");
+  await gate.waitFor({ state: "visible", timeout: 30000 });
+  assert.equal(await window.evaluate(() => document.activeElement?.matches("[data-terms-checkbox]")), true, "focus starts on the checkbox");
+  assert.equal(await window.locator("[data-terms-accept]").isDisabled(), true, "Accept waits for the box");
+  assert.equal(await window.evaluate(() => document.body.innerText.includes("MVP isolated proof")), false, "nothing of the app shows behind the gate");
+  await window.locator("[data-terms-checkbox]").check();
+  await window.locator("[data-terms-accept]").click();
+  await gate.waitFor({ state: "detached", timeout: 30000 });
+  console.log(JSON.stringify({ termsGateAccepted: true }));
   await window.waitForFunction(() => document.body.innerText.includes("MVP isolated proof"), undefined, { timeout: 30000 });
   console.log(JSON.stringify({ nativeWindow: true, isolatedProfile: true, version: actual.version, userProfileRendered: true }));
   const processRows = execFileSync("ps", ["-axo", "pid=,ppid="], { encoding: "utf8" }).trim().split("\n").map(line => line.trim().split(/\s+/).map(Number));

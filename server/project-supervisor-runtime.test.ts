@@ -20,7 +20,7 @@ function usageFixture() {
   const owner = { botId: "lead", generation: "gen", notOwnerAudience: false };
   const pending = new Map(); const turns = new Map(); const bindings = new Map();
   const settle = vi.fn(); const complete = vi.fn(); const insert = vi.fn((_db: unknown, _input: unknown) => ({ request }));
-  const deps = { internalTurnOwners: new Map([["thread", owner]]), turnRequestByGeneration: bindings, delegationWatch: new Map(), syncAskRequests: new Map(),
+  const deps = { fluxFirstTokenProbe: { begin() {}, observe() {} }, internalTurnOwners: new Map([["thread", owner]]), turnRequestByGeneration: bindings, delegationWatch: new Map(), syncAskRequests: new Map(),
     dispatchProjectUsageTurn,
     sharedOwnerUsageTurn: seam("sharedOwnerUsageTurn", { store: { bot: () => undefined } }),
     abandonSharedOwnerUsageTurn: seam("abandonSharedOwnerUsageTurn", { sharedOwnerUsage: createSharedOwnerUsage(vi.fn()) }),

@@ -2,6 +2,7 @@
 import { pathToFileURL } from "node:url";
 import { createLineSplitter, writeMcpLine } from "../mcp-bridge.ts";
 import { BuiltinFloorGate, floorToolResult, readBrowserRefusal } from "../browser-floor-builtin.ts";
+import { EXTENSION_CALL_FAILED_TEXT } from "../browser-extension-refusals.ts";
 import { BROWSER_EXTENSION_CALL_TIMEOUT_MS } from "../../shared/browser-extension-protocol.ts";
 import { turnSecret, turnSecretWired } from "../turn-credential.ts";
 export async function runUnifiedBrowserProxy(env: NodeJS.ProcessEnv = process.env, options: { transport?: "builtin" | "extension" } = {}) {
@@ -52,7 +53,7 @@ export async function runUnifiedBrowserProxy(env: NodeJS.ProcessEnv = process.en
         }
       } catch (error) {
         const failure = (error as { refusal?: { code: string; text: string } } | undefined)?.refusal;
-        const text = failure?.text ?? "Browser unavailable or control changed. Ask the owner to open the browser panel.";
+        const text = failure?.text ?? (transport === "extension" ? EXTENSION_CALL_FAILED_TEXT : "Browser unavailable or control changed. Ask the owner to check the browser.");
         // A tool call fails as a tool result the model reads. Anything else
         // (tools/list above all) fails as a JSON-RPC error: a "result" with
         // no tools in it connected the server with zero tools and no reason.

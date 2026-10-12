@@ -30,6 +30,7 @@ import { homedir } from "node:os";
 import { join } from "node:path";
 
 import { createAcpDriver, type AcpSupport } from "./core.ts";
+import { isolateGeminiFromPersonalSetup } from "./gemini-isolation.ts";
 
 // Prefer an explicit key method, then personal OAuth, then Vertex — but fall
 // back to whatever the CLI advertises so a new method id still works.
@@ -104,6 +105,13 @@ const support: AcpSupport = {
   // alias for older releases, but using it now emits a deprecation warning.
   spawnArgs: (_config, turn) => ["--acp", ...(turn.model ? ["-m", turn.model] : [])],
   credentialEnv: ["GEMINI_API_KEY", "GOOGLE_API_KEY"],
+  // The owner's personal MCP servers, hooks, skills, agents, policies, extensions
+  // and instruction files stay out of bot turns (see gemini-isolation.ts).
+  transformEnv: (env) => isolateGeminiFromPersonalSetup(env),
+  // A turn's own bot gets its own scope (the shared one above serves probes with no bot).
+  scopeKind: "gemini",
+  applyMountEnv: (env, { botId }) => isolateGeminiFromPersonalSetup(env, botId, true),
+  scopeRoot: (env) => env.GEMINI_CLI_HOME,
 
   pickAuthMethod: (methods) => {
     const ids = methods.map((m) => m.id).filter((id): id is string => typeof id === "string");

@@ -14,6 +14,8 @@ import { LazyBoundary, retryableLazy } from "./LazyBoundary";
 const ProjectRows=lazy(()=>import("./ProjectInboxRows"));
 // Learning suggestions and their screen copy load the first time the inbox has one (spec §6).
 const LearningSuggestions = retryableLazy(() => import("./InboxLearningSuggestions").then((module) => ({ default: module.InboxLearningSuggestions })));
+// Memories the bots would like to keep load the first time the inbox has some.
+const MemoryWaitingCards = retryableLazy(() => import("./InboxMemoryWaiting").then((module) => ({ default: module.InboxMemoryWaiting })));
 const button = "min-h-10 rounded-lg border border-hairline/50 bg-control px-3 py-2 text-[13px] text-ink hover:bg-raised-hover focus-visible:outline focus-visible:outline-2 focus-visible:outline-focus disabled:opacity-50";
 // The selected view is a filled chip, not a grey one with a slightly
 // different edge: on the control tone the old `border-accent bg-accent/10`
@@ -215,7 +217,7 @@ function InboxSection({ label, aside, children }: { label: string; aside?: React
   </section>;
 }
 
-export function Inbox({ onOpen, onClose, onOpenBackups, onOpenLearning, refreshKey = 0, initialView = "decisions" }: { onOpen: (link: InboxLink) => void; onClose?: () => void; onOpenBackups?: () => void; onOpenLearning?: (botId: string) => void; refreshKey?: number; initialView?: InboxView }) {
+export function Inbox({ onOpen, onClose, onOpenBackups, onOpenLearning, onOpenMemory, refreshKey = 0, initialView = "decisions" }: { onOpen: (link: InboxLink) => void; onClose?: () => void; onOpenBackups?: () => void; onOpenLearning?: (botId: string) => void; onOpenMemory?: (subject: { kind: "bot" | "room" | "other"; id: string; name: string }) => void; refreshKey?: number; initialView?: InboxView }) {
   const [view, setView] = useState<InboxView>(initialView);
   const [draft, setDraft] = useState("");
   const [query, setQuery] = useState("");
@@ -342,7 +344,9 @@ export function Inbox({ onOpen, onClose, onOpenBackups, onOpenLearning, refreshK
   const backupFailed = view === "decisions" || view === "to-read" || view === "all" ? result?.backupFailed ?? null : null;
   // Lessons a bot suggested, waiting for the owner's yes: the only learning the Inbox shows.
   const suggestionRows = view === "decisions" || view === "all" ? result?.learningSuggestions ?? [] : [];
-  const ownRows = [...projectRows,...restoreRows, ...signedOut, ...(backupWaiting ? [backupWaiting] : []), ...(backupFailed ? [backupFailed] : []), ...suggestionRows];
+  // Memories the bots would like to keep: one card per bot, counted per item in `decisions` (server/inbox-memory-waiting.ts).
+  const memoryRows = view === "decisions" || view === "all" ? result?.memoryWaiting ?? [] : [];
+  const ownRows = [...projectRows,...restoreRows, ...signedOut, ...(backupWaiting ? [backupWaiting] : []), ...(backupFailed ? [backupFailed] : []), ...suggestionRows, ...memoryRows];
   const dismissible = list.filter(item => item.dismissible);
   const clearable = list.filter(item => item.clearable);
   // The live card for each waiting request on this page, keyed by message id.
@@ -370,7 +374,7 @@ export function Inbox({ onOpen, onClose, onOpenBackups, onOpenLearning, refreshK
   }, [waitingKey]);
   const owed = INBOX_OWED_VIEWS.includes(view);
   const tally = result ? inboxTally(result.total - result.items.filter(item => gone.has(item.id)).length, result.unread) : "";
-  const sections = signedOut.length + restoreRows.length + (backupWaiting ? 1 : 0) + (backupFailed ? 1 : 0) + suggestionRows.length + (view === "routines" ? routineRows.length : 0) > 0;
+  const sections = signedOut.length + restoreRows.length + (backupWaiting ? 1 : 0) + (backupFailed ? 1 : 0) + suggestionRows.length + memoryRows.length + (view === "routines" ? routineRows.length : 0) > 0;
   return <section aria-labelledby="inbox-title" aria-busy={loading} className="mx-auto flex h-full w-full max-w-4xl flex-col overflow-y-auto bg-panel p-4 text-ink sm:p-6">
     <header className="flex items-center justify-between gap-3"><h1 id="inbox-title" className="text-[22px] font-semibold">Inbox</h1>
       <div className="flex gap-2">
@@ -419,6 +423,11 @@ export function Inbox({ onOpen, onClose, onOpenBackups, onOpenLearning, refreshK
           <p className="mt-1 text-ink-secondary">{backupFailed.sentence}</p>
           {onOpenBackups && <div className="mt-3 flex flex-wrap gap-2"><button className={button} onClick={onOpenBackups}>Open Backups</button></div>}
         </div>
+      </InboxSection>
+    )}
+    {memoryRows.length > 0 && (
+      <InboxSection label="Memories">
+        <LazyBoundary inline onRetry={MemoryWaitingCards.retry}><Suspense fallback={null}><MemoryWaitingCards.Component rows={memoryRows} onSettled={() => setRevision(current => current + 1)} onOpenMemory={onOpenMemory} /></Suspense></LazyBoundary>
       </InboxSection>
     )}
     {suggestionRows.length > 0 && (
