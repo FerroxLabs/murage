@@ -1,0 +1,297 @@
+// Copyright 2026 Ferrox Labs
+// SPDX-License-Identifier: AGPL-3.0-or-later
+//
+// The strict reader behind every engine-history plan and every executor read (the one place that touches the engines'
+// files). Only lstat and readdir may answer "not there" (ENOENT, ENOTDIR). Everything else that goes wrong (EIO, EACCES,
+// EMFILE, a corrupt zstd frame, missing zstd support, a SQLite open or query error, a line that names the conversation but
+// does not parse) throws PlanError, so a read that could not be done is never mistaken for an empty answer.
+//
+// `fsOps` is the raw read layer and `mutOps` the raw write layer: tests replace members to inject a failure or to record every
+// call. They are the ONLY place the deletion code touches node:fs and node:sqlite (engine-plan-structure.test.ts): the planners
+// reach the world through the strict reader below, the executor through both layers, and the worker through the driver alone.
+import { chmodSync, closeSync, utimesSync, fstatSync, fsyncSync, linkSync, lstatSync, mkdirSync, openSync, readFileSync, readSync, readdirSync, readlinkSync, renameSync, rmSync, rmdirSync, unlinkSync, writeSync, type Stats } from "node:fs";
+import { DatabaseSync } from "node:sqlite";
+import zlib from "node:zlib";
+import { heldFileOf, loadExclusionAddon } from "./engine-exclusion.ts";
+import { MAX_LINE_BYTES, mentions as mentionsIn, PlanError, type DbReader, type EngineFs, type FileRef, type HeldFile, type JsonLine } from "./engine-plan-core.ts";
+
+export interface RawDb { all(sql: string, params: Array<string | number>): Array<Record<string, unknown>>; close(): void }
+
+function readHeadRaw(path: string, bytes: number): Buffer {
+  const fd = openSync(path, "r");
+  try {
+    const buffer = Buffer.alloc(bytes);
+    const read = readSync(fd, buffer, 0, buffer.length, 0);
+    return buffer.subarray(0, read);
+  } finally {
+    closeSync(fd);
+  }
+}
+function zstdRaw(bytes: Buffer): Buffer {
+  const decode = (zlib as unknown as { zstdDecompressSync?: (input: Buffer) => Buffer }).zstdDecompressSync;
+  if (!decode) throw new Error("zstd support is not available in this Node");
+  return decode(bytes);
+}
+function openDbRaw(path: string): RawDb {
+  const db = new DatabaseSync(path);
+  db.exec("PRAGMA busy_timeout=5000;");
+  return { all: (sql, params) => db.prepare(sql).all(...params) as Array<Record<string, unknown>>, close: () => db.close() };
+}
+
+function readAtRaw(fd: FileRef, buffer: Buffer, position: number): number {
+  if (typeof fd !== "number") {
+    const got = fd.read(buffer.length, position);
+    got.copy(buffer, 0, 0, got.length);
+    return got.length;
+  }
+  return readSync(fd, buffer, 0, buffer.length, position);
+}
+
+/** The raw calls every read goes through. Tests replace members to inject a listing or read failure. */
+export const fsOps = {
+  openRead: (path: string): number => openSync(path, "r"),
+  readAt: readAtRaw,
+  closeFd: (fd: number): void => closeSync(fd),
+  lstat: lstatSync,
+  readdir: readdirSync,
+  readFile: readFileSync,
+  readlink: readlinkSync,
+  readHead: readHeadRaw,
+  zstd: zstdRaw,
+  openDb: openDbRaw,
+};
+
+function openDbWriteRaw(path: string, pragmas: string): DatabaseSync {
+  const db = new DatabaseSync(path);
+  try { db.exec(pragmas); } catch (error) { db.close(); throw error; }
+  return db;
+}
+function preadRaw(fd: FileRef, length: number, position: number): Buffer {
+  const buffer = Buffer.alloc(length);
+  let got = 0;
+  while (got < length) {
+    if (typeof fd !== "number") {
+      const piece = fd.read(length - got, position + got);
+      if (piece.length === 0) break;
+      piece.copy(buffer, got);
+      got += piece.length;
+      continue;
+    }
+    const read = readSync(fd, buffer, got, length - got, position + got);
+    if (read === 0) break;
+    got += read;
+  }
+  return buffer.subarray(0, got);
+}
+function pwriteRaw(fd: FileRef, bytes: Buffer, position: number): void {
+  if (typeof fd !== "number") { fd.write(bytes, position); return; }
+  let done = 0;
+  while (done < bytes.length) done += writeSync(fd, bytes, done, bytes.length - done, position + done);
+}
+function sleepRaw(ms: number): void {
+  if (ms > 0) Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
+}
+
+/** The raw calls every change goes through (and the reads that must happen on an open handle). Tests replace members to inject
+ * a failure, to run a writer between two calls, or to count calls. */
+export const mutOps = {
+  openRead: (path: string): number => openSync(path, "r"),
+  openReadWrite: (path: string): number => openSync(path, "r+"),
+  openAppend: (path: string): number => openSync(path, "a"),
+  close: (fd: FileRef): void => { if (typeof fd === "number") closeSync(fd); else fd.close(); },
+  /** size and inode of an open file (a held file reports its file index as a Number, as Node's own stat does on Windows) */
+  fstat: (fd: FileRef): { size: number; ino: number } => { if (typeof fd === "number") { const stat = fstatSync(fd); return { size: stat.size, ino: stat.ino }; } return { size: fd.size(), ino: Number(fd.id().ino) }; },
+  pread: preadRaw,
+  pwrite: pwriteRaw,
+  append: (fd: number, bytes: Buffer): void => { let done = 0; while (done < bytes.length) done += writeSync(fd, bytes, done, bytes.length - done); },
+  fsync: (fd: FileRef): void => { if (typeof fd === "number") fsyncSync(fd); else fd.sync(); },
+  rename: renameSync,
+  /** a new name for a file, failing with EEXIST if the name is taken (unlike rename, never replaces) */
+  link: linkSync,
+  /** device and inode of a path (no link followed) or of an open file, as BigInt */
+  idOf: (path: string): { dev: bigint; ino: bigint } => { const stat = lstatSync(path, { bigint: true }); return { dev: stat.dev, ino: stat.ino }; },
+  idOfFd: (fd: FileRef): { dev: bigint; ino: bigint } => { if (typeof fd !== "number") return fd.id(); const stat = fstatSync(fd, { bigint: true }); return { dev: stat.dev, ino: stat.ino }; },
+  removeTree: (path: string): void => rmSync(path, { recursive: true, force: true }),
+  unlink: unlinkSync,
+  mkdir: (path: string): void => mkdirSync(path),
+  /** sets a path's modification time to now (a directory lock is kept fresh this way) */
+  touch: (path: string): void => { const now = new Date(); utimesSync(path, now, now); },
+  rmdir: rmdirSync,
+  chmod: chmodSync,
+  openDbWrite: openDbWriteRaw,
+  sleep: sleepRaw,
+};
+
+/** Real exclusion on an engine's file, from the native addon (engine-exclusion.ts). Tests replace members or the whole object to model
+ * an engine that holds a lock or has a file open. With no addon `available()` is false and the executor changes nothing. */
+export const exclOps = {
+  mode: (process.platform === "win32" ? "win32" : "posix") as "posix" | "win32",
+  available: (): boolean => loadExclusionAddon() !== null,
+  /** The engine's own whole-file lock on `fd` (waits up to a second). False: someone else has it. (macOS, Linux) */
+  lock: (fd: number): boolean => loadExclusionAddon()!.lock(fd),
+  /** Per file or directory: does another process hold it (open, or as a working directory)? Any doubt says true. (macOS, Linux) */
+  openers: (files: ReadonlyArray<{ dev: bigint; ino: bigint }>): boolean[] => {
+    if (!files.length) return [];
+    return loadExclusionAddon()!.openers(files.map((file) => file.dev), files.map((file) => file.ino));
+  },
+  /** Moves `from` to `to` in one atomic step that never replaces an existing name. "exists": the name is taken (nothing moved).
+   * "unsupported": this file system or system cannot do it (nothing moved). Never falls back to a replacing rename. */
+  renameNoReplace: (from: string, to: string): "ok" | "exists" | "unsupported" => {
+    const code = loadExclusionAddon()!.renameNoReplace(from, to);
+    return code === 0 ? "ok" : code === 1 ? "exists" : "unsupported";
+  },
+  /** Windows: a file held by the addon: "exclusive" (share-none), "delete" (share-none, may be deleted) or "shared" (for the
+   * engine's lock). null when something else has it open. */
+  openFile: (path: string, kind: "exclusive" | "delete" | "shared"): HeldFile | null => {
+    const addon = loadExclusionAddon()!;
+    const native = addon.openFile!(path, kind === "exclusive" ? 0 : kind === "delete" ? 1 : 2);
+    return native ? heldFileOf(addon, native) : null;
+  },
+};
+
+/** ENOENT and ENOTDIR mean the thing is not there. Any other error (EIO, EACCES, EMFILE, ...) means it could not be looked at. */
+export const isAbsent = (error: unknown): boolean => { const code = (error as NodeJS.ErrnoException | undefined)?.code; return code === "ENOENT" || code === "ENOTDIR"; };
+
+/** Does `text` mention any needle, raw or as it would be escaped inside a JSON string? (engine-plan-core.ts) */
+export const mentions = mentionsIn;
+
+/** Parse JSONL text. A blank line, a non-object line, or a torn line that mentions no needle is kept as it is (row null). A
+ * torn line that mentions a needle could be this conversation's, so it throws. `cut` says the last piece is a partial line. */
+export function parseJsonLines(path: string, text: string, needles: readonly string[], cut = false): JsonLine[] {
+  const pieces = text.split("\n");
+  return pieces.map((line, index) => {
+    if (!line.trim()) return { text: line, row: null };
+    try {
+      const value = JSON.parse(line) as unknown;
+      return { text: line, row: value && typeof value === "object" && !Array.isArray(value) ? (value as Record<string, unknown>) : null };
+    } catch (error) {
+      if (cut && index === pieces.length - 1) return { text: line, row: null };
+      if (mentions(line, needles)) throw new PlanError(path, new Error("a line that names this conversation could not be parsed", { cause: error }));
+      return { text: line, row: null };
+    }
+  });
+}
+
+const CHUNK_BYTES = 1024 * 1024;
+
+/** The lines of a file in order, read CHUNK_BYTES at a time; a line may span reads. `fd` is an open descriptor (left open), else
+ * the path is opened and closed here. A line over MAX_LINE_BYTES is a PlanError: it cannot be read in full. */
+function streamLines(fd: FileRef | undefined, path: string, visit: (line: Buffer, offset: number, cut: boolean) => void): void {
+  const own = fd === undefined ? fsOps.openRead(path) : undefined;
+  const at = fd ?? own!;
+  try {
+    let position = 0, lineStart = 0;
+    let carry: Buffer[] = [], carried = 0;
+    for (;;) {
+      const chunk = Buffer.alloc(CHUNK_BYTES);
+      const got = fsOps.readAt(at, chunk, position);
+      if (got <= 0) break;
+      position += got;
+      let from = 0;
+      for (let end = chunk.indexOf(0x0a, from); end >= 0 && end < got; end = chunk.indexOf(0x0a, from)) {
+        const piece = chunk.subarray(from, end);
+        if (carried + piece.length > MAX_LINE_BYTES) throw new Error("a line is longer than Murage reads");
+        const line = carried ? Buffer.concat([...carry, piece]) : piece;
+        visit(line, lineStart, false);
+        lineStart += line.length + 1;
+        carry = []; carried = 0;
+        from = end + 1;
+      }
+      if (from < got) {
+        carry.push(chunk.subarray(from, got)); carried += got - from;
+        if (carried > MAX_LINE_BYTES) throw new Error("a line is longer than Murage reads");
+      }
+    }
+    if (carried) visit(Buffer.concat(carry), lineStart, true);
+  } finally {
+    if (own !== undefined) fsOps.closeFd(own);
+  }
+}
+
+/** A line as an object, or null (blank, not an object, or a torn last line). A line that does not parse and names a needle throws. */
+function parseRow(path: string, line: Buffer, needles: readonly string[], cut: boolean): Record<string, unknown> | null {
+  const text = line.toString("utf8");
+  if (!text.trim()) return null;
+  try {
+    const value = JSON.parse(text) as unknown;
+    return value && typeof value === "object" && !Array.isArray(value) ? (value as Record<string, unknown>) : null;
+  } catch (error) {
+    if (cut) return null;
+    if (mentions(text, needles)) throw new PlanError(path, new Error("a line that names this conversation could not be parsed", { cause: error }));
+    return null;
+  }
+}
+
+function guarded<T>(path: string, work: () => T): T {
+  try { return work(); } catch (error) { throw error instanceof PlanError ? error : new PlanError(path, error); }
+}
+
+/** The strict reader, over whatever `fsOps` is at the time of each call. */
+export function realEngineFs(): EngineFs {
+  const lstat = (path: string): Stats | null => {
+    try { return fsOps.lstat(path) as Stats; } catch (error) {
+      if (isAbsent(error)) return null;
+      throw new PlanError(path, error);
+    }
+  };
+  const plainFile = (path: string): Stats | null => {
+    const stat = lstat(path);
+    return stat && stat.isFile() && !stat.isSymbolicLink() ? stat : null;
+  };
+  return {
+    lstat,
+    readdir(path) {
+      const stat = lstat(path);
+      if (!stat || !stat.isDirectory() || stat.isSymbolicLink()) return [];
+      return guarded(path, () => fsOps.readdir(path) as string[]);
+    },
+    readText(path) {
+      if (!plainFile(path)) return null;
+      return guarded(path, () => fsOps.readFile(path, "utf8") as string);
+    },
+    readBytes(path) {
+      if (!plainFile(path)) return null;
+      return guarded(path, () => fsOps.readFile(path) as Buffer);
+    },
+    readHead(path, bytes) {
+      const stat = plainFile(path);
+      if (!stat) return null;
+      const buffer = guarded(path, () => fsOps.readHead(path, Math.min(bytes, stat.size)));
+      return { text: buffer.toString("utf8"), cut: stat.size > bytes };
+    },
+    zstdFirstLine(path) {
+      const stat = lstat(path);
+      if (!stat || !stat.isFile()) return null;
+      const bytes = guarded(path, () => fsOps.readFile(path) as Buffer);
+      return guarded(path, () => fsOps.zstd(bytes).toString("utf8").split("\n", 1)[0] ?? "");
+    },
+    readlink: (path) => guarded(path, () => fsOps.readlink(path) as string),
+    withDb<T>(path: string, use: (db: DbReader) => T): T | null {
+      if (!plainFile(path)) return null;
+      const raw = guarded(path, () => fsOps.openDb(path));
+      try {
+        return use({ all: (sql, params = []) => guarded(path, () => raw.all(sql, params)) });
+      } finally {
+        raw.close();
+      }
+    },
+    jsonLines: parseJsonLines,
+    eachLine(path, visit, fd) {
+      if (fd === undefined && !plainFile(path)) return false;
+      guarded(path, () => streamLines(fd, path, visit));
+      return true;
+    },
+    eachRow(path, needles, visit, fd) {
+      if (fd === undefined && !plainFile(path)) return false;
+      guarded(path, () => streamLines(fd, path, (line, offset, cut) => visit(parseRow(path, line, needles, cut), line, offset, cut)));
+      return true;
+    },
+    jsonValue(path, text, needles) {
+      if (!text.trim()) return undefined;
+      try { return JSON.parse(text) as unknown; } catch (error) {
+        if (mentions(text, needles)) throw new PlanError(path, new Error("a file that names this conversation could not be parsed", { cause: error }));
+        return undefined;
+      }
+    },
+  };
+}

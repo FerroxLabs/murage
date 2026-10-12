@@ -76,6 +76,12 @@ jobs:
           pnpm build:speech
           pnpm build:recorder
           pnpm build:notification-authorization
+          # Native addon (native/engine-exclusion/exclusion.c, N-API 9) that after-pack.mjs
+          # requires at Contents/Resources/engine-exclusion.node; package:mac builds it,
+          # and this workflow does not call package:mac, so it must build it here.
+          pnpm build:engine-exclusion
+          cat dist-native/engine-exclusion/darwin-arm64/build.json
+          lipo dist-native/engine-exclusion/darwin-arm64/engine-exclusion.node -verify_arch arm64
           pnpm build:cua
       - name: Import the existing Developer ID into a throwaway keychain
         env:

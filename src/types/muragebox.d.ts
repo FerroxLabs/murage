@@ -304,6 +304,8 @@ type SkillRecordingPayload = {
       openEngineSetupTerminal?(input: { instanceId: string; action: "install" | "connect" }): Promise<boolean>;
       /** Opens an http(s) link in the user's default browser. */
       openExternal?(url: string): Promise<boolean>;
+      /** Quit the app; the terms screen offers it beside Accept. */
+      quit?(): Promise<void>;
       /** Recolor the native window chrome for a skin; absent on older builds. */
       applySkin?(skin: string): Promise<boolean>;
       /** Receives a GitHub package URL opened through murage://install. */

@@ -54,6 +54,7 @@ export const SHAPE_CATALOGUE: Record<string, CatalogueEntry> = {
   "required-apps": { group: "tools", label: "Apps its job needs", what: "The apps the profile it came from says it needs.", locked: true },
   browser: { group: "tools", label: "Browser", what: "How to use its built-in browser.", locked: true },
   coordination: { group: "identity", label: "Working with others", what: "How it works with your other bots.", locked: true },
+  "peer-task": { group: "identity", label: "A teammate's task", what: "Tells it a message from another bot is a task, not part of any story.", locked: true },
   "speak-as": { group: "identity", label: "Speaks only for itself", what: "Answers as itself and never for another member.", locked: true },
   credential: { group: "tools", label: "Asking for keys", what: "Asks for a missing key with a secure card, never in chat.", locked: true },
   images: { group: "tools", label: "Pictures", what: "How to make or edit pictures and use the ones you attach.", locked: true },
@@ -253,6 +254,10 @@ export interface DirectTurnShapeInput {
   aboutMe?: string;
   persona: string;
   computerKind: "box" | "vps" | "vm" | "local" | null;
+  /** The bot has a computer destination this engine cannot mount this turn. */
+  computerUnavailable?: boolean;
+  /** Set for a delegated or peer-ask turn on a text-only engine (peerTaskPrompt). */
+  peerTask?: string;
   /** Local VM mode is per-bot rather than shared. */
   vmPerBot: boolean;
   driverKind: string;
@@ -280,6 +285,19 @@ export interface DirectTurnShapeInput {
 /** The direct turn's system prompt, in the order the model reads it. The
  *  stable prefix (everything up to the primer) depends only on the bot and
  *  the workspace; after it comes what THIS turn chose. */
+/** Said when the bot has a computer destination but this engine cannot mount it. */
+export const COMPUTER_UNAVAILABLE = " You cannot control the computer this turn. Do not claim to have taken, or to be able to take, any computer actions; if asked, say plainly that you can't do that here.";
+
+const PEER_TASK_PREAMBLE = /^\[(?:Message from|Delegated by) @([^,\]\n]+),/;
+/** A delegated message or peer ask opens with a "[Delegated by @X ...]" line.
+ * Engines without team tools get no instruction about it, so a bot in a
+ * role-play can read it as part of the story. The layer says what it is. */
+export function peerTaskPrompt(text: string, textOnly: boolean): string {
+  if (!textOnly) return "";
+  const from = PEER_TASK_PREAMBLE.exec(text.trimStart())?.[1]?.trim();
+  return from ? ` This message is a task from your teammate @${from}. Do the work and answer as yourself; it is not part of any role-play or story in this conversation.` : "";
+}
+
 export function directTurnLayers(v: DirectTurnShapeInput): ShapeLayer[] {
   const kind = v.computerKind;
   const computer = kind === "vm"
@@ -287,6 +305,7 @@ export function directTurnLayers(v: DirectTurnShapeInput): ShapeLayer[] {
     : kind === "box" && v.driverKind !== "boxAgent" ? COMPUTER.box
     : kind === "vps" ? COMPUTER.vps
     : kind === "local" ? COMPUTER.local
+    : v.computerUnavailable ? COMPUTER_UNAVAILABLE
     : "";
   return [
     shapeLayer("house-rules", v.houseRules),
@@ -298,6 +317,7 @@ export function directTurnLayers(v: DirectTurnShapeInput): ShapeLayer[] {
     shapeLayer("required-apps", v.requiredApps),
     shapeLayer("browser", v.browser),
     shapeLayer("coordination", v.coordination ? ` ${v.coordination}` : ""),
+    shapeLayer("peer-task", v.peerTask ?? ""),
     shapeLayer("credential", v.credential),
     shapeLayer("images", v.image),
     shapeLayer("web-search", v.webSearchBackup ? WEB_SEARCH_BACKUP : ""),
@@ -403,7 +423,7 @@ export interface CurrentShapes {
 }
 
 // The direct turn's order, with a room turn's own layers where they fit.
-const ORDER = ["house-rules", "about-me", "persona", "room", "project-brief", "computer", "computer-protected-input", "connected-apps", "required-apps", "browser", "coordination", "speak-as",
+const ORDER = ["house-rules", "about-me", "persona", "room", "project-brief", "computer", "computer-protected-input", "connected-apps", "required-apps", "browser", "coordination", "peer-task", "speak-as",
   "credential", "images", "web-search", "routines", "learn", "goal", "learned", "skills-index", "own-skills", "team-brief", "memory", "capabilities", "skill:*", "chief-guide",
   "playbooks", "output-folder", "automation", "tagged", "project-status", "working-context", "now"];
 // Shown before the first turn as "decided when a message arrives".

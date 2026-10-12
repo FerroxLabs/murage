@@ -3,6 +3,7 @@
 // node scripts/smoke-memory-desktop.mjs --app /absolute/private/Murage.app --out /absolute/new-evidence-directory
 // No installed app replacement, development owner bypass, real model calls or kill-by-name.
 import assert from "node:assert/strict";
+import { seedTermsAccepted } from "./terms-fixture.mjs";
 import { createHash } from "node:crypto";
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
@@ -72,6 +73,7 @@ async function main(){
     });
     await new Promise(done=>fake.listen(0,"127.0.0.1",done));const address=fake.address();assert(address&&typeof address!=="string");
     writeFileSync(join(data,"config.json"),JSON.stringify({profile:{name:"Native memory fixture"},instances:{fixture:{driver:"openai-compat",displayName:"Isolated fixture",config:{url:`http://127.0.0.1:${address.port}/v1`,key:"synthetic-local-only",model:"native-memory-fixture"}}}}),{mode:0o600});
+    seedTermsAccepted(data);// a fresh profile shows the terms screen; smoke-mvp-mac.mjs is the one that accepts it through the UI
     writeFileSync(join(userData,"companion-settings.json"),JSON.stringify({enabled:false,remoteAccess:false,keepAwake:false}),{mode:0o600});
     const env={PATH:"/usr/bin:/bin:/usr/sbin:/sbin",HOME:home,USERPROFILE:home,TMPDIR:temp,TMP:temp,TEMP:temp,
       XDG_CONFIG_HOME:join(home,"config"),XDG_CACHE_HOME:join(home,"cache"),XDG_DATA_HOME:join(home,"data"),

@@ -18,7 +18,7 @@
 // Keep this file dependency-free — it runs as a bare `node` subprocess.
 import { fixtureDumpEnvironment } from "./fixture-dump.ts";
 import { spawn } from "node:child_process";
-import { readFileSync, writeFileSync } from "node:fs";
+import { existsSync, readdirSync, readFileSync, realpathSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { logProposalTurn, proposalReply } from "./fake-mcp-propose.ts";
 import { fakeReviewReply } from "./fake-review.ts";
@@ -162,6 +162,31 @@ if (process.env.FAKE_AGY_MCP_DUMP) {
     config = readFileSync(join(home, ".gemini", "config", "mcp_config.json"), "utf8");
   } catch {}
   writeFileSync(process.env.FAKE_AGY_MCP_DUMP, config);
+}
+
+// FAKE_AGY_HOME_DUMP: what the child sees under its HOME/.gemini (every path,
+// symlinks followed), plus where the login file really lives. Lets a test prove
+// the owner's personal items are absent and the login still resolves.
+if (process.env.FAKE_AGY_HOME_DUMP) {
+  const home = process.env.HOME || process.env.USERPROFILE || "";
+  const seen: string[] = [];
+  const walk = (dir: string, depth: number) => {
+    let names: string[] = [];
+    try { names = readdirSync(dir); } catch { return; }
+    for (const name of names) {
+      const path = join(dir, name);
+      seen.push(path.slice(home.length + 1));
+      if (depth < 4) walk(path, depth + 1);
+    }
+  };
+  walk(join(home, ".gemini"), 0);
+  const login = join(home, ".gemini", "antigravity-cli", "auth.json");
+  writeFileSync(process.env.FAKE_AGY_HOME_DUMP, JSON.stringify({
+    home,
+    seen: seen.sort(),
+    loginReal: existsSync(login) ? realpathSync(login) : null,
+    loginText: existsSync(login) ? readFileSync(login, "utf8") : null,
+  }));
 }
 
 const out = (obj: unknown) => process.stdout.write(JSON.stringify(obj) + "\n");

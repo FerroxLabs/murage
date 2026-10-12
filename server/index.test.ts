@@ -69,7 +69,9 @@ describe("harness HTTP API", () => {
     }
   }, 20000);
 
-  it("persists structured provider 402 credit guidance from the real ACP error fold without raw secrets", async () => {
+  // The second run is an engine that never announces MCP readiness: the reply must still arrive
+  // (the first prompt waits at most MURAGE_ACP_MCP_READY_MS) and the lifecycle records mcp_ready_timeout.
+  for (const announces of [true, false]) it(`persists structured provider 402 credit guidance from the real ACP error fold without raw secrets${announces ? "" : " (engine that never announces MCP readiness)"}`, async () => {
     const isolatedHome = mkdtempSync(join(tmpdir(), "murage-provider402-api-"));
     const data = join(isolatedHome, ".murage");
     const staticRoot = join(isolatedHome, "static");
@@ -83,7 +85,7 @@ describe("harness HTTP API", () => {
     writeFileSync(join(data, "config.json"), JSON.stringify({ engineDiscovery: "explicit", instances: {
       fixture402: { driver: "grokAgent", displayName: "Fixture 402", config: { cli: join(SERVER_DIR, "testing", "fake-acp-cli.ts") } },
     } }));
-    const env: NodeJS.ProcessEnv = { HOME: isolatedHome, USERPROFILE: isolatedHome, MURAGE_DATA_DIR: data, MURAGE_STATIC_DIR: staticRoot, MURAGE_PORT: String(port), MURAGE_WEBHOOK_PORT: String(port + 1), MURAGE_DEV_DESKTOP_SECRET: DESKTOP_SECRET, FAKE_ACP_MODE: "credit-exhausted", PATH: process.env.PATH };
+    const env: NodeJS.ProcessEnv = { HOME: isolatedHome, USERPROFILE: isolatedHome, MURAGE_DATA_DIR: data, MURAGE_STATIC_DIR: staticRoot, MURAGE_PORT: String(port), MURAGE_WEBHOOK_PORT: String(port + 1), MURAGE_DEV_DESKTOP_SECRET: DESKTOP_SECRET, FAKE_ACP_MODE: "credit-exhausted", ...(announces ? { FAKE_ACP_MCP_READY: "1", FAKE_ACP_MCP_READY_METHOD: "_x.ai/mcp_initialized" } : { MURAGE_ACP_MCP_READY_MS: "1500" }), PATH: process.env.PATH };
     if (process.env.SystemRoot) env.SystemRoot = process.env.SystemRoot;
     const isolatedChild = spawn(process.execPath, [join(SERVER_DIR, "index.ts")], { cwd: ROOT, env, stdio: ["ignore", "ignore", "pipe"] });
     let isolatedStderr = "";
@@ -125,6 +127,10 @@ describe("harness HTTP API", () => {
         expect(persisted.tool.errorKind).toBe("api");
         expect(JSON.stringify(persisted)).not.toMatch(/fake-secret-canary|billing\.invalid/);
       } finally { db.close(); }
+      if (!announces) {
+        const rows = readFileSync(join(data, "native", `${bot.threadId}.ndjson`), "utf8").split("\n").filter(Boolean).map((line) => JSON.parse(line) as { dir: string; msg: Record<string, unknown> });
+        expect(rows.filter((row) => row.dir === "lifecycle").map((row) => row.msg.event)).toContain("mcp_ready_timeout");
+      }
     } finally {
       await waitForExit(isolatedChild, { signal: "SIGTERM" });
       await removeTempDir(isolatedHome);
