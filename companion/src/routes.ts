@@ -130,6 +130,9 @@ export const OWNER_VOICE_ROUTES = [
  * the owner's relay. A paired
  * device is the owner, so the door vouches for these too. */
 export const OWNER_DECISION_ROUTES = [
+  // terms acceptance: the paired phone shows the same gate and accepts as the owner (the harness checks the proof)
+  { method: "GET", path: /^\/api\/terms$/ },
+  { method: "POST", path: /^\/api\/terms\/accept$/ },
   { method: "GET", path: /^\/api\/groups\/[\w-]+\/project$/ },
   { method: "POST", path: /^\/api\/groups\/[\w-]+\/project\/viewed$/ },
   { method: "PATCH", path: /^\/api\/groups\/[\w-]+\/project\/brief$/ },
@@ -265,6 +268,9 @@ export function isRoutineWrite(method: string, path: string): boolean {
  * fails to match and is denied rather than forwarded — the failure mode of
  * a strict pattern is a closed door, which is the one to have. */
 const DEVICE_ALLOWED: ReadonlyArray<{ method: string; path: RegExp }> = [
+  // terms acceptance: the paired phone shows the same gate and accepts as the owner (the harness checks the proof)
+  { method: "GET", path: /^\/api\/terms$/ },
+  { method: "POST", path: /^\/api\/terms\/accept$/ },
   { method: "GET", path: /^\/api\/groups\/[\w-]+\/project$/ },
   { method: "POST", path: /^\/api\/groups\/[\w-]+\/project\/viewed$/ },
   { method: "PATCH", path: /^\/api\/groups\/[\w-]+\/project\/brief$/ },
@@ -500,6 +506,9 @@ export const BROWSER_DENIED: ReadonlyArray<{ method: string; path: RegExp }> = [
  * visible transcript dressed as a search. Adding it wants the query bound
  * from plan-security §5 first. */
 const BROWSER_ALLOWED: ReadonlyArray<{ method: string; path: RegExp }> = [
+  // terms acceptance: the paired phone shows the same gate and accepts as the owner (the harness checks the proof)
+  { method: "GET", path: /^\/api\/terms$/ },
+  { method: "POST", path: /^\/api\/terms\/accept$/ },
   { method: "GET", path: /^\/api\/groups\/[\w-]+\/project$/ },
   { method: "POST", path: /^\/api\/groups\/[\w-]+\/project\/viewed$/ },
   { method: "PATCH", path: /^\/api\/groups\/[\w-]+\/project\/brief$/ },

@@ -32,7 +32,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { Loader2, Mic, MicOff, PhoneOff, X } from "lucide-react";
 
-import { useStore, visibleMessages, type Bot, type OptionCardData } from "@/state/store";
+import { olderOpenCards, useStore, visibleMessages, type Bot, type OptionCardData } from "@/state/store";
 import { currentCall, deferCallCleanup, endCall } from "@/lib/call";
 import { publishCallBarState, type CallBarStatus } from "@/lib/call-bar";
 import { CallBarContent } from "./CallBarContent";
@@ -65,7 +65,7 @@ import { callStatusText } from "@/lib/call-status";
 import { auraPhaseFor } from "@/lib/call-aura";
 import { useKeyboardHints } from "@/lib/use-keyboard-hints";
 import { CallCaption } from "./CallCaption";
-import { isHostConsentApproval, isRoutineApproval, isSkillApproval, pendingApprovals, spokenApprovalPrompt, spokenToolAction } from "./PendingApproval";
+import { isHostConsentApproval, isRoutineApproval, isSkillApproval, openQuestions, pendingApprovals, spokenApprovalPrompt, spokenToolAction } from "./PendingApproval";
 import { cn } from "@/lib/cn";
 import { useDesktopCapabilities } from "./DesktopCapabilities";
 
@@ -337,7 +337,7 @@ export function Call({
   messagesRef.current = messages;
   /** The last time anyone spoke on the call, for the "still on it" lines. */
   const lastSpeechAt = useRef(Date.now());
-  const approval = pendingApprovals(messages)[0];
+  const approval = pendingApprovals(olderOpenCards(bot, messages))[0];
   /** Kinds of request the owner said yes to for the rest of this call. Held
    *  only here: never saved, gone when the call ends. Not the permanent
    *  "Always allow" the trust design rules out. */
@@ -416,15 +416,9 @@ export function Call({
   const offeredForCall = useRef(false);
   const approvalRef = useRef(approval);
   approvalRef.current = approval;
-  const question = messages.find(
-    (message) =>
-      message.kind === "options" &&
-      message.card?.requestId &&
-      !message.card.tool &&
-      !message.card.answered &&
-      !message.card.dismissed &&
-      !leftToScreen.current.has(message.card.requestId),
-  );
+  // Includes the questions held beside the page: a call must ask one that is
+  // older than the rows it holds, like an approval.
+  const question = openQuestions(olderOpenCards(bot, messages)).find((message) => !leftToScreen.current.has(message.card!.requestId!));
 
   // Everything already on screen or held when the call starts has been read
   // or ignored — a call must not open by reciting the backlog.

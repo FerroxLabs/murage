@@ -9,6 +9,7 @@ import {
   probeWarning,
 } from "./browser-content-probe.ts";
 import type { HiddenFact, ProbeModelInput } from "./browser-content-probe.ts";
+import { bestOfMs, fastestOfMs } from "./testing/timing.ts";
 
 const ZW = "​";
 
@@ -347,23 +348,22 @@ describe("warning line", () => {
 // Opus gate findings A1-A8
 // ---------------------------------------------------------------------------
 
-const ms = (f: () => unknown): number => {
-  const t0 = performance.now();
-  f();
-  return performance.now() - t0;
-};
 // Linear work on 400k characters takes tens of milliseconds; the bound is generous for a loaded
-// test box, while a quadratic pattern on the same input takes minutes.
+// test box, while a quadratic pattern on the same input takes minutes. The fastest of three runs
+// is measured, so one stalled run on a loaded runner is not read as a slow pattern.
 const LIMIT_MS = 1000;
+const ms = (f: () => unknown): number => fastestOfMs(f, LIMIT_MS);
 const hideAll = (text: string): HiddenFact[] => [{ text, reason: "display-none" }];
 
 describe("Opus gate A1-A3: no quadratic patterns", () => {
   it("A1 whitespace and newline runs stay linear", () => {
     probeText("warm up\nsystem: hello");
-    const big = ms(() => probeText(" \n".repeat(200_000)));
-    const small = ms(() => probeText(" \n".repeat(50_000)));
+    // Both sizes get the same five runs and the fastest of each is compared:
+    // one stalled run on either side is not a growth rate.
+    const big = bestOfMs(() => probeText(" \n".repeat(200_000)));
+    const small = bestOfMs(() => probeText(" \n".repeat(50_000)));
     expect(big).toBeLessThan(LIMIT_MS);
-    expect(big / Math.max(small, 2)).toBeLessThan(8);
+    expect(big / Math.max(small, 5)).toBeLessThan(8);
   });
 
   it("A2 gaps between words stay linear", () => {

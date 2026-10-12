@@ -1,4 +1,5 @@
 import { mergeDestinationMemoryDeletions } from "./memory/restore.ts";
+import { detachRestoredLedgerAccounts, mergeDestinationConnectedLedger } from "./connected-app-journal.ts";
 import { randomUUID } from "node:crypto";
 import { closeSync, fsyncSync, linkSync, lstatSync, openSync, readFileSync, renameSync, rmSync, unlinkSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
@@ -112,6 +113,11 @@ export async function restoreInstallation(dataDir: string, archive: string, expe
     const memoryRestore = mergeDestinationMemoryDeletions(paths.root, prepared.stateDirectory);
     const marker = JSON.parse(readFileSync(markerPath, "utf8"));
     marker.modifications.push({component:"messages.db",action:`Memory restore: ${memoryRestore.history}; ${memoryRestore.merged} destination tombstones retained`});
+    // Unknown-outcome app actions of the installation being replaced keep blocking their repeats.
+    const ledgerRestore = mergeDestinationConnectedLedger(paths.root, prepared.stateDirectory);
+    if (ledgerRestore.merged) marker.modifications.push({component:"connected-app-ledger.db",action:`${ledgerRestore.merged} connected app records from the installation being replaced kept, still marked as not known to have finished`});
+    // New credentials are made on restore, so these records follow the bot until the same action is resolved.
+    detachRestoredLedgerAccounts(prepared.stateDirectory);
     writeFileAtomic(markerPath, JSON.stringify({ ...marker, transactionId: id }) + "\n", { mode: 0o600 });
     move(prepared.stateDirectory, tx.candidate);
     if (options.requireNew && entry(paths.root)) fail("RESTORE_NEW_TARGET_REQUIRED");

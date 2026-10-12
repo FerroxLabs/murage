@@ -3,7 +3,7 @@ import { beforeEach,expect,it,vi } from "vitest";
 import { DATA_DIR } from "./config.ts";
 import { closeDatabase } from "./database.ts";
 import { Store } from "./store.ts";
-import { accessOwnerView,assertConnectedAppCall,requestBotAccess,reviewBotAccess,restrictedConnectorTools } from "./bot-access.ts";
+import { accessOwnerView,assertConnectedAppCall,assertStoredConnectedAppAccess,requestBotAccess,reviewBotAccess,restrictedConnectorTools,connectedAppsListScope } from "./bot-access.ts";
 import { botAccessPolicy } from "./bot-access-role.ts";
 import { permissionStatus } from "./permission-status.ts";
 import { ACCESS_REQUEST_TTL_MS, accessRequestExpiresAt } from "../shared/bot-access.ts";
@@ -59,10 +59,109 @@ it("bounds legacy request expiry and rejects attempts to supply a longer review 
  expect(()=>reviewBotAccess(restored,f.bot.id,{action:"approve",requestId:request.requestId,revision:request.revision},[account],now+ACCESS_REQUEST_TTL_MS)).toThrow("expired");
  expect(accessRequestExpiresAt({createdAt:now,expiresAt:now+2*ACCESS_REQUEST_TTL_MS})).toBe(now+ACCESS_REQUEST_TTL_MS);
 });
+it("the list revision also moves when connected accounts were removed (disconnect or sign-out)",()=>{
+ const f=setup();
+ enable(f,false);
+ const before=connectedAppsListScope(f.bot,0);
+ expect(connectedAppsListScope(f.bot,0).revision).toBe(before.revision);
+ expect(connectedAppsListScope(f.bot,1).revision).not.toBe(before.revision);
+});
+it("a restricted bot's description repeats no tool, so a policy listing the same tool many times stays small",()=>{
+ const f=setup();
+ enable(f,false);
+ const policy=botAccessPolicy(f.bot);
+ const one=policy.grants[0]!;
+ const grants=Array.from({length:30},()=>({...one,tools:Array.from({length:30},()=>"GMAIL_FETCH_EMAILS")}));
+ f.bot.connectedAppAccess={...policy,grants};
+ const raw=JSON.stringify(botAccessPolicy(f.bot).grants).length;
+ const listed=connectedAppsListScope(f.bot).initialTools as {description:string}[];
+ expect(listed[0]!.description.length).toBeLessThan(raw/3);
+ expect(listed[0]!.description).toContain("ca_fixture_owned");
+});
 it("replaces expired queue entries without reviving them or consuming the request limit",()=>{
  const f=setup(),now=1_700_000_000_000;let first="";
  for(let index=0;index<12;index++){const queued=requestBotAccess(f.store,f.lead,{botId:f.bot.id,revision:botAccessPolicy(f.bot).revision,grants:[grant]},now);if(!index)first=queued.requestId;}
  const fresh=requestBotAccess(f.store,f.lead,{botId:f.bot.id,revision:botAccessPolicy(f.bot).revision,grants:[grant]},now+ACCESS_REQUEST_TTL_MS);
  expect(botAccessPolicy(f.bot).requests.map(item=>item.id)).toEqual([fresh.requestId]);
  expect(()=>reviewBotAccess(f.store,f.bot.id,{action:"approve",requestId:first,revision:fresh.revision},[account],now+ACCESS_REQUEST_TTL_MS)).toThrow("no longer pending");
+});
+
+it("a stored connected-app result is handed back only while the bot's CURRENT grants still cover what the action used",()=>{
+ const f=setup();enable(f);
+ const used=[{tool:"GMAIL_SEND_EMAIL",account:"ca_fixture_owned"}];
+ expect(()=>assertStoredConnectedAppAccess(f.bot,{requirements:used,complete:true})).not.toThrow();
+ const before=accessOwnerView(f.bot);
+ reviewBotAccess(f.store,f.bot.id,{action:"configure",revision:before.policy.revision,mode:"restricted",allowWrites:true,grants:[{toolkit:"gmail",accountId:"ca_fixture_owned",tools:["GMAIL_FETCH_EMAILS"]}]},[account]);
+ expect(()=>assertStoredConnectedAppAccess(f.bot,{requirements:used,complete:true})).toThrow("not been approved");
+ expect(()=>assertStoredConnectedAppAccess(f.bot,{requirements:[{tool:"GMAIL_FETCH_EMAILS",account:"ca_fixture_owned"}],complete:true})).not.toThrow();
+ f.store.patchBot(f.bot.id,{composio:false});
+ expect(()=>assertStoredConnectedAppAccess(f.bot,{requirements:[{tool:"GMAIL_FETCH_EMAILS",account:"ca_fixture_owned"}],complete:true})).toThrow("disabled");
+});
+it("a restricted bot is denied a stored result whose tools or accounts are unknown",()=>{
+ const f=setup();enable(f);
+ // unrestricted bots are unaffected
+ f.store.patchBot(f.bot.id,{connectedAppAccess:{...botAccessPolicy(f.bot),mode:"unrestricted"}});
+ expect(()=>assertStoredConnectedAppAccess(f.bot,{requirements:[],complete:false})).not.toThrow();
+ const f2=setup();enable(f2);
+ // no recognised tool slug: empty requirements
+ expect(()=>assertStoredConnectedAppAccess(f2.bot,{requirements:[],complete:false})).toThrow("cannot be matched");
+ expect(()=>assertStoredConnectedAppAccess(f2.bot,{requirements:[],complete:true})).toThrow("cannot be matched");
+ // a requirement list that is only part of what ran
+ expect(()=>assertStoredConnectedAppAccess(f2.bot,{requirements:[{tool:"GMAIL_FETCH_EMAILS",account:"ca_fixture_owned"}],complete:false})).toThrow("cannot be matched");
+ // a tool outside the reviewed catalog
+ expect(()=>assertStoredConnectedAppAccess(f2.bot,{requirements:[{tool:"ACME_DO_THING",account:"ca_fixture_owned"}],complete:true})).toThrow("not supported");
+ // a known tool with no account recorded
+ expect(()=>assertStoredConnectedAppAccess(f2.bot,{requirements:[{tool:"GMAIL_FETCH_EMAILS"}],complete:true})).toThrow("not been approved");
+});
+it("a migrated legacy journal row is incomplete, so a restricted CHECK / run_again is denied",async()=>{
+ const {mkdtempSync,rmSync}=await import("node:fs");const {tmpdir}=await import("node:os");const {join}=await import("node:path");const {DatabaseSync}=await import("node:sqlite");
+ const {SqliteOperationJournal}=await import("./connected-app-journal.ts");const {ConnectedAppOperations}=await import("./connected-app-operations.ts");
+ const dir=mkdtempSync(join(tmpdir(),"legacy-"));
+ try{
+  const file=join(dir,"ledger.db");const old=new DatabaseSync(file);
+  old.exec("CREATE TABLE connected_app_ops (handle TEXT PRIMARY KEY, scope TEXT NOT NULL, key TEXT NOT NULL, label TEXT, started_at INTEGER NOT NULL, state TEXT NOT NULL, cause TEXT, delivered_at INTEGER, requirements TEXT NOT NULL)");
+  old.prepare("INSERT INTO connected_app_ops VALUES ('h-old','s','k',NULL,1,'unknown','no-answer',NULL,?)").run(JSON.stringify([{tool:"GMAIL_SEND_EMAIL",account:"ca_fixture_owned"}]));
+  old.close();
+  const op=new ConnectedAppOperations(Date.now,new SqliteOperationJournal(file)).byHandle("s","h-old")!;
+  expect(op.requirementsComplete).toBe(false);
+  const f=setup();enable(f);
+  expect(()=>assertStoredConnectedAppAccess(f.bot,{requirements:op.requirements,complete:op.requirementsComplete})).toThrow("cannot be matched");
+ }finally{rmSync(dir,{recursive:true,force:true});}
+});
+it("the bridge's list scope: a restricted bot's initial list holds only approved accounts, and the revision moves with access",()=>{
+ const f=setup();
+ const open=connectedAppsListScope(f.bot);
+ expect(open.initialTools).toBeUndefined();
+ enable(f,false);
+ const restricted=connectedAppsListScope(f.bot);
+ expect(restricted.revision).not.toBe(open.revision);
+ expect(JSON.stringify(restricted.initialTools)).toContain("ca_fixture_owned");
+ expect(JSON.stringify(restricted.initialTools)).not.toContain("COMPOSIO_SEARCH_TOOLS");
+ expect(connectedAppsListScope(f.bot).revision).toBe(restricted.revision);
+ reviewBotAccess(f.store,f.bot.id,{action:"configure",revision:botAccessPolicy(f.bot).revision,mode:"restricted",allowWrites:false,grants:[]},[]);
+ const revoked=connectedAppsListScope(f.bot);
+ expect(revoked.revision).not.toBe(restricted.revision);
+ expect(JSON.stringify(revoked.initialTools)).not.toContain("ca_fixture_owned");
+});
+it("the list revision follows EFFECTIVE access only: requests, denials, unchanged saves and grant ordering never move it",()=>{
+ const f=setup();
+ enable(f,false);
+ const base=connectedAppsListScope(f.bot,3).revision;
+ // A new request (revision counter moves, pending list changes): same effective access.
+ const q=requestBotAccess(f.store,f.lead,{botId:f.bot.id,revision:botAccessPolicy(f.bot).revision,grants:[{...grant,tools:["GMAIL_SEND_EMAIL"]}],allowWrites:true});
+ expect(botAccessPolicy(f.bot).requests.length).toBe(1);
+ expect(connectedAppsListScope(f.bot,3).revision).toBe(base);
+ // Denying it: same.
+ reviewBotAccess(f.store,f.bot.id,{action:"deny",requestId:q.requestId,revision:q.revision},[account]);
+ expect(connectedAppsListScope(f.bot,3).revision).toBe(base);
+ // Saving exactly what is already configured (counter moves): same.
+ const p=botAccessPolicy(f.bot);
+ reviewBotAccess(f.store,f.bot.id,{action:"configure",revision:p.revision,mode:"restricted",allowWrites:p.allowWrites,grants:p.grants},[account]);
+ expect(connectedAppsListScope(f.bot,3).revision).toBe(base);
+ // Tool order and duplicates carry no meaning.
+ reviewBotAccess(f.store,f.bot.id,{action:"configure",revision:botAccessPolicy(f.bot).revision,mode:"restricted",allowWrites:false,grants:[{...grant,tools:[...grant.tools].reverse().concat(grant.tools[0]!)}]},[account]);
+ expect(connectedAppsListScope(f.bot,3).revision).toBe(base);
+ // A real change in effective access moves it.
+ reviewBotAccess(f.store,f.bot.id,{action:"configure",revision:botAccessPolicy(f.bot).revision,mode:"restricted",allowWrites:true,grants:[grant]},[account]);
+ expect(connectedAppsListScope(f.bot,3).revision).not.toBe(base);
 });

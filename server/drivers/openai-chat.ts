@@ -1,4 +1,6 @@
 import { NO_TOOL_SURFACE, renderMurageTurn } from "../murage-tool-surface.ts";
+import { awaitIntake, isIntakeOpen } from "../harness/intake.ts";
+import { fluxMemoryContextForTurn, fluxMemoryDecision, isFluxUrl, type FluxMemoryDecision } from "../flux-memory-headers.ts";
 import type {
   DriverCreateInput,
   ModelCatalog,
@@ -263,6 +265,8 @@ interface IdleBudget {
   readonly expired: boolean;
   readonly message: string;
   renew(): void;
+  /** Stops the clock without ending the budget (our own wait for room on the event bus); renew() re-arms it. */
+  suspend(): void;
   clear(): void;
 }
 
@@ -270,7 +274,7 @@ function createIdleBudget(ms: number | undefined): IdleBudget {
   const controller = new AbortController();
   if (!ms || ms <= 0) {
     // No budget: nothing ever expires here, and progress has nothing to renew.
-    return { signal: controller.signal, expired: false, message: "", renew: () => {}, clear: () => {} };
+    return { signal: controller.signal, expired: false, message: "", renew: () => {}, suspend: () => {}, clear: () => {} };
   }
   const message = `timed out after ${ms}ms without provider progress`;
   let timer: ReturnType<typeof setTimeout> | null = null;
@@ -291,6 +295,10 @@ function createIdleBudget(ms: number | undefined): IdleBudget {
     },
     message,
     renew: arm,
+    suspend: () => {
+      if (timer) clearTimeout(timer);
+      timer = null;
+    },
     clear: () => {
       cleared = true;
       if (timer) clearTimeout(timer);
@@ -310,6 +318,16 @@ const isProgress = (chunk: CompletionJson): boolean => {
     || reasoningOf(delta) !== ""
     || (typeof choice?.finish_reason === "string" && choice.finish_reason !== "")
     || (chunk.usage !== undefined && chunk.usage !== null);
+};
+
+/** A wait that settles as soon as the request is aborted, whatever the awaited promise is doing. */
+const waitUnlessAborted = (wait: Promise<void>, signal: AbortSignal): Promise<void> => {
+  if (signal.aborted) return Promise.reject(signal.reason);
+  return new Promise((resolve, reject) => {
+    const onAbort = () => reject(signal.reason);
+    signal.addEventListener("abort", onAbort, { once: true });
+    wait.then(() => { signal.removeEventListener("abort", onAbort); resolve(); }, (error: unknown) => { signal.removeEventListener("abort", onAbort); reject(error); });
+  });
 };
 
 /** One body read that settles as soon as the request is aborted, even when a
@@ -415,6 +433,11 @@ export function createOpenAIChatRuntime<Config>(options: RuntimeOptions<Config>)
     /** The turn's submission fence, run right before every request write
      *  (each redirect hop too) with no await in between. */
     beforeWrite?: () => void,
+    /** Flux Memory headers for this call; a caller with no turn is off/off. */
+    fluxMemory: FluxMemoryDecision = fluxMemoryDecision(),
+    /** The thread this stream feeds, so the bus backpressure holds THIS thread at its own allowance. A call with no thread
+     *  (a one-off generate) is the only caller that may pass null. */
+    threadId: string | null = null,
   ): Promise<Completion> => {
     const local = providerRoute ? null : options.localEndpoint?.(model) ?? null;
     const endpoint: ChatEndpoint | undefined = local
@@ -432,7 +455,7 @@ export function createOpenAIChatRuntime<Config>(options: RuntimeOptions<Config>)
     // same errno.
     const reached = { value: false };
     try {
-      return await completeWithin(requestSignal, idle, reached, messages, model, stream, onDelta, endpoint, beforeWrite);
+      return await completeWithin(requestSignal, idle, reached, messages, model, stream, onDelta, endpoint, beforeWrite, fluxMemory, threadId);
     } catch (value) {
       // An idle expiry outside the stream reader (connect, headers, or a
       // non-streamed body) is the provider's timeout failure. The caller's own
@@ -490,6 +513,8 @@ export function createOpenAIChatRuntime<Config>(options: RuntimeOptions<Config>)
     onDelta?: (delta: string, kind: "assistant_text" | "reasoning_text") => void,
     providerRoute?: ChatEndpoint,
     beforeWrite?: () => void,
+    fluxMemory: FluxMemoryDecision = fluxMemoryDecision(),
+    threadId: string | null = null,
   ): Promise<Completion> => {
     const label = providerRoute?.preset ?? options.httpErrorLabel;
     const secret = providerRoute?.apiKey ?? options.apiKey;
@@ -529,6 +554,8 @@ export function createOpenAIChatRuntime<Config>(options: RuntimeOptions<Config>)
         headers: {
           ...(sameOrigin ? { authorization: `Bearer ${secret}` } : {}),
           "content-type": "application/json",
+          // Flux Memory: only on a Flux host (a Flux connection, or a compat URL that is Flux).
+          ...(isFluxUrl(endpoint) ? fluxMemory.headers : {}),
         },
         body: requestBody,
         signal: requestSignal,
@@ -656,7 +683,15 @@ export function createOpenAIChatRuntime<Config>(options: RuntimeOptions<Config>)
     try {
       readLoop: for (;;) {
         let result: Awaited<ReturnType<typeof reader.read>>;
+        // Backpressure: while the event bus is at its cap the next chunk is not read (the connection itself stalls); the idle
+        // budget restarts when reading resumes, so waiting on our own queue never counts as the provider going quiet.
         try {
+          if (!isIntakeOpen(threadId)) {
+            // Our own queue, not the provider: the idle clock stands still while we wait, and Stop ends the wait at once.
+            idle.suspend();
+            await waitUnlessAborted(awaitIntake(threadId), requestSignal);
+            idle.renew();
+          }
           result = await readUnlessAborted(reader, requestSignal);
         } catch (value) {
           const cause = asError(value);
@@ -809,7 +844,7 @@ export function createOpenAIChatRuntime<Config>(options: RuntimeOptions<Config>)
             const out = todo.push(delta);
             emitPlans(out.plans);
             emitAnswerDelta(out.text);
-          }, turn.providerRoute, turn.beforeSubmit);
+          }, turn.providerRoute, turn.beforeSubmit, fluxMemoryDecision(fluxMemoryContextForTurn(turn)), turn.threadId);
           const rest = todo.flush();
           emitPlans(rest.plans);
           emitAnswerDelta(rest.text);
