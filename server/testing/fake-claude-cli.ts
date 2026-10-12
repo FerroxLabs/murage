@@ -52,11 +52,19 @@
 //                      reply that @mentions teammates).
 //   FAKE_CLAUDE_AUTH   in (default) | out | unsupported | malformed |
 //                      inherited-api-key — what `auth status` reports
+//   FAKE_CLAUDE_VERSION what `--version` prints before " (Claude Code)" (default 2.1.295)
+//   FAKE_CLAUDE_ONE_SHOT_FAIL after-init — a one-shot helper starts (`init`), then exits 1 with a
+//                      stderr line quoting a launch-flag refusal
+//   FAKE_CLAUDE_REFUSE unknown-option | managed-mcp — the CLI refuses Murage's launch flags, on a
+//                      turn and on the flagged auth probe alike
 //   FAKE_CLAUDE_SIGTERM_DELAY_MS a CLI that takes this long to close after
 //                      SIGTERM (the real CLI tears down MCP children and
 //                      flushes before exiting). The turn's writer lease is
 //                      released only at that close, so a test can stand
 //                      inside the Stop → close window deterministically.
+//
+//   FAKE_CLAUDE_IGNORE_TERM=1 a wedged CLI: ignores SIGTERM and stdin EOF,
+//                      so only SIGKILL of its tree ends it.
 //
 //   FAKE_CLAUDE_PRE_ACCEPT_TRANSIENTS how many launches die with transient
 //                      stderr at startup WITHOUT reading stdin (counted in
@@ -180,12 +188,33 @@ const fixtureRequested = (text: string, marker: string) => {
   return (lines.pop() ?? "").includes(marker);
 };
 
+// What a real CLI prints when it refuses the isolation flags (rig, 2.1.281 and 2.1.295: stderr, exit 1).
+function refuseLaunchFlags(): void {
+  if (process.env.FAKE_CLAUDE_REFUSE === "unknown-option") {
+    process.stderr.write("error: unknown option '--strict-mcp-config'\n");
+    process.exit(1);
+  }
+  if (process.env.FAKE_CLAUDE_REFUSE === "managed-mcp") {
+    process.stderr.write("You cannot use --strict-mcp-config when an enterprise MCP config is present\n");
+    process.exit(1);
+  }
+}
+
 // Snapshot probes: both answer on argv alone and exit without reading stdin.
 if (argv[0] === "--version") {
-  process.stdout.write("2.1.232 (Claude Code)\n");
+  process.stdout.write(`${process.env.FAKE_CLAUDE_VERSION ?? "2.1.295"} (Claude Code)\n`);
   process.exit(0);
 }
 
+// The auth probe carries the isolation flags a turn gets, ahead of the subcommand.
+const authAt = argv.indexOf("auth");
+if (authAt > 0 && argv[authAt + 1] === "status") {
+  if (process.env.FAKE_CLAUDE_AUTH_ARGV) writeFileSync(process.env.FAKE_CLAUDE_AUTH_ARGV, JSON.stringify(argv.slice(0, authAt)));
+  // A CLI that refuses the flags refuses them ahead of `auth` too (rig, 2.1.281 and 2.1.295:
+  // `claude --no-such-flag auth status --json` prints the commander error on stderr, exit 1).
+  refuseLaunchFlags();
+  argv.splice(0, authAt);
+}
 if (argv[0] === "auth" && argv[1] === "status") {
   const auth = process.env.FAKE_CLAUDE_AUTH ?? "in";
   if (auth === "unsupported") {
@@ -203,10 +232,13 @@ if (argv[0] === "auth" && argv[1] === "status") {
   );
 }
 
+refuseLaunchFlags();
+
 // One-shot helper mode used by generateText/reviewPermission. The prompt is
 // deliberately read from stdin so sensitive review text never appears in
 // argv or process listings.
-if (argAfter("--output-format") === "text") {
+// Helpers ask for stream-json (init, then one result frame); text is the older shape.
+if (argAfter("--output-format") === "text" || (argv.includes("-p") && argAfter("--input-format") === null && !argv.includes("--json-schema"))) {
   const prompt = await new Promise<string>((resolve) => {
     let input = "";
     process.stdin.setEncoding("utf8");
@@ -222,8 +254,20 @@ if (argAfter("--output-format") === "text") {
   if (process.env.FAKE_CLAUDE_REVIEW_LOG) appendFileSync(process.env.FAKE_CLAUDE_REVIEW_LOG, "one-shot\n");
   // {{PROPOSAL_NONCE}}: the New project proposal block's nonce, read from the prompt as a model does
   const nonce = /<murage-project-proposal nonce="([a-f0-9]{32})">/.exec(prompt)?.[1] ?? "";
-  process.stdout.write(`${(process.env.FAKE_CLAUDE_ONE_SHOT_TEXT ?? "fake generated text").replaceAll("{{PROPOSAL_NONCE}}", nonce)}\n`);
-  process.exit(0);
+  const answer = (process.env.FAKE_CLAUDE_ONE_SHOT_TEXT ?? "fake generated text").replaceAll("{{PROPOSAL_NONCE}}", nonce);
+  if (argAfter("--output-format") !== "stream-json") {
+    process.stdout.write(`${answer}\n`);
+    process.exit(0);
+  }
+  process.stdout.write(JSON.stringify({ type: "system", subtype: "init", session_id: "one-shot", tools: [], mcp_servers: [] }) + "\n");
+  // FAKE_CLAUDE_ONE_SHOT_FAIL=after-init: the CLI started, then a later diagnostic happens to quote
+  // a launch-flag refusal before a nonzero exit (that is not a refusal of Murage's flags)
+  if (process.env.FAKE_CLAUDE_ONE_SHOT_FAIL === "after-init") {
+    process.stderr.write("error: unknown option '--settings'\n", () => process.exit(1));
+    await new Promise(() => {});
+  }
+  process.stdout.write(JSON.stringify({ type: "result", subtype: "success", is_error: false, result: answer }) + "\n", () => process.exit(0));
+  await new Promise(() => {});
 }
 
 const countLaunch = (): number => {
@@ -619,7 +663,7 @@ const playTurn = (prompt: JsonValue) => {
     }
     writeFileSync(
       process.env.FAKE_CLAUDE_DUMP,
-      JSON.stringify({ pid: process.pid, argv, env: fixtureDumpEnvironment(), prompt, systemPrompt, mcpConfig, credFile: readCredFile(), ...(procedureProbe?{procedureProbe}:{}) }, null, 2),
+      JSON.stringify({ pid: process.pid, argv, env: fixtureDumpEnvironment(), prompt, systemPrompt, mcpConfig, credFile: readCredFile(), promptWallMs: Date.now(), ...(procedureProbe?{procedureProbe}:{}), ...(process.env.FAKE_CLAUDE_MCP_READY_MS ? { mcpAtPrompt: mcpStates(), promptAtMs: Date.now() - mcpStartedAt } : {}) }, null, 2),
     );
   }
 
@@ -999,6 +1043,18 @@ const sigtermDelayMs = Number(process.env.FAKE_CLAUDE_SIGTERM_DELAY_MS);
 if (Number.isFinite(sigtermDelayMs) && sigtermDelayMs > 0) {
   process.on("SIGTERM", () => { setTimeout(() => process.exit(143), sigtermDelayMs); });
 }
+// A wedged CLI: SIGTERM and stdin EOF are both ignored, so only SIGKILL ends
+// it.
+const wedged = process.env.FAKE_CLAUDE_IGNORE_TERM === "1";
+if (wedged) {
+  process.on("SIGTERM", () => { /* ignored */ });
+  setInterval(() => { /* stays alive after stdin EOF */ }, 60_000);
+  // FAKE_CLAUDE_LATE_INIT=1: a retired session's straggler, a system/init
+  // frame written after Murage closed its stdin.
+  if (process.env.FAKE_CLAUDE_LATE_INIT === "1") {
+    process.stdin.on("end", () => setTimeout(() => out({ type: "system", subtype: "init", session_id: "late-retired-session", model: "fake" }), 100));
+  }
+}
 
 // A slow start (a wrapper, a loaded machine): nothing is read or written for
 // FAKE_CLAUDE_START_DELAY_MS, then the CLI reads its --mcp-config and
@@ -1026,11 +1082,33 @@ if (Number.isFinite(startDelayMs) && startDelayMs > 0) {
   }, startDelayMs);
 }
 
+// MCP start-up as Claude Code 2.1.280+ reports it (rig, 2026-10-10): every
+// --mcp-config server starts "pending" and becomes "connected" after
+// FAKE_CLAUDE_MCP_READY_MS[name] ms (default 0; -1 never), or "failed" at
+// MCP_TIMEOUT. `mcp_status` answers the states; `mcp_reconnect` answers after
+// FAKE_CLAUDE_MCP_RECONNECT_MS[name] ms (default 0; -1: the timeout error at
+// MCP_TIMEOUT), and, as in the real CLI, nothing else on stdin is read until it has.
+const mcpStartedAt = Date.now();
+const mcpTimeoutMs = Number(process.env.MCP_TIMEOUT) > 0 ? Number(process.env.MCP_TIMEOUT) : 30_000;
+const mcpReadyMs: Record<string, number> = process.env.FAKE_CLAUDE_MCP_READY_MS ? JSON.parse(process.env.FAKE_CLAUDE_MCP_READY_MS) : {};
+const mcpReconnectMs: Record<string, number> = process.env.FAKE_CLAUDE_MCP_RECONNECT_MS ? JSON.parse(process.env.FAKE_CLAUDE_MCP_RECONNECT_MS) : {};
+const mcpOverride = new Map<string, "connected" | "failed">();
+const mcpServerNames = (): string[] => Object.keys((startupMcpConfig as { mcpServers?: Record<string, unknown> } | null)?.mcpServers ?? {});
+const mcpState = (name: string): string => {
+  const forced = mcpOverride.get(name);
+  if (forced) return forced;
+  const elapsed = Date.now() - mcpStartedAt;
+  const ready = mcpReadyMs[name] ?? 0;
+  if (ready >= 0 && elapsed >= ready) return "connected";
+  return elapsed >= mcpTimeoutMs ? "failed" : "pending";
+};
+const mcpStates = (): Record<string, string> => Object.fromEntries(mcpServerNames().map((name) => [name, mcpState(name)]));
+let stdinHeld = false;
+
 let buf = "";
-process.stdin.on("data", (c) => {
-  buf += c;
+const drainStdin = () => {
   let nl;
-  while ((nl = buf.indexOf("\n")) !== -1) {
+  while (!stdinHeld && (nl = buf.indexOf("\n")) !== -1) {
     const line = buf.slice(0, nl);
     buf = buf.slice(nl + 1);
     if (!line.trim()) continue;
@@ -1040,9 +1118,49 @@ process.stdin.on("data", (c) => {
     } catch {
       continue;
     }
-    const control = prompt as { type?: string; request_id?: string; request?: { subtype?: string } } | null;
+    const control = prompt as { type?: string; request_id?: string; request?: { subtype?: string; serverName?: string } } | null;
     if (control?.type === "control_request") {
-      if (process.env.FAKE_CLAUDE_CONTROL_LOG) appendFileSync(process.env.FAKE_CLAUDE_CONTROL_LOG, `${JSON.stringify(control)}\n`);
+      if (process.env.FAKE_CLAUDE_CONTROL_LOG) appendFileSync(process.env.FAKE_CLAUDE_CONTROL_LOG, `${JSON.stringify({ ...control, at: Date.now() - mcpStartedAt })}\n`);
+      // FAKE_CLAUDE_MCP_STATUS: "error" refuses mcp_status as an unknown
+      // request (an older build); "silent" never answers it.
+      if (control.request?.subtype === "mcp_status" && process.env.FAKE_CLAUDE_MCP_STATUS === "silent") continue;
+      if (control.request?.subtype === "mcp_status" && process.env.FAKE_CLAUDE_MCP_STATUS === "error") {
+        out({ type: "control_response", response: { subtype: "error", request_id: control.request_id, error: "Unsupported control request subtype: mcp_status" } });
+        continue;
+      }
+      if (control.request?.subtype === "mcp_status") {
+        // A server whose bridge died between turns (the test writes its name
+        // into FAKE_CLAUDE_MCP_KILL_FILE): "failed" from now on, until reconnected.
+        const killFile = process.env.FAKE_CLAUDE_MCP_KILL_FILE;
+        if (killFile && existsSync(killFile)) {
+          for (const name of readFileSync(killFile, "utf8").split(/\s+/).filter(Boolean)) mcpOverride.set(name, "failed");
+          try { unlinkSync(killFile); } catch { /* already gone */ }
+        }
+        out({ type: "control_response", response: { subtype: "success", request_id: control.request_id, response: { mcpServers: Object.entries(mcpStates()).map(([name, status]) => ({ name, status })) } } });
+        continue;
+      }
+      if (control.request?.subtype === "mcp_reconnect") {
+        const name = String(control.request.serverName ?? "");
+        const after = mcpReconnectMs[name] ?? 0;
+        stdinHeld = true;
+        setTimeout(() => {
+          // FAKE_CLAUDE_MCP_RECONNECT_NEEDS_CRED=1: the restarted bridge lists
+          // its tools with the credential file as it is now; an empty file is
+          // refused, as the harness refuses a tools/list without a token.
+          const cred = process.env.FAKE_CLAUDE_MCP_RECONNECT_NEEDS_CRED === "1" ? readCredFile().content : null;
+          const unauthorized = process.env.FAKE_CLAUDE_MCP_RECONNECT_NEEDS_CRED === "1"
+            && !(cred && typeof cred === "object" && Object.keys((cred as Record<string, Record<string, string>>)[name] ?? {}).length);
+          if (process.env.FAKE_CLAUDE_CONTROL_LOG) appendFileSync(process.env.FAKE_CLAUDE_CONTROL_LOG, `${JSON.stringify({ reconnected: name, unauthorized, at: Date.now() - mcpStartedAt })}\n`);
+          const fails = after < 0 || unauthorized;
+          mcpOverride.set(name, fails ? "failed" : "connected");
+          out(fails
+            ? { type: "control_response", response: { subtype: "error", request_id: control.request_id, error: unauthorized ? `MCP server "${name}": tools/list unauthorized` : `MCP server "${name}" connection timed out after ${mcpTimeoutMs}ms` } }
+            : { type: "control_response", response: { subtype: "success", request_id: control.request_id, response: {} } });
+          stdinHeld = false;
+          drainStdin();
+        }, after < 0 ? mcpTimeoutMs : after);
+        continue;
+      }
       out(control.request?.subtype === "initialize" && process.env.FAKE_CLAUDE_INIT_ERROR === "1"
         ? { type: "control_response", response: { subtype: "error", request_id: control.request_id, error: "initialize refused" } }
         : control.request?.subtype === "initialize"
@@ -1056,8 +1174,13 @@ process.stdin.on("data", (c) => {
       armSteerGate();
     }
   }
+};
+process.stdin.on("data", (c) => {
+  buf += c;
+  drainStdin();
 });
 process.stdin.on("end", () => {
+  if (wedged) return;
   stdinEnded = true;
   finishIfDone();
 });

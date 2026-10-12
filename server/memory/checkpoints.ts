@@ -46,5 +46,7 @@ export function supersededThreadCheckpoint(id: string, version: number, access: 
   const db = database();
   const row = db.prepare("SELECT scope_id,kind,state,owner_pinned FROM memory_records WHERE id=? AND version=?").get(id,version);
   if (!row || row.kind !== "checkpoint" || row.state !== "archived" || row.owner_pinned === 1 || id !== threadCheckpointId(String(row.scope_id),access.threadId)) return false;
-  return Boolean(db.prepare("SELECT 1 FROM memory_records WHERE id=? AND version>? AND state='active' LIMIT 1").get(id,version));
+  // Newest first: the active version of a rolling checkpoint is its newest, so this is one probe. In ascending order it read
+  // every version between this one and the newest, and a resumed session's receipts cite one version each (perf102 long500).
+  return Boolean(db.prepare("SELECT 1 FROM memory_records WHERE id=? AND version>? AND state='active' ORDER BY version DESC LIMIT 1").get(id,version));
 }

@@ -241,6 +241,7 @@ jobs:
           set -euo pipefail
           mkdir -p qualification-evidence
           node scripts/whatsapp-inventory.mjs "release/mac-arm64/Murage.app/Contents/Resources/server" --check
+          node scripts/staged-tree-check.mjs "release/mac-arm64/Murage.app/Contents/Resources/server" --max-path 140
           cp "release/mac-arm64/Murage.app/Contents/Resources/server/whatsapp-runtime-manifest.json" qualification-evidence/whatsapp-darwin-arm64-inventory.json
           node scripts/smoke-whatsapp-packaged.mjs --server-directory "release/mac-arm64/Murage.app/Contents/Resources/server" --runtime "release/mac-arm64/Murage.app/Contents/MacOS/Murage" --platform darwin --arch arm64 --electron-version "$(node -p 'require("electron/package.json").version')" > qualification-evidence/whatsapp-darwin-arm64.json 2> qualification-evidence/whatsapp-darwin-arm64-probe.log
 
@@ -485,6 +486,7 @@ jobs:
           set -euo pipefail
           mkdir -p qualification-evidence
           node scripts/whatsapp-inventory.mjs "release/mac/Murage.app/Contents/Resources/server" --check
+          node scripts/staged-tree-check.mjs "release/mac/Murage.app/Contents/Resources/server" --max-path 140
           cp "release/mac/Murage.app/Contents/Resources/server/whatsapp-runtime-manifest.json" qualification-evidence/whatsapp-darwin-x64-inventory.json
           # One automatic retry; the first attempt's diagnostics are kept.
           for attempt in 1 2; do
@@ -596,6 +598,7 @@ jobs:
           set -euo pipefail
           mkdir -p qualification-evidence
           node scripts/whatsapp-inventory.mjs "release/win-unpacked/resources/server" --check
+          node scripts/staged-tree-check.mjs "release/win-unpacked/resources/server" --max-path 140
           cp "release/win-unpacked/resources/server/whatsapp-runtime-manifest.json" qualification-evidence/whatsapp-win32-x64-inventory.json
           node scripts/smoke-whatsapp-packaged.mjs --server-directory "release/win-unpacked/resources/server" --runtime "release/win-unpacked/Murage.exe" --platform win32 --arch x64 --electron-version "$(node -p 'require("electron/package.json").version')" > qualification-evidence/whatsapp-win32-x64.json 2> qualification-evidence/whatsapp-win32-x64-probe.log
 
@@ -811,6 +814,7 @@ jobs:
           set -euo pipefail
           mkdir -p qualification-evidence
           node scripts/whatsapp-inventory.mjs "release/linux-unpacked/resources/server" --check
+          node scripts/staged-tree-check.mjs "release/linux-unpacked/resources/server" --max-path 140
           cp "release/linux-unpacked/resources/server/whatsapp-runtime-manifest.json" qualification-evidence/whatsapp-linux-x64-inventory.json
           node scripts/smoke-whatsapp-packaged.mjs --server-directory "release/linux-unpacked/resources/server" --runtime "release/linux-unpacked/murage" --platform linux --arch x64 --electron-version "$(node -p 'require("electron/package.json").version')" > qualification-evidence/whatsapp-linux-x64.json 2> qualification-evidence/whatsapp-linux-x64-probe.log
 

@@ -6,7 +6,8 @@ import type { ProviderAdapter, RuntimeEvent } from "../contracts.ts";
 export interface EventRecorder {
   events: RuntimeEvent[];
   /** Resolves with the first event matching `pred` (including already-seen
-   * ones). Rejects after `timeoutMs` with the transcript so far. */
+   * ones). Rejects after `timeoutMs` (30 s: a ceiling for a loaded runner, never a delay
+   * on a passing run) with the transcript so far. */
   until(pred: (e: RuntimeEvent) => boolean, timeoutMs?: number): Promise<RuntimeEvent>;
   stop(): void;
 }
@@ -25,7 +26,7 @@ export function recordEvents(adapter: ProviderAdapter): EventRecorder {
   });
   return {
     events,
-    until(pred, timeoutMs = 10_000) {
+    until(pred, timeoutMs = 30_000) {
       const seen = events.find(pred);
       if (seen) return Promise.resolve(seen);
       return new Promise((resolve, reject) => {

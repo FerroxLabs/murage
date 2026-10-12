@@ -4,10 +4,11 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 const macAdmission = vi.hoisted(() => vi.fn());
-vi.mock("./browser-macos-identity.ts", () => ({ verifyPackagedMacBrowser: macAdmission }));
+const macState = vi.hoisted(() => ({ checking: false, unfinished: false, keepChecking: false, settleTo: "ok" as "ok" | "failed" | "unfinished", waited: 0, starts: [] as unknown[], waitArgs: [] as unknown[], startsAtWait: 0 }));
+vi.mock("./browser-macos-identity.ts", () => ({ verifyPackagedMacBrowser: macAdmission, verifyPackagedMacBrowserAsync: async () => true, checkPackagedMacBrowserAsync: async (...args: unknown[]) => { macState.waited++; macState.waitArgs = args; macState.startsAtWait = macState.starts.length; if (!macState.keepChecking) macState.checking = false; if (macState.settleTo === "ok") macAdmission.mockReturnValue(true); else if (macState.settleTo === "unfinished") macState.unfinished = true; return macState.settleTo; }, packagedMacBrowserState: (...args: unknown[]) => (macState.starts.push(args[2]), macState.checking) ? "checking" : macState.unfinished ? "unfinished" : macAdmission(...args) ? "ok" : "failed" }));
 import { AGENT_BROWSER_VERSION, agentBrowserReleaseUrl, resolveAgentBrowserReleaseAsset } from "./browser-engine-release.ts";
 import { CLAUDE_TOOL_SURFACE, renderMurageTools } from "./murage-tool-surface.ts";
-import { ADMISSION_CACHE_TTL_MS, admissionWalkLimits, clearBrowserAdmissionCache, UNIFIED_BROWSER_SYSTEM_PROMPT, unifiedBrowserSystemPrompt, agentBrowserIntegration, BEFOREUNLOAD_GUARD_SCRIPT, browserEngineEncryptionKey, browserEngineStatus, browserSessionId, userChromeSessionId, closeAgentBrowserSession, installAgentBrowserBinary, pinnedBinaryPath, resolveAgentBrowserBinary, verifyAgentBrowserBinary } from "./browser-engine.ts";
+import { BROWSER_CHECK_UNFINISHED_REASON, settledBrowserEngineStatus, ADMISSION_CACHE_TTL_MS, admissionWalkLimits, clearBrowserAdmissionCache, UNIFIED_BROWSER_SYSTEM_PROMPT, unifiedBrowserSystemPrompt, agentBrowserIntegration, BEFOREUNLOAD_GUARD_SCRIPT, browserEngineEncryptionKey, browserEngineStatus, packagedBrowserRefusedReason, browserSessionId, userChromeSessionId, closeAgentBrowserSession, installAgentBrowserBinary, pinnedBinaryPath, resolveAgentBrowserBinary, verifyAgentBrowserBinary } from "./browser-engine.ts";
 
 const scratch: string[] = [];
 function temporary() { const path = mkdtempSync(join(tmpdir(), "murage-browser-test-")); scratch.push(path); return path; }
@@ -23,7 +24,7 @@ describe("optional browser resolver and installation", () => {
     const options = { platform: "darwin" as const, arch: "arm64", env: { MURAGE_RESOURCES_PATH: resources, PATH: bundle } };
     macAdmission.mockReturnValue(true);
     expect(browserEngineStatus(options)).toMatchObject({ kind: "ready", version: AGENT_BROWSER_VERSION, runtimeVerified: false });
-    expect(macAdmission).toHaveBeenCalledWith(resources);
+    expect(macAdmission).toHaveBeenCalledWith(resources, expect.any(String), true);
     macAdmission.mockReturnValue(false);
     expect(resolveAgentBrowserBinary(options)).toBeNull();
   });
@@ -38,7 +39,99 @@ describe("optional browser resolver and installation", () => {
     macAdmission.mockReturnValue(false);
     const status = browserEngineStatus({ platform: "darwin", arch: "arm64", env: { MURAGE_RESOURCES_PATH: resources } });
     expect(status).toMatchObject({ kind: "unavailable", installable: false });
-    expect(status.kind === "unavailable" && status.reason).toBe("The browser that comes with Murage didn't pass its signature check, so it wasn't started. Reinstall Murage from the download to fix it.");
+    expect(status.kind === "unavailable" && status.reason).toBe(packagedBrowserRefusedReason(resources, "darwin"));
+  });
+  // D6: while the signature check runs the owner sees plain "checking" copy, never the failure text.
+  it("reads 'checking' while the packaged browser's signature check is still running", () => {
+    const resources = temporary(), bundle = join(resources, "browser-engine");
+    mkdirSync(bundle, { recursive: true });
+    writeFileSync(join(bundle, "agent-browser"), "signed engine", { mode: 0o700 });
+    macState.checking = true;
+    try {
+      const status = browserEngineStatus({ platform: "darwin", arch: "arm64", env: { MURAGE_RESOURCES_PATH: resources } });
+      expect(status).toMatchObject({ kind: "unavailable", checking: true, installable: false });
+      expect(status.kind === "unavailable" && status.reason).toContain("checking");
+      expect(status.kind === "unavailable" && status.reason).not.toMatch(/didn't pass|Reinstall/);
+    } finally { macState.checking = false; }
+  });
+  // 1.0.2: a check that could not finish is not a refusal. It never says "reinstall", and the next attempt asks again.
+  it("gives a plain 'still checking' message, not the reinstall one, when the signature check could not finish", () => {
+    const resources = temporary(), bundle = join(resources, "browser-engine");
+    mkdirSync(join(bundle, "chrome/chrome-headless-shell-mac-arm64"), { recursive: true });
+    writeFileSync(join(bundle, "agent-browser"), "signed engine", { mode: 0o700 });
+    writeFileSync(join(bundle, "chrome/chrome-headless-shell-mac-arm64/chrome-headless-shell"), "signed Chrome", { mode: 0o700 });
+    const options = { platform: "darwin" as const, arch: "arm64", env: { MURAGE_RESOURCES_PATH: resources } };
+    macState.unfinished = true;
+    try {
+      const status = browserEngineStatus(options);
+      expect(status).toMatchObject({ kind: "unavailable", unfinished: true, installable: false });
+      expect(status.kind === "unavailable" && status.reason).toBe(BROWSER_CHECK_UNFINISHED_REASON);
+      expect(status.kind === "unavailable" && status.reason).not.toMatch(/didn't pass|Reinstall|\u2014/);
+    } finally { macState.unfinished = false; }
+    macAdmission.mockReturnValue(false);
+    const refused = browserEngineStatus(options);
+    expect(refused.kind === "unavailable" && refused.reason).toBe(packagedBrowserRefusedReason(resources, "darwin"));   // a real refusal still says reinstall
+    macAdmission.mockReturnValue(true);
+    expect(browserEngineStatus(options).kind).toBe("ready");          // the next attempt checks again; nothing was remembered
+  });
+  it("lets a turn wait for a running check and then use the browser", async () => {
+    const resources = temporary(), bundle = join(resources, "browser-engine");
+    mkdirSync(join(bundle, "chrome/chrome-headless-shell-mac-arm64"), { recursive: true });
+    writeFileSync(join(bundle, "agent-browser"), "signed engine", { mode: 0o700 });
+    writeFileSync(join(bundle, "chrome/chrome-headless-shell-mac-arm64/chrome-headless-shell"), "signed Chrome", { mode: 0o700 });
+    const options = { platform: "darwin" as const, arch: "arm64", env: { MURAGE_RESOURCES_PATH: resources } };
+    macState.checking = true; macState.settleTo = "ok"; macState.waited = 0;
+    try {
+      expect(browserEngineStatus(options)).toMatchObject({ checking: true });
+      expect(await settledBrowserEngineStatus(options)).toMatchObject({ kind: "ready" });
+      expect(macState.waited).toBe(1);
+    } finally { macState.checking = false; macAdmission.mockReset(); }
+  });
+  // 1.0.2 review: the wait reports the outcome it awaited. Its last look never starts a new signature check, and the turn can cancel it and give a short budget.
+  it("ends a turn's wait without starting another check, passes the budget and cancel, and says when it could not finish", async () => {
+    const resources = temporary(), bundle = join(resources, "browser-engine");
+    mkdirSync(join(bundle, "chrome/chrome-headless-shell-mac-arm64"), { recursive: true });
+    writeFileSync(join(bundle, "agent-browser"), "signed engine", { mode: 0o700 });
+    writeFileSync(join(bundle, "chrome/chrome-headless-shell-mac-arm64/chrome-headless-shell"), "signed Chrome", { mode: 0o700 });
+    const options = { platform: "darwin" as const, arch: "arm64", env: { MURAGE_RESOURCES_PATH: resources } };
+    macState.checking = true; macState.settleTo = "unfinished"; macState.waited = 0; macState.starts = [];
+    const cancelled = () => false, noted: string[] = [];
+    try {
+      const status = await settledBrowserEngineStatus(options, { waitMs: 20_000, cancelled, onChecking: reason => noted.push(reason) });
+      expect(status).toMatchObject({ kind: "unavailable", unfinished: true });
+      expect(status.kind === "unavailable" && status.reason).toBe(BROWSER_CHECK_UNFINISHED_REASON);
+      expect(macState.waitArgs.slice(2)).toEqual([20_000, cancelled]);   // short budget and the turn's own cancel reach the wait
+      expect(noted).toHaveLength(1); expect(noted[0]).toContain("checking");   // progress is published before waiting
+      expect(macState.starts.slice(0, macState.startsAtWait).every(start => start === true)).toBe(true);   // the looks before the wait may start the check
+      expect(macState.starts.length).toBeGreaterThan(macState.startsAtWait);
+      expect(macState.starts.slice(macState.startsAtWait).every(start => start === false)).toBe(true);     // every look after it never does
+    } finally { macState.checking = false; macState.unfinished = false; macAdmission.mockReset(); }
+  });
+  // Astra r2: when the wait ends "unfinished" while the shared run is still going, the awaited outcome is reported, never a fresh "checking".
+  it("reports the awaited 'unfinished' outcome even though the check is still running", async () => {
+    const resources = temporary(), bundle = join(resources, "browser-engine");
+    mkdirSync(join(bundle, "chrome/chrome-headless-shell-mac-arm64"), { recursive: true });
+    writeFileSync(join(bundle, "agent-browser"), "signed engine", { mode: 0o700 });
+    writeFileSync(join(bundle, "chrome/chrome-headless-shell-mac-arm64/chrome-headless-shell"), "signed Chrome", { mode: 0o700 });
+    const options = { platform: "darwin" as const, arch: "arm64", env: { MURAGE_RESOURCES_PATH: resources } };
+    macState.checking = true; macState.keepChecking = true; macState.settleTo = "unfinished"; macState.waited = 0; macState.starts = [];
+    try {
+      const status = await settledBrowserEngineStatus(options, { waitMs: 1 });
+      expect(status).toMatchObject({ kind: "unavailable", unfinished: true });
+      expect(status.kind === "unavailable" && status.checking).toBeFalsy();
+      expect(status.kind === "unavailable" && status.reason).toBe(BROWSER_CHECK_UNFINISHED_REASON);
+    } finally { macState.checking = false; macState.keepChecking = false; macState.unfinished = false; macAdmission.mockReset(); }
+  });
+  // D6: the check is the signature, not the path. A copy under /private/tmp fails because a copy loses its seal, and the message says to move the app.
+  it("tells a Mac app running outside Applications to move the original there, and a normal install to reinstall", () => {
+    const outside = packagedBrowserRefusedReason("/private/tmp/Murage.app/Contents/Resources", "darwin", "/Users/alex");
+    expect(outside).toContain("Move the original Murage.app into Applications");
+    expect(outside).toContain("didn't pass its signature check");
+    expect(packagedBrowserRefusedReason("/Applications/Murage.app/Contents/Resources", "darwin", "/Users/alex")).toBe("The browser that comes with Murage didn't pass its signature check, so it wasn't started. Reinstall Murage from the download to fix it.");
+    expect(packagedBrowserRefusedReason("/Users/alex/Applications/Murage.app/Contents/Resources", "darwin", "/Users/alex")).toContain("Reinstall Murage");
+    expect(packagedBrowserRefusedReason("/Applications/Murage.app-copy/Contents/Resources", "darwin", "/Users/alex")).toContain("Move the original");
+    expect(packagedBrowserRefusedReason("/private/tmp/Murage.app/Contents/Resources", "linux", "/home/x")).toContain("Reinstall Murage");
+    expect(outside).not.toMatch(/safe|unsafe|—/i);
   });
   describe("packaged admission cache", () => {
     // Fixtures are created "now"; the cache refuses files touched in the last
@@ -74,7 +167,7 @@ describe("optional browser resolver and installation", () => {
       expect(resolveAgentBrowserBinary(options)).toBe(engine);
       expect(browserEngineStatus(options).kind).toBe("ready");
       expect(macAdmission).toHaveBeenCalledTimes(1);
-      expect(macAdmission).toHaveBeenCalledWith(resources);
+      expect(macAdmission).toHaveBeenCalledWith(resources, expect.any(String), true);
     });
     it("re-verifies when the engine, Chrome, seal or app identity changes (stale cache never admits a swapped binary)", () => {
       const { engine, chrome, options } = packaged();

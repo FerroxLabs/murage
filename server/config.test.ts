@@ -3,6 +3,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { fluxMemorySettings, setFluxMemoryConfig } from "./flux-memory-headers.ts";
 
 import { customMcpServers, customMcpServerDescriptors,
   DATA_DIR,
@@ -150,11 +151,11 @@ describe("notification preference configuration", () => {
   afterEach(() => { rmSync(file, { force: true }); });
   it("persists privacy and quiet hours while partial changes preserve false preferences", () => {
     const quietHours = { enabled: true, start: "22:00", end: "07:00", timeZone: "Asia/Bangkok" };
-    saveConfig({ notifications: { attention: true, completion: false, failures: false, previewContent: false, quietHours } });
+    saveConfig({ notifications: { attention: true, completion: false, failures: false, memories: true, previewContent: false, quietHours } });
     const patch = parseConfigPatch({ notifications: { attention: false } });
     expect(patch.notifications).toEqual({ attention: false });
     saveConfig(patch);
-    expect(loadConfig().notifications).toEqual({ attention: false, completion: false, failures: false, previewContent: false, quietHours });
+    expect(loadConfig().notifications).toEqual({ attention: false, completion: false, failures: false, memories: true, previewContent: false, quietHours });
     expect(JSON.parse(readFileSync(file, "utf8")).notifications).toEqual(loadConfig().notifications);
     expect(parseStoredConfig({}).notifications).toBeUndefined();
   });
@@ -703,8 +704,12 @@ describe("configuration boundaries", () => {
     expect(showToolCallsEnabled({ features: { showToolCalls: true } })).toBe(true);
   });
 
-  it.each([0, 1.5, 5, "2", null])("rejects an invalid per-bot VM limit: %j", (maxInstances) => {
+  it.each([0, 1.5, 9, "2", null])("rejects an invalid per-bot VM limit: %j", (maxInstances) => {
     expect(() => parseConfigPatch({ localVm: { maxInstances } })).toThrow("localVm.maxInstances");
+  });
+
+  it("accepts up to eight per-bot desktops", () => {
+    expect(parseConfigPatch({ localVm: { maxInstances: 8 } })).toEqual({ localVm: { maxInstances: 8 } });
   });
 
   it.each(["one-per-bot", "windows", 1, null])("rejects an invalid Local VM mode: %j", (mode) => {
@@ -1526,4 +1531,22 @@ it("keeps the learning default flag typed and round trips explicit choices",()=>
  expect(parseConfigPatch({features:{learningDefaultOn:true}})).toEqual(cfg);
  expect(parseConfigPatch({features:{learningDefaultOn:false}})).toEqual({features:{learningDefaultOn:false}});
  expect(()=>parseConfigPatch({features:{learningDefaultOn:"yes"}})).toThrow();
+});
+
+describe("Flux Memory switches in config", () => {
+  const file = join(DATA_DIR, "config.json");
+  beforeEach(() => { mkdirSync(DATA_DIR, { recursive: true }); rmSync(file, { force: true }); vi.stubEnv("MURAGE_FLUX_MEMORY", undefined); vi.stubEnv("MURAGE_FLUX_MEMORY_INJECT", undefined); vi.stubEnv("MURAGE_FLUX_MEMORY_OWNER", undefined); vi.stubEnv("MURAGE_FLUX_MEMORY_SPACES", undefined); });
+  afterEach(() => { rmSync(file, { force: true }); vi.unstubAllEnvs(); setFluxMemoryConfig(undefined); });
+
+  it("defaults are unchanged (spaces off), saved switches apply, env overrides them", () => {
+    loadConfig();
+    expect(fluxMemorySettings()).toEqual({ killSwitch: false, inject: "on", ownerMemory: "on", spaces: false });
+    saveConfig({ flux: { memory: { enabled: true, inject: false, spaces: true } } });
+    loadConfig();
+    expect(fluxMemorySettings()).toEqual({ killSwitch: false, inject: "off", ownerMemory: "on", spaces: true });
+    vi.stubEnv("MURAGE_FLUX_MEMORY_SPACES", "off");
+    vi.stubEnv("MURAGE_FLUX_MEMORY", "off");
+    expect(fluxMemorySettings()).toMatchObject({ killSwitch: true, spaces: false, inject: "off" });
+    expect(() => saveConfig({ flux: { memory: { bogus: true } } } as never)).toThrow();
+  });
 });

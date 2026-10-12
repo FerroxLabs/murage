@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
-import { LocalSetupError, localSetupFailureOf } from "./local-setup-failure.ts";
+import { engineConfigInvalid, engineFolderUnavailable, engineUpdateRequired, ScopeUnavailableError } from "./drivers/scoped-cli-home.ts";
+import { LocalSetupError, localSetupEngineOf, localSetupFailureOf } from "./local-setup-failure.ts";
 import { ProjectFolderLeaseError } from "./project-folder-leases.ts";
 
 describe("local setup failure source", () => {
@@ -16,5 +17,18 @@ describe("local setup failure source", () => {
     expect(localSetupFailureOf(new Error("CUA Driver is not ready for this computer"))).toBeUndefined();
     expect(localSetupFailureOf(Object.assign(new Error("x"), { localFailure: "computer" }))).toBeUndefined();
     expect(localSetupFailureOf("agent-browser command timed out")).toBeUndefined();
+  });
+
+  it("reads an engine folder failure from its structured code and engine, never from its English text", () => {
+    expect(localSetupFailureOf(new ScopeUnavailableError("tidied up", true))).toBe("engine-folder-busy");
+    expect(localSetupFailureOf(engineFolderUnavailable("Antigravity", new Error("EACCES")))).toBe("engine-folder-unavailable");
+    expect(localSetupFailureOf(engineUpdateRequired("Codex", "0.100.0", [0, 2, 0]))).toBe("engine-update-required");
+    expect(localSetupEngineOf(engineUpdateRequired("Codex", undefined, [0, 2, 0]))).toBe("Codex");
+    expect(localSetupFailureOf(new ScopeUnavailableError("x", false, { code: "symlink-required", engine: "Grok" }))).toBe("engine-symlink-required");
+    expect(localSetupFailureOf(new ScopeUnavailableError("x", false, { code: "login-link-lost", engine: "Codex" }))).toBe("engine-login-link-lost");
+    expect(localSetupFailureOf(engineConfigInvalid("OpenCode"))).toBe("engine-config-invalid");
+    expect(localSetupEngineOf(engineConfigInvalid("OpenCode"))).toBe("OpenCode");
+    expect(localSetupFailureOf(new Error("This bot's engine could not be set up in its own folder"))).toBeUndefined();
+    expect(localSetupEngineOf(new Error("x"))).toBeUndefined();
   });
 });
