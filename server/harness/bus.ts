@@ -9,6 +9,7 @@ import { join } from "node:path";
 
 import { EVENTS_DIR } from "../config.ts";
 import { redactSecrets } from "../redact.ts";
+import { IntakeValve } from "./intake.ts";
 import { newId, type ProviderInstance, type RuntimeEvent, type RuntimeEventListener } from "../contracts.ts";
 
 const INCOMPLETE_LOG_MESSAGE =
@@ -34,11 +35,45 @@ function withoutImageBytes(event: RuntimeEvent): RuntimeEvent {
   } as RuntimeEvent;
 }
 
+export type DeliveryGate = {
+  held(): boolean; wait(): Promise<void>; isBusy(error: unknown): boolean;
+  /** The queue passed its bound while the gate was held: release the hold (the index build defers to a later idle). */
+  overflow?(): void;
+};
+type QueuedDelivery = { event: RuntimeEvent; owed: RuntimeEventListener[]; bytes: number };
+export type DeliveryLimits = { maxEvents: number; maxBytes: number; batch: number; retryMinMs: number; retryMaxMs: number };
+const DEFAULT_LIMITS: DeliveryLimits = { maxEvents: 2_000, maxBytes: 32 * 1024 * 1024, batch: 50, retryMinMs: 50, retryMaxMs: 2_000 };
+function eventBytes(event: RuntimeEvent): number {
+  try { return JSON.stringify(event).length; } catch { return 4_096; }
+}
+
 export class EventBus {
   private listeners = new Set<RuntimeEventListener>();
   private unsubscribes: Array<{ instanceId: string; unsubscribe: () => void }> = [];
   private pendingLogWarnings = new Map<string, RuntimeEvent>();
   private readonly appendLog: typeof appendFileSync;
+  /** Every listener is durable by default (the fold, terminal cleanup and the waiters all write or follow writes): its
+   * deliveries wait out the writer gate and are retried on a locked database, never dropped. `{ durable: false }` opts out. */
+  private immediate = new Set<RuntimeEventListener>();
+  private gate: DeliveryGate | null = null;
+  /** Events waiting for the writer gate (or for a lock to clear), per thread and in order, each with the durable listeners
+   * still owed it (the failed one and every listener after it, in subscription order). A thread whose head keeps meeting a
+   * locked database backs off on its own; other threads are never held behind it. */
+  private pendingByThread = new Map<string, QueuedDelivery[]>();
+  private retryState = new Map<string, { at: number; attempts: number }>();
+  /** Every event still owed. All of it is in RAM and none of it is ever written to a side file: revoked content must not
+   * outlive its deletion, so the bound is kept by slowing the producers (see intake.ts), never by spilling. */
+  private pendingCount = 0;
+  private pendingBytes = 0;
+  /** Bytes owed per thread, so a few huge events from one thread close that thread's intake before they reach the global byte cap. */
+  private bytesByThread = new Map<string, number>();
+  /** True from the moment the global cap is reached until the queue is back under the low-water mark. */
+  private saturated = false;
+  private overflowed = false;
+  /** Producers ask this before handing over another event; engine stdout streams are paused through it. */
+  readonly valve = new IntakeValve(threadId => this.intakeClosed(threadId));
+  private limits: DeliveryLimits = DEFAULT_LIMITS;
+  private draining = false;
   /** Threads whose events are delivered but never written to events/. */
   private omitThread: (threadId: string) => boolean = () => false;
 
@@ -103,18 +138,137 @@ export class EventBus {
   }
 
   private deliver(event: RuntimeEvent) {
+    const owed: RuntimeEventListener[] = [];
     for (const listener of [...this.listeners]) {
+      if (!this.immediate.has(listener)) { owed.push(listener); continue; }
       try {
         listener(event);
       } catch (e) {
         console.error("bus: listener threw", e);
       }
     }
+    if (!owed.length) return;
+    // Durable listeners write to messages.db. While the lock is held, or earlier events of the same thread are still waiting,
+    // this one queues behind them (per-thread order is kept); otherwise it runs now.
+    if (this.pendingByThread.has(event.threadId) || this.gate?.held()) { this.enqueue(event, owed); return; }
+    const left = this.runOwed(event, owed);
+    if (left.length) this.enqueue(event, left);
   }
 
-  subscribe(listener: RuntimeEventListener): () => void {
+  /** Runs the listeners in order. At the first one that hits a locked database it stops and returns that listener AND every
+   * listener after it, so none overtakes the failed one. A listener that fails any other way is logged and skipped. */
+  private runOwed(event: RuntimeEvent, owed: RuntimeEventListener[]): RuntimeEventListener[] {
+    for (let i = 0; i < owed.length; i++) {
+      try {
+        owed[i]!(event);
+      } catch (e) {
+        if (this.gate?.isBusy(e)) return owed.slice(i);
+        console.error("bus: listener threw", e);
+      }
+    }
+    return [];
+  }
+
+  private enqueue(event: RuntimeEvent, owed: RuntimeEventListener[]) {
+    const bytes = eventBytes(event);
+    const entry = { event, owed, bytes };
+    const queue = this.pendingByThread.get(event.threadId);
+    if (queue) queue.push(entry); else this.pendingByThread.set(event.threadId, [entry]);
+    this.pendingCount++; this.pendingBytes += bytes;
+    this.bytesByThread.set(event.threadId, (this.bytesByThread.get(event.threadId) ?? 0) + bytes);
+    this.checkCapacity();
+    this.kick();
+  }
+
+  /** The cap is global (all threads, events and bytes). Reaching it releases the hold on writers (a held gate would
+   * otherwise keep every thread queueing; the index build defers to a later idle) and closes intake. Intake reopens only
+   * below the low-water mark, so producers do not flap.
+   *
+   * No deadlock between threads: a thread may hold at most half the event cap (`threadShare`), so one thread whose
+   * listener keeps meeting a lock cannot fill the queue and starve the others. A blocked thread's queue drains by its own
+   * retry timer, independent of intake, and a thread with nothing queued delivers synchronously without using capacity. */
+  private checkCapacity() {
+    const { maxEvents, maxBytes } = this.limits;
+    if (!this.saturated && (this.pendingCount >= maxEvents || this.pendingBytes >= maxBytes)) {
+      this.saturated = true;
+      if (!this.overflowed) {
+        this.overflowed = true;
+        console.error(`bus: delivery queue reached its cap (${this.pendingCount} events); intake is paused until it drains and the writer hold is released`);
+        try { this.gate?.overflow?.(); } catch (e) { console.error("bus: overflow release failed", e); }
+      }
+    } else if (this.saturated && this.pendingCount <= Math.floor(maxEvents / 2) && this.pendingBytes <= Math.floor(maxBytes / 2)) {
+      this.saturated = false;
+    }
+    if (!this.pendingCount) this.overflowed = false;
+    this.valve.evaluate();
+  }
+  private threadShare(): number { return Math.max(1, Math.floor(this.limits.maxEvents / 2)); }
+  /** True while a producer for this thread (null: a stream shared by several) must wait. */
+  private intakeClosed(threadId: string | null): boolean {
+    if (this.saturated) return true;
+    if (threadId === null) return false;
+    return (this.pendingByThread.get(threadId)?.length ?? 0) >= this.threadShare() || (this.bytesByThread.get(threadId) ?? 0) >= Math.max(1, Math.floor(this.limits.maxBytes / 2));
+  }
+
+  private kick() {
+    if (this.draining) return;
+    this.draining = true;
+    void this.drain().catch(e => console.error("bus: drain failed", e)).finally(() => { this.draining = false; if (this.pendingCount) this.kick(); });
+  }
+
+  private async drain() {
+    let held = 0;
+    while (this.pendingCount) {
+      if (this.gate?.held()) {
+        await this.gate.wait();
+        // a wait that returns at once while the hold is still in force (a bounded or exclusion-blind wait) must not spin the loop: a real timer, growing to a cap
+        if (this.gate.held()) { held = Math.min(held * 2 || 5, 100); await new Promise<void>(resolve => setTimeout(resolve, held)); } else held = 0;
+        continue;
+      }
+      held = 0;
+      const now = Date.now();
+      let budget = this.limits.batch, soonest = Infinity;
+      for (const [threadId, queue] of [...this.pendingByThread]) {
+        const state = this.retryState.get(threadId);
+        if (state && state.at > now) { soonest = Math.min(soonest, state.at); continue; }
+        while (queue.length && budget > 0) {
+          const head = queue[0]!;
+          head.owed = this.runOwed(head.event, head.owed);
+          if (head.owed.length) {
+            const attempts = (state?.attempts ?? 0) + 1;
+            if (attempts === 100) console.error(`bus: thread ${threadId} has met a locked database ${attempts} times; still retrying`);
+            const wait = Math.min(this.limits.retryMaxMs, this.limits.retryMinMs * 2 ** Math.min(attempts, 10));
+            this.retryState.set(threadId, { at: Date.now() + wait, attempts });
+            soonest = Math.min(soonest, Date.now() + wait);
+            break;
+          }
+          queue.shift(); budget--; this.pendingCount--; this.pendingBytes -= head.bytes;
+          this.bytesByThread.set(threadId, Math.max(0, (this.bytesByThread.get(threadId) ?? 0) - head.bytes));
+          this.retryState.delete(threadId);
+        }
+        if (!queue.length) { this.pendingByThread.delete(threadId); this.retryState.delete(threadId); this.bytesByThread.delete(threadId); }
+        this.checkCapacity();
+        if (budget <= 0) break;
+      }
+      if (!this.pendingCount) break;
+      // hand the loop back between batches; sleep until the soonest retry when every thread is backing off
+      await new Promise<void>(resolve => budget <= 0 ? setImmediate(resolve) : setTimeout(resolve, Math.max(5, Math.min(this.limits.retryMaxMs, soonest - Date.now()))));
+    }
+  }
+
+  /** Test seam: tighter bounds and timings. */
+  setDeliveryLimits(limits: Partial<DeliveryLimits>) { this.limits = { ...DEFAULT_LIMITS, ...limits }; }
+
+  /** The writer gate the durable listeners wait on (server/database.ts). */
+  gateDeliveries(gate: DeliveryGate | null) { this.gate = gate; }
+
+  /** True while a durable delivery is still queued. */
+  pendingDurable(): number { return this.pendingCount; }
+
+  subscribe(listener: RuntimeEventListener, options: { durable?: boolean } = {}): () => void {
     this.listeners.add(listener);
-    return () => this.listeners.delete(listener);
+    if (options.durable === false) this.immediate.add(listener);
+    return () => { this.listeners.delete(listener); this.immediate.delete(listener); };
   }
 
   detachAll() {

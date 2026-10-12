@@ -18,6 +18,16 @@ it("creates local capture-and-recall memory for a new installation", () => {
   expect(() => inspectInstallationDatabase(database())).not.toThrow();
 });
 
+// Review finding 1 (1.0.2 lane C): under synchronous=NORMAL an acknowledged forget, a disclosure's provenance or an
+// accepted send's identity could be undone by a power cut. Measured on the sched rig, NORMAL gained nothing (turn
+// prep p90 and stall max were no better than FULL), so messages.db stays FULL for every commit, traffic included.
+it("keeps messages.db at synchronous=FULL once it takes traffic, for every commit", () => {
+  const level = () => database().prepare("PRAGMA synchronous").get()?.synchronous;
+  transaction(db => { db.prepare("UPDATE memory_meta SET data_revision=data_revision+1 WHERE id=1").run(); });
+  expect(level()).toBe(2);
+  expect(transaction(() => level())).toBe(2);
+});
+
 it("rolls back conversation, source revision and job as one transaction", () => {
   const id = randomUUID();
   expect(() => transaction(db => {

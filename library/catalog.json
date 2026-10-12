@@ -2220,6 +2220,65 @@
       }
     },
     {
+      "slug": "community-lead-finder",
+      "name": "Community Lead Finder",
+      "summary": "Find people asking for what you sell in communities you choose. Read each community's rules first, prepare useful replies for your approval, and keep a dated lead log. For a researched prospect list and outbound sequence, use Lead-Gen Outbound Squad.",
+      "category": "Sales",
+      "outcome": "A ranked list of relevant community requests with dated evidence",
+      "setupMinutes": 5,
+      "manifest": "teams/community-lead-finder/community-lead-finder.emberteam.json",
+      "readme": "teams/community-lead-finder/README.md",
+      "members": 5,
+      "skills": [
+        "teams/community-lead-finder/skills/project-manager/SKILL.md",
+        "teams/community-lead-finder/skills/task-delegation-system/SKILL.md",
+        "teams/community-lead-finder/skills/task-prioritization/SKILL.md",
+        "teams/community-lead-finder/skills/community-led-growth/SKILL.md",
+        "teams/community-lead-finder/skills/community-builder/SKILL.md",
+        "teams/community-lead-finder/skills/fact-check-framework/SKILL.md",
+        "teams/community-lead-finder/skills/research-synthesis/SKILL.md",
+        "teams/community-lead-finder/skills/research-audience-discovery/SKILL.md",
+        "teams/community-lead-finder/skills/sales-icp/SKILL.md",
+        "teams/community-lead-finder/skills/copy-customer-voice/SKILL.md",
+        "teams/community-lead-finder/skills/proofreading/SKILL.md",
+        "teams/community-lead-finder/skills/data-quality-rules/SKILL.md",
+        "teams/community-lead-finder/skills/patch-crm-hygiene/SKILL.md",
+        "teams/community-lead-finder/skills/sales-qualify/SKILL.md",
+        "teams/community-lead-finder/skills/project-status-report/SKILL.md"
+      ],
+      "playbooks": [
+        {
+          "key": "nina",
+          "name": "Community Lead Finder lead",
+          "summary": "Return a community rules register, ranked request cards, helpful reply approval queue and minimal lead log with a room bulletin."
+        },
+        {
+          "key": "otis",
+          "name": "Community rules reviewer",
+          "summary": "Return a dated rules table and a permitted, held or revise disposition for each reply, with the supporting rule excerpt."
+        },
+        {
+          "key": "tess",
+          "name": "Community request scout",
+          "summary": "Return ranked request cards with score components, quoted need, dated evidence, rules reference, unknowns and a suggested helpful answer angle."
+        },
+        {
+          "key": "leon",
+          "name": "Helpful reply writer",
+          "summary": "Return a complete helpful reply draft and approval card with rule support, disclosure decision and action state."
+        },
+        {
+          "key": "mae",
+          "name": "Community lead record keeper",
+          "summary": "Return a minimal lead register, duplicate notes, next review queue and reconciled community activity counts."
+        }
+      ],
+      "adaptable": false,
+      "requires": {
+        "apps": []
+      }
+    },
+    {
       "slug": "community-manager",
       "name": "Community Manager",
       "summary": "Hearth prepares a weekly community digest from the material you supply. You receive the working draft, its supporting evidence and the decisions still needed. For channel strategy, use Channels.",
@@ -3161,6 +3220,60 @@
       "profileReviewHash": "b1547f5115ad5b932d5b7b60c9f08f1277e3603ccd57594bdaa512be83cb4ef4",
       "requires": {
         "apps": []
+      }
+    },
+    {
+      "slug": "follow-up-desk",
+      "name": "Follow-Up Desk",
+      "summary": "Find quiet threads and leads, prepare follow-ups in your voice, and track replies with a clear cadence. For a backlog of incoming messages, use Reply Desk. For buyer needs, offer fit and pipeline bottlenecks, use Sales Pipeline.",
+      "category": "Sales",
+      "outcome": "An approval queue of follow-ups grounded in the last conversation",
+      "setupMinutes": 5,
+      "manifest": "teams/follow-up-desk/follow-up-desk.emberteam.json",
+      "readme": "teams/follow-up-desk/README.md",
+      "members": 4,
+      "skills": [
+        "teams/follow-up-desk/skills/project-manager/SKILL.md",
+        "teams/follow-up-desk/skills/task-delegation-system/SKILL.md",
+        "teams/follow-up-desk/skills/task-prioritization/SKILL.md",
+        "teams/follow-up-desk/skills/follow-up-sequences/SKILL.md",
+        "teams/follow-up-desk/skills/email-productivity/SKILL.md",
+        "teams/follow-up-desk/skills/patch-crm-hygiene/SKILL.md",
+        "teams/follow-up-desk/skills/data-quality-rules/SKILL.md",
+        "teams/follow-up-desk/skills/copy-customer-voice/SKILL.md",
+        "teams/follow-up-desk/skills/professional-email/SKILL.md",
+        "teams/follow-up-desk/skills/proofreading/SKILL.md",
+        "teams/follow-up-desk/skills/project-status-report/SKILL.md"
+      ],
+      "playbooks": [
+        {
+          "key": "ada",
+          "name": "Follow-Up Desk lead",
+          "summary": "Return a quiet-thread register, proposed cadence, approval queue and reply tracker with a dated room bulletin."
+        },
+        {
+          "key": "finn",
+          "name": "Quiet-thread reviewer",
+          "summary": "Return a dated sweep table with eligible and held rows, business-day calculations, evidence references and the next review date."
+        },
+        {
+          "key": "cora",
+          "name": "Follow-up writer",
+          "summary": "Return a follow-up approval card with exact message text, destination, evidence for the next step and action state."
+        },
+        {
+          "key": "joel",
+          "name": "Reply and cadence tracker",
+          "summary": "Return a reply tracker with evidence references, draft and sent states, stop or hold reasons, next review dates and a reconciled room count."
+        }
+      ],
+      "adaptable": false,
+      "requires": {
+        "apps": [
+          "Gmail",
+          "Outlook",
+          "HubSpot"
+        ]
       }
     },
     {
@@ -6077,6 +6190,61 @@
       }
     },
     {
+      "slug": "rival-watch",
+      "name": "Rival Watch",
+      "summary": "Track named competitors over time across public pricing, product, hiring and messaging. Your team keeps dated evidence, a change log and a weekly action brief. For timely content angles, use Trend Desk. For a consequential business decision across functions, use War Room.",
+      "category": "Founders",
+      "outcome": "A weekly dated competitor brief with a proposed response to each change",
+      "setupMinutes": 5,
+      "manifest": "teams/rival-watch/rival-watch.emberteam.json",
+      "readme": "teams/rival-watch/README.md",
+      "members": 5,
+      "skills": [
+        "teams/rival-watch/skills/project-manager/SKILL.md",
+        "teams/rival-watch/skills/task-delegation-system/SKILL.md",
+        "teams/rival-watch/skills/task-prioritization/SKILL.md",
+        "teams/rival-watch/skills/competitive-intelligence/SKILL.md",
+        "teams/rival-watch/skills/competitive-analysis/SKILL.md",
+        "teams/rival-watch/skills/fact-check-framework/SKILL.md",
+        "teams/rival-watch/skills/data-quality-rules/SKILL.md",
+        "teams/rival-watch/skills/research-synthesis/SKILL.md",
+        "teams/rival-watch/skills/competitive-position-analyzer/SKILL.md",
+        "teams/rival-watch/skills/copy-customer-voice/SKILL.md",
+        "teams/rival-watch/skills/proofreading/SKILL.md"
+      ],
+      "playbooks": [
+        {
+          "key": "owen",
+          "name": "Rival Watch lead",
+          "summary": "Return a dated weekly competitor brief, change log, source register and project board."
+        },
+        {
+          "key": "iris",
+          "name": "Product and offer tracker",
+          "summary": "Return an offer and product change table with comparable before and after evidence, coverage notes and proposed responses."
+        },
+        {
+          "key": "hugo",
+          "name": "Hiring signal tracker",
+          "summary": "Return a dated hiring register and signal cards with observed counts, evidence links, interpretations and proposed next checks."
+        },
+        {
+          "key": "vera",
+          "name": "Messaging change tracker",
+          "summary": "Return a messaging comparison with old and new excerpts, dated sources, audience implications and a concrete response draft."
+        },
+        {
+          "key": "ellis",
+          "name": "Competitor evidence reviewer",
+          "summary": "Return an evidence review with a disposition for every card, corrected claim wording, coverage counts and the reviewed brief."
+        }
+      ],
+      "adaptable": false,
+      "requires": {
+        "apps": []
+      }
+    },
+    {
       "slug": "sales-deck",
       "name": "Sales Deck",
       "summary": "A ten-slide sales story with evidence and speaker notes",
@@ -7605,44 +7773,6 @@
       }
     },
     {
-      "slug": "100x-marketing",
-      "name": "Launch a Measurable Campaign",
-      "summary": "For businesses ready to test a focused marketing campaign. Turn audience evidence into campaign assets, a distribution plan, and a measured stop, improve, or scale decision.",
-      "category": "Marketing",
-      "outcome": "Turn a business goal into one clear audience, promise, and growth bet",
-      "setupMinutes": 5,
-      "featured": true,
-      "package": "packages/100x-marketing.md",
-      "manifest": "teams/100x-marketing/100x-marketing.emberteam.json",
-      "readme": "teams/100x-marketing/README.md",
-      "members": 4,
-      "skills": [],
-      "playbooks": [
-        {
-          "key": "positioning-brief",
-          "name": "Positioning Brief",
-          "summary": "Create a sharp, evidence-aware position for one audience and buying situation."
-        },
-        {
-          "key": "campaign-sprint",
-          "name": "Campaign Sprint",
-          "summary": "Turn one growth bet into a focused campaign with assets, distribution, ownership, and measurement."
-        },
-        {
-          "key": "experiment-review",
-          "name": "Experiment Review",
-          "summary": "Review a growth experiment and make an evidence-based stop, iterate, or scale decision."
-        }
-      ],
-      "adaptable": false,
-      "requires": {
-        "apps": [
-          "Google Sheets",
-          "Slack"
-        ]
-      }
-    },
-    {
       "slug": "ad-account-mechanic",
       "name": "Ad Account Mechanic",
       "summary": "For advertisers reviewing an existing ad account. Find weak spots in the funnel, assess spend and offers, and get a weekly action plan with fresh creative ideas.",
@@ -8211,38 +8341,6 @@
       }
     },
     {
-      "slug": "competitor-watch",
-      "name": "Watch Competitor Moves",
-      "summary": "For businesses keeping track of selected competitors. Review public pricing, product, and positioning changes, then get a dated evidence brief explaining what merits a response.",
-      "category": "Strategy",
-      "outcome": "Detect material changes across approved competitor pages and public announcements",
-      "setupMinutes": 4,
-      "featured": true,
-      "package": "packages/competitor-watch.md",
-      "manifest": "teams/competitor-watch/competitor-watch.emberteam.json",
-      "readme": "teams/competitor-watch/README.md",
-      "members": 2,
-      "skills": [],
-      "playbooks": [
-        {
-          "key": "change-detection",
-          "name": "Material Change Detection",
-          "summary": "Record only meaningful public changes with dated evidence and confidence."
-        },
-        {
-          "key": "decision-brief",
-          "name": "Competitive Decision Brief",
-          "summary": "Turn verified changes into a calm watch, investigate, respond, or ignore decision."
-        }
-      ],
-      "adaptable": false,
-      "requires": {
-        "apps": [
-          "Google Sheets"
-        ]
-      }
-    },
-    {
       "slug": "content-refresh-crew",
       "name": "Content Refresh Crew",
       "summary": "For publishers with ageing or underperforming content. Identify what to update first and get researched replacement sections with an editorial quality review.",
@@ -8620,63 +8718,70 @@
     {
       "slug": "dev-shop",
       "name": "Dev Shop",
-      "summary": "For solo founders coordinating software delivery. Turn requests into technical plans, review quality and operational risks, and organize implementation handoffs and release priorities.",
+      "summary": "Plan, build and test software through your available coding engines, with a project board, code review and release notes. Ship coordinates the team for you and Ember, then brings each merge, publish or deployment draft to you for a yes. For a first MVP, use SaaS MVP Sprint (saas-mvp-sprint).",
       "category": "Build",
-      "outcome": "Turn requests into technical plans, review quality and operational risks, and organize implementation handoffs and release priorities.",
+      "outcome": "A scoped spec and project board with an owner and acceptance checks for every task",
       "setupMinutes": 2,
       "featured": true,
       "manifest": "teams/dev-shop/dev-shop.emberteam.json",
       "readme": "teams/dev-shop/README.md",
-      "members": 4,
+      "members": 6,
       "skills": [
+        "teams/dev-shop/skills/engineering-manager-toolkit/SKILL.md",
+        "teams/dev-shop/skills/project-manager/SKILL.md",
+        "teams/dev-shop/skills/task-prioritization/SKILL.md",
+        "teams/dev-shop/skills/task-delegation-system/SKILL.md",
         "teams/dev-shop/skills/smith-shape-and-spec/SKILL.md",
         "teams/dev-shop/skills/smith-architecture-decisions/SKILL.md",
         "teams/dev-shop/skills/smith-agent-handoff/SKILL.md",
-        "teams/dev-shop/skills/ai-agent-builder/SKILL.md",
-        "teams/dev-shop/skills/ai-agent-patterns/SKILL.md",
         "teams/dev-shop/skills/feature-spec/SKILL.md",
-        "teams/dev-shop/skills/monorepo-architect/SKILL.md",
-        "teams/dev-shop/skills/scalability-architect/SKILL.md",
-        "teams/dev-shop/skills/search-system-architect/SKILL.md",
-        "teams/dev-shop/skills/patch-operating-rhythm/SKILL.md",
-        "teams/dev-shop/skills/patch-crm-hygiene/SKILL.md",
+        "teams/dev-shop/skills/ai-coding-assistant-power-user/SKILL.md",
+        "teams/dev-shop/skills/git-workflow/SKILL.md",
+        "teams/dev-shop/skills/unit-test-writer/SKILL.md",
+        "teams/dev-shop/skills/code-review-patterns/SKILL.md",
         "teams/dev-shop/skills/patch-process-design/SKILL.md",
-        "teams/dev-shop/skills/sop-creation/SKILL.md",
-        "teams/dev-shop/skills/pipeline-review/SKILL.md",
-        "teams/dev-shop/skills/ops-metrics-dashboard/SKILL.md",
-        "teams/dev-shop/skills/cold-outreach-sequence/SKILL.md",
-        "teams/dev-shop/skills/follow-up-sequences/SKILL.md",
-        "teams/dev-shop/skills/verdict-score-and-rank/SKILL.md",
-        "teams/dev-shop/skills/verdict-flag-and-fix/SKILL.md",
-        "teams/dev-shop/skills/verdict-the-one-edit/SKILL.md",
-        "teams/dev-shop/skills/content-strategy-evaluation/SKILL.md",
-        "teams/dev-shop/skills/copy-editing/SKILL.md",
-        "teams/dev-shop/skills/proofreading/SKILL.md",
-        "teams/dev-shop/skills/weighted-decision-matrix/SKILL.md",
-        "teams/dev-shop/skills/sentry-formation-and-structure/SKILL.md",
-        "teams/dev-shop/skills/sentry-contracts-and-terms/SKILL.md",
-        "teams/dev-shop/skills/sentry-ip-and-compliance/SKILL.md"
+        "teams/dev-shop/skills/release-management/SKILL.md",
+        "teams/dev-shop/skills/release-notes/SKILL.md",
+        "teams/dev-shop/skills/ci-cd-pipeline-design/SKILL.md",
+        "teams/dev-shop/skills/code-reviewer-software-engineering/SKILL.md",
+        "teams/dev-shop/skills/qa-engineer/SKILL.md",
+        "teams/dev-shop/skills/test-strategy-design/SKILL.md",
+        "teams/dev-shop/skills/accessibility-tester/SKILL.md",
+        "teams/dev-shop/skills/security-audit-codebase/SKILL.md",
+        "teams/dev-shop/skills/api-security-engineer/SKILL.md",
+        "teams/dev-shop/skills/auth-engineer/SKILL.md",
+        "teams/dev-shop/skills/supply-chain-security/SKILL.md"
       ],
       "playbooks": [
         {
+          "key": "ship",
+          "name": "Run the software project",
+          "summary": "Take work from the owner or Ember through spec, implementation, review and release approval."
+        },
+        {
           "key": "smith",
-          "name": "Code",
-          "summary": "Code architect - specs, ADRs, agent handoffs via Ryan Singer's Shape Up. PM/architect, not the coding agent."
+          "name": "Write the spec and engine brief",
+          "summary": "Define the smallest useful change, the architecture choice and the checks a coding engine must satisfy."
+        },
+        {
+          "key": "cole",
+          "name": "Build through the coding engine",
+          "summary": "Turn an agreed spec into a reviewable change and focused verification evidence."
         },
         {
           "key": "patch",
-          "name": "Ops",
-          "summary": "Ops specialist - operating rhythms, CRM hygiene, and SOP design via Verne Harnish's Scaling Up cadence discipline."
+          "name": "Prepare the release",
+          "summary": "Turn reviewed work into release notes and a precise deployment and recovery plan."
         },
         {
           "key": "verdict",
-          "name": "Quality Gate",
-          "summary": "Quality gate - scores content on 8 dimensions, flags issues, names the one specific edit. Scores, doesn't rewrite."
+          "name": "Review code and acceptance evidence",
+          "summary": "Provide an independent review of the implementation and its most important behavior."
         },
         {
           "key": "sentry",
-          "name": "Counsel",
-          "summary": "Counsel - startup-stage legal framing on formation, contracts, IP, and compliance. Not your lawyer; flags when you need one."
+          "name": "Review application boundaries",
+          "summary": "Check the changed feature for access, data handling and dependency concerns."
         }
       ],
       "adaptable": false,
@@ -8907,43 +9012,6 @@
       "adaptable": false,
       "requires": {
         "apps": []
-      }
-    },
-    {
-      "slug": "engineering",
-      "name": "Ship Software Safely",
-      "summary": "For product teams delivering a software change. Get a scoped implementation plan, coordinated engineering work, and a release-readiness review backed by verification evidence.",
-      "category": "Engineering",
-      "outcome": "Convert a product request into an owned, sequenced implementation plan",
-      "setupMinutes": 3,
-      "featured": true,
-      "package": "packages/engineering.md",
-      "manifest": "teams/engineering/engineering.emberteam.json",
-      "readme": "teams/engineering/README.md",
-      "members": 4,
-      "skills": [],
-      "playbooks": [
-        {
-          "key": "architecture-decision",
-          "name": "Architecture Decision",
-          "summary": "Record a focused technical decision with context, alternatives, tradeoffs, and follow-up."
-        },
-        {
-          "key": "implementation-plan",
-          "name": "Implementation Plan",
-          "summary": "Convert a requested outcome into sequenced engineering work with ownership and verification."
-        },
-        {
-          "key": "release-readiness",
-          "name": "Release Readiness",
-          "summary": "Decide whether a change is ready to ship using evidence, risk, rollback, and communication."
-        }
-      ],
-      "adaptable": false,
-      "requires": {
-        "apps": [
-          "GitHub"
-        ]
       }
     },
     {
@@ -9296,39 +9364,6 @@
       "adaptable": false,
       "requires": {
         "apps": []
-      }
-    },
-    {
-      "slug": "inbox-follow-up",
-      "name": "Recover Unanswered Sales Emails",
-      "summary": "For sales teams losing track of promised next steps. Review approved mailbox and CRM data, filter out closed or opted-out conversations, and draft relevant follow-ups without sending them.",
-      "category": "Sales",
-      "outcome": "Find conversations where your team owes a response or promised next step",
-      "setupMinutes": 5,
-      "featured": true,
-      "package": "packages/inbox-follow-up.md",
-      "manifest": "teams/inbox-follow-up/inbox-follow-up.emberteam.json",
-      "readme": "teams/inbox-follow-up/README.md",
-      "members": 2,
-      "skills": [],
-      "playbooks": [
-        {
-          "key": "follow-up-triage",
-          "name": "Follow-up Triage",
-          "summary": "Identify only the conversations where your team genuinely owes the next step."
-        },
-        {
-          "key": "specific-follow-up",
-          "name": "Specific Follow-up",
-          "summary": "Draft a concise follow-up that preserves the real context and offers an easy next step."
-        }
-      ],
-      "adaptable": false,
-      "requires": {
-        "apps": [
-          "Gmail",
-          "HubSpot"
-        ]
       }
     },
     {
@@ -9791,76 +9826,71 @@
     {
       "slug": "marketing-agency",
       "name": "Marketing Agency",
-      "summary": "For businesses coordinating marketing across multiple channels. Plan campaigns, prepare brand-consistent content, and review channel performance to set the next priorities.",
+      "summary": "A complete campaign with clear positioning, channel drafts and measured results",
       "category": "Sell",
-      "outcome": "Plan campaigns, prepare brand-consistent content, and review channel performance to set the next priorities.",
+      "outcome": "A campaign brief and project board linking positioning, content, channels and launch dates",
       "setupMinutes": 2,
       "featured": true,
       "manifest": "teams/marketing-agency/marketing-agency.emberteam.json",
       "readme": "teams/marketing-agency/README.md",
-      "members": 5,
+      "members": 6,
       "skills": [
-        "teams/marketing-agency/skills/research-jtbd-interviews/SKILL.md",
+        "teams/marketing-agency/skills/campaign-planning/SKILL.md",
+        "teams/marketing-agency/skills/marketing-strategy/SKILL.md",
+        "teams/marketing-agency/skills/task-delegation-system/SKILL.md",
+        "teams/marketing-agency/skills/project-manager/SKILL.md",
         "teams/marketing-agency/skills/research-audience-discovery/SKILL.md",
+        "teams/marketing-agency/skills/research-jtbd-interviews/SKILL.md",
         "teams/marketing-agency/skills/research-competitive-scan/SKILL.md",
-        "teams/marketing-agency/skills/user-research-plan/SKILL.md",
-        "teams/marketing-agency/skills/customer-discovery-interview/SKILL.md",
-        "teams/marketing-agency/skills/market-researcher/SKILL.md",
-        "teams/marketing-agency/skills/market-research-brief/SKILL.md",
         "teams/marketing-agency/skills/customer-persona/SKILL.md",
-        "teams/marketing-agency/skills/competitive-analysis/SKILL.md",
         "teams/marketing-agency/skills/mira-brand-foundation/SKILL.md",
         "teams/marketing-agency/skills/mira-visual-system/SKILL.md",
-        "teams/marketing-agency/skills/mira-presentation-design/SKILL.md",
+        "teams/marketing-agency/skills/brand-positioning/SKILL.md",
+        "teams/marketing-agency/skills/brand-identity-brief/SKILL.md",
         "teams/marketing-agency/skills/beacon-channel-strategy/SKILL.md",
-        "teams/marketing-agency/skills/beacon-seo-organic/SKILL.md",
         "teams/marketing-agency/skills/beacon-paid-acquisition/SKILL.md",
-        "teams/marketing-agency/skills/traction-channel-analysis/SKILL.md",
-        "teams/marketing-agency/skills/seo-content-strategy/SKILL.md",
-        "teams/marketing-agency/skills/marketing-strategy/SKILL.md",
-        "teams/marketing-agency/skills/paid-ad-copy/SKILL.md",
+        "teams/marketing-agency/skills/product-launch-checklist/SKILL.md",
         "teams/marketing-agency/skills/social-media-strategy/SKILL.md",
-        "teams/marketing-agency/skills/go-to-market-strategy/SKILL.md",
-        "teams/marketing-agency/skills/community-led-growth/SKILL.md",
         "teams/marketing-agency/skills/copy-customer-voice/SKILL.md",
         "teams/marketing-agency/skills/copy-awareness-stages/SKILL.md",
         "teams/marketing-agency/skills/copy-hook-craft/SKILL.md",
+        "teams/marketing-agency/skills/paid-ad-copy/SKILL.md",
+        "teams/marketing-agency/skills/email-campaign/SKILL.md",
         "teams/marketing-agency/skills/lens-funnel-diagnosis/SKILL.md",
-        "teams/marketing-agency/skills/lens-cohort-and-retention/SKILL.md",
         "teams/marketing-agency/skills/lens-north-star-and-experiments/SKILL.md",
-        "teams/marketing-agency/skills/cohort-analysis/SKILL.md",
-        "teams/marketing-agency/skills/marketing-funnel-diagnosis/SKILL.md",
-        "teams/marketing-agency/skills/funnel-analysis/SKILL.md",
-        "teams/marketing-agency/skills/segmentation-design/SKILL.md",
-        "teams/marketing-agency/skills/metric-framework/SKILL.md",
-        "teams/marketing-agency/skills/saas-metrics-analyst/SKILL.md",
-        "teams/marketing-agency/skills/conversion-rate-optimizer/SKILL.md"
+        "teams/marketing-agency/skills/lens-marketing-attribution/SKILL.md",
+        "teams/marketing-agency/skills/marketing-analytics-report/SKILL.md"
       ],
       "playbooks": [
         {
+          "key": "director",
+          "name": "Run the campaign project",
+          "summary": "Coordinate positioning, content, launch approvals and measurement as one project."
+        },
+        {
           "key": "research",
-          "name": "Research",
-          "summary": "Switch-interview specialist - finds who'll buy and why now, using Bob Moesta's Jobs-to-be-Done method."
+          "name": "Build the audience brief",
+          "summary": "Turn supplied customer evidence into a clear audience, trigger and campaign message direction."
         },
         {
           "key": "mira",
-          "name": "Brand",
-          "summary": "Brand specialist - onlyness-first positioning and visual systems via Marty Neumeier's difference-beats-betterness method."
+          "name": "Set positioning and creative direction",
+          "summary": "Give the campaign a specific promise, consistent voice and reviewable visual brief."
         },
         {
           "key": "beacon",
-          "name": "Channels",
-          "summary": "Channels specialist - channel-mix and discovery via Avinash Kaushik's See/Think/Do/Care intent-based framework."
+          "name": "Plan channels, ads and launch",
+          "summary": "Prepare channel settings, a launch sequence and a concrete approval queue."
         },
         {
           "key": "copy",
-          "name": "Copy",
-          "summary": "Copywriter - hooks, headlines, CTAs, sales pages, rewrites, anchored on customer voice and awareness stage."
+          "name": "Write the campaign assets",
+          "summary": "Produce complete channel drafts in the owner-approved voice, ready for preview and approval."
         },
         {
           "key": "lens",
-          "name": "Analyst",
-          "summary": "Analyst - funnel diagnosis, cohort retention, experiment discipline via Kaushik measurement + Kohavi rigor."
+          "name": "Measure the campaign",
+          "summary": "Define events before launch and report results with clear denominators and useful next actions."
         }
       ],
       "adaptable": false,
@@ -10500,39 +10530,6 @@
       }
     },
     {
-      "slug": "reddit-lead-miner",
-      "name": "Find Qualified Reddit Leads",
-      "summary": "For businesses finding relevant buying conversations on Reddit. Research approved communities, score opportunities against your customer criteria, and draft helpful replies with source context.",
-      "category": "Sales",
-      "outcome": "Find current conversations that reveal a real problem your product solves",
-      "setupMinutes": 6,
-      "featured": true,
-      "package": "packages/reddit-lead-miner.md",
-      "manifest": "teams/reddit-lead-miner/reddit-lead-miner.emberteam.json",
-      "readme": "teams/reddit-lead-miner/README.md",
-      "members": 2,
-      "skills": [],
-      "playbooks": [
-        {
-          "key": "lead-qualification",
-          "name": "Evidence-Based Lead Qualification",
-          "summary": "Score public conversations by ICP fit, problem strength, intent, timing, and confidence."
-        },
-        {
-          "key": "safe-outreach",
-          "name": "Context-First Outreach",
-          "summary": "Draft a helpful reply or follow-up without spam, deception, or automatic sending."
-        }
-      ],
-      "adaptable": false,
-      "requires": {
-        "apps": [
-          "Reddit",
-          "Google Sheets"
-        ]
-      }
-    },
-    {
       "slug": "reply-desk",
       "name": "Reply Desk",
       "summary": "For businesses with a backlog of comments or customer messages. Sort the queue, prepare replies in your voice, and flag promising sales conversations for follow-up.",
@@ -10975,111 +10972,68 @@
     {
       "slug": "seo-content-engine",
       "name": "SEO Content Engine Room",
-      "summary": "For publishers planning search-focused content. Research keyword clusters, build an editorial calendar, and produce an optimized draft with a quality review.",
+      "summary": "A search growth plan with page briefs, practical edits and a dated ranking report",
       "category": "Write",
-      "outcome": "Research keyword clusters, build an editorial calendar, and produce an optimized draft with a quality review.",
+      "outcome": "A keyword-to-page map and prioritized project board grounded in your site data",
       "setupMinutes": 2,
       "manifest": "teams/seo-content-engine/seo-content-engine.emberteam.json",
       "readme": "teams/seo-content-engine/README.md",
-      "members": 4,
+      "members": 6,
       "skills": [
-        "teams/seo-content-engine/skills/research-jtbd-interviews/SKILL.md",
-        "teams/seo-content-engine/skills/research-audience-discovery/SKILL.md",
-        "teams/seo-content-engine/skills/research-competitive-scan/SKILL.md",
-        "teams/seo-content-engine/skills/user-research-plan/SKILL.md",
-        "teams/seo-content-engine/skills/customer-discovery-interview/SKILL.md",
+        "teams/seo-content-engine/skills/seo-content-strategy/SKILL.md",
+        "teams/seo-content-engine/skills/project-manager/SKILL.md",
+        "teams/seo-content-engine/skills/task-prioritization/SKILL.md",
+        "teams/seo-content-engine/skills/task-delegation-system/SKILL.md",
+        "teams/seo-content-engine/skills/beacon-seo-organic/SKILL.md",
         "teams/seo-content-engine/skills/market-researcher/SKILL.md",
-        "teams/seo-content-engine/skills/market-research-brief/SKILL.md",
-        "teams/seo-content-engine/skills/customer-persona/SKILL.md",
         "teams/seo-content-engine/skills/competitive-analysis/SKILL.md",
-        "teams/seo-content-engine/skills/spark-curriculum-architecture/SKILL.md",
-        "teams/seo-content-engine/skills/spark-long-form-narrative/SKILL.md",
-        "teams/seo-content-engine/skills/spark-learner-engagement/SKILL.md",
-        "teams/seo-content-engine/skills/online-course-design/SKILL.md",
-        "teams/seo-content-engine/skills/lesson-plan-design/SKILL.md",
-        "teams/seo-content-engine/skills/learning-path-designer/SKILL.md",
-        "teams/seo-content-engine/skills/online-academy-builder/SKILL.md",
-        "teams/seo-content-engine/skills/curriculum-designer/SKILL.md",
-        "teams/seo-content-engine/skills/lens-funnel-diagnosis/SKILL.md",
-        "teams/seo-content-engine/skills/lens-cohort-and-retention/SKILL.md",
-        "teams/seo-content-engine/skills/lens-north-star-and-experiments/SKILL.md",
-        "teams/seo-content-engine/skills/cohort-analysis/SKILL.md",
-        "teams/seo-content-engine/skills/marketing-funnel-diagnosis/SKILL.md",
-        "teams/seo-content-engine/skills/funnel-analysis/SKILL.md",
-        "teams/seo-content-engine/skills/segmentation-design/SKILL.md",
-        "teams/seo-content-engine/skills/metric-framework/SKILL.md",
-        "teams/seo-content-engine/skills/saas-metrics-analyst/SKILL.md",
-        "teams/seo-content-engine/skills/conversion-rate-optimizer/SKILL.md",
-        "teams/seo-content-engine/skills/verdict-score-and-rank/SKILL.md",
-        "teams/seo-content-engine/skills/verdict-flag-and-fix/SKILL.md",
-        "teams/seo-content-engine/skills/verdict-the-one-edit/SKILL.md",
-        "teams/seo-content-engine/skills/content-strategy-evaluation/SKILL.md",
+        "teams/seo-content-engine/skills/content-brief/SKILL.md",
+        "teams/seo-content-engine/skills/seo-blog-post/SKILL.md",
         "teams/seo-content-engine/skills/copy-editing/SKILL.md",
+        "teams/seo-content-engine/skills/content-strategy-evaluation/SKILL.md",
+        "teams/seo-content-engine/skills/seo-optimizer/SKILL.md",
+        "teams/seo-content-engine/skills/marketing-analytics-report/SKILL.md",
+        "teams/seo-content-engine/skills/metric-framework/SKILL.md",
+        "teams/seo-content-engine/skills/lens-funnel-diagnosis/SKILL.md",
         "teams/seo-content-engine/skills/proofreading/SKILL.md",
-        "teams/seo-content-engine/skills/weighted-decision-matrix/SKILL.md"
+        "teams/seo-content-engine/skills/seo-advisor/SKILL.md",
+        "teams/seo-content-engine/skills/accessibility-tester/SKILL.md"
       ],
       "playbooks": [
         {
+          "key": "fern",
+          "name": "Run the search growth project",
+          "summary": "Coordinate keyword research, page drafts, on-page changes and a report the owner can act on."
+        },
+        {
           "key": "research",
-          "name": "Research",
-          "summary": "Switch-interview specialist - finds who'll buy and why now, using Bob Moesta's Jobs-to-be-Done method."
+          "name": "Map keywords to useful pages",
+          "summary": "Research search intent and group queries into a page plan using evidence from the chosen market."
         },
         {
           "key": "spark",
-          "name": "Build",
-          "summary": "Long-form builder - course, book, and curriculum architecture via Wiggins & McTighe's Backward Design."
+          "name": "Write the page brief and draft",
+          "summary": "Turn a keyword cluster into a clear page outline, source list and useful draft."
         },
         {
           "key": "lens",
-          "name": "Analyst",
-          "summary": "Analyst - funnel diagnosis, cohort retention, experiment discipline via Kaushik measurement + Kohavi rigor."
+          "name": "Report search performance",
+          "summary": "Compare ranking and traffic observations with consistent windows and explain the next measurement."
         },
         {
           "key": "verdict",
-          "name": "Quality Gate",
-          "summary": "Quality gate - scores content on 8 dimensions, flags issues, names the one specific edit. Scores, doesn't rewrite."
+          "name": "Review search content",
+          "summary": "Review the page against its intent, evidence and voice, then name the most useful edit."
+        },
+        {
+          "key": "reed",
+          "name": "Prepare on-page edits and internal links",
+          "summary": "Produce exact page changes and contextual link proposals with a reviewable change ledger."
         }
       ],
       "adaptable": false,
       "requires": {
         "apps": []
-      }
-    },
-    {
-      "slug": "seo-growth",
-      "name": "Find SEO Growth Opportunities",
-      "summary": "For businesses deciding where to invest in search visibility. Assess demand and technical evidence, then get prioritized fixes, content briefs, and a practical SEO roadmap.",
-      "category": "Marketing",
-      "outcome": "Rank the strongest search opportunities by impact, confidence, and effort",
-      "setupMinutes": 5,
-      "featured": true,
-      "package": "packages/seo-growth.md",
-      "manifest": "teams/seo-growth/seo-growth.emberteam.json",
-      "readme": "teams/seo-growth/README.md",
-      "members": 4,
-      "skills": [],
-      "playbooks": [
-        {
-          "key": "keyword-opportunity-map",
-          "name": "Keyword Opportunity Map",
-          "summary": "Build an evidence-based map of search topics, intent, gaps, and priorities."
-        },
-        {
-          "key": "technical-seo-triage",
-          "name": "Technical SEO Triage",
-          "summary": "Turn crawl and indexing evidence into reproducible, severity-ranked findings."
-        },
-        {
-          "key": "content-brief",
-          "name": "Content Brief",
-          "summary": "Create a search-informed content brief that is useful to readers and specific to the business."
-        }
-      ],
-      "adaptable": false,
-      "requires": {
-        "apps": [
-          "Google Sheets"
-        ]
       }
     },
     {

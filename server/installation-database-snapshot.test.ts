@@ -13,7 +13,7 @@ import { initializeThreadSnooze } from "./thread-snooze.ts";
 import { initializeMobilePush } from "./mobile-push-store.ts";
 import { initializeSharedRequestProvenance } from "./shared-provenance-schema.ts";
 import { inspectInstallationDatabase, snapshotInstallationDatabase, withOfflineInstallation, type OfflineInstallation } from "./installation-database-snapshot.ts";
-import { MEMORY_SCHEMA_V2,MEMORY_SCHEMA_V3,migrateMemorySchema } from "./memory/schema.ts";
+import { MEMORY_SCHEMA_VERSION,MEMORY_SCHEMA_V2,MEMORY_SCHEMA_V3,migrateMemorySchema } from "./memory/schema.ts";
 import { pauseRestoredMemory } from "./memory/restore.ts";
 import { readMemoryLearning, updateMemoryLearning } from "./memory/learning-policy.ts";
 
@@ -393,7 +393,7 @@ it.each([2,3])("inspects and restores a v%s memory archive into v4",async versio
  expect(await snapshotInstallationDatabase(f.data,f.target)).toMatchObject({status:"copied"});
  const restored=new DatabaseSync(f.target);try{
  migrateMemorySchema(restored);restored.exec("BEGIN IMMEDIATE");pauseRestoredMemory(restored);restored.exec("COMMIT");
- expect(restored.prepare("SELECT schema_version,mode FROM memory_meta").get()).toEqual({schema_version:6,mode:"paused"});expect(readMemoryLearning(restored)).toMatchObject({version:2,dailyInputTokens:400000});
+ expect(restored.prepare("SELECT schema_version,mode FROM memory_meta").get()).toEqual({schema_version:MEMORY_SCHEMA_VERSION,mode:"paused"});expect(readMemoryLearning(restored)).toMatchObject({version:2,dailyInputTokens:400000});
  }finally{restored.close();}
 });
 

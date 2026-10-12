@@ -8,6 +8,7 @@ import { findCliCandidates } from "../env-path.ts";
 import { MODEL_CATALOG_REFRESH_MS } from "../model-catalog-refresh.ts";
 import { filterFluxRows } from "../flux-surface.ts";
 import { decorateMemoryInstance } from "./memory-adapter.ts";
+import { decorateHoldInstance, InstanceHolds, type HoldResult } from "./instance-holds.ts";
 import type {
   AnyProviderDriver,
   InstanceConfigMap,
@@ -57,9 +58,13 @@ export class ProviderRegistry {
   private cliByInstance = new Map<InstanceId, string>();
   private driversByKind: Map<string, AnyProviderDriver>;
 
+  /** Bumped whenever the set of engines changes, so a scan that began before a change is never shared with a caller that came after it. */
+  private epoch = 0;
   private catalogRefreshes = new WeakMap<ProviderInstance, { attemptedAt: number; pending?: Promise<void> }>();
 
   private readonly now: () => number;
+  /** Murage's own sessions wait on an instance while a deleted conversation is removed from its engine's files. */
+  readonly holds = new InstanceHolds();
   constructor(drivers: readonly AnyProviderDriver[], now: () => number = Date.now) {
     this.now = now;
     this.driversByKind = new Map(drivers.map((d) => [d.driverKind, d]));
@@ -83,6 +88,7 @@ export class ProviderRegistry {
   async load(configs: InstanceConfigMap) {
     // Discovered together, recorded in configuration order.
     for (const [instanceId, resolved] of await Promise.all(Object.entries(configs).map(entry => this.resolveEntry(entry)))) {
+      this.epoch++;
       this.byId.set(instanceId, resolved);
     }
   }
@@ -107,6 +113,7 @@ export class ProviderRegistry {
     const resolved = new Map(await Promise.all(wanted.map(entry => this.resolveEntry(entry))));
     for (const id of instanceIds) {
       const next = resolved.get(id);
+      this.epoch++;
       if (next) this.byId.set(id, next);
       else this.byId.delete(id);
     }
@@ -155,7 +162,7 @@ export class ProviderRegistry {
         enabled: entry.enabled ?? true,
         config,
       });
-      const decorated = decorateMemoryInstance(live);
+      const decorated = decorateHoldInstance(decorateMemoryInstance(live), this.holds);
       this.catalogRefreshes.set(decorated, { attemptedAt: this.now() });
       return [instanceId, { instanceId, live: decorated }];
     } catch (e) {
@@ -171,6 +178,12 @@ export class ProviderRegistry {
         },
       }];
     }
+  }
+
+  /** Holds these instances (see instance-holds.ts): new turns wait, running turns get `waitMs` to finish, idle engines close. The
+   * instances whose running turns outlast the wait are not held and are reported in `busy`. */
+  holdInstances(instanceIds: readonly InstanceId[], waitMs: number): Promise<HoldResult> {
+    return this.holds.hold(instanceIds, waitMs, async (id) => this.get(id)?.adapter.holdIdle?.());
   }
 
   get(instanceId: InstanceId): ProviderInstance | null {
@@ -220,6 +233,16 @@ export class ProviderRegistry {
     return new Map(rows.filter((row): row is [InstanceId, ProviderSnapshot] => row !== undefined));
   }
 
+  /** One engine's id, driver and health, with no catalog refresh and no other engine probed: what the
+   * per-engine management card needs. Undefined when the registry lacks the id. */
+  async describeOne(instanceId: InstanceId): Promise<{ instanceId: InstanceId; driverKind: string; snapshot: ProviderSnapshot } | undefined> {
+    const entry = this.byId.get(instanceId);
+    if (!entry) return undefined;
+    const snapshot = (await this.snapshots([instanceId])).get(instanceId);
+    if (!snapshot) return undefined;
+    return { instanceId, driverKind: entry.shadow?.driverKind ?? entry.live!.driverKind, snapshot };
+  }
+
   /** instance snapshots for the model picker: id, driver, models, health.
    *
    * `catalogs: "fresh"` (the default) refreshes every catalog first, for a
@@ -227,8 +250,24 @@ export class ProviderRegistry {
    * (the tray's minute-by-minute setup view, the setup poll) pass `"due"`:
    * their forced refresh spawned `fuigo models` every minute, which is a
    * GET /v1/models at Flux every 60 to 65 s, refused or not (2026-10-01). */
-  async describe(options: { catalogs?: "fresh" | "due" } = {}) {
-    const dueOnly = options.catalogs === "due";
+  private describing: Record<"due" | "fresh", { epoch: number; run: Promise<Awaited<ReturnType<ProviderRegistry["scan"]>>> } | null> = { due: null, fresh: null };
+
+  /** One scan at a time per mode: boot asks for the engine list and the setup view together, and every
+   * engine card used to start its own. A caller that arrives mid-scan waits for it. A "fresh" scan also
+   * answers a "due" caller (it refreshed at least as much); a "due" scan never answers a "fresh" one. */
+  describe(options: { catalogs?: "fresh" | "due" } = {}) {
+    const mode = options.catalogs === "due" ? "due" : "fresh";
+    const usable = (flight: { epoch: number } | null) => flight !== null && flight.epoch === this.epoch;
+    const shared = usable(this.describing.fresh) ? this.describing.fresh : mode === "due" && usable(this.describing.due) ? this.describing.due : null;
+    if (shared) return shared.run;
+    const flight = { epoch: this.epoch, run: this.scan(mode === "due") };
+    this.describing[mode] = flight;
+    const clear = () => { if (this.describing[mode] === flight) this.describing[mode] = null; };
+    flight.run.then(clear, clear);
+    return flight.run;
+  }
+
+  private async scan(dueOnly: boolean) {
     // Multiple instances may share a driver. Scan each default binary once
     // per response instead of repeating filesystem work for every row.
     const candidatesByName = new Map<string, string[]>();
@@ -312,6 +351,7 @@ export class ProviderRegistry {
   async disposeAll() {
     await Promise.allSettled(this.instances().map(instance => this.catalogRefreshes.get(instance)?.pending));
     await Promise.allSettled(this.instances().map((i) => i.dispose()));
+    this.epoch++;
     this.byId.clear();
     this.cliByInstance.clear();
   }
