@@ -4,7 +4,7 @@ import { readFileSync } from "node:fs";
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it, vi } from "vitest";
-import { APP_VERSION, WHATS_NEW_BY_VERSION, recordWhatsNewSeen, shouldOpenWhatsNew, whatsNewPage } from "./whats-new";
+import { APP_VERSION, WHATS_NEW_BY_VERSION, changelogUrl, recordWhatsNewSeen, shouldOpenWhatsNew, whatsNewPage, whatsNewTarget } from "./whats-new";
 import { SidebarYouMenuPanel } from "@/components/SidebarYouMenuPanel";
 
 const pkg = JSON.parse(readFileSync(new URL("../../package.json", import.meta.url), "utf8")) as { version: string };
@@ -30,6 +30,45 @@ describe("what's new pages", () => {
   it("has a page for 0.1.61", () => {
     expect(whatsNewPage("0.1.61")).toEqual({ kind: "page", releaseNotesUrl: "https://github.com/FerroxLabs/murage-releases/releases/tag/v0.1.61" });
   });
+
+  it("has a page for 1.0.2", () => {
+    expect(whatsNewPage("1.0.2")).toEqual({ kind: "page", releaseNotesUrl: "https://github.com/FerroxLabs/murage-releases/releases/tag/v1.0.2" });
+  });
+});
+
+describe("what the menu item opens", () => {
+  it("opens the version's own page when it has one", () => {
+    expect(whatsNewTarget("0.1.61")).toEqual({ kind: "page", version: "0.1.61", releaseNotesUrl: "https://github.com/FerroxLabs/murage-releases/releases/tag/v0.1.61" });
+    expect(whatsNewTarget("1.0.2")).toMatchObject({ kind: "page", version: "1.0.2" });
+  });
+
+  it("opens the newest page of the same major line for a version with none", () => {
+    expect(whatsNewTarget("1.0.3")).toMatchObject({ kind: "page", version: "1.0.2" });
+    expect(whatsNewTarget("1.1.0")).toMatchObject({ kind: "page", version: "1.0.2" });
+    expect(whatsNewTarget("0.1.62")).toMatchObject({ kind: "page", version: "0.1.61" });
+  });
+
+  it("opens the docs release notes when the major line has no page yet", () => {
+    expect(whatsNewTarget("1.0.1")).toEqual({ kind: "notes", url: "https://docs.murage.ai/docs/changelog/v1-0-1" });
+    expect(whatsNewTarget("2.0.0")).toEqual({ kind: "notes", url: "https://docs.murage.ai/docs/changelog/v2-0-0" });
+    expect(changelogUrl("1.0.2")).toBe("https://docs.murage.ai/docs/changelog/v1-0-2");
+  });
+
+  it("points at a changelog page that exists in the docs", () => {
+    for (const version of Object.keys(WHATS_NEW_BY_VERSION).filter((v) => v.startsWith("1."))) {
+      const slug = changelogUrl(version).split("/").pop()!;
+      expect(() => readFileSync(new URL(`../../apps/docs/content/docs/changelog/${slug}.mdx`, import.meta.url)), slug).not.toThrow();
+    }
+  });
+
+  it("is in the menu and in Settings for every desktop version, none included", () => {
+    expect(sidebar).toContain("...(whatsNew.available ? [{ key: \"whats-new\"");
+    const hook = readFileSync(new URL("./whats-new.ts", import.meta.url), "utf8");
+    expect(hook).toContain("available: desktop === true }");
+    expect(hook).not.toMatch(/available: [^}]*whatsNewPage/);
+    const settings = readFileSync(new URL("../components/SettingsModal.tsx", import.meta.url), "utf8");
+    expect(settings).toMatch(/function WhatsNewRow\(\) \{[\s\S]*?if \(desktop !== true\) return null;/);
+  });
 });
 
 describe("when the page opens by itself", () => {
@@ -41,6 +80,14 @@ describe("when the page opens by itself", () => {
     expect(request).not.toHaveBeenCalled();
     expect(await shouldOpenWhatsNew(true, request, "0.1.59")).toBe(true);
     expect(request).toHaveBeenCalledWith("/api/whats-new?version=0.1.59");
+  });
+
+  it("never opens by itself for a version with no page, though the menu item is there", async () => {
+    const request = vi.fn(async () => ({ show: true }));
+    expect(await shouldOpenWhatsNew(true, request, "1.0.1")).toBe(false);
+    expect(await shouldOpenWhatsNew(true, request, "1.0.3")).toBe(false);
+    await recordWhatsNewSeen(true, request, "1.0.1");
+    expect(request).not.toHaveBeenCalled();
   });
 
   it("stays shut when the server says seen, or cannot answer", async () => {

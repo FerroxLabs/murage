@@ -10,11 +10,13 @@ import { validateMemorySchema } from "./memory/schema.ts";
 import { InstallationTranscriptGraph } from "./installation-transcript-graph.ts";
 import { initializeArtifacts } from "./artifacts.ts";
 import { initializeInbox } from "./inbox.ts";
-import { initializeMessageTables } from "./message-tables.ts";
+import { ensureBrowserCheckIndex, initializeMessageTables } from "./message-tables.ts";
 import { initializeImageLibrary, initializeImageOperations } from "./image-operations-schema.ts";
 import { initializeProjectTables } from "./project-tables.ts";
 import { initializeMobilePush } from "./mobile-push-store.ts";
 import { initializeSharedRequestProvenance } from "./shared-provenance-schema.ts";
+import { initializeProjectCardDelivery } from "./project-card-delivery-schema.ts";
+import { initializeOwnerSends } from "./send-store.ts";
 
 import { InstallationSnapshotError } from "./installation-snapshot-error.ts";
 import { flushCoalesced } from "./atomic.ts";
@@ -48,6 +50,13 @@ function count(db: DatabaseSync, sql: string): number {
 const APP_TABLES = new Map<string, { required: boolean; optional: string[] }>(Object.entries({
   messages: { required: true, optional: [] },
   thread_state: { required: true, optional: [] },
+  // which open request cards the active branch passes through (message-db.ts);
+  // derived from messages, so an archive from before it simply lacks the table
+  card_branch: { required: false, optional: [] },
+  open_card: { required: false, optional: [] },
+  turn_first: { required: false, optional: [] },
+  branch_walk: { required: false, optional: [] },
+  transcript_index_state: { required: false, optional: [] },
   // The substring-search index (message-search-index.ts): a contentless FTS5
   // virtual table plus the four shadow tables SQLite keeps for it. Not
   // required: an archive from before the index lacks them and the app builds
@@ -76,6 +85,9 @@ const APP_TABLES = new Map<string, { required: boolean; optional: string[] }>(Ob
   team_identities: { required: false, optional: [] },
   project_settings: { required: false, optional: [] },
   room_requests: { required: false, optional: [] },
+  // every owner send, committed before it is acknowledged (server/send-store.ts), new in 1.0.2;
+  // notice (the code of what the person was told) was appended by ALTER during 1.0.2
+  owner_sends: { required: false, optional: ["notice"] },
   project_work_items: { required: false, optional: [] },
   project_board_columns: { required: false, optional: [] },
   project_briefs: { required: false, optional: [] },
@@ -98,6 +110,8 @@ const APP_TABLES = new Map<string, { required: boolean; optional: string[] }>(Ob
   push_relay_removals: { required: false, optional: [] },
   // routine provenance of shared requests (shared-provenance-schema.ts); an older archive lacks it
   shared_request_provenance: { required: false, optional: [] },
+  // card results owed to the project room (project-card-delivery-schema.ts)
+  project_card_delivery_owed: { required: false, optional: [] },
 }));
 
 type SchemaRow = { type: string; name: string; tbl_name: string; sql: string | null };
@@ -124,8 +138,8 @@ function referenceSchema(): Map<string, ReferenceObject> {
   if (reference) return reference;
   const db = new DatabaseSync(":memory:");
   try {
-    initializeMessageTables(db); initializeInbox(db); initializeArtifacts(db);
-    initializeImageOperations(db); initializeImageLibrary(db); initializeThreadSnooze(db); initializeProjectTables(db); initializeTeamIdentityTables(db); initializeMobilePush(db); initializeSharedRequestProvenance(db);
+    initializeMessageTables(db); ensureBrowserCheckIndex(db); initializeInbox(db); initializeArtifacts(db);
+    initializeImageOperations(db); initializeImageLibrary(db); initializeThreadSnooze(db); initializeProjectTables(db); initializeTeamIdentityTables(db); initializeMobilePush(db); initializeSharedRequestProvenance(db); initializeProjectCardDelivery(db); initializeOwnerSends(db);
     const objects = new Map<string, ReferenceObject>();
     for (const row of db.prepare("SELECT type,name,tbl_name,sql FROM sqlite_schema").all() as SchemaRow[]) {
       if (!APP_TABLES.has(row.tbl_name)) throw new Error(`initializer created an object outside APP_TABLES: ${row.name}`);
@@ -223,7 +237,7 @@ function digestFile(path: string): string {
  * publishes without replacing any existing destination. No runtime Store,
  * migration, provider or scheduler is constructed. Other app-state components
  * must eventually share this offline epoch in the complete backup builder. */
-async function snapshotSqliteWhileOwned<T extends object>(dataDir: string, destination: string, component: "messages.db" | "memory-index.db", inspect: (db: DatabaseSync) => T) {
+async function snapshotSqliteWhileOwned<T extends object>(dataDir: string, destination: string, component: "messages.db" | "memory-index.db" | "connected-app-ledger.db", inspect: (db: DatabaseSync) => T) {
   const root = dataDirLeasePaths(dataDir).canonicalDataDir;
   if (!destination || /[\r\n\0]/.test(destination) || [".", "..", ""].includes(basename(destination))) throw new InstallationSnapshotError("INVALID_DESTINATION");
   // Canonicalize the parent, not the file: an existing destination must be
@@ -324,8 +338,21 @@ function snapshotMemoryIndexWhileOwned(dataDir: string, destination: string) {
   });
 }
 
+// The connected-app operation ledger (connected-app-journal.ts) keeps records
+// of actions whose outcome is not known, so equivalent requests stay blocked
+// until the bot checks the app. Those records matter on a restored computer
+// too: the remote action happened whatever machine asks next.
+function snapshotConnectedLedgerWhileOwned(dataDir: string, destination: string) {
+  return snapshotSqliteWhileOwned(dataDir, destination, "connected-app-ledger.db", db => {
+    const rows = db.prepare("PRAGMA integrity_check").all();
+    if (rows.length !== 1 || Object.values(rows[0])[0] !== "ok") throw new InstallationSnapshotError("DATABASE_INTEGRITY_FAILED");
+    return {};
+  });
+}
+
 export interface OfflineInstallation {
   readonly dataDir: string;
+  snapshotConnectedLedger(destination: string): Promise<Awaited<ReturnType<typeof snapshotConnectedLedgerWhileOwned>>>;
   snapshotDatabase(destination: string): Promise<Awaited<ReturnType<typeof snapshotDatabaseWhileOwned>>>;
   snapshotMemoryIndex(destination: string): Promise<Awaited<ReturnType<typeof snapshotMemoryIndexWhileOwned>>>;
 }
@@ -349,6 +376,13 @@ export async function withOfflineInstallation<T>(dataDir: string, operation: (in
         pending.add(result);
         // Attach a rejection handler without manufacturing an unhandled
         // finally() branch if an operation abandons its copy promise.
+        void result.then(() => pending.delete(result), () => pending.delete(result));
+        return result;
+      },
+      snapshotConnectedLedger(destination: string) {
+        if (!active) return Promise.reject(new InstallationSnapshotError("SNAPSHOT_EPOCH_CLOSED"));
+        const result = snapshotConnectedLedgerWhileOwned(root, destination);
+        pending.add(result);
         void result.then(() => pending.delete(result), () => pending.delete(result));
         return result;
       },

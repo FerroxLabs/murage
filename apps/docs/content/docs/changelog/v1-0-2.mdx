@@ -1,0 +1,38 @@
+---
+title: What changed in Murage 1.0.2
+description: Memory stays quick on long histories and asks you about the things that need you, group chats pick the right bot, Murage for Chrome reads like the app, and new Ferrox Labs teams join the library.
+icon: Clock
+---
+
+## Memory in 1.0.2
+
+- **Memory stays compact on long conversations.** Memory now stores each reply's sources as a small step from the one before, so a long-running thread takes a fraction of the disk it did and memory search answers quickly. The upgrade screen shows its progress, and Murage hands freed space back to your disk when there is room.
+- **Memory answers faster.** The first check of a resumed conversation now takes about a tenth of a second, recall reads its index first, and background memory work gives way to what you are doing.
+- **Memories that need you are easy to find.** A Needs you block and an Inbox card list the memories waiting for your word, with Keep, Keep all, Later, Edit and Undo, and your phone gets one quiet note when some are waiting.
+- **Flux Memory follows each engine and your settings.** Every engine's calls through Flux carry the memory settings meant for that bot, engines keep their own built-in memory out of the way, and you can turn each part of Flux Memory on or off in your settings.
+- **You can go back to Murage 1.0.1 in one step.** Choose Help, then Prepare to reinstall Murage 1.0.1. Murage gets your memory ready for 1.0.1 and closes; your chats and memories come with you.
+
+## Group chats in 1.0.2
+
+- **Group chats pick the right bot to answer.** With a Flux key, Murage's decision model chooses which bot should reply in a group chat, asks Flux not to keep anything it sends, and answers within about a second. You can switch it off in Settings.
+
+## Chats and bots in 1.0.2
+
+- **Unmatched actions live in the Inspector.** When a bot says it did something Murage has no record of, the note now sits in the Inspector sidebar beside the chat, and actions a teammate ran for the bot count as records.
+- **House rules keep up with your typing.** The house rules editor keeps every word you type, however fast you write.
+- **Any engine can run your bot.** A bot moved to an engine that cannot reach its computer still answers, and says what it can do without the computer. The engine picker names a ready engine that runs the same model with pictures, and the vision icon matches what the engine can see.
+- **Ferrox Labs teams join the library.** The team library now offers teams written by Ferrox Labs, ready to add to your workspace.
+
+## Murage for Chrome in 1.0.2
+
+- **Murage for Chrome reads like the app.** The panel shows the bot's own name and colour, cards have plain headings such as "click on example.com", access levels use the app's names (Ask each step, Ask once per task, Full access), an approval card waits 15 minutes like every other card, and the browser check finishes in the background and says "checking" while it runs.
+
+## Flux in 1.0.2
+
+- **Pictures and voice through Flux use Flux's current services.** Image generation goes straight to Flux's live image service, and live transcription stays behind its own switch until you turn it on.
+- **Murage checks your Flux key once and waits for you.** If Flux does not accept a key, Murage stops asking until you test, save or re-enter it, and connected apps and web search try again on a steady schedule of their own.
+
+## Under the hood in 1.0.2
+
+- **A wide set of everyday improvements.** Up to eight per-bot desktops, MCP tools that start from Windows command shims, remote MCP servers that get 30 seconds to list their tools, phone pairing that picks your real Wi-Fi or Ethernet address, chats that follow the newest message after you switch threads, routines that keep their detailed error, and settings files saved with a byte order mark all work as you would expect.
+- **Every release is checked on Intel Macs.** Each build now starts on a real Intel Mac and checks its WhatsApp connection before it is published.

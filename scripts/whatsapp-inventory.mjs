@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import { createHash } from "node:crypto";
 import { existsSync, mkdirSync, readFileSync, readdirSync, statSync, writeFileSync } from "node:fs";
-import { dirname, join, relative, resolve } from "node:path";
+import { basename, dirname, join, relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { parse } from "yaml";
 
@@ -22,20 +22,37 @@ export function licenseAllowed(name, expression) {
   try { return or() && i === tokens.length; } catch { return false; }
 }
 
+/** The staged closure of the WhatsApp runtime. The tree is hoisted (see stage-hoisted.mjs), so the closure is
+ * found the way Node finds it: from each package, walk up its node_modules chain for every declared dependency. */
+function resolveStaged(name, from, modules) {
+  for (let dir = from; ; dir = dirname(dir)) {
+    const candidate = basename(dir) === "node_modules" ? join(dir, name) : join(dir, "node_modules", name);
+    if (existsSync(join(candidate, "package.json"))) return candidate;
+    if (dir === modules || dirname(dir) === dir) return null;
+  }
+}
+function declaredRequired(pkg) {
+  return Object.keys({ ...pkg.dependencies, ...pkg.peerDependencies }).filter(name => !pkg.optionalDependencies?.[name] && !pkg.peerDependenciesMeta?.[name]?.optional &&
+    // The pinned workspace extension makes Baileys' sharp peer optional. A regular dependency still fails.
+    !(pkg.name === "baileys" && name === "sharp" && !pkg.dependencies?.sharp));
+}
 function packageDirectories(server) {
-  const dirs = [];
+  const modules = join(resolve(server), "node_modules"), dirs = [], seen = new Set();
   const walk = dir => {
-    if (!existsSync(dir)) throw Error(`Missing staged package: ${dir}`);
-    dirs.push(dir);
-    const modules = join(dir, "node_modules");
-    if (!existsSync(modules)) return;
-    for (const name of readdirSync(modules).sort()) {
-      if (name.startsWith(".")) continue;
-      if (name.startsWith("@")) for (const child of readdirSync(join(modules, name)).sort()) walk(join(modules, name, child));
-      else walk(join(modules, name));
+    if (seen.has(dir)) return;
+    if (!existsSync(join(dir, "package.json"))) throw Error(`Missing staged package: ${dir}`);
+    seen.add(dir); dirs.push(dir);
+    const pkg = JSON.parse(readFileSync(join(dir, "package.json"), "utf8")), identity = `${pkg.name}@${pkg.version}`;
+    const required = new Set(declaredRequired(pkg));
+    for (const dependency of Object.keys({ ...pkg.dependencies, ...pkg.optionalDependencies })) {
+      if (excludedPackage(dependency)) throw Error(`Excluded WhatsApp dependency: ${dependency}`);
+      const target = resolveStaged(dependency, dir, modules);
+      if (target) walk(target);
+      else if (required.has(dependency)) throw Error(`Missing staged dependency: ${identity} -> ${dependency}`);
     }
+    for (const dependency of required) if (!resolveStaged(dependency, dir, modules)) throw Error(`Missing staged dependency: ${identity} -> ${dependency}`);
   };
-  for (const name of ["baileys", "jimp"]) walk(join(server, "node_modules", name));
+  for (const name of ["baileys", "jimp"]) walk(join(modules, name));
   return dirs;
 }
 function notices(dir) {
@@ -51,6 +68,30 @@ function notices(dir) {
   walk(dir); return files;
 }
 
+// Text that makes a root markdown file the package's licence text (stage-hoisted.mjs keeps root markdown only
+// for packages that publish no licence file).
+const LICENCE_TEXT = /permission is hereby granted|permission to use, copy, modify|redistribution and use in source|licensed under the apache license|apache license,? version 2|this is free and unencumbered software/i;
+function licenceDocuments(dir) {
+  return readdirSync(dir).sort().filter(name => /\.md$/i.test(name) && !/^changelog/i.test(name) && statSync(join(dir, name)).isFile() && LICENCE_TEXT.test(readFileSync(join(dir, name), "utf8"))).map(name => join(dir, name));
+}
+
+// Licence text can also sit inside a retained source file (omggif.js opens with the MIT text).
+const EMBEDDED_LICENCE = /permission is hereby granted|permission to use, copy, modify|redistribution and use in source|licensed under the (apache|mit|bsd|isc)|apache license,? version 2|this is free and unencumbered software|spdx-license-identifier:/i;
+function carriesLicenceText(dir) {
+  for (const name of readdirSync(dir).sort()) {
+    if (name === "node_modules") continue;
+    const path = join(dir, name), stat = statSync(path);
+    if (stat.isDirectory()) { if (carriesLicenceText(path)) return true; }
+    else if (stat.size <= 2_000_000 && /\.(c?js|mjs|ts|d\.ts|json|txt|md)$/i.test(name) && name !== "package.json" && EMBEDDED_LICENCE.test(readFileSync(path, "utf8"))) return true;
+  }
+  return false;
+}
+
+/** Identities that publish no licence text anywhere: the inventory carries only the generated LICENSE.declared
+ * metadata and no retained file under `server` embeds licence text. Reviewed by hand; the packaging check reports them. */
+export function declaredOnly(inventory, server) {
+  return inventory.filter(pkg => pkg.licenseFiles.every(file => file.source === "package.json") && !(server && carriesLicenceText(join(resolve(server), pkg.path)))).map(pkg => `${pkg.name}@${pkg.version}`);
+}
 function declaredNotice(pkg, license) {
   const author = typeof pkg.author === "string" ? pkg.author : pkg.author?.name;
   const repository = typeof pkg.repository === "string" ? pkg.repository : pkg.repository?.url;
@@ -66,25 +107,14 @@ export function generateInventory({ server, lockfile, write = true }) {
   return directories.map(dir => {
     const pkg = JSON.parse(readFileSync(join(dir, "package.json"), "utf8"));
     const { name, version } = pkg, identity = `${name}@${version}`;
-    const required = Object.keys({ ...pkg.dependencies, ...pkg.peerDependencies }).filter(name => !pkg.optionalDependencies?.[name] && !pkg.peerDependenciesMeta?.[name]?.optional &&
-      // The pinned workspace extension makes Baileys' sharp peer optional. A regular dependency still fails.
-      !(pkg.name === "baileys" && name === "sharp" && !pkg.dependencies?.sharp));
-    for (const dependency of required) {
-      let parent = dir, found = false;
-      while (parent.startsWith(resolve(server))) {
-        const target = join(parent, "node_modules", dependency);
-        if (directories.includes(target)) { found = true; break; }
-        const next = dirname(parent); if (next === parent) break; parent = next;
-      }
-      if (!found) throw Error(`Missing staged dependency: ${identity} -> ${dependency}`);
-    }
 
     if (excludedPackage(name)) throw Error(`Excluded WhatsApp dependency: ${name}`);
     const integrity = lock.packages?.[identity]?.resolution?.integrity;
     if (!/^sha512-[A-Za-z0-9+/]+=*$/.test(integrity ?? "")) throw Error(`Missing registry integrity: ${identity}`);
     const license = pkg.license ?? (pkg.licenses?.map(item => item.type).join(" OR ")) ?? (identity === "exif-parser@0.1.12" ? "MIT" : null);
     if (!licenseAllowed(name, license)) throw Error(`Review licence: ${identity}: ${license}`);
-    const files = notices(dir);
+    let files = notices(dir);
+    if (!files.length) files = licenceDocuments(dir);
     // A few permissive packages publish no licence file. Their notice is generated from the
     // licence they declare in package.json, marked as generated, and never invented beyond it.
     if (!files.length && !/^(MIT|ISC|BSD-2-Clause|BSD-3-Clause|Apache-2\.0|0BSD)$/.test(license ?? "")) throw Error(`Missing licence files: ${identity}`);
@@ -130,4 +160,6 @@ if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.ur
     manifest.packages = generateInventory(options); writeFileSync(path, JSON.stringify(manifest, null, 2) + "\n");
   }
   console.log(`Verified ${verifyInventory(options)} WhatsApp dependency records`);
+  const bare = declaredOnly(JSON.parse(readFileSync(join(server, "whatsapp-runtime-manifest.json"), "utf8")).packages, server);
+  console.log(`Packages that publish no licence text (declared metadata only): ${bare.length ? bare.join(", ") : "none"}`);
 }

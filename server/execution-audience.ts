@@ -98,6 +98,14 @@ export function effectiveAudience(bot: BotRecord, threadId: string, tag: Executi
   if (!bindingFits(bot, threadId, tag)) throw new Error("This request no longer fits this conversation. Ask again.");
   return threadPartition(bot, threadId);
 }
+/** True only when the thread is positively the owner's own unshared conversation on this bot: a task of the bot, no shared
+ * work on it, in the bot's home partition, and with the owner as its human. Anything else (unknown thread, shared, project
+ * or partitioned) is false, so callers fail closed. */
+export function isOwnUnsharedThread(bot: BotRecord | undefined, threadId: string): boolean {
+  const task = bot?.tasks?.find(t => t.threadId === threadId);
+  return Boolean(bot && task && !task.sharedWork && threadPartition(bot, threadId).kind === "home"
+    && JSON.stringify(threadHumanPrincipal(threadId)) === JSON.stringify(OWNER));
+}
 export function homeThread(bot: BotRecord): TaskRecord {
   const store = currentStore; if (!store) throw new Error("Execution store is unavailable");
   const active = bot.tasks?.find(t => t.threadId === bot.threadId);

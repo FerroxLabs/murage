@@ -1,6 +1,7 @@
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { z } from "zod";
 import { ACCESS_REQUEST_TTL_MS, accessRequestExpired, CONNECTED_APP_TOOLS, accessGrantSchema, type AccessGrant } from "../shared/bot-access.ts";
+import { isConnectedAppStatusTool } from "../shared/connected-app-calls.ts";
 import { accessRoleBinding, botAccessPolicy } from "./bot-access-role.ts";
 import { isWorkspaceChief, sectionKey, type BotRecord, type Store } from "./store.ts";
 const fail=(message:string,status=403):never=>{throw Object.assign(new Error(message),{status});};
@@ -77,6 +78,8 @@ export function assertConnectedAppCall(bot:BotRecord,input:unknown):void {
  if(["initialize","notifications/initialized","initialized","tools/list","ping"].includes(String(message.method)))return;
  if(message.method!=="tools/call"||!object(message.params))fail("This connected-app operation is not allowed by the owner’s restrictions.");
  const params=message.params as Record<string,unknown>;
+ // Collecting the outcome of this bot's own earlier action runs nothing new.
+ if(isConnectedAppStatusTool(String(params.name??""))&&Object.keys(params).every(key=>["name","arguments"].includes(key)))return;
  if(Object.keys(params).some(key=>!["name","arguments"].includes(key)))fail("Unsupported connected-app request fields.");
  if(params.name!=="COMPOSIO_MULTI_EXECUTE_TOOL"||!object(params.arguments))fail("Restricted access only permits approved tools with an explicit account. Dynamic and discovery tools are blocked.");
  const args=params.arguments as Record<string,unknown>;
@@ -95,10 +98,49 @@ export function assertConnectedAppCall(bot:BotRecord,input:unknown):void {
  }
 }
 
+/** The bot's grants as they are NOW, against what an earlier action used. A
+ * handle proves which bot asked; it does not outlive the owner removing the
+ * account or tool from that bot, so a stored result is only handed back while
+ * every tool and account the action used is still granted. A restricted bot is
+ * never handed a stored result whose provenance is incomplete or empty: when
+ * nothing says what the action needed, nothing says the bot may see it. */
+export function assertStoredConnectedAppAccess(bot:BotRecord,used:{requirements:ReadonlyArray<{tool:string;account?:string}>;complete:boolean}):void {
+ if(bot.hidden||bot.composio===false)fail("Connected apps are disabled for this bot.");
+ const policy=botAccessPolicy(bot);
+ if(policy.mode==="unrestricted")return;
+ if(!used.complete||!used.requirements.length)fail("This stored result cannot be matched to approved tools for this bot.");
+ for(const call of used.requirements) {
+  const known=CONNECTED_APP_TOOLS.find(tool=>tool.tool===call.tool);
+  if(!known)fail("This tool is not supported under restricted connected-app access.");
+  if(known!.writes&&!policy.allowWrites)fail("The owner has blocked connected-app writes for this bot.");
+  if(!policy.grants.some(grant=>grant.toolkit===known!.toolkit&&grant.accountId===call.account&&grant.tools.includes(call.tool)))fail("This tool or connected account has not been approved for this bot.");
+ }
+}
+
 /** Restricted bots receive only the concrete execution shape and approved IDs.
  * Do not relay tools/list to an upstream catalog that may describe other accounts. */
 export function restrictedConnectorTools(bot:BotRecord,id:unknown) {
  const policy=botAccessPolicy(bot);if(policy.mode!=="restricted")return null;
  const approved=policy.grants.flatMap(grant=>grant.tools.filter(name=>CONNECTED_APP_TOOLS.some(tool=>tool.tool===name&&(!tool.writes||policy.allowWrites))));
- return {jsonrpc:"2.0",id,result:{tools:approved.length?[{name:"COMPOSIO_MULTI_EXECUTE_TOOL",description:"Run only owner-approved connected-app tools. Each tool must include its exact approved connected-account ID. Approved scopes: "+JSON.stringify(policy.grants),inputSchema:{type:"object",properties:{tools:{type:"array",minItems:1,maxItems:50,items:{type:"object",properties:{tool_slug:{type:"string",enum:[...new Set(approved)]},account:{type:"string",enum:[...new Set(policy.grants.map(grant=>grant.accountId))]},arguments:{type:"object"}},required:["tool_slug","account","arguments"],additionalProperties:false}},sync_response_to_workbench:{type:"boolean",const:false}},required:["tools"],additionalProperties:false}}]:[]}};
+ return {jsonrpc:"2.0",id,result:{tools:approved.length?[{name:"COMPOSIO_MULTI_EXECUTE_TOOL",description:"Run only owner-approved connected-app tools. Each tool must include its exact approved connected-account ID. Approved scopes: "+JSON.stringify(policy.grants.map(grant=>({...grant,tools:[...new Set(grant.tools)]}))),inputSchema:{type:"object",properties:{tools:{type:"array",minItems:1,maxItems:50,items:{type:"object",properties:{tool_slug:{type:"string",enum:[...new Set(approved)]},account:{type:"string",enum:[...new Set(policy.grants.map(grant=>grant.accountId))]},arguments:{type:"object"}},required:["tool_slug","account","arguments"],additionalProperties:false}},sync_response_to_workbench:{type:"boolean",const:false}},required:["tools"],additionalProperties:false}}]:[]}};
+}
+
+/** What the connector bridge needs to remember a tool list for this bot: a
+ * revision of its connected-app access (anything that changes what it may see
+ * changes it, including an account being disconnected or signed out, which
+ * arrives as `connectionEpoch`; pending requests do not), and for a restricted bot the list it is
+ * first shown, so a slow mount never offers it unapproved accounts. */
+export function connectedAppsListScope(bot:BotRecord,connectionEpoch=0):{revision:string;initialTools?:unknown[]} {
+ const policy=botAccessPolicy(bot);
+ // EFFECTIVE access only: what this bot may see and call, normalized (order and
+ // duplicates carry no meaning). The review/request counter, pending requests,
+ // denials and saves that change nothing are NOT part of it, so they never
+ // recycle a warm process or lose a remembered list. An unrestricted bot's
+ // leftover grants and write switch have no effect and are left out too.
+ const restricted=policy.mode==="restricted";
+ const grantsNormalized=restricted?policy.grants.map(grant=>({toolkit:grant.toolkit,accountId:grant.accountId,tools:[...new Set(grant.tools)].sort()})).sort((a,b)=>(a.toolkit+"\0"+a.accountId).localeCompare(b.toolkit+"\0"+b.accountId)):[];
+ const effective={enabled:bot.composio!==false,hidden:!!bot.hidden,mode:policy.mode,allowWrites:restricted?policy.allowWrites:null,grants:grantsNormalized,connectionEpoch};
+ const revision=createHash("sha256").update(JSON.stringify(effective)).digest("hex").slice(0,32);
+ const initial=restrictedConnectorTools(bot,null);
+ return {revision,...(initial?{initialTools:initial.result.tools as unknown[]}:{})};
 }
