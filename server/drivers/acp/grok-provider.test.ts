@@ -7,6 +7,7 @@ import { expect, it } from "vitest";
 import { DATA_DIR } from "../../config.ts";
 import { applyProviderRoute, grokProviderIdentity, grokResumeBinding, removeGrokProviderHome, type ProviderTurnRoute } from "../../provider-routing.ts";
 import { recordEvents } from "../../testing/events.ts";
+import { scopedCliHomeRoot } from "../scoped-cli-home.ts";
 import { GrokAgentDriver } from "./grok.ts";
 import type { ProviderInstance, SendTurnInput } from "../../contracts.ts";
 const fake = join(import.meta.dirname, "../../testing/fake-grok-provider-cli.ts");
@@ -105,7 +106,7 @@ it("replays authorised history on route revision and native switches without loa
     expect(f.dump().grokHome).not.toBe(firstHome); expect(f.dump().calls.some((c: any) => c.method === "session/load")).toBe(false);
     expect(f.received.at(-1)!.body.messages[0].content).toContain("prior conversation fact"); expect(f.received.at(-1)!.body.model).toBe(changed.model);
     const native = await turn(instance, { threadId: f.threadId, text: "native now", model: "grok-4.6", resumeCursor: next.sessionId, transcript: history });
-    expect(f.dump().grokHome).toBe(f.native); expect(f.dump().calls.some((c: any) => c.method === "authenticate")).toBe(true); expect(f.dump().calls.some((c: any) => c.method === "session/load")).toBe(false);
+    expect(f.dump().grokHome).not.toBe(firstHome); expect(f.dump().grokHome.startsWith(scopedCliHomeRoot("grok"))).toBe(true); /* a native turn runs in the bot scope, never the owner's own GROK_HOME */ expect(f.dump().calls.some((c: any) => c.method === "authenticate")).toBe(true); expect(f.dump().calls.some((c: any) => c.method === "session/load")).toBe(false);
     await turn(instance, { threadId: f.threadId, text: "provider again", model: changed.model, providerRoute: changed, resumeCursor: native.sessionId, transcript: history });
     expect(f.dump().calls.some((c: any) => c.method === "session/load")).toBe(false); expect(f.received).toHaveLength(3);
   } finally { await f.cleanup(); }

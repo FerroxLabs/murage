@@ -17,6 +17,7 @@
 //
 // It answers to the CHAT CONTAINER, not the window: the same shortage happens
 // in a 1600px window with the sidebar and the computer panel open.
+import { preloadBotSettings } from "@/lib/preload-bot-settings";
 import { useMemo, useRef, useState } from "react";
 import { Bug, Folder, Monitor, Search, Square } from "lucide-react";
 
@@ -323,6 +324,7 @@ export function ChatHeader({
       <div className="flex min-w-0 flex-1 items-center gap-2.5 rounded-lg px-1.5 py-1 chip-trim:gap-1.5 chip-trim:px-0">
         <button
           onClick={() => dispatch({ type: "toggleSettings", open: true })}
+          onPointerEnter={preloadBotSettings} onFocus={preloadBotSettings} onPointerDown={preloadBotSettings}
           // Folded, the 40px button and the 10px gaps beside it are 20px the
           // NAME needs more: measured at a 320px column, the guaranteed track
           // came out one pixel short of its 96px floor with the desktop

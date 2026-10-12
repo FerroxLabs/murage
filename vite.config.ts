@@ -34,7 +34,9 @@ export default defineConfig({
     // the suite spawns fake provider CLIs and a real harness server;
     // parallel files introduce load-sensitive flakes for no win
     fileParallelism: false,
-    testTimeout: 20_000,
+    // A ceiling for a loaded runner (Windows and macOS CI take several times
+    // longer than a developer machine); a passing test never waits on it.
+    testTimeout: 45_000,
     hookTimeout: 30_000,
   },
   resolve: {
