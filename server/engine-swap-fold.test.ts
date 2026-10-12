@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { stripTypeScriptTypes } from "node:module";
 import { fileURLToPath } from "node:url";
@@ -10,6 +11,7 @@ import { plainConnectedAppText } from "../shared/connected-app-tools.ts";
 import { engineStamp } from "./engine-profile.ts";
 import { memberTurnProvenance, turnIsBackground } from "./message-automation.ts";
 import { isLiveRoutineRunStatus } from "./routines.ts";
+import { adoptStagedImages, memoryEchoDecision, retainSession } from "./fold-steps.ts";
 
 /** Execute the production event fold with isolated storage and inert outside
  * services. This is a behavior test, not a census of source substrings. */
@@ -22,6 +24,7 @@ function foldFixture() {
   const noop = () => undefined;
   const scope: Record<string, unknown> = {
     store, toolAction, engineStamp, plainConnectedAppMessage: (row: unknown) => row,
+    fluxFirstTokenProbe: { observe: noop, begin: noop },
     accountProjectEvent: noop, shouldIgnoreProviderEvent: () => false, replyGuardContext: () => null,
     accountPresentedProjectEvent: () => true, presentedRequests: { publish: noop },
     localVmThreadTargets: new Map(), groupGoalCoordinatorTurns: new Map(), groupGoalCoordinatorTurnForEvent: () => null,
@@ -33,7 +36,8 @@ function foldFixture() {
     routinePeerSources: new Map(), routinePeerApprover: (value: unknown) => value,
     questionFromChoices: (summary: string, choices: string[]) => ({ question: summary, options: choices }),
     lowRiskStamp: () => ({}), askMessageByRequest: new Map(), resolveAutoReviewMode: () => "off",
-    appendDecision: noop, DATA_DIR: "fixture", workAdmission: { liveTurns: () => [] }, notify: noop, buildNotification: noop,
+    createHash, retainSession, adoptStagedImages, memoryEchoDecision, generatedImagesByTurn: new Map(), memoryEchoReplies: new Map(),
+    performance, appendDecision: noop, DATA_DIR: "fixture", workAdmission: { liveTurns: () => [] }, notify: noop, buildNotification: noop,
   };
   const source = readFileSync(new URL("./index.ts", import.meta.url), "utf8");
   const plainStart = source.indexOf("function plainConnectedAppMessage");
@@ -41,7 +45,17 @@ function foldFixture() {
   const start = source.indexOf("const foldRuntimeEvent =");
   const end = source.indexOf("\nbus.subscribe(foldRuntimeEvent)", start);
   const code = stripTypeScriptTypes(source.slice(start, end)) + "\nfoldRuntimeEvent;";
-  const fold = runInNewContext(code, scope) as (event: Record<string, unknown>) => void;
+  const production = runInNewContext(code, scope) as (event: Record<string, unknown>) => void;
+  // Production events each carry their own eventId, and the fold derives a message's stable id from it (so a redelivery of the SAME
+  // event adds nothing twice). These fixtures reuse one literal eventId across many distinct events, so every distinct event
+  // object gets its own suffix here; passing the same object again is a redelivery and keeps its id.
+  const issued = new WeakMap<object, string>();
+  let issuedCount = 0;
+  const fold = (event: Record<string, unknown>) => {
+    let id = issued.get(event);
+    if (!id) { id = `${String(event.eventId ?? "event")}#${++issuedCount}`; issued.set(event, id); }
+    production({ ...event, eventId: id });
+  };
   return { store, bot, fold, stamps, instance, scope };
 }
 

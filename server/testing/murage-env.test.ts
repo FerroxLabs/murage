@@ -14,7 +14,7 @@ const ROOT = fileURLToPath(new URL("../..", import.meta.url));
 // --import takes a URL: a bare C:\ path reads as the scheme "c:" on Windows.
 const PRELOAD = pathToFileURL(join(ROOT, "server/testing/safe-wipe-preload.mjs")).href;
 // What setup.ts itself sets after the scrub, on purpose.
-const SET_BY_SETUP = new Set(["MURAGE_ALLOW_DEV_DESKTOP_SECRET", "MURAGE_COMPANION_DIR", "MURAGE_COMPANION_TOKEN", "MURAGE_CONTROL_PORT_OVERRIDE"]);
+const SET_BY_SETUP = new Set(["MURAGE_ALLOW_DEV_DESKTOP_SECRET", "MURAGE_COMPANION_DIR", "MURAGE_COMPANION_TOKEN", "MURAGE_CONTROL_PORT_OVERRIDE", "MURAGE_ENGINE_EXCLUSION_PATH"]);
 
 // A cleared Windows env still needs SystemRoot for node to start; the file URL gives a real drive path for cwd.
 const WIN_BASE: Record<string, string> = process.platform === "win32" ? { SystemRoot: process.env.SystemRoot ?? "C:\\Windows" } : {};

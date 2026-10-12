@@ -68,8 +68,8 @@ it.each(["expired", "revoked", "policy"])("rechecks %s authority after the worke
 
 it("performs a final fresh check when capability expiry occurs during synchronous hydration", async () => {
   const f = fixture(); const hit = f.add("allowed");
-  // The bridge fixture advances its fake clock when score is copied into the
-  // hydrated result, after scope validation. No authorization function is mocked.
-  const expiresWhileHydrating = { id: hit.id, version: hit.version, get score() { f.expire(); return 1; } };
-  await expect(searchMemory("expires at delivery", f.access, bridgeFor([expiresWhileHydrating]))).rejects.toThrow("MEMORY_UNAUTHORIZED");
+  // The bridge fixture advances its fake clock while the hits are being hydrated, after each candidate's scope validation
+  // (the helper's unscored-record list is read once the candidates are checked). No authorization function is mocked.
+  const answer = { hits: [hit], vectorRows: 0, get unvectored() { f.expire(); return undefined; } };
+  await expect(searchMemory("expires at delivery", f.access, { async search() { return answer; } })).rejects.toThrow("MEMORY_UNAUTHORIZED");
 });

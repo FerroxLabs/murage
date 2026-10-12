@@ -7,6 +7,7 @@
 // by then the quoted reply can be withheld (its source revoked), and a check
 // made then would record nothing for text the engine already has.
 import type { Message } from "./store.ts";
+import type { SteerDelivery } from "./contracts.ts";
 import { capturedMessageWithheld, mergeOutputRoots, outputRootsBad, outputRootsFor, recordSessionRoots, type OutputRoots } from "./memory/replay-lineage.ts";
 import { steerBusyDesk } from "./project-card-executor.ts";
 
@@ -56,11 +57,13 @@ export function steerWithQuoteLineage(adapter: SteerAdapter, threadId: string, t
   steerId?: string;
   quote?: ShownLine;
   lineage: RunningTurnLineage | undefined;
+  /** The engine's answer when it arrives after the response deadline. */
+  onLate?: (delivery: SteerDelivery) => void;
 }): Promise<"steer" | "queue" | "uncertain"> {
   const quoted = opts.quote ? shownLinesRoots([opts.quote]) : undefined;
   return steerBusyDesk(adapter, threadId, text, allowed, () => {
     if (!opts.holds()) throw new Error("MEMORY_CONTEXT_REVOKED");
     if (quoted && outputRootsBad(quoted)) throw new Error("MEMORY_CONTEXT_REVOKED");
     if (quoted) addRootsToRunningTurn(threadId, opts.lineage, quoted);
-  }, opts.steerId);
+  }, opts.steerId, undefined, opts.onLate);
 }

@@ -81,7 +81,7 @@ const ALLOWLIST: Record<string, string> = {
   "server/engine-management.ts": "removes the mkdtemp scratch of an engine install probe",
   "server/fuigo-native-update.ts": "removes the mkdtemp probe home and download directory",
   "server/index.ts": "removes the mkdtemp scratch of a selected-conversation export",
-  "server/conversation-deletion.ts": "removes a deleted conversation's folders only when strictly inside a known root and reached without a symlink (removeConfined); never a root itself",
+  "server/engine-fs.ts": "the mutOps.removeTree member is the one recursive delete of the engine-history executor: engine-exec.ts calls it only through removeConfined, for a deleted conversation's folders strictly inside a known root and reached without a symlink; never a root itself",
   "server/installation-archive.ts": "removes the mkdtemp write scratch and inspection stage of a backup archive",
   "server/installation-damaged-export.ts": "removes the mkdtemp scratch of a damaged-installation export",
   "server/installation-database-snapshot.ts": "removes the mkdtemp scratch beside the snapshot target",
@@ -103,6 +103,16 @@ const ALLOWLIST: Record<string, string> = {
   "server/fuigo-turn-logs.ts": "removes <home>/logs of a finished turn (a symlink is unlinked, never followed) and kept turn-log directories directly inside the turn-log root it owns; never the home or the root",
   "server/memory/pip-transport.ts": "removeTempRoot refuses any path that is not strictly inside the reflection temp base, then removes that one run directory",
   "apps/mobile/e2e/freshauth/run.mjs": "cleanup removes only the realpath'd mkdtempSync(tmpdir(), 'murage-p7-') root this run made, and only when it is still under tmpdir; apps/mobile has no dependency on server/testing",
+  // Reviewed for the engine-deletion lane (each checked against its file, 2026-10-11).
+  "scripts/scale/hz-scale.sh": "the rm -rf is inside the ssh command string and runs on build-host, never on this machine: it empties the children of $H/scale-$label/src, where $H is the fixed /root/mb-0161-hz and $label passed ^[a-z0-9-]+$ above; the tree is exported again straight after",
+  "scripts/scale/run-container.sh": "runs inside the scale-rig container only: every rm is `rm -rf -- \"${VAR:?}\"` on the container's own /scale/data/murage mount or its /scale/cache/<key> cache folder, rebuilt from the fixed /scale/cache root and a key made of the run's shape, seed and tree names plus a short hash of the generator, so some of its parts come from the run's environment; the root is fixed and the name is a single path segment",
+  "server/connector-cache-harness.ts": "usableToolsCacheDir removes once the connector tools-cache folder (CONNECTOR_TOOLS_CACHE_DIR, a folder Murage made for itself) when Windows privacy checks refuse it; everything in it can be fetched again, and it is made again at once",
+  "server/drivers/acp/grok.ts": "the process-exit handler removes the murage-grok-isolation- mkdtemp folder opened a few lines above; `dir` is a const copy of it",
+  "server/drivers/antigravity-scope.ts": "every delete is inside a scoped Antigravity home Murage built itself (its own links and reconciled copies, never followed), a lock folder it made, or a moveInto source it just copied; none can be DATA_DIR or the owner's real engine home",
+  "server/drivers/scoped-cli-home.ts": "every delete is inside a per-engine scoped home Murage made (a cache folder the marker names as one segment and lstat shows is a real directory, its own temporary generation, a retired scope after its logins were set aside, or a pruned cache entry); the owner's real engine home is only ever linked into it and never removed",
+  "server/memory/revocation-index.bench.mjs": "benchmark run by hand: the finally clause removes the revoke-bench- mkdtemp folder it made",
+  "server/memory/testing/perf-fixture.ts": "fixture helper imported only by vitest suites: DATA_DIR resolves under the temporary HOME server/testing/setup.ts makes (setup deletes any MURAGE_DATA_DIR override before anything loads) and installSafeWipeGuard protects it (it refuses the real ~/.murage); the cache folder is the MEMORY_PERF_CACHE the run set",
+  "server/memory/testing/recall-fixture.ts": "fixture helper imported only by vitest suites: DATA_DIR resolves under the temporary HOME server/testing/setup.ts makes (setup deletes any MURAGE_DATA_DIR override), behind the same runtime guard",
   "server/tts/system-voices.ts": "removes the mkdtemp directory a voice probe created",
 };
 
@@ -112,8 +122,17 @@ const ALLOWLIST: Record<string, string> = {
  *  account's real ~/.murage, any home, the checkout and live leases. */
 const VITEST_INCLUDE = [/^server\/.*\.test\.ts$/, /^electron\/.*\.test\.mjs$/, /^src\/.*\.test\.ts$/, /^shared\/.*\.test\.ts$/, /^companion\/.*\.test\.ts$/, /^scripts\/.*\.test\.mjs$/, /^tools\/.*\.test\.ts$/];
 
-const tracked = (): string[] => execFileSync("git", ["ls-files", "-z"], { cwd: ROOT, encoding: "utf8", maxBuffer: 64 * 1024 * 1024 })
-  .split("\0").filter(Boolean);
+/** The tracked files. With no .git (a copy made for a container run) the listing saved beside this test is read instead:
+ * `git ls-files -z > server/testing/.git-ls-files.fixture` in a checkout makes it. It is never committed. */
+const tracked = (): string[] => {
+  let listing: string;
+  try {
+    listing = execFileSync("git", ["ls-files", "-z"], { cwd: ROOT, encoding: "utf8", maxBuffer: 64 * 1024 * 1024, stdio: ["ignore", "pipe", "ignore"] });
+  } catch {
+    listing = readFileSync(join(ROOT, "server/testing/.git-ls-files.fixture"), "utf8");
+  }
+  return listing.split("\0").filter(Boolean);
+};
 
 /** A JS/TS recursive delete whose options object spans lines. */
 const JS_DELETE_MULTILINE = /\b(?:rmSync|rm|rmdirSync|rmdir)\s*\((?:[^;()]|\([^;()]*\))*?\brecursive\s*:\s*true/g;

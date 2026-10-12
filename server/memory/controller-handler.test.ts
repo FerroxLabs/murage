@@ -39,6 +39,8 @@ it("an index-result of 16 rows returns the handler in under 20 ms however long t
     records.push({ id: `r${i}`, version: 1, deleted: false });
   }
   internals.indexing = true; internals.indexRequestId = "req";
+  // what the batch was sent as: its acknowledgement is fenced against it (msearch review round 2)
+  (controller as unknown as { indexSent: Map<string, string> }).indexSent = new Map(records.map(row => [`${row.id}\u0000${row.version}`, "active"]));
   slow.ms = 120;
   const started = performance.now();
   internals.onWorkerMessage(internals.child, { type: "index-result", requestId: "req", records, embeddingStatus: "indexed" });

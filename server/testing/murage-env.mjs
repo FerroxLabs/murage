@@ -40,7 +40,9 @@ export function stripMurageEnv(env) {
 export function childEnv(overrides = {}) {
   // The suite's stand-in for the companion door's launch secret (audit C5).
   const door = process.env.MURAGE_TEST_DOOR_TOKEN ? { MURAGE_COMPANION_TOKEN: process.env.MURAGE_TEST_DOOR_TOKEN } : {};
-  return { ...stripMurageEnv(process.env), ...door, ...overrides };
+  // The suite's stand-in for the native engine-exclusion addon (setup.ts), which a deletion of an engine's files needs.
+  const exclusion = process.env.MURAGE_TEST_DOOR_TOKEN && process.env.MURAGE_ENGINE_EXCLUSION_PATH ? { MURAGE_ENGINE_EXCLUSION_PATH: process.env.MURAGE_ENGINE_EXCLUSION_PATH } : {};
+  return { ...stripMurageEnv(process.env), ...door, ...exclusion, ...overrides };
 }
 
 /** Delete every ambient runtime key from `env` (default process.env) and

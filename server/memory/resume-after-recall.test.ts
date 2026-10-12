@@ -127,8 +127,11 @@ it("the image-await check and the live steer both go through the full session va
   // write fence, run again right before a late write (round 3)
   const holdsAt = source.indexOf("const steerSessionHolds = (): boolean => {");
   expect(source.slice(holdsAt, holdsAt + 600)).toMatch(/receipt\.steerable\(\)[\s\S]*retainedSessionInvalid\(/);
-  const gateAt = source.indexOf("const memorySessionHolds = steerSessionHolds();");
-  const steerAt = source.indexOf("!isEngineCommand && !unprovenSend && memorySessionHolds,", gateAt);
+  // (1.0.2: only for an engine that can take the line mid-turn; any other
+  // queues it, and that turn's own pre-submit check decides)
+  const gateAt = source.indexOf("const memorySessionHolds = steerable && steerSessionHolds();");
+  const steerAt = source.indexOf("memorySessionHolds, {", gateAt);
+  expect(source.slice(gateAt - 300, gateAt)).toMatch(/const steerable = !isEngineCommand && !unprovenSend && Boolean\(instance && cardSteeringMode\(instance\.adapter\) === "steer"\);/);
   expect(gateAt).toBeGreaterThan(holdsAt);
   expect(steerAt).toBeGreaterThan(gateAt);
   expect(source.slice(steerAt, steerAt + 200)).toContain("holds: steerSessionHolds,");

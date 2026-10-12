@@ -26,6 +26,7 @@
 //    rowids by rowid seek, then an update over exactly that rowid range;
 //  - the reconciliation after a downgrade: the next window of `cancelled`
 //    index entries, then one rowid update per candidate.
+import { memoryClaimIndex } from "./claim-index.ts";
 import type { DatabaseSync } from "node:sqlite";
 import { runningAppVersion } from "./app-version.ts";
 import { turnTraceEnabled } from "../turn-trace.ts";
@@ -40,13 +41,15 @@ const parkedMarker = (p: string) => `(CASE WHEN ${p}status='cancelled' AND subst
    AND json_type(substr(${p}error,${MARKER_PREFIX.length + 1}),'$.e') IN ('null','text')) ELSE 0 END)`;
 const REOPEN_SET = `status=json_extract(substr(error,${MARKER_PREFIX.length + 1}),'$.s'),error=json_extract(substr(error,${MARKER_PREFIX.length + 1}),'$.e')`;
 export const PARK_WINDOW_SQL = 500;
+/** Reopened jobs filed one by one; the sweep files the rest. */
+const REOPEN_HINT_LIMIT = 256;
 export const PARK_SWEEP_WINDOW = PARK_WINDOW_SQL;
 
 export const PARK_SQL = {
   thread: `UPDATE memory_jobs SET ${PARK_SET} WHERE rowid IN (SELECT j.rowid FROM memory_sources s CROSS JOIN memory_jobs j ON j.source_id=s.id
     WHERE s.thread_id=? AND s.state='retired' AND +j.status IN ${OPEN})`,  // the unary plus keeps the status index out of the plan: the jobs are probed by source id
   reopenThread: `UPDATE memory_jobs SET ${REOPEN_SET} WHERE rowid IN (SELECT j.rowid FROM memory_sources s CROSS JOIN memory_jobs j ON j.source_id=s.id AND j.source_revision=s.revision
-    WHERE s.thread_id=? AND s.state='active' AND +j.status='cancelled' AND ${parkedMarker("j.")})`,
+    WHERE s.thread_id=? AND s.state='active' AND +j.status='cancelled' AND ${parkedMarker("j.")}) RETURNING id`,
   restore: `UPDATE memory_jobs SET ${PARK_SET} WHERE status='leased' AND EXISTS (SELECT 1 FROM memory_sources s WHERE s.id=memory_jobs.source_id AND s.state='retired')`,
   sweepSelect: `SELECT rowid AS r FROM memory_jobs NOT INDEXED WHERE rowid>? ORDER BY rowid LIMIT ${PARK_WINDOW_SQL}`,
   sweepPark: `UPDATE memory_jobs NOT INDEXED SET ${PARK_SET} WHERE rowid>? AND rowid<=? AND status IN ${OPEN}
@@ -86,7 +89,14 @@ export function parkRetiredThreadJobs(db: DatabaseSync, threadId: string) {
 /** Re-open, as they were, the parked jobs of every active source of one thread
  * (only for the revision the job belongs to: a newer revision already replaced it). */
 export function reopenParkedThreadJobs(db: DatabaseSync, threadId: string) {
-  return Number(db.prepare(PARK_SQL.reopenThread).run(threadId).changes);
+  const ids = db.prepare(PARK_SQL.reopenThread).all(threadId) as Array<{ id: string }>;
+  // The claim's ready index dropped these jobs when they were parked: the jobs are filed again directly (a bounded
+  // number), and the sweep is asked for as well, for the rest (review finding 5, round 2 P2-B).
+  if (ids.length) {
+    for (const row of ids.slice(0, REOPEN_HINT_LIMIT)) memoryClaimIndex.hint(db, String(row.id));
+    memoryClaimIndex.reopened();
+  }
+  return ids.length;
 }
 
 /** A restore requeues leased jobs; one whose source is retired is parked, not requeued. */
@@ -203,6 +213,7 @@ export function parkReconcileStep(db: DatabaseSync, sink: (line: string) => void
     const reopen = db.prepare(PARK_SQL.reconcileReopen);
     let reopened = 0;
     for (const row of rows) reopened += Number(reopen.run(row.r).changes);
+    if (reopened) memoryClaimIndex.reopened();
     const done = rows.length < PARK_WINDOW_SQL, last = rows.at(-1) ?? reconcileCursor;
     if (version !== null) writeReconcileMarker(db, { version, done, t: String(last.t), r: String(last.r) });
     return { reopened, rows, done };

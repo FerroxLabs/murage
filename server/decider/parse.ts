@@ -26,6 +26,8 @@ function parseChoice(raw: Record<string, unknown>, question: Extract<DeciderQues
     probabilities[key] = value;
     sum += value;
   }
+  // Every offered option must carry a probability: a partial map hides mass.
+  if (Object.keys(probabilities).length !== offered.size) return null;
   if (!(Math.abs(sum - 1) <= SUM_TOLERANCE)) return null;
   const pTop = probabilities[choice];
   if (pTop === undefined) return null;
@@ -43,6 +45,7 @@ function parseScore(raw: Record<string, unknown>, question: Extract<DeciderQuest
   if (typeof score !== "number" || !Number.isFinite(score) || score < -EPSILON || score > levels - 1 + EPSILON) return null;
   if (!isRecord(raw.probabilities)) return null;
   const probabilities = Array.from({ length: levels }, () => 0);
+  if (Object.keys(raw.probabilities).length !== levels) return null;
   for (const [key, value] of Object.entries(raw.probabilities)) {
     const index = Number(key);
     if (!Number.isInteger(index) || index < 0 || index >= levels || String(index) !== key || !isProbability(value)) return null;
