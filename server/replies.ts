@@ -33,7 +33,7 @@ export function promptWithReply(text: string, target: Message | undefined, userN
 }
 
 /** Compact relationship marker used while replaying room/direct history. */
-export function transcriptText(stored: Message, messagesById: ReadonlyMap<string, Message>, userName = "User"): string {
+export function transcriptText(stored: Message, messagesById: { get(id: string): Message | undefined }, userName = "User"): string {
   // images a turn left out stay out of every replay of this message
   const message = stored.imagesNotSent?.length && stored.text ? { ...stored, text: withoutImageTags(stored.text, stored.imagesNotSent) } : stored;
   // an earlier routine run's standing instruction reads as that run, not as

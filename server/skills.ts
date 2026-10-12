@@ -293,7 +293,8 @@ function singleLine(value: string): string {
  * 2,194 in skills-library/ do), so those are read properly and folded to the
  * single line the index wants. */
 export function parseSkillMd(raw: string): ParsedSkill | { error: string } {
-  const match = raw.match(/^---\r?\n([\s\S]*?)\r?\n---\r?\n?([\s\S]*)$/);
+  // Notepad and PowerShell can save a leading byte order mark.
+  const match = raw.replace(/^\uFEFF/, "").match(/^---\r?\n([\s\S]*?)\r?\n---\r?\n?([\s\S]*)$/);
   if (!match) return { error: "SKILL.md has no YAML frontmatter (--- block) at the top" };
   const fields = parseFrontmatterScalars(match[1]!);
   const name = singleLine(fields.name ?? "");
@@ -712,6 +713,7 @@ function removeNativeLinksForUnsafeSkillsRoot(
  * so disable/remove has exactly one source of truth; junctions on Windows
  * because directory symlinks there need privileges junctions do not. */
 export function syncSkillLinks(botId: string): void {
+  sweepBotSkills(botId); // (a no-op once the bot has been scanned; marks the bot first, so the scan's own sync does not come back here)
   if (existsSync(join(skillStateDir(botId), "task-discovery.json"))) return;
   const root = workspaceDir(botId);
   const previouslyManaged = readManagedLinks(botId);
@@ -1105,24 +1107,48 @@ export function setSkillEnabled(
   return skillListing(botId, name, current);
 }
 
-/** Once at startup: every installed skill gets a current scan, and any that
- *  is switched on but now Blocked is switched off. Returns those. */
+/** Bots whose skills have had their start-up scan in this process. */
+const sweptBots = new Set<string>();
+let sweepSwitchedOff: ((found: Array<{ botId: string; name: string; scan: SkillScan }>) => void) | null = null;
+/** Who hears of skills the scan switches off. The scan of a bot can run on its first turn (below), so the report cannot be the caller's alone. */
+export function onSkillSweepSwitchedOff(listener: ((found: Array<{ botId: string; name: string; scan: SkillScan }>) => void) | null): void { sweepSwitchedOff = listener; }
+/** Whether this bot's skills have been scanned in this process. */
+export function skillSweepDone(botId: string): boolean { return sweptBots.has(botId); }
+
+/** The start-up scan of ONE bot: every installed skill gets a current scan, and any that is switched on but now Blocked is switched off. The
+ *  manifest is read once and written once. Runs once per bot per process, in the background after the server listens, and at the latest on
+ *  the bot's first turn (skillsSystemPrompt, syncSkillLinks): a skill the scan would block is never offered to a turn before it ran. */
+export function sweepBotSkills(botId: string): Array<{ botId: string; name: string; scan: SkillScan }> {
+  if (sweptBots.has(botId)) return [];
+  sweptBots.add(botId);
+  const off: Array<{ botId: string; name: string; scan: SkillScan }> = [];
+  const manifest = readManifest(botId);
+  let dirty = false, switchedOff = false;
+  for (const name of Object.keys(manifest)) {
+    const entry = manifest[name]!;
+    if (!isSkillName(name)) continue;
+    const text = readSkillFile(botId, name);
+    if (text === null) continue;
+    const parsed = parseSkillMd(text);
+    const description = "error" in parsed ? entry.description : parsed.description;
+    const input = { name, description, triggerTerms: [], files: [{ path: "SKILL.md", content: text }] };
+    let scan: SkillScan;
+    if (entry.scan && entry.scan.scannerVersion === SKILL_SCANNER_VERSION && entry.scan.contentHash === skillContentHash(input)) scan = entry.scan;
+    else { scan = scanSkill(input); entry.scan = scan; dirty = true; }
+    if (scan.verdict !== "blocked" || !entry.enabled) continue;
+    entry.enabled = false; dirty = true; switchedOff = true;
+    off.push({ botId, name, scan });
+  }
+  if (dirty) writeManifest(botId, manifest);
+  if (switchedOff) syncSkillLinks(botId);
+  if (off.length) { try { sweepSwitchedOff?.(off); } catch { /* a report never stops a turn */ } }
+  return off;
+}
+
+/** Once at startup: every installed skill of every bot is scanned (see sweepBotSkills). Returns what was switched off. */
 export function sweepSkillScans(botIds: string[]): Array<{ botId: string; name: string; scan: SkillScan }> {
   const off: Array<{ botId: string; name: string; scan: SkillScan }> = [];
-  for (const botId of botIds) {
-    let changed = false;
-    for (const name of Object.keys(readManifest(botId))) {
-      const scan = currentSkillScan(botId, name);
-      if (!scan || scan.verdict !== "blocked") continue;
-      const manifest = readManifest(botId);
-      if (!manifest[name]?.enabled) continue;
-      manifest[name]!.enabled = false;
-      writeManifest(botId, manifest);
-      off.push({ botId, name, scan });
-      changed = true;
-    }
-    if (changed) syncSkillLinks(botId);
-  }
+  for (const botId of botIds) off.push(...sweepBotSkills(botId));
   return off;
 }
 
@@ -1871,6 +1897,7 @@ export function fitSkillIndex(candidates: readonly string[], render: (kept: stri
 export function skillsSystemPrompt(botId: string): string {
   // Reconcile links on every turn. If the workspace copy changed since its
   // review, integrity filtering below removes it from native discovery too.
+  sweepBotSkills(botId);
   syncSkillLinks(botId);
   const enabled = listSkills(botId).filter((skill) => skill.enabled);
   if (!enabled.length) {

@@ -41,6 +41,7 @@ const NOT_THE_DATA_FOLDER: Record<string, Record<string, string>> = {
   },
   "server/memory/settings.ts": { "<<part>>": "path parts inside DATA_DIR/memory-model, checked by memoryModelPath" },
   "server/procedure-bundles.ts": { "<<part>>": "path parts inside DATA_DIR/skill-state/<bot>" },
+  "server/installation-app-schema-downgrade.ts": { "<<LEGACY_DELEGATIONS_FILE>>": "delegations.json (classified): the 1.0.1 queue file the downgrade writes back" },
   "server/index.ts": { "<<relative>>": "relative paths inside DATA_DIR/workspaces" },
   "electron/memory-upgrade-status.mjs": { "<<name>>": "deletes only memory-upgrade-status.json and its memory-upgrade-status.json.<pid>.tmp (both classified), matched by name before removal" },
   "server/database.ts": { "<<MEMORY_PRE_V2_SNAPSHOT>>": "messages.pre-memory-v2.db, from memory/schema.ts", "<<MEMORY_PRE_V4_SNAPSHOT>>": "messages.pre-memory-v4.db, from memory/schema.ts", "<<MEMORY_PRE_V3_SNAPSHOT>>": "messages.pre-memory-v3.db, from memory/schema.ts" },
@@ -92,6 +93,18 @@ describe("every top-level name Murage writes is classified for backup", () => {
     expect(classifyDataDirEntry("connected-apps-catalog.json")).toMatchObject({ backup: "excluded" });
     expect(classifyDataDirEntry("connected-apps-catalog.json")?.why).toMatch(/not restored/);
     expect(DATA_DIR_RESTORABLE).not.toContain("connected-apps-catalog.json");
+  });
+
+  it("backs up the connected-app ledger through a consistent snapshot and restores it, so unknown outcomes keep blocking repeats", () => {
+    expect(classifyDataDirEntry("connected-app-ledger.db")).toMatchObject({ backup: "database" });
+    for (const sidecar of ["connected-app-ledger.db-wal", "connected-app-ledger.db-shm", "connected-app-ledger.db-journal"]) expect(classifyDataDirEntry(sidecar)).toMatchObject({ backup: "sidecar" });
+    expect(DATA_DIR_RESTORABLE).toContain("connected-app-ledger.db");
+  });
+
+  it("keeps the legal acceptance record in backups and the retired bus spill folder out", () => {
+    expect(classifyDataDirEntry("terms-acceptance.json")).toMatchObject({ backup: "owner-file" });
+    expect(DATA_DIR_RESTORABLE).toContain("terms-acceptance.json");
+    expect(classifyDataDirEntry("bus-spill")).toMatchObject({ backup: "excluded" });
   });
 
   it("reference-pack images are owner work the restorable stage copies", () => {

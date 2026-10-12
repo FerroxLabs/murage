@@ -1,7 +1,9 @@
 import { repairRestoredSharing, validateSharingPaused, validateSharingStructure } from "./sharing-restore.ts";
+import { endAllLivePairedRequests } from "./handoff-pair.ts";
 import { reconcileTeamJournalFiles } from "./team-lifecycle.ts";
 import type { BotRecord, GroupRecord } from "./store.ts";
 import { migrateMemorySchema } from "./memory/schema.ts";
+import { markIntegrityPassProven } from "./memory/integrity-state.ts";
 import { prepareProjectTablesForRestore } from "./project-tables.ts";
 import { pauseRestoredMemory } from "./memory/restore.ts";
 import { EFFORT_LEVELS } from "./contracts.ts";
@@ -19,6 +21,10 @@ import { RESTORE_REVIEW_FILE } from "../electron/restore-review.mjs";
 import { notificationPreferencesSchema } from "../shared/notification-preferences.ts";
 import { hermesProfileCarry } from "../shared/hermes-profile-name.ts";
 import { mapRoutineRuns, routinesCommit } from "./routine-runs-journal.ts";
+import { bumpWriteEpoch } from "./app-write-revision.ts";
+import { neutralizeRestoredSends } from "./send-store.ts";
+import { queuedDelegationsByThread } from "./pending-delegations-schema.ts";
+import { fenceRestoredContinuations, fenceRestoredSql } from "./restore-fence.ts";
 
 type RecordValue = Record<string, unknown>;
 const object = (value: unknown): value is RecordValue => value !== null && typeof value === "object" && !Array.isArray(value);
@@ -95,6 +101,9 @@ export async function prepareInstallationRestore(archive: string, outputParent: 
   const modifications: Array<{ component: string; action: string }> = [];
   const quarantined: string[] = [];
   let success = false;
+  // One token for this restore: every held row, JSON or SQL, carries it, and only an owner action after the restore releases them.
+  const generation = randomUUID();
+  let heldContinuations = 0;
   const read = (path: string): unknown => {
     if (!files.has(path)) return undefined;
     const absolute = join(state, ...path.split("/"));
@@ -206,6 +215,7 @@ export async function prepareInstallationRestore(archive: string, outputParent: 
           if (!Array.isArray(value.memberIds) || value.memberIds.some(member => !id(member) || !botIds.has(member))) fail("INVALID_RESTORE_MEMBERSHIP");
           Object.assign(record, { working: false, busyBotId: null });
         }
+        heldContinuations += fenceRestoredContinuations(record, generation);
         return record;
       });
       write(path, prepared);
@@ -214,6 +224,7 @@ export async function prepareInstallationRestore(archive: string, outputParent: 
       if (path === "bots.json" && prospectLearningReset) modifications.push({ component: path, action: "Learning from customer and audience messages was turned off; choose it again if you want it." });
       if (path === "bots.json" && imageApprovalReset) modifications.push({ component: path, action: "Bots set to make images without asking now follow their permission level." });
     }
+    if (heldContinuations > 0) modifications.push({ component: "bots.json/groups.json", action: `${heldContinuations} saved continuation${heldContinuations === 1 ? "" : "s"} kept on hold: authorize each one again to continue` });
     const routines = read("routines.json");
     if (routines !== undefined) {
       if (!object(routines) || routines.version !== 1 || !Array.isArray(routines.routines) || (routines.runs !== undefined && !Array.isArray(routines.runs))) fail("INVALID_RESTORE_ROUTINES");
@@ -299,7 +310,8 @@ export async function prepareInstallationRestore(archive: string, outputParent: 
       try {
         const counts = inspectInstallationDatabase(db);
         if (inspected.manifest.database.status !== "copied" || counts.messages !== inspected.manifest.database.messages || counts.threads !== inspected.manifest.database.threads) fail("INVALID_DATABASE_MANIFEST");
-        if(db.prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name='memory_meta'").get())migrateMemorySchema(db);
+        if(db.prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name='memory_meta'").get()){migrateMemorySchema(db);markIntegrityPassProven(db);} // inspectInstallationDatabase proved every row in full above
+        bumpWriteEpoch(db); // a restored file is not the file any cached figure was counted from
         validateSharingStructure(sharingBots, sharingGroups, db);
         modifications.push(...reconcileTeamJournalFiles(state, db, sharingBots as unknown as BotRecord[], sharingGroups as unknown as GroupRecord[]).map(action => ({ component: "bots.json/groups.json", action })));
         validateSharingPaused(sharingBots, sharingGroups, db);
@@ -313,7 +325,22 @@ export async function prepareInstallationRestore(archive: string, outputParent: 
           const encoded = JSON.stringify(after);
           if (encoded !== row.json) update.run(encoded, row.thread_id, row.id);
         }
+        // Handoffs queued in the backup never run after a restore: kept as evidence beside the other quarantined files, then removed from the table.
+        if (db.prepare("SELECT 1 AS x FROM sqlite_schema WHERE type='table' AND name='pending_delegations'").get()) {
+          const evidence = queuedDelegationsByThread(db), queued = Object.values(evidence).flat();
+          if (queued.length) {
+            const destination = join(state, "recovery-quarantine", inspected.manifest.snapshotId, files.has("delegations.json") ? "delegations-table.json" : "delegations.json");
+            mkdirSync(dirname(destination), { recursive: true, mode: 0o700 });
+            writeFileSync(destination, JSON.stringify(evidence) + "\n", { mode: 0o600, flush: true });
+            endAllLivePairedRequests(db, "restore-quarantine");   // a queued hand-off's request is not left live behind its removed row
+            db.exec("DELETE FROM pending_delegations");
+            modifications.push({ component: "messages.db", action: `${queued.length} queued handoff${queued.length === 1 ? "" : "s"} moved to recovery-quarantine; none runs after the restore` });
+          }
+        }
+        modifications.push(...fenceRestoredSql(db, generation));
         modifications.push(...prepareProjectTablesForRestore(db, { groups: sharingGroups as Array<{ id: string; channelProject?: unknown }>, botIds, now: Date.now() }));
+        const heldSends = neutralizeRestoredSends(db, generation);
+        if (heldSends) modifications.push({ component: "messages.db", action: `${heldSends} message${heldSends === 1 ? "" : "s"} that were waiting to be sent were kept as "Send again" chips and will not run until you resend them` });
         if (pauseRestoredMemory(db)) modifications.push({component:"messages.db",action:"Memory paused; worker leases and provider disclosures invalidated; indexes require rebuild"});
         db.exec("COMMIT");
       } catch (error) { try { db.exec("ROLLBACK"); } catch { /* already rolled back */ } throw error; }

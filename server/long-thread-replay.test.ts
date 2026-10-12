@@ -17,7 +17,8 @@ import { InternalCapabilities } from "./internal-capabilities.ts";
 import { memoryAccess, reconcileMemoryRoster, type MemoryRoster } from "./memory/policy.ts";
 import * as disclosures from "./memory/disclosures.ts";
 import { retainedSessionInvalid } from "./memory/dispatch.ts";
-import { THREAD_RECEIPT_LIMIT } from "./memory/replay-lineage.ts";
+import { THREAD_RECEIPT_LIMIT, outputRootsFor, recordSessionRoots } from "./memory/replay-lineage.ts";
+import { insertMessage } from "./message-db.ts";
 
 const roster: MemoryRoster = { bots: [{ id: "dax", threadId: "dax-direct", section: "Operations" }], groups: [] };
 const NONE: ReadonlySet<string> = new Set();
@@ -34,6 +35,8 @@ function longThread(receipts: number) {
   database().prepare(`WITH RECURSIVE n(value) AS (VALUES(1) UNION ALL SELECT value+1 FROM n WHERE value<?)
     INSERT INTO memory_disclosures(bundle_id,thread_id,driver_instance,record_versions,source_versions,output_message_ids,policy_revision,deletion_epoch,token_count,state,created_at)
     SELECT 'old-'||value,'dax-direct','driver','[]','[]',json_array('reply-'||value),?,?,0,'delivered',value FROM n`).run(receipts, a.policyRevision, a.deletionEpoch);
+  // the copy's original is stored where it was written
+  insertMessage("other", { id: "x", role: "bot", kind: "text", text: "line x", at: 1 });
   const messages = [text("u1", "user"), text("reply-1", "bot"), text("plain", "bot"), text("copy", "bot", { copyOf: { threadId: "other", messageIds: ["x"] } }), text("u2", "user")];
   return { a, messages };
 }
@@ -92,6 +95,7 @@ function oneSession(turns: number) {
     insert.run(`s-${k}`, JSON.stringify(outputs), a.policyRevision, a.deletionEpoch, Date.now() + k);
   }
   database().exec("COMMIT");
+  recordSessionRoots("dax-direct", "driver", "s1", outputRootsFor([]));
   const messages = Array.from({ length: turns * 2 }, (_, i) => text(`m${i + 1}`, (i + 1) % 2 ? "user" : "bot"));
   return { a, messages };
 }

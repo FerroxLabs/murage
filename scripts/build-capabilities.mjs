@@ -121,7 +121,7 @@ const ROUTE_TERMS = {
 };
 const ROUTE_PLUMBING = new Set([
   "announcements", "automation-admission", "config", "desktop", "desktop-secret", "deletion-preview", "diagnostics",
-  "events", "health", "hermes", "instances", "internal", "presence", "setup", "subscribe",
+  "events", "health", "hermes", "instances", "internal", "presence", "restore-holds", "setup", "shared-results", "subscribe", "terms",
 ]);
 const seenFamilies = new Set();
 for (const match of read("server/index.ts").matchAll(/"\/api\/([a-z][a-z-]*)/g)) seenFamilies.add(match[1]);

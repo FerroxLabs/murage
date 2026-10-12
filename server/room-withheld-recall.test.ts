@@ -197,6 +197,8 @@ it("P1: a reply made with a clean pin stays visible; one made with a pin that la
 function mirroredReply() {
   const record = daxMemory();
   disclose("b-task", "dax-direct", [{ id: record, version: version(record) }], ["m-original"]);
+  // the original is stored where it was written: a copy is shown only while the message it was copied from still is
+  insertMessage("dax-direct", { id: "m-original", role: "bot", kind: "text", text: REPLY, at: Date.now(), from: { botId: "dax", name: "Dax", color: "#000" } });
   captured("dax-direct", "m-original", "dax", REPLY);
   const copy: Message = { id: "m-copy", role: "bot", kind: "text", text: REPLY, at: Date.now(), from: { botId: "dax", name: "Dax", color: "#000" }, copyOf: { threadId: "dax-direct", messageIds: ["m-original"] } };
   insertMessage("pair-chat", copy);

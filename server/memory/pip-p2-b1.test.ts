@@ -124,18 +124,31 @@ describe("PIP kind list", () => {
       if (n) counts[file] = n;
     }
     // Readers that hand rows to a model or the owner exclude PIP_ALL_KINDS_SQL or isPipKind in their own file.
-    for (const file of ["memory/eligibility.ts", "memory/recent.ts", "memory/search.ts", "memory/projection.ts", "memory/owner-list.ts", "memory/bundle.ts", "memory/routes.ts", "memory/retention.ts", "memory/authority.ts", "memory/consolidate.ts", "memory/settings.ts", "skills.ts"])
+    for (const file of ["memory/eligibility.ts", "memory/recent.ts", "memory/readable.ts", "memory/projection.ts", "memory/owner-list.ts", "memory/bundle.ts", "memory/retention.ts", "memory/authority.ts", "memory/consolidate.ts", "memory/settings.ts", "skills.ts"])
       expect(readFileSync(new URL(file, root), "utf8"), file).toMatch(/PIP_ALL_KINDS_SQL|isPipKind|pip-kinds\.ts/);
+    // memory_get (routes.ts) and memory_search (search.ts) read every record through readableMemoryRecord as the bot's own
+    // tool (agent: true), which refuses PIP kinds in readable.ts (msearch review round 2).
+    for (const file of ["memory/routes.ts", "memory/search.ts"]) expect(readFileSync(new URL(file, root), "utf8"), file).toMatch(/agent:true/);
     // Nothing still imports the P1 names.
     for (const file of files) expect(readFileSync(new URL(file, root), "utf8"), file).not.toMatch(/\bPIP_KINDS(?:_SQL)?\b/);
     expect(counts).toEqual({
-      "memory/authority.ts": 11, "memory/automatic-learning.ts": 2, "memory/bring-in.ts": 2, "memory/bundle.ts": 6, "memory/capture.ts": 1, "memory/checkpoints.ts": 2,
-      "memory/consolidate.ts": 3, "memory/eligibility.ts": 3, "memory/evolution-forgetting.ts": 1, "memory/forget.ts": 2, "memory/identity.ts": 8, "memory/import.ts": 1,
+      "memory/authority.ts": 11, "memory/automatic-learning.ts": 2, "memory/bring-in.ts": 2,
+      // -2: bundle hydration, memory_get and every search path read through readableMemoryRecord (readable.ts: one point
+      // lookup per read mode, PIP kinds refused for the bot's own tools)
+      "memory/bundle.ts": 4, "memory/readable.ts": 4, "memory/capture.ts": 1, "memory/checkpoints.ts": 2,
+      "memory/consolidate.ts": 3, "memory/eligibility.ts": 3, "memory/evolution-forgetting.ts": 1, "memory/forget.ts": 2, "memory/identity.ts": 8, "memory/import.ts": 1, "memory/index-reader.ts": 1,
       "memory/learning-history.ts": 4, "memory/lessons.ts": 1, "memory/memory-moments.ts": 1, "memory/metrics.ts": 1, "memory/owner-list.ts": 2, "memory/procedure-review.ts": 3,
-      "memory/projection.ts": 2, "memory/recent.ts": 2,
+      // +1: pendingProjectionRefsIn names the reader's own pending records (ids only) behind the PENDING predicate, which excludes PIP kinds (msearch review round 4)
+      "memory/projection.ts": 4,
+      // +2: keywordMemoryHits, the keyword fallback for memory_search, excludes PIP_ALL_KINDS_SQL and CURRENT_MEMORY in its own statement (fix/1.0.2-memory-search)
+      // +1: the keyword fallback reads a row's text by rowid only after its size passed the byte cap (msearch review round 2)
+      "memory/recent.ts": 5,
       // +3: derivationAncestryCurrent reads parent states only, never text (revoke fix round 2)
-      "memory/replay-lineage.ts": 12, "memory/restore.ts": 7, "memory/retention.ts": 8, "memory/reveal-capture.ts": 2, "memory/routes.ts": 8,
-      "memory/schema.ts": 3, "memory/search.ts": 1, "memory/settings.ts": 3, "memory/worker-controller.ts": 3, "skills.ts": 6, "human-principals.ts": 1,
+      "memory/replay-lineage.ts": 12, "memory/restore.ts": 8, // +1: the status scan counts records by state and adds up text lengths, never returning text
+      "memory/retention.ts": 9, "memory/reveal-capture.ts": 2, "memory/routes.ts": 8,
+      "memory/schema.ts": 5, "memory/settings.ts": 3,
+      // the background integrity pass checks that a learning event's record exists (a key lookup, no text), and the upgrade counts use max(rowid) (fast upgrade)
+      "memory/integrity-pass.ts": 1, "memory/upgrade-counts.ts": 1, "memory/worker-controller.ts": 3, "skills.ts": 6, "human-principals.ts": 1,
       // B3: the lived family, episodes and reflection read only PIP kinds, named in their own statements.
       // Round 2 removed the redundant episode check from pip-reflect; pip-episodes owns it.
       "memory/pip-episodes.ts": 4, "memory/pip-lived.ts": 8, "memory/pip-reflect.ts": 2, "memory/pip-stance.ts": 4,
@@ -143,6 +156,10 @@ describe("PIP kind list", () => {
       // provenance-stamp.ts (it names its kinds) plus a rowid chunk bound; replay-lineage gained a
       // point lookup by id; schema.ts folded two administrative checks into one marked statement.
       "memory/provenance-stamp.ts": 2,
+      // Memory review lane (reviewed against I-15): review.ts lists waiting candidates with kind NOT IN PIP_ALL_KINDS_SQL and
+      // every id+version lookup (keep, edit, undo) rejects isPipKind rows through candidateRow or reads an owner-keep receipt's
+      // own record; review-eligibility.ts adds one point lookup of the pinned record a candidate supersedes, returning no text.
+      "memory/review.ts": 8, "memory/review-eligibility.ts": 1,
     });
   });
 

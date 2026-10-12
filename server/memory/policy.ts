@@ -8,7 +8,7 @@ import type { MemoryScopeKind } from "../../shared/memory.ts";
 import { memoryState } from "./repository.ts";
 import { threadMemoryRoom } from "./capture-scope.ts";
 import { scopeRow } from "./scope-id.ts";
-import { eligibilityAnswer, inEligibilityPass } from "./eligibility-pass.ts";
+import { eligibilityAnswer, inEligibilityPass, passLookup } from "./eligibility-pass.ts";
 import { revokeAllDisclosures } from "./revocation.ts";
 
 export interface MemoryRoster {
@@ -136,7 +136,13 @@ export function persistMemoryRoster(roster: MemoryRoster, persist: () => void) {
 }
 
 /** Caller supplies the already-validated durable roster on startup, never model data. */
-export function reconcileMemoryRoster(roster: MemoryRoster) {
+let lastReconciled: { db: unknown; key: string } | null = null;
+/** `unlessUnchanged`: the start reconciles twice (identities, then sharing) over the same roster; the second pass is skipped when this process already
+ * reconciled this exact roster against this database at this policy revision (it would rewrite the same rows). */
+export function reconcileMemoryRoster(roster: MemoryRoster, options: { unlessUnchanged?: boolean } = {}) {
+  const handle = database();
+  const key = `${fingerprint(roster)}\n${rosterIntent(roster)}\n${memoryState().policyRevision}`;
+  if (options.unlessUnchanged && lastReconciled?.db === handle && lastReconciled.key === key) return;
   transaction(db => {
     const prior = policyRow();
     if (prior && JSON.parse(String(prior.intent)).hash !== fingerprint(roster)
@@ -156,6 +162,7 @@ export function reconcileMemoryRoster(roster: MemoryRoster) {
     db.prepare("INSERT INTO memory_scope_bindings(id,scope_id,subject_type,subject_id,revision,state,intent) VALUES(?,?,'system','roster',?,'granted',?) ON CONFLICT(id) DO UPDATE SET state='granted',intent=excluded.intent,revision=excluded.revision")
       .run(POLICY_ID,scope,memoryState().policyRevision,rosterIntent(roster));
   });
+  lastReconciled = { db: handle, key: `${fingerprint(roster)}\n${rosterIntent(roster)}\n${memoryState().policyRevision}` };
 }
 
 /** notOwnerAudience: the turn's words were not proven to be the owner's
@@ -283,6 +290,15 @@ export function memoryAccessNotOwnerAudience(access: MemoryAccess): boolean {
   return contexts.get(access)?.claim.notOwnerAudience === true;
 }
 
+/** May this reader see an identity-partition record held in this scope: only the
+ * bot's own bot scope (or a conversation scope), and never in a room. A grant
+ * that reaches another bot's scope does not carry that bot's private identity.
+ * One rule for memory_get (bundle hydration) and memory_search. */
+export function identityRecordReadable(scopeId: string, access: Pick<MemoryAccess, "botId" | "scopeIds" | "threadId">): boolean {
+  const own = database().prepare("SELECT 1 FROM memory_scopes WHERE id=? AND ((kind='bot' AND owner_key=?) OR kind='conversation')").get(scopeId, access.botId);
+  return Boolean(own) && !accessIncludesRoom(access);
+}
+
 /** True when this access is a room member's. Owner-private identity records
  * (continuity, canon, reveal state) are never read in a room. */
 export function accessIncludesRoom(access: Pick<MemoryAccess, "scopeIds" | "threadId">): boolean {
@@ -315,16 +331,18 @@ export function memoryAccess(registry: InternalCapabilities, claim: InternalCapa
 
 /** Host background processing reuses current audience policy without minting a
  * tool capability or an owner ticket. This is not a dispatch/disclosure grant. */
-export function backgroundMemoryScopes(botId: string, threadId: string, roster: MemoryRoster): readonly string[] {
+/** `observeOnly`: reading what a skill or routine says right now (the recovery of a half-finished change) is not a use of memory, so it does not wait for memory
+ * to be switched on: the mode check is skipped, every other check (the roster's grant, excluded threads, eligibility) is the same. */
+export function backgroundMemoryScopes(botId: string, threadId: string, roster: MemoryRoster, observeOnly = false): readonly string[] {
   const state = memoryState();
-  if (!["active", "capture"].includes(state.mode) || policyRow()?.state !== "granted") return [];
+  if ((!observeOnly && !["active", "capture"].includes(state.mode)) || policyRow()?.state !== "granted") return [];
   const excluded = database().prepare("SELECT 1 FROM memory_scope_bindings b,json_each(b.intent,'$.excludedThreadIds') e WHERE b.id='memory-owner-settings' AND e.value=?").get(threadId);
   if (excluded) return [];
   return Object.freeze(eligibilityAnswer(database(), `${botId}\u0000${threadId}`, roster, () => eligibleScopes(botId, threadId, roster)));
 }
 
-export function backgroundMemoryAudience(botId: string, threadId: string, roster: MemoryRoster) {
-  const scopeIds = backgroundMemoryScopes(botId, threadId, roster);
+export function backgroundMemoryAudience(botId: string, threadId: string, roster: MemoryRoster, observeOnly = false) {
+  const scopeIds = backgroundMemoryScopes(botId, threadId, roster, observeOnly);
   if (!scopeIds.length) return null;
   const principal = threadHumanPrincipal(threadId);
   assertHumanPrincipal(principal);
@@ -347,9 +365,11 @@ export function backgroundMemoryAudience(botId: string, threadId: string, roster
 export function inMemoryAccessPass<T>(work: () => T): T { return inEligibilityPass(database(), work); }
 
 export function assertMemoryAccess(access: MemoryAccess, scope?: string) {
-  const trusted = contexts.get(access), state = memoryState();
+  const trusted = contexts.get(access);
   if (!trusted || !trusted.registry.isActive(trusted.claim)) throw new Error("MEMORY_UNAUTHORIZED");
-  if (state.policyRevision !== access.policyRevision || state.deletionEpoch !== access.deletionEpoch || policyRow()?.state !== "granted") throw new Error("MEMORY_CONTEXT_REVOKED");
+  // Inside a synchronous pass the meta row and the policy binding are read once (a row this connection writes ends the memo).
+  const { state, granted } = passLookup(database(), "assert-memory-state", () => ({ state: memoryState(), granted: policyRow()?.state === "granted" }));
+  if (state.policyRevision !== access.policyRevision || state.deletionEpoch !== access.deletionEpoch || !granted) throw new Error("MEMORY_CONTEXT_REVOKED");
   const roster = trusted.roster(), notOwner = trusted.claim.notOwnerAudience === true;
   // Inside a synchronous pass (hydrating one record, a hit loop) the audience is worked out once; the primary-key re-check still runs once per pass.
   const current = eligibilityAnswer(database(), `assert\u0000${access.botId}\u0000${access.threadId}\u0000${notOwner}`, roster, () => eligibleScopes(access.botId,access.threadId,roster,notOwner));

@@ -10,11 +10,26 @@
 // system language gets English.
 import { readdirSync, readFileSync, rmSync, statSync } from "node:fs";
 import path from "node:path";
+import { parseUpgradeState } from "../shared/upgrade-contract.mjs";
 
 export const MEMORY_UPGRADE_STATUS_FILE = "memory-upgrade-status.json";
 const BLOCKED_CODES = new Set(["MEMORY_MIGRATION_DISK_SPACE", "MEMORY_SCHEMA_NEWER", "MEMORY_MIGRATION_FAILED"]);
-const PHASES = new Set(["checking", "copying", "migrating"]);
+const PHASES = new Set(["checking", "copying", "migrating", "indexing", "converting", "repairing", "reclaiming", "message-index", "search-index"]);
+const STEPS = new Set(["tables", "indexes", "backfill", "validating", "committing"]);
 const num = (value) => (typeof value === "number" && Number.isFinite(value) && value >= 0 ? value : undefined);
+
+/** The upgrade reading a note or a 503 health body carries (`upgrade`, shared/upgrade-contract.mjs), parsed: { ok: true, state } or { ok: false, reason }.
+ * A server that predates the contract has none ("legacy"): the screens then show activity only. This module does not word anything. */
+export function cleanUpgrade(raw) { return raw && typeof raw === "object" && raw.upgrade !== undefined ? parseUpgradeState(raw.upgrade) : { ok: false, reason: "legacy" }; }
+
+/** A note-shaped status from the server's 503 health body (the answer while the server thread is busy). The shell uses it when the note
+ * cannot be read: a missing or unwritable note must not blank the screen. */
+export function statusFromHealth(body, now = Date.now()) {
+  if (!body || body.upgrading !== true) return null;
+  const upgrade = cleanUpgrade(body);
+  const state = upgrade.ok ? upgrade.state : null;
+  return { state: "upgrading", phase: undefined, startedAt: undefined, updatedAt: now, done: state?.step.done, total: state?.step.total, upgrade };
+}
 
 /** The note, validated, or null. `pid` must be the child that is starting now:
  * a note left by an earlier launch is never shown as this launch's state. */
@@ -37,6 +52,11 @@ export function readMemoryUpgradeStatus(dataDir, { pid } = {}) {
     freeBytes: num(raw.freeBytes),
     shortBytes: num(raw.shortBytes),
     newerVersion: num(raw.newerVersion),
+    done: num(raw.done),
+    total: num(raw.total),
+    step: STEPS.has(raw.step) ? raw.step : undefined,
+    upgrade: cleanUpgrade(raw),
+    stepElapsedMs: num(raw.stepElapsedMs),
     partialName,
   };
 }
@@ -52,12 +72,13 @@ export function clearMemoryUpgradeStatus(dataDir) {
   } catch { /* absent folder or file */ }
 }
 
-/** 0..100 while the copy grows, null when there is nothing to measure yet. */
+/** 0..100 for the splash bar's key: the server's own launch-wide figure (never backwards within a launch), or the copy's growth; null when there is nothing to measure. */
 export function memoryUpgradeProgress(status, dataDir, size = (file) => statSync(file).size) {
   if (!status || status.state !== "upgrading") return null;
-  if (status.phase === "migrating") return 95;
-  if (status.phase !== "copying" || !status.copyBytes || !status.partialName) return status.phase === "checking" ? 0 : null;
-  try { return Math.max(1, Math.min(94, Math.floor((size(path.join(dataDir, status.partialName)) / status.copyBytes) * 100))); } catch { return 1; }
+  const state = status.upgrade?.ok ? status.upgrade.state : null;
+  if (state && typeof state.overall === "number" && state.launch !== "unknown") return Math.max(1, Math.min(99, Math.floor(state.overall * 100)));
+  if (status.phase !== "copying" || !status.copyBytes || !status.partialName) return null;
+  try { return Math.max(1, Math.min(94, Math.floor((size(path.join(dataDir, status.partialName)) / status.copyBytes) * 100))); } catch { return null; }
 }
 
 /** "1.3 GB" / "640 MB", rounded up so freeing exactly that much is enough. */
@@ -67,14 +88,14 @@ export function describeBytes(bytes) {
 }
 
 const TEXT = {
-  en: { title: "Upgrading your memory", body: "This can take a minute. Murage opens when it is done. Please keep this window open.", space: "Murage needs more free disk space to upgrade your memory. Free up at least {amount}, then open Murage again. Nothing has been changed.", newer: "Your data was last opened by a newer version of Murage. Install the latest version of Murage to open it.", failed: "Murage could not finish upgrading your memory. Nothing has been changed. Open Murage again, or restore a backup." },
-  de: { title: "Dein Gedächtnis wird aktualisiert", body: "Das kann eine Minute dauern. Murage öffnet sich, sobald es fertig ist. Bitte lass dieses Fenster geöffnet.", space: "Murage braucht mehr freien Speicherplatz, um dein Gedächtnis zu aktualisieren. Gib mindestens {amount} frei und öffne Murage dann erneut. Es wurde nichts verändert.", newer: "Deine Daten wurden zuletzt mit einer neueren Version von Murage geöffnet. Installiere die neueste Version von Murage, um sie zu öffnen.", failed: "Murage konnte die Aktualisierung deines Gedächtnisses nicht abschließen. Es wurde nichts verändert. Öffne Murage erneut oder stelle ein Backup wieder her." },
-  es: { title: "Actualizando tu memoria", body: "Esto puede tardar un minuto. Murage se abrirá cuando termine. Mantén esta ventana abierta.", space: "Murage necesita más espacio libre en disco para actualizar tu memoria. Libera al menos {amount} y vuelve a abrir Murage. No se ha cambiado nada.", newer: "Tus datos se abrieron por última vez con una versión más reciente de Murage. Instala la última versión de Murage para abrirlos.", failed: "Murage no pudo terminar de actualizar tu memoria. No se ha cambiado nada. Vuelve a abrir Murage o restaura una copia de seguridad." },
-  fr: { title: "Mise à niveau de votre mémoire", body: "Cela peut prendre une minute. Murage s'ouvrira dès que ce sera terminé. Gardez cette fenêtre ouverte.", space: "Murage a besoin de plus d'espace disque libre pour mettre votre mémoire à niveau. Libérez au moins {amount}, puis rouvrez Murage. Rien n'a été modifié.", newer: "Vos données ont été ouvertes en dernier par une version plus récente de Murage. Installez la dernière version de Murage pour les ouvrir.", failed: "Murage n'a pas pu terminer la mise à niveau de votre mémoire. Rien n'a été modifié. Rouvrez Murage ou restaurez une sauvegarde." },
-  hi: { title: "आपकी मेमोरी अपग्रेड हो रही है", body: "इसमें एक मिनट लग सकता है। पूरा होने पर Murage खुल जाएगा। कृपया यह विंडो खुली रहने दें।", space: "आपकी मेमोरी अपग्रेड करने के लिए Murage को और खाली डिस्क जगह चाहिए। कम से कम {amount} खाली करें, फिर Murage को दोबारा खोलें। कुछ भी नहीं बदला गया है।", newer: "आपका डेटा आखिरी बार Murage के नए संस्करण से खोला गया था। इसे खोलने के लिए Murage का नवीनतम संस्करण इंस्टॉल करें।", failed: "Murage आपकी मेमोरी का अपग्रेड पूरा नहीं कर सका। कुछ भी नहीं बदला गया है। Murage को दोबारा खोलें या कोई बैकअप पुनर्स्थापित करें।" },
-  ja: { title: "メモリをアップグレードしています", body: "1分ほどかかることがあります。完了すると Murage が開きます。このウィンドウは開いたままにしてください。", space: "メモリをアップグレードするには、ディスクの空き容量がさらに必要です。{amount}以上の空きを作ってから Murage をもう一度開いてください。何も変更されていません。", newer: "このデータは、より新しいバージョンの Murage で最後に開かれました。開くには最新バージョンの Murage をインストールしてください。", failed: "Murage はメモリのアップグレードを完了できませんでした。何も変更されていません。Murage をもう一度開くか、バックアップを復元してください。" },
-  pt: { title: "Atualizando sua memória", body: "Isso pode levar um minuto. O Murage abre quando terminar. Mantenha esta janela aberta.", space: "O Murage precisa de mais espaço livre em disco para atualizar sua memória. Libere pelo menos {amount} e abra o Murage de novo. Nada foi alterado.", newer: "Seus dados foram abertos por último por uma versão mais recente do Murage. Instale a versão mais recente do Murage para abri-los.", failed: "O Murage não conseguiu terminar de atualizar sua memória. Nada foi alterado. Abra o Murage de novo ou restaure um backup." },
-  zh: { title: "正在升级你的记忆", body: "这可能需要一分钟。完成后 Murage 会自动打开。请保持此窗口打开。", space: "Murage 需要更多可用磁盘空间来升级你的记忆。请至少腾出 {amount},然后重新打开 Murage。没有任何内容被更改。", newer: "你的数据上次是由更新版本的 Murage 打开的。请安装最新版本的 Murage 来打开它。", failed: "Murage 未能完成记忆升级。没有任何内容被更改。请重新打开 Murage,或恢复备份。" },
+  en: { space: "Murage needs more free disk space to upgrade your memory. Free up at least {amount}, then open Murage again. Nothing has been changed.", newer: "Your data was last opened by a newer version of Murage. Install the latest version of Murage to open it.", failed: "Murage could not finish updating your memory. Your conversations and memory are still there. Open Murage again, or restore a backup.", timeout: "This did not finish in the time Murage allows. Open Murage again and it carries on from the last step it finished. If it happens twice, the reason is in {log}." },
+  de: { space: "Murage braucht mehr freien Speicherplatz, um dein Gedächtnis zu aktualisieren. Gib mindestens {amount} frei und öffne Murage dann erneut. Es wurde nichts verändert.", newer: "Deine Daten wurden zuletzt mit einer neueren Version von Murage geöffnet. Installiere die neueste Version von Murage, um sie zu öffnen.", failed: "Murage konnte die Aktualisierung deines Gedächtnisses nicht abschließen. Deine Unterhaltungen und dein Gedächtnis sind weiterhin da. Öffne Murage erneut oder stelle ein Backup wieder her.", timeout: "Das wurde nicht in der Zeit fertig, die Murage dafür vorsieht. Öffne Murage erneut, dann geht es beim letzten abgeschlossenen Schritt weiter. Wenn das zweimal passiert, steht der Grund in {log}." },
+  es: { space: "Murage necesita más espacio libre en disco para actualizar tu memoria. Libera al menos {amount} y vuelve a abrir Murage. No se ha cambiado nada.", newer: "Tus datos se abrieron por última vez con una versión más reciente de Murage. Instala la última versión de Murage para abrirlos.", failed: "Murage no pudo terminar de actualizar tu memoria. Tus conversaciones y tu memoria siguen ahí. Vuelve a abrir Murage o restaura una copia de seguridad.", timeout: "Esto no terminó en el tiempo que Murage permite. Vuelve a abrir Murage y continuará desde el último paso que terminó. Si ocurre dos veces, el motivo está en {log}." },
+  fr: { space: "Murage a besoin de plus d'espace disque libre pour mettre votre mémoire à niveau. Libérez au moins {amount}, puis rouvrez Murage. Rien n'a été modifié.", newer: "Vos données ont été ouvertes en dernier par une version plus récente de Murage. Installez la dernière version de Murage pour les ouvrir.", failed: "Murage n'a pas pu terminer la mise à jour de votre mémoire. Vos conversations et votre mémoire sont toujours là. Rouvrez Murage ou restaurez une sauvegarde.", timeout: "Cela n'a pas pu se terminer dans le temps que Murage accorde. Rouvrez Murage et il reprendra à la dernière étape terminée. Si cela se reproduit, la raison se trouve dans {log}." },
+  hi: { space: "आपकी मेमोरी अपग्रेड करने के लिए Murage को और खाली डिस्क जगह चाहिए। कम से कम {amount} खाली करें, फिर Murage को दोबारा खोलें। कुछ भी नहीं बदला गया है।", newer: "आपका डेटा आखिरी बार Murage के नए संस्करण से खोला गया था। इसे खोलने के लिए Murage का नवीनतम संस्करण इंस्टॉल करें।", failed: "Murage आपकी मेमोरी का अपडेट पूरा नहीं कर सका। आपकी बातचीत और मेमोरी अब भी मौजूद हैं। Murage को दोबारा खोलें या कोई बैकअप पुनर्स्थापित करें।", timeout: "यह Murage के दिए समय में पूरा नहीं हुआ। Murage को दोबारा खोलें, यह आख़िरी पूरे हुए चरण से आगे बढ़ेगा। अगर ऐसा दो बार हो, तो कारण {log} में है।" },
+  ja: { space: "メモリをアップグレードするには、ディスクの空き容量がさらに必要です。{amount}以上の空きを作ってから Murage をもう一度開いてください。何も変更されていません。", newer: "このデータは、より新しいバージョンの Murage で最後に開かれました。開くには最新バージョンの Murage をインストールしてください。", failed: "Murage はメモリの更新を完了できませんでした。会話とメモリはそのまま残っています。Murage をもう一度開くか、バックアップを復元してください。", timeout: "Murage が許容する時間内に終わりませんでした。Murage をもう一度開くと、最後に完了したステップから続きます。2回続く場合は、理由が {log} にあります。" },
+  pt: { space: "O Murage precisa de mais espaço livre em disco para atualizar sua memória. Libere pelo menos {amount} e abra o Murage de novo. Nada foi alterado.", newer: "Seus dados foram abertos por último por uma versão mais recente do Murage. Instale a versão mais recente do Murage para abri-los.", failed: "O Murage não conseguiu terminar de atualizar sua memória. Suas conversas e sua memória continuam aqui. Abra o Murage de novo ou restaure um backup.", timeout: "Isso não terminou no tempo que o Murage permite. Abra o Murage de novo e ele continua a partir da última etapa concluída. Se acontecer duas vezes, o motivo está em {log}." },
+  zh: { space: "Murage 需要更多可用磁盘空间来升级你的记忆。请至少腾出 {amount},然后重新打开 Murage。没有任何内容被更改。", newer: "你的数据上次是由更新版本的 Murage 打开的。请安装最新版本的 Murage 来打开它。", failed: "Murage 未能完成记忆更新。你的对话和记忆仍然都在。请重新打开 Murage,或恢复备份。", timeout: "这没有在 Murage 允许的时间内完成。请重新打开 Murage,它会从上一个完成的步骤继续。如果发生两次,原因记录在 {log}。" },
 };
 
 /** A system language such as "pt-BR" or "ja" to a table key; English when unknown. */
@@ -84,41 +105,61 @@ export function memoryUpgradeLocale(language) {
 }
 
 /** The sentence the recovery page shows when the upgrade could not run. */
-export function memoryUpgradeBlockedSentence(status, language) {
+export function memoryUpgradeBlockedSentence(status, language, { logPath = "server.log" } = {}) {
   const text = TEXT[memoryUpgradeLocale(language)];
+  if (status?.code === "MEMORY_MIGRATION_TIMEOUT") return text.timeout.replace("{log}", logPath);
   if (status?.code === "MEMORY_MIGRATION_DISK_SPACE") return text.space.replace("{amount}", describeBytes(status.shortBytes ?? status.needBytes ?? 0));
   if (status?.code === "MEMORY_SCHEMA_NEWER") return text.newer;
   return text.failed;
 }
 
-const escapeHtml = (value) => String(value).replace(/[&<>"']/g, (ch) => `&#${ch.charCodeAt(0)};`);
-
-/** The start-up screen: a self-contained data page like the error page, with a
- * progress bar the shell moves by setting `#bar` width (see setMemoryUpgradeProgressScript). */
-export function buildMemoryUpgradePage({ language, percent } = {}) {
-  const text = TEXT[memoryUpgradeLocale(language)];
-  const width = percent === null || percent === undefined ? 8 : Math.max(2, Math.min(100, percent));
-  return "data:text/html;charset=utf-8," + encodeURIComponent(
-    `<!doctype html><meta charset="utf-8"><title>${escapeHtml(text.title)}</title><body style="margin:0;display:flex;align-items:center;justify-content:center;height:100vh;background:#070707;color:#fcfcfc;font:15px -apple-system,system-ui"><div role="status" aria-live="polite" style="text-align:center;max-width:360px;padding:0 16px"><h2 style="font-weight:600;margin:0 0 8px">${escapeHtml(text.title)}</h2><p style="color:#fcfcfc99;line-height:1.5;margin:0 0 20px">${escapeHtml(text.body)}</p><div style="height:6px;border-radius:3px;background:#fcfcfc22;overflow:hidden"><div id="bar" style="height:100%;width:${width}%;background:#fcfcfc;transition:width .4s"></div></div></div></body>`,
-  );
+/** Bytes of the copy written so far (the partial file beside the data), or null when there is nothing to measure. */
+export function copiedBytes(status, dataDir, size = (file) => statSync(file).size) {
+  if (!status || status.state !== "upgrading" || status.phase !== "copying" || !status.partialName) return null;
+  try { return size(path.join(dataDir, status.partialName)); } catch { return null; }
 }
 
-export const setMemoryUpgradeProgressScript = (percent) => `(()=>{const b=document.getElementById("bar");if(b)b.style.width=${JSON.stringify(`${Math.max(2, Math.min(100, Number(percent) || 2))}%`)}})()`;
+/** How long a note may sit unchanged and still count as the upgrade making progress. */
+export const UPGRADE_PROGRESS_FRESH_MS = 60_000;
 
-/** Polls the note while the child boots. `onUpdate(status|null, percent)` fires on
- * every change; `stop()` ends it. `active()` is true while an upgrade is running,
+/** Polls the note while the child boots. `onUpdate(status|null, percent)` fires on every change; `onLife` on a heartbeat with no new figure; `onReading`
+ * on every look, changed or not (the screen's clock needs to hear a missed one too); `stop()` ends it. `active()` is true while an upgrade is running,
  * which the boot probe uses to keep waiting past its normal budget. */
-export function watchMemoryUpgrade({ dataDir, pid, onUpdate, intervalMs = 400, read = readMemoryUpgradeStatus, progress = memoryUpgradeProgress, setTimer = setInterval, clearTimer = clearInterval }) {
+export function watchMemoryUpgrade({ dataDir, pid, onUpdate, onLife, onReading, intervalMs = 400, read = readMemoryUpgradeStatus, progress = memoryUpgradeProgress, setTimer = setInterval, clearTimer = clearInterval, now = Date.now, freshMs = UPGRADE_PROGRESS_FRESH_MS }) {
   let last = "";
   let current = null;
+  // When the child last showed life: a new note (its own updatedAt moved) or a different figure
+  // (the copy grew). Measured on THIS clock, so a child with a wrong clock still counts.
+  let movedAt = null;
+  let seen = "";
   const tick = () => {
     const status = read(dataDir, { pid: typeof pid === "function" ? pid() : pid });
     current = status;
     const percent = progress(status, dataDir);
-    const key = JSON.stringify([status?.state, status?.code, status?.phase, percent]);
-    if (key !== last) { last = key; try { onUpdate(status, percent); } catch { /* a screen glitch never blocks startup */ } }
+    // every field the screen shows is part of the key, so a change in any of them reaches the screen (a heartbeat alone does not)
+    const u = status?.upgrade?.ok ? status.upgrade.state : null;
+    const key = JSON.stringify([status?.state, status?.code, status?.phase, status?.step, percent, status?.upgrade?.ok ?? null, u && [u.launch, u.stage, u.phase, u.overall, u.step, u.eta, u.keepOpen, u.counts, u.held, u.complete]]);
+    const life = JSON.stringify([key, status?.updatedAt, status?.done, u?.heartbeatAt, u?.seq]);
+    const moved = status?.state === "upgrading" && life !== seen;
+    if (moved) { seen = life; movedAt = now(); }
+    if (key !== last) { last = key; try { onUpdate?.(status, percent); } catch { /* a screen glitch never blocks startup */ } }
+    // a heartbeat with no new figure: the screen still hears it (the time left is judged from reading to reading)
+    else if (moved && onLife) { try { onLife(status, percent); } catch { /* as above */ } }
+    if (onReading) { try { onReading(status, percent); } catch { /* as above */ } }
   };
   const timer = setTimer(tick, intervalMs);
   timer?.unref?.();
-  return { active: () => current?.state === "upgrading", status: () => current, stop: () => clearTimer(timer), tick };
+  // the server's 503 health answer, used when the note cannot be read (missing or unwritable): the screen keeps moving from it
+  const feed = (body) => {
+    if (read(dataDir, { pid: typeof pid === "function" ? pid() : pid })) return;
+    const fed = statusFromHealth(body, now());
+    if (!fed) return;
+    current = fed;
+    const percent = progress(fed, dataDir);
+    const u = fed.upgrade?.ok ? fed.upgrade.state : null;
+    const key = JSON.stringify(["fed", u && [u.launch, u.phase, u.overall, u.step, u.eta, u.keepOpen], percent]);
+    if (key !== last) { last = key; movedAt = now(); try { onUpdate?.(fed, percent); } catch { /* as above */ } }
+    if (onReading) { try { onReading(fed, percent); } catch { /* as above */ } }
+  };
+  return { feed, active: () => current?.state === "upgrading", fresh: () => current?.state === "upgrading" && movedAt !== null && now() - movedAt <= freshMs, status: () => current, stop: () => clearTimer(timer), tick };
 }

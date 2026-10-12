@@ -2,9 +2,11 @@ import type { MemoryBundle } from "../../shared/memory.ts";
 import { database } from "../database.ts";
 import { assertMemoryAccess, type MemoryAccess } from "./policy.ts";
 import type { MemorySearchBridge } from "./search.ts";
-import { contentRevoked, databaseStamp, outputRootsBad, preLineageSessionRevoked, sessionLineageBad, sessionOutputRoots } from "./replay-lineage.ts";
+import { authorityStamp } from "./authority-epoch.ts";
+import { contentRevoked, isLineageLimit, JudgeMemo, newTurnLineageBudget, outputRootsBad, preLineageSessionRevoked, sessionLineageBad, sessionOutputRoots, spendTurnRows, turnLineageHit, turnReadTooBig, turnRowRoom, withTurnLineage } from "./replay-lineage.ts";
 import { assertMemoryBundle, buildMemoryBundle, memoryHandleRecord } from "./bundle.ts";
 import { assertMemoryDisclosureCurrent, bindMemoryDisclosureSession, continuationMemoryRevoked, deliverMemoryDisclosure, linkMemoryDisclosureOutput, noteMemoryLookup, prepareMemoryDisclosure } from "./disclosures.ts";
+import { heldStep } from "../observe.ts";
 
 /** Whether a bundle differs from the session's latest delivered frame. This is
  * a comparison, not an invalidation test: the thread's own checkpoint rolls on
@@ -23,7 +25,7 @@ export function memoryContinuationChanged(bundle:MemoryBundle,threadId:string,in
   // :lookup companion of this session. Any revoked receipt of the session, at
   // any age, ends it (one indexed probe, no row cap).
   if(memorySessionRevoked(threadId,instanceId,session))return true;
-  const latest=database().prepare("SELECT record_versions,source_versions,policy_revision,deletion_epoch FROM memory_disclosures WHERE thread_id=? AND driver_instance=? AND native_session=? AND state='delivered' ORDER BY created_at DESC, rowid DESC LIMIT 1").get(threadId,instanceId,session);
+  const latest=database().prepare("SELECT record_versions,source_versions,policy_revision,deletion_epoch FROM memory_disclosures WHERE thread_id=? AND driver_instance=? AND native_session=? AND state='delivered' AND bundle_id NOT LIKE '%:lookup' ORDER BY rowid DESC LIMIT 1").get(threadId,instanceId,session);
   return !latest || latest.policy_revision!==bundle.policyRevision || latest.deletion_epoch!==bundle.deletionEpoch
     || latest.record_versions!==JSON.stringify(bundle.recordVersions) || latest.source_versions!==JSON.stringify(bundle.sourceVersions);
 }
@@ -43,10 +45,11 @@ export function memorySessionRevoked(threadId:string,instanceId:string,session:s
  * while this turn awaited recall; that thread revokes only its own receipts,
  * so memorySessionRevoked (state and counters) cannot see it. True when the
  * session must reset and rebuild its authorized replay. The full check is
- * skipped only while the database is unmoved since `checkedStamp`, the stamp
+ * skipped only while the authority epoch is unmoved since `checkedStamp`, the stamp
  * taken right after the last full check passed. */
-export function resumedSessionInvalid(threadId:string,instanceId:string,session:string,access:MemoryAccess,checkedStamp:string|undefined,why?:{reason?:string}):boolean {
-  if(checkedStamp!==undefined&&databaseStamp()===checkedStamp)return false;
+export function resumedSessionInvalid(threadId:string,instanceId:string,session:string,access:MemoryAccess,checkedStamp:string|undefined,why?:{reason?:string}):boolean { return heldStep("memory.session-check", () => resumedSessionInvalidUnheld(threadId, instanceId, session, access, checkedStamp, why)); }
+function resumedSessionInvalidUnheld(threadId:string,instanceId:string,session:string,access:MemoryAccess,checkedStamp:string|undefined,why?:{reason?:string}):boolean {
+  if(checkedStamp!==undefined&&authorityStamp()===checkedStamp)return false;
   return continuationMemoryRevoked(threadId,instanceId,session,access,why);
 }
 /** A retained native session checked in EVERY memory mode, with no reader
@@ -58,20 +61,29 @@ export function resumedSessionInvalid(threadId:string,instanceId:string,session:
  * it cites withheld. Every session, receipts or not, is also judged on the
  * replies built on memory that its context carried (its session roots, v6). */
 export function retainedSessionInvalid(threadId:string,instanceId:string,session:string,why?:{reason?:string}):boolean {
+  return withTurnLineage(newTurnLineageBudget(),()=>retainedSessionInvalidWithin(threadId,instanceId,session,why));
+}
+function retainedSessionInvalidWithin(threadId:string,instanceId:string,session:string,why?:{reason?:string}):boolean {
   try {
     // a session set at the ceiling resets rather than withholding its replies (v6)
-    const held=sessionOutputRoots(threadId,instanceId,session);
-    if(held.over){if(why)why.reason="root-ceiling";return true;}
-    if(outputRootsBad(held)){if(why)why.reason="session-roots";return true;}
-    const rows=database().prepare("SELECT * FROM memory_disclosures WHERE thread_id=? AND driver_instance=? AND native_session=? LIMIT 4097").all(threadId,instanceId,session);
+    const held=sessionOutputRoots(threadId,instanceId,session,{metered:true});
+    if(held.over){if(why)why.reason=held.unproven?"lineage-warming":"root-ceiling";return true;}
+    {const seen:{reason?:string}={};if(outputRootsBad(held,seen)){if(why)why.reason=turnLineageHit()?"lineage-warming":seen.reason==="checking"?"checking":"session-roots";return true;}}
+    // what a receipt check reads: never its output list, which grows with every reply of the session
+    // read within the turn's allowance: no more rows than it can pay for, and a session with more than that is unproven (warming), not read
+    const cap=turnRowRoom(threadId,4097);
+    const rows=database().prepare("SELECT bundle_id,thread_id,driver_instance,native_session,record_versions,source_versions,policy_revision,deletion_epoch,state,created_at FROM memory_disclosures WHERE thread_id=? AND driver_instance=? AND native_session=? LIMIT ?").all(threadId,instanceId,session,cap<4097?cap+1:4097);
+    if(cap<4097&&rows.length>cap)turnReadTooBig(threadId);
+    spendTurnRows(threadId,rows.length);
     if(!rows.length)return false;
     if(rows.length>4096){if(why)why.reason="too-many-receipts";return true;}
     if(preLineageSessionRevoked(rows,threadId,instanceId,session)){if(why)why.reason="pre-lineage";return true;}
     if(memorySessionRevoked(threadId,instanceId,session)){if(why)why.reason="receipt-revoked";return true;}
-    for(const row of rows)if(contentRevoked(row,threadId)){if(why)why.reason="memory-changed";return true;}
-    if(sessionLineageBad(threadId,instanceId,session,null)){if(why)why.reason="lineage";return true;}
+    const memo=new JudgeMemo<boolean>();
+    for(const row of rows)if(contentRevoked(row,threadId,memo)){if(why)why.reason="memory-changed";return true;}
+    if(sessionLineageBad(threadId,instanceId,session,null)){if(why)why.reason=turnLineageHit()?"lineage-warming":"lineage";return true;}
     return false;
-  } catch { if(why)why.reason="check-failed"; return true; }
+  } catch (error) { if(why)why.reason=isLineageLimit(error)||turnLineageHit()?"lineage-warming":"check-failed"; return true; }
 }
 
 /** The after-recall recheck is the same one function every later pre-submit check uses. */
@@ -103,7 +115,7 @@ export class MemoryDispatchReceipt {
    * again at acceptance, so a revoke that lands in between ends the session
    * instead of letting the new frame be accepted into it. */
   private resumedSession?: string;
-  /** databaseStamp() right after the last full session check passed: an unmoved database skips the next one. */
+  /** authorityStamp() right after the last full session check passed: an unmoved authority epoch skips the next one. */
   private sessionCheckedStamp?: string;
   resumes(session:string,checkedStamp?:string) { this.resumedSession=session; this.sessionCheckedStamp=checkedStamp; }
   /** Every pre-submit check (before dispatch, after the image await, at the
@@ -116,7 +128,7 @@ export class MemoryDispatchReceipt {
   private assertSessionCurrent() {
     if(this.resumedSession===undefined)return;
     if(resumedSessionInvalid(this.access.threadId,this.instanceId,this.resumedSession,this.access,this.sessionCheckedStamp))throw new Error("MEMORY_CONTEXT_REVOKED");
-    this.sessionCheckedStamp=databaseStamp();
+    this.sessionCheckedStamp=authorityStamp();
   }
   assertCurrent() { if(this.failure)throw this.failure; assertMemoryBundle(this.bundle,this.access); this.assertSessionCurrent(); }
   private boundSession?: string;

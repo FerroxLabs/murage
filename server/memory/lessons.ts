@@ -29,6 +29,8 @@ import {
 } from "../../shared/learned-chip.ts";
 import { parseStyleSpec, parseWhere, renderStyleLine, specKey, supersedeKey, type StyleSpec, type Where } from "./lesson-spec.ts";
 import { recordLearningEvent } from "./learning-ledger.ts";
+import { integrityFlags } from "./integrity-flags.ts";
+import { MEMORY_HELD_MESSAGE, memoryGate } from "./memory-gate.ts";
 import { cascadeLineageRestore, cascadeLineageUndo, lessonsConflict } from "./lesson-lineage.ts";
 
 export const LESSON_KINDS = ["style", "note"] as const;
@@ -77,7 +79,12 @@ const normalized = (text: string) => text.toLowerCase().replace(/\s+/g, " ").rep
 
 // ── plumbing ──────────────────────────────────────────────────────────────
 let savepoints = 0;
+/** Said to the owner when memory is set aside: plain words, nothing is lost, chats are unaffected. */
+export const LEARNING_HELD_MESSAGE = MEMORY_HELD_MESSAGE;
+/** While the background pass holds memory, lessons, feedback and learning events are not written (the conversation itself is unaffected). */
+export const learningWritesHeld = (db: DatabaseSync): boolean => memoryGate(db, "lesson-write") !== "ok";
 export function inTransaction<T>(db: DatabaseSync, work: () => T): T {
+  if (learningWritesHeld(db)) throw httpError(LEARNING_HELD_MESSAGE, 409);
   const nested = db.isTransaction;
   const point = `lessons_tx_${++savepoints}`;
   db.exec(nested ? `SAVEPOINT ${point}` : "BEGIN IMMEDIATE");
@@ -122,6 +129,21 @@ export const latestLesson = (db: DatabaseSync, id: string): Lesson | undefined =
   const row = db.prepare(`SELECT * FROM memory_lessons WHERE id=? AND ${LATEST}`).get(id);
   return row ? lessonOf(row) : undefined;
 };
+
+/** What a render may read from the lesson table: the pass floors (integrity-state.ts) decide what counts as earlier memory, never a clock. */
+interface RenderRead { /** Newest first, at most this many rows (a prompt holds a handful). */ limit: number; }
+/** While the pass is pending a lesson is shown only if no version of its id has a rowid at or below the floor: a new version of an old lesson is still the old lesson. */
+function pendingFloor(db: DatabaseSync): { sql: string; args: number[] } {
+  const flags = integrityFlags(db);
+  if (!flags.pending) return { sql: "", args: [] };
+  return { sql: " AND NOT EXISTS(SELECT 1 FROM memory_lessons o WHERE o.id=memory_lessons.id AND o.rowid<=?)", args: [flags.lessonsFloor ?? Number.MAX_SAFE_INTEGER] };
+}
+/** A bot's active lessons for a render: current version, newest first, bounded in SQL (never the bot's whole history). */
+function activeLessonsForRender(db: DatabaseSync, botId: string, read: RenderRead, extra: { sql: string; args: Array<string | number> } = { sql: "", args: [] }): Lesson[] {
+  const floor = pendingFloor(db);
+  return (db.prepare(`SELECT * FROM memory_lessons WHERE bot_id=? AND state='active' AND ${LATEST}${floor.sql}${extra.sql} ORDER BY created_at DESC,rowid DESC LIMIT ?`)
+    .all(botId, ...floor.args, ...extra.args, read.limit) as Record<string, any>[]).map(lessonOf);
+}
 
 /** Moves on every lesson change, for the expected-revision rule on the routes. */
 export function lessonsRevision(db: DatabaseSync, botId: string): number {
@@ -212,9 +234,10 @@ export type AddLessonResult =
   | { status: "applied"; lesson: Lesson }
   | { status: "suggested"; lesson: Lesson }
   | { status: "duplicate"; lesson: Lesson }
-  | { status: "refused"; reason: "empty" | "too-long" | "invalid-spec" | "learning-off" | "undone-before" | "prospect-text" | "learning-local-unavailable" };
+  | { status: "refused"; reason: "empty" | "too-long" | "invalid-spec" | "learning-off" | "undone-before" | "prospect-text" | "learning-local-unavailable" | "memory-held" };
 
 export function insertLesson(db: DatabaseSync, lesson: Omit<Lesson, "version" | "parentId" | "recipients" | "spec" | "where" | "threadId" | "sourceMessageId" | "targetMessageId"> & { version?: number; parentId?: string | null; recipients?: string[] | null; spec?: StyleSpec | null; where?: Where | null; threadId?: string | null; sourceMessageId?: string | null; targetMessageId?: string | null }) {
+  if (memoryGate(db, "lesson-write") !== "ok") throw httpError(LEARNING_HELD_MESSAGE, 409);
   db.prepare(`INSERT INTO memory_lessons(id,version,parent_id,bot_id,scope,recipients,kind,text,origin,state,evidence,prospect_derived,learning_event_id,created_at,decided_at,spec,where_,thread_id,source_message_id,target_message_id) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`)
     .run(lesson.id, lesson.version ?? 1, lesson.parentId ?? null, lesson.botId, lesson.scope, lesson.recipients ? JSON.stringify(lesson.recipients) : null, lesson.kind, lesson.text, lesson.origin, lesson.state,
       lesson.evidence === null || lesson.evidence === undefined ? null : JSON.stringify(lesson.evidence), lesson.prospectDerived ? 1 : 0, lesson.learningEventId, lesson.createdAt, lesson.decidedAt,
@@ -261,6 +284,7 @@ function resupersede(db: DatabaseSync, ids: unknown, now: number): void {
 export function addLesson(db: DatabaseSync, input: AddLessonInput): AddLessonResult {
   const now = input.now ?? Date.now();
   const typed = input.origin === "typed";
+  if (learningWritesHeld(db)) return { status: "refused", reason: "memory-held" };
   if (!typed && !input.learning.enabled) return { status: "refused", reason: "learning-off" };
   // A style lesson is a typed value; a typed-by-the-owner lesson is always a note.
   let spec: StyleSpec | null = null, where: Where | null = null;
@@ -470,8 +494,22 @@ export const turnsSinceFromSources = (db: DatabaseSync): TurnsSince => (botId, s
 const inline = (text: string) => text.replace(/<\/?what-it-learned>/gi, " ").replace(/\s+/g, " ").trim();
 
 // ── lessons that reach a bot from elsewhere (B11, design 14) ──────────────
+/** The render's read of team lessons that name a bot (parameters: the reading bot, the pass floor's, the reading bot again, the limit). The authors are walked by
+ * seeking the next bot_id in the existing (bot_id, state) index, and each author's ACTIVE rows are read through that same index: the cost follows the active
+ * team lessons, never the retired history (no scan of the table, no change to the memory schema). */
+export const teamLessonsRenderSql = (floorSql: string): string => `WITH RECURSIVE authors(b) AS (SELECT min(bot_id) FROM memory_lessons UNION ALL SELECT (SELECT min(bot_id) FROM memory_lessons WHERE bot_id>b) FROM authors WHERE b IS NOT NULL)
+      SELECT memory_lessons.* FROM authors a JOIN memory_lessons ON memory_lessons.bot_id=a.b AND memory_lessons.state='active'
+      WHERE a.b IS NOT NULL AND a.b<>? AND memory_lessons.scope='team' AND ${LATEST}${floorSql}
+      AND EXISTS(SELECT 1 FROM json_each(memory_lessons.recipients) r WHERE r.value=?) ORDER BY memory_lessons.created_at DESC,memory_lessons.rowid DESC LIMIT ?`;
 /** Copies shared to this bot, and team lessons that name it. Active only. */
-export function sharedLessonsFor(db: DatabaseSync, botId: string): { inherited: Lesson[]; team: Lesson[] } {
+export function sharedLessonsFor(db: DatabaseSync, botId: string, read?: RenderRead): { inherited: Lesson[]; team: Lesson[] } {
+  if (read) {
+    // A render: both lists come from one bounded query each (team recipients matched in SQL), with the pass floor applied.
+    const inherited = activeLessonsForRender(db, botId, read, { sql: " AND scope='bot' AND parent_id IS NOT NULL", args: [] });
+    const floor = pendingFloor(db);
+    const rows = db.prepare(teamLessonsRenderSql(floor.sql)).all(botId, ...floor.args, botId, read.limit) as Record<string, any>[];
+    return { inherited, team: rows.map(lessonOf) };
+  }
   const inherited = listLessons(db, botId, { states: ["active"] }).filter(lesson => lesson.scope === "bot" && lesson.parentId !== null);
   const rows = db.prepare(`SELECT * FROM memory_lessons WHERE scope='team' AND state='active' AND ${LATEST} ORDER BY created_at,rowid`).all() as Record<string, any>[];
   const team = rows.map(lessonOf).filter(lesson => lesson.botId !== botId && lesson.recipients?.includes(botId));
@@ -480,9 +518,9 @@ export function sharedLessonsFor(db: DatabaseSync, botId: string): { inherited: 
 
 export interface LessonConflict { winner: Lesson; other: Lesson; via: "shared" | "team"; fromBotId: string }
 /** Precedence: a bot's own lesson beats one it inherited, and the pair is reported so the Learning screen can show it. */
-export function lessonConflicts(db: DatabaseSync, botId: string): LessonConflict[] {
-  const own = listLessons(db, botId, { states: ["active"] }).filter(lesson => (lesson.scope === "bot" || lesson.scope === "owner") && lesson.parentId === null);
-  const { inherited, team } = sharedLessonsFor(db, botId);
+export function lessonConflicts(db: DatabaseSync, botId: string, loaded?: { active: readonly Lesson[]; shared: { inherited: Lesson[]; team: Lesson[] } }): LessonConflict[] {
+  const own = (loaded ? loaded.active : listLessons(db, botId, { states: ["active"] })).filter(lesson => (lesson.scope === "bot" || lesson.scope === "owner") && lesson.parentId === null);
+  const { inherited, team } = loaded ? loaded.shared : sharedLessonsFor(db, botId);
   const out: LessonConflict[] = [];
   const check = (other: Lesson, via: LessonConflict["via"], fromBotId: string) => {
     const winner = own.find(lesson => lessonsConflict(lesson, other));
@@ -531,8 +569,10 @@ function newestPerKey(styles: readonly Lesson[]): Lesson[] {
  * kept notes, plus notes the owner widened to every conversation. No Recent feedback rows, no term lines, nothing shared down or from a
  * team, nothing prospect-derived. Owner wording reaches a customer only when the owner tapped Keep AND chose the wider scope. */
 function renderChannelLearnedBlock(db: DatabaseSync, botId: string, threadId: string): LearnedBlock {
-  const beaten = new Set(lessonConflicts(db, botId).map(conflict => conflict.other.id));
-  const own = listLessons(db, botId, { states: ["active"] }).filter(lesson => lesson.parentId === null && !lesson.prospectDerived && !beaten.has(lesson.id));
+  const read = { limit: LEARNED_BLOCK_MAX_LESSONS * 4 };
+  const loaded = renderLessons(db, botId, threadId, read);
+  const beaten = new Set(lessonConflicts(db, botId, loaded).map(conflict => conflict.other.id));
+  const own = loaded.active.filter(lesson => lesson.parentId === null && !lesson.prospectDerived && !beaten.has(lesson.id));
   const styles = newestPerKey(own.filter(lesson => lesson.kind === "style" && lesson.scope === "bot" && lesson.spec !== null && lesson.spec.kind !== "term" && whereFits(lesson, "others") && styleLineOf(lesson) !== null));
   const notes = own.filter(lesson => lesson.kind === "note" && ((lesson.scope === "thread" && lesson.threadId === threadId) || lesson.scope === "bot")).sort((a, b) => b.createdAt - a.createdAt);
   const render = (kept: Lesson[]) => [CHANNEL_BLOCK_OPEN, CHANNEL_BLOCK_INTRO,
@@ -552,23 +592,35 @@ export interface RenderLearnedInput {
   /** Is this message on the conversation's active branch? Recent feedback from an abandoned branch is left out (design 3.6). Absent: every row counts. */
   onPath?: (messageId: string) => boolean;
 }
+/** One bounded read of a bot's lessons for a render (own, inherited and team), reused by the conflict check and by both audiences' blocks. */
+function renderLessons(db: DatabaseSync, botId: string, threadId: string, read: RenderRead): { active: Lesson[]; shared: { inherited: Lesson[]; team: Lesson[] } } {
+  const active = activeLessonsForRender(db, botId, read, { sql: " AND (scope IN ('bot','owner') OR (scope='thread' AND thread_id=?))", args: [threadId] });
+  return { active, shared: sharedLessonsFor(db, botId, read) };
+}
 export function renderLearnedBlock(db: DatabaseSync, input: RenderLearnedInput): LearnedBlock {
+  if (memoryGate(db, "render-learned") !== "ok") return { text: "", lessonIds: [], feedbackIds: [], digest: "" };
   const block = renderLearnedBlockInner(db, input);
   return block.text ? block : { ...block, everLearned: Boolean(db.prepare("SELECT 1 FROM memory_lessons WHERE bot_id=? LIMIT 1").get(input.botId)) };
 }
 function renderLearnedBlockInner(db: DatabaseSync, input: RenderLearnedInput): LearnedBlock {
   const empty: LearnedBlock = { text: "", lessonIds: [], feedbackIds: [], digest: "" };
+  // (Memory set aside is decided by the gate in renderLearnedBlock.) Until the background pass has passed, what was learned before the upgrade is
+  // not yet proven: a lesson is read only if no version of it is at or below the rowid floor the pass wrote when it began, and feedback only if it is
+  // above its floor. Rowids, not clocks, say what is earlier. This reads the state at the moment of the render.
+  const flags = integrityFlags(db);
   if (!input.ownerAudience) return renderChannelLearnedBlock(db, input.botId, input.threadId);
-  const beaten = new Set(lessonConflicts(db, input.botId).map(conflict => conflict.other.id));
+  const loaded = renderLessons(db, input.botId, input.threadId, { limit: LEARNED_BLOCK_MAX_LESSONS * 4 });
+  const beaten = new Set(lessonConflicts(db, input.botId, loaded).map(conflict => conflict.other.id));
   const usable = (lesson: Lesson) => !beaten.has(lesson.id) && (lesson.scope === "bot" || lesson.scope === "owner" || (lesson.scope === "thread" && lesson.threadId === input.threadId));
-  const active = listLessons(db, input.botId, { states: ["active"] }).filter(usable);
-  const team = sharedLessonsFor(db, input.botId).team.filter(lesson => !beaten.has(lesson.id));
+  const active = loaded.active.filter(usable);
+  const team = loaded.shared.team.filter(lesson => !beaten.has(lesson.id));
   const budget = (list: Lesson[]) => list.sort((a, b) => b.createdAt - a.createdAt).slice(0, LEARNED_BLOCK_MAX_LESSONS);
   let styles = newestPerKey(active.filter(lesson => lesson.kind === "style" && lesson.scope === "bot" && styleLineOf(lesson) !== null && whereFits(lesson, "owner")));
   let notes = budget(active.filter(lesson => lesson.kind === "note"));
   let teamKept = budget(team.filter(lesson => lesson.kind === "note" || (styleLineOf(lesson) !== null && whereFits(lesson, "owner")))).slice(0, Math.max(0, LEARNED_BLOCK_MAX_LESSONS - styles.length - notes.length));
   const turns = input.turnsSince ?? turnsSinceFromSources(db);
-  const feedback = (db.prepare("SELECT * FROM memory_feedback WHERE bot_id=? AND thread_id=? AND state='detected' ORDER BY created_at DESC,rowid DESC LIMIT 20").all(input.botId, input.threadId) as Record<string, any>[])
+  const feedback = (db.prepare(`SELECT * FROM memory_feedback WHERE bot_id=? AND thread_id=? AND state='detected'${flags.pending ? " AND rowid>?" : ""} ORDER BY created_at DESC,rowid DESC LIMIT 20`)
+    .all(input.botId, input.threadId, ...(flags.pending ? [flags.feedbackFloor ?? Number.MAX_SAFE_INTEGER] : [])) as Record<string, any>[])
     // Weak signals (Stop, re-ask, rewind), plain Allow/Deny taps and thread-less rows are corpus evidence only: they never reach the prompt (T1-02).
     .filter(row => promptWorthyFeedback(row))
     // A message on an abandoned branch, or edited away, is no longer what the owner said (design 3.6).

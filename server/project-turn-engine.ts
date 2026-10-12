@@ -15,6 +15,7 @@
 // before the projects release has none of them, and then every room is a
 // channel.
 import type { DatabaseSync } from "node:sqlite";
+import { findDelegationReceipt } from "./delegations.ts";
 import { groupGoalAssignmentKey } from "./group-goal-run.ts";
 import { partitionSourcesAllowed } from "./partition-sources.ts";
 import { acceptProjectCard, changesRequestedCount, changesRequestedNotes, CHANGES_BEFORE_LEAD_DECIDES, applyCardRunFailed, applyCardRunFinished, applyCardWaiting, assignCardReview, NO_VERDICT, pickCardReviewer } from "./project-cards.ts";
@@ -476,12 +477,16 @@ export function recordLeadWake(
   // planned the work (inputs, a hand-off note), never handing it back to the
   // owner; only an assign, or a delegation to someone else, hands work over.
   const leadId = (projectTableExists(db, "project_settings") ? (db.prepare("SELECT lead_bot_id FROM project_settings WHERE group_id=?").get(goal.group_id) as { lead_bot_id: string | null } | undefined)?.lead_bot_id : null) ?? null;
-  const handsOverHop = (hop: Hop, to: string) => hop.verb === "assign" || (hop.verb === "ask" && hop.key.startsWith("ask:delegation:") && to !== leadId);
+  // A hand-off is known by its durable identity, never by how its admission key is spelled: a request with a hand-off row of its id (pending), or with a receipt (the
+  // hand-off finished; the receipt survives its row), or the canonical key a queued hand-off is created with.
+  const pendingHandoff = projectTableExists(db, "pending_delegations") ? db.prepare("SELECT 1 FROM pending_delegations WHERE id=?") : null;
+  const isHandoff = (hop: Hop): boolean => hop.key.startsWith("ask:delegation:") || Boolean(pendingHandoff?.get(hop.id)) || findDelegationReceipt(hop.id) !== null;
+  const handsOverHop = (hop: Hop, to: string) => hop.verb === "assign" || (hop.verb === "ask" && isHandoff(hop) && to !== leadId);
   const hopColumns = (t: string) => `${t}.id AS ${t}Id, ${t}.verb AS ${t}Verb, ${t}.admission_key AS ${t}Key, ${t}.work_item_id AS ${t}Work, ${t}.payload_text AS ${t}Text`;
   const hopOf = (row: Record<string, unknown>, t: string): Hop => ({ id: String(row[`${t}Id`]), verb: String(row[`${t}Verb`]), key: String(row[`${t}Key`] ?? ""), workItemId: (row[`${t}Work`] as string | null) ?? null, text: (row[`${t}Text`] as string | null) ?? null });
   const handedBack = (db.prepare(`SELECT ${hopColumns("a")}, ${hopColumns("b")}, a.from_bot_id AS a, a.to_bot_id AS b FROM room_requests a JOIN room_requests b
       ON a.root_id=b.root_id AND a.from_bot_id=b.to_bot_id AND a.to_bot_id=b.from_bot_id AND b.created_at > a.created_at
-    WHERE a.project_goal_id=? AND a.verb IN ('ask','assign') AND (b.verb='assign' OR (b.verb='ask' AND b.admission_key LIKE 'ask:delegation:%' AND b.to_bot_id IS NOT ?))
+    WHERE a.project_goal_id=? AND a.verb IN ('ask','assign') AND (b.verb='assign' OR (b.verb='ask' AND b.to_bot_id IS NOT ?))
       AND a.from_bot_id IS NOT NULL AND b.created_at > ? ORDER BY b.created_at`).all(goal.id, leadId, input.since) as Array<Record<string, unknown>>)
     .map((row) => ({ a: String(row.a), b: String(row.b), first: hopOf(row, "a"), back: hopOf(row, "b") }))
     .find((pair) => handsOverHop(pair.back, pair.a) && descends(pair.back.id, pair.first.id) && sameWork(workOf(pair.first), workOf(pair.back)));

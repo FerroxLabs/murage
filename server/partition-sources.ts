@@ -29,8 +29,39 @@ export function requestReturnsTo(db: DatabaseSync, requestId: string, threadId: 
   return requestSourceThread(requestId, db) === threadId;
 }
 
+/** Every original a copy stands on, and every original those were copied from, is still stored and not withheld from bots. A copy whose original
+ * was deleted is not shown to any bot, in any memory mode, partitioned or not. A chain past the limits is not established. */
+export function copyChainPresent(db: DatabaseSync, copy: { threadId: string; messageIds: readonly string[] }): boolean {
+  const seen = new Set<string>();
+  let level: Array<{ threadId: string; messageIds: readonly string[] }> = [copy];
+  for (let depth = 0; level.length; depth += 1) {
+    if (depth > 8) return false;
+    const next: Array<{ threadId: string; messageIds: readonly string[] }> = [];
+    for (const group of level) for (const id of group.messageIds) {
+      const key = `${group.threadId}\u0000${id}`;
+      if (seen.has(key)) continue;
+      if (seen.size >= 64) return false;
+      seen.add(key);
+      const row = db.prepare("SELECT json FROM messages WHERE thread_id=? AND id=?").get(group.threadId, id);
+      if (!row) return false;
+      try {
+        const stored = JSON.parse(String(row.json));
+        if (stored.withheldFromBots !== undefined && stored.withheldFromBots !== false) return false;
+        const further = stored.copyOf;
+        if (further) {
+          if (typeof further.threadId !== "string" || !Array.isArray(further.messageIds) || !further.messageIds.every((m: unknown) => typeof m === "string")) return false;
+          next.push({ threadId: further.threadId, messageIds: further.messageIds });
+        }
+      } catch { return false; }
+    }
+    level = next;
+  }
+  return true;
+}
+
 export function partitionTranscriptMessages(db: DatabaseSync, botId: string, threadId: string, messages: readonly Message[]): Message[] {
   return messages.filter(message => {
+    if (message.copyOf && !copyChainPresent(db, message.copyOf)) return false;
     if (message.copyOf && !partitionSourcesAllowed(db, botId, threadId, [message.id])) return false;
     return message.kind !== "activity" || !message.requestId || partitionSourcesAllowed(db, botId, threadId, projectRequestSourceMessages(db, message.requestId));
   });

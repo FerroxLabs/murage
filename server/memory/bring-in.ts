@@ -20,6 +20,7 @@
 import { isLearnableSource } from "./learnable.ts";
 import { createHash, randomUUID } from "node:crypto";
 import type { DatabaseSync } from "node:sqlite";
+import { memoryGate } from "./memory-gate.ts";
 import { isWorkspaceOwner, threadHumanPrincipal } from "../human-principals.ts";
 import { redactSecretsInText } from "../redact.ts";
 import type { MemoryRoster } from "./policy.ts";
@@ -84,7 +85,7 @@ export function bringInToProject(db: DatabaseSync, input: {
   groupId: string; roomThreadId: string; botId: string; roster: MemoryRoster; now: number; botInitiated?: boolean;
 } & BringInInput): BringInResult {
   const mode = db.prepare("SELECT mode FROM memory_meta WHERE id=1").get()?.mode;
-  if (mode === "off" || mode === "paused") return refuse(409, "Memory is off, so nothing can be brought in.");
+  if (mode === "off" || mode === "paused" || memoryGate(db, "bring-in") !== "ok") return refuse(409, "Memory is off, so nothing can be brought in.");
   const excerpt = typeof input.text === "string" ? input.text.trim() : "";
   if (excerpt.length > BRING_IN_MAX_CHARS) return refuse(400, `The text is longer than ${BRING_IN_MAX_CHARS} characters.`);
   if (Boolean(input.recordId) === Boolean(input.sourceMessageId)) return refuse(400, "Name one thing to bring in: recordId or sourceMessageId.");

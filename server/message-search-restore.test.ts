@@ -13,7 +13,7 @@ import { DatabaseSync } from "node:sqlite";
 import { afterEach, beforeEach, expect, it } from "vitest";
 
 import { DATA_DIR } from "./config.ts";
-import { database } from "./database.ts";
+import { database, finishBackgroundUpgradeWorkNow } from "./database.ts";
 import { inspectInstallationDatabase, snapshotInstallationDatabase } from "./installation-database-snapshot.ts";
 import { closeMessageDb, deleteThread, insertMessage, searchMessages, updateMessage } from "./message-db.ts";
 import { backfillMessageSearchIndex, messageSearchIndexReady, trigramQuery } from "./message-search-index.ts";
@@ -71,6 +71,8 @@ it("snapshots an indexed installation, carries the index, and restored search an
 
   restoreInto(target);
   expect(answers()).toEqual(before);
+  // the first open notes where the index ends; the rest is filled by the background work (upgrade-background.ts), and searches scan until then
+  finishBackgroundUpgradeWorkNow();
   expect(messageSearchIndexReady(database())).toBe(true);
   expect(backfillMessageSearchIndex(database())).toBe(0); // nothing missing: it did not need rebuilding
   expect(indexedRows()).toBe(indexed);
@@ -102,6 +104,8 @@ it("an archive from before the index restores, and the first open builds the ind
   expect(await snapshotInstallationDatabase(DATA_DIR, target)).toMatchObject({ status: "copied" });
   restoreInto(target);
   expect(answers()).toEqual(before);
+  // the first open notes where the index ends; the background work fills the rest (upgrade-background.ts), and searches scan until then
+  finishBackgroundUpgradeWorkNow();
   expect(messageSearchIndexReady(database())).toBe(true);
   expect(indexedRows()).toBeGreaterThan(0);
 });

@@ -19,16 +19,21 @@ import { consolidateMemorySource } from "./memory/consolidate.ts";
 import { ownerMemoryTicket, saveMemoryCandidate } from "./memory/authority.ts";
 import { forgetMemory } from "./memory/forget.ts";
 import { continuationMemoryRevoked, filterMemoryReplay, readerWithheldMessage, roomReplayWithheld } from "./memory/disclosures.ts";
-import { _loadPending, findDelegationReceipt, recordDelegationReceipt, summarizeDelegatedActivity } from "./delegations.ts";
+import { _loadPending, findDelegationReceipt, recordDelegationReceipt, summarizeDelegatedActivity, type ReleasedActivityRow } from "./delegations.ts";
+import { releaseMessage, releaseStoredResult, type ResultEgressDeps } from "./result-egress.ts";
+import { WorkerText } from "./released-text.ts";
+import { outboundWords } from "./murage-status.ts";
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { roomTranscriptWithoutMemory } from "./room-transcript.ts";
-import { copyOriginWithheld, messageMadeWithMemory, recordRestsOnWithheldMessage, replayExclusions } from "./memory/replay-lineage.ts";
+import { capturedMessageWithheld, copyOriginWithheld, messageMadeWithMemory, messageSourceForgotten as forgottenSource, recordRestsOnWithheldMessage, replayExclusions } from "./memory/replay-lineage.ts";
 import { insertMessage } from "./message-db.ts";
 import type { Message } from "./store.ts";
+import { released } from "./testing/released.ts";
 
 // A Windows checkout has CRLF line endings; the wiring checks read LF.
-const indexSource = () => readFileSync(fileURLToPath(new URL("./index.ts", import.meta.url)), "utf8").replace(/\r\n/g, "\n");
+// the hand-off routes and deliveries moved into server/handoff-boundary.ts, unchanged; the checks below read both files
+const indexSource = () => (readFileSync(fileURLToPath(new URL("./index.ts", import.meta.url)), "utf8") + "\n" + readFileSync(fileURLToPath(new URL("./handoff-boundary.ts", import.meta.url)), "utf8")).replace(/\r\n/g, "\n");
 
 const roster: MemoryRoster = {
   bots: [
@@ -76,7 +81,8 @@ const bot = (id: string, text: string, extra: Partial<Message> = {}): Message =>
 /** Dax's answer in his own chat (from `record`) and its copy in the pair room. */
 function copied(record: string, originThread = "dax-direct") {
   disclose("b-task", originThread, [{ id: record, version: version(record) }], ["m-original"]);
-  captureSource(database(), { id: `message:${originThread}:m-original`, threadId: originThread, messageId: "m-original", kind: "text", speaker: "dax", outcome: "recorded", text: REPLY });
+  // the original is stored (and so captured as a source): a copy is shown only while the message it was copied from still is
+  insertMessage(originThread, bot("m-original", REPLY));
   const copy = bot("m-copy", REPLY, { copyOf: { threadId: originThread, messageIds: ["m-original"] } });
   insertMessage("pair-chat", copy);
   captureSource(database(), { id: "message:pair-chat:m-copy", threadId: "pair-chat", messageId: "m-copy", kind: "text", speaker: "dax", outcome: "recorded", text: REPLY });
@@ -269,16 +275,16 @@ it("R2-2: a direct turn whose words were not proven gets the reader rule for rec
 it("R2-4/5/6: delegation receipts keep the audience and the whole link, and running excerpts can be left out", () => {
   const record = daxMemory();
   copied(record);
-  recordDelegationReceipt({ id: "task-wide", sourceThreadId: "finch-direct", toBotId: "dax", toBotName: "Dax", status: "done", result: REPLY, notOwnerAudience: true,
+  recordDelegationReceipt({ id: "task-wide", sourceThreadId: "finch-direct", toBotId: "dax", toBotName: "Dax", status: "done", result: released(REPLY), notOwnerAudience: true,
     copyOf: { threadId: "dax-direct", messageIds: ["m-original", ...Array.from({ length: 69 }, (_, i) => `m-extra-${i}`)] } });
   _loadPending();
   const loaded = findDelegationReceipt("task-wide")!;
   expect(loaded.notOwnerAudience).toBe(true);
   expect(loaded.copyOf!.messageIds.length).toBe(65);
   expect(copyOriginWithheld(loaded.copyOf!)).toBe(true);
-  const activity = [{ at: 2, kind: "text", text: REPLY }, { at: 3, kind: "activity", tool: { name: "Read notes" } }] as never[];
-  expect(summarizeDelegatedActivity(activity, 1)).toEqual([`text: ${REPLY}`, "tool: Read notes"]);
-  expect(summarizeDelegatedActivity(activity, 1, 5, false)).toEqual(["tool: Read notes"]);
+  const activity: ReleasedActivityRow[] = [{ at: 2, kind: "text", text: released(REPLY) }, { at: 3, kind: "activity", tool: released("Read notes") }];
+  expect(summarizeDelegatedActivity(activity, 1).map(line => outboundWords(line))).toEqual([`text: ${REPLY}`, "tool: Read notes"]);
+  expect(summarizeDelegatedActivity(activity, 1, 5, false).map(line => outboundWords(line))).toEqual(["tool: Read notes"]);
 });
 
 it("R2-7: a derivation chain past the budget counts as withheld even when its first records carry no evidence", () => {
@@ -323,7 +329,10 @@ it("R2-1/9/10: a turn that is not the owner's gets no standing material, no owed
   expect(source).toContain("excludeSourceIds: standingContextSourceIds(bot, humanIsOwner, bot.partitionedAt === undefined ? undefined : threadPartition(bot, threadId)),");
   expect(source).toContain("excludeSourceIds:standingContextSourceIds(bot,humanIsOwner,bot.partitionedAt === undefined ? undefined : threadPartition(bot,threadId)),");
   expect(source).toContain("excludeSourceIds:standingContextSourceIds(bot,turnAudienceIsOwner(threadId),bot.partitionedAt === undefined ? undefined : threadPartition(bot,threadId)),");
-  expect(source).toContain("const withheld = (internalClaim.notOwnerAudience === true && receipt.notOwnerAudience !== true) || (receipt.copyOf && copyOriginWithheld(receipt.copyOf))");
+  // the receipt's text leaves through the one result gate, told who the result was made for and asked for, and where it came from
+  expect(source).toContain("recordedNotOwner: receipt.notOwnerAudience === true,");
+  expect(source).toContain("}, receipt.toBotId, receipt.sourceThreadId, { fromBotId }, internalClaim.notOwnerAudience === true, receipt.result);");
+  expect(source).toContain("...(receipt.copyOf ? { origin: receipt.copyOf } : {}),");
 });
 
 // Astra round 3
@@ -344,18 +353,50 @@ it("R3-12: a direct chat past 2048 receipts judges the lines it replays by their
 });
 
 it("R3-9: a legacy delegation result with no recorded origin is not handed back", () => {
-  recordDelegationReceipt({ id: "task-legacy", sourceThreadId: "finch-direct", toBotId: "dax", toBotName: "Dax", status: "done", result: REPLY });
-  recordDelegationReceipt({ id: "task-new", sourceThreadId: "finch-direct", toBotId: "dax", toBotName: "Dax", status: "done", result: "(no text)", lineage: true });
+  recordDelegationReceipt({ id: "task-legacy", sourceThreadId: "finch-direct", toBotId: "dax", toBotName: "Dax", status: "done", result: released(REPLY) });
+  recordDelegationReceipt({ id: "task-new", sourceThreadId: "finch-direct", toBotId: "dax", toBotName: "Dax", status: "done", result: released("(no text)"), lineage: true });
   _loadPending();
   expect(findDelegationReceipt("task-legacy")!.lineage).toBeUndefined();
   expect(findDelegationReceipt("task-new")!.lineage).toBe(true);
   const source = indexSource();
-  expect(source).toContain(`|| (receipt.status === "done" && receipt.lineage !== true);`);
+  expect(source).toContain(`...(receipt.status === "done" && receipt.lineage !== true ? { lineageUnknown: true } : {}),`);
 });
 
 it("R3-1/6/10: queued quotes are rendered at drain, running excerpts follow withholding, a converted ask keeps its audience (wiring)", () => {
   const source = indexSource();
   expect(source).toContain("replyForPrompt(threadId, message.replyToId ? byId.get(message.replyToId) : undefined, unproven && isWorkspaceOwner(threadHumanPrincipal(threadId)))");
-  expect(source).toContain(`!capturedMessageWithheld(runningEntry[0], message.id)`);
+  // a running delegation's excerpt keeps a bot row only when the one result gate would release it now (which asks the captured-message rule among the rest)
+  expect(source).toContain("const row = releaseMessage(message, field => releaseStoredResult(");
   expect(source).toMatch(/startedAtMs: Date\.now\(\) - ASK_BOT_TIMEOUT_MS,\n\s+\.\.\.\(internalClaim\.notOwnerAudience === true \? \{ notOwnerAudience: true \} : \{\}\),/);
+});
+
+// R6-02 (round 7): a running delegation's recent activity reads every field a row would show through the one gate, tool rows included. A tool
+// source the owner forgets while the delegation runs leaves no label in what check_delegation / wait_delegation hand back.
+it("R6-02: a real forget of a tool source removes its label from a running delegation's recent activity", () => {
+  setMemoryMode("capture");
+  captureSource(database(), { id: "message:other:tool1", threadId: "other", messageId: "tool1", kind: "activity", speaker: "dax", outcome: "recorded", text: "Read /private/FORGOTTEN-PLAN.txt" });
+  captureSource(database(), { id: "message:other:tool2", threadId: "other", messageId: "tool2", kind: "activity", speaker: "dax", outcome: "recorded", text: "Bash ls" });
+  const rows = [
+    { id: "tool1", role: "bot", kind: "activity", at: 2_000, tool: { name: "Read /private/FORGOTTEN-PLAN.txt" } },
+    { id: "tool2", role: "bot", kind: "activity", at: 2_100, tool: { name: "Bash ls" } },
+  ];
+  const deps: ResultEgressDeps = { message: (_thread, id) => ({ id, text: rows.find(row => row.id === id)?.tool.name }), authorize: () => ({ ok: true }), copyOriginWithheld: () => false,
+    capturedMessageWithheld, messageSourceForgotten: forgottenSource, messageMadeWithMemory, partitionAllowed: () => true, ownUnsharedWork: () => true, withheldLine: "[withheld]" };
+  const asked: string[] = [];
+  const summary = () => {
+    const released: ReleasedActivityRow[] = [];
+    for (const row of rows) {
+      const out = releaseMessage({ id: row.id, at: row.at, role: row.role, kind: "activity", tool: { name: new WorkerText(row.tool.name) } }, field => { asked.push(row.id); return releaseStoredResult({ origin: { threadId: "other", messageIds: [row.id] } }, "dax", "finch-direct", { fromBotId: "finch" }, false, field.text, deps); });
+      if (out?.tool) released.push({ at: row.at, kind: "activity", tool: out.tool });
+    }
+    return summarizeDelegatedActivity(released, 1_000, 5).map(line => outboundWords(line));
+  };
+  expect(summary()).toEqual(["tool: Read /private/FORGOTTEN-PLAN.txt", "tool: Bash ls"]);
+  forgetMemory(ownerMemoryTicket(), { kind: "source", id: "message:other:tool1" });
+  expect(forgottenSource("other", "tool1")).toBe(true);
+  const after = summary();
+  expect(after).toEqual(["tool: Bash ls"]);
+  expect(JSON.stringify(after)).not.toContain("FORGOTTEN");
+  // the gate was asked for every activity row, on both polls
+  expect(asked).toEqual(["tool1", "tool2", "tool1", "tool2"]);
 });

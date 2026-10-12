@@ -37,6 +37,11 @@ import { issueWorkAudience, issueExecutionAudience, validExecutionAudience } fro
 //
 // Lineage (6.1) is issued at the root by the server and copied to every
 // child unchanged; a child can never become owner audience.
+import { scopedTx } from "./tx-scope.ts";
+import { ownerDeletedThread } from "./owner-deletions.ts";
+import { OLD_OWNER_HANDOFF_GROUP } from "./pending-delegations-schema.ts";
+import { isDispatchToken, type HandoffDispatchToken } from "./handoff-capability.ts";
+import { sweepAddedOrphans } from "./added-table-lifecycle.ts";
 import { randomUUID } from "node:crypto";
 import type { DatabaseSync } from "node:sqlite";
 
@@ -102,6 +107,8 @@ export interface RoomRequest extends RoomRequestLineage {
   waitingSince: number | null;
   resultMessageId: string | null;
   outcomeNote: string | null;
+  /** Set only on a sweep read (queuedRoomRequests with dueAt): this request is retained and has been looked at this many times. */
+  retryAttempts?: number;
 }
 
 /** One continuation result, as carried by a wake's `payload_text`. */
@@ -170,6 +177,76 @@ export interface CompletionHooks {
   /** Who moves on a card that a run nobody handed over (an owner card) put
    * in review in goal mode: the lead, in the room (lane R's rows decide). */
   reviewWake?: (db: DatabaseSync, request: RoomRequest) => { botId: string; threadId: string } | null;
+  /** An owner's queued message ended without a transcript line (the room closed it, it expired,
+   * it could not start): keep the owner's words as a chip. Called inside the completing
+   * transaction, so the closure and the chip commit together. See `ownerWordsOwed`. */
+  ownerWords?: (db: DatabaseSync, request: RoomRequest) => void;
+}
+
+/** The note of a request the OWNER cancelled: the one closure that needs no chip, because the owner chose it. */
+export const OWNER_CANCEL_NOTE = "cancelled by you";
+/** Recorded on a closed owner send once its words are a chip (the durable receipt of that). */
+export const OWNER_WORDS_KEPT = "owner_words_kept";
+/** The note a restore leaves on a waiting request it expired: its owner words come back as a restore-held chip. */
+export const RESTORE_EXPIRED_NOTE = "restored";
+
+/** SQL twin of `ownerWordsOwed` (binds: OWNER_CANCEL_NOTE, OWNER_WORDS_KEPT, in that order): a closed owner send
+ * whose words are neither a chip nor in a transcript yet. No age or size based prune may delete such a row. */
+export const OWNER_WORDS_OWED_SQL = `(verb='owner_send' AND state IN ('cancelled','failed','expired','unknown')
+    AND COALESCE(outcome_note,'')<>? AND COALESCE(refusal,'')<>? AND payload_text IS NOT NULL AND payload_text<>'')`;
+/** The same predicate with its two binds written in, so it matches the partial index `room_requests_owner_words` (project-tables.ts)
+ * and startup recovery reads only the owed rows, never the history of closed sends. */
+export const OWNER_WORDS_OWED_LITERAL_SQL = OWNER_WORDS_OWED_SQL.replace("?", `'${OWNER_CANCEL_NOTE}'`).replace("?", `'${OWNER_WORDS_KEPT}'`);
+
+/** Left by a restore on a `done` owner send whose room turns were never created: startup must not fan it out
+ * on its own. Its words come back as a restore-held chip, and only a post-restore Send again runs them. */
+export const RESTORE_FANOUT_HELD = "restored_fanout";
+
+/** Does a closed owner_send still owe its owner a chip? Every terminal state but done (its line is
+ * the receipt) and the owner's own cancel. A failed or unknown one that had started may have its
+ * line already: the caller checks the transcript for those. */
+export function ownerWordsOwed(request: RoomRequest): boolean {
+  return request.verb === "owner_send" && Boolean(request.payloadText)
+    && ["cancelled", "failed", "expired", "unknown"].includes(request.state)
+    && request.outcomeNote !== OWNER_CANCEL_NOTE && request.refusal !== OWNER_WORDS_KEPT;
+}
+
+/** Record that a closed owner send's words are kept (called in the same transaction as the chip). */
+export function markOwnerWordsKept(db: DatabaseSync, id: string): void {
+  db.prepare("UPDATE room_requests SET refusal=? WHERE id=? AND verb='owner_send'").run(OWNER_WORDS_KEPT, id);
+}
+
+/** Closed owner sends whose chip was never made (the write failed, or the process died between the
+ * closure and the chip): startup recovery gives each its chip. */
+export function ownerSendsOwingWords(db: DatabaseSync, _now: number = Date.now()): RoomRequest[] {
+  // No age cut: owed words are recovered however old the closure is, and `OWNER_WORDS_OWED_SQL` keeps
+  // the row out of every prune until the words are a chip (or in the transcript).
+  const rows = db.prepare(`SELECT * FROM room_requests WHERE ${OWNER_WORDS_OWED_LITERAL_SQL} ORDER BY finished_at, id`)
+    .all() as Record<string, unknown>[];
+  return rows.map(fromRow);
+}
+
+/** A deleted conversation takes its owner words with it: every owner send aimed at the thread loses
+ * its payload (so no chip is ever made from it, at closure or by recovery), and one still waiting is
+ * closed as the owner's own cancel so nothing dispatches an empty message. Returns how many changed. */
+export function scrubOwnerSendsOfThread(db: DatabaseSync, threadId: string, now: number = Date.now()): number {
+  if (!db.prepare("SELECT 1 AS x FROM sqlite_master WHERE type='table' AND name='room_requests'").get()) return 0;
+  const where = "verb='owner_send' AND (target_thread_id=?1 OR (target_thread_id IS NULL AND root_thread_id=?1))";
+  db.prepare(`UPDATE room_requests SET state='cancelled', finished_at=?2, waiting_since=NULL, outcome_note=?3 WHERE state='queued' AND ${where}`)
+    .run(threadId, now, OWNER_CANCEL_NOTE);
+  const info = db.prepare(`UPDATE room_requests SET payload_text=NULL WHERE payload_text IS NOT NULL AND ${where}`).run(threadId);
+  return Number(info.changes);
+}
+
+/** Startup: owner sends whose conversation the owner deleted (a recorded deletion) but whose words survived are scrubbed the same way. */
+export function scrubOwnerSendsOfGoneThreads(db: DatabaseSync, isLive: (threadId: string) => boolean, now: number = Date.now()): number {
+  // Absence from the registry proves nothing (a file may be missing or partly loaded): only a recorded owner deletion scrubs.
+  if (!db.prepare("SELECT 1 AS x FROM sqlite_master WHERE type='table' AND name='room_requests'").get()) return 0;
+  const rows = db.prepare("SELECT DISTINCT COALESCE(target_thread_id, root_thread_id) AS t FROM room_requests WHERE verb='owner_send' AND payload_text IS NOT NULL")
+    .all() as Array<{ t: string }>;
+  let changed = 0;
+  for (const { t } of rows) if (!isLive(t) && ownerDeletedThread(db, t)) changed += scrubOwnerSendsOfThread(db, t, now);
+  return changed;
 }
 
 export interface CompletionResult {
@@ -180,18 +257,24 @@ export interface CompletionResult {
 }
 
 function withTx<T>(db: DatabaseSync, operation: () => T): T {
-  const nested = db.isTransaction;
-  const point = `room_requests_${randomUUID().replace(/-/g, "")}`;
-  db.exec(nested ? `SAVEPOINT ${point}` : "BEGIN IMMEDIATE");
-  try {
-    const result = operation();
-    db.exec(nested ? `RELEASE ${point}` : "COMMIT");
-    return result;
-  } catch (error) {
-    db.exec(nested ? `ROLLBACK TO ${point}; RELEASE ${point}` : "ROLLBACK");
-    throw error;
-  }
+  // The tx-scope frame spans the whole transaction, COMMIT included: a transcript line or send chip
+  // announced by `operation` reaches clients only once this (or an enclosing) transaction commits.
+  return scopedTx(() => {
+    const nested = db.isTransaction;
+    const point = `room_requests_${randomUUID().replace(/-/g, "")}`;
+    db.exec(nested ? `SAVEPOINT ${point}` : "BEGIN IMMEDIATE");
+    try {
+      const result = operation();
+      db.exec(nested ? `RELEASE ${point}` : "COMMIT");
+      return result;
+    } catch (error) {
+      db.exec(nested ? `ROLLBACK TO ${point}; RELEASE ${point}` : "ROLLBACK");
+      throw error;
+    }
+  });
 }
+/** Runs `operation` in one transaction (a savepoint inside an enclosing one); used by recovery to record a decision with its work. */
+export function roomRequestsTransaction<T>(db: DatabaseSync, operation: () => T): T { return withTx(db, operation); }
 
 function num(value: unknown): number | null {
   return value === null || value === undefined ? null : Number(value);
@@ -244,6 +327,7 @@ function fromRow(row: Record<string, unknown>): RoomRequest {
     waitingSince: num(row.waiting_since),
     resultMessageId: str(row.result_message_id),
     outcomeNote: str(row.outcome_note),
+    ...(row.retry_attempts !== undefined && row.retry_attempts !== null ? { retryAttempts: Number(row.retry_attempts) } : {}),
   };
 }
 
@@ -254,6 +338,13 @@ export function isTerminalRoomRequestState(state: RoomRequestState): state is Ro
 export function roomRequest(db: DatabaseSync, id: string): RoomRequest | null {
   const row = db.prepare("SELECT * FROM room_requests WHERE id=?").get(id) as Record<string, unknown> | undefined;
   return row ? fromRow(row) : null;
+}
+
+/** The request a hand-off stands for, found by its ID (a hand-off and its request share one id by construction, at the one place they are created). Never by the
+ * spelling of the admission key: a key is a label, the id is the identity. An earlier build's stand-in record is not a request. */
+export function handoffRequest(db: DatabaseSync, id: string): RoomRequest | null {
+  const request = roomRequest(db, id);
+  return request !== null && request.groupId !== OLD_OWNER_HANDOFF_GROUP ? request : null;
 }
 
 export function roomRequestByKey(db: DatabaseSync, admissionKey: string): RoomRequest | null {
@@ -335,13 +426,88 @@ export function listRoomRequests(
   return (db.prepare(sql).all(...args) as Record<string, unknown>[]).map(fromRow);
 }
 
-/** The dispatch order (5.2): owner, then coordinator, then work; then
- * created_at; then id. */
-export function queuedRoomRequests(db: DatabaseSync, filter: { groupId?: string } = {}): RoomRequest[] {
-  const rows = db.prepare(`SELECT * FROM room_requests WHERE state='queued'${filter.groupId ? " AND group_id=?" : ""}
-    ORDER BY CASE priority WHEN 'owner' THEN 0 WHEN 'coordinator' THEN 1 ELSE 2 END, created_at, id`)
-    .all(...(filter.groupId ? [filter.groupId] : [])) as Record<string, unknown>[];
-  return rows.map(fromRow);
+/** The dispatch order (5.2): owner, then coordinator, then work; then created_at; then id. */
+export interface QueuedRoomRequestFilter {
+  groupId?: string;
+  /** Only this bot's rows. */
+  toBotId?: string;
+}
+/** Parked (inactive) requests carry this marker in `refusal` together with their `room_request_retry` row: they are kept, never settled, and
+ * leave the runnable set (Q1) until their persisted `retry_at` falls due (Q2). Written only by `deferRetainedRoomRequest`. */
+export const RETAINED_UNRESOLVED = "retained_unresolved";
+export const RETAINED_SWEEP_BATCH = 100;
+const RETAINED_BACKOFF_MIN_MS = 30_000;
+const RETAINED_BACKOFF_MAX_MS = 3_600_000;
+export function retainedBackoffMs(attempts: number): number {
+  return Math.min(RETAINED_BACKOFF_MAX_MS, RETAINED_BACKOFF_MIN_MS * 2 ** Math.max(0, Math.min(attempts, 20)));
+}
+const PRIORITY_RANK: Record<string, number> = { owner: 0, coordinator: 1 };
+
+/** Q1, the runnable ids: every queued request that is not parked, in age order. The WHERE text repeats the literal predicate of the partial
+ * index `room_requests_runnable`, so the plan is an index walk over the queued rows only, never a scan of the table's history. */
+export function runnableRoomRequestIds(db: DatabaseSync, filter: QueuedRoomRequestFilter = {}): string[] {
+  const args: Array<string | number> = [];
+  if (filter.groupId) args.push(filter.groupId);
+  // The bot variant repeats the index's literal term (`to_bot_id IS NOT NULL`) so room_requests_runnable_bot applies and only that bot's runnable rows are read.
+  if (filter.toBotId) args.push(filter.toBotId);
+  return (db.prepare(runnableRoomRequestIdsSql(filter)).all(...args) as Array<{ id: string }>).map(row => row.id);
+}
+/** The text of Q1 for a filter (exported so a test can measure the rows the production statement visits). */
+export function runnableRoomRequestIdsSql(filter: QueuedRoomRequestFilter = {}): string {
+  const where = ["state='queued'", `refusal IS NOT '${RETAINED_UNRESOLVED}'`];
+  if (filter.groupId) where.push("group_id=?");
+  if (filter.toBotId) where.push("to_bot_id=?", "to_bot_id IS NOT NULL");
+  return `SELECT id FROM room_requests WHERE ${where.join(" AND ")} ORDER BY created_at, id`;
+}
+/** The requests with these ids, in the given order (one primary-key lookup each). */
+function requestsByIds(db: DatabaseSync, ids: readonly string[], extra: ReadonlyMap<string, number> = new Map()): RoomRequest[] {
+  const select = db.prepare("SELECT * FROM room_requests WHERE id=?");
+  const out: RoomRequest[] = [];
+  for (const id of ids) {
+    const row = select.get(id) as Record<string, unknown> | undefined;
+    if (!row) continue;
+    out.push(fromRow(extra.has(id) ? { ...row, retry_attempts: extra.get(id) } : row));
+  }
+  return out;
+}
+/** The runnable queue (Q1 then a primary-key fetch), with the priority order (owner, coordinator, work) applied here: the runnable set is small. */
+export function queuedRoomRequests(db: DatabaseSync, filter: QueuedRoomRequestFilter = {}): RoomRequest[] {
+  const rows = requestsByIds(db, runnableRoomRequestIds(db, filter));
+  const rank = (r: RoomRequest) => PRIORITY_RANK[r.priority] ?? 2;
+  return rows.sort((a, b) => rank(a) - rank(b) || a.createdAt - b.createdAt || a.id.localeCompare(b.id));
+}
+/** Q2, the parked requests whose wait is over: through `room_request_retry_due` with a LIMIT, so the cost follows the work that is due and never
+ * the parked backlog. Each carries `retryAttempts`. */
+export function dueRetainedRoomRequests(db: DatabaseSync, now: number, limit = RETAINED_SWEEP_BATCH): RoomRequest[] {
+  const due = db.prepare("SELECT request_id, attempts FROM room_request_retry WHERE retry_at<=? ORDER BY retry_at, request_id LIMIT ?")
+    .all(now, Math.max(1, Math.trunc(limit))) as Array<{ request_id: string; attempts: number }>;
+  return requestsByIds(db, due.map(row => row.request_id), new Map(due.map(row => [row.request_id, Number(row.attempts)])));
+}
+
+/** Park a queued request that cannot be decided yet, and look at it again later: 30 s, doubling, at most 1 hour (persisted `retry_at`). The row
+ * leaves the runnable set through the marker in the same transaction. Returns the next time. */
+export function deferRetainedRoomRequest(db: DatabaseSync, id: string, now: number): number {
+  return withTx(db, () => {
+    const row = db.prepare("SELECT attempts FROM room_request_retry WHERE request_id=?").get(id) as { attempts: number } | undefined;
+    const attempts = Number(row?.attempts ?? 0);
+    const retryAt = now + retainedBackoffMs(attempts);
+    db.prepare(`INSERT INTO room_request_retry(request_id, retry_at, attempts) SELECT id, ?, ? FROM room_requests WHERE id=? AND state='queued'
+      ON CONFLICT(request_id) DO UPDATE SET retry_at=excluded.retry_at, attempts=excluded.attempts`).run(retryAt, attempts + 1, id);
+    db.prepare("UPDATE room_requests SET refusal=? WHERE id=? AND state='queued'").run(RETAINED_UNRESOLVED, id);
+    return retryAt;
+  });
+}
+/** The request is decidable now (known, or being handled): it is runnable again. True when it was parked. */
+export function clearRetainedRoomRequest(db: DatabaseSync, id: string): boolean {
+  return withTx(db, () => {
+    db.prepare("UPDATE room_requests SET refusal=NULL WHERE id=? AND state='queued' AND refusal=?").run(id, RETAINED_UNRESOLVED);
+    return Number(db.prepare("DELETE FROM room_request_retry WHERE request_id=?").run(id).changes) > 0;
+  });
+}
+/** Make every parked request due now (the harness finished booting, so a registry that was not loaded is). Bounded work: one statement over the
+ * retry set only. The attempts stay: a request that is still unresolved goes back to its long wait, never to the first short one. */
+export function wakeRetainedRoomRequests(db: DatabaseSync, now: number): number {
+  return Number(db.prepare("UPDATE room_request_retry SET retry_at=? WHERE retry_at>?").run(now, now).changes);
 }
 
 /** queued -> running. False when the row is no longer queued (a second
@@ -350,16 +516,33 @@ export function markRequestDispatched(
   db: DatabaseSync,
   id: string,
   input: { now: number; targetThreadId?: string },
+  token?: HandoffDispatchToken,
 ): boolean {
-  const result = db.prepare(`UPDATE room_requests SET state='running', dispatched_at=?, refusal=NULL,
-      target_thread_id=COALESCE(?, target_thread_id) WHERE id=? AND state='queued'`)
-    .run(input.now, input.targetThreadId ?? null, id);
-  return Number(result.changes) === 1;
+  return withTx(db, () => {
+    // A request that has a hand-off row is the hand-off's: only the hand-off dispatch (it holds the token) may mark it running. Anything else, a plain starter
+    // included, finds it not dispatchable, whatever its key is spelled like.
+    const partnered = isDispatchToken(token) || !tableExists(db, "pending_delegations") ? "" : " AND NOT EXISTS (SELECT 1 FROM pending_delegations WHERE pending_delegations.id=room_requests.id)";
+    const result = db.prepare(`UPDATE room_requests SET state='running', dispatched_at=?, refusal=NULL,
+      target_thread_id=COALESCE(?, target_thread_id) WHERE id=? AND state='queued'${partnered}`)
+      .run(input.now, input.targetThreadId ?? null, id);
+    if (Number(result.changes) !== 1) return false;
+    // The hand-off row of the same id (if any) is stamped by the hand-off dispatch (handoff-dispatch.ts), in the transaction that writes the turn's prompt, never here:
+    // a request that is dispatched and then waits on the owner has not started its hand-off.
+    return true;
+  });
+}
+const pendingTableKnown = new WeakSet<DatabaseSync>();
+function tableExists(db: DatabaseSync, name: string): boolean {
+  if (pendingTableKnown.has(db)) return true;
+  const found = Boolean(db.prepare("SELECT 1 AS x FROM sqlite_schema WHERE type='table' AND name=?").get(name));
+  if (found) pendingTableKnown.add(db);
+  return found;
 }
 
 /** The arbiter's last refusal for a queued request (7.2 codes). */
 export function recordRoomRequestRefusal(db: DatabaseSync, id: string, refusal: string | null): void {
-  db.prepare("UPDATE room_requests SET refusal=? WHERE id=? AND state='queued'").run(refusal, id);
+  // A parked request keeps its marker: only `clearRetainedRoomRequest` and a dispatch take it off.
+  db.prepare(`UPDATE room_requests SET refusal=? WHERE id=? AND state='queued' AND refusal IS NOT '${RETAINED_UNRESOLVED}'`).run(refusal, id);
 }
 
 /** running -> waiting_owner (an approval or question is open). */
@@ -482,7 +665,8 @@ export function completeRequest(
     const noVerdict = current.verb === "review" && !reviewVerdict && !fenced && outcome.state === "done" && !outcome.outcomeNote && !current.outcomeNote;
     const note = reviewVerdict ? current.outcomeNote : fenced ? "superseded" : noVerdict ? "No verdict given" : (outcome.outcomeNote ?? current.outcomeNote);
     db.prepare(`UPDATE room_requests SET state=?, finished_at=?, result_message_id=COALESCE(?, result_message_id),
-        outcome_note=?, waiting_since=NULL, owner_wait_ms=owner_wait_ms+? WHERE id=?`)
+        outcome_note=?, waiting_since=NULL, owner_wait_ms=owner_wait_ms+?,
+        refusal=CASE WHEN refusal='retained_unresolved' THEN NULL ELSE refusal END WHERE id=?`)
       .run(outcome.state, outcome.now, outcome.resultMessageId ?? null, note === null ? null : note.slice(0, 200), ownerWait, id);
     const done = roomRequest(db, id)!;
     // A card's effect is applied once, by the card's own request: a
@@ -492,6 +676,7 @@ export function completeRequest(
     if (done.verb === "review") Object.assign(done, roomRequest(db, id)!);
     if (ran) hooks.settleUsage?.(db, done);
     hooks.activity?.(db, done);
+    if (hooks.ownerWords && ownerWordsOwed(done)) hooks.ownerWords(db, done);
     // An interrupted card is an owner decision, including a card whose
     // continuation was interrupted. Retry or Skip must precede another wake.
     if (!fenced && done.state === "unknown" && done.workItemId && done.verb === "wake" && done.parentId && done.admissionKey === `wake:${done.parentId}`) {
@@ -837,7 +1022,11 @@ export function recoverCommittedAskResults(
  */
 export function reconcileRoomRequestsAtBoot(db: DatabaseSync, now: number, hooks: CompletionHooks = {}): { unknown: number; wakes: RoomRequest[] } {
   return withTx(db, () => {
-    const rows = (db.prepare("SELECT * FROM room_requests WHERE state IN ('running','waiting_owner') OR (state='queued' AND work_item_id IS NOT NULL AND dispatched_at IS NOT NULL) ORDER BY created_at, id").all() as Record<string, unknown>[]).map(fromRow);
+    // A request whose handoff row is still queued is that row's partner: the row decides it (a start cut short before the provider took it is
+    // run once more, server/delegations.ts reconcileStartedDelegations), so the sweep leaves it running.
+    // A row the owner has to decide (held: started, no start time) is not a partner: its request is interrupted like any other.
+    const partner = tableExists(db, "pending_delegations") ? " AND NOT EXISTS (SELECT 1 FROM pending_delegations p WHERE p.id=room_requests.id AND NOT (p.phase='started' AND p.started_at IS NULL))" : "";
+    const rows = (db.prepare(`SELECT * FROM room_requests WHERE (state IN ('running','waiting_owner') OR (state='queued' AND work_item_id IS NOT NULL AND dispatched_at IS NOT NULL))${partner} ORDER BY created_at, id`).all() as Record<string, unknown>[]).map(fromRow);
     const wakes: RoomRequest[] = [];
     let unknown = 0;
     for (const row of rows) {
@@ -856,10 +1045,23 @@ export function reconcileRoomRequestsAtBoot(db: DatabaseSync, now: number, hooks
   });
 }
 
-/** Queued requests past their deadline (`room_turn` 2 hours) expire. */
-export function expireOverdueRoomRequests(db: DatabaseSync, now: number, hooks: CompletionHooks = {}, include: (row: RoomRequest) => boolean = () => true): RoomRequest[] {
-  const rows = (db.prepare("SELECT * FROM room_requests WHERE state='queued' AND deadline_at IS NOT NULL AND deadline_at < ? ORDER BY created_at, id").all(now) as Record<string, unknown>[]).map(fromRow);
-  return rows.filter(include).map((row) => completeRequest(db, row.id, { state: "expired", now, outcomeNote: "not answered in time" }, hooks).request);
+/** Q3, the queued requests past their deadline, oldest first, at most `limit` (default 100) per call. `deadline_at` is fixed when the row is created,
+ * so expiry never depends on the registry; the partial index `room_requests_queued_deadline` holds queued rows with a deadline only, so an
+ * expired row leaves it. A backlog clears over successive ticks. */
+export function overdueRoomRequests(db: DatabaseSync, now: number, limit = RETAINED_SWEEP_BATCH): RoomRequest[] {
+  const ids = db.prepare("SELECT id FROM room_requests WHERE state='queued' AND deadline_at IS NOT NULL AND deadline_at<? ORDER BY deadline_at, id LIMIT ?")
+    .all(now, Math.max(1, Math.trunc(limit))) as Array<{ id: string }>;
+  return requestsByIds(db, ids.map(row => row.id));
+}
+/** Queued requests past their deadline (`room_turn` 2 hours, shared work 24 hours) expire, a bounded batch per call. `expire` closes one
+ * (the default completes it as expired); shared work passes its own closer, which also tells the requester. */
+export function expireOverdueRoomRequests(db: DatabaseSync, now: number, hooks: CompletionHooks = {}, expire?: (row: RoomRequest) => RoomRequest | null, limit = RETAINED_SWEEP_BATCH): RoomRequest[] {
+  const closed: RoomRequest[] = [];
+  for (const row of overdueRoomRequests(db, now, limit)) {
+    const done = expire ? expire(row) : completeRequest(db, row.id, { state: "expired", now, outcomeNote: "not answered in time" }, hooks).request;
+    if (done) closed.push(done);
+  }
+  return closed;
 }
 
 /** The (group, closeSeq) of every close still running: after the group's last
@@ -873,6 +1075,32 @@ export const LIVE_PROJECT_CLOSES_SQL = `SELECT a.group_id AS group_id, json_extr
   GROUP BY a.group_id, json_extract(a.detail,'$.closeSeq')
   HAVING MAX(json_extract(a.detail,'$.step')) < 3`;
 
+/** The statement that decides one hold: does this request have nothing left to keep. Exported so a test can read its plan. */
+export function settledHoldSql(db: DatabaseSync): string {
+  const exists = (name: string) => Boolean(db.prepare("SELECT 1 AS x FROM sqlite_schema WHERE type='table' AND name=?").get(name));
+  // Existence probes (NOT EXISTS on an indexed request id), never a list built from the owed set: cost per hold is flat in how much is owed.
+  const owedRow = exists("room_request_owed") ? " AND NOT EXISTS (SELECT 1 FROM room_request_owed o WHERE o.kind IN ('shared_delivery','fanout') AND o.request_id=room_requests.id)" : "";
+  const cardRow = exists("project_card_delivery_owed") ? " AND NOT EXISTS (SELECT 1 FROM project_card_delivery_owed c WHERE c.request_id=room_requests.id)" : "";
+  const dismissal = exists("room_request_dismissal_receipts") ? " AND NOT EXISTS (SELECT 1 FROM room_request_dismissal_receipts d WHERE d.request_id=room_requests.id)" : "";
+  return `SELECT 1 AS x FROM room_requests WHERE id=? AND state IN ${TERMINAL_SQL} AND NOT ${OWNER_WORDS_OWED_LITERAL_SQL}${owedRow}${cardRow}${dismissal}`;
+}
+/** A restore holds every open request ("room_request") and then expires it. The hold exists for the recovery that request still owes: the owner's words
+ * not yet a chip, a finished card's result still owed to its room, a shared result still owed to its requester. When none of those is left (the request is
+ * terminal and the chip exists, or its delivery is settled) the hold has nothing more to keep and is retired, so the request can be pruned like any other
+ * and repeated restores do not leave expired requests behind. A hold whose request is gone is retired too. Cost follows the holds, which only restores create. */
+export function retireSettledRoomRequestHolds(db: DatabaseSync): number {
+  if (!db.prepare("SELECT 1 AS x FROM sqlite_schema WHERE type='table' AND name='restore_holds'").get()) return 0;
+  // each hold is decided by primary-key probes, never by a pass over the request history
+  const settled = db.prepare(settledHoldSql(db));
+  const retire = db.prepare("DELETE FROM restore_holds WHERE kind='room_request' AND row_id=?");
+  const gone = db.prepare("SELECT 1 AS x FROM room_requests WHERE id=?");
+  let retired = 0;
+  for (const { row_id: id } of db.prepare("SELECT row_id FROM restore_holds WHERE kind='room_request'").all() as Array<{ row_id: string }>) {
+    if (!gone.get(id) || settled.get(id)) { retire.run(id); retired++; }
+  }
+  return retired;
+}
+
 /**
  * Pruning (SPEC-P section 2): terminal requests older than 30 days go,
  * except a row still referenced by an open request (`parent_id`) or by a
@@ -881,6 +1109,7 @@ export const LIVE_PROJECT_CLOSES_SQL = `SELECT a.group_id AS group_id, json_extr
  */
 export function pruneTerminalRoomRequests(db: DatabaseSync, now: number): number {
   return withTx(db, () => {
+    retireSettledRoomRequestHolds(db);
     const cutoff = now - ROOM_REQUEST_RETENTION_MS;
     const cards = Boolean(db.prepare("SELECT 1 FROM sqlite_schema WHERE type='table' AND name='project_work_items'").get());
     const activity = Boolean(db.prepare("SELECT 1 FROM sqlite_schema WHERE type='table' AND name='project_activity'").get());
@@ -889,12 +1118,27 @@ export function pruneTerminalRoomRequests(db: DatabaseSync, now: number): number
       + (cards ? " OR id IN (SELECT request_id FROM project_work_items WHERE archived_at IS NULL AND request_id IS NOT NULL)"
         + " OR id IN (SELECT review_request_id FROM project_work_items WHERE archived_at IS NULL AND review_request_id IS NOT NULL)" : "")
       + (activity ? ` OR id IN (SELECT summary_request_id FROM (${LIVE_PROJECT_CLOSES_SQL}) WHERE summary_request_id IS NOT NULL)` : "");
-    const doomed = `SELECT id FROM room_requests WHERE state IN ${TERMINAL_SQL} AND finished_at < ? AND NOT (${keep})`;
+    // a result, request or card delivery a restore is holding waits for the owner's release, however old
+    const holds = Boolean(db.prepare("SELECT 1 FROM sqlite_schema WHERE type='table' AND name='restore_holds'").get());
+    const heldKeep = holds ? " OR id IN (SELECT row_id FROM restore_holds WHERE kind IN ('room_request','shared_result','card_delivery'))" : "";   // room_request holds were just retired where nothing is left to recover
+    // a finished result still owed to its requester, or a send still to fan out, is delivery debt: it is never pruned, however old,
+    // and neither is its owed row (a Resume that released a hold must not let the pruner erase the result before it is delivered)
+    const debt = Boolean(db.prepare("SELECT 1 FROM sqlite_schema WHERE type='table' AND name='room_request_owed'").get());
+    const dismissals = Boolean(db.prepare("SELECT 1 FROM sqlite_schema WHERE type='table' AND name='room_request_dismissal_receipts'").get());
+    // a request whose handoff row is still in the queue (waiting, or started and not yet receipted) is that row's partner: never pruned from under it
+    const handoffs = Boolean(db.prepare("SELECT 1 FROM sqlite_schema WHERE type='table' AND name='pending_delegations'").get());
+    const debtKeep = (debt ? " OR id IN (SELECT request_id FROM room_request_owed)" : "") + (dismissals ? " OR id IN (SELECT request_id FROM room_request_dismissal_receipts)" : "")
+      + (handoffs ? " OR id IN (SELECT id FROM pending_delegations)" : "");
+    // an owner send whose words are not yet a chip or a transcript line is never pruned, however old
+    const owed = OWNER_WORDS_OWED_LITERAL_SQL;
+    const doomed = `SELECT id FROM room_requests WHERE state IN ${TERMINAL_SQL} AND finished_at < ? AND NOT (${keep}${heldKeep}${debtKeep}) AND NOT ${owed}`;
     if (cards) {
       db.prepare(`UPDATE project_work_items SET request_id=NULL WHERE archived_at IS NOT NULL AND request_id IN (${doomed})`).run(cutoff);
       db.prepare(`UPDATE project_work_items SET review_request_id=NULL WHERE archived_at IS NOT NULL AND review_request_id IN (${doomed})`).run(cutoff);
     }
     const result = db.prepare(`DELETE FROM room_requests WHERE id IN (${doomed})`).run(cutoff);
+    // rows that belonged to those requests go with them, also on a connection where the cascade does not run
+    sweepAddedOrphans(db);
     return Number(result.changes);
   });
 }
@@ -905,4 +1149,19 @@ export function pruneTerminalRoomRequests(db: DatabaseSync, now: number): number
 export function requeueRoomRequest(db: DatabaseSync, id: string, refusal: string | null): boolean {
   const result = db.prepare("UPDATE room_requests SET state='queued', dispatched_at=NULL, refusal=? WHERE id=? AND state='running'").run(refusal, id);
   return Number(result.changes) === 1;
+}
+
+/** A hand-off's request whose turn did not start (a wait, a restart that cut the start short): back to `queued` from `running` or `waiting_owner`, the
+ * refusal recorded, so the dispatch that follows finds both records agreeing. Never terminal: a request that finished is left alone. */
+export function requeueRequest(db: DatabaseSync, id: string, refusal: string | null = null): boolean {
+  const result = db.prepare("UPDATE room_requests SET state='queued', dispatched_at=NULL, waiting_since=NULL, refusal=? WHERE id=? AND state IN ('running','waiting_owner')").run(refusal, id);
+  return Number(result.changes) === 1;
+}
+
+/** The same ask, to the same bot, with the same words, already made under this parent (a room turn): in ANY state. A repeated tool call is answered from this request's
+ * own outcome (queued or running: the same task; finished: its receipt), never by starting the work again (SPEC-P 5.2 idempotency). */
+export function findRoomAskDuplicate(db: DatabaseSync, parentId: string, toBotId: string, message: string): RoomRequest | null {
+  const row = db.prepare("SELECT id FROM room_requests WHERE parent_id=? AND verb='ask' AND to_bot_id=? AND payload_text=? ORDER BY created_at LIMIT 1")
+    .get(parentId, toBotId, message.slice(0, 100_000)) as { id: string } | undefined;
+  return row ? roomRequest(db, row.id) : null;
 }

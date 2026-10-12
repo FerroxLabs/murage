@@ -22,6 +22,7 @@
 import { mkdirSync, rmSync } from "node:fs";
 import { beforeEach, expect, it } from "vitest";
 import { DATA_DIR } from "../config.ts";
+import { insertMessage } from "../message-db.ts";
 import { closeDatabase, database } from "../database.ts";
 import { InternalCapabilities } from "../internal-capabilities.ts";
 import { memoryAccess, reconcileMemoryRoster, type MemoryAccess, type MemoryRoster } from "./policy.ts";
@@ -180,6 +181,8 @@ it("a delegated reply copied in from Kessler follows its original in a long chat
   kReceipt.accepted();
   kReceipt.noteLookup([handle(kesslerMemory, "kessler")], k);
   kReceipt.output("k-answer");
+  // Kessler's reply is stored where it was written: a copy is shown only while the message it was copied from still is
+  insertMessage("kessler-direct", reply("k-answer", 1, { from: { botId: "kessler", name: "Kessler", color: "#111" } }));
   const { a, messages } = await longConversation(100);
   messages.push(reply("copy-k-answer", 99_999, { from: { botId: "kessler", name: "Kessler", color: "#111" }, copyOf: { threadId: "kessler-direct", messageIds: ["k-answer"] } }));
   expect(directAllowed("dax-direct", messages, a, new Set()).map(m => m.id)).toContain("copy-k-answer");
@@ -239,7 +242,7 @@ it("a resumed session past 2048 receipts still decides from its latest frame (ME
     SELECT 'old-frame-'||value,'dax-direct','fuigo','native-1',?,?,'[]',?,?,?,'delivered',value FROM n`).run(frame.record_versions, frame.source_versions, frame.policy_revision, frame.deletion_epoch, frame.token_count);
   const bundle = await buildMemoryBundle("what is the plan", a, empty);
   expect(memoryContinuationChanged(bundle, "dax-direct", "fuigo", "native-1")).toBe(false);
-  // the latest frame differing still resets the session
-  database().prepare("UPDATE memory_disclosures SET record_versions='[]' WHERE bundle_id=?").run(frame.bundle_id);
+  // the latest frame (the last written: receipt order is the write sequence, not the date) differing still resets the session
+  database().prepare("UPDATE memory_disclosures SET record_versions='[]' WHERE bundle_id='old-frame-2100'").run();
   expect(memoryContinuationChanged(bundle, "dax-direct", "fuigo", "native-1")).toBe(true);
 }, 240_000);

@@ -10,10 +10,12 @@ import { BOT_OPENERS, openerAt } from "../shared/bot-openers.ts";
 import { BOT_PROFILE_LIMITS } from "../shared/bot-profile.ts";
 import { resolveToolLabel } from "../shared/tool-activity.ts";
 import { DATA_DIR } from "./config.ts";
+import { closeDatabase, database, finishBackgroundUpgradeWorkNow } from "./database.ts";
 import type { ModelSelection } from "./contracts.ts";
 import * as mdb from "./message-db.ts";
 import { peerAllowKey } from "./peer-approval-key.ts";
 import { canReach, isIndividualAssistant, isWorkspaceChief, Store, type BotRecord, type Message } from "./store.ts";
+import { BROWSER_CHECKING_REASON, BROWSER_CHECK_FAILED_REASON, browserUnavailableActivityName } from "../shared/browser-unavailable.ts";
 import { TURN_INTERRUPTED_NOTE } from "./turn-outcome.ts";
 import { roomTranscript } from "../src/lib/room-transcript.ts";
 
@@ -193,6 +195,20 @@ describe("Store", () => {
     const store = new Store(selection);
     const bot = store.createBot({ name: "Imported" }, { seedMessages: false });
     expect(store.messagesFor(bot.threadId)).toHaveLength(0);
+  });
+
+  it("addTaskUsage banks a provider turn once: a redelivered terminal event adds no tokens, cost or turn, even after a restart", () => {
+    const store = new Store(selection);
+    const bot = store.createBot();
+    const turn = { input: 100, output: 20, costUsd: 0.5 };
+    store.addTaskUsage(bot.id, bot.threadId, turn, "turn-a");
+    store.addTaskUsage(bot.id, bot.threadId, turn, "turn-a");
+    expect(store.taskByThread(bot.id, bot.threadId)?.usage).toEqual({ input: 100, output: 20, costUsd: 0.5, turns: 1 });
+    const reloaded = new Store(selection);
+    reloaded.addTaskUsage(bot.id, bot.threadId, turn, "turn-a");
+    expect(reloaded.taskByThread(bot.id, bot.threadId)?.usage).toEqual({ input: 100, output: 20, costUsd: 0.5, turns: 1 });
+    reloaded.addTaskUsage(bot.id, bot.threadId, turn, "turn-b");
+    expect(reloaded.taskByThread(bot.id, bot.threadId)?.usage).toEqual({ input: 200, output: 40, costUsd: 1, turns: 2 });
   });
 
   it("addTaskUsage accumulates settled-turn totals per task and survives a restart", () => {
@@ -792,6 +808,15 @@ describe("Store", () => {
 
     const reloaded = new Store(selection);
     expect(reloaded.bot(bot.id)?.resumeCursors).toEqual({ claude: "sess-abc", codex: "thread-xyz" });
+  });
+
+  it("records the session contract a cursor was made under, and forgets it for a cursor with none", () => {
+    const store = new Store(selection);
+    const bot = store.createBot();
+    store.setResumeCursor(bot.id, "claude", "sess-1", bot.threadId, undefined, 1);
+    expect(new Store(selection).taskByThread(bot.id, bot.threadId)?.resumeContracts).toEqual({ claude: 1 });
+    store.setResumeCursor(bot.id, "claude", "sess-2", bot.threadId);
+    expect(new Store(selection).taskByThread(bot.id, bot.threadId)?.resumeContracts).toEqual({});
   });
 
   it("seedIfEmpty creates exactly one starter bot, once", () => {
@@ -2632,5 +2657,88 @@ describe("Store bounded message pages", () => {
     const after = new Store(selection);
     expect(after.messagePage(oldThread, 5)).toEqual({ messages: [], hasMore: false, activeLeafId: null });
     expect(after.messageWindow(oldThread, "anything", 5)).toBeNull();
+  });
+});
+
+describe("boot reconcile of an abandoned browser check (1.0.2)", () => {
+  it("settles a checking note that is the conversation leaf into the restart marker, once", () => {
+    const store = new Store(selection);
+    const bot = store.createBot();
+    store.appendMessage(bot.threadId, { role: "user", kind: "text", text: "open the site" });
+    const note = store.appendMessage(bot.threadId, { role: "bot", kind: "activity", tool: { name: browserUnavailableActivityName(BROWSER_CHECKING_REASON), ok: true } });
+    expect(store.reconcileAbandonedBrowserChecks(TURN_INTERRUPTED_NOTE)).toBe(1);
+    const row = store.messagesFor(bot.threadId).find(m => m.id === note.id);
+    expect(row?.tool).toMatchObject({ name: TURN_INTERRUPTED_NOTE, ok: false });
+    expect(store.reconcileAbandonedBrowserChecks(TURN_INTERRUPTED_NOTE)).toBe(0);
+    // the direct-turn pass finds the thread already explained
+    expect(store.reconcileInterruptedDirectTurns(TURN_INTERRUPTED_NOTE)).toBe(0);
+  });
+
+  it("settles a checking note that is not the leaf to the try-again wording", () => {
+    const store = new Store(selection);
+    const bot = store.createBot();
+    store.appendMessage(bot.threadId, { role: "user", kind: "text", text: "open the site" });
+    const note = store.appendMessage(bot.threadId, { role: "bot", kind: "activity", tool: { name: browserUnavailableActivityName(BROWSER_CHECKING_REASON), ok: true } });
+    store.appendMessage(bot.threadId, { role: "bot", kind: "text", text: "done" });
+    expect(store.reconcileAbandonedBrowserChecks(TURN_INTERRUPTED_NOTE)).toBe(1);
+    expect(store.messagesFor(bot.threadId).find(m => m.id === note.id)?.tool?.name).toBe(browserUnavailableActivityName(BROWSER_CHECK_FAILED_REASON));
+  });
+
+  it("reads only the pending notes: 100k historical activity rows and none pending touch no history and load no transcript", () => {
+    const store = new Store(selection);
+    const bot = store.createBot({}, { seedMessages: false });
+    store.appendMessage(bot.threadId, { role: "user", kind: "text", text: "hi" });
+    // bulk history written straight into the table, as an old installation would hold it
+    const db = database();
+    const insert = db.prepare("INSERT INTO messages(thread_id,id,at,role,kind,text,json) VALUES (?,?,?,?,?,?,?)");
+    db.exec("BEGIN");
+    for (let i = 0; i < 100_000; i++) {
+      const m = { id: `h${i}`, at: i, role: "bot", kind: "activity", tool: { name: `Read file ${i % 50}`, ok: true } };
+      insert.run("history-thread", m.id, m.at, m.role, m.kind, null, JSON.stringify(m));
+    }
+    db.exec("COMMIT");
+    const plan = mdb.pendingBrowserCheckPlan().join(" | ");
+    // the only scan is of the table of pending notes itself, which holds pending notes only; each is then found by its primary key
+    expect(plan).toMatch(/SCAN p/);
+    expect(plan).toMatch(/SEARCH m USING (COVERING )?INDEX sqlite_autoindex_messages_1 \(thread_id=\? AND id=\?\)|SEARCH m USING PRIMARY KEY/);
+    expect(plan).not.toMatch(/SCAN m|SCAN messages/);
+    const fresh = new Store(selection);
+    expect(mdb.pendingBrowserCheckRows()).toEqual([]);
+    expect(fresh.reconcileAbandonedBrowserChecks(TURN_INTERRUPTED_NOTE)).toBe(0);
+    expect((fresh as unknown as { threads: Map<string, unknown> }).threads.size).toBe(0);
+  });
+
+  it("patches a pending note from a cold store without loading its transcript, then leaves the index", () => {
+    const store = new Store(selection);
+    const bot = store.createBot({}, { seedMessages: false });
+    store.appendMessage(bot.threadId, { role: "user", kind: "text", text: "go" });
+    const note = store.appendMessage(bot.threadId, { role: "bot", kind: "activity", tool: { name: browserUnavailableActivityName(BROWSER_CHECKING_REASON), ok: true } });
+    store.appendMessage(bot.threadId, { role: "bot", kind: "text", text: "done" });
+    const cold = new Store(selection);
+    expect(cold.reconcileAbandonedBrowserChecks(TURN_INTERRUPTED_NOTE)).toBe(1);
+    expect((cold as unknown as { threads: Map<string, unknown> }).threads.size).toBe(0);
+    expect(mdb.pendingBrowserCheckRows()).toEqual([]);
+    expect(cold.messagesFor(bot.threadId).find(m => m.id === note.id)?.tool?.name).toBe(browserUnavailableActivityName(BROWSER_CHECK_FAILED_REASON));
+  });
+
+  it("fills the pending-note table in the background, once, and boot recovery without it scans no history", () => {
+    const store = new Store(selection);
+    const bot = store.createBot({}, { seedMessages: false });
+    store.appendMessage(bot.threadId, { role: "user", kind: "text", text: "go" });
+    store.appendMessage(bot.threadId, { role: "bot", kind: "activity", tool: { name: browserUnavailableActivityName(BROWSER_CHECKING_REASON), ok: true } });
+    // an installation whose table was never filled (or whose fill did not finish)
+    database().exec("DELETE FROM browser_check_pending; DELETE FROM transcript_index_state WHERE name='browser_check'");
+    expect(mdb.pendingBrowserCheckRows()).toBeNull();
+    const cold = new Store(selection);
+    // not filled: recovery waits (no history scan, nothing settled) rather than falling back
+    expect(cold.reconcileAbandonedBrowserChecks(TURN_INTERRUPTED_NOTE)).toBe(0);
+    closeDatabase();
+    database();
+    // the open itself does not read the history for it: the background walker does, after the port is open
+    expect(mdb.pendingBrowserCheckRows()).toBeNull();
+    finishBackgroundUpgradeWorkNow();
+    expect(mdb.pendingBrowserCheckRows()).toHaveLength(1);
+    expect(existsSync(join(DATA_DIR, "memory-upgrade-status.json"))).toBe(false);
+    expect(new Store(selection).reconcileAbandonedBrowserChecks(TURN_INTERRUPTED_NOTE)).toBe(1);
   });
 });

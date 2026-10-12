@@ -1,3 +1,8 @@
+import { sqlRowRestoreHeld } from "./restore-fence.ts";
+import { createGuardedCompletion } from "./guarded-completion.ts";
+import { scopedTx, txScopeBegin, txScopeEnd } from "./tx-scope.ts";
+import { isDatabaseBusy } from "./database.ts";
+import { initializeProjectCardDelivery } from "./project-card-delivery-schema.ts";
 import type { authorizeWork } from "./execution-audience.ts";
 // Copyright 2026 Ferrox Labs
 // SPDX-License-Identifier: AGPL-3.0-or-later
@@ -69,6 +74,9 @@ interface CardExecutorDeps {
   wake?(): void;
   hooks: CompletionHooks;
   changed(groupId: string): void;
+  /** Delivers a finished run's result to the project room from durable data alone (after a restart there is no closure).
+   * Must be idempotent: the room messages carry stable ids. `payload` is what `finish` stored with the owed delivery. */
+  redeliver?(request: RoomRequest, payload: string | null): void;
 }
 
 /** Owns admission until a terminal event, including after Stop or reassign.
@@ -80,7 +88,45 @@ export function createProjectCardExecutor(deps: CardExecutorDeps) {
   const cancellationHolds = new Map<string, number>();
   const retryCounts = new Map<string, number>();
   const retries = new Map<string, { count: number; at: number }>();
-  let pumping = false, stopped = false;
+  let pumping = false, stopped = false, sweptOwed = false;
+  /** Deliveries in flight; a delivery owed to a request is only ever worked on by one retry chain. */
+  const delivering = new Set<string>();
+  let owedTable: DatabaseSync | undefined;
+  const owedReady = (db: DatabaseSync) => { if (owedTable !== db) { initializeProjectCardDelivery(db); owedTable = db; } };
+  const owedRow = (db: DatabaseSync, id: string) => db.prepare("SELECT payload FROM project_card_delivery_owed WHERE request_id=?").get(id) as { payload: string | null } | undefined;
+  /** Runs the owed delivery of one request until it has gone through. The row is removed only after the delivery returned,
+   * so a lock, a crash or a restart repeats it (idempotent) and nothing ends the retries while it is owed. */
+  function deliverOwed(id: string, deliver: () => void, releaseClaim: () => void) {
+    // one chain per request owns the delivery AND the claim: a concurrent call is deduplicated and releases nothing
+    if (delivering.has(id)) return;
+    delivering.add(id);
+    createGuardedCompletion<true, true>({
+      write: () => true,
+      follow: () => { deliver(); const db = deps.db(); owedReady(db); db.prepare("DELETE FROM project_card_delivery_owed WHERE request_id=?").run(id); },
+      unsubscribe: () => {},
+      release: () => { delivering.delete(id); releaseClaim(); },
+      isBusy: isDatabaseBusy, onError: () => console.warn("Project card result delivery failed; it stays owed and is retried at the next start", id),
+    }).attempt();
+  }
+  /** Boot sweep: every delivery still owed from an earlier run is made now (and again after a lock). */
+  function sweepOwedDeliveries() {
+    if (!deps.redeliver) return;
+    const db = deps.db(); owedReady(db);
+    const rows = db.prepare("SELECT request_id AS id, payload FROM project_card_delivery_owed").all() as Array<{ id: string; payload: string | null }>;
+    for (const row of rows) {
+      // a finished card's result a restore holds waits for the owner's Resume (restore-fence.ts): the row stays,
+      // nothing is delivered or deleted
+      if (sqlRowRestoreHeld(db, "card_delivery", row.id)) continue;
+      const request = roomRequest(db, row.id);
+      if (!request || !isTerminalRoomRequestState(request.state)) { db.prepare("DELETE FROM project_card_delivery_owed WHERE request_id=?").run(row.id); continue; }
+      // a request a restore expired is not delivered after it
+      if (sqlRowRestoreHeld(db, "room_request", row.id)) continue;
+      deliverOwed(row.id, () => {
+        if (deps.hooks.cardGenerationCurrent && !deps.hooks.cardGenerationCurrent(deps.db(), request)) return;
+        deps.redeliver!(request, row.payload);
+      }, () => {});
+    }
+  }
   let timer: ReturnType<typeof setTimeout> | undefined;
   let timerAt = Infinity;
   const wake = () => { if (!stopped) (deps.wake ?? pump)(); };
@@ -115,7 +161,7 @@ export function createProjectCardExecutor(deps: CardExecutorDeps) {
     deps.changed(request.groupId);
     return true;
   }
-  function finish(id: string, outcome: { ok: boolean; stopped?: boolean; resultMessageId?: string; note?: string; deliver?: () => void }) {
+  function finish(id: string, outcome: { ok: boolean; stopped?: boolean; resultMessageId?: string; note?: string; deliver?: () => void; owedPayload?: string }) {
     // Shutdown closes engines after stop(). Leave durable runs for boot's
     // unknown/restart decision, even if disposal emits a terminal callback.
     if (stopped) { live.get(id)?.release(); live.delete(id); return; }
@@ -124,7 +170,9 @@ export function createProjectCardExecutor(deps: CardExecutorDeps) {
     if (stopping.has(id) || outcome.stopped) outcome = { ...outcome, stopped: true, ok: false, note: stopping.get(id) ?? (outcome.stopped ? outcome.note : undefined) ?? STOPPED_BY_YOU };
     retries.delete(id); retryCounts.delete(id); stopping.delete(id); cancellationHolds.delete(id);
     let deliver = false;
-    let result: ReturnType<typeof finishRequestTurn>;
+    let result!: ReturnType<typeof finishRequestTurn>;
+    owedReady(db);
+    scopedTx(() => {
     db.exec("SAVEPOINT card_terminal");
     try {
       // A review run that ends with no verdict is no longer taken as
@@ -141,17 +189,25 @@ export function createProjectCardExecutor(deps: CardExecutorDeps) {
       }
       deliver = !isTerminalRoomRequestState(request.state) && isTerminalRoomRequestState(result.request.state)
         && (!deps.hooks.cardGenerationCurrent || deps.hooks.cardGenerationCurrent(db, request));
+      // The delivery is owed from the moment the run is terminal: recorded in the same savepoint, so the two commit together.
+      // A run that was terminal already (an earlier delivery never finished) keeps the row it has.
+      if (deliver) db.prepare("INSERT OR IGNORE INTO project_card_delivery_owed(request_id,payload,created_at) VALUES(?,?,?)").run(id, outcome.owedPayload ?? null, deps.now());
+      else if (owedRow(db, id) && !sqlRowRestoreHeld(db, "card_delivery", id)) deliver = true;
       deps.changed(request.groupId);
       db.exec("RELEASE card_terminal");
     } catch (error) {
       db.exec("ROLLBACK TO card_terminal; RELEASE card_terminal");
+      // The claim stays held: the request is still running (the rollback undid its terminal state) and the caller retries
+      // this finish, so admission is only released by a finish that committed (or by shutdown).
       throw error;
-    } finally { live.get(id)?.release(); live.delete(id); }
-    if (deliver) {
-      try { outcome.deliver?.(); }
-      catch { console.warn("Project card result delivery failed", id); }
     }
-    if (deps.wake) wake();
+    });
+    // The result's delivery goes through the guarded retry until it has gone through: a locked database retries it on a timer
+    // with no limit, the admission claim is released only afterwards, and the row recording it stays until then.
+    const releaseClaim = () => { live.get(id)?.release(); live.delete(id); wake(); };
+    const latest = owedRow(db, id);
+    const run = deliver ? (outcome.deliver ?? (deps.redeliver && latest ? () => deps.redeliver!(roomRequest(deps.db(), id) ?? request, latest.payload) : undefined)) : undefined;
+    if (run) deliverOwed(id, run, releaseClaim); else releaseClaim();
     return result;
   }
   /** A deleted row has no terminal callback contract left to retain. */
@@ -166,6 +222,7 @@ export function createProjectCardExecutor(deps: CardExecutorDeps) {
     if (pumping || stopped || !deps.open()) return;
     pumping = true;
     try {
+      if (!sweptOwed) { sweptOwed = true; try { sweepOwedDeliveries(); } catch (error) { sweptOwed = !isDatabaseBusy(error); console.warn("Project card delivery sweep failed", error); } }
       if (timer) clearTimeout(timer); timer = undefined; timerAt = Infinity;
       for (const id of new Set([...live.keys(), ...retries.keys(), ...retryCounts.keys(), ...stopping.keys(), ...cancellationHolds.keys()])) {
         if (!roomRequest(deps.db(), id)) forgetRequest(id);
@@ -211,6 +268,7 @@ export function createProjectCardExecutor(deps: CardExecutorDeps) {
           if (request.refusal !== decision.reason && decision.reason !== "stagger") deps.changed(request.groupId);
           continue;
         }
+        txScopeBegin();
         try {
           db.exec("BEGIN IMMEDIATE");
           // PF deviation from SPEC-P 5.3: also recover owner-approved cards
@@ -228,8 +286,9 @@ export function createProjectCardExecutor(deps: CardExecutorDeps) {
           } else if (!markRequestDispatched(db, request.id, { now: deps.now(), targetThreadId: threadId })) throw new Error("Card request changed before dispatch");
           if (request.verb === "wake" && card.state === "waiting") applyCardRunResumed(db, { cardId: card.id, now: deps.now() });
           db.exec("COMMIT");
+          txScopeEnd(true);
         } catch (error) {
-          if (db.isTransaction) db.exec("ROLLBACK");
+          try { if (db.isTransaction) db.exec("ROLLBACK"); } finally { txScopeEnd(false); }
           decision.claim.release(); live.delete(request.id); retries.delete(request.id); retryCounts.delete(request.id);
           completeRequest(db, request.id, { state: "cancelled", now: deps.now(),
             outcomeNote: error instanceof Error ? error.message.slice(0, 200) : "Card dispatch was refused." }, deps.hooks);
@@ -301,8 +360,12 @@ export function createProjectCardExecutor(deps: CardExecutorDeps) {
   function stopRequested(id: string): boolean { return stopping.has(id); }
   /** Shutdown stopped the executor: finish only releases a claim. */
   function isStopped(): boolean { return stopped; }
-  return { pump, finish, retryStart, prepareBackoffCancellation, cancelBackoff, cancelBackoffs, requestStop, stopRequested, isStopped, stop };
+  return { pump, finish, sweepOwedDeliveries, retryStart, prepareBackoffCancellation, cancelBackoff, cancelBackoffs, requestStop, stopRequested, isStopped, stop };
 }
+
+/** How long a steer may wait for the engine to be ready (Claude holds a steer until its
+ * `init`, which a cold start can delay) before the line is queued for the next turn instead. */
+export const STEER_READY_WAIT_MS = 4000;
 
 /** The direct-send route rechecks ownership after this awaited engine call. */
 /** A driver's steer answer in the three-state contract (a boolean is the older shape). */
@@ -312,15 +375,44 @@ export function steerDelivery(answer: boolean | SteerDelivery): SteerDelivery {
 
 /** "uncertain": the engine may still take it, so the caller records it once and never queues a copy.
  * `beforeWrite` is the submission fence, run by the driver right before its write. */
-export async function steerBusyDesk(adapter: { capabilities: { queueing?: boolean }; steer?: (threadId: string, text: string, beforeWrite?: () => void, interjectionId?: string) => Promise<boolean | SteerDelivery> } | undefined, threadId: string, text: string, allowed: boolean, beforeWrite?: () => void, interjectionId?: string): Promise<"steer" | "queue" | "uncertain"> {
+export async function steerBusyDesk(adapter: { capabilities: { queueing?: boolean }; steer?: (threadId: string, text: string, beforeWrite?: () => void, interjectionId?: string) => Promise<boolean | SteerDelivery> } | undefined, threadId: string, text: string, allowed: boolean, beforeWrite?: () => void, interjectionId?: string, maxWaitMs: number = STEER_READY_WAIT_MS, onLate?: (delivery: SteerDelivery) => void): Promise<"steer" | "queue" | "uncertain"> {
   if (!allowed || !adapter || cardSteeringMode(adapter) !== "steer") return "queue";
   // steer() carries text only, so a picture folded into a live turn reaches
   // the engine as its `<attached-image path>` tag and nothing else (the bot
   // answers "only its file path"). A message with a picture waits in the
   // queue and runs as its own turn, where the image goes in as an image.
   if (splitTranscriptAttachments(text).images.length) return "queue";
-  const delivery = steerDelivery(await adapter.steer!(threadId, text, beforeWrite, interjectionId).catch(() => false as const));
-  return delivery === "delivered" ? "steer" : delivery === "uncertain" ? "uncertain" : "queue";
+  // The wait is bounded. Past it the line is queued (a visible chip, run next turn) and the
+  // submission fence is closed, so a driver that gets ready later writes nothing: the text
+  // can never run twice. Once the fence has passed the engine may already have the text, so
+  // the answer is "uncertain" (recorded once, never queued).
+  let phase = "waiting" as "waiting" | "fenced" | "expired";
+  const fence = () => {
+    if (phase === "expired") throw new Error("STEER_WAIT_ELAPSED");
+    beforeWrite?.();
+    phase = "fenced";
+  };
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const expired = new Promise<"expired">((resolve) => { timer = setTimeout(() => resolve("expired"), maxWaitMs); });
+  try {
+    const engineAnswer = adapter.steer!(threadId, text, fence, interjectionId).catch(() => false as const);
+    const answered = await Promise.race([engineAnswer, expired]);
+    if (answered === "expired") {
+      if ((phase as string) === "fenced") {
+        // The engine may still take it or refuse it. The caller answers "uncertain" now and
+        // keeps listening: a later proven refusal moves the send to the queue, a later
+        // acceptance confirms it. It is never left unconfirmed for good.
+        if (onLate) void engineAnswer.then((late) => { try { onLate(steerDelivery(late)); } catch { /* reconciliation never throws into the engine */ } });
+        return "uncertain";
+      }
+      phase = "expired";
+      return "queue";
+    }
+    const delivery = steerDelivery(answered);
+    return delivery === "delivered" ? "steer" : delivery === "uncertain" ? "uncertain" : "queue";
+  } finally {
+    if (timer) clearTimeout(timer);
+  }
 }
 
 export function projectRestartLine(cards: ReadonlyArray<{ name: string; number: number }>): string {

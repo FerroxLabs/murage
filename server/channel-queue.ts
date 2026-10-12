@@ -6,8 +6,13 @@
 // operation settles so the current responder cannot appear to answer words it
 // never saw.
 
-import { newId } from "./contracts.ts";
+import { sendFingerprint } from "./send-idempotency.ts";
+import { sendStore, type SendRow } from "./send-store.ts";
 import type { MessageOrigin } from "./store.ts";
+
+// The waiting sends are rows of owner_sends (server/send-store.ts), the same
+// SQLite file as the transcript: accepting one commits a row, so a send the
+// person was told about survives a restart. There is no memory-only queue.
 
 interface ChannelQueueItem {
   id: string;
@@ -20,17 +25,29 @@ interface ChannelQueueItem {
   responderBotId?: string;
 }
 
-interface ChannelQueueEntry {
-  groupId: string;
-  items: ChannelQueueItem[];
-}
-
-const queues = new Map<string, ChannelQueueEntry>(); // threadId -> waiting sends
+/** Told which thread's waiting list changed, so every client's chips follow. */
+export function setChannelQueueObserver(fn: ((threadId: string) => void) | null): void { sendStore.setObserver(fn); }
 
 export interface QueuedChannelMessage {
   id: string;
+  /** The row's state: "cancelled" means an earlier attempt of this send id was cancelled. */
+  status: string;
 }
 
+function itemOf(row: SendRow): ChannelQueueItem {
+  return {
+    id: row.queueId,
+    text: row.text,
+    replyToId: row.replyToId ?? undefined,
+    sendId: row.sendId ?? undefined,
+    mode: row.mode ?? "chat",
+    ...(row.origin ? { origin: row.origin as MessageOrigin } : {}),
+    ...(row.responderId ? { responderBotId: row.responderId } : {}),
+  };
+}
+
+/** Accept a send into the queue. Throws when the row cannot be written; the
+ * send must then be refused, never acknowledged. */
 export function queueChannelMessage(
   groupId: string,
   threadId: string,
@@ -41,22 +58,23 @@ export function queueChannelMessage(
     mode?: "chat" | "goal";
     origin?: MessageOrigin;
     responderBotId?: string;
+    /** The owner's validated Send again on a restore-held chip, with the restore generation the chip carried. */
+    resend?: boolean;
+    restoreGen?: string;
   } = {},
 ): QueuedChannelMessage {
-  const entry = queues.get(threadId) ?? { groupId, items: [] };
-  if (entry.groupId !== groupId) throw new Error("queued task belongs to another channel");
-  const item: ChannelQueueItem = {
-    id: newId(),
-    text,
-    replyToId: options.replyToId,
-    sendId: options.sendId,
+  const accepted = sendStore.accept({
+    kind: "group", ownerId: groupId, threadId, text, status: "queued",
+    ...(options.sendId ? { sendId: options.sendId } : {}),
+    fingerprint: sendFingerprint(text, options.replyToId, options.mode ?? "chat", options.responderBotId),
+    ...(options.replyToId ? { replyToId: options.replyToId } : {}),
     mode: options.mode ?? "chat",
     ...(options.origin ? { origin: options.origin } : {}),
-    ...(options.responderBotId ? { responderBotId: options.responderBotId } : {}),
-  };
-  entry.items.push(item);
-  queues.set(threadId, entry);
-  return { id: item.id };
+    ...(options.responderBotId ? { responderId: options.responderBotId } : {}),
+    ...(options.resend ? { resend: true, ...(options.restoreGen ? { restoreGen: options.restoreGen } : {}) } : {}),
+  });
+  if (accepted.kind === "conflict") throw new Error("sendId already belongs to another message");
+  return { id: accepted.row.queueId, status: accepted.row.status };
 }
 
 /** Find the stable receipt for an HTTP retry that is still waiting. */
@@ -65,54 +83,65 @@ export function queuedChannelMessage(
   threadId: string,
   sendId: string,
 ): ChannelQueueItem | null {
-  const entry = queues.get(threadId);
-  if (!entry || entry.groupId !== groupId) return null;
-  return entry.items.find((item) => item.sendId === sendId) ?? null;
+  const row = sendStore.bySendId(threadId, sendId);
+  if (!row || row.kind !== "group" || row.ownerId !== groupId || row.status !== "queued") return null;
+  return itemOf(row);
 }
 
 /** Whether a queued message is still waiting (not yet started or cancelled). */
 export function channelMessageQueued(groupId: string, queueId: string): boolean {
-  for (const entry of queues.values()) {
-    if (entry.groupId === groupId && entry.items.some((item) => item.id === queueId)) return true;
-  }
-  return false;
+  const row = sendStore.byQueueId(groupId, queueId);
+  return Boolean(row && row.kind === "group" && row.status === "queued");
 }
 
 /** Remove one queued message before it starts. */
 export function cancelChannelMessage(groupId: string, queueId: string): boolean {
-  for (const [threadId, entry] of queues) {
-    if (entry.groupId !== groupId) continue;
-    const items = entry.items.filter((item) => item.id !== queueId);
-    if (items.length === entry.items.length) continue;
-    if (items.length === 0) queues.delete(threadId);
-    else queues.set(threadId, { groupId, items });
-    return true;
-  }
-  return false;
+  const row = sendStore.byQueueId(groupId, queueId);
+  if (!row || row.kind !== "group") return false;
+  return sendStore.cancel(groupId, queueId) !== null;
 }
 
+/** What starting a queued room message came to: the transcript line it landed as, or a refusal. */
+export type ChannelRunOutcome = { messageId: string } | { refused: true };
+
 /**
- * Start at most one follow-up per idle channel. Starting it synchronously
- * marks the channel working again; its completion calls this drain for the
- * next item. Removing first makes repeated settle notifications harmless.
+ * Start at most one follow-up per idle channel. The dispatched marker is
+ * committed first, so repeated settle notifications are harmless and a crash
+ * after it never sends the message again.
+ *
+ * The row settles "started" only with the id of the transcript line it became.
+ * A message the room could not start (the responder left, the room is mid setup,
+ * the engine refused) is NOT settled as started: it becomes "refused", keeping
+ * its words, and the person sees it as a chip they can send again or dismiss.
  */
 export function drainChannelMessages(
   isWorking: (groupId: string) => boolean,
-  run: (input: ChannelQueueItem & { groupId: string; threadId: string }) => void,
+  run: (input: ChannelQueueItem & { groupId: string; threadId: string }) => ChannelRunOutcome,
 ): void {
-  for (const [threadId, entry] of queues) {
-    if (isWorking(entry.groupId)) continue;
-    const item = entry.items.shift();
-    if (!item) {
-      queues.delete(threadId);
-      continue;
-    }
-    if (entry.items.length === 0) queues.delete(threadId);
-    run({ ...item, groupId: entry.groupId, threadId });
+  for (const threadId of sendStore.queuedThreads("group")) {
+    const rows = sendStore.drainable(threadId, "group");
+    const row = rows[0];
+    if (!row) continue;
+    if (isWorking(row.ownerId)) continue;
+    try { sendStore.markDispatchedMany([row.seq]); } catch { continue; }
+    const item = itemOf(row);
+    let outcome: ChannelRunOutcome;
+    try { outcome = run({ ...item, groupId: row.ownerId, threadId }); } catch { outcome = { refused: true }; }
+    try {
+      if ("messageId" in outcome) sendStore.settle(row.seq, "started", outcome.messageId);
+      else sendStore.refuse(row.seq);
+    } catch { /* the row stays dispatched; the next start finds the line (or shows the message) */ }
   }
 }
 
 /** Test helper. */
 export function _queuedChannelCount(threadId: string): number {
-  return queues.get(threadId)?.items.length ?? 0;
+  return sendStore.queuedCount(threadId, "group");
 }
+
+/** The waiting sends of a thread as every client should show them. */
+export function pendingChannelItems(threadId: string): Array<{ queueId: string; sendId?: string; text: string }> {
+  return sendStore.queuedRows(threadId, "group").map((row) => ({ queueId: row.queueId, ...(row.sendId ? { sendId: row.sendId } : {}), text: row.text }));
+}
+
+export function channelQueueThreads(): string[] { return sendStore.queuedThreads("group"); }

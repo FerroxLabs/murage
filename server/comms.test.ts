@@ -15,7 +15,9 @@ import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, wr
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
+import { DatabaseSync } from "node:sqlite";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { queuedDelegationsByThread } from "./pending-delegations-schema.ts";
 
 
 import { mentionedBots, normalizeGroupDefaultResponder, roomResponders } from "./store.ts";
@@ -899,7 +901,7 @@ describe("comms e2e (fake ACP fleet)", () => {
                 text: bounded(message.text, 1500), tool: message.tool,
               })),
             })),
-            pending: readReceipt("delegations.json"), receipts: readReceipt("delegation-receipts.json"),
+            pending: "see the pending_delegations table of the fixture messages.db", receipts: readReceipt("delegation-receipts.json"),
             stderr: bounded(stderr.slice(-8000), 8000),
           }, null, 2), { mode: 0o600 });
         } catch { console.warn("Could not save bounded reload fixture diagnostics"); }
@@ -1205,7 +1207,7 @@ describe("comms e2e (fake ACP fleet)", () => {
           ? state.groups.find((g: any) => g.id === note.comm.groupId)
           : undefined;
         const terminal = channel?.messages.some(
-          (m: any) => m.kind === "activity" && m.tool?.ok === false && /did not finish: .+/.test(m.tool?.name ?? ""),
+          (m: any) => m.kind === "activity" && m.tool?.ok === false && /(?:did not finish|failed): .+/.test(m.tool?.name ?? ""),
         );
         if (terminal) break;
         if (Date.now() > deadline) {
@@ -1264,7 +1266,16 @@ describe("comms e2e (fake ACP fleet)", () => {
         const terminal = channel?.messages.some(
           (m: any) => m.kind === "activity" && m.tool?.ok === false && m.tool?.name?.includes("could not start"),
         );
-        if (sourceChip && terminal) break;
+        if (sourceChip && terminal) {
+          // r7 F3: the delegating bot reads this conversation, so the chip says the kind of failure and never the engine's own words
+          expect(sourceChip.tool.name).toMatch(/could not start: (?:the provider is limiting requests right now|it is not signed in to its provider|its provider took too long to answer|its provider had an error|it did not say why)$/);
+          // r7 R7-04: the full explanation stays where the owner reads it, in the helper's own conversation
+          const helperBot = state.bots.find((b: any) => b.id === helper.id);
+          const explained = helperBot.messages.find((m: any) => m.kind === "activity" && m.tool?.ok === false && /^error: /.test(m.tool?.name ?? "") && (m.tool?.errorDetails ?? "").length > 0);
+          expect(explained, JSON.stringify(helperBot.messages.slice(-4))).toBeDefined();
+          expect(explained.tool.name).not.toBe(sourceChip.tool.name);
+          break;
+        }
         if (Date.now() > deadline) {
           throw new Error(
             `could-not-start not mirrored. sourceChip=${JSON.stringify(sourceChip)}\n` +
@@ -1576,7 +1587,13 @@ describe("comms e2e (fake ACP fleet)", () => {
           try { return JSON.parse(readFileSync(join(home, ".murage", name), "utf8")); }
           catch { return null; }
         };
-        const pending = readFixtureJson("delegations.json");
+        const readFixtureQueue = (): any => {
+          let db: DatabaseSync | undefined;
+          try { db = new DatabaseSync(join(home, ".murage", "messages.db"), { readOnly: true }); return queuedDelegationsByThread(db); }
+          catch { return null; }
+          finally { try { db?.close(); } catch { /* the diagnostics are best effort */ } }
+        };
+        const pending = readFixtureQueue();
         const receipts = readFixtureJson("delegation-receipts.json");
         const pendingItems = pending && typeof pending === "object"
           ? Object.entries(pending).flatMap(([sourceThreadId, items]) => Array.isArray(items)

@@ -5,13 +5,22 @@ import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { DATA_DIR } from "./config.ts";
 import { closeDatabase, database } from "./database.ts";
 import { Store } from "./store.ts";
+import { checkHeldRelease, fenceRestoredSql, releaseHeldItem, releaseRestoreHold, sqlRowRestoreHeld } from "./restore-fence.ts";
 import { ARTIFACT_PREVIEW_MAX_BYTES, ARTIFACT_TEXT_EXTENSIONS, describeArtifact, listArtifacts, previewArtifact, registerArtifact, type ArtifactScope } from "./artifacts.ts";
 import { ensureTaskWorkspace } from "./workspace.ts";
 import {
   completeImageOutput, createOutputPublisher, managedImageOutputPath, outputReceiptsForRun, publishAssistantImage, resumePendingAssistantImages, retainImageOutput,
 } from "./output-publication.ts";
 
-const faults = vi.hoisted(() => ({ saveImage: 0 }));
+const faults = vi.hoisted(() => ({ saveImage: 0, register: 0 }));
+// Files quota fault: the next N saves to Files (registerArtifact) are refused with the quota status.
+vi.mock("./artifacts.ts", async importOriginal => {
+  const actual = await importOriginal<typeof import("./artifacts.ts")>();
+  return { ...actual, registerArtifact: (...args: Parameters<typeof actual.registerArtifact>) => {
+    if (faults.register > 0) { faults.register--; throw Object.assign(new Error("Files quota reached"), { status: 507 }); }
+    return actual.registerArtifact(...args);
+  } };
+});
 vi.mock("./attachments.ts", async importOriginal => {
   const actual = await importOriginal<typeof import("./attachments.ts")>();
   return { ...actual, saveImage: (...args: Parameters<typeof actual.saveImage>) => {
@@ -24,7 +33,7 @@ const png = Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR
 const sha = (value: Buffer | string) => createHash("sha256").update(value).digest("hex");
 const storage = () => join(DATA_DIR, "artifact-files");
 
-beforeEach(() => { faults.saveImage = 0; closeDatabase(); rmSync(DATA_DIR, { recursive: true, force: true }); mkdirSync(DATA_DIR, { recursive: true }); });
+beforeEach(() => { faults.saveImage = 0; faults.register = 0; closeDatabase(); rmSync(DATA_DIR, { recursive: true, force: true }); mkdirSync(DATA_DIR, { recursive: true }); });
 afterEach(() => closeDatabase());
 
 function fixture() {
@@ -348,4 +357,149 @@ it("refuses to complete a retained image into a conversation the producing bot d
   expect(() => completeImageOutput(deps, receipt.id, { transcriptText: "Image created.", artifactName: "Generated image" })).toThrow("no longer available");
   expect(f.store.messagesFor(other.threadId).some(message => message.attachments?.length)).toBe(false);
   expect(outputReceiptsForRun(db, "image-operation", f.bot.id, other.threadId, "operation")).toEqual([expect.objectContaining({ stage: "retained" })]);
+});
+
+// Restore fence: a retained image or an unannounced shell output that was pending at backup time does not finish at boot.
+it("a fenced pending assistant image is not published by the startup resume; only the owner's explicit release carrying the current restore generation finishes it", () => {
+  const f = fixture(), db = database(), deps = { db, dataDir: DATA_DIR, store: f.store };
+  faults.saveImage = 1;
+  expect(() => publishAssistantImage(deps, { botId: f.bot.id, threadId: f.bot.threadId, runId: "turn-held", bytes: png, mime: "image/png" })).toThrow("kept locally");
+  const [receipt] = outputReceiptsForRun(db, "assistant-image", f.bot.id, f.bot.threadId, "turn-held");
+  fenceRestoredSql(db, "gen-1");
+  expect(sqlRowRestoreHeld(db, "output_receipt", receipt!.id)).toBe(true);
+  // every startup publisher
+  expect(resumePendingAssistantImages(deps)).toBe(0);
+  f.publisher.resumePending();
+  expect(f.store.messagesFor(f.bot.threadId).some(message => message.attachments?.length)).toBe(false);
+  expect(outputReceiptsForRun(db, "assistant-image", f.bot.id, f.bot.threadId, "turn-held")[0]).toMatchObject({ stage: "failed" });
+  // kept, not dropped: an unrelated message in the conversation releases nothing
+  f.dispatch(false);
+  expect(sqlRowRestoreHeld(db, "output_receipt", receipt!.id)).toBe(true);
+  f.publisher.resumePending();
+  expect(f.store.messagesFor(f.bot.threadId).some(message => message.attachments?.length)).toBe(false);
+  // a release without the generation, or with an older one, changes nothing
+  expect(releaseHeldItem(db, "output_receipt", receipt!.id, undefined, "gen-1")).toEqual({ ok: false, reason: "stale_generation" });
+  expect(releaseHeldItem(db, "output_receipt", receipt!.id, "gen-0", "gen-1")).toEqual({ ok: false, reason: "stale_generation" });
+  expect(sqlRowRestoreHeld(db, "output_receipt", receipt!.id)).toBe(true);
+  // the explicit, output-specific release for the current generation lets it finish
+  expect(releaseHeldItem(db, "output_receipt", receipt!.id, "gen-1", "gen-1")).toEqual({ ok: true });
+  f.publisher.resumePending();
+  expect(outputReceiptsForRun(db, "assistant-image", f.bot.id, f.bot.threadId, "turn-held")[0]).toMatchObject({ stage: "registered" });
+  expect(f.store.messagesFor(f.bot.threadId).filter(message => message.attachments?.length)).toHaveLength(1);
+});
+
+it("a fenced registered shell output keeps its unannounced card until the owner releases it explicitly", async () => {
+  const f = fixture(); f.dispatch();
+  f.write("outputs/report.txt", "verified");
+  const append = vi.spyOn(f.store, "appendMessage").mockImplementationOnce(() => { throw new Error("transcript unavailable"); });
+  await f.complete(); append.mockRestore();
+  fenceRestoredSql(database(), "gen-1");
+  expect(recoverShell(f)).toEqual([]);
+  expect(f.receipts()[0]!.messageId).toBeUndefined();
+  f.dispatch(false); // an unrelated message announces nothing
+  expect(recoverShell(f)).toEqual([]);
+  expect(f.cards()).toHaveLength(0);
+  expect(f.receipts()[0]!.messageId).toBeUndefined();
+  expect(releaseHeldItem(database(), "output_receipt", f.receipts()[0]!.id, "gen-0", "gen-1")).toMatchObject({ ok: false });
+  expect(releaseHeldItem(database(), "output_receipt", f.receipts()[0]!.id, "gen-1", "gen-1")).toEqual({ ok: true });
+  f.publisher.resumePending();
+  expect(f.cards()).toHaveLength(1);
+  expect(f.receipts()[0]!.messageId).toBe(f.cards()[0]!.id);
+});
+
+it("50 earlier held images never starve a released one: the 51st is published by the recovery batch and by its own direct completion", () => {
+  const f = fixture(), db = database(), deps = { db, dataDir: DATA_DIR, store: f.store };
+  faults.saveImage = 51;
+  for (let i = 0; i < 51; i++) expect(() => publishAssistantImage(deps, { botId: f.bot.id, threadId: f.bot.threadId, runId: `turn-${i}`, bytes: png, mime: "image/png" })).toThrow("kept locally");
+  fenceRestoredSql(db, "gen-1");
+  const order = (db.prepare("SELECT id FROM output_publications WHERE producer='assistant-image' ORDER BY updated_at,id").all() as Array<{ id: string }>).map(row => row.id);
+  expect(order).toHaveLength(51);
+  const last = order[50]!, beforeLast = order[49]!;
+  expect(resumePendingAssistantImages(deps)).toBe(0);
+  expect(releaseHeldItem(db, "output_receipt", last, "gen-1", "gen-1")).toEqual({ ok: true });
+  expect(resumePendingAssistantImages(deps)).toBe(1);
+  expect(db.prepare("SELECT stage FROM output_publications WHERE id=?").get(last)).toEqual({ stage: "registered" });
+  // the direct path does not depend on any batch
+  f.publisher.completeReleased(beforeLast);
+  expect(db.prepare("SELECT stage FROM output_publications WHERE id=?").get(beforeLast)).toEqual({ stage: "registered" });
+  expect(sqlRowRestoreHeld(db, "output_receipt", beforeLast)).toBe(true); // completion alone does not drop the hold; the route does, after success
+});
+
+it("a retained shell output is published by the owner's Release, and stays held and listed until the publish succeeds", async () => {
+  const f = fixture(), db = database();
+  f.dispatch();
+  const report = f.write("outputs/report.txt", "kept for the owner");
+  await f.complete(false); // a failed turn keeps a verified receipt only
+  const [receipt] = f.receipts();
+  expect(receipt).toMatchObject({ stage: "retained" });
+  fenceRestoredSql(db, "gen-1");
+  expect(sqlRowRestoreHeld(db, "output_receipt", receipt!.id)).toBe(true);
+  f.publisher.resumePending();
+  expect(f.cards()).toHaveLength(0);
+  // the file is gone: the release cannot finish, so the hold (and the list entry) stays
+  const original = readFileSync(report);
+  rmSync(report);
+  expect(checkHeldRelease(db, "output_receipt", receipt!.id, "gen-1", "gen-1")).toEqual({ ok: true });
+  expect(() => f.publisher.completeReleased(receipt!.id)).toThrow();
+  expect(sqlRowRestoreHeld(db, "output_receipt", receipt!.id)).toBe(true);
+  expect(f.receipts()[0]).toMatchObject({ stage: "retained" });
+  expect(f.cards()).toHaveLength(0);
+  // retry with the file back: published, announced once, then the hold is dropped
+  writeFileSync(report, original);
+  f.publisher.completeReleased(receipt!.id);
+  expect(releaseRestoreHold(db, "output_receipt", receipt!.id)).toBe(true);
+  expect(f.receipts()[0]).toMatchObject({ stage: "registered" });
+  expect(f.receipts()[0]!.messageId).toBe(f.cards()[0]!.id);
+  expect(f.cards()).toHaveLength(1);
+  expect(listArtifacts(db, storage(), {}, f.access).total).toBe(1);
+  f.publisher.completeReleased(receipt!.id); // idempotent
+  expect(f.cards()).toHaveLength(1);
+});
+
+it("registered shell runs: 55 held runs ahead never starve a released run's card recovery", async () => {
+  const f = fixture(), db = database();
+  for (let i = 0; i < 55; i++) db.prepare("INSERT INTO output_publications(id,producer,bot_id,thread_id,run_id,path_token,sha256,mime,bytes,stage,artifact_id,created_at,updated_at) VALUES(?,'shell-output','b','t',?,?,?,'text/plain',1,'registered','art',?,?)")
+    .run(`held-${i}`, `run-${i}`, `outputs/${i}.txt`, "a".repeat(64), i + 1, i + 1);
+  f.dispatch(); f.write("outputs/real.txt", "verified");
+  const append = vi.spyOn(f.store, "appendMessage").mockImplementationOnce(() => { throw new Error("transcript unavailable"); });
+  await f.complete(); append.mockRestore();
+  db.prepare("UPDATE output_publications SET created_at=1000000 WHERE run_id=?").run(f.runId);
+  fenceRestoredSql(db, "gen-1");
+  for (const receipt of f.receipts()) releaseRestoreHold(db, "output_receipt", receipt.id);
+  f.publisher.resumePending();
+  expect(f.cards()).toHaveLength(1);
+});
+
+it("the Release route finishes the receipt first and drops the hold only afterwards", () => {
+  const source = readFileSync(new URL("./index.ts", import.meta.url), "utf8");
+  const route = source.slice(source.indexOf("restore-holds\\/(output_receipt|shared_result)"), source.indexOf("held-continuations"));
+  expect(route.indexOf("checkHeldRelease")).toBeGreaterThan(-1);
+  expect(route.indexOf("outputPublisher.completeReleased(rowId)")).toBeGreaterThan(route.indexOf("checkHeldRelease"));
+  expect(route.indexOf("releaseRestoreHold(db, kind, rowId)")).toBeGreaterThan(route.indexOf("outputPublisher.completeReleased(rowId)"));
+});
+
+// Astra r11 P2: a Release must never drop the hold before the output is truly published, Files copy included.
+it("a Release whose Files copy hits the quota throws, keeps the hold and the receipt, and the retry publishes", () => {
+  const f = fixture(), db = database(), deps = { db, dataDir: DATA_DIR, store: f.store };
+  faults.saveImage = 1;
+  expect(() => publishAssistantImage(deps, { botId: f.bot.id, threadId: f.bot.threadId, runId: "turn-quota", bytes: png, mime: "image/png" })).toThrow("kept locally");
+  fenceRestoredSql(db, "gen-1");
+  const [held] = outputReceiptsForRun(db, "assistant-image", f.bot.id, f.bot.threadId, "turn-quota");
+  expect(sqlRowRestoreHeld(db, "output_receipt", held!.id)).toBe(true);
+  faults.register = 1; // the attachment now succeeds, the Files copy does not
+  expect(() => f.publisher.completeReleased(held!.id)).toThrow();
+  expect(sqlRowRestoreHeld(db, "output_receipt", held!.id)).toBe(true); // still held and listed
+  expect(outputReceiptsForRun(db, "assistant-image", f.bot.id, f.bot.threadId, "turn-quota")[0]).toMatchObject({ stage: "failed", errorCategory: "quota" });
+  expect(listArtifacts(db, storage(), { kind: "image" }, f.access).total).toBe(0);
+  // the owner releases again: Files has room, the copy lands once and the receipt is registered
+  f.publisher.completeReleased(held!.id);
+  expect(outputReceiptsForRun(db, "assistant-image", f.bot.id, f.bot.threadId, "turn-quota")[0]).toMatchObject({ stage: "registered", artifactId: expect.any(String) });
+  expect(listArtifacts(db, storage(), { kind: "image" }, f.access).total).toBe(1);
+  expect(f.store.messagesFor(f.bot.threadId).filter(message => message.attachments?.length)).toHaveLength(1);
+});
+
+it("the Release route answers 409 and leaves the hold when completion throws", () => {
+  const source = readFileSync(new URL("./index.ts", import.meta.url), "utf8");
+  const route = source.slice(source.indexOf("restore-holds\\/(output_receipt|shared_result)"), source.indexOf("held-continuations"));
+  expect(route).toMatch(/catch \{ return json\(res, 409, \{ error: "This output is still kept and was not published yet\. Release it again to retry\." \}\); \}/);
 });

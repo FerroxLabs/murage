@@ -65,7 +65,7 @@ posixOnly("memory off: a paraphrase of a memory-derived reply follows its source
     expect(y.text).toContain("PARAPHRASE-Y");
     expect(JSON.stringify(dump().prompt)).toContain("X-PRIME");
     // Y rests on X' (its root), recorded with memory off
-    expect(query<{ root_message_id: string }>("SELECT m.root_message_id FROM memory_output_roots o JOIN memory_root_set_members m ON m.set_id=o.set_id WHERE o.thread_id=? AND o.message_id=?", bot.threadId, y.id).map(row => row.root_message_id)).toContain(xPrime.id);
+    expect(query<{ root_message_id: string }>("WITH RECURSIVE chain(id) AS (SELECT set_id FROM memory_output_roots WHERE thread_id=? AND message_id=? UNION SELECT p.parent_id FROM memory_root_set_parents p JOIN chain c ON p.set_id=c.id) SELECT m.root_message_id FROM chain c JOIN memory_root_set_members m ON m.set_id=c.id", bot.threadId, y.id).map(row => row.root_message_id)).toContain(xPrime.id);
     const ySession = dump().argv[dump().argv.indexOf("--session-id") + 1] ?? dump().argv[dump().argv.indexOf("--resume") + 1];
     expect(ySession).toBeTruthy();
     // X is revoked with memory still off

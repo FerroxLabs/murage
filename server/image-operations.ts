@@ -5,6 +5,7 @@ import type { Message, Store } from "./store.ts";
 import type { RoutineCardHooks } from "./peer-approval.ts";
 import { database } from "./database.ts";
 import { initializeImageOperations } from "./image-operations-schema.ts";
+import { notRestoreHeldSql, releaseHeldImageOperation, sqlRowRestoreHeld } from "./restore-fence.ts";
 import { ATTACHMENTS_DIR, GENERATED_IMAGE_MAX_BYTES } from "./attachments.ts";
 import { IMAGE_GENERATION_REFERENCE_MAX, IMAGE_GENERATION_REFERENCE_MAX_TOTAL_BYTES } from "../shared/media-assets.ts";
 import { DATA_DIR } from "./config.ts";
@@ -217,12 +218,20 @@ export class ImageOperations {
     // gives; from a later turn it is a new render, as execute() starts.
     const same = (row: Row) => row.request_hash === hash(JSON.stringify(request));
     if (own && !same(own)) throw error(409, "This image request ID was already used for a different request.");
-    const carried = own ? undefined : this.db().prepare("SELECT id,request_hash,state,result FROM image_operations WHERE state IN ('running','uncertain') AND json_valid(result) AND json_extract(result,'$.resumeKey')=? ORDER BY updated_at DESC LIMIT 1")
-      .get(hash(`${actor.botId}:${actor.threadId}:${requestId}`)) as Row | undefined;
+    const carried = own ? undefined : this.db().prepare("SELECT id,request_hash,state,result FROM image_operations WHERE state IN ('running','uncertain') AND json_valid(result) AND json_extract(result,'$.resumeKey')=? AND request_hash=? ORDER BY updated_at DESC LIMIT 1")
+      .get(hash(`${actor.botId}:${actor.threadId}:${requestId}`), hash(JSON.stringify(request))) as Row | undefined;
     const row = own ?? (carried && same(carried) ? carried : undefined);
     if (!row) return undefined;
     if (row.state === "published" || row.state === "publish-pending") return { kind: "settled", operationId: row.id };
     return ["running", "uncertain"].includes(row.state) && parseJob(row.result) && !parsePending(row.result) ? { kind: "job", operationId: row.id } : undefined;
+  }
+  /** Restore-held operations that could be a re-ask of this request: those naming its resumeKey, and held rows that predate it. Narrowed by the request hash in SQL and never limited: the identity match
+   * happens over every candidate, so newer unrelated holds cannot hide the one being asked for again. */
+  private heldCandidates(resumeKey: string, requestHash: string) {
+    type Held = { id: string; generation: string; request_hash: string; state: string; result: string | null };
+    try {
+      return this.db().prepare("SELECT o.id,o.generation,o.request_hash,o.state,o.result FROM image_operations o JOIN restore_holds h ON h.kind='image_operation' AND h.row_id=o.id WHERE o.state IN ('publish-pending','running','uncertain') AND json_valid(o.result) AND (json_extract(o.result,'$.resumeKey')=? OR json_extract(o.result,'$.resumeKey') IS NULL) AND o.request_hash=? ORDER BY o.updated_at DESC").all(resumeKey, requestHash) as unknown as Held[];
+    } catch { return []; }
   }
   execute<T>(actor: ImageActor, requestId: string, request: unknown, work: (reserve: ImageReserve, publish: PublishOperationImage, context: ImageWorkContext) => Promise<T>): Promise<T> {
     actor.assertActive();
@@ -235,8 +244,17 @@ export class ImageOperations {
       // A provider job started in an earlier turn (or before a restart) is
       // found again by bot, thread and request_id: the same request polls
       // the same job under its first operation id, never a second render.
-      const carried = this.db().prepare("SELECT id,request_hash,state,result FROM image_operations WHERE state IN ('running','uncertain') AND json_valid(result) AND json_extract(result,'$.resumeKey')=? ORDER BY updated_at DESC LIMIT 1").get(resumeKey) as Prior | undefined;
+      const carried = this.db().prepare("SELECT id,request_hash,state,result FROM image_operations WHERE state IN ('running','uncertain') AND json_valid(result) AND json_extract(result,'$.resumeKey')=? AND request_hash=? ORDER BY updated_at DESC LIMIT 1").get(resumeKey, requestHash) as Prior | undefined;
       if (carried && carried.request_hash === requestHash && parseJob(carried.result) && !parsePending(carried.result)) { id = carried.id; prior = carried; }
+    }
+    if (!prior) {
+      // A restore held a received image of this same request (bot, thread, request_id, request hash) in an earlier turn:
+      // the owner asking again is the release. It is finished from the retained bytes, never rendered a second time.
+      // A row held before resumeKey existed carries none: its identity is re-derived from the generation it was started under
+      // (the id is a hash of bot, thread, that generation and the request id), so it matches the same way.
+      const held = this.heldCandidates(resumeKey, requestHash).find(row => row.request_hash === requestHash && parsePending(row.result)
+        && (progressOf(row.result).resumeKey === resumeKey || row.id === hash(`${actor.botId}:${actor.threadId}:${row.generation.split("#")[0]}:${requestId}`)));
+      if (held) { id = held.id; prior = held; }
     }
     if (prior?.request_hash !== undefined && prior.request_hash !== requestHash) throw error(409, "This image request ID was already used for a different request.");
     if (this.jobs.has(id)) {
@@ -248,8 +266,19 @@ export class ImageOperations {
       void joined.then(settle, settle);
       return joined;
     }
-    if (prior?.state === "published" && prior.result) return Promise.resolve(this.refreshPublished(actor, id, JSON.parse(prior.result) as T));
-    if (prior?.state === "publish-pending") return this.resume<T>(actor, id, prior.result);
+    if (prior?.state === "published" && prior.result) { const value = this.refreshPublished(actor, id, JSON.parse(prior.result) as T); this.releaseHoldWhenPublished(id, value); return Promise.resolve(value); }
+    // The owner asking for an operation a restore held is the explicit action that releases it: it is finished from the
+    // retained bytes (no provider call), also when the restore caught it before it was marked publish-pending.
+    const heldByRestore = prior !== undefined && sqlRowRestoreHeld(this.db(), "image_operation", prior.id);
+    // The hold is dropped only after the images are truly published (receipt, transcript AND Files copy): a Files failure keeps it.
+    const releaseAfter = Boolean(prior && heldByRestore && parsePending(prior.result));
+    // A held provider job without retained bytes is polled again: its hold stays through the polling and the Files copy
+    // and is dropped only once every image is published (a failure anywhere keeps it held).
+    const heldJob = Boolean(prior && heldByRestore && !parsePending(prior.result) && ["running", "uncertain"].includes(prior.state) && parseJob(prior.result));
+    if (prior && heldByRestore && parsePending(prior.result)) {
+      if (prior.state !== "publish-pending") { this.db().prepare("UPDATE image_operations SET state='publish-pending',updated_at=? WHERE id=?").run(Date.now(), prior.id); prior = { ...prior, state: "publish-pending" }; }
+    } else if (prior && heldByRestore && !heldJob) releaseHeldImageOperation(this.db(), prior.id);
+    if (prior?.state === "publish-pending") return this.resume<T>(actor, id, prior.result, releaseAfter);
     // A provider job this request already started (contract section 4): the
     // same request_id polls it again. It never submits a second render.
     const priorJob = prior && ["running", "uncertain"].includes(prior.state) && !parsePending(prior.result) ? parseJob(prior.result) : undefined;
@@ -282,7 +311,7 @@ export class ImageOperations {
     // Progress (retained receipts, the job id) is merged, never dropped.
     const record = (state: string, patch?: OperationProgress) => {
       const current = patch ? progressOf((this.db().prepare("SELECT result FROM image_operations WHERE id=?").get(id) as { result: string | null } | undefined)?.result ?? null) : undefined;
-      this.db().prepare("UPDATE image_operations SET state=?,result=COALESCE(?,result),updated_at=? WHERE id=?").run(state, patch ? JSON.stringify({ ...current, ...patch }) : null, Date.now(), id);
+      this.db().prepare("UPDATE image_operations SET state=?,result=COALESCE(?,result),updated_at=? WHERE id=?").run(state, patch ? JSON.stringify({ ...current, ...patch, resumeKey }) : null, Date.now(), id);
     };
     const retained: string[] = [], items: GeneratedImageMetadata[] = [];
     const publish: PublishOperationImage = async (image, metadata) => publishImage(this.store, actor, image, metadata, { operationId: id,
@@ -308,6 +337,7 @@ export class ImageOperations {
     const context: ImageWorkContext = { operationId: id, ...(priorJob ? { resumeJob: priorJob } : {}), jobStarted: job => record("running", { job, resumeKey }) };
     const job = Promise.resolve().then(() => work(reserve, publish, context)).then(result => {
       this.db().prepare("UPDATE image_operations SET state='published',result=?,updated_at=? WHERE id=?").run(JSON.stringify(result), Date.now(), id);
+      if (heldJob) this.releaseHoldWhenPublished(id, result);
       return result;
     }).catch(e => {
       if (!approvalStarted && !priorJob && e instanceof ImageGenerationError && e.correctablePreflight && !actor.signal.aborted) {
@@ -332,16 +362,18 @@ export class ImageOperations {
     this.jobs.set(id, job); return job;
   }
   /** Completes every retained image of one operation from its receipts. */
-  private completeAll(receipts: Array<{ id: string }>, metadata: GeneratedImageMetadata, items?: GeneratedImageMetadata[]): ImageOperationResult {
+  private completeAll(receipts: Array<{ id: string }>, metadata: GeneratedImageMetadata, items?: GeneratedImageMetadata[], strict = false): ImageOperationResult {
     const artifacts = receipts.map((receipt, index) => {
       const each: GeneratedImageMetadata = items?.[index] ?? (receipts.length > 1 ? { ...metadata, imageIndex: index, delivered: metadata.delivered?.[index] ? [metadata.delivered[index]!] : metadata.delivered } : metadata);
       return imageArtifact(completeImageOutput(outputDeps(this.store), receipt.id, { transcriptText: imageTranscriptText(each), artifactName: artifactName(each) }));
     });
+    // A held release needs the Files copy too; anything less throws so the caller keeps the hold.
+    if (strict && artifacts.some(item => item.filesError || !item.artifactId)) throw error(409, imagePublishRecoveryMessage(artifacts.find(item => item.filesError)?.filesError));
     return { artifact: artifacts[0]!, artifacts, metadata };
   }
   /** Same request_id after a local publication failure: finish from the
    * retained receipts with zero provider calls and no new approval. */
-  private resume<T>(actor: ImageActor, id: string, result: string | null): Promise<T> {
+  private resume<T>(actor: ImageActor, id: string, result: string | null, releaseHold = false): Promise<T> {
     const pending = parsePending(result), receipts = pending ? this.pendingReceipts(actor, id, pending) : null;
     if (!pending || !receipts || receipts[0]!.id !== pending.receiptId) throw error(409, "This image request already finished or was interrupted. Check its earlier result and provider billing; it will not be retried automatically.");
     if (this.workspaces.has(actor.botId)) throw error(409, "An image request is already active in this bot's workspace.");
@@ -349,14 +381,23 @@ export class ImageOperations {
     const job = Promise.resolve().then(() => {
       actor.assertActive();
       if (actor.signal.aborted) throw error(409, "Image operation was cancelled.");
-      const value = this.completeAll(receipts, pending.metadata, pending.items);
+      const value = this.completeAll(receipts, pending.metadata, pending.items, releaseHold);
       this.db().prepare("UPDATE image_operations SET state='published',result=?,updated_at=? WHERE id=? AND state='publish-pending'").run(JSON.stringify(value), Date.now(), id);
+      if (releaseHold) releaseHeldImageOperation(this.db(), id);
       return value as T;
     }).catch(e => {
       const category = outputReceipt(database(), receipts[0]!.id)?.errorCategory;
       throw (e as { status?: number }).status === 409 && /revoked|cancel/i.test(String((e as Error).message)) ? e : error(409, imagePublishRecoveryMessage(category));
     }).finally(() => { this.jobs.delete(id); this.workspaces.delete(actor.botId); });
     this.jobs.set(id, job); return job;
+  }
+  /** Drops an operation's restore hold once every image of its result is published (receipt, transcript and Files copy). */
+  private releaseHoldWhenPublished(id: string, value: unknown): void {
+    try {
+      if (!sqlRowRestoreHeld(this.db(), "image_operation", id) || !isOperationResult(value)) return;
+      const artifacts = value.artifacts?.length ? value.artifacts : [value.artifact];
+      if (artifacts.every(artifact => artifact.artifactId && !artifact.filesError)) releaseHeldImageOperation(this.db(), id);
+    } catch { /* the hold stays; the next request for it tries again */ }
   }
   /** A published image whose Files copy did not finish is retried from its
    * retained bytes when the same request is repeated; no provider work. */
@@ -379,10 +420,13 @@ export class ImageOperations {
   /** Startup reconciliation: only operations that recorded a retained image
    * receipt are completed, into their exact recorded conversation. */
   resumePendingPublications(limit = 50): number {
-    this.releaseUndispatchedOperations(limit);
-    const rows = this.db().prepare("SELECT id,state,result FROM image_operations WHERE state IN ('publish-pending','running','uncertain') AND result IS NOT NULL ORDER BY updated_at LIMIT ?").all(limit) as Array<{ id: string; state: string; result: string | null }>;
+    this.releaseUndispatchedOperations();
+    const rows = this.db().prepare(`SELECT id,state,result FROM image_operations WHERE state IN ('publish-pending','running','uncertain') AND result IS NOT NULL${notRestoreHeldSql(this.db(), "image_operation", "image_operations.id")} ORDER BY updated_at LIMIT ?`).all(limit) as Array<{ id: string; state: string; result: string | null }>;
     let completed = 0;
     for (const row of rows) {
+      // a restore keeps this image: only the owner's own request for it finishes it (execute). Held rows are
+      // excluded in the query above, before the LIMIT, so they never fill the batch; this is the belt.
+      if (sqlRowRestoreHeld(this.db(), "image_operation", row.id)) continue;
       const pending = parsePending(row.result);
       const receipts = pending ? pending.receiptIds!.map(receiptId => outputReceipt(database(), receiptId)) : [];
       if (!pending || !receipts.length || receipts.some(receipt => !receipt || receipt.producer !== "image-operation" || receipt.runId !== row.id)) continue;
@@ -402,11 +446,13 @@ export class ImageOperations {
    * answers the same request with "already finished" and the same turn with
    * "one image attempt", forever. Clearing it is what the live path already
    * does for a request that never reached a provider. */
-  private releaseUndispatchedOperations(limit = 50): number {
-    const rows = this.db().prepare("SELECT id FROM image_operations WHERE state='awaiting' AND result IS NULL ORDER BY updated_at LIMIT ?").all(limit) as Array<{ id: string }>;
+  private releaseUndispatchedOperations(): number {
+    // Only rows seen at startup are candidates, so walk exactly those: a LIMIT over every awaiting row would let
+    // this process's own live requests fill the batch and hide the abandoned ones.
+    const rows = [...this.startupUndispatched].map(id => ({ id }));
     let released = 0;
     for (const row of rows) {
-      if (!this.startupUndispatched.has(row.id) || this.jobs.has(row.id)) continue;
+      if (this.jobs.has(row.id)) continue;
       // Belt and braces: bytes are only ever retained through a receipt, and
       // retaining one writes `running` and a result in the same statement, so
       // this cannot match. Refuse to clear a row that somehow has one anyway —
@@ -419,7 +465,7 @@ export class ImageOperations {
   }
   /** Every operation row this turn (generation) has, first attempt and later ones. */
   private turnOperations(actor: Pick<ImageActor, "generation">) {
-    return this.db().prepare("SELECT state,result FROM image_operations WHERE generation=? OR generation LIKE ?").all(actor.generation, `${actor.generation}#%`) as Array<{ state: string; result: string | null }>;
+    return this.db().prepare("SELECT state,result FROM image_operations WHERE generation=? OR (generation>=? AND generation<?)").all(actor.generation, `${actor.generation}#`, `${actor.generation}$`) as Array<{ state: string; result: string | null }>;
   }
   /** Images this turn already made or has under way: a finished render's own
    * image count, and the count a running one recorded when it was reserved. */

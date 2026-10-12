@@ -1,7 +1,7 @@
 import { partitionOfScopeKey, executionStore, homeThread } from "../execution-audience.ts";
 import { teamLabel } from "../team-identities.ts";
-import { learningReviewReason } from "./automatic-learning.ts";
-import { learningHistory,changeLearningEvent } from "./learning-history.ts";
+import { candidateReviewReason } from "./automatic-learning.ts";
+import { learningHistory,changeLearningEvent,undoOwnsItsTransactions } from "./learning-history.ts";
 import type { LearningConnection } from "./extractor-connections.ts";
 import { humanBindingStatus, linkHumanBinding, shareHumanScope } from "../human-principals.ts";
 import { continuityReadSchema, deleteBotIdentity, rejectGenericForgetOfPip, identityDeleteSchema, identityReadSchema, identityWriteSchema, readBotIdentity, readContinuity, writeBotIdentity } from "./identity.ts";
@@ -19,11 +19,13 @@ import { samePath } from "../../shared/path-identity.mjs";
 import { z } from "zod";
 import { DATA_DIR } from "../config.ts";
 import { SERVER_ROOT } from "../proxy-paths.ts";
-import { database, transaction } from "../database.ts";
+import { database, memoryHoldCode, transaction } from "../database.ts";
+import { holdMessage } from "./integrity-pass.ts";
 import { requireMemoryOwner, approveMemory, pinMemory, correctMemory, bindMemoryScope, readCorrectionTarget } from "./authority.ts";
 import { forgetMemory, memoryDeletionStatus } from "./forget.ts";
 import { backgroundMemoryScopes, ensureScope, type MemoryRoster } from "./policy.ts";
 import { memoryState } from "./repository.ts";
+import { memoryCaptures, memoryRecalls } from "./capture-gate.ts";
 import { previewMemoryImport, commitMemoryImport, availableMemoryNotebooks, memoryNotebookLinks, stopTrackingMemoryNotebook, migrateDetectedMemoryNotebooks } from "./import.ts";
 import { ownerMemoryList } from "./owner-list.ts";
 import type { MemoryRecord } from "../../shared/memory.ts";
@@ -34,6 +36,7 @@ import type { ProcedureEvaluatorBridge } from "./procedure-evaluator.ts";
 import { memoryHealth } from "./health.ts";
 import { forgetParkedThreads } from "./park.ts";
 import { revokeAllDisclosures } from "./revocation.ts";
+import { reviewBack, reviewEdit, reviewKeep, reviewKeepAll, reviewLater, reviewList, reviewSources, reviewSummary, reviewUndo } from "./review.ts";
 
 const SETTINGS="memory-owner-settings";
 type Configuration={excludedThreadIds:string[];extractorInstanceId:string|null};
@@ -50,11 +53,22 @@ export interface MemoryOwnerOptions {
   startSkillReview?:(input:{botId:string;record:{id:string;version:number};source:string;request:string})=>Promise<{botId:string;threadId:string;messageId:string}>;
 }
 const id=z.string().min(1).max(180),version=z.number().int().positive();
+/** A client-made action id: the key that makes a retried call return the first result. */
+const actionId=z.string().regex(/^[\w-]{8,80}$/);
 const subject={subjectType:z.enum(["bot","room"]),subjectId:id};
 const actions=z.discriminatedUnion("action",[
   z.object({action:z.literal("learning-history"),botId:id.optional(),cursor:id.optional(),limit:z.number().int().min(1).max(50).optional()}).strict(),
   z.object({action:z.literal("learning-undo"),eventId:id}).strict(),
   z.object({action:z.literal("learning-keep"),eventId:id}).strict(),
+  z.object({action:z.literal("waiting-summary")}).strict(),
+  z.object({action:z.literal("waiting-list"),subjectType:z.enum(["bot","room","other"]),subjectId:id,tab:z.enum(["waiting","later"]).optional(),cursor:z.string().max(16).optional()}).strict(),
+  z.object({action:z.literal("waiting-sources"),id,version}).strict(),
+  z.object({action:z.literal("review-keep"),actionId,id,version,correctionPin:z.enum(["transfer","unpin"]).optional()}).strict(),
+  z.object({action:z.literal("review-keep-all"),actionId,items:z.array(z.object({id,version}).strict()).min(1).max(500)}).strict(),
+  z.object({action:z.literal("review-later"),actionId,id,version}).strict(),
+  z.object({action:z.literal("review-back"),id}).strict(),
+  z.object({action:z.literal("review-edit"),actionId,id,version,text:z.string().min(1).max(4096),keep:z.boolean().optional(),correctionPin:z.enum(["transfer","unpin"]).optional()}).strict(),
+  z.object({action:z.literal("review-undo"),actionId,keepActionId:actionId,id,version}).strict(),
   z.object({action:z.literal("learning-bot"),botId:id,enabled:z.boolean(),learningRevision:z.number().int().nonnegative()}).strict(),
   z.object({action:z.literal("evolution-authorize")}).strict(),
   z.object({action:z.literal("evolution-authorize-classification")}).strict(),
@@ -107,8 +121,7 @@ function configuration():Configuration {
   return row?JSON.parse(String(row.intent)):{excludedThreadIds:[],extractorInstanceId:null};
 }
 function record(row:Record<string,unknown>):MemoryRecord {
-  const basis=row.state==="candidate"?database().prepare("SELECT confidence_basis FROM memory_record_details WHERE record_id=? AND record_version=?").get(String(row.id),Number(row.version))?.confidence_basis:null;
-  const reviewReason=typeof basis==="string"?(basis.includes(" ")?basis:learningReviewReason(basis)):undefined;
+  const reviewReason=row.state==="candidate"?candidateReviewReason(database(),String(row.id),Number(row.version)):undefined;
   return {...(reviewReason?{reviewReason}:{}),id:String(row.id),version:Number(row.version),scopeId:String(row.scope_id),kind:String(row.kind),text:String(row.text),assertion:row.assertion as MemoryRecord["assertion"],state:row.state as MemoryRecord["state"],ownerPinned:row.owner_pinned===1,validFrom:Number(row.valid_from),validTo:row.valid_to===null?null:Number(row.valid_to)};
 }
 function getRecord(id:string,version:number){
@@ -245,7 +258,9 @@ export function memoryOwnerStatus(ticket:object,roster:MemoryRoster,options:Memo
   const resolved=options.learningConnection?.();
   const connection=resolved?{instanceId:resolved.instanceId,label:resolved.label,source:resolved.source,reason:resolved.reason,suggestion:resolved.suggestion}:{instanceId:configuration().extractorInstanceId,label:"No connection",source:"none" as const};
   const learning={settings,revision,connection,defaultOn:options.learningDefaultOn?.()??false,allowance:{day,callsThisMinute:budget.minute===Math.floor(Date.now()/60000)?budget.calls??0:0,inputUsed:budget.input??0,inputLimit:settings.dailyInputTokens,outputUsed:budget.output??0,outputLimit:settings.dailyOutputTokens,usedPercent:Math.min(100,Math.round(100*Math.max(settings.dailyInputTokens?(budget.input??0)/settings.dailyInputTokens:1,settings.dailyOutputTokens?(budget.output??0)/settings.dailyOutputTokens:1)))}};
-  return {...memoryState(),learning,evolution:options.evolution?.status()??null,classificationEvolution:options.evolution?.status("classification")??null,procedureEvolution:options.procedureEvolution?.status(ticket)??null,health:memoryHealth(resolved?(resolved.extractor?resolved.instanceId:null):configuration().extractorInstanceId),retention:memoryRetentionStatus(),configuration:configuration(),scopes:scopes(roster),records:counts,backlog,model:modelStatus(),extractors:options.extractors?.()??[],
+  const hold=memoryHoldCode(),stored=String(db.prepare("SELECT mode FROM memory_meta WHERE id=1").get()?.mode??"");
+  // what the owner is told about capture and recall comes from the same predicates the capture path uses (capture-gate.ts); a hold switches both off
+  return {...memoryState(),hold,held:hold!==null,capture:memoryCaptures(stored,hold)?"on":"off",recall:memoryRecalls(stored,hold)?"on":"off",storedMode:stored,holdMessage:hold?holdMessage(hold):null,learning,evolution:options.evolution?.status()??null,classificationEvolution:options.evolution?.status("classification")??null,procedureEvolution:options.procedureEvolution?.status(ticket)??null,health:memoryHealth(resolved?(resolved.extractor?resolved.instanceId:null):configuration().extractorInstanceId),retention:memoryRetentionStatus(),configuration:configuration(),scopes:scopes(roster),records:counts,backlog,model:modelStatus(),extractors:options.extractors?.()??[],
     deletion:memoryDeletionStatus(),workerError:runtime?.error??null,runtime:runtime??null};
 }
 
@@ -273,7 +288,16 @@ export async function memoryOwnerRoute(path:string,body:unknown,ticket:object,ro
   const parsed=actions.safeParse(body);if(!parsed.success)throw Object.assign(new Error("INVALID_MEMORY_ARGUMENTS"),{status:400});
   const input=parsed.data,db=database();
   if(input.action==="learning-history")return learningHistory(db,roster,input);
-  if(input.action==="learning-undo"||input.action==="learning-keep")return transaction(()=>changeLearningEvent(db,input.eventId,input.action==="learning-undo"?"undo":"keep"));
+  if(input.action==="learning-undo"||input.action==="learning-keep"){const action=input.action==="learning-undo"?"undo" as const:"keep" as const;return undoOwnsItsTransactions(db,input.eventId,action)?changeLearningEvent(db,input.eventId,action):transaction(()=>changeLearningEvent(db,input.eventId,action));}
+  if(input.action==="waiting-summary")return reviewSummary(ticket,roster);
+  if(input.action==="waiting-list")return reviewList(ticket,roster,input);
+  if(input.action==="waiting-sources")return reviewSources(ticket,roster,input);
+  if(input.action==="review-keep")return reviewKeep(ticket,roster,input);
+  if(input.action==="review-keep-all")return reviewKeepAll(ticket,roster,input);
+  if(input.action==="review-later")return reviewLater(ticket,roster,input);
+  if(input.action==="review-back")return reviewBack(ticket,roster,input);
+  if(input.action==="review-edit")return reviewEdit(ticket,roster,input);
+  if(input.action==="review-undo")return reviewUndo(ticket,roster,input);
   if(input.action==="learning-bot"){
     validSubject(roster,"bot",input.botId);
     transaction(()=>{const current=readMemoryLearning(db),paused=new Set(current.botsPaused);if(input.enabled)paused.delete(input.botId);else paused.add(input.botId);updateMemoryLearning(db,{botsPaused:[...paused]},input.learningRevision);});

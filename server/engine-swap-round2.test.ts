@@ -1,3 +1,4 @@
+import { isRestoreHeld, releaseHeldContinuation, runnableContinuation } from "./restore-fence.ts";
 import { readFileSync, rmSync } from "node:fs";
 import { stripTypeScriptTypes } from "node:module";
 import { runInNewContext } from "node:vm";
@@ -13,8 +14,21 @@ import { detectActionClaims } from "../shared/reply-action-claims.ts";
 import { checkReplyActions, toolAction } from "./reply-action-guard.ts";
 import { routePolicy } from "./route-policy.ts";
 import { CONNECTED_APP_TOOLS } from "../shared/bot-access.ts";
+import { WorkerText } from "./released-text.ts";
+import { RowSink, writeActivityRow, writeBotRow } from "./bot-egress.ts";
+import { boundaryStore } from "./boundary-ports.ts";
+import { sharedEndingLine } from "./handoff-boundary.ts";
+import { noteOf, outboundWords, status, statusFromNote, type Outbound } from "./murage-status.ts";
+import { released } from "./testing/released.ts";
+import { releaseStoredResult as releaseThroughTheGate, type ResultEgressDeps } from "./result-egress.ts";
 
 const source = readFileSync(new URL("./index.ts", import.meta.url), "utf8");
+const boundarySource = readFileSync(new URL("./handoff-boundary.ts", import.meta.url), "utf8");
+// the hand-off boundary's functions take their server ports as `bx`; the names it imports directly come from the scope
+function boundaryDefinition(name: string) {
+  const start = boundarySource.indexOf(`export function ${name}(`);
+  return boundarySource.slice(start + "export ".length, boundarySource.indexOf("\n}\n", start) + 3);
+}
 function execute(code: string, scope: Record<string, unknown>) { return runInNewContext(stripTypeScriptTypes(code), scope); }
 function definition(name: string, end: string) {
   const start = source.indexOf(`function ${name}(`);
@@ -36,7 +50,7 @@ it("N1 queued questions dispatch as questions and tool work resumes the original
   const scope: any = { store, turnIsBackground, pendingRoomTurnRequests: pending, groupQueues: queues, roomRounds: rounds,
     roomTurnRequestKey: (thread: string, bot: string) => `${thread}:${bot}`, roomRoots: new Map(),
     registry: { get: () => ({ adapter: { capabilities: { tools } } }) }, routeHasTools: (caps: any) => caps?.tools,
-    threadHumanPrincipal: () => "owner", botPermissionMode: () => "ask", database: noop, noteHeldQueue: noop,
+    threadHumanPrincipal: () => "owner", botPermissionMode: () => "ask", database: noop, noteHeldQueue: noop, runnableContinuation, isRestoreHeld, releaseHeldContinuation, currentRestoreGeneration: () => null,
     // the pinned-root lookup the mobile lane added to startRoomRequestTurn (no pinned root here)
     roomRequest: () => null,
     requeueRoomRequest: (_db: any, id: string) => { expect(id).toBe(request.id); request.state = "queued"; },
@@ -122,11 +136,58 @@ it("N3 wrapper receipts distinguish completed, failed and unreported operations"
 it("N4 primary shared-question delivery remains in tool-less history", () => {
   const { store, bot } = fixture(), target = store.createBot({}, { seedMessages: false });
   const result = store.appendMessage(target.threadId, { role: "bot", kind: "text", text: "Which format?" });
-  const deliver = execute(definition("deliverSharedResult", "configureSharedDrain(") + "\ndeliverSharedResult;", { store,
-    requestSourceThread: () => bot.threadId, authorizeWork: () => ({ ok: true }), mirrorReply: noop, commsBus: {},
-    database: () => ({ prepare: () => ({ run: noop }) }), SHARED_RESULT_DELIVERED: "delivered", recordDelegationReceipt: noop, clearSharedFinishing: noop });
+  const deliver = execute(boundaryDefinition("runDeliverSharedResult") + "\n(request) => runDeliverSharedResult(bx, request);", { bx: { store: boundaryStore(store), rows: new RowSink(store), comms: { reply: noop, clearFinishing: noop } }, writeBotRow, writeActivityRow, statusFromNote, sharedEndingLine,
+    requestSourceThread: () => bot.threadId, authorizeWork: () => ({ ok: true }),
+    database: () => ({ prepare: () => ({ run: noop }) }), SHARED_RESULT_DELIVERED: "delivered", recordDelegationReceipt: noop,
+    releaseStoredResult: () => ({ kind: "text", text: released(result.text!, { threadId: target.threadId, messageIds: [result.id] }), copyOf: { threadId: target.threadId, messageIds: [result.id] } }), partitionSourcesAllowed: () => true });
   deliver({ id: "question", toBotId: target.id, targetThreadId: target.threadId, resultMessageId: result.id, verb: "ask", state: "done", admissionKey: "ask:question" });
   expect(promptRows(store.messagesFor(bot.threadId), false).map(row => row.text)).toEqual(["Which format?"]);
+});
+
+it("N4b a shared result whose source is forgotten leaves nothing in the copy, the mirror or the receipt, on first delivery and on redelivery", () => {
+  const SECRET = "The figure is SECRET-FORTY-ONE.";
+  for (const forgotten of [true, false]) {
+    const { store, bot } = fixture(), target = store.createBot({}, { seedMessages: false });
+    const result = store.appendMessage(target.threadId, { role: "bot", kind: "text", text: SECRET });
+    const deps: ResultEgressDeps = { message: (threadId, id) => store.messagesFor(threadId).find(m => m.id === id), authorize: () => ({ ok: true }), copyOriginWithheld: () => false,
+      capturedMessageWithheld: () => false, messageSourceForgotten: () => forgotten, messageMadeWithMemory: () => false, partitionAllowed: () => true, ownUnsharedWork: () => false, withheldLine: "[withheld]" };
+    const mirrored: unknown[] = [], receipts: unknown[] = [];
+    const deliver = execute(boundaryDefinition("runDeliverSharedResult") + "\n(request) => runDeliverSharedResult(bx, request);", { bx: { store: boundaryStore(store), rows: new RowSink(store), comms: { reply: (_bot: unknown, text: Outbound) => { mirrored.push(outboundWords(text)); }, clearFinishing: noop } }, writeBotRow, writeActivityRow, statusFromNote, sharedEndingLine,
+      requestSourceThread: () => bot.threadId,
+      database: () => ({ prepare: () => ({ run: noop }) }), SHARED_RESULT_DELIVERED: "delivered", recordDelegationReceipt: (receipt: { result?: Outbound }) => { receipts.push({ ...receipt, result: receipt.result ? outboundWords(receipt.result) : undefined }); },
+      releaseStoredResult: (ref: any, worker: string, destination: string, authority: any, notOwner: boolean, text?: WorkerText) => releaseThroughTheGate(ref, worker, destination, authority, notOwner, text, deps), partitionSourcesAllowed: () => true });
+    const request = { id: "q1", toBotId: target.id, fromBotId: bot.id, targetThreadId: target.threadId, resultMessageId: result.id, verb: "ask", state: "done", admissionKey: "ask:q1", groupId: "g", outcomeNote: "done" };
+    deliver(request);
+    deliver(request); // a restart redelivers the same request
+    const everywhere = JSON.stringify({ transcript: store.messagesFor(bot.threadId), mirrored, receipts });
+    expect(everywhere.includes("SECRET-FORTY-ONE"), `forgotten=${forgotten}`).toBe(!forgotten);
+  }
+});
+
+it("N4c a shared request that failed never reads as finished, in the owner's conversation or the receipt", () => {
+  for (const [outcomeNote, line] of [
+    [undefined, "The request did not finish."],
+    ["rate limit hit on /home/sean/x with key sk-live", "The request did not finish."],
+    [noteOf(status("delegated_turn_failed", { why: "auth" })), "Delegated turn failed: it is not signed in to its provider"],
+    ["stopped before it finished", "Turn was stopped before it finished"],
+  ] as const) {
+    const { store, bot } = fixture(), target = store.createBot({}, { seedMessages: false });
+    const receipts: Array<{ status: string; result?: string }> = [];
+    const deliver = execute(boundaryDefinition("runDeliverSharedResult") + "\n(request) => runDeliverSharedResult(bx, request);", { bx: { store: boundaryStore(store), rows: new RowSink(store), comms: { reply: noop, clearFinishing: noop } }, writeBotRow, writeActivityRow, statusFromNote, sharedEndingLine,
+      requestSourceThread: () => bot.threadId, database: () => ({ prepare: () => ({ run: noop }) }), SHARED_RESULT_DELIVERED: "delivered",
+      recordDelegationReceipt: (receipt: { status: string; result?: Outbound }) => { receipts.push({ status: receipt.status, result: receipt.result ? outboundWords(receipt.result) : undefined }); },
+      releaseStoredResult: () => ({ kind: "gone" }), partitionSourcesAllowed: () => true });
+    deliver({ id: "failed-ask", toBotId: target.id, fromBotId: bot.id, verb: "ask", state: "failed", admissionKey: "ask:failed-ask", groupId: "g", ...(outcomeNote ? { outcomeNote } : {}) });
+    const written = store.messagesFor(bot.threadId).find(m => m.requestId === "failed-ask");
+    expect(written?.tool?.name, String(outcomeNote)).toBe(line);
+    expect(written?.tool?.ok).toBe(false);
+    expect(receipts).toEqual([{ status: "failed", result: line }]);
+    expect(JSON.stringify(store.messagesFor(bot.threadId))).not.toMatch(/sk-live|\/home\/sean/);
+  }
+  // a finished request whose answer was deleted says that, and one that finished with nothing to show still says it finished
+  expect(outboundWords(sharedEndingLine({ kind: "gone" }, { state: "done", resultMessageId: "m1" }))).toBe("(that result is no longer available)");
+  expect(outboundWords(sharedEndingLine({ kind: "gone" }, { state: "done" }))).toBe("The request finished.");
+  expect(outboundWords(sharedEndingLine({ kind: "gone" }, { state: "expired", outcomeNote: "garbage" }))).toBe("The request did not finish.");
 });
 
 it.each(["After lunch, I sent it.", "I sent it after lunch.", "I sent it and can send another.", "I sent it and I can send another.", "I sent it without an attachment."])("N5 retains the independent completed claim: %s", text => {
@@ -141,7 +202,7 @@ it("N6 dispatch retry revalidates authority and retains identity after a transie
   store.holdTaskContinuation(bot.id, bot.threadId, "continue", { id: "held", dispatcher: "direct", principal: JSON.stringify(principal) });
   const drain = execute("const heldDispatches = new Set();\nasync " + definition("drainHeldContinuations", "store.onChange(") + "\ndrainHeldContinuations;", {
     store, roomEngine: { ready: true }, registry: { get: () => ({ adapter: { capabilities: {} } }) }, routeHasTools: () => true,
-    threadHumanPrincipal: () => principal, Date: { now: () => now }, noteHeldQueue: noop, routines: undefined,
+    threadHumanPrincipal: () => principal, Date: { now: () => now }, noteHeldQueue: noop, runnableContinuation, isRestoreHeld, releaseHeldContinuation, currentRestoreGeneration: () => null, routines: undefined,
     startTurn: async (_bot: string, _text: string, opts: any) => { calls++; if (calls === 1) { opts.onDispatchError("Engine is reconnecting."); return; } store.consumeTaskHeldContinuations(bot.id, bot.threadId, [opts.heldContinuationId]); },
   });
   await drain(bot.id);
@@ -169,12 +230,32 @@ it("N7 persisted legacy entries require explicit owner recovery and can be reaut
     path: `/api/bots/${bot.id}/held-continuations/legacy/retry`, method: "POST", req: {}, res: {}, url: {}, readBody: async () => ({ threadId: bot.threadId }),
     store: restarted, connectorThread: () => ({ bot }), mayApprove: () => approved, turnAudienceIsOwner: () => true,
     threadHumanPrincipal: () => "owner", turnSessionAudience: () => "owner", latestRoomUserMessage: noop,
-    noteHeldQueue: noop, drainHeldContinuations: drain, APPROVAL_NEEDS_OWNER: "Owner required", json: (_res: any, status: number) => status,
+    noteHeldQueue: noop, database: noop, runnableContinuation, isRestoreHeld, releaseHeldContinuation, currentRestoreGeneration: () => null, drainHeldContinuations: drain, APPROVAL_NEEDS_OWNER: "Owner required", json: (_res: any, status: number) => status,
   });
   expect(await retry(false)).toBe(403); expect(drain).not.toHaveBeenCalled();
   expect(await retry(true)).toBe(200); expect(drain).toHaveBeenCalledWith(bot.id);
   expect(restarted.taskByThread(bot.id, bot.threadId)?.heldContinuations?.[0]).toMatchObject({ state: "ready", dispatcher: "direct", options: { continuationPermissionMode: "ask" } });
   expect(restarted.taskByThread(bot.id, bot.threadId)?.heldContinuations?.[0].error).toBeUndefined();
+});
+
+it("N8 a replayed pre-restore retry of a restore-held continuation carries the wrong generation and starts nothing", async () => {
+  const { store, bot } = fixture();
+  store.holdTaskContinuation(bot.id, bot.threadId, "carry on", { id: "heldr", botId: bot.id, dispatcher: "direct", principal: JSON.stringify("owner"), state: "recovery", restoreHeld: true, restoreGen: "gen-new" });
+  const begin = source.indexOf('    m = path.match(/^\\/api\\/bots\\/([\\w-]+)\\/held-continuations');
+  const end = source.indexOf('    m = path.match(/^\\/api\\/bots\\/([\\w-]+)\\/respond', begin);
+  const drain = vi.fn();
+  const retry = (body: Record<string, unknown>) => execute(`(async function(){let m;${source.slice(begin, end)}})()`, {
+    path: `/api/bots/${bot.id}/held-continuations/heldr/retry`, method: "POST", req: {}, res: {}, url: {}, readBody: async () => ({ threadId: bot.threadId, ...body }),
+    store, connectorThread: () => ({ bot }), mayApprove: () => true, turnAudienceIsOwner: () => true,
+    threadHumanPrincipal: () => "owner", turnSessionAudience: () => "owner", latestRoomUserMessage: noop,
+    noteHeldQueue: noop, database: noop, runnableContinuation, isRestoreHeld, releaseHeldContinuation, currentRestoreGeneration: () => "gen-new", drainHeldContinuations: drain, APPROVAL_NEEDS_OWNER: "Owner required", json: (_res: any, status: number) => status,
+  });
+  expect(await retry({})).toBe(409);                              // no generation presented
+  expect(await retry({ restoreGen: "gen-old" })).toBe(409);       // a press or automatic retry from before the restore
+  expect(drain).not.toHaveBeenCalled();
+  expect(store.taskByThread(bot.id, bot.threadId)?.heldContinuations?.[0]).toMatchObject({ restoreHeld: true, restoreGen: "gen-new" });
+  expect(await retry({ restoreGen: "gen-new" })).toBe(200);       // the owner's press on the chip that carries the current token
+  expect(drain).toHaveBeenCalledTimes(1);
 });
 
 it.each([false, true])("P7 counts original eligible history with memory inactive, native=%s", replaysNatively => {
@@ -194,7 +275,7 @@ it("N6 room dispatch retries retain the request and respect revalidation delays"
   const release = vi.fn(), claims = new Map([["key", { release }]]), running = new Map([["key", request.id]]);
   let now = 1;
   const scope = { store, database: noop, roomTurnRequestKey: () => "key", pendingRoomTurnRequests: new Map(), roomTurnClaims: claims, roomTurnRequests: running,
-    noteHeldQueue: noop, Date: { now: () => now }, registry: { get: () => ({ adapter: { capabilities: {} } }) }, routeHasTools: () => true,
+    noteHeldQueue: noop, runnableContinuation, isRestoreHeld, releaseHeldContinuation, currentRestoreGeneration: () => null, Date: { now: () => now }, registry: { get: () => ({ adapter: { capabilities: {} } }) }, routeHasTools: () => true,
     requeueRoomRequest: (_db: any, id: string) => { expect(id).toBe("original"); request.state = "queued"; return true; } };
   const retry = execute(definition("retryHeldRoomRequest", "/** Start a queued member") + "\nretryHeldRoomRequest;", scope);
   retry(request, "Engine is reconnecting.", { retryable: true });

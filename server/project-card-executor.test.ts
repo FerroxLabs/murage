@@ -10,6 +10,8 @@ import { applyGoalPlanAccepted } from "./project-goals.ts";
 import { roomRequest, reconcileRoomRequestsAtBoot, insertRoomRequest, completeRequest } from "./room-requests.ts";
 import { applyCardRunEffect, cardGenerationCurrent } from "./project-turn-engine.ts";
 import { createWorkAdmission } from "./work-admission.ts";
+import { fenceRestoredSql, sqlRowRestoreHeld, heldCardDeliveries } from "./restore-fence.ts";
+import { setProjectRunState } from "./project-settings.ts";
 import { createProjectCardExecutor, cardRequestOwnerApproved, cardSteeringMode, cardRequestIsReview, queueRoutineCardRun, steerBusyDesk, projectRestartLine } from "./project-card-executor.ts";
 
 const databases: DatabaseSync[] = [];
@@ -181,7 +183,7 @@ it("never steers a message that carries a picture: steer() is text-only, so it q
 it("steers a busy desk only on a steering engine and queues otherwise", async () => {
   const steer = vi.fn(async () => true);
   expect(await steerBusyDesk({ capabilities: { queueing: true }, steer }, "desk", "Check totals", true)).toBe("steer");
-  expect(steer).toHaveBeenCalledExactlyOnceWith("desk", "Check totals", undefined, undefined); // third: the submission fence (beforeWrite), fourth: the interjection id, both absent here
+  expect(steer).toHaveBeenCalledExactlyOnceWith("desk", "Check totals", expect.any(Function), undefined); // third: the submission fence (always wrapped, so the wait can be bounded), fourth: the interjection id (absent here)
   expect(await steerBusyDesk({ capabilities: { queueing: false }, steer }, "desk", "Later", true)).toBe("queue");
   expect(await steerBusyDesk({ capabilities: { queueing: true }, steer }, "desk", "Contact", false)).toBe("queue");
   expect(steer).toHaveBeenCalledTimes(1);
@@ -189,10 +191,29 @@ it("steers a busy desk only on a steering engine and queues otherwise", async ()
   expect(await steerBusyDesk({ capabilities: { queueing: true }, steer: async () => { throw new Error("ended"); } }, "desk", "Later", true)).toBe("queue");
 });
 it("hands the steer's fence and its id to the driver, which runs the fence right before its write", async () => {
-  const steer = vi.fn(async () => "delivered" as const);
-  const fence = () => {};
+  const fence = vi.fn();
+  const steer = vi.fn(async (_t: string, _x: string, before?: () => void) => { before?.(); return "delivered" as const; });
   expect(await steerBusyDesk({ capabilities: { queueing: true }, steer }, "desk", "Check totals", true, fence, "steer-1")).toBe("steer");
-  expect(steer).toHaveBeenCalledExactlyOnceWith("desk", "Check totals", fence, "steer-1");
+  expect(steer).toHaveBeenCalledExactlyOnceWith("desk", "Check totals", expect.any(Function), "steer-1");
+  expect(fence).toHaveBeenCalledTimes(1);
+});
+it("bounds the wait for an engine that is not ready: the line is queued and the fence is closed so it can never also run", async () => {
+  let release!: () => void;
+  let wrote = false;
+  const fence = vi.fn();
+  const steer = (_t: string, _x: string, before?: () => void) => new Promise<boolean>((resolve) => {
+    release = () => { try { before?.(); wrote = true; resolve(true); } catch { resolve(false); } };
+  });
+  const answer = await steerBusyDesk({ capabilities: { queueing: true }, steer }, "desk", "Wait for init", true, fence, "s1", 20);
+  expect(answer).toBe("queue");
+  release(); // the engine becomes ready after the bound
+  await Promise.resolve();
+  expect(wrote).toBe(false);
+  expect(fence).not.toHaveBeenCalled();
+});
+it("a wait that expires after the fence passed is uncertain, never queued", async () => {
+  const steer = (_t: string, _x: string, before?: () => void) => new Promise<boolean>(() => { before?.(); });
+  expect(await steerBusyDesk({ capabilities: { queueing: true }, steer }, "desk", "In flight", true, undefined, "s2", 20)).toBe("uncertain");
 });
 it("maps the three-state steer answer: delivered steers, rejected queues, uncertain is neither", async () => {
   const desk = (answer: "delivered" | "rejected" | "uncertain") => steerBusyDesk({ capabilities: { queueing: true }, steer: async () => answer }, "desk", "Check totals", true);
@@ -233,9 +254,10 @@ it("commits terminal state and releases the claim when delivery throws", () => {
     expect(roomRequest(f.db, card.requestId)?.state).toBe("done");
     expect(projectCardById(f.db, card.id)?.state).toBe("done");
     expect(f.admission.liveTurns({})).toHaveLength(0);
+    // the delivery is still owed (it failed): a later finish makes it again instead of skipping it
     f.executor.finish(card.requestId, { ok: true, deliver });
-    expect(deliver).toHaveBeenCalledTimes(1);
-    expect(warn).toHaveBeenCalledTimes(1);
+    expect(deliver).toHaveBeenCalledTimes(2);
+    expect(warn).toHaveBeenCalledTimes(2);
   } finally { warn.mockRestore(); }
 });
 
@@ -296,4 +318,97 @@ it("with plan approval on, the owner's own card runs while the lead's queued pla
   // lane review: the owner card's review may run; the plan's cards still wait
   expect(f.start.mock.calls.slice(1).map(call => call[0].verb)).toEqual(f.start.mock.calls.length > 1 ? ["review"] : []);
   for (const card of leadCards) expect(roomRequest(f.db, card.requestId)).toMatchObject({ state: "queued", refusal: "plan_not_approved" });
+});
+it("keeps the admission claim through a failed terminal transaction and releases it only when a finish commits", () => {
+  const f = setup(), card = f.card(); f.executor.pump();
+  const hooks = f.hooks as any, original = hooks.cardEffect;
+  hooks.cardEffect = () => { throw new Error("terminal write failed"); };
+  try {
+    expect(() => f.executor.finish(card.requestId, { ok: true })).toThrow("terminal write failed");
+  } finally { hooks.cardEffect = original; }
+  // rolled back: the request is still running and still owns its admission
+  expect(roomRequest(f.db, card.requestId)?.state).toBe("running");
+  expect(f.admission.liveTurns({})).toHaveLength(1);
+  f.executor.finish(card.requestId, { ok: true });
+  expect(roomRequest(f.db, card.requestId)?.state).toBe("done");
+  expect(f.admission.liveTurns({})).toHaveLength(0);
+});
+it("a concurrent delivery is deduplicated without releasing the claim the first one owns", () => {
+  const f = setup(), card = f.card(); f.executor.pump();
+  const seen: number[] = [];
+  const deliver = vi.fn(() => {
+    // a second finish for the same request arrives while the first delivery is still in flight
+    if (deliver.mock.calls.length === 1) { f.executor.finish(card.requestId, { ok: true, deliver }); seen.push(f.admission.liveTurns({}).length); }
+  });
+  f.executor.finish(card.requestId, { ok: true, deliver });
+  expect(seen).toEqual([1]);
+  expect(deliver).toHaveBeenCalledTimes(1);
+  expect(f.admission.liveTurns({})).toHaveLength(0);
+});
+it("a durable failed settlement after a persistently failing completion leaves an owed row and releases the claim", () => {
+  const f = setup(), card = f.card(); f.executor.pump();
+  const hooks = f.hooks as any, original = hooks.cardEffect;
+  let failures = 3;
+  hooks.cardEffect = (...args: unknown[]) => { if (failures-- > 0) throw new Error("disk I/O error"); return original(...args); };
+  for (let i = 0; i < 3; i++) expect(() => f.executor.finish(card.requestId, { ok: true, resultMessageId: "result" })).toThrow("disk I/O error");
+  expect(roomRequest(f.db, card.requestId)?.state).toBe("running");
+  expect(f.admission.liveTurns({})).toHaveLength(1);
+  // the failed settlement: terminal as failed, delivery owed so the boot sweep or a later completion finishes it
+  f.executor.finish(card.requestId, { ok: false, note: "This card run could not be recorded. Try again shortly.", owedPayload: "{}" });
+  expect(roomRequest(f.db, card.requestId)?.state).toBe("failed");
+  expect(f.admission.liveTurns({})).toHaveLength(0);
+});
+it("keeps listening after the response deadline: a proven refusal that arrives later is reported as rejected, never left unconfirmed", async () => {
+  let answer!: (value: "rejected" | "delivered") => void;
+  const steer = vi.fn((_t: string, _x: string, before?: () => void) => { before?.(); return new Promise<"rejected" | "delivered">((resolve) => { answer = resolve; }); });
+  const late = vi.fn();
+  const result = await steerBusyDesk({ capabilities: { queueing: true }, steer }, "desk", "late no", true, undefined, "s1", 20, late);
+  expect(result).toBe("uncertain");
+  expect(late).not.toHaveBeenCalled();
+  answer("rejected");
+  await new Promise((resolve) => setTimeout(resolve, 5));
+  expect(late).toHaveBeenCalledExactlyOnceWith("rejected");
+});
+it("a late acceptance after the deadline is reported as delivered", async () => {
+  let answer!: (value: "rejected" | "delivered") => void;
+  const steer = vi.fn((_t: string, _x: string, before?: () => void) => { before?.(); return new Promise<"rejected" | "delivered">((resolve) => { answer = resolve; }); });
+  const late = vi.fn();
+  expect(await steerBusyDesk({ capabilities: { queueing: true }, steer }, "desk", "late yes", true, undefined, "s2", 20, late)).toBe("uncertain");
+  answer("delivered");
+  await new Promise((resolve) => setTimeout(resolve, 5));
+  expect(late).toHaveBeenCalledExactlyOnceWith("delivered");
+});
+it("an engine that never got past the fence has no late answer to report", async () => {
+  const steer = vi.fn(() => new Promise<boolean>(() => {}));
+  const late = vi.fn();
+  expect(await steerBusyDesk({ capabilities: { queueing: true }, steer }, "desk", "never ready", true, undefined, "s3", 20, late)).toBe("queue");
+  expect(late).not.toHaveBeenCalled();
+});
+
+it("a finished card's undelivered room result survives a restore held, is not posted by the boot sweep, and Resume posts it", () => {
+  const f = setup(), card = f.card(); f.executor.pump();
+  const failing = vi.fn(() => { throw new Error("room unavailable"); });
+  f.executor.finish(card.requestId, { ok: true, resultMessageId: "result", deliver: failing });
+  expect(f.db.prepare("SELECT count(*) n FROM project_card_delivery_owed").get()).toMatchObject({ n: 1 });
+  // the restore
+  fenceRestoredSql(f.db, "gen-1");
+  expect(f.db.prepare("SELECT count(*) n FROM project_card_delivery_owed").get()).toMatchObject({ n: 1 });
+  expect(sqlRowRestoreHeld(f.db, "card_delivery", card.requestId)).toBe(true);
+  expect(heldCardDeliveries(f.db, "g")).toEqual([{ requestId: card.requestId }]);
+  // boot: a fresh executor sweeps; nothing is delivered and nothing is deleted
+  const redeliver = vi.fn();
+  const boot = createProjectCardExecutor({ db: () => f.db, admission: f.admission, now: () => 10000, open: () => true,
+    context: () => ({ groupId: "g", isProject: true, closed: false, runState: "paused", mode: "ongoing", leadBotId: "lead", boardOn: true, parallelCards: 1 }),
+    usable: () => true, desk: request => `desk-${request.toBotId}`, writerRoot: () => undefined, start: vi.fn(), hooks: f.hooks, changed: vi.fn(), redeliver });
+  executors.push(boot);
+  boot.sweepOwedDeliveries();
+  expect(redeliver).not.toHaveBeenCalled();
+  expect(f.db.prepare("SELECT count(*) n FROM project_card_delivery_owed").get()).toMatchObject({ n: 1 });
+  // the owner's Resume releases it and the result reaches the room
+  const resumed = setProjectRunState(f.db, { groupId: "g", runState: "running", actor: "owner", now: 20000 });
+  expect(resumed.ok).toBe(true);
+  expect(heldCardDeliveries(f.db, "g")).toEqual([]);
+  boot.sweepOwedDeliveries();
+  expect(redeliver).toHaveBeenCalledTimes(1);
+  expect(f.db.prepare("SELECT count(*) n FROM project_card_delivery_owed").get()).toMatchObject({ n: 0 });
 });

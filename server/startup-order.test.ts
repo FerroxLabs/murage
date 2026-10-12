@@ -13,12 +13,15 @@ describe("cold start ordering in server/index.ts", () => {
   const listen = at('server.listen(PORT, "127.0.0.1", () => {');
   const callbackEnd = at("const gracefulShutdown = createGracefulShutdown", listen);
 
-  it("finishes the skill sweep before the port opens, so before any bot turn", () => {
-    const sweep = at("sweepSkillScans(store.bots.map(");
-    expect(sweep).toBeLessThan(listen);
-    expect(at('startupMark("skillSweep.done")')).toBeGreaterThan(sweep);
+  it("scans a bot's skills in the background after the port opens and, at the latest, on that bot's first turn", () => {
+    // the scan used to read every skill of every bot before the port opened (78 s on a heavy install)
+    expect(at("sweepBotSkills(bot.id)")).toBeGreaterThan(at("async function sweepSkillsInBackground"));
+    expect(at("void sweepSkillsInBackground()", listen)).toBeGreaterThan(listen);
     expect(at('startupMark("skillSweep.done")')).toBeLessThan(listen);
-    // Nothing that starts turns may run before the sweep: the room queue and memory worker start in the callback.
+    const skills = readFileSync(new URL("./skills.ts", import.meta.url), "utf8");
+    expect(skills).toMatch(/export function skillsSystemPrompt\(botId: string\): string \{[^}]*?sweepBotSkills\(botId\)/s);
+    expect(skills).toMatch(/export function syncSkillLinks\(botId: string\): void \{\s*sweepBotSkills\(botId\)/);
+    // Nothing that starts turns may run before the port: the room queue and memory worker start in the callback.
     expect(at("roomEngine.ready = true;", listen)).toBeGreaterThan(listen);
   });
 

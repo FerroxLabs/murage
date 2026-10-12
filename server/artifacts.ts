@@ -161,7 +161,10 @@ export function initializeArtifacts(db: DatabaseSync) {
     created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL,
     UNIQUE(producer,bot_id,thread_id,run_id,path_token,sha256));
     CREATE INDEX IF NOT EXISTS output_publications_scope ON output_publications(bot_id,thread_id,run_id);
-    CREATE INDEX IF NOT EXISTS output_publications_stage ON output_publications(stage,updated_at);`);
+    CREATE INDEX IF NOT EXISTS output_publications_stage ON output_publications(stage,updated_at);
+    -- Shell card recovery (output-publication.ts resumeRegisteredShellCards) reads only registered, unannounced receipts that have
+    -- an artifact: its work follows the runs still owing a card, never the history of published outputs. Same WHERE as that query.
+    CREATE INDEX IF NOT EXISTS output_publications_unannounced ON output_publications(bot_id,thread_id,run_id,created_at) WHERE producer='shell-output' AND stage='registered' AND message_id IS NULL AND artifact_id IS NOT NULL;`);
 }
 interface Row { id: string; name: string; kind: ArtifactKind; mime: string; bytes: number; sha256: string; extension: string; created_at: number; bot_id: string; thread_id: string; run_id: string; source_root: string; relative_path: string; source_fingerprint: string; producer: string | null; publication_id: string | null }
 const blobName = (row: Pick<Row, "sha256" | "extension">) => {

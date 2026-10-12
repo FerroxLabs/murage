@@ -31,8 +31,10 @@ import {
   api,
   useStore,
   useStreaming,
+  useStreamHelpers,
   formatTime,
   messageVersions,
+  olderOpenCards,
   openNotificationTarget,
   visibleMessages,
   viewedTaskBot,
@@ -79,6 +81,8 @@ import { ChatFindBar } from "./ChatFindBar";
 import { ReplyQuote } from "./ReplyQuote";
 import { ConnectorCard } from "./ConnectorCard";
 import { StoppedByYouRow, StoppedMidActionRow, StoppedRow } from "./StoppedRow";
+import { SendNoticeRow } from "./SendNoticeRow";
+import { sendNoticeCode } from "../../shared/send-notice";
 import { FolderTrustRow } from "./FolderTrustRow";
 import { BrowserUnavailableRow } from "./BrowserUnavailableRow";
 import { ImagesNotSentRow } from "./ImagesNotSentRow";
@@ -93,6 +97,7 @@ import { routineRunMarker } from "../../shared/routine-run-marker";
 import { RoutineRunDivider } from "./RoutineRunDivider";
 import { RoutineRunAgainRow } from "./RoutineRunAgainRow";
 import { DelegationWaitRow } from "./DelegationWaitRow";
+import { DelegationHeldRow, heldAction } from "./DelegationHeldRow";
 import { SecretRequestCard } from "./SecretRequestCard";
 import { hasRoutineExecutionTask, RoutineRunCard } from "./RoutineRunCard";
 import { AttachedFileChips, AttachedImageGallery } from "./AttachmentPreview";
@@ -153,7 +158,7 @@ import {
 import { captureRowAnchor, captureViewportAnchor, observeSeenRows, restoreRowAnchor, type ScrollAnchor } from "@/lib/transcript-rows";
 import { timelineEvents } from "@/lib/taskTimeline";
 import { engineDividers, engineHoverLabel } from "../../shared/chat-engine-notes";
-import { HeldQueueRow, ReplyActionNote } from "./EngineNotes";
+import { HeldQueueRow } from "./EngineNotes";
 import { useReplyDraft } from "@/lib/drafts";
 
 /** Long user messages collapse behind a fade so pasted walls of text don't
@@ -372,8 +377,8 @@ export function MessageActionSheet({
 // "Update Claude for me" loads on first use; most chats never need it.
 const ClaudeUpdatePrompt = retryableLazy(() => import("./ClaudeUpdatePrompt")).Component;
 
-export function ErrorRow({ message, details, errorKind, localFailure, diagnostic, turnId, incident, onRetry, setupInstance, authRequired = false, claudeUpdateInstance, providerError, botName, onOpenProviderSettings }: {
-  message: string; details?: string; errorKind?: string; localFailure?: string; onRetry?: () => void; setupInstance?: InstanceInfo; botName?: string; claudeUpdateInstance?: InstanceInfo;
+export function ErrorRow({ message, details, errorKind, localFailure, localFailureEngine, diagnostic, turnId, incident, onRetry, setupInstance, authRequired = false, claudeUpdateInstance, providerError, botName, onOpenProviderSettings }: {
+  message: string; details?: string; errorKind?: string; localFailure?: string; localFailureEngine?: string; onRetry?: () => void; setupInstance?: InstanceInfo; botName?: string; claudeUpdateInstance?: InstanceInfo;
   authRequired?: boolean; providerError?: ProviderErrorInfo; diagnostic?: unknown; turnId?: string; incident?:IncidentMessageSelection; onOpenProviderSettings: () => void;
 }) {
   const [authRecovered, setAuthRecovered] = useState(false);
@@ -384,7 +389,7 @@ export function ErrorRow({ message, details, errorKind, localFailure, diagnostic
     return <RuntimeErrorCard message={message} details={details} botName={botName} diagnostic={diagnostic} turnId={turnId} incident={incident} onOpenProviderSettings={onOpenProviderSettings}
       setup={<Suspense fallback={null}><ClaudeUpdatePrompt instance={claudeUpdateInstance} onRetry={onRetry} /></Suspense>} />;
   }
-  return <RuntimeErrorCard message={message} details={details} errorKind={errorKind} localFailure={localFailure} botName={botName} diagnostic={diagnostic} turnId={turnId} incident={incident} onRetry={onRetry} onOpenProviderSettings={onOpenProviderSettings}
+  return <RuntimeErrorCard message={message} details={details} errorKind={errorKind} localFailure={localFailure} localFailureEngine={localFailureEngine} botName={botName} diagnostic={diagnostic} turnId={turnId} incident={incident} onRetry={onRetry} onOpenProviderSettings={onOpenProviderSettings}
     setup={needsSetup ? <EngineSetup instance={setupInstance} authRequired={forceSignIn} onReady={() => setAuthRecovered(true)} className="mt-3 text-ink-secondary" /> : undefined} />;
 }
 
@@ -737,7 +742,6 @@ function Bubble({
               ) : null}
               {text ? <ChatMarkdown text={text} scope={{ botId: bot.id, threadId: bot.threadId }} /> : null}
               {message.artifactIds?.length ? <ArtifactCards ids={message.artifactIds} /> : null}
-              {message.actionCheck ? <ReplyActionNote text={text} check={message.actionCheck} onJump={messageId => dispatch({ type: "focusMessage", threadId: bot.threadId, messageId })} /> : null}
             </MessageBoundary>
           )}
         </div>
@@ -999,7 +1003,7 @@ const MessagesList = memo(function MessagesList({
   const narrow = useNarrowViewport();
   // Finished tool chips become compact runs; settled assistant narration
   // becomes one reversible turn row while the terminal answer stays visible.
-  const helperRuns = useStreaming().helpers.runs[bot.threadId];
+  const helperRuns = useStreamHelpers().runs[bot.threadId];
   const items = useMemo(() => groupTranscript(messages, helperRuns), [messages, helperRuns]);
   const instances = state.instances;
   const engineLabel = useCallback(
@@ -1152,7 +1156,7 @@ const MessagesList = memo(function MessagesList({
               );
             }
             case "activity": {
-              if (m.murage?.held) return <HeldQueueRow text={m.tool?.name ?? ""} count={m.murage.held.count} items={m.murage.held.items} bots={state.bots} onRetry={async (id, botId) => { await api(`/api/bots/${botId}/held-continuations/${id}/retry`, { method: "POST", body: JSON.stringify({ threadId: bot.threadId }) }); }} onJump={messageId => dispatch({ type: "focusMessage", threadId: bot.threadId, messageId })} />;
+              if (m.murage?.held) return <HeldQueueRow text={m.tool?.name ?? ""} count={m.murage.held.count} items={m.murage.held.items} bots={state.bots} onRetry={async (id, botId, restoreGen) => { await api(`/api/bots/${botId}/held-continuations/${id}/retry`, { method: "POST", body: JSON.stringify({ threadId: bot.threadId, ...(restoreGen ? { restoreGen } : {}) }) }); }} onJump={messageId => dispatch({ type: "focusMessage", threadId: bot.threadId, messageId })} />;
               // a failed turn is an error, not a tool run — render it as one.
               // a host-stopped turn is neither: a neutral stopped row that says
               // why, visible whether or not Tool calls is on (STOP2).
@@ -1172,9 +1176,16 @@ const MessagesList = memo(function MessagesList({
                 const delegationId = m.delegationWait.id;
                 return <DelegationWaitRow text={m.tool.name} onStop={() => dispatch({ type: "stopDelegation", delegationId })} />;
               }
+              // a hand-off a restart cut off after the provider may have taken it: Send again or Dismiss
+              if (m.delegationHeld && m.tool) {
+                const delegationId = m.delegationHeld.id;
+                return <DelegationHeldRow text={m.tool.name} onSendAgain={() => heldAction(dispatch, "resendDelegation", delegationId, bot.threadId)} onDismiss={() => heldAction(dispatch, "dismissDelegation", delegationId, bot.threadId)} />;
+              }
               // where one run of a routine begins in its own conversation
               const runMarker = routineRunMarker(m);
               if (runMarker) return <RoutineRunDivider trigger={runMarker.trigger} routineName={runMarker.routineName} at={m.at} />;
+              const noticeCode = sendNoticeCode(m.tool?.name);
+              if (noticeCode) return <SendNoticeRow code={noticeCode} />;
               const stoppedReason = hostStoppedReason(m.tool?.name);
               if (stoppedReason) return <StoppedRow reason={stoppedReason} />;
               // the person's Stop caught a desktop action mid-flight: say to
@@ -1213,6 +1224,7 @@ const MessagesList = memo(function MessagesList({
                     details={m.tool.errorDetails}
                     errorKind={m.tool.errorKind}
                     localFailure={m.tool.localFailure}
+                    localFailureEngine={m.tool.localFailureEngine}
                     providerError={m.tool.providerError}
                     diagnostic={m.tool.diagnostic}
                     turnId={m.turnId}
@@ -1357,7 +1369,10 @@ export function ChatView({ bot:profile }: { bot: Bot }) {
   }, []);
 
   // only the active branch is rendered; forks stay reachable via ‹ › nav
-  const messages = useMemo(() => visibleMessages(bot), [bot]);
+  // Open request cards older than the held page are rows too, whatever they ask
+  // (an approval, a question, a publish): they ride beside the page, and a
+  // card nobody renders cannot be answered.
+  const messages = useMemo(() => olderOpenCards(bot, visibleMessages(bot)), [bot]);
 
   // Windowed transcript: only a tail of the thread mounts (screenshots make
   // full threads DOM-heavy). The boundary is anchored per bot+task; a
@@ -1501,7 +1516,9 @@ export function ChatView({ bot:profile }: { bot: Bot }) {
     setFollow(next);
   }, []);
 
-  useEffect(() => setBottomFollow(true), [bot.id, setBottomFollow]);
+  // Another thread of the same bot is another transcript: re-arm on the key,
+  // not the bot (OpenMausBot #2462, Apache-2.0).
+  useEffect(() => setBottomFollow(true), [transcriptKey, setBottomFollow]);
   useBottomFollowResize(scrollRef, transcriptRef, followRef, transcriptKey);
 
   // A search result may be hundreds of rows before the mounted tail. Open a
@@ -1545,7 +1562,7 @@ export function ChatView({ bot:profile }: { bot: Bot }) {
     // keyboardInsetPx: the pane loses clientHeight when the keyboard opens
     // while scrollHeight is unchanged, so a pinned transcript has to re-pin or
     // the last message slides up behind the composer.
-  }, [bot.id, messages.length, streaming, liveReply, reasoning, plan, bot.busy, composerDock.pad, keyboardInsetPx]);
+  }, [transcriptKey, messages.length, streaming, liveReply, reasoning, plan, bot.busy, composerDock.pad, keyboardInsetPx]);
 
   // Reading scrollback (follow === false): preserve the anchor rather than let
   // the shrinking pane scroll the reader's row up out of view by exactly the
@@ -1719,7 +1736,7 @@ export function ChatView({ bot:profile }: { bot: Bot }) {
 
       {/* Error banner */}
       {state.error && <ErrorBanner message={state.error} onDismiss={() => dispatch({ type: "error", message: null })}/>}
-      {state.deletionNote && <DeletionNoteBanner note={state.deletionNote} onDismiss={() => dispatch({ type: "deletionNote", note: null })} />}
+      {state.deletionNote && <DeletionNoteBanner note={state.deletionNote} onDismiss={() => dispatch({ type: "deletionNote", note: null })} onRetry={() => { void api("/api/deletions/retry", { method: "POST" }).then((response) => dispatch({ type: "deletionOwed", notices: response?.notices, rev: response?.rev })).catch(() => {}); }} />}
 
       {/* Pinned message banner */}
       <PinnedBanner

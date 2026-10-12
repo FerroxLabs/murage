@@ -10,9 +10,10 @@ import { redactSecretsInText } from "../redact.ts";
 import { activateGroundedMemory } from "./automatic-learning.ts";
 import { readMemoryLearning } from "./learning-policy.ts";
 import { threadCheckpointId, unsettledIntention } from "./checkpoints.ts";
-import { sourceIsWithheldMessage } from "./replay-lineage.ts";
+import { prepareLineageCache, sourceIsWithheldMessage } from "./replay-lineage.ts";
 import { enqueueProcedureCorrectionReview } from "./procedure-review.ts";
 import { revokeRecordDisclosures } from "./revocation.ts";
+import { heldStep } from "../observe.ts";
 
 type Handle={sourceId:string;revision:number;startByte:number;endByte:number};
 const hash=(text:string)=>createHash("sha256").update(text).digest("hex");
@@ -49,7 +50,10 @@ function checkpointEvidence(handle:Handle,scopeId:string){
  * Maintains at most four direct original-source references; never summarizes an
  * earlier summary, deletes source evidence, promotes authority, or writes pins.
  */
-export function refreshMemoryCheckpoint(completedJobId:string){
+export function refreshMemoryCheckpoint(completedJobId:string){ return heldStep("memory.checkpoint", () => refreshMemoryCheckpointUnheld(completedJobId)); }
+function refreshMemoryCheckpointUnheld(completedJobId:string){
+  // its evidence is judged inside the transaction: the lineage verdict cache can serve there once it is current
+  prepareLineageCache();
   return transaction(db=>{
     const source=completedSource(completedJobId);
     if(!source.thread_id)return {status:"deferred" as const,reason:"source-has-no-thread"};

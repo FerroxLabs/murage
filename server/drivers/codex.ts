@@ -16,16 +16,22 @@ import { createHash } from "node:crypto";
 import { statSync } from "node:fs";
 import { join } from "node:path";
 import { CRED_FILE_ENV, CRED_SERVER_ENV } from "../turn-credential.ts";
-import { CRED_FILE_PLACEHOLDER, createTurnCredentialStore, splitTurnSecrets, type TurnCredentialStore } from "./turn-credentials.ts";
+import { anyMountIncomplete, clearMountsIncomplete, connectorMountRefsOf, CRED_FILE_PLACEHOLDER, connectorScopeOf, createTurnCredentialStore, splitTurnSecrets, type TurnCredentialStore } from "./turn-credentials.ts";
 import { descendantPids, untrackedDescendants } from "./process-tree.ts";
 import { diffWarmKey, stableJson, warmKey, type WarmKey } from "./warm-key.ts";
 
 import { stripRoutingEnv, stripWorkspaceCredentialEnv } from "../config.ts";
 import { computerProxyEnv } from "../container-computer.ts";
+import { codexIsolationArgs, scopedCodexHome } from "./codex-isolation.ts";
+import { ScopeUnavailableError, scopeLocalFailureOf, withScopeRetry } from "./scoped-cli-home.ts";
+import { awaitScopeStart } from "./scoped-cli-home.ts";
+import { renderDriverReplay } from "../turn-context.ts";
+import { cliSig, knownCliVersion, noteVersionProbe, rememberCliVersion, versionProbeAllowed } from "./isolation-cache.ts";
 import { customMountEntries } from "../custom-mcp-mounts.ts";
 import { codexConfigMcpServerNames, mountedMcpServerNames } from "./codex-mcp-names.ts";
 import { createPrewarmGate, createTurnMemory, spawnInputsOf, TAKEOVER_FAILED_MESSAGE, warmPool, pastWarmMaxAge, spawnedAtOf } from "./warm-pool.ts";
 import { awaitCliTreeStopped, describeSpawnFailure, execCli, killCliTree, spawnCli } from "../procs.ts";
+import { cachedCliVersion } from "../cli-version-cache.ts";
 import { SPAWNED_PROXIES } from "../proxy-paths.ts";
 
 import type {
@@ -41,13 +47,15 @@ import { newEventId, newId } from "../contracts.ts";
 import { decodeCodexSelection, readCodexModelCatalog, STATIC_CODEX_MODELS } from "./codex-catalog.ts";
 import { codexLocalProviderArgs } from "./local-inject.ts";
 import { fluxKey } from "../flux-config.ts";
-import { applyFluxSurface } from "../flux-routing.ts";
+import { applyFluxSurface, FLUX_CODEX_PROVIDER } from "../flux-routing.ts";
+import { codexFluxProviderFor, codexHttpHeaderArgs, fluxMemoryContextForTurn, fluxMemoryDecision, logFluxMemoryHeaders } from "../flux-memory-headers.ts";
 import { fluxIdIsRoutable } from "../flux-surface.ts";
 import { augmentedPath } from "../env-path.ts";
 import { classifyError, computeBackoff, interruptibleDelay, RETRY_MAX_ATTEMPTS } from "./retry.ts";
 import { appendNative } from "./native.ts";
 import { extractMcpImages } from "../mcp-tool-images.ts";
 import { createBoundedLineSplitter, FRAME_TOO_LARGE, frameOverflowMessage } from "./bounded-lines.ts";
+import { registerIntake } from "../harness/intake.ts";
 import {
   codexNoAnswers,
   fromCodex,
@@ -133,6 +141,8 @@ interface Retained {
   conn: Conn;
   /** The conversation loaded in the app-server. */
   codexThreadId: string;
+  /** The bot whose engine home this process runs on. */
+  bot?: string | null;
   closing: boolean;
   idleTimer?: ReturnType<typeof setTimeout>;
   settleCheck?: Promise<void>;
@@ -183,6 +193,12 @@ export const CODEX_MCP_TOOL_TIMEOUT_SEC = 7 * 24 * 60 * 60;
 /** How long Codex waits for a custom stdio server to start (spec 3.6). */
 export const CODEX_CUSTOM_MCP_STARTUP_TIMEOUT_SEC = 60;
 
+/** How long Codex waits for a server Murage mounts itself to start and list its
+ * tools (its default is 10 s). At least twice the connector bridge's absolute
+ * list deadline (8 s), so the bridge's answer, the stand-in included, always
+ * arrives before Codex drops the server from the turn. */
+export const CODEX_MURAGE_MCP_STARTUP_TIMEOUT_SEC = 20;
+
 function mountMcpServer(
   appServerArgs: string[],
   env: Record<string, string | undefined>,
@@ -212,6 +228,7 @@ function mountMcpServer(
   // codex's on-request policy so its tool calls become approval cards.
   if (preApproved) {
     appServerArgs.push("-c", `${prefix}.default_tools_approval_mode="auto"`);
+    appServerArgs.push("-c", `${prefix}.startup_timeout_sec=${CODEX_MURAGE_MCP_STARTUP_TIMEOUT_SEC}`);
   } else {
     // A user's server often downloads what it runs (npx, uvx, docker) on its
     // first turn. Codex gives a server 10 seconds to start unless told
@@ -281,6 +298,27 @@ export const CodexDriver: ProviderDriver<CodexConfig> = {
     // The engine as Settings names this instance, for every line the chat shows.
     const ENGINE = input.displayName?.trim() || "Codex";
     const { instanceId, config } = input;
+    // The Codex version, for the scoped CODEX_HOME gate: probed once per CLI
+    // file, a failing probe retried on a bounded backoff (isolation-cache.ts).
+    let codexVersion = "";
+    let codexVersionSig = "";
+    // `force`: a bot turn's second look after an unknown answer, which does not wait for the backoff.
+    const codexVersionForTurn = async (env: Record<string, string | undefined>, force = false): Promise<string | undefined> => {
+      const sig = cliSig(config.cli, env);
+      if (codexVersion && sig === codexVersionSig) return codexVersion;
+      const known = knownCliVersion(`codex|${config.cli}`, sig);
+      if (known) { codexVersion = known; codexVersionSig = sig; return known; }
+      if (!force && !versionProbeAllowed(`codex|${config.cli}`, sig)) return undefined;
+      const version = await new Promise<string | null>((resolve) => {
+        execCli(config.cli, ["--version"], { timeout: 8000, env }, (err, stdout) => resolve(err ? null : stdout.trim() || null));
+      });
+      noteVersionProbe(`codex|${config.cli}`, sig, Boolean(version));
+      if (!version) return undefined;
+      codexVersion = version;
+      codexVersionSig = sig;
+      rememberCliVersion(`codex|${config.cli}`, sig, version);
+      return version;
+    };
     const childEnv = (): Record<string, string | undefined> => {
       const env: Record<string, string | undefined> = {
         ...process.env,
@@ -374,7 +412,10 @@ export const CodexDriver: ProviderDriver<CodexConfig> = {
       retained.delete(threadId);
       return closeProcess(r, threadId, why);
     };
+    /** > 0 while Murage removes a deleted conversation from the engine's files (holdIdle): nothing is kept idle or warmed. */
+    let idleHeld = 0;
     const armIdle = (threadId: string, r: Retained, hold = false) => {
+      if (idleHeld > 0) { void closeRetained(threadId, "deletion-hold", r); return; }
       if (r.idleTimer) clearTimeout(r.idleTimer);
       r.idleTimer = setTimeout(() => void closeRetained(threadId, "idle", r), SESSION_IDLE_MS);
       r.idleTimer.unref?.();
@@ -383,6 +424,7 @@ export const CodexDriver: ProviderDriver<CodexConfig> = {
         threadId,
         pid: () => r.child.pid,
         spawnedAt: spawnedAtOf(r.child),
+        scope: { kind: "codex", bot: r.bot ?? null },
         background: backgroundThreads.has(threadId),
         hold,
         close: (reason) => void closeRetained(threadId, reason, r),
@@ -511,7 +553,18 @@ export const CodexDriver: ProviderDriver<CodexConfig> = {
         const flux = !turn.providerRoute && fluxIdIsRoutable(turn.model, DRIVER_KIND)
           ? applyFluxSurface(DRIVER_KIND, env, turn.model, fluxKey())
           : null;
+        // Flux Memory: the table this thread starts under. The headers live in
+        // three provider tables declared once in argv (flux-routing.ts), so the
+        // shared app-server is never recycled for an audience change; the warm
+        // key below carries the choice so a change still re-evaluates the thread.
+        const fluxMemory = fluxMemoryDecision(fluxMemoryContextForTurn(turn));
+        const fluxProvider = codexFluxProviderFor(fluxMemory);
         const providerBinding = turn.providerRoute ? applyProviderRoute(DRIVER_KIND, env, turn.providerRoute) : null;
+        // A Flux connection (a named provider route) carries the headers on its own table.
+        if (providerBinding?.modelProvider && turn.providerRoute?.preset === "flux") {
+          providerBinding.args.push(...codexHttpHeaderArgs(providerBinding.modelProvider, fluxMemory.headers));
+          logFluxMemoryHeaders(DRIVER_KIND, fluxMemory);
+        }
         const appServerArgs = [
           "app-server",
           ...(providerBinding ? [] : await codexLocalProviderArgs(env, turn.model)),
@@ -528,6 +581,9 @@ export const CodexDriver: ProviderDriver<CodexConfig> = {
           // floor, exactly as the spec says to. Only set for a Flux turn.
           ...(flux?.applied ? ["-c", `model_context_window=${FLUX_CONTEXT_FLOOR}`] : []),
           ...CODEX_TOOL_SURFACE_ARGS,
+          // Codex's own memories (distilled from past sessions into ~/.codex/memories) cross bots and
+          // people; what a bot remembers is Murage's to fence.
+          "-c", "features.memories=false",
           ...(turn.proposalOnly ? CODEX_PROPOSAL_ARGS : []),
         ];
         // Servers are collected first: per-turn secrets leave their env for the
@@ -608,6 +664,40 @@ export const CodexDriver: ProviderDriver<CodexConfig> = {
           ? splitTurnSecrets(Object.fromEntries(mounts.map((m) => [m.name, m.server])))
           : { stableServers: Object.fromEntries(mounts.map((m) => [m.name, m.server])), secrets: {} };
         for (const m of mounts) mountMcpServer(appServerArgs, env, m.name, stableServers[m.name] as StdioMcpServer, m.preApproved);
+        // The owner's global AGENTS.md / AGENTS.override.md and personal skills
+        // folder out of this app-server: a scoped CODEX_HOME on a proven Codex
+        // (codex-isolation.ts). Set on the child's env only after every read of
+        // the owner's real home above and below (codexHome is resolved first).
+        // A provider route brings its own Codex home; that one is Murage's already.
+        let scopedHome: string | null = null;
+        try {
+          if (!providerBinding) {
+            const preparingId = `preparing-${turnId}`;
+            let preparing = false;
+            try {
+              await awaitScopeStart("codex", () => { preparing = true; emit({ ...base(threadId, turnId), type: "item.started", itemId: preparingId, itemType: "tool", origin: "murage", title: "Preparing Codex..." }); }, ENGINE);
+            } finally {
+              if (preparing) emit({ ...base(threadId, turnId), type: "item.completed", itemId: preparingId, itemType: "tool", ok: true });
+            }
+          }
+          // Fails closed: contention is retried within a bound; a scope that cannot be established rejects the turn before any spawn.
+          // An unknown version is probed once more before the turn is rejected (the owner is told to update Codex).
+          const codexVersion = providerBinding ? undefined : (await codexVersionForTurn(env)) ?? (await codexVersionForTurn(env, true));
+          scopedHome = providerBinding ? null : await withScopeRetry(() => scopedCodexHome(env, codexVersion, turn.warmIdentity?.botId), ENGINE);
+        } catch (error) {
+          if (!(error instanceof ScopeUnavailableError)) throw error;
+          // The turn id is already handed back, so the rejection is the turn's own failure: a structured error the chat words in
+          // the owner's language (localFailure + engine), and no process is started.
+          if (active.get(threadId) === slot) active.delete(threadId);
+          if (attempt === 0) emit({ ...base(threadId, turnId), type: "turn.started" });
+          emit({ ...base(threadId, turnId), type: "runtime.error", message: error.message, localFailure: scopeLocalFailureOf(error), ...(error.engine ? { localFailureEngine: error.engine } : {}) });
+          emit({ ...base(threadId, turnId), type: "turn.completed", ok: false, stopReason: "scope_unavailable", cost: null });
+          endPrewarm(); forgetPrewarm();
+          return;
+        }
+        // The owner's own servers and personal skills off for this app-server (codex-isolation.ts).
+        appServerArgs.push(...codexIsolationArgs(env, declaredInCodexConfig,
+          new Set([...mounts.map((m) => m.name), ...(turn.integrations?.phone ? [CODEX_PHONE_MOUNT] : [])])));
         if (turn.integrations?.phone) {
           const bridge = turn.integrations.phone;
           Object.assign(env, bridge.env);
@@ -627,6 +717,7 @@ export const CodexDriver: ProviderDriver<CodexConfig> = {
         // (provider and Flux keys, mounted servers' env), each MCP server
         // definition, and the argv.
         const digest = (value: unknown) => createHash("sha256").update(stableJson(value)).digest("hex");
+        const mountRefs = connectorMountRefsOf(stableServers, secrets, threadId);
         const warm: WarmKey = warmKey({
           bot: turn.warmIdentity?.botId ?? null,
           thread: threadId,
@@ -637,12 +728,18 @@ export const CodexDriver: ProviderDriver<CodexConfig> = {
           proposalOnly: turn.proposalOnly === true,
           model: turn.model ?? null,
           providerRoute: turn.providerRoute ? [turn.providerRoute.connectionId, turn.providerRoute.revision] : null,
+          fluxMemory: flux?.applied ? fluxProvider : null,
           cwd: turn.cwd ?? homedir(),
           mcp: Object.fromEntries(Object.entries(stableServers).map(([name, server]) => [name, digest(server)])),
+          // the bot's connected-app access: a change relists the tools by recycling
+          connectorScope: connectorScopeOf(secrets),
           env: digest(env),
           settingsRev: codexSettingsRevision(env),
+          // the scope's login generation this process runs on: a new generation never reuses a process on the older one
+          scopeHome: scopedHome,
           args: digest(appServerArgs),
         });
+        if (scopedHome) env.CODEX_HOME = scopedHome;
 
         // Reuse the retained app-server when it is idle, unchanged and holds
         // the conversation the harness wants resumed; otherwise close it and
@@ -661,6 +758,12 @@ export const CodexDriver: ProviderDriver<CodexConfig> = {
           }
           // Headroom for one more engine: evicts an idle one if needed, never refuses.
           if (!live) await warmPool.beforeSpawn();
+          // A prewarm never starts an engine while Murage removes a deleted conversation from the engine's files (holdIdle).
+          if (turn.prewarm && idleHeld > 0 && !live) {
+            if (active.get(threadId) === slot) active.delete(threadId);
+            endPrewarm(); forgetPrewarm();
+            return;
+          }
           if (stopRequested || active.get(threadId) !== slot) {
             if (stopRequested) {
               void closeRetained(threadId, "stop");
@@ -678,7 +781,10 @@ export const CodexDriver: ProviderDriver<CodexConfig> = {
             : live.conn.buffered() > 0 ? "partial-frame"
             : live.child.exitCode !== null || live.child.signalCode !== null ? "process-exited"
             : pastWarmMaxAge(spawnedAtOf(live.child)) ? "max-age"
-            : diffWarmKey(live.warm, warm) ?? (cursorNow && cursorNow !== live.codexThreadId ? "cursor" : null);
+            : diffWarmKey(live.warm, warm) ?? (cursorNow && cursorNow !== live.codexThreadId ? "cursor" : null)
+              // Codex lists a server's tools once: an engine that was handed only the stand-in list is replaced
+              ?? (anyMountIncomplete(mountRefs) ? "connector-mount-incomplete" : null);
+          if (spawnReason !== null && live && !turn.prewarm) clearMountsIncomplete(mountRefs);
           console.info(`codex dispatch thread=${threadId} process=${spawnReason === null ? "reused reason=unchanged" : `spawned reason=${spawnReason}`}`);
           if (turn.prewarm && live) {
             // an engine is already live on this thread: nothing to warm
@@ -726,6 +832,7 @@ export const CodexDriver: ProviderDriver<CodexConfig> = {
           const lines = createBoundedLineSplitter({ onLine: (line) => made.onLine(line), onOverflow: (overflow) => made.onOverflow(overflow) });
           made.buffered = () => lines.bufferedBytes;
           child.stdout.on("data", (chunk: Buffer) => lines.push(chunk));
+          registerIntake(threadId, child.stdout, child);
           return made;
         })();
         const ownsProcess = !reuse;
@@ -888,7 +995,7 @@ export const CodexDriver: ProviderDriver<CodexConfig> = {
       const retain = (complete: () => void) => {
         for (const off of unsubscribe.splice(0)) off();
         const kept: Retained = {
-          child, warm, cred, conn, codexThreadId: codexThreadId!, closing: false,
+          child, warm, cred, conn, codexThreadId: codexThreadId!, closing: false, bot: turn.warmIdentity?.botId ?? null,
           detachIdle: () => {},
         };
         attachIdle(threadId, kept);
@@ -1120,7 +1227,7 @@ export const CodexDriver: ProviderDriver<CodexConfig> = {
             if (state.settled) return;
             const note = backgroundCapNote(backgroundWaitCapMs());
             emit({ ...base(threadId, turnId), type: "content.delta", streamKind: "assistant_text", delta: note });
-            emit({ ...base(threadId, turnId), type: "item.completed", itemType: "assistant_text", text: note });
+            emit({ ...base(threadId, turnId), type: "item.completed", itemType: "assistant_text", origin: "murage", text: note });
             void settle(true, "background_wait_cap");
           }, backgroundWaitCapMs());
           helpers.cap.unref?.();
@@ -1218,7 +1325,7 @@ export const CodexDriver: ProviderDriver<CodexConfig> = {
               const paths = item.changes.map((c: any) => (typeof c?.path === "string" ? c.path : "")).filter(Boolean);
               if (paths.length) fileChangePaths.set(String(item.id), paths);
             }
-            if (title) emit({ ...base(threadId, turnId), type: "item.started", itemType: "tool", itemId: item.id, title, toolIdentity: { name: item.type === "commandExecution" ? "shell" : title }, input: item.arguments });
+            if (title) emit({ ...base(threadId, turnId), type: "item.started", itemType: "tool", origin: "engine", itemId: item.id, title, toolIdentity: { name: item.type === "commandExecution" ? "shell" : title }, input: item.arguments });
             break;
           }
           case "item/completed": {
@@ -1231,11 +1338,11 @@ export const CodexDriver: ProviderDriver<CodexConfig> = {
               if (review.trim()) {
                 state.lastText = review;
                 emit({ ...base(threadId, turnId), type: "content.delta", streamKind: "assistant_text", delta: review });
-                emit({ ...base(threadId, turnId), type: "item.completed", itemType: "assistant_text", text: review });
+                emit({ ...base(threadId, turnId), type: "item.completed", itemType: "assistant_text", origin: "engine", text: review });
               }
             } else if (item.type === "contextCompaction") {
               // /compact: the only visible trace is a finished step.
-              emit({ ...base(threadId, turnId), type: "item.started", itemType: "tool", itemId: item.id, title: "compact" });
+              emit({ ...base(threadId, turnId), type: "item.started", itemType: "tool", origin: "murage", itemId: item.id, title: "compact" });
               emit({ ...base(threadId, turnId), type: "item.completed", itemType: "tool", itemId: item.id, ok: true });
             } else if (item.type === "agentMessage") {
               if (item.text?.trim()) {
@@ -1244,7 +1351,7 @@ export const CodexDriver: ProviderDriver<CodexConfig> = {
                   emit({ ...base(threadId, turnId), type: "content.delta", streamKind: "assistant_text", delta: item.text });
                 }
                 state.sawStreamDelta = false;
-                emit({ ...base(threadId, turnId), type: "item.completed", itemType: "assistant_text", text: item.text });
+                emit({ ...base(threadId, turnId), type: "item.completed", itemType: "assistant_text", origin: "engine", text: item.text });
               }
             } else if (item.type === "imageGeneration" && item.status !== "failed") {
               // Current Codex app-server returns the generated raster as
@@ -1491,7 +1598,7 @@ export const CodexDriver: ProviderDriver<CodexConfig> = {
       if (warmPool.consumeColdWake(threadId)) {
         // the warm engine was released while idle: say so instead of waiting silently
         console.info(`codex wake thread=${threadId} cold=true`);
-        emit({ ...base(threadId, turnId), type: "item.started", itemType: "tool", itemId: `wake-${turnId}`, title: "Waking up: starting a fresh engine after a quiet spell" });
+        emit({ ...base(threadId, turnId), type: "item.started", itemType: "tool", origin: "murage", itemId: `wake-${turnId}`, title: "Waking up: starting a fresh engine after a quiet spell" });
         emit({ ...base(threadId, turnId), type: "item.completed", itemType: "tool", itemId: `wake-${turnId}`, ok: true });
       }
 
@@ -1517,19 +1624,33 @@ export const CodexDriver: ProviderDriver<CodexConfig> = {
           send({ jsonrpc: "2.0", method: "initialized", params: {} });
         }
         const cursor = !reuse && !turn.sessionReset && typeof turn.resumeCursor === "string" ? turn.resumeCursor : null;
+        // The cursor named a thread this app-server's state root does not hold (real Codex 0.162: -32600
+        // "no rollout found for thread id …"; a 1.0.1 or earlier cursor lives in another root): ONE new
+        // thread starts and the conversation the harness sent is replayed into it.
+        let replayHistory = false;
         if (cursor) {
           try {
-            const resumed = await request("thread/resume", { threadId: cursor });
+            // A resumed Flux thread names its table again: the headers belong to the
+            // table, and the audience may have changed since the thread started.
+            const resumeSelection = !providerBinding ? decodeCodexSelection(turn.model) : null;
+            const resumeFlux = flux?.applied && resumeSelection?.modelProvider === FLUX_CODEX_PROVIDER;
+            const resumed = await request("thread/resume", { threadId: cursor, ...(resumeFlux ? { modelProvider: fluxProvider } : {}) });
             if (cancelledBeforeStart()) return;
             codexThreadId = resumed?.thread?.id ?? cursor;
           } catch {
             /* The replacement session has no settled total baseline. */
             settledTotals.delete(threadId);
             baseline = undefined;
+            replayHistory = true;
           }
         }
         if (!codexThreadId) {
           const selection = providerBinding ? { model: providerBinding.model, modelProvider: providerBinding.modelProvider } : decodeCodexSelection(turn.model);
+          // A Flux thread starts under the table whose headers match its audience.
+          if (flux?.applied && !providerBinding && selection.modelProvider === FLUX_CODEX_PROVIDER) {
+            selection.modelProvider = fluxProvider;
+            logFluxMemoryHeaders(DRIVER_KIND, fluxMemory);
+          }
           const started = await request("thread/start", {
             cwd: turn.cwd ?? homedir(),
             model: selection.model,
@@ -1626,9 +1747,13 @@ export const CodexDriver: ProviderDriver<CodexConfig> = {
           if (cancelledBeforeStart()) return;
           if (skill && typeof skill.path === "string") skillInput = { type: "skill", name: skill.name, path: skill.path };
         }
+        const latestText = replayHistory && !command && turn.transcript?.length
+          ? ["[Your previous session could not be restored. Continue from this conversation history:]", "",
+            renderDriverReplay(turn.transcript, turn.replayMetadata), "", "[Latest message:]", turn.text].join("\n")
+          : turn.text;
         const turnText = skillInput
           ? `$${skillInput.name}${command?.args ? ` ${command.args}` : ""}`
-          : turn.system ? `${turn.system}\n\n${turn.text}` : turn.text;
+          : turn.system ? `${turn.system}\n\n${latestText}` : latestText;
         // The engine's own MCP servers are up: take the baseline NOW and wait
         // for it, so nothing this turn launches can become baseline.
         if (conn.baseline === undefined && child.pid) {
@@ -1763,7 +1888,7 @@ export const CodexDriver: ProviderDriver<CodexConfig> = {
    * still runs the warm-key check, so changed settings or MCP config recycle it. */
   const prewarm = async (threadId: string): Promise<boolean> => {
     const mem = lastTurns.get(threadId);
-    if (!mem?.warmIdentity || active.has(threadId) || retained.has(threadId) || !prewarming.begin(threadId)) return false;
+    if (idleHeld > 0 || !mem?.warmIdentity || active.has(threadId) || retained.has(threadId) || !prewarming.begin(threadId)) return false;
     try {
       await sendTurn({ ...mem, prewarm: true, background: false, sessionReset: false });
     } catch {
@@ -1776,11 +1901,8 @@ export const CodexDriver: ProviderDriver<CodexConfig> = {
 
   const snapshot = async (): Promise<ProviderSnapshot> => {
     const env = childEnv();
-    const version = await new Promise<string | null>((resolve) => {
-      execCli(config.cli, ["--version"], { timeout: 8000, env }, (err, stdout) =>
-        resolve(err ? null : stdout.trim()),
-      );
-    });
+    const probed = await cachedCliVersion(config.cli, env, execCli);
+    const version = probed.error ? null : probed.stdout.trim();
     if (!version) return { state: "unavailable", reason: `\`${config.cli}\` CLI not found` };
     const authenticated = await new Promise<boolean>((resolve) => {
       execCli(config.cli, ["login", "status"], { timeout: 8000, env }, (err, stdout, stderr) =>
@@ -1822,6 +1944,21 @@ export const CodexDriver: ProviderDriver<CodexConfig> = {
       },
       sendTurn,
       prewarm,
+      holdIdle: async () => {
+        idleHeld++;
+        let confirmed = true;
+        // A prewarm already starting meets the hold at its spawn, or parks and is closed on the spot (armIdle): let it end first.
+        for (const threadId of [...new Set([...retained.keys(), ...active.keys()])]) {
+          if (prewarming.has(threadId) && !(await prewarming.wait(threadId))) confirmed = false;
+        }
+        // An engine whose shutdown is not confirmed (false) is not idle: its files stay alone.
+        const closed = await Promise.all([...retained.keys()].filter((threadId) => !active.has(threadId)).map((threadId) => closeRetained(threadId, "deletion-hold")));
+        if (closed.some((ok) => ok === false)) confirmed = false;
+        // A close still in flight, or a process that would not stop, means the engine may still be writing: not idle.
+        if (!(await drainClosing()) || stuck.size > 0 || closingProcs.size > 0) confirmed = false;
+        let released = false;
+        return { confirmed, release: () => { if (!released) { released = true; idleHeld = Math.max(0, idleHeld - 1); } } };
+      },
       interruptTurn: async (threadId) => {
         // a process that survived an earlier Stop is retried here, and Stop reports failure until it is gone
         if (!active.has(threadId) && (!(await closeRetained(threadId, "stop")) || !(await retryStuck(threadId)))) throw new Error("codex shutdown is still pending; the process remains owned");

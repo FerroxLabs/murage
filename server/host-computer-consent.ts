@@ -20,7 +20,7 @@
 // `resolveHostComputerConsent` before forwarding anything to a provider.
 import { newId } from "./contracts.ts";
 import { botUsesHostComputer } from "./local-routing.ts";
-import type { ApprovalBus } from "./peer-approval.ts";
+import { dismissStaleToolCards, type ApprovalBus } from "./peer-approval.ts";
 import type { BotRecord } from "./store.ts";
 
 /** The card's tool identity. Never a real tool: nothing can grant it. */
@@ -220,26 +220,9 @@ export function cancelHostComputerConsentFor(botId: string): void {
 
 /** Cards left open on disk by a previous run can never be answered; settle
  *  them at boot so they do not hold a composer. */
-export function dismissStaleHostConsentCards(bus: ApprovalBus): number {
-  let dismissed = 0;
-  const threadIds = new Set<string>();
-  for (const bot of bus.store.bots) {
-    threadIds.add(bot.threadId);
-    for (const task of bot.tasks ?? []) threadIds.add(task.threadId);
-  }
-  for (const group of bus.store.groups) {
-    threadIds.add(group.threadId);
-    for (const task of group.tasks ?? []) threadIds.add(task.threadId);
-  }
+export function dismissStaleHostConsentCards(bus: ApprovalBus, range?: { after: number; upTo: number } | "indexed", owned?: ReadonlySet<string>): number {
   const open = new Set([...pendingByBot.values()].map((pending) => pending.requestId));
-  for (const threadId of threadIds) {
-    for (const message of bus.store.messagesFor(threadId)) {
-      const card = message.card;
-      if (card?.tool !== HOST_CONSENT_TOOL || !card.requestId || card.answered || card.dismissed || open.has(card.requestId)) continue;
-      if (bus.store.patchMessage(threadId, message.id, { card: { ...card, answered: "deny", dismissed: true } })) dismissed += 1;
-    }
-  }
-  return dismissed;
+  return dismissStaleToolCards(bus, [HOST_CONSENT_TOOL], (card) => !card.requestId || open.has(card.requestId), range, owned);
 }
 
 /** What the bot's tool call returns when it may not act. */

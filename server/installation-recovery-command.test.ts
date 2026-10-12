@@ -8,7 +8,11 @@ import { DatabaseSync } from "node:sqlite";
 import { afterEach, expect, it } from "vitest";
 import { acquireDataDirLease } from "../electron/data-dir-lease.mjs";
 import { assertRestoreReviewed } from "../electron/restore-review.mjs";
-import { MEMORY_SCHEMA_V1, migrateMemorySchema } from "./memory/schema.ts";
+import { MEMORY_SCHEMA_V1, MEMORY_SCHEMA_VERSION, migrateMemorySchema } from "./memory/schema.ts";
+import { finishRevocationIndexAtStartup } from "./memory/revocation-index.ts";
+import { initializePendingDelegations } from "./pending-delegations-schema.ts";
+import { initializeOwnerDeletions } from "./owner-deletions.ts";
+import { haveV101, V101 } from "./testing/pm-sends-v101.ts";
 const exec = promisify(execFile);
 const cli = fileURLToPath(new URL("../scripts/installation-recovery.ts", import.meta.url));
 const roots: string[] = [];
@@ -112,7 +116,7 @@ it("downgrades a stopped installation's memory schema to v1 and refuses a runnin
   expect(running.stderr).toContain("LEASE");
   const first = await run(["memory-downgrade", "--data-dir", f.data]);
   expect(first.stdout + first.stderr).not.toContain("never-print-this-canary");
-  expect(JSON.parse(first.stdout)).toEqual({ ok: true, operation: "memory-downgrade", status: "downgraded", from: 6, to: 1 });
+  expect(JSON.parse(first.stdout)).toEqual({ ok: true, operation: "memory-downgrade", status: "downgraded", from: 9, to: 1 });
   expect(JSON.parse((await run(["memory-downgrade", "--data-dir", f.data])).stdout)).toMatchObject({ ok: true, status: "already-v1" });
   const check = new DatabaseSync(file);
   try {
@@ -123,8 +127,66 @@ it("downgrades a stopped installation's memory schema to v1 and refuses a runnin
   expect(() => acquireDataDirLease(f.data).release()).not.toThrow();
 });
 
-it.each([2,3])("supports a stopped-installation downgrade to v%s",async to=>{
+it.each([2,3,6,8])("supports a stopped-installation downgrade to v%s",async to=>{
  const f=fixture(),db=new DatabaseSync(join(f.data,"messages.db"));migrateMemorySchema(db);db.close();
  const result=await run(["memory-downgrade","--data-dir",f.data,"--to",String(to)]);
- expect(JSON.parse(result.stdout)).toMatchObject({status:"downgraded",from:6,to});
+ expect(JSON.parse(result.stdout)).toMatchObject({status:"downgraded",from:9,to});
+});
+
+// "Prepare to reinstall Murage 1.0.1" (electron/main.mjs) runs memory-downgrade --to 6, because the 1.0.1 tag (d950cbf67)
+// has MEMORY_SCHEMA_VERSION 6 and refuses anything newer. 1.0.2 is v9, so the step traverses v8 (the cold-lineage indexes), v7 and the v8 revocation index.
+it("the reinstall-1.0.1 downgrade leaves a file at exactly the version 1.0.1 reads, with the 1.0.2-only objects gone and the data kept", async () => {
+  const f = fixture(), file = join(f.data, "messages.db");
+  const db = new DatabaseSync(file);
+  db.exec("PRAGMA journal_mode=WAL; PRAGMA foreign_keys=ON; CREATE TABLE messages(thread_id TEXT NOT NULL,id TEXT NOT NULL,at INTEGER NOT NULL,role TEXT NOT NULL,kind TEXT NOT NULL,text TEXT,json TEXT NOT NULL,PRIMARY KEY(thread_id,id));");
+  migrateMemorySchema(db, "active");
+  db.exec("INSERT INTO memory_scopes VALUES('w','workspace','owner','[]',0)");
+  db.exec("INSERT INTO messages VALUES('t','m',1,'user','text','kept chat','{}')");
+  // the 1.0.2 application objects 1.0.1 does not know (hand-off queue, deletion records) leave with the memory objects
+  initializePendingDelegations(db); initializeOwnerDeletions(db);
+  db.exec("INSERT INTO pending_delegations(id, source_thread_id, to_bot_id, from_bot_id, phase, retry_at, item) VALUES('h1','t','peer','sender','fresh',NULL,'{\"toBotId\":\"peer\",\"message\":\"m\",\"depth\":0,\"attempts\":0}')");
+  // a finished 1.0.2 start: every receipt indexed, lookup index built, ready flag set
+  finishRevocationIndexAtStartup(db);
+  expect(db.prepare("SELECT ready FROM memory_revocation_index_build").get()?.ready).toBe(1);
+  expect(db.prepare("SELECT schema_version FROM memory_meta").get()?.schema_version).toBe(MEMORY_SCHEMA_VERSION);
+  const objectsBefore = (db.prepare("SELECT name FROM sqlite_schema").all() as Array<{ name: string }>).map(row => row.name);
+  db.close();
+  const first = JSON.parse((await run(["memory-downgrade", "--data-dir", f.data, "--to", "6"])).stdout);
+  expect(first).toEqual({ ok: true, operation: "memory-downgrade", status: "downgraded", from: MEMORY_SCHEMA_VERSION, to: 6, handoffs: 1, handoffsStarted: 0 });
+  expect(JSON.parse((await run(["memory-downgrade", "--data-dir", f.data, "--to", "6"])).stdout)).toMatchObject({ status: "already-v6", from: 6, to: 6 });
+  const check = new DatabaseSync(file);
+  try {
+    // 1.0.1 checks schema_version <= 6 (MEMORY_SCHEMA_NEWER otherwise) and validates its own shape
+    expect(check.prepare("SELECT schema_version FROM memory_meta").get()?.schema_version).toBe(6);
+    const names = new Set((check.prepare("SELECT name FROM sqlite_schema").all() as Array<{ name: string }>).map(row => row.name));
+    // every memory object this build creates that the real 1.0.1 (git archive d950cbf67, the same migration run by its own code) does not, plus the revocation
+    // lookup index: computed, not listed by hand. Without the extracted 1.0.1 the list that was checked against it is used.
+    let gone = ["memory_disclosure_refs", "memory_disclosure_refs_bundle", "memory_disclosure_refs_ref", "memory_disclosure_refs_delete", "memory_disclosure_refs_insert", "memory_disclosure_refs_update",
+      "memory_disclosures_state", "memory_revocation_index_build", "memory_root_set_compaction", "memory_root_set_parents", "memory_root_set_parents_parent", "memory_session_roots_set"];
+    if (haveV101) {
+      const specifier = join(V101, "server", "memory", "schema.ts");
+      const old101 = await import(/* @vite-ignore */ specifier) as { migrateMemorySchema(db: DatabaseSync, mode?: "active"): unknown };
+      const reference = new DatabaseSync(":memory:");
+      try {
+        reference.exec("CREATE TABLE messages(thread_id TEXT NOT NULL,id TEXT NOT NULL,at INTEGER NOT NULL,role TEXT NOT NULL,kind TEXT NOT NULL,text TEXT,json TEXT NOT NULL,PRIMARY KEY(thread_id,id));");
+        old101.migrateMemorySchema(reference, "active");
+        const known = new Set((reference.prepare("SELECT name FROM sqlite_schema").all() as Array<{ name: string }>).map(row => row.name));
+        gone = objectsBefore.filter(name => name.startsWith("memory_") && !known.has(name));
+      } finally { reference.close(); }
+      expect(gone.length).toBeGreaterThan(5);
+      expect(gone).toContain("memory_revocation_index_build");
+    }
+    for (const name of gone) expect(names.has(name), name).toBe(false);
+    expect(check.prepare("SELECT text FROM messages").get()?.text).toBe("kept chat");
+    // none of the application objects 1.0.1 does not know remain, and the waiting hand-off went back to the file 1.0.1 reads
+    for (const gone of ["pending_delegations", "pending_delegations_import", "owner_deleted_threads", "pd_thread", "pd_started"]) expect(names.has(gone), gone).toBe(false);
+    expect(JSON.parse(readFileSync(join(f.data, "delegations.json"), "utf8"))).toEqual({ t: [expect.objectContaining({ id: "h1", toBotId: "peer" })] });
+  } finally { check.close(); }
+  // the next 1.0.2 start brings the derived objects back
+  const again = new DatabaseSync(file);
+  try {
+    migrateMemorySchema(again);
+    expect(again.prepare("SELECT schema_version FROM memory_meta").get()?.schema_version).toBe(MEMORY_SCHEMA_VERSION);
+    expect(again.prepare("SELECT count(*) n FROM sqlite_schema WHERE name='memory_revocation_index_build'").get()?.n).toBe(1);
+  } finally { again.close(); }
 });
