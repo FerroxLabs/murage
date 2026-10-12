@@ -1,3 +1,4 @@
+import { RoutineSchedulerNotice, useRoutineSchedulerLate } from "./RoutineSchedulerNotice";
 import { RoutineVersionHistory } from "./ProcedureVersionHistory";
 import {
   useCallback,
@@ -152,6 +153,12 @@ function roomCanRunGoal(group: Group): boolean {
  * channel whose setup was never finished is left out of the list, so the
  * sentence names it rather than telling the person to create a channel that
  * is already in their sidebar (0.1.60 low). */
+async function loadSchedulerLate(): Promise<boolean> {
+  const now = Date.now();
+  const response = await api(`/api/routines?from=${now}&to=${now}`);
+  return response?.scheduler?.stalled === true;
+}
+
 export function goalChannelHint(groups: Group[]): string {
   const waiting = groups.filter((group) => !group.dm && !group.hidden && !roomCanRunGoal(group)).map((group) => group.name);
   if (!waiting.length) return "Create a channel from the sidebar first, then come back to schedule its goal.";
@@ -1535,6 +1542,8 @@ export function RoutinesPage({ onBack, onOpenRoom }: { onBack: () => void; onOpe
     }
   }, []);
   useEffect(() => { void loadCalls(); }, [loadCalls]);
+  // The scheduler's own health: shown while it is behind, cleared by the next good check.
+  const schedulerLate = useRoutineSchedulerLate(loadSchedulerLate);
   useEffect(() => { backButtonRef.current?.focus({ preventScroll: true }); }, []);
 
   const items = useMemo<CalendarEventItem[]>(() => {
@@ -1656,6 +1665,7 @@ export function RoutinesPage({ onBack, onOpenRoom }: { onBack: () => void; onOpe
           <div className="min-w-[220px] px-2 text-[15px] font-medium text-ink">{calendarRangeLabel(rangeStart, viewDays)}</div>
           <div className="ml-auto flex items-center gap-2" style={windowNoDragStyle}>
             {running > 0 && <span className="hidden items-center gap-1.5 rounded-full bg-accent/10 px-2.5 py-1.5 text-[10.5px] text-accent sm:flex"><Loader2 size={11} className="animate-spin" />{running} active</span>}
+            <RoutineSchedulerNotice late={schedulerLate} />
             {unseenFailures > 0 && <button type="button" onClick={() => setProblemsOpen(true)} aria-label="Show routine problems" title="Show routine problems" className="hidden items-center gap-1.5 rounded-full bg-danger/10 px-2.5 py-1.5 text-[10.5px] text-danger hover:bg-danger/15 sm:flex"><CircleAlert size={11} />{unseenFailures}</button>}
             {paused.length > 0 && <button onClick={() => setPausedOpen(true)} aria-label={`Paused routines (${paused.length})`} className="hidden items-center gap-1.5 rounded-full border border-hairline/50 px-2.5 py-1.5 text-[10.5px] text-ink-secondary hover:bg-raised sm:flex"><Pause size={11} />{paused.length}</button>}
             <select value={botFilter} onChange={(event) => setBotFilter(event.target.value)} className="hidden rounded-lg border border-hairline/50 bg-panel px-2.5 py-2 text-[11.5px] text-ink outline-none focus:border-accent sm:block"><option value="all">All bots</option>{visibleBots.map((bot) => <option key={bot.id} value={bot.id}>{bot.name}</option>)}</select>

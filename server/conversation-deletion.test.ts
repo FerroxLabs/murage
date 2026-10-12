@@ -1,11 +1,13 @@
 // Copyright 2026 Ferrox Labs
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import { spawn } from "node:child_process";
-import { chmodSync, existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { monitorEventLoopDelay } from "node:perf_hooks";
+import { chmodSync, existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, statSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path, { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
-import { afterAll, describe, expect, it } from "vitest";
+import { afterAll, afterEach, describe, expect, it, vi } from "vitest";
+import { engineHistoryTestHooks, runEngineHistoryOffThread } from "./engine-history-offthread.ts";
 
 import {
   ConversationDeletions,
@@ -502,7 +504,7 @@ describe("ConversationDeletions", () => {
     const db = messagesDb(data);
     const desk = readOnlyDesk(data, THREAD);
     const deletions = new ConversationDeletions({ dataDir: data, database: () => db });
-    const report = deletions.finish(deletions.begin({ threadIds: [THREAD] }));
+    const report = await deletions.finish(deletions.begin({ threadIds: [THREAD] }));
     expect(report.failed).toEqual([]);
     expect(existsSync(desk)).toBe(false);
     expect(deletions.pending()).toEqual([]);
@@ -525,14 +527,256 @@ describe("ConversationDeletions", () => {
     expect(existsSync(join(outside, "keep.txt"))).toBe(true);
   });
 
-  it("ignores ids that are not plain ids", () => {
+  it("ignores ids that are not plain ids", async () => {
     const data = fresh("data");
     const db = messagesDb(data);
     touch(join(data, "bots.json"), "{}");
     const deletions = new ConversationDeletions({ dataDir: data, database: () => db });
     const entry = deletions.begin({ threadIds: ["../bots", ".."] });
     expect(entry.threadIds).toEqual([]);
-    deletions.finish({ ...entry, threadIds: ["../bots"], desks: [{ botId: "..", threadId: "../x" }], attachments: ["../bots.json"], artifactBlobs: ["../bots.json"] });
+    await deletions.finish({ ...entry, threadIds: ["../bots"], desks: [{ botId: "..", threadId: "../x" }], attachments: ["../bots.json"], artifactBlobs: ["../bots.json"] });
     expect(existsSync(join(data, "bots.json"))).toBe(true);
+  });
+});
+
+// 1.0.2: the engines' own files are rewritten in a worker thread, one deletion at a time, and a job that cannot finish keeps
+// the pending record so the next start runs it again.
+describe("engine history off the main thread", () => {
+  const unhandled: unknown[] = [];
+  const onUnhandled = (reason: unknown) => { unhandled.push(reason); };
+  afterEach(() => { process.off("unhandledRejection", onUnhandled); for (const key of Object.keys(engineHistoryTestHooks)) delete (engineHistoryTestHooks as Record<string, unknown>)[key]; });
+
+  it("a worker that dies mid-job fails every home, keeps the pending record and raises no rejection", async () => {
+    process.on("unhandledRejection", onUnhandled);
+    const data = fresh("data"), claudeHome = fresh("claude"), dir = fresh("silent");
+    const db = messagesDb(data);
+    const desk = join(data, "workspaces", BOT, "threads", THREAD);
+    touch(join(desk, "a.md"));
+    touch(join(claudeHome, "projects", desk.replace(/[^a-zA-Z0-9]/g, "-"), "s1.jsonl"), `${JSON.stringify({ type: "user", cwd: desk })}\n`);
+    const silent = join(dir, "silent-worker.mjs");
+    writeFileSync(silent, 'import { parentPort } from "node:worker_threads"; parentPort.once("message", () => { setInterval(() => {}, 1000); });\n');
+    engineHistoryTestHooks.workerPath = silent;
+    engineHistoryTestHooks.onWorker = (worker) => { setTimeout(() => { void worker.terminate(); }, 100); };
+    const deletions = new ConversationDeletions({ dataDir: data, database: () => db });
+    const { report } = await runConversationDeletion(deletions, { threadIds: [THREAD], engineHomes: [{ engine: "claude", home: claudeHome }] }, () => true);
+    expect(report.failed).toEqual([claudeHome]);
+    expect(deletions.pending()).toHaveLength(1);
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    expect(unhandled).toEqual([]);
+    // the boot retry, on a healthy worker, finishes it
+    for (const key of Object.keys(engineHistoryTestHooks)) delete (engineHistoryTestHooks as Record<string, unknown>)[key];
+    expect(await new ConversationDeletions({ dataDir: data, database: () => db }).reconcile(() => false, () => {})).toBe(1);
+    expect(existsSync(join(claudeHome, "projects", desk.replace(/[^a-zA-Z0-9]/g, "-")))).toBe(false);
+  });
+
+  it("a worker that cannot be started does NOT run the removal on the calling thread: the job fails with a reason and the files are untouched", async () => {
+    const claudeHome = fresh("claude"), desk = join(fresh("data"), "workspaces", BOT, "threads", THREAD);
+    const project = join(claudeHome, "projects", desk.replace(/[^a-zA-Z0-9]/g, "-"));
+    touch(join(project, "s1.jsonl"), `${JSON.stringify({ type: "user", cwd: desk })}\n`);
+    const result = await runEngineHistoryOffThread({ homes: [{ engine: "claude", home: claudeHome }], folders: [desk], memoryFolders: [], sessions: {} }, { workerPath: join(fresh("nowhere"), "missing-worker.mjs"), createWorker: () => { throw new Error("no thread"); } });
+    expect(result.failed).toEqual([claudeHome]);
+    expect(result.homeReasons).toEqual({ [`claude\0${claudeHome}`]: "worker-unavailable" });
+    expect(existsSync(project)).toBe(true);
+  });
+
+  it("rewrites a 100 MB Fuigo search index in a worker thread while the main loop stays free", async () => {
+    const data = fresh("data"), fuigoHome = fresh("fuigo"), db = messagesDb(data);
+    const desk = join(data, "workspaces", BOT, "threads", THREAD);
+    touch(join(desk, "a.md"));
+    const index = join(fuigoHome, "sessions", "session_search.sqlite");
+    const rows = Array.from({ length: 40 }, (_, i) => ({ id: i === 0 ? "gone-1" : `kept-${i}`, cwd: i === 0 ? desk : `/w/threads/${i}`, title: `t${i}`, content: i === 0 ? "first draft quetzalmarmot" : "x" }));
+    const seeded = fuigoSearchIndex(index, rows);
+    seeded.exec("BEGIN");
+    const bulk = seeded.prepare("UPDATE session_docs SET content = ? WHERE session_id = ?");
+    for (let i = 1; i < 40; i++) bulk.run(Array.from({ length: 2600 }, (_, j) => `w${(i * 7919 + j * 104729) % 99991}`).join(" ").repeat(150).slice(0, 2_600_000), `kept-${i}`);
+    seeded.exec("COMMIT");
+    seeded.exec("PRAGMA wal_checkpoint(TRUNCATE)");
+    seeded.close();
+    expect(statSync(index).size).toBeGreaterThan(100 * 1024 * 1024);
+    let threadId = -1;
+    engineHistoryTestHooks.onWorker = (worker) => { threadId = worker.threadId; };
+    const histogram = monitorEventLoopDelay({ resolution: 5 });
+    histogram.enable();
+    const deletions = new ConversationDeletions({ dataDir: data, database: () => db });
+    touch(join(fuigoHome, "sessions", rustUrlEncode(desk), "s1", "chat_history.jsonl"));
+    const { report } = await runConversationDeletion(deletions, { threadIds: [THREAD], engineHomes: [{ engine: "fuigo", home: fuigoHome }] }, () => true);
+    histogram.disable();
+    expect(report.failed).toEqual([]);
+    expect(threadId).toBeGreaterThan(0); // it ran in a worker thread, not the main one (thread id 0)
+    expect(histogram.max / 1e6).toBeLessThan(50);
+    expect(fileHas(index, "quetzalmarmot")).toBe(false);
+  }, 180_000);
+
+  it("two deletions at once run one after the other, and both rewrites of the shared history survive", async () => {
+    const data = fresh("data"), codexHome = fresh("codex"), db = messagesDb(data);
+    const second = "thread-two";
+    const tidA = "019a0000-aaaa-7bbb-8ccc-00000000000a", tidB = "019a0000-aaaa-7bbb-8ccc-00000000000b";
+    const deskA = join(data, "workspaces", BOT, "threads", THREAD), deskB = join(data, "workspaces", BOT, "threads", second);
+    touch(join(deskA, "a.md")); touch(join(deskB, "b.md"));
+    for (const [tid, desk] of [[tidA, deskA], [tidB, deskB]]) touch(join(codexHome, "sessions", "2026", "09", "25", `rollout-2026-09-25T10-00-00-${tid}.jsonl`), `${JSON.stringify({ type: "session_meta", payload: { id: tid, cwd: desk } })}\n`);
+    const lines = (n: number) => Array.from({ length: n }, (_, i) => [JSON.stringify({ session_id: tidA, ts: i, text: `a${i}` }), JSON.stringify({ session_id: tidB, ts: i, text: `b${i}` }), JSON.stringify({ session_id: "other", ts: i, text: `k${i}` })].join("\n")).join("\n") + "\n";
+    touch(join(codexHome, "history.jsonl"), lines(2000));
+    const deletions = new ConversationDeletions({ dataDir: data, database: () => db });
+    const run = (id: string) => runConversationDeletion(deletions, { threadIds: [id], engineHomes: [{ engine: "codex", home: codexHome }] }, () => true);
+    const [one, two] = await Promise.all([run(THREAD), run(second)]);
+    expect(one.report.failed).toEqual([]); expect(two.report.failed).toEqual([]);
+    const history = readFileSync(join(codexHome, "history.jsonl"), "utf8");
+    expect(history).not.toMatch(/"text":"[ab]\d/); // the words of both conversations are gone (their ids stay: an id is not their words)
+    expect(history).toContain(tidA); expect(history).toContain(tidB);
+    const rows = history.split("\n").filter(Boolean);
+    expect(rows).toHaveLength(6000); // the rows of the two conversations are blanked in place, not cut
+    for (const row of rows) expect(() => JSON.parse(row)).not.toThrow();
+    expect(rows.filter((row) => row.includes('"other"'))).toHaveLength(2000); // the bystander's rows are all there
+  }, 60_000);
+});
+
+// r9: what an interrupted or incomplete engine cleanup must not lose, and what must not count as done.
+describe("engine cleanup survives an interruption and is never reported done while text remains (r9)", () => {
+  afterEach(() => {
+    for (const key of Object.keys(engineHistoryTestHooks)) delete (engineHistoryTestHooks as Record<string, unknown>)[key];
+  });
+  const noRows = () => undefined;
+
+  it("finding 1 (Codex): a history rewrite that fails after the rollouts are gone is finished by the replay from the saved thread ids", async () => {
+    const data = fresh("data"), codexHome = fresh("codex"), sqliteHome = fresh("codex-sql"), db = messagesDb(data);
+    const tid = "019a0000-aaaa-7bbb-8ccc-0000000000c1";
+    const desk = join(data, "workspaces", BOT, "threads", THREAD);
+    touch(join(desk, "a.md"));
+    const rollout = join(codexHome, "sessions", "2026", "09", "25", `rollout-2026-09-25T10-00-00-${tid}.jsonl`);
+    touch(rollout, `${JSON.stringify({ type: "session_meta", payload: { id: tid, cwd: desk } })}\n`);
+    touch(join(codexHome, "history.jsonl"), `${JSON.stringify({ session_id: tid, text: "private-codex-words" })}\n${JSON.stringify({ session_id: "other", text: "keep" })}\n`);
+    const state = new DatabaseSync(join(sqliteHome, "state_1.sqlite"));
+    state.exec("PRAGMA journal_mode=WAL; CREATE TABLE threads(id TEXT, title TEXT); CREATE TABLE logs(thread_id TEXT, body TEXT);");
+    state.prepare("INSERT INTO threads VALUES(?,?)").run(tid, "private-codex-title");
+    state.prepare("INSERT INTO logs VALUES(?,?)").run(tid, "private-codex-log");
+    state.close();
+    const deletions = new ConversationDeletions({ dataDir: data, database: () => db, retryDelaysMs: [] });
+    chmodSync(join(codexHome, "history.jsonl"), 0o444); // history.jsonl cannot be opened for writing, after the rollouts are removed
+    try {
+      const { report } = await runConversationDeletion(deletions, { threadIds: [THREAD], engineHomes: [{ engine: "codex", home: codexHome, sqliteHome }] }, () => true);
+      expect(report.failed).toContain(join(codexHome, "history.jsonl"));
+    } finally { chmodSync(join(codexHome, "history.jsonl"), 0o644); }
+    expect(existsSync(rollout)).toBe(false); // the thread id can no longer be found by looking
+    const [saved] = deletions.pending();
+    expect(saved).toBeDefined();
+    expect(Object.values(saved!.engineDiscovery ?? {}).some((home) => home.threadIds?.includes(tid))).toBe(true);
+    expect(await new ConversationDeletions({ dataDir: data, database: () => db, retryDelaysMs: [] }).reconcile(() => false, noRows)).toBe(1);
+    expect(readFileSync(join(codexHome, "history.jsonl"), "utf8")).not.toContain("private-codex-words");
+    expect(readFileSync(join(codexHome, "history.jsonl"), "utf8")).toContain("keep");
+    const after = new DatabaseSync(join(sqliteHome, "state_1.sqlite"));
+    expect(after.prepare("SELECT count(*) AS n FROM threads").get()?.n).toBe(0);
+    expect(after.prepare("SELECT count(*) AS n FROM logs").get()?.n).toBe(0);
+    after.close();
+    expect(fileHas(join(sqliteHome, "state_1.sqlite"), "private-codex-title")).toBe(false);
+    expect(new ConversationDeletions({ dataDir: data, database: () => db }).pending()).toEqual([]);
+  });
+
+  it("finding 1 (Fuigo): session folders removed before the shared log is scrubbed; the replay still scrubs it by the saved session ids", async () => {
+    const data = fresh("data"), fuigoHome = fresh("fuigo"), db = messagesDb(data);
+    const desk = join(data, "workspaces", BOT, "threads", THREAD);
+    touch(join(desk, "a.md"));
+    touch(join(fuigoHome, "sessions", fuigoSessionKey(desk), "s-private-1", "chat_history.jsonl"));
+    const log = join(fuigoHome, "logs", "unified.jsonl");
+    touch(log, `${JSON.stringify({ sid: "s-private-1", text: "private-fuigo-words" })}\n${JSON.stringify({ sid: "s-other", text: "keep" })}\n`);
+    const index = join(fuigoHome, "sessions", "session_search.sqlite");
+    const seeded = fuigoSearchIndex(index, [{ id: "s-private-1", cwd: desk, title: "t", content: "private-fuigo-index" }, { id: "s-other", cwd: "/w/x", title: "k", content: "keep" }]);
+    seeded.exec("PRAGMA wal_checkpoint(TRUNCATE)"); seeded.close();
+    const deletions = new ConversationDeletions({ dataDir: data, database: () => db, retryDelaysMs: [] });
+    chmodSync(log, 0o444); // the in-place scrub of the shared log cannot open it for writing
+    try {
+      const { report } = await runConversationDeletion(deletions, { threadIds: [THREAD], engineHomes: [{ engine: "fuigo", home: fuigoHome }] }, () => true);
+      expect(report.failed).toEqual([log]);
+    } finally { chmodSync(log, 0o644); }
+    expect(existsSync(join(fuigoHome, "sessions", fuigoSessionKey(desk)))).toBe(false);
+    expect(await new ConversationDeletions({ dataDir: data, database: () => db, retryDelaysMs: [] }).reconcile(() => false, noRows)).toBe(1);
+    expect(readFileSync(log, "utf8")).not.toContain("private-fuigo-words");
+    expect(readFileSync(log, "utf8")).toContain("keep");
+    expect(fileHas(index, "private-fuigo-index")).toBe(false);
+  });
+
+  it("finding 1 (Hermes): child sessions whose rows are already gone still have their transcripts removed on the replay", async () => {
+    const data = fresh("data"), hermesHome = fresh("hermes"), db = messagesDb(data);
+    const desk = join(data, "workspaces", BOT, "threads", THREAD);
+    touch(join(desk, "a.md"));
+    const parent = "parent-session-0001", child = "child-session-00002";
+    const state = new DatabaseSync(join(hermesHome, "state.db"));
+    state.exec("PRAGMA journal_mode=WAL; CREATE TABLE sessions(id TEXT PRIMARY KEY, parent_session_id TEXT); CREATE TABLE messages(session_id TEXT, content TEXT);");
+    state.prepare("INSERT INTO sessions VALUES(?,?)").run(parent, null);
+    state.prepare("INSERT INTO sessions VALUES(?,?)").run(child, parent);
+    state.prepare("INSERT INTO messages VALUES(?,?)").run(child, "private-hermes-child-words");
+    state.close();
+    touch(join(hermesHome, "sessions", `${parent}.json`)); touch(join(hermesHome, "sessions", `${child}.jsonl`), "private-hermes-child-words");
+    const deletions = new ConversationDeletions({ dataDir: data, database: () => db, retryDelaysMs: [] });
+    chmodSync(join(hermesHome, "sessions"), 0o555); // transcripts cannot be unlinked after the rows are deleted
+    try {
+      const { report } = await runConversationDeletion(deletions, { threadIds: [THREAD], engineHomes: [{ engine: "hermes", home: hermesHome }], sessionIds: { hermesAgent: [parent] } }, () => true);
+      expect(report.failed.length).toBeGreaterThan(0);
+    } finally { chmodSync(join(hermesHome, "sessions"), 0o755); }
+    const rows = new DatabaseSync(join(hermesHome, "state.db"));
+    expect(rows.prepare("SELECT count(*) AS n FROM sessions").get()?.n).toBe(0); // the child can no longer be found in the database
+    rows.close();
+    expect(await new ConversationDeletions({ dataDir: data, database: () => db, retryDelaysMs: [] }).reconcile(() => false, noRows)).toBe(1);
+    expect(existsSync(join(hermesHome, "sessions", `${parent}.json`))).toBe(false);
+    expect(existsSync(join(hermesHome, "sessions", `${child}.jsonl`))).toBe(false);
+  });
+
+  it("finding 2 (Fuigo): an engine reader that pins the log keeps the deletion unfinished; the record stays and a bounded retry finishes it", async () => {
+    const data = fresh("data"), fuigoHome = fresh("fuigo"), db = messagesDb(data);
+    const desk = join(data, "workspaces", BOT, "threads", THREAD);
+    touch(join(desk, "a.md"));
+    const index = join(fuigoHome, "sessions", "session_search.sqlite");
+    const seeded = fuigoSearchIndex(index, [{ id: "gone-1", cwd: desk, title: "t", content: MARKER_TEXT }, { id: "kept-1", cwd: "/w/x", title: "k", content: "keep" }]);
+    seeded.exec("PRAGMA wal_checkpoint(TRUNCATE)"); seeded.close();
+    const reader = new DatabaseSync(index); // the engine's own connection, mid-read
+    reader.exec("BEGIN"); reader.prepare("SELECT count(*) FROM session_docs").get();
+    const deletions = new ConversationDeletions({ dataDir: data, database: () => db, retryDelaysMs: [150, 150, 150, 150, 150, 150] });
+    try {
+      const { report } = await runConversationDeletion(deletions, { threadIds: [THREAD], engineHomes: [{ engine: "fuigo", home: fuigoHome }] }, () => true);
+      expect(report.failed).toEqual([index]); // not a successful deletion
+      expect(deletions.pending()).toHaveLength(1);
+      expect(fileHas(index, MARKER_TEXT)).toBe(true); // it really is still readable in the log
+    } finally { reader.exec("COMMIT"); reader.close(); }
+    await vi.waitFor(() => expect(deletions.pending()).toEqual([]), { timeout: 10_000 });
+    expect(fileHas(index, MARKER_TEXT)).toBe(false);
+    deletions.dispose();
+  });
+
+  it("finding 2 (ACP engine database): a log that cannot be checkpointed is reported failed, saved as owed, and replayed to completion", async () => {
+    const data = fresh("data"), home = fresh("opencode"), db = messagesDb(data);
+    const desk = join(data, "workspaces", BOT, "threads", THREAD);
+    touch(join(desk, "a.md"));
+    const file = join(home, "opencode.db");
+    const engineDb = new DatabaseSync(file);
+    engineDb.exec("PRAGMA journal_mode=WAL; CREATE TABLE session(id TEXT PRIMARY KEY, directory TEXT, parent_id TEXT); CREATE TABLE message(session_id TEXT, data TEXT);");
+    engineDb.prepare("INSERT INTO session VALUES(?,?,?)").run("ses_private_1", desk, null);
+    engineDb.prepare("INSERT INTO message VALUES(?,?)").run("ses_private_1", MARKER_TEXT);
+    engineDb.exec("PRAGMA wal_checkpoint(TRUNCATE)"); engineDb.close();
+    const reader = new DatabaseSync(file);
+    reader.exec("BEGIN"); reader.prepare("SELECT count(*) FROM session").get();
+    const deletions = new ConversationDeletions({ dataDir: data, database: () => db, retryDelaysMs: [] });
+    try {
+      const { report } = await runConversationDeletion(deletions, { threadIds: [THREAD], engineHomes: [{ engine: "opencode", home }] }, () => true);
+      expect(report.failed).toEqual([file]);
+      expect(fileHas(file, MARKER_TEXT)).toBe(true);
+    } finally { reader.exec("COMMIT"); reader.close(); }
+    const [saved] = deletions.pending();
+    expect(Object.values(saved!.engineDiscovery ?? {}).some((entry) => entry.dirtyDbs?.includes(file))).toBe(true);
+    // the rows are already gone, so only the saved list says this database is still owed a checkpoint
+    expect(await new ConversationDeletions({ dataDir: data, database: () => db, retryDelaysMs: [] }).reconcile(() => false, noRows)).toBe(1);
+    expect(fileHas(file, MARKER_TEXT)).toBe(false);
+    expect(new ConversationDeletions({ dataDir: data, database: () => db }).pending()).toEqual([]);
+  });
+
+  it("finding 2: scrubFuigoSearchIndex throws instead of reporting success when its log cannot be checkpointed", () => {
+    const dir = fresh("fuigo-blocked");
+    const index = join(dir, "session_search.sqlite");
+    const seeded = fuigoSearchIndex(index, [{ id: "gone-1", cwd: "/w/a", title: "t", content: MARKER_TEXT }]);
+    seeded.exec("PRAGMA wal_checkpoint(TRUNCATE)"); seeded.close();
+    const reader = new DatabaseSync(index);
+    reader.exec("BEGIN"); reader.prepare("SELECT count(*) FROM session_docs").get();
+    try { expect(() => scrubFuigoSearchIndex(index, ["gone-1"], [])).toThrow(/checkpoint/); }
+    finally { reader.exec("COMMIT"); reader.close(); }
+    expect(scrubFuigoSearchIndex(index, ["gone-1"], [])).toBe(false); // nothing left to delete, and now the log is clean
+    expect(fileHas(index, MARKER_TEXT)).toBe(false);
   });
 });

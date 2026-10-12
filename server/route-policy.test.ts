@@ -80,6 +80,17 @@ describe("route policy (strict)", () => {
     expect(routeClass("PATCH", "/api/bots/b1/cards/m1")).toBe("companion");
   });
 
+  it("the terms status is readable by a door caller without the launch proof; accepting stays on the companion", () => {
+    const nobody = { desktop: false, companion: false, door: false, bot: false };
+    expect(routeClass("GET", "/api/terms")).toBe("conversation");
+    expect(routeAdmits(routeClass("GET", "/api/terms"), { ...nobody, door: true })).toBe(true);
+    expect(routeAdmits(routeClass("GET", "/api/terms"), nobody)).toBe(false);
+    expect(routeAdmits(routeClass("GET", "/api/terms"), { ...nobody, bot: true })).toBe(false);
+    expect(routeClass("POST", "/api/terms/accept")).toBe("companion");
+    expect(routeAdmits(routeClass("POST", "/api/terms/accept"), { ...nobody, door: true })).toBe(false);
+    expect(routeAdmits(routeClass("POST", "/api/terms/accept"), { ...nobody, companion: true })).toBe(true);
+  });
+
   it("refuses with the sentence only a caller that proved who it is", () => {
     const nobody = { desktop: false, companion: false, door: false, bot: false };
     expect(routeAdmits("desktop", nobody)).toBe(false);

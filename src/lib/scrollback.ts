@@ -51,11 +51,13 @@ export const DEEP_LINK_MAX_PAGES = 5;
 
 type OlderMessagesAction =
   | { type: "loadOlderMessages"; threadId: string }
-  | { type: "olderMessages"; threadId: string; generation: number; messages: Message[]; hasMore: boolean };
+  | { type: "olderMessages"; threadId: string; generation: number; messages: Message[]; hasMore: boolean; olderFrom?: string | null };
 
 export interface ScrollbackPage {
   messages?: Message[];
   hasMore?: boolean;
+  /** The next ancestor to page back to, when the page is a branch page. */
+  olderFrom?: string | null;
 }
 
 export interface ScrollbackDeps {
@@ -120,8 +122,14 @@ export function createScrollback(deps: ScrollbackDeps) {
     paging.add(threadId);
     return exclusive(threadId, async () => {
       try {
-        const page = await deps.request(pagePath(threadId, `limit=${MESSAGE_PAGE_SIZE}&before=${encodeURIComponent(before)}`));
-        deps.dispatch({ type: "olderMessages", threadId, generation, messages: page.messages ?? [], hasMore: Boolean(page.hasMore) });
+        // A branch page is paged back along the branch's own parent links
+        // (`branchFrom`); storage order says nothing about ancestry once a
+        // thread has forked. Any other page is paged back by storage order.
+        const cursor = owner.olderFrom && !owner.messages.some((m) => m.id === owner.olderFrom) ? owner.olderFrom : undefined;
+        const page = await deps.request(pagePath(threadId, cursor
+          ? `limit=${MESSAGE_PAGE_SIZE}&branchFrom=${encodeURIComponent(cursor)}`
+          : `limit=${MESSAGE_PAGE_SIZE}&before=${encodeURIComponent(before)}`));
+        deps.dispatch({ type: "olderMessages", threadId, generation, messages: page.messages ?? [], hasMore: Boolean(page.hasMore), ...(cursor ? { olderFrom: page.olderFrom ?? null } : {}) });
       } catch (error) {
         // Clear the flag on the way out, or scrolling up never asks again.
         deps.dispatch({ type: "olderMessages", threadId, generation, messages: [], hasMore: true });
@@ -161,22 +169,29 @@ export function createScrollback(deps: ScrollbackDeps) {
       }
       const generation = generationOf(threadId);
       let before = start;
+      // The same cursor loadOlder pages with: a branch page is walked back
+      // along the branch's own parent links, so a late-stored ancestor spliced
+      // in earlier in the branch is reached, and the cursor stays right.
+      let cursor: string | undefined = owner.olderFrom && !owner.messages.some((m) => m.id === owner.olderFrom) ? owner.olderFrom : undefined;
       for (let pages = 0; pages < maxPages; pages++) {
         if (generationOf(threadId) !== generation) return "missing";
         deps.dispatch({ type: "loadOlderMessages", threadId });
         let page: ScrollbackPage;
         try {
-          page = await deps.request(pagePath(threadId, `limit=${MESSAGE_PAGE_MAX}&before=${encodeURIComponent(before)}`));
+          page = await deps.request(pagePath(threadId, cursor
+            ? `limit=${MESSAGE_PAGE_MAX}&branchFrom=${encodeURIComponent(cursor)}`
+            : `limit=${MESSAGE_PAGE_MAX}&before=${encodeURIComponent(before)}`));
         } catch (error) {
           deps.dispatch({ type: "olderMessages", threadId, generation, messages: [], hasMore: true });
           deps.onError(error);
           return "missing";
         }
         const messages = page.messages ?? [];
-        deps.dispatch({ type: "olderMessages", threadId, generation, messages, hasMore: Boolean(page.hasMore) });
+        deps.dispatch({ type: "olderMessages", threadId, generation, messages, hasMore: Boolean(page.hasMore), ...(cursor ? { olderFrom: page.olderFrom ?? null } : {}) });
         if (messages.some((message) => message.id === messageId)) return "fetched";
         if (!page.hasMore || !messages[0]) return "missing";
         before = messages[0].id;
+        if (cursor) cursor = page.olderFrom ?? undefined;
       }
       return "missing";
     });

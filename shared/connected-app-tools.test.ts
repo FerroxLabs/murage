@@ -35,7 +35,7 @@ it("is applied where engine events become messages, so cards, activity, Inbox an
   // A row is stored from the normalized message, appended or written ahead
   // of a hosted tool row (insertMessageBefore), never from the raw one.
   expect(push).toContain('const stored = { ...(group && m.role === "bot" ? { ...m, from: speaker } : m),');
-  expect(push).toContain("store.insertMessageBefore(event.threadId, before, stored)");
-  expect(push).toContain("store.appendMessage(event.threadId, stored)");
+  expect(push).toContain("store.insertMessageBefore(event.threadId, before, stored, stableId, linkOutput)");
+  expect(push).toContain("store.appendMessage(event.threadId, stored, stableId, linkOutput)");
   expect(push).not.toMatch(/(appendMessage|insertMessageBefore)\([^;]*\.\.\.raw/);
 });

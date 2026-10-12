@@ -74,6 +74,12 @@ export function pendingApprovals(messages: Message[]): Pending[] {
     }));
 }
 
+/** Open questions a provider is waiting on (a request card that is not a
+ * permission), oldest first. A call asks these aloud like an approval. */
+export function openQuestions(messages: Message[]): Message[] {
+  return messages.filter((m) => m.kind === "options" && m.card?.requestId && !m.card.tool && !m.card.answered && !m.card.dismissed);
+}
+
 /** Routine cards can carry every instruction the user asked for (up to
  * 20,000 characters). Calls should announce the concise, visible title and
  * let the user review those details on screen instead of reading them all. */
