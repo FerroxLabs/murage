@@ -293,7 +293,8 @@ function singleLine(value: string): string {
  * 2,194 in skills-library/ do), so those are read properly and folded to the
  * single line the index wants. */
 export function parseSkillMd(raw: string): ParsedSkill | { error: string } {
-  const match = raw.match(/^---\r?\n([\s\S]*?)\r?\n---\r?\n?([\s\S]*)$/);
+  // Notepad and PowerShell can save a leading byte order mark.
+  const match = raw.replace(/^\uFEFF/, "").match(/^---\r?\n([\s\S]*?)\r?\n---\r?\n?([\s\S]*)$/);
   if (!match) return { error: "SKILL.md has no YAML frontmatter (--- block) at the top" };
   const fields = parseFrontmatterScalars(match[1]!);
   const name = singleLine(fields.name ?? "");

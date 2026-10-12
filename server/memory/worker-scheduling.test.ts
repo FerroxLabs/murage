@@ -16,6 +16,8 @@ vi.mock("./index.ts",()=>({MemoryIndex:class {
   upsert(records:Array<{text:string}>){state.indexed.push(...records.map(record=>record.text));}
   vector(){}
   search(){return {hits:[],vectorRows:0};}
+  purgeRolledCheckpoints(){return {removed:0,examined:0,merged:false,done:true};}
+  maintenanceOwed(){return false;}
   close(){}
 }}));
 vi.mock("./eligibility.ts",()=>({MemoryEligibility:class {

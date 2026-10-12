@@ -133,6 +133,8 @@ jobs:
         run: |
           res=release/win-unpacked/resources
           fail=0
+          # the hoisted runtime tree must resolve exactly as staged (versions, nesting, path budget)
+          node scripts/staged-tree-check.mjs "$res/server" --max-path 140 || fail=1
           # missing → utilityProcess.fork fails → the 🔥 "Couldn't start the
           # bot server" page
           [ -f "$res/server/index.js" ] || { echo "::error::missing $res/server/index.js"; fail=1; }

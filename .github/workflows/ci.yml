@@ -192,6 +192,13 @@ jobs:
         run: node scripts/prepare-backup-test-fixtures.mjs --tool-directory "$RUNNER_TEMP/backup-test-age" >> "$GITHUB_ENV"
       - name: Build the server bundle that packaged-layout tests import
         run: pnpm build:server
+      - name: Build the engine-exclusion addon
+        # server/engine-exclusion*.test.ts run the REAL addon (dist-native/engine-exclusion/<os>-<arch>) and skip when it is absent;
+        # a runner that skipped them would prove nothing, so build it first, as package:<os> does, and print the receipt.
+        shell: bash
+        run: |
+          pnpm build:engine-exclusion
+          cat dist-native/engine-exclusion/*/build.json
       - name: Build the Windows browser helper
         # On Windows the browser broker and service keep their state through the
         # native ACL helper (electron/browser-extension-windows.mjs) and fail

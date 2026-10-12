@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import { describe, expect, it } from "vitest";
 
-import { BACKUPS_LINE, deletionConsequenceLines, deletionErrorSentence, deletionNote } from "./deletion-notes.ts";
+import { BACKUPS_LINE, deletionConsequenceLines, deletionErrorSentence, deletionNote, ENGINE_FILES_LINE, owedNote } from "./deletion-notes.ts";
 
 describe("deletion notes", () => {
   it("counts saved files in the confirmation and always mentions backups", () => {
@@ -33,6 +33,32 @@ describe("deletion notes", () => {
     for (const line of [note.title, ...note.items, ...deletionConsequenceLines(2)]) {
       expect(line).not.toMatch(/—|\bsafe(ly)?\b|Composio|\/Users\//i);
     }
+  });
+
+  it("says once what Murage does to the coding engines' files, what it does when an engine is using one, and what it does not reach", () => {
+    expect(deletionConsequenceLines(0, null, ["Claude Code"])).toEqual([
+      BACKUPS_LINE,
+      "When you delete a conversation, Murage removes its words from the coding engines' files on this computer. If an engine is using one of those files, Murage leaves that file alone, tells you, and finishes later. Murage never changes another conversation's words. Copies in backups or in an engine's online account are not removed by Murage.",
+    ]);
+    expect(deletionConsequenceLines(0, null, ["Codex", "Fuigo"]).filter((line) => line === ENGINE_FILES_LINE)).toHaveLength(1);
+    expect(deletionConsequenceLines(0, null, [])).toEqual([BACKUPS_LINE]);
+    expect(ENGINE_FILES_LINE).not.toMatch(/—|\bsafe(ly|ty)?\b|\bunsafe\b/i);
+  });
+
+  it("shows the server's owed sentences as they come, with a way to try again", () => {
+    expect(owedNote([])).toBeNull();
+    expect(owedNote(undefined)).toBeNull();
+    expect(owedNote([{ id: "a:codex", text: "Codex's copy of this conversation could not be removed yet because Codex was using its history. Murage will try again when it starts.", tryAgain: true }, { nothing: true }])).toEqual({
+      title: "Deleted. A few things could not be removed:",
+      items: ["Codex's copy of this conversation could not be removed yet because Codex was using its history. Murage will try again when it starts."],
+      retry: true,
+      owed: true,
+    });
+    // an engine that has its files open: said on the first attempt; and the line for a copy that has gone, with nothing left to retry
+    const open = "Codex is open. Close Codex and Murage will finish removing this conversation from it.";
+    expect(owedNote([{ id: "a:codex", text: open, tryAgain: true }])).toEqual({ title: "Deleted. A few things could not be removed:", items: [open], retry: true, owed: true });
+    expect(owedNote([{ id: "a:codex:done", text: "Removed from Codex.", tryAgain: false }])).toEqual({ title: "Deleted.", items: ["Removed from Codex."], retry: false, owed: true });
+    expect(owedNote([{ id: "a:codex:done", text: "Removed from Codex.", tryAgain: false }, { id: "b:fuigo", text: open, tryAgain: true }])?.retry).toBe(true);
   });
 
   it("never passes the server's own text through when a Delete fails", () => {
