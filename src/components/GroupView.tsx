@@ -35,6 +35,7 @@ import {
   useStore,
   useStreaming,
   formatTime,
+  olderOpenCards,
   openNotificationTarget,
   type Bot,
   type Group,
@@ -87,6 +88,8 @@ import { cn } from "@/lib/cn";
 import { OpenBotListButton } from "./OpenBotListButton";
 import { t } from "@/lib/i18n";
 import { StoppedByYouRow, StoppedMidActionRow, StoppedRow } from "./StoppedRow";
+import { SendNoticeRow } from "./SendNoticeRow";
+import { sendNoticeCode } from "../../shared/send-notice";
 import { hostStoppedReason, isStoppedMidDesktopAction } from "../../shared/host-stop";
 import { TURN_STOPPED_NOTE } from "../../server/turn-outcome";
 import { folderTrustNotice } from "../../shared/folder-trust";
@@ -396,6 +399,8 @@ const Transcript = memo(function Transcript({
               <ImageRecordRow message={m} />
             ) : m.delegationWait ? (
               <DelegationWaitRow text={m.tool.name} onStop={() => dispatch({ type: "stopDelegation", delegationId: m.delegationWait!.id })} />
+            ) : sendNoticeCode(m.tool.name) ? (
+              <SendNoticeRow code={sendNoticeCode(m.tool.name)!} />
             ) : hostStoppedReason(m.tool.name) ? (
               <StoppedRow reason={hostStoppedReason(m.tool.name)!} />
             ) : isStoppedMidDesktopAction(m.tool.name) ? (
@@ -1328,7 +1333,7 @@ export function GroupView({ group }: { group: Group }) {
   // Conversation order from parent links, not arrival order: hosted-tool
   // text saved in front of its row arrives after it (room-transcript.ts).
   // Everything below (window, focus, follow, replies) reads this order.
-  const roomMessages = useMemo(() => roomTranscript(group.messages), [group.messages]);
+  const roomMessages = useMemo(() => roomTranscript(olderOpenCards(group, group.messages)), [group.messages, group.openCards, group.openCardsLeaf]);
   const stream = useStreaming();
   const roomHelpers = group.busyBotId
     ? pickSubtasks(stream.helpers.live[group.threadId], group.tasks?.find((task) => task.threadId === group.threadId)?.subtasks)
@@ -1505,7 +1510,7 @@ export function GroupView({ group }: { group: Group }) {
     setFollow(next);
   }, []);
 
-  useEffect(() => setBottomFollow(true), [group.id, setBottomFollow]);
+  useEffect(() => setBottomFollow(true), [transcriptKey, setBottomFollow]);
   // Observed only while the Chat tab's transcript is mounted: a project room
   // can open on Overview, and a key that did not change on the switch to Chat
   // left the new transcript unobserved, so a Thinking row or a streaming
@@ -1554,7 +1559,7 @@ export function GroupView({ group }: { group: Group }) {
     if (!el || !followRef.current) return;
     el.scrollTo({ top: el.scrollHeight });
     previousScrollTop.current = el.scrollTop;
-  }, [group.id, roomMessages.length, streaming, group.busyBotId, group.working, composerDock.pad, showChat]);
+  }, [transcriptKey, roomMessages.length, streaming, group.busyBotId, group.working, composerDock.pad, showChat]);
 
   // Rows move in and out around the reader; a surviving row is kept where it
   // was (transcript-rows.ts, and see ChatView). The capture belongs to the
@@ -1855,7 +1860,7 @@ export function GroupView({ group }: { group: Group }) {
       {/* A channel never showed an error: a refused delete or rename in the
           conversation picker just did nothing. Same banner as a bot chat. */}
       {state.error && <ErrorBanner message={state.error} onDismiss={() => dispatch({ type: "error", message: null })} />}
-      {state.deletionNote && <DeletionNoteBanner note={state.deletionNote} onDismiss={() => dispatch({ type: "deletionNote", note: null })} />}
+      {state.deletionNote && <DeletionNoteBanner note={state.deletionNote} onDismiss={() => dispatch({ type: "deletionNote", note: null })} onRetry={() => { void api("/api/deletions/retry", { method: "POST" }).then((response) => dispatch({ type: "deletionOwed", notices: response?.notices, rev: response?.rev })).catch(() => {}); }} />}
 
       {/* Instructions: one pinned line; click to edit */}
       {!setupPending && showChat && <div className="w-full px-5">

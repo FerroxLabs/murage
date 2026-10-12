@@ -893,7 +893,7 @@ export function ConfirmTaskDelete({ name, preview, onCancel, onConfirm, savedFil
     <div role="group" aria-label={`Delete ${name}?`} className="border-y border-hairline/40 bg-inset/40 px-2 py-2 text-[12.5px] text-ink">
       <p className="font-medium">Delete this conversation?</p>
       <p className="mt-0.5 text-ink-secondary">Its messages, files and history are removed from this computer.</p>
-      {deletionConsequenceLines(savedFiles, messages).map((line) => <p key={line} className="mt-0.5 text-ink-secondary">{line}</p>)}
+      {deletionConsequenceLines(savedFiles, messages, fetched?.engines).map((line) => <p key={line} className="mt-0.5 text-ink-secondary">{line}</p>)}
       <div className="mt-1.5 flex justify-end gap-1.5">
         <button type="button" onClick={onCancel} className="rounded px-2 py-1 text-ink-secondary hover:bg-raised hover:text-ink">Cancel</button>
         <button type="button" onClick={onConfirm} className="rounded bg-danger px-2 py-1 font-medium text-white">Delete</button>

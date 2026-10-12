@@ -26,7 +26,7 @@ function fn(name: string): string {
 
 describe("stall watchdog wiring (admission, exemptions, setup latch)", () => {
   it("arms the direct watch at admission, in setup, under the turn's own generation", () => {
-    const body = fn("startTurn");
+    const body = fn("startTurnAdmitting");
     const admit = body.indexOf("directRuns.admit(");
     const watch = body.indexOf('watchdog.watch(threadId, bot.id, { generation: dispatchClaimId, setup: true })');
     const firstWait = body.indexOf("await acquireDirectTurnSlot(run)");
@@ -41,7 +41,7 @@ describe("stall watchdog wiring (admission, exemptions, setup latch)", () => {
   });
 
   it("binds the direct watch to its own engine turn, so another turn's completion leaves it (and its open card) in place", () => {
-    const body = fn("startTurn");
+    const body = fn("startTurnAdmitting");
     // once dispatch returns, alongside the capability and lease binds
     expect(body).toMatch(/projectTurnLeases\.bind\(threadId, dispatchClaimId, dispatch\.value\.turnId\);[\s\S]{0,300}watchdog\.bindProviderTurn\(threadId, dispatchClaimId, dispatch\.value\.turnId\);\s*if \(dispatch\.cancelled\)/);
     // the fold names the completing turn and the generation that sent it
@@ -61,14 +61,14 @@ describe("stall watchdog wiring (admission, exemptions, setup latch)", () => {
     expect(body).toMatch(/releaseStallWait=watchdog\.waitingOn\(run\.threadId,waitingFor\.resource,run\.generation\)/);
     expect(body).toMatch(/\}finally\{\s*releaseStallWait\(\);/);
     // and every claim a direct turn makes goes through that helper
-    const startTurn = fn("startTurn");
+    const startTurn = fn("startTurnAdmitting");
     expect(startTurn).not.toMatch(/directRuns\.acquire\(/);
     expect(startTurn.match(/await acquireDirectTurnResources\(run,/g)?.length).toBeGreaterThanOrEqual(4);
   });
 
   it("exempts waits that happen before admission: queued behind a room turn, coordination slots, capacity", () => {
     // A direct send while the bot speaks in a room is queued, not admitted.
-    expect(SOURCE).toMatch(/if \(activeGroupTurnForBot\(currentAtStart\.id\)\) \{\s*const queued = queueSteeredMessage\(/);
+    expect(SOURCE).toMatch(/if \(activeGroupTurnForBot\(currentAtStart\.id\)\) \{\s*return queueIt\(\);/);
     // Handoff capacity refuses instead of waiting inside a turn.
     expect(fn("holdCoordinationSlot")).not.toContain("watchdog");
     // A goal waiting for a busy teammate waits before the member turn runs.

@@ -77,7 +77,7 @@ export function ConfirmDelete({
               {title ?? <>Delete {kind} “{name}”?</>}
             </h2>
             <p className="mt-1.5 text-[13px] leading-relaxed text-ink-secondary">{detail}</p>
-            {preview && deletionConsequenceLines(counts?.savedFiles, counts?.messages).map((line) => (
+            {preview && deletionConsequenceLines(counts?.savedFiles, counts?.messages, counts?.engines).map((line) => (
               <p key={line} className="mt-1 text-[13px] leading-relaxed text-ink-secondary">{line}</p>
             ))}
             {items && items.length > 0 && (
@@ -128,14 +128,14 @@ export function ConfirmDelete({
 }
 
 /** How many messages and saved files a Delete takes with it; null until known. */
-export function useDeletionCounts(preview: { botId?: string; groupId?: string; threadId?: string } | undefined): { savedFiles: number; messages: number | null } | null {
-  const [counts, setCounts] = useState<{ savedFiles: number; messages: number | null } | null>(null);
+export function useDeletionCounts(preview: { botId?: string; groupId?: string; threadId?: string } | undefined): { savedFiles: number; messages: number | null; engines: string[] } | null {
+  const [counts, setCounts] = useState<{ savedFiles: number; messages: number | null; engines: string[] } | null>(null);
   const query = preview ? new URLSearchParams(Object.entries(preview).filter((entry): entry is [string, string] => Boolean(entry[1]))).toString() : "";
   useEffect(() => {
     if (!query) return;
     let live = true;
-    api(`/api/deletion-preview?${query}`).then((body: { savedFiles?: unknown; messages?: unknown }) => {
-      if (live && typeof body?.savedFiles === "number") setCounts({ savedFiles: body.savedFiles, messages: typeof body.messages === "number" ? body.messages : null });
+    api(`/api/deletion-preview?${query}`).then((body: { savedFiles?: unknown; messages?: unknown; engines?: unknown }) => {
+      if (live && typeof body?.savedFiles === "number") setCounts({ savedFiles: body.savedFiles, messages: typeof body.messages === "number" ? body.messages : null, engines: Array.isArray(body.engines) ? body.engines.filter((item): item is string => typeof item === "string") : [] });
     }).catch(() => {});
     return () => { live = false; };
   }, [query]);

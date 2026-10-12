@@ -22,6 +22,7 @@ import { readFileSync } from "node:fs";
 import { join } from "node:path";
 
 import { hostStoppedDisplayName } from "../shared/host-stop.ts";
+import { sendNoticeDisplayName } from "../shared/send-notice.ts";
 import { folderTrustDisplayName } from "../shared/folder-trust.ts";
 import { writeFileAtomic } from "./atomic.ts";
 import { coordinationTraceSchema, MAX_HANDOFFS_PER_TURN, type CoordinationTrace } from "./coordination-budget.ts";
@@ -122,6 +123,8 @@ export interface DelegationReceipt {
   /** Where the reply came from, so reading it back follows the original:
    * withheld when it is (server/memory/replay-lineage.ts). */
   copyOf?: { threadId: string; messageIds: string[] };
+  /** The room request this receipt answers; every replay of its text re-asks the delivery authorization for it. */
+  requestId?: string;
   /** The delegated turn itself read memory as a non-owner audience. */
   notOwnerAudience?: true;
   /** Written by a build whose results carry their origin (copyOf when there
@@ -220,6 +223,7 @@ export function recordDelegationReceipt(receipt: Omit<DelegationReceipt, "finish
   if (receipt.result !== undefined) bounded.result = receipt.result.slice(0, RESULT_MAX_CHARS);
   // one past the check's width budget, so a longer link reads as unestablished
   if (receipt.copyOf) bounded.copyOf = { threadId: receipt.copyOf.threadId, messageIds: receipt.copyOf.messageIds.slice(0, 65) };
+  if (typeof receipt.requestId === "string" && receipt.requestId) bounded.requestId = receipt.requestId;
   if (receipt.notOwnerAudience === true) bounded.notOwnerAudience = true;
   if (receipt.lineage === true) bounded.lineage = true;
   receipts = [bounded, ...receipts.filter((existing) => existing.id !== bounded.id)]
@@ -244,7 +248,9 @@ export function forgetDelegationsForThreads(threadIds: readonly string[]): void 
 }
 
 export function findDelegationReceipt(id: string): DelegationReceipt | null {
-  return receipts.find((receipt) => receipt.id === id) ?? null;
+  // A receipt past its retention is gone on read too, so an idle process never serves one that a write would have pruned.
+  const found = receipts.find((receipt) => receipt.id === id);
+  return found && Date.now() - found.finishedAt <= RECEIPT_MAX_AGE_MS ? found : null;
 }
 
 /** A still-queued task's routing info, or null once it dispatched/settled. */
@@ -494,6 +500,7 @@ export function _loadPending(): void {
         if (copyOf && typeof copyOf === "object" && typeof copyOf.threadId === "string" && Array.isArray(copyOf.messageIds) && copyOf.messageIds.every((m) => typeof m === "string")) {
           receipt.copyOf = { threadId: copyOf.threadId, messageIds: copyOf.messageIds.slice(0, 65) };
         }
+        if (typeof candidate.requestId === "string" && candidate.requestId) receipt.requestId = candidate.requestId;
         if (candidate.notOwnerAudience === true) receipt.notOwnerAudience = true;
         if (candidate.lineage === true) receipt.lineage = true;
         loaded.push(receipt);
@@ -1045,7 +1052,7 @@ export function summarizeDelegatedActivity(
       const name = (message.tool?.name ?? "").trim();
       // a host stop is not a tool run: the caller sees the stop as the
       // transcript spells it, not the raw "stopped:" prefix (STOP2)
-      const stopped = hostStoppedDisplayName(name) ?? folderTrustDisplayName(name);
+      const stopped = hostStoppedDisplayName(name) ?? sendNoticeDisplayName(name) ?? folderTrustDisplayName(name);
       if (stopped) lines.push(stopped);
       else if (name) lines.push(`tool: ${name}`);
       continue;

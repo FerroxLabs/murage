@@ -128,6 +128,16 @@ describe("narrateTool", () => {
     expect(narrateTool("screenshot")).toBe("looking at the screen");
   });
 
+  it("says which app a connected-app action works in, also through an engine's tool wrapper", () => {
+    const input = { tools: [{ tool_slug: "GMAIL_FETCH_EMAILS" }, { tool_slug: "SLACK_LIST_CHANNELS" }] };
+    expect(narrateTool("composio__COMPOSIO_MULTI_EXECUTE_TOOL", input)).toBe("working in Gmail and Slack");
+    expect(narrateTool("use_tool", { tool_name: "composio__COMPOSIO_MULTI_EXECUTE_TOOL", tool_input: { tools: [{ tool_slug: "GMAIL_FETCH_EMAILS" }] } })).toBe("working in Gmail");
+    // Grok's tool row: the real tool as the title, the wrapper's arguments as input
+    expect(narrateTool("composio__COMPOSIO_MULTI_EXECUTE_TOOL", { tool_name: "composio__COMPOSIO_MULTI_EXECUTE_TOOL", tool_input: { tools: [{ tool_slug: "OUTLOOK_LIST_MESSAGES" }] } })).toBe("working in Outlook");
+    expect(narrateTool("composio__COMPOSIO_MULTI_EXECUTE_TOOL", {})).toBe("working in your connected apps");
+    expect(narrateTool("composio__COMPOSIO_SEARCH_TOOLS", { queries: [] })).toBe("finding the right tool");
+  });
+
   it("sees through an MCP tool prefix", () => {
     expect(narrateTool("mcp__computer__click")).toBe("using the computer");
     expect(narrateTool("mcp__agents__ask_bot")).toBe("asking a teammate");

@@ -60,7 +60,9 @@ const rowsFor = (messages: Message[], a: MemoryAccess) => { const before = repla
 /** Rows read before the whole-thread shortcut (033e6de8d^) on this same thread. */
 const BASE_HEALTHY = 22_831, BASE_FORGOTTEN = 82_874;
 
-async function longThread(turns: number, receipts: number) {
+/** `clonesEarlier`: the bulk receipts are the thread's earlier history (written before the session's own, as a rowid below
+ * every other); otherwise they are written after it, in the same session. */
+async function longThread(turns: number, receipts: number, clonesEarlier = true) {
   memory("dax-direct", "dax", "pin", "Rebel Wealth Accelerator launches in March.");
   const a = access("dax", "dax-direct");
   const records: string[] = [];
@@ -82,7 +84,8 @@ async function longThread(turns: number, receipts: number) {
   // the thread's earlier sessions: receipts that list the same lines, in bulk
   const ids = JSON.stringify(messages.filter(m => m.role !== "user").map(m => m.id));
   database().exec(`WITH RECURSIVE n(i) AS (SELECT 1 UNION ALL SELECT i+1 FROM n WHERE i<${receipts})
-    INSERT INTO memory_disclosures SELECT 'clone'||i, thread_id, driver_instance, native_session, record_versions, source_versions, '${ids}', policy_revision, deletion_epoch, token_count, state, created_at
+    INSERT INTO memory_disclosures(${clonesEarlier ? "rowid," : ""}bundle_id,thread_id,driver_instance,native_session,record_versions,source_versions,output_message_ids,policy_revision,deletion_epoch,token_count,state,created_at)
+    SELECT ${clonesEarlier ? "-i," : ""}'clone'||i, thread_id, driver_instance, native_session, record_versions, source_versions, '${ids}', policy_revision, deletion_epoch, token_count, state, created_at
     FROM n, (SELECT * FROM memory_disclosures WHERE bundle_id NOT LIKE '%:lookup' LIMIT 1)`);
   return { a, messages, records };
 }
@@ -106,15 +109,18 @@ it("a thread of 2,500 receipts reads rows in proportion to its receipts, not 20,
 // 20,000 reply-to-receipt pairs. The whole-thread read is tried first and runs
 // out of the node budget; the pairs are then listed exactly, as before the
 // change, so every verdict is the base verdict and nothing extra is withheld.
-it("more receipts than the limit and 2,048 to 20,000 pairs: the fallback lists the pairs, with the base verdicts", async () => {
+// Both fixtures are kept: the fillers in the replies' own native session (the original fixture, where the session's other
+// receipts are ones its replies rest on) and in sessions of their own. Every filler cites what the first receipt cites and
+// nothing is forgotten, so in both nothing is withheld: all 12 replies stay, and no line is lost.
+it.each([["the fillers in the replies' own session (original fixture)", "native-1"], ["the fillers in sessions of their own", "filler-session"]])("more receipts than the limit and 2,048 to 20,000 pairs, %s: the fallback lists the pairs, with the base verdicts", async (_name, fillerSession) => {
   const { a, messages } = await longThread(12, 300);
   const pairs = Number((database().prepare("SELECT count(*) AS n FROM memory_disclosure_outputs").get() as { n: number }).n);
   expect(pairs).toBeGreaterThan(2048);
   expect(pairs).toBeLessThan(20000);
   // receipts that list nothing of these replies, each its own group (the bulk of the thread)
   database().exec(`WITH RECURSIVE n(i) AS (SELECT 1 UNION ALL SELECT i+1 FROM n WHERE i<3000)
-    INSERT INTO memory_disclosures SELECT 'filler'||i, thread_id, driver_instance, native_session, record_versions, source_versions, '["unrelated-'||i||'"]', policy_revision+i, deletion_epoch, token_count, state, created_at
-    FROM n, (SELECT * FROM memory_disclosures WHERE bundle_id='clone1')`);
+    INSERT INTO memory_disclosures SELECT 'filler'||i, thread_id, driver_instance, 'filler-session', record_versions, source_versions, '["unrelated-'||i||'"]', policy_revision+i, deletion_epoch, token_count, state, created_at
+    FROM n, (SELECT * FROM memory_disclosures WHERE bundle_id='clone1')`.replace("'filler-session'", `'${fillerSession}'`));
   const receipts = Number((database().prepare("SELECT count(DISTINCT bundle_id) AS n FROM memory_disclosures WHERE thread_id='dax-direct'").get() as { n: number }).n);
   expect(receipts).toBeGreaterThan(2048);
   // the whole thread costs more than the budget, the listed pairs do not
@@ -122,4 +128,15 @@ it("more receipts than the limit and 2,048 to 20,000 pairs: the fallback lists t
   const kept = directAllowed("dax-direct", messages, a, new Set());
   expect(kept.filter(m => m.role !== "user" && m.kind === "text").length).toBe(12);
   expect(kept.length).toBe(messages.filter(m => m.kind !== "activity").length + 0);
+}, 240_000);
+
+// The same long session with the bulk receipts written AFTER the session's own, in the same session, each listing every reply
+// (so every reply rests on every receipt, the forgotten recall's included): forgetting turn 4's record withholds every reply,
+// the early ones too. Explicit, not a change of the original fixture above.
+it("bulk receipts written after the session's own, in its session: a forgotten recall withholds every reply", async () => {
+  const { a, messages, records } = await longThread(12, 40, false);
+  expect(rowsFor(messages, a).kept.filter(m => m.role !== "user" && m.kind === "text").length).toBeGreaterThanOrEqual(10);
+  forgetMemory(ownerMemoryTicket(), { kind: "record", id: records[3]! });
+  const after = rowsFor(messages, access("dax", "dax-direct"));
+  expect(after.kept.filter(m => m.role !== "user").map(m => m.id)).toEqual([]);
 }, 240_000);

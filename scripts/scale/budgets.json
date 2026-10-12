@@ -1,0 +1,24 @@
+{
+  "source": "SCALE-PLAN.md section 2 (2026-10-10): budgets the user feels at the extreme, measured on the overloaded rig, model time excluded (fake engines answer at once).",
+  "regression": { "ratio": 1.15, "floorMs": 20, "note": "Against a stored baseline: fail when a p90 is more than 15% and more than 20 ms worse." },
+  "slope": { "maxRatio": 1.7, "floorMs": 25, "note": "Turn prep at turn 500 of one resumed session within 70% of turn 10 (10% per doubling over 5.6 doublings), or within 25 ms of it." },
+  "metrics": [
+    { "id": "turnPrep", "label": "Turn prep before the engine (long resumed session)", "path": "scenarios.turnPrep.prep", "p50": 150, "p90": 300, "unit": "ms" },
+    { "id": "firstToken", "label": "Murage-added time to first token (warm session)", "path": "scenarios.turnPrep.firstText", "p50": 300, "p90": 600, "unit": "ms" },
+    { "id": "slope", "label": "Per-turn prep, turn 10 / 100 / 500 of one session", "kind": "slope", "unit": "ms" },
+    { "id": "switch", "label": "Conversation switch (click to rows on screen)", "path": "scenarios.ui.flows.switchConversation.usable", "p50": 100, "p90": 200, "unit": "ms" },
+    { "id": "openLong", "label": "Open the longest thread (first page painted)", "path": "scenarios.ui.flows.openLongThread.usable", "p50": 150, "p90": 300, "unit": "ms" },
+    { "id": "memorySearch", "label": "Memory search (recall) while a bot captures", "path": "scenarios.memorySearch.recall", "p50": 300, "p90": 500, "unit": "ms" },
+    { "id": "memorySearchSuccess", "label": "Memory search success rate while capturing", "path": "scenarios.memorySearch.recallSuccess", "min": 0.95, "unit": "share" },
+    { "id": "ownerSearch", "label": "Owner memory search (Settings › Memory)", "path": "scenarios.memorySearch.owner", "p50": 300, "p90": 500, "unit": "ms" },
+    { "id": "settingsEngines", "label": "Settings › Engines settled", "path": "scenarios.ui.flows.settingsEngines.settled", "p50": 400, "p90": 800, "unit": "ms" },
+    { "id": "botSettings", "label": "Bot settings open", "path": "scenarios.ui.flows.botSettings.usable", "p50": 150, "p90": 300, "unit": "ms" },
+    { "id": "appStartUsable", "label": "App start usable (server boot + first screen)", "sum": ["scenarios.serverBoot.boot", "scenarios.ui.flows.appStart.usable"], "p50": 1500, "p90": 2500, "unit": "ms" },
+    { "id": "appStartSettled", "label": "App start settled (server boot + requests quiet)", "sum": ["scenarios.serverBoot.boot", "scenarios.ui.flows.appStart.settled"], "p50": 3000, "p90": 4000, "unit": "ms" },
+    { "id": "routineStart", "label": "Routine burst at the top of the hour: due to started", "path": "scenarios.routineBurst.start", "p50": 1000, "p90": 2000, "unit": "ms" },
+    { "id": "revokeFreeze", "label": "Revoke / forget freeze (stall or stuck request)", "path": "scenarios.revoke.freeze", "max": 250, "unit": "ms" },
+    { "id": "stallTurn", "label": "Event-loop stall during turns (per-second max)", "path": "scenarios.turnPrep.eld", "p90": 100, "max": 250, "unit": "ms" },
+    { "id": "stallAll", "label": "Event-loop stall, whole run (per-second max)", "path": "eldAll", "max": 250, "unit": "ms" },
+    { "id": "backgroundCpu", "label": "Background CPU while the owner types", "path": "scenarios.typing.cores", "p50": 0.5, "p90": 1.0, "unit": "cores" }
+  ]
+}

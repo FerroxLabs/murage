@@ -20,7 +20,15 @@ import { removeTempDir } from "../../testing/cleanup.ts";
 import { recordEvents, type EventRecorder } from "../../testing/events.ts";
 import { fixtureCredentialFingerprint } from "../../testing/fixture-dump.ts";
 import { warmPool } from "../warm-pool.ts";
-import { acpPoolingEnabled, createAcpDriver, type AcpSupport } from "./core.ts";
+import { cacheEnvFromProcess, markMountIncomplete, markMountReady } from "../../connector-cache.ts";
+import { acpPoolingEnabled, createAcpDriver, resetAcpMcpReadinessForTests, type AcpSupport } from "./core.ts";
+
+// A close that never reports the process gone, switched on by one test (everything else passes through).
+const stopHook = vi.hoisted(() => ({ hang: null as null | Promise<boolean> }));
+vi.mock("../../procs.ts", async (original) => {
+  const actual = await original<typeof import("../../procs.ts")>();
+  return { ...actual, awaitCliTreeStopped: (...args: Parameters<typeof actual.awaitCliTreeStopped>) => (stopHook.hang ? stopHook.hang : actual.awaitCliTreeStopped(...args)) };
+});
 
 const FAKE_CLI = join(dirname(fileURLToPath(import.meta.url)), "..", "..", "testing", "fake-acp-cli.ts");
 
@@ -136,6 +144,7 @@ describe.skipIf(process.platform === "win32")("ACP process pool (fake CLI)", () 
   });
 
   afterEach(async () => {
+    resetAcpMcpReadinessForTests();
     for (const name of ["FAKE_ACP_SPAWN_LOG", "FAKE_ACP_RPC_LOG", "FAKE_ACP_MCP_READY", "FAKE_ACP_MODE",
       "FAKE_ACP_REJECT_LIVE_LOAD", "MURAGE_ACP_POOL_IDLE_MS", "MURAGE_ACP_POOL", "MURAGE_ACP_POOL_MAX", "MURAGE_WARM_ACTIVITY_WINDOW_MS", "MURAGE_PREWARM_WAIT_MS", "MURAGE_ACP_MCP_READY_MS", "MURAGE_WARM_POOL_BUDGET_MB", "FAKE_ACP_GATE_FILE", "FAKE_ACP_UNIQUE_SESSIONS", "FAKE_ACP_LATE_FRAMES_MS", "FAKE_ACP_LATE_REPLY_LOG", "FAKE_ACP_LATE_SHAPE", "FAKE_ACP_CHILD_PID_FILE", "FAKE_ACP_MCP_CHILD_LOG", "MURAGE_ACP_CROSS_THREAD_SPARE", "FAKE_ACP_NAMED_UPDATES", "FAKE_ACP_INIT_DELAY_MS", "FAKE_ACP_CHILD_DELAY_MS", "MURAGE_WARM_MAX_AGE_MS", "FAKE_ACP_LOAD_NULL", "FAKE_ACP_MCP_READY_NEW_ONLY"]) delete process.env[name];
     infoSpy?.mockRestore();
@@ -573,6 +582,35 @@ describe.skipIf(process.platform === "win32")("ACP process pool (fake CLI)", () 
     await until(() => !alive(first!), "the aged process to exit");
   });
 
+  it("an engine the bridge handed only the stand-in tool list is recycled at the next turn (same session), and the fresh one is then pooled", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "murage-mount-"));
+    const identity = "a".repeat(32);
+    const composio = { command: process.execPath, args: ["fixture-connectors"], env: { MURAGE_CONNECTOR_IDENTITY: identity, MURAGE_CONNECTOR_REVISION: "rev-1", MURAGE_CONNECTOR_TOOLS_CACHE_DIR: dir } } as unknown as NonNullable<SendTurnInput["integrations"]>["composio"];
+    try {
+      await create();
+      expect((await turn({ text: "one", integrations: { composio } })).done).toMatchObject({ ok: true });
+      const [first] = spawns();
+      const ref = { cache: cacheEnvFromProcess({ MURAGE_CONNECTOR_TOOLS_CACHE_DIR: dir }), identity, revision: "rev-1", thread: "t-pool" };
+      markMountIncomplete(ref);
+      // Discovery keeps failing: five turns, the pooled engine stays (zero recycles).
+      for (let n = 1; n <= 5; n++) {
+        expect((await turn({ text: `wait ${n}`, resumeCursor: SESSION, integrations: { composio } })).done).toMatchObject({ ok: true });
+        expect(spawns()).toHaveLength(1);
+      }
+      expect(logged("reason=mount_incomplete")).toBe(false);
+      // The real list is confirmed available: exactly one recycle.
+      markMountReady(ref, "");
+      expect((await turn({ text: "two", resumeCursor: SESSION, integrations: { composio } })).done).toMatchObject({ ok: true });
+      expect(logged("acp close thread=t-pool reason=mount_incomplete")).toBe(true);
+      expect(spawns()).toHaveLength(2);
+      await until(() => !alive(first!), "the stand-in engine to exit");
+      expect((await turn({ text: "three", resumeCursor: SESSION, integrations: { composio } })).done).toMatchObject({ ok: true });
+      expect(spawns()).toHaveLength(2);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
   it.each([
     ["a computer", { computer: { boxId: "box-1", token: `box-${randomUUID()}` } }],
     ["a browser", { browser: { command: process.execPath, args: [FAKE_CLI, "--never-started"], env: {} } }],
@@ -733,6 +771,50 @@ describe.skipIf(process.platform === "win32")("ACP process pool (fake CLI)", () 
       // an engine already parked for the thread: nothing more to start
       expect(await instance!.adapter.prewarm!("t-pool")).toBe(false);
       expect(spawns()).toHaveLength(2);
+    });
+
+    it("holdIdle (a deleted conversation is being removed from the engine's files) closes the parked process, warms nothing while held, and allows it again after", async () => {
+      await goCold();
+      expect(await instance!.adapter.prewarm!("t-pool")).toBe(true);
+      const parked = spawns()[1]!;
+      const hold = await instance!.adapter.holdIdle!();
+      expect(hold.confirmed).toBe(true);
+      await until(() => !alive(parked), "the parked process to close for the hold");
+      expect(warmPool.idleCount()).toBe(0);
+      expect(await instance!.adapter.prewarm!("t-pool")).toBe(false);
+      expect(spawns()).toHaveLength(2);
+      hold.release();
+      expect(await instance!.adapter.prewarm!("t-pool")).toBe(true);
+      expect(spawns()).toHaveLength(3);
+    });
+
+    it("holdIdle also waits for every teardown still outstanding, not only the threads still pooled: a close in flight keeps the hold unconfirmed", async () => {
+      process.env.MURAGE_PROVIDER_CLOSE_MS = "300";
+      await create();
+      await turn({ text: "one" }); // parked in the pool
+      let reportGone!: (value: boolean) => void;
+      stopHook.hang = new Promise<boolean>((resolve) => { reportGone = resolve; }); // the process is asked to go but not yet reported gone
+      const stopping = instance!.adapter.interruptTurn("t-pool").catch(() => "unconfirmed"); // leaves the pool at once; its close is in flight
+      const hold = await instance!.adapter.holdIdle!();
+      expect(hold.confirmed).toBe(false); // nothing is pooled any more, but a process of this engine may still be writing
+      hold.release();
+      reportGone(true); // it does go in the end, so the instance can be disposed
+      stopHook.hang = null;
+      await stopping;
+      delete process.env.MURAGE_PROVIDER_CLOSE_MS;
+    });
+
+    it("a prewarm admitted just before the hold leaves no live process behind: the hold waits for it, closes it, and is confirmed", async () => {
+      await goCold();
+      const before = spawns().length;
+      const warming = instance!.adapter.prewarm!("t-pool"); // admitted: nothing is held yet
+      const hold = await instance!.adapter.holdIdle!();
+      expect(await warming).toBe(false); // it did not park: the hold closed it
+      expect(hold.confirmed).toBe(true);
+      for (const pid of spawns().slice(before)) expect(alive(pid)).toBe(false); // confirmed means gone, not asked to close
+      expect(warmPool.idleCount()).toBe(0);
+      hold.release();
+      expect(await instance!.adapter.prewarm!("t-pool")).toBe(true);
     });
 
     it("is released when no send follows within the window", async () => {

@@ -38,6 +38,17 @@ jobs:
           node-version: 24
           cache: pnpm
       - run: pnpm install --frozen-lockfile
+      - name: Node headers for the engine-exclusion addon
+        # The hosted Windows Node has no include/node folder; scripts/build-engine-exclusion.mjs needs node_api.h. Fetch the headers
+        # of the running Node and check them against the published SHASUMS256.txt.
+        shell: bash
+        run: |
+          v=$(node -p process.version)
+          dir="$(cygpath -u "$RUNNER_TEMP")/node-headers"; mkdir -p "$dir"
+          curl -fsSL "https://nodejs.org/dist/$v/node-$v-headers.tar.gz" -o "$dir/h.tgz"
+          curl -fsSL "https://nodejs.org/dist/$v/SHASUMS256.txt" -o "$dir/sums"
+          (cd "$dir" && want=$(grep " node-$v-headers.tar.gz\$" sums | cut -d' ' -f1) && echo "$want  h.tgz" | sha256sum -c - && tar xzf h.tgz)
+          echo "NODE_HEADERS_DIR=$(cygpath -w "$dir/node-$v/include/node")" >> "$GITHUB_ENV"
       # Murage for Chrome: the store item ID and public key when the owner has
       # set them (plan 2.3); until then this build carries no extension identity.
       - name: Murage for Chrome identity, when set
@@ -133,6 +144,8 @@ jobs:
         run: |
           res=release/win-unpacked/resources
           fail=0
+          # the hoisted runtime tree must resolve exactly as staged (versions, nesting, path budget)
+          node scripts/staged-tree-check.mjs "$res/server" --max-path 140 || fail=1
           # missing → utilityProcess.fork fails → the 🔥 "Couldn't start the
           # bot server" page
           [ -f "$res/server/index.js" ] || { echo "::error::missing $res/server/index.js"; fail=1; }

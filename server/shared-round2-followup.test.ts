@@ -90,7 +90,7 @@ it.each([false, true])("R2.3 index coordination preserves Chief tools (shared=%s
   if (!shared) { delete f.iris.partitionedAt; delete f.iris.sharedWith; }
   const chiefRoster = seam("chiefRoster", { store: f.store, database, withProjectNow: (bots: unknown) => bots, projectBotNowAnywhere: () => undefined, partitionRoster });
   const prompt = value("coordinationPrompt", { bot: f.sam, threadId: f.sam.threadId, store: f.store, surfacesForOwner: true, audienceRoster: partitionRoster(f.store, f.sam, f.sam.threadId, true), isHomePartition, threadPartition, chiefRoster, chiefOfStaffSystemPrompt, integrations: { agents: true }, openMurageStatusSystemPrompt: () => "STATUS_TOOLS_CANARY" });
-  expect(prompt).toContain("Chief of Staff"); expect(prompt).toContain("delegate_bot"); expect(prompt).toContain("STATUS_TOOLS_CANARY");
+  expect(prompt).toContain("Chief of Staff"); expect(prompt).toContain("delegate_bot"); expect(prompt).not.toContain("STATUS_TOOLS_CANARY");
   if (shared) { expect(prompt).toContain("Iris (shared): available"); expect(prompt).not.toContain("HOME_PRIVATE_DESCRIPTION"); }
 });
 it.each([false, true])("R2.4 session turns are read-only during a team journal (partitioned=%s)", partitioned => {
@@ -154,7 +154,7 @@ it("R2.7 index standing prompt path selects Sales and excludes home notes", () =
 it("R2.7 real permission event denies cross-partition writes before Full access autoVerdict", () => {
   const f = fixture(); Object.assign(f.iris, { autoApprove: true, fullAccess: true, noLimits: true });
   const respondToRequest = vi.fn(), judged = vi.fn(autoVerdict);
-  const fold = seam("foldRuntimeEvent", { accountProjectEvent: vi.fn(), shouldIgnoreProviderEvent: () => false, accountPresentedProjectEvent: () => true, presentedRequests: { publish: vi.fn() }, localVmThreadTargets: new Map(), groupGoalCoordinatorTurns: new Map(), groupGoalCoordinatorTurnForEvent: () => undefined, broadcast: vi.fn(), routines: null, store: f.store, botForDirectThread: () => f.iris, partitionFileRefusal, turnCwdByThread: new Map(), turnEngineByThread: new Map(), registry: { get: () => ({ adapter: { respondToRequest } }) }, autoVerdict: judged,
+  const fold = seam("foldRuntimeEvent", { fluxFirstTokenProbe: { begin() {}, observe() {} }, accountProjectEvent: vi.fn(), shouldIgnoreProviderEvent: () => false, accountPresentedProjectEvent: () => true, presentedRequests: { publish: vi.fn() }, localVmThreadTargets: new Map(), groupGoalCoordinatorTurns: new Map(), groupGoalCoordinatorTurnForEvent: () => undefined, broadcast: vi.fn(), routines: null, store: f.store, botForDirectThread: () => f.iris, partitionFileRefusal, turnCwdByThread: new Map(), turnEngineByThread: new Map(), registry: { get: () => ({ adapter: { respondToRequest } }) }, autoVerdict: judged,
     // lane PF's reply speaker guard: not a project room here, so it guards nothing
     replyGuardContext: () => null, replySpeakerTurns: { started: vi.fn(), completed: vi.fn(), delta: vi.fn(), item: vi.fn(), removalRow: vi.fn() } });
   fold({ type: "request.opened", eventId: "event", threadId: f.work.threadId, requestId: "ask", requestType: "permission", tool: "write_file", filePaths: [join(DATA_DIR, "workspaces", f.iris.id, "MEMORY.md")] });

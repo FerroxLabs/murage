@@ -63,8 +63,9 @@ const { searchCatalog, searchSkills, toMatchExpression } = (await import(
   searchSkills: (query: string, limit?: number) => Promise<Array<{ id: string }>>;
   toMatchExpression: (raw: string) => string;
 };
-const { fetchTeamCatalog } = (await import(/* @vite-ignore */ `${SERVER}team-library.ts`)) as {
+const { fetchTeamCatalog, loadLocalCatalog } = (await import(/* @vite-ignore */ `${SERVER}team-library.ts`)) as {
   fetchTeamCatalog: () => Promise<{ teams: IntakeCatalogEntry[] }>;
+  loadLocalCatalog: () => { teams: IntakeCatalogEntry[] } | null;
 };
 
 /** The route's own resolver, reproduced by behaviour rather than by import:
@@ -611,7 +612,12 @@ describe("the curated terms themselves", () => {
     // The fallback below is a real code path with real behaviour, and it is
     // strictly the weaker answer. If a catalogue entry is missing from the
     // list this goes red BEFORE anyone ships the weaker answer by accident.
-    const { teams } = await fetchTeamCatalog();
+    // The SHIPPED catalogue, read from the tree. fetchTeamCatalog also merges
+    // a downloaded copy of the upstream index, which still lists teams this
+    // build retired; a list the build does not ship needs no curated terms,
+    // and the answer must not change with whether the network was reachable.
+    const teams = loadLocalCatalog()?.teams ?? [];
+    expect(teams.length).toBeGreaterThan(0);
     const missing = teams.filter((team) => intakeMatchTerms(team.slug) === null).map((team) => team.slug);
     expect(missing, `add these slugs to shared/intake-matches.ts: ${missing.join(", ")}`).toEqual([]);
   });

@@ -104,11 +104,15 @@ export function createWebhookIngressHandler(manager: WebhookManager) {
     if (req.method !== "POST") return json(res, 405, { error: "Webhooks accept POST requests" });
 
     try {
-      const pathSecret = match[2] ? decodeURIComponent(match[2]) : "";
-      const secret = pathSecret || bearerSecret(req);
+      let secret = "";
+      try {
+        secret = (match[2] ? decodeURIComponent(match[2]) : "") || bearerSecret(req);
+      } catch {
+        // A malformed escape is not a secret this server issued.
+      }
       // Reject bad capability URLs before buffering or parsing attacker input.
       if (!manager.authorize(match[1], secret)) {
-        manager.recordRejected(match[1], 401, "Invalid webhook URL or secret", {
+        manager.recordUnauthorized(match[1], {
           contentType: header(req, "content-type"),
           eventName: eventName(req),
           deliveryId: deliveryId(req),

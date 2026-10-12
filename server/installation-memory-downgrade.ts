@@ -10,10 +10,10 @@ function fail(code: string): never { throw Object.assign(new Error(code), { code
  * later Murage already migrated to a newer memory schema. Takes the same
  * exclusive lease as the running app (so it refuses while Murage is open),
  * rewrites the memory objects to the frozen shape of `to` (1: 0.1.53 and
- * older; 2: 0.1.54 to 0.1.60; 3 and 4: development builds; 5: before the 1.0 lineage tables) and folds the WAL so the file stands alone.
+ * older; 2: 0.1.54 to 0.1.60; 3 and 4: development builds; 5: before the 1.0 lineage tables; 6: 1.0.0 and 1.0.1; 7: before the 1.0.2 revocation index) and folds the WAL so the file stands alone.
  * Chat history and memory rows are kept; only derived or learning-only
  * objects are dropped. The pre-upgrade copies are left untouched. */
-export function downgradeInstallationMemorySchema(dataDir: string, to: 1 | 2 | 3 | 4 | 5 = 1) {
+export function downgradeInstallationMemorySchema(dataDir: string, to: 1 | 2 | 3 | 4 | 5 | 6 | 7 = 1) {
   const root = dataDirLeasePaths(dataDir).canonicalDataDir;
   const file = join(root, "messages.db");
   const stat = existsSync(file) ? lstatSync(file) : null;
