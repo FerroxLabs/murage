@@ -23,7 +23,9 @@ describe("boot recovery in an auto room", () => {
 
   it("the boot block never reaches the decider", () => {
     const start = INDEX.indexOf("// Boot (SPEC-P 7.2)");
-    const end = INDEX.indexOf("setInterval(() => {", start);
+    // the sweep that follows the boot block (now wrapped by guardedWriter, 1.0.2 revocation)
+    const ends = [INDEX.indexOf("setInterval(() => {", start), INDEX.indexOf("setInterval(guardedWriter(", start)].filter((at) => at > 0);
+    const end = Math.min(...ends);
     expect(start).toBeGreaterThan(0);
     expect(end).toBeGreaterThan(start);
     const boot = INDEX.slice(start, end);

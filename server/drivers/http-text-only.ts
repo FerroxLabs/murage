@@ -8,6 +8,7 @@
 // the isolation facts a socket can state (no tools, no files, finish_reason).
 import { reportMemoryUsage } from "../memory/extract.ts";
 import { checkLocalServerUrl } from "../local-address-guard.ts";
+import { fluxCallHeaders, isFluxUrl } from "../flux-memory-headers.ts";
 import { providerDispatcher } from "../provider-dispatcher.ts";
 import {
   RUN_BOUND_MS, assertSupportedSchema, httpIsolationReport, httpVerdict, isReportedOverLimit,
@@ -57,7 +58,7 @@ export async function httpTextOnlyTurn(turn: TextOnlyTurnInput, o: HttpTextOnlyO
     if (!reach.ok) return settled({ state: "refused", reason: "transient", detail: `address-${reach.code}`, counted: false });
     response = await (o.fetchImpl ?? fetch)(endpoint, {
       method: "POST", redirect: "error", signal,
-      headers: { "content-type": "application/json", authorization: `Bearer ${o.apiKey}` },
+      headers: { "content-type": "application/json", authorization: `Bearer ${o.apiKey}`, ...(isFluxUrl(o.baseUrl) ? fluxCallHeaders("pip-reflection") : {}) },
       body: request, dispatcher: providerDispatcher(endpoint),
     } as RequestInit);
   } catch {

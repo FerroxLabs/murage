@@ -127,22 +127,6 @@ describe("offline", () => {
     expect(blocked).not.toHaveBeenCalled();
   });
 
-  it("carries the six OpenMausBot teams complete rather than half", async () => {
-    // These six had no source in this repo at all. Vendored, they import with
-    // their crew, their room and their playbooks — the playbooks being the ids
-    // upstream's catalog mislabels as skills, which no import has ever
-    // installed. Nothing about them is now network-dependent.
-    for (const slug of ["100x-marketing", "competitor-watch", "engineering", "inbox-follow-up", "reddit-lead-miner", "seo-growth"]) {
-      const loaded = await fetchLibraryTeam(slug, blocked, { cacheFile: noCache() });
-      if (loaded.format !== "murage.package") throw new Error(`${slug} is not a package`);
-      expect(loaded.package.agents.length, slug).toBeGreaterThan(1);
-      expect(loaded.package.rooms?.length, slug).toBe(1);
-      expect(loaded.package.playbooks?.length, slug).toBeGreaterThan(1);
-      for (const playbook of loaded.package.playbooks ?? []) expect(playbook.instructions.length).toBeGreaterThan(100);
-    }
-    expect(blocked).not.toHaveBeenCalled();
-  });
-
   it("refuses a document whose package id is not its filename", () => {
     const roots = { library: mkdtempSync(join(tmpdir(), "murage-lib-")), botLibrary: DEFAULT_ROOTS.botLibrary };
     scratch.push(roots.library);
@@ -265,7 +249,7 @@ describe("the vendored tree", () => {
     const catalog = loadLocalCatalog()!;
     const slugs = new Set(catalog.teams.map((team) => team.slug));
     const vendored = readdirSync(join(repoRoot, "library", "packages"));
-    expect(vendored).toHaveLength(68);
+    expect(vendored).toHaveLength(62);
     for (const file of vendored) {
       const slug = file.replace(/\.(json|md)$/, "");
       expect(slugs.has(slug), file).toBe(true);

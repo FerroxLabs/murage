@@ -15,11 +15,13 @@
 // member), which is exactly what a lead-mode room does today. Nothing here
 // throws.
 import type { Decider } from "./index.ts";
+import { decideRequestBody } from "./flux.ts";
+import type { DeciderLogRow } from "./log.ts";
 import type { DeciderFailure } from "./types.ts";
 
-/** Turn starts take seconds anyway, and people far from the US West Coast
- * see 400–700 ms round trips; 1.5 s keeps a slow answer usable. */
-export const ROOM_ROUTING_TIMEOUT_MS = 1_500;
+/** Flux ends the call itself at 1.1 s; typical answers take 300–550 ms. A turn
+ * never waits longer than this for the choice, then the lead answers. */
+export const ROOM_ROUTING_TIMEOUT_MS = 1_100;
 /** Bench calibration: answers at >= 0.6 were right 92–99% of the time. */
 export const ROOM_ROUTING_MIN_PROBABILITY = 0.6;
 export const MIN_PROBABILITY = ROOM_ROUTING_MIN_PROBABILITY;
@@ -31,12 +33,33 @@ export const ROOM_ROUTING_INSTRUCTIONS = "Which bot in this room should answer `
 export const ROOM_ROUTING_STATE_KEYS = ["room", "humans_in_room", "bots_in_room", "recent_messages", "new_message"] as const;
 
 const NAME_MAX = 80;
-const TITLE_MAX = 120;
-const DESCRIPTION_MAX = 400;
-const LINE_MAX = 500;
-/** The room context window bounds how many lines; this bounds their size,
- * because large irrelevant state makes the classifier worse, not better. */
-const RECENT_BUDGET_CHARS = 6_000;
+const TITLE_MAX = 60;
+const DESCRIPTION_MAX = 160;
+const LINE_MAX = 300;
+const BOTS_LISTED_MAX = 30;
+/** Flux refuses a state over 2,048 tokens (422 state_too_long). Stay well
+ * under it with a deliberately pessimistic estimate: large irrelevant state
+ * also makes the classifier worse, not better. */
+export const ROOM_ROUTING_STATE_TOKEN_BUDGET = 1_600;
+/** The whole request (state plus the bots' descriptions) is kept under this as
+ * well, so no part of it can push the call over the limit. */
+export const ROOM_ROUTING_REQUEST_TOKEN_BUDGET = 1_900;
+
+/** Hard cap on the serialized request body, independent of any token estimate. */
+export const ROOM_ROUTING_REQUEST_BYTE_CAP = 8_192;
+
+/** Pessimistic token estimate, no tokenizer needed: plain ASCII about 3
+ * characters a token, any other character (accents, CJK, emoji) two tokens. */
+export function estimateStateTokens(value: unknown): number {
+  const json = JSON.stringify(value) ?? "";
+  let ascii = 0;
+  let other = 0;
+  for (const char of json) {
+    if (char.charCodeAt(0) < 128) ascii++;
+    else other++;
+  }
+  return Math.ceil(ascii / 3) + other * 2;
+}
 
 export interface RoomRoutingMember {
   id: string;
@@ -73,35 +96,59 @@ export function memberOption(member: RoomRoutingMember): string {
   return `${name}${title ? `, ${title}` : ""} bot.${description ? ` ${description}` : ""}`;
 }
 
-/** The newest lines that fit the budget, oldest first, each clipped. */
-function recentWithinBudget(recent: RoomRoutingInput["recent"]): RoomRoutingInput["recent"] {
-  const kept: RoomRoutingInput["recent"] = [];
-  let used = 0;
-  for (let index = recent.length - 1; index >= 0; index--) {
-    const line = recent[index]!;
-    const text = clip(line.text, LINE_MAX);
-    if (!text) continue;
-    const size = text.length + line.from.length;
-    if (used + size > RECENT_BUDGET_CHARS) break;
-    used += size;
-    kept.unshift({ from: clip(line.from, NAME_MAX), text });
-  }
-  return kept;
+/** The whole serialized request, exactly as flux.ts will send it. */
+function serializedRequest(state: unknown, options: Record<string, string>): string {
+  return JSON.stringify(decideRequestBody(state, { answer: { type: "choice", instructions: ROOM_ROUTING_INSTRUCTIONS, options } }));
 }
 
-export function roomRoutingRequest(input: RoomRoutingInput) {
-  const options: Record<string, string> = {};
-  for (const member of input.members) options[member.id] = memberOption(member);
-  options[EVERYONE_OPTION] = EVERYONE_MEANING;
-  const recent = recentWithinBudget(input.recent);
-  const state = {
-    room: clip(input.room, NAME_MAX),
-    humans_in_room: input.humans.map((human) => clip(human, NAME_MAX)),
-    bots_in_room: input.members.map((member) => clip(member.name, NAME_MAX)),
-    ...(recent.length ? { recent_messages: recent } : {}),
-    new_message: { from: clip(input.message.from, NAME_MAX), text: input.message.text.trim().slice(0, 8_000) },
-  };
-  return { state, question: { instructions: ROOM_ROUTING_INSTRUCTIONS, options } };
+/** Final admission check on the serialized request (instructions + options +
+ * state): conservative token estimates for the state and for the whole body,
+ * plus a byte cap. */
+function requestFits(state: unknown, options: Record<string, string>): boolean {
+  const body = serializedRequest(state, options);
+  return estimateStateTokens(state) <= ROOM_ROUTING_STATE_TOKEN_BUDGET
+    && estimateStateTokens(body) <= ROOM_ROUTING_REQUEST_TOKEN_BUDGET
+    && Buffer.byteLength(body, "utf8") <= ROOM_ROUTING_REQUEST_BYTE_CAP;
+}
+
+export type RoomRoutingRequest =
+  | { ok: true; state: { room: string; humans_in_room: string[]; bots_in_room: string[]; recent_messages?: Array<{ from: string; text: string }>; new_message: { from: string; text: string } }; question: { instructions: string; options: Record<string, string> } }
+  | { ok: false; reason: "state_too_long" };
+
+/** Builds the request. The new message is required evidence and is NEVER
+ * clipped: if the request does not fit with it whole, the answer is
+ * `state_too_long` and nothing is sent. Bot descriptions, names and history
+ * (newest first) are what give way. */
+export function roomRoutingRequest(input: RoomRoutingInput): RoomRoutingRequest {
+  const message = { from: clip(input.message.from, NAME_MAX), text: input.message.text.trim() };
+  for (const [descMax, titleMax] of [[DESCRIPTION_MAX, TITLE_MAX], [80, 40], [0, 0]] as const) {
+    const options: Record<string, string> = {};
+    for (const member of input.members) {
+      options[member.id] = memberOption({ ...member, title: titleMax && member.title ? clip(member.title, titleMax) : "", description: descMax && member.description ? clip(member.description, descMax) : "" });
+    }
+    options[EVERYONE_OPTION] = EVERYONE_MEANING;
+    const lastTier = descMax === 0;
+    if (!lastTier && estimateStateTokens(options) > 700) continue;
+    for (const nameMax of [NAME_MAX, 40, 24, 16]) {
+      const fixed = {
+        room: clip(input.room, nameMax),
+        humans_in_room: input.humans.slice(0, 5).map((human) => clip(human, nameMax)),
+        bots_in_room: input.members.slice(0, BOTS_LISTED_MAX).map((member) => clip(member.name, nameMax)),
+      };
+      if (!requestFits({ ...fixed, new_message: message }, options)) continue;
+      const recent: Array<{ from: string; text: string }> = [];
+      for (let index = input.recent.length - 1; index >= 0; index--) {
+        const line = input.recent[index]!;
+        const text = clip(line.text, LINE_MAX);
+        if (!text) continue;
+        const candidate = [{ from: clip(line.from, nameMax), text }, ...recent];
+        if (!requestFits({ ...fixed, recent_messages: candidate, new_message: message }, options)) break;
+        recent.unshift(candidate[0]!);
+      }
+      return { ok: true, state: { ...fixed, ...(recent.length ? { recent_messages: recent } : {}), new_message: message }, question: { instructions: ROOM_ROUTING_INSTRUCTIONS, options } };
+    }
+  }
+  return { ok: false, reason: "state_too_long" };
 }
 
 /** Ask once and turn the answer into a route. Never throws. */
@@ -110,11 +157,17 @@ export async function decideRoomResponder(
   input: RoomRoutingInput,
   options: { signal?: AbortSignal; timeoutMs?: number } = {},
 ): Promise<RoomRoute> {
+  // One absolute deadline from enqueue: request building, transport, body read and parse.
+  const enqueuedAt = Date.now();
   try {
     if (input.members.length < 2) return { kind: "fallback", reason: "no_choice" };
-    const { state, question } = roomRoutingRequest(input);
+    const request = roomRoutingRequest(input);
+    if (!request.ok) return { kind: "fallback", reason: request.reason };
+    const { state, question } = request;
+    const remaining = (options.timeoutMs ?? ROOM_ROUTING_TIMEOUT_MS) - (Date.now() - enqueuedAt);
+    if (remaining <= 0) return { kind: "fallback", reason: "timeout" };
     const result = await decider.choose("roomRouting", state, question, {
-      timeoutMs: options.timeoutMs ?? ROOM_ROUTING_TIMEOUT_MS,
+      timeoutMs: remaining,
       signal: options.signal,
     });
     if (!result.ok) return { kind: "fallback", reason: result.reason };
@@ -126,4 +179,28 @@ export async function decideRoomResponder(
   } catch {
     return { kind: "fallback", reason: "malformed" };
   }
+}
+
+const FALLBACK_WHY: Record<string, string> = {
+  state_too_long: "the message was too long to check, so the lead answered",
+  privacy_contract_failed: "the privacy check did not pass, so the lead answered",
+  low_confidence: "not sure enough, so the lead answered",
+  no_choice: "only one bot in the room",
+  plan_required: "not available on this account right now, so the lead answered",
+  timeout: "took too long, so the lead answered",
+  disabled: "switched off, so the lead answered",
+  job_off: "switched off, so the lead answered",
+  no_key: "no Flux Router connection, so the lead answered",
+};
+
+/** A local-log row saying who was picked and why, for the activity view. No
+ * room text, and it is never put in the chat. */
+export function routeLogRow(route: RoomRoute, now: Date = new Date()): DeciderLogRow {
+  const why = route.kind === "fallback" ? FALLBACK_WHY[route.reason] ?? "could not decide, so the lead answered" : undefined;
+  return {
+    at: now.toISOString(), seam: "roomRouting", provider: "flux", ok: route.kind !== "fallback",
+    choice: route.kind === "member" ? route.botId : route.kind === "everyone" ? EVERYONE_OPTION : null,
+    pTop: route.kind === "fallback" ? null : route.probability, margin: null, latencyMs: 0, inputTokens: null, stateHash: "route",
+    route: { kind: route.kind, ...(route.kind === "member" ? { botId: route.botId } : {}), ...(why ? { why } : {}) },
+  };
 }

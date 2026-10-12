@@ -94,6 +94,18 @@ describe("every top-level name Murage writes is classified for backup", () => {
     expect(DATA_DIR_RESTORABLE).not.toContain("connected-apps-catalog.json");
   });
 
+  it("backs up the connected-app ledger through a consistent snapshot and restores it, so unknown outcomes keep blocking repeats", () => {
+    expect(classifyDataDirEntry("connected-app-ledger.db")).toMatchObject({ backup: "database" });
+    for (const sidecar of ["connected-app-ledger.db-wal", "connected-app-ledger.db-shm", "connected-app-ledger.db-journal"]) expect(classifyDataDirEntry(sidecar)).toMatchObject({ backup: "sidecar" });
+    expect(DATA_DIR_RESTORABLE).toContain("connected-app-ledger.db");
+  });
+
+  it("keeps the legal acceptance record in backups and the retired bus spill folder out", () => {
+    expect(classifyDataDirEntry("terms-acceptance.json")).toMatchObject({ backup: "owner-file" });
+    expect(DATA_DIR_RESTORABLE).toContain("terms-acceptance.json");
+    expect(classifyDataDirEntry("bus-spill")).toMatchObject({ backup: "excluded" });
+  });
+
   it("reference-pack images are owner work the restorable stage copies", () => {
     expect(scanDataDirWrites([join(ROOT, "server", "image-library.ts")])).toContainEqual({ file: "server/image-library.ts", name: "image-reference-packs" });
     expect(classifyDataDirEntry("image-reference-packs")).toMatchObject({ backup: "owner-folder" });

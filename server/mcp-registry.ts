@@ -58,7 +58,7 @@ function environmentNameError(name: string): string | null {
 
 /** Server keys the harness mounts itself — a custom entry must never
  * shadow or clobber one of these across any driver's namespace. */
-const RESERVED_MCP_NAMES = new Set([
+export const RESERVED_MCP_NAMES: ReadonlySet<string> = new Set([
   "muragebox",
   "computer",
   "agents",

@@ -239,7 +239,7 @@ it("a resumed session past 2048 receipts still decides from its latest frame (ME
     SELECT 'old-frame-'||value,'dax-direct','fuigo','native-1',?,?,'[]',?,?,?,'delivered',value FROM n`).run(frame.record_versions, frame.source_versions, frame.policy_revision, frame.deletion_epoch, frame.token_count);
   const bundle = await buildMemoryBundle("what is the plan", a, empty);
   expect(memoryContinuationChanged(bundle, "dax-direct", "fuigo", "native-1")).toBe(false);
-  // the latest frame differing still resets the session
-  database().prepare("UPDATE memory_disclosures SET record_versions='[]' WHERE bundle_id=?").run(frame.bundle_id);
+  // the latest frame (the last written: receipt order is the write sequence, not the date) differing still resets the session
+  database().prepare("UPDATE memory_disclosures SET record_versions='[]' WHERE bundle_id='old-frame-2100'").run();
   expect(memoryContinuationChanged(bundle, "dax-direct", "fuigo", "native-1")).toBe(true);
 }, 240_000);

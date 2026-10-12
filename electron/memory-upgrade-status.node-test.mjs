@@ -6,7 +6,7 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import test from "node:test";
 import { safeWipeSync } from "../server/testing/safe-wipe.mjs";
-import { BOOT_EXTEND_LIMIT_MS, pollServerIdentity } from "./server-boot-probe.mjs";
+import { BOOT_EXTEND_ABSOLUTE_MS, BOOT_EXTEND_LIMIT_MS, pollServerIdentity } from "./server-boot-probe.mjs";
 import {
   MEMORY_UPGRADE_STATUS_FILE, buildMemoryUpgradePage, describeBytes, memoryUpgradeBlockedSentence, memoryUpgradeLocale, memoryUpgradeProgress,
   readMemoryUpgradeStatus, watchMemoryUpgrade,
@@ -40,6 +40,26 @@ test("progress is the size of the growing copy over its expected size", () => {
   assert.equal(memoryUpgradeProgress(status, "/d", () => { throw new Error("not created yet"); }), 1);
   assert.equal(memoryUpgradeProgress({ ...status, phase: "migrating" }, "/d"), 95);
   assert.equal(memoryUpgradeProgress({ state: "blocked", code: "MEMORY_MIGRATION_FAILED" }, "/d"), null);
+});
+
+test("after the upgrade, the root-set conversion counts sets done over sets in all, then the space hand-back", () => {
+  const root = mkdtempSync(path.join(tmpdir(), "murage-upgrade-v7-"));
+  try {
+    note(root, { state: "upgrading", phase: "converting", done: 500, total: 1000 });
+    const status = readMemoryUpgradeStatus(root, { pid: 77 });
+    assert.equal(status.phase, "converting");
+    assert.equal(memoryUpgradeProgress(status, root), 47);
+    assert.equal(memoryUpgradeProgress({ ...status, done: 1000 }, root), 94);
+    assert.equal(memoryUpgradeProgress({ state: "upgrading", phase: "reclaiming" }, root), 97);
+    // memory v8: the revocation index backfill counts receipts the same way
+    note(root, { state: "upgrading", phase: "indexing", done: 250_000, total: 500_000 });
+    const indexing = readMemoryUpgradeStatus(root, { pid: 77 });
+    assert.equal(indexing.phase, "indexing");
+    assert.equal(memoryUpgradeProgress(indexing, root), 47);
+    note(root, { state: "upgrading", phase: "indexing" });
+    assert.equal(readMemoryUpgradeStatus(root, { pid: 77 }).phase, "indexing");
+    assert.equal(memoryUpgradeProgress({ state: "upgrading", phase: "indexing" }, root), 98);
+  } finally { safeWipeSync(root); }
 });
 
 test("every sentence is plain: no em dash, no banned words, the shortfall is named", () => {
@@ -148,4 +168,109 @@ test("an upgrade that ends after the normal budget leaves the child a full budge
   const fetchImpl = async () => { if (clock < 130_000) throw new Error("refused"); return { ok: true, json: async () => ({ app: "murage", pid: 9, static: true }) }; };
   const result = await pollServerIdentity({ port: 1, pid: () => 9, bootTimeoutMs: 60_000, now, sleep, fetchImpl, extendWhile: () => clock < 100_000 });
   assert.equal(result.outcome, "ready", "a finished upgrade must not leave the child only the last 5 s extension step");
+});
+
+test("S1: the 30-minute cap does not end an upgrade whose note is still moving, and still ends a stalled one", async () => {
+  let clock = 0;
+  const now = () => clock;
+  const sleep = async (ms) => { clock += ms; };
+  const refused = async () => { throw new Error("refused"); };
+  // progress stays fresh until 50 minutes in, then the note stops moving
+  const staysFresh = await pollServerIdentity({ port: 1, pid: () => 9, bootTimeoutMs: 60_000, now, sleep, fetchImpl: refused, extendWhile: () => true, progressFresh: () => clock < 50 * 60_000 });
+  assert.equal(staysFresh.outcome, "timeout");
+  assert.ok(clock >= 50 * 60_000 && clock < 50 * 60_000 + 10_000, "waited past the 30-minute cap while progress was fresh");
+  // a child that comes up at 45 minutes while still reporting progress is ready, not failed
+  clock = 0;
+  const lateReady = await pollServerIdentity({ port: 1, pid: () => 9, bootTimeoutMs: 60_000, now, sleep, extendWhile: () => true, progressFresh: () => true,
+    fetchImpl: async () => { if (clock < 45 * 60_000) throw new Error("refused"); return { ok: true, json: async () => ({ app: "murage", pid: 9, static: true }) }; } });
+  assert.equal(lateReady.outcome, "ready");
+  // no fresh progress: the cap is the end, as before
+  clock = 0;
+  const stalled = await pollServerIdentity({ port: 1, pid: () => 9, bootTimeoutMs: 60_000, now, sleep, fetchImpl: refused, extendWhile: () => true, progressFresh: () => false });
+  assert.equal(stalled.outcome, "timeout");
+  assert.ok(clock >= BOOT_EXTEND_LIMIT_MS && clock < BOOT_EXTEND_LIMIT_MS + 10_000);
+  // and fresh progress never lifts the absolute ceiling
+  clock = 0;
+  const wedged = await pollServerIdentity({ port: 1, pid: () => 9, bootTimeoutMs: 60_000, now, sleep: async (ms) => { clock += ms * 50; }, fetchImpl: refused, extendWhile: () => true, progressFresh: () => true });
+  assert.equal(wedged.outcome, "timeout");
+  assert.ok(clock >= BOOT_EXTEND_ABSOLUTE_MS);
+});
+
+test("S1: the watcher calls an upgrade fresh while its note changes and stale once it has sat still", () => {
+  let current = { state: "upgrading", phase: "repairing", updatedAt: 1, done: 0, total: 9 };
+  let tick; let clock = 0;
+  const watch = watchMemoryUpgrade({
+    dataDir: "/d", pid: 77, read: () => current, progress: () => 10, onUpdate: () => {}, now: () => clock, freshMs: 5 * 60_000,
+    setTimer: (fn) => { tick = fn; return { unref() {} }; }, clearTimer: () => {},
+  });
+  assert.equal(watch.fresh(), false, "nothing seen yet");
+  tick(); assert.equal(watch.fresh(), true);
+  clock = 4 * 60_000; current = { ...current, updatedAt: 2 }; tick();
+  clock = 8 * 60_000; assert.equal(watch.fresh(), true, "moved 4 minutes ago");
+  clock = 10 * 60_000; tick(); assert.equal(watch.fresh(), false, "still, for more than five minutes");
+  current = { ...current, updatedAt: 3, done: 1 }; tick(); assert.equal(watch.fresh(), true);
+  assert.equal(memoryUpgradeProgress({ state: "upgrading", phase: "repairing", done: 1, total: 4 }, "/d"), 23);
+  assert.equal(readMemoryUpgradeStatus(dir(), { pid: 77 }), null);
+});
+
+test("S1: main.mjs hands the boot probe the watcher's freshness", async () => {
+  const { readFileSync } = await import("node:fs");
+  assert.match(readFileSync(new URL("./main.mjs", import.meta.url), "utf8"), /progressFresh: \(\) => upgradeWatch\?\.fresh\(\) \?\? false/);
+});
+
+test("P1 r1: an upgrade that ends after the 30-minute cap still gives the child its boot budget", async () => {
+  let clock = 0;
+  const now = () => clock;
+  const sleep = async (ms) => { clock += ms; };
+  const end = 31 * 60_000;
+  // the upgrade (and its note) ends at 31 minutes; the rest of the boot needs 20 seconds more
+  const fetchImpl = async () => { if (clock < end + 20_000) throw new Error("refused"); return { ok: true, json: async () => ({ app: "murage", pid: 9, static: true }) }; };
+  const result = await pollServerIdentity({ port: 1, pid: () => 9, bootTimeoutMs: 60_000, now, sleep, fetchImpl, extendWhile: () => clock < end, progressFresh: () => clock < end });
+  assert.equal(result.outcome, "ready");
+  // and a note that stays but stops moving is still a stall
+  clock = 0;
+  const stalled = await pollServerIdentity({ port: 1, pid: () => 9, bootTimeoutMs: 60_000, now, sleep, fetchImpl: async () => { throw new Error("refused"); }, extendWhile: () => true, progressFresh: () => clock < end });
+  assert.equal(stalled.outcome, "timeout");
+  assert.ok(clock < end + 10_000);
+  // a finished upgrade whose child never comes up is still bounded by one budget
+  clock = 0;
+  const dead = await pollServerIdentity({ port: 1, pid: () => 9, bootTimeoutMs: 60_000, now, sleep, fetchImpl: async () => { throw new Error("refused"); }, extendWhile: () => clock < end, progressFresh: () => clock < end });
+  assert.equal(dead.outcome, "timeout");
+  assert.ok(clock >= end + 55_000 && clock < end + 70_000);
+});
+
+test("P1 r2: a long indivisible step past the stale threshold does not fail the boot while the server is alive, and a dead server still does", async () => {
+  // The server's heartbeat thread rewrites the note (updatedAt) every 30 s while the server thread is blocked inside one statement.
+  const boot = async ({ aliveUntil, readyAt }) => {
+    let clock = 0;
+    const now = () => clock;
+    let current = { state: "upgrading", phase: "migrating", step: "indexes", updatedAt: 0 };
+    let tick;
+    const watch = watchMemoryUpgrade({ dataDir: "/d", pid: 5, read: () => current, progress: () => 95, onUpdate: () => {}, now, freshMs: 5 * 60_000,
+      setTimer: (fn) => { tick = fn; return { unref() {} }; }, clearTimer: () => {} });
+    const sleep = async (ms) => {
+      clock += ms;
+      if (clock <= aliveUntil && Math.floor(clock / 30_000) !== Math.floor((clock - ms) / 30_000)) current = { ...current, updatedAt: clock };
+      tick();
+    };
+    tick();
+    const result = await pollServerIdentity({ port: 1, pid: () => 5, bootTimeoutMs: 60_000, now, sleep, extendWhile: () => watch.active(), progressFresh: () => watch.fresh(),
+      fetchImpl: async () => { if (clock < readyAt) throw new Error("refused"); return { ok: true, json: async () => ({ app: "murage", pid: 5, static: true }) }; } });
+    return { outcome: result.outcome, clock };
+  };
+  // one statement that runs for 50 minutes (past the 30-minute cap and every five-minute stale window), then the server is ready
+  const alive = await boot({ aliveUntil: Infinity, readyAt: 50 * 60_000 });
+  assert.equal(alive.outcome, "ready", "the heartbeat kept the note fresh through a 50-minute statement");
+  // the server dies at 35 minutes: the beats stop with it, the note goes stale, and the boot fails soon after
+  const dead = await boot({ aliveUntil: 35 * 60_000, readyAt: Infinity });
+  assert.equal(dead.outcome, "timeout");
+  assert.ok(dead.clock >= 40 * 60_000 && dead.clock < 41 * 60_000, `failed ${Math.round(dead.clock / 60_000)} min in`);
+  // the reader passes the step through, and drops one it does not know
+  const root = dir();
+  try {
+    note(root, { state: "upgrading", phase: "migrating", pid: 3, step: "indexes", stepElapsedMs: 61_000 });
+    assert.deepEqual([readMemoryUpgradeStatus(root, { pid: 3 }).step, readMemoryUpgradeStatus(root, { pid: 3 }).stepElapsedMs], ["indexes", 61_000]);
+    note(root, { state: "upgrading", phase: "migrating", pid: 3, step: "C:\\secret" });
+    assert.equal(readMemoryUpgradeStatus(root, { pid: 3 }).step, undefined);
+  } finally { safeWipeSync(root); }
 });

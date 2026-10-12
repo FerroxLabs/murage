@@ -212,6 +212,11 @@ describe("nothing in the app is gated on a Flux key", () => {
     // servers are untouched, and the locked panel says where to unlock
     // (Add FluxRouter key).
     "components/ConnectedAppsLock.tsx",
+    // RoomRoutingSettings reads it (or a BYO decider key) to show the CLEF room-routing switch as on-capable or
+    // muted with a note. It clears the same bar: the switch only controls work the key performs (the CLEF decision
+    // model, on by default once a key exists), room routing itself keeps working without it, and the muted switch
+    // says why (the key is needed). Nothing is hidden or removed.
+    "components/RoomRoutingSettings.tsx",
   ]);
 
   const sources = (): string[] => {

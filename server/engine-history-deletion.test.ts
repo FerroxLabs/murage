@@ -5,9 +5,11 @@ import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync,
 import { tmpdir } from "node:os";
 import path, { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
-import { afterAll, describe, expect, it } from "vitest";
+import { afterAll, afterEach, describe, expect, it } from "vitest";
 
-import { ConversationDeletions, runConversationDeletion } from "./conversation-deletion.ts";
+import { ConversationDeletions, fuigoSessionKey, removeEngineHistoryFiles, runConversationDeletion } from "./conversation-deletion.ts";
+import { PlanError } from "./engine-plan-core.ts";
+import { fsOps, realEngineFs } from "./engine-fs.ts";
 import { cursorChatsKey, cursorProjectSlug, droidCwdKey, geminiNormalizedPath, geminiSlug, kimiWorkDirKey, qwenProjectHash, qwenProjectKey } from "./engine-history-deletion.ts";
 
 const scratch = realpathSync.native(mkdtempSync(join(tmpdir(), "murage-engines-")));
@@ -135,14 +137,16 @@ describe("removing one conversation's engine history", () => {
     const kimi = join(home, ".kimi-code");
     touch(join(kimi, "sessions", kimiWorkDirKey(desk), "s1", "agents", "main", "wire.jsonl"), SECRET);
     touch(join(kimi, "sessions", "wd_other_000000000000", "s2", "state.json"), "kept");
-    touch(join(kimi, "session_index.jsonl"), `${JSON.stringify({ sessionId: "s1", workDir: desk })}\n${JSON.stringify({ sessionId: "s2", workDir: "/other" })}\n`);
+    touch(join(kimi, "session_index.jsonl"), `${JSON.stringify({ sessionId: "s1", workDir: desk, title: SECRET })}\n${JSON.stringify({ sessionId: "s2", workDir: "/other", title: "other title" })}\n`);
     touch(join(kimi, "user-history", `${createHash("md5").update(desk).digest("hex")}.jsonl`), SECRET);
     touch(join(kimi, "credentials", "kimi-code.json"), "sign-in");
     await runConversationDeletion(deletions, { threadIds: [THREAD], engineHomes: [{ engine: "kimi", home: kimi }] }, () => true);
     expect(existsSync(join(kimi, "sessions", kimiWorkDirKey(desk)))).toBe(false);
     expect(existsSync(join(kimi, "sessions", "wd_other_000000000000"))).toBe(true);
-    expect(readFileSync(join(kimi, "session_index.jsonl"), "utf8")).not.toContain("s1");
-    expect(readFileSync(join(kimi, "session_index.jsonl"), "utf8")).toContain("s2");
+    // the row keeps its ids (an identifier is not the conversation's words); its title is gone
+    expect(readFileSync(join(kimi, "session_index.jsonl"), "utf8")).not.toContain(SECRET);
+    expect(readFileSync(join(kimi, "session_index.jsonl"), "utf8")).toContain('"sessionId":"s1"');
+    expect(readFileSync(join(kimi, "session_index.jsonl"), "utf8")).toContain("other title");
     expect(existsSync(join(kimi, "credentials", "kimi-code.json"))).toBe(true);
   });
 
@@ -231,6 +235,79 @@ describe("removing one conversation's engine history", () => {
     expect(existsSync(join(hermes, "sessions", "other-0000000001.json"))).toBe(true);
   });
 
+  it("r10 finding 1 (Hermes): a database that cannot be read during discovery removes nothing and keeps the pending record; the next run removes parent and child", async () => {
+    const { data, home, db, deletions } = setup();
+    const hermes = join(home, ".hermes");
+    const sid = "a1b2c3d4-1111-4222-8333-444455556666", child = "child-0000000001";
+    const file = join(hermes, "state.db");
+    touch(file, "this is not a database"); // discovery cannot read it
+    touch(join(hermes, "sessions", `${sid}.jsonl`), SECRET);
+    touch(join(hermes, "sessions", `${child}.jsonl`), SECRET);
+    const { report } = await runConversationDeletion(deletions, { threadIds: [THREAD], engineHomes: [{ engine: "hermes", home: hermes }], sessionIds: { hermesAgent: [sid] } }, () => true);
+    expect(report.failed).toContain(file);
+    expect(existsSync(join(hermes, "sessions", `${sid}.jsonl`))).toBe(true);
+    expect(existsSync(join(hermes, "sessions", `${child}.jsonl`))).toBe(true);
+    const [saved] = deletions.pending();
+    expect(saved).toBeDefined();
+    expect(saved!.engineDiscovery).toBeUndefined(); // incomplete discovery is never saved
+    rmSync(file);
+    const store = new DatabaseSync(file);
+    store.exec(`CREATE TABLE sessions(id TEXT PRIMARY KEY, parent_session_id TEXT, meta TEXT);
+      CREATE TABLE messages(id INTEGER PRIMARY KEY, session_id TEXT, content TEXT);`);
+    store.prepare("INSERT INTO sessions VALUES(?,?,?)").run(sid, null, "{}");
+    store.prepare("INSERT INTO sessions VALUES(?,?,?)").run(child, sid, "{}");
+    store.prepare("INSERT INTO messages(session_id,content) VALUES(?,?)").run(child, SECRET);
+    store.close();
+    expect(await new ConversationDeletions({ dataDir: data, database: () => db, retryDelaysMs: [] }).reconcile(() => false, () => undefined)).toBe(1);
+    const after = new DatabaseSync(file);
+    expect(after.prepare("SELECT count(*) AS n FROM sessions").get()?.n).toBe(0);
+    after.close();
+    expect(existsSync(join(hermes, "sessions", `${sid}.jsonl`))).toBe(false);
+    expect(existsSync(join(hermes, "sessions", `${child}.jsonl`))).toBe(false);
+    expect(new ConversationDeletions({ dataDir: data, database: () => db }).pending()).toEqual([]);
+  });
+
+  it("r11: only a missing database counts as absent; any other probe error is a failed read so nothing is removed", () => {
+    const fs = realEngineFs();
+    const dir = mkdtempSync(join(tmpdir(), "probe-"));
+    expect(fs.withDb(join(dir, "state.db"), () => "opened")).toBeNull(); // ENOENT: absent, not a failure
+    const unreadable = join(dir, "x".repeat(300), "state.db"); // ENAMETOOLONG stands in for EIO/EACCES
+    expect(() => fs.withDb(unreadable, () => "opened")).toThrow(PlanError);
+    touch(join(dir, "real.db"), "");
+    expect(fs.withDb(join(dir, "real.db"), () => "opened")).toBe("opened");
+    rmSync(dir, { recursive: true, force: true });
+  });
+
+  it("r10 finding 1 (OpenCode): a database that cannot be read during discovery removes nothing and keeps the pending record; the next run removes parent and child", async () => {
+    const { data, home, db, desk, deletions } = setup();
+    const dir = join(home, ".local", "share", "opencode");
+    const file = join(dir, "opencode.db");
+    touch(file, "this is not a database");
+    touch(join(dir, "storage", "session_diff", "ses_a.json"), SECRET);
+    touch(join(dir, "storage", "session_diff", "ses_child.json"), SECRET);
+    const { report } = await runConversationDeletion(deletions, { threadIds: [THREAD], engineHomes: [{ engine: "opencode", home: dir }] }, () => true);
+    expect(report.failed).toContain(file);
+    expect(existsSync(join(dir, "storage", "session_diff", "ses_a.json"))).toBe(true);
+    expect(existsSync(join(dir, "storage", "session_diff", "ses_child.json"))).toBe(true);
+    const [saved] = deletions.pending();
+    expect(saved).toBeDefined();
+    expect(saved!.engineDiscovery).toBeUndefined();
+    rmSync(file);
+    const store = new DatabaseSync(file);
+    store.exec("CREATE TABLE session(id TEXT PRIMARY KEY, parent_id TEXT, directory TEXT); CREATE TABLE message(id TEXT, session_id TEXT, data TEXT);");
+    store.prepare("INSERT INTO session VALUES(?,?,?)").run("ses_a", null, desk);
+    store.prepare("INSERT INTO session VALUES(?,?,?)").run("ses_child", "ses_a", "/sub/dir");
+    store.prepare("INSERT INTO message VALUES(?,?,?)").run("m1", "ses_child", SECRET);
+    store.close();
+    expect(await new ConversationDeletions({ dataDir: data, database: () => db, retryDelaysMs: [] }).reconcile(() => false, () => undefined)).toBe(1);
+    const after = new DatabaseSync(file);
+    expect(after.prepare("SELECT count(*) AS n FROM session").get()?.n).toBe(0);
+    expect(after.prepare("SELECT count(*) AS n FROM message").get()?.n).toBe(0);
+    after.close();
+    expect(existsSync(join(dir, "storage", "session_diff", "ses_a.json"))).toBe(false);
+    expect(existsSync(join(dir, "storage", "session_diff", "ses_child.json"))).toBe(false);
+  });
+
   it("Antigravity: the conversation's brain folder and summary row", async () => {
     const { home, deletions } = setup();
     const agy = join(home, ".gemini", "antigravity-cli");
@@ -248,5 +325,86 @@ describe("removing one conversation's engine history", () => {
     const after = new DatabaseSync(join(agy, "conversation_summaries.db"));
     expect(after.prepare("SELECT conversation_id FROM summaries").all().map((row) => row.conversation_id)).toEqual(["other-conversation"]);
     after.close();
+  });
+});
+
+// A listing or read failure that is not "not there" (EIO here; EACCES, EMFILE behave the same) must leave discovery
+// incomplete: nothing is removed for that home and the failure is reported, so the pending record stays for the retry.
+describe("file-based engine homes: only absence is silent", () => {
+  const real = { lstat: fsOps.lstat, readdir: fsOps.readdir, readFile: fsOps.readFile };
+  afterEach(() => { Object.assign(fsOps, real); });
+  const failOn = (target: string) => {
+    const eio = () => Object.assign(new Error("EIO: i/o error"), { code: "EIO" });
+    fsOps.lstat = ((p: string, ...rest: unknown[]) => { if (p === target) throw eio(); return (real.lstat as (...a: unknown[]) => unknown)(p, ...rest); }) as typeof fsOps.lstat;
+  };
+  const heal = () => { Object.assign(fsOps, real); };
+  const folder = () => { const { desk } = setup(); return desk; };
+
+  type Case = { name: string; engine: "codex" | "fuigo" | "qwen" | "gemini" | "kimi" | "droid"; build: (home: string, desk: string) => { fault: string; gone: string[] } };
+  const codexRow = (desk: string) => `${JSON.stringify({ type: "session_meta", payload: { id: "abc", cwd: desk } })}\n`;
+  const cases: Case[] = [
+    { name: "Codex: a day directory that cannot be listed", engine: "codex", build: (home, desk) => {
+      const file = join(home, "sessions", "2026", "10", "11", "rollout-a.jsonl"); touch(file, codexRow(desk));
+      return { fault: join(home, "sessions", "2026", "10", "11"), gone: [file] };
+    } },
+    { name: "Codex: a rollout whose head cannot be read", engine: "codex", build: (home, desk) => {
+      const file = join(home, "sessions", "2026", "10", "11", "rollout-a.jsonl"); touch(file, codexRow(desk));
+      const other = join(home, "archived_sessions", "rollout-b.jsonl"); touch(other, codexRow(desk));
+      return { fault: other, gone: [file, other] };
+    } },
+    { name: "Fuigo: the folder's sessions directory", engine: "fuigo", build: (home, desk) => {
+      const dir = join(home, "sessions", fuigoSessionKey(desk)); touch(join(dir, "s1", "t.json"));
+      return { fault: dir, gone: [dir] };
+    } },
+    { name: "Qwen: the project's chats directory", engine: "qwen", build: (home, desk) => {
+      const project = join(home, "projects", qwenProjectKey(desk)); touch(join(project, "chats", "s1.jsonl"), JSON.stringify({ cwd: desk }));
+      return { fault: join(project, "chats"), gone: [project] };
+    } },
+    { name: "Gemini: the tmp directory", engine: "gemini", build: (home, desk) => {
+      const tmp = join(home, "tmp", geminiSlug(desk)); touch(join(tmp, ".project_root"), desk); touch(join(tmp, "chats", "c.jsonl"), SECRET);
+      return { fault: join(home, "tmp"), gone: [tmp] };
+    } },
+    { name: "Kimi Code: the workdir bucket", engine: "kimi", build: (home, desk) => {
+      const bucket = join(home, "sessions", kimiWorkDirKey(desk)); touch(join(bucket, "s1", "log"), SECRET);
+      return { fault: bucket, gone: [bucket] };
+    } },
+    { name: "Droid: the folder's session bucket", engine: "droid", build: (home, desk) => {
+      const bucket = join(home, "sessions", droidCwdKey(realpathSync.native(desk))); touch(join(bucket, "s1.jsonl"), SECRET);
+      return { fault: bucket, gone: [bucket] };
+    } },
+  ];
+
+  for (const item of cases) {
+    it(`${item.name}: nothing is removed and the home is reported failed; a clean retry removes everything`, () => {
+      const desk = folder();
+      const home = fresh("eh");
+      const { fault, gone } = item.build(home, desk);
+      const homes = [{ engine: item.engine, home, ...(item.engine === "qwen" ? { secondary: home } : {}) }];
+      for (const exists of gone) expect(existsSync(exists), exists).toBe(true);
+      failOn(fault);
+      const discover = removeEngineHistoryFiles(homes, [desk], [], {}, {}, false);
+      expect(discover.failed, "discovery").toContain(fault);
+      const apply = removeEngineHistoryFiles(homes, [desk], [], {}, {}, true);
+      expect(apply.failed, "removal").toContain(fault);
+      expect(apply.removed).toEqual([]);
+      for (const exists of gone) expect(existsSync(exists), `${exists} must stay while discovery is incomplete`).toBe(true);
+      heal();
+      const retry = removeEngineHistoryFiles(homes, [desk], [], {}, {}, true);
+      expect(retry.failed).toEqual([]);
+      for (const exists of gone) expect(existsSync(exists), `${exists} removed on the clean retry`).toBe(false);
+    });
+  }
+
+  it("absence stays silent for every family: a home with nothing in it reports no failure", () => {
+    const desk = folder();
+    for (const engine of ["codex", "fuigo", "qwen", "gemini", "kimi", "droid", "cursor", "hermes", "antigravity", "opencode"] as const) {
+      const home = fresh(`empty-${engine}`);
+      const result = removeEngineHistoryFiles([{ engine, home }], [desk], [], {}, {}, true);
+      expect(result.failed, engine).toEqual([]);
+    }
+    const missing = join(fresh("gone"), "nope");
+    for (const engine of ["codex", "fuigo", "qwen", "gemini", "kimi", "droid"] as const) {
+      expect(removeEngineHistoryFiles([{ engine, home: missing }], [desk], [], {}, {}, true).failed, engine).toEqual([]);
+    }
   });
 });
