@@ -56,7 +56,8 @@ export function readPersistedJson(
 
   let parsed: unknown;
   try {
-    parsed = JSON.parse(raw);
+    // A byte order mark (Notepad, PowerShell) is not part of the JSON.
+    parsed = JSON.parse(raw.replace(/^\uFEFF/, ""));
   } catch {
     // JSON errors can contain snippets of private saved data. Keep the public
     // recovery error actionable without retaining those parser messages.

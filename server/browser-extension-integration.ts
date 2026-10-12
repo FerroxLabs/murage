@@ -9,16 +9,23 @@ import { mkdirSync } from "node:fs";
 import { startBrowserExtensionBroker } from "./browser-extension-broker.ts";
 import { browserExtensionResourcesPath } from "./browser-extension-listing.ts";
 import { createBrowserExtensionService, type YourTurnInfo } from "./browser-extension-service.ts";
-import { BrowserExtensionApprovals, type ContinuationInfo } from "./browser-extension-approvals.ts";
+import { BrowserExtensionApprovals, browserActionCardTitle, type ContinuationInfo } from "./browser-extension-approvals.ts";
 import { HUMAN_DECISION_MS } from "../shared/browser-extension-protocol.ts";
 import type { ApprovalBus } from "./peer-approval.ts";
 import type { BotRecord } from "./store.ts";
 import type { ProviderInstance } from "./contracts.ts";
 import type { BindingContext } from "./browser-extension-policy.ts";
 import { browserActivityStore } from "./browser-extension-activity.ts";
+import { botColorHex } from "../shared/ember-colors.ts";
 import { resolveCheckerConnection } from "./browser-action-checker-connection.ts";
 
 const HUMAN_WAIT_MS = HUMAN_DECISION_MS;
+/** The name the extension shows for a bot: the bot's own name. The side panel adds the conversation's title itself. */
+export function extensionBindName(bot: { name: string } | undefined, botId: string): string { return bot?.name ?? botId; }
+/** One activity line for the side panel, in the same words the app's settings use for the access levels. */
+export function extensionActivityText(line: { action: string; target?: string; site: string; decision: string }): string {
+  return `${line.action}${line.target ? ` ${line.target}` : ""} on ${line.site}: ${line.decision === "Full permissive" ? "Full access" : line.decision}`;
+}
 type Broker = Awaited<ReturnType<typeof startBrowserExtensionBroker>>;
 type Service = Awaited<ReturnType<typeof createBrowserExtensionService>>;
 /** The folder the service keeps its state in. On Windows the native helper creates it (and sets its private ACL)
@@ -121,27 +128,28 @@ export class BrowserExtensionIntegration {
           const bot = this.options.bot(context.botId); if (!bot) return undefined;
           const title = bot.tasks?.find(task => task.threadId === context.threadId)?.title?.trim();
           const lines = browserActivityStore()?.list({ botId: context.botId, bindingId: context.bindingId }).slice(-20) ?? [];
-          return { ...(title ? { conversation: title } : {}), ...(typeof bot.color === "string" ? { botColor: bot.color } : {}), full: bot.browserApproval === "full", ...(this.approvals.hasWaiting(context.bindingId) ? { phase: "waiting" as const } : {}),
-            activity: lines.map(line => ({ time: new Date(line.at).toISOString().slice(11, 16), text: `${line.action}${line.target ? ` ${line.target}` : ""} on ${line.site}: ${line.decision}` })) };
+          return { ...(title ? { conversation: title } : {}), ...(botColorHex(bot.color) ? { botColor: botColorHex(bot.color)! } : {}), full: bot.browserApproval === "full", ...(this.approvals.hasWaiting(context.bindingId) ? { phase: "waiting" as const } : {}),
+            activity: lines.map(line => ({ time: new Date(line.at).toISOString().slice(11, 16), text: extensionActivityText(line) })) };
         },
         onTaskEnded: info => { this.approvals.cancelBinding(info.context.bindingId); const bot = this.options.bot(info.context.botId); if (bot) this.options.taskEnded?.({ ...info, bot }); },
         onHandoff: info => { const bot = this.options.bot(info.context.botId); if (bot) this.options.yourTurn?.({ ...info, bot }); },
         onHandoffFailed: info => { const bot = this.options.bot(info.context.botId); if (bot) this.options.handoffFailed?.({ ...info, bot }); },
         onStateRecovered: info => { this.options.stateRecovered?.(info); },
         onContinue: info => { this.continueWhenFree(info, 0); },
-        botLabel: context => { const bot = this.options.bot(context.botId); const title = bot?.tasks?.find(task => task.threadId === context.threadId)?.title?.trim(); return bot ? `${bot.name}${title ? `: ${title}` : ""}` : context.botId; },
+        // The side panel already shows the conversation under the name, so the name is the bot's alone.
+        botLabel: context => extensionBindName(this.options.bot(context.botId), context.botId),
         askSite: async (context, origin, binding) => {
           const bot = this.options.bot(context.botId);
           if (!bot) return "never";
           const state = await this.approvals.ask({ bot, threadId: context.threadId, bindingId: context.bindingId, generation: context.generation,
             digest: createHash("sha256").update(JSON.stringify(["site", context, origin])).digest("hex"),
-            summary: `Let ${bot.name} read and work on ${origin}? Site access is remembered for this browser task. It does not approve purchases, messages or other changes.`, scope: "site", waitMs: HUMAN_WAIT_MS, binding, kind: "site" });
+            summary: `Let ${bot.name} read and work on ${origin}? Site access is remembered for this browser task. It does not approve purchases, messages or other changes.`, scope: "site", waitMs: HUMAN_WAIT_MS, binding, kind: "site", title: `${bot.name} wants to use ${(() => { try { return new URL(origin).host || origin; } catch { return origin; } })()}` });
           return state === "allow" ? "allow" : state === "waiting" ? "waiting" : "ask";
         },
         askAction: async (context, action, binding) => {
           const bot = this.options.bot(context.botId);
           if (!bot) return false;
-          const state = await this.approvals.ask({ bot, threadId: context.threadId, bindingId: context.bindingId, generation: context.generation, digest: action.digest, summary: action.summary.slice(0, 12000), ...(action.pushSummary ? { pushSummary: action.pushSummary } : {}), waitMs: HUMAN_WAIT_MS, binding, kind: "action", ...(action.cardKind ? { cardKind: action.cardKind } : {}) });
+          const state = await this.approvals.ask({ bot, threadId: context.threadId, bindingId: context.bindingId, generation: context.generation, digest: action.digest, summary: action.summary.slice(0, 12000), ...(action.pushSummary ? { pushSummary: action.pushSummary } : {}), waitMs: HUMAN_WAIT_MS, binding, kind: "action", title: browserActionCardTitle(bot.name, action), ...(action.cardKind ? { cardKind: action.cardKind } : {}) });
           return state === "allow" ? true : state === "waiting" ? "waiting" : false;
         },
         consumeApproval: (context, query) => this.approvals.consume({ bindingId: context.bindingId, kind: query.kind, binding: query.binding }),
@@ -155,6 +163,8 @@ export class BrowserExtensionIntegration {
   /** Everything the broker passes up: events, and the one kind of response that arrives with no request waiting (the restarted extension's
    * "the last step may have run"). Public so the broker-to-service path is testable end to end. */
   handleBrokerMessage(profileId: string, message: Parameters<Service["handleMessage"]>[1]): void {
+    // The extension is talking to the helper, so setup worked: a leftover registration problem is no longer true.
+    this.registrationProblem = ""; this.registrationCode = "";
     if (message.type === "response") {
       // RES-002: an uncertain report is owner news. Cards for the old step die first; the service pauses the binding and keeps the outcome-unknown mark.
       if (message.error?.code === "uncertain") {
@@ -247,9 +257,14 @@ export class BrowserExtensionIntegration {
       throw Object.assign(new Error(code === "registration_ownership_conflict" ? "Another browser helper is registered under Murage's name, or its files were changed. Murage left them in place." : "Browser helper removal could not finish. Changed files were left in place."), { status: 409 });
     } finally { this.registrationProblem = ""; this.registrationCode = ""; }
   }
-  setupProblem() { return this.registrationProblem; }
+  /** A browser that is connected shows the helper works, so an earlier "needs repair" is stale: drop it. */
+  private clearProblemWhenConnected() {
+    if ((this.registrationProblem || this.registrationCode) && (this.service?.status().profiles.length ?? 0) > 0) { this.registrationProblem = ""; this.registrationCode = ""; }
+  }
+  setupProblem() { this.clearProblemWhenConnected(); return this.registrationProblem; }
   /** repair: this build needs the old owned registration removed first; foreign: another registration holds the name. */
   setupProblemKind(): "repair" | "foreign" | undefined {
+    this.clearProblemWhenConnected();
     return this.registrationCode === "registration_repair_required" ? "repair" : this.registrationCode === "registration_ownership_conflict" ? "foreign" : undefined;
   }
   status() { return this.service?.status() ?? { profiles: [], bindings: [] }; }

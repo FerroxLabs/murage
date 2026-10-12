@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 import { database, transaction } from "../database.ts";
 import { requireMemoryOwner } from "./authority.ts";
 import { applyMemoryTombstones } from "./restore.ts";
+import { notifyMemoryWork } from "./jobs.ts";
 
 /** Told, inside the forget's own transaction, which messages the forgotten
  * material came from: derived project text citing them goes stale (SPEC-P
@@ -11,6 +12,12 @@ let forgottenMessagesHook: ForgottenMessagesHook | null = null;
 export function onMemoryMessagesForgotten(hook: ForgottenMessagesHook | null): void { forgottenMessagesHook = hook; }
 
 export function forgetMemory(ticket: object, target: {kind:"source"|"record";id:string;revision?:number}) {
+  const result=forgetInTransaction(ticket,target);
+  // The derived cleanup is not owner-gated (no engine call): the worker is told at once, not at its next idle sweep.
+  if(result.derivedCleanup=="pending")notifyMemoryWork();
+  return result;
+}
+function forgetInTransaction(ticket: object, target: {kind:"source"|"record";id:string;revision?:number}) {
   requireMemoryOwner(ticket);
   if(!target.id || target.revision!==undefined && (!Number.isSafeInteger(target.revision)||target.revision<0))throw new Error("INVALID_MEMORY_TARGET");
   return transaction(db=>{

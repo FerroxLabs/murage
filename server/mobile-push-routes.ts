@@ -7,6 +7,7 @@
 // exist.
 import type { IncomingHttpHeaders } from "node:http";
 import { EVENT_REF, TOKEN_PATTERNS, UUID } from "../shared/mobile-push.ts";
+import { awaitWriterGate, isDatabaseBusy } from "./database.ts";
 import type { PushOutbox } from "./mobile-push-outbox.ts";
 import type { RelayClient } from "./mobile-push-relay.ts";
 import { PUSH_TOKEN_TTL_MS, type PushBinding, type PushEventRow, type PushStore } from "./mobile-push-store.ts";
@@ -32,6 +33,7 @@ const header = (h: IncomingHttpHeaders, name: string) => (typeof h[name] === "st
 const BAD_REQUEST = { status: 400, body: { code: "bad_request", error: "bad request" } };
 const PUSH_OFF = { status: 503, body: { code: "push_off", error: "Notifications are turned off on this computer." } };
 const RELAY_DOWN = { status: 503, body: { code: "relay_unavailable", error: "Murage could not reach the notification service. Try again later." } };
+const BUSY_RETRY = { status: 503, body: { code: "busy", error: "Murage is busy for a moment. Try again." } };
 const NOT_SAVED = { status: 500, body: { error: "Murage could not save the notification setup. Try again." } };
 /** The relay never expires a binding on its own, so every binding dropped
  * here is first queued in the store (same transaction as the delete) and
@@ -53,9 +55,13 @@ export async function mobilePushRoute(
   if (!deps.authorized(req.headers)) return NO_ROUTE;
   const device = header(req.headers, "x-murage-push-device");
   if (!DEVICE.test(device)) return NO_ROUTE;
-  const now = (deps.now ?? Date.now)();
   const rest = req.path.slice(PREFIX.length);
   const route = `${req.method} ${rest}`;
+  // Almost every route here writes (a token expiry, a binding, a delivery mark), GET included. They all wait, without
+  // blocking the loop, while the revocation index build holds the writer lock; only the settings read does not.
+  // The clock is read after the wait, so an expiry is counted from when it is written.
+  if (route !== "GET preferences") await awaitWriterGate();
+  const now = (deps.now ?? Date.now)();
 
   if (route === "GET preferences" || route === "POST preferences") {
     // Only the cookie-authenticated door may change consent. Notification
@@ -102,7 +108,10 @@ export async function mobilePushRoute(
     const binding = deps.store.bindingForDevice(device);
     // The door asks this only to mint a token pair for the binding, so the
     // pair's expiry is recorded here, from this host's own clock.
-    if (binding) try { deps.store.setTokenExpiry(binding.bindingId, now + PUSH_TOKEN_TTL_MS); } catch { /* the earlier record stands */ }
+    // A failed write is not an answer of success: a stale expiry would let the phone's token outlive its record and drop
+    // notifications. The caller asks again.
+    if (binding) try { deps.store.setTokenExpiry(binding.bindingId, now + PUSH_TOKEN_TTL_MS); }
+    catch (error) { return isDatabaseBusy(error) ? BUSY_RETRY : NOT_SAVED; }
     return binding ? { status: 200, body: { bindingId: binding.bindingId } } : { status: 404, body: { code: "not_enrolled" } };
   }
   if (route === "POST revoke-device") {

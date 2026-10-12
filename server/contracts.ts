@@ -5,7 +5,7 @@
 // Stream. The shapes and names are kept so the two codebases stay mutually
 // readable.
 
-import type { ProviderErrorInfo } from "../shared/provider-error.ts";
+import type { LocalSetupFailure, ProviderErrorInfo } from "../shared/provider-error.ts";
 import type { RuntimeErrorDiagnostic } from "../shared/error-diagnostic.ts";
 import type { MemoryBundle } from "../shared/memory.ts";
 import type { QuestionAnswer, QuestionSpec } from "../shared/questions.ts";
@@ -108,7 +108,9 @@ export type SteerDelivery = "delivered" | "rejected" | "uncertain";
 
 export type RuntimeEvent = RuntimeEventBase &
   (
-    | { type: "session.started"; sessionId: string | null; model?: string | null }
+    | { type: "session.started"; sessionId: string | null; model?: string | null;
+        /** The driver's session contract this session was made under (ProviderInstance.sessionContract). */
+        sessionContract?: number }
     /** A sub agent or background task started, progressed or ended. `subtasks`
      * is the whole list for the turn after this change, so a client that joins
      * late renders from the latest event alone. Owner-only on every stream. */
@@ -136,6 +138,15 @@ export type RuntimeEvent = RuntimeEventBase &
          * is a live indicator whose meaning differs per driver (a per-call
          * delta, a thread total, a per-step figure) and must never be summed. */
         usage?: { input: number; output: number; cachedInput?: number };
+        /** Plain names ("connected apps", "memory") of required tools that had
+         * not loaded when the turn's prompt was written; the bot was told so.
+         * Degraded availability: a routine run records it, and fails only when
+         * its task needed them (server/routines.ts). */
+        toolsUnavailable?: string[];
+        /** "unknown": the engine could not say whether the required tools were
+         * up (it does not report per-server status); the bot was told they may
+         * still be loading. Absent when they were checked. */
+        mcpReadiness?: "unknown";
       }
     /** `summary` is a short human read of the tool's arguments, for engines
      * that hide the real call inside a wrapper tool — without it every chip
@@ -256,7 +267,7 @@ export type RuntimeEvent = RuntimeEventBase &
     | { type: "thread.token-usage.updated"; input: number; output: number; cachedInput?: number }
     // `setup: true` marks a failure the user fixes by installing or
     // configuring something, not by retrying — the UI offers setup instead.
-    | { type: "runtime.error"; message: string; details?: string; setup?: boolean; authRequired?: boolean; /** the installed Claude Code is too old for the model */ claudeUpdate?: boolean; errorKind?: string; providerError?: ProviderErrorInfo; diagnostic?: RuntimeErrorDiagnostic }
+    | { type: "runtime.error"; message: string; details?: string; setup?: boolean; authRequired?: boolean; /** the installed Claude Code is too old for the model */ claudeUpdate?: boolean; errorKind?: string; /** A device-side setup failure the chat words from its code (a bot's engine folder); localFailureEngine names the engine. */ localFailure?: LocalSetupFailure; localFailureEngine?: string; providerError?: ProviderErrorInfo; diagnostic?: RuntimeErrorDiagnostic }
   );
 
 export type RuntimeEventListener = (event: RuntimeEvent) => void;
@@ -460,6 +471,9 @@ export interface TurnStartResult {
   turnId: TurnId;
 }
 
+/** What `ProviderAdapter.holdIdle` returns: how to let the adapter keep or warm engines again, and whether every idle one is gone. */
+export interface IdleHold { release: () => void; confirmed: boolean }
+
 export interface ProviderAdapter {
   readonly provider: DriverKind;
   readonly mcpToolSurface?: import("./murage-tool-surface.ts").McpToolSurface;
@@ -571,6 +585,12 @@ export interface ProviderAdapter {
    * sessions. Resolves after retirement; callers must omit stale resume cursors.
    * Unlike interruptTurn, this must prevent implicit reuse on the next turn. */
   resetSession?(threadId: ThreadId): Promise<void>;
+  /** Close every pooled or retained IDLE engine process this adapter holds and keep it from starting a warm one (a prewarm, a
+   * process parked after a turn) until the returned release is called. Running turns are never touched. Used while Murage removes
+   * a deleted conversation from the engine's own files (conversation-deletion.ts), so no process of ours writes to them then.
+   * `confirmed` is true only when every idle process (and every prewarm that was starting) is known to have exited; a close that
+   * could not be confirmed says false and the caller leaves that engine's files alone. */
+  holdIdle?(): Promise<IdleHold>;
   /** Answer a pending ask. Resolves with what actually happened — never
    * throws for an ask that is no longer there: `unavailable` means nobody
    * could take the answer (the turn ended, the broker died, the driver
@@ -686,6 +706,11 @@ export interface ProviderInstance {
   readonly displayName: string | undefined;
   readonly enabled: boolean;
   readonly models: ModelCatalog;
+  /** The version of what this engine's native sessions are made under (Claude: the isolation
+   * contract, claude.ts CLAUDE_ISOLATION_CONTRACT). A cursor recorded under another version, or
+   * with none, is never resumed: the harness starts a fresh session and replays the thread.
+   * Absent for an engine with no such contract. */
+  readonly sessionContract?: number;
   /** Refresh a live catalog without recreating the provider instance. */
   readonly refreshModels?: (options?: ModelRefreshOptions) => Promise<void>;
   readonly adapter: ProviderAdapter;

@@ -137,8 +137,8 @@ export class ProviderConnectionsService {
  private readonly attempted=new Map<string,{revision:string;at:number}>();
  private readonly listeners=new Set<(changedIds:string[])=>void|Promise<void>>();
  private readonly fetcher:typeof fetch;
- private readonly options:{readBank:()=>string|undefined;cacheDir:string;fetch?:typeof fetch;now?:()=>number;legacyConnections?:()=>LegacyProviderConnection[];onCatalogOutcome?:(connection:{id:string;preset:ProviderPreset;key:string},outcome:"ok"|"refused")=>void;resolveAlias?:(id:string)=>ProviderConnectionRecord|null;signIns?:SignInConnectionSource};
- constructor(options:{readBank:()=>string|undefined;cacheDir:string;fetch?:typeof fetch;now?:()=>number;legacyConnections?:()=>LegacyProviderConnection[];onCatalogOutcome?:(connection:{id:string;preset:ProviderPreset;key:string},outcome:"ok"|"refused")=>void;resolveAlias?:(id:string)=>ProviderConnectionRecord|null;signIns?:SignInConnectionSource}){this.options=options;this.fetcher=options.fetch??fetch;}
+ private readonly options:{readBank:()=>string|undefined;cacheDir:string;fetch?:typeof fetch;now?:()=>number;legacyConnections?:()=>LegacyProviderConnection[];onCatalogOutcome?:(connection:{id:string;preset:ProviderPreset;key:string},outcome:"ok"|"refused")=>void;keyGate?:(connection:{id:string;preset:ProviderPreset;key:string})=>Promise<ProviderCatalogError|null>;resolveAlias?:(id:string)=>ProviderConnectionRecord|null;signIns?:SignInConnectionSource};
+ constructor(options:{readBank:()=>string|undefined;cacheDir:string;fetch?:typeof fetch;now?:()=>number;legacyConnections?:()=>LegacyProviderConnection[];onCatalogOutcome?:(connection:{id:string;preset:ProviderPreset;key:string},outcome:"ok"|"refused")=>void;keyGate?:(connection:{id:string;preset:ProviderPreset;key:string})=>Promise<ProviderCatalogError|null>;resolveAlias?:(id:string)=>ProviderConnectionRecord|null;signIns?:SignInConnectionSource}){this.options=options;this.fetcher=options.fetch??fetch;}
  /** Plan sign-in connections changed (sign-in, sign-out, account switch or
   * an ended sign-in). Same effect as a bank change for those ids. */
  async invalidate(ids:string[]){for(const id of ids)this.cache.delete(id);await Promise.all([...this.listeners].map(listener=>listener(ids)));}
@@ -196,6 +196,8 @@ export class ProviderConnectionsService {
   const previous=this.readCache(connection),controllerSignal=signal?AbortSignal.any([signal,AbortSignal.timeout(15_000)]):AbortSignal.timeout(15_000);
   const active=()=>{const current=this.resolve(id);if(!current||!current.enabled||current.revision!==connection.revision)throw new CatalogFailure("connection-changed");};
   try{
+   // A key the provider is known to refuse (or that is blocked) is not sent to the catalog route at all.
+   if(this.options.keyGate){const gated=await this.options.keyGate({id,preset:connection.preset,key:connection.key});if(gated)throw new CatalogFailure(gated);}
    const all:ProviderModel[]=[],seen=new Set<string>();let cursor:string|undefined;
    for(let page=0;page<20;page++){
     active();const url=new URL(connection.catalogUrl);if(cursor)url.searchParams.set("after_id",cursor);

@@ -137,9 +137,10 @@ async function main() {
       const context=contexts.get(query.id)!;let ranked:string[]=[],delivered:string[]=[],error:string|undefined,degradedReason:string|undefined;
       const started=performance.now();
       try {
-        const found=await searchMemory(query.query,context,controller,{limit:10});
-        if(!found.vectorRows)throw Error("Wrong backend: semantic candidate path did not execute");
-        workerPeakRssBytes=Math.max(workerPeakRssBytes,Number((found as typeof found&{workerPeakRssBytes?:number}).workerPeakRssBytes??0));
+        let facts:{vectorRows:number;workerPeakRssBytes?:number}={vectorRows:0};
+        const found=await searchMemory(query.query,context,controller,{limit:10,telemetry:seen=>{facts=seen;}});
+        if(!facts.vectorRows)throw Error("Wrong backend: semantic candidate path did not execute");
+        workerPeakRssBytes=Math.max(workerPeakRssBytes,Number(facts.workerPeakRssBytes??0));
         ranked=[...new Set(found.hits.flatMap(hit=>hit.evidence.map(handle=>String(handle.sourceId))))];
         const bundle=await buildMemoryBundle(query.query,context,controller);assertMemoryBundle(bundle,context);
         delivered=bundle.sourceVersions.map(source=>source.id);degradedReason=bundle.degradedReason??found.degradedReason;

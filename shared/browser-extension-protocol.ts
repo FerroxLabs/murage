@@ -83,8 +83,9 @@ export function nativeWireBytes(value: unknown): number {
 /** Largest result the extension returns: one frame minus the envelope and the identity fields. */
 export const MAX_RESULT_BYTES = MAX_MESSAGE_BYTES - 32 * 1024;
 
-/** How long a card waits for a person to decide. Execution deadlines (browserCommandDeadlineMs) are separate. */
-export const HUMAN_DECISION_MS = 120_000;
+/** How long a card waits for a person to decide: the same 15 minutes as every other approval card (images, publishing, peers).
+ * After that the call returns WAITING and the card stays open for 24 hours. Execution deadlines (browserCommandDeadlineMs) are separate. */
+export const HUMAN_DECISION_MS = 15 * 60_000;
 
 /** A tool call can wait for site access and then action approval, plus one bounded execution window. */
 export const BROWSER_EXTENSION_CALL_TIMEOUT_MS = HUMAN_DECISION_MS * 2 + 60_000;

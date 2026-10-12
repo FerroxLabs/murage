@@ -89,7 +89,7 @@ it("removes a deleted conversation's content everywhere Murage and its engines p
   expect(keepPreview).toMatchObject({ savedFiles: 0 });
   // The confirmation also counts the messages that go: the typed message and the reply.
   expect(doomedPreview.messages).toBeGreaterThanOrEqual(2);
-  expect((await api("GET", `/api/deletion-preview?botId=${bot.id}`)).body).toEqual({ savedFiles: 1, messages: doomedPreview.messages + keepPreview.messages });
+  expect((await api("GET", `/api/deletion-preview?botId=${bot.id}`)).body).toEqual({ savedFiles: 1, messages: doomedPreview.messages + keepPreview.messages, engines: ["Claude Code"] });
   writeFileSync(join(data, "decisions.ndjson.1"), `${JSON.stringify({ at: new Date().toISOString(), threadId: doomed, botName: "Delete fixture", tool: "Bash", summary: MARKER, decision: "user-allowed", source: "user" })}\n`);
   const deleted = await api("DELETE", `/api/bots/${bot.id}/tasks/${doomed}`);
   expect(deleted.status).toBe(200);
