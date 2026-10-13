@@ -8,7 +8,7 @@ import { join } from "node:path";
 
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-import { decideEndpoint, isLoopbackUrl } from "./flux.ts";
+import { decideEndpoint, isLoopbackUrl, resetPrivacyLatch } from "./flux.ts";
 import { createDecider } from "./index.ts";
 import { DECIDER_LOG_DIR, flushDeciderLog } from "./log.ts";
 import { readDecisionModelSettings, type DecisionModelSettings } from "./settings.ts";
@@ -20,7 +20,7 @@ const QUESTION = { instructions: "Which bot should answer `new_message`?", optio
 const STATE = { new_message: { from: "Milind", text: "PRIVATE-MESSAGE-TEXT the navbar overlaps on Safari" } };
 type FetchMock = ReturnType<typeof vi.fn<typeof fetch>>;
 
-const json = (body: unknown, status = 200) => new Response(JSON.stringify(body), { status, headers: { "content-type": "application/json" } });
+const json = (body: unknown, status = 200) => new Response(JSON.stringify(body), { status, headers: { "content-type": "application/json", "x-flux-no-retain": "applied" } });
 const choiceBody = (choice: string, probabilities: Record<string, number>) => ({
   model: "flux-decide-1", answers: { answer: { type: "choice", choice, probabilities } }, usage: { input_tokens: 612 },
 });
@@ -34,7 +34,7 @@ function decider(settings: DecisionModelSettings, fetchImpl: FetchMock, opts: { 
   });
 }
 
-afterEach(() => vi.restoreAllMocks());
+afterEach(() => { vi.restoreAllMocks(); resetPrivacyLatch(); });
 
 describe("gates: never a call, never a throw", () => {
   it.each([
@@ -145,7 +145,7 @@ describe("failure matrix: every one is { ok:false }, none throws", () => {
   });
 
   it("a non-JSON body -> malformed", async () => {
-    const fetchImpl = vi.fn<typeof fetch>().mockResolvedValue(new Response("<html>gateway</html>", { status: 200 }));
+    const fetchImpl = vi.fn<typeof fetch>().mockResolvedValue(new Response("<html>gateway</html>", { status: 200, headers: { "x-flux-no-retain": "applied" } }));
     await expect(decider(ON, fetchImpl).choose("roomRouting", STATE, QUESTION)).resolves.toMatchObject({ ok: false, reason: "malformed" });
   });
 
@@ -167,7 +167,7 @@ describe("failure matrix: every one is { ok:false }, none throws", () => {
   });
 
   it("a body that stalls after its headers still ends at the budget", async () => {
-    const stalled = { ok: true, status: 200, json: () => new Promise(() => undefined), body: null } as unknown as Response;
+    const stalled = { ok: true, status: 200, headers: new Headers({ "x-flux-no-retain": "applied" }), json: () => new Promise(() => undefined), body: null } as unknown as Response;
     const fetchImpl = vi.fn<typeof fetch>().mockResolvedValue(stalled);
     await expect(decider(ON, fetchImpl).choose("roomRouting", STATE, QUESTION, { timeoutMs: 80 })).resolves.toMatchObject({ ok: false, reason: "timeout" });
   });

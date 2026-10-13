@@ -90,3 +90,15 @@ export class CoordinationBudget {
     return { rootId: root.id, path };
   }
 }
+
+/** Words a bot (and so the owner) can use for why a hand-off was not allowed. The codes stay in the server's own checks. */
+export function coordinationRefusalText(error: unknown): string | undefined {
+  const message = error instanceof Error ? error.message : "";
+  if (!message.startsWith("COORDINATION_")) return undefined;
+  if (message.startsWith("COORDINATION_BUDGET_EXHAUSTED")) return "This task has already handed off as many times as it can. Tell the owner, and finish what you can without another hand-off.";
+  if (message.startsWith("COORDINATION_DEPTH_LIMIT")) return "This chain of hand-offs is as long as it can get. Finish this work yourself instead of handing it on.";
+  if (message.startsWith("COORDINATION_CYCLE")) return "That bot is already part of this chain of hand-offs, so I can't hand the work back to it.";
+  if (message.startsWith("COORDINATION_ROOT_LIMIT")) return "Too many tasks have been handing work on over the last day. Tell the owner, and try again later.";
+  if (message.startsWith("COORDINATION_CAPACITY")) return "Other hand-offs are still running, so this one can't start yet. Try again in a minute, or do it yourself.";
+  return "I can't hand work on from here. Tell the owner and ask them to start the task again.";
+}

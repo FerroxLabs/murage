@@ -9,8 +9,10 @@
 // or state changes (or that is deleted), and the policy revision, deletion
 // epoch and mode. Inside a transaction there is no stamp (a write may roll
 // back), so nothing is remembered from there.
+import { withoutDroppedTableTriggers } from "./read-time-retired.ts";
 import type { DatabaseSync } from "node:sqlite";
 import { turnTraceEnabled } from "../turn-trace.ts";
+import { ancestryUnrepaired, connectionId } from "../database.ts";
 
 // Trigger bodies name their write target unqualified: SQLite forbids a
 // qualified one there, and an unqualified name resolves to the temp table.
@@ -40,6 +42,27 @@ CREATE TEMP TRIGGER IF NOT EXISTS prov_versions_d AFTER DELETE ON main.memory_so
 CREATE TEMP TRIGGER IF NOT EXISTS prov_versions_u AFTER UPDATE ON main.memory_source_versions BEGIN ${BUMP}; END;
 CREATE TEMP TRIGGER IF NOT EXISTS prov_meta_u AFTER UPDATE ON main.memory_meta
  WHEN OLD.policy_revision IS NOT NEW.policy_revision OR OLD.deletion_epoch IS NOT NEW.deletion_epoch OR OLD.mode IS NOT NEW.mode BEGIN ${BUMP}; END;
+-- A procedure verdict also rests on reply lineage (is the reply behind a source or record withheld?): output roots and root sets (a
+-- repair writes them), receipt outputs, receipts whose versions change, and a message that is deleted or whose copyOf changes.
+CREATE TEMP TRIGGER IF NOT EXISTS prov_outputs_i AFTER INSERT ON main.memory_disclosure_outputs BEGIN ${BUMP}; END;
+CREATE TEMP TRIGGER IF NOT EXISTS prov_outputs_d AFTER DELETE ON main.memory_disclosure_outputs BEGIN ${BUMP}; END;
+CREATE TEMP TRIGGER IF NOT EXISTS prov_roots_i AFTER INSERT ON main.memory_output_roots BEGIN ${BUMP}; END;
+CREATE TEMP TRIGGER IF NOT EXISTS prov_roots_u AFTER UPDATE ON main.memory_output_roots BEGIN ${BUMP}; END;
+CREATE TEMP TRIGGER IF NOT EXISTS prov_roots_d AFTER DELETE ON main.memory_output_roots BEGIN ${BUMP}; END;
+CREATE TEMP TRIGGER IF NOT EXISTS prov_root_sets_i AFTER INSERT ON main.memory_root_sets BEGIN ${BUMP}; END;
+CREATE TEMP TRIGGER IF NOT EXISTS prov_root_sets_u AFTER UPDATE ON main.memory_root_sets BEGIN ${BUMP}; END;
+CREATE TEMP TRIGGER IF NOT EXISTS prov_root_sets_d AFTER DELETE ON main.memory_root_sets BEGIN ${BUMP}; END;
+CREATE TEMP TRIGGER IF NOT EXISTS prov_root_members_i AFTER INSERT ON main.memory_root_set_members BEGIN ${BUMP}; END;
+CREATE TEMP TRIGGER IF NOT EXISTS prov_root_members_d AFTER DELETE ON main.memory_root_set_members BEGIN ${BUMP}; END;
+CREATE TEMP TRIGGER IF NOT EXISTS prov_root_parents_i AFTER INSERT ON main.memory_root_set_parents BEGIN ${BUMP}; END;
+CREATE TEMP TRIGGER IF NOT EXISTS prov_root_parents_u AFTER UPDATE ON main.memory_root_set_parents BEGIN ${BUMP}; END;
+CREATE TEMP TRIGGER IF NOT EXISTS prov_root_parents_d AFTER DELETE ON main.memory_root_set_parents BEGIN ${BUMP}; END;
+CREATE TEMP TRIGGER IF NOT EXISTS prov_receipts_u AFTER UPDATE ON main.memory_disclosures
+ WHEN OLD.record_versions IS NOT NEW.record_versions OR OLD.source_versions IS NOT NEW.source_versions OR OLD.native_session IS NOT NEW.native_session BEGIN ${BUMP}; END;
+CREATE TEMP TRIGGER IF NOT EXISTS prov_messages_u AFTER UPDATE ON main.messages WHEN OLD.json IS NOT NEW.json AND (instr(OLD.json,'copyOf')>0 OR instr(NEW.json,'copyOf')>0) BEGIN ${BUMP}; END;
+CREATE TEMP TRIGGER IF NOT EXISTS prov_messages_d AFTER DELETE ON main.messages BEGIN ${BUMP}; END;
+CREATE TEMP TRIGGER IF NOT EXISTS prov_messages_r BEFORE INSERT ON main.messages
+ WHEN EXISTS (SELECT 1 FROM main.messages o WHERE o.thread_id=NEW.thread_id AND o.id=NEW.id AND o.json IS NOT NEW.json AND (instr(o.json,'copyOf')>0 OR instr(NEW.json,'copyOf')>0)) BEGIN ${BUMP}; END;
 `;
 // The identity set reads only identity records, their details and their
 // evidence, and its scan cannot use an index (no index on kind or partition),
@@ -50,16 +73,18 @@ CREATE TEMP TRIGGER IF NOT EXISTS prov_meta_u AFTER UPDATE ON main.memory_meta
 // those writes threw the set away and the next check rescanned (158 s in the
 // first three minutes on a 735 MB store).
 const IDENTITY_BUMP = "UPDATE identity_epoch SET n=n+1";
-const IS_IDENTITY = (id: string) => `(EXISTS(SELECT 1 FROM main.memory_records WHERE id=${id} AND kind='character-canon') OR EXISTS(SELECT 1 FROM main.memory_record_details WHERE record_id=${id} AND partition='identity'))`;
+// (one version, by its full primary key: an id-level probe read every version of a record on each write of one, so seeding or ending a
+// record with 150k versions cost 150k reads per row: 1.0.2 revoke-bounded r3)
+const IS_IDENTITY = (id: string, version: string) => `(EXISTS(SELECT 1 FROM main.memory_records WHERE id=${id} AND version=${version} AND kind='character-canon') OR EXISTS(SELECT 1 FROM main.memory_record_details WHERE record_id=${id} AND record_version=${version} AND partition='identity'))`;
 const IDENTITY_SCHEMA = `
 CREATE TEMP TABLE IF NOT EXISTS identity_epoch(id INTEGER PRIMARY KEY CHECK(id=1), n INTEGER NOT NULL);
 INSERT OR IGNORE INTO temp.identity_epoch VALUES(1,0);
 CREATE TEMP TRIGGER IF NOT EXISTS ident_records_i AFTER INSERT ON main.memory_records
- WHEN NEW.kind='character-canon' OR ${IS_IDENTITY("NEW.id")} BEGIN ${IDENTITY_BUMP}; END;
+ WHEN NEW.kind='character-canon' OR ${IS_IDENTITY("NEW.id", "NEW.version")} BEGIN ${IDENTITY_BUMP}; END;
 CREATE TEMP TRIGGER IF NOT EXISTS ident_records_u AFTER UPDATE ON main.memory_records
- WHEN OLD.kind='character-canon' OR NEW.kind='character-canon' OR ${IS_IDENTITY("OLD.id")} OR ${IS_IDENTITY("NEW.id")} BEGIN ${IDENTITY_BUMP}; END;
+ WHEN OLD.kind='character-canon' OR NEW.kind='character-canon' OR ${IS_IDENTITY("OLD.id", "OLD.version")} OR ${IS_IDENTITY("NEW.id", "NEW.version")} BEGIN ${IDENTITY_BUMP}; END;
 CREATE TEMP TRIGGER IF NOT EXISTS ident_records_d AFTER DELETE ON main.memory_records
- WHEN OLD.kind='character-canon' OR ${IS_IDENTITY("OLD.id")} BEGIN ${IDENTITY_BUMP}; END;
+ WHEN OLD.kind='character-canon' OR ${IS_IDENTITY("OLD.id", "OLD.version")} BEGIN ${IDENTITY_BUMP}; END;
 CREATE TEMP TRIGGER IF NOT EXISTS ident_details_i AFTER INSERT ON main.memory_record_details
  WHEN NEW.partition='identity' BEGIN ${IDENTITY_BUMP}; END;
 CREATE TEMP TRIGGER IF NOT EXISTS ident_details_u AFTER UPDATE ON main.memory_record_details
@@ -67,17 +92,17 @@ CREATE TEMP TRIGGER IF NOT EXISTS ident_details_u AFTER UPDATE ON main.memory_re
 CREATE TEMP TRIGGER IF NOT EXISTS ident_details_d AFTER DELETE ON main.memory_record_details
  WHEN OLD.partition='identity' BEGIN ${IDENTITY_BUMP}; END;
 CREATE TEMP TRIGGER IF NOT EXISTS ident_evidence_i AFTER INSERT ON main.memory_evidence
- WHEN ${IS_IDENTITY("NEW.record_id")} BEGIN ${IDENTITY_BUMP}; END;
+ WHEN ${IS_IDENTITY("NEW.record_id", "NEW.record_version")} BEGIN ${IDENTITY_BUMP}; END;
 CREATE TEMP TRIGGER IF NOT EXISTS ident_evidence_u AFTER UPDATE ON main.memory_evidence
- WHEN ${IS_IDENTITY("OLD.record_id")} OR ${IS_IDENTITY("NEW.record_id")} BEGIN ${IDENTITY_BUMP}; END;
+ WHEN ${IS_IDENTITY("OLD.record_id", "OLD.record_version")} OR ${IS_IDENTITY("NEW.record_id", "NEW.record_version")} BEGIN ${IDENTITY_BUMP}; END;
 CREATE TEMP TRIGGER IF NOT EXISTS ident_evidence_d AFTER DELETE ON main.memory_evidence
- WHEN ${IS_IDENTITY("OLD.record_id")} BEGIN ${IDENTITY_BUMP}; END;
+ WHEN ${IS_IDENTITY("OLD.record_id", "OLD.record_version")} BEGIN ${IDENTITY_BUMP}; END;
 `;
 const ready = new WeakMap<object, boolean>();
 function install(db: DatabaseSync): boolean {
   let ok = ready.get(db);
   if (ok === undefined) {
-    try { db.exec(SCHEMA); db.exec(IDENTITY_SCHEMA); ok = true; }
+    try { db.exec(withoutDroppedTableTriggers(db, SCHEMA)); db.exec(IDENTITY_SCHEMA); ok = true; }
     catch (error) {
       ok = false;
       if (!installWarned) { installWarned = true; console.warn(`[memory] provenance cache triggers could not be installed; every check rescans (${error instanceof Error ? error.message : String(error)})`); }
@@ -94,7 +119,9 @@ export function provenanceTriggersInstalled(db: DatabaseSync): boolean { return 
 export function provenanceStamp(db: DatabaseSync): string | undefined {
   if (db.isTransaction || !install(db)) return undefined;
   const row = db.prepare("SELECT (SELECT n FROM temp.provenance_epoch) AS epoch, (SELECT data_version FROM pragma_data_version) AS version").get();
-  return `${row?.epoch}:${row?.version}`;
+  // The connection and its ancestry-repair state ride in the stamp: a verdict reached while the lineage repair had failed (replay of
+  // unrepaired threads withheld) is not reused after the repair succeeds, nor on another connection.
+  return `${connectionId(db)}${ancestryUnrepaired(db) ? "u" : ""}.${row?.epoch}:${row?.version}`;
 }
 
 const IDENTITY_SQL = "SELECT e.source_id,e.source_revision FROM memory_records r LEFT JOIN memory_record_details d ON d.record_id=r.id AND d.record_version=r.version CROSS JOIN memory_evidence e ON e.record_id=r.id AND e.record_version=r.version WHERE r.kind='character-canon' OR d.partition='identity'";

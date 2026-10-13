@@ -19,6 +19,7 @@ import { ensureScope, memoryAccess, reconcileMemoryRoster, type MemoryRoster } f
 import { continuationMemoryRevoked, filterDirectReplay } from "./disclosures.ts";
 import { revokeAllDisclosures } from "./revocation.ts";
 import { recordSessionRoots } from "./replay-lineage.ts";
+import { LineageAllowance } from "./lineage-allowance.ts";
 
 beforeEach(() => { closeDatabase(); rmSync(DATA_DIR, { recursive: true, force: true }); mkdirSync(DATA_DIR, { recursive: true }); });
 
@@ -68,14 +69,14 @@ it("after a roster change resets the session, the owner's direct chat replays th
   const a = access();
   const why: { reason?: string } = {};
   // the live log's reset: memory-changed (receipt-already-revoked)
-  expect(continuationMemoryRevoked("sable-direct", "claude", "S-1", a, why)).toBe(true);
+  expect(continuationMemoryRevoked(LineageAllowance.tool(), "sable-direct", "claude", "S-1", a, why)).toBe(true);
   expect(why.reason).toBe("memory-changed (receipt-already-revoked)");
-  const { replayed, withheld } = filterDirectReplay("sable-direct", messages, a, new Set(), { withheldLine: marker });
+  const { replayed, withheld } = filterDirectReplay(LineageAllowance.tool(), "sable-direct", messages, a, new Set(), { withheldLine: marker });
   expect(replayed.map(m => m.id)).toEqual(["o1", "r1", "o2", "r2", "o3", "r3", "o4", "r4", "o5", "r5"]);
   expect(replayed.find(m => m.id === "r5")?.text).toBe("sable r5");
   expect(withheld.size).toBe(0);
   // without a line to show, nothing is dropped either
-  expect(filterDirectReplay("sable-direct", messages, a, new Set()).replayed.filter(m => m.role === "bot")).toHaveLength(5);
+  expect(filterDirectReplay(LineageAllowance.tool(), "sable-direct", messages, a, new Set()).replayed.filter(m => m.role === "bot")).toHaveLength(5);
 });
 
 it("a reply whose content the owner forgot stays in its place as a withheld line, and a quote of it reads that line", () => {
@@ -85,7 +86,7 @@ it("a reply whose content the owner forgot stays in its place as a withheld line
   rosterChange();
   // the record reply r2's own turn used (R2) is forgotten: r2 and r3 rest on it
   database().prepare("UPDATE memory_records SET state='deleted' WHERE id='fact-2'").run();
-  const { replayed, allowed, withheld } = filterDirectReplay("sable-direct", messages, access(), new Set(), { withheldLine: marker });
+  const { replayed, allowed, withheld } = filterDirectReplay(LineageAllowance.tool(), "sable-direct", messages, access(), new Set(), { withheldLine: marker });
   expect(replayed.map(m => m.id)).toEqual(["o1", "r1", "o2", "r2", "o3", "r3", "o4"]);
   expect([...withheld].sort()).toEqual(["r2", "r3"]);
   expect(replayed.find(m => m.id === "r2")?.text).toBe("[withheld] (Sable)");
@@ -97,6 +98,6 @@ it("words nobody proved are the owner's keep the receipt fence: revoked receipts
   reconcileMemoryRoster(roster);
   const messages = session(access(), 3);
   rosterChange();
-  const { replayed } = filterDirectReplay("sable-direct", messages, access(true), new Set(), { withheldLine: marker });
+  const { replayed } = filterDirectReplay(LineageAllowance.tool(), "sable-direct", messages, access(true), new Set(), { withheldLine: marker });
   expect(replayed.map(m => m.id)).toEqual(["o1", "o2", "o3"]);
 });

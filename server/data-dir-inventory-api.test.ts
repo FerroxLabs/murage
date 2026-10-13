@@ -26,7 +26,7 @@ import { stageInstallationStateWhileOwned } from "./installation-state-snapshot.
 
 const posixOnly = describe.skipIf(process.platform === "win32");
 /** What launchVerificationServer itself puts in the folder, not Murage. */
-const HARNESS = new Set(["fake-claude-dump.json", "finish-fake", ".verification-instrumentation.mjs"]);
+const HARNESS = new Set(["fake-claude-dump.json", "finish-fake", ".verification-instrumentation.mjs", ".verification-instrumentation.body.mjs"]);
 
 
 let fixture: VerificationServer, headers: Record<string, string>, logDir: string, log: string;

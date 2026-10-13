@@ -1,14 +1,19 @@
+import { REQUIRED_MCP_SERVERS, startsWithNotDone, toolsUnavailableRunError } from "./drivers/mcp-readiness.ts";
 import { assertHumanPrincipal, type HumanPrincipal } from "./human-principals.ts";
 import { ROUTINE_INSTRUCTIONS_MAX, routineInstructionsTooLongMessage } from "../shared/routine-instructions.ts";
 import { createHash, randomUUID } from "node:crypto";
 import { existsSync, mkdirSync, readFileSync, statSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { z } from "zod";
+import { awaitWriterGate, isDatabaseBusy, writersHeldForIndexBuild } from "./database.ts";
 
 import { DATA_DIR } from "./config.ts";
+import { rateLimited } from "./observe.ts";
 import type { RuntimeEvent } from "./contracts.ts";
 import { cancelCoalesced, flushCoalesced, scheduleCoalesced, writeFileAtomic } from "./atomic.ts";
 import { RoutineRunsJournal, routinesCommit } from "./routine-runs-journal.ts";
+import { isTracked, plainCopy, track, untracked } from "./tracked-state.ts";
+import { PersistedStateRecoveryError, readPersistedJson } from "./persisted-state.ts";
 import { redactSecretsInText } from "./redact.ts";
 import { CLOUD_ROUTINE_NOT_YET, type RoutineRunCardData } from "../shared/routine-run.ts";
 import type { GroupGoalRunStatus } from "../shared/group-goal-run.ts";
@@ -58,6 +63,8 @@ export type RoutineRunStatus = typeof ROUTINE_RUN_STATUSES[number];
 const LIVE_RUN_STATUSES: readonly RoutineRunStatus[] = ["running", "waiting", "needs-you"];
 /** A run that is not settled yet. */
 const OPEN_RUN_STATUSES: readonly RoutineRunStatus[] = ["queued", ...LIVE_RUN_STATUSES];
+/** What a locked messages.db says (DatabaseBusyError's sentence, or SQLite's own): never a reason to fail a run. */
+const BUSY_MESSAGE = /Busy for a moment, try again|database is locked|SQLITE_BUSY/i;
 const isLive = (status: RoutineRunStatus) => LIVE_RUN_STATUSES.includes(status);
 const isOpen = (status: RoutineRunStatus) => OPEN_RUN_STATUSES.includes(status);
 /** Queued, running, waiting, or waiting on you: not settled yet. */
@@ -214,6 +221,14 @@ export interface RoutineRun {
   /** Provider identity for a Telegram turn in a reused conversation. */
   channelTurnId?: string;
   startedAt?: number;
+  /** When this run was due to start: its due time, plus its own place in the dispatch spread
+   *  (dispatchStaggerMs) for an on-time scheduled run. Lateness is startedAt - slotAt. */
+  slotAt?: number;
+  /** When this occurrence was first due, recorded when it was scheduled and never moved: lateness and queue age are
+   *  measured from it, though a queued interval run is later aligned to its newest occurrence (scheduledFor). */
+  dueAt?: number;
+  /** How many times this queued interval run was moved on to a newer occurrence while it waited. */
+  coalescedOccurrences?: number;
   /** When the owner answered a card this run was waiting on after its run
    * limit; the limit counts again from here. */
   resumedAt?: number;
@@ -231,23 +246,85 @@ export interface RoutineRun {
   error?: string;
   cost?: number | null;
   denials?: string[];
+  /** Degraded availability, kept apart from the outcome: required tools
+   * ("connected apps", "memory") that had not loaded when the run's turn
+   * started. The run still completes when its task did not need them. */
+  toolsUnavailable?: string[];
+  /** "unknown": the engine could not say whether those tools were up. */
+  toolsReadiness?: "unknown";
   createdAt: number;
   seenAt?: number;
 }
 
-export interface EventActionBudget {
-  version: 1;
-  limits: { create: 4; handoff: 4 };
-  admissions: Array<{ id: string; kind: "create" | "handoff" }>;
-  closed: boolean;
+/** Which required tool family a tool call belongs to (by its server name in
+ * the engine's tool id), as the plain label the drivers report. */
+export function requiredToolLabelOf(event: { title?: string; toolIdentity?: { namespace?: string; name?: string } }): string | null {
+  const text = `${event.toolIdentity?.namespace ?? ""} ${event.toolIdentity?.name ?? ""} ${event.title ?? ""}`;
+  for (const [server, label] of Object.entries(REQUIRED_MCP_SERVERS)) {
+    const escaped = server.replace(/[-]/g, "[-_]");
+    if (new RegExp(`(^|[^a-z0-9])${escaped}(__|[^a-z0-9_-]|$)`, "i").test(text)) return label;
+  }
+  return /\bCOMPOSIO_[A-Z0-9_]+\b/.test(text) ? REQUIRED_MCP_SERVERS.composio! : null;
 }
+
+/** How many creates / hand-offs one event-started run may do before the owner is asked. */
+export const EVENT_BASE_LIMIT = 4;
+/** What one owner "Allow" adds to a run's limit. */
+export const EVENT_EXTENSION = 4;
+/** Where a run the owner's Full access already covers starts (before any card). */
+export const EVENT_FULL_ACCESS_LIMIT = 16;
+/** The most hand-offs or new bots one run can ever do, however many times the owner allows more. */
+export const EVENT_MAX_LIMIT = 64;
+/** Why a run's ledger was closed, so the bot can be told the true reason. */
+export type EventBudgetClosedReason = "connection" | "stopped" | "watch";
+export interface EventActionBudget {
+  /** 2: limits are per run and can be raised; version 1 stored a fixed 4 and 4. */
+  version: 2;
+  limits: { create: number; handoff: number };
+  /** `receipt` is what the admitted action actually produced (the delegation id, the new bot's id), so the same action asked again returns it instead of doing the work twice. */
+  admissions: Array<{ id: string; kind: "create" | "handoff"; receipt?: string }>;
+  /** Kinds the owner answered "Not now" to: no more actions of that kind in this run, and no further cards for it. */
+  declined?: Array<"create" | "handoff">;
+  closed: boolean;
+  closedReason?: EventBudgetClosedReason;
+}
+export type EventAdmission =
+  | { ok: true }
+  | { ok: false; reason: "limit"; kind: "create" | "handoff"; used: number; limit: number }
+  | { ok: false; reason: "closed"; closedReason?: EventBudgetClosedReason }
+  | { ok: false; reason: "unavailable" };
 const eventAdmissionId = z.string().min(1).max(200).regex(/^[^\x00-\x1f\x7f]+$/);
-const eventActionBudgetSchema = z.object({
+const eventAdmissionList = z.array(z.object({ id: eventAdmissionId, kind: z.enum(["create", "handoff"]), receipt: z.string().min(1).max(200).optional() }).strict());
+// Older runs stored the declined request keys ("handoff:<hash>"); they load as the kind they belonged to.
+const eventDeclinedList = z.array(z.string().min(1).max(200)).max(EVENT_MAX_LIMIT * 2);
+function declinedKinds(marks: string[]): Array<"create" | "handoff"> {
+  const kinds = new Set<"create" | "handoff">();
+  for (const mark of marks) { if (mark.startsWith("handoff")) kinds.add("handoff"); else if (mark.startsWith("create")) kinds.add("create"); }
+  return [...kinds];
+}
+const uniqueAdmissions = (value: { admissions: Array<{ id: string; kind: string }> }) => new Set(value.admissions.map(item => item.id)).size === value.admissions.length;
+const eventActionBudgetV1 = z.object({
   version: z.literal(1), limits: z.object({ create: z.literal(4), handoff: z.literal(4) }).strict(),
-  admissions: z.array(z.object({ id: eventAdmissionId, kind: z.enum(["create", "handoff"]) }).strict()).max(8), closed: z.boolean(),
-}).strict().refine(value => new Set(value.admissions.map(item => item.id)).size === value.admissions.length
-  && value.admissions.filter(item => item.kind === "create").length <= 4 && value.admissions.filter(item => item.kind === "handoff").length <= 4);
-function newEventActionBudget(): EventActionBudget { return { version: 1, limits: { create: 4, handoff: 4 }, admissions: [], closed: false }; }
+  admissions: eventAdmissionList.max(8), closed: z.boolean(),
+}).strict().refine(value => uniqueAdmissions(value)
+  && value.admissions.filter(item => item.kind === "create").length <= 4 && value.admissions.filter(item => item.kind === "handoff").length <= 4)
+  .transform((value): EventActionBudget => ({ ...value, version: 2 }));
+const eventActionBudgetV2 = z.object({
+  version: z.literal(2),
+  limits: z.object({ create: z.number().int().min(EVENT_BASE_LIMIT).max(EVENT_MAX_LIMIT), handoff: z.number().int().min(EVENT_BASE_LIMIT).max(EVENT_MAX_LIMIT) }).strict(),
+  admissions: eventAdmissionList.max(EVENT_MAX_LIMIT * 2), declined: eventDeclinedList.optional(), closed: z.boolean(),
+  closedReason: z.enum(["connection", "stopped", "watch"]).optional(),
+}).strict().refine(value => uniqueAdmissions(value)
+  && value.admissions.filter(item => item.kind === "create").length <= value.limits.create
+  && value.admissions.filter(item => item.kind === "handoff").length <= value.limits.handoff)
+  .transform((value): EventActionBudget => {
+    const { declined, ...rest } = value;
+    const kinds = declined ? declinedKinds(declined) : [];
+    return { ...rest, ...(kinds.length ? { declined: kinds } : {}) };
+  });
+/** Stored runs migrate here: a version 1 ledger loads as version 2 with the same counts. */
+const eventActionBudgetSchema = z.union([eventActionBudgetV1, eventActionBudgetV2]);
+function newEventActionBudget(): EventActionBudget { return { version: 2, limits: { create: EVENT_BASE_LIMIT, handoff: EVENT_BASE_LIMIT }, admissions: [], closed: false }; }
 
 export interface RoutineRequestReceipt {
   requestId: string;
@@ -303,6 +380,8 @@ interface RoutineFile {
   runs?: RoutineRun[];
   /** The journal commit this file records (routine-runs-journal.ts). */
   runsCommit?: number;
+  /** Renewed by every full write: routine state lines written against it apply on top (routine-runs-journal.ts). */
+  stateGeneration?: string;
   /** Durable commit receipts for cross-file confirmation recovery. */
   routineRequestReceipts?: RoutineRequestReceipt[];
 }
@@ -334,6 +413,30 @@ export interface RoutineManagerOptions {
   startupWaitMs?: number;
   /** Gap between two catch-up runs, so they never start at the same instant. */
   catchUpStaggerMs?: number;
+  /** Spread on-time scheduled runs over this window (F19, A21): each routine starts at its own fixed offset
+   * after its due time (a hash of its id), so sixty routines due at 9:00 do not all start in one tick. The run
+   * is queued and saved at its due time as before; only its start waits. 0 or absent: no spread. */
+  dispatchStaggerMs?: number;
+  /** Install-wide cap on automatic runs (schedule and webhook) running at once, across every bot. A due run
+   * over the cap stays queued, in order, until one finishes. Absent: no cap (each bot's three threads only). */
+  maxConcurrentAutomaticRuns?: number;
+  /** The most the cap above may grow to when measured service time says it must (automaticRunCap). Absent: it never grows. */
+  automaticCapCeiling?: number;
+  /** Owner first (owner-first.ts): false while the owner's own work should go first. An automatic run then
+   * stays queued for a later tick; the gate admits it at its bound. `waitedMs` is how long this run has been
+   * held back at the cap or the gate, on a monotonic clock (0 the first time it is asked). */
+  admitAutomatic?: (run: Readonly<RoutineRun>, waitedMs: number) => boolean;
+  /** A run is starting (1.0.2 bgwork): held from its dispatch until startTurn/startGoal has returned, so
+   * background work yields between a due run and its engine start (owner-first.ts beginStart). */
+  beginStart?: () => () => void;
+  /** Project routine work still queued or running in project rooms (room_requests): it counts against
+   * maxConcurrentAutomaticRuns like a running automatic run. */
+  activeProjectRoutineRuns?: () => number;
+  /** An automatic run held back this long (cap or owner-first gate) gets past the cap, up to twice the cap
+   * (aging: never starved behind newer runs). Default 120 s, the owner-first gate's own bound. */
+  automaticAgingMs?: number;
+  /** A monotonic clock for the waits above (default performance.now; tests pass their own). */
+  monotonicNow?: () => number;
   /** Step 0 check for a scheduled bot run: true while this bot should have
    * connected-app tools and they have not registered. The run is deferred
    * (see CONNECTOR_DEFER_DELAYS_MS) instead of running without them. */
@@ -523,33 +626,38 @@ export function routineInstructionRevision(routine: Pick<Routine, "id" | "prompt
 
 function retainRoutineInstructions(routine: Routine): RoutineInstructionRevision[] {
   const id = routineInstructionRevision(routine);
-  const history = structuredClone(routine.instructionHistory ?? []);
+  const history = plainCopy(routine.instructionHistory ?? []);
   const current = history.find(item => item.id === id);
   if (current && current.prompt !== routine.prompt) throw new Error("ROUTINE_INSTRUCTION_CORRUPT");
   if (!current) history.push({ id, prompt: routine.prompt, author: "owner", createdAt: routine.updatedAt });
   return history;
 }
 
-function cloneRoutine(routine: Routine): Routine {
+function cloneRoutine(tracked: Routine): Routine {
+  const routine = untracked(tracked);
   return {
     ...routine,
-    ...(routine.instructionHistory ? { instructionHistory: structuredClone(routine.instructionHistory) } : {}),
-    ...(routine.watch ? { watch: structuredClone(routine.watch) } : {}),
+    ...(routine.instructionHistory ? { instructionHistory: plainCopy(routine.instructionHistory) } : {}),
+    ...(routine.watch ? { watch: plainCopy(routine.watch) } : {}),
     ...(routine.alwaysAllow ? { alwaysAllow: [...routine.alwaysAllow] } : {}),
     schedule: cloneSchedule(routine.schedule),
     attachments: cloneAttachments(routine.attachments),
   };
 }
 
-function cloneRun(run: RoutineRun): RoutineRun {
+function cloneRun(tracked: RoutineRun): RoutineRun {
+  const run = untracked(tracked);
   return {
     ...run,
-    ...(run.instructionEvidence ? { instructionEvidence: structuredClone(run.instructionEvidence) } : {}),
-    ...(run.watch ? { watch: structuredClone(run.watch) } : {}),
-    ...(run.event ? { event: structuredClone(run.event) } : {}),
-    ...(run.eventBudget ? { eventBudget: structuredClone(run.eventBudget) } : {}),
+    ...(run.instructionEvidence ? { instructionEvidence: plainCopy(run.instructionEvidence) } : {}),
+    ...(run.watch ? { watch: plainCopy(run.watch) } : {}),
+    ...(run.event ? { event: plainCopy(run.event) } : {}),
+    ...(run.eventBudget ? { eventBudget: plainCopy(run.eventBudget) } : {}),
+    ...(run.humanPrincipal ? { humanPrincipal: plainCopy(run.humanPrincipal) } : {}),
+    ...(run.channelOrigin ? { channelOrigin: plainCopy(run.channelOrigin) } : {}),
     attachments: cloneAttachments(run.attachments),
     denials: run.denials ? [...run.denials] : undefined,
+    ...(run.toolsUnavailable ? { toolsUnavailable: [...run.toolsUnavailable] } : {}),
   };
 }
 
@@ -695,6 +803,23 @@ export const STARTUP_WAIT_MS = 90_000;
 export const STARTUP_NOTE =
   "Note: connected apps had not finished loading when this run started, so their tools may be missing. If a tool you need is not available, say so plainly and stop instead of guessing; this run will be retried.";
 
+class MissingRoutinesFile extends Error {}
+
+/** Automatic runs whose service time sizes the cap (the median of these). */
+const AUTOMATIC_SERVICE_SAMPLES = 20;
+/**
+ * The install-wide cap on automatic runs, sized from measured service time (Little's law): the runs waiting
+ * now arrive over one dispatch window, so draining them inside it takes waiting x service / window places at
+ * once. Never below `base` (the fixed floor) and never above `ceiling` (the machine's own bound). With no
+ * measurement yet, or quick runs, it is `base`.
+ */
+export function automaticRunCap(input: { base: number; ceiling: number; serviceMs: number | undefined; waiting: number; windowMs: number }): number {
+  const { base, serviceMs, waiting, windowMs } = input;
+  const ceiling = Math.max(base, input.ceiling);
+  if (!serviceMs || serviceMs <= 0 || waiting <= 0 || !(windowMs > 0)) return base;
+  return Math.max(base, Math.min(ceiling, Math.ceil(waiting * serviceMs / windowMs)));
+}
+
 export class RoutineManager {
   private startedAt: number;
   private gateOpened = false;
@@ -704,12 +829,46 @@ export class RoutineManager {
   private readonly deferrals = new Map<string, { attempts: number; notBefore: number }>();
   private readonly file: string;
   private readonly now: () => number;
+  private readonly monotonicNow: () => number;
+  /** Automatic runs held back at the cap or the owner-first gate, by run id: how long each has waited. Elapsed time,
+   * not awake time: a Mac asleep counts (the wall clock moved while the monotonic one did not), a relaunch starts from
+   * the age the run's own stored creation time gives, and a wall clock set back adds nothing (the monotonic step counts). */
+  private readonly automaticHeldSince = new Map<string, { waitedMs: number; monotonic: number; wall: number }>();
   private readonly options: RoutineManagerOptions;
-  private routines: Routine[] = [];
-  private runs: RoutineRun[] = [];
+  private routinesRaw: Routine[] = [];
+  private runsRaw: RoutineRun[] = [];
+  private routinesView: Routine[] = this.routinesRaw;
+  private runsView: RoutineRun[] = this.runsRaw;
+  /** Set when a whole list was replaced or an element was put in raw: the next sweep walks the list once. */
+  private walkRoutines = true;
+  private walkRuns = true;
+  /** Runs put into the run list since the last sweep (index writes only; a trim works on the raw list and adds none). */
+  private joinedRuns: RoutineRun[] = [];
+  /** The lists seen through a write watch on the list itself (not on the elements, which tracked-state.ts covers):
+   * a run pushed in is queued for the next sweep, a routine put in or taken out forces a full save, and a run taken
+   * out other than by the history cap does too. Reads and iteration cost nothing extra. */
+  private get routines(): Routine[] { return this.routinesView; }
+  private set routines(list: Routine[]) { this.routinesRaw = list; this.routinesView = this.watchList(list, "routines"); this.walkRoutines = true; this.fullSave = true; }
+  private get runs(): RoutineRun[] { return this.runsView; }
+  private set runs(list: RoutineRun[]) { this.runsRaw = list; this.runsView = this.watchList(list, "runs"); this.walkRuns = true; this.fullSave = true; }
+  private watchList<T extends object>(list: T[], kind: "routines" | "runs"): T[] {
+    const isIndex = (key: PropertyKey) => typeof key === "string" && key !== "length" && /^\d+$/.test(key);
+    return new Proxy(list, {
+      set: (target, key, value, receiver) => {
+        if (isIndex(key)) { if (kind === "runs") this.joinedRuns.push(value as unknown as RoutineRun); else { this.fullSave = true; this.walkRoutines = true; } }
+        return Reflect.set(target, key, value, receiver);
+      },
+      deleteProperty: (target, key) => { if (isIndex(key)) this.fullSave = true; return Reflect.deleteProperty(target, key); },
+    });
+  }
   private routineRequestReceipts: RoutineRequestReceipt[] = [];
   private timer: ReturnType<typeof setInterval> | null = null;
   private ticking = false;
+  /** The earliest time any routine needs the fleet walk (a due run, a watch expiry), or null when unknown.
+   * Every definition change goes through a save or a commit, which forget it. */
+  private fleetDueAt: number | null = null;
+  /** When the cap last said it was holding runs back (the log says so once a minute). */
+  private capLoggedAt = -Infinity;
   private watchReads = new Map<string, AbortController>();
   private readonly journal: RoutineRunsJournal;
   /** What routines.json last held, so an unchanged file is never rewritten. */
@@ -719,6 +878,19 @@ export class RoutineManager {
   /** A tag whose routines.json write has not succeeded yet: every later save
    * reuses it until one does, so no line from that save counts early. */
   private pendingCommit: number | null = null;
+  /** This file's stateGeneration (routine-runs-journal.ts); undefined until one is written. */
+  private generation: string | undefined;
+  /** Runs and routines written since the last save, persisted incrementally by the next saveNow. Every run,
+   * routine and the receipt list sit behind a write-tracking proxy (tracked-state.ts), so any write to them, from
+   * any path and at any depth, lands here: no path can change persisted state without the next save writing it. */
+  private dirtyRuns = new Set<RoutineRun>();
+  private dirtyRoutines = new Set<Routine>();
+  /** A save that named nothing (or a failed one): the next saveNow compares everything, as before 1.0.2. */
+  private fullSave = true;
+  /** Runs this manager has already accounted for in a save, and how many runs and routines that save left. */
+  private knownRuns = new WeakSet<RoutineRun>();
+  private savedRunCount = -1;
+  private savedRoutineCount = -1;
 
   constructor(options: RoutineManagerOptions) {
     this.options = options;
@@ -728,12 +900,27 @@ export class RoutineManager {
     let migratedLegacyRuns = false;
     let prePin: string | undefined;
     this.now = options.now ?? Date.now;
+    this.monotonicNow = options.monotonicNow ?? (options.now ? options.now : () => performance.now());
     this.startedAt = this.now();
+    // A missing file is a fresh start. Any other read, parse or shape failure
+    // stops startup (like webhooks.json) instead of loading empty state that
+    // the next save would write over the person's routines.
+    let original = "";
+    const parsedDisk = readPersistedJson(this.file, (path) => (original = readFileSync(path, "utf8")));
     try {
-      const original = readFileSync(this.file, "utf8");
-      const disk = JSON.parse(original) as Partial<RoutineFile>;
-      this.routines = Array.isArray(disk.routines)
-        ? disk.routines.flatMap((routine) => {
+      if (parsedDisk === undefined) throw new MissingRoutinesFile();
+      const disk = parsedDisk as Partial<RoutineFile>;
+      // Run history and routine state lines (routine-runs-journal.ts) are read before the routines: a
+      // state line of this file's generation is the routine's newer state (a moved cursor, an adopted thread).
+      this.runsCommit = routinesCommit(disk);
+      this.generation = typeof disk.stateGeneration === "string" ? disk.stateGeneration : undefined;
+      const journalRuns = this.journal.load(this.runsCommit, this.generation) as RoutineRun[];
+      const states = this.journal.routineStates;
+      const diskRoutines = Array.isArray(disk.routines)
+        ? disk.routines.map((routine) => (routine && typeof routine.id === "string" ? states.get(routine.id) as Routine | undefined : undefined) ?? routine)
+        : undefined;
+      this.routines = diskRoutines
+        ? diskRoutines.flatMap((routine) => {
             const schedule = loadSchedule(routine.schedule);
             if (!schedule) return [];
             const target = loadTarget(routine.target);
@@ -771,8 +958,6 @@ export class RoutineManager {
       // overlaid on the journal (the file is the newer copy when a downgrade
       // happened in between) and moved out below. Idempotent: a crash after the
       // journal write but before the file rewrite just repeats this on next boot.
-      this.runsCommit = routinesCommit(disk);
-      const journalRuns = this.journal.load(this.runsCommit) as RoutineRun[];
       let diskRuns: RoutineRun[] = journalRuns;
       if (Array.isArray(disk.runs) && disk.runs.length > 0) {
         const byId = new Map(journalRuns.map((run) => [run.id, run] as const));
@@ -827,12 +1012,17 @@ export class RoutineManager {
             Number.isFinite(receipt?.appliedAt)
           )
         : [];
-    } catch {
+    } catch (error) {
+      if (!(error instanceof MissingRoutinesFile)) throw new PersistedStateRecoveryError(this.file, "invalid-shape", error);
       prePin = undefined;
       this.routines = [];
       this.runs = [];
       this.routineRequestReceipts = [];
     }
+    // From here on every write to persisted state is tracked (tracked-state.ts).
+    this.routines = this.routines.map((routine) => this.trackRoutine(routine));
+    this.runs = this.runs.map((run) => this.trackRun(run));
+    this.routineRequestReceipts = this.trackReceipts(this.routineRequestReceipts);
     // A local process cannot still own these turns after a full restart.
     const recovered: RoutineRun[] = [];
     for (const run of this.runs) {
@@ -876,6 +1066,11 @@ export class RoutineManager {
 
   listRoutines(): Routine[] {
     return this.routines.map((routine) => this.routineWithHealth(routine));
+  }
+
+  /** Each routine's name, bot and whether it is on: no run history is read (a turn's working context lists them). */
+  listRoutineNames(): Array<{ name: string; botId: string; enabled: boolean }> {
+    return this.routines.map((routine) => ({ name: routine.name, botId: routine.botId, enabled: routine.enabled }));
   }
 
   /** A copy with the derived failure streak. Only failed and completed runs
@@ -1000,7 +1195,7 @@ export class RoutineManager {
   activeRunOrigin(threadId: string): { triggerSource: RoutineRunTrigger; humanPrincipal?: HumanPrincipal } | null {
     const run = this.runs.find((candidate) => candidate.threadId === threadId && isLive(candidate.status));
     if (!run) return null;
-    return { triggerSource: run.triggerSource ?? (run.manual ? "manual" : "schedule"), ...(run.humanPrincipal ? { humanPrincipal: structuredClone(run.humanPrincipal) } : {}) };
+    return { triggerSource: run.triggerSource ?? (run.manual ? "manual" : "schedule"), ...(run.humanPrincipal ? { humanPrincipal: plainCopy(run.humanPrincipal) } : {}) };
   }
 
   /** One of the harness's own cards opened in this thread. In a scheduled or
@@ -1117,7 +1312,7 @@ export class RoutineManager {
     routine.instructionHistory = retainRoutineInstructions(routine);
     if (watchInput && request) routine.watch = { ownerBotId: request.botId, state: createRoutineWatchState({ id: routine.id, ...watchInput }, at) };
     this.commitMutation(() => {
-      this.routines.unshift(routine);
+      this.routines.unshift(this.trackRoutine(routine));
       if (request) this.rememberRoutineRequest(request, routine.id, at);
     });
     this.emitRoutine(routine);
@@ -1160,7 +1355,7 @@ export class RoutineManager {
     if (routine.watch && (clean.target !== "bot" || clean.botId !== routine.botId || clean.runOn !== "ember" || clean.schedule.type !== "interval" || clean.attachments?.length)) throw new Error("A file watch must keep its approved bot, local interval and source");
     if (routine.watch && patch.enabled === true) {
       if (now >= routine.watch.state.definition.expiresAt || routine.watch.state.checks.length >= routine.watch.state.definition.maxChecks) throw new Error("This file watch expired or reached its check limit. Confirm a new watch to continue");
-      this.options.validateWatchSource?.(routine.watch.ownerBotId, routine.botId, routine.watch.state.definition.source);
+      this.options.validateWatchSource?.(routine.watch.ownerBotId, routine.botId, untracked(routine.watch.state.definition.source));
     }
     // An edit that leaves the schedule and the enabled state alone (a rename,
     // new instructions, a different timeout) keeps the cursor. Recomputing it
@@ -1221,11 +1416,11 @@ export class RoutineManager {
     if (routineInstructionRevision(routine) !== proposal.expectedRevision || routine.updatedAt !== proposal.expectedUpdatedAt) throw new Error("ROUTINE_INSTRUCTION_CONFLICT");
     const prompt = z.string().trim().min(1).max(ROUTINE_INSTRUCTIONS_MAX).parse(proposal.prompt);
     if (!proposal.evaluationReceiptId || !proposal.evidence.length || !proposal.evidence.every(item => ["source", "record"].includes(item.kind) && typeof item.id === "string" && item.id.length > 0 && typeof item.scopeId === "string" && item.scopeId.length > 0 && Number.isSafeInteger(item.revision) && item.revision > 0)) throw new Error("ROUTINE_EVALUATION_REQUIRED");
-    if (!this.options.validateInstructionPromotion?.(cloneRoutine(routine), structuredClone({ ...proposal, prompt }))) throw new Error("ROUTINE_EVALUATION_REQUIRED");
+    if (!this.options.validateInstructionPromotion?.(cloneRoutine(routine), plainCopy({ ...proposal, prompt }))) throw new Error("ROUTINE_EVALUATION_REQUIRED");
     if (routineInstructionRevision(routine) !== proposal.expectedRevision || routine.updatedAt !== proposal.expectedUpdatedAt) throw new Error("ROUTINE_INSTRUCTION_CONFLICT");
     if (prompt === routine.prompt) return cloneRoutine(routine);
     const at = this.now(), history = retainRoutineInstructions(routine), revision = randomUUID();
-    history.push({ id: revision, parentId: proposal.expectedRevision, prompt, author: "learned", createdAt: at, evaluationReceiptId: proposal.evaluationReceiptId, evidence: structuredClone(proposal.evidence) });
+    history.push({ id: revision, parentId: proposal.expectedRevision, prompt, author: "learned", createdAt: at, evaluationReceiptId: proposal.evaluationReceiptId, evidence: plainCopy(proposal.evidence) });
     this.commitMutation(() => {
       routine.prompt = prompt;
       routine.instructionRevision = revision;
@@ -1243,11 +1438,11 @@ export class RoutineManager {
     if (routineInstructionRevision(routine) !== expectedRevision || routine.updatedAt !== expectedUpdatedAt) throw new Error("ROUTINE_INSTRUCTION_CONFLICT");
     const history = retainRoutineInstructions(routine), target = history.find(item => item.id === targetRevision);
     if (!target) throw new Error("ROUTINE_INSTRUCTION_UNAVAILABLE");
-    if (target.evidence?.length && !this.options.validateInstructionEvidence?.(cloneRoutine(routine), structuredClone(target.evidence))) throw new Error("ROUTINE_INSTRUCTION_EVIDENCE_REVOKED");
+    if (target.evidence?.length && !this.options.validateInstructionEvidence?.(cloneRoutine(routine), plainCopy(target.evidence))) throw new Error("ROUTINE_INSTRUCTION_EVIDENCE_REVOKED");
     const prompt = z.string().trim().min(1).max(ROUTINE_INSTRUCTIONS_MAX).parse(target.prompt);
     const at = this.now(), revision = randomUUID();
     history.push({ id: revision, parentId: expectedRevision, prompt, author: "rollback", createdAt: at, rollbackOf: target.id,
-      ...(target.evidence ? { evidence: structuredClone(target.evidence), evaluationReceiptId: target.evaluationReceiptId } : {}) });
+      ...(target.evidence ? { evidence: plainCopy(target.evidence), evaluationReceiptId: target.evaluationReceiptId } : {}) });
     this.commitMutation(() => {
       routine.prompt = prompt;
       routine.instructionRevision = revision;
@@ -1413,6 +1608,7 @@ export class RoutineManager {
       botId: input.botId,
       runOn: input.runOn,
       scheduledFor: input.receivedAt,
+      dueAt: input.receivedAt,
       status: "queued",
       manual: false,
       triggerSource: input.telegramConnectionId || input.channelOrigin ? "channel" : "webhook",
@@ -1427,7 +1623,7 @@ export class RoutineManager {
     };
     run.event = routineEventForRun(run);
     run.eventBudget = newEventActionBudget();
-    this.commitMutation(() => { this.runs.push(run); });
+    this.commitMutation(() => { this.runs.push(this.trackRun(run)); });
     this.emitRun(run);
     queueMicrotask(() => void this.tick());
     return cloneRun(run);
@@ -1442,27 +1638,105 @@ export class RoutineManager {
 
   getEventBudget(eventId: string): EventActionBudget | null {
     const run = this.runs.find(item => item.id === eventId && item.event?.id === eventId);
-    return run?.eventBudget ? structuredClone(run.eventBudget) : null;
+    return run?.eventBudget ? plainCopy(run.eventBudget) : null;
   }
 
   /** Charge before the caller performs external work. Uncertain work is not
-   * refunded. A missing/evicted/legacy ledger never resets its allocation. */
-  admitEventAction(eventId: string, admissionId: string, kind: "create" | "handoff"): boolean {
-    if (!eventAdmissionId.safeParse(admissionId).success || !["create", "handoff"].includes(kind)) return false;
+   * refunded. A missing/evicted/legacy ledger never resets its allocation.
+   * The same admission id is charged once, so a retry of one hand-off is free. */
+  admitEventActionDetailed(eventId: string, admissionId: string, kind: "create" | "handoff"): EventAdmission {
+    if (!eventAdmissionId.safeParse(admissionId).success || !["create", "handoff"].includes(kind)) return { ok: false, reason: "unavailable" };
     const run = this.runs.find(item => item.id === eventId && item.event?.id === eventId);
     const budget = run?.eventBudget;
-    if (!run || !budget || budget.closed) return false;
+    if (!run || !budget) return { ok: false, reason: "unavailable" };
+    if (budget.closed) return { ok: false, reason: "closed", ...(budget.closedReason ? { closedReason: budget.closedReason } : {}) };
     const prior = budget.admissions.find(item => item.id === admissionId);
-    if (prior) return prior.kind === kind;
-    if (budget.admissions.filter(item => item.kind === kind).length >= budget.limits[kind]) return false;
+    if (prior) return prior.kind === kind ? { ok: true } : { ok: false, reason: "unavailable" };
+    const used = budget.admissions.filter(item => item.kind === kind).length;
+    if (used >= budget.limits[kind]) return { ok: false, reason: "limit", kind, used, limit: budget.limits[kind] };
     this.commitMutation(() => { budget.admissions.push({ id: admissionId, kind }); });
+    return { ok: true };
+  }
+
+  admitEventAction(eventId: string, admissionId: string, kind: "create" | "handoff"): boolean {
+    return this.admitEventActionDetailed(eventId, admissionId, kind).ok;
+  }
+
+  /** Raise one kind's limit for this run (the owner allowed it, or Full access
+   * already covers it). Never lowers a limit; null when the run cannot take more. */
+  raiseEventLimit(eventId: string, kind: "create" | "handoff", to: number): EventActionBudget | null {
+    const run = this.runs.find(item => item.id === eventId && item.event?.id === eventId);
+    const budget = run?.eventBudget;
+    if (!budget || budget.closed) return null;
+    const next = Math.min(EVENT_MAX_LIMIT, Math.max(budget.limits[kind], Math.trunc(to)));
+    if (next !== budget.limits[kind]) this.commitMutation(() => { budget.limits[kind] = next; });
+    return plainCopy(budget);
+  }
+
+  /** The owner's "Allow": this run may do another EVENT_EXTENSION of this kind.
+   * A kind the owner already said "Not now" to never reaches a card, so this
+   * cannot undo a refusal. */
+  extendEventBudget(eventId: string, kind: "create" | "handoff"): EventActionBudget | null {
+    const budget = this.getEventBudget(eventId);
+    if (!budget) return null;
+    return this.raiseEventLimit(eventId, kind, budget.limits[kind] + EVENT_EXTENSION);
+  }
+
+  /** What an already-admitted action produced, if it got that far. */
+  eventAdmissionReceipt(eventId: string, admissionId: string): string | undefined {
+    return this.runs.find(item => item.id === eventId && item.event?.id === eventId)?.eventBudget?.admissions.find(item => item.id === admissionId)?.receipt;
+  }
+
+  /** Remember what an admitted action produced, saved with the run so it holds after a restart. */
+  recordEventAdmissionReceipt(eventId: string, admissionId: string, receipt: string): boolean {
+    const admission = this.runs.find(item => item.id === eventId && item.event?.id === eventId)?.eventBudget?.admissions.find(item => item.id === admissionId);
+    if (!admission) return false;
+    if (admission.receipt !== receipt) this.commitMutation(() => { admission.receipt = receipt.slice(0, 200); });
     return true;
   }
 
-  closeEventBudget(eventId: string): boolean {
+  /** The owner said "Not now" to more actions of this kind: none for the rest of this run, and no more cards for it. */
+  declineEventKind(eventId: string, kind: "create" | "handoff"): void {
+    const budget = this.runs.find(item => item.id === eventId && item.event?.id === eventId)?.eventBudget;
+    if (!budget || budget.closed || budget.declined?.includes(kind)) return;
+    this.commitMutation(() => { budget.declined = [...(budget.declined ?? []), kind]; });
+  }
+
+  eventKindDeclined(eventId: string, kind: "create" | "handoff"): boolean {
+    return this.runs.find(item => item.id === eventId && item.event?.id === eventId)?.eventBudget?.declined?.includes(kind) === true;
+  }
+
+  /** Give back a charge for an action that never ran (it failed its checks after the owner's OK). A recorded action is never released. */
+  releaseEventAdmission(eventId: string, admissionId: string): boolean {
+    const budget = this.runs.find(item => item.id === eventId && item.event?.id === eventId)?.eventBudget;
+    const index = budget?.admissions.findIndex(item => item.id === admissionId) ?? -1;
+    if (!budget || index < 0 || budget.admissions[index].receipt) return false;
+    this.commitMutation(() => { budget.admissions.splice(index, 1); });
+    return true;
+  }
+
+  /** After a restart nothing in this process tracks a synchronous ask that ran past its wait: a `timeout:<task>` receipt
+   * whose task can no longer be found (not finished, not queued, not running) becomes `ended:interrupted`, so asking
+   * again is a new, charged attempt and never returns a task id nothing can answer. */
+  interruptUnresolvedEventTimeouts(resolvable: (taskId: string) => boolean): number {
+    const stale: Array<{ receipt: string; set: (value: string) => void }> = [];
+    for (const run of this.runs) for (const admission of run.eventBudget?.admissions ?? []) {
+      if (admission.receipt?.startsWith("timeout:") && !resolvable(admission.receipt.slice("timeout:".length))) stale.push({ receipt: admission.receipt, set: value => { admission.receipt = value; } });
+    }
+    if (stale.length === 0) return 0;
+    this.commitMutation(() => { for (const item of stale) item.set("ended:interrupted"); });
+    return stale.length;
+  }
+
+  /** Is this admission already charged to the run? */
+  eventAdmissionExists(eventId: string, admissionId: string): boolean {
+    return this.runs.find(item => item.id === eventId && item.event?.id === eventId)?.eventBudget?.admissions.some(item => item.id === admissionId) === true;
+  }
+
+  closeEventBudget(eventId: string, reason: EventBudgetClosedReason = "connection"): boolean {
     const run = this.runs.find(item => item.id === eventId && item.event?.id === eventId);
     if (!run?.eventBudget) return false;
-    if (!run.eventBudget.closed) this.commitMutation(() => { run.eventBudget!.closed = true; });
+    if (!run.eventBudget.closed) this.commitMutation(() => { run.eventBudget!.closed = true; run.eventBudget!.closedReason = reason; });
     return true;
   }
 
@@ -1494,7 +1768,7 @@ export class RoutineManager {
       if (run.target === "room-goal") run.goalStatus = "stopped";
       run.attention = undefined;
       run.finishedAt = this.now();
-      if (run.eventBudget) run.eventBudget.closed = true;
+      if (run.eventBudget) { run.eventBudget.closed = true; run.eventBudget.closedReason ??= "stopped"; }
       if (run.watch) {
         const routine = this.routines.find(item => item.id === run.routineId);
         if (routine?.watch) {
@@ -1542,7 +1816,7 @@ export class RoutineManager {
     if (!run) return null;
     if (!run.seenAt) {
       run.seenAt = this.now();
-      this.save({ defer: true });
+      this.save({ defer: true, runs: [run] });
       this.emitRun(run);
     }
     return cloneRun(run);
@@ -1559,6 +1833,8 @@ export class RoutineManager {
   }
 
   stop() {
+    if (this.busyRetry) clearTimeout(this.busyRetry);
+    this.busyRetry = null;
     if (this.timer) clearInterval(this.timer);
     this.timer = null;
     for (const read of this.watchReads.values()) read.abort();
@@ -1621,7 +1897,51 @@ export class RoutineManager {
     }
   }
 
+  private busyRetry: ReturnType<typeof setTimeout> | null = null;
+  /** The scheduler tick. It waits (asynchronously) while the revocation index build holds the writer lock, and it NEVER
+   * rejects: callers use `void this.tick()`, and a rejection there would end the server. A lock failure that still gets
+   * through leaves every run as it was (queued) and the tick runs again shortly; no run fails terminally on contention. */
   async tick(): Promise<void> {
+    try {
+      if (writersHeldForIndexBuild()) await awaitWriterGate();
+      await this.tickBody();
+      this.tickFailures = 0;
+    } catch (error) {
+      if (isDatabaseBusy(error)) this.retrySoon();
+      else {
+        this.tickFailures += 1;
+        this.lastTickFault = error instanceof Error ? error.message : String(error);
+        // Rate limited like the database's busy line: a save that keeps failing logs once a minute, with a count.
+        rateLimited("routine-tick-failed", 60_000, (suppressed) => `routine: tick failed (${this.tickFailures} in a row${suppressed ? `, ${suppressed} more since the last line` : ""}): ${this.lastTickFault}`);
+      }
+    }
+  }
+
+  /** Consecutive ticks that failed for a reason other than a locked database (reset by the next good tick). */
+  private tickFailures = 0;
+  private lastTickFault = "";
+  /** After this many failed ticks in a row the scheduler reports itself as not running on time. */
+  static readonly TICK_FAILURES_BEFORE_STALLED = 5;
+  /** The scheduler's own health, for whatever surface shows routine status: `stalled` once ticks keep failing. */
+  schedulerStatus(): { stalled: boolean; consecutiveFailures: number } {
+    return { stalled: this.tickFailures >= RoutineManager.TICK_FAILURES_BEFORE_STALLED, consecutiveFailures: this.tickFailures };
+  }
+
+  private retrySoon(): void {
+    if (this.busyRetry) return;
+    this.busyRetry = setTimeout(() => { this.busyRetry = null; void this.tick(); }, 1_000);
+    this.busyRetry.unref?.();
+  }
+
+  /** A run that met a locked database goes back to queued, with nothing of it lost, and the tick runs again. */
+  private requeueBusy(run: RoutineRun): void {
+    if (isLive(run.status)) { run.status = "queued"; run.startedAt = undefined; }
+    this.save({ runs: [run] });
+    this.emitRun(run);
+    this.retrySoon();
+  }
+
+  private async tickBody(): Promise<void> {
     // Before the guard, on purpose — see enforceRunLimits.
     await this.enforceRunLimits();
     if (this.ticking) return;
@@ -1630,7 +1950,20 @@ export class RoutineManager {
       const now = this.now();
       let changed = false;
       const missedRuns: RoutineRun[] = [];
-      for (const routine of this.routines) {
+      // What the fleet walk below touched: its save appends only these (1.0.2 bgwork).
+      const touchedRoutines: Routine[] = [], createdRuns: RoutineRun[] = [];
+      // Indexed (A21): nothing to do in the fleet walk before the earliest due time, and one pass over the runs
+      // answers every routine's overlap question instead of a scan of all runs per due routine.
+      const fleetDue = now >= this.nextFleetDue();
+      const openByRoutine = new Map<string, { open: boolean; scheduledQueued: boolean }>();
+      if (fleetDue) for (const run of this.runs) {
+        if (!isOpen(run.status)) continue;
+        const entry = openByRoutine.get(run.routineId) ?? { open: false, scheduledQueued: false };
+        entry.open = true;
+        if (run.status === "queued" && (run.triggerSource ?? (run.manual ? "manual" : "schedule")) === "schedule") entry.scheduledQueued = true;
+        openByRoutine.set(run.routineId, entry);
+      }
+      for (const routine of fleetDue ? this.routines : []) {
         if(this.options.automaticPaused?.())break;
         if (routine.watch && (now >= routine.watch.state.definition.expiresAt || routine.watch.state.checks.length >= routine.watch.state.definition.maxChecks)) {
           if (routine.enabled || routine.nextRunAt !== null) {
@@ -1650,17 +1983,16 @@ export class RoutineManager {
         // recurring schedule needs this, not intervals alone: a daily routine
         // whose run is still running or waiting when tomorrow comes round
         // stacked another copy every day, and nothing ever cleared them.
-        const overlapping = routine.schedule.type !== "once" && this.runs.some(
-          (run) => run.routineId === routine.id && isOpen(run.status),
-        );
+        const open = openByRoutine.get(routine.id);
+        const overlapping = routine.schedule.type !== "once" && open?.open === true;
         // "queue" (upstream #1564) lets ONE scheduled occurrence wait behind
         // the active run, never a backlog: while a scheduled run is already
         // queued, later occurrences are skipped as before.
-        const scheduledQueued = overlapping && this.runs.some((run) => run.routineId === routine.id && run.status === "queued" &&
-          (run.triggerSource ?? (run.manual ? "manual" : "schedule")) === "schedule");
+        const scheduledQueued = overlapping && open?.scheduledQueued === true;
         if (!overlapping || (routine.overlap === "queue" && !scheduledQueued)) {
           if (late > CATCH_UP_MS) {
             const missed = this.newRun(routine, scheduledFor, false);
+            createdRuns.push(missed);
             missed.status = "missed";
             missed.finishedAt = now;
             missed.error = "This computer was offline for more than 12 hours after the scheduled time";
@@ -1668,6 +2000,8 @@ export class RoutineManager {
             missedRuns.push(cloneRun(missed));
           } else {
             const run = this.newRun(routine, scheduledFor, false);
+            createdRuns.push(run);
+            openByRoutine.set(routine.id, { open: true, scheduledQueued: true });
             this.emitRun(run);
           }
         } else {
@@ -1688,18 +2022,54 @@ export class RoutineManager {
           routine.updatedAt = Math.max(now, routine.updatedAt + 1);
         }
         this.emitRoutine(routine);
+        touchedRoutines.push(routine);
         changed = true;
       }
-      if (changed) this.save();
+      if (changed) this.save({ routines: touchedRoutines, runs: createdRuns });
       for (const missed of missedRuns) this.options.onRunFailed?.(missed);
 
-      for (const run of [...this.runs].reverse()) {
+      // One pass for the install-wide cap and the per-routine and per-thread "already working" questions below.
+      let cap = this.options.maxConcurrentAutomaticRuns;
+      const agingMs = this.options.automaticAgingMs ?? 120_000;
+      let automaticRunning = 0, capHeld = 0;
+      const liveRoutines = new Set<string>(), liveThreads = new Set<string>();
+      for (const other of this.runs) {
+        if (!isLive(other.status)) continue;
+        liveRoutines.add(other.routineId);
+        if (other.threadId) liveThreads.add(other.threadId);
+        const source = other.triggerSource ?? (other.manual ? "manual" : "schedule");
+        if (other.status === "running" && (source === "schedule" || source === "webhook")) automaticRunning++;
+      }
+      const automatic = (run: RoutineRun) => {
+        const source = run.triggerSource ?? (run.manual ? "manual" : "schedule");
+        return source === "schedule" || source === "webhook";
+      };
+      // Project routines run as room work after delivery (index.ts): they hold a place under the cap too.
+      if (cap !== undefined && this.options.activeProjectRoutineRuns && this.runs.some(run => run.status === "queued" && automatic(run))) {
+        try { automaticRunning += Math.max(0, Number(this.options.activeProjectRoutineRuns()) || 0); } catch { /* unknown: not counted */ }
+      }
+      // Order: the owner's own and channel runs newest first (as before), then automatic runs OLDEST first, so a
+      // freed place under the cap goes to the run that has waited longest, never to the newest arrival.
+      const queuedNow = this.runs.filter(run => run.status === "queued");
+      const byAge = queuedNow.map((run, index) => ({ run, index })).filter(entry => automatic(entry.run))
+        .sort((a, b) => (Number(a.run.createdAt) || 0) - (Number(b.run.createdAt) || 0) || a.index - b.index).map(entry => entry.run);
+      const dispatchOrder = [...queuedNow.filter(run => !automatic(run)).reverse(), ...byAge];
+      // the cap is sized from how long automatic runs take here, for the runs waiting now (automaticRunCap)
+      if (cap !== undefined) cap = automaticRunCap({ base: cap, ceiling: this.options.automaticCapCeiling ?? cap, serviceMs: this.automaticServiceMs(), waiting: byAge.length + automaticRunning, windowMs: this.options.dispatchStaggerMs || 60_000 });
+      // aging lets a long-held run past the cap (up to twice it), never past the machine's own ceiling
+      const machineCeiling = this.options.automaticCapCeiling === undefined ? Infinity : Math.max(this.options.maxConcurrentAutomaticRuns ?? 0, this.options.automaticCapCeiling);
+      const admissionLimit = (limit: number, aged: boolean) => Math.min(aged ? limit * 2 : limit, Math.max(limit, machineCeiling));
+      const queuedIds = new Set(queuedNow.map(run => run.id));
+      for (const id of [...this.automaticHeldSince.keys()]) if (!queuedIds.has(id)) this.automaticHeldSince.delete(id);
+      for (const run of dispatchOrder) {
         if (run.status !== "queued") continue;
-        if (run.instructionEvidence?.length && !this.options.validateInstructionEvidence?.(run, structuredClone(run.instructionEvidence))) {
+        // the build can start while this tick is between runs: the next dispatch waits it out before its first mutation
+        if (writersHeldForIndexBuild()) { await awaitWriterGate(); if (run.status !== "queued") continue; }
+        if (run.instructionEvidence?.length && !this.options.validateInstructionEvidence?.(untracked(run), plainCopy(run.instructionEvidence))) {
           this.failRun(run, "The evidence supporting these learned instructions is no longer available to this routine. Review its instructions before running it again.");
           continue;
         }
-        if (run.channelOrigin !== undefined && (!channelOriginSchema.safeParse(run.channelOrigin).success || run.telegramConnectionId || this.options.isChannelCurrent?.(run.channelOrigin, run.botId) !== true)) {
+        if (run.channelOrigin !== undefined && (!channelOriginSchema.safeParse(run.channelOrigin).success || run.telegramConnectionId || this.options.isChannelCurrent?.(untracked(run.channelOrigin), run.botId) !== true)) {
           this.failRun(run, "Channel binding changed; review it in Murage."); continue;
         }
         if(run.triggerSource==="channel"){try{if(!run.humanPrincipal)throw new Error("HUMAN_LINK_REQUIRED");assertHumanPrincipal(run.humanPrincipal);}catch(error){this.failRun(run,error instanceof Error?error.message:String(error));continue;}}
@@ -1732,7 +2102,7 @@ export class RoutineManager {
               const notBefore = this.now() + CONNECTOR_DEFER_DELAYS_MS[attempts];
               this.deferrals.set(run.id, { attempts: attempts + 1, notBefore });
               run.attention = `Waiting for connected apps to load. Retrying in ${Math.round(CONNECTOR_DEFER_DELAYS_MS[attempts] / 60_000)} minutes (attempt ${attempts + 1} of ${CONNECTOR_DEFER_DELAYS_MS.length + 1}).`;
-              this.save({ defer: true });
+              this.save({ defer: true, runs: [run] });
               this.emitRun(run);
               continue;
             }
@@ -1746,15 +2116,17 @@ export class RoutineManager {
           run.status = "cancelled";
           run.finishedAt = this.now();
           run.error = "The routine changed bots before this run started. Run it again with its current bot.";
-          this.save();
+          this.save({ runs: [run] });
           this.emitRun(run);
           continue;
         }
         if (triggerSource === "schedule" && definition?.schedule.type === "interval") {
           const latest = latestIntervalOccurrence(definition.schedule, now);
           if (latest !== null && latest > run.scheduledFor) {
+            run.dueAt ??= run.scheduledFor;
+            run.coalescedOccurrences = (run.coalescedOccurrences ?? 0) + 1;
             run.scheduledFor = latest;
-            this.save();
+            this.save({ runs: [run] });
             this.emitRun(run);
           }
         }
@@ -1762,8 +2134,7 @@ export class RoutineManager {
         // not merely for a free thread slot on its bot: the bot may have
         // spare slots while the earlier run waits on a teammate. Resource
         // admission is unchanged; this only holds the run before it.
-        const sameRoutineWorking = triggerSource === "schedule" && this.runs.some((other) =>
-          other.id !== run.id && other.routineId === run.routineId && isLive(other.status));
+        const sameRoutineWorking = triggerSource === "schedule" && liveRoutines.has(run.routineId);
         const state = sameRoutineWorking ? "busy" : this.targetState(run);
         if (state === "busy") continue;
         if (state === "missing") {
@@ -1777,16 +2148,44 @@ export class RoutineManager {
           this.failRun(run, CLOUD_ROUTINE_NOT_YET);
           continue;
         }
+        // Automatic runs (schedule, webhook) are spread, capped and owner-first (F19, A21), project routines
+        // included (they are room work once delivered). The run stays queued with its id, so a held-back run starts
+        // exactly once, on a later tick; nothing is missed. Oldest first (dispatchOrder); a run held back past
+        // automaticAgingMs gets past the cap (up to twice the cap) and the gate admits it at its bound.
+        if (!run.watch && (triggerSource === "schedule" || triggerSource === "webhook")) {
+          const stagger = this.options.dispatchStaggerMs ?? 0;
+          if (triggerSource === "schedule" && stagger > 0 && run.scheduledFor >= this.startedAt &&
+            this.now() < run.scheduledFor + RoutineManager.staggerOffset(run.routineId, stagger)) continue;
+          const monotonic = this.monotonicNow();
+          const wall = this.now();
+          let held = this.automaticHeldSince.get(run.id);
+          if (!held) { // A run queued before this launch keeps the wait it had (from its stored creation time), short of the aging bound,
+            // so a relaunch does not reset it and does not start every old run aged at once.
+            const before = Number(run.createdAt) < this.startedAt ? Math.max(0, wall - Number(run.createdAt)) : 0;
+            held = { waitedMs: Math.min(before, Math.max(0, agingMs - 1)), monotonic, wall }; this.automaticHeldSince.set(run.id, held); }
+          else {
+            held.waitedMs += Math.max(0, monotonic - held.monotonic, wall - held.wall);
+            held.monotonic = monotonic; held.wall = wall;
+          }
+          const waitedMs = held.waitedMs;
+          const aged = waitedMs >= agingMs;
+          if (cap !== undefined && automaticRunning >= admissionLimit(cap, aged)) { capHeld++; continue; }
+          if (this.options.admitAutomatic && !this.options.admitAutomatic(untracked(run), waitedMs)) continue;
+        }
         if (run.target === "room-goal" && this.options.projectRoutine) {
-          const delivered = this.options.projectRoutine(cloneRun(run));
+          let delivered: { threadId: string } | null;
+          try { delivered = this.options.projectRoutine(cloneRun(run)); }
+          catch (error) { if (isDatabaseBusy(error)) { this.retrySoon(); continue; } throw error; }
           if (delivered) {
+            if (triggerSource === "schedule" || triggerSource === "webhook") automaticRunning++;
             run.threadId = delivered.threadId;
             run.startedAt = this.now();
+            run.slotAt = this.slotAt(run, triggerSource);
             run.finishedAt = this.now();
             run.status = "completed";
             run.goalStatus = "completed";
             run.attention = "Posted to the project chat";
-            this.save();
+            this.save({ runs: [run] });
             this.emitRun(run);
             continue;
           }
@@ -1800,9 +2199,13 @@ export class RoutineManager {
           ? this.routines.find((routine) => routine.id === run.routineId && routine.botId === run.botId)
           : undefined;
         const reusable = owner?.threadId && this.options.taskExists?.(run.botId, owner.threadId) ? owner.threadId : undefined;
-        if (reusable && (this.runs.some((active) => active.threadId === reusable && isLive(active.status)) || this.options.threadBusy?.(run.botId, reusable))) continue;
+        if (reusable && (liveThreads.has(reusable) || this.options.threadBusy?.(run.botId, reusable))) continue;
         // A webhook is an incoming message, so make its task the bot's live
         // chat immediately. Scheduled work remains detached and unobtrusive.
+        // From here to its engine start the run is starting: background work waits (owner-first.ts).
+        let releaseStart: () => void = () => {};
+        try { releaseStart = this.options.beginStart?.() ?? releaseStart; } catch { /* no gate: nothing held */ }
+        try {
         const task = run.target === "room-goal"
           ? run.groupId
             ? this.options.createGoalTask?.(run.groupId, run.routineName) ?? null
@@ -1822,13 +2225,16 @@ export class RoutineManager {
           isLive(active.status)) || this.options.threadBusy?.(run.botId, task.threadId))) continue;
         run.threadId = task.threadId;
         run.startedAt = this.now();
+        run.slotAt = this.slotAt(run, triggerSource);
         run.status = "running";
+        liveRoutines.add(run.routineId); liveThreads.add(task.threadId);
+        if (triggerSource === "schedule" || triggerSource === "webhook") automaticRunning++;
         if (triggerSource === "schedule" && run.scheduledFor < this.startedAt) this.lastCatchUpAt = this.now();
         if (this.deferrals.delete(run.id) && run.attention?.startsWith("Waiting for connected apps")) run.attention = undefined;
         this.heldByStartup.delete(run.id);
         const adopted = owner && this.options.taskExists && owner.threadId !== task.threadId;
         if (adopted) owner.threadId = task.threadId;
-        this.save();
+        this.save({ runs: [run], routines: adopted ? [owner] : [] });
         this.emitRun(run);
         if (adopted) this.emitRoutine(owner);
         if (owner) {
@@ -1836,6 +2242,11 @@ export class RoutineManager {
           catch (error) { console.error("routine: run marker failed", error); }
         }
         const failDispatch = (message: string) => {
+          if (BUSY_MESSAGE.test(message)) {
+            // contention is not a failure of the run: it goes back to the queue with its occurrence intact
+            if (isLive(run.status)) this.requeueBusy(run);
+            return;
+          }
           if (!sharedChannel) return this.failThread(task.threadId, message);
           // A delayed callback from an earlier message cannot fail the next
           // message merely because both used this conversation.
@@ -1878,10 +2289,47 @@ export class RoutineManager {
         } catch (error) {
           failDispatch(error instanceof Error ? error.message : String(error));
         }
+        } finally { releaseStart(); }
+      }
+      if (capHeld && this.now() - this.capLoggedAt >= 60_000) {
+        this.capLoggedAt = this.now();
+        console.log(`[routines] ${capHeld} due run${capHeld === 1 ? "" : "s"} waiting: ${automaticRunning} automatic runs already running (install-wide cap ${cap})`);
       }
     } finally {
       this.ticking = false;
     }
+  }
+
+  /** min(nextRunAt of enabled routines, watch expiry of watched ones): nothing in the fleet walk can happen before it. */
+  private nextFleetDue(): number {
+    if (this.fleetDueAt !== null) return this.fleetDueAt;
+    let due = Infinity;
+    for (const routine of this.routines) {
+      if (routine.watch && (routine.enabled || routine.nextRunAt !== null)) {
+        // a watch that has used up its checks is closed on the next tick
+        if (routine.watch.state.checks.length >= routine.watch.state.definition.maxChecks) return (this.fleetDueAt = -Infinity);
+        due = Math.min(due, routine.watch.state.definition.expiresAt);
+      }
+      if (routine.enabled && routine.nextRunAt != null) due = Math.min(due, routine.nextRunAt);
+    }
+    return (this.fleetDueAt = due);
+  }
+
+  /** A routine's fixed start offset inside the stagger window (FNV-1a of its id): the same every tick and every start. */
+  /** When the run was due to start: an on-time scheduled run starts at its own offset in the spread, any other at its due time. */
+  private slotAt(run: RoutineRun, triggerSource: RoutineRunTrigger): number {
+    const stagger = this.options.dispatchStaggerMs ?? 0;
+    // from the due time recorded when the run was scheduled, never the one a queued interval run was moved on to
+    const due = run.dueAt ?? run.scheduledFor;
+    return triggerSource === "schedule" && stagger > 0 && due >= this.startedAt
+      ? due + RoutineManager.staggerOffset(run.routineId, stagger) : due;
+  }
+
+  static staggerOffset(routineId: string, windowMs: number): number {
+    if (!(windowMs > 0)) return 0;
+    let hash = 0x811c9dc5;
+    for (let index = 0; index < routineId.length; index++) { hash ^= routineId.charCodeAt(index); hash = Math.imul(hash, 0x01000193) >>> 0; }
+    return hash % Math.floor(windowMs);
   }
 
   private async startupGateOpen(now: number): Promise<boolean> {
@@ -1909,7 +2357,7 @@ export class RoutineManager {
         if (event.type !== "turn.started" || this.runs.some((prior) => prior.id !== run.id &&
           prior.threadId === event.threadId && prior.channelTurnId === event.turnId)) return null;
         run.channelTurnId = event.turnId;
-        this.save({ defer: true });
+        this.save({ defer: true, runs: [run] });
       }
       if (event.turnId !== run.channelTurnId) return null;
     }
@@ -1921,6 +2369,28 @@ export class RoutineManager {
       run.target === "room-goal" &&
       (event.type === "turn.completed" || (event.type === "item.completed" && event.itemType === "assistant_text"))
     ) return null;
+    if (event.type === "item.started" && event.itemType === "tool") {
+      // A call to a required tool family: if that family turns out not to have
+      // loaded and the call failed, the run needed it and it was blocked.
+      const label = requiredToolLabelOf(event);
+      if (label && event.itemId) {
+        const calls = this.requiredToolCalls.get(run.id) ?? new Map<string, { label: string; failed: boolean; op: string }>();
+        // The operation is the tool and what it was asked to do: a later
+        // success of the same operation (a retry) settles an earlier failure.
+        let input = "";
+        try { input = JSON.stringify((event as { input?: unknown }).input ?? null) ?? ""; } catch { /* unserialisable input: the title alone names it */ }
+        calls.set(event.itemId, { label, failed: false, op: `${label}\0${event.title ?? ""}\0${input}` });
+        this.requiredToolCalls.set(run.id, calls);
+      }
+      return null;
+    }
+    if (event.type === "item.completed" && event.itemType === "tool") {
+      const all = this.requiredToolCalls.get(run.id);
+      const call = event.itemId ? all?.get(event.itemId) : undefined;
+      if (call && !event.ok) call.failed = true;
+      else if (call && all) for (const other of all.values()) if (other.op === call.op) other.failed = false;
+      return null;
+    }
     if (event.type === "request.opened") {
       run.status = "waiting";
       run.attention = redactSecretsInText(event.summary).trim().slice(0, 500) || undefined;
@@ -1944,7 +2414,7 @@ export class RoutineManager {
       run.cost = event.cost;
       run.turnEnded = true;
       run.status = "needs-you";
-      this.save();
+      this.save({ runs: [run] });
       this.emitRun(run);
       try { this.options.onRunNeedsYou?.(cloneRun(run)); }
       catch (error) { console.error("routine: waiting-on-you notice failed", error); }
@@ -1956,11 +2426,33 @@ export class RoutineManager {
       // (STOP1). The user's own cancel sets the run cancelled before its turn
       // stops, so this is a host stop (watchdog, connection change).
       if (!turnSucceeded(event)) {
+        // A bare "error" or "tool_error" says less than the runtime.error that
+        // came before it; keep the detailed one (OpenMausBot #2214, Apache-2.0).
+        const genericStopReason = event.stopReason === "error" || event.stopReason === "tool_error";
         this.failRun(run, turnStopped(event)
           ? "The run was stopped before it finished"
-          : event.stopReason ?? run.error ?? "The bot did not complete this run");
+          : (genericStopReason ? run.error : undefined) ?? event.stopReason ?? run.error ?? "The bot did not complete this run");
         queueMicrotask(() => void this.tick());
         return cloneRun(run);
+      }
+      // Required tools that had not loaded are degraded availability, recorded
+      // on the run. The run fails only when its task needed them: a call to
+      // one of them failed, or the bot said the task is not done (the notice
+      // asks it to start its reply with NOT_DONE_PREFIX then). A run that
+      // summarises supplied text completes while bot messaging is down.
+      const calls = [...(this.requiredToolCalls.get(run.id)?.values() ?? [])];
+      this.requiredToolCalls.delete(run.id);
+      if (event.toolsUnavailable?.length || event.mcpReadiness === "unknown") {
+        run.toolsUnavailable = event.toolsUnavailable?.length ? [...event.toolsUnavailable] : undefined;
+        run.toolsReadiness = event.mcpReadiness;
+        const unavailable = new Set(event.toolsUnavailable ?? []);
+        const blocked = [...new Set(calls.filter((call) => call.failed && unavailable.has(call.label)).map((call) => call.label))];
+        const saidNotDone = startsWithNotDone(run.output ?? "");
+        if (blocked.length || saidNotDone) {
+          this.failRun(run, toolsUnavailableRunError(blocked.length ? blocked : [...unavailable]));
+          queueMicrotask(() => void this.tick());
+          return cloneRun(run);
+        }
       }
       run.status = "completed";
       run.attention = undefined;
@@ -1969,7 +2461,7 @@ export class RoutineManager {
     } else {
       return null;
     }
-    this.save();
+    this.save({ runs: [run] });
     this.emitRun(run);
     if (event.type === "turn.completed") queueMicrotask(() => void this.tick());
     return cloneRun(run);
@@ -2005,7 +2497,7 @@ export class RoutineManager {
       run.status = "waiting";
       run.attention = safeDetail.slice(0, 500) || (status === "paused" ? "The room goal is paused" : "The team needs your input");
       run.error = undefined;
-      this.save();
+      this.save({ runs: [run] });
       this.emitRun(run);
     } else {
       run.status = status === "stopped" ? "cancelled" : "completed";
@@ -2013,19 +2505,23 @@ export class RoutineManager {
       run.finishedAt = this.now();
       run.error = undefined;
       if (status !== "stopped") run.output = safeDetail.slice(0, 2_000) || undefined;
-      this.save();
+      this.save({ runs: [run] });
       this.emitRun(run);
     }
     queueMicrotask(() => void this.tick());
     return cloneRun(run);
   }
 
+  /** Calls to required tool families in each live run's turn, by item id. */
+  private readonly requiredToolCalls = new Map<string, Map<string, { label: string; failed: boolean; op: string }>>();
+
   private failRun(run: RoutineRun, message: string) {
+    this.requiredToolCalls.delete(run.id);
     run.status = "failed";
     run.attention = undefined;
     run.error = redactSecretsInText(message).slice(0, 500);
     run.finishedAt = this.now();
-    this.save();
+    this.save({ runs: [run] });
     this.emitRun(run);
     this.options.onRunFailed?.(cloneRun(run));
   }
@@ -2063,7 +2559,7 @@ export class RoutineManager {
       routineName: routine.name,
       prompt: routine.prompt,
       instructionRevision: routineInstructionRevision(routine),
-      ...(instruction?.evidence ? { instructionEvidence: structuredClone(instruction.evidence), instructionEvaluationReceiptId: instruction.evaluationReceiptId } : {}),
+      ...(instruction?.evidence ? { instructionEvidence: plainCopy(instruction.evidence), instructionEvaluationReceiptId: instruction.evaluationReceiptId } : {}),
       durationMinutes: routine.durationMinutes,
       ...(routine.timeoutMinutes === undefined ? {} : { timeoutMinutes: routine.timeoutMinutes }),
       attachments: cloneAttachments(routine.attachments),
@@ -2072,18 +2568,20 @@ export class RoutineManager {
       botId: routine.botId,
       runOn: routine.runOn ?? "ember",
       scheduledFor,
+      dueAt: scheduledFor,
       status: "queued",
       manual,
       triggerSource: manual ? "manual" : "schedule",
       sourceThreadId: routine.sourceThreadId,
       createdAt: this.now(),
     };
-    if (routine.watch) run.watch = { watchId: routine.id, ownerBotId: routine.watch.ownerBotId, source: structuredClone(routine.watch.state.definition.source), outcome: "pending" };
+    if (routine.watch) run.watch = { watchId: routine.id, ownerBotId: routine.watch.ownerBotId, source: plainCopy(routine.watch.state.definition.source), outcome: "pending" };
     run.event = routineEventForRun(run);
     run.eventBudget = newEventActionBudget();
-    if (run.watch) run.eventBudget.closed = true;
-    this.runs.push(run);
-    return run;
+    if (run.watch) { run.eventBudget.closed = true; run.eventBudget.closedReason = "watch"; }
+    const tracked = this.trackRun(run);
+    this.runs.push(tracked);
+    return tracked;
   }
 
   private async checkWatch(run: RoutineRun): Promise<void> {
@@ -2105,9 +2603,9 @@ export class RoutineManager {
     let failure: string | undefined;
     try {
       if (!this.options.readWatchSource || !this.options.validateWatchSource) throw new Error("File watch source access is unavailable");
-      this.options.validateWatchSource(routine.watch.ownerBotId, routine.botId, run.watch.source);
-      observation = await this.options.readWatchSource(routine.watch.ownerBotId, routine.botId, run.watch.source, controller.signal);
-      this.options.validateWatchSource(routine.watch.ownerBotId, routine.botId, run.watch.source);
+      this.options.validateWatchSource(routine.watch.ownerBotId, routine.botId, untracked(run.watch.source));
+      observation = await this.options.readWatchSource(routine.watch.ownerBotId, routine.botId, untracked(run.watch.source), controller.signal);
+      this.options.validateWatchSource(routine.watch.ownerBotId, routine.botId, untracked(run.watch.source));
     } catch { failure = "The selected watch file is unavailable or no longer permitted. Review its working folder and source."; }
     finally { this.watchReads.delete(routine.id); }
     const current = this.routines.find(item => item.id === routine.id);
@@ -2145,15 +2643,31 @@ export class RoutineManager {
     const run = this.runs.find((item) => item.threadId === threadId && isLive(item.status));
     if (!run || run.procedureBundleId) return;
     run.procedureBundleId = bundleId;
-    this.save();
+    this.save({ runs: [run] });
     this.emitRun(run);
   }
 
   private emitRoutine(routine: Routine) {
+    this.fleetDueAt = null;
     this.options.emit?.({ kind: "routine", routine: this.routineWithHealth(routine) });
   }
 
+  /** How long recent automatic runs took, start to finish (the last AUTOMATIC_SERVICE_SAMPLES of them). */
+  private readonly automaticServiceTimes = new Map<string, number>();
+  private automaticServiceMs(): number | undefined {
+    const times = [...this.automaticServiceTimes.values()].sort((a, b) => a - b);
+    return times.length ? times[Math.floor(times.length / 2)] : undefined;
+  }
+  private noteServiceTime(run: RoutineRun) {
+    const source = run.triggerSource ?? (run.manual ? "manual" : "schedule");
+    if ((source !== "schedule" && source !== "webhook") || isLive(run.status) || run.startedAt === undefined || run.finishedAt === undefined || run.watch) return;
+    if (this.automaticServiceTimes.has(run.id) || run.target === "room-goal") return;
+    this.automaticServiceTimes.set(run.id, Math.max(0, run.finishedAt - run.startedAt));
+    if (this.automaticServiceTimes.size > AUTOMATIC_SERVICE_SAMPLES) this.automaticServiceTimes.delete(this.automaticServiceTimes.keys().next().value!);
+  }
+
   private emitRun(run: RoutineRun) {
+    this.noteServiceTime(run);
     this.options.emit?.({ kind: "routine.run", run: cloneRun(run) });
     this.notifyRunChanged(run);
     // A settled attempt moves the routine's failure streak.
@@ -2209,6 +2723,7 @@ export class RoutineManager {
    * uncommitted action for a durable one.
    */
   private commitMutation(mutate: () => void): void {
+    this.fleetDueAt = null;
     const before = {
       routines: this.routines.map(cloneRoutine),
       runs: this.runs.map(cloneRun),
@@ -2218,9 +2733,9 @@ export class RoutineManager {
       mutate();
       this.save();
     } catch (error) {
-      this.routines = before.routines;
-      this.runs = before.runs;
-      this.routineRequestReceipts = before.receipts;
+      this.routines = before.routines.map((routine) => this.trackRoutine(routine));
+      this.runs = before.runs.map((run) => this.trackRun(run));
+      this.routineRequestReceipts = this.trackReceipts(before.receipts);
       throw error;
     }
   }
@@ -2234,18 +2749,34 @@ export class RoutineManager {
     }
     // An imported routine arrives with its ceiling pinned: imported bots start at Ask, so does the routine.
     const next = [...this.routines, ...additions.map(routine => routine.permissionMode ? routine : { ...routine, permissionMode: "ask" as const })];
+    // The bytes take their own generation, and publish records it, so correctness never rests on diskIsOurs() failing:
+    // every state line written before this file is spent, and the routines folded into `next` are the whole state.
+    const stateGeneration = randomUUID();
     return {
       // runsCommit stays as recorded: a file without it accepts every journal line, including
       // those of a save that was interrupted before its routines.json write (audit A-3).
-      bytes: Buffer.from(JSON.stringify({ version: 1, routines: next, routineRequestReceipts: this.routineRequestReceipts, ...(this.runsCommit === undefined ? {} : { runsCommit: this.runsCommit }) } satisfies RoutineFile, null, 2)),
-      publish: () => { this.routines = next; },
+      bytes: Buffer.from(JSON.stringify({ version: 1, routines: next, routineRequestReceipts: this.routineRequestReceipts, ...(this.runsCommit === undefined ? {} : { runsCommit: this.runsCommit }), stateGeneration } satisfies RoutineFile, null, 2)),
+      publish: () => { this.routines = next.map((routine) => this.trackRoutine(routine)); this.fleetDueAt = null; this.fullSave = true; this.generation = stateGeneration; this.journal.setGeneration(stateGeneration); },
     };
   }
 
   /** Persist routines.json and the run journal. Immediate by default (receipts,
    * grants, schedules and run starts rely on it throwing); `defer` coalesces to
-   * once per 250 ms for cosmetic bookkeeping such as marking a run seen. */
-  private save(options: { defer?: boolean } = {}) {
+   * once per 250 ms for cosmetic bookkeeping such as marking a run seen.
+   * Passing `runs`/`routines` (1.0.2 bgwork) allows an incremental save: it
+   * appends to the journal only what was written since the last save, found by
+   * write tracking (tracked-state.ts), not by what the caller names, so its
+   * bytes follow the change, never the number of routines or runs, and nothing
+   * written by another path is left out. A save that passes neither rewrites
+   * routines.json and compares everything, as before. */
+  private save(options: { defer?: boolean; runs?: readonly RoutineRun[]; routines?: readonly Routine[] } = {}) {
+    const hinted = options.runs !== undefined || options.routines !== undefined;
+    if (hinted) {
+      for (const run of options.runs ?? []) this.dirtyRuns.add(run);
+      for (const routine of options.routines ?? []) this.dirtyRoutines.add(routine);
+    } else this.fullSave = true;
+    // only a routine change can move the fleet's earliest due time
+    if (!hinted || options.routines?.length) this.fleetDueAt = null;
     if (options.defer) { scheduleCoalesced(this.file, () => this.saveNow()); return; }
     this.saveNow();
     cancelCoalesced(this.file);
@@ -2256,15 +2787,104 @@ export class RoutineManager {
     // evicting one would strand live work. Treat MAX_RUNS as a soft history
     // cap and reclaim only the oldest terminal receipts. An unusually large
     // active queue may exceed it until work settles.
-    let excess = this.runs.length - MAX_RUNS;
-    for (let index = 0; index < this.runs.length && excess > 0;) {
-      if (isOpen(this.runs[index]!.status)) {
+    const removed: RoutineRun[] = [];
+    let excess = this.runsRaw.length - MAX_RUNS;
+    // on the raw list: the cap's own removals are accounted for (`trimmed`), so the list watch must not see them
+    for (let index = 0; index < this.runsRaw.length && excess > 0;) {
+      if (isOpen(this.runsRaw[index]!.status)) {
         index += 1;
         continue;
       }
-      this.runs.splice(index, 1);
+      removed.push(...this.runsRaw.splice(index, 1));
       excess -= 1;
     }
+    for (const run of removed) this.dirtyRuns.delete(run);
+    this.sweep(removed.length);
+    try {
+      if (this.fullSave || this.pendingCommit !== null || this.generation === undefined || !this.diskIsOurs()) this.saveFull();
+      else {
+        // written since the last save, in list order; a run or routine that left the lists is not written back
+        // straight from the dirty sets: a run or routine that left a list did so through a path that forces a full save
+        const runs = [...this.dirtyRuns].map(untracked);
+        const routines = [...this.dirtyRoutines].map(untracked);
+        this.journal.append({ runs, routines, removed: removed.map(untracked) });
+      }
+      this.fullSave = false;
+      this.dirtyRuns.clear();
+      this.dirtyRoutines.clear();
+      this.savedRunCount = this.runs.length;
+      this.savedRoutineCount = this.routines.length;
+    } catch (error) {
+      // what reached the disk is unknown: the next save compares everything
+      this.fullSave = true;
+      throw error;
+    }
+  }
+
+  private trackRun(run: RoutineRun): RoutineRun {
+    if (isTracked(run)) return run;
+    const tracked: RoutineRun = track(run, () => { this.dirtyRuns.add(tracked); });
+    return tracked;
+  }
+
+  private trackRoutine(routine: Routine): Routine {
+    if (isTracked(routine)) return routine;
+    // a routine write can move the fleet's earliest due time
+    const tracked: Routine = track(routine, () => { this.dirtyRoutines.add(tracked); this.fleetDueAt = null; });
+    return tracked;
+  }
+
+  /** Receipts live only in routines.json: any write to them makes the next save a full one. */
+  private trackReceipts(receipts: RoutineRequestReceipt[]): RoutineRequestReceipt[] {
+    return isTracked(receipts) ? receipts : track(receipts, () => { this.fullSave = true; });
+  }
+
+  /** Bring anything put into the lists without tracking under it, and account for what joined or left them since
+   * the last save. A routine that joined or left, a list replaced, or a run that left other than by the history cap
+   * (`trimmed`) makes this save a full one; a run that joined is written. */
+  private sweep(trimmed: number): void {
+    if (!isTracked(this.routineRequestReceipts)) { this.routineRequestReceipts = this.trackReceipts(this.routineRequestReceipts); this.fullSave = true; }
+    // Incremental: the list watch queues what joined, so the walk over every routine and run happens only after a
+    // list was replaced or an element was put in raw, never per save.
+    if (this.walkRoutines) {
+      this.walkRoutines = false;
+      for (let index = 0; index < this.routinesRaw.length; index++) {
+        const routine = this.routinesRaw[index]!;
+        if (!isTracked(routine)) { this.routinesRaw[index] = this.trackRoutine(routine); this.fullSave = true; }
+      }
+    }
+    if (this.routinesRaw.length !== this.savedRoutineCount) this.fullSave = true;
+    let joined = 0;
+    if (this.walkRuns) {
+      this.walkRuns = false;
+      this.joinedRuns.length = 0;
+      for (let index = 0; index < this.runsRaw.length; index++) {
+        let run = this.runsRaw[index]!;
+        if (!isTracked(run)) run = this.runsRaw[index] = this.trackRun(run);
+        if (!this.knownRuns.has(run)) { this.knownRuns.add(run); this.dirtyRuns.add(run); joined += 1; }
+      }
+    } else {
+      const queued = this.joinedRuns.splice(0);
+      for (const candidate of queued) {
+        let run = candidate;
+        if (!isTracked(run)) { run = this.trackRun(run); const at = this.runsRaw.indexOf(candidate); if (at >= 0) this.runsRaw[at] = run; this.fullSave = true; }
+        if (!this.knownRuns.has(run)) { this.knownRuns.add(run); this.dirtyRuns.add(run); joined += 1; }
+      }
+    }
+    if (this.runsRaw.length !== this.savedRunCount + joined - trimmed) this.fullSave = true;
+  }
+
+  /** routines.json is still the file this process last wrote (one stat). */
+  private diskIsOurs(): boolean {
+    const last = this.lastWritten;
+    if (!last) return false;
+    try {
+      const stat = statSync(this.file);
+      return stat.size === last.size && stat.mtimeMs === last.mtimeMs && stat.ino === last.ino;
+    } catch { return false; }
+  }
+
+  private saveFull() {
     mkdirSync(dirname(this.file), { recursive: true });
     // History first: if routines.json then fails, nothing is lost, and a run
     // that exists only in the journal is still loaded on the next start.
@@ -2272,24 +2892,29 @@ export class RoutineManager {
     // that only counts once routines.json records it (routine-runs-journal.ts):
     // a crash between the two writes rolls both back, so a tick or a confirmed
     // action is applied exactly once on the next start.
-    const textFor = (runsCommit: number | undefined) => JSON.stringify({
+    const textFor = (runsCommit: number | undefined, stateGeneration: string | undefined) => JSON.stringify({
       version: 1,
-      routines: this.routines,
+      routines: this.routines.map(untracked),
       runs: [],
-      routineRequestReceipts: this.routineRequestReceipts,
+      routineRequestReceipts: untracked(this.routineRequestReceipts),
       ...(runsCommit === undefined ? {} : { runsCommit }),
+      ...(stateGeneration === undefined ? {} : { stateGeneration }),
     } satisfies RoutineFile, null, 2);
-    if (this.pendingCommit === null && this.fileUnchanged(textFor(this.runsCommit))) {
-      this.journal.sync(this.runs);
+    // A live state line means routines.json alone is not the whole state: rewrite it even if it reads the same.
+    if (this.pendingCommit === null && !this.journal.hasRoutineLines() && this.fileUnchanged(textFor(this.runsCommit, this.generation))) {
+      this.journal.sync(this.runs.map(untracked));
       return;
     }
     const tag = this.pendingCommit ?? Math.max(this.runsCommit ?? 0, this.journal.highestTag) + 1;
     this.pendingCommit = tag;
-    this.journal.sync(this.runs, tag);
-    const text = textFor(tag);
+    this.journal.sync(this.runs.map(untracked), tag);
+    const generation = randomUUID();
+    const text = textFor(tag, generation);
     writeFileAtomic(this.file, text, { mode: 0o600 });
     this.runsCommit = tag;
     this.pendingCommit = null;
+    this.generation = generation;
+    this.journal.setGeneration(generation);
     try { const stat = statSync(this.file); this.lastWritten = { text, size: stat.size, mtimeMs: stat.mtimeMs, ino: stat.ino }; }
     catch { this.lastWritten = null; }
     this.journal.compact();

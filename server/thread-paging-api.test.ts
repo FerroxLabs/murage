@@ -22,11 +22,13 @@ beforeAll(async () => {
   fixture = await launchVerificationServer(process.env, undefined, { instrumentationSource: `
     const {Store}=await import(${JSON.stringify(new URL("./store.ts", import.meta.url).href)});
     const {writeFileSync}=await import('node:fs');const {join}=await import('node:path');
+    // An approval card written before the server starts is "left by a previous run": the start-up sweep retires it (orphaned), so it stops
+    // counting as open. A routine request card is open by design until the person answers, and the sweep leaves it alone.
     const store=new Store(()=>({instanceId:'verification',model:'sonnet'}));
     const bot=store.createBot({name:'Paging fixture'},{seedMessages:false});
     const long=bot.threadId;let card='';
     for(let i=0;i<${LONG};i++){
-      if(i===${CARD_AT})card=store.appendMessage(long,{role:'bot',kind:'options',card:{title:'Allow?',subtitle:'run ls',options:['Allow','Deny'],requestId:'paging-open-request',tool:'Bash'}}).id;
+      if(i===${CARD_AT})card=store.appendMessage(long,{role:'bot',kind:'options',card:{title:'Allow?',subtitle:'run ls',options:['Allow','Deny'],requestId:'paging-open-request',tool:'Bash',routineRequest:{version:1,requestId:'paging-open-request',botId:bot.id,threadId:long,createdAt:1,operation:{action:'delete',routineId:'paging-fixture',expectedUpdatedAt:1}}}}).id;
       else store.appendMessage(long,{role:i%2?'bot':'user',kind:'text',text:'bot message '+i});
     }
     const short=store.createTask(bot.id,'Short').threadId;

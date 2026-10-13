@@ -6,6 +6,8 @@ import { useDesktopSurface } from "@/lib/use-surface";
 import { projectClient, refreshProject } from "@/lib/use-project";
 const CloseProject = retryableLazy(() => import("./CloseProjectDialog"));
 const EndProject = retryableLazy(() => import("./EndProjectDialog"));
+// Find in this conversation loads when someone asks for it (Cmd+F).
+const ChatFindBar = retryableLazy(() => import("./ChatFindBar").then((module) => ({ default: module.ChatFindBar })));
 // A room: several bots + you in one shared thread. The sidebar and call view
 // carry the personality; avatars inside the room stay still so a busy group
 // does not become a wall of competing motion. Plain messages go to the room's
@@ -23,8 +25,9 @@ import { DeletionNoteBanner } from "./DeletionNoteBanner";
 import { ApprovedStepsRow, isApprovedStepsLine } from "./ApprovedStepsRow";
 import { ImageRecordRow, isImageRecordLine } from "./ImageRecordRow";
 import { DelegationWaitRow } from "./DelegationWaitRow";
+import { DelegationHeldRow, heldAction } from "./DelegationHeldRow";
 import { roomTranscript } from "@/lib/room-transcript";
-import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type RefObject } from "react";
 import { Archive, ArrowDown, Check, ChevronDown, Folder, FolderOpen, Info, Loader2, MessageSquareReply, MoreHorizontal, Pencil, Pin, PinOff, Plus, Search, Square, Target, Trash2, Volume2, X } from "lucide-react";
 import { SpeakButton } from "./SpeakButton";
 import { speaker } from "@/lib/tts";
@@ -35,6 +38,7 @@ import {
   useStore,
   useStreaming,
   formatTime,
+  olderOpenCards,
   openNotificationTarget,
   type Bot,
   type Group,
@@ -56,7 +60,6 @@ import { instructionsPreview } from "@/lib/channel-instructions";
 import { ChatMarkdown } from "./ChatMarkdown";
 import { ErrorBanner, MessageActionSheet, type MessageAction } from "./ChatView";
 import { Composer } from "./Composer";
-import { ChatFindBar } from "./ChatFindBar";
 import { GroupTaskPicker } from "./TaskPicker";
 import { ReplyQuote } from "./ReplyQuote";
 import { ConnectorCard } from "./ConnectorCard";
@@ -78,7 +81,10 @@ import { ProjectHome } from "./ProjectHome";
 import { ConfirmDelete } from "./ConfirmDelete";
 import { CHANNEL_PROJECT_GOAL_MAX } from "../../shared/project";
 import { channelProjectStatusLabel } from "@/lib/channel-surface";
-import { groupActivityRuns } from "@/lib/activity-runs";
+import { groupActivityRuns, itemKeyHolding, transcriptItemKey } from "@/lib/activity-runs";
+import { TranscriptTail } from "./TranscriptTail";
+import { tailOf } from "@/lib/transcript-tail";
+import { VirtualTranscript } from "./VirtualTranscript";
 import { ActivityRun } from "./ActivityRun";
 import { HelpersLine, HelpersSummary } from "./HelpersLine";
 import { pickSubtasks } from "@/lib/subtasks";
@@ -87,6 +93,8 @@ import { cn } from "@/lib/cn";
 import { OpenBotListButton } from "./OpenBotListButton";
 import { t } from "@/lib/i18n";
 import { StoppedByYouRow, StoppedMidActionRow, StoppedRow } from "./StoppedRow";
+import { SendNoticeRow } from "./SendNoticeRow";
+import { sendNoticeCode } from "../../shared/send-notice";
 import { hostStoppedReason, isStoppedMidDesktopAction } from "../../shared/host-stop";
 import { TURN_STOPPED_NOTE } from "../../server/turn-outcome";
 import { folderTrustNotice } from "../../shared/folder-trust";
@@ -207,6 +215,9 @@ const Transcript = memo(function Transcript({
   transcript,
   emergingId,
   onReply,
+  scrollRef,
+  followRef,
+  follow,
 }: {
   group: Group;
   members: Bot[];
@@ -216,6 +227,10 @@ const Transcript = memo(function Transcript({
   transcript: Message[];
   emergingId?: string | null;
   onReply: (message: Message) => void;
+  /** The transcript scroller and its follow state: only the rows in view mount. */
+  scrollRef: RefObject<HTMLDivElement | null>;
+  followRef: RefObject<boolean>;
+  follow: boolean;
 }) {
   const { state, dispatch } = useStore();
   const speech = useSpeech();
@@ -291,9 +306,10 @@ const Transcript = memo(function Transcript({
   // tool calls off, a quiet step, the bubble still streaming) must not count
   // as the previous sender, or the next bot's reply loses its name label.
   let shownPrev: Message | undefined;
-  return (
-    <>
-      {items.map((item) => {
+  // Every row is worked out in order (a row's speaker label and day line
+  // depend on the row drawn above it), but these are only elements: nothing
+  // renders until VirtualTranscript mounts the rows in view.
+  const rows = items.map((item) => {
         const prev = shownPrev;
         if (item.kind === "helpers") {
           return (
@@ -396,6 +412,10 @@ const Transcript = memo(function Transcript({
               <ImageRecordRow message={m} />
             ) : m.delegationWait ? (
               <DelegationWaitRow text={m.tool.name} onStop={() => dispatch({ type: "stopDelegation", delegationId: m.delegationWait!.id })} />
+            ) : m.delegationHeld ? (
+              <DelegationHeldRow text={m.tool.name} onSendAgain={() => heldAction(dispatch, "resendDelegation", m.delegationHeld!.id, group.threadId)} onDismiss={() => heldAction(dispatch, "dismissDelegation", m.delegationHeld!.id, group.threadId)} />
+            ) : sendNoticeCode(m.tool.name) ? (
+              <SendNoticeRow code={sendNoticeCode(m.tool.name)!} />
             ) : hostStoppedReason(m.tool.name) ? (
               <StoppedRow reason={hostStoppedReason(m.tool.name)!} />
             ) : isStoppedMidDesktopAction(m.tool.name) ? (
@@ -519,7 +539,7 @@ const Transcript = memo(function Transcript({
                         <ChatMarkdown text={m.text} scope={m.from?.botId ? { botId: m.from.botId, threadId: group.threadId } : undefined} />
                       ) : null}
                       {m.withheldFromBots && (
-                        <div className="mt-1 text-[11px] text-ink-secondary/70">{m.withheldFromBots === "forgotten" ? "Bots no longer see this reply: you chose to forget it." : "Bots no longer see this reply: it used something you deleted or changed."}</div>
+                        <div className="mt-1 text-[11px] text-ink-secondary/70">{m.withheldFromBots === "forgotten" ? "Bots no longer see this reply: you chose to forget it." : m.withheldFromBots === "checking" ? "Bots will see this reply once earlier memory is checked." : "Bots no longer see this reply: it used something you deleted or changed."}</div>
                       )}
                     </>
                   )}
@@ -586,8 +606,18 @@ const Transcript = memo(function Transcript({
             {row}
           </div>
         );
-      })}
-    </>
+      });
+  return (
+    <VirtualTranscript
+      items={items}
+      keyOf={transcriptItemKey}
+      scrollRef={scrollRef}
+      followRef={followRef}
+      follow={follow}
+      resetKey={group.threadId}
+      focusKey={itemKeyHolding(items, focusedId)}
+      render={(_item, i) => rows[i]}
+    />
   );
 });
 
@@ -1328,7 +1358,7 @@ export function GroupView({ group }: { group: Group }) {
   // Conversation order from parent links, not arrival order: hosted-tool
   // text saved in front of its row arrives after it (room-transcript.ts).
   // Everything below (window, focus, follow, replies) reads this order.
-  const roomMessages = useMemo(() => roomTranscript(group.messages), [group.messages]);
+  const roomMessages = useMemo(() => roomTranscript(olderOpenCards(group, group.messages)), [group.messages, group.openCards, group.openCardsLeaf]);
   const stream = useStreaming();
   const roomHelpers = group.busyBotId
     ? pickSubtasks(stream.helpers.live[group.threadId], group.tasks?.find((task) => task.threadId === group.threadId)?.subtasks)
@@ -1505,7 +1535,7 @@ export function GroupView({ group }: { group: Group }) {
     setFollow(next);
   }, []);
 
-  useEffect(() => setBottomFollow(true), [group.id, setBottomFollow]);
+  useEffect(() => setBottomFollow(true), [transcriptKey, setBottomFollow]);
   // Observed only while the Chat tab's transcript is mounted: a project room
   // can open on Overview, and a key that did not change on the switch to Chat
   // left the new transcript unobserved, so a Thinking row or a streaming
@@ -1554,7 +1584,7 @@ export function GroupView({ group }: { group: Group }) {
     if (!el || !followRef.current) return;
     el.scrollTo({ top: el.scrollHeight });
     previousScrollTop.current = el.scrollTop;
-  }, [group.id, roomMessages.length, streaming, group.busyBotId, group.working, composerDock.pad, showChat]);
+  }, [transcriptKey, roomMessages.length, streaming, group.busyBotId, group.working, composerDock.pad, showChat]);
 
   // Rows move in and out around the reader; a surviving row is kept where it
   // was (transcript-rows.ts, and see ChatView). The capture belongs to the
@@ -1851,11 +1881,11 @@ export function GroupView({ group }: { group: Group }) {
 
       <ProjectLifecycleBanner closing={project?.closing === true} closed={project?.lifecycle === "closed"} leadName={state.bots.find(bot=>bot.id===project?.settings.leadBotId)?.name} reopening={reopening} reopened={reopenedNotice} onReopen={desktop === true ? async () => { setReopening(true); const result=await projectClient.reopen(group.id); if(result.ok) { setReopenedNotice({pausedRoutines:result.data.pausedRoutines,resumeHint:result.data.resumeHint}); await refreshProject(group.id); } else setLifecycleError(result.reason); setReopening(false); } : undefined} />
       {lifecycleError && <p role="alert" className="p-3 text-sm text-ink">{lifecycleError}</p>}
-      {findOpen && <ChatFindBar threadId={group.threadId} onClose={() => setFindOpen(false)} />}
+      {findOpen && <LazyBoundary onRetry={ChatFindBar.retry} onDismiss={() => setFindOpen(false)}><Suspense fallback={null}><ChatFindBar.Component threadId={group.threadId} onClose={() => setFindOpen(false)} /></Suspense></LazyBoundary>}
       {/* A channel never showed an error: a refused delete or rename in the
           conversation picker just did nothing. Same banner as a bot chat. */}
       {state.error && <ErrorBanner message={state.error} onDismiss={() => dispatch({ type: "error", message: null })} />}
-      {state.deletionNote && <DeletionNoteBanner note={state.deletionNote} onDismiss={() => dispatch({ type: "deletionNote", note: null })} />}
+      {state.deletionNote && <DeletionNoteBanner note={state.deletionNote} onDismiss={() => dispatch({ type: "deletionNote", note: null })} onRetry={() => { void api("/api/deletions/retry", { method: "POST" }).then((response) => dispatch({ type: "deletionOwed", notices: response?.notices, rev: response?.rev })).catch(() => {}); }} />}
 
       {/* Instructions: one pinned line; click to edit */}
       {!setupPending && showChat && <div className="w-full px-5">
@@ -1991,9 +2021,10 @@ export function GroupView({ group }: { group: Group }) {
           style={{ paddingBottom: composerDock.pad }}
           ref={transcriptRef}
           role="log"
-          aria-live="polite"
+          aria-live="off"
           aria-label={`Channel ${group.name}`}
         >
+          <TranscriptTail scope={group.threadId} last={tailOf(roomMessages.at(-1))} />
           {roomMessages.length === 0 && (
             <div className="flex flex-1 flex-col items-center justify-center gap-3 py-24 text-center">
               <div className="flex -space-x-2">
@@ -2013,6 +2044,11 @@ export function GroupView({ group }: { group: Group }) {
               <div className="max-w-[380px] text-[14px] text-ink-secondary">
                 {groupResponseHint(group, members)}
               </div>
+            </div>
+          )}
+          {roomMessages.some((m) => m.withheldFromBots === "checking") && (
+            <div className="text-center text-[12px] text-ink-secondary/80" data-testid="checking-note">
+              Earlier context in this conversation is still being checked, so some older replies were left out for now.
             </div>
           )}
           {hiddenCount > 0 ? (
@@ -2043,6 +2079,9 @@ export function GroupView({ group }: { group: Group }) {
             transcript={roomMessages}
             emergingId={popping?.id}
             onReply={selectReply}
+            scrollRef={scrollRef}
+            followRef={followRef}
+            follow={follow}
           />
           {laterCount > 0 && (
             <div className="flex justify-center">

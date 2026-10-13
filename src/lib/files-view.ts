@@ -7,6 +7,7 @@ import {
   type WorkspaceEntry, type WorkspaceRootState, type WorkspaceSaveVersionResponse, type WorkspaceScopeRef,
 } from "../../shared/workspace-files";
 import { t } from "@/lib/i18n";
+import { runNativeAction } from "@/lib/native-action-error";
 import type { LocaleKey } from "@/locales";
 
 export type ApiCall = (path: string, init?: RequestInit) => Promise<unknown>;
@@ -73,7 +74,7 @@ export function workspaceNativeAction(): WorkspaceNativeAction | undefined {
   const act = bridge.workspaceFileAction;
   return (scope, entry, action) => {
     if (!canSaveEntry(entry)) return Promise.reject(new Error(t("filesWorkspace.nativeUnavailable")));
-    return act({ botId: scope.botId, threadId: scope.threadId }, entry.relativePath, action);
+    return runNativeAction(() => act({ botId: scope.botId, threadId: scope.threadId }, entry.relativePath, action), t("filesWorkspace.nativeError"));
   };
 }
 

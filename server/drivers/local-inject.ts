@@ -9,6 +9,7 @@
 // add-time address rule again on this read (server/local-servers.ts). Every
 // engine writer starts from `decodeInjectId`/`localHost`, so an address that
 // fails validation never reaches a CLI config.
+import { AsyncLocalStorage } from "node:async_hooks";
 import { readFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
@@ -618,7 +619,9 @@ async function probeHostGroup(
   }
   const aliases = group.filter((row) => row.kind === host.kind).map((row) => row.id);
   for (const [id, reading] of contexts) for (const alias of aliases) rememberLocalContext(alias, id, reading);
-  return { host, aliases, reachable: catalog !== null || extra !== null, ids, loaded, contexts };
+  const page: LocalHostPage = { host, aliases, reachable: catalog !== null || extra !== null, ids, loaded, contexts };
+  if (group.some((row) => row.source === "added")) lastPages.set(catalogUrl.replace(/\/models$/, ""), page);
+  return page;
 }
 
 /** Probe a single host (a server just added or edited). */
@@ -630,11 +633,33 @@ export function probeLocalHost(
   return probeHostGroup([host], env, fetchImpl);
 }
 
+/**
+ * One catalog refresh = one scope. Every driver's catalog merge inside it shares
+ * a single probe per address (so eight engines cost one request pair per host,
+ * not sixteen sockets), and a background refresh (`onDemand: false`) never
+ * probes user-added servers on its own: it shows their last stored result. The
+ * owner opening model choice ("Check again"), the Local models screen or a turn
+ * probes them for real.
+ */
+export interface LocalProbeScope {
+  onDemand: boolean;
+  pages: Map<string, Promise<LocalHostPage>>;
+}
+const probeScope = new AsyncLocalStorage<LocalProbeScope>();
+// Last answer per address, kept so a background refresh can still list a
+// user-added server's models without calling it.
+const lastPages = new Map<string, LocalHostPage>();
+
+export function runInLocalProbeScope<T>(onDemand: boolean, run: () => Promise<T>): Promise<T> {
+  return probeScope.run({ onDemand, pages: new Map() }, run);
+}
+
 /** Every local address, built-in and user-added, probed in parallel. */
 export async function probeLocalHosts(
   env: Record<string, string | undefined> = process.env,
   fetchImpl: typeof fetch = fetch,
 ): Promise<LocalHostPage[]> {
+  const scope = probeScope.getStore();
   const groups = new Map<string, LocalHost[]>();
   for (const host of allLocalHosts()) {
     const key = host.baseUrl.replace(/\/$/, "");
@@ -642,7 +667,25 @@ export async function probeLocalHosts(
     if (group) group.push(host);
     else groups.set(key, [host]);
   }
-  return Promise.all([...groups.values()].map((group) => probeHostGroup(group, env, fetchImpl)));
+  const pages: Array<LocalHostPage | Promise<LocalHostPage>> = [];
+  for (const [key, group] of groups) {
+    if (!scope) {
+      pages.push(probeHostGroup(group, env, fetchImpl));
+      continue;
+    }
+    if (!scope.onDemand && group.every((row) => row.source === "added")) {
+      const last = lastPages.get(key);
+      if (last) pages.push(last);
+      continue;
+    }
+    let shared = scope.pages.get(key);
+    if (!shared) {
+      shared = probeHostGroup(group, env, fetchImpl);
+      scope.pages.set(key, shared);
+    }
+    pages.push(shared);
+  }
+  return Promise.all(pages);
 }
 
 /** Live models from the same local hosts the sidecar probed. */

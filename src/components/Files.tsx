@@ -2,6 +2,7 @@ import { useEffect, useRef, useState, type ReactNode } from "react";
 import { api } from "@/state/store";
 import { desktopSurfaceHeaders, ensureDesktopSurfaceSecret } from "@/lib/live-events";
 import { t } from "@/lib/i18n";
+import { runNativeAction } from "@/lib/native-action-error";
 import { clickDownload } from "@/lib/save-file";
 import { activeSavedFilters, type SavedFilters, type SavedVersionResult } from "@/lib/files-view";
 import type { Artifact, ArtifactKind, ArtifactPage, ArtifactPreview } from "../../shared/artifacts";
@@ -17,7 +18,7 @@ export interface FilesOpenDetail { botId?: string; threadId?: string; artifactId
 export function openFiles(detail: FilesOpenDetail = {}) { window.dispatchEvent(new CustomEvent("murage:open-files", { detail })); }
 export function artifactNativeAction() {
   const bridge = window.muragebox as (NonNullable<Window["muragebox"]> & { artifactAction?: (id: string, action: "open" | "reveal") => Promise<void> }) | undefined;
-  return typeof bridge?.artifactAction === "function" ? (artifact: Artifact, action: "open" | "reveal") => bridge.artifactAction!(artifact.id, action) : undefined;
+  return typeof bridge?.artifactAction === "function" ? (artifact: Artifact, action: "open" | "reveal") => runNativeAction(() => bridge.artifactAction!(artifact.id, action), "This saved file could not be opened.") : undefined;
 }
 export async function downloadSavedArtifact(artifact: Artifact) {
   // Artifacts are desktop-authority-only (server/route-policy.ts, class

@@ -36,6 +36,8 @@ export const LIFECYCLE_EVENTS = [
   "stop_route", "stop_route_result", "turn_settled", "closed", "events_omitted",
   // Engine MCP readiness before the first prompt (Fuigo `_fuigo/mcp_initialized`).
   "mcp_ready", "mcp_ready_own", "mcp_ready_timeout",
+  // A required server (connected apps, memory, bot messaging) was not ready: reconnected once.
+  "mcp_reconnect",
 ] as const;
 export type LifecycleEventName = (typeof LIFECYCLE_EVENTS)[number];
 

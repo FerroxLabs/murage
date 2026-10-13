@@ -201,3 +201,30 @@ export function formatTime(iso: string): string {
   const ms = String(d.getMilliseconds()).padStart(3, "0");
   return `${hh}:${mm}:${ss}.${ms}`;
 }
+
+/** A quiet row for an action the reply described that has no matching record. */
+export interface ClaimInspectorRow {
+  key: string;
+  kind: "claim";
+  at: string;
+  sentence: string;
+  messageId: string;
+}
+
+/** Place each claim row right after the end of the turn it belongs to, or at
+ * the end when that turn is not in the page. */
+export function withClaimRows(
+  rows: InspectorRow[],
+  claims: readonly { key: string; sentence: string; messageId: string; turnId?: string }[],
+): Array<InspectorRow | ClaimInspectorRow> {
+  const out: Array<InspectorRow | ClaimInspectorRow> = [...rows];
+  for (const claim of claims) {
+    const at = out.findIndex((row) => row.kind === "runtime" && row.tag === "turn.completed"
+      && claim.turnId !== undefined && (row.data as { turnId?: string }).turnId === claim.turnId);
+    const previous = at >= 0 ? out[at]!.at : out.at(-1)?.at ?? new Date(0).toISOString();
+    const entry: ClaimInspectorRow = { key: `claim:${claim.key}`, kind: "claim", at: previous, sentence: claim.sentence, messageId: claim.messageId };
+    if (at >= 0) out.splice(at + 1, 0, entry);
+    else out.push(entry);
+  }
+  return out;
+}

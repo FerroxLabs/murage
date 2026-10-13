@@ -630,6 +630,15 @@ describe("owner decisions carry the launch proof", () => {
     for (const [method, path] of [["POST", "/api/sidebar-sections"], ["POST", "/api/routines/r1/run"], ["POST", "/api/bots"], ["GET", "/api/bots/b1/browser"], ["GET", "/api/bots/b1/browser/frame"], ["POST", "/api/bots/b1/browser"], ["PATCH", "/api/bots/b1/profile"], ["DELETE", "/api/bots/b1/tasks/t1"], ["DELETE", "/api/groups/g1/tasks/t1"]])
       expect(launchProofHeaders(method, path, token), `${method} ${path}`).toEqual({ "x-murage-companion-token": token });
   });
+  it("stamps terms acceptance, which both doors allow so a paired phone can accept", () => {
+    for (const [method, path] of [["GET", "/api/terms"], ["POST", "/api/terms/accept"]]) {
+      expect(launchProofHeaders(method, path, token), `${method} ${path}`).toEqual({ "x-murage-companion-token": token });
+      expect(ask(method, path), `${method} ${path} device`).toBeNull();
+      expect(askBrowser(method, path), `${method} ${path} browser`).toBeNull();
+    }
+    expect(ask("DELETE", "/api/terms")).not.toBeNull();
+    expect(ask("POST", "/api/terms/other")).not.toBeNull();
+  });
   it("stamps the room queue's reads and steering (SPEC-P 11.1), which both doors allow", () => {
     for (const [method, path] of [["GET", "/api/groups/g1/requests"], ["POST", "/api/groups/g1/requests/r1/cancel"], ["POST", "/api/groups/g1/requests/r1/retry"],
       ["POST", "/api/groups/g1/project/control/stop"], ["POST", "/api/groups/g1/project/control/pause"], ["POST", "/api/groups/g1/project/control/resume"], ["POST", "/api/groups/g1/project/control/redirect"]]) {

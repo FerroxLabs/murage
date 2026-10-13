@@ -4,10 +4,14 @@ import type { DatabaseSync } from "node:sqlite";
 import { z } from "zod";
 import { database, transaction } from "../database.ts";
 import { readMemoryLearning } from "./learning-policy.ts";
-import { capturedSourceWithheld, derivationAncestryCurrent, recordRestsOnWithheldMessage } from "./replay-lineage.ts";
+import { capturedSourceWithheld, derivationAncestryCurrent, LineageAllowance, recordRestsOnWithheldMessage } from "./replay-lineage.ts";
 import { isGepaCallNotStarted } from "../gepa-worker.ts";
-import { recordAppliedChange, recordProcedureSuggestion, type AppliedChange, type LandingDecision } from "./procedure-landing.ts";
+import { reconcilePublishing, settleAppliedChange, recordAppliedChange, recordProcedureSuggestion, type AppliedChange, type LandingDecision } from "./procedure-landing.ts";
 import { inEligibilityPass } from "./eligibility-pass.ts";
+import { memoryGate } from "./memory-gate.ts";
+import { writeObjectLineage } from "./lineage-write.ts";
+import type { LineageRef } from "./lineage-types.ts";
+import { memoryRefs, murageObjectRef } from "./prompt-parts.ts";
 
 const hash = (value: unknown) => createHash("sha256").update(JSON.stringify(value)).digest("hex");
 export const procedureCandidateHash = (text: string) => createHash("sha256").update(text).digest("hex");
@@ -119,6 +123,8 @@ export function enqueueProcedureCorrectionReview(db:DatabaseSync,recordId:string
 }
 function hydrate(db:DatabaseSync,evidence:ProcedureEvidence[],scopeId:string,host:ProcedureReviewHost):ProcedureReviewSnapshot["evidence"] {
   let bytes=0;
+  // one allowance for the whole review: evidence that cannot be proven within it is stale, as withheld evidence is
+  const allowance=LineageAllowance.tool();
   return unique(evidence).map(item=>{
     let text:string,speaker:string,outcome:string,evidenceScopeId:string;
     if(item.kind==="source"){
@@ -127,13 +133,13 @@ function hydrate(db:DatabaseSync,evidence:ProcedureEvidence[],scopeId:string,hos
       // A reply made with something since archived, corrected, withheld or
       // forgotten stays an active source; its disclosure lineage says it is
       // withheld, and withheld evidence never reaches a review or publication.
-      if(capturedSourceWithheld(row))throw Error("PROCEDURE_EVIDENCE_STALE");
+      if(capturedSourceWithheld(allowance,row))throw Error("PROCEDURE_EVIDENCE_STALE");
       evidenceScopeId=String(row.scope_id);if(!host.canReadEvidence(scopeId,evidenceScopeId,item))throw Error("PROCEDURE_EVIDENCE_FORBIDDEN");
       const payload=JSON.parse(String(row.payload));text=String(payload.text??"");speaker=String(row.speaker);outcome=String(row.outcome);
     }else{
       const row=db.prepare("SELECT * FROM memory_records WHERE id=? AND version=? AND state='active' AND version=(SELECT max(version) FROM memory_records WHERE id=?)").get(item.id,item.revision,item.id);
       if(!row||db.prepare("SELECT 1 FROM memory_tombstones WHERE target_type='record' AND target_id=? AND (revision IS NULL OR revision=?)").get(item.id,item.revision)
-        ||!derivationAncestryCurrent(db,item.id,item.revision,row.supersedes_id)||recordRestsOnWithheldMessage(item.id,item.revision))throw Error("PROCEDURE_EVIDENCE_STALE");
+        ||!derivationAncestryCurrent(allowance,db,item.id,item.revision,row.supersedes_id)||recordRestsOnWithheldMessage(allowance,item.id,item.revision))throw Error("PROCEDURE_EVIDENCE_STALE");
       evidenceScopeId=String(row.scope_id);if(!host.canReadEvidence(scopeId,evidenceScopeId,item))throw Error("PROCEDURE_EVIDENCE_FORBIDDEN");
       text=String(row.text);speaker=String(row.assertion);outcome="owner-correction";
     }
@@ -280,23 +286,54 @@ export async function processProcedureReview(id:string,host:ProcedureReviewHost,
     const current=()=>{const saved=read(database(),id);if(!saved||saved.generation!==claim.generation||saved.status!=="running"||(saved.expiresAt??0)<Date.now())throw Error("PROCEDURE_LEASE_STALE");assertCurrent(database(),saved,host);if(signal.aborted)throw Error("PROCEDURE_REVIEW_CANCELLED");if(!host.canPublish(snapshot))throw Error("PROCEDURE_AUDIENCE_REVOKED");return saved;};
     // Receipt survives a crash between publication and queue acknowledgement.
     transaction(db=>save(db,{...current(),receipt}));
-    transaction(db=>{
+    // Phase 1 (one commit): decide, and for an automatic change write the intent ahead of the publication (the ledger row in state "publishing").
+    const publication=transaction(db=>{
       const saved=current();
+      // The one memory gate, before anything can be published: a hold (or a pass still going over earlier memory) puts this off without spending an attempt.
+      if(receipt.decision==="accepted"&&memoryGate(db,"publish-procedure")!=="ok"){save(db,{...saved,status:"deferred",reason:"memory-held",retryAfter:Date.now()+60000});return undefined;}
       procedureLearningDecision(db,snapshot,saved.ownerAuthorized);
       if(receipt.decision==="accepted"){
         const landing=host.landing?.(structuredClone(snapshot),structuredClone(receipt))??{mode:"auto" as const,beforeSha256:"",label:""};
-        if(landing.mode==="refuse"){save(db,{...saved,status:"complete",receipt,reason:`hard-check:${landing.reason}`});return;}
-        if(landing.mode==="suggest"){recordProcedureSuggestion(db,{snapshot,receipt,landing});save(db,{...saved,status:"complete",receipt,reason:"suggested"});return;}
-        host.publish!(structuredClone(snapshot),structuredClone(receipt));
+        if(landing.mode==="refuse"){save(db,{...saved,status:"complete",receipt,reason:`hard-check:${landing.reason}`});return undefined;}
+        if(landing.mode==="suggest"){recordProcedureSuggestion(db,{snapshot,receipt,landing});save(db,{...saved,status:"complete",receipt,reason:"suggested"});return undefined;}
         const change=host.appliedChange?.(snapshot,receipt,landing);
-        if(change)recordAppliedChange(db,{...change,via:"automatic"});
+        if(!change){
+          // nothing to record (no ledger row): the publication is still the LAST statement, so a throw rolls the rows back
+          save(db,{...saved,status:"complete",receipt,reason:receipt.decision});
+          if(memoryGate(db,"publish-procedure")!=="ok")throw Object.assign(Error("MEMORY_HELD"),{memoryHeld:true});
+          recordProcedureLineage(db,snapshot);
+          host.publish!(structuredClone(snapshot),structuredClone(receipt));
+          return undefined;
+        }
+        return {ledgerId:recordAppliedChange(db,{...change,via:"automatic"},Date.now(),{publishing:true}),landing};
       }
       save(db,{...saved,status:"complete",receipt,reason:receipt.decision});
+      return undefined;
     });
+    if(publication){
+      // Phase 2: the external publication, outside any transaction. Phase 3 (second commit) marks it applied. A refusal, a throw or a failed second commit
+      // is settled from what the text is now before the error leaves; a crash is settled by the boot and idle sweeps.
+      let thrown:unknown;
+      try{
+        if(memoryGate(database(),"publish-procedure")!=="ok")throw Object.assign(Error("MEMORY_HELD"),{memoryHeld:true});
+        host.publish!(structuredClone(snapshot),structuredClone(receipt));
+        const landed=host.appliedChange?.(snapshot,receipt,publication.landing);
+        transaction(db=>{
+          recordProcedureLineage(db,snapshot);
+          settleAppliedChange(db,publication.ledgerId,landed?.afterRevision??"");
+          const saved=read(db,id);if(saved?.generation===claim.generation&&saved.status==="running")save(db,{...saved,status:"complete",receipt,reason:receipt.decision});
+        });
+      }catch(error){thrown=error;}
+      if(thrown!==undefined){
+        const settled=reconcilePublishing(database(),publication.ledgerId);
+        if(settled!=="applied")throw thrown;
+        try{transaction(db=>{const saved=read(db,id);if(saved?.generation===claim.generation&&saved.status==="running")save(db,{...saved,status:"complete",receipt,reason:receipt.decision});});}catch{/* the lease runs out and the target is seen to have moved on */}
+      }
+    }
     return {status:"complete" as const,decision:receipt.decision};
   }catch(error){
-    const reason=error instanceof Error?error.message:"PROCEDURE_REVIEW_FAILED";
-    transaction(db=>{const saved=read(db,id);if(saved?.generation===claim.generation&&saved.status==="running"){const notStarted=isGepaCallNotStarted(error),attempts=(saved.attempts??0)+(notStarted?0:1);save(db,{...saved,status:"deferred",attempts,reason,retryAfter:notStarted||host.automaticFailureRetry===false||attempts>=3?null:Date.now()+60000});}});
+    const reason=(error as {memoryHeld?:boolean}|undefined)?.memoryHeld===true?"memory-held":error instanceof Error?error.message:"PROCEDURE_REVIEW_FAILED";
+    transaction(db=>{const saved=read(db,id);if(saved?.generation===claim.generation&&saved.status==="running"){const held=(error as {memoryHeld?:boolean}|undefined)?.memoryHeld===true,notStarted=isGepaCallNotStarted(error)||held,attempts=(saved.attempts??0)+(notStarted?0:1);save(db,{...saved,status:"deferred",attempts,reason,retryAfter:held?Date.now()+60000:notStarted||host.automaticFailureRetry===false||attempts>=3?null:Date.now()+60000});}});
     return {status:"deferred" as const,reason};
   }
 }
@@ -311,4 +348,18 @@ export function readProcedureReviewSnapshot(id:string,host:ProcedureReviewHost):
 }
 export function wakeProcedureReview(id:string,options?:{ownerAuthorized?:true}):void {
   transaction(db=>{const intent=read(db,id);if(!intent?.target||["complete","cancelled","running"].includes(intent.status))throw Error("PROCEDURE_REVIEW_UNAVAILABLE");save(db,{...intent,...(options?.ownerAuthorized?{ownerAuthorized:true as const}:{}),status:"pending",reason:undefined,retryAfter:undefined});});
+}
+
+// ── write-time lineage (DESIGN-WRITETIME 2.2 and 2.5) ──────────────────────
+/** What a procedure review's text rests on: every piece of evidence its snapshot showed the evaluator. The evaluator's prompt is built from
+ * these (a prompt part of the host carries them), and a revision the review publishes is written in the evaluator's words over them. */
+export function procedureEvidenceRefs(snapshot:Pick<ProcedureReviewSnapshot,"evidence">):LineageRef[] {
+  return memoryRefs(snapshot.evidence.map(item=>({kind:item.kind,id:item.id,version:item.revision,scopeId:item.scopeId})));
+}
+/** A published skill revision rests on the review's evidence (a learned skill is text a model wrote: DESIGN-WRITETIME 2.2, "skill text
+ * written by a bot"). The review is not a turn of any thread: writeObjectLineage carries each piece of evidence onto the skill (no prefix).
+ * Written in the publication's own commit. */
+function recordProcedureLineage(db:DatabaseSync,snapshot:ProcedureReviewSnapshot):void {
+  if(snapshot.target.kind!=="skill")return;
+  writeObjectLineage(db,murageObjectRef("skill",`${snapshot.target.ownerId}:${snapshot.target.artifactId}`),procedureEvidenceRefs(snapshot));
 }

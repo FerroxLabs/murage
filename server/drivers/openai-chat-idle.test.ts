@@ -14,6 +14,7 @@ import type { ProviderInstance, RuntimeEvent } from "../contracts.ts";
 import { recordEvents } from "../testing/events.ts";
 import { freePortBlock } from "../testing/ports.ts";
 import { createOpenAIChatRuntime } from "./openai-chat.ts";
+import { IntakeValve, installIntakeValve } from "../harness/intake.ts";
 
 const IDLE_MS = 600;
 const frame = (value: unknown) => `data: ${JSON.stringify(value)}\n\n`;
@@ -322,6 +323,76 @@ describe("createOpenAIChatRuntime idle budget over loopback HTTP", () => {
     // F6: the words the person already watched arrive are kept when they stop.
     expect(replies(recorder.events)).toEqual(["working "]);
     expect(requests).toBe(1);
+  });
+
+  it("a wait for room on the event bus does not spend the idle budget, and the stream finishes after it", async () => {
+    let full = false;
+    const valve = new IntakeValve(() => full);
+    installIntakeValve(valve);
+    try {
+      const first = barrier("first chunk sent");
+      handler = (_req, res) => {
+        sse(res);
+        res.write(content("one "));
+        first.open();
+        setTimeout(() => res.end(content("two ") + finish + DONE), 100);
+      };
+      const instance = create();
+      const recorder = recordEvents(instance.adapter);
+      full = true; // the bus is full before the first read
+      await instance.adapter.sendTurn({ threadId: "t-wait", text: "question" });
+      await first.promise;
+      await delay(IDLE_MS * 2); // far longer than the idle budget, all of it our own queue
+      full = false; valve.evaluate();
+      const completed = await recorder.until((event) => event.type === "turn.completed", 15_000);
+      recorder.stop();
+      expect(completed).toMatchObject({ ok: true });
+      expect(errors(recorder.events)).toEqual([]);
+      expect(replies(recorder.events)).toEqual(["one two "]);
+    } finally { installIntakeValve(null); }
+  });
+
+  it("a stream waits at ITS thread's allowance: a blocked thread holds only itself, never another bot's stream", async () => {
+    let blocked = true;
+    // closed for one thread only (the per-thread share), open for everyone else and for the shared null stream
+    const valve = new IntakeValve((threadId) => blocked && threadId === "t-blocked");
+    installIntakeValve(valve);
+    try {
+      handler = (_req, res) => { sse(res); res.write(content("a ")); setTimeout(() => res.end(content("b ") + finish + DONE), 50); };
+      const instance = create();
+      const recorder = recordEvents(instance.adapter);
+      await instance.adapter.sendTurn({ threadId: "t-blocked", text: "q1" });
+      await instance.adapter.sendTurn({ threadId: "t-free", text: "q2" });
+      await recorder.until((event) => event.type === "turn.completed" && event.threadId === "t-free", 10_000);
+      await delay(400);
+      // the blocked thread never read past the wait: no terminal event for it yet
+      expect(recorder.events.some((event) => event.type === "turn.completed" && event.threadId === "t-blocked")).toBe(false);
+      blocked = false; valve.evaluate();
+      const done = await recorder.until((event) => event.type === "turn.completed" && event.threadId === "t-blocked", 10_000);
+      recorder.stop();
+      expect(done).toMatchObject({ ok: true });
+    } finally { installIntakeValve(null); }
+  });
+
+  it("Stop settles promptly while the turn waits for room on the event bus", async () => {
+    const valve = new IntakeValve(() => true);
+    installIntakeValve(valve);
+    try {
+      const received = barrier("request received");
+      handler = (_req, res) => { sse(res); res.write(content("held ")); received.open(); };
+      const instance = create({ timeoutMs: 20_000 });
+      const recorder = recordEvents(instance.adapter);
+      await instance.adapter.sendTurn({ threadId: "t-stop-wait", text: "question" });
+      await received.promise;
+      await delay(100);
+      const stoppedAt = performance.now();
+      await instance.adapter.interruptTurn("t-stop-wait");
+      const completed = await recorder.until((event) => event.type === "turn.completed", 5_000);
+      recorder.stop();
+      expect(performance.now() - stoppedAt).toBeLessThan(3_000);
+      expect(completed).toMatchObject({ ok: true, stopReason: "cancelled" });
+      expect(completions(recorder.events)).toHaveLength(1);
+    } finally { installIntakeValve(null); }
   });
 
   it("bounds a non-streamed helper call that never answers", async () => {

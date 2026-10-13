@@ -11,13 +11,22 @@
 // retained session holding a withheld line is not resumed.
 import { mkdirSync, rmSync } from "node:fs";
 import { beforeEach, expect, it } from "vitest";
+import { afterEach as thawAfterEach, beforeEach as thawBeforeEach } from "vitest";
+import { thawRootSetWritesForTest } from "./memory/replay-lineage.ts";
+// 1.0.2: this test models a 1.0.1 file (legacy root-set rows) for the read-time judge, which still decides legacy data until S6.
+thawBeforeEach(() => thawRootSetWritesForTest(true));
+thawAfterEach(() => thawRootSetWritesForTest(false));
 import { DATA_DIR } from "./config.ts";
-import { closeDatabase, database } from "./database.ts";
+import { closeDatabase, database, transaction } from "./database.ts";
 import { InternalCapabilities } from "./internal-capabilities.ts";
 import { memoryAccess, reconcileMemoryRoster, type MemoryRoster } from "./memory/policy.ts";
 import * as disclosures from "./memory/disclosures.ts";
 import { retainedSessionInvalid } from "./memory/dispatch.ts";
-import { THREAD_RECEIPT_LIMIT } from "./memory/replay-lineage.ts";
+import { THREAD_RECEIPT_LIMIT, outputRootsFor, recordSessionRoots } from "./memory/replay-lineage.ts";
+import { LineageAllowance } from "./memory/lineage-allowance.ts";
+import { insertMessage } from "./message-db.ts";
+import { commitRevoke } from "./memory/revoke-commit.ts";
+import { writtenWithReceipts } from "./memory/testing/legacy-file-model.ts";
 
 const roster: MemoryRoster = { bots: [{ id: "dax", threadId: "dax-direct", section: "Operations" }], groups: [] };
 const NONE: ReadonlySet<string> = new Set();
@@ -34,13 +43,18 @@ function longThread(receipts: number) {
   database().prepare(`WITH RECURSIVE n(value) AS (VALUES(1) UNION ALL SELECT value+1 FROM n WHERE value<?)
     INSERT INTO memory_disclosures(bundle_id,thread_id,driver_instance,record_versions,source_versions,output_message_ids,policy_revision,deletion_epoch,token_count,state,created_at)
     SELECT 'old-'||value,'dax-direct','driver','[]','[]',json_array('reply-'||value),?,?,0,'delivered',value FROM n`).run(receipts, a.policyRevision, a.deletionEpoch);
+  // the copy's original is stored where it was written
+  insertMessage("other", { id: "x", role: "bot", kind: "text", text: "line x", at: 1 });
   const messages = [text("u1", "user"), text("reply-1", "bot"), text("plain", "bot"), text("copy", "bot", { copyOf: { threadId: "other", messageIds: ["x"] } }), text("u2", "user")];
+  // 1.0.2: once any line row exists a replayed line with no row reads "checking"; a real replay holds only stored lines
+  // (reply-1 was made inside the turn that held receipt old-1, so it rests on it: the production writer, DESIGN-WRITETIME 2.2)
+  messages.forEach((m, i) => (m.id === "reply-1" ? writtenWithReceipts("dax-direct", "dax", ["old-1"], () => insertMessage("dax-direct", { ...(m as any), at: i + 2 }), () => "reply-1") : insertMessage("dax-direct", { ...(m as any), at: i + 2 })));
   return { a, messages };
 }
 
 it(`a direct chat past ${THREAD_RECEIPT_LIMIT} receipts still runs: owner words replay, a reply made with memory and a copy do not`, () => {
   const { a, messages } = longThread(THREAD_RECEIPT_LIMIT + 1);
-  const { allowed, replayed } = disclosures.filterDirectReplay("dax-direct", messages, a, NONE);
+  const { allowed, replayed } = disclosures.filterDirectReplay(LineageAllowance.tool(), "dax-direct", messages, a, NONE);
   const kept = replayed.map(m => m.id);
   expect(kept).toContain("u1");
   expect(kept).toContain("u2");
@@ -49,8 +63,10 @@ it(`a direct chat past ${THREAD_RECEIPT_LIMIT} receipts still runs: owner words 
   // server/memory/*.test.ts): the original here was made without memory
   expect(allowed.map(m => m.id)).toContain("copy");
   // a reply made with memory replays only while its receipt holds
+  // what the receipt cites is gone: the owner's forget commits this revoke (the reply is withheld whatever else it rests on; DESIGN-WRITETIME 3)
   database().prepare(`UPDATE memory_disclosures SET record_versions='[{"id":"forgotten","version":1}]' WHERE bundle_id='old-1'`).run();
-  const after = disclosures.filterDirectReplay("dax-direct", messages, a, NONE);
+  transaction(tx => commitRevoke(tx, { kind: "receipt", bundleId: "old-1", cause: "receipt-content" }));
+  const after = disclosures.filterDirectReplay(LineageAllowance.tool(), "dax-direct", messages, a, NONE);
   expect(after.allowed.map(m => m.id)).not.toContain("reply-1");
   expect(after.replayed.map(m => m.id)).toEqual(expect.arrayContaining(["u1", "u2"]));
 });
@@ -62,13 +78,13 @@ it("a 5000-message thread with 3000 receipts replays its recent lines in full an
     SELECT 'r-'||value,'dax-direct','driver',CASE WHEN value=3000 THEN '[{"id":"forgotten","version":1}]' ELSE '[]' END,'[]',json_array('m'||(value*2-1)),?,?,0,'delivered',value FROM n`).run(3000, a.policyRevision, a.deletionEpoch);
   // 5000 messages: odd ids are bot replies (the 3000 receipts cover m1..m5999), even ids the owner
   const messages = Array.from({ length: 5000 }, (_, i) => text(`m${i + 1}`, (i + 1) % 2 ? "bot" : "user"));
-  const first = disclosures.filterDirectReplay("dax-direct", messages, a, NONE).replayed;
+  const first = disclosures.filterDirectReplay(LineageAllowance.tool(), "dax-direct", messages, a, NONE).replayed;
   // m5999 is outside the 5000; receipt 3000 covers m5999, so no recent line is withheld here
   expect(first).toHaveLength(disclosures.DIRECT_REPLAY_LINES);
   expect(first.at(-1)!.id).toBe("m5000");
   // a recent reply whose receipt cites something that is gone is withheld, nothing else
   database().prepare("UPDATE memory_disclosures SET output_message_ids='[\"m4999\"]' WHERE bundle_id='r-3000'").run();
-  const after = disclosures.filterDirectReplay("dax-direct", messages, a, NONE).replayed.map(m => m.id);
+  const after = disclosures.filterDirectReplay(LineageAllowance.tool(), "dax-direct", messages, a, NONE).replayed.map(m => m.id);
   expect(after).not.toContain("m4999");
   expect(after).toHaveLength(disclosures.DIRECT_REPLAY_LINES);
   expect(after).toContain("m4998");
@@ -92,13 +108,14 @@ function oneSession(turns: number) {
     insert.run(`s-${k}`, JSON.stringify(outputs), a.policyRevision, a.deletionEpoch, Date.now() + k);
   }
   database().exec("COMMIT");
+  recordSessionRoots("dax-direct", "driver", "s1", outputRootsFor(LineageAllowance.tool(1_000_000_000), []));
   const messages = Array.from({ length: turns * 2 }, (_, i) => text(`m${i + 1}`, (i + 1) % 2 ? "user" : "bot"));
   return { a, messages };
 }
 
 it("a 400-turn chat in one session replays its recent bot lines with memory on", () => {
   const { a, messages } = oneSession(400);
-  const { replayed } = disclosures.filterDirectReplay("dax-direct", messages, a, NONE);
+  const { replayed } = disclosures.filterDirectReplay(LineageAllowance.tool(), "dax-direct", messages, a, NONE);
   expect(replayed).toHaveLength(disclosures.DIRECT_REPLAY_LINES);
   expect(replayed.filter(m => m.role === "bot")).toHaveLength(disclosures.DIRECT_REPLAY_LINES / 2);
 });
@@ -106,7 +123,7 @@ it("a 400-turn chat in one session replays its recent bot lines with memory on",
 it("in that chat a reply whose receipt fails its check is still withheld, with every reply after it in the session", () => {
   const { a, messages } = oneSession(400);
   database().prepare(`UPDATE memory_disclosures SET record_versions='[{"id":"forgotten","version":1}]' WHERE bundle_id='s-390'`).run();
-  const kept = disclosures.filterDirectReplay("dax-direct", messages, a, NONE).replayed.map(m => m.id);
+  const kept = disclosures.filterDirectReplay(LineageAllowance.tool(), "dax-direct", messages, a, NONE).replayed.map(m => m.id);
   expect(kept).toContain("m778");
   for (let turn = 390; turn <= 400; turn++) expect(kept).not.toContain(`m${turn * 2}`);
   expect(kept).toContain("m799");
@@ -124,11 +141,11 @@ it("a 300-turn tool-heavy session (five outputs a turn) replays and checks recal
   database().exec("COMMIT");
   const messages = ids.flatMap((id, i) => i % 5 === 4 ? [{ id: `u-${i}`, role: "user", kind: "text", text: "ask" }, { id, role: "bot", kind: "text", text: "answer" }] : [{ id, role: "bot", kind: "tool", text: "" }]);
   const started = performance.now();
-  const { replayed } = disclosures.filterDirectReplay("dax-direct", messages, a, NONE);
+  const { replayed } = disclosures.filterDirectReplay(LineageAllowance.tool(), "dax-direct", messages, a, NONE);
   const replayMs = performance.now() - started;
   expect(replayed.filter(m => m.kind === "text" && m.role === "bot")).toHaveLength(disclosures.DIRECT_REPLAY_LINES / 2);
   const recallStarted = performance.now();
-  for (const id of ids.slice(-100).filter((_, i) => i % 5 === 4)) expect(capturedMessageWithheld("dax-direct", id)).toBe(false);
+  for (const id of ids.slice(-100).filter((_, i) => i % 5 === 4)) expect(capturedMessageWithheld(LineageAllowance.tool(1_000_000_000), "dax-direct", id)).toBe(false);
   const recallMs = performance.now() - recallStarted;
   console.log(`replay ${replayMs.toFixed(0)} ms, 20 recall checks ${recallMs.toFixed(0)} ms`);
   expect(replayMs).toBeLessThan(5000);
@@ -136,26 +153,26 @@ it("a 300-turn tool-heavy session (five outputs a turn) replays and checks recal
 
 it("a retained session that holds a withheld line is not resumed; one that holds none is", () => {
   const { a, messages } = oneSession(50);
-  const kept = disclosures.filterDirectReplay("dax-direct", messages, a, NONE).replayed;
+  const kept = disclosures.filterDirectReplay(LineageAllowance.tool(), "dax-direct", messages, a, NONE).replayed;
   const whyOff: { reason?: string } = {};
-  expect(retainedSessionInvalid("dax-direct", "driver", "s1", whyOff), JSON.stringify(whyOff)).toBe(false);
+  expect(retainedSessionInvalid(LineageAllowance.tool(), "dax-direct", "driver", "s1", whyOff), JSON.stringify(whyOff)).toBe(false);
   const whyRevoked: { reason?: string } = {};
-  expect(disclosures.continuationMemoryRevoked("dax-direct", "driver", "s1", a, whyRevoked), JSON.stringify(whyRevoked)).toBe(false);
+  expect(disclosures.continuationMemoryRevoked(LineageAllowance.tool(), "dax-direct", "driver", "s1", a, whyRevoked), JSON.stringify(whyRevoked)).toBe(false);
   database().prepare(`UPDATE memory_disclosures SET record_versions='[{"id":"forgotten","version":1}]' WHERE bundle_id='s-45'`).run();
-  const after = disclosures.filterDirectReplay("dax-direct", messages, a, NONE).replayed;
+  const after = disclosures.filterDirectReplay(LineageAllowance.tool(), "dax-direct", messages, a, NONE).replayed;
   expect(after.filter(m => m.role === "bot").length).toBeLessThan(kept.filter(m => m.role === "bot").length);
-  expect(disclosures.continuationMemoryRevoked("dax-direct", "driver", "s1", a)).toBe(true);
-  expect(retainedSessionInvalid("dax-direct", "driver", "s1")).toBe(true);
+  expect(disclosures.continuationMemoryRevoked(LineageAllowance.tool(), "dax-direct", "driver", "s1", a)).toBe(true);
+  expect(retainedSessionInvalid(LineageAllowance.tool(), "dax-direct", "driver", "s1")).toBe(true);
   // a line withheld from an older session does not hold a newer one back
-  expect(retainedSessionInvalid("dax-direct", "driver", "s2")).toBe(false);
+  expect(retainedSessionInvalid(LineageAllowance.tool(), "dax-direct", "driver", "s2")).toBe(false);
 });
 
 it("the direct turn replays through filterDirectReplay and resets a retained session it may not resume (wiring)", async () => {
   const { readFileSync } = await import("node:fs");
   const source = readFileSync(new URL("./index.ts", import.meta.url), "utf8");
   const direct = source.slice(source.indexOf("      let memoryReceipt: MemoryDispatchReceipt | undefined;"), source.indexOf("      if (!markDirectTurnDispatching"));
-  expect(direct).toContain("filterDirectReplay(threadId,activeMessages,access,skipTranscript,replayOptions)");
+  expect(direct).toContain("filterDirectReplay(allowance,threadId,activeMessages,access,skipTranscript,replayOptions)");
   expect(direct).toMatch(/needsReplay=!resumeCursor \|\| revoked/);
-  expect(direct).toContain("retainedSessionInvalid(threadId, instanceId, String(resumeCursor), offWhy)");
+  expect(direct).toContain("retainedSessionInvalid(allowance, threadId, instanceId, String(resumeCursor), offWhy)");
   expect(direct).toContain("MEMORY_SESSION_RESET_UNAVAILABLE");
 });

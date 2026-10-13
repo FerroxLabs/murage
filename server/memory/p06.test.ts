@@ -14,6 +14,7 @@ import { searchMemory } from "./search.ts";
 import { MemoryQueryCache } from "./cache.ts";
 import { ownerMemoryTicket } from "./authority.ts";
 import { forgetMemory } from "./forget.ts";
+import { LineageAllowance } from "./lineage-allowance.ts";
 
 beforeEach(()=>{closeDatabase();rmSync(DATA_DIR,{recursive:true,force:true});mkdirSync(DATA_DIR,{recursive:true});});
 /** The pinned real model (shared/memory-model-manifest.json) is a prepared
@@ -78,11 +79,12 @@ it("uses the real local model through the worker and invalidates results after f
     const registry=new InternalCapabilities();registry.begin("bot","thread","turn");
     const token=registry.mint({botId:"bot",threadId:"thread",generation:"turn",depth:0,kind:"memory",skillAuthoring:false});
     const context=memoryAccess(registry,registry.resolve(`Bearer ${token}`)!,()=>roster);
-    const result=await searchMemory("How frequently do we save recovery copies?",context,controller);
-    expect(result.vectorRows).toBeGreaterThan(0);expect(result.hits[0]?.text).toContain("every night");
+    let vectorRows=0;
+    const result=await searchMemory("How frequently do we save recovery copies?",context,controller,{ allowance: LineageAllowance.tool(1_000_000_000),telemetry:facts=>{vectorRows=facts.vectorRows;}});
+    expect(vectorRows).toBeGreaterThan(0);expect(result.hits[0]?.text).toContain("every night");
     expect(result.degradedReason).toBeUndefined();
     forgetMemory(ownerMemoryTicket(),{kind:"record",id:result.hits[0].id});
-    await expect(searchMemory("recovery copies",context,controller)).rejects.toThrow("MEMORY_CONTEXT_REVOKED");
+    await expect(searchMemory("recovery copies",context,controller, {allowance: LineageAllowance.tool(1_000_000_000)})).rejects.toThrow("MEMORY_CONTEXT_REVOKED");
   }finally{await controller.stop();}
 });
 

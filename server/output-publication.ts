@@ -20,6 +20,7 @@ import { createHash, randomUUID } from "node:crypto";
 import { closeSync, constants, fstatSync, lstatSync, mkdirSync, openSync, readdirSync, readSync, realpathSync, renameSync, unlinkSync, writeFileSync, type Stats } from "node:fs";
 import { basename, extname, isAbsolute, join, relative, sep } from "node:path";
 import type { DatabaseSync } from "node:sqlite";
+import { notRestoreHeldSql, sqlRowRestoreHeld } from "./restore-fence.ts";
 import {
   OUTPUT_PUBLICATION_LIMITS, canAdvanceOutputStage, isOutputProducer, isOutputReceiptStage,
   type LocalOutputReceipt, type OutputProducer, type OutputPublicationErrorCategory, type OutputReceiptStage,
@@ -65,6 +66,9 @@ export interface OutputPublisher {
   /** Startup reconciliation of pending assistant images and already registered
    * successful shell outputs. Shell recovery only repairs their missing cards. */
   resumePending(): void;
+  /** The owner released this held receipt: finish it directly (verify, save to Files, announce), whatever kind it is. Throws
+   * an OutputPublicationError when it cannot finish, so the caller keeps the hold and the item stays listed for a retry. */
+  completeReleased(receiptId: string): void;
 }
 
 /** Host facts only. Prose directs creation but never authorizes publication. */
@@ -320,7 +324,8 @@ export function createOutputPublisher(deps: OutputPublicationDeps): OutputPublis
     // One host-authored card per turn. An artifact the bot already registered
     // with register_artifact in this run already has its own card.
     let referenced: Set<string>;
-    try { referenced = new Set(deps.store.messagesFor(snapshot.threadId).flatMap(message => message.artifactIds ?? [])); } catch { return; }
+    // the thread's file rows, by index: never its chat
+    try { referenced = new Set(deps.store.artifactRows(snapshot.threadId).flatMap(message => message.artifactIds ?? [])); } catch { return; }
     const fresh = registered.filter((item, index) => !referenced.has(item.artifact.id) && registered.findIndex(other => other.artifact.id === item.artifact.id) === index);
     if (!fresh.length && !notSaved) return;
     try {
@@ -333,6 +338,12 @@ export function createOutputPublisher(deps: OutputPublicationDeps): OutputPublis
     }
   };
 
+  const resumePending = () => {
+    try { resumePendingAssistantImages({ db: deps.database(), dataDir: deps.dataDir, store: deps.store }); }
+    catch (error) { log(`pending image recovery stopped (${outputErrorCategory(error, "database")})`); }
+    try { resumeRegisteredShellCards(deps); }
+    catch (error) { log(`pending shell card recovery stopped (${outputErrorCategory(error, "database")})`); }
+  };
   return {
     beforeDispatch(context) {
       snapshots.delete(context.threadId);
@@ -362,25 +373,78 @@ export function createOutputPublisher(deps: OutputPublicationDeps): OutputPublis
       try { await sweep(snapshot, event); }
       catch (error) { log(`automatic publication stopped (${outputErrorCategory(error, "database")})`); }
     },
-    resumePending() {
-      try { resumePendingAssistantImages({ db: deps.database(), dataDir: deps.dataDir, store: deps.store }); }
-      catch (error) { log(`pending image recovery stopped (${outputErrorCategory(error, "database")})`); }
-      try { resumeRegisteredShellCards(deps); }
-      catch (error) { log(`pending shell card recovery stopped (${outputErrorCategory(error, "database")})`); }
-    },
+    resumePending,
+    completeReleased: receiptId => completeReleasedReceipt(deps, receiptId),
   };
+}
+
+/** Owner-authorized completion of ONE receipt a restore held, for every receipt kind (retained, failed or registered
+ * shell outputs and generated images). It never depends on a recovery batch picking the receipt up. */
+function completeReleasedReceipt(deps: OutputPublicationDeps, receiptId: string): void {
+  const db = deps.database();
+  const receipt = outputReceipt(db, receiptId);
+  if (!receipt) throw new OutputPublicationError("scope", "This saved output is unavailable.", 404);
+  if (receipt.producer === "assistant-image" || receipt.producer === "image-operation") { finishImageReceipt({ db, dataDir: deps.dataDir, store: deps.store }, receipt.id); return; }
+  const scope = deps.artifactScopes().find(item => item.botId === receipt.botId && item.threadId === receipt.threadId && item.threadAvailable !== false && item.managedOutput !== true);
+  const owner = deps.store.botByThread(receipt.threadId)?.id === receipt.botId || Boolean(deps.store.groupByThread(receipt.threadId)?.memberIds.includes(receipt.botId));
+  if (!scope || !owner) throw new OutputPublicationError("scope", "The conversation this output belongs to is unavailable.", 404);
+  if (!receipt.pathToken.startsWith(`${OUTPUT_NAMESPACE}/`) || privateOutputPath(receipt.pathToken)) throw new OutputPublicationError("verification", "The saved output identity changed.");
+  let current = receipt;
+  const filesDir = join(deps.dataDir, "artifact-files");
+  try {
+    if (!(current.stage === "registered" && current.artifactId)) {
+      const root = artifactWorkspaceIdentity(scope.workspaceRoot);
+      const source = verifiedArtifactSource(root, current.pathToken);
+      const bytes = readStableFile(source.path, OUTPUT_PUBLICATION_LIMITS.maxFileBytes, source.stat);
+      if (bytes.length !== current.bytes || sha256(bytes) !== current.sha256) throw new OutputPublicationError("verification", "The original output changed.");
+      const artifact = registerArtifact(db, filesDir, { botId: current.botId, threadId: current.threadId, relativePath: current.pathToken },
+        { owner: true, scopes: [{ ...scope, runId: current.runId }] }, { producer: "shell-output", publicationId: current.id });
+      if (artifact.sha256 !== current.sha256) throw new OutputPublicationError("verification", "The saved copy did not match the original output.");
+      current = updateOutputReceipt(db, current.id, { stage: "registered", artifactId: artifact.id, errorCategory: null });
+    }
+    if (current.messageId) return;
+    const { artifact } = readArtifact(db, filesDir, current.artifactId!, { owner: true, scopes: [scope] });
+    const existing = deps.store.messagesFor(current.threadId).find(message => message.artifactIds?.includes(artifact.id));
+    const message = existing ?? deps.store.appendMessage(current.threadId, { role: "bot", kind: "text", text: outputCardText([artifact.name], 0), artifactIds: [artifact.id] });
+    updateOutputReceipt(db, current.id, { messageId: message.id, errorCategory: null });
+  } catch (error) {
+    if (error instanceof OutputPublicationError) throw error;
+    throw new OutputPublicationError(outputErrorCategory(error, "database"), "This saved output could not be finished yet.");
+  }
 }
 
 /** Only registered shell receipts prove the successful terminal gate was
  * crossed. Retained/failed receipts cannot establish that after a restart.
  * Read recorded identities only, and never register or dispatch anything. */
+function receiptsHeld(db: DatabaseSync, run: { bot_id: string; thread_id: string; run_id: string }): boolean {
+  return (db.prepare("SELECT id FROM output_publications WHERE producer='shell-output' AND bot_id=? AND thread_id=? AND run_id=?").all(run.bot_id, run.thread_id, run.run_id) as Array<{ id: string }>)
+    .some(row => sqlRowRestoreHeld(db, "output_receipt", row.id));
+}
+/** Extra condition for "and this receipt is held", for use inside the query so held runs never fill a batch. Held runs are
+ * excluded before any batching; recovery of a run is not limited to a first page that held or unavailable runs could fill. */
+const heldReceiptTest = (db: DatabaseSync, idExpr: string): string =>
+  db.prepare("SELECT 1 AS x FROM sqlite_master WHERE type='table' AND name='restore_holds'").get()
+    ? ` AND EXISTS (SELECT 1 FROM restore_holds rh WHERE rh.kind='output_receipt' AND rh.row_id=${idExpr})` : " AND 0";
+/** The runs still owing a card: read through the partial index of registered, unannounced receipts, so the work follows those runs and
+ * never the history of published outputs (SQLite otherwise prefers the unique index on `producer`, which walks every shell output).
+ * Falls back to the plain query only if the index is somehow absent. */
+function runsOwingShellCards(db: DatabaseSync): Array<{ bot_id: string; thread_id: string; run_id: string }> {
+  const query = (hint: string) => `SELECT bot_id,thread_id,run_id FROM output_publications${hint}
+    WHERE producer='shell-output' AND stage='registered' AND message_id IS NULL AND artifact_id IS NOT NULL
+      AND NOT EXISTS (SELECT 1 FROM output_publications q WHERE q.producer='shell-output' AND q.bot_id=output_publications.bot_id AND q.thread_id=output_publications.thread_id AND q.run_id=output_publications.run_id${heldReceiptTest(db, "q.id")})
+    GROUP BY bot_id,thread_id,run_id ORDER BY MIN(created_at),run_id`;
+  try { return db.prepare(query(" INDEXED BY output_publications_unannounced")).all() as unknown as Array<{ bot_id: string; thread_id: string; run_id: string }>; }
+  catch (error) {
+    if (!/no such index|no query solution/i.test(String((error as Error)?.message))) throw error;
+    return db.prepare(query("")).all() as unknown as Array<{ bot_id: string; thread_id: string; run_id: string }>;
+  }
+}
 function resumeRegisteredShellCards(deps: OutputPublicationDeps): void {
   const db = deps.database();
-  const runs = db.prepare(`SELECT bot_id,thread_id,run_id FROM output_publications
-    WHERE producer='shell-output' AND stage='registered' AND message_id IS NULL AND artifact_id IS NOT NULL
-    GROUP BY bot_id,thread_id,run_id ORDER BY MIN(created_at),run_id LIMIT 50`).all() as unknown as Array<{ bot_id: string; thread_id: string; run_id: string }>;
+  const runs = runsOwingShellCards(db);
   for (const run of runs) {
     try {
+      if (receiptsHeld(db, run)) continue;
       const scope = deps.artifactScopes().find(item => item.botId === run.bot_id && item.threadId === run.thread_id && item.threadAvailable !== false && item.managedOutput !== true);
       const owner = deps.store.botByThread(run.thread_id)?.id === run.bot_id
         || Boolean(deps.store.groupByThread(run.thread_id)?.memberIds.includes(run.bot_id));
@@ -400,7 +464,7 @@ function resumeRegisteredShellCards(deps: OutputPublicationDeps): void {
         if (bytes.length !== receipt.bytes || sha256(bytes) !== receipt.sha256) throw new OutputPublicationError("verification", "The original output changed.");
         return { receipt, artifact };
       });
-      const messages = deps.store.messagesFor(run.thread_id);
+      const messages = deps.store.artifactRows(run.thread_id);
       const missing = verified.filter(item => !messages.some(message => message.artifactIds?.includes(item.artifact.id)));
       const fresh = missing.filter((item, index) => missing.findIndex(other => other.artifact.id === item.artifact.id) === index);
       const card = fresh.length ? deps.store.appendMessage(run.thread_id, { role: "bot", kind: "text", text: outputCardText(fresh.map(item => item.artifact.name), 0), artifactIds: fresh.map(item => item.artifact.id) }) : undefined;
@@ -507,7 +571,7 @@ export function completeImageOutput(deps: ImageOutputDeps, receiptId: string, op
   const attachmentId = basename(saved.path);
   if (options.transcriptText !== undefined && !receipt.messageId) {
     try {
-      const existing = store.messagesFor(receipt.threadId).find(message => message.attachments?.some(item => item.path === saved.path));
+      const existing = store.rowAttaching(receipt.threadId, saved.path);
       const message = existing ?? store.appendMessage(receipt.threadId, { role: "bot", kind: "text", text: options.transcriptText, attachments: [{ kind: "image", path: saved.path, mime: saved.mime }] });
       receipt = updateOutputReceipt(db, receipt.id, { ...(receipt.stage === "registered" ? {} : { stage: "attached" as const }), attachmentId, messageId: message.id, errorCategory: null });
     } catch (error) {
@@ -544,19 +608,30 @@ export function publishAssistantImage(deps: ImageOutputDeps, input: { botId: str
 /** Startup reconciliation for assistant images whose attachment or Files
  * step did not finish. Only known receipts are read; no directory scan. */
 export function resumePendingAssistantImages(deps: ImageOutputDeps, limit = 50): number {
-  const rows = deps.db.prepare("SELECT * FROM output_publications WHERE producer='assistant-image' AND stage IN ('retained','failed') ORDER BY updated_at,id LIMIT ?").all(limit) as unknown as ReceiptRow[];
+  // Held rows are excluded in SQL, before the LIMIT: a restore's held images must never fill the batch and starve a released one.
+  const rows = deps.db.prepare(`SELECT * FROM output_publications WHERE producer='assistant-image' AND stage IN ('retained','failed')${notRestoreHeldSql(deps.db, "output_receipt", "output_publications.id")} ORDER BY updated_at,id LIMIT ?`).all(limit) as unknown as ReceiptRow[];
   let completed = 0;
   for (const row of rows) {
     try {
-      const receipt = receiptFromRow(row);
-      const done = completeImageOutput(deps, receipt.id, { artifactName: "Generated image" });
-      // The in-memory turn attachment was lost with the process: attach once.
-      if (!deps.store.messagesFor(receipt.threadId).some(message => message.attachments?.some(item => item.path === done.saved.path))) {
-        const message = deps.store.appendMessage(receipt.threadId, { role: "bot", kind: "text", text: "", attachments: [{ kind: "image", path: done.saved.path, mime: done.saved.mime }] });
-        try { updateOutputReceipt(deps.db, receipt.id, { messageId: message.id }); } catch {}
-      }
-      if (done.artifact) completed++;
+      // belt: a restore keeps this image until the owner releases it
+      if (sqlRowRestoreHeld(deps.db, "output_receipt", row.id)) continue;
+      if (finishImageReceipt(deps, row.id)) completed++;
     } catch { /* stays failed with its category for the next startup */ }
   }
   return completed;
+}
+
+/** Completes one retained image receipt and attaches it once. True when a Files artifact was saved by this call. Throws on failure. */
+function finishImageReceipt(deps: ImageOutputDeps, receiptId: string): boolean {
+  const receipt = outputReceipt(deps.db, receiptId);
+  if (!receipt) throw new OutputPublicationError("scope", "This saved output is unavailable.", 404);
+  const done = completeImageOutput(deps, receipt.id, { artifactName: "Generated image" });
+  // The in-memory turn attachment was lost with the process: attach once.
+  if (!deps.store.rowAttaching(receipt.threadId, done.saved.path)) {
+    const message = deps.store.appendMessage(receipt.threadId, { role: "bot", kind: "text", text: "", attachments: [{ kind: "image", path: done.saved.path, mime: done.saved.mime }] });
+    try { updateOutputReceipt(deps.db, receipt.id, { messageId: message.id }); } catch {}
+  }
+  // A Files copy that did not land is an incomplete publication: throw so a Release keeps its hold and answers 409.
+  if (done.filesError || !(done.artifact ?? done.receipt.artifactId)) throw new OutputPublicationError(done.filesError ?? "database", "This saved output could not be finished yet.");
+  return Boolean(done.artifact);
 }

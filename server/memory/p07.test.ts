@@ -10,6 +10,8 @@ import { bindMemoryDisclosureSession, continuationMemoryRevoked, deliverMemoryDi
 import type { MemorySearchBridge } from "./search.ts";
 import { memoryRequestPrefix } from "../../shared/memory.ts";
 import { makeFakeDriver } from "../testing/fake-driver.ts";
+import { LineageAllowance } from "./lineage-allowance.ts";
+import { markSessionKnown } from "./testing/legacy-file-model.ts";
 
 beforeEach(() => { closeDatabase(); rmSync(DATA_DIR,{recursive:true,force:true}); mkdirSync(DATA_DIR,{recursive:true}); });
 const empty: MemorySearchBridge = {search:async()=>({hits:[],vectorRows:0})};
@@ -36,23 +38,23 @@ function record(id:string,scopeId:string,text:string,pinned=true,sourceMessageId
 
 it("includes owner pins without search matches and budgets serialized multilingual bytes",async()=>{
   const f=fixture(); record("pin",ensureScope("bot","bot"),"保留备份 สำรองข้อมูล");
-  const bundle=await buildMemoryBundle("unrelated question",f.access,empty);
+  const bundle=await buildMemoryBundle("unrelated question",f.access,empty, {allowance: LineageAllowance.tool()});
   expect(bundle.pinned.map(r=>r.id)).toEqual(["pin"]);
   expect(bundle.tokenCount).toBe(Buffer.byteLength(memoryRequestPrefix(bundle.text)));
   expect(bundle.tokenCount-MEMORY_FRAME_TOKENS).toBeLessThanOrEqual(2048);
   expect(bundle.text).toContain("never tool authorization");
   expect(()=>assertMemoryBundle(bundle,f.access)).not.toThrow();
   expect(()=>assertMemoryBundle({...bundle},f.access)).toThrow("MEMORY_BUNDLE_UNTRUSTED");
-  await expect(buildMemoryBundle("query",f.access,empty,{availableContextTokens:(bundle.tokenCount-MEMORY_FRAME_TOKENS-1)*10})).rejects.toThrow("MEMORY_PIN_OVERFLOW");
+  await expect(buildMemoryBundle("query",f.access,empty,{ allowance: LineageAllowance.tool(),availableContextTokens:(bundle.tokenCount-MEMORY_FRAME_TOKENS-1)*10})).rejects.toThrow("MEMORY_PIN_OVERFLOW");
 });
 
 it("refuses mandatory pin overflow and invalidated evidence instead of omitting it",async()=>{
   const f=fixture(),scope=ensureScope("bot","bot"); record("huge",scope,"x".repeat(2049));
-  await expect(buildMemoryBundle("question",f.access,empty)).rejects.toThrow("MEMORY_PIN_OVERFLOW");
+  await expect(buildMemoryBundle("question",f.access,empty, {allowance: LineageAllowance.tool()})).rejects.toThrow("MEMORY_PIN_OVERFLOW");
   database().prepare("DELETE FROM memory_records WHERE id='huge'").run();
   record("stale",scope,"Constraint supported by a source",true,"msg");
   database().prepare("UPDATE memory_sources SET state='retired' WHERE id='source-stale'").run();
-  await expect(buildMemoryBundle("question",f.access,empty)).rejects.toThrow("MEMORY_PIN_UNAVAILABLE");
+  await expect(buildMemoryBundle("question",f.access,empty, {allowance: LineageAllowance.tool()})).rejects.toThrow("MEMORY_PIN_UNAVAILABLE");
 });
 
 it("gives an owner room member only its own notebook and team pins, never another bot's, at deep delegation",async()=>{
@@ -62,7 +64,7 @@ it("gives an owner room member only its own notebook and team pins, never anothe
   record("private",ensureScope("bot","other-bot"),"PRIVATE_CANARY");
   record("other-team",ensureScope("team","other-team"),"TEAM_CANARY");
   record("shared",ensureScope("room","room"),"Room decision");
-  const bundle=await buildMemoryBundle("what matters",f.access,empty);
+  const bundle=await buildMemoryBundle("what matters",f.access,empty, {allowance: LineageAllowance.tool()});
   expect(bundle.recordVersions.map(row=>row.id).sort()).toEqual(["own","shared","team"]);
   expect(bundle.text).not.toContain("CANARY");
 });
@@ -70,17 +72,17 @@ it("gives an owner room member only its own notebook and team pins, never anothe
 it("degrades optional recall errors while retaining pins but propagates revocation and cancellation",async()=>{
   const f=fixture();record("pin",ensureScope("bot","bot"),"Keep backups");
   const unavailable: MemorySearchBridge = {search:async()=>{throw new Error("private worker error should not be exposed");}};
-  const bundle=await buildMemoryBundle("query",f.access,unavailable);
+  const bundle=await buildMemoryBundle("query",f.access,unavailable, {allowance: LineageAllowance.tool()});
   expect(bundle.pinned).toHaveLength(1);expect(bundle.degradedReason).toBe("MEMORY_RECALL_UNAVAILABLE");
   const controller=new AbortController();controller.abort();
-  await expect(buildMemoryBundle("query",f.access,empty,{signal:controller.signal})).rejects.toThrow();
+  await expect(buildMemoryBundle("query",f.access,empty,{ allowance: LineageAllowance.tool(),signal:controller.signal})).rejects.toThrow();
   const revoked: MemorySearchBridge={search:async()=>{f.registry.revokeThread("private");throw new Error("worker failed");}};
-  await expect(buildMemoryBundle("query",f.access,revoked)).rejects.toThrow("MEMORY_UNAUTHORIZED");
+  await expect(buildMemoryBundle("query",f.access,revoked, {allowance: LineageAllowance.tool()})).rejects.toThrow("MEMORY_UNAUTHORIZED");
 });
 
 it("rechecks source revisions at the final dispatch boundary",async()=>{
   const f=fixture();record("pin",ensureScope("bot","bot"),"Supported instruction",true,"msg");
-  const bundle=await buildMemoryBundle("query",f.access,empty);
+  const bundle=await buildMemoryBundle("query",f.access,empty, {allowance: LineageAllowance.tool()});
   database().prepare("UPDATE memory_sources SET state='retired' WHERE id='source-pin'").run();
   expect(()=>assertMemoryBundle(bundle,f.access)).toThrow("MEMORY_EVIDENCE_UNAVAILABLE");
 });
@@ -92,7 +94,7 @@ it("hydrates optional search hits from authority with scoped evidence references
     expect(input.scopeIds).toContain(scope);
     return {hits:[{id:"recall",version:1,score:100}],vectorRows:0,degradedReason:"model-missing"};
   }};
-  const bundle=await buildMemoryBundle("outcome",f.access,bridge);
+  const bundle=await buildMemoryBundle("outcome",f.access,bridge, {allowance: LineageAllowance.tool()});
   expect(bundle.evidence[0]?.text).toBe("Actual source-backed outcome");
   expect(bundle.sourceVersions).toEqual([{id:"source-recall",revision:1}]);
   expect(bundle.evidence[0]?.assertion).toBe("owner-statement");
@@ -106,26 +108,27 @@ it("refuses a pin whose evidence is retired while optional retrieval is awaited"
     database().prepare("UPDATE memory_sources SET state='retired' WHERE id='source-pin'").run();
     return {hits:[],vectorRows:0};
   }};
-  await expect(buildMemoryBundle("query",f.access,bridge)).rejects.toThrow("MEMORY_PIN_UNAVAILABLE");
+  await expect(buildMemoryBundle("query",f.access,bridge, {allowance: LineageAllowance.tool()})).rejects.toThrow("MEMORY_PIN_UNAVAILABLE");
 });
 
 it("records prepared delivery without raw text and handles session.started before acceptance",async()=>{
   const f=fixture();record("pin",ensureScope("bot","bot"),"SECRET_TEXT");
-  const bundle=await buildMemoryBundle("query",f.access,empty);
+  const bundle=await buildMemoryBundle("query",f.access,empty, {allowance: LineageAllowance.tool()});
   prepareMemoryDisclosure(bundle,f.access,"driver");
   bindMemoryDisclosureSession(bundle.bundleId,"native-session");
   expect(database().prepare("SELECT state FROM memory_disclosures").get()?.state).toBe("prepared");
+  markSessionKnown("private","driver","native-session"); // index.ts retainSession writes the session's lineage row (bind no longer does)
   deliverMemoryDisclosure(bundle.bundleId,f.access);
   expect(database().prepare("SELECT state FROM memory_disclosures").get()?.state).toBe("delivered");
   expect(JSON.stringify(database().prepare("SELECT * FROM memory_disclosures").all())).not.toContain("SECRET_TEXT");
-  expect(continuationMemoryRevoked("private","driver","native-session",f.access)).toBe(false);
-  expect(continuationMemoryRevoked("private","driver","unknown-session",f.access)).toBe(true);
+  expect(continuationMemoryRevoked(LineageAllowance.tool(), "private","driver","native-session",f.access)).toBe(false);
+  expect(continuationMemoryRevoked(LineageAllowance.tool(), "private","driver","unknown-session",f.access)).toBe(true);
   expect(()=>bindMemoryDisclosureSession(bundle.bundleId,"different-session")).toThrow("MEMORY_DISCLOSURE_SESSION_CONFLICT");
 });
 
 it("records early terminal acceptance before capability completion and late provider binding",async()=>{
   const f=fixture();record("pin",ensureScope("bot","bot"),"Retain this constraint");
-  const bundle=await buildMemoryBundle("query",f.access,empty);
+  const bundle=await buildMemoryBundle("query",f.access,empty, {allowance: LineageAllowance.tool()});
   prepareMemoryDisclosure(bundle,f.access,"driver");
   const fake=makeFakeDriver();
   const instance=await fake.driver.create({instanceId:"driver",displayName:"Fixture",enabled:true,environment:{},config:{}});
@@ -154,13 +157,13 @@ it("records early terminal acceptance before capability completion and late prov
     expect(()=>assertMemoryBundle(bundle,f.access)).toThrow("MEMORY_UNAUTHORIZED");
     expect(database().prepare("SELECT state,native_session FROM memory_disclosures WHERE bundle_id=?").get(bundle.bundleId)).toMatchObject({state:"delivered",native_session:"native"});
     linkMemoryDisclosureOutput(bundle.bundleId,"early-answer");
-    expect(filterMemoryReplay("private",[{id:"user"},{id:"early-answer"}],f.renew())).toEqual([{id:"user"},{id:"early-answer"}]);
+    expect(filterMemoryReplay(LineageAllowance.tool(), "private",[{id:"user"},{id:"early-answer"}],f.renew())).toEqual([{id:"user"},{id:"early-answer"}]);
   }finally{observer();terminal();await instance.dispose();}
 });
 
 it("keeps fresh source and authority checks mandatory at receipt acceptance",async()=>{
   const f=fixture();record("pin",ensureScope("bot","bot"),"Source-backed constraint",true,"message");
-  const bundle=await buildMemoryBundle("query",f.access,empty);
+  const bundle=await buildMemoryBundle("query",f.access,empty, {allowance: LineageAllowance.tool()});
   prepareMemoryDisclosure(bundle,f.access,"driver");bindMemoryDisclosureSession(bundle.bundleId,"native");
   database().prepare("UPDATE memory_sources SET state='retired' WHERE id='source-pin'").run();
   expect(()=>deliverMemoryDisclosure(bundle.bundleId,f.access)).toThrow("MEMORY_CONTEXT_REVOKED");
@@ -171,48 +174,48 @@ it("keeps fresh source and authority checks mandatory at receipt acceptance",asy
 
 it("retires native history when disclosed records change without an epoch change",async()=>{
   const f=fixture();record("pin",ensureScope("bot","bot"),"Old private fact");
-  const bundle=await buildMemoryBundle("query",f.access,empty);
+  const bundle=await buildMemoryBundle("query",f.access,empty, {allowance: LineageAllowance.tool()});
   prepareMemoryDisclosure(bundle,f.access,"driver");deliverMemoryDisclosure(bundle.bundleId,f.access,"session");
   linkMemoryDisclosureOutput(bundle.bundleId,"generated");
   database().prepare("UPDATE memory_records SET state='deleted' WHERE id='pin'").run();
-  expect(continuationMemoryRevoked("private","driver","session",f.access)).toBe(true);
-  expect(filterMemoryReplay("private",[{id:"user"},{id:"generated"}],f.access)).toEqual([{id:"user"}]);
+  expect(continuationMemoryRevoked(LineageAllowance.tool(), "private","driver","session",f.access)).toBe(true);
+  expect(filterMemoryReplay(LineageAllowance.tool(), "private",[{id:"user"},{id:"generated"}],f.access)).toEqual([{id:"user"}]);
 });
 
 it("omits dependent paraphrases across fresh sessions and preserves independent user messages",async()=>{
   const f=fixture(),scope=ensureScope("bot","bot");record("original",scope,"Sensitive instruction");
-  const first=await buildMemoryBundle("query",f.access,empty);
+  const first=await buildMemoryBundle("query",f.access,empty, {allowance: LineageAllowance.tool()});
   prepareMemoryDisclosure(first,f.access,"driver");deliverMemoryDisclosure(first.bundleId,f.access,"session-one");linkMemoryDisclosureOutput(first.bundleId,"answer-one");
   database().prepare("UPDATE memory_records SET owner_pinned=0 WHERE id='original'").run();
   record("derived",scope,"Paraphrased instruction",true,"answer-one");
-  const second=await buildMemoryBundle("query",f.access,empty);
+  const second=await buildMemoryBundle("query",f.access,empty, {allowance: LineageAllowance.tool()});
   prepareMemoryDisclosure(second,f.access,"driver");deliverMemoryDisclosure(second.bundleId,f.access,"session-two");linkMemoryDisclosureOutput(second.bundleId,"answer-two");
   database().prepare("UPDATE memory_disclosures SET state='revoked' WHERE bundle_id=?").run(first.bundleId);
-  expect(filterMemoryReplay("private",[{id:"user"},{id:"answer-one"},{id:"answer-two"},{id:"independent"}],f.access)).toEqual([{id:"user"},{id:"independent"}]);
+  expect(filterMemoryReplay(LineageAllowance.tool(), "private",[{id:"user"},{id:"answer-one"},{id:"answer-two"},{id:"independent"}],f.access)).toEqual([{id:"user"},{id:"independent"}]);
   expect(database().prepare("SELECT state FROM memory_disclosures WHERE bundle_id=?").get(second.bundleId)?.state).toBe("revoked");
 });
 
 it("links later continuation outputs to prior disclosures even without repeated recall",async()=>{
   const f=fixture();record("original",ensureScope("bot","bot"),"Earlier disclosed fact");
-  const first=await buildMemoryBundle("query",f.access,empty);
+  const first=await buildMemoryBundle("query",f.access,empty, {allowance: LineageAllowance.tool()});
   prepareMemoryDisclosure(first,f.access,"driver");deliverMemoryDisclosure(first.bundleId,f.access,"same-session");
   database().prepare("UPDATE memory_records SET owner_pinned=0 WHERE id='original'").run();
-  const second=await buildMemoryBundle("query",f.access,empty);
+  const second=await buildMemoryBundle("query",f.access,empty, {allowance: LineageAllowance.tool()});
   expect(second.recordVersions).toEqual([]);
   prepareMemoryDisclosure(second,f.access,"driver");deliverMemoryDisclosure(second.bundleId,f.access,"same-session");
   linkMemoryDisclosureOutput(second.bundleId,"later-answer");
   database().prepare("UPDATE memory_disclosures SET state='revoked' WHERE bundle_id=?").run(first.bundleId);
-  expect(filterMemoryReplay("private",[{id:"user"},{id:"later-answer"}],f.access)).toEqual([{id:"user"}]);
+  expect(filterMemoryReplay(LineageAllowance.tool(), "private",[{id:"user"},{id:"later-answer"}],f.access)).toEqual([{id:"user"}]);
 });
 
 it("ignores unrelated workspace disclosures when filtering a bounded replay",async()=>{
   const f=fixture();record("pin",ensureScope("bot","bot"),"Allowed decision");
-  const bundle=await buildMemoryBundle("query",f.access,empty);
+  const bundle=await buildMemoryBundle("query",f.access,empty, {allowance: LineageAllowance.tool()});
   prepareMemoryDisclosure(bundle,f.access,"driver");deliverMemoryDisclosure(bundle.bundleId,f.access,"session");linkMemoryDisclosureOutput(bundle.bundleId,"answer");
   database().exec(`WITH RECURSIVE n(value) AS (VALUES(1) UNION ALL SELECT value+1 FROM n WHERE value<2049)
     INSERT INTO memory_disclosures(bundle_id,thread_id,driver_instance,record_versions,source_versions,output_message_ids,policy_revision,deletion_epoch,token_count,state,created_at)
     SELECT 'unrelated-'||value,'unrelated-thread','driver','[]','[]','["unrelated-output"]',0,0,0,'revoked',1 FROM n`);
-  expect(filterMemoryReplay("private",[{id:"user"},{id:"answer"}],f.access)).toEqual([{id:"user"},{id:"answer"}]);
+  expect(filterMemoryReplay(LineageAllowance.tool(), "private",[{id:"user"},{id:"answer"}],f.access)).toEqual([{id:"user"},{id:"answer"}]);
 });
 
 // 0.1.61.1 memreplay: past the old whole-thread cap the line is still judged
@@ -223,9 +226,9 @@ it("withholds a line when the one revoked receipt among thousands that list it i
   database().prepare(`WITH RECURSIVE n(value) AS (VALUES(1) UNION ALL SELECT value+1 FROM n WHERE value<2049)
     INSERT INTO memory_disclosures(bundle_id,thread_id,driver_instance,record_versions,source_versions,output_message_ids,policy_revision,deletion_epoch,token_count,state,created_at)
     SELECT 'sound-'||value,'private','driver','[]','[]','["answer"]',?,?,0,'delivered',value+1 FROM n`).run(f.access.policyRevision,f.access.deletionEpoch);
-  expect(filterMemoryReplay("private",[{id:"user"},{id:"answer"}],f.access)).toEqual([{id:"user"},{id:"answer"}]);
+  expect(filterMemoryReplay(LineageAllowance.tool(), "private",[{id:"user"},{id:"answer"}],f.access)).toEqual([{id:"user"},{id:"answer"}]);
   database().prepare("INSERT INTO memory_disclosures(bundle_id,thread_id,driver_instance,record_versions,source_versions,output_message_ids,policy_revision,deletion_epoch,token_count,state,created_at) VALUES('oldest','private','driver','[]','[]','[\"answer\"]',?,?,0,'revoked',1)").run(f.access.policyRevision,f.access.deletionEpoch);
-  expect(filterMemoryReplay("private",[{id:"user"},{id:"answer"}],f.access)).toEqual([{id:"user"}]);
+  expect(filterMemoryReplay(LineageAllowance.tool(), "private",[{id:"user"},{id:"answer"}],f.access)).toEqual([{id:"user"}]);
 });
 
 // 0.1.61 final check D2 (Mac, Harbor Room on a 200k model): pinning the room's
@@ -243,14 +246,14 @@ function roomRecord(id:string,kind:string,text:string,pinned:boolean){
 }
 it("carries one small pinned room checkpoint for a room member on a large context",async()=>{
   const f=fixture("room-thread"),checkpoint=threadCheckpointId(ensureScope("conversation","room-thread"),"room-thread");roomRecord(checkpoint,"checkpoint",HARBOR_CHECKPOINT,true);
-  const bundle=await buildMemoryBundle("Round 6: which date and budget are we planning for?",f.renew(),empty,{availableContextTokens:200000});
+  const bundle=await buildMemoryBundle("Round 6: which date and budget are we planning for?",f.renew(),empty,{ allowance: LineageAllowance.tool(),availableContextTokens:200000});
   expect(bundle.pinned.map(r=>r.id)).toEqual([checkpoint]);
 });
 it("recalls a relevant room reply beside the room checkpoint for a room member",async()=>{
   const f=fixture("room-thread"),checkpoint=threadCheckpointId(ensureScope("conversation","room-thread"),"room-thread");roomRecord(checkpoint,"checkpoint",HARBOR_CHECKPOINT,false);
   roomRecord("reply","source","Round 3: a seal-themed face-painting stall where kids get whiskers and nose designs fits the 900 dollar budget for Saturday the 14th, with paint, brushes and two helpers.",false);
   const bridge:MemorySearchBridge={search:async()=>({hits:[{id:"reply",version:1,score:100}],vectorRows:0})};
-  const bundle=await buildMemoryBundle("Round 6: which date and budget are we planning for?",f.renew(),bridge,{availableContextTokens:200000});
+  const bundle=await buildMemoryBundle("Round 6: which date and budget are we planning for?",f.renew(),bridge,{ allowance: LineageAllowance.tool(),availableContextTokens:200000});
   expect(bundle.checkpoint.map(r=>r.id)).toEqual([checkpoint]);
   expect(bundle.evidence.map(r=>r.id)).toEqual(["reply"]);
 });
