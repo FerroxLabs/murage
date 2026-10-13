@@ -108,13 +108,20 @@ export interface InboxItem {
   clearable?: true;
   link: InboxLink;
 }
-export interface InboxQuery { view?: InboxView; query?: string; page?: number; pageSize?: number; includeSnoozed?: boolean }
+/** `after`: the `next` of the page before, to continue the list from there
+ *  (an index seek) rather than counting `page` rows in. */
+export interface InboxQuery { view?: InboxView; query?: string; page?: number; pageSize?: number; includeSnoozed?: boolean; after?: string }
 export interface ProjectInboxRow {
   groupId:string; name:string; sentence:string; count:number;
   approvals:Array<{requestId:string;threadId:string;messageId:string;summary:string;card:unknown}>;
   goals:Array<{goalId:string;state:"awaiting_plan_ok"|"awaiting_signoff"}>;
   deadWaitCards:Array<{cardId:string;waitingKind:string;requestId:string|null}>;
 }
+/** What one bot (or room) would like to remember: how many wait, and how many of those can be kept together. */
+export interface InboxMemoryWaiting {
+  kind: "bot" | "room" | "other"; id: string; name: string; waiting: number; everyday: number;
+}
+
 /** One suggestion owed in the Inbox: a lesson, an offer to share a lesson (scope "bots" or "team"), or a
  *  change to a skill or routine (`lessonId` starts "psug-"). Suggestions only; nothing applies by itself. */
 export interface InboxLearningSuggestion {
@@ -128,6 +135,12 @@ export interface InboxLearningSuggestion {
 export interface InboxPage {
   projects?:ProjectInboxRow[];
   items: InboxItem[]; total: number; page: number; pageSize: number;
+  /** Where the next page starts, when this one is full: pass it back as `after`. */
+  next?: string;
+  /** The Inbox is still reading the history from before this version (once,
+   *  after an upgrade). Every list is empty and every count zero, and none of
+   *  them is the answer: say "Getting your inbox ready" and read again. */
+  preparing?: true;
   unread: number;
   /** Everything owed, across all the owner can see, not just this page. This
    *  is the number the sidebar badge shows: the sum of `approvals`,
@@ -166,6 +179,9 @@ export interface InboxPage {
    *  Learning section). The only learning the Inbox shows. Desktop only; counted in `decisions`
    *  and in no segment. See server/inbox-learning-suggestions.ts. */
   learningSuggestions?: InboxLearningSuggestion[];
+  /** Memories the bots would like to keep, one entry per bot or room, counted per item in `decisions`.
+   *  Desktop only. Counts and names, never memory text. See server/inbox-memory-waiting.ts. */
+  memoryWaiting?: InboxMemoryWaiting[];
   /** ONE ROW PER ROUTINE, NOT PER RUN. Present only on `view=routines`.
    *  This is the promise the routines tab makes in words, kept in data:
    *  the owner's thirty six rows were twelve of one routine, three of

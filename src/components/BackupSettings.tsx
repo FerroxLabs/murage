@@ -7,6 +7,7 @@ import { Switch } from "./SettingsPrimitives";
 import { OffsiteCleanup, OffsiteDetails, OffsiteRecover, OffsiteRefresh, OffsiteStatus, useBackupRemote, type RemoteController } from "./BackupRemoteSettings";
 import { enabledSchedule, scheduleCardNotice, scheduleDraft, scheduleError, scheduleNeedsReview, schedulePhase, closedJobLabel, closedResultLabel, type ScheduleDraft } from "./backup-schedule-ui";
 import { api, useStore } from "@/state/store";
+import { HeldAfterRestore } from "./HeldAfterRestore";
 import { openInboxLink } from "@/lib/open-inbox-link";
 import { backupWaitingSentence, type BackupWaitingBot } from "../../shared/backup-waiting";
 import { BACKUP_UNAVAILABLE_SENTENCES } from "../../shared/backup-capture-failure.mjs";
@@ -529,6 +530,7 @@ export function BackupSettings() {
         <h4 className="text-[13px] font-medium text-ink">From the off-site copy</h4>
         <OffsiteRecover r={r}/>
       </div>
+      <HeldAfterRestore/>
     </Disclosure>
     <Disclosure id="backup-advanced" title="Advanced" open={advancedOpen} onToggle={()=>setAdvancedOpen(value=>!value)}>
       <ScheduleAdvanced s={s}/>

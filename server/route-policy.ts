@@ -114,6 +114,7 @@ export const ROUTE_POLICY: readonly RoutePolicyEntry[] = [
   { methods: ["POST"], path: re(`/api/bots/${ID}/interrupt`), class: "conversation", why: "stop a bot's turn" },
   { methods: ["POST"], path: re(`/api/bots/${ID}/read`), class: "conversation", why: "mark a conversation read" },
   { methods: ["POST"], path: re(`/api/bots/${ID}/warm`), class: "conversation", why: "hold a thread's idle engine ready while its composer is focused" },
+  { methods: ["POST"], path: re(`/api/bots/${ID}/typing`), class: "conversation", why: "the owner is typing: background work holds back a few seconds (owner-first)" },
   { methods: ["POST"], path: re(`/api/bots/${ID}/active-branch`), class: "conversation", why: "switch between a conversation's branches" },
   { methods: ["GET"], path: re(`/api/bots/${ID}/engine-commands`), class: "conversation", why: "names of the bot's own engine commands for the composer menu" },
   { methods: ["POST"], path: re(`/api/bots/${ID}/avatar/generate`), class: "conversation", why: "draw a new avatar for a bot" },
@@ -145,6 +146,7 @@ export const ROUTE_POLICY: readonly RoutePolicyEntry[] = [
   { methods: ["POST"], path: re(`/api/groups/${ID}/tasks`), class: "conversation", why: "start a room task" },
   { methods: ["POST", "PATCH"], path: re(`/api/groups/${ID}/tasks/${ID}`), class: "conversation", why: "open or rename a room task" },
   { methods: ["GET"], path: re(`/api/threads/${ID}/messages`), class: "conversation", why: "a transcript page, one thread id at a time" },
+  { methods: ["GET"], path: re(`/api/threads/${ID}/open-cards`), class: "conversation", why: "the open request cards on the active branch of one thread" },
   { methods: ["GET"], path: re(`/api/threads/${ID}/messages/${ID}/image`), class: "conversation", why: "an image in a transcript" },
   { methods: ["POST"], path: re(`/api/threads/${ID}/messages/${ID}/reactions`), class: "conversation", why: "react to a message" },
   { methods: ["GET"], path: re(`/api/threads/${ID}/export`), class: "conversation", why: "export one conversation" },
@@ -192,7 +194,12 @@ export const ROUTE_POLICY: readonly RoutePolicyEntry[] = [
   { methods: ["POST"], path: "/api/backup-failure-notice", class: "desktop", why: "the desktop reports a stopped backup to the Inbox" },
   { methods: ["GET"], path: "/api/backup-waiting", class: "desktop", why: "who a held-up backup is waiting for" },
   { methods: ["POST"], path: "/api/backup-restart", class: "desktop", why: "admit or cancel a backup restart" },
+  { methods: ["GET"], path: "/api/restore-holds", class: "desktop", why: "the owner lists what a restore is keeping" },
+  { methods: ["POST"], path: re(`/api/restore-holds/(output_receipt|shared_result)/${ID}/release`), class: "desktop", why: "the owner releases one item a restore kept" },
+  { methods: ["POST"], path: re(`/api/shared-results/${ID}/dismiss`), class: "desktop", why: "the owner dismisses a finished shared result that cannot be delivered" },
   { methods: ["GET"], path: "/api/deletion-preview", class: "desktop", why: "what a Delete confirmation removes" },
+  { methods: ["GET"], path: "/api/deletions/owed", class: "desktop", why: "engine copies of deleted conversations still owed" },
+  { methods: ["POST"], path: "/api/deletions/retry", class: "desktop", why: "Try again now for an engine copy still owed" },
   { methods: ["GET"], path: "/api/desktop/tray", class: "desktop", why: "the menu bar and tray menu" },
   { methods: "*", path: /^\/api\/memory(?:\/|$)/, class: "desktop", why: "memory authority, sharing, retention and configuration" },
   { methods: ["GET", "POST"], path: "/api/images/settings", class: "desktop", why: "image provider and model selection" },
@@ -202,6 +209,9 @@ export const ROUTE_POLICY: readonly RoutePolicyEntry[] = [
   { methods: "*", path: /^\/api\/about-me$/, class: "desktop", why: "the owner's own profile" },
   { methods: "*", path: /^\/api\/house-rules(?:\/reset)?$/, class: "desktop", why: "House Rules text and switch" },
   { methods: "*", path: /^\/api\/whats-new(?:\/seen)?$/, class: "desktop", why: "What's New pages shown" },
+  { methods: ["GET"], path: "/api/terms", class: "conversation", why: "which terms are accepted: any owner surface the door serves may read it, so a screen that cannot accept can still see that the desktop did, or say where to accept" },
+  { methods: ["POST", "PUT", "PATCH", "DELETE"], path: "/api/terms", class: "companion", why: "only GET reads the terms status; every other method on it is for the owner's desktop or paired phone" },
+  { methods: "*", path: "/api/terms/accept", class: "companion", why: "terms acceptance: the owner's desktop or paired phone accepts; nothing else can agree to the terms for them" },
   { methods: "*", path: /^\/api\/announcements(?:\/|$)/, class: "desktop", why: "announcements seen, dismissed and their settings" },
   { methods: "*", path: /^\/api\/skills(?:\/|$)/, class: "desktop", why: "the skill collection: import, duplicate, switch on for a bot, delete" },
   { methods: ["GET", "PUT"], path: "/api/section-context", class: "desktop", why: "persistent team instructions" },
@@ -245,6 +255,7 @@ export const ROUTE_POLICY: readonly RoutePolicyEntry[] = [
   { methods: ["POST"], path: re(`/api/connectors/${ID}/authorize`), class: "desktop", why: "authorize a connected account" },
   { methods: ["DELETE"], path: re(`/api/connectors/${ID}(?:/accounts/[A-Za-z0-9][A-Za-z0-9_-]{0,127})?`), class: "desktop", why: "revoke connected accounts" },
   { methods: ["POST"], path: re(`/api/delegations/[\\w-]{4,64}/stop`), class: "desktop", why: "stop a delegated task" },
+  { methods: ["POST"], path: re(`/api/delegations/[\\w-]{4,160}/(?:send-again|dismiss)`), class: "desktop", why: "send a held hand-off again, or let it go" },
   // one bot's administration
   { methods: ["PATCH", "DELETE"], path: re(`/api/bots/${ID}`), class: "desktop", why: "bot authority, engine, working folder and deletion" },
   { methods: ["GET", "PUT"], path: re(`/api/bots/${ID}/access`), class: "desktop", why: "review scoped connected-app authority" },
@@ -287,7 +298,7 @@ export const ROUTE_POLICY: readonly RoutePolicyEntry[] = [
  * desktop gets the same answer for a hidden bot or a bot-to-bot room as for
  * one that does not exist (visibleToCompanion), whatever the route. */
 export function conversationSubject(target: string): { scope: "bot"; botId: string } | { scope: "group"; groupId: string } | null {
-  const bot = /^\/api\/bots\/([\w-]+)\/(?:messages(?:\/[\w-]+\/edit)?|interrupt|message-allow|read|warm|active-branch|engine-commands|avatar\/generate|profile|respond|cards\/[\w-]+|skills|browser-extension(?:\/(?:activity|mode|sites))?|work-threads|tasks(?:\/[\w-]+)?)$/.exec(target);
+  const bot = /^\/api\/bots\/([\w-]+)\/(?:messages(?:\/[\w-]+\/edit)?|interrupt|message-allow|read|warm|typing|active-branch|engine-commands|avatar\/generate|profile|respond|cards\/[\w-]+|skills|browser-extension(?:\/(?:activity|mode|sites))?|work-threads|tasks(?:\/[\w-]+)?)$/.exec(target);
   if (bot) return { scope: "bot", botId: bot[1]! };
   const group = /^\/api\/groups\/([\w-]+)\/(?:messages|interrupt|read|tasks(?:\/[\w-]+)?|project(?:\/[\w-]+)*|board(?:\/[\w-]+)*|activity|usage|requests(?:\/[\w-]+)*)$/.exec(target);
   if (group) return { scope: "group", groupId: group[1]! };

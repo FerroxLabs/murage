@@ -46,6 +46,10 @@ files:
   - shared/backup-restic-pin.mjs
   - shared/update-candidate.mjs
   - shared/backup-capture-failure.mjs
+  - shared/upgrade-wait.mjs
+  - shared/upgrade-contract.mjs
+  - shared/boot-proof.mjs
+  - shared/upgrade-machine.mjs
   - shared/closed-volume-sentences.mjs
   - shared/backup-folder-refusals.mjs
   - shared/mcp-secret-url.mjs
@@ -92,15 +96,12 @@ extraResources:
   - from: third_party/models-dev
     to: licenses/models-dev
   # Silero VAD (MIT, public/vad/silero_vad.onnx), the Instrument Serif font
-  # (SIL OFL 1.1, bundled in the renderer) and the six vendored team packages
-  # from openmausbot-teams (MIT, library/packages): each license requires its
-  # text to travel with the distribution.
+  # (SIL OFL 1.1, bundled in the renderer): each license requires its text to
+  # travel with the distribution.
   - from: third_party/silero-vad
     to: licenses/silero-vad
   - from: third_party/instrument-serif
     to: licenses/instrument-serif
-  - from: third_party/openmausbot-teams
-    to: licenses/openmausbot-teams
   # WhatsApp channel: Baileys (MIT), its libsignal dependency (GPL-3.0, full
   # text must travel), and the MIT Hermes Agent / OpenClaw code it adapts.
   - from: dist-server/licenses/whatsapp
@@ -198,6 +199,8 @@ mac:
       to: notification-authorization.node
     - from: dist-native/notification-authorization/${arch}/build.json
       to: notification-authorization-build.json
+    - from: dist-native/engine-exclusion/darwin-${arch}/engine-exclusion.node
+      to: engine-exclusion.node
     - from: dist-native/gepa/darwin-${arch}
       to: gepa-worker
     - from: dist-native/backup-age
@@ -241,6 +244,9 @@ mac:
 
 dmg:
   sign: true
+  # A short notice pointing at the Terms of Service and Privacy Policy; the
+  # legal text itself is never embedded (see build/license.txt).
+  license: build/license.txt
   # ${arch} is load-bearing: without it the x64 dmg silently overwrites
   # the arm64 one when both arches build (this section overrides both the
   # top-level and mac-level artifactName, so it must carry the arch itself)
@@ -283,6 +289,8 @@ win:
       to: fuigo-probe/launcher.exe
     - from: dist-native/fuigo-probe/win32-x64/manifest.json
       to: fuigo-probe/manifest.json
+    - from: dist-native/engine-exclusion/win32-x64/engine-exclusion.node
+      to: engine-exclusion.node
     - from: dist-native/cloudflared/win32-x64/cloudflared.exe
       to: cloudflared/cloudflared.exe
     # Directory copies sign EXEs before afterPack; defer these two files until
@@ -320,8 +328,18 @@ win:
 
 nsis:
   include: build/windows-sandbox-acl.nsh
-  oneClick: true
+  # The assisted installer is the only NSIS flavour with a license page, and
+  # the page is how a Windows install shows the short terms notice
+  # (build/license.txt). It stays a per-user install with no folder or
+  # install-mode questions: build/windows-install-mode.nsh forces the current
+  # user, so the only extra step over the one-click installer is the notice.
+  # Updates skip the license page (electron-builder wraps it in
+  # skipPageIfUpdated), and the in-app updater installs silently (/S), which
+  # shows no pages at all.
+  oneClick: false
   perMachine: false
+  allowToChangeInstallationDirectory: false
+  license: build/license.txt
   shortcutName: Murage
   # Versioned, like the .dmg. The README's /latest/download/ button needs a
   # STABLE filename, so ship a second copy named Murage-setup.exe on the
@@ -365,6 +383,8 @@ linux:
       to: fuigo-probe/launcher
     - from: dist-native/fuigo-probe/linux-x64/manifest.json
       to: fuigo-probe/manifest.json
+    - from: dist-native/engine-exclusion/linux-x64/engine-exclusion.node
+      to: engine-exclusion.node
     - from: dist-native/cloudflared/linux-x64/cloudflared
       to: cloudflared/cloudflared
     - from: dist-native/browser/linux-${arch}

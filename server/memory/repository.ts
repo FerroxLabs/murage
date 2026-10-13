@@ -1,9 +1,11 @@
-import { database, transaction } from "../database.ts";
+import { database, memoryHoldCode, transaction } from "../database.ts";
 
 export type MemoryMode = "off" | "capture" | "active" | "paused";
+/** The memory settings of this installation. While the background integrity pass holds memory (it found a source row that is not valid),
+ * the mode reads "paused": nothing recalls, discloses, replays or learns, and the stored mode is untouched. */
 export function memoryState() {
   const row = database().prepare("SELECT * FROM memory_meta WHERE id=1").get()!;
-  return {installationId: String(row.installation_id), policyRevision: Number(row.policy_revision), deletionEpoch: Number(row.deletion_epoch), mode: String(row.mode) as MemoryMode};
+  return {installationId: String(row.installation_id), policyRevision: Number(row.policy_revision), deletionEpoch: Number(row.deletion_epoch), mode: (memoryHoldCode() ? "paused" : String(row.mode)) as MemoryMode};
 }
 
 /** Internal primitive; only the owner-authorized settings service may call this. */

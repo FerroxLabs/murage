@@ -22,6 +22,7 @@ import { forgetMemory, onMemoryMessagesForgotten } from "./memory/forget.ts";
 import { applyMemoryTombstones } from "./memory/restore.ts";
 import { roomReplayWithheld } from "./memory/disclosures.ts";
 import { messageSourceForgotten } from "./memory/replay-lineage.ts";
+import { LineageAllowance } from "./memory/lineage-allowance.ts";
 
 const roster: MemoryRoster = {
   bots: [
@@ -67,12 +68,12 @@ it("forgetting the room's notes withholds only the reply made with them; the quo
   expect(notes.status).toBe("updated");
   // Dax answers with the notes in his remembered context.
   disclose("b-noted", [{ id: notes.checkpointId!, version: notes.version! }], ["m-noted"]);
-  expect([...roomReplayWithheld("closing-chat", room)]).toEqual([]);
+  expect([...roomReplayWithheld(LineageAllowance.tool(), "closing-chat", room)]).toEqual([]);
 
   forgetMemory(ownerMemoryTicket(), { kind: "record", id: notes.checkpointId!, revision: notes.version! });
 
   // Only Dax's reply is withheld, and for what it used, not as forgotten itself.
-  expect([...roomReplayWithheld("closing-chat", room)]).toEqual(["m-noted"]);
+  expect([...roomReplayWithheld(LineageAllowance.tool(), "closing-chat", room)]).toEqual(["m-noted"]);
   expect(messageSourceForgotten("closing-chat", "m-noted")).toBe(false);
   // The messages the notes quoted are not forgotten.
   for (const id of ["m-ask", "m-plain"]) {
@@ -87,7 +88,7 @@ it("forgetting the room's notes withholds only the reply made with them; the quo
   applyMemoryTombstones(database());
   expect(sourceState("m-ask")).toBe("active");
   expect(sourceState("m-plain")).toBe("active");
-  expect([...roomReplayWithheld("closing-chat", room)]).toEqual(["m-noted"]);
+  expect([...roomReplayWithheld(LineageAllowance.tool(), "closing-chat", room)]).toEqual(["m-noted"]);
 });
 
 it("the room's next notes start after the forgotten ones, without their quotes", () => {

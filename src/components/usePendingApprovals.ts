@@ -23,7 +23,9 @@ export function usePendingApprovals(enabled: boolean, connected: boolean) {
     const refresh = serialRefresh(async () => {
       try {
         const result = await api("/api/inbox?view=decisions&pageSize=1", { signal: controller.signal });
-        if (!disposed) { setCount(result.total); setDecisions(result.decisions); setStale(false); setQuestionThreads(result.questionThreads); }
+        // Still getting ready (once, after an upgrade): its zeros are not the answer, so the last badge stays, marked stale.
+        if (!disposed && result.preparing) setStale(true);
+        else if (!disposed) { setCount(result.total); setDecisions(result.decisions); setStale(false); setQuestionThreads(result.questionThreads); }
         // The same beat reads conversation snoozes, and that read is what
         // wakes a snooze whose time has come (server/thread-snooze.ts).
         if (!disposed) await refreshThreadSnoozes(api, controller.signal).catch(() => undefined);

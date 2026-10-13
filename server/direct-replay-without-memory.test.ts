@@ -20,6 +20,7 @@ import { setMemoryMode } from "./memory/repository.ts";
 import { roomTranscriptWithoutMemory } from "./room-transcript.ts";
 import type { Message } from "./store.ts";
 import { transcriptText } from "./replies.ts";
+import { LineageAllowance } from "./memory/lineage-allowance.ts";
 
 const roster: MemoryRoster = { bots: [{ id: "dax", threadId: "dax-direct", tasks: [{ threadId: "dax-older" }] }], groups: [] };
 beforeEach(() => { closeDatabase(); rmSync(DATA_DIR, { recursive: true, force: true }); mkdirSync(DATA_DIR, { recursive: true }); setMemoryMode("active"); reconcileMemoryRoster(roster); });
@@ -35,11 +36,11 @@ it("a direct reply made with memory the owner then forgot is withheld from the r
     VALUES('b1','dax-direct','engine',NULL,?,'[]','["m-reply"]',0,0,1,'delivered',1)`).run(JSON.stringify([{ id: record, version: 1 }]));
   const lines = [{ id: "m-ask", role: "user", kind: "text", text: "code?", at: 1 } as Message, { id: "m-reply", role: "bot", kind: "text", text: "It is 7788.", at: 2 } as Message];
   setMemoryMode("off");
-  expect(roomTranscriptWithoutMemory("dax-direct", lines, true)?.withheld.size).toBe(0);
+  expect(roomTranscriptWithoutMemory(LineageAllowance.tool(1_000_000_000), "dax-direct", lines, true)?.withheld.size).toBe(0);
   forgetMemory(ownerMemoryTicket(), { kind: "record", id: record });
-  const owner = roomTranscriptWithoutMemory("dax-direct", lines, true)!;
+  const owner = roomTranscriptWithoutMemory(LineageAllowance.tool(1_000_000_000), "dax-direct", lines, true)!;
   expect(owner.messages.find(m => m.id === "m-reply")?.text).toContain("Reply withheld");
-  expect(roomTranscriptWithoutMemory("dax-direct", lines, false)!.messages.map(m => m.id)).toEqual(["m-ask"]);
+  expect(roomTranscriptWithoutMemory(LineageAllowance.tool(1_000_000_000), "dax-direct", lines, false)!.messages.map(m => m.id)).toEqual(["m-ask"]);
   // and the direct turn replays through it when memory is not active
   const index = readFileSync(fileURLToPath(new URL("./index.ts", import.meta.url)), "utf8");
   expect(index).toContain(`const replayFloor = memoryState().mode === "active" ? undefined`);
@@ -47,9 +48,9 @@ it("a direct reply made with memory the owner then forgot is withheld from the r
   expect(replayDeclaration).toContain("(replayFloor?.messages ?? activeMessages)");
   expect(replayDeclaration).toContain("opts?.projectCardRun ? [] : (replayFloor?.messages ?? activeMessages)");
   // Astra r1 #5: an owner line answering the withheld reply quotes the withheld line
-  expect(index).toContain("const quoteTargets: ReadonlyMap<string, Message> = replayFloor ? new Map(replayFloor.messages.map((message) => [message.id, message])) : messagesById;");
+  expect(index).toContain("const quoteTargets: MessageLookup = replayFloor ? new Map(replayFloor.messages.map((message) => [message.id, message])) : messagesById;");
   const answer = { id: "m-thanks", role: "user", kind: "text", text: "thanks", replyToId: "m-reply", at: 3 } as Message;
-  const floor = roomTranscriptWithoutMemory("dax-direct", [...lines, answer], true)!;
+  const floor = roomTranscriptWithoutMemory(LineageAllowance.tool(1_000_000_000), "dax-direct", [...lines, answer], true)!;
   const quoted = transcriptText(answer, new Map(floor.messages.map(m => [m.id, m])));
   expect(quoted).not.toContain("7788");
   expect(quoted).toContain("Reply withheld");

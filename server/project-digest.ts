@@ -2,6 +2,7 @@
 // Copyright 2026 Ferrox Labs
 import type { DatabaseSync } from "node:sqlite";
 import { mirrorMurageLine, type CommsBus } from "./comms-visibility.ts";
+import { hostLine } from "./host-words.ts";
 import { projectBudgetsForGroup } from "./project-defaults.ts";
 import { budgetPeriodStart } from "./project-budget-period.ts";
 import { deriveGroupedDecisions, type GroupedDecisions } from "./project-goals.ts";
@@ -58,7 +59,7 @@ export function runProjectDigests(deps: DigestDeps, now: number): number {
         if (goal) text += ` Goal '${goal.title}': ${goalStates[goal.state]}.`;
         text += ` Work used today: ${workTime(projectUsage(db, { groupId, since: dayStart }).totals.workMs)}.`;
       }
-      mirrorMurageLine(bus, group, text, { kind: "status", digestDay });
+      mirrorMurageLine(bus, group, hostLine(text), { kind: "status", digestDay });
       posted++;
     } catch (error) {
       console.error("[project-digest] Project digest failed", groupId, error instanceof Error ? error.name : "Error");

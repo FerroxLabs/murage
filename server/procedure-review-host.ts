@@ -1,4 +1,5 @@
 import { database } from "./database.ts";
+import { assertMemoryGate } from "./memory/memory-gate.ts";
 import { DEFAULT_BOT_LEARNING, readBotLearning } from "./bot-learning.ts";
 import { classifyRoutineOutbound, contextsContained, type RunContextFacts } from "./routine-outbound.ts";
 import { readProspectScope } from "./memory/learnable.ts";
@@ -105,8 +106,9 @@ export function createProcedureReviewHost(options: ProcedureHostOptions) {
     return [];
   };
   let authorizedRoutine: { snapshot: ProcedureReviewSnapshot; receipt: ProcedureEvaluationReceipt } | undefined;
-  const currentInstructionRevision=(target:ProcedureReviewTarget)=>{
-    const context=audience(target.ownerId,target.threadId);if(!context||context.scopeId!==target.scopeId)throw Error("PROCEDURE_TARGET_STALE");
+  /** `observeOnly`: the recovery of a half-finished change reads what the text is now whatever the memory mode is (reading it is not a use of memory). */
+  const currentInstructionRevision=(target:ProcedureReviewTarget,observeOnly=false)=>{
+    let context:Audience|null=null;try{context=backgroundMemoryAudience(target.ownerId,target.threadId,roster(),observeOnly);}catch{context=null;}if(!context||context.scopeId!==target.scopeId)throw Error("PROCEDURE_TARGET_STALE");
     if(target.kind==="skill"){const current=options.skills.current(target.ownerId,target.artifactId,context);if(!current)throw Error("PROCEDURE_TARGET_STALE");return current;}
     const routine=options.routines()?.listRoutines().find(item=>item.id===target.artifactId);
     if(target.kind!=="routine"||!routine||routine.botId!==target.ownerId)throw Error("PROCEDURE_TARGET_STALE");
@@ -225,6 +227,7 @@ export function createProcedureReviewHost(options: ProcedureHostOptions) {
       if(published)options.onPublished?.(snapshot,receipt,currentInstructionRevision(snapshot.target));return published;
     },
     publish(snapshot, input) {
+      assertMemoryGate(database(), "publish-procedure"); // the callers gate first; this is the last look before a file changes
       const receipt = validateProcedureEvaluationReceipt(snapshot, input);
       if (receipt.decision !== "accepted" || !host.canPublish(snapshot)) throw new Error("PROCEDURE_PUBLICATION_REVOKED");
       const context = audience(snapshot.target.ownerId, snapshot.target.threadId)!;
@@ -240,9 +243,10 @@ export function createProcedureReviewHost(options: ProcedureHostOptions) {
   };
   setProcedureLandingHost({
     describe,
-    base:target=>{try{return currentInstructionRevision(target);}catch{return null;}},
+    base:target=>{try{return currentInstructionRevision(target,true);}catch{return null;}},
     publishEvaluated:(snapshot,receipt)=>host.publish!(snapshot,receipt),
     publishEdited:(snapshot,text,receiptId)=>{
+      assertMemoryGate(database(), "publish-procedure");
       const target=snapshot.target;
       if(!host.canPublish(snapshot))throw Error("PROCEDURE_AUDIENCE_REVOKED");
       if(target.kind==="skill"){const context=audience(target.ownerId,target.threadId);if(!context)throw Error("PROCEDURE_TARGET_STALE");publishOwnerEditedScopedSkill(snapshot,text,receiptId,{audienceKey:context.audienceKey,allowedScopeIds:context.scopeIds});return;}

@@ -21,59 +21,143 @@ import { executionStore, homeThread, sameThreadPartition, isHomePartition, threa
 //    owner forgot it) is left out, not quoted;
 //  - every quoted line goes through redactSecretsInText and is clipped;
 //  - at most 8 threads and 1.5 KB in all.
+//
+// Cost (1.0.2 turnctx): a turn pays for what changed and for the few lines it
+// shows, never for the history.
+//  - Nothing at all on a scheduled or webhook run: the block is for a turn
+//    with the owner (bot-shapes.ts says "Only when it is talking with you").
+//  - Only DISCOVERY is kept, per bot and current thread: which of the bot's
+//    threads are its most recent (at most MAX_CONSIDERED) and which message in
+//    each is its last reply. It is brought up to date from the threads that
+//    changed (thread-activity.ts), and found again by one bounded read when
+//    the inputs moved or TURN_CACHE_MS passed.
+//  - Nothing that decides whether a line may be SHOWN is kept. Every build
+//    asks afresh, for each line it is about to show (at most MAX_CONSIDERED):
+//    is the thread still the bot's and in this conversation's partition, not
+//    left out of memory, the owner's; does the reply still exist, still the
+//    bot's, not withheld from bots, with the words it has now; and does the
+//    lineage judge (whose own cache follows every dirty key) still let bots
+//    see it. A verdict the judge could not prove is not shown and not kept:
+//    the next turn asks again. So a change to a message, to memory or to a
+//    room's scope is seen on the next turn, whatever path made it.
 import type { DatabaseSync } from "node:sqlite";
-import { projectCardsForGroup } from "./project-records.ts";
 import { projectTableExists } from "./project-turn-engine.ts";
 import { database } from "./database.ts";
 import { isWorkspaceOwner, threadHumanPrincipal } from "./human-principals.ts";
-import { capturedMessageWithheld, messageSourceForgotten } from "./memory/replay-lineage.ts";
+import { capturedMessageVerdict, messageSourceForgotten, type LineageAllowance } from "./memory/replay-lineage.ts";
 import { ownerOnly } from "./owner-audience.ts";
 import { copiedFromOwner } from "./memory/bring-in.ts";
 import type { MemoryRoster } from "./memory/policy.ts";
 import { redactSecretsInText } from "./redact.ts";
 import { titleFromMessage, UNTITLED_TASK } from "./store.ts";
+import { threadActivitySeq, threadsChangedSince } from "./thread-activity.ts";
+import { ioBudget } from "./io-budget.ts";
+import type { LineageRef, PromptPart } from "./memory/lineage-types.ts";
+import { fileRef, lineRefs, memoryRefs, murageObjectRef, noneRef, promptPart } from "./memory/prompt-parts.ts";
 
 export const WORKING_CONTEXT_MAX_BYTES = 1536;
 const MAX_THREADS = 8;
 const LINE_CHARS = 140;
 const MAX_FILES = 5;
 const MAX_ROUTINES = 5;
+/** The most recent threads a build looks at for its lines (some have no reply of the bot's that may be quoted). */
+const MAX_CONSIDERED = 24;
+/** Messages a first build reads newest first to find them, at most. */
+const RECENT_SCAN_ROWS = 4000;
+/** A bot with at most this many threads has each one's newest message read when the scan found too few. */
+const SMALL_CANDIDATES = 64;
+/** What was discovered is found again at least this often (a thread whose newest message predates a room join). */
+const TURN_CACHE_MS = 10 * 60_000;
+/** Kept discoveries, per bot and current thread, least recently used dropped first. */
+const MAX_KEPT = 512;
 
+
+type TaskLike = { threadId: string; title: string; channelProjectDesk?: { groupId: string; archivedAt?: number } };
 export interface WorkingContextInput {
   botId: string;
   /** The thread this turn runs in: it is the conversation itself, not
    *  something to recall. */
   currentThreadId: string;
-  bots: ReadonlyArray<{ id: string; threadId: string; tasks?: ReadonlyArray<{ threadId: string; title: string; channelProjectDesk?: { groupId: string; archivedAt?: number } }> }>;
+  bots: ReadonlyArray<{ id: string; threadId: string; tasks?: ReadonlyArray<TaskLike> }>;
   groups: ReadonlyArray<{ id: string; name: string; threadId: string; memberIds: readonly string[]; dm?: boolean; channelProject?: unknown; tasks?: ReadonlyArray<{ threadId: string; title: string }> }>;
-  routines: ReadonlyArray<{ name: string; botId: string; enabled: boolean }>;
+  /** The bot's routines, or a function that lists them: a function is called only when the block is built
+   *  (never on a scheduled or webhook run). */
+  routines: ReadonlyArray<{ name: string; botId: string; enabled: boolean }> | (() => ReadonlyArray<{ name: string; botId: string; enabled: boolean }>);
   now: number;
+  /** What started the turn (the routine trigger): a scheduled or webhook run gets no block and does no work for it. */
+  trigger?: string;
 }
 
 type Candidate = { threadId: string; label: string; title?: { name: string; render: (title: string) => string; fallback: string } };
 
-function candidates(input: WorkingContextInput): Candidate[] {
+/** A task list by thread id, built once per list. The store replaces a bot's or room's task list when a task is
+ *  added or removed, so a list that is still the same object holds the same threads; the length check catches a
+ *  list grown in place. The task objects are the live ones: a title or desk read through it is current. */
+const taskIndexes = new WeakMap<object, { length: number; byThread: Map<string, TaskLike> }>();
+const NO_TASKS: ReadonlyMap<string, TaskLike> = new Map();
+function taskIndex(tasks: ReadonlyArray<TaskLike> | undefined): ReadonlyMap<string, TaskLike> {
+  if (!tasks?.length) return NO_TASKS;
+  const known = taskIndexes.get(tasks);
+  if (known && known.length === tasks.length) return known.byThread;
+  const byThread = new Map<string, TaskLike>();
+  for (const task of tasks) if (!byThread.has(task.threadId)) byThread.set(task.threadId, task);
+  taskIndexes.set(tasks, { length: tasks.length, byThread });
+  return byThread;
+}
+
+type LiveBot = NonNullable<ReturnType<NonNullable<ReturnType<typeof executionStore>>["bot"]>>;
+/** Who the block is for: the bot as the input names it, its live record and its direct chat. */
+type Subject = { bot: WorkingContextInput["bots"][number]; liveBot: LiveBot | undefined; directThread: string };
+function subject(input: WorkingContextInput): Subject | undefined {
   const bot = input.bots.find(entry => entry.id === input.botId);
-  if (!bot) return [];
-  const liveBot = executionStore()?.bot(bot.id);
-  const directThread = liveBot ? homeThread(liveBot).threadId : bot.threadId;
-  const list: Candidate[] = [{ threadId: directThread, label: "Direct chat with the owner" }];
-  for (const task of bot.tasks ?? []) {
-    if (task.threadId === directThread) continue;
+  if (!bot) return undefined;
+  const liveBot = executionStore()?.bot(bot.id) ?? undefined;
+  return { bot, liveBot, directThread: liveBot ? homeThread(liveBot).threadId : bot.threadId };
+}
+
+/** What `threadId` is to the bot right now, read from the live input: its direct chat, one of its tasks, or a room
+ *  it is a member of (or one of that room's threads). Undefined when it is none of these. */
+function candidateFor(input: WorkingContextInput, who: Subject, threadId: string): Candidate | undefined {
+  if (threadId === who.directThread) return { threadId, label: "Direct chat with the owner" };
+  const task = taskIndex(who.bot.tasks).get(threadId);
+  if (task) {
     const desk = task.channelProjectDesk ? input.groups.find(group => group.id === task.channelProjectDesk!.groupId) : undefined;
-    list.push(desk ? { threadId: task.threadId, label: `My work thread for the project "${name(desk.name)}"` }
-      : { threadId: task.threadId, label: "", title: { name: task.title, render: title => `Task "${name(title)}"`, fallback: "A task" } });
+    return desk ? { threadId, label: `My work thread for the project "${name(desk.name)}"` }
+      : { threadId, label: "", title: { name: task.title, render: title => `Task "${name(title)}"`, fallback: "A task" } };
   }
   for (const group of input.groups) {
     if (group.dm || !group.memberIds.includes(input.botId)) continue;
     const kind = group.channelProject ? "Project" : "Channel";
-    list.push({ threadId: group.threadId, label: `${kind} "${name(group.name)}"` });
-    for (const task of group.tasks ?? []) if (task.threadId !== group.threadId) {
-      list.push({ threadId: task.threadId, label: "", title: { name: task.title, render: title => `${kind} "${name(group.name)}", thread "${name(title)}"`, fallback: `${kind} "${name(group.name)}", another thread` } });
-    }
+    if (group.threadId === threadId) return { threadId, label: `${kind} "${name(group.name)}"` };
+    const roomTask = taskIndex(group.tasks).get(threadId);
+    if (roomTask) return { threadId, label: "", title: { name: roomTask.title, render: title => `${kind} "${name(group.name)}", thread "${name(title)}"`, fallback: `${kind} "${name(group.name)}", another thread` } };
   }
-  const seen = new Set<string>();
-  return list.filter(item => (!liveBot || sameThreadPartition(liveBot, input.currentThreadId, item.threadId)) && item.threadId !== input.currentThreadId && !seen.has(item.threadId) && Boolean(seen.add(item.threadId)));
+  return undefined;
+}
+
+/** Every thread of the bot, or null when it has more than SMALL_CANDIDATES (never listed then). */
+function smallCandidateList(input: WorkingContextInput, who: Subject): string[] | null {
+  let count = 1 + (who.bot.tasks?.length ?? 0);
+  for (const group of input.groups) if (!group.dm && group.memberIds.includes(input.botId)) count += 1 + (group.tasks?.length ?? 0);
+  if (count > SMALL_CANDIDATES) return null;
+  const out = [who.directThread, ...(who.bot.tasks ?? []).map(task => task.threadId)];
+  for (const group of input.groups) if (!group.dm && group.memberIds.includes(input.botId)) out.push(group.threadId, ...(group.tasks ?? []).map(task => task.threadId));
+  return out;
+}
+
+/** Whether a thread may be named on this block, asked afresh of the live input and the database on every build
+ *  (a room moved to another section, a task removed, a thread left out of memory), remembered for that build only. */
+type Eligible = (threadId: string) => Candidate | null;
+function eligibility(input: WorkingContextInput, db: DatabaseSync, who: Subject, excluded: ReadonlySet<string>): Eligible {
+  const seen = new Map<string, Candidate | null>();
+  return threadId => {
+    let known = seen.get(threadId);
+    if (known !== undefined) return known;
+    const item = threadId === input.currentThreadId ? undefined : candidateFor(input, who, threadId);
+    known = item && (!who.liveBot || sameThreadPartition(who.liveBot, input.currentThreadId, threadId)) && threadAllowed(db, threadId, excluded) ? item : null;
+    seen.set(threadId, known);
+    return known;
+  };
 }
 
 /** A task named after its first message carries the owner's words, which
@@ -117,21 +201,38 @@ function clip(text: string): string {
   return flat.length > LINE_CHARS ? `${flat.slice(0, LINE_CHARS - 3).trimEnd()}...` : flat;
 }
 
-/** The bot's own last reply in the thread that bots may still be shown. */
-function lastOwnReply(db: DatabaseSync, threadId: string, botId: string, roster: MemoryRoster, excluded: ReadonlySet<string>): { at: number; line: string; messageId: string } | null {
-  const rows = db.prepare("SELECT id, at, text, json FROM messages WHERE thread_id=? AND role='bot' AND kind='text' ORDER BY rowid DESC LIMIT 20").all(threadId) as Array<{ id: string; at: number; text: string | null; json: string }>;
-  for (const row of rows) {
-    let message: { from?: { botId?: string }; withheldFromBots?: unknown; copyOf?: unknown } = {};
-    try { message = JSON.parse(row.json); } catch { continue; }
-    if (message.from?.botId && message.from.botId !== botId) continue;
-    const text = typeof row.text === "string" ? row.text : "";
-    if (!text.trim()) continue;
-    if (message.withheldFromBots || messageSourceForgotten(threadId, row.id) || capturedMessageWithheld(threadId, row.id)) return null;
-    // a copy of someone else's words is not the bot's own work (Astra r2 #15)
-    if (message.copyOf && !copiedFromOwner(db, roster, threadId, row.id, excluded)) return null;
-    return { at: Number(row.at), line: clip(text), messageId: row.id };
-  }
+type MessageRow = { id: string; text: string | null; json: string };
+/** A row as the bot's own reply that has words, read as it is now: its words and whether it is withheld from bots
+ *  or a copy. Null when it is someone else's or has no words. */
+function ownReply(row: MessageRow, botId: string): { text: string; withheld: boolean; copy: boolean } | null {
+  let message: { from?: { botId?: string }; withheldFromBots?: unknown; copyOf?: unknown } = {};
+  try { message = JSON.parse(row.json); } catch { return null; }
+  if (message.from?.botId && message.from.botId !== botId) return null;
+  const text = typeof row.text === "string" ? row.text : "";
+  if (!text.trim()) return null;
+  return { text, withheld: Boolean(message.withheldFromBots), copy: Boolean(message.copyOf) };
+}
+
+/** DISCOVERY: which message is the bot's own last reply with words in the thread (or null: none). Not a verdict:
+ *  whether it may be shown is judged on every build (shownLine). */
+function lastOwnReplyId(db: DatabaseSync, threadId: string, botId: string): string | null {
+  const rows = db.prepare("SELECT id, text, json FROM messages WHERE thread_id=? AND role='bot' AND kind='text' ORDER BY rowid DESC LIMIT 20").all(threadId) as MessageRow[];
+  for (const row of rows) if (ownReply(row, botId)) return row.id;
   return null;
+}
+
+/** The lineage judge: "shown", "withheld" (on content: what it used was forgotten; or a copy of someone else's
+ *  words, Astra r2 #15), or "unproven" (the judge could not finish: not shown, and nothing about it is kept).
+ *  The lineage reads run under their own source for the slow-statement log. */
+type Verdict = "shown" | "withheld" | "unproven";
+function judgeReply(allowance: LineageAllowance, db: DatabaseSync, threadId: string, messageId: string, copy: boolean, roster: MemoryRoster, excluded: ReadonlySet<string>): Verdict {
+  return ioBudget.withSource("lineage", () => {
+    if (messageSourceForgotten(threadId, messageId)) return "withheld";
+    const verdict = capturedMessageVerdict(allowance, threadId, messageId);
+    if (verdict.unproven) return "unproven";
+    if (verdict.withheld) return "withheld";
+    return copy && !copiedFromOwner(db, roster, threadId, messageId, excluded) ? "withheld" : "shown";
+  });
 }
 
 function newestAt(db: DatabaseSync, threadId: string): number | null {
@@ -139,14 +240,15 @@ function newestAt(db: DatabaseSync, threadId: string): number | null {
   return typeof row?.at === "number" ? row.at : null;
 }
 
-function recentFiles(db: DatabaseSync, botId: string, threads: ReadonlySet<string>): string[] {
+/** The bot's newest files in threads that may be named: an indexed newest-first read (artifacts_bot_date). */
+function recentFiles(db: DatabaseSync, botId: string, eligible: Eligible, refs?: LineageRef[]): string[] {
   try {
     const rows = db.prepare("SELECT relative_path, thread_id FROM artifacts WHERE bot_id=? ORDER BY created_at DESC LIMIT 50").all(botId) as Array<{ relative_path: string; thread_id: string }>;
     const files: string[] = [];
     for (const row of rows) {
-      if (!threads.has(row.thread_id)) continue;
+      if (!eligible(String(row.thread_id))) continue;
       const path = name(redactSecretsInText(String(row.relative_path))).slice(0, 120);
-      if (path && !files.includes(path)) files.push(path);
+      if (path && !files.includes(path)) { files.push(path); refs?.push(...memoryRefs([fileRef(botId, String(row.relative_path))])); }
       if (files.length === MAX_FILES) break;
     }
     return files;
@@ -165,63 +267,215 @@ export function renderWorkingContext(lines: readonly string[], files: readonly s
 
 /** The block, or "" when there is nothing worth saying. Callers gate it with
  *  ownerOnly("working-context", ...) on the consuming turn. */
-export function workingContext(input: WorkingContextInput, db: DatabaseSync = database()): string {
-  return buildWorkingContext(input, db).text;
+export function workingContext(allowance: LineageAllowance, input: WorkingContextInput, db: DatabaseSync = database()): string {
+  return buildWorkingContext(allowance, input, db).text;
 }
 
 /** The replies a block quotes: a reply built from the block rests on them
  *  (the dispatch notes their sources on its receipt, Astra r1 #6). */
 export type WorkingContextQuote = { threadId: string; messageId: string };
 
-function buildWorkingContext(input: WorkingContextInput, db: DatabaseSync): { text: string; quoted: WorkingContextQuote[] } {
+/** What was discovered for one bot and current thread. Nothing here decides what is shown. */
+type Kept = {
+  sig: string; seq: number; builtAt: number;
+  /** the MAX_CONSIDERED most recent threads of the bot, newest first */
+  recent: Array<{ threadId: string; at: number }>;
+  /** each considered thread's last own reply (its message id), or null: it has none */
+  replies: Map<string, string | null>;
+};
+const keptByDb = new WeakMap<object, Map<string, Kept>>();
+const remember = <T>(map: Map<string, T>, key: string, value: T) => { map.delete(key); map.set(key, value); if (map.size > MAX_KEPT) map.delete(map.keys().next().value!); };
+
+/** When to find the recent threads again: the bot's task list and rooms as they read now (the list object itself is
+ *  compared by identity through the task index, so a task added or removed anywhere moves it). A hint for freshness
+ *  only: nothing shown rests on it. */
+function inputSignature(input: WorkingContextInput, who: Subject, excluded: ReadonlySet<string>): string {
+  const parts: unknown[] = [[...excluded].sort().join("\u0002"), who.bot.threadId, who.directThread, who.liveBot?.partitionedAt ?? "", listId(who.bot.tasks)];
+  for (const group of input.groups) {
+    if (group.dm || !group.memberIds.includes(input.botId)) continue;
+    parts.push(group.id, group.threadId, listId(group.tasks));
+  }
+  return parts.join("\u0001");
+}
+const listIds = new WeakMap<object, number>();
+let nextListId = 0;
+function listId(list: ReadonlyArray<unknown> | undefined): string {
+  if (!list) return "-";
+  let id = listIds.get(list);
+  if (id === undefined) { id = ++nextListId; listIds.set(list, id); }
+  return `${id}.${list.length}`;
+}
+
+/** The bot's most recent threads and their last replies: discovered, kept and brought up to date with what changed. */
+function discovered(input: WorkingContextInput, db: DatabaseSync, who: Subject, eligible: Eligible, excluded: ReadonlySet<string>): Kept {
+  const key = `${input.botId}\u0000${input.currentThreadId}`;
+  const sig = inputSignature(input, who, excluded);
+  const keptHere = keptByDb.get(db) ?? new Map<string, Kept>();
+  keptByDb.set(db, keptHere);
+  const seq = threadActivitySeq();
+  const previous = keptHere.get(key);
+  const reusable = previous && previous.sig === sig && input.now - previous.builtAt < TURN_CACHE_MS && input.now >= previous.builtAt ? previous : undefined;
+  const changed = reusable ? threadsChangedSince(reusable.seq) : null;
+  if (reusable && changed) {
+    // only the changed threads of the bot are read again: their newest message moves them up, their reply is found again
+    const recent = new Map(reusable.recent.map(entry => [entry.threadId, entry.at] as const));
+    for (const threadId of changed) {
+      if (!eligible(threadId)) continue;
+      const at = newestAt(db, threadId);
+      if (at === null) recent.delete(threadId); else recent.set(threadId, at);
+      reusable.replies.delete(threadId);
+    }
+    reusable.recent = sortRecent(recent).slice(0, MAX_CONSIDERED);
+    const considered = new Set(reusable.recent.map(entry => entry.threadId));
+    for (const threadId of [...reusable.replies.keys()]) if (!considered.has(threadId)) reusable.replies.delete(threadId);
+    reusable.seq = seq;
+    remember(keptHere, key, reusable);
+    return reusable;
+  }
+  // first build (or inputs changed, or the log no longer reaches back): one bounded newest-first read
+  const kept: Kept = { sig, seq, builtAt: input.now, recent: recentThreads(input, db, who, eligible), replies: new Map() };
+  remember(keptHere, key, kept);
+  return kept;
+}
+
+const sortRecent = (recent: Map<string, number>) => [...recent].map(([threadId, at]) => ({ threadId, at })).sort((a, b) => b.at - a.at || a.threadId.localeCompare(b.threadId));
+
+/** The bot's threads with the newest messages that may be named now: read newest first from the messages' time
+ *  index, at most RECENT_SCAN_ROWS rows; a bot with few threads has the rest read one by one. */
+function recentThreads(input: WorkingContextInput, db: DatabaseSync, who: Subject, eligible: Eligible): Array<{ threadId: string; at: number }> {
+  const found = new Map<string, number>();
+  const passed = new Set<string>();
+  let rows = 0;
+  for (const row of db.prepare("SELECT thread_id, at FROM messages ORDER BY at DESC").iterate() as Iterable<{ thread_id: string; at: number }>) {
+    if (++rows > RECENT_SCAN_ROWS || found.size >= MAX_CONSIDERED) break;
+    const threadId = String(row.thread_id);
+    if (found.has(threadId) || passed.has(threadId)) continue;
+    if (eligible(threadId)) found.set(threadId, Number(row.at)); else passed.add(threadId);
+  }
+  const small = found.size < MAX_CONSIDERED ? smallCandidateList(input, who) : null;
+  for (const threadId of small ?? []) {
+    if (found.has(threadId) || !eligible(threadId)) continue;
+    const at = newestAt(db, threadId);
+    if (at !== null) found.set(threadId, at);
+  }
+  // the direct chat is always looked at
+  if (!found.has(who.directThread) && eligible(who.directThread)) { const at = newestAt(db, who.directThread); if (at !== null) found.set(who.directThread, at); }
+  return sortRecent(found).slice(0, MAX_CONSIDERED);
+}
+
+/** The line a thread gives on THIS build, judged now: the thread may be named, its last own reply still exists, is
+ *  still the bot's, not withheld from bots, and the lineage judge lets bots see it. Its words are the ones it has now. */
+function shownLine(allowance: LineageAllowance, input: WorkingContextInput, db: DatabaseSync, kept: Kept, eligible: Eligible, excluded: ReadonlySet<string>, threadId: string, at: number): { line: string; messageId: string } | null {
+  const item = eligible(threadId);
+  if (!item) return null;
+  let messageId = kept.replies.get(threadId);
+  if (messageId === undefined) { messageId = lastOwnReplyId(db, threadId, input.botId); kept.replies.set(threadId, messageId); }
+  if (messageId === null) return null;
+  let row = db.prepare("SELECT id, text, json FROM messages WHERE thread_id=? AND id=?").get(threadId, messageId) as MessageRow | undefined;
+  let reply = row ? ownReply(row, input.botId) : null;
+  if (!reply) {
+    // the kept reply was deleted or emptied: find the last one again
+    messageId = lastOwnReplyId(db, threadId, input.botId);
+    kept.replies.set(threadId, messageId);
+    row = messageId === null ? undefined : db.prepare("SELECT id, text, json FROM messages WHERE thread_id=? AND id=?").get(threadId, messageId) as MessageRow | undefined;
+    reply = row ? ownReply(row, input.botId) : null;
+    if (!reply) return null;
+  }
+  if (reply.withheld) return null;
+  if (judgeReply(allowance, db, threadId, messageId!, reply.copy, input as unknown as MemoryRoster, excluded) !== "shown") return null;
+  const saidIn = input.groups.some(group => group.channelProject && (group.threadId === threadId || taskIndex(group.tasks).has(threadId)))
+    || input.bots.some(bot => taskIndex(bot.tasks).get(threadId)?.channelProjectDesk);
+  return { line: `- ${saidIn ? "Said in " : ""}${label(db, item)}, ${ago(at, input.now)}: ${quote(clip(reply.text))}`, messageId: messageId! };
+}
+
+/** Whether a thread's human is the owner, kept per thread. Only asked of a thread that already has messages (its
+ *  newest line or an artifact led here), and a thread's human is bound before its first message and never changes
+ *  after (human-principals.ts, HUMAN_THREAD_IMMUTABLE), so the answer holds. */
+const ownerThreads = new WeakMap<object, Map<string, boolean>>();
+function ownerThread(db: DatabaseSync, threadId: string): boolean {
+  const known = ownerThreads.get(db) ?? new Map<string, boolean>();
+  ownerThreads.set(db, known);
+  let owner = known.get(threadId);
+  if (owner === undefined) { owner = isWorkspaceOwner(threadHumanPrincipal(threadId, db)); if (known.size >= 50_000) known.clear(); known.set(threadId, owner); }
+  return owner;
+}
+/** Whether a thread the bot is in may be named on this block (not left out of memory, its human is the owner). */
+function threadAllowed(db: DatabaseSync, threadId: string, excluded: ReadonlySet<string>): boolean {
+  return !excluded.has(threadId) && ownerThread(db, threadId);
+}
+
+/** The bot's cards on a project's record: an indexed read of at most `limit` (project_work_items_assignee). */
+function projectCardLines(db: DatabaseSync, group: { id: string; name: string }, botId: string, limit: number, refs?: LineageRef[]): string[] {
+  const rows = db.prepare("SELECT id, number, title, state, request_id FROM project_work_items WHERE group_id=? AND assignee_bot_id=? AND archived_at IS NULL AND stale=0 ORDER BY position, created_at, id LIMIT ?")
+    .all(group.id, botId, limit) as Array<{ id: string; number: number; title: string; state: string; request_id: string | null }>;
+  // a card's title may be a lead's words: the line rests on the card (project-cards.ts records a card a bot writes in its turn)
+  refs?.push(...memoryRefs(rows.map(card => murageObjectRef("project-card", String(card.id)))));
+  return rows.map(card => {
+    const request = card.request_id ? db.prepare("SELECT state FROM room_requests WHERE id=?").get(card.request_id) as { state?: string } | undefined : undefined;
+    const state = card.state === "todo" ? "not started" : card.state === "doing" ? (request?.state === "running" ? "running" : "waiting")
+      : card.state === "review" ? "in review" : card.state;
+    return `- Project "${name(group.name)}", on record: #${Number(card.number)} [${state}] ${quote(clip(String(card.title)))}`;
+  });
+}
+
+function buildWorkingContext(allowance: LineageAllowance, input: WorkingContextInput, db: DatabaseSync, refs: LineageRef[] = []): { text: string; quoted: WorkingContextQuote[] } {
+  // a scheduled or webhook run is not a turn with the owner: no block, and no work for it
+  if (input.trigger === "schedule" || input.trigger === "webhook") return { text: "", quoted: [] };
+  const who = subject(input);
+  if (!who) return { text: "", quoted: [] };
   const excluded = excludedThreads(db);
-  const eligible = candidates(input).filter(item => !excluded.has(item.threadId) && isWorkspaceOwner(threadHumanPrincipal(item.threadId, db)));
-  const allowed = new Set(eligible.map(item => item.threadId));
-  const recent = eligible
-    .map(item => ({ ...item, at: newestAt(db, item.threadId) }))
-    .filter((item): item is Candidate & { at: number } => item.at !== null)
-    .sort((a, b) => b.at - a.at || a.threadId.localeCompare(b.threadId));
+  const eligible = eligibility(input, db, who, excluded);
   const lines: string[] = [];
-  if (projectTableExists(db, "project_work_items")) for (const group of input.groups) {
-    if (!group.channelProject || group.dm || !group.memberIds.includes(input.botId) || !allowed.has(group.threadId)) continue;
-    for (const card of projectCardsForGroup(db, group.id).filter(card => card.assigneeBotId === input.botId && !card.stale)) {
+  const projectGroups = input.groups.filter(group => group.channelProject && !group.dm && group.memberIds.includes(input.botId));
+  if (projectGroups.length && projectTableExists(db, "project_work_items")) {
+    for (const group of projectGroups) {
       if (lines.length === MAX_THREADS) break;
-      const request = card.requestId ? db.prepare("SELECT state FROM room_requests WHERE id=?").get(card.requestId) : undefined;
-      const state = card.state === "todo" ? "not started" : card.state === "doing" ? (request?.state === "running" ? "running" : "waiting")
-        : card.state === "review" ? "in review" : card.state;
-      lines.push(`- Project "${name(group.name)}", on record: #${card.number} [${state}] ${quote(clip(card.title))}`);
+      // a room's chat may have no message yet: its human is read afresh, not kept
+      if (!eligible(group.threadId) || !isWorkspaceOwner(threadHumanPrincipal(group.threadId, db))) continue;
+      lines.push(...projectCardLines(db, group, input.botId, MAX_THREADS - lines.length, refs));
     }
   }
   const quoted: WorkingContextQuote[] = [];
-  for (const item of recent) {
+  const kept = discovered(input, db, who, eligible, excluded);
+  for (const { threadId, at } of kept.recent) {
     if (lines.length === MAX_THREADS) break;
-    const reply = lastOwnReply(db, item.threadId, input.botId, input as unknown as MemoryRoster, excluded);
-    if (!reply) continue;
-    lines.push(`- ${input.groups.some(group => group.channelProject && (group.threadId === item.threadId || group.tasks?.some(task => task.threadId === item.threadId))) || input.bots.some(bot => bot.tasks?.some(task => task.threadId === item.threadId && task.channelProjectDesk)) ? "Said in " : ""}${label(db, item)}, ${ago(item.at, input.now)}: ${quote(reply.line)}`);
-    quoted.push({ threadId: item.threadId, messageId: reply.messageId });
+    const shown = shownLine(allowance, input, db, kept, eligible, excluded, threadId, at);
+    if (!shown) continue;
+    lines.push(shown.line);
+    quoted.push({ threadId, messageId: shown.messageId });
   }
-  const files = recentFiles(db, input.botId, allowed);
-  const liveBot = executionStore()?.bot(input.botId);
-  const routines = (liveBot?.partitionedAt !== undefined && !isHomePartition(threadPartition(liveBot, input.currentThreadId)) ? [] : input.routines).filter(routine => routine.botId === input.botId && routine.enabled).map(routine => name(routine.name).slice(0, 60)).filter(Boolean).slice(0, MAX_ROUTINES);
+  const files = recentFiles(db, input.botId, eligible, refs);
+  const routineList = typeof input.routines === "function" ? input.routines() : input.routines;
+  const routines = (who.liveBot?.partitionedAt !== undefined && !isHomePartition(threadPartition(who.liveBot, input.currentThreadId)) ? [] : routineList).filter(routine => routine.botId === input.botId && routine.enabled).map(routine => name(routine.name).slice(0, 60)).filter(Boolean).slice(0, MAX_ROUTINES);
   if (!lines.length && !files.length && !routines.length) return { text: "", quoted: [] };
   const recordLines = lines.length - quoted.length;
-  let kept = lines;
-  while (kept.length && Buffer.byteLength(renderWorkingContext(kept, files, routines)) > WORKING_CONTEXT_MAX_BYTES) kept = kept.slice(0, -1);
-  let text = renderWorkingContext(kept, files, routines);
+  let fitted = lines;
+  while (fitted.length && Buffer.byteLength(renderWorkingContext(fitted, files, routines)) > WORKING_CONTEXT_MAX_BYTES) fitted = fitted.slice(0, -1);
+  let text = renderWorkingContext(fitted, files, routines);
   if (Buffer.byteLength(text) > WORKING_CONTEXT_MAX_BYTES) text = Buffer.from(text).subarray(0, WORKING_CONTEXT_MAX_BYTES).toString("utf8").replace(/\uFFFD+$/, "");
-  return { text, quoted: quoted.slice(0, Math.max(0, kept.length - recordLines)) };
+  return { text, quoted: quoted.slice(0, Math.max(0, fitted.length - recordLines)) };
 }
 
 /** The surface: owner-audience turns only (owner-audience.ts). */
-export function workingContextPrompt(ownerAudience: boolean, input: WorkingContextInput, db?: DatabaseSync): string {
-  return workingContextBlock(ownerAudience, input, db).text;
+export function workingContextPrompt(allowance: LineageAllowance, ownerAudience: boolean, input: WorkingContextInput, db?: DatabaseSync): string {
+  return workingContextBlock(allowance, ownerAudience, input, db).text;
 }
 
 /** The surface with the replies it quotes, for the dispatch's receipt. */
-export function workingContextBlock(ownerAudience: boolean, input: WorkingContextInput, db: DatabaseSync = database()): { text: string; quoted: WorkingContextQuote[] } {
+export function workingContextBlock(allowance: LineageAllowance, ownerAudience: boolean, input: WorkingContextInput, db: DatabaseSync = database()): { text: string; quoted: WorkingContextQuote[]; part: PromptPart } {
   let quoted: WorkingContextQuote[] = [];
-  const text = ownerOnly("working-context", ownerAudience, () => { const built = buildWorkingContext(input, db); quoted = built.quoted; return built.text; });
-  return { text, quoted: text ? quoted : [] };
+  const refs: LineageRef[] = [];
+  const text = ownerOnly("working-context", ownerAudience, () => { const built = buildWorkingContext(allowance, input, db, refs); quoted = built.quoted; return built.text; });
+  return { text, quoted: text ? quoted : [], part: workingContextPart(text, text ? quoted : [], text ? refs : []) };
+}
+
+/** The block as a prompt part (DESIGN-WRITETIME 2.2, prompt-borne text): every reply it quotes is a point carry, every card and file it
+ * names rests on that card or file. A reply built from the block then rests on all of it, whatever the owner later forgets. */
+export function workingContextPart(text: string, quoted: readonly WorkingContextQuote[], named: readonly LineageRef[] = []): PromptPart {
+  if (!text) return promptPart("", [noneRef("static")]);
+  const byThread = new Map<string, string[]>();
+  for (const item of quoted) byThread.set(item.threadId, [...(byThread.get(item.threadId) ?? []), item.messageId]);
+  return promptPart(text, [...[...byThread].flatMap(([threadId, ids]) => lineRefs(threadId, ids)), ...named]);
 }
 
 /** The captured sources of the quoted replies, as receipt source versions. */

@@ -50,7 +50,7 @@ import type { MarkdownEditorController } from "./MarkdownEditor";
 import { LazyBoundary, retryableLazy } from "./LazyBoundary";
 import { ChatMarkdown } from "./ChatMarkdown";
 import { Files, artifactNativeAction, artifactPreviewHtml } from "./Files";
-import { MemorySettings } from "./MemorySettings";
+import { MemorySettings } from "./MemorySettingsLazy";
 import { LocalMedia } from "./MediaPlayer";
 import { ImageMedia } from "./ImageMedia";
 import { MEDIA_ROUTES, type MediaResolveResponse } from "../../shared/media-assets";

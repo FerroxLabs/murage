@@ -62,7 +62,7 @@ export function NotificationSettings() {
     finally { setPermissionPending(false); }
   };
   // One setting, one switch (0.1.62): the label and its note name it.
-  const check = (field: "attention" | "completion" | "failures" | "previewContent", label: string, detail: string) =>
+  const check = (field: "attention" | "completion" | "failures" | "memories" | "previewContent", label: string, detail: string) =>
     <div className="flex min-h-11 items-start justify-between gap-3 py-1.5 text-[13px] text-ink">
       <span id={`notification-${field}`}>{label}<span className="mt-0.5 block text-[11px] leading-relaxed text-ink-secondary">{detail}</span></span>
       <Switch aria-labelledby={`notification-${field}`} checked={draft[field]} disabled={!state.config || saving} onClick={() => edit({ ...draft, [field]: !draft[field] })} className={focus} />
@@ -74,6 +74,7 @@ export function NotificationSettings() {
       {check("attention", t("notificationSettings.attentionLabel"), t("notificationSettings.attentionHelp"))}
       {check("completion", t("notificationSettings.completionLabel"), t("notificationSettings.completionHelp"))}
       {check("failures", t("notificationSettings.failuresLabel"), t("notificationSettings.failuresHelp"))}
+      {check("memories", t("notificationSettings.memoriesLabel"), t("notificationSettings.memoriesHelp"))}
       {check("previewContent", t("notificationSettings.previewLabel"), t("notificationSettings.previewHelp"))}
     </div>
     <div className="mt-3 rounded-lg bg-inset p-3">

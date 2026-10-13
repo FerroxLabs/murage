@@ -7,9 +7,10 @@ import { InternalCapabilities } from "../internal-capabilities.ts";
 import { ensureScope,memoryAccess,reconcileMemoryRoster,assertMemoryAccess } from "./policy.ts";
 import { searchMemory } from "./search.ts";
 import { buildMemoryBundle } from "./bundle.ts";
-import { materializeRecentMemory } from "./recent.ts";
+import { catchUpRecentMemory, materializeRecentMemory } from "./recent.ts";
 import { claimMemoryJob,publishMemoryWork } from "./jobs.ts";
 import { captureWork } from "./chunks.ts";
+import { LineageAllowance } from "./lineage-allowance.ts";
 
 beforeEach(()=>{closeDatabase();rmSync(DATA_DIR,{recursive:true,force:true});mkdirSync(DATA_DIR,{recursive:true});});
 const roster=()=>({bots:[{id:"a",threadId:"new",tasks:[{threadId:"new"},{threadId:"old"}]},{id:"b",threadId:"other"}],groups:[{id:"room",threadId:"shared",memberIds:["a","b"]}]});
@@ -22,24 +23,27 @@ const empty={search:async()=>({hits:[],vectorRows:0,degradedReason:"keyword-only
 it("recalls a captured preference from the bot's previous task before worker indexing",async()=>{
   const {access}=context();appendMessage("old",{id:"preference",at:123,role:"user",kind:"text",text:"My report colour is charcoal."});
   expect(database().prepare("SELECT count(*) n FROM memory_records").get()?.n).toBe(0);
-  const result=await searchMemory("report colour",access,empty);
+  // Search itself writes nothing; the turn's one catch-up step (run before recall) makes a message written a moment ago recallable.
+  expect(catchUpRecentMemory(access)).toBe(1);
+  const result=await searchMemory("report colour",access,empty, {allowance: LineageAllowance.tool(1_000_000_000)});
   expect(result.hits.some(hit=>hit.text.includes("charcoal"))).toBe(true);expect(result.recentFallback).toBe(true);
   expect(result.hits.flatMap(hit=>hit.evidence).some(e=>e.occurredAt===123)).toBe(true);
-  expect((await buildMemoryBundle("report colour",access,empty)).text).toContain("charcoal");
+  expect((await buildMemoryBundle("report colour",access,empty, {allowance: LineageAllowance.tool()})).text).toContain("charcoal");
   const before=database().prepare("SELECT count(*) n FROM memory_records").get()?.n;
-  await searchMemory("report colour",access,empty);
+  await searchMemory("report colour",access,empty, {allowance: LineageAllowance.tool(1_000_000_000)});
   expect(database().prepare("SELECT count(*) n FROM memory_records").get()?.n).toBe(before);
 });
 it("does not grant another bot the private prior-task history, in a shared room either",async()=>{
   const r=roster(),{access}=context(r);appendMessage("old",{id:"private",at:1,role:"user",kind:"text",text:"PRIVATE_PAST_CANARY report"});
-  await searchMemory("report",access,empty);
+  catchUpRecentMemory(access);
+  await searchMemory("report",access,empty, {allowance: LineageAllowance.tool(1_000_000_000)});
   // 0.1.61 lane M recall both ways: in an owner room the bot recalls its own
   // prior task, its teammate never does
   const room=context(r,"shared").access;
   expect(()=>assertMemoryAccess(room,ensureScope("conversation","old"))).not.toThrow();
   reconcileMemoryRoster(r);const registry=new InternalCapabilities(),generation=registry.begin("b","shared");
   const teammate=memoryAccess(registry,registry.resolve(`Bearer ${registry.mint({botId:"b",threadId:"shared",generation,depth:0,kind:"memory",skillAuthoring:false})}`)!,()=>r);
-  expect((await searchMemory("PRIVATE_PAST_CANARY report",teammate,empty)).hits).toEqual([]);
+  expect((await searchMemory("PRIVATE_PAST_CANARY report",teammate,empty, {allowance: LineageAllowance.tool(1_000_000_000)})).hits).toEqual([]);
   expect(()=>assertMemoryAccess(teammate,ensureScope("conversation","old"))).toThrow("MEMORY_SCOPE_DENIED");
   expect(()=>assertMemoryAccess(access,ensureScope("conversation","other"))).toThrow("MEMORY_SCOPE_DENIED");
 });
@@ -53,10 +57,12 @@ it("does not infer grants for aliased or excluded old tasks",()=>{
 });
 it("returns bounded recent evidence with explicit degradation when the worker is unavailable",async()=>{
   const {access}=context();appendMessage("old",{id:"fresh",at:321,role:"user",kind:"text",text:"The launch deadline is Friday."});
-  const result=await searchMemory("launch deadline",access,{search:async()=>{throw new Error("worker offline");}});
-  expect(result.degradedReason).toBe("MEMORY_RECALL_UNAVAILABLE");expect(result.coverageComplete).toBe(false);
+  catchUpRecentMemory(access);
+  const result=await searchMemory("launch deadline",access,{search:async()=>{throw new Error("worker offline");}}, {allowance: LineageAllowance.tool(1_000_000_000)});
+  // Hits found by keyword while the worker is down are partial, not "unavailable" (fix/1.0.2-memory-search).
+  expect(result.degradedReason).toBe("MEMORY_RECALL_PARTIAL");expect(result.partial).toBe(true);expect(result.coverageComplete).toBe(false);
   expect(result.hits.some(hit=>hit.text.includes("Friday"))).toBe(true);
-  expect((await searchMemory("unrelated_opaque_id",access,empty)).hits).toEqual([]);
+  expect((await searchMemory("unrelated_opaque_id",access,empty, {allowance: LineageAllowance.tool(1_000_000_000)})).hits).toEqual([]);
 });
 it("does not steal a live worker lease and keeps per-request catch-up bounded",()=>{
   const {access}=context();appendMessage("old",{id:"leased",at:1,role:"user",kind:"text",text:"A retained source"});
@@ -79,5 +85,6 @@ it("an ordinary append keeps its predecessors' jobs pending and only a branch ch
 });
 it("revocation during worker await cannot disclose the recent fallback",async()=>{
   const {access,registry}=context();appendMessage("old",{id:"secret",at:1,role:"user",kind:"text",text:"Fresh private report"});
-  await expect(searchMemory("private report",access,{search:async()=>{registry.revokeThread("new");return {hits:[],vectorRows:0};}})).rejects.toThrow("MEMORY_UNAUTHORIZED");
+  catchUpRecentMemory(access);
+  await expect(searchMemory("private report",access,{search:async()=>{registry.revokeThread("new");return {hits:[],vectorRows:0};}}, {allowance: LineageAllowance.tool(1_000_000_000)})).rejects.toThrow("MEMORY_UNAUTHORIZED");
 });

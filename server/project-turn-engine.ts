@@ -15,8 +15,10 @@
 // before the projects release has none of them, and then every room is a
 // channel.
 import type { DatabaseSync } from "node:sqlite";
+import { findDelegationReceipt } from "./delegations.ts";
 import { groupGoalAssignmentKey } from "./group-goal-run.ts";
 import { partitionSourcesAllowed } from "./partition-sources.ts";
+import { releaseNote } from "./project-notes.ts";
 import { acceptProjectCard, changesRequestedCount, changesRequestedNotes, CHANGES_BEFORE_LEAD_DECIDES, applyCardRunFailed, applyCardRunFinished, applyCardWaiting, assignCardReview, NO_VERDICT, pickCardReviewer } from "./project-cards.ts";
 import { projectCardById, projectGoalById, projectSettingsFor } from "./project-records.ts";
 import { roomCardName, type LeadNextStep } from "./project-prompt.ts";
@@ -277,7 +279,9 @@ export function queueHeldReviewWakes(db: DatabaseSync, input: { groupId: string;
  * changes, and have it reviewed again after a review run that ended without
  * a verdict (failed, cancelled, expired, stopped). Nothing once the card has
  * moved on, or for a review that is no longer the card's current one. */
-export function leadNextStep(db: DatabaseSync, source: RoomRequest, input: { memberIds: readonly string[]; name: (botId: string) => string; viewer: LeadViewer }): LeadNextStep | undefined {
+export function leadNextStep(db: DatabaseSync, source: RoomRequest, input: { memberIds: readonly string[]; name: (botId: string) => string; viewer: LeadViewer;
+  /** The lead's turn is not the owner's audience (the reviewer's notes are released for it as such); a turn not known to be the owner's is not. */
+  notOwnerAudience?: boolean }): LeadNextStep | undefined {
   if (source.verb !== "assign" && source.verb !== "review") return undefined;
   // lane review: a pass the server accepted, for the card's current review
   const passed = source.verb === "review" && source.outcomeNote === "pass" && source.workItemId ? projectCardById(db, source.workItemId) : null;
@@ -299,7 +303,8 @@ export function leadNextStep(db: DatabaseSync, source: RoomRequest, input: { mem
     if (source.outcomeNote === "pass") return { step: "accept", ...base };
     if (source.outcomeNote === "changes") {
       // lane cards (b): asked twice already, so the lead decides: accept, or reassign with a reason
-      const reviewNotes = changesRequestedNotes(db, card.id);
+      // the reviewer's words, read now through the result gate: a verdict the gate allows does not carry its notes on its own
+      const reviewNotes = releaseNote(db, changesRequestedNotes(db, card.id), input.notOwnerAudience !== false);
       return { step: changesRequestedCount(db, card.id) >= CHANGES_BEFORE_LEAD_DECIDES ? "decide_changes" : "send_back", ...base, ...(reviewNotes ? { reviewNotes } : {}), reviewers: reviewers() };
     }
     // lane review: it finished without giving a verdict, and the lead decides
@@ -316,7 +321,7 @@ export function leadNextStep(db: DatabaseSync, source: RoomRequest, input: { mem
   return { step: "review", ...base, reviewers: reviewers() };
 }
 
-interface Hop { id: string; verb: string; key: string; workItemId: string | null; text: string | null }
+interface Hop { id: string; verb: string; key: string; workItemId: string | null; text: string | null; handoff?: boolean }
 interface HopWork { workItemId: string | null; texts: string[]; question: boolean }
 /** Text shorter than this names no work of its own ("ok", "done"). */
 const SAME_WORK_MIN_CHARS = 8;
@@ -476,12 +481,22 @@ export function recordLeadWake(
   // planned the work (inputs, a hand-off note), never handing it back to the
   // owner; only an assign, or a delegation to someone else, hands work over.
   const leadId = (projectTableExists(db, "project_settings") ? (db.prepare("SELECT lead_bot_id FROM project_settings WHERE group_id=?").get(goal.group_id) as { lead_bot_id: string | null } | undefined)?.lead_bot_id : null) ?? null;
-  const handsOverHop = (hop: Hop, to: string) => hop.verb === "assign" || (hop.verb === "ask" && hop.key.startsWith("ask:delegation:") && to !== leadId);
-  const hopColumns = (t: string) => `${t}.id AS ${t}Id, ${t}.verb AS ${t}Verb, ${t}.admission_key AS ${t}Key, ${t}.work_item_id AS ${t}Work, ${t}.payload_text AS ${t}Text`;
-  const hopOf = (row: Record<string, unknown>, t: string): Hop => ({ id: String(row[`${t}Id`]), verb: String(row[`${t}Verb`]), key: String(row[`${t}Key`] ?? ""), workItemId: (row[`${t}Work`] as string | null) ?? null, text: (row[`${t}Text`] as string | null) ?? null });
+  // A hand-off is known by its durable identity, never by how its admission key is spelled: the mark on the request's own row (set by the database when the hand-off's
+  // row and the request meet, kept for the request's whole life), or the canonical key a queued hand-off is created with; a request from before the mark existed is
+  // still found by a hand-off row of its id or its receipt.
+  const pendingHandoff = projectTableExists(db, "pending_delegations") ? db.prepare("SELECT 1 FROM pending_delegations WHERE id=?") : null;
+  const isHandoff = (hop: Hop): boolean => hop.handoff || hop.key.startsWith("ask:delegation:") || Boolean(pendingHandoff?.get(hop.id)) || findDelegationReceipt(hop.id) !== null;
+  const handsOverHop = (hop: Hop, to: string) => hop.verb === "assign" || (hop.verb === "ask" && isHandoff(hop) && to !== leadId);
+  const marked = (db.prepare("PRAGMA table_info(room_requests)").all() as Array<{ name: string }>).some((column) => column.name === "handoff");
+  const hopColumns = (t: string) => `${t}.id AS ${t}Id, ${t}.verb AS ${t}Verb, ${t}.admission_key AS ${t}Key, ${t}.work_item_id AS ${t}Work, ${t}.payload_text AS ${t}Text, ${marked ? `${t}.handoff` : "NULL"} AS ${t}Handoff`;
+  // only an ask that is a hand-off can hand work back: the candidates are narrowed in SQL by the same durable identity (the mark, or the canonical key; without the
+  // mark column, a hand-off row of its id), so an ordinary return question is never even read
+  const handoffAsk = (t: string) => marked ? `(${t}.handoff=1 OR ${t}.admission_key LIKE 'ask:delegation:%')`
+    : `(${t}.admission_key LIKE 'ask:delegation:%'${pendingHandoff ? ` OR EXISTS (SELECT 1 FROM pending_delegations p WHERE p.id=${t}.id)` : ""})`;
+  const hopOf = (row: Record<string, unknown>, t: string): Hop => ({ id: String(row[`${t}Id`]), verb: String(row[`${t}Verb`]), key: String(row[`${t}Key`] ?? ""), workItemId: (row[`${t}Work`] as string | null) ?? null, text: (row[`${t}Text`] as string | null) ?? null, handoff: Number(row[`${t}Handoff`] ?? 0) === 1 });
   const handedBack = (db.prepare(`SELECT ${hopColumns("a")}, ${hopColumns("b")}, a.from_bot_id AS a, a.to_bot_id AS b FROM room_requests a JOIN room_requests b
       ON a.root_id=b.root_id AND a.from_bot_id=b.to_bot_id AND a.to_bot_id=b.from_bot_id AND b.created_at > a.created_at
-    WHERE a.project_goal_id=? AND a.verb IN ('ask','assign') AND (b.verb='assign' OR (b.verb='ask' AND b.admission_key LIKE 'ask:delegation:%' AND b.to_bot_id IS NOT ?))
+    WHERE a.project_goal_id=? AND a.verb IN ('ask','assign') AND (b.verb='assign' OR (b.verb='ask' AND ${handoffAsk("b")} AND b.to_bot_id IS NOT ?))
       AND a.from_bot_id IS NOT NULL AND b.created_at > ? ORDER BY b.created_at`).all(goal.id, leadId, input.since) as Array<Record<string, unknown>>)
     .map((row) => ({ a: String(row.a), b: String(row.b), first: hopOf(row, "a"), back: hopOf(row, "b") }))
     .find((pair) => handsOverHop(pair.back, pair.a) && descends(pair.back.id, pair.first.id) && sameWork(workOf(pair.first), workOf(pair.back)));

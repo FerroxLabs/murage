@@ -1,9 +1,14 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { pollServerIdentity } from "./server-boot-probe.mjs";
+import {
+  BOOT_PROBE_FAST_INTERVAL_MS,
+  BOOT_PROBE_FAST_WINDOW_MS,
+  BOOT_PROBE_INTERVAL_MS,
+} from "./server-boot-probe.mjs";
+import { pollServerIdentity, launchOf } from "./signed-fetch.test.mjs";
 
-const OUR_BODY = () => ({ app: "murage", pid: 4242, static: true });
+const OUR_BODY = () => ({ app: "murage", launch: launchOf("n4242"), static: true });
 
 function okFetch({ body = OUR_BODY(), status = 200 } = {}) {
   return async () => ({
@@ -16,7 +21,7 @@ function okFetch({ body = OUR_BODY(), status = 200 } = {}) {
 test("returns ready when our own child answers with its identity", async () => {
   const outcome = await pollServerIdentity({
     port: 8799,
-    pid: () => 4242,
+    nonce: () => "n4242",
     bootTimeoutMs: 5_000,
     fetchImpl: okFetch(),
   });
@@ -33,7 +38,7 @@ test("a never-completing /api/health cannot wedge the launcher past the boot bud
   const startedAt = Date.now();
   const outcome = await pollServerIdentity({
     port: 8799,
-    pid: () => 4242,
+    nonce: () => "n4242",
     bootTimeoutMs: 300,
     fetchImpl: hangUntilAborted,
   });
@@ -50,7 +55,7 @@ test("a non-2xx health response is a foreign owner, reported without waiting out
   const startedAt = Date.now();
   const outcome = await pollServerIdentity({
     port: 18799,
-    pid: () => 4242,
+    nonce: () => "n4242",
     bootTimeoutMs: 60_000,
     fetchImpl,
   });
@@ -62,7 +67,7 @@ test("a non-2xx health response is a foreign owner, reported without waiting out
 test("a non-JSON body on an HTTP response counts as a foreign owner too", async () => {
   const outcome = await pollServerIdentity({
     port: 28799,
-    pid: () => 4242,
+    nonce: () => "n4242",
     bootTimeoutMs: 60_000,
     fetchImpl: async () => ({ ok: true, status: 200, json: async () => "not json-shaped" }),
   });
@@ -73,7 +78,7 @@ test("an incomplete response body that reaches the deadline is a timeout", async
   let atDeadline = false;
   const outcome = await pollServerIdentity({
     port: 28799,
-    pid: () => 4242,
+    nonce: () => "n4242",
     bootTimeoutMs: 1_000,
     now: () => (atDeadline ? 1_000 : 0),
     fetchImpl: async () => ({
@@ -91,9 +96,9 @@ test("an incomplete response body that reaches the deadline is a timeout", async
 test("an identity mismatch (same payload shape, wrong pid) stays foreign", async () => {
   const outcome = await pollServerIdentity({
     port: 8799,
-    pid: () => 4242,
+    nonce: () => "n4242",
     bootTimeoutMs: 5_000,
-    fetchImpl: okFetch({ body: { app: "murage", pid: 999, static: true } }),
+    fetchImpl: okFetch({ body: { app: "murage", launch: launchOf("n999"), static: true } }),
   });
   assert.equal(outcome.outcome, "foreign-owner");
 });
@@ -104,7 +109,7 @@ test("a response that lands after the deadline never returns ready", async () =>
   const now = () => [0, 0, 1_001][Math.min(reads++, 2)];
   const outcome = await pollServerIdentity({
     port: 8799,
-    pid: () => 4242,
+    nonce: () => "n4242",
     bootTimeoutMs: 1_000,
     now,
     sleep: async () => {},
@@ -121,7 +126,7 @@ test("connection failures keep retrying until the budget runs out", async () => 
   };
   const outcome = await pollServerIdentity({
     port: 8799,
-    pid: () => 4242,
+    nonce: () => "n4242",
     bootTimeoutMs: 1_500,
     fetchImpl: refused,
     sleep: async () => {},
@@ -134,7 +139,7 @@ test("reports exit instead of polling after the child has died", async () => {
   let attempts = 0;
   const outcome = await pollServerIdentity({
     port: 8799,
-    pid: () => 4242,
+    nonce: () => "n4242",
     bootTimeoutMs: 5_000,
     isExited: () => true,
     fetchImpl: async () => {
@@ -159,11 +164,11 @@ test("regression: a pid read before the spawn event must not doom our own child"
   const fetchImpl = async () => {
     calls += 1;
     if (calls === 1) throw new Error("ECONNREFUSED");
-    return { ok: true, status: 200, json: async () => ({ app: "murage", pid: 4242, static: true }) };
+    return { ok: true, status: 200, json: async () => ({ app: "murage", launch: launchOf("n4242"), static: true }) };
   };
   const outcome = await pollServerIdentity({
     port: 8799,
-    pid: () => (spawned ? 4242 : undefined),
+    nonce: () => (spawned ? "n4242" : undefined),
     bootTimeoutMs: 5_000,
     sleep: async () => {
       spawned = true; // the spawn event lands while we back off between polls
@@ -179,7 +184,7 @@ test("an answer that arrives while the pid is still unknown is a foreign owner",
   // answers anyway, it is genuinely not ours.
   const outcome = await pollServerIdentity({
     port: 8799,
-    pid: () => undefined,
+    nonce: () => undefined,
     bootTimeoutMs: 5_000,
     fetchImpl: okFetch(),
   });
@@ -191,11 +196,134 @@ test("polls a booting child every 100 ms at most, so a ready port is noticed wit
   let calls = 0;
   const outcome = await pollServerIdentity({
     port: 8799,
-    pid: () => 4242,
+    nonce: () => "n4242",
     bootTimeoutMs: 5_000,
     sleep: async (ms) => { sleeps.push(ms); },
     fetchImpl: async () => { if (++calls < 3) throw new Error("ECONNREFUSED"); return okFetch()(); },
   });
   assert.equal(outcome.outcome, "ready");
   assert.deepEqual(sleeps.map((ms) => ms <= 100), [true, true]);
+});
+
+// A fake clock that only moves when the probe sleeps or a fetch costs time, so
+// the poll schedule is asserted exactly instead of against a loaded machine.
+function fakeClock() {
+  const clock = { t: 0, sleeps: [] };
+  clock.now = () => clock.t;
+  clock.sleep = async (ms) => {
+    clock.sleeps.push({ at: clock.t, ms });
+    clock.t += ms;
+  };
+  return clock;
+}
+
+test("a server that binds shortly after fork is noticed within one fast poll", async () => {
+  // Typical packaged boot: the child listens a couple hundred ms after fork.
+  // A flat 500 ms back-off only noticed it on the next poll, ~285 ms late.
+  const listensAt = 215;
+  const clock = fakeClock();
+  const fetchImpl = async () => {
+    clock.t += 1;
+    if (clock.t < listensAt) throw new Error("ECONNREFUSED");
+    return { ok: true, status: 200, json: async () => OUR_BODY() };
+  };
+  const outcome = await pollServerIdentity({
+    port: 8799,
+    nonce: () => "n4242",
+    bootTimeoutMs: 60_000,
+    now: clock.now,
+    sleep: clock.sleep,
+    fetchImpl,
+  });
+  assert.equal(outcome.outcome, "ready");
+  assert.ok(
+    outcome.latencyMs - listensAt <= BOOT_PROBE_FAST_INTERVAL_MS + 1,
+    `noticed ${outcome.latencyMs - listensAt} ms after the server listened`,
+  );
+});
+
+test("polls fast during the usual boot window, then falls back to the slow interval", async () => {
+  const clock = fakeClock();
+  const bootTimeoutMs = BOOT_PROBE_FAST_WINDOW_MS + 3 * BOOT_PROBE_INTERVAL_MS;
+  const outcome = await pollServerIdentity({
+    port: 8799,
+    nonce: () => "n4242",
+    bootTimeoutMs,
+    now: clock.now,
+    sleep: clock.sleep,
+    fetchImpl: async () => {
+      throw new Error("ECONNREFUSED");
+    },
+  });
+  assert.equal(outcome.outcome, "timeout");
+  const early = clock.sleeps.filter(({ at }) => at < BOOT_PROBE_FAST_WINDOW_MS);
+  const late = clock.sleeps.filter(({ at }) => at >= BOOT_PROBE_FAST_WINDOW_MS);
+  assert.ok(early.length > 0 && early.every(({ ms }) => ms === BOOT_PROBE_FAST_INTERVAL_MS));
+  assert.deepEqual(
+    late.map(({ ms }) => ms),
+    [BOOT_PROBE_INTERVAL_MS, BOOT_PROBE_INTERVAL_MS, BOOT_PROBE_INTERVAL_MS],
+  );
+});
+
+test("each probe's abort timer is the remaining boot budget, not the poll interval", async (t) => {
+  // A slow but healthy /api/health must not be cut off just because polling
+  // got faster: the per-fetch timeout stays tied to the wall-clock deadline.
+  const timeout = t.mock.method(AbortSignal, "timeout");
+  const clock = fakeClock();
+  const bootTimeoutMs = 1_000;
+  const remainingAtFetch = [];
+  const outcome = await pollServerIdentity({
+    port: 8799,
+    nonce: () => "n4242",
+    bootTimeoutMs,
+    now: clock.now,
+    sleep: clock.sleep,
+    fetchImpl: async () => {
+      remainingAtFetch.push(bootTimeoutMs - clock.t);
+      throw new Error("ECONNREFUSED");
+    },
+  });
+  assert.equal(outcome.outcome, "timeout");
+  assert.ok(remainingAtFetch.length > 1);
+  assert.deepEqual(
+    timeout.mock.calls.map((call) => call.arguments[0]),
+    remainingAtFetch,
+  );
+});
+
+test("readiness needs the exact boolean static:true, and a changed value is not accepted even with a valid proof", async () => {
+  const { computeProof, proofKeyOf, proofHolds, identityEnvelopeValid } = await import("../shared/boot-proof.mjs");
+  const challenge = "a".repeat(32);
+  const base = { app: "murage", pid: 7, launch: launchOf("n4242"), static: false, upgrading: false };
+  const proof = computeProof(proofKeyOf("n4242"), challenge, { status: 200, pid: 7, launch: base.launch, isStatic: false, upgrading: false });
+  assert.equal(proofHolds("n4242", challenge, { ...base, proof }, 200), true);
+  assert.equal(proofHolds("n4242", challenge, { ...base, static: "false", proof }, 200), false);
+  assert.equal(proofHolds("n4242", challenge, { ...base, static: 0, proof }, 200), false);
+  assert.equal(identityEnvelopeValid({ ...base, pid: "7" }), false);
+  assert.equal(identityEnvelopeValid({ ...base, upgrading: "yes" }), false);
+  assert.equal(identityEnvelopeValid({ ...base, launch: "x" }), false);
+  // the probe: a truthy but not-true static from an authentic-looking answer is never ready
+  const fetchImpl = async (_u, options) => {
+    const c = options.headers["x-murage-challenge"];
+    const p = computeProof(proofKeyOf("n4242"), c, { status: 200, pid: 7, launch: base.launch, isStatic: false, upgrading: false });
+    return { ok: true, status: 200, json: async () => ({ ...base, static: "false", proof: p }) };
+  };
+  const { pollServerIdentity: realPoll } = await import("./server-boot-probe.mjs");
+  const outcome = await realPoll({ port: 8799, nonce: () => "n4242", bootTimeoutMs: 5_000, fetchImpl });
+  assert.notEqual(outcome.outcome, "ready");
+  // and a truthy non-boolean with the matching proof for isStatic:true is also not ready
+  const fetch2 = async (_u, options) => {
+    const c = options.headers["x-murage-challenge"];
+    const p = computeProof(proofKeyOf("n4242"), c, { status: 200, pid: 7, launch: base.launch, isStatic: true, upgrading: false });
+    return { ok: true, status: 200, json: async () => ({ ...base, static: "yes", proof: p }) };
+  };
+  assert.notEqual((await realPoll({ port: 8799, nonce: () => "n4242", bootTimeoutMs: 5_000, fetchImpl: fetch2 })).outcome, "ready");
+});
+
+test("proof comparison decodes the digests and uses a constant-time compare with a length check", async () => {
+  const { readFileSync } = await import("node:fs");
+  const src = readFileSync(new URL("../shared/boot-proof.mjs", import.meta.url), "utf8");
+  assert.match(src, /timingSafeEqual\(want, got\)/);
+  assert.match(src, /want\.length === got\.length/);
+  assert.doesNotMatch(src, /want === body\.proof/);
 });

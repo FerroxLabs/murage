@@ -121,7 +121,13 @@ describe("a shipped Wayland team package resolves to generated assistant package
     expect(document.package.name).toBe("Dev Shop");
     expect(document.package.agents.length).toBeGreaterThan(0);
 
+    // Ship and Cole are authored inline in the package (see the roster test below).
+    const inlineRoles = ["ship", "cole"];
     for (const member of document.package.agents) {
+      if (inlineRoles.includes(member.key)) {
+        expect(member.playbooks?.length, `member "${member.key}" playbooks`).toBeGreaterThan(0);
+        continue;
+      }
       const assistant = join(ASSISTANT_LIBRARY, `${member.key}.json`);
       const builtin = join(BUILTIN_LIBRARY, `${member.key}.json`);
       const path = existsSync(assistant) ? assistant : builtin;
@@ -147,6 +153,16 @@ describe("a shipped Wayland team package resolves to generated assistant package
       "starter-business-team": ["team-coordinator", "delivery-partner", "review-partner"],
     };
     for (const id of Object.keys(embeddedRosters)) expect(files).toContain(`${id}.json`);
+    // The Ferrox teams (1.0.2) author some of their roles inline, with their
+    // own description and playbook, because the role is specific to the team
+    // (Ship, Cole, Director, Fern, Reed). The importer builds those bots from
+    // the package. Every other member of these teams must still resolve to a
+    // generated assistant, and an unlisted role still fails.
+    const inlineRoles: Record<string, string[]> = {
+      "dev-shop": ["ship", "cole"],
+      "marketing-agency": ["director"],
+      "seo-content-engine": ["fern", "reed"],
+    };
     const unresolved: string[] = [];
     for (const file of files) {
       const document = parseBotPackage(JSON.parse(readFileSync(join(TEAM_LIBRARY, file), "utf8")));
@@ -156,6 +172,15 @@ describe("a shipped Wayland team package resolves to generated assistant package
       }
       for (const member of document.package.agents) {
         if (embeddedRoster) {
+          expect(member.description?.trim().length, `${file} → ${member.key} description`).toBeGreaterThan(0);
+          expect(member.playbooks?.length, `${file} → ${member.key} playbooks`).toBeGreaterThan(0);
+          for (const key of member.playbooks ?? []) {
+            const playbook = document.package.playbooks?.find((entry) => entry.key === key);
+            expect(playbook?.instructions.trim().length, `${file} → ${member.key} → ${key}`).toBeGreaterThan(0);
+          }
+          continue;
+        }
+        if (inlineRoles[document.package.id]?.includes(member.key)) {
           expect(member.description?.trim().length, `${file} → ${member.key} description`).toBeGreaterThan(0);
           expect(member.playbooks?.length, `${file} → ${member.key} playbooks`).toBeGreaterThan(0);
           for (const key of member.playbooks ?? []) {

@@ -14,15 +14,19 @@
 // deletion sweep (section 2), activity pruning (section 2) and the forget
 // purge for derived rows (15.3). Restore preparation and paused validation
 // live here too (15.1), because they are table business and nothing else.
+import { sweepAddedOrphans } from "./added-table-lifecycle.ts";
 import { z } from "zod";
 import { createHash, randomUUID } from "node:crypto";
 import type { DatabaseSync } from "node:sqlite";
 
 import { rollupSettledUsage } from "./usage-ledger.ts";
-import { LIVE_PROJECT_CLOSES_SQL } from "./room-requests.ts";
+import { LIVE_PROJECT_CLOSES_SQL, OWNER_CANCEL_NOTE, OWNER_WORDS_KEPT, RESTORE_EXPIRED_NOTE, RESTORE_FANOUT_HELD } from "./room-requests.ts";
 
 import { InstallationSnapshotError } from "./installation-snapshot-error.ts";
 import { DEFAULT_PROJECT_PARTS } from "./project-defaults.ts";
+import { initializeRoomRequestOwed, rebuildOwedTableIfStale } from "./room-request-owed.ts";
+import { initializeSharedReady } from "./shared-ready.ts";
+import { ensureHandoffPairGuard } from "./pending-delegations-schema.ts";
 
 /** The eleven tables, in creation order. Indexes are created by the same
  * statements and are not listed separately. */
@@ -147,6 +151,29 @@ CREATE INDEX IF NOT EXISTS room_requests_root ON room_requests(root_id);
 CREATE INDEX IF NOT EXISTS room_requests_parent ON room_requests(parent_id) WHERE parent_id IS NOT NULL;
 CREATE INDEX IF NOT EXISTS room_requests_work_item ON room_requests(work_item_id) WHERE work_item_id IS NOT NULL;
 CREATE INDEX IF NOT EXISTS room_requests_to_bot ON room_requests(to_bot_id, state) WHERE to_bot_id IS NOT NULL;
+-- Startup recovery works from PENDING rows only, never history. Each partial index holds just the rows a recovery query
+-- still owes work for (a row leaves it when its words become a chip, its hold is made, or its result is delivered).
+-- The WHERE terms are literal and must match the recovery SQL (room-requests.ts OWNER_WORDS_OWED_LITERAL_SQL,
+-- restore-fanout.ts); a test asserts each query plan uses its index.
+CREATE INDEX IF NOT EXISTS room_requests_owner_words ON room_requests(finished_at, id) WHERE verb='owner_send' AND state IN ('cancelled','failed','expired','unknown') AND COALESCE(outcome_note,'')<>'cancelled by you' AND COALESCE(refusal,'')<>'owner_words_kept' AND payload_text IS NOT NULL AND payload_text<>'';
+CREATE INDEX IF NOT EXISTS room_requests_fanout_held ON room_requests(created_at, id) WHERE verb='owner_send' AND state='done' AND outcome_note='restored_fanout' AND COALESCE(refusal,'')<>'owner_words_kept';
+-- The three queue questions (room-requests.ts runnableRoomRequestIds, overdueRoomRequests): the queued rows that are not parked, and the queued rows with a
+-- deadline. Each holds queued rows only, so a request leaves its index when it leaves the queue (or, for the runnable one, when it is parked), and the cost of a
+-- sweep follows the queue, never the terminal history. The WHERE terms are literal and the queries repeat them.
+CREATE INDEX IF NOT EXISTS room_requests_runnable ON room_requests(created_at, id) WHERE state='queued' AND refusal IS NOT 'retained_unresolved';
+CREATE INDEX IF NOT EXISTS room_requests_queued_deadline ON room_requests(deadline_at, id) WHERE state='queued' AND deadline_at IS NOT NULL;
+-- The per-bot and per-room variants of the runnable question (Astra r19): led by the bot or the room, so a drain of one bot reads that bot's runnable rows only
+-- and never walks its parked ones (room_requests_to_bot and room_requests_group_state hold parked queued rows too).
+CREATE INDEX IF NOT EXISTS room_requests_runnable_bot ON room_requests(to_bot_id, created_at, id) WHERE state='queued' AND refusal IS NOT 'retained_unresolved' AND to_bot_id IS NOT NULL;
+CREATE INDEX IF NOT EXISTS room_requests_runnable_group ON room_requests(group_id, created_at, id) WHERE state='queued' AND refusal IS NOT 'retained_unresolved';
+-- When a bot last started work for a team (shared-work.ts sharedDispatchOrder): MAX(dispatched_at) is one index seek, whatever the history holds.
+CREATE INDEX IF NOT EXISTS room_requests_team_dispatch ON room_requests(to_bot_id, json_extract(execution_audience,'$.team'), dispatched_at) WHERE dispatched_at IS NOT NULL;
+-- The shared fair order (shared-work.ts nextSharedRequest): per bot, the teams that have runnable work are found by a loose scan of this index (one seek per team),
+-- and a team's oldest runnable request after a cursor is one seek. Led by the bot and the team, then (created_at, id), so a decision costs O(teams x log n), never the queue.
+CREATE INDEX IF NOT EXISTS room_requests_runnable_team ON room_requests(to_bot_id, json_extract(execution_audience,'$.team'), created_at, id) WHERE state='queued' AND refusal IS NOT 'retained_unresolved' AND to_bot_id IS NOT NULL AND json_extract(execution_audience,'$.team') IS NOT NULL;
+-- A team's continuation wake (shared-work.ts sharedTeamHead): the next step of the request the team is already running is its head, found by one seek.
+CREATE INDEX IF NOT EXISTS room_requests_queued_wake ON room_requests(to_bot_id, json_extract(execution_audience,'$.team'), created_at, id) WHERE state='queued' AND verb='wake' AND refusal IS NOT 'retained_unresolved' AND to_bot_id IS NOT NULL AND json_extract(execution_audience,'$.team') IS NOT NULL;
+-- Owed shared results and unfinished fan-outs live in room_request_owed (room-request-owed.ts), a set that holds only the rows that owe work.
 
 CREATE TABLE IF NOT EXISTS project_work_items (
   id TEXT PRIMARY KEY NOT NULL,
@@ -183,6 +210,8 @@ CREATE TABLE IF NOT EXISTS project_work_items (
   created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL, done_at INTEGER, archived_at INTEGER);
 CREATE INDEX IF NOT EXISTS project_work_items_group_state ON project_work_items(group_id, state);
 CREATE UNIQUE INDEX IF NOT EXISTS project_work_items_number ON project_work_items(group_id, number);
+-- a member's live cards in board order, read a few at a time (working-context.ts projectCardLines)
+CREATE INDEX IF NOT EXISTS project_work_items_assignee ON project_work_items(group_id, assignee_bot_id, position, created_at, id) WHERE archived_at IS NULL AND stale=0;
 
 CREATE TABLE IF NOT EXISTS project_board_columns (
   group_id TEXT NOT NULL,
@@ -303,6 +332,13 @@ CREATE TABLE IF NOT EXISTS project_member_state (
  * is absent there belongs to an older release and is skipped, not created. */
 export function initializeProjectTables(db: DatabaseSync): void {
   db.exec(PROJECT_DDL);
+  // A request that is a hand-off's says so on its own row, for its whole life (project-turn-engine.ts reads it): set by the database when the hand-off's row
+  // and the request meet (pending-delegations-schema.ts ensureHandoffPairGuard). Listed as optional in APP_TABLES; the 1.0.1 downgrade rebuilds the table without it.
+  const columns = (db.prepare("PRAGMA table_info(room_requests)").all() as Array<{ name: string }>).map((column) => column.name);
+  if (!columns.includes("handoff")) db.exec("ALTER TABLE room_requests ADD COLUMN handoff INTEGER");
+  initializeRoomRequestOwed(db);
+  initializeSharedReady(db);
+  ensureHandoffPairGuard(db);
 }
 
 // ── 15.2 the shared row validator ───────────────────────────────────────────
@@ -613,9 +649,22 @@ export function prepareProjectTablesForRestore(db: DatabaseSync, ctx: ProjectRow
   validateProjectAuthority(db);
   const modifications: Array<{ component: string; action: string }> = [];
   const has = (name: ProjectTableName) => projectTableExists(db, name);
+  // An archive from the first build of this release carries the two-column owed table: rebuilt here, with its backfill record cleared,
+  // so the restored database is seeded in full at its first open.
+  if (has("room_requests") && projectTableExists(db, "room_request_owed" as ProjectTableName) && rebuildOwedTableIfStale(db)) {
+    modifications.push({ component: "messages.db", action: "The record of finished room results still owed was rebuilt for this release" });
+  }
   if (has("room_requests")) {
-    const changed = changedRows(db.prepare(`UPDATE room_requests SET state='expired', outcome_note='restored', finished_at=?, waiting_since=NULL
-      WHERE state IN ('queued','running','waiting_owner','waiting_bot')`).run(ctx.now));
+    const changed = changedRows(db.prepare(`UPDATE room_requests SET state='expired', outcome_note=?, finished_at=?, waiting_since=NULL
+      WHERE state IN ('queued','running','waiting_owner','waiting_bot')`).run(RESTORE_EXPIRED_NOTE, ctx.now));
+    // A terminal owner send that still owes its owner a chip (the chip never persisted before the backup) is fenced the
+    // same way: startup recovery makes its chip restore-held, and a retry of its id waits for a post-restore Send again.
+    db.prepare(`UPDATE room_requests SET outcome_note=? WHERE verb='owner_send' AND state IN ('cancelled','failed','expired','unknown')
+      AND COALESCE(outcome_note,'')<>? AND COALESCE(refusal,'')<>? AND payload_text IS NOT NULL AND payload_text<>''`).run(RESTORE_EXPIRED_NOTE, OWNER_CANCEL_NOTE, OWNER_WORDS_KEPT);
+    // A done owner send whose line is committed but whose room turns were never created would be fanned out by
+    // startup recovery: fenced, so its words come back as a restore-held chip and nothing runs without a Send again.
+    db.prepare(`UPDATE room_requests SET outcome_note=? WHERE verb='owner_send' AND state='done' AND result_message_id IS NOT NULL
+      AND NOT EXISTS (SELECT 1 FROM room_requests c WHERE c.root_id=room_requests.id AND c.id<>room_requests.id)`).run(RESTORE_FANOUT_HELD);
     if (changed > 0) modifications.push({ component: "messages.db", action: `${changed} waiting room request(s) expired: this was waiting when the backup was made; ask again` });
   }
   if (has("project_work_items")) {
@@ -681,6 +730,7 @@ export function deleteProjectRows(db: DatabaseSync, groupId: string, now: number
     if (table === "room_requests") db.prepare("DELETE FROM room_requests WHERE group_id=?").run(groupId);
     else db.prepare(`DELETE FROM ${table} WHERE group_id=?`).run(groupId);
   }
+  sweepAddedOrphans(db);
 }
 
 /** SPEC-P 15.3: model-written derived text that cites a forgotten or withheld

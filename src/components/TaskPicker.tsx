@@ -39,6 +39,8 @@ import { changeThreadSnooze, useThreadAttention } from "@/lib/thread-attention";
 import { useRelativeNow } from "@/lib/relative-now";
 import { useDesktopSurface } from "@/lib/use-surface";
 import { QuestionBadge, SnoozeChoices } from "./ConversationSnooze";
+import { startConversationPrefetch } from "@/lib/conversation-cache-host";
+import { MESSAGE_PAGE_SIZE } from "@/lib/scrollback";
 
 /** Click-to-switch used to close this menu immediately, which unmounted the
  * row before a double-click (or right-click) could start a rename. Linger
@@ -191,6 +193,7 @@ export function ConversationTaskPicker({
   questions,
   canSnooze = false,
   deleteScope,
+  onPrefetch,
 }: {
   threadId: string;
   tasks: PickerTask[];
@@ -219,6 +222,9 @@ export function ConversationTaskPicker({
   canSnooze?: boolean;
   /** Whose conversations these are, for the Delete confirmation's saved-file count. */
   deleteScope?: { botId?: string; groupId?: string };
+  /** Start fetching a task's first page (pointer or focus resting on its
+   * row); returns the cancel, run when the pointer or focus moves on. */
+  onPrefetch?: (threadId: string) => () => void;
 }) {
   const [open, setOpen] = useState(initialOpen);
   const [snoozing, setSnoozing] = useState<string | null>(null);
@@ -233,6 +239,17 @@ export function ConversationTaskPicker({
   const search = useRef<HTMLInputElement>(null);
   const baseId = useId();
   const [renaming, setRenaming] = useState<string | null>(null);
+  // One prefetch at a time: resting on a row starts it, leaving cancels it.
+  const prefetching = useRef<(() => void) | null>(null);
+  const stopPrefetch = () => {
+    prefetching.current?.();
+    prefetching.current = null;
+  };
+  const startPrefetch = (target: string) => {
+    stopPrefetch();
+    if (onPrefetch && target !== threadId) prefetching.current = onPrefetch(target);
+  };
+  useEffect(() => stopPrefetch, []);
   const [draft, setDraft] = useState("");
   const [query, setQuery] = useState("");
   const [exporting, setExporting] = useState(false);
@@ -484,6 +501,10 @@ export function ConversationTaskPicker({
             data-task-nav=""
             data-in-fold={inFold}
             aria-current={active ? "true" : undefined}
+            onPointerEnter={() => startPrefetch(task.threadId)}
+            onPointerLeave={stopPrefetch}
+            onFocus={() => startPrefetch(task.threadId)}
+            onBlur={stopPrefetch}
             onClick={(e) => {
               if (taskPickerPointerIntent("click", e.detail) !== "select") return;
               if (!active) onSwitch(task.threadId);
@@ -835,6 +856,7 @@ export function TaskPicker({ bot }: { bot: Bot }) {
       onRename={(threadId, title) => dispatch({ type: "renameTask", botId: bot.id, threadId, title })}
       onDelete={(threadId) => dispatch({ type: "deleteTask", botId: bot.id, threadId })}
       deleteScope={{ botId: bot.id }}
+      onPrefetch={(threadId) => startConversationPrefetch(api, { ownerId: bot.id, threadId, pageSize: MESSAGE_PAGE_SIZE })}
       onTogglePin={(threadId, pinned) => dispatch({ type: "pinTask", botId: bot.id, threadId, pinned })}
     />
   );
@@ -893,7 +915,7 @@ export function ConfirmTaskDelete({ name, preview, onCancel, onConfirm, savedFil
     <div role="group" aria-label={`Delete ${name}?`} className="border-y border-hairline/40 bg-inset/40 px-2 py-2 text-[12.5px] text-ink">
       <p className="font-medium">Delete this conversation?</p>
       <p className="mt-0.5 text-ink-secondary">Its messages, files and history are removed from this computer.</p>
-      {deletionConsequenceLines(savedFiles, messages).map((line) => <p key={line} className="mt-0.5 text-ink-secondary">{line}</p>)}
+      {deletionConsequenceLines(savedFiles, messages, fetched?.engines).map((line) => <p key={line} className="mt-0.5 text-ink-secondary">{line}</p>)}
       <div className="mt-1.5 flex justify-end gap-1.5">
         <button type="button" onClick={onCancel} className="rounded px-2 py-1 text-ink-secondary hover:bg-raised hover:text-ink">Cancel</button>
         <button type="button" onClick={onConfirm} className="rounded bg-danger px-2 py-1 font-medium text-white">Delete</button>

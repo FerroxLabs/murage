@@ -11,6 +11,7 @@ import { mkdirSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync }
 import { join, relative } from "node:path";
 import ts from "typescript";
 import { beforeEach, describe, expect, it } from "vitest";
+import { released } from "./testing/released.ts";
 import { saveAboutMe } from "./about-me.ts";
 import { DATA_DIR } from "./config.ts";
 import { closeDatabase, database } from "./database.ts";
@@ -28,6 +29,7 @@ import { joiningBriefLayer, projectBoardLayer, projectBriefLayer, projectSummary
 import { projectRosterLine } from "./project-roster.ts";
 import { insertProjectBriefVersion } from "./project-records.ts";
 import { channelToProjectRows } from "./project-settings.ts";
+import { LineageAllowance } from "./memory/lineage-allowance.ts";
 
 const ROOT = join(import.meta.dirname, "..");
 
@@ -74,8 +76,8 @@ const SURFACE_TEXT: Record<OwnerAudienceSurface, (bot: { id: string; section?: s
   "about-me": (bot, owner) => standingContextParts(bot, { ownerAudience: owner, fileTools: true }).aboutMe,
   "memory-md": (bot, owner) => standingContextParts(bot, { ownerAudience: owner, fileTools: true }).memory,
   "team-brief": (bot, owner) => standingContextParts(bot, { ownerAudience: owner, fileTools: true }).teamBrief,
-  "project-card": (_bot, owner) => projectCardPrompt(owner, { ask: "CARD_CANARY", brief: "BRIEF_CANARY", summary: "SUMMARY_CANARY" }),
-  "continuation-results": (_bot, owner) => continuationResultsPrompt(owner, [{ botName: "Dax", state: "done", text: "RESULT_CANARY the price is 12" }]),
+  "project-card": (_bot, owner) => projectCardPrompt(owner, { ask: "CARD_CANARY", brief: "BRIEF_CANARY", summary: released("SUMMARY_CANARY") }),
+  "continuation-results": (_bot, owner) => continuationResultsPrompt(owner, [{ botName: "Dax", state: "done", answer: released("RESULT_CANARY the price is 12") }]),
   "project-brief": (bot, owner) => projectBriefLayer(database(), surfaceProject(bot.id), owner),
   "project-board": (bot, owner) => projectBoardLayer(database(), surfaceProject(bot.id), owner),
   "project-summary": (bot, owner) => projectSummaryLayer(database(), surfaceProject(bot.id), owner),
@@ -85,7 +87,7 @@ const SURFACE_TEXT: Record<OwnerAudienceSurface, (bot: { id: string; section?: s
   "working-context": (bot, owner) => {
     const thread = `wc-${bot.id}`;
     appendMessage(thread, { id: `wc-${bot.id}-${Math.random()}`, role: "bot", kind: "text", text: "WORK_CANARY sent the follow-up", at: 1 });
-    return workingContextPrompt(owner, { botId: bot.id, currentThreadId: "none", bots: [{ id: bot.id, threadId: thread }], groups: [], routines: [], now: 2 });
+    return workingContextPrompt(LineageAllowance.tool(1_000_000_000), owner, { botId: bot.id, currentThreadId: "none", bots: [{ id: bot.id, threadId: thread }], groups: [], routines: [], now: 2 });
   },
 };
 
@@ -218,6 +220,8 @@ describe("every registered owner-only surface", () => {
       ts.forEachChild(node, visit);
     };
     visit(sf);
+    // pm-sends moved the delegation turn into the hand-off dispatch: it is the second chained start
+    if (/chainRootThreadId: source,/.test(readFileSync(join(ROOT, "server", "handoff-dispatch.ts"), "utf8"))) chained.push("handoff-dispatch.ts");
     expect(missing).toEqual([]);
     expect(chained.length).toBeGreaterThanOrEqual(2);
     expect(source).toMatch(/turnAudienceIsOwner\(threadId,\{origin:opts\?\.origin,rootThreadId:opts\?\.chainRootThreadId\}\)/);

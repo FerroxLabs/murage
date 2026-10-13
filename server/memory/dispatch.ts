@@ -2,9 +2,14 @@ import type { MemoryBundle } from "../../shared/memory.ts";
 import { database } from "../database.ts";
 import { assertMemoryAccess, type MemoryAccess } from "./policy.ts";
 import type { MemorySearchBridge } from "./search.ts";
-import { contentRevoked, databaseStamp, outputRootsBad, preLineageSessionRevoked, sessionLineageBad, sessionOutputRoots } from "./replay-lineage.ts";
+import { authorityStamp } from "./authority-epoch.ts";
+import { contentRevoked, isLineageLimit, JudgeMemo, LineageAllowance, outputRootsBad, preLineageSessionRevoked, sessionLineageBad, sessionOutputRoots } from "./replay-lineage.ts";
 import { assertMemoryBundle, buildMemoryBundle, memoryHandleRecord } from "./bundle.ts";
-import { assertMemoryDisclosureCurrent, bindMemoryDisclosureSession, continuationMemoryRevoked, deliverMemoryDisclosure, linkMemoryDisclosureOutput, noteMemoryLookup, prepareMemoryDisclosure } from "./disclosures.ts";
+import { assertMemoryDisclosureCurrent, bindMemoryDisclosureSession, continuationMemoryRevoked, deliverMemoryDisclosure, linkMemoryDisclosureOutput, noteMemoryLookup, prepareMemoryDisclosure, receiptJoinsTurn } from "./disclosures.ts";
+import { heldStep } from "../observe.ts";
+import { lineageLive, sessionLookup } from "./deny-read.ts";
+import { setSendFenceDeps } from "./send-fence.ts";
+import type { LineageVerdict } from "./lineage-types.ts";
 
 /** Whether a bundle differs from the session's latest delivered frame. This is
  * a comparison, not an invalidation test: the thread's own checkpoint rolls on
@@ -23,7 +28,7 @@ export function memoryContinuationChanged(bundle:MemoryBundle,threadId:string,in
   // :lookup companion of this session. Any revoked receipt of the session, at
   // any age, ends it (one indexed probe, no row cap).
   if(memorySessionRevoked(threadId,instanceId,session))return true;
-  const latest=database().prepare("SELECT record_versions,source_versions,policy_revision,deletion_epoch FROM memory_disclosures WHERE thread_id=? AND driver_instance=? AND native_session=? AND state='delivered' ORDER BY created_at DESC, rowid DESC LIMIT 1").get(threadId,instanceId,session);
+  const latest=database().prepare("SELECT record_versions,source_versions,policy_revision,deletion_epoch FROM memory_disclosures WHERE thread_id=? AND driver_instance=? AND native_session=? AND state='delivered' AND bundle_id NOT LIKE '%:lookup' ORDER BY rowid DESC LIMIT 1").get(threadId,instanceId,session);
   return !latest || latest.policy_revision!==bundle.policyRevision || latest.deletion_epoch!==bundle.deletionEpoch
     || latest.record_versions!==JSON.stringify(bundle.recordVersions) || latest.source_versions!==JSON.stringify(bundle.sourceVersions);
 }
@@ -43,11 +48,12 @@ export function memorySessionRevoked(threadId:string,instanceId:string,session:s
  * while this turn awaited recall; that thread revokes only its own receipts,
  * so memorySessionRevoked (state and counters) cannot see it. True when the
  * session must reset and rebuild its authorized replay. The full check is
- * skipped only while the database is unmoved since `checkedStamp`, the stamp
+ * skipped only while the authority epoch is unmoved since `checkedStamp`, the stamp
  * taken right after the last full check passed. */
-export function resumedSessionInvalid(threadId:string,instanceId:string,session:string,access:MemoryAccess,checkedStamp:string|undefined,why?:{reason?:string}):boolean {
-  if(checkedStamp!==undefined&&databaseStamp()===checkedStamp)return false;
-  return continuationMemoryRevoked(threadId,instanceId,session,access,why);
+export function resumedSessionInvalid(allowance:LineageAllowance,threadId:string,instanceId:string,session:string,access:MemoryAccess,checkedStamp:string|undefined,why?:{reason?:string}):boolean { return heldStep("memory.session-check", () => resumedSessionInvalidUnheld(allowance, threadId, instanceId, session, access, checkedStamp, why)); }
+function resumedSessionInvalidUnheld(allowance:LineageAllowance,threadId:string,instanceId:string,session:string,access:MemoryAccess,checkedStamp:string|undefined,why?:{reason?:string}):boolean {
+  if(checkedStamp!==undefined&&authorityStamp()===checkedStamp)return false;
+  return continuationMemoryRevoked(allowance,threadId,instanceId,session,access,why);
 }
 /** A retained native session checked in EVERY memory mode, with no reader
  * access (memory off mints none): true when it was shown memory and that
@@ -57,22 +63,43 @@ export function resumedSessionInvalid(threadId:string,instanceId:string,session:
  * revision), any record or source it cites changed or forgotten, or a reply
  * it cites withheld. Every session, receipts or not, is also judged on the
  * replies built on memory that its context carried (its session roots, v6). */
-export function retainedSessionInvalid(threadId:string,instanceId:string,session:string,why?:{reason?:string}):boolean {
+function retainedSessionInvalidWork(allowance:LineageAllowance,threadId:string,instanceId:string,session:string,why?:{reason?:string}):boolean {
+  // the write-time session predicate first (S4): O(1) seeks; anything but "shown" resets the session
+  {const verdict=writetimeSessionVerdict(threadId,instanceId,session);if(verdict.state!=="shown"){if(why)why.reason=verdict.state==="checking"?"checking":`writetime-${verdict.reason}`;return true;}}
   try {
     // a session set at the ceiling resets rather than withholding its replies (v6)
-    const held=sessionOutputRoots(threadId,instanceId,session);
-    if(held.over){if(why)why.reason="root-ceiling";return true;}
-    if(outputRootsBad(held)){if(why)why.reason="session-roots";return true;}
-    const rows=database().prepare("SELECT * FROM memory_disclosures WHERE thread_id=? AND driver_instance=? AND native_session=? LIMIT 4097").all(threadId,instanceId,session);
+    const held=sessionOutputRoots(allowance,threadId,instanceId,session);
+    if(held.over){if(why)why.reason=held.unproven?"lineage-warming":"root-ceiling";return true;}
+    {const seen:{reason?:string}={};if(outputRootsBad(allowance,held,seen)){if(why)why.reason=seen.reason==="checking"?"checking":allowance.hit?"lineage-warming":"session-roots";return true;}}
+    // what a receipt check reads: never its output list, which grows with every reply of the session
+    // read within the turn's allowance: no more rows than it can pay for, and a session with more than that is unproven (warming), not read
+    const cap=allowance.rowRoom(threadId,4097);
+    const rows=database().prepare("SELECT bundle_id,thread_id,driver_instance,native_session,record_versions,source_versions,policy_revision,deletion_epoch,state,created_at FROM memory_disclosures WHERE thread_id=? AND driver_instance=? AND native_session=? LIMIT ?").all(threadId,instanceId,session,cap<4097?cap+1:4097);
+    if(cap<4097&&rows.length>cap)allowance.readTooBig(threadId);
+    allowance.spendRows(threadId,rows.length);
     if(!rows.length)return false;
     if(rows.length>4096){if(why)why.reason="too-many-receipts";return true;}
     if(preLineageSessionRevoked(rows,threadId,instanceId,session)){if(why)why.reason="pre-lineage";return true;}
     if(memorySessionRevoked(threadId,instanceId,session)){if(why)why.reason="receipt-revoked";return true;}
-    for(const row of rows)if(contentRevoked(row,threadId)){if(why)why.reason="memory-changed";return true;}
-    if(sessionLineageBad(threadId,instanceId,session,null)){if(why)why.reason="lineage";return true;}
+    const memo=new JudgeMemo<boolean>();
+    for(const row of rows)if(contentRevoked(allowance,row,threadId,memo)){if(why)why.reason="memory-changed";return true;}
+    if(sessionLineageBad(allowance,threadId,instanceId,session,null)){if(why)why.reason=allowance.hit?"lineage-warming":"lineage";return true;}
     return false;
-  } catch { if(why)why.reason="check-failed"; return true; }
+  } catch (error) { if(why)why.reason=isLineageLimit(error)||allowance.hit?"lineage-warming":"check-failed"; return true; }
 }
+
+/** The write-time session predicate (DESIGN-WRITETIME 1, "Sessions"): deny_session, rs-forgotten, the session's receipts (memorySessionRevoked
+ * in O(1)), and the pending window over its last lsn. Not shown means the session resets. Content reader: a retained session is judged in
+ * every memory mode, with no reader access. Until write-time lineage is written on this file the read-time checks below decide alone. */
+export function writetimeSessionVerdict(threadId:string,instanceId:string,session:string):LineageVerdict {
+  const db=database();
+  if(!lineageLive(db))return {state:"shown"};
+  return sessionLookup(db,{threadId,driverInstance:instanceId,nativeSession:session},{audience:null});
+}
+
+// the send fence lives in send-fence.ts (drivers reach it without this module's imports); this module hands it the server database
+export { assertSendFence } from "./send-fence.ts";
+setSendFenceDeps({ db: database });
 
 /** The after-recall recheck is the same one function every later pre-submit check uses. */
 export const resumedSessionInvalidAfterRecall=resumedSessionInvalid;
@@ -97,13 +124,15 @@ export class MemoryDispatchReceipt {
   constructor(bundle: MemoryBundle, access: MemoryAccess, instanceId: string) {
     this.bundle=bundle; this.access=access; this.instanceId=instanceId;
     prepareMemoryDisclosure(bundle,access,instanceId);
+    // write-time: the frame joins the running turn (its replies, notes and session carry it)
+    try { receiptJoinsTurn(access.threadId,access.botId,bundle.bundleId); } catch { /* the line keeps its own receipt link (linkMemoryDisclosureOutput) */ }
   }
   /** The native session this dispatch continues, when it resumes one
    * (index.ts). Its whole receipt set is re-checked right before dispatch and
    * again at acceptance, so a revoke that lands in between ends the session
    * instead of letting the new frame be accepted into it. */
   private resumedSession?: string;
-  /** databaseStamp() right after the last full session check passed: an unmoved database skips the next one. */
+  /** authorityStamp() right after the last full session check passed: an unmoved authority epoch skips the next one. */
   private sessionCheckedStamp?: string;
   resumes(session:string,checkedStamp?:string) { this.resumedSession=session; this.sessionCheckedStamp=checkedStamp; }
   /** Every pre-submit check (before dispatch, after the image await, at the
@@ -115,8 +144,8 @@ export class MemoryDispatchReceipt {
    * was submitted; the re-dispatch finds the session invalid and resets. */
   private assertSessionCurrent() {
     if(this.resumedSession===undefined)return;
-    if(resumedSessionInvalid(this.access.threadId,this.instanceId,this.resumedSession,this.access,this.sessionCheckedStamp))throw new Error("MEMORY_CONTEXT_REVOKED");
-    this.sessionCheckedStamp=databaseStamp();
+    if(resumedSessionInvalid(LineageAllowance.tool(),this.access.threadId,this.instanceId,this.resumedSession,this.access,this.sessionCheckedStamp))throw new Error("MEMORY_CONTEXT_REVOKED");
+    this.sessionCheckedStamp=authorityStamp();
   }
   assertCurrent() { if(this.failure)throw this.failure; assertMemoryBundle(this.bundle,this.access); this.assertSessionCurrent(); }
   private boundSession?: string;
@@ -130,7 +159,7 @@ export class MemoryDispatchReceipt {
       if(this.failure)return false;
       assertMemoryBundle(this.bundle,this.access);
       const session=this.boundSession??this.resumedSession;
-      return session===undefined||!resumedSessionInvalid(this.access.threadId,this.instanceId,session,this.access,undefined);
+      return session===undefined||!resumedSessionInvalid(LineageAllowance.tool(),this.access.threadId,this.instanceId,session,this.access,undefined);
     } catch { return false; }
   }
   /** Acceptance, run by every adapter write (SendTurnInput.beforeSubmit) and
@@ -168,12 +197,16 @@ export class MemoryDispatchReceipt {
     if(!records.length||access.botId!==this.access.botId||access.threadId!==this.access.threadId||access.generation!==this.access.generation)return;
     if(!noteMemoryLookup(this.bundle.bundleId,this.lookupBundleId??=`${this.bundle.bundleId}:lookup`,records))
       throw Object.assign(new Error("MEMORY_LOOKUP_LIMIT: this turn has looked up as much as it can; answer with what you have"),{status:409});
+    // write-time: what the turn looked up joins it (a note it writes next rests on it)
+    try { receiptJoinsTurn(this.access.threadId,this.access.botId,this.lookupBundleId); } catch { /* outputs still link the lookup receipt */ }
   }
   /** Sources the turn was shown outside the frame (the replies its working
    * context quotes, working-context.ts): a reply built from them rests on them. */
   noteSources(sources:ReadonlyArray<{sourceId:string;revision:number}>) {
     if(!sources.length)return true;
-    return noteMemoryLookup(this.bundle.bundleId,this.lookupBundleId??=`${this.bundle.bundleId}:lookup`,[],sources);
+    const noted=noteMemoryLookup(this.bundle.bundleId,this.lookupBundleId??=`${this.bundle.bundleId}:lookup`,[],sources);
+    if(noted)try { receiptJoinsTurn(this.access.threadId,this.access.botId,this.lookupBundleId); } catch { /* outputs still link the lookup receipt */ }
+    return noted;
   }
   /** Resolve a turn-local handle (m1, m2, …) from the remembered-context frame
    * this receipt delivered. Only the capability that dispatched the turn may
@@ -188,7 +221,7 @@ export class MemoryDispatchReceipt {
  * await, keeping the original authority snapshot so revocation still fails. */
 export async function buildMemoryBundleAfterReset(
   query: string, access: MemoryAccess, bridge: MemorySearchBridge,
-  reset: () => Promise<void>, options: Parameters<typeof buildMemoryBundle>[3] = {},
+  reset: () => Promise<void>, options: Parameters<typeof buildMemoryBundle>[3],
 ) {
   assertMemoryAccess(access);
   await reset();
@@ -224,3 +257,7 @@ export function withheldPinLine(threadId: string, bundle: MemoryBundle & {withhe
   for (const key of fresh) noted.add(key);
   return fresh.length ? WITHHELD_PIN_LINE : undefined;
 }
+
+// ---- the entry points of the lineage reads, each timed (see LineageAllowance.timed) ----
+/** retainedSessionInvalid, timed against the allowance's wall-clock budget (1.0.2 lineage-cold r3: nodes bound the count, this bounds the time). */
+export function retainedSessionInvalid(...args: Parameters<typeof retainedSessionInvalidWork>): ReturnType<typeof retainedSessionInvalidWork> { return args[0].timed(() => retainedSessionInvalidWork(...args)); }

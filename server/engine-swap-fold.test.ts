@@ -1,8 +1,11 @@
+import { isRestoreHeld, releaseHeldContinuation, runnableContinuation } from "./restore-fence.ts";
+import { createHash } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { stripTypeScriptTypes } from "node:module";
 import { fileURLToPath } from "node:url";
 import { runInNewContext } from "node:vm";
 import { describe, expect, it, vi } from "vitest";
+import { database } from "./database.ts";
 import { Store, type Message } from "./store.ts";
 import { checkReplyActions, toolAction } from "./reply-action-guard.ts";
 import { renderDriverReplay, replayMetadata } from "./turn-context.ts";
@@ -10,6 +13,9 @@ import { plainConnectedAppText } from "../shared/connected-app-tools.ts";
 import { engineStamp } from "./engine-profile.ts";
 import { memberTurnProvenance, turnIsBackground } from "./message-automation.ts";
 import { isLiveRoutineRunStatus } from "./routines.ts";
+import { adoptStagedImages, memoryEchoDecision, retainSession } from "./fold-steps.ts";
+import { providerReplyOf } from "./provider-reply.ts";
+import { LineageAllowance } from "./memory/lineage-allowance.ts";
 
 /** Execute the production event fold with isolated storage and inert outside
  * services. This is a behavior test, not a census of source substrings. */
@@ -22,6 +28,7 @@ function foldFixture() {
   const noop = () => undefined;
   const scope: Record<string, unknown> = {
     store, toolAction, engineStamp, plainConnectedAppMessage: (row: unknown) => row,
+    fluxFirstTokenProbe: { observe: noop, begin: noop },
     accountProjectEvent: noop, shouldIgnoreProviderEvent: () => false, replyGuardContext: () => null,
     accountPresentedProjectEvent: () => true, presentedRequests: { publish: noop },
     localVmThreadTargets: new Map(), groupGoalCoordinatorTurns: new Map(), groupGoalCoordinatorTurnForEvent: () => null,
@@ -33,7 +40,8 @@ function foldFixture() {
     routinePeerSources: new Map(), routinePeerApprover: (value: unknown) => value,
     questionFromChoices: (summary: string, choices: string[]) => ({ question: summary, options: choices }),
     lowRiskStamp: () => ({}), askMessageByRequest: new Map(), resolveAutoReviewMode: () => "off",
-    appendDecision: noop, DATA_DIR: "fixture", workAdmission: { liveTurns: () => [] }, notify: noop, buildNotification: noop,
+    createHash, retainSession, adoptStagedImages, memoryEchoDecision, generatedImagesByTurn: new Map(), memoryEchoReplies: new Map(),
+    performance, providerReplyOf, appendDecision: noop, addSourcesToRunningTurn: noop, DATA_DIR: "fixture", workAdmission: { liveTurns: () => [] }, notify: noop, buildNotification: noop,
   };
   const source = readFileSync(new URL("./index.ts", import.meta.url), "utf8");
   const plainStart = source.indexOf("function plainConnectedAppMessage");
@@ -41,7 +49,17 @@ function foldFixture() {
   const start = source.indexOf("const foldRuntimeEvent =");
   const end = source.indexOf("\nbus.subscribe(foldRuntimeEvent)", start);
   const code = stripTypeScriptTypes(source.slice(start, end)) + "\nfoldRuntimeEvent;";
-  const fold = runInNewContext(code, scope) as (event: Record<string, unknown>) => void;
+  const production = runInNewContext(code, scope) as (event: Record<string, unknown>) => void;
+  // Production events each carry their own eventId, and the fold derives a message's stable id from it (so a redelivery of the SAME
+  // event adds nothing twice). These fixtures reuse one literal eventId across many distinct events, so every distinct event
+  // object gets its own suffix here; passing the same object again is a redelivery and keeps its id.
+  const issued = new WeakMap<object, string>();
+  let issuedCount = 0;
+  const fold = (event: Record<string, unknown>) => {
+    let id = issued.get(event);
+    if (!id) { id = `${String(event.eventId ?? "event")}#${++issuedCount}`; issued.set(event, id); }
+    production({ ...event, eventId: id });
+  };
   return { store, bot, fold, stamps, instance, scope };
 }
 
@@ -97,7 +115,7 @@ it("F2 resumes held requests through their original dispatcher after authority r
   const end = source.indexOf("\nstore.onChange(change =>", start);
   const scope = { store, roomEngine: { ready: true }, registry: { get: () => ({ adapter: { capabilities: { agentsMcp: true } } }) }, routeHasTools: () => true,
     threadHumanPrincipal: () => principal, routines: { listRuns: () => [{ id: "original-run", threadId: bot.threadId, status: "waiting" }], getEventBudget: () => ({ closed: false }) },
-    startTurn: async (...args: unknown[]) => { calls.push(args); }, startCardContinuation: async () => { throw new Error("wrong dispatcher"); }, noteHeldQueue: () => {} };
+    startTurn: async (...args: unknown[]) => { calls.push(args); }, startCardContinuation: async () => { throw new Error("wrong dispatcher"); }, noteHeldQueue: () => {}, runnableContinuation, isRestoreHeld, releaseHeldContinuation, currentRestoreGeneration: () => null };
   const drain = runInNewContext(stripTypeScriptTypes(source.slice(start, end)) + "\ndrainHeldContinuations;", scope);
   await drain(bot.id);
   expect(calls).toHaveLength(1);
@@ -125,7 +143,7 @@ it.each(["bot", "project"])("skips a held %s route with no model selection and c
   const end = source.indexOf("\nstore.onChange(change =>", start);
   const drain = runInNewContext(stripTypeScriptTypes(source.slice(start, end)) + "\ndrainHeldContinuations;", {
     store, roomEngine: { ready: true }, registry: { get }, routeHasTools: () => true,
-    threadHumanPrincipal: () => principal, startTurn, noteHeldQueue: () => {},
+    threadHumanPrincipal: () => principal, startTurn, noteHeldQueue: () => {}, runnableContinuation, isRestoreHeld, releaseHeldContinuation, currentRestoreGeneration: () => null,
   });
   try {
     await expect(drain(bot.id)).resolves.toBeUndefined();
@@ -185,10 +203,10 @@ it("F11 room continuation admission preserves the originating connection card", 
   // the real provenance seam: a room turn is told its automation by memberTurnAutomation, so it is extracted, not stubbed
   const memberStart = source.indexOf("function memberTurnAutomation(");
   const memberEnd = source.indexOf("/** The message the owner pinned", memberStart);
-  const scope = { store, memberTurnProvenance, turnIsBackground, isLiveRoutineRunStatus, backupRestartAdmission: { held: () => false }, routineRunLevel: () => null, roomRounds: new Map(), cfg: {},
+  const scope = { LineageAllowance, store, memberTurnProvenance, turnIsBackground, isLiveRoutineRunStatus, backupRestartAdmission: { held: () => false }, routineRunLevel: () => null, roomRounds: new Map(), cfg: {},
     registry: { get: () => ({ adapter: { capabilities: {} } }) }, routeHasTools: () => false,
     threadHumanPrincipal: () => ({ kind: "owner" }), routines: { listRuns: () => [] },
-    botPermissionMode: () => "ask", routinePeerSource: () => undefined, turnSessionAudience: () => "audience", latestRoomUserMessage: () => undefined, noteHeldQueue: () => {} };
+    botPermissionMode: () => "ask", routinePeerSource: () => undefined, turnSessionAudience: () => "audience", latestRoomUserMessage: () => undefined, noteHeldQueue: () => {}, runnableContinuation, isRestoreHeld, releaseHeldContinuation, currentRestoreGeneration: () => null };
   const run = runInNewContext(stripTypeScriptTypes(source.slice(memberStart, memberEnd) + source.slice(start, end) + "\n}") + "\nrunGroupMemberTurn;", scope);
   // noMentionChain (mobile lane) precedes memoryRedispatch, heldContinuation and continuationCardId
   expect(await run(group.id, group.threadId, bot.id, 0, new Set(), "Continue", undefined, undefined, undefined, undefined, undefined, undefined, false, false, undefined, original.id)).toBe(false);
@@ -438,5 +456,46 @@ describe("provider reload retires hosted-row anchors", () => {
     const anchors = filled();
     await expect(reload(anchors, new Set(["off"]), async () => { throw new Error("dispose failed"); })).rejects.toThrow("dispose failed");
     expect([...anchors.keys()]).toEqual(["room-thread"]);
+  });
+});
+
+// ── what the production fold counts as the provider's reply to a hand-off (DESIGN-r26 §1) ──
+describe("the production fold marks only the engine's own reply as the proof that a hand-off ran", () => {
+  let handoffs = 0;
+  function handoffThread() {
+    const id = `h${++handoffs}`;
+    const fixture = foldFixture();
+    Object.assign(fixture.scope, { redactSecretsInText: (text: string) => text, parseRuntimeErrorDiagnostic: () => undefined, ERROR_MESSAGE_MAX: 200, RETRY_MAX_ATTEMPTS: 3 });
+    const db = database();
+    db.prepare("INSERT INTO pending_delegations(id, source_thread_id, to_bot_id, from_bot_id, phase, retry_at, item, origin, turn_key, target_thread_id) VALUES(?,?,?,?,?,?,?,?,?,?)")
+      .run(id, "src", fixture.bot.id, null, "fresh", null, "{}", "owner", `dlg-${id}`, fixture.bot.threadId);
+    // the prompt and the start commit together, as the dispatch writes them
+    fixture.store.appendMessage(fixture.bot.threadId, { role: "user", kind: "text", text: "go" }, `dlg-${id}`, () => { db.prepare("UPDATE pending_delegations SET phase='started', started_at=1, submitted_at=1 WHERE id=?").run(id); });
+    const evidence = () => (db.prepare("SELECT evidence_at FROM pending_delegations WHERE id=?").get(id) as { evidence_at: number | null }).evidence_at;
+    const base = { threadId: fixture.bot.threadId, turnId: "turn-1", providerInstanceId: "fixture", provider: "claudeAgent" };
+    return { ...fixture, evidence, base };
+  }
+  it("a spawn failure (Murage's own error line, stamped with the turn id) and every Murage-origin item prove nothing", () => {
+    const { fold, evidence, base } = handoffThread();
+    fold({ ...base, eventId: "e1", type: "runtime.error", message: "spawn failed" });
+    fold({ ...base, eventId: "e2", type: "turn.retrying", attempt: 1, delayMs: 1000, reason: "x" });
+    fold({ ...base, eventId: "e3", type: "item.started", itemType: "tool", itemId: "wake", origin: "murage", title: "Waking up" });
+    fold({ ...base, eventId: "e4", type: "item.completed", itemType: "assistant_text", origin: "murage", text: "a cap note" });
+    expect(evidence()).toBeNull();
+  });
+  it("the engine's reply after Murage's own lines of the same turn is the proof (the walk goes on past Murage's lines)", () => {
+    const { fold, evidence, base } = handoffThread();
+    fold({ ...base, eventId: "e1", type: "item.started", itemType: "tool", itemId: "wait", origin: "murage", title: "Waiting for connected apps" });
+    expect(evidence()).toBeNull();
+    fold({ ...base, eventId: "e2", type: "item.completed", itemType: "assistant_text", origin: "engine", text: "on it" });
+    expect(evidence()).not.toBeNull();
+  });
+  it("a tool the engine started is the proof too, and an engine item with no origin is not (a new emit that forgot to choose proves nothing)", () => {
+    const none = handoffThread();
+    none.fold({ ...none.base, eventId: "e1", type: "item.completed", itemType: "assistant_text", text: "no origin" });
+    expect(none.evidence()).toBeNull();
+    const tool = handoffThread();
+    tool.fold({ ...tool.base, eventId: "e1", type: "item.started", itemType: "tool", itemId: "t1", origin: "engine", title: "Read" });
+    expect(tool.evidence()).not.toBeNull();
   });
 });

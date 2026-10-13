@@ -1,5 +1,8 @@
 import type { Bot, InstanceInfo } from "@/state/store";
 
+/** Windows has no host-control destination; this says what it has instead. */
+export const WINDOWS_COMPUTER_TEXT = "On Windows, bots work on a cloud computer or a local VM. Pick one in Computer settings.";
+
 export function instanceSupportsLocalComputer(
   instances: InstanceInfo[],
   bot: Pick<Bot, "modelSelection">,
@@ -33,6 +36,7 @@ export function localComputerDisabledReason({
   capabilities: DesktopCapabilities;
   providerSupportsLocal: boolean;
 }): string | null {
+  if (capabilities.host.platform === "win32") return WINDOWS_COMPUTER_TEXT;
   if (!providerSupportsLocal) {
     return "The selected provider cannot request approvals for local computer actions.";
   }

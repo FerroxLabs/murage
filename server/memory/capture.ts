@@ -1,20 +1,26 @@
 import { authoredTurnPieces } from "../reply-action-guard.ts";
-import { purgeThreadLearning } from "./evolution-forgetting.ts";
 import { threadHumanPrincipal, isWorkspaceOwner } from "../human-principals.ts";
 import { createHash, randomUUID } from "node:crypto";
 import type { DatabaseSync } from "node:sqlite";
+import { memoryCaptures } from "./capture-gate.ts";
+import { memoryGate } from "./memory-gate.ts";
+import { turnFirstRowid } from "../transcript-backfill.ts";
 import type { Message } from "../store.ts";
 import { redactSecretsInText } from "../redact.ts";
 import { reconcilePipStances } from "./pip-stance.ts";
-import { applyMemoryTombstones } from "./restore.ts";
+import { applyForgetTombstones } from "./restore.ts";
+import { REVOCATION_JOB_SUBJECT } from "./memory-revocation.ts";
 import { forgetParkedSource, parkRetiredThreadJobs, reopenParkedThreadJobs } from "./park.ts";
+import { memoryClaimIndex } from "./claim-index.ts";
 import { enqueueProcedureSourceReview } from "./procedure-review.ts";
 import { threadCaptureScope } from "./capture-scope.ts";
 import { withoutImageTags } from "../../src/lib/composer-attachments.ts";
 import { scopeRow } from "./scope-id.ts";
-import { revokeAllDisclosures, revokeThreadDisclosures } from "./revocation.ts";
+import { revokeThreadDisclosures } from "./revocation.ts";
+import { commitRevoke } from "./revoke-commit.ts";
+import { writeCaptureLineage } from "./lineage-write.ts";
 
-function enabled(db: DatabaseSync) { return db.prepare("SELECT mode FROM memory_meta WHERE id=1").get()?.mode !== "off"; }
+function enabled(db: DatabaseSync) { const mode = db.prepare("SELECT mode FROM memory_meta WHERE id=1").get()?.mode as string | undefined; return memoryCaptures(mode, memoryGate(db, "capture") === "ok" ? null : "held"); }
 function excludedThread(db:DatabaseSync,threadId:string){return Boolean(db.prepare("SELECT 1 FROM memory_scope_bindings b,json_each(b.intent,'$.excludedThreadIds') e WHERE b.id='memory-owner-settings' AND e.value=? LIMIT 1").get(threadId));}
 /** The scope a thread's sources are captured into: its room's scope for a
  * room or project desk thread, else its own conversation (capture-scope.ts). */
@@ -41,6 +47,8 @@ export function captureSource(db: DatabaseSync, source: {id: string; threadId: s
   const hash = createHash("sha256").update(JSON.stringify(content)).digest("hex");
   const scope = captureScopeId(db,source.threadId);
   if (db.prepare("SELECT 1 FROM memory_tombstones WHERE (target_type='source' AND target_id=? AND revision IS NULL) OR (target_type='import' AND target_id=? AND content_hash=?)").get(source.id,scope,hash)) return;
+  // a deleted conversation or bot takes nothing new (deny.ts)
+  if (db.prepare("SELECT 1 FROM memory_deny WHERE (kind='thread' AND id=?) OR (kind='scope' AND id=?)").get(source.threadId,scope)) return;
   const previous = db.prepare("SELECT revision,content_hash,state FROM memory_sources WHERE id=?").get(source.id);
   if (previous?.state === "deleted") return;
   if (previous?.content_hash === hash) {
@@ -61,6 +69,8 @@ export function captureSource(db: DatabaseSync, source: {id: string; threadId: s
     revision=excluded.revision,content_hash=excluded.content_hash,outcome=excluded.outcome,kind=excluded.kind,state=excluded.state,branch_id=excluded.branch_id`)
     .run(source.id,scope,source.threadId,source.messageId??null,source.turnId??null,revision,hash,source.kind,source.speaker,source.outcome,source.parentId??null,source.excluded?"retired":"active");
   db.prepare("INSERT INTO memory_source_versions VALUES(?,?,?,?,?)").run(source.id,revision,hash,payload,Date.now());
+  // the line -> source edge the marker follows when the line is revoked (DESIGN-WRITETIME 2.6)
+  if(source.messageId)writeCaptureLineage(db,{threadId:source.threadId,messageId:source.messageId},source.id);
   db.prepare("UPDATE memory_jobs SET status='cancelled',lease_generation=lease_generation+1 WHERE source_id=? AND status NOT IN ('complete','cancelled')").run(source.id);
   forgetParkedSource(db,source.id);
   const meta = db.prepare("SELECT policy_revision,deletion_epoch FROM memory_meta WHERE id=1").get()!;
@@ -76,14 +86,48 @@ export function captureSource(db: DatabaseSync, source: {id: string; threadId: s
  * recall and later admission see all of it, not only the last piece. Pieces
  * join in storage order with a blank line. A removal row's removedText never
  * joins (it is not part of what the engine said to the person). */
+export const TURN_WALK_MAX = 512;
 export function wholeTurnText(db: DatabaseSync, threadId: string, message: Message): string {
   if (!message.turnId) return message.text ?? "";
+  // Keeps the turn's first row on record (turn_first) for a turn begun before that table existed; free once kept.
+  turnFirstRowid(db, threadId, message.turnId, message.id);
+  // The parent-link walk reads root to this message only: right for the turn's last piece, which is all capture holds; a
+  // message with later pieces of its turn after it (the engine payload's reader) needs the branch read.
+  const path = (message.turnTerminal ? turnPath(db, threadId, message) : null) ?? boundedBranchPath(db, threadId, message);
+  return authoredTurnPieces(path, message).map(piece => piece.id === message.id ? message.text : piece.text).filter(Boolean).join("\n\n");
+}
+/** The rows of the captured message's turn, root to message: walked up the parent links from the message itself until the first row of an
+ * earlier turn (a different turnId), so the cost is the turn's length, never the history's. Null (not provable: a missing link, a row that
+ * is not held, a loop, or past TURN_WALK_MAX rows) sends the caller to the rowid-bounded branch read. */
+function turnPath(db: DatabaseSync, threadId: string, message: Message): Message[] | null {
+  const rows: Message[] = [message];
+  const seen = new Set<string>([message.id]);
+  const read = db.prepare("SELECT json FROM messages WHERE thread_id=? AND id=?");
+  let at: string | null | undefined = message.parentId;
+  while (at !== null) {
+    if (at === undefined || seen.has(at) || rows.length > TURN_WALK_MAX) return null;
+    const row = read.get(threadId, at);
+    if (!row) return null;
+    const parsed = JSON.parse(String(row.json)) as Message;
+    if (parsed.turnId && parsed.turnId !== message.turnId) break;
+    seen.add(at); rows.push(parsed);
+    at = parsed.parentId;
+  }
+  return rows.reverse();
+}
+function boundedBranchPath(db: DatabaseSync, threadId: string, message: Message): Message[] {
+  // Only this turn's own rows matter (authoredTurnPieces), and a parent is
+  // always stored before its child, so the walk up the branch stops at the
+  // turn's first row instead of climbing to the root of a very long thread.
+  // The turn's first row is kept as it is written (turn_first); a turn that began
+  // before that table existed is found the long way, once.
+  const first = { first: turnFirstRowid(db, threadId, message.turnId!, message.id) };
   const rows = db.prepare(`WITH RECURSIVE path(id,parent,json,depth) AS (
     SELECT id,json_extract(json,'$.parentId'),json,0 FROM messages WHERE thread_id=? AND id=(SELECT active_leaf_id FROM thread_state WHERE thread_id=?)
-    UNION ALL SELECT m.id,json_extract(m.json,'$.parentId'),m.json,p.depth+1 FROM messages m JOIN path p ON m.id=p.parent WHERE m.thread_id=?
-  ) SELECT json FROM path ORDER BY depth DESC`).all(threadId,threadId,threadId);
+    UNION ALL SELECT m.id,json_extract(m.json,'$.parentId'),m.json,p.depth+1 FROM messages m JOIN path p ON m.id=p.parent WHERE m.thread_id=? AND m.rowid>=? AND p.depth<10000
+  ) SELECT json FROM path ORDER BY depth DESC`).all(threadId,threadId,threadId,first.first ?? 0);
   const path = rows.map(row => JSON.parse(String(row.json)) as Message);
-  return authoredTurnPieces(path, message).map(piece => piece.id === message.id ? message.text : piece.text).filter(Boolean).join("\n\n");
+  return path;
 }
 
 /** Only folded message fields are accepted; raw provider envelopes never enter here. */
@@ -120,53 +164,48 @@ export function captureBranchChange(db: DatabaseSync, threadId: string, leafId: 
   db.prepare("UPDATE memory_sources SET state=CASE WHEN message_id IN (SELECT value FROM json_each(?)) THEN 'active' ELSE 'retired' END WHERE thread_id=? AND message_id IS NOT NULL AND state!='deleted' AND kind IN ('text','tool-outcome')").run(active,threadId);
   // A retired source's jobs can never be claimed: park them out of the open set, and bring back the ones whose source is active again.
   parkRetiredThreadJobs(db,threadId);reopenParkedThreadJobs(db,threadId);
+  // Sources active again bring their open jobs back: the claim's ready index sweeps for them (review finding 5).
+  memoryClaimIndex.reopened();
   revokeThreadDisclosures(db,threadId,"branch-change");
 }
 
 /** Deleting a conversation forgets what memory captured from it, whatever
  * the memory mode is now: sources captured while memory was on are still on
  * disk after it is turned off. The rows stay (tombstones, epochs and the
- * evidence graph point at them) but the conversation's words do not. */
+ * evidence graph point at them) but the conversation's words do not.
+ * The commit writes one deny row for the conversation (deny.ts: every reader refuses its sources from here on) and the epoch
+ * bump; its sources are tombstoned, ended and blanked by the durable job's thread phase, a page at a time. */
 export function captureThreadDeletion(db: DatabaseSync, threadId: string) {
-  // What was learned from this conversation goes with it, captured or not (owner-typed feedback text included).
-  purgeThreadLearning(db, threadId);
+  // The deny row and the epoch bump are written whatever memory captured from the conversation (revbound r3 A1, Fable P1-2): a line
+  // carried out of it, or a lesson citing one of its messages, has no source row to be refused by, only the conversation's deny.
+  db.exec("UPDATE memory_meta SET deletion_epoch=deletion_epoch+1 WHERE id=1");
+  const epoch = Number(db.prepare("SELECT deletion_epoch FROM memory_meta WHERE id=1").get()!.deletion_epoch);
+  db.prepare("INSERT OR IGNORE INTO memory_deny(kind,id,epoch,created_at) VALUES('thread',?,?,?)").run(threadId, epoch, Date.now());
+  // write-time: the thread's lines denied, its carries out and captures walked by the marker (revoke-commit.ts)
+  const revokeId = commitRevoke(db, { kind: "thread", threadId, cause: "delete-conversation" });
+  const tracked = revokeId ? { revokeId } : {};
   if (!db.prepare("SELECT 1 FROM memory_sources WHERE thread_id=? LIMIT 1").get(threadId)) {
+    // nothing captured: what was learned from this conversation still goes with it (owner-typed feedback text included)
+    applyForgetTombstones(db, { sources: [], records: [] }, { job: { threads: [threadId], phases: ["learning", "done"], ...tracked }, messages: threadId });
     if (enabled(db)) revokeThreadDisclosures(db,threadId,"thread-deletion",{includeRevoked:true});
     return;
   }
-  db.exec("UPDATE memory_meta SET deletion_epoch=deletion_epoch+1 WHERE id=1");
-  const epoch = Number(db.prepare("SELECT deletion_epoch FROM memory_meta WHERE id=1").get()!.deletion_epoch);
-  const sources = db.prepare("SELECT id FROM memory_sources WHERE thread_id=? AND state!='deleted'").all(threadId);
-  for (const source of sources) {
-    db.prepare("INSERT INTO memory_tombstones VALUES(?,'source',?,NULL,NULL,?,'thread-deleted',?)").run(randomUUID(),source.id,epoch,Date.now());
-    db.prepare("UPDATE memory_sources SET state='deleted' WHERE id=?").run(source.id);
-    db.prepare("UPDATE memory_jobs SET status='cancelled',lease_generation=lease_generation+1 WHERE source_id=? AND status!='cancelled'").run(source.id);
-    forgetParkedSource(db,String(source.id));
-  }
-  revokeThreadDisclosures(db,threadId,"thread-deletion",{includeRevoked:true});
-  applyMemoryTombstones(db);
-  db.prepare(`UPDATE memory_records SET text='' WHERE state='deleted' AND EXISTS (SELECT 1 FROM memory_evidence e JOIN memory_sources s
-    ON s.id=e.source_id WHERE e.record_id=memory_records.id AND e.record_version=memory_records.version AND s.thread_id=?)`).run(threadId);
-  db.prepare("UPDATE memory_source_versions SET payload=? WHERE source_id IN (SELECT id FROM memory_sources WHERE thread_id=? AND state='deleted')")
-    .run(JSON.stringify({ deleted: "thread-deleted" }), threadId);
+  applyForgetTombstones(db, { sources: [], records: [] }, { job: { thread: threadId, threads: [threadId], cause: "thread-deletion", ...tracked }, before: ["thread"], messages: threadId });
 }
 
-/** Bot notebooks, including every composite partition, share deletion semantics. */
+/** Bot notebooks, including every composite partition, share deletion semantics. The commit writes one deny row per scope (every
+ * reader refuses its sources and records from here on), the epoch and policy bump and the bindings' revoke; its sources and
+ * records are tombstoned, ended and blanked by the durable job's scope phase, then every receipt made before the commit ends. */
 export function captureBotDeletion(db: DatabaseSync, botId: string): void {
   const scopes = db.prepare("SELECT id FROM memory_scopes WHERE kind='bot' AND (owner_key=? OR substr(owner_key,1,?)=?)").all(botId,botId.length+1,botId+"#").map(row=>String(row.id));
   if (!scopes.length) return;
   const encoded = JSON.stringify(scopes);
   db.exec("UPDATE memory_meta SET deletion_epoch=deletion_epoch+1,policy_revision=policy_revision+1 WHERE id=1");
   const epoch = Number(db.prepare("SELECT deletion_epoch FROM memory_meta WHERE id=1").get()!.deletion_epoch);
-  for (const source of db.prepare("SELECT id FROM memory_sources WHERE scope_id IN (SELECT value FROM json_each(?))").all(encoded)) {
-    db.prepare("INSERT INTO memory_tombstones VALUES(?,'source',?,NULL,NULL,?,'bot-deleted',?)").run(randomUUID(),source.id,epoch,Date.now());
-    db.prepare("UPDATE memory_jobs SET status='cancelled',lease_generation=lease_generation+1 WHERE source_id=?").run(source.id);
-    forgetParkedSource(db,String(source.id));
-  }
-  for (const record of db.prepare("SELECT id FROM memory_records WHERE scope_id IN (SELECT value FROM json_each(?))").all(encoded)) db.prepare("INSERT INTO memory_tombstones VALUES(?,'record',?,NULL,NULL,?,'bot-deleted',?)").run(randomUUID(),record.id,epoch,Date.now());
-  applyMemoryTombstones(db);
-  db.prepare("UPDATE memory_records SET text='',state='deleted' WHERE scope_id IN (SELECT value FROM json_each(?))").run(encoded);
-  db.prepare("UPDATE memory_source_versions SET payload=? WHERE source_id IN (SELECT id FROM memory_sources WHERE scope_id IN (SELECT value FROM json_each(?)))").run(JSON.stringify({deleted:"bot-deleted"}),encoded);
-  db.prepare("UPDATE memory_scope_bindings SET state='revoked' WHERE scope_id IN (SELECT value FROM json_each(?))").run(encoded);
-  revokeAllDisclosures(db,"bot-deletion",{includeRevoked:true});
+  const deny = db.prepare("INSERT OR IGNORE INTO memory_deny(kind,id,epoch,created_at) VALUES('scope',?,?,?)");
+  for (const scope of scopes) deny.run(scope, epoch, Date.now());
+  db.prepare("UPDATE memory_scope_bindings SET state='revoked' WHERE scope_id IN (SELECT value FROM json_each(?)) AND NOT (subject_type='system' AND subject_id=?)").run(encoded, REVOCATION_JOB_SUBJECT);
+  // write-time: the bot's scopes' records walked by the marker (its conversations are deleted, each its own thread revoke)
+  const revokeId = commitRevoke(db, { kind: "bot", botId, threadIds: [], cause: "delete-bot" });
+  applyForgetTombstones(db, { sources: [], records: [] }, { job: { scopes, cause: "bot-deletion", ...(revokeId ? { revokeId } : {}) }, before: ["scope"], tail: "all" });
 }

@@ -18,10 +18,13 @@ import {
   connectedServices,
   connectionStatus,
   forgetInventoryMemory,
+  hasRememberedConnected,
   primeBrokerReadiness,
   relayMcp,
   refreshFluxAccountStatusBriefly,
   removeAccount,
+  connectedAppsEpoch,
+  setToolsCachePurger,
   resetManagedBrokerState,
 } from "./composio.ts";
 import { DATA_DIR, type AppConfig } from "./config.ts";
@@ -211,6 +214,18 @@ describe("a remembered list is never shown after it stopped being true", () => {
     expect(after.gmail).toBeUndefined();
   });
 
+  it("purges the bridge's remembered tool lists and changes the access epoch when an account is disconnected", async () => {
+    let purged = 0;
+    setToolsCachePurger(() => { purged += 1; });
+    try {
+      await connectedServices(cfg());
+      const before = connectedAppsEpoch();
+      await removeAccount(cfg(), "gmail", "ca_1");
+      expect(purged).toBe(1);
+      expect(connectedAppsEpoch()).toBe(before + 1);
+    } finally { setToolsCachePurger(null); }
+  });
+
   it("never stores a refresh that began before a disconnect", async () => {
     inventoryDelayMs = 30;
     const early = connectedServices(cfg()); // reads the broker while ca_1 still exists
@@ -336,6 +351,29 @@ describe("tool search and schema cache", () => {
     expect(mcpCalls).toBe(1);
   });
 
+  it("answers tools/list from what it remembers, and never serves it once the connected apps changed", async () => {
+    const tools = [{ name: "COMPOSIO_SEARCH_TOOLS", inputSchema: { type: "object" } }];
+    upstreamMcp = (payload) => ({ status: 200, body: { jsonrpc: "2.0", id: payload.id, result: { tools } } });
+    const list = (id: number) => ({ jsonrpc: "2.0", id, method: "tools/list" });
+    expect((await run(list(1))).result.tools).toEqual(tools);
+    expect(mcpCalls).toBe(1);
+    // Same revision: no broker call at all.
+    expect(await run(list(2))).toMatchObject({ id: 2, result: { tools } });
+    expect(mcpCalls).toBe(1);
+    // A new revision of the connected apps: what was remembered is dropped, not
+    // served (an engine that lists once would keep a disconnected account's
+    // tools); the answer is the authoritative one, asked for at once.
+    await connectedServices(cfg());
+    await authorizeService(cfg(), "slack", "work");
+    const third = await run(list(3));
+    expect(third).toMatchObject({ id: 3, result: { tools } });
+    expect(third.result._meta).toBeUndefined();
+    expect(mcpCalls).toBe(2);
+    // And it is remembered again under the new revision.
+    expect(await run(list(4))).toMatchObject({ id: 4, result: { tools } });
+    expect(mcpCalls).toBe(2);
+  });
+
   it("drops cached searches when the inventory changes", async () => {
     await run(search(1));
     await connectedServices(cfg());
@@ -376,6 +414,21 @@ describe("the panel route's inventory", () => {
       expect(panel.read.services?.gmail.connected).toBe(true);
       expect(panel.read.revalidating).toBe(true);
     }
+  });
+
+  it("the bot access card: a remembered list is served at once, then the background refresh updates it", async () => {
+    await connectedServices(cfg());
+    forgetInventoryMemory();
+    expect(hasRememberedConnected(cfg())).toBe(true);
+    inventory = { ...gmail(), slack: { connected: true, pending: false, status: "ACTIVE", accounts: [{ id: "ca_2", status: "ACTIVE" }] } };
+    inventoryDelayMs = 300;
+    const started = Date.now();
+    const first = await connectedServices(cfg()); // what GET /api/bots/:id/access reads (not fresh)
+    expect(Date.now() - started).toBeLessThan(150);
+    expect(Object.keys(first)).toEqual(["gmail"]);
+    let later = first;
+    for (let i = 0; i < 40 && !later.slack; i++) { await new Promise((r) => setTimeout(r, 50)); later = await connectedServices(cfg()); }
+    expect(later.slack?.accounts?.[0]?.id).toBe("ca_2");
   });
 
   it("still answers with the remembered list while the broker is unreachable", async () => {

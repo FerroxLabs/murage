@@ -2,11 +2,15 @@
 // A disk and CPU watchdog with application byte accounting. Periodic work
 // consults its source's backoff before starting. Turns, routines, user actions,
 // claimed jobs and owner-requested writes always proceed; it never stops a turn.
+// CPU is judged on the whole computer too (system-load.ts: load average and all
+// cores busy, children and other apps included), not only Murage's own process.
 import { AsyncLocalStorage } from "node:async_hooks";
 import { closeSync, openSync, readSync, statSync } from "node:fs";
 import { endianness } from "node:os";
-import type { DatabaseSync } from "node:sqlite";
+import type { DatabaseSync, StatementSync } from "node:sqlite";
 import { turnTraceEnabled } from "./turn-trace.ts";
+import { reportSlowSql, SLOW_SQL_MS } from "./observe.ts";
+import { systemLoad } from "./system-load.ts";
 
 export const IO_BUDGET_INTERVAL_MS = 60_000;
 export const IO_BUDGET_BYTES_PER_MINUTE = 50 * 1024 * 1024;
@@ -33,6 +37,8 @@ export interface IoBudgetOptions {
   cpuMinutes?: number;
   isIdle?: () => boolean;
   onMemoryWork?: () => void;
+  /** The whole computer is overloaded (default: the system-load sampler, which reads nothing until started). */
+  systemOverloaded?: () => { overloaded: boolean; why: string } | null;
 }
 
 export function readProcess(): IoReading {
@@ -58,6 +64,7 @@ export class IoBudget {
   private sourceContext = new AsyncLocalStorage<string>();
   private isIdle: () => boolean;
   private onMemoryWork?: () => void;
+  private systemOverloaded: () => { overloaded: boolean; why: string } | null;
   private deferredSource: string | null = null;
   private deferUntil = 0;
   /** Totals at the last statement-trace line, so each line is one minute's cost. */
@@ -73,6 +80,7 @@ export class IoBudget {
     this.cpuMinutes = options.cpuMinutes ?? IO_BUDGET_CPU_MINUTES;
     this.isIdle = options.isIdle ?? (() => false);
     this.onMemoryWork = options.onMemoryWork;
+    this.systemOverloaded = options.systemOverloaded ?? (() => systemLoad.reading());
   }
 
   /** Replace the listener told when the scale changes. */
@@ -145,6 +153,7 @@ export class IoBudget {
       if (this.statements.size >= 500) this.statements.clear();
       this.statements.set(key, { sql: key, calls: 1, ms });
     }
+    if (keyed && ms > SLOW_SQL_MS) reportSlowSql(shortStatement(key), ms, this.currentSource() ?? statementSource(key));
   }
 
   topStatements(count = 3): StatementCost[] {
@@ -179,7 +188,10 @@ export class IoBudget {
     const osBytes = Math.max(0, (reading.fsWriteBlocks - previous.fsWriteBlocks) * BLOCK_BYTES);
     const writeBytesPerMinute = Math.max(osBytes, applicationBytes) / minutes;
     const cpu = (reading.cpuMicros - previous.cpuMicros) / 1000 / (reading.at - previous.at);
-    this.hotCpuMinutes = cpu > this.cpuFraction ? this.hotCpuMinutes + 1 : 0;
+    let system: { overloaded: boolean; why: string } | null = null;
+    try { system = this.systemOverloaded(); } catch { /* unknown load: Murage's own CPU decides */ }
+    const systemHot = system?.overloaded === true;
+    this.hotCpuMinutes = cpu > this.cpuFraction || systemHot ? this.hotCpuMinutes + 1 : 0;
     let idle = false;
     try { idle = this.isIdle(); } catch { /* startup uses the active budget */ }
     const budget = idle ? IO_BUDGET_IDLE_BYTES_PER_MINUTE : this.bytesPerMinute;
@@ -193,7 +205,7 @@ export class IoBudget {
       this.deferredSource = [...this.bytes].sort((a,b) => b[1]-a[1])[0]?.[0] ?? this.topStatements(1)[0]?.sql ?? "process";
       this.deferUntil = reading.at + next * IO_BUDGET_INTERVAL_MS;
       this.log(`[io-budget] ${writing ? `writing ${(writeBytesPerMinute / 1048576).toFixed(1)} MB/min (budget ${(budget / 1048576).toFixed(0)})` : ""}`
-        + `${writing && spinning ? ", " : ""}${spinning ? `cpu ${(cpu * 100).toFixed(0)}% for ${this.hotCpuMinutes} min` : ""}; source: ${this.deferredSource}; top statements: ${top}; poll rate x1/${next}`);
+        + `${writing && spinning ? ", " : ""}${spinning ? `cpu ${(cpu * 100).toFixed(0)}%${systemHot ? ` (computer: ${system!.why})` : ""} for ${this.hotCpuMinutes} min` : ""}; source: ${this.deferredSource}; top statements: ${top}; poll rate x1/${next}`);
       this.setScale(next);
       this.statements.clear(); this.traced.clear();
       if (spinning) this.hotCpuMinutes = 0;
@@ -235,6 +247,12 @@ export class IoBudget {
 /** The text a statement is filed under. Done once per prepare, not per run:
  *  the Inbox projection is ten kilobytes of SQL. */
 export function statementKey(sql: string): string { return sql.replace(/\s+/g, " ").trim().slice(0, 160); }
+
+/** The lineage checks (memory/replay-lineage.ts) run for whichever caller asks, under no source of their own.
+ *  Their statements are known by the tables only they read, so a slow one is reported as `lineage`. */
+const LINEAGE_SQL = /\b(?:memory_disclosure_outputs|memory_output_roots|memory_session_roots|memory_root_set\w*|lineage_(?:dirty|epoch|structure))\b|^WITH (?:RECURSIVE )?direct\(b\)/i;
+/** The source a statement with no source of its own is reported under, when its text says. */
+export function statementSource(key: string): string | undefined { return LINEAGE_SQL.test(key) ? "lineage" : undefined; }
 
 /** A statement for a trace line: literals (quoted text, numbers) replaced by ?, cut at 80 characters. */
 export function shortStatement(sql: string): string {
@@ -316,6 +334,26 @@ export function walFrameReader(databaseFile: string): (() => number) & { close()
   return Object.assign(read, { close, fd: () => held?.fd });
 }
 
+// Statement reuse for a synchronous pass that runs the same few statements thousands of times (a session's receipts are
+// checked record by record: ~60,000 prepares for one check). While a pass is open, preparing the same SQL again on the same
+// handle returns the statement already made. Statements are only shared inside the pass, which is synchronous, so no two users
+// ever hold one at the same time; the cache is dropped when the next outermost pass opens.
+let reuseDepth = 0, reuseGeneration = 0;
+export function withStatementReuse<T>(work: () => T): T {
+  if (reuseDepth++ === 0) reuseGeneration++;
+  try { return work(); } finally { reuseDepth--; }
+}
+const REUSE_LIMIT = 512;
+// Every write through an instrumented handle moves its counter (conservatively: a statement that can write, or any exec). A memo
+// that only needs to know "did this connection write since I looked" reads it instead of asking SQLite for total_changes().
+const writeCounts = new WeakMap<object, number>();
+export const writeStamp = (db: object): number | undefined => writeCounts.get(db);
+const wrote = (db: object) => writeCounts.set(db, (writeCounts.get(db) ?? 0) + 1);
+/** Whether a synchronous pass is open (the data folder cannot be swapped under it). */
+export const inStatementReusePass = () => reuseDepth > 0;
+/** Identifies the open pass (0 when none), so a memo made inside one is never read in another. */
+export const statementReusePassId = () => reuseDepth > 0 ? reuseGeneration : 0;
+
 /** Time every statement run through this handle, so a trip can name the culprits. */
 export function instrumentDatabase(db: DatabaseSync, budget: IoBudget = ioBudget): () => void {
   const prepare = db.prepare.bind(db);
@@ -325,13 +363,22 @@ export function instrumentDatabase(db: DatabaseSync, budget: IoBudget = ioBudget
   let transactionSource = source;
   const sample = (name: string) => { if (source) budget.sampleByteSource(source, name); };
   const exec = db.exec.bind(db);
+  writeCounts.set(db, 0);
   db.exec = (sql: string) => {
     const inTransaction = db.isTransaction;
     if (!inTransaction) sample(source);
+    wrote(db);
     exec(sql);
     if (!db.isTransaction) sample(budget.currentSource() ?? (inTransaction ? transactionSource : statementKey(sql)));
   };
+  const reuse = new Map<string, StatementSync>();
+  let reuseSeen = -1;
   (db as unknown as { prepare: unknown }).prepare = (sql: string) => {
+    if (reuseDepth > 0) {
+      if (reuseSeen !== reuseGeneration) { reuse.clear(); reuseSeen = reuseGeneration; }
+      const known = reuse.get(sql);
+      if (known) return known;
+    }
     const statement = prepare(sql);
     const key = statementKey(sql);
     const tokens = sql.replace(/'(?:''|[^'])*'|--[^\n]*|\/\*[\s\S]*?\*\//g, " ");
@@ -349,9 +396,10 @@ export function instrumentDatabase(db: DatabaseSync, budget: IoBudget = ioBudget
           }
           if (memoryWork && method === "run" && Number((result as {changes:number|bigint}).changes) > 0) budget.notifyMemoryWork();
           return result;
-        } finally { budget.note(key, performance.now() - started, true); }
+        } finally { if (writes) wrote(db); budget.note(key, performance.now() - started, true); }
       };
     }
+    if (reuseDepth > 0 && reuse.size < REUSE_LIMIT) reuse.set(sql, statement);
     return statement;
   };
   return unregister;

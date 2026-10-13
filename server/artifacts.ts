@@ -154,6 +154,8 @@ export function initializeArtifacts(db: DatabaseSync) {
   const columns = new Set((db.prepare("PRAGMA table_info(artifacts)").all() as Array<{ name: string }>).map(column => column.name));
   if (!columns.has("producer")) db.exec("ALTER TABLE artifacts ADD COLUMN producer TEXT");
   if (!columns.has("publication_id")) db.exec("ALTER TABLE artifacts ADD COLUMN publication_id TEXT");
+  // a bot's newest files, newest first, read without sorting its whole history (working-context.ts recentFiles)
+  db.exec("CREATE INDEX IF NOT EXISTS artifacts_bot_date ON artifacts(bot_id,created_at DESC)");
   db.exec(`CREATE TABLE IF NOT EXISTS output_publications (
     id TEXT PRIMARY KEY, producer TEXT NOT NULL, bot_id TEXT NOT NULL, thread_id TEXT NOT NULL, run_id TEXT NOT NULL,
     path_token TEXT NOT NULL, sha256 TEXT NOT NULL, mime TEXT NOT NULL, bytes INTEGER NOT NULL, stage TEXT NOT NULL,
@@ -161,7 +163,10 @@ export function initializeArtifacts(db: DatabaseSync) {
     created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL,
     UNIQUE(producer,bot_id,thread_id,run_id,path_token,sha256));
     CREATE INDEX IF NOT EXISTS output_publications_scope ON output_publications(bot_id,thread_id,run_id);
-    CREATE INDEX IF NOT EXISTS output_publications_stage ON output_publications(stage,updated_at);`);
+    CREATE INDEX IF NOT EXISTS output_publications_stage ON output_publications(stage,updated_at);
+    -- Shell card recovery (output-publication.ts resumeRegisteredShellCards) reads only registered, unannounced receipts that have
+    -- an artifact: its work follows the runs still owing a card, never the history of published outputs. Same WHERE as that query.
+    CREATE INDEX IF NOT EXISTS output_publications_unannounced ON output_publications(bot_id,thread_id,run_id,created_at) WHERE producer='shell-output' AND stage='registered' AND message_id IS NULL AND artifact_id IS NOT NULL;`);
 }
 interface Row { id: string; name: string; kind: ArtifactKind; mime: string; bytes: number; sha256: string; extension: string; created_at: number; bot_id: string; thread_id: string; run_id: string; source_root: string; relative_path: string; source_fingerprint: string; producer: string | null; publication_id: string | null }
 const blobName = (row: Pick<Row, "sha256" | "extension">) => {

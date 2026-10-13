@@ -26,21 +26,26 @@
 //    crash left behind.
 import { DEFAULT_HERMES_PROFILE, hermesHome, isHermesProfileName } from "./hermes-profiles.ts";
 import { createHash, randomUUID } from "node:crypto";
-import { chmodSync, closeSync, ftruncateSync, fsyncSync, lstatSync, mkdirSync, openSync, readFileSync, readSync, readdirSync, readlinkSync, realpathSync, rmSync, rmdirSync, unlinkSync, writeSync } from "node:fs";
+import { lstatSync, readFileSync, readdirSync, realpathSync } from "node:fs";
 import { homedir } from "node:os";
 import nodePath from "node:path";
-import { DatabaseSync } from "node:sqlite";
-import zlib from "node:zlib";
+import type { DatabaseSync } from "node:sqlite";
 
 import { writeFileAtomic } from "./atomic.ts";
-import { blake3Hex } from "./blake3.ts";
-import { removeAcpEngineHistory, type AcpHistoryEngine } from "./engine-history-deletion.ts";
+import { lstatOrNull, removeConfined, type RemoveOutcome } from "./engine-exec.ts";
+import type { AcpHistoryEngine } from "./engine-history-deletion.ts";
+import { applyFactsDelta, MAX_ENGINE_ROUNDS } from "./engine-history-run.ts";
+import { runEngineHistoryOffThread, type EngineDiscovery, type EngineHistoryJob, type EngineHistoryResult } from "./engine-history-offthread.ts";
+import { hasContentSteps, homeKey, pathApiFor, type EnginePlanData, type HomePlanData } from "./engine-plan-core.ts";
+import { scrubWalAfterDelete } from "./wal-maintenance.ts";
+import { closeThreadLog, threadLogNames, threadSessionLines, threadTempFiles, type SessionReadOptions } from "./harness/event-log.ts";
 
 const ID = /^[\w-]+$/;
+/** How long a "Removed from <Engine>." line stays on screen. */
+const DONE_LINE_MS = 5 * 60_000;
 const ATTACHMENT_NAME = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\.[a-z0-9]{1,5}$/i;
 const ATTACHMENT_IN_TEXT = /[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\.[a-z0-9]{1,5}/gi;
 const ARTIFACT_BLOB = /^[a-f0-9]{64}\.[a-z0-9]{1,12}$/;
-const FIRST_LINE_BYTES = 1024 * 1024;
 
 export type DeletionEngine = "fuigo" | "grok" | "claude" | "codex" | AcpHistoryEngine;
 export interface DeletionEngineHome {
@@ -52,6 +57,9 @@ export interface DeletionEngineHome {
   secondary?: string;
   /** OpenCode: OPENCODE_DB when set */
   db?: string;
+  /** The real paths of the programs Murage is configured to run for this engine: a renamed copy of one still counts as the engine
+   * when the process check looks for it (engine-closed.ts). */
+  identities?: string[];
 }
 /** Something this deletion could not remove, in words the owner can act on. */
 /** Something this deletion could not remove, in plain words the app shows
@@ -82,6 +90,67 @@ export interface PendingConversationDeletion {
   attachments: string[];
   artifactBlobs: string[];
   leftovers: DeletionLeftover[];
+  /** What the engines' removal needs, found by a read-only pass and saved BEFORE the first engine file is removed: session and
+   * thread ids, slugs, and the engine databases still owed a verified checkpoint. A retry works from this list, not from
+   * files an interrupted run may already have removed. */
+  engineDiscovery?: EngineDiscovery;
+  /** The engines' removal as a PLAN, saved BEFORE the first engine step runs: every step (a removal, a file rewrite, a SQL
+   * delete, a checkpoint...) with a `done` mark, per engine home. It is the record of what this attempt is doing. Every attempt
+   * begins with a fresh plan of ALL homes and nothing in an earlier plan counts as proof that a home is finished. */
+  enginePlan?: EnginePlanData;
+  /** What is still owed to the owner after the retry schedule has run out: since when, and per engine home why, as a code. The
+   * words shown come from ownerNoticeText (never a path or an error). Cleared when the deletion finishes. */
+  owed?: OwedStatus;
+}
+export type OwedCode = "engine-open" | "engine-unchecked" | "held" | "aside" | "using" | "unreadable" | "unopenable" | "helper" | "other";
+export interface OwedStatus { since: number; homes: Array<{ engine: DeletionEngine; code: OwedCode; /** the desktop application that is open (Claude, Cursor), when that is why */ app?: string }> }
+/** What the owner is told about an engine copy that is still owed. */
+export interface OwnerNotice { id: string; text: string; /** the owner may ask Murage to try again now (false for a line that says a copy is gone) */ tryAgain: boolean }
+
+/** The codes that mean "tried and not touched, try again soon": an engine that is open or cannot be told, a file another program has, a
+ * file the engine started anew. Each is asked about every 10 minutes at most (the owner closes an engine whenever they like) and told on
+ * the FIRST attempt. */
+const WAITS_FOR_OWNER: ReadonlySet<OwedCode> = new Set<OwedCode>(["engine-open", "engine-unchecked", "held", "aside"]);
+
+/** The code for a home's first failure reason. */
+export function owedCodeOf(reason: string | undefined): OwedCode {
+  const text = reason ?? "";
+  if (text === "engine-open") return "engine-open";
+  if (text === "engine-unchecked") return "engine-unchecked";
+  if (text === "held") return "held";
+  if (text === "aside") return "aside";
+  if (/^(EACCES|EPERM|EROFS)$/.test(text)) return "unopenable";
+  if (/^(EIO|EMFILE|ENFILE|ENAMETOOLONG|ENOENT|ENOTDIR|EISDIR)$/.test(text)) return "unreadable";
+  if (/^(busy|changed|locked|engine-running)$/.test(text) || /locked by its engine|kept changing|still being written/.test(text)) return "using";
+  if (text === "worker-unavailable" || text === "helper") return "helper";
+  return "other";
+}
+/** The line for an engine that keeps its files in a synced folder (shown once, after the conversation is removed from it). */
+export function syncedHomeText(label: string): string {
+  return `This conversation is removed from ${label}. ${label} keeps its files in a synced folder, so your cloud provider may still hold older copies in its version history.`;
+}
+/** The words for one owed engine copy. Authored here, keyed by code; no paths, no errors. */
+export function ownerNoticeText(label: string, code: OwedCode, app?: string): string {
+  const head = `${label}'s copy of this conversation could not be removed yet`;
+  const tail = "Murage will try again when it starts.";
+  switch (code) {
+    // the approved lines (DESIGN-r20 section 7): the engine, or, when its desktop app matched, the engine or that app by the app's own name
+    // (the Claude app holds Claude Code's files too)
+    case "engine-open": {
+      const shown = app?.trim();
+      return shown
+        ? `${label} or the ${shown} app is open. Close them and Murage will finish removing this conversation from ${label}.`
+        : `${label} is open. Close ${label} and Murage will finish removing this conversation from it.`;
+    }
+    case "engine-unchecked": return `Murage will check again within 10 minutes whether ${label} is open.`;
+    case "held": return `Another program is using ${label}'s files. Murage will try again in 10 minutes.`;
+    case "aside": return `${label} started a new file while Murage had the old one set aside. Murage will join them and try again in 10 minutes.`;
+    case "using": return `${head} because ${label} was using its history. ${tail}`;
+    case "unreadable": return `${head} because ${label}'s history could not be read. ${tail}`;
+    case "unopenable": return `${head} because Murage was not allowed to open ${label}'s history. ${tail}`;
+    case "helper": return `${head} because Murage could not start its cleanup helper. ${tail}`;
+    default: return `${head}. ${tail}`;
+  }
 }
 
 export interface DeletionInput {
@@ -100,69 +169,22 @@ export interface DeletionInput {
   instanceKind?: (instanceId: string) => string | undefined;
 }
 
-// ── pure path helpers ───────────────────────────────────────────────────
+// Path and key helpers live with the planners (engine-plan-core.ts, engine-keys.ts) and the confined removal with the executor
+// (engine-exec.ts); they stay importable from here.
+export { isStrictlyInside, pathApiFor } from "./engine-plan-core.ts";
+export { claudeProjectKey, engineSlug, fuigoMemoryKey, fuigoSessionKey, rustUrlEncode } from "./engine-keys.ts";
+export { allowOwnerWrites, removeConfined, type RemoveOutcome } from "./engine-exec.ts";
+export { removeEngineHistoryFiles, runEngineHistoryJob } from "./engine-history-run.ts";
 
-type PathApi = typeof nodePath.posix;
-
-/** The path module a path is written for: a drive letter or UNC prefix is Windows. */
-export function pathApiFor(path: string): PathApi {
-  return /^[A-Za-z]:[\\/]/.test(path) || path.startsWith("\\\\") ? nodePath.win32 : process.platform === "win32" ? nodePath.win32 : nodePath.posix;
-}
-
-/** True only for a path strictly below `root` (never `root` itself). */
-export function isStrictlyInside(root: string, target: string, api: PathApi = pathApiFor(root)): boolean {
-  if (!api.isAbsolute(root) || !api.isAbsolute(target)) return false;
-  const rel = api.relative(api.resolve(root), api.resolve(target));
-  return rel !== "" && rel !== ".." && !rel.startsWith(`..${api.sep}`) && !api.isAbsolute(rel);
-}
-
-/** The `urlencoding` crate's `encode`: every UTF-8 byte except ASCII
- * letters, digits and `-._~` becomes `%XX` in upper-case hex. Fuigo and Grok
- * name a folder's session directory with it (fuigo-config paths.rs
- * `encode_cwd_dirname`). encodeURIComponent differs on `!*'()`. */
-export function rustUrlEncode(value: string): string {
-  let out = "";
-  for (const byte of Buffer.from(value, "utf8")) {
-    const ch = String.fromCharCode(byte);
-    out += /[A-Za-z0-9\-._~]/.test(ch) ? ch : `%${byte.toString(16).toUpperCase().padStart(2, "0")}`;
+/** Names in `path`; absent or unreadable is empty. Only the deletion service's own folders (workspaces, skill-state) are listed
+ * this way: the engines' files are always read through the strict reader (engine-fs.ts). */
+function listDir(path: string): string[] {
+  try {
+    const stat = lstatSync(path);
+    return stat.isDirectory() && !stat.isSymbolicLink() ? readdirSync(path) : [];
+  } catch {
+    return [];
   }
-  return out;
-}
-
-/** fuigo-config paths.rs `slugify`. */
-export function engineSlug(input: string, maxLength: number): string {
-  let result = "";
-  let previousDash = false;
-  for (const ch of input.toLowerCase()) {
-    if (/^[a-z0-9]$/.test(ch)) {
-      result += ch;
-      previousDash = false;
-    } else if (!previousDash) {
-      result += "-";
-      previousDash = true;
-    }
-  }
-  return [...result.replace(/^-+|-+$/g, "")].slice(0, maxLength).join("");
-}
-
-/** Fuigo/Grok `sessions/<key>` for a folder (fuigo-config paths.rs
- * `encode_cwd_dirname`): the urlencoded folder, or past 255 bytes
- * `<slug of the leaf>-<first 16 hex of blake3(folder)>`. */
-export function fuigoSessionKey(cwd: string): string {
-  const encoded = rustUrlEncode(cwd);
-  if (Buffer.byteLength(encoded) <= 255) return encoded;
-  const leaf = pathApiFor(cwd).basename(cwd) || "workspace";
-  return `${engineSlug(leaf, 40) || "workspace"}-${blake3Hex(cwd).slice(0, 16)}`;
-}
-
-/** Fuigo/Grok memory folder `memory/<slug>-<first 8 hex of blake3>` for a
- * folder outside any git repository (fuigo-memory storage.rs
- * `compute_workspace_hash`): slug and hash both come from the canonical
- * path. Inside a repository the name follows the repository's remote and is
- * shared by every clone, so it is never computed here. */
-export function fuigoMemoryKey(canonicalFolder: string): string {
-  const leaf = pathApiFor(canonicalFolder).basename(canonicalFolder) || "workspace";
-  return `${engineSlug(leaf, 40) || "workspace"}-${blake3Hex(canonicalFolder).slice(0, 8)}`;
 }
 
 /** Is `folder` inside a git repository (a `.git` entry in it or any parent)? */
@@ -177,467 +199,9 @@ export function insideGitRepository(folder: string): boolean {
   }
 }
 
-/** Remove the lines a predicate picks from a shared JSONL log, keeping the
- * file's inode: Fuigo writers hold O_APPEND handles on it and its own trim
- * rewrites in place for that reason (fuigo-telemetry unified_log.rs
- * `trim_file`). Kept lines are written over the head, then the file is cut. */
-export function scrubJsonlInPlace(path: string, drop: (row: Record<string, unknown>) => boolean): number {
-  const stat = lstatOrNull(path);
-  if (!stat || !stat.isFile() || stat.isSymbolicLink()) return 0;
-  const text = readFileSync(path, "utf8");
-  let removed = 0;
-  const kept = text.split("\n").filter((line) => {
-    if (!line.trim()) return true;
-    try {
-      const row = JSON.parse(line) as unknown;
-      if (row && typeof row === "object" && drop(row as Record<string, unknown>)) {
-        removed++;
-        return false;
-      }
-    } catch { /* a torn line is kept as it is */ }
-    return true;
-  });
-  if (!removed) return 0;
-  const bytes = Buffer.from(kept.join("\n"), "utf8");
-  const fd = openSync(path, "r+");
-  try {
-    writeSync(fd, bytes, 0, bytes.length, 0);
-    ftruncateSync(fd, bytes.length);
-    fsyncSync(fd);
-  } finally {
-    closeSync(fd);
-  }
-  return removed;
-}
-
-/** Claude Code `projects/<key>`: every character that is not an ASCII letter
- * or digit becomes `-`; over 200 characters the key is cut and a hash is
- * appended (read from the shipped 2.1.x bundle). The mapping is lossy, so a
- * directory is removed only when the sessions inside it name this folder. */
-export function claudeProjectKey(cwd: string): { exact: string } | { prefix: string } {
-  const key = cwd.replace(/[^a-zA-Z0-9]/g, "-");
-  return key.length <= 200 ? { exact: key } : { prefix: `${key.slice(0, 200)}-` };
-}
-
 /** checkpoints.ts `shadowDir` key for a folder. */
 export function checkpointKey(realFolder: string): string {
   return createHash("sha256").update(nodePath.resolve(realFolder)).digest("hex").slice(0, 16);
-}
-
-function sameFolder(a: string, b: string): boolean {
-  const api = pathApiFor(a);
-  if (api === nodePath.win32) return nodePath.win32.normalize(a).toLowerCase() === nodePath.win32.normalize(b).toLowerCase();
-  return nodePath.posix.normalize(a) === nodePath.posix.normalize(b);
-}
-
-// ── confined removal ────────────────────────────────────────────────────
-
-export type RemoveOutcome = "removed" | "absent" | "refused" | "failed";
-
-function lstatOrNull(path: string) {
-  try {
-    return lstatSync(path);
-  } catch (error) {
-    if ((error as NodeJS.ErrnoException).code === "ENOENT" || (error as NodeJS.ErrnoException).code === "ENOTDIR") return null;
-    throw error;
-  }
-}
-
-/** Remove `target`, which must sit strictly inside `root`, without
- * following a symlink anywhere between them. A symlink target is unlinked
- * as a link. */
-export function removeConfined(root: string, target: string): RemoveOutcome {
-  const api = pathApiFor(root);
-  if (!isStrictlyInside(root, target, api)) return "refused";
-  try {
-    const parts = api.relative(api.resolve(root), api.resolve(target)).split(api.sep);
-    let at = api.resolve(root);
-    const rootStat = lstatOrNull(at);
-    if (!rootStat) return "absent";
-    for (const part of parts.slice(0, -1)) {
-      at = api.join(at, part);
-      const stat = lstatOrNull(at);
-      if (!stat) return "absent";
-      if (stat.isSymbolicLink() || !stat.isDirectory()) return "refused";
-    }
-    const full = api.join(at, parts[parts.length - 1]!);
-    const stat = lstatOrNull(full);
-    if (!stat) return "absent";
-    if (stat.isSymbolicLink() || !stat.isDirectory()) unlinkSync(full);
-    else {
-      try { rmSync(full, { recursive: true, force: true }); }
-      catch {
-        // W-D8: a conversation's workspace keeps read-only skill files
-        // (.murage-procedures). The Node inside Electron refuses those on
-        // Windows (EPERM), so the folder stayed after Delete and the retry
-        // at the next start failed the same way. Give the owner write
-        // permission back, never through a link, and try once more.
-        allowOwnerWrites(full);
-        rmSync(full, { recursive: true, force: true });
-      }
-    }
-    return lstatOrNull(full) ? "failed" : "removed";
-  } catch {
-    return "failed";
-  }
-}
-
-/** Adds the owner's write permission to `directory` and everything in it,
- * without following a link or junction. On Windows this clears the
- * read-only attribute. Best effort: whatever still refuses is reported by
- * the removal that follows. */
-export function allowOwnerWrites(directory: string): void {
-  const pending = [directory];
-  while (pending.length) {
-    const at = pending.pop()!;
-    let stat: ReturnType<typeof lstatSync>;
-    try { stat = lstatSync(at); } catch { continue; }
-    if (stat.isSymbolicLink()) continue;
-    try { chmodSync(at, (stat.mode & 0o7777) | (stat.isDirectory() ? 0o700 : 0o600)); } catch { /* reported by the removal */ }
-    if (!stat.isDirectory()) continue;
-    let names: string[] = [];
-    try { names = readdirSync(at); } catch { continue; }
-    for (const name of names) pending.push(nodePath.join(at, name));
-  }
-}
-
-function listDir(path: string): string[] {
-  try {
-    const stat = lstatSync(path);
-    if (!stat.isDirectory() || stat.isSymbolicLink()) return [];
-    return readdirSync(path);
-  } catch {
-    return [];
-  }
-}
-
-function readHead(path: string, bytes = FIRST_LINE_BYTES): string | null {
-  let fd: number | undefined;
-  try {
-    const stat = lstatSync(path);
-    if (!stat.isFile() || stat.isSymbolicLink()) return null;
-    fd = openSync(path, "r");
-    const buffer = Buffer.alloc(Math.min(bytes, stat.size));
-    const read = readSync(fd, buffer, 0, buffer.length, 0);
-    return buffer.subarray(0, read).toString("utf8");
-  } catch {
-    return null;
-  } finally {
-    if (fd !== undefined) closeSync(fd);
-  }
-}
-
-// ── engine transcripts ──────────────────────────────────────────────────
-
-/** Fuigo and Grok: `<home>/sessions/<key>` for each exact folder. */
-/** Fuigo and Grok: `<home>/sessions/<key>` for each folder, the lines those
- * sessions wrote to the shared `logs/unified.jsonl` (keyed `sid`), and the
- * folder's memory notes when the folder is outside any repository. */
-function removeFuigoSessions(home: string, folders: string[], memoryFolders: string[], removed: string[], failed: string[]): void {
-  const api = pathApiFor(home);
-  const sessions = api.join(home, "sessions");
-  const sessionIds = new Set<string>();
-  for (const folder of folders) {
-    const dir = api.join(sessions, fuigoSessionKey(folder));
-    for (const name of listDir(dir)) if (lstatOrNull(api.join(dir, name))?.isDirectory()) sessionIds.add(name);
-    record(removeConfined(sessions, dir), dir, removed, failed);
-  }
-  // Fuigo's session search index keeps each session's title and text
-  // (0.1.60 Linux D5: the conversation's words were still in it after delete).
-  const index = api.join(sessions, "session_search.sqlite");
-  if (lstatOrNull(index)?.isFile()) {
-    try {
-      if (scrubFuigoSearchIndex(index, [...sessionIds], folders)) removed.push(index);
-    } catch {
-      failed.push(index);
-    }
-  }
-  if (sessionIds.size) {
-    const log = api.join(home, "logs", "unified.jsonl");
-    try {
-      if (scrubJsonlInPlace(log, (row) => typeof row.sid === "string" && sessionIds.has(row.sid))) removed.push(log);
-    } catch {
-      failed.push(log);
-    }
-  }
-  const memory = api.join(home, "memory");
-  for (const folder of new Set(memoryFolders)) {
-    const dir = api.join(memory, fuigoMemoryKey(folder));
-    record(removeConfined(memory, dir), dir, removed, failed);
-  }
-}
-
-/** Removes the rows of Fuigo's session search index
- * (`<home>/sessions/session_search.sqlite`, fuigo-session-search fts.rs) that
- * belong to these sessions: by session id, and by the conversation's own
- * folder in case a session directory was already gone. Other sessions' rows
- * stay. `session_docs` holds the text; `session_docs_fts` is an FTS5 index
- * over it kept by triggers, whose deletes only add markers, so the index is
- * merged (`optimize`) to drop the old terms, with secure_delete zeroing the
- * freed pages. Fuigo may have the database open: WAL, a busy timeout, one
- * write transaction, then a checkpoint so the text leaves the -wal file too,
- * and a VACUUM for the copies Fuigo's own rewrites left in free pages.
- * Returns whether anything was removed. */
-export function scrubFuigoSearchIndex(path: string, sessionIds: readonly string[], folders: readonly string[]): boolean {
-  const ids = [...new Set(sessionIds)], cwds = [...new Set(folders)];
-  if (!ids.length && !cwds.length) return false;
-  const db = new DatabaseSync(path);
-  try {
-    db.exec("PRAGMA busy_timeout=5000; PRAGMA secure_delete=ON;");
-    const tables = new Set((db.prepare("SELECT name FROM sqlite_master WHERE type IN ('table','view')").all() as Array<{ name: string }>).map((row) => row.name));
-    if (!tables.has("session_docs")) return false;
-    const where = [ids.length ? `session_id IN (${ids.map(() => "?").join(",")})` : "", cwds.length ? `cwd IN (${cwds.map(() => "?").join(",")})` : ""].filter(Boolean).join(" OR ");
-    db.exec("BEGIN IMMEDIATE");
-    let changes = 0;
-    try {
-      changes = Number(db.prepare(`DELETE FROM session_docs WHERE ${where}`).run(...ids, ...cwds).changes);
-      // Every scrub merges the index, not only one that deleted rows: a
-      // conversation deleted before this fix left its terms in old segments.
-      if (tables.has("session_docs_fts")) db.exec("INSERT INTO session_docs_fts(session_docs_fts) VALUES('optimize')");
-      db.exec("COMMIT");
-    } catch (error) {
-      try { db.exec("ROLLBACK"); } catch { /* already rolled back */ }
-      throw error;
-    }
-    // A reader Fuigo holds open can keep a TRUNCATE from finishing; the
-    // rows are already gone and zeroed, and its next checkpoint takes them.
-    try { db.exec("PRAGMA wal_checkpoint(TRUNCATE)"); } catch { /* see above */ }
-    // Fuigo rewrites a session's row as the conversation grows, without
-    // secure_delete, so earlier copies of its text sit in free pages that no
-    // delete of ours can reach (0.1.60 low). VACUUM rebuilds the file without
-    // them. It runs whenever there are free pages, not only when this call
-    // deleted rows, so a conversation deleted before this fix, or a VACUUM
-    // that Fuigo's own lock refused last time, is cleared by the next scrub.
-    try {
-      if (Number((db.prepare("PRAGMA freelist_count").get() as { freelist_count?: number } | undefined)?.freelist_count ?? 0) > 0) {
-        db.exec("VACUUM");
-        db.exec("PRAGMA wal_checkpoint(TRUNCATE)");
-      }
-    } catch { /* Fuigo busy with it: the live rows are gone, and the next scrub tries again */ }
-    return changes > 0;
-  } finally {
-    db.close();
-  }
-}
-
-/** Every `cwd` and per-session `slug` the Claude Code session files in `dir` name. */
-function claudeSessionFacts(dir: string): { folders: string[]; sessionIds: string[]; slugs: string[] } {
-  const folders: string[] = [];
-  const sessionIds: string[] = [];
-  const slugs = new Set<string>();
-  for (const name of listDir(dir)) {
-    if (!name.endsWith(".jsonl")) continue;
-    const id = name.slice(0, -".jsonl".length);
-    if (ID.test(id)) sessionIds.push(id);
-    const head = readHead(nodePath.join(dir, name), 256 * 1024);
-    if (head === null) continue;
-    for (const line of head.split("\n")) {
-      try {
-        const row = JSON.parse(line) as { cwd?: unknown; slug?: unknown };
-        if (typeof row.cwd === "string") folders.push(row.cwd);
-        if (typeof row.slug === "string" && ID.test(row.slug)) slugs.add(row.slug);
-      } catch { /* a cut last line */ }
-    }
-  }
-  return { folders, sessionIds, slugs: [...slugs] };
-}
-
-/** Rewrite a JSONL file without the rows `drop` picks, atomically, keeping
- * its mode. A torn or non-JSON line is kept as it is. */
-export function rewriteJsonlAtomic(path: string, drop: (row: Record<string, unknown>) => boolean): number {
-  const stat = lstatOrNull(path);
-  if (!stat || !stat.isFile() || stat.isSymbolicLink()) return 0;
-  let removed = 0;
-  const kept = readFileSync(path, "utf8").split("\n").filter((line) => {
-    if (!line.trim()) return true;
-    try {
-      const row = JSON.parse(line) as unknown;
-      if (row && typeof row === "object" && drop(row as Record<string, unknown>)) {
-        removed++;
-        return false;
-      }
-    } catch { /* kept */ }
-    return true;
-  });
-  if (removed) writeFileAtomic(path, kept.join("\n"), { mode: stat.mode & 0o777 });
-  return removed;
-}
-
-/** Claude Code takes `<file>.lock` as a directory while it writes history
- * (stale after 10 s). Hold the same lock for the rewrite. */
-function withClaudeHistoryLock<T>(file: string, work: () => T): T | undefined {
-  const lock = `${file}.lock`;
-  for (let attempt = 0; attempt < 2; attempt++) {
-    try {
-      mkdirSync(lock);
-      try { return work(); } finally { try { rmdirSync(lock); } catch { /* gone */ } }
-    } catch (error) {
-      if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error;
-      const held = lstatOrNull(lock);
-      if (held && Date.now() - held.mtimeMs > 10_000) { try { rmdirSync(lock); } catch { /* taken back */ } continue; }
-      return undefined;
-    }
-  }
-  return undefined;
-}
-
-/** Claude Code: the folder's `projects/<key>` (sessions, subagents, tool
- * results), the sessions' lines in `history.jsonl` and the paste cache only
- * they used, and every per-session side file (Claude Code 2.1.282: file
- * history, debug log, tasks, session env, image cache, uploads, plans). */
-function removeClaudeProjects(home: string, folders: string[], removed: string[], failed: string[], leftovers: DeletionLeftover[]): void {
-  const api = pathApiFor(home);
-  const projects = api.join(home, "projects");
-  const ours = (cwd: string) => folders.some((folder) => sameFolder(folder, cwd));
-  const sessionIds = new Set<string>();
-  const slugs = new Set<string>();
-  let removedProject = false;
-  for (const folder of folders) {
-    const key = claudeProjectKey(folder);
-    const names = "exact" in key ? [key.exact] : listDir(projects).filter((name) => name.startsWith(key.prefix));
-    for (const name of names) {
-      const dir = api.join(projects, name);
-      if (!lstatOrNull(dir)) continue;
-      const facts = claudeSessionFacts(dir);
-      // A lossy key: another folder can share it. Remove only when every
-      // session inside names this conversation's folder (and, for the cut
-      // long form, at least one does).
-      if (facts.folders.some((cwd) => !ours(cwd)) || ("prefix" in key && !facts.folders.length)) {
-        if ("exact" in key) leftovers.push({ what: "Claude Code's history of this conversation", where: "Claude Code's project history, filed under a name another folder shares" });
-        continue;
-      }
-      for (const id of facts.sessionIds) sessionIds.add(id);
-      for (const slug of facts.slugs) slugs.add(slug);
-      record(removeConfined(projects, dir), dir, removed, failed);
-      removedProject = true;
-    }
-  }
-  if (!removedProject && !sessionIds.size) return;
-  const history = api.join(home, "history.jsonl");
-  const pastes = new Set<string>();
-  try {
-    const outcome = withClaudeHistoryLock(history, () => rewriteJsonlAtomic(history, (row) => {
-      const mine = (typeof row.sessionId === "string" && sessionIds.has(row.sessionId)) || (typeof row.project === "string" && ours(row.project));
-      if (mine && row.pastedContents && typeof row.pastedContents === "object") {
-        for (const paste of Object.values(row.pastedContents as Record<string, { contentHash?: unknown }>)) {
-          if (typeof paste?.contentHash === "string" && /^[a-f0-9]{16,64}$/.test(paste.contentHash)) pastes.add(paste.contentHash);
-        }
-      }
-      return mine;
-    }));
-    if (outcome === undefined) {
-      if (lstatOrNull(history)) failed.push(history);
-    } else if (outcome) removed.push(history);
-  } catch {
-    failed.push(history);
-  }
-  const remaining = lstatOrNull(history) ? readFileSync(history, "utf8") : "";
-  for (const hash of pastes) {
-    if (remaining.includes(hash)) continue;
-    const file = api.join(home, "paste-cache", `${hash}.txt`);
-    record(removeConfined(api.join(home, "paste-cache"), file), file, removed, failed);
-  }
-  for (const id of sessionIds) {
-    for (const [dir, name] of [["file-history", id], ["debug", `${id}.txt`], ["tasks", id], ["session-env", id], ["image-cache", id], ["uploads", id]] as const) {
-      const target = api.join(home, dir, name);
-      record(removeConfined(api.join(home, dir), target), target, removed, failed);
-    }
-  }
-  const latest = api.join(home, "debug", "latest");
-  try {
-    const stat = lstatOrNull(latest);
-    if (stat?.isSymbolicLink() && [...sessionIds].some((id) => readlinkSync(latest).endsWith(`${id}.txt`))) unlinkSync(latest);
-  } catch { /* left */ }
-  const plans = api.join(home, "plans");
-  for (const name of listDir(plans)) {
-    if ([...slugs].some((slug) => name === `${slug}.md` || name === `${slug}.workshop.md` || (name.startsWith(`${slug}-agent-`) && name.endsWith(".md")))) {
-      record(removeConfined(plans, api.join(plans, name)), api.join(plans, name), removed, failed);
-    }
-  }
-}
-
-/** The first line of a Codex rollout, plain or zstd-compressed. */
-function codexRolloutHead(file: string): string | undefined {
-  if (file.endsWith(".jsonl")) return readHead(file)?.split("\n", 1)[0];
-  try {
-    const zstd = (zlib as unknown as { zstdDecompressSync?: (input: Buffer) => Buffer }).zstdDecompressSync;
-    if (!zstd || !lstatOrNull(file)?.isFile()) return undefined;
-    return zstd(readFileSync(file)).toString("utf8").split("\n", 1)[0];
-  } catch {
-    return undefined;
-  }
-}
-
-/** Codex: rollout files (sessions/YYYY/MM/DD and archived_sessions) whose
- * first line (`session_meta`) names the folder; then, by those thread ids,
- * the lines in history.jsonl and session_index.jsonl, shell snapshots, and
- * the rows in its SQLite stores (state, logs, memories, goals, history). */
-function removeCodexRollouts(home: string, folders: string[], removed: string[], failed: string[], sqliteHome?: string): void {
-  const api = pathApiFor(home);
-  const candidates: string[] = [];
-  const sessions = api.join(home, "sessions");
-  for (const year of listDir(sessions).filter((name) => /^\d{4}$/.test(name)))
-    for (const month of listDir(api.join(sessions, year)).filter((name) => /^\d{2}$/.test(name)))
-      for (const day of listDir(api.join(sessions, year, month)).filter((name) => /^\d{2}$/.test(name)))
-        for (const file of listDir(api.join(sessions, year, month, day))) candidates.push(api.join(sessions, year, month, day, file));
-  const archived = api.join(home, "archived_sessions");
-  for (const file of listDir(archived)) candidates.push(api.join(archived, file));
-  const threadIds = new Set<string>();
-  for (const file of candidates) {
-    if (!/^rollout-.+\.jsonl(\.zst)?$/.test(api.basename(file))) continue;
-    const first = codexRolloutHead(file);
-    if (!first) continue;
-    try {
-      const row = JSON.parse(first) as { type?: unknown; payload?: { cwd?: unknown; id?: unknown } };
-      const cwd = row.payload?.cwd;
-      if (row.type !== "session_meta" || typeof cwd !== "string" || !folders.some((folder) => sameFolder(folder, cwd))) continue;
-      if (typeof row.payload?.id === "string" && ID.test(row.payload.id)) threadIds.add(row.payload.id);
-    } catch {
-      continue;
-    }
-    record(removeConfined(home, file), file, removed, failed);
-  }
-  if (!threadIds.size) return;
-  for (const [file, field] of [["history.jsonl", "session_id"], ["session_index.jsonl", "id"]] as const) {
-    const path = api.join(home, file);
-    try {
-      if (rewriteJsonlAtomic(path, (row) => typeof row[field] === "string" && threadIds.has(row[field] as string))) removed.push(path);
-    } catch {
-      failed.push(path);
-    }
-  }
-  const snapshots = api.join(home, "shell_snapshots");
-  for (const name of listDir(snapshots)) {
-    if ([...threadIds].some((id) => name.startsWith(`${id}.`))) record(removeConfined(snapshots, api.join(snapshots, name)), api.join(snapshots, name), removed, failed);
-  }
-  const dbDir = sqliteHome || home;
-  for (const name of listDir(dbDir).filter((item) => /^(state|logs|memories|goals|thread_history)_\d+\.sqlite$/.test(item))) {
-    const path = pathApiFor(dbDir).join(dbDir, name);
-    if (!lstatOrNull(path)?.isFile()) continue;
-    let db: DatabaseSync | undefined;
-    try {
-      db = new DatabaseSync(path);
-      db.exec("PRAGMA busy_timeout=5000; PRAGMA secure_delete=ON;");
-      const ids = [...threadIds];
-      const marks = ids.map(() => "?").join(",");
-      let changed = 0;
-      for (const { name: table } of db.prepare("SELECT name FROM sqlite_master WHERE type='table'").all() as Array<{ name: string }>) {
-        if (!/^\w+$/.test(table)) continue;
-        const columns = new Set((db.prepare(`PRAGMA table_info("${table}")`).all() as Array<{ name: string }>).map((column) => column.name));
-        for (const column of ["thread_id", "parent_thread_id", "child_thread_id", ...(table === "threads" ? ["id"] : [])]) {
-          if (columns.has(column)) changed += Number(db.prepare(`DELETE FROM "${table}" WHERE "${column}" IN (${marks})`).run(...ids).changes);
-        }
-      }
-      if (changed) {
-        db.exec("PRAGMA wal_checkpoint(TRUNCATE)");
-        removed.push(path);
-      }
-    } catch {
-      failed.push(path);
-    } finally {
-      db?.close();
-    }
-  }
 }
 
 function record(outcome: RemoveOutcome, path: string, removed: string[], failed: string[]): void {
@@ -710,6 +274,23 @@ export interface DeletionServiceOptions {
   /** other per-conversation records to drop once the rows are gone; runs
    * before the pending record is cleared, so a crash repeats it */
   forgetThreads?: (threadIds: string[]) => void | Promise<void>;
+  /** Pauses before each replay of a deletion that could not finish (default 30 s, 2 min, 10 min, 30 min; then every 6 hours and at
+   * each start). An empty list turns the replays off. */
+  retryDelaysMs?: number[];
+  /** The pause between replays once the list above has run out (default 6 hours). */
+  slowRetryMs?: number;
+  /** The pause between tries while an engine is open (default 10 minutes). */
+  openRetryMs?: number;
+  /** Murage's own sessions on these engine homes wait while the steps run. Resolves with `release` and the homes that could not be
+   * held (a turn of theirs was still running after the wait): those are skipped this attempt and stay pending. */
+  /** Pauses Murage's own background one-shot runs of these engines before the deletion plans (they would read as the engine being
+   * open); resolves when they are gone or the wait ran out, and returns how to let them start again. */
+  pauseBackgroundRuns?: (engines: DeletionEngine[]) => Promise<() => void>;
+  holdHomes?: (homes: DeletionEngineHome[]) => Promise<{ release: () => void; skipped: DeletionEngineHome[] }>;
+  /** What is owed to the owner changed (a notice appeared, changed or went away). */
+  onOwed?: (notices: OwnerNotice[], rev: number) => void;
+  /** How long a home that keeps changing is left alone before it is planned again (default 10 s). */
+  staleQuietMs?: number;
 }
 
 export class ConversationDeletions {
@@ -720,6 +301,7 @@ export class ConversationDeletions {
     this.journal = nodePath.join(options.dataDir, "pending-deletions.json");
   }
 
+  private get redoDir(): string { return nodePath.join(this.options.dataDir, "engine-redo"); }
   pending(): PendingConversationDeletion[] {
     try {
       const parsed = JSON.parse(readFileSync(this.journal, "utf8")) as unknown;
@@ -749,7 +331,7 @@ export class ConversationDeletions {
 
   /** Record what a deletion will remove, before any of it is removed. Throws
    * when the record cannot be written, so nothing is deleted without it. */
-  begin(input: DeletionInput): PendingConversationDeletion {
+  begin(input: DeletionInput, logSessions?: Partial<Record<DeletionEngine, string[]>>): PendingConversationDeletion {
     const threadIds = [...new Set(input.threadIds)].filter((id) => ID.test(id));
     const dirs = this.dir;
     const desks: PendingConversationDeletion["desks"] = [];
@@ -781,7 +363,7 @@ export class ConversationDeletions {
       threadIds,
       desks,
       botIds: [...new Set(input.botIds ?? [])].filter((id) => ID.test(id)),
-      engineSessions: this.engineSessionsOf(threadIds, input),
+      engineSessions: this.engineSessionsOf(input, logSessions),
       engineHomes: (input.engineHomes ?? []).filter((home) => Object.values(ENGINE_FOR_DRIVER).includes(home.engine) && typeof home.home === "string" && pathApiFor(home.home).isAbsolute(home.home)),
       attachments: this.attachmentsOnlyIn(threadIds),
       artifactBlobs: this.artifactBlobsOf(threadIds),
@@ -797,8 +379,21 @@ export class ConversationDeletions {
     if (rest.length !== this.pending().length) this.save(rest);
   }
 
-  /** Remove everything the record names, then clear the record. */
-  finish(entry: PendingConversationDeletion): DeletionReport {
+  /** Remove everything the record names, then clear the record. If anything in it throws while the record is still pending, the
+   * retry schedule is armed again before the error goes on: a scheduled retry, "Try again now" and the start-up pass can all
+   * fail on a transient fault (a busy database), and none of them may leave the record with no next attempt. */
+  async finish(entry: PendingConversationDeletion): Promise<DeletionReport> {
+    try {
+      return await this.finishOnce(entry);
+    } catch (error) {
+      let pending = true;
+      try { pending = this.pending().some((item) => item.id === entry.id); } catch { /* the record could not be read: try again */ }
+      if (pending) this.scheduleRetry(entry);
+      throw error;
+    }
+  }
+
+  private async finishOnce(entry: PendingConversationDeletion): Promise<DeletionReport> {
     const dirs = this.dir;
     const removed: string[] = [];
     const failed: string[] = [];
@@ -806,9 +401,11 @@ export class ConversationDeletions {
     const threadIds = entry.threadIds.filter((id) => ID.test(id));
     this.deleteArtifactRows(threadIds);
     for (const threadId of threadIds) {
-      for (const dir of [dirs.events, dirs.native]) {
-        for (const name of [`${threadId}.ndjson`, `${threadId}.previous.ndjson`]) record(removeConfined(dir, nodePath.join(dir, name)), nodePath.join(dir, name), removed, failed);
-      }
+      // a late event from a turn still winding down never brings the log back
+      closeThreadLog(threadId);
+      // the event log with its rotation, its sessions file and any rewrite in flight (harness/event-log.ts)
+      for (const name of [...threadLogNames(threadId), ...threadTempFiles(dirs.events, threadId)]) record(removeConfined(dirs.events, nodePath.join(dirs.events, name)), nodePath.join(dirs.events, name), removed, failed);
+      for (const name of [`${threadId}.ndjson`, `${threadId}.previous.ndjson`]) record(removeConfined(dirs.native, nodePath.join(dirs.native, name)), nodePath.join(dirs.native, name), removed, failed);
       const grok = nodePath.join(dirs.grokContext, createHash("sha256").update(threadId).digest("hex"));
       record(removeConfined(dirs.grokContext, grok), grok, removed, failed);
     }
@@ -862,12 +459,361 @@ export class ConversationDeletions {
       record(removeConfined(dirs.artifacts, path), path, removed, failed);
     }
     const memoryFolders = entry.desks.filter((desk) => threadIds.includes(desk.threadId) && typeof desk.memoryFolder === "string" && desk.memoryFolder.endsWith(desk.threadId)).map((desk) => desk.memoryFolder!);
-    if (folders.length) this.removeEngineHistory(entry.engineHomes, [...new Set(folders)], memoryFolders, entry.engineSessions ?? {}, removed, failed, leftovers);
-    // The rows are gone and overwritten (secure_delete); the write-ahead log
-    // still holds the old pages until it is checkpointed and truncated.
-    try { this.options.database().exec("PRAGMA wal_checkpoint(TRUNCATE)"); } catch { /* the next checkpoint takes it */ }
-    if (!failed.length) this.abandon(entry);
+    // The engines' history and messages.db's log are independent: both start now, and neither waits for the other (an engine
+    // job can take as long as its own timeout).
+    const engineWork = folders.length ? this.removeEngineHistory(entry, { homes: entry.engineHomes, folders: [...new Set(folders)], memoryFolders, sessions: entry.engineSessions ?? {}, redoDir: this.redoDir }) : undefined;
+    // The rows are gone and overwritten (secure_delete); the write-ahead log still holds the old pages until the log is
+    // copied and restarted. That happens without holding the writer lock (wal-maintenance.ts); if a reader holds the log
+    // for now, the scrub stays owed there and is retried, and the next start's TRUNCATE settles it after a crash.
+    const walWork = scrubWalAfterDelete().catch((error) => { console.warn("conversation deletion: the write-ahead log was not scrubbed yet", error); return false; });
+    const engines = await engineWork;
+    await walWork;
+    if (engines) { removed.push(...engines.removed); failed.push(...engines.failed); leftovers.push(...engines.leftovers); }
+    // Once the retry schedule has run out, what is still owed is named for the owner (it is NOT done) and tried again every few
+    // hours and at each start. The words come from ownerNoticeText by reason code; nothing from the engine's error is shown.
+    if (engines && failed.length) {
+      const homes = engines.failedHomes.map((key) => ({ engine: key.split("\0")[0] as DeletionEngine, code: owedCodeOf(engines.homeReasons?.[key]), ...(engines.homeApps?.[key] ? { app: engines.homeApps[key] } : {}) }));
+      // An engine that has its files open is told about on the FIRST attempt (the owner can close it and choose Try again);
+      // every other reason waits until the retry schedule has run out.
+      const named = this.retriesExhausted(entry) ? homes : homes.filter((home) => WAITS_FOR_OWNER.has(home.code));
+      this.setOwed(entry, named.length ? { since: entry.owed?.since ?? Date.now(), homes: named } : undefined, new Set(homes.map((home) => home.engine)));
+    } else if (!failed.length) this.setOwed(entry, undefined);
+    // A home in a synced folder: once its copy is gone the owner is told, once, that the cloud provider may keep older copies.
+    if (engines) this.tellSynced(entry, engines);
+    if (!failed.length) {
+      this.abandon(entry);
+      const retry = this.retries.get(entry.id);
+      if (retry?.timer) clearTimeout(retry.timer);
+      this.retries.delete(entry.id);
+    } else this.scheduleRetry(entry);
     return { leftovers: dedupeLeftovers(leftovers), failed };
+  }
+
+  /** Bumped on every change to what is owed, seeded with the clock so a restarted server never goes backwards. It rides on every
+   * broadcast and every answer, and the app drops anything older than the newest it has seen (a slow answer to an old question
+   * must not undo a newer event). */
+  private rev = Date.now();
+  /** "Removed from <Engine>." lines for copies that were owed and are now gone; shown for a few minutes. */
+  private doneLines: Array<{ id: string; text: string; at: number }> = [];
+  private readonly expiryTimers = new Set<ReturnType<typeof setTimeout>>();
+
+  currentRev(): number { return this.rev; }
+
+  private labelFor(engine: DeletionEngine): string {
+    const kind = Object.keys(ENGINE_FOR_DRIVER).find((driver) => ENGINE_FOR_DRIVER[driver] === engine);
+    return kind ? engineLabel(kind) : "An engine";
+  }
+
+  /** The notices owed to the owner right now, one per engine copy still waiting, then the lines for copies just finished. */
+  notices(): OwnerNotice[] {
+    const out: OwnerNotice[] = [];
+    for (const entry of this.pending()) {
+      for (const home of entry.owed?.homes ?? []) out.push({ id: `${entry.id}:${home.engine}`, text: ownerNoticeText(this.labelFor(home.engine), home.code, home.app), tryAgain: true });
+    }
+    this.expireDoneLines();
+    for (const line of this.doneLines) out.push({ id: line.id, text: line.text, tryAgain: false });
+    return out;
+  }
+
+  /** A "Removed from <Engine>." line is shown for five minutes. When one runs out the notice list has changed: the revision
+   * advances and the app is told (a window that is still open would otherwise keep the old line on screen), and an answer older
+   * than the expiry can no longer put it back. */
+  private expireDoneLines(): void {
+    const kept = this.doneLines.filter((line) => Date.now() - line.at < DONE_LINE_MS);
+    if (kept.length === this.doneLines.length) return;
+    this.doneLines = kept;
+    this.rev = Math.max(this.rev + 1, Date.now());
+    try { this.options.onOwed?.(this.notices(), this.rev); } catch { /* telling the owner never blocks the deletion */ }
+  }
+
+  /** The line for an engine whose files live in a synced folder, shown with the other deletion results. Once per conversation and engine. */
+  private tellSynced(entry: PendingConversationDeletion, engines: EngineHistoryResult): void {
+    const failing = new Set(engines.failedHomes ?? []);
+    let added = false;
+    for (const key of engines.syncedHomes ?? []) {
+      if (failing.has(key)) continue;
+      const engine = key.split("\0")[0] as DeletionEngine;
+      const id = `${entry.id}:${engine}:synced`;
+      if (this.doneLines.some((line) => line.id === id)) continue;
+      this.doneLines.push({ id, text: syncedHomeText(this.labelFor(engine)), at: Date.now() });
+      const timer = setTimeout(() => { this.expiryTimers.delete(timer); this.expireDoneLines(); }, DONE_LINE_MS + 50);
+      timer.unref?.();
+      this.expiryTimers.add(timer);
+      added = true;
+    }
+    if (!added) return;
+    this.rev = Math.max(this.rev + 1, Date.now());
+    try { this.options.onOwed?.(this.notices(), this.rev); } catch { /* telling the owner never blocks the deletion */ }
+  }
+
+  /** Saves what is owed with the pending record and tells the owner when it changed. */
+  private setOwed(entry: PendingConversationDeletion, owed: OwedStatus | undefined, failing: ReadonlySet<DeletionEngine> = new Set()): void {
+    const before = JSON.stringify(entry.owed ?? null);
+    if (before === JSON.stringify(owed ?? null)) return;
+    // An engine that was owed and no longer is has had its copy removed.
+    const still = new Set((owed?.homes ?? []).map((home) => home.engine));
+    for (const home of entry.owed?.homes ?? []) {
+      if (still.has(home.engine) || failing.has(home.engine)) continue;
+      const id = `${entry.id}:${home.engine}:done`;
+      if (!this.doneLines.some((line) => line.id === id)) {
+        this.doneLines.push({ id, text: `Removed from ${this.labelFor(home.engine)}.`, at: Date.now() });
+        // when the line runs out the window is told, even if nothing else happens by then
+        const timer = setTimeout(() => { this.expiryTimers.delete(timer); this.expireDoneLines(); }, DONE_LINE_MS + 50);
+        timer.unref?.();
+        this.expiryTimers.add(timer);
+      }
+    }
+    this.rev = Math.max(this.rev + 1, Date.now());
+    if (owed) entry.owed = owed; else delete entry.owed;
+    try {
+      const entries = this.pending();
+      const at = entries.findIndex((item) => item.id === entry.id);
+      if (at >= 0) {
+        if (owed) entries[at] = { ...entries[at]!, owed }; else delete entries[at]!.owed;
+        this.save(entries);
+      }
+    } catch (error) { console.warn("conversation deletion: could not save what is owed", error); }
+    try { this.options.onOwed?.(this.notices(), this.rev); } catch { /* telling the owner never blocks the deletion */ }
+  }
+
+  /** "Try again now": every unfinished deletion is replayed at once, whatever the schedule says. */
+  async retryNow(): Promise<number> {
+    let started = 0;
+    for (const entry of this.pending()) {
+      const state = this.retries.get(entry.id);
+      if (state?.timer) clearTimeout(state.timer);
+      this.retries.delete(entry.id);
+      started++;
+      try { await this.finish(entry); } catch (error) { console.warn("conversation deletion: a retry could not finish", error); }
+    }
+    return started;
+  }
+
+  /** The pauses between replays. Codex's app-server daemon keeps a rollout open for about a minute after the terminal closes
+   * (real-engine qualification), so a deletion made right after closing Codex is tried again every 30 s for 3 minutes before the
+   * normal schedule. */
+  private delaysFor(entry: PendingConversationDeletion): number[] {
+    if (this.options.retryDelaysMs) return this.options.retryDelaysMs;
+    const normal = [30_000, 120_000, 600_000, 1_800_000];
+    const codexBusy = (entry.owed?.homes ?? []).some((home) => home.engine === "codex" && home.code === "engine-open");
+    return codexBusy ? [30_000, 30_000, 30_000, 30_000, 30_000, 30_000, ...normal.slice(1)] : normal;
+  }
+
+  /** True once every pause of the retry schedule has been used. */
+  private retriesExhausted(entry: PendingConversationDeletion): boolean {
+    const delays = this.delaysFor(entry);
+    const state = this.retries.get(entry.id);
+    return delays.length > 0 && !!state && !state.timer && state.attempts >= delays.length;
+  }
+
+  /** Replays: after the pauses of the list, one more every `slowRetryMs` (6 hours), and the next start's reconcile. */
+  private readonly retries = new Map<string, { attempts: number; timer?: NodeJS.Timeout }>();
+  private disposed = false;
+
+  /** An unfinished deletion keeps its pending record, and is tried again after a growing pause (the record is the retry
+   * state; this only decides when to look at it again). */
+  private scheduleRetry(entry: PendingConversationDeletion): void {
+    if (this.disposed) return;
+    const delays = this.delaysFor(entry);
+    if (delays.length === 0) return;
+    const state = this.retries.get(entry.id) ?? { attempts: 0 };
+    this.retries.set(entry.id, state);
+    if (state.timer) return;
+    // An engine that is open is asked about every 10 minutes (the owner closes it whenever they like); anything else waits for hours.
+    const engineOpen = (entry.owed?.homes ?? []).some((home) => WAITS_FOR_OWNER.has(home.code));
+    // No gap above 10 minutes while an engine, a file or a new file is what is being waited for.
+    const delay = engineOpen
+      ? Math.min(state.attempts < delays.length ? delays[state.attempts]! : this.options.openRetryMs ?? 600_000, 600_000)
+      : state.attempts < delays.length ? delays[state.attempts]! : this.options.slowRetryMs ?? 6 * 3_600_000;
+    state.attempts++;
+    state.timer = setTimeout(() => {
+      state.timer = undefined;
+      const current = this.pending().find((item) => item.id === entry.id);
+      if (!current || this.disposed) { this.retries.delete(entry.id); return; }
+      void this.finish(current).catch((error) => console.warn("conversation deletion: a retry could not finish", error));
+    }, delay);
+    state.timer.unref();
+  }
+
+  /** Stops the retry timers (shutdown). The pending records stay. */
+  dispose(): void {
+    this.disposed = true;
+    for (const state of this.retries.values()) if (state.timer) clearTimeout(state.timer);
+    this.retries.clear();
+    for (const timer of this.expiryTimers) clearTimeout(timer);
+    this.expiryTimers.clear();
+  }
+
+  /** The engines' own files can be hundreds of megabytes: planned, rewritten and vacuumed in a worker thread, one job at a time.
+   * Four stages, never mixed (engine-history-run.ts):
+   *   plan     a read-only job; the engine bodies are planners and read strictly (only "not there" is silent). A home that
+   *            cannot be read in full gets no plan and nothing in it is touched.
+   *   persist  the plans, and the ids they found, are saved in the pending record BEFORE the first step runs.
+   *   execute  only the plan's steps, each idempotent; each finished step is marked done in the record as it finishes. The
+   *            executor never discovers: a step whose planned inputs changed is STALE (nothing of it was changed) and its home
+   *            is planned again, with the new plan saved before the next execute.
+   *   verify   plan again. A home is finished only when a plan of EVERY home, made after the last execute of this attempt and
+   *            while Murage's own sessions on those homes are still held, has no content step left.
+   * Every attempt starts from a fresh plan of all homes; nothing saved by an earlier attempt counts as proof. Up to
+   * MAX_ENGINE_ROUNDS plan/execute/verify rounds per attempt; what is still owed stays in the record for the retry schedule.
+   * Never throws. */
+  private async removeEngineHistory(entry: PendingConversationDeletion, base: Omit<EngineHistoryJob, "kind" | "known" | "only" | "plans">): Promise<EngineHistoryResult & { failedHomes: string[] }> {
+    const homesFailed = (): EngineHistoryResult & { failedHomes: string[] } => ({ removed: [], failed: [...new Set(base.homes.map((home) => home.home))], leftovers: [], failedHomes: [...new Set(base.homes.map((home) => homeKey(home.engine, home.home)))] });
+    if (!base.homes.length) return { removed: [], failed: [], leftovers: [], failedHomes: [] };
+    const removed: string[] = [], leftovers: EngineHistoryResult["leftovers"] = [];
+    const failed = new Set<string>();
+    const failedHomes = new Set<string>();
+    const syncedHomes = new Set<string>();
+    const reasons: Record<string, string> = {};
+    const homeReasons: Record<string, string> = {};
+    const homeApps: Record<string, string> = {};
+    const keys = [...new Set(base.homes.map((home) => homeKey(home.engine, home.home)))];
+    const homeOf = (key: string) => base.homes.find((home) => homeKey(home.engine, home.home) === key)!;
+    const stuck = new Set<string>(); // could not be planned, or a step failed, or Murage's own turn was still running: left for the retry
+    const executed = new Set<string>(); // executed in THIS attempt
+    let closedOfLastPlan: string[] = []; // the homes whose engine was closed before and after the last plan was made
+    let uncheckedOfLastPlan = new Set<string>(); // the homes whose engine could not be checked when the last plan was made
+    const stale = new Map<string, number>();
+    const held = new Map<string, () => void>();
+    let unpause: (() => void) | undefined;
+    const giveUp = (key: string, reason: string, path: string) => {
+      stuck.add(key); failedHomes.add(key); failed.add(path);
+      homeReasons[key] ??= reason;
+      // diagnostic for CI on Windows: which home was left, and why, in the log of the run
+      console.warn(`conversation deletion: home left pending (${key.split("\0")[0]}): ${reason}; recorded ${homeReasons[key]}`);
+    };
+    // Step marks are kept in memory as they arrive and saved with the pending record once the job has ended (below), whether it
+    // finished or its worker died. Never while the worker runs: the record is written and fsynced on this thread, and an fsync
+    // made while the worker rewrites a large engine file waits behind that file's writes on the same drive (measured: over 100 ms
+    // of a stalled event loop under disk load). A mark is never evidence on a replay, which plans everything again, so a crash of
+    // the whole process mid-job loses nothing a mark would have saved.
+    const onStep = (key: string, index: number) => {
+      const step = entry.enginePlan?.homes[key]?.steps[index];
+      if (step) step.done = true;
+    };
+    try {
+      if (this.options.pauseBackgroundRuns) {
+        try { unpause = await this.options.pauseBackgroundRuns([...new Set(base.homes.map((home) => home.engine))]); } catch (error) { console.warn("conversation deletion: the background runs were not paused", error); }
+      }
+      // A fresh plan of everything: a plan saved by an earlier attempt, and any mark in it, is not evidence of anything now.
+      entry.enginePlan = { v: 3, homes: {} };
+      const plans = entry.enginePlan.homes;
+      const settleQuiet = async (quiet: string[]) => {
+        // A home that keeps changing is left alone until its planned inputs have stopped changing (at most twice).
+        const fingerprint = (key: string) => JSON.stringify((plans[key]?.steps ?? []).map(({ done: _done, ...step }) => step));
+        for (let waits = 0; waits < 2; waits++) {
+          const before = new Map(quiet.map((key) => [key, fingerprint(key)]));
+          await new Promise<void>((resolve) => { const timer = setTimeout(resolve, this.options.staleQuietMs ?? 10_000); timer.unref(); });
+          const replanned = await runEngineHistoryOffThread({ ...base, kind: "plan", known: entry.engineDiscovery ?? {}, only: quiet });
+          for (const [key, plan] of Object.entries(replanned.plans ?? {})) plans[key] = plan;
+          if (replanned.discovery) entry.engineDiscovery = { ...(entry.engineDiscovery ?? {}), ...replanned.discovery };
+          this.saveEngineState(entry);
+          if (quiet.every((key) => fingerprint(key) === before.get(key))) return;
+        }
+      };
+      /** Holds Murage's own sessions on these homes while their steps run, and keeps them held for the verifying plan. */
+      const holdFor = async (candidates: string[]): Promise<void> => {
+        const wanted = candidates.filter((key) => !held.has(key));
+        if (!wanted.length || !this.options.holdHomes) return;
+        try {
+          const taken = await this.options.holdHomes(wanted.map(homeOf));
+          const skipped = new Set(taken.skipped.map((home) => homeKey(home.engine, home.home)));
+          let released = false;
+          const release = () => { if (!released) { released = true; taken.release(); } };
+          for (const key of wanted) held.set(key, release);
+          for (const key of wanted) if (skipped.has(key)) giveUp(key, "engine-running", homeOf(key).home);
+        } catch (error) {
+          // Murage's own sessions on these homes could not be held, so one of them could start the engine: nothing is touched. No
+          // engine was seen open, so the owner is not told one is: Murage could not make sure it is closed ("could not check").
+          console.warn("conversation deletion: Murage's own sessions could not be held; the homes stay as they are", error);
+          for (const key of wanted) giveUp(key, "engine-unchecked", homeOf(key).home);
+        }
+      };
+      for (let round = 0; round <= MAX_ENGINE_ROUNDS; round++) {
+        // plan: every home that is not stuck, every round, so the last plan covers all of them.
+        // Murage's own sessions on these homes are held BEFORE the plan is made: a warm idle process of the engine reads as the engine
+        // being open, so a plan made first would leave the home unread (on Windows it did, for good). The hold closes the idle ones
+        // and waits until they have really exited; a live owner turn is never stopped, and its home stays pending (`skipped`).
+        await holdFor(keys.filter((key) => !stuck.has(key)));
+        const only = keys.filter((key) => !stuck.has(key));
+        if (only.length) {
+          const planned = await runEngineHistoryOffThread({ ...base, kind: "plan", known: entry.engineDiscovery ?? {}, only });
+          Object.assign(reasons, planned.reasons);
+          Object.assign(homeReasons, planned.homeReasons);
+          Object.assign(homeApps, planned.homeApps);
+          for (const path of planned.failed) failed.add(path);
+          closedOfLastPlan = planned.closedHomes ?? [];
+          uncheckedOfLastPlan = new Set(planned.uncheckedHomes ?? []);
+          for (const key of planned.syncedHomes ?? []) syncedHomes.add(key);
+          const unplanned = planned.failedHomes ?? (planned.plans ? [] : only);
+          for (const key of unplanned) { stuck.add(key); failedHomes.add(key); }
+          if (!planned.plans) for (const home of base.homes) if (only.includes(homeKey(home.engine, home.home))) failed.add(home.home); // the job itself failed
+          leftovers.push(...planned.leftovers);
+          for (const [key, plan] of Object.entries(planned.plans ?? {})) plans[key] = plan;
+          const merged = { ...(entry.engineDiscovery ?? {}), ...(planned.discovery ?? {}) };
+          if (Object.keys(merged).length) entry.engineDiscovery = merged;
+          // persist: the plan and its ids are in the record before anything is changed
+          this.saveEngineState(entry);
+        }
+        const closedNow = new Set<string>();
+        if (only.length) for (const key of closedOfLastPlan) closedNow.add(key);
+        // A home that was changed is finished only when the plan that shows nothing left was made while its engine was closed.
+        for (const key of keys) if (!stuck.has(key) && executed.has(key) && plans[key] && !hasContentSteps(plans[key]!) && only.includes(key) && !closedNow.has(key)) giveUp(key, uncheckedOfLastPlan.has(key) ? "engine-unchecked" : "engine-open", homeOf(key).home);
+        const todo = (plan: HomePlanData | undefined, key: string): boolean => !!plan && (executed.has(key) ? hasContentSteps(plan) : plan.steps.length > 0);
+        const active = keys.filter((key) => !stuck.has(key) && todo(plans[key], key));
+        if (round === MAX_ENGINE_ROUNDS || !active.length) {
+          // Out of rounds with a home still changing: it is not done, and the owner is told it was in use.
+          for (const key of active) giveUp(key, "changed", homeOf(key).home);
+          break;
+        }
+        const run = Object.fromEntries(active.filter((key) => !stuck.has(key)).map((key) => [key, plans[key]!]));
+        if (!Object.keys(run).length) break;
+        const ran = await runEngineHistoryOffThread({ ...base, kind: "execute", plans: run }, { onStep });
+        removed.push(...ran.removed);
+        Object.assign(reasons, ran.reasons);
+        Object.assign(homeReasons, ran.homeReasons);
+        Object.assign(homeApps, ran.homeApps);
+        for (const path of ran.failed) failed.add(path);
+        if (ran.factsDelta) {
+          const merged = { ...(entry.engineDiscovery ?? {}) };
+          applyFactsDelta(merged, ran.factsDelta);
+          if (Object.keys(merged).length) entry.engineDiscovery = merged; else delete entry.engineDiscovery;
+        }
+        if (!ran.factsDelta && ran.failed.length) for (const key of Object.keys(run)) { stuck.add(key); failedHomes.add(key); } // the job itself failed
+        for (const key of ran.failedHomes ?? []) { stuck.add(key); failedHomes.add(key); }
+        // A home with no failed and no stale step ran every step that was not done: all are marked. A stale home is left
+        // unmarked; the next round plans it again.
+        const quiet: string[] = [];
+        for (const key of Object.keys(run)) {
+          executed.add(key);
+          if ((ran.staleHomes ?? []).includes(key)) {
+            const times = (stale.get(key) ?? 0) + 1;
+            stale.set(key, times);
+            if (times >= 2) quiet.push(key);
+            continue;
+          }
+          if (!stuck.has(key)) for (const step of plans[key]!.steps) step.done = true;
+        }
+        this.saveEngineState(entry);
+        if (quiet.length && round < MAX_ENGINE_ROUNDS - 1) await settleQuiet(quiet);
+      }
+      return { removed, failed: [...failed], leftovers, reasons, homeReasons, homeApps, failedHomes: [...failedHomes], syncedHomes: [...syncedHomes] };
+    } catch (error) {
+      console.warn("conversation deletion: the engine history was not removed yet", error);
+      return homesFailed();
+    } finally {
+      for (const release of new Set(held.values())) { try { release(); } catch { /* released */ } }
+      try { unpause?.(); } catch { /* released */ }
+    }
+  }
+
+  /** Saves the plan, its step marks and the ids with the pending record. Throws when the record is gone. */
+  private saveEngineState(entry: PendingConversationDeletion): void {
+    const entries = this.pending();
+    const at = entries.findIndex((item) => item.id === entry.id);
+    if (at < 0) throw new Error("the pending deletion record is gone");
+    entries[at] = { ...entries[at]!, enginePlan: entry.enginePlan, engineDiscovery: entry.engineDiscovery };
+    this.save(entries);
   }
 
   /** Finish every deletion a crash interrupted. A record whose thread is
@@ -875,28 +821,36 @@ export class ConversationDeletions {
   /** Every engine session a conversation started, by engine: the resume
    * cursors Murage holds plus each `session.started` in its event log (a
    * rewind starts a new session and forgets the old cursor). */
-  private engineSessionsOf(threadIds: string[], input: DeletionInput): Partial<Record<DeletionEngine, string[]>> {
+  private engineSessionsOf(input: DeletionInput, fromLogs?: Partial<Record<DeletionEngine, string[]>>): Partial<Record<DeletionEngine, string[]>> {
+    if (input.instanceKind && !fromLogs) throw new Error("conversation deletion: read the event-log sessions first (collectLogSessions); a planning step never scans a log");
     const found = new Map<DeletionEngine, Set<string>>();
-    const add = (kind: string | undefined, id: unknown) => {
-      const engine = kind ? ENGINE_FOR_DRIVER[kind] : undefined;
+    const addTo = (engine: DeletionEngine | undefined, id: unknown) => {
       if (!engine || typeof id !== "string" || !/^[\w.-]{1,200}$/.test(id)) return;
       if (!found.has(engine)) found.set(engine, new Set());
       found.get(engine)!.add(id);
     };
-    for (const [kind, ids] of Object.entries(input.sessionIds ?? {})) for (const id of ids) add(kind, id);
-    if (input.instanceKind) {
-      for (const threadId of threadIds) {
-        for (const name of [`${threadId}.previous.ndjson`, `${threadId}.ndjson`]) {
-          let text = "";
-          try { text = readFileSync(nodePath.join(this.dir.events, name), "utf8"); } catch { continue; }
-          for (const line of text.split("\n")) {
-            if (!line.includes("session.started")) continue;
-            try {
-              const event = JSON.parse(line) as { type?: unknown; sessionId?: unknown; providerInstanceId?: unknown };
-              if (event.type === "session.started" && typeof event.providerInstanceId === "string") add(input.instanceKind(event.providerInstanceId), event.sessionId);
-            } catch { /* a torn line */ }
-          }
-        }
+    for (const [kind, ids] of Object.entries(input.sessionIds ?? {})) for (const id of ids) addTo(ENGINE_FOR_DRIVER[kind], id);
+    for (const [engine, ids] of Object.entries(fromLogs ?? {})) for (const id of ids ?? []) addTo(engine as DeletionEngine, id);
+    return Object.fromEntries([...found].map(([engine, ids]) => [engine, [...ids]]));
+  }
+
+  /** The engine sessions in the conversations' event logs, read from each
+   * thread's compact sessions file in short slices (never a sync scan; a
+   * pre-1.0.2 log is scanned once, sliced, then answered from the compact file). */
+  async collectLogSessions(threadIds: string[], input: Pick<DeletionInput, "instanceKind">, options?: SessionReadOptions): Promise<Partial<Record<DeletionEngine, string[]>>> {
+    const found = new Map<DeletionEngine, Set<string>>();
+    if (!input.instanceKind) return {};
+    for (const threadId of threadIds.filter((id) => ID.test(id))) {
+      for (const line of await threadSessionLines(this.dir.events, threadId, options)) {
+        try {
+          const event = JSON.parse(line) as { type?: unknown; sessionId?: unknown; providerInstanceId?: unknown };
+          if (event.type !== "session.started" || typeof event.providerInstanceId !== "string" || typeof event.sessionId !== "string") continue;
+          const kind = input.instanceKind(event.providerInstanceId);
+          const engine = kind ? ENGINE_FOR_DRIVER[kind] : undefined;
+          if (!engine) continue;
+          if (!found.has(engine)) found.set(engine, new Set());
+          found.get(engine)!.add(event.sessionId);
+        } catch { /* a torn line */ }
       }
     }
     return Object.fromEntries([...found].map(([engine, ids]) => [engine, [...ids]]));
@@ -917,6 +871,11 @@ export class ConversationDeletions {
 
   async reconcile(isLive: (threadId: string) => boolean, deleteRows: (threadId: string) => void): Promise<number> {
     let finished = 0;
+    // A crash can leave an engine's history row cut in the middle of a value: finish the crash journals before anything is planned.
+    try {
+      const homes = this.pending().flatMap((entry) => entry.engineHomes);
+      await runEngineHistoryOffThread({ kind: "recover", homes, folders: [], memoryFolders: [], sessions: {}, redoDir: this.redoDir });
+    } catch (error) { console.warn("conversation deletion: the crash journals were not checked", error); }
     for (const entry of this.pending()) {
       if (entry.threadIds.some(isLive)) {
         this.abandon(entry);
@@ -925,33 +884,13 @@ export class ConversationDeletions {
       try {
         for (const threadId of entry.threadIds) deleteRows(threadId);
         await this.forget(entry.threadIds);
-        this.finish(entry);
+        await this.finish(entry);
         finished++;
       } catch (error) {
         console.error("conversation deletion: could not finish an interrupted delete", error);
       }
     }
     return finished;
-  }
-
-  private removeEngineHistory(homes: DeletionEngineHome[], folders: string[], memoryFolders: string[], sessions: Partial<Record<DeletionEngine, string[]>>, removed: string[], failed: string[], leftovers: DeletionLeftover[]): void {
-    const seen = new Set<string>();
-    const out = {
-      remove: (root: string, target: string) => record(removeConfined(root, target), target, removed, failed),
-      rewriteJsonl: (path: string, drop: (row: Record<string, unknown>) => boolean) => {
-        try { if (rewriteJsonlAtomic(path, drop)) removed.push(path); } catch { failed.push(path); }
-      },
-      failed: (path: string) => failed.push(path),
-      removed: (path: string) => removed.push(path),
-    };
-    for (const { engine, home, sqliteHome, secondary, db } of homes) {
-      if (seen.has(`${engine}\0${home}`)) continue;
-      seen.add(`${engine}\0${home}`);
-      if (engine === "fuigo" || engine === "grok") removeFuigoSessions(home, folders, memoryFolders, removed, failed);
-      else if (engine === "claude") removeClaudeProjects(home, folders, removed, failed, leftovers);
-      else if (engine === "codex") removeCodexRollouts(home, folders, removed, failed, sqliteHome);
-      else removeAcpEngineHistory({ engine, home, ...(secondary ? { secondary } : {}), ...(db ? { db } : {}) }, folders, (sessions[engine] ?? []).filter((id) => typeof id === "string"), out);
-    }
   }
 
   private hasTable(name: string): boolean {
@@ -1012,7 +951,7 @@ function dedupeLeftovers(leftovers: DeletionLeftover[]): DeletionLeftover[] {
  * after the commit and before any file goes (retire idle engine sessions, so
  * nothing writes to a transcript after it is removed). */
 export async function runConversationDeletion<T>(deletions: ConversationDeletions, input: DeletionInput, commit: () => T, settle?: () => Promise<void>): Promise<{ result: T; report: DeletionReport }> {
-  const entry = deletions.begin(input);
+  const entry = deletions.begin(input, await deletions.collectLogSessions(input.threadIds, input));
   let result: T;
   try {
     result = commit();
@@ -1026,5 +965,5 @@ export async function runConversationDeletion<T>(deletions: ConversationDeletion
   }
   try { await settle?.(); } catch { /* the files go regardless */ }
   await deletions.forget(entry.threadIds);
-  return { result, report: deletions.finish(entry) };
+  return { result, report: await deletions.finish(entry) };
 }

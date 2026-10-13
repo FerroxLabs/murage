@@ -20,8 +20,10 @@ function usageFixture() {
   const owner = { botId: "lead", generation: "gen", notOwnerAudience: false };
   const pending = new Map(); const turns = new Map(); const bindings = new Map();
   const settle = vi.fn(); const complete = vi.fn(); const insert = vi.fn((_db: unknown, _input: unknown) => ({ request }));
-  const deps = { internalTurnOwners: new Map([["thread", owner]]), turnRequestByGeneration: bindings, delegationWatch: new Map(), syncAskRequests: new Map(),
+  const deps = { fluxFirstTokenProbe: { begin() {}, observe() {} }, internalTurnOwners: new Map([["thread", owner]]), turnRequestByGeneration: bindings, delegationWatch: new Map(), syncAskRequests: new Map(),
     dispatchProjectUsageTurn,
+    // the fence is engine-input's own subject (engine-input tests); this seam is about accounting, so the built turn passes through unwrapped
+    fencedTurnInput: (input: { prompt?: unknown }, _fence: unknown) => { const { prompt: _prompt, ...rest } = input; return { ...rest, text: "" }; },
     sharedOwnerUsageTurn: seam("sharedOwnerUsageTurn", { store: { bot: () => undefined } }),
     abandonSharedOwnerUsageTurn: seam("abandonSharedOwnerUsageTurn", { sharedOwnerUsage: createSharedOwnerUsage(vi.fn()) }),
     roomRequest: () => request, database: () => ({}), projectGroupForThread: () => ({ id: "g", channelProject: true }),
