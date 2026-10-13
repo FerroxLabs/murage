@@ -362,7 +362,7 @@ describe("the reply is shown as it streams", () => {
 
   it("does not pop the reply in a second time and keeps following the end", () => {
     expect(chat).toMatch(/if \(liveReply\) wasWaiting\.current = false;/);
-    expect(chat).toContain("[bot.id, messages.length, streaming, liveReply, reasoning, plan, bot.busy, composerDock.pad, keyboardInsetPx]");
+    expect(chat).toContain("[transcriptKey, messages.length, streaming, liveReply, reasoning, plan, bot.busy, composerDock.pad, keyboardInsetPx]");
   });
 });
 

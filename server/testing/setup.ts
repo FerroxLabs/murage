@@ -4,7 +4,8 @@
 // runs before any test module imports server/config.ts.
 import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
 import { afterAll, afterEach } from "vitest";
 
 import { removeTempDir } from "./cleanup.ts";
@@ -18,7 +19,6 @@ import { installSafeWipeGuard } from "./safe-wipe.mjs";
 const ambient = scrubAmbientMurageEnv();
 // Children a test spawns with the node --test preload keep what the test set.
 process.env.MURAGE_TEST_ENV_SCRUBBED = "1";
-
 // Belt and braces for the faked home below: every recursive rm/rmSync/rmdir
 // in this worker refuses the account's real ~/.murage (found through the
 // account database, not $HOME), any home directory, the checkout, and any
@@ -66,6 +66,14 @@ globalThis.fetch = ((input: Parameters<typeof fetch>[0], init?: Parameters<typeo
   else if (!headers.has("x-murage-door-token")) headers.set("x-murage-door-token", TEST_DOOR_TOKEN);
   return realFetch(input, { ...init, headers });
 }) as typeof fetch;
+
+// The engines' files are changed only under real exclusion (server/engine-exec.ts), which needs the native addon. Tests run in a
+// world where no engine holds a lock or has a file open (a stand-in the worker threads load too); the tests of the real addon
+// point MURAGE_ENGINE_EXCLUSION_PATH at the build (server/engine-exclusion.test.ts).
+process.env.MURAGE_ENGINE_EXCLUSION_PATH = join(dirname(fileURLToPath(import.meta.url)), "engine-exclusion-stub.cjs");
+
+// The crash journal of an engine-history rewrite (server/engine-redo.ts) lives in a throwaway folder of its own in tests.
+process.env.MURAGE_ENGINE_REDO_DIR = join(mkdtempSync(join(tmpdir(), "murage-test-redo-")), "engine-redo");
 
 const home = mkdtempSync(join(tmpdir(), "murage-test-home-"));
 process.env.HOME = home;
@@ -116,12 +124,16 @@ if (!process.env.MURAGE_CONTROL_PORT_OVERRIDE) {
 // SQLite keeps the database file open for the lifetime of its handle.
 // Windows will not remove a directory containing an open database, so close
 // the per-test handle before the next test resets its throwaway data dir.
+// The log checkpointer (wal-maintenance.ts) closes its own connection a moment after the server's, and that last close
+// copies and removes the log: wait for it, so the next test's reset of the data dir never meets a file still being deleted.
 const { closeMessageDb } = await import("../message-db.ts");
-afterEach(closeMessageDb);
+const { stopWalMaintenance } = await import("../wal-maintenance.ts");
+afterEach(async () => { closeMessageDb(); await stopWalMaintenance(); });
 
 // Windows holds a directory that is a live process's cwd, and a just-killed
 // CLI lets go a beat after the kill call returns — see removeTempDir.
 afterAll(async () => {
   closeMessageDb();
+  await stopWalMaintenance();
   await removeTempDir(home);
 });
