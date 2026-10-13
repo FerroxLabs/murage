@@ -5,7 +5,10 @@ import { join } from "node:path";
 import { beforeEach, describe, expect, it } from "vitest";
 
 import { DATA_DIR } from "./config.ts";
+import { database } from "./database.ts";
 import {
+  appendMessage,
+  cardsOnBranch,
   closeMessageDb,
   deleteThread,
   insertMessage,
@@ -17,6 +20,7 @@ import {
   updateMessage,
 } from "./message-db.ts";
 import { Store, type Message } from "./store.ts";
+import { walkStats } from "./transcript-backfill.ts";
 import type { ModelSelection } from "./contracts.ts";
 
 const selection = (): ModelSelection => ({ instanceId: "claude", model: "claude-sonnet-5" });
@@ -248,4 +252,64 @@ describe("attachment adoption uses the visibility definition of a reference", ()
       expect(seen.flat()).toContain("imp-9.png");
     } finally { setAttachmentAdoptionObserver(null); }
   });
+});
+
+describe("lane E r7: new cards on a busy thread do not restart the branch walk", () => {
+  const card = (id: string, parentId: string | null, answered = false): Message =>
+    ({ ...msg(id, ""), role: "bot", kind: "options", parentId, card: { title: "May I?", options: [], requestId: `r-${id}`, tool: "Bash", ...(answered ? { answered: true } : {}) } }) as unknown as Message;
+  const DEPTH = 9_000;
+  beforeEach(() => {
+    closeMessageDb();
+    rmSync(DATA_DIR, { recursive: true, force: true });
+    mkdirSync(DATA_DIR, { recursive: true });
+  });
+  /** thread `t`: an open card at the bottom, DEPTH text rows above it */
+  function history(): string {
+    appendMessage("t", card("old", null));
+    let head = "old";
+    for (let i = 1; i < DEPTH; i++) { appendMessage("t", msg(`m${i}`, "x", { parentId: head })); head = `m${i}`; }
+    // as a database from before the answer table: no answer is kept for the old card
+    database().exec("DELETE FROM card_branch; DELETE FROM branch_walk;");
+    return head;
+  }
+  /** open the thread until the answer for every card is kept (a call that reads nothing) */
+  function settle(head: string, cards: Array<{ id: string; rowid: number }>): number {
+    walkStats.parentReads = 0;
+    for (let guard = 0; guard < 200; guard++) {
+      const before = walkStats.parentReads;
+      cardsOnBranch("t", head, cards);
+      if (walkStats.parentReads === before) return walkStats.parentReads;
+    }
+    throw new Error("the walk never settled");
+  }
+
+  it("an unresolved old card + 3 appended approval cards: the cursor survives and the total is about one walk", () => {
+    let head = history();
+    const cards = [{ id: "old", rowid: 1 }];
+    walkStats.parentReads = 0;
+    for (let n = 0; n < 3; n++) {
+      for (let i = 0; i < 10; i++) cardsOnBranch("t", head, cards); // the walk makes progress between cards
+      appendMessage("t", card(`ask${n}`, head));
+      head = `ask${n}`;
+    }
+    const spent = walkStats.parentReads;
+    const rest = settle(head, cards);
+    // one walk of the history in all (<= 9,000 + small), never a restart per card
+    expect(spent + rest).toBeLessThanOrEqual(DEPTH + 1_000);
+    expect(cardsOnBranch("t", head, cards).has("old")).toBe(true);
+  }, 120_000);
+
+  it("a reopened card the walk has passed still voids the walk", () => {
+    const head = history();
+    const cards = [{ id: "old", rowid: 1 }, { id: "near", rowid: 2 }];
+    // a card near the head that is answered, then reopened below the point the walk has reached
+    appendMessage("t", card("near", head, true));
+    const tip = "near";
+    for (let i = 0; i < 10; i++) cardsOnBranch("t", tip, cards);
+    walkStats.parentReads = 0;
+    updateMessage("t", card("near", head)); // reopened
+    const rest = settle(tip, cards);
+    expect(rest).toBeGreaterThanOrEqual(DEPTH); // started again from the head
+    expect(cardsOnBranch("t", tip, cards)).toEqual(new Set(["old", "near"]));
+  }, 120_000);
 });

@@ -44,7 +44,13 @@ interface Target {
 export function parseSkillSource(input: string): Target | { rawUrl: string } | { error: string } {
   const text = input.trim();
   if (!text) return { error: "paste a GitHub repository, folder, or SKILL.md URL" };
-  if (/^https?:\/\/raw\.githubusercontent\.com\/.+\/SKILL\.md$/i.test(text)) return { rawUrl: text };
+  const raw = text.match(/^(https?):\/\/raw\.githubusercontent\.com\/.+\/SKILL\.md$/i);
+  if (raw) {
+    // Plain http sends the skill URL in the clear; refuse it rather than upgrade it.
+    return raw[1]!.toLowerCase() === "https"
+      ? { rawUrl: text }
+      : { error: "paste an https:// raw.githubusercontent.com link instead of plain http" };
+  }
   // The file itself must be named SKILL.md, at the repository root or in a
   // folder, the same rule the raw link above applies.
   const blob = text.match(/^https?:\/\/github\.com\/([^/]+)\/([^/]+)\/blob\/([^/]+)\/((?:.*\/)?SKILL\.md)$/i);
@@ -154,7 +160,24 @@ async function fetchListing(url: string, fetcher: typeof fetch): Promise<Content
   return asEntries(listing);
 }
 
+// A download_url is remote data from a GitHub listing and a rawUrl is pasted
+// input: pin both to https on the raw host, with no port or credentials, so a
+// tampered listing cannot aim the server's fetch at another host. Adapted from
+// OpenMausBot #2428 (Apache-2.0).
+function assertPinnedRawUrl(url: string): void {
+  let parsed: URL;
+  try {
+    parsed = new URL(url);
+  } catch {
+    throw new Error("refusing to download a skill file from an invalid link");
+  }
+  if (parsed.protocol !== "https:" || parsed.username || parsed.password || parsed.port || parsed.hostname !== "raw.githubusercontent.com") {
+    throw new Error("refusing to download a skill file that is not an https://raw.githubusercontent.com link");
+  }
+}
+
 async function fetchText(url: string, fetcher: typeof fetch): Promise<string> {
+  assertPinnedRawUrl(url);
   const signal = AbortSignal.timeout(TEXT_TIMEOUT_MS);
   const response = await fetchWithRedirects(url, fetcher, signal, { "user-agent": "Murage-skills" });
   if (!response.ok) {

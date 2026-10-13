@@ -1,32 +1,6 @@
 import { useState } from "react";
 import type { Message } from "../state/store";
-import { claimExcerpts, HELD_QUEUE_OPEN } from "../../shared/chat-engine-notes";
-import { EARLIER_CLAIM_TITLE, FLAGGED_REPLY_LINE } from "../../shared/reply-action-claims";
-
-/** Under a reply whose described actions have no record: one quiet line, and the words it is about. */
-export function ReplyActionNote({ text, check, onJump }: { text: string; check: NonNullable<Message["actionCheck"]>; onJump: (messageId: string) => void }) {
-  const excerpts = claimExcerpts(text, check);
-  const flagged = check.state === "flagged";
-  if (!flagged && !excerpts.some((excerpt) => excerpt.state === "earlier")) return null;
-  return (
-    <div data-testid="reply-action-note" className="mt-1.5 text-[11.5px] text-ink-secondary">
-      {flagged && <div role="note">{FLAGGED_REPLY_LINE}</div>}
-      {excerpts.map((excerpt, i) => excerpt.state === "earlier" && excerpt.rowId ? (
-        <button key={i} type="button" data-claim-state="earlier" title={EARLIER_CLAIM_TITLE}
-          onClick={() => onJump(excerpt.rowId!)} className="mr-2 underline decoration-dotted underline-offset-2">{excerpt.text}</button>
-      ) : (
-        <span
-          key={i}
-          data-claim-state={excerpt.state}
-          title={excerpt.state === "earlier" ? EARLIER_CLAIM_TITLE : undefined}
-          className={excerpt.state === "flagged" ? "mr-2 underline decoration-warning decoration-2 underline-offset-2" : "mr-2 underline decoration-dotted underline-offset-2"}
-        >
-          {excerpt.text}
-        </span>
-      ))}
-    </div>
-  );
-}
+import { HELD_QUEUE_OPEN } from "../../shared/chat-engine-notes";
 
 /** The thread's one line about items waiting for an engine that can act. */
 export function HeldQueueRow({ text, count, items = [], onJump, onRetry, bots = [] }: { bots?: Array<{ id: string; name: string }>; onRetry?: (id: string, botId: string) => Promise<void>; text: string; count: number; items?: NonNullable<NonNullable<Message["murage"]>["held"]>["items"]; onJump: (messageId: string) => void }) {

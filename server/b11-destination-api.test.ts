@@ -1,4 +1,5 @@
 import { existsSync, mkdirSync, readFileSync, realpathSync, writeFileSync } from "node:fs";
+import { CLAUDE_ISOLATION_CONTRACT } from "./drivers/claude.ts";
 import { join } from "node:path";
 import { afterAll, beforeAll, expect, it } from "vitest";
 import { launchVerificationServer, type VerificationServer } from "../scripts/control-murage.ts";
@@ -24,7 +25,7 @@ beforeAll(async () => {
     "import fs from 'node:fs'; import path from 'node:path';",
     "process.env.FAKE_CLAUDE_DUMP_EACH_TURN = '1';",
     "const dir = process.env.MURAGE_DATA_DIR; const seed = path.join(dir, 'b11-legacy-seed');",
-    "if (fs.existsSync(seed)) { const id = fs.readFileSync(seed, 'utf8'); const file = path.join(dir, 'bots.json'); const bots = JSON.parse(fs.readFileSync(file, 'utf8')); const bot = bots.find(bot => bot.id === id); if (!bot) throw new Error('legacy fixture missing'); bot.tasks[0].cwd = null; bot.tasks[0].resumeCursors = {verification:'b11-retained-session'}; delete bot.tasks[0].localOutputs; bot.resumeCursors = {...bot.tasks[0].resumeCursors}; fs.writeFileSync(file, JSON.stringify(bots)); fs.unlinkSync(seed); }",
+    `if (fs.existsSync(seed)) { const id = fs.readFileSync(seed, 'utf8'); const file = path.join(dir, 'bots.json'); const bots = JSON.parse(fs.readFileSync(file, 'utf8')); const bot = bots.find(bot => bot.id === id); if (!bot) throw new Error('legacy fixture missing'); bot.tasks[0].cwd = null; bot.tasks[0].resumeCursors = {verification:'b11-retained-session'}; bot.tasks[0].resumeContracts = {verification:${CLAUDE_ISOLATION_CONTRACT}}; delete bot.tasks[0].localOutputs; bot.resumeCursors = {...bot.tasks[0].resumeCursors}; fs.writeFileSync(file, JSON.stringify(bots)); fs.unlinkSync(seed); }`,
   ].join("\n");
   fixture = await launchVerificationServer(process.env, undefined, { instrumentationSource });
   await identify();

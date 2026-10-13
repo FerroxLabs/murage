@@ -71,6 +71,20 @@ describe("room dispatcher", () => {
     expect(h.closed).toEqual([`${turn.id}:dax cannot be reached from here`]);
   });
 
+  it("keeps the words of an owner send the room closes (audience changed, member left, expired), never only a line without them", () => {
+    const kept: string[] = [];
+    const keepOwnerWords = (request: RoomRequest) => { kept.push(`${request.id}:${request.payloadText}`); };
+    const audience = insertRoomRequest(db, { groupId: "g", verb: "owner_send", fromKind: "owner", admissionKey: "ka", lineage, targetThreadId: "t", payloadText: "words a", now: 1 }).request;
+    harness({ audienceStillValid: () => false, keepOwnerWords }).dispatcher.pump();
+    const left = insertRoomRequest(db, { groupId: "g", verb: "owner_send", fromKind: "owner", toBotId: "gone", admissionKey: "kb", lineage, targetThreadId: "t2", payloadText: "words b", now: 2 }).request;
+    harness({ roomUsable: (request) => request.id !== left.id, memberIds: () => ["other"], keepOwnerWords }).dispatcher.pump();
+    const late = insertRoomRequest(db, { groupId: "g", verb: "owner_send", fromKind: "owner", admissionKey: "kc", lineage, targetThreadId: "t3", payloadText: "words c", deadlineAt: 50, now: 3 }).request;
+    now = 10_000;
+    const h = harness({ roomBusy: () => true, keepOwnerWords });
+    h.dispatcher.tick();
+    expect(kept).toEqual([`${audience.id}:words a`, `${left.id}:words b`, `${late.id}:words c`]);
+  });
+
   it("cancels a request whose audience changed", () => {
     const send = insertRoomRequest(db, { groupId: "g", verb: "owner_send", fromKind: "owner", admissionKey: "a", lineage, targetThreadId: "t", now: 1 }).request;
     const h = harness({ audienceStillValid: () => false });

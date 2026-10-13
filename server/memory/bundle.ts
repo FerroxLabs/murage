@@ -1,15 +1,17 @@
+import { authorityStamp, pinStamp } from "./authority-epoch.ts";
 import { readMemoryEvolutionPolicy, type MemoryEvolutionPolicy } from "./evolution-policy.ts";
-import { humanMayReadRecord } from "../human-principals.ts";
 import { createHash, randomUUID } from "node:crypto";
 import { database } from "../database.ts";
 import type { MemoryBundle, MemoryEvidenceHandle } from "../../shared/memory.ts";
 import { MEMORY_HANDLE_LIMIT, MEMORY_REFERENCE_CLOSE, MEMORY_REFERENCE_OPEN, MEMORY_REFERENCE_PREAMBLE, memoryHandle, memoryHandlePosition, memoryRequestPrefix } from "../../shared/memory.ts";
 import { accessIncludesRoom, assertMemoryAccess, inMemoryAccessPass, type MemoryAccess } from "./policy.ts";
-import { searchMemory, type MemorySearchBridge } from "./search.ts";
+import { readableMemoryRecord, type MemoryReadOptions } from "./readable.ts";
+import { noteRecallDegraded, searchMemory, type MemorySearchBridge } from "./search.ts";
+import { causeOf } from "./worker-log.ts";
 import { episodeHits } from "./pip-episodes.ts";
 import { generationOf, readCounter } from "./pip-lived.ts";
-import { supersededThreadCheckpoint, threadCheckpointId, unsettledIntention } from "./checkpoints.ts";
-import { derivationAncestryCurrent, recordRestsOnWithheldMessage } from "./replay-lineage.ts";
+import { supersededThreadCheckpoint, threadCheckpointId } from "./checkpoints.ts";
+import { recordRestsOnWithheldMessage } from "./replay-lineage.ts";
 import { threadCaptureScope } from "./capture-scope.ts";
 import { PIP_ALL_KINDS_SQL, isPipOwnerKind, pipRenderId, pipTierOf, type PipTier } from "./pip-kinds.ts";
 import { observedReservation, pipAttribution, pipKindLabel, reinforcedAtOf, selfSlotOrder, sentenceEnds } from "./pip-render.ts";
@@ -40,64 +42,31 @@ export interface BoundedMemoryBundle extends MemoryBundle {
 }
 const bundles = new WeakMap<MemoryBundle, {access: MemoryAccess; records: BundleRecord[]; withheldMessage?: (threadId: string, messageId: string) => boolean}>();
 
-/** Hydrate authoritative bytes only; an approved projection does not expose its private parents. */
-export function hydrateMemoryRecord(id: string, version: number, access: MemoryAccess): BundleRecord {
-  return hydrate(id,version,access,false);
+/** Hydrate authoritative bytes only; an approved projection does not expose its private parents. Every check is
+ * readableMemoryRecord's (readable.ts), the one function memory_get, bundle hydration and search share. */
+export function hydrateMemoryRecord(id: string, version: number, access: MemoryAccess, options: HydrateOptions = {}): BundleRecord {
+  return hydrate(id,version,access,false,options);
 }
 
 /** Hydrate a version that was disclosed to a turn: identical to hydrateMemoryRecord
  * except that the thread's own superseded checkpoint is accepted as stale. */
-export function hydrateDisclosedMemoryRecord(id: string, version: number, access: MemoryAccess): BundleRecord {
-  try { return hydrate(id,version,access,false); }
+export function hydrateDisclosedMemoryRecord(id: string, version: number, access: MemoryAccess, options: HydrateOptions = {}): BundleRecord {
+  try { return hydrate(id,version,access,false,options); }
   catch (error) {
     if (!supersededThreadCheckpoint(id,version,access)) throw error;
-    return hydrate(id,version,access,true);
+    return hydrate(id,version,access,true,options);
   }
 }
+/** memory_get's extra reader rules: a bot's own tool call (no owner-authored continuity) and its transcript rule. */
+export type HydrateOptions = Pick<MemoryReadOptions, "agent" | "withheldMessage">;
 
-function hydrate(id: string, version: number, access: MemoryAccess, allowSuperseded: boolean): BundleRecord {
-  return inMemoryAccessPass(() => hydrateInPass(id, version, access, allowSuperseded));
+function hydrate(id: string, version: number, access: MemoryAccess, allowSuperseded: boolean, options: HydrateOptions): BundleRecord {
+  return inMemoryAccessPass(() => hydrateInPass(id, version, access, allowSuperseded, options));
 }
-function hydrateInPass(id: string, version: number, access: MemoryAccess, allowSuperseded: boolean): BundleRecord {
-  assertMemoryAccess(access);
-  const db = database();
-  const row = db.prepare(allowSuperseded
-    ? "SELECT * FROM memory_records WHERE id=? AND version=? AND state IN ('active','archived')"
-    : "SELECT * FROM memory_records WHERE id=? AND version=? AND state='active'").get(id,version);
-  if (!row || db.prepare("SELECT 1 FROM memory_tombstones WHERE target_type='record' AND target_id=? AND (revision IS NULL OR revision=?)").get(id,version)) throw new Error("MEMORY_RECORD_UNAVAILABLE");
-  if (!derivationAncestryCurrent(db,id,version,row.supersedes_id)) throw new Error("MEMORY_RECORD_UNAVAILABLE");
-  assertMemoryAccess(access,String(row.scope_id));
-  if(!humanMayReadRecord(db,id,version,access.humanPrincipal))throw new Error("MEMORY_SCOPE_DENIED");
-  const details=db.prepare("SELECT partition,confidence_basis FROM memory_record_details WHERE record_id=? AND record_version=?").get(id,version);
-  if(details?.partition==="identity"){
-    const own=db.prepare("SELECT 1 FROM memory_scopes WHERE id=? AND ((kind='bot' AND owner_key=?) OR kind='conversation')").get(row.scope_id,access.botId);
-    if(!own||accessIncludesRoom(access))throw new Error("MEMORY_SCOPE_DENIED");
-  }
-  const evidence = db.prepare("SELECT source_id AS sourceId,source_revision AS revision,start_byte AS startByte,end_byte AS endByte FROM memory_evidence WHERE record_id=? AND record_version=?").all(id,version) as unknown as MemoryEvidenceHandle[];
-  if (!evidence.length && row.assertion !== "owner-statement") throw new Error("MEMORY_EVIDENCE_UNAVAILABLE");
-  for (const handle of evidence) {
-    const source = db.prepare("SELECT s.scope_id,s.state,s.revision,s.kind,s.outcome,v.payload FROM memory_sources s JOIN memory_source_versions v ON v.source_id=s.id AND v.revision=? WHERE s.id=?").get(handle.revision,handle.sourceId);
-    if (!source || source.state !== "active" || source.revision !== handle.revision || db.prepare("SELECT 1 FROM memory_tombstones WHERE target_type='source' AND target_id=? AND (revision IS NULL OR revision=?)").get(handle.sourceId,handle.revision)) throw new Error("MEMORY_EVIDENCE_UNAVAILABLE");
-    if (["source", "fact", "checkpoint"].includes(String(row.kind)) && ["tool-outcome", "activity"].includes(String(source.kind)) && source.outcome === "failed") throw new Error("MEMORY_EVIDENCE_UNAVAILABLE");
-    assertMemoryAccess(access,String(source.scope_id));
-    const text = JSON.parse(String(source.payload)).text;
-    if (typeof text !== "string" || !Number.isSafeInteger(handle.startByte) || !Number.isSafeInteger(handle.endByte) || handle.startByte < 0 || handle.endByte <= handle.startByte || handle.endByte > Buffer.byteLength(text)) throw new Error("MEMORY_EVIDENCE_UNAVAILABLE");
-  }
-  // A record resting on a generated message that is withheld (what its reply
-  // used was forgotten, deleted or changed, replay-lineage.ts) does not bring
-  // that reply back as a remembered line. An owner pin is no exception: a
-  // pinned room note quoting such a reply handed its words back to every bot
-  // (0.1.61 third check, P1). buildMemoryBundle leaves such a pin out and says
-  // so instead of refusing the turn.
-  if (recordRestsOnWithheldMessage(id,version)) throw new Error("MEMORY_EVIDENCE_UNAVAILABLE");
-  // A captured chunk keeps its source's settlement (checkpoints.ts): an unsettled
-  // intention is not current evidence; a failed tool output is only a failure.
-  let sourceOutcome: "failed" | undefined;
-  if (row.kind === "source") {
-    const sources = db.prepare("SELECT s.speaker,s.outcome,s.turn_id,s.thread_id FROM memory_evidence e JOIN memory_sources s ON s.id=e.source_id WHERE e.record_id=? AND e.record_version=?").all(id,version);
-    if (!allowSuperseded && row.owner_pinned !== 1 && sources.some(source => unsettledIntention(db,source))) throw new Error("MEMORY_EVIDENCE_UNAVAILABLE");
-    if (sources.some(source => source.speaker === "tool" && source.outcome === "failed")) sourceOutcome = "failed";
-  }
+function hydrateInPass(id: string, version: number, access: MemoryAccess, allowSuperseded: boolean, options: HydrateOptions): BundleRecord {
+  const read = readableMemoryRecord(id, version, access, { ...options, mode: allowSuperseded ? "disclosed" : "current" });
+  if (typeof read === "string") throw new Error(read);
+  const {row, details, evidence, sourceOutcome} = read;
   const pipTier=details?.partition==="identity"?pipTierOf(details.confidence_basis):undefined;
   return {id,version,scopeId:String(row.scope_id),text:String(row.text),assertion:String(row.assertion),pinned:row.owner_pinned===1,kind:String(row.kind),...(details?.partition==="identity"?{identityBasis:String(details.confidence_basis??"Unverified identity context")}:{ }),...(pipTier?{pipTier}:{}),...(pipTier&&String(details!.confidence_basis).includes("imported from ")?{pipImported:true as const}:{}),...(sourceOutcome?{sourceOutcome}:{}),evidence};
 }
@@ -120,8 +89,8 @@ const PIP_LABELS: Record<string, string> = {
   "commitment": "Commitments (you said)",
   "self-trait": "About me (you said)",
 };
-function referenceLine(record: BundleRecord, position: number): string {
-  const attribution = record.pipTier ? pipAttribution(record.pipTier,record.pipImported===true) : record.kind==="character-canon" ? "fictional character canon; not model autobiography or world truth" : record.identityBasis?.includes("fictional") ? "owner-authored fictional continuity; not world truth" : record.sourceOutcome==="failed" ? "a tool reported a failed action" : ASSERTION_LABELS[record.assertion] ?? "unattributed";
+export function referenceLine(record: BundleRecord, position: number): string {
+  const attribution = record.kind==="checkpoint" ? "working notes" : record.pipTier ? pipAttribution(record.pipTier,record.pipImported===true) : record.kind==="character-canon" ? "fictional character canon; not model autobiography or world truth" : record.identityBasis?.includes("fictional") ? "owner-authored fictional continuity; not world truth" : record.sourceOutcome==="failed" ? "a tool reported a failed action" : ASSERTION_LABELS[record.assertion] ?? "unattributed";
   const kind = (record.pipTier ? pipKindLabel(record.kind,record.pipTier) : undefined) ?? PIP_LABELS[record.kind] ?? (/^[a-z][a-z-]{0,31}$/.test(record.kind) ? record.kind : "note");
   // One JSON string literal per line: stored text cannot introduce a newline,
   // the closing tag or the current-request boundary. Angle brackets are
@@ -178,8 +147,16 @@ export async function buildMemoryBundle(query: string, access: MemoryAccess, bri
   // A room member reaches its own bot scope, but never its owner-private
   // identity partition, pinned or not: that is withheld, not a failed pin.
   const room = accessIncludesRoom(access);
-  const pinRows = db.prepare(`SELECT id,version FROM memory_records r WHERE state='active' AND owner_pinned=1 AND r.kind NOT IN ${PIP_ALL_KINDS_SQL} AND scope_id IN (SELECT value FROM json_each(?))
+  // The owner's pins: no index serves owner_pinned, so reading them walks every active record of the reader's scopes (41 ms with 20,000 captured
+  // chunks). They change only when a pinned record is added, changed or removed, which the pin stamp counts (authority-epoch.ts).
+  const pinKey = JSON.stringify([access.scopeIds, room]), pinAt = pinStamp();
+  const cachedPins = pinAt === undefined ? undefined : pinCache.get(pinKey);
+  const pinRows = cachedPins && cachedPins.stamp === pinAt ? cachedPins.rows : db.prepare(`SELECT id,version FROM memory_records r WHERE state='active' AND owner_pinned=1 AND r.kind NOT IN ${PIP_ALL_KINDS_SQL} AND scope_id IN (SELECT value FROM json_each(?))
     ${room ? "AND NOT EXISTS (SELECT 1 FROM memory_record_details d WHERE d.record_id=r.id AND d.record_version=r.version AND d.partition='identity')" : ""} ORDER BY id,version`).all(JSON.stringify(access.scopeIds));
+  if (pinAt !== undefined && cachedPins?.stamp !== pinAt && pinStamp() === pinAt) {
+    if (pinCache.size >= 64) pinCache.delete(pinCache.keys().next().value!);
+    pinCache.set(pinKey, { stamp: pinAt, rows: pinRows.map(row => ({ id: row.id, version: row.version })) });
+  }
   // A pin resting on a reply bots no longer see is left out, not a refused
   // turn: the owner is told, and the room goes on without it. Left-out pins
   // take no handle.
@@ -395,7 +372,8 @@ export async function buildMemoryBundle(query: string, access: MemoryAccess, bri
     const row = scopeRow(db, scope.kind,scope.owner);
     return row ? threadCheckpointId(String(row.id),access.threadId) : "";
   }).filter(Boolean))];
-  const checkpoints = db.prepare("SELECT id,version FROM memory_records WHERE state='active' AND owner_pinned=0 AND kind='checkpoint' AND id IN (SELECT value FROM json_each(?)) AND scope_id IN (SELECT value FROM json_each(?)) ORDER BY created_at DESC LIMIT 1").all(JSON.stringify(ownCheckpoints),JSON.stringify(access.scopeIds));
+  // Driven from the thread's own checkpoint ids by primary key; the scope condition only filters (an index on the scope would walk every chunk it holds).
+  const checkpoints = db.prepare("SELECT r.id,r.version FROM json_each(?) j JOIN memory_records r ON r.id=j.value WHERE r.state='active' AND r.owner_pinned=0 AND r.kind='checkpoint' AND +r.scope_id IN (SELECT value FROM json_each(?)) ORDER BY r.created_at DESC LIMIT 1").all(JSON.stringify(ownCheckpoints),JSON.stringify(access.scopeIds));
   inMemoryAccessPass(() => {
     for (const row of checkpoints) {
       try {
@@ -432,10 +410,11 @@ export async function buildMemoryBundle(query: string, access: MemoryAccess, bri
           catch { assertMemoryAccess(access); degradedReason = "MEMORY_OPTIONAL_EVIDENCE_UNAVAILABLE"; }
         }
       });
-    } catch {
+    } catch (error) {
       options.signal?.throwIfAborted();
       assertMemoryAccess(access);
       degradedReason = "MEMORY_RECALL_UNAVAILABLE";
+      noteRecallDegraded("turn", causeOf(error), { hits: 0, ms: 0, index: "unknown", outcome: "empty" });
     }
     // PIP episodes (design 1.2): recall only, merged after the shared search, direct owner turns with Continuity on.
     if (pipOn && access.botId) {
@@ -538,12 +517,20 @@ function citesOnly(record: BundleRecord, sources: Set<string>): boolean {
   return sources.size > 0 && record.evidence.length > 0 && record.evidence.every(handle => sources.has(handle.sourceId));
 }
 
-/** Must run immediately before the adapter call, after all other asynchronous setup. */
+/** The owner's pinned records per reader, and the pin stamp they were read at. */
+const pinCache = new Map<string, { stamp: string; rows: Array<{ id: unknown; version: unknown }> }>();
+/** The authority stamp at which a bundle last passed the record loop below, per bundle. */
+const bundleCheckedAt = new WeakMap<object, string>();
+/** Must run immediately before the adapter call, after all other asynchronous setup.
+ * The access check runs every time; the per-record rehydration and withheld-source walk are
+ * memoised per (bundle, authority epoch): they read only what the epoch tracks (authority-epoch.ts). */
 export function assertMemoryBundle(bundle: MemoryBundle, access: MemoryAccess) {
   const trusted = bundles.get(bundle);
   if (!trusted || trusted.access !== access) throw new Error("MEMORY_BUNDLE_UNTRUSTED");
   if (bundle.tokenCount !== tokens(bundle.text)) throw new Error("MEMORY_BUNDLE_BUDGET_MISMATCH");
   assertMemoryAccess(access);
+  const stamp = authorityStamp();
+  if (stamp !== undefined && bundleCheckedAt.get(bundle) === stamp) return;
   inMemoryAccessPass(() => {
     for (const record of trusted.records) {
       const current = hydrateDisclosedMemoryRecord(record.id,record.version,access);
@@ -552,4 +539,6 @@ export function assertMemoryBundle(bundle: MemoryBundle, access: MemoryAccess) {
       if (trusted.withheldMessage && recordRestsOnWithheldMessage(record.id,record.version,trusted.withheldMessage)) throw new Error("MEMORY_CONTEXT_REVOKED");
     }
   });
+  // Re-read after the loop: a stamp taken before it that has since moved is not a pass at that stamp.
+  if (stamp !== undefined && authorityStamp() === stamp) bundleCheckedAt.set(bundle, stamp);
 }
