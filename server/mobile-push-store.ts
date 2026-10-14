@@ -10,6 +10,7 @@
 import type { DatabaseSync } from "node:sqlite";
 import type { PushCategory, PushKind, PushRisk, ResolvedBy } from "../shared/mobile-push.ts";
 import { newKeySecret } from "./mobile-push-keys.ts";
+import { releaseRestoreHold, sqlRowRestoreHeld } from "./restore-fence.ts";
 
 export interface PushBinding {
   bindingId: string; deviceId: string; publisherToken: string; createdAt: number; previewContent?: boolean;
@@ -205,10 +206,13 @@ export class PushStore {
   enqueueRelayRemoval(binding: Pick<PushBinding, "bindingId" | "publisherToken">, now: number): void {
     this.db.prepare("INSERT OR IGNORE INTO push_relay_removals (binding_id,publisher_token,attempts,next_attempt_at,created_at) VALUES (?,?,0,?,?)")
       .run(binding.bindingId, binding.publisherToken, now, now);
+    // The owner removing this device now is the explicit action that lets a removal a restore held run.
+    releaseRestoreHold(this.db, "push_relay_removal", binding.bindingId);
   }
+  /** Removals due now. A removal a restore holds is not due: it runs only after the owner removes the device again. */
   dueRelayRemovals(now: number, limit: number): RelayRemoval[] {
-    return (this.db.prepare("SELECT * FROM push_relay_removals WHERE next_attempt_at<=? ORDER BY next_attempt_at, created_at, rowid LIMIT ?")
-      .all(now, limit) as Row[]).map(toRemoval);
+    return (this.db.prepare("SELECT * FROM push_relay_removals WHERE next_attempt_at<=? ORDER BY next_attempt_at, created_at, rowid")
+      .all(now) as Row[]).filter((row) => !sqlRowRestoreHeld(this.db, "push_relay_removal", String(row.binding_id))).slice(0, limit).map(toRemoval);
   }
   relayRemovalDone(bindingId: string): void {
     this.db.prepare("DELETE FROM push_relay_removals WHERE binding_id=?").run(bindingId);

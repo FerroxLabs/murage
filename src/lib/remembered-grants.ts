@@ -5,6 +5,7 @@
 // server is the one that decides what a key covers (server/auto-approve.ts,
 // server/stop-line.ts, shared/exact-command.ts); this only puts it in words.
 import { parseExactCommandKey } from "../../shared/exact-command";
+import { taskGrantKeys } from "@/lib/task-window";
 
 export type GrantDescription =
   | { kind: "exact"; command: string; folder: string; engine: string }
@@ -12,8 +13,8 @@ export type GrantDescription =
 
 /** Every grant the bot's defaults and its tasks hold, each once, defaults
  * first. Removing one removes it from all of them (server/index.ts). */
-export function rememberedGrants(bot: { alwaysAllow?: string[]; tasks?: { alwaysAllow?: string[] }[] }): string[] {
-  return [...new Set([...(bot.alwaysAllow ?? []), ...(bot.tasks ?? []).flatMap((task) => task.alwaysAllow ?? [])])];
+export function rememberedGrants(bot: { alwaysAllow?: string[]; tasks?: { alwaysAllow?: string[] }[]; grantsAll?: string[] }): string[] {
+  return [...new Set([...(bot.alwaysAllow ?? []), ...taskGrantKeys(bot)])];
 }
 
 const PROGRAM_GRANT = /^(?:mcp__.+__)?(?:[\w-]+\.)?(?:bash|shell|execute|exec_command|run_command|computer_exec|terminal):([^:\s]+)$/i;

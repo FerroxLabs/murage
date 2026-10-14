@@ -21,6 +21,40 @@ const previews=new Map<string,Preview>();
 let checkedDatabase:ReturnType<typeof database>|undefined;
 const hash=(text:string)=>createHash("sha256").update(text).digest("hex");
 
+/** The part of an import path that survives a move of the data dir ("workspaces/bot/MEMORY.md", "section-contexts.json#Team"). */
+function relativeImportPath(path:string):string{
+  return (path.startsWith(DATA_DIR+sep)?path.slice(DATA_DIR.length+1):path).split(sep).join("/");
+}
+/** A notebook's source id. New ids hash [scope, path under DATA_DIR], so moving the data dir keeps them. A source already imported under the
+ * old id (a hash of the absolute path) keeps that id, and one imported under another data dir's absolute path is found by its stored path
+ * (a move or restore): no id is rewritten, so nothing is imported twice and a real change is still seen. Only an id with no row either way
+ * (never imported, or moved) reads the scope's few legacy sources. */
+const legacyIdMemo=new WeakMap<object,{revision:number;ids:Map<string,string|null>}>();
+function importSourceId(db:ReturnType<typeof database>,scopeId:string,path:string):string{
+  const relativeId=`legacy:${hash(JSON.stringify([scopeId,relativeImportPath(path)]))}`;
+  const exists=db.prepare("SELECT 1 FROM memory_sources WHERE id=?");
+  if(exists.get(relativeId))return relativeId;
+  const absoluteId=`legacy:${hash(JSON.stringify([scopeId,path]))}`;
+  if(exists.get(absoluteId))return absoluteId;
+  const wanted="/"+relativeImportPath(path);
+  // The scan below reads the scope's legacy sources: it is done once per (scope, path) until the memory data changes (data_revision moves on
+  // every capture, import and edit), so a turn that meets the same notebook again reads two primary keys and one meta row.
+  const revision=Number(db.prepare("SELECT data_revision AS r FROM memory_meta WHERE id=1").get()?.r);
+  const memoKey=JSON.stringify([scopeId,wanted]),memo=legacyIdMemo.get(db);
+  if(memo&&memo.revision===revision){const hit=memo.ids.get(memoKey);if(hit!==undefined)return hit??relativeId;}
+  let found:string|null=null;
+  for(const row of db.prepare("SELECT s.id,json_extract(v.payload,'$.path') AS stored FROM memory_sources s JOIN memory_source_versions v ON v.source_id=s.id AND v.revision=s.revision WHERE s.id>='legacy:' AND s.id<'legacy;' AND s.scope_id=?").all(scopeId)){
+    const stored=typeof row.stored==="string"?row.stored.replace(/\\/g,"/"):"";
+    if(stored.endsWith(wanted)){found=String(row.id);break;}
+  }
+  if(!memo||memo.revision!==revision)legacyIdMemo.set(db,{revision,ids:new Map()});
+  const ids=legacyIdMemo.get(db)!.ids;
+  if(ids.size>=512)ids.delete(ids.keys().next().value!);
+  ids.set(memoKey,found);
+  if(found)return found;
+  return relativeId;
+}
+
 /** The configured profile root is trusted; every selected descendant must be a
  * regular non-symlink file. Never accept arbitrary paths from import requests.
  */
@@ -58,7 +92,7 @@ function selectionItem(selection:ImportSelection,roster:MemoryRoster):ImportItem
   const originalHash=hash(text);
   text=redactSecretsInText(text);
   if(!text.trim())throw new Error("MEMORY_IMPORT_EMPTY");
-  const sourceId=`legacy:${hash(JSON.stringify([scopeId,path]))}`;
+  const sourceId=importSourceId(database(),scopeId,path);
   const previous=database().prepare("SELECT content_hash FROM memory_sources WHERE id=?").get(sourceId);
   return {selection,path,hash:originalHash,bytes:Buffer.byteLength(text),text,scopeId,scopeLabel,alreadyImported:previous?.content_hash===originalHash};
 }
@@ -71,12 +105,13 @@ export function notebookSourceIds(botId:string,section?:string|null,partition:Pa
   if(partition.kind === "isolated") return {};
   const db=database(),team=isHomePartition(partition) ? section?.trim()||"" : partition.kind === "team" ? teamMemoryKey(partition.teamId) : null;
   const scope=(kind:string,owner:string)=>scopeRow(db, kind,owner)?.id;
+  const idOf=(scopeId:unknown,path:string)=>importSourceId(db,String(scopeId),path);
   const bot=scope("bot",partitionScopeKey(botId,partition)!),brief=team === null ? undefined : scope("team",team);
   const general=partition.kind !== "general" ? scope("bot",botId+"#general") : undefined;
   return {
-    ...general?{general:`legacy:${hash(JSON.stringify([String(general),join(notebookRoot(botId,{kind:"general"}),"GENERAL.md")]))}`}:{},
-    ...bot?{notebook:`legacy:${hash(JSON.stringify([String(bot),join(notebookRoot(botId,partition),partition.kind === "general" ? "GENERAL.md" : "MEMORY.md")]))}`}:{},
-    ...brief?{brief:`legacy:${hash(JSON.stringify([String(brief),`${join(DATA_DIR,"section-contexts.json")}#${team}`]))}`}:{},
+    ...general?{general:idOf(general,join(notebookRoot(botId,{kind:"general"}),"GENERAL.md"))}:{},
+    ...bot?{notebook:idOf(bot,join(notebookRoot(botId,partition),partition.kind === "general" ? "GENERAL.md" : "MEMORY.md"))}:{},
+    ...brief?{brief:idOf(brief,`${join(DATA_DIR,"section-contexts.json")}#${team}`)}:{},
   };
 }
 
@@ -102,15 +137,34 @@ export function commitMemoryImport(ticket:object,previewId:string,roster:MemoryR
   return commitImportItems(preview.items, track);
 }
 
-function commitImportItems(items:ImportItem[], track=false){
+/** Whether memory_evidence_by_source is built (every older row is in it). Until then a changed import is deferred, never answered by a scan of the
+ * evidence table (455,296 rows, 77 MB, on the main thread for the whole upgrade). */
+function evidenceReady(db:ReturnType<typeof database>):boolean{
+  try{return Number(db.prepare("SELECT ready FROM memory_late_build WHERE name='evidence'").get()?.ready)===1;}catch{return false;/* no late table yet */}
+}
+const evidenceSourceQuery="SELECT record_id FROM memory_evidence_by_source WHERE source_id=?";
+const CONFLICT_OF_RECORD="(r.owner_pinned=1 OR r.state IN ('archived','deleted') OR r.assertion!='unverified-import')";
+
+/** `retryLater`: the tracked sync and the notebook walk, which leave the link as it was and look again. Anything else is told to try again in a moment. */
+function commitImportItems(items:ImportItem[], track=false, retryLater=false){
   return transaction(db=>{
-    let imported=0,skipped=0;const recordIds:string[]=[];
+    let imported=0,skipped=0;const recordIds:string[]=[];let deferred=0;
     for(const item of items){
-      const id=`legacy:${hash(JSON.stringify([item.scopeId,item.path]))}`;
+      const id=importSourceId(db,item.scopeId,item.path);
       if(db.prepare("SELECT 1 FROM memory_tombstones WHERE (target_type='source' AND target_id=?) OR (target_type='import' AND target_id=? AND content_hash=?)").get(id,item.scopeId,item.hash))throw new Error("MEMORY_IMPORT_FORGOTTEN");
       const prior=db.prepare("SELECT revision,content_hash,state FROM memory_sources WHERE id=?").get(id);
       if(prior && prior.state!=="active")throw new Error("MEMORY_IMPORT_SOURCE_RETIRED");
-      if(prior && prior.content_hash!==item.hash && db.prepare("SELECT 1 FROM memory_records r WHERE r.id IN (SELECT record_id FROM memory_evidence WHERE source_id=?) AND (r.owner_pinned=1 OR r.state IN ('archived','deleted') OR r.assertion!='unverified-import') LIMIT 1").get(id))throw new Error("MEMORY_IMPORT_REVIEW_CONFLICT");
+      // No row for the source means no evidence can name it (the foreign key runs through memory_sources), so a first import reads no evidence at
+      // all. A changed one reads it by source through memory_evidence_by_source, which leads with source_id (memory_evidence has no index on it).
+      // While that index is not built nothing of the notebook is applied: records that cite the old revision (derived ones too) could not all be
+      // found, and the tracked sync tries it again once the index is ready.
+      if(prior && prior.content_hash!==item.hash){
+        if(!evidenceReady(db)){
+          if(!retryLater)throw new Error("MEMORY_IMPORT_INDEX_BUILDING");
+          deferred++;continue;
+        }
+        if(db.prepare(`SELECT 1 FROM memory_records r WHERE r.id IN (${evidenceSourceQuery}) AND ${CONFLICT_OF_RECORD} LIMIT 1`).get(id))throw new Error("MEMORY_IMPORT_REVIEW_CONFLICT");
+      }
       if(track){
         // Written only when the link is new or something about it changed: a rescan of
         // an unchanged notebook leaves the database as it found it.
@@ -122,7 +176,7 @@ function commitImportItems(items:ImportItem[], track=false){
       }
       if(prior?.content_hash===item.hash){skipped++;continue;}
       const revision=prior?Number(prior.revision)+1:1;
-      db.prepare("UPDATE memory_records SET state='superseded' WHERE id IN (SELECT record_id FROM memory_evidence WHERE source_id=?) AND state!='deleted'").run(id);
+      if(prior)db.prepare(`UPDATE memory_records SET state='superseded' WHERE id IN (${evidenceSourceQuery}) AND state!='deleted'`).run(id);
       db.prepare("INSERT INTO memory_sources VALUES(?,?,NULL,NULL,NULL,?,?,'legacy-import','import','imported',NULL,'active') ON CONFLICT(id) DO UPDATE SET revision=excluded.revision,content_hash=excluded.content_hash,state='active'").run(id,item.scopeId,revision,item.hash);
       db.prepare("INSERT INTO memory_source_versions VALUES(?,?,?,?,?)").run(id,revision,item.hash,JSON.stringify({text:item.text,path:item.path,originalHash:item.hash,selection:item.selection}),Date.now());
       for(const [index,chunk] of chunksFor(item.text).entries()){
@@ -134,7 +188,7 @@ function commitImportItems(items:ImportItem[], track=false){
       imported++;
     }
     if(imported){db.exec("UPDATE memory_meta SET data_revision=data_revision+1");revokeAllDisclosures(db,"import");}
-    return {imported,skipped,recordIds,originals:"preserved" as const};
+    return {imported,skipped,deferred,recordIds,originals:"preserved" as const};
   });
 }
 
@@ -195,7 +249,7 @@ export function syncTrackedMemoryImports(roster:MemoryRoster){
     let link:Link;
     try{
       const item=selectionItem(previous.selection,roster);
-      commitImportItems([item]);
+      if(commitImportItems([item],false,true).deferred)continue; // the evidence index is not ready: the link keeps its old hash and the next look tries again
       link={selection:previous.selection,hash:item.hash,status:"current",checkedAt:Date.now()};
     }catch(error){
       const code=error instanceof Error?error.message:"MEMORY_IMPORT_SYNC_FAILED";
@@ -280,13 +334,13 @@ export function migrateDetectedMemoryNotebooks(roster:MemoryRoster,cursor?:strin
   const pending=selections.filter(selection=>botId!==after.bot||key(selection)>after.file).sort((a,b)=>key(a)<key(b)?-1:1);
   let imported=0,skipped=0,needsReview=0;
   for(const selection of pending.slice(0,4)){
-    const path=join(base,key(selection)),sourceId=`legacy:${hash(JSON.stringify([scopeId,path]))}`,linkId=`notebook-link:${sourceId}`;
+    const path=join(base,key(selection)),sourceId=importSourceId(db,scopeId,path),linkId=`notebook-link:${sourceId}`;
     // Stopping tracking is an owner choice, not an invitation to relink later.
     if(db.prepare("SELECT 1 FROM memory_scope_bindings WHERE id=? AND state!='granted'").get(linkId)){skipped++;continue;}
     try{
       const item=selectionItem(selection,roster);
       if(item.text===MEMORY_SEED){skipped++;continue;}
-      const result=commitImportItems([item],true);imported+=result.imported;skipped+=result.skipped;
+      const result=commitImportItems([item],true,true);imported+=result.imported;skipped+=result.skipped+result.deferred;
     }catch(error){
       const code=error instanceof Error&&error.message.startsWith("MEMORY_IMPORT_")?error.message:"MEMORY_IMPORT_FILE_UNREADABLE";
       if(code==="MEMORY_IMPORT_EMPTY"){skipped++;continue;}

@@ -20,8 +20,14 @@
 // once, and a direct turn asks only about the lines it replays. What a
 // revoked or forgotten source produced is still never replayed.
 import { mkdirSync, rmSync } from "node:fs";
-import { beforeEach, expect, it } from "vitest";
+import { beforeEach, expect, it, afterEach } from "vitest";
+import { thawRootSetWritesForTest } from "./replay-lineage.ts";
+// 1.0.2: this file drives the read-time root-set machinery over rows a 1.0.1 file holds; thaw the frozen root-set writes to model them.
+beforeEach(() => thawRootSetWritesForTest(true));
+afterEach(() => thawRootSetWritesForTest(false));
 import { DATA_DIR } from "../config.ts";
+import { insertMessage } from "../message-db.ts";
+import { writtenWithReceipts } from "./testing/legacy-file-model.ts";
 import { closeDatabase, database } from "../database.ts";
 import { InternalCapabilities } from "../internal-capabilities.ts";
 import { memoryAccess, reconcileMemoryRoster, type MemoryAccess, type MemoryRoster } from "./policy.ts";
@@ -34,6 +40,7 @@ import { filterDirectReplay, filterMemoryReplay } from "./disclosures.ts";
 import { replayExclusions } from "./replay-lineage.ts";
 import type { MemorySearchBridge } from "./search.ts";
 import type { Message } from "../store.ts";
+import { LineageAllowance } from "./lineage-allowance.ts";
 
 const roster: MemoryRoster = {
   bots: [
@@ -43,7 +50,7 @@ const roster: MemoryRoster = {
   groups: [],
 };
 /** What a direct turn may replay or quote (filterDirectReplay). */
-const directAllowed = (t: string, m: Message[], a: MemoryAccess, s: Set<string>) => filterDirectReplay(t, m, a, s).allowed;
+const directAllowed = (t: string, m: Message[], a: MemoryAccess, s: Set<string>) => filterDirectReplay(LineageAllowance.tool(), t, m, a, s).allowed;
 const empty: MemorySearchBridge = { search: async () => ({ hits: [], vectorRows: 0 }) };
 beforeEach(() => { closeDatabase(); rmSync(DATA_DIR, { recursive: true, force: true }); mkdirSync(DATA_DIR, { recursive: true }); });
 
@@ -90,7 +97,7 @@ async function longConversation(turns: number, extraLookup: Record<number, Retur
   const messages: Message[] = [];
   for (let turn = 1; turn <= turns; turn++) {
     messages.push(owner(`ask-${turn}`, turn * 10));
-    const bundle = await buildMemoryBundle("what is the plan", a, empty);
+    const bundle = await buildMemoryBundle("what is the plan", a, empty, {allowance: LineageAllowance.tool()});
     const receipt = new MemoryDispatchReceipt(bundle, a, "fuigo");
     receipt.sessionStarted("native-1");
     receipt.accepted();
@@ -107,14 +114,14 @@ async function longConversation(turns: number, extraLookup: Record<number, Retur
 it("red: a long direct chat with recall every turn replays without MEMORY_REPLAY_LIMIT", async () => {
   const { a, messages } = await longConversation(120);
   // the whole thread, as 0.1.61 asked (index.ts direct turn)
-  expect(() => filterMemoryReplay("dax-direct", messages, a)).not.toThrow();
-  expect(filterMemoryReplay("dax-direct", messages, a)).toHaveLength(messages.length);
+  expect(() => filterMemoryReplay(LineageAllowance.tool(), "dax-direct", messages, a)).not.toThrow();
+  expect(filterMemoryReplay(LineageAllowance.tool(), "dax-direct", messages, a)).toHaveLength(messages.length);
   // and the replay a direct turn builds now
   const replayed = directAllowed("dax-direct", messages, a, new Set()).filter(m => m.kind === "text").slice(-40);
   expect(replayed).toHaveLength(40);
   expect(replayed.at(-1)?.id).toBe("reply-120");
   // the session check that decides whether to resume reads only its latest frame
-  const bundle = await buildMemoryBundle("what is the plan", a, empty);
+  const bundle = await buildMemoryBundle("what is the plan", a, empty, {allowance: LineageAllowance.tool()});
   expect(memoryContinuationChanged(bundle, "dax-direct", "fuigo", "native-1")).toBe(false);
 }, 240_000);
 
@@ -134,7 +141,7 @@ it("a source forgotten mid-session withholds the replies made from it on, and ke
   forgetMemory(ownerMemoryTicket(), { kind: "source", id: "src-side", revision: 1 });
   // the content rule (an owner-audience room turn, recall): the lookup receipt
   // of turn 90 vouches for every reply of the session from turn 90 on
-  const withheld = replayExclusions("dax-direct", messages, null, { failClosed: true });
+  const withheld = replayExclusions(LineageAllowance.tool(1_000_000_000), "dax-direct", messages, null, { failClosed: true });
   for (let turn = 90; turn <= 110; turn++) expect(withheld.has(`reply-${turn}`)).toBe(true);
   for (let turn = 1; turn < 90; turn++) expect(withheld.has(`reply-${turn}`)).toBe(false);
   // a direct turn withholds them too (a forget also moves the deletion epoch,
@@ -157,7 +164,7 @@ it("a thread past 2048 receipts replays its recent lines, and one receipt among 
     }
     messages.push(owner(`ask-${turn}`, turn * 10), reply(`reply-${turn}`, turn * 10 + 2));
   }
-  expect(() => filterMemoryReplay("dax-direct", messages.slice(-80), a)).not.toThrow();
+  expect(() => filterMemoryReplay(LineageAllowance.tool(), "dax-direct", messages.slice(-80), a)).not.toThrow();
   let kept = directAllowed("dax-direct", messages, a, new Set());
   expect(kept.filter(m => m.kind === "text").slice(-40).at(-1)?.id).toBe("reply-2404");
   expect(kept.map(m => m.id)).toContain("reply-2400");
@@ -174,18 +181,24 @@ it("a delegated reply copied in from Kessler follows its original in a long chat
   // a team memory both bots may read (a copy is held to its reader's access)
   const kesslerMemory = teamMemory("kessler", "The webinar list is 4,200 people.");
   const k = access("kessler", "kessler-direct");
-  const kBundle = await buildMemoryBundle("webinar", k, empty);
+  const kBundle = await buildMemoryBundle("webinar", k, empty, {allowance: LineageAllowance.tool()});
   const kReceipt = new MemoryDispatchReceipt(kBundle, k, "fuigo");
   kReceipt.sessionStarted("k-native");
   kReceipt.accepted();
   kReceipt.noteLookup([handle(kesslerMemory, "kessler")], k);
   kReceipt.output("k-answer");
+  // Kessler's reply is stored where it was written: a copy is shown only while the message it was copied from still is
+  // (1.0.2: written by the production writer inside the turn that held the receipts, so the line rests on them)
+  writtenWithReceipts("kessler-direct", "kessler", [kBundle.bundleId, `${kBundle.bundleId}:lookup`], () => insertMessage("kessler-direct", reply("k-answer", 1, { from: { botId: "kessler", name: "Kessler", color: "#111" } })), () => "k-answer");
   const { a, messages } = await longConversation(100);
-  messages.push(reply("copy-k-answer", 99_999, { from: { botId: "kessler", name: "Kessler", color: "#111" }, copyOf: { threadId: "kessler-direct", messageIds: ["k-answer"] } }));
+  const copy = reply("copy-k-answer", 99_999, { from: { botId: "kessler", name: "Kessler", color: "#111" }, copyOf: { threadId: "kessler-direct", messageIds: ["k-answer"] } });
+  messages.push(copy);
+  // the conversation is stored as the app stores it: the write-time layer judges a line by its stored row (a line with no row is unknown, "checking")
+  for (const message of messages) insertMessage("dax-direct", message);
   expect(directAllowed("dax-direct", messages, a, new Set()).map(m => m.id)).toContain("copy-k-answer");
   forgetMemory(ownerMemoryTicket(), { kind: "record", id: kesslerMemory });
   // the copy goes with its original; Dax's own replies do not (content rule)
-  const withheld = replayExclusions("dax-direct", messages.slice(-80), null, { failClosed: true });
+  const withheld = replayExclusions(LineageAllowance.tool(1_000_000_000), "dax-direct", messages.slice(-80), null, { failClosed: true });
   expect(withheld.has("copy-k-answer")).toBe(true);
   expect(withheld.has("reply-100")).toBe(false);
   const kept = directAllowed("dax-direct", messages, access("dax", "dax-direct"), new Set()).map(m => m.id);
@@ -212,7 +225,7 @@ it("red: a conversation past 10,000 messages that a routine keeps posting into r
   }
   expect(messages.length).toBeGreaterThan(10_000);
   // 0.1.61 handed the whole branch to the check, which refused past 10,000
-  expect(() => filterMemoryReplay("dax-direct", messages, a)).not.toThrow();
+  expect(() => filterMemoryReplay(LineageAllowance.tool(), "dax-direct", messages, a)).not.toThrow();
   const kept = directAllowed("dax-direct", messages, a, new Set());
   const replayed = kept.filter(m => m.kind === "text").slice(-40);
   expect(replayed).toHaveLength(40);
@@ -222,9 +235,9 @@ it("red: a conversation past 10,000 messages that a routine keeps posting into r
   const last = Number((database().prepare("SELECT max(CAST(substr(bundle_id,13) AS INTEGER)) AS n FROM memory_disclosures WHERE bundle_id LIKE 'run-receipt-%'").get() as { n: number }).n);
   const side = teamMemory("routine-side", "The sweep watches the RWA checkout page.");
   database().prepare("UPDATE memory_disclosures SET record_versions=? WHERE bundle_id=?").run(JSON.stringify([{ id: side, version: version(side) }]), `run-receipt-${last}`);
-  expect(replayExclusions("dax-direct", replayed, null, { failClosed: true }).has(`run-${last}-summary`)).toBe(false);
+  expect(replayExclusions(LineageAllowance.tool(1_000_000_000), "dax-direct", replayed, null, { failClosed: true }).has(`run-${last}-summary`)).toBe(false);
   forgetMemory(ownerMemoryTicket(), { kind: "record", id: side });
-  const withheld = replayExclusions("dax-direct", replayed, null, { failClosed: true });
+  const withheld = replayExclusions(LineageAllowance.tool(1_000_000_000), "dax-direct", replayed, null, { failClosed: true });
   expect(withheld.has(`run-${last}-summary`)).toBe(true);
   expect(replayed.map(m => m.id)).toContain(`run-${last - 10}-summary`);
   expect(withheld.has(`run-${last - 10}-summary`)).toBe(false);
@@ -237,9 +250,9 @@ it("a resumed session past 2048 receipts still decides from its latest frame (ME
   database().prepare(`WITH RECURSIVE n(value) AS (VALUES(1) UNION ALL SELECT value+1 FROM n WHERE value<2100)
     INSERT INTO memory_disclosures(bundle_id,thread_id,driver_instance,native_session,record_versions,source_versions,output_message_ids,policy_revision,deletion_epoch,token_count,state,created_at)
     SELECT 'old-frame-'||value,'dax-direct','fuigo','native-1',?,?,'[]',?,?,?,'delivered',value FROM n`).run(frame.record_versions, frame.source_versions, frame.policy_revision, frame.deletion_epoch, frame.token_count);
-  const bundle = await buildMemoryBundle("what is the plan", a, empty);
+  const bundle = await buildMemoryBundle("what is the plan", a, empty, {allowance: LineageAllowance.tool()});
   expect(memoryContinuationChanged(bundle, "dax-direct", "fuigo", "native-1")).toBe(false);
-  // the latest frame differing still resets the session
-  database().prepare("UPDATE memory_disclosures SET record_versions='[]' WHERE bundle_id=?").run(frame.bundle_id);
+  // the latest frame (the last written: receipt order is the write sequence, not the date) differing still resets the session
+  database().prepare("UPDATE memory_disclosures SET record_versions='[]' WHERE bundle_id='old-frame-2100'").run();
   expect(memoryContinuationChanged(bundle, "dax-direct", "fuigo", "native-1")).toBe(true);
 }, 240_000);

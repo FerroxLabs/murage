@@ -315,6 +315,14 @@ export interface SetupLiveState {
   connectedAppIds: readonly string[] | null;
   /** A settled engine reply exists somewhere in the workspace. */
   botReplyExists: boolean;
+  /**
+   * Some conversation's facts could not be read yet: the Inbox projection's
+   * first fill is still partial for it, so what the server holds about its
+   * replies and refusals is an unfinished picture, not the truth. Nothing is
+   * inferred from an unfinished picture: the steps that depend on those facts
+   * keep what was persisted, and this is not read as a first run.
+   */
+  threadFactsUnknown?: boolean;
   /** Routines, and the morning brief's own state. */
   routines: SetupRoutineReading;
 }
@@ -535,7 +543,21 @@ export function setupStepDone(step: SetupStep, recorded: SetupStepState, live: S
       // step is NOT done — it is blocked, with the key kept exactly as it
       // is, because the key is right and the spending is not. Several saved
       // keys with none chosen is not done either: nothing is routing yet.
-      return fluxUsable(live) && !fluxRefusedOnPayment(live);
+      //
+      // A refusal that is KNOWN always blocks: the Chief's reading only
+      // reports one from a conversation whose facts are complete, and a
+      // refusal newer than its own conversation's newest reply is a fact no
+      // other conversation can retract.
+      //
+      // What an unfinished fill (live.threadFactsUnknown) suppresses is the
+      // opposite conclusion, "nothing is refusing anywhere": a 402 the first
+      // fill has reached in ONE conversation may already have been answered
+      // by a reply it has not reached. That needs every conversation, so the
+      // step stays as it was persisted.
+      if (!fluxUsable(live)) return false;
+      if (fluxRefusedOnPayment(live)) return false;
+      if (live.threadFactsUnknown) return recorded.done;
+      return true;
     case "chat":
       // A job was chosen. Not "a bot replied": a restored workspace has
       // replies going back months and has chosen nothing today.
@@ -627,6 +649,7 @@ export function setupIsFirstRun(state: SetupState, live: SetupLiveState): boolea
     (step) => !state.steps[step].skipped && (state.steps[step].note ?? "").trim().length === 0,
   );
   return untouched
+    && live.threadFactsUnknown !== true
     && live.ownerName.trim().length === 0
     && !live.botReplyExists
     && !live.flux.configured

@@ -3,14 +3,19 @@
 // Counts and milliseconds only: step names are fixed words, never job, source
 // or scope ids and never message content.
 import { turnTraceEnabled } from "../turn-trace.ts";
+import { noteLoopHolder, rateLimited } from "../observe.ts";
 
 /** A single synchronous step that holds the event loop longer than this is logged. */
 export const SLOW_STEP_MS = 50;
+/** No main-thread step of the memory worker may hold the loop longer than this; one that does is logged, trace or not. */
+export const LONG_STEP_MS = 200;
 
 type Sink = (line: string) => void;
 const defaultSink: Sink = line => console.log(line);
 
 export function traceSlowStep(name: string, ms: number, sink: Sink = defaultSink): void {
+  if (ms > SLOW_STEP_MS) noteLoopHolder(name, ms);
+  if (ms > LONG_STEP_MS) rateLimited(`long-step:${name}`, 60_000, suppressed => `[memory-worker] long step name=${name} ms=${Math.round(ms)}${suppressed ? ` more=${suppressed}` : ""}`);
   if (ms <= SLOW_STEP_MS || !turnTraceEnabled()) return;
   sink(`[turn-trace] phase=${name} slow=true ms=${Math.round(ms)}`);
 }

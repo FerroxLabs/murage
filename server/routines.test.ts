@@ -1735,7 +1735,7 @@ describe("RoutineManager", () => {
     expect(h.manager.listRuns()[0]!.attention).toBeUndefined();
     h.manager.handleRuntimeEvent({ ...base, type: "content.delta", streamKind: "reasoning_text", delta: "HTTP 503. Retrying model request." });
     expect(h.manager.listRuns()[0]!.output).toBeUndefined();
-    h.manager.handleRuntimeEvent({ ...base, type: "item.completed", itemType: "assistant_text", text: "Report shipped." });
+    h.manager.handleRuntimeEvent({ ...base, type: "item.completed", itemType: "assistant_text", origin: "engine", text: "Report shipped." });
     h.manager.handleRuntimeEvent({ ...base, type: "turn.completed", ok: true, cost: 0.02 });
 
     expect(h.manager.listRuns()[0]).toMatchObject({
@@ -1766,6 +1766,7 @@ describe("RoutineManager", () => {
       createdAt: new Date().toISOString(),
       type: "item.completed",
       itemType: "assistant_text",
+      origin: "engine",
       text: "private coordinator envelope",
     })).toBeNull();
     const folded = h.manager.handleRuntimeEvent({
@@ -1979,6 +1980,17 @@ describe("RoutineManager", () => {
     expect(h.emitted).toHaveLength(0);
     save.mockRestore();
     expect(h.manager.markAllSeen()).toHaveLength(1);
+  });
+
+  it("keeps the detailed runtime error when the turn ends with a bare error stop reason", async () => {
+    const h = harness();
+    const routine = h.manager.create({ name: "Detailed error", prompt: "Write it", botId: "ember-a", schedule: { type: "once", at: new Date(2026, 7, 17, 8, 1).getTime() } });
+    h.setNow(routine.nextRunAt!);
+    await h.manager.tick();
+    const base = { provider: "fake", threadId: "thread-1", createdAt: new Date().toISOString() } as const;
+    h.manager.handleRuntimeEvent({ ...base, eventId: "detail", type: "runtime.error", message: "The model rejected the request: quota used up" } as never);
+    h.manager.handleRuntimeEvent({ ...base, eventId: "end", type: "turn.completed", ok: false, stopReason: "error" });
+    expect(h.manager.listRuns()[0].error).toBe("The model rejected the request: quota used up");
   });
 
   it("fails, not completes, a run whose turn the host stopped (ok:true, stopReason cancelled) (STOP1)", async () => {
@@ -2228,5 +2240,91 @@ describe("startup readiness for scheduled and catch-up runs", () => {
     await h.manager.tick();
     expect(h.started).toHaveLength(1);
     expect(h.started[0].prompt).toContain("connected apps had not finished loading");
+  });
+
+  const startRun = async (h: ReturnType<typeof harness>, name: string) => {
+    const routine = make(h, name, h.nowValue() - 1_000);
+    await h.manager.tick();
+    const run = h.manager.listRuns().find((r) => r.routineId === routine.id)!;
+    expect(run.status).toBe("running");
+    let n = 0;
+    const send = (event: Record<string, unknown>) => h.manager.handleRuntimeEvent({
+      eventId: `${name}-${n++}`, provider: "fake", threadId: run.threadId!, createdAt: new Date().toISOString(), ...event,
+    } as never);
+    return { run, send, settled: () => h.manager.listRuns().find((r) => r.id === run.id)! };
+  };
+
+  it("completes a run that did not need the tools that were not ready, and records the degraded availability", async () => {
+    const h = harness();
+    const { send, settled } = await startRun(h, "Summarise the notes");
+    send({ type: "item.completed", itemType: "assistant_text", text: "Here is the summary." });
+    send({ type: "turn.completed", ok: true, stopReason: "end_turn", cost: 0, toolsUnavailable: ["messaging other bots"] });
+    expect(settled()).toMatchObject({ status: "completed", toolsUnavailable: ["messaging other bots"] });
+    expect(settled().error).toBeUndefined();
+  });
+
+  it("fails a run whose call to a tool that was not ready failed", async () => {
+    const h = harness();
+    const { send, settled } = await startRun(h, "Founders sweep");
+    send({ type: "item.started", itemType: "tool", itemId: "c1", title: "mcp__composio__COMPOSIO_SEARCH_TOOLS", toolIdentity: { namespace: "composio", name: "COMPOSIO_SEARCH_TOOLS" } });
+    send({ type: "item.completed", itemType: "tool", itemId: "c1", ok: false, detail: "No such tool available" });
+    send({ type: "item.completed", itemType: "assistant_text", text: "I could not reach your apps." });
+    send({ type: "turn.completed", ok: true, stopReason: "end_turn", cost: 0, toolsUnavailable: ["connected apps", "memory"] });
+    const run = settled();
+    expect(run.status).toBe("failed");
+    expect(run.error).toBe("Connected apps were not ready when this run started, and the run needed them.");
+    expect(run.error).not.toMatch(/composio|\u2014/i);
+    expect(run.toolsUnavailable).toEqual(["connected apps", "memory"]);
+  });
+
+  it("fails a run whose bot said the task is not done for lack of those tools", async () => {
+    const h = harness();
+    const { send, settled } = await startRun(h, "Inbox triage");
+    send({ type: "item.completed", itemType: "assistant_text", text: "Not done: connected apps were not ready, so I could not read your inbox." });
+    send({ type: "turn.completed", ok: true, stopReason: "end_turn", cost: 0, toolsUnavailable: ["connected apps"] });
+    expect(settled()).toMatchObject({ status: "failed", error: "Connected apps were not ready when this run started, and the run needed them." });
+  });
+
+  it("a call that worked anyway, or readiness the engine could not report, does not fail a finished run", async () => {
+    const h = harness();
+    const { send, settled } = await startRun(h, "Weekly digest");
+    send({ type: "item.started", itemType: "tool", itemId: "m1", title: "mcp__murage-memory__memory_search" });
+    send({ type: "item.completed", itemType: "tool", itemId: "m1", ok: true });
+    send({ type: "item.completed", itemType: "assistant_text", text: "Digest sent." });
+    send({ type: "turn.completed", ok: true, stopReason: "end_turn", cost: 0, mcpReadiness: "unknown" });
+    expect(settled()).toMatchObject({ status: "completed", toolsReadiness: "unknown" });
+  });
+
+  it("a failed call followed by a successful retry of the same operation does not fail the run", async () => {
+    const h = harness();
+    const { send, settled } = await startRun(h, "Retry sweep");
+    const identity = { namespace: "composio", name: "COMPOSIO_SEARCH_TOOLS" };
+    const input = { queries: [{ use_case: "recent mail" }] };
+    send({ type: "item.started", itemType: "tool", itemId: "r1", title: "mcp__composio__COMPOSIO_SEARCH_TOOLS", toolIdentity: identity, input });
+    send({ type: "item.completed", itemType: "tool", itemId: "r1", ok: false, detail: "No such tool available" });
+    send({ type: "item.started", itemType: "tool", itemId: "r2", title: "mcp__composio__COMPOSIO_SEARCH_TOOLS", toolIdentity: identity, input });
+    send({ type: "item.completed", itemType: "tool", itemId: "r2", ok: true });
+    send({ type: "item.completed", itemType: "assistant_text", text: "Found three emails." });
+    send({ type: "turn.completed", ok: true, stopReason: "end_turn", cost: 0, toolsUnavailable: ["connected apps"] });
+    expect(settled()).toMatchObject({ status: "completed", toolsUnavailable: ["connected apps"] });
+    expect(settled().error).toBeUndefined();
+  });
+
+  it("detects 'Not done:' through markdown emphasis, leading space and case", async () => {
+    const h = harness();
+    const { send, settled } = await startRun(h, "Emphasised inbox triage");
+    send({ type: "item.completed", itemType: "assistant_text", text: "  **Not done:** connected apps were not ready." });
+    send({ type: "turn.completed", ok: true, stopReason: "end_turn", cost: 0, toolsUnavailable: ["connected apps"] });
+    expect(settled()).toMatchObject({ status: "failed", error: "Connected apps were not ready when this run started, and the run needed them." });
+  });
+
+  it("never turns a plain completion into a failure only because readiness was unknown", async () => {
+    const h = harness();
+    const { send, settled } = await startRun(h, "Unknown readiness");
+    send({ type: "item.started", itemType: "tool", itemId: "u1", title: "mcp__composio__COMPOSIO_SEARCH_TOOLS", toolIdentity: { namespace: "composio", name: "COMPOSIO_SEARCH_TOOLS" } });
+    send({ type: "item.completed", itemType: "tool", itemId: "u1", ok: false, detail: "rate limited" });
+    send({ type: "item.completed", itemType: "assistant_text", text: "Done, with what I had." });
+    send({ type: "turn.completed", ok: true, stopReason: "end_turn", cost: 0, mcpReadiness: "unknown" });
+    expect(settled()).toMatchObject({ status: "completed", toolsReadiness: "unknown" });
   });
 });

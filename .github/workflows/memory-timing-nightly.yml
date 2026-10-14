@@ -1,0 +1,73 @@
+name: Memory timing (nightly)
+
+# The Phase 0 timing gates on the 60,000-source store: pre-dispatch memory time, searches under a backlog, the
+# longest event-loop block while the worker drains, and the size of the write-ahead log. Pinned to two CPUs.
+# The fixture is generated from a seed and cached, so the long build is paid once.
+on:
+  schedule:
+    - cron: "17 3 * * *"
+  workflow_dispatch:
+    inputs:
+      drain_seconds:
+        description: "Length of the drain measurement in seconds"
+        required: false
+        default: "600"
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: memory-timing
+  cancel-in-progress: false
+
+jobs:
+  timing:
+    name: memory timing
+    runs-on: ubuntu-24.04
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: pnpm/action-setup@ff378ebe6b225b0680b81c1ad4498ae0d1d3a5e3 # v6.0.10
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 24
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - name: Build the server bundle (production build)
+        run: pnpm build:server
+      - name: Restore the fixture
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ${{ runner.temp }}/memory-perf-cache
+          key: memory-perf-fixture-${{ hashFiles('server/memory/testing/perf-fixture.ts') }}
+      - name: Restore the previous night's results
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ${{ runner.temp }}/memory-perf-previous
+          key: memory-perf-results-${{ github.run_id }}
+          restore-keys: memory-perf-results-
+      - name: Measure (two CPUs)
+        env:
+          MEMORY_PERF: "1"
+          MEMORY_PERF_ASSERT: "1"
+          MEMORY_PERF_LABEL: nightly
+          MEMORY_PERF_CACHE: ${{ runner.temp }}/memory-perf-cache
+          MEMORY_PERF_OUT: ${{ runner.temp }}/memory-perf-current.jsonl
+          MEMORY_PERF_DRAIN_SECONDS: ${{ inputs.drain_seconds || '600' }}
+        run: taskset -c 0,1 pnpm exec vitest run server/memory/memory-perf.test.ts
+      - name: Compare with the budget and the previous night
+        if: always()
+        run: |
+          mkdir -p "$RUNNER_TEMP/memory-perf-previous"
+          node scripts/memory-perf-compare.mjs "$RUNNER_TEMP/memory-perf-current.jsonl" "$RUNNER_TEMP/memory-perf-previous/results.jsonl"
+      - name: Keep these results for tomorrow
+        if: success()
+        run: cp "$RUNNER_TEMP/memory-perf-current.jsonl" "$RUNNER_TEMP/memory-perf-previous/results.jsonl"
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        if: always()
+        with:
+          name: memory-perf-results
+          path: ${{ runner.temp }}/memory-perf-current.jsonl

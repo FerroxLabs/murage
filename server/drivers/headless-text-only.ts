@@ -7,6 +7,8 @@
 // stdout cap, a 120 s first-byte timer, and settlement only after
 // awaitCliTreeStopped confirms the tree is gone. The per-run gate and the
 // miss map live in memory/pip-transport.ts.
+import { oneShots } from "../engine-one-shots.ts";
+import { fluxCallHeaders, fuigoConfigOverlay } from "../flux-memory-headers.ts";
 import { copyFileSync, existsSync, chmodSync, readFileSync, lstatSync, writeFileSync } from "node:fs";
 import { randomUUID } from "node:crypto";
 import { PIP_JOB_REFUSAL } from "../memory/pip-job.ts";
@@ -52,7 +54,12 @@ export interface HeadlessRunOptions {
  * included) until the tree is confirmed gone. It rejects (`cancelled`, or the original error) only after confirmed
  * exit; an unconfirmed stop returns uncertain-transport with the root kept for the reaper.
  */
-export async function runHeadlessCli(o: HeadlessRunOptions): Promise<TextOnlyTurnResult> {
+export function runHeadlessCli(o: HeadlessRunOptions): Promise<TextOnlyTurnResult> {
+  // A background run of the engine: a deletion of a conversation pauses these (engine-one-shots.ts). The temp root is spent by a stopped
+  // run, so a stopped one reaches its caller as a cancellation and the caller's own queue starts it again.
+  return oneShots.run(o.engine, o.signal, (signal) => runHeadlessCliNow({ ...o, signal }));
+}
+async function runHeadlessCliNow(o: HeadlessRunOptions): Promise<TextOnlyTurnResult> {
   const job = process.platform === "win32" ? { name: `Local\\murage-pip-${randomUUID()}`, argsFile: join(o.temp.root, "job-args.json") } : undefined;
   const max = o.maxOutputBytes ?? MAX_OUTPUT_BYTES;
   const now = Date.now();
@@ -238,6 +245,12 @@ export async function headlessTextOnlyTurn(input: TextOnlyTurnInput, cfg: Headle
     cleanup = bound.cleanup;
     model = bound.model;
     env = buildReflectionEnv(cfg.engine, cfg.pathValue ?? augmentedPath(), temp.home, temp.root, bound.env);
+    // Flux Memory: a reflection is background work, so a Flux-routed child carries off/off
+    // (PROPOSAL-v2 5.4, same overlay the engine's turns use).
+    if (input.providerRoute ? input.providerRoute.preset === "flux" : cfg.engine === "fuigo" && Boolean(cfg.fluxKey)) {
+      const overlay = fuigoConfigOverlay(fluxCallHeaders("pip-reflection"));
+      if (cfg.engine === "fuigo") env.FUIGO_CONFIG = overlay; else env.GROK_CONFIG = overlay;
+    }
   } catch (error) { removeTempRoot(cfg.tmpBase, temp.root); throw error; }
   return runHeadlessCli({
     cli: cfg.cli, args: [...(cfg.cliPrefixArgs ?? []), ...headlessArgv(temp, model, input.outputSchema)], cwd: temp.work, env,

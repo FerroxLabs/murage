@@ -15,7 +15,7 @@ import { detectFeedback, type FeedbackDeps, type LessonSink } from "./feedback.t
 import { changeLessonEvent, formLessonFromFeedback, listLessons, renderLearnedBlock, recordKeptMoment, setFeedbackLessonFormer, setKeptMomentUndoHook, setLearningLocalLessonSink, setLessonAdmitter, addLesson } from "./lessons.ts";
 import { afterFeedback, leasedFeedbackClassifier, onActivePath, recordWinChip, wireBotLearning, type BotLearningWiring } from "./learning-wiring.ts";
 import { readProspectScope, isOutcomeEvidence } from "./learnable.ts";
-import { MEMORY_SCHEMA } from "./schema.ts";
+import { ensureRevokeLateObjects, MEMORY_SCHEMA } from "./schema.ts";
 
 const NOW = 1_800_000_000_000;
 let db: DatabaseSync;
@@ -25,7 +25,8 @@ function memoryDb() {
   const handle = new DatabaseSync(":memory:");
   handle.exec(MEMORY_SCHEMA);
   handle.exec("CREATE TABLE messages (thread_id TEXT, id TEXT, text TEXT)");
-  handle.prepare("INSERT INTO memory_meta(id,schema_version,installation_id,mode) VALUES(1,6,?,'active')").run(randomUUID());
+  handle.prepare("INSERT INTO memory_meta(id,schema_version,installation_id,mode) VALUES(1,10,?,'active')").run(randomUUID());
+  ensureRevokeLateObjects(handle); // what every open makes from v8 on (the deny facts readers consult)
   return handle;
 }
 const wiring = (): BotLearningWiring => ({

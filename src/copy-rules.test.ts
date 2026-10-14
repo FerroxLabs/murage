@@ -43,6 +43,7 @@ const RULES = [EM_DASH, SAFE, SERVICE];
 
 function walk(dir: string, out: string[] = []): string[] {
   for (const entry of readdirSync(dir)) {
+    if (entry.startsWith(".")) continue;
     const full = join(dir, entry);
     if (statSync(full).isDirectory()) {
       if (entry === "e2e" || entry === "__fixtures__" || entry === "fixtures" || entry === "node_modules" || entry === "testing" || entry === "vendor" || entry === "resources") continue;

@@ -7,6 +7,8 @@ import {
   type WorkspaceEntry, type WorkspaceRootState, type WorkspaceSaveVersionResponse, type WorkspaceScopeRef,
 } from "../../shared/workspace-files";
 import { t } from "@/lib/i18n";
+import { findTask } from "@/lib/task-window";
+import { runNativeAction } from "@/lib/native-action-error";
 import type { LocaleKey } from "@/locales";
 
 export type ApiCall = (path: string, init?: RequestInit) => Promise<unknown>;
@@ -73,7 +75,7 @@ export function workspaceNativeAction(): WorkspaceNativeAction | undefined {
   const act = bridge.workspaceFileAction;
   return (scope, entry, action) => {
     if (!canSaveEntry(entry)) return Promise.reject(new Error(t("filesWorkspace.nativeUnavailable")));
-    return act({ botId: scope.botId, threadId: scope.threadId }, entry.relativePath, action);
+    return runNativeAction(() => act({ botId: scope.botId, threadId: scope.threadId }, entry.relativePath, action), t("filesWorkspace.nativeError"));
   };
 }
 
@@ -108,14 +110,14 @@ const KIND_LABEL: Record<ArtifactKind, LocaleKey> = {
   html: "filesWorkspace.kind.html", text: "filesWorkspace.kind.text", image: "filesWorkspace.kind.image", other: "filesWorkspace.kind.other",
 };
 
-export interface FilterBot { id: string; name: string; tasks?: { threadId: string; title: string }[] }
+export interface FilterBot { id: string; name: string; tasks?: { threadId: string; title: string }[]; extraTasks?: { threadId: string; title: string }[] }
 
 /** Human labels for every saved-version filter currently narrowing the list,
  * so an empty result can never hide why it is empty. */
 export function activeSavedFilters(filters: SavedFilters, bots: FilterBot[]): string[] {
   const bot = bots.find(item => item.id === filters.botId), labels: string[] = [];
   if (filters.botId) labels.push(t("filesWorkspace.filter.bot", { value: bot?.name ?? filters.botId }));
-  if (filters.threadId) labels.push(t("filesWorkspace.filter.task", { value: bot?.tasks?.find(task => task.threadId === filters.threadId)?.title ?? t("filesWorkspace.currentTask") }));
+  if (filters.threadId) labels.push(t("filesWorkspace.filter.task", { value: findTask(bot, filters.threadId)?.title ?? t("filesWorkspace.currentTask") }));
   if (filters.kind) labels.push(t("filesWorkspace.filter.type", { value: t(KIND_LABEL[filters.kind]) }));
   if (filters.since) labels.push(t("filesWorkspace.filter.since", { value: filters.since }));
   if (filters.until) labels.push(t("filesWorkspace.filter.until", { value: filters.until }));

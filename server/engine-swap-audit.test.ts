@@ -11,6 +11,7 @@ import { fitRenderedReplay, buildTurnContext, renderDriverReplay, replayMetadata
 import { replayWindow } from "./memory/disclosures.ts";
 import { captureSource, wholeTurnText } from "./memory/capture.ts";
 import { claimExcerpts } from "../shared/chat-engine-notes.ts";
+import { released } from "./testing/released.ts";
 
 const row = (id: string, extra: Partial<Message> = {}): Message => ({ id, at: 1, role: "bot", kind: "text", turnId: "t", ...extra });
 const check = (text: string, rows: Message[]) => { const reply = row("reply", { text }); return checkReplyActions({ reply, path: [...rows, reply] }); };
@@ -89,8 +90,8 @@ describe("durable queue and capture", () => {
     const { store, bot } = make();
     const group = store.createGroup("Questions", [bot.id]);
     const bus = { store } as Parameters<typeof mirrorReply>[0];
-    mirrorReply(bus, bot, "Which format?", group, { threadId: bot.threadId, messageIds: ["question"] });
-    mirrorReply(bus, bot, "Delegated action result", group, { threadId: bot.threadId, messageIds: ["result"] }, "action");
+    mirrorReply(bus, bot, released("Which format?", { threadId: bot.threadId, messageIds: ["question"] }), group, { threadId: bot.threadId, messageIds: ["question"] });
+    mirrorReply(bus, bot, released("Delegated action result", { threadId: bot.threadId, messageIds: ["result"] }), group, { threadId: bot.threadId, messageIds: ["result"] }, "action");
     const rows = store.messagesFor(group.threadId);
     expect(promptRows(rows, false).filter(row => row.text).map(row => row.text)).toEqual(["Which format?"]);
   });

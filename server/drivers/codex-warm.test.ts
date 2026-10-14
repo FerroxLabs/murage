@@ -12,6 +12,7 @@ import { recordEvents, type EventRecorder } from "../testing/events.ts";
 import { removeTempDir } from "../testing/cleanup.ts";
 import { bindCredentialPathInArgs, CodexDriver } from "./codex.ts";
 import { CRED_FILE_PLACEHOLDER } from "./turn-credentials.ts";
+import { cacheEnvFromProcess, markMountIncomplete, markMountReady } from "../connector-cache.ts";
 import { warmPool } from "./warm-pool.ts";
 
 // The process probe, replaceable per test: `probe.override` answers instead of `ps`.
@@ -29,14 +30,15 @@ vi.mock("./process-tree.ts", async (original) => {
 
 // Hooks the tests flip: a process that will not stop, a credential file that cannot be emptied,
 // and every warm key's parts as the driver built them.
-const hooks = vi.hoisted(() => ({ stuck: false, failClear: false, clears: 0, keyParts: [] as unknown[] }));
+const hooks = vi.hoisted(() => ({ stuck: false, failClear: false, clears: 0, keyParts: [] as unknown[], hang: null as null | Promise<boolean> }));
 vi.mock("../procs.ts", async (original) => {
   const actual = await original<typeof import("../procs.ts")>();
   return {
     ...actual,
     // a process that ignores the kill: nothing is signalled and it never reports stopped
     killCliTree: (...args: Parameters<typeof actual.killCliTree>) => { if (!hooks.stuck) actual.killCliTree(...args); },
-    awaitCliTreeStopped: (...args: Parameters<typeof actual.awaitCliTreeStopped>) => (hooks.stuck ? Promise.resolve(false) : actual.awaitCliTreeStopped(...args)),
+    // a close still in flight: the answer comes when the test says so
+    awaitCliTreeStopped: (...args: Parameters<typeof actual.awaitCliTreeStopped>) => (hooks.hang ? hooks.hang : hooks.stuck ? Promise.resolve(false) : actual.awaitCliTreeStopped(...args)),
   };
 });
 vi.mock("./turn-credentials.ts", async (original) => {
@@ -246,6 +248,58 @@ describe("CodexDriver warm app-server (fake app-server)", () => {
   respawned("a different folder", "cwd", () => ({ cwd: tmpdir() }));
   respawned("a changed MCP server set", "mcp", () => ({ integrations: { ...agents("tok-1"), memory: { command: process.execPath, args: ["fixture-memory"], env: { MURAGE_MEMORY_TOKEN: "m-1" } } } }));
   respawned("the stop line", "stopLine", () => ({ stopLine: true }));
+
+  describe("connected-apps access revision", () => {
+    const withScope = (revision: string, token = "tok-1"): Partial<SendTurnInput> => ({
+      integrations: { ...agents(token), composio: { command: process.execPath, args: ["fixture-connectors"], env: { MURAGE_CONNECTOR_IDENTITY: "a".repeat(32), MURAGE_CONNECTOR_REVISION: revision } } },
+    });
+    it("recycles when the bot's access revision changes, so the engine lists the tools again (reason=connectorScope)", async () => {
+      await create();
+      const one = await run("t-scope", "one", { ...base, ...withScope("rev-1") });
+      const two = await run("t-scope", "two", { ...base, ...withScope("rev-2") });
+      expect(two.pid).not.toBe(one.pid);
+      expect(dispatches()[1]).toBe("codex dispatch thread=t-scope process=spawned reason=connectorScope");
+      await eventually(() => exited(one.pid!));
+    });
+    it("recycles an engine the bridge handed only the stand-in list (it lists once), same thread; the fresh mount is then kept (reason=connector-mount-incomplete)", async () => {
+      await create();
+      const dir = mkdtempSync(join(tmpdir(), "murage-mount-"));
+      const cacheEnv = { MURAGE_CONNECTOR_TOOLS_CACHE_DIR: dir, ...(process.platform === "win32" ? { MURAGE_CONNECTOR_TOOLS_CACHE_PRIVATE: "1" } : {}) };
+      const scoped = (): Partial<SendTurnInput> => ({
+        integrations: { ...agents("tok-1"), composio: { command: process.execPath, args: ["fixture-connectors"], env: { MURAGE_CONNECTOR_IDENTITY: "a".repeat(32), MURAGE_CONNECTOR_REVISION: "rev-1", ...cacheEnv } } },
+      });
+      try {
+        const one = await run("t-mount", "one", { ...base, ...scoped() });
+        // The bridge of that engine served the provisional list and filed it.
+        const ref = { cache: cacheEnvFromProcess(cacheEnv), identity: "a".repeat(32), revision: "rev-1", thread: "t-mount" };
+        markMountIncomplete(ref);
+        // Discovery keeps failing (the real list is not confirmed): five turns, the warm engine stays, zero recycles.
+        for (let turn = 1; turn <= 5; turn++) {
+          const same = await run("t-mount", `wait ${turn}`, { ...base, ...scoped() });
+          expect(same.pid).toBe(one.pid);
+          expect(dispatches()[turn]).toContain("process=reused");
+        }
+        // The bridge's probe got the real list (cached under the current generation): exactly one recycle.
+        markMountReady(ref, "");
+        const two = await run("t-mount", "two", { ...base, ...scoped() });
+        expect(two.pid).not.toBe(one.pid);
+        expect(dispatches()[6]).toBe("codex dispatch thread=t-mount process=spawned reason=connector-mount-incomplete");
+        const three = await run("t-mount", "three", { ...base, ...scoped() });
+        expect(three.pid).toBe(two.pid);
+        expect(dispatches()[7]).toContain("process=reused");
+        await eventually(() => exited(one.pid!));
+      } finally {
+        removeTempDir(dir);
+      }
+    });
+    it("keeps the warm process when only the turn's token rotates under the same revision", async () => {
+      await create();
+      const one = await run("t-scope2", "one", { ...base, ...withScope("rev-1", "tok-1") });
+      const two = await run("t-scope2", "two", { ...base, ...withScope("rev-1", "tok-2") });
+      expect(two.pid).toBe(one.pid);
+      expect(dispatches()[1]).toContain("process=reused");
+    });
+  });
 
   it("respawns on sessionReset and starts a new conversation", async () => {
     await create();
@@ -606,6 +660,69 @@ describe("CodexDriver intent prewarm (fake app-server)", () => {
     await warmPool.tick();
     expect(warmPool.idleCount()).toBe(0);
     await eventually(() => lines.filter((l) => l.startsWith("codex close thread=t-pw-release reason=activity window")).length === 2);
+  });
+
+  it("holdIdle (a deleted conversation is being removed from the engine's files) closes the parked app-server, warms nothing while held, and allows it again after", async () => {
+    await create();
+    await goCold("t-pw-hold");
+    expect(await instance.adapter.prewarm!("t-pw-hold")).toBe(true);
+    const hold = await instance.adapter.holdIdle!();
+    expect(hold.confirmed).toBe(true);
+    await eventually(() => lines.some((l) => l.startsWith("codex close thread=t-pw-hold reason=deletion-hold")));
+    expect(await instance.adapter.prewarm!("t-pw-hold")).toBe(false);
+    hold.release();
+    expect(await instance.adapter.prewarm!("t-pw-hold")).toBe(true);
+  });
+
+  it("holdIdle waits for a close that is already in flight (the engine left `retained` but may still be writing): confirmed only if that process really stopped", async () => {
+    for (const stopped of [true, false]) {
+      await create();
+      await goCold(`t-hold-flight-${stopped}`);
+      expect(await instance.adapter.prewarm!(`t-hold-flight-${stopped}`)).toBe(true);
+      let answer!: (value: boolean) => void;
+      hooks.hang = new Promise<boolean>((resolve) => { answer = resolve; });
+      const stopping = instance.adapter.interruptTurn(`t-hold-flight-${stopped}`).catch(() => "pending"); // closes the parked app-server; it is no longer retained, its close is in flight
+      let settled = false;
+      const holding = instance.adapter.holdIdle!().then((hold) => { settled = true; return hold; });
+      await new Promise((resolve) => setTimeout(resolve, 150));
+      expect(settled, "the hold waits for the close in flight").toBe(false);
+      answer(stopped);
+      const hold = await holding;
+      expect(hold.confirmed, stopped ? "the process stopped" : "the process did not stop: it stays owned and the files stay alone").toBe(stopped);
+      hooks.hang = null;
+      hooks.stuck = false;
+      hold.release();
+      await stopping;
+    }
+  });
+
+  it("a process that would not stop earlier keeps the hold unconfirmed until it does", async () => {
+    await create();
+    await goCold("t-hold-stuck");
+    expect(await instance.adapter.prewarm!("t-hold-stuck")).toBe(true);
+    hooks.stuck = true;
+    await instance.adapter.interruptTurn("t-hold-stuck").catch(() => undefined); // closed, but never reported stopped: it is in the stuck registry
+    const refused = await instance.adapter.holdIdle!();
+    expect(refused.confirmed).toBe(false);
+    refused.release();
+    hooks.stuck = false;
+    const allowed = await instance.adapter.holdIdle!();
+    expect(allowed.confirmed).toBe(true);
+    allowed.release();
+  });
+
+  it("a prewarm that is already starting meets the hold at its spawn: no app-server is started, and the hold is confirmed", async () => {
+    await create();
+    await goCold("t-pw-hold-race");
+    const before = spawns().length;
+    const warming = instance.adapter.prewarm!("t-pw-hold-race"); // admitted: nothing is held yet
+    const hold = await instance.adapter.holdIdle!();
+    expect(await warming).toBe(false);
+    expect(hold.confirmed).toBe(true);
+    expect(spawns()).toHaveLength(before);
+    expect(warmPool.idleCount()).toBe(0);
+    hold.release();
+    expect(await instance.adapter.prewarm!("t-pw-hold-race")).toBe(true);
   });
 
   it("prewarm then send reuses the app-server: no second spawn", async () => {

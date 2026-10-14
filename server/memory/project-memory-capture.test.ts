@@ -25,6 +25,7 @@ import type { Message } from "../store.ts";
 import { checkReplyActions, toolAction } from "../reply-action-guard.ts";
 import { admissibleActionSources } from "./pip-admission.ts";
 import { setMemoryMode } from "./repository.ts";
+import { LineageAllowance } from "./lineage-allowance.ts";
 
 const roster: MemoryRoster = {
   bots: [
@@ -134,7 +135,7 @@ it("the room thread's own checkpoint, now kept in the room scope, still rides it
   publishMemoryWork(work, "m-worker", captureWork(work));
   const result = refreshMemoryCheckpoint(work.id);
   expect(result.status).toBe("updated");
-  const bundle = await buildMemoryBundle("", access("dax", "closing-chat"), { async search() { return { hits: [], vectorRows: 0, coverageComplete: false }; } });
+  const bundle = await buildMemoryBundle("", access("dax", "closing-chat"), { async search() { return { hits: [], vectorRows: 0, coverageComplete: false }; } }, {allowance: LineageAllowance.tool(1_000_000_000)});
   expect(bundle.checkpoint.map(record => record.scopeId)).toEqual([ensureScope("room", "closing")]);
   expect(bundle.text).toContain("Ship the pricing page by Friday.");
 });
@@ -189,7 +190,7 @@ it.each(["recall", "extraction"])("withholds legacy failed activity from %s whil
   publishMemoryWork(work, "legacy-recall", captureWork(work));
   const record = database().prepare("SELECT id FROM memory_records WHERE kind='source'").get()!;
   database().prepare("UPDATE memory_sources SET outcome='failed' WHERE id='legacy-recall'").run();
-  if (path === "recall") expect(() => hydrateMemoryRecord(String(record.id), 1, access("finch", "closing-chat"))).toThrow("MEMORY_EVIDENCE_UNAVAILABLE");
+  if (path === "recall") expect(() => hydrateMemoryRecord(String(record.id), 1, access("finch", "closing-chat"), {allowance: LineageAllowance.tool(1_000_000_000)})).toThrow("MEMORY_EVIDENCE_UNAVAILABLE");
   // Lane D's learnable-source gate is the one refusal: a failed activity is not an owner statement.
   else expect(await consolidateMemorySource(work.id, null, new AbortController().signal)).toMatchObject({ status: "deferred", reason: "not-owner-speaker", retryAfter: null, candidateIds: [] });
   expect(database().prepare("SELECT outcome FROM memory_sources WHERE id='legacy-recall'").get()).toMatchObject({ outcome: "failed" });

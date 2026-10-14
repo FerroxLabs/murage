@@ -19,6 +19,7 @@
 // memory/schema.ts; what must live in index.ts is in INTEGRATOR-PATCHES/b1.md.
 import { randomUUID } from "node:crypto";
 import type { DatabaseSync } from "node:sqlite";
+import { memoryGate } from "./memory-gate.ts";
 import { redactSecretsInText } from "../redact.ts";
 import { isOutcomeKind, type OutcomeKind, type OutcomeState, type OutcomeView } from "../../shared/outcome-choices.ts";
 export type { OutcomeState, OutcomeView };
@@ -323,10 +324,11 @@ export function signalClass(row: { target_action: string | null; correction: str
 
 function passiveAllowed(db: DatabaseSync, bot: LearningBotLike | null | undefined, threadId: string): boolean {
   if (!bot || !readBotLearning(bot).enabled) return false;
-  if (db.prepare("SELECT mode FROM memory_meta WHERE id=1").get()?.mode === "off") return false;
+  if (db.prepare("SELECT mode FROM memory_meta WHERE id=1").get()?.mode === "off" || memoryGate(db, "feedback-write") !== "ok") return false;
   return !db.prepare("SELECT 1 FROM memory_scope_bindings b,json_each(b.intent,'$.excludedThreadIds') e WHERE b.id='memory-owner-settings' AND e.value=? LIMIT 1").get(threadId);
 }
 function insertFeedback(db: DatabaseSync, row: { turnId?: string | null; id: string; botId: string; threadId: string; targetMessageId?: string | null; action: string; polarity: "+" | "-"; strength: 1 | 2 | 3; correction?: string | null; confidence: number; messageId?: string | null; now: number }): boolean {
+  if (memoryGate(db, "feedback-write") !== "ok") return false; // memory is set aside: no feedback is kept
   const result = db.prepare(`INSERT OR IGNORE INTO memory_feedback(id,bot_id,thread_id,message_id,target_message_id,target_turn_id,target_action,polarity,strength,correction,confidence,state,scope,created_at)
     VALUES(?,?,?,?,?,?,?,?,?,?,?,'detected','chat',?)`).run(row.id, row.botId, row.threadId, row.messageId ?? null, row.targetMessageId ?? null, row.turnId ?? null, row.action, row.polarity, row.strength, row.correction ?? null, row.confidence, row.now);
   return Number(result.changes) > 0;

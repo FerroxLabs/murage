@@ -18,13 +18,14 @@ import { initializeImageOperations } from "./image-operations-schema.ts";
 import { migrateMemorySchema } from "./memory/schema.ts";
 import { initializeTeamIdentityTables } from "./team-identities.ts";
 import { initializeProjectTables } from "./project-tables.ts";
+import { initializePendingDelegations } from "./pending-delegations-schema.ts";
 import { completeRequest, insertRoomRequest, markRequestDispatched } from "./room-requests.ts";
 import { assertRestoreReviewed, RESTORE_REVIEW_FILE } from "../electron/restore-review.mjs";
 import { restoredConnectionProfile } from "../electron/restored-connections.mjs";
 
 const roots: string[] = [];
 afterEach(() => { for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true }); });
-async function fixture(customize?: { bot?: Record<string, unknown>; db?: (db: DatabaseSync) => void }) {
+async function fixture(customize?: { bot?: Record<string, unknown>; db?: (db: DatabaseSync) => void; withoutLegacyQueueFile?: boolean }) {
   const root = mkdtempSync(join(tmpdir(), "murage-restore-preparation-"));
   roots.push(root);
   const data = join(root, "source");
@@ -39,7 +40,7 @@ async function fixture(customize?: { bot?: Record<string, unknown>; db?: (db: Da
   writeFileSync(join(data, "events", "routine-runs", "routine.jsonl"), [{ ...run, id: "journal-done", status: "completed" }, { ...run, id: "journal-queued", status: "queued" }].map(line => JSON.stringify(line)).join("\n") + "\n");
   put("calendar-calls.json", { version: 1, calls: [{ id: "call", name: "Call", description: "Fixture", botIds: ["bot"], schedule: { type: "once", at: 1 }, durationMinutes: 30, attachments: [], createdAt: 1, updatedAt: 1, nextRunAt: Date.now() + 10 }] });
   put("webhooks.json", { version: 1, webhooks: [{ id: "hook", endpointId: "endpoint", name: "Hook", prompt: "Task", botId: "bot", runOn: "ember", createdAt: 1, updatedAt: 1, deliveryCount: 1, enabled: true, secretHash: "b".repeat(64) }], deliveries: [{ key: "endpoint:already-run", runId: "done", at: 1 }] });
-  put("delegations.json", { thread: [{ id: "queued", message: "Never replay automatically" }] });
+  if (!customize?.withoutLegacyQueueFile) put("delegations.json", { thread: [{ id: "queued", message: "Never replay automatically" }] });
   put("browser-cleanups.json", { entries: ["Do not replay cleanup"] });
   // Murage for Chrome: the paired external client registry, its generated
   // pairing files and the extension service state are credentials of this
@@ -358,4 +359,38 @@ it("PIP: a restore with memory comes back paused, with the continuity rows kept 
     // continuity rows are not part of the rebuilt recall index: no receipt was ever queued for them
     expect(db.prepare("SELECT count(*) AS n FROM memory_projection_receipts WHERE record_id='identity:pip-fixture'").get()?.n).toBe(0);
   } finally { db.close(); }
+});
+
+// Astra r20 (e): handoffs queued in the backup's messages.db never run after a restore.
+const queueRows = (db: DatabaseSync, count: number) => {
+  initializePendingDelegations(db);
+  const insert = db.prepare("INSERT INTO pending_delegations(id, source_thread_id, to_bot_id, from_bot_id, phase, retry_at, item) VALUES(?,?,?,?,?,?,?)");
+  for (let i = 0; i < count; i++) insert.run(`q-${i}`, `src-${i % 7}`, "peer", "bot", i % 3 === 0 ? "busy" : "fresh", i % 3 === 0 ? 5 : null, JSON.stringify({ message: `queued ${i}`, depth: 0, attempts: 0 }));
+};
+it("a restore with 50 queued handoffs leaves the table empty, keeps the rows as evidence, and activation passes; a row put back is refused", async () => {
+  const f = await fixture({ withoutLegacyQueueFile: true, db: (db) => queueRows(db, 50) });
+  const prepared = await prepareInstallationRestore(f.archive, f.root);
+  expect(prepared.modifications).toContainEqual({ component: "messages.db", action: "50 queued handoffs moved to recovery-quarantine; none runs after the restore" });
+  const evidence = JSON.parse(readFileSync(join(prepared.stateDirectory, "recovery-quarantine", prepared.manifest.snapshotId, "delegations.json"), "utf8")) as Record<string, Array<{ id: string; message: string }>>;
+  expect(Object.values(evidence).flat()).toHaveLength(50);
+  expect(evidence["src-0"]![0]).toMatchObject({ id: "q-0", message: "queued 0" });
+  const restored = new DatabaseSync(join(prepared.stateDirectory, "messages.db"), { readOnly: true });
+  try { expect(restored.prepare("SELECT COUNT(*) AS n FROM pending_delegations").get()).toEqual({ n: 0 }); } finally { restored.close(); }
+  // the full restore path: archive, restore, review
+  const { restoreInstallation } = await import("./installation-restore.ts");
+  const { reviewInstallation } = await import("./installation-activation.ts");
+  const target = join(f.root, "queue-restored");
+  const saved = await writeInstallationArchive(f.data, join(f.root, "queue.zip"));
+  await restoreInstallation(target, join(f.root, "queue.zip"), saved.sha256, { requireNew: true });
+  expect(() => reviewInstallation(target)).not.toThrow();
+  const put = new DatabaseSync(join(target, "messages.db"));
+  try { queueRows(put, 1); } finally { put.close(); }
+  expect(() => reviewInstallation(target)).toThrowError(expect.objectContaining({ code: "RESTORE_WORK_NOT_PAUSED" }));
+});
+it("when the backup also carries a delegations.json, both are kept as evidence under their own names", async () => {
+  const f = await fixture({ db: (db) => queueRows(db, 3) });
+  const prepared = await prepareInstallationRestore(f.archive, f.root);
+  const dir = join(prepared.stateDirectory, "recovery-quarantine", prepared.manifest.snapshotId);
+  expect(JSON.parse(readFileSync(join(dir, "delegations.json"), "utf8")).thread[0].id).toBe("queued");
+  expect(Object.values(JSON.parse(readFileSync(join(dir, "delegations-table.json"), "utf8"))).flat()).toHaveLength(3);
 });

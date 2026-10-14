@@ -16,6 +16,7 @@ import { buildMemoryBundle, MEMORY_FRAME_TOKENS } from "./bundle.ts";
 import { searchMemory } from "./search.ts";
 import { prepareMemorySkillReview, stageSkillWrite, applyStagedSkillWrite, listSkills } from "../skills.ts";
 import { memoryOwnerRoute } from "./settings.ts";
+import { LineageAllowance } from "./lineage-allowance.ts";
 
 const threadId="7f00a32e-17a4-426b-bdc6-910220ba66c9";
 const roster={bots:[{id:"bot",threadId}],groups:[]};
@@ -41,12 +42,12 @@ it("refreshes 1000 completed turns incrementally while retaining every original 
 
 it("delivers the actual source-linked checkpoint through the canonical bounded memory bundle",async()=>{
   const source=complete("The latest verified task is to check nightly backup recovery."),checkpoint=refreshMemoryCheckpoint(source.jobId);
-  const bundle=await buildMemoryBundle("task checkpoint",access(),{search:async()=>({hits:[],vectorRows:0})});
+  const bundle=await buildMemoryBundle("task checkpoint",access(),{search:async()=>({hits:[],vectorRows:0})}, {allowance: LineageAllowance.tool()});
   expect(bundle.checkpoint.map(record=>record.id)).toContain(checkpoint.checkpointId);
   expect(bundle.sourceVersions).toContainEqual({id:source.id,revision:source.revision});
   expect(bundle.tokenCount-MEMORY_FRAME_TOKENS).toBeLessThanOrEqual(2048);
   const sourceRecord=database().prepare("SELECT id,version FROM memory_records WHERE kind='source'").get()!;
-  const withRecall=await buildMemoryBundle("verified recovery",access(),{search:async()=>({hits:[{id:String(sourceRecord.id),version:Number(sourceRecord.version),score:1}],vectorRows:0})});
+  const withRecall=await buildMemoryBundle("verified recovery",access(),{search:async()=>({hits:[{id:String(sourceRecord.id),version:Number(sourceRecord.version),score:1}],vectorRows:0})}, {allowance: LineageAllowance.tool()});
   expect(withRecall.checkpoint.map(record=>record.id)).toContain(checkpoint.checkpointId);
   expect(withRecall.evidence.map(record=>record.id)).toContain(sourceRecord.id);
   expect(withRecall.tokenCount-MEMORY_FRAME_TOKENS).toBeLessThanOrEqual(2048);
@@ -86,8 +87,8 @@ it("archives owner-selected records for historical retrieval and refuses implici
   const source=complete("Historical task evidence");const record=database().prepare("SELECT id FROM memory_records WHERE kind='source'").get()!;
   const ticket=ownerMemoryTicket();archiveMemoryRecord(ticket,String(record.id),1);
   const bridge={search:async()=>({hits:[{id:String(record.id),version:1,score:1}],vectorRows:0})};
-  expect((await searchMemory("evidence",access(),bridge)).hits).toEqual([]);
-  expect((await searchMemory("evidence",access(),bridge,{historical:true})).hits[0]?.id).toBe(record.id);
+  expect((await searchMemory("evidence",access(),bridge, {allowance: LineageAllowance.tool(1_000_000_000)})).hits).toEqual([]);
+  expect((await searchMemory("evidence",access(),bridge,{ allowance: LineageAllowance.tool(1_000_000_000),historical:true})).hits[0]?.id).toBe(record.id);
   restoreArchivedMemoryRecord(ticket,String(record.id),1);
   database().prepare("UPDATE memory_records SET owner_pinned=1 WHERE id=?").run(record.id);
   expect(()=>archiveMemoryRecord(ticket,String(record.id),1)).toThrow("MEMORY_PIN_MUST_BE_UNPINNED");
