@@ -3,13 +3,16 @@
 // cached catalogs, live /v1/models) is tagged `custom` so ModelPicker
 // can hide it behind Custom. `codex app-server` thread/start takes
 // `model` + `modelProvider` separately; picker ids encode both.
+import { oneShots } from "../engine-one-shots.ts";
 import { readdirSync, readFileSync } from "node:fs";
 import { homedir } from "node:os";
-import { basename, join } from "node:path";
+import { basename, isAbsolute, join } from "node:path";
 
 import type { ModelCatalog } from "../contracts.ts";
 import { mergeFluxCatalog } from "../flux-surface.ts";
 import { killCliTree, spawnCli } from "../procs.ts";
+import "./codex-scope-spec.ts"; // registers how a scope this process did not build is rebuilt
+import { currentScopeHome, scopedCliHomeRoot, withScopeRetry } from "./scoped-cli-home.ts";
 import { mergeLocalInject } from "./local-inject.ts";
 
 export const STATIC_CODEX_MODELS: ModelCatalog = {
@@ -83,10 +86,28 @@ export function readCodexAppServerModelCatalog(
   env: Record<string, string | undefined>,
   timeoutMs = 8_000,
 ): Promise<ModelCatalog | null> {
+  // An environment that names one of Murage's Codex scopes launches on that scope's CURRENT login generation, never an older path.
+  // A scope that cannot be resolved (contention is retried within the bound; anything else) gives NO catalog: the inherited path,
+  // which may hold a login the owner has since replaced or signed out of, is never launched with.
+  const named = env.CODEX_HOME && env.CODEX_HOME.startsWith(scopedCliHomeRoot("codex")) ? env.CODEX_HOME : null;
+  // A background run of the engine: a conversation deletion pauses these (engine-one-shots.ts); a stopped listing is simply empty.
+  if (!named) return oneShots.run("codex", undefined, (signal) => spawnCatalog(cli, env, timeoutMs, signal));
+  return withScopeRetry(() => currentScopeHome("codex", named), "Codex").then(
+    (current) => (current ? oneShots.run("codex", undefined, (signal) => spawnCatalog(cli, { ...env, CODEX_HOME: current }, timeoutMs, signal)) : null),
+    () => null,
+  );
+}
+
+function spawnCatalog(
+  cli: string,
+  launchEnv: Record<string, string | undefined>,
+  timeoutMs: number,
+  signal?: AbortSignal,
+): Promise<ModelCatalog | null> {
   return new Promise((resolve) => {
     const child = spawnCli(cli, ["app-server"], {
       cwd: homedir(),
-      env,
+      env: launchEnv,
       stdio: ["pipe", "pipe", "pipe"],
     });
     let settled = false;
@@ -100,9 +121,11 @@ export function readCodexAppServerModelCatalog(
       if (settled) return;
       settled = true;
       clearTimeout(timer);
+      signal?.removeEventListener("abort", onStop);
       killCliTree(child);
       resolve(catalog);
     };
+    function onStop(): void { finish(null); }
     const request = (method: string, params: unknown, kind: "initialize" | "models") => {
       const id = nextId++;
       pending.set(id, kind);
@@ -116,6 +139,7 @@ export function readCodexAppServerModelCatalog(
       request("model/list", { cursor, limit: 100 }, "models");
     };
     const timer = setTimeout(() => finish(null), timeoutMs);
+    if (signal?.aborted) onStop(); else signal?.addEventListener("abort", onStop, { once: true });
     timer.unref?.();
 
     child.stdout.setEncoding("utf8");
@@ -188,7 +212,9 @@ export function readCodexAppServerModelCatalog(
 }
 
 export function codexHome(env: Record<string, string | undefined>): string {
-  if (env.CODEX_HOME) return env.CODEX_HOME;
+  // A relative CODEX_HOME would resolve against whatever folder the server
+  // happens to run in, and read sign-in state from there. Use it only when absolute.
+  if (env.CODEX_HOME && isAbsolute(env.CODEX_HOME)) return env.CODEX_HOME;
   return join(env.HOME || env.USERPROFILE || homedir(), ".codex");
 }
 

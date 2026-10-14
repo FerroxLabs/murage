@@ -15,7 +15,7 @@ import { test, expect, type Page } from "@playwright/test";
 import { createServer, type ViteDevServer } from "vite";
 import react from "@vitejs/plugin-react";
 import tailwindcss from "@tailwindcss/vite";
-import { mkdirSync, readFileSync } from "node:fs";
+import { mkdirSync } from "node:fs";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { openSidebar } from "./fixtures.ts";
@@ -49,10 +49,9 @@ test.beforeAll(async () => {
 });
 test.afterAll(async () => { try { await vite?.close(); } finally { await fixture?.close(); } });
 
-// What's new is in the menu only for a version that has a page
-// (WHATS_NEW_BY_VERSION in src/lib/whats-new.ts); 1.0.0 says "none".
-const VERSION = JSON.parse(readFileSync(new URL("../../package.json", import.meta.url), "utf8")).version as string;
-const HAS_WHATS_NEW = new RegExp(`"${VERSION.replace(/\./g, "\\.")}": \\{ kind: "page"`).test(readFileSync(new URL("../lib/whats-new.ts", import.meta.url), "utf8"));
+// What's new is always in the menu on the desktop; a version without a page
+// opens its release notes (whatsNewTarget in src/lib/whats-new.ts).
+const HAS_WHATS_NEW = true;
 const shotDir = (fallback: string) => { const dir = process.env.NAV_SHOTS_DIR || fallback; mkdirSync(dir, { recursive: true }); return dir; };
 const settings = (page: Page) => page.getByRole("dialog", { name: "Settings", exact: true });
 const noSideScroll = (page: Page) => page.evaluate(() => document.documentElement.scrollWidth <= innerWidth);

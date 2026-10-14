@@ -9,7 +9,9 @@
 import { readFileSync } from "node:fs";
 import { writeFileSync } from "node:fs";
 import { join } from "node:path";
+import { DatabaseSync } from "node:sqlite";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { queuedDelegationsByThread } from "./pending-delegations-schema.ts";
 import { launchVerificationServer, type VerificationServer } from "../scripts/control-murage.ts";
 import { withTurnSecrets } from "./testing/fixture-dump.ts";
 
@@ -95,9 +97,10 @@ describe.skipIf(process.platform === "win32")("a live routine run hands work to 
     finish(peerTurn);
   }, 120000);
 
-  // The queued ask's hand-off is parked in the delegation ledger on disk until the asker's turn settles: its mark is read there.
+  // The queued ask's hand-off is parked in the delegation queue (a table of messages.db) until the asker's turn settles: its mark is read there.
   const ledgerItem = (needle: string) => {
-    const ledger = JSON.parse(readFileSync(join(fixture.info.dataDir, "delegations.json"), "utf8")) as Record<string, Array<{ message?: string; unattended?: boolean; routineAuthority?: { permissionMode?: string; triggerSource?: string } }>>;
+    const ledgerDb = new DatabaseSync(join(fixture.info.dataDir, "messages.db"), { readOnly: true });
+    const ledger = (() => { try { return queuedDelegationsByThread(ledgerDb); } finally { ledgerDb.close(); } })() as Record<string, Array<{ message?: string; unattended?: boolean; routineAuthority?: { permissionMode?: string; triggerSource?: string } }>>;
     return Object.values(ledger).flat().find(item => String(item.message ?? "").includes(needle));
   };
   it("the queued ask while the peer is busy: the parked hand-off carries the routine's ceiling, not an unattended mark (and carries neither from an owner conversation)", async () => {

@@ -30,6 +30,7 @@ import { Card, Switch } from "./SettingsPrimitives";
 import { UsageSection } from "./UsageSection";
 import { SkinPicker } from "./SkinPicker";
 import { RoomTurnTimeoutSettings } from "./RoomTurnTimeoutSettings";
+import { ROOM_ROUTING_COPY, RoomRoutingSettings } from "./RoomRoutingSettings";
 import { TranscriptionSettings } from "./TranscriptionSettings";
 import { SearchSettings } from "./SearchSettings";
 import { SkillsSettings } from "./skills/SkillsSettings";
@@ -75,7 +76,7 @@ import {
   subscribeSidebarDensity,
   type SidebarDensity,
 } from "@/lib/sidebar-preferences";
-import { APP_VERSION, whatsNewPage } from "@/lib/whats-new";
+import { APP_VERSION } from "@/lib/whats-new";
 import { sourceCodeLink, sourceVersionLabel } from "@/lib/source-code";
 import { openKeyboardShortcuts, openWhatsNew } from "@/lib/app-events";
 
@@ -740,7 +741,8 @@ function SidebarDensityRow() {
 function WhatsNewRow() {
   const { dispatch } = useStore();
   const desktop = useDesktopSurface();
-  if (desktop !== true || !whatsNewPage()) return null;
+  // Always on the desktop: a version without a page opens its release notes.
+  if (desktop !== true) return null;
   return (
     <Card title={t("settings.about.whatsNewTitle")} subtitle={t("settings.about.whatsNewNote")}>
       <button
@@ -1185,6 +1187,9 @@ export function SettingsModal() {
                 <ProjectAutonomySetting />
                 <Card title="Channel turns" subtitle="Stop a bot that goes quiet in a channel. Use Stop to end a reply yourself.">
                   <RoomTurnTimeoutSettings />
+                </Card>
+                <Card title={ROOM_ROUTING_COPY.title} subtitle={ROOM_ROUTING_COPY.subtitle}>
+                  <RoomRoutingSettings />
                 </Card>
                 <StarterProfiles />
               </>

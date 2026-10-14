@@ -17,6 +17,7 @@
 //
 // It answers to the CHAT CONTAINER, not the window: the same shortage happens
 // in a 1600px window with the sidebar and the computer panel open.
+import { preloadBotSettings } from "@/lib/preload-bot-settings";
 import { useMemo, useRef, useState } from "react";
 import { Bug, Folder, Monitor, Search, Square } from "lucide-react";
 
@@ -42,6 +43,7 @@ import { RenameTitle } from "./RenameTitle";
 import { RoleBadge } from "./RoleBadge";
 import { TaskPicker } from "./TaskPicker";
 import { UsagePopover } from "./UsagePopover";
+import { findTask, taskCount } from "@/lib/task-window";
 import { WorkingDots } from "@/components/WorkingIndicator";
 
 export interface EffectiveWorkspace {
@@ -53,7 +55,7 @@ export interface EffectiveWorkspace {
  * own folder, the bot's default, or nothing dedicated at all. A custom path
  * must never read as the default bot folder, so the origin travels with it. */
 export function effectiveWorkspace(bot: Bot): EffectiveWorkspace {
-  const task = bot.tasks?.find((candidate) => candidate.threadId === bot.threadId);
+  const task = findTask(bot, bot.threadId);
   // `task.cwd === null` is an explicit "this task has no folder of its own";
   // `undefined` means the task never overrode the bot.
   if (task?.cwd) return { path: task.cwd, origin: "task" };
@@ -123,7 +125,7 @@ export function WorkingFolderChip({ bot }: { bot: Bot }) {
  * never be (see the note at the top of that file). */
 export function UsageChip({ bot }: { bot: Bot }) {
   const { state, dispatch } = useStore();
-  const usage = bot.tasks?.find((t) => t.threadId === bot.threadId)?.usage;
+  const usage = findTask(bot, bot.threadId)?.usage;
   const billing = state.instances.find((i) => i.instanceId === bot.modelSelection.instanceId)?.snapshot.billing;
   const text = usage ? usageChip(usage, billing) : "";
   if (!usage || !text) return null;
@@ -166,7 +168,7 @@ export function UsageChip({ bot }: { bot: Bot }) {
  * anchor the menu cannot give it, so the relocated item carries the same
  * figure and the same destination as the chip's own click. */
 function usageMenuText(bot: Bot, instances: readonly InstanceInfo[]): string {
-  const usage = bot.tasks?.find((task) => task.threadId === bot.threadId)?.usage;
+  const usage = findTask(bot, bot.threadId)?.usage;
   if (!usage) return "";
   const billing = instances.find((i) => i.instanceId === bot.modelSelection.instanceId)?.snapshot.billing;
   return usageChip(usage, billing);
@@ -192,7 +194,7 @@ export function ChatHeader({
   const desktop = useDesktopSurface();
   const workspace = effectiveWorkspace(bot);
   const usageText = usageMenuText(bot, state.instances);
-  const task = bot.tasks?.find((candidate) => candidate.threadId === bot.threadId);
+  const task = findTask(bot, bot.threadId);
 
   // Anything that changes what the header has to fit restarts the ladder at
   // its richest layout, so a shorter name or a settled turn gives relocated
@@ -210,7 +212,7 @@ export function ChatHeader({
     // narrows the secondary track without changing the header's box, which
     // is the one thing the ResizeObserver cannot see.
     task?.title ?? "",
-    String(bot.tasks?.length ?? 0),
+    String(taskCount(bot)),
     bot.modelSelection.instanceId,
     bot.modelSelection.model,
     String(bot.modelSelection.effort ?? ""),
@@ -323,6 +325,7 @@ export function ChatHeader({
       <div className="flex min-w-0 flex-1 items-center gap-2.5 rounded-lg px-1.5 py-1 chip-trim:gap-1.5 chip-trim:px-0">
         <button
           onClick={() => dispatch({ type: "toggleSettings", open: true })}
+          onPointerEnter={preloadBotSettings} onFocus={preloadBotSettings} onPointerDown={preloadBotSettings}
           // Folded, the 40px button and the 10px gaps beside it are 20px the
           // NAME needs more: measured at a 320px column, the guaranteed track
           // came out one pixel short of its 96px floor with the desktop

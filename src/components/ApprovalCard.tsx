@@ -306,9 +306,10 @@ export function ApprovalCard({
         <div className="text-[15px] font-semibold text-ink">
           {isHostConsent
             ? `${bot ? `@${bot.name}` : "This bot"} wants to use this computer`
+            : card.tool === "browser_extension_action" && card.title ? card.title
             : <>{bot ? `${bot.name} wants to ` : "Wants to "}{(displayTool === "other" && knownToolAction("other", card.subtitle)) || toolLabel(displayTool)}</>}
         </div>
-        {displayTool && !isHostConsent && !isAcpPermissionKind(displayTool) && <span className="shrink-0 font-mono text-[11px] text-ink-secondary">{displayTool}</span>}
+        {displayTool && !isHostConsent && displayTool !== "browser_extension_action" && !isAcpPermissionKind(displayTool) && <span className="shrink-0 font-mono text-[11px] text-ink-secondary">{displayTool}</span>}
       </div>
 
       {/* what, exactly */}

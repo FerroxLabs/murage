@@ -2,11 +2,18 @@ import { MemoryEligibility } from "./eligibility.ts";
 import { captureWork } from "./chunks.ts";
 import { workSchema,indexBatchSchema,searchInputSchema,type MemorySearchInput } from "./worker-protocol.ts";
 import { MemoryIndex,type IndexedMemory } from "./index.ts";
+import { answerQuery } from "./worker-query.ts";
 import { MemoryEmbeddings,type ModelManifest } from "./embeddings.ts";
+import { MAINTENANCE_POLL_MS,maintenanceMayRun,type MaintenanceClock } from "./maintenance-schedule.ts";
 
 let index:MemoryIndex|null=null, embeddings:MemoryEmbeddings|null=null, eligibility:MemoryEligibility|null=null, busy=false;
 const queries:Array<{requestId:string;input:MemorySearchInput;enqueuedAt:number}>=[];
 const batches:Array<{requestId:string;records:IndexedMemory[]}>=[];
+/** Capture work waits behind queries: a waiting search is read and answered before the capture in hand starts. */
+const captures:Array<ReturnType<typeof workSchema.parse>>=[];
+/** An error's name and message only (never the work it was handling): the parent forwards stderr to a rate-limited log. */
+const describe=(error:unknown)=>error instanceof Error?`${error.name}: ${error.message.slice(0,160)}`:"unknown";
+const yieldToMessages=()=>new Promise<void>(resolve=>setImmediate(resolve));
 const cancelled=new Set<string>();
 /** Index records embedded per model call: a waiting query is served between slices. */
 const INDEX_SLICE=4;
@@ -22,27 +29,33 @@ async function serveQueries(){
   const embeddingMs=performance.now()-batchStarted;
   for(let i=0;i<batch.length;i++){
     const q=batch[i];if(cancelled.delete(q.requestId)||expired(q))continue;
-    const eligibilityStarted=performance.now();
-    const eligible=eligibility!.read(q.input);
-    const eligibilityMs=performance.now()-eligibilityStarted;
-    let result;
-    try {result=index!.search(q.input.query,eligible.allowed,q.input.semantic&&!eligible.capacity?vectors?.[i]??null:null,embeddings!.identity,q.input.limit);}
-    catch {result=index!.search(q.input.query,eligible.allowed,null,embeddings!.identity,q.input.limit);degradedReason="semantic-index-unavailable";}
-    process.send?.({type:"query-result",requestId:q.requestId,result:{...result,workerPeakRssBytes:process.resourceUsage().maxRSS*1024,...q.input.profile?{profile:{queueMs:batchStarted-q.enqueuedAt,embeddingMs,batchSize:batch.length,eligibilityMs,...result.timings,workerTotalMs:performance.now()-q.enqueuedAt}}:{},coverageComplete:result.vectorRows===eligible.allowed.length,...degradedReason?{degradedReason}:{},...eligible.capacity?{degradedReason:"semantic-capacity-paged",nextCursor:eligible.nextCursor}:{}}});
+    index!.wantScopes?.(q.input.scopeIds);
+    const answered=answerQuery(index!,eligibility!,q.input,vectors?.[i]??null,embeddings!.identity,degradedReason);
+    process.send?.({type:"query-result",requestId:q.requestId,result:{...answered.result,workerPeakRssBytes:process.resourceUsage().maxRSS*1024,timings:answered.timings,...q.input.profile?{profile:{queueMs:batchStarted-q.enqueuedAt,embeddingMs,batchSize:batch.length,eligibilityMs:answered.eligibilityMs,...answered.timings,workerTotalMs:performance.now()-q.enqueuedAt}}:{}}});
   }
 }
 async function drain(){
   if(busy||!index||!embeddings||!eligibility)return;busy=true;
   let queryBatchServed=false;
   try {
-    while(queries.length||batches.length){
+    while(queries.length||batches.length||captures.length){
       // Queries lead each drain. Sustained arrivals must still leave one slot
       // for a waiting index batch, then immediately return priority to queries.
-      if(queries.length&&(!batches.length||!queryBatchServed)){
+      if(queries.length&&((!batches.length&&!captures.length)||!queryBatchServed)){
         await serveQueries();
         queryBatchServed=true;
+      } else if(captures.length){
+        // A capture is synchronous CPU: let the loop read any query that arrived since the last one, then answer it first.
+        await yieldToMessages();
+        if(queries.length){await serveQueries();continue;}
+        const work=captures.shift()!;
+        try{process.send?.({type:"result",result:captureWork(work)});}
+        catch(error){console.error(`capture rejected: ${describe(error)}`);process.send?.({type:"error",reason:"INVALID_MEMORY_WORK"});}
+        queryBatchServed=false;
       } else {
         const batch=batches.shift()!;index.upsert(batch.records);
+        // Rolled checkpoint versions were removed without whole-index work: the stepped maintenance merges them out when idle.
+        if(index.maintenanceOwed())void purgeRolledCheckpoints();
         const alive=batch.records.filter(r=>!r.deleted&&!r.archived);let embeddingStatus="indexed";
         try {
           for(let at=0;at<alive.length;at+=INDEX_SLICE){
@@ -58,8 +71,65 @@ async function drain(){
         queryBatchServed=false;
       }
     }
-  }catch{process.send?.({type:"index-error",reason:"MEMORY_INDEX_FAILED"});}
+  }catch(error){console.error(`index drain failed: ${describe(error)}`);process.send?.({type:"index-error",reason:"MEMORY_INDEX_FAILED"});}
   finally{busy=false;}
+}
+/** Entries one purge step examines, at most; each step also stops at ROLLED_CHECKPOINT_STEP_MS. */
+const ROLLED_CHECKPOINT_EXAMINED=2048;
+const ROLLED_CHECKPOINT_STEP_MS=10;
+/** How often the purge walks the index again after a pass found nothing left: a safety net behind the fenced
+ * acknowledgements (worker-controller.ts), so a version a race left behind does not stay for the life of the helper. */
+const ROLLED_CHECKPOINT_PASS_MS=5*60_000;
+let purging=false;
+let passTimer:ReturnType<typeof setTimeout>|undefined;
+/** Removes old checkpoint versions left in the index (MemoryIndex.purgeRolledCheckpoints), one bounded step at a time,
+ * only while the helper has nothing else to do, until a pass finds none left; then again every ROLLED_CHECKPOINT_PASS_MS. */
+async function purgeRolledCheckpoints(){
+  if(purging)return;
+  purging=true;
+  if(passTimer){clearTimeout(passTimer);passTimer=undefined;}
+  const clock:MaintenanceClock={deferredSince:null};
+  try{
+    for(;;){
+      const working=()=>busy||queries.length>0||batches.length>0||captures.length>0;
+      await new Promise<void>(resolve=>setTimeout(resolve,working()?MAINTENANCE_POLL_MS:0));
+      if(!index)return;
+      // Quiet: run. Busy: wait, but not past MAINTENANCE_MAX_DEFER_MS since the step was first put off, so sustained load
+      // cannot starve the merge a deletion owes (the step is bounded and synchronous, so it cannot interleave with a search).
+      if(!maintenanceMayRun(clock,working(),Date.now()))continue;
+      try{if(index.purgeRolledCheckpoints({maxExamined:ROLLED_CHECKPOINT_EXAMINED,maxMs:ROLLED_CHECKPOINT_STEP_MS}).done)break;}
+      catch(error){console.error(`rolled checkpoint purge failed: ${describe(error)}`);break;}
+    }
+  }finally{purging=false;}
+  // Deletions that arrived while the last merge ran are owed their own pass at once; otherwise the safety-net pass.
+  if(index)passTimer=setTimeout(()=>void purgeRolledCheckpoints(),index.maintenanceOwed()?0:ROLLED_CHECKPOINT_PASS_MS);
+  passTimer?.unref();
+}
+/** The postings of entries an earlier build indexed (postings.ts), filled newest first in steps of at most POSTINGS_STEP_MS, only while
+ * the helper has nothing else to do (and never put off past MAINTENANCE_MAX_DEFER_MS). Each step commits where it got to. */
+const POSTINGS_STEP_MS=10;
+const POSTINGS_BUSY_RETRY_MS=1000;
+let filling=false;
+async function fillPostings(){
+  if(filling)return;
+  filling=true;
+  const clock:MaintenanceClock={deferredSince:null};
+  try{
+    for(;;){
+      const working=()=>busy||queries.length>0||batches.length>0||captures.length>0;
+      await new Promise<void>(resolve=>setTimeout(resolve,working()?MAINTENANCE_POLL_MS:0));
+      if(!index)return;
+      if(!maintenanceMayRun(clock,working(),Date.now()))continue;
+      try{
+        const step=index.fillPostings({maxMs:POSTINGS_STEP_MS});
+        index.settlePostings?.();
+        if(step.done)break;
+        // The write lock was taken: never wait for it here (the busy wait is synchronous); try again in a second.
+        if(step.busy)await new Promise<void>(resolve=>setTimeout(resolve,POSTINGS_BUSY_RETRY_MS));
+      }
+      catch(error){console.error(`postings fill failed: ${describe(error)}`);break;}
+    }
+  }finally{filling=false;}
 }
 process.on("message",input=>{
   try {
@@ -69,15 +139,24 @@ process.on("message",input=>{
       eligibility=new MemoryEligibility(message.authorityPath!);index=new MemoryIndex(message.indexPath);
       // Owner-authored continuity is never part of the shared index: drop any an earlier build wrote.
       try{index.purgeRecords(eligibility.pipRecordIds());}catch{/* retried at the next open */}
+      void purgeRolledCheckpoints();
+      // (optional call: tests stand a stub index in for the real one)
+      if(index.postingsOwed?.())void fillPostings();
       embeddings=new MemoryEmbeddings(message.modelDirectory,message.manifest);
       try{index.prepareModel(embeddings.identity);}catch{/* capacity remains an explicit lexical degradation */}
       process.send?.({type:"initialised",reset:index.rebuilt});return;
     }
+    // The reader asks for a checkpoint when the log is over its threshold and no scan snapshot is open (index-reader.ts).
+    if(message.type==="checkpoint"&&message.requestId){
+      let ok=false;try{ok=index?.checkpointNow()??false;}catch(error){console.error(`checkpoint failed: ${describe(error)}`);}
+      process.send?.({type:"checkpoint-result",requestId:message.requestId,ok});return;
+    }
     if(message.type==="cancel"&&message.requestId){cancelled.add(message.requestId);if(cancelled.size>128)cancelled.delete(cancelled.values().next().value!);return;}
     if(message.type==="query"&&message.requestId){if(queries.length>=64)throw new Error("queue full");queries.push({requestId:message.requestId,input:searchInputSchema.parse(message.input),enqueuedAt:performance.now()});void drain();return;}
     if(message.type==="index"&&message.requestId){if(batches.length>=2)throw new Error("index queue full");batches.push({requestId:message.requestId,records:indexBatchSchema.parse(message.records)});void drain();return;}
-    process.send?.({type:"result",result:captureWork(workSchema.parse(input))});
-  } catch {process.send?.({type:"error",reason:"INVALID_MEMORY_WORK"});}
+    if(captures.length>=2)throw new Error("capture queue full");
+    captures.push(workSchema.parse(input));void drain();
+  } catch(error) {console.error(`message rejected: ${describe(error)}`);process.send?.({type:"error",reason:"INVALID_MEMORY_WORK"});}
 });
 process.on("disconnect",()=>{index?.close();eligibility?.close();process.exit(0);});
 process.send?.({type:"ready"});

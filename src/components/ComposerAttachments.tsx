@@ -34,6 +34,7 @@ export function ComposerAttachments({
   onNotice,
   onAudioFile,
   threadId,
+  frozen = false,
 }: {
   items: Attachment[];
   onAdd: (attachments: Attachment[]) => void;
@@ -44,8 +45,12 @@ export function ComposerAttachments({
   onNotice: (notice: string | null) => void;
   onAudioFile?: (file: File) => void;
   threadId?: string;
+  /** A send is out: the chips are read-only and a dropped file is not taken until it is settled. */
+  frozen?: boolean;
 }) {
   const [dragging, setDragging] = useState(false);
+  const frozenRef = useRef(frozen);
+  frozenRef.current = frozen;
   const [preview, setPreview] = useState<PreviewImage | null>(null);
   // dragenter/dragleave fire once per element crossed, so the overlay
   // tracks depth rather than the last event it happened to see
@@ -81,6 +86,7 @@ export function ComposerAttachments({
       setDragging(false);
       // That region's own handler already took this drop.
       if (insideFileDropZone(e.target)) return;
+      if (frozenRef.current) return;
       const files = Array.from(e.dataTransfer?.files ?? []);
       // Same intake the attach button uses: a dropped file and a picked one
       // must not appear in a different order — and the same upload tracking,
@@ -146,6 +152,7 @@ export function ComposerAttachments({
                 label="PASTED"
                 title={a.text.slice(0, 4000)}
                 onRemove={() => onRemove(a.id)}
+                locked={frozen}
               >
                 <div className="relative h-[76px] overflow-hidden">
                   <pre className="whitespace-pre-wrap break-words font-mono text-[10.5px] leading-[1.45] text-ink-secondary">
@@ -157,6 +164,7 @@ export function ComposerAttachments({
                 <button
                   type="button"
                   onClick={() => onDisplayInChatBox(a)}
+                  disabled={frozen}
                   className="mt-2 flex w-full items-center justify-center gap-1.5 rounded-lg border border-accent/25 bg-accent/5 px-2 py-1.5 text-[10.5px] font-medium text-accent-text transition-colors hover:border-accent/50 hover:bg-accent/10 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-focus/60"
                   aria-label="Display pasted text in chat box"
                   title="Display in chat box"
@@ -166,7 +174,8 @@ export function ComposerAttachments({
                 </button>
               </Chip>
             ) : a.kind === "image" ? (
-              <Chip key={a.id} label="IMAGE" title={a.name} onRemove={() => onRemove(a.id)}>
+              <Chip key={a.id} label="IMAGE" title={a.name} onRemove={() => onRemove(a.id)}
+                locked={frozen}>
                 <button
                   type="button"
                   onClick={() => setPreview(previewImage(a.path))}
@@ -183,7 +192,8 @@ export function ComposerAttachments({
                 <div className="mt-1 truncate text-[10.5px] text-ink-secondary/70">{formatSize(a.size)}</div>
               </Chip>
             ) : (
-              <Chip key={a.id} label="FILE" title={a.path} onRemove={() => onRemove(a.id)}>
+              <Chip key={a.id} label="FILE" title={a.path} onRemove={() => onRemove(a.id)}
+                locked={frozen}>
                 <div className="flex h-[76px] items-center gap-2">
                   <FileIcon size={16} className="shrink-0 text-ink-secondary" />
                   <div className="min-w-0">
@@ -206,11 +216,13 @@ function Chip({
   label,
   title,
   onRemove,
+  locked = false,
 }: {
   children: React.ReactNode;
   label: "PASTED" | "FILE" | "IMAGE";
   title: string;
   onRemove: () => void;
+  locked?: boolean;
 }) {
   const Icon = label === "PASTED" ? ClipboardPaste : label === "IMAGE" ? ImageIcon : FileIcon;
   return (
@@ -232,6 +244,7 @@ function Chip({
           way to drop a chip out of reach of the keyboard */}
       <button
         onClick={onRemove}
+        disabled={locked}
         aria-label={`Remove ${label === "PASTED" ? "pasted text" : "file"}`}
         className="absolute -right-1.5 -top-1.5 flex size-5 items-center justify-center rounded-full border border-hairline/60 bg-panel text-ink-secondary opacity-0 transition-opacity hover:text-ink focus-visible:opacity-100 group-hover:opacity-100"
       >

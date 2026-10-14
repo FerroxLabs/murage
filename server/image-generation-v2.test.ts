@@ -397,3 +397,38 @@ describe("review round 3", () => {
     expect(f.posts()).toHaveLength(0);
   });
 });
+
+describe("Flux image paths that api.fluxrouter.ai does not serve", () => {
+  const paths = (f: ReturnType<typeof fixture>) => f.fetcher.mock.calls.map(([input]) => String(input));
+  it("never reads /v1/images/models or /v1/images/jobs in the default service", async () => {
+    const f = fixture("flux");
+    await f.service.getCatalog("flux", { offered: true });
+    await f.service.getCatalog("flux", { refresh: true });
+    expect(paths(f).some(url => url.endsWith("/v1/images/models"))).toBe(false);
+    expect(paths(f).filter(url => url.endsWith("/v1/models"))).toHaveLength(1);
+  });
+  it("renders a long Flux image in one synchronous call: no async preference, no job polling", async () => {
+    const f = fixture("flux");
+    const result = await f.service.generate({ ...f.request, model: "flux-image", quality: "high", width: 2048, height: 2048 }, f.hooks);
+    expect(f.posts()).toHaveLength(1);
+    expect(new Headers(f.posts()[0]![1]!.headers).get("prefer")).toBeNull();
+    expect(paths(f).some(url => url.includes("/v1/images/jobs"))).toBe(false);
+    expect(result.metadata).not.toMatchObject({ delivery: "job" });
+    expect(f.jobStarted).not.toHaveBeenCalled();
+    expect(f.publish).toHaveBeenCalledOnce();
+  });
+  it("reads a Flux 202 as an answer to check, not a job to follow", async () => {
+    const f = fixture("flux");
+    f.fetcher.mockResolvedValueOnce(json({ contract: 1, kind: "image-job", id: "imgjob_9", status: "queued" }, { status: 202 }));
+    await expect(f.service.generate({ ...f.request, model: "flux-image" }, f.hooks)).rejects.toBeTruthy();
+    expect(paths(f).some(url => url.includes("/v1/images/jobs"))).toBe(false);
+    expect(f.jobStarted).not.toHaveBeenCalled();
+  });
+  it("does not poll a job left by an earlier version; it says the result is unknown", async () => {
+    const f = fixture("flux");
+    const error = await f.service.generate({ ...f.request, model: "flux-image" }, { ...f.hooks, resumeJob: { id: "imgjob_7" } }).then(() => null, (reason: unknown) => reason as { message: string });
+    expect(error?.message).toContain("earlier version");
+    expect(paths(f).some(url => url.includes("/v1/images/jobs"))).toBe(false);
+    expect(f.posts()).toHaveLength(0);
+  });
+});

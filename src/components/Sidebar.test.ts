@@ -508,3 +508,12 @@ it("P7 keeps defaults-only New project for non-desktop surfaces", () => {
   expect(source).not.toContain('showNewProject={desktop === true}');
   expect(source).toContain('newRoom === "project" && desktop === false && <NewRoomPanel kind="project"');
 });
+
+describe("the delete dialogs count every conversation, not the window of them a frame carries", () => {
+  it("uses the server's total", () => {
+    const windowed = { id: "b", name: "Old", threadId: "t0", tasks: [{ threadId: "t0", title: "a", createdAt: 1 }], tasksTotal: 5000 } as never;
+    expect(archivedBotDeleteDetail(windowed, [])).toContain("5000 conversations");
+    expect(archivedBotsDeleteDetail([windowed], [])).toContain("5000 conversations");
+    expect(archivedBotsDeleteItems([windowed])[0]).toContain("5000 conversations");
+  });
+});

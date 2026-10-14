@@ -31,6 +31,7 @@ import { openSidebar, SEND_KEY } from "./fixtures.ts";
 import { safeWipeSync } from "../../server/testing/safe-wipe.mjs";
 import { laneDataDir } from "./lane-data-dir";
 import { seedWhatsNewSeen } from "../../scripts/control-murage.ts";
+import { TERMS_VERSION } from "../../shared/terms.ts";
 
 const ROOT = fileURLToPath(new URL("../../", import.meta.url));
 const DATA_DIR = resolve(laneDataDir("this spec never uses ~/.murage"), "composer-size-limit-data");
@@ -72,6 +73,7 @@ async function startHarness() {
     XDG_CONFIG_HOME: join(home, ".config"), XDG_CACHE_HOME: join(home, ".cache"), XDG_DATA_HOME: join(home, ".local", "share"),
     MURAGE_DATA_DIR: DATA_DIR, MURAGE_PORT: String(HARNESS_PORT), MURAGE_WEBHOOK_PORT: String(HARNESS_PORT + 1),
     MURAGE_ALLOW_DEV_DESKTOP_SECRET: "1", FAKE_CLAUDE_MODE: "happy",
+    MURAGE_TERMS_ACCEPTED: TERMS_VERSION, // a fixture install has no one to tick the terms box (server/terms.ts)
   };
   logPath = join(DATA_DIR, "harness.log");
   const log = openSync(logPath, "a");
