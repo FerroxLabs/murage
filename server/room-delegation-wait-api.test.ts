@@ -48,7 +48,7 @@ posixOnly("a handoff to a teammate who was next in the same channel", () => {
       instrumentationSource: `
       const fs=await import('node:fs');const path=await import('node:path');
       const file=path.join(process.env.MURAGE_DATA_DIR,'config.json');const cfg=JSON.parse(fs.readFileSync(file,'utf8'));
-      cfg.instances.delegator={driver:'grokAgent',displayName:'Delegator fixture',environment:{FAKE_ACP_MODE:'delegate-peer'},config:{cli:${JSON.stringify(FAKE_ACP)},fullAuto:true}};
+      cfg.instances.delegator={driver:'grokAgent',displayName:'Delegator fixture',environment:{FAKE_ACP_MODE:'delegate-peer',FAKE_ACP_MCP_READY:'1',FAKE_ACP_MCP_READY_METHOD:'_x.ai/mcp_initialized'},config:{cli:${JSON.stringify(FAKE_ACP)},fullAuto:true}};
       fs.writeFileSync(file,JSON.stringify(cfg));
     ` });
     const proof = await (await fetch(`${fixture.info.url}/api/desktop-secret`)).json() as { secret: string };

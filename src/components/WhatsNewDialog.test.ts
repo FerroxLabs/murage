@@ -21,7 +21,7 @@ class FakeElement {
 }
 Object.assign(globalThis, { HTMLElement: FakeElement });
 vi.mock("@/lib/analytics", () => ({ analyticsEnabled: () => false, setAnalyticsEnabled: () => {}, initAnalytics: () => {}, track: () => {} }));
-const { WhatsNewCard, WHATS_NEW_CARD_COUNT, WHATS_NEW_TILES, WHATS_NEW_MORE, whatsNewArrowStep } = await import("./WhatsNewDialog");
+const { WhatsNewCard, WHATS_NEW_CARD_COUNT, WHATS_NEW_TILES, WHATS_NEW_MORE, WHATS_NEW_TILES_102, WHATS_NEW_MORE_102, whatsNewContentFor, whatsNewArrowStep } = await import("./WhatsNewDialog");
 const { runWhatsNewAction } = await import("./WhatsNewHost");
 
 const source = readFileSync(new URL("./WhatsNewDialog.tsx", import.meta.url), "utf8");
@@ -219,7 +219,7 @@ describe("where the shortcuts go", () => {
     expect(host).toContain('retryableLazy(() => import("./WhatsNewDialog")');
     expect(host).toContain('import type { WhatsNewAction } from "./WhatsNewDialog";');
     expect(host).not.toMatch(/^import \{[^}]*\} from "\.\/WhatsNewDialog";/m);
-    expect(host).toContain("if (!page || !whatsNew.open) return null;");
+    expect(host).toContain('if (target.kind !== "page" || !whatsNew.open) return null;');
   });
 
   it("can go back from every card after the first, and every dot goes to its card (D11)", () => {
@@ -260,3 +260,63 @@ describe("where the shortcuts go", () => {
   });
 });
 
+
+describe("the 1.0.2 page", () => {
+  const render102 = (index: number) => renderToStaticMarkup(createElement(WhatsNewCard, {
+    index, version: "1.0.2", releaseNotesUrl: "https://github.com/FerroxLabs/murage-releases/releases/tag/v1.0.2",
+    onNext: () => {}, onClose: () => {}, onAction: () => {},
+  }));
+
+  it("has its own hero, six tiles and list, and leaves 0.1.61's alone", () => {
+    expect(text(render102(0))).toContain("Bots that remember what matters");
+    expect(text(render102(0))).toContain("Open Memory");
+    expect(text(render102(0))).not.toContain("Your team, in step.");
+    expect(WHATS_NEW_TILES_102.map((tile) => tile.action)).toEqual(["routing", "library", "engines", "chrome", "speed", "desktops"]);
+    const html = text(render102(1));
+    for (const tile of WHATS_NEW_TILES_102) { expect(html).toContain(tile.title); expect(html).toContain(tile.body); }
+    expect(render102(1).match(/<img/g)?.length).toBe(6);
+    const more = text(render102(2));
+    for (const line of WHATS_NEW_MORE_102) expect(more).toContain(line);
+    // the 0.1.61 page is what every call without 1.0.2 shows
+    expect(text(render(0))).toContain("Your team, in step.");
+    expect(text(render(1))).toContain("Rooms that work as one");
+    expect(whatsNewContentFor("0.1.61")).toBe("0.1.61");
+    expect(whatsNewContentFor("1.0.2")).toBe("1.0.2");
+  });
+
+  it("follows the house copy rules and makes no speed claim beyond the changelog", () => {
+    const copy = [0, 1, 2].map((index) => text(render102(index))).join(" ");
+    expect(copy).not.toMatch(/[—–]/);
+    expect(copy).not.toMatch(/\bsaf(e|ely|ety)\b/i);
+    expect(copy).not.toMatch(/composio|price|pricing|cost|cheap|free\b|\$\d/i);
+    expect(copy).not.toMatch(/\d+x\b|\bmilliseconds?\b|\bfaster than\b|\binstant/i);
+    expect(copy).not.toMatch(/\b(broke|broken|used to|no longer|fixed|bug)\b/i);
+  });
+
+  it("keeps every 1.0.2 tile and button a 44px target", () => {
+    for (let index = 0; index < 3; index += 1) {
+      for (const [tag] of render102(index).matchAll(/<(button|a)\b[^>]*>/g)) expect(tag.includes("data-whats-new-tile") || /min-h-11|size-11/.test(tag), tag).toBe(true);
+    }
+  });
+
+  it("sends every shortcut somewhere in the app", () => {
+    const go = (action: Parameters<typeof runWhatsNewAction>[0]) => { const dispatch = vi.fn(); frames.length = 0; elements.clear(); return { went: runWhatsNewAction(action, dispatch), calls: dispatch.mock.calls }; };
+    expect(go("memory")).toEqual({ went: true, calls: [[{ type: "toggleAppSettings", open: true, section: "memory" }]] });
+    expect(go("speed")).toEqual({ went: true, calls: [[{ type: "toggleAppSettings", open: true, section: "memory" }]] });
+    expect(go("engines")).toEqual({ went: true, calls: [[{ type: "toggleAppSettings", open: true, section: "engines" }]] });
+    expect(go("chrome")).toEqual({ went: true, calls: [[{ type: "toggleAppSettings", open: true, section: "computer" }]] });
+    const desktops = go("desktops");
+    expect(desktops.calls).toEqual([[{ type: "toggleAppSettings", open: true, section: "computer" }]]);
+    const limit = new FakeElement();
+    elements.set("local-vm-max-instances", limit);
+    while (frames.length) frames.shift()!(0);
+    expect(limit.scrolled).toEqual({ block: "start" });
+    expect(go("library")).toEqual({ went: true, calls: [[{ type: "showTeamLibrary", view: "teams" }]] });
+    const routing = go("routing");
+    expect(routing.calls).toEqual([[{ type: "toggleAppSettings", open: true, section: "botDefaults" }]]);
+    const label = new FakeElement();
+    elements.set("room-routing-label", label);
+    while (frames.length) frames.shift()!(0);
+    expect(label.scrolled).toEqual({ block: "start" });
+  });
+});

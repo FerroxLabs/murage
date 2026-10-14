@@ -22,6 +22,7 @@
 // Never inside the packaged app: an embedded harness receives its token from
 // main.mjs, and the env override `MURAGE_FLUX_COMPOSIO_BROKER_TOKEN` always
 // wins so QA can pin one by hand.
+import { fluxFetch } from "./flux-memory-headers.ts";
 import { existsSync, readFileSync, unlinkSync } from "node:fs";
 import { join } from "node:path";
 import { z } from "zod";
@@ -33,6 +34,7 @@ import {
 } from "../electron/flux-composio-token.mjs";
 import { writeFileAtomic } from "./atomic.ts";
 import { DATA_DIR } from "./config.ts";
+import { FLUX_RETRY_MAX_MS, fluxRetryDelayMs } from "./flux-key-health.ts";
 import { fluxKey } from "./flux-config.ts";
 
 export const DEV_FLUX_TOKEN_FILE = "flux-composio-broker-token.json";
@@ -108,11 +110,22 @@ export interface DevFluxTokenOptions {
 }
 
 let nextAttemptAt = 0;
+// Consecutive failed attempts, and forced re-mints after a rejected token. Both
+// back off 1 minute, doubling, to 1 hour (fluxRetryDelayMs), so a token Flux
+// keeps refusing is not re-presented on every connector request.
+let failureCount = 0;
+let forcedStreak = 0;
+let nextForceAt = 0;
+let lastForcedAt = 0;
 let inFlight: Promise<DevFluxTokenDocument> | null = null;
 
 /** Reset the retry clock and the in-memory copy (tests; a data-dir change). */
 export function resetDevFluxTokenState(): void {
   nextAttemptAt = 0;
+  failureCount = 0;
+  forcedStreak = 0;
+  nextForceAt = 0;
+  lastForcedAt = 0;
   inFlight = null;
   cached = null;
 }
@@ -144,14 +157,21 @@ export async function ensureDevFluxBrokerToken(options: DevFluxTokenOptions): Pr
   // is healthy, so the cheap no-network case is the common one. The retry
   // clock only gates attempts that would go to the network.
   if (!key && !current.fluxComposioBrokerToken && !current.fluxComposioTokenError) return current;
-  if (!options.force && now < nextAttemptAt) return current;
+  if (options.force) {
+    if (now - lastForcedAt > FLUX_RETRY_MAX_MS) forcedStreak = 0;
+    if (now < nextForceAt) return current;
+    forcedStreak += 1;
+    lastForcedAt = now;
+    nextForceAt = now + fluxRetryDelayMs(forcedStreak);
+  } else if (now < nextAttemptAt) return current;
   inFlight = (async () => {
     let rateLimited = false;
     let attempted = false;
     const baseFetch = options.fetchImpl ?? globalThis.fetch;
     const fetchImpl: typeof fetch = (input, init) => {
       attempted = true;
-      return baseFetch(input, init);
+      // Flux Memory: a broker call is background work, never an owner turn.
+      return fluxFetch("composio-broker", input as string | URL, init, baseFetch);
     };
     const before = current.fluxComposioBrokerToken;
     let next: DevFluxTokenDocument = current;
@@ -174,9 +194,16 @@ export async function ensureDevFluxBrokerToken(options: DevFluxTokenOptions): Pr
     // A network attempt that produced no new token (unreachable, 5xx, or a
     // declined code the panel now shows) waits before the next one, so a
     // declined key is not re-presented on every connector route.
-    nextAttemptAt = rateLimited
-      ? now + DEV_FLUX_TOKEN_RATE_LIMIT_RETRY_MS
-      : attempted && next.fluxComposioBrokerToken === before ? now + DEV_FLUX_TOKEN_RETRY_MS : 0;
+    if (rateLimited) {
+      failureCount += 1;
+      nextAttemptAt = now + DEV_FLUX_TOKEN_RATE_LIMIT_RETRY_MS;
+    } else if (attempted && next.fluxComposioBrokerToken === before) {
+      failureCount += 1;
+      nextAttemptAt = now + fluxRetryDelayMs(failureCount);
+    } else {
+      failureCount = 0;
+      nextAttemptAt = 0;
+    }
     try {
       writeDevFluxTokenDocument(next);
     } catch (error) {

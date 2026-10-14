@@ -50,6 +50,7 @@ if (window.__hostOff) delete window.__config.tts.routes.host;
 window.__setBot = (patch) => { window.__bot = { ...window.__bot, ...patch }; for (const l of listeners) l(); };
 const subscribe = (l) => { listeners.add(l); return () => listeners.delete(l); };
 export const visibleMessages = (bot) => bot.messages;
+export const olderOpenCards = (owner, visible) => visible;
 // CallControls.tsx's CallOverlaySlot imports this for real (callbar-rereview.md
 // I7); this fixture never selects a different task, so a passthrough is
 // exactly what the real one would project it to anyway.

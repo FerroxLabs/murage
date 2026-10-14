@@ -1,4 +1,5 @@
 import { hostStoppedReason } from "../../shared/host-stop.ts";
+import { sendNoticeDisplayName } from "../../shared/send-notice.ts";
 import { folderTrustDisplayName } from "../../shared/folder-trust.ts";
 import { browserUnavailableDisplayName } from "../../shared/browser-unavailable.ts";
 import { imagesLeftOutDisplayName } from "../../shared/images-left-out.ts";
@@ -46,6 +47,11 @@ export function timelineEvents(messages: TimelineMessage[]): TimelineEvent[] {
       const stoppedReason = hostStoppedReason(message.tool.name);
       if (stoppedReason) {
         events.push({ id: message.id, at: message.at, label: `Stopped: ${stoppedReason}`, state: "observed", kind: "tool" });
+        continue;
+      }
+      const sendNotice = sendNoticeDisplayName(message.tool.name);
+      if (sendNotice) {
+        events.push({ id: message.id, at: message.at, label: sendNotice, state: "observed", kind: "tool" });
         continue;
       }
       // a folder-trust notice is observed the same way: not a run, not a failure

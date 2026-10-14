@@ -10,7 +10,7 @@
 // on this machine, plus (async, best-effort) whatever PATH the user's
 // real login shell reports.
 import { execFile, spawnSync } from "node:child_process";
-import { accessSync, closeSync, constants, existsSync, openSync, readFileSync, readSync, statSync, readdirSync } from "node:fs";
+import { accessSync, closeSync, constants, existsSync, openSync, readFileSync, readSync, realpathSync, statSync, readdirSync } from "node:fs";
 import { homedir } from "node:os";
 import { basename, delimiter, dirname, extname, isAbsolute, join, resolve } from "node:path";
 
@@ -546,4 +546,34 @@ export function resolveFuigoCli(
     );
   }
   return { command: bundled, source: "bundled" };
+}
+
+/** The command names each deletion engine runs as (what the process check, engine-closed.ts, looks for by name). */
+const ENGINE_COMMANDS: Readonly<Record<string, readonly string[]>> = {
+  claude: ["claude"], codex: ["codex"], fuigo: ["fuigo"], grok: ["grok", "fuigo"], gemini: ["gemini"], qwen: ["qwen"], kimi: ["kimi"],
+  hermes: ["hermes"], opencode: ["opencode"], droid: ["droid"], cursor: ["cursor-agent"], antigravity: ["agy"],
+};
+
+/** The real paths of the programs Murage runs for `engine`: each instance's configured CLI, every program of the engine's name on the
+ * search path, and (for a Windows shim or a node script) the script it runs. The process check treats a process that IS one of these
+ * as the engine however it was renamed or launched. Paths that cannot be resolved are left out. */
+export function engineIdentities(engine: string, configured: readonly string[] = []): string[] {
+  const out = new Set<string>();
+  const add = (path: string | undefined): void => {
+    if (!path) return;
+    try { out.add(realpathSync.native(path)); } catch { /* not there */ }
+  };
+  const hits = new Set<string>();
+  for (const cli of configured) {
+    const head = splitCliString(cli)[0];
+    if (head) for (const found of findCliCandidates(head)) hits.add(found);
+  }
+  for (const name of ENGINE_COMMANDS[engine] ?? []) for (const found of findCliCandidates(name)) hits.add(found);
+  for (const hit of hits) {
+    add(hit);
+    const ext = extname(hit).toLowerCase();
+    const shim = ext === ".cmd" || ext === ".bat" ? parseCmdShim(hit) : parseNodeShebang(hit);
+    add(shim?.args[0]); // the script it runs, never the node that runs it
+  }
+  return [...out];
 }

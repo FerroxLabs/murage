@@ -12,6 +12,7 @@ import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
 import { backup, DatabaseSync } from "node:sqlite";
 import { validateCorpus, requireMeasuredHit } from "../server/memory/testing/contracts.ts";
+import { workerMemoryGate } from "../server/memory/worker-rss-gate.ts";
 import { safeWipeSync } from "../server/testing/safe-wipe.mjs";
 
 const self=fileURLToPath(import.meta.url),repo=fileURLToPath(new URL("..",import.meta.url)),argv=process.argv.slice(2);
@@ -94,7 +95,7 @@ async function runCase(id:string,root:string,model:string):Promise<Result>{
     let raw:Awaited<ReturnType<typeof controller.search>>|undefined;
     const bridge={search:async(input:Parameters<typeof controller.search>[0],signal:AbortSignal)=>{raw=await controller.search(input,signal);return raw;}};
     const result=await searchMemory(text,context,bridge,{limit:10});
-    caseObservations.lastCanonical={query:text,rawHits:raw?.hits,vectorRows:result.vectorRows,hits:result.hits.map(hit=>({id:hit.id,text:hit.text,similarity:hit.similarity,lexical:hit.lexical}))};
+    caseObservations.lastCanonical={query:text,rawHits:raw?.hits,vectorRows:raw?.vectorRows,hits:result.hits.map(hit=>({id:hit.id,text:hit.text,similarity:hit.similarity,lexical:hit.lexical}))};
     const bundle=await buildMemoryBundle(text,context,bridge);assertMemoryBundle(bundle,context);return {result,bundle,raw};
   }
   const result=(observations:Record<string,unknown>,limitations?:string[]):Result=>({id,status:"PASS",observations,...limitations?{limitations}:{}});
@@ -273,8 +274,8 @@ async function runCase(id:string,root:string,model:string):Promise<Result>{
       const observed:Array<Record<string,unknown>>=[];caseObservations.queries=observed;
       for(const [i,query] of queries.entries()){
         const expected=id==="F11"&&i===0?source:current;const found=await canonical(query);
-        observed.push({query,expectedRecord:expected.id,expectedText:expected.text,vectorRows:found.result.vectorRows,rawHits:found.raw?.hits,hits:found.result.hits.map(hit=>({id:hit.id,text:hit.text,similarity:hit.similarity,lexical:hit.lexical})),bundleSourceVersions:found.bundle.sourceVersions});
-        assert(found.result.vectorRows>0);assert(found.result.hits.some(hit=>hit.id===expected.id),`Expected source absent for ${JSON.stringify(query)}`);
+        observed.push({query,expectedRecord:expected.id,expectedText:expected.text,vectorRows:found.raw?.vectorRows,rawHits:found.raw?.hits,hits:found.result.hits.map(hit=>({id:hit.id,text:hit.text,similarity:hit.similarity,lexical:hit.lexical})),bundleSourceVersions:found.bundle.sourceVersions});
+        assert((found.raw?.vectorRows??0)>0);assert(found.result.hits.some(hit=>hit.id===expected.id),`Expected source absent for ${JSON.stringify(query)}`);
         if(id==="F11"&&i===0)assert(found.result.hits.find(hit=>hit.id===source.id)!.text.includes("Rejected approach:"));
       }
       if(id==="F12"){
@@ -298,13 +299,14 @@ async function runServerLoad(root:string,model:string,normalUse=false):Promise<R
 import {readFileSync,writeFileSync,renameSync} from 'node:fs';import {join} from 'node:path';
 import cp from 'node:child_process';import {syncBuiltinESMExports} from 'node:module';
 const root=process.env.MURAGE_DATA_DIR,loop=monitorEventLoopDelay({resolution:10});loop.enable();
-let phase='',baseRss=process.memoryUsage().rss,maxRss=baseRss,maxWorkers=0,indexBatches=0,maxIndexBatch=0,queryRequests=0;
+let phase='',baseRss=process.memoryUsage().rss,maxRss=baseRss,maxWorkers=0,indexBatches=0,maxIndexBatch=0,queryRequests=0,workerPeakRssBytes=0,workerRssSamples=0;
 const workers=new Set(),fork=cp.fork;
 cp.fork=function(...args){const child=fork.apply(this,args);if(String(args[0]).includes('/memory/worker')){
 workers.add(child.pid);maxWorkers=Math.max(maxWorkers,workers.size);child.once('exit',()=>workers.delete(child.pid));
+child.on('message',message=>{const peak=message?.type==='query-result'?message.result?.workerPeakRssBytes:undefined;if(typeof peak==='number'&&Number.isFinite(peak)&&peak>0){workerPeakRssBytes=Math.max(workerPeakRssBytes,peak);workerRssSamples++;}});
 const send=child.send;child.send=function(message,...rest){if(message?.type==='index'){indexBatches++;maxIndexBatch=Math.max(maxIndexBatch,message.records?.length??0);}if(message?.type==='query')queryRequests++;return send.call(this,message,...rest);};}return child;};syncBuiltinESMExports();
-setInterval(()=>{try{const next=readFileSync(join(root,'.fault-metrics-reset'),'utf8');if(next!==phase){phase=next;loop.reset();baseRss=process.memoryUsage().rss;maxRss=baseRss;maxWorkers=workers.size;indexBatches=0;maxIndexBatch=0;queryRequests=0;}}catch{}
-maxRss=Math.max(maxRss,process.memoryUsage().rss);writeFileSync(join(root,'.fault-runtime-metrics.tmp'),JSON.stringify({pid:process.pid,phase,baseRss,maxRss,eventLoopP99Ms:loop.percentile(99)/1e6,maxWorkers,workers:[...workers],indexBatches,maxIndexBatch,queryRequests}));renameSync(join(root,'.fault-runtime-metrics.tmp'),join(root,'.fault-runtime-metrics.json'));},500).unref();`;
+setInterval(()=>{try{const next=readFileSync(join(root,'.fault-metrics-reset'),'utf8');if(next!==phase){phase=next;loop.reset();baseRss=process.memoryUsage().rss;maxRss=baseRss;maxWorkers=workers.size;indexBatches=0;maxIndexBatch=0;queryRequests=0;workerPeakRssBytes=0;workerRssSamples=0;}}catch{}
+maxRss=Math.max(maxRss,process.memoryUsage().rss);writeFileSync(join(root,'.fault-runtime-metrics.tmp'),JSON.stringify({pid:process.pid,phase,baseRss,maxRss,eventLoopP99Ms:loop.percentile(99)/1e6,maxWorkers,workers:[...workers],indexBatches,maxIndexBatch,queryRequests,workerPeakRssBytes,workerRssSamples}));renameSync(join(root,'.fault-runtime-metrics.tmp'),join(root,'.fault-runtime-metrics.json'));},500).unref();`;
   const fixture=await launchVerificationServer({},undefined,{instrumentationSource});
   Object.assign(caseObservations,{stage:"server-launched",mainPid:fixture.info.pid,fixtureLog:fixture.info.logPath,fixtureDataDir:fixture.info.dataDir,loadStarted:false});
   const cleanup=()=>fixture.close();shutdown.add(cleanup);
@@ -400,7 +402,7 @@ await import(${JSON.stringify(new URL("../server/testing/fake-claude-cli.ts",imp
     await drain("held-capability-setup",180000,heldTurns.map(turn=>turn.jobId));
     const metricFile=join(fixture.info.dataDir,".fault-runtime-metrics.json");writeFileSync(join(fixture.info.dataDir,".fault-metrics-reset"),"measure");
     await until("actual PID metrics reset",()=>{try{const state=JSON.parse(readFileSync(metricFile,"utf8"));return state.phase==="measure"?state:undefined;}catch{return undefined;}});
-    const times:number[]=[],errors:string[]=[];let calls=0,changes=0,bytes=0,maxQueued=0,workerPeakRssBytes=0,chatTurns=0,statusReads=0,recallFailures=0,continuityFailures=0;
+    const times:number[]=[],errors:string[]=[];let calls=0,changes=0,bytes=0,maxQueued=0,chatTurns=0,statusReads=0,recallFailures=0,continuityFailures=0;
     const updatedSources:Array<{sourceId:string;text:string;revision:number}>=[],changedFactRecall:Array<{sourceId:string;revision:number;latencyMs:number}>=[];
     const started=performance.now(),end=started+durationMs;let stopping=false;
     Object.assign(caseObservations,{stage:normalUse?"N01-normal-use":"600-second-load",loadStarted:true,...normalUse?{profileDefinition:normalUseProfile}:{}});
@@ -416,9 +418,8 @@ await import(${JSON.stringify(new URL("../server/testing/fake-claude-cli.ts",imp
     }})();
     const consumers=tokens.slice(0,readerCount).map(async(token,index)=>{let sequence=0;while(!stopping&&performance.now()<end){const begin=performance.now();
       try{const response=await api("POST","/api/internal/memory/search",{query:`LOAD_GOLD_CANARY caller${index} iteration${sequence++}`,limit:10},{authorization:`Bearer ${token}`},normalUse?500:10000);
-        workerPeakRssBytes=Math.max(workerPeakRssBytes,Number(response.workerPeakRssBytes??0));
-        assert(!response.degradedReason,`Recall degraded: ${String(response.degradedReason)}; vectorRows=${Number(response.vectorRows??0)}; paged=${Boolean(response.nextCursor)}`);
-        assert(response.vectorRows>0);assert(response.hits.some((hit:any)=>hit.evidence.some((e:any)=>e.sourceId===`message:${bots[0].threadId}:load-0`)));
+        assert(!response.degradedReason,`Recall degraded: ${String(response.degradedReason)}; paged=${Boolean(response.nextCursor)}`);
+        assert(response.hits.some((hit:any)=>typeof hit.similarity==="number"),"meaning search did not contribute");assert(response.hits.some((hit:any)=>hit.evidence.some((e:any)=>e.sourceId===`message:${bots[0].threadId}:load-0`)));
       }catch(error){recallFailures++;if(errors.length<100)errors.push(error instanceof Error?error.message:String(error));}
       times.push(performance.now()-begin);calls++;
       if(normalUse){const pause=Math.min(12000,Math.max(0,end-performance.now()));if(pause)await sleep(pause);}
@@ -443,10 +444,9 @@ await import(${JSON.stringify(new URL("../server/testing/fake-claude-cli.ts",imp
         for(const source of updatedSources){
           const begin=performance.now();assert(begin<drainDeadline,"Normal-use drain deadline expired before changed-fact recall");
           const found=await api("POST","/api/internal/memory/search",{query:source.text,limit:10},{authorization:`Bearer ${tokens[0]}`},Math.max(1,Math.min(500,Math.floor(drainDeadline-begin))));
-          assert(!found.degradedReason);assert(found.vectorRows>0);
+          assert(!found.degradedReason);assert(found.hits.some((hit:any)=>typeof hit.similarity==="number"),"meaning search did not contribute");
           assert(found.hits.some((hit:any)=>hit.text===source.text&&hit.evidence.some((handle:any)=>handle.sourceId===source.sourceId&&handle.revision===source.revision)),"Changed source revision was not recalled");
           const latencyMs=performance.now()-begin;times.push(latencyMs);changedFactRecall.push({sourceId:source.sourceId,revision:source.revision,latencyMs});
-          workerPeakRssBytes=Math.max(workerPeakRssBytes,Number(found.workerPeakRssBytes??0));
         }
       }
       // All eight recall loops have finished. Release the existing fake CLI's
@@ -462,15 +462,21 @@ await import(${JSON.stringify(new URL("../server/testing/fake-claude-cli.ts",imp
         assert(db!.prepare("SELECT 1 FROM memory_jobs j JOIN memory_sources s ON s.id=j.source_id AND s.revision=j.source_revision WHERE s.id=? AND s.outcome='completed' AND j.stage='capture' AND j.status='complete'").get(turn.sourceId),"Released turn lacks complete current-revision capture");
       }
     }catch(error){drainError=error instanceof Error?error.message:String(error);}
-    const drainMs=performance.now()-loadEnded,metrics=JSON.parse(readFileSync(metricFile,"utf8"));assert.equal(metrics.pid,fixture.info.pid);
+    // The helper's memory use is no longer part of any search answer (it is shaped by records a reader may not read). It is
+    // measured here, privately, from the helper's own IPC replies inside the server process (instrumentationSource above). The
+    // gate FAILS when nothing was measured: a gate that reads zero because the figure went missing passes anything.
+    const drainMs=performance.now()-loadEnded;
+    await sleep(700); // the instrumentation writes its metrics every 500 ms
+    const metrics=JSON.parse(readFileSync(metricFile,"utf8"));assert.equal(metrics.pid,fixture.info.pid);
+    const workerPeakRssBytes=Number(metrics.workerPeakRssBytes??0),workerRssSamples=Number(metrics.workerRssSamples??0);
     const revisions=Number(db.prepare("SELECT count(*) AS n FROM memory_source_versions WHERE revision>1 AND source_id LIKE 'message:%:load-%'").get()!.n);
     const completed=Number(db.prepare("SELECT count(*) AS n FROM memory_jobs WHERE status='complete' AND source_revision>1 AND source_id LIKE 'message:%:load-%'").get()!.n);
     const observations={mainPid:fixture.info.pid,fixtureLog:fixture.info.logPath,activeChunks,historyRecords,bots:20,concurrentRecalls:readerCount,requiredDurationMs:durationMs,
       changes,bytes,calls,maxQueued,sourceRevisions:revisions,acknowledgedJobs:completed,chatTurns,statusReads,heldTurns:heldTurns.length,releasedHeldTurns,productionEndedMs:productionEnded-started,elapsedMs:loadEnded-started,drainMs,
-      latencyMs:{p95:percentile(times,.95),p99:percentile(times,.99)},...normalUse?{profileDefinition:normalUseProfile,changedFactRecall,latencySamples:times.length,stressGate:{id:"F10",status:"DEFERRED",execution:"UNEXECUTED"}}:{},mainEventLoopP99Ms:metrics.eventLoopP99Ms,mainRssIncreaseBytes:Math.max(0,metrics.maxRss-metrics.baseRss),workerPeakRssBytes,
+      latencyMs:{p95:percentile(times,.95),p99:percentile(times,.99)},...normalUse?{profileDefinition:normalUseProfile,changedFactRecall,latencySamples:times.length,stressGate:{id:"F10",status:"DEFERRED",execution:"UNEXECUTED"}}:{},mainEventLoopP99Ms:metrics.eventLoopP99Ms,mainRssIncreaseBytes:Math.max(0,metrics.maxRss-metrics.baseRss),workerPeakRssBytes,workerRssSamples,workerMemoryGate:workerMemoryGate({workerPeakRssBytes,workerRssSamples},1024**3),
       observedWorkerProcessesPeak:metrics.maxWorkers,maxIndexBatch:metrics.maxIndexBatch,indexBatches:metrics.indexBatches,queryRequests:metrics.queryRequests,recallFailures,continuityFailures,errors,drainError,
       backgroundLLMReservations:Number(db.prepare("SELECT count(*) AS n FROM memory_scope_bindings WHERE subject_id='extract-budget'").get()!.n)};
-    const failed=changes!==requiredUpdates||revisions!==requiredUpdates||completed!==requiredUpdates||productionEnded-started>durationMs||normalUse&&changedFactRecall.length!==2||!calls||!chatTurns||!statusReads||releasedHeldTurns!==8||errors.length>0||Boolean(drainError)||drainMs>60000||Number(observations.latencyMs.p95)>200||Number(observations.latencyMs.p99)>400||observations.mainEventLoopP99Ms>20||observations.mainRssIncreaseBytes>128*1024**2||workerPeakRssBytes>1024**3||metrics.maxWorkers!==1||metrics.maxIndexBatch>16||observations.backgroundLLMReservations!==0;
+    const failed=changes!==requiredUpdates||revisions!==requiredUpdates||completed!==requiredUpdates||productionEnded-started>durationMs||normalUse&&changedFactRecall.length!==2||!calls||!chatTurns||!statusReads||releasedHeldTurns!==8||errors.length>0||Boolean(drainError)||drainMs>60000||Number(observations.latencyMs.p95)>200||Number(observations.latencyMs.p99)>400||observations.mainEventLoopP99Ms>20||observations.mainRssIncreaseBytes>128*1024**2||!workerMemoryGate({workerPeakRssBytes,workerRssSamples},1024**3).ok||metrics.maxWorkers!==1||metrics.maxIndexBatch>16||observations.backgroundLLMReservations!==0;
     return {id:proofId,status:failed?"FAIL":"PASS",observations,limitations:["HTTP canonical recall latency includes transport overhead. Fake-provider chat continuity is real HTTP/driver execution, not native model generation.","IPC index batches are counted exactly; internal embedding subbatches and one-hour unload remain their separate resource-observability obligations.",...normalUse?["N01 is normal-use acceptance only. The original F10 stress gate is user-deferred and was not executed."]:[]]};
   }finally{
     try{caseObservations.retainedServerLog=readFileSync(fixture.info.logPath,"utf8").slice(-16000);}catch{}

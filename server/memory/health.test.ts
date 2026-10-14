@@ -8,16 +8,18 @@ import { buildMemoryBundle } from "./bundle.ts";
 import { captureSource } from "./capture.ts";
 import { captureWork } from "./chunks.ts";
 import { MemoryDispatchReceipt } from "./dispatch.ts";
-import { memoryHealth } from "./health.ts";
+import { flushMemoryCounters, memoryHealth, resetMemoryCounters } from "./health.ts";
 import { claimMemoryJob, publishMemoryWork } from "./jobs.ts";
 import { readMemoryLearning, updateMemoryLearning } from "./learning-policy.ts";
 import { memoryAccess, reconcileMemoryRoster } from "./policy.ts";
 import { setMemoryMode } from "./repository.ts";
 import { searchMemory, type MemorySearchBridge } from "./search.ts";
+import { LineageAllowance } from "./lineage-allowance.ts";
 
 const roster = { bots: [{ id: "bot", threadId: "thread" }], groups: [] };
 
 beforeEach(() => {
+  resetMemoryCounters();
   closeDatabase();
   rmSync(DATA_DIR, { recursive: true, force: true });
   mkdirSync(DATA_DIR, { recursive: true });
@@ -56,7 +58,7 @@ it("reports current v2 sources as captured before their real capture job is publ
   // current source only, rather than count both historical revisions.
   capture(id, "Current evidence");
 
-  expect(database().prepare("SELECT schema_version FROM memory_meta WHERE id=1").get()).toEqual({ schema_version: 6 });
+  expect(database().prepare("SELECT schema_version FROM memory_meta WHERE id=1").get()).toEqual({ schema_version: 10 });
   expect(memoryHealth("extractor")).toMatchObject({
     captured: { sources: 1 },
     processed: { sources: 0, lastAt: null },
@@ -76,15 +78,17 @@ it("keeps retrieval, prepared disclosure, and accepted supplied context as disti
   const db = database();
   db.prepare("UPDATE memory_records SET owner_pinned=1 WHERE state='active'").run();
   const currentAccess = access();
+  // Counters are held in memory and written by the worker's idle sweep; the first write creates the row Details reads.
+  expect(flushMemoryCounters(Date.now(), true)).toBe(true);
 
-  const retrieved = await searchMemory("durable", currentAccess, publishedBridge());
+  const retrieved = await searchMemory("durable", currentAccess, publishedBridge(), {allowance: LineageAllowance.tool(1_000_000_000)});
   expect(retrieved.hits).toHaveLength(1);
   expect(memoryHealth("extractor")).toMatchObject({
     retrieved: { available: true, queries: 1, hits: 1 },
     supplied: { turns: 0, references: 0, lastAt: null },
   });
 
-  const supplied = await buildMemoryBundle("durable", currentAccess, publishedBridge());
+  const supplied = await buildMemoryBundle("durable", currentAccess, publishedBridge(), {allowance: LineageAllowance.tool()});
   expect(supplied.recordVersions).toHaveLength(1);
   const receipt = new MemoryDispatchReceipt(supplied, currentAccess, "health-engine");
   expect(memoryHealth("extractor").supplied).toMatchObject({ turns: 0, references: 0, lastAt: null });
@@ -95,7 +99,7 @@ it("keeps retrieval, prepared disclosure, and accepted supplied context as disti
 it("does not count even an accepted empty bundle as supplying memories", async () => {
   setMemoryMode("active");
   const currentAccess=access();
-  const empty=await buildMemoryBundle("nothing matches",currentAccess,{search:async()=>({hits:[],vectorRows:0})});
+  const empty=await buildMemoryBundle("nothing matches",currentAccess,{search:async()=>({hits:[],vectorRows:0})}, {allowance: LineageAllowance.tool()});
   expect(empty.recordVersions).toEqual([]);
   const receipt=new MemoryDispatchReceipt(empty,currentAccess,"health-engine");
   receipt.completed(true);
@@ -112,7 +116,7 @@ it("reports unavailable counters when no observability binding exists and preser
   publish();
   setMemoryMode("active");
   const currentAccess = access();
-  await expect(searchMemory("durable", currentAccess, publishedBridge())).resolves.toMatchObject({ hits: expect.any(Array) });
+  await expect(searchMemory("durable", currentAccess, publishedBridge(), {allowance: LineageAllowance.tool(1_000_000_000)})).resolves.toMatchObject({ hits: expect.any(Array) });
   expect(db.prepare("SELECT status FROM memory_jobs").get()).toEqual({ status: "complete" });
   expect(memoryHealth("extractor").retrieved).toEqual({ available: false, queries: 0, hits: 0, lastAt: null });
 });

@@ -22,6 +22,8 @@
 // The suggestion rows live in memory_scope_bindings under the same subject as
 // finished procedure reviews, so forgetting an evidence message reaches them
 // through the existing sweep (evolution-forgetting.ts).
+import { assertMemoryGate, memoryGate } from "./memory-gate.ts";
+import { noteIdentityEpoch } from "./provenance-stamp.ts";
 import { createHash } from "node:crypto";
 import type { DatabaseSync } from "node:sqlite";
 import { chipClause, pickTemplate, KEEP_WINDOW_MS, type ChipItem } from "../../shared/learned-chip.ts";
@@ -94,25 +96,133 @@ const PROCEDURE_KINDS = ["guide-applied"] as const;
 export const isProcedureEvent = (event: Record<string, any>): boolean => (PROCEDURE_KINDS as readonly string[]).includes(String(event.kind)) && safeDetail(event).procedure === 1;
 function safeDetail(event: Record<string, any>): Record<string, any> { try { return JSON.parse(String(event.detail ?? "{}")); } catch { return {}; } }
 
-/** Writes the ledger row for a change that has landed. The chip needs a reply to sit under;
- * with none, the row still shows under Recent changes. */
-export function recordAppliedChange(db: DatabaseSync, change: AppliedChange, now: number = Date.now()): string {
+/** How far a change got. A change is written as "publishing" BEFORE the skill or routine is touched and marked "applied" only after it landed (the
+ * outbox pattern): a failure or a crash between the two leaves a row that reconcilePublishing resolves by looking at what is actually there. "failed"
+ * means nothing landed; "held" means the text is neither the intended nor the previous one and the owner is told. Rows from earlier builds have no state
+ * and are applied. */
+export type PublishState = "publishing" | "applied" | "failed" | "held";
+const OUTBOX_SUBJECT = "procedure-outbox", OUTBOX_PREFIX = "procedure-outbox:";
+const publishStateOf = (detail: Record<string, any>): PublishState => (["publishing", "failed", "held"].includes(detail.publishState) ? detail.publishState : "applied") as PublishState;
+
+/** Writes the ledger row for a change. With `publishing` the row is the outbox entry written ahead of the external change (nothing is announced yet);
+ * otherwise it is a change that has landed. The chip needs a reply to sit under; with none, the row still shows under Recent changes. */
+export function recordAppliedChange(db: DatabaseSync, change: AppliedChange, now: number = Date.now(), options: { publishing?: boolean; suggestionId?: string } = {}): string {
   const reply = latestBotReply(db, change.threadId);
   const group = "improved" as const;
   const id = recordLearningEvent(db, {
     kind: "guide-applied", scopeId: change.scopeId, botId: change.ownerId, now,
-    detail: { procedure: 1, ...change, group, template: pickTemplate(group, previousTemplate(db, change.ownerId, group), seedFor(db, change.ownerId, now)), replyMessageId: reply },
+    detail: { procedure: 1, ...change, group, template: pickTemplate(group, previousTemplate(db, change.ownerId, group), seedFor(db, change.ownerId, now)), replyMessageId: reply,
+      ...(options.publishing ? { publishState: "publishing" } : {}), ...(options.suggestionId ? { suggestionId: options.suggestionId } : {}) },
   }) as unknown as string;
-  // Announced after the surrounding write has committed; the listener re-reads the row, so a rollback announces nothing.
-  if (change.via === "automatic" && reply) { const listener = improvedListener; if (listener) setTimeout(() => { try { listener(id); } catch { /* the chip is optional; the change is already recorded */ } }, 0); }
+  if (options.publishing) {
+    // the pointer the boot and idle sweeps find (a range on the primary key, never a scan of the ledger)
+    db.prepare("INSERT OR REPLACE INTO memory_scope_bindings VALUES(?,?,'system',?,0,'granted',?)").run(`${OUTBOX_PREFIX}${id}`, change.scopeId, OUTBOX_SUBJECT, JSON.stringify({ eventId: id, at: now }));
+  } else announceApplied(change.via, reply, id);
   return id;
+}
+/** Announced after the surrounding write has committed; the listener re-reads the row, so a rollback announces nothing. */
+function announceApplied(via: string, reply: string | null | undefined, id: string): void {
+  if (via === "automatic" && reply) { const listener = improvedListener; if (listener) setTimeout(() => { try { listener(id); } catch { /* the chip is optional; the change is already recorded */ } }, 0); }
+}
+const patchDetail = (db: DatabaseSync, eventId: string, patch: Record<string, unknown>): void => {
+  const done = db.prepare("UPDATE memory_learning_events SET detail=json_patch(detail,?) WHERE id=?").run(JSON.stringify(patch), eventId);
+  if (Number(done.changes) !== 1) throw new Error("MEMORY_LEDGER_ROW_MISSING");
+};
+const dropOutboxPointer = (db: DatabaseSync, eventId: string): void => { db.prepare("DELETE FROM memory_scope_bindings WHERE id=?").run(`${OUTBOX_PREFIX}${eventId}`); };
+
+/** Second commit of an Apply: the change landed. One update of a row the first commit wrote, plus the suggestion's own state. */
+export function settleAppliedChange(db: DatabaseSync, eventId: string, afterRevision: string, now: number = Date.now()): void {
+  const event = db.prepare("SELECT detail FROM memory_learning_events WHERE id=?").get(eventId) as { detail: string } | undefined;
+  if (!event) throw new Error("MEMORY_LEDGER_ROW_MISSING");
+  const detail = safeDetail(event);
+  patchDetail(db, eventId, { publishState: null, afterRevision });
+  dropOutboxPointer(db, eventId);
+  // announced after the surrounding write has committed (the listener re-reads the row, so a rollback announces nothing)
+  announceApplied(String(detail.via ?? ""), typeof detail.replyMessageId === "string" ? detail.replyMessageId : null, eventId);
+  if (typeof detail.suggestionId === "string") { const row = readRow(db, detail.suggestionId); if (row && row.state === "suggested") writeRow(db, { ...row, state: "applied", decidedAt: now }); }
+}
+
+type Observed = { sha256: string; revision: string } | null;
+/** What the skill or routine is right now, from its own host (null when it cannot be read). */
+function observe(detail: Record<string, any>): Observed {
+  if (!landingHost) return null;
+  const target: ProcedureReviewTarget = { kind: detail.kind, scopeId: String(detail.scopeId), ownerId: String(detail.ownerId), artifactId: String(detail.artifactId), baseRevision: String(detail.baseRevision), threadId: String(detail.threadId), bundleId: String(detail.bundleId) };
+  try {
+    const now = landingHost.base(target);
+    if (!now) return null;
+    return { sha256: now.sha256, revision: detail.kind === "routine" ? String(JSON.parse(now.revision)[0]) : now.revision };
+  } catch { return null; }
+}
+
+/** Resolves a change left "publishing" by a failure or a crash, by comparing what is there with the intended and the previous text. Matches the intended
+ * text: it is applied. Matches the previous text: it failed and the suggestion stays suggested. Anything else (or unreadable): held, shown to the owner,
+ * nothing is hidden. Returns "pending" when it could not decide or write right now (the sweeps try again). */
+export function reconcilePublishing(db: DatabaseSync, eventId: string, now: number = Date.now()): "applied" | "failed" | "held" | "pending" | "none" {
+  const event = db.prepare("SELECT * FROM memory_learning_events WHERE id=?").get(eventId) as Record<string, any> | undefined;
+  if (!event) return "none";
+  const detail = safeDetail(event);
+  if (publishStateOf(detail) !== "publishing") return "none";
+  if (!landingHost) return "pending";
+  const seen = observe(detail);
+  try {
+    return atomically(db, () => {
+      if (seen && seen.sha256 === detail.afterSha256) { settleAppliedChange(db, eventId, seen.revision, now); return "applied" as const; }
+      if (seen && seen.sha256 === detail.beforeSha256) { patchDetail(db, eventId, { publishState: "failed" }); dropOutboxPointer(db, eventId); return "failed" as const; }
+      patchDetail(db, eventId, { publishState: "held" }); dropOutboxPointer(db, eventId); return "held" as const;
+    });
+  } catch { return "pending"; }
+}
+/** An Undo left "undoing": the text is back (complete it), still as it was (clear it), or something else (held). */
+export function reconcileUndoing(db: DatabaseSync, eventId: string, now: number = Date.now()): "undone" | "kept" | "held" | "pending" | "none" {
+  const event = db.prepare("SELECT * FROM memory_learning_events WHERE id=?").get(eventId) as Record<string, any> | undefined;
+  if (!event) return "none";
+  const detail = safeDetail(event);
+  if (detail.undoState !== "undoing") return "none";
+  if (!landingHost) return "pending";
+  const seen = observe(detail);
+  try {
+    return atomically(db, () => {
+      if (seen && seen.sha256 === detail.beforeSha256) { finishUndo(db, event, now); return "undone" as const; }
+      if (seen && seen.sha256 === detail.afterSha256) { patchDetail(db, eventId, { undoState: null }); dropOutboxPointer(db, eventId); return "kept" as const; }
+      patchDetail(db, eventId, { undoState: "held" }); dropOutboxPointer(db, eventId); return "held" as const;
+    });
+  } catch { return "pending"; }
+}
+function finishUndo(db: DatabaseSync, event: Record<string, any>, now: number): void {
+  const detail = safeDetail(event), eventId = String(event.id);
+  db.prepare("UPDATE memory_learning_events SET undone_at=?,detail=json_patch(detail,'{\"undoState\":null}') WHERE id=?").run(now, eventId);
+  dropOutboxPointer(db, eventId);
+  recordLearningEvent(db, { kind: "guide-undone", scopeId: String(event.scope_id), botId: event.bot_id === null ? null : String(event.bot_id), now, detail: { procedure: 1, kind: detail.kind, label: detail.label, appliedEventId: eventId } });
+}
+/** Boot, idle and the recovery scheduler: every change an earlier run (or a failed commit) left half done. Bounded; the pointers are a primary-key range.
+ * `after` is the id of the last pointer the previous pass looked at: a pass looks at the `limit` pointers that follow it and hands back where it got to
+ * (`next`, null when the end of the range was reached, so the next pass begins again at the start), so a pointer that cannot settle yet never starves the
+ * ones behind it. `pending` counts the ones left for a later pass. */
+export function reconcileOutstandingChangesPass(db: DatabaseSync, after: string | null, limit = 20): { settled: number; examined: number; pending: number; next: string | null } {
+  let settled = 0, pending = 0, last: string | null = null;
+  const rows = (after === null
+    ? db.prepare("SELECT id,intent FROM memory_scope_bindings WHERE id>=? AND id<? ORDER BY id LIMIT ?").all(OUTBOX_PREFIX, "procedure-outbox;", limit)
+    : db.prepare("SELECT id,intent FROM memory_scope_bindings WHERE id>? AND id<? ORDER BY id LIMIT ?").all(after, "procedure-outbox;", limit)) as Array<{ id: string; intent: string }>;
+  for (const row of rows) {
+    last = String(row.id);
+    let eventId = ""; try { eventId = String(JSON.parse(row.intent).eventId ?? ""); } catch { continue; }
+    if (!eventId) continue;
+    const a = reconcilePublishing(db, eventId), b = reconcileUndoing(db, eventId);
+    if (a !== "pending" && b !== "pending") { settled++; if (a === "none" && b === "none") dropOutboxPointer(db, eventId); }
+    else pending++;
+  }
+  return { settled, examined: rows.length, pending, next: rows.length < limit ? null : last };
+}
+/** One pass from the start of the range (the boot pass, and the idle call that older callers make). */
+export function reconcileOutstandingChanges(db: DatabaseSync, limit = 20): number {
+  return reconcileOutstandingChangesPass(db, null, limit).settled;
 }
 
 /** Chips under this thread's replies for automatic skill and routine changes. */
 export function procedureChipItemsForThread(db: DatabaseSync, input: { botId: string; threadId: string; now?: number }): ChipItem[] {
   const now = input.now ?? Date.now();
   const rows = db.prepare(`SELECT * FROM memory_learning_events WHERE bot_id=? AND kind='guide-applied' AND json_extract(detail,'$.procedure')=1
-    AND json_extract(detail,'$.threadId')=? AND json_extract(detail,'$.replyMessageId') IS NOT NULL AND (undone_at IS NULL OR undone_at>=?)
+    AND json_extract(detail,'$.threadId')=? AND json_extract(detail,'$.replyMessageId') IS NOT NULL AND json_extract(detail,'$.publishState') IS NULL AND (undone_at IS NULL OR undone_at>=?)
     ORDER BY created_at DESC,rowid DESC LIMIT 50`).all(input.botId, input.threadId, now - KEEP_WINDOW_MS) as Record<string, any>[];
   return rows.reverse().map(chipItemOf);
 }
@@ -131,7 +241,7 @@ function chipItemOf(event: Record<string, any>): ChipItem {
  * (the write rolled back) or has no reply to sit under. */
 export interface ImprovedMoment { eventId: string; botId: string; threadId: string; replyMessageId: string; template: number; text: string; procedureKind: "skill" | "routine" }
 export function improvedMomentForEvent(db: DatabaseSync, eventId: string): ImprovedMoment | null {
-  const event = db.prepare("SELECT * FROM memory_learning_events WHERE id=? AND kind='guide-applied' AND undone_at IS NULL").get(eventId) as Record<string, any> | undefined;
+  const event = db.prepare("SELECT * FROM memory_learning_events WHERE id=? AND kind='guide-applied' AND undone_at IS NULL AND json_extract(detail,'$.publishState') IS NULL").get(eventId) as Record<string, any> | undefined;
   if (!event || !event.bot_id) return null;
   const detail = safeDetail(event);
   if (detail.procedure !== 1 || detail.via !== "automatic" || typeof detail.threadId !== "string" || !detail.threadId || typeof detail.replyMessageId !== "string" || !detail.replyMessageId) return null;
@@ -147,7 +257,11 @@ export function procedureForEvent(_db: DatabaseSync, event: Record<string, any>)
   if (event.kind === "guide-applied") {
     const detail = safeDetail(event);
     if (detail.procedure !== 1) return null;
-    return { kind: detail.kind === "routine" ? "routine" : "skill", label: String(detail.label ?? ""), via: String(detail.via ?? "automatic"), state: event.undone_at === null ? "active" : "undone" };
+    const published = publishStateOf(detail);
+    // held (and still-publishing) changes are shown as needing a look; a change that never landed is not shown at all
+    if (published === "failed") return null;
+    const state = published !== "applied" || detail.undoState === "held" ? "held" : event.undone_at === null ? "active" : "undone";
+    return { kind: detail.kind === "routine" ? "routine" : "skill", label: String(detail.label ?? ""), via: String(detail.via ?? "automatic"), state };
   }
   if (event.kind === "guide-undone") {
     const detail = safeDetail(event);
@@ -176,22 +290,63 @@ let landingHost: ProcedureLandingHost | null = null;
 /** The review host registers itself when it is built. */
 export function setProcedureLandingHost(host: ProcedureLandingHost | null): void { landingHost = host; }
 
-/** Undo or Keep for a procedure change. Called from changeLearningEvent. */
+const OUTBOX_NESTED = "PROCEDURE_OUTBOX_NEEDS_OWN_TRANSACTION";
+/** Apply and Undo commit twice around the external change, so they cannot run inside a caller's transaction (the first commit must be durable before the
+ * files change). Callers do not wrap them. */
+const requireOwnTransaction = (db: DatabaseSync): void => { if (db.isTransaction) throw new Error(OUTBOX_NESTED); };
+const stillLanding = () => httpError("This change is still being finished. Try again in a moment.", 409, "CONFLICT");
+
+/** Undo or Keep for a procedure change. Called from changeLearningEvent. Undo is an outbox too: the intent is committed, then the text goes back, then
+ * the undone state is committed; a failure between them is reconciled from what the text actually is. */
 export function changeProcedureEvent(db: DatabaseSync, event: Record<string, any>, action: "undo" | "keep", now: number = Date.now()) {
   const eventId = String(event.id);
+  const detail = safeDetail(event) as AppliedChange & Record<string, any>;
   if (action === "keep") {
     if (event.undone_at !== null) throw httpError("This learning item cannot be changed.", 409);
+    if (publishStateOf(detail) !== "applied") throw stillLanding();
+    // The gate first, before the acknowledgement is written: a hold refuses every ledger write.
+    assertMemoryGate(db, "ledger-write");
     if (event.kept_at === null) db.prepare("UPDATE memory_learning_events SET kept_at=? WHERE id=?").run(now, eventId);
     return { ok: true, eventId, kept: true };
   }
   if (event.undone_at !== null) return { ok: true, eventId, undone: true };
-  const detail = safeDetail(event) as AppliedChange & Record<string, any>;
+  requireOwnTransaction(db);
+  if (publishStateOf(detail) !== "applied") { reconcilePublishing(db, eventId, now); throw stillLanding(); }
+  if (detail.undoState === "undoing") {
+    const settled = reconcileUndoing(db, eventId, now);
+    if (settled === "undone") return { ok: true, eventId, undone: true };
+    if (settled !== "kept") throw stillLanding();
+  } else if (detail.undoState === "held") throw httpError("This changed since it was updated. Open its history to review the current version.", 409);
+  // The gate first: a hold (or a pass still going over earlier memory, for a change made before it began) refuses before anything is touched.
+  assertMemoryGate(db, "rollback-procedure", { eventId });
   if (!landingHost) throw httpError("This learning item cannot be changed.", 409);
-  const result = landingHost.rollback(detail);
-  if (!result.ok) throw httpError("This changed since it was updated. Open its history to review the current version.", 409);
-  db.prepare("UPDATE memory_learning_events SET undone_at=? WHERE id=?").run(now, eventId);
-  recordLearningEvent(db, { kind: "guide-undone", scopeId: String(event.scope_id), botId: event.bot_id === null ? null : String(event.bot_id), now, detail: { procedure: 1, kind: detail.kind, label: detail.label, appliedEventId: eventId } });
-  return { ok: true, eventId, undone: true };
+  const host = landingHost;
+  // commit 1: the intent, durable before the text moves
+  atomically(db, () => {
+    assertMemoryGate(db, "rollback-procedure", { eventId });
+    patchDetail(db, eventId, { undoState: "undoing" });
+    db.prepare("INSERT OR REPLACE INTO memory_scope_bindings VALUES(?,?,'system',?,0,'granted',?)").run(`${OUTBOX_PREFIX}${eventId}`, String(event.scope_id), OUTBOX_SUBJECT, JSON.stringify({ eventId, at: now }));
+  });
+  let thrown: unknown, result: { ok: boolean } | undefined;
+  try { assertMemoryGate(db, "rollback-procedure", { eventId }); result = host.rollback(detail); } catch (error) { thrown = error; }
+  if (!thrown && result?.ok === true) {
+    try { atomically(db, () => finishUndo(db, event, now)); return { ok: true, eventId, undone: true }; } catch (error) { thrown = error; }
+  }
+  // a refused rollback ({ok:false}), a throw, or a failed second commit: look at what the text is now
+  const settled = reconcileUndoing(db, eventId, now);
+  if (settled === "undone") return { ok: true, eventId, undone: true };
+  if (thrown) throw thrown;
+  throw httpError("This changed since it was updated. Open its history to review the current version.", 409);
+}
+
+let atomicSavepoints = 0;
+/** Runs the work as one unit: inside the caller's transaction it is a savepoint, so a throw undoes its rows even when the caller catches it. */
+function atomically<T>(db: DatabaseSync, work: () => T): T {
+  const nested = db.isTransaction, point = `procedure_landing_${++atomicSavepoints}`;
+  if (!nested) noteIdentityEpoch(db);
+  db.exec(nested ? `SAVEPOINT ${point}` : "BEGIN IMMEDIATE");
+  try { const result = work(); db.exec(nested ? `RELEASE ${point}` : "COMMIT"); return result; }
+  catch (error) { db.exec(nested ? `ROLLBACK TO ${point}; RELEASE ${point}` : "ROLLBACK"); throw error; }
 }
 
 // ── suggestions ───────────────────────────────────────────────────────────
@@ -259,13 +414,62 @@ export function recordProcedureSuggestion(db: DatabaseSync, input: { snapshot: P
   return id;
 }
 
-export function listProcedureSuggestions(db: DatabaseSync, botId: string): ProcedureSuggestionView[] {
-  return (db.prepare("SELECT intent FROM memory_scope_bindings WHERE subject_type='system' AND subject_id='procedure-review' AND id LIKE ? AND state='granted' ORDER BY rowid").all(`${PROCEDURE_SUGGESTION_PREFIX}%`) as Array<{ intent: string }>)
-    .flatMap(row => { try { return [JSON.parse(row.intent) as Row]; } catch { return []; } })
-    .filter(row => row.kind === "suggestion" && row.botId === botId && row.state === "suggested" && row.status === "complete" && row.snapshot)
+/** The waiting suggestion rows, parsed once per connection. A temp trigger counts every write to the procedure-review rows on this connection, and
+ * `pragma data_version` catches commits from other connections, so a call with nothing changed does no reading and no JSON.parse at all. */
+const suggestedCache = new WeakMap<DatabaseSync, { key: string; rows: Row[] }>();
+const watching = new WeakSet<DatabaseSync>();
+function watchProcedureRows(db: DatabaseSync): boolean {
+  if (watching.has(db)) return true;
+  try {
+    db.exec("CREATE TEMP TABLE IF NOT EXISTS psug_epoch(n INTEGER NOT NULL); INSERT INTO psug_epoch SELECT 0 WHERE NOT EXISTS (SELECT 1 FROM psug_epoch)");
+    const when = { INSERT: "NEW.subject_id='procedure-review'", UPDATE: "OLD.subject_id='procedure-review' OR NEW.subject_id='procedure-review'", DELETE: "OLD.subject_id='procedure-review'" };
+    for (const [op, cond] of Object.entries(when)) db.exec(`CREATE TEMP TRIGGER IF NOT EXISTS psug_epoch_${op.toLowerCase()} AFTER ${op} ON main.memory_scope_bindings WHEN ${cond} BEGIN UPDATE psug_epoch SET n=n+1; END`);
+    watching.add(db);
+    return true;
+  } catch { return false; }
+}
+/** The psug- ids sort contiguously ('-' is 0x2D, '.' is 0x2E), so the primary-key index answers a range (the unary plus keeps the planner off the subject index) and the procedure-review rows of other kinds are never
+ * touched. A cache miss costs the number of psug- rows, not the number of procedure-review rows. Parsing and the kind/state filters happen on those few rows. */
+const PROCEDURE_SUGGESTION_END = "psug.";
+export const SUGGESTED_ROWS_SQL = "SELECT intent FROM memory_scope_bindings WHERE id>=? AND id<? AND +subject_type='system' AND +subject_id='procedure-review' AND state='granted' ORDER BY rowid";
+function suggestedRows(db: DatabaseSync): Row[] {
+  const watched = watchProcedureRows(db);
+  let key = "";
+  if (watched) {
+    try {
+      const n = (db.prepare("SELECT n FROM psug_epoch").get() as { n: number }).n;
+      const v = (db.prepare("PRAGMA data_version").get() as { data_version: number }).data_version;
+      key = `${n}:${v}`;
+    } catch { key = ""; }
+  }
+  const hit = suggestedCache.get(db);
+  if (key && hit && hit.key === key) return hit.rows;
+  const rows = (db.prepare(SUGGESTED_ROWS_SQL).all(PROCEDURE_SUGGESTION_PREFIX, PROCEDURE_SUGGESTION_END) as Array<{ intent: string }>)
+    .flatMap(item => { try { return [JSON.parse(item.intent) as Row]; } catch { return []; } })
+    .filter(row => row.kind === "suggestion" && row.state === "suggested" && row.status === "complete" && !!row.snapshot);
+  if (key) suggestedCache.set(db, { key, rows });
+  else suggestedCache.delete(db);
+  return rows;
+}
+
+/** One read of the suggestion rows, grouped by bot. The Inbox asks for every bot at once, so the cost is flat in the number of bots. */
+export function listProcedureSuggestionsByBot(db: DatabaseSync, botIds?: readonly string[]): Map<string, ProcedureSuggestionView[]> {
+  const wanted = botIds ? new Set(botIds) : undefined;
+  const out = new Map<string, ProcedureSuggestionView[]>();
+  for (const row of suggestedRows(db)) {
+    if (wanted && !wanted.has(row.botId)) continue;
     // A card whose skill or routine has changed since is no longer an offer: it would be refused as stale.
-    .filter(row => { const now = landingHost?.base(row.target); return !landingHost || (now !== null && now !== undefined && now.revision === row.target.baseRevision && now.sha256 === row.beforeSha256); })
-    .map(view);
+    const now = landingHost?.base(row.target);
+    if (landingHost && !(now !== null && now !== undefined && now.revision === row.target.baseRevision && now.sha256 === row.beforeSha256)) continue;
+    const list = out.get(row.botId) ?? [];
+    list.push(view(row));
+    out.set(row.botId, list);
+  }
+  return out;
+}
+
+export function listProcedureSuggestions(db: DatabaseSync, botId: string): ProcedureSuggestionView[] {
+  return listProcedureSuggestionsByBot(db, [botId]).get(botId) ?? [];
 }
 
 const pending = (db: DatabaseSync, botId: string, id: string, expectedVersion: number): Row => {
@@ -276,14 +480,22 @@ const pending = (db: DatabaseSync, botId: string, id: string, expectedVersion: n
   return row;
 };
 
-/** Apply: publishes exactly the words the owner was shown, if the skill or routine is still as it was. */
+/** Apply: publishes exactly the words the owner was shown, if the skill or routine is still as it was. Written as an outbox: the intent (the ledger row
+ * in state "publishing", naming the intended text) is committed first, then the skill or routine changes, then a second commit marks it applied. A failure
+ * or a crash between them is reconciled from the text itself (reconcilePublishing): the intended text means applied, the previous text means failed and the
+ * suggestion stays suggested, anything else is shown to the owner as needing a look. */
 export function applyProcedureSuggestion(db: DatabaseSync, input: { botId: string; id: string; expectedVersion: number; proposedHash?: string; now?: number }): ProcedureSuggestionView {
   const now = input.now ?? Date.now();
+  requireOwnTransaction(db);
+  // The gate first, before the card is even read: nothing below can publish while memory is held or still being gone over.
+  assertMemoryGate(db, "publish-procedure");
+  // A change this card left half done by an earlier failure is settled before another is started.
+  const left = readRow(db, input.id);
+  if (left) for (const pointer of outboxFor(db, left)) reconcilePublishing(db, pointer, now);
   const row = pending(db, input.botId, input.id, input.expectedVersion);
   const text = finalText(row);
   if (input.proposedHash !== undefined && input.proposedHash !== sha256(text)) throw httpError("This suggestion changed elsewhere. Refresh and try again.", 409, "REVISION_CONFLICT");
   if (!landingHost) throw httpError("This cannot be applied right now.", 409, "CONFLICT");
-  // A refused Apply rolls its transaction back, so nothing is written here: the card drops out of the list on its own (see listProcedureSuggestions).
   const stale = () => httpError("This changed since it was suggested, so it was not applied.", 409, "STALE");
   const current = landingHost.base(row.target);
   if (!current || current.revision !== row.target.baseRevision || current.sha256 !== row.beforeSha256) throw stale();
@@ -291,14 +503,40 @@ export function applyProcedureSuggestion(db: DatabaseSync, input: { botId: strin
   if (!check.ok) throw httpError("A change can only change how it works, not what it may do.", 422, "INVALID_CHANGE");
   const edited = row.editedText !== undefined;
   const receiptId = edited ? `owner-edit:${sha256(text)}` : row.receipt!.id;
+  const host = landingHost;
+  // commit 1: the intent, durable before the files change
+  const ledgerId = atomically(db, () => {
+    assertMemoryGate(db, "publish-procedure");
+    return recordAppliedChange(db, { ...host.describe(row.snapshot!, text, receiptId, row.beforeSha256, row.label), via: edited ? "edit" : "suggestion" }, now, { publishing: true, suggestionId: row.id });
+  });
+  let thrown: unknown;
   try {
-    if (edited) landingHost.publishEdited(row.snapshot!, text, receiptId);
-    else landingHost.publishEvaluated(row.snapshot!, row.receipt!);
-  } catch { throw stale(); }
-  recordAppliedChange(db, { ...landingHost.describe(row.snapshot!, text, receiptId, row.beforeSha256, row.label), via: edited ? "edit" : "suggestion" }, now);
-  const next: Row = { ...row, state: "applied", decidedAt: now };
-  writeRow(db, next);
-  return view(next);
+    assertMemoryGate(db, "publish-procedure");
+    try {
+      if (edited) host.publishEdited(row.snapshot!, text, receiptId);
+      else host.publishEvaluated(row.snapshot!, row.receipt!);
+    } catch (error) { if ((error as { code?: string }).code === "MEMORY_HELD" || (error as { code?: string }).code === "MEMORY_PENDING") throw error; throw stale(); }
+    // commit 2: it landed
+    const landed = host.describe(row.snapshot!, text, receiptId, row.beforeSha256, row.label);
+    atomically(db, () => settleAppliedChange(db, ledgerId, landed.afterRevision, now));
+    return view({ ...row, state: "applied", decidedAt: now });
+  } catch (error) { thrown = error; }
+  // a refused or failed publication, or a failed second commit: settle the row from what the text is now, before the error leaves
+  const settled = reconcilePublishing(db, ledgerId, now);
+  if (settled === "applied") return view({ ...row, state: "applied", decidedAt: now });
+  throw thrown;
+}
+/** The outbox entries (ledger rows still publishing) of one suggestion card. */
+function outboxFor(db: DatabaseSync, row: Row): string[] {
+  const out: string[] = [];
+  for (const pointer of db.prepare("SELECT intent FROM memory_scope_bindings WHERE id>=? AND id<? ORDER BY id LIMIT 50").all(OUTBOX_PREFIX, "procedure-outbox;") as Array<{ intent: string }>) {
+    try {
+      const eventId = String(JSON.parse(pointer.intent).eventId ?? "");
+      const event = db.prepare("SELECT detail FROM memory_learning_events WHERE id=?").get(eventId) as { detail: string } | undefined;
+      if (event && safeDetail(event).suggestionId === row.id) out.push(eventId);
+    } catch { /* an unreadable pointer is the sweep's to drop */ }
+  }
+  return out;
 }
 
 /** Edit: new words, scores dropped, still waiting. */
@@ -319,7 +557,7 @@ export function notNowProcedureSuggestion(db: DatabaseSync, input: { botId: stri
   const row = pending(db, input.botId, input.id, input.expectedVersion);
   const second = row.notNowCount >= 1;
   writeRow(db, { ...row, state: second ? "hidden" : "retired", notNowCount: row.notNowCount + 1, decidedAt: now });
-  if (second) {
+  if (second && memoryGate(db, "feedback-write") === "ok") {
     // thread_id stays empty so this never shows up as "recent feedback" in a conversation.
     db.prepare("INSERT OR IGNORE INTO memory_feedback(id,bot_id,thread_id,message_id,target_message_id,target_turn_id,target_action,polarity,strength,correction,confidence,state,scope,acknowledged_at,created_at) VALUES(?,?,NULL,NULL,NULL,NULL,?,'-',2,NULL,1,'detected','bot',NULL,?)")
       .run(`fb_${sha256(`${row.id}:${row.notNowCount + 1}`).slice(0, 24)}`, row.botId, `procedure-suggestion:${row.targetKind}`, now);

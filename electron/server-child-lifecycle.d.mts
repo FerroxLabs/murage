@@ -8,10 +8,11 @@ export interface ServerChildLifecycle {
   readonly exited: boolean;
   readonly failed: boolean;
   readonly exit: Promise<void>;
+  readonly exitedRecord: Readonly<{ pid: number; code: number | null }> | null;
   stop(options?: { graceful?: boolean }): Promise<void>;
 }
 export declare function createServerChildLifecycle(
-  child: NodeJS.EventEmitter & { exitCode?: number | null; signalCode?: string | null; kill(): unknown; postMessage?(message: unknown): void },
+  child: NodeJS.EventEmitter & { pid?: number; exitCode?: number | null; signalCode?: string | null; kill(): unknown; postMessage?(message: unknown): void },
   options?: { timeoutMs?: number; gracefulClose?: boolean; graceMs?: number },
 ): ServerChildLifecycle;
 export declare function awaitOwnedWork(work: Promise<unknown>, label: string, timeoutMs?: number): Promise<void>;

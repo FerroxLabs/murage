@@ -143,3 +143,13 @@ test("stopRequested is false for an outside kill and true once the app asked to 
   await b.stop();
   assert.equal(b.stopRequested,true);
 });
+
+test("exitedRecord reports the pid and exit code once the child exited, so the lease release can clear it", async () => {
+  const child = new EventEmitter();
+  child.pid = 4242;
+  child.kill = () => { child.emit("exit", 0); };
+  const lifecycle = createServerChildLifecycle(child, { timeoutMs: 20 });
+  assert.equal(lifecycle.exitedRecord, null);
+  await lifecycle.stop();
+  assert.deepEqual({ ...lifecycle.exitedRecord }, { pid: 4242, code: 0 });
+});

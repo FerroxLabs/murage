@@ -9,12 +9,13 @@ import { insertRoomRequest as insertE1, roomRequest, completeRequest } from "./r
 import { createProjectCard, enqueueCardRun, applyCardRunDispatched, applyCardRunFinished, applyCardRunFailed, assignCardReview, sendProjectCardBack, retryProjectCard } from "./project-cards.ts";
 import { recordProjectRoutine } from "./project-routines.ts";
 import { queueRoutineCardRun } from "./project-card-executor.ts";
-import { readFileSync, writeFileSync } from "node:fs";
+import { writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { DATA_DIR } from "./config.ts";
 import { Store } from "./store.ts";
 import { teamIdFor } from "./team-identities.ts";
-import { queueDelegation, _resetPending, _loadPending, _pendingCount } from "./delegations.ts";
+import { queueDelegation, _resetPending, _simulateRestart, _loadPending, _pendingCount } from "./delegations.ts";
+import { queuedDelegationsByThread } from "./pending-delegations-schema.ts";
 import { database } from "./database.ts";
 
 it("the second writer inherits the parent's audience", () => {
@@ -88,10 +89,11 @@ it("delegation persists its tag and rejects malformed tags on restart", () => {
   const team = teamIdFor("Sales"), tag = { v: 1 as const, kind: "team" as const, human: "owner" as const, team, rootRequestId: "root" };
   const queued = queueDelegation({ store, broadcast: () => {} }, from, { toBotId: target.id, message: "fixture", depth: 0, executionAudience: tag }, 4);
   expect(queued.result).toBe("ok");
-  const path = join(DATA_DIR, "delegations.json"), raw = JSON.parse(readFileSync(path, "utf8"));
-  expect(raw[from.threadId][0].executionAudience).toEqual(tag);
-  _resetPending(); _loadPending(); expect(_pendingCount(from.threadId)).toBe(1);
-  raw[from.threadId][0].executionAudience = { ...tag, team: "../escape" }; writeFileSync(path, JSON.stringify(raw));
+  const path = join(DATA_DIR, "delegations.json"), raw = queuedDelegationsByThread(database());
+  expect(raw[from.threadId]![0]!.executionAudience).toEqual(tag);
+  _simulateRestart(); _loadPending(); expect(_pendingCount(from.threadId)).toBe(1);
+  // a 1.0.1 queue file carrying a tag that does not validate is not imported
+  raw[from.threadId]![0]!.executionAudience = { ...tag, team: "../escape" }; _resetPending(); writeFileSync(path, JSON.stringify(raw));
   _loadPending(); expect(_pendingCount(from.threadId)).toBe(0); _resetPending();
 });
 
@@ -107,7 +109,7 @@ it("roots issue from the requesting partition and shared entry uses the actual r
   const work = store.createSharedWorkTask(iris.id, sales)!;
   const queued = queueDelegation({ store, broadcast: () => {} }, iris, { toBotId: sam.id, message: "root work", depth: 0 }, 4, work.threadId);
   expect(queued.result).toBe("ok");
-  const persisted = JSON.parse(readFileSync(join(DATA_DIR, "delegations.json"), "utf8"))[work.threadId][0];
+  const persisted = queuedDelegationsByThread(database())[work.threadId]![0]!;
   expect(persisted.executionAudience).toEqual({ v: 1, kind: "team", human: "owner", team: sales, rootRequestId: queued.id });
   _resetPending();
 });
@@ -124,6 +126,6 @@ it("delegation carries the bound turn audience through sourceExecutionAudience",
   const audience = sourceExecutionAudience(iris.id, work.threadId, root.id, true);
   const queued = queueDelegation({ store, broadcast: () => {} }, iris, { toBotId: zed.id, message: "bound", depth: 0, executionAudience: audience ?? undefined }, 4, work.threadId);
   expect(queued.result).toBe("ok");
-  expect(JSON.parse(readFileSync(join(DATA_DIR, "delegations.json"), "utf8"))[work.threadId][0].executionAudience).toEqual(tag);
+  expect(queuedDelegationsByThread(database())[work.threadId]![0]!.executionAudience).toEqual(tag);
   _resetPending();
 });

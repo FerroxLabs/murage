@@ -11,8 +11,7 @@
 // INPUTS — all committed, all read from disk, no network:
 //   library/assistants/*.json     28 Wayland specialist profiles
 //   bot-library/builtins/*.json   29 Murage built-in profiles
-//   library/packages/*.{json,md}  65 team documents vendored by
-//                                 scripts/vendor-team-packages.mjs
+//   library/packages/*.{json,md}  65 team documents committed in this repo
 //   skills-library/<id>/          the shipped skill catalog, used to decide
 //                                 which declared skill ids actually install
 //
@@ -25,12 +24,6 @@
 //     their members install real skills. Here `skills` is derived from the
 //     members' declared ids, filtered to what skills-library actually ships,
 //     so the count the card shows is the count that lands.
-//   * The 6 OpenMausBot entries take their name/summary/outcome from their own
-//     package document rather than upstream's separately hand-written catalog
-//     text, so the browse label and the import preview cannot disagree. Their
-//     `skills` become [] because those ids are PLAYBOOKS in the package, not
-//     skills: the importer reads agents[].skills, so upstream's three-SKILL.md
-//     advertisement installs nothing, online or offline.
 //
 // Usage:
 //   node --experimental-strip-types scripts/build-local-catalog.mjs [--check]
@@ -48,7 +41,7 @@ export const REPO_ROOT = dirname(dirname(fileURLToPath(import.meta.url)));
 export const LOCAL_CATALOG_FILE = "library/catalog.json";
 /** Single-agent profile packages, one file per slug, filename === package id. */
 export const PROFILE_DIRECTORIES = ["library/assistants", "bot-library/builtins"];
-/** Team documents with no other committed source. See vendor-team-packages.mjs. */
+/** Team documents with no other committed source. */
 export const PACKAGE_DIRECTORY = "library/packages";
 export const SKILL_LIBRARY_DIRECTORY = "skills-library";
 

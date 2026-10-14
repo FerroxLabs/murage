@@ -24,6 +24,7 @@ import { searchMemory } from "./search.ts";
 import { memoryOwnerRoute } from "./settings.ts";
 import { MemoryDispatchReceipt, memoryContinuationChanged } from "./dispatch.ts";
 import { continuationMemoryRevoked } from "./disclosures.ts";
+import { markSessionKnown } from "./testing/legacy-file-model.ts";
 import { Store } from "../store.ts";
 import { decorateMemoryInstance } from "../harness/memory-adapter.ts";
 import { MEMORY_REFERENCE_OPEN } from "../../shared/memory.ts";
@@ -35,6 +36,7 @@ import { claimMemoryJob, publishMemoryWork } from "./jobs.ts";
 import { captureWork } from "./chunks.ts";
 import { consolidateMemorySource } from "./consolidate.ts";
 import { prepareMemorySkillReview } from "../skills.ts";
+import { LineageAllowance } from "./lineage-allowance.ts";
 
 const roster = {
   bots: [
@@ -118,14 +120,14 @@ describe("PIP keeps continuity out of the shared recall index", () => {
     const index = new MemoryIndex(join(DATA_DIR, "memory-index.db")); opened.push(index);
     project(index);
     const mossOf = async (bridge: ReturnType<typeof productionBridge>, query: string) => ({
-      ids: (await searchMemory(query, access(), bridge, { limit: 20 })).hits.map(hit => `${hit.id}@${hit.version}`),
-      historical: (await searchMemory(query, access(), bridge, { limit: 20, historical: true })).hits.map(hit => `${hit.id}@${hit.version}`),
-      off: (await buildMemoryBundle(query, access(), bridge)).text,
-      offFalse: (await buildMemoryBundle(query, access(), bridge, { continuity: false })).text,
+      ids: (await searchMemory(query, access(), bridge, { allowance: LineageAllowance.tool(1_000_000_000), limit: 20 })).hits.map(hit => `${hit.id}@${hit.version}`),
+      historical: (await searchMemory(query, access(), bridge, { allowance: LineageAllowance.tool(1_000_000_000), limit: 20, historical: true })).hits.map(hit => `${hit.id}@${hit.version}`),
+      off: (await buildMemoryBundle(query, access(), bridge, {allowance: LineageAllowance.tool()})).text,
+      offFalse: (await buildMemoryBundle(query, access(), bridge, { allowance: LineageAllowance.tool(), continuity: false })).text,
     });
     const neutralOf = async (bridge: ReturnType<typeof productionBridge>, query: string) => ({
-      ids: (await searchMemory(query, access("neutral", "neutral-thread"), bridge, { limit: 20 })).hits.map(hit => `${hit.id}@${hit.version}`),
-      text: (await buildMemoryBundle(query, access("neutral", "neutral-thread"), bridge)).text,
+      ids: (await searchMemory(query, access("neutral", "neutral-thread"), bridge, { allowance: LineageAllowance.tool(1_000_000_000), limit: 20 })).hits.map(hit => `${hit.id}@${hit.version}`),
+      text: (await buildMemoryBundle(query, access("neutral", "neutral-thread"), bridge, {allowance: LineageAllowance.tool()})).text,
     });
     const snapshot = async (bridge: ReturnType<typeof productionBridge>) => {
       const out: Record<string, unknown> = {};
@@ -174,15 +176,15 @@ describe("PIP keeps continuity out of the shared recall index", () => {
     expect(queued.sort()).toEqual(["harbour lantern notes"]);
   });
 
-  it("still lists continuity rows for the owner from the authoritative records, and does not slow the indexed search of other rows", () => {
+  it("still lists continuity rows for the owner from the authoritative records, and does not slow the indexed search of other rows", async () => {
     const f = fact("moss", "harbour lantern notes");
     const row = writeBotIdentity(ticket, pip("commitment", "lantern-promise", "A lantern promise for the owner."), roster);
     const index = new MemoryIndex(join(DATA_DIR, "memory-index.db")); opened.push(index);
     project(index);
-    const found = ownerMemoryList({ botId: "moss", query: "lantern" }, roster);
+    const found = await ownerMemoryList({ botId: "moss", query: "lantern" }, roster);
     expect(found.searchMode).toBe("indexed");
     expect(found.rows.map(r => String(r.id)).sort()).toEqual([f, row.id].sort());
-    expect(ownerMemoryList({ botId: "moss", query: "nothing-matches-this" }, roster).rows).toEqual([]);
+    expect((await ownerMemoryList({ botId: "moss", query: "nothing-matches-this" }, roster)).rows).toEqual([]);
   });
 });
 
@@ -214,7 +216,7 @@ describe("PIP generic owner actions", () => {
   async function twoBotState() {
     writeBotIdentity(ticket, brief("Neutral keeps the dock notes.", "neutral"), roster);
     const neutral = access("neutral", "neutral-thread");
-    const bundle = await buildMemoryBundle("", neutral, emptyBridge);
+    const bundle = await buildMemoryBundle("", neutral, emptyBridge, {allowance: LineageAllowance.tool()});
     const receipt = new MemoryDispatchReceipt(bundle, neutral, "driver-one");
     receipt.sessionStarted("session-one"); receipt.accepted();
     return { neutral, bundle, state: () => database().prepare("SELECT state FROM memory_disclosures WHERE bundle_id=?").get(bundle.bundleId)!.state };
@@ -302,10 +304,11 @@ describe("PIP leaves another bot's state alone across save, edit and delete", ()
     const noteId = fact("neutral", "dock lantern needs oil on Tuesdays");
     const bridge = { search: async () => ({ hits: [{ id: noteId, version: 1, score: 1, lexical: true }] as IndexHit[], vectorRows: 0 }) };
     const query = "dock lantern oil";
-    const bundle = await buildMemoryBundle(query, b, bridge);
+    const bundle = await buildMemoryBundle(query, b, bridge, {allowance: LineageAllowance.tool()});
     expect(bundle.text).toContain("dock lantern needs oil on Tuesdays");
     const receipt = new MemoryDispatchReceipt(bundle, b, "driver-one");
     receipt.sessionStarted("session-one"); receipt.accepted();
+    markSessionKnown("neutral-thread", "driver-one", "session-one", "neutral"); // index.ts retainSession writes the session's lineage row (bind no longer does)
 
     // Bot B's real persisted ENGINE resume cursor (the one the direct-turn path clears when
     // memory context changes), and B's engine adapter behind the production memory decorator.
@@ -356,7 +359,7 @@ describe("PIP leaves another bot's state alone across save, edit and delete", ()
       expect(meta(), step).toEqual(before);
       expect(database().prepare("SELECT state FROM memory_disclosures WHERE bundle_id=?").get(bundle.bundleId)!.state, step).toBe("delivered");
       expect(intent(), step).toMatchObject({ status: "running", generation, cursor: first.cursor });
-      const again = await buildMemoryBundle(query, access("neutral", "neutral-thread"), bridge);
+      const again = await buildMemoryBundle(query, access("neutral", "neutral-thread"), bridge, {allowance: LineageAllowance.tool()});
       expect(again.text, step).toBe(bundle.text);
       expect(memoryContinuationChanged(again, "neutral-thread", "driver-one", "session-one"), step).toBe(false);
       expect(() => assertMemoryAccess(b), step).not.toThrow();
@@ -364,7 +367,7 @@ describe("PIP leaves another bot's state alone across save, edit and delete", ()
       // resume cursor is kept (no reset), and the adapter does not send the frame again.
       const resume = String(persistedCursor());
       expect(resume, step).toBe("session-one");
-      expect(continuationMemoryRevoked("neutral-thread", "driver-one", resume, access("neutral", "neutral-thread")), step).toBe(false);
+      expect(continuationMemoryRevoked(LineageAllowance.tool(), "neutral-thread", "driver-one", resume, access("neutral", "neutral-thread")), step).toBe(false);
       await live.adapter.sendTurn({ threadId: "neutral-thread", text: "next turn", memoryContext: again, resumeCursor: resume } as SendTurnInput);
       expect(sent.at(-1)!.text, step).toBe("next turn");
       expect(sent.at(-1)!.resumeCursor, step).toBe("session-one");
@@ -388,7 +391,7 @@ describe("PIP coverage is written on delivery", () => {
   async function receiptFor(botId: string, thread: string) {
     writeBotIdentity(ticket, brief("Moss keeps the harbour log.", botId), roster);
     const a = access(botId, thread);
-    return { a, receipt: new MemoryDispatchReceipt(await buildMemoryBundle("", a, emptyBridge, { continuity: true }), a, "driver-one") };
+    return { a, receipt: new MemoryDispatchReceipt(await buildMemoryBundle("", a, emptyBridge, { allowance: LineageAllowance.tool(), continuity: true }), a, "driver-one") };
   }
 
   it("records the count and the turn when the disclosure becomes delivered, and always restamps it", async () => {
@@ -412,7 +415,7 @@ describe("PIP coverage is written on delivery", () => {
     expect(delivered.turn).toBe(receipt.bundle.bundleId);
 
     // a later turn is prepared but its dispatch is rejected before acceptance
-    const bundle2 = await buildMemoryBundle("", a, emptyBridge, { continuity: true });
+    const bundle2 = await buildMemoryBundle("", a, emptyBridge, { allowance: LineageAllowance.tool(), continuity: true });
     const failed = new MemoryDispatchReceipt(bundle2, a, "driver-one");
     attachContinuityCoverage(failed, "moss", { brought: 1, total: 9 });
     database().prepare("UPDATE memory_disclosures SET state='revoked' WHERE bundle_id=?").run(bundle2.bundleId);
@@ -420,7 +423,7 @@ describe("PIP coverage is written on delivery", () => {
     expect(readContinuityCoverage("moss")).toEqual(delivered);
 
     // the next turn has the switch off (or memory not active): no stale success remains
-    const off = new MemoryDispatchReceipt(await buildMemoryBundle("", a, emptyBridge), a, "driver-one");
+    const off = new MemoryDispatchReceipt(await buildMemoryBundle("", a, emptyBridge, {allowance: LineageAllowance.tool()}), a, "driver-one");
     attachContinuityCoverage(off, "moss", undefined);
     expect(readContinuityCoverage("moss")).toBeNull();
     expect(readContinuity(ticket, "moss", roster).coverage).toBeNull();
@@ -439,9 +442,9 @@ describe("PIP budget share", () => {
     const bridge = { search: async () => ({ hits: [{ id: f, version: 1, score: 1, lexical: true }] as IndexHit[], vectorRows: 0 }) };
     const window = 8000; // ceiling = fixed frame + 800
     const ceiling = MEMORY_FRAME_TOKENS + 800;
-    const base = (await buildMemoryBundle("", access(), emptyBridge, { availableContextTokens: window })).tokenCount; // frame + brief
-    const pipOnly = await buildMemoryBundle("", access(), emptyBridge, { continuity: true, availableContextTokens: window });
-    const withRecall = await buildMemoryBundle("harbour lantern oil", access(), bridge, { continuity: true, availableContextTokens: window });
+    const base = (await buildMemoryBundle("", access(), emptyBridge, { allowance: LineageAllowance.tool(), availableContextTokens: window })).tokenCount; // frame + brief
+    const pipOnly = await buildMemoryBundle("", access(), emptyBridge, { allowance: LineageAllowance.tool(), continuity: true, availableContextTokens: window });
+    const withRecall = await buildMemoryBundle("harbour lantern oil", access(), bridge, { allowance: LineageAllowance.tool(), continuity: true, availableContextTokens: window });
     // 12 rows of ~200 rendered bytes would fill the whole remainder; with nothing else to bring they may use all of it (A11 pass two)
     expect(pipOnly.continuity!.total).toBe(12);
     expect(pipOnly.continuity!.brought).toBeGreaterThan(0);
@@ -467,8 +470,8 @@ describe("PIP two-pass budget (A11)", () => {
     const small = writeBotIdentity(ticket, pip("commitment", "small", "Call on Friday."), roster);
     // newest first (design 2.2); a fixed lead, because +10 ms raced the second write on a loaded machine
     database().prepare("UPDATE memory_records SET created_at=? WHERE id=?").run(Number(database().prepare("SELECT created_at FROM memory_records WHERE id=?").get(small.id)!.created_at) + 60_000, relation.id);
-    const base = (await buildMemoryBundle("", access(), emptyBridge, { availableContextTokens: window })).tokenCount;
-    const bundle = await buildMemoryBundle("", access(), emptyBridge, { continuity: true, availableContextTokens: window });
+    const base = (await buildMemoryBundle("", access(), emptyBridge, { allowance: LineageAllowance.tool(), availableContextTokens: window })).tokenCount;
+    const bundle = await buildMemoryBundle("", access(), emptyBridge, { allowance: LineageAllowance.tool(), continuity: true, availableContextTokens: window });
     expect(520 + 40).toBeGreaterThan(Math.floor((ceiling - base) / 2)); // the row really is past the old half-share
     expect(bundle.identity.map(record => record.id)).toContain(relation.id);
     expect(bundle.text).toContain("R".repeat(520));
@@ -484,7 +487,7 @@ describe("PIP two-pass budget (A11)", () => {
     database().prepare("UPDATE memory_records SET created_at=? WHERE id=?").run(Number(database().prepare("SELECT created_at FROM memory_records WHERE id=?").get(small.id)!.created_at) + 60_000, relation.id);
     const f = fact("moss", "harbour lantern oil on Tuesdays");
     const bridge = { search: async () => ({ hits: [{ id: f, version: 1, score: 1, lexical: true }] as IndexHit[], vectorRows: 0 }) };
-    const bundle = await buildMemoryBundle("harbour lantern oil", access(), bridge, { continuity: true, availableContextTokens: window });
+    const bundle = await buildMemoryBundle("harbour lantern oil", access(), bridge, { allowance: LineageAllowance.tool(), continuity: true, availableContextTokens: window });
     expect(bundle.recordVersions.some(row => row.id === f)).toBe(true);
     expect(bundle.tokenCount).toBeLessThanOrEqual(ceiling);
     expect(bundle.identity.map(record => record.id)).toContain(relation.id); // skipped in pass one, placed in pass two
@@ -497,11 +500,11 @@ describe("PIP two-pass budget (A11)", () => {
     writeBotIdentity(ticket, brief(), roster);
     const f = fact("moss", "harbour lantern oil on Tuesdays");
     const bridge = { search: async () => ({ hits: [{ id: f, version: 1, score: 1, lexical: true }] as IndexHit[], vectorRows: 0 }) };
-    const clean = await buildMemoryBundle("harbour lantern oil", access(), bridge, { availableContextTokens: window });
+    const clean = await buildMemoryBundle("harbour lantern oil", access(), bridge, { allowance: LineageAllowance.tool(), availableContextTokens: window });
     writeBotIdentity(ticket, pip("relation", "owner", "R".repeat(520)), roster);
     writeBotIdentity(ticket, pip("commitment", "small", "Call on Friday."), roster);
     for (const options of [{}, { continuity: false }]) {
-      const off = await buildMemoryBundle("harbour lantern oil", access(), bridge, { availableContextTokens: window, ...options });
+      const off = await buildMemoryBundle("harbour lantern oil", access(), bridge, { allowance: LineageAllowance.tool(), availableContextTokens: window, ...options });
       expect(off.text).toBe(clean.text);
       expect(off.continuity).toBeUndefined();
     }

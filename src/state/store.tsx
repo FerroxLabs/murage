@@ -1,7 +1,9 @@
+import { requestMemoryWake } from "@/lib/memory-integrity-wake";
 import { projectEvents, type ProjectFrame } from "@/lib/project-events";
 import { emitInboxChanged } from "@/lib/inbox-changed";
 import { decideWithFreshAuth } from "@/lib/fresh-auth";
 import { REMEMBERED_EVENT } from "../../shared/learned-chip";
+import { MEMORY_WAITING_EVENT } from "@/lib/memory-waiting-event";
 // Server-backed store. The React app holds no transports of its own:
 // it dispatches typed commands over HTTP and folds the one SSE event
 // stream from the harness server into local state. The reducer stays
@@ -24,13 +26,15 @@ import type { CloudBackend, EffortLevel, Subtask } from "../../server/contracts.
 import type { LocalSetupFailure, ProviderErrorInfo } from "../../shared/provider-error";
 import type { RuntimeErrorDiagnostic } from "../../shared/error-diagnostic";
 import { hostStoppedReason } from "../../shared/host-stop";
+import { sendNoticeCode, type SendNoticeCode } from "../../shared/send-notice";
+import { sendNoticeFromBody } from "@/lib/send-notice";
 import { parseSidebarOrder } from "../../shared/sidebar-order";
 import type { TurnHelper } from "../../shared/turn-helpers";
 import { EMPTY_HELPERS, helpersAfterEvent, type HelperState } from "@/lib/subtasks";
 import { normalizeAgentPlan, type AgentPlanEntry } from "../../shared/agent-plan";
 import type { EmberColor, EmberMotion } from "@/lib/mascot";
 import { botRole } from "@/lib/bot-role";
-import { forgetDeletedDrafts } from "@/lib/drafts";
+import { extraTasksPatch, findTask, mayHoldTask, viewedThreadGone, withExtraTasks } from "@/lib/task-window";
 import { forgetProjectTab } from "@/lib/project-tab";
 import { createIndexedDbDraftBackend, forgetMarkdownDrafts } from "@/lib/markdown-drafts";
 import { initialWorkspacePaneState, workspacePaneReducer, type WorkspacePaneAction, type WorkspacePaneState } from "@/lib/workspace-pane";
@@ -69,11 +73,15 @@ import { persistCardPatch } from "./card-persist";
 import { skillRecorderEnabled } from "@/lib/feature-flags";
 import { desktopSurfaceHeaders, ensureDesktopSurfaceSecret, openLiveEvents } from "@/lib/live-events";
 import { newSendId } from "@/lib/send-id";
+import { createOutbox, createSendDelivery, retryWhileBusy, type OutboxDraft } from "./send-delivery";
+import { draftRevision, forgetDeletedDrafts, getDraft, markDraftEdited, noteRefusedChips, recoverFailedComposerSend, releaseRecoveredSend, restoreComposerDraft, thawDraft } from "@/lib/drafts";
 import { checkSession, onSignedOut, sessionSignedOut } from "@/lib/session-check";
 import { onSaveFailed } from "@/lib/save-file";
 import { callNative, nativeAvailable } from "@/lib/native-shell";
 import { isPhoneClient } from "@/lib/phone-client";
-import { deletionErrorSentence, deletionNote } from "@/lib/deletion-notes";
+import { applyThreadDelta, conversationCache, loadConversationCache } from "@/lib/conversation-cache-host";
+import type { CachedConversation } from "@/lib/conversation-cache";
+import { deletionErrorSentence, deletionNote, owedNote } from "@/lib/deletion-notes";
 
 const MAX_ROUTINE_RUNS = 2_000;
 const ACTIVE_ROUTINE_RUN_STATUSES = new Set<RoutineRun["status"]>(["queued", "running", "waiting", "needs-you"]);
@@ -206,6 +214,9 @@ export interface SecretRequestCardData {
 }
 
 export interface Message {
+  /** Set on a roster preview row (GET /api/bots): its text or tool payload was cut. A conversation that holds one fetches its newest page and replaces it
+   * (scrollback openThread, store "freshPage"). */
+  truncated?: boolean;
   /** The row the server saved this message in front of (Store
    * insertMessageBefore). It arrives after that row, live and in pages. */
   insertedBefore?: string;
@@ -215,7 +226,7 @@ export interface Message {
   requestId?: string;
   workItemId?: string;
   to?: string[];
-  murage?: { desk?: { botId: string; threadId: string }; digestDay?: string; kind: "failure" | "status" | "queue" | "budget" | "restore" | "milestone" | "result" | "progress" | "cap"; held?: { count: number; items?: Array<{ id: string; text: string; rowId?: string; error?: string; botId?: string; state?: "ready" | "retry" | "authority" | "recovery" }> }; retry?: { requestId: string }; reassign?: { workItemId: string } };
+  murage?: { desk?: { botId: string; threadId: string }; digestDay?: string; kind: "failure" | "status" | "queue" | "budget" | "restore" | "milestone" | "result" | "progress" | "cap"; held?: { count: number; items?: Array<{ id: string; text: string; rowId?: string; error?: string; botId?: string; state?: "ready" | "retry" | "authority" | "recovery"; restoreGen?: string }> }; retry?: { requestId: string }; reassign?: { workItemId: string } };
   id: string;
   role: "bot" | "user";
   kind: "text" | "options" | "activity" | "screen" | "connector" | "mcpSignIn" | "secret" | "routine.run" | "goal.run";
@@ -237,7 +248,7 @@ export interface Message {
   /** activity messages: tool name + outcome. `spoken` is the server's
    * narration of the same chip ("reading a file"), used by call mode. */
   /** `setup` marks an error fixed by installing something, not by retrying. */
-  tool?: { name: string; ok?: boolean; spoken?: string; summary?: string; setup?: boolean; authRequired?: boolean; claudeUpdate?: boolean; errorDetails?: string; errorKind?: string; providerError?: ProviderErrorInfo; localFailure?: LocalSetupFailure; diagnostic?: RuntimeErrorDiagnostic; /** Full access approvals collapsed into one line: each step, newest last (bounded), and how many in all. */ steps?: string[]; stepCount?: number; /** An image made without an approval card: what was asked for and the whole prompt. */ imageRecord?: { summary: string; prompt: string } };
+  tool?: { name: string; ok?: boolean; spoken?: string; summary?: string; setup?: boolean; authRequired?: boolean; claudeUpdate?: boolean; errorDetails?: string; errorKind?: string; providerError?: ProviderErrorInfo; localFailure?: LocalSetupFailure; localFailureEngine?: string; diagnostic?: RuntimeErrorDiagnostic; /** Full access approvals collapsed into one line: each step, newest last (bounded), and how many in all. */ steps?: string[]; stepCount?: number; /** An image made without an approval card: what was asked for and the whole prompt. */ imageRecord?: { summary: string; prompt: string } };
   /** user messages sent into a running turn — the model saw it mid-turn */
   steered?: boolean;
   /** a steered message the bot has not confirmed yet; cleared when it does */
@@ -284,9 +295,11 @@ export interface Message {
   routineRunAgain?: { routineId: string };
   /** activity: a delegation waiting on a busy teammate; offers Stop. */
   delegationWait?: { id: string };
+  /** activity: a hand-off a restart cut off after the provider may have taken it; offers Send again and Dismiss. */
+  delegationHeld?: { id: string };
   /** rooms: bots no longer see this reply; it used something the owner
    * forgot, deleted or changed. The owner still does. */
-  withheldFromBots?: boolean | "forgotten";
+  withheldFromBots?: boolean | "forgotten" | "checking";
 }
 
 export type GroupDefaultResponder =
@@ -351,7 +364,20 @@ export interface Group {
   /** Separate conversations in this channel. DMs deliberately stay on one
    * thread and omit this collection. */
   tasks?: GroupTask[];
+  /** How many tasks the channel has. `tasks` is a window of them (the open one,
+   * unread, newest); the rest page in on request (src/lib/task-window.ts). */
+  tasksTotal?: number;
+  tasksOlder?: string | null;
+  /** Rows outside the window this client asked for by thread id. Never sent. */
+  extraTasks?: GroupTask[];
   messages: Message[];
+  /** Open request cards older than the held messages (see Bot.openCards). */
+  openCards?: Message[];
+  openCardsLeaf?: string;
+  /** As on a bot: the server has not indexed this room's older open cards yet, so the ones held may be incomplete; and the revision of card patches. */
+  openCardsPending?: boolean;
+  cardsRev?: number;
+  olderFrom?: string;
   /** The server answered a bounded page and older messages remain in storage
    * (upstream #1527). Absent on an unpaged response, which is the whole thread. */
   hasMore?: boolean;
@@ -446,6 +472,18 @@ export interface Bot {
   sharedRows?: SharedRow[];
   /** every context this bot has, newest first */
   tasks?: Task[];
+  /** How many tasks the bot has. `tasks` is a window of them (pinned, unread,
+   * busy, the open one, the newest); the rest page in on request
+   * (src/lib/task-window.ts). Absent from a server that sends every task. */
+  tasksTotal?: number;
+  /** Where the older tasks begin: the `before` of the first older page. null = none are left out. */
+  tasksOlder?: string | null;
+  /** What every task of the bot has spent, summed by the server. */
+  usageTotal?: TaskUsage;
+  /** The "Always allow" keys across every task, each once. */
+  grantsAll?: string[];
+  /** Rows outside the window this client asked for by thread id. Never sent. */
+  extraTasks?: Task[];
   name: string;
   title: string;
   description: string;
@@ -559,6 +597,38 @@ export interface Bot {
   /** The browser the owner connected the extension in for this bot. */
   browserExtensionBrowser?: "chrome" | "edge" | "brave";
   messages: Message[];
+  /** Open request cards older than the held messages, on the branch the
+   * server's page was cut from. Held beside `messages`, never inside it: the
+   * rows linking them to the page are not held, so the visible-branch walk
+   * cannot reach them. The composer answers them (olderOpenCards); scrollback
+   * that reaches one moves it into `messages`. Replaced with each transcript a
+   * frame carries, kept when a frame leaves the transcript alone. */
+  openCards?: Message[];
+  /** The branch head `openCards` was worked out for. The cards belong to that
+   * branch: once the visible branch no longer passes through this row (an edit,
+   * a switch to a sibling) they are not shown, and are fetched again. */
+  openCardsLeaf?: string;
+  /** Moves each time a request card on this transcript is patched (answered,
+   * denied, dismissed). A card refresh asked for at one revision is dropped if
+   * it lands at another: an older REST answer must never put back a card a
+   * newer patch had already settled. */
+  cardsRev?: number;
+  /** The server has not indexed this thread's older open cards yet (the upgrade is still preparing it), so the ones held may be incomplete.
+   * Held cards are never cleared while it is set; the server says when they are exact (`open-cards.ready`). */
+  openCardsPending?: boolean;
+  /** The next ancestor to page back to, when the page held is a branch page
+   * (parent links, not storage order): the cursor `branchFrom` takes. */
+  olderFrom?: string;
+  /** Task rows that changed since frame `base`, with the task count; laid over
+   * the held rows inside the reducer (withTaskDelta), never kept. `read` marks
+   * the row this client is reading. */
+  tasksDelta?: { upsert: Task[]; count: number; base?: number; read?: string };
+  /** The server's number for the task list held (server/task-delta.ts), and the
+   * server run that numbered it: a number is only comparable within its run. */
+  tasksSeq?: number;
+  tasksEpoch?: string;
+  /** A delta could not be laid over the held task list; it is being refetched. */
+  tasksStale?: boolean;
   /** The server answered a bounded page and older messages remain in storage
    * (upstream #1527). Absent on an unpaged response, which is the whole thread. */
   hasMore?: boolean;
@@ -566,35 +636,95 @@ export interface Bot {
   awaitingThreadSnapshot?: boolean;
   deletedThreadId?: string;
   pendingThreadEvents?: Array<Extract<Action, { type: "messageAdded" | "messagePatched" | "threadActive" }>>;
+  /** Message ids a live patch changed since this page was painted from the cache;
+   * the server's delta may have been read before those writes, so it skips them. */
+  patchedSinceOpen?: string[];
   /** leaf of the visible conversation branch (see visibleMessages) */
   activeLeafId?: string | null;
+  /** The server's version of this thread as of the page held (a switch back
+   * asks for only what changed since). */
+  threadVersion?: string;
 }
 
+/** Derived views of a held transcript, remembered per `messages` array. The
+ * reducer replaces that array on every message event and keeps it otherwise,
+ * so a view is recomputed only when the transcript changed, not on each of the
+ * dispatches (busy, unread, stream frames) that leave it alone. */
+const visibleCache = new WeakMap<Message[], { leafId: string | null | undefined; path: Message[] | null }>();
+const versionCache = new WeakMap<Message[], Map<string | null, Message[]>>();
+
 /** The visible conversation: walk parentId links from the active leaf back
- * to the root. Falls back to the flat list for pre-branching payloads. */
+ * to the root. Falls back to the flat list for pre-branching payloads. A leaf
+ * this client does not hold yet (older than its page) shows nothing rather
+ * than another branch's rows; the provider fetches back to it. */
 export function visibleMessages(bot: Bot): Message[] {
   const leafId = bot.activeLeafId;
   if (!leafId) return bot.messages;
-  const byId = new Map(bot.messages.map((m) => [m.id, m]));
-  if (!byId.has(leafId)) return bot.messages;
-  const path: Message[] = [];
-  let cur = byId.get(leafId);
-  while (cur) {
-    path.push(cur);
-    cur = cur.parentId ? byId.get(cur.parentId) : undefined;
+  const cached = visibleCache.get(bot.messages);
+  let path = cached && cached.leafId === leafId ? cached.path : undefined;
+  if (path === undefined) {
+    const byId = new Map(bot.messages.map((m) => [m.id, m]));
+    path = byId.has(leafId) ? [] : null;
+    for (let cur = byId.get(leafId); cur && path; cur = cur.parentId ? byId.get(cur.parentId) : undefined) path.push(cur);
+    path?.reverse();
+    visibleCache.set(bot.messages, { leafId, path });
   }
-  return path.reverse();
+  return path ?? (bot.hasMore ? EMPTY_MESSAGES : bot.messages);
+}
+const EMPTY_MESSAGES: Message[] = [];
+
+/** True while the selected branch head is older than every held row. */
+export const branchHeadMissing = (bot: Bot): boolean => Boolean(bot.activeLeafId && bot.hasMore) && visibleMessages(bot) === EMPTY_MESSAGES;
+
+/** What the composer and a call answer: the open cards on the visible branch,
+ * and in front of them the ones older than the held rows (`openCards`) while
+ * that branch still reaches back past the held rows. A branch whose root is
+ * held (an edit made inside the page) does not pass through them. */
+/** How many readiness notices the server has given for this conversation (its own and the global ones). */
+export function readyRevOf(state: Pick<AppState, "cardsReady" | "cardsReadyAll">, threadId: string): number {
+  return (state.cardsReady[threadId] ?? 0) + state.cardsReadyAll;
+}
+/** Whether a conversation's open cards must be asked for again: the snapshot it holds is partial (pending) and a readiness notice has come that no accepted
+ * answer for THIS transcript generation has covered yet. A notice that came before the snapshot counts; the previous conversation's answers do not. */
+export function cardsFetchNeeded(state: AppState, owner: { threadId: string; openCardsPending?: boolean } | null | undefined): boolean {
+  if (!owner?.threadId || !owner.openCardsPending) return false;
+  const ready = readyRevOf(state, owner.threadId);
+  if (!ready) return false;
+  const gen = state.transcriptGeneration[owner.threadId] ?? 0, done = state.cardsFulfilled[owner.threadId];
+  return (done && done.gen === gen ? done.rev : 0) < ready;
+}
+/** An answer to /open-cards. While the server says it is still pending, the answer can be missing cards, so it only adds to what is held (the
+ * answer wins for a card in both) and never clears or re-binds a held list; once exact, it replaces the list. */
+export function withRefreshedCards<T extends { openCards?: Message[]; openCardsLeaf?: string; openCardsPending?: boolean }>(b: T, action: { leafId: string; cards: Message[]; pending?: boolean }): T {
+  if (!action.pending) return { ...b, openCards: action.cards.length ? action.cards : undefined, openCardsLeaf: action.leafId, openCardsPending: undefined };
+  const held = b.openCards ?? [];
+  const fresh = new Set(action.cards.map((card) => card.id));
+  const merged = [...held.filter((card) => !fresh.has(card.id)), ...action.cards].sort((x, y) => x.at - y.at);
+  return { ...b, openCards: merged.length ? merged : undefined, openCardsLeaf: action.cards.length || !held.length ? action.leafId : b.openCardsLeaf, openCardsPending: true };
+}
+export function olderOpenCards(owner: { openCards?: Message[]; openCardsLeaf?: string }, visible: Message[]): Message[] {
+  const older = owner.openCards;
+  if (!older?.length || visible[0]?.parentId === null) return visible;
+  // The cards were worked out for one branch head. A branch that no longer
+  // passes through it (an edit, a switch to a sibling) is not theirs.
+  if (owner.openCardsLeaf && !visible.some((m) => m.id === owner.openCardsLeaf)) return visible;
+  const held = new Set(visible.map((m) => m.id));
+  return [...older.filter((card) => !held.has(card.id)), ...visible];
 }
 
 /** All versions of a user message (itself + the forks that replaced it),
- * oldest first. Length 1 = never edited. */
+ * oldest first. Length 1 = never edited. Indexed by parent once per held
+ * transcript, so a row asks in O(versions), not O(held messages). */
 export function messageVersions(bot: Bot, message: Message): Message[] {
   if (message.role !== "user" || message.kind !== "text") return [message];
-  return bot.messages
-    .filter(
-      (m) => m.role === "user" && m.kind === "text" && (m.parentId ?? null) === (message.parentId ?? null),
-    )
-    .sort((a, b) => a.at - b.at);
+  let index = versionCache.get(bot.messages);
+  if (!index) {
+    index = new Map();
+    for (const m of bot.messages) if (m.role === "user" && m.kind === "text") index.set(m.parentId ?? null, [...(index.get(m.parentId ?? null) ?? []), m]);
+    for (const list of index.values()) list.sort((x, y) => x.at - y.at);
+    versionCache.set(bot.messages, index);
+  }
+  return index.get(message.parentId ?? null) ?? [];
 }
 
 /** GET /api/config — configured flags only; secrets are never echoed. */
@@ -631,7 +761,7 @@ export interface ConfigStatus {
    * renderer. Write it with PATCH /api/config `{ flux: { apiKey } }`. */
   flux?: { configured: boolean; keyState?: FluxKeyState };
   /** Decision model switches (never a key). Absent from an older harness. */
-  decider?: { enabled: boolean; jobs?: { roomRouting?: boolean } };
+  decider?: { enabled: boolean; /** false while this key's plan cannot use it */ available?: boolean; byoKeyConfigured?: boolean; jobs?: { roomRouting?: boolean } };
   webSearch?: { provider: "engine" | "auto" | "flux" | "tavily" | "exa" | "firecrawl" | "off"; tavilyConfigured: boolean; exaConfigured: boolean; firecrawlConfigured: boolean; fluxConfigured?: boolean };
   notifications?: import("../../shared/notification-preferences").NotificationPreferences;
   /** who's using the app — collected in onboarding, shown in the sidebar */
@@ -807,7 +937,7 @@ export interface AppState {
   sidebarSectionOrder?: string[] | null;
   /** a search hit to scroll to once its thread is on screen; nonce lets the
    * same message be focused twice in a row */
-  focusMessage: { threadId: string; messageId: string; nonce: number; consumed: boolean } | null;
+  focusMessage: { threadId: string; messageId: string; nonce: number; consumed: boolean; sentence?: string } | null;
   /** The library is a modal, not a view, so it does not belong in
    *  `activeView`. It lives here rather than inside Sidebar because the
    *  Skills panel has to be able to open it with an agent already chosen —
@@ -823,7 +953,9 @@ export interface AppState {
   hydrated?: boolean;
   error: string | null;
   /** After a Delete: what could not be removed, in plain words (deletion-notes.ts). */
-  deletionNote: { title: string; items: string[] } | null;
+  deletionNote: { title: string; items: string[]; retry?: boolean; owed?: boolean } | null;
+  /** the newest revision of the owed-deletion list seen (server/conversation-deletion.ts); older answers are dropped */
+  owedRev: number;
   mascotMotion: {
     botId: string;
     nonce: number;
@@ -831,7 +963,7 @@ export interface AppState {
   } | null;
   /** Queued follow-up lines waiting for drain; keyed by threadId.
    * Each entry is identified by the server queueId, not by text. */
-  pendingQueued: Record<string, Array<{ queueId: string; text: string }>>;
+  pendingQueued: Record<string, Array<{ queueId: string; text: string; sending?: true; sendId?: string; local?: true; refused?: PendingRefusal }>>;
   /** queueIds whose drain frame beat the POST continuation. One-shot and
    * bounded to a short event window so other clients cannot grow it forever. */
   consumedQueueIds: Record<string, true>;
@@ -845,6 +977,14 @@ export interface AppState {
    * Ordinary appends do not bump it: a page must still land over messages
    * that arrived while it was on the wire (upstream #1527). */
   transcriptGeneration: Record<string, number>;
+  /** Per conversation (bot task or room thread, held or not): how many times the server said its open cards became exact. A notice is kept whether or not
+   * the conversation is the one on screen, so a snapshot that lands later (a task switched to, a room opened) still finds it. */
+  cardsReady: Record<string, number>;
+  /** How many times the server said every waiting conversation became exact (open-cards.ready with no thread). Counts for each conversation. */
+  cardsReadyAll: number;
+  /** Per conversation: the readiness revision its last accepted open-cards answer fulfilled, and the transcript generation that answer was for. Set only
+   * by the reducer; a fulfilment of an earlier generation (another task's transcript, a replaced snapshot) counts for nothing. */
+  cardsFulfilled: Record<string, { gen: number; rev: number }>;
 }
 
 const MAX_CONSUMED_QUEUE_IDS = 64;
@@ -868,6 +1008,92 @@ interface QueueReceiptSnapshot {
 /** A replacement snapshot can contain the canonical user line after this
  * window missed its queue-drain frame. Remove any matching chip and retain a
  * short tombstone so a slower POST continuation cannot add the chip back. */
+/** The queue id of a send that has not been answered yet (never a server id). */
+export const sendingQueueId = (sendId: string): string => `sending:${sendId}`;
+
+/** A send the server is holding for a thread: still being handed to the engine
+ * ("sending") or waiting for the bot or room ("queued"). Authoritative: every
+ * client shows this list, whichever device the words were typed on. */
+export interface ServerPendingSend {
+  queueId: string;
+  sendId?: string;
+  text: string;
+  /** "refused": the bot or room could not start it; the words wait for "Send again" or "Dismiss". */
+  state: "sending" | "queued" | "refused";
+  notice?: SendNoticeCode;
+  replyToId?: string;
+  mode?: "chat" | "goal";
+  responderId?: string;
+  /** Present on a chip held by a restore: Send again must present it. */
+  restoreGen?: string;
+  /** Present on a chip held because the owner pressed Stop: only a Send again pressed after that Stop can present it. */
+  stopGen?: string;
+}
+
+/** What "Send again" repeats for a refused send: the same id, reply, mode and responder. */
+export interface PendingRefusal {
+  notice: SendNoticeCode;
+  replyToId?: string;
+  mode?: "chat" | "goal";
+  responderId?: string;
+  restoreGen?: string;
+  stopGen?: string;
+}
+
+/** The server's list replaces what a thread shows as waiting. A line this client
+ * is still delivering (no server record yet) stays; once the server knows the
+ * send, the server's entry stands in for it. */
+function mergeServerPending(
+  prev: AppState["pendingQueued"][string] | undefined,
+  server: ServerPendingSend[],
+): AppState["pendingQueued"][string] {
+  const serverSendIds = new Set(server.flatMap((entry) => (entry.sendId ? [entry.sendId] : [])));
+  const serverQueueIds = new Set(server.map((entry) => entry.queueId));
+  const local = (prev ?? []).filter((entry) => {
+    // only a line THIS device is still delivering; the server's own entries are replaced wholesale
+    if (!entry.local || serverQueueIds.has(entry.queueId)) return false;
+    const sendId = entry.sendId ?? entry.queueId.replace(/^sending:/, "");
+    return !serverSendIds.has(sendId);
+  });
+  const fromServer = server.map((entry) => ({
+    queueId: entry.queueId,
+    text: entry.text,
+    ...(entry.sendId ? { sendId: entry.sendId } : {}),
+    ...(entry.state === "sending" ? { sending: true as const } : {}),
+    ...(entry.state === "refused" ? { refused: {
+      notice: entry.notice ?? "refused",
+      ...(entry.replyToId ? { replyToId: entry.replyToId } : {}),
+      ...(entry.mode ? { mode: entry.mode } : {}),
+      ...(entry.responderId ? { responderId: entry.responderId } : {}),
+      ...(entry.restoreGen ? { restoreGen: entry.restoreGen } : {}),
+      ...(entry.stopGen ? { stopGen: entry.stopGen } : {}),
+    } } : {}),
+  }));
+  return [...fromServer, ...local];
+}
+
+/** The send id behind a waiting or refused line, wherever it is listed. */
+function queuedSendId(pending: AppState["pendingQueued"], queueId: string): string | undefined {
+  for (const entries of Object.values(pending)) {
+    const found = entries.find((entry) => entry.queueId === queueId);
+    if (found) return found.sendId;
+  }
+  return undefined;
+}
+
+function applyServerPending(
+  state: AppState,
+  pendingSends: Record<string, ServerPendingSend[]>,
+): AppState {
+  const pendingQueued: AppState["pendingQueued"] = {};
+  const threads = new Set([...Object.keys(state.pendingQueued), ...Object.keys(pendingSends)]);
+  for (const threadId of threads) {
+    const merged = mergeServerPending(state.pendingQueued[threadId], pendingSends[threadId] ?? []);
+    if (merged.length) pendingQueued[threadId] = merged;
+  }
+  return { ...state, pendingQueued };
+}
+
 function reconcileSnapshotQueues(
   state: AppState,
   conversations: QueueReceiptSnapshot[],
@@ -907,6 +1133,8 @@ export type BotAnnouncement = Omit<Bot, "messages"> & { messages?: Message[] };
  *  panel's own default. */
 export type TeamLibraryView = "bots" | "teams" | "skills";
 
+/** How a held hand-off's Send again / Dismiss ended: the row awaits it, so a refused action puts its buttons back. */
+export interface DelegationActionSettled { resolve(): void; reject(error: unknown): void }
 export type Action =
   | {
       type: "hydrate";
@@ -914,7 +1142,10 @@ export type Action =
       groups: Group[];
       computerControl: Record<string, { held: boolean; helpReason: string | null }>;
       sidebarSectionOrder?: string[] | null;
+      /** The server's pending sends per thread (absent from an older server). */
+      pendingSends?: Record<string, ServerPendingSend[]>;
     }
+  | { type: "serverSends"; threadId: string; pending: ServerPendingSend[] }
   | { type: "showRoutines" }
   | { type: "showTeamMap"; memory?: boolean }
   | { type: "showTeamLibrary"; botId?: string; view?: TeamLibraryView; tab?: "import" }
@@ -933,6 +1164,8 @@ export type Action =
   | { type: "deleteRoutine"; routineId: string }
   | { type: "runRoutine"; routineId: string }
   | { type: "stopDelegation"; delegationId: string }
+  | { type: "resendDelegation"; delegationId: string; threadId?: string; settled?: DelegationActionSettled }
+  | { type: "dismissDelegation"; delegationId: string; threadId?: string; settled?: DelegationActionSettled }
   | { type: "cancelRoutineRun"; runId: string }
   | { type: "markRoutineRunSeen"; runId: string }
   | { type: "markAllRoutineRunsSeen" }
@@ -955,7 +1188,17 @@ export type Action =
       type: "sendGroup";
       groupId: string;
       text: string;
+      /** What the composer held, so a reload cannot lose it (the send outbox). */
+      outboxDraft?: OutboxDraft;
       sendId?: string;
+      /** The owner pressed Send again on a refused chip: the only action that may run a restore-held send. */
+      resend?: true;
+      /** The restore generation the refused chip carried (PendingRefusal.restoreGen). */
+      restoreGen?: string;
+      /** The stop token the refused chip carried (PendingRefusal.stopGen). */
+      stopGen?: string;
+      /** Minted fresh by each Send again press; an automatic retry of the press replays it. */
+      actionId?: string;
       replyToId?: string;
       threadId?: string;
       mode?: "chat" | "goal";
@@ -995,7 +1238,17 @@ export type Action =
       type: "send";
       botId: string;
       text: string;
+      /** What the composer held, so a reload cannot lose it (the send outbox). */
+      outboxDraft?: OutboxDraft;
       sendId?: string;
+      /** The owner pressed Send again on a refused chip: the only action that may run a restore-held send. */
+      resend?: true;
+      /** The restore generation the refused chip carried (PendingRefusal.restoreGen). */
+      restoreGen?: string;
+      /** The stop token the refused chip carried (PendingRefusal.stopGen). */
+      stopGen?: string;
+      /** Minted fresh by each Send again press; an automatic retry of the press replays it. */
+      actionId?: string;
       replyToId?: string;
       threadId?: string;
       /**
@@ -1012,6 +1265,11 @@ export type Action =
       onError?: (error: unknown) => boolean | void;
     }
   | { type: "pendingQueued"; threadId: string; queueId: string; text: string }
+  /** A send is in flight while the bot is busy: its words show at once, as a
+   * "Sending" line above the composer, until the server answers (steered,
+   * queued or refused). Never silently gone. */
+  | { type: "sendingStarted"; threadId: string; sendId: string; text: string }
+  | { type: "sendingSettled"; threadId: string; sendId: string }
   | { type: "consumePendingQueued"; threadId: string; queueId: string }
   | { type: "cancelQueued"; botId: string; queueId: string }
   | {
@@ -1089,6 +1347,10 @@ export type Action =
   | { type: "newTask"; botId: string }
   | { type: "switchTask"; botId: string; threadId: string }
   | { type: "taskSwitched"; bot: Bot }
+  /** Switching to a recently opened task: its cached page, at once. */
+  | { type: "conversationFromCache"; botId: string; entry: CachedConversation }
+  /** The reconcile of a page opened from the cache: what changed since. */
+  | { type: "threadDeltaApplied"; bot: BotAnnouncement & { threadDelta: { messages: Message[]; activeLeafId?: string | null } } }
   | { type: "renameTask"; botId: string; threadId: string; title: string }
   | { type: "pinTask"; botId: string; threadId: string; pinned: boolean }
   | { type: "deleteTask"; botId: string; threadId: string }
@@ -1114,7 +1376,10 @@ export type Action =
   | { type: "connected"; value: boolean }
   | { type: "signedOut" }
   | { type: "error"; message: string | null }
-  | { type: "deletionNote"; note: { title: string; items: string[] } | null }
+  | { type: "deletionNote"; note: { title: string; items: string[]; retry?: boolean; owed?: boolean } | null }
+  /** What the server says is still owed for deleted conversations (the whole list, possibly empty). A list shows the notice; an
+   * empty one clears a notice of this kind and leaves any other note alone. Anything that is not a list is ignored. */
+  | { type: "deletionOwed"; notices: unknown; /** the server's revision of the list: an answer older than the newest one seen is dropped */ rev?: unknown }
   | { type: "toggleSettings"; open?: boolean; intent?: BotSettingsIntent }
   | { type: "clearBotSettingsIntent" }
   | { type: "togglePlugins"; open?: boolean; surface?: "apps" | "mcp" }
@@ -1122,11 +1387,21 @@ export type Action =
   | { type: "toggleInspector"; open?: boolean }
   | { type: "workspacePane"; action: WorkspacePaneAction }
   // maxPages: how far back to walk for it (a deep link walks less far)
-  | { type: "focusMessage"; threadId: string; messageId: string; maxPages?: number }
+  | { type: "focusMessage"; threadId: string; messageId: string; maxPages?: number; sentence?: string }
   // scrollback: ask the server for the page before the oldest message held
   | { type: "loadOlderMessages"; threadId: string }
-  | { type: "olderMessages"; threadId: string; generation: number; messages: Message[]; hasMore: boolean }
+  | { type: "olderMessages"; threadId: string; generation: number; messages: Message[]; hasMore: boolean; olderFrom?: string | null }
+  | { type: "freshPage"; threadId: string; generation: number; messages: Message[]; live: Message[]; hasMore: boolean; olderFrom?: string | null }
+  // a task list fetched to repair a delta that did not fit; applied only if no newer frame has landed
+  | { type: "tasksResynced"; botId: string; tasks: Task[]; tasksSeq?: number; tasksEpoch?: string; tasksTotal?: number; tasksOlder?: string | null; usageTotal?: TaskUsage; grantsAll?: string[] }
+  // tasks outside the window, asked for by thread id or as an older page; held beside the window, never in it
+  | { type: "tasksFetched"; owner: "bot" | "group"; id: string; tasks: Task[] }
+  // the open cards of the branch a conversation now shows
+  | { type: "openCardsRefreshed"; threadId: string; leafId: string; cards: Message[]; rev: number; pending?: boolean; readyRev?: number; gen?: number; requestLeaf?: string }
+  | { type: "openCardsReady"; threadId: string | null }
   | { type: "focusMessageConsumed"; nonce: number }
+  /** Page back until the selected branch head is held (branchHeadMissing). */
+  | { type: "loadBranchHead"; threadId: string; messageId: string }
   | { type: "toggleAppSettings"; open?: boolean; section?: AppSettingsSection }
   | {
       type: "updateBot";
@@ -1135,8 +1410,47 @@ export type Action =
     };
 
 /** Project for conversation controls only. Profile editors keep bot defaults. */
+/** A cached page opens only into the bot it was taken from, and only while
+ * that task is still one of its own. */
+/** True once the stream has proved itself since the last drop: a resumed hello,
+ * or a snapshot loaded after a failed resume. Until then a cached page may be stale. */
+const streamProof = { live: false };
+
+/** The cached page a switch may paint at once. While the stream is not known
+ * to be live (after a wake or a drop, before the reconnect's hello), the page
+ * could be about to be cleared as stale, so it is not painted. */
+export function cachedPaintFor(
+  cache: { get(threadId: string): CachedConversation | undefined } | null | undefined,
+  leaving: Bot | undefined,
+  threadId: string,
+  streamLive: boolean,
+): CachedConversation | undefined {
+  if (!streamLive) return undefined;
+  const cached = cache?.get(threadId);
+  return cached && opensFromCache(leaving, cached) ? cached : undefined;
+}
+
+export function opensFromCache(bot: Bot | undefined, entry: CachedConversation): boolean {
+  return Boolean(bot && entry.ownerId === bot.id && mayHoldTask(bot, entry.threadId));
+}
+
+/** What the conversation cache keeps of the page a bot is leaving. */
+export function cachedPage(bot: Bot): CachedConversation {
+  return {
+    ownerId: bot.id,
+    threadId: bot.threadId,
+    messages: bot.messages,
+    hasMore: bot.hasMore,
+    olderFrom: bot.olderFrom,
+    activeLeafId: bot.activeLeafId,
+    openCards: bot.openCards,
+    openCardsLeaf: bot.openCardsLeaf,
+    version: bot.threadVersion,
+  };
+}
+
 export function viewedTaskBot(bot: Bot): Bot {
-  const task=bot.tasks?.find(task=>task.threadId===bot.threadId);
+  const task=findTask(bot,bot.threadId);
   if(!task)return bot;
   return {...bot,modelSelection:task.modelSelection??bot.modelSelection,autoApprove:task.autoApprove??bot.autoApprove,fullAccess:(task.autoApprove??bot.autoApprove)===true&&task.fullAccess===true,noLimits:(task.autoApprove??bot.autoApprove)===true&&task.fullAccess===true&&task.noLimits===true,alwaysAllow:task.alwaysAllow??bot.alwaysAllow,busy:task.busy??bot.busy,activity:task.activity??bot.activity,unread:task.unread??bot.unread,pinnedMessageId:task.pinnedMessageId,turnStartedAt:task.turnStartedAt??null,subtasks:task.subtasks};
 }
@@ -1150,6 +1464,8 @@ interface NotificationThreadOwner {
   id: string;
   threadId: string;
   tasks?: Array<{ threadId: string }>;
+  tasksTotal?: number;
+  extraTasks?: Array<{ threadId: string }>;
 }
 
 interface NotificationRoutingState {
@@ -1182,7 +1498,7 @@ export function openNotificationTarget(
   const group = state.groups.find(
     (candidate) =>
       candidate.threadId === target.threadId ||
-      (candidate.tasks ?? []).some((task) => task.threadId === target.threadId),
+      findTask(candidate, target.threadId) !== undefined,
   );
   if (group) {
     dispatch({ type: "select", id: group.id });
@@ -1199,15 +1515,16 @@ export function openNotificationTarget(
     state.bots.find(
       (candidate) =>
         candidate.threadId === target.threadId ||
-        (candidate.tasks ?? []).some((task) => task.threadId === target.threadId),
+        findTask(candidate, target.threadId) !== undefined,
     )?.id;
   if (!botId) return false;
   dispatch({ type: "select", id: botId });
   const bot = state.bots.find((candidate) => candidate.id === botId);
   if (!bot) return true;
+  // A bot whose window leaves tasks out may own this one: the server says if not.
   const known =
     bot.threadId === target.threadId ||
-    (bot.tasks ?? []).some((task) => task.threadId === target.threadId);
+    mayHoldTask(bot, target.threadId);
   if (known) dispatch({ type: "switchTask", botId, threadId: target.threadId });
   return true;
 }
@@ -1224,11 +1541,34 @@ function bumpTranscriptGeneration(state: AppState, ...threadIds: Array<string | 
 
 /** Put an older page in front of what a conversation holds. A page that
  * overlaps (it raced an edit, or a jump already fetched some of it) keeps the
- * held copy, which is the newer one. */
-function prependOlder<T extends { messages: Message[]; hasMore?: boolean }>(owner: T, older: Message[], hasMore: boolean): T {
+ * held copy, which is the newer one. That includes an open card held beside
+ * the page (`openCards`): the page now reaches it, so it moves into page
+ * order with the held contents (an answer may have landed while the page was
+ * on the wire) and leaves `openCards`. */
+function prependOlder<T extends { messages: Message[]; hasMore?: boolean; openCards?: Message[]; olderFrom?: string }>(owner: T, older: Message[], hasMore: boolean, olderFrom?: string | null): T {
   const held = new Set(owner.messages.map((message) => message.id));
-  return { ...owner, messages: [...older.filter((message) => !held.has(message.id)), ...owner.messages], hasMore };
+  const beside = new Map(owner.openCards?.map((card) => [card.id, card]));
+  const fresh = older.filter((message) => !held.has(message.id)).map((message) => beside.get(message.id) ?? message);
+  const reached = new Set(fresh.map((message) => message.id));
+  const openCards = owner.openCards?.filter((card) => !reached.has(card.id));
+  // A branch page names the next ancestor; a storage page leaves the cursor as it was.
+  const cursor = olderFrom === undefined ? owner.olderFrom : olderFrom ?? undefined;
+  return { ...owner, messages: [...fresh, ...owner.messages], openCards: openCards?.length ? openCards : undefined, hasMore, olderFrom: hasMore ? cursor : undefined };
 }
+
+/** The fresh first page of an opened thread REPLACES what the thread held (the roster's preview rows included). Rows that reached the client live while the
+ * page was on the wire (`live`, not in the page) stay behind it, in the order they arrived. After this the thread holds no preview row; older history
+ * pages by the normal cursor from the oldest row now held. */
+export function replaceWithFreshPage<T extends { messages: Message[]; hasMore?: boolean; openCards?: Message[]; olderFrom?: string }>(owner: T, page: Message[], live: Message[], hasMore: boolean, olderFrom?: string | null): T {
+  const reached = new Set(page.map((message) => message.id));
+  const tail = live.filter((message) => !reached.has(message.id));
+  const openCards = owner.openCards?.filter((card) => !reached.has(card.id));
+  return { ...owner, messages: [...page, ...tail], openCards: openCards?.length ? openCards : undefined, hasMore, olderFrom: hasMore && olderFrom ? olderFrom : undefined };
+}
+
+/** Apply a message update to the open cards held beside the page too. */
+const patchOpenCards = (cards: Message[] | undefined, id: string, patch: (m: Message) => Message): Message[] | undefined =>
+  cards?.some((m) => m.id === id) ? cards.map((m) => (m.id === id ? patch(m) : m)) : cards;
 
 function updateBot(state: AppState, botId: string, fn: (b: Bot) => Bot): AppState {
   return { ...state, bots: state.bots.map((b) => (b.id === botId ? fn(b) : b)) };
@@ -1240,7 +1580,7 @@ function updateBot(state: AppState, botId: string, fn: (b: Bot) => Bot): AppStat
  * the transcript shows a StoppedRow, never a red card — so the avatar plays
  * nothing for it (STOP2). */
 function activityMotion(message: Message): Exclude<EmberMotion, "none"> | null {
-  if (message.tool?.ok === false) return hostStoppedReason(message.tool.name) === undefined ? "failure" : null;
+  if (message.tool?.ok === false) return hostStoppedReason(message.tool.name) === undefined && sendNoticeCode(message.tool.name) === undefined ? "failure" : null;
   return message.tool?.ok === true ? "success" : "working";
 }
 
@@ -1260,11 +1600,12 @@ function withMascotMotion(
 }
 
 function patchCard(state: AppState, botId: string, messageId: string, patch: Partial<OptionCardData>): AppState {
+  const apply = (m: Message) => (m.id === messageId && m.card ? { ...m, card: { ...m.card, ...patch } } : m);
   return updateBot(state, botId, (b) => ({
     ...b,
-    messages: b.messages.map((m) =>
-      m.id === messageId && m.card ? { ...m, card: { ...m.card, ...patch } } : m,
-    ),
+    messages: b.messages.map(apply),
+    openCards: patchOpenCards(b.openCards, messageId, apply),
+    cardsRev: (b.cardsRev ?? 0) + 1,
   }));
 }
 
@@ -1322,6 +1663,26 @@ export function pendingThreadActionBlocked(state: AppState, action: Action): boo
   }
 }
 
+/** A bot frame's `tasksDelta` laid over the task rows held when the reducer
+ * runs (never a copy read earlier: frames drained in one batch would restore
+ * each other's rows). Changed rows replace their rows in place. A held list
+ * that is not the one the delta builds on (another `tasksSeq`, or a size other
+ * than `count`) cannot be completed by it: the frame carries no `tasks`, the
+ * held list stays, and the bot is marked `tasksStale` so the provider
+ * refetches the list. */
+export function withTaskDelta(bot: BotAnnouncement, held: Pick<Bot, "tasks" | "tasksSeq"> | undefined): BotAnnouncement {
+  const { tasksDelta: d, ...rest } = bot;
+  if (!d) return bot;
+  const tasks = held?.tasks;
+  if (!tasks || tasks.length !== d.count || (d.base !== undefined && held?.tasksSeq !== d.base)) return { ...rest, tasksSeq: held?.tasksSeq, tasksStale: true };
+  const changed = new Map(d.upsert.map((task) => [task.threadId, task]));
+  const merged = tasks.map((task) => {
+    const next = changed.get(task.threadId) ?? task;
+    return next.threadId === d.read && next.unread ? { ...next, unread: false } : next;
+  });
+  return { ...rest, tasks: merged, ...(d.read ? { unread: merged.some((task) => task.unread) } : {}) };
+}
+
 export function reducer(state: AppState, action: Action): AppState {
   if (action.type === "messageAdded" || action.type === "messagePatched" || action.type === "threadActive") {
     const waiting = state.bots.find(bot => bot.awaitingThreadSnapshot && bot.threadId === action.threadId);
@@ -1353,7 +1714,7 @@ export function reducer(state: AppState, action: Action): AppState {
           : (chief?.id ?? visible[0]?.id ?? action.bots[0]?.id ?? "");
       // Every transcript in the snapshot replaces the one held before it.
       const fenced = bumpTranscriptGeneration(state, ...action.bots.map((b) => b.threadId), ...action.groups.map((g) => g.threadId));
-      return reconcileSnapshotQueues(
+      const reconciled = reconcileSnapshotQueues(
         {
           ...fenced,
           bots: action.bots,
@@ -1365,11 +1726,67 @@ export function reducer(state: AppState, action: Action): AppState {
         },
         [...action.bots, ...action.groups],
       );
+      return action.pendingSends ? applyServerPending(reconciled, action.pendingSends) : reconciled;
+    }
+    case "serverSends": {
+      const merged = mergeServerPending(state.pendingQueued[action.threadId], action.pending);
+      const pendingQueued = { ...state.pendingQueued };
+      if (merged.length) pendingQueued[action.threadId] = merged;
+      else delete pendingQueued[action.threadId];
+      return { ...state, pendingQueued };
     }
     case "loadOlderMessages":
       return state.loadingOlder[action.threadId]
         ? state
         : { ...state, loadingOlder: { ...state.loadingOlder, [action.threadId]: true } };
+    case "tasksResynced": {
+      const held = state.bots.find((b) => b.id === action.botId);
+      if (!held) return state;
+      // The snapshot was read before a newer frame of the same run landed: it
+      // would put back a task list that frame had already moved past.
+      if (held.tasksEpoch && held.tasksEpoch === action.tasksEpoch && (held.tasksSeq ?? 0) > (action.tasksSeq ?? 0)) return state;
+      return updateBot(state, action.botId, (b) => ({
+        ...b,
+        tasks: action.tasks,
+        tasksSeq: action.tasksSeq,
+        tasksEpoch: action.tasksEpoch,
+        tasksStale: false,
+        ...(action.tasksTotal !== undefined ? { tasksTotal: action.tasksTotal } : {}),
+        ...(action.tasksOlder !== undefined ? { tasksOlder: action.tasksOlder } : {}),
+        ...(action.usageTotal ? { usageTotal: action.usageTotal } : {}),
+        ...(action.grantsAll ? { grantsAll: action.grantsAll } : {}),
+        ...extraTasksPatch(b, { tasks: action.tasks, tasksTotal: action.tasksTotal }),
+      }));
+    }
+    case "tasksFetched": {
+      if (action.owner === "bot") return updateBot(state, action.id, (b) => ({ ...b, extraTasks: withExtraTasks(b.extraTasks, action.tasks) }));
+      return { ...state, groups: state.groups.map((g) => (g.id === action.id ? { ...g, extraTasks: withExtraTasks(g.extraTasks, action.tasks as GroupTask[]) } : g)) };
+    }
+    case "openCardsRefreshed": {
+      // accepted only if the response still describes this transcript: the generation and the leaf the request was made for are the ones held now,
+      // the leaf the server answered for is the held one, and no card was patched meanwhile
+      if (action.gen !== undefined && (state.transcriptGeneration[action.threadId] ?? 0) !== action.gen) return state;
+      const heldBot = state.bots.find((b) => b.threadId === action.threadId);
+      const fulfil = (next: AppState): AppState => {
+        if (action.readyRev === undefined) return next;
+        const gen = next.transcriptGeneration[action.threadId] ?? 0, held = next.cardsFulfilled[action.threadId];
+        const rev = held && held.gen === gen ? Math.max(held.rev, action.readyRev) : action.readyRev;
+        return { ...next, cardsFulfilled: { ...next.cardsFulfilled, [action.threadId]: { gen, rev } } };
+      };
+      if (heldBot) {
+        if (action.requestLeaf !== undefined && heldBot.activeLeafId !== action.requestLeaf) return state;
+        if (heldBot.activeLeafId !== action.leafId || (heldBot.cardsRev ?? 0) !== action.rev) return state;
+        return fulfil(updateBot(state, heldBot.id, (b) => withRefreshedCards(b, action)));
+      }
+      // a room: its transcript has no client-held branch head, so the generation and the card revision are what fence the answer
+      const room = state.groups.find((g) => g.threadId === action.threadId);
+      if (!room || (room.cardsRev ?? 0) !== action.rev) return state;
+      return fulfil({ ...state, groups: state.groups.map((g) => (g.id === room.id ? withRefreshedCards(g, action) : g)) });
+    }
+    case "openCardsReady":
+      // kept for the conversation named, held or not; the global notice counts for every conversation
+      if (action.threadId === null) return { ...state, cardsReadyAll: state.cardsReadyAll + 1 };
+      return { ...state, cardsReady: { ...state.cardsReady, [action.threadId]: (state.cardsReady[action.threadId] ?? 0) + 1 } };
     case "olderMessages": {
       const { [action.threadId]: _done, ...loadingOlder } = state.loadingOlder;
       // The page describes the transcript as it stood when it was asked for.
@@ -1382,8 +1799,19 @@ export function reducer(state: AppState, action: Action): AppState {
       return {
         ...state,
         loadingOlder,
-        bots: state.bots.map((bot) => (bot.threadId === action.threadId ? prependOlder(bot, action.messages, action.hasMore) : bot)),
-        groups: state.groups.map((group) => (group.threadId === action.threadId ? prependOlder(group, action.messages, action.hasMore) : group)),
+        bots: state.bots.map((bot) => (bot.threadId === action.threadId ? prependOlder(bot, action.messages, action.hasMore, action.olderFrom) : bot)),
+        groups: state.groups.map((group) => (group.threadId === action.threadId ? prependOlder(group, action.messages, action.hasMore, action.olderFrom) : group)),
+      };
+    }
+    case "freshPage": {
+      const { [action.threadId]: _done, ...loadingOlder } = state.loadingOlder;
+      // A page for a transcript that has since been replaced is dropped; the thread still holds its preview rows, so it stays marked and the next open asks again.
+      if ((state.transcriptGeneration[action.threadId] ?? 0) !== action.generation) return { ...state, loadingOlder };
+      return {
+        ...state,
+        loadingOlder,
+        bots: state.bots.map((bot) => (bot.threadId === action.threadId ? replaceWithFreshPage(bot, action.messages, action.live, action.hasMore, action.olderFrom) : bot)),
+        groups: state.groups.map((group) => (group.threadId === action.threadId ? replaceWithFreshPage(group, action.messages, action.live, action.hasMore, action.olderFrom) : group)),
       };
     }
     case "showRoutines":
@@ -1492,6 +1920,11 @@ export function reducer(state: AppState, action: Action): AppState {
               ...g,
               ...action.group,
               messages: action.group.messages ?? g.messages,
+              // The cards beside a transcript belong to it: replaced with it, kept without it.
+              openCards: action.group.messages ? action.group.openCards : g.openCards,
+              openCardsLeaf: action.group.messages ? action.group.openCardsLeaf : g.openCardsLeaf,
+              openCardsPending: action.group.messages ? action.group.openCardsPending : g.openCardsPending,
+              olderFrom: action.group.messages ? action.group.olderFrom : g.olderFrom,
               // A transcript answers the scrollback question with it: a page
               // says so, and one without the marker is the whole thread.
               hasMore: action.group.messages ? Boolean(action.group.hasMore) : g.hasMore,
@@ -1512,6 +1945,7 @@ export function reducer(state: AppState, action: Action): AppState {
                 unread: read ? false : task.unreadCount !== undefined ? task.unreadCount > 0 : task.unread ?? old?.unread,
                 unreadMessageIds: read ? [] : old?.unreadMessageIds };
             });
+            Object.assign(next, extraTasksPatch(g, next));
             return next;
           })
         : [{ ...(action.group as Group), messages: action.group.messages ?? [] }, ...fenced.groups];
@@ -1561,7 +1995,7 @@ export function reducer(state: AppState, action: Action): AppState {
     // optimistic card settle; the server's message.patch confirms it later
     case "answerCard": {
       const bot = state.bots.find((candidate) => candidate.id === action.botId);
-      const card = bot?.messages.find((message) => message.id === action.messageId)?.card;
+      const card = (bot?.messages.find((message) => message.id === action.messageId) ?? bot?.openCards?.find((message) => message.id === action.messageId))?.card;
       return withMascotMotion(
         patchCard(state, action.botId, action.messageId, {
           answered: action.answer,
@@ -1575,7 +2009,8 @@ export function reducer(state: AppState, action: Action): AppState {
     case "dismissCard": {
       // A live question never vanishes on dismiss: it is skipped (the
       // engine is told at once) and the server's patch shows it as skipped.
-      const card = state.bots.find((bot) => bot.id === action.botId)?.messages.find((message) => message.id === action.messageId)?.card;
+      const owner = state.bots.find((bot) => bot.id === action.botId);
+      const card = (owner?.messages.find((message) => message.id === action.messageId) ?? owner?.openCards?.find((message) => message.id === action.messageId))?.card;
       if (isQuestionCard(card)) return state;
       return patchCard(state, action.botId, action.messageId, { dismissed: true });
     }
@@ -1612,6 +2047,10 @@ export function reducer(state: AppState, action: Action): AppState {
       return updateBot(withMascotMotion(state, action.botId, "surprise"), action.botId, (b) => withThreadUnread(b,b.threadId,true));
     case "botPatched": {
       const before = state.bots.find((b) => b.id === action.bot.id);
+      // Task deltas are laid over the rows held NOW, inside the reducer.
+      const bot: BotAnnouncement = action.bot.tasksDelta
+        ? withTaskDelta(action.bot, before)
+        : before?.tasksStale && Array.isArray(action.bot.tasks) ? { ...action.bot, tasksStale: false } : action.bot;
       // Bot frames are complete except for their transcript. An unknown one
       // was created by another client (the phone, another app window, or a
       // team import), so add it now; the following message frames will fill
@@ -1619,19 +2058,19 @@ export function reducer(state: AppState, action: Action): AppState {
       if (!before) {
         const added = {
           ...state,
-          bots: [{ ...action.bot, messages: action.bot.messages ?? [] }, ...state.bots],
+          bots: [{ ...bot, messages: bot.messages ?? [] }, ...state.bots],
         };
-        return reconcileSnapshotQueues(added, [action.bot]);
+        return reconcileSnapshotQueues(added, [bot]);
       }
       const kind =
-        action.bot.unread && !before?.unread
+        bot.unread && !before?.unread
           ? "surprise"
-          : action.bot.busy === true && !before?.busy
+          : bot.busy === true && !before?.busy
             ? "working"
-            : action.bot.busy === false && before?.busy
+            : bot.busy === false && before?.busy
               ? "celebrate"
               : null;
-      const animated = kind ? withMascotMotion(state, action.bot.id, kind) : state;
+      const animated = kind ? withMascotMotion(state, bot.id, kind) : state;
       // The workspace Chief is exempt, exactly as she is on the server.
       //
       // `chiefOfStaff` is true for the Chief AND for every team leader, and
@@ -1647,38 +2086,46 @@ export function reducer(state: AppState, action: Action): AppState {
       // changed, so no frame is ever emitted to correct the client. The wrong
       // state is sticky until a full hydration. This is the Chief-vanishes
       // report, and only its server half was fixed.
-      const next = action.bot.chiefOfStaff
+      const next = bot.chiefOfStaff
         ? {
             ...animated,
             bots: animated.bots.map((b) =>
-              b.id === action.bot.id ||
+              b.id === bot.id ||
               b.chiefScope === "workspace" ||
-              (b.section?.trim() || "") !== (action.bot.section?.trim() || "")
+              (b.section?.trim() || "") !== (bot.section?.trim() || "")
                 ? b
                 : { ...b, chiefOfStaff: false },
             ),
           }
         : animated;
       const switchedThread =
-        typeof action.bot.threadId === "string" && action.bot.threadId !== before.threadId &&
-        (!Array.isArray(action.bot.tasks) || !action.bot.tasks.some(task => task.threadId === before.threadId));
-      const deletedSelection = switchedThread && Array.isArray(action.bot.tasks);
-      if (Array.isArray(action.bot.messages) &&
-          (switchedThread || (before.awaitingThreadSnapshot && action.bot.threadId === before.threadId))) {
+        typeof bot.threadId === "string" && bot.threadId !== before.threadId &&
+        viewedThreadGone(before, bot);
+      const deletedSelection = switchedThread && Array.isArray(bot.tasks);
+      if (Array.isArray(bot.messages) &&
+          (switchedThread || (before.awaitingThreadSnapshot && bot.threadId === before.threadId))) {
         // hasMore spelled out: `before`'s answer belongs to the thread being left.
-        return reducer(next, { type: "taskSwitched", bot: { ...before, ...action.bot, messages: action.bot.messages, hasMore: action.bot.hasMore } });
+        return reducer(next, { type: "taskSwitched", bot: { ...before, ...bot, messages: bot.messages, hasMore: bot.hasMore } });
       }
-      const patched = updateBot(deletedSelection ? bumpTranscriptGeneration(next, before.threadId) : next, action.bot.id, (b) => ({
+      const patched = updateBot(deletedSelection ? bumpTranscriptGeneration(next, before.threadId) : next, bot.id, (b) => ({
         ...b,
-        ...action.bot,
+        ...bot,
         // Messages are ignored on a same-thread frame, so its page marker is
         // too: this client may already have paged further back than it says.
         hasMore: deletedSelection ? false : b.hasMore,
-        threadId: deletedSelection ? action.bot.threadId : b.threadId,
+        threadId: deletedSelection ? bot.threadId : b.threadId,
         activeLeafId: deletedSelection ? null : b.activeLeafId,
         awaitingThreadSnapshot: deletedSelection || b.awaitingThreadSnapshot,
         deletedThreadId: deletedSelection ? b.threadId : b.deletedThreadId,
         pendingThreadEvents: deletedSelection ? [] : b.pendingThreadEvents,
+        ...extraTasksPatch(b, bot, { keepViewed: !deletedSelection }),
+        // Like the transcript they ride beside: another window's switch frame
+        // carries its own thread's cards, not this one's.
+        openCards: deletedSelection ? undefined : b.openCards,
+        openCardsLeaf: deletedSelection ? undefined : b.openCardsLeaf,
+        olderFrom: deletedSelection ? undefined : b.olderFrom,
+        // The version belongs to the page held, which this frame did not replace.
+        threadVersion: deletedSelection ? undefined : b.threadVersion,
         // Ordinary bot patches omit messages and must preserve the current
         // transcript. A task switch is different: its full bot event carries
         // the new transcript, which must replace the previous task before the
@@ -1754,7 +2201,7 @@ export function reducer(state: AppState, action: Action): AppState {
           ...state,
           groups: state.groups.map((g) =>
             g.id === group.id
-              ? { ...g, messages: g.messages.map((m) => (m.id === action.message.id ? action.message : m)) }
+              ? { ...g, messages: g.messages.map((m) => (m.id === action.message.id ? action.message : m)), openCards: patchOpenCards(g.openCards, action.message.id, () => action.message), ...(action.message.kind === "options" ? { cardsRev: (g.cardsRev ?? 0) + 1 } : {}) }
               : g,
           ),
         };
@@ -1764,6 +2211,9 @@ export function reducer(state: AppState, action: Action): AppState {
       return updateBot(next, bot.id, (b) => ({
         ...b,
         messages: b.messages.map((m) => (m.id === action.message.id ? action.message : m)),
+        openCards: patchOpenCards(b.openCards, action.message.id, () => action.message),
+        ...(b.patchedSinceOpen ? { patchedSinceOpen: [...b.patchedSinceOpen, action.message.id] } : {}),
+        ...(action.message.kind === "options" ? { cardsRev: (b.cardsRev ?? 0) + 1 } : {}),
       }));
     }
     case "screenUnavailable":
@@ -1803,6 +2253,19 @@ export function reducer(state: AppState, action: Action): AppState {
       return { ...state, signedOut: true, connected: false };
     case "deletionNote":
       return { ...state, deletionNote: action.note };
+    case "deletionOwed": {
+      if (!Array.isArray(action.notices)) return state;
+      // A slow answer to an old question must not undo a newer event: anything not newer than what is already shown is dropped.
+      const rev = typeof action.rev === "number" && Number.isFinite(action.rev) ? action.rev : undefined;
+      if (rev !== undefined && rev <= state.owedRev) return state;
+      const owedRev = rev ?? state.owedRev;
+      const note = owedNote(action.notices);
+      if (note) return { ...state, owedRev, deletionNote: note };
+      // The note that came from the server's owed list goes when that list is empty, whether or not it still offers "Try again" (a
+      // finished line has none). A note a Delete just showed is not one of them and stays.
+      if (state.deletionNote?.owed) return { ...state, owedRev, deletionNote: null };
+      return owedRev === state.owedRev ? state : { ...state, owedRev };
+    }
     case "error":
       return {
         ...(action.message && state.selectedId
@@ -1836,6 +2299,7 @@ export function reducer(state: AppState, action: Action): AppState {
           messageId: action.messageId,
           nonce: (state.focusMessage?.nonce ?? 0) + 1,
           consumed: false,
+          ...(action.sentence ? { sentence: action.sentence } : {}),
         },
       };
     case "focusMessageConsumed":
@@ -1984,6 +2448,25 @@ export function reducer(state: AppState, action: Action): AppState {
         },
       };
     }
+    case "sendingStarted": {
+      const queueId = sendingQueueId(action.sendId);
+      const prev = state.pendingQueued[action.threadId] ?? [];
+      if (prev.some((entry) => entry.queueId === queueId)) return state;
+      return {
+        ...state,
+        pendingQueued: { ...state.pendingQueued, [action.threadId]: [...prev, { queueId, text: action.text, sending: true, sendId: action.sendId, local: true }] },
+      };
+    }
+    case "sendingSettled": {
+      const queueId = sendingQueueId(action.sendId);
+      const prev = state.pendingQueued[action.threadId] ?? [];
+      const rest = prev.filter((entry) => entry.queueId !== queueId);
+      if (rest.length === prev.length) return state;
+      const pendingQueued = { ...state.pendingQueued };
+      if (rest.length) pendingQueued[action.threadId] = rest;
+      else delete pendingQueued[action.threadId];
+      return { ...state, pendingQueued };
+    }
     case "consumePendingQueued": {
       const prev = state.pendingQueued[action.threadId] ?? [];
       const at = prev.findIndex((entry) => entry.queueId === action.queueId);
@@ -2037,6 +2520,7 @@ export function reducer(state: AppState, action: Action): AppState {
         tasks: (bot.tasks ?? []).map((task) =>
           task.threadId === action.threadId ? { ...task, pinned: action.pinned || undefined } : task,
         ),
+        ...(bot.extraTasks ? { extraTasks: bot.extraTasks.map((task) => task.threadId === action.threadId ? { ...task, pinned: action.pinned || undefined } : task) } : {}),
       }));
     case "renameTask":
       return updateBot(state, action.botId, (bot) => ({
@@ -2044,6 +2528,7 @@ export function reducer(state: AppState, action: Action): AppState {
         tasks: (bot.tasks ?? []).map((task) =>
           task.threadId === action.threadId ? { ...task, title: action.title } : task,
         ),
+        ...(bot.extraTasks ? { extraTasks: bot.extraTasks.map((task) => task.threadId === action.threadId ? { ...task, title: action.title } : task) } : {}),
       }));
     case "renameGroupTask":
       return {
@@ -2055,6 +2540,7 @@ export function reducer(state: AppState, action: Action): AppState {
                 tasks: (group.tasks ?? []).map((task) =>
                   task.threadId === action.threadId ? { ...task, title: action.title } : task,
                 ),
+                ...(group.extraTasks ? { extraTasks: group.extraTasks.map((task) => task.threadId === action.threadId ? { ...task, title: action.title } : task) } : {}),
               }
             : group,
         ),
@@ -2066,14 +2552,64 @@ export function reducer(state: AppState, action: Action): AppState {
         ...bot,
         ...action.bot,
         messages: action.bot.messages ?? [],
+        openCards: action.bot.openCards,
+        openCardsLeaf: action.bot.openCardsLeaf,
+        openCardsPending: action.bot.openCardsPending,
+        olderFrom: action.bot.olderFrom,
         // The snapshot decides whether this thread has scrollback; merging
         // would carry the previous thread's answer onto this one.
         hasMore: action.bot.hasMore,
         awaitingThreadSnapshot: false,
         deletedThreadId: undefined,
         pendingThreadEvents: undefined,
+        ...extraTasksPatch(bot, action.bot, { keepViewed: false }),
       }));
       return pending.reduce(reducer, reconcileSnapshotQueues(switched, [action.bot]));
+    }
+    case "conversationFromCache": {
+      const entry = action.entry;
+      const held = state.bots.find((bot) => bot.id === action.botId);
+      if (!held || !opensFromCache(held, entry)) return state;
+      const opened = updateBot(bumpTranscriptGeneration(state, entry.threadId), held.id, (bot) => ({
+        ...bot,
+        threadId: entry.threadId,
+        messages: entry.messages,
+        hasMore: entry.hasMore,
+        olderFrom: entry.olderFrom,
+        activeLeafId: entry.activeLeafId,
+        openCards: entry.openCards,
+        openCardsLeaf: entry.openCardsLeaf,
+        threadVersion: entry.version,
+        awaitingThreadSnapshot: false,
+        deletedThreadId: undefined,
+        pendingThreadEvents: undefined,
+        patchedSinceOpen: [],
+      }));
+      return reconcileSnapshotQueues(opened, [{ messages: entry.messages }]);
+    }
+    case "threadDeltaApplied": {
+      const { threadDelta, messages: _messages, hasMore: _hasMore, ...incoming } = action.bot;
+      const held = state.bots.find((bot) => bot.id === incoming.id);
+      // A later switch moved on: this answer describes a page no longer on screen.
+      if (!held || held.threadId !== incoming.threadId) return state;
+      // A live patch that landed since the cached paint is newer than a delta read before it.
+      const patched = new Set(held.patchedSinceOpen ?? []);
+      const deltaMessages = patched.size ? threadDelta.messages.filter((message) => !patched.has(message.id)) : threadDelta.messages;
+      const merged = applyThreadDelta(held, deltaMessages);
+      const reconciled = updateBot(state, held.id, (bot) => ({
+        ...bot,
+        ...incoming,
+        patchedSinceOpen: undefined,
+        messages: merged.messages,
+        openCards: merged.openCards,
+        activeLeafId: threadDelta.activeLeafId === undefined ? bot.activeLeafId : threadDelta.activeLeafId,
+        hasMore: bot.hasMore,
+        olderFrom: bot.olderFrom,
+        openCardsLeaf: bot.openCardsLeaf,
+        threadVersion: incoming.threadVersion ?? bot.threadVersion,
+        ...(threadDelta.messages.some((message) => message.kind === "options") ? { cardsRev: (bot.cardsRev ?? 0) + 1 } : {}),
+      }));
+      return reconcileSnapshotQueues(reconciled, [{ messages: deltaMessages }]);
     }
     case "newBot":
     case "duplicateBot":
@@ -2087,9 +2623,12 @@ export function reducer(state: AppState, action: Action): AppState {
     case "deleteRoutine":
     case "runRoutine":
     case "stopDelegation":
+    case "resendDelegation":
+    case "dismissDelegation":
     case "cancelRoutineRun":
     case "markRoutineRunSeen":
     case "markAllRoutineRunsSeen":
+    case "loadBranchHead":
       return state;
   }
 }
@@ -2126,11 +2665,15 @@ export const initialState: AppState = {
   hydrated: false,
   error: null,
   deletionNote: null,
+  owedRev: 0,
   mascotMotion: null,
   pendingQueued: {},
   consumedQueueIds: {},
   loadingOlder: {},
   transcriptGeneration: {},
+  cardsReady: {},
+  cardsReadyAll: 0,
+  cardsFulfilled: {},
 };
 
 // ── API client ─────────────────────────────────────────────────────────
@@ -2152,6 +2695,10 @@ export async function api(path: string, init?: RequestInit): Promise<any> {
       // so — without this the sidebar loses every hidden bot and every
       // bot-to-bot room on hydration.
       "x-murage-surface": "desktop",
+      // This renderer holds open request cards beside a page it was sent
+      // (server/task-delta.ts CARDS_BESIDE_*); an older one says nothing and is
+      // sent every card inside its page.
+      "x-murage-cards": "beside",
       // Saying it is not proving it. The harness believes the marker only
       // when this launch's secret rides along; without it every call above
       // is answered as though it came from a paired phone. Spread before
@@ -2172,7 +2719,7 @@ export async function api(path: string, init?: RequestInit): Promise<any> {
   // for as long as the phone had the tab open.
   // The body rides along too, for refusals that carry more than a sentence
   // (Skill Guard's 409 names its findings and the content they cover).
-  if (!res.ok) throw Object.assign(new Error(body.error ?? requestFailedSentence(res.status)), { status: res.status, body });
+  if (!res.ok) throw Object.assign(new Error(sendNoticeFromBody(body) ?? body.error ?? requestFailedSentence(res.status)), { status: res.status, body });
   return body;
 }
 
@@ -2258,6 +2805,13 @@ export function agentPlansAfterEvent(
   return rest;
 }
 const StreamContext = createContext<StreamState>(EMPTY_STREAM);
+/** Just the helpers of the stream. Its identity does not change on a text or
+ * reasoning frame, so the settled transcript, which only needs the helper runs,
+ * is not re-rendered at the stream's frame rate. */
+const HelpersContext = createContext<HelperState>(EMPTY_HELPERS);
+export function useStreamHelpers(): HelperState {
+  return useContext(HelpersContext);
+}
 
 export type PendingStreamDelta = { text: string; reasoning: string };
 
@@ -2349,10 +2903,117 @@ const StoreContext = createContext<{
   refreshAfterKey: () => Promise<void>;
 } | null>(null);
 
+/** The parts of the store that never change identity with the state: a
+ * component that only dispatches reads these and is not re-rendered by every
+ * dispatch (useStore() re-renders its caller on each state change). */
+type StoreActions = Omit<NonNullable<React.ContextType<typeof StoreContext>>, "state">;
+const ActionsContext = createContext<StoreActions | null>(null);
+
+
 export function StoreProvider({ children }: { children: ReactNode }) {
   const [state, rawDispatch] = useReducer(reducer, initialState);
   const stateRef = useRef(state);
   stateRef.current = state;
+  // The conversation cache loads after the first paint, in its own chunk.
+  useEffect(() => { void loadConversationCache(); }, []);
+  // Every owner send goes through one delivery: written to a persisted outbox
+  // before the composer clears, shown as "Sending" until the server has a
+  // receipt, retried with the same sendId, and given back to the person only
+  // after a definitive refusal (see send-delivery.ts).
+  const delivery = useMemo(
+    () =>
+      createSendDelivery({
+        outbox: createOutbox(
+          (() => { try { return window.localStorage; } catch { return undefined; } })(),
+        ),
+        now: () => Date.now(),
+        setTimer: (fn, ms) => setTimeout(fn, ms),
+        // A reload left the entry in the outbox and the server already holds it: its draft clears as an acknowledgement would.
+        acknowledgeDraft: (entry) => {
+          const draft = entry.draft;
+          if (!draft) return;
+          try {
+            if (getDraft(window.localStorage, draft.draftId) !== draft.text) return;
+            markDraftEdited(draft.draftId);
+            restoreComposerDraft(draft.draftId, { text: "", attachments: [], channelMode: "chat" });
+          } catch { /* storage refused: the words stay in the box, and the same send id answers the same receipt */ }
+        },
+        post: (entry, signal) =>
+          entry.kind === "group"
+            ? api(`/api/groups/${entry.groupId}/messages`, {
+                method: "POST",
+                signal,
+                body: JSON.stringify({
+                  text: entry.text,
+                  replyToId: entry.replyToId,
+                  threadId: entry.threadId,
+                  sendId: entry.sendId,
+                  ...(entry.resend ? { resend: true, ...(entry.restoreGen ? { restoreGen: entry.restoreGen } : {}), ...(entry.stopGen ? { stopGen: entry.stopGen } : {}), ...(entry.actionId ? { actionId: entry.actionId } : {}) } : {}),
+                  mode: entry.mode ?? "chat",
+                  ...(entry.responderId ? { responderId: entry.responderId } : {}),
+                }),
+              })
+            : threadWrites.ready(entry.threadId ?? "").then(() =>
+                api(`/api/bots/${entry.botId}/messages`, {
+                  method: "POST",
+                  signal,
+                  body: JSON.stringify({ text: entry.text, replyToId: entry.replyToId, threadId: entry.threadId, sendId: entry.sendId, ...(entry.resend ? { resend: true, ...(entry.restoreGen ? { restoreGen: entry.restoreGen } : {}), ...(entry.stopGen ? { stopGen: entry.stopGen } : {}), ...(entry.actionId ? { actionId: entry.actionId } : {}) } : {}) }),
+                }),
+              ),
+        releaseRefused: (sendId, entry) => {
+          releaseRecoveredSend(sendId, { includeFrozen: true });
+          if (entry?.draft) thawDraft(entry.draft.draftId);
+        },
+        showSending: (entry) => rawDispatch({ type: "sendingStarted", threadId: entry.threadId, sendId: entry.sendId, text: entry.text }),
+        settleSending: (entry) => rawDispatch({ type: "sendingSettled", threadId: entry.threadId, sendId: entry.sendId }),
+        receipt: (entry, body) => {
+          if (body?.message && typeof body.threadId === "string") {
+            rawDispatch({ type: "messageAdded", threadId: body.threadId, message: body.message });
+          }
+          if (body?.queued && typeof body.threadId === "string" && typeof body.queueId === "string") {
+            rawDispatch({ type: "pendingQueued", threadId: body.threadId, queueId: body.queueId, text: entry.text });
+          }
+        },
+        // A refusal the server meant, with the composer gone (a reload in
+        // between): the words go back into the draft, never lost.
+        recover: (entry, error) => {
+          const draft = entry.draft;
+          if (draft) {
+            let busyDraft = false;
+            try { busyDraft = getDraft(window.localStorage, draft.draftId).trim() !== ""; } catch { /* storage refused: restore */ }
+            recoverFailedComposerSend({
+              draftId: draft.draftId,
+              // a newer draft is never overwritten: the words wait in the retry list instead
+              revision: busyDraft ? draftRevision(draft.draftId) - 1 : draftRevision(draft.draftId),
+              sendId: entry.sendId,
+              text: draft.text,
+              requestText: draft.requestText,
+              attachments: draft.attachments,
+              replyToId: draft.replyToId,
+              threadId: entry.threadId,
+              channelMode: draft.channelMode,
+            });
+          }
+          rawDispatch({ type: "error", message: error instanceof Error ? error.message : requestFailedSentence(0) });
+          setTimeout(() => rawDispatch({ type: "error", message: null }), 6000);
+        },
+      }),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [],
+  );
+  const deliveryRef = useRef(delivery);
+  deliveryRef.current = delivery;
+  // One recovery surface per send id: a refused chip (the server's durable copy) owns its words; the
+  // restored draft, the retry list and the outbox entry for the same id give theirs up.
+  const forgetSend = useCallback((sendId: string) => {
+    deliveryRef.current.resolveRefused(sendId);
+  }, []);
+  useEffect(() => {
+    const refused = new Set<string>();
+    for (const entries of Object.values(state.pendingQueued)) for (const entry of entries) if (entry.refused && entry.sendId) refused.add(entry.sendId);
+    noteRefusedChips(refused);
+    for (const sendId of refused) deliveryRef.current.resolveRefused(sendId);
+  }, [state.pendingQueued]);
   // A save the person asked for and did not get (lib/save-file.ts): the same
   // six-second error toast every other failed action shows.
   useEffect(() => onSaveFailed((message) => {
@@ -2446,7 +3107,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
         reconcile: async (botId, signal) => {
           // A page, not every transcript (upstream #1527): only the record is
           // used unless the bot moved thread, and then a page is what it needs.
-          const result: { bots: BotAnnouncement[] } = await api(`/api/bots?messages=${MESSAGE_PAGE_SIZE}`, { signal });
+          const result: { bots: BotAnnouncement[] } = await api(`/api/bots?messages=${hydratePageSize(false)}`, { signal });
           return result.bots.find((candidate) => candidate.id === botId) ?? null;
         },
         onAuthoritative: (bot, optimisticOverlay) => {
@@ -2484,7 +3145,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     const saveThread=(botId:string,threadId:string,patch:object)=>threadWrites.write(threadId,async()=>{
       const result=await api(`/api/bots/${botId}/tasks/${threadId}`,{method:"PATCH",body:JSON.stringify(patch)});
       const bot=stateRef.current.bots.find(bot=>bot.id===botId);
-      if(bot&&result.task)rawDispatch({type:"botPatched",bot:{...bot,tasks:bot.tasks?.map(task=>task.threadId===threadId?{...task,...result.task}:task)}});
+      if(bot&&result.task){rawDispatch({type:"botPatched",bot:{...bot,tasks:bot.tasks?.map(task=>task.threadId===threadId?{...task,...result.task}:task)}});const outside=bot.extraTasks?.find(task=>task.threadId===threadId);if(outside)rawDispatch({type:"tasksFetched",owner:"bot",id:botId,tasks:[{...outside,...result.task}]});}
     },async()=>{
       const result=await api("/api/bots?messages=0");
       const bot=result.bots?.find((bot:Bot)=>bot.id===botId);
@@ -2498,6 +3159,9 @@ export function StoreProvider({ children }: { children: ReactNode }) {
       request: (path) => api(path),
       onError: showError,
     });
+
+    // The latest task switch per bot: an answer to an earlier one is not applied.
+    const switchSeq: Record<string, number> = {};
 
     const wrapped: React.Dispatch<Action> = (action) => {
       if (pendingThreadActionBlocked(stateRef.current, action)) {
@@ -2543,6 +3207,14 @@ export function StoreProvider({ children }: { children: ReactNode }) {
         case "stopDelegation":
           api(`/api/delegations/${action.delegationId}/stop`, { method: "POST" }).catch(showError);
           break;
+        case "resendDelegation":
+        case "dismissDelegation": {
+          const verb = action.type === "resendDelegation" ? "send-again" : "dismiss";
+          api(`/api/delegations/${action.delegationId}/${verb}`, { method: "POST", ...(action.threadId ? { body: JSON.stringify({ threadId: action.threadId }) } : {}) })
+            .then(() => action.settled?.resolve())
+            .catch((error) => { showError(error); action.settled?.reject(error); });
+          break;
+        }
         case "cancelRoutineRun":
           api(`/api/routine-runs/${action.runId}/cancel`, { method: "POST" }).catch(showError);
           break;
@@ -2553,21 +3225,26 @@ export function StoreProvider({ children }: { children: ReactNode }) {
           // The server re-emits every stamped run, which clears the dots here.
           api("/api/routine-runs/seen-all", { method: "POST" }).catch(showError);
           break;
-        case "cancelQueued":
+        case "cancelQueued": {
+          const dismissedSendId = queuedSendId(stateRef.current.pendingQueued, action.queueId);
           void api(`/api/bots/${action.botId}/queue/${action.queueId}`, { method: "DELETE" })
-            .then(() => rawDispatch(action))
+            .then(() => { rawDispatch(action); if (dismissedSendId) forgetSend(dismissedSendId); })
             .catch(showError);
           break;
-        case "cancelGroupQueued":
+        }
+        case "cancelGroupQueued": {
+          const dismissedSendId = queuedSendId(stateRef.current.pendingQueued, action.queueId);
           void api(`/api/groups/${action.groupId}/queue/${action.queueId}`, { method: "DELETE" })
             .then(() => {
               rawDispatch(action);
+              if (dismissedSendId) forgetSend(dismissedSendId);
               action.onDone?.();
             })
             .catch((error) => {
               if (action.onError?.(error) !== true) showError(error);
             });
           break;
+        }
         case "send": {
           // persist through the existing card route so an older server that
           // does not auto-dismiss still hides the quiz on this client
@@ -2575,33 +3252,44 @@ export function StoreProvider({ children }: { children: ReactNode }) {
           const threadId =
             action.threadId ?? stateRef.current.bots.find((bot) => bot.id === action.botId)?.threadId;
           const sendId = action.sendId ?? newSendId();
-          void threadWrites.ready(threadId??"").then(()=>api(`/api/bots/${action.botId}/messages`, {
-            method: "POST",
-            body: JSON.stringify({ text: action.text, replyToId: action.replyToId, threadId, sendId }),
-          }))
-            .then((body) => {
-              if (body?.message && typeof body.threadId === "string") {
-                rawDispatch({ type: "messageAdded", threadId: body.threadId, message: body.message });
-              }
-              if (
-                body?.queued &&
-                typeof body.threadId === "string" &&
-                typeof body.queueId === "string"
-              ) {
-                rawDispatch({
-                  type: "pendingQueued",
-                  threadId: body.threadId,
-                  queueId: body.queueId,
-                  text: action.text,
-                });
-              }
-              // The route answered, so the message is the server's problem
-              // now. Said last, after the state it implies has been applied.
-              action.onSent?.();
-            })
-            .catch((error) => {
+          // The words are in the persisted outbox and on screen as a "Sending"
+          // line before this handler returns (the composer clears right after),
+          // whatever the busy flags say. They leave only on a receipt or a
+          // refusal the server meant; a dropped connection keeps them and tries
+          // again with the same sendId.
+          if (threadId) {
+            void deliveryRef.current.submit(
+              {
+                sendId,
+                kind: "bot",
+                botId: action.botId,
+                threadId,
+                text: action.text,
+                ...(action.replyToId ? { replyToId: action.replyToId } : {}),
+                ...(action.outboxDraft ? { draft: action.outboxDraft } : {}),
+                ...(action.resend ? { resend: true as const, ...(action.restoreGen ? { restoreGen: action.restoreGen } : {}), ...(action.stopGen ? { stopGen: action.stopGen } : {}), ...(action.actionId ? { actionId: action.actionId } : {}) } : {}),
+                at: Date.now(),
+                attempts: 0,
+              },
+              {
+                // The route answered, so the message is the server's problem
+                // now. Said last, after the state it implies has been applied.
+                onReceipt: () => action.onSent?.(),
+                onFailed: (_entry, error) => {
+                  if (action.onError?.(error) !== true) showError(error);
+                  return true;
+                },
+              },
+            );
+          } else {
+            // the same sendId on every repeat: a busy answer means the send did not run, and a repeat that did is deduplicated
+            retryWhileBusy(() => api(`/api/bots/${action.botId}/messages`, {
+              method: "POST",
+              body: JSON.stringify({ text: action.text, replyToId: action.replyToId, threadId, sendId }),
+            })).then(() => action.onSent?.()).catch((error) => {
               if (action.onError?.(error) !== true) showError(error);
             });
+          }
           break;
         }
         case "editMessage":
@@ -2702,7 +3390,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
                 method: "POST",
                 body: JSON.stringify({ text: action.text, threadId: action.threadId, sendId }),
               }));
-          void post()
+          void retryWhileBusy(post)
             .then((body) => {
               if (body?.message && typeof body.threadId === "string") {
                 rawDispatch({ type: "messageAdded", threadId: body.threadId, message: body.message });
@@ -2824,6 +3512,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
           break;
         }
         case "deleteBot":
+          conversationCache()?.dropOwner(action.botId);
           forgetDeletedDrafts({ botId: action.botId });
           forgetDocumentDrafts({ botId: action.botId });
           api(`/api/bots/${action.botId}`, { method: "DELETE" }).then(showDeletionNote).catch(showError);
@@ -2873,42 +3562,39 @@ export function StoreProvider({ children }: { children: ReactNode }) {
           const threadId =
             action.threadId ?? stateRef.current.groups.find((group) => group.id === action.groupId)?.threadId;
           const sendId = action.sendId ?? newSendId();
-          api(`/api/groups/${action.groupId}/messages`, {
-            method: "POST",
-            body: JSON.stringify({
-              text: action.text,
-              replyToId: action.replyToId,
-              threadId,
-              sendId,
-              mode: action.mode ?? "chat",
-              ...(action.responderId ? { responderId: action.responderId } : {}),
-            }),
-          })
-            .then((body) => {
-              action.onReceipt?.({
+          // Same promise as a 1:1 send: outbox first, "Sending" line at once,
+          // a receipt or a meant refusal to leave.
+          if (threadId) {
+            void deliveryRef.current.submit(
+              {
                 sendId,
-                queued: body?.queued === true,
-                ...(typeof body?.queueId === "string" ? { requestId: body.queueId } : typeof body?.message?.requestId === "string" ? { requestId: body.message.requestId } : {}),
-              });
-              if (body?.message && typeof body.threadId === "string") {
-                rawDispatch({ type: "messageAdded", threadId: body.threadId, message: body.message });
-              }
-              if (
-                body?.queued &&
-                typeof body.threadId === "string" &&
-                typeof body.queueId === "string"
-              ) {
-                rawDispatch({
-                  type: "pendingQueued",
-                  threadId: body.threadId,
-                  queueId: body.queueId,
-                  text: action.text,
-                });
-              }
-            })
-            .catch((error) => {
-              if (action.onError?.(error) !== true) showError(error);
-            });
+                kind: "group",
+                groupId: action.groupId,
+                threadId,
+                text: action.text,
+                ...(action.replyToId ? { replyToId: action.replyToId } : {}),
+                mode: action.mode ?? "chat",
+                ...(action.responderId ? { responderId: action.responderId } : {}),
+                ...(action.outboxDraft ? { draft: action.outboxDraft } : {}),
+                ...(action.resend ? { resend: true as const, ...(action.restoreGen ? { restoreGen: action.restoreGen } : {}), ...(action.stopGen ? { stopGen: action.stopGen } : {}), ...(action.actionId ? { actionId: action.actionId } : {}) } : {}),
+                at: Date.now(),
+                attempts: 0,
+              },
+              {
+                onReceipt: (_entry, body) => {
+                  action.onReceipt?.({
+                    sendId,
+                    queued: body?.queued === true,
+                    ...(typeof body?.queueId === "string" ? { requestId: body.queueId } : typeof body?.message?.requestId === "string" ? { requestId: body.message.requestId } : {}),
+                  });
+                },
+                onFailed: (_entry, error) => {
+                  if (action.onError?.(error) !== true) showError(error);
+                  return true;
+                },
+              },
+            );
+          }
           break;
         }
         case "patchGroup":
@@ -2952,18 +3638,49 @@ export function StoreProvider({ children }: { children: ReactNode }) {
           break;
         // tasks: the server answers with the bot AND the live transcript,
         // because switching changes which conversation is on screen
-        case "newTask":
+        case "newTask": {
+          const leaving = stateRef.current.bots.find((candidate) => candidate.id === action.botId);
+          if (leaving && !leaving.awaitingThreadSnapshot) conversationCache()?.put(cachedPage(leaving));
           api(`/api/bots/${action.botId}/tasks`, { method: "POST", body: "{}" })
             .then((r: any) => r?.bot && dispatch({ type: "taskSwitched", bot: r.bot }))
             .catch(showError);
           break;
+        }
         // A switch answers with the newest page and `hasMore` (upstream
         // #1527); older messages page back through /api/threads/:id/messages.
-        case "switchTask":
-          api(`/api/bots/${action.botId}/tasks/${action.threadId}?messages=${MESSAGE_PAGE_SIZE}`, { method: "POST" })
-            .then((r: any) => {if(r?.bot){dispatch({ type: "taskSwitched", bot: r.bot });void api(`/api/bots/${action.botId}/read`,{method:"POST",body:JSON.stringify({threadId:action.threadId})}).catch(showError);}})
-            .catch(showError);
+        // A task opened recently paints from the conversation cache at once,
+        // and the same request then asks only for what changed since that
+        // page (`since=`) and lays it over; with no cached page, or when the
+        // server cannot say what changed, the answer is the whole page.
+        case "switchTask": {
+          const cache = conversationCache();
+          const leaving = stateRef.current.bots.find((candidate) => candidate.id === action.botId);
+          if (cache && leaving && leaving.threadId !== action.threadId && !leaving.awaitingThreadSnapshot) cache.put(cachedPage(leaving));
+          // Only a page the reducer will open is sent as `since=`; a delta for
+          // a page that is not on screen would have nothing to lay over.
+          const opened = cachedPaintFor(cache, leaving, action.threadId, streamProof.live);
+          const seq = (switchSeq[action.botId] ?? 0) + 1;
+          switchSeq[action.botId] = seq;
+          if (opened) rawDispatch({ type: "conversationFromCache", botId: action.botId, entry: opened });
+          const since = opened?.version ? `&since=${encodeURIComponent(opened.version)}` : "";
+          api(`/api/bots/${action.botId}/tasks/${action.threadId}?messages=${MESSAGE_PAGE_SIZE}${since}`, { method: "POST" })
+            .then((r: any) => {
+              if (!r?.bot) return;
+              // A later switch owns the screen; this answer is for a page it left.
+              if (switchSeq[action.botId] === seq) {
+                if (r.bot.threadDelta) rawDispatch({ type: "threadDeltaApplied", bot: r.bot });
+                else dispatch({ type: "taskSwitched", bot: r.bot });
+              }
+              void api(`/api/bots/${action.botId}/read`,{method:"POST",body:JSON.stringify({threadId:action.threadId})}).catch(showError);
+            })
+            .catch((error: unknown) => {
+              // The switch did not happen: the conversation that was on screen comes back.
+              const back = leaving && cache?.peek(leaving.threadId);
+              if (opened && back && switchSeq[action.botId] === seq) rawDispatch({ type: "conversationFromCache", botId: action.botId, entry: back });
+              showError(error);
+            });
           break;
+        }
         case "pinTask":
           api(`/api/bots/${action.botId}/tasks/${action.threadId}`, {
             method: "PATCH",
@@ -2978,6 +3695,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
           break;
         case "deleteTask":
           forgetDeletedDrafts({ threadId: action.threadId });
+          conversationCache()?.drop(action.threadId);
           forgetDocumentDrafts({ threadIds: [action.threadId] });
           api(`/api/bots/${action.botId}/tasks/${action.threadId}`, { method: "DELETE" })
             .then((r: any) => {
@@ -3031,6 +3749,9 @@ export function StoreProvider({ children }: { children: ReactNode }) {
         case "loadOlderMessages":
           void scrollback.loadOlder(action.threadId);
           break;
+        case "loadBranchHead":
+          void scrollback.loadThrough(action.threadId, action.messageId);
+          break;
         // A jump to a message older than the held page: walk back until it is
         // held, then focus again, so the views that ignored a target they
         // could not find open a window around it now.
@@ -3055,20 +3776,127 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     state.bots.find((candidate) => candidate.id === state.selectedId) ??
     state.groups.find((candidate) => candidate.id === state.selectedId);
   const topUpThread = onScreen && needsNewestPage(onScreen) ? onScreen.threadId : null;
-  // Once per (thread, transcript generation). A resync (hydrate, a switch)
-  // bumps the generation and drops an in-flight top-up as stale, so it asks
-  // again; a failed one leaves the key as it was and does not retry, which
-  // keeps a dead link from looping ("Load earlier" is still there).
+  // A thread that holds a preview row is marked "needs fresh page" (the marker is the preview row itself, so a rehydrate that brings a new one re-marks it).
+  // The fetch runs once per (thread, transcript generation) so a dead link does not loop; opening the thread again, or the window coming back into view,
+  // clears that guard and asks again. A failed or discarded fetch leaves the preview rows in place, so nothing is ever suppressed for good.
   const topUpGeneration = topUpThread ? state.transcriptGeneration[topUpThread] ?? 0 : 0;
   const topUpBusy = topUpThread ? Boolean(state.loadingOlder[topUpThread]) : false;
   const toppedUp = useRef("");
+  const screenThread = onScreen?.threadId ?? "";
+  const [freshRetry, setFreshRetry] = useState(0);
+  useEffect(() => {
+    toppedUp.current = "";
+  }, [screenThread]);
+  useEffect(() => {
+    if (typeof document === "undefined") return;
+    const again = () => {
+      if (document.visibilityState === "hidden") return;
+      toppedUp.current = "";
+      setFreshRetry((n) => n + 1);
+    };
+    document.addEventListener("visibilitychange", again);
+    window.addEventListener("online", again);
+    return () => {
+      document.removeEventListener("visibilitychange", again);
+      window.removeEventListener("online", again);
+    };
+  }, []);
   useEffect(() => {
     if (!topUpThread || topUpBusy) return;
     const key = `${topUpThread}:${topUpGeneration}`;
     if (toppedUp.current === key) return;
     toppedUp.current = key;
     dispatch({ type: "loadOlderMessages", threadId: topUpThread });
-  }, [topUpThread, topUpGeneration, topUpBusy, dispatch]);
+  }, [topUpThread, topUpGeneration, topUpBusy, freshRetry, screenThread, dispatch]);
+
+  // The selected branch head is older than every held row (another window
+  // moved it, or a fork outgrew it): fetch back to it, once per head and
+  // transcript generation, instead of showing another branch's rows.
+  const headBot = onScreen && "activeLeafId" in onScreen && branchHeadMissing(onScreen as Bot) ? (onScreen as Bot) : null;
+  const headThread = headBot?.threadId ?? "", headLeaf = headBot?.activeLeafId ?? "";
+  const headGeneration = headThread ? state.transcriptGeneration[headThread] ?? 0 : 0;
+  const fetchedHead = useRef("");
+  useEffect(() => {
+    const key = `${headThread}:${headGeneration}:${headLeaf}`;
+    if (!headLeaf || fetchedHead.current === key) return;
+    fetchedHead.current = key;
+    dispatch({ type: "loadBranchHead", threadId: headThread, messageId: headLeaf });
+  }, [headThread, headGeneration, headLeaf, dispatch]);
+
+  // The branch on screen moved off the head the held open cards were worked
+  // out for (an edit, a switch to a sibling): they belong to the branch it
+  // left, so the ones on this branch are fetched, once per head.
+  const cardsBot = onScreen && "activeLeafId" in onScreen ? (onScreen as Bot) : null;
+  const cardsLeaf = cardsBot?.activeLeafId && cardsBot.openCardsLeaf && cardsBot.openCardsLeaf !== cardsBot.activeLeafId && !visibleMessages(cardsBot).some((m) => m.id === cardsBot.openCardsLeaf) ? cardsBot.activeLeafId : "";
+  const cardsThread = cardsBot?.threadId ?? "";
+  const cardsRev = cardsBot?.cardsRev ?? 0;
+  const fetchedCards = useRef("");
+  useEffect(() => {
+    const key = `${cardsThread}:${cardsLeaf}:${cardsRev}`;
+    if (!cardsLeaf || fetchedCards.current === key) return;
+    fetchedCards.current = key;
+    void api(`/api/threads/${encodeURIComponent(cardsThread)}/open-cards`)
+      .then((result: { activeLeafId?: string; openCards?: Message[]; pending?: boolean }) => dispatch({ type: "openCardsRefreshed", threadId: cardsThread, leafId: result.activeLeafId ?? cardsLeaf, cards: result.openCards ?? [], rev: cardsRev, pending: result.pending === true }))
+      .catch(() => {});
+  }, [cardsThread, cardsLeaf, cardsRev, dispatch]);
+
+  // The server said this conversation's open cards became exact (open-cards.ready): ask again, once per frame, for a bot task or a room alike. The notice
+  // is kept per conversation (a task opened later still finds it), and an answer fulfils it only for the transcript generation it was asked under.
+  // A branch that moved meanwhile makes the answer stale, and the reducer drops it by head and revision like any other refresh.
+  const readyOwner = onScreen ?? null;
+  const readyThread = readyOwner?.threadId ?? "";
+  const readyRev = readyThread ? readyRevOf(state, readyThread) : 0;
+  const readyBot = state.bots.find((candidate) => candidate.threadId === readyThread);
+  const readyIsBot = Boolean(readyBot);
+  const readyLeaf = readyBot?.activeLeafId ?? "";
+  const readyCardsRev = (readyOwner as { cardsRev?: number } | null)?.cardsRev ?? 0;
+  const fetchedReady = useRef("");
+  const readyNeeded = cardsFetchNeeded(state, readyOwner);
+  const readyGeneration = readyThread ? state.transcriptGeneration[readyThread] ?? 0 : 0;
+  // A readiness fetch that failed (or was answered for another branch head) is asked again after a growing wait (1 s, 2 s, 4 s ... at most 30 s, eight times), never in a tight loop.
+  const [readyRetry, setReadyRetry] = useState(0);
+  const readyFailures = useRef(0);
+  const readyBase = useRef("");
+  const readyTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
+  useEffect(() => () => { if (readyTimer.current) clearTimeout(readyTimer.current); }, []);
+  useEffect(() => {
+    // one request per (thread, transcript generation, leaf, readiness revision, card revision, retry): a head that moved asks again for its own leaf
+    const base = `${readyThread}:${readyGeneration}:${readyLeaf}:${readyRev}:${readyCardsRev}`;
+    // a new thread, generation, head or revision starts its own count of retries: the eight are per question, not per session
+    if (readyBase.current !== base) { readyBase.current = base; readyFailures.current = 0; }
+    const key = `${base}:${readyRetry}`;
+    if (!readyNeeded || !readyThread || (readyIsBot && !readyLeaf) || fetchedReady.current === key) return;
+    fetchedReady.current = key;
+    const askAgain = () => {
+      const attempt = ++readyFailures.current;
+      if (attempt > 8) return;
+      if (readyTimer.current) clearTimeout(readyTimer.current);
+      readyTimer.current = setTimeout(() => setReadyRetry((n) => n + 1), Math.min(30_000, 1000 * 2 ** (attempt - 1)));
+    };
+    void api(`/api/threads/${encodeURIComponent(readyThread)}/open-cards`)
+      .then((result: { activeLeafId?: string; openCards?: Message[]; pending?: boolean }) => {
+        dispatch({ type: "openCardsRefreshed", threadId: readyThread, leafId: result.activeLeafId ?? readyLeaf, cards: result.openCards ?? [], rev: readyCardsRev, pending: result.pending === true, readyRev, gen: readyGeneration, ...(readyIsBot ? { requestLeaf: readyLeaf } : {}) });
+        // answered for a branch head other than the one held: the reducer discards it, so it is asked for again (bounded), not forgotten
+        if (readyIsBot && result.activeLeafId !== undefined && result.activeLeafId !== readyLeaf) askAgain(); else readyFailures.current = 0;
+      })
+      .catch(askAgain);
+  }, [readyThread, readyGeneration, readyRev, readyLeaf, readyNeeded, readyCardsRev, readyRetry, readyIsBot, dispatch]);
+
+  // A task delta that did not fit the held list (tasksStale): refetch the
+  // bots' task lists once, a moment later, so a burst of frames is one read.
+  const staleTasks = state.bots.filter((bot) => bot.tasksStale).map((bot) => bot.id).join(",");
+  useEffect(() => {
+    if (!staleTasks) return;
+    const timer = setTimeout(() => {
+      void api("/api/bots?messages=0").then((result: { bots?: Bot[] }) => {
+        for (const id of staleTasks.split(",")) {
+          const fresh = result.bots?.find((bot) => bot.id === id);
+          if (fresh?.tasks) dispatch({ type: "tasksResynced", botId: id, tasks: fresh.tasks, tasksSeq: fresh.tasksSeq, tasksEpoch: fresh.tasksEpoch, tasksTotal: fresh.tasksTotal, tasksOlder: fresh.tasksOlder, usageTotal: fresh.usageTotal, grantsAll: fresh.grantsAll });
+        }
+      }).catch(() => {});
+    }, 250);
+    return () => clearTimeout(timer);
+  }, [staleTasks, dispatch]);
 
   // ── initial load + SSE fold ──────────────────────────────────────────
   useEffect(() => {
@@ -3191,8 +4019,10 @@ export function StoreProvider({ children }: { children: ReactNode }) {
         // transcript at once made startup slow on long threads and was more
         // than a companion over a tunnel could buffer.
         // A phone asks for one row per thread and pages the one on screen in (spec §6).
-        api(`/api/bots?messages=${hydratePageSize(phone)}`).then(({ bots, groups, computerControl, sidebarSectionOrder }) => {
+        api(`/api/bots?messages=${hydratePageSize(phone)}`).then(({ bots, groups, computerControl, sidebarSectionOrder, pendingSends }) => {
           if (!alive) return;
+          // A fresh snapshot: frames may have been missed, so nothing cached is trusted.
+          conversationCache()?.clear();
           rawDispatch({
             type: "hydrate",
             bots,
@@ -3200,7 +4030,20 @@ export function StoreProvider({ children }: { children: ReactNode }) {
             computerControl: computerControl ?? {},
             // null = the computer has none yet; absent = an older harness.
             sidebarSectionOrder: sidebarSectionOrder === null ? null : (parseSidebarOrder(sidebarSectionOrder) ?? undefined),
+            ...(pendingSends && typeof pendingSends === "object" ? { pendingSends } : {}),
           });
+          // Sends still in this device's outbox (a reload or a restart in the
+          // middle of one): the server's receipt settles them, the rest go again
+          // under the same sendId.
+          const messageSendIds = new Set<string>();
+          for (const conversation of [...(bots ?? []), ...(groups ?? [])]) {
+            for (const message of conversation.messages ?? []) if (typeof message.sendId === "string") messageSendIds.add(message.sendId);
+          }
+          const pendingSendIds = new Set<string>();
+          for (const list of Object.values((pendingSends ?? {}) as Record<string, ServerPendingSend[]>)) {
+            for (const entry of list) if ((entry.state === "queued" || entry.state === "refused") && entry.sendId) pendingSendIds.add(entry.sendId);
+          }
+          deliveryRef.current.reconcile({ messageSendIds, pendingSendIds });
         });
       const peripherals = peripheralParts.map((part) => ({
         key: part.key,
@@ -3223,6 +4066,11 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     let rehydrateRequested = false;
     const pendingFrames: Array<{ frame: any; replayed: boolean }> = [];
     let handleFrame: (frame: any, replayed?: boolean) => void;
+    // What is still owed for deleted conversations is asked for on every connect and reconnect: a notice raised while this
+    // window was closed or disconnected is never broadcast again, and one that was settled meanwhile must go.
+    const refreshOwed = () => {
+      void api("/api/deletions/owed").then((response) => { if (alive) rawDispatch({ type: "deletionOwed", notices: response?.notices, rev: response?.rev }); }).catch(() => {});
+    };
     const hydrate = (): Promise<boolean> => {
       if (hydrationPromise) {
         // A second non-resumable hello means this snapshot may have started
@@ -3239,6 +4087,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
         } while (alive && rehydrateRequested);
         if (!alive || !loaded) return false;
         hydrated = true;
+        refreshOwed();
         for (const pending of pendingFrames.splice(0)) handleFrame(pending.frame, pending.replayed);
         return true;
       })().finally(() => {
@@ -3258,6 +4107,8 @@ export function StoreProvider({ children }: { children: ReactNode }) {
       if (frame.kind === "inbox.changed") { emitInboxChanged(frame.pollScale); return; }
       // A memory the bot just kept (B5m): the open chat attaches its chip under the reply it came from.
       if (frame.kind === "learning.remembered" || frame.kind === "learning.improved") { window.dispatchEvent(new CustomEvent(REMEMBERED_EVENT, { detail: frame })); return; }
+      // How many memories wait for the owner (counts only): the shared counts, the badge and the Memory screen move at once.
+      if (frame.kind === "memory.waiting") { window.dispatchEvent(new CustomEvent(MEMORY_WAITING_EVENT, { detail: frame })); return; }
       if (frame.kind === "project.strip" || frame.kind === "project.board" || frame.kind === "room.requests") {
         projectEvents.frame(frame as ProjectFrame);
         return;
@@ -3273,8 +4124,24 @@ export function StoreProvider({ children }: { children: ReactNode }) {
         bumpPeripheralVersion("webhooks");
       }
       switch (frame.kind) {
+        case "open-cards.ready": {
+          // threadId null is the global completion: every thread still waiting for its older cards asks again
+          if (typeof frame.threadId === "string") rawDispatch({ type: "openCardsReady", threadId: frame.threadId });
+          else if (frame.threadId === null || frame.threadId === undefined) rawDispatch({ type: "openCardsReady", threadId: null });
+          break;
+        }
+        case "sends": {
+          if (typeof frame.threadId === "string" && Array.isArray(frame.pending)) {
+            rawDispatch({ type: "serverSends", threadId: frame.threadId, pending: frame.pending });
+          }
+          break;
+        }
         case "message": {
+          conversationCache()?.applyFrame(frame);
           rawDispatch({ type: "messageAdded", threadId: frame.threadId, message: frame.message });
+          if (frame.message?.role === "user" && typeof frame.message.sendId === "string") {
+            rawDispatch({ type: "sendingSettled", threadId: frame.threadId, sendId: frame.message.sendId });
+          }
           if (frame.message?.role === "user" && typeof frame.message.queueId === "string") {
             rawDispatch({
               type: "consumePendingQueued",
@@ -3302,9 +4169,11 @@ export function StoreProvider({ children }: { children: ReactNode }) {
           break;
         }
         case "message.patch":
+          conversationCache()?.applyFrame(frame);
           rawDispatch({ type: "messagePatched", threadId: frame.threadId, message: frame.message });
           break;
         case "thread":
+          conversationCache()?.applyFrame(frame);
           rawDispatch({ type: "threadActive", threadId: frame.threadId, activeLeafId: frame.activeLeafId });
           // a rewind also invalidates any half-streamed text from the old branch
           clearStream(frame.threadId);
@@ -3315,10 +4184,17 @@ export function StoreProvider({ children }: { children: ReactNode }) {
           // reading the selected chat clears its badge immediately
           const viewed=stateRef.current.bots.find(current=>current.id===bot.id);
           const viewedThread=viewed?.threadId;
-          const selectedUnread=bot.tasks?.find(task=>task.threadId===viewedThread)?.unread??(bot.threadId===viewedThread&&bot.unread);
+          // A frame that flips busy or unread carries only the task rows that
+          // changed. The reducer lays them over the rows it holds then; this
+          // reads the changed rows only, to decide about the badge.
+          const rows=bot.tasks??bot.tasksDelta?.upsert;
+          const selectedUnread=rows?.find(task=>task.threadId===viewedThread)?.unread??(bot.threadId===viewedThread&&bot.unread);
           if (selectedUnread && viewedThread && bot.id === stateRef.current.selectedId && stateRef.current.activeView==="chat") {
-            const tasks=bot.tasks?.map(task=>task.threadId===viewedThread?{...task,unread:false}:task);
-            bot={...bot,tasks,unread:tasks?.some(task=>task.unread)??false};
+            if (bot.tasksDelta) bot={...bot,tasksDelta:{...bot.tasksDelta,read:viewedThread}};
+            else {
+              const tasks=bot.tasks?.map(task=>task.threadId===viewedThread?{...task,unread:false}:task);
+              bot={...bot,tasks,unread:tasks?.some(task=>task.unread)??false};
+            }
             void api(`/api/bots/${bot.id}/read`, { method: "POST",body:JSON.stringify({threadId:viewedThread}) }).catch(() => {});
           }
           rawDispatch({
@@ -3335,6 +4211,12 @@ export function StoreProvider({ children }: { children: ReactNode }) {
             void api(`/api/groups/${group.id}/read`, { method: "POST" }).catch(() => {});
           }
           rawDispatch({ type: "groupPatched", group });
+          break;
+        }
+        // engine copies of deleted conversations that are still owed (fixed sentences from the server, no paths): shown in the
+        // same note a Delete uses, with "Try again now"
+        case "deletion-owed": {
+          rawDispatch({ type: "deletionOwed", notices: frame.notices, rev: frame.rev });
           break;
         }
         // the harness decided this was worth interrupting for; the toggle
@@ -3393,6 +4275,8 @@ export function StoreProvider({ children }: { children: ReactNode }) {
             clearStream(event.threadId);
             updatePlans(event);
             updateHelpers(event);
+            // a turn that met an unproven large set has asked for its check: the memory strip looks again (it says "Checking earlier memory" while it runs)
+            requestMemoryWake("TURN");
           }
           break;
         }
@@ -3421,6 +4305,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
           });
           break;
         case "bot.deleted":
+          conversationCache()?.dropOwner(frame.botId);
           botPatchQueue.cancel(frame.botId);
           rawDispatch({ type: "deleteBot", botId: frame.botId });
           break;
@@ -3457,15 +4342,18 @@ export function StoreProvider({ children }: { children: ReactNode }) {
       // Its computer panel polls instead (ComputerPanel, sseFlowing).
       stopLive = openLiveEvents({
         screens: phone ? false : undefined,
-        onOpen: () => rawDispatch({ type: "connected", value: true }),
-        onError: () => rawDispatch({ type: "connected", value: false }),
+        taskDelta: true,
+        cardsBeside: true,
+        onOpen: () => { rawDispatch({ type: "connected", value: true }); requestMemoryWake("RECONNECT"); refreshOwed(); },
+        onError: () => { streamProof.live = false; rawDispatch({ type: "connected", value: false }); },
+        onHello: (resumed) => { streamProof.live = resumed; },
         onSnapshotRequired: () => {
           projectEvents.replayGap();
           clearTimeout(hydrationFallback);
           // Frames buffered before this non-resumable stream belong to an
           // abandoned generation. Keep the new generation behind hydrate().
           pendingFrames.splice(0);
-          return hydrate();
+          return hydrate().then((loaded) => { if (loaded) streamProof.live = true; return loaded; });
         },
         onFrame: (frame, delivery) => {
           if (hydrated) handleFrame(frame, delivery?.replayed);
@@ -3516,7 +4404,8 @@ export function StoreProvider({ children }: { children: ReactNode }) {
   // it used to swallow the failure, which left those messages unreachable
   // (FOLLOW4). Callers with nothing to tell the user catch it themselves.
   const refreshInstances = useCallback(async () => {
-    const { instances } = await api("/api/instances");
+    // An explicit refresh (Enable, Check again, a saved change) rechecks every CLI version.
+    const { instances } = await api("/api/instances?fresh=1");
     rawDispatch({ type: "instances", instances });
   }, []);
   const refreshAfterKey = useCallback(
@@ -3549,11 +4438,32 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     () => ({ state, dispatch, flushBotPatches, refreshInstances, refreshAfterKey }),
     [state, dispatch, flushBotPatches, refreshInstances, refreshAfterKey],
   );
+  const actions = useMemo(
+    () => ({ dispatch, flushBotPatches, refreshInstances, refreshAfterKey }),
+    [dispatch, flushBotPatches, refreshInstances, refreshAfterKey],
+  );
   return (
     <StoreContext.Provider value={value}>
-      <StreamContext.Provider value={stream}>{children}</StreamContext.Provider>
+      <ActionsContext.Provider value={actions}>
+        <StreamContext.Provider value={stream}>
+          <HelpersContext.Provider value={stream.helpers}>{children}</HelpersContext.Provider>
+        </StreamContext.Provider>
+      </ActionsContext.Provider>
     </StoreContext.Provider>
   );
+}
+
+/** dispatch and friends without the state: does not re-render on state changes. */
+export function useStoreActions() {
+  const ctx = useContext(ActionsContext);
+  if (!ctx) throw new Error("useStoreActions outside provider");
+  return ctx;
+}
+
+/** The store when there is one: a component that only improves on what it was
+ * handed (a lookup that fetches a missing row) renders without a provider. */
+export function useStoreIfAny() {
+  return useContext(StoreContext);
 }
 
 export function useStore() {

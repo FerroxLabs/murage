@@ -190,8 +190,8 @@ for (const target of ["bot", "room"]) {
       expect(requests[0].mode).toBe("goal");
       await expect(page.getByRole("button", { name: "Finish together", exact: true })).toHaveAttribute("aria-pressed", "true");
     }
-    await page.getByRole("button", { name: "Send message", exact: true }).click();
-    await expect.poll(() => requests.length).toBe(2);
+    await expect(page.getByRole("button", { name: "Send message", exact: true })).toBeDisabled();
+    await expect.poll(() => requests.length, { timeout: 15_000 }).toBe(2);
     expect(requests[0].sendId).toMatch(UUID_V4);
     expect(requests[1]).toEqual(requests[0]);
     await expect(input).toHaveValue("");

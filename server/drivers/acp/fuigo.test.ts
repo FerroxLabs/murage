@@ -26,7 +26,9 @@
 // (core.ts:204-212). The shared `fake-acp-cli.ts` cannot be used for the env
 // half — its dump carries a fixed allowlist of variable names that does not
 // include FUIGO_API_KEY, so every assertion here would pass vacuously.
-import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import { toolsMayBeLoadingNotice, toolsUnavailableNotice } from "../mcp-readiness.ts";
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { cacheEnvFromProcess, markMountIncomplete } from "../../connector-cache.ts";
 import { tmpdir } from "node:os";
 import { delimiter, join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, onTestFinished, vi } from "vitest";
@@ -45,7 +47,7 @@ import { fixtureCredentialFingerprint } from "../../testing/fixture-dump.ts";
 import { ensureFuigoLocalModel, FuigoAgentDriver, fuigoLocalKeyEnv, fuigoLocalSlug, FUIGO_EXTERNAL_MCP_GATES, isolateFuigoFromExternalMcp, parseFuigoModels, scrubFuigoCredentialEnv, STATIC_FUIGO_MODELS } from "./fuigo.ts";
 import { noteFluxKeyRefused, resetFluxKeyHealthForTests } from "../../flux-key-health.ts";
 import { fluxKeyState } from "../../flux-config.ts";
-import { acpVersionFailureDetail, createAcpDriver, FALLBACK_CAP_LINE, MCP_OWN_READY_WAIT_MS, MCP_READY_WAIT_MS, type AcpSupport } from "./core.ts";
+import { acpVersionFailureDetail, createAcpDriver, FALLBACK_CAP_LINE, MCP_OWN_READY_WAIT_MS, MCP_READY_WAIT_MS, resetAcpMcpReadinessForTests, type AcpSupport } from "./core.ts";
 import { configureLocalServerStore, writeLocalServers } from "../../local-servers.ts";
 import { localHost } from "../local-inject.ts";
 
@@ -173,6 +175,7 @@ const helperAnswered = (decision) => {
       update: { sessionUpdate: "subagent_finished", subagent_id: "helper-1", status: "completed" } } });
   }, 200);
 };
+const reconnected = {};
 let buf = "";
 process.stdin.on("data", (d) => {
   buf += d;
@@ -223,6 +226,9 @@ process.stdin.on("data", (d) => {
       if (process.env.FUIGO_FAKE_DUMP_DIR) appendFileSync(join(process.env.FUIGO_FAKE_DUMP_DIR, "loads.log"), JSON.stringify(m.params) + "\\n");
       ok(process.env.FUIGO_FAKE_CURRENT_MODEL ? { models: { currentModelId: process.env.FUIGO_FAKE_CURRENT_MODEL, availableModels: [] } } : {});
       if (Array.isArray(m.params?.mcpServers) && m.params.mcpServers.length) mcpReady(m.params.sessionId);
+      for (const server of m.params?.mcpServers ?? []) {
+        if (process.env.FUIGO_FAKE_MCP_RECONNECT_TO && (server.env ?? []).some((item) => item.name === "MURAGE_MCP_RECONNECT")) reconnected[server.name] = process.env.FUIGO_FAKE_MCP_RECONNECT_TO;
+      }
     }
     else if (m.method === "session/set_model") {
       order("set-model");
@@ -257,6 +263,13 @@ process.stdin.on("data", (d) => {
         if (stranded.length) runFallback(stranded.shift());
       };
       if (holdMs > 0) setTimeout(finish, holdMs); else finish();
+    } else if (m.method === "_fuigo/mcp/list" && process.env.FUIGO_FAKE_MCP_LIST) {
+      // Per-server status (fuigo-shell extensions/mcp.rs), double-wrapped as
+      // real ext results are. A server reloaded with a fresh MURAGE_MCP_RECONNECT
+      // marker takes FUIGO_FAKE_MCP_RECONNECT_TO (default: unchanged).
+      if (process.env.FUIGO_FAKE_DUMP_DIR) appendFileSync(join(process.env.FUIGO_FAKE_DUMP_DIR, "mcp-list.log"), JSON.stringify(m.params) + "\\n");
+      const states = { ...JSON.parse(process.env.FUIGO_FAKE_MCP_LIST), ...reconnected };
+      ok({ result: { servers: Object.entries(states).map(([name, status]) => ({ name, type: "stdio", command: "x", source: "session", session: { enabled: true, status } })) } });
     } else if (m.method === "_fuigo/interject") {
       // FUIGO_FAKE_INTERJECT: "ok" (default) queues and echoes; "nomethod" is
       // method-not-found, as a build without the extension answers;
@@ -1242,7 +1255,9 @@ describe("fuigo waits for MCP readiness before the first prompt", () => {
   const AGENTS = { agents: { command: process.execPath, args: ["/fake/agents-proxy.js"], env: {} } };
 
   afterEach(() => {
+    resetAcpMcpReadinessForTests();
     delete process.env.MURAGE_ACP_MCP_READY_MS;
+    delete process.env.MURAGE_MCP_RECONNECT_WAIT_MS;
   });
 
   const readOrder = () => {
@@ -1263,6 +1278,7 @@ describe("fuigo waits for MCP readiness before the first prompt", () => {
     environment: Record<string, string>,
     integrations: SendTurnInput["integrations"] | undefined,
     driver: typeof FuigoAgentDriver = FuigoAgentDriver,
+    fixedThreadId?: string,
   ) {
     instance = await driver.create({
       instanceId: "fuigo-mcp-ready",
@@ -1272,7 +1288,7 @@ describe("fuigo waits for MCP readiness before the first prompt", () => {
       config: { cli: fakeCli, fullAuto: false },
     });
     recorder = recordEvents(instance.adapter);
-    const threadId = `t-fuigo-mcp-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+    const threadId = fixedThreadId ?? `t-fuigo-mcp-${Date.now()}-${Math.random().toString(36).slice(2)}`;
     const startedAt = Date.now();
     const { turnId } = await instance.adapter.sendTurn({ threadId, text: "hi", ...(integrations ? { integrations } : {}) });
     return { threadId, turnId, startedAt };
@@ -1363,6 +1379,7 @@ describe("fuigo waits for MCP readiness before the first prompt", () => {
     const events = lifecycleEvents(threadId, turnId).map((row) => row.event);
     expect(events).toContain("mcp_ready");
     expect(events).not.toContain("mcp_ready_own");
+    expect(readFileSync(join(dumps, "prompt.json"), "utf8")).not.toContain("[Murage:");
   });
 
   it("(h3) a non-connector turn keeps the early own-mount release in the same situation", async () => {
@@ -1388,6 +1405,61 @@ describe("fuigo waits for MCP readiness before the first prompt", () => {
     const events = lifecycleEvents(threadId, turnId).map((row) => row.event);
     expect(events.filter((e) => e === "mcp_ready_timeout")).toHaveLength(1);
     expect(events).not.toContain("mcp_ready_own");
+    // The bot is told, in the Claude driver's words, instead of guessing.
+    const text = (JSON.parse(readFileSync(join(dumps, "prompt.json"), "utf8")).prompt as Array<{ text?: string }>).map((part) => part.text ?? "").join("\n");
+    expect(text).toContain(toolsMayBeLoadingNotice(["connected apps"]));
+  });
+
+  it("(i) connected apps still not ready: reconnected once, then the turn runs and the bot is told plainly", async () => {
+    process.env.MURAGE_MCP_RECONNECT_WAIT_MS = "800";
+    const { threadId, turnId } = await start({ FUIGO_FAKE_MCP: "ready", FUIGO_FAKE_MCP_LIST: JSON.stringify({ composio: "initializing", agents: "ready" }) }, { ...COMPOSIO, ...AGENTS });
+    const done = await recorder!.until((e) => e.type === "turn.completed");
+    expect(done).toMatchObject({ ok: true, toolsUnavailable: ["connected apps"] });
+    const loads = readFileSync(join(dumps, "loads.log"), "utf8").trim().split("\n").map((line) => JSON.parse(line));
+    expect(loads).toHaveLength(1);
+    const marked = loads[0].mcpServers.filter((server: { env?: Array<{ name: string }> }) => (server.env ?? []).some((item) => item.name === "MURAGE_MCP_RECONNECT"));
+    expect(marked.map((server: { name: string }) => server.name)).toEqual(["composio"]);
+    const text = (JSON.parse(readFileSync(join(dumps, "prompt.json"), "utf8")).prompt as Array<{ text?: string }>).map((part) => part.text ?? "").join("\n");
+    expect(text).toContain(toolsUnavailableNotice(["connected apps"]));
+    expect(lifecycleEvents(threadId, turnId).map((row) => row.event)).toContain("mcp_reconnect");
+  });
+
+  it("(j) a reconnect that brings connected apps up runs the turn with no notice", async () => {
+    process.env.MURAGE_MCP_RECONNECT_WAIT_MS = "3000";
+    await start({ FUIGO_FAKE_MCP: "ready", FUIGO_FAKE_MCP_LIST: JSON.stringify({ composio: "unavailable" }), FUIGO_FAKE_MCP_RECONNECT_TO: "ready" }, COMPOSIO);
+    const done = await recorder!.until((e) => e.type === "turn.completed");
+    expect(done).toMatchObject({ ok: true });
+    expect((done as { toolsUnavailable?: string[] }).toolsUnavailable).toBeUndefined();
+    expect(readFileSync(join(dumps, "prompt.json"), "utf8")).not.toContain("[Murage:");
+  });
+
+  it("(k) connected apps 'ready' by status but still on the stand-in list: reconnected once, and the bot is not told they are unavailable", async () => {
+    process.env.MURAGE_MCP_RECONNECT_WAIT_MS = "800";
+    const dir = mkdtempSync(join(tmpdir(), "murage-standin-"));
+    onTestFinished(() => rmSync(dir, { recursive: true, force: true }));
+    const identity = "d".repeat(32);
+    const threadId = `t-fuigo-standin-${Date.now()}`;
+    markMountIncomplete({ cache: cacheEnvFromProcess({ MURAGE_CONNECTOR_TOOLS_CACHE_DIR: dir }), identity, revision: "rev-1", thread: threadId });
+    const composio = { composio: { command: process.execPath, args: ["/fake/composio-mcp.js"], env: { MURAGE_CONNECTOR_IDENTITY: identity, MURAGE_CONNECTOR_REVISION: "rev-1", MURAGE_CONNECTOR_TOOLS_CACHE_DIR: dir } } } as unknown as NonNullable<SendTurnInput["integrations"]>;
+    const { turnId } = await start({ FUIGO_FAKE_MCP: "ready", FUIGO_FAKE_MCP_LIST: JSON.stringify({ composio: "ready" }) }, composio, FuigoAgentDriver, threadId);
+    const done = await recorder!.until((e) => e.type === "turn.completed");
+    expect(done).toMatchObject({ ok: true });
+    expect((done as { toolsUnavailable?: string[] }).toolsUnavailable).toBeUndefined(); // its tools work; only the list is provisional
+    const loads = readFileSync(join(dumps, "loads.log"), "utf8").trim().split("\n").map((line) => JSON.parse(line));
+    expect(loads).toHaveLength(1);
+    const marked = loads[0].mcpServers.filter((server: { env?: Array<{ name: string }> }) => (server.env ?? []).some((item) => item.name === "MURAGE_MCP_RECONNECT"));
+    expect(marked.map((server: { name: string }) => server.name)).toEqual(["composio"]);
+    expect(lifecycleEvents(threadId, turnId).map((row) => row.event)).toContain("mcp_reconnect");
+  });
+
+  it("(k2) connected apps 'ready' with a real list (no marker): no reconnect", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "murage-standin-"));
+    onTestFinished(() => rmSync(dir, { recursive: true, force: true }));
+    const composio = { composio: { command: process.execPath, args: ["/fake/composio-mcp.js"], env: { MURAGE_CONNECTOR_IDENTITY: "e".repeat(32), MURAGE_CONNECTOR_REVISION: "rev-1", MURAGE_CONNECTOR_TOOLS_CACHE_DIR: dir } } } as unknown as NonNullable<SendTurnInput["integrations"]>;
+    const { threadId, turnId } = await start({ FUIGO_FAKE_MCP: "ready", FUIGO_FAKE_MCP_LIST: JSON.stringify({ composio: "ready" }) }, composio);
+    expect(await recorder!.until((e) => e.type === "turn.completed")).toMatchObject({ ok: true });
+    expect(existsSync(join(dumps, "loads.log"))).toBe(false);
+    expect(lifecycleEvents(threadId, turnId).map((row) => row.event)).not.toContain("mcp_reconnect");
   });
 
   it("(d) a Stop during the wait sends no prompt and ends the turn as cancelled, promptly", async () => {

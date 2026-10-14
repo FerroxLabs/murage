@@ -1,0 +1,24 @@
+{
+  "id": 1,
+  "jsonrpc": "2.0",
+  "method": "tools/call",
+  "params": {
+    "_meta": {
+      "progressToken": 0
+    },
+    "arguments": {
+      "sync_response_to_workbench": false,
+      "tools": [
+        {
+          "account": "ca_fixture_owned",
+          "arguments": {
+            "max_results": 5,
+            "user_id": "me"
+          },
+          "tool_slug": "GMAIL_FETCH_EMAILS"
+        }
+      ]
+    },
+    "name": "COMPOSIO_MULTI_EXECUTE_TOOL"
+  }
+}

@@ -1,0 +1,1 @@
+By installing Murage you agree to the Terms of Service at https://murage.ai/terms-of-service and the Privacy Policy at https://murage.ai/privacy-policy. Murage is open source under the AGPL-3.0-or-later; see the included LICENSE.

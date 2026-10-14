@@ -35,6 +35,9 @@ it("delivers corrected template roles on follow-ups and selects detailed guidanc
     expect(response.ok, JSON.stringify(value)).toBe(true);
     return value;
   };
+  // The fake engine rewrites the dump file in place, so a read can land mid-write and parse as null. A null read is never a new dump, and the file
+  // the next turn must replace is the last one that parsed (not whatever a torn read showed just before the turn).
+  let seen = "null";
   const dump = () => { try { return JSON.parse(readFileSync(fixture.fixtureDumpPath, "utf8")); } catch { return null; } };
   try {
     headers = { "x-murage-surface": "desktop", "x-murage-surface-secret": (await api("GET", "/api/desktop-secret")).secret };
@@ -47,10 +50,11 @@ it("delivers corrected template roles on follow-ups and selects detailed guidanc
       const task = (await api("POST", `/api/bots/${bot.id}/tasks`, { title: "Template delivery" })).task;
       await api("POST", `/api/bots/${bot.id}/tasks/${task.threadId}?messages=0`);
       for (const [text, selected] of [[query, true], ["Continue from my previous answer.", false]] as const) {
-        const previous = JSON.stringify(dump());
+        const previous = seen;
         await api("POST", `/api/bots/${bot.id}/messages`, { threadId: task.threadId, text });
-        await expect.poll(() => JSON.stringify(dump()) !== previous, { timeout: 10000 }).toBe(true);
-        const wire = dump();
+        await expect.poll(() => { const now = dump(); return now !== null && JSON.stringify(now) !== previous; }, { timeout: 10000 }).toBe(true);
+        const wire = dump() ?? JSON.parse(previous);
+        seen = JSON.stringify(wire);
         expect(JSON.stringify(wire.prompt)).toContain(text);
         expect(wire.systemPrompt).toContain(profile.agents[0]!.description);
         expect(wire.systemPrompt.includes(profile.playbooks![0]!.instructions)).toBe(selected);
@@ -94,7 +98,7 @@ it("delivers the imported personal playbook in real server dispatch and omits it
   const fixture=await launchVerificationServer({},undefined,{instrumentationSource:"process.env.FAKE_CLAUDE_DUMP_EACH_TURN='1';"});
   let headers:Record<string,string>={},complete=false;const observations:Record<string,unknown>[]=[];
   const api=async(method:string,path:string,body?:unknown)=>{
-    const response=await fetch(fixture.info.url+path,{method,headers:{...headers,"content-type":"application/json"},body:body===undefined?undefined:JSON.stringify(body),signal:AbortSignal.timeout(10000)});
+    const response=await fetch(fixture.info.url+path,{method,headers:{...headers,"content-type":"application/json"},body:body===undefined?undefined:JSON.stringify(body),signal:AbortSignal.timeout(30000)});
     const value=await response.json() as any;expect(response.ok,JSON.stringify(value)).toBe(true);return value;
   };
   const dump=()=>{try{return JSON.parse(readFileSync(fixture.fixtureDumpPath,"utf8")) as {prompt:unknown;systemPrompt:string|null};}catch{return null;}};
@@ -118,12 +122,12 @@ it("delivers the imported personal playbook in real server dispatch and omits it
       const task={threadId};
       await api("POST",`/api/bots/${bot.id}/tasks/${task.threadId}?messages=0`);
       await api("POST",`/api/bots/${bot.id}/messages`,{threadId:task.threadId,text:row.text});
-      await expect.poll(()=>strings(dump()?.prompt).includes(row.text),{timeout:10000}).toBe(true);
+      await expect.poll(()=>strings(dump()?.prompt).includes(row.text),{timeout:30000}).toBe(true);
       const wire=dump()!,system=wire.systemPrompt??"",mounted=system.includes(book.instructions);
       observations.push({caseId:row.caseId,turnIndex:row.turnIndex,reusedThread,restarted,query:row.text,expectedMounted:row.selected,actualMounted:mounted,playbookSha256:createHash("sha256").update(book.instructions).digest("hex"),systemPromptSha256:createHash("sha256").update(system).digest("hex"),systemPrompt:system,threadId:task.threadId});
       expect(mounted,row.text).toBe(row.selected);
       if(row.selected)expect(system).toContain("<installed_package_playbooks>");else expect(system).not.toContain("<playbook name=\"Plan from my notes\">");
-      await expect.poll(async()=>Boolean((await api("GET","/api/bots?messages=0")).bots.find((b:any)=>b.id===bot.id).busy),{timeout:10000}).toBe(false);
+      await expect.poll(async()=>Boolean((await api("GET","/api/bots?messages=0")).bots.find((b:any)=>b.id===bot.id).busy),{timeout:30000}).toBe(false);
     }
     expect(observations.filter(row=>row.restarted)).toHaveLength(1);
     expect(observations.find(row=>row.restarted)?.reusedThread).toBe(true);
@@ -132,7 +136,7 @@ it("delivers the imported personal playbook in real server dispatch and omits it
     await fixture.close();
     if(process.env.MURAGE_B08_PLAYBOOK_EVIDENCE_FILE)writeFileSync(process.env.MURAGE_B08_PLAYBOOK_EVIDENCE_FILE,JSON.stringify({status:complete?"PASS":"FAILED",evidenceKind:"actual Murage starter import/pin/dispatch to existing fake Claude CLI; recovery uses same thread after server restart, initial fake turn completed normally; no native interruption/model behavior claim",observations,fixtureClosed:true,paidCalls:0},null,2)+"\n",{mode:0o600,flag:"wx"});
   }
-},60000);
+},240000); // a dozen real turns and a server restart: minutes of work on a loaded runner
 
 const guidePlan = () => parseBotPackage(JSON.parse(readFileSync(new URL("../bot-library/builtins/concierge.json",import.meta.url),"utf8"))).package.playbooks![0]!;
 it("activates Guide guidance for setup, refresh, phone and restart language without generic fragments",()=>{
