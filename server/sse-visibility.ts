@@ -247,6 +247,7 @@ const nested = (payload: Record<string, unknown>, key: string): Record<string, u
 export const KNOWN_FRAME_KINDS = [
   "message",
   "message.patch",
+  "sends",
   "thread",
   "runtime",
   "notify",
@@ -265,6 +266,9 @@ export const KNOWN_FRAME_KINDS = [
   "inbox.changed",
   "learning.remembered",
   "learning.improved",
+  "memory.waiting",
+  "open-cards.ready",
+  "deletion-owed",
 ] as const;
 
 /** Read the conversation a frame is about out of its payload.
@@ -277,6 +281,9 @@ export function frameSubject(payload: Record<string, unknown>): FrameSubject {
   switch (kind) {
     case "message":
     case "message.patch":
+    case "sends":
+    // A thread's open cards became exact (the upgrade prepared it): ids only, the client asks again.
+    case "open-cards.ready":
     case "thread": {
       const threadId = id(payload.threadId);
       return threadId ? { scope: "thread", threadId } : WORKSPACE;
@@ -346,6 +353,13 @@ export function frameSubject(payload: Record<string, unknown>): FrameSubject {
       return { scope: "desktop" };
     // An automatic skill or routine change (B7c): carries the name of the skill or routine, so desktop only.
     case "learning.improved":
+      return { scope: "desktop" };
+    // How many memories wait for the owner, per bot or room (counts only, no
+    // memory text). Desktop in Phase 0; the paired owner phone joins in Phase 1.
+    case "memory.waiting":
+      return { scope: "desktop" };
+    // An engine's copy of a deleted conversation is still owed: fixed sentences naming the engine, no paths. Desktop only.
+    case "deletion-owed":
       return { scope: "desktop" };
     case "sidebar.order":
       return payload.audience === "remote" ? { scope: "remote" } : { scope: "desktop" };

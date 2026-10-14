@@ -24,13 +24,15 @@ type PaletteEntry =
 /** At most this many Settings pages, after the bots and channels. */
 const SETTINGS_LIMIT = 4;
 
-export function CommandPalette({ onOpenChange }: { onOpenChange?: (open: boolean) => void }) {
+/** `initialOpen`/`initialQuery`: the request that loaded this chunk
+ * (CommandPaletteHost), answered on mount. */
+export function CommandPalette({ onOpenChange, initialOpen = false, initialQuery = "" }: { onOpenChange?: (open: boolean) => void; initialOpen?: boolean; initialQuery?: string }) {
   const { state, dispatch } = useStore();
   const desktop = useDesktopSurface();
-  const [open, setOpen] = useState(false);
+  const [open, setOpen] = useState(initialOpen);
   // The Settings words load with the first open, not with the first paint.
   const [settingsSearch, setSettingsSearch] = useState<typeof import("@/lib/settings-search") | null>(null);
-  const handedQuery = useRef("");
+  const handedQuery = useRef(initialQuery);
   const [query, setQuery] = useState("");
   const [messageHits, setMessageHits] = useState<SearchHit[]>([]);
   const [cursor, setCursor] = useState(0);

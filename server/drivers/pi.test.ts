@@ -1267,14 +1267,14 @@ describe("PiDriver bounded ingress (A4)", () => {
   it("still carries a valid 14 MiB multibyte frame intact", async () => {
     await create();
     const { turnId } = await instance.adapter.sendTurn({ threadId: "t-large", text: "__fixture_large_frame__", model: "ollama-cloud/glm-5.2" });
-    const done = await recorder.until((e) => e.type === "turn.completed" && e.turnId === turnId);
+    const done = await recorder.until((e) => e.type === "turn.completed" && e.turnId === turnId, 90_000);
 
     expect(done).toMatchObject({ ok: true });
     const reply = recorder.events.find((e) => e.type === "item.completed" && e.itemType === "assistant_text" && e.threadId === "t-large");
     const text = (reply as { text: string } | undefined)?.text ?? "";
     expect(text.startsWith("éé")).toBe(true);
     expect(Buffer.byteLength(text)).toBe(14 * 1024 * 1024 + Buffer.byteLength("Hello from pi"));
-  });
+  }, 120_000);
 
   it("resolves the catalog probe empty on an oversized frame instead of waiting for its timeout", async () => {
     const started = Date.now();

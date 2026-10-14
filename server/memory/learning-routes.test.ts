@@ -108,6 +108,6 @@ it("serves candidate review reasons in the owner list and inspection",async()=>{
  const f=learned(),ticket=ownerMemoryTicket();f.db.exec("UPDATE memory_records SET state='candidate' WHERE id='fact';UPDATE memory_record_details SET confidence_basis='needs-owner-approval' WHERE record_id='fact'");
  for(const action of [{action:"list",state:"candidate"},{action:"inspect",id:"fact",version:1}]){
   const result=await memoryOwnerRoute("/api/memory/action",action,ticket,roster);
-  expect(JSON.stringify(result)).toContain("Review this memory in Needs review before using it.");
+  expect(JSON.stringify(result)).toContain("This memory needs you before it is used.");
  }
 });

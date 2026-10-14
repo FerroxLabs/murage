@@ -23,6 +23,7 @@ import { filterMemoryReplay } from "./memory/disclosures.ts";
 import { THREAD_RECEIPT_LIMIT } from "./memory/replay-lineage.ts";
 import { roomTranscriptForTurn } from "./room-transcript.ts";
 import type { Message } from "./store.ts";
+import { LineageAllowance } from "./memory/lineage-allowance.ts";
 
 const roster: MemoryRoster = {
   bots: [
@@ -63,29 +64,31 @@ function busyRoom(count: number) {
   return { record, messages };
 }
 
-it(`reads a room at exactly ${THREAD_RECEIPT_LIMIT} receipts whole, as before`, () => {
+it(`a room at exactly ${THREAD_RECEIPT_LIMIT} receipts checks only the lines a prompt can show (R10-03: no whole-room read at any size)`, () => {
   const { messages } = busyRoom(THREAD_RECEIPT_LIMIT);
-  const turn = roomTranscriptForTurn("busy-room", messages, true, access("finch", "busy-room"));
-  expect(turn.messages).toHaveLength(messages.length);
+  const turn = roomTranscriptForTurn(LineageAllowance.tool(1_000_000_000), "busy-room", messages, true, access("finch", "busy-room"));
+  expect(turn.messages.map(m => m.id).slice(-2)).toEqual(["reply-last", "ask"]);
+  expect(turn.messages.length).toBeLessThanOrEqual(31);
+  expect(turn.checked.size).toBeLessThanOrEqual(31);
   expect(turn.withheld.size).toBe(0);
 });
 
 it(`a room past ${THREAD_RECEIPT_LIMIT} receipts no longer fails the turn, for the owner and for anyone else`, () => {
   const { record, messages } = busyRoom(THREAD_RECEIPT_LIMIT + 1);
-  const owner = roomTranscriptForTurn("busy-room", messages, true, access("finch", "busy-room"));
+  const owner = roomTranscriptForTurn(LineageAllowance.tool(1_000_000_000), "busy-room", messages, true, access("finch", "busy-room"));
   // only what the prompt can show was checked, and all of it is shown
   expect(owner.messages.map(m => m.id).slice(-2)).toEqual(["reply-last", "ask"]);
   expect(owner.messages.length).toBeLessThan(100);
   expect(owner.withheld.size).toBe(0);
-  const other = roomTranscriptForTurn("busy-room", messages, false, access("finch", "busy-room", true));
+  const other = roomTranscriptForTurn(LineageAllowance.tool(1_000_000_000), "busy-room", messages, false, access("finch", "busy-room", true));
   expect(other.messages.map(m => m.id).slice(-2)).toEqual(["reply-last", "ask"]);
 
   // what the owner forgets is still withheld there
   forgetMemory(ownerMemoryTicket(), { kind: "record", id: record });
-  const after = roomTranscriptForTurn("busy-room", messages, true, access("finch", "busy-room"));
+  const after = roomTranscriptForTurn(LineageAllowance.tool(1_000_000_000), "busy-room", messages, true, access("finch", "busy-room"));
   expect([...after.withheld]).toEqual(["reply-last"]);
   expect(after.messages.find(m => m.id === "reply-last")?.text).toContain("Reply withheld");
-  const otherAfter = roomTranscriptForTurn("busy-room", messages, false, access("finch", "busy-room", true));
+  const otherAfter = roomTranscriptForTurn(LineageAllowance.tool(1_000_000_000), "busy-room", messages, false, access("finch", "busy-room", true));
   expect(otherAfter.messages.map(m => m.id)).not.toContain("reply-last");
   // the forget moved the deletion epoch, so a reader that is not the owner
   // keeps none of the older replies (its rule, unchanged); the search for
@@ -102,15 +105,15 @@ it("a line listed by more than the old per-line receipt cap is judged by all of 
   database().prepare(`WITH RECURSIVE n(value) AS (VALUES(1) UNION ALL SELECT value+1 FROM n WHERE value<?)
     INSERT INTO memory_disclosures(bundle_id,thread_id,driver_instance,record_versions,source_versions,output_message_ids,policy_revision,deletion_epoch,token_count,state,created_at)
     SELECT 'crowd-'||value,'busy-room','driver','[]','[]','["reply-3"]',?,?,0,'delivered',value FROM n`).run(THREAD_RECEIPT_LIMIT + 1, a.policyRevision, a.deletionEpoch);
-  const owner = roomTranscriptForTurn("busy-room", messages, true, access("finch", "busy-room"));
+  const owner = roomTranscriptForTurn(LineageAllowance.tool(1_000_000_000), "busy-room", messages, true, access("finch", "busy-room"));
   expect([...owner.withheld]).toEqual([]);
-  const other = roomTranscriptForTurn("busy-room", messages, false, access("finch", "busy-room", true));
+  const other = roomTranscriptForTurn(LineageAllowance.tool(1_000_000_000), "busy-room", messages, false, access("finch", "busy-room", true));
   expect(other.messages.map(m => m.id)).toContain("reply-3");
   expect(other.messages.map(m => m.id)).toContain("reply-4");
-  expect(filterMemoryReplay("busy-room", messages, access("finch", "busy-room")).map(m => m.id)).toContain("reply-3");
+  expect(filterMemoryReplay(LineageAllowance.tool(), "busy-room", messages, access("finch", "busy-room")).map(m => m.id)).toContain("reply-3");
   // one of them revoked: a reader held to receipts no longer sees the line
   database().prepare("UPDATE memory_disclosures SET state='revoked' WHERE bundle_id='crowd-1700'").run();
-  const otherAfter = roomTranscriptForTurn("busy-room", messages, false, access("finch", "busy-room", true));
+  const otherAfter = roomTranscriptForTurn(LineageAllowance.tool(1_000_000_000), "busy-room", messages, false, access("finch", "busy-room", true));
   expect(otherAfter.messages.map(m => m.id)).not.toContain("reply-3");
   expect(otherAfter.messages.map(m => m.id)).toContain("reply-4");
 });
@@ -120,7 +123,7 @@ it("recall of a reply in a room past the limit still follows the content rule", 
   captureSource(database(), { id: "message:busy-room:reply-last", threadId: "busy-room", messageId: "reply-last", kind: "text", speaker: "dax", outcome: "recorded", text: "Rows 83-86 went out on the 26th." });
   for (let work = claimMemoryJob("t2"); work; work = claimMemoryJob("t2")) publishMemoryWork(work, "t2", captureWork(work));
   const chunk = database().prepare("SELECT r.id,r.version FROM memory_evidence e JOIN memory_records r ON r.id=e.record_id AND r.version=e.record_version WHERE e.source_id='message:busy-room:reply-last' AND r.kind='source'").get() as { id: string; version: number };
-  expect(hydrateMemoryRecord(chunk.id, chunk.version, access("finch", "busy-room")).text).toContain("83-86");
+  expect(hydrateMemoryRecord(chunk.id, chunk.version, access("finch", "busy-room"), {allowance: LineageAllowance.tool(1_000_000_000)}).text).toContain("83-86");
   forgetMemory(ownerMemoryTicket(), { kind: "record", id: record });
-  expect(() => hydrateMemoryRecord(chunk.id, chunk.version, access("finch", "busy-room"))).toThrow("MEMORY_EVIDENCE_UNAVAILABLE");
+  expect(() => hydrateMemoryRecord(chunk.id, chunk.version, access("finch", "busy-room"), {allowance: LineageAllowance.tool(1_000_000_000)})).toThrow("MEMORY_EVIDENCE_UNAVAILABLE");
 });

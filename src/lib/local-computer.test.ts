@@ -254,3 +254,13 @@ describe("taking this screen away from a bot", () => {
     expect(switchRevokesThisComputer({ platform: "linux", from: undefined, to: "off" })).toBe(false);
   });
 });
+
+describe("Windows computer wording", () => {
+  it("states what Windows bots use, with no limit language", async () => {
+    const { localComputerDisabledReason, WINDOWS_COMPUTER_TEXT } = await import("./local-computer");
+    expect(WINDOWS_COMPUTER_TEXT).toBe("On Windows, bots work on a cloud computer or a local VM. Pick one in Computer settings.");
+    expect(WINDOWS_COMPUTER_TEXT).not.toMatch(/—|safe|yet|cannot/i);
+    const caps = { host: { platform: "win32", label: "Windows" }, localComputer: { available: false, enabled: false } } as never;
+    expect(localComputerDisabledReason({ capabilities: caps, providerSupportsLocal: true })).toBe(WINDOWS_COMPUTER_TEXT);
+  });
+});

@@ -256,6 +256,33 @@ export function useReplyDraft<T extends { id: string }>(
   return { replyTo, selectReply, clearReply, consumeReply, restoreReply };
 }
 
+// While a send is out, its draft is frozen: the words (and attachments) the server is
+// being given are exactly the ones the acknowledgement clears. Anything that tries to
+// change the draft in the meantime (typing, a paste, a drop, a chip removed, an image
+// added from elsewhere) is refused or, for an attachment that arrives, held for after.
+const frozenDrafts = new Set<string>();
+const deferredAppends = new Map<string, Attachment[]>();
+
+const frozenListeners = new Set<() => void>();
+const announceFrozen = (): void => { for (const listener of [...frozenListeners]) listener(); };
+
+export function freezeDraft(draftId: string): void { frozenDrafts.add(draftId); announceFrozen(); }
+export function isDraftFrozen(draftId: string): boolean { return frozenDrafts.has(draftId); }
+/** For useSyncExternalStore: a composer mounted while a send is out follows it. */
+export function subscribeDraftFrozen(listener: () => void): () => void {
+  frozenListeners.add(listener);
+  return () => { frozenListeners.delete(listener); };
+}
+
+/** The send was acknowledged or failed (its words already cleared or restored): the draft takes edits again. */
+export function thawDraft(draftId: string): void {
+  if (!frozenDrafts.delete(draftId)) return;
+  announceFrozen();
+  const held = deferredAppends.get(draftId);
+  deferredAppends.delete(draftId);
+  if (held?.length) appendComposerDraftAttachments(draftId, held);
+}
+
 export function draftRevision(draftId: string): number {
   return draftRevisions.get(draftId) ?? 0;
 }
@@ -264,6 +291,23 @@ export function markDraftEdited(draftId: string): void {
   restoredSendIds.delete(draftId);
   setStoredSendId(getStore(), draftId, undefined);
   draftRevisions.set(draftId, draftRevision(draftId) + 1);
+}
+
+/** Pin the id of the send now in flight to its draft. The words stay in the box until the
+ * server acknowledges them, so a send pressed again (or from another view of this draft)
+ * reuses the id and can never run twice. */
+export function pinDraftSendId(draftId: string, sendId: string): void {
+  restoredSendIds.set(draftId, sendId);
+  setStoredSendId(getStore(), draftId, sendId);
+}
+
+/** The server acknowledged the send: only now does the box empty, and only if the person
+ * has not changed it since. Returns whether it cleared. */
+export function clearAcknowledgedDraft(draftId: string, revision: number): boolean {
+  if (draftRevision(draftId) !== revision) return false;
+  markDraftEdited(draftId);
+  restoreComposerDraft(draftId, { text: "", attachments: [], channelMode: "chat" });
+  return true;
 }
 
 export function restoredSendId(draftId: string): string | undefined {
@@ -299,6 +343,11 @@ const samePath = (a: Attachment, b: Attachment) => a.kind !== "paste" && b.kind 
  * twice. */
 export function appendComposerDraftAttachments(id: string, added: Attachment[]): void {
   if (added.length === 0) return;
+  // A send is out: the draft is frozen, so these wait and join the NEXT draft when it is released.
+  if (frozenDrafts.has(id)) {
+    deferredAppends.set(id, [...(deferredAppends.get(id) ?? []), ...added]);
+    return;
+  }
   markDraftEdited(id);
   const listeners = attachmentAppendListeners.get(id);
   if (listeners?.size) {
@@ -368,8 +417,41 @@ export function rememberFailedComposerSend(
   return failed;
 }
 
+// ONE recovery surface per sendId. The server keeps a refused send's words as a chip (durable, listed on
+// every device); the draft box and the retry list are the other two places those words could be put back.
+// When a chip exists for a sendId, the chip is the surface and the other two give theirs up.
+let refusedChipSendIds: ReadonlySet<string> = new Set();
+
+/** The sends the server currently shows as refused chips. Anything this device restored for one of them is released. */
+export function noteRefusedChips(sendIds: ReadonlySet<string>): void {
+  refusedChipSendIds = sendIds;
+  for (const sendId of sendIds) releaseRecoveredSend(sendId);
+}
+
+/** Give up every local copy of a send's words (a restored draft that has not been edited, a retry-list item):
+ * the chip, or nothing, holds them now. A draft the person has edited since is theirs and stays. */
+export function releaseRecoveredSend(sendId: string, options: { includeFrozen?: boolean } = {}): void {
+  const draftIds = new Set<string>(restoredSendIds.keys());
+  for (const [draftId, stored] of Object.entries(read(getStore(), SEND_IDS_KEY))) if (stored === sendId) draftIds.add(draftId);
+  for (const draftId of draftIds) {
+    if (restoredSendId(draftId) !== sendId) continue;
+    if (!options.includeFrozen && frozenDrafts.has(draftId)) continue;
+    clearAcknowledgedDraft(draftId, draftRevision(draftId));
+  }
+  // Retry lists of conversations not loaded this session live only in storage: load them too.
+  const retryDraftIds = new Set<string>([...failedSends.keys(), ...Object.keys(read(getStore(), FAILED_SENDS_KEY))]);
+  for (const draftId of retryDraftIds) {
+    for (const failed of failedComposerSends(draftId)) if (failed.sendId === sendId) forgetFailedComposerSend(draftId, failed.id);
+  }
+}
+
 /** Recovers a rejected POST without ever replacing a newer draft. */
-export function recoverFailedComposerSend(sent: ComposerSendSnapshot): "restored" | "outbox" {
+export function recoverFailedComposerSend(sent: ComposerSendSnapshot): "restored" | "outbox" | "chip" {
+  // The server already holds these words as a refused chip: do not put a second copy anywhere.
+  if (refusedChipSendIds.has(sent.sendId)) {
+    releaseRecoveredSend(sent.sendId, { includeFrozen: true });
+    return "chip";
+  }
   if (draftRevision(sent.draftId) !== sent.revision) {
     rememberFailedComposerSend(sent.draftId, {
       sendId: sent.sendId,

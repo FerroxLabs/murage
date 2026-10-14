@@ -8,6 +8,7 @@ import { closeDatabase, database } from "../database.ts";
 import { timedStep } from "./claim-trace.ts";
 import { capturedMessageWithheld } from "./replay-lineage.ts";
 import { memoryStatsSince, memoryStatsSnapshot, noteMemorySearch } from "./turn-stats.ts";
+import { LineageAllowance } from "./lineage-allowance.ts";
 
 beforeEach(() => { closeDatabase(); rmSync(DATA_DIR, { recursive: true, force: true }); mkdirSync(DATA_DIR, { recursive: true }); process.env.MURAGE_TURN_TRACE = "1"; });
 afterEach(() => { delete process.env.MURAGE_TURN_TRACE; vi.restoreAllMocks(); });
@@ -28,8 +29,8 @@ it("the turn stats report hits, search ms, lineage rows and cache hits and misse
   database();
   const before = memoryStatsSnapshot();
   noteMemorySearch(3, 12.4);
-  capturedMessageWithheld("t", "m1");
-  capturedMessageWithheld("t", "m1");
+  capturedMessageWithheld(LineageAllowance.tool(1_000_000_000), "t", "m1");
+  capturedMessageWithheld(LineageAllowance.tool(1_000_000_000), "t", "m1");
   const delta = memoryStatsSince(before);
   expect(delta).toMatchObject({ hits: 3, searchMs: 12, lineageHit: 1, lineageMiss: 1 });
   expect(delta.lineageRows).toBeGreaterThanOrEqual(0);

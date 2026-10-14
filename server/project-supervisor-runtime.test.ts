@@ -20,12 +20,14 @@ function usageFixture() {
   const owner = { botId: "lead", generation: "gen", notOwnerAudience: false };
   const pending = new Map(); const turns = new Map(); const bindings = new Map();
   const settle = vi.fn(); const complete = vi.fn(); const insert = vi.fn((_db: unknown, _input: unknown) => ({ request }));
-  const deps = { internalTurnOwners: new Map([["thread", owner]]), turnRequestByGeneration: bindings, delegationWatch: new Map(), syncAskRequests: new Map(),
+  const deps = { fluxFirstTokenProbe: { begin() {}, observe() {} }, internalTurnOwners: new Map([["thread", owner]]), turnRequestByGeneration: bindings, delegationWatch: new Map(), syncAskRequests: new Map(),
     dispatchProjectUsageTurn,
+    // the fence is engine-input's own subject (engine-input tests); this seam is about accounting, so the built turn passes through unwrapped
+    fencedTurnInput: (input: { prompt?: unknown }, _fence: unknown) => { const { prompt: _prompt, ...rest } = input; return { ...rest, text: "" }; },
     sharedOwnerUsageTurn: seam("sharedOwnerUsageTurn", { store: { bot: () => undefined } }),
     abandonSharedOwnerUsageTurn: seam("abandonSharedOwnerUsageTurn", { sharedOwnerUsage: createSharedOwnerUsage(vi.fn()) }),
     roomRequest: () => request, database: () => ({}), projectGroupForThread: () => ({ id: "g", channelProject: true }),
-    store: { messagesFor: () => [], group: () => ({ id: "g" }) }, insertRoomRequest: insert, activeRoomGoal: () => "goal",
+    store: { messagesFor: () => [], newestMatching: () => undefined, group: () => ({ id: "g" }) }, insertRoomRequest: insert, activeRoomGoal: () => "goal",
     roomLineage: () => ({ notOwnerAudience: true }), projectUsagePending: pending, projectUsageTurns: turns,
     settleProjectUsage: settle, completeRequest: complete, projectFrames: { strip: vi.fn() }, projectBudgetGate: { evaluate: vi.fn() },
     // the warm-engine identity the usage turn now carries (mobile lane): no proven human here
@@ -78,7 +80,7 @@ it("F7 revoking a generation settles and removes a dead usage run", () => {
 it("shared-owner accounting holds asks and settles a failed send", async () => {
   const settleSharedOwner = vi.fn(), sharedOwnerUsage = createSharedOwnerUsage(settleSharedOwner);
   const sendTurn = vi.fn(async () => { throw Error("shared send failed"); });
-  const send = seam("sharedOwnerUsageTurn", { sharedOwnerUsage, store: { bot: () => ({ tasks: [{ threadId: "work", sharedWork: { teamId: "sales" } }] }), messagesFor: () => [{ id: "message", role: "user" }] } });
+  const send = seam("sharedOwnerUsageTurn", { sharedOwnerUsage, store: { bot: () => ({ tasks: [{ threadId: "work", sharedWork: { teamId: "sales" } }] }), messagesFor: () => [{ id: "message", role: "user" }], newestMatching: () => ({ id: "message", role: "user" }) } });
   await expect(send({ driverKind: "fake", adapter: { sendTurn } }, { threadId: "work" }, { botId: "bot", generation: "gen" })).rejects.toThrow("shared send failed");
   expect(sendTurn).toHaveBeenCalledWith({ threadId: "work", holdPermissionAsks: true, holdProjectAsks: true });
   expect(settleSharedOwner).toHaveBeenCalledTimes(1);

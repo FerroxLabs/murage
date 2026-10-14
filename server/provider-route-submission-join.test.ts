@@ -15,14 +15,15 @@ it("actual direct and room submission callbacks reject changed provider revision
   const service = new ProviderConnectionsService({ cacheDir, readBank: () => JSON.stringify([{ id: "fixture", preset: "openai", label: "Fixture", enabled: true, key: "sk-proj-FAKE_ONLY", revision }]) });
   try {
     for (const body of bodies) {
-      const callback = new Function("providerRouteIsCurrent", "providerRoute", "memoryReceipt", body);
+      // the callbacks mark the turn trace at submission (77cb5d307): a trace that records nothing stands in for it
+      const callback = (current: unknown, route: unknown, receipt: unknown, opts: unknown) => new Function("providerRouteIsCurrent", "providerRoute", "memoryReceipt", "opts", "trace", body)(current, route, receipt, opts, { mark() {} });
       const current = (route?: { connectionId: string; revision: string }) => !route || service.isCurrent(route.connectionId, route.revision);
       const accepted = vi.fn(); const boundary = new TurnSubmissionBoundary(); boundary.started(); revision = "r2";
-      expect(() => boundary.beforeSubmit(() => callback(current, { connectionId: "fixture", revision: "r1" }, { accepted }))).toThrow("changed before submission");
+      expect(() => boundary.beforeSubmit(() => callback(current, { connectionId: "fixture", revision: "r1" }, { accepted }, undefined))).toThrow("changed before submission");
       expect(accepted).not.toHaveBeenCalled(); expect(() => boundary.assertNotRefused()).toThrow();
-      const valid = new TurnSubmissionBoundary(); valid.started(); valid.beforeSubmit(() => callback(current, { connectionId: "fixture", revision: "r2" }, { accepted })); expect(accepted).toHaveBeenCalledTimes(1);
+      const valid = new TurnSubmissionBoundary(); valid.started(); valid.beforeSubmit(() => callback(current, { connectionId: "fixture", revision: "r2" }, { accepted }, undefined)); expect(accepted).toHaveBeenCalledTimes(1);
       // The new provider guard must not break memory acceptance on native/no-route turns.
-      const native = new TurnSubmissionBoundary(); native.started(); native.beforeSubmit(() => callback(current, undefined, { accepted })); expect(accepted).toHaveBeenCalledTimes(2);
+      const native = new TurnSubmissionBoundary(); native.started(); native.beforeSubmit(() => callback(current, undefined, { accepted }, undefined)); expect(accepted).toHaveBeenCalledTimes(2);
     }
   } finally { rmSync(cacheDir, { recursive: true, force: true }); }
 });

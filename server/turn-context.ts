@@ -29,12 +29,18 @@ export interface TurnContextInput {
   currentInstanceId?: string;
   /** replayable lines the window left out or the memory check withheld */
   omitted?: number;
+  /** the conversation goes back further than the rows the turn read
+   * (TURN_TAIL_ROWS): older lines exist, uncounted */
+  omittedMore?: boolean;
   /** the visible branch changed (edit / version switch) */
   rewound: boolean;
   /** Authorized memory changed; rebuild without claiming the user edited history. */
   memoryRefreshed?: boolean;
   /** this driver instance has no session cursor for this thread */
   fresh: boolean;
+  /** fresh only because Murage itself started a new engine session for this conversation (the
+   * engine's session contract changed): same engine, nothing was switched over */
+  sessionRestarted?: boolean;
   /** a message was appended outside the provider's own turn (for example,
    * a delegated teammate returned a result). Native resume state cannot
    * contain it, so the active branch must be replayed once. */
@@ -91,6 +97,8 @@ const REWOUND_PREAMBLE =
   "[The user rewound this conversation (edited a message or switched to another version). Everything before this point was replaced by the following history:]";
 export const FRESH_PREAMBLE =
   "[You are joining this conversation mid-thread: this bot was switched over to you. Replies written on other engines are part of this bot's record; do not restate, summarise, correct or disown them. Where your own limits differ, say your own limit and continue with what you can do. The conversation so far:]";
+export const RESTARTED_PREAMBLE =
+  "[Murage started a fresh engine session for this conversation; here is the conversation so far.]";
 const EXTERNAL_UPDATE_PREAMBLE =
   "[This conversation received an update outside your provider session. The complete current history follows so you can use that update in your next response:]";
 
@@ -132,8 +140,17 @@ export function transcriptForDriver(transcript: readonly TranscriptEntry[], curr
 }
 
 /** Shared by native messages, inline history and session recovery. */
-export function replayMetadata(omitted = 0): string {
-  return [FRESH_PREAMBLE, ...(omitted > 0 ? [`[${omitted} earlier ${omitted === 1 ? "line" : "lines"} of this conversation ${omitted === 1 ? "is" : "are"} not shown.]`] : [])].join("\n");
+export function replayMetadata(omitted = 0, sessionRestarted = false, more = false): string {
+  const notice = omittedNotice(omitted, more);
+  return [sessionRestarted ? RESTARTED_PREAMBLE : FRESH_PREAMBLE, ...(notice ? [notice] : [])].join("\n");
+}
+
+/** The line that says how much of the conversation the replay leaves out.
+ * `more`: the turn read only the newest rows and older ones exist, so the
+ * count is not known and none is claimed. */
+export function omittedNotice(omitted = 0, more = false): string | null {
+  if (more) return "[Earlier lines of this conversation are not shown.]";
+  return omitted > 0 ? `[${omitted} earlier ${omitted === 1 ? "line" : "lines"} of this conversation ${omitted === 1 ? "is" : "are"} not shown.]` : null;
 }
 
 export function renderDriverReplay(transcript: readonly { role: "user" | "assistant"; text: string; header?: string }[], metadata = ""): string {
@@ -142,9 +159,9 @@ export function renderDriverReplay(transcript: readonly { role: "user" | "assist
 
 /** Budget the rendered representation, including quotes, labels and headers.
  * Keep whole newest rows. Binary search avoids repeatedly walking long tails. */
-export function fitRenderedReplay(transcript: TranscriptEntry[], currentInstanceId?: string, omitted = 0, maxBytes = 192 * 1024): { transcript: TranscriptEntry[]; omitted: number } {
+export function fitRenderedReplay(transcript: TranscriptEntry[], currentInstanceId?: string, omitted = 0, maxBytes = 192 * 1024, more = false): { transcript: TranscriptEntry[]; omitted: number } {
   const budget = Math.min(maxBytes, 192 * 1024);
-  const fits = (drop: number) => 256 + Buffer.byteLength(renderDriverReplay(transcriptForDriver(transcript.slice(drop), currentInstanceId), replayMetadata(omitted + drop)) + "\n\n[Now reply to the user's latest message:]\n\n") <= budget;
+  const fits = (drop: number) => 256 + Buffer.byteLength(renderDriverReplay(transcriptForDriver(transcript.slice(drop), currentInstanceId), replayMetadata(omitted + drop, false, more)) + "\n\n[Now reply to the user's latest message:]\n\n") <= budget;
   if (!fits(transcript.length)) throw new Error("This engine context window cannot hold the conversation replay notice.");
   let low = 0, high = transcript.length;
   while (low < high) { const mid = Math.floor((low + high) / 2); if (fits(mid)) high = mid; else low = mid + 1; }
@@ -156,16 +173,18 @@ export function buildTurnContext(input: TurnContextInput): {
   /** false when the native session must not be resumed */
   resume: boolean;
 } {
-  const { text, transcript, rewound, fresh, externallyUpdated, replaysNatively, memoryRefreshed, currentInstanceId, omitted } = input;
+  const { text, transcript, rewound, fresh, externallyUpdated, replaysNatively, memoryRefreshed, currentInstanceId, omitted, omittedMore } = input;
+  const notice = omittedNotice(omitted, omittedMore);
+  const restarted = input.sessionRestarted === true && fresh && !rewound && !memoryRefreshed && !externallyUpdated;
   const resume = !rewound && !fresh && !externallyUpdated && !memoryRefreshed;
-  const replay = !resume && !replaysNatively && (transcript.length > 0 || Boolean(omitted));
-  if (!replay) return { turnText: replaysNatively && (transcript.length > 0 || Boolean(omitted)) ? `${replayMetadata(omitted)}\n\n${text}` : text, resume };
+  const replay = !resume && !replaysNatively && (transcript.length > 0 || Boolean(notice));
+  if (!replay) return { turnText: replaysNatively && (transcript.length > 0 || Boolean(notice)) ? `${replayMetadata(omitted, restarted, omittedMore)}\n\n${text}` : text, resume };
   const headers = runHeaders(transcript, currentInstanceId);
   return {
     turnText: [
-      rewound ? REWOUND_PREAMBLE : memoryRefreshed ? "[Your authorized memory context was refreshed. Continue using only the current memory and conversation history below:]" : externallyUpdated ? EXTERNAL_UPDATE_PREAMBLE : FRESH_PREAMBLE,
-      ...(rewound || memoryRefreshed || externallyUpdated ? ["[Replies written on other engines are part of this bot's record; do not restate, summarise, correct or disown them. Where your own limits differ, say your own limit and continue with what you can do.]"] : []),
-      ...(omitted && omitted > 0 ? [`[${omitted} earlier ${omitted === 1 ? "line" : "lines"} of this conversation ${omitted === 1 ? "is" : "are"} not shown.]`] : []),
+      rewound ? REWOUND_PREAMBLE : memoryRefreshed ? "[Your authorized memory context was refreshed. Continue using only the current memory and conversation history below:]" : externallyUpdated ? EXTERNAL_UPDATE_PREAMBLE : restarted ? RESTARTED_PREAMBLE : FRESH_PREAMBLE,
+      ...(rewound || memoryRefreshed || externallyUpdated || restarted ? ["[Replies written on other engines are part of this bot's record; do not restate, summarise, correct or disown them. Where your own limits differ, say your own limit and continue with what you can do.]"] : []),
+      ...(notice ? [notice] : []),
       "",
       ...transcript.flatMap((m, i) => {
         const line = `${m.role === "user" ? "User" : "Assistant"}: ${m.text}`;

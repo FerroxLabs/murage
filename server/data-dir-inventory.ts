@@ -21,7 +21,7 @@
 //                restorable stage; reported "missing" when absent
 //   owner-file   optional owner file copied into the restorable stage
 //   owner-folder folder of owner work copied into the restorable stage
-//   database     messages.db, captured through a consistent SQLite snapshot
+//   database     messages.db and connected-app-ledger.db, captured through a consistent SQLite snapshot
 //   sidecar      SQLite -wal/-shm files covered by their database's snapshot
 //   retained     kept in the encrypted backup but never restored by itself
 //   excluded     runtime, cache, rebuildable, trust or credential state;
@@ -70,6 +70,7 @@ export const DATA_DIR_ENTRIES: Readonly<Record<string, DataDirEntry>> = Object.f
   // startup if missing, so it is never backed up or restored.
   // Hashes and scopes of the script-access grants the owner made (mcp-grants.ts).
   "mcp-grants.json": excluded("Script access grants, switched on again by the owner after a restore; not restored"),
+  "send-ledger.json": excluded("Retired: sends are rows of messages.db now (owner_sends). A leftover file is deleted at startup, not restored"),
   "mcp-access.token": excluded("Local tool access key, created again at startup; not restored"),
   "setup.json": ownerFile(), "queued-messages.json": ownerFile(), "whats-new.json": ownerFile(),
   "announcements.json": ownerFile(), "house-rules.md": ownerFile(), "house-rules.json": ownerFile(),
@@ -80,6 +81,10 @@ export const DATA_DIR_ENTRIES: Readonly<Record<string, DataDirEntry>> = Object.f
   "install-id.json": { backup: "owner-file", why: "Random per-install id for the connected-apps token label; kept by a backup and restore so the installation stays one identity" },
   // The sidebar's section order, the same on every device (sidebar-order.ts).
   "sidebar-order.json": ownerFile(),
+  // Which Terms/Privacy version the owner accepted and when (terms.ts). A
+  // per-install legal record meant to survive a reinstall and a second device,
+  // so a backup keeps it and a restore brings it back.
+  "terms-acceptance.json": ownerFile(),
   // The approval decision log (decision-log.ts) and its one rotated file.
   // It is the owner's own record of what each bot was allowed or denied,
   // with command lines already passed through redactSecrets. It is no more
@@ -106,6 +111,15 @@ export const DATA_DIR_ENTRIES: Readonly<Record<string, DataDirEntry>> = Object.f
   "messages.db": { backup: "database", why: APPLICATION },
   "messages.db-wal": { backup: "sidecar", why: APPLICATION },
   "messages.db-shm": { backup: "sidecar", why: APPLICATION },
+  // The connected-app operation ledger (connected-app-journal.ts): records of
+  // actions whose outcome may be unknown. An action that reached its app
+  // stays done whichever computer asks next, so the records travel through a
+  // consistent snapshot and a restore keeps them as unknown, still blocking
+  // an equivalent request until the bot checks the app.
+  "connected-app-ledger.db": { backup: "database", why: "Records of connected-app actions whose outcome may be unknown; kept so a restored computer does not repeat an action that already reached its app. A restore marks them not known to have finished, and the check tool can clear any that no longer apply" },
+  "connected-app-ledger.db-wal": { backup: "sidecar", why: APPLICATION },
+  "connected-app-ledger.db-shm": { backup: "sidecar", why: APPLICATION },
+  "connected-app-ledger.db-journal": { backup: "sidecar", why: APPLICATION },
   "memory-index.db-wal": { backup: "sidecar", why: APPLICATION },
   "memory-index.db-shm": { backup: "sidecar", why: APPLICATION },
 
@@ -119,10 +133,13 @@ export const DATA_DIR_ENTRIES: Readonly<Record<string, DataDirEntry>> = Object.f
   "messages.pre-memory-v2.db": excluded("Pre-upgrade copy of messages.db kept for manual 0.1.x rollback only; the live messages.db is the backed-up authority"),
   "messages.pre-memory-v4.db": excluded("Pre-upgrade memory v3 copy for manual reinstall; messages.db remains authoritative"),
   "messages.pre-memory-v3.db": excluded("Pre-upgrade copy of messages.db (memory v2) kept for a manual 0.1.60 reinstall only; the live messages.db is the backed-up authority"),
+  "memory-upgrade-overall.json": excluded("Start-up note holding how far the memory upgrade got, so a restart's progress bar never moves back; removed when the upgrade finishes"),
+  "memory-upgrade-counts.json": excluded("Cache of the exact message counts the upgrade screen shows, keyed on messages.db's write revision; recounted when absent or stale"),
   "memory-upgrade-status.json": excluded("Start-up note written while the memory upgrade runs (progress, or why it could not run); removed when the upgrade finishes"),
   "native": excluded(RUNTIME), "decider-log": excluded("Decision-model call log (no message text); regenerates and expires after 180 days"), "pending-deletions.json": excluded(RUNTIME), "memory-index": excluded(RUNTIME),
-  "models": excluded(RUNTIME), "logs": excluded(RUNTIME), "tmp": excluded(RUNTIME), "browser-profiles": excluded(RUNTIME),
+  "models": excluded(RUNTIME), "logs": excluded(RUNTIME), "tmp": excluded(RUNTIME), "connector-tools-cache": excluded(DOWNLOADED), "browser-profiles": excluded(RUNTIME),
   "browser-engine": excluded(RUNTIME),
+  "engine-redo": excluded("Crash journal of a coding-engine history rewrite (offsets and fill kinds, never any text); finished at the next start and removed; not restored"),
   // Handoff budgets that expire after 24 hours (coordination-budget.ts) and
   // who holds each native browser session (browser-control.ts).
   "coordination-roots.json": excluded(RUNTIME), "browser-control.json": excluded(RUNTIME),
@@ -141,6 +158,7 @@ export const DATA_DIR_ENTRIES: Readonly<Record<string, DataDirEntry>> = Object.f
   // account ids, aliases and statuses for one credential. Refetched on the
   // restored computer, and never shown to another account.
   "connected-apps-inventory.json": excluded(RUNTIME),
+  "bus-spill": excluded("Over-bound events parked by an earlier build; removed at start, never restored"),
   "skill-index.db": excluded(DERIVED_SKILLS), "skill-index.db-wal": excluded(DERIVED_SKILLS),
   "skill-index.db-shm": excluded(DERIVED_SKILLS), "skill-index.db-journal": excluded(DERIVED_SKILLS),
   // Downloads Murage fetches again on demand: model catalogs, managed engine
@@ -227,6 +245,7 @@ export const DATA_DIR_PATTERNS: ReadonlyArray<{ pattern: RegExp; entry: DataDirE
   // final name only when whole; a killed start leaves this behind and the next
   // start deletes it), and the status note's own temp file.
   { pattern: /^messages\.pre-memory-v[234]\.db\.partial(?:-journal|-wal|-shm)?$/, entry: excluded(LEFTOVER), example: "messages.pre-memory-v3.db.partial-journal" },
+  { pattern: /^memory-upgrade-(?:overall|counts)\.json\.\d+\.tmp$/, entry: excluded(LEFTOVER), example: "memory-upgrade-overall.json.4242.tmp" },
   { pattern: /^memory-upgrade-status\.json\.\d+\.tmp$/, entry: excluded(LEFTOVER), example: "memory-upgrade-status.json.4242.tmp" },
   // A skill index build stopped before its rename (skill-search.ts).
   { pattern: /^skill-index\.db\.\d+\.[a-z0-9]{1,8}\.tmp(?:-journal|-wal|-shm)?$/, entry: excluded(DERIVED_SKILLS), example: "skill-index.db.1268.ffjn5f.tmp" },

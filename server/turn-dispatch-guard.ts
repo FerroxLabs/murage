@@ -22,6 +22,11 @@ export class TurnSubmissionBoundary {
       throw error;
     }
   }
+  /** A refusal that happened before the adapter wrote (the send fence runs ahead of beforeSubmit): the same state beforeSubmit leaves. */
+  refuse(error: unknown) {
+    this.state = "refused"; this.refusal = error;
+    if (this.accepted) { try { this.onLateRefusal?.(error); } catch { /* the refusal itself still stands */ } }
+  }
   assertNotRefused() { if (this.state === "refused") throw this.refusal; }
   get canRetry() { return this.state !== "unknown"; }
 }

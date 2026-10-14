@@ -2,7 +2,7 @@
 import { randomUUID } from "node:crypto";
 import { readBrowserSetupCard, type BrowserSetupCardData } from "../shared/browser-setup-card.ts";
 import { isOwnerOrigin, type Store, type BotRecord } from "./store.ts";
-type SetupStore = Pick<Store,"messagesFor"|"appendMessage"|"patchMessage"|"bots"|"groups">;
+type SetupStore = Pick<Store,"keyedCards"|"keyedCardsEverywhere"|"messageById"|"newestMatching"|"appendMessage"|"patchMessage"|"bots"|"groups">;
 export type BrowserSetupStatus = { profiles: {profileId:string;browser:string}[]; bindings: {bindingId?:string;botId:string;threadId:string;profileId:string;state:string}[] };
 type Options = {
   store: SetupStore;
@@ -22,11 +22,12 @@ export class BrowserExtensionSetup {
   constructor(options:Options){this.options=options;}
   request(botId:string,threadId:string,reason:string="") {
     const bot=this.options.owner(botId,threadId);if(!bot)refusal("This conversation cannot request browser setup.");
-    const messages=this.options.store.messagesFor(threadId);
     // Only the owner's own words anchor a browser request: a message of unproven or other origin never does.
-    const ownerMessage=messages.findLast(message=>message.role==='user'&&message.kind==='text'&&message.text?.trim()&&(message.origin===undefined||isOwnerOrigin(message.origin)));
+    // The newest such line is found from the end of the thread: the work is the rows written since it.
+    const ownerMessage=this.options.store.newestMatching(threadId,message=>message.role==='user'&&message.kind==='text'&&Boolean(message.text?.trim())&&(message.origin===undefined||isOwnerOrigin(message.origin)),Number.POSITIVE_INFINITY);
     if(!ownerMessage)refusal("Ask for a task in this conversation before connecting a browser.");
-    const existing=messages.find(message=>{const setup=readBrowserSetupCard(message.card);return setup?.botId===botId&&setup.ownerMessageId===ownerMessage.id&&!setup.resumed&&!message.card?.answered;});
+    // The offers still open in this conversation are kept by key (keyed_card), so this is those offers and never the thread.
+    const existing=this.options.store.keyedCards(threadId,'browser').find(message=>{const setup=readBrowserSetupCard(message.card);return setup?.botId===botId&&setup.ownerMessageId===ownerMessage.id&&!setup.resumed&&!message.card?.answered;});
     if(existing)return {messageId:existing.id,pending:true};
     // A bot the owner already connected keeps that connection: no second offer
     // and no browser question, only the check before its task continues.
@@ -37,7 +38,7 @@ export class BrowserExtensionSetup {
       :{title:'Use your browser for this task?',subtitle:reason.trim().slice(0,240)||'You can connect your signed-in browser, or keep using Murage without it.',options:['Set up','Not now'],browserSetup}});
     return {messageId:message.id,pending:true};
   }
-  private card(threadId:string,messageId:string){const message=this.options.store.messagesFor(threadId).find(item=>item.id===messageId);const setup=readBrowserSetupCard(message?.card);if(!message?.card||!setup||setup.threadId!==threadId||!this.options.owner(setup.botId,threadId))refusal("This browser setup request is no longer available.");return {message,setup};}
+  private card(threadId:string,messageId:string){const message=this.options.store.messageById(threadId,messageId);const setup=readBrowserSetupCard(message?.card);if(!message?.card||!setup||setup.threadId!==threadId||!this.options.owner(setup.botId,threadId))refusal("This browser setup request is no longer available.");return {message,setup};}
   private patch(threadId:string,messageId:string,patch:Partial<BrowserSetupCardData>){const {message,setup}=this.card(threadId,messageId);this.options.store.patchMessage(threadId,messageId,{card:{...message.card!,browserSetup:{...setup,...patch}}});}
   async answer(threadId:string,messageId:string,action:'accept'|'decline'|'continue',profileId?:string,browser?:'chrome'|'edge'|'brave') {
     const {message,setup}=this.card(threadId,messageId);if(setup.resumed)return {resumed:true};
@@ -76,7 +77,9 @@ export class BrowserExtensionSetup {
   /** Called when a turn settles, never on a connection heartbeat alone. */
   async drain():Promise<void>{
     const threads=new Set<string>();for(const owner of [...this.options.store.bots,...this.options.store.groups]){threads.add(owner.threadId);for(const task of owner.tasks??[])threads.add(task.threadId);}
-    for(const threadId of threads)for(const message of this.options.store.messagesFor(threadId)){
+    // Only the offers still open are visited, found by key across every conversation (keyed_card), never by reading a transcript.
+    for(const {threadId,message} of this.options.store.keyedCardsEverywhere('browser')){
+      if(!threads.has(threadId))continue;
       const setup=readBrowserSetupCard(message.card);if(!setup||message.card?.answered||setup.resumed||!setup.continueRequested||this.working.has(setup.requestKey))continue;
       const bot=this.options.owner(setup.botId,threadId);if(!bot||bot.busy)continue;
       if(setup.decision==='accepted'){

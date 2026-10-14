@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import { useCallback, useEffect, useRef, useState } from "react";
 import { api, useStore, type Bot } from "@/state/store";
+import { allHeldTasks } from "@/lib/task-window";
 import { ContinuityView } from "./ContinuityView";
 import {
   continuityDeleteBody,
@@ -158,7 +159,7 @@ export function ContinuityBlock({ bot }: { bot: Bot }) {
     onDismissProposal={dismissProposal}
     onKeep={keep}
     onRetryReflection={retryReflection}
-    reflectThreads={[{ id: bot.threadId, title: "Main conversation" }, ...(bot.tasks ?? []).map(t => ({ id: t.threadId, title: t.title || "Conversation" }))]}
+    reflectThreads={[{ id: bot.threadId, title: "Main conversation" }, ...allHeldTasks(bot).map(t => ({ id: t.threadId, title: t.title || "Conversation" }))]}
     onReflectExclude={(threadId, excluded) => guarded(() => act(reflectExcludeBody(bot.id, threadId, excluded)) as Promise<{ ok?: boolean }>)}
     onSave={save}
     onAdd={add}

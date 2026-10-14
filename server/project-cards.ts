@@ -23,6 +23,9 @@ import {
   type ProjectCard,
   type ProjectWaitingOn,
 } from "./project-records.ts";
+import { recordNoteLineage, releaseNote, requestAnswerOrigin, requestTurnThread, storedNote, type NoteOrigin, type StoredNote } from "./project-notes.ts";
+import { murageObjectRef, recordTurnObject } from "./memory/prompt-parts.ts";
+import type { RedoNotes } from "./project-prompt.ts";
 
 /** Who acts. L operations carry the lead's bot id; A operations the acting
  * member's. The routes and the internal tools prove the role before they
@@ -250,6 +253,8 @@ export function createProjectCard(
     JSON.stringify(sources), input.createKey ?? null, input.dueAt ?? null,
     input.createdBy ?? actorName(input.actor), input.now, input.now,
   );
+  // a card a lead writes (its title and description are the lead's words) rests on the lead's turn (DESIGN-WRITETIME 2.5)
+  if (input.actor.kind === "lead") recordTurnObject(db, requestTurnThread(db, input.actor.lineage?.parentId), murageObjectRef("project-card", id), input.actor.botId);
   const card = projectCardById(db, id)!;
   activity(db, card, "card_created", actorName(input.actor), input.now, { state: "todo" });
   return { ok: true, card };
@@ -523,7 +528,10 @@ export function pickCardReviewer(db: DatabaseSync, card: ProjectCard, memberIds:
  * another bot or for another generation is refused (5.1a). */
 export function applyReviewVerdict(
   db: DatabaseSync,
-  input: { cardId: string; requestId: string; verdict: "pass" | "changes"; notes?: string; reviewerBotId: string; now: number },
+  input: { cardId: string; requestId: string; verdict: "pass" | "changes"; notes?: string; reviewerBotId: string; now: number;
+    /** The reviewer's stored answer the notes were read from (the fenced block in its reply). A tool verdict names none: the notes are stored as
+     * the reviewer's message of the review run's turn, with that turn's lineage, and rest on that (server/project-notes.ts). */
+    notesFrom?: { threadId: string; messageIds: string[] } },
 ): { ok: true } | CardFailure {
   const card = cardOr404(db, input.cardId);
   if (!("state" in card)) return card;
@@ -537,7 +545,12 @@ export function applyReviewVerdict(
   if (input.verdict !== "pass" && input.verdict !== "changes") return invalid("The verdict is pass or changes.");
   db.prepare("UPDATE room_requests SET outcome_note=? WHERE id=?").run(input.verdict, input.requestId);
   const notes = input.notes?.trim().slice(0, 500);
-  activity(db, card, "card_result", input.reviewerBotId, input.now, { review: input.verdict, ...(notes ? { notes } : {}) }, input.requestId);
+  // the notes are the reviewer's own words: they keep where they came from, and a bot reads them only through the result gate
+  const notesOrigin: NoteOrigin = { by: input.reviewerBotId, requestId: input.requestId, ...(input.notesFrom?.messageIds.length ? { threadId: input.notesFrom.threadId, messageIds: [...input.notesFrom.messageIds] } : {}) };
+  // the notes rest on the reviewer's whole turn (write-time, closes evhand r11c): project-notes.ts
+  const notesLineage = notes ? recordNoteLineage(db, requestTurnThread(db, input.requestId), input.requestId, input.reviewerBotId) : undefined;
+  if (notesLineage) notesOrigin.lineage = notesLineage;
+  activity(db, card, "card_result", input.reviewerBotId, input.now, { review: input.verdict, ...(notes ? { notes, notesOrigin } : {}) }, input.requestId);
   return { ok: true };
 }
 
@@ -561,12 +574,29 @@ export function changesRequestedCount(db: DatabaseSync, cardId: string): number 
 export const CHANGES_BEFORE_LEAD_DECIDES = 2;
 
 /** What the latest changes-requested review since the last reassignment
- * said, or null. */
-export function changesRequestedNotes(db: DatabaseSync, cardId: string, since = changesCountSince(db, cardId)): string | null {
-  const row = db.prepare(`SELECT json_extract(detail,'$.notes') AS notes FROM project_activity
+ * said, or null: sealed, with where it came from. A bot reads it only through
+ * releaseNote (server/project-notes.ts), at the prompt that quotes it. */
+export function changesRequestedNotes(db: DatabaseSync, cardId: string, since = changesCountSince(db, cardId)): StoredNote | null {
+  const row = db.prepare(`SELECT json_extract(detail,'$.notes') AS notes, json_extract(detail,'$.notesOrigin') AS origin FROM project_activity
     WHERE work_item_id=? AND kind='card_result' AND json_extract(detail,'$.review')='changes' AND at>?
-    ORDER BY at DESC, rowid DESC LIMIT 1`).get(cardId, since) as { notes: string | null } | undefined;
-  return row?.notes ?? null;
+    ORDER BY at DESC, rowid DESC LIMIT 1`).get(cardId, since) as { notes: string | null; origin: string | null } | undefined;
+  return row ? storedNote(row.notes, row.origin) : null;
+}
+
+/** Where a lead's note on a card comes from: the lead's own turn, resting on what it judged (the card's latest review answer, or else the
+ * card's result). Null without the turn or without anything stored to rest on: such a note cannot be checked, so no bot is shown it. */
+function leadNoteOrigin(db: DatabaseSync, card: ProjectCard, actor: ProjectActor): NoteOrigin | null {
+  if (actor.kind !== "lead" || !actor.lineage?.parentId) return null;
+  const review = card.reviewRequestId ? roomRequestById(db, card.reviewRequestId) : null;
+  const rests = requestAnswerOrigin(review) ?? (card.deskThreadId && card.resultMessageId ? { threadId: card.deskThreadId, messageIds: [card.resultMessageId] } : undefined);
+  return rests ? { by: actor.botId, requestId: actor.lineage.parentId, threadId: rests.threadId, messageIds: rests.messageIds } : null;
+}
+
+/** A lead's note rests on the lead's whole turn (write-time, closes evhand r11c): recorded in the note's own transaction. */
+function withNoteLineage(db: DatabaseSync, origin: NoteOrigin | null, actor: ProjectActor | undefined): void {
+  if (!origin || actor?.kind !== "lead" || !actor.lineage?.parentId) return;
+  const lineage = recordNoteLineage(db, requestTurnThread(db, actor.lineage.parentId), actor.lineage.parentId, actor.botId);
+  if (lineage) origin.lineage = lineage;
 }
 
 /** The latest recorded verdict for the card's current generation, or null. */
@@ -639,6 +669,7 @@ export function sendProjectCardBack(
     return notAllowed(`Card ${card.number} has been sent back for changes twice. Accept it, or reassign it and say why.`);
   }
   const attempt = card.attempt + 1;
+  const noteOrigin = leadNoteOrigin(db, card, input.actor);
   writeCard(db, card.id, stateFields("todo", {
     attempt, review_request_id: null, request_id: null,
     reason: input.note?.slice(0, 200) ?? null,
@@ -655,7 +686,8 @@ export function sendProjectCardBack(
   unmarkCriteriaForCard(db, card.id, input.now);
   const after = projectCardById(db, card.id)!;
   const sentBackNote = input.note?.trim().slice(0, 500);
-  activity(db, after, "card_moved", actorName(input.actor), input.now, { from: "review", to: "todo", ...(sentBackNote ? { note: sentBackNote } : {}) }, requestId);
+  withNoteLineage(db, noteOrigin, sentBackNote ? input.actor : undefined);
+  activity(db, after, "card_moved", actorName(input.actor), input.now, { from: "review", to: "todo", ...(sentBackNote ? { note: sentBackNote, ...(noteOrigin ? { noteOrigin } : {}) } : {}) }, requestId);
   return { ok: true, card: after, requestId: requestId ?? undefined };
 }
 
@@ -720,6 +752,7 @@ export function reassignProjectCard(
     const goalActive = db.prepare("SELECT 1 FROM project_goals WHERE group_id=? AND state IN ('planning','awaiting_plan_ok','working','awaiting_signoff','paused')").get(card.groupId);
     if (settings?.mode !== "ongoing" && !goalActive) return notAllowed("The lead can reassign only while a goal runs or the project is ongoing.");
   }
+  const noteOrigin = leadNoteOrigin(db, card, input.actor);
   cancelCardRequests(db, card, input.now, "reassigned");
   const generation = card.generation + 1;
   writeCard(db, card.id, stateFields("todo", {
@@ -736,7 +769,8 @@ export function reassignProjectCard(
     cardGeneration: generation + 1, attempt: card.attempt, admissionKey: cardRunAdmissionKey(card, card.attempt, generation + 1), now: input.now,
   });
   const after = projectCardById(db, card.id)!;
-  activity(db, after, "card_reassigned", actorName(input.actor), input.now, { from: card.state, to: "todo", ...(card.assigneeBotId === input.assigneeBotId ? { same: true } : {}), ...(input.reason ? { reason: input.reason.slice(0, 500) } : {}) }, requestId);
+  withNoteLineage(db, noteOrigin, input.reason ? input.actor : undefined);
+  activity(db, after, "card_reassigned", actorName(input.actor), input.now, { from: card.state, to: "todo", ...(card.assigneeBotId === input.assigneeBotId ? { same: true } : {}), ...(input.reason ? { reason: input.reason.slice(0, 500), ...(noteOrigin ? { noteOrigin } : {}) } : {}) }, requestId);
   return { ok: true, card: after, requestId: requestId ?? undefined };
 }
 
@@ -995,8 +1029,20 @@ export function editProjectCard(
 
 export { DEFAULT_PROJECT_PARALLEL_CARDS };
 
-/** What a redo run is told (lane cards): see changesRequestedBlock. */
-export interface RedoContext { reviewerNotes?: string; leadNote?: string; reassigned?: true; noteByOwner?: true }
+/** What a redo run is told (lane cards), as stored: the teammates' notes sealed with their origins (they reach the assignee only through
+ * releaseNote, server/project-notes.ts), and the owner's own note, which is the owner's words. See changesRequestedBlock. */
+export interface RedoContext { reviewerNotes?: StoredNote; leadNote?: StoredNote; ownerNote?: OwnerNote; reassigned?: true }
+
+/** The owner's own note on a card (a send back or a reassignment the owner made): made only here, from a row the owner wrote. */
+export type OwnerNote = string & { readonly __ownerNote: unique symbol };
+
+/** What the redo prompt may quote, read now: each teammate's note through the result gate (one withheld or deleted since, or resting on an
+ * answer that is, is left out), and the owner's own note as it is. `notOwnerAudience`: the redo run is not the owner's audience. */
+export function releasedRedoNotes(db: DatabaseSync, redo: RedoContext, notOwnerAudience: boolean): RedoNotes {
+  const reviewerNotes = releaseNote(db, redo.reviewerNotes, notOwnerAudience), leadNote = releaseNote(db, redo.leadNote, notOwnerAudience);
+  return { ...(reviewerNotes ? { reviewerNotes } : {}), ...(leadNote ? { leadNote } : {}), ...(redo.ownerNote ? { ownerNote: redo.ownerNote } : {}),
+    ...(redo.reassigned ? { reassigned: true } : {}) };
+}
 
 /** What a card's redo quotes (lane cards). Looking back from now, past any
  * failure retries: a send back from review gives the lead's own note and the
@@ -1004,9 +1050,10 @@ export interface RedoContext { reviewerNotes?: string; leadNote?: string; reassi
  * gives the new assignee the lead's reason and the same reviewer notes. A
  * card that was never sent back or reassigned quotes nothing. */
 export function redoContext(db: DatabaseSync, cardId: string): RedoContext {
-  const events = db.prepare(`SELECT kind, actor, json_extract(detail,'$.from') AS from_state, json_extract(detail,'$.note') AS note, json_extract(detail,'$.reason') AS reason
+  const events = db.prepare(`SELECT kind, actor, json_extract(detail,'$.from') AS from_state, json_extract(detail,'$.note') AS note, json_extract(detail,'$.reason') AS reason,
+    json_extract(detail,'$.noteOrigin') AS note_origin
     FROM project_activity WHERE work_item_id=? AND ((kind='card_moved' AND json_extract(detail,'$.to')='todo' AND json_extract(detail,'$.from') IN ('review','failed','waiting','done','cancelled')) OR kind='card_reassigned')
-    ORDER BY at DESC, rowid DESC`).all(cardId) as Array<{ kind: string; actor: string; from_state: string | null; note: string | null; reason: string | null }>;
+    ORDER BY at DESC, rowid DESC`).all(cardId) as Array<{ kind: string; actor: string; from_state: string | null; note: string | null; reason: string | null; note_origin: string | null }>;
   const last = events.find(event => !(event.kind === "card_moved" && (event.from_state === "failed" || event.from_state === "waiting")));
   if (!last) return {};
   const sentBack = last.kind === "card_moved" && last.from_state === "review";
@@ -1014,9 +1061,11 @@ export function redoContext(db: DatabaseSync, cardId: string): RedoContext {
   if (!sentBack && !reassigned) return {};
   const latestReview = db.prepare("SELECT outcome_note FROM room_requests WHERE work_item_id=? AND verb='review' ORDER BY created_at DESC, id DESC LIMIT 1").get(cardId) as { outcome_note: string | null } | undefined;
   const reviewerNotes = (sentBack || last.from_state === "review") && latestReview?.outcome_note === "changes" ? changesRequestedNotes(db, cardId, 0) : null;
-  const leadNote = sentBack ? last.note : last.reason;
+  const words = sentBack ? last.note : last.reason;
   // review 2 N4: a reassigned card's result was someone's earlier attempt, and
   // the note is whoever moved it (the owner or the lead)
-  return { ...(reviewerNotes ? { reviewerNotes } : {}), ...(leadNote ? { leadNote } : {}),
-    ...(reassigned ? { reassigned: true as const } : {}), ...(leadNote && last.actor === "owner" ? { noteByOwner: true as const } : {}) };
+  const ownerNote = words?.trim() && last.actor === "owner" ? words as OwnerNote : undefined;
+  const leadNote = ownerNote ? null : storedNote(words, last.note_origin);
+  return { ...(reviewerNotes ? { reviewerNotes } : {}), ...(leadNote ? { leadNote } : {}), ...(ownerNote ? { ownerNote } : {}),
+    ...(reassigned ? { reassigned: true as const } : {}) };
 }

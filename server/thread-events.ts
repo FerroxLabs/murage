@@ -14,6 +14,7 @@
 import { closeSync, fstatSync, openSync, readSync, type Stats } from "node:fs";
 import { join } from "node:path";
 import type { RuntimeEvent } from "./contracts.ts";
+import { eventLogForgetPending } from "./harness/event-log.ts";
 
 /** One line of native/<threadId>.ndjson (server/drivers/native.ts). */
 export interface NativeRecord {
@@ -34,6 +35,9 @@ export interface InspectorPage {
   total: { runtime: number; native: number };
   /** False means the bounded count has not scanned the complete file. */
   totalComplete?: { runtime: boolean; native: boolean };
+  /** "forgetting": a forgotten message is still being removed from this
+   * thread's logs (harness/event-log.ts); no line is served until it is. */
+  withheld?: "forgetting";
 }
 
 const DEFAULT_LIMIT = 300;
@@ -276,7 +280,15 @@ export function readThreadEvents(input: {
   const requested = input.limit ?? DEFAULT_LIMIT;
   const limit = Number.isFinite(requested) ? Math.max(1, Math.min(Math.trunc(requested), MAX_LIMIT)) : DEFAULT_LIMIT;
 
-  const runtime = readRecentLines(join(eventsDir, `${threadId}.ndjson`), limit, isRuntimeEvent);
+  if (eventLogForgetPending(threadId)) {
+    return { entries: [], total: { runtime: 0, native: 0 }, totalComplete: { runtime: true, native: true }, withheld: "forgetting" };
+  }
+  let runtime = readRecentLines(join(eventsDir, `${threadId}.ndjson`), limit, isRuntimeEvent);
+  // a thread whose log just rotated (harness/event-log.ts) fills the page from its previous file
+  if (runtime.lines.length < limit) {
+    const older = readRecentLines(join(eventsDir, `${threadId}.previous.ndjson`), limit - runtime.lines.length, isRuntimeEvent);
+    if (older.total || older.lines.length) runtime = { lines: [...older.lines, ...runtime.lines], total: runtime.total + older.total, complete: runtime.complete && older.complete };
+  }
   const native = readRecentLines(join(nativeDir, `${threadId}.ndjson`), limit, isNativeRecord);
 
   // cap each log on its own, then merge: the native tee is several times

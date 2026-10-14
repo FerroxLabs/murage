@@ -26,6 +26,8 @@ import { deliveredProjectSuggestions, pendingProjectSuggestions, readProjectMess
 import { projectToolHandlers } from "./project-tool-routing.ts";
 import { channelToProjectRows } from "./project-settings.ts";
 import type { Message } from "./store.ts";
+import { writtenWithReceipts } from "./memory/testing/legacy-file-model.ts";
+import { LineageAllowance } from "./memory/lineage-allowance.ts";
 
 const NOW = 1_790_000_000_000;
 type Roster = MemoryRoster & { bots: Array<MemoryRoster["bots"][number] & { name: string }> };
@@ -49,8 +51,13 @@ beforeEach(() => {
 });
 
 let n = 0;
+// A line is chained to the thread's head, as every production write is: a line that names another parent leaves the branch, and leaving a
+// branch revokes its head (DESIGN-WRITETIME 2.8), which would withhold every earlier line of the thread.
+const heads = new Map<string, string>();
+beforeEach(() => heads.clear());
 function say(threadId: string, text: string, extra: Partial<Message> = {}) {
-  const message = { id: `m${++n}`, role: "bot", kind: "text", text, at: NOW + n, from: { botId: "dax", name: "Dax", color: "blue" }, ...extra } as Message;
+  const message = { id: `m${++n}`, role: "bot", kind: "text", text, at: NOW + n, from: { botId: "dax", name: "Dax", color: "blue" }, ...(heads.has(threadId) ? { parentId: heads.get(threadId) } : {}), ...extra } as Message;
+  heads.set(threadId, message.id);
   appendMessage(threadId, message);
   return message;
 }
@@ -132,7 +139,7 @@ it("bring-in copies a note from the bot's own memory into the project, readable 
   const row = database().prepare("SELECT scope_id, text, state FROM memory_records WHERE id=?").get(copy) as { scope_id: string; text: string; state: string };
   expect(row).toEqual({ scope_id: ensureScope("room", "launch"), text: "Pricing rule: never below 12 a month.", state: "active" });
   // a teammate in the project reads it (its evidence is in the room)
-  expect(hydrateMemoryRecord(copy, 1, access("finch", "launch-chat")).text).toBe("Pricing rule: never below 12 a month.");
+  expect(hydrateMemoryRecord(copy, 1, access("finch", "launch-chat"), {allowance: LineageAllowance.tool(1_000_000_000)}).text).toBe("Pricing rule: never below 12 a month.");
   // idempotent
   expect(bringInToProject(database(), { groupId: "launch", roomThreadId: "launch-chat", botId: "dax", roster, now: NOW, recordId: original })).toEqual(result);
   forgetMemory(ownerMemoryTicket(), { kind: "record", id: original });
@@ -203,16 +210,18 @@ it("Astra r1 #3 / review H1: bring-in walks the whole copy chain, and a pair roo
 it("Astra r1 #4: a brought-in reply is withheld with the reply when what the reply used is forgotten", () => {
   // Dax's reply in its own chat was made with a memory note
   const note = ownerFact("dax-task", "The supplier is Acme.", "k-up");
-  const reply = say("dax-direct", "Our supplier is Acme, as you told me.");
-  captureSource(database(), { id: `message:dax-direct:${reply.id}`, threadId: "dax-direct", messageId: reply.id, kind: "text", speaker: "dax", outcome: "recorded", text: reply.text! });
+  // (1.0.2: the receipt, then the reply written by the production writer inside the turn that held it, so the line rests on it)
   database().prepare(`INSERT INTO memory_disclosures(bundle_id,thread_id,driver_instance,native_session,record_versions,source_versions,output_message_ids,policy_revision,deletion_epoch,token_count,state,created_at)
-    VALUES('b-up','dax-direct','engine',NULL,?,'[]',?,0,0,1,'delivered',1)`).run(JSON.stringify([{ id: note, version: 1 }]), JSON.stringify([reply.id]));
+    VALUES('b-up','dax-direct','engine',NULL,?,'[]','[]',0,0,1,'delivered',1)`).run(JSON.stringify([{ id: note, version: 1 }]));
+  const reply = writtenWithReceipts("dax-direct", "dax", ["b-up"], () => say("dax-direct", "Our supplier is Acme, as you told me."), written => written.id);
+  database().prepare("UPDATE memory_disclosures SET output_message_ids=? WHERE bundle_id='b-up'").run(JSON.stringify([reply.id]));
+  captureSource(database(), { id: `message:dax-direct:${reply.id}`, threadId: "dax-direct", messageId: reply.id, kind: "text", speaker: "dax", outcome: "recorded", text: reply.text! });
   const result = bringInToProject(database(), { groupId: "launch", roomThreadId: "launch-chat", botId: "dax", roster, now: NOW, sourceMessageId: reply.id });
   expect(result.ok).toBe(true);
   const copy = (result as { recordId: string }).recordId;
-  expect(hydrateMemoryRecord(copy, 1, access("finch", "launch-chat")).text).toContain("Acme");
+  expect(hydrateMemoryRecord(copy, 1, access("finch", "launch-chat"), {allowance: LineageAllowance.tool(1_000_000_000)}).text).toContain("Acme");
   forgetMemory(ownerMemoryTicket(), { kind: "record", id: note });
-  expect(() => hydrateMemoryRecord(copy, 1, access("finch", "launch-chat"))).toThrow();
+  expect(() => hydrateMemoryRecord(copy, 1, access("finch", "launch-chat"), {allowance: LineageAllowance.tool(1_000_000_000)})).toThrow();
 });
 
 it("Astra r2 #13/#14/#8: read-messages withholds a copy of a forgotten original; a summary cannot cite a channel person's thread or overflow its sources", () => {

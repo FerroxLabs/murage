@@ -59,12 +59,14 @@ import type { DatabaseSync } from "node:sqlite";
 import { requireMemoryOwner } from "./memory/authority.ts";
 import { isPipKind } from "./memory/pip-kinds.ts";
 import { memoryState } from "./memory/repository.ts";
-import { capturedSourceWithheld, derivationAncestryCurrent, recordRestsOnWithheldMessage } from "./memory/replay-lineage.ts";
+import { capturedSourceWithheld, derivationAncestryCurrent, LineageAllowance, recordRestsOnWithheldMessage } from "./memory/replay-lineage.ts";
 import { parseSkillManifest as parseLibrarySkillManifest } from "./skill-library.ts";
 import { collectPackageExportSkills } from "./package-export-files.ts";
 import { murageTool } from "./murage-tool-surface.ts";
 import { workspaceDir } from "./workspace.ts";
-import { identitySourceSet, provenanceStamp } from "./memory/provenance-stamp.ts";
+import { identityForAllow, identityGeneration, provenanceStamp } from "./memory/provenance-stamp.ts";
+import type { LineageRef, MemoryRef, PromptPart, ToolText } from "./memory/lineage-types.ts";
+import { memoryRefs, murageObjectRef, noneRef, promptPart, recordTurnObject, turnToolText } from "./memory/prompt-parts.ts";
 
 /** Spec rule: lowercase alphanumerics with single hyphens, 1-64 chars,
  * folder name must equal it. The regex IS the traversal gate — no dots, no
@@ -293,7 +295,8 @@ function singleLine(value: string): string {
  * 2,194 in skills-library/ do), so those are read properly and folded to the
  * single line the index wants. */
 export function parseSkillMd(raw: string): ParsedSkill | { error: string } {
-  const match = raw.match(/^---\r?\n([\s\S]*?)\r?\n---\r?\n?([\s\S]*)$/);
+  // Notepad and PowerShell can save a leading byte order mark.
+  const match = raw.replace(/^\uFEFF/, "").match(/^---\r?\n([\s\S]*?)\r?\n---\r?\n?([\s\S]*)$/);
   if (!match) return { error: "SKILL.md has no YAML frontmatter (--- block) at the top" };
   const fields = parseFrontmatterScalars(match[1]!);
   const name = singleLine(fields.name ?? "");
@@ -712,6 +715,7 @@ function removeNativeLinksForUnsafeSkillsRoot(
  * so disable/remove has exactly one source of truth; junctions on Windows
  * because directory symlinks there need privileges junctions do not. */
 export function syncSkillLinks(botId: string): void {
+  sweepBotSkills(botId); // (a no-op once the bot has been scanned; marks the bot first, so the scan's own sync does not come back here)
   if (existsSync(join(skillStateDir(botId), "task-discovery.json"))) return;
   const root = workspaceDir(botId);
   const previouslyManaged = readManagedLinks(botId);
@@ -1105,24 +1109,48 @@ export function setSkillEnabled(
   return skillListing(botId, name, current);
 }
 
-/** Once at startup: every installed skill gets a current scan, and any that
- *  is switched on but now Blocked is switched off. Returns those. */
+/** Bots whose skills have had their start-up scan in this process. */
+const sweptBots = new Set<string>();
+let sweepSwitchedOff: ((found: Array<{ botId: string; name: string; scan: SkillScan }>) => void) | null = null;
+/** Who hears of skills the scan switches off. The scan of a bot can run on its first turn (below), so the report cannot be the caller's alone. */
+export function onSkillSweepSwitchedOff(listener: ((found: Array<{ botId: string; name: string; scan: SkillScan }>) => void) | null): void { sweepSwitchedOff = listener; }
+/** Whether this bot's skills have been scanned in this process. */
+export function skillSweepDone(botId: string): boolean { return sweptBots.has(botId); }
+
+/** The start-up scan of ONE bot: every installed skill gets a current scan, and any that is switched on but now Blocked is switched off. The
+ *  manifest is read once and written once. Runs once per bot per process, in the background after the server listens, and at the latest on
+ *  the bot's first turn (skillsSystemPrompt, syncSkillLinks): a skill the scan would block is never offered to a turn before it ran. */
+export function sweepBotSkills(botId: string): Array<{ botId: string; name: string; scan: SkillScan }> {
+  if (sweptBots.has(botId)) return [];
+  sweptBots.add(botId);
+  const off: Array<{ botId: string; name: string; scan: SkillScan }> = [];
+  const manifest = readManifest(botId);
+  let dirty = false, switchedOff = false;
+  for (const name of Object.keys(manifest)) {
+    const entry = manifest[name]!;
+    if (!isSkillName(name)) continue;
+    const text = readSkillFile(botId, name);
+    if (text === null) continue;
+    const parsed = parseSkillMd(text);
+    const description = "error" in parsed ? entry.description : parsed.description;
+    const input = { name, description, triggerTerms: [], files: [{ path: "SKILL.md", content: text }] };
+    let scan: SkillScan;
+    if (entry.scan && entry.scan.scannerVersion === SKILL_SCANNER_VERSION && entry.scan.contentHash === skillContentHash(input)) scan = entry.scan;
+    else { scan = scanSkill(input); entry.scan = scan; dirty = true; }
+    if (scan.verdict !== "blocked" || !entry.enabled) continue;
+    entry.enabled = false; dirty = true; switchedOff = true;
+    off.push({ botId, name, scan });
+  }
+  if (dirty) writeManifest(botId, manifest);
+  if (switchedOff) syncSkillLinks(botId);
+  if (off.length) { try { sweepSwitchedOff?.(off); } catch { /* a report never stops a turn */ } }
+  return off;
+}
+
+/** Once at startup: every installed skill of every bot is scanned (see sweepBotSkills). Returns what was switched off. */
 export function sweepSkillScans(botIds: string[]): Array<{ botId: string; name: string; scan: SkillScan }> {
   const off: Array<{ botId: string; name: string; scan: SkillScan }> = [];
-  for (const botId of botIds) {
-    let changed = false;
-    for (const name of Object.keys(readManifest(botId))) {
-      const scan = currentSkillScan(botId, name);
-      if (!scan || scan.verdict !== "blocked") continue;
-      const manifest = readManifest(botId);
-      if (!manifest[name]?.enabled) continue;
-      manifest[name]!.enabled = false;
-      writeManifest(botId, manifest);
-      off.push({ botId, name, scan });
-      changed = true;
-    }
-    if (changed) syncSkillLinks(botId);
-  }
+  for (const botId of botIds) off.push(...sweepBotSkills(botId));
   return off;
 }
 
@@ -1671,6 +1699,8 @@ export function stageSkillWrite(
     files: Array<{ path: string; content: string }>;
     gist?: string;
     source?: string;
+    /** The thread whose turn wrote the skill: the skill's words rest on that turn (write-time lineage, DESIGN-WRITETIME 2.2). */
+    threadId?: string;
   },
 ): StagedSkillWrite | { error: string } {
   if (input.action !== "create" && input.action !== "update") {
@@ -1753,7 +1783,42 @@ export function stageSkillWrite(
   };
   store.writes[entry.id] = entry;
   writeStaged(botId, store);
+  // a skill a bot writes is a file written through a Murage tool: it rests on the turn that wrote it, whatever it is later approved as
+  try { recordTurnObject(database(), input.threadId, skillRef(botId, parsed.name)); }
+  catch (error) { console.warn(`[skills] the staged skill's lineage could not be recorded: ${error instanceof Error ? error.message : String(error)}`); }
   return entry;
+}
+
+// ── write-time lineage (DESIGN-WRITETIME 2.2) ────────────────────────────────
+// A learned skill is text a bot (or a procedure review) wrote; Murage's own skill tools are how it is written (skill_manage) and listed,
+// so it is tracked like a message: the write records the writing turn (stageSkillWrite, procedure-review.ts), and every place Murage
+// shows it carries the skill's ref. The bot reads SKILL.md bodies with its engine's own file tools: that engine-native read is outside
+// Murage's sight (it never passes through Murage), so the index line that points at the file carries the ref instead.
+
+/** The skill as a lineage object (shared with memory/procedure-review.ts). */
+export const skillRef = (botId: string, name: string): MemoryRef => murageObjectRef("skill", `${botId}:${name}`);
+
+/** Whether a skill's words were written by a bot or a review (imported skills are the owner's material). */
+const learnedSkill = (source: string): boolean => source.startsWith(LEARN_SOURCE_PREFIX);
+
+/** What the skills index of a bot's prompt rests on: each learned skill it lists. */
+export function skillsIndexRefs(botId: string, listed: ReadonlyArray<Pick<SkillListing, "name" | "source">>): LineageRef[] {
+  const refs = memoryRefs(listed.filter(skill => learnedSkill(skill.source)).map(skill => skillRef(botId, skill.name)));
+  return refs.length ? refs : [noneRef("static")];
+}
+
+/** The skills block as a prompt part (skillsSystemPrompt's text, with what it rests on). */
+export function skillsSystemPromptPart(botId: string): PromptPart {
+  const built = skillsIndex(botId);
+  return promptPart(built.text, skillsIndexRefs(botId, built.listed));
+}
+
+/** A skill's SKILL.md as a Murage tool hands it to the turn running on `consumingThreadId`, or null. */
+export function skillFileToolText(botId: string, name: string, consumingThreadId: string | undefined): ToolText | null {
+  const text = readSkillFile(botId, name);
+  if (text === null) return null;
+  const source = readManifest(botId)[name]?.source ?? "";
+  return turnToolText(consumingThreadId, text, learnedSkill(source) ? memoryRefs([skillRef(botId, name)]) : [noneRef("static")]);
 }
 
 export function listStagedSkillWrites(botId: string): StagedSkillWrite[] {
@@ -1869,13 +1934,18 @@ export function fitSkillIndex(candidates: readonly string[], render: (kept: stri
  * agents for. Bodies never ride the prompt; the bot reads the file when a
  * task matches. */
 export function skillsSystemPrompt(botId: string): string {
+  return skillsIndex(botId).text;
+}
+
+function skillsIndex(botId: string): { text: string; listed: SkillListing[] } {
   // Reconcile links on every turn. If the workspace copy changed since its
   // review, integrity filtering below removes it from native discovery too.
+  sweepBotSkills(botId);
   syncSkillLinks(botId);
   const enabled = listSkills(botId).filter((skill) => skill.enabled);
   if (!enabled.length) {
     loggedIndexOmissions.delete(botId);
-    return "";
+    return { text: "", listed: [] };
   }
   const root = workspaceDir(botId);
   const manifest = readManifest(botId);
@@ -1900,7 +1970,7 @@ export function skillsSystemPrompt(botId: string): string {
   } else {
     loggedIndexOmissions.delete(botId);
   }
-  return block(lines, omitted.length);
+  return { text: block(lines, omitted.length), listed: enabled.slice(0, lines.length) };
 }
 
 /** Protected history stores exact prior manifest entries; no historical GC. */
@@ -2018,7 +2088,7 @@ export function skillEvolutionDescriptor(botId:string,name:string,context?:Skill
  * provenance stamp (memory/provenance-stamp.ts) moves on exactly such writes
  * and on commits by another connection, and not on ordinary message or source
  * captures. Inside a transaction nothing is remembered. */
-const evidenceVerdicts={db:null as DatabaseSync|null,stamp:"",verdicts:new Map<string,string>()};
+const evidenceVerdicts={db:null as DatabaseSync|null,stamp:"",generation:0,verdicts:new Map<string,string>()};
 function evidenceStamp(db:DatabaseSync):string|undefined {
   return provenanceStamp(db);
 }
@@ -2028,18 +2098,30 @@ function evidenceStamp(db:DatabaseSync):string|undefined {
 export function assertSkillProcedureEvidence(context:SkillProcedureContext,evidence:readonly SkillProcedureEvidence[]):void {
   const db=database(),stamp=evidenceStamp(db);
   if(stamp===undefined){checkSkillProcedureEvidence(db,context,evidence);return;}
-  if(evidenceVerdicts.db!==db||evidenceVerdicts.stamp!==stamp){evidenceVerdicts.db=db;evidenceVerdicts.stamp=stamp;evidenceVerdicts.verdicts.clear();}
+  // A verdict also rests on the identity set (identity canon is never evidence): it is dropped whenever that set was replaced or has gone out of
+  // date, even where the provenance stamp looks unchanged.
+  const generation=identityGeneration(db);
+  if(evidenceVerdicts.db!==db||evidenceVerdicts.stamp!==stamp||evidenceVerdicts.generation!==generation){evidenceVerdicts.db=db;evidenceVerdicts.stamp=stamp;evidenceVerdicts.generation=generation;evidenceVerdicts.verdicts.clear();}
   const key=JSON.stringify([context.audienceKey,[...context.allowedScopeIds].sort(),evidence.map(item=>[item.kind,item.id,item.revision,item.scopeId])]);
   const known=evidenceVerdicts.verdicts.get(key);
   if(known!==undefined){if(known)throw new Error(known);return;}
   try{checkSkillProcedureEvidence(db,context,evidence);}
   catch(error){
     const message=error instanceof Error?error.message:"";
-    if(message.startsWith("PROCEDURE_EVIDENCE_")){if(evidenceVerdicts.verdicts.size>=64)evidenceVerdicts.verdicts.clear();evidenceVerdicts.verdicts.set(key,message);}
+    if(message.startsWith("PROCEDURE_EVIDENCE_")&&settleVerdictGeneration(db,generation)){if(evidenceVerdicts.verdicts.size>=64)evidenceVerdicts.verdicts.clear();evidenceVerdicts.verdicts.set(key,message);}
     throw error;
   }
+  if(!settleVerdictGeneration(db,generation))return;
   if(evidenceVerdicts.verdicts.size>=64)evidenceVerdicts.verdicts.clear();
   evidenceVerdicts.verdicts.set(key,"");
+}
+/** The check may have read the identity set for the first time (or afresh): the memo then moves to that set's version, and the verdict is
+ * kept only if the set it was reached against is still current. */
+function settleVerdictGeneration(db:DatabaseSync,before:number):boolean {
+  const now=identityGeneration(db);
+  if(now===-1)return false;
+  if(now!==before){evidenceVerdicts.verdicts.clear();evidenceVerdicts.generation=now;}
+  return true;
 }
 function checkSkillProcedureEvidence(db:DatabaseSync,context:SkillProcedureContext,evidence:readonly SkillProcedureEvidence[]):void {
   if(evidence.length>64)throw new Error("PROCEDURE_EVIDENCE_UNAVAILABLE");
@@ -2058,10 +2140,13 @@ function checkSkillProcedureEvidence(db:DatabaseSync,context:SkillProcedureConte
   // records are the small side: list them once per check, reach their
   // evidence through the primary key, and answer each source from a set.
   let identityIds:ReadonlySet<string>|null=null;
-  const sourceIsIdentity=(id:string,revision:number)=>(identityIds??=identitySourceSet(db)).has(`${id}:${revision}`);
+  // An unknown set (stale, being recomputed off the calling thread) withholds: it is a refusal, never a pass, and it is not remembered.
+  const sourceIsIdentity=(id:string,revision:number)=>{identityIds??=identityForAllow(db);if(identityIds===null)throw new Error("PROCEDURE_EVIDENCE_REVOKED");return identityIds.has(`${id}:${revision}`);};
   const recordRow=db.prepare("SELECT r.*,d.partition,(SELECT max(version) FROM memory_records WHERE id=r.id) AS latest_version FROM memory_records r LEFT JOIN memory_record_details d ON d.record_id=r.id AND d.record_version=r.version WHERE r.id=? AND r.version=?");
   const recordSources=db.prepare("SELECT e.source_id,e.source_revision,s.scope_id FROM memory_evidence e LEFT JOIN memory_sources s ON s.id=e.source_id WHERE e.record_id=? AND e.record_version=?");
   const recordParents=db.prepare("SELECT d.parent_id,d.parent_version,r.scope_id FROM memory_derivations d LEFT JOIN memory_records r ON r.id=d.parent_id AND r.version=d.parent_version WHERE d.child_id=? AND d.child_version=?");
+  // one allowance for the whole walk
+  const allowance=LineageAllowance.tool();
   const visit=(item:SkillProcedureEvidence,provenanceOnly=false):void=>{
     const key=`${item.kind}:${item.id}:${item.revision}:${provenanceOnly}`;if(seen.has(key))return;
     if(seen.size>=256)throw new Error("PROCEDURE_EVIDENCE_LIMIT");seen.add(key);
@@ -2072,7 +2157,7 @@ function checkSkillProcedureEvidence(db:DatabaseSync,context:SkillProcedureConte
       // a reply whose lineage is withheld (it used something since archived,
       // corrected or forgotten) is not evidence, though its source is active
       // (an owner-corrected ancestor's sources are history, not evidence)
-      if(!provenanceOnly&&capturedSourceWithheld(row))throw new Error("PROCEDURE_EVIDENCE_REVOKED");
+      if(!provenanceOnly&&capturedSourceWithheld(allowance,row))throw new Error("PROCEDURE_EVIDENCE_REVOKED");
       return;
     }
     const row=recordRow.get(item.id,item.revision);
@@ -2080,7 +2165,7 @@ function checkSkillProcedureEvidence(db:DatabaseSync,context:SkillProcedureConte
     // emitted as current claims. Only selected top-level evidence is current.
     if(!row||row.scope_id!==item.scopeId||row.kind==="character-canon"||row.partition==="identity"||
       (provenanceOnly?!["active","superseded","archived"].includes(String(row.state)):row.state!=="active"||row.version!==row.latest_version))throw new Error("PROCEDURE_EVIDENCE_REVOKED");
-    if(!provenanceOnly&&(!derivationAncestryCurrent(db,item.id,item.revision,row.supersedes_id)||recordRestsOnWithheldMessage(item.id,item.revision)))throw new Error("PROCEDURE_EVIDENCE_REVOKED");
+    if(!provenanceOnly&&(!derivationAncestryCurrent(allowance,db,item.id,item.revision,row.supersedes_id)||recordRestsOnWithheldMessage(allowance,item.id,item.revision)))throw new Error("PROCEDURE_EVIDENCE_REVOKED");
     const sources=recordSources.all(item.id,item.revision);
     const parents=recordParents.all(item.id,item.revision);
     // The desktop-authorized correction/approval path can create an exact
