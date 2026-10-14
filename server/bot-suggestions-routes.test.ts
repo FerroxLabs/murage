@@ -5,7 +5,7 @@
 // rows (feedback the detector was not sure about), through the real dispatcher
 // and database. Apply / Edit / Not now; Yes / No.
 import { mkdirSync } from "node:fs";
-import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
+import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { DATA_DIR } from "./config.ts";
 import "./bot-learning-modules.ts";
 import { handleBotLearningApi, resetBotLearningApiForTest } from "./bot-learning-api.ts";
@@ -81,6 +81,23 @@ describe("suggestions", () => {
     expect(rows).toEqual([expect.objectContaining({ botId: "ember", botName: "Ember", text: "Lead with the decision" })]);
     expect(Object.keys(rows[0]!).sort()).toEqual(["at", "botId", "botName", "kind", "lessonId", "lessonKind", "text", "version"]);
     expect(rows[0]).toMatchObject({ kind: "lesson" });
+  });
+});
+
+describe("the inbox reads procedure suggestions once, whatever the number of bots", () => {
+  it("costs the same single read for 1 bot as for 43", () => {
+    const reads = (count: number) => {
+      const ids = Array.from({ length: count }, (_, i) => `bot-${i}`);
+      const db = database();
+      const original = db.prepare.bind(db);
+      let n = 0;
+      const spy = vi.spyOn(db, "prepare").mockImplementation(((sql: string) => { if (/subject_id='procedure-review'/.test(sql)) n++; return original(sql); }) as typeof db.prepare);
+      try { inboxSuggestionRows(db, id => id, ids); } finally { spy.mockRestore(); }
+      return n;
+    };
+    expect(reads(1)).toBe(1);
+    // the first call kept its result for the connection, so the second does no read at all (procedure-suggestions-cache.test.ts)
+    expect(reads(43)).toBeLessThanOrEqual(1);
   });
 });
 

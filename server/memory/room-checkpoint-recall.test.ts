@@ -31,6 +31,7 @@ import { buildMemoryBundleAfterReset, MemoryDispatchReceipt } from "./dispatch.t
 import { forgetMemory } from "./forget.ts";
 import { ownerMemoryTicket } from "./authority.ts";
 import { readerWithheldMessage } from "./disclosures.ts";
+import { LineageAllowance } from "./lineage-allowance.ts";
 
 const botThread = "0b1c2d3e-4f50-4617-8a9b-0c1d2e3f4a5b", otherThread = "1c2d3e4f-5061-4728-9bac-1d2e3f4a5b6c";
 const roomThread = "2d3e4f50-6172-4839-acbd-2e3f4a5b6c7d";
@@ -67,7 +68,7 @@ it("gives a room member the room's saved notes when the round's capture rolls th
   const first = settle(saved.work);
   const ask = inFlight("What is the dog called?");
   const access = member();
-  const bundle = await buildMemoryBundleAfterReset("What is the dog called?", access, workerBridge(ask.work), async () => {}, { excludeMessageIds: [saved.messageId, ask.messageId], withheldMessage: readerWithheldMessage(access) });
+  const bundle = await buildMemoryBundleAfterReset("What is the dog called?", access, workerBridge(ask.work), async () => {}, { allowance: LineageAllowance.tool(1_000_000_000), excludeMessageIds: [saved.messageId, ask.messageId], withheldMessage: readerWithheldMessage(access) });
   // The checkpoint rolled while recall awaited the worker.
   expect(database().prepare("SELECT state FROM memory_records WHERE id=? AND version=?").get(first.id, first.version)?.state).toBe("archived");
   expect(bundle.tokenCount).toBeGreaterThan(0);
@@ -84,10 +85,10 @@ it("gives each member of the round the notes, the second one after the first one
   const saved = inFlight("Remember: the dog is called Biscuit.");
   const first = settle(saved.work);
   const ask = inFlight("What is the dog called?");
-  const a = await buildMemoryBundleAfterReset("dog", member("bot"), workerBridge(ask.work), async () => {}, { excludeMessageIds: [saved.messageId, ask.messageId] });
+  const a = await buildMemoryBundleAfterReset("dog", member("bot"), workerBridge(ask.work), async () => {}, { allowance: LineageAllowance.tool(1_000_000_000), excludeMessageIds: [saved.messageId, ask.messageId] });
   expect(a.recordVersions).toEqual([{ id: first.id, version: first.version + 1 }]);
   const reply = inFlight("It is Biscuit.", "bot");
-  const b = await buildMemoryBundleAfterReset("dog", member("other"), workerBridge(reply.work), async () => {}, { excludeMessageIds: [saved.messageId, ask.messageId, reply.messageId] });
+  const b = await buildMemoryBundleAfterReset("dog", member("other"), workerBridge(reply.work), async () => {}, { allowance: LineageAllowance.tool(1_000_000_000), excludeMessageIds: [saved.messageId, ask.messageId, reply.messageId] });
   expect(b.recordVersions).toEqual([{ id: first.id, version: first.version + 2 }]);
   expect(b.text).toContain("Biscuit");
 });
@@ -98,7 +99,7 @@ it("still refuses the turn when the owner forgets the room's notes while recall 
   const ask = inFlight("What is the dog called?");
   await expect(buildMemoryBundleAfterReset("dog", member(), workerBridge(ask.work, () => {
     forgetMemory(ownerMemoryTicket(), { kind: "source", id: saved.sourceId, revision: 1 });
-  }), async () => {})).rejects.toThrow("MEMORY_CONTEXT_REVOKED");
+  }), async () => {}, {allowance: LineageAllowance.tool(1_000_000_000)})).rejects.toThrow("MEMORY_CONTEXT_REVOKED");
 });
 
 it("does not hand a member the newer checkpoint when it rests on a message withheld from that member", async () => {
@@ -108,7 +109,7 @@ it("does not hand a member the newer checkpoint when it rests on a message withh
   // readerWithheldMessage): its capture rolls the checkpoint during recall.
   const hidden = inFlight("A reply this member may not see.", "bot");
   const withheld = (threadId: string, messageId: string) => threadId === roomThread && messageId === hidden.messageId;
-  const bundle = await buildMemoryBundleAfterReset("dog", member(), workerBridge(hidden.work), async () => {}, { excludeMessageIds: [saved.messageId], withheldMessage: withheld });
+  const bundle = await buildMemoryBundleAfterReset("dog", member(), workerBridge(hidden.work), async () => {}, { allowance: LineageAllowance.tool(1_000_000_000), excludeMessageIds: [saved.messageId], withheldMessage: withheld });
   expect(bundle.text).not.toContain("may not see");
   expect(bundle.recordVersions).not.toContainEqual({ id: first.id, version: first.version + 1 });
 });

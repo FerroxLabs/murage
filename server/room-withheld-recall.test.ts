@@ -8,6 +8,11 @@
 // room or back into the room that asked.
 import { mkdirSync, rmSync } from "node:fs";
 import { beforeEach, expect, it } from "vitest";
+import { afterEach as thawAfterEach, beforeEach as thawBeforeEach } from "vitest";
+import { thawRootSetWritesForTest } from "./memory/replay-lineage.ts";
+// 1.0.2: this test models a 1.0.1 file (legacy root-set rows) for the read-time judge, which still decides legacy data until S6.
+thawBeforeEach(() => thawRootSetWritesForTest(true));
+thawAfterEach(() => thawRootSetWritesForTest(false));
 import { DATA_DIR } from "./config.ts";
 import { closeDatabase, database, transaction } from "./database.ts";
 import { InternalCapabilities } from "./internal-capabilities.ts";
@@ -23,9 +28,11 @@ import { MEMORY_HANDLE_LIMIT } from "../shared/memory.ts";
 import { searchMemory, type MemorySearchBridge } from "./memory/search.ts";
 import { filterMemoryReplay, roomReplayWithheld } from "./memory/disclosures.ts";
 import { insertMessage } from "./message-db.ts";
+import { writtenWithReceipts } from "./memory/testing/legacy-file-model.ts";
 import { capturedMessageWithheld } from "./memory/replay-lineage.ts";
 import { readFileSync } from "node:fs";
 import type { Message } from "./store.ts";
+import { LineageAllowance } from "./memory/lineage-allowance.ts";
 
 const roster: MemoryRoster = {
   bots: [
@@ -89,15 +96,15 @@ it("gap 1: the chunk captured from a withheld room reply is not recalled or foun
   const { record } = daxRoomReply();
   const chunk = chunkOf("message:closing-chat:m-dax");
   expect(chunk).toBeTruthy();
-  expect(hydrateMemoryRecord(chunk.id, chunk.version, access("finch", "closing-chat")).text).toContain("83-86");
+  expect(hydrateMemoryRecord(chunk.id, chunk.version, access("finch", "closing-chat"), {allowance: LineageAllowance.tool(1_000_000_000)}).text).toContain("83-86");
   forget(record);
-  expect([...roomReplayWithheld("closing-chat", [{ id: "m-dax" }])]).toEqual(["m-dax"]);
+  expect([...roomReplayWithheld(LineageAllowance.tool(), "closing-chat", [{ id: "m-dax" }])]).toEqual(["m-dax"]);
   const reader = access("finch", "closing-chat");
-  expect(() => hydrateMemoryRecord(chunk.id, chunk.version, reader)).toThrow("MEMORY_EVIDENCE_UNAVAILABLE");
+  expect(() => hydrateMemoryRecord(chunk.id, chunk.version, reader, {allowance: LineageAllowance.tool(1_000_000_000)})).toThrow("MEMORY_EVIDENCE_UNAVAILABLE");
   const bridge: MemorySearchBridge = { search: async () => ({ hits: [{ id: chunk.id, version: chunk.version, score: 1, lexical: true }], vectorRows: 0, coverageComplete: true }) };
-  const found = await searchMemory("rows 83-86 vendor", reader, bridge);
+  const found = await searchMemory("rows 83-86 vendor", reader, bridge, {allowance: LineageAllowance.tool(1_000_000_000)});
   expect(found.hits.map(hit => hit.id)).not.toContain(chunk.id);
-  const bundle = await buildMemoryBundle("rows 83-86 vendor", reader, bridge);
+  const bundle = await buildMemoryBundle("rows 83-86 vendor", reader, bridge, {allowance: LineageAllowance.tool()});
   expect(bundle.text).not.toContain("83-86");
 });
 
@@ -105,9 +112,9 @@ it("gap 1: a record the room saved from a withheld reply is not recalled", () =>
   const { record } = daxRoomReply();
   const saved = saveMemoryCandidate("The vendor confirmed rows 83-86 in writing.", [{ sourceId: "message:closing-chat:m-dax", revision: 1, startByte: 0, endByte: Buffer.byteLength(REPLY) }], "k-room", access("finch", "closing-chat"));
   database().prepare("UPDATE memory_records SET state='active' WHERE id=?").run(saved);
-  expect(hydrateMemoryRecord(saved, version(saved), access("finch", "closing-chat")).text).toContain("83-86");
+  expect(hydrateMemoryRecord(saved, version(saved), access("finch", "closing-chat"), {allowance: LineageAllowance.tool(1_000_000_000)}).text).toContain("83-86");
   forget(record);
-  expect(() => hydrateMemoryRecord(saved, version(saved), access("finch", "closing-chat"))).toThrow("MEMORY_EVIDENCE_UNAVAILABLE");
+  expect(() => hydrateMemoryRecord(saved, version(saved), access("finch", "closing-chat"), {allowance: LineageAllowance.tool(1_000_000_000)})).toThrow("MEMORY_EVIDENCE_UNAVAILABLE");
 });
 
 it("gap 1: the room checkpoint built from a withheld reply leaves recall, and the next one is rebuilt without it", async () => {
@@ -115,9 +122,9 @@ it("gap 1: the room checkpoint built from a withheld reply leaves recall, and th
   const first = refreshMemoryCheckpoint(job);
   expect(first.status).toBe("updated");
   const empty: MemorySearchBridge = { search: async () => ({ hits: [], vectorRows: 0 }) };
-  expect((await buildMemoryBundle("", access("finch", "closing-chat"), empty)).text).toContain("83-86");
+  expect((await buildMemoryBundle("", access("finch", "closing-chat"), empty, {allowance: LineageAllowance.tool()})).text).toContain("83-86");
   forget(record);
-  const after = await buildMemoryBundle("", access("finch", "closing-chat"), empty);
+  const after = await buildMemoryBundle("", access("finch", "closing-chat"), empty, {allowance: LineageAllowance.tool()});
   expect(after.text).not.toContain("83-86");
   // the owner speaks again: the checkpoint rolls, without the withheld reply
   const next = refreshMemoryCheckpoint(captured("closing-chat", "m-owner-2", "owner", "Thanks, let us move on to the invoices."));
@@ -125,7 +132,7 @@ it("gap 1: the room checkpoint built from a withheld reply leaves recall, and th
   const rolled = database().prepare("SELECT text FROM memory_records WHERE id=? AND version=?").get(next.checkpointId!, next.version!) as { text: string };
   expect(rolled.text).toContain("invoices");
   expect(rolled.text).not.toContain("83-86");
-  const again = await buildMemoryBundle("", access("finch", "closing-chat"), empty);
+  const again = await buildMemoryBundle("", access("finch", "closing-chat"), empty, {allowance: LineageAllowance.tool()});
   expect(again.text).toContain("invoices");
 });
 
@@ -134,7 +141,7 @@ it("gap 1: the owner's own words are never withheld for what a bot recalled", ()
   captured("closing-chat", "m-owner", "owner", "Please confirm rows 83-86.");
   forget(record);
   const owner = chunkOf("message:closing-chat:m-owner");
-  expect(hydrateMemoryRecord(owner.id, owner.version, access("finch", "closing-chat")).text).toContain("confirm");
+  expect(hydrateMemoryRecord(owner.id, owner.version, access("finch", "closing-chat"), {allowance: LineageAllowance.tool(1_000_000_000)}).text).toContain("confirm");
 });
 
 /** An owner pin quoting Dax's room reply. */
@@ -150,19 +157,19 @@ const nothing: MemorySearchBridge = { search: async () => ({ hits: [], vectorRow
 it("P1: an owner pin resting on a withheld reply is left out of the turn, and named for the owner", async () => {
   const { record } = daxRoomReply();
   const pinned = pinOnReply();
-  const before = await buildMemoryBundle("", access("finch", "closing-chat"), nothing);
+  const before = await buildMemoryBundle("", access("finch", "closing-chat"), nothing, {allowance: LineageAllowance.tool()});
   expect(before.text).toContain("83-86");
   expect(before.withheldPins).toBeUndefined();
   forget(record);
   const reader = access("finch", "closing-chat");
-  const after = await buildMemoryBundle("rows 83-86", reader, nothing);
+  const after = await buildMemoryBundle("rows 83-86", reader, nothing, {allowance: LineageAllowance.tool()});
   expect(after.text).not.toContain("83-86");
   expect(after.pinned).toEqual([]);
   expect(after.withheldPins).toEqual([{ id: pinned, version: version(pinned) }]);
   // no other door hands it over: hydration and memory search refuse it too
-  expect(() => hydrateMemoryRecord(pinned, version(pinned), reader)).toThrow("MEMORY_EVIDENCE_UNAVAILABLE");
+  expect(() => hydrateMemoryRecord(pinned, version(pinned), reader, {allowance: LineageAllowance.tool(1_000_000_000)})).toThrow("MEMORY_EVIDENCE_UNAVAILABLE");
   const bridge: MemorySearchBridge = { search: async () => ({ hits: [{ id: pinned, version: version(pinned), score: 1, lexical: true }], vectorRows: 0, coverageComplete: true }) };
-  expect((await searchMemory("rows 83-86", reader, bridge)).hits.map(hit => hit.id)).not.toContain(pinned);
+  expect((await searchMemory("rows 83-86", reader, bridge, {allowance: LineageAllowance.tool(1_000_000_000)})).hits.map(hit => hit.id)).not.toContain(pinned);
 });
 
 it("P1: a pin that comes to rest on a withheld reply while recall waits is left out, not a refused turn", async () => {
@@ -171,7 +178,7 @@ it("P1: a pin that comes to rest on a withheld reply while recall waits is left 
   // An owner forget moves the deletion epoch and refuses the whole turn
   // (assertMemoryAccess); a change that moves no epoch reaches the re-check.
   const bridge: MemorySearchBridge = { search: async () => { database().prepare("UPDATE memory_sources SET state='deleted' WHERE id='src-dax'").run(); return { hits: [], vectorRows: 0, coverageComplete: true }; } };
-  const bundle = await buildMemoryBundle("rows 83-86", access("finch", "closing-chat"), bridge);
+  const bundle = await buildMemoryBundle("rows 83-86", access("finch", "closing-chat"), bridge, {allowance: LineageAllowance.tool()});
   expect(bundle.text).not.toContain("83-86");
   expect(bundle.pinned).toEqual([]);
   expect(bundle.withheldPins).toEqual([{ id: pinned, version: version(pinned) }]);
@@ -186,10 +193,10 @@ it("P1: a reply made with a clean pin stays visible; one made with a pin that la
   captured("closing-chat", "m-finch-plain", "finch", "Plain answer.");
   disclose("b-pinned", "closing-chat", [{ id: pinned, version: version(pinned) }], ["m-finch-pinned"]);
   captured("closing-chat", "m-finch-pinned", "finch", "Answer made with the pin.");
-  expect([...roomReplayWithheld("closing-chat", [{ id: "m-finch-plain" }, { id: "m-finch-pinned" }])]).toEqual([]);
+  expect([...roomReplayWithheld(LineageAllowance.tool(), "closing-chat", [{ id: "m-finch-plain" }, { id: "m-finch-pinned" }])]).toEqual([]);
   forget(record);
   // the reply given the pin's words carries what was forgotten; the other does not
-  expect([...roomReplayWithheld("closing-chat", [{ id: "m-finch-plain" }, { id: "m-finch-pinned" }])]).toEqual(["m-finch-pinned"]);
+  expect([...roomReplayWithheld(LineageAllowance.tool(), "closing-chat", [{ id: "m-finch-plain" }, { id: "m-finch-pinned" }])]).toEqual(["m-finch-pinned"]);
 });
 
 /** Dax's delegated answer in his own task thread, and its copy posted by the
@@ -197,6 +204,9 @@ it("P1: a reply made with a clean pin stays visible; one made with a pin that la
 function mirroredReply() {
   const record = daxMemory();
   disclose("b-task", "dax-direct", [{ id: record, version: version(record) }], ["m-original"]);
+  // the original is stored where it was written: a copy is shown only while the message it was copied from still is
+  // 1.0.2: written by the production writer inside the turn that was given the receipt, so the line rests on it (mem_lsn, footprint)
+  writtenWithReceipts("dax-direct", "dax", ["b-task"], () => insertMessage("dax-direct", { id: "m-original", role: "bot", kind: "text", text: REPLY, at: Date.now(), from: { botId: "dax", name: "Dax", color: "#000" } }), () => "m-original");
   captured("dax-direct", "m-original", "dax", REPLY);
   const copy: Message = { id: "m-copy", role: "bot", kind: "text", text: REPLY, at: Date.now(), from: { botId: "dax", name: "Dax", color: "#000" }, copyOf: { threadId: "dax-direct", messageIds: ["m-original"] } };
   insertMessage("pair-chat", copy);
@@ -206,35 +216,37 @@ function mirroredReply() {
 
 it("gap 2: a mirrored copy is withheld with its original, in owner and other rooms", () => {
   const { record, copy } = mirroredReply();
+  insertMessage("pair-chat", { id: "m-ask", role: "user", kind: "text", text: "when did the rows go out?", at: Date.now() }); // 1.0.2: once any line row exists, a replayed line with no row reads "checking"; real replays hold only stored lines
   const pair = [{ id: "m-ask", role: "user" }, copy];
-  expect([...roomReplayWithheld("pair-chat", pair)]).toEqual([]);
+  expect([...roomReplayWithheld(LineageAllowance.tool(), "pair-chat", pair)]).toEqual([]);
   forget(record);
-  expect([...roomReplayWithheld("pair-chat", pair)]).toEqual(["m-copy"]);
-  expect(filterMemoryReplay("pair-chat", pair, access("finch", "pair-chat"), { persist: false }).map(m => m.id)).toEqual(["m-ask"]);
+  expect([...roomReplayWithheld(LineageAllowance.tool(), "pair-chat", pair)]).toEqual(["m-copy"]);
+  expect(filterMemoryReplay(LineageAllowance.tool(), "pair-chat", pair, access("finch", "pair-chat"), { persist: false }).map(m => m.id)).toEqual(["m-ask"]);
 });
 
 it("gap 2: forgetting the original message itself withholds its copy", () => {
   const { copy } = mirroredReply();
   forgetMemory(ownerMemoryTicket(), { kind: "source", id: "message:dax-direct:m-original" });
-  expect([...roomReplayWithheld("pair-chat", [copy])]).toEqual(["m-copy"]);
+  expect([...roomReplayWithheld(LineageAllowance.tool(), "pair-chat", [copy])]).toEqual(["m-copy"]);
 });
 
 it("gap 2: the copy's own captured chunk leaves recall with the original", () => {
   const { record } = mirroredReply();
   const chunk = chunkOf("message:pair-chat:m-copy");
-  expect(hydrateMemoryRecord(chunk.id, chunk.version, access("finch", "pair-chat")).text).toContain("83-86");
+  expect(hydrateMemoryRecord(chunk.id, chunk.version, access("finch", "pair-chat"), {allowance: LineageAllowance.tool(1_000_000_000)}).text).toContain("83-86");
   forget(record);
-  expect(() => hydrateMemoryRecord(chunk.id, chunk.version, access("finch", "pair-chat"))).toThrow("MEMORY_EVIDENCE_UNAVAILABLE");
+  expect(() => hydrateMemoryRecord(chunk.id, chunk.version, access("finch", "pair-chat"), {allowance: LineageAllowance.tool(1_000_000_000)})).toThrow(/MEMORY_(EVIDENCE|RECORD)_UNAVAILABLE/); // (1.0.2: the chunk is marked denied (deny-memory), which refuses it as an unavailable record)
 });
 
 it("gap 2: a copy owed to the asking bot's next turn is known withheld (external delivery hands over the withheld line)", () => {
   const { record } = mirroredReply();
-  expect(capturedMessageWithheld("pair-chat", "m-copy")).toBe(false);
+  expect(capturedMessageWithheld(LineageAllowance.tool(1_000_000_000), "pair-chat", "m-copy")).toBe(false);
   forget(record);
-  expect(capturedMessageWithheld("pair-chat", "m-copy")).toBe(true);
+  expect(capturedMessageWithheld(LineageAllowance.tool(1_000_000_000), "pair-chat", "m-copy")).toBe(true);
   // the delivery path reads it this way (server/index.ts, planExternalDelivery input)
   const source = readFileSync(new URL("./index.ts", import.meta.url), "utf8");
-  expect(source).toContain("if (message?.copyOf && (memoryNotOwner || capturedMessageWithheld(threadId, id))) return { id, text: withheldRoomLine(message) };");
+  expect(source).toContain("const verdict = memoryNotOwner ? { withheld: true, unproven: false } : capturedMessageVerdict(allowance, threadId, id);");
+  expect(source).toContain("if (verdict.withheld) { pendingWithheld.add(id); return { id, text: withheldRoomLine(message, false, verdict.unproven) }; }");
 });
 
 // Astra P1 audit #3: the owner rewrites a pinned note that rested on a
@@ -244,9 +256,9 @@ it("P1: an owner's correction of a pin resting on a withheld reply is delivered"
   const { record } = daxRoomReply();
   const pinned = pinOnReply();
   forget(record);
-  expect((await buildMemoryBundle("", access("finch", "closing-chat"), nothing)).withheldPins).toEqual([{ id: pinned, version: version(pinned) }]);
+  expect((await buildMemoryBundle("", access("finch", "closing-chat"), nothing, {allowance: LineageAllowance.tool()})).withheldPins).toEqual([{ id: pinned, version: version(pinned) }]);
   const next = correctMemory(ownerMemoryTicket(), pinned, version(pinned), "The invoices go out on Monday.");
-  const bundle = await buildMemoryBundle("", access("finch", "closing-chat"), nothing);
+  const bundle = await buildMemoryBundle("", access("finch", "closing-chat"), nothing, {allowance: LineageAllowance.tool()});
   expect(bundle.text).toContain("Monday");
   expect(bundle.text).not.toContain("83-86");
   expect(bundle.pinned.map(r => [r.id, r.version])).toEqual([[pinned, next]]);
@@ -265,9 +277,9 @@ it("P1: pins left out do not count toward the pin limit", async () => {
       database().prepare("UPDATE memory_records SET state='active',owner_pinned=1 WHERE id=?").run(id);
     }
   });
-  await expect(buildMemoryBundle("", access("finch", "closing-chat"), nothing)).rejects.toThrow("MEMORY_PIN_OVERFLOW");
+  await expect(buildMemoryBundle("", access("finch", "closing-chat"), nothing, {allowance: LineageAllowance.tool()})).rejects.toThrow("MEMORY_PIN_OVERFLOW");
   forget(record);
-  const bundle = await buildMemoryBundle("", access("finch", "closing-chat"), nothing);
+  const bundle = await buildMemoryBundle("", access("finch", "closing-chat"), nothing, {allowance: LineageAllowance.tool()});
   expect(bundle.text).toBe("");
   expect(bundle.withheldPins).toHaveLength(MEMORY_HANDLE_LIMIT + 1);
 });
@@ -280,7 +292,7 @@ it("P1: a reply made with the owner's corrected note is not withheld for the old
   const next = correctMemory(ownerMemoryTicket(), pinned, version(pinned), "The invoices go out on Monday.");
   disclose("b-corrected", "closing-chat", [{ id: pinned, version: next }], ["m-finch-corrected"]);
   captured("closing-chat", "m-finch-corrected", "finch", "The invoices go out on Monday.");
-  expect([...roomReplayWithheld("closing-chat", [{ id: "m-finch-corrected" }])]).toEqual([]);
+  expect([...roomReplayWithheld(LineageAllowance.tool(), "closing-chat", [{ id: "m-finch-corrected" }])]).toEqual([]);
 });
 
 // Astra r3 #2: an approved copy of a candidate, then rewritten by the owner:
@@ -297,5 +309,5 @@ it("P1: a reply made with an owner's rewrite of an approved copy stays visible",
   const next = correctMemory(ownerMemoryTicket(), "shared-copy", 1, "The invoices go out on Monday.");
   disclose("b-rewrite", "closing-chat", [{ id: "shared-copy", version: next }], ["m-finch-rewrite"]);
   captured("closing-chat", "m-finch-rewrite", "finch", "The invoices go out on Monday.");
-  expect([...roomReplayWithheld("closing-chat", [{ id: "m-finch-rewrite" }])]).toEqual([]);
+  expect([...roomReplayWithheld(LineageAllowance.tool(), "closing-chat", [{ id: "m-finch-rewrite" }])]).toEqual([]);
 });

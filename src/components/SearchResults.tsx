@@ -10,13 +10,14 @@ import { cn } from "@/lib/cn";
 import type { SearchHit } from "@/lib/search-hit";
 import { landOnSearchHit } from "@/lib/focus-message";
 
-export const MIN_QUERY = 2;
+export const MIN_QUERY = 3;
 const DEBOUNCE_MS = 250;
 
 export function SearchResults({ query, onLanded }: { query: string; onLanded: () => void }) {
   const { state, dispatch } = useStore();
   const [hits, setHits] = useState<SearchHit[] | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [partial, setPartial] = useState(false);
   const q = query.trim();
 
   useEffect(() => {
@@ -32,7 +33,7 @@ export function SearchResults({ query, onLanded }: { query: string; onLanded: ()
     let alive = true;
     const t = setTimeout(() => {
       api(`/api/search?q=${encodeURIComponent(q)}&limit=40`)
-        .then((r: { hits: SearchHit[] }) => alive && (setHits(r.hits), setError(null)))
+        .then((r: { hits: SearchHit[]; partial?: boolean }) => alive && (setHits(r.hits), setPartial(r.partial === true), setError(null)))
         .catch((e: unknown) => alive && setError(e instanceof Error ? e.message : String(e)));
     }, DEBOUNCE_MS);
     return () => {
@@ -57,6 +58,7 @@ export function SearchResults({ query, onLanded }: { query: string; onLanded: ()
       <div className="px-3 pb-1 text-[11px] font-medium uppercase tracking-wide text-ink-secondary">
         Messages{hits ? ` · ${hits.length}${hits.length === 40 ? "+" : ""}` : ""}
       </div>
+      {partial && hits && <div className="px-3 pb-1 text-[11.5px] text-ink-secondary">Showing matches from your most recent messages. Search is still getting ready for older ones.</div>}
       {error && <div className="px-3 py-2 text-[12.5px] text-danger">couldn't search: {error}</div>}
       {hits && hits.length === 0 && !error && <div className="px-3 py-3 text-[13px] text-ink-secondary">No messages match “{q}”</div>}
       {hits?.map((hit) => {

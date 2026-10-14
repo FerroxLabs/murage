@@ -7,6 +7,7 @@ import { ensureDirs } from "../config.ts";
 import type { ProviderInstance } from "../contracts.ts";
 import { recordEvents, type EventRecorder } from "../testing/events.ts";
 import { BoxAgentDriver } from "./boxagent.ts";
+import { IntakeValve, installIntakeValve } from "../harness/intake.ts";
 
 const BOX = "box-1";
 const PROMPT = "p1";
@@ -79,6 +80,17 @@ describe("BoxAgentDriver turns (fake API)", () => {
     for(let n=0;n<2;n++){const sent=await instance.adapter.sendTurn({threadId:"usage-two",text:"hi",integrations:{computer}});await recorder.until(e=>e.type==="turn.completed"&&e.turnId===sent.turnId);}
     const completed=recorder.events.filter(e=>e.type==="turn.completed");expect(completed).toHaveLength(2);
     for(const event of completed)expect(event).not.toHaveProperty("usage");
+  });
+
+  it("r26b: a run that finished with no output shows '(finished)' as Murage's own line, never as the engine's reply", async () => {
+    restoreFetch = installFakeBox([{ events: [], status: { promptRun: { status: "finished" } } }]);
+    await create();
+    const sent = await instance.adapter.sendTurn({ threadId: "t-box-silent", text: "hi", integrations: { computer } });
+    await recorder.until((e) => e.type === "turn.completed" && e.turnId === sent.turnId);
+    const lines = recorder.events.filter((e) => e.type === "item.completed" && e.itemType === "assistant_text");
+    expect(lines).toHaveLength(1);
+    expect(lines[0]).toMatchObject({ text: "(finished)", origin: "murage" });
+    expect(recorder.events.some((e) => e.type === "item.completed" && e.itemType === "assistant_text" && e.origin === "engine")).toBe(false);
   });
 
   it("fences the prompt write: a refused turn posts nothing to the box", async () => {
@@ -315,5 +327,79 @@ describe("BoxAgentDriver turns (fake API)", () => {
       .filter((e) => e.type === "item.completed" && (e as { itemType: string }).itemType === "assistant_text")
       .map((e) => (e as { text: string }).text);
     expect(texts).toEqual(["half"]);
+  });
+  it("waits for room on the event bus before polling and before emitting, and resumes when it opens", async () => {
+    let closed = true;
+    const valve = new IntakeValve(() => closed);
+    installIntakeValve(valve);
+    try {
+      let polls = 0;
+      const restore = installFakeBox([
+        { events: [{ id: "e1", type: "response", text: "one" }, { id: "e2", type: "tool_call", title: "t" }, { id: "e3", type: "status", data: { a: 1 } }], status: { promptRun: { status: "running" } } },
+        { events: [], status: { promptRun: { status: "finished", result: "one" } } },
+      ]);
+      const inner = globalThis.fetch;
+      globalThis.fetch = (async (input: string | URL, init?: RequestInit) => { if (String(input).includes("/events")) polls++; return inner(input, init); }) as typeof fetch;
+      restoreFetch = () => { globalThis.fetch = inner; restore(); };
+      await create();
+      await instance.adapter.sendTurn({ threadId: "t-valve", text: "go", integrations: { computer } });
+      await new Promise((r) => setTimeout(r, 150));
+      // the bus is full: the producer neither polled nor emitted anything beyond the turn's own start
+      expect(polls).toBe(0);
+      expect(recorder.events.filter((e) => e.type === "content.delta" || e.type === "item.started" || e.type === "item.updated")).toEqual([]);
+      closed = false; valve.evaluate();
+      await recorder.until((e) => e.type === "turn.completed");
+      expect(polls).toBeGreaterThan(0);
+      expect(recorder.events.some((e) => e.type === "content.delta")).toBe(true);
+    } finally { installIntakeValve(null); }
+  });
+  it("Stop ends the session promptly while the bus has no room, and nothing is polled or emitted after it", async () => {
+    const valve = new IntakeValve(() => true);
+    installIntakeValve(valve);
+    try {
+      let polls = 0;
+      const restore = installFakeBox([{ events: [{ id: "e1", type: "response", text: "late" }], status: { promptRun: { status: "running" } } }]);
+      const inner = globalThis.fetch;
+      globalThis.fetch = (async (input: string | URL, init?: RequestInit) => { if (String(input).includes("/events")) polls++; return inner(input, init); }) as typeof fetch;
+      restoreFetch = () => { globalThis.fetch = inner; restore(); };
+      await create();
+      await instance.adapter.sendTurn({ threadId: "t-stop-closed", text: "go", integrations: { computer } });
+      await new Promise((r) => setTimeout(r, 100));
+      await instance.adapter.interruptTurn("t-stop-closed");
+      const done = await recorder.until((e) => e.type === "turn.completed");
+      expect(done).toMatchObject({ ok: true, stopReason: "cancelled" });
+      expect(polls).toBe(0);
+      expect(recorder.events.filter((e) => e.type === "content.delta" || e.type === "item.started" || e.type === "item.updated")).toEqual([]);
+    } finally { installIntakeValve(null); }
+  });
+  it("a Stop that lands after the status call resolves emits no fresh text and settles as the stopped completion", async () => {
+    restoreFetch = installFakeBox([{ events: [], status: { promptRun: { status: "finished", result: "fresh after stop" } } }]);
+    const inner = globalThis.fetch;
+    globalThis.fetch = (async (input: string | URL, init?: RequestInit) => {
+      const res = await inner(input, init);
+      if (String(input).includes(`/prompts/${PROMPT}`)) { await instance.adapter.interruptTurn("t-stop-status"); await res.clone().text(); }
+      return res;
+    }) as typeof fetch;
+    const base = restoreFetch; restoreFetch = () => { globalThis.fetch = inner; base(); };
+    await create();
+    await instance.adapter.sendTurn({ threadId: "t-stop-status", text: "go", integrations: { computer } });
+    const done = await recorder.until((e) => e.type === "turn.completed");
+    expect(done).toMatchObject({ ok: true, stopReason: "cancelled" });
+    expect(JSON.stringify(recorder.events)).not.toContain("fresh after stop");
+  });
+  it("a Stop that lands after the events call resolves emits none of that call's text", async () => {
+    restoreFetch = installFakeBox([{ events: [{ id: "e1", type: "response", text: "late events text" }], status: { promptRun: { status: "running" } } }]);
+    const inner = globalThis.fetch;
+    globalThis.fetch = (async (input: string | URL, init?: RequestInit) => {
+      const res = await inner(input, init);
+      if (String(input).includes("/events")) { await instance.adapter.interruptTurn("t-stop-events"); await res.clone().text(); }
+      return res;
+    }) as typeof fetch;
+    const base = restoreFetch; restoreFetch = () => { globalThis.fetch = inner; base(); };
+    await create();
+    await instance.adapter.sendTurn({ threadId: "t-stop-events", text: "go", integrations: { computer } });
+    const done = await recorder.until((e) => e.type === "turn.completed");
+    expect(done).toMatchObject({ ok: true, stopReason: "cancelled" });
+    expect(JSON.stringify(recorder.events)).not.toContain("late events text");
   });
 });

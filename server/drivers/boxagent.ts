@@ -12,6 +12,7 @@ import { NO_TOOL_SURFACE, renderMurageTurn } from "../murage-tool-surface.ts";
 // The event payload shapes are tolerated liberally and teed verbatim to
 // the native log — the same protocol-drift armor as every other driver.
 import { createHash } from "node:crypto";
+import { awaitIntake, isIntakeOpen } from "../harness/intake.ts";
 
 import type {
   DriverCreateInput,
@@ -124,11 +125,19 @@ export const BoxAgentDriver: ProviderDriver<BoxAgentConfig> = {
       const promptId = started?.promptRun?.id ?? started?.prompt?.id ?? started?.promptId ?? null;
 
       let cancelled = false;
+      // Stop ends every wait of this turn at once, including the wait for room on the bus
+      const stopped = new AbortController();
+      const unlessStopped = (wait: Promise<void>): Promise<void> => stopped.signal.aborted ? Promise.resolve() : new Promise<void>((resolve, reject) => {
+        const onStop = () => resolve();
+        stopped.signal.addEventListener("abort", onStop, { once: true });
+        wait.then(() => { stopped.signal.removeEventListener("abort", onStop); resolve(); }, (error: unknown) => { stopped.signal.removeEventListener("abort", onStop); reject(error); });
+      });
       active.set(threadId, {
         turnId,
         boxId,
         cancel: () => {
           cancelled = true;
+          stopped.abort();
           void api(`/boxes/${boxId}/interrupt`, { method: "POST" }).catch(() => {});
         },
       });
@@ -138,6 +147,8 @@ export const BoxAgentDriver: ProviderDriver<BoxAgentConfig> = {
       // poll events + run status until the prompt settles
       (async () => {
         const seen = new Set<string>();
+        /** Waits for the bus to have room for this thread before the next poll or the next emitted event. */
+        const gate = async () => { if (!cancelled && !isIntakeOpen(threadId)) await unlessStopped(awaitIntake(threadId)); };
         // No clock of its own (0.1.61): every new box event reaches the
         // thread as activity, and the thread's silence watch (the owner's
         // room setting in a room) stops a run that goes quiet, through
@@ -149,7 +160,7 @@ export const BoxAgentDriver: ProviderDriver<BoxAgentConfig> = {
           const text = pendingText;
           pendingText = "";
           if (!text.trim()) return;
-          emit({ ...base(threadId, turnId), type: "item.completed", itemType: "assistant_text", text });
+          emit({ ...base(threadId, turnId), type: "item.completed", itemType: "assistant_text", origin: "engine", text });
         };
         /** Stream a full-text snapshot as a delta and accumulate it for flush. */
         const ingest = (text: string) => {
@@ -175,10 +186,19 @@ export const BoxAgentDriver: ProviderDriver<BoxAgentConfig> = {
         try {
           for (;;) {
             if (cancelled) break;
-            await new Promise((r) => setTimeout(r, config.pollMs));
-            const events: any = await api(`/boxes/${boxId}/events`).catch(() => null);
+            // the bus is full for this thread: stop polling until it has room, so a box that keeps producing cannot grow it
+            await gate();
+            if (cancelled) break;
+            await unlessStopped(new Promise<void>((r) => setTimeout(r, config.pollMs)));
+            await gate();
+            if (cancelled) break;
+            const events: any = await api(`/boxes/${boxId}/events`, { signal: AbortSignal.any([stopped.signal, AbortSignal.timeout(30_000)]) }).catch(() => null);
+            // a Stop that landed while the events call was in flight: nothing from it is processed or emitted
+            if (cancelled) break;
             const list: any[] = events?.events ?? events?.items ?? [];
             for (const ev of list) {
+              await gate();
+              if (cancelled) break;
               const id = String(ev.id ?? ev.eventId ?? JSON.stringify(ev).slice(0, 120));
               if (seen.has(id)) continue;
               seen.add(id);
@@ -198,6 +218,7 @@ export const BoxAgentDriver: ProviderDriver<BoxAgentConfig> = {
                   ...base(threadId, turnId),
                   type: "item.started",
                   itemType: "tool",
+                  origin: "engine",
                   itemId: id,
                   title: String(ev.title ?? ev.command ?? kind).slice(0, 80),
                 });
@@ -216,8 +237,13 @@ export const BoxAgentDriver: ProviderDriver<BoxAgentConfig> = {
                 return;
               }
             }
+            if (cancelled) break;
             if (promptId) {
-              const status: any = await api(`/boxes/${boxId}/prompts/${promptId}`).catch(() => null);
+              await gate();
+              if (cancelled) break;
+              const status: any = await api(`/boxes/${boxId}/prompts/${promptId}`, { signal: AbortSignal.any([stopped.signal, AbortSignal.timeout(30_000)]) }).catch(() => null);
+              // same for the status call: a stopped turn never settles ok:true with fresh text
+              if (cancelled) break;
               appendNative(threadId, { dir: "in", source: "box.prompt.status", msg: status });
               // real shape (2026-08): {promptRun:{status:"finished",…}} —
               // flat fallbacks kept for drift
@@ -228,8 +254,10 @@ export const BoxAgentDriver: ProviderDriver<BoxAgentConfig> = {
                 if (typeof result === "string" && result.trim() && result !== lastText) {
                   ingest(result);
                 }
-                if (!pendingText.trim() && !lastText.trim()) pendingText = "(finished)";
+                // a run with no output at all is shown as finished: that line is Murage's own (the status said so), never the engine's reply, so it proves nothing about the run
+                const silent = !pendingText.trim() && !lastText.trim();
                 flushAssistantText();
+                if (silent) emit({ ...base(threadId, turnId), type: "item.completed", itemType: "assistant_text", origin: "murage", text: "(finished)" });
                 active.delete(threadId);
                 emit({ ...base(threadId, turnId), type: "turn.completed", ok: true, stopReason: null, cost: null });
                 return;

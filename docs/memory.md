@@ -23,6 +23,18 @@ Intel Macs use keyword retrieval in this release. The pinned semantic runtime do
 
 Missing or unusable embeddings are reported as degraded keyword recall. An invalid or oversized required pin can block dispatch rather than silently lose an important owner constraint.
 
+## Search and what a reader cannot read
+
+A search only ever shows a reader what that reader may read: every candidate is checked with the same rule `memory_get` uses, and the answer (results, order, coverage, paging and cursors) is worked out from the records that pass. A record a reader may not read does not appear in what it is told, and does not make a page, a cursor or a coverage notice appear.
+
+- Results that score the same are ordered by record id, then version, so the order never depends on how the index or its cache happened to hold them.
+- When a search scans more records than the index keeps in memory at once, it scans on in chunks inside its time budget. It offers a next page only if a record the reader may read lies past where the scan stopped.
+- Records nobody can read (not current, forgotten, resting on nothing, evidence withdrawn, outside the reader's scopes) are left out inside the index query itself, before ranking and before any limit, so they never take the place of a record the reader can read. The checks that depend on the reader are made record by record, in rank order, inside the search's time limit; a search that runs out of time says its answer is partial and never offers a page past records it did not check.
+- Page cursors are opaque, expire after ten minutes, and work only for the reader they were given to. They hold no per-reader state, so one reader's searches cannot use up another's.
+- Coverage ("everything you may read was searched") ignores records the reader may not read. Bounds on work remain: a search reads up to 1,000 ranked candidates per list, up to 1,024 records that have no vector yet, and up to 1,024 records past a stopped scan, before it stops checking. When every record inside a bound is refused and more lie beyond it, the search reports coverage as incomplete rather than guess.
+
+Known limit in 1.0.2: keyword ranking uses BM25 statistics (how common a word is, the average length of a document) that the shared full-text index computes over every document in it, including documents a given reader may not read. Such documents can therefore change the relative order of readable results that score almost the same. They cannot add, remove or reveal a result, a count, a page or a cursor. Removing this needs a separate index for each audience and is planned with the retention work.
+
 ## Review what is remembered
 
 Search by audience and status, then **Inspect memory** to see its text, exact version and source excerpts.
@@ -86,6 +98,18 @@ Going from 0.1.61 to 0.1.62 upgrades the memory tables in `messages.db` straight
 - Once you are happy with 0.1.62, you can delete `messages.pre-memory-v3.db` (and `messages.pre-memory-v2.db` / `messages.pre-memory-v4.db` if present) from the data folder. They are never deleted automatically and are left out of backups.
 
 Memory is verified for ordinary interactive use. Sustained high-throughput ingestion and continuous-search saturation tuning remain deferred; it is not a promise of unlimited recall capacity or perfect model answers.
+
+### Going back to 1.0.1 after the memory v8 upgrade
+
+Murage 1.0.2 upgrades memory to schema v8, and Murage 1.0.1 (which reads up to v6) will not open a v7 or v8 `messages.db` (`MEMORY_SCHEMA_NEWER`). To go back, choose **Help > Prepare to reinstall Murage 1.0.1…** in the 1.0.2 app and press **Prepare and quit**. That is the one step: Murage closes, steps the memory database down to v6, and tells you when to install 1.0.1. Chats and memories stay; details only 1.0.2 uses are set aside, and the next start of 1.0.2 brings them up to date again. Handoffs your bots queued for a teammate that have not run yet are written back to `delegations.json`, the file 1.0.1 reads, so 1.0.1 runs them; if you come back to 1.0.2 first, or later, 1.0.2 brings them in once and none runs twice. A handoff that had already started is not handed on, because 1.0.1 could not tell and would start it again.
+
+If the menu item is not available, run the same step by hand with Murage fully quit, using the command above with `--to 6`:
+
+```sh
+ELECTRON_RUN_AS_NODE=1 /Applications/Murage.app/Contents/MacOS/Murage \
+  /Applications/Murage.app/Contents/Resources/server/installation-recovery.js \
+  memory-downgrade --data-dir ~/.murage --to 6
+```
 
 ### Fuigo memory ownership
 

@@ -86,6 +86,16 @@ test("edit and save the house rules, switch them off, and reset to the default",
       const rest = document.createRange(); rest.setStart(node!, selection.anchorOffset); rest.setEndAfter(title);
       return rest.toString() === "";
     })).toBe(true);
+    // The browser's caret is not enough: the editor learns of it from an
+    // asynchronous selection event, and a key pressed before that lands where
+    // the editor still thinks the caret is (the start). Ask the editor itself.
+    expect(await box.evaluate((element) => {
+      type Head = { parent: { type: { name: string }; content: { size: number } }; parentOffset: number };
+      const editor = (element as unknown as { editor?: { state: { selection: { empty: boolean; $head: Head } } } }).editor;
+      if (!editor) return false;
+      const { empty, $head } = editor.state.selection;
+      return empty && $head.parent.type.name === "heading" && $head.parentOffset === $head.parent.content.size;
+    })).toBe(true);
   }).toPass({ timeout: 10_000 });
   await page.keyboard.press("Enter");
   await page.keyboard.type("/");

@@ -30,6 +30,9 @@ export const test = base.extend<{ app: Page }>({
  *  in over the chat and has to be opened first, so a spec that just asserted
  *  visibility would pass on an off-screen drawer. */
 export async function openSidebar(page: Page): Promise<Locator> {
+  // TermsGate renders a blank frame while the terms load; a bare isVisible()
+  // right after load would skip the click and leave the drawer shut.
+  await expect(page.getByRole("complementary", { name: "Bots and navigation" })).toBeAttached();
   const menu = page.getByRole("button", { name: "Open bot list" });
   // md:hidden — present in the DOM at every width, visible only on phones.
   // An already-open drawer covers its own toggle, so a second call (a spec

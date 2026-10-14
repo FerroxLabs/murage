@@ -7,7 +7,7 @@ import { join } from "node:path";
 import { createInterface } from "node:readline";
 const argv = process.argv.slice(2);
 const arg = name => argv[argv.indexOf(name) + 1];
-if (argv[0] === "--version") { console.log("2.1.232 (Claude Code)"); process.exit(0); }
+if (argv[0] === "--version") { console.log("2.1.295 (Claude Code)"); process.exit(0); }
 if (argv[0] === "auth") { console.log(JSON.stringify({ loggedIn: true, authMethod: "claude.ai", apiProvider: "firstParty" })); process.exit(0); }
 if (!process.env.MURAGE_DATA_DIR || !process.env.MURAGE_CHANNEL_BUTTON_FIXTURE) throw new Error("Isolated button fixture environment required");
 const receiptFile = join(process.env.MURAGE_DATA_DIR, "channel-button-decisions.jsonl");

@@ -30,8 +30,8 @@ describe("conversation Delete confirmation", () => {
   });
 
   it("shows what could not be removed after a Delete", () => {
-    const html = renderToStaticMarkup(createElement(DeletionNoteBanner, { note: { title: "Deleted. A few things could not be removed:", items: ["Gemini CLI's own copy of this conversation, in Gemini CLI's history on this computer."] }, onDismiss: noop }));
-    expect(html).toContain("A few things could not be removed");
+    const html = renderToStaticMarkup(createElement(DeletionNoteBanner, { note: { title: "Deleted. Murage will finish removing these when it can:", items: ["Gemini CLI's own copy of this conversation, in Gemini CLI's history on this computer."] }, onDismiss: noop }));
+    expect(html).toContain("Murage will finish removing these when it can");
     expect(html).toContain("Gemini CLI&#x27;s own copy of this conversation");
   });
 });

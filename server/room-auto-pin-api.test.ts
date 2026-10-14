@@ -26,10 +26,18 @@ posixOnly("auto room with a pinned responder", () => {
   beforeAll(async () => {
     stub = createServer((request, response) => {
       stubHits++;
-      request.resume();
+      const chunks: Buffer[] = [];
+      request.on("data", chunk => chunks.push(chunk));
       request.on("end", () => {
+        // The decision client discards an answer that does not echo the no-retain contract, and one whose
+        // probability map does not cover every offered option and sum to ~1 (9bcf82ecd): answer in kind.
+        let offered: string[] = ["__everyone__"];
+        try { offered = Object.keys(JSON.parse(Buffer.concat(chunks).toString("utf8")).questions.answer.criteria); } catch { /* keep the default */ }
+        const rest = offered.filter(key => key !== "__everyone__");
+        const probabilities: Record<string, number> = Object.fromEntries(offered.map(key => [key, key === "__everyone__" ? (rest.length ? 0.97 : 1) : 0.03 / rest.length]));
         response.setHeader("content-type", "application/json");
-        response.end(JSON.stringify({ answers: { answer: { type: "choice", choice: "__everyone__", probabilities: { __everyone__: 0.97 } } } }));
+        response.setHeader("x-flux-no-retain", "applied");
+        response.end(JSON.stringify({ answers: { answer: { type: "choice", choice: "__everyone__", probabilities } } }));
       });
     });
     await new Promise<void>(resolve => stub.listen(0, "127.0.0.1", resolve));

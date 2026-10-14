@@ -13,7 +13,7 @@ const messages: Record<string, Array<{ id: string; from?: { botId?: string }; ca
   t3: [{ id: "m5" }],
 };
 const deps = {
-  messagesFor: (threadId: string) => messages[threadId] ?? [],
+  messageById: (threadId: string, messageId: string) => (messages[threadId] ?? []).find(candidate => candidate.id === messageId),
   botFor: (threadId: string, asking?: string) => asking ? bots[asking] : threadId === "room" ? undefined : bots.ember,
 };
 

@@ -14,7 +14,7 @@ import { publishNoReplace } from "./publish-file.ts";
 // A damaged installation cannot take a consistent SQLite snapshot, so the
 // database and its sidecars are copied raw beside every name a backup would
 // restore (data-dir-inventory.ts, the one list of top-level names).
-const RECORDS = new Set([...DATA_DIR_RECORDS, "messages.db", "messages.db-wal", "messages.db-shm"]);
+const RECORDS = new Set([...DATA_DIR_RECORDS, "messages.db", "messages.db-wal", "messages.db-shm", "connected-app-ledger.db", "connected-app-ledger.db-wal", "connected-app-ledger.db-shm"]);
 const preserved = (name: string) => {
   if (RECORDS.has(name)) return true;
   const kind = classifyDataDirEntry(name)?.backup;

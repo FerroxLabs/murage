@@ -6,24 +6,40 @@ import type { DatabaseSync } from "node:sqlite";
 import { learningLocalPath } from "../bot-learning.ts";
 import { DATA_DIR } from "../config.ts";
 import { cascadeLineageForget, forgetLineageOfBot } from "./lesson-lineage.ts";
+import { DENIED_PLACE } from "./deny.ts";
 
 /** Offline-safe cleanup of evaluation copies, shared by live forgetting and
  * restore. Original cost/digest receipts survive; copied response text does not. */
 export function purgeForgottenEvolutionCopies(db: DatabaseSync): void {
-  const sourceForgotten = db.prepare("SELECT 1 WHERE EXISTS(SELECT 1 FROM memory_sources WHERE id=? AND state='deleted') OR EXISTS(SELECT 1 FROM memory_tombstones WHERE target_type='source' AND target_id=? AND (revision IS NULL OR revision=?))");
+  purgeForgottenEvolutionBindings(db);
+  purgeForgottenLearning(db, Date.now());
+}
+
+/** The binding subjects that copy evidence (evaluation jobs, procedure reviews and evaluations). */
+export const EVOLUTION_BINDING_SUBJECTS = ["gepa-job", "procedure-review-pending", "procedure-review", "procedure-evaluation-preview", "procedure-evaluation-grant", "procedure-evaluation-session"] as const;
+/** The evaluation and review bindings that copied forgotten evidence, all of them (restore's installation-wide pass). A forget's
+ * durable job goes through them a page at a time instead (memory-revocation.ts bindings phase). */
+export function purgeForgottenEvolutionBindings(db: DatabaseSync): void {
+  const rows = db.prepare(`SELECT id,subject_id,state,intent FROM memory_scope_bindings WHERE subject_type='system' AND subject_id IN (${EVOLUTION_BINDING_SUBJECTS.map(subject => `'${subject}'`).join(",")})`).all();
+  for (const row of rows) purgeEvolutionBinding(db, row);
+}
+/** One binding: revoked, with the words it copied removed, when evidence it names was forgotten (deleted, tombstoned, or in a
+ * deleted conversation or bot: deny.ts). */
+export function purgeEvolutionBinding(db: DatabaseSync, row: Record<string, unknown>): void {
+  const denied = hasTable(db, "memory_deny") ? ` OR EXISTS(SELECT 1 FROM memory_sources s WHERE s.id=?1 AND ${DENIED_PLACE("s")})` : "";
+  const sourceForgotten = db.prepare(`SELECT 1 WHERE EXISTS(SELECT 1 FROM memory_sources WHERE id=?1 AND state='deleted') OR EXISTS(SELECT 1 FROM memory_tombstones WHERE target_type='source' AND target_id=?1 AND (revision IS NULL OR revision=?2))${denied}`);
   const recordForgotten = db.prepare("SELECT 1 WHERE EXISTS(SELECT 1 FROM memory_records WHERE id=? AND version=? AND state='deleted') OR EXISTS(SELECT 1 FROM memory_tombstones WHERE target_type='record' AND target_id=? AND (revision IS NULL OR revision=?))");
-  const rows = db.prepare("SELECT id,subject_id,state,intent FROM memory_scope_bindings WHERE subject_type='system' AND subject_id IN ('gepa-job','procedure-review-pending','procedure-review','procedure-evaluation-preview','procedure-evaluation-grant','procedure-evaluation-session')").all();
-  for (const row of rows) {
+  {
     let value: Record<string, any>;
     try { value = JSON.parse(String(row.intent)); } catch { value = {}; }
     const refs = [...(Array.isArray(value.evidence) ? value.evidence : []), ...(Array.isArray(value.snapshot?.evidence) ? value.snapshot.evidence : [])];
     const invalid = row.state === "revoked" || value.revoked === true || !Array.isArray(value.evidence) || refs.some(ref => {
       if (!ref || typeof ref.id !== "string" || !Number.isSafeInteger(ref.revision)) return true;
-      if (ref.kind === "source") return Boolean(sourceForgotten.get(ref.id, ref.id, ref.revision));
+      if (ref.kind === "source") return Boolean(sourceForgotten.get(ref.id, ref.revision));
       if (ref.kind === "record") return Boolean(recordForgotten.get(ref.id, ref.revision, ref.id, ref.revision));
       return true;
     });
-    if (!invalid) continue;
+    if (!invalid) return;
     if (row.subject_id === "gepa-job") {
       for (const call of db.prepare("SELECT id,intent FROM memory_scope_bindings WHERE subject_type='system' AND subject_id=?").all(String(row.id))) {
         let receipt: Record<string, unknown>;
@@ -40,7 +56,6 @@ export function purgeForgottenEvolutionCopies(db: DatabaseSync): void {
       db.prepare("UPDATE memory_scope_bindings SET subject_id='procedure-review',state='revoked',intent=? WHERE id=?").run(JSON.stringify({ ...metadata, evidence: [], status: "cancelled", reason: "MEMORY_EVIDENCE_FORGOTTEN" }), String(row.id));
     }
   }
-  purgeForgottenLearning(db);
 }
 
 const hasTable = (db: DatabaseSync, name: string) => Boolean(db.prepare("SELECT 1 FROM sqlite_schema WHERE type='table' AND name=?").get(name));
@@ -64,7 +79,7 @@ function forgottenSources(db: DatabaseSync) {
 }
 
 /** Evidence lists name sources as {kind:"source",id}, {sourceId} or {messageId}. */
-function evidenceForgotten(json: unknown, forgotten: ReturnType<typeof forgottenSources>): boolean {
+function evidenceForgotten(json: unknown, forgotten: Forgotten): boolean {
   let value: unknown;
   try { value = typeof json === "string" ? JSON.parse(json) : null; } catch { return false; }
   // B2's feedback evidence is one object {feedbackId, phrase, messageId, action}; the source lists are arrays.
@@ -90,26 +105,31 @@ export function purgeForgottenLearning(db: DatabaseSync, now = Date.now()): { le
   if (!hasTable(db, "memory_lessons")) return { lessons: 0, feedback: 0, episodes: 0, runs: 0 };
   const forgotten = forgottenSources(db);
   if (!forgotten.ids.size) return { lessons: 0, feedback: 0, episodes: 0, runs: 0 };
-  return purgeLearningFor(db, forgotten, now);
+  return purgeLearningFor(db, { ids: [...forgotten.ids], messages: [...forgotten.messages], threads: [...forgotten.threads] }, now);
 }
 
-type Forgotten = ReturnType<typeof forgottenSources>;
-/** Prospect-derived lessons live in learning-local/<bot>/lessons/<id>.json; one that rested on a forgotten message goes too (T1-16d). */
-function purgeLearningLocal(forgotten: Forgotten, dataDir: string): void {
-  const root = learningLocalPath(dataDir);
-  if (!existsSync(root)) return;
-  for (const bot of readdirSync(root)) {
-    if (!SAFE_SEGMENT.test(bot)) continue;
-    const dir = join(root, bot, "lessons");
-    let files: string[];
-    try { files = readdirSync(dir).filter(file => file.endsWith(".json")); } catch { continue; }
-    for (const file of files) {
-      try {
-        const lesson = JSON.parse(readFileSync(join(dir, file), "utf8")) as { evidence?: unknown };
-        if (evidenceForgotten(JSON.stringify(lesson.evidence ?? null), forgotten)) rmSync(join(dir, file), { force: true });
-      } catch { /* a damaged file is not a lesson */ }
-    }
+/** What a purge takes out: membership tests, so a durable job asks its own target rows by key instead of holding them in memory. */
+type Has = { has(id: string): boolean };
+type Forgotten = { ids: Has; messages: Has; threads: Has };
+/** A durable job's targets as lookups (memory-revocation.ts learning phase). */
+export type LearningLookup = { source(id: string): boolean; message(id: string): boolean; thread(id: string): boolean };
+const fromLookup = (lookup: LearningLookup): Forgotten => ({ ids: { has: lookup.source }, messages: { has: lookup.message }, threads: { has: lookup.thread } });
+/** One bot's local lesson folder: a lesson file that rested on a forgotten message goes (T1-16d). */
+function purgeLearningLocalBot(dir: string, forgotten: Forgotten, from = 0, limit = Number.MAX_SAFE_INTEGER): { more: boolean; advance: number; read: number } {
+  let files: string[];
+  try { files = readdirSync(dir).filter(file => file.endsWith(".json")).sort(); } catch { return { more: false, advance: 0, read: 0 }; }
+  // a removed file shifts the later ones down: the page is read before any goes, and the cursor counts only the kept ones
+  const page = files.slice(from, from + limit);
+  let kept = 0;
+  for (const file of page) {
+    let removed = false;
+    try {
+      const lesson = JSON.parse(readFileSync(join(dir, file), "utf8")) as { evidence?: unknown };
+      if (evidenceForgotten(JSON.stringify(lesson.evidence ?? null), forgotten)) { rmSync(join(dir, file), { force: true }); removed = true; }
+    } catch { /* a damaged file is not a lesson */ }
+    if (!removed) kept++;
   }
+  return { more: from + page.length < files.length, advance: kept, read: page.length };
 }
 /** Deleting a conversation forgets what was learned from it, even when no memory
  * source was ever captured for it (memory off, or capture paused). Owner-typed
@@ -118,54 +138,109 @@ function purgeLearningLocal(forgotten: Forgotten, dataDir: string): void {
 export function purgeThreadLearning(db: DatabaseSync, threadId: string, now = Date.now()): void {
   if (!hasTable(db, "memory_lessons")) return;
   const messages = new Set(hasTable(db, "messages") ? (db.prepare("SELECT id FROM messages WHERE thread_id=?").all(threadId) as Array<{ id: unknown }>).map(row => String(row.id)) : []);
-  purgeLearningFor(db, { ids: new Set<string>(), messages, threads: new Set([threadId]) }, now);
+  purgeLearningFor(db, { ids: [], messages: [...messages], threads: [threadId] }, now);
 }
 
-function purgeLearningFor(db: DatabaseSync, forgotten: Forgotten, now: number, dataDir = DATA_DIR): { lessons: number; feedback: number; episodes: number; runs: number } {
-  const done = { lessons: 0, feedback: 0, episodes: 0, runs: 0 };
-  const affectedBots = new Set<string>();
+function purgeLearningFor(db: DatabaseSync, target: LearningPurgeTarget, now: number, dataDir = DATA_DIR): { lessons: number; feedback: number; episodes: number; runs: number } {
+  const cursor = newLearningPurgeCursor();
+  while (!purgeLearningStep(db, target, cursor, Number.MAX_SAFE_INTEGER, now, dataDir));
+  return cursor.done;
+}
+
+/** What one forget (or one deleted conversation) takes out of what was learned: source ids, message ids, whole threads. */
+export type LearningPurgeTarget = { ids: string[]; messages: string[]; threads: string[] };
+/** Where a sliced purge is: the step, the last rowid it read in that step's table (or the bot folder index), its end, and the bots touched. */
+export type LearningPurgeCursor = { step: number; after: number; end: number | null; bots: string[]; done: { lessons: number; feedback: number; episodes: number; runs: number }; read?: number; file?: number; run?: string };
+export const newLearningPurgeCursor = (): LearningPurgeCursor => ({ step: 0, after: 0, end: null, bots: [], done: { lessons: 0, feedback: 0, episodes: 0, runs: 0 } });
+const LEARNING_STEP_TABLES = ["memory_lessons", "memory_feedback", "memory_outcomes", "memory_learning_events", "memory_episodes"] as const;
+
+/** One bounded step of the learning purge: at most `rows` rowids of one table (a window of rowids, so a step reads at most that many
+ * rows whatever matches), or one bot's local lesson folder, or the open learning runs. True when every step is done. Lessons go
+ * first: they are what reaches a prompt (renderLearnedBlock refuses one resting on forgotten material meanwhile: lessons.ts lessonEvidenceForgotten). */
+export function purgeLearningStep(db: DatabaseSync, target: LearningPurgeTarget | LearningLookup, cursor: LearningPurgeCursor, rows: number, now = Date.now(), dataDir = DATA_DIR): boolean {
+  if (!hasTable(db, "memory_lessons")) return true;
+  let forgotten: Forgotten;
+  if ("source" in target) forgotten = fromLookup(target);
+  else {
+    if (!target.ids.length && !target.messages.length && !target.threads.length) return true;
+    forgotten = { ids: new Set(target.ids), messages: new Set(target.messages), threads: new Set(target.threads) };
+  }
+  const bots = new Set(cursor.bots), done = cursor.done;
   const inThreads = (thread: unknown) => typeof thread === "string" && forgotten.threads.has(thread);
-  for (const row of db.prepare("SELECT id,version,bot_id,state,evidence FROM memory_lessons WHERE state IN ('active','suggested') OR (state='retired' AND spec IS NOT NULL)").all()) {
-    if (!evidenceForgotten(row.evidence, forgotten)) continue;
-    const active = row.state === "active";
-    // An unsupported lesson leaves the prompt and loses its words with the evidence it rested on (T1-16a).
-    db.prepare(active ? "UPDATE memory_lessons SET state='unsupported',kind='note',spec=NULL,where_=NULL,text='',evidence=NULL,decided_at=? WHERE id=? AND version=?" : "UPDATE memory_lessons SET state='stale',kind='note',spec=NULL,where_=NULL,text='',evidence=NULL,decided_at=? WHERE id=? AND version=?").run(now, String(row.id), Number(row.version));
-    affectedBots.add(String(row.bot_id)); done.lessons++;
-    // Lineage (B11): what was shared from this lesson leaves the recipients too.
-    done.lessons += cascadeLineageForget(db, String(row.id), now);
+  const table = LEARNING_STEP_TABLES[cursor.step];
+  if (table) {
+    if (cursor.end === null) cursor.end = Number(db.prepare(`SELECT max(rowid) AS m FROM ${table}`).get()?.m ?? 0);
+    const lo = cursor.after, hi = Math.min(cursor.end, lo + Math.max(1, rows));
+    const window = "rowid>? AND rowid<=?";
+    if (table === "memory_lessons") {
+      for (const row of db.prepare(`SELECT id,version,bot_id,state,evidence FROM memory_lessons WHERE ${window} AND (state IN ('active','suggested') OR (state='retired' AND spec IS NOT NULL))`).all(lo, hi)) {
+        if (!evidenceForgotten(row.evidence, forgotten)) continue;
+        const active = row.state === "active";
+        // An unsupported lesson leaves the prompt and loses its words with the evidence it rested on (T1-16a).
+        db.prepare(active ? "UPDATE memory_lessons SET state='unsupported',kind='note',spec=NULL,where_=NULL,text='',evidence=NULL,decided_at=? WHERE id=? AND version=?" : "UPDATE memory_lessons SET state='stale',kind='note',spec=NULL,where_=NULL,text='',evidence=NULL,decided_at=? WHERE id=? AND version=?").run(now, String(row.id), Number(row.version));
+        bots.add(String(row.bot_id)); done.lessons++;
+        // Lineage (B11): what was shared from this lesson leaves the recipients too.
+        done.lessons += cascadeLineageForget(db, String(row.id), now);
+      }
+    } else if (table === "memory_feedback") {
+      for (const row of db.prepare(`SELECT id,bot_id,thread_id,message_id,target_message_id FROM memory_feedback WHERE ${window} AND (state!='expired' OR correction IS NOT NULL)`).all(lo, hi)) {
+        const hit = [row.message_id, row.target_message_id].some(id => typeof id === "string" && forgotten.messages.has(id)) || inThreads(row.thread_id);
+        if (!hit) continue;
+        db.prepare("UPDATE memory_feedback SET state='expired',correction=NULL WHERE id=?").run(String(row.id));
+        bots.add(String(row.bot_id)); done.feedback++;
+      }
+    } else if (table === "memory_outcomes") {
+      // Owner-typed text on an outcome mark (the reason, a proposal's note) goes; the mark's count stays.
+      for (const row of db.prepare(`SELECT id,bot_id,thread_id,source_event_key FROM memory_outcomes WHERE ${window} AND (reason IS NOT NULL OR label IS NOT NULL)`).all(lo, hi)) {
+        const key = typeof row.source_event_key === "string" ? row.source_event_key : "";
+        const message = key.split("#")[0]!.replace(/^(?:mark|proposal):/, "");
+        if (!(inThreads(row.thread_id) || (message && forgotten.messages.has(message)))) continue;
+        db.prepare("UPDATE memory_outcomes SET reason=NULL,label=NULL WHERE id=?").run(String(row.id));
+        bots.add(String(row.bot_id));
+      }
+    } else if (table === "memory_learning_events") {
+      // an event whose prior is a record that ended goes, as in applyMemoryTombstones (no index on the prior: read by rowid window)
+      db.prepare(`DELETE FROM memory_learning_events WHERE ${window} AND prior_id IS NOT NULL AND EXISTS (SELECT 1 FROM memory_records r WHERE r.id=memory_learning_events.prior_id AND r.version=memory_learning_events.prior_version AND r.state='deleted')`).run(lo, hi);
+      // Reply snippets kept in the ledger for chips (detail.label) go with the conversation or message they came from (T1-16c).
+      for (const row of db.prepare(`SELECT id,json_extract(detail,'$.threadId') AS thread,json_extract(detail,'$.replyMessageId') AS reply FROM memory_learning_events WHERE ${window} AND json_extract(detail,'$.label') IS NOT NULL`).all(lo, hi)) {
+        if (!(inThreads(row.thread) || (typeof row.reply === "string" && forgotten.messages.has(row.reply)))) continue;
+        db.prepare("UPDATE memory_learning_events SET detail=json_remove(detail,'$.label') WHERE id=?").run(String(row.id));
+      }
+    } else {
+      for (const row of db.prepare(`SELECT id,bot_id,thread_id,start_message_id,end_message_id,source_revisions FROM memory_episodes WHERE ${window} AND excluded_at IS NULL`).all(lo, hi)) {
+        const hit = inThreads(row.thread_id) || [row.start_message_id, row.end_message_id].some(id => typeof id === "string" && forgotten.messages.has(id)) || evidenceForgotten(row.source_revisions, forgotten);
+        if (!hit) continue;
+        db.prepare("UPDATE memory_episodes SET eligible=0,excluded_at=? WHERE id=?").run(now, String(row.id));
+        bots.add(String(row.bot_id)); done.episodes++;
+      }
+    }
+    cursor.bots = [...bots]; cursor.read = (cursor.read ?? 0) + (hi - lo) + 1;
+    if (hi >= cursor.end) { cursor.step++; cursor.after = 0; cursor.end = null; } else cursor.after = hi;
+    return false;
   }
-  for (const row of db.prepare("SELECT id,bot_id,thread_id,message_id,target_message_id,state,correction FROM memory_feedback WHERE state!='expired' OR correction IS NOT NULL").all()) {
-    const hit = [row.message_id, row.target_message_id].some(id => typeof id === "string" && forgotten.messages.has(id)) || inThreads(row.thread_id);
-    if (!hit) continue;
-    db.prepare("UPDATE memory_feedback SET state='expired',correction=NULL WHERE id=?").run(String(row.id));
-    affectedBots.add(String(row.bot_id)); done.feedback++;
+  if (cursor.step === LEARNING_STEP_TABLES.length) {
+    // Prospect-derived lessons live in learning-local/<bot>/lessons/<id>.json: one bot's folder per step (T1-16d).
+    // one bot's folder, a page of its lesson files at a time
+    const root = learningLocalPath(dataDir);
+    const folders = existsSync(root) ? readdirSync(root).filter(bot => SAFE_SEGMENT.test(bot)).sort() : [];
+    if (cursor.after >= folders.length) { cursor.step++; cursor.after = 0; cursor.file = 0; return false; }
+    const page = Math.max(1, Math.min(rows, 64));
+    const step = purgeLearningLocalBot(join(root, folders[cursor.after]!, "lessons"), forgotten, cursor.file ?? 0, page);
+    cursor.read = (cursor.read ?? 0) + step.read + 1;
+    if (!step.more) { cursor.after++; cursor.file = 0; } else cursor.file = (cursor.file ?? 0) + step.advance;
+    return false;
   }
-  // Owner-typed text on an outcome mark (the reason, a proposal's note) goes; the mark's count stays.
-  for (const row of db.prepare("SELECT id,bot_id,thread_id,source_event_key FROM memory_outcomes WHERE reason IS NOT NULL OR label IS NOT NULL").all()) {
-    const key = typeof row.source_event_key === "string" ? row.source_event_key : "";
-    const message = key.split("#")[0]!.replace(/^(?:mark|proposal):/, "");
-    if (!(inThreads(row.thread_id) || (message && forgotten.messages.has(message)))) continue;
-    db.prepare("UPDATE memory_outcomes SET reason=NULL,label=NULL WHERE id=?").run(String(row.id));
-    affectedBots.add(String(row.bot_id));
-  }
-  // Reply snippets kept in the ledger for chips (detail.label) go with the conversation or message they came from (T1-16c).
-  for (const row of db.prepare("SELECT id,json_extract(detail,'$.threadId') AS thread,json_extract(detail,'$.replyMessageId') AS reply FROM memory_learning_events WHERE json_extract(detail,'$.label') IS NOT NULL").all()) {
-    if (!(inThreads(row.thread) || (typeof row.reply === "string" && forgotten.messages.has(row.reply)))) continue;
-    db.prepare("UPDATE memory_learning_events SET detail=json_remove(detail,'$.label') WHERE id=?").run(String(row.id));
-  }
-  purgeLearningLocal(forgotten, dataDir);
-  for (const row of db.prepare("SELECT id,bot_id,thread_id,start_message_id,end_message_id,source_revisions FROM memory_episodes WHERE excluded_at IS NULL").all()) {
-    const hit = inThreads(row.thread_id) || [row.start_message_id, row.end_message_id].some(id => typeof id === "string" && forgotten.messages.has(id)) || evidenceForgotten(row.source_revisions, forgotten);
-    if (!hit) continue;
-    db.prepare("UPDATE memory_episodes SET eligible=0,excluded_at=? WHERE id=?").run(now, String(row.id));
-    affectedBots.add(String(row.bot_id)); done.episodes++;
-  }
-  for (const row of db.prepare("SELECT id,bot_id FROM memory_learning_runs WHERE finished_at IS NULL").all()) {
-    if (!affectedBots.has(String(row.bot_id))) continue;
+  // the open learning runs of every bot touched, a page of run ids at a time (no index on finished_at: the page bounds the read)
+  const page = db.prepare("SELECT id,bot_id,finished_at FROM memory_learning_runs WHERE id>? ORDER BY id LIMIT ?").all(cursor.run ?? "", Math.max(1, rows));
+  for (const row of page) {
+    if (row.finished_at !== null || !bots.has(String(row.bot_id))) continue;
     db.prepare("UPDATE memory_learning_runs SET state='cancelled',reason='MEMORY_EVIDENCE_FORGOTTEN',corpus_digest=NULL,holdout_digest=NULL,holdout_groups=NULL,finished_at=? WHERE id=?").run(now, String(row.id));
     done.runs++;
   }
-  return done;
+  cursor.read = (cursor.read ?? 0) + page.length + 1;
+  if (page.length >= Math.max(1, rows)) { cursor.run = String(page[page.length - 1]!.id); return false; }
+  cursor.step++;
+  return true;
 }
 
 const SAFE_SEGMENT = /^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/;

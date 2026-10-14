@@ -19,6 +19,10 @@ const api = async (method: string, path: string, body?: unknown) => {
   const response = await fetch(`${fixture.info.url}${path}`, { method, headers: { "content-type": "application/json", ...headers }, body: body === undefined ? undefined : JSON.stringify(body) });
   return { status: response.status, body: await response.json() as any };
 };
+/** What the server said about the engine homes it left pending: the next CI run's evidence of why (a diagnostic only). */
+const serverLog = (): string => {
+  try { return readFileSync(fixture.info.logPath, "utf8").split("\n").filter((line) => /conversation deletion|engine history|engine reload|NOT_STOPPED/.test(line)).slice(-30).join("\n"); } catch { return "(no server log)"; }
+};
 const touch = (file: string, text: string) => { mkdirSync(dirname(file), { recursive: true }); writeFileSync(file, text); };
 
 beforeAll(async () => {
@@ -89,12 +93,12 @@ it("removes a deleted conversation's content everywhere Murage and its engines p
   expect(keepPreview).toMatchObject({ savedFiles: 0 });
   // The confirmation also counts the messages that go: the typed message and the reply.
   expect(doomedPreview.messages).toBeGreaterThanOrEqual(2);
-  expect((await api("GET", `/api/deletion-preview?botId=${bot.id}`)).body).toEqual({ savedFiles: 1, messages: doomedPreview.messages + keepPreview.messages });
+  expect((await api("GET", `/api/deletion-preview?botId=${bot.id}`)).body).toEqual({ savedFiles: 1, messages: doomedPreview.messages + keepPreview.messages, engines: ["Claude Code"] });
   writeFileSync(join(data, "decisions.ndjson.1"), `${JSON.stringify({ at: new Date().toISOString(), threadId: doomed, botName: "Delete fixture", tool: "Bash", summary: MARKER, decision: "user-allowed", source: "user" })}\n`);
   const deleted = await api("DELETE", `/api/bots/${bot.id}/tasks/${doomed}`);
   expect(deleted.status).toBe(200);
   expect(Array.isArray(deleted.body.leftovers)).toBe(true);
-  expect(deleted.body.failed).toBeUndefined();
+  expect(deleted.body.failed, `${JSON.stringify({ failed: deleted.body.failed, leftovers: deleted.body.leftovers })}\n${serverLog()}`).toBeUndefined();
 
   for (const path of [desk, join(data, "events", `${doomed}.ndjson`), join(data, "native", `${doomed}.ndjson`), join(data, "native", `${doomed}.previous.ndjson`),
     join(data, "skill-state", bot.id, "task-bundles", doomed), claudeProject, fuigoSession]) expect(existsSync(path), path).toBe(false);

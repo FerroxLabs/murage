@@ -20,6 +20,7 @@ import {
 import { fetchLearningCounts, monthLine, type LearningCountsAnswer } from "@/lib/learning-counts";
 import { learningEventLabel, type LearningPage } from "@/lib/memory-learning";
 import { Switch } from "./SettingsPrimitives";
+import { allHeldTasks } from "@/lib/task-window";
 
 const FOCUS = "focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent";
 const ACTION = `min-h-11 rounded-lg px-3 text-[13px] text-ink hover:bg-raised disabled:opacity-50 ${FOCUS}`;
@@ -475,5 +476,5 @@ export function LearningSettings({ bot }: { bot: Bot }) {
     await load();
   }
 
-  return <LearningView botName={bot.name} data={data} tasks={bot.tasks ?? []} handlers={handlers} />;
+  return <LearningView botName={bot.name} data={data} tasks={allHeldTasks(bot)} handlers={handlers} />;
 }

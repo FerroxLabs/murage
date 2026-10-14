@@ -249,3 +249,4 @@ describe("attachment adoption uses the visibility definition of a reference", ()
     } finally { setAttachmentAdoptionObserver(null); }
   });
 });
+

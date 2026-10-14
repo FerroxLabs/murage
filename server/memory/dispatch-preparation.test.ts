@@ -1,6 +1,8 @@
 import { randomUUID } from "node:crypto";
 import { mkdirSync, readFileSync, rmSync } from "node:fs";
 import { beforeEach, expect, it } from "vitest";
+import { afterEach as thawAfterEach, beforeEach as thawBeforeEach } from "vitest";
+import { thawRootSetWritesForTest } from "./replay-lineage.ts";
 import { DATA_DIR } from "../config.ts";
 import { closeDatabase, database } from "../database.ts";
 import { guardTurnDispatch, RetiredTurnRegistry } from "../turn-dispatch-guard.ts";
@@ -18,6 +20,10 @@ import { forgetMemory } from "./forget.ts";
 import { archiveMemoryRecord } from "./retention.ts";
 import { continuationMemoryRevoked, filterMemoryReplay } from "./disclosures.ts";
 import { ownerMemoryTicket } from "./authority.ts";
+import { LineageAllowance } from "./lineage-allowance.ts";
+// 1.0.2: the receipt binds its session through the legacy session-root row here (no index.ts turn writes the write-time session row), which the read-time judge reads.
+thawBeforeEach(() => thawRootSetWritesForTest(true));
+thawAfterEach(() => thawRootSetWritesForTest(false));
 
 const threadId="7f00a32e-17a4-426b-bdc6-910220ba66c9";
 const roster={bots:[{id:"bot",threadId}],groups:[]};
@@ -46,7 +52,7 @@ function checkpoint(text:string){
 // receipt prepares the version it selected and discloses exactly that.
 it("prepares a bundle whose own-thread checkpoint rolled over during reset as stale, not revoked",async()=>{
   const f=fixture(),first=checkpoint("Verified initial result.");
-  const before=await buildMemoryBundle("result",f.access,bridge);
+  const before=await buildMemoryBundle("result",f.access,bridge, {allowance: LineageAllowance.tool()});
   expect(before.recordVersions).toContainEqual({id:first.id,version:first.version});
   await Promise.resolve().then(()=>checkpoint("Verified later result."));
   expect(database().prepare("SELECT state FROM memory_records WHERE id=? AND version=?").get(first.id,first.version)?.state).toBe("archived");
@@ -63,21 +69,21 @@ it("prepares a bundle whose own-thread checkpoint rolled over during reset as st
 it("keeps the thread's own checkpoint that rolls while recall runs",async()=>{
   const f=fixture(),first=checkpoint("Verified initial result.");
   const rolling={search:async()=>{checkpoint("The turn's own prompt, captured during recall.");return {hits:[],vectorRows:0};}};
-  const bundle=await buildMemoryBundle("result",f.access,rolling);
+  const bundle=await buildMemoryBundle("result",f.access,rolling, {allowance: LineageAllowance.tool()});
   expect(database().prepare("SELECT state FROM memory_records WHERE id=? AND version=?").get(first.id,first.version)?.state).toBe("archived");
   expect(bundle.recordVersions).toContainEqual({id:first.id,version:first.version});
   expect(bundle.degradedReason).toBeUndefined();
   // Any other loss during recall is still dropped: an archived version with no successor.
   const g=fixture(),second=checkpoint("Another result.");
   const archiving={search:async()=>{database().prepare("UPDATE memory_records SET state='archived' WHERE id=? AND version=?").run(second.id,second.version);return {hits:[],vectorRows:0};}};
-  const dropped=await buildMemoryBundle("result",g.access,archiving);
+  const dropped=await buildMemoryBundle("result",g.access,archiving, {allowance: LineageAllowance.tool()});
   expect(dropped.recordVersions).not.toContainEqual({id:second.id,version:second.version});
   expect(dropped.degradedReason).toBe("MEMORY_OPTIONAL_EVIDENCE_UNAVAILABLE");
 });
 
 it("treats the thread's own checkpoint superseded inside the dispatch window as stale: the accepted turn runs and its reply stays replayable",async()=>{
   const f=fixture(),first=checkpoint("Verified initial result.");
-  const bundle=await buildMemoryBundleAfterReset("result",f.access,bridge,async()=>{});
+  const bundle=await buildMemoryBundleAfterReset("result",f.access,bridge,async()=>{}, {allowance: LineageAllowance.tool(1_000_000_000)});
   expect(bundle.recordVersions).toContainEqual({id:first.id,version:first.version});
   const receipt=new MemoryDispatchReceipt(bundle,f.access,"fixture");
   receipt.assertCurrent();
@@ -95,14 +101,14 @@ it("treats the thread's own checkpoint superseded inside the dispatch window as 
   // replays this reply and may resume the native session.
   expect(checkpoint("The reply, captured.")).toMatchObject({id:first.id,version:first.version+2});
   const next=fixture();
-  expect(filterMemoryReplay(threadId,[{id:"reply-1"}],next.access).map(message=>message.id)).toEqual(["reply-1"]);
-  expect(continuationMemoryRevoked(threadId,"fixture","native",next.access)).toBe(false);
+  expect(filterMemoryReplay(LineageAllowance.tool(), threadId,[{id:"reply-1"}],next.access).map(message=>message.id)).toEqual(["reply-1"]);
+  expect(continuationMemoryRevoked(LineageAllowance.tool(), threadId,"fixture","native",next.access)).toBe(false);
   expect(database().prepare("SELECT state FROM memory_disclosures WHERE bundle_id=?").get(bundle.bundleId)?.state).toBe("delivered");
 });
 
 it("keeps every other revocation of a disclosed checkpoint fail-closed",async()=>{
   const prepared=async(text:string)=>{
-    const f=fixture(),first=checkpoint(text),bundle=await buildMemoryBundle("result",f.access,bridge);
+    const f=fixture(),first=checkpoint(text),bundle=await buildMemoryBundle("result",f.access,bridge, {allowance: LineageAllowance.tool()});
     expect(bundle.recordVersions).toContainEqual({id:first.id,version:first.version});
     return {f,first,receipt:new MemoryDispatchReceipt(bundle,f.access,"fixture")};
   };
@@ -157,7 +163,7 @@ it("discloses only the dispatched thread's own checkpoint, so a busy sibling rol
   const registry=new InternalCapabilities(),generation=registry.begin("bot",threadId);
   const token=registry.mint({botId:"bot",threadId,generation,depth:0,kind:"memory",skillAuthoring:false});
   const access=memoryAccess(registry,registry.resolve(`Bearer ${token}`)!,()=>wider);
-  const bundle=await buildMemoryBundle("result",access,bridge);
+  const bundle=await buildMemoryBundle("result",access,bridge, {allowance: LineageAllowance.tool()});
   expect(bundle.recordVersions).toContainEqual({id:own.id,version:own.version});
   expect(bundle.recordVersions.map(record=>record.id)).not.toContain(other.id);
   const receipt=new MemoryDispatchReceipt(bundle,access,"fixture");
@@ -186,7 +192,7 @@ it("keeps a sibling thread's checkpoint out of recall too, even when it matches 
   const registry=new InternalCapabilities(),generation=registry.begin("bot",threadId);
   const token=registry.mint({botId:"bot",threadId,generation,depth:0,kind:"memory",skillAuthoring:false});
   const access=memoryAccess(registry,registry.resolve(`Bearer ${token}`)!,()=>wider);
-  const bundle=await buildMemoryBundle("result",access,bridge);
+  const bundle=await buildMemoryBundle("result",access,bridge, {allowance: LineageAllowance.tool()});
   expect(bundle.recordVersions).toContainEqual({id:own.id,version:own.version});
   expect(bundle.recordVersions.map(record=>record.id)).not.toContain(other.id);
   const receipt=new MemoryDispatchReceipt(bundle,access,"fixture");
@@ -236,7 +242,7 @@ it("treats the room checkpoint superseded inside a member's dispatch window as s
   reconcileMemoryRoster(roomRoster);
   const member=roomFixture("bot",roomThread),first=roomCheckpoint(roomThread,"Room evidence.");
   expect(first.id).toBe(threadCheckpointId(String(database().prepare("SELECT id FROM memory_scopes WHERE kind='conversation' AND owner_key=?").get(roomThread)!.id),roomThread));
-  const bundle=await buildMemoryBundleAfterReset("evidence",member.access,bridge,async()=>{});
+  const bundle=await buildMemoryBundleAfterReset("evidence",member.access,bridge,async()=>{}, {allowance: LineageAllowance.tool(1_000_000_000)});
   expect(bundle.recordVersions).toContainEqual({id:first.id,version:first.version});
   const receipt=new MemoryDispatchReceipt(bundle,member.access,"fixture");
   receipt.assertCurrent();
@@ -256,9 +262,9 @@ it("treats the room checkpoint superseded inside a member's dispatch window as s
   expect(roomCheckpoint(roomThread,"The member's reply, captured.","bot")).toMatchObject({id:first.id,version:first.version+2});
   for(const botId of ["bot","other"]){
     const next=roomFixture(botId,roomThread);
-    expect(filterMemoryReplay(roomThread,[{id:"member-reply"}],next.access).map(message=>message.id)).toEqual(["member-reply"]);
+    expect(filterMemoryReplay(LineageAllowance.tool(), roomThread,[{id:"member-reply"}],next.access).map(message=>message.id)).toEqual(["member-reply"]);
   }
-  expect(continuationMemoryRevoked(roomThread,"fixture","native",roomFixture("bot",roomThread).access)).toBe(false);
+  expect(continuationMemoryRevoked(LineageAllowance.tool(), roomThread,"fixture","native",roomFixture("bot",roomThread).access)).toBe(false);
   expect(database().prepare("SELECT state FROM memory_disclosures WHERE bundle_id=?").get(bundle.bundleId)?.state).toBe("delivered");
 });
 
@@ -293,7 +299,7 @@ it("recognizes exactly the dispatched room's checkpoint for a member turn",()=>{
 it("keeps owner revocation of a disclosed room checkpoint fail-closed for the member turn",async()=>{
   reconcileMemoryRoster(roomRoster);
   const prepared=async(text:string)=>{
-    const member=roomFixture("bot",roomThread),first=roomCheckpoint(roomThread,text),bundle=await buildMemoryBundle("evidence",member.access,bridge);
+    const member=roomFixture("bot",roomThread),first=roomCheckpoint(roomThread,text),bundle=await buildMemoryBundle("evidence",member.access,bridge, {allowance: LineageAllowance.tool()});
     expect(bundle.recordVersions).toContainEqual({id:first.id,version:first.version});
     return {first,receipt:new MemoryDispatchReceipt(bundle,member.access,"fixture")};
   };
@@ -319,7 +325,7 @@ it("builds after checkpoint rollover during reset and prepares the current versi
   const f=fixture(),first=checkpoint("Verified initial result.");let resets=0;
   const bundle=await buildMemoryBundleAfterReset("result",f.access,bridge,async()=>{
     resets++;await Promise.resolve();checkpoint("Verified later result.");
-  });
+  }, {allowance: LineageAllowance.tool(1_000_000_000)});
   expect(resets).toBe(1);
   expect(bundle.recordVersions).toContainEqual({id:first.id,version:first.version+1});
   expect(bundle.recordVersions).not.toContainEqual({id:first.id,version:first.version});
@@ -332,7 +338,7 @@ it("retains original authority when the turn is revoked during session reset",as
   const f=fixture();checkpoint("Retain evidence.");
   await expect(buildMemoryBundleAfterReset("result",f.access,bridge,async()=>{
     f.registry.revokeThread(threadId);
-  })).rejects.toThrow("MEMORY_UNAUTHORIZED");
+  }, {allowance: LineageAllowance.tool(1_000_000_000)})).rejects.toThrow("MEMORY_UNAUTHORIZED");
   expect(database().prepare("SELECT count(*) AS n FROM memory_disclosures").get()?.n).toBe(0);
 });
 
@@ -340,7 +346,7 @@ it("refuses forgotten evidence during reset through the original deletion epoch"
   const f=fixture(),first=checkpoint("Forget this evidence.");
   await expect(buildMemoryBundleAfterReset("result",f.access,bridge,async()=>{
     forgetMemory(ownerMemoryTicket(),{kind:"source",id:first.sourceId,revision:1});
-  })).rejects.toThrow("MEMORY_CONTEXT_REVOKED");
+  }, {allowance: LineageAllowance.tool(1_000_000_000)})).rejects.toThrow("MEMORY_CONTEXT_REVOKED");
 });
 
 it("never drops a mandatory pin whose supporting evidence retires during reset",async()=>{
@@ -348,7 +354,7 @@ it("never drops a mandatory pin whose supporting evidence retires during reset",
   database().prepare("UPDATE memory_records SET owner_pinned=1 WHERE id=? AND version=?").run(first.id,first.version);
   await expect(buildMemoryBundleAfterReset("result",f.access,bridge,async()=>{
     database().prepare("UPDATE memory_sources SET state='retired' WHERE id=?").run(first.sourceId);
-  })).rejects.toThrow("MEMORY_PIN_UNAVAILABLE");
+  }, {allowance: LineageAllowance.tool(1_000_000_000)})).rejects.toThrow("MEMORY_PIN_UNAVAILABLE");
 });
 
 it("uses post-reset bundle preparation in both real dispatch paths before receipt construction",()=>{
@@ -382,13 +388,13 @@ it("filters the transcript of a resumed direct turn before dispatch, not only a 
   expect(resumed).toBeGreaterThan(replay);
   expect(resumed).toBeLessThan(bundle);
   const branch=direct.slice(resumed,bundle);
-  expect(branch).toContain("filterDirectReplay(threadId,activeMessages,access,skipTranscript,replayOptions)");
+  expect(branch).toContain("filterDirectReplay(allowance,threadId,activeMessages,access,skipTranscript,replayOptions)");
   expect(branch).toMatch(/transcript=replayed\b/);
 });
 
 it("retires an accepted provider and awaits interruption when true forgetting invalidates its memory receipt",async()=>{
   const f=fixture(),source=checkpoint("Evidence that the owner may forget.");
-  const bundle=await buildMemoryBundle("result",f.access,bridge),receipt=new MemoryDispatchReceipt(bundle,f.access,"fixture");
+  const bundle=await buildMemoryBundle("result",f.access,bridge, {allowance: LineageAllowance.tool()}),receipt=new MemoryDispatchReceipt(bundle,f.access,"fixture");
   let acceptProvider!:(value:{turnId:string})=>void;
   const provider=new Promise<{turnId:string}>(resolve=>{acceptProvider=resolve;});
   let finishStop!:()=>void;

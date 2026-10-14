@@ -31,6 +31,10 @@ export interface BotLearningWiring {
   readThread: (threadId: string, limit: number) => readonly Message[];
   /** The visible branch: root to the active leaf (Store.activePath). Staleness is decided by membership in it, never by a clock. */
   activePath: (threadId: string) => readonly Message[];
+  /** Branch membership by key (Store.branchMembership): preferred over `activePath`, which reads the whole conversation. */
+  branchMembership?: (threadId: string) => (messageId: string) => boolean;
+  /** One row by key (Store.messageById), for the words a feedback signal was sent with. */
+  messageById?: (threadId: string, messageId: string) => Message | undefined;
   /** Tests run the observer inline. */
   defer?: (run: () => void) => void;
 }
@@ -186,7 +190,11 @@ export function wireBotLearning(wiring: BotLearningWiring): BotLearningHandle {
         readThread: wiring.readThread,
         botName: id => wiring.bot(id)?.name,
         // SEC-09, design 3.6: the same owner message must still be on the visible branch, word for word, when the model has answered.
-        stillCurrent: (thread, sent, target) => onActivePath(wiring.activePath(thread), sent, target),
+        stillCurrent: (thread, sent, target) => {
+          if (!wiring.branchMembership || !wiring.messageById) return onActivePath(wiring.activePath(thread), sent, target);
+          const onBranch = wiring.branchMembership(thread), here = wiring.messageById(thread, sent.id);
+          return Boolean(here) && onBranch(sent.id) && (here!.text ?? "") === (sent.text ?? "") && (target === null || onBranch(target));
+        },
         lessons,
       }).then(result => { try { afterFeedback(wiring.db(), threadId, result); } catch { /* optional */ } }, () => { /* detection is optional */ });
     } catch { /* never into the write path */ }
@@ -194,8 +202,11 @@ export function wireBotLearning(wiring: BotLearningWiring): BotLearningHandle {
   return {
     onBranchChange(threadId) {
       try {
-        const path = new Set(wiring.activePath(threadId).map(item => item.id));
-        sweepOffPathLearning(wiring.db(), { threadId, onPath: id => path.has(id) });
+        if (wiring.branchMembership) sweepOffPathLearning(wiring.db(), { threadId, onPath: wiring.branchMembership(threadId) });
+        else {
+          const path = new Set(wiring.activePath(threadId).map(item => item.id));
+          sweepOffPathLearning(wiring.db(), { threadId, onPath: id => path.has(id) });
+        }
       } catch { /* a sweep is never allowed into the write path */ }
     },
   };
