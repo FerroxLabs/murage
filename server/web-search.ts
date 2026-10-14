@@ -1,5 +1,7 @@
 // REST shapes verified against Tavily search, Exa's coding-agent guide, and Firecrawl v2 search.
 // Results are untrusted data; this adapter never follows their source URLs.
+import { fluxCallHeaders } from "./flux-memory-headers.ts";
+import { fluxKeyRefused, noteFluxKeyRefused } from "./flux-key-health.ts";
 export type WebSearchProvider = "tavily" | "exa" | "firecrawl";
 export type SearchErrorCode = "missing-config" | "auth" | "plan" | "quota" | "rate-limit" | "unavailable" | "offline" | "timeout" | "cancel" | "invalid-response" | "invalid-request";
 const messages: Record<SearchErrorCode, string> = {
@@ -143,6 +145,8 @@ export async function searchWeb(input: { provider?: WebSearchProvider; apiKey?: 
 export async function searchFlux(input: { baseUrl?: string; apiKey?: string; query: string; maxResults?: number; signal?: AbortSignal }, options: { fetch?: typeof fetch; timeoutMs?: number } = {}): Promise<WebSearchResult> {
   if (!input.baseUrl?.trim() || !input.apiKey?.trim()) throw new SearchError("missing-config");
   if (/[\r\n]/.test(input.apiKey)) throw new SearchError("auth");
+  // Flux refused this exact key before (shared state, server/flux-key-health.ts): say so, do not ask again until the key changes or the owner presses Test.
+  if (fluxKeyRefused(input.apiKey)) throw new SearchError("auth", 401);
   const maxResults = input.maxResults ?? 5; const timeoutMs = options.timeoutMs ?? 40_000;
   // Flux takes a query of at most 2,000 characters
   if (typeof input.query !== "string" || !input.query.trim() || input.query.length > 2000 || !Number.isInteger(maxResults) || maxResults < 1 || maxResults > 10) throw new SearchError("invalid-request");
@@ -154,7 +158,7 @@ export async function searchFlux(input: { baseUrl?: string; apiKey?: string; que
   try {
     const fetching = (options.fetch ?? fetch)(`${input.baseUrl.replace(/\/+$/, "")}/search`, {
       method: "POST", redirect: "error", signal: controller.signal,
-      headers: { authorization: `Bearer ${input.apiKey.trim()}`, "content-type": "application/json" },
+      headers: { authorization: `Bearer ${input.apiKey.trim()}`, "content-type": "application/json", ...fluxCallHeaders("web-search") },
       body: JSON.stringify({ query: input.query, provider: "xai" }),
     });
     void fetching.then(response => { if (controller.signal.aborted) void response.body?.cancel().catch(() => {}); }, () => {});
@@ -163,11 +167,13 @@ export async function searchFlux(input: { baseUrl?: string; apiKey?: string; que
     try { parsed = JSON.parse(await bodyText(response, controller.signal)); }
     catch (error) {
       if (error instanceof SearchError && error.code !== "invalid-response") throw error;
+      if (response.status === 401) noteFluxKeyRefused(input.apiKey);
       if (!response.ok) throw new SearchError(fluxErrorCode(response.status, ""), response.status);
       throw new SearchError("invalid-response");
     }
     if (!response.ok || response.redirected) {
       const code = typeof parsed?.error?.code === "string" ? parsed.error.code : "";
+      if (response.status === 401) noteFluxKeyRefused(input.apiKey);
       throw new SearchError(fluxErrorCode(response.status, code), response.status, code);
     }
     const answer = typeof parsed?.answer === "string" ? parsed.answer.trim() : "";

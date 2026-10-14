@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // Copyright 2026 Ferrox Labs
+import { scopedTx } from "./tx-scope.ts";
 import type { DatabaseSync } from 'node:sqlite';
 import { randomBytes } from 'node:crypto';
 import { z } from 'zod';
@@ -202,6 +203,7 @@ export function createProjectRows(db:DatabaseSync,input:unknown,members:ProjectM
   if (lead && !body.members.includes(lead)) throw new Error('The lead must be a member.');
   if (body.mode === 'chat' && !lead) throw new Error('Choose a lead for the chat room.');
   const roots = body.folder ? canonicalProjectRoots([{path:body.folder}],{dataDir:DATA_DIR}).map(root=>({...root,label:'Work folder',addedAt:now})) : [];
+  return scopedTx(() => {
   db.exec('SAVEPOINT project_create');
   try {
     channelToProjectRows(db,{groupId,bulletin:body.brief?.rules ?? body.purpose,leadBotId:lead,now});
@@ -219,6 +221,7 @@ export function createProjectRows(db:DatabaseSync,input:unknown,members:ProjectM
     db.exec('RELEASE project_create');
     return {groupId};
   } catch(error) {db.exec('ROLLBACK TO project_create; RELEASE project_create');throw error;}
+  });
 }
 export function projectCreationRecord(db:DatabaseSync,groupId:string): GroupRecord | null {
   const row = db.prepare("SELECT detail,at FROM project_activity WHERE group_id=? AND kind='settings' AND json_extract(detail,'$.creation')='pending' ORDER BY rowid LIMIT 1").get(groupId);

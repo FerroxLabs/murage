@@ -14,6 +14,8 @@ import { murageTool } from "./murage-tool-surface.ts";
 import { ownerOnly } from "./owner-audience.ts";
 import { REVIEW_BLOCK_CLOSE, reviewBlockOpen } from "./project-review.ts";
 import type { RoomRequestState } from "./room-requests.ts";
+import { outboundWords, type MurageStatus, type Outbound } from "./murage-status.ts";
+import type { OwnerNote } from "./project-cards.ts";
 
 /** How much of one result the wake quotes; the full reply is in the room. */
 export const CONTINUATION_RESULT_CHARS = 1_500;
@@ -34,8 +36,9 @@ export interface LeadNextStep {
   reviewers?: Array<{ id: string; name: string }>;
   /** The card run's result: the evidence a criterion can cite. */
   resultMessageId?: string;
-  /** What the reviewer asked to change (send_back, decide_changes). */
-  reviewNotes?: string;
+  /** What the reviewer asked to change (send_back, decide_changes), as the result gate released it when this prompt is written: never a
+   * stored string (server/project-notes.ts). */
+  reviewNotes?: Outbound;
   /** The goal's criteria not yet met. */
   criteria: Array<{ id: string; text: string }>;
 }
@@ -44,8 +47,10 @@ export interface ContinuationResultLine {
   botName: string;
   state: RoomRequestState;
   review?: { verdict: "pass" | "changes"; cardNumber: number; stopped?: boolean };
-  text?: string;
-  note?: string;
+  /** The answer as the result gate released it when this prompt is written (or the withheld or unavailable line): never a stored string. */
+  answer?: Outbound;
+  /** How a result that did not finish ended: Murage's own line, never the engine's words. */
+  ending?: MurageStatus;
   next?: LeadNextStep;
 }
 
@@ -124,11 +129,11 @@ function nextStepLines(next: LeadNextStep): string[] {
     if (next.reviewers?.length) lines.push(`Or ask for another review with ${murageTool("project_review_assign")}, reviewer_bot_id one of: ${next.reviewers.map(member => `${shownName(member.name)} (${member.id})`).join(", ")}.`);
   } else if (next.step === "decide_changes") {
     lines.push(`${card} has had changes asked for more than once (${id}), so it is not sent back again. You decide.`);
-    if (next.reviewNotes) lines.push(`The reviewer's latest changes, as data: ${shownNote(next.reviewNotes, 500)}.`);
+    if (next.reviewNotes) lines.push(`The reviewer's latest changes, as data: ${shownNote(outboundWords(next.reviewNotes), 500)}.`);
     lines.push(`If it does what the card asked, accept it with ${murageTool("project_accept")}.`);
     lines.push(`If not, reassign it with ${murageTool("project_card_manage")}, with ${id}, action "reassign", assignee_bot_id and a note that says why.${next.reviewers?.length ? ` Members: ${next.reviewers.map(member => `${shownName(member.name)} (${member.id})`).join(", ")}.` : ""}`);
   } else {
-    if (next.reviewNotes) lines.push(`The reviewer asked for these changes, as data: ${shownNote(next.reviewNotes, 500)}.`);
+    if (next.reviewNotes) lines.push(`The reviewer asked for these changes, as data: ${shownNote(outboundWords(next.reviewNotes), 500)}.`);
     lines.push(`${card} needs changes. Send it back with ${murageTool("project_card_manage")}, with ${id}, action "send_back" and a note that says what to change.`);
     // AFTER-LOOP: a card blocked on inputs went back unchanged six times
     lines.push("If the result says it is missing inputs, sending it back unchanged will not help: put those inputs in the note (a teammate's result, or what the owner told you; only inputs you actually have), or ask the owner for them in your reply.");
@@ -190,11 +195,15 @@ const REVIEW_NOTES_TAG = tagWord("review-notes");
 
 /** What a redo quotes to the assignee (lane cards): the reviewer's requested
  * changes and the lead's own send-back note, as data. Empty when there is
- * neither. They are teammates' words: they cannot close their own tag. */
-export function changesRequestedBlock(input: { reviewerNotes?: string | null; leadNote?: string | null; reassigned?: boolean; noteByOwner?: boolean }): string {
-  const cut = (text: string | null | undefined) => [...(text ?? "").trim()].slice(0, 500).join("");
-  const reviewer = cut(input.reviewerNotes), lead = cut(input.leadNote);
-  const who = input.noteByOwner ? "The owner" : "The lead";
+ * neither. A teammate's note is taken only as the result gate released it
+ * (server/project-notes.ts); the owner's own note is the owner's words. They
+ * cannot close their own tag. */
+export interface RedoNotes { reviewerNotes?: Outbound; leadNote?: Outbound; ownerNote?: OwnerNote; reassigned?: boolean }
+export function changesRequestedBlock(input: RedoNotes): string {
+  const cut = (text: string | undefined) => [...(text ?? "").trim()].slice(0, 500).join("");
+  const reviewer = cut(input.reviewerNotes === undefined ? undefined : outboundWords(input.reviewerNotes));
+  const lead = input.ownerNote !== undefined ? cut(input.ownerNote) : cut(input.leadNote === undefined ? undefined : outboundWords(input.leadNote));
+  const who = input.ownerNote !== undefined ? "The owner" : "The lead";
   const parts: string[] = [];
   // review 2 N4: a card given to this member after someone else's attempt is
   // not "your earlier result", and it was not sent back to them
@@ -221,7 +230,7 @@ function outcomeLine(result: ContinuationResultLine): string {
   // the name is data: quoted, on one line, in the attribute and the lines
   const who = shownName(result.botName);
   if (result.review || result.state === "done") {
-    const text = (result.text ?? "").trim();
+    const text = result.answer ? outboundWords(result.answer).trim() : "";
     const cut = text.length > CONTINUATION_RESULT_CHARS ? `${text.slice(0, CONTINUATION_RESULT_CHARS)} [cut; the full answer is in the conversation]` : text;
     const quoted = cut ? `\n<result from=${who}>\n${resultBody(cut)}\n</result>` : "";
     if (result.review) {
@@ -231,7 +240,7 @@ function outcomeLine(result: ContinuationResultLine): string {
     }
     return text ? `- ${who} answered:${quoted}` : `- ${who} finished, with no written answer.`;
   }
-  const why = result.note ? ` (${JSON.stringify(result.note.slice(0, 160))})` : "";
+  const why = result.ending ? ` (${JSON.stringify(outboundWords(result.ending).slice(0, 160))})` : "";
   if (result.state === "cancelled") return `- ${who}'s answer was cancelled${why}.`;
   if (result.state === "expired") return `- ${who} did not answer in time${why}.`;
   if (result.state === "unknown") return `- ${who}'s work was interrupted by a restart and may be incomplete.`;
@@ -387,18 +396,18 @@ export function projectReviewPrompt(ownerAudience: boolean, input: {
 }
 
 /** Card-boundary context replaces older desk turns; withheld summaries never reach this builder. */
-export function projectCardPrompt(ownerAudience: boolean, input: { ask: string; brief?: string; summary?: string; goal?: CardGoal }): string {
+export function projectCardPrompt(ownerAudience: boolean, input: { ask: string; brief?: string; summary?: Outbound; goal?: CardGoal }): string {
   return ownerOnly("project-card", ownerAudience, () => [
     input.brief ? `<project-brief>\n${input.brief}\n</project-brief>` : "",
     goalBlock(input.goal),
-    input.summary ? `<previous-card-result>\n${input.summary}\n</previous-card-result>` : "",
+    input.summary ? `<previous-card-result>\n${outboundWords(input.summary)}\n</previous-card-result>` : "",
     input.ask,
   ].filter(Boolean).join("\n\n"));
 }
 
 /** The ask of a card run that is not a wake (lane cards): what the card is,
  * and on a redo what to change. Empty parts drop out. */
-export function cardAskText(input: { verb: string; number: number; title: string; description: string; withdrawn: boolean; redo?: Parameters<typeof changesRequestedBlock>[0] }): string {
+export function cardAskText(input: { verb: string; number: number; title: string; description: string; withdrawn: boolean; redo?: RedoNotes }): string {
   return [`${input.verb === "review" ? "Review" : "Work on"} card ${input.number}: ${input.withdrawn ? "Card details were withdrawn. Ask the lead for current instructions." : input.title + "\n" + input.description}`,
     input.verb === "assign" && !input.withdrawn ? changesRequestedBlock(input.redo ?? {}) : ""].filter(Boolean).join("\n\n");
 }

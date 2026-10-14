@@ -6,6 +6,8 @@
 // messages.db inside the caller's transaction; the caller (a route, lane N,
 // the reconciler) writes groups.json and the desk archive stamps after.
 import { projectIsClosing } from "./project-records.ts";
+import { releaseHeldClosesForResume } from "./project-restore-hold.ts";
+import { releaseHeldCardDeliveries, releaseHeldSharedResults } from "./restore-fence.ts";
 import type { DatabaseSync } from "node:sqlite";
 
 import { createDefaultPeriodBudget, DEFAULT_PROJECT_PARALLEL_CARDS, DEFAULT_PROJECT_PARTS, type ProjectFeatureFlags } from "./project-defaults.ts";
@@ -181,11 +183,13 @@ export function setProjectReopened(db: DatabaseSync, input: { groupId: string; a
 
 /** Pause and resume the whole project (control routes are lane E1's; the row
  * writes are R's). */
-export function setProjectRunState(db: DatabaseSync, input: { groupId: string; runState: "running" | "paused"; reason?: string | null; actor: ProjectActor | "owner"; now: number }): SettingsOutcome {
+export function setProjectRunState(db: DatabaseSync, input: { groupId: string; runState: "running" | "paused"; reason?: string | null; actor: ProjectActor | "owner"; now: number; publishHeldShared?: (requestId: string) => boolean }): SettingsOutcome {
   const settings = projectSettingsFor(db, input.groupId);
   if (!settings) return { ok: false, error: "not_found", reason: "Not a project." };
   if (settings.endedAt !== null) return { ok: false, error: "not_allowed", reason: "This is a channel now." };
   if (settings.closedAt !== null && input.runState === "running") return { ok: false, error: "not_allowed", reason: "This project is closed. Reopen it first." };
+  // The owner resuming the project is the explicit action that lets go of a close the restore held.
+  if (input.runState === "running" && (input.actor === "owner" || input.actor.kind === "owner")) { releaseHeldClosesForResume(db, input.groupId, input.now); releaseHeldCardDeliveries(db, input.groupId); releaseHeldSharedResults(db, input.groupId, input.publishHeldShared ?? (() => false)); }   // no publisher: the holds stay until the owner releases each item
   if (input.runState === "running" && projectIsClosing(db,input.groupId)) return { ok: false, error: "not_allowed", reason: "This project is closing." };
   writeSettings(db, input.groupId, { run_state: input.runState, run_state_reason: input.reason ?? null }, input.now);
   insertProjectActivity(db, { groupId: input.groupId, kind: "settings", actor: "owner", at: input.now, detail: { runState: input.runState } });

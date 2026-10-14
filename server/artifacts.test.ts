@@ -5,7 +5,7 @@ import { DatabaseSync } from "node:sqlite";
 import { createHash } from "node:crypto";
 import { afterEach, expect, it } from "vitest";
 import {
-  artifactsRequest, ARTIFACT_MAX_BYTES, ARTIFACT_PREVIEW_MAX_BYTES, ARTIFACT_STORAGE_MAX_BYTES, ARTIFACT_TEXT_EXTENSIONS, describeArtifact, initializeArtifacts, listArtifacts, previewArtifact, readArtifact, registerArtifact, type ArtifactAccess,
+  artifactOwner, retainedSourceRoots, artifactsRequest, ARTIFACT_MAX_BYTES, ARTIFACT_PREVIEW_MAX_BYTES, ARTIFACT_STORAGE_MAX_BYTES, ARTIFACT_TEXT_EXTENSIONS, describeArtifact, initializeArtifacts, listArtifacts, previewArtifact, readArtifact, registerArtifact, type ArtifactAccess,
   artifactRelativePathParts, artifactSourceFingerprint, authorizedArtifactRoot, isPrivateWorkspaceName, safeArtifactDirectory, verifiedArtifactSource, workspacePathWithin,
 } from "./artifacts.ts";
 const roots: string[] = [], databases: DatabaseSync[] = [];
@@ -226,4 +226,20 @@ it("judges a workspace boundary with the platform's own paths", () => {
   expect(workspacePathWithin(base + "-sibling", base)).toBe(false);
   expect(workspacePathWithin(join(base, "..workspaces-not-a-parent"), base)).toBe(true);
   if (process.platform === "win32") expect(workspacePathWithin(join(base.toUpperCase(), "bot"), base.toLowerCase())).toBe(true);
+});
+it("finds a saved file's owner and retained roots by index, with the same plan at 10 and 100,000 rows", () => {
+  for (const count of [10, 100_000]) {
+    const f = fixture();
+    const insert = f.db.prepare("INSERT INTO artifacts(id,name,kind,mime,bytes,sha256,extension,created_at,bot_id,thread_id,run_id,source_root,relative_path,source_fingerprint) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)");
+    f.db.exec("BEGIN");
+    for (let i = 0; i < count; i++) insert.run(`00000000-0000-4000-8000-${String(i).padStart(12, "0")}`, `n${i}`, "html", "text/html", 1, "a".repeat(64), ".html", i, `bot${i % 50}`, `thread${i}`, "", `/root/${i % 500}`, `f${i}.html`, "[]");
+    f.db.exec("COMMIT");
+    const id = `00000000-0000-4000-8000-${String(7).padStart(12, "0")}`;
+    expect(artifactOwner(f.db, id)).toEqual({ botId: "bot7", threadId: "thread7", sourceRoot: "/root/7" });
+    expect(artifactOwner(f.db, "00000000-0000-4000-8000-ffffffffffff")).toBeUndefined();
+    expect(retainedSourceRoots(f.db, "bot7", "/root/7")).toEqual(["/root/7"]);
+    const plan = (sql: string, ...args: string[]) => (f.db.prepare(`EXPLAIN QUERY PLAN ${sql}`).all(...args) as Array<{ detail: string }>).map(row => row.detail).join(" | ");
+    expect(plan("SELECT bot_id, thread_id, source_root FROM artifacts WHERE id=?", id)).toMatch(/SEARCH artifacts USING (?:INDEX sqlite_autoindex_artifacts_\d+|PRIMARY KEY)/);
+    expect(plan("SELECT DISTINCT source_root FROM artifacts WHERE bot_id=? AND source_root=?", "bot7", "/root/7")).not.toMatch(/SCAN artifacts/);
+  }
 });

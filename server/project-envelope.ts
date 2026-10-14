@@ -6,6 +6,7 @@
 // the shape strictly (unknown fields are refused) and applies the effect on
 // rows through the card and goal transitions. The same functions back the
 // internal tools (11.3).
+import { scopedTx } from "./tx-scope.ts";
 import type { DatabaseSync } from "node:sqlite";
 
 import {
@@ -373,16 +374,18 @@ function applyGoalEnvelopeV2Rows(db: DatabaseSync, ctx: GoalEnvelopeContext, env
 
 /** Atomic even when called directly or inside an existing transaction. */
 export function applyGoalEnvelopeV2(db: DatabaseSync, ctx: GoalEnvelopeContext, envelope: unknown): EnvelopeOutcome {
-  db.exec("SAVEPOINT project_envelope");
-  try {
-    const result = applyGoalEnvelopeV2Rows(db, ctx, envelope);
-    if (!result.ok) db.exec("ROLLBACK TO project_envelope");
-    db.exec("RELEASE project_envelope");
-    return result;
-  } catch (error) {
-    db.exec("ROLLBACK TO project_envelope; RELEASE project_envelope");
-    throw error;
-  }
+  return scopedTx(() => {
+    db.exec("SAVEPOINT project_envelope");
+    try {
+      const result = applyGoalEnvelopeV2Rows(db, ctx, envelope);
+      if (!result.ok) db.exec("ROLLBACK TO project_envelope");
+      db.exec("RELEASE project_envelope");
+      return result;
+    } catch (error) {
+      db.exec("ROLLBACK TO project_envelope; RELEASE project_envelope");
+      throw error;
+    }
+  }, (result) => !result.ok);
 }
 
 export function applyGoalEnvelopeAssign(db: DatabaseSync, ctx: GoalEnvelopeContext, payload: Record<string, unknown>): EnvelopeOutcome {

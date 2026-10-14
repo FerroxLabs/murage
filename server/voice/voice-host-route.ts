@@ -77,8 +77,10 @@ export interface VoiceHostRouteDeps {
   /** A channel the caller may hold a room call in; null when it does not
    *  exist or this caller may not call it (index.ts: desktop only). */
   group?(id: string): VoiceHostRouteGroup | null;
-  /** The active branch of a thread, oldest first. */
-  activePath(threadId: string): Message[];
+  /** The tail of a thread's active branch, oldest first: at least the newest lines the call speaks from, the
+   *  owner's last line, and every row written at or after `sinceAt` (the earliest hand-down on the call) when
+   *  given. Never the whole conversation (index.ts walks back from the branch head and stops there). */
+  activePath(threadId: string, sinceAt?: number): Message[];
   /** What the harness holds for a hand-down's request row in a room: its
    *  state and note, or "missing" when the row is gone. */
   requestReceipt?(groupId: string, requestId: string): HandDownReceipt | undefined;
@@ -312,12 +314,14 @@ export async function handleVoiceHostRoute(
   const history = parseHistory(body.history);
   // In a room the thread holds every member's rows: a hand-down's outcome is
   // read from the owner's lines and this member's own rows only.
-  const fullThread = deps.activePath(threadId);
+  // a hand-down's own line is no older than the hand-down (less the ten seconds its text match allows)
+  const handDowns = parseHandDowns(body.handDowns);
+  const fullThread = deps.activePath(threadId, handDowns.length ? Math.min(...handDowns.map((h) => h.at)) - 10_000 : undefined);
   const thread = group ? fullThread.filter((m) => m.role === "user" || m.from?.botId === bot.id) : fullThread;
   const busy = group ? group.busyBotId === bot.id && group.threadId === threadId : Boolean(bot.busy) && bot.threadId === threadId;
   const results: Record<string, string> = {};
   const running: string[] = [];
-  for (const handDown of parseHandDowns(body.handDowns)) {
+  for (const handDown of handDowns) {
     const receipt = handDown.requestId && group ? deps.requestReceipt?.(group.id, handDown.requestId) : undefined;
     const status = handDownStatus(handDown, thread, busy, receipt);
     results[handDown.id] = handDownResult(status);

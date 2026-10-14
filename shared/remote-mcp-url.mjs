@@ -36,7 +36,10 @@ export const LIMITS = Object.freeze({
   toolsListed: 100,
   dnsMs: 3_000,
   connectMs: 10_000,
-  probeTotalMs: 20_000,
+  // initialize + tools/list over the internet for an account with many
+  // workspaces can take well over 20 s. Only a person-initiated Test waits
+  // on this, never a bot's turn (OpenMausBot #2449, Apache-2.0).
+  probeTotalMs: 30_000,
   initializeRelayMs: 30_000,
   toolCallMs: 10 * 60_000,
   signInMs: 10 * 60_000,

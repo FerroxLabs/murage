@@ -38,6 +38,7 @@ import { filterDirectReplay } from "./disclosures.ts";
 import { replayExclusions, replayLimitWithheld, replayRowsRead, setReplayNodeBudgetForTest } from "./replay-lineage.ts";
 import type { MemorySearchBridge } from "./search.ts";
 import type { Message } from "../store.ts";
+import { LineageAllowance } from "./lineage-allowance.ts";
 
 const roster: MemoryRoster = {
   bots: [
@@ -47,7 +48,7 @@ const roster: MemoryRoster = {
   groups: [],
 };
 /** What a direct turn may replay or quote (filterDirectReplay). */
-const directAllowed = (t: string, m: Message[], a: MemoryAccess, s: Set<string>) => filterDirectReplay(t, m, a, s).allowed;
+const directAllowed = (t: string, m: Message[], a: MemoryAccess, s: Set<string>) => filterDirectReplay(LineageAllowance.tool(), t, m, a, s).allowed;
 const empty: MemorySearchBridge = { search: async () => ({ hits: [], vectorRows: 0 }) };
 afterEach(() => setReplayNodeBudgetForTest(null));
 beforeEach(() => { closeDatabase(); rmSync(DATA_DIR, { recursive: true, force: true }); mkdirSync(DATA_DIR, { recursive: true }); });
@@ -85,7 +86,7 @@ async function longConversation(turns: number, extraLookup: Record<number, Retur
   const messages: Message[] = [];
   for (let turn = 1; turn <= turns; turn++) {
     messages.push(owner(`ask-${turn}`, turn * 10));
-    const bundle = await buildMemoryBundle("what is the plan", a, empty);
+    const bundle = await buildMemoryBundle("what is the plan", a, empty, {allowance: LineageAllowance.tool()});
     const receipt = new MemoryDispatchReceipt(bundle, a, "fuigo");
     receipt.sessionStarted("native-1");
     receipt.accepted();
@@ -135,7 +136,7 @@ it("a whole-thread check that runs out of replay budget before reaching the line
   const strangers: Message[] = Array.from({ length: 5 }, (_, i) => reply(`stranger-${i}`, 100_000 + i));
   const asked = [...messages, ...strangers].map(m => ({ id: m.id, role: m.role }));
   const generated = asked.filter(m => m.role !== "user").map(m => m.id);
-  const run = () => replayExclusions("dax-direct", asked, null, { failClosed: true });
+  const run = () => replayExclusions(LineageAllowance.tool(1_000_000_000), "dax-direct", asked, null, { failClosed: true });
   // healthy: nothing is withheld, strangers included
   expect(run().size).toBe(0);
   forgetMemory(ownerMemoryTicket(), { kind: "record", id: recalled });

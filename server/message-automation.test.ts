@@ -54,7 +54,7 @@ it("background is told by the dispatch's own provenance, not the newest user mes
 it("the dispatch no longer infers background from the newest user message",()=>{
  const source=readFileSync(new URL("./index.ts",import.meta.url),"utf8");
  expect(source).not.toMatch(/reverse\(\)\.find\(m => m\.role === "user"\)\?\.automation/);
- expect(source).toMatch(/turnIsBackground\(\{ \.\.\.\(opts \?\? \{\}\)/);
+ expect(source).toMatch(/turnIsBackground\(\{ automation: opts\?\.automation \?\? userMessage\?\.automation, automationSource: opts\?\.automationSource/);
 });
 
 import {memberTurnProvenance} from "./message-automation.ts";

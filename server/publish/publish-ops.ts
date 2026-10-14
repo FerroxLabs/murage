@@ -282,7 +282,7 @@ export class PublishOperations {
   /** Patch the card the owner is looking at with how far along it is. */
   private progress(actor: PublishActor, messageId: string, progress: PublishProgress, url?: string) {
     const { store } = this.options;
-    const current = store.messagesFor(actor.threadId).find(item => item.id === messageId);
+    const current = store.messageById(actor.threadId, messageId);
     if (!current?.card?.publish) return;
     store.patchMessage(actor.threadId, messageId, { card: { ...current.card, publish: { ...current.card.publish, ...(url ? { url } : {}), progress } } });
   }
@@ -290,7 +290,7 @@ export class PublishOperations {
   /** The "Connect Netlify" card: one per chat until it is used. */
   private connectNotice(actor: PublishActor) {
     const { store } = this.options;
-    if (store.messagesFor(actor.threadId).some(item => item.card?.publish?.action === "connect" && item.card.publish.connect?.state === "needed")) return;
+    if (store.keyedCards(actor.threadId, "publish", "connect").some(item => item.card?.publish?.action === "connect" && item.card.publish.connect?.state === "needed")) return;
     const from = this.options.speaker?.(actor.threadId, actor.botId);
     store.appendMessage(actor.threadId, { role: "bot", kind: "options", ...(from ? { from } : {}), card: {
       title: "Connect Netlify", subtitle: "", options: [], kind: "publish",
@@ -300,13 +300,13 @@ export class PublishOperations {
 
   /** The bot a connect card was raised for. */
   connectBot(threadId: string, messageId: string): string | undefined {
-    return this.options.store.messagesFor(threadId).find(item => item.id === messageId)?.card?.publish?.connect?.botId;
+    return this.options.store.messageById(threadId, messageId)?.card?.publish?.connect?.botId;
   }
 
   /** Netlify is connected and working: the card says so. False when there is no such card. */
   markConnected(threadId: string, messageId: string): boolean {
     const { store } = this.options;
-    const current = store.messagesFor(threadId).find(item => item.id === messageId);
+    const current = store.messageById(threadId, messageId);
     const publish = current?.card?.publish;
     if (!current?.card || publish?.action !== "connect" || publish.connect?.state === "connected") return false;
     store.patchMessage(threadId, messageId, { card: { ...current.card, publish: { ...publish, connect: { ...publish.connect, state: "connected" } } } });
@@ -348,7 +348,7 @@ export class PublishOperations {
       let done = false, expired = false;
       const finish = (allow: boolean, source: "user" | "system" = "system") => {
         if (done) return; done = true; clearTimeout(timer); actor.signal.removeEventListener("abort", abort); this.pending.delete(requestId);
-        const current = store.messagesFor(actor.threadId).find(m => m.id === message.id);
+        const current = store.messageById(actor.threadId, message.id);
         if (current?.card && !current.card.answered) store.patchMessage(actor.threadId, message.id, { card: { ...current.card, answered: source === "user" ? (allow ? "allow" : "deny") : "unavailable", dismissed: source !== "user" } });
         this.options.waiting(actor.threadId, false, requestId, undefined, actor.botId);
         resolve({ answer: source === "user" ? (allow ? "allow" : "deny") : expired ? "unanswered" : "gone", messageId: message.id });

@@ -25,14 +25,17 @@ import {
   Users,
   X,
 } from "lucide-react";
-import { useCallback, useEffect, useRef, useState } from "react";
+import { Suspense, useCallback, useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
-import { BundleImportDialog, type BundleImportResult } from "./BundleImportDialog";
+import type { BundleImportResult } from "./BundleImportDialog";
+import { LazyBoundary, retryableLazy } from "./LazyBoundary";
 import { returnFocus } from "@/lib/return-focus";
 import { t } from "@/lib/i18n";
 import { ImportGuardFindings, guardBlockedNote, guardScanFromError, type GuardScan } from "./ImportGuardFindings";
 import { ImportScanProgress } from "./ImportScanProgress";
 import { isCheckStopped, useImportScan, withScanId } from "@/lib/importScan";
+// A bundle file is imported rarely: its dialog loads when one is chosen.
+const BundleImportDialog = retryableLazy(() => import("./BundleImportDialog").then((module) => ({ default: module.BundleImportDialog })));
 
 const MAX_TEAM_FILE_BYTES = 1_000_000;
 
@@ -1607,8 +1610,14 @@ export function TeamLibraryPanel({
           </>
         )}
       </div>
-      {bundleFile && <BundleImportDialog archivePath={bundleFile.path} fileName={bundleFile.name}
-        onClose={() => { setBundleFile(null); dialogRef.current?.focus(); }} onImported={finishBundleImport} />}
+      {bundleFile && (
+        <LazyBoundary onRetry={BundleImportDialog.retry} onDismiss={() => { setBundleFile(null); dialogRef.current?.focus(); }}>
+          <Suspense fallback={null}>
+            <BundleImportDialog.Component archivePath={bundleFile.path} fileName={bundleFile.name}
+              onClose={() => { setBundleFile(null); dialogRef.current?.focus(); }} onImported={finishBundleImport} />
+          </Suspense>
+        </LazyBoundary>
+      )}
     </div>,
     document.body,
   );
