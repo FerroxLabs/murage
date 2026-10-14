@@ -1,0 +1,178 @@
+{
+ "_note": "Shapes of /api/health `upgrade` as shared/upgrade-contract.mjs (lane upgui, contract version 2) builds them: sampleState() and variations. Every key is present; 'unknown' is a value, never an absent field.",
+ "running": {
+  "app": "murage",
+  "pid": 4242,
+  "launch": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+  "static": true,
+  "unresolvedFrameDrops": 0,
+  "upgrade": {
+   "v": 2,
+   "launch": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+   "seq": 3,
+   "source": "health",
+   "stage": "background",
+   "phase": "message-index",
+   "overall": 0.5,
+   "complete": false,
+   "held": false,
+   "holdKey": null,
+   "capture": "on",
+   "recall": "on",
+   "storedMode": "active",
+   "counts": {
+    "exact": true,
+    "messages": 1200,
+    "conversations": 40,
+    "memoryRecords": 90,
+    "firstMessageAt": 1600000000000
+   },
+   "keepOpen": true,
+   "step": {
+    "awakeElapsedMs": 12000,
+    "unit": "messages",
+    "done": 300,
+    "total": 1200
+   },
+   "eta": {
+    "stable": true,
+    "ms": 360000
+   },
+   "storage": "idle",
+   "heartbeatAt": 1000,
+   "progressAt": 1000,
+   "blocked": null
+  }
+ },
+ "runningUnknownPercent": {
+  "app": "murage",
+  "pid": 4242,
+  "launch": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+  "static": true,
+  "unresolvedFrameDrops": 0,
+  "upgrade": {
+   "v": 2,
+   "launch": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+   "seq": 3,
+   "source": "health",
+   "stage": "background",
+   "phase": "checking",
+   "overall": "unknown",
+   "complete": false,
+   "held": false,
+   "holdKey": null,
+   "capture": "on",
+   "recall": "on",
+   "storedMode": "active",
+   "counts": {
+    "exact": false
+   },
+   "keepOpen": true,
+   "step": {
+    "awakeElapsedMs": 2000,
+    "unit": "none"
+   },
+   "eta": {
+    "stable": false
+   },
+   "storage": "idle",
+   "heartbeatAt": 1000,
+   "progressAt": 1000,
+   "blocked": null
+  }
+ },
+ "finished": {
+  "app": "murage",
+  "pid": 4242,
+  "launch": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+  "static": true,
+  "unresolvedFrameDrops": 0,
+  "upgrade": {
+   "v": 2,
+   "launch": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+   "seq": 3,
+   "source": "health",
+   "stage": "idle",
+   "phase": "none",
+   "overall": 1,
+   "complete": true,
+   "held": false,
+   "holdKey": null,
+   "capture": "on",
+   "recall": "on",
+   "storedMode": "active",
+   "counts": {
+    "exact": true,
+    "messages": 1200,
+    "conversations": 40,
+    "memoryRecords": 90,
+    "firstMessageAt": 1600000000000
+   },
+   "keepOpen": true,
+   "step": {
+    "awakeElapsedMs": 0,
+    "unit": "none"
+   },
+   "eta": {
+    "stable": false
+   },
+   "storage": "idle",
+   "heartbeatAt": 1000,
+   "progressAt": 1000,
+   "blocked": null
+  }
+ },
+ "blocked": {
+  "app": "murage",
+  "pid": 4242,
+  "launch": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+  "static": true,
+  "unresolvedFrameDrops": 0,
+  "upgrade": {
+   "v": 2,
+   "launch": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+   "seq": 3,
+   "source": "health",
+   "stage": "blocked",
+   "phase": "message-index",
+   "overall": 0.5,
+   "complete": "unknown",
+   "held": false,
+   "holdKey": null,
+   "capture": "on",
+   "recall": "on",
+   "storedMode": "active",
+   "counts": {
+    "exact": true,
+    "messages": 1200,
+    "conversations": 40,
+    "memoryRecords": 90,
+    "firstMessageAt": 1600000000000
+   },
+   "keepOpen": true,
+   "step": {
+    "awakeElapsedMs": 12000,
+    "unit": "messages",
+    "done": 300,
+    "total": 1200
+   },
+   "eta": {
+    "stable": true,
+    "ms": 360000
+   },
+   "storage": "idle",
+   "heartbeatAt": 1000,
+   "progressAt": 1000,
+   "blocked": {
+    "code": "DISK_FULL"
+   }
+  }
+ },
+ "legacy": {
+  "app": "murage",
+  "pid": 4242,
+  "launch": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+  "static": true,
+  "unresolvedFrameDrops": 0
+ }
+}

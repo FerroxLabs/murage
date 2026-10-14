@@ -147,7 +147,7 @@ async function probe(configPath) {
     // No lexical term occurs in the eligible source; a hit needs independent semantic candidates.
     const semantic = await query("car fuel", true);
     assert.equal(semantic.vectorRows, 1, "Denied/deleted sources participated in similarity ranking");
-    assert.equal(semantic.coverageComplete, true);
+    assert.deepEqual(semantic.unvectored, [], "An eligible source has no vector");
     assert(Number.isFinite(semantic.hits[0].similarity) && semantic.hits[0].similarity > 0);
     checks.push("independent-semantic-hit-and-denied-source-exclusion");
     await stop();

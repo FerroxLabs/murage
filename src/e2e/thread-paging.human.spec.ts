@@ -12,7 +12,7 @@ import { fileURLToPath } from "node:url";
 import { join } from "node:path";
 import { launchVerificationServer, type VerificationServer } from "../../scripts/control-murage.ts";
 import { openSidebar } from "./fixtures.ts";
-import { PHONE_HYDRATE_PAGE } from "../lib/scrollback.ts";
+import { DESKTOP_HYDRATE_PAGE, PHONE_HYDRATE_PAGE } from "../lib/scrollback.ts";
 
 const TOTAL = 1000;
 const PAGE = 100;
@@ -75,7 +75,7 @@ test("opens on the newest page and loads older ones in place when scrolled to th
   // boots on a slim page (PHONE_HYDRATE_PAGE) and the store tops the open
   // conversation up to the newest page (scrollback needsNewestPage).
   const phone = info.project.name === "mobile";
-  expect(requests.some((path) => path === `/api/bots?messages=${phone ? PHONE_HYDRATE_PAGE : PAGE}`)).toBe(true);
+  expect(requests.some((path) => path === `/api/bots?messages=${phone ? PHONE_HYDRATE_PAGE : DESKTOP_HYDRATE_PAGE}`)).toBe(true);
   expect(requests.some((path) => path === "/api/bots")).toBe(false);
   await expect.poll(() => mountedSeeded(page)).toBeGreaterThanOrEqual(PAGE - 2);
   // the harness may have added a live message of its own, which then
@@ -83,7 +83,7 @@ test("opens on the newest page and loads older ones in place when scrolled to th
   const held = await mountedSeeded(page);
   expect(held).toBeGreaterThanOrEqual(PAGE - 2);
   // The phone's top-up is a full page before its slim one.
-  expect(held).toBeLessThanOrEqual(phone ? PHONE_HYDRATE_PAGE + PAGE : PAGE);
+  expect(held).toBeLessThanOrEqual((phone ? PHONE_HYDRATE_PAGE : DESKTOP_HYDRATE_PAGE) + PAGE);
   const oldest = TOTAL - held;
   await expect(row(page, oldest)).toBeAttached();
   await expect(row(page, oldest - 1)).toHaveCount(0);

@@ -58,4 +58,8 @@ Delete team removes the heading from the sidebar. No bot, channel or conversatio
 
 Right-click a channel in the sidebar, or use the channel's More actions menu, and choose Delete. Type the name to confirm. Every message in it goes, but the bots stay. Deleting the last conversation in a channel leaves a fresh, empty one, and a channel shows an error instead of failing quietly when something goes wrong.
 
+When you delete a conversation, Murage removes its words from the coding engines' files on this computer. If an engine is using one of those files, Murage leaves that file alone, tells you, and finishes later. Murage never changes another conversation's words. Copies in backups or in an engine's online account are not removed by Murage.
+
+When an engine has a file open, Murage says so with the engine's name: "Claude Code is open on this computer. Murage will remove its copy when Claude Code is closed, and tries again each time Murage starts." Close that engine and choose Try again now to finish at once. When the copy is gone you see "Removed from Claude Code."
+
 Editing a message and running it again starts the new run once.

@@ -26,16 +26,27 @@ export const MESSAGE_PAGE_SIZE = 100;
  * be settings only: no cards, no latest line, and nothing to page back from. */
 export const PHONE_HYDRATE_PAGE = 1;
 
+/** The desktop's boot page per thread: enough for the sidebar preview and a
+ * first paint. A hundred rows for every bot and room made /api/bots 4.65 MB at
+ * 43 bots, and twenty still 2.44 MB (p95 322 ms). The server widens a page to
+ * reach every open request card and the active branch head, so a few rows hold
+ * the sidebar's last line; the conversation on screen tops up to a full page
+ * at once (store topUpThread, needsNewestPage) and older pages load as before. */
+export const DESKTOP_HYDRATE_PAGE = 3;
+
 export function hydratePageSize(phone: boolean): number {
-  return phone ? PHONE_HYDRATE_PAGE : MESSAGE_PAGE_SIZE;
+  return phone ? PHONE_HYDRATE_PAGE : DESKTOP_HYDRATE_PAGE;
 }
 
 /** A conversation holding less than a newest page while the server has more:
- * a phone's slim boot page. A snapshot or switch always holds at least a full
- * page when there is more, so on the desktop this is never true. */
+ * a slim boot page (phone or desktop). A thread switch always holds at least a
+ * full page when there is more. */
 export function needsNewestPage(owner: { messages: Message[]; hasMore?: boolean }): boolean {
-  return Boolean(owner.hasMore) && owner.messages.length < MESSAGE_PAGE_SIZE;
+  return holdsPreviewRows(owner) || (Boolean(owner.hasMore) && owner.messages.length < MESSAGE_PAGE_SIZE);
 }
+
+/** The roster carries cut rows (`truncated`); only the newest page, asked for without a cursor, brings them whole. */
+export const holdsPreviewRows = (owner: { messages: Message[] }): boolean => owner.messages.some((message) => message.truncated === true);
 
 /** The largest page the server hands out; a jump walks back in these. */
 export const MESSAGE_PAGE_MAX = 200;
@@ -51,11 +62,14 @@ export const DEEP_LINK_MAX_PAGES = 5;
 
 type OlderMessagesAction =
   | { type: "loadOlderMessages"; threadId: string }
-  | { type: "olderMessages"; threadId: string; generation: number; messages: Message[]; hasMore: boolean };
+  | { type: "olderMessages"; threadId: string; generation: number; messages: Message[]; hasMore: boolean; olderFrom?: string | null }
+  | { type: "newestMessages"; threadId: string; generation: number; messages: Message[]; hasMore: boolean; olderFrom?: string | null };
 
 export interface ScrollbackPage {
   messages?: Message[];
   hasMore?: boolean;
+  /** The next ancestor to page back to, when the page is a branch page. */
+  olderFrom?: string | null;
 }
 
 export interface ScrollbackDeps {
@@ -110,6 +124,21 @@ export function createScrollback(deps: ScrollbackDeps) {
       return undefined;
     }
     deps.dispatch({ type: "loadOlderMessages", threadId });
+    if (owner && holdsPreviewRows(owner)) {
+      // The roster sent cut rows. Older pages only prepend, so the newest page is fetched whole and replaces them.
+      paging.add(threadId);
+      return exclusive(threadId, async () => {
+        try {
+          const page = await deps.request(pagePath(threadId, `limit=${MESSAGE_PAGE_SIZE}`));
+          deps.dispatch({ type: "newestMessages", threadId, generation, messages: page.messages ?? [], hasMore: Boolean(page.hasMore), ...(page.olderFrom !== undefined ? { olderFrom: page.olderFrom } : {}) });
+        } catch (error) {
+          deps.dispatch({ type: "olderMessages", threadId, generation, messages: [], hasMore: Boolean(owner.hasMore) });
+          deps.onError(error);
+        } finally {
+          paging.delete(threadId);
+        }
+      });
+    }
     const before = owner?.messages[0]?.id;
     if (!owner?.hasMore || !before) {
       // Nothing to page back from: clear the flag rather than wait for a
@@ -120,8 +149,14 @@ export function createScrollback(deps: ScrollbackDeps) {
     paging.add(threadId);
     return exclusive(threadId, async () => {
       try {
-        const page = await deps.request(pagePath(threadId, `limit=${MESSAGE_PAGE_SIZE}&before=${encodeURIComponent(before)}`));
-        deps.dispatch({ type: "olderMessages", threadId, generation, messages: page.messages ?? [], hasMore: Boolean(page.hasMore) });
+        // A branch page is paged back along the branch's own parent links
+        // (`branchFrom`); storage order says nothing about ancestry once a
+        // thread has forked. Any other page is paged back by storage order.
+        const cursor = owner.olderFrom && !owner.messages.some((m) => m.id === owner.olderFrom) ? owner.olderFrom : undefined;
+        const page = await deps.request(pagePath(threadId, cursor
+          ? `limit=${MESSAGE_PAGE_SIZE}&branchFrom=${encodeURIComponent(cursor)}`
+          : `limit=${MESSAGE_PAGE_SIZE}&before=${encodeURIComponent(before)}`));
+        deps.dispatch({ type: "olderMessages", threadId, generation, messages: page.messages ?? [], hasMore: Boolean(page.hasMore), ...(cursor ? { olderFrom: page.olderFrom ?? null } : {}) });
       } catch (error) {
         // Clear the flag on the way out, or scrolling up never asks again.
         deps.dispatch({ type: "olderMessages", threadId, generation, messages: [], hasMore: true });
@@ -161,22 +196,29 @@ export function createScrollback(deps: ScrollbackDeps) {
       }
       const generation = generationOf(threadId);
       let before = start;
+      // The same cursor loadOlder pages with: a branch page is walked back
+      // along the branch's own parent links, so a late-stored ancestor spliced
+      // in earlier in the branch is reached, and the cursor stays right.
+      let cursor: string | undefined = owner.olderFrom && !owner.messages.some((m) => m.id === owner.olderFrom) ? owner.olderFrom : undefined;
       for (let pages = 0; pages < maxPages; pages++) {
         if (generationOf(threadId) !== generation) return "missing";
         deps.dispatch({ type: "loadOlderMessages", threadId });
         let page: ScrollbackPage;
         try {
-          page = await deps.request(pagePath(threadId, `limit=${MESSAGE_PAGE_MAX}&before=${encodeURIComponent(before)}`));
+          page = await deps.request(pagePath(threadId, cursor
+            ? `limit=${MESSAGE_PAGE_MAX}&branchFrom=${encodeURIComponent(cursor)}`
+            : `limit=${MESSAGE_PAGE_MAX}&before=${encodeURIComponent(before)}`));
         } catch (error) {
           deps.dispatch({ type: "olderMessages", threadId, generation, messages: [], hasMore: true });
           deps.onError(error);
           return "missing";
         }
         const messages = page.messages ?? [];
-        deps.dispatch({ type: "olderMessages", threadId, generation, messages, hasMore: Boolean(page.hasMore) });
+        deps.dispatch({ type: "olderMessages", threadId, generation, messages, hasMore: Boolean(page.hasMore), ...(cursor ? { olderFrom: page.olderFrom ?? null } : {}) });
         if (messages.some((message) => message.id === messageId)) return "fetched";
         if (!page.hasMore || !messages[0]) return "missing";
         before = messages[0].id;
+        if (cursor) cursor = page.olderFrom ?? undefined;
       }
       return "missing";
     });

@@ -6,9 +6,14 @@ const SUMMARY_KEY = {
   "user-chrome": "browserUnavailable.userChrome",
   "user-chrome-allow": "browserUnavailable.userChromeAllow",
   held: "browserUnavailable.held",
+  checking: "browserUnavailable.checking",
+  checked: "browserUnavailable.checked",
+  unfinished: "browserUnavailable.unfinished",
+  "check-failed": "browserUnavailable.checkFailed",
   "timed-out": "browserUnavailable.timedOut",
   failed: "browserUnavailable.failed",
 } as const;
+const NO_DETAILS = new Set<string>(["user-chrome", "user-chrome-allow", "held", "checking", "checked", "unfinished", "check-failed"]);
 
 /** A turn that ran without the built-in browser, said in plain words, with
  * the engine's own reason one click away. Neutral, like FolderTrustRow: not a
@@ -30,7 +35,7 @@ export function BrowserUnavailableRow({ reason }: { reason: string }) {
         <span className="mt-[3px] shrink-0" aria-hidden="true"><GlobeLock size={12} className="opacity-70" /></span>
         <div className="min-w-0 [overflow-wrap:anywhere]">
           <span>{t(SUMMARY_KEY[kind])}</span>
-          {kind !== "user-chrome" && kind !== "user-chrome-allow" && kind !== "held" && (
+          {!NO_DETAILS.has(kind) && (
             <details className="mt-0.5 text-[12px]">
               <summary className="cursor-pointer select-none">{t("browserUnavailable.details")}</summary>
               <span className="font-mono">{reason}</span>

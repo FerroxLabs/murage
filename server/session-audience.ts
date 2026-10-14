@@ -31,6 +31,14 @@ export function sessionAudienceChanged(recorded: string | undefined, hasCursor: 
   return previous !== current;
 }
 
+/** Must this turn leave the session it would resume because the engine's session contract moved?
+ * Only for an engine that has one (ProviderInstance.sessionContract): a cursor recorded under
+ * another version, or with none (made before the contract existed), is not resumed. */
+export function sessionContractChanged(recorded: number | undefined, hasCursor: boolean, current: number | undefined): boolean {
+  if (!hasCursor || current === undefined) return false;
+  return recorded !== current;
+}
+
 /** Pooled engine processes on room threads (no cursor, one process kept per
  * thread by some drivers): reset when the audience moves. In memory: a
  * restart starts every room turn on a fresh process anyway. */

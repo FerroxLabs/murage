@@ -86,6 +86,36 @@ export function admissibleActionSources(db: DatabaseSync, botId: string, q: Span
   return q.limit ? out.slice(0, q.limit) : out;
 }
 
+/** The pending check only: true when some source is admissible after the cursor of `q`. It reads the thread's sources newest first (capture order) and stops
+ * at the first admissible one, or at the first one at or before the cursor, so it reads the rows after the cursor and one more, never the whole thread.
+ * `onPayload` is a test seam counting the payloads read. The run itself keeps the full lists. */
+export function hasAdmissibleAfter(db: DatabaseSync, botId: string, q: SpanQuery, onPayload?: () => void): boolean {
+  if (!threadIsBotsOwn(botId, q.threadId, q.excludedThreads)) return false;
+  const beforeCursor = (at: number, id: string | null) => q.afterAt !== undefined && (at < q.afterAt || (at === q.afterAt && (id ?? "") <= (q.afterMessageId ?? "")));
+  const walk = (kind: "text" | "tool-outcome", where: string, admit: (r: Record<string, unknown>, payload: Record<string, unknown>, at: number) => boolean): boolean => {
+    const statement = db.prepare(`SELECT s.id,s.revision,s.message_id,s.speaker,s.outcome,v.payload FROM memory_sources s
+      JOIN memory_source_versions v ON v.source_id=s.id AND v.revision=s.revision
+      WHERE s.thread_id=? AND s.kind=? AND s.state='active' AND ${where} ORDER BY s.rowid DESC`);
+    for (const r of statement.iterate(q.threadId, kind) as Iterable<Record<string, unknown>>) {
+      let payload: Record<string, unknown>;
+      onPayload?.();
+      try { payload = JSON.parse(String(r.payload)) as Record<string, unknown>; } catch { continue; }
+      const at = Number.isSafeInteger(payload.occurredAt) ? Number(payload.occurredAt) : 0;
+      const messageId = r.message_id === null ? null : String(r.message_id);
+      if (beforeCursor(at, messageId)) return false;
+      if (q.untilAt !== undefined && at > q.untilAt) continue;
+      if (admit(r, payload, at)) return true;
+    }
+    return false;
+  };
+  if (walk("text", "s.speaker='owner'", (r, payload) => typeof payload.text === "string" && isLearnableSource(db, String(r.id), Number(r.revision)).learnable)) return true;
+  if (!turnAudienceIsOwner(q.threadId, {}, db)) return false;
+  return walk("tool-outcome", "s.speaker='tool' AND s.outcome='completed'", (r, payload) => {
+    const label = (payload.action as { label?: unknown } | undefined)?.label;
+    return typeof label === "string" && label.length > 0 && !sourceTombstoned(db, String(r.id), Number(r.revision));
+  });
+}
+
 /** Re-check one grounding handle: used inside the confirm transaction (I-1) and before an episode is written. */
 export function ownerSourceStillAdmissible(db: DatabaseSync, botId: string, sourceId: string, revision: number, excluded: readonly string[] = []): boolean {
   const row = db.prepare("SELECT thread_id,speaker,kind,revision,state FROM memory_sources WHERE id=?").get(sourceId);

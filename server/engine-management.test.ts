@@ -2,7 +2,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { EngineManager, type ManagedEngineInstance } from "./engine-management.js";
+import { EngineManager, LATEST_VERSION_TTL_MS, type ManagedEngineInstance } from "./engine-management.js";
 const roots: string[] = [];
 afterEach(async () => { await Promise.all(roots.splice(0).map(root => rm(root, { recursive: true, force: true }))); });
 async function fixture(options: { driver?: string; platform?: NodeJS.Platform; arch?: string; busy?: () => boolean; probe?: string } = {}) {
@@ -73,4 +73,48 @@ it("retains the working Windows CLI after a native version mismatch",async()=>{
   const f=await fixture({platform:"win32",probe:"codex-cli 0.0.1"});
   await expect(f.manager.install("fixture")).rejects.toThrow("previous engine is unchanged");
   expect(f.activate).not.toHaveBeenCalled();expect(f.instance.cli).toBe("/preserved/old-cli");
+});
+
+describe("Settings › Engines serves the last known release", () => {
+  it("answers a second visit without a network call, and refreshes after the TTL in the background", async () => {
+    const f = await fixture();
+    let clock = 1_000_000;
+    const manager = new EngineManager({ root: f.root, getInstance: async id => id === "fixture" ? f.instance : undefined, isBusy: () => false, activate: f.activate, platform: "darwin", arch: "x64", run: f.run, fetch: f.fetch as typeof globalThis.fetch, now: () => clock });
+    expect((await manager.check("fixture")).latestVersion).toBe("1.2.0");
+    expect(f.fetch).toHaveBeenCalledOnce();
+    const started = performance.now();
+    const second = await manager.check("fixture");
+    expect(performance.now() - started).toBeLessThan(50);
+    expect(second.latestVersion).toBe("1.2.0");
+    expect(f.fetch).toHaveBeenCalledOnce();
+    // past the TTL: the known answer comes back at once, and one lookup runs behind it
+    clock += LATEST_VERSION_TTL_MS;
+    let release!: (response: Response) => void;
+    f.fetch.mockImplementationOnce(() => new Promise<Response>(resolve => { release = resolve; }));
+    expect((await manager.check("fixture")).latestVersion).toBe("1.2.0");
+    expect(f.fetch).toHaveBeenCalledTimes(2);
+    expect((await manager.check("fixture")).latestVersion).toBe("1.2.0");
+    expect(f.fetch).toHaveBeenCalledTimes(2); // joined, not repeated
+    release(new Response(JSON.stringify({ version: "1.3.0" })));
+    await new Promise(resolve => setImmediate(resolve));
+    expect((await manager.check("fixture")).latestVersion).toBe("1.3.0");
+    expect(f.fetch).toHaveBeenCalledTimes(2);
+  });
+  it("keeps the last known release when a background refresh fails", async () => {
+    const f = await fixture();
+    let clock = 0;
+    const manager = new EngineManager({ root: f.root, getInstance: async () => f.instance, isBusy: () => false, activate: f.activate, platform: "darwin", arch: "x64", run: f.run, fetch: f.fetch as typeof globalThis.fetch, now: () => clock });
+    await manager.check("fixture");
+    clock += LATEST_VERSION_TTL_MS;
+    f.fetch.mockRejectedValueOnce(new Error("offline"));
+    expect((await manager.check("fixture")).latestVersion).toBe("1.2.0");
+    await new Promise(resolve => setImmediate(resolve));
+    expect((await manager.check("fixture")).latestVersion).toBe("1.2.0");
+  });
+  it("an install always looks the release up again", async () => {
+    const f = await fixture();
+    await f.manager.check("fixture");
+    await f.manager.install("fixture");
+    expect(f.fetch).toHaveBeenCalledTimes(2);
+  });
 });
