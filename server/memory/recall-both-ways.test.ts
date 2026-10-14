@@ -20,6 +20,7 @@ import { captureSource } from "./capture.ts";
 import { setMemoryCaptureRoster } from "./capture-scope.ts";
 import { buildMemoryBundle } from "./bundle.ts";
 import { memoryOwnerRoute } from "./settings.ts";
+import { LineageAllowance } from "./lineage-allowance.ts";
 
 let roster: MemoryRoster;
 beforeEach(() => {
@@ -115,12 +116,12 @@ it("what the owner told the project reaches the member's direct chat, and its di
   const directRecord = saveMemoryCandidate(inDirect, [{ sourceId: "d1", revision: 1, startByte: 0, endByte: Buffer.byteLength(inDirect) }], "k2", access("reed", "reed-direct"));
   database().prepare("UPDATE memory_records SET state='active' WHERE id=?").run(directRecord);
   const bridge = (id: string) => ({ async search() { return { hits: [{ id, version: 1, score: 1, lexical: true }], vectorRows: 0, coverageComplete: false }; } });
-  const direct = await buildMemoryBundle("when does Tallyroo launch", access("reed", "reed-direct"), bridge(projectRecord));
+  const direct = await buildMemoryBundle("when does Tallyroo launch", access("reed", "reed-direct"), bridge(projectRecord), {allowance: LineageAllowance.tool()});
   expect(direct.text).toContain("Tallyroo launches on the 14th");
-  const room = await buildMemoryBundle("pricing rules", access("reed", "launch-chat"), bridge(directRecord));
+  const room = await buildMemoryBundle("pricing rules", access("reed", "launch-chat"), bridge(directRecord), {allowance: LineageAllowance.tool()});
   expect(room.text).toContain("never discount below 12");
   // a teammate in the same room does not get Reed's direct chat
-  const teammate = await buildMemoryBundle("pricing rules", access("cole", "launch-chat"), bridge(directRecord));
+  const teammate = await buildMemoryBundle("pricing rules", access("cole", "launch-chat"), bridge(directRecord), {allowance: LineageAllowance.tool()});
   expect(teammate.text).not.toContain("never discount below 12");
 });
 

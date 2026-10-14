@@ -424,4 +424,153 @@ describe("Pi MCP extension registration", () => {
     expect(asked).toBe(0);
     await handlers.get("session_shutdown")?.();
   });
+
+  it("lists again while the server's list is a stand-in, so Pi mounts the real tools", async () => {
+    const script = fakeMcpScript(`
+      let buffer = "", lists = 0;
+      process.stdin.setEncoding("utf8");
+      const send = (value) => process.stdout.write(JSON.stringify(value) + "\\n");
+      process.stdin.on("data", (chunk) => {
+        buffer += chunk;
+        let newline;
+        while ((newline = buffer.indexOf("\\n")) !== -1) {
+          const line = buffer.slice(0, newline); buffer = buffer.slice(newline + 1);
+          if (!line.trim()) continue;
+          const msg = JSON.parse(line);
+          if (msg.method === "initialize") send({ jsonrpc: "2.0", id: msg.id, result: { capabilities: { tools: { listChanged: true } } } });
+          else if (msg.method === "tools/list") {
+            lists += 1;
+            if (lists < 3) send({ jsonrpc: "2.0", id: msg.id, result: { tools: [{ name: "STANDIN", inputSchema: { type: "object", properties: {} } }], _meta: { "murage/provisional": true } } });
+            else send({ jsonrpc: "2.0", id: msg.id, result: { tools: [{ name: "REAL", inputSchema: { type: "object", properties: {} } }] } });
+          }
+        }
+      });
+    `);
+    const config = join(tempDir(), "mcp.json");
+    writeFileSync(config, JSON.stringify({ mcpServers: { test: { command: process.execPath, args: [script] } } }));
+    process.env.MURAGE_MCP_CONFIG = config;
+    const tools: RegisteredTool[] = [];
+    const handlers = new Map<string, ShutdownHandler>();
+    await extension({ registerTool(tool) { tools.push(tool); }, on(event, handler) { handlers.set(event, handler); } });
+    expect(tools.map((tool) => tool.name)).toEqual([expect.stringMatching(/real$/i)]);
+    await handlers.get("session_shutdown")?.();
+  });
+
+  it("registers tools the server announces after the mount (list_changed), since Pi cannot refresh a session", async () => {
+    const script = fakeMcpScript(`
+      let buffer = "", lists = 0;
+      process.stdin.setEncoding("utf8");
+      const send = (value) => process.stdout.write(JSON.stringify(value) + "\\n");
+      process.stdin.on("data", (chunk) => {
+        buffer += chunk;
+        let newline;
+        while ((newline = buffer.indexOf("\\n")) !== -1) {
+          const line = buffer.slice(0, newline); buffer = buffer.slice(newline + 1);
+          if (!line.trim()) continue;
+          const msg = JSON.parse(line);
+          if (msg.method === "initialize") send({ jsonrpc: "2.0", id: msg.id, result: { capabilities: { tools: { listChanged: true } } } });
+          else if (msg.method === "tools/list") {
+            lists += 1;
+            const tools = [{ name: "first", inputSchema: { type: "object", properties: {} } }];
+            if (lists > 1) tools.push({ name: "second", inputSchema: { type: "object", properties: {} } });
+            send({ jsonrpc: "2.0", id: msg.id, result: { tools } });
+            if (lists === 1) setTimeout(() => send({ jsonrpc: "2.0", method: "notifications/tools/list_changed" }), 200);
+          }
+        }
+      });
+    `);
+    const config = join(tempDir(), "mcp.json");
+    writeFileSync(config, JSON.stringify({ mcpServers: { test: { command: process.execPath, args: [script] } } }));
+    process.env.MURAGE_MCP_CONFIG = config;
+    const tools: RegisteredTool[] = [];
+    const handlers = new Map<string, ShutdownHandler>();
+    await extension({ registerTool(tool) { tools.push(tool); }, on(event, handler) { handlers.set(event, handler); } });
+    expect(tools).toHaveLength(1);
+    await vi.waitFor(() => expect(tools.map((tool) => tool.name)).toEqual([expect.stringMatching(/first$/), expect.stringMatching(/second$/)]), { timeout: 3_000 });
+    await handlers.get("session_shutdown")?.();
+  });
+
+  it("keeps a mount alive when the list is still a stand-in after the settle window, and mounts the tools when they arrive (never disposed for a slow harness)", async () => {
+    const script = fakeMcpScript(`
+      let buffer = "", ready = false;
+      process.stdin.setEncoding("utf8");
+      const send = (value) => process.stdout.write(JSON.stringify(value) + "\\n");
+      setTimeout(() => { ready = true; send({ jsonrpc: "2.0", method: "notifications/tools/list_changed" }); }, 5200);
+      process.stdin.on("data", (chunk) => {
+        buffer += chunk;
+        let newline;
+        while ((newline = buffer.indexOf("\\n")) !== -1) {
+          const line = buffer.slice(0, newline); buffer = buffer.slice(newline + 1);
+          if (!line.trim()) continue;
+          const msg = JSON.parse(line);
+          if (msg.method === "initialize") send({ jsonrpc: "2.0", id: msg.id, result: { capabilities: { tools: { listChanged: true } } } });
+          else if (msg.method === "tools/list") {
+            if (!ready) send({ jsonrpc: "2.0", id: msg.id, result: { tools: [], _meta: { "murage/provisional": true } } });
+            else send({ jsonrpc: "2.0", id: msg.id, result: { tools: [{ name: "APPROVED", inputSchema: { type: "object", properties: {} } }] } });
+          }
+        }
+      });
+    `);
+    const config = join(tempDir(), "mcp.json");
+    writeFileSync(config, JSON.stringify({ mcpServers: { test: { command: process.execPath, args: [script] } } }));
+    process.env.MURAGE_MCP_CONFIG = config;
+    const tools: RegisteredTool[] = [];
+    const handlers = new Map<string, ShutdownHandler>();
+    await extension({ registerTool(tool) { tools.push(tool); }, on(event, handler) { handlers.set(event, handler); } });
+    expect(tools).toHaveLength(0); // the settle window ended with nothing but a stand-in
+    await vi.waitFor(() => expect(tools.map((tool) => tool.name)).toEqual([expect.stringMatching(/approved$/i)]), { timeout: 8_000 });
+    await handlers.get("session_shutdown")?.();
+  }, 30_000);
+
+  it("replaces a tool whose description or schema changed, and retires a tool the server dropped", async () => {
+    const script = fakeMcpScript(`
+      let buffer = "", lists = 0;
+      process.stdin.setEncoding("utf8");
+      const send = (value) => process.stdout.write(JSON.stringify(value) + "\\n");
+      process.stdin.on("data", (chunk) => {
+        buffer += chunk;
+        let newline;
+        while ((newline = buffer.indexOf("\\n")) !== -1) {
+          const line = buffer.slice(0, newline); buffer = buffer.slice(newline + 1);
+          if (!line.trim()) continue;
+          const msg = JSON.parse(line);
+          if (msg.method === "initialize") send({ jsonrpc: "2.0", id: msg.id, result: { capabilities: { tools: { listChanged: true } } } });
+          else if (msg.method === "tools/list") {
+            lists += 1;
+            const tools = lists === 1
+              ? [
+                  { name: "EXEC", description: "accounts: A", inputSchema: { type: "object", properties: { account: { type: "string", enum: ["A"] } } } },
+                  { name: "DROPPED", description: "old", inputSchema: { type: "object", properties: {} } },
+                ]
+              : [{ name: "EXEC", description: "accounts: A, B", inputSchema: { type: "object", properties: { account: { type: "string", enum: ["A", "B"] } } } }];
+            send({ jsonrpc: "2.0", id: msg.id, result: { tools } });
+            if (lists === 1) setTimeout(() => send({ jsonrpc: "2.0", method: "notifications/tools/list_changed" }), 200);
+          }
+        }
+      });
+    `);
+    const config = join(tempDir(), "mcp.json");
+    writeFileSync(config, JSON.stringify({ mcpServers: { test: { command: process.execPath, args: [script] } } }));
+    process.env.MURAGE_MCP_CONFIG = config;
+    const registrations: RegisteredTool[] = [];
+    let active = ["test_exec", "test_dropped", "read"];
+    const handlers = new Map<string, ShutdownHandler>();
+    await extension({
+      registerTool(tool) { registrations.push(tool); },
+      getActiveTools() { return active; },
+      setActiveTools(names: string[]) { active = names; },
+      on(event, handler) { handlers.set(event, handler); },
+    });
+    expect(registrations.map((tool) => tool.name)).toEqual(["test_exec", "test_dropped"]);
+    await vi.waitFor(() => expect(registrations.length).toBe(4), { timeout: 3_000 });
+    const replaced = registrations.filter((tool) => tool.name === "test_exec");
+    expect(replaced).toHaveLength(2);
+    expect(replaced[1]!.description).toBe("accounts: A, B");
+    expect(JSON.stringify(replaced[1]!.parameters)).toContain('"B"');
+    const retired = registrations.filter((tool) => tool.name === "test_dropped")[1]!;
+    await expect(retired.execute("c", {}, undefined, undefined, { ui: { confirm: async () => true } }))
+      .resolves.toMatchObject({ content: [{ type: "text", text: expect.stringContaining("no longer available") }] });
+    expect(active).toEqual(["test_exec", "read"]);
+    await handlers.get("session_shutdown")?.();
+  });
 });

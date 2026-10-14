@@ -84,6 +84,9 @@ export interface HeldContinuation {
   state?: "ready" | "retry" | "authority" | "recovery";
   retryAt?: number;
   error?: string;
+  /** A restore holds this item (server/restore-fence.ts): only the owner's retry after the restore releases it. */
+  restoreHeld?: boolean;
+  restoreGen?: string;
 }
 
 const DELIVERY_GUARD =

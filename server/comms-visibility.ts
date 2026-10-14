@@ -1,4 +1,6 @@
 import { teamLabel } from "./team-identities.ts";
+import { MurageStatus, outboundCopy, outboundWords, status, type Outbound } from "./murage-status.ts";
+import { ReleasedText } from "./released-text.ts";
 import type { ExecutionAudience } from "./work-admission.ts";
 import { audienceTask, defaultThreadId, issueExecutionAudience, issueWorkAudience, threadPartition } from "./execution-audience.ts";
 import { threadHumanPrincipal, assertHumanPrincipal, bindHumanThread } from "./human-principals.ts";
@@ -13,8 +15,9 @@ import { sectionKey, type BotRecord, type GroupRecord, type Message, type Messag
  * so chat clients see the change without waiting for a refresh. */
 export interface CommsBus {
   store: Store;
-  /** Durable request admission precedes the delegation JSON save. */
-  prepareDelegation?(fromBotId: string, toBotId: string, sourceThreadId: string, message: string, requestId: string): void;
+  /** The durable ask:delegation record of a handoff when a room turn made it (a room request, or shared work), made in the transaction that queues
+   * it. Returns who owns the request side: `room`, `shared`, or `owner` (an owner-conversation handoff has no record: its queue row is all there is). */
+  prepareDelegation?(fromBotId: string, toBotId: string, sourceThreadId: string, message: string, requestId: string): "owner" | "room" | "shared" | void;
   /** Admission capacity, independent of how many handoffs are queued. */
   canDispatch?: () => boolean;
   /** Could a handoff from `sourceThreadId` start on this bot RIGHT NOW?
@@ -27,8 +30,11 @@ export interface CommsBus {
    * the handoff actually uses.
    *
    * Optional so an embedder that has no thread bookkeeping (and every test
-   * that fakes this bus) keeps the older, stricter bot-wide behaviour. */
-  canStartHandoff?: (botId: string, sourceThreadId: string) => boolean;
+   * that fakes this bus) keeps the older, stricter bot-wide behaviour.
+   * `destinationThreadId` is the conversation the hand-off is stored for: the question is asked of THAT one, never of one resolved again. */
+  canStartHandoff?: (botId: string, sourceThreadId: string, destinationThreadId?: string) => boolean;
+  /** Is a turn of this hand-off still running on the conversation it was started in? Send again asks before it sends the same work a second time. */
+  handoffRunning?: (threadId: string, handoffId: string) => boolean;
   /** SSE broadcast (kind: "message" envelope). */
   broadcast: (payload: Record<string, unknown>) => void;
   /** SSE broadcast (kind: "group" envelope) for a single group. */
@@ -115,27 +121,35 @@ export function mirrorExchange(
 export function mirrorReply(
   bus: CommsBus,
   target: BotRecord,
-  reply: string,
+  reply: Outbound,
   channel: GroupRecord | undefined,
   copyOf?: Message["copyOf"],
   inboundKind: "action" | "question" = "question",
-): void {
-  if (!channel || !reply.trim()) return;
-  bus.store.appendMessage(channel.threadId, {
+): string | undefined {
+  const words = outboundWords(reply);
+  if (!channel || !words.trim()) return undefined;
+  // A copy of a worker's words is written only with the link to its original; without one the channel gets Murage's withheld line instead.
+  const quotesWorker = ReleasedText.is(reply) || (MurageStatus.is(reply) && reply.quotes.length > 0);
+  if (quotesWorker && !(copyOf?.messageIds.length || outboundCopy(reply)?.messageIds.length)) {
+    mirrorMurageLine(bus, channel, status("withheld"), { kind: "failure" });
+    return undefined;
+  }
+  const written = bus.store.appendMessage(channel.threadId, {
     role: "bot",
     kind: "text",
-    text: reply,
+    text: words,
     inboundKind,
     from: { botId: target.id, name: target.name, color: target.color },
     ...(copyOf?.messageIds.length ? { copyOf } : {}),
   });
   bus.store.patchGroup(channel.id, { unread: true });
+  return written.id;
 }
 
 /** A line from Murage itself in the channel: no sender, so it never reads
  * as a bot's own words, and never folded away with tool calls (0.1.61 lane
  * T, O3). For what went wrong around a bot, not what the bot said. */
-export function mirrorNotice(bus: CommsBus, channel: GroupRecord | undefined, name: string): void {
+export function mirrorNotice(bus: CommsBus, channel: GroupRecord | undefined, name: Outbound): void {
   mirrorMurageLine(bus, channel, name, { kind: "failure" });
 }
 
@@ -145,7 +159,7 @@ export function mirrorNotice(bus: CommsBus, channel: GroupRecord | undefined, na
 export function mirrorMurageLine(
   bus: CommsBus,
   channel: GroupRecord | undefined,
-  text: string,
+  text: Outbound,
   murage: MessageMurage,
   lineage: { requestId?: string; replyToId?: string } = {},
 ): void {
@@ -153,7 +167,7 @@ export function mirrorMurageLine(
   bus.store.appendMessage(channel.threadId, {
     role: "bot",
     kind: "activity",
-    tool: { name: text, ok: murage.kind !== "failure" && murage.kind !== "cap" },
+    tool: { name: outboundWords(text), ok: murage.kind !== "failure" && murage.kind !== "cap" },
     actorKind: "murage",
     murage,
     ...(lineage.requestId ? { requestId: lineage.requestId } : {}),
@@ -171,14 +185,14 @@ export function mirrorActivity(
   bus: CommsBus,
   from: BotRecord,
   channel: GroupRecord | undefined,
-  name: string,
+  name: Outbound,
   ok: boolean,
 ): void {
   if (!channel) return;
   bus.store.appendMessage(channel.threadId, {
     role: "bot",
     kind: "activity",
-    tool: { name, ok },
+    tool: { name: outboundWords(name), ok },
     from: { botId: from.id, name: from.name, color: from.color },
   });
   bus.store.patchGroup(channel.id, { unread: true });

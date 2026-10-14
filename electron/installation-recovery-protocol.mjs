@@ -19,7 +19,7 @@ export function backupSkippedSummary(value) {
   }
   return { count: value.count, items, bots };
 }
-const operations = new Set(["backup", "inspect", "plan-restore", "restore", "rollback", "review", "activate", "backup-encrypted", "inspect-encrypted", "restore-encrypted-new"]);
+const operations = new Set(["backup", "inspect", "plan-restore", "restore", "rollback", "memory-downgrade", "review", "activate", "backup-encrypted", "inspect-encrypted", "restore-encrypted-new"]);
 const fields = ["path", "sha256", "snapshotId", "status", "previousDataDir", "receipt", "retainedCandidate", "activationAvailable", "reviewHash", "activationId", "connectionProfileId", "engines", "schedules", "pendingWork"];
 
 /** The desktop never receives archive content or an unbounded omissions list.
@@ -43,6 +43,7 @@ export function recoveryDesktopSummary(result) {
   if (["inspect", "plan-restore", "restore"].includes(result.operation) && result.activationAvailable !== false) invalid();
   if (result.operation === "restore" && (result.status !== "restored-review-required" || !file(result.receipt) || !(result.previousDataDir === null || file(result.previousDataDir)))) invalid();
   if (result.operation === "rollback" && (result.status !== "rolled-back" || !file(result.receipt) || !(result.retainedCandidate === null || file(result.retainedCandidate)))) invalid();
+  if (result.operation === "memory-downgrade" && (!["downgraded", "already-v6"].includes(result.status) || result.to !== 6 || !Number.isSafeInteger(result.from) || result.from < 1 || result.from > 64 || (result.status === "downgraded" ? result.from <= 6 : result.from > 6))) invalid();
   const summary = { ok: true, operation: result.operation };
   if(result.operation.includes("encrypted")){
     const coverage=result.coverage;
@@ -68,6 +69,7 @@ export function recoveryDesktopSummary(result) {
     } else if (value !== null && (typeof value !== "string" || value.length > 8192)) throw new Error("INVALID_RECOVERY_RESULT");
     summary[key] = value;
   }
+  if (result.operation === "memory-downgrade") { summary.from = result.from; summary.to = result.to; }
   if (result.operation === "restore") summary.sha256 = result.sha256 ?? result.archiveSha256;
   for (const key of ["files", "bytes"]) if (result[key] !== undefined) {
     if (!Number.isSafeInteger(result[key]) || result[key] < 0) invalid();

@@ -23,6 +23,19 @@ describe("ProviderRegistry", () => {
     expect(description.snapshot).toMatchObject({ state: "unavailable", reason: expect.stringContaining("disabled") });
     expect(description.cliCandidates).toEqual([]);
   });
+  it("turning an engine off is applied and does not fail when its old process cannot be confirmed stopped yet", async () => {
+    const fake = makeFakeDriver();
+    const registry = new ProviderRegistry([fake.driver]);
+    await registry.load({ a: { driver: "fake" }, b: { driver: "fake" } });
+    const sibling = registry.get("b");
+    registry.get("a")!.dispose = async () => { throw new Error("CLAUDE_SESSION_NOT_STOPPED: 1 earlier Claude process could not be confirmed stopped"); };
+    await expect(registry.reload(new Set(["a"]), { a: { driver: "fake", enabled: false }, b: { driver: "fake" } })).resolves.toBeUndefined();
+    expect(registry.get("a")).toBeNull();
+    expect(registry.get("b")).toBe(sibling);
+    const described = await registry.describe();
+    expect(described.find((entry) => entry.instanceId === "a")).toMatchObject({ enabled: false, snapshot: { state: "unavailable" } });
+  });
+
   it("creates live instances for known drivers", async () => {
     const fake = makeFakeDriver();
     const registry = new ProviderRegistry([fake.driver]);

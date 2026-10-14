@@ -15,7 +15,9 @@ import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, wr
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
+import { DatabaseSync } from "node:sqlite";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { queuedDelegationsByThread } from "./pending-delegations-schema.ts";
 
 
 import { mentionedBots, normalizeGroupDefaultResponder, roomResponders } from "./store.ts";
@@ -23,6 +25,10 @@ import { removeTempDir, waitForExit } from "./testing/cleanup.ts";
 
 const SERVER_DIR = dirname(fileURLToPath(import.meta.url));
 const FAKE_CLI = join(SERVER_DIR, "testing", "fake-acp-cli.ts");
+// The fake engines announce their MCP servers ready under Grok Build's own name, as the real engine does
+// (drivers/acp/grok.ts mcpReadyNotification). A build that stays silent is held for the full MCP_REQUIRED_WAIT_MS
+// before every first prompt (drivers/acp/core.ts waitMcpReady), which is longer than these tests' turn windows.
+const GROK_MCP_READY = { FAKE_ACP_MCP_READY: "1", FAKE_ACP_MCP_READY_METHOD: "_x.ai/mcp_initialized" };
 const FAKE_AGY_CLI = join(SERVER_DIR, "testing", "fake-agy-cli.ts");
 const PORT = 18800 + Math.floor(Math.random() * 10_000);
 const BASE = `http://127.0.0.1:${PORT}`;
@@ -200,12 +206,12 @@ describe("comms e2e (fake ACP fleet)", () => {
           // which uses the same sync path under a human card).
           batchChief: {
             driver: "grokAgent",
-            environment: { FAKE_ACP_MODE: "batch-delegate" },
+            environment: { ...GROK_MCP_READY, FAKE_ACP_MODE: "batch-delegate" },
             config: { cli: FAKE_CLI, fullAuto: true },
           },
           grok: {
             driver: "grokAgent",
-            environment: { FAKE_ACP_MODE: "ask-peer" },
+            environment: { ...GROK_MCP_READY, FAKE_ACP_MODE: "ask-peer" },
             config: { cli: FAKE_CLI, fullAuto: true },
           },
           // Normal Gemini 3.x bots use Antigravity print mode rather than
@@ -222,19 +228,19 @@ describe("comms e2e (fake ACP fleet)", () => {
           // plain happy text.
           askerDelegate: {
             driver: "grokAgent",
-            environment: { FAKE_ACP_MODE: "delegate-peer" },
+            environment: { ...GROK_MCP_READY, FAKE_ACP_MODE: "delegate-peer" },
             config: { cli: FAKE_CLI, fullAuto: true },
           },
           // A Chief that delegates only on the first assignment prompt, then
           // answers ordinary follow-ups while the worker remains gated.
           chiefAsync: {
             driver: "grokAgent",
-            environment: { FAKE_ACP_MODE: "chief-delegate" },
+            environment: { ...GROK_MCP_READY, FAKE_ACP_MODE: "chief-delegate" },
             config: { cli: FAKE_CLI, fullAuto: true },
           },
           chiefCreator: {
             driver: "grokAgent",
-            environment: { FAKE_ACP_MODE: "create-peer" },
+            environment: { ...GROK_MCP_READY, FAKE_ACP_MODE: "create-peer" },
             config: { cli: FAKE_CLI, fullAuto: true },
           },
           // a peer whose agent crashes at initialize — the delegated turn
@@ -242,7 +248,7 @@ describe("comms e2e (fake ACP fleet)", () => {
           // chip, not silence.
           helperCrash: {
             driver: "grokAgent",
-            environment: { FAKE_ACP_MODE: "exit-early" },
+            environment: { ...GROK_MCP_READY, FAKE_ACP_MODE: "exit-early" },
             config: { cli: FAKE_CLI, fullAuto: true },
           },
           // a successful peer turn that deliberately emits no assistant text,
@@ -251,13 +257,13 @@ describe("comms e2e (fake ACP fleet)", () => {
           // nothing at all is a failed turn since #1623.)
           helperImage: {
             driver: "grokAgent",
-            environment: { FAKE_ACP_MODE: "image" },
+            environment: { ...GROK_MCP_READY, FAKE_ACP_MODE: "image" },
             config: { cli: FAKE_CLI, fullAuto: true },
           },
           // a turn that remains busy until provider reload disposes it.
           helperHang: {
             driver: "grokAgent",
-            environment: { FAKE_ACP_MODE: "hang", FAKE_ACP_RPC_DUMP: helperHangRpc },
+            environment: { ...GROK_MCP_READY, FAKE_ACP_MODE: "hang", FAKE_ACP_RPC_DUMP: helperHangRpc },
             config: { cli: FAKE_CLI, fullAuto: true },
           },
           // a deterministic busy window: turns hold open until the gate
@@ -265,7 +271,7 @@ describe("comms e2e (fake ACP fleet)", () => {
           // e2e frees the peer by writing the file).
           helperGate: {
             driver: "grokAgent",
-            environment: { FAKE_ACP_MODE: "echo-gated", FAKE_ACP_GATE_FILE: gateFile },
+            environment: { ...GROK_MCP_READY, FAKE_ACP_MODE: "echo-gated", FAKE_ACP_GATE_FILE: gateFile },
             config: { cli: FAKE_CLI, fullAuto: true },
           },
         },
@@ -899,7 +905,7 @@ describe("comms e2e (fake ACP fleet)", () => {
                 text: bounded(message.text, 1500), tool: message.tool,
               })),
             })),
-            pending: readReceipt("delegations.json"), receipts: readReceipt("delegation-receipts.json"),
+            pending: "see the pending_delegations table of the fixture messages.db", receipts: readReceipt("delegation-receipts.json"),
             stderr: bounded(stderr.slice(-8000), 8000),
           }, null, 2), { mode: 0o600 });
         } catch { console.warn("Could not save bounded reload fixture diagnostics"); }
@@ -1205,7 +1211,7 @@ describe("comms e2e (fake ACP fleet)", () => {
           ? state.groups.find((g: any) => g.id === note.comm.groupId)
           : undefined;
         const terminal = channel?.messages.some(
-          (m: any) => m.kind === "activity" && m.tool?.ok === false && /did not finish: .+/.test(m.tool?.name ?? ""),
+          (m: any) => m.kind === "activity" && m.tool?.ok === false && /(?:did not finish|failed): .+/.test(m.tool?.name ?? ""),
         );
         if (terminal) break;
         if (Date.now() > deadline) {
@@ -1264,7 +1270,16 @@ describe("comms e2e (fake ACP fleet)", () => {
         const terminal = channel?.messages.some(
           (m: any) => m.kind === "activity" && m.tool?.ok === false && m.tool?.name?.includes("could not start"),
         );
-        if (sourceChip && terminal) break;
+        if (sourceChip && terminal) {
+          // r7 F3: the delegating bot reads this conversation, so the chip says the kind of failure and never the engine's own words
+          expect(sourceChip.tool.name).toMatch(/could not start: (?:the provider is limiting requests right now|it is not signed in to its provider|its provider took too long to answer|its provider had an error|it did not say why)$/);
+          // r7 R7-04: the full explanation stays where the owner reads it, in the helper's own conversation
+          const helperBot = state.bots.find((b: any) => b.id === helper.id);
+          const explained = helperBot.messages.find((m: any) => m.kind === "activity" && m.tool?.ok === false && /^error: /.test(m.tool?.name ?? "") && (m.tool?.errorDetails ?? "").length > 0);
+          expect(explained, JSON.stringify(helperBot.messages.slice(-4))).toBeDefined();
+          expect(explained.tool.name).not.toBe(sourceChip.tool.name);
+          break;
+        }
         if (Date.now() > deadline) {
           throw new Error(
             `could-not-start not mirrored. sourceChip=${JSON.stringify(sourceChip)}\n` +
@@ -1576,7 +1591,13 @@ describe("comms e2e (fake ACP fleet)", () => {
           try { return JSON.parse(readFileSync(join(home, ".murage", name), "utf8")); }
           catch { return null; }
         };
-        const pending = readFixtureJson("delegations.json");
+        const readFixtureQueue = (): any => {
+          let db: DatabaseSync | undefined;
+          try { db = new DatabaseSync(join(home, ".murage", "messages.db"), { readOnly: true }); return queuedDelegationsByThread(db); }
+          catch { return null; }
+          finally { try { db?.close(); } catch { /* the diagnostics are best effort */ } }
+        };
+        const pending = readFixtureQueue();
         const receipts = readFixtureJson("delegation-receipts.json");
         const pendingItems = pending && typeof pending === "object"
           ? Object.entries(pending).flatMap(([sourceThreadId, items]) => Array.isArray(items)

@@ -65,10 +65,11 @@ async function main(){
       await Promise.all(contexts.map(async(context,i)=>{
         const source=sourceRows[(batch*concurrency+i)%sourceRows.length];const started=performance.now();
         try{
-          const result=await searchMemory(source.text,context,bridge,{limit:10,profile:args.includes("--profile")});
-          if((lexicalOnly&&result.vectorRows!==0)||(!lexicalOnly&&result.vectorRows<active)||!result.hits.some(hit=>hit.evidence.some(e=>e.sourceId===source.id)))throw new Error("expected source not retrieved");
-          workerPeakRssBytes=Math.max(workerPeakRssBytes,Number((result as typeof result & {workerPeakRssBytes?:number}).workerPeakRssBytes??0));
-          if(args.includes("--profile")){const trace=result as typeof result & {profile?:unknown;profileCacheHit?:boolean;serviceProfile?:object};profiles.push({cacheHit:trace.profileCacheHit,...trace.profile as object,...trace.serviceProfile});}
+          let facts:{vectorRows:number;workerPeakRssBytes?:number;profile?:unknown;service?:{cacheHit:boolean;preparationMs:number;bridgeMs:number;hydrationMs:number}}={vectorRows:0};
+          const result=await searchMemory(source.text,context,bridge,{limit:10,profile:args.includes("--profile"),telemetry:seen=>{facts=seen;}});
+          if((lexicalOnly&&facts.vectorRows!==0)||(!lexicalOnly&&facts.vectorRows<active)||!result.hits.some(hit=>hit.evidence.some(e=>e.sourceId===source.id)))throw new Error("expected source not retrieved");
+          workerPeakRssBytes=Math.max(workerPeakRssBytes,Number(facts.workerPeakRssBytes??0));
+          if(args.includes("--profile")){profiles.push({cacheHit:facts.service?.cacheHit,...facts.profile as object,...facts.service});}
           semanticCalls++;
         }catch(error){failures.push(error instanceof Error?error.message:String(error));}
         latency.push(performance.now()-started);

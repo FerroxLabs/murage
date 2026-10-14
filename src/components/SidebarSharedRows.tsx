@@ -7,19 +7,34 @@
 // on first use (POST /api/bots/:id/work-threads). The rows come from the
 // harness's `sharedRows`, which only the owner's surfaces carry, so the
 // desktop and the paired phone show them and nothing else does.
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Users } from "lucide-react";
 import { api, useStore, type Bot } from "@/state/store";
 import { cn } from "@/lib/cn";
 import { sharedRowLabel, sharedRowStatus, sharedRowsForSection, workThreadRequest, type SharedRow } from "@/lib/shared-teams";
+import { startConversationPrefetch } from "@/lib/conversation-cache-host";
+import { MESSAGE_PAGE_SIZE } from "@/lib/scrollback";
 
-export function SharedRowButton({ bot, row, selected, onOpen }: { bot: Pick<Bot, "id" | "name" | "section">; row: SharedRow; selected: boolean; onOpen: () => void }) {
+export function SharedRowButton({ bot, row, selected, onOpen, onPrefetch, onPrefetchCancel }: {
+  bot: Pick<Bot, "id" | "name" | "section">;
+  row: SharedRow;
+  selected: boolean;
+  onOpen: () => void;
+  /** The pointer or focus is resting on the row: fetch its first page. */
+  onPrefetch?: () => void;
+  /** It moved on: cancel that fetch. */
+  onPrefetchCancel?: () => void;
+}) {
   const status = sharedRowStatus(row);
   return (
     <button
       type="button"
       data-shared-row={`${bot.id}:${row.teamId ?? row.teamName}`}
       onClick={onOpen}
+      onPointerEnter={onPrefetch}
+      onPointerLeave={onPrefetchCancel}
+      onFocus={onPrefetch}
+      onBlur={onPrefetchCancel}
       aria-current={selected || undefined}
       className={cn(
         "flex min-h-9 w-full items-center gap-2 rounded-lg px-3 py-1.5 text-left text-[13px] text-ink-secondary transition-colors hover:bg-raised/50 hover:text-ink focus-visible:outline focus-visible:outline-2 focus-visible:outline-focus",
@@ -36,6 +51,14 @@ export function SharedRowButton({ bot, row, selected, onOpen }: { bot: Pick<Bot,
 export function SidebarSharedRows({ section, onNavigate }: { section: string; onNavigate?: () => void }) {
   const { state, dispatch } = useStore();
   const [error, setError] = useState<string | null>(null);
+  // A row's work thread, once it exists, is prefetched while the pointer or
+  // focus rests on it; one at a time, cancelled when it moves on.
+  const prefetching = useRef<(() => void) | null>(null);
+  const stopPrefetch = () => {
+    prefetching.current?.();
+    prefetching.current = null;
+  };
+  useEffect(() => stopPrefetch, []);
   const rows = sharedRowsForSection(state.bots, section);
   if (!rows.length) return null;
   const open = async (bot: Bot, row: SharedRow) => {
@@ -54,7 +77,14 @@ export function SidebarSharedRows({ section, onNavigate }: { section: string; on
       {rows.map(({ bot, row }) => (
         <SharedRowButton key={`${bot.id}:${row.teamId ?? row.teamName}`} bot={bot} row={row}
           selected={state.activeView === "chat" && state.selectedId === bot.id && row.threadId !== null && bot.threadId === row.threadId}
-          onOpen={() => void open(bot, row)} />
+          onOpen={() => void open(bot, row)}
+          onPrefetch={() => {
+            stopPrefetch();
+            if (row.threadId && row.threadId !== bot.threadId) {
+              prefetching.current = startConversationPrefetch(api, { ownerId: bot.id, threadId: row.threadId, pageSize: MESSAGE_PAGE_SIZE });
+            }
+          }}
+          onPrefetchCancel={stopPrefetch} />
       ))}
       {error && <p role="status" className="px-3 text-[12px] text-danger">{error}</p>}
     </div>

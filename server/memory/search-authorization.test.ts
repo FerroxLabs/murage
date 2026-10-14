@@ -8,6 +8,7 @@ import { ensureScope, memoryAccess, reconcileMemoryRoster } from "./policy.ts";
 import { setMemoryMode } from "./repository.ts";
 import { searchMemory, type MemorySearchBridge } from "./search.ts";
 import type { IndexHit } from "./index.ts";
+import { LineageAllowance } from "./lineage-allowance.ts";
 
 beforeEach(() => { closeDatabase(); rmSync(DATA_DIR, { recursive: true, force: true }); mkdirSync(DATA_DIR, { recursive: true }); });
 
@@ -32,7 +33,7 @@ const bridgeFor = (hits: IndexHit[], beforeReturn?: () => void): MemorySearchBri
 it("hydrates repeated and distinct allowed scopes without changing record order or versions", async () => {
   const f = fixture();
   const hits = [f.add("one"), f.add("two"), f.add("team", ensureScope("team", "alpha"), 2)];
-  const result = await searchMemory("allowed records", f.access, bridgeFor(hits));
+  const result = await searchMemory("allowed records", f.access, bridgeFor(hits), {allowance: LineageAllowance.tool(1_000_000_000)});
   expect(result.hits.map(hit => [hit.id, hit.version, hit.text, hit.pinned, hit.evidence])).toEqual([
     ["one", 1, "text:one:1", true, []], ["two", 1, "text:two:1", true, []], ["team", 2, "text:team:2", true, []],
   ]);
@@ -42,7 +43,7 @@ it("hydrates repeated and distinct allowed scopes without changing record order 
 it("rejects a mixed allowed/private response instead of returning any private text", async () => {
   const f = fixture();
   const hits = [f.add("allowed"), f.add("allowed-two"), f.add("PRIVATE_CANARY", ensureScope("bot", "b"))];
-  await expect(searchMemory("mixed response", f.access, bridgeFor(hits))).rejects.toThrow("MEMORY_SCOPE_DENIED");
+  await expect(searchMemory("mixed response", f.access, bridgeFor(hits), {allowance: LineageAllowance.tool(1_000_000_000)})).rejects.toThrow("MEMORY_SCOPE_DENIED");
 });
 
 it("keeps per-record active version and source revision checks within a shared scope", async () => {
@@ -52,7 +53,7 @@ it("keeps per-record active version and source revision checks within a shared s
   const hits = [f.add("current"), f.add("stale-source"), f.add("old-version", undefined, 1, "superseded"), { id: "missing", version: 9, score: 1 }];
   database().prepare("INSERT INTO memory_evidence VALUES(?,1,?,?,0,8)").run("stale-source", source.id, source.revision);
   updateMessage("thread", { id: "source-message", at: 1, role: "user", kind: "text", text: "corrected" });
-  const result = await searchMemory("current only", f.access, bridgeFor(hits));
+  const result = await searchMemory("current only", f.access, bridgeFor(hits), {allowance: LineageAllowance.tool(1_000_000_000)});
   expect(result.hits.map(hit => hit.id)).toEqual(["current"]);
 });
 
@@ -63,13 +64,13 @@ it.each(["expired", "revoked", "policy"])("rechecks %s authority after the worke
     else if (reason === "revoked") f.registry.revokeThread("thread");
     else database().exec("UPDATE memory_meta SET policy_revision=policy_revision+1 WHERE id=1");
   });
-  await expect(searchMemory(`after worker ${reason}`, f.access, bridge)).rejects.toThrow(reason === "policy" ? "MEMORY_CONTEXT_REVOKED" : "MEMORY_UNAUTHORIZED");
+  await expect(searchMemory(`after worker ${reason}`, f.access, bridge, {allowance: LineageAllowance.tool(1_000_000_000)})).rejects.toThrow(reason === "policy" ? "MEMORY_CONTEXT_REVOKED" : "MEMORY_UNAUTHORIZED");
 });
 
 it("performs a final fresh check when capability expiry occurs during synchronous hydration", async () => {
   const f = fixture(); const hit = f.add("allowed");
-  // The bridge fixture advances its fake clock when score is copied into the
-  // hydrated result, after scope validation. No authorization function is mocked.
-  const expiresWhileHydrating = { id: hit.id, version: hit.version, get score() { f.expire(); return 1; } };
-  await expect(searchMemory("expires at delivery", f.access, bridgeFor([expiresWhileHydrating]))).rejects.toThrow("MEMORY_UNAUTHORIZED");
+  // The bridge fixture advances its fake clock while the hits are being hydrated, after each candidate's scope validation
+  // (the helper's unscored-record list is read once the candidates are checked). No authorization function is mocked.
+  const answer = { hits: [hit], vectorRows: 0, get unvectored() { f.expire(); return undefined; } };
+  await expect(searchMemory("expires at delivery", f.access, { async search() { return answer; } }, {allowance: LineageAllowance.tool(1_000_000_000)})).rejects.toThrow("MEMORY_UNAUTHORIZED");
 });

@@ -4,6 +4,8 @@ import react from "@vitejs/plugin-react";
 import tailwindcss from "@tailwindcss/vite";
 import { copyFileSync, existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
+import { DatabaseSync } from "node:sqlite";
+import { queuedDelegationsByThread } from "../../server/pending-delegations-schema.ts";
 import { openSidebar } from "./fixtures.ts";
 import { evidenceRoot } from "./evidence.ts";
 import { B35_CHILD_NAME, B35_CHILD_TASK, B35_CREATE_MARKER, B35_DELEGATE_MARKER, B35_LOG_NAME, readB35Log, writeB35DelegationCli, type B35LogEntry } from "./b35-delegation-engine.ts";
@@ -67,7 +69,12 @@ const channel = async () => {
 const mirroredReplies = async (text: string) => (await messages((await channel()).threadId)).filter(m => m.kind === "text" && m.from?.botId === childId && m.text === text);
 const dataJson = (name: string, fallback: unknown) => { const file = join(harness.data, name); return existsSync(file) ? JSON.parse(readFileSync(file, "utf8")) : fallback; };
 const receiptsFor = (taskId: string) => (dataJson("delegation-receipts.json", []) as any[]).filter(receipt => receipt.id === taskId);
-const pendingFor = (threadId: string) => ((dataJson("delegations.json", {}) as Record<string, any[]>)[threadId] ?? []);
+const pendingFor = (threadId: string) => {
+  const file = join(harness.data, "messages.db");
+  if (!existsSync(file)) return [];
+  const db = new DatabaseSync(file, { readOnly: true });
+  try { return queuedDelegationsByThread(db)[threadId] ?? []; } finally { db.close(); }
+};
 const idle = (botId: string, label: string) => waitFor(label, () => botRecord(botId), (bot: any) => Boolean(bot) && bot.busy !== true, 60_000);
 const cardIn = async (threadId: string, messageId: string) => (await messages(threadId)).find(m => m.id === messageId)?.card;
 
@@ -286,6 +293,8 @@ async function delegatedApproval(page: Page, testInfo: TestInfo, behavior: "allo
 }
 
 test("a Chief-created sub-bot's delegated permission is global attention, opens its exact card, decides once and delivers one reply", async ({ page }, testInfo) => {
+  // Creates a team, restarts the harness and waits out a boot drain: minutes of real work on a loaded runner.
+  test.setTimeout(300_000);
   // A sub-bot created through the product: agents create_bot with lead:true.
   expect((await inbox()).total).toBe(0);
   await expectApprovalsOnlyOnChild("before create_bot");

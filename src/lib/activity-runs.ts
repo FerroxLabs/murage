@@ -247,3 +247,21 @@ export function describeRun(messages: Message[]): string {
   const rest = names.length > MAX_NAMES ? ` +${names.length - MAX_NAMES} more` : "";
   return `${messages.length} steps · ${shown}${rest}`;
 }
+
+/** A transcript item's stable key: its message's id, or the run, turn or
+ * helpers row's own id (components/VirtualTranscript.tsx). */
+export function transcriptItemKey(item: TranscriptItem): string {
+  return item.kind === "message" ? item.message.id : item.id;
+}
+
+/** The key of the item that shows `messageId`: the message's own row, or the
+ * run or turn it is folded into. */
+export function itemKeyHolding(items: readonly TranscriptItem[], messageId: string | null | undefined): string | null {
+  if (!messageId) return null;
+  for (const item of items) {
+    if (item.kind === "message" ? item.message.id === messageId : item.kind !== "helpers" && item.messages.some((message) => message.id === messageId)) {
+      return transcriptItemKey(item);
+    }
+  }
+  return null;
+}
