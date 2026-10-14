@@ -5,6 +5,8 @@ import { unreadTaskLabel } from "@/lib/project-presentation";
 // the only clean slate is a second bot. A task is a real boundary — its
 // own transcript and its own provider session — so sensitive work, a
 // long job and a quick question can sit side by side under one agent.
+import { allHeldTasks, taskCount } from "@/lib/task-window";
+import { useOlderTasks } from "@/lib/use-ensure-task";
 import { useEffect, useId, useMemo, useRef, useState, type KeyboardEvent as ReactKeyboardEvent } from "react";
 import { BellOff, Check, ChevronDown, ChevronRight, Clock, Download, Pencil, Pin, Plus, Search, Trash2 } from "lucide-react";
 import { api, useStore, type Bot, type Group, type Task } from "@/state/store";
@@ -39,6 +41,8 @@ import { changeThreadSnooze, useThreadAttention } from "@/lib/thread-attention";
 import { useRelativeNow } from "@/lib/relative-now";
 import { useDesktopSurface } from "@/lib/use-surface";
 import { QuestionBadge, SnoozeChoices } from "./ConversationSnooze";
+import { startConversationPrefetch } from "@/lib/conversation-cache-host";
+import { MESSAGE_PAGE_SIZE } from "@/lib/scrollback";
 
 /** Click-to-switch used to close this menu immediately, which unmounted the
  * row before a double-click (or right-click) could start a rename. Linger
@@ -191,9 +195,16 @@ export function ConversationTaskPicker({
   questions,
   canSnooze = false,
   deleteScope,
+  onPrefetch,
+  older,
+  total,
 }: {
+  /** Every task there is, when the list holds only a window of them. */
+  total?: number;
   threadId: string;
   tasks: PickerTask[];
+  /** Tasks past the ones held: shows the "Show older tasks" row. */
+  older?: { hasMore: boolean; loading: boolean; failed: boolean; onLoadMore: () => void };
   busy: boolean;
   onNew: () => void;
   onSwitch: (threadId: string) => void;
@@ -219,6 +230,9 @@ export function ConversationTaskPicker({
   canSnooze?: boolean;
   /** Whose conversations these are, for the Delete confirmation's saved-file count. */
   deleteScope?: { botId?: string; groupId?: string };
+  /** Start fetching a task's first page (pointer or focus resting on its
+   * row); returns the cancel, run when the pointer or focus moves on. */
+  onPrefetch?: (threadId: string) => () => void;
 }) {
   const [open, setOpen] = useState(initialOpen);
   const [snoozing, setSnoozing] = useState<string | null>(null);
@@ -233,6 +247,17 @@ export function ConversationTaskPicker({
   const search = useRef<HTMLInputElement>(null);
   const baseId = useId();
   const [renaming, setRenaming] = useState<string | null>(null);
+  // One prefetch at a time: resting on a row starts it, leaving cancels it.
+  const prefetching = useRef<(() => void) | null>(null);
+  const stopPrefetch = () => {
+    prefetching.current?.();
+    prefetching.current = null;
+  };
+  const startPrefetch = (target: string) => {
+    stopPrefetch();
+    if (onPrefetch && target !== threadId) prefetching.current = onPrefetch(target);
+  };
+  useEffect(() => stopPrefetch, []);
   const [draft, setDraft] = useState("");
   const [query, setQuery] = useState("");
   const [exporting, setExporting] = useState(false);
@@ -484,6 +509,10 @@ export function ConversationTaskPicker({
             data-task-nav=""
             data-in-fold={inFold}
             aria-current={active ? "true" : undefined}
+            onPointerEnter={() => startPrefetch(task.threadId)}
+            onPointerLeave={stopPrefetch}
+            onFocus={() => startPrefetch(task.threadId)}
+            onBlur={stopPrefetch}
             onClick={(e) => {
               if (taskPickerPointerIntent("click", e.detail) !== "select") return;
               if (!active) onSwitch(task.threadId);
@@ -631,7 +660,7 @@ export function ConversationTaskPicker({
       >
         <span className="truncate chip-fold:hidden">{current ? readableTaskTitle(current.title).text : "Task"}</span>
         {/* folded: just the count in the bubble — the title rides the tooltip */}
-        <span className="shrink-0 tabular-nums opacity-60 chip-fold:opacity-100">{tasks.length}</span>
+        <span className="shrink-0 tabular-nums opacity-60 chip-fold:opacity-100">{total ?? tasks.length}</span>
         <ChevronDown size={12} className="shrink-0 chip-fold:hidden" />
       </button>
 
@@ -695,7 +724,7 @@ export function ConversationTaskPicker({
                   key={chip.id}
                   type="button"
                   aria-pressed={filter === chip.id && !looking}
-                  title={looking ? "Search looks at every task; choosing a filter clears it" : undefined}
+                  title={looking ? "Search looks at the tasks shown here; choosing a filter clears it" : undefined}
                   onClick={() => {
                     clearDismiss();
                     setFilter(chip.id);
@@ -780,6 +809,21 @@ export function ConversationTaskPicker({
                 </div>
               );
             })}
+            {older?.hasMore && (
+              <div className="border-t border-hairline/40 px-2 py-1.5">
+                <button
+                  type="button"
+                  data-task-nav=""
+                  data-show-older=""
+                  disabled={older.loading}
+                  onClick={() => { clearDismiss(); older.onLoadMore(); }}
+                  className="w-full rounded px-2 py-1.5 text-left text-[13px] text-ink hover:bg-raised/50 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus disabled:opacity-60"
+                >
+                  {older.loading ? "Loading older tasks…" : "Show older tasks"}
+                </button>
+                {older.failed && !older.loading && <p role="alert" className="px-2 pt-1 text-[12px] text-danger">Could not load older tasks. Try again.</p>}
+              </div>
+            )}
           </div>
           <button
             type="button"
@@ -811,6 +855,7 @@ export function ConversationTaskPicker({
 
 export function TaskPicker({ bot }: { bot: Bot }) {
   const { state, dispatch } = useStore();
+  const older = useOlderTasks("bot", bot.id);
   // A detached run's own task; a channel-triggered run shares the channel's
   // conversation, which is not a routine task.
   const routines = useMemo(
@@ -828,13 +873,16 @@ export function TaskPicker({ bot }: { bot: Bot }) {
       questions={attention.questions}
       canSnooze={desktop}
       threadId={bot.threadId}
-      tasks={bot.tasks ?? []}
+      tasks={allHeldTasks(bot)}
+      total={taskCount(bot)}
+      older={{ hasMore: older.hasMore, loading: older.loading, failed: older.failed, onLoadMore: older.loadMore }}
       busy={false}
       onNew={() => dispatch({ type: "newTask", botId: bot.id })}
       onSwitch={(threadId) => dispatch({ type: "switchTask", botId: bot.id, threadId })}
       onRename={(threadId, title) => dispatch({ type: "renameTask", botId: bot.id, threadId, title })}
       onDelete={(threadId) => dispatch({ type: "deleteTask", botId: bot.id, threadId })}
       deleteScope={{ botId: bot.id }}
+      onPrefetch={(threadId) => startConversationPrefetch(api, { ownerId: bot.id, threadId, pageSize: MESSAGE_PAGE_SIZE })}
       onTogglePin={(threadId, pinned) => dispatch({ type: "pinTask", botId: bot.id, threadId, pinned })}
     />
   );
@@ -844,6 +892,7 @@ export function TaskPicker({ bot }: { bot: Bot }) {
  * transcript is the private bot-to-bot exchange rather than user work. */
 export function GroupTaskPicker({ group }: { group: Group }) {
   const { state, dispatch } = useStore();
+  const older = useOlderTasks("group", group.id);
   const routines = useMemo(
     () => routineRunIndex(
       state.routineRuns,
@@ -863,7 +912,9 @@ export function GroupTaskPicker({ group }: { group: Group }) {
       questions={attention.questions}
       canSnooze={desktop}
       threadId={group.threadId}
-      tasks={group.tasks ?? []}
+      tasks={allHeldTasks(group)}
+      total={taskCount(group)}
+      older={{ hasMore: older.hasMore, loading: older.loading, failed: older.failed, onLoadMore: older.loadMore }}
       busy={Boolean(group.working || group.busyBotId)}
       onNew={() => dispatch({ type: "newGroupTask", groupId: group.id })}
       onSwitch={(threadId) => dispatch({ type: "switchGroupTask", groupId: group.id, threadId })}
@@ -893,7 +944,7 @@ export function ConfirmTaskDelete({ name, preview, onCancel, onConfirm, savedFil
     <div role="group" aria-label={`Delete ${name}?`} className="border-y border-hairline/40 bg-inset/40 px-2 py-2 text-[12.5px] text-ink">
       <p className="font-medium">Delete this conversation?</p>
       <p className="mt-0.5 text-ink-secondary">Its messages, files and history are removed from this computer.</p>
-      {deletionConsequenceLines(savedFiles, messages).map((line) => <p key={line} className="mt-0.5 text-ink-secondary">{line}</p>)}
+      {deletionConsequenceLines(savedFiles, messages, fetched?.engines).map((line) => <p key={line} className="mt-0.5 text-ink-secondary">{line}</p>)}
       <div className="mt-1.5 flex justify-end gap-1.5">
         <button type="button" onClick={onCancel} className="rounded px-2 py-1 text-ink-secondary hover:bg-raised hover:text-ink">Cancel</button>
         <button type="button" onClick={onConfirm} className="rounded bg-danger px-2 py-1 font-medium text-white">Delete</button>

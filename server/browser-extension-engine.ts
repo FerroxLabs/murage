@@ -7,7 +7,7 @@ import { writeFileAtomic } from "./atomic.ts";
 import { createServer, type Server } from "node:http";
 import { randomBytes, timingSafeEqual, createHash } from "node:crypto";
 import { WebSocketServer, WebSocket } from "ws";
-import { agentBrowserIntegration, browserEngineEncryptionKey, browserEngineStatus, verifyAgentBrowserBinary, type AgentBrowserSpec } from "./browser-engine.ts";
+import { agentBrowserIntegration, browserEngineEncryptionKey, settledBrowserEngineStatus, verifyAgentBrowserBinary, type AgentBrowserSpec } from "./browser-engine.ts";
 import { startHeadlessEngine, type EngineClient } from "./drivers/headless-browser-proxy.ts";
 import { listHeadlessBrowserTools, validateHeadlessBrowserCall } from "./browser-engine-policy.ts";
 import { ReadLayer } from "./browser-extension-snapshot.ts";
@@ -201,7 +201,7 @@ export class BrowserExtensionEngine {
         const valid= !req.headers.origin&&req.headers.host===`127.0.0.1:${address.port}`&&typeof req.url==="string"&&Buffer.byteLength(req.url)===Buffer.byteLength(route)&&timingSafeEqual(Buffer.from(req.url),Buffer.from(route))&&!this.socket;
         if(!valid){socket.destroy();return;}sockets.handleUpgrade(req,socket,head,ws=>{this.socket=ws;ws.on("message",raw=>{this.dispatchWire(raw.toString(),()=>ws.close(1013));});ws.on("error",()=>{});ws.on("close",()=>{if(this.socket===ws)this.socket=undefined;});});
       });
-      const status=browserEngineStatus({dataDir:this.options.dataDir});if(status.kind!=="ready")throw Error(status.reason);
+      const status=await settledBrowserEngineStatus({dataDir:this.options.dataDir});if(status.kind!=="ready")throw Error(status.reason);
       const spec=agentBrowserIntegration({binaryPath:status.binaryPath,session:`mbe-${createHash("sha256").update(this.options.bindingId).digest("hex").slice(0,28)}`,encryptionKey:browserEngineEncryptionKey(this.options.dataDir),dataDir:this.options.dataDir,realmId:this.options.realmId,attachCdpUrl:`ws://127.0.0.1:${address.port}${route}`,persistent:false});
       await verifyAgentBrowserBinary(spec.command,spec.env);
       // Supported pinned engine target record: avoid creating an unrelated blank tab

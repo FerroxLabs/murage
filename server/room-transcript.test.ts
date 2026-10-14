@@ -21,6 +21,7 @@ import { filterMemoryReplay, roomReplayWithheld } from "./memory/disclosures.ts"
 import { roomTranscriptForTurn } from "./room-transcript.ts";
 import { ROOM_REPLY_FORGOTTEN, ROOM_REPLY_WITHHELD, withheldRoomLine, withholdRoomReplies } from "./room-context.ts";
 import type { Message } from "./store.ts";
+import { LineageAllowance } from "./memory/lineage-allowance.ts";
 
 const roster: MemoryRoster = {
   bots: [
@@ -62,7 +63,7 @@ const stateOf = (bundleId: string) => (database().prepare("SELECT state FROM mem
 
 it("R7 inverted: a teammate's room reply made with its own recall stays in the next member's transcript", () => {
   daxReplyWithOwnRecall();
-  expect([...roomReplayWithheld("closing-chat", transcript)]).toEqual([]);
+  expect([...roomReplayWithheld(LineageAllowance.tool(), "closing-chat", transcript)]).toEqual([]);
   // and reading it marks nothing revoked for anyone
   expect(stateOf("b-dax")).toBe("delivered");
 });
@@ -72,49 +73,49 @@ it("R8 inverted: a roster change revokes every receipt, and the reply is still t
   const grown: MemoryRoster = { ...roster, bots: [...roster.bots, { id: "kessler", threadId: "kessler-direct", section: "Ops" }] };
   reconcileMemoryRoster(grown);
   expect(stateOf("b-dax")).toBe("revoked");
-  expect([...roomReplayWithheld("closing-chat", transcript)]).toEqual([]);
-  const turn = roomTranscriptForTurn("closing-chat", transcript as Message[], true, access("finch", "closing-chat", grown));
+  expect([...roomReplayWithheld(LineageAllowance.tool(), "closing-chat", transcript)]).toEqual([]);
+  const turn = roomTranscriptForTurn(LineageAllowance.tool(1_000_000_000), "closing-chat", transcript as Message[], true, access("finch", "closing-chat", grown));
   expect(turn.messages.map(m => m.id)).toEqual(["m-owner", "m-dax", "m-finch"]);
 });
 
 it("a settings change (policy revision and deletion epoch moved) leaves room replies visible", () => {
   daxReplyWithOwnRecall();
   database().exec("UPDATE memory_meta SET policy_revision=policy_revision+5,deletion_epoch=deletion_epoch+2 WHERE id=1");
-  expect([...roomReplayWithheld("closing-chat", transcript)]).toEqual([]);
+  expect([...roomReplayWithheld(LineageAllowance.tool(), "closing-chat", transcript)]).toEqual([]);
 });
 
 it("restore: every receipt revoked and memory paused, and the owner room still reads every reply", () => {
   daxReplyWithOwnRecall();
   expect(pauseRestoredMemory(database())).toBe(true);
   expect(stateOf("b-dax")).toBe("revoked");
-  expect([...roomReplayWithheld("closing-chat", transcript)]).toEqual([]);
+  expect([...roomReplayWithheld(LineageAllowance.tool(), "closing-chat", transcript)]).toEqual([]);
 });
 
 it("withholds a reply whose record the owner forgot", () => {
   const record = daxReplyWithOwnRecall();
   forgetMemory(ownerMemoryTicket(), { kind: "record", id: record });
-  expect([...roomReplayWithheld("closing-chat", transcript)]).toEqual(["m-dax"]);
+  expect([...roomReplayWithheld(LineageAllowance.tool(), "closing-chat", transcript)]).toEqual(["m-dax"]);
 });
 
 it("withholds a reply whose record was deleted without a tombstone", () => {
   const record = daxReplyWithOwnRecall();
   database().prepare("UPDATE memory_records SET state='deleted' WHERE id=?").run(record);
-  expect([...roomReplayWithheld("closing-chat", transcript)]).toEqual(["m-dax"]);
+  expect([...roomReplayWithheld(LineageAllowance.tool(), "closing-chat", transcript)]).toEqual(["m-dax"]);
 });
 
 it("withholds a reply whose record carries a tombstone while still active", () => {
   const record = daxReplyWithOwnRecall();
   database().prepare("INSERT INTO memory_tombstones VALUES('t1','record',?,?,NULL,1,'owner-forget',1)").run(record, version(record));
-  expect([...roomReplayWithheld("closing-chat", transcript)]).toEqual(["m-dax"]);
+  expect([...roomReplayWithheld(LineageAllowance.tool(), "closing-chat", transcript)]).toEqual(["m-dax"]);
 });
 
 it("withholds a reply whose cited source was deleted", () => {
   reconcileMemoryRoster(roster);
   captureSource(database(), { id: "src-note", threadId: "dax-direct", kind: "text", speaker: "owner", outcome: "recorded", text: "the vendor pin is 4471" });
   disclose("b-dax", "closing-chat", [], [{ id: "src-note", revision: 1 }], ["m-dax"]);
-  expect([...roomReplayWithheld("closing-chat", transcript)]).toEqual([]);
+  expect([...roomReplayWithheld(LineageAllowance.tool(), "closing-chat", transcript)]).toEqual([]);
   forgetMemory(ownerMemoryTicket(), { kind: "source", id: "src-note" });
-  expect([...roomReplayWithheld("closing-chat", transcript)]).toEqual(["m-dax"]);
+  expect([...roomReplayWithheld(LineageAllowance.tool(), "closing-chat", transcript)]).toEqual(["m-dax"]);
 });
 
 it("withholds a reply whose cited source was edited (new revision)", () => {
@@ -122,7 +123,7 @@ it("withholds a reply whose cited source was edited (new revision)", () => {
   captureSource(database(), { id: "src-note", threadId: "dax-direct", kind: "text", speaker: "owner", outcome: "recorded", text: "first wording" });
   disclose("b-dax", "closing-chat", [], [{ id: "src-note", revision: 1 }], ["m-dax"]);
   captureSource(database(), { id: "src-note", threadId: "dax-direct", kind: "text", speaker: "owner", outcome: "recorded", text: "second wording" });
-  expect([...roomReplayWithheld("closing-chat", transcript)]).toEqual(["m-dax"]);
+  expect([...roomReplayWithheld(LineageAllowance.tool(), "closing-chat", transcript)]).toEqual(["m-dax"]);
 });
 
 it("withholds a reply that used a derived record whose parent the owner forgot", () => {
@@ -130,9 +131,9 @@ it("withholds a reply that used a derived record whose parent the owner forgot",
   const child = daxMemory("child fact", "src-child");
   database().prepare("INSERT INTO memory_derivations(parent_id,parent_version,child_id,child_version) VALUES(?,?,?,?)").run(parent, version(parent), child, version(child));
   disclose("b-dax", "closing-chat", [{ id: child, version: version(child) }], [], ["m-dax"]);
-  expect([...roomReplayWithheld("closing-chat", transcript)]).toEqual([]);
+  expect([...roomReplayWithheld(LineageAllowance.tool(), "closing-chat", transcript)]).toEqual([]);
   forgetMemory(ownerMemoryTicket(), { kind: "record", id: parent });
-  expect([...roomReplayWithheld("closing-chat", transcript)]).toEqual(["m-dax"]);
+  expect([...roomReplayWithheld(LineageAllowance.tool(), "closing-chat", transcript)]).toEqual(["m-dax"]);
 });
 
 it("withholds a reply that recalled an earlier reply which is itself no longer valid (ancestor receipt)", () => {
@@ -143,9 +144,9 @@ it("withholds a reply that recalled an earlier reply which is itself no longer v
   captureSource(database(), { id: "message:dax-direct:m-dax-direct", threadId: "dax-direct", messageId: "m-dax-direct", kind: "text", speaker: "dax", outcome: "recorded", text: "a paraphrase of it" });
   const paraphrase = active(saveMemoryCandidate("a paraphrase of it", [{ sourceId: "message:dax-direct:m-dax-direct", revision: 1, startByte: 0, endByte: Buffer.byteLength("a paraphrase of it") }], "k-para", access("dax", "dax-direct")));
   disclose("b-dax", "closing-chat", [{ id: paraphrase, version: version(paraphrase) }], [], ["m-dax"]);
-  expect([...roomReplayWithheld("closing-chat", transcript)]).toEqual([]);
+  expect([...roomReplayWithheld(LineageAllowance.tool(), "closing-chat", transcript)]).toEqual([]);
   database().prepare("UPDATE memory_records SET state='deleted' WHERE id=?").run(original);
-  expect([...roomReplayWithheld("closing-chat", transcript)]).toEqual(["m-dax"]);
+  expect([...roomReplayWithheld(LineageAllowance.tool(), "closing-chat", transcript)]).toEqual(["m-dax"]);
 });
 
 it("does not withhold a reply over the room's own superseded checkpoint (stale, not forgotten)", () => {
@@ -157,19 +158,19 @@ it("does not withhold a reply over the room's own superseded checkpoint (stale, 
   insert.run(id, 1, scope, "archived");
   insert.run(id, 2, scope, "active");
   disclose("b-dax", "closing-chat", [{ id, version: 1 }], [], ["m-dax"]);
-  expect([...roomReplayWithheld("closing-chat", transcript)]).toEqual([]);
+  expect([...roomReplayWithheld(LineageAllowance.tool(), "closing-chat", transcript)]).toEqual([]);
   // another room's checkpoint in the same state is not this room's own
   const other = threadCheckpointId(scope, "another-room");
   insert.run(other, 1, scope, "archived");
   insert.run(other, 2, scope, "active");
   disclose("b-other", "closing-chat", [{ id: other, version: 1 }], [], ["m-finch"]);
-  expect([...roomReplayWithheld("closing-chat", transcript)]).toEqual(["m-finch"]);
+  expect([...roomReplayWithheld(LineageAllowance.tool(), "closing-chat", transcript)]).toEqual(["m-finch"]);
 });
 
 it("keeps owner text: only linked generated output is ever withheld", () => {
   const record = daxReplyWithOwnRecall();
   forgetMemory(ownerMemoryTicket(), { kind: "record", id: record });
-  expect(roomReplayWithheld("closing-chat", transcript).has("m-owner")).toBe(false);
+  expect(roomReplayWithheld(LineageAllowance.tool(), "closing-chat", transcript).has("m-owner")).toBe(false);
 });
 
 it("a channel person's pair room refuses the owner transcript and keeps the per-reader filter", () => {
@@ -178,12 +179,12 @@ it("a channel person's pair room refuses the owner transcript and keeps the per-
   const scope = String((db.prepare("SELECT id FROM memory_scopes WHERE kind='conversation' AND owner_key='closing-chat'").get() as { id: string }).id);
   db.prepare("INSERT INTO memory_scope_bindings VALUES(?,?,'human-thread',?,1,'granted',?)")
     .run("human-thread:closing-chat", scope, "closing-chat", JSON.stringify({ personId: "person-1", bindingId: "human-binding:x", revision: 1 }));
-  expect(() => roomReplayWithheld("closing-chat", transcript)).toThrow("MEMORY_SCOPE_DENIED");
+  expect(() => roomReplayWithheld(LineageAllowance.tool(), "closing-chat", transcript)).toThrow("MEMORY_SCOPE_DENIED");
 });
 
 it("a turn that is not an owner audience keeps filterMemoryReplay: the revoked reply is dropped, with no withheld line", () => {
   daxReplyWithOwnRecall("revoked");
-  const turn = roomTranscriptForTurn("closing-chat", transcript as Message[], false, access("finch", "closing-chat"));
+  const turn = roomTranscriptForTurn(LineageAllowance.tool(1_000_000_000), "closing-chat", transcript as Message[], false, access("finch", "closing-chat"));
   expect(turn.messages.map(m => m.id)).toEqual(["m-owner", "m-finch"]);
   expect(turn.withheld.size).toBe(0);
 });
@@ -191,10 +192,10 @@ it("a turn that is not an owner audience keeps filterMemoryReplay: the revoked r
 it("a room's per-reader filter drops what that reader may not see and marks nothing revoked", () => {
   daxReplyWithOwnRecall();
   // Finch may not read Dax's own-chat memory: the per-reader filter drops it
-  expect(filterMemoryReplay("closing-chat", transcript, access("finch", "closing-chat"), { persist: false }).map(m => m.id)).toEqual(["m-owner", "m-finch"]);
+  expect(filterMemoryReplay(LineageAllowance.tool(), "closing-chat", transcript, access("finch", "closing-chat"), { persist: false }).map(m => m.id)).toEqual(["m-owner", "m-finch"]);
   // but one reader's filter no longer revokes it for everyone after it
   expect(stateOf("b-dax")).toBe("delivered");
-  expect([...roomReplayWithheld("closing-chat", transcript)]).toEqual([]);
+  expect([...roomReplayWithheld(LineageAllowance.tool(), "closing-chat", transcript)]).toEqual([]);
 });
 
 // 0.1.61 final check D4: a reply the owner forgot itself read "it used
@@ -211,7 +212,7 @@ it("gives a reply the owner forgot itself that reason, and keeps the other reaso
   forgetMemory(ownerMemoryTicket(), { kind: "record", id: record });
   captureSource(database(), { id: "message:closing-chat:m-finch", threadId: "closing-chat", messageId: "m-finch", kind: "text", speaker: "finch", outcome: "recorded", text: "the forgotten line" });
   forgetMemory(ownerMemoryTicket(), { kind: "source", id: "message:closing-chat:m-finch" });
-  const turn = roomTranscriptForTurn("closing-chat", room, true, access("finch", "closing-chat"));
+  const turn = roomTranscriptForTurn(LineageAllowance.tool(1_000_000_000), "closing-chat", room, true, access("finch", "closing-chat"));
   expect([...turn.withheld].sort()).toEqual(["m-dax", "m-finch"]);
   expect([...turn.forgotten]).toEqual(["m-finch"]);
   expect(turn.messages[1].text).toBe(`[${ROOM_REPLY_WITHHELD}] (Dax, 2026-09-28 15:01 UTC)`);
@@ -236,19 +237,21 @@ it("renders a withheld reply as a line with author and time, with nothing of it 
 
 it("a direct chat's replay still persists what it found invalid, so a resumed session sees lineage-only invalidation", () => {
   daxReplyWithOwnRecall();
-  expect(filterMemoryReplay("closing-chat", transcript, access("finch", "closing-chat")).map(m => m.id)).toEqual(["m-owner", "m-finch"]);
+  expect(filterMemoryReplay(LineageAllowance.tool(), "closing-chat", transcript, access("finch", "closing-chat")).map(m => m.id)).toEqual(["m-owner", "m-finch"]);
   expect(stateOf("b-dax")).toBe("revoked");
 });
 
-it("withholds a generated reply whose own captured source the owner forgot, never the owner's words", () => {
+// 1.0.2 revoke-bounded r3 (Astra r2 #4): nothing the owner forgot reaches an engine, the owner's own words included; a forgotten
+// owner line is shown to bots as forgotten, like a forgotten reply
+it("withholds a generated reply whose own captured source the owner forgot, and the owner's own line once forgotten", () => {
   reconcileMemoryRoster(roster);
   captureSource(database(), { id: "message:closing-chat:m-dax", threadId: "closing-chat", messageId: "m-dax", kind: "text", speaker: "dax", outcome: "recorded", text: "the pin is 4471" });
   captureSource(database(), { id: "message:closing-chat:m-owner", threadId: "closing-chat", messageId: "m-owner", kind: "text", speaker: "owner", outcome: "recorded", text: "what is the pin?" });
   const roles = [{ id: "m-owner", role: "user" }, { id: "m-dax", role: "bot" }, { id: "m-finch", role: "bot" }];
-  expect([...roomReplayWithheld("closing-chat", roles)]).toEqual([]);
+  expect([...roomReplayWithheld(LineageAllowance.tool(), "closing-chat", roles)]).toEqual([]);
   forgetMemory(ownerMemoryTicket(), { kind: "source", id: "message:closing-chat:m-dax" });
   forgetMemory(ownerMemoryTicket(), { kind: "source", id: "message:closing-chat:m-owner" });
-  expect([...roomReplayWithheld("closing-chat", roles)]).toEqual(["m-dax"]);
+  expect([...roomReplayWithheld(LineageAllowance.tool(), "closing-chat", roles)].sort()).toEqual(["m-dax", "m-owner"]);
 });
 
 it("withholds a reply that used a projection whose original the owner corrected, but not one that used the correction", () => {
@@ -256,16 +259,16 @@ it("withholds a reply that used a projection whose original the owner corrected,
   const projection = daxMemory("the vendor is Acme (room copy)", "src-projection");
   database().prepare("INSERT INTO memory_derivations(parent_id,parent_version,child_id,child_version) VALUES(?,?,?,?)").run(original, version(original), projection, version(projection));
   disclose("b-dax", "closing-chat", [{ id: projection, version: version(projection) }], [], ["m-dax"]);
-  expect([...roomReplayWithheld("closing-chat", transcript)]).toEqual([]);
+  expect([...roomReplayWithheld(LineageAllowance.tool(), "closing-chat", transcript)]).toEqual([]);
   // the owner corrects the original: a new version that supersedes it
   const v = version(original);
   database().prepare("UPDATE memory_records SET state='superseded' WHERE id=? AND version=?").run(original, v);
   database().prepare("INSERT INTO memory_records(id,version,scope_id,kind,text,assertion,state,owner_pinned,valid_from,supersedes_id,created_at) SELECT id,version+1,scope_id,kind,'the vendor is Bolt',assertion,'active',0,1,id,1 FROM memory_records WHERE id=? AND version=?").run(original, v);
   database().prepare("INSERT INTO memory_derivations(parent_id,parent_version,child_id,child_version) VALUES(?,?,?,?)").run(original, v, original, v + 1);
-  expect([...roomReplayWithheld("closing-chat", transcript)]).toEqual(["m-dax"]);
+  expect([...roomReplayWithheld(LineageAllowance.tool(), "closing-chat", transcript)]).toEqual(["m-dax"]);
   // a reply that used the corrected version itself stays
   disclose("b-finch", "closing-chat", [{ id: original, version: v + 1 }], [], ["m-finch"]);
-  expect(roomReplayWithheld("closing-chat", transcript).has("m-finch")).toBe(false);
+  expect(roomReplayWithheld(LineageAllowance.tool(), "closing-chat", transcript).has("m-finch")).toBe(false);
 });
 
 it("keeps a reply whose record descends from a record corrected earlier in the same chain", () => {
@@ -279,5 +282,5 @@ it("keeps a reply whose record descends from a record corrected earlier in the s
   const c = daxMemory("the vendor is Bolt (room copy)", "src-c");
   db.prepare("INSERT INTO memory_derivations(parent_id,parent_version,child_id,child_version) VALUES(?,?,?,?)").run(p, v + 1, c, version(c));
   disclose("b-dax", "closing-chat", [{ id: c, version: version(c) }], [], ["m-dax"]);
-  expect([...roomReplayWithheld("closing-chat", transcript)]).toEqual([]);
+  expect([...roomReplayWithheld(LineageAllowance.tool(), "closing-chat", transcript)]).toEqual([]);
 });

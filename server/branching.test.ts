@@ -19,6 +19,9 @@ import { removeTempDir, waitForExit } from "./testing/cleanup.ts";
 
 const SERVER_DIR = dirname(fileURLToPath(import.meta.url));
 const FAKE_CLI = join(SERVER_DIR, "testing", "fake-acp-cli.ts");
+// The fake engines announce their MCP servers ready under Grok Build's own name, as the real engine does
+// (drivers/acp/grok.ts mcpReadyNotification); a silent build is held for the full MCP_REQUIRED_WAIT_MS before each first prompt.
+const GROK_MCP_READY = { FAKE_ACP_MCP_READY: "1", FAKE_ACP_MCP_READY_METHOD: "_x.ai/mcp_initialized" };
 const FAKE_CLAUDE = join(SERVER_DIR, "testing", "fake-claude-cli.ts");
 const PORT = 18800 + Math.floor(Math.random() * 10_000);
 const BASE = `http://127.0.0.1:${PORT}`;
@@ -85,13 +88,13 @@ posixOnly("conversation branching e2e (fake ACP fleet)", () => {
       join(home, ".murage", "config.json"),
       JSON.stringify({
         instances: {
-          happy: { driver: "grokAgent", config: { cli: FAKE_CLI, fullAuto: true } },
+          happy: { driver: "grokAgent", environment: GROK_MCP_READY, config: { cli: FAKE_CLI, fullAuto: true } },
           // a second engine for the mid-thread model switch: same fake, its
           // own instance, so it starts with no session cursor for the thread
-          second: { driver: "grokAgent", config: { cli: FAKE_CLI, fullAuto: true } },
+          second: { driver: "grokAgent", environment: GROK_MCP_READY, config: { cli: FAKE_CLI, fullAuto: true } },
           hang: {
             driver: "grokAgent",
-            environment: { FAKE_ACP_MODE: "hang" },
+            environment: { ...GROK_MCP_READY, FAKE_ACP_MODE: "hang" },
             config: { cli: FAKE_CLI, fullAuto: true },
           },
           // Claude keeps an idle process per thread between turns; the dump

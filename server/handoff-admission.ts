@@ -1,6 +1,6 @@
 // Delegation admission: asking the question the dispatch is about to ask.
 //
-// `runDelegatedTurn` runs a handoff on exactly ONE thread — the target's task
+// the hand-off dispatch (handoff-dispatch.ts) runs a handoff on exactly ONE thread: the target's task
 // for the source thread's human principal, its main thread otherwise — and
 // `startTurn` admits that turn on exactly three conditions: that thread is not
 // already running, the bot is not mid-room-turn, and the bot is under the
@@ -26,7 +26,7 @@
 export interface HandoffAdmission {
   /** the target's record, or null/undefined when the roster no longer has it */
   bot(botId: string): { threadId: string } | null | undefined;
-  /** the thread `runDelegatedTurn` will use for a handoff arriving from
+  /** the thread the dispatch will use for a handoff arriving from
    * `sourceThreadId`. May throw: an unreadable human principal is a refusal,
    * never an exception on the drain path. */
   handoffThread(botId: string, sourceThreadId: string): string | undefined;
@@ -40,12 +40,13 @@ export interface HandoffAdmission {
   maxThreads: number;
 }
 
-export function handoffCanStart(deps: HandoffAdmission, botId: string, sourceThreadId: string): boolean {
+/** `destinationThreadId` is the conversation the hand-off is stored for: it is asked about THAT conversation, never one resolved again from the source. */
+export function handoffCanStart(deps: HandoffAdmission, botId: string, sourceThreadId: string, destinationThreadId?: string): boolean {
   const profile = deps.bot(botId);
   if (!profile) return false;
   let threadId: string;
   try {
-    threadId = deps.handoffThread(botId, sourceThreadId) ?? profile.threadId;
+    threadId = destinationThreadId ?? deps.handoffThread(botId, sourceThreadId) ?? profile.threadId;
   } catch {
     return false;
   }

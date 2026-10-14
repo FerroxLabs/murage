@@ -38,3 +38,6 @@ export function extensionRefusal(error: unknown): { status: number; code: string
   const reason = REASONS[code];
   return reason ? { status: reason[0], code: `browser_extension_${code}`, error: reason[1] } : undefined;
 }
+/** What a bot reads when a Murage for Chrome call failed with no specific reason. It never tells the owner to open the side panel as
+ * if that were the fix: the panel is usually open and connected, and the likelier causes are a card waiting in Murage or a dropped link. */
+export const EXTENSION_CALL_FAILED_TEXT = "Murage for Chrome did not complete that step. Check Murage for a card waiting for the owner. If there is none, ask the owner to look at the Murage for Chrome side panel: it says whether it is connected. Then try again.";

@@ -39,7 +39,7 @@ test("a fresh desktop shows learning immediately and saves per-bot choices", asy
   await dialog.getByRole("navigation").getByRole("button", { name: "Memory", exact: true }).click();
   const learning = dialog.getByRole("region", { name: "Learning", exact: true });
   // Default-off activation still learns candidates; no disclosure is opened to see it.
-  await expect(learning.getByRole("status")).toHaveText("Learning is on. Open Needs review below to approve new memories.");
+  await expect(learning.getByRole("status")).toHaveText("Learning is on. Memories that need your yes wait in Needs you.");
   await expect(learning.getByRole("combobox", { name: "Connection", exact: true })).toHaveValue("");
   const status = await api("/api/memory/status"); expect(status.configuration.extractorInstanceId).toBeNull(); expect(status.learning.connection).toMatchObject({ source: "default", instanceId: "@murage/flux-fast" });
   const bots = dialog.getByRole("region", { name: "Bots", exact: true }); const toggle = bots.getByRole("switch").first();

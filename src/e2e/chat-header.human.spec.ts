@@ -354,6 +354,9 @@ for (const skin of SKINS) {
 }
 
 test("every width from 320 to 1024, eight pixels at a time: no threshold is a cliff", async ({ page }) => {
+  // 89 widths, each measured after a layout settle: real work that takes
+  // minutes on a loaded runner.
+  test.setTimeout(240_000);
   // The layout has no fixed breakpoints to test either side of; every
   // threshold is where the measurement tips. So this walks the whole range
   // at 8px steps, which puts a sample within 4px of every transition, and

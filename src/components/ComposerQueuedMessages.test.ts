@@ -32,6 +32,16 @@ describe("QueuedComposerMessages", () => {
     expect(html).toContain('aria-label="Cancel queued message"');
   });
 
+  it("shows a line still being sent as Sending, with nothing to cancel yet", () => {
+    const html = renderToStaticMarkup(createElement(QueuedComposerMessages, {
+      items: [{ queueId: "sending:s1", text: "typed while it worked", sending: true }],
+      onCancel: vi.fn(),
+    }));
+    expect(html).toContain("typed while it worked");
+    expect(html).toContain("Sending");
+    expect(html).not.toContain("Cancel queued message");
+  });
+
   it("renders nothing at all when the queue is empty", () => {
     expect(renderToStaticMarkup(createElement(QueuedComposerMessages, {
       items: [],
@@ -72,5 +82,21 @@ describe("its place in the composer column", () => {
       const source = readFileSync(join(COMPONENTS_DIR, view), "utf8");
       expect(source).not.toContain("pendingQueued");
     }
+  });
+});
+
+describe("QueuedComposerMessages: a refused send", () => {
+  it("shows the words with why they were not sent, and Send again and Dismiss", () => {
+    const html = renderToStaticMarkup(createElement(QueuedComposerMessages, {
+      items: [{ queueId: "q9", text: "the room could not start this", refused: { notice: "refused" } }],
+      onCancel: vi.fn(),
+      onResend: vi.fn(),
+    }));
+    expect(html).toContain("the room could not start this");
+    expect(html).toContain('data-testid="refused-send"');
+    expect(html).toContain("Not sent");
+    expect(html).toContain("Send again");
+    expect(html).toContain("Dismiss");
+    expect(html).not.toContain("Cancel queued message");
   });
 });

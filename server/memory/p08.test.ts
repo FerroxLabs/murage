@@ -71,7 +71,7 @@ it("rejects file changes after preview and imports explicitly selected team brie
 it("rolls back a multi-file import when a later source publication fails",()=>{
   const root=notebook();writeFileSync(join(root,"memory","second.md"),"Second note");
   const ticket=owner(),preview=previewMemoryImport(ticket,[{kind:"bot",botId:"a"},{kind:"bot",botId:"a",topic:"second.md"}],roster);
-  const second=preview.items[1],id="legacy:"+createHash("sha256").update(JSON.stringify([second.scopeId,second.path])).digest("hex");
+  const second=preview.items[1],id="legacy:"+createHash("sha256").update(JSON.stringify([second.scopeId,second.path.slice(DATA_DIR.length+1).split("/").join("/")])).digest("hex");
   database().exec(`CREATE TEMP TRIGGER reject_second BEFORE INSERT ON memory_sources WHEN NEW.id='${id}' BEGIN SELECT RAISE(ABORT,'fixture publication failure'); END`);
   expect(()=>commitMemoryImport(ticket,preview.previewId,roster)).toThrow("fixture publication failure");
   expect(database().prepare("SELECT count(*) AS n FROM memory_sources").get()?.n).toBe(0);
