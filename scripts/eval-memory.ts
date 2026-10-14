@@ -8,6 +8,7 @@ import { existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import { LineageAllowance } from "../server/memory/lineage-allowance.ts";
 import { families, validateAnswerCohorts, validateCorpus, type MemoryCorpus } from "../server/memory/testing/contracts.ts";
 import { safeWipeSync } from "../server/testing/safe-wipe.mjs";
 
@@ -137,11 +138,12 @@ async function main() {
       const context=contexts.get(query.id)!;let ranked:string[]=[],delivered:string[]=[],error:string|undefined,degradedReason:string|undefined;
       const started=performance.now();
       try {
-        const found=await searchMemory(query.query,context,controller,{limit:10});
-        if(!found.vectorRows)throw Error("Wrong backend: semantic candidate path did not execute");
-        workerPeakRssBytes=Math.max(workerPeakRssBytes,Number((found as typeof found&{workerPeakRssBytes?:number}).workerPeakRssBytes??0));
+        let facts:{vectorRows:number;workerPeakRssBytes?:number}={vectorRows:0};
+        const found=await searchMemory(query.query,context,controller,{allowance:LineageAllowance.tool(),limit:10,telemetry:seen=>{facts=seen;}});
+        if(!facts.vectorRows)throw Error("Wrong backend: semantic candidate path did not execute");
+        workerPeakRssBytes=Math.max(workerPeakRssBytes,Number(facts.workerPeakRssBytes??0));
         ranked=[...new Set(found.hits.flatMap(hit=>hit.evidence.map(handle=>String(handle.sourceId))))];
-        const bundle=await buildMemoryBundle(query.query,context,controller);assertMemoryBundle(bundle,context);
+        const bundle=await buildMemoryBundle(query.query,context,controller,{allowance:LineageAllowance.tool()});assertMemoryBundle(bundle,context);
         delivered=bundle.sourceVersions.map(source=>source.id);degradedReason=bundle.degradedReason??found.degradedReason;
         for(const record of [...bundle.pinned,...bundle.checkpoint,...bundle.evidence])for(const handle of record.evidence){
           const row=database().prepare("SELECT payload FROM memory_source_versions WHERE source_id=? AND revision=?").get(handle.sourceId,handle.revision);
@@ -162,7 +164,7 @@ async function main() {
       const id=query.expected[0];if(!id)throw Error("Frozen pin trial lacks expected source");
       database().prepare("UPDATE memory_records SET owner_pinned=1 WHERE id=?").run(id);
       try{
-        const bundle=await buildMemoryBundle("",contexts.get(query.id)!,controller);
+        const bundle=await buildMemoryBundle("",contexts.get(query.id)!,controller,{allowance:LineageAllowance.tool()});
         assertMemoryBundle(bundle,contexts.get(query.id)!);
         pins.push({id,passed:bundle.pinned.some(record=>record.id===id)&&bundle.sourceVersions.some(source=>source.id===id)});
       }catch(error){pins.push({id,passed:false,error:error instanceof Error?error.message:String(error)});}

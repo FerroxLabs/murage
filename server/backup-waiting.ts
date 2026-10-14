@@ -9,7 +9,8 @@ type NamedBot = { id: string; name: string };
  * held open for a live turn (askMessageByRequest, `threadId:requestId` to the
  * card's message id) whose card is unanswered. */
 export function backupWaitingBotsFrom(asks: Iterable<[string, string]>, deps: {
-  messagesFor: (threadId: string) => readonly CardMessage[];
+  /** One card by its id (Store.messageById): a keyed read, never the thread. */
+  messageById: (threadId: string, messageId: string) => CardMessage | undefined;
   botFor: (threadId: string, askingBotId?: string) => NamedBot | undefined;
 }): BackupWaitingBot[] {
   const found: BackupWaitingBot[] = [], seen = new Set<string>();
@@ -18,7 +19,7 @@ export function backupWaitingBotsFrom(asks: Iterable<[string, string]>, deps: {
     if (cut <= 0) continue;
     const threadId = key.slice(0, cut);
     if (seen.has(`${threadId}:${messageId}`)) continue;
-    const message = deps.messagesFor(threadId).find(candidate => candidate.id === messageId);
+    const message = deps.messageById(threadId, messageId);
     const card = message?.card;
     if (!message || !card || (card.answered !== undefined && card.answered !== null) || card.dismissed || card.expired) continue;
     const bot = deps.botFor(threadId, message.from?.botId);

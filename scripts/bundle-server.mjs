@@ -49,6 +49,8 @@ const ENTRY_POINTS = [
   "installation-windows-backup-transport.ts",
   "memory/worker.ts",
   "bot-package-guard-worker.ts",
+  "engine-history-worker.ts",
+  "inbox-fill-worker.ts",
   "memory/restore.ts",
   "drivers/memory-proxy.ts",
   "index.ts",
@@ -117,6 +119,14 @@ await import("./stage-whatsapp-runtime.mjs");
 
 copyFileSync(join(root,"shared","memory-model-manifest.json"),join(root,"dist-server","memory-model-manifest.json"));
 await import("./stage-memory-runtime.mjs");
+
+// Both stagers share one hoisted tree. Verify it resolves exactly as staged before anything is packaged.
+{
+  const { checkStagedTree } = await import("./staged-tree-check.mjs");
+  const checked = checkStagedTree(join(root, "dist-server"));
+  console.log(`staged tree: ${checked.packages} packages, ${checked.files} files, longest path ${checked.longest.length}`);
+  if (checked.problems.length) throw Error(`staged runtime tree is inconsistent:\n${checked.problems.join("\n")}`);
+}
 
 // External MCP clients launch this as an independent stdio process. Keep its
 // source under scripts for a pleasant checkout command (`pnpm mcp`), but ship

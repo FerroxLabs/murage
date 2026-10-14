@@ -4,6 +4,8 @@
 // The whole session is rechecked after the await, before the prompt goes out.
 import { mkdirSync, readFileSync, rmSync } from "node:fs";
 import { beforeEach, expect, it } from "vitest";
+import { afterEach as thawAfterEach, beforeEach as thawBeforeEach } from "vitest";
+import { thawRootSetWritesForTest } from "./replay-lineage.ts";
 import { DATA_DIR } from "../config.ts";
 import { closeDatabase, database } from "../database.ts";
 import { InternalCapabilities } from "../internal-capabilities.ts";
@@ -15,6 +17,10 @@ import { buildMemoryBundleAfterReset, MemoryDispatchReceipt, memorySessionRevoke
 import { memoryAccess, reconcileMemoryRoster, type MemoryRoster } from "./policy.ts";
 import { databaseStamp } from "./replay-lineage.ts";
 import { setMemoryMode } from "./repository.ts";
+import { LineageAllowance } from "./lineage-allowance.ts";
+// 1.0.2: this test models a 1.0.1 file (legacy root-set rows) for the read-time judge, which still decides legacy data until S6.
+thawBeforeEach(() => thawRootSetWritesForTest(true));
+thawAfterEach(() => thawRootSetWritesForTest(false));
 
 const roster: MemoryRoster = { bots: [{ id: "bot", threadId: "chat", tasks: [{ threadId: "older" }] }], groups: [] };
 beforeEach(() => { closeDatabase(); rmSync(DATA_DIR, { recursive: true, force: true }); mkdirSync(DATA_DIR, { recursive: true }); setMemoryMode("active"); reconcileMemoryRoster(roster); });
@@ -32,7 +38,7 @@ async function shownSession() {
   const turn = access();
   const record = saveMemoryCandidate(text, [{ sourceId: "message:older:m1", revision: 1, startByte: 0, endByte: Buffer.byteLength(text) }], "k", turn);
   database().prepare("UPDATE memory_records SET state='active' WHERE id=?").run(record);
-  const receipt = new MemoryDispatchReceipt(await buildMemoryBundle("", turn, empty), turn, "engine");
+  const receipt = new MemoryDispatchReceipt(await buildMemoryBundle("", turn, empty, {allowance: LineageAllowance.tool()}), turn, "engine");
   receipt.sessionStarted("s1");
   receipt.noteLookup([{ id: record, version: 1, evidence: [{ sourceId: "message:older:m1", revision: 1 }] }], turn);
   receipt.accepted();
@@ -43,14 +49,14 @@ it("thread B retires a source shown to A while A awaits recall: A does not resum
   await shownSession();
   const turn = access();
   // The dispatch step's check passes and its stamp is taken.
-  expect(continuationMemoryRevoked("chat", "engine", "s1", turn)).toBe(false);
+  expect(continuationMemoryRevoked(LineageAllowance.tool(), "chat", "engine", "s1", turn)).toBe(false);
   const checked = databaseStamp();
   let release!: () => void;
   const gate = new Promise<void>(resolve => { release = resolve; });
   let searching!: () => void;
   const started = new Promise<void>(resolve => { searching = resolve; });
   const bridge = { async search() { searching(); await gate; return { hits: [], vectorRows: 0, coverageComplete: false }; } };
-  const recall = buildMemoryBundle("what is the alarm code", turn, bridge);
+  const recall = buildMemoryBundle("what is the alarm code", turn, bridge, {allowance: LineageAllowance.tool()});
   await started;
   // Thread B's branch change: its message m1 leaves the branch, B's receipts are revoked, A's are not.
   captureBranchChange(database(), "older", null);
@@ -61,24 +67,24 @@ it("thread B retires a source shown to A while A awaits recall: A does not resum
   expect(JSON.stringify(bundle.sourceVersions)).not.toContain("message:older:m1");
   expect(memorySessionRevoked("chat", "engine", "s1")).toBe(false);
   const why: { reason?: string } = {};
-  expect(resumedSessionInvalidAfterRecall("chat", "engine", "s1", turn, checked, why)).toBe(true);
+  expect(resumedSessionInvalidAfterRecall(LineageAllowance.tool(), "chat", "engine", "s1", turn, checked, why)).toBe(true);
   expect(why.reason).toMatch(/^memory-changed/);
 });
 
 it("an unmoved database skips the recheck, and a session that still holds resumes", async () => {
   await shownSession();
   const turn = access();
-  expect(continuationMemoryRevoked("chat", "engine", "s1", turn)).toBe(false);
+  expect(continuationMemoryRevoked(LineageAllowance.tool(), "chat", "engine", "s1", turn)).toBe(false);
   const checked = databaseStamp();
-  expect(resumedSessionInvalidAfterRecall("chat", "engine", "s1", turn, checked)).toBe(false);
+  expect(resumedSessionInvalidAfterRecall(LineageAllowance.tool(), "chat", "engine", "s1", turn, checked)).toBe(false);
   database().exec("UPDATE memory_meta SET data_revision=data_revision+1");
-  expect(resumedSessionInvalidAfterRecall("chat", "engine", "s1", turn, checked)).toBe(false);
+  expect(resumedSessionInvalidAfterRecall(LineageAllowance.tool(), "chat", "engine", "s1", turn, checked)).toBe(false);
 });
 
 it("the dispatch path rechecks after the recall await and before the receipt is made", () => {
   const source = readFileSync(new URL("../index.ts", import.meta.url), "utf8");
   const awaitAt = source.indexOf("bundle=await buildMemoryBundle(query,access,memoryWorker,memoryOptions)");
-  const recheckAt = source.indexOf("resumedSessionInvalidAfterRecall(threadId,instanceId,String(resumeCursor),access,checkedStamp");
+  const recheckAt = source.indexOf("resumedSessionInvalidAfterRecall(allowance,threadId,instanceId,String(resumeCursor),access,checkedStamp");
   const resetAt = source.indexOf("bundle=await buildMemoryBundleAfterReset(");
   const receiptAt = source.indexOf("memoryReceipt=new MemoryDispatchReceipt(bundle,access,instanceId)");
   expect(awaitAt).toBeGreaterThan(0);
@@ -91,7 +97,7 @@ it("thread B retires a source shown to A during the image await: the last pre-su
   await shownSession();
   const turn = access();
   // A's resumed turn: the after-recall check passed and its receipt resumes s1.
-  const receipt = new MemoryDispatchReceipt(await buildMemoryBundle("", turn, empty), turn, "engine");
+  const receipt = new MemoryDispatchReceipt(await buildMemoryBundle("", turn, empty, {allowance: LineageAllowance.tool()}), turn, "engine");
   receipt.resumes("s1");
   expect(() => receipt.assertCurrent()).not.toThrow();
   // While A awaits image collection, B's branch change retires m1; A's receipts stay delivered.
@@ -107,7 +113,7 @@ it("thread B retires a source shown to A during the image await: the last pre-su
 it("a steer into a running session whose disclosed source was retired is refused", async () => {
   await shownSession();
   const turn = access();
-  const receipt = new MemoryDispatchReceipt(await buildMemoryBundle("", turn, empty), turn, "engine");
+  const receipt = new MemoryDispatchReceipt(await buildMemoryBundle("", turn, empty, {allowance: LineageAllowance.tool()}), turn, "engine");
   receipt.resumes("s1");
   receipt.sessionStarted("s1");
   expect(receipt.steerable()).toBe(true);
@@ -127,8 +133,11 @@ it("the image-await check and the live steer both go through the full session va
   // write fence, run again right before a late write (round 3)
   const holdsAt = source.indexOf("const steerSessionHolds = (): boolean => {");
   expect(source.slice(holdsAt, holdsAt + 600)).toMatch(/receipt\.steerable\(\)[\s\S]*retainedSessionInvalid\(/);
-  const gateAt = source.indexOf("const memorySessionHolds = steerSessionHolds();");
-  const steerAt = source.indexOf("!isEngineCommand && !unprovenSend && memorySessionHolds,", gateAt);
+  // (1.0.2: only for an engine that can take the line mid-turn; any other
+  // queues it, and that turn's own pre-submit check decides)
+  const gateAt = source.indexOf("const memorySessionHolds = steerable && steerSessionHolds();");
+  const steerAt = source.indexOf("memorySessionHolds, {", gateAt);
+  expect(source.slice(gateAt - 300, gateAt)).toMatch(/const steerable = !isEngineCommand && !unprovenSend && Boolean\(instance && cardSteeringMode\(instance\.adapter\) === "steer"\);/);
   expect(gateAt).toBeGreaterThan(holdsAt);
   expect(steerAt).toBeGreaterThan(gateAt);
   expect(source.slice(steerAt, steerAt + 200)).toContain("holds: steerSessionHolds,");
@@ -145,7 +154,7 @@ it("the image-await check and the live steer both go through the full session va
 it("a room member turn resets the engine session before its bundle and never resumes or is steered", async () => {
   const order: string[] = [];
   const bridge = { async search() { order.push("recall"); return { hits: [], vectorRows: 0, coverageComplete: false }; } };
-  await buildMemoryBundleAfterReset("alarm code", access(), bridge, async () => { order.push("reset"); });
+  await buildMemoryBundleAfterReset("alarm code", access(), bridge, async () => { order.push("reset"); }, {allowance: LineageAllowance.tool(1_000_000_000)});
   expect(order[0]).toBe("reset");
   const source = readFileSync(new URL("../index.ts", import.meta.url), "utf8");
   const start = source.indexOf("async function runGroupMemberTurn(");

@@ -60,7 +60,7 @@ describe("the composer's send", () => {
     expect(start).toBeGreaterThan(-1);
     const check = send.indexOf("if (messageIsTooLarge(t)) {");
     expect(check).toBeGreaterThan(-1);
-    for (const later of ['type: "sendGroup"', 'type: "send",', "replyToIntake(", 'setText("")']) {
+    for (const later of ['type: "sendGroup"', 'type: "send",', "replyToIntake(", "clearAcknowledgedDraft("]) {
       expect(send.indexOf(later), later).toBeGreaterThan(check);
     }
     // up to the block's own closing brace, past the notice object literal
@@ -78,8 +78,10 @@ describe("the composer's send", () => {
     // sentence the direct send's own handler is already holding the draft
     // for. Restoring the draft there would fight the send that succeeded, and
     // a setup card that did not appear is not a message that did not send.
-    expect(send.match(/refusedForSize\(error\)/g)).toHaveLength(2);
-    expect(send.match(/restoreDraft\(sentDraft\)/g)).toHaveLength(2);
+    // Both paths share one failure handler (restore the draft, show the size notice)...
+    expect(send.match(/onError: failedSend/g)).toHaveLength(2);
+    expect(send.match(/refusedForSize\(error\)/g)).toHaveLength(1);
+    expect(send.match(/restoreDraft\(sentDraft\)/g)).toHaveLength(1);
     expect(send).toContain("{ alongside: true }).catch(() => {})");
   });
 

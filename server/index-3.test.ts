@@ -1065,7 +1065,7 @@ describe("harness HTTP API", () => {
     expect(firstStatus.body.container_name).not.toBe(secondStatus.body.container_name);
     expect(firstStatus.body.workspace_path).not.toBe(secondStatus.body.workspace_path);
 
-    const invalid = await desktopApi("PATCH", "/api/config", { localVm: { maxInstances: 5 } });
+    const invalid = await desktopApi("PATCH", "/api/config", { localVm: { maxInstances: 9 } });
     expect(invalid.status).toBe(400);
     expect(invalid.body.error).toContain("localVm.maxInstances");
 

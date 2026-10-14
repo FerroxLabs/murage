@@ -29,7 +29,11 @@ interface Dependencies {
   fetch?: typeof fetch;
   run?: (command: string, args: string[], cwd: string) => Promise<string>;
   fuigoProbe?: FuigoProbe;
+  /** Clock for the release cache (tests). */
+  now?: () => number;
 }
+/** How long a looked-up latest release is served before it is refreshed. */
+export const LATEST_VERSION_TTL_MS = 6 * 60 * 60 * 1000;
 const exec = promisify(execFile);
 const versionPattern = /^\d+\.\d+\.\d+$/;
 export function versionFrom(value: string | null | undefined): string | null {
@@ -47,6 +51,9 @@ function newer(a: string, b: string): boolean {
 export class EngineManager {
   private running = false;
   private versions = new Map<string, string>();
+  /** When each driver's latest release was last looked up, and the lookup in flight. */
+  private checkedAt = new Map<string, number>();
+  private refreshing = new Map<string, Promise<void>>();
   private deps: Dependencies;
   constructor(deps: Dependencies) { this.deps = deps; }
   private async instance(id: string) {
@@ -84,20 +91,45 @@ export class EngineManager {
       message: this.supported(instance) ? "Murage keeps your current engine until the new version is verified. Requires Node.js and npm."
         : "Use the engine’s setup guide to install or update on this platform." };
   }
-  async check(id: string): Promise<EngineManagementStatus> {
+  /** The latest release, as last seen. Settings asks on every visit: the
+   *  answer it already has comes back at once, and a lookup older than the TTL
+   *  is refreshed in the background for the next visit. Only the first visit,
+   *  or an install (`fresh`), waits on the registry. */
+  async check(id: string, options: { fresh?: boolean } = {}): Promise<EngineManagementStatus> {
     const instance = await this.instance(id);
-    if (instance.driverKind === "fuigo") {
-      this.versions.set("fuigo", await latestFuigoVersion(this.deps.fetch));
+    if (instance.driverKind !== "fuigo" && !this.supported(instance)) return this.status(id);
+    const kind = instance.driverKind, now = (this.deps.now ?? Date.now)();
+    if (!options.fresh && this.versions.has(kind)) {
+      if (now - (this.checkedAt.get(kind) ?? 0) >= LATEST_VERSION_TTL_MS) this.refreshInBackground(kind);
       return this.status(id);
     }
-    if (!this.supported(instance)) return this.status(id);
+    await this.lookUp(kind);
+    return this.status(id);
+  }
+  /** One lookup per driver at a time; a second caller joins it. */
+  private lookUp(kind: string): Promise<void> {
+    let pending = this.refreshing.get(kind);
+    if (!pending) {
+      pending = this.fetchLatest(kind).then(version => {
+        this.versions.set(kind, version);
+        this.checkedAt.set(kind, (this.deps.now ?? Date.now)());
+      }).finally(() => { this.refreshing.delete(kind); });
+      this.refreshing.set(kind, pending);
+    }
+    return pending;
+  }
+  private refreshInBackground(kind: string): void {
+    // The release already shown stays until a newer lookup succeeds.
+    this.lookUp(kind).catch(() => { /* kept: the last known release */ });
+  }
+  private async fetchLatest(kind: string): Promise<string> {
+    if (kind === "fuigo") return latestFuigoVersion(this.deps.fetch);
     const packageName = "@openai%2Fcodex";
     const response = await (this.deps.fetch ?? fetch)(`https://registry.npmjs.org/${packageName}/latest`, { signal: AbortSignal.timeout(15_000), redirect: "error" });
     if (!response.ok) throw new Error("Could not check for engine updates. Try again.");
     const metadata = await response.json() as { version?: unknown };
     if (typeof metadata.version !== "string" || !versionPattern.test(metadata.version)) throw new Error("The update service returned an unsupported version. Try again later.");
-    this.versions.set(instance.driverKind, metadata.version);
-    return this.status(id);
+    return metadata.version;
   }
   async install(id: string, options: { allowCustom?: boolean } = {}): Promise<EngineManagementStatus> {
     if (this.running || this.deps.isBusy()) throw new Error("Finish or stop running tasks before updating an engine.");
@@ -109,7 +141,7 @@ export class EngineManager {
         if (!this.supported(instance)) throw new Error("Native Fuigo installation is not supported on this platform.");
         const status = await this.status(id);
         if (!options.allowCustom && status.source !== "managed" && status.source !== "bundled") throw new Error("Choose Use managed Fuigo explicitly to replace the current custom or PATH selection.");
-        await this.check(id);
+        await this.check(id, { fresh: true });
         const version = this.versions.get("fuigo")!;
         if (!supportedFuigoVersion(version)) throw new Error("This Fuigo release is not supported by this Murage version.");
         let cli: string;
@@ -125,7 +157,7 @@ export class EngineManager {
         return this.status(id);
       }
       if (!this.supported(instance)) throw new Error("Managed installation is not supported for this engine on this platform. Use its setup guide.");
-      await this.check(id);
+      await this.check(id, { fresh: true });
       const version = this.versions.get(instance.driverKind)!;
       await mkdir(this.deps.root, { recursive: true });
       const candidate = await mkdtemp(join(this.deps.root, "codex-" + version + "-"));

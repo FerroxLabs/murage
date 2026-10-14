@@ -83,6 +83,8 @@
     [NOT_WRITABLE, ["BACKUP_FOLDER_NOT_WRITABLE"]],
     [IN_USE, ["BACKUP_FILE_IN_USE"]],
     [FOLDER_UNUSABLE, ["BACKUP_FOLDER_UNUSABLE"]],
+    ["You still have messages waiting to send or restore. Send or cancel them, then try again.", ["DOWNGRADE_WORK_PENDING"]],
+    ["Some hand-offs are waiting for you. Send again or dismiss them, then try going back to the earlier version.", ["DOWNGRADE_HANDOFFS_HELD"]],
     [CANCELLED, ["RECOVERY_CAPTURE_CANCELLED", "SNAPSHOT_CANCELLED"]],
     [EXPIRED, ["RECOVERY_SELECTION_EXPIRED"]],
     [CAPTURE_WINDOWS, ["RECOVERY_CAPTURE_UNAVAILABLE", "RECOVERY_CAPTURE_FAILED", "INVALID_RECOVERY_CAPTURE", "INVALID_RECOVERY_CAPTURE_RESULT"]],

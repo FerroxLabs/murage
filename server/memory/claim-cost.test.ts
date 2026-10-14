@@ -105,8 +105,8 @@ describe("claim cost", () => {
     seed(200, 10);
     const db = database();
     const q = jobs.MEMORY_CLAIM_SQL;
-    const params: Record<string, SQLInputValue[]> = { anyOpen: [NOW, NOW], scope: ["", NOW, NOW], head: [NOW, NOW, "scope-001"], recent: [NOW, NOW, '["scope-001"]'], row: [1] };
-    for (const name of ["anyOpen", "scope", "head", "row"] as const) {
+    const params: Record<string, SQLInputValue[]> = { anyOpen: [NOW, NOW], scope: ["", '["1"]'], head: ['["1"]', "scope-001"], window: ["pending", 0, 0, NOW, NOW, 256], recent: [NOW, NOW, '["scope-001"]'], row: [1] };
+    for (const name of ["anyOpen", "window", "scope", "head", "row"] as const) {
       const plan = db.prepare(`EXPLAIN QUERY PLAN ${q[name]}`).all(...params[name]).map(r => String(r.detail)).join("\n");
       expect(plan, name).not.toMatch(/TEMP B-TREE/);
       expect(plan, name).not.toMatch(/memory_source_versions/);
@@ -188,4 +188,47 @@ describe("pacing and trace", () => {
     traceSlowStep("memory.claim", 73.4, l => lines.push(l));
     expect(lines).toEqual(["[turn-trace] phase=memory.claim slow=true ms=73"]);
   });
+});
+
+describe("claims behind a blocked prefix (RC8)", () => {
+  /** `blocked` jobs whose sources are still working, then `eligible` jobs, all in one scope. */
+  function seedBlockedThenEligible(blocked: number, eligible: number) {
+    const db = database();
+    db.exec("BEGIN");
+    db.prepare("INSERT INTO memory_scopes VALUES('scope-000','conversation','owner-0','[]',0)").run();
+    for (let i = 0; i < blocked + eligible; i++) {
+      db.prepare("INSERT INTO memory_sources VALUES(?,?,?,?,?,1,?,?,?,?,NULL,?)").run(`src-${i}`, "scope-000", `thread-${i % 50}`, `m${i}`, null, `h${i}`, "text", "owner", i < blocked ? "working" : "recorded", "active");
+      db.prepare("INSERT INTO memory_source_versions VALUES(?,1,?,?,?)").run(`src-${i}`, `h${i}`, JSON.stringify({ text: `${i} x` }), 1);
+      db.prepare("INSERT INTO memory_jobs(id,source_id,source_revision,stage,stage_version,status,retry_at,attempts,lease_until,policy_revision,deletion_epoch) VALUES(?,?,1,'capture','1','pending',0,0,0,0,0)")
+        .run(`job-${String(i).padStart(5, "0")}`, `src-${i}`);
+    }
+    db.exec("COMMIT");
+  }
+  for (const blocked of [600, 6000]) {
+    it(`${blocked} blocked jobs ahead of 3000 eligible: every claim is bounded, no unbounded query runs, eligible jobs are claimed`, () => {
+      seedBlockedThenEligible(blocked, 3000);
+      const db = database();
+      const sql: string[] = [];
+      const real = db.prepare.bind(db);
+      vi.spyOn(db, "prepare").mockImplementation(((text: string) => { sql.push(text); return real(text); }) as typeof db.prepare);
+      const ceiling = jobs.CLAIM_MAX_WINDOWS * 2 * 4 + 12;
+      let claimed = 0, attempts = 0;
+      const perClaim: number[] = [];
+      while (claimed < 20 && attempts < 40) {
+        attempts++;
+        jobs.invalidateMemoryClaimIndex();
+        sql.length = 0;
+        const work = jobs.claimMemoryJob("w", NOW);
+        perClaim.push(sql.length);
+        for (const text of sql) {
+          if (/memory_jobs/.test(text) && /memory_sources/.test(text) && /min\(/.test(text)) expect([jobs.MEMORY_CLAIM_SQL.scope, jobs.MEMORY_CLAIM_SQL.head], text).toContain(text);
+        }
+        if (work) { expect(Number(work.sourceId.slice(4))).toBeGreaterThanOrEqual(blocked); claimed++; }
+      }
+      expect(claimed).toBe(20);
+      expect(Math.max(...perClaim)).toBeLessThanOrEqual(ceiling);
+      // the eligible jobs are reached within ceil(blocked / (window x budget)) + 1 tries, again after each periodic restart from the front
+      expect(attempts).toBeLessThanOrEqual(20 + 3 * (Math.ceil(blocked / (jobs.CLAIM_WINDOW * jobs.CLAIM_MAX_WINDOWS)) + 1));
+    });
+  }
 });

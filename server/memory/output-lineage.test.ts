@@ -6,6 +6,8 @@
 // revoked. A retained session whose set nears the one hard ceiling resets.
 import { mkdirSync, rmSync } from "node:fs";
 import { afterEach, beforeEach, expect, it } from "vitest";
+import { afterEach as thawAfterEach, beforeEach as thawBeforeEach } from "vitest";
+import { thawRootSetWritesForTest } from "./replay-lineage.ts";
 import { DATA_DIR } from "../config.ts";
 import { closeDatabase, database, transaction } from "../database.ts";
 import { InternalCapabilities } from "../internal-capabilities.ts";
@@ -19,6 +21,10 @@ import { outputRootsFor, recordOutputRoots, recordSessionRoots, replayExclusions
 import { roomTranscriptWithoutMemory } from "../room-transcript.ts";
 import type { Message } from "../store.ts";
 import { setMemoryMode } from "./repository.ts";
+import { LineageAllowance } from "./lineage-allowance.ts";
+// 1.0.2: this test models a 1.0.1 file (legacy root-set rows) for the read-time judge, which still decides legacy data until S6.
+thawBeforeEach(() => thawRootSetWritesForTest(true));
+thawAfterEach(() => thawRootSetWritesForTest(false));
 
 const roster: MemoryRoster = { bots: [{ id: "dax", threadId: "dax-direct" }], groups: [] };
 const thread = "dax-direct";
@@ -39,7 +45,7 @@ async function disclose(): Promise<MemoryDispatchReceipt> {
   const id = saveMemoryCandidate(text, [{ sourceId: "src-x", revision: 1, startByte: 0, endByte: Buffer.byteLength(text) }], "k-x", access());
   database().prepare("UPDATE memory_records SET state='active', owner_pinned=1 WHERE id=?").run(id);
   const a = access();
-  const bundle = await buildMemoryBundle("vault", a, empty);
+  const bundle = await buildMemoryBundle("vault", a, empty, {allowance: LineageAllowance.tool()});
   expect(bundle.recordVersions.map(record => record.id)).toContain(id);
   const receipt = new MemoryDispatchReceipt(bundle, a, "claude");
   receipt.sessionStarted("s-active");
@@ -48,10 +54,10 @@ async function disclose(): Promise<MemoryDispatchReceipt> {
   return receipt;
 }
 const bot = (id: string) => ({ threadId: thread, id, role: "bot" as const });
-const rootsOf = (id: string, threadId = thread) => database().prepare("SELECT m.root_thread_id,m.root_message_id FROM memory_output_roots o JOIN memory_root_set_members m ON m.set_id=o.set_id WHERE o.thread_id=? AND o.message_id=? ORDER BY m.root_message_id").all(threadId, id).map(row => `${row.root_thread_id}/${row.root_message_id}`);
+const rootsOf = (id: string, threadId = thread) => database().prepare("WITH RECURSIVE chain(id) AS (SELECT set_id FROM memory_output_roots WHERE thread_id=? AND message_id=? UNION SELECT p.parent_id FROM memory_root_set_parents p JOIN chain c ON p.set_id=c.id) SELECT m.root_thread_id,m.root_message_id FROM chain c JOIN memory_root_set_members m ON m.set_id=c.id ORDER BY m.root_message_id").all(threadId, id).map(row => `${row.root_thread_id}/${row.root_message_id}`);
 const setOf = (id: string, threadId = thread) => database().prepare("SELECT set_id FROM memory_output_roots WHERE thread_id=? AND message_id=?").get(threadId, id)?.set_id;
 afterEach(() => setRootSetCeilingForTest(null));
-const withheld = (ids: string[]) => replayExclusions(thread, ids.map(id => ({ id, role: "bot" })), null, { failClosed: true });
+const withheld = (ids: string[]) => replayExclusions(LineageAllowance.tool(1_000_000_000), thread, ids.map(id => ({ id, role: "bot" })), null, { failClosed: true });
 
 it("a 30-turn OFF conversation after one disclosure stays visible, flat, until X is revoked; then all of it is withheld", async () => {
   await disclose();
@@ -60,13 +66,13 @@ it("a 30-turn OFF conversation after one disclosure stays visible, flat, until X
   const chain = ["x-prime"];
   for (let turn = 1; turn <= 30; turn++) {
     const id = `off-${turn}`;
-    recordOutputRoots(thread, id, outputRootsFor([bot(chain.at(-1)!)]));
+    recordOutputRoots(thread, id, outputRootsFor(LineageAllowance.tool(1_000_000_000), [bot(chain.at(-1)!)]));
     chain.push(id);
   }
   // flat: every OFF reply rests on X' alone, however far down the chain
   for (const id of chain.slice(1)) expect(rootsOf(id)).toEqual([`${thread}/x-prime`]);
   // an OFF reply made with nothing memory-derived in its context has no roots
-  recordOutputRoots(thread, "plain", outputRootsFor([{ threadId: thread, id: "owner-ask", role: "user" }]));
+  recordOutputRoots(thread, "plain", outputRootsFor(LineageAllowance.tool(1_000_000_000), [{ threadId: thread, id: "owner-ask", role: "user" }]));
   expect(rootsOf("plain")).toEqual([]);
   expect([...withheld([...chain, "plain"])]).toEqual([]);
   // X is revoked: the paraphrase and everything after it go with X'
@@ -84,7 +90,7 @@ it("a 600-reply ACTIVE chat with memory outputs keeps every reply visible until 
   transaction(() => {
     for (let turn = 1; turn < 600; turn++) {
       const id = `r-${turn}`;
-      recordOutputRoots(thread, id, outputRootsFor([bot(chain.at(-1)!)]));
+      recordOutputRoots(thread, id, outputRootsFor(LineageAllowance.tool(1_000_000_000), [bot(chain.at(-1)!)]));
       receipt.output(id);
       chain.push(id);
     }
@@ -93,7 +99,7 @@ it("a 600-reply ACTIVE chat with memory outputs keeps every reply visible until 
   expect(database().prepare("SELECT count(*) AS n FROM memory_output_roots WHERE set_id=''").get()?.n).toBe(0);
   // memory goes off and one more reply paraphrases the newest
   setMemoryMode("off");
-  recordOutputRoots(thread, "off-1", outputRootsFor([bot("r-599")]));
+  recordOutputRoots(thread, "off-1", outputRootsFor(LineageAllowance.tool(1_000_000_000), [bot("r-599")]));
   expect(rootsOf("off-1")).toHaveLength(600);
   expect([...withheld([...chain, "off-1"])]).toEqual([]);
   forgetMemory(ownerMemoryTicket(), { kind: "source", id: "src-x", revision: 1 });
@@ -103,18 +109,18 @@ it("a 600-reply ACTIVE chat with memory outputs keeps every reply visible until 
 it("root sets are deduplicated: the same union is the same set id, stored once", async () => {
   const receipt = await disclose();
   receipt.output("x-second");
-  recordOutputRoots(thread, "a", outputRootsFor([bot("x-prime"), bot("x-second")]));
+  recordOutputRoots(thread, "a", outputRootsFor(LineageAllowance.tool(1_000_000_000), [bot("x-prime"), bot("x-second")]));
   const sets = Number(database().prepare("SELECT count(*) AS n FROM memory_root_sets").get()?.n);
   // the same union, reached in another order and through another reply
-  recordOutputRoots(thread, "b", outputRootsFor([bot("x-second"), bot("x-prime")]));
-  recordOutputRoots(thread, "c", outputRootsFor([bot("a")]));
+  recordOutputRoots(thread, "b", outputRootsFor(LineageAllowance.tool(1_000_000_000), [bot("x-second"), bot("x-prime")]));
+  recordOutputRoots(thread, "c", outputRootsFor(LineageAllowance.tool(1_000_000_000), [bot("a")]));
   expect(setOf("b")).toBe(setOf("a"));
   expect(setOf("c")).toBe(setOf("a"));
   expect(Number(database().prepare("SELECT count(*) AS n FROM memory_root_sets").get()?.n)).toBe(sets);
   expect(Number(database().prepare("SELECT count(*) AS n FROM memory_root_set_members WHERE set_id=?").get(String(setOf("a")))?.n)).toBe(2);
   // inheriting takes the union of the parents' sets
-  recordOutputRoots(thread, "d", outputRootsFor([bot("x-prime")]));
-  recordOutputRoots(thread, "e", outputRootsFor([bot("d"), bot("x-second")]));
+  recordOutputRoots(thread, "d", outputRootsFor(LineageAllowance.tool(1_000_000_000), [bot("x-prime")]));
+  recordOutputRoots(thread, "e", outputRootsFor(LineageAllowance.tool(1_000_000_000), [bot("d"), bot("x-second")]));
   expect(setOf("e")).toBe(setOf("a"));
 });
 
@@ -122,22 +128,22 @@ it("at the ceiling the retained session resets instead of withholding the reply"
   const receipt = await disclose();
   setRootSetCeilingForTest(20);
   for (let i = 0; i < 19; i++) receipt.output(`m-${i}`);
-  const context = outputRootsFor(Array.from({ length: 19 }, (_, i) => bot(`m-${i}`)));
+  const context = outputRootsFor(LineageAllowance.tool(1_000_000_000), Array.from({ length: 19 }, (_, i) => bot(`m-${i}`)));
   expect(context.over).toBe(false);
   // the session has taken in 19 roots: within the headroom of the ceiling of 20
   recordSessionRoots(thread, "claude", "s-full", context);
   recordOutputRoots(thread, "reply", context);
   const why: { reason?: string } = {};
-  expect(retainedSessionInvalid(thread, "claude", "s-full", why)).toBe(true);
+  expect(retainedSessionInvalid(LineageAllowance.tool(), thread, "claude", "s-full", why)).toBe(true);
   expect(why.reason).toBe("root-ceiling");
   // the reply itself is visible: it is not withheld for the ceiling
   expect([...withheld(["reply"])]).toEqual([]);
   // a fresh session starts small and holds
-  recordSessionRoots(thread, "claude", "s-fresh", outputRootsFor([bot("m-0")]));
-  expect(retainedSessionInvalid(thread, "claude", "s-fresh")).toBe(false);
+  recordSessionRoots(thread, "claude", "s-fresh", outputRootsFor(LineageAllowance.tool(1_000_000_000), [bot("m-0")]));
+  expect(retainedSessionInvalid(LineageAllowance.tool(), thread, "claude", "s-fresh")).toBe(false);
   // only a reply whose own context alone passes the ceiling is unprovable
   for (let i = 19; i < 25; i++) receipt.output(`m-${i}`);
-  const wide = outputRootsFor(Array.from({ length: 25 }, (_, i) => bot(`m-${i}`)));
+  const wide = outputRootsFor(LineageAllowance.tool(1_000_000_000), Array.from({ length: 25 }, (_, i) => bot(`m-${i}`)));
   expect(wide.over).toBe(true);
   recordOutputRoots(thread, "wide", wide);
   expect(setOf("wide")).toBe("");
@@ -146,14 +152,14 @@ it("at the ceiling the retained session resets instead of withholding the reply"
 
 it("a pre-v6 session resets before its first v6 continuation whatever the counters say, then is not reset again", async () => {
   await disclose();
-  // the receipt predates lineage, and no counter moved since
-  database().prepare("UPDATE memory_lineage_meta SET since=? WHERE id=1").run(Date.now() + 60_000);
+  // the receipt predates lineage (a legacy session has receipts and no lineage row), and no counter moved since
+  database().prepare("DELETE FROM memory_session_roots WHERE thread_id=? AND driver_instance='claude' AND native_session='s-active'").run(thread);
   const why: { reason?: string } = {};
-  expect(retainedSessionInvalid(thread, "claude", "s-active", why)).toBe(true);
+  expect(retainedSessionInvalid(LineageAllowance.tool(), thread, "claude", "s-active", why)).toBe(true);
   expect(why.reason).toBe("pre-lineage");
   // the session v6 starts in its place gets its row (session.started), even with no roots
-  recordSessionRoots(thread, "claude", "s-active", outputRootsFor([]));
-  expect(retainedSessionInvalid(thread, "claude", "s-active")).toBe(false);
+  recordSessionRoots(thread, "claude", "s-active", outputRootsFor(LineageAllowance.tool(1_000_000_000), []));
+  expect(retainedSessionInvalid(LineageAllowance.tool(), thread, "claude", "s-active")).toBe(false);
 });
 
 it("a thread with no receipt of its own still withholds a reply whose root elsewhere is revoked", async () => {
@@ -161,11 +167,11 @@ it("a thread with no receipt of its own still withholds a reply whose root elsew
   setMemoryMode("off");
   // a fresh OFF thread was shown X' through cross-thread working context
   const other = "moss-direct";
-  recordOutputRoots(other, "y", outputRootsFor([bot("x-prime")]));
+  recordOutputRoots(other, "y", outputRootsFor(LineageAllowance.tool(1_000_000_000), [bot("x-prime")]));
   const lines: Message[] = [{ id: "y", at: 1, role: "bot", kind: "text", text: "the code is 7731" } as Message];
-  expect(roomTranscriptWithoutMemory(other, lines, true)?.withheld.size).toBe(0);
+  expect(roomTranscriptWithoutMemory(LineageAllowance.tool(1_000_000_000), other, lines, true)?.withheld.size).toBe(0);
   forgetMemory(ownerMemoryTicket(), { kind: "source", id: "src-x", revision: 1 });
-  expect([...(roomTranscriptWithoutMemory(other, lines, true)?.withheld ?? [])]).toEqual(["y"]);
+  expect([...(roomTranscriptWithoutMemory(LineageAllowance.tool(1_000_000_000), other, lines, true)?.withheld ?? [])]).toEqual(["y"]);
 });
 
 it("a large thread (2,000 replies over 500 roots) is checked in a bounded number of statements", async () => {
@@ -183,7 +189,7 @@ it("a large thread (2,000 replies over 500 roots) is checked in a bounded number
   (db as { prepare: typeof db.prepare }).prepare = ((sql: string) => { statements++; return original(sql); }) as typeof db.prepare;
   const started = performance.now();
   let out: Set<string>;
-  try { out = replayExclusions(big, Array.from({ length: 2000 }, (_, i) => ({ id: `b-${i}`, role: "bot" })), null, { failClosed: true }); }
+  try { out = replayExclusions(LineageAllowance.tool(1_000_000_000), big, Array.from({ length: 2000 }, (_, i) => ({ id: `b-${i}`, role: "bot" })), null, { failClosed: true }); }
   finally { delete (db as { prepare?: unknown }).prepare; }
   const elapsed = performance.now() - started;
   expect(out.size).toBe(0);
@@ -196,10 +202,10 @@ it("an OFF engine session that was shown a memory-derived reply is not resumed a
   await disclose();
   setMemoryMode("off");
   // a fresh OFF session replayed X'; it holds no receipt of its own
-  recordSessionRoots(thread, "claude", "s-off", outputRootsFor([bot("x-prime")]));
-  expect(retainedSessionInvalid(thread, "claude", "s-off")).toBe(false);
+  recordSessionRoots(thread, "claude", "s-off", outputRootsFor(LineageAllowance.tool(1_000_000_000), [bot("x-prime")]));
+  expect(retainedSessionInvalid(LineageAllowance.tool(), thread, "claude", "s-off")).toBe(false);
   forgetMemory(ownerMemoryTicket(), { kind: "source", id: "src-x", revision: 1 });
   const why: { reason?: string } = {};
-  expect(retainedSessionInvalid(thread, "claude", "s-off", why)).toBe(true);
+  expect(retainedSessionInvalid(LineageAllowance.tool(), thread, "claude", "s-off", why)).toBe(true);
   expect(why.reason).toBe("session-roots");
 });

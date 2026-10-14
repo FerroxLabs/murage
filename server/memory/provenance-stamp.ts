@@ -9,8 +9,14 @@
 // or state changes (or that is deleted), and the policy revision, deletion
 // epoch and mode. Inside a transaction there is no stamp (a write may roll
 // back), so nothing is remembered from there.
+import { withoutDroppedTableTriggers } from "./read-time-retired.ts";
 import type { DatabaseSync } from "node:sqlite";
 import { turnTraceEnabled } from "../turn-trace.ts";
+import { ancestryUnrepaired, connectionId } from "../database.ts";
+import { Worker } from "node:worker_threads";
+import { pauseReclaim } from "./root-set-reclaim.ts";
+import { buildOptionalIndexOffThread, databaseFile, optionalIndexReady } from "./optional-index.ts";
+import { IDENTITY_CANON, IDENTITY_CANON_INDEX, IDENTITY_PARTITION, IDENTITY_PARTITION_INDEX } from "./schema.ts";
 
 // Trigger bodies name their write target unqualified: SQLite forbids a
 // qualified one there, and an unqualified name resolves to the temp table.
@@ -40,6 +46,27 @@ CREATE TEMP TRIGGER IF NOT EXISTS prov_versions_d AFTER DELETE ON main.memory_so
 CREATE TEMP TRIGGER IF NOT EXISTS prov_versions_u AFTER UPDATE ON main.memory_source_versions BEGIN ${BUMP}; END;
 CREATE TEMP TRIGGER IF NOT EXISTS prov_meta_u AFTER UPDATE ON main.memory_meta
  WHEN OLD.policy_revision IS NOT NEW.policy_revision OR OLD.deletion_epoch IS NOT NEW.deletion_epoch OR OLD.mode IS NOT NEW.mode BEGIN ${BUMP}; END;
+-- A procedure verdict also rests on reply lineage (is the reply behind a source or record withheld?): output roots and root sets (a
+-- repair writes them), receipt outputs, receipts whose versions change, and a message that is deleted or whose copyOf changes.
+CREATE TEMP TRIGGER IF NOT EXISTS prov_outputs_i AFTER INSERT ON main.memory_disclosure_outputs BEGIN ${BUMP}; END;
+CREATE TEMP TRIGGER IF NOT EXISTS prov_outputs_d AFTER DELETE ON main.memory_disclosure_outputs BEGIN ${BUMP}; END;
+CREATE TEMP TRIGGER IF NOT EXISTS prov_roots_i AFTER INSERT ON main.memory_output_roots BEGIN ${BUMP}; END;
+CREATE TEMP TRIGGER IF NOT EXISTS prov_roots_u AFTER UPDATE ON main.memory_output_roots BEGIN ${BUMP}; END;
+CREATE TEMP TRIGGER IF NOT EXISTS prov_roots_d AFTER DELETE ON main.memory_output_roots BEGIN ${BUMP}; END;
+CREATE TEMP TRIGGER IF NOT EXISTS prov_root_sets_i AFTER INSERT ON main.memory_root_sets BEGIN ${BUMP}; END;
+CREATE TEMP TRIGGER IF NOT EXISTS prov_root_sets_u AFTER UPDATE ON main.memory_root_sets BEGIN ${BUMP}; END;
+CREATE TEMP TRIGGER IF NOT EXISTS prov_root_sets_d AFTER DELETE ON main.memory_root_sets BEGIN ${BUMP}; END;
+CREATE TEMP TRIGGER IF NOT EXISTS prov_root_members_i AFTER INSERT ON main.memory_root_set_members BEGIN ${BUMP}; END;
+CREATE TEMP TRIGGER IF NOT EXISTS prov_root_members_d AFTER DELETE ON main.memory_root_set_members BEGIN ${BUMP}; END;
+CREATE TEMP TRIGGER IF NOT EXISTS prov_root_parents_i AFTER INSERT ON main.memory_root_set_parents BEGIN ${BUMP}; END;
+CREATE TEMP TRIGGER IF NOT EXISTS prov_root_parents_u AFTER UPDATE ON main.memory_root_set_parents BEGIN ${BUMP}; END;
+CREATE TEMP TRIGGER IF NOT EXISTS prov_root_parents_d AFTER DELETE ON main.memory_root_set_parents BEGIN ${BUMP}; END;
+CREATE TEMP TRIGGER IF NOT EXISTS prov_receipts_u AFTER UPDATE ON main.memory_disclosures
+ WHEN OLD.record_versions IS NOT NEW.record_versions OR OLD.source_versions IS NOT NEW.source_versions OR OLD.native_session IS NOT NEW.native_session BEGIN ${BUMP}; END;
+CREATE TEMP TRIGGER IF NOT EXISTS prov_messages_u AFTER UPDATE ON main.messages WHEN OLD.json IS NOT NEW.json AND (instr(OLD.json,'copyOf')>0 OR instr(NEW.json,'copyOf')>0) BEGIN ${BUMP}; END;
+CREATE TEMP TRIGGER IF NOT EXISTS prov_messages_d AFTER DELETE ON main.messages BEGIN ${BUMP}; END;
+CREATE TEMP TRIGGER IF NOT EXISTS prov_messages_r BEFORE INSERT ON main.messages
+ WHEN EXISTS (SELECT 1 FROM main.messages o WHERE o.thread_id=NEW.thread_id AND o.id=NEW.id AND o.json IS NOT NEW.json AND (instr(o.json,'copyOf')>0 OR instr(NEW.json,'copyOf')>0)) BEGIN ${BUMP}; END;
 `;
 // The identity set reads only identity records, their details and their
 // evidence, and its scan cannot use an index (no index on kind or partition),
@@ -50,16 +77,18 @@ CREATE TEMP TRIGGER IF NOT EXISTS prov_meta_u AFTER UPDATE ON main.memory_meta
 // those writes threw the set away and the next check rescanned (158 s in the
 // first three minutes on a 735 MB store).
 const IDENTITY_BUMP = "UPDATE identity_epoch SET n=n+1";
-const IS_IDENTITY = (id: string) => `(EXISTS(SELECT 1 FROM main.memory_records WHERE id=${id} AND kind='character-canon') OR EXISTS(SELECT 1 FROM main.memory_record_details WHERE record_id=${id} AND partition='identity'))`;
+// (one version, by its full primary key: an id-level probe read every version of a record on each write of one, so seeding or ending a
+// record with 150k versions cost 150k reads per row: 1.0.2 revoke-bounded r3)
+const IS_IDENTITY = (id: string, version: string) => `(EXISTS(SELECT 1 FROM main.memory_records WHERE id=${id} AND version=${version} AND kind='character-canon') OR EXISTS(SELECT 1 FROM main.memory_record_details WHERE record_id=${id} AND record_version=${version} AND partition='identity'))`;
 const IDENTITY_SCHEMA = `
 CREATE TEMP TABLE IF NOT EXISTS identity_epoch(id INTEGER PRIMARY KEY CHECK(id=1), n INTEGER NOT NULL);
 INSERT OR IGNORE INTO temp.identity_epoch VALUES(1,0);
 CREATE TEMP TRIGGER IF NOT EXISTS ident_records_i AFTER INSERT ON main.memory_records
- WHEN NEW.kind='character-canon' OR ${IS_IDENTITY("NEW.id")} BEGIN ${IDENTITY_BUMP}; END;
+ WHEN NEW.kind='character-canon' OR ${IS_IDENTITY("NEW.id", "NEW.version")} BEGIN ${IDENTITY_BUMP}; END;
 CREATE TEMP TRIGGER IF NOT EXISTS ident_records_u AFTER UPDATE ON main.memory_records
- WHEN OLD.kind='character-canon' OR NEW.kind='character-canon' OR ${IS_IDENTITY("OLD.id")} OR ${IS_IDENTITY("NEW.id")} BEGIN ${IDENTITY_BUMP}; END;
+ WHEN OLD.kind='character-canon' OR NEW.kind='character-canon' OR ${IS_IDENTITY("OLD.id", "OLD.version")} OR ${IS_IDENTITY("NEW.id", "NEW.version")} BEGIN ${IDENTITY_BUMP}; END;
 CREATE TEMP TRIGGER IF NOT EXISTS ident_records_d AFTER DELETE ON main.memory_records
- WHEN OLD.kind='character-canon' OR ${IS_IDENTITY("OLD.id")} BEGIN ${IDENTITY_BUMP}; END;
+ WHEN OLD.kind='character-canon' OR ${IS_IDENTITY("OLD.id", "OLD.version")} BEGIN ${IDENTITY_BUMP}; END;
 CREATE TEMP TRIGGER IF NOT EXISTS ident_details_i AFTER INSERT ON main.memory_record_details
  WHEN NEW.partition='identity' BEGIN ${IDENTITY_BUMP}; END;
 CREATE TEMP TRIGGER IF NOT EXISTS ident_details_u AFTER UPDATE ON main.memory_record_details
@@ -67,17 +96,17 @@ CREATE TEMP TRIGGER IF NOT EXISTS ident_details_u AFTER UPDATE ON main.memory_re
 CREATE TEMP TRIGGER IF NOT EXISTS ident_details_d AFTER DELETE ON main.memory_record_details
  WHEN OLD.partition='identity' BEGIN ${IDENTITY_BUMP}; END;
 CREATE TEMP TRIGGER IF NOT EXISTS ident_evidence_i AFTER INSERT ON main.memory_evidence
- WHEN ${IS_IDENTITY("NEW.record_id")} BEGIN ${IDENTITY_BUMP}; END;
+ WHEN ${IS_IDENTITY("NEW.record_id", "NEW.record_version")} BEGIN ${IDENTITY_BUMP}; END;
 CREATE TEMP TRIGGER IF NOT EXISTS ident_evidence_u AFTER UPDATE ON main.memory_evidence
- WHEN ${IS_IDENTITY("OLD.record_id")} OR ${IS_IDENTITY("NEW.record_id")} BEGIN ${IDENTITY_BUMP}; END;
+ WHEN ${IS_IDENTITY("OLD.record_id", "OLD.record_version")} OR ${IS_IDENTITY("NEW.record_id", "NEW.record_version")} BEGIN ${IDENTITY_BUMP}; END;
 CREATE TEMP TRIGGER IF NOT EXISTS ident_evidence_d AFTER DELETE ON main.memory_evidence
- WHEN ${IS_IDENTITY("OLD.record_id")} BEGIN ${IDENTITY_BUMP}; END;
+ WHEN ${IS_IDENTITY("OLD.record_id", "OLD.record_version")} BEGIN ${IDENTITY_BUMP}; END;
 `;
 const ready = new WeakMap<object, boolean>();
 function install(db: DatabaseSync): boolean {
   let ok = ready.get(db);
   if (ok === undefined) {
-    try { db.exec(SCHEMA); db.exec(IDENTITY_SCHEMA); ok = true; }
+    try { db.exec(withoutDroppedTableTriggers(db, SCHEMA)); db.exec(IDENTITY_SCHEMA); ok = true; }
     catch (error) {
       ok = false;
       if (!installWarned) { installWarned = true; console.warn(`[memory] provenance cache triggers could not be installed; every check rescans (${error instanceof Error ? error.message : String(error)})`); }
@@ -94,10 +123,28 @@ export function provenanceTriggersInstalled(db: DatabaseSync): boolean { return 
 export function provenanceStamp(db: DatabaseSync): string | undefined {
   if (db.isTransaction || !install(db)) return undefined;
   const row = db.prepare("SELECT (SELECT n FROM temp.provenance_epoch) AS epoch, (SELECT data_version FROM pragma_data_version) AS version").get();
-  return `${row?.epoch}:${row?.version}`;
+  // The connection and its ancestry-repair state ride in the stamp: a verdict reached while the lineage repair had failed (replay of
+  // unrepaired threads withheld) is not reused after the repair succeeds, nor on another connection.
+  return `${connectionId(db)}${ancestryUnrepaired(db) ? "u" : ""}.${row?.epoch}:${row?.version}`;
 }
 
-const IDENTITY_SQL = "SELECT e.source_id,e.source_revision FROM memory_records r LEFT JOIN memory_record_details d ON d.record_id=r.id AND d.record_version=r.version CROSS JOIN memory_evidence e ON e.record_id=r.id AND e.record_version=r.version WHERE r.kind='character-canon' OR d.partition='identity'";
+// The ids of every identity record, from the two sources of identity: kind='character-canon' on the record, partition='identity' on its details.
+// With the two partial indexes (IDENTITY_INDEXES, built off the main thread) each arm is a walk of the identity rows only, so the whole read
+// is O(identity records) however large the store. Without them each arm is one plain pass over its table (no per-row join), still far
+// cheaper than the old record-by-record join. A record with no evidence yet still comes back (source_id null).
+const IDENTITY_IDS = "SELECT id,version FROM memory_records WHERE kind='character-canon' UNION SELECT record_id,record_version FROM memory_record_details WHERE partition='identity'";
+export const IDENTITY_SQL = `SELECT r.id AS record_id,r.version AS record_version,e.source_id,e.source_revision FROM (${IDENTITY_IDS}) i JOIN memory_records r ON r.id=i.id AND r.version=i.version LEFT JOIN memory_evidence e ON e.record_id=r.id AND e.record_version=r.version`;
+// The chunked (rowid range) form for the background build when the indexes do not exist yet.
+const CHUNK_BASE_SQL = "SELECT r.id AS record_id,r.version AS record_version,e.source_id,e.source_revision FROM memory_records r LEFT JOIN memory_record_details d ON d.record_id=r.id AND d.record_version=r.version LEFT JOIN memory_evidence e ON e.record_id=r.id AND e.record_version=r.version WHERE r.kind='character-canon' OR d.partition='identity'";
+/** Whether both identity indexes exist (an index that exists is complete, see optional-index.ts). */
+export function identityIndexesReady(db: DatabaseSync): boolean {
+  return optionalIndexReady(db, IDENTITY_CANON_INDEX) && optionalIndexReady(db, IDENTITY_PARTITION_INDEX);
+}
+/** Builds both identity indexes off the main thread (tests pass inline). Production builds them through the idle-gated sweep. */
+export async function ensureIdentityIndexes(db: DatabaseSync, options: { inline?: boolean } = {}): Promise<boolean> {
+  const both = [buildOptionalIndexOffThread(db, IDENTITY_CANON, options), buildOptionalIndexOffThread(db, IDENTITY_PARTITION, options)];
+  return (await Promise.all(both)).every(Boolean);
+}
 // The identity counter's value and data_version, read even inside a
 // transaction. A memo taken outside any transaction stays exact inside one
 // while both still match: every identity write this transaction makes bumps
@@ -121,27 +168,128 @@ export function noteIdentityEpoch(db: DatabaseSync): void {
   const reading = identityReading(db);
   if (reading) committedEpoch.set(db, reading.epoch);
 }
-const identity = { db: null as DatabaseSync | null, stamp: "", sources: null as Set<string> | null, builds: 0 };
+const identity = { db: null as DatabaseSync | null, stamp: "", epoch: -1, sources: null as Set<string> | null, builds: 0, refreshes: 0, generation: 0 };
+function collectRow(row: Record<string, unknown>, sources: Set<string>): void {
+  if (row.source_id !== null && row.source_id !== undefined) sources.add(`${row.source_id}:${row.source_revision}`);
+}
+/** The version of the identity set a verdict was reached against. It moves whenever the set is replaced; -1 means the remembered set is
+ * out of date (the database moved since it was read), so a verdict taken against it must not be reused. 0 until a set is first read. */
+export function identityGeneration(db: DatabaseSync): number {
+  if (identity.db !== db || !identity.sources) return identity.generation;
+  const reading = identityReading(db);
+  return reading && identity.stamp === `${reading.epoch}:${reading.version}` ? identity.generation : -1;
+}
+
 let lastReasonAt = 0;
-/** Every `source:revision` cited by an identity record. One scan of the
- * records when the identity counter has moved; the remembered set otherwise,
- * inside a transaction too. */
+/** Every `source:revision` cited by an identity record, exact at the moment of the call. Remembered while neither this connection's identity
+ * counter nor the database's data_version has moved (inside a transaction too); any other change, an in-place promotion by another connection
+ * included, is read afresh. The fresh read is O(identity records) once the indexes exist and one pass over each of two tables before, never
+ * a guess from watermarks: a promotion of an old row writes no new rowid, so only a read of the identity rows themselves can see it. */
 export function identitySourceSet(db: DatabaseSync): ReadonlySet<string> {
   const reading = identityReading(db);
   const stamp = reading ? `${reading.epoch}:${reading.version}` : undefined;
   if (stamp !== undefined && identity.db === db && identity.stamp === stamp && identity.sources) return identity.sources;
   const started = performance.now();
   const previouslyHeld = identity.db === db;
+  const indexed = identityIndexesReady(db);
   const sources = new Set<string>();
-  for (const row of db.prepare(IDENTITY_SQL).all()) sources.add(`${row.source_id}:${row.source_revision}`);
-  identity.builds++;
+  for (const row of db.prepare(IDENTITY_SQL).all()) collectRow(row, sources);
+  if (indexed) identity.refreshes++; else identity.builds++;
   if (!db.isTransaction && reading) committedEpoch.set(db, reading.epoch);
   const keep = reading !== undefined && (!db.isTransaction || committedEpoch.get(db) === reading.epoch);
-  if (keep) { identity.db = db; identity.stamp = stamp!; identity.sources = sources; }
-  else if (identity.db === db && !db.isTransaction) identity.sources = null;
-  traceBuild(reading, keep, db, started, previouslyHeld);
+  if (keep) { identity.db = db; identity.stamp = stamp!; identity.epoch = reading!.epoch; identity.sources = sources; identity.generation++; }
+  else if (identity.db === db && !db.isTransaction) { identity.sources = null; identity.generation++; }
+  traceBuild(reading, keep, db, started, previouslyHeld, indexed ? "indexed" : "scan");
   return sources;
 }
+// ---- The set for a consumer that ALLOWS something on it -------------------------------------------------------------------------------
+// A store past SMALL_STORE_ROWS with no indexes yet is never reread on the calling thread: the set is marked stale (the identity counter or the
+// data_version moved), recomputed on a worker connection in one read snapshot, and meanwhile the consumer is told "unknown" (null) so it withholds.
+// A consumer that only withholds may keep using the last known set (identity.sources, even when stale).
+export const SMALL_STORE_ROWS = 20_000;
+function smallStore(db: DatabaseSync): boolean {
+  const row = db.prepare("SELECT (SELECT coalesce(max(rowid),0) FROM memory_records) AS r,(SELECT coalesce(max(rowid),0) FROM memory_record_details) AS d").get();
+  return Number(row?.r ?? 0) <= SMALL_STORE_ROWS && Number(row?.d ?? 0) <= SMALL_STORE_ROWS;
+}
+const RECOMPUTE_WORKER = `
+const { workerData, parentPort } = require("node:worker_threads");
+const { DatabaseSync } = require("node:sqlite");
+let db;
+try {
+  db = new DatabaseSync(workerData.file);
+  db.exec("PRAGMA busy_timeout=30000");
+  db.exec("BEGIN");
+  const rows = db.prepare(workerData.sql).all();
+  db.exec("COMMIT");
+  db.close();
+  const sources = []; for (const row of rows) if (row.source_id !== null && row.source_id !== undefined) sources.push(row.source_id + ":" + row.source_revision);
+  parentPort.postMessage({ ok: true, sources });
+} catch (error) {
+  try { db && db.close(); } catch {}
+  parentPort.postMessage({ ok: false, message: String(error && error.message || error) });
+}
+`;
+const recomputing = new WeakMap<DatabaseSync, Promise<boolean>>();
+export const identityRecomputeStats = { started: 0, kept: 0, moved: 0 };
+/** Recomputes the set off the calling thread (a worker connection reads one snapshot). The result is kept only if neither this connection's
+ * identity counter nor the data_version moved between the request and the answer: then no commit lies between the snapshot and now, so the
+ * snapshot is the committed state. Otherwise it asks again (a few times). Resolves true once a current set is held. Many callers share one run. */
+export function recomputeIdentityOffThread(db: DatabaseSync, attempts = 6): Promise<boolean> {
+  const running = recomputing.get(db);
+  if (running) return running;
+  const file = databaseFile(db);
+  const run = (async (): Promise<boolean> => {
+    for (let attempt = 0; attempt < attempts; attempt++) {
+      // The reclaim commits every ~100 ms for half an hour; each commit moves the data_version, so a scan of seconds never agreed with it.
+      // Park the reclaim between batches for the length of the scan: then ANY movement of the data_version or the counter is somebody else's
+      // commit (a promotion included) and the result is thrown away, exactly as before. Nothing is excused, so no promotion can be missed.
+      const parked = await pauseReclaim();
+      try {
+      const first = db.isTransaction ? undefined : identityReading(db);
+      if (!first) { await new Promise<void>(r => setTimeout(r, 25 * (attempt + 1))); continue; }
+      identityRecomputeStats.started++;
+      let sources: Set<string> | undefined;
+      if (!file) { const set = new Set<string>(); for (const row of db.prepare(IDENTITY_SQL).all()) collectRow(row, set); sources = set; }
+      else sources = await new Promise<Set<string> | undefined>(resolve => {
+        try {
+          const worker = new Worker(RECOMPUTE_WORKER, { eval: true, workerData: { file, sql: IDENTITY_SQL } });
+          let settled = false;
+          const finish = (value: Set<string> | undefined) => { if (!settled) { settled = true; resolve(value); } };
+          worker.on("message", (m: { ok: boolean; sources?: string[] }) => finish(m.ok ? new Set(m.sources) : undefined));
+          worker.on("error", () => finish(undefined));
+          worker.on("exit", () => finish(undefined));
+          worker.unref();
+        } catch { resolve(undefined); }
+      });
+      const last = db.isTransaction ? undefined : identityReading(db);
+      if (sources && last && last.epoch === first.epoch && last.version === first.version) {
+        identity.builds++; identityRecomputeStats.kept++;
+        committedEpoch.set(db, last.epoch);
+        identity.db = db; identity.epoch = last.epoch; identity.stamp = `${last.epoch}:${last.version}`; identity.sources = sources; identity.generation++;
+        return true;
+      }
+      identityRecomputeStats.moved++;
+      } finally { parked.release(); }
+      await new Promise<void>(r => setTimeout(r, 20 * (attempt + 1)));
+    }
+    return false;
+  })().finally(() => { recomputing.delete(db); });
+  recomputing.set(db, run);
+  return run;
+}
+/** The identity set for a consumer that ALLOWS something because a source is not in it, or null when it is not known right now (stale and
+ * being recomputed): the consumer must then withhold. Exact and synchronous when the memo is current, the identity indexes exist (an
+ * O(identity records) read), or the store is small; never a full pass over a large store on the calling thread. */
+export function identityForAllow(db: DatabaseSync): ReadonlySet<string> | null {
+  const reading = identityReading(db);
+  const stamp = reading ? `${reading.epoch}:${reading.version}` : undefined;
+  if (stamp !== undefined && identity.db === db && identity.stamp === stamp && identity.sources) return identity.sources;
+  if (!reading || identityIndexesReady(db) || smallStore(db)) return identitySourceSet(db);
+  void recomputeIdentityOffThread(db).catch(() => false);
+  return null;
+}
+/** The last set read, current or not (for a consumer that only withholds), or null when none was read yet. */
+export function lastKnownIdentitySet(db: DatabaseSync): ReadonlySet<string> | null { return identity.db === db ? identity.sources : null; }
 function traceBuild(reading: unknown, keep: boolean, db: DatabaseSync, started: number, previouslyHeld: boolean, kind = "scan"): void {
   if (!turnTraceEnabled() || performance.now() - lastReasonAt <= 5000) return;
   lastReasonAt = performance.now();
@@ -154,7 +302,7 @@ function traceBuild(reading: unknown, keep: boolean, db: DatabaseSync, started: 
 // reading is the same at every chunk and at the end: then it equals the
 // committed state at that reading, the rule the one-shot scan already obeys.
 const CHUNK_HI_SQL = "SELECT max(rowid) AS hi FROM (SELECT rowid FROM memory_records WHERE rowid>? ORDER BY rowid LIMIT ?)";
-const CHUNK_SQL = IDENTITY_SQL.replace("WHERE r.kind='character-canon' OR d.partition='identity'", "WHERE r.rowid>? AND r.rowid<=? AND (r.kind='character-canon' OR d.partition='identity')");
+const CHUNK_SQL = CHUNK_BASE_SQL.replace("WHERE r.kind='character-canon' OR d.partition='identity'", "WHERE r.rowid>? AND r.rowid<=? AND (r.kind='character-canon' OR d.partition='identity')");
 export const IDENTITY_CHUNK_SQL = CHUNK_SQL;
 export const IDENTITY_CHUNK_HI_SQL = CHUNK_HI_SQL;
 const warming = new WeakSet<DatabaseSync>();
@@ -162,7 +310,7 @@ const warming = new WeakSet<DatabaseSync>();
  * between chunks, and keeps it only if nothing identity-related moved while it
  * ran. Resolves true when a memo was stored. A request that needs the set
  * meanwhile simply builds it synchronously. */
-export async function warmIdentitySourceSet(db: DatabaseSync, options: { chunk?: number; retries?: number } = {}): Promise<boolean> {
+export async function warmIdentitySourceSet(db: DatabaseSync, options: { chunk?: number; retries?: number; force?: boolean } = {}): Promise<boolean> {
   if (warming.has(db)) return false;
   warming.add(db);
   const chunk = options.chunk ?? 2000;
@@ -172,25 +320,30 @@ export async function warmIdentitySourceSet(db: DatabaseSync, options: { chunk?:
       const first = db.isTransaction ? undefined : identityReading(db);
       if (!first) { await new Promise<void>(r => setImmediate(r)); continue; }
       const stamp = `${first.epoch}:${first.version}`;
-      if (identity.db === db && identity.stamp === stamp && identity.sources) return true;
+      if (!options.force && identity.db === db && identity.stamp === stamp && identity.sources) return true;
+      // With the indexes the read is already O(identity records): no slicing needed.
+      if (identityIndexesReady(db)) { identitySourceSet(db); return true; }
       const sources = new Set<string>();
+      // The partial result is exact only if nothing at all (this connection or another) committed while it ran: an in-place promotion of a
+      // row already passed would otherwise be missed.
+      const unmoved = (now: { epoch: number; version: number }) => now.epoch === first.epoch && now.version === first.version;
       const hiStmt = db.prepare(CHUNK_HI_SQL), rowsStmt = db.prepare(CHUNK_SQL);
       let after = 0, moved = false;
       for (;;) {
         const hi = hiStmt.get(after, chunk)?.hi;
         if (hi === null || hi === undefined) break;
-        for (const row of rowsStmt.all(after, hi)) sources.add(`${row.source_id}:${row.source_revision}`);
+        for (const row of rowsStmt.all(after, hi)) collectRow(row, sources);
         after = Number(hi);
         await new Promise<void>(r => setImmediate(r));
         const now = db.isTransaction ? undefined : identityReading(db);
-        if (!now || now.epoch !== first.epoch || now.version !== first.version) { moved = true; break; }
+        if (!now || !unmoved(now)) { moved = true; break; }
       }
       if (moved) continue;
       const last = db.isTransaction ? undefined : identityReading(db);
-      if (!last || last.epoch !== first.epoch || last.version !== first.version) continue;
+      if (!last || !unmoved(last)) continue;
       identity.builds++;
       committedEpoch.set(db, last.epoch);
-      identity.db = db; identity.stamp = stamp; identity.sources = sources;
+      identity.db = db; identity.epoch = last.epoch; identity.stamp = stamp; identity.sources = sources; identity.generation++;
       traceBuild(last, true, db, started, false, "warm");
       return true;
     }
@@ -210,3 +363,5 @@ export function scanCallers(stack: string = new Error().stack ?? ""): string {
 }
 /** How many times the identity scan has run (for cost tests). */
 export function identityScanCount(): number { return identity.builds; }
+/** How many times the set was read through the identity indexes (for cost tests). */
+export function identityRefreshCount(): number { return identity.refreshes; }

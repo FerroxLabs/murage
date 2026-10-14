@@ -1,0 +1,47 @@
+name: Flux contract (daily)
+
+# Calls the REAL Flux Router once a day with cheap probes of every endpoint
+# Murage uses and reads the answers with Murage's own parsers. A red run means
+# Flux changed (or went down) under us. GitHub's failed-run notification is the
+# alert; nothing else is wired.
+#
+# SETUP: add a repository secret named FLUX_CONTRACT_KEY holding a paid-plan
+# sk-flux- test key (it needs the flux-decide model). Without it the job stops
+# with a clear message instead of passing silently.
+on:
+  schedule:
+    - cron: "17 6 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: flux-contract-daily
+  cancel-in-progress: false
+
+jobs:
+  contract:
+    name: live Flux contract
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: pnpm/action-setup@ff378ebe6b225b0680b81c1ad4498ae0d1d3a5e3 # v6.0.10
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 24
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - name: Require the test key
+        env:
+          FLUX_CONTRACT_KEY: ${{ secrets.FLUX_CONTRACT_KEY }}
+        run: |
+          if [ -z "$FLUX_CONTRACT_KEY" ]; then
+            echo "::error::The repository secret FLUX_CONTRACT_KEY is not set. Add a paid-plan Flux test key under Settings, Secrets and variables, Actions."
+            exit 1
+          fi
+      - name: Probe every Flux endpoint Murage uses
+        env:
+          FLUX_CONTRACT_KEY: ${{ secrets.FLUX_CONTRACT_KEY }}
+        run: pnpm exec vitest run server/flux-contract.live.test.ts server/flux-contract-endpoints.test.ts --reporter=default

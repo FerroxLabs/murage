@@ -189,6 +189,8 @@ export interface RoutineRequestMessage {
 /** Kept narrow so the domain can be tested without constructing the full app store. */
 export interface RoutineRequestStore {
   messagesFor(threadId: string): RoutineRequestMessage[];
+  /** The routine-request card for `requestId` by index (the app's store); a store without it is read whole. */
+  cardForRequest?(threadId: string, requestId: string, test?: (message: RoutineRequestMessage) => boolean): RoutineRequestMessage | undefined;
   appendMessage(
     threadId: string,
     message: {
@@ -918,9 +920,10 @@ export class RoutineRequestService {
     requestId: string;
     behavior: string | undefined;
   }): ResolveRoutineRequestResult {
-    const message = this.store
-      .messagesFor(args.threadId)
-      .find((candidate) => candidate.card?.requestId === args.requestId && candidate.card.routineRequest);
+    const isRoutineCard = (candidate: RoutineRequestMessage) => Boolean(candidate.card?.routineRequest);
+    const message = this.store.cardForRequest
+      ? this.store.cardForRequest(args.threadId, args.requestId, isRoutineCard)
+      : this.store.messagesFor(args.threadId).find((candidate) => candidate.card?.requestId === args.requestId && isRoutineCard(candidate));
     const card = message?.card;
     const rawPayload = card?.routineRequest;
     if (!message || !card || !rawPayload) return { claimed: false, state: "not_found" };

@@ -18,6 +18,7 @@ import { captureSource } from "./capture.ts";
 import { setMemoryMode } from "./repository.ts";
 import { pipCounterId } from "./pip-kinds.ts";
 import { sentenceRanges } from "./pip-reflect.ts";
+import { LineageAllowance } from "./lineage-allowance.ts";
 
 const roster = { bots: [{ id: "moss", threadId: "private" }], groups: [] };
 const ticket = ownerMemoryTicket();
@@ -65,7 +66,7 @@ describe("audit finding 10: a brief pinned before it became a PIP kind", () => {
   it("renders the pinned brief across current toggle settings", async () => {
     const row = pinnedLegacyBrief();
     for (const options of [{}, { continuity: false }, { continuity: true }]) {
-      const bundle = await buildMemoryBundle("", access(), emptyBridge, options);
+      const bundle = await buildMemoryBundle("", access(), emptyBridge, { ...options, allowance: LineageAllowance.tool() });
       expect(bundle.recordVersions.map(r => r.id), JSON.stringify(options)).toEqual([row.id]);
       expect(bundle.text).toContain("PINNED_BRIEF_CANARY");
     }
@@ -75,7 +76,7 @@ describe("audit finding 10: a brief pinned before it became a PIP kind", () => {
     expect(() => pinMemory(ticket, row.id, 1, true)).toThrow("MEMORY_IDENTITY_NOT_PINNABLE");
     pinMemory(ticket, row.id, 1, false);
     expect(database().prepare("SELECT owner_pinned FROM memory_records WHERE id=? AND version=1").get(row.id)!.owner_pinned).toBe(0);
-    const bundle = await buildMemoryBundle("", access(), emptyBridge, {});
+    const bundle = await buildMemoryBundle("", access(), emptyBridge, { allowance: LineageAllowance.tool(),});
     expect(bundle.recordVersions.map(r => r.id)).toEqual([row.id]);
   });
 });
@@ -85,7 +86,7 @@ describe("audit finding 11: the advertised prefix", () => {
     writeBotIdentity(ticket, brief(), roster);
     for (let n = 0; n < 24; n++) { const row = writeBotIdentity(ticket, pip("commitment", `a-${String(n).padStart(2, "0")}`, `Attested ${String(n).padStart(2, "0")} ${"x".repeat(380)}`), roster); stamp(row.id, 10_000 + n); }
     const obs = [0, 1, 2].map(n => observed(`r${n}`, `Observed ${n} ${"y".repeat(380)}`, 20_000 + n));
-    const bundle = await buildMemoryBundle("", access(), emptyBridge, { continuity: true });
+    const bundle = await buildMemoryBundle("", access(), emptyBridge, { allowance: LineageAllowance.tool(), continuity: true });
     const prefix = cacheSelection()!;
     const ids = bundle.recordVersions.map(r => r.id);
     // the second pass really placed rows beyond the first pass, and at least one observed row was in the prefix
@@ -93,7 +94,7 @@ describe("audit finding 11: the advertised prefix", () => {
     expect(prefix.some(id => obs.includes(id))).toBe(true);
     expect(ids.slice(0, prefix.length)).toEqual(prefix);
     // handles follow positions: the prefix handles are the same whether or not the second pass ran
-    const again = await buildMemoryBundle("", access(), emptyBridge, { continuity: true });
+    const again = await buildMemoryBundle("", access(), emptyBridge, { allowance: LineageAllowance.tool(), continuity: true });
     expect(again.recordVersions.map(r => r.id)).toEqual(ids);
   });
 });
@@ -102,7 +103,7 @@ describe("audit finding 11: standing reaches the self-slot order", () => {
   it("a disputed observed row mounts after an undisputed one even when it is newer", async () => {
     const newer = observed("n", "Newer disputed row.", 9000), older = observed("o", "Older undisputed row.", 5000);
     database().prepare("UPDATE memory_record_details SET claim_status='disputed' WHERE record_id=? AND record_version=1").run(newer);
-    const bundle = await buildMemoryBundle("", access(), emptyBridge, { continuity: true });
+    const bundle = await buildMemoryBundle("", access(), emptyBridge, { allowance: LineageAllowance.tool(), continuity: true });
     expect(bundle.recordVersions.map(r => r.id)).toEqual([older, newer]);
   });
   it("a contested observed row (open counter occasions) mounts after an uncontested one, before a disputed one", async () => {
@@ -112,12 +113,12 @@ describe("audit finding 11: standing reaches the self-slot order", () => {
     database().prepare("INSERT INTO memory_records VALUES(?,1,?,'pip-counter','Something points the other way.','assistant-inference','active',0,?,NULL,NULL,?)").run(counterId, scopeOf(), Date.now(), Date.now());
     database().prepare("UPDATE memory_record_details SET partition='identity',attention='current',confidence_basis='pip:counter; test',entities=? WHERE record_id=? AND record_version=1")
       .run(JSON.stringify([contested, "gen:1", "occ:one"]), counterId);
-    const bundle = await buildMemoryBundle("", access(), emptyBridge, { continuity: true });
+    const bundle = await buildMemoryBundle("", access(), emptyBridge, { allowance: LineageAllowance.tool(), continuity: true });
     expect(bundle.recordVersions.map(r => r.id)).toEqual([clean, contested, disputed]);
     // a kept occasion is no longer open: the row is uncontested again and its recency wins
     database().prepare("UPDATE memory_record_details SET entities=? WHERE record_id=? AND record_version=1").run(JSON.stringify([contested, "gen:1", "occ:one", "kept:one"]), counterId);
     database().prepare("DELETE FROM memory_scope_bindings WHERE id='pip-render:moss'").run();
-    const kept = await buildMemoryBundle("", access(), emptyBridge, { continuity: true });
+    const kept = await buildMemoryBundle("", access(), emptyBridge, { allowance: LineageAllowance.tool(), continuity: true });
     expect(kept.recordVersions.map(r => r.id)).toEqual([contested, clean, disputed]);
   });
 });

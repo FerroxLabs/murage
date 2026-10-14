@@ -1,5 +1,6 @@
 import type { authorizeWork } from "./execution-audience.ts";
-import { isSharedWorkRow } from "./shared-work.ts";
+import { executionStore } from "./execution-audience.ts";
+import { cancelSharedRequest, expireSharedRequest, sharedByProvenance, sharedResolution } from "./shared-work.ts";
 // Copyright 2026 Ferrox Labs
 // SPDX-License-Identifier: AGPL-3.0-or-later
 //
@@ -33,11 +34,16 @@ import { pauseProjectGoal } from "./project-goals.ts";
 import type { DatabaseSync } from "node:sqlite";
 import {
   completeRequest,
+  dueRetainedRoomRequests,
   expireOverdueRoomRequests,
   markRequestDispatched,
   queuedRoomRequests,
+  RETAINED_UNRESOLVED,
+  deferRetainedRoomRequest,
+  clearRetainedRoomRequest,
   readdressReviewWake,
   recordRoomRequestRefusal,
+  type CompletionHooks,
   type RoomRequest,
 } from "./room-requests.ts";
 import type { AdmissionClaim, AdmissionDecision, AdmissionInput, ProjectContext, WorkAdmission, WriterRoot } from "./work-admission.ts";
@@ -61,6 +67,8 @@ export interface RoomDispatcherDeps {
   /** A room operation is running on this thread (one speaker at a time). */
   roomBusy(groupId: string, threadId: string): boolean;
   projectContext(request: RoomRequest): ProjectContext | undefined;
+  /** The room still exists (its members may all be gone). Absent: no members means the room is gone. */
+  roomExists?(groupId: string): boolean;
   /** The room's current members (a review wake moves only to a lead that is one). */
   memberIds(groupId: string): readonly string[];
   /** The work root a project room turn claims when free (SPEC-P 5.4a). */
@@ -75,6 +83,9 @@ export interface RoomDispatcherDeps {
   startMemberTurn(request: RoomRequest, claim: AdmissionClaim): void;
   /** A row was cancelled or expired here: say so in the room. */
   onClosed(request: RoomRequest, line: string): void;
+  /** An owner send was closed without a transcript line (member left, audience changed, expired, room gone):
+   * keep its words as a refused chip. Called inside the closing transaction, so both commit together. */
+  keepOwnerWords?(request: RoomRequest): void;
   /** A queued room turn has waited ROOM_TURN_STATUS_AFTER_MS. */
   onStillWaiting(request: RoomRequest, line: string): void;
   /** Rows changed (SSE `room.requests`). */
@@ -103,6 +114,9 @@ export function createRoomDispatcher(deps: RoomDispatcherDeps): RoomDispatcher {
   let again = false;
   const statusSent = new Set<string>();
 
+  // A closed owner send keeps its words as a chip in the SAME transaction as the closure.
+  const hooks: CompletionHooks = deps.keepOwnerWords ? { ownerWords: (_db, request) => deps.keepOwnerWords!(request) } : {};
+
   const refusalLine = (decision: Extract<AdmissionDecision, { admit: false }>) => decision.line;
 
   function admissionFor(request: RoomRequest, project: ProjectContext | undefined): AdmissionInput {
@@ -128,8 +142,30 @@ export function createRoomDispatcher(deps: RoomDispatcherDeps): RoomDispatcher {
   function once(): void {
     const db = deps.db();
     const busyRooms = new Set<string>();
-    for (const request of queuedRoomRequests(db)) {
-      if (isSharedWorkRow(request)) continue;
+    // One bounded selection per sweep: the runnable queue (Q1), then the parked requests whose wait is over (Q2, at most 100, fetched by id). The
+    // parked backlog is never read: it sits outside Q1 and is reached only through the due index.
+    const seen = new Set<string>();
+    const batch = [...queuedRoomRequests(db), ...dueRetainedRoomRequests(db, deps.now())];
+    for (let request of batch) {
+      if (seen.has(request.id)) continue;
+      seen.add(request.id);
+      const parked = request.retryAttempts !== undefined;
+      // A retry row whose request no longer carries the parked marker is stale (written by an earlier build): drop it and treat the row as runnable.
+      if (parked && request.refusal !== RETAINED_UNRESOLVED) { clearRetainedRoomRequest(db, request.id); request = { ...request, retryAttempts: undefined }; }
+      if (sharedByProvenance(db, request)) {
+        // Shared work is classified by the provenance recorded when it was created, never by the live registry. Resolved (its bot and task are
+        // listed): the shared drain takes it from here, every pump. Tombstoned (the owner deleted the bot, task or room): cancelled with a receipt.
+        // Otherwise unresolved: parked inactive with a persisted retry time (30 s doubling to 1 h), selected again only when due.
+        const resolution = sharedResolution(request, executionStore(), db);
+        if (resolution === "unresolved") { deferRetainedRoomRequest(db, request.id, deps.now()); continue; }
+        if (request.retryAttempts !== undefined) clearRetainedRoomRequest(db, request.id);
+        if (resolution === "tombstoned") {
+          cancelSharedRequest(request, "shared-target-deleted", `${executionStore()?.bot(request.toBotId ?? "")?.name ?? "That teammate"} is no longer available for this. Ask again.`, db);
+          deps.changed(request.groupId, request.targetThreadId);
+        }
+        continue;
+      }
+      if (parked) { clearRetainedRoomRequest(db, request.id); request = { ...request, refusal: null, retryAttempts: undefined }; }
       if (!DISPATCHED_BY_ROOM.has(request.verb) || (request.verb === "wake" && request.workItemId)) continue;
       const threadId = request.targetThreadId ?? request.rootThreadId;
       const roomKey = `${request.groupId}:${threadId}`;
@@ -165,11 +201,14 @@ export function createRoomDispatcher(deps: RoomDispatcherDeps): RoomDispatcher {
         && deps.roomUsable({ ...request, toBotId: null })) continue;
       if (!deps.roomUsable(request)) {
         const members = deps.memberIds(request.groupId);
-        if (request.verb === "owner_send" && request.toBotId && members.length && !members.includes(request.toBotId)) {
+        // The owner's words are kept on EVERY unusable-room closure (the picked member left, the last
+        // member was deleted, the room is gone): the chip is made in the closing transaction.
+        // With no members left the room may still exist (its last member was deleted) or be gone; either way the words are kept.
+        if (request.verb === "owner_send" && request.toBotId && !members.includes(request.toBotId) && (members.length > 0 || deps.roomExists?.(request.groupId))) {
           const line = "The member you picked is no longer in this room; ask again.";
-          completeRequest(db, request.id, { state: "cancelled", now: deps.now(), outcomeNote: line });
+          completeRequest(db, request.id, { state: "cancelled", now: deps.now(), outcomeNote: line }, hooks);
           deps.onClosed(request, line);
-        } else completeRequest(db, request.id, { state: "cancelled", now: deps.now(), outcomeNote: "the room is gone" });
+        } else completeRequest(db, request.id, { state: "cancelled", now: deps.now(), outcomeNote: "the room is gone" }, hooks);
         deps.changed(request.groupId, threadId);
         continue;
       }
@@ -179,7 +218,7 @@ export function createRoomDispatcher(deps: RoomDispatcherDeps): RoomDispatcher {
       }
       if (!deps.audienceStillValid(request)) {
         const line = "This conversation's audience changed; ask again.";
-        completeRequest(db, request.id, { state: "cancelled", now: deps.now(), outcomeNote: line });
+        completeRequest(db, request.id, { state: "cancelled", now: deps.now(), outcomeNote: line }, hooks);
         deps.onClosed(request, line);
         deps.changed(request.groupId, threadId);
         continue;
@@ -239,13 +278,14 @@ export function createRoomDispatcher(deps: RoomDispatcherDeps): RoomDispatcher {
   function tick(): void {
     const db = deps.db();
     const now = deps.now();
-    for (const expired of expireOverdueRoomRequests(db, now, {}, row => !isSharedWorkRow(row))) {
+    // Q3: at most 100 overdue requests per tick, oldest deadline first; a backlog clears over successive ticks and then costs nothing. Shared work
+    // closes through its own path (24 h, the requester is told); the rest expire with the room's line.
+    for (const expired of expireOverdueRoomRequests(db, now, hooks, row => sharedByProvenance(db, row) ? expireSharedRequest(row, db) : completeRequest(db, row.id, { state: "expired", now, outcomeNote: "not answered in time" }, hooks).request)) {
       statusSent.delete(expired.id);
-      deps.onClosed(expired, "Not answered in time. Ask again.");
+      if (!sharedByProvenance(db, expired)) deps.onClosed(expired, "Not answered in time. Ask again.");
       deps.changed(expired.groupId, expired.targetThreadId);
     }
     for (const request of queuedRoomRequests(db)) {
-      if (isSharedWorkRow(request)) continue;
       if (request.verb !== "room_turn" || statusSent.has(request.id)) continue;
       if (now - request.createdAt < ROOM_TURN_STATUS_AFTER_MS) continue;
       statusSent.add(request.id);

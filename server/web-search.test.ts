@@ -1,5 +1,8 @@
-import { describe, expect, it, vi } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 import { searchFlux, searchWeb } from "./web-search.ts";
+import { resetFluxKeyHealthForTests } from "./flux-key-health.ts";
+
+beforeEach(() => resetFluxKeyHealthForTests());
 
 const input = { provider: "tavily" as const, apiKey: "fake-secret-canary", query: "fixture query" };
 const response = (results: unknown) => Response.json({ results });
@@ -127,6 +130,7 @@ describe("web search through Flux Router (/v1/search, 2026-09-23 contract)", () 
     await expect(searchFlux(flux, { fetch: refuse(402, "premium_locked") })).rejects.toMatchObject({ code: "plan", providerCode: "premium_locked" });
     await expect(searchFlux(flux, { fetch: refuse(402, "insufficient_balance") })).rejects.toMatchObject({ code: "quota", providerCode: "insufficient_balance" });
     await expect(searchFlux(flux, { fetch: refuse(401) })).rejects.toMatchObject({ code: "auth" });
+    resetFluxKeyHealthForTests(); // the 401 above latched this key; the cases below are about other statuses
     await expect(searchFlux(flux, { fetch: refuse(429) })).rejects.toMatchObject({ code: "rate-limit" });
     await expect(searchFlux(flux, { fetch: refuse(503) })).rejects.toMatchObject({ code: "unavailable" });
   });
