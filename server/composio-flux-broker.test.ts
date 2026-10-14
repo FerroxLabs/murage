@@ -7,9 +7,11 @@
 // ago. Picking the wrong one does not fail loudly — it returns an empty,
 // perfectly healthy-looking list of connections. `activeBroker` is the single
 // place that choice is made, so it is the single place worth testing hard.
-import { existsSync, mkdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { createServer, type Server } from "node:http";
+import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { readCacheEntry } from "./connector-cache.ts";
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 
 import {
@@ -419,6 +421,46 @@ describe("the FluxRouter readiness probe", () => {
       expect(integration?.env.MURAGE_BOT_ID).toBe("b");
       expect(healthProbes).toBe(1);
       await inFlight;
+    });
+
+    it("hands the bridge a stable list identity (not the turn token), the access revision, and a private cache folder", async () => {
+      await readyFlux({ claim: { state: "claimed" } });
+      const scope = { revision: "rev-1", generation: "initial", initialTools: [{ name: "COMPOSIO_MULTI_EXECUTE_TOOL" }] };
+      const first = await mcpIntegration(cfg(), { ...ctx, commsToken: "turn-token-A", listScope: scope, toolsCacheDir: "/data/connector-tools-cache" });
+      const second = await mcpIntegration(cfg(), { ...ctx, commsToken: "turn-token-B", threadId: "th2", listScope: scope, toolsCacheDir: "/data/connector-tools-cache" });
+      expect(first?.env.MURAGE_CONNECTOR_IDENTITY).toMatch(/^[a-f0-9]{32}$/);
+      expect(first?.env.MURAGE_CONNECTOR_IDENTITY).toBe(second?.env.MURAGE_CONNECTOR_IDENTITY);
+      expect(JSON.stringify(first?.env.MURAGE_CONNECTOR_IDENTITY)).not.toContain("turn-token");
+      expect(first?.env.MURAGE_CONNECTOR_REVISION).toBe("rev-1");
+      expect(first?.env.MURAGE_CONNECTOR_TOOLS_CACHE_DIR).toBe("/data/connector-tools-cache");
+      expect(JSON.parse(first?.env.MURAGE_CONNECTOR_INITIAL_TOOLS ?? "null")).toEqual(scope.initialTools);
+      // The generation the list was built under rides with it, always explicit (never omitted, never empty).
+      expect(first?.env.MURAGE_CONNECTOR_INITIAL_GENERATION).toBe("initial");
+      const named = await mcpIntegration(cfg(), { ...ctx, listScope: { ...scope, generation: "gen-built-1" } });
+      expect(named?.env.MURAGE_CONNECTOR_INITIAL_GENERATION).toBe("gen-built-1");
+      const blank = await mcpIntegration(cfg(), { ...ctx, listScope: { ...scope, generation: "" } });
+      expect(blank?.env.MURAGE_CONNECTOR_INITIAL_GENERATION).toBe("initial");
+      const other = await mcpIntegration(cfg(), { ...ctx, botId: "other-bot", listScope: scope });
+      expect(other?.env.MURAGE_CONNECTOR_IDENTITY).not.toBe(first?.env.MURAGE_CONNECTOR_IDENTITY);
+      const unrestricted = await mcpIntegration(cfg(), { ...ctx, listScope: { revision: "rev-2", generation: "initial" } });
+      expect(unrestricted?.env.MURAGE_CONNECTOR_INITIAL_TOOLS).toBeUndefined();
+      // Longer than the environment should carry: handed over WHOLE through a private
+      // file, never emptied (an empty mount cost a Pi session all its app tools).
+      const folder = mkdtempSync(join(tmpdir(), "murage-initial-"));
+      try {
+        const bigTools = [{ name: "COMPOSIO_MULTI_EXECUTE_TOOL", description: "x".repeat(40_000) }];
+        const huge = await mcpIntegration(cfg(), { ...ctx, listScope: { revision: "rev-3", generation: "initial", initialTools: bigTools }, toolsCacheDir: folder });
+        expect(huge?.env.MURAGE_CONNECTOR_INITIAL_TOOLS).toBe("@file");
+        expect(readCacheEntry(folder, `initial-${huge!.env.MURAGE_CONNECTOR_IDENTITY}-rev-3.json`)).toEqual({ revision: "rev-3", tools: bigTools });
+        // No private folder to use: the whole list still goes in the environment, not "[]".
+        const noFolder = await mcpIntegration(cfg(), { ...ctx, listScope: { revision: "rev-3", generation: "initial", initialTools: bigTools } });
+        expect(JSON.parse(noFolder?.env.MURAGE_CONNECTOR_INITIAL_TOOLS ?? "null")).toEqual(bigTools);
+        // Beyond even that: the bridge is told to ask the harness for the authoritative list (never a file that is not there, never an empty list).
+        const beyond = await mcpIntegration(cfg(), { ...ctx, listScope: { revision: "rev-4", generation: "initial", initialTools: [{ name: "x".repeat(150_000) }] } });
+        expect(beyond?.env.MURAGE_CONNECTOR_INITIAL_TOOLS).toBe("@harness");
+        const windows = await mcpIntegration(cfg(), { ...ctx, listScope: { revision: "rev-5", generation: "initial" }, toolsCacheDir: folder, toolsCachePrivate: true });
+        expect(windows?.env.MURAGE_CONNECTOR_TOOLS_CACHE_PRIVATE).toBe("1");
+      } finally { rmSync(folder, { recursive: true, force: true }); }
     });
 
     it("is bounded by the cap when the probe never answers in time", async () => {

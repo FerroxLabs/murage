@@ -461,11 +461,19 @@ function retireDeadOwner(path, expected) {
   removeIdentity(path, expected);
 }
 
-function assertNoLiveChild(paths) {
+function assertNoLiveChild(paths, exitedChildren = []) {
   const child = readRecord(paths.childLeasePath)?.owner;
   if (!child) return;
   if (!sameMachine(child)) throw fail("LEASE_FOREIGN_HOST");
-  if (ownerIsAlive(child, paths.childLeasePath)) throw fail("LEASE_CHILD_BUSY");
+  if (!ownerIsAlive(child, paths.childLeasePath)) return;
+  // The caller spawned this exact child and watched it exit cleanly (code 0),
+  // so a record still naming its PID is leftover from a stop that arrived
+  // before the child could release (the OS can lag the exit event). Only that
+  // observed PID qualifies: any other live holder still refuses release.
+  const observed = Array.isArray(exitedChildren)
+    && exitedChildren.some((entry) => entry && entry.pid === child.pid && entry.code === 0);
+  if (!observed) throw fail("LEASE_CHILD_BUSY");
+  removeOwnedRecord(paths.childLeasePath, child);
 }
 
 /** Diagnostic snapshot only: "available" never grants ownership. Acquisition
@@ -557,16 +565,19 @@ export function acquireDataDirLease(dataDir, options) {
   return Object.freeze({
     ownerPid: owner.pid,
     delegated: false,
-    release() {
+    /** `options.exitedChildren`: [{ pid, code }] for server children this
+     * process spawned and saw exit; a code-0 exit clears that child's record. */
+    release(options) {
       if (released) return false;
+      const exitedChildren = options?.exitedChildren;
       if (!sameOwner(readRecord(paths.leasePath)?.owner, owner)) throw fail("LEASE_NOT_OWNED");
       // Refusing an already-live child leaves delegation usable for a later
       // fallback attempt. The seal then closes the child-start/release race.
-      assertNoLiveChild(paths);
+      assertNoLiveChild(paths, exitedChildren);
       const seal = closingPath(paths, owner);
       if (!publishRecord(seal, owner) && !sameOwner(readRecord(seal)?.owner, owner)) throw fail("LEASE_NOT_OWNED");
       try {
-        assertNoLiveChild(paths);
+        assertNoLiveChild(paths, exitedChildren);
         removeOwnedRecord(paths.leasePath, owner);
         released = true;
         removeIdentity(paths.leasePath, owner);

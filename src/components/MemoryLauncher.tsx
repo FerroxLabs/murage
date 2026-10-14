@@ -1,6 +1,6 @@
 import { useEffect, useId, useRef, useState, type RefObject } from "react";
 import { Brain, X } from "lucide-react";
-import { MemorySettings } from "./MemorySettings";
+import { MemorySettings } from "./MemorySettingsLazy";
 import { t } from "@/lib/i18n";
 import { useDesktopSurface } from "@/lib/use-surface";
 

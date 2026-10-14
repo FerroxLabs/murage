@@ -24,7 +24,13 @@ export function createServerChildLifecycle(child, { timeoutMs = OWNED_WORK_TIMEO
   let resolveExit;
   const exit = new Promise((resolve) => { resolveExit = resolve; });
   if (exited) resolveExit();
-  child.once("exit", () => { exited = true; resolveExit(); });
+  let pid = typeof child.pid === "number" ? child.pid : undefined;
+  let exitCode = child.exitCode ?? null;
+  child.once("exit", (code) => {
+    if (typeof child.pid === "number") pid = child.pid;
+    if (typeof code === "number") exitCode = code;
+    exited = true; resolveExit();
+  });
   // UtilityProcess/ChildProcess errors must not become an unhandled event.
   // An error without exit is NOT evidence the child no longer owns data.
   child.on("error", () => { failed = true; });
@@ -35,6 +41,9 @@ export function createServerChildLifecycle(child, { timeoutMs = OWNED_WORK_TIMEO
      * An exit nobody asked for is a crash even when the code is 0. */
     get stopRequested() { return stopRequested; },
     get exited() { return exited; },
+    /** The child's PID and exit code once it exited; null before. The parent
+     * hands this to its lease release so a cleanly exited child's record clears. */
+    get exitedRecord() { return exited && typeof pid === "number" ? Object.freeze({ pid, code: exitCode }) : null; },
     get failed() { return failed; },
     exit,
     stop({ graceful = gracefulClose } = {}) {

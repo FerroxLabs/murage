@@ -498,7 +498,24 @@ function dispatcher(sf: ts.SourceFile): ts.Node {
   };
   visit(sf);
   if (!found) throw new Error("server/index.ts: the createServer dispatcher was not found");
-  return found;
+  // createServer((req, res) => ioBudget.withSource(source, () => handleRequest(req, res))): the listener only wraps
+  // the request in its route source; the if-chain lives in the function it calls. Follow that call to its declaration.
+  let target: ts.Node | undefined;
+  const calls = (node: ts.Node) => {
+    if (target) return;
+    if (ts.isCallExpression(node) && ts.isIdentifier(node.expression)) {
+      const name = node.expression.text;
+      for (const statement of sf.statements) {
+        if (ts.isFunctionDeclaration(statement) && statement.name?.text === name) target = statement;
+        if (ts.isVariableStatement(statement)) for (const declaration of statement.declarationList.declarations)
+          if (ts.isIdentifier(declaration.name) && declaration.name.text === name && declaration.initializer && (ts.isArrowFunction(declaration.initializer) || ts.isFunctionExpression(declaration.initializer))) target = declaration.initializer;
+      }
+    }
+    if (!target) ts.forEachChild(node, calls);
+  };
+  const body = (found as ts.ArrowFunction | ts.FunctionExpression).body;
+  if (ts.isCallExpression(body) || ts.isParenthesizedExpression(body) || ts.isBlock(body)) calls(body);
+  return target ?? found;
 }
 
 /** Local modules the dispatcher hands the request path to. */

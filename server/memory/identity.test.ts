@@ -10,6 +10,7 @@ import { buildMemoryBundle, assertMemoryBundle, hydrateMemoryRecord, MEMORY_FRAM
 import { forgetMemory } from "./forget.ts";
 import { memoryOwnerRoute } from "./settings.ts";
 import { personalityImprint } from "../../shared/bot-identity.ts";
+import { LineageAllowance } from "./lineage-allowance.ts";
 
 const roster={bots:[{id:"moss",threadId:"private",tasks:[{threadId:"new-task"}]},{id:"neutral",threadId:"neutral-thread"}],groups:[{id:"room",threadId:"room-thread",memberIds:["moss","neutral"]}]};
 const ticket=ownerMemoryTicket(),bridge={search:async()=>({hits:[],vectorRows:0})};
@@ -35,7 +36,7 @@ it("requires owner authority and validates fictional canon, byte limits and fixe
 });
 it("versions atomically, fences stale writes, preserves prior versions and revokes prepared bundles",async()=>{
   const first=writeBotIdentity(ticket,input(),roster),ctx=access();
-  const bundle=await buildMemoryBundle("",ctx,bridge);
+  const bundle=await buildMemoryBundle("",ctx,bridge, {allowance: LineageAllowance.tool()});
   const second=writeBotIdentity(ticket,input({expectedVersion:1,expectedId:first.id,text:"Finish the fictional lighthouse story tomorrow."}),roster);
   expect(second).toMatchObject({id:first.id,version:2});
   // The brief is a PIP kind: an edit revokes the disclosures that carried it, and the prepared bundle's old version is gone.
@@ -52,24 +53,24 @@ it("does not resurrect a forgotten key even with the latest expected version",()
 it("retains brief across database restart and new task while excluding other bots and rooms",async()=>{
   const first=writeBotIdentity(ticket,input(),roster);closeDatabase();
   expect(readBotIdentity(ticket,"moss",roster).records[0]).toMatchObject({id:first.id,version:1});
-  expect((await buildMemoryBundle("",access("moss","new-task"),bridge)).identity[0].id).toBe(first.id);
-  expect((await buildMemoryBundle("",access("neutral","neutral-thread"),bridge)).text).not.toContain("lighthouse");
-  expect((await buildMemoryBundle("",access("moss","room-thread"),bridge)).text).not.toContain("lighthouse");
-  expect(()=>hydrateMemoryRecord(first.id,1,access("moss","room-thread"))).toThrow("MEMORY_SCOPE_DENIED");
+  expect((await buildMemoryBundle("",access("moss","new-task"),bridge, {allowance: LineageAllowance.tool()})).identity[0].id).toBe(first.id);
+  expect((await buildMemoryBundle("",access("neutral","neutral-thread"),bridge, {allowance: LineageAllowance.tool()})).text).not.toContain("lighthouse");
+  expect((await buildMemoryBundle("",access("moss","room-thread"),bridge, {allowance: LineageAllowance.tool()})).text).not.toContain("lighthouse");
+  expect(()=>hydrateMemoryRecord(first.id,1,access("moss","room-thread"), {allowance: LineageAllowance.tool(1_000_000_000)})).toThrow("MEMORY_SCOPE_DENIED");
 });
 it("prioritizes compact continuity after owner pins within the existing total bound",async()=>{
   const brief=writeBotIdentity(ticket,input(),roster),fact=canon();
   database().prepare("UPDATE memory_records SET owner_pinned=1 WHERE id=?").run(fact.id);
-  const bundle=await buildMemoryBundle("",access(),bridge);
+  const bundle=await buildMemoryBundle("",access(),bridge, {allowance: LineageAllowance.tool()});
   expect(bundle.recordVersions).toEqual([{id:fact.id,version:1},{id:brief.id,version:1}]);
   expect(bundle.tokenCount-MEMORY_FRAME_TOKENS).toBeLessThanOrEqual(2048);
   expect(bundle.text).toContain("fictional character canon; not model autobiography or world truth");
   // The fixed frame is paid once above the share: a 12k context still carries
   // the pin and the brief within a tenth of it (1200), and so does an 8k one.
-  const smaller=await buildMemoryBundle("",access(),bridge,{availableContextTokens:12000});
+  const smaller=await buildMemoryBundle("",access(),bridge,{ allowance: LineageAllowance.tool(),availableContextTokens:12000});
   expect(smaller.recordVersions).toEqual([{id:fact.id,version:1},{id:brief.id,version:1}]);
   expect(smaller.tokenCount-MEMORY_FRAME_TOKENS).toBeLessThanOrEqual(1200);
-  expect((await buildMemoryBundle("",access(),bridge,{availableContextTokens:8192})).pinned.map(record=>record.id)).toEqual([fact.id]);
+  expect((await buildMemoryBundle("",access(),bridge,{ allowance: LineageAllowance.tool(),availableContextTokens:8192})).pinned.map(record=>record.id)).toEqual([fact.id]);
 });
 it("persists canonical audience reveal state, deduplicates event keys, and forgets derived reveals with canon",async()=>{
   const fact=canon();
@@ -77,7 +78,7 @@ it("persists canonical audience reveal state, deduplicates event keys, and forge
   const first=writeBotIdentity(ticket,reveal,roster);
   const updated=writeBotIdentity(ticket,{...reveal,key:"event-two",expectedVersion:1,text:"The owner has also heard the ending."},roster);
   expect(updated).toMatchObject({id:first.id,version:2});closeDatabase();
-  const bundle=await buildMemoryBundle("",access("moss","new-task"),bridge);
+  const bundle=await buildMemoryBundle("",access("moss","new-task"),bridge, {allowance: LineageAllowance.tool()});
   expect(bundle.text).toContain("owner-private");expect(bundle.text).toContain("ending");
   expect(readBotIdentity(ticket,"moss",roster).records.filter(row=>row.kind==="reveal-state")).toHaveLength(1);
   forgetMemory(ticket,{kind:"record",id:fact.id});

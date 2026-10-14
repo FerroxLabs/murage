@@ -10,14 +10,12 @@
 // person asked for, Escape closes, Tab stays inside, and focus goes back to
 // whatever opened it. Delete asks inline, never with a browser confirm().
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { createPortal } from "react-dom";
 import { Check, X } from "lucide-react";
 
 import { botRole } from "@/lib/bot-role";
 import { cn } from "@/lib/cn";
 import { LEADERSHIP_BLOCKED_HINT, TEAM_NAME_MAX, existingTeamNames, leadershipPromotionBlocked, teamCandidates } from "@/lib/new-team";
 import {
-  OPEN_TEAM_SETTINGS_EVENT,
   loadTeam,
   removeTeam,
   saveTeamMembers,
@@ -29,7 +27,6 @@ import {
   teamChangePatches,
   toggledMembers,
   teamRenameProblem,
-  type OpenTeamSettingsDetail,
   type TeamChanges,
   type TeamDeleteChoice,
   type TeamSettingsFocus,
@@ -539,33 +536,5 @@ export function TeamSettingsDialog({
         </div>
       )}
     </div>
-  );
-}
-
-/** Mounted once (in the sidebar): opens team settings when anything asks
- * through openTeamSettings(). */
-export function TeamSettingsHost({ onRenamed }: { onRenamed?: (from: string, to: string) => void }) {
-  const [open, setOpen] = useState<OpenTeamSettingsDetail | null>(null);
-  useEffect(() => {
-    const listener = (event: Event) => {
-      const detail = (event as CustomEvent<OpenTeamSettingsDetail>).detail;
-      if (!detail || typeof detail.section !== "string" || !detail.section.trim() || detail.section.length > 200) return;
-      setOpen({ section: detail.section, focus: detail.focus === "rename" || detail.focus === "delete" ? detail.focus : "members" });
-    };
-    window.addEventListener(OPEN_TEAM_SETTINGS_EVENT, listener);
-    return () => window.removeEventListener(OPEN_TEAM_SETTINGS_EVENT, listener);
-  }, []);
-  if (!open) return null;
-  // Portalled to the page: on a phone the sidebar is a transformed drawer,
-  // and a fixed overlay inside it would cover only the drawer.
-  return createPortal(
-    <TeamSettingsDialog
-      key={`${open.section}:${open.focus}`}
-      section={open.section}
-      focus={open.focus}
-      onClose={() => setOpen(null)}
-      onRenamed={onRenamed}
-    />,
-    document.body,
   );
 }

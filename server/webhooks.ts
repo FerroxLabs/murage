@@ -80,6 +80,7 @@ export type WebhookManagerEvent =
 
 const MAX_DELIVERIES = 2_000;
 const MAX_ATTEMPTS = 2_000;
+const UNAUTHORIZED_REASON = "Invalid webhook URL or secret";
 const MAX_EVENT_CHARS = 48_000;
 const RATE_WINDOW_MS = 60_000;
 const RATE_LIMIT = 10;
@@ -285,6 +286,8 @@ function eventPrompt(trigger: StoredWebhookTrigger, event: WebhookEvent, receive
   ].join("\n");
 }
 
+type AttemptDetails = Pick<WebhookAttempt, "outcome" | "statusCode"> & Partial<Pick<WebhookAttempt, "deliveryId" | "runId" | "reason">>;
+
 export class WebhookManager {
   private readonly file: string;
   private readonly now: () => number;
@@ -293,6 +296,8 @@ export class WebhookManager {
   private deliveries: DeliveryReceipt[] = [];
   private attempts: WebhookAttempt[] = [];
   private rate = new Map<string, number[]>();
+  /** Wrong-secret requests folded into each webhook's rolling record. */
+  private unauthorized = new Map<string, number>();
 
   constructor(options: WebhookManagerOptions) {
     this.options = options;
@@ -369,6 +374,7 @@ export class WebhookManager {
     this.deliveries = this.deliveries.filter((delivery) => !delivery.key.startsWith(`${trigger.endpointId}:`));
     this.attempts = this.attempts.filter((attempt) => attempt.webhookId !== trigger.id);
     this.rate.delete(trigger.endpointId);
+    this.unauthorized.delete(trigger.id);
     this.options.cancelQueued?.(trigger.id, "The webhook was deleted before this delivery started");
     this.save();
     this.options.emit?.({ kind: "webhook.deleted", webhookId: id });
@@ -435,6 +441,34 @@ export class WebhookManager {
     const trigger = this.webhooks.find((candidate) => candidate.endpointId === endpointId);
     if (!trigger) return null;
     return this.recordRejectedForTrigger(trigger, statusCode, reason, event);
+  }
+
+  /** A request with a wrong secret can come from anyone who reaches the
+   * receiver, before any rate limit applies. Each webhook keeps one rolling
+   * record of them, updated in place and saved with the next real change, so
+   * a flood neither pushes real deliveries out of the shared history nor
+   * rewrites the file on every request. Adapted from OpenMausBot #2394. */
+  recordUnauthorized(endpointId: string, event: Partial<WebhookEvent> = {}): WebhookAttempt | null {
+    const trigger = this.webhooks.find((candidate) => candidate.endpointId === endpointId);
+    if (!trigger) return null;
+    const at = this.attempts.findLastIndex((attempt) =>
+      attempt.webhookId === trigger.id && attempt.outcome === "rejected" && attempt.statusCode === 401);
+    if (at === -1) {
+      this.unauthorized.set(trigger.id, 1);
+      return this.appendAttempt(trigger, event, { outcome: "rejected", statusCode: 401, reason: UNAUTHORIZED_REASON, deliveryId: event.deliveryId });
+    }
+    const count = (this.unauthorized.get(trigger.id) ?? 1) + 1;
+    this.unauthorized.set(trigger.id, count);
+    // Same id: clients replace the record they hold instead of adding one.
+    const attempt = this.buildAttempt(trigger, event, {
+      outcome: "rejected",
+      statusCode: 401,
+      reason: `${UNAUTHORIZED_REASON} (${count} requests)`,
+      deliveryId: event.deliveryId,
+    }, this.attempts[at]!.id);
+    this.attempts[at] = attempt;
+    this.options.emit?.({ kind: "webhook.attempt", attempt: { ...attempt } });
+    return attempt;
   }
 
   private dispatch(trigger: StoredWebhookTrigger, event: WebhookEvent): WebhookReceiveResult {
@@ -562,10 +596,23 @@ export class WebhookManager {
   private appendAttempt(
     trigger: StoredWebhookTrigger,
     event: Partial<WebhookEvent>,
-    details: Pick<WebhookAttempt, "outcome" | "statusCode"> & Partial<Pick<WebhookAttempt, "deliveryId" | "runId" | "reason">>,
+    details: AttemptDetails,
+  ): WebhookAttempt {
+    const attempt = this.buildAttempt(trigger, event, details);
+    this.attempts.push(attempt);
+    if (this.attempts.length > MAX_ATTEMPTS) this.attempts.splice(0, this.attempts.length - MAX_ATTEMPTS);
+    this.options.emit?.({ kind: "webhook.attempt", attempt: { ...attempt } });
+    return attempt;
+  }
+
+  private buildAttempt(
+    trigger: StoredWebhookTrigger,
+    event: Partial<WebhookEvent>,
+    details: AttemptDetails,
+    id: string = randomUUID(),
   ): WebhookAttempt {
     const attempt: WebhookAttempt = {
-      id: randomUUID(),
+      id,
       webhookId: trigger.id,
       receivedAt: this.now(),
       outcome: details.outcome,
@@ -576,9 +623,6 @@ export class WebhookManager {
     if (details.deliveryId) attempt.deliveryId = details.deliveryId.slice(0, 200);
     if (details.runId) attempt.runId = details.runId;
     if (details.reason) attempt.reason = details.reason;
-    this.attempts.push(attempt);
-    if (this.attempts.length > MAX_ATTEMPTS) this.attempts.splice(0, this.attempts.length - MAX_ATTEMPTS);
-    this.options.emit?.({ kind: "webhook.attempt", attempt: { ...attempt } });
     return attempt;
   }
 

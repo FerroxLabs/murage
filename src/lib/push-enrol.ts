@@ -127,6 +127,8 @@ export async function reportBadge(deps: PushDeps): Promise<void> {
   if (!deps.has("setBadgeCount")) return;
   const answer = await deps.get("/api/inbox?view=decisions&page=0&pageSize=1");
   const decisions = (answer.body as { decisions?: unknown } | null)?.decisions;
+  // Still getting ready: its zero is not the answer, so the badge is left as it is.
+  if ((answer.body as { preparing?: unknown } | null)?.preparing === true) return;
   if (answer.status === 200 && typeof decisions === "number" && Number.isInteger(decisions) && decisions >= 0) {
     await deps.call("setBadgeCount", decisions).catch(() => undefined);
   }

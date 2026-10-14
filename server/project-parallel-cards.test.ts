@@ -6,6 +6,7 @@ import { createProjectGoal } from "./project-goals.ts";
 import { continuationResults, listRoomRequests, cancelRoomRequest } from "./room-requests.ts";
 import { continuationResultsPrompt } from "./project-prompt.ts";
 import { DATA_DIR } from "./config.ts";
+import { database } from "./database.ts";
 import { DatabaseSync } from "node:sqlite";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { initializeProjectTables } from "./project-tables.ts";
@@ -14,6 +15,16 @@ import { projectCardById, projectSettingsFor } from "./project-records.ts";
 import { roomRequest, enterOwnerWait, reconcileRoomRequestsAtBoot, completeRequest, insertRoomRequest, type RoomRequest } from "./room-requests.ts";
 import { requestReturnsTo } from "./partition-sources.ts";
 import { requestSourceThread } from "./execution-audience.ts";
+import { continuationOutcome } from "./handoff-boundary.ts";
+// the result gate reads a result's thread through the process database; this fixture's requests live in its own in-memory one
+const fixtureDb = vi.hoisted(() => ({ current: undefined as unknown }));
+vi.mock("./execution-audience.ts", async (original) => {
+  const real = await original<typeof import("./execution-audience.ts")>();
+  return { ...real, requestSourceThread: (id: string, db?: DatabaseSync) => real.requestSourceThread(id, db ?? (fixtureDb.current as DatabaseSync | undefined) ?? undefined) };
+});
+import { boundaryStore } from "./boundary-ports.ts";
+import { requestEnding } from "./room-request-status.ts";
+import { configureResultEgress } from "./result-egress.ts";
 import { applyCardRunEffect, cardGenerationCurrent, leadNextStep, projectTableExists } from "./project-turn-engine.ts";
 import { WriterRootClaims } from "./writer-roots.ts";
 import { createWorkAdmission, type AdmissionInput } from "./work-admission.ts";
@@ -21,8 +32,13 @@ import { handleProjectRouteWithInterrupt, applyProjectChangeWithInterrupt } from
 import { BUDGET_STOPPED, createProjectCardExecutor, STOPPED_BY_YOU } from "./project-card-executor.ts";
 
 const cleanups: Array<() => void> = [];
-beforeEach(() => { vi.useFakeTimers(); vi.setSystemTime(10000); });
-afterEach(() => { for (const cleanup of cleanups.splice(0)) cleanup(); vi.useRealTimers(); });
+beforeEach(() => {
+  // The owner-audience lookups below open the real database; its hourly storage report timer (database.ts startupStorage,
+  // mem/1.0.2-perf) must be made on the real clock, not counted among the backoff timers these tests assert on.
+  mkdirSync(DATA_DIR, { recursive: true }); database();
+  vi.useFakeTimers(); vi.setSystemTime(10000);
+});
+afterEach(() => { for (const cleanup of cleanups.splice(0)) cleanup(); vi.useRealTimers(); configureResultEgress(undefined); });
 function fixture() {
   mkdirSync(DATA_DIR, { recursive: true });
   const db = new DatabaseSync(":memory:"); initializeProjectTables(db);
@@ -363,7 +379,7 @@ it.each(["Stop all", "bot Stop"])("%s wiring drains live and backoff cards witho
     f.executor.requestStop(claim.requestId!);
     f.executor.finish(claim.requestId!, { ok: false, note: "Stopped by you" });
   });
-  const deps = { projectCardExecutor: f.executor, workAdmission: f.admission,
+  const deps = { projectCardExecutor: f.executor, workAdmission: f.admission, markSendsStopped: vi.fn(),
     store: { bot: () => ({ modelSelection: { instanceId: "fake" } }), groupByThread: () => undefined },
     directRuns: { forBot: () => [{ threadId: "h-a" }] }, routines: { activeBotRunForThread: () => undefined },
     interruptDirectThread: interrupt, groupSpeakers: new Map(), groupTurnOperations: new Map(),
@@ -407,7 +423,7 @@ it("bot Stop does not create lead work from either stopped card", async () => {
   const f = fixture(), live = f.card("a"), backoff = f.card("a", "h");
   f.executor.pump(); vi.advanceTimersByTime(2000);
   f.executor.retryStart(backoff.requestId, new Error("429"), false);
-  const deps = { projectCardExecutor: f.executor, workAdmission: f.admission,
+  const deps = { projectCardExecutor: f.executor, workAdmission: f.admission, markSendsStopped: vi.fn(),
     store: { bot: () => ({ modelSelection: { instanceId: "fake" } }), groupByThread: () => undefined },
     directRuns: { forBot: () => [{ threadId: "g-a" }] }, routines: { activeBotRunForThread: () => undefined },
     interruptDirectThread: async () => { f.executor.requestStop(live.requestId); f.executor.finish(live.requestId, { ok: false }); }, groupSpeakers: new Map() };
@@ -490,7 +506,7 @@ it.each(["desk Stop", "bot Stop"])("%s parks an asked card continuation and surv
   expect(projectCardById(f.db, card.id)?.state).toBe("doing");
   const interrupt = async () => { f.executor.requestStop(wake.id); f.executor.finish(wake.id, { ok: true }); };
   if (action === "desk Stop") await interrupt();
-  else await serverStop("stopBotEverywhere", { projectCardExecutor: f.executor, workAdmission: f.admission,
+  else await serverStop("stopBotEverywhere", { projectCardExecutor: f.executor, workAdmission: f.admission, markSendsStopped: vi.fn(),
     store: { bot: () => ({ modelSelection: { instanceId: "fake" } }), groupByThread: () => undefined },
     directRuns: { forBot: () => [{ threadId: "g-a" }] }, routines: { activeBotRunForThread: () => undefined },
     interruptDirectThread: interrupt, groupSpeakers: new Map() })("a");
@@ -582,7 +598,7 @@ it.each([
   if (verdict) expect(applyReviewVerdict(f.db, { cardId: card.id, requestId: review.requestId, reviewerBotId: "reviewer", verdict, now: Date.now() })).toEqual({ ok: true });
   const interrupt = async () => { f.executor.requestStop(stoppedId); f.executor.finish(stoppedId, { ok: true }); };
   if (action === "desk Stop") await interrupt();
-  else await serverStop("stopBotEverywhere", { projectCardExecutor: f.executor, workAdmission: f.admission,
+  else await serverStop("stopBotEverywhere", { projectCardExecutor: f.executor, workAdmission: f.admission, markSendsStopped: vi.fn(),
     store: { bot: () => ({ modelSelection: { instanceId: "fake" } }), groupByThread: () => undefined },
     directRuns: { forBot: () => [{ threadId: "g-reviewer" }] }, routines: { activeBotRunForThread: () => undefined },
     interruptDirectThread: interrupt, groupSpeakers: new Map() })("reviewer");
@@ -604,6 +620,7 @@ it.each([
 
 // RUN 7: Exercise the actual lead wake builder, including desk message lookup.
 function leadPrompt(f: ReturnType<typeof fixture>, wake: NonNullable<ReturnType<typeof roomRequest>>, text: string) {
+  fixtureDb.current = f.db;
   const source = readFileSync(new URL("./index.ts", import.meta.url), "utf8");
   const begin = source.indexOf("function wakeContinuationPrompt("), end = source.indexOf("\n/**", begin);
   expect(begin).toBeGreaterThan(0); expect(end).toBeGreaterThan(begin);
@@ -612,10 +629,17 @@ function leadPrompt(f: ReturnType<typeof fixture>, wake: NonNullable<ReturnType<
   const deps = { isProjectCloseRequest: () => false, isGoalCloseRequest: () => false, wakeRedirectText: () => null, wakeGoalAction: () => null, database: () => f.db,
     roomRequest, projectCardById, continuationResults, continuationResultsPrompt, roomRequestStillOwnerAudience: () => true,
     projectTableExists, projectSettingsFor, leadNextStep,
+    // the wake reads each result through handoff-boundary.ts's continuationOutcome (moved out of index.ts by the hand-off split)
+    continuationOutcome, boundaryStoreView: { ...boundaryStore({ bot: () => ({ name: "Ivy" }), group: () => ({ memberIds: ["lead", "a", "reviewer"] }), messagesFor: (thread: string) => thread === "g-reviewer" ? [{ id: "review-text", text }] : [] } as never),
+      // this fixture's requests live in f.db, not the process database
+      roomRequest: (id: string) => roomRequest(f.db, id), requestEnding: (request: RoomRequest) => requestEnding(f.db, request) },
     requestSourceThread: (id: string) => requestSourceThread(id, f.db),
     continuationResultsForThread: (db: DatabaseSync, request: RoomRequest, threadId: string) => continuationResults(request).filter(result => requestReturnsTo(db, result.requestId, threadId)),
-    store: { bot: () => ({ name: "Ivy" }), group: () => ({ memberIds: ["lead", "a", "reviewer"] }), messagesFor: (thread: string) => thread === "g-reviewer" ? [{ id: "review-text", text }] : [] } };
+    store: { bot: () => ({ name: "Ivy" }), group: () => ({ memberIds: ["lead", "a", "reviewer"] }), messagesFor: (thread: string) => thread === "g-reviewer" ? [{ id: "review-text", text }] : [], messageById: (thread: string, id: string) => thread === "g-reviewer" && id === "review-text" ? { id: "review-text", text } : undefined } };
   const code = ts.transpileModule(source.slice(begin, end), { compilerOptions: { target: ts.ScriptTarget.ES2022 } }).outputText;
+  // index.ts configures the one result gate at start; this fixture has no server, so it opens it for the review text it seeds
+  configureResultEgress({ message: (_threadId, id) => ({ id, text }) as never, authorize: () => ({ ok: true }), copyOriginWithheld: () => false,
+    capturedMessageWithheld: () => false, messageSourceForgotten: () => false, messageMadeWithMemory: () => false, partitionAllowed: () => true, ownUnsharedWork: () => true });
   return new Function(...Object.keys(deps), code + "return wakeContinuationPrompt;")(...Object.values(deps))(wake, "room") as string;
 }
 it.each([
@@ -651,7 +675,11 @@ it("lead prompt keeps assignment failure wording even when its note looks like a
   const f = fixture(), card = f.card("a"); f.executor.pump();
   f.executor.finish(card.requestId, { ok: false, note: "pass" });
   const wake = listRoomRequests(f.db, { groupId: "g", open: true }).find(r => r.verb === "wake" && r.toBotId === "lead")!;
-  expect(leadPrompt(f, wake, "")).toContain('- "Ivy" could not finish ("pass").');
+  // handoff-boundary.ts continuationOutcome: how a result that did not finish ended is Murage's own line; the engine's words (here "pass")
+  // never reach the bot, so the note that looks like a verdict neither becomes a review line nor is quoted.
+  const prompt = leadPrompt(f, wake, "");
+  expect(prompt).toContain('- "Ivy" could not finish.');
+  expect(prompt).not.toContain("pass");
 });
 
 // PF3: real Stop-all wiring, executor and database; only provider interruption
@@ -668,7 +696,7 @@ it.each(["pass", "changes"] as const)("Stop all preserves a recorded %s verdict 
   const ordinary = f.card("b"); vi.advanceTimersByTime(2000); f.executor.pump();
   expect(roomRequest(f.db, ordinary.requestId)?.state).toBe("running");
   await serverStop("stopProjectEverything", {
-    projectCardExecutor: f.executor, workAdmission: f.admission, database: () => f.db,
+    projectCardExecutor: f.executor, workAdmission: f.admission, markSendsStopped: vi.fn(), database: () => f.db,
     listRoomRequests, cancelRoomRequest, roomCompletionHooks: f.hooks,
     groupTurnOperations: new Map(), groupSpeakers: new Map(), dropDelegationsOf: vi.fn(),
     projectContextFor: () => ({}), projectPartFlags: () => ({}), roomRequestsChanged: vi.fn(),

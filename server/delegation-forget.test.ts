@@ -6,12 +6,13 @@ import { beforeEach, expect, it } from "vitest";
 
 import { DATA_DIR } from "./config.ts";
 import { _resetPending, findDelegationReceipt, forgetDelegationsForThreads, recordDelegationReceipt } from "./delegations.ts";
+import { released } from "./testing/released.ts";
 
 beforeEach(() => { mkdirSync(DATA_DIR, { recursive: true }); _resetPending(); });
 
 it("drops a deleted conversation's handoff results, and keeps the others", () => {
-  recordDelegationReceipt({ id: "gone-1", sourceThreadId: "gone", toBotId: "b", toBotName: "B", status: "done", result: "private reply" });
-  recordDelegationReceipt({ id: "kept-1", sourceThreadId: "kept", toBotId: "b", toBotName: "B", status: "done", result: "other reply" });
+  recordDelegationReceipt({ id: "gone-1", sourceThreadId: "gone", toBotId: "b", toBotName: "B", status: "done", result: released("private reply") });
+  recordDelegationReceipt({ id: "kept-1", sourceThreadId: "kept", toBotId: "b", toBotName: "B", status: "done", result: released("other reply") });
   forgetDelegationsForThreads(["gone"]);
   expect(findDelegationReceipt("gone-1")).toBeNull();
   expect(findDelegationReceipt("kept-1")?.result).toBe("other reply");

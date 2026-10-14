@@ -18,6 +18,7 @@ import { writeBotIdentity } from "./identity.ts";
 import { buildMemoryBundle } from "./bundle.ts";
 import { searchMemory, type MemorySearchBridge } from "./search.ts";
 import { commitMemoryImport, notebookSourceIds, previewMemoryImport } from "./import.ts";
+import { LineageAllowance } from "./lineage-allowance.ts";
 
 const roster: MemoryRoster = {
   bots: [{ id: "a", threadId: "private-a", section: "alpha" }, { id: "b", threadId: "private-b", section: "beta" }],
@@ -69,15 +70,15 @@ it("keeps owner-private continuity out of an owner room even when it is pinned",
   reconcileMemoryRoster(roster);
   const ticket = ownerMemoryTicket();
   const record = writeBotIdentity(ticket, { action: "identity-write", botId: "a", kind: "continuity-brief", key: "core", expectedVersion: 0, text: "Private harbour continuity", basis: "fiction", audience: "owner-private" }, roster) as { id: string; version: number };
-  const direct = await buildMemoryBundle("harbour", access("private-a"), bridge([]));
+  const direct = await buildMemoryBundle("harbour", access("private-a"), bridge([]), {allowance: LineageAllowance.tool()});
   expect(direct.text).toContain("Private harbour continuity");
   // a PIP kind can no longer be pinned (P2 I-10); an older build could, so pin the row directly
   expect(() => pinMemory(ticket, record.id, record.version, true)).toThrow("MEMORY_IDENTITY_NOT_PINNABLE");
   database().prepare("UPDATE memory_records SET owner_pinned=1 WHERE id=? AND version=?").run(record.id, record.version);
   const room = access("room-thread");
-  const bundle = await buildMemoryBundle("harbour continuity", room, bridge([record]));
+  const bundle = await buildMemoryBundle("harbour continuity", room, bridge([record]), {allowance: LineageAllowance.tool()});
   expect(bundle.text).not.toContain("Private harbour continuity");
-  const found = await searchMemory("harbour continuity", room, bridge([record]));
+  const found = await searchMemory("harbour continuity", room, bridge([record]), {allowance: LineageAllowance.tool(1_000_000_000)});
   expect(found.hits.map(hit => hit.id)).not.toContain(record.id);
 });
 
@@ -86,8 +87,8 @@ it("does not recall a notebook that the prompt already carries whole", async () 
   const ids = importNotebook("The greenhouse sensor id is gh-7.");
   const direct = access("private-a");
   const hits = ids.map(id => ({ id, version: 1 }));
-  const recalled = await buildMemoryBundle("greenhouse sensor id", direct, bridge(hits));
+  const recalled = await buildMemoryBundle("greenhouse sensor id", direct, bridge(hits), {allowance: LineageAllowance.tool()});
   expect(recalled.text).toContain("gh-7");
-  const excluded = await buildMemoryBundle("greenhouse sensor id", direct, bridge(hits), { excludeSourceIds: Object.values(notebookSourceIds("a", "alpha")) });
+  const excluded = await buildMemoryBundle("greenhouse sensor id", direct, bridge(hits), { allowance: LineageAllowance.tool(), excludeSourceIds: Object.values(notebookSourceIds("a", "alpha")) });
   expect(excluded.text).not.toContain("gh-7");
 });

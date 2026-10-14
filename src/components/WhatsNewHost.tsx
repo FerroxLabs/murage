@@ -7,7 +7,7 @@
 // loads the first time the page opens, so it stays out of the first paint.
 import { Suspense } from "react";
 import { useStore, type Action } from "@/state/store";
-import { whatsNewPage } from "@/lib/whats-new";
+import { whatsNewTarget } from "@/lib/whats-new";
 import { LazyBoundary, retryableLazy } from "./LazyBoundary";
 import type { WhatsNewAction } from "./WhatsNewDialog";
 
@@ -55,6 +55,33 @@ export function runWhatsNewAction(action: WhatsNewAction, dispatch: (action: Act
     case "gemini":
       dispatch({ type: "toggleAppSettings", open: true, section: "models" });
       return true;
+    // 1.0.2. Settings > Bot defaults, at the switch for who answers in channels.
+    case "routing":
+      dispatch({ type: "toggleAppSettings", open: true, section: "botDefaults" });
+      whenRendered(() => document.getElementById("room-routing-label"), showSetting);
+      return true;
+    // Settings > Engines, where each engine is set up.
+    case "engines":
+      dispatch({ type: "toggleAppSettings", open: true, section: "engines" });
+      return true;
+    // Settings > Computer & browser, where Murage for Chrome is set up.
+    case "chrome":
+      dispatch({ type: "toggleAppSettings", open: true, section: "computer" });
+      return true;
+    // Settings > Memory: what needs you, and Flux Memory for each bot.
+    case "memory":
+    case "speed":
+      dispatch({ type: "toggleAppSettings", open: true, section: "memory" });
+      return true;
+    // Settings > Computer & browser, at the per-bot desktops limit.
+    case "desktops":
+      dispatch({ type: "toggleAppSettings", open: true, section: "computer" });
+      whenRendered(() => document.getElementById("local-vm-max-instances"), showSetting);
+      return true;
+    // The team library, on its Teams view, Ferrox Labs teams included.
+    case "library":
+      dispatch({ type: "showTeamLibrary", view: "teams" });
+      return true;
     // Settings > Bot defaults > Channel turns: the no activity limit, the one
     // clock left, which counts silence rather than working time.
     case "longwork":
@@ -73,14 +100,15 @@ export function WhatsNewHost({
   onNavigate: () => void;
 }) {
   const { dispatch } = useStore();
-  const page = whatsNewPage();
-  if (!page || !whatsNew.open) return null;
+  const target = whatsNewTarget();
+  if (target.kind !== "page" || !whatsNew.open) return null;
   return (
     <LazyBoundary onRetry={Dialog.retry} onDismiss={whatsNew.close}>
       <Suspense fallback={null}>
         <Dialog.Component
           open
-          releaseNotesUrl={page.releaseNotesUrl}
+          version={target.version}
+          releaseNotesUrl={target.releaseNotesUrl}
           onClose={whatsNew.close}
           onAction={(action) => {
             whatsNew.close();

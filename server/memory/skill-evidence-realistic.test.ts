@@ -10,9 +10,11 @@ import { DATA_DIR } from "../config.ts";
 import { closeDatabase, database, transaction } from "../database.ts";
 import { captureSource } from "./capture.ts";
 import { setMemoryMode } from "./repository.ts";
-import { identityScanCount } from "./provenance-stamp.ts";
+import { ensureIdentityIndexes, IDENTITY_SQL, identityRefreshCount, identityScanCount } from "./provenance-stamp.ts";
 import { assertSkillProcedureEvidence, type SkillProcedureContext } from "../skills.ts";
 
+// reads of the identity set, indexed or not
+const identityReads = () => identityScanCount() + identityRefreshCount();
 const SOURCES = 300, RECORDS = 30000;
 beforeEach(() => {
   closeDatabase(); rmSync(DATA_DIR, { recursive: true, force: true }); mkdirSync(DATA_DIR, { recursive: true }); setMemoryMode("capture");
@@ -29,6 +31,8 @@ function seed() {
     INSERT INTO memory_records SELECT 'bulk'||i,1,'${scope}','fact','fact '||i,'model-inference','active',0,1,NULL,NULL,1 FROM n;
     WITH RECURSIVE n(i) AS (SELECT 1 UNION ALL SELECT i+1 FROM n WHERE i<${RECORDS})
     INSERT INTO memory_evidence SELECT 'bulk'||i,1,'source:t'||(i%${SOURCES}),1,0,1 FROM n;`);
+  // a store this size reads its identity set through the (eager, small) partial indexes; the unindexed large store withholds instead (identity-promotion.test.ts)
+  void ensureIdentityIndexes(db, { inline: true });
   const context: SkillProcedureContext = { audienceKey: "bot:x:owner", allowedScopeIds: [...new Set(items.map(item => item.scopeId))] };
   return { items, context };
 }
@@ -44,21 +48,21 @@ function messageWrite(n: number) {
 
 it("100 procedure scans with unrelated writes between them run the identity scan at most once", () => {
   const { items, context } = seed();
-  const before = identityScanCount();
+  const before = identityReads();
   for (let i = 0; i < 100; i++) {
     messageWrite(i);
     // a different evidence item each time, so the verdict memo cannot answer
     assertSkillProcedureEvidence(context, [items[i % SOURCES]!]);
   }
   // runs of the scan, not compiles of its statement
-  expect(identityScanCount() - before).toBeLessThanOrEqual(1);
+  expect(identityReads() - before).toBeLessThanOrEqual(1);
 });
 
 it("a check of 50 sources inside a transaction runs the identity scan once, not once per source", () => {
   const { items, context } = seed();
-  const before = identityScanCount();
+  const before = identityReads();
   transaction(() => assertSkillProcedureEvidence(context, items.slice(0, 50)));
-  expect(identityScanCount() - before).toBe(1);
+  expect(identityReads() - before).toBe(1);
 });
 
 it("a new source capture and a message write move nothing the identity set rests on", () => {
@@ -74,7 +78,7 @@ it("the per-call statements of a check use indexes on the realistic store", () =
   const { items, context } = seed();
   const sql = statementsDuring(() => assertSkillProcedureEvidence(context, [items[0]!]));
   const db = database(), plans: string[] = [];
-  for (const text of new Set(sql.filter(s => !s.startsWith("EXPLAIN") && !s.includes("CROSS JOIN memory_evidence e")))) {
+  for (const text of new Set(sql.filter(s => !s.startsWith("EXPLAIN") && !s.includes("CROSS JOIN memory_evidence e") && s !== IDENTITY_SQL))) {
     if (!/^\s*SELECT/i.test(text) || /pragma|total_changes|temp\./.test(text)) continue;
     const params = Array.from({ length: (text.match(/\?/g) ?? []).length }, (_, i) => (i % 2 ? 1 : "x"));
     for (const row of db.prepare(`EXPLAIN QUERY PLAN ${text}`).all(...params)) plans.push(String(row.detail));

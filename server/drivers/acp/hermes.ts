@@ -5,9 +5,11 @@
 // header" failure. Inject writes providers.<host> and session/set_model
 // `custom:<host>:<model>` instead.
 import { spawn } from "node:child_process";
+import { createHash } from "node:crypto";
 import { chmodSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join, resolve } from "node:path";
+import { parse as parseYaml, stringify as stringifyYaml } from "yaml";
 
 import type { ModelCatalog } from "../../contracts.ts";
 import { writeFileAtomic } from "../../atomic.ts";
@@ -15,6 +17,7 @@ import { quietChildPipes } from "../../child-pipe-quiet.mjs";
 import { DATA_DIR } from "../../config.ts";
 import { fluxKey } from "../../flux-config.ts";
 import { FLUX_OPENAI_BASE, fluxModelId } from "../../flux-routing.ts";
+import { FLUX_HEADER_REFUSAL, type FluxMemoryDecision } from "../../flux-memory-headers.ts";
 import { mergeFluxCatalog } from "../../flux-surface.ts";
 import { decodeInjectId, hostApiKey, INJECT_SEP, localHost, mergeLocalInject } from "../local-inject.ts";
 import { createAcpDriver, type AcpSupport } from "./core.ts";
@@ -135,6 +138,10 @@ export function materializeFluxHermesHome(
     "  api_mode: chat_completions",
     `  api_key: ${quoteYaml(key)}`,
     "providers: {}",
+    // The scoped home is shared by every Flux Hermes bot, so Hermes's own memory stays off in it.
+    "memory:",
+    "  memory_enabled: false",
+    "  user_profile_enabled: false",
     "",
   ].join("\n");
   writeFileAtomic(join(dir, "config.yaml"), text, { mode: 0o600 });
@@ -183,6 +190,99 @@ export function applyHermesFluxHome(
   env.HERMES_HOME = materializeFluxHermesHome(env, key, tier);
   markHermesRoutedHome(env);
   return tier;
+}
+
+/** Hermes's built-in managed-scope directory (hermes_cli/managed_scope.py `_DEFAULT_MANAGED_DIR`). */
+const HERMES_DEFAULT_MANAGED_DIR = "/etc/hermes";
+
+/**
+ * Carries one turn's Flux Memory headers to its Hermes child without touching
+ * the shared home.
+ *
+ * Every Flux Hermes child shares ONE home (state.db, sessions/), so native
+ * history, resume and conversation deletion all see one store. The headers
+ * cannot live in that home's config.yaml: Hermes re-reads it lazily (an
+ * mtime-keyed cache in hermes_cli/config.py `load_config`, called again by
+ * agent/auxiliary_client.py `_apply_user_default_headers` whenever a main or
+ * side-task client is built), so a concurrent turn's rewrite would reach a
+ * running child. Instead each child gets `HERMES_MANAGED_DIR`: Hermes
+ * deep-merges `<that dir>/config.yaml` over the home's config on every load
+ * (hermes_cli/managed_scope.py `get_managed_dir`, config.py
+ * `_merge_managed_overlay`). The overlay is content-addressed and written
+ * once, so a child only ever reads its own turn's headers, and the pool key
+ * (a digest of the child env) never reuses a warm child across contracts.
+ * It holds no key and no history. An administrator's own managed config, if
+ * the machine has one, is carried into the overlay so its policy still holds.
+ */
+export function applyHermesFluxMemory(env: Record<string, string | undefined>, decision: FluxMemoryDecision): void {
+  // Only Murage's own scoped home is on Flux. A native Hermes turn (no key, or
+  // the user's own home) is not, so there is nothing to carry.
+  if (!murageRoutedHome(env)) return;
+  const home = env.HERMES_HOME;
+  let text: string | null = null;
+  try { text = home ? readFileSync(join(home, "config.yaml"), "utf8") : null; } catch { text = null; }
+  if (!text || !/\nproviders:/.test(text) || !text.startsWith("model:\n")) {
+    if (decision.capture === "off" || decision.inject === "off") throw new Error(FLUX_HEADER_REFUSAL);
+    return;
+  }
+  const admin = adminManagedConfig(env);
+  const model = admin.model && typeof admin.model === "object" && !Array.isArray(admin.model) ? admin.model as Record<string, unknown> : {};
+  const held = model.extra_headers && typeof model.extra_headers === "object" && !Array.isArray(model.extra_headers) ? model.extra_headers as Record<string, unknown> : {};
+  const kept = Object.fromEntries(Object.entries(held).filter(([name]) => !name.toLowerCase().startsWith("x-flux-memory")));
+  const overlay = stringifyYaml({ ...admin, model: { ...model, extra_headers: { ...kept, ...decision.headers } } });
+  const dir = join(env.MURAGE_DATA_DIR || DATA_DIR, "native", "flux-memory", `hermes-${createHash("sha256").update(overlay).digest("hex").slice(0, 16)}`);
+  const file = join(dir, "config.yaml");
+  let current: string | null = null;
+  try { current = readFileSync(file, "utf8"); } catch { current = null; }
+  if (current !== overlay) {
+    mkdirSync(dir, { recursive: true, mode: 0o700 });
+    try { chmodSync(dir, 0o700); } catch { /* Windows ignores POSIX modes */ }
+    writeFileAtomic(file, overlay, { mode: 0o600 });
+  }
+  env.HERMES_MANAGED_DIR = dir;
+}
+
+/** First Hermes release that reads `HERMES_MANAGED_DIR`: 0.17.0 (tag v2026.6.19),
+ * where hermes_cli/managed_scope.py arrived (9cbcc0c9c8) and `load_config` merges
+ * its overlay (b5ddd6e719). Older builds ignore the overlay without any error. */
+export const HERMES_MIN_MANAGED_SCOPE: readonly [number, number, number] = [0, 17, 0];
+
+/** Parse the `hermes --version` banner ("Hermes Agent v0.21.3 (2026.9.14)"). */
+export function parseHermesVersion(banner: string): [number, number, number] | null {
+  const m = /Hermes Agent v(\d+)\.(\d+)\.(\d+)/i.exec(banner) ?? /(?:^|\s)v(\d+)\.(\d+)\.(\d+)(?!\d)/.exec(banner);
+  return m ? [Number(m[1]), Number(m[2]), Number(m[3])] : null;
+}
+
+/** A turn whose Flux Memory headers say "off" rides only the managed-scope
+ * overlay. On a Hermes older than the first managed-scope build, or one whose
+ * version is unknown, that overlay would be ignored and the turn would go out
+ * without its "off" headers, so the turn is refused. All-on turns carry no
+ * "off" and still run. */
+export function hermesFluxHeaderGate(cliVersion: string, decision: FluxMemoryDecision): string | null {
+  if (decision.capture !== "off" && decision.inject !== "off") return null;
+  const v = parseHermesVersion(cliVersion);
+  if (v) {
+    const [a, b, c] = v;
+    const [x, y, z] = HERMES_MIN_MANAGED_SCOPE;
+    if (a !== x ? a > x : b !== y ? b > y : c >= z) return null;
+  }
+  return FLUX_HEADER_REFUSAL;
+}
+
+/** The managed config Hermes would have applied on its own: `HERMES_MANAGED_DIR`
+ * from the parent env, else /etc/hermes. Malformed or absent is `{}`, as in Hermes. */
+function adminManagedConfig(env: Record<string, string | undefined>): Record<string, unknown> {
+  const own = join(env.MURAGE_DATA_DIR || DATA_DIR, "native", "flux-memory");
+  const named = (env.HERMES_MANAGED_DIR ?? "").trim();
+  if (named && resolve(named).startsWith(resolve(own))) return {}; // already one of ours
+  const dir = named || (process.platform === "win32" ? "" : HERMES_DEFAULT_MANAGED_DIR);
+  if (!dir) return {};
+  try {
+    const parsed: unknown = parseYaml(readFileSync(join(dir, "config.yaml"), "utf8"));
+    return parsed && typeof parsed === "object" && !Array.isArray(parsed) ? parsed as Record<string, unknown> : {};
+  } catch {
+    return {};
+  }
 }
 
 function quoteYaml(value: string): string {
@@ -625,6 +725,17 @@ const support: AcpSupport = {
     signInCommand: "hermes setup",
   },
   spawnArgs: (config, _turn, ctx) => hermesSpawnArgs(config, ctx?.env),
+  /**
+   * Flux Memory headers. Hermes (0.21.3 source, agent/auxiliary_client.py
+   * `_apply_user_default_headers`) merges `model.extra_headers` from the
+   * config onto the OpenAI client for the main and the auxiliary calls. The
+   * block rides a per-turn managed-scope overlay (applyHermesFluxMemory); the
+   * home itself is never edited for a turn. If the home is not Murage's own
+   * and the headers must say "off", the turn is refused rather than sent
+   * without them.
+   */
+  applyFluxMemory: (env, { decision }) => applyHermesFluxMemory(env, decision),
+  fluxHeaderGate: hermesFluxHeaderGate,
   transformEnv: (env) => {
     // A leftover OPENAI_API_KEY makes Hermes auto-resolve to OpenRouter and
     // send no Authorization header. ACP also reloads ~/.hermes/.env, so the
