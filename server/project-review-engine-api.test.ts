@@ -8,6 +8,9 @@
 // done. Each engine kind answers with the verdict block in its reply
 // (fake-review.ts); Fuigo also answers through project_review_result. A
 // reviewer that gives no verdict wakes the lead, who decides.
+// The Grok fakes connect to the servers they are handed, as a real engine
+// does, so a cold turn starts once Murage's own servers have listed their
+// tools (mcp-listed.ts) rather than at the end of the MCP-ready bound.
 import { chmodSync, mkdtempSync, readFileSync, realpathSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { DatabaseSync } from "node:sqlite";
@@ -44,17 +47,19 @@ beforeAll(async () => {
     const file=path.join(process.env.MURAGE_DATA_DIR,'config.json');const cfg=JSON.parse(fs.readFileSync(file,'utf8'));
     fs.mkdirSync(path.join(process.env.HOME,'.fuigo'),{recursive:true});fs.writeFileSync(path.join(process.env.HOME,'.fuigo','auth.json'),'{}');
     const acp=${JSON.stringify(FAKE_ACP)};
-    cfg.instances.cardlead={driver:'grokAgent',displayName:'Lead fixture',environment:{FAKE_ACP_MODE:'project-card-lead'},config:{cli:acp,fullAuto:true}};
+    // Grok Build announces its MCP servers ready (drivers/acp/grok.ts); a silent fake is held MCP_REQUIRED_WAIT_MS before each first prompt
+    const grokReady={FAKE_ACP_MCP_READY:'1',FAKE_ACP_MCP_READY_METHOD:'_x.ai/mcp_initialized'};
+    cfg.instances.cardlead={driver:'grokAgent',displayName:'Lead fixture',environment:{...grokReady,FAKE_ACP_MODE:'project-card-lead'},config:{cli:acp,fullAuto:true}};
     const pass={FAKE_REVIEW_VERDICT:'pass'};
     cfg.instances['rev-claude']={driver:'claudeAgent',displayName:'Claude reviewer',environment:pass,config:{cli:cfg.instances.verification.config.cli}};
     cfg.instances['rev-codex']={driver:'codex',displayName:'Codex reviewer',environment:pass,config:{cli:${JSON.stringify(FAKE_CODEX)},fullAuto:true}};
     cfg.instances['rev-fuigo']={driver:'fuigoAgent',displayName:'Fuigo reviewer',environment:{...pass,FAKE_ACP_MCP_READY:'1'},config:{cli:acp}};
     cfg.instances['rev-fuigo-tool']={driver:'fuigoAgent',displayName:'Fuigo tool reviewer',environment:{...pass,FAKE_REVIEW_TOOL:'1',FAKE_ACP_MCP_READY:'1'},config:{cli:acp}};
-    cfg.instances['rev-grok']={driver:'grokAgent',displayName:'Grok reviewer',environment:pass,config:{cli:acp,fullAuto:true}};
+    cfg.instances['rev-grok']={driver:'grokAgent',displayName:'Grok reviewer',environment:{...pass,...grokReady},config:{cli:acp,fullAuto:true}};
     cfg.instances['rev-gemini']={driver:'geminiAgent',displayName:'Gemini reviewer',environment:{...pass,GEMINI_API_KEY:'fixture',FAKE_ACP_AUTH:'1'},config:{cli:acp,fullAuto:true}};
     cfg.instances['rev-pi']={driver:'piAgent',displayName:'Pi reviewer',environment:pass,config:{cli:${JSON.stringify(FAKE_PI)},fullAuto:true}};
     cfg.instances['rev-agy']={driver:'antigravityAgent',displayName:'Antigravity reviewer',environment:pass,config:{cli:${JSON.stringify(FAKE_AGY)},fullAuto:true}};
-    cfg.instances['rev-silent']={driver:'grokAgent',displayName:'Silent reviewer',environment:{FAKE_REVIEW_VERDICT:'none'},config:{cli:acp,fullAuto:true}};
+    cfg.instances['rev-silent']={driver:'grokAgent',displayName:'Silent reviewer',environment:{...grokReady,FAKE_REVIEW_VERDICT:'none'},config:{cli:acp,fullAuto:true}};
     fs.writeFileSync(file,JSON.stringify(cfg));
   ` });
   proof = (await (await fetch(`${fixture.info.url}/api/desktop-secret`)).json() as { secret: string }).secret;

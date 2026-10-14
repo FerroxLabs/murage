@@ -14,7 +14,7 @@ export function learningHistory(db:DatabaseSync,roster:MemoryRoster,input:{botId
   catch{throw Object.assign(Error("This history page is no longer available. Refresh the list."),{status:400});}
  }
  const rows=db.prepare(`SELECT e.*,s.kind scope_kind,s.owner_key FROM memory_learning_events e JOIN memory_scopes s ON s.id=e.scope_id
- WHERE (? IS NULL OR e.bot_id=?) AND (? IS NULL OR e.created_at<? OR (e.created_at=? AND e.id<?)) ORDER BY e.created_at DESC,e.id DESC LIMIT ?`).all(input.botId??null,input.botId??null,cursor?.id??null,cursor?.created_at??null,cursor?.created_at??null,cursor?.id??null,limit+1);
+ WHERE (? IS NULL OR e.bot_id=?) AND (e.kind<>'guide-applied' OR json_extract(e.detail,'$.publishState') IS NOT 'failed') AND (? IS NULL OR e.created_at<? OR (e.created_at=? AND e.id<?)) ORDER BY e.created_at DESC,e.id DESC LIMIT ?`).all(input.botId??null,input.botId??null,cursor?.id??null,cursor?.created_at??null,cursor?.created_at??null,cursor?.id??null,limit+1);
  return {events:rows.slice(0,limit).map(row=>{
   const record=row.record_id?db.prepare("SELECT id,version,state,text FROM memory_records WHERE id=? ORDER BY version DESC LIMIT 1").get(row.record_id):null;
   const source=row.source_id?db.prepare("SELECT thread_id,message_id,state FROM memory_sources WHERE id=?").get(row.source_id):null;
@@ -28,6 +28,12 @@ export function learningHistory(db:DatabaseSync,roster:MemoryRoster,input:{botId
   return {...row,lesson:lessonForEvent(db,row),procedure:procedureForEvent(db,row),record:record?{...record,text:record.state==="deleted"?null:record.text}:null,scopeLabel,
    source:source&&source.state!=="deleted"?{threadId:source.thread_id,messageId:source.message_id,threadTitle:title??room?.name??bot?.name??"Conversation",botId:bot?.id??null,botName:bot?.name??null,roomName:room?.name??null}:null};
  }),nextCursor:rows.length>limit?JSON.stringify([Number(rows[limit-1].created_at),String(rows[limit-1].id)]):null};
+}
+/** An Undo of a skill or routine change commits in two steps around the external rollback (procedure-landing.ts), so its caller must not wrap it in a transaction. */
+export function undoOwnsItsTransactions(db:DatabaseSync,eventId:string,action:"undo"|"keep"):boolean{
+ if(action!=="undo")return false;
+ const event=db.prepare("SELECT * FROM memory_learning_events WHERE id=?").get(eventId);
+ return Boolean(event&&isProcedureEvent(event));
 }
 /** Caller owns owner authorization and transaction. */
 export function changeLearningEvent(db:DatabaseSync,eventId:string,action:"undo"|"keep",now:number=Date.now()){

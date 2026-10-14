@@ -27,6 +27,7 @@
 // used here speaks OpenAI-shaped streaming chat with tools, Anthropic through
 // its OpenAI-compatible endpoint. Runs on the HARNESS, never the renderer:
 // keys must not leave the server.
+import { fluxCallHeadersVia } from "../flux-memory-headers.ts";
 import { isUnavailable, markUnavailable, notPermitted, VoiceUnavailable, type VoiceEndpoint } from "./voice-routes.ts";
 import { firstClauseBreak, firstClauseEnd, splitFirstClause, splitLong, splitSentences } from "../tts/speech-text.ts";
 import { sameRequest } from "./hand-downs.ts";
@@ -578,7 +579,7 @@ export async function warmVoiceHost(host: VoiceEndpoint | null, fetchImpl: typeo
   if (!host) return;
   await fetchImpl(`${host.baseUrl}/chat/completions`, {
     method: "POST",
-    headers: { authorization: `Bearer ${host.key}`, "content-type": "application/json" },
+    headers: { authorization: `Bearer ${host.key}`, "content-type": "application/json", ...fluxCallHeadersVia("voice-host", host.via) },
     body: JSON.stringify({
       model: host.model,
       messages: [{ role: "user", content: "Say ok." }],
@@ -698,7 +699,7 @@ async function* lookupText(query: string, endpoint: VoiceEndpoint, call: typeof 
       body: JSON.stringify(body),
       signal,
     });
-  const bearer = { authorization: `Bearer ${endpoint.key}` };
+  const bearer = { authorization: `Bearer ${endpoint.key}`, ...fluxCallHeadersVia("voice-host", endpoint.via) };
   if (endpoint.via === "flux") {
     const res = await post("/voice/lookup", { query, instructions: LOOKUP_INSTRUCTIONS, model: endpoint.model }, bearer);
     // 404: Flux's lookup capability is not switched on for this account yet
@@ -885,7 +886,7 @@ async function* hostTurn(options: VoiceHostOptions, timing: HostTiming, clock: {
       try {
         res = await call(`${host.baseUrl}/chat/completions`, {
           method: "POST",
-          headers: { authorization: `Bearer ${host.key}`, "content-type": "application/json" },
+          headers: { authorization: `Bearer ${host.key}`, "content-type": "application/json", ...fluxCallHeadersVia("voice-host", host.via) },
           body,
           signal: mine.signal,
         });
@@ -1200,7 +1201,7 @@ export async function* runVoiceBrief(options: VoiceBriefOptions): AsyncGenerator
     try {
       res = await call(`${host.baseUrl}/chat/completions`, {
         method: "POST",
-        headers: { authorization: `Bearer ${host.key}`, "content-type": "application/json" },
+        headers: { authorization: `Bearer ${host.key}`, "content-type": "application/json", ...fluxCallHeadersVia("voice-host", host.via) },
         body: JSON.stringify({
           model: host.model,
           messages: [

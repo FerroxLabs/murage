@@ -14,6 +14,8 @@ import { LazyBoundary, retryableLazy } from "./LazyBoundary";
 const ProjectRows=lazy(()=>import("./ProjectInboxRows"));
 // Learning suggestions and their screen copy load the first time the inbox has one (spec §6).
 const LearningSuggestions = retryableLazy(() => import("./InboxLearningSuggestions").then((module) => ({ default: module.InboxLearningSuggestions })));
+// Memories the bots would like to keep load the first time the inbox has some.
+const MemoryWaitingCards = retryableLazy(() => import("./InboxMemoryWaiting").then((module) => ({ default: module.InboxMemoryWaiting })));
 const button = "min-h-10 rounded-lg border border-hairline/50 bg-control px-3 py-2 text-[13px] text-ink hover:bg-raised-hover focus-visible:outline focus-visible:outline-2 focus-visible:outline-focus disabled:opacity-50";
 // The selected view is a filled chip, not a grey one with a slightly
 // different edge: on the control tone the old `border-accent bg-accent/10`
@@ -215,13 +217,19 @@ function InboxSection({ label, aside, children }: { label: string; aside?: React
   </section>;
 }
 
-export function Inbox({ onOpen, onClose, onOpenBackups, onOpenLearning, refreshKey = 0, initialView = "decisions" }: { onOpen: (link: InboxLink) => void; onClose?: () => void; onOpenBackups?: () => void; onOpenLearning?: (botId: string) => void; refreshKey?: number; initialView?: InboxView }) {
+export function Inbox({ onOpen, onClose, onOpenBackups, onOpenLearning, onOpenMemory, refreshKey = 0, initialView = "decisions" }: { onOpen: (link: InboxLink) => void; onClose?: () => void; onOpenBackups?: () => void; onOpenLearning?: (botId: string) => void; onOpenMemory?: (subject: { kind: "bot" | "room" | "other"; id: string; name: string }) => void; refreshKey?: number; initialView?: InboxView }) {
   const [view, setView] = useState<InboxView>(initialView);
   const [draft, setDraft] = useState("");
   const [query, setQuery] = useState("");
   const [page, setPage] = useState(0);
   const [includeSnoozed, setIncludeSnoozed] = useState(false);
   const [result, setResult] = useState<InboxPage | null>(null);
+  // Once, after an upgrade, the server is still reading the history in: it
+  // says so, and nothing it holds yet is shown as the Inbox.
+  const [preparing, setPreparing] = useState(false);
+  // Where each page after the first starts (the `next` of the page before),
+  // so a later page is a seek on the server, not a count from the top.
+  const [cursors, setCursors] = useState<ReadonlyArray<string | undefined>>([]);
   // TWO KINDS OF BUSY, BECAUSE ONE MADE THE INBOX UNUSABLE.
   //
   // Needs you re-reads itself every five seconds, and every read used to set
@@ -246,13 +254,26 @@ export function Inbox({ onOpen, onClose, onOpenBackups, onOpenLearning, refreshK
     const controller = new AbortController();
     setLoading(true);
     const params = new URLSearchParams({ view, query, page: String(page), pageSize: "25", includeSnoozed: String(includeSnoozed) });
+    const after = page > 0 ? cursors[page] : undefined;
+    if (after) params.set("after", after);
     void api(`/api/inbox?${params}`, { signal: controller.signal }).then(value => {
-      if (!controller.signal.aborted) { setResult(value as InboxPage); setReadError(null); }
+      if (controller.signal.aborted) return;
+      setReadError(null);
+      if ((value as InboxPage).preparing) { setPreparing(true); return; }
+      setPreparing(false); setResult(value as InboxPage);
     }).catch(reason => {
       if (!controller.signal.aborted) setReadError(reason instanceof Error ? reason.message : "Inbox could not load.");
     }).finally(() => { if (!controller.signal.aborted) setLoading(false); });
     return () => controller.abort();
+    // `cursors` changes only together with `page`.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [view, query, page, includeSnoozed, revision, refreshKey]);
+  // Read again shortly while it is getting ready; the server also announces the end.
+  useEffect(() => {
+    if (!preparing) return;
+    const timer = window.setTimeout(() => setRevision(current => current + 1), 2000);
+    return () => window.clearTimeout(timer);
+  }, [preparing, revision]);
 
   // Hidden (a locked phone, a background tab): no 5 s reads nobody can see.
   const pageVisible = usePageVisible();
@@ -285,7 +306,7 @@ export function Inbox({ onOpen, onClose, onOpenBackups, onOpenLearning, refreshK
     act(change.cleared ? [item.id] : [], () => saveState(item, change), "Inbox state could not be saved.");
   // A new list: what was on screen belongs to the old one, so it goes rather
   // than sitting there under the new tab's name until the read lands.
-  const reset = () => { setResult(null); setPage(0); };
+  const reset = () => { setResult(null); setPage(0); setCursors([]); };
   const chooseView = (next: InboxView) => { if (next !== view) { setView(next); reset(); } };
   // Setting aside a request to connect an app: the same call as the card's
   // own "Not now" in the chat, one card or every one on this page.
@@ -342,7 +363,9 @@ export function Inbox({ onOpen, onClose, onOpenBackups, onOpenLearning, refreshK
   const backupFailed = view === "decisions" || view === "to-read" || view === "all" ? result?.backupFailed ?? null : null;
   // Lessons a bot suggested, waiting for the owner's yes: the only learning the Inbox shows.
   const suggestionRows = view === "decisions" || view === "all" ? result?.learningSuggestions ?? [] : [];
-  const ownRows = [...projectRows,...restoreRows, ...signedOut, ...(backupWaiting ? [backupWaiting] : []), ...(backupFailed ? [backupFailed] : []), ...suggestionRows];
+  // Memories the bots would like to keep: one card per bot, counted per item in `decisions` (server/inbox-memory-waiting.ts).
+  const memoryRows = view === "decisions" || view === "all" ? result?.memoryWaiting ?? [] : [];
+  const ownRows = [...projectRows,...restoreRows, ...signedOut, ...(backupWaiting ? [backupWaiting] : []), ...(backupFailed ? [backupFailed] : []), ...suggestionRows, ...memoryRows];
   const dismissible = list.filter(item => item.dismissible);
   const clearable = list.filter(item => item.clearable);
   // The live card for each waiting request on this page, keyed by message id.
@@ -370,7 +393,7 @@ export function Inbox({ onOpen, onClose, onOpenBackups, onOpenLearning, refreshK
   }, [waitingKey]);
   const owed = INBOX_OWED_VIEWS.includes(view);
   const tally = result ? inboxTally(result.total - result.items.filter(item => gone.has(item.id)).length, result.unread) : "";
-  const sections = signedOut.length + restoreRows.length + (backupWaiting ? 1 : 0) + (backupFailed ? 1 : 0) + suggestionRows.length + (view === "routines" ? routineRows.length : 0) > 0;
+  const sections = signedOut.length + restoreRows.length + (backupWaiting ? 1 : 0) + (backupFailed ? 1 : 0) + suggestionRows.length + memoryRows.length + (view === "routines" ? routineRows.length : 0) > 0;
   return <section aria-labelledby="inbox-title" aria-busy={loading} className="mx-auto flex h-full w-full max-w-4xl flex-col overflow-y-auto bg-panel p-4 text-ink sm:p-6">
     <header className="flex items-center justify-between gap-3"><h1 id="inbox-title" className="text-[22px] font-semibold">Inbox</h1>
       <div className="flex gap-2">
@@ -402,7 +425,7 @@ export function Inbox({ onOpen, onClose, onOpenBackups, onOpenLearning, refreshK
     <div className="mt-5 flex-1">
     {actionError && <p role="alert" className="mb-3 rounded-lg border border-danger/40 p-3 text-[13px] text-danger">{actionError}</p>}
     {readError && <p role="alert" className="mb-3 rounded-lg border border-danger/40 p-3 text-[13px] text-danger">{readError} What is shown may be out of date. Use Refresh to try again.</p>}
-    {!result && !readError && <p className="py-10 text-center text-[13px] text-ink-secondary">Loading…</p>}
+    {!result && !readError && <p className="py-10 text-center text-[13px] text-ink-secondary">{preparing ? "Getting your inbox ready" : "Loading…"}</p>}
     {/* Routines draws its own list, so its emptiness is the rollup's, not
         the card list's. Reading `list` here would print "your routines have
         not run yet" underneath four routines that plainly had. */}
@@ -419,6 +442,11 @@ export function Inbox({ onOpen, onClose, onOpenBackups, onOpenLearning, refreshK
           <p className="mt-1 text-ink-secondary">{backupFailed.sentence}</p>
           {onOpenBackups && <div className="mt-3 flex flex-wrap gap-2"><button className={button} onClick={onOpenBackups}>Open Backups</button></div>}
         </div>
+      </InboxSection>
+    )}
+    {memoryRows.length > 0 && (
+      <InboxSection label="Memories">
+        <LazyBoundary inline onRetry={MemoryWaitingCards.retry}><Suspense fallback={null}><MemoryWaitingCards.Component rows={memoryRows} onSettled={() => setRevision(current => current + 1)} onOpenMemory={onOpenMemory} /></Suspense></LazyBoundary>
       </InboxSection>
     )}
     {suggestionRows.length > 0 && (
@@ -579,7 +607,7 @@ export function Inbox({ onOpen, onClose, onOpenBackups, onOpenLearning, refreshK
     {result && result.total > result.pageSize && <footer className="mt-4 flex items-center justify-between gap-3 border-t border-hairline/40 pt-4">
       <button className={button} disabled={page === 0} onClick={() => setPage(current => current - 1)}>Previous</button>
       <span className="text-[12px] text-ink-secondary">Page {page + 1} of {Math.ceil(result.total / result.pageSize)}</span>
-      <button className={button} disabled={(page + 1) * result.pageSize >= result.total} onClick={() => setPage(current => current + 1)}>Next</button>
+      <button className={button} disabled={(page + 1) * result.pageSize >= result.total} onClick={() => { const next = result.next; setCursors(current => { const kept = [...current]; kept[page + 1] = next; return kept; }); setPage(current => current + 1); }}>Next</button>
     </footer>}
   </section>;
 }

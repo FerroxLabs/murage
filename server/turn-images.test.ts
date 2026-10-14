@@ -17,6 +17,12 @@ function fixture(shrink?: Shrink | null) {
   const store = { bots: [{ id: "a", threadId: "t", tasks: [{ threadId: "task" }] }, { id: "b", threadId: "u" }],
     groups: [{ threadId: "r", memberIds: ["a"], tasks: [{ threadId: "goal" }] }],
     messagesFor: (thread: string) => messages.get(thread) ?? [],
+    // Store.boundAttachments over the fixture's rows: the first row naming each path
+    boundAttachments: (thread: string, paths: readonly string[]) => {
+      const found = new Map<string, NonNullable<Message["attachments"]>[number]>();
+      for (const row of messages.get(thread) ?? []) for (const item of row.attachments ?? []) if (paths.includes(item.path) && !found.has(item.path)) found.set(item.path, item);
+      return found;
+    },
   } as unknown as Store;
   let now = 0;
   const images = new TurnImages(store, root, () => now, async () => shrink ?? null);

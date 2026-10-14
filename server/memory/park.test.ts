@@ -2,6 +2,7 @@ import { mkdirSync, rmSync } from "node:fs";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { DATA_DIR } from "../config.ts";
 import { closeDatabase, database } from "../database.ts";
+import { prepareSyncOn } from "../branch-fill.ts";
 import { setMemoryMode } from "./repository.ts";
 import { captureSource, captureBranchChange } from "./capture.ts";
 import { claimMemoryJob, MEMORY_CLAIM_SQL, resetMemoryClaimCursor } from "./jobs.ts";
@@ -17,6 +18,7 @@ function thread() {
   const db = database();
   const row = (id: string, parent: string | null) => db.prepare("INSERT INTO messages VALUES('t',?,1,'user','text',?,?)").run(id, id, JSON.stringify({ parentId: parent }));
   row("m1", null); row("m2", "m1"); row("m3", "m1");
+  prepareSyncOn(db, "t"); // filled as a first turn leaves it; on an unfilled thread the drain does the branch change
   for (const id of ["m1", "m2", "m3"]) captureSource(db, { id: `message:t:${id}`, threadId: "t", messageId: id, kind: "text", speaker: "owner", outcome: "recorded", text: `text ${id}` });
   return db;
 }

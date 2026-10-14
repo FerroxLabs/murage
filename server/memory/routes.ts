@@ -1,19 +1,19 @@
 import { isProjectCloseLesson, isCloseTurnRequest } from "../project-close.ts";
 import { roomRequest } from "../room-requests.ts";
 import { z } from "zod";
+import { MEMORY_CURSOR_MAX_CHARS } from "./cursor-limits.ts";
 import { Buffer } from "node:buffer";
 import { database,transaction } from "../database.ts";
 import { assertMemoryAccess,type MemoryAccess } from "./policy.ts";
 import { searchMemory,type MemorySearchBridge } from "./search.ts";
 import { hydrateDisclosedMemoryRecord, hydrateMemoryRecord } from "./bundle.ts";
-import { isPipKind } from "./pip-kinds.ts";
 import { readerWithheldMessage } from "./disclosures.ts";
-import { recordRestsOnWithheldMessage } from "./replay-lineage.ts";
+import { LineageAllowance } from "./lineage-allowance.ts";
 import { memoryState } from "./repository.ts";
 import { groundMemoryClaim, type TextOnlyExtractor } from "./extract.ts";
 import { learningWriteDecision,learningEvidenceScopes,learningSourceBot } from "./learning-guard.ts";
 import { recordLearningEvent } from "./learning-ledger.ts";
-import { activateGroundedMemory, holdMemoryCandidate, ownerLearningRefusal } from "./automatic-learning.ts";
+import { activateGroundedMemory, candidateReviewReason, holdMemoryCandidate, learningReviewReason, ownerLearningRefusal, pendingSaveNote } from "./automatic-learning.ts";
 import { readMemoryLearning } from "./learning-policy.ts";
 import { saveProjectCloseLesson, saveMemoryCandidate, saveGroundedMemory, assertMemoryCaptureComplete, assertGenericMemoryTarget } from "./authority.ts";
 import { MEMORY_HANDLE_PATTERN } from "../../shared/memory.ts";
@@ -33,7 +33,7 @@ const version=z.number().int().min(1);
 const evidenceHandle=z.object({sourceId:id,revision:version,startByte:z.number().int().nonnegative(),endByte:z.number().int().positive()}).strict();
 const evidence=z.array(evidenceHandle).min(1).max(20);
 const key=z.string().regex(/^[\w-]{1,160}$/);
-const search=z.object({query:z.string().min(1).refine(s=>Buffer.byteLength(s)<=4096),limit:z.number().int().min(1).max(20).optional(),historical:z.boolean().optional(),cursor:z.string().min(1).max(160).optional()}).strict();
+const search=z.object({query:z.string().min(1).refine(s=>Buffer.byteLength(s)<=4096),limit:z.number().int().min(1).max(20).optional(),historical:z.boolean().optional(),cursor:z.string().min(1).max(MEMORY_CURSOR_MAX_CHARS).optional()}).strict();
 const turnHandle=z.string().regex(MEMORY_HANDLE_PATTERN);
 // A remembered line is addressed by its turn-local handle (m1, m2, …) or by
 // the exact id/version memory_search returned; never by a mix of the two.
@@ -49,7 +49,9 @@ function bounded<T>(result:T):T {
 }
 
 /** Called only after the harness binds a live memory capability to this context. */
-export async function memoryAgentRoute(path:string,body:unknown,access:MemoryAccess,bridge:MemorySearchBridge,handles?:MemoryHandleResolver,extractor:TextOnlyExtractor|null=null,options:{budgetGate?:(scopeId:string)=>boolean;executingRequestId?:string}={}) {
+export async function memoryAgentRoute(path:string,body:unknown,access:MemoryAccess,bridge:MemorySearchBridge,handles?:MemoryHandleResolver,extractor:TextOnlyExtractor|null=null,options:{budgetGate?:(scopeId:string)=>boolean;executingRequestId?:string;
+  /** The captured sources whose text a read hands the turn (every record's evidence): they join the calling turn's sources (server/steer-lineage.ts). */
+  onRead?:(sourceIds:string[])=>void}={}) {
   const executingRequestId=options.executingRequestId;
   assertMemoryAccess(access);
   if(memoryState().mode!=="active")throw Object.assign(new Error("MEMORY_NOT_ACTIVE"),{status:409});
@@ -63,8 +65,9 @@ export async function memoryAgentRoute(path:string,body:unknown,access:MemoryAcc
   try {
     if(path==="/api/internal/memory/search"){
       const input=search.parse(body);
-      const result=bounded(await searchMemory(input.query,access,bridge,{...input,withheldMessage:readerWithheldMessage(access)}));
+      const result=bounded(await searchMemory(input.query,access,bridge,{...input,allowance:LineageAllowance.tool(),withheldMessage:readerWithheldMessage(access),caller:"tool"}));
       handles?.noteLookup?.(result.hits.map(hit=>({id:hit.id,version:hit.version,evidence:hit.evidence.map(handle=>({sourceId:String(handle.sourceId),revision:Number(handle.revision)}))})),access);
+      options.onRead?.(result.hits.flatMap(hit=>hit.evidence.map(handle=>String(handle.sourceId))));
       return result;
     }
     if(path==="/api/internal/memory/get"){
@@ -72,20 +75,18 @@ export async function memoryAgentRoute(path:string,body:unknown,access:MemoryAcc
       // A room reader that is not the owner is not handed a line its
       // transcript leaves out (disclosures.ts readerWithheldMessage).
       const withheld=readerWithheldMessage(access);
-      const unless=<T extends {id:string;version:number;pinned:boolean;kind:string}>(record:T):T=>{
-        // Owner-authored continuity reaches the bot only through the frame (PIP A1).
-        if(isPipKind(record.kind))throw new Error("MEMORY_RECORD_UNAVAILABLE");
-        if(withheld&&recordRestsOnWithheldMessage(record.id,record.version,withheld))throw new Error("MEMORY_EVIDENCE_UNAVAILABLE");
-        return record;
-      };
+      // A bot's own read (agent): owner-authored continuity reaches the bot only through the frame (PIP A1). Every
+      // check is readableMemoryRecord's (readable.ts), the same one memory_search applies to each hit.
+      const reader={allowance:LineageAllowance.tool(),agent:true,...withheld?{withheldMessage:withheld}:{}};
       const records=input.handles.map(item=>{
-        if(!("handle" in item))return unless(hydrateMemoryRecord(item.id,item.version,access));
+        if(!("handle" in item))return hydrateMemoryRecord(item.id,item.version,access,reader);
         const {id:recordId,version:recordVersion}=resolve(item.handle);
-        return {handle:item.handle,...unless(hydrateDisclosedMemoryRecord(recordId,recordVersion,access))};
+        return {handle:item.handle,...hydrateDisclosedMemoryRecord(recordId,recordVersion,access,reader)};
       });
       assertMemoryAccess(access);
       const result=bounded({records});
       handles?.noteLookup?.(records.map(record=>({id:record.id,version:record.version,evidence:record.evidence.map(handle=>({sourceId:handle.sourceId,revision:handle.revision}))})),access);
+      options.onRead?.(records.flatMap(record=>record.evidence.map(handle=>String(handle.sourceId))));
       return result;
     }
     if(path==="/api/internal/memory/save"){
@@ -98,12 +99,14 @@ export async function memoryAgentRoute(path:string,body:unknown,access:MemoryAcc
         ? saveProjectCloseLesson(input.text,input.evidence,input.idempotencyKey,access,executing.id)
         : await saveGroundedMemory(input.text,input.evidence,input.idempotencyKey,access,input.claimType,extractor,input.ownerInvitation,{budgetGate:options.budgetGate});
       const state=String(database().prepare("SELECT state FROM memory_records WHERE id=? AND version=1").get(candidateId)!.state);
-      return {candidateId,state,pendingReview:state==="candidate"};
+      // A held save says so, and why, so the bot does not search for it and conclude it was lost.
+      if(state!=="candidate")return {candidateId,state,pendingReview:false};
+      return {candidateId,state,pendingReview:true,note:pendingSaveNote(candidateReviewReason(database(),candidateId,1)??learningReviewReason("needs-owner-approval"))};
     }
     if(path==="/api/internal/memory/propose-correction"){
       const input=correction.parse(body);
       const target="handle" in input?resolve(input.handle):{id:input.id,version:input.version};
-      hydrateMemoryRecord(target.id,target.version,access);
+      hydrateMemoryRecord(target.id,target.version,access,{allowance:LineageAllowance.tool()});
       const db=database();
       assertGenericMemoryTarget(db,target.id,target.version);
       const targetBefore=db.prepare("SELECT text,state,owner_pinned,scope_id FROM memory_records WHERE id=? AND version=?").get(target.id,target.version)!;

@@ -33,14 +33,16 @@ export function isUntouchedSeedThread(page: SeedThreadPage | null | undefined): 
 }
 
 /** Whether a first-run starter import may go ahead: the workspace is empty,
- * or the only thing in it is the seeded bot, untouched. `messagesFor` reads
- * the whole thread, so there is no older page to miss. */
+ * or the only thing in it is the seeded bot, untouched. `messagesFor` gives
+ * the whole thread, or its newest page with `hasMore` (older rows make it used). */
 export function firstRunImportAllowed(
   workspace: { bots: readonly SeedBotSummary[]; groups: readonly unknown[] },
-  messagesFor: (threadId: string) => readonly unknown[],
+  messagesFor: (threadId: string) => readonly unknown[] | SeedThreadPage,
 ): boolean {
   if (!workspace.bots.length && !workspace.groups.length) return true;
   const seed = seedBotCandidate(workspace);
   if (!seed) return false;
-  return isUntouchedSeedThread({ messages: [...messagesFor(seed.threadId as string)], hasMore: false });
+  const read = messagesFor(seed.threadId as string);
+  // a caller may hand the newest page (rows and whether older ones exist) instead of the whole thread
+  return isUntouchedSeedThread(Array.isArray(read) ? { messages: [...read], hasMore: false } : (read as SeedThreadPage));
 }
