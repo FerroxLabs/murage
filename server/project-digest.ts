@@ -1,7 +1,10 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // Copyright 2026 Ferrox Labs
 import type { DatabaseSync } from "node:sqlite";
+import { queueFrontFill, threadIsReady } from "./branch-fill.ts";
+import { startTranscriptBackfill } from "./transcript-backfill.ts";
 import { mirrorMurageLine, type CommsBus } from "./comms-visibility.ts";
+import { hostLine } from "./host-words.ts";
 import { projectBudgetsForGroup } from "./project-defaults.ts";
 import { budgetPeriodStart } from "./project-budget-period.ts";
 import { deriveGroupedDecisions, type GroupedDecisions } from "./project-goals.ts";
@@ -36,9 +39,22 @@ export function runProjectDigests(deps: DigestDeps, now: number): number {
       const parts = Object.fromEntries(new Intl.DateTimeFormat("en-CA", { timeZone: tz, year: "numeric", month: "2-digit", day: "2-digit", hour: "2-digit", hourCycle: "h23" }).formatToParts(now).map(p => [p.type, p.value]));
       if (Number(parts.hour) < 8) continue;
       const digestDay = `${parts.year}-${parts.month}-${parts.day}`;
-      const predicate = "thread_id=? AND json_extract(json,'$.actorKind')='murage' AND json_extract(json,'$.murage.kind')='status' AND json_type(json,'$.murage.digestDay')='text'";
-      if (db.prepare(`SELECT 1 FROM messages WHERE ${predicate} AND json_extract(json,'$.murage.digestDay')=? LIMIT 1`).get(group.threadId, digestDay)) continue;
-      const previous = db.prepare(`SELECT at FROM messages WHERE ${predicate} AND at<=? ORDER BY at DESC LIMIT 1`).get(group.threadId, now);
+      // the digest line of each day is filed by that day (keyed_card, family "digest"): a keyed read, never the room's rows. A
+      // handle without the derived tables (a fixture) is read the long way.
+      const keyed = Boolean(db.prepare("SELECT 1 FROM sqlite_schema WHERE name='keyed_card'").get()) && Boolean(db.prepare("SELECT 1 FROM sqlite_schema WHERE name='thread_key'").get());
+      let done: unknown, previous: { at: unknown } | undefined;
+      if (keyed) {
+        // the tick never fills a thread on the main thread: an unfilled room is queued at the front of the background fill and its digest
+        // is written by a later tick, once the room is ready (the digest is a day's line, not an instant one)
+        if (!threadIsReady(db, group.threadId)) { queueFrontFill(db, group.threadId); startTranscriptBackfill(db, () => db.isOpen); continue; }
+        done = db.prepare("SELECT 1 FROM keyed_card WHERE thread_id=? AND family='digest' AND key=? LIMIT 1").get(group.threadId, digestDay);
+        if (!done) previous = db.prepare("SELECT m.at AS at FROM keyed_card k JOIN messages m ON m.thread_id=k.thread_id AND m.id=k.id WHERE k.thread_id=? AND k.family='digest' AND m.at<=? ORDER BY m.at DESC LIMIT 1").get(group.threadId, now) as { at: unknown } | undefined;
+      } else {
+        const predicate = "thread_id=? AND json_extract(json,'$.actorKind')='murage' AND json_extract(json,'$.murage.kind')='status' AND json_type(json,'$.murage.digestDay')='text'";
+        done = db.prepare(`SELECT 1 FROM messages WHERE ${predicate} AND json_extract(json,'$.murage.digestDay')=? LIMIT 1`).get(group.threadId, digestDay);
+        if (!done) previous = db.prepare(`SELECT at FROM messages WHERE ${predicate} AND at<=? ORDER BY at DESC LIMIT 1`).get(group.threadId, now) as { at: unknown } | undefined;
+      }
+      if (done) continue;
       const since = previous ? Number(previous.at) : now - 86400000;
       const cards = projectCardsForGroup(db, groupId, true);
       const goalRow = db.prepare("SELECT id FROM project_goals WHERE group_id=? ORDER BY CASE WHEN state IN ('done','stopped','failed') THEN 1 ELSE 0 END,created_at DESC LIMIT 1").get(groupId);
@@ -58,7 +74,7 @@ export function runProjectDigests(deps: DigestDeps, now: number): number {
         if (goal) text += ` Goal '${goal.title}': ${goalStates[goal.state]}.`;
         text += ` Work used today: ${workTime(projectUsage(db, { groupId, since: dayStart }).totals.workMs)}.`;
       }
-      mirrorMurageLine(bus, group, text, { kind: "status", digestDay });
+      mirrorMurageLine(bus, group, hostLine(text), { kind: "status", digestDay });
       posted++;
     } catch (error) {
       console.error("[project-digest] Project digest failed", groupId, error instanceof Error ? error.name : "Error");

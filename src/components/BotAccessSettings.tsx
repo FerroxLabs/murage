@@ -2,15 +2,20 @@ import { useEffect, useRef, useState } from "react";
 import { Switch } from "./SettingsPrimitives";
 import { api } from "@/state/store";
 import type { AccessGrant, ConnectedAppAccess, PendingPermissionStatus } from "../../shared/bot-access";
+import { rememberedViews } from "@/lib/remembered-view";
 import { useBotSettingsDraft } from "./bot-settings-drafts";
-interface AccessView { enabled:boolean; policy:ConnectedAppAccess; catalog:{toolkit:string;tool:string;label:string;writes:boolean}[]; accounts:{toolkit:string;accountId:string;label?:string}[]; pending:PendingPermissionStatus[] }
+export interface AccessView { enabled:boolean; policy:ConnectedAppAccess; catalog:{toolkit:string;tool:string;label:string;writes:boolean}[]; accounts:{toolkit:string;accountId:string;label?:string}[]; pending:PendingPermissionStatus[] }
+/** The last answer per bot. The card paints from it at once on the next open and refreshes behind it,
+ * so a slow connected-apps service never leaves a blank or loading card once one answer exists. */
+const views = rememberedViews<AccessView>();
+export const accessViews = views;
 /** Owner-only controls. Managers can request a bundle but cannot approve it. */
 export function BotAccessSettings({botId}:{botId:string}) {
- const [view,setView]=useState<AccessView|null>(null),[open,setOpen]=useState(false),[error,setError]=useState<string|null>(null),[busy,setBusy]=useState(false);
+ const [view,setView]=useState<AccessView|null>(()=>views.get(botId)),[open,setOpen]=useState(false),[error,setError]=useState<string|null>(null),[busy,setBusy]=useState(false);
  const [mode,setMode]=useState<"unrestricted"|"restricted">("restricted"),[writes,setWrites]=useState(false),[grants,setGrants]=useState<AccessGrant[]>([]);
  const [accountId,setAccountId]=useState("");const gate=useRef(false);const url=`/api/bots/${encodeURIComponent(botId)}/access`;
- const apply=(next:AccessView)=>{setView(next);setMode(next.policy.mode);setWrites(next.policy.allowWrites);setGrants(next.policy.grants);};
- useEffect(()=>{let active=true;api(url).then((next:AccessView)=>{if(active)apply(next);}).catch(()=>{if(active)setError("Could not load app access. Try again.");});return()=>{active=false;};},[url]);
+ const apply=(next:AccessView)=>{views.set(botId,next);setView(next);setMode(next.policy.mode);setWrites(next.policy.allowWrites);setGrants(next.policy.grants);};
+ useEffect(()=>{let active=true;setView(views.get(botId));void views.open(botId,()=>api(url),next=>{if(active){setView(next);setMode(next.policy.mode);setWrites(next.policy.allowWrites);setGrants(next.policy.grants);}},()=>setError("Could not load app access. Try again."),()=>active);return()=>{active=false;};},[url]);
  const refresh=async()=>{setError(null);try{apply(await api(url));}catch{setError("Could not load app access. Try again.");}};
  const save=async(body:object)=>{if(gate.current||!view)return;gate.current=true;setBusy(true);setError(null);try{apply(await api(url,{method:"PUT",body:JSON.stringify({...body,revision:view.policy.revision})}));}catch(e){setError(e instanceof Error?e.message:"Could not save access. Refresh and try again.");}finally{gate.current=false;setBusy(false);}};
  const account=view?.accounts.find(item=>item.accountId===accountId);

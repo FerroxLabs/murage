@@ -24,6 +24,7 @@ import { ROUTE_POLICY } from "./route-policy.ts";
 import { transcriptText } from "./replies.ts";
 import { Store, type Message } from "./store.ts";
 import { buildTurnContext, engineIsFresh, runHeaders, transcriptForDriver, type TranscriptEntry } from "./turn-context.ts";
+import { LineageAllowance } from "./memory/lineage-allowance.ts";
 
 const here = fileURLToPath(new URL(".", import.meta.url));
 const source = (file: string) => readFileSync(join(here, file), "utf8");
@@ -245,17 +246,17 @@ describe("CF-2 filterDirectReplay counts what it leaves out", () => {
   const rows = (n: number) => Array.from({ length: n }, (_, i) => ({ id: `m${i}`, role: i % 2 ? "bot" : "user", kind: "text", text: `line ${i} ${"y".repeat(100)}` }));
 
   it("reports the lines the window dropped", () => {
-    const out = filterDirectReplay("private", rows(100), access(), new Set());
+    const out = filterDirectReplay(LineageAllowance.tool(), "private", rows(100), access(), new Set());
     expect(out.replayed.length).toBe(40);
     expect(out.omitted).toBe(60);
   });
 
   it("reports zero when everything fits, and widens to the budget on a roomy engine", () => {
-    expect(filterDirectReplay("private", rows(30), access(), new Set()).omitted).toBe(0);
-    const wide = filterDirectReplay("private", rows(100), access(), new Set(), { maxBytes: 192 * 1024 });
+    expect(filterDirectReplay(LineageAllowance.tool(), "private", rows(30), access(), new Set()).omitted).toBe(0);
+    const wide = filterDirectReplay(LineageAllowance.tool(), "private", rows(100), access(), new Set(), { maxBytes: 192 * 1024 });
     expect(wide.replayed.length).toBe(100);
     expect(wide.omitted).toBe(0);
-    const mid = filterDirectReplay("private", rows(100), access(), new Set(), { maxBytes: 8_000 });
+    const mid = filterDirectReplay(LineageAllowance.tool(), "private", rows(100), access(), new Set(), { maxBytes: 8_000 });
     expect(mid.replayed.length).toBeGreaterThan(40);
     expect(mid.replayed.length).toBeLessThan(100);
     expect(mid.omitted).toBe(100 - mid.replayed.length);
@@ -386,6 +387,9 @@ describe("CF-5 history is fixed (I-24)", () => {
       .filter((file) => /\b(?:patchMessage|updateMessage|deleteMessage|removeMessage)\(/.test(source(file)))
       .sort();
     expect(writers).toEqual([
+      // the compile-time guard's own examples of a write that must not compile, and the boundary's one non-text link to a row (never its words)
+      "bot-egress.expect-errors.ts",
+      "boundary-ports.ts",
       "browser-extension-approvals.ts",
       "browser-extension-setup.ts",
       "delegations.ts",
@@ -396,6 +400,7 @@ describe("CF-5 history is fixed (I-24)", () => {
       "peer-approval.ts",
       "publish/publish-ops.ts",
       "routine-requests.ts",
+      "steer-late.ts",
       "steer-queue.ts",
       "store.ts",
     ]);

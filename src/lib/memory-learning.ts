@@ -37,7 +37,7 @@ export function learningStatusLine(mode: string, learning: MemoryLearning): stri
   if (mode === "paused") return "Learning is paused with memory processing.";
   if (!settings.automaticFacts && !settings.automaticProcedures) return "Learning is paused. Turn on facts or procedures below.";
   if (connection.source === "none") return connection.reason === "Add your Flux key or choose a connection." ? "Learning is paused: add your Flux key or choose a connection." : connection.reason?.startsWith("Learning is paused:") ? connection.reason : connection.reason ? `Learning is paused: ${connection.reason}` : "Learning is paused: add your Flux key or choose a connection.";
-  if (settings.reviewMode || connection.source === "default" && !learning.defaultOn) return "Learning is on. Open Needs review below to approve new memories.";
+  if (settings.reviewMode || connection.source === "default" && !learning.defaultOn) return "Learning is on. Memories that need your yes wait in Needs you.";
   return `Learning is on. Uses ${learningConnectionLabel(connection.label)}.`;
 }
 export function learningEventLabel(kind: string): string {

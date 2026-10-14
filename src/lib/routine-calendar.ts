@@ -237,9 +237,9 @@ export function calendarRangeLabel(from: number, days: number): string {
     return start.toLocaleDateString([], { month: "long", day: "numeric", year: "numeric" });
   }
   if (start.getMonth() === end.getMonth()) {
-    return `${start.toLocaleDateString([], { month: "long" })} ${start.getDate()} – ${end.getDate()}, ${end.getFullYear()}`;
+    return `${start.toLocaleDateString([], { month: "long" })} ${start.getDate()} to ${end.getDate()}, ${end.getFullYear()}`;
   }
-  return `${start.toLocaleDateString([], { month: "short", day: "numeric" })} – ${end.toLocaleDateString([], { month: "short", day: "numeric", year: "numeric" })}`;
+  return `${start.toLocaleDateString([], { month: "short", day: "numeric" })} to ${end.toLocaleDateString([], { month: "short", day: "numeric", year: "numeric" })}`;
 }
 
 /** The two time lines under an event's title, each saying what it is: this

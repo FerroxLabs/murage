@@ -58,6 +58,7 @@ import {
   linuxAutoDescription,
   localAutoHostPlatform,
   localComputerDisabledReason,
+  WINDOWS_COMPUTER_TEXT,
   localComputerSelectable,
   switchRevokesThisComputer,
   type HarnessAnnouncement,
@@ -69,6 +70,7 @@ import {
 } from "@/lib/computer-panel-view";
 import { usePagedScreenFrame } from "@/lib/paged-screen-frame";
 import { describeDesktopOnlyRouteError, routeErrorFrom } from "@/lib/desktop-only-route-error";
+import { engineWithoutComputerText } from "../../shared/engine-switch";
 
 export function ScreenStreamNotice({ message }: { message?: string }) {
   return message ? <p role="status" className="mt-2 rounded-lg border border-warning/30 bg-warning/10 px-3 py-2 text-[12px] text-warning">{message}</p> : null;
@@ -157,6 +159,8 @@ type Phase =
   | "vps-stopped"
   | "local"
   | "local-unavailable"
+  | "engine-unsupported"
+  | "windows-computer"
   | "off"
   | "error";
 
@@ -515,16 +519,20 @@ export function ComputerPanel({
       return;
     }
     if (bot.computer === "local") {
-      if (!providerSupportsLocal) {
-        setError("This model engine cannot control this computer. Choose Claude or an ACP engine.");
+      if (capabilities.host.platform === "win32") {
+        setPhase("windows-computer");
+        return;
       }
-      setPhase(capabilitiesReady && localAvailable && providerSupportsLocal ? "local" : "local-unavailable");
+      if (!providerSupportsLocal) {
+        setPhase("engine-unsupported");
+        return;
+      }
+      setPhase(capabilitiesReady && localAvailable ? "local" : "local-unavailable");
       return;
     }
     if (bot.computer === "vm") {
       if (!vmSupported) {
-        setError("This model engine cannot use the Local VM. Choose Claude or an ACP engine.");
-        setPhase("vm-unavailable");
+        setPhase("engine-unsupported");
         return;
       }
       let retryTimer: number | undefined;
@@ -575,8 +583,7 @@ export function ComputerPanel({
       };
     }
     if (bot.computer === "cloud" && !cloudSupported) {
-      setError("This model engine cannot use cloud computer tools. Choose Claude, an ACP engine, or the Computer engine.");
-      setPhase("error");
+      setPhase("engine-unsupported");
       return;
     }
     if (bot.computer !== "cloud" && !capabilitiesReady) return;
@@ -586,8 +593,7 @@ export function ComputerPanel({
       if (!vpsSupported) {
         if (autoLocal) setPhase("local");
         else {
-          setError("This model engine cannot use a self-hosted VPS. Choose Claude or an ACP engine, or switch the cloud backend to Box.");
-          setPhase("error");
+          setPhase("engine-unsupported");
         }
         return;
       }
@@ -1072,6 +1078,8 @@ export function ComputerPanel({
     "vps-stopped": "The managed VPS computer is stopped",
     "local-unavailable": localDisabledReason ?? "Local computer control isn't ready.",
     "vm-unavailable": "The Local VM isn't available for this bot",
+    "windows-computer": WINDOWS_COMPUTER_TEXT,
+    "engine-unsupported": engineWithoutComputerText(selectedInstance?.displayName),
     off: "This bot's computer is off",
     error: "Couldn't reach the computer",
   } satisfies Record<Exclude<Phase, "ready" | "local" | "vm">, string>;

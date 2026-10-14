@@ -11,6 +11,8 @@
 // invalidation below still ends the session.
 import { mkdirSync, rmSync } from "node:fs";
 import { beforeEach, expect, it } from "vitest";
+import { afterEach as thawAfterEach, beforeEach as thawBeforeEach } from "vitest";
+import { thawRootSetWritesForTest } from "./replay-lineage.ts";
 import { DATA_DIR } from "../config.ts";
 import { closeDatabase, database } from "../database.ts";
 import { InternalCapabilities } from "../internal-capabilities.ts";
@@ -27,7 +29,15 @@ import { continuationMemoryRevoked } from "./disclosures.ts";
 import { ownerMemoryTicket, correctMemory, pinMemory } from "./authority.ts";
 import { forgetMemory } from "./forget.ts";
 import type { MemoryBundle } from "../../shared/memory.ts";
+import { LineageAllowance } from "./lineage-allowance.ts";
+import { markSessionKnown } from "./testing/legacy-file-model.ts";
+// 1.0.2: this test models a 1.0.1 file (legacy root-set rows) for the read-time judge, which still decides legacy data until S6.
+thawBeforeEach(() => thawRootSetWritesForTest(true));
+thawAfterEach(() => thawRootSetWritesForTest(false));
 
+// the reset is the same; since S6 its logged reason is the write-time predicate that decided it (deny-read.ts sessionLookup: writetime-deny-session,
+// writetime-watermark, ...), where the read-time judge said memory-changed
+const WHY_RESET = /^(memory-changed|writetime-)/;
 const bridge = { search: async () => ({ hits: [], vectorRows: 0 }) };
 beforeEach(() => { closeDatabase(); rmSync(DATA_DIR, { recursive: true, force: true }); mkdirSync(DATA_DIR, { recursive: true }); });
 
@@ -68,9 +78,12 @@ function world() {
    * next send when `late`), then the worker's pass. */
   const turn = async (n: number, session: string, late = true): Promise<MemoryBundle> => {
     const a = access();
-    const bundle = await buildMemoryBundle(`item ${n}`, a, bridge);
+    const bundle = await buildMemoryBundle(`item ${n}`, a, bridge, {allowance: LineageAllowance.tool()});
     const receipt = new MemoryDispatchReceipt(bundle, a, "claude");
     receipt.sessionStarted(session); receipt.accepted();
+    // index.ts writes the session's lineage row when the session starts or resumes (write-time privacy, DESIGN-WRITETIME 2.7); without one the
+    // session reads "checking" and is reset
+    markSessionKnown(threadId, "claude", session, bot.id);
     const turnId = `t${n}`;
     const tool = store.appendMessage(threadId, { role: "bot", kind: "activity", turnId, tool: { name: "mcp__browser__browser_click", summary: "click" } } as never);
     store.patchMessage(threadId, tool.id, { tool: { name: "mcp__browser__browser_click", ok: true } } as never);
@@ -84,7 +97,7 @@ function world() {
     drain();
     return bundle;
   };
-  const revoked = (session: string) => { const why: { reason?: string } = {}; const result = continuationMemoryRevoked(threadId, "claude", session, access(), why); return { result, why: why.reason }; };
+  const revoked = (session: string) => { const why: { reason?: string } = {}; const result = continuationMemoryRevoked(LineageAllowance.tool(), threadId, "claude", session, access(), why); return { result, why: why.reason }; };
   const w = { store, bot, threadId, access, send, turn, revoked, prompts };
   return w;
 }
@@ -115,7 +128,7 @@ it("(b) the owner edits a memory the session was shown: reset", async () => {
   const { w, second } = await twoTurns();
   const record = second.recordVersions.find(r => !r.id.startsWith("checkpoint:"))!;
   correctMemory(ownerMemoryTicket(), record.id, record.version, "Item 2 was closed, not opened.");
-  expect(w.revoked("S1")).toEqual({ result: true, why: expect.stringMatching(/^memory-changed/) });
+  expect(w.revoked("S1")).toEqual({ result: true, why: expect.stringMatching(WHY_RESET) });
 });
 
 it("(c) the owner forgets a memory the session was shown, or a source it rests on: reset", async () => {
@@ -123,7 +136,7 @@ it("(c) the owner forgets a memory the session was shown, or a source it rests o
     const { w, second } = await twoTurns();
     const target = kind === "record" ? second.recordVersions.find(r => !r.id.startsWith("checkpoint:"))!.id : second.sourceVersions[0].id;
     forgetMemory(ownerMemoryTicket(), { kind, id: target });
-    expect(w.revoked("S1")).toEqual({ result: true, why: expect.stringMatching(/^memory-changed/) });
+    expect(w.revoked("S1")).toEqual({ result: true, why: expect.stringMatching(WHY_RESET) });
     closeDatabase(); rmSync(DATA_DIR, { recursive: true, force: true }); mkdirSync(DATA_DIR, { recursive: true });
   }
 });
@@ -134,7 +147,7 @@ it("(c2) a tombstone on one disclosed source revision, with no global counter mo
   // the revision check itself, not the global revocation that forget also does
   const meta = database().prepare("SELECT deletion_epoch FROM memory_meta").get()!;
   database().prepare("INSERT INTO memory_tombstones VALUES('t-1','source',?,?,NULL,?,'owner-forget',1)").run(source.id, source.revision, meta.deletion_epoch);
-  expect(w.revoked("S1")).toEqual({ result: true, why: expect.stringMatching(/^memory-changed/) });
+  expect(w.revoked("S1")).toEqual({ result: true, why: expect.stringMatching(WHY_RESET) });
 });
 
 it("(d) a message the session was shown is edited, or withheld by a real branch change: reset", async () => {
@@ -142,7 +155,7 @@ it("(d) a message the session was shown is edited, or withheld by a real branch 
     const { w } = await twoTurns();
     // the owner edits the first prompt in place: its captured source gets a new revision
     w.store.patchMessage(w.threadId, w.prompts[0], { text: "Never mind item 1." } as never);
-    expect(w.revoked("S1")).toEqual({ result: true, why: expect.stringMatching(/^memory-changed/) });
+    expect(w.revoked("S1")).toEqual({ result: true, why: expect.stringMatching(WHY_RESET) });
   }
   closeDatabase(); rmSync(DATA_DIR, { recursive: true, force: true }); mkdirSync(DATA_DIR, { recursive: true });
   {
@@ -156,7 +169,7 @@ it("(d) a message the session was shown is edited, or withheld by a real branch 
     expect(after).toContain(fork!.id);
     expect(after).not.toContain(w.prompts[0]);
     expect(after).not.toContain(w.prompts[1]);
-    expect(w.revoked("S1")).toEqual({ result: true, why: expect.stringMatching(/^memory-changed/) });
+    expect(w.revoked("S1")).toEqual({ result: true, why: expect.stringMatching(WHY_RESET) });
   }
 });
 
@@ -165,12 +178,12 @@ it("(e) a policy revision or deletion epoch move: reset", async () => {
     const { w, second } = await twoTurns();
     const record = second.recordVersions.find(r => !r.id.startsWith("checkpoint:"))!;
     pinMemory(ownerMemoryTicket(), record.id, record.version, true);  // policy revision only
-    expect(w.revoked("S1")).toEqual({ result: true, why: expect.stringMatching(/^memory-changed/) });
+    expect(w.revoked("S1")).toEqual({ result: true, why: expect.stringMatching(WHY_RESET) });
   }
   closeDatabase(); rmSync(DATA_DIR, { recursive: true, force: true }); mkdirSync(DATA_DIR, { recursive: true });
   {
     const { w } = await twoTurns();
     database().exec("UPDATE memory_meta SET deletion_epoch=deletion_epoch+1 WHERE id=1");
-    expect(w.revoked("S1")).toEqual({ result: true, why: expect.stringMatching(/^memory-changed/) });
+    expect(w.revoked("S1")).toEqual({ result: true, why: expect.stringMatching(WHY_RESET) });
   }
 });

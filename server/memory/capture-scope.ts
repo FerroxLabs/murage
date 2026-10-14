@@ -24,6 +24,7 @@ import { teamMemoryKey } from "../team-identities.ts";
 import type { DatabaseSync } from "node:sqlite";
 import { isWorkspaceOwner, threadHumanPrincipal } from "../human-principals.ts";
 import type { MemoryRoster } from "./policy.ts";
+import { scopeRow } from "./scope-id.ts";
 
 export type ThreadCaptureScope = { kind: "room" | "conversation" | "team"; owner: string };
 
@@ -59,4 +60,11 @@ export function threadCaptureScope(threadId: string, roster?: MemoryRoster | nul
   }
   const room = threadMemoryRoom(threadId, current);
   return room && isWorkspaceOwner(threadHumanPrincipal(threadId, db)) ? { kind: "room", owner: room } : { kind: "conversation", owner: threadId };
+}
+
+/** The id of the scope a thread's sources are captured into, without creating it (none yet: nothing of the
+ * thread was captured). The owner-first gate's turn-critical lane reads it (worker-controller.ts). */
+export function existingCaptureScopeId(db: DatabaseSync, threadId: string): string | undefined {
+  const { kind, owner } = threadCaptureScope(threadId, undefined, db);
+  return scopeRow(db, kind, owner)?.id;
 }

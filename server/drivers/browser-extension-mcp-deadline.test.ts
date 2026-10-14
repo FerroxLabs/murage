@@ -60,6 +60,8 @@ function cards() {
   const messages: Message[] = [];
   const store = {
     messagesFor: () => messages,
+    messageById: (_thread: string, id: string) => messages.find(item => item.id === id),
+    openRequestCardRows: () => messages.filter(item => item.card?.requestId && !item.card.answered && !item.card.dismissed),
     appendMessage: (_thread: string, input: Partial<Message>) => { const message = { ...input, id: String(messages.length + 1) } as Message; messages.push(message); return message; },
     patchMessage: (_thread: string, id: string, patch: Partial<Message>) => { const message = messages.find(item => item.id === id)!; Object.assign(message, patch); return message; },
   };

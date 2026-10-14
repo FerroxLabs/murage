@@ -93,7 +93,9 @@ it("the actual main createWindow and activate wiring retargets the process updat
   const walk = (node) => { nodes.push(node); ts.forEachChild(node, walk); };
   walk(file);
   const windowFactory = nodes.find((node) => ts.isFunctionDeclaration(node) && node.name?.text === "createWindow");
-  const ready = nodes.find((node) => ts.isCallExpression(node) && node.expression.getText(file) === "app.whenReady().then");
+  // main.mjs has two ready callbacks: a small one that only wires powerMonitor for the upgrade screen, and the boot block that opens the window.
+  const ready = nodes.find((node) => ts.isCallExpression(node) && node.expression.getText(file) === "app.whenReady().then"
+    && node.arguments[0]?.getText(file).includes("createWindow"));
   const activate = nodes.find((node) => ts.isCallExpression(node) && node.expression.getText(file) === "app.on"
     && node.arguments[0]?.text === "activate" && node.pos >= ready.pos && node.end <= ready.end);
   // Since the startup background controls (5b140c4f) the first window is

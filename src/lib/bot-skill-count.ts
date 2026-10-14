@@ -96,6 +96,8 @@ export interface BotSetupEvidence {
   /** Every context this agent has. `usage.turns` is the closest thing the
    *  renderer holds to "how many times has a person talked to it". */
   tasks?: ReadonlyArray<{ usage?: { turns?: number } | undefined }>;
+  /** The server's sum over every task: `tasks` is only a window of them. */
+  usageTotal?: { turns?: number };
 }
 
 /** Past this many turns the agent is IN USE, and an unprompted "what do you
@@ -105,6 +107,8 @@ export const INTAKE_MAX_TURNS = 3;
 
 /** Turns this agent has actually had, across all its contexts. */
 export function botTurnCount(bot: BotSetupEvidence): number {
+  const all = bot.usageTotal?.turns;
+  if (typeof all === "number" && Number.isFinite(all)) return Math.max(0, all);
   let turns = 0;
   for (const task of bot.tasks ?? []) {
     const count = task?.usage?.turns;

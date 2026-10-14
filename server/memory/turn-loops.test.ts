@@ -16,6 +16,8 @@ import { threadHumanPrincipal, OWNER } from "../human-principals.ts";
 import { assertMemoryAccess, inMemoryAccessPass, memoryAccess, reconcileMemoryRoster, type MemoryRoster } from "./policy.ts";
 import { inEligibilityPass } from "./eligibility-pass.ts";
 import { buildMemoryBundle } from "./bundle.ts";
+import { catchUpRecentMemory } from "./recent.ts";
+import { LineageAllowance } from "./lineage-allowance.ts";
 
 beforeEach(() => { closeDatabase(); rmSync(DATA_DIR, { recursive: true, force: true }); mkdirSync(DATA_DIR, { recursive: true }); });
 
@@ -57,8 +59,10 @@ function setup() {
 }
 
 it("building a bundle from many hits confirms the roster's scopes a handful of times, not once per check", async () => {
-  const { access, confirms } = setup(), before = confirms();
-  const bundle = await buildMemoryBundle("report colour", access, empty);
+  const { access, confirms } = setup();
+  catchUpRecentMemory(access);  // the turn's one catch-up step runs before recall; recall itself writes nothing
+  const before = confirms();
+  const bundle = await buildMemoryBundle("report colour", access, empty, {allowance: LineageAllowance.tool()});
   expect(bundle.text).toContain("charcoal");
   // one audience walk is ~215 confirmations; 20 hits used to cost ~3 walks each on top of the fixed checks (7,624 before, 3,560 after)
   console.error("AFTERC",confirms()-before);expect(confirms() - before).toBeLessThanOrEqual(215 * 18);
@@ -66,7 +70,7 @@ it("building a bundle from many hits confirms the roster's scopes a handful of t
 
 it("building a bundle reads a thread's human binding a handful of times, not once per check", async () => {
   const { access, bindings } = setup(), before = bindings();
-  await buildMemoryBundle("report colour", access, empty);
+  await buildMemoryBundle("report colour", access, empty, {allowance: LineageAllowance.tool()});
   console.error("AFTERB",bindings()-before);expect(bindings() - before).toBeLessThanOrEqual(11 * 16);
 });
 

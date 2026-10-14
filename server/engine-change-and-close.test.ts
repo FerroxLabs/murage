@@ -249,4 +249,18 @@ describe("an engine change or an app close around a run waiting for the person",
     await expect.poll(async () => (await messagesOf(bot.threadId)).some((message) => message.tool?.name === "Couldn't deliver that answer. The request is no longer open, so the action was not run."), { timeout: 10_000 }).toBe(true);
     await desktopApi("DELETE", `/api/bots/${bot.id}`);
   }, 90_000);
+
+  it("a replayed answer for a card that already settled adds no second \"Couldn't deliver\" message", async () => {
+    const bot = await makeBot("Replayed answer");
+    const card = await waitingForApproval(bot);
+    await waitForExit(child!, { signal: "SIGKILL" });
+    await start();
+    const respond = { requestId: card.card!.requestId, behavior: "allow" };
+    const undelivered = async () => (await messagesOf(bot.threadId)).filter((message) => message.tool?.name?.startsWith("Couldn't deliver that answer")).length;
+    expect((await desktopApi("POST", `/api/threads/${bot.threadId}/respond`, respond)).status).toBe(200);
+    await expect.poll(undelivered, { timeout: 10_000 }).toBe(1);
+    expect((await desktopApi("POST", `/api/threads/${bot.threadId}/respond`, respond)).status).toBe(200);
+    expect(await undelivered()).toBe(1);
+    await desktopApi("DELETE", `/api/bots/${bot.id}`);
+  }, 90_000);
 });

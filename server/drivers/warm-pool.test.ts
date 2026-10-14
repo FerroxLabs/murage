@@ -632,3 +632,23 @@ describe("early re-measure of a just-spawned engine", () => {
     }
   });
 });
+
+describe("drainScope (a bot's login split)", () => {
+  it("closes the idle engines started on that scope now, and an engine that settles later if it started before the drain", async () => {
+    const r = rig();
+    const closed: string[] = [];
+    const member = (threadId: string, spawnedAt: number | undefined, kind = "codex", bot: string | null = "b1", engine: WarmEngine = "claude"): WarmMember => ({
+      engine, threadId, pid: () => 1, spawnedAt, scope: { kind, bot }, close: (reason) => { closed.push(`${threadId}:${reason}`); },
+    });
+    const idleOne = {}, other = {}, busyOne = {}, fresh = {};
+    await r.pool.markIdle(idleOne, member("t1", 1));
+    await r.pool.markIdle(other, member("t2", 1, "codex", "b2", "acp"));
+    expect(r.pool.drainScope({ kind: "codex", bot: "b1" })).toBe(1);
+    expect(closed).toEqual(["t1:login-split"]);
+    await r.pool.markIdle(busyOne, member("t3", 1)); // started before the drain: closed at settle
+    expect(closed).toEqual(["t1:login-split", "t3:login-split"]);
+    await r.pool.markIdle(fresh, member("t4", r.clock.t + 10_000, "codex", "b1", "codex")); // started after the split: kept
+    expect(closed.length).toBe(2);
+    expect(r.pool.idleCount()).toBe(2);
+  });
+});

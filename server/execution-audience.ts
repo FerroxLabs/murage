@@ -3,6 +3,8 @@
 import { join } from "node:path";
 import { DATA_DIR, loadConfig } from "./config.ts";
 import { database } from "./database.ts";
+import { botDeleted } from "./owner-deletions.ts";
+import { threadHasKeyed } from "./message-db.ts";
 import { type BotRecord, type GroupRecord, type Store, type TaskRecord, sectionKey, isWorkspaceChief, isIndividualAssistant } from "./store.ts";
 import { OWNER, assertHumanPrincipal, bindHumanThread, humanTask, isLocalOwner, threadHumanPrincipal, type HumanPrincipal } from "./human-principals.ts";
 import { teamIdFor, teamMemoryKey } from "./team-identities.ts";
@@ -98,6 +100,14 @@ export function effectiveAudience(bot: BotRecord, threadId: string, tag: Executi
   if (!bindingFits(bot, threadId, tag)) throw new Error("This request no longer fits this conversation. Ask again.");
   return threadPartition(bot, threadId);
 }
+/** True only when the thread is positively the owner's own unshared conversation on this bot: a task of the bot, no shared
+ * work on it, in the bot's home partition, and with the owner as its human. Anything else (unknown thread, shared, project
+ * or partitioned) is false, so callers fail closed. */
+export function isOwnUnsharedThread(bot: BotRecord | undefined, threadId: string): boolean {
+  const task = bot?.tasks?.find(t => t.threadId === threadId);
+  return Boolean(bot && task && !task.sharedWork && threadPartition(bot, threadId).kind === "home"
+    && JSON.stringify(threadHumanPrincipal(threadId)) === JSON.stringify(OWNER));
+}
 export function homeThread(bot: BotRecord): TaskRecord {
   const store = currentStore; if (!store) throw new Error("Execution store is unavailable");
   const active = bot.tasks?.find(t => t.threadId === bot.threadId);
@@ -105,7 +115,7 @@ export function homeThread(bot: BotRecord): TaskRecord {
   const owner = OWNER;
   const eligible = (task: TaskRecord) => !task.sharedWork && isHomePartition(threadPartition(bot, task.threadId))
     && JSON.stringify(threadHumanPrincipal(task.threadId)) === JSON.stringify(owner)
-    && !database().prepare("SELECT 1 FROM messages WHERE thread_id=? AND json_extract(json, '$.routineRunPrompt') IS NOT NULL LIMIT 1").get(task.threadId);
+    && !threadHasKeyed(task.threadId, "routineRun");
   const task = bot.tasks?.find(t => t.threadId === bot.threadId && eligible(t)) ?? bot.tasks?.filter(eligible).sort((a, b) => b.createdAt - a.createdAt)[0];
   if (task) return task;
   const created = store.createTask(bot.id, "Direct chat", false); if (!created) throw new Error("Unknown bot");
@@ -205,7 +215,9 @@ export function authorizeWork(input: WorkEdge, continuing = false): WorkResult {
   const refuse = (code: WorkRefusal, line = "This bot cannot be reached from here."): WorkResult => ({ ok: false, code, line, retry: code === "shared_paused" ? "queue" : "never" });
   const targetId = input.edge === "resume" ? input.botId : input.edge === "deliver" ? input.fromBotId : input.targetBotId;
   const target = store?.bot(targetId);
-  if (!store || !target) return refuse("not_reachable");
+  // A bot the registry does not know is gone only when its deletion was recorded (owner-deletions.ts); a registry that is not loaded
+  // yet or only partly loaded also lacks it, and that is no reason to settle the work: it is kept and tried again.
+  if (!store || !target) return botDeleted(database(), targetId) ? refuse("not_reachable") : { ok: false, code: "not_reachable", line: "This bot cannot be reached from here.", retry: "queue" };
   if (target.hidden) return refuse("archived", `${target.name} is archived.`);
   const requestId = input.edge === "peer" ? input.parentRequestId : input.requestId ?? ("generation" in input && input.generation ? turnRequestByGeneration.get(input.generation) : undefined);
   const row = requestId ? database().prepare("SELECT * FROM room_requests WHERE id=?").get(requestId) : undefined;

@@ -161,6 +161,19 @@ describe("the first paint", () => {
     expect(bytes).toBeLessThanOrEqual(1.5 * 1024);
   });
 
+  it("loads the conversation cache, team settings, find-in-conversation and bundle import on first use (1.0.2)", () => {
+    const reached = staticallyReached(graph);
+    for (const file of ["src/lib/conversation-cache.ts", "src/components/TeamSettingsDialog.tsx", "src/components/ChatFindBar.tsx", "src/components/BundleImportDialog.tsx"]) {
+      expect(reached, file).not.toContain(file);
+      expect(graph.inputs[file], file).toBeDefined();
+    }
+    // what the first paint does carry: the transcript that mounts only what
+    // is on screen, and the small handle that loads the cache
+    for (const file of ["src/components/VirtualTranscript.tsx", "src/lib/conversation-cache-host.ts", "src/components/TeamSettingsHost.tsx"]) {
+      expect(reached, file).toContain(file);
+    }
+  });
+
   it("leaves both Markdown editors and Tiptap to the first edit", () => {
     const reached = staticallyReached(graph);
     for (const file of ["src/components/MarkdownEditor.tsx", "src/components/editor/RichMarkdownEditor.tsx", "src/lib/markdown-fidelity.ts"]) {

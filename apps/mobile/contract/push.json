@@ -9,6 +9,7 @@
     { "kind": "routine-failed", "risk": "unrated", "category": "question" },
     { "kind": "turn-failed", "risk": "unrated", "category": "question" },
     { "kind": "backup-waiting", "risk": "unrated", "category": "question" },
+    { "kind": "memories-waiting", "risk": "unrated", "category": "question" },
     { "kind": "done", "risk": "low", "category": "done" }
   ],
   "iosCategory": { "approval": "APPROVAL", "approval-open": "APPROVAL_OPEN", "question": "QUESTION", "done": "DONE", "resolved": "DONE" },
