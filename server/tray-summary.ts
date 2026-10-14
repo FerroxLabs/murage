@@ -71,7 +71,12 @@ export interface TraySummaryDeps {
   page: Pick<InboxPage, "decisions" | "items">;
   bots: readonly BotRecord[];
   chiefId?: string;
-  messagesFor(threadId: string): readonly Message[];
+  /** One message by id, and the newest tool line of a turn: what the tray
+   * reads, each without the thread's history (Store.messageById, scanNewest).
+   * A caller holding whole transcripts may give `messagesFor` instead. */
+  message?(threadId: string, messageId: string): Message | undefined;
+  newestActivity?(threadId: string, startedAt: number | undefined): Message | undefined;
+  messagesFor?(threadId: string): readonly Message[];
   stopHit(threadId: string, requestId: string): boolean;
   /** Engines present and signed out of, as the sidebar counts them: none
    * while the first run owns the main view. */
@@ -81,7 +86,9 @@ export interface TraySummaryDeps {
 export function traySummary(deps: TraySummaryDeps): TraySummary {
   const botById = new Map(deps.bots.map(bot => [bot.id, bot]));
   const items = deps.page.items.slice(0, TRAY_ITEM_LIMIT).map((item: InboxItem): TrayItem => {
-    const message = item.kind === "request" ? deps.messagesFor(item.link.threadId).find(entry => entry.id === item.link.messageId) : undefined;
+    const message = item.kind !== "request" ? undefined
+      : deps.message ? deps.message(item.link.threadId, item.link.messageId)
+      : deps.messagesFor?.(item.link.threadId).find(entry => entry.id === item.link.messageId);
     const card = message?.card;
     const botId = message?.from?.botId ?? item.botId;
     const botName = (botId ? botById.get(botId)?.name : undefined) ?? item.sourceLabel.split(" · ")[0]?.trim() ?? "Murage";
@@ -105,7 +112,8 @@ export function traySummary(deps: TraySummaryDeps): TraySummary {
       // waiting on the owner is "Needs you", not working
       if (!busy || activity === "waiting-on-you" || activity === "idle" || activity === "dead") continue;
       const startedAt = task?.turnStartedAt;
-      const last = [...deps.messagesFor(threadId)].reverse().find(message => message.kind === "activity" && message.tool && (!startedAt || message.at >= startedAt));
+      const last = deps.newestActivity ? deps.newestActivity(threadId, startedAt)
+        : [...(deps.messagesFor?.(threadId) ?? [])].reverse().find(message => message.kind === "activity" && message.tool && (!startedAt || message.at >= startedAt));
       const doing = oneLine(last?.tool?.spoken ?? last?.tool?.summary ?? (task?.title && task.title !== "New task" ? task.title : "") ?? "") || "Working";
       working.push({ botId: bot.id, botName: bot.name, threadId, doing, ...(startedAt ? { startedAt } : {}) });
     }

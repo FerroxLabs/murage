@@ -20,11 +20,14 @@
 import { isLearnableSource } from "./learnable.ts";
 import { createHash, randomUUID } from "node:crypto";
 import type { DatabaseSync } from "node:sqlite";
+import { memoryGate } from "./memory-gate.ts";
 import { isWorkspaceOwner, threadHumanPrincipal } from "../human-principals.ts";
 import { redactSecretsInText } from "../redact.ts";
 import type { MemoryRoster } from "./policy.ts";
-import { capturedMessageWithheld, messageCopy, messageSourceForgotten } from "./replay-lineage.ts";
+import { capturedMessageWithheld, LineageAllowance, messageCopy, messageSourceForgotten } from "./replay-lineage.ts";
 import { scopeRow } from "./scope-id.ts";
+import { addTurnParents, writeRecordLineage } from "./lineage-write.ts";
+import type { LineageRef, TurnLineage } from "./lineage-types.ts";
 
 export const BRING_IN_MAX_CHARS = 1000;
 
@@ -82,9 +85,12 @@ export function copiedFromOwner(db: DatabaseSync, roster: MemoryRoster, threadId
  * the turn is the owner's audience and the bot a member of the project. */
 export function bringInToProject(db: DatabaseSync, input: {
   groupId: string; roomThreadId: string; botId: string; roster: MemoryRoster; now: number; botInitiated?: boolean;
+  /** The running turn of the bot that brings it in (write-time hole 2): what it brings joins the turn, and the copy rests on the turn.
+   * Absent outside a turn (the owner's UI): nothing is recorded. */
+  turn?: TurnLineage;
 } & BringInInput): BringInResult {
   const mode = db.prepare("SELECT mode FROM memory_meta WHERE id=1").get()?.mode;
-  if (mode === "off" || mode === "paused") return refuse(409, "Memory is off, so nothing can be brought in.");
+  if (mode === "off" || mode === "paused" || memoryGate(db, "bring-in") !== "ok") return refuse(409, "Memory is off, so nothing can be brought in.");
   const excerpt = typeof input.text === "string" ? input.text.trim() : "";
   if (excerpt.length > BRING_IN_MAX_CHARS) return refuse(400, `The text is longer than ${BRING_IN_MAX_CHARS} characters.`);
   if (Boolean(input.recordId) === Boolean(input.sourceMessageId)) return refuse(400, "Name one thing to bring in: recordId or sourceMessageId.");
@@ -98,6 +104,7 @@ export function bringInToProject(db: DatabaseSync, input: {
   let original: string, from: { record?: { id: string; version: number }; sources: Array<{ id: string; revision: number }> };
   let kind = "fact";
   let origin: { threadId: string; messageId: string; speaker: string } | null = null;
+  let evidenceLines: Array<{ threadId: string; messageId: string }> = [];
   if (input.recordId) {
     const record = db.prepare("SELECT * FROM memory_records WHERE id=? AND state='active' ORDER BY version DESC LIMIT 1").get(input.recordId);
     if (!record) return refuse(404, "No such note in your memory.");
@@ -126,6 +133,7 @@ export function bringInToProject(db: DatabaseSync, input: {
     original = String(record.text);
     kind = /^[a-z][a-z-]{0,31}$/.test(String(record.kind)) && !["checkpoint", "source"].includes(String(record.kind)) ? String(record.kind) : "fact";
     from = { record: { id: String(record.id), version: Number(record.version) }, sources: evidence.map(item => ({ id: item.source_id, revision: Number(item.source_revision) })) };
+    evidenceLines = evidence.filter(item => item.thread_id && item.message_id).map(item => ({ threadId: item.thread_id!, messageId: item.message_id! }));
   } else {
     const threadId = input.threadId ?? bot.threadId;
     if (!own.has(threadId)) return refuse(403, "You can only bring in messages from your own chats.");
@@ -135,7 +143,7 @@ export function bringInToProject(db: DatabaseSync, input: {
     if (!copiedFromOwner(db, input.roster, threadId, input.sourceMessageId!, excluded)) return refuse(403, NOT_OWNERS);
     const sourceId = `message:${threadId}:${input.sourceMessageId}`;
     const source = db.prepare("SELECT revision, speaker FROM memory_sources WHERE id=? AND state='active'").get(sourceId);
-    if (!source || messageSourceForgotten(threadId, input.sourceMessageId!) || capturedMessageWithheld(threadId, input.sourceMessageId!)) return refuse(409, "That message is not in memory, or was forgotten.");
+    if (!source || messageSourceForgotten(threadId, input.sourceMessageId!) || capturedMessageWithheld(LineageAllowance.tool(), threadId, input.sourceMessageId!)) return refuse(409, "That message is not in memory, or was forgotten.");
     if(input.botInitiated&&!isLearnableSource(db,sourceId,Number(source.revision),{roster:input.roster}).learnable)return refuse(403,"This source is not eligible for learning. Ask the owner to review it.");
     original = message.text;
     from = { sources: [{ id: sourceId, revision: Number(source.revision) }] };
@@ -153,6 +161,10 @@ export function bringInToProject(db: DatabaseSync, input: {
   const key = createHash("sha256").update(JSON.stringify([input.groupId, from, text])).digest("hex").slice(0, 32);
   const newSource = `bring-in:${input.groupId}:${key}`;
   const existing = db.prepare("SELECT r.id FROM memory_evidence e JOIN memory_records r ON r.id=e.record_id AND r.version=e.record_version WHERE e.source_id=? AND r.state='active' LIMIT 1").get(newSource);
+  // Write-time hole 2 (DESIGN-WRITETIME 2.2): until now bring-in only judged its material at read. What it brings in was shown to the
+  // turn (the original, its evidence lines, the sources the copy names in memory_source_origins), so all of it joins the running turn.
+  const broughtRefs = bringInRefs(from, origin ? [origin, ...evidenceLines] : evidenceLines);
+  if (input.turn) addTurnParents(input.turn, broughtRefs);
   if (existing) return { ok: true, recordId: String(existing.id) };
   if (db.prepare("SELECT 1 FROM memory_sources WHERE id=?").get(newSource)) return refuse(409, "That was brought in before and has since been forgotten.");
   const payload = JSON.stringify({ text, kind: "bring-in", speaker: input.botId, outcome: "recorded", occurredAt: input.now, actorId: input.botId, broughtFrom: from });
@@ -168,6 +180,24 @@ export function bringInToProject(db: DatabaseSync, input: {
   db.prepare("INSERT INTO memory_evidence VALUES(?,1,?,1,0,?)").run(recordId, newSource, Buffer.byteLength(text));
   if (from.record) db.prepare("INSERT INTO memory_derivations VALUES(?,?,?,1)").run(from.record.id, from.record.version, recordId);
   db.prepare("INSERT INTO memory_projection_receipts VALUES(?,1,0,'pending','pending',NULL)").run(recordId);
+  // the copy is a record a bot wrote in its turn: a prefix carry from the turn (2.5); its evidence and derivation are written above
+  if (input.turn) writeRecordLineage(db, { kind: "record", id: recordId, version: 1, scopeId: room }, input.turn);
   db.exec("UPDATE memory_meta SET data_revision=data_revision+1 WHERE id=1");
   return { ok: true, recordId };
+}
+
+/** What a bring-in rests on: the record version it copies, each source the
+ * copy names (memory_source_origins), and each stored line those sources captured. */
+function bringInRefs(from: { record?: { id: string; version: number }; sources: Array<{ id: string; revision: number }> }, lines: ReadonlyArray<{ threadId: string; messageId: string }>): LineageRef[] {
+  const refs: LineageRef[] = [];
+  if (from.record) refs.push({ kind: "memory", ref: { kind: "record", id: from.record.id, version: from.record.version } });
+  for (const source of from.sources) refs.push({ kind: "memory", ref: { kind: "source", id: source.id } });
+  const seen = new Set<string>();
+  for (const line of lines) {
+    const key = `${line.threadId}\u0000${line.messageId}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    refs.push({ kind: "line", threadId: line.threadId, messageId: line.messageId });
+  }
+  return refs;
 }

@@ -32,8 +32,9 @@ export function cachedKnown(u: Pick<TaskUsage, "cachedInput">): boolean {
   return hasFiniteCost(u.cachedInput);
 }
 
-export function botUsage(bot: Pick<Bot, "tasks">): TaskUsage {
-  return sumUsage((bot.tasks ?? []).map((t) => t.usage));
+export function botUsage(bot: Pick<Bot, "tasks" | "usageTotal">): TaskUsage {
+  // The server sums every task; the list a frame carries is only a window of them.
+  return bot.usageTotal ?? sumUsage((bot.tasks ?? []).map((t) => t.usage));
 }
 
 /** 950 → "950", 12_400 → "12.4k", 2_300_000 → "2.3M" */

@@ -15,6 +15,7 @@
 // message-tables.ts so the offline archive inspector builds its reference
 // schema from it.
 import type { DatabaseSync } from "node:sqlite";
+import { readIndexState, writeIndexState } from "./transcript-backfill.ts";
 
 export const MESSAGE_SEARCH_TABLE = "messages_fts";
 /** Fewer code points than this cannot form a trigram: those queries scan. */
@@ -31,7 +32,12 @@ export function trigramQuery(needle: string): string {
   return [...grams].map((gram) => `"${gram.replace(/"/g, '""')}"`).join(" AND ");
 }
 
+/** Rowids covered by one backfill statement and its transaction (at most this many rows indexed per transaction). */
+const BACKFILL_WINDOW = 500;
+/** Rows read by one step of the background fill (stepMessageSearchBackfill, upgui). */
 const BACKFILL_CHUNK = 500;
+/** A chunk is read in pieces of this many rows and stops once it has used this long (it commits what it read). */
+const BACKFILL_PIECE = 100, BACKFILL_CHUNK_MS = 25;
 const ready = new WeakSet<DatabaseSync>();
 let warned = false;
 
@@ -98,28 +104,34 @@ export function mergeMessageSearchIndex(db: DatabaseSync): void {
  * point: a fresh/restored-from-older-release database starts at 0, an
  * interrupted run continues, and rows appended while an older release (with
  * no index) was running are picked up. Idempotent and chunked: one short
- * transaction per BACKFILL_CHUNK rows. Marks the handle ready when done;
+ * transaction per BACKFILL_WINDOW rowids. Marks the handle ready when done;
  * on failure leaves it not ready (searches scan) rather than throwing.
  *
  * @returns how many rows were indexed by this call. */
-export function backfillMessageSearchIndex(db: DatabaseSync): number {
+export function backfillMessageSearchIndex(db: DatabaseSync, options: { onProgress?: (progress: { done: number; total: number }) => void } = {}): number {
   let indexed = 0;
   try {
     let cursor = Number((db.prepare(`SELECT COALESCE(MAX(id), 0) AS top FROM ${MESSAGE_SEARCH_TABLE}_docsize`).get() as { top: number }).top);
+    const last = Number((db.prepare("SELECT COALESCE(MAX(rowid), 0) AS top FROM messages").get() as { top: number }).top);
+    // Each statement reads one bounded window of rowids, so a long run of rows with nothing to index (tool and
+    // status rows after the last text row) is walked in slices with progress, never as one multi-second scan.
     const read = db.prepare(
       "SELECT rowid AS r, CASE kind WHEN 'activity' THEN json_extract(json, '$.tool.name') ELSE text END AS t " +
-        "FROM messages WHERE rowid > ? AND kind IN ('text', 'activity') ORDER BY rowid LIMIT ?",
+        "FROM messages WHERE rowid > ? AND rowid <= ? AND kind IN ('text', 'activity') ORDER BY rowid",
     );
     const add = db.prepare(`INSERT INTO ${MESSAGE_SEARCH_TABLE}(rowid, t) VALUES (?, ?)`);
-    for (;;) {
-      const rows = read.all(cursor, BACKFILL_CHUNK) as Array<{ r: number; t: unknown }>;
-      if (!rows.length) break;
-      db.exec("BEGIN IMMEDIATE");
-      try {
-        for (const row of rows) if (typeof row.t === "string" && row.t !== "") { add.run(row.r, row.t); indexed++; }
-        db.exec("COMMIT");
-      } catch (error) { try { db.exec("ROLLBACK"); } catch { /* none open */ } throw error; }
-      cursor = rows[rows.length - 1]!.r;
+    while (cursor < last) {
+      const high = Math.min(last, cursor + BACKFILL_WINDOW);
+      const rows = read.all(cursor, high) as Array<{ r: number; t: unknown }>;
+      if (rows.length) {
+        db.exec("BEGIN IMMEDIATE");
+        try {
+          for (const row of rows) if (typeof row.t === "string" && row.t !== "") { add.run(row.r, row.t); indexed++; }
+          db.exec("COMMIT");
+        } catch (error) { try { db.exec("ROLLBACK"); } catch { /* none open */ } throw error; }
+      }
+      cursor = high;
+      options.onProgress?.({ done: cursor, total: last });
     }
     ready.add(db);
   } catch (error) { degrade(db, error); }
@@ -131,4 +143,65 @@ export function rebuildMessageSearchIndex(db: DatabaseSync): number {
   ready.delete(db);
   db.exec(`INSERT INTO ${MESSAGE_SEARCH_TABLE}(${MESSAGE_SEARCH_TABLE}) VALUES('delete-all')`);
   return backfillMessageSearchIndex(db);
+}
+
+/** The state row that keeps the place of the background fill (transcript_index_state): `cursor` is the highest rowid already covered at the
+ * start of this run. It is taken at open, before any write of this run, because a write adds its own entry and would otherwise move the
+ * "highest indexed rowid" past older rows that were never indexed. */
+const SEARCH_FILL = "search_fts";
+
+/** At open: notes where the index ends. With nothing past that point the index is complete and is trusted at once; otherwise the rows past it
+ * are filled by stepMessageSearchBackfill in the background, and searches scan until it has finished. Cheap: a seek and a probe. */
+export function prepareMessageSearchBackfill(db: DatabaseSync): boolean {
+  try {
+    // A fill that was started and not finished keeps its own place. The highest indexed rowid says nothing about it: a live write of the
+    // earlier run indexed a row beyond the unfinished history, and taking that rowid as the cursor would skip everything in between for good.
+    const saved = db.prepare("SELECT done FROM transcript_index_state WHERE name = ?").get(SEARCH_FILL) as { done: number } | undefined;
+    if (saved && Number(saved.done) === 0) return true;
+    const top = Number((db.prepare(`SELECT COALESCE(MAX(id), 0) AS top FROM ${MESSAGE_SEARCH_TABLE}_docsize`).get() as { top: number }).top);
+    // A seek on the rowid alone: filtering by kind here walked every row past the index when they were all of other kinds (6 s on a 48 GB history before the server listened). A row past the index that has no text is found by the fill, which finishes at once.
+    const tail = db.prepare("SELECT 1 AS present FROM messages WHERE rowid > ? LIMIT 1").get(top) !== undefined;
+    writeIndexState(db, SEARCH_FILL, { done: tail ? 0 : 1, cursor: top, skipped: 0 });
+    if (!tail) ready.add(db);
+    return tail;
+  } catch (error) { degrade(db, error); return false; }
+}
+/** True while the fill of the rows past the index still has work. */
+export function messageSearchFillPending(db: DatabaseSync): boolean {
+  try { return !ready.has(db) && readIndexState(db, SEARCH_FILL).done === 0 && db.prepare(`SELECT 1 AS present FROM sqlite_schema WHERE name = '${MESSAGE_SEARCH_TABLE}_docsize'`).get() !== undefined; } catch { return false; }
+}
+/** One chunk of the fill, committed with its place. Returns whether more remain; marks the handle ready at the end. */
+export function stepMessageSearchBackfill(db: DatabaseSync, rows = BACKFILL_CHUNK): { more: boolean; done: number; total: number } {
+  const state = readIndexState(db, SEARCH_FILL);
+  if (state.done) return { more: false, done: state.cursor, total: state.cursor };
+  const newest = Number((db.prepare("SELECT COALESCE(MAX(rowid), 0) AS n FROM messages").get() as { n: number }).n);
+  // Read in small pieces and stop once the chunk has used its time: a cold disk reads 500 long rows in 160 ms on the main thread, which holds
+  // every request behind it; the cursor is committed with whatever was read, so the next chunk carries on.
+  const piece = db.prepare(
+    "SELECT rowid AS r, CASE kind WHEN 'activity' THEN json_extract(json, '$.tool.name') ELSE text END AS t FROM messages WHERE rowid > ? AND kind IN ('text', 'activity') ORDER BY rowid LIMIT ?",
+  );
+  const batch: Array<{ r: number; t: unknown }> = [];
+  const began = performance.now();
+  let more = true;
+  while (batch.length < rows && more) {
+    const limit = Math.min(BACKFILL_PIECE, rows - batch.length);
+    const got = piece.all(batch.length ? batch[batch.length - 1]!.r : state.cursor, limit) as Array<{ r: number; t: unknown }>;
+    batch.push(...got);
+    more = got.length === limit; // a full piece: there may be rows past it
+    if (performance.now() - began >= BACKFILL_CHUNK_MS) break;
+  }
+  db.exec("BEGIN IMMEDIATE");
+  try {
+    for (const row of batch) {
+      // a write of this run may already have added the entry: replace, never duplicate
+      db.prepare(`DELETE FROM ${MESSAGE_SEARCH_TABLE} WHERE rowid = ?`).run(row.r);
+      if (typeof row.t === "string" && row.t !== "") db.prepare(`INSERT INTO ${MESSAGE_SEARCH_TABLE}(rowid, t) VALUES (?, ?)`).run(row.r, row.t);
+    }
+    const last = batch.length ? batch[batch.length - 1]!.r : state.cursor;
+    const finished = !more;
+    writeIndexState(db, SEARCH_FILL, { done: finished ? 1 : 0, cursor: finished ? Math.max(last, newest) : last, skipped: 0 });
+    db.exec("COMMIT");
+    if (finished) ready.add(db);
+    return { more: !finished, done: last, total: newest };
+  } catch (error) { try { db.exec("ROLLBACK"); } catch { /* none open */ } degrade(db, error); throw error; }
 }

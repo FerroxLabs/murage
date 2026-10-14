@@ -1,4 +1,5 @@
 import { spawn, type ChildProcess } from "node:child_process";
+import { MEMORY_CURSOR_MAX_CHARS } from "../memory/cursor-limits.ts";
 import { createServer, type Server } from "node:http";
 import { fileURLToPath } from "node:url";
 import { afterAll, beforeAll, beforeEach, expect, it } from "vitest";
@@ -122,7 +123,7 @@ it("rejects caller authority claims and oversized or malformed arguments before 
   const cases = [
     ["memory_search", { query: "ok", botId: "other" }],
     ["memory_search", { query: "界".repeat(1366) }],
-    ["memory_search", { query: "ok", cursor: "x".repeat(161) }],
+    ["memory_search", { query: "ok", cursor: "x".repeat(MEMORY_CURSOR_MAX_CHARS + 1) }],
     ["memory_search", { query: "ok", limit: 21 }],
     ["memory_get", { handles: Array.from({ length: 21 }, () => ({ id: "r", version: 1 })) }],
     ["memory_get", { handles: [{ id: "r", version: 1, scopeId: "private" }] }],
@@ -146,7 +147,7 @@ it("rejects caller authority claims and oversized or malformed arguments before 
 });
 
 it("says which argument a refused memory call got wrong, so the model can correct it", async () => {
-  const tooLong = await call("memory_search", { query: "ok", cursor: "x".repeat(161) });
+  const tooLong = await call("memory_search", { query: "ok", cursor: "x".repeat(MEMORY_CURSOR_MAX_CHARS + 1) });
   expect(tooLong.result.isError).toBe(true);
   const text = tooLong.result.content[0].text as string;
   expect(text).toContain("cursor");

@@ -70,7 +70,7 @@ it("routes a paired private Telegram delivery through durable routines, event bu
     expect(manager.listRuns()[0].status).toBe("waiting"); expect(calls).toHaveLength(1);
     expect(replies).toContainEqual({ chatId: "7", text: expect.stringContaining("Murage app") });
     manager.handleRuntimeEvent({ ...base, type: "request.resolved", behavior: "allow", source: "user" });
-    manager.handleRuntimeEvent({ ...base, type: "item.completed", itemType: "assistant_text", text: "Fixture task complete" });
+    manager.handleRuntimeEvent({ ...base, type: "item.completed", itemType: "assistant_text", origin: "engine", text: "Fixture task complete" });
     manager.handleRuntimeEvent({ ...base, type: "turn.completed", ok: true, cost: 0 }); busy = false;
     updates = [message(3, "run it")]; await poll();
     expect(replies).toContainEqual({ chatId: "7", text: "Fixture task complete" }); expect(calls).toHaveLength(1);

@@ -22,6 +22,8 @@ import { join } from "node:path";
 import { decodeInjectId, hostApiKey, localHost, mergeLocalInject, type LocalHost } from "../local-inject.ts";
 import { isPlainObject, readNativeJsonConfig } from "../native-config-file.ts";
 import { createAcpDriver, type AcpSupport } from "./core.ts";
+import { pathExists, readText } from "../isolation-cache.ts";
+import { currentScopeHome, engineUpdateRequired, registerScopeReconstructor, scopedCliHome, scopedCliHomeRoot, type ScopedCliHomeSpec } from "../scoped-cli-home.ts";
 
 // FACTORY_HOME_OVERRIDE replaces the HOME the CLI resolves, NOT the data root:
 // droid builds every path as <home>/.factory/… (verified against 0.196.0 —
@@ -236,8 +238,79 @@ const MODELS = {
   ],
 };
 
+/**
+ * The owner's personal Droid setup out of bot turns. Under ACP droid loads
+ * ~/.factory/mcp.json servers, settings.json hooks (SessionStart and
+ * UserPromptSubmit fire), droids, skills, commands and AGENTS.md, plus
+ * ~/.agents skills (rig, droid 0.238.0: 128 tools, 62 of them three personal
+ * servers, four personal markers in the prompt). `--settings` only merges
+ * (hooks and `disabled` servers in it changed nothing) and `--remove-tools
+ * MCP:<server>` still starts the server, so the lever is FACTORY_HOME_OVERRIDE
+ * (droid resolves `.factory` and `.agents` under it): a Murage-owned home, one
+ * per bot, whose `.factory` holds copies of settings.json and settings.local.json
+ * without hooks or servers (model and BYOK fields stay) and links to the login
+ * files only; sessions, droids, skills and commands are the bot's own. The login files are linked
+ * even before they exist; droid writes them with `atomically`, which resolves
+ * the real path and renames onto it, so the owner's file is updated and the
+ * link stays. After: only Murage's servers start, no hook fires, 66 tools.
+ * Applied from 0.196.0, the earliest version with FACTORY_HOME_OVERRIDE proved to replace the CLI's HOME and root `.factory` under it (acp.test.ts: auth.v2.file lands at <home>/.factory, verified against 0.196.0; the closed-source binary has no earlier evidence). The full effect (servers, hooks, droids, skills out) was rig-measured at 0.238.0; older or unknown: the bot's turn is rejected and the owner is told to update droid.
+ * An owner-set FACTORY_HOME_OVERRIDE is the real home being mirrored.
+ */
+export const DROID_SCOPED_HOME_MIN = [0, 196, 0] as const;
+/** settings.json keys that run or mount the owner's own things. */
+const DROID_PERSONAL_SETTINGS_KEYS = ["hooks", "mcpServers", "mcp"];
+
+function droidVersionAtLeast(version: string | undefined, min: readonly number[]): boolean {
+  const m = /(\d+)\.(\d+)\.(\d+)/.exec(version ?? "");
+  if (!m) return false;
+  const v = [Number(m[1]), Number(m[2]), Number(m[3])];
+  return v[0]! !== min[0]! ? v[0]! > min[0]! : v[1]! !== min[1]! ? v[1]! > min[1]! : v[2]! >= min[2]!;
+}
+
+function droidScopeSpec(realFactory: string, botId?: string): ScopedCliHomeSpec {
+  return {
+    kind: "droid",
+    realHome: realFactory,
+    subdir: ".factory",
+    botId,
+    share: AUTH_FILES.concat("auth.v2.key"),
+    cache: ["logs"],
+    // settings.json and settings.local.json (droid layers the local file over it) are copies without the keys
+    // that run or mount the owner's own things; model, BYOK and display settings stay.
+    generated: () => {
+      const out: Record<string, string> = {};
+      for (const name of ["settings.json", "settings.local.json"]) {
+        const path = join(realFactory, name);
+        let settings: Record<string, unknown> = {};
+        try {
+          const parsed = JSON.parse(readText(path)) as unknown;
+          if (isPlainObject(parsed)) settings = { ...parsed };
+        } catch { pathExists(path); if (name === "settings.local.json") continue; }
+        for (const key of DROID_PERSONAL_SETTINGS_KEYS) delete settings[key];
+        out[name] = `${JSON.stringify(settings, null, 2)}\n`;
+      }
+      return out;
+    },
+  };
+}
+registerScopeReconstructor("droid", ({ realHome, botId }) => droidScopeSpec(realHome, botId));
+
+/** Point FACTORY_HOME_OVERRIDE at the scoped home on a proven droid. Throws when the scope cannot be built. */
+export function scopeDroidHome(env: Record<string, string | undefined>, cliVersion: string | undefined, botId?: string): void {
+  // Fails closed: no catch here. The turn path retries contention and rejects the turn (withScopeRetry) rather than start in the owner's own home.
+  // Fails closed on a version that is unknown (the probe was retried) or older than the first proven one.
+  if (!droidVersionAtLeast(cliVersion, DROID_SCOPED_HOME_MIN)) throw engineUpdateRequired("Droid", cliVersion?.trim() || undefined, DROID_SCOPED_HOME_MIN);
+  const realHome = factoryHome(env);
+  if (realHome.startsWith(scopedCliHomeRoot("droid"))) { const current = currentScopeHome("droid", realHome); if (current) env.FACTORY_HOME_OVERRIDE = current; return; }
+  const realFactory = join(realHome, ".factory");
+  env.FACTORY_HOME_OVERRIDE = scopedCliHome(droidScopeSpec(realFactory, botId));
+}
+
 const support: AcpSupport = {
   driverKind: "droidAgent",
+  // Droid starts the servers handed at session/new (rig 0.238.0: only Murage's
+  // servers start once the owner's are scoped out), with no readiness signal.
+  mcpListedWait: true,
   displayName: "Droid",
   models: MODELS,
   defaultCli: "droid",
@@ -257,7 +330,13 @@ const support: AcpSupport = {
   // No model/mode flags here on purpose: see the header note. `-o acp` is the
   // ACP entry point; everything else is negotiated over the protocol.
   spawnArgs: () => ["exec", "-o", "acp"],
+  // The version gates the scoped home below.
+  spawnNeedsCliVersion: true,
   credentialEnv: ["FACTORY_API_KEY"],
+  // After resolveTurnModel, so a local model is written to the real settings.json first.
+  scopeKind: "droid",
+  applyMountEnv: (env, { cliVersion, botId }) => scopeDroidHome(env, cliVersion, botId),
+  scopeRoot: (env) => env.FACTORY_HOME_OVERRIDE,
 
   // The advertised methods are device-pairing (a browser flow that cannot be
   // driven over ACP) and factory-api-key (read from the child env, no

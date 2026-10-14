@@ -28,6 +28,9 @@ import type { BotRecord, Message } from "./store.ts";
 
 const SERVER_DIR = dirname(fileURLToPath(import.meta.url));
 const FAKE_CLI = join(SERVER_DIR, "testing", "fake-acp-cli.ts");
+// The fake engines announce their MCP servers ready under Grok Build's own name, as the real engine does
+// (drivers/acp/grok.ts mcpReadyNotification); a silent build is held for the full MCP_REQUIRED_WAIT_MS before each first prompt.
+const GROK_MCP_READY = { FAKE_ACP_MCP_READY: "1", FAKE_ACP_MCP_READY_METHOD: "_x.ai/mcp_initialized" };
 const PORT = 18800 + Math.floor(Math.random() * 10_000);
 const BASE = `http://127.0.0.1:${PORT}`;
 
@@ -168,6 +171,31 @@ describe("steer-queue module", () => {
     // drain-once: a second settle finds nothing and fires nothing
     drainSteeredMessages(store, run);
     expect(run).toHaveBeenCalledTimes(1);
+  });
+
+  it("keeps a queued line through a reset that times out: it lands in the transcript, visible, and the failed start loses nothing", async () => {
+    const bot = fakeBot("bot-r", "thread-r", true);
+    const store = fakeStore([bot]);
+    const queued = queueSteeredMessage(bot.id, bot.threadId, "typed during the reset loop");
+    // the session reset closed the engine: the busy turn settles
+    bot.busy = false;
+    const run = vi.fn(async () => { throw new Error("CLAUDE_SESSION_RESET_TIMEOUT"); });
+    expect(() => drainSteeredMessages(store, run)).not.toThrow();
+    await Promise.resolve();
+    expect(run).toHaveBeenCalledTimes(1);
+    // the words are in the thread with the chip's identity, so the pending chip resolves to a real line
+    expect(store.messages.map((m) => [m.text, m.queueId])).toEqual([["typed during the reset loop", queued.id]]);
+    expect(_queuedCount("thread-r")).toBe(0);
+  });
+
+  it("a queued line survives a refused steer while the bot stays busy through repeated resets", () => {
+    const bot = fakeBot("bot-s", "thread-s", true);
+    const store = fakeStore([bot]);
+    queueSteeredMessage(bot.id, bot.threadId, "one");
+    for (let reset = 0; reset < 3; reset += 1) drainSteeredMessages(store, vi.fn());
+    queueSteeredMessage(bot.id, bot.threadId, "two");
+    expect(_queuedCount("thread-s")).toBe(2);
+    expect(store.messages).toHaveLength(0);
   });
 
   it("drops a cancelled message so drain does not send it", () => {
@@ -328,7 +356,7 @@ describe("steer-queue e2e (fake ACP fleet)", () => {
         instances: {
           steer: {
             driver: "grokAgent",
-            environment: { FAKE_ACP_MODE: "echo-gated", FAKE_ACP_GATE_FILE: drainGate },
+            environment: { ...GROK_MCP_READY, FAKE_ACP_MODE: "echo-gated", FAKE_ACP_GATE_FILE: drainGate },
             config: { cli: FAKE_CLI, fullAuto: true },
           },
           // the RPC dump lets the interrupt test wait for session/prompt to
@@ -336,7 +364,7 @@ describe("steer-queue e2e (fake ACP fleet)", () => {
           // the driver has not registered yet
           steerStop: {
             driver: "grokAgent",
-            environment: {
+            environment: { ...GROK_MCP_READY,
               FAKE_ACP_MODE: "echo-gated",
               FAKE_ACP_GATE_FILE: stopGate,
               FAKE_ACP_RPC_DUMP: stopRpcDump,
@@ -346,7 +374,7 @@ describe("steer-queue e2e (fake ACP fleet)", () => {
           // a room turn held open by its own gate while a 1:1 message arrives
           steerRoom: {
             driver: "grokAgent",
-            environment: { FAKE_ACP_MODE: "echo-gated", FAKE_ACP_GATE_FILE: roomGate },
+            environment: { ...GROK_MCP_READY, FAKE_ACP_MODE: "echo-gated", FAKE_ACP_GATE_FILE: roomGate },
             config: { cli: FAKE_CLI, fullAuto: true },
           },
         },
@@ -531,4 +559,52 @@ describe("steer-queue e2e (fake ACP fleet)", () => {
     },
     60_000,
   );
+});
+
+describe("steer-queue: authoritative pending list and ordering", () => {
+  it("reports each change to the observer and lists the waiting sends with their send ids", async () => {
+    const { setSteerQueueObserver, pendingSteerItems, queuedSteerCount, steerQueueThreads } = await import("./steer-queue.ts");
+    const seen: string[] = [];
+    setSteerQueueObserver((threadId) => seen.push(threadId));
+    try {
+      const bot = fakeBot("bot-o", "thread-o", true);
+      const queued = queueSteeredMessage(bot.id, bot.threadId, "wait", { sendId: "send-o1" });
+      expect(pendingSteerItems("thread-o")).toEqual([{ queueId: queued.id, sendId: "send-o1", text: "wait", at: expect.any(Number) }]);   // r29: with the time it was typed
+      expect(queuedSteerCount("thread-o")).toBe(1);
+      expect(steerQueueThreads()).toContain("thread-o");
+      expect(cancelSteeredMessage(bot.id, queued.id)).toBe(true);
+      expect(pendingSteerItems("thread-o")).toEqual([]);
+      expect(seen).toEqual(["thread-o", "thread-o"]);
+    } finally {
+      setSteerQueueObserver(null);
+    }
+  });
+
+  it("tells the observer only AFTER the held lines are in the transcript, so a client never sees the chip gone before the words are on the page", async () => {
+    const { setSteerQueueObserver } = await import("./steer-queue.ts");
+    const bot = fakeBot("bot-p", "thread-p", false);
+    const store = fakeStore([bot]);
+    let linesWhenTold = -1;
+    setSteerQueueObserver(() => { linesWhenTold = store.messages.length; });
+    try {
+      queueSteeredMessage(bot.id, bot.threadId, "one", { sendId: "p1" });
+      linesWhenTold = -1;
+      drainSteeredMessages(store, vi.fn());
+      expect(linesWhenTold).toBe(1);
+    } finally {
+      setSteerQueueObserver(null);
+    }
+  });
+
+  it("a send the engine refused late runs from the line already in the transcript, not as a second copy", () => {
+    const bot = fakeBot("bot-q", "thread-q", false);
+    const store = fakeStore([bot]);
+    const already = store.appendMessage("thread-q", { role: "user", kind: "text", text: "do the thing", sendId: "q1" });
+    (store as any).messagesFor = () => store.messages;
+    queueSteeredMessage(bot.id, bot.threadId, "do the thing", { sendId: "q1", existingMessageId: already.id });
+    const run = vi.fn();
+    drainSteeredMessages(store, run);
+    expect(store.messages).toHaveLength(1);
+    expect(run).toHaveBeenCalledWith("bot-q", "thread-q", "do the thing", already, [already.id]);
+  });
 });

@@ -11,8 +11,10 @@ import { DATA_DIR, saveConfig } from "./config.ts";
 import { closeDatabase, database } from "./database.ts";
 import { Store } from "./store.ts";
 import { teamIdFor } from "./team-identities.ts";
-import { getOrCreateChannel, mirrorExchange } from "./comms-visibility.ts";
-import { enqueueSharedWork, isSharedWorkRow, sharedDispatchOrder, sharedCapacity, changeSharing, clearSharedFinishing, sharedRowAudience, configureSharedDrain, drainSharedWork, sharedRequestRoutineAuthority } from "./shared-work.ts";
+import { getOrCreateChannel, mirrorExchange, type CommsBus } from "./comms-visibility.ts";
+import { configureHandoffDispatch } from "./handoff-dispatch.ts";
+import { fakeHost } from "./testing/handoff-turn.ts";
+import { enqueueSharedWork, isSharedWorkRow, sharedDispatchOrder, sharedCapacity, changeSharing, clearSharedFinishing, sharedRowAudience, configureSharedDrain, drainSharedWork, sharedRequestRoutineAuthority, sharedRequestEventId } from "./shared-work.ts";
 import { authorizeWork } from "./execution-audience.ts";
 import { roomRequest, insertRoomRequest, completeRequest, type RoomRequest } from "./room-requests.ts";
 import { settleSharedWorkOwnerTurn, settleProjectUsage } from "./usage-ledger.ts";
@@ -85,9 +87,10 @@ it("only the shared drain starts shared requests, holds flag-off and resumes on 
  const shared={admission,open:()=>true,now:()=>10,changed:()=>{},closed:()=>{},start:(row:RoomRequest)=>{started.push(row.id);}};
  configureSharedDrain(shared);
  const rooms=createRoomDispatcher({db:database,admission,now:()=>10,open:()=>true,roomUsable:()=>{throw Error("shared rows must be skipped first");},roomBusy:()=>false,projectContext:()=>undefined,memberIds:()=>[],audienceStillValid:()=>true,ownerOrigin:()=>true,startOwnerSend:()=>{},startMemberTurn:()=>{throw Error("wrong executor");},onClosed:()=>{},onStillWaiting:()=>{},changed:()=>{}});
- database().prepare("UPDATE room_requests SET verb='wake' WHERE id=?").run(first.request.id);
+ // a wake is shared work when its parent was recorded as shared at creation (here the row names itself as that parent)
+ database().prepare("UPDATE room_requests SET verb='wake', parent_id=id WHERE id=?").run(first.request.id);
  rooms.pump();expect(roomRequest(database(),first.request.id)?.state).toBe("queued");
- database().prepare("UPDATE room_requests SET verb='ask' WHERE id=?").run(first.request.id);
+ database().prepare("UPDATE room_requests SET verb='ask', parent_id=NULL WHERE id=?").run(first.request.id);
  saveConfig({features:{botsSharedAcrossTeams:false}});drainSharedWork(f.iris.id);expect(started).toEqual([]);expect(roomRequest(database(),first.request.id)?.refusal).toBe("shared_paused");
  saveConfig({features:{botsSharedAcrossTeams:true}});drainSharedWork(f.iris.id);expect(started).toEqual([first.request.id]);
 });
@@ -179,10 +182,16 @@ it("R3c A6: a parent and its running continuation occupy one shared slot",()=>{
 
 
 it.each(["expired","unreachable","admission"])("R3c C6: shared drain records a terminal delegation receipt (%s)",reason=>{
- const f=fixture(),queued=f.enqueue(0,"ask:delegation:receipt-"+reason);if(!queued.ok)throw Error(queued.code);
+ // (as in production: the request's id IS the hand-off's id, and the hand-off's row exists while its request is live)
+ const f=fixture(),queued=enqueueSharedWork(f.store,{fromBotId:f.teams[0].bot.id,sourceThreadId:f.teams[0].bot.threadId,toBotId:f.iris.id,message:"CANARY_0",admissionKey:"ask:delegation:receipt-"+reason,ownerAudience:true,now:1,id:"receipt-"+reason});if(!queued.ok)throw Error(queued.code);
+ database().prepare("INSERT INTO pending_delegations(id, source_thread_id, to_bot_id, from_bot_id, phase, retry_at, item, origin, turn_key, target_thread_id) VALUES(?,?,?,?,?,?,?,?,?,?)")
+  .run("receipt-"+reason,f.teams[0].bot.threadId,f.iris.id,f.teams[0].bot.id,"fresh",null,JSON.stringify({message:"CANARY_0",depth:0,attempts:0}),"shared","dlg-receipt-"+reason,queued.request.targetThreadId);
  if(reason==="unreachable") f.store.patchBot(f.iris.id,{hidden:true});
  const admission={admit:()=>({admit:false,reason:"fixture-refusal",retry:"never",line:"Refused by admission"})} as unknown as WorkAdmission;
  configureSharedDrain({admission,open:()=>true,now:()=>reason==="expired"?86400002:10,changed:()=>{},closed:()=>{},start:()=>{throw Error("must not start");}});
+ // a hand-off's request is decided by the hand-off dispatch (its row exists): the drain hands it over, and the dispatch settles it with the same receipt
+ const bus={store:f.store,broadcast:()=>{}} as unknown as CommsBus;
+ configureHandoffDispatch({...fakeHost(bus,()=>{},{stamp:false})},{bus,approvalBus:{store:f.store,broadcast:()=>{}} as never});
  drainSharedWork(f.iris.id);
  expect(roomRequest(database(),queued.request.id)?.state).toBe(reason==="expired"?"expired":"cancelled");
  expect(findDelegationReceipt("receipt-"+reason)).toMatchObject({id:"receipt-"+reason,sourceThreadId:f.teams[0].bot.threadId,toBotId:f.iris.id,status:reason==="expired"?"expired":"failed"});
@@ -423,4 +432,19 @@ it("restart: a nonroutine chain W1 -> W2 stays unchanged, and a routine chain th
 it("the provenance table exists from the database initializer, before any shared request",()=>{
  fixture();
  expect(database().prepare("SELECT name FROM sqlite_schema WHERE type='table' AND name='shared_request_provenance'").get()).toBeTruthy();
+});
+
+// Review round 4 #1: the run a shared request works for follows the work, so the bot that receives it is counted in that run's ledger.
+it("a shared request carries the event run it works for, through its children and continuations; work from no run carries none", async () => {
+ const f=fixture();
+ const plain=f.enqueue(0,"plain");if(!plain.ok)throw Error(plain.code);
+ expect(sharedRequestEventId(plain.request)).toBeUndefined();
+ const entry=enqueueSharedWork(f.store,{fromBotId:f.teams[1].bot.id,sourceThreadId:f.teams[1].bot.threadId,toBotId:f.iris.id,message:"from a run",admissionKey:"evented",ownerAudience:true,now:2,eventId:"run-42"});
+ if(!entry.ok)throw Error(entry.code);
+ expect(sharedRequestEventId(entry.request)).toBe("run-42");
+ const wake=insertRoomRequest(database(),{groupId:entry.request.groupId,verb:"wake",fromKind:"murage",admissionKey:"wake-of-evented",now:3,parentId:entry.request.id,targetThreadId:entry.request.targetThreadId}).request;
+ expect(sharedRequestEventId(wake)).toBe("run-42");
+ // a repeat of the same key does not move the request to another run
+ const again=enqueueSharedWork(f.store,{fromBotId:f.teams[1].bot.id,sourceThreadId:f.teams[1].bot.threadId,toBotId:f.iris.id,message:"from a run",admissionKey:"evented",ownerAudience:true,now:4,eventId:"run-99"});
+ expect(again.ok&&again.request.id).toBe(entry.request.id);expect(sharedRequestEventId(entry.request)).toBe("run-42");
 });

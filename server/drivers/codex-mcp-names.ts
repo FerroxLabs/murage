@@ -28,7 +28,7 @@
 // `murage-memory`, `murage_phone`) are NOT handled here: a bot's custom server
 // can never take one of those names, because mcp-registry.ts rejects them at
 // the config boundary (RESERVED_MCP_NAMES).
-import { readFileSync } from "node:fs";
+import { memoDeps, readText } from "./isolation-cache.ts";
 import { join } from "node:path";
 
 import { codexHome } from "./codex-catalog.ts";
@@ -329,9 +329,14 @@ export function mcpServerNamesInToml(toml: string): Set<string> {
  * for the model and a fresh piece of per-server state in Codex. No capability
  * moves and no turn is refused, so that is the side to be wrong on. */
 export function codexConfigMcpServerNames(env: Record<string, string | undefined>): DeclaredMcpServers {
+  const path = join(codexHome(env), "config.toml");
+  return memoDeps("codex-config-names", path, () => scanCodexConfig(path));
+}
+
+function scanCodexConfig(path: string): DeclaredMcpServers {
   let text: string;
   try {
-    text = readFileSync(join(codexHome(env), "config.toml"), "utf8");
+    text = readText(path);
   } catch (err) {
     const code = (err as NodeJS.ErrnoException)?.code;
     // ENOENT/ENOTDIR: no such file, so nothing is declared in it.
