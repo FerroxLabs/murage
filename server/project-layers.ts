@@ -272,11 +272,13 @@ export function withProjectStatus(transcript: string, status: string): string {
  * anything else can go), then what is left is clipped line by line, and the
  * pointer to project_read_messages is paid for inside the budget. `earlier`
  * is how many messages were already outside the window. */
-export function fitProjectTranscript(lines: readonly string[], earlier: number, maxBytes: number, pinnedPrefix: string): string {
-  const pointer = (hidden: number) => `[${hidden} earlier ${hidden === 1 ? "message is" : "messages are"} not shown here: use ${murageTool("project_read_messages")} to read them.]`;
+export function fitProjectTranscript(lines: readonly string[], earlier: number, maxBytes: number, pinnedPrefix: string, atLeast = false): string {
+  const pointer = (hidden: number) => atLeast
+    ? `[At least ${hidden} earlier ${hidden === 1 ? "message is" : "messages are"} not shown here: use ${murageTool("project_read_messages")} to read them.]`
+    : `[${hidden} earlier ${hidden === 1 ? "message is" : "messages are"} not shown here: use ${murageTool("project_read_messages")} to read them.]`;
   const size = (kept: readonly string[], hidden: number) => Buffer.byteLength([...(hidden > 0 ? [pointer(hidden)] : []), ...kept].join("\n"));
   const kept = [...lines];
-  let hidden = Math.max(0, earlier);
+  let hidden = Math.max(atLeast ? 1 : 0, earlier);
   while (kept.length > 1 && size(kept, hidden) > maxBytes) {
     const drop = kept[0]!.startsWith(pinnedPrefix) ? 1 : 0;
     if (drop >= kept.length) break;

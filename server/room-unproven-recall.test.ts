@@ -23,6 +23,7 @@ import { memoryAgentRoute } from "./memory/routes.ts";
 import { readerWithheldMessage } from "./memory/disclosures.ts";
 import { roomTranscriptForTurn } from "./room-transcript.ts";
 import type { Message } from "./store.ts";
+import { LineageAllowance } from "./memory/lineage-allowance.ts";
 
 const roster: MemoryRoster = {
   bots: [
@@ -65,19 +66,19 @@ it("an unproven room turn reads no bot, team or owner-shared memory", async () =
   expect(unproven.scopeIds).not.toContain(scopeOf("bot", "dax"));
   expect(unproven.scopeIds).not.toContain(scopeOf("team", "Operations"));
   expect(unproven.scopeIds).toContain(scopeOf("room", "closing"));
-  expect(hydrateMemoryRecord(record, version(record), owner).text).toContain("VAULT-5521");
-  expect(() => hydrateMemoryRecord(record, version(record), unproven)).toThrow("MEMORY_SCOPE_DENIED");
+  expect(hydrateMemoryRecord(record, version(record), owner, {allowance: LineageAllowance.tool(1_000_000_000)}).text).toContain("VAULT-5521");
+  expect(() => hydrateMemoryRecord(record, version(record), unproven, {allowance: LineageAllowance.tool(1_000_000_000)})).toThrow("MEMORY_SCOPE_DENIED");
   const bridge = hits([{ id: record, version: version(record) }]);
-  expect((await buildMemoryBundle("vault code", owner, bridge)).text).toContain("VAULT-5521");
-  expect((await buildMemoryBundle("vault code", unproven, bridge)).text).not.toContain("VAULT-5521");
+  expect((await buildMemoryBundle("vault code", owner, bridge, {allowance: LineageAllowance.tool()})).text).toContain("VAULT-5521");
+  expect((await buildMemoryBundle("vault code", unproven, bridge, {allowance: LineageAllowance.tool()})).text).not.toContain("VAULT-5521");
 });
 
 it("an owner pin in the bot's memory does not reach an unproven room turn", async () => {
   const record = daxPrivate("Always sign as Dax from Operations, code VAULT-5521.");
   database().prepare("UPDATE memory_records SET owner_pinned=1 WHERE id=?").run(record);
   const empty = hits([]);
-  expect((await buildMemoryBundle("", access("dax", "closing-chat"), empty)).text).toContain("VAULT-5521");
-  expect((await buildMemoryBundle("", access("dax", "closing-chat", true), empty)).text).not.toContain("VAULT-5521");
+  expect((await buildMemoryBundle("", access("dax", "closing-chat"), empty, {allowance: LineageAllowance.tool()})).text).toContain("VAULT-5521");
+  expect((await buildMemoryBundle("", access("dax", "closing-chat", true), empty, {allowance: LineageAllowance.tool()})).text).not.toContain("VAULT-5521");
 });
 
 it("an unproven room turn does not recall an owner-audience reply its transcript leaves out", async () => {
@@ -95,16 +96,16 @@ it("an unproven room turn does not recall an owner-audience reply its transcript
   // the owner's own turn reads the reply and can recall it
   const owner = access("finch", "closing-chat");
   expect(readerWithheldMessage(owner)).toBeUndefined();
-  expect(roomTranscriptForTurn("closing-chat", transcript, true, owner).messages.map(m => m.text)).toContain("The code you asked for is VAULT-5521.");
-  expect((await buildMemoryBundle("code", owner, hits([chunk]))).text).toContain("VAULT-5521");
+  expect(roomTranscriptForTurn(LineageAllowance.tool(1_000_000_000), "closing-chat", transcript, true, owner).messages.map(m => m.text)).toContain("The code you asked for is VAULT-5521.");
+  expect((await buildMemoryBundle("code", owner, hits([chunk]), {allowance: LineageAllowance.tool()})).text).toContain("VAULT-5521");
 
   // an unproven turn's transcript leaves the reply out, and so does its recall
   const unproven = access("finch", "closing-chat", true);
-  expect(roomTranscriptForTurn("closing-chat", transcript, false, unproven).messages.map(m => m.id)).toEqual(["m-owner"]);
+  expect(roomTranscriptForTurn(LineageAllowance.tool(1_000_000_000), "closing-chat", transcript, false, unproven).messages.map(m => m.id)).toEqual(["m-owner"]);
   const withheld = readerWithheldMessage(unproven)!;
-  expect(withheld("closing-chat", "m-dax")).toBe(true);
-  expect(withheld("closing-chat", "m-owner")).toBe(false);
-  expect((await buildMemoryBundle("code", unproven, hits([chunk]), { withheldMessage: withheld })).text).not.toContain("VAULT-5521");
+  expect(withheld("closing-chat", "m-dax", LineageAllowance.tool(1_000_000_000))).toBe(true);
+  expect(withheld("closing-chat", "m-owner", LineageAllowance.tool(1_000_000_000))).toBe(false);
+  expect((await buildMemoryBundle("code", unproven, hits([chunk]), { allowance: LineageAllowance.tool(), withheldMessage: withheld })).text).not.toContain("VAULT-5521");
   // memory search and get through the bot's own memory tools too
   const searched = await memoryAgentRoute("/api/internal/memory/search", { query: "code" }, unproven, hits([chunk])) as { hits: Array<{ id: string }> };
   expect(searched.hits.map(hit => hit.id)).not.toContain(chunk.id);
@@ -134,10 +135,10 @@ const revokeFinch = () => database().prepare("UPDATE memory_disclosures SET stat
 it("a pin whose reply an unproven reader stops seeing while recall waits is left out", async () => {
   const pin = roomReplyPin();
   const reader = access("dax", "closing-chat", true);
-  const before = await buildMemoryBundle("vendor", reader, hits([]), { withheldMessage: readerWithheldMessage(reader) });
+  const before = await buildMemoryBundle("vendor", reader, hits([]), { allowance: LineageAllowance.tool(), withheldMessage: readerWithheldMessage(reader) });
   expect(before.text).toContain("Friday");
   const during: MemorySearchBridge = { search: async () => { revokeFinch(); return { hits: [], vectorRows: 0, coverageComplete: true }; } };
-  const bundle = await buildMemoryBundle("vendor", reader, during, { withheldMessage: readerWithheldMessage(reader) });
+  const bundle = await buildMemoryBundle("vendor", reader, during, { allowance: LineageAllowance.tool(), withheldMessage: readerWithheldMessage(reader) });
   expect(bundle.text).not.toContain("Friday");
   expect(bundle.withheldPins).toEqual([{ id: pin, version: version(pin) }]);
 });
@@ -145,7 +146,7 @@ it("a pin whose reply an unproven reader stops seeing while recall waits is left
 it("a pin whose reply an unproven reader stops seeing before dispatch refuses that dispatch", async () => {
   roomReplyPin();
   const reader = access("dax", "closing-chat", true);
-  const bundle = await buildMemoryBundle("vendor", reader, hits([]), { withheldMessage: readerWithheldMessage(reader) });
+  const bundle = await buildMemoryBundle("vendor", reader, hits([]), { allowance: LineageAllowance.tool(), withheldMessage: readerWithheldMessage(reader) });
   expect(bundle.text).toContain("Friday");
   assertMemoryBundle(bundle, reader);
   revokeFinch();

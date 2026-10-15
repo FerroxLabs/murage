@@ -17,6 +17,7 @@ import type { DatabaseSync } from "node:sqlite";
 import { database, transaction } from "./database.ts";
 import { DEFAULT_GOAL_REVIEW, DEFAULT_PROJECT_PARALLEL_CARDS, DEFAULT_PROJECT_PARTS } from "./project-defaults.ts";
 import { deleteProjectRows, validateProjectRows } from "./project-tables.ts";
+import { groupDeletionKey, ownerDeletedThread } from "./owner-deletions.ts";
 import { currentProjectBrief, insertProjectBriefVersion, projectSettingsFor, projectSettingsFromRow, activeProjectGoal } from "./project-records.ts";
 import type { GroupRecord, Store } from "./store.ts";
 
@@ -144,8 +145,13 @@ export function reconcileProjectRecords(store: Store): void {
     materializeProjectCreation(store,settings.groupId);
     const group = store.group(settings.groupId);
     if (!group) {
-      if (rosterUnknown) {
-        console.warn("[project-migration] groups.json lists no groups; project rows kept");
+      // Absence from groups.json is not a deletion (the file may be partial or lost): only the owner's recorded deletion of
+      // this channel (store.deleteGroup writes it before the registry forgets it) lets its rows go. That record is honoured
+      // FIRST: deleting the last group leaves an empty roster, which must not hide a confirmed deletion.
+      if (!ownerDeletedThread(db, groupDeletionKey(settings.groupId))) {
+        console.warn(rosterUnknown
+          ? "[project-migration] groups.json lists no groups; project rows kept"
+          : "[project-migration] a channel is missing from groups.json with no recorded deletion; its project rows are kept");
         continue;
       }
       // Crash repair for a deleted group. Hard deletes are permanent, so the

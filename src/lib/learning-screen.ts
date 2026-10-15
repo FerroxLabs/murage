@@ -256,10 +256,10 @@ export const memoryIsOff = (status: MemoryStatusView | null) => status?.mode ===
 /** A skill or routine change: "Improved automatically", "Applied by you", "Suggested" or "Undone", with its name. */
 function procedureChange(event: LearningEvent): ChangeRow {
   const p = event.procedure!;
-  const how = event.kind === "guide-suggested" ? "suggested" : event.kind === "guide-undone" ? "undone" : p.via === "automatic" ? "auto" : "applied";
+  const how = p.state === "held" ? "held" : event.kind === "guide-suggested" ? "suggested" : event.kind === "guide-undone" ? "undone" : p.via === "automatic" ? "auto" : "applied";
   return {
     id: event.id, label: screenText(`recent.procedure.${how}`), text: screenText(p.kind === "routine" ? "recent.procedure.routine" : "recent.procedure.skill", { name: p.label }),
-    canUndo: event.kind === "guide-applied" && event.undone_at === null, undone: event.kind === "guide-applied" && event.undone_at !== null,
+    canUndo: event.kind === "guide-applied" && event.undone_at === null && p.state !== "held", undone: event.kind === "guide-applied" && event.undone_at !== null,
   };
 }
 export interface ChangeRow { id: string; label: string; text: string; canUndo: boolean; undone: boolean }

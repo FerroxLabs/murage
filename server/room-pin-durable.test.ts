@@ -17,7 +17,7 @@ describe("durable responder pin", () => {
   it("the in-memory queue hands the responder to the drain", () => {
     queueChannelMessage("g-pin", "t-pin", "hello", { sendId: "s".repeat(16), responderBotId: "bot-a" });
     const seen: Array<string | undefined> = [];
-    drainChannelMessages(() => false, (item) => { seen.push(item.responderBotId); });
+    drainChannelMessages(() => false, (item) => { seen.push(item.responderBotId); return { messageId: "line-pin" }; });
     expect(seen).toEqual(["bot-a"]);
   });
 

@@ -18,6 +18,7 @@ import { partitionSourcesAllowed } from "./partition-sources.ts";
 // So a lead change takes effect at once, and each role refuses the other.
 // The tools' effects are lanes R and M's functions (R's in project-tools.ts),
 // registered here by name.
+import { scopedTx } from "./tx-scope.ts";
 import { createHash } from "node:crypto";
 import { applyGoalEnvelopeAssign, projectRequestSourceMessages } from "./project-envelope.ts";
 import { activeProjectGoal, projectCardById, projectSettingsFor } from "./project-records.ts";
@@ -268,15 +269,18 @@ projectToolHandlers.set("review-assign", (call, sent) => {
     return { status: 400, body: { error: "cardId and reviewer are required." } };
   }
   if (projectCardById(call.db, body.cardId)?.groupId !== call.groupId) return { status: 404, body: { error: "No such card in this project." } };
-  call.db.exec("SAVEPOINT project_review_assign");
-  try {
-    const result = assignCardReview(call.db, { cardId: body.cardId, reviewerBotId: body.reviewer, leadBotId: call.botId, memberIds: [...call.memberIds], now: call.now });
-    call.db.exec("RELEASE project_review_assign");
-    return { status: result.ok ? 200 : 409, body: result };
-  } catch (error) {
-    call.db.exec("ROLLBACK TO project_review_assign; RELEASE project_review_assign");
-    throw error;
-  }
+  const cardId = body.cardId, reviewerRef = body.reviewer;
+  return scopedTx(() => {
+    call.db.exec("SAVEPOINT project_review_assign");
+    try {
+      const result = assignCardReview(call.db, { cardId, reviewerBotId: reviewerRef, leadBotId: call.botId, memberIds: [...call.memberIds], now: call.now });
+      call.db.exec("RELEASE project_review_assign");
+      return { status: result.ok ? 200 : 409, body: result };
+    } catch (error) {
+      call.db.exec("ROLLBACK TO project_review_assign; RELEASE project_review_assign");
+      throw error;
+    }
+  });
 });
 
 export function projectToolRoleForTurn(db: DatabaseSync, group: { id: string; channelProject?: unknown; dm?: unknown; memberIds: readonly string[] }, botId: string, ownerAudience: boolean): "lead" | "member" | undefined {

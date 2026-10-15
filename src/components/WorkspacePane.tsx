@@ -25,6 +25,8 @@ import { Suspense, useCallback, useEffect, useMemo, useRef, useState, type Keybo
 import { ArrowLeft, ChevronDown, ChevronRight, FileText, Folder, Maximize2, Minimize2, Pencil, Pin, RefreshCw, X } from "lucide-react";
 import { useStore, type Bot } from "@/state/store";
 import { t } from "@/lib/i18n";
+import { findTask } from "@/lib/task-window";
+import { useEnsureTask } from "@/lib/use-ensure-task";
 import type { LocaleKey } from "@/locales";
 import { cn } from "@/lib/cn";
 import { useNarrowViewport } from "@/lib/media-query";
@@ -50,7 +52,7 @@ import type { MarkdownEditorController } from "./MarkdownEditor";
 import { LazyBoundary, retryableLazy } from "./LazyBoundary";
 import { ChatMarkdown } from "./ChatMarkdown";
 import { Files, artifactNativeAction, artifactPreviewHtml } from "./Files";
-import { MemorySettings } from "./MemorySettings";
+import { MemorySettings } from "./MemorySettingsLazy";
 import { LocalMedia } from "./MediaPlayer";
 import { ImageMedia } from "./ImageMedia";
 import { MEDIA_ROUTES, type MediaResolveResponse } from "../../shared/media-assets";
@@ -103,6 +105,7 @@ export function WorkspacePane({ bot }: { bot: Bot }) {
   const pane = state.workspacePane;
   const send = useCallback<WorkspacePaneDispatch>(action => dispatch({ type: "workspacePane", action }), [dispatch]);
   const labelForScope = useCallback((scope: WorkspaceScopeRef) => scopeLabel(state.bots, scope), [state.bots]);
+  useEnsureTask("bot", pane.filesRequest?.botId ?? bot.id, pane.filesRequest?.threadId ?? state.bots.find(item => item.id === pane.filesRequest?.botId)?.threadId ?? bot.threadId);
   const drafts = useMemo(() => createMarkdownDraftStore(createIndexedDbDraftBackend()), []);
   const reveal = window.muragebox?.revealWorkspace;
   if (desktop !== true || !pane.open) return null;
@@ -123,10 +126,10 @@ export function WorkspacePane({ bot }: { bot: Bot }) {
 }
 
 /** "Bot · task" for a scope, from the bots the store knows. */
-export function scopeLabel(bots: ReadonlyArray<{ id: string; name: string; threadId: string; tasks?: ReadonlyArray<{ threadId: string; title: string }> }>, scope: WorkspaceScopeRef): string {
+export function scopeLabel(bots: ReadonlyArray<{ id: string; name: string; threadId: string; tasks?: ReadonlyArray<{ threadId: string; title: string }>; extraTasks?: ReadonlyArray<{ threadId: string; title: string }> }>, scope: WorkspaceScopeRef): string {
   const bot = bots.find(item => item.id === scope.botId);
   if (!bot) return scope.botId;
-  const title = bot.tasks?.find(item => item.threadId === scope.threadId)?.title || t("workspacePane.currentTask");
+  const title = findTask(bot, scope.threadId)?.title || t("workspacePane.currentTask");
   return t("workspacePane.scope", { bot: bot.name, task: title });
 }
 

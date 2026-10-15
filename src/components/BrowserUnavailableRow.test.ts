@@ -5,7 +5,7 @@ import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
 import { BrowserUnavailableRow } from "./BrowserUnavailableRow";
 import { timelineEvents } from "@/lib/taskTimeline";
-import { browserUnavailableActivityName, USER_CHROME_UNREACHABLE_REASON } from "../../shared/browser-unavailable";
+import { BROWSER_CHECK_FAILED_REASON, BROWSER_CHECKING_REASON, browserUnavailableActivityName, USER_CHROME_UNREACHABLE_REASON } from "../../shared/browser-unavailable";
 
 describe("browser unavailable note", () => {
   it("says what happened in plain words, with the technical reason tucked into details", () => {
@@ -34,5 +34,18 @@ describe("browser unavailable note", () => {
   it("reads as an observed note in the task timeline, not a failed tool", () => {
     const [event] = timelineEvents([{ id: "m1", at: 1, kind: "activity", role: "bot", tool: { name: browserUnavailableActivityName("agent-browser command timed out"), ok: true } }]);
     expect(event).toMatchObject({ label: "The browser didn't start in time, so this turn ran without it. It'll try again next turn.", state: "observed" });
+  });
+
+  it("shows the browser check as progress, not as a failure, with no details", () => {
+    const markup = renderToStaticMarkup(createElement(BrowserUnavailableRow, { reason: BROWSER_CHECKING_REASON }));
+    expect(markup).toContain("Checking the browser before this turn starts.");
+    expect(markup).not.toMatch(/couldn&#x27;t start|ran without it|<details/);
+  });
+
+  it("says a check that errored did not finish and to try again, with no details", () => {
+    const markup = renderToStaticMarkup(createElement(BrowserUnavailableRow, { reason: BROWSER_CHECK_FAILED_REASON }));
+    expect(markup).toContain("The browser check didn&#x27;t finish. Try again in a moment.");
+    expect(markup).not.toContain("<details");
+    expect(markup).not.toMatch(/next turn|didn&#x27;t use the browser/);
   });
 });

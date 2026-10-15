@@ -73,10 +73,25 @@ interface PiToolDefinition {
  * loaded by the user's installed Pi, which supplies the real implementation. */
 interface PiExtensionApi {
   registerTool(definition: PiToolDefinition): void;
+  /** Optional in the Pi builds Murage supports: narrow or restore the active tool set. */
+  getActiveTools?(): string[];
+  setActiveTools?(names: string[]): void;
   on(event: "session_shutdown", handler: () => void): void;
 }
 
 const MCP_STARTUP_TIMEOUT_MS = 8_000;
+/** The tools/list deadline: at least twice the connector bridge's own absolute
+ * deadline (CONNECTOR_LIST_DEADLINE_MS, 8 s), so the bridge's answer (the real
+ * list, or the stand-in with the transport margin) always lands first and the
+ * client is never disposed with the mount lost. */
+export const MCP_LIST_TIMEOUT_MS = 20_000;
+/** The `_meta` key the connector bridge sets on a tools/list answer that is a
+ * stand-in (the same key as connector-proxy.ts). Pi cannot refresh tools in a
+ * running session, so the mount lists again for a short while until the real
+ * list replaces it. */
+const PROVISIONAL_TOOLS_META = "murage/provisional";
+const MCP_PROVISIONAL_SETTLE_MS = 4_000;
+const MCP_PROVISIONAL_RELIST_MS = 400;
 const MCP_MAX_LIST_PAGES = 100;
 const MCP_MAX_FRAME_BYTES = 32 * 1024 * 1024;
 const TOOL_OUTPUT_MAX_BYTES = 50 * 1024;
@@ -91,6 +106,10 @@ export class StdioMcp {
   private nextId = 1;
   private disposed = false;
   private pending = new Map<number, { resolve: (v: unknown) => void; reject: (e: Error) => void }>();
+  /** Set by the extension once tools are registered: the server said its list changed. */
+  onToolsListChanged: (() => void) | undefined;
+  /** The last tools/list answer carried the server's provisional marker. */
+  lastListProvisional = false;
 
   constructor(def: McpServerDef) {
     this.child = spawn(def.command, def.args ?? [], {
@@ -163,8 +182,11 @@ export class StdioMcp {
           return;
         }
       }
-      // Notifications (e.g. notifications/tools/list_changed) are intentionally
-      // ignored for this single-shot mount.
+      // A server that replaces a provisional list says so; the extension then
+      // lists again and registers what is new (Pi has no live tool refresh).
+      if (msg.id === undefined && msg.method === "notifications/tools/list_changed") {
+        try { this.onToolsListChanged?.(); } catch { /* never let a handler end the transport */ }
+      }
     }
     if (Buffer.byteLength(this.buf, "utf8") > MCP_MAX_FRAME_BYTES) {
       this.closeWithError(new Error(`MCP frame exceeded ${MCP_MAX_FRAME_BYTES} bytes without a newline`));
@@ -243,7 +265,7 @@ export class StdioMcp {
   async listTools(): Promise<McpTool[]> {
     const tools: McpTool[] = [];
     const seenCursors = new Set<string>();
-    const deadline = Date.now() + MCP_STARTUP_TIMEOUT_MS;
+    const deadline = Date.now() + MCP_LIST_TIMEOUT_MS;
     let cursor: string | undefined;
     for (let page = 0; page < MCP_MAX_LIST_PAGES; page += 1) {
       const remainingMs = Math.max(1, deadline - Date.now());
@@ -251,8 +273,9 @@ export class StdioMcp {
         "tools/list",
         cursor ? { cursor } : {},
         remainingMs,
-      )) as { tools?: unknown; nextCursor?: unknown } | undefined;
+      )) as { tools?: unknown; nextCursor?: unknown; _meta?: Record<string, unknown> } | undefined;
       if (!Array.isArray(res?.tools)) throw new Error("MCP tools/list returned no tools array");
+      if (page === 0) this.lastListProvisional = res?._meta?.[PROVISIONAL_TOOLS_META] === true;
       tools.push(...(res.tools as McpTool[]));
       if (typeof res.nextCursor !== "string" || !res.nextCursor) return tools;
       if (seenCursors.has(res.nextCursor)) throw new Error("MCP tools/list repeated a pagination cursor");
@@ -260,6 +283,17 @@ export class StdioMcp {
       cursor = res.nextCursor;
     }
     throw new Error(`MCP tools/list exceeded ${MCP_MAX_LIST_PAGES} pages`);
+  }
+
+  /** tools/list that waits (bounded) for a provisional answer to be replaced. */
+  async listSettledTools(settleMs = MCP_PROVISIONAL_SETTLE_MS): Promise<McpTool[]> {
+    const until = Date.now() + settleMs;
+    let tools = await this.listTools();
+    while (this.lastListProvisional && !this.disposed && Date.now() < until) {
+      await new Promise((resolve) => setTimeout(resolve, MCP_PROVISIONAL_RELIST_MS));
+      try { tools = await this.listTools(); } catch { break; }
+    }
+    return tools;
   }
 
   /** tools/call → Pi content, preserving screenshots and bounding text so a
@@ -564,7 +598,7 @@ export default async function (pi: PiExtensionApi): Promise<void> {
       try {
         client = new StdioMcp(def);
         await client.init();
-        return { serverName, def, client, tools: await client.listTools() };
+        return { serverName, def, client, tools: await client.listSettledTools() };
       } catch (err) {
         const message = err instanceof Error ? err.message : String(err);
         process.stderr.write(`[murage-pi-mcp] ${serverName}: ${message}\n`);
@@ -579,60 +613,118 @@ export default async function (pi: PiExtensionApi): Promise<void> {
     const { serverName, def, client, tools } = mount;
     const gated = def.scope === "local-computer" || def.scope === "custom";
     let registered = 0;
-
-    for (const tool of tools) {
-      if (!tool || typeof tool.name !== "string" || !tool.name.trim()) {
-        process.stderr.write(`[murage-pi-mcp] ${serverName}: skipped a tool with no valid name\n`);
-        continue;
-      }
+    // Every tool this mount has put in front of Pi, by the server's tool name:
+    // the Pi name it holds and a signature of what it was registered with. A
+    // refresh compares against it, so a changed description or schema (for
+    // example new account choices) replaces the old registration under the same
+    // Pi name, and a tool the server dropped is retired instead of lingering.
+    const mounted = new Map<string, { piName: string; signature: string; retired: boolean }>();
+    const defineTool = (piName: string, tool: McpTool): PiToolDefinition => {
       const toolName = tool.name;
-      const name = allocateToolName(serverName, toolName, used);
-      try {
-        const parameters = toTypebox(tool.inputSchema);
-        pi.registerTool({
-          name,
-          label: `${serverName}:${toolName}`,
-          description: typeof tool.description === "string" ? tool.description : `${toolName} (MCP tool from ${serverName})`,
-          parameters,
-          async execute(_toolCallId, params, signal, _onUpdate, ctx) {
-            // Host tools ask first, using pi's native permission card
-            // (ctx.ui.confirm → extension_ui_request → Allow/Deny card). This
-            // mirrors ACP's session/request_permission and Codex's elicitation.
-            if (gated) {
-              const detail = summarizeParams(params);
-              const allowed = await ctx.ui.confirm(
-                def.scope === "custom" ? `Allow ${toolName} from ${serverName}?` : `Allow ${toolName} on your computer?`,
-                detail || `Run ${serverName}:${toolName}`,
-              );
-              if (!allowed) {
-                return { content: [{ type: "text", text: "Blocked by the user." }], details: {} };
-              }
+      return {
+        name: piName,
+        label: `${serverName}:${toolName}`,
+        description: typeof tool.description === "string" ? tool.description : `${toolName} (MCP tool from ${serverName})`,
+        parameters: toTypebox(tool.inputSchema),
+        async execute(_toolCallId, params, signal, _onUpdate, ctx) {
+          // Host tools ask first, using pi's native permission card
+          // (ctx.ui.confirm → extension_ui_request → Allow/Deny card). This
+          // mirrors ACP's session/request_permission and Codex's elicitation.
+          if (gated) {
+            const detail = summarizeParams(params);
+            const allowed = await ctx.ui.confirm(
+              def.scope === "custom" ? `Allow ${toolName} from ${serverName}?` : `Allow ${toolName} on your computer?`,
+              detail || `Run ${serverName}:${toolName}`,
+            );
+            if (!allowed) {
+              return { content: [{ type: "text", text: "Blocked by the user." }], details: {} };
             }
-            const res = await client.callTool(toolName, params, signal);
-            if (res.isError) {
-              const message = res.content
-                .filter((item): item is { type: "text"; text: string } => item.type === "text")
-                .map((item) => item.text)
-                .join("\n");
-              // Pi marks a custom tool as failed only when execute throws;
-              // returning error-looking text incorrectly produces isError=false.
-              throw new Error(message || `MCP tool ${serverName}:${toolName} returned an error`);
-            }
-            return { content: res.content, details: {} };
-          },
-        });
-        used.add(name);
-        registered += 1;
-      } catch (err) {
-        // One malformed tool must not dispose the client behind tools that
-        // were already registered from the same server.
-        const message = err instanceof Error ? err.message : String(err);
-        process.stderr.write(`[murage-pi-mcp] ${serverName}:${toolName}: ${message}\n`);
+          }
+          const res = await client.callTool(toolName, params, signal);
+          if (res.isError) {
+            const message = res.content
+              .filter((item): item is { type: "text"; text: string } => item.type === "text")
+              .map((item) => item.text)
+              .join("\n");
+            // Pi marks a custom tool as failed only when execute throws;
+            // returning error-looking text incorrectly produces isError=false.
+            throw new Error(message || `MCP tool ${serverName}:${toolName} returned an error`);
+          }
+          return { content: res.content, details: {} };
+        },
+      };
+    };
+    const signatureOf = (tool: McpTool): string => JSON.stringify([tool.description ?? null, tool.inputSchema ?? null]);
+    /** Registers new tools and REPLACES changed ones; with `list` complete (a refresh), retires the rest. */
+    const registerAll = (list: McpTool[], complete = false): void => {
+      const present = new Set<string>();
+      for (const tool of list) {
+        if (!tool || typeof tool.name !== "string" || !tool.name.trim()) {
+          process.stderr.write(`[murage-pi-mcp] ${serverName}: skipped a tool with no valid name\n`);
+          continue;
+        }
+        const toolName = tool.name;
+        if (present.has(toolName)) continue;
+        present.add(toolName);
+        const known = mounted.get(toolName);
+        const signature = signatureOf(tool);
+        if (known && !known.retired && known.signature === signature) continue;
+        const piName = known ? known.piName : allocateToolName(serverName, toolName, used);
+        try {
+          pi.registerTool(defineTool(piName, tool));
+          used.add(piName);
+          mounted.set(toolName, { piName, signature, retired: false });
+          if (!known) registered += 1;
+          if (known?.retired) pi.setActiveTools?.([...new Set([...(pi.getActiveTools?.() ?? []), piName])]);
+        } catch (err) {
+          // One malformed tool must not dispose the client behind tools that
+          // were already registered from the same server.
+          const message = err instanceof Error ? err.message : String(err);
+          process.stderr.write(`[murage-pi-mcp] ${serverName}:${toolName}: ${message}\n`);
+        }
       }
-    }
+      if (!complete) return;
+      for (const [toolName, known] of mounted) {
+        if (present.has(toolName) || known.retired) continue;
+        known.retired = true;
+        // Out of the active set where Pi allows it; and whatever Pi does, the
+        // registered tool now refuses with a plain message (the server enforces
+        // access on every call regardless).
+        try {
+          pi.setActiveTools?.((pi.getActiveTools?.() ?? []).filter((name) => name !== known.piName));
+          pi.registerTool({
+            name: known.piName,
+            label: `${serverName}:${toolName}`,
+            description: `${toolName} is no longer available from ${serverName}.`,
+            parameters: Type.Object({}, { additionalProperties: true }),
+            async execute() {
+              return { content: [{ type: "text", text: `${toolName} is no longer available. Use the tools currently listed.` }], details: {} };
+            },
+          });
+        } catch { /* best effort */ }
+      }
+    };
+    registerAll(tools);
 
-    if (registered > 0) clients.push(client);
-    else client.dispose();
+    // The server replaced or changed its list after the mount (a stand-in list
+    // replaced by the real one, or the bot's access changed): list again and
+    // bring Pi's registrations in line. A mount whose list was still a
+    // provisional stand-in is kept alive even with nothing registered yet, so a
+    // slow harness never costs the session its connected apps.
+    if (registered > 0 || client.lastListProvisional) {
+      let relisting = false;
+      let again = false;
+      const refresh = (): void => {
+        if (relisting) { again = true; return; }
+        relisting = true;
+        void client.listTools().then((list) => registerAll(list, true), () => {}).finally(() => {
+          relisting = false;
+          if (again) { again = false; refresh(); }
+        });
+      };
+      client.onToolsListChanged = refresh;
+      clients.push(client);
+    } else client.dispose();
   }
 
   pi.on("session_shutdown", () => {

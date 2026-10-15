@@ -12,7 +12,6 @@ import { fileURLToPath } from "node:url";
 import { join } from "node:path";
 import { launchVerificationServer, type VerificationServer } from "../../scripts/control-murage.ts";
 import { openSidebar } from "./fixtures.ts";
-import { PHONE_HYDRATE_PAGE } from "../lib/scrollback.ts";
 
 const TOTAL = 1000;
 const PAGE = 100;
@@ -46,13 +45,46 @@ test.beforeAll(async () => {
 });
 test.afterAll(async () => { try { await vite?.close(); } finally { await fixture?.close(); } });
 
-/** How many of the seeded rows are mounted. Counted by id: the harness may
- * add a live message of its own (a greeting card) while the spec runs. */
-const mountedSeeded = (page: Page) =>
+/** Index of the oldest seeded row that is mounted. The transcript mounts only
+ * the rows on screen (05683e461), so a count of mounted rows is no longer the
+ * held count; with the view at the top of the held page, TOTAL minus this index
+ * is. Matched by id: the harness may add a live message of its own (a greeting
+ * card) while the spec runs. */
+const oldestMounted = (page: Page) =>
   page.getByTestId("chat-scroll").evaluate((el, seeded) => {
-    const known = new Set(seeded);
-    return [...el.querySelectorAll("[data-mid]")].filter((node) => known.has(node.getAttribute("data-mid")!)).length;
+    const known = new Map(seeded.map((id, index) => [id, index] as const));
+    const found = [...el.querySelectorAll("[data-mid]")].map((node) => known.get(node.getAttribute("data-mid")!)).filter((index): index is number => index !== undefined);
+    return found.length ? Math.min(...found) : Number.POSITIVE_INFINITY;
   }, ids);
+
+/** The oldest mounted seeded row once the view is at the top of the held page
+ * and the mount has stopped changing (two reads 300 ms apart agree). */
+async function settledOldest(page: Page) {
+  await wheelToHeldTop(page);
+  let last = await oldestMounted(page);
+  for (let i = 0; i < 30; i++) {
+    await page.waitForTimeout(300);
+    const next = await oldestMounted(page);
+    if (next === last) return next;
+    last = next;
+  }
+  return last;
+}
+
+/** Wheel up to the top of the held page, short of the earlier-page trigger
+ * (SCROLLBACK_TRIGGER_PX, 200), so the oldest held row is mounted and no
+ * older page has been asked for yet. */
+async function wheelToHeldTop(page: Page) {
+  const scroller = page.getByTestId("chat-scroll");
+  await scroller.hover();
+  // aim for ~300 px from the top, in steps that cannot overshoot the trigger
+  for (let i = 0; i < 120; i++) {
+    const top = await scroller.evaluate((el) => el.scrollTop);
+    if (top <= 450) break;
+    await page.mouse.wheel(0, -Math.min(500, top - 300));
+    await page.waitForTimeout(80);
+  }
+}
 
 /** The rendered bubble of a message: rows are `display: contents` wrappers. */
 const row = (page: Page, index: number) => page.locator(`[data-mid="${ids[index]}"] > :last-child`);
@@ -71,20 +103,19 @@ async function open(page: Page, requests: string[]) {
 test("opens on the newest page and loads older ones in place when scrolled to the top", async ({ page }, info) => {
   const requests: string[] = [];
   await open(page, requests);
-  // hydration asked for a page, and only that page is on screen. A phone
-  // boots on a slim page (PHONE_HYDRATE_PAGE) and the store tops the open
-  // conversation up to the newest page (scrollback needsNewestPage).
-  const phone = info.project.name === "mobile";
-  expect(requests.some((path) => path === `/api/bots?messages=${phone ? PHONE_HYDRATE_PAGE : PAGE}`)).toBe(true);
-  expect(requests.some((path) => path === "/api/bots")).toBe(false);
-  await expect.poll(() => mountedSeeded(page)).toBeGreaterThanOrEqual(PAGE - 2);
+  // hydration asked for the sidebar roster (no rows, desktop and phone
+  // alike), and the store fetched the open conversation's first page
+  // (scrollback loadFirstPage, the switch page); only that page is on screen.
+  expect(requests.some((path) => path === "/api/bots?view=sidebar")).toBe(true);
+  expect(requests.some((path) => path === "/api/bots" || /^\/api\/bots\?messages=[1-9]/.test(path))).toBe(false);
+  expect(requests.some((path) => /^\/api\/threads\/[\w-]+\/messages\?view=switch&limit=100$/.test(path))).toBe(true);
   // the harness may have added a live message of its own, which then
   // counts toward the newest page
-  const held = await mountedSeeded(page);
+  const oldest = await settledOldest(page);
+  const held = TOTAL - oldest;
   expect(held).toBeGreaterThanOrEqual(PAGE - 2);
-  // The phone's top-up is a full page before its slim one.
-  expect(held).toBeLessThanOrEqual(phone ? PHONE_HYDRATE_PAGE + PAGE : PAGE);
-  const oldest = TOTAL - held;
+  // the first page is one page
+  expect(held).toBeLessThanOrEqual(PAGE + 1);
   await expect(row(page, oldest)).toBeAttached();
   await expect(row(page, oldest - 1)).toHaveCount(0);
   await expect(page.getByTestId("load-earlier")).toBeAttached();
@@ -100,9 +131,9 @@ test("opens on the newest page and loads older ones in place when scrolled to th
     const target = document.querySelector(`[data-mid="${id}"]`)!.lastElementChild!;
     return target.getBoundingClientRect().top - el.getBoundingClientRect().top;
   }, firstHeld);
-  await expect(row(page, oldest - PAGE)).toBeAttached();
+  // the page lands above the reader: its newest row sits right above the old top
+  await expect(row(page, oldest - 1)).toBeAttached();
   expect(requests.some((path) => path.includes(`limit=${PAGE}&before=${firstHeld}`))).toBe(true);
-  await expect.poll(() => mountedSeeded(page)).toBe(held + PAGE);
   // The prepended page went in above the reader: the row that was at the top
   // is exactly where it was, so the view did not jump.
   const after = await page.getByTestId("chat-scroll").evaluate((el, id) => {
@@ -112,6 +143,10 @@ test("opens on the newest page and loads older ones in place when scrolled to th
   expect(Math.abs(after.top - before)).toBeLessThanOrEqual(2);
   expect(after.scrollTop).toBeGreaterThan(0);
   await expect(row(page, oldest)).toBeInViewport();
+  // the held page is now two pages: back at the top of it, the oldest mounted
+  // row is exactly one page older
+  await wheelToHeldTop(page);
+  await expect.poll(() => oldestMounted(page)).toBe(oldest - PAGE);
   await page.screenshot({ path: info.outputPath("thread-paging-older-page.png") });
 });
 
@@ -119,11 +154,10 @@ test("a search hit older than the held page walks back to it and lands on it", a
   const requests: string[] = [];
   await open(page, requests);
   await expect(row(page, NEEDLE)).toHaveCount(0);
-  // A phone boots on a slim page and the store tops it up to the newest page
-  // with a `before=` request of its own (scrollback needsNewestPage). Let that
-  // settle, and count only the requests the search makes.
-  await expect.poll(() => mountedSeeded(page)).toBeGreaterThanOrEqual(PAGE - 2);
-  const oldest = TOTAL - await mountedSeeded(page);
+  // The store fetches the open conversation's first page on its own
+  // (scrollback loadFirstPage). Let that settle, and count only the requests
+  // the search makes.
+  const oldest = await settledOldest(page);
   const searchFrom = requests.length;
   await page.keyboard.press("ControlOrMeta+f");
   const find = page.getByRole("textbox", { name: "Find in this conversation", exact: true });

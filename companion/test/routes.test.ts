@@ -630,6 +630,15 @@ describe("owner decisions carry the launch proof", () => {
     for (const [method, path] of [["POST", "/api/sidebar-sections"], ["POST", "/api/routines/r1/run"], ["POST", "/api/bots"], ["GET", "/api/bots/b1/browser"], ["GET", "/api/bots/b1/browser/frame"], ["POST", "/api/bots/b1/browser"], ["PATCH", "/api/bots/b1/profile"], ["DELETE", "/api/bots/b1/tasks/t1"], ["DELETE", "/api/groups/g1/tasks/t1"]])
       expect(launchProofHeaders(method, path, token), `${method} ${path}`).toEqual({ "x-murage-companion-token": token });
   });
+  it("stamps terms acceptance, which both doors allow so a paired phone can accept", () => {
+    for (const [method, path] of [["GET", "/api/terms"], ["POST", "/api/terms/accept"]]) {
+      expect(launchProofHeaders(method, path, token), `${method} ${path}`).toEqual({ "x-murage-companion-token": token });
+      expect(ask(method, path), `${method} ${path} device`).toBeNull();
+      expect(askBrowser(method, path), `${method} ${path} browser`).toBeNull();
+    }
+    expect(ask("DELETE", "/api/terms")).not.toBeNull();
+    expect(ask("POST", "/api/terms/other")).not.toBeNull();
+  });
   it("stamps the room queue's reads and steering (SPEC-P 11.1), which both doors allow", () => {
     for (const [method, path] of [["GET", "/api/groups/g1/requests"], ["POST", "/api/groups/g1/requests/r1/cancel"], ["POST", "/api/groups/g1/requests/r1/retry"],
       ["POST", "/api/groups/g1/project/control/stop"], ["POST", "/api/groups/g1/project/control/pause"], ["POST", "/api/groups/g1/project/control/resume"], ["POST", "/api/groups/g1/project/control/redirect"]]) {
@@ -778,5 +787,25 @@ describe("approvalDeviceHeaders", () => {
   });
   it("sends no key header for a device without one", () => {
     expect(approvalDeviceHeaders("POST", "/api/threads/t1/respond", { id: id.id, cls: "browser" })).toEqual({ "x-murage-approval-device": id.id, "x-murage-approval-class": "browser" });
+  });
+});
+
+// rc12 review: Settings on the phone reads one bot's whole record (GET /api/bots/:id) when the fleet carried a cut description. Both doors let
+// that read through for a signed-in caller, exactly as they let the fleet through, and nothing else on the same path.
+describe("one bot's whole record reaches the harness from both doors", () => {
+  it("allows GET /api/bots/:id for a paired device and a signed-in browser, and nothing beside it", () => {
+    expect(ask("GET", "/api/bots/bot_123")).toBeNull();
+    expect(askBrowser("GET", "/api/bots/bot_123")).toBeNull();
+    for (const surface of ["device", "browser"] as const) {
+      expect(ask("GET", "/api/bots/bot_123", false, surface)?.status, surface).toBe(401);
+      for (const method of ["PATCH", "DELETE", "PUT", "POST"]) expect(ask(method, "/api/bots/bot_123", true, surface), `${surface} ${method}`).not.toBeNull();
+      expect(ask("GET", "/api/bots/bot_123/access", true, surface), surface).not.toBeNull();
+      expect(ask("GET", "/api/bots/bot_123/computer", true, surface), surface).not.toBeNull();
+    }
+  });
+  it("carries no owner proof: the harness answers it with the fleet's visibility alone", () => {
+    const token = "f".repeat(64);
+    expect(deviceProofHeaders("GET", "/api/bots/bot_123", token)).toEqual({});
+    expect(launchProofHeaders("GET", "/api/bots/bot_123", token)).toEqual({});
   });
 });

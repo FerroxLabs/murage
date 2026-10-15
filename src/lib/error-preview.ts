@@ -9,8 +9,9 @@
 // api_error: …". A preview is one plain sentence chosen the same way the card
 // chooses its heading, and never the engine's text.
 import { t } from "@/lib/i18n";
-import { engineErrorCategory, type ProviderErrorInfo } from "../../shared/provider-error";
+import { engineErrorCategory, isEngineFolderFailure, type ProviderErrorInfo } from "../../shared/provider-error";
 import { isProviderSafetyBlock } from "../../shared/provider-safety";
+import { plainTurnError } from "../../shared/turn-error-code";
 
 const PROVIDER_CATEGORIES = ["credits", "spend-cap", "payment", "authentication", "permission", "rate-limit", "unavailable"] as const;
 export type ProviderErrorCategory = typeof PROVIDER_CATEGORIES[number] | "unknown";
@@ -30,13 +31,19 @@ const sentence = (text: string) => (/[.!?]$/.test(text.trim()) ? text.trim() : `
 
 /** A plain sentence for a failed-turn activity, or undefined when the
  *  activity is not a failed turn. */
-export function errorPreview(tool: { name: string; setup?: boolean; errorKind?: string; errorDetails?: string; providerError?: ProviderErrorInfo } | undefined | null): string | undefined {
+export function errorPreview(tool: { name: string; setup?: boolean; errorKind?: string; errorDetails?: string; providerError?: ProviderErrorInfo; localFailure?: string; localFailureEngine?: string; /** a sidebar line's reading of the details (shared/sidebar-line.ts) */ blocked?: true } | undefined | null): string | undefined {
   if (!tool || !tool.name.startsWith("error:")) return undefined;
   if (tool.providerError) return sentence(providerErrorTitle(tool.providerError));
+  if (isEngineFolderFailure(tool.localFailure)) {
+    return sentence(t(`runtimeError.local.${tool.localFailure}.title`, { engine: tool.localFailureEngine || "Engine" }));
+  }
   if (tool.setup) return "This engine needs setup.";
   const message = tool.name.slice(6).trim();
-  if (isProviderSafetyBlock(message) || isProviderSafetyBlock(tool.errorDetails ?? "")) return "The provider blocked this request.";
+  if (tool.blocked || isProviderSafetyBlock(message) || isProviderSafetyBlock(tool.errorDetails ?? "")) return "The provider blocked this request.";
   const category = engineErrorCategory(tool.errorKind);
   if (category) return t(`runtimeError.engineKind.${category}`);
+  // an internal code reads as its plain sentence, never as the code
+  const coded = plainTurnError(message);
+  if (coded) return coded.split(/(?<=\.)\s/)[0];
   return "This request hit a problem.";
 }

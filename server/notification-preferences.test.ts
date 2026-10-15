@@ -8,7 +8,7 @@ describe("notification preference delivery policy", () => {
     expect(applyNotificationPreferences({ ...notification, requestId: "request", messageId: "card", requestTurnId: "turn", secret: "not allowed" }, { previewContent: false }, at("12:00"))).toEqual({ kind: "approval", botId: notification.botId, threadId: notification.threadId, requestId: "request", messageId: "card", requestTurnId: "turn", botName: "", title: "Murage", body: "Your attention is needed.", privatePreview: true });
   });
   it("preserves current notification behavior when preferences are absent", () => {
-    expect(resolveNotificationPreferences()).toEqual({ attention: true, completion: true, failures: true, previewContent: true });
+    expect(resolveNotificationPreferences()).toEqual({ attention: true, completion: true, failures: true, memories: true, previewContent: true });
     expect(applyNotificationPreferences(notification, undefined, at("12:00"))).toBe(notification);
     expect(notificationPreferencesSchema.safeParse({ attention: "false" }).success).toBe(false);
     expect(notificationPreferencesSchema.safeParse({ unexpected: true }).success).toBe(false);

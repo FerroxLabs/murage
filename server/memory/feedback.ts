@@ -19,6 +19,7 @@
 //
 // The hook (detectFeedback) is async and must run AFTER the message
 // transaction commits; see INTEGRATOR-PATCHES/b2.md for the wiring.
+import { memoryGate } from "./memory-gate.ts";
 import { createHash } from "node:crypto";
 import type { DatabaseSync } from "node:sqlite";
 import { isOwnerOrigin, type Message } from "../store.ts";
@@ -743,6 +744,7 @@ export const feedbackId = (threadId: string, messageId: string) => "fb_" + creat
 
 /** Idempotent per owner message: an edited message never re-runs detection. Returns false when the row already existed. */
 export function recordFeedback(db: DatabaseSync, row: { id: string; botId: string; threadId: string; messageId: string; turn: PriorTurn | null; decision: FeedbackDecision; now: number; /** The owner message as it was when read: its hash is kept so a later edit is recognised (design 3.6). */ sourceText?: string }): boolean {
+  if (memoryGate(db, "feedback-write") !== "ok") return false; // memory is set aside: no feedback is kept (the conversation itself is unaffected)
   const d = row.decision;
   const result = db.prepare(
     `INSERT OR IGNORE INTO memory_feedback(id,bot_id,thread_id,message_id,target_message_id,target_turn_id,target_action,polarity,strength,correction,confidence,state,scope,acknowledged_at,created_at,source_on_path_rev)

@@ -13,7 +13,7 @@ import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { afterEach, beforeEach, expect, it } from "vitest";
 import { DATA_DIR } from "../config.ts";
-import { closeDatabase, database } from "../database.ts";
+import { finishBackgroundUpgradeWorkNow, closeDatabase, database } from "../database.ts";
 import { InternalCapabilities } from "../internal-capabilities.ts";
 import { memoryAccess, reconcileMemoryRoster, type MemoryAccess, type MemoryRoster } from "./policy.ts";
 import { captureSource } from "./capture.ts";
@@ -22,8 +22,11 @@ import { forgetMemory } from "./forget.ts";
 import { buildMemoryBundle } from "./bundle.ts";
 import { MemoryDispatchReceipt } from "./dispatch.ts";
 import { replayExclusions } from "./replay-lineage.ts";
+import { filterMemoryReplay } from "./disclosures.ts";
 import { setMemoryMode } from "./repository.ts";
 import { downgradeMemorySchema, MEMORY_SCHEMA_VERSION, migrateMemorySchema, validateMemorySchema } from "./schema.ts";
+import { drainRevokeMarker } from "./memory-revocation.ts";
+import { LineageAllowance } from "./lineage-allowance.ts";
 
 const roster: MemoryRoster = { bots: [{ id: "dax", threadId: "dax-direct" }, { id: "moss", threadId: "moss-direct" }], groups: [] };
 const thread = "dax-direct";
@@ -36,9 +39,12 @@ function access(): MemoryAccess {
   return memoryAccess(registry, registry.resolve(`Bearer ${registry.mint({ botId: "dax", threadId: thread, generation: "g", depth: 0, kind: "memory", skillAuthoring: false })}`)!, () => roster);
 }
 const empty = { async search() { return { hits: [], vectorRows: 0, coverageComplete: false }; } };
-const message = (threadId: string, id: string, at: number, role: "user" | "bot", text: string) =>
-  database().prepare("INSERT INTO messages(thread_id,id,at,role,kind,text,json) VALUES(?,?,?,?,'text',?,?)")
-    .run(threadId, id, at, role, text, JSON.stringify({ id, at, role, kind: "text", text }));
+// (a legacy thread is a proven chain: every message names the one before it, as the app writes them)
+const message = (threadId: string, id: string, at: number, role: "user" | "bot", text: string) => {
+  const parentId = database().prepare("SELECT id FROM messages WHERE thread_id=? ORDER BY rowid DESC LIMIT 1").get(threadId)?.id ?? null;
+  return database().prepare("INSERT INTO messages(thread_id,id,at,role,kind,text,json) VALUES(?,?,?,?,'text',?,?)")
+    .run(threadId, id, at, role, text, JSON.stringify({ id, at, role, kind: "text", text, parentId }));
+};
 
 /** A used v5 data dir: the app's own writes, then the exact v6 -> v5 inverse. */
 async function usedV5DataDir(): Promise<string> {
@@ -49,7 +55,7 @@ async function usedV5DataDir(): Promise<string> {
   const id = saveMemoryCandidate("The vault code is 7731.", [{ sourceId: "src-x", revision: 1, startByte: 0, endByte: 23 }], "k-x", access());
   database().prepare("UPDATE memory_records SET state='active', owner_pinned=1 WHERE id=?").run(id);
   const a = access();
-  const receipt = new MemoryDispatchReceipt(await buildMemoryBundle("vault", a, empty), a, "claude");
+  const receipt = new MemoryDispatchReceipt(await buildMemoryBundle("vault", a, empty, {allowance: LineageAllowance.tool()}), a, "claude");
   receipt.sessionStarted("s-active"); receipt.accepted(); receipt.output("x-prime");
   message(thread, "x-prime", 11, "bot", "Your vault code is 7731.");
   // memory switched off: an OFF reply repeats it, with no lineage in v5
@@ -76,7 +82,7 @@ function rows(db: DatabaseSync): Map<string, string> {
 /** The shape-check marker is rewritten by every open of a new schema version (validateMemorySchema). */
 const withoutMarker = (db: DatabaseSync) => JSON.stringify(db.prepare("SELECT * FROM memory_scope_bindings WHERE id!='memory-shape-check'").all().map(row => JSON.stringify(row)).sort());
 
-it("upgrades a copy of a used v5 data dir additively, backfills Y's root, and the inverse runs", async () => {
+it("upgrades a copy of a used v5 data dir additively, writes no root set (v10), and the inverse runs", async () => {
   const copy = await usedV5DataDir();
   const db = new DatabaseSync(copy);
   try {
@@ -85,7 +91,7 @@ it("upgrades a copy of a used v5 data dir additively, backfills Y's root, and th
     for (const table of NEW_TABLES) expect(db.prepare("SELECT 1 FROM sqlite_schema WHERE name=?").get(table), table).toBeUndefined();
     const before = rows(db), metaBefore = db.prepare("SELECT * FROM memory_meta").get(), bindingsBefore = withoutMarker(db);
     migrateMemorySchema(db);
-    expect(db.prepare("SELECT schema_version FROM memory_meta").get()?.schema_version).toBe(6);
+    expect(db.prepare("SELECT schema_version FROM memory_meta").get()?.schema_version).toBe(10);
     validateMemorySchema(db, { references: true });
     const after = rows(db);
     // every existing table keeps every row, byte for byte (the shape-check marker aside)
@@ -94,18 +100,21 @@ it("upgrades a copy of a used v5 data dir additively, backfills Y's root, and th
       expect(after.get(table), table).toBe(content);
     }
     expect(withoutMarker(db)).toBe(bindingsBefore);
-    expect(db.prepare("SELECT * FROM memory_meta").get()).toEqual({ ...metaBefore, schema_version: 6 });
-    // the backfill wrote only the roots table: Y, after the thread's first receipt output, rests on X'
+    expect(db.prepare("SELECT * FROM memory_meta").get()).toEqual({ ...metaBefore, schema_version: 10 });
+    // v10: the migration writes no root-set rows (root sets are frozen and the upgrade does not convert them); Y's ancestry is read from the
+    // receipts by the write-time backfill (lineage-backfill.ts), whose certificate starts not ready on an upgraded file
     const roots = db.prepare("SELECT o.thread_id,o.message_id,m.root_thread_id,m.root_message_id FROM memory_output_roots o JOIN memory_root_set_members m ON m.set_id=o.set_id ORDER BY o.message_id").all();
-    expect(roots).toEqual([{ thread_id: thread, message_id: "y", root_thread_id: thread, root_message_id: "x-prime" }]);
-    expect(db.prepare("SELECT count(*) AS n FROM memory_output_roots WHERE set_id NOT IN (SELECT set_id FROM memory_root_sets)").get()?.n).toBe(0);
+    expect(roots).toEqual([]);
+    expect(db.prepare("SELECT count(*) AS n FROM memory_output_roots").get()?.n).toBe(0);
+    expect(db.prepare("SELECT count(*) AS n FROM memory_root_sets").get()?.n).toBe(0);
+    expect(db.prepare("SELECT ready FROM memory_lineage_cert WHERE id=1").get()?.ready).toBe(0);
     expect(db.prepare("SELECT count(*) AS n FROM memory_session_roots").get()?.n).toBe(0);
     expect(db.prepare("SELECT count(*) AS n FROM memory_lineage_meta").get()?.n).toBe(1);
     // a second open changes nothing
     migrateMemorySchema(db);
     for (const table of NEW_TABLES) expect(rows(db).get(table), table).toBe(after.get(table));
     // the inverse: back to the v5 file, every row as it was
-    expect(downgradeMemorySchema(db, 5)).toEqual({ status: "downgraded", from: 6, to: 5 });
+    expect(downgradeMemorySchema(db, 5)).toEqual({ status: "downgraded", from: 10, to: 5 });
     validateMemorySchema(db, { references: true });
     for (const table of NEW_TABLES) expect(db.prepare("SELECT 1 FROM sqlite_schema WHERE name=?").get(table), table).toBeUndefined();
     const back = rows(db);
@@ -113,23 +122,32 @@ it("upgrades a copy of a used v5 data dir additively, backfills Y's root, and th
   } finally { db.close(); }
 });
 
-it("after the upgrade, revoking X withholds the pre-v6 OFF reply Y with X'", async () => {
+it("after the upgrade and the write-time backfill, revoking X withholds the pre-v6 OFF reply Y with X'", async () => {
   const copy = await usedV5DataDir();
   // the app opens the upgraded copy as its data dir
   rmSync(join(DATA_DIR, "messages.db"), { force: true });
   for (const suffix of ["-wal", "-shm"]) if (existsSync(join(DATA_DIR, `messages.db${suffix}`))) rmSync(join(DATA_DIR, `messages.db${suffix}`));
   copyFileSync(copy, join(DATA_DIR, "messages.db"));
-  expect(database().prepare("SELECT schema_version FROM memory_meta").get()?.schema_version).toBe(6);
+  expect(database().prepare("SELECT schema_version FROM memory_meta").get()?.schema_version).toBe(10);
+  finishBackgroundUpgradeWorkNow(); // the write-time backfill is background work now (the root-set repair is retired on v10)
+  // v10: the replay a turn gets is the read-time judge (legacy rows, none here) AND the write-time lookup over the backfilled lines (filterMemoryReplay)
   const lines = ["early", "x-prime", "y"].map(id => ({ id, role: "bot" }));
-  expect([...replayExclusions(thread, lines, null, { failClosed: true })]).toEqual([]);
+  const withheld = (threadId: string, ofLines: Array<{ id: string; role: string }>) => {
+    const kept = new Set(filterMemoryReplay(LineageAllowance.tool(1_000_000_000), threadId, ofLines, access(), { failClosed: true }).map(line => line.id));
+    return new Set(ofLines.filter(line => !kept.has(line.id)).map(line => line.id));
+  };
+  expect(withheld(thread, lines)).toEqual(new Set());
   reconcileMemoryRoster(roster);
   forgetMemory(ownerMemoryTicket(), { kind: "source", id: "src-x", revision: 1 });
-  expect(new Set(replayExclusions(thread, lines, null, { failClosed: true }))).toEqual(new Set(["x-prime", "y"]));
-  // the thread that never used memory is untouched
-  expect([...replayExclusions("moss-direct", [{ id: "moss-1", role: "bot" }], null, { failClosed: true })]).toEqual([]);
+  expect(withheld(thread, lines)).toEqual(new Set(["x-prime", "y"]));
+  // (DESIGN-WRITETIME 3: until the marker has narrowed the forget's window to the threads it reaches, every generated line reads "checking")
+  drainRevokeMarker(database());
+  expect(withheld(thread, lines)).toEqual(new Set(["x-prime", "y"]));
+  // the thread that never used memory is untouched (the marker never reached it)
+  expect([...replayExclusions(LineageAllowance.tool(1_000_000_000), "moss-direct", [{ id: "moss-1", role: "bot" }], null, { failClosed: true })]).toEqual([]);
 });
 
-it("the backfill writes deduplicated root sets past 256 outputs, with no marker for valid memory", async () => {
+it("the v10 upgrade writes no root sets even past 256 outputs (the old deduplicating backfill is retired), with no marker for valid memory", async () => {
   const copy = await usedV5DataDir();
   const db = new DatabaseSync(copy);
   try {
@@ -137,21 +155,26 @@ it("the backfill writes deduplicated root sets past 256 outputs, with no marker 
     const insert = db.prepare("INSERT INTO messages(thread_id,id,at,role,kind,text,json) VALUES(?,?,?,?,'text',?,?)");
     const bundle = db.prepare("SELECT bundle_id FROM memory_disclosure_outputs WHERE thread_id=? LIMIT 1").get(thread)?.bundle_id;
     const outputs = ["x-prime"];
+    let previous = String(db.prepare("SELECT id FROM messages WHERE thread_id=? ORDER BY rowid DESC LIMIT 1").get(thread)?.id ?? "");
     for (let i = 0; i < 300; i++) {
-      insert.run(thread, `o-${i}`, 100 + 2 * i, "bot", "made with memory", JSON.stringify({ id: `o-${i}`, at: 100 + 2 * i, role: "bot", kind: "text", text: "made with memory" }));
-      insert.run(thread, `f-${i}`, 101 + 2 * i, "bot", "made without", JSON.stringify({ id: `f-${i}`, at: 101 + 2 * i, role: "bot", kind: "text", text: "made without" }));
+      insert.run(thread, `o-${i}`, 100 + 2 * i, "bot", "made with memory", JSON.stringify({ id: `o-${i}`, at: 100 + 2 * i, role: "bot", kind: "text", text: "made with memory", parentId: previous || null }));
+      insert.run(thread, `f-${i}`, 101 + 2 * i, "bot", "made without", JSON.stringify({ id: `f-${i}`, at: 101 + 2 * i, role: "bot", kind: "text", text: "made without", parentId: `o-${i}` }));
+      previous = `f-${i}`;
       outputs.push(`o-${i}`);
     }
     db.prepare("UPDATE memory_disclosures SET output_message_ids=? WHERE bundle_id=?").run(JSON.stringify(outputs), String(bundle));
     migrateMemorySchema(db);
-    expect(db.prepare("SELECT count(*) AS n FROM memory_output_roots WHERE set_id=''").get()?.n).toBe(0);
-    const size = (id: string) => db.prepare("SELECT r.size FROM memory_output_roots o JOIN memory_root_sets r ON r.set_id=o.set_id WHERE o.thread_id=? AND o.message_id=?").get(thread, id)?.size;
-    expect(size("f-299")).toBe(301);
-    // o-i (a receipt output, a bot text reply) and f-(i-1) rest on the same outputs: one set
-    const setOf = (id: string) => db.prepare("SELECT set_id FROM memory_output_roots WHERE thread_id=? AND message_id=?").get(thread, id)?.set_id;
-    expect(setOf("o-10")).toBe(setOf("f-9"));
+    // v10: no backfill writes root sets, so there is nothing to deduplicate past 256 outputs and no marker to write for valid memory: the 600 messages
+    // add no root-set row at all (the write-time backfill reads the receipt's outputs directly)
+    expect(db.prepare("SELECT count(*) AS n FROM memory_output_roots").get()?.n).toBe(0);
+    expect(db.prepare("SELECT count(*) AS n FROM memory_root_sets").get()?.n).toBe(0);
+    expect(db.prepare("SELECT count(*) AS n FROM memory_root_set_members").get()?.n).toBe(0);
     // the session table is part of the v6 shape that archive, restore and merge validate
+    // v10: the root-set tables may be handed back (root-set-reclaim.ts), so a file without memory_session_roots still validates; one missing a table that
+    // is not handed back does not
     db.exec("DROP TABLE memory_session_roots");
+    expect(() => validateMemorySchema(db)).not.toThrow();
+    db.exec("DROP TABLE memory_lineage_meta");
     expect(() => validateMemorySchema(db)).toThrow();
   } finally { db.close(); }
 });

@@ -28,7 +28,7 @@ import { normalizeState } from "@/lib/mascot";
 import { speaker } from "@/lib/tts";
 import { useSpeech } from "@/lib/tts/useSpeech";
 import { usePushToTalk } from "@/lib/push-to-talk";
-import { useStore, useStreaming, type Bot, type Group, type Message, type OptionCardData } from "@/state/store";
+import { olderOpenCards, useStore, useStreaming, type Bot, type Group, type Message, type OptionCardData } from "@/state/store";
 import { cn } from "@/lib/cn";
 import { MemberCallAvatar } from "./CallAvatar";
 import { stillSignals, useAvatarAura } from "./CallAura";
@@ -37,7 +37,7 @@ import { ReadAlong } from "./ReadAlong";
 import { botVoice } from "@/lib/audio-level";
 import { auraPhaseFor } from "@/lib/call-aura";
 import { useKeyboardHints } from "@/lib/use-keyboard-hints";
-import { isRoutineApproval, isSkillApproval, pendingApprovals, spokenApprovalPrompt } from "./PendingApproval";
+import { isRoutineApproval, isSkillApproval, openQuestions, pendingApprovals, spokenApprovalPrompt } from "./PendingApproval";
 
 /** Pre-synthesized acknowledgement clips, kept across calls (see call-ack.ts). */
 const cueCache = new CueCache((text, o) => speaker.fetchClip(text, o));
@@ -48,14 +48,7 @@ const NO = /^(no|nope|don'?t|do not|stop|deny|denied|cancel|never|skip it)\b/i;
 type Phase = "listening" | "sending" | "working" | "speaking";
 
 function questionIn(messages: Message[]): Message | undefined {
-  return messages.find(
-    (message) =>
-      message.kind === "options" &&
-      message.card?.requestId &&
-      !message.card.tool &&
-      !message.card.answered &&
-      !message.card.dismissed,
-  );
+  return openQuestions(messages)[0];
 }
 
 export function GroupCall({
@@ -106,8 +99,8 @@ export function GroupCall({
   const messages = group.messages;
   const messagesRef = useRef(messages);
   messagesRef.current = messages;
-  const approval = pendingApprovals(messages)[0];
-  const question = questionIn(messages);
+  const approval = pendingApprovals(olderOpenCards(group, messages))[0];
+  const question = questionIn(olderOpenCards(group, messages));
   const membersRef = useRef(members);
   const busyRef = useRef(Boolean(group.working || group.busyBotId));
   const busyBotRef = useRef<string | null>(group.busyBotId ?? null);
@@ -138,7 +131,8 @@ export function GroupCall({
 
   const spokenIds = useRef<Set<string>>(new Set());
   const started = useRef(false);
-  if (!started.current) {
+  // A room whose first page is not held yet starts once it is: the page landing after the call began is backlog, not news.
+  if (!started.current && !group.messagesUnloaded && !group.pageStale && !group.firstPageEvents) {
     started.current = true;
     for (const message of messages) spokenIds.current.add(message.id);
   }
@@ -780,6 +774,7 @@ export function GroupCall({
     }
 
     // unheardMessages: a scrollback page loaded mid-call is not news.
+    if (!started.current) return;
     const fresh = unheardMessages(messages, spokenIds.current);
     if (!fresh.length) return;
     for (const message of fresh) spokenIds.current.add(message.id);

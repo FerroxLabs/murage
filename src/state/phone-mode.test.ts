@@ -8,9 +8,9 @@ import { describe, expect, it } from "vitest";
 const store = readFileSync(fileURLToPath(new URL("./store.tsx", import.meta.url)), "utf8");
 
 describe("phone mode in the store", () => {
-  it("hydrates with the phone's page size, not a fixed one", () => {
-    expect(store).toContain("api(`/api/bots?messages=${hydratePageSize(phone)}`)");
-    expect(store).not.toContain("api(`/api/bots?messages=${MESSAGE_PAGE_SIZE}`).then(({ bots, groups, computerControl })");
+  it("boots from the sidebar roster (no rows), the same on a phone as on the desktop", () => {
+    expect(store).toContain("api(`/api/bots?view=sidebar`).then(({ bots, groups, computerControl, sidebarSectionOrder, pendingSends })");
+    expect(store).not.toMatch(/api\(`\/api\/bots\?messages=\$\{/);
   });
 
   it("opens the event stream without live screen frames on a phone", () => {
@@ -21,26 +21,31 @@ describe("phone mode in the store", () => {
     expect(store.match(/const phone = isPhoneClient\(\);/g)).toHaveLength(1);
   });
 
-  it("tops up the conversation on screen through the scrollback path", () => {
-    expect(store).toMatch(/needsNewestPage\(onScreen\)/);
-    expect(store).toMatch(/dispatch\(\{ type: "loadOlderMessages", threadId: topUpThread \}\)/);
+  it("fetches the first page of the conversation on screen through the scrollback path", () => {
+    expect(store).toMatch(/needsFirstPage\(onScreen\)/);
+    expect(store).toMatch(/dispatch\(\{ type: "loadFirstPage", threadId: topUpThread \}\)/);
   });
 
   // A resync drops an in-flight top-up as stale; a failure must not loop.
   it("asks again once per transcript generation, and never while a page is in flight", () => {
     expect(store).toContain("const key = `${topUpThread}:${topUpGeneration}`;");
     expect(store).toContain("if (!topUpThread || topUpBusy) return;");
-    expect(store).toContain("}, [topUpThread, topUpGeneration, topUpBusy, dispatch]);");
+    // rc10-preview2 (4fecfadca) adds two deliberate re-asks: opening the thread again (screenThread) and the window coming back into view
+    // or online (freshRetry). Each clears the once-per-generation guard only there; nothing else resets it, so a dead link still does not loop.
+    expect(store).toContain("}, [topUpThread, topUpGeneration, topUpBusy, freshRetry, screenThread, dispatch]);");
+    expect(store.match(/toppedUp\.current = "";/g)).toHaveLength(2);
+    expect(store).toContain("toppedUp.current = \"\";\n  }, [screenThread]);");
+    expect(store).toMatch(/if \(document\.visibilityState === "hidden"\) return;\s+toppedUp\.current = "";\s+setFreshRetry/);
   });
 
-  // Without a capture, windowAfterPrepend treats the top-up like a jump's
-  // page and leaves it unmounted behind "Show earlier": the phone would open
-  // a thread on its one booted row.
-  it("mounts the top-up in both transcript views, holding the viewport still", () => {
+  // Without a capture, windowAfterPrepend treats a page that replaces held rows (a rehydrated conversation's) like a jump's page and
+  // leaves it unmounted behind "Show earlier".
+  it("mounts the first page in both transcript views, holding the viewport still", () => {
     for (const [file, owner] of [["ChatView.tsx", "bot"], ["GroupView.tsx", "group"]]) {
       const view = readFileSync(fileURLToPath(new URL(`../components/${file}`, import.meta.url)), "utf8");
-      expect(view).toContain(`if (olderPending && !preExpandAnchor.current && needsNewestPage(${owner})) captureAnchor("first");`);
-      expect(view).toContain("}, [olderPending, transcriptKey]);");
+      expect(view).toContain(`const firstPagePending = ${owner}.firstPageEvents !== undefined;`);
+      expect(view).toContain(`if (firstPagePending && !preExpandAnchor.current) captureAnchor("first");`);
+      expect(view).toContain("}, [olderPending, firstPagePending, transcriptKey]);");
     }
   });
 });

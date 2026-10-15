@@ -128,6 +128,6 @@ test("lists the engine's own commands under Murage's, and sends a picked one to 
   await engine.getByRole("option", { name: /\/context/ }).click();
   await expect(composer).toHaveValue("");
   await expect.poll(dumpedPrompt, { timeout: 20_000 }).toBe("/context");
-  await expect(page.getByTestId("chat-scroll").getByText("FAKE_CONTEXT 12k of 200k tokens used")).toBeVisible();
+  await expect(page.getByTestId("chat-scroll").locator("p").getByText("FAKE_CONTEXT 12k of 200k tokens used")).toBeVisible();
   await shot(page, info, "engine-command-answer");
 });
