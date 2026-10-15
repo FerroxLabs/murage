@@ -38,6 +38,7 @@ import { safeWipeSync } from "../../server/testing/safe-wipe.mjs";
 import { laneDataDir } from "./lane-data-dir";
 import { seedWhatsNewSeen } from "../../scripts/control-murage.ts";
 import { openSidebarPlace } from "./sidebar-nav";
+import { TERMS_VERSION } from "../../shared/terms.ts";
 
 // ── Inputs ───────────────────────────────────────────────────────────────
 
@@ -161,6 +162,7 @@ async function startHarness() {
     XDG_CONFIG_HOME: join(home, ".config"), XDG_CACHE_HOME: join(home, ".cache"), XDG_DATA_HOME: join(home, ".local", "share"),
     MURAGE_DATA_DIR: DATA_DIR, MURAGE_PORT: String(HARNESS_PORT), MURAGE_WEBHOOK_PORT: String(HARNESS_PORT + 1),
     MURAGE_ALLOW_DEV_DESKTOP_SECRET: "1",
+    MURAGE_TERMS_ACCEPTED: TERMS_VERSION, // a fixture install has no one to tick the terms box (server/terms.ts)
     // The built UI, when present, is what the harness serves to a phone
     // (electron/harness-resources.mjs decides the same for `pnpm dev:server`).
     ...(existsSync(join(ROOT, "dist", "index.html")) ? { MURAGE_STATIC_DIR: join(ROOT, "dist") } : {}),

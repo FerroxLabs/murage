@@ -24,6 +24,7 @@ import { MemoryDispatchReceipt, memoryContinuationChanged } from "./dispatch.ts"
 import { setMemoryMode } from "./repository.ts";
 import { pauseRestoredMemory } from "./restore.ts";
 import type { IndexHit } from "./index.ts";
+import { LineageAllowance } from "./lineage-allowance.ts";
 
 const roster = {
   bots: [
@@ -150,7 +151,7 @@ describe("PIP P1 singleton relation survives delete", () => {
     const read = readContinuity(ticket, "moss", roster).records.filter(row => row.kind === "relation");
     expect(read).toHaveLength(1);
     expect(read[0]).toMatchObject({ id: second.id, key: "owner", text: "We plan on Tuesdays." });
-    const bundle = await buildMemoryBundle("", access(), emptyBridge, { continuity: true });
+    const bundle = await buildMemoryBundle("", access(), emptyBridge, { allowance: LineageAllowance.tool(), continuity: true });
     expect(bundle.text).toContain("We plan on Tuesdays.");
     expect(bundle.text).not.toContain("We plan on Mondays.");
     expect(bundle.recordVersions.map(row => row.id)).toContain(second.id);
@@ -188,12 +189,12 @@ describe("PIP P1 delete", () => {
       const ids = eligibility!.read({ scopeIds: [botScope()], policyRevision: meta().policy_revision, deletionEpoch: meta().deletion_epoch, historical, cursor: "" }).allowed.map(row => row.id);
       expect(ids).not.toContain(first.id);
     }
-    expect((await searchMemory("dry humour", access(), bridge, { historical: true })).hits).toEqual([]);
+    expect((await searchMemory("dry humour", access(), bridge, { allowance: LineageAllowance.tool(1_000_000_000), historical: true })).hits).toEqual([]);
     // even with the kind filter out of the picture, the state filter alone drops every version
     expect(database().prepare("SELECT count(*) AS n FROM memory_records r WHERE r.id=? AND r.state IN ('active','archived','superseded')").get(first.id)!.n).toBe(0);
     // the slug stays retired; the brief rebuilds without the trait
     expect(() => writeBotIdentity(ticket, pip("self-trait", "dry-humour", "Again.", { expectedVersion: 2 }), roster)).toThrow("MEMORY_RECORD_UNAVAILABLE");
-    const bundle = await buildMemoryBundle("", access(), emptyBridge, { continuity: true });
+    const bundle = await buildMemoryBundle("", access(), emptyBridge, { allowance: LineageAllowance.tool(), continuity: true });
     expect(bundle.text).not.toContain("Dry humour");
     expect(kinds(bundle)).toEqual(["continuity-brief"]);
   });
@@ -232,7 +233,7 @@ describe("PIP P1 identity slot", () => {
 
   it("off: PIP rows in the store leave the direct-turn bundle byte-identical to the same scenario without them", async () => {
     writeBotIdentity(ticket, brief(), roster);
-    const baseline = await buildMemoryBundle("harbour log", access(), emptyBridge);
+    const baseline = await buildMemoryBundle("harbour log", access(), emptyBridge, {allowance: LineageAllowance.tool()});
     seed(false);
     // P2 also stores proposals, counters, concerns and episodes in identity.
     // None joins the base identity slot when Continuity is absent or false.
@@ -243,7 +244,7 @@ describe("PIP P1 identity slot", () => {
       database().prepare("UPDATE memory_record_details SET partition='identity' WHERE record_id=?").run(id);
     }
     for (const options of [{}, { continuity: false }]) {
-      const withRows = await buildMemoryBundle("harbour log", access(), emptyBridge, options);
+      const withRows = await buildMemoryBundle("harbour log", access(), emptyBridge, { ...options, allowance: LineageAllowance.tool() });
       expect(kinds(withRows)).toEqual(["continuity-brief", "reveal-state"]);
       expect(withRows.text).toContain("REVEAL_NOTE");
       expect(withRows.continuity).toBeUndefined();
@@ -251,7 +252,7 @@ describe("PIP P1 identity slot", () => {
     }
     // the exact baseline is the brief alone
     database().prepare("UPDATE memory_records SET state='archived' WHERE kind='reveal-state'").run();
-    const again = await buildMemoryBundle("harbour log", access(), emptyBridge);
+    const again = await buildMemoryBundle("harbour log", access(), emptyBridge, {allowance: LineageAllowance.tool()});
     expect(again.text).toBe(baseline.text);
     expect(again.tokenCount).toBe(baseline.tokenCount);
     expect(again.recordVersions).toEqual(baseline.recordVersions);
@@ -259,7 +260,7 @@ describe("PIP P1 identity slot", () => {
 
   it("on: brief, reveal state, how we work together, commitments, then traits, newest edit first, with labels; canon stays out", async () => {
     const ids = seed();
-    const bundle = await buildMemoryBundle("", access(), emptyBridge, { continuity: true });
+    const bundle = await buildMemoryBundle("", access(), emptyBridge, { allowance: LineageAllowance.tool(), continuity: true });
     // P2 order (design 2.1, 2.2): the brief, the self slot newest edit first (the relation was written after the stamped rows), then reveal state
     expect(bundle.recordVersions.map(row => row.id)).toEqual([ids.brief, ids.relation, ids.t2, ids.t1, ids.c2, ids.c1, ids.reveal]);
     expect(kinds(bundle)).toEqual(["continuity-brief", "relation", "self-trait", "self-trait", "commitment", "commitment", "reveal-state"]);
@@ -275,7 +276,7 @@ describe("PIP P1 identity slot", () => {
     expect(bundle.continuity).toEqual({ brought: 5, total: 5 });
     // an edit moves a commitment to the front of its kind
     writeBotIdentity(ticket, pip("commitment", "first", "Send the weekly summary by noon.", { expectedVersion: 1 }), roster);
-    const edited = await buildMemoryBundle("", access(), emptyBridge, { continuity: true });
+    const edited = await buildMemoryBundle("", access(), emptyBridge, { allowance: LineageAllowance.tool(), continuity: true });
     expect(edited.identity.filter(record => record.kind === "commitment").map(record => record.text)[0]).toContain("by noon");
   });
 
@@ -286,8 +287,8 @@ describe("PIP P1 identity slot", () => {
     for (let n = 0; n < 3; n++) rows.push(writeBotIdentity(ticket, pip("commitment", `c-${n}`, `${String.fromCharCode(65 + n)}`.repeat(380)), roster).id);
     for (let n = 0; n < 3; n++) rows.push(writeBotIdentity(ticket, pip("self-trait", `t-${n}`, `${String.fromCharCode(88 + n)}`.repeat(380)), roster).id);
     rows.forEach((id, index) => stamp(id, 10000 - index));
-    const wide = await buildMemoryBundle("", access(), emptyBridge, { continuity: true });
-    const narrow = await buildMemoryBundle("", access(), emptyBridge, { continuity: true, availableContextTokens: 8000 });
+    const wide = await buildMemoryBundle("", access(), emptyBridge, { allowance: LineageAllowance.tool(), continuity: true });
+    const narrow = await buildMemoryBundle("", access(), emptyBridge, { allowance: LineageAllowance.tool(), continuity: true, availableContextTokens: 8000 });
     // ceiling = fixed frame + min(2048, tenth of the window), measured on the rendered bundle
     expect(wide.tokenCount - MEMORY_FRAME_TOKENS).toBeLessThanOrEqual(2048);
     expect(narrow.tokenCount - MEMORY_FRAME_TOKENS).toBeLessThanOrEqual(800);
@@ -310,8 +311,8 @@ describe("PIP P1 identity slot", () => {
 
   it("gives the same identity-slot bytes to two reads of the same window (engine parity) and different bytes only by window", async () => {
     seed();
-    const a = await buildMemoryBundle("", access("moss", "private"), emptyBridge, { continuity: true, availableContextTokens: 32000 });
-    const b = await buildMemoryBundle("", access("moss", "new-task"), emptyBridge, { continuity: true, availableContextTokens: 32000 });
+    const a = await buildMemoryBundle("", access("moss", "private"), emptyBridge, { allowance: LineageAllowance.tool(), continuity: true, availableContextTokens: 32000 });
+    const b = await buildMemoryBundle("", access("moss", "new-task"), emptyBridge, { allowance: LineageAllowance.tool(), continuity: true, availableContextTokens: 32000 });
     expect(b.text).toBe(a.text);
     expect(b.recordVersions).toEqual(a.recordVersions);
   });
@@ -319,7 +320,7 @@ describe("PIP P1 identity slot", () => {
   it("never reaches a room, a project desk, another bot, or a pin", async () => {
     const ids = seed();
     for (const [bot, thread] of [["moss", "room-thread"], ["moss", "desk"], ["neutral", "neutral-thread"]] as const) {
-      const bundle = await buildMemoryBundle("", access(bot, thread), emptyBridge, { continuity: true });
+      const bundle = await buildMemoryBundle("", access(bot, thread), emptyBridge, { allowance: LineageAllowance.tool(), continuity: true });
       expect(bundle.text, thread).not.toMatch(/Prefers plain|weekly summary|Mondays|How we work|you said/);
       expect(bundle.recordVersions.filter(row => Object.values(ids).includes(row.id)), thread).toEqual([]);
       // a room or desk turn reports nothing; another bot's direct turn has nothing of its own
@@ -328,7 +329,7 @@ describe("PIP P1 identity slot", () => {
     }
     // even a row forced to owner_pinned in the table is not delivered as a pin
     database().prepare("UPDATE memory_records SET owner_pinned=1 WHERE id=?").run(ids.c1);
-    const off = await buildMemoryBundle("", access(), emptyBridge);
+    const off = await buildMemoryBundle("", access(), emptyBridge, {allowance: LineageAllowance.tool()});
     expect(off.pinned).toEqual([]);
     expect(off.text).not.toContain("weekly summary");
   });
@@ -342,11 +343,11 @@ describe("PIP P1 readers, pins and the projection", () => {
     writeBotIdentity(ticket, brief(), roster);
     const query = "harbour lantern";
     const run = async (bridge: ReturnType<typeof rankedBridge>) => ({
-      hits: (await searchMemory(query, access(), bridge, { limit: 3 })).hits.map(hit => hit.id).sort(),
-      historical: (await searchMemory(query, access(), bridge, { limit: 3, historical: true })).hits.map(hit => hit.id).sort(),
+      hits: (await searchMemory(query, access(), bridge, { allowance: LineageAllowance.tool(1_000_000_000), limit: 3 })).hits.map(hit => hit.id).sort(),
+      historical: (await searchMemory(query, access(), bridge, { allowance: LineageAllowance.tool(1_000_000_000), limit: 3, historical: true })).hits.map(hit => hit.id).sort(),
       recent: recentMemoryHits(query, access()).map(hit => hit.id).sort(),
-      turn: (await buildMemoryBundle(query, access(), bridge)).text,
-      turnOn: (await buildMemoryBundle(query, access(), bridge, { continuity: false })).text,
+      turn: (await buildMemoryBundle(query, access(), bridge, {allowance: LineageAllowance.tool()})).text,
+      turnOn: (await buildMemoryBundle(query, access(), bridge, { allowance: LineageAllowance.tool(), continuity: false })).text,
     });
     // the baseline warms its own eligibility cache BEFORE any PIP row exists
     const baseline = await run(rankedBridge());
@@ -370,7 +371,7 @@ describe("PIP P1 readers, pins and the projection", () => {
     }
     // search's own map guard holds even if a bridge hands one back
     const leaky = { search: async () => ({ hits: [...ids].map(id => ({ id, version: 1, score: 9 })) as IndexHit[], vectorRows: 0 }) };
-    expect((await searchMemory(query, access(), leaky, { limit: 20 })).hits.filter(hit => ids.has(hit.id))).toEqual([]);
+    expect((await searchMemory(query, access(), leaky, { allowance: LineageAllowance.tool(1_000_000_000), limit: 20 })).hits.filter(hit => ids.has(hit.id))).toEqual([]);
   });
 
   it("does not hand a PIP row to the agent get route, on or off", async () => {
@@ -400,7 +401,7 @@ describe("PIP P1 does not reset anything outside its own bot", () => {
     writeBotIdentity(ticket, brief("Neutral keeps the dock notes.", "neutral"), roster);
     writeBotIdentity(ticket, brief(), roster);
     const neutral = access("neutral", "neutral-thread");
-    const bundle = await buildMemoryBundle("", neutral, emptyBridge);
+    const bundle = await buildMemoryBundle("", neutral, emptyBridge, {allowance: LineageAllowance.tool()});
     const receipt = new MemoryDispatchReceipt(bundle, neutral, "driver-one");
     receipt.sessionStarted("session-one"); receipt.accepted();
     const disclosure = () => database().prepare("SELECT state FROM memory_disclosures WHERE bundle_id=?").get(bundle.bundleId)!.state;
@@ -408,21 +409,21 @@ describe("PIP P1 does not reset anything outside its own bot", () => {
     const before = meta();
 
     const mossAccess = access();
-    const mossBundle = await buildMemoryBundle("", mossAccess, emptyBridge, { continuity: true });
+    const mossBundle = await buildMemoryBundle("", mossAccess, emptyBridge, { allowance: LineageAllowance.tool(), continuity: true });
     const mossReceipt = new MemoryDispatchReceipt(mossBundle, mossAccess, "driver-one");
     mossReceipt.sessionStarted("session-moss"); mossReceipt.accepted();
 
     writeBotIdentity(ticket, pip("self-trait", "calm", "Stays calm under pressure."), roster);
     writeBotIdentity(ticket, pip("self-trait", "calm", "Stays calm and plain.", { expectedVersion: 1 }), roster);
     const laterAccess = access();
-    const mossLater = await buildMemoryBundle("", laterAccess, emptyBridge, { continuity: true });
+    const mossLater = await buildMemoryBundle("", laterAccess, emptyBridge, { allowance: LineageAllowance.tool(), continuity: true });
     const mossReceipt2 = new MemoryDispatchReceipt(mossLater, laterAccess, "driver-one");
     mossReceipt2.sessionStarted("session-moss-2"); mossReceipt2.accepted();
     deleteBotIdentity(ticket, { action: "identity-delete", botId: "moss", kind: "self-trait", key: "calm", expectedVersion: 2 }, roster);
 
     expect(meta()).toEqual(before);
     expect(disclosure()).toBe("delivered");
-    const again = await buildMemoryBundle("", access("neutral", "neutral-thread"), emptyBridge);
+    const again = await buildMemoryBundle("", access("neutral", "neutral-thread"), emptyBridge, {allowance: LineageAllowance.tool()});
     expect(again.text).toBe(bundle.text);
     expect(memoryContinuationChanged(again, "neutral-thread", "driver-one", "session-one")).toBe(false);
     expect(() => assertMemoryAccess(neutral)).not.toThrow();

@@ -29,9 +29,12 @@ function receipt(db:DatabaseSync,jobId:string):Receipt {
   const row=db.prepare("SELECT intent FROM memory_scope_bindings WHERE id=?").get(receiptId(jobId));
   return row?JSON.parse(String(row.intent)):{cursor:"",status:"pending",retryAt:0};
 }
-function persist(db:DatabaseSync,jobId:string,scope:string,value:Receipt){
-  db.prepare("INSERT INTO memory_scope_bindings VALUES(?,?,'system','reveal-capture',0,'granted',?) ON CONFLICT(id) DO UPDATE SET intent=excluded.intent")
-    .run(receiptId(jobId),scope,JSON.stringify(value));
+// The receipt and mark writes run inside transaction() (a SAVEPOINT when the caller has one open): under the idle lane's source that is the
+// background budget, so a writer holding the lock (a VACUUM) costs this visit 50 ms and a DatabaseBusyError ("try again shortly"), never the
+// handle's 1 s wait and a raw SQLITE_BUSY (STALLS-FINAL-DESIGN RC-B1).
+function persist(_db:DatabaseSync,jobId:string,scope:string,value:Receipt){
+  transaction(d=>d.prepare("INSERT INTO memory_scope_bindings VALUES(?,?,'system','reveal-capture',0,'granted',?) ON CONFLICT(id) DO UPDATE SET intent=excluded.intent")
+    .run(receiptId(jobId),scope,JSON.stringify(value)),{op:"reveal-receipt"});
   // only after the write: a failed write leaves the job where the database says it is
   noteRetry(jobId,value);
 }
@@ -87,8 +90,8 @@ function loadScan(db:DatabaseSync){
 function saveMark(db:DatabaseSync){
   const scope=db.prepare("SELECT id FROM memory_scopes LIMIT 1").get()?.id;
   if(!scope)return;
-  db.prepare("INSERT INTO memory_scope_bindings VALUES(?,?,'system','reveal-scan',0,'granted',?) ON CONFLICT(id) DO UPDATE SET intent=excluded.intent")
-    .run(MARK_ID,scope,JSON.stringify(scan.mark));
+  transaction(d=>d.prepare("INSERT INTO memory_scope_bindings VALUES(?,?,'system','reveal-scan',0,'granted',?) ON CONFLICT(id) DO UPDATE SET intent=excluded.intent")
+    .run(MARK_ID,scope,JSON.stringify(scan.mark)),{op:"reveal-mark"});
 }
 /** A receipt was written pending: the sweep must not sleep past its retry time. */
 function noteRetry(jobId:string,value:Receipt){

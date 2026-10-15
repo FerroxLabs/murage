@@ -40,7 +40,8 @@ it.skipIf(process.platform === "win32")("keeps About me out of a Slack turn for 
   const event = (id: string, text: string, user = "UOTHER") => child!.send({ kind: "slack-fixture-event", body: { type: "event_callback", team_id: "TEAM", api_app_id: "APP", event_id: id, event_time: Math.floor(Date.now() / 1000), authorizations: [{ team_id: "TEAM", user_id: "UBOT", is_bot: true }], event: { type: "message", channel_type: "im", channel: "DOTHER", user, text } } });
   const dumped = () => existsSync(dump) ? readFileSync(dump, "utf8") : "";
   const turnFor = async (botId: string, tag: string) => {
-    await expect.poll(() => dumped().includes(tag), { timeout: 20000 }).toBe(true);
+    try { await expect.poll(() => dumped().includes(tag), { timeout: 20000 }).toBe(true); }
+    catch (error) { throw new Error(`the turn never ran; server stderr tail: ${stderr.slice(-6000)}`, { cause: error }); }
     await expect.poll(async () => !(await api("GET", "/api/bots?messages=0")).bots.find((item: any) => item.id === botId).busy, { timeout: 15000 }).toBe(true);
     return String(JSON.parse(dumped()).systemPrompt ?? "");
   };

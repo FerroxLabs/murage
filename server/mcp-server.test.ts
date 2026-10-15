@@ -179,6 +179,23 @@ describe("MCP tool execution", () => {
     expect(result.hasMore).toBe(true);
   });
 
+  it("reads a task older than the window a big bot's frame carries, by asking for it, and says how many there are", async () => {
+    const fetcher = vi.fn(async (path: string) => {
+      if (path === "/api/bots?messages=0") return {
+        bots: [{ id: "bot-1", name: "Deckard", threadId: "task-1", tasks: [{ threadId: "task-1", title: "Case" }], tasksTotal: 5000 }],
+      };
+      if (path === "/api/bots/bot-1/tasks/old-task") return { task: { threadId: "old-task", title: "Old" } };
+      if (path === "/api/bots/bot-1/tasks/not-its") throw new Error("404");
+      if (path === "/api/threads/old-task/messages?limit=30") return { messages: [], hasMore: false };
+      throw new Error(`unexpected path ${path}`);
+    });
+    const listed: any = await handleToolCall("list_bots", {}, fetcher);
+    expect(listed.bots[0]).toMatchObject({ totalTasks: 5000 });
+    const result: any = await handleToolCall("get_bot_messages", { bot_id: "bot-1", task_id: "old-task" }, fetcher);
+    expect(result.messages).toEqual([]);
+    await expect(handleToolCall("get_bot_messages", { bot_id: "bot-1", task_id: "not-its" }, fetcher)).rejects.toThrow("does not belong");
+  });
+
   it("pins bot and channel sends to the active task", async () => {
     const fetcher = vi.fn(async (path: string, options?: RequestInit) => {
       if (path === "/api/bots?messages=0") return {

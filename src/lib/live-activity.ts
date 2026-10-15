@@ -1,4 +1,5 @@
 import type { Message } from "@/state/store";
+import { delegationToolKind } from "../../shared/delegation-tool";
 
 const FALLBACK_LABELS: Array<[RegExp, string]> = [
   [/\b(?:bash|shell|terminal|exec|command|run_command)\b/i, "Running a command"],
@@ -41,6 +42,9 @@ export function liveActivityLabel(message?: Message): string {
   if (message.tool.spoken?.trim()) return sentenceCase(message.tool.spoken);
 
   const toolName = message.tool.name.replace(/^mcp__[^_]+__/, "").split(":", 1)[0] ?? "";
+  // A hand-off is never a file or command, whatever the engine calls it.
+  const delegation = delegationToolKind(toolName);
+  if (delegation) return delegation === "delegate" ? "Handing off a task" : delegation === "ask" ? "Asking a teammate" : "Messaging a teammate";
   for (const [pattern, label] of FALLBACK_LABELS) {
     if (pattern.test(toolName)) return label;
   }

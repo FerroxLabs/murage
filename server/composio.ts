@@ -1,9 +1,53 @@
 // Connected apps run through the Flux Router broker (and, for installs that
 // still hold a Worker identity, the legacy broker until it is claimed). No key
 // a person typed in is ever read here: a stored own key stays on disk, unused.
-import type { AppConfig } from "./config.ts";
+import { DATA_DIR, type AppConfig } from "./config.ts";
+import {
+  CONNECTED_APP_ACTION_TIMEOUT_MS,
+  CONNECTED_APP_OPERATION_LIFETIME_MS,
+  CONNECTED_APP_RELAY_GRACE_MS,
+  CONNECTED_APP_STATUS_WAIT_MS,
+  connectedAppActionCall,
+  connectedAppUnprotectedAction,
+  connectedAppActionLabel,
+  connectedAppCallTimeoutMs,
+  connectedAppBusyText,
+  connectedAppClearedText,
+  connectedAppEffectArgs,
+  connectedAppNoRecordText,
+  connectedAppNotSentText,
+  connectedAppPendingText,
+  connectedAppRepeatNote,
+  connectedAppToolId,
+  connectedAppUnknownText,
+  connectedAppUnrecordedText,
+  type ConnectedAppProvenance,
+  connectedAppProvenance,
+  connectedAppHistoryNote,
+  connectedAppReadUnknownText,
+  connectedAppNotClearedText,
+  isConnectedAppStatusTool,
+  LEGACY_BROKER_RETIRED,
+  LEGACY_BROKER_RETIRED_FLUX_READY,
+  LEGACY_DAILY_LIMIT,
+} from "../shared/connected-app-calls.ts";
+import {
+  ConnectedAppOperations,
+  OperationRefused,
+  isEventStream,
+  answersRequest,
+  operationKey,
+  replyMessage,
+  waitForOperation,
+  type ConnectedAppOperation,
+  type OperationOutcome,
+  type RelayReply,
+} from "./connected-app-operations.ts";
+import { classifyConnectedAppCall } from "../shared/connected-app-readonly.ts";
+import { SqliteOperationJournal, defaultJournalFile } from "./connected-app-journal.ts";
 import { devFluxTokenApplies, devFluxTokenInFlight, ensureDevFluxBrokerToken, readDevFluxTokenDocument, resetDevFluxTokenState } from "./flux-composio-dev-token.ts";
 import { createHash } from "node:crypto";
+import { fluxRetryDelayMs } from "./flux-key-health.ts";
 import { z } from "zod";
 import { brokerTokenFingerprint } from "../electron/flux-composio-token.mjs";
 import { SPAWNED_PROXIES } from "./proxy-paths.ts";
@@ -20,6 +64,8 @@ import {
   type InventoryReadOptions,
   type InventoryServices,
 } from "./connected-inventory.ts";
+import { handOverInitialTools } from "./connector-cache-harness.ts";
+import { INITIAL_GENERATION, INITIAL_TOOLS_ASK_HARNESS } from "./connector-cache.ts";
 import { catalogApp, loadCatalog, type CatalogApp, type CatalogBackend, type CatalogView } from "./app-catalog.ts";
 
 export interface ConnectedAccountSummary {
@@ -81,7 +127,24 @@ interface IntegrationContext {
   commsToken: string;
   botId: string;
   threadId: string;
+  /** What the bridge files its remembered tool list under and checks it against.
+   * `revision` changes with the bot's connected-app access (grants, switches);
+   * `initialTools` is the policy-correct list a restricted bot is first shown
+   * (only its approved accounts) when the live one is slow. */
+  listScope?: { revision: string; initialTools?: unknown[]; /** The connection generation read in the SAME step that built `initialTools` (before any await); explicit, "initial" when none was written yet. */ generation: string };
+  /** A private directory under Murage's data folder for the remembered list
+   * (see connector-cache-harness.ts: only passed once it is verified private). */
+  toolsCacheDir?: string;
+  /** Windows: the directory's owner-only ACL was verified by the native helper. */
+  toolsCachePrivate?: boolean;
 }
+
+/** The largest initial list handed over in the environment. Anything longer
+ * goes through a private file, whole: it is never cut down or emptied. */
+const INITIAL_TOOLS_ENV_MAX_CHARS = 16_000;
+/** With no private file possible, the largest list still passed in the
+ * environment (POSIX allows far more; Windows' whole block is 32,767). */
+const INITIAL_TOOLS_ENV_LAST_RESORT_CHARS = 100_000;
 
 export type BrokerKind = "flux" | "legacy";
 export interface BrokerAccess { url: string; token: string; kind: BrokerKind }
@@ -256,6 +319,7 @@ export function resetManagedBrokerState(): void {
   fluxReadiness = null;
   fluxReadinessProbe = null;
   fluxAccountStatus = null;
+  fluxAccountStatusFailure = null;
   devTokenRemintDue = false;
   devTokenRejectedFingerprint = undefined;
   tokenRejectedAwaitingReplacement = false;
@@ -555,16 +619,9 @@ export const BROKER_UNAVAILABLE =
 export const BROKER_UNREACHABLE =
   "Connected apps can't be reached right now. This is usually brief. Try again in a minute.";
 
-/** What a connector call says when the Murage Worker has retired. The model
- * reads it as the tool's answer, so it names the way out rather than a code. */
-export const LEGACY_BROKER_RETIRED =
-  "Murage's original connected-apps service has retired, so this request did not run. Connect Flux Router, then reconnect the app under Connected apps.";
-/** The same, once a working Flux Router broker has taken over. */
-export const LEGACY_BROKER_RETIRED_FLUX_READY =
-  "Murage's original connected-apps service has retired, and connected apps now run through Flux Router. Try the request again; if the app is missing, reconnect it under Connected apps.";
-/** The Worker's per-install daily cap (it resets at 00:00 UTC). */
-export const LEGACY_DAILY_LIMIT =
-  "Connected apps have reached today's limit on Murage's original service, so this request did not run. The limit resets at 00:00 UTC and does not apply once your apps run through Flux Router.";
+// The plain answers to the original service's refusals live beside the
+// connected-app call rules, so the stdio bridge can recognise them as refusals.
+export { LEGACY_BROKER_RETIRED, LEGACY_BROKER_RETIRED_FLUX_READY, LEGACY_DAILY_LIMIT };
 
 /** React to what a broker's answer says about the broker itself. */
 async function observeBrokerResponse(broker: BrokerAccess, response: Response, options: { sessionScoped?: boolean } = {}): Promise<void> {
@@ -726,6 +783,7 @@ export function connectorMigration(cfg: AppConfig): ConnectorMigration {
 // The last /v1/me from the Flux broker, for the free-allowance line.
 const FLUX_ACCOUNT_STATUS_TTL_MS = 60_000;
 let fluxAccountStatus: { url: string; token: string; at: number; freeRunsRemainingToday: number | null } | null = null;
+let fluxAccountStatusFailure: { url: string; token: string; count: number; nextAt: number } | null = null;
 const fluxMeSchema = z.object({ freeRunsRemainingToday: z.number().int().min(0).nullable().optional() }).passthrough();
 
 /** Refresh the cached account status when the Flux broker is in use. Never
@@ -735,14 +793,24 @@ export async function refreshFluxAccountStatus(cfg: AppConfig): Promise<void> {
   if (broker?.kind !== "flux") return;
   const cached = fluxAccountStatus;
   if (cached && cached.url === broker.url && cached.token === broker.token && Date.now() - cached.at < FLUX_ACCOUNT_STATUS_TTL_MS) return;
+  // A failed ask is not repeated on every panel request: 1 minute, doubling to
+  // 1 hour, and after a 401 not at all until the broker token changes.
+  const failed = fluxAccountStatusFailure;
+  if (failed && failed.url === broker.url && failed.token === broker.token && Date.now() < failed.nextAt) return;
+  const fail = (stop: boolean) => {
+    const same = failed && failed.url === broker.url && failed.token === broker.token;
+    const count = (same ? failed.count : 0) + 1;
+    fluxAccountStatusFailure = { url: broker.url, token: broker.token, count, nextAt: stop ? Number.POSITIVE_INFINITY : Date.now() + fluxRetryDelayMs(count) };
+  };
   try {
     const response = await brokerRequest(cfg, "/v1/me", { signal: AbortSignal.timeout(8_000) });
-    if (!response.ok) return;
+    if (!response.ok) { void response.body?.cancel().catch(() => {}); fail(response.status === 401); return; }
     const body = fluxMeSchema.safeParse(await response.json());
-    if (!body.success) return;
+    if (!body.success) { fail(false); return; }
+    fluxAccountStatusFailure = null;
     fluxAccountStatus = { url: broker.url, token: broker.token, at: Date.now(), freeRunsRemainingToday: body.data.freeRunsRemainingToday ?? null };
   } catch {
-    // leave the previous answer, if any
+    fail(false); // leave the previous answer, if any
   }
 }
 
@@ -1061,8 +1129,50 @@ export async function mcpIntegration(
       MURAGE_CONNECTORS_TOKEN: context.commsToken,
       MURAGE_BOT_ID: context.botId,
       MURAGE_THREAD_ID: context.threadId,
+      ...connectorListEnv({ ...context, identity: connectorListIdentity(cfg, context.botId) }),
     },
   };
+}
+
+/** The bridge's list identity: stable for the signed-in account and the bot (the
+ * rotating turn token is not part of it), never a secret. Null with no account. */
+export function connectorListIdentity(cfg: AppConfig, botId: string): string | null {
+  const owner = inventoryOwner(cfg);
+  return owner ? createHash("sha256").update(`connector-list\0${owner}\0${botId}`).digest("hex").slice(0, 32) : null;
+}
+
+function connectorListEnv(context: IntegrationContext & { identity?: string | null }): Record<string, string> {
+  const env: Record<string, string> = {};
+  if (context.toolsCacheDir) {
+    env.MURAGE_CONNECTOR_TOOLS_CACHE_DIR = context.toolsCacheDir;
+    if (context.toolsCachePrivate) env.MURAGE_CONNECTOR_TOOLS_CACHE_PRIVATE = "1";
+  }
+  if (context.identity && context.listScope) {
+    env.MURAGE_CONNECTOR_IDENTITY = context.identity;
+    env.MURAGE_CONNECTOR_REVISION = context.listScope.revision;
+    if (context.listScope.initialTools) {
+      // The list below was built under this connection generation: the bridge never reuses it after a disconnect.
+      // Captured by the caller with the list itself, never here (this runs after awaits). Always passed.
+      env.MURAGE_CONNECTOR_INITIAL_GENERATION = context.listScope.generation || INITIAL_GENERATION;
+      const text = JSON.stringify(context.listScope.initialTools);
+      if (text.length <= INITIAL_TOOLS_ENV_MAX_CHARS) env.MURAGE_CONNECTOR_INITIAL_TOOLS = text;
+      else {
+        // Too long for the environment: the complete list goes through a private
+        // file the bridge reads. Never truncated, never replaced by an empty list.
+        const handed = context.toolsCacheDir
+          ? handOverInitialTools({ dir: context.toolsCacheDir, windowsPrivate: context.toolsCachePrivate === true }, { identity: context.identity, revision: context.listScope.revision }, context.listScope.initialTools)
+          : null;
+        if (handed) env.MURAGE_CONNECTOR_INITIAL_TOOLS = handed;
+        else if (text.length <= INITIAL_TOOLS_ENV_LAST_RESORT_CHARS) env.MURAGE_CONNECTOR_INITIAL_TOOLS = text;
+        // Neither the file nor the environment can carry it: never an empty list
+        // and never a pointer to a file that does not exist. The bridge is told to
+        // ask the harness for the authoritative approved list before it answers
+        // (and to fail the mount recoverably if it cannot).
+        else env.MURAGE_CONNECTOR_INITIAL_TOOLS = INITIAL_TOOLS_ASK_HARNESS;
+      }
+    }
+  }
+  return env;
 }
 
 // Tool search and schemas answer the same thing for the same arguments until
@@ -1112,12 +1222,165 @@ function rememberToolResponse(key: string, ttlMs: number, contentType: string | 
   }
 }
 
+/** The last good tools/list per owner, kept past its ten-minute freshness: a
+ * turn's mount is answered from it at once and a stale one refreshes behind.
+ * The list is the same handful of session tools whatever is connected, so a
+ * remembered one is right; before, every mount after a quiet spell waited on
+ * a readiness probe and a broker round trip before the engine saw any tool. */
+const rememberedToolsList = new Map<string, { at: number; revision: number | string | null; epoch: number; body: Record<string, JsonValue> }>();
+/** The list discovery running per owner, access revision and connection epoch: every
+ * cold request for the same ones awaits the SAME broker round trip (a retry gets
+ * the first request's answer, not a new wait). */
+const coldToolsListInFlight = new Map<string, Promise<RelayReply>>();
+/** The refresh running per owner, and the revision it was asked under. */
+const toolsListRefreshing = new Map<string, number | string | null>();
+/** The `_meta` key that marks a tools/list answer provisional: the bundled
+ * standard list, or a remembered one from an older revision. A refresh is
+ * running whenever one is served, and the connector bridge
+ * (connector-proxy.ts followProvisionalList) asks again and tells the engine
+ * to list again (`notifications/tools/list_changed`) once the real one lands. */
+export const PROVISIONAL_TOOLS_META = "murage/provisional";
+/** Set beside it when the answer is the bundled stand-in rather than an older real list (the same key as connector-proxy.ts). */
+export const PROVISIONAL_BUNDLED_META = "murage/provisional-bundled";
+/** With nothing remembered yet (the first mount after the app starts), how
+ * long a mount waits for the broker before it is answered with the session's
+ * standard tools; the broker's answer is remembered when it comes. */
+export const COLD_TOOLS_LIST_WAIT_MS = 4_000;
+let coldToolsListWaitMs = COLD_TOOLS_LIST_WAIT_MS;
+/** Test hook: shrink (or, with no argument, restore) the cold wait. */
+export function setColdToolsListWaitMsForTests(ms?: number): void {
+  coldToolsListWaitMs = ms ?? COLD_TOOLS_LIST_WAIT_MS;
+}
+
+export { STANDARD_SESSION_TOOLS } from "./composio-standard-tools.ts";
+import { STANDARD_SESSION_TOOLS } from "./composio-standard-tools.ts";
+
+function isToolsList(payload: JsonValue): boolean {
+  return !!payload && typeof payload === "object" && !Array.isArray(payload) && (payload as { method?: JsonValue }).method === "tools/list"
+    && (payload as { id?: JsonValue }).id !== undefined && (payload as { id?: JsonValue }).id !== null;
+}
+
+/** The same answer, marked provisional (PROVISIONAL_TOOLS_META). */
+function provisional(body: Record<string, JsonValue>): Record<string, JsonValue> {
+  const result = (body.result && typeof body.result === "object" && !Array.isArray(body.result) ? body.result : {}) as Record<string, JsonValue>;
+  const meta = (result._meta && typeof result._meta === "object" && !Array.isArray(result._meta) ? result._meta : {}) as Record<string, JsonValue>;
+  return { ...body, result: { ...result, _meta: { ...meta, [PROVISIONAL_TOOLS_META]: true } } };
+}
+
+/** The revision of this owner's connected apps: any connect or disconnect
+ * bumps it, so a list remembered under an older one is refreshed. */
+function toolsListRevision(owner: string): number | string | null {
+  return inventoryVersion(owner) ?? null;
+}
+
+/** Remember a good tools/list answer for this owner, at the revision it was asked under. */
+function rememberToolsList(owner: string, reply: RelayReply, revision: number | string | null, epoch: number): void {
+  if (reply.status !== 200 || !reply.contentType.includes("application/json")) return;
+  // Asked before a disconnect or an access change: never filed (or served) afterwards.
+  if (epoch !== connectionEpoch || revision !== toolsListRevision(owner)) return;
+  try {
+    const body = JSON.parse(new TextDecoder().decode(reply.bytes)) as Record<string, JsonValue>;
+    const tools = (body?.result as { tools?: JsonValue } | undefined)?.tools;
+    if (!Array.isArray(tools) || !tools.length || body.error !== undefined) return;
+    const { id: _id, ...rest } = body;
+    rememberedToolsList.set(owner, { at: Date.now(), revision, epoch, body: rest });
+  } catch {
+    // not JSON-RPC: nothing to remember
+  }
+}
+
+/** Test seam: the access revision of this install's connected apps changes (a connect or disconnect). */
+export function bumpAccessRevisionForTests(cfg: AppConfig): void {
+  const owner = inventoryOwner(cfg);
+  if (!owner) return;
+  void readInventory(owner, async () => ({})).catch(() => {});
+  invalidateInventory(owner);
+}
+
+/** The bundled stand-in, said so (PROVISIONAL_BUNDLED_META): the bridge holds a
+ * first list against this one, because Codex and Grok never list again. */
+function bundledProvisionalReply(id: JsonValue): RelayReply {
+  const bundled = provisional({ jsonrpc: "2.0", id, result: { tools: STANDARD_SESSION_TOOLS as unknown as JsonValue } });
+  const bundledResult = bundled.result as Record<string, JsonValue>;
+  return jsonReply({ ...bundled, result: { ...bundledResult, _meta: { ...(bundledResult._meta as Record<string, JsonValue>), [PROVISIONAL_BUNDLED_META]: true } } });
+}
+
+/** The same reply addressed to this request (a shared discovery answers several). */
+function replyWithId(reply: RelayReply, id: JsonValue): RelayReply {
+  if (reply.status !== 200 || !reply.contentType.includes("application/json")) return reply;
+  try {
+    const body = JSON.parse(new TextDecoder().decode(reply.bytes)) as Record<string, JsonValue>;
+    return jsonReply({ ...body, id });
+  } catch {
+    return reply;
+  }
+}
+
 export async function relayMcp(
   cfg: AppConfig,
   payload: JsonValue,
   transportSessionId?: string,
   beforeDispatch?: () => void,
-): Promise<{ status: number; bytes: Uint8Array; contentType: string; transportSessionId?: string }> {
+  options: { timeoutMs?: number } = {},
+): Promise<RelayReply> {
+  if (!isToolsList(payload)) return relayMcpUpstream(cfg, payload, transportSessionId, beforeDispatch, false, options);
+  const owner = inventoryOwner(cfg);
+  if (!owner) return relayMcpUpstream(cfg, payload, transportSessionId, beforeDispatch, false, options);
+  const id = (payload as { id?: JsonValue }).id ?? null;
+  let held = rememberedToolsList.get(owner);
+  const revision = toolsListRevision(owner);
+  const epoch = connectionEpoch;
+  // A list remembered under another access revision or before a disconnect is
+  // never served, not even marked provisional: a disconnected account's tools
+  // must not reach an engine that lists once. It is dropped and the answer is
+  // held for authoritative discovery, like a first list.
+  if (held && (held.revision !== revision || held.epoch !== epoch)) {
+    rememberedToolsList.delete(owner);
+    held = undefined;
+  }
+  if (held) {
+    // Served now. One past its freshness refreshes behind, one refresh per revision at a time.
+    if (Date.now() - held.at >= TOOLS_LIST_TTL_MS && (!toolsListRefreshing.has(owner) || toolsListRefreshing.get(owner) !== revision)) {
+      toolsListRefreshing.set(owner, revision);
+      void relayMcpUpstream(cfg, payload, undefined, beforeDispatch, true, options)
+        .then((reply) => { if (inventoryOwner(cfg) === owner) rememberToolsList(owner, reply, revision, epoch); }, () => {})
+        .finally(() => { if (toolsListRefreshing.get(owner) === revision) toolsListRefreshing.delete(owner); });
+    }
+    return jsonReply({ ...held.body, id });
+  }
+  const flightKey = `${owner}|${revision}|${epoch}`;
+  let live = coldToolsListInFlight.get(flightKey);
+  if (!live) {
+    const started: Promise<RelayReply> = relayMcpUpstream(cfg, payload, transportSessionId, beforeDispatch, false, options).then((reply) => {
+      if (inventoryOwner(cfg) === owner) rememberToolsList(owner, reply, revision, epoch);
+      return reply;
+    }).finally(() => { if (coldToolsListInFlight.get(flightKey) === started) coldToolsListInFlight.delete(flightKey); });
+    started.catch(() => {});
+    coldToolsListInFlight.set(flightKey, started);
+    live = started;
+  }
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const raced = await Promise.race([
+    live.then((reply) => ({ reply })),
+    new Promise<null>((resolve) => { timer = setTimeout(() => resolve(null), coldToolsListWaitMs); }),
+  ]).finally(() => clearTimeout(timer));
+  if (raced) {
+    // The connections or the access changed while it was asked: this answer is
+    // from before, so it is not shown. The bridge holds against the stand-in and asks again.
+    if (epoch !== connectionEpoch || revision !== toolsListRevision(owner)) return bundledProvisionalReply(id);
+    return replyWithId(raced.reply, id);
+  }
+  return bundledProvisionalReply(id);
+}
+
+async function relayMcpUpstream(
+  cfg: AppConfig,
+  payload: JsonValue,
+  transportSessionId?: string,
+  beforeDispatch?: () => void,
+  bypassCache = false,
+  options: { timeoutMs?: number } = {},
+): Promise<RelayReply> {
   // Every call re-checks readiness the way a turn start does (never waiting
   // on a probe already running), so a 503 earlier in this turn, which clears
   // it, is repaired here instead of failing every later call in the turn.
@@ -1145,7 +1408,7 @@ export async function relayMcp(
       // Say it as the tool's own answer, in plain words, so the model relays
       // "briefly unreachable" rather than an error.
       const answer = jsonRpcFailure(payload, BROKER_UNREACHABLE);
-      if (answer !== null) return { status: 200, bytes: new TextEncoder().encode(JSON.stringify(answer)), contentType: "application/json" };
+      if (answer !== null) return { status: 200, bytes: new TextEncoder().encode(JSON.stringify(answer)), contentType: "application/json", delivery: "not-sent" };
     }
     throw new Error(fluxSignedInButUnreachable(cfg) ? BROKER_UNREACHABLE : BROKER_UNAVAILABLE);
   }
@@ -1153,7 +1416,7 @@ export async function relayMcp(
   const cacheKey = cachePolicy ? `${identity}|${inventoryVersion(inventoryOwner(cfg))}|${cachePolicy.key}` : null;
   if (cacheKey) {
     const held = toolResponseCache.get(cacheKey);
-    if (held && Date.now() - held.at < held.ttlMs) {
+    if (held && !bypassCache && Date.now() - held.at < held.ttlMs) {
       const id = (payload as { id?: JsonValue }).id;
       return {
         status: 200,
@@ -1172,7 +1435,13 @@ export async function relayMcp(
       method: "POST",
       headers,
       body: JSON.stringify(payload),
-      signal: AbortSignal.timeout(10 * 60_000),
+      // A lookup stops a short grace after the bridge gives up. An action runs
+      // for its own lifetime (relayConnectedAppCall keeps it going after the
+      // bot's wait ends), bounded inside the broker's 285 s upstream cap plus
+      // a margin, so a broker that never answers cannot hold a socket forever.
+      signal: AbortSignal.timeout(options.timeoutMs ?? (connectedAppActionCall(payload)
+        ? CONNECTED_APP_OPERATION_LIFETIME_MS
+        : connectedAppCallTimeoutMs(payload) + CONNECTED_APP_RELAY_GRACE_MS)),
     });
   } catch (error) {
     // A dropped connection reads as a plain sentence, and readiness is
@@ -1180,10 +1449,16 @@ export async function relayMcp(
     if (broker?.kind === "flux" && error instanceof TypeError) {
       invalidateBrokerReadiness();
       const answer = jsonRpcFailure(payload, BROKER_UNREACHABLE);
-      if (answer !== null) return { status: 200, bytes: new TextEncoder().encode(JSON.stringify(answer)), contentType: "application/json" };
+      // Refused before anything left is "not sent"; a drop after the request
+      // went out may have reached the app, so its outcome is unknown.
+      const delivery = neverConnected(error) ? "not-sent" : "unknown";
+      if (answer !== null) return { status: 200, bytes: new TextEncoder().encode(JSON.stringify(answer)), contentType: "application/json", delivery };
     }
     throw error;
   }
+  // Read before any body is consumed: only the broker saying so, in so many
+  // words, makes a 5xx "nothing was sent".
+  const refusal = response.ok ? undefined : brokerRefusalDelivery(response.status, await dispatchEvidence(response));
   if (broker) {
     // The hot path learns what the broker says about itself exactly as the
     // panel routes do: a retired Worker must stop being chosen here too.
@@ -1197,6 +1472,7 @@ export async function relayMcp(
         status: 404,
         bytes: new TextEncoder().encode(JSON.stringify({ error: "session_gone" })),
         contentType: "application/json",
+        delivery: refusal ?? "unknown",
       };
     }
     const unreachable = broker.kind === "flux" && (response.status === 503 || response.status === 404);
@@ -1204,7 +1480,7 @@ export async function relayMcp(
     const answer = plain === null ? null : jsonRpcFailure(payload, plain);
     if (answer !== null) {
       await response.body?.cancel().catch(() => {});
-      return { status: 200, bytes: new TextEncoder().encode(JSON.stringify(answer)), contentType: "application/json" };
+      return { status: 200, bytes: new TextEncoder().encode(JSON.stringify(answer)), contentType: "application/json", delivery: refusal! };
     }
   }
   const declared = Number(response.headers.get("content-length") ?? "0");
@@ -1216,12 +1492,271 @@ export async function relayMcp(
   if (forwarded) rememberTransportSession(forwarded, identity);
   const nextSession = response.headers.get("mcp-session-id") ?? undefined;
   if (nextSession) rememberTransportSession(nextSession, identity);
+  const delivery = refusal ?? (response.ok && inBandNotDispatched(bytes, (payload as { id?: unknown } | null)?.id) ? "not-sent" as const : undefined);
   return {
     status: response.status,
     bytes,
     contentType: response.headers.get("content-type") ?? "application/json",
     transportSessionId: nextSession,
+    ...(delivery ? { delivery } : {}),
   };
+}
+
+const NEVER_CONNECTED = new Set(["ECONNREFUSED", "ENOTFOUND", "EAI_AGAIN", "EHOSTUNREACH", "ENETUNREACH", "CERT_HAS_EXPIRED", "DEPTH_ZERO_SELF_SIGNED_CERT", "UNABLE_TO_VERIFY_LEAF_SIGNATURE"]);
+/** A fetch failure that happened before the request could have left. */
+function neverConnected(error: TypeError): boolean {
+  const cause = (error as { cause?: { code?: unknown } }).cause;
+  return typeof cause?.code === "string" && NEVER_CONNECTED.has(cause.code);
+}
+
+/** Codes the Flux broker answers a 503 with only when it turned the request
+ * away before dispatching anything (flux-router 523958cb). */
+const FLUX_PRE_SEND_CODES = new Set(["apps_unavailable", "composio_unavailable", "capability_unavailable"]);
+
+/** What the broker's error body says about whether anything was dispatched. */
+async function dispatchEvidence(response: Response): Promise<{ dispatched?: boolean; code?: string }> {
+  try {
+    const body = (await response.clone().json()) as { dispatched?: unknown; code?: unknown } | null;
+    return {
+      ...(body?.dispatched === false ? { dispatched: false } : {}),
+      ...(typeof body?.code === "string" ? { code: body.code } : {}),
+    };
+  } catch {
+    return {};
+  }
+}
+
+/** A failed broker answer is "unknown" (it may have reached the app) unless
+ * the broker said, in so many words, that nothing was dispatched: a top-level
+ * `dispatched:false`, or (503 only) one of the codes Flux uses for exactly
+ * that. No status alone is evidence, 4xx included: Flux's own 400/402/403/
+ * 413/429 refusals carry no flag today, and the app's own 4xx pass through. */
+function brokerRefusalDelivery(status: number, evidence: { dispatched?: boolean; code?: string } = {}): "not-sent" | "unknown" {
+  if (evidence.dispatched === false) return "not-sent";
+  if (status === 503 && evidence.code !== undefined && FLUX_PRE_SEND_CODES.has(evidence.code)) return "not-sent";
+  return "unknown";
+}
+
+/** An answer carried in a 200 (plain JSON or an event stream) that is, for
+ * THIS request's JSON-RPC id, an in-band -32000 error saying
+ * `data.dispatched` is false: nothing was sent. A frame for any other id is
+ * somebody else's answer and says nothing about this request. */
+function inBandNotDispatched(bytes: Uint8Array, requestId: unknown): boolean {
+  if (requestId === undefined || requestId === null) return false;
+  const text = new TextDecoder().decode(bytes).trim();
+  if (!text) return false;
+  const frames: unknown[] = [];
+  const parse = (value: string) => { try { frames.push(JSON.parse(value)); } catch { /* not a frame */ } };
+  if (text.startsWith("{") || text.startsWith("[")) parse(text);
+  else for (const line of text.split(/\r?\n/)) if (line.startsWith("data:")) parse(line.slice(5).trim());
+  const list = frames.flatMap((frame) => Array.isArray(frame) ? frame : [frame])
+    .filter((frame) => !!frame && typeof frame === "object" && (frame as { id?: unknown }).id === requestId);
+  const errors = list.filter((frame): frame is { error: { code?: unknown; data?: { dispatched?: unknown } } } =>
+    !!frame && typeof frame === "object" && "error" in frame && !!(frame as { error: unknown }).error && typeof (frame as { error: unknown }).error === "object");
+  if (!errors.length || list.some((frame) => !!frame && typeof frame === "object" && "result" in frame)) return false;
+  return errors.every((frame) => frame.error.code === -32000 && frame.error.data?.dispatched === false);
+}
+
+// ── One identity per connected-app action ───────────────────────────────
+// (server/connected-app-operations.ts explains the ledger.)
+// The journal is written before an action is sent, so a restart cannot forget
+// one that was on its way.
+const operationJournal = new SqliteOperationJournal(defaultJournalFile(DATA_DIR));
+let connectedAppOperations = new ConnectedAppOperations(Date.now, operationJournal);
+
+/** Tests only: forget every kept operation, in memory and in the journal. */
+export function resetConnectedAppOperations(): void {
+  connectedAppOperations.reset();
+}
+
+/** Tests only: as if Murage had stopped and started again. Memory is lost; the
+ * journal is what the new process reads. */
+export function restartConnectedAppOperations(): void {
+  connectedAppOperations = new ConnectedAppOperations(Date.now, operationJournal);
+}
+
+function jsonReply(message: unknown): RelayReply {
+  return { status: 200, bytes: new TextEncoder().encode(JSON.stringify(message)), contentType: "application/json" };
+}
+
+function textReply(id: unknown, text: string, isError = false): RelayReply {
+  return jsonReply({ jsonrpc: "2.0", id, result: { content: [{ type: "text", text }], ...(isError ? { isError: true } : {}) } });
+}
+
+/** A kept answer handed to a later request: its id, with a note first. */
+function keptReply(op: ConnectedAppOperation, reply: RelayReply, id: unknown, now: number): RelayReply {
+  const ago = Math.max(0, Math.round((now - op.startedAt) / 1000));
+  const note = op.fresh ? connectedAppHistoryNote(op.label, op.handle, ago) : connectedAppRepeatNote(op.label, op.handle, ago);
+  // Only the frame that answers the request that started the operation: a
+  // stored stream may carry answers to other requests.
+  const message = replyMessage(reply, op.requestId);
+  if (!message) {
+    const raw = new TextDecoder().decode(reply.bytes);
+    const readable = !isEventStream(reply) && !/^\s*[{[]/.test(raw);
+    return readable
+      ? textReply(id, `${note}\n\n${raw.slice(0, 20_000)}`)
+      : textReply(id, `${note}\n\nThe app's answer to this request could not be read back. Check in the app for the outcome.`, true);
+  }
+  const result = message.result;
+  if (result && typeof result === "object" && !Array.isArray(result) && Array.isArray((result as { content?: unknown }).content)) {
+    const content = (result as { content: unknown[] }).content;
+    return jsonReply({ ...message, id, result: { ...result, content: [{ type: "text", text: note }, ...content] } });
+  }
+  if (message.error !== undefined) {
+    const error = message.error as { message?: unknown };
+    return textReply(id, `${note}\n\n${String(error?.message ?? JSON.stringify(message.error))}`, true);
+  }
+  return jsonReply({ ...message, id });
+}
+
+/** What a request receives once an operation has an outcome. `first` is the
+ * request that started it, which gets the broker's own bytes unchanged. */
+function outcomeReply(op: ConnectedAppOperation, outcome: OperationOutcome, id: unknown, first: boolean): RelayReply {
+  if (outcome.kind === "answered") {
+    connectedAppOperations.delivered(op);
+    return first ? outcome.reply : keptReply(op, outcome.reply, id, Date.now());
+  }
+  if (outcome.kind === "unknown") return textReply(id, op.fresh ? connectedAppReadUnknownText(op.label) : connectedAppUnknownText(op.label, op.handle, outcome.cause), true);
+  if (first) {
+    if (outcome.reply) return outcome.reply;
+    throw outcome.error;
+  }
+  const reason = outcome.error instanceof Error ? outcome.error.message : "the app could not be reached";
+  return textReply(id, connectedAppNotSentText(op.label, reason), true);
+}
+
+const provenanceOf = (op: ConnectedAppOperation): ConnectedAppProvenance => ({ requirements: op.requirements, complete: op.requirementsComplete });
+
+/** The call each operation in this process was started with, for the receipt
+ * of what the app completed (server/connected-app-receipts.ts). Not journaled. */
+const operationCalls = new WeakMap<ConnectedAppOperation, { name: string; args: unknown }>();
+export type ConnectedAppAnswered = (call: { name: string; args: unknown }, answer: Record<string, unknown> | null) => void;
+
+/** Tell the caller an operation's answer reached the bot. Never throws into the relay. */
+function reportAnswered(op: ConnectedAppOperation, outcome: OperationOutcome | undefined, onAnswered: ConnectedAppAnswered | undefined): void {
+  if (!onAnswered || outcome?.kind !== "answered") return;
+  const call = operationCalls.get(op);
+  if (!call) return;
+  try { onAnswered(call, replyMessage(outcome.reply, op.requestId)); } catch (error) {
+    console.warn("connected app receipt failed:", error instanceof Error ? error.message : String(error));
+  }
+}
+
+async function statusReply(scope: string, id: unknown, args: unknown, waitMs: number, authorizeStored?: (used: ConnectedAppProvenance) => void, onAnswered?: ConnectedAppAnswered): Promise<RelayReply> {
+  const input = args && typeof args === "object" && !Array.isArray(args) ? args as { handle?: unknown; run_again?: unknown } : {};
+  const handle = typeof input.handle === "string" ? input.handle.trim() : "";
+  const op = handle ? connectedAppOperations.byHandle(scope, handle) : undefined;
+  if (!op) return textReply(id, connectedAppNoRecordText(handle || "(none)"));
+  // The handle proves which bot asked, not that it may still see this: the
+  // bot's grants as they are now must cover what the action used.
+  authorizeStored?.(provenanceOf(op));
+  if (input.run_again === true) {
+    if (!op.outcome) return textReply(id, connectedAppPendingText(op.label, op.handle, true));
+    try {
+      connectedAppOperations.clear(op);
+    } catch {
+      return textReply(id, connectedAppNotClearedText(op.label), true);
+    }
+    return textReply(id, connectedAppClearedText(op.label));
+  }
+  const outcome = await waitForOperation(op, waitMs);
+  // Grants can change while this waited (up to the status wait): look again,
+  // immediately before anything of the action is handed over.
+  authorizeStored?.(provenanceOf(op));
+  if (!outcome) return textReply(id, connectedAppPendingText(op.label, op.handle, true));
+  reportAnswered(op, outcome, onAnswered);
+  return outcomeReply(op, outcome, id, false);
+}
+
+/**
+ * The connected-apps relay for one bot's call. Lookups and the tool list go
+ * straight through (a lookup that runs out of time is a plain error). An
+ * action gets an operation identity: the bot waits at most `waitMs`, then is
+ * told it is still running, with a handle; the action carries on and its
+ * outcome is kept. The same action made again joins it rather than running
+ * twice. The bridge's status tool (CHECK_CONNECTED_APP_ACTION) collects it.
+ */
+export async function relayConnectedAppCall(
+  cfg: AppConfig,
+  payload: JsonValue,
+  transportSessionId: string | undefined,
+  beforeDispatch: (() => void) | undefined,
+  options: {
+    botId: string; waitMs?: number; lifetimeMs?: number; statusWaitMs?: number;
+    /** Throws when the bot may no longer use what a stored action used. */
+    authorizeStored?: (used: ConnectedAppProvenance) => void;
+    /** Called when an action's answer from the app is handed to the bot (first, joined or collected). */
+    onAnswered?: ConnectedAppAnswered;
+  },
+): Promise<RelayReply> {
+  const message = payload && typeof payload === "object" && !Array.isArray(payload) ? payload as Record<string, JsonValue> : null;
+  const params = message?.method === "tools/call" && message.params && typeof message.params === "object" && !Array.isArray(message.params)
+    ? message.params as Record<string, JsonValue> : null;
+  const scope = `${options.botId}|${inventoryOwner(cfg) ?? "none"}`;
+  if (params && isConnectedAppStatusTool(String(params.name ?? "")) && message!.id !== undefined) {
+    beforeDispatch?.();
+    return statusReply(scope, message!.id, params.arguments, Math.min(options.statusWaitMs ?? CONNECTED_APP_STATUS_WAIT_MS, options.waitMs ?? Infinity), options.authorizeStored, options.onAnswered);
+  }
+  // An action that cannot be given an identity (no usable request id, or inside
+  // a batch) is never forwarded: nothing would record it or stop its repeat.
+  if (connectedAppUnprotectedAction(payload)) {
+    beforeDispatch?.();
+    const rawId = message && "id" in message ? message.id : null;
+    return jsonReply({
+      jsonrpc: "2.0",
+      id: typeof rawId === "string" || typeof rawId === "number" ? rawId : null,
+      error: { code: -32600, message: "An app action needs a request id so Murage can keep track of it. Send it as a single request with an id." },
+    });
+  }
+  const action = connectedAppActionCall(payload);
+  if (!action) return relayMcp(cfg, payload, transportSessionId, beforeDispatch);
+  const waitMs = Math.max(0, Math.min(options.waitMs ?? CONNECTED_APP_ACTION_TIMEOUT_MS, CONNECTED_APP_ACTION_TIMEOUT_MS));
+  // Identity is the tool and its effect-bearing arguments; the model's
+  // commentary (`thought`, step labels) changes on every retry and is left out.
+  const key = operationKey(connectedAppToolId(action.name), connectedAppEffectArgs(action.args));
+  // Only a call whose every action is a verified read runs fresh each time;
+  // writes, unknown tools, mixed batches and code tools keep the one-send guard.
+  const fresh = classifyConnectedAppCall(action.name, action.args) === "read";
+  const existing = fresh ? undefined : connectedAppOperations.blocking(scope, key);
+  if (existing) {
+    // Same tool, same arguments, same bot and account: never a second send.
+    beforeDispatch?.();
+    const outcome = await waitForOperation(existing, waitMs);
+    // The wait may have outlasted the bot's grants.
+    options.authorizeStored?.(provenanceOf(existing));
+    reportAnswered(existing, outcome, options.onAnswered);
+    return outcome ? outcomeReply(existing, outcome, action.id, false) : textReply(action.id, connectedAppPendingText(existing.label, existing.handle, true));
+  }
+  let sent = false;
+  let op: ConnectedAppOperation;
+  try {
+    op = connectedAppOperations.start(
+      scope,
+      key,
+      connectedAppActionLabel(action.args),
+      // Only a result or error frame carrying THIS request's id is an answer;
+      // anything else that came back (foreign ids, empty, malformed) leaves the
+      // outcome unknown, so repeats stay blocked until CHECK or run_again.
+      async () => {
+        const reply = await relayMcp(cfg, payload, transportSessionId, () => { beforeDispatch?.(); sent = true; }, { timeoutMs: options.lifetimeMs ?? CONNECTED_APP_OPERATION_LIFETIME_MS });
+        return reply.delivery || answersRequest(reply, action.id) ? reply : { ...reply, delivery: "unknown" as const };
+      },
+      () => sent,
+      (() => {
+        const provenance = connectedAppProvenance(action.name, action.args);
+        return { requestId: action.id, requirements: provenance.requirements, requirementsComplete: provenance.complete, fresh };
+      })(),
+    );
+  } catch (error) {
+    if (!(error instanceof OperationRefused)) throw error;
+    beforeDispatch?.();
+    const label = connectedAppActionLabel(action.args);
+    return textReply(action.id, error.reason === "busy" ? connectedAppBusyText(label) : connectedAppUnrecordedText(label), true);
+  }
+  operationCalls.set(op, { name: action.name, args: action.args });
+  const outcome = await waitForOperation(op, waitMs);
+  reportAnswered(op, outcome, options.onAnswered);
+  return outcome ? outcomeReply(op, outcome, action.id, true) : textReply(action.id, connectedAppPendingText(op.label, op.handle, false));
 }
 
 /** Who owns the remembered inventory: the credential identity that would be
@@ -1280,6 +1815,12 @@ export async function connectedPanelInventory(cfg: AppConfig, options: { force?:
   return { kind: "ok", read: await connectedInventory(cfg, { force: options.force }) };
 }
 
+/** True when a connected-apps list is already remembered, so a view can show it without a broker call. */
+export function hasRememberedConnected(cfg: AppConfig): boolean {
+  const owner = inventoryOwner(cfg);
+  return owner !== null && hasInventory(owner);
+}
+
 /** The inventory for a view or a count: one shared, single-flight read. Waits
  * only when nothing is remembered (or `fresh` is set). */
 export async function connectedServices(cfg: AppConfig, options: { fresh?: boolean } = {}): Promise<Record<string, ConnectorServiceState>> {
@@ -1299,6 +1840,23 @@ function invalidateConnected(cfg: AppConfig, options: { drop?: boolean } = {}): 
 function clearInventoryAndToolCache(): void {
   clearInventory();
   toolResponseCache.clear();
+  rememberedToolsList.clear();
+  connectionsRemoved();
+}
+
+// The bridge's on-disk tool lists name accounts and carry upstream
+// descriptions. When an account is disconnected, or the person signs out, they
+// go at once, and the epoch below (part of every bot's list revision) changes so
+// a warm bridge stops serving what it still remembers in memory.
+let connectionEpoch = 0;
+let toolsCachePurger: (() => void) | null = null;
+/** The index installs the purge for its data folder. */
+export function setToolsCachePurger(purge: (() => void) | null): void { toolsCachePurger = purge; }
+/** Changes whenever connected accounts were removed in this process. */
+export function connectedAppsEpoch(): number { return connectionEpoch; }
+function connectionsRemoved(): void {
+  connectionEpoch += 1;
+  try { toolsCachePurger?.(); } catch { /* best effort: the revision change already retires every remembered list */ }
 }
 
 /**
@@ -1365,6 +1923,7 @@ export async function removeService(cfg: AppConfig, slug: string) {
   if (!response.ok) await throwBrokerError(response, `Connected apps: HTTP ${response.status}`);
   const answer = removalResponseSchema.parse(await response.json());
   invalidateConnected(cfg, { drop: true });
+  connectionsRemoved();
   return answer;
 }
 
@@ -1379,6 +1938,7 @@ export async function removeAccount(cfg: AppConfig, slug: string, accountId: str
   if (!response.ok) await throwBrokerError(response, `Connected apps: HTTP ${response.status}`);
   const answer = removalResponseSchema.parse(await response.json());
   invalidateConnected(cfg, { drop: true });
+  connectionsRemoved();
   return answer;
 }
 
@@ -1400,7 +1960,7 @@ async function clearDeadAttempts(cfg: AppConfig, slug: string, alias: string): P
       const response = await brokerRequest(cfg, `/v1/connectors/${encodeURIComponent(slug)}/accounts/${encodeURIComponent(account.id)}`, { method: "DELETE" });
       if (response.ok) removed = true;
     }
-    if (removed) invalidateConnected(cfg, { drop: true });
+    if (removed) { invalidateConnected(cfg, { drop: true }); connectionsRemoved(); }
     return removed;
   } catch {
     return false;

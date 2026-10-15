@@ -1,7 +1,7 @@
 // Copyright 2026 Ferrox Labs
 // SPDX-License-Identifier: AGPL-3.0-or-later
 //
-// What's new in 0.1.61: three cards in the approved 0.1.59 design (the
+// What's new in 0.1.61 and 1.0.2: three cards in the approved 0.1.59 design (the
 // whats-new-art/mockup-boards WN1, WN3 and WN4 layouts), with the copy and art
 // Sean approved in whats-new-art-0161 (preview.html, brief.md). Sizes and
 // colours are the mockups'; the colours are the `--wn-*` art-panel tokens in
@@ -12,6 +12,10 @@
 // shortcut does and records the page as seen when it closes, however it
 // closes: X (card 1, as in the mockups), Escape, Got it, Let's go, or any
 // shortcut.
+//
+// 1.0.2 has its own hero, six tiles and list (whats-new-art-0102); every other
+// version with a page keeps the 0.1.61 content. The pictures all load with this
+// lazy chunk, never with the first paint.
 import { useEffect, useLayoutEffect, useRef, useState, type KeyboardEvent, type ReactNode } from "react";
 import { cn } from "@/lib/cn";
 import teamHero from "@/assets/whats-new/team-hero.webp";
@@ -21,12 +25,23 @@ import tilePacks from "@/assets/whats-new/tile-packs.webp";
 import tileShapes from "@/assets/whats-new/tile-shapes.webp";
 import tileGemini from "@/assets/whats-new/tile-gemini.webp";
 import tileLongwork from "@/assets/whats-new/tile-longwork.webp";
+import memoryHero from "@/assets/whats-new/memory-hero.webp";
+import tileRouting from "@/assets/whats-new/tile-routing.webp";
+import tileEngines from "@/assets/whats-new/tile-engines.webp";
+import tileChrome from "@/assets/whats-new/tile-chrome.webp";
+import tileSpeed from "@/assets/whats-new/tile-speed.webp";
+import tileDesktops from "@/assets/whats-new/tile-desktops.webp";
+import tileLabs from "@/assets/whats-new/tile-labs.webp";
 
-export type WhatsNewAction = "teams" | "rooms" | "blocks" | "packs" | "shapes" | "gemini" | "longwork";
+export type WhatsNewAction =
+  | "teams" | "rooms" | "blocks" | "packs" | "shapes" | "gemini" | "longwork"
+  | "memory" | "routing" | "engines" | "chrome" | "speed" | "desktops" | "library";
+
+type Tile = { action: Exclude<WhatsNewAction, "teams" | "memory">; img: string; alt: string; dot: string; title: string; body: string };
 
 export const WHATS_NEW_CARD_COUNT = 3;
 
-export const WHATS_NEW_TILES: Array<{ action: Exclude<WhatsNewAction, "teams">; img: string; alt: string; dot: string; title: string; body: string }> = [
+export const WHATS_NEW_TILES: Tile[] = [
   { action: "rooms", img: tileRooms, alt: "Three glowing orange glass pebbles sharing one pool of light", dot: "bg-[var(--wn-accent)]", title: "Rooms that work as one", body: "Every bot in a room sees what its teammates said, and bots on Fuigo can ask and hand off to teammates again." },
   { action: "blocks", img: tileBlocks, alt: "A stack of gold glass slabs with one slid forward", dot: "bg-[var(--wn-dot-gold)]", title: "Saved prompt blocks", body: "Save a character or a brand look as a named block, and every change keeps its own version." },
   { action: "packs", img: tilePacks, alt: "A fan of blank violet glass panes", dot: "bg-[var(--wn-dot-violet)]", title: "Reference packs", body: "Keep up to 16 reference images as a named pack and use them again whenever you need them." },
@@ -49,6 +64,36 @@ export const WHATS_NEW_MORE: string[] = [
   "Slow models on MiniMax, xAI and OpenAI-compatible engines get time to answer",
   "Tool names match the engine each bot runs on",
 ];
+
+/** The 1.0.2 tiles, from the 1.0.2 changelog. Each opens a real place in the app. */
+export const WHATS_NEW_TILES_102: Tile[] = [
+  { action: "routing", img: tileRouting, alt: "A ring of dim glass pebbles with one glowing orange pebble picked out by a thread of light", dot: "bg-[var(--wn-accent)]", title: "Ask the room, the right bot answers", body: "In a group chat, Murage picks the bot best placed to reply, in about a second." },
+  { action: "library", img: tileLabs, alt: "Five white glass pebbles in a crescent, one with a warm glow", dot: "bg-[var(--wn-ink)]", title: "Six teams, ready to hire", body: "Dev Shop, Marketing Agency, SEO Content Engine Room, Rival Watch, Follow-Up Desk and Community Lead Finder, each with a lead, a workflow and a first routine." },
+  { action: "engines", img: tileEngines, alt: "A glowing blue sphere resting among three differently shaped glass cradles", dot: "bg-[var(--wn-dot-blue)]", title: "Any model, any bot", body: "Move a bot between Claude, GPT, Grok and Gemini. It keeps working and tells you what it can do there." },
+  { action: "chrome", img: tileChrome, alt: "Two matching gold glass rings, one set inside the other", dot: "bg-[var(--wn-dot-gold)]", title: "Your bot, right in Chrome", body: "Work beside your bot in Chrome, with its own name and colour and the same access levels you use in the app." },
+  { action: "speed", img: tileSpeed, alt: "One calm ribbon of mint light running smoothly across a dark plane", dot: "bg-[var(--wn-dot-mint)]", title: "Long chats stay quick", body: "Memory answers in about a tenth of a second, even on a long history, and takes a fraction of the disk." },
+  { action: "desktops", img: tileDesktops, alt: "A neat row of eight violet glass panes, one slightly brighter", dot: "bg-[var(--wn-dot-violet)]", title: "Up to eight desktops per bot", body: "Give a busy bot several local desktops of its own and let it work on them side by side." },
+];
+
+export const WHATS_NEW_MORE_102: string[] = [
+  "Memory stays compact on long conversations",
+  "A Needs you block and an Inbox card list the memories waiting for your word",
+  "Keep, Keep all, Later, Edit and Undo on every waiting memory",
+  "One quiet note on your phone when memories are waiting",
+  "Unmatched actions sit in the Inspector beside the chat",
+  "House rules keep every word you type",
+  "Pictures through Flux use Flux's live image service",
+  "Murage checks your Flux key once and waits for you",
+  "Up to eight desktops, one for each bot",
+  "MCP tools start from Windows command shims",
+  "Phone pairing picks your real Wi-Fi or Ethernet address",
+  "Every release is checked on an Intel Mac",
+];
+
+/** Which content a page shows: 1.0.2 has its own; every other version with a page keeps 0.1.61's. */
+export function whatsNewContentFor(version: string | undefined): "0.1.61" | "1.0.2" {
+  return version === "1.0.2" ? "1.0.2" : "0.1.61";
+}
 
 // Shared control styles. 44px targets everywhere; a visible focus ring that
 // reads on the dark panels.
@@ -90,6 +135,8 @@ function Pager({ index, onGo }: { index: number; onGo?: (index: number) => void 
 
 export interface WhatsNewCardProps {
   index: number;
+  /** Which version's page this is. Without it, the 0.1.61 page. */
+  version?: string;
   releaseNotesUrl: string;
   onNext: () => void;
   /** The card before this one. Offered on every card after the first. */
@@ -102,23 +149,26 @@ export interface WhatsNewCardProps {
 }
 
 /** One card, by index. Rendered alone by the tests; the dialog wraps it. */
-export function WhatsNewCard({ index, releaseNotesUrl, onNext, onBack, onGo, onClose, onAction, headingRef }: WhatsNewCardProps): ReactNode {
+export function WhatsNewCard({ index, version, releaseNotesUrl, onNext, onBack, onGo, onClose, onAction, headingRef }: WhatsNewCardProps): ReactNode {
   const titleId = `whats-new-title-${index + 1}`;
+  const fresh = whatsNewContentFor(version) === "1.0.2";
+  const tiles = fresh ? WHATS_NEW_TILES_102 : WHATS_NEW_TILES;
+  const more = fresh ? WHATS_NEW_MORE_102 : WHATS_NEW_MORE;
   if (index === 0) {
     return (
       <section aria-labelledby={titleId} data-whats-new-card="hero" className="whats-new-card max-h-[calc(100dvh-32px-2*max(var(--inset-top),var(--inset-bottom)))] w-[min(820px,calc(100vw-32px))] overflow-y-auto overflow-x-hidden rounded-[22px] border border-[var(--wn-edge)] bg-[var(--wn-panel)] text-[var(--wn-ink)] shadow-[0_30px_90px_rgba(0,0,0,0.6)]">
         <div className="relative h-[342px] bg-[var(--wn-ground)] max-md:h-[260px] [@media(max-height:720px)]:h-[250px]">
-          <img src={teamHero} alt="A constellation of orange orbs of light, each joined to every other by fine threads" width={820} height={342} className="block h-full w-full object-cover" />
+          <img src={fresh ? memoryHero : teamHero} alt={fresh ? "A slim glowing column of fine glass layers with one small orange orb leaning toward you" : "A constellation of orange orbs of light, each joined to every other by fine threads"} width={820} height={342} className="block h-full w-full object-cover" />
           <div className="absolute left-[34px] top-[26px] flex gap-2">
             <span className="rounded-full border border-[var(--wn-chip-edge)] bg-[var(--wn-chip-ground)] px-[11px] py-1.5 text-[12px] font-semibold tracking-[0.06em] text-[var(--wn-accent-ink)]">NEW IN MURAGE</span>
           </div>
           <button type="button" aria-label="Close" onClick={onClose} className={cn("absolute right-3.5 top-3.5 flex size-11 cursor-pointer items-center justify-center rounded-xl border-0 bg-[var(--wn-close-ground)] text-[var(--wn-close-ink)] hover:text-[var(--wn-ink-strong)]", focusRing)}><CloseIcon /></button>
-          <h2 id={titleId} ref={headingRef} tabIndex={-1} className={cn("whats-new-display absolute bottom-[30px] left-[34px] right-[34px] m-0 text-[58px] leading-none tracking-[-0.01em] text-[var(--wn-ink-strong)] max-sm:text-[44px]", headingFocus)}>Your team, in step.</h2>
+          <h2 id={titleId} ref={headingRef} tabIndex={-1} className={cn("whats-new-display absolute bottom-[30px] left-[34px] right-[34px] m-0 text-[58px] leading-none tracking-[-0.01em] text-[var(--wn-ink-strong)] max-sm:text-[44px]", headingFocus)}>{fresh ? <>Bots that remember what matters</> : <>Your team, in step.</>}</h2>
         </div>
         <div className="flex flex-col gap-3.5 px-[34px] pb-[26px] pt-6 max-sm:px-5">
-          <p className="m-0 text-[15.5px] leading-[1.55] text-[var(--wn-ink-body)]">Every bot in a room sees what its teammates said, on every engine. Images get saved looks and reference packs, and long work runs until it is done.</p>
+          <p className="m-0 text-[15.5px] leading-[1.55] text-[var(--wn-ink-body)]">{fresh ? "Your bots now check with you before they keep something about you. Keep it, edit it or let it go from one Needs you list." : "Every bot in a room sees what its teammates said, on every engine. Images get saved looks and reference packs, and long work runs until it is done."}</p>
           <div className="mt-1.5 flex items-center gap-2.5">
-            <button type="button" className={primaryDark} onClick={() => onAction("teams")}>Open Teams</button>
+            <button type="button" className={primaryDark} onClick={() => onAction(fresh ? "memory" : "teams")}>{fresh ? <>Open Memory</> : <>Open Teams</>}</button>
             <button type="button" className={ghostDark} onClick={onNext}>Next</button>
             <span className="grow" />
             <Pager index={0} onGo={onGo} />
@@ -135,7 +185,7 @@ export function WhatsNewCard({ index, releaseNotesUrl, onNext, onBack, onGo, onC
           <h2 id={titleId} ref={headingRef} tabIndex={-1} className={cn("whats-new-display m-0 text-[42px] leading-[1.05]", headingFocus)}>Made for bigger work</h2>
         </div>
         <ul className="m-0 grid list-none grid-cols-3 gap-3.5 p-0 max-[820px]:grid-cols-2 max-sm:grid-cols-1">
-          {WHATS_NEW_TILES.map((tile) => (
+          {tiles.map((tile) => (
             <li key={tile.action} className="flex">
               <button
                 type="button"
@@ -173,7 +223,7 @@ export function WhatsNewCard({ index, releaseNotesUrl, onNext, onBack, onGo, onC
         <h2 id={titleId} ref={headingRef} tabIndex={-1} className={cn("whats-new-display m-0 text-[42px] leading-[1.05]", headingFocus)}>Plus a long list of small wins</h2>
       </div>
       <ul className="relative m-0 grid list-none grid-cols-2 gap-x-9 gap-y-3.5 p-0 max-sm:grid-cols-1">
-        {WHATS_NEW_MORE.map((line) => (
+        {more.map((line) => (
           <li key={line} className="flex items-start gap-3">
             <span aria-hidden="true" className="mt-[7px] size-1.5 shrink-0 rounded-full bg-[var(--wn-accent)]" />
             <span className="text-[14.5px] font-semibold leading-[1.45]">{line}</span>
@@ -203,6 +253,7 @@ const FOCUSABLE = 'button:not([disabled]), a[href], [tabindex]:not([tabindex="-1
 
 export function WhatsNewDialog({
   open,
+  version,
   onClose,
   onAction,
   releaseNotesUrl,
@@ -213,6 +264,8 @@ export function WhatsNewDialog({
   /** A shortcut was chosen. The host closes the page and goes there. */
   onAction: (action: WhatsNewAction) => void;
   releaseNotesUrl: string;
+  /** The version whose page this is. */
+  version?: string;
 }) {
   const dialog = useRef<HTMLDialogElement>(null);
   const heading = useRef<HTMLHeadingElement | null>(null);
@@ -269,6 +322,7 @@ export function WhatsNewDialog({
       <WhatsNewCard
         key={index}
         index={index}
+        version={version}
         releaseNotesUrl={releaseNotesUrl}
         onNext={next}
         onBack={back}

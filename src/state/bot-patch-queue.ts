@@ -1,3 +1,4 @@
+import { carryAnswerTag } from "./answer-tag";
 import type { Bot, BotAnnouncement } from "./store";
 
 /** Every field written through the desktop's broad bot PATCH boundary. */
@@ -120,7 +121,8 @@ const stateOverlay = (patch: BotUpdatePatch): BotStateOverlay => {
 const withRefusedFieldsCleared = (bot: BotAnnouncement, rejected: BotUpdatePatch): BotAnnouncement => {
   const cleared: Record<string, undefined> = {};
   for (const key of Object.keys(stateOverlay(rejected))) if (!Object.hasOwn(bot, key)) cleared[key] = undefined;
-  return { ...bot, ...cleared };
+  // still the answer it was made from: its send time travels with it (answer-tag.ts)
+  return carryAnswerTag(bot, { ...bot, ...cleared });
 };
 
 /**

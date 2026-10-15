@@ -356,11 +356,13 @@ describe("ApprovalCard ACP permission kinds", () => {
     }
   });
 
-  it("still names a real tool, and still shows what was asked", () => {
+  it("still shows what was asked, and says a real command in words", () => {
     expect(render("other")).toContain("agents__list_bots");
     const real = renderToStaticMarkup(createElement(ApprovalCard, { bot, message: card("Bash", "git status") }));
-    expect(real).toContain("Business Planner wants to run a command");
-    expect(real).toContain(">Bash<");
+    expect(real).toContain("Business Planner wants to use git");
+    // the command itself is still on the card, behind Show details
+    expect(real).toContain("Show details");
+    expect(real).toContain("git status");
   });
 });
 
@@ -371,7 +373,7 @@ describe("tool approvals, spoken on a call", () => {
     ["WebSearch", "latest AI news", "search the web"],
     ["fetch", "https://www.reuters.com/technology/ai", "open a page on reuters.com"],
     ["web_fetch", "", "open a web page"],
-    ["Bash", "ls -la ~/Documents", "run a command on your computer"],
+    ["Bash", "ls -la ~/Documents", "list files"],
     ["Edit", "src/components/CallView.tsx", "change CallView.tsx"],
     ["Read", "notes/board.md", "read board.md"],
     ["mcp__gmail__send_email", "", "use send email"],
@@ -469,6 +471,14 @@ describe("the exact command grant on a pending approval", () => {
 
 describe("Murage for Chrome action cards (Fable H4, M9)", () => {
   const card = (subtitle: string): Message => ({ id: "ext", role: "bot", kind: "options", at: 1, card: { title: "Mira needs your approval", subtitle, options: ["Allow", "Deny"], tool: "browser_extension_action", requestId: "browser-1" } });
+  // D3: the heading is the card's own sentence, never the tool's internal name.
+  it("reads the heading the server wrote, not 'wants to browser extension action'", () => {
+    const message: Message = { id: "ext-title", role: "bot", kind: "options", at: 1, card: { title: "Ember wants to click on example.com", subtitle: "click on https://example.com", options: ["Allow", "Deny"], tool: "browser_extension_action", requestId: "browser-2" } };
+    const html = renderToStaticMarkup(createElement(ApprovalCard, { message }));
+    expect(html).toContain("Ember wants to click on example.com");
+    expect(html).not.toContain("browser extension action");
+    expect(html).not.toContain("browser_extension_action");
+  });
   it("shows a long reviewed text collapsed, with a real toggle", () => {
     const body = "word ".repeat(500); const html = renderToStaticMarkup(createElement(ApprovalCard, { message: card(`fill on https://example.test\nArguments: {"text":"${body}"}`) }));
     expect(html).toContain('data-approval-held="collapsed"'); expect(html).toContain("aria-expanded");
@@ -488,20 +498,34 @@ describe("ApprovalCard plain-language detail", () => {
     expect(markup).toContain("Show details");
     expect(markup).toContain("&quot;file_path&quot;:&quot;Newsletter/Spring offers.md&quot;");
   });
-  it("keeps a shell command first, with the bot's note below", () => {
+  it("says a shell command in words, with the bot's note, and keeps the command behind Show details", () => {
     const markup = render("mcp__x__run", '{"cmd":"rm -rf build","description":"Say hi"}');
-    expect(markup).toContain("cmd: rm -rf build");
+    expect(markup).toContain("Cmd: rm -rf build");
     const sh = render("Bash", '{"command":"rm -rf build","description":"Say hi"}');
-    expect(sh.indexOf("rm -rf build")).toBeLessThan(sh.indexOf("Bot&#x27;s note: Say hi"));
+    expect(sh).toContain("Wants to delete build");
+    expect(sh).toContain("What it is for: Say hi");
+    expect(sh.indexOf("What it is for: Say hi")).toBeLessThan(sh.indexOf("Show details"));
+    expect(sh.indexOf("Show details")).toBeLessThan(sh.indexOf("rm -rf build"));
   });
-  it("shows a visible expander for long values", () => {
-    expect(render("mcp__x__mystery", '{"a":"1","b":"' + "y".repeat(200) + '"}')).toContain("more characters");
+  it("shortens a long value in words and keeps the whole of it behind Show details", () => {
+    const markup = render("mcp__x__mystery", '{"a":"1","b":"' + "y".repeat(200) + '"}');
+    expect(markup).toContain("B: " + "y".repeat(119) + "…");
+    expect(markup).toContain("y".repeat(200));
   });
-  it.each(["ask_bot", "delegate", "browser_extension_action", "edit", "shell", "other"])("renders %s free text verbatim", tool => {
+  it.each(["ask_bot", "delegate", "browser_extension_action"])("renders Murage's own %s card text verbatim", tool => {
     const subtitle = '{"path":"notes.md"}';
     const markup = render(tool, subtitle);
     expect(markup).toContain("<pre");
     expect(markup).not.toContain("Show details");
+  });
+  it.each([
+    ["edit", "change notes.md"],
+    ["shell", "run a command on your computer"],
+    ["other", "use a tool"],
+  ])("says an engine's %s request in words, with the request itself folded", (tool, action) => {
+    const markup = render(tool, '{"path":"notes.md"}');
+    expect(markup).toContain(`Wants to ${action}`);
+    expect(markup).toContain("Show details");
   });
 });
 

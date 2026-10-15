@@ -22,7 +22,7 @@ import {
 import { usePageVisible } from "@/lib/page-visible";
 import { cn } from "@/lib/cn";
 import { transitionBrowserControlLease } from "@/lib/computer-control";
-import { api, useStore, type Bot, type BotAnnouncement, type BrowserProfile } from "@/state/store";
+import { api, useStore, type Bot, type BotAnnouncement, type BrowserProfile, fromAnswer } from "@/state/store";
 import { browserProfilePartitionId, browserProfileReplacementPatch } from "@/lib/browser-profiles";
 import { useNativeViewObscured } from "@/hooks/use-native-view-obscured";
 import { aspectFitNativeViewBounds } from "@/lib/local-vm-workspace";
@@ -549,7 +549,7 @@ export function LegacyBrowserPanel({
         method: "PATCH",
         body: JSON.stringify({ browserProfile: value === OWN_PROFILE ? null : value }),
       });
-      dispatch({ type: "botPatched", bot: result.bot });
+      dispatch({ type: "botPatched", ...fromAnswer(result.bot), bot: result.bot });
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : String(cause));
     } finally {
@@ -581,7 +581,7 @@ export function LegacyBrowserPanel({
         method: "PATCH",
         body: JSON.stringify({ browserProfile: id }),
       });
-      dispatch({ type: "botPatched", bot: result.bot });
+      dispatch({ type: "botPatched", ...fromAnswer(result.bot), bot: result.bot });
       setAddingProfile(false);
       setNewProfileName("");
     } catch (cause) {

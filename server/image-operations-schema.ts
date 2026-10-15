@@ -3,6 +3,13 @@ import type { DatabaseSync } from "node:sqlite";
 /** Shared by image startup recovery and the strict installation archive schema. */
 export function initializeImageOperations(db: DatabaseSync): void {
   db.exec("CREATE TABLE IF NOT EXISTS image_operations(id TEXT PRIMARY KEY, generation TEXT NOT NULL UNIQUE, request_hash TEXT NOT NULL, state TEXT NOT NULL, result TEXT, updated_at INTEGER NOT NULL)");
+  // Startup recovery and request lookup follow PENDING operations, never completed history: each partial index holds only the
+  // rows in the states the query asks for, and its WHERE is spelled exactly as in image-operations.ts so SQLite uses it.
+  // Existing 1.0.1 / 1.0.2 data upgrades in place (IF NOT EXISTS, no table rewrite).
+  db.exec(`CREATE INDEX IF NOT EXISTS image_operations_pending ON image_operations(updated_at) WHERE state IN ('publish-pending','running','uncertain');
+    CREATE INDEX IF NOT EXISTS image_operations_pending_hash ON image_operations(request_hash) WHERE state IN ('publish-pending','running','uncertain');
+    CREATE INDEX IF NOT EXISTS image_operations_inflight_hash ON image_operations(request_hash) WHERE state IN ('running','uncertain');
+    CREATE INDEX IF NOT EXISTS image_operations_awaiting ON image_operations(id) WHERE state='awaiting' AND result IS NULL;`);
 }
 
 /** Saved prompt blocks and reference packs (versioned; `bot_id` is '' in the

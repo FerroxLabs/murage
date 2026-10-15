@@ -17,6 +17,7 @@ import {
 } from "../shared/reply-action-claims.ts";
 
 type OperationOutcome = "completed" | "failed" | "pending" | "opaque";
+const ALL_CLASSES: readonly ActionClass[] = ["send", "save", "schedule", "delegate", "pay", "delete", "run", "change"];
 type Operation = { name: string; callId?: string; classes: ActionClass[]; outcome: OperationOutcome };
 
 function structured(value: unknown): any {
@@ -45,7 +46,7 @@ export function toolAction(name: string, ok?: boolean, input?: unknown, result?:
     send: /^(?:send(?:_| )|send$|email$|post_message$|publish$|ask_bot$)/,
     save: /^(?:write(?:_file)?|save(?:_file)?|edit|create_file|export_file|upload_file|apply_patch)$/,
     schedule: /^(?:create_routine|schedule(?:_event)?|create_reminder|create_calendar_event)$/,
-    delegate: /^(?:ask_bot|delegate(?:_task)?|assign_task)$/,
+    delegate: /^(?:ask_bot|delegate(?:_task|_bot)?|assign_task|message_agent|hand_?off)$/,
     pay: /^(?:pay_invoice|transfer_funds|create_payment)$/,
     delete: /^(?:delete_file|remove_file|cancel_event)$/,
     run: /^(?:run_tests|deploy|install_package)$/,
@@ -83,6 +84,13 @@ export function toolAction(name: string, ok?: boolean, input?: unknown, result?:
     return { name, classes: [...new Set(entries.filter(entry => entry.outcome === "completed").flatMap(entry => entry.classes))],
       outcome: ok === false ? "failed" : entries.some(entry => entry.outcome === "completed") ? "completed" : entries.length && entries.every(entry => entry.outcome === "failed") ? "failed" : ok === true ? "opaque" : "pending", operations: entries };
   }
+  // A connected-app workbench or remote shell runs code that may call any app action; what it did is not in its
+  // name or arguments. A successful run leaves every class open, never proven and never absent.
+  if (/(?:^|_)remote_(?:workbench|bash_tool)$/.test(identifier)) {
+    const output = structured(result);
+    if (output?.successful === false || output?.success === false || output?.isError === true || output?.error) ok = false;
+    return { name, classes: [...ALL_CLASSES], outcome: ok === false ? "failed" : ok === true ? "opaque" : "pending" };
+  }
   for (const [cls, pattern] of Object.entries(operations)) if (pattern.test(operation)) classes.push(cls as ActionClass);
   const output = structured(result);
   if (output?.successful === false || output?.success === false || output?.isError === true || output?.error) ok = false;
@@ -94,8 +102,22 @@ export function toolAction(name: string, ok?: boolean, input?: unknown, result?:
   return { name, classes, outcome: ok === false ? "failed" : ok !== true ? "pending" : classes.length ? "completed" : "pending" };
 }
 
+type ToolRowAction = ReturnType<typeof toolAction>;
+
+/** The action a tool row carries when the engine starts the tool (server/index.ts, item.started). */
+export function startedToolAction(event: { title?: string; toolKind?: string; toolIdentity?: { name?: string }; input?: unknown; summary?: string }): ToolRowAction {
+  const name = event.title ?? "tool";
+  return toolAction(event.toolKind === "execute" ? "shell" : event.toolIdentity?.name ?? name, undefined, event.input ?? event.summary);
+}
+
+/** The action a tool row carries once the engine reports the tool finished (server/index.ts, item.completed). */
+export function completedToolAction(existing: { name?: string; action?: ToolRowAction; summary?: string } | undefined, ok: boolean | undefined, result: unknown): ToolRowAction {
+  const toolName = existing?.name ?? "tool";
+  return toolAction(existing?.action?.name ?? toolName, ok, existing?.action?.operations ? { tools: existing.action.operations.map(operation => ({ tool_slug: operation.name, call_id: operation.callId })) } : existing?.summary, result);
+}
+
 /** Only completed relevant outcomes establish an action. */
-function rowActions(row: Message): ReturnType<typeof toolAction> {
+export function rowActions(row: Message): ReturnType<typeof toolAction> {
   if (row.murage || row.actorKind === "murage" || row.role !== "bot" || row.copyOf || row.tool?.notice) return { classes: [], outcome: "pending" };
   if (row.comm && row.tool?.ok === true) return { classes: ["send", "delegate"], outcome: "completed" };
   if (row.artifactIds?.length || row.tool?.imageRecord) return { classes: ["save"], outcome: "completed" };
@@ -120,15 +142,69 @@ export interface ReplyActionInput {
   path: readonly Message[];
   /** the driver has tools but reports no tool events (see DRIVERS_WITHOUT_TOOL_EVENTS) */
   unverifiable?: boolean;
+  /** Rows of bots this bot asked or delegated to (ask_bot, delegate, assign_task)
+   * in this conversation, gathered by the caller from delegationSources. Their
+   * completed actions count as records for this reply. */
+  delegated?: readonly Message[];
+  /** Classes of connected-app actions the relay saw the app complete for this turn (server/connected-app-receipts.ts).
+   * Every engine's connected-app calls pass the relay, so this holds whatever the engine's own events said. */
+  relayed?: Iterable<ActionClass>;
+}
+
+/** A row that starts a fresh request from the owner. */
+function isOwnerRow(row: Message): boolean {
+  return row.role === "user" && !row.murage && row.actorKind !== "murage" && row.actorKind !== "routine";
+}
+
+/** Where the rows of the teammates this bot handed work to live: the thread a
+ * mirrored answer came from, and the pair room a "Messaged" chip points at. */
+export function delegationSources(path: readonly Message[], groupThreadOf: (groupId: string) => string | undefined): { threadId: string; messageIds?: string[]; since: number }[] {
+  let from = 0;
+  for (let i = path.length - 1; i >= 0; i--) if (isOwnerRow(path[i]!)) { from = i + 1; break; }
+  const since = from > 0 ? path[from - 1]!.at : 0;
+  const out = new Map<string, { threadId: string; messageIds?: string[]; since: number }>();
+  for (const row of path.slice(from)) {
+    if (row.copyOf?.threadId) {
+      const prior = out.get(row.copyOf.threadId);
+      out.set(row.copyOf.threadId, { threadId: row.copyOf.threadId, since, messageIds: [...(prior?.messageIds ?? []), ...row.copyOf.messageIds] });
+    } else if (row.comm?.groupId) {
+      const threadId = groupThreadOf(row.comm.groupId);
+      if (threadId && !out.has(threadId)) out.set(threadId, { threadId, since });
+    }
+  }
+  return [...out.values()];
+}
+
+/** What the claim check needs to know about the record, however it was found: the pieces of the closing turn, the classes
+ * the turn (and the teammates it handed work to) completed, the classes it left opaque, and for any other class whether
+ * the same bot did it since the owner last spoke, and the row that last did it before. */
+export interface ActionEvidence {
+  pieces: readonly Pick<Message, "id" | "text" | "turnId" | "from">[];
+  current: ReadonlySet<ActionClass>;
+  opaque: ReadonlySet<ActionClass>;
+  recent(cls: ActionClass): boolean;
+  earlier(cls: ActionClass): string | undefined;
+  unverifiable?: boolean;
 }
 
 export function checkReplyActions(input: ReplyActionInput): ActionCheck {
   const pieces = authoredTurnPieces(input.path, input.reply);
-  const scans = pieces.map(piece => ({ piece, scan: detectActionClaims(piece.text ?? "") }));
-  if (scans.every(({ scan }) => !scan.checked)) return { state: "unchecked", claims: [] };
   const current = new Set<ActionClass>(), earlier = new Map<ActionClass, string>();
   const opaqueClasses = new Set<ActionClass>();
-  for (const row of input.path) {
+  // The same bot's actions in earlier turns since the owner last spoke are
+  // records of this conversation; older ones stay "earlier".
+  let lastOwner = -1;
+  input.path.forEach((row, index) => { if (isOwnerRow(row)) lastOwner = index; });
+  const recent = new Set<ActionClass>();
+  for (const cls of input.relayed ?? []) current.add(cls);
+  for (const row of input.delegated ?? []) {
+    const evidence = rowActions(row);
+    for (const operation of evidence.operations?.length ? evidence.operations : [evidence]) {
+      if (operation.outcome === "completed") for (const cls of operation.classes) current.add(cls);
+    }
+  }
+  const sameBot = (row: Message) => !row.from?.botId || !input.reply.from?.botId || row.from.botId === input.reply.from.botId;
+  for (const [index, row] of input.path.entries()) {
     const evidence = rowActions(row);
     const sameTurn = input.reply.turnId !== undefined && row.turnId === input.reply.turnId;
     for (const operation of evidence.operations?.length ? evidence.operations : [evidence]) {
@@ -138,15 +214,24 @@ export function checkReplyActions(input: ReplyActionInput): ActionCheck {
       if (operation.outcome !== "completed") continue;
       for (const cls of operation.classes) {
         if (sameTurn) current.add(cls);
-        else earlier.set(cls, row.id);
+        else {
+          earlier.set(cls, row.id);
+          if (index > lastOwner && sameBot(row)) recent.add(cls);
+        }
       }
     }
   }
+  return checkReplyActionsWith({ pieces, current, opaque: opaqueClasses, recent: cls => recent.has(cls), earlier: cls => earlier.get(cls), unverifiable: input.unverifiable });
+}
+
+export function checkReplyActionsWith(evidence: ActionEvidence): ActionCheck {
+  const scans = evidence.pieces.map(piece => ({ piece, scan: detectActionClaims(piece.text ?? "") }));
+  if (scans.every(({ scan }) => !scan.checked)) return { state: "unchecked", claims: [] };
   const claims: CheckedClaim[] = scans.flatMap(({ piece, scan }) => scan.claims.map(claim => {
     const located = { ...claim, pieceId: piece.id, text: (piece.text ?? "").slice(...claim.span) };
-    if (current.has(claim.class)) return { ...located, state: "recorded" as const };
-    if (input.unverifiable || opaqueClasses.has(claim.class)) return { ...located, state: "unverifiable" as const };
-    const rowId = earlier.get(claim.class);
+    if (evidence.current.has(claim.class) || evidence.recent(claim.class)) return { ...located, state: "recorded" as const };
+    if (evidence.unverifiable || evidence.opaque.has(claim.class)) return { ...located, state: "unverifiable" as const };
+    const rowId = evidence.earlier(claim.class);
     if (rowId) return { ...located, state: "earlier" as const, rowId };
     return { ...located, state: "flagged" as const };
   }));

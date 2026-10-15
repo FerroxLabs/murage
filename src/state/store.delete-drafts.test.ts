@@ -86,7 +86,7 @@ describe("deleting removes drafts from browser storage at once", () => {
   });
 
   it("a deleted bot: every conversation, and its older single draft", async () => {
-    const { left } = await dispatchWith({ type: "deleteBot", botId: "bramble" });
+    const { left } = await dispatchWith({ type: "deleteBot", source: "local", attempt: "test-attempt", botId: "bramble" });
     allKeysHold(left, Object.values(ids).filter((id) => id !== ids.legacyBot && id !== ids.botThread));
   });
 

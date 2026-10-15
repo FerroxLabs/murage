@@ -1,10 +1,11 @@
 import { useEffect, useRef, useState } from "react";
-import { api, useStore } from "@/state/store";
+import { api, fromAnswer, requestPage, useStore } from "@/state/store";
 import { Files, artifactNativeAction, type FilesOpenDetail } from "./Files";
 import type { Artifact } from "../../shared/artifacts";
 import type { WorkspaceScopeRef } from "../../shared/workspace-files";
 import { t } from "@/lib/i18n";
 import { MESSAGE_PAGE_SIZE } from "@/lib/scrollback";
+import { ownerOfThread } from "@/lib/thread-owner";
 
 export function FilesDialog({ onClose, ...initial }: FilesOpenDetail & { onClose: () => void }) {
   const dialog = useRef<HTMLDialogElement>(null), gate = useRef(false);
@@ -15,15 +16,16 @@ export function FilesDialog({ onClose, ...initial }: FilesOpenDetail & { onClose
     try {
       const bot = state.bots.find(bot => bot.id === artifact.botId);
       if (!bot || !artifact.sourceConversationAvailable) throw new Error(t("files.sourceUnavailableRetained"));
-      const group = state.groups.find(group => group.threadId === artifact.threadId || group.tasks?.some(task => task.threadId === artifact.threadId));
+      const group = (await ownerOfThread(state, artifact.threadId))?.group;
       if (group) {
         const result = await api(`/api/groups/${group.id}/tasks/${artifact.threadId}?messages=${MESSAGE_PAGE_SIZE}`, { method: "POST" });
         if (!result.group || result.group.threadId !== artifact.threadId) throw new Error(t("source.openError"));
         dispatch({ type: "groupPatched", group: result.group }); dispatch({ type: "select", id: group.id });
       } else {
+        const intent = requestPage(dispatch, state, bot.id);
         const result = await api(`/api/bots/${bot.id}/tasks/${artifact.threadId}?messages=${MESSAGE_PAGE_SIZE}`, { method: "POST" });
         if (!result.bot || result.bot.threadId !== artifact.threadId) throw new Error(t("source.openError"));
-        dispatch({ type: "taskSwitched", bot: result.bot }); dispatch({ type: "select", id: bot.id });
+        dispatch({ type: "taskSwitched", ...fromAnswer(result.bot), bot: result.bot, intent }); dispatch({ type: "select", id: bot.id });
       }
       onClose();
     } catch (reason) { setError(reason instanceof Error ? reason.message : t("source.openError")); } finally { gate.current = false; }

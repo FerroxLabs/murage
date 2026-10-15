@@ -5,6 +5,8 @@
 // and forgetting, still end what they always did.
 import { mkdirSync, rmSync } from "node:fs";
 import { beforeEach, expect, it, vi } from "vitest";
+import { afterEach as thawAfterEach, beforeEach as thawBeforeEach } from "vitest";
+import { thawRootSetWritesForTest } from "./replay-lineage.ts";
 import { DATA_DIR } from "../config.ts";
 import { closeDatabase, database } from "../database.ts";
 import { InternalCapabilities } from "../internal-capabilities.ts";
@@ -16,6 +18,10 @@ import { approveMemory, correctMemory, ownerMemoryTicket, pinMemory, renameMemor
 import { archiveMemoryRecord } from "./retention.ts";
 import { forgetMemory } from "./forget.ts";
 import type { MemorySearchBridge } from "./search.ts";
+import { LineageAllowance } from "./lineage-allowance.ts";
+// 1.0.2: this test models a 1.0.1 file (legacy root-set rows) for the read-time judge, which still decides legacy data until S6.
+thawBeforeEach(() => thawRootSetWritesForTest(true));
+thawAfterEach(() => thawRootSetWritesForTest(false));
 
 beforeEach(() => { closeDatabase(); rmSync(DATA_DIR,{recursive:true,force:true}); mkdirSync(DATA_DIR,{recursive:true}); });
 const empty: MemorySearchBridge = {search:async()=>({hits:[],vectorRows:0})};
@@ -46,13 +52,13 @@ async function world() {
   record("other",scope,"The owner likes tea");
   record("pending",scope,"The owner plays chess",{state:"candidate"});
   const a=access();
-  const bundle=await buildMemoryBundle("anything",a,empty);
+  const bundle=await buildMemoryBundle("anything",a,empty, {allowance: LineageAllowance.tool()});
   expect(bundle.recordVersions.map(r=>r.id)).toEqual(["shown"]);
   prepareMemoryDisclosure(bundle,a,"claude");
   bindMemoryDisclosureSession(bundle.bundleId,"session-1");
   deliverMemoryDisclosure(bundle.bundleId,a);
   const state=()=>String(database().prepare("SELECT state FROM memory_disclosures WHERE bundle_id=?").get(bundle.bundleId)!.state);
-  const revoked=()=>({result:continuationMemoryRevoked("private","claude","session-1",access())});
+  const revoked=()=>({result:continuationMemoryRevoked(LineageAllowance.tool(), "private","claude","session-1",access())});
   return {state,revoked,ticket:ownerMemoryTicket(),access,frame:bundle.bundleId};
 }
 
@@ -109,7 +115,7 @@ it("a revoke during the bundle search that hits only the session's lookup receip
   const w=await world();
   expect(noteMemoryLookup(w.frame,`${w.frame}:lookup`,[{id:"other",version:1,evidence:[]}])).toBe(true);
   const a=w.access();
-  const next=await buildMemoryBundle("anything",a,empty);
+  const next=await buildMemoryBundle("anything",a,empty, {allowance: LineageAllowance.tool()});
   // same frame as before: only the latest frame was compared
   expect(memoryContinuationChanged(next,"private","claude","session-1")).toBe(false);
   archiveMemoryRecord(w.ticket,"other",1);
@@ -120,7 +126,7 @@ it("a revoke between the dispatch checks and acceptance refuses acceptance into 
   const w=await world();
   expect(noteMemoryLookup(w.frame,`${w.frame}:lookup`,[{id:"other",version:1,evidence:[]}])).toBe(true);
   const a=w.access();
-  const receipt=new MemoryDispatchReceipt(await buildMemoryBundle("anything",a,empty),a,"claude");
+  const receipt=new MemoryDispatchReceipt(await buildMemoryBundle("anything",a,empty, {allowance: LineageAllowance.tool()}),a,"claude");
   receipt.resumes("session-1");
   receipt.assertCurrent();
   receipt.sessionStarted("session-1");
@@ -137,10 +143,10 @@ it("a derived record whose parent is corrected while the search waits cannot be 
   record("derived",scope,"Backups are on Fridays, so plan around it",{pinned:true});
   db.prepare("INSERT INTO memory_derivations VALUES('other',1,'derived',1)").run();
   const a=w.access();
-  const bundle=await buildMemoryBundle("anything",a,empty);
+  const bundle=await buildMemoryBundle("anything",a,empty, {allowance: LineageAllowance.tool()});
   expect(bundle.recordVersions.map(r=>r.id)).toContain("derived");
   correctMemory(w.ticket,"other",1,"The owner likes green tea");
-  expect(()=>hydrateMemoryRecord("derived",1,w.access())).toThrow("MEMORY_RECORD_UNAVAILABLE");
+  expect(()=>hydrateMemoryRecord("derived",1,w.access(), {allowance: LineageAllowance.tool(1_000_000_000)})).toThrow("MEMORY_RECORD_UNAVAILABLE");
   expect(()=>prepareMemoryDisclosure(bundle,a,"claude")).toThrow();
   expect(db.prepare("SELECT 1 FROM memory_disclosures WHERE bundle_id=?").get(bundle.bundleId)).toBeUndefined();
 });

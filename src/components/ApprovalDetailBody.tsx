@@ -7,6 +7,7 @@ import { useState } from "react";
 import { cn } from "@/lib/cn";
 import { t } from "@/lib/i18n";
 import { approvalDetail, formatsToolInput, type ApprovalLine } from "@/lib/approval-detail";
+import { plainApproval } from "../../shared/approval-plain";
 
 function Line({ line }: { line: ApprovalLine }) {
   const [open, setOpen] = useState(false);
@@ -35,6 +36,25 @@ export function ApprovalDetailBody({ tool, detail, label, className, preClassNam
 }) {
   // Routine, skill, peer-bot and browser-extension cards pass no engine tool:
   // their text is shown exactly as written.
+  // An engine's request is said in plain words: the facts an owner decides on
+  // as short lines, and the request exactly as the engine sent it (raw JSON,
+  // a shell line) folded under "Show details".
+  const plain = tool ? plainApproval(tool, detail) : undefined;
+  if (plain) {
+    return (
+      <div className={cn("mt-2", className)}>
+        {plain.lines.length > 0 && (
+          <div tabIndex={0} aria-label={label} data-approval-plain className="space-y-0.5 whitespace-pre-wrap break-words text-[13px] leading-relaxed text-ink">
+            {plain.lines.map((text, i) => <div key={i} className="break-words">{text}</div>)}
+          </div>
+        )}
+        <details className="mt-1 text-[12px] text-ink-secondary">
+          <summary className="cursor-pointer select-none">{t("approval.showDetails")}</summary>
+          <pre aria-label={plain.lines.length ? undefined : label} className="mt-1 max-h-60 overflow-auto whitespace-pre-wrap break-words rounded-lg bg-inset px-2 py-1 font-mono text-[11.5px] text-ink">{detail}</pre>
+        </details>
+      </div>
+    );
+  }
   const d = formatsToolInput(tool) ? approvalDetail(tool!, detail) : undefined;
   if (!d || !d.primary || d.primary === detail) {
     return <pre tabIndex={0} aria-label={label} className={preClassName}>{detail}</pre>;

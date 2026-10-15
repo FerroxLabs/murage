@@ -265,9 +265,11 @@ export interface ActionCheck {
   claims: CheckedClaim[];
 }
 
-/** The exact line the chat shows under a flagged reply. */
-export const FLAGGED_REPLY_LINE = "This reply describes an action that has no record. Nothing was done.";
-export const EARLIER_CLAIM_TITLE = "recorded earlier in this conversation";
+/** The reply's activity details (the Inspector) carry one quiet row per claim
+ * with no matching record. The chat itself shows the reply text clean. */
+export const unmatchedActionLabel = (sentence: string): string => `No matching action found for: "${sentence}"`;
+export const UNMATCHED_ACTION_EXPLANATION =
+  "Murage found no record of this action in this reply. It may have been done by another bot or in an earlier reply. Check before relying on it.";
 
 /** Replace a flagged reply's text in a window a reader sees (the span count stays honest). */
 export const HELD_REPLY_TEXT = "[reply held: it described an action with no record]";

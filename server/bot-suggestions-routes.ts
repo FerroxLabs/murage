@@ -47,10 +47,11 @@ const procedureError = (cause: unknown): LearningRouteAnswer => {
   return error(status, (cause as Error).message, code);
 };
 /** The same envelope a lesson answers with, for a skill or routine change. */
-const procedureSettle = (context: LearningRouteContext, work: (db: ReturnType<typeof database>, id: string) => LearningRouteAnswer): LearningRouteAnswer => {
+/** `ownsTransactions`: Apply commits twice around the change to the skill or routine (procedure-landing.ts), so it is not wrapped in one. */
+const procedureSettle = (context: LearningRouteContext, work: (db: ReturnType<typeof database>, id: string) => LearningRouteAnswer, ownsTransactions = false): LearningRouteAnswer => {
   const id = context.itemId ?? "";
   if (!Number.isInteger(context.expectedRevision)) return error(400, "expectedRevision must be a number", "INVALID_REVISION");
-  try { return transaction(db => work(db, id)); } catch (cause) { return procedureError(cause); }
+  try { return ownsTransactions ? work(database(), id) : transaction(db => work(db, id)); } catch (cause) { return procedureError(cause); }
 };
 
 const settle = (context: LearningRouteContext, work: (lesson: Lesson, db: ReturnType<typeof database>) => LearningRouteAnswer): LearningRouteAnswer => transaction(db => {
@@ -61,7 +62,7 @@ const settle = (context: LearningRouteContext, work: (lesson: Lesson, db: Return
 });
 
 const apply = (context: LearningRouteContext) => isProcedureSuggestionId(context.itemId) ? procedureSettle(context, (db, id) =>
-  ({ status: 200, body: { change: applyProcedureSuggestion(db, { botId: context.botId, id, expectedVersion: Number(context.expectedRevision), ...(typeof context.body.proposedHash === "string" ? { proposedHash: context.body.proposedHash } : {}) }) } })) : settle(context, (lesson, db) => {
+  ({ status: 200, body: { change: applyProcedureSuggestion(db, { botId: context.botId, id, expectedVersion: Number(context.expectedRevision), ...(typeof context.body.proposedHash === "string" ? { proposedHash: context.body.proposedHash } : {}) }) } }), true) : settle(context, (lesson, db) => {
   try {
     if (lesson.scope === "bots" || lesson.scope === "team") {
       const picked = Array.isArray(context.body.recipients) ? context.body.recipients.map(String) : undefined;

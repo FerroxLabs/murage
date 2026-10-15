@@ -11,9 +11,13 @@ import { SEND_KEY } from "./fixtures.ts";
 let fixture:VerificationServer,vite:ViteDevServer,origin:string,headers:Record<string,string>,chiefId:string;
 let seeded:{id:string;threadId:string;chiefOfStaff?:boolean};
 const root=fileURLToPath(new URL("../../",import.meta.url));
+// Every engine turn of this fixture answers with the next of these, in order, and is logged one line per launch
+// (fixtureTurnLogPath), so the answer to each sentence is read from the turns and parent links, never guessed from
+// a prompt (a fresh turn's prompt can replay the earlier sentence as history).
+const REPLIES=["Reply one from fake claude","Reply two from fake claude"];
 async function api(method:string,path:string,body?:unknown){const response=await fetch(fixture.info.url+path,{method,headers:{...headers,"content-type":"application/json"},...(body===undefined?{}:{body:JSON.stringify(body)})});const data=await response.json();expect(response.ok,JSON.stringify({path,status:response.status,data})).toBe(true);return data;}
 test.beforeAll(async()=>{
-  fixture=await launchVerificationServer(process.env,undefined,{instrumentationSource:`const fetchOriginal=globalThis.fetch;globalThis.fetch=(input,init)=>{const url=new URL(typeof input==='string'||input instanceof URL?input:input.url);if(!['127.0.0.1','localhost','[::1]'].includes(url.hostname))throw Error('External network disabled in intake journey');return fetchOriginal(input,init);};`});
+  fixture=await launchVerificationServer(process.env,undefined,{instrumentationSource:`const fetchOriginal=globalThis.fetch;globalThis.fetch=(input,init)=>{const url=new URL(typeof input==='string'||input instanceof URL?input:input.url);if(!['127.0.0.1','localhost','[::1]'].includes(url.hostname))throw Error('External network disabled in intake journey');return fetchOriginal(input,init);};`,turnLog:{replies:REPLIES}});
   headers={"x-murage-surface":"desktop","x-murage-surface-secret":(await api("GET","/api/desktop-secret")).secret};
   // This harness reads as an update, so What's new would open over every test; a person sees it once.
   await api("POST","/api/whats-new/seen",{version:JSON.parse(readFileSync(join(root,"package.json"),"utf8")).version});
@@ -92,13 +96,59 @@ test("Tango keeps its identity/history/Chief while conversationally adopting rev
   // person typed ever reached an engine and the dump was proof of it. That is
   // the bug. Tango is asked for something and answers, AND adopts Cowork from
   // the same two sentences — alongside, never instead.
-  expect(existsSync(join(fixture.info.dataDir,"fake-claude-dump.json"))).toBe(true);
-  const dump=JSON.parse(readFileSync(join(fixture.info.dataDir,"fake-claude-dump.json"),"utf8"));
-  // The engine's own launch record. The second sentence is steered into this
-  // same live turn rather than launching a second process, so the dump is the
-  // first one: "I want cowork" went to Tango, and Tango answered it.
-  expect(JSON.stringify(dump.prompt)).toContain("I want cowork");
+  // The engine launches when the turn dispatches, which can trail the intake
+  // cards (memory recall runs first, within its budget), so this waits for it.
+  // Whether the second sentence is steered into the first turn or runs as a
+  // turn of its own is the engine's timing, not the product's choice (a phone
+  // run answers the first sentence before the second is sent), so both are
+  // accepted; what is proved either way is that each sentence reached Tango and
+  // was answered, read from the fake's own turn record and the parent links.
   expect(before.messages.filter((message:any)=>message.role==="user"&&message.text==="I want cowork")).toHaveLength(1);
-  expect(before.messages.some((message:any)=>message.role==="bot"&&message.kind==="text"&&message.text?.includes("fake claude"))).toBe(true);
+  const logLines=()=>existsSync(fixture.fixtureTurnLogPath)?readFileSync(fixture.fixtureTurnLogPath,"utf8").split("\n").filter(Boolean).map(line=>JSON.parse(line)):[];
+  // launch lines of Tango's turns (each names the provider turn from its credential file); steer lines name the turn they went into
+  const turns=()=>logLines().filter((turn:any)=>turn.botId===target.id&&turn.steer===undefined);
+  const steerLines=(turnId:string)=>logLines().filter((line:any)=>line.steer!==undefined&&line.turnId===turnId);
+  const ancestors=(messages:any[],id:string)=>{const byId=new Map(messages.map((message:any)=>[message.id,message]));const out=new Set<string>();for(let cur=byId.get(id)?.parentId;cur&&!out.has(cur);cur=byId.get(cur)?.parentId)out.add(cur);return out;};
+  const botRow=(messages:any[],text:string)=>messages.find((message:any)=>message.role==="bot"&&message.kind==="text"&&message.text===text);
+  // Settled: both sentences are on the transcript (a queued one lands when it is drained, as its turn starts),
+  // Tango is idle, and every launched turn has answered.
+  await expect.poll(async()=>{const bot=await current();const launched=turns().length;return bot.busy!==true&&launched>0&&bot.messages.some((message:any)=>message.role==="user"&&message.text==="That's about right")&&REPLIES.slice(0,launched).every(reply=>botRow(bot.messages,reply));},{timeout:30_000}).toBe(true);
+  const launches=turns();const messages=(await current()).messages;
+  expect(launches.length,JSON.stringify(launches.map((turn:any)=>turn.prompt))).toBeLessThanOrEqual(2);
+  const steered=launches.length===1;
+  const first=messages.find((message:any)=>message.role==="user"&&message.text==="I want cowork");
+  const reply1=botRow(messages,REPLIES[0]);
+  expect(first).toBeTruthy();expect(reply1).toBeTruthy();
+  // "I want cowork" went to Tango and Tango answered it, never swallowed by the intake.
+  expect(ancestors(messages,reply1.id).has(first.id)).toBe(true);
+  // The server stamped the row with the provider turn it released the sentence to (BOTADDED-DESIGN-V3 r6 §5): that turn's
+  // launch carried the sentence and its answer is reply1. A never-dispatched or only-replayed sentence has no stamp.
+  const T1=first.dispatchedIn;
+  expect(T1,"the first sentence names the turn it was dispatched in").toBeTruthy();
+  const launch1=launches.find((turn:any)=>turn.turnId===T1);
+  expect(launch1,JSON.stringify(launches.map((turn:any)=>turn.turnId))).toBeTruthy();
+  expect(launch1.prompt).toContain("I want cowork");
+  expect(reply1.turnId).toBe(T1);
+  expect(launches[0].prompt).toContain("I want cowork");
+  const second=messages.find((message:any)=>message.role==="user"&&message.text==="That's about right");
+  if(second?.dispatchedIn===T1&&steerLines(T1).some((line:any)=>String(line.steer).includes("That's about right"))){
+    // steered into the running turn T1: the steer line names T1
+    expect(second.steered).toBe(true);
+  }else if(steered){
+    // one turn answered both sentences: no second answer, and its launch carried both
+    expect(botRow(messages,REPLIES[1])).toBeUndefined();
+    expect(launches[0].prompt).toContain("That's about right");
+  }else{
+    // a turn of its own: sent after the first answer, and answered in its turn
+    const reply2=botRow(messages,REPLIES[1]);
+    expect(second).toBeTruthy();expect(reply2).toBeTruthy();
+    expect(ancestors(messages,second.id).has(reply1.id)).toBe(true);
+    expect(ancestors(messages,reply2.id).has(second.id)).toBe(true);
+    expect(launches[1].prompt).toContain("That's about right");
+    // two turns, two turn ids on the answers; the second sentence names its own turn T2, whose launch carried it
+    expect(reply1.turnId).toBeTruthy();expect(reply2.turnId).toBeTruthy();expect(reply2.turnId).not.toBe(reply1.turnId);
+    expect(second.dispatchedIn).toBe(reply2.turnId);
+    expect(launches.find((turn:any)=>turn.turnId===second.dispatchedIn)?.prompt).toContain("That's about right");
+  }
   await page.screenshot({path:info.outputPath("tango-adapted-cowork.png"),fullPage:true});
 });

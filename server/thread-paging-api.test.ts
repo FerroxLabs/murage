@@ -22,11 +22,13 @@ beforeAll(async () => {
   fixture = await launchVerificationServer(process.env, undefined, { instrumentationSource: `
     const {Store}=await import(${JSON.stringify(new URL("./store.ts", import.meta.url).href)});
     const {writeFileSync}=await import('node:fs');const {join}=await import('node:path');
+    // An approval card written before the server starts is "left by a previous run": the start-up sweep retires it (orphaned), so it stops
+    // counting as open. A routine request card is open by design until the person answers, and the sweep leaves it alone.
     const store=new Store(()=>({instanceId:'verification',model:'sonnet'}));
     const bot=store.createBot({name:'Paging fixture'},{seedMessages:false});
     const long=bot.threadId;let card='';
     for(let i=0;i<${LONG};i++){
-      if(i===${CARD_AT})card=store.appendMessage(long,{role:'bot',kind:'options',card:{title:'Allow?',subtitle:'run ls',options:['Allow','Deny'],requestId:'paging-open-request',tool:'Bash'}}).id;
+      if(i===${CARD_AT})card=store.appendMessage(long,{role:'bot',kind:'options',card:{title:'Allow?',subtitle:'run ls',options:['Allow','Deny'],requestId:'paging-open-request',tool:'Bash',routineRequest:{version:1,requestId:'paging-open-request',botId:bot.id,threadId:long,createdAt:1,operation:{action:'delete',routineId:'paging-fixture',expectedUpdatedAt:1}}}}).id;
       else store.appendMessage(long,{role:i%2?'bot':'user',kind:'text',text:'bot message '+i});
     }
     const short=store.createTask(bot.id,'Short').threadId;
@@ -76,14 +78,15 @@ describe("bot thread switch", () => {
     expect(older.hasMore).toBe(false);
   });
 
-  it("keeps settings-only and whole-thread answers as they were", async () => {
+  it("keeps settings-only answers, and a switch with no size answers the bounded default page", async () => {
     await call("POST", `/api/bots/${ids.bot}/tasks/${ids.short}?messages=0`);
     const settings = await call("POST", `/api/bots/${ids.bot}/tasks/${ids.long}?messages=0`);
     expect(settings.body.bot).not.toHaveProperty("messages");
     await call("POST", `/api/bots/${ids.bot}/tasks/${ids.short}?messages=0`);
+    // no size: the default page (FRAME_PAGE), stretched back to the open card, never the whole thread
     const whole = await call("POST", `/api/bots/${ids.bot}/tasks/${ids.long}`);
-    expect(whole.body.bot.messages).toHaveLength(LONG);
-    expect(whole.body.bot).not.toHaveProperty("hasMore");
+    expect(whole.body.bot.messages).toHaveLength(LONG - CARD_AT);
+    expect(whole.body.bot.hasMore).toBe(true);
   });
 
   it("refuses a bad page size before it moves the bot", async () => {
@@ -98,7 +101,7 @@ describe("bot thread switch", () => {
     try {
       await stream.until((frame) => frame.kind === "hello");
       const whole = await call("POST", `/api/bots/${ids.bot}/tasks/${ids.long}`);
-      expect(whole.body.bot.messages).toHaveLength(LONG);
+      expect(whole.body.bot.messages).toHaveLength(LONG - CARD_AT);
       const frame = await stream.until((f) => f.kind === "bot" && f.bot?.id === ids.bot && f.bot?.threadId === ids.long && Array.isArray(f.bot?.messages));
       // one page, stretched only as far back as the open card
       expect(frame.bot.messages).toHaveLength(LONG - CARD_AT);
@@ -134,7 +137,7 @@ describe("channel thread switch", () => {
     expect(hydrated.hasMore).toBe(true);
   });
 
-  it("keeps settings-only and whole-thread answers, and refuses a bad size in place", async () => {
+  it("keeps settings-only answers, answers the bounded default page for no size, and refuses a bad size in place", async () => {
     await call("POST", `/api/groups/${ids.group}/tasks/${ids.groupShort}?messages=0`);
     const settings = await call("POST", `/api/groups/${ids.group}/tasks/${ids.groupLong}?messages=0`);
     expect(settings.body.group).not.toHaveProperty("messages");
@@ -142,8 +145,8 @@ describe("channel thread switch", () => {
     expect((await call("POST", `/api/groups/${ids.group}/tasks/${ids.groupLong}?messages=-1`)).status).toBe(400);
     expect((await snapshot()).groups.find((group) => group.id === ids.group).threadId).toBe(ids.groupShort);
     const whole = await call("POST", `/api/groups/${ids.group}/tasks/${ids.groupLong}`);
-    expect(whole.body.group.messages).toHaveLength(LONG);
-    expect(whole.body.group).not.toHaveProperty("hasMore");
+    expect(whole.body.group.messages).toHaveLength(FRAME_PAGE);
+    expect(whole.body.group.hasMore).toBe(true);
   });
 });
 

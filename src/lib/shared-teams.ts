@@ -5,6 +5,7 @@
 // live here, in one place, so the Teams section, the sidebar rows, the work
 // thread and Team settings say the same thing, and every sentence uses the
 // bot's own name rather than a pronoun.
+import { findTask } from "@/lib/task-window";
 
 /** One team a bot is shared with, as the harness derives it for the owner
  * (server/shared-wire.ts). `threadId` is null until the owner first opens
@@ -124,11 +125,11 @@ export function closedWorkThreadLine(name: string, work: Pick<SharedWorkMarker, 
 }
 
 type TaskLike = { threadId: string; sharedWork?: SharedWorkMarker };
-type BotLike = { id: string; name: string; threadId: string; section?: string; hidden?: boolean; sharedRows?: SharedRow[]; tasks?: TaskLike[] };
+type BotLike = { id: string; name: string; threadId: string; section?: string; hidden?: boolean; sharedRows?: SharedRow[]; tasks?: TaskLike[]; extraTasks?: TaskLike[] };
 
 /** The work thread the bot has open, if the open thread is one. */
-export function activeWorkThread(bot: Pick<BotLike, "threadId" | "tasks">): SharedWorkMarker | undefined {
-  return bot.tasks?.find(task => task.threadId === bot.threadId)?.sharedWork;
+export function activeWorkThread(bot: Pick<BotLike, "threadId" | "tasks" | "extraTasks">): SharedWorkMarker | undefined {
+  return findTask(bot, bot.threadId)?.sharedWork;
 }
 
 /** The closed-thread line when the open thread is a closed work thread. */

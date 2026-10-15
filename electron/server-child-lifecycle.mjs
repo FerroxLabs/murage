@@ -24,7 +24,18 @@ export function createServerChildLifecycle(child, { timeoutMs = OWNED_WORK_TIMEO
   let resolveExit;
   const exit = new Promise((resolve) => { resolveExit = resolve; });
   if (exited) resolveExit();
-  child.once("exit", () => { exited = true; resolveExit(); });
+  // An Electron utility process has no pid until 'spawn' and none again by
+  // 'exit' (a Node child process has one from fork). Keep the pid seen at
+  // spawn so the exit record can still name the child.
+  let pid = typeof child.pid === "number" ? child.pid : undefined;
+  let exitCode = child.exitCode ?? null;
+  const notePid = () => { if (typeof child.pid === "number") pid = child.pid; };
+  child.once("spawn", notePid);
+  child.once("exit", (code) => {
+    notePid();
+    if (typeof code === "number") exitCode = code;
+    exited = true; resolveExit();
+  });
   // UtilityProcess/ChildProcess errors must not become an unhandled event.
   // An error without exit is NOT evidence the child no longer owns data.
   child.on("error", () => { failed = true; });
@@ -35,6 +46,9 @@ export function createServerChildLifecycle(child, { timeoutMs = OWNED_WORK_TIMEO
      * An exit nobody asked for is a crash even when the code is 0. */
     get stopRequested() { return stopRequested; },
     get exited() { return exited; },
+    /** The child's PID and exit code once it exited; null before. The parent
+     * hands this to its lease release so a cleanly exited child's record clears. */
+    get exitedRecord() { return exited && typeof pid === "number" ? Object.freeze({ pid, code: exitCode }) : null; },
     get failed() { return failed; },
     exit,
     stop({ graceful = gracefulClose } = {}) {

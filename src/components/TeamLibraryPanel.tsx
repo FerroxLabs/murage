@@ -5,7 +5,7 @@ import { teamImportPreview, type PendingTeamImport } from "@/lib/team-import";
 import { assignSkillsToBot } from "@/lib/onboarding-intake";
 import { invalidateSkillCount } from "@/lib/bot-skill-count";
 import type { Routine } from "@/lib/routines";
-import { api, useStore, type Bot, type Group, type TeamLibraryView } from "@/state/store";
+import { api, useStore, type Bot, type Group, type TeamLibraryView, fromAnswer } from "@/state/store";
 import {
   ArrowLeft,
   BookOpen,
@@ -25,14 +25,17 @@ import {
   Users,
   X,
 } from "lucide-react";
-import { useCallback, useEffect, useRef, useState } from "react";
+import { Suspense, useCallback, useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
-import { BundleImportDialog, type BundleImportResult } from "./BundleImportDialog";
+import type { BundleImportResult } from "./BundleImportDialog";
+import { LazyBoundary, retryableLazy } from "./LazyBoundary";
 import { returnFocus } from "@/lib/return-focus";
 import { t } from "@/lib/i18n";
 import { ImportGuardFindings, guardBlockedNote, guardScanFromError, type GuardScan } from "./ImportGuardFindings";
 import { ImportScanProgress } from "./ImportScanProgress";
 import { isCheckStopped, useImportScan, withScanId } from "@/lib/importScan";
+// A bundle file is imported rarely: its dialog loads when one is chosen.
+const BundleImportDialog = retryableLazy(() => import("./BundleImportDialog").then((module) => ({ default: module.BundleImportDialog })));
 
 const MAX_TEAM_FILE_BYTES = 1_000_000;
 
@@ -709,7 +712,7 @@ export function TeamLibraryPanel({
   };
 
   const finishBundleImport = (result: BundleImportResult) => {
-    for (const bot of result.bots) dispatch({ type: "botAdded", bot });
+    for (const bot of result.bots) dispatch({ type: "botAdded", ...fromAnswer(bot), bot });
     for (const group of result.groups) dispatch({ type: "groupPatched", group });
     for (const routine of result.routines) dispatch({ type: "routinePatched", routine });
     if (result.bots[0]) dispatch({ type: "select", id: result.bots[0].id });
@@ -782,8 +785,8 @@ export function TeamLibraryPanel({
         archived?: ArchivedTeamBot[];
         skillErrors?: TeamImportSkillError[];
       };
-      for (const bot of response.archivedBots ?? []) dispatch({ type: "botPatched", bot });
-      for (const bot of response.bots) dispatch({ type: "botAdded", bot });
+      for (const bot of response.archivedBots ?? []) dispatch({ type: "botPatched", ...fromAnswer(bot), bot });
+      for (const bot of response.bots) dispatch({ type: "botAdded", ...fromAnswer(bot), bot });
       for (const group of response.groups ?? []) dispatch({ type: "groupPatched", group });
       for (const routine of response.routines ?? []) dispatch({ type: "routinePatched", routine });
       const first = response.bots[0];
@@ -880,7 +883,7 @@ export function TeamLibraryPanel({
         `/api/teams/import?mode=project&cwd=${encodeURIComponent(scoutedFolder)}&room=${encodeURIComponent(room)}`,
         { method: "POST", body: JSON.stringify(manifest) },
       )) as { bots: Bot[]; group?: Group };
-      for (const bot of response.bots) dispatch({ type: "botAdded", bot });
+      for (const bot of response.bots) dispatch({ type: "botAdded", ...fromAnswer(bot), bot });
       if (response.group) {
         // upsert now instead of waiting for the SSE frame, then land in the room
         dispatch({ type: "groupPatched", group: { ...response.group, messages: [] } });
@@ -1607,8 +1610,14 @@ export function TeamLibraryPanel({
           </>
         )}
       </div>
-      {bundleFile && <BundleImportDialog archivePath={bundleFile.path} fileName={bundleFile.name}
-        onClose={() => { setBundleFile(null); dialogRef.current?.focus(); }} onImported={finishBundleImport} />}
+      {bundleFile && (
+        <LazyBoundary onRetry={BundleImportDialog.retry} onDismiss={() => { setBundleFile(null); dialogRef.current?.focus(); }}>
+          <Suspense fallback={null}>
+            <BundleImportDialog.Component archivePath={bundleFile.path} fileName={bundleFile.name}
+              onClose={() => { setBundleFile(null); dialogRef.current?.focus(); }} onImported={finishBundleImport} />
+          </Suspense>
+        </LazyBoundary>
+      )}
     </div>,
     document.body,
   );

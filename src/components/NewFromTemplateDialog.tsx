@@ -11,7 +11,7 @@ import { createPortal } from "react-dom";
 import { track } from "@/lib/analytics";
 import { teamImportPreview, type PendingTeamImport } from "@/lib/team-import";
 import type { Routine } from "@/lib/routines";
-import { api, useStore, type Bot, type Group, type InstanceInfo } from "@/state/store";
+import { api, useStore, type Bot, type Group, type InstanceInfo, fromAnswer } from "@/state/store";
 import { retryableLazy } from "./LazyBoundary";
 import type { TeamImportResult } from "./TeamLibraryPanel";
 import { t } from "@/lib/i18n";
@@ -187,8 +187,8 @@ export function NewFromTemplateDialog({ kind, onClose, onBlank, onOpenFile, onCr
       const response = (await api(withScanId(templateImportUrl(preview.manifest, guard?.manifest, guardAcknowledged), scanId), { method: "POST", signal, body: JSON.stringify(preview.manifest) })) as {
         bots: Bot[]; groups?: Group[]; routines?: Routine[]; archivedBots?: Bot[]; archived?: TeamImportResult["archived"]; skillErrors?: TeamImportResult["skillErrors"];
       };
-      for (const bot of response.archivedBots ?? []) dispatch({ type: "botPatched", bot });
-      for (const bot of response.bots) dispatch({ type: "botAdded", bot });
+      for (const bot of response.archivedBots ?? []) dispatch({ type: "botPatched", ...fromAnswer(bot), bot });
+      for (const bot of response.bots) dispatch({ type: "botAdded", ...fromAnswer(bot), bot });
       for (const group of response.groups ?? []) dispatch({ type: "groupPatched", group });
       for (const routine of response.routines ?? []) dispatch({ type: "routinePatched", routine });
       const first = response.bots[0];

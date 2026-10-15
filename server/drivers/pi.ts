@@ -1,3 +1,5 @@
+import { cliSig, knownCliVersion, memoDeps, noteVersionProbe, pathExists, rememberCliVersion, versionProbeAllowed } from "./isolation-cache.ts";
+import { engineUpdateRequired } from "./scoped-cli-home.ts";
 import { PI_TOOL_SURFACE, renderMurageTurn } from "../murage-tool-surface.ts";
 // pi — the pi coding agent (@earendil-works/pi-coding-agent) as a native engine.
 //
@@ -24,7 +26,7 @@ import { PI_TOOL_SURFACE, renderMurageTurn } from "../murage-tool-surface.ts";
 import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { randomBytes } from "node:crypto";
 import { homedir, tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, isAbsolute, join, relative, resolve } from "node:path";
 
 import { deleteEnvNames, PROVIDER_CREDENTIAL_ENV, stripRoutingEnv, stripWorkspaceCredentialEnv } from "../config.ts";
 import { computerProxyEnv } from "../container-computer.ts";
@@ -55,6 +57,7 @@ import {
 } from "./local-inject.ts";
 import { appendNative } from "./native.ts";
 import { createBoundedLineSplitter, FRAME_TOO_LARGE, frameOverflowMessage } from "./bounded-lines.ts";
+import { registerIntake } from "../harness/intake.ts";
 import { fromPi, toPiValue, type QuestionAnswer, type QuestionSpec } from "../question-normalize.ts";
 import { QUESTION_TIMEOUT_MS } from "../../shared/questions.ts";
 import { localContextWindow, type LocalHost } from "./local-inject.ts";
@@ -88,6 +91,81 @@ function piMaxTokens(contextWindow: number): number {
 const DRIVER_KIND = "piAgent";
 const PI_ARGS = ["--mode", "rpc", "--no-session"];
 const NODE_ENV_FLAG = { ELECTRON_RUN_AS_NODE: "1" };
+
+/**
+ * The owner's personal pi setup stays out of a bot's turns (same principles as
+ * the Claude engine's design B, claude.ts claudeIsolation): pi auto-discovers
+ * ~/.pi/agent extensions (and installed packages), skills, prompt templates
+ * and themes, and loads ~/.pi/agent/AGENTS.md plus every AGENTS.md/CLAUDE.md
+ * from the cwd up to the filesystem root. Murage's own extensions ride `-e`,
+ * which `--no-extensions` keeps ("explicit -e paths still work", pi --help).
+ * `--no-context-files` drops the project's own file too, so the files between
+ * the turn's folder and the owner's home (exclusive) are handed back with
+ * `--append-system-prompt <file>`, root first, as pi would have ordered them.
+ * Floors from pi's CHANGELOG: --no-extensions works from 0.48.0 (#776 fix),
+ * --no-skills 0.39.0, --no-prompt-templates/--no-themes 0.50.0,
+ * --no-context-files 0.67.4. A version below the newest floor, or unknown
+ * (the probe is retried once), is rejected: the turn does not start and the
+ * owner is told to update pi.
+ * Rig (build host, pi 0.73.1, fake model): before = personal extension tool,
+ * personal skill and global AGENTS.md in the request; after = none of them,
+ * project AGENTS.md and an explicit `-e` extension's tool still present.
+ */
+const PI_ISOLATION_FLAGS: ReadonlyArray<readonly [string, readonly [number, number, number]]> = [
+  ["--no-extensions", [0, 48, 0]],
+  ["--no-skills", [0, 39, 0]],
+  ["--no-prompt-templates", [0, 50, 0]],
+  ["--no-themes", [0, 50, 0]],
+  ["--no-context-files", [0, 67, 4]],
+];
+
+/** The newest floor above: the first pi that has every switch. */
+export const PI_ISOLATION_MIN = [0, 67, 4] as const;
+
+function piSemver(text: string | undefined): [number, number, number] | null {
+  const m = /(\d+)\.(\d+)\.(\d+)/.exec(text ?? "");
+  return m ? [Number(m[1]), Number(m[2]), Number(m[3])] : null;
+}
+const piAtLeast = (v: readonly number[], min: readonly number[]) =>
+  v[0]! !== min[0]! ? v[0]! > min[0]! : v[1]! !== min[1]! ? v[1]! > min[1]! : v[2]! >= min[2]!;
+
+/** The project's own context files, root first, from `cwd` up to (not
+ *  including) `home`; at or above home they are the owner's or the
+ *  machine's, not the project's. A folder outside home keeps pi's whole walk
+ *  to the root. pi takes AGENTS.md, else CLAUDE.md, per folder. */
+export function piProjectContextFiles(cwd: string | undefined, home: string): string[] {
+  if (!cwd) return [];
+  return memoDeps("pi-context-files", JSON.stringify([cwd, home]), () => walkPiProjectContextFiles(cwd, home));
+}
+
+function walkPiProjectContextFiles(cwd: string, home: string): string[] {
+  const files: string[] = [];
+  const stop = resolve(home);
+  let dir = resolve(cwd);
+  const rel = relative(stop, dir);
+  if (rel === "") return [];
+  // Outside home, pi's own walk to the root is the project's (and the volume's); kept whole.
+  const inHome = !rel.startsWith("..") && !isAbsolute(rel);
+  for (let depth = 0; (!inHome || dir !== stop) && depth < 64; depth++) {
+    const found = ["AGENTS.md", "CLAUDE.md"].map((name) => join(dir, name)).find((path) => pathExists(path));
+    if (found) files.unshift(found);
+    const parent = dirname(dir);
+    if (parent === dir) break;
+    dir = parent;
+  }
+  return files;
+}
+
+/** Isolation argv for one pi turn, given the probed `pi --version`. */
+export function piIsolationArgs(version: string | undefined, cwd: string | undefined, home: string): string[] {
+  const v = piSemver(version);
+  // Fails closed: a pi that lacks any of these switches (or whose version cannot be read) would load the owner's own
+  // extensions, skills, prompt templates or AGENTS.md into the bot, so the turn is rejected and the owner told to update pi.
+  if (!v || !piAtLeast(v, PI_ISOLATION_MIN)) throw engineUpdateRequired("Pi", version?.trim() || undefined, PI_ISOLATION_MIN);
+  const flags = PI_ISOLATION_FLAGS.filter(([, min]) => piAtLeast(v, min)).map(([flag]) => flag);
+  if (!flags.includes("--no-context-files")) return flags;
+  return [...flags, ...piProjectContextFiles(cwd, home).flatMap((file) => ["--append-system-prompt", file])];
+}
 
 const PI_ERROR_DETAIL_MAX = 200;
 // Absolute paths under a home, data or temp root. Only the last segment
@@ -545,6 +623,10 @@ export const PiDriver: ProviderDriver<PiConfig> = {
   defaultConfig: () => decodeConfig({}),
 
   async create(input: DriverCreateInput<PiConfig>): Promise<ProviderInstance> {
+    /** `pi --version` as last probed (snapshot or a turn); decides the isolation flags. */
+    let piVersion = "";
+    // The CLI file the version came from: replaced by an update, it is re-probed; otherwise never.
+    let piCliSig = "";
     // The engine as Settings names this instance, for every line the chat shows.
     const ENGINE = input.displayName?.trim() || "pi";
     const { instanceId, config } = input;
@@ -641,6 +723,18 @@ export const PiDriver: ProviderDriver<PiConfig> = {
         ensurePiInjectModel(requestedModel, { ...process.env, ...input.environment });
       }
 
+      // The isolation switches depend on pi's version: read it now (a failed or backed-off probe is tried once more), before any
+      // credential-bearing temp file exists, and reject the turn when it is unknown or too old (piIsolationArgs).
+      if (piVersion && cliSig(config.cli, { ...process.env, ...input.environment }) !== piCliSig) piVersion = "";
+      if (!piVersion) {
+        const sig = cliSig(config.cli, { ...process.env, ...input.environment });
+        const known = knownCliVersion(`pi|${config.cli}`, sig);
+        if (known) { piVersion = known; piCliSig = sig; }
+      }
+      if (!piVersion && versionProbeAllowed(`pi|${config.cli}`, cliSig(config.cli, { ...process.env, ...input.environment }))) await probePiVersion();
+      if (!piVersion) await probePiVersion();
+      piIsolationArgs(piVersion, undefined, "");
+
       // integrations → stdio MCP servers for the pi-mcp-extension. The config
       // carries credentials (box token, composio key, comms token), so it goes
       // into a 0600 temp file removed when the turn settles — never on argv.
@@ -671,8 +765,18 @@ export const PiDriver: ProviderDriver<PiConfig> = {
       // Connected-app calls are asked about only when the stop line has to
       // see them, as Claude pre-allows its connected-apps tool otherwise.
       const gatePrefixes = (turn.stopLine === true || turn.routeAsks === true) && turn.integrations?.composio ? [PI_COMPOSIO_TOOL_PREFIX] : [];
+      if (piVersion && cliSig(config.cli, { ...process.env, ...input.environment }) !== piCliSig) piVersion = "";
+      // A pi whose `--version` keeps failing is re-probed on a bounded backoff
+      // (isolation-cache.ts), not on every turn; the version stays unknown meanwhile.
+      if (!piVersion) {
+        const sig = cliSig(config.cli, { ...process.env, ...input.environment });
+        const known = knownCliVersion(`pi|${config.cli}`, sig);
+        if (known) { piVersion = known; piCliSig = sig; }
+      }
+      if (!piVersion && versionProbeAllowed(`pi|${config.cli}`, cliSig(config.cli, { ...process.env, ...input.environment }))) await probePiVersion();
       const childArgs = [
         ...PI_ARGS,
+        ...piIsolationArgs(piVersion, turn.cwd, input.environment.HOME || process.env.HOME || input.environment.USERPROFILE || process.env.USERPROFILE || homedir()),
         ...(mcpServers ? ["-e", SPAWNED_PROXIES.piMcpExtension] : []),
         ...(gateSecret ? ["-e", SPAWNED_PROXIES.piPermissionGate] : []),
       ];
@@ -755,7 +859,7 @@ export const PiDriver: ProviderDriver<PiConfig> = {
         const text = extractTodoBlocks(assistantText).text;
         assistantText = "";
         if (!text.trim()) return;
-        emit({ ...base(threadId, turnId), type: "item.completed", itemType: "assistant_text", text });
+        emit({ ...base(threadId, turnId), type: "item.completed", itemType: "assistant_text", origin: "engine", text });
       };
 
       const settle = (ok: boolean, stopReason?: string | null, usage?: { input?: number; output?: number }) => {
@@ -833,6 +937,7 @@ export const PiDriver: ProviderDriver<PiConfig> = {
               ...base(threadId, turnId),
               type: "item.started",
               itemType: "tool",
+              origin: "engine",
               itemId: evt.toolCallId,
               title: String(evt.toolName ?? "tool").slice(0, 80),
               toolIdentity: { name: evt.toolName },
@@ -987,6 +1092,7 @@ export const PiDriver: ProviderDriver<PiConfig> = {
         },
       });
       child.stdout.on("data", (chunk: Buffer) => stdoutLines.push(chunk));
+      registerIntake(threadId, child.stdout, child);
       child.on("error", (err) => {
         const fail = describeSpawnFailure(err as NodeJS.ErrnoException, config.cli);
         rejectWaiters(new Error(fail.message));
@@ -1085,6 +1191,13 @@ export const PiDriver: ProviderDriver<PiConfig> = {
     };
 
     const snapshot = async (): Promise<ProviderSnapshot> => {
+      const version = await probePiVersion();
+      if (!version) return { state: "unavailable", reason: `\`${config.cli}\` CLI not found` };
+      // pi manages its own credentials (~/.pi/agent/auth.json); there is no
+      // separate sign-in step the harness can probe, so treat it as authed.
+      return { state: "available", version, authenticated: true };
+    };
+    async function probePiVersion(): Promise<string | null> {
       const version = await new Promise<string | null>((resolve) => {
         const child = spawnCli(config.cli, ["--version"], {
           stdio: ["ignore", "pipe", "pipe"],
@@ -1111,11 +1224,11 @@ export const PiDriver: ProviderDriver<PiConfig> = {
           resolve(out.trim() || null);
         });
       });
-      if (!version) return { state: "unavailable", reason: `\`${config.cli}\` CLI not found` };
-      // pi manages its own credentials (~/.pi/agent/auth.json); there is no
-      // separate sign-in step the harness can probe, so treat it as authed.
-      return { state: "available", version, authenticated: true };
-    };
+      const sig = cliSig(config.cli, { ...process.env, ...input.environment });
+      noteVersionProbe(`pi|${config.cli}`, sig, Boolean(version));
+      if (version) { piVersion = version; piCliSig = sig; rememberCliVersion(`pi|${config.cli}`, sig, version); }
+      return version;
+    }
 
     return {
       instanceId,

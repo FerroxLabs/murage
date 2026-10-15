@@ -256,11 +256,11 @@ describe("message pages", () => {
     return after.body.groups.find((g: { id: string }) => g.id === groupId);
   };
 
-  it("returns the whole transcript when nothing is asked for", async () => {
+  it("returns a bounded page when nothing is asked for", async () => {
     const room = await seedRoom(6);
+    // a short transcript fits inside the default page, with nothing older to page back to
     expect(room.messages).toHaveLength(6);
-    // the original shape carries no pagination fields at all
-    expect(room).not.toHaveProperty("hasMore");
+    expect(room.hasMore).toBe(false);
   });
 
   it("returns only the newest n when asked", async () => {
@@ -1077,7 +1077,15 @@ describe("internal capability authority", () => {
         const newIds = result.body.bots.map((bot: { id: string }) => bot.id);
         botIds.push(...newIds);
         routineIds.push(...result.body.routines.map((routine: { id: string }) => routine.id));
-        for (const bot of result.body.bots) expect(bot).toMatchObject({ chiefOfStaff: false, autoApprove: false, browser: false, composio: false, computer: "off" });
+        for (const bot of result.body.bots) expect(bot).toMatchObject({ autoApprove: false, browser: false, composio: false, computer: "off" });
+        // A shipped crew of more than one arrives led by the bot its package
+        // names; nothing else gains a role, and no lead is a workspace Chief.
+        const leads = result.body.bots.filter((bot: { chiefOfStaff?: boolean }) => bot.chiefOfStaff);
+        expect(leads).toHaveLength(profile.members > 1 ? 1 : 0);
+        for (const lead of leads) expect(lead).toMatchObject({ installedPackage: { sourceRole: "leader" } });
+        for (const lead of leads) expect(lead.chiefScope).toBeUndefined();
+        expect(new Set(result.body.bots.map((bot: { section?: string }) => bot.section)).size).toBe(1);
+        for (const bot of result.body.bots) expect(bot.section).not.toMatch(/\([0-9a-f]{8}\)/);
         for (const routine of result.body.routines) expect(routine).toMatchObject({ enabled: false, nextRunAt: null });
         const after = JSON.parse(readFileSync(botsFile, "utf8"));
         expect(after.filter((bot: { id: string }) => !newIds.includes(bot.id))).toEqual(JSON.parse(before.toString()));
@@ -1143,7 +1151,10 @@ describe("internal capability authority", () => {
       const again = await desktopApi("POST", "/api/packages/import", reviewed);
       expect(again.status).toBe(409);
       expect(JSON.parse(readFileSync(botsFile, "utf8"))).toHaveLength(after.length);
-      expect(JSON.parse(readFileSync(botsFile, "utf8")).find((candidate: { id: string }) => candidate.id === bot.id)).toEqual(bot);
+      // the answer is the stored record plus its number (BOTADDED-DESIGN-V3 r6 §4: every answer that carries a bot carries it)
+      const { tasksSeq, tasksEpoch, ...stored } = bot;
+      expect(typeof tasksSeq).toBe("number"); expect(typeof tasksEpoch).toBe("string");
+      expect(JSON.parse(readFileSync(botsFile, "utf8")).find((candidate: { id: string }) => candidate.id === bot.id)).toEqual(stored);
       expect(bot.packageImportReceipt.baseline.release).toBe("1.0.0");
       expect(JSON.stringify(bot.packageImportReceipt.baseline)).not.toContain("Use the notes provided");
       const samePreview = await desktopApi("POST", "/api/packages/import", { ...request, action: "preview" });
@@ -1167,7 +1178,7 @@ describe("internal capability authority", () => {
       routineIds.push(...nextResult.body.routines.map((item: { id: string }) => item.id));
       expect(nextResult.body.bots[0].id).not.toBe(bot.id);
       expect(nextResult.body.bots[0]).toMatchObject({ chiefOfStaff: false, computer: "off", autoApprove: false });
-      expect(JSON.parse(readFileSync(botsFile, "utf8")).find((candidate: { id: string }) => candidate.id === bot.id)).toEqual(bot);
+      expect(JSON.parse(readFileSync(botsFile, "utf8")).find((candidate: { id: string }) => candidate.id === bot.id)).toEqual(stored);
       // Construct hostile intake directly: the normal archive writer correctly refuses it.
       const secretPath = join(root, "hostile.zip");
       const secretPayloads = new Map(payloads); secretPayloads.set("bots/scout/SOUL.md", "Bearer fake_secret_canary_1234567890");
@@ -1542,9 +1553,20 @@ describe("internal capability authority", () => {
       const second = await readJsonFileWhenReady<{ pid: number; mcpConfig: { mcpServers: { agents: { env: Record<string, string> } } } }>(fakeClaudeDump);
       const nextToken = second.mcpConfig.mcpServers.agents.env.MURAGE_COMMS_TOKEN;
       expect(nextToken).not.toBe(env.MURAGE_COMMS_TOKEN);
-      const denied = await create({ ...headers, authorization: `Bearer ${nextToken}` }, threadId, 4);
-      expect(denied.status).toBe(429);
-      expect(denied.body.error).toMatch(/cumulative action limit/);
+      // The fifth create no longer dead-ends: the owner is asked, and "Not now" gives the bot a plain answer.
+      const pendingCreate = create({ ...headers, authorization: `Bearer ${nextToken}` }, threadId, 4);
+      let limitCard: { card: { requestId: string; title: string; subtitle: string; options: string[] } } | undefined;
+      await expect.poll(async () => {
+        const messages = (await desktopApi("GET", `/api/threads/${threadId}/messages`)).body.messages as Array<{ card?: { tool?: string; answered?: string } }> | undefined;
+        limitCard = messages?.find(item => item.card?.tool === "more_new_bots" && !item.card.answered) as typeof limitCard;
+        return Boolean(limitCard);
+      }).toBe(true);
+      expect(limitCard!.card.options).toEqual(["Allow", "Not now"]);
+      expect(limitCard!.card.subtitle).toMatch(/added 4 bots, the most it can without you/);
+      expect((await desktopApi("POST", `/api/threads/${threadId}/respond`, { requestId: limitCard!.card.requestId, behavior: "deny" })).status).toBe(200);
+      const denied = await pendingCreate;
+      expect(denied.status).toBe(409);
+      expect(denied.body.error).toMatch(/not now/);
       const stored = readRoutinesWithRuns(join(home, ".murage", "routines.json")).runs.find((item: { id: string }) => item.id === runId);
       expect(stored.eventBudget.admissions.filter((item: { kind: string }) => item.kind === "create")).toHaveLength(4);
       writeFileSync(join(home, "finish-fake", String(second.pid)), "finish");
@@ -1555,6 +1577,365 @@ describe("internal capability authority", () => {
       if (runId) await desktopApi("POST", `/api/routine-runs/${runId}/cancel`);
       if (routineId) await desktopApi("DELETE", `/api/routines/${routineId}`);
       for (const id of createdIds) await desktopApi("DELETE", `/api/bots/${id}`);
+      await desktopApi("DELETE", `/api/bots/${bot.id}`);
+    }
+  });
+
+  it("four identical creates made at once while the owner\u2019s card is open make one bot and one charge", async () => {
+    const bot = (await desktopApi("POST", "/api/bots")).body.bot;
+    const createdIds: string[] = [];
+    let routineId = "", runId = "";
+    try {
+      expect((await desktopApi("PATCH", `/api/bots/${bot.id}`, { section: "Event concurrent create test", chiefOfStaff: true,
+        modelSelection: { instanceId: "claude", model: "claude-sonnet-5" } })).status).toBe(200);
+      routineId = (await desktopApi("POST", "/api/routines", { name: "Concurrent create event", prompt: "__fixture_hold_authority__",
+        botId: bot.id, enabled: false, schedule: { type: "daily", time: "10:00", weekdays: [1] } })).body.routine.id;
+      rmSync(fakeClaudeDump, { force: true });
+      const queued = await desktopApi("POST", `/api/routines/${routineId}/run`);
+      expect(queued.status).toBe(201); runId = queued.body.run.id;
+      const first = await readJsonFileWhenReady<{ pid: number; mcpConfig: { mcpServers: { agents: { env: Record<string, string> } } } }>(fakeClaudeDump);
+      const env = first.mcpConfig.mcpServers.agents.env;
+      const threadId = env.MURAGE_THREAD_ID;
+      expect(threadId).toBeTruthy();
+      const headers = { authorization: `Bearer ${env.MURAGE_COMMS_TOKEN}`, "content-type": "application/json" };
+      const createNamed = async (requestHeaders: Record<string, string>, sourceThread: string, name: string) => {
+        const response = await fetch(`${BASE}/api/internal/create-bot`, { method: "POST", headers: requestHeaders,
+          body: JSON.stringify({ fromBotId: bot.id, fromThreadId: sourceThread, name, role: "Research", instructions: "Review notes." }) });
+        const body = await response.json() as { id?: string; error?: string };
+        if (body.id) createdIds.push(body.id);
+        return { status: response.status, body };
+      };
+      const create = async (requestHeaders: Record<string, string>, sourceThread: string, index: number) => {
+        const response = await fetch(`${BASE}/api/internal/create-bot`, { method: "POST", headers: requestHeaders,
+          body: JSON.stringify({ fromBotId: bot.id, fromThreadId: sourceThread, name: `Event operator ${index}`, role: "Research", instructions: "Review notes.", eventId: "forged-new-event" }) });
+        const body = await response.json() as { id?: string; error?: string };
+        if (body.id) createdIds.push(body.id);
+        return { status: response.status, body };
+      };
+      for (let index = 0; index < 4; index++) expect((await create(headers, threadId, index)).status).toBe(201);
+      const card = await fetch(`${BASE}/api/internal/request-credential`, { method: "POST", headers,
+        body: JSON.stringify({ fromBotId: bot.id, fromThreadId: threadId, credentialId: "openaiImageApiKey", reason: "Test continuation ownership" }) });
+      expect(card.status).toBe(201);
+      const { messageId } = await card.json() as { messageId: string };
+      writeFileSync(join(home, "finish-fake", String(first.pid)), "finish");
+      await expect.poll(async () => (await api("GET", "/api/bots?messages=0")).body.bots.find((item: { id: string }) => item.id === bot.id)?.busy).toBe(false);
+      rmSync(fakeClaudeDump, { force: true });
+      const resumed = await desktopApi("POST", `/api/bots/${bot.id}/secret-cards/${messageId}/dismiss`, { threadId });
+      expect(resumed.status).toBe(200);
+      const second = await readJsonFileWhenReady<{ pid: number; mcpConfig: { mcpServers: { agents: { env: Record<string, string> } } } }>(fakeClaudeDump);
+      const nextToken = second.mcpConfig.mcpServers.agents.env.MURAGE_COMMS_TOKEN;
+      expect(nextToken).not.toBe(env.MURAGE_COMMS_TOKEN);
+      const together = Promise.all(Array.from({ length: 4 }, () => createNamed({ ...headers, authorization: `Bearer ${nextToken}` }, threadId, "Ledger scout")));
+      let limitCard: { card: { requestId: string; subtitle: string } } | undefined;
+      await expect.poll(async () => {
+        const messages = (await desktopApi("GET", `/api/threads/${threadId}/messages`)).body.messages as Array<{ card?: { tool?: string; answered?: string } }> | undefined;
+        limitCard = messages?.find(item => item.card?.tool === "more_new_bots" && !item.card.answered) as typeof limitCard;
+        return Boolean(limitCard);
+      }).toBe(true);
+      expect(limitCard!.card.subtitle).toContain("Next it wants to add @Ledger scout.");
+      expect((await desktopApi("POST", `/api/threads/${threadId}/respond`, { requestId: limitCard!.card.requestId, behavior: "allow" })).status).toBe(200);
+      const made = await together;
+      expect(made.map(item => item.status)).toEqual([201, 201, 201, 201]);
+      expect(new Set(made.map(item => item.body.id)).size).toBe(1);
+      const stored = readRoutinesWithRuns(join(home, ".murage", "routines.json")).runs.find((item: { id: string }) => item.id === runId);
+      expect(stored.eventBudget.admissions.filter((item: { kind: string }) => item.kind === "create")).toHaveLength(5);
+      expect(stored.eventBudget.limits.create).toBe(8);
+      writeFileSync(join(home, "finish-fake", String(second.pid)), "finish");
+    } finally {
+      await api("POST", `/api/bots/${bot.id}/interrupt`);
+      if (runId) await desktopApi("POST", `/api/routine-runs/${runId}/cancel`);
+      if (routineId) await desktopApi("DELETE", `/api/routines/${routineId}`);
+      for (const id of createdIds) await desktopApi("DELETE", `/api/bots/${id}`);
+      await desktopApi("DELETE", `/api/bots/${bot.id}`);
+    }
+  });
+
+  // Review round 3: a synchronous ask in an event run is one action, however many times it is repeated.
+  const eventAskRun = async (label: string) => {
+    const bot = (await desktopApi("POST", "/api/bots")).body.bot;
+    const target = (await desktopApi("POST", "/api/bots", { name: `${label} target` })).body.bot;
+    expect((await desktopApi("PATCH", `/api/bots/${bot.id}`, { section: `${label} test`, chiefOfStaff: true,
+      modelSelection: { instanceId: "claude", model: "claude-sonnet-5" } })).status).toBe(200);
+    expect((await desktopApi("PATCH", `/api/bots/${target.id}`, { section: `${label} test`, modelSelection: { instanceId: "claude", model: "claude-sonnet-5" } })).status).toBe(200);
+    const routineId = (await desktopApi("POST", "/api/routines", { name: `${label} event`, prompt: "__fixture_hold_authority__",
+      botId: bot.id, enabled: false, schedule: { type: "daily", time: "10:00", weekdays: [1] } })).body.routine.id as string;
+    rmSync(fakeClaudeDump, { force: true });
+    const queued = await desktopApi("POST", `/api/routines/${routineId}/run`);
+    expect(queued.status).toBe(201);
+    const runId = queued.body.run.id as string;
+    const first = await readJsonFileWhenReady<{ pid: number; mcpConfig: { mcpServers: { agents: { env: Record<string, string> } } } }>(fakeClaudeDump);
+    const env = first.mcpConfig.mcpServers.agents.env;
+    const headers = { authorization: `Bearer ${env.MURAGE_COMMS_TOKEN}`, "content-type": "application/json" };
+    const ask = async (message: string) => {
+      const response = await fetch(`${BASE}/api/internal/ask-bot`, { method: "POST", headers,
+        body: JSON.stringify({ fromBotId: bot.id, fromThreadId: env.MURAGE_THREAD_ID, toBotId: target.id, message, depth: 0 }) });
+      return { status: response.status, body: await response.json() as { text?: string; botName?: string; timeout?: boolean; taskId?: string; busy?: boolean; error?: string } };
+    };
+    const delegate = async (message: string) => {
+      const response = await fetch(`${BASE}/api/internal/delegate-bot`, { method: "POST", headers,
+        body: JSON.stringify({ fromBotId: bot.id, fromThreadId: env.MURAGE_THREAD_ID, toBotId: target.id, message, depth: 0 }) });
+      return { status: response.status, body: await response.json() as { taskId?: string; queued?: boolean; message?: string; error?: string } };
+    };
+    const copies = (token: string): number => {
+      const db = new DatabaseSync(join(home, ".murage", "messages.db"), { readOnly: true });
+      try { return (db.prepare("SELECT COUNT(*) AS count FROM messages WHERE text LIKE ?").get(`%${token}%`) as { count: number }).count; } finally { db.close(); }
+    };
+    const handoffAdmissions = () => readRoutinesWithRuns(join(home, ".murage", "routines.json")).runs.find((item: { id: string }) => item.id === runId)
+      .eventBudget.admissions.filter((item: { kind: string }) => item.kind === "handoff") as Array<{ id: string; receipt?: string }>;
+    const cleanup = async () => {
+      await api("POST", `/api/bots/${bot.id}/interrupt`);
+      await api("POST", `/api/bots/${target.id}/interrupt`);
+      await desktopApi("POST", `/api/routine-runs/${runId}/cancel`);
+      await desktopApi("DELETE", `/api/routines/${routineId}`);
+      await desktopApi("DELETE", `/api/bots/${target.id}`);
+      await desktopApi("DELETE", `/api/bots/${bot.id}`);
+    };
+    return { ask, delegate, copies, handoffAdmissions, cleanup };
+  };
+
+  it("six identical synchronous asks in one event run reach the peer once, charge once and return the same answer", async () => {
+    const run = await eventAskRun("Ledger ask");
+    try {
+      const token = "ledger-ask-token-7731 __fixture_finish_turn__";
+      const firstAsk = await run.ask(`Please confirm ${token}`);
+      expect(firstAsk, JSON.stringify(firstAsk.body)).toMatchObject({ status: 200 });
+      const answered = firstAsk.body.text;
+      expect(answered).toBeTruthy();
+      const dispatched = run.copies(token);
+      expect(dispatched).toBeGreaterThan(0);
+      for (let repeat = 0; repeat < 5; repeat++) {
+        const again = await run.ask(`Please confirm ${token}`);
+        expect(again.status).toBe(200);
+        expect(again.body.text).toBe(`You already asked @${firstAsk.body.botName} this in this run. Their answer: ${answered}`);
+      }
+      expect(run.copies(token)).toBe(dispatched);
+      const admissions = run.handoffAdmissions();
+      expect(admissions).toHaveLength(1);
+      expect(admissions[0].receipt).toMatch(/^answer:/);
+    } finally {
+      await run.cleanup();
+    }
+  });
+
+  it("a synchronous ask that timed out into a task returns that same timeout and task every time it is repeated", async () => {
+    const run = await eventAskRun("Ledger timeout");
+    try {
+      // the peer's turn is held open, so the wait ends and the ask becomes a task
+      const message = "Take your time __fixture_hold_authority__";
+      const firstAsk = await run.ask(message);
+      expect(firstAsk, JSON.stringify(firstAsk.body)).toMatchObject({ status: 200, body: { timeout: true } });
+      expect(firstAsk.body.taskId).toBeTruthy();
+      for (let repeat = 0; repeat < 3; repeat++) {
+        const again = await run.ask(message);
+        expect(again.status).toBe(200);
+        expect(again.body.timeout).toBe(true);
+        expect(again.body.taskId).toBe(firstAsk.body.taskId);
+      }
+      const admissions = run.handoffAdmissions();
+      expect(admissions).toHaveLength(1);
+      expect(admissions[0].receipt).toBe(`timeout:${firstAsk.body.taskId}`);
+    } finally {
+      await run.cleanup();
+    }
+  }, 90_000);
+
+  it("an event run that repeats the same hand-off gets the first delegation back and queues nothing new", async () => {
+    const bot = (await desktopApi("POST", "/api/bots")).body.bot;
+    const target = (await desktopApi("POST", "/api/bots", { name: "Repeat target" })).body.bot;
+    let routineId = "", runId = "";
+    try {
+      expect((await desktopApi("PATCH", `/api/bots/${bot.id}`, { section: "Event repeat test", chiefOfStaff: true,
+        modelSelection: { instanceId: "claude", model: "claude-sonnet-5" } })).status).toBe(200);
+      expect((await desktopApi("PATCH", `/api/bots/${target.id}`, { section: "Event repeat test" })).status).toBe(200);
+      routineId = (await desktopApi("POST", "/api/routines", { name: "Repeat event", prompt: "__fixture_hold_authority__",
+        botId: bot.id, enabled: false, schedule: { type: "daily", time: "10:00", weekdays: [1] } })).body.routine.id;
+      rmSync(fakeClaudeDump, { force: true });
+      const queued = await desktopApi("POST", `/api/routines/${routineId}/run`);
+      expect(queued.status).toBe(201); runId = queued.body.run.id;
+      const first = await readJsonFileWhenReady<{ pid: number; mcpConfig: { mcpServers: { agents: { env: Record<string, string> } } } }>(fakeClaudeDump);
+      const env = first.mcpConfig.mcpServers.agents.env;
+      const headers = { authorization: `Bearer ${env.MURAGE_COMMS_TOKEN}`, "content-type": "application/json" };
+      const hand = async () => {
+        const response = await fetch(`${BASE}/api/internal/delegate-bot`, { method: "POST", headers,
+          body: JSON.stringify({ fromBotId: bot.id, fromThreadId: env.MURAGE_THREAD_ID, toBotId: target.id, message: "Please pay invoice 7", depth: 0 }) });
+        return { status: response.status, body: await response.json() as { taskId?: string; queued?: boolean; error?: string } };
+      };
+      const firstHand = await hand();
+      expect(firstHand, JSON.stringify(firstHand.body)).toMatchObject({ status: 200 });
+      expect(firstHand.body.taskId).toBeTruthy();
+      for (let repeat = 0; repeat < 5; repeat++) {
+        const again = await hand();
+        expect(again.status).toBe(200);
+        expect(again.body.taskId).toBe(firstHand.body.taskId);
+      }
+      const stored = readRoutinesWithRuns(join(home, ".murage", "routines.json")).runs.find((item: { id: string }) => item.id === runId);
+      const handoffs = stored.eventBudget.admissions.filter((item: { kind: string }) => item.kind === "handoff");
+      expect(handoffs).toHaveLength(1);
+      expect(handoffs[0].receipt).toBe(`delegation:${firstHand.body.taskId}`);
+    } finally {
+      await api("POST", `/api/bots/${bot.id}/interrupt`);
+      if (runId) await desktopApi("POST", `/api/routine-runs/${runId}/cancel`);
+      if (routineId) await desktopApi("DELETE", `/api/routines/${routineId}`);
+      await desktopApi("DELETE", `/api/bots/${target.id}`);
+      await desktopApi("DELETE", `/api/bots/${bot.id}`);
+    }
+  });
+
+  // Review round 4 #4: the ask and delegate routes read every hand-off receipt the same way.
+  it("a hand-off asked and then delegated, in an event run, returns what already happened: nothing runs or is charged a second time", async () => {
+    const run = await eventAskRun("Ledger cross");
+    try {
+      const token = "ledger-cross-token-5521 __fixture_finish_turn__";
+      const message = `Please confirm ${token}`;
+      const firstAsk = await run.ask(message);
+      expect(firstAsk, JSON.stringify(firstAsk.body)).toMatchObject({ status: 200 });
+      const dispatched = run.copies(token);
+      expect(dispatched).toBeGreaterThan(0);
+      const delegated = await run.delegate(message);
+      expect(delegated.status, JSON.stringify(delegated.body)).toBe(200);
+      expect(delegated.body.message).toBe(`You already asked @${firstAsk.body.botName} this in this run. Their answer: ${firstAsk.body.text}`);
+      expect(delegated.body.taskId).toBeUndefined();
+      expect(run.copies(token)).toBe(dispatched);
+      expect(run.handoffAdmissions()).toHaveLength(1);
+    } finally {
+      await run.cleanup();
+    }
+  }, 90_000);
+
+  it("a synchronous ask that timed out into a task, then delegated, returns that same task and starts nothing new", async () => {
+    const run = await eventAskRun("Ledger cross timeout");
+    try {
+      const message = "Take your time, cross __fixture_hold_authority__";
+      const firstAsk = await run.ask(message);
+      expect(firstAsk, JSON.stringify(firstAsk.body)).toMatchObject({ status: 200, body: { timeout: true } });
+      const delegated = await run.delegate(message);
+      expect(delegated.status, JSON.stringify(delegated.body)).toBe(200);
+      expect(delegated.body.taskId).toBe(firstAsk.body.taskId);
+      const admissions = run.handoffAdmissions();
+      expect(admissions).toHaveLength(1);
+      expect(admissions[0].receipt).toBe(`timeout:${firstAsk.body.taskId}`);
+    } finally {
+      await run.cleanup();
+    }
+  }, 90_000);
+
+  // Review round 4 #5: two different names cleared while one card waits cannot both take the last place.
+  it("two different new bots waiting on the same card cannot both take the last place in the workspace", async () => {
+    const bot = (await desktopApi("POST", "/api/bots")).body.bot;
+    const made: string[] = [];
+    let routineId = "", runId = "";
+    try {
+      expect((await desktopApi("PATCH", `/api/bots/${bot.id}`, { section: "Last place test", chiefOfStaff: true,
+        modelSelection: { instanceId: "claude", model: "claude-sonnet-5" } })).status).toBe(200);
+      const count = async () => ((await api("GET", "/api/bots?messages=0")).body.bots as unknown[]).length;
+      // 95 bots now; four creates by the run make 99
+      while ((await count()) < 95) made.push((await desktopApi("POST", "/api/bots")).body.bot.id);
+      routineId = (await desktopApi("POST", "/api/routines", { name: "Last place", prompt: "__fixture_hold_authority__",
+        botId: bot.id, enabled: false, schedule: { type: "daily", time: "10:00", weekdays: [1] } })).body.routine.id;
+      rmSync(fakeClaudeDump, { force: true });
+      const queued = await desktopApi("POST", `/api/routines/${routineId}/run`);
+      expect(queued.status).toBe(201); runId = queued.body.run.id;
+      const first = await readJsonFileWhenReady<{ pid: number; mcpConfig: { mcpServers: { agents: { env: Record<string, string> } } } }>(fakeClaudeDump);
+      const env = first.mcpConfig.mcpServers.agents.env;
+      const threadId = env.MURAGE_THREAD_ID;
+      const headers = { authorization: `Bearer ${env.MURAGE_COMMS_TOKEN}`, "content-type": "application/json" };
+      const create = async (name: string) => {
+        const response = await fetch(`${BASE}/api/internal/create-bot`, { method: "POST", headers,
+          body: JSON.stringify({ fromBotId: bot.id, fromThreadId: threadId, name, role: "Research", instructions: "Review notes." }) });
+        const body = await response.json() as { id?: string; error?: string };
+        if (body.id) made.push(body.id);
+        return { status: response.status, body };
+      };
+      for (let index = 0; index < 4; index++) expect((await create(`Filler operator ${index}`)).status).toBe(201);
+      expect(await count()).toBe(99);
+      // a turn may create four bots: the run goes on in a second turn (after a credential card), still under the run's one ledger
+      const card = await fetch(`${BASE}/api/internal/request-credential`, { method: "POST", headers,
+        body: JSON.stringify({ fromBotId: bot.id, fromThreadId: threadId, credentialId: "openaiImageApiKey", reason: "Test continuation ownership" }) });
+      expect(card.status).toBe(201);
+      const { messageId } = await card.json() as { messageId: string };
+      writeFileSync(join(home, "finish-fake", String(first.pid)), "finish");
+      await expect.poll(async () => (await api("GET", "/api/bots?messages=0")).body.bots.find((item: { id: string }) => item.id === bot.id)?.busy).toBe(false);
+      rmSync(fakeClaudeDump, { force: true });
+      expect((await desktopApi("POST", `/api/bots/${bot.id}/secret-cards/${messageId}/dismiss`, { threadId })).status).toBe(200);
+      const second = await readJsonFileWhenReady<{ pid: number; mcpConfig: { mcpServers: { agents: { env: Record<string, string> } } } }>(fakeClaudeDump);
+      headers.authorization = `Bearer ${second.mcpConfig.mcpServers.agents.env.MURAGE_COMMS_TOKEN}`;
+      const both = Promise.all([create("Scout"), create("Ranger")]);
+      let limitCard: { card: { requestId: string } } | undefined;
+      await expect.poll(async () => {
+        const messages = (await desktopApi("GET", `/api/threads/${threadId}/messages`)).body.messages as Array<{ card?: { tool?: string; answered?: string } }> | undefined;
+        limitCard = messages?.find(item => item.card?.tool === "more_new_bots" && !item.card.answered) as typeof limitCard;
+        return Boolean(limitCard);
+      }, { timeout: 15_000 }).toBe(true);
+      expect((await desktopApi("POST", `/api/threads/${threadId}/respond`, { requestId: limitCard!.card.requestId, behavior: "allow" })).status).toBe(200);
+      const results = await both;
+      expect(results.map(item => item.status).sort()).toEqual([201, 409]);
+      expect(results.find(item => item.status === 409)!.body.error).toMatch(/limited to 100 bots/);
+      expect(await count()).toBe(100);
+      // the loser ran nothing, so it was given back: four fillers and the winner
+      const stored = readRoutinesWithRuns(join(home, ".murage", "routines.json")).runs.find((item: { id: string }) => item.id === runId);
+      expect(stored.eventBudget.admissions.filter((item: { kind: string }) => item.kind === "create")).toHaveLength(5);
+      writeFileSync(join(home, "finish-fake", String(second.pid)), "finish");
+    } finally {
+      await api("POST", `/api/bots/${bot.id}/interrupt`);
+      if (runId) await desktopApi("POST", `/api/routine-runs/${runId}/cancel`);
+      if (routineId) await desktopApi("DELETE", `/api/routines/${routineId}`);
+      for (const id of made) await desktopApi("DELETE", `/api/bots/${id}`);
+      await desktopApi("DELETE", `/api/bots/${bot.id}`);
+    }
+  }, 180_000);
+
+  it("a Not now on hand-offs covers every later hand-off in the run, whoever it is for, and asks nothing more", async () => {
+    const bot = (await desktopApi("POST", "/api/bots")).body.bot;
+    const targets = [(await desktopApi("POST", "/api/bots", { name: "Ledger target one" })).body.bot, (await desktopApi("POST", "/api/bots", { name: "Ledger target two" })).body.bot];
+    let routineId = "", runId = "";
+    try {
+      expect((await desktopApi("PATCH", `/api/bots/${bot.id}`, { section: "Event ledger test", chiefOfStaff: true,
+        modelSelection: { instanceId: "claude", model: "claude-sonnet-5" } })).status).toBe(200);
+      for (const target of targets) expect((await desktopApi("PATCH", `/api/bots/${target.id}`, { section: "Event ledger test" })).status).toBe(200);
+      routineId = (await desktopApi("POST", "/api/routines", { name: "Ledger event", prompt: "__fixture_hold_authority__",
+        botId: bot.id, enabled: false, schedule: { type: "daily", time: "10:00", weekdays: [1] } })).body.routine.id;
+      rmSync(fakeClaudeDump, { force: true });
+      const queued = await desktopApi("POST", `/api/routines/${routineId}/run`);
+      expect(queued.status).toBe(201); runId = queued.body.run.id;
+      const first = await readJsonFileWhenReady<{ pid: number; mcpConfig: { mcpServers: { agents: { env: Record<string, string> } } } }>(fakeClaudeDump);
+      const env = first.mcpConfig.mcpServers.agents.env;
+      const threadId = env.MURAGE_THREAD_ID;
+      const headers = { authorization: `Bearer ${env.MURAGE_COMMS_TOKEN}`, "content-type": "application/json" };
+      const stored = () => readRoutinesWithRuns(join(home, ".murage", "routines.json")).runs.find((item: { id: string }) => item.id === runId);
+      const openLimitCard = async (tool: string) => {
+        let card: { card: { requestId: string; subtitle: string } } | undefined;
+        await expect.poll(async () => {
+          const messages = (await desktopApi("GET", `/api/threads/${threadId}/messages`)).body.messages as Array<{ card?: { tool?: string; answered?: string } }> | undefined;
+          card = messages?.find(item => item.card?.tool === tool && !item.card.answered) as typeof card;
+          return Boolean(card);
+        }).toBe(true);
+        return card!;
+      };
+      // four hand-offs, then a fifth asks, and Not now stops them for the rest of the run, whoever they are for
+      const hand = async (target: { id: string }, message: string) => {
+        const response = await fetch(`${BASE}/api/internal/delegate-bot`, { method: "POST", headers,
+          body: JSON.stringify({ fromBotId: bot.id, fromThreadId: threadId, toBotId: target.id, message, depth: 0 }) });
+        return { status: response.status, body: await response.json() as { taskId?: string; error?: string } };
+      };
+      for (let index = 0; index < 4; index++) expect((await hand(targets[0], `Task ${index}`)).status).toBe(200);
+      const fifth = hand(targets[0], "Task 4");
+      const handCard = await openLimitCard("more_handoffs");
+      expect(handCard.card.subtitle).toContain("Not now stops hand-offs for the rest of this run.");
+      expect((await desktopApi("POST", `/api/threads/${threadId}/respond`, { requestId: handCard.card.requestId, behavior: "deny" })).status).toBe(200);
+      const refused = await fifth;
+      expect(refused.status).toBe(409);
+      expect(refused.body.error).toBe("The owner said not now to more hand-offs in this run. Nothing more was handed off. Tell them, and finish what you can yourself.");
+      const other = await hand(targets[1], "Something else");
+      expect(other.status).toBe(409);
+      expect(other.body.error).toMatch(/said not now to more hand-offs/);
+      const cardsNow = ((await desktopApi("GET", `/api/threads/${threadId}/messages`)).body.messages as Array<{ card?: { tool?: string } }>).filter(item => item.card?.tool === "more_handoffs");
+      expect(cardsNow).toHaveLength(1);
+      expect(stored().eventBudget.admissions.filter((item: { kind: string }) => item.kind === "handoff")).toHaveLength(4);
+    } finally {
+      await api("POST", `/api/bots/${bot.id}/interrupt`);
+      if (runId) await desktopApi("POST", `/api/routine-runs/${runId}/cancel`);
+      if (routineId) await desktopApi("DELETE", `/api/routines/${routineId}`);
+      for (const target of targets) await desktopApi("DELETE", `/api/bots/${target.id}`);
       await desktopApi("DELETE", `/api/bots/${bot.id}`);
     }
   });
@@ -2559,7 +2940,8 @@ describe("new-bot setup conversation", () => {
 
   it.each(["cowork", "starter-personal-home"])("adapts a reviewed one-bot playbook package without flattening a team: %s", async (slug) => {
     const bot = await makeBot("Keep this name");
-    const before = (await api("GET", "/api/bots?messages=0")).body.bots.find((entry: { id: string }) => entry.id === bot.id)!;
+    // the roster leaves playbooks out (rc11); the record route carries them
+    const before = (await api("GET", `/api/bots/${bot.id}`)).body.bot;
     const catalog = await api("GET", "/api/team-library/catalog");
     const cowork = catalog.body.teams.find((entry: { slug: string }) => entry.slug === slug);
     expect(cowork).toMatchObject({ members: 1, adaptable: true, playbooks: expect.any(Array) });
@@ -2568,8 +2950,7 @@ describe("new-bot setup conversation", () => {
     const legacy = await desktopApi("POST", `/api/bots/${bot.id}/assistant-profile`, { slug, rename: false });
     expect(legacy.status).toBe(200);
     expect(legacy.body.playbooks).toEqual([]);
-    expect((await api("GET", "/api/bots?messages=0")).body.bots.find((entry: { id: string }) => entry.id === bot.id)!.playbooks)
-      .toEqual(before.playbooks);
+    expect((await api("GET", `/api/bots/${bot.id}`)).body.bot.playbooks).toEqual(before.playbooks);
 
     const applied = await desktopApi("POST", `/api/bots/${bot.id}/assistant-profile`, {
       slug, rename: false, profileReviewHash: cowork.profileReviewHash,
@@ -2577,7 +2958,7 @@ describe("new-bot setup conversation", () => {
     expect(applied.status).toBe(200);
     expect(applied.body.bot).toMatchObject({ id: bot.id, name: "Keep this name" });
     expect(applied.body.playbooks.length).toBeGreaterThan(0);
-    const after = (await api("GET", "/api/bots?messages=0")).body.bots.find((entry: { id: string }) => entry.id === bot.id)!;
+    const after = (await api("GET", `/api/bots/${bot.id}`)).body.bot;
     expect(after).toMatchObject({ id: before.id, name: before.name, threadId: before.threadId });
     expect(after.chiefOfStaff).toBe(before.chiefOfStaff);
     expect(after.playbooks).toMatchObject(applied.body.playbooks);
@@ -2586,8 +2967,7 @@ describe("new-bot setup conversation", () => {
       slug, rename: false, profileReviewHash: cowork.profileReviewHash,
     });
     expect(repeated.status).toBe(200);
-    expect((await api("GET", "/api/bots?messages=0")).body.bots.find((entry: { id: string }) => entry.id === bot.id)!.playbooks)
-      .toEqual(after.playbooks);
+    expect((await api("GET", `/api/bots/${bot.id}`)).body.bot.playbooks).toEqual(after.playbooks);
 
     expect((await desktopApi("POST", `/api/bots/${bot.id}/assistant-profile`, {
       slug, rename: false, profileReviewHash: "0".repeat(64),

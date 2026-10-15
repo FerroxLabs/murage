@@ -5,12 +5,12 @@
 // every other projection (responses, live `bot` frames and replay) strips
 // both and carries `shared` and, for the owner's phone, `sharedRows`.
 import { mkdirSync, rmSync } from "node:fs";
-import { beforeEach, expect, it } from "vitest";
+import { beforeEach, describe, expect, it } from "vitest";
 import { DATA_DIR } from "./config.ts";
 import { closeDatabase, database } from "./database.ts";
 import { Store } from "./store.ts";
 import { teamIdFor } from "./team-identities.ts";
-import { remoteBody, remoteWireBot, scopedBotFrame, sharedRowsFor, sharingTeams, sharingWire, wireSharedWork } from "./shared-wire.ts";
+import { foreignBody, remoteBody, remoteWireBot, scopedBotFrame, sharedRowsFor, sharingTeams, sharingWire, wireSharedWork } from "./shared-wire.ts";
 
 beforeEach(() => { closeDatabase(); rmSync(DATA_DIR, { recursive: true, force: true }); mkdirSync(DATA_DIR, { recursive: true }); });
 function fixture() {
@@ -105,4 +105,37 @@ it("a legacy team label longer than 60 characters never breaks a read, and no re
   expect(database().prepare("SELECT count(*) AS n FROM team_identities").get()!.n).toBe(before);
   // the owner's sharing list, which may mint, leaves the long label out rather than failing
   expect(sharingTeams(store, iris).some(team => team.name === long)).toBe(false);
+});
+
+describe("foreignBody (astra-botint H1: owner-only metadata at the response boundary)", () => {
+  it("cuts the numbering, the ledger and turn ids from nested bots and transcript rows, and keeps everything else", () => {
+    const row = (id: string, extra: Record<string, unknown>) => ({ id, role: "user", content: "hi", createdAt: 1, ...extra });
+    const body = {
+      tasksEpoch: "e1",
+      removed: [{ id: "gone", kind: "deleted", tasksSeq: 3 }],
+      bots: [{
+        id: "b1", threadId: "t1", name: "Bot", modelSelection: {}, tasksSeq: 7, tasksEpoch: "e1",
+        messages: [row("m1", { dispatchedIn: "turn-1" }), { ...row("m2", { turnId: "turn-1", turnTerminal: true }), role: "assistant" }],
+        tasks: { items: [{ id: "task", tasksSeq: 2 }] },
+      }],
+      messages: [row("m3", { dispatchedIn: "turn-2", turnId: "turn-2" })],
+      bot: { id: "b2", threadId: "t2", name: "Two", modelSelection: {}, tasksSeq: 1, tasksEpoch: "e1" },
+    };
+    const out = foreignBody(body) as any;
+    expect(JSON.stringify(out)).not.toMatch(/"(tasksEpoch|tasksSeq|turnId|dispatchedIn|removed)"/);
+    expect(out.bots[0]).toMatchObject({ id: "b1", threadId: "t1", name: "Bot" });
+    expect(out.bots[0].messages[0]).toEqual({ id: "m1", role: "user", content: "hi", createdAt: 1 });
+    expect(out.bots[0].messages[1]).toMatchObject({ id: "m2", role: "assistant", turnTerminal: true });
+    expect(out.messages[0]).toEqual({ id: "m3", role: "user", content: "hi", createdAt: 1 });
+    expect(out.bot).toEqual({ id: "b2", threadId: "t2", name: "Two", modelSelection: {} });
+    // the owner's body is never touched
+    expect(body.bots[0].tasksSeq).toBe(7);
+    expect((body.messages[0] as Record<string, unknown>).dispatchedIn).toBe("turn-2");
+  });
+
+  it("leaves a body with nothing owner-only as the same object, and a `turnId` outside a transcript row alone", () => {
+    const plain = { ok: true, bots: [{ id: "b", name: "x" }] };
+    expect(foreignBody(plain)).toBe(plain);
+    expect(foreignBody({ session: { turnId: "t" } })).toEqual({ session: { turnId: "t" } });
+  });
 });

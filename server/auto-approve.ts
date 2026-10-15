@@ -311,6 +311,10 @@ export type AutoVerdictSource =
    * folder. Not a grant and not a mode — the action was never the person's
    * to authorize (see the comment on `ownWorkspace` below). */
   | "own-workspace"
+  /** The bot reading back its OWN saved tool result: a read-only command or
+   * read tool on a file in this session's own result folder
+   * (server/own-tool-results.ts). Not a grant and not a mode. */
+  | "own-tool-results"
   | "project-work-roots"
   /** The stop line (server/stop-line.ts): deleting outside its folder,
    * paying, or messaging someone new. Full access stops here too. */
@@ -408,6 +412,12 @@ export interface AutoContext {
    * mode raised a card for its own MEMORY.md and another for its own thread
    * file, and an unattended routine simply stopped until someone woke up. */
   ownWorkspace?: boolean;
+  /** The bot reading back its own saved tool result. Decided in
+   * server/own-tool-results.ts (the session's own folder, a strictly
+   * read-only command, every path inside); placed here like `ownWorkspace`:
+   * behind the guards, ahead of the unattended and host blocks, because an
+   * engine reading what it was just given is not something a person grants. */
+  ownToolResults?: boolean;
   projectWorkRoots?: boolean;
   /** What the stop line (server/stop-line.ts) found, computed by the caller
    * from the engine's structured input and the bot's own folders and
@@ -511,6 +521,9 @@ export function autoVerdict(
   }
   if (context?.ownWorkspace === true && !destructive && !sensitive && context.scope !== "local-computer") {
     return { approve: `auto-approved ${tool} (own workspace)`, source: "own-workspace" };
+  }
+  if (context?.ownToolResults === true && !destructive && !sensitive && !context.scope) {
+    return { approve: "read its own saved tool result", source: "own-tool-results" };
   }
   // The grant is computed even when a hard block will refuse it: the row
   // worth auditing is "this WOULD have auto-approved, and only the block

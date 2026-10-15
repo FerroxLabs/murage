@@ -16,7 +16,7 @@ beforeAll(async()=>{
   const source=[
     "const fs=await import('node:fs');const path=await import('node:path');const {registerHooks}=await import('node:module');",
     "registerHooks({load(url,ctx,next){if(!url.endsWith('/fake-late-terminal-driver.ts'))return next(url,ctx);let source=fs.readFileSync(new URL(url),'utf8');",
-    "const old='emit({ type: \"item.completed\", itemType: \"assistant_text\", text: \"Hello from late\", threadId: turn.threadId, turnId });';if(!source.includes(old))throw Error('fixture anchor changed');",
+    "const old='emit({ type: \"item.completed\", itemType: \"assistant_text\", origin: \"engine\", text: \"Hello from late\", threadId: turn.threadId, turnId });';if(!source.includes(old))throw Error('fixture anchor changed');",
     "source=source.replaceAll(old,'emit({ type: \"request.opened\", requestType: \"permission\", tool: \"Read\", summary: \"Read fixture notes\", requestId: turnId + \"-approval\", threadId: turn.threadId, turnId }); return;');return{format:'module-typescript',shortCircuit:true,source};}});",
     "const {BUILT_IN_DRIVERS}=await import("+JSON.stringify(new URL("./drivers/builtIn.ts",import.meta.url).href)+");",
     "const {makeLateTerminalDriver}=await import("+JSON.stringify(new URL("./testing/fake-late-terminal-driver.ts",import.meta.url).href)+");BUILT_IN_DRIVERS.push(makeLateTerminalDriver());",

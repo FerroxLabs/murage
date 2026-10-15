@@ -13,12 +13,19 @@ describe("cold start ordering in server/index.ts", () => {
   const listen = at('server.listen(PORT, "127.0.0.1", () => {');
   const callbackEnd = at("const gracefulShutdown = createGracefulShutdown", listen);
 
-  it("finishes the skill sweep before the port opens, so before any bot turn", () => {
-    const sweep = at("sweepSkillScans(store.bots.map(");
-    expect(sweep).toBeLessThan(listen);
-    expect(at('startupMark("skillSweep.done")')).toBeGreaterThan(sweep);
+  it("scans a bot's skills in the background after the port opens and, at the latest, on that bot's first turn", () => {
+    // the scan used to read every skill of every bot before the port opened (78 s on a heavy install)
+    expect(at("sweepBotSkills(bot.id)")).toBeGreaterThan(at("async function sweepSkillsInBackground"));
+    // rc13: the sweep is an after-listen step of its own (STALLS-FINAL-DESIGN 3.4), started from inside the listen callback
+    expect(at("startRecovery(() => sweepSkillsInBackground()", listen)).toBeGreaterThan(listen);
+    expect(at("startRecovery(() => sweepSkillsInBackground()", listen)).toBeLessThan(callbackEnd);
     expect(at('startupMark("skillSweep.done")')).toBeLessThan(listen);
-    // Nothing that starts turns may run before the sweep: the room queue and memory worker start in the callback.
+    const skills = readFileSync(new URL("./skills.ts", import.meta.url), "utf8");
+    // 1.0.2: skillsSystemPrompt delegates to skillsIndex, which sweeps first.
+    expect(skills).toMatch(/export function skillsSystemPrompt\(botId: string\): string \{\s*return skillsIndex\(botId\)\.text;/);
+    expect(skills).toMatch(/function skillsIndex\(botId: string\): \{ text: string; listed: SkillListing\[\] \} \{(?:\s*\/\/[^\n]*)*\s*sweepBotSkills\(botId\)/);
+    expect(skills).toMatch(/export function syncSkillLinks\(botId: string\): void \{\s*sweepBotSkills\(botId\)/);
+    // Nothing that starts turns may run before the port: the room queue and memory worker start in the callback.
     expect(at("roomEngine.ready = true;", listen)).toBeGreaterThan(listen);
   });
 
@@ -28,7 +35,7 @@ describe("cold start ordering in server/index.ts", () => {
   });
 
   it("starts the jobs that do not gate correctness after listen, not before", () => {
-    for (const call of ["startModelCatalogRefresh(async", "calendarCalls.start();", "cleanupStaleAttachmentPartials();", "imageOperations.resumePendingPublications()", "sweepBackupWork(DATA_DIR)"]) {
+    for (const call of ["startModelCatalogRefresh(async", "calendarCalls.start();", "cleanupStaleAttachmentPartials();", "void resumePendingPublicationsInSlices()", "sweepBackupWork(DATA_DIR)"]) {
       const first = at(call, index.indexOf("const store = new Store("));
       expect(first, call).toBeGreaterThan(listen);
       expect(first, call).toBeLessThan(callbackEnd);

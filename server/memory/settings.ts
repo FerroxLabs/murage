@@ -1,7 +1,7 @@
 import { partitionOfScopeKey, executionStore, homeThread } from "../execution-audience.ts";
 import { teamLabel } from "../team-identities.ts";
-import { learningReviewReason } from "./automatic-learning.ts";
-import { learningHistory,changeLearningEvent } from "./learning-history.ts";
+import { candidateReviewReason } from "./automatic-learning.ts";
+import { learningHistory,changeLearningEvent,undoOwnsItsTransactions } from "./learning-history.ts";
 import type { LearningConnection } from "./extractor-connections.ts";
 import { humanBindingStatus, linkHumanBinding, shareHumanScope } from "../human-principals.ts";
 import { continuityReadSchema, deleteBotIdentity, rejectGenericForgetOfPip, identityDeleteSchema, identityReadSchema, identityWriteSchema, readBotIdentity, readContinuity, writeBotIdentity } from "./identity.ts";
@@ -19,11 +19,13 @@ import { samePath } from "../../shared/path-identity.mjs";
 import { z } from "zod";
 import { DATA_DIR } from "../config.ts";
 import { SERVER_ROOT } from "../proxy-paths.ts";
-import { database, transaction } from "../database.ts";
+import { database, memoryHoldCode, transaction } from "../database.ts";
+import { holdMessage } from "./integrity-pass.ts";
 import { requireMemoryOwner, approveMemory, pinMemory, correctMemory, bindMemoryScope, readCorrectionTarget } from "./authority.ts";
-import { forgetMemory, memoryDeletionStatus } from "./forget.ts";
+import { forgetMemory, memoryDeletionStatus, MEMORY_COUNT_CAP } from "./forget.ts";
 import { backgroundMemoryScopes, ensureScope, type MemoryRoster } from "./policy.ts";
 import { memoryState } from "./repository.ts";
+import { memoryCaptures, memoryRecalls } from "./capture-gate.ts";
 import { previewMemoryImport, commitMemoryImport, availableMemoryNotebooks, memoryNotebookLinks, stopTrackingMemoryNotebook, migrateDetectedMemoryNotebooks } from "./import.ts";
 import { ownerMemoryList } from "./owner-list.ts";
 import type { MemoryRecord } from "../../shared/memory.ts";
@@ -34,6 +36,7 @@ import type { ProcedureEvaluatorBridge } from "./procedure-evaluator.ts";
 import { memoryHealth } from "./health.ts";
 import { forgetParkedThreads } from "./park.ts";
 import { revokeAllDisclosures } from "./revocation.ts";
+import { reviewBack, reviewEdit, reviewKeep, reviewKeepAll, reviewLater, reviewList, reviewSources, reviewSummary, reviewUndo } from "./review.ts";
 
 const SETTINGS="memory-owner-settings";
 type Configuration={excludedThreadIds:string[];extractorInstanceId:string|null};
@@ -50,11 +53,24 @@ export interface MemoryOwnerOptions {
   startSkillReview?:(input:{botId:string;record:{id:string;version:number};source:string;request:string})=>Promise<{botId:string;threadId:string;messageId:string}>;
 }
 const id=z.string().min(1).max(180),version=z.number().int().positive();
+/** A client-made action id: the key that makes a retried call return the first result. */
+const actionId=z.string().regex(/^[\w-]{8,80}$/);
 const subject={subjectType:z.enum(["bot","room"]),subjectId:id};
+/** The most scope ids one `scope-labels` call resolves. */
+export const MEMORY_SCOPE_LABELS_MAX=50;
 const actions=z.discriminatedUnion("action",[
   z.object({action:z.literal("learning-history"),botId:id.optional(),cursor:id.optional(),limit:z.number().int().min(1).max(50).optional()}).strict(),
   z.object({action:z.literal("learning-undo"),eventId:id}).strict(),
   z.object({action:z.literal("learning-keep"),eventId:id}).strict(),
+  z.object({action:z.literal("waiting-summary")}).strict(),
+  z.object({action:z.literal("waiting-list"),subjectType:z.enum(["bot","room","other"]),subjectId:id,tab:z.enum(["waiting","later"]).optional(),cursor:z.string().max(16).optional()}).strict(),
+  z.object({action:z.literal("waiting-sources"),id,version}).strict(),
+  z.object({action:z.literal("review-keep"),actionId,id,version,correctionPin:z.enum(["transfer","unpin"]).optional()}).strict(),
+  z.object({action:z.literal("review-keep-all"),actionId,items:z.array(z.object({id,version}).strict()).min(1).max(500)}).strict(),
+  z.object({action:z.literal("review-later"),actionId,id,version}).strict(),
+  z.object({action:z.literal("review-back"),id}).strict(),
+  z.object({action:z.literal("review-edit"),actionId,id,version,text:z.string().min(1).max(4096),keep:z.boolean().optional(),correctionPin:z.enum(["transfer","unpin"]).optional()}).strict(),
+  z.object({action:z.literal("review-undo"),actionId,keepActionId:actionId,id,version}).strict(),
   z.object({action:z.literal("learning-bot"),botId:id,enabled:z.boolean(),learningRevision:z.number().int().nonnegative()}).strict(),
   z.object({action:z.literal("evolution-authorize")}).strict(),
   z.object({action:z.literal("evolution-authorize-classification")}).strict(),
@@ -76,6 +92,7 @@ const actions=z.discriminatedUnion("action",[
   z.object({action:z.literal("human-share"),personId:id,scopeId:id,granted:z.boolean()}).strict(),
   z.object({action:z.literal("human-link"),bindingId:id,expectedRevision:z.number().int().positive(),as:z.enum(["owner","person","unlink"]),personId:id.optional()}).strict(),
   z.object({action:z.literal("list"),query:z.string().max(4096).optional(),scopeId:id.optional(),botId:id.optional(),state:z.enum(["candidate","active","archived","superseded","deleted"]).optional(),cursor:z.string().max(512).optional(),view:z.enum(["search","important","recent","review"]).optional()}).strict(),
+  z.object({action:z.literal("scope-labels"),scopeIds:z.array(id).min(1).max(MEMORY_SCOPE_LABELS_MAX)}).strict(),
   z.object({action:z.literal("inspect"),id,version}).strict(),
   z.object({action:z.literal("review-as-skill"),id,version,botId:id}).strict(),
   // correctionPin is the owner's explicit choice when an approved correction
@@ -107,8 +124,7 @@ function configuration():Configuration {
   return row?JSON.parse(String(row.intent)):{excludedThreadIds:[],extractorInstanceId:null};
 }
 function record(row:Record<string,unknown>):MemoryRecord {
-  const basis=row.state==="candidate"?database().prepare("SELECT confidence_basis FROM memory_record_details WHERE record_id=? AND record_version=?").get(String(row.id),Number(row.version))?.confidence_basis:null;
-  const reviewReason=typeof basis==="string"?(basis.includes(" ")?basis:learningReviewReason(basis)):undefined;
+  const reviewReason=row.state==="candidate"?candidateReviewReason(database(),String(row.id),Number(row.version)):undefined;
   return {...(reviewReason?{reviewReason}:{}),id:String(row.id),version:Number(row.version),scopeId:String(row.scope_id),kind:String(row.kind),text:String(row.text),assertion:row.assertion as MemoryRecord["assertion"],state:row.state as MemoryRecord["state"],ownerPinned:row.owner_pinned===1,validFrom:Number(row.valid_from),validTo:row.valid_to===null?null:Number(row.valid_to)};
 }
 function getRecord(id:string,version:number){
@@ -172,16 +188,27 @@ function sameStoredFolder(owner:string,path:string):boolean {
 function validSubject(roster:MemoryRoster,type:"bot"|"room",id:string){
   if(!(type==="bot"?roster.bots:roster.groups).some(subject=>subject.id===id))throw new Error("MEMORY_SUBJECT_UNKNOWN");
 }
-function scopes(roster:MemoryRoster){return database().prepare("SELECT id,kind,owner_key FROM memory_scopes ORDER BY kind,owner_key").all().map(row=>{
+function scopeOmission():number{
+  const conversations=Number(database().prepare("SELECT count(*) AS n FROM (SELECT 1 FROM memory_scopes WHERE kind='conversation' LIMIT ?)").get(MEMORY_STATUS_SCOPE_LIMIT+1)?.n??0);
+  return conversations>MEMORY_STATUS_SCOPE_LIMIT?Number(database().prepare("SELECT count(*) AS n FROM memory_scopes WHERE kind='conversation'").get()?.n??0):0;
+}
+type ScopeRow=Record<string,unknown>;
+function scopeAudience(roster:MemoryRoster,row:ScopeRow){
   const part=partitionOfScopeKey(String(row.kind),String(row.owner_key));
   if(part?.botId && part.partition.kind!=="home") {
     const p=part.partition;
-    const label=p.kind==="general"?"Notes for every team":p.kind==="team"?`Notes for ${teamLabel(p.teamId) ?? "deleted team"}`:p.kind==="project"||p.kind==="room"?`Notes for ${(roster.groups.find(g=>g.id===p.groupId) as {name?:string}|undefined)?.name ?? p.groupId}`:"Notes";
+    const label=p.kind==="general"?"Notes for every team":p.kind==="team"?`Notes for ${teamLabel(p.teamId) ?? "deleted team"}`:p.kind==="project"||p.kind==="room"?`Notes for ${(roster.groups.find(g=>g.id===p.groupId) as {name?:string}|undefined)?.name?.trim() || (p.kind==="project"?"a removed project":"a removed channel")}`:"Notes";
     return {id:String(row.id),kind:String(row.kind),ownerKey:String(row.owner_key),label};
   }
   const named=(row.kind==="bot"?roster.bots:roster.groups).find(item=>item.id===row.owner_key) as {name?:string}|undefined;
-  return {id:String(row.id),kind:String(row.kind),ownerKey:String(row.owner_key),label:named?.name||String(row.owner_key)||"General"};
-});}
+  return {id:String(row.id),kind:String(row.kind),ownerKey:String(row.owner_key),label:named?.name||(row.kind==="bot"?"A removed bot":row.kind==="room"||row.kind==="project"?"A removed channel":String(row.owner_key))||"General"};
+}
+function scopes(roster:MemoryRoster,omitConversations=false){return database().prepare(omitConversations?"SELECT id,kind,owner_key FROM memory_scopes WHERE kind<>'conversation' ORDER BY kind,owner_key":"SELECT id,kind,owner_key FROM memory_scopes ORDER BY kind,owner_key").all().map(row=>scopeAudience(roster,row));}
+/** The audiences for the given scope ids, by primary key: how a record in a per-conversation scope the status left out still gets its name. */
+function scopeLabels(roster:MemoryRoster,ids:readonly string[]){
+  const read=database().prepare("SELECT id,kind,owner_key FROM memory_scopes WHERE id=?");
+  return {scopes:[...new Set(ids)].flatMap(id=>{const row=read.get(id);return row?[scopeAudience(roster,row)]:[];})};
+}
 interface Manifest {model:string;revision:string;files:Array<{path:string;bytes:number;sha256:string}>}
 function manifest():Manifest {
   const packaged=join(SERVER_ROOT,"memory-model-manifest.json");
@@ -232,20 +259,41 @@ async function downloadModel(options:MemoryOwnerOptions){
   } catch(error){download.state="failed";download.error=error instanceof Error&&/^MEMORY_MODEL_/.test(error.message)?error.message:"MEMORY_MODEL_DOWNLOAD_FAILED";}
 }
 
+export const MEMORY_STATE_COUNT_SQL="SELECT count(*) AS n FROM (SELECT 1 FROM memory_scopes s CROSS JOIN memory_records r INDEXED BY memory_records_scope WHERE r.scope_id=s.id AND r.state=? LIMIT ?)";
+/** Above this many scopes the status lists the audiences people choose (bots, rooms, teams, folders, preferences) and leaves out the per-conversation ones,
+ * which are most of a long history and only ever read as a record's label. The count says how many were left out. */
+export const MEMORY_STATUS_SCOPE_LIMIT=100;
 export function memoryOwnerStatus(ticket:object,roster:MemoryRoster,options:MemoryOwnerOptions={}){
   requireMemoryOwner(ticket);const db=database();
-  const counts={candidate:0,active:0,archived:0,superseded:0,deleted:0};
-  for(const row of db.prepare("SELECT state,count(*) AS n FROM memory_records GROUP BY state").all())counts[String(row.state) as keyof typeof counts]=Number(row.n);
-  const backlog={pending:0,leased:0,deferred:0,failed:0,oldestQueuedAt:null as number|null};
-  for(const row of db.prepare("SELECT CASE status WHEN 'partial' THEN 'pending' ELSE status END AS status,count(*) AS n FROM memory_jobs WHERE status IN ('pending','partial','leased','deferred','failed') GROUP BY CASE status WHEN 'partial' THEN 'pending' ELSE status END").all())backlog[String(row.status) as "pending"|"leased"|"deferred"|"failed"]=Number(row.n);
-  const oldest=db.prepare("SELECT min(v.created_at) AS at FROM memory_jobs j JOIN memory_source_versions v ON v.source_id=j.source_id AND v.revision=j.source_revision WHERE j.status IN ('pending','partial','leased','deferred','failed')").get();backlog.oldestQueuedAt=oldest?.at===null?null:Number(oldest?.at??0);
+  // Every figure here is exact up to MEMORY_COUNT_CAP and then reads "1,000+": a keyed, limited count (the scope+state index, the job status
+  // index), so opening Memory costs the same at any history size. Never a count(*) of a table.
+  const counts={candidate:0,active:0,archived:0,superseded:0,deleted:0},recordsMore:Record<string,boolean>={};
+  // One global capped count per state: the scopes drive an index seek each and the LIMIT caps the whole walk, not each scope.
+  const countState=db.prepare(MEMORY_STATE_COUNT_SQL);
+  for(const state of Object.keys(counts)){
+    const n=Number(countState.get(state,MEMORY_COUNT_CAP+1)?.n??0);
+    counts[state as keyof typeof counts]=Math.min(n,MEMORY_COUNT_CAP);if(n>MEMORY_COUNT_CAP)recordsMore[state]=true;
+  }
+  const backlog={pending:0,leased:0,deferred:0,failed:0,oldestQueuedAt:null as number|null,more:{} as Record<string,boolean>};
+  let queued=0;
+  for(const row of db.prepare(`WITH st(status) AS (VALUES ('pending'),('partial'),('leased'),('deferred'),('failed'))
+    SELECT status,(SELECT count(*) FROM (SELECT 1 FROM memory_jobs j WHERE j.status=st.status LIMIT ?)) AS n FROM st`).all(MEMORY_COUNT_CAP+1)){
+    const key=(String(row.status)==="partial"?"pending":String(row.status)) as "pending"|"leased"|"deferred"|"failed",n=Number(row.n);
+    const total=backlog[key]+n;backlog[key]=Math.min(total,MEMORY_COUNT_CAP);queued+=n;if(total>MEMORY_COUNT_CAP)backlog.more[key]=true;
+  }
+  if(queued<=MEMORY_COUNT_CAP){
+    const oldest=db.prepare("SELECT min(v.created_at) AS at FROM memory_jobs j JOIN memory_source_versions v ON v.source_id=j.source_id AND v.revision=j.source_revision WHERE j.status IN ('pending','partial','leased','deferred','failed')").get();backlog.oldestQueuedAt=oldest?.at===null?null:Number(oldest?.at??0);
+  }
   const day=new Date().toISOString().slice(0,10),budgetRow=db.prepare("SELECT intent FROM memory_scope_bindings WHERE id=?").get(`extract-budget:${day}`),budget=budgetRow?JSON.parse(String(budgetRow.intent)):{};
+  const omittedScopes=scopeOmission();
   const runtime=options.runtimeStatus?.();
   const {revision,...settings}=readMemoryLearning(db);
   const resolved=options.learningConnection?.();
   const connection=resolved?{instanceId:resolved.instanceId,label:resolved.label,source:resolved.source,reason:resolved.reason,suggestion:resolved.suggestion}:{instanceId:configuration().extractorInstanceId,label:"No connection",source:"none" as const};
   const learning={settings,revision,connection,defaultOn:options.learningDefaultOn?.()??false,allowance:{day,callsThisMinute:budget.minute===Math.floor(Date.now()/60000)?budget.calls??0:0,inputUsed:budget.input??0,inputLimit:settings.dailyInputTokens,outputUsed:budget.output??0,outputLimit:settings.dailyOutputTokens,usedPercent:Math.min(100,Math.round(100*Math.max(settings.dailyInputTokens?(budget.input??0)/settings.dailyInputTokens:1,settings.dailyOutputTokens?(budget.output??0)/settings.dailyOutputTokens:1)))}};
-  return {...memoryState(),learning,evolution:options.evolution?.status()??null,classificationEvolution:options.evolution?.status("classification")??null,procedureEvolution:options.procedureEvolution?.status(ticket)??null,health:memoryHealth(resolved?(resolved.extractor?resolved.instanceId:null):configuration().extractorInstanceId),retention:memoryRetentionStatus(),configuration:configuration(),scopes:scopes(roster),records:counts,backlog,model:modelStatus(),extractors:options.extractors?.()??[],
+  const hold=memoryHoldCode(),stored=String(db.prepare("SELECT mode FROM memory_meta WHERE id=1").get()?.mode??"");
+  // what the owner is told about capture and recall comes from the same predicates the capture path uses (capture-gate.ts); a hold switches both off
+  return {...memoryState(),hold,held:hold!==null,capture:memoryCaptures(stored,hold)?"on":"off",recall:memoryRecalls(stored,hold)?"on":"off",storedMode:stored,holdMessage:hold?holdMessage(hold):null,learning,evolution:options.evolution?.status()??null,classificationEvolution:options.evolution?.status("classification")??null,procedureEvolution:options.procedureEvolution?.status(ticket)??null,health:memoryHealth(resolved?(resolved.extractor?resolved.instanceId:null):configuration().extractorInstanceId),retention:memoryRetentionStatus(),configuration:configuration(),scopes:scopes(roster,omittedScopes>0),scopesOmitted:omittedScopes,records:counts,recordsMore,backlog,model:modelStatus(),extractors:options.extractors?.()??[],
     deletion:memoryDeletionStatus(),workerError:runtime?.error??null,runtime:runtime??null};
 }
 
@@ -273,7 +321,16 @@ export async function memoryOwnerRoute(path:string,body:unknown,ticket:object,ro
   const parsed=actions.safeParse(body);if(!parsed.success)throw Object.assign(new Error("INVALID_MEMORY_ARGUMENTS"),{status:400});
   const input=parsed.data,db=database();
   if(input.action==="learning-history")return learningHistory(db,roster,input);
-  if(input.action==="learning-undo"||input.action==="learning-keep")return transaction(()=>changeLearningEvent(db,input.eventId,input.action==="learning-undo"?"undo":"keep"));
+  if(input.action==="learning-undo"||input.action==="learning-keep"){const action=input.action==="learning-undo"?"undo" as const:"keep" as const;return undoOwnsItsTransactions(db,input.eventId,action)?changeLearningEvent(db,input.eventId,action):transaction(()=>changeLearningEvent(db,input.eventId,action));}
+  if(input.action==="waiting-summary")return reviewSummary(ticket,roster);
+  if(input.action==="waiting-list")return reviewList(ticket,roster,input);
+  if(input.action==="waiting-sources")return reviewSources(ticket,roster,input);
+  if(input.action==="review-keep")return reviewKeep(ticket,roster,input);
+  if(input.action==="review-keep-all")return reviewKeepAll(ticket,roster,input);
+  if(input.action==="review-later")return reviewLater(ticket,roster,input);
+  if(input.action==="review-back")return reviewBack(ticket,roster,input);
+  if(input.action==="review-edit")return reviewEdit(ticket,roster,input);
+  if(input.action==="review-undo")return reviewUndo(ticket,roster,input);
   if(input.action==="learning-bot"){
     validSubject(roster,"bot",input.botId);
     transaction(()=>{const current=readMemoryLearning(db),paused=new Set(current.botsPaused);if(input.enabled)paused.delete(input.botId);else paused.add(input.botId);updateMemoryLearning(db,{botsPaused:[...paused]},input.learningRevision);});
@@ -296,6 +353,7 @@ export async function memoryOwnerRoute(path:string,body:unknown,ticket:object,ro
     if(input.action==="procedure-evaluation-authorize")return options.procedureEvolution.authorize(ticket,input.previewId);
     if(input.action==="procedure-evaluation-retry")return options.procedureEvolution.retry(ticket,input.reviewId);
   }
+  if(input.action==="scope-labels")return scopeLabels(roster,input.scopeIds);
   if(input.action==="humans")return humanBindingStatus(ticket);
   if(input.action==="human-share")return shareHumanScope(ticket,input);
   if(input.action==="human-link"){const result=linkHumanBinding(ticket,input);await options.humanBindingChanged?.(input.bindingId);return result;}
@@ -326,7 +384,7 @@ export async function memoryOwnerRoute(path:string,body:unknown,ticket:object,ro
   if(input.action==="pip-reflect-status"){requireMemoryOwner(ticket);return reflectionStatus(input.botId);}
   if(input.action==="pip-reflect-retry"){requireMemoryOwner(ticket);retryReflection(input.botId);return {ok:true};}
   if(input.action==="list"){
-    const {rows,...result}=ownerMemoryList(input,roster);
+    const {rows,...result}=await ownerMemoryList(input,roster);
     return {...result,records:rows.map(record)};
   }
   if(input.action==="inspect"){

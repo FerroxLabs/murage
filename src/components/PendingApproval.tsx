@@ -14,6 +14,8 @@ import { SkillRequestPreview } from "@/components/SkillRequestPreview";
 import { ApprovalDetailBody } from "@/components/ApprovalDetailBody";
 import { CollapsibleText } from "@/components/CollapsibleText";
 import { reviewedSkillSha256 } from "../../shared/skill-request";
+import { plainApproval } from "../../shared/approval-plain";
+import { delegationAction } from "../../shared/delegation-tool";
 import { useDesktopSurface } from "@/lib/use-surface";
 import { inNativeShell } from "@/lib/native-shell";
 import { allowNeedsComputer, approvalSurface, useComputerOnlyRefusal } from "@/lib/approval-surface";
@@ -53,6 +55,13 @@ export function isHostConsentApproval(pending: Pending): boolean {
   return pending.message.card?.tool === "local_computer_consent";
 }
 
+/** The card a bot raises when an event-started run has used up the hand-offs
+ * or new bots it may do on its own (server/peer-approval.ts). It offers only
+ * Allow and Not now: nothing about it can be remembered. */
+export function isEventLimitApproval(pending: Pending): boolean {
+  return pending.tool === "more_handoffs" || pending.tool === "more_new_bots";
+}
+
 function needsRoutineReview(pending: Pending): boolean {
   const card = pending.message.card;
   return isRoutineApproval(pending) && !card?.answered && !/^[a-f0-9]{64}$/.test(card?.routineProposalDigest ?? "");
@@ -74,6 +83,12 @@ export function pendingApprovals(messages: Message[]): Pending[] {
     }));
 }
 
+/** Open questions a provider is waiting on (a request card that is not a
+ * permission), oldest first. A call asks these aloud like an approval. */
+export function openQuestions(messages: Message[]): Message[] {
+  return messages.filter((m) => m.kind === "options" && m.card?.requestId && !m.card.tool && !m.card.answered && !m.card.dismissed);
+}
+
 /** Routine cards can carry every instruction the user asked for (up to
  * 20,000 characters). Calls should announce the concise, visible title and
  * let the user review those details on screen instead of reading them all. */
@@ -81,6 +96,10 @@ export function pendingApprovals(messages: Message[]): Pending[] {
  *  the same action many ways (Grok's web search arrives as tool "other",
  *  detail "Agents_web_search"); none of those names is ever read aloud. */
 export function spokenToolAction(tool: string, detail: string): string {
+  if (tool === "more_handoffs") return "hand more work to other bots";
+  if (tool === "more_new_bots") return "add more bots";
+  const plain = plainApproval(tool, detail);
+  if (plain) return plain.action;
   const known = knownToolAction(tool, detail);
   if (known) return known;
   const words = (text: string) => text.replace(/^mcp__[^_]+__/, "").replace(/^agents?_/i, "").replace(/[_-]+/g, " ").trim();
@@ -90,7 +109,11 @@ export function spokenToolAction(tool: string, detail: string): string {
 
 /** The action in plain words when it is one Murage recognises, else null
  *  (the approval card then keeps its own generic wording). */
-export function knownToolAction(tool: string, detail: string): string | null {
+export function knownToolAction(tool: string, detail: string, hint?: { who?: string }): string | null {
+  // A hand-off to another bot is named as one on every engine, before any
+  // word of its task ("write the intro") can read as a file change.
+  const delegation = delegationAction(tool, detail, hint);
+  if (delegation) return delegation;
   const words = (text: string) => text.replace(/^mcp__[^_]+__/, "").replace(/^agents?_/i, "").replace(/[_-]+/g, " ").trim();
   const both = `${words(tool)} ${words(detail)}`.toLowerCase();
   const url = detail.match(/https?:\/\/([^/\s]+)/i)?.[1]?.replace(/^www\./, "");
@@ -151,6 +174,9 @@ function label(pending: Pending): string {
       : "Confirm this routine change";
   }
   if (isHostConsentApproval(pending)) return pending.message.card?.title || "Use this computer?";
+  if (isEventLimitApproval(pending)) return pending.tool === "more_new_bots" ? "More new bots?" : "More hand-offs?";
+  const plain = plainApproval(pending.tool, pending.detail);
+  if (plain) return `Wants to ${plain.action}`;
   const nice: ApprovalLabels = {
     Bash: "Command approval requested",
     shell: "Command approval requested",
@@ -185,7 +211,7 @@ export const PendingApprovalPanel = memo(function PendingApprovalPanel({
           </span>
         )}
         <span className="text-[13px] text-ink">{label(pending)}</span>
-        <span className="font-mono text-[11px] text-ink-secondary">
+        {!(plainApproval(pending.tool, pending.detail) && !isSkillApproval(pending) && !isRoutineApproval(pending)) && <span className="font-mono text-[11px] text-ink-secondary">
           {isSkillApproval(pending)
             ? pending.message.card?.skillRequest?.action === "update" ? "update_skill" : "stage_skill"
             : isRoutineApproval(pending)
@@ -193,7 +219,7 @@ export const PendingApprovalPanel = memo(function PendingApprovalPanel({
               ? "schedule_routine"
               : "manage_routine"
             : pending.tool}
-        </span>
+        </span>}
       </div>
       {/* every argument stays visible; long commands wrap and scroll */}
       <ApprovalDetailBody
@@ -256,6 +282,7 @@ export function PendingApprovalActions({
   const isRoutineRequest = isRoutineApproval(pending);
   const isSkillRequest = isSkillApproval(pending);
   const hostConsent = isHostConsentApproval(pending);
+  const eventLimit = isEventLimitApproval(pending);
   const durableRequest = isRoutineRequest || isSkillRequest;
   const reviewedSha256 = pending.message.card?.skillRequest
     ? reviewedSkillSha256(pending.message.card.skillRequest)
@@ -308,7 +335,7 @@ export function PendingApprovalActions({
         onClick={() => decide("deny", "deny")}
         {...btn("deny", cn(base, "border border-danger/40 text-danger hover:bg-danger/10"))}
       >
-        <ApprovalBusyLabel busy={feedback.busy === "deny"}>{isRoutineRequest ? "Cancel" : hostConsent ? "Don't allow" : "Deny"}</ApprovalBusyLabel>
+        <ApprovalBusyLabel busy={feedback.busy === "deny"}>{isRoutineRequest ? "Cancel" : hostConsent ? "Don't allow" : eventLimit ? "Not now" : "Deny"}</ApprovalBusyLabel>
       </button>
       {!computerOnly && (
         <>
@@ -357,7 +384,7 @@ export function PendingApprovalActions({
         <ApprovalBusyLabel busy={feedback.busy === "allow"}>
           {isSkillRequest
             ? pending.message.card?.skillRequest?.action === "update" ? "Update" : "Enable"
-            : isRoutineRequest ? "Confirm" : hostConsent ? "Allow for this bot" : "Allow once"}
+            : isRoutineRequest ? "Confirm" : hostConsent ? "Allow for this bot" : eventLimit ? "Allow" : "Allow once"}
         </ApprovalBusyLabel>
       </button>
         </>

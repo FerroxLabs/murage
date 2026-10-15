@@ -1,4 +1,7 @@
 // shared/flux-stream-contract.ts
+// Reference only for now: this tracks Flux FLUX-940 (subprotocol flux.stt.v1),
+// which is NOT live on api.fluxrouter.ai yet. Murage keeps it behind
+// MURAGE_VOICE_STREAM (default off) and uses batch POST /v1/audio/transcriptions.
 // Contract A (flux.stt.v1) of
 // docs/superpowers/specs/2026-09-30-flux-streaming-transcription-design.md.
 // One module for the page, the harness, the simulator and the conformance

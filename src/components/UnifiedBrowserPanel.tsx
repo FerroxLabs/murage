@@ -2,7 +2,7 @@ import { BrowserExtensionPanel, BrowserExtensionConsent } from "./BrowserExtensi
 import { useEffect, useRef, useState } from "react";
 import { acceptBrowserGeneration, expectedStaleBrowserFrame } from "@/lib/browser-view-state";
 import { Hand, Maximize2, RotateCcw } from "lucide-react";
-import { api, useStore, type Bot } from "@/state/store";
+import { api, useStore, type Bot, fromAnswer } from "@/state/store";
 import { BrowserLiveView, type LiveBrowserFrame } from "./BrowserLiveView";
 import { describeDesktopOnlyRouteError, routeErrorFrom } from "@/lib/desktop-only-route-error";
 /** Select value for "Use my Chrome"; "@" can never appear in a profile id. */
@@ -94,7 +94,7 @@ function LegacyBrowserPanel({ bot, size = "compact", onExpand }: UnifiedBrowserP
   }, [base, bot.browserProfile, bot.useMyChrome]);
   const chooseBrowser = async (body: Record<string, unknown>) => {
     setRefusal("");
-    try { const result = await api(`/api/bots/${encodeURIComponent(bot.id)}`, { method: "PATCH", body: JSON.stringify(body) }); dispatch({ type: "botPatched", bot: result.bot }); setConfirmMyChrome(false); setConfirmMyBrowser(false); }
+    try { const result = await api(`/api/bots/${encodeURIComponent(bot.id)}`, { method: "PATCH", body: JSON.stringify(body) }); dispatch({ type: "botPatched", ...fromAnswer(result.bot), bot: result.bot }); setConfirmMyChrome(false); setConfirmMyBrowser(false); }
     // Refused: close the confirmation (the picker falls back to the saved
     // choice) and say why where nothing else can cover it.
     catch (cause) { setConfirmMyChrome(false); setConfirmMyBrowser(false); setRefusal(cause instanceof Error ? cause.message : "Profile change failed"); }

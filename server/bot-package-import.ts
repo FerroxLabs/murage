@@ -13,6 +13,7 @@ import type { ModelSelection } from "./contracts.ts";
 import type { BotRecord, GroupRecord } from "./store.ts";
 import type { Routine } from "./routines.ts";
 import { comparePackageImport, createPackageImportBaseline } from "./package-import-comparison.ts";
+import { importedTeamName, starterLeadKey } from "./imported-team.ts";
 
 export class BotPackageImportError extends Error {
   readonly code: string;
@@ -119,6 +120,9 @@ export interface PreparedBotPackageImport {
   id: string; archiveSha256: string; reviewHash: string;
   selectionHash: string;
   bots: BotRecord[]; groups: GroupRecord[]; routines: Routine[];
+  /** A shipped starter crew's lead. The bots are written with no access
+   * (chiefOfStaff false); the caller makes these leads after the commit. */
+  leadBotIds: string[];
   files: Array<{ path: string; content: Buffer }>;
   baseline: ReturnType<typeof createPackageImportBaseline>;
 }
@@ -129,6 +133,7 @@ export type BotPackageAtomicCommit = (input: BotPackageAtomicCommitInput) => voi
 
 function prepare(intake: Intake, inspected: ReturnType<typeof inspect>, options: {
   existingBots: readonly Pick<BotRecord, "id" | "threadId" | "name">[]; modelSelection: ModelSelection;
+  existingSections?: readonly string[]; starterLeads?: boolean;
 }): PreparedBotPackageImport {
   const manifest = inspected.selected;
   if (!manifest) fail("MISSING_SELECTED_DEPENDENCY");
@@ -138,10 +143,24 @@ function prepare(intake: Intake, inspected: ReturnType<typeof inspect>, options:
   const freshId = () => { let id: string; do { id = randomUUID(); } while (takenIds.has(id)); takenIds.add(id); return id; };
   const result: PreparedBotPackageImport = { id: randomUUID(), archiveSha256: intake.sha256, reviewHash: inspected.reviewHash,
     selectionHash: inspected.selectionHash,
-    bots: [], groups: [], routines: [], files: [], baseline: createPackageImportBaseline(manifest) };
+    bots: [], groups: [], routines: [], leadBotIds: [], files: [], baseline: createPackageImportBaseline(manifest) };
   const ids = new Map<string, string>();
   const pkg = manifest.definition.package;
-  const teamSection = (team?: string) => `${pkg.name} · ${team?.trim() || "General"} (${result.id.slice(0, 8)})`;
+  // A team's label is its name everywhere it is shown, so it never carries an
+  // id; a second import of the same package becomes "Solo Business 2".
+  const sectionNames = new Map<string, string>();
+  const takenSections = new Set(options.existingSections ?? []);
+  const teamSection = (team?: string) => {
+    const key = team?.trim() || "";
+    let name = sectionNames.get(key);
+    if (!name) { name = importedTeamName(pkg.name, team, takenSections); sectionNames.set(key, name); takenSections.add(name); }
+    return name;
+  };
+  // A shipped starter crew arrives with the lead its package names (the
+  // caller checked that the engine can coordinate bots).
+  const leadKeys = new Set(options.starterLeads
+    ? [...new Set(pkg.agents.map((agent) => agent.team?.trim() || ""))].flatMap((team) => { const key = starterLeadKey(pkg, team); return key ? [key] : []; })
+    : []);
   const skillsByKey = new Map(manifest.skills.map((skill) => [skill.key, skill]));
   const instructionsByAgent = new Map(manifest.instructions.map((entry) => [entry.agent, entry.path]));
   const decoder = new TextDecoder("utf-8", { fatal: true });
@@ -185,6 +204,7 @@ function prepare(intake: Intake, inspected: ReturnType<typeof inspect>, options:
         sourceRole: agent.role ?? (agent.key === pkg.chiefOfStaff ? "chief" : "member"), sourceTeam: agent.team },
     };
     result.bots.push(bot); ids.set(agent.key, id);
+    if (leadKeys.has(agent.key)) result.leadBotIds.push(id);
     const assigned = new Set<string>();
     const collect = (skillKey: string) => {
       if (assigned.has(skillKey)) return;
@@ -247,6 +267,11 @@ interface ImportOptions {
   dataDir: string; selection: BotPackageSelection;
   expectedArchiveSha256: string; expectedReviewHash: string; acknowledgeWarnings?: boolean;
   existingBots: readonly ImportHistoryBot[]; modelSelection: ModelSelection;
+  /** Every team label already in use, so the new team's name is its own. */
+  existingSections?: readonly string[];
+  /** A shipped starter crew whose engine can coordinate bots: name its lead
+   * in `leadBotIds` for the caller to appoint once the import is committed. */
+  starterLeads?: boolean;
   atomicCommit: BotPackageAtomicCommit; signal?: AbortSignal; scanId?: string;
 }
 async function importIntake(options: ImportOptions, load: () => Promise<Intake>) {
@@ -260,7 +285,7 @@ async function importIntake(options: ImportOptions, load: () => Promise<Intake>)
   if (intake.sha256 !== options.expectedArchiveSha256 || inspected.reviewHash !== options.expectedReviewHash) fail("PACKAGE_REVIEW_CHANGED");
   if (inspected.scan.blocked) fail("PACKAGE_CONTENT_BLOCKED");
   if (inspected.scan.reviewRequired && options.acknowledgeWarnings !== true) fail("PACKAGE_REVIEW_REQUIRED");
-  const prepared = prepare(intake, inspected, { existingBots, modelSelection });
+  const prepared = prepare(intake, inspected, { existingBots, modelSelection, existingSections: options.existingSections, starterLeads: options.starterLeads });
   const root = lstatSync(options.dataDir);
   if (!root.isDirectory() || root.isSymbolicLink()) fail("UNSAFE_IMPORT_DIRECTORY");
   const stagingDirectory = mkdtempSync(join(options.dataDir, ".package-import-"));
@@ -273,7 +298,7 @@ async function importIntake(options: ImportOptions, load: () => Promise<Intake>)
     }
     if (options.signal?.aborted) fail("PACKAGE_IMPORT_CANCELLED");
     options.atomicCommit({ prepared, stagingDirectory });
-    return { id: prepared.id, archiveSha256: prepared.archiveSha256, reviewHash: prepared.reviewHash, bots: prepared.bots, groups: prepared.groups, routines: prepared.routines };
+    return { id: prepared.id, archiveSha256: prepared.archiveSha256, reviewHash: prepared.reviewHash, bots: prepared.bots, groups: prepared.groups, routines: prepared.routines, leadBotIds: prepared.leadBotIds };
   } finally { rmSync(stagingDirectory, { recursive: true, force: true }); }
 }
 

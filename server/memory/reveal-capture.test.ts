@@ -1,7 +1,10 @@
 import { mkdirSync, rmSync } from "node:fs";
+import { join } from "node:path";
+import { DatabaseSync } from "node:sqlite";
 import { beforeEach, expect, it, vi } from "vitest";
 import { DATA_DIR } from "../config.ts";
-import { closeDatabase, database } from "../database.ts";
+import { closeDatabase, database, DatabaseBusyError, isDatabaseBusy } from "../database.ts";
+import { ioBudget } from "../io-budget.ts";
 import { appendMessage } from "../message-db.ts";
 import { ownerMemoryTicket } from "./authority.ts";
 import { reconcileMemoryRoster } from "./policy.ts";
@@ -142,4 +145,43 @@ it("F14 reveals from the authoritative multi-piece turn captured by memory", asy
   const result = await captureBotReveals(job, () => roster, evaluator(true), signal());
   expect(result, JSON.stringify(result)).toMatchObject({ status: "partial", written: true });
   expect(reveals()[0].text).toContain(text);
+});
+
+// T1 (STALLS-FINAL-DESIGN RC-B1): the receipt and the scan mark are written inside transaction(), so under the idle lane's source a writer that
+// holds the lock (the root-set VACUUM in RC12) costs the visit the background budget and a DatabaseBusyError, never the handle's 1 s wait.
+function holdWriteLock(): DatabaseSync {
+  const other = new DatabaseSync(join(DATA_DIR, "messages.db"));
+  other.exec("PRAGMA busy_timeout=0; BEGIN IMMEDIATE");
+  return other;
+}
+it("an ineligible job's receipt meets a held lock within the background budget under the idle source (persist)", async () => {
+  canon();
+  const job = message(text, "room-thread"); // a room's reply: the source is ineligible, so the visit only writes its receipt
+  database();
+  const other = holdWriteLock();
+  try {
+    const started = performance.now();
+    let caught: unknown;
+    try { await ioBudget.withSource("memory-idle", () => captureBotReveals(job, () => roster, null, signal())); } catch (error) { caught = error; }
+    const ms = performance.now() - started;
+    expect(caught).toBeInstanceOf(DatabaseBusyError);
+    expect(isDatabaseBusy(caught)).toBe(true);
+    expect(ms).toBeLessThan(200);
+  } finally { other.exec("ROLLBACK"); other.close(); }
+  // the lock gone, the same visit writes its receipt
+  await ioBudget.withSource("memory-idle", () => captureBotReveals(job, () => roster, null, signal()));
+  expect(database().prepare("SELECT 1 AS x FROM memory_scope_bindings WHERE id=?").get(`reveal-capture:${job}`)).toBeTruthy();
+});
+it("a dirty scan mark meets a held lock within the background budget under the idle source (saveMark)", () => {
+  canon();
+  message();
+  database();
+  const other = holdWriteLock();
+  try {
+    const started = performance.now();
+    let caught: unknown;
+    try { ioBudget.withSource("memory-idle", () => pendingBotRevealJobs()); } catch (error) { caught = error; }
+    expect(caught).toBeInstanceOf(DatabaseBusyError);
+    expect(performance.now() - started).toBeLessThan(200);
+  } finally { other.exec("ROLLBACK"); other.close(); }
 });

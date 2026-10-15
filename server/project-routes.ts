@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
+import { scopedTx } from "./tx-scope.ts";
 import { cardRequestIsReview } from "./project-card-executor.ts";
 import { roomRequest } from "./room-requests.ts";
 import { randomUUID } from "node:crypto";
@@ -108,7 +109,7 @@ export function handleProjectRoute(db: DatabaseSync, input: ProjectRouteInput): 
       const changedCards = db.prepare("SELECT COUNT(*) AS n FROM project_work_items WHERE group_id=? AND updated_at>?").get(groupId, viewed)?.n ?? 0;
       const changedDecisions = db.prepare("SELECT COUNT(*) AS n FROM project_activity WHERE group_id=? AND at>? AND kind='criteria'").get(groupId, viewed)?.n ?? 0;
       const messages = db.prepare("SELECT 1 FROM sqlite_schema WHERE name='messages'").get()
-        ? db.prepare("SELECT COUNT(*) AS n FROM messages WHERE thread_id=? AND at>?").get(group.threadId, viewed)?.n ?? 0 : 0;
+        ? db.prepare("SELECT COUNT(*) AS n FROM messages INDEXED BY messages_at WHERE at>? AND thread_id=?").get(viewed, group.threadId)?.n ?? 0 : 0;
       const reason = settings.runState === "paused" ? settings.runStateReason ?? "Paused"
         : goal?.state === "planning" ? `Waiting for ${settings.leadBotId && input.botName ? input.botName(settings.leadBotId) : "the lead"}'s plan`
         : goal?.state === "awaiting_plan_ok" ? "Waiting for your OK on the plan"
@@ -140,16 +141,18 @@ export function handleProjectRoute(db: DatabaseSync, input: ProjectRouteInput): 
     const brief = records.projectBriefVersion(db, groupId, Number(recordId));
     return brief ? ok({ lifecycle, brief }) : error(404, "no such brief version");
   }
-  db.exec("SAVEPOINT project_route");
-  try {
-    const result = write();
-    if (result.status >= 400) db.exec("ROLLBACK TO project_route");
-    db.exec("RELEASE project_route");
-    return result;
-  } catch (cause) {
-    db.exec("ROLLBACK TO project_route; RELEASE project_route");
-    throw cause;
-  }
+  return scopedTx(() => {
+    db.exec("SAVEPOINT project_route");
+    try {
+      const result = write();
+      if (result.status >= 400) db.exec("ROLLBACK TO project_route");
+      db.exec("RELEASE project_route");
+      return result;
+    } catch (cause) {
+      db.exec("ROLLBACK TO project_route; RELEASE project_route");
+      throw cause;
+    }
+  }, (result) => result.status >= 400);
   function write(): ProjectRouteResult {
     if (action === "viewed") {
       const body = parse(z.object({}).strict(), input.body); if (isError(body)) return body;
@@ -413,17 +416,19 @@ export async function applyProjectChangeWithInterrupt<T extends { status: number
         stopped.add(key);
       }
     }
-    db.exec("SAVEPOINT project_interrupt_apply");
-    try {
-      const result = apply();
-      if (result && result.status >= 400) db.exec("ROLLBACK TO project_interrupt_apply");
-      db.exec("RELEASE project_interrupt_apply");
-      committed = !!result && result.status < 400;
-      return result;
-    } catch (cause) {
-      db.exec("ROLLBACK TO project_interrupt_apply; RELEASE project_interrupt_apply");
-      throw cause;
-    }
+    return scopedTx(() => {
+      db.exec("SAVEPOINT project_interrupt_apply");
+      try {
+        const result = apply();
+        if (result && result.status >= 400) db.exec("ROLLBACK TO project_interrupt_apply");
+        db.exec("RELEASE project_interrupt_apply");
+        committed = !!result && result.status < 400;
+        return result;
+      } catch (cause) {
+        db.exec("ROLLBACK TO project_interrupt_apply; RELEASE project_interrupt_apply");
+        throw cause;
+      }
+    }, (result) => !!result && result.status >= 400);
   } finally {
     for (const pending of prepared) { if (committed) pending.commit(); else pending.abort(); }
   }
@@ -443,11 +448,13 @@ function queuedCardReason(refusal: string): string {
 
 /** Owner goal transitions that issue a wake commit both effects together. */
 export function handleProjectGoalRouteWithWake(db: DatabaseSync, input: ProjectRouteInput, wake: () => void): ProjectRouteResult | null {
-  db.exec('SAVEPOINT project_goal_wake');
-  try {
-    const result = handleProjectRoute(db,input);
-    if (result && result.status < 400) wake();
-    db.exec('RELEASE project_goal_wake');
-    return result;
-  } catch (error) { db.exec('ROLLBACK TO project_goal_wake; RELEASE project_goal_wake'); throw error; }
+  return scopedTx(() => {
+    db.exec('SAVEPOINT project_goal_wake');
+    try {
+      const result = handleProjectRoute(db,input);
+      if (result && result.status < 400) wake();
+      db.exec('RELEASE project_goal_wake');
+      return result;
+    } catch (error) { db.exec('ROLLBACK TO project_goal_wake; RELEASE project_goal_wake'); throw error; }
+  });
 }

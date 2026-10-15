@@ -401,7 +401,7 @@ it("the previous inspector schema refuses an archive with project tables", async
   vi.resetModules();
   vi.doMock("./project-tables.ts", () => ({ initializeProjectTables: () => {} }));
   const iterate = Map.prototype[Symbol.iterator];
-  const projectNames = new Set<string>(PROJECT_TABLE_NAMES);
+  const projectNames = new Set<string>([...PROJECT_TABLE_NAMES, "room_request_owed", "room_request_backfills", "room_request_retry"]);   // the previous inspector knew none of them
   const registry = vi.spyOn(Map.prototype, Symbol.iterator).mockImplementation((function* (this: Map<unknown, unknown>) {
     for (const entry of iterate.call(this)) {
       const [key, value] = entry;
