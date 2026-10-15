@@ -92,8 +92,10 @@ describe("room transcript live order", () => {
   it("GroupView windows and renders the projected order, not arrival order", () => {
     const source = readFileSync(fileURLToPath(new URL("../components/GroupView.tsx", import.meta.url)), "utf8");
     const body = source.slice(source.indexOf("export function GroupView("));
-    expect(body).toContain("const roomMessages = useMemo(() => roomTranscript(group.messages), [group.messages]);");
-    expect(body.split("group.messages").length - 1).toBe(2); // only the memo reads arrival order
+    expect(body).toContain("const roomMessages = useMemo(() => roomTranscript(olderOpenCards(group, group.messages)),");
+    // Only the memo (and its dependency) reads arrival order. Counted as the whole name: `group.messagesUnloaded` (a first page is still on
+    // the wire, fix/rc12-sidebar) is a flag, not a read of the rows.
+    expect(body.match(/\bgroup\.messages(?![\w$])/g)?.length ?? 0).toBe(2);
     expect(body).toContain("resolveTranscriptWindow(roomMessages,");
   });
 });

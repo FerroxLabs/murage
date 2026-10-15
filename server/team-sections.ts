@@ -27,10 +27,8 @@ import { assertSectionUnlocked, teamRenameStalled } from "./team-identities.ts";
 import { readSectionContext } from "./section-context.ts";
 import { isWorkspaceChief, sectionKey, type BotRecord, type GroupRecord, type Store } from "./store.ts";
 
-/** Sidebar headings that are not teams (src/lib/new-team.ts, plus the
- * Projects heading the sidebar adds). */
-export const RESERVED_TEAM_NAMES = ["General", "Bots", "Channels", "Bot Chats", "Pinned", "Projects"] as const;
-export const TEAM_NAME_MAX = 60;
+import { RESERVED_TEAM_NAMES, TEAM_NAME_MAX } from "./team-name-rules.ts";
+export { RESERVED_TEAM_NAMES, TEAM_NAME_MAX };
 
 export interface TeamDeps {
   /** The owner's memory authority, for moving team memory with its team. */

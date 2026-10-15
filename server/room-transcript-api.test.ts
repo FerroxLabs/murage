@@ -120,9 +120,11 @@ posixOnly("a room member reads every teammate reply after a roster change", () =
       expect(alphaReplies(bravoPrompt)).toBe(2);
       expect(bravoPrompt).not.toContain("Reply withheld");
 
-      // The owner forgets their first message. Alpha's second reply used it
-      // (through the checkpoint); the first did not.
-      const owner = (await messages(room.threadId)).find(message => message.role === "user" && message.text === "first question");
+      // The owner forgets their second message. Alpha's second reply answered
+      // it (and rests on the checkpoint); the first reply did not use it. (A
+      // reply is generated from the message it answers, so forgetting the
+      // FIRST message withholds the first reply too, as it must: lineage-cold.)
+      const owner = (await messages(room.threadId)).find(message => message.role === "user" && message.text === "second question");
       const forgot = await api("POST", "/api/memory/action", { action: "forget", kind: "source", id: `message:${room.threadId}:${owner.id}` });
       expect(forgot.status).toBe(200);
 

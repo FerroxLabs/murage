@@ -82,8 +82,11 @@ export interface BotPatchQueueOptions {
     patch: BotUpdatePatch,
     signal: AbortSignal,
   ) => Promise<BotAnnouncement>;
+  /** The bot's whole record from the detail route (numbered, full instructions): never a roster preview, whose cut description
+   * must never reach an editable field. */
   reconcile: (botId: string, signal: AbortSignal) => Promise<BotAnnouncement | null>;
-  onAuthoritative: (bot: BotAnnouncement, optimisticOverlay: BotStateOverlay) => void;
+  /** `settled`: after a refusal, the refused fields, which the record settles under the version rules (absent = cleared). */
+  onAuthoritative: (bot: BotAnnouncement, optimisticOverlay: BotStateOverlay, settled?: ReadonlyArray<keyof BotStateOverlay>) => void;
   /** `rejected` is the patch the server refused, so the caller can say
    * what was refused in plain words. */
   onError: (error: Error, rejected: BotUpdatePatch) => void;
@@ -112,16 +115,12 @@ const stateOverlay = (patch: BotUpdatePatch): BotStateOverlay => {
   return { ...rest, ...(Object.hasOwn(fields, "computer") ? { computer: computer ?? undefined } : {}) };
 };
 
-/** The re-read bot after a refusal, with every refused field it does not
- * carry spelled out as `undefined`. The server omits an unset field (a bot
- * that never had Full access has no `fullAccess`), and the store folds a bot
- * over its current record with a spread — so without this the refused
- * optimistic value survived the rollback and stayed on screen. */
-const withRefusedFieldsCleared = (bot: BotAnnouncement, rejected: BotUpdatePatch): BotAnnouncement => {
-  const cleared: Record<string, undefined> = {};
-  for (const key of Object.keys(stateOverlay(rejected))) if (!Object.hasOwn(bot, key)) cleared[key] = undefined;
-  return { ...bot, ...cleared };
-};
+/** The record fields a refused patch wrote: the fields the re-read settles (store.tsx reduceBotPatched `settled`). A refused
+ * PATCH changed nothing, so the re-read usually carries the held copy's own number, and a same-number record only fills fields
+ * the held copy lacks (BOTADDED-DESIGN-V3 §2.5); the settled keys take the record's value, absent included, under the
+ * version rules, so the refused optimistic values leave the screen and no served value ever bypasses admission. */
+const settledKeys = (rejected: BotUpdatePatch): ReadonlyArray<keyof BotStateOverlay> =>
+  Object.keys(stateOverlay(rejected)) as Array<keyof BotStateOverlay>;
 
 /**
  * A per-bot mutation lane: edits debounce together, requests never overtake
@@ -169,7 +168,7 @@ export function createBotPatchQueue(options: BotPatchQueueOptions): BotPatchQueu
         // Deletion may cancel this lane while the re-read is in flight. Folding
         // that result back into state would resurrect the deleted bot.
         if (disposed || entry.cancelled) return;
-        if (bot) options.onAuthoritative(withRefusedFieldsCleared(bot, patch), stateOverlay(entry.pending));
+        if (bot) options.onAuthoritative(bot, stateOverlay(entry.pending), settledKeys(patch));
         options.onError(caught instanceof Error ? caught : new Error(String(caught)), patch);
       }
     } finally {

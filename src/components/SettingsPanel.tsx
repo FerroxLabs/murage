@@ -1,6 +1,6 @@
 import { ChevronDown, ChevronLeft, FolderOpen, X } from "lucide-react";
 import { notebookLastWrittenLine } from "../lib/notebook-last-written";
-import { Suspense, useState } from "react";
+import { Suspense, useEffect, useState } from "react";
 import { api, useStore, type Bot } from "@/state/store";
 import { stateForBot } from "@/lib/mascot";
 import { CloudBackendPicker } from "./CloudBackendPicker";
@@ -39,6 +39,8 @@ import { MemoryLauncher } from "./MemoryLauncher";
 import { ContinuityBlock } from "./ContinuityBlock";
 import { activeSettingsRole, settingsRoleLabel, type BotSettingsSection } from "./bot-settings-sections";
 import { botRoleTitle } from "@/lib/bot-role";
+import { allHeldTasks, findTask } from "@/lib/task-window";
+import { useOlderTasks } from "@/lib/use-ensure-task";
 import { useBotSettingsDraft, useBotSettingsNavigation } from "./bot-settings-drafts";
 import { LazyBoundary, retryableLazy } from "./LazyBoundary";
 
@@ -46,8 +48,15 @@ import { LazyBoundary, retryableLazy } from "./LazyBoundary";
 // sharing routes are desktop only, and none of it belongs in first paint.
 const TeamsSection = retryableLazy(() => import("./BotTeamsSection"));
 
-function SettingsSection({ id, active, children }: { id: BotSettingsSection; active?: BotSettingsSection; children: React.ReactNode }) {
-  return <section hidden={active !== undefined && active !== id} data-settings-section={id} className="space-y-4">{children}</section>;
+/** A tab's contents mount the first time it is shown and then stay mounted (its unsaved edits and
+ * scroll survive switching away). Hidden tabs that were never opened cost nothing: opening bot
+ * settings used to mount and fetch for all fourteen. A deep link (botSettingsIntent) just changes
+ * `active`, so its target mounts on arrival. */
+export function SettingsSection({ id, active, children }: { id: BotSettingsSection; active?: BotSettingsSection; children?: React.ReactNode }) {
+  const shown = active === undefined || active === id;
+  const [seen, setSeen] = useState(shown);
+  if (shown && !seen) setSeen(true);
+  return <section hidden={!shown} data-settings-section={id} className="space-y-4">{seen ? children : null}</section>;
 }
 
 function Field({
@@ -122,7 +131,7 @@ function WorkingFolder({ bot }: { bot: Bot }) {
   const [error, setError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
   const canPick = Boolean(window.muragebox?.pickFolder);
-  const task = bot.tasks?.find((t) => t.threadId === bot.threadId);
+  const task = findTask(bot, bot.threadId);
   const pinned = task?.cwd; // undefined = not yet, null = legacy home, string = folder
   const pinnedElsewhere = pinned !== undefined && (pinned ?? undefined) !== bot.cwd;
   useBotSettingsDraft("Working folder", draft !== null && draft !== (bot.cwd ?? ""), saving);
@@ -362,6 +371,7 @@ function MemoryCard({ bot }: { bot: Bot }) {
 
 export function SettingsPanel({ bot, section, embedded = false }: { bot: Bot; section?: BotSettingsSection; embedded?: boolean }) {
   const navigate = useBotSettingsNavigation();
+  const olderHistory = useOlderTasks("bot", bot.id);
   // The one card in this panel that provisions rather than configures: "This
   // computer" hands a bot the machine, and Cloud opens the Box / VPS backend
   // picker, which is where a managed container gets created and started. Those
@@ -375,6 +385,11 @@ export function SettingsPanel({ bot, section, embedded = false }: { bot: Bot; se
   const [localAutoWarning, setLocalAutoWarning] = useState<"auto" | "full" | "unlimited" | "local" | null>(null);
   const [fullAccessWarning, setFullAccessWarning] = useState<{ onThisComputer: boolean; level: "full" | "unlimited" } | null>(null);
   const localDisabledReason = localComputerDisabledReason({ capabilities, providerSupportsLocal });
+  // The roster carries the first lines of a long description (`descriptionCut`). The whole text is fetched before the field can be
+  // edited, so an edit never writes the cut copy back over the rest.
+  useEffect(() => {
+    if (bot.descriptionCut) dispatch({ type: "ensureBotDetail", botId: bot.id });
+  }, [bot.id, bot.descriptionCut, dispatch]);
   const patch = (
     p: Partial<
       Pick<
@@ -556,6 +571,7 @@ export function SettingsPanel({ bot, section, embedded = false }: { bot: Bot; se
               maxLength={BOT_PROFILE_LIMITS.description}
               placeholder="What this bot does, what it should know, and how you want it to work"
               value={bot.description}
+              disabled={bot.descriptionCut === true}
               onChange={(e) => patch({ description: e.target.value })}
             />
             <p className="mt-1.5 text-[12px] leading-relaxed text-ink-secondary">
@@ -921,10 +937,12 @@ export function SettingsPanel({ bot, section, embedded = false }: { bot: Bot; se
           {desktop === true && section === "teams" && <LazyBoundary inline onRetry={TeamsSection.retry}><Suspense fallback={<p role="status" className="text-[13px] text-ink-secondary">Loading teams…</p>}><TeamsSection.Component key={`teams-${bot.id}`} bot={bot} /></Suspense></LazyBoundary>}
           </SettingsSection>
           <SettingsSection id="history" active={section}>
-          {(bot.tasks ?? []).map(task => <button type="button" key={task.threadId} onClick={() => dispatch({ type: "switchTask", botId: bot.id, threadId: task.threadId })} className="block min-h-10 w-full rounded-xl bg-card p-4 text-left">
+          {allHeldTasks(bot).map(task => <button type="button" key={task.threadId} onClick={() => dispatch({ type: "switchTask", botId: bot.id, threadId: task.threadId })} className="block min-h-10 w-full rounded-xl bg-card p-4 text-left">
             <p className="text-[14px] font-medium">{task.title}</p><p className="mt-1 text-[12px] text-ink-secondary">{new Date(task.createdAt).toLocaleString()}{task.threadId === bot.threadId ? " · Current task" : ""}</p>
           </button>)}
           {!bot.tasks?.length && <p className="text-[13px] text-ink-secondary">No task history available.</p>}
+          {olderHistory.hasMore && <button type="button" disabled={olderHistory.loading} onClick={olderHistory.loadMore} className="block min-h-10 w-full rounded-xl bg-control px-3 py-2 text-left text-[13px] disabled:opacity-60">{olderHistory.loading ? "Loading older tasks…" : "Show older tasks"}</button>}
+          {olderHistory.failed && !olderHistory.loading && <p role="alert" className="text-[13px] text-danger">Could not load older tasks. Try again.</p>}
           </SettingsSection>
         </div>
       </div>

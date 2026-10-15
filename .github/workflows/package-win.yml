@@ -38,6 +38,17 @@ jobs:
           node-version: 24
           cache: pnpm
       - run: pnpm install --frozen-lockfile
+      - name: Node headers for the engine-exclusion addon
+        # The hosted Windows Node has no include/node folder; scripts/build-engine-exclusion.mjs needs node_api.h. Fetch the headers
+        # of the running Node and check them against the published SHASUMS256.txt.
+        shell: bash
+        run: |
+          v=$(node -p process.version)
+          dir="$(cygpath -u "$RUNNER_TEMP")/node-headers"; mkdir -p "$dir"
+          curl -fsSL "https://nodejs.org/dist/$v/node-$v-headers.tar.gz" -o "$dir/h.tgz"
+          curl -fsSL "https://nodejs.org/dist/$v/SHASUMS256.txt" -o "$dir/sums"
+          (cd "$dir" && want=$(grep " node-$v-headers.tar.gz\$" sums | cut -d' ' -f1) && echo "$want  h.tgz" | sha256sum -c - && tar xzf h.tgz)
+          echo "NODE_HEADERS_DIR=$(cygpath -w "$dir/node-$v/include/node")" >> "$GITHUB_ENV"
       # Murage for Chrome: the store item ID and public key when the owner has
       # set them (plan 2.3); until then this build carries no extension identity.
       - name: Murage for Chrome identity, when set
@@ -133,6 +144,8 @@ jobs:
         run: |
           res=release/win-unpacked/resources
           fail=0
+          # the hoisted runtime tree must resolve exactly as staged (versions, nesting, path budget)
+          node scripts/staged-tree-check.mjs "$res/server" --max-path 140 || fail=1
           # missing → utilityProcess.fork fails → the 🔥 "Couldn't start the
           # bot server" page
           [ -f "$res/server/index.js" ] || { echo "::error::missing $res/server/index.js"; fail=1; }
@@ -214,4 +227,101 @@ jobs:
             release/*.zip
             release/latest.yml
           if-no-files-found: error
+          retention-days: 7
+
+  # Release rule: the Windows build must install and start as a STANDARD
+  # (non-admin) user. Runs after the packaging job in the same run, on a
+  # GitHub-hosted runner only, against that run's windows-installer artifact.
+  # Lives here (not a separate workflow) because a workflow_dispatch workflow
+  # must exist on the default branch to be dispatched; this one can be
+  # dispatched on any ref. Read the result: job "Standard-user install check".
+  stduser:
+    name: Standard-user install check
+    needs: package
+    runs-on: windows-latest
+    timeout-minutes: 90
+    permissions:
+      contents: read
+      actions: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ inputs.ref || github.ref }}
+          sparse-checkout: ci
+      - name: Download the installer artifact
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RUN_ID: ${{ github.run_id }}
+        run: |
+          if ($env:RUN_ID -notmatch '^\d+$') { throw 'run id must be digits' }
+          New-Item -ItemType Directory -Force C:\inst | Out-Null
+          gh run download $env:RUN_ID -R $env:GITHUB_REPOSITORY -n windows-installer -D C:\inst
+          $exe = @(Get-ChildItem C:\inst -Filter 'Murage-*-setup.exe' -File)
+          if ($exe.Count -ne 1) { throw "expected exactly one Murage-*-setup.exe, found $($exe.Count)" }
+          Rename-Item $exe[0].FullName 'setup.exe'
+          $sig = Get-AuthenticodeSignature C:\inst\setup.exe
+          "installer=$($exe[0].Name) sha256=$((Get-FileHash C:\inst\setup.exe).Hash) sig=$($sig.Status)"
+          if ($sig.Status -ne 'Valid') { throw 'installer signature not Valid' }
+      - name: Create the standard user (password never printed)
+        shell: pwsh
+        run: |
+          $chars = [char[]]([char]'a'..[char]'z' + [char]'A'..[char]'Z' + [char]'0'..[char]'9')
+          $bytes = [byte[]]::new(24); [Security.Cryptography.RandomNumberGenerator]::Fill($bytes)
+          $pw = 'Aa1!' + (-join ($bytes | ForEach-Object { $chars[$_ % $chars.Length] }))
+          Write-Output "::add-mask::$pw"
+          "STD_PW=$pw" | Out-File -Append -Encoding utf8 $env:GITHUB_ENV
+          "STD_USER=mrgstd" | Out-File -Append -Encoding utf8 $env:GITHUB_ENV
+          $env:PW = $pw
+          net user mrgstd $env:PW /add /y | Out-Null
+          if ($LASTEXITCODE -ne 0) { throw 'net user /add failed' }
+          # standard user: member of Users only, never Administrators
+          $admins = (net localgroup Administrators) -join "`n"
+          if ($admins -match '\bmrgstd\b') { throw 'user is in Administrators' }
+          net localgroup Users mrgstd /add 2>$null | Out-Null
+          # the user needs to read the installer and own a scratch dir
+          icacls C:\inst /grant 'mrgstd:(OI)(CI)RX' /T /Q | Out-Null
+          New-Item -ItemType Directory -Force C:\stdchk | Out-Null
+          icacls C:\stdchk /grant 'mrgstd:(OI)(CI)M' /Q | Out-Null
+          Copy-Item ci\std-user-check.ps1 C:\stdchk\std-user-check.ps1
+          "node=$((Get-Command node).Source)"
+          "NODE_EXE=$((Get-Command node).Source)" | Out-File -Append -Encoding utf8 $env:GITHUB_ENV
+      - name: Run the check as the standard user
+        shell: pwsh
+        run: |
+          $sec = ConvertTo-SecureString $env:STD_PW -AsPlainText -Force
+          $cred = [pscredential]::new($env:STD_USER, $sec)
+          # First logon with -LoadUserProfile creates the user's own profile and
+          # its HKLM ProfileList entry; read the real path from there (never the
+          # admin's environment) and hand it to the check explicitly.
+          $w = Start-Process cmd.exe -Credential $cred -LoadUserProfile -WorkingDirectory C:\stdchk -PassThru -Wait -ArgumentList '/c','exit 0'
+          if ($w.ExitCode -ne 0) { throw "profile warm-up as $env:STD_USER failed, exit $($w.ExitCode)" }
+          $sid = ([Security.Principal.NTAccount]::new($env:STD_USER)).Translate([Security.Principal.SecurityIdentifier]).Value
+          $prof = [string](Get-ItemProperty -LiteralPath "HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion\ProfileList\$sid" -Name ProfileImagePath -ErrorAction SilentlyContinue).ProfileImagePath
+          "sid=$sid profile=$prof admin USERPROFILE=$env:USERPROFILE"
+          if (-not $prof) { throw "no ProfileImagePath for $env:STD_USER ($sid) after warm-up" }
+          if (-not (Test-Path -LiteralPath $prof)) { throw "profile $prof does not exist" }
+          if ($prof.TrimEnd('\') -eq $env:USERPROFILE.TrimEnd('\')) { throw "profile $prof is the admin's" }
+          "STD_PROFILE=$prof" | Out-File -Append -Encoding utf8 $env:GITHUB_ENV
+          $p = Start-Process powershell.exe -Credential $cred -LoadUserProfile -WorkingDirectory C:\stdchk -PassThru -Wait `
+            -ArgumentList '-NoProfile','-ExecutionPolicy','Bypass','-File','C:\stdchk\std-user-check.ps1','-Installer','C:\inst\setup.exe','-Node',"`"$env:NODE_EXE`"",'-ProfileDir',"`"$prof`"" `
+            -RedirectStandardOutput C:\stdchk\out.log -RedirectStandardError C:\stdchk\err.log
+          Get-Content C:\stdchk\out.log, C:\stdchk\err.log -ErrorAction SilentlyContinue
+          if ($p.ExitCode -ne 0) { throw "standard-user check failed, exit $($p.ExitCode)" }
+      - name: Clean up the user
+        if: always()
+        shell: pwsh
+        run: |
+          $prof = if ($env:STD_PROFILE) { $env:STD_PROFILE } else { 'C:\Users\mrgstd' }
+          Get-Process | Where-Object { $_.Path -like "$prof\*" } | Stop-Process -Force -ErrorAction SilentlyContinue
+          net user mrgstd /delete 2>$null | Out-Null
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        if: always()
+        with:
+          name: windows-standard-user-evidence
+          path: |
+            C:\stdchk\out.log
+            C:\stdchk\err.log
+            C:\stdchk\result.json
+          if-no-files-found: warn
           retention-days: 7

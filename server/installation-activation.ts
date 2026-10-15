@@ -85,6 +85,8 @@ function validatePaused(root: string) {
   if (entry(join(root, "messages.db"))) {
     const db = new DatabaseSync(join(root, "messages.db"), { readOnly: true });
     try { inspectInstallationDatabase(db);
+      // a restored copy queues nothing: the handoffs of the backup were moved to recovery-quarantine as evidence (installation-restore-preparation.ts)
+      if (db.prepare("SELECT 1 AS x FROM sqlite_schema WHERE type='table' AND name='pending_delegations'").get() && db.prepare("SELECT 1 AS x FROM pending_delegations LIMIT 1").get()) fail("RESTORE_WORK_NOT_PAUSED");
       validateSharingPaused(records(json(join(root, "bots.json"))), records(json(join(root, "groups.json"))), db);
       assertProjectTablesPaused(db, { groups: records(json(join(root, "groups.json"))).map(row => ({ id: String(row.id), channelProject: row.channelProject })), botIds: new Set(records(json(join(root, "bots.json"))).map(row => String(row.id))), now: Date.now() }); if (db.prepare("SELECT 1 FROM sqlite_schema WHERE name=\'memory_meta\'").get() && db.prepare("SELECT mode FROM memory_meta WHERE id=1").get()?.mode !== "paused") fail("RESTORE_MEMORY_NOT_PAUSED"); for (const row of db.prepare("SELECT json FROM messages").iterate()) inertMessage(JSON.parse(String(row.json))); }
     finally { db.close(); }

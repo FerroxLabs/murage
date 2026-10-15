@@ -6,6 +6,7 @@ import { assignSkillsToBot } from "@/lib/onboarding-intake";
 import { invalidateSkillCount } from "@/lib/bot-skill-count";
 import type { Routine } from "@/lib/routines";
 import { api, useStore, type Bot, type Group, type TeamLibraryView } from "@/state/store";
+import { fromAnswer } from "@/state/answer-tag";
 import {
   ArrowLeft,
   BookOpen,
@@ -25,14 +26,19 @@ import {
   Users,
   X,
 } from "lucide-react";
-import { useCallback, useEffect, useRef, useState } from "react";
+import { Suspense, useCallback, useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
-import { BundleImportDialog, type BundleImportResult } from "./BundleImportDialog";
+import type { BundleImportResult } from "./BundleImportDialog";
+import { LazyBoundary, retryableLazy } from "./LazyBoundary";
 import { returnFocus } from "@/lib/return-focus";
 import { t } from "@/lib/i18n";
 import { ImportGuardFindings, guardBlockedNote, guardScanFromError, type GuardScan } from "./ImportGuardFindings";
 import { ImportScanProgress } from "./ImportScanProgress";
 import { isCheckStopped, useImportScan, withScanId } from "@/lib/importScan";
+import type { ArchivedTeamBot, TeamImportResult, TeamImportSkillError } from "@/lib/team-import-result";
+export { archivedRestorePatch, teamImportSkillSummary, type ArchivedTeamBot, type TeamImportResult, type TeamImportSkillError } from "@/lib/team-import-result";
+// A bundle file is imported rarely: its dialog loads when one is chosen.
+const BundleImportDialog = retryableLazy(() => import("./BundleImportDialog").then((module) => ({ default: module.BundleImportDialog })));
 
 const MAX_TEAM_FILE_BYTES = 1_000_000;
 
@@ -104,90 +110,6 @@ function firstSentence(raw: string, max = 150): string {
   const stop = trimmed.search(/\.\s/);
   const candidate = stop > 40 ? trimmed.slice(0, stop + 1) : trimmed;
   return candidate.length > max ? `${candidate.slice(0, max - 1).trimEnd()}…` : candidate;
-}
-
-/** One bot a replace-import put away, and everything the undo needs to put
- *  it back exactly as it was.
- *
- *  `chiefOfStaff` alone was not enough. The org chart is three fields read
- *  together (src/lib/bot-role.ts) — leading something, leading the WHOLE
- *  workspace, leading nothing — so a record that remembers only the first
- *  can only ever restore the first: the workspace Chief of Staff was
- *  archived and came back a section lead, demoted by an Undo button with
- *  nothing said. The harness now sends the tier alongside the role. */
-export interface ArchivedTeamBot {
-  id: string;
-  chiefOfStaff: boolean;
-  /** Which chair this bot held. `null` = led nothing. Absent only in a
-   *  payload from a harness older than this field. */
-  chiefTier?: "workspace" | "section" | null;
-}
-
-/** The PATCH body that puts one archived bot back.
- *
- *  `chiefTier` reaches the wire as `chiefScope`, the same rename
- *  `botRolePatch` makes — and the tier is stated explicitly rather than
- *  left out, because an omitted scope means "leave the tier as it is", and
- *  "as it is" is exactly the thing an archive is not trusted to remember.
- *
- *  Restoring a Chief while a DIFFERENT bot now holds the workspace chair is
- *  refused by the harness with 409 and a sentence naming the incumbent.
- *  That refusal is the point: seating two would break the one invariant the
- *  chart has, and silently restoring her as a section lead would repeat the
- *  demotion this type exists to stop. */
-export function archivedRestorePatch(bot: ArchivedTeamBot): {
-  hidden: false;
-  chiefOfStaff?: true;
-  chiefScope?: "workspace" | "section";
-} {
-  if (!bot.chiefOfStaff) return { hidden: false };
-  return {
-    hidden: false,
-    chiefOfStaff: true,
-    // A payload with no tier (older harness) keeps the old meaning: a bare
-    // election, which the harness reads as a section lead.
-    ...(bot.chiefTier ? { chiefScope: bot.chiefTier } : {}),
-  };
-}
-
-/** One skill the imported profile declared and the import could not
- *  deliver. `install` means the bot never got it; `enable` means it landed
- *  but is switched off — a smaller failure, and worth telling apart. */
-export interface TeamImportSkillError {
-  botId: string;
-  botName: string;
-  skillId: string;
-  stage: "install" | "enable";
-  error: string;
-}
-
-export interface TeamImportResult {
-  name: string;
-  members: number;
-  importedBotIds: string[];
-  importedGroupIds: string[];
-  importedRoutineIds: string[];
-  archived: ArchivedTeamBot[];
-  /** Empty when everything the profile declared arrived. A short import is
-   *  reported rather than logged: the harness used to answer 201 and print
-   *  the failure to its own stderr, so a team quietly landed with fewer
-   *  skills than it advertised. */
-  skillErrors: TeamImportSkillError[];
-}
-
-/** The shape of a short import, for a caller that has a sentence to write.
- *  `unavailable` never arrived at all; `disabled` arrived but would not
- *  switch on. Both are unusable, and they are counted apart because they
- *  are not the same thing to say to somebody. */
-export function teamImportSkillSummary(result: {
-  skillErrors: TeamImportSkillError[];
-}): { failed: number; unavailable: number; disabled: number } {
-  const unavailable = result.skillErrors.filter((entry) => entry.stage === "install").length;
-  return {
-    failed: result.skillErrors.length,
-    unavailable,
-    disabled: result.skillErrors.length - unavailable,
-  };
 }
 
 type ImportSource = "library" | "file" | "github";
@@ -709,7 +631,7 @@ export function TeamLibraryPanel({
   };
 
   const finishBundleImport = (result: BundleImportResult) => {
-    for (const bot of result.bots) dispatch({ type: "botAdded", bot });
+    for (const bot of result.bots) dispatch({ type: "botAdded", ...fromAnswer(bot), bot });
     for (const group of result.groups) dispatch({ type: "groupPatched", group });
     for (const routine of result.routines) dispatch({ type: "routinePatched", routine });
     if (result.bots[0]) dispatch({ type: "select", id: result.bots[0].id });
@@ -782,8 +704,8 @@ export function TeamLibraryPanel({
         archived?: ArchivedTeamBot[];
         skillErrors?: TeamImportSkillError[];
       };
-      for (const bot of response.archivedBots ?? []) dispatch({ type: "botPatched", bot });
-      for (const bot of response.bots) dispatch({ type: "botAdded", bot });
+      for (const bot of response.archivedBots ?? []) dispatch({ type: "botPatched", ...fromAnswer(bot), bot });
+      for (const bot of response.bots) dispatch({ type: "botAdded", ...fromAnswer(bot), bot });
       for (const group of response.groups ?? []) dispatch({ type: "groupPatched", group });
       for (const routine of response.routines ?? []) dispatch({ type: "routinePatched", routine });
       const first = response.bots[0];
@@ -880,7 +802,7 @@ export function TeamLibraryPanel({
         `/api/teams/import?mode=project&cwd=${encodeURIComponent(scoutedFolder)}&room=${encodeURIComponent(room)}`,
         { method: "POST", body: JSON.stringify(manifest) },
       )) as { bots: Bot[]; group?: Group };
-      for (const bot of response.bots) dispatch({ type: "botAdded", bot });
+      for (const bot of response.bots) dispatch({ type: "botAdded", ...fromAnswer(bot), bot });
       if (response.group) {
         // upsert now instead of waiting for the SSE frame, then land in the room
         dispatch({ type: "groupPatched", group: { ...response.group, messages: [] } });
@@ -1607,8 +1529,14 @@ export function TeamLibraryPanel({
           </>
         )}
       </div>
-      {bundleFile && <BundleImportDialog archivePath={bundleFile.path} fileName={bundleFile.name}
-        onClose={() => { setBundleFile(null); dialogRef.current?.focus(); }} onImported={finishBundleImport} />}
+      {bundleFile && (
+        <LazyBoundary onRetry={BundleImportDialog.retry} onDismiss={() => { setBundleFile(null); dialogRef.current?.focus(); }}>
+          <Suspense fallback={null}>
+            <BundleImportDialog.Component archivePath={bundleFile.path} fileName={bundleFile.name}
+              onClose={() => { setBundleFile(null); dialogRef.current?.focus(); }} onImported={finishBundleImport} />
+          </Suspense>
+        </LazyBoundary>
+      )}
     </div>,
     document.body,
   );

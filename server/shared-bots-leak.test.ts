@@ -24,6 +24,7 @@ import { channelToProjectRows } from "./project-settings.ts";
 import { createProjectGoal } from "./project-goals.ts";
 import { insertRoomRequest as projectInsertRoomRequest } from "./project-records.ts";
 import { roomRequest } from "./room-requests.ts";
+import { LineageAllowance } from "./memory/lineage-allowance.ts";
 
 beforeEach(() => { closeDatabase(); rmSync(DATA_DIR, { recursive: true, force: true }); mkdirSync(DATA_DIR, { recursive: true }); });
 function fixture() {
@@ -88,8 +89,8 @@ it("recall payloads and bundles reject home canaries even when the search bridge
     for (const scope of [f.scopes.home, f.scopes.other, f.scopes.room]) expect(input.scopeIds).not.toContain(scope);
     return { hits: ids.map(id => ({ id, version: 1, score: 1, lexical: true })), vectorRows: 0, coverageComplete: false };
   } };
-  await expect(searchMemory("CANARY", access, bridge)).rejects.toThrow("MEMORY_SCOPE_DENIED");
-  expect((await buildMemoryBundle("CANARY", access, bridge)).text).not.toContain("CANARY_DESIGN_NOTE");
+  await expect(searchMemory("CANARY", access, bridge, {allowance: LineageAllowance.tool(1_000_000_000)})).rejects.toThrow("MEMORY_SCOPE_DENIED");
+  expect((await buildMemoryBundle("CANARY", access, bridge, {allowance: LineageAllowance.tool()})).text).not.toContain("CANARY_DESIGN_NOTE");
 });
 it("selected managed roots and bookkeeping never include the home folder on Sales work", () => {
   const f = fixture(); f.work.cwd = join(DATA_DIR, "workspaces", f.iris.id, "threads", f.work.threadId);
@@ -122,7 +123,7 @@ it("file partition denial outranks Full access and general notes cannot be writt
 it("Sales working context contains no home, other-team, room or routine canaries", async () => {
   const f = fixture(); const { workingContext } = await import("./working-context.ts");
   for (const [thread, text] of [[f.iris.threadId, "CANARY_DESIGN_REPLY"], [f.other.threadId, "CANARY_SUPPORT_REPLY"], [f.room.threadId, "CANARY_GENERAL_ROOM_REPLY"]]) f.store.appendMessage(thread, { role:"bot", kind:"text", text, from:{botId:f.iris.id,name:"Iris",color:f.iris.color} });
-  const text = workingContext({botId:f.iris.id,currentThreadId:f.work.threadId,bots:f.store.bots,groups:f.store.groups,routines:[{name:"CANARY_DESIGN_ROUTINE",botId:f.iris.id,enabled:true}],now:Date.now()});
+  const text = workingContext(LineageAllowance.tool(1_000_000_000), {botId:f.iris.id,currentThreadId:f.work.threadId,bots:f.store.bots,groups:f.store.groups,routines:[{name:"CANARY_DESIGN_ROUTINE",botId:f.iris.id,enabled:true}],now:Date.now()});
   expect(text).not.toMatch(/CANARY_(DESIGN|SUPPORT|GENERAL_ROOM)/);
 });
 it("unproven turns get neither general nor private partition scopes", () => {
@@ -254,15 +255,15 @@ it.each(["home","support","project","room"])("Sales recall and bundles omit %s p
   const registry=new InternalCapabilities();registry.begin(f.iris.id,f.work.threadId,"turn");const token=registry.mint({botId:f.iris.id,threadId:f.work.threadId,generation:"turn",depth:0,kind:"memory",skillAuthoring:false});
   const access=memoryAccess(registry,registry.resolve(`Bearer ${token}`)!,()=>f.store);
   const bridge={async search(){return {hits:ids.map(id=>({id,version:1,score:1,lexical:true})),vectorRows:0,coverageComplete:false};}};
-  await expect(searchMemory("CANARY",access,bridge)).rejects.toThrow("MEMORY_SCOPE_DENIED");
-  expect((await buildMemoryBundle("CANARY",access,bridge)).text).not.toContain(canary);
+  await expect(searchMemory("CANARY",access,bridge, {allowance: LineageAllowance.tool(1_000_000_000)})).rejects.toThrow("MEMORY_SCOPE_DENIED");
+  expect((await buildMemoryBundle("CANARY",access,bridge, {allowance: LineageAllowance.tool()})).text).not.toContain(canary);
   const scopedBridge={async search(input:{scopeIds:string[]}){
     const hits=ids.filter(id=>input.scopeIds.includes(String(database().prepare("SELECT scope_id FROM memory_records WHERE id=? AND version=1").get(id)!.scope_id))).map(id=>({id,version:1,score:1,lexical:true}));
     expect(hits).toHaveLength(0);
     return {hits,vectorRows:0,coverageComplete:false};
   }};
-  expect(JSON.stringify(await searchMemory("CANARY",access,scopedBridge))).not.toContain(canary);
-  expect((await buildMemoryBundle("CANARY",access,scopedBridge)).text).not.toContain(canary);
+  expect(JSON.stringify(await searchMemory("CANARY",access,scopedBridge, {allowance: LineageAllowance.tool(1_000_000_000)}))).not.toContain(canary);
+  expect((await buildMemoryBundle("CANARY",access,scopedBridge, {allowance: LineageAllowance.tool()})).text).not.toContain(canary);
 });
 it("a result can only be consumed by the requesting thread", async()=>{
   const f=fixture();const {requestReturnsTo}=await import("./partition-sources.ts");

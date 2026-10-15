@@ -29,9 +29,12 @@ function receipt(db:DatabaseSync,jobId:string):Receipt {
   const row=db.prepare("SELECT intent FROM memory_scope_bindings WHERE id=?").get(receiptId(jobId));
   return row?JSON.parse(String(row.intent)):{cursor:"",status:"pending",retryAt:0};
 }
-function persist(db:DatabaseSync,jobId:string,scope:string,value:Receipt){
-  db.prepare("INSERT INTO memory_scope_bindings VALUES(?,?,'system','reveal-capture',0,'granted',?) ON CONFLICT(id) DO UPDATE SET intent=excluded.intent")
-    .run(receiptId(jobId),scope,JSON.stringify(value));
+// The receipt and mark writes run inside transaction() (a SAVEPOINT when the caller has one open): under the idle lane's source that is the
+// background budget, so a writer holding the lock (a VACUUM) costs this visit 50 ms and a DatabaseBusyError ("try again shortly"), never the
+// handle's 1 s wait and a raw SQLITE_BUSY (STALLS-FINAL-DESIGN RC-B1).
+function persist(_db:DatabaseSync,jobId:string,scope:string,value:Receipt){
+  transaction(d=>d.prepare("INSERT INTO memory_scope_bindings VALUES(?,?,'system','reveal-capture',0,'granted',?) ON CONFLICT(id) DO UPDATE SET intent=excluded.intent")
+    .run(receiptId(jobId),scope,JSON.stringify(value)),{op:"reveal-receipt"});
   // only after the write: a failed write leaves the job where the database says it is
   noteRetry(jobId,value);
 }
@@ -39,6 +42,21 @@ function persist(db:DatabaseSync,jobId:string,scope:string,value:Receipt){
  *  pollers (pendingMemoryConsolidationJobs, pendingProcedureReviews) are
  *  bounded the same way and for the same reason. */
 const REVEAL_SCAN_WINDOW=4096;
+/** The window actually read is adaptive, REVEAL_WINDOW_MIN up to REVEAL_SCAN_WINDOW: a window whose read took longer than REVEAL_WINDOW_TARGET_MS
+ *  is halved for the next, one much quicker doubled back (rc13 real-data run: a 4096-rowid window read 97 to 112 ms beside the upgrade). */
+export const REVEAL_WINDOW_TARGET_MS=20;
+export const REVEAL_WINDOW_MIN=128;
+let revealWindow=1024;
+/** The window the next range read covers (tests). */
+export function revealScanWindow(){return revealWindow;}
+function rangeRows(db:DatabaseSync,from:number,upto:number){
+  const started=performance.now();
+  const rows=db.prepare(REVEAL_RANGE_SQL).all(from,upto);
+  const ms=performance.now()-started;
+  if(ms>REVEAL_WINDOW_TARGET_MS)revealWindow=Math.max(REVEAL_WINDOW_MIN,Math.floor(revealWindow/2));
+  else if(ms<REVEAL_WINDOW_TARGET_MS/4)revealWindow=Math.min(REVEAL_SCAN_WINDOW,revealWindow*2);
+  return rows;
+}
 /** Jobs below the mark that may still need a reveal pass (not complete yet,
  *  or complete under a retired source) are remembered by rowid up to this
  *  many; past it the mark stops advancing rather than lose one. */
@@ -77,7 +95,7 @@ const KNOWN_LIMIT=200_000;
 /** A receipt that is due but whose job is not eligible (the job's own state, not the roster) is looked at again after this. */
 const INELIGIBLE_RECHECK_MS=600_000;
 /** Forget what is held in memory, as a restart does: the persisted mark remains. */
-export function resetRevealScan(){scan.db=null;scan.mark={hwm:0,open:[]};scan.retryCursor=0;scan.retryWake=0;scan.cycleMin=Infinity;scan.eventMin=Infinity;scan.cycleCandidates=false;scan.hot.clear();scan.known.clear();scan.loaded=false;}
+export function resetRevealScan(){revealWindow=1024;scan.db=null;scan.mark={hwm:0,open:[]};scan.retryCursor=0;scan.retryWake=0;scan.cycleMin=Infinity;scan.eventMin=Infinity;scan.cycleCandidates=false;scan.hot.clear();scan.known.clear();scan.loaded=false;}
 function loadScan(db:DatabaseSync){
   if(scan.db===db)return;
   resetRevealScan();scan.db=db;
@@ -87,8 +105,8 @@ function loadScan(db:DatabaseSync){
 function saveMark(db:DatabaseSync){
   const scope=db.prepare("SELECT id FROM memory_scopes LIMIT 1").get()?.id;
   if(!scope)return;
-  db.prepare("INSERT INTO memory_scope_bindings VALUES(?,?,'system','reveal-scan',0,'granted',?) ON CONFLICT(id) DO UPDATE SET intent=excluded.intent")
-    .run(MARK_ID,scope,JSON.stringify(scan.mark));
+  transaction(d=>d.prepare("INSERT INTO memory_scope_bindings VALUES(?,?,'system','reveal-scan',0,'granted',?) ON CONFLICT(id) DO UPDATE SET intent=excluded.intent")
+    .run(MARK_ID,scope,JSON.stringify(scan.mark)),{op:"reveal-mark"});
 }
 /** A receipt was written pending: the sweep must not sleep past its retry time. */
 function noteRetry(jobId:string,value:Receipt){
@@ -133,8 +151,8 @@ export function pendingBotRevealJobs(limit=1):string[]{
     const mark=scan.mark,room=REVEAL_OPEN_LIMIT-mark.open.length;
     if(mark.spill&&mark.spill.to>newest){mark.spill.to=newest;dirty=true;}
     if(mark.hwm<newest){
-      const upto=Math.min(newest,mark.hwm+REVEAL_SCAN_WINDOW);
-      const rows=db.prepare(REVEAL_RANGE_SQL).all(mark.hwm,upto);
+      const upto=Math.min(newest,mark.hwm+revealWindow);
+      const rows=rangeRows(db,mark.hwm,upto);
       const kept=rows.slice(0,Math.max(0,room));
       // The mark always moves to the end of the window. Unsettled jobs that do
       // not fit the open set are recorded as a spill range, never re-read on
@@ -144,8 +162,8 @@ export function pendingBotRevealJobs(limit=1):string[]{
       mark.open=[...mark.open,...kept.map(row=>Number(row.rid))];dirty=true;
       for(const row of kept)if(row.cand)take(String(row.id));
     }else if(mark.spill&&room>0){
-      const upto=Math.min(mark.spill.to,mark.spill.from-1+REVEAL_SCAN_WINDOW);
-      const rows=db.prepare(REVEAL_RANGE_SQL).all(mark.spill.from-1,upto).filter(row=>!mark.open.includes(Number(row.rid)));
+      const upto=Math.min(mark.spill.to,mark.spill.from-1+revealWindow);
+      const rows=rangeRows(db,mark.spill.from-1,upto).filter(row=>!mark.open.includes(Number(row.rid)));
       const kept=rows.slice(0,room);
       mark.open=[...mark.open,...kept.map(row=>Number(row.rid))];
       mark.spill=rows.length>kept.length?{from:Number(rows[kept.length].rid),to:mark.spill.to}:upto<mark.spill.to?{from:upto+1,to:mark.spill.to}:undefined;

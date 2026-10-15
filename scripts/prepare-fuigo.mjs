@@ -44,65 +44,65 @@ import { executableTarget, verifySha256 } from "./prepare-cloudflared.mjs";
 import { FUIGO_EXECUTABLE_NAMES } from "../electron/harness-resources.mjs";
 import { safeWipeSync } from "../server/testing/safe-wipe.mjs";
 
-export const FUIGO_VERSION = "1.0.22";
+export const FUIGO_VERSION = "1.0.27";
 export const FUIGO_REGISTRY = "https://registry.npmjs.org";
 
 // Pinned to an exact version — never a floating range for a shipped binary.
 // `tarballSha256` covers the published npm tarball; `binarySha256` covers the
 // brotli-decompressed executable that actually ships.
 //
-// Provenance for 1.0.22: official fuigo and all six @fuigo platform
-// metadata records report gitHead 0930ca14b0faee92ac30f5c139ced38336dbbd1f.
+// Provenance for 1.0.27: official fuigo and all six @fuigo platform
+// metadata records report gitHead 9479d1f6e100f675276c78ad4d8ed80c86d6f26f.
 // Each registry archive was downloaded and verified against its published
 // SHA-512 integrity and SHA-1 shasum, then SHA-256 hashed. The matching
 // package/bin executable was Brotli-decompressed without install scripts,
 // SHA-256 hashed and its Mach-O/ELF/PE machine header independently checked.
-// See fuigo-1.0.22-provenance.json for the exact source and registry receipts.
+// See fuigo-1.0.27-provenance.json for the exact source and registry receipts.
 // All six declared platform packages are pinned; the existing Linux/Windows
 // arm64 staging refusals below remain in force. Cross-target byte/header
 // verification is not native execution qualification on those platforms.
 export const FUIGO_ASSETS = Object.freeze({
   "darwin-arm64": Object.freeze({
     package: "@fuigo/darwin-arm64",
-    tarballSha256: "54fb7003f7117059836ccf1f424de5e8bf21402106baa7e51cad6e37b211ce81",
-    binarySha256: "8a8a86c30dd54c47769c81b9bd012016a8a494bc755df0c87b4193ffcd606721",
+    tarballSha256: "c87ef990ecdbc2d86b189753838db3a09165cd1cbfac6a43ad0d91f062caf4a9",
+    binarySha256: "7af3442ee695b9acc1211a676ca017d085b98ad8676582a22eac092cd7483823",
   }),
   "darwin-x64": Object.freeze({
     package: "@fuigo/darwin-x64",
-    tarballSha256: "168576aa4d60d8f924edfc0e3d48711f282521ba668e1190047cac0a03a2c268",
-    binarySha256: "79211a502ce86fd6fd5654cbcf0dadd8b0a507e501035fd739b0132e9a0ac248",
+    tarballSha256: "5c526bf50e72ecd2f25e6a361a83994bcca2f3311eecfc10edef14460121863e",
+    binarySha256: "87335b236faa215c63f1120ec9c4ffef14dfc4264fbc36ea5a3bd1849c786aeb",
   }),
   "linux-arm64": Object.freeze({
     package: "@fuigo/linux-arm64",
-    tarballSha256: "af743ead247afda299b1c7a1d340dc159c1cb7623d28cd3e0b79ae6a7fee29e7",
-    binarySha256: "3b93e7ab92d0785e05913c425c3c40cec3577f056643078d48be369521e7b5ae",
+    tarballSha256: "45a64894e3b742d54f9f9e5301a5856809d40d27198636ebdc761cc09be9ef82",
+    binarySha256: "e2183f295dc5beb08fb34c45649686934d3847902bd4de33300611d7a85619dc",
   }),
   "linux-x64": Object.freeze({
     package: "@fuigo/linux-x64",
-    tarballSha256: "8d174adb61329c9a79ebafe82c080c08f786eaf81ce1a524f1eff5744ebddc06",
-    binarySha256: "48415edb89bd0a5a31f7f61df3906d5ef1e47cf1e75b3af88d96a0ed4de23048",
+    tarballSha256: "7bd21d87f5e05bbf80d30ccfd45aa40102b0b4814c0046e2f10d9a733dd00cbd",
+    binarySha256: "fa8cef4d877e40eb6e1335cd5633bf8d47f1118f127db8ab9b8116a07f2b9994",
   }),
   // The old note here said fuigo-win32-arm64 was declared but unpublished.
-  // That is no longer true: under the scope, @fuigo/win32-arm64@1.0.22 publishes
+  // That is no longer true: under the scope, @fuigo/win32-arm64@1.0.27 publishes
   // and resolves normally, re-checked against the live registry at this bump.
   // The remaining obstacle is on our side, not upstream — see
   // UNSTAGEABLE_TARGETS.
   "win32-arm64": Object.freeze({
     package: "@fuigo/win32-arm64",
-    tarballSha256: "35c245eb6d009508c1fdc1882f538dda84a2061afc3d02749c06bbba20dac2b9",
-    binarySha256: "b2b750db658279432fe73453d08443764afa09dedf703f86d0a9dfb7bf54f95a",
+    tarballSha256: "08e378755089b044676cc6810c196090cb09eccd7982a174a73306b30a101e1a",
+    binarySha256: "eb006c18d39945ed63e1dd6ffebe3e13d597da75ed4bb7c3f56fcbf8fae0e7f4",
   }),
   "win32-x64": Object.freeze({
     package: "@fuigo/win32-x64",
-    tarballSha256: "e99b98d509b02ec448c329a9d200959610c57f1fc7f12abb6de9c81c7a6ee6ad",
-    binarySha256: "cc82dfabd706919eda9b5fbb4bccb04bef603041e6eb3facca60c928df602a65",
+    tarballSha256: "3624ac29b15c886c859b8effbbd8e26e037c4fd5b701eb9998a97a424afd1a73",
+    binarySha256: "2583a7f06be091ee6ef8676e78334e98c3cd740c0ddac721cd9fe24afc558697",
   }),
 });
 
 // Pinned and digest-reviewed above, but NOT stageable yet. verifyPinnedBinary()
 // parses the real executable header through the shared executableTarget() in
 // prepare-cloudflared.mjs, and that parser classifies only ELF x86-64
-// (e_machine 0x3e) and PE AMD64 (0x8664). The published 1.0.22 arm64 engines are
+// (e_machine 0x3e) and PE AMD64 (0x8664). The published 1.0.27 arm64 engines are
 // ELF aarch64 (0xb7) and PE ARM64 (0xaa64) — read off the real downloaded bytes
 // at this bump — so staging either one
 // would download ~35-50MB, pass the tarball
@@ -141,8 +141,8 @@ function vendorEntry(target) {
 
 /** npm names a scoped package's tarball after the UNSCOPED half of the name:
  * `@fuigo/darwin-arm64` publishes at
- * `@fuigo/darwin-arm64/-/darwin-arm64-1.0.22.tgz`. Building the basename from
- * the full package id would request `@fuigo/darwin-arm64-1.0.22.tgz`, which
+ * `@fuigo/darwin-arm64/-/darwin-arm64-1.0.27.tgz`. Building the basename from
+ * the full package id would request `@fuigo/darwin-arm64-1.0.27.tgz`, which
  * 404s, and would also push a `/` into the MURAGE_FUIGO_ARCHIVE_DIR cache
  * path. */
 function unscopedPackageName(packageName) {

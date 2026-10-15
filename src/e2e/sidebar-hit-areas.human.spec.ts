@@ -21,7 +21,7 @@ test.beforeAll(async () => {
     name: "sidebar-hit-fixture", enforce: "pre",
     resolveId(id) { if (id.endsWith("/src/state/store") || id === "@/state/store") return "\0hit-store"; if (id === "/__hit.js") return "\0hit-entry"; },
     load(id) {
-      if (id === "\0hit-store") return `export * from '/src/state/store.tsx?original';import {useSyncExternalStore} from 'react';export function useStore(){return useSyncExternalStore(window.subscribeFixture,()=>window.fixtureStore);}`;
+      if (id === "\0hit-store") return `export * from '/src/state/store.tsx?original';import {useSyncExternalStore} from 'react';export function useStore(){return useSyncExternalStore(window.subscribeFixture,()=>window.fixtureStore);}export function useStoreActions(){return window.fixtureStore;}`;
       if (id !== "\0hit-entry") return;
       return `import React from 'react';import {createRoot} from 'react-dom/client';import {initialState} from '/src/state/store.tsx?original';import {Sidebar} from '/src/components/Sidebar.tsx';import '/src/styles.css';
         const listeners=new Set();window.subscribeFixture=fn=>{listeners.add(fn);return()=>listeners.delete(fn);};

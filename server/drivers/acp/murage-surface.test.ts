@@ -22,6 +22,12 @@ import { chiefOfStaffSystemPrompt } from "../../chief-of-staff.ts";
 import { TURN_PROMPTS } from "../../bot-shapes.ts";
 import { murageTool } from "../../murage-tool-surface.ts";
 
+// The fixture mounts here are not real MCP servers, so they never write the
+// marker an engine without a readiness signal is waited for (core.ts
+// mcpListedWait). That wait has its own tests (mcp-listed-wait.test.ts); here
+// its cap is short so each cold turn does not sit out the full 5 s.
+process.env.MURAGE_ACP_MCP_LISTED_MS ??= "200";
+
 beforeEach(() => {
   for (const key of Object.keys(process.env)) if (/KEY|TOKEN|SECRET|PASSWORD|AUTH|CREDENTIAL/i.test(key)) vi.stubEnv(key, "");
 });
@@ -38,7 +44,7 @@ it.each(drivers)("$driverKind resolves references against the real session mount
   const instance = await driver.create({ instanceId: "pf-surface", displayName: "PF fixture", enabled: true,
     config: driver.decodeConfig({ cli, fullAuto: true }), environment: {
       HOME: dir, USERPROFILE: dir, FAKE_ACP_MODE: "happy", FAKE_ACP_DUMP: dump, FAKE_ACP_PROMPT_DUMP: prompt,
-      FAKE_ACP_MCP_READY: "1", FAKE_ACP_MODELS: "fixture-model", CURSOR_API_KEY: "fixture-only", XAI_API_KEY: "fixture-only", FUIGO_API_KEY: "sk-flux-fixture-only", OPENCODE_API_KEY: "fixture-only", FACTORY_API_KEY: "fixture-only",
+      FAKE_ACP_MCP_READY: "1", FAKE_ACP_MCP_READY_METHOD: driver === GrokAgentDriver ? "_x.ai/mcp_initialized" : "_fuigo/mcp_initialized", FAKE_ACP_MODELS: "fixture-model", CURSOR_API_KEY: "fixture-only", XAI_API_KEY: "fixture-only", FUIGO_API_KEY: "sk-flux-fixture-only", OPENCODE_API_KEY: "fixture-only", FACTORY_API_KEY: "fixture-only",
     } });
   const recorder = recordEvents(instance.adapter);
   try {

@@ -130,6 +130,9 @@ export const OWNER_VOICE_ROUTES = [
  * the owner's relay. A paired
  * device is the owner, so the door vouches for these too. */
 export const OWNER_DECISION_ROUTES = [
+  // terms acceptance: the paired phone shows the same gate and accepts as the owner (the harness checks the proof)
+  { method: "GET", path: /^\/api\/terms$/ },
+  { method: "POST", path: /^\/api\/terms\/accept$/ },
   { method: "GET", path: /^\/api\/groups\/[\w-]+\/project$/ },
   { method: "POST", path: /^\/api\/groups\/[\w-]+\/project\/viewed$/ },
   { method: "PATCH", path: /^\/api\/groups\/[\w-]+\/project\/brief$/ },
@@ -265,6 +268,9 @@ export function isRoutineWrite(method: string, path: string): boolean {
  * fails to match and is denied rather than forwarded — the failure mode of
  * a strict pattern is a closed door, which is the one to have. */
 const DEVICE_ALLOWED: ReadonlyArray<{ method: string; path: RegExp }> = [
+  // terms acceptance: the paired phone shows the same gate and accepts as the owner (the harness checks the proof)
+  { method: "GET", path: /^\/api\/terms$/ },
+  { method: "POST", path: /^\/api\/terms\/accept$/ },
   { method: "GET", path: /^\/api\/groups\/[\w-]+\/project$/ },
   { method: "POST", path: /^\/api\/groups\/[\w-]+\/project\/viewed$/ },
   { method: "PATCH", path: /^\/api\/groups\/[\w-]+\/project\/brief$/ },
@@ -288,6 +294,9 @@ const DEVICE_ALLOWED: ReadonlyArray<{ method: string; path: RegExp }> = [
 
   // the fleet, and making a bot
   { method: "GET", path: /^\/api\/bots$/ },
+  // One bot's whole record (its full description), no transcript: Settings reads it when the fleet carried a cut description, and keeps the
+  // instructions field closed until it lands. The harness answers it with the fleet's visibility (server/index.ts, GET /api/bots/:id).
+  { method: "GET", path: /^\/api\/bots\/[\w-]+$/ },
   { method: "POST", path: /^\/api\/bots$/ },
   // One narrow, atomic organizer write. This can only file visible bots;
   // unlike the desktop's broad PATCH it cannot alter execution policy.
@@ -308,6 +317,9 @@ const DEVICE_ALLOWED: ReadonlyArray<{ method: string; path: RegExp }> = [
   { method: "POST", path: /^\/api\/bots\/[\w-]+\/tasks\/[\w-]+$/ },
   { method: "PATCH", path: /^\/api\/bots\/[\w-]+\/tasks\/[\w-]+$/ },
   { method: "DELETE", path: /^\/api\/bots\/[\w-]+\/tasks\/[\w-]+$/ },
+  // the older tasks the roster window leaves out: a page of them, one by its thread, and whose a thread is
+  { method: "GET", path: /^\/api\/(?:bots|groups)\/[\w-]+\/tasks(?:\/[\w-]+)?$/ },
+  { method: "GET", path: /^\/api\/threads\/[\w-]+\/owner$/ },
   // Paired-safe profile subset. The harness route itself rejects fields
   // outside identity, avatar, notifications, and voice preferences.
   { method: "PATCH", path: /^\/api\/bots\/[\w-]+\/profile$/ },
@@ -500,6 +512,9 @@ export const BROWSER_DENIED: ReadonlyArray<{ method: string; path: RegExp }> = [
  * visible transcript dressed as a search. Adding it wants the query bound
  * from plan-security §5 first. */
 const BROWSER_ALLOWED: ReadonlyArray<{ method: string; path: RegExp }> = [
+  // terms acceptance: the paired phone shows the same gate and accepts as the owner (the harness checks the proof)
+  { method: "GET", path: /^\/api\/terms$/ },
+  { method: "POST", path: /^\/api\/terms\/accept$/ },
   { method: "GET", path: /^\/api\/groups\/[\w-]+\/project$/ },
   { method: "POST", path: /^\/api\/groups\/[\w-]+\/project\/viewed$/ },
   { method: "PATCH", path: /^\/api\/groups\/[\w-]+\/project\/brief$/ },
@@ -528,6 +543,9 @@ const BROWSER_ALLOWED: ReadonlyArray<{ method: string; path: RegExp }> = [
 
   // the fleet, and making a bot
   { method: "GET", path: /^\/api\/bots$/ },
+  // One bot's whole record (its full description), no transcript: Settings reads it when the fleet carried a cut description, and keeps the
+  // instructions field closed until it lands. The harness answers it with the fleet's visibility (server/index.ts, GET /api/bots/:id).
+  { method: "GET", path: /^\/api\/bots\/[\w-]+$/ },
   { method: "POST", path: /^\/api\/bots$/ },
   { method: "POST", path: /^\/api\/sidebar-sections$/ },
   { method: "POST", path: /^\/api\/bots\/[\w-]+\/messages$/ },
@@ -546,6 +564,9 @@ const BROWSER_ALLOWED: ReadonlyArray<{ method: string; path: RegExp }> = [
   { method: "POST", path: /^\/api\/bots\/[\w-]+\/tasks\/[\w-]+$/ },
   { method: "PATCH", path: /^\/api\/bots\/[\w-]+\/tasks\/[\w-]+$/ },
   { method: "DELETE", path: /^\/api\/bots\/[\w-]+\/tasks\/[\w-]+$/ },
+  // the older tasks the roster window leaves out: a page of them, one by its thread, and whose a thread is
+  { method: "GET", path: /^\/api\/(?:bots|groups)\/[\w-]+\/tasks(?:\/[\w-]+)?$/ },
+  { method: "GET", path: /^\/api\/threads\/[\w-]+\/owner$/ },
   // The narrow profile patch, not the desktop's broad PATCH /api/bots/:id.
   { method: "PATCH", path: /^\/api\/bots\/[\w-]+\/profile$/ },
   { method: "POST", path: /^\/api\/bots\/[\w-]+\/avatar\/generate$/ },

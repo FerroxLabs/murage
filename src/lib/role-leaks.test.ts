@@ -36,6 +36,8 @@ const ALLOWED: Record<string, string> = {
   "components/SettingsPanel.tsx": "a PATCH key in a type union, not a rendered value",
   "lib/team-manage.ts": "folds the harness's team-change record back into the store field for field; every rendered role goes through botRole()",
   "components/TeamLibraryPanel.tsx": "package preview: chiefOfStaff is the lead's NAME, a string",
+  "lib/team-import-result.ts":
+    "the archived-bot record and its restore PATCH: the flag and tier go back over the wire verbatim, nothing is rendered",
   "components/Sidebar.tsx":
     "the archive/restore round-trip sends the flag back over the wire verbatim; every " +
     "rendered role in this file goes through botRole()",

@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import { AlertTriangle, BookOpen, Sparkles, X } from "lucide-react";
 
 import { api, useStore, type Bot, type BotAnnouncement } from "@/state/store";
+import { fromAnswer } from "@/state/answer-tag";
 import { cn } from "@/lib/cn";
 import {
   invalidateSkillCount,
@@ -165,7 +166,7 @@ function IntakeQuestion({
       const applied = await applyProfileToBot(bot.id, profile.slug, api, { rename: !keepName });
       // Straight into the sidebar and the chat header, without waiting for the
       // broadcast to come back around.
-      dispatch({ type: "botPatched", bot: applied.bot as BotAnnouncement });
+      dispatch({ type: "botPatched", ...fromAnswer(applied.bot), bot: applied.bot as BotAnnouncement });
       finish(applied.installed.length);
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : String(cause));

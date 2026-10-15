@@ -1,7 +1,9 @@
 // The maintained OpenCode CLI through its ACP stdio interface. OpenCode is
 // the harness; Zen, Go, OpenRouter, and user-configured/local providers are
 // models discovered from that harness rather than separate Murage drivers.
-import { mkdirSync, readFileSync, realpathSync } from "node:fs";
+import { memoDeps, pathExists, readText } from "../isolation-cache.ts";
+import { currentScopeHome, engineConfigInvalid, registerScopeReconstructor, scopedCliHome, scopedCliHomeRoot, type ScopedCliHomeSpec } from "../scoped-cli-home.ts";
+import { existsSync, mkdirSync, readFileSync, realpathSync } from "node:fs";
 import { homedir } from "node:os";
 import { basename, dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 
@@ -13,8 +15,10 @@ import { writeFileAtomic } from "../../atomic.ts";
 import { DATA_DIR } from "../../config.ts";
 import { execCli } from "../../procs.ts";
 import { fluxModelId } from "../../flux-routing.ts";
+import { opencodeConfigOverlay } from "../../flux-memory-headers.ts";
 import { mergeFluxCatalog } from "../../flux-surface.ts";
 import {
+  OPENCODE_FLUX_PROVIDER,
   openCodeFluxRouted,
   opencodeConfigDir,
   opencodeConfigPath,
@@ -379,8 +383,212 @@ export function murageOwnsWorkingFolder(cwd: string): boolean {
   }));
 }
 
+/**
+ * The owner's personal OpenCode setup stays out of a bot's turns (same
+ * principles as the Claude engine's design B, claude.ts claudeIsolation):
+ * - OPENCODE_DISABLE_CLAUDE_CODE: no ~/.claude/CLAUDE.md prompt, no
+ *   ~/.claude/skills (the owner's Claude Code setup);
+ * - OPENCODE_DISABLE_EXTERNAL_SKILLS: no ~/.agents and other external skills;
+ * - OPENCODE_PURE: no external plugins (the `--pure` flag's env; built-in
+ *   provider/auth plugins are a separate switch and stay, so logins work);
+ * - every MCP server in the owner's global config (opencode.json/.jsonc,
+ *   config.json, $OPENCODE_CONFIG) is set `enabled: false` in the
+ *   OPENCODE_CONFIG_CONTENT overlay, which OpenCode merges over its files.
+ *   Murage's own servers ride ACP `session/new` and are untouched: only a name
+ *   this turn actually mounts is spared, never a name merely reserved.
+ * Names from the opencode 1.15.11 binary (Flag.OPENCODE_PURE, RuntimeFlags
+ * disableExternalSkills, OPENCODE_DISABLE_CLAUDE_CODE). Older builds ignore an
+ * env they do not know, so there is no version floor; an unreadable config
+ * leaves its servers alone (fail open). An explicit value already in the
+ * environment wins.
+ * Rig (build host, opencode 1.15.11, fake model): before = 109 tools (40 the
+ * owner's), personal skill, plugin loaded, 20.6k tokens; after = Murage's 69
+ * tools, no skill or plugin, 15.3k tokens.
+ * The global ~/.config/opencode/AGENTS.md: isolateOpenCodeGlobalInstructions.
+ */
+const OPENCODE_ISOLATION_ENV = [
+  ["OPENCODE_DISABLE_CLAUDE_CODE", "1"],
+  ["OPENCODE_DISABLE_EXTERNAL_SKILLS", "1"],
+  ["OPENCODE_PURE", "1"],
+] as const;
+
+/** JSON with comments and trailing commas (OpenCode's .jsonc) as plain JSON. */
+export function jsoncToJson(text: string): string {
+  let out = "", i = 0, inString = false;
+  while (i < text.length) {
+    const c = text[i]!, next = text[i + 1];
+    if (inString) {
+      out += c;
+      if (c === "\\") { out += next ?? ""; i += 2; continue; }
+      if (c === '"') inString = false;
+      i++; continue;
+    }
+    if (c === '"') { inString = true; out += c; i++; continue; }
+    if (c === "/" && next === "/") { while (i < text.length && text[i] !== "\n") i++; continue; }
+    if (c === "/" && next === "*") { const end = text.indexOf("*/", i + 2); i = end < 0 ? text.length : end + 2; continue; }
+    out += c; i++;
+  }
+  return out.replace(/,(\s*[}\]])/g, "$1");
+}
+
+/** MCP server names in the owner's global OpenCode config files. Read only. */
+export function ownerOpenCodeMcpNames(env: Record<string, string | undefined>): string[] {
+  const dir = opencodeConfigDir(env);
+  const files = [join(dir, "config.json"), join(dir, "opencode.json"), join(dir, "opencode.jsonc"), ...(env.OPENCODE_CONFIG ? [env.OPENCODE_CONFIG] : [])];
+  return memoDeps("opencode-owner-mcp", JSON.stringify(files), () => scanOwnerOpenCodeMcpNames(files));
+}
+
+function scanOwnerOpenCodeMcpNames(files: string[]): string[] {
+  const names = new Set<string>();
+  for (const file of files) {
+    let mcp: unknown;
+    try { mcp = (JSON.parse(jsoncToJson(readText(file))) as { mcp?: unknown } | null)?.mcp; } catch { continue; }
+    if (mcp && typeof mcp === "object" && !Array.isArray(mcp)) for (const name of Object.keys(mcp)) names.add(name);
+  }
+  return [...names].sort();
+}
+
+/** The env switches above; an explicit value already in the environment wins. */
+export function applyOpenCodeIsolationFlags(env: Record<string, string | undefined>): void {
+  for (const [name, value] of OPENCODE_ISOLATION_ENV) if (env[name] === undefined) env[name] = value;
+}
+
+/**
+ * The switches, and every server in the owner's global config turned off.
+ * Ownership is by origin: everything in the owner's config files is theirs,
+ * whatever it is called (a personal `computer`, `agents` or `composio` too).
+ * Murage's own servers ride ACP `session/new`, and OpenCode starts an ACP
+ * mount even when the config overlay says `enabled: false` for that name; a
+ * same-named config entry is replaced by the ACP one (rig, opencode 1.15.11 and
+ * 1.18.35). So nothing is spared by name.
+ */
+export function isolateOpenCodeFromPersonalSetup(env: Record<string, string | undefined>): void {
+  applyOpenCodeIsolationFlags(env);
+  const names = ownerOpenCodeMcpNames(env);
+  if (!names.length) return;
+  let base: Record<string, unknown> = {};
+  try {
+    const parsed = env.OPENCODE_CONFIG_CONTENT?.trim() ? JSON.parse(env.OPENCODE_CONFIG_CONTENT) as unknown : {};
+    if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) base = parsed as Record<string, unknown>;
+  } catch { /* an unparseable overlay is replaced, as opencodeConfigOverlay does */ }
+  const mcp = base.mcp && typeof base.mcp === "object" && !Array.isArray(base.mcp) ? base.mcp as Record<string, unknown> : {};
+  const off = Object.fromEntries(names.map((name) => [name, { ...(mcp[name] && typeof mcp[name] === "object" ? mcp[name] as object : {}), enabled: false }]));
+  env.OPENCODE_CONFIG_CONTENT = JSON.stringify({ ...base, mcp: { ...mcp, ...off } });
+}
+
+/**
+ * The owner's global ~/.config/opencode/AGENTS.md is read from
+ * `OPENCODE_CONFIG_DIR ?? <config folder>`, so pointing OPENCODE_CONFIG_DIR at
+ * an empty Murage-owned folder leaves it out while the global opencode.json
+ * (providers, Murage's Flux connector, the overlay above) still loads; the
+ * login is in the data folder (~/.local/share/opencode/auth.json), which this
+ * does not move. Rig: opencode 1.15.11 and 1.18.35, marker gone, provider
+ * loaded. An older build that does not know the variable ignores it.
+ *
+ * An OPENCODE_CONFIG_DIR the owner set is never passed to a bot: that folder is
+ * the SOURCE, and the bot gets a Murage-owned scope of it (one per bot,
+ * scoped-cli-home.ts) holding only a copy of its opencode.json / config.json
+ * without the keys that start or load the owner's own things (`mcp`, `plugin`,
+ * `instructions`), so providers and models still resolve. Its AGENTS.md, agents,
+ * commands, skills and plugins are absent. The owner's folder is only read.
+ */
+export const OPENCODE_CONFIG_FILES = ["opencode.json", "opencode.jsonc", "config.json"] as const;
+/** opencode.json keys that start or load the owner's own servers, plugins and instruction files. */
+const OPENCODE_PERSONAL_CONFIG_KEYS = ["mcp", "plugin", "instructions"] as const;
+
+/**
+ * Config-relative file references, rebased against the SOURCE folder. OpenCode resolves `{file:path}` in the config text relative
+ * to the config file's own directory ("~/" is the home folder, an absolute path stays; packages/core/src/config/variable.ts lines
+ * 56-58, anomalyco/opencode; docs https://opencode.ai/docs/config/#files), and the `references` table's local paths the same way
+ * (packages/core/src/config/plugin/reference.ts localPath). A copy of the config lives in the bot's scope, so a relative path
+ * would resolve there and miss the owner's file: each relative one is made absolute against the owner's folder. Tokens on a `//`
+ * comment line are left alone, as OpenCode leaves them. Forward slashes, which every platform's OpenCode accepts.
+ */
+export function rebaseOpenCodeFileRefs(text: string, sourceDir: string): string {
+  return text.replace(/\{file:[^}]+\}/g, (token, index: number) => {
+    const lineStart = text.lastIndexOf("\n", index - 1) + 1;
+    if (text.slice(lineStart, index).trimStart().startsWith("//")) return token;
+    const path = token.slice("{file:".length, -1);
+    if (path.startsWith("~/") || isAbsolute(path)) return token;
+    return `{file:${resolve(sourceDir, path).replaceAll("\\", "/")}}`;
+  });
+}
+
+function rebaseOpenCodeReferences(references: unknown, sourceDir: string): unknown {
+  if (!references || typeof references !== "object" || Array.isArray(references)) return references;
+  const local = (value: string) => value.startsWith(".") || value.startsWith("/") || value.startsWith("~");
+  const rebased = (value: string) => (value.startsWith("~/") || isAbsolute(value) ? value : resolve(sourceDir, value).replaceAll("\\", "/"));
+  const out: Record<string, unknown> = {};
+  for (const [name, entry] of Object.entries(references as Record<string, unknown>)) {
+    if (typeof entry === "string") out[name] = local(entry) ? rebased(entry) : entry;
+    else if (entry && typeof entry === "object" && !Array.isArray(entry) && typeof (entry as { path?: unknown }).path === "string") out[name] = { ...entry, path: rebased((entry as { path: string }).path) };
+    else out[name] = entry;
+  }
+  return out;
+}
+
+/** The owner's config file without the keys above and with config-relative references rebased to `sourceDir`; null for text that cannot be read as a JSON or JSONC object. */
+export function filterOpenCodeConfigFile(text: string, sourceDir: string): string | null {
+  try {
+    const parsed: unknown = JSON.parse(jsoncToJson(rebaseOpenCodeFileRefs(text, sourceDir)));
+    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return null;
+    const rest = { ...(parsed as Record<string, unknown>) };
+    for (const key of OPENCODE_PERSONAL_CONFIG_KEYS) delete rest[key];
+    if ("references" in rest) rest.references = rebaseOpenCodeReferences(rest.references, sourceDir);
+    return `${JSON.stringify(rest, null, 2)}\n`;
+  } catch { return null; }
+}
+
+function openCodeConfigScopeSpec(owner: string, botId?: string): ScopedCliHomeSpec {
+  return {
+    kind: "opencode-config",
+    realHome: owner,
+    botId,
+    share: [],
+    generated: () => {
+      const out: Record<string, string> = {};
+      for (const name of OPENCODE_CONFIG_FILES) {
+        let text: string;
+        try { text = readText(join(owner, name)); } catch (error) {
+          pathExists(join(owner, name));
+          // Absent: no copy (an earlier one is removed by the scope build). Present but unreadable: not run with stale settings.
+          const code = (error as NodeJS.ErrnoException).code;
+          if (code === "ENOENT" || code === "ENOTDIR") continue;
+          throw engineConfigInvalid("OpenCode", error);
+        }
+        if (!text.trim()) continue; // an empty file holds no settings
+        const filtered = filterOpenCodeConfigFile(text, owner);
+        if (filtered === null) throw engineConfigInvalid("OpenCode");
+        out[name] = filtered;
+      }
+      return out;
+    },
+  };
+}
+registerScopeReconstructor("opencode-config", ({ realHome, botId }) => openCodeConfigScopeSpec(realHome, botId));
+
+export function isolateOpenCodeGlobalInstructions(env: Record<string, string | undefined>, botId?: string): void {
+  const owner = env.OPENCODE_CONFIG_DIR;
+  if (owner && owner.startsWith(scopedCliHomeRoot("opencode-config"))) { const current = currentScopeHome("opencode-config", owner); if (current) env.OPENCODE_CONFIG_DIR = current; return; } // already a Murage scope: its current generation
+  try {
+    if (owner) {
+      env.OPENCODE_CONFIG_DIR = scopedCliHome(openCodeConfigScopeSpec(owner, botId));
+      return;
+    }
+    const dir = join(DATA_DIR, "native", "opencode-empty-config");
+    if (!existsSync(dir)) mkdirSync(dir, { recursive: true, mode: 0o700 });
+    env.OPENCODE_CONFIG_DIR = dir;
+  } catch (error) {
+    // Fails closed: the owner's global instructions would otherwise reach the bot; the turn path rejects the turn.
+    throw error;
+  }
+}
+
 const support = (loadCatalog: OpenCodeCatalogLoader): AcpSupport => ({
   driverKind: "opencodeGo",
+  // OpenCode starts every ACP mount it is handed, even one its config disables
+  // (isolateOpenCodeFromPersonalSetup, rig 1.15.11 and 1.18.35), with no readiness signal.
+  mcpListedWait: true,
   // Keep the historical driver kind so existing bots and instance config do
   // not break; only the product name/catalog expand from Go to OpenCode.
   displayName: "OpenCode",
@@ -423,7 +631,24 @@ const support = (loadCatalog: OpenCodeCatalogLoader): AcpSupport => ({
     if (tier) return opencodeFluxModelId(tier);
     return ensureOpenCodeInjectModel(normalizeLegacyOpenCodeModel(model, env), env);
   },
-  transformEnv: stripForeignProviderKeys,
+  /**
+   * Flux Memory headers. OpenCode merges `OPENCODE_CONFIG_CONTENT` (inline
+   * JSON) over the config files, so `provider.flux.options.headers` lands on
+   * the Flux provider Murage's connector wrote without rewriting the user's
+   * own opencode.json (a per-turn write there is exactly what the connector
+   * refuses to do). The provider id is the connector's.
+   */
+  applyFluxMemory: (env, { decision }) => {
+    env.OPENCODE_CONFIG_CONTENT = opencodeConfigOverlay(OPENCODE_FLUX_PROVIDER, decision.headers, env.OPENCODE_CONFIG_CONTENT);
+  },
+  transformEnv: (env) => {
+    stripForeignProviderKeys(env);
+    isolateOpenCodeFromPersonalSetup(env);
+  },
+  // The owner's global AGENTS.md: after every Murage read and write of their real
+  // config folder this turn (resolveTurnModel), so those still reach it.
+  scopeKind: "opencode-config",
+  applyMountEnv: (env, { botId }) => isolateOpenCodeGlobalInstructions(env, botId),
   // OpenCode reads opencode.json and .opencode/ from the working folder and
   // every folder above it. In a Murage-owned folder a bot could write one in
   // Auto and grant itself permissions on later turns, so project config is

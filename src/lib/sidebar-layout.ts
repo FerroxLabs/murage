@@ -61,7 +61,7 @@ export function sidebarSectionLabel(id: SidebarSectionId): string {
   return userSectionName(id) ?? id;
 }
 
-export function sidebarGoalRunPreview(run: GroupGoalRunCardData): string {
+export function sidebarGoalRunPreview(run: Pick<GroupGoalRunCardData, "status" | "goal" | "detail"> & Partial<GroupGoalRunCardData>): string {
   const detail = run.detail?.replace(/\s+/g, " ").trim();
   const goal = run.goal.replace(/\s+/g, " ").trim();
   const summary = detail || goal;

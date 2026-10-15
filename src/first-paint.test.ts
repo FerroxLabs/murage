@@ -118,7 +118,7 @@ describe("the first paint", () => {
 
   it("defers occasional workspaces and panels until they are opened", () => {
     const reached = staticallyReached(graph);
-    for (const file of ["RoutinesPage", "RoutineCalendarPage", "TeamMapPage", "PluginsPanel", "SkillRecorderPage", "LocalVmWorkspace", "BrowserWorkspace"]) {
+    for (const file of ["RoutinesPage", "RoutineCalendarPage", "TeamMapPage", "PluginsPanel", "SkillRecorderPage", "LocalVmWorkspace", "BrowserWorkspace", "TeamLibraryPanel"]) {
       const path = `src/components/${file}.tsx`;
       expect(reached, path).not.toContain(path);
       expect(graph.inputs[path], path).toBeDefined();
@@ -159,6 +159,31 @@ describe("the first paint", () => {
     const { code } = await transform(source, { loader: "tsx", jsx: "automatic", minify: true, target: "es2022" });
     const bytes = brotliCompressSync(code, { params: { [constants.BROTLI_PARAM_QUALITY]: 11 } }).length;
     expect(bytes).toBeLessThanOrEqual(1.5 * 1024);
+  });
+
+  it("loads the conversation cache, team settings, find-in-conversation and bundle import on first use (1.0.2)", () => {
+    const reached = staticallyReached(graph);
+    for (const file of ["src/lib/conversation-cache.ts", "src/components/TeamSettingsDialog.tsx", "src/components/ChatFindBar.tsx", "src/components/BundleImportDialog.tsx"]) {
+      expect(reached, file).not.toContain(file);
+      expect(graph.inputs[file], file).toBeDefined();
+    }
+    // what the first paint does carry: the transcript that mounts only what
+    // is on screen, and the small handle that loads the cache
+    for (const file of ["src/components/VirtualTranscript.tsx", "src/lib/conversation-cache-host.ts", "src/components/TeamSettingsHost.tsx"]) {
+      expect(reached, file).toContain(file);
+    }
+  });
+
+  it("loads the approval cards' plain words, with the strict shell parser, after the first paint (1.0.2)", () => {
+    const reached = staticallyReached(graph);
+    for (const file of ["shared/approval-plain.ts", "shared/readonly-shell.ts", "shared/connected-app-calls.ts"]) {
+      expect(reached, file).not.toContain(file);
+      expect(graph.inputs[file], file).toBeDefined();
+    }
+    // the cards themselves and the small loader are the first paint
+    for (const file of ["src/components/ApprovalCard.tsx", "src/components/PendingApproval.tsx", "src/lib/plain-approval.ts"]) {
+      expect(reached, file).toContain(file);
+    }
   });
 
   it("leaves both Markdown editors and Tiptap to the first edit", () => {

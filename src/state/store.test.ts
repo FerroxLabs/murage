@@ -19,6 +19,7 @@ import {
   visibleNotificationThread,
   visibleMessages,
   type Action,
+  type AppState,
   type Bot,
   type Group,
   type Message,
@@ -29,6 +30,7 @@ import { openLiveEvents, type LiveEventSourceLike, type LiveEventsPlatform } fro
 import { openerAt } from "../../shared/bot-openers.js";
 import { hostStoppedActivityName } from "../../shared/host-stop";
 import type { RoutineRun } from "../lib/routines";
+import { httpNow } from "./test-origins";
 
 describe("stream delta buffer", () => {
   it("keeps Fuigo retry-status thought text out of the answer buffer", () => {
@@ -401,23 +403,23 @@ describe("notification routing", () => {
 describe("hydration", () => {
   it("is false until the first snapshot lands", () => {
     expect(initialState.hydrated).toBe(false);
-    expect(reducer(initialState, { type: "hydrate", bots: [], groups: [], computerControl: {} }).hydrated).toBe(true);
+    expect(reducer(initialState, { type: "hydrate", ...httpNow, bots: [], groups: [], computerControl: {} }).hydrated).toBe(true);
   });
 });
 
 describe("sidebar section order", () => {
   it("takes the computer's order from hydration and from the live frame", () => {
     expect(initialState.sidebarSectionOrder).toBeUndefined();
-    const none = reducer(initialState, { type: "hydrate", bots: [], groups: [], computerControl: {}, sidebarSectionOrder: null });
+    const none = reducer(initialState, { type: "hydrate", ...httpNow, bots: [], groups: [], computerControl: {}, sidebarSectionOrder: null });
     expect(none.sidebarSectionOrder).toBeNull();
-    const hydrated = reducer(none, { type: "hydrate", bots: [], groups: [], computerControl: {}, sidebarSectionOrder: ["section:Ops", "builtin:pinned"] });
+    const hydrated = reducer(none, { type: "hydrate", ...httpNow, bots: [], groups: [], computerControl: {}, sidebarSectionOrder: ["section:Ops", "builtin:pinned"] });
     expect(hydrated.sidebarSectionOrder).toEqual(["section:Ops", "builtin:pinned"]);
     const live = reducer(hydrated, { type: "sidebarSectionOrder", order: ["builtin:pinned", "section:Ops"] });
     expect(live.sidebarSectionOrder).toEqual(["builtin:pinned", "section:Ops"]);
   });
 
   it("leaves it unknown when the harness does not send one", () => {
-    expect(reducer(initialState, { type: "hydrate", bots: [], groups: [], computerControl: {} }).sidebarSectionOrder).toBeUndefined();
+    expect(reducer(initialState, { type: "hydrate", ...httpNow, bots: [], groups: [], computerControl: {} }).sidebarSectionOrder).toBeUndefined();
   });
 });
 
@@ -579,7 +581,7 @@ describe("where a fresh sign-in lands", () => {
     const bruce = { ...member("bruce", "Bruce"), chiefOfStaff: true } as unknown as Bot;
     const sable = { ...member("sable", "Sable"), chiefOfStaff: true, chiefScope: "workspace" } as unknown as Bot;
     const next = reducer({ ...initialState, selectedId: "" }, {
-      type: "hydrate",
+      type: "hydrate", ...httpNow,
       bots: [bruce, sable],
       groups: [],
       computerControl: {},
@@ -590,7 +592,7 @@ describe("where a fresh sign-in lands", () => {
   it("keeps a selection the person already made", () => {
     const sable = { ...member("sable", "Sable"), chiefOfStaff: true, chiefScope: "workspace" } as unknown as Bot;
     const next = reducer({ ...initialState, selectedId: "bruce" }, {
-      type: "hydrate",
+      type: "hydrate", ...httpNow,
       bots: [member("bruce", "Bruce"), sable],
       groups: [],
       computerControl: {},
@@ -600,7 +602,7 @@ describe("where a fresh sign-in lands", () => {
 
   it("falls back to the first bot when no Chief exists", () => {
     const next = reducer({ ...initialState, selectedId: "" }, {
-      type: "hydrate",
+      type: "hydrate", ...httpNow,
       bots: [member("one", "One"), member("two", "Two")],
       groups: [],
       computerControl: {},
@@ -611,7 +613,7 @@ describe("where a fresh sign-in lands", () => {
   it("never opens a hidden Chief", () => {
     const hidden = { ...member("ghost", "Ghost"), chiefOfStaff: true, chiefScope: "workspace", hidden: true } as unknown as Bot;
     const next = reducer({ ...initialState, selectedId: "" }, {
-      type: "hydrate",
+      type: "hydrate", ...httpNow,
       bots: [hidden, member("real", "Real")],
       groups: [],
       computerControl: {},
@@ -860,9 +862,9 @@ describe("cross-client bot creation", () => {
       modelSelection: { instanceId: "codex", model: "default" },
     } satisfies Omit<Bot, "messages">;
 
-    const added = reducer(initialState, { type: "botPatched", bot: announced });
+    const added = reducer(initialState, { type: "botPatched", source: "stream", bot: announced });
 
-    expect(added.bots).toEqual([{ ...announced, messages: [] }]);
+    expect(added.bots).toEqual([{ ...announced, messages: [], admittedAt: 1 }]);
 
     const greeting = {
       id: "greeting",
@@ -1027,7 +1029,7 @@ describe("section Chiefs", () => {
       bots: [sable, bruce].map((candidate) => ({ ...candidate, messages: [] })),
     };
 
-    const next = reducer(state, { type: "botPatched", bot: { ...bruce, chiefOfStaff: true } });
+    const next = reducer(state, { type: "botPatched", source: "stream", bot: { ...bruce, chiefOfStaff: true } });
 
     expect(next.bots.find((candidate) => candidate.id === sable.id)?.chiefOfStaff).toBe(true);
   });
@@ -1042,7 +1044,7 @@ describe("section Chiefs", () => {
     };
 
     const next = reducer(state, {
-      type: "botPatched",
+      type: "botPatched", source: "stream",
       bot: { ...workCandidate, chiefOfStaff: true },
     });
 
@@ -1142,8 +1144,72 @@ describe("pending queued chip", () => {
     modelSelection: { instanceId: "acp", model: "fake" },
   } satisfies Omit<Bot, "messages">;
 
+  it("shows a send the moment it starts and removes it when the server answers", () => {
+    const withBot = reducer(initialState, { type: "botPatched", source: "stream", bot });
+    const sending = reducer(withBot, { type: "sendingStarted", threadId: "t1", sendId: "s1", text: "while you work" });
+    expect(sending.pendingQueued).toEqual({ t1: [{ queueId: "sending:s1", text: "while you work", sending: true, sendId: "s1", local: true }] });
+    // a repeated start (retry) does not double the line
+    expect(reducer(sending, { type: "sendingStarted", threadId: "t1", sendId: "s1", text: "while you work" })).toBe(sending);
+    // queued: the Sending line is replaced by the server's queued chip
+    const queued = reducer(reducer(sending, { type: "sendingSettled", threadId: "t1", sendId: "s1" }), {
+      type: "pendingQueued", threadId: "t1", queueId: "q9", text: "while you work",
+    });
+    expect(queued.pendingQueued).toEqual({ t1: [{ queueId: "q9", text: "while you work" }] });
+    // refused or steered: nothing is left behind
+    expect(reducer(sending, { type: "sendingSettled", threadId: "t1", sendId: "s1" }).pendingQueued).toEqual({});
+    // settling something unknown is a no-op
+    expect(reducer(withBot, { type: "sendingSettled", threadId: "t1", sendId: "nope" })).toBe(withBot);
+  });
+
+  it("every send goes through the persisted outbox and shows its Sending line, whatever the busy flags say", () => {
+    const source = readFileSync(fileURLToPath(new URL("./store.tsx", import.meta.url)), "utf8");
+    for (const action of ['case "send": {', 'case "sendGroup": {']) {
+      const body = source.slice(source.indexOf(action), source.indexOf("break;", source.indexOf(action) + 400));
+      expect(body, action).toContain("deliveryRef.current.submit(");
+      // not gated on a client busy flag: that was the invisible interval
+      expect(body, action).not.toMatch(/\.busy\b|busyBotId/);
+    }
+    const delivery = readFileSync(fileURLToPath(new URL("./send-delivery.ts", import.meta.url)), "utf8");
+    expect(delivery.indexOf("deps.outbox.add(entry)")).toBeLessThan(delivery.indexOf("deps.showSending(entry)"));
+  });
+
+  it("the server's pending list replaces the chips after a reload and keeps only the sends this device is still delivering", () => {
+    const withBot = reducer(initialState, { type: "botPatched", source: "stream", bot });
+    const hydrated = reducer(withBot, {
+      type: "hydrate", ...httpNow, bots: [{ ...bot, messages: [] }], groups: [], computerControl: {},
+      pendingSends: { t1: [
+        { queueId: "q1", sendId: "a", text: "queued earlier", state: "queued" },
+        { queueId: "sending:b", sendId: "b", text: "being handed over", state: "sending" },
+      ] },
+    });
+    expect(hydrated.pendingQueued.t1).toEqual([
+      { queueId: "q1", text: "queued earlier", sendId: "a" },
+      { queueId: "sending:b", text: "being handed over", sendId: "b", sending: true },
+    ]);
+    // a line this device is delivering with no server record yet stays; a stale chip the server no longer lists goes
+    const local = reducer(reducer(hydrated, { type: "sendingStarted", threadId: "t1", sendId: "c", text: "mine" }), {
+      type: "pendingQueued", threadId: "t1", queueId: "stale", text: "drained meanwhile",
+    });
+    const next = reducer(local, { type: "serverSends", threadId: "t1", pending: [{ queueId: "q1", sendId: "a", text: "queued earlier", state: "queued" }] });
+    expect(next.pendingQueued.t1).toEqual([
+      { queueId: "q1", text: "queued earlier", sendId: "a" },
+      { queueId: "sending:c", text: "mine", sending: true, sendId: "c", local: true },
+    ]);
+    // when the server takes the send over (queued under its own id) the local Sending line yields to it
+    const taken = reducer(next, { type: "serverSends", threadId: "t1", pending: [{ queueId: "q2", sendId: "c", text: "mine", state: "queued" }] });
+    expect(taken.pendingQueued.t1).toEqual([{ queueId: "q2", text: "mine", sendId: "c" }]);
+    // nothing pending anywhere: no chips
+    expect(reducer(taken, { type: "serverSends", threadId: "t1", pending: [] }).pendingQueued).toEqual({});
+  });
+
+  it("another client's pending send (a phone) shows on this desktop from the server's list alone", () => {
+    const withBot = reducer(initialState, { type: "botPatched", source: "stream", bot });
+    const seen = reducer(withBot, { type: "serverSends", threadId: "t1", pending: [{ queueId: "q7", sendId: "phone-1", text: "from my phone", state: "queued" }] });
+    expect(seen.pendingQueued.t1).toEqual([{ queueId: "q7", text: "from my phone", sendId: "phone-1" }]);
+  });
+
   it("records queue-fallback text and drops it when that user line lands", () => {
-    const withBot = reducer(initialState, { type: "botPatched", bot });
+    const withBot = reducer(initialState, { type: "botPatched", source: "stream", bot });
     const queued = reducer(withBot, {
       type: "pendingQueued",
       threadId: "t1",
@@ -1160,7 +1226,7 @@ describe("pending queued chip", () => {
   });
 
   it("keeps a Shift+Enter multiline message as one entry", () => {
-    const withBot = reducer(initialState, { type: "botPatched", bot });
+    const withBot = reducer(initialState, { type: "botPatched", source: "stream", bot });
     const queued = reducer(withBot, {
       type: "pendingQueued",
       threadId: "t1",
@@ -1177,7 +1243,7 @@ describe("pending queued chip", () => {
   });
 
   it("leaves the chip on the old thread after a task switch", () => {
-    const withBot = reducer(initialState, { type: "botPatched", bot });
+    const withBot = reducer(initialState, { type: "botPatched", source: "stream", bot });
     const queued = reducer(withBot, {
       type: "pendingQueued",
       threadId: "t1",
@@ -1185,7 +1251,7 @@ describe("pending queued chip", () => {
       text: "stay here",
     });
     const switched = reducer(queued, {
-      type: "botPatched",
+      type: "botPatched", source: "stream",
       bot: { ...bot, threadId: "t2", messages: [] },
     });
     expect(switched.pendingQueued).toEqual({ t1: [{ queueId: "q-stay", text: "stay here" }] });
@@ -1199,7 +1265,7 @@ describe("pending queued chip", () => {
   });
 
   it("consumes only the matching queue id when two pending lines share text", () => {
-    const withBot = reducer(initialState, { type: "botPatched", bot });
+    const withBot = reducer(initialState, { type: "botPatched", source: "stream", bot });
     const first = reducer(withBot, {
       type: "pendingQueued",
       threadId: "t1",
@@ -1227,7 +1293,7 @@ describe("pending queued chip", () => {
   });
 
   it("does not add a chip when the drain frame arrives before the POST continuation", () => {
-    const withBot = reducer(initialState, { type: "botPatched", bot });
+    const withBot = reducer(initialState, { type: "botPatched", source: "stream", bot });
     const drained = reducer(withBot, {
       type: "consumePendingQueued",
       threadId: "t1",
@@ -1245,7 +1311,7 @@ describe("pending queued chip", () => {
   });
 
   it("reconciles a missed drain from hydration and rejects its late POST continuation", () => {
-    const withBot = reducer(initialState, { type: "botPatched", bot });
+    const withBot = reducer(initialState, { type: "botPatched", source: "stream", bot });
     const queued = reducer(withBot, {
       type: "pendingQueued",
       threadId: "t1",
@@ -1261,7 +1327,7 @@ describe("pending queued chip", () => {
       queueId: "q-snapshot",
     } satisfies Message;
     const hydrated = reducer(queued, {
-      type: "hydrate",
+      type: "hydrate", ...httpNow,
       bots: [{ ...bot, messages: [canonical] }],
       groups: [],
       computerControl: {},
@@ -1280,7 +1346,7 @@ describe("pending queued chip", () => {
   });
 
   it("bounds unmatched queue tombstones from other clients", () => {
-    const withBot = reducer(initialState, { type: "botPatched", bot });
+    const withBot = reducer(initialState, { type: "botPatched", source: "stream", bot });
     let state = withBot;
     for (let index = 0; index < 100; index += 1) {
       state = reducer(state, {
@@ -1305,7 +1371,7 @@ describe("pending queued chip", () => {
   });
 
   it("drops a cancelled pending chip without waiting for drain", () => {
-    const withBot = reducer(initialState, { type: "botPatched", bot });
+    const withBot = reducer(initialState, { type: "botPatched", source: "stream", bot });
     const queued = reducer(withBot, {
       type: "pendingQueued",
       threadId: "t1",
@@ -1385,15 +1451,15 @@ describe("scrollback pages", () => {
 
   it("drops a page asked for in the thread this bot switched away from", () => {
     const generation = state.transcriptGeneration["thread-1"] ?? 0;
-    const away = reducer(state, { type: "taskSwitched", bot: { ...bot, threadId: "thread-2", messages: [message("n1", 1)], hasMore: false } });
-    const back = reducer(away, { type: "taskSwitched", bot: { ...bot, messages: [message("m4", 4)], hasMore: true } });
+    const away = reducer(state, { type: "taskSwitched", source: "local", bot: { ...bot, threadId: "thread-2", messages: [message("n1", 1)], hasMore: false } });
+    const back = reducer(away, { type: "taskSwitched", source: "local", bot: { ...bot, messages: [message("m4", 4)], hasMore: true } });
     const landed = reducer(back, { type: "olderMessages", threadId: "thread-1", generation, messages: [message("m3", 3)], hasMore: true });
     expect(landed.bots[0].messages.map((m) => m.id)).toEqual(["m4"]);
   });
 
   it("drops a page that raced a fresh snapshot", () => {
     const generation = state.transcriptGeneration["thread-1"] ?? 0;
-    const hydrated = reducer(state, { type: "hydrate", bots: [bot], groups: [], computerControl: {} });
+    const hydrated = reducer(state, { type: "hydrate", ...httpNow, bots: [bot], groups: [], computerControl: {} });
     const landed = reducer(hydrated, { type: "olderMessages", threadId: "thread-1", generation, messages: [message("m2", 2)], hasMore: true });
     expect(landed.bots[0].messages.map((m) => m.id)).toEqual(["m3", "m4"]);
   });
@@ -1412,17 +1478,17 @@ describe("scrollback pages", () => {
   it("takes a switched thread's scrollback answer from its own page, never the previous thread's", () => {
     // an unpaged answer: the whole thread, so no marker at all
     const { hasMore: _previous, ...unpaged } = bot;
-    const switched = reducer(state, { type: "taskSwitched", bot: { ...unpaged, threadId: "thread-2", messages: [message("n1", 1)] } });
+    const switched = reducer(state, { type: "taskSwitched", source: "local", bot: { ...unpaged, threadId: "thread-2", messages: [message("n1", 1)] } });
     expect(switched.bots[0].hasMore).toBeUndefined();
     // the same move arriving as a bot frame with a transcript
-    const framed = reducer(state, { type: "botPatched", bot: { ...unpaged, threadId: "thread-2", tasks: undefined, messages: [message("n1", 1)] } });
+    const framed = reducer(state, { type: "botPatched", source: "stream", bot: { ...unpaged, threadId: "thread-2", tasks: undefined, messages: [message("n1", 1)] } });
     expect(framed.bots[0].threadId).toBe("thread-2");
     expect(framed.bots[0].hasMore).toBeUndefined();
   });
 
   it("keeps how far this client paged back when a same-thread frame carries a page", () => {
     const paged = reducer(state, { type: "olderMessages", threadId: "thread-1", generation: 0, messages: [message("m1", 1)], hasMore: false });
-    const framed = reducer(paged, { type: "botPatched", bot: { ...bot, messages: [message("m4", 4)], hasMore: true } });
+    const framed = reducer(paged, { type: "botPatched", source: "stream", bot: { ...bot, messages: [message("m4", 4)], hasMore: true } });
     expect(framed.bots[0].messages.map((m) => m.id)).toEqual(["m1", "m3", "m4"]);
     expect(framed.bots[0].hasMore).toBe(false);
   });
@@ -1606,7 +1672,7 @@ describe("wire shapes the renderer must declare", () => {
     // render which connected services the assistant needs.
     const packaged = { ...bare("packaged", "Packaged"), messages: [], installedPackage } satisfies Bot;
 
-    const next = reducer(initialState, { type: "botPatched", bot: packaged } as never);
+    const next = reducer(initialState, { type: "botPatched", source: "stream", bot: packaged } as never);
     expect(next.bots[0]?.installedPackage?.requiredApps.map((app) => app.slug)).toEqual(["gmail", "slack"]);
   });
 });
@@ -1745,10 +1811,208 @@ describe("a bot added from an import response", () => {
       unread: false,
       modelSelection: { instanceId: "acp", model: "fake" },
     } as unknown as Bot;
-    const next = reducer(initialState, { type: "botAdded", bot: imported });
+    const next = reducer(initialState, { type: "botAdded", ...httpNow, bot: imported });
     const added = next.bots.find((bot) => bot.id === "imported-1")!;
     expect(added.messages).toEqual([]);
     expect(visibleMessages(added).at(-1)).toBeUndefined();
+  });
+});
+
+describe("botAdded: a create or duplicate response reconciled with the stream (BOTADDED-DESIGN)", () => {
+  const model = { instanceId: "acp", model: "fake" };
+  const task = { threadId: "t-new", title: "New task", createdAt: 1, modelSelection: model, autoApprove: false, alwaysAllow: [], unread: false };
+  const taskB = { ...task, threadId: "t-B", title: "Task B", createdAt: 2 };
+  const record = { id: "new-1", threadId: "t-new", title: "", description: "", notifications: true, color: "green", unread: false, busy: false, modelSelection: model };
+  // createBot's rows: the greeting (a root), then the intake question chained onto it.
+  const m1 = { id: "m1", parentId: null, role: "bot", kind: "text", text: "Hi, I'm Vega.", at: 1, turnId: "seed" } as unknown as Message;
+  const m2 = { id: "m2", parentId: "m1", role: "bot", kind: "options", card: { title: "What do you actually want me for?", options: [], intake: { step: "open", asked: 1 } }, at: 2, turnId: "seed" } as unknown as Message;
+  // The stream: createBot's own frame (full, no transcript, no head), then a rename's frame (a task delta).
+  const created = { ...record, name: "Vega", tasks: [task], tasksSeq: 1, tasksEpoch: "e1" } as unknown as Bot;
+  const renamed = { ...record, name: "Tango", computer: "off", tasksSeq: 2, tasksEpoch: "e1", tasksDelta: { upsert: [], count: 1, base: 1 } } as unknown as Bot;
+  // POST /api/bots: the record as createBot left it, its transcript and head. Rseq carries the create frame's number (§3); Rlegacy is a 1.0.1 server.
+  const R = { ...record, name: "Vega", tasks: [task], messages: [m1, m2], activeLeafId: "m2" } as unknown as Bot;
+  const Rseq = { ...R, tasksSeq: 1, tasksEpoch: "e1" } as unknown as Bot;
+  const Rlegacy = R;
+  const add = (state: AppState, message: Message, threadId = "t-new") => reducer(state, { type: "messageAdded", threadId, message } as Action);
+  const frame = (state: AppState, bot: Bot) => reducer(state, { type: "botPatched", source: "stream", bot });
+  const response = (state: AppState, bot: Bot) => reducer(state, { type: "botAdded", ...httpNow, bot });
+  const held = (state: AppState) => state.bots.find((bot) => bot.id === "new-1");
+  const ids = (messages: Message[] | undefined) => (messages ?? []).map((message) => message.id);
+
+  it("T1 (Astra H1): create frame, greeting, response, then the question's frame: the question is the head and on screen", () => {
+    let state = add(frame(initialState, created), m1);
+    state = response(state, Rseq);
+    state = add(state, m2);
+    const bot = held(state)!;
+    expect(ids(bot.messages)).toEqual(["m1", "m2"]);
+    expect(bot.activeLeafId).toBe("m2");
+    expect(ids(visibleMessages(bot))).toEqual(["m1", "m2"]);
+    expect(state.bots.filter((item) => item.id === "new-1")).toHaveLength(1);
+    // withSidebarLines runs on botAdded: the row's line is the head's
+    expect(bot.sidebarLine?.messageId).toBe("m2");
+  });
+
+  it("T1b: the question's frame never comes; the response's head is a descendant of the held one, so it wins", () => {
+    const state = response(add(frame(initialState, created), m1), Rlegacy);
+    const bot = held(state)!;
+    expect(bot.activeLeafId).toBe("m2");
+    expect(ids(visibleMessages(bot))).toEqual(["m1", "m2"]);
+  });
+
+  it("T2 (Tango): a rename the stream delivered before the response keeps its name, with either response shape", () => {
+    for (const body of [Rlegacy, Rseq]) {
+      let state = add(add(frame(initialState, created), m1), m2);
+      state = frame(state, renamed);
+      expect(held(state)?.name).toBe("Tango");
+      state = response(state, body);
+      const bot = held(state)!;
+      expect(bot).toMatchObject({ name: "Tango", computer: "off", tasksSeq: 2, tasksEpoch: "e1", activeLeafId: "m2" });
+      expect(ids(bot.messages)).toEqual(["m1", "m2"]);
+      expect(state.selectedId).toBe("new-1");
+      expect(state.activeView).toBe("chat");
+    }
+  });
+
+  it("T3: response first, then the create frame and both rows: nothing doubles and the head stays", () => {
+    let state = response(initialState, Rlegacy);
+    state = add(add(frame(state, created), m1), m2);
+    const bot = held(state)!;
+    expect(ids(bot.messages)).toEqual(["m1", "m2"]);
+    expect(bot.activeLeafId).toBe("m2");
+    expect(state.bots.filter((item) => item.id === "new-1")).toHaveLength(1);
+  });
+
+  it("T3b: a rename frame after the response still lands", () => {
+    const state = frame(response(initialState, Rlegacy), renamed);
+    expect(held(state)?.name).toBe("Tango");
+  });
+
+  // Duplicate Bot: POST /api/bots then PATCH with the copied profile; the effect answers with the two merged.
+  const dupR = { ...Rseq, name: "Vega copy", computer: "off", tasksSeq: 2, tasksEpoch: "e1" } as unknown as Bot;
+  const patchFrame = { ...record, name: "Vega copy", computer: "off", tasksSeq: 2, tasksEpoch: "e1", tasksDelta: { upsert: [], count: 1, base: 1 } } as unknown as Bot;
+
+  it("T4 (Astra M): the duplicate's copied profile wins over the create frame, in either order", () => {
+    // create frame, then the response (its PATCH frame still in flight)
+    let state = response(frame(initialState, created), dupR);
+    expect(held(state)).toMatchObject({ name: "Vega copy", computer: "off", tasksSeq: 2 });
+    // create frame, PATCH frame, then the response: equal numbers, the held frame is that very change
+    state = response(frame(frame(initialState, created), patchFrame), dupR);
+    expect(held(state)).toMatchObject({ name: "Vega copy", computer: "off", tasksSeq: 2 });
+  });
+
+  it("T4b: a response with no number (an older server) keeps the held record; the PATCH's own frame repairs it", () => {
+    const legacyDup = { ...Rlegacy, name: "Vega copy" } as unknown as Bot;
+    let state = response(frame(initialState, created), legacyDup);
+    expect(held(state)?.name).toBe("Vega");
+    state = frame(state, patchFrame);
+    expect(held(state)?.name).toBe("Vega copy");
+  });
+
+  it("T4c: a newer response's values are never erased by held explicit undefineds or stale held values", () => {
+    const holding = { ...created, browser: false, description: undefined, hasMore: undefined } as unknown as Bot;
+    const newer = { ...Rseq, browser: true, description: "Copied description", tasksSeq: 2 } as unknown as Bot;
+    const bot = held(response(frame(initialState, holding), newer))!;
+    expect(bot.browser).toBe(true);
+    expect(bot.description).toBe("Copied description");
+    expect(bot.tasksSeq).toBe(2);
+  });
+
+  it("T5 (Astra H3): switched to an empty task before the response: nothing of the old task's transcript is imported", () => {
+    let state = add(add(frame(initialState, created), m1), m2);
+    state = reducer(state, { type: "taskSwitched", source: "local", bot: { ...record, name: "Vega", threadId: "t-B", tasks: [task, taskB], messages: [], activeLeafId: null } as unknown as Bot });
+    state = response(state, Rlegacy);
+    const bot = held(state)!;
+    expect(bot.threadId).toBe("t-B");
+    expect(bot.messages).toEqual([]);
+    expect(bot.activeLeafId ?? null).toBeNull();
+    expect(visibleMessages(bot)).toEqual([]);
+  });
+
+  it("T6 (Astra, deletion fence; V3 r6 §2.7): a deleted bot never comes back from a late response or a late HTTP patch", () => {
+    let state = response(frame(initialState, created), Rlegacy);
+    state = reducer({ ...state, selectedId: "other" }, { type: "deleteBot", source: "local", attempt: "a1", botId: "new-1" });
+    // pending: nothing for the id is admitted
+    state = reducer(state, { type: "botAdded", ...httpNow, bot: Rlegacy });
+    expect(held(state)).toBeUndefined();
+    expect(state.selectedId).not.toBe("new-1");
+    // the DELETE's own answer settles it with the deletion's number; a later answer at or below it stays out
+    state = reducer(state, { type: "deletionSettled", source: "http", botId: "new-1", attempt: "a1", outcome: "deleted", tasksSeq: 2, tasksEpoch: "e1" });
+    expect(state.pendingDeletes?.["new-1"]).toBeUndefined();
+    state = frame(state, { ...created, name: "Late HTTP patch", tasksSeq: 2 } as unknown as Bot);
+    expect(held(state)).toBeUndefined();
+
+    // a stream deletion frame: the same fence, numbered by the frame
+    let other = frame(initialState, created);
+    other = reducer(other, { type: "botDeleted", source: "stream", botId: "new-1", hidden: false, tasksSeq: 1, tasksEpoch: "e1" });
+    other = frame(other, { ...created, name: "Late HTTP patch" } as unknown as Bot);
+    expect(held(other)).toBeUndefined();
+    expect(other.selectedId).not.toBe("new-1");
+  });
+
+  it("T6b: a bot only archived on another device (a scoped stream's hide) comes back when it is restored (numbered past the hide)", () => {
+    let state = frame(initialState, created);
+    state = reducer(state, { type: "botDeleted", source: "stream", botId: "new-1", hidden: true, tasksSeq: 1, tasksEpoch: "e1" });
+    expect(held(state)).toBeUndefined();
+    state = frame(state, { ...created, tasksSeq: 3 } as unknown as Bot);
+    expect(held(state)).toBeDefined();
+  });
+
+  it("T7 (Astra H1, duplicate frame): a held row chained onto the head advances it; a held sibling does not move it", () => {
+    let state = frame(initialState, { ...created, messages: [m1, m2], activeLeafId: "m1" } as unknown as Bot);
+    state = add(state, m2);
+    expect(held(state)?.activeLeafId).toBe("m2");
+    expect(ids(held(state)?.messages)).toEqual(["m1", "m2"]);
+
+    const c1 = { id: "c1", parentId: "m1", role: "bot", kind: "text", text: "first answer", at: 3 } as unknown as Message;
+    const c2 = { id: "c2", parentId: "m1", role: "bot", kind: "text", text: "retried answer", at: 4 } as unknown as Message;
+    let forked = frame(initialState, { ...created, messages: [m1, c1, c2], activeLeafId: "c2" } as unknown as Bot);
+    forked = add(forked, c1);
+    expect(held(forked)?.activeLeafId).toBe("c2");
+    expect(ids(held(forked)?.messages)).toEqual(["m1", "c1", "c2"]);
+  });
+
+  it("T8: a held head on another branch (a fork) is kept over the response's head", () => {
+    const m1x = { id: "m1x", parentId: null, role: "user", kind: "text", text: "edited first line", at: 5 } as unknown as Message;
+    let state = frame(initialState, { ...created, messages: [m1, m1x], activeLeafId: "m1x" } as unknown as Bot);
+    state = response(state, Rlegacy);
+    const bot = held(state)!;
+    expect(bot.activeLeafId).toBe("m1x");
+    expect(ids(bot.messages)).toEqual(["m1", "m2", "m1x"]);
+    expect(ids(visibleMessages(bot))).toEqual(["m1x"]);
+  });
+
+  it("T9: an unloaded conversation keeps its page machinery; the record still merges and the bot is selected", () => {
+    const line = { messageId: "m2", at: 2, role: "bot", kind: "options", text: "What do you actually want me for?" };
+    let state = frame(initialState, { ...created, messagesUnloaded: true, sidebarLine: line, activeLeafId: "m2" } as unknown as Bot);
+    state = response(state, { ...dupR } as unknown as Bot);
+    const bot = held(state)!;
+    expect(bot.messages).toEqual([]);
+    expect(bot.messagesUnloaded).toBe(true);
+    expect(bot.sidebarLine).toEqual(line);
+    expect(bot.name).toBe("Vega copy");
+    expect(state.selectedId).toBe("new-1");
+  });
+
+  it("T10: a response that brings an options row not held moves cardsRev", () => {
+    const before = add(frame(initialState, created), m1);
+    const rev = held(before)?.cardsRev ?? 0;
+    expect(held(response(before, Rlegacy))?.cardsRev).toBe(rev + 1);
+    // a held options row is not new
+    const both = add(before, m2);
+    expect(held(response(both, Rlegacy))?.cardsRev ?? 0).toBe(held(both)?.cardsRev ?? 0);
+  });
+
+  it("T11: the same response twice gives the same bot and head (I6)", () => {
+    const once = response(add(frame(initialState, created), m1), Rseq);
+    const twice = response(once, Rseq);
+    expect(held(twice)).toEqual(held(once));
+    expect(twice.bots.filter((item) => item.id === "new-1")).toHaveLength(1);
+  });
+
+  it("keeps the response's transcript and head when the stream sent only the bot frame", () => {
+    const bot = held(response(frame(initialState, created), Rlegacy))!;
+    expect(ids(bot.messages)).toEqual(["m1", "m2"]);
+    expect(bot.activeLeafId).toBe("m2");
   });
 });
 

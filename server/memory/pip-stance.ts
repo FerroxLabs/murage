@@ -11,7 +11,10 @@ export interface StanceBinding { support: Record<string, string[]>; events?: Rec
 /** One current stance per target, generation and occasion. Exclusion is reversible;
  * deleted or edited source revisions cease contributing immediately. */
 export function reconcilePipStances(db: DatabaseSync, onlyBot?: string) {
-  for (const row of db.prepare("SELECT id,intent FROM memory_scope_bindings WHERE subject_id='pip-stance'").all()) {
+  // by the primary key when one bot is named, else through memory_bindings_subject(subject_type, subject_id): never a scan of every binding (the stances are written as 'system', pip-lived.ts)
+  const rows = onlyBot ? db.prepare("SELECT id,intent FROM memory_scope_bindings WHERE id=?").all("pip-stance:" + onlyBot)
+    : db.prepare("SELECT id,intent FROM memory_scope_bindings WHERE subject_type='system' AND subject_id='pip-stance'").all();
+  for (const row of rows) {
     const botId = String(row.id).slice("pip-stance:".length);
     if (onlyBot && botId !== onlyBot) continue;
     const stance = JSON.parse(String(row.intent)) as StanceBinding;

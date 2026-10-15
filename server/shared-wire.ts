@@ -137,3 +137,32 @@ export function scopedBotFrame(frame: string, store: Pick<Store, "bots" | "group
   if (!payload.bot) return frame;
   return `${match[1] ?? ""}data: ${JSON.stringify({ ...payload, bot: remoteWireBot(payload.bot, store, owner) })}\n\n`;
 }
+
+/** The owner's bookkeeping, never shown to a caller that is not the owner's own surface (a script's grant, a bot's tool call): a
+ * bot's stream numbering (`tasksEpoch`, `tasksSeq`), a room's (`recordEpoch`, `recordSeq`), the run's removal ledger, and on
+ * transcript rows the turn ids (`turnId`, `dispatchedIn`). Stripped at the response boundary from the body and every nested
+ * record and row, wherever they sit. */
+const OWNER_ONLY_TOP = ["tasksEpoch", "tasksSeq", "recordEpoch", "recordSeq", "removed"] as const;
+/** The numbering names nothing but the owner's stream order, so it goes wherever it sits (a full bot, a sidebar bot, a room, a wrapper). */
+const OWNER_ONLY_ANY = ["tasksEpoch", "tasksSeq", "recordEpoch", "recordSeq"] as const;
+const OWNER_ONLY_ROW = ["turnId", "dispatchedIn"] as const;
+const isRowShape = (value: Record<string, unknown>) => typeof value.id === "string" && typeof value.role === "string";
+export function foreignBody(body: unknown, depth = 0): unknown {
+  if (depth > 12 || body === null || typeof body !== "object") return body;
+  if (Array.isArray(body)) {
+    const items = body.map(item => foreignBody(item, depth + 1));
+    return items.some((item, index) => item !== body[index]) ? items : body;
+  }
+  const record = body as Record<string, unknown>;
+  const drop = new Set<string>(depth === 0 ? OWNER_ONLY_TOP : OWNER_ONLY_ANY);
+  if (isRowShape(record)) for (const key of OWNER_ONLY_ROW) drop.add(key);
+  let changed = false;
+  const out: Record<string, unknown> = {};
+  for (const [key, value] of Object.entries(record)) {
+    if (drop.has(key)) { changed = true; continue; }
+    const next = foreignBody(value, depth + 1);
+    if (next !== value) changed = true;
+    out[key] = next;
+  }
+  return changed ? out : body;
+}

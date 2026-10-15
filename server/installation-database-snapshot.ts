@@ -1,3 +1,4 @@
+import { ensureForgetTable } from "./harness/event-log.ts";
 import { initializeTeamIdentityTables } from "./team-identities.ts";
 import { initializeThreadSnooze } from "./thread-snooze.ts";
 import { createHash } from "node:crypto";
@@ -9,15 +10,24 @@ import { acquireDataDirLeaseForProcess, dataDirLeasePaths } from "../electron/da
 import { validateMemorySchema } from "./memory/schema.ts";
 import { InstallationTranscriptGraph } from "./installation-transcript-graph.ts";
 import { initializeArtifacts } from "./artifacts.ts";
-import { initializeInbox } from "./inbox.ts";
-import { initializeMessageTables } from "./message-tables.ts";
+import { discardInboxProjection, initializeInbox, isInboxProjectionObject } from "./inbox.ts";
+import { LEGACY_OWED_TABLE_DDL, LEGACY_SHARED_OWED_INDEX, LEGACY_SHARED_OWED_INDEX_DDL } from "./room-request-owed.ts";
+import { ensureBrowserCheckIndex, initializeMessageTables } from "./message-tables.ts";
 import { initializeImageLibrary, initializeImageOperations } from "./image-operations-schema.ts";
 import { initializeProjectTables } from "./project-tables.ts";
 import { initializeMobilePush } from "./mobile-push-store.ts";
 import { initializeSharedRequestProvenance } from "./shared-provenance-schema.ts";
+import { initializePendingDelegations } from "./pending-delegations-schema.ts";
+import { initializeProjectCardDelivery } from "./project-card-delivery-schema.ts";
+import { initializeOwnerSends } from "./send-store.ts";
+import { initializeTurnSourceHolds } from "./turn-source-holds.ts";
 
+import { ensureIntegrityPassTable } from "./memory/integrity-state.ts";
+import { LEGACY_UPGRADE_TABLES, ensureUpgradeAppTables } from "./memory/upgrade-app-tables.ts";
 import { InstallationSnapshotError } from "./installation-snapshot-error.ts";
 import { flushCoalesced } from "./atomic.ts";
+import { ADDED_TABLE_LIFECYCLE } from "./added-table-lifecycle.ts";
+import { APP_SCHEMA_102_ADDITIONS } from "./installation-app-schema-downgrade.ts";
 export { InstallationSnapshotError } from "./installation-snapshot-error.ts";
 
 function regularFile(path: string, missing = false) {
@@ -48,6 +58,32 @@ function count(db: DatabaseSync, sql: string): number {
 const APP_TABLES = new Map<string, { required: boolean; optional: string[] }>(Object.entries({
   messages: { required: true, optional: [] },
   thread_state: { required: true, optional: [] },
+  open_card: { required: false, optional: [] },
+  turn_first: { required: false, optional: [] },
+  transcript_index_state: { required: false, optional: [] },
+  // pending "Checking the browser" notes, kept by the message writers and filled in the background (message-tables.ts), new in 1.0.2
+  browser_check_pending: { required: false, optional: [] },
+  // where the background integrity pass has got to (memory/integrity-state.ts), new in 1.0.2; outside the memory schema
+  upgrade_integrity_pass: { required: false, optional: ["lessons_floor", "feedback_floor", "events_floor"] },
+  // the conversion's worklist, the counter the upgrade screen's figures are keyed to, and the direct turns in flight (memory/upgrade-app-tables.ts), new in 1.0.2
+  upgrade_root_set_worklist: { required: false, optional: [] },
+  app_write_revision: { required: false, optional: [] },
+  direct_turn_inflight: { required: false, optional: [] },
+  // tables an earlier 1.0.2 preview wrote (the kept proofs of large root sets): known, never read, dropped when the restored file is opened
+  ...Object.fromEntries([...LEGACY_UPGRADE_TABLES].map(([table, { optional }]) => [table, { required: false, optional }])),
+  // the rows of a thread that name an image, by path (message-db.ts), new in 1.0.2
+  message_image: { required: false, optional: [] },
+  attachment_name: { required: false, optional: [] },
+  // cards without a request id, by (family, key) (message-db.ts), and the rows whose parent is not the row before them (transcript-backfill.ts)
+  keyed_card: { required: false, optional: [] },
+  // the branch index and the line index (branch-index.ts): small integer-keyed tables the writers keep and a thread's fill builds
+  thread_key: { required: false, optional: [] },
+  seg: { required: false, optional: [] },
+  msg_branch: { required: false, optional: [] },
+  fill_pending: { required: false, optional: [] },
+  line: { required: false, optional: [] },
+  // a branch move whose memory sources are still being flipped, in slices (memory/branch-change.ts)
+  branch_change: { required: false, optional: [] },
   // The substring-search index (message-search-index.ts): a contentless FTS5
   // virtual table plus the four shadow tables SQLite keeps for it. Not
   // required: an archive from before the index lacks them and the app builds
@@ -59,6 +95,15 @@ const APP_TABLES = new Map<string, { required: boolean; optional: string[] }>(Ob
   messages_fts_docsize: { required: false, optional: [] },
   messages_fts_config: { required: false, optional: [] },
   inbox_item_state: { required: false, optional: ["cleared_at"] },
+  // the Inbox projection (server/inbox.ts), derived from messages by triggers;
+  // an archive's copy is discarded at restore and rebuilt from its messages
+  inbox_raw: { required: false, optional: [] },
+  inbox_keys: { required: false, optional: [] },
+  inbox_items: { required: false, optional: [] },
+  inbox_counts: { required: false, optional: [] },
+  inbox_projection_state: { required: false, optional: [] },
+  setup_marks: { required: false, optional: [] },
+  inbox_fill_deferred: { required: false, optional: [] },
   artifacts: { required: false, optional: ["producer", "publication_id"] },
   output_publications: { required: false, optional: [] },
   image_operations: { required: false, optional: [] },
@@ -75,7 +120,15 @@ const APP_TABLES = new Map<string, { required: boolean; optional: string[] }>(Ob
   // required: false so an archive from before the release still restores
   team_identities: { required: false, optional: [] },
   project_settings: { required: false, optional: [] },
-  room_requests: { required: false, optional: [] },
+  room_requests: { required: false, optional: ["handoff", "shared_work"] },
+  // every owner send, committed before it is acknowledged (server/send-store.ts), new in 1.0.2;
+  // notice (the code of what the person was told) was appended by ALTER during 1.0.2, and so was turn_id (the turn a steer went into)
+  owner_sends: { required: false, optional: ["notice", "restore_held", "restore_gen", "stopped", "stop_gen", "action_id", "turn_id"] },
+  // the owner's deletion record and the restore generation (server/owner-deletions.ts, server/send-store.ts), new in 1.0.2
+  owner_deleted_threads: { required: false, optional: [] },
+  send_restore_generation: { required: false, optional: [] },
+  // the restore fence's holds on unfinished work (server/restore-fence.ts), new in 1.0.2
+  restore_holds: { required: false, optional: [] },
   project_work_items: { required: false, optional: [] },
   project_board_columns: { required: false, optional: [] },
   project_briefs: { required: false, optional: [] },
@@ -98,6 +151,11 @@ const APP_TABLES = new Map<string, { required: boolean; optional: string[] }>(Ob
   push_relay_removals: { required: false, optional: [] },
   // routine provenance of shared requests (shared-provenance-schema.ts); an older archive lacks it
   shared_request_provenance: { required: false, optional: [] },
+  // Tables added in 1.0.2 (shared_request_events, project_card_delivery_owed, ...) are not listed here: they are registered from
+  // APP_SCHEMA_102_ADDITIONS.tables, the list the downgrade drops, by referenceSchema() below (owner_sends carries a column appended
+  // later, so it is named above too).
+  // forgotten messages whose lines are still to leave the event log (harness/event-log.ts), new in 1.0.2
+  event_log_forgets: { required: false, optional: [] },
 }));
 
 type SchemaRow = { type: string; name: string; tbl_name: string; sql: string | null };
@@ -117,6 +175,9 @@ function columnShape(db: DatabaseSync, table: string): string[] {
 }
 
 let reference: Map<string, ReferenceObject> | undefined;
+/** APP_TABLES plus every table of APP_SCHEMA_102_ADDITIONS the initializers create: one list for what the downgrade drops and what a snapshot accepts. */
+let registeredTables: Map<string, { required: boolean; optional: string[] }> = APP_TABLES;
+function appTables() { referenceSchema(); return registeredTables; }
 /** The definitions the harness's own initializers create, read back from a
  * fresh in-memory database rather than copied by hand, so an index or table
  * the app changes is compared against what the app now writes. */
@@ -124,26 +185,60 @@ function referenceSchema(): Map<string, ReferenceObject> {
   if (reference) return reference;
   const db = new DatabaseSync(":memory:");
   try {
-    initializeMessageTables(db); initializeInbox(db); initializeArtifacts(db);
-    initializeImageOperations(db); initializeImageLibrary(db); initializeThreadSnooze(db); initializeProjectTables(db); initializeTeamIdentityTables(db); initializeMobilePush(db); initializeSharedRequestProvenance(db);
+    initializeMessageTables(db); initializeTurnSourceHolds(db); ensureBrowserCheckIndex(db); ensureIntegrityPassTable(db); ensureUpgradeAppTables(db); initializeInbox(db); initializeArtifacts(db);
+    for (const { schema } of LEGACY_UPGRADE_TABLES.values()) db.exec(schema);
+    initializeImageOperations(db); initializeImageLibrary(db); initializeThreadSnooze(db); initializeProjectTables(db); ensureForgetTable(db); initializeTeamIdentityTables(db); initializeMobilePush(db); initializeSharedRequestProvenance(db); initializeProjectCardDelivery(db); initializeOwnerSends(db); initializePendingDelegations(db);
     const objects = new Map<string, ReferenceObject>();
-    for (const row of db.prepare("SELECT type,name,tbl_name,sql FROM sqlite_schema").all() as SchemaRow[]) {
-      if (!APP_TABLES.has(row.tbl_name)) throw new Error(`initializer created an object outside APP_TABLES: ${row.name}`);
+    const rows = db.prepare("SELECT type,name,tbl_name,sql FROM sqlite_schema").all() as SchemaRow[];
+    const tables = new Map(APP_TABLES);
+    for (const name of APP_SCHEMA_102_ADDITIONS.tables) if (!tables.has(name) && rows.some(row => row.type === "table" && row.name === name)) tables.set(name, { required: false, optional: [] });
+    for (const row of rows) {
+      if (!tables.has(row.tbl_name)) throw new Error(`initializer created an object outside APP_TABLES: ${row.name}`);
       objects.set(row.name, { type: row.type, table: row.tbl_name, sql: new Set([normalizedSql(row.sql)]), columns: row.type === "table" ? [columnShape(db, row.name)] : [] });
     }
-    for (const [table, { optional }] of APP_TABLES) {
+    // The Inbox projection's triggers read inbox_item_state.cleared_at, so they
+    // would refuse the column drops below; they are recorded already, and an
+    // archive old enough to lack the column predates the projection too.
+    discardInboxProjection(db);
+    // a child table an earlier 1.0.2 build wrote without its cascade is still the same table
+    for (const [name, entry] of Object.entries(ADDED_TABLE_LIFECYCLE)) {
+      if (entry.kind === "child") for (const legacy of entry.legacyDdl) objects.get(name)?.sql.add(normalizedSql(legacy));
+    }
+    for (const [table, { optional }] of tables) {
       const object = objects.get(table);
       if (!object || object.type !== "table") throw new Error(`initializer did not create ${table}`);
       // An older archive predates the migration that appended these columns.
       // Dropping them from the fresh table restores exactly the text SQLite
       // kept before ALTER TABLE ADD COLUMN extended it.
       for (const column of [...optional].reverse()) {
+        // a trigger or an index that names the column (already recorded above) would make the drop fail: it goes first, this database is only a reference
+        for (const dependent of db.prepare("SELECT type, name, sql FROM sqlite_schema WHERE type IN ('trigger','index') AND sql IS NOT NULL").all() as Array<{ type: string; name: string; sql: string }>) {
+          if (new RegExp(`\\b${column}\\b`).test(dependent.sql)) db.exec(`DROP ${dependent.type === "index" ? "INDEX" : "TRIGGER"} "${dependent.name}"`);
+        }
         db.exec(`ALTER TABLE "${table}" DROP COLUMN "${column}"`);
         object.sql.add(normalizedSql((db.prepare("SELECT sql FROM sqlite_schema WHERE type='table' AND name=?").get(table) as SchemaRow).sql));
         object.columns.push(columnShape(db, table));
       }
     }
+    // An archive written by an earlier build still carries the partial index the owed set replaced: accepted with exactly that text
+    // (the app drops it on first open), never under another definition.
+    if (objects.has("room_requests")) {
+      db.exec(LEGACY_SHARED_OWED_INDEX_DDL);
+      objects.set(LEGACY_SHARED_OWED_INDEX, { type: "index", table: "room_requests", sql: new Set([normalizedSql((db.prepare("SELECT sql FROM sqlite_schema WHERE name=?").get(LEGACY_SHARED_OWED_INDEX) as SchemaRow).sql)]), columns: [] });
+    }
+    // The two-column owed table of the first build of this release is accepted with exactly its text and columns (restore
+    // preparation rebuilds it); the table is derived data, so nothing is lost.
+    const owedObject = objects.get("room_request_owed");
+    if (owedObject) {
+      const legacy = new DatabaseSync(":memory:");
+      try {
+        legacy.exec(LEGACY_OWED_TABLE_DDL);
+        owedObject.sql.add(normalizedSql((legacy.prepare("SELECT sql FROM sqlite_schema WHERE name='room_request_owed'").get() as SchemaRow).sql));
+        owedObject.columns.push(columnShape(legacy, "room_request_owed"));
+      } finally { legacy.close(); }
+    }
     reference = objects;
+    registeredTables = tables;
     return objects;
   } finally { db.close(); }
 }
@@ -159,6 +254,10 @@ export function inspectInstallationDatabase(db: DatabaseSync) {
   const expected = referenceSchema();
   for (const item of schema) {
     if (memoryObjects.has(String(item.name))) continue;
+    // The projection is derived data that restore discards before anything
+    // runs and the app rebuilds from the messages; its text is the app's to
+    // change, so an archive's copy is never held to a byte-exact definition.
+    if (isInboxProjectionObject(item)) continue;
     // A known NAME is not enough: an index kept under an allowed name but
     // made partial, unique, expression-based or re-targeted, or a table with a
     // CHECK, conflict clause or generated column, would survive activation
@@ -167,7 +266,8 @@ export function inspectInstallationDatabase(db: DatabaseSync) {
     const known = expected.get(String(item.name));
     if (!known || known.type !== item.type || known.table !== item.tbl_name || !known.sql.has(normalizedSql(item.sql))) fail("DATABASE_SCHEMA_UNSUPPORTED");
   }
-  for (const [table, { required }] of APP_TABLES) {
+  for (const [table, { required }] of appTables()) {
+    if (isInboxProjectionObject({ type: "table", name: table, tbl_name: table })) continue;
     if (!schema.some(item => item.type === "table" && item.name === table)) {
       if (required) fail("DATABASE_SCHEMA_UNSUPPORTED");
       continue;
@@ -223,7 +323,7 @@ function digestFile(path: string): string {
  * publishes without replacing any existing destination. No runtime Store,
  * migration, provider or scheduler is constructed. Other app-state components
  * must eventually share this offline epoch in the complete backup builder. */
-async function snapshotSqliteWhileOwned<T extends object>(dataDir: string, destination: string, component: "messages.db" | "memory-index.db", inspect: (db: DatabaseSync) => T) {
+async function snapshotSqliteWhileOwned<T extends object>(dataDir: string, destination: string, component: "messages.db" | "memory-index.db" | "connected-app-ledger.db", inspect: (db: DatabaseSync) => T) {
   const root = dataDirLeasePaths(dataDir).canonicalDataDir;
   if (!destination || /[\r\n\0]/.test(destination) || [".", "..", ""].includes(basename(destination))) throw new InstallationSnapshotError("INVALID_DESTINATION");
   // Canonicalize the parent, not the file: an existing destination must be
@@ -324,8 +424,21 @@ function snapshotMemoryIndexWhileOwned(dataDir: string, destination: string) {
   });
 }
 
+// The connected-app operation ledger (connected-app-journal.ts) keeps records
+// of actions whose outcome is not known, so equivalent requests stay blocked
+// until the bot checks the app. Those records matter on a restored computer
+// too: the remote action happened whatever machine asks next.
+function snapshotConnectedLedgerWhileOwned(dataDir: string, destination: string) {
+  return snapshotSqliteWhileOwned(dataDir, destination, "connected-app-ledger.db", db => {
+    const rows = db.prepare("PRAGMA integrity_check").all();
+    if (rows.length !== 1 || Object.values(rows[0])[0] !== "ok") throw new InstallationSnapshotError("DATABASE_INTEGRITY_FAILED");
+    return {};
+  });
+}
+
 export interface OfflineInstallation {
   readonly dataDir: string;
+  snapshotConnectedLedger(destination: string): Promise<Awaited<ReturnType<typeof snapshotConnectedLedgerWhileOwned>>>;
   snapshotDatabase(destination: string): Promise<Awaited<ReturnType<typeof snapshotDatabaseWhileOwned>>>;
   snapshotMemoryIndex(destination: string): Promise<Awaited<ReturnType<typeof snapshotMemoryIndexWhileOwned>>>;
 }
@@ -349,6 +462,13 @@ export async function withOfflineInstallation<T>(dataDir: string, operation: (in
         pending.add(result);
         // Attach a rejection handler without manufacturing an unhandled
         // finally() branch if an operation abandons its copy promise.
+        void result.then(() => pending.delete(result), () => pending.delete(result));
+        return result;
+      },
+      snapshotConnectedLedger(destination: string) {
+        if (!active) return Promise.reject(new InstallationSnapshotError("SNAPSHOT_EPOCH_CLOSED"));
+        const result = snapshotConnectedLedgerWhileOwned(root, destination);
+        pending.add(result);
         void result.then(() => pending.delete(result), () => pending.delete(result));
         return result;
       },

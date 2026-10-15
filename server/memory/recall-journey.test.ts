@@ -111,7 +111,10 @@ posixOnly("B30 fresh, deep and corrected recall through actual dispatch", () => 
       corrected = { id: result.record.id, version: result.record.version };
       expect(corrected.version).toBe(source.version + 1);
       // Authority is re-read per request: the same capability now receives the correction, never the superseded version.
-      const after = await search({ query: "weekly report colour" });
+      // 1.0.2: a correction revokes the superseded version write-time; until that revoke commits (a background slice) the scope reads "checking",
+      // which the capability answers as "memory could not be searched just now", never as the superseded text. Wait for it to commit.
+      let after = await search({ query: "weekly report colour" });
+      await expect.poll(async () => { after = await search({ query: "weekly report colour" }); return after.body.hits.some((item: any) => String(item.text).includes("B30_TEAL_CANARY")); }, { timeout: 15000, interval: 250 }).toBe(true);
       expect(after.status).toBe(200);
       expect(after.body.hits.some((item: any) => String(item.text).includes("B30_TEAL_CANARY"))).toBe(true);
       for (const item of after.body.hits) if (String(item.text).includes("B30_CHARCOAL_CANARY")) expect(workingEvidence(String(item.text))).toBe(true);
