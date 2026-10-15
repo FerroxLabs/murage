@@ -7,6 +7,7 @@ import { ensureScope, memoryAccess, reconcileMemoryRoster } from "./policy.ts";
 import { InternalCapabilities } from "../internal-capabilities.ts";
 import { searchMemory } from "./search.ts";
 import { buildMemoryBundle, hydrateMemoryRecord } from "./bundle.ts";
+import { LineageAllowance } from "./lineage-allowance.ts";
 
 beforeEach(()=>{closeDatabase();rmSync(DATA_DIR,{recursive:true,force:true});mkdirSync(DATA_DIR,{recursive:true});});
 
@@ -54,11 +55,11 @@ it("applies the same optional gate to canonical search and bundle while preservi
   const access=memoryAccess(registry,registry.resolve(`Bearer ${token}`)!,()=>roster);
   const bridge={search:async()=>({hits:[{id:"rule",version:1,score:0.032,similarity:0.95}],vectorRows:1})};
   const query="What approved replacement exists?";
-  expect((await searchMemory(query,access,bridge)).hits).toEqual([]);
-  expect((await buildMemoryBundle(query,access,bridge)).evidence).toEqual([]);
-  expect(hydrateMemoryRecord("rule",1,access).text).toContain("two reviewers");
+  expect((await searchMemory(query,access,bridge, {allowance: LineageAllowance.tool(1_000_000_000)})).hits).toEqual([]);
+  expect((await buildMemoryBundle(query,access,bridge, {allowance: LineageAllowance.tool()})).evidence).toEqual([]);
+  expect(hydrateMemoryRecord("rule",1,access, {allowance: LineageAllowance.tool(1_000_000_000)}).text).toContain("two reviewers");
   database().prepare("UPDATE memory_records SET owner_pinned=1 WHERE id='rule'").run();
-  expect((await buildMemoryBundle(query,access,bridge)).pinned.map(record=>record.id)).toEqual(["rule"]);
+  expect((await buildMemoryBundle(query,access,bridge, {allowance: LineageAllowance.tool()})).pinned.map(record=>record.id)).toEqual(["rule"]);
 });
 
 

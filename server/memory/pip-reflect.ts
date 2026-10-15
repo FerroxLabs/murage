@@ -9,12 +9,13 @@
 // one SQLite transaction, so a restart never sees half a transition.
 import { createHash } from "node:crypto";
 import type { DatabaseSync } from "node:sqlite";
-import { database, transaction } from "../database.ts";
+import { connectionId, database, transaction } from "../database.ts";
 import { reconcilePipStances } from "./pip-stance.ts";
 import { redactSecretsInText } from "../redact.ts";
 import { ensureScope } from "./policy.ts";
 import { withContinuityInferenceLease, continuityDay, reportMemoryUsage, type TextOnlyExtractor } from "./extract.ts";
-import { admissibleActionSources, admissibleOwnerSources, type AdmittedSource } from "./pip-admission.ts";
+import { admissibleActionSources, admissibleActionSourcesSliced, admissibleOwnerSources, admissibleOwnerSourcesSliced, forEachThreadSourcePage, hasAdmissibleAfter, hasAdmissibleAfterSliced, type AdmittedSource } from "./pip-admission.ts";
+import { heldStep } from "../observe.ts";
 import { applyLivedResult, expireProposals, validOwnerNominations, LIVED_SCHEMA, validLivedResult, type LivedResult } from "./pip-lived.ts";
 import { writeEpisode, writeTraceEpisode } from "./pip-episodes.ts";
 import { admissibleSentenceRanges } from "./pip-claims.ts";
@@ -210,10 +211,25 @@ export interface Candidate { bot: ReflectBot; threadId: string; surprise: number
 
 function newestIsSettledBotReply(db: DatabaseSync, threadId: string, now: number): boolean {
   const row = db.prepare(`SELECT s.speaker,s.kind,json_extract(v.payload,'$.occurredAt') AS at FROM memory_sources s JOIN memory_source_versions v ON v.source_id=s.id AND v.revision=s.revision
-    WHERE s.thread_id=? AND s.kind='text' AND s.state='active' ORDER BY at DESC LIMIT 1`).get(threadId);
+    WHERE s.thread_id=? AND s.kind='text' AND s.state='active' ORDER BY s.rowid DESC LIMIT 1`).get(threadId);
   if (!row) return false;
   const isOwnerish = row.speaker === "owner" || String(row.speaker).startsWith("person:");
   return !isOwnerish && now - Number(row.at ?? 0) >= REFLECTABLE_AGE_MS;
+}
+/** newestIsSettledBotReply, the same answer, read newest first in pages of the thread (pip-admission.ts forEachThreadSourcePage): the one statement
+ *  sorted every text source of the thread and read each row to filter it (rc13 real-data run, server3.log:27: 158 ms for one thread). */
+async function newestIsSettledBotReplySliced(db: DatabaseSync, threadId: string, now: number, between: () => Promise<void>): Promise<boolean> {
+  let newest: Record<string, unknown> | undefined;
+  await forEachThreadSourcePage(db, threadId, "text", between, page => {
+    newest = page[0];
+    return newest !== undefined;
+  }, "desc");
+  if (!newest) return false;
+  const speaker = String(newest.speaker);
+  let at = 0;
+  try { at = Number((JSON.parse(String(newest.payload)) as { occurredAt?: unknown }).occurredAt ?? 0); } catch { at = 0; }
+  const isOwnerish = speaker === "owner" || speaker.startsWith("person:");
+  return !isOwnerish && now - at >= REFLECTABLE_AGE_MS;
 }
 /** A held route is re-resolved at most this often: a changed binary or route (new fingerprint) clears the entry then. */
 export const SUPPORT_RECHECK_MS = 5 * 60_000;
@@ -225,8 +241,36 @@ export function routeBlocked(state: ReflectState, fingerprint: string | undefine
   return null;
 }
 
+/** The bot-level part of §3.2 (toggle, memory mode, no run, cooldown, route, daily cap): false when no thread of the bot can be reflectable. */
+function reflectGateOpen(deps: ReflectDeps, bot: ReflectBot, state: ReflectState, now: number): boolean {
+  if (!bot.continuity || !bot.options?.reflect) return false;
+  if (!["capture", "active"].includes(deps.memoryMode())) return false;
+  if (state.run) return false;
+  if (now < state.cooldownUntil) return false;
+  if (routeBlocked(state, state.lastFingerprint, now, true)) return false;
+  const today = dayOf(now);
+  return !(state.dailyRuns.day === today && state.dailyRuns.count >= DAILY_RUN_CAP);
+}
+/** The pending form of reflectableThreads (pendingOnly), in slices: at most PIP_PENDING_SLICE_MS of the serving thread at a time, the loop handed
+ *  back between slices (between threads, and between pages of one thread's walk). True when some thread has something to reflect. */
+async function anyThreadPendingSliced(db: DatabaseSync, deps: ReflectDeps, bot: ReflectBot, state: ReflectState, now: number, between: () => Promise<void>): Promise<boolean> {
+  if (!reflectGateOpen(deps, bot, state, now)) return false;
+  for (const threadId of bot.threadIds) {
+    if (state.excludedThreads.includes(threadId)) continue;
+    const cursor = state.threads[threadId];
+    if (cursor && now - cursor.lastRunAt < MIN_RUN_INTERVAL_MS) continue;
+    await between();
+    if (!await newestIsSettledBotReplySliced(db, threadId, now, between)) continue;
+    const q = { threadId, afterAt: cursor?.cursorAt, afterMessageId: cursor?.cursorMessageId ?? null, excludedThreads: state.excludedThreads };
+    if (await hasAdmissibleAfterSliced(db, bot.id, q, between)) return true;
+  }
+  return false;
+}
+/** The longest one slice of the pending check holds the serving thread. */
+export const PIP_PENDING_SLICE_MS = 20;
+
 /** §3.2: toggle on, memory capture or active, own direct thread, settled reply, a new admissible turn, spacing, caps. */
-export function reflectableThreads(db: DatabaseSync, deps: ReflectDeps, bot: ReflectBot, state: ReflectState, now: number): Candidate[] {
+export function reflectableThreads(db: DatabaseSync, deps: ReflectDeps, bot: ReflectBot, state: ReflectState, now: number, pendingOnly = false): Candidate[] {
   if (!bot.continuity || !bot.options?.reflect) return [];
   if (!["capture", "active"].includes(deps.memoryMode())) return [];
   if (state.run) return [];
@@ -242,6 +286,12 @@ export function reflectableThreads(db: DatabaseSync, deps: ReflectDeps, bot: Ref
     if (cursor && now - cursor.lastRunAt < MIN_RUN_INTERVAL_MS) continue;
     if (!newestIsSettledBotReply(db, threadId, now)) continue;
     const q = { threadId, afterAt: cursor?.cursorAt, afterMessageId: cursor?.cursorMessageId ?? null, excludedThreads: state.excludedThreads };
+    if (pendingOnly) {
+      // the pending check reads the newest sources until the cursor, never the whole thread (the run keeps the full lists below)
+      if (!hasAdmissibleAfter(db, bot.id, q)) continue;
+      out.push({ bot, threadId, surprise: 0, cursorAt: cursor?.cursorAt ?? 0 });
+      continue;
+    }
     const owner = admissibleOwnerSources(db, bot.id, q), actions = admissibleActionSources(db, bot.id, q);
     if (!owner.length && !actions.length) continue;
     // Surprise: occasion counts only (completed actions here; contradiction events arrive with P3).
@@ -250,14 +300,102 @@ export function reflectableThreads(db: DatabaseSync, deps: ReflectDeps, bot: Ref
   return out.sort((a, b) => b.surprise - a.surprise || a.cursorAt - b.cursorAt || a.threadId.localeCompare(b.threadId));
 }
 
+/** reflectableThreads (the run's full form), the same candidates in the same order, read in slices: `between()` is awaited between threads and
+ *  between pages of each thread, so the run's choice of a thread never holds the serving thread for every thread's whole history (rc13 real-data
+ *  run, server3.log:31: a 2292 ms stall, ten whole-thread source reads of about 103 ms each under no name). Each page runs as `memory.pip.threads`. */
+export async function reflectableThreadsSliced(db: DatabaseSync, deps: ReflectDeps, bot: ReflectBot, state: ReflectState, now: number, between: () => Promise<void>): Promise<Candidate[]> {
+  if (!reflectGateOpen(deps, bot, state, now)) return [];
+  const out: Candidate[] = [];
+  for (const threadId of bot.threadIds) {
+    if (state.excludedThreads.includes(threadId)) continue;
+    const cursor = state.threads[threadId];
+    if (cursor && now - cursor.lastRunAt < MIN_RUN_INTERVAL_MS) continue;
+    await between();
+    if (!await newestIsSettledBotReplySliced(db, threadId, now, between)) continue;
+    const q = { threadId, afterAt: cursor?.cursorAt, afterMessageId: cursor?.cursorMessageId ?? null, excludedThreads: state.excludedThreads };
+    const owner = await admissibleOwnerSourcesSliced(db, bot.id, q, between), actions = await admissibleActionSourcesSliced(db, bot.id, q, between);
+    if (!owner.length && !actions.length) continue;
+    out.push({ bot, threadId, surprise: actions.length, cursorAt: cursor?.cursorAt ?? 0 });
+  }
+  return out.sort((a, b) => b.surprise - a.surprise || a.cursorAt - b.cursorAt || a.threadId.localeCompare(b.threadId));
+}
+/** A `between()` for the sliced scans: hands the event loop back once `sliceMs` of the serving thread has been spent since the last hand-back. */
+export function sliceBetween(sliceMs = PIP_PENDING_SLICE_MS): () => Promise<void> {
+  let sliceStart = performance.now();
+  return async () => {
+    if (performance.now() - sliceStart < sliceMs) return;
+    await new Promise<void>(resolve => setImmediate(resolve));
+    sliceStart = performance.now();
+  };
+}
+
 /** True when lane 5 has something to do: a reflectable thread, or an attempt the reaper must settle. */
 export function pipReflectPending(deps: ReflectDeps): string | undefined {
+  return heldStep("memory.pip.pending", () => pipReflectPendingUnnamed(deps));
+}
+/** The per-bot thread scan of the pending check, remembered per bot while nothing it reads moved: the memory data revision, the bot's reflect
+ *  state and settings, the memory mode, the newest message, and the minute. A maintenance pass then costs one map read
+ *  per bot instead of a scan of every thread (34.6 s stall, STALLS-FINAL-DESIGN section 4). */
+const pendingScans = new Map<string, { key: string; pending: boolean }>();
+export const pipPendingScanStats = { scans: 0, memoHits: 0 };
+/** Test hook: forget the remembered scans. */
+export function resetPipPendingScans(): void { pendingScans.clear(); pipPendingScanStats.scans = 0; pipPendingScanStats.memoHits = 0; }
+const PENDING_SCAN_BUCKET_MS = 60_000;
+function pipReflectPendingUnnamed(deps: ReflectDeps): string | undefined {
   const db = database(), now = nowOf(deps);
+  // what the scan reads moves one of these: the memory data revision, or the newest message (a new settled reply) (two seeks per pass)
+  let revision: string | null = null;
+  try { revision = `${connectionId(db)}:${Number(db.prepare("SELECT data_revision FROM memory_meta WHERE id=1").get()?.data_revision ?? 0)}:${Number(db.prepare("SELECT COALESCE(MAX(rowid),0) AS n FROM messages").get()?.n ?? 0)}`; } catch { /* unknown: no memo */ }
   for (const bot of deps.bots()) {
     if (!bot.continuity) continue;
+    const row = db.prepare("SELECT intent FROM memory_scope_bindings WHERE id=?").get(reflectBindingId(bot.id));
     const state = readReflectState(db, bot.id);
     if (state.run && Object.values(state.run.families).some(f => ["requested", "uncertain-transport", "validated", "pending", "catch-up"].includes(f.state))) return bot.id;
-    if (reflectableThreads(db, deps, bot, state, now).length) return bot.id;
+    const key = revision === null ? null : `${revision}|${Math.floor(now / PENDING_SCAN_BUCKET_MS)}|${deps.memoryMode()}|${bot.settingsGeneration ?? ""}|${JSON.stringify(bot.options ?? null)}|${bot.threadIds.join(",")}|${String(row?.intent ?? "")}`;
+    const memo = key === null ? undefined : pendingScans.get(bot.id);
+    let pending: boolean;
+    if (memo && memo.key === key) { pending = memo.pending; pipPendingScanStats.memoHits++; }
+    else {
+      pipPendingScanStats.scans++;
+      pending = heldStep("memory.pip.threads", () => reflectableThreads(db, deps, bot, state, now, true).length > 0);
+      if (key !== null) pendingScans.set(bot.id, { key, pending });
+    }
+    if (pending) return bot.id;
+  }
+  return undefined;
+}
+
+/** pipReflectPending, the same answer and the same per-bot memo, with the thread scan in slices of at most PIP_PENDING_SLICE_MS: the idle lane's
+ *  check (index.ts onContinuity) never holds the serving thread for a bot's whole history (rc13 real-data boot: a 581 ms stall,
+ *  `memory.pip.pending:261ms others=memory.pip.threads:261msx2`). */
+export async function pipReflectPendingSliced(deps: ReflectDeps, sliceMs = PIP_PENDING_SLICE_MS): Promise<string | undefined> {
+  let sliceStart = performance.now();
+  const between = async () => {
+    if (performance.now() - sliceStart < sliceMs) return;
+    await new Promise<void>(resolve => setImmediate(resolve));
+    sliceStart = performance.now();
+  };
+  const db = database(), now = nowOf(deps);
+  let revision: string | null = null;
+  try { revision = `${connectionId(db)}:${Number(db.prepare("SELECT data_revision FROM memory_meta WHERE id=1").get()?.data_revision ?? 0)}:${Number(db.prepare("SELECT COALESCE(MAX(rowid),0) AS n FROM messages").get()?.n ?? 0)}`; } catch { /* unknown: no memo */ }
+  for (const bot of deps.bots()) {
+    if (!bot.continuity) continue;
+    await between();
+    // the data folder may have changed while the loop was handed back: the scan reads the connection it began on, or stops
+    if (database() !== db) return undefined;
+    const row = db.prepare("SELECT intent FROM memory_scope_bindings WHERE id=?").get(reflectBindingId(bot.id));
+    const state = readReflectState(db, bot.id);
+    if (state.run && Object.values(state.run.families).some(f => ["requested", "uncertain-transport", "validated", "pending", "catch-up"].includes(f.state))) return bot.id;
+    const key = revision === null ? null : `${revision}|${Math.floor(now / PENDING_SCAN_BUCKET_MS)}|${deps.memoryMode()}|${bot.settingsGeneration ?? ""}|${JSON.stringify(bot.options ?? null)}|${bot.threadIds.join(",")}|${String(row?.intent ?? "")}`;
+    const memo = key === null ? undefined : pendingScans.get(bot.id);
+    let pending: boolean;
+    if (memo && memo.key === key) { pending = memo.pending; pipPendingScanStats.memoHits++; }
+    else {
+      pipPendingScanStats.scans++;
+      pending = await anyThreadPendingSliced(db, deps, bot, state, now, between);
+      if (key !== null) pendingScans.set(bot.id, { key, pending });
+    }
+    if (pending) return bot.id;
   }
   return undefined;
 }
@@ -305,7 +443,10 @@ export async function runPipReflect(deps: ReflectDeps, botIdHint: string | undef
     const state = readReflectState(db, bot.id);
     // An unfinished run (restart, catch-up) resumes before anything new starts.
     if (state.run) { const resumed = await driveRun(deps, bot, signal); if (resumed.status !== "idle") return resumed; continue; }
-    const candidates = reflectableThreads(db, deps, bot, state, now0);
+    // in slices (reflectableThreadsSliced): the choice of a thread reads every candidate thread's sources
+    const candidates = await reflectableThreadsSliced(db, deps, bot, state, now0, sliceBetween());
+    // the loop was handed back: a stop, or a data folder changed meanwhile, ends the pass
+    if (signal.aborted || database() !== db) return { status: "idle" };
     for (const candidate of candidates) {
       const started = await startRun(deps, bot, candidate, signal);
       if (started.status !== "idle") return started;

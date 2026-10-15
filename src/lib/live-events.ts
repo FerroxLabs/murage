@@ -56,12 +56,19 @@ export interface LiveEventsHandlers {
    * the last known-good boundary. */
   onSnapshotRequired: () => Promise<boolean>;
   onOpen?: () => void;
+  /** The stream's first word: `resumed` says whether it carries on from the cursor. */
+  onHello?: (resumed: boolean) => void;
   onError?: () => void;
   /** Asked after the stream drops. EventSource never reveals the status that
    * ended it, so a dead session looks exactly like a host that went to
    * sleep; false ends the supervisor instead of retrying forever. */
   stillSignedIn?: () => Promise<boolean>;
   screens?: boolean;
+  /** This client lays a bot frame's `tasksDelta` over its held task rows
+   * (server/task-delta.ts); without it every bot frame carries the whole list. */
+  taskDelta?: boolean;
+  /** This client holds open request cards beside its page (`?cards=beside`). */
+  cardsBeside?: boolean;
   staleMs?: number;
   retryMinMs?: number;
   retryMaxMs?: number;
@@ -231,7 +238,7 @@ export function setDesktopSurfaceSecretForTest(value: string): void {
   secretRefused = false;
 }
 
-export function liveEventsUrl(options?: { since?: string | null; screens?: boolean }): string {
+export function liveEventsUrl(options?: { since?: string | null; screens?: boolean; taskDelta?: boolean; cardsBeside?: boolean }): string {
   const params = new URLSearchParams();
   // The harness scopes this stream to a phone's narrow view by default, so
   // that a paired device cannot receive frames for hidden bots or bot-to-bot
@@ -241,6 +248,9 @@ export function liveEventsUrl(options?: { since?: string | null; screens?: boole
   params.set("surface", "desktop");
   if (options?.since) params.set("since", options.since);
   if (options?.screens === false) params.set("screens", "off");
+  if (options?.taskDelta) params.set("tasks", "delta");
+  // This renderer holds open request cards beside a page (server/task-delta.ts).
+  if (options?.cardsBeside) params.set("cards", "beside");
   // …and the marker alone is not believed. Appended LAST so that every other
   // parameter keeps the position it had before this existed, and omitted
   // entirely when unknown — an empty value would only be a wrong one.
@@ -432,7 +442,7 @@ export function openLiveEvents(
     let current: LiveEventSourceLike;
     try {
       current = platform.createEventSource(
-        liveEventsUrl({ since: cursor, screens: handlers.screens }),
+        liveEventsUrl({ since: cursor, screens: handlers.screens, taskDelta: handlers.taskDelta, cardsBeside: handlers.cardsBeside }),
       );
     } catch {
       handlers.onError?.();
@@ -466,6 +476,7 @@ export function openLiveEvents(
       }
 
       if (frame.kind === "hello") {
+        handlers.onHello?.(frame.resumed === true);
         replayBoundary = frame.resumed === true ? parseCursor(frame.cursor) : null;
         // `resumed:true` is followed by replay frames. Advancing to hello's
         // newest cursor here would skip any replay frame not yet delivered if

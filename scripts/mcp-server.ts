@@ -566,6 +566,11 @@ function projectTask(task: Record<string, any>, activeThreadId: unknown) {
   };
 }
 
+/** A big owner lists its open, unread, pinned and newest tasks; any task is still reachable by its id. */
+function totalTasks(owner: Record<string, any>) {
+  return Number(owner.tasksTotal) > records(owner.tasks).length ? { totalTasks: Number(owner.tasksTotal), tasksListed: "the open, unread, pinned and newest tasks; older ones answer to their task id" } : {};
+}
+
 function projectBot(bot: Record<string, any>) {
   return {
     id: bot.id,
@@ -580,6 +585,7 @@ function projectBot(bot: Record<string, any>) {
     unread: Boolean(bot.unread),
     activeTaskId: bot.threadId,
     tasks: records(bot.tasks).map((task) => projectTask(task, bot.threadId)),
+    ...totalTasks(bot),
   };
 }
 
@@ -596,6 +602,7 @@ function projectChannel(channel: Record<string, any>) {
     busyBotId: channel.busyBotId ?? null,
     activeTaskId: channel.threadId,
     tasks: records(channel.tasks).map((task) => projectTask(task, channel.threadId)),
+    ...totalTasks(channel),
   };
 }
 
@@ -657,8 +664,23 @@ async function fleet(fetcher: (path: string, options?: RequestInit) => Promise<a
   return fetcher("/api/bots?messages=0");
 }
 
-function taskBelongsTo(owner: Record<string, any>, taskId: string): boolean {
-  return owner.threadId === taskId || records(owner.tasks).some((task) => task.threadId === taskId);
+/** A task is the owner's if the frame holds it. The frame carries a window of a
+ * big owner's tasks (server/task-window.ts), so one it does not hold is asked
+ * for by its thread id. */
+async function taskBelongsTo(
+  fetcher: (path: string, options?: RequestInit) => Promise<any>,
+  kind: "bot" | "channel",
+  owner: Record<string, any>,
+  taskId: string,
+): Promise<boolean> {
+  if (owner.threadId === taskId || records(owner.tasks).some((task) => task.threadId === taskId)) return true;
+  if (!(Number(owner.tasksTotal) > records(owner.tasks).length)) return false;
+  try {
+    const found = await fetcher(`/api/${kind === "bot" ? "bots" : "groups"}/${encodeURIComponent(String(owner.id))}/tasks/${encodeURIComponent(taskId)}`);
+    return isRecord(found?.task) && found.task.threadId === taskId;
+  } catch {
+    return false;
+  }
 }
 
 function messageNeedsInput(message: Record<string, any>): boolean {
@@ -794,7 +816,7 @@ export async function handleToolCall(
       const bot = records(res.bots).find((candidate) => candidate.id === botId);
       if (!bot) throw new Error(`Bot not found: ${botId}`);
       const taskId = args.task_id === undefined ? String(bot.threadId) : idArg(args, "task_id");
-      if (!taskBelongsTo(bot, taskId)) throw new Error(`Task '${taskId}' does not belong to bot '${botId}'`);
+      if (!(await taskBelongsTo(fetcher, "bot", bot, taskId))) throw new Error(`Task '${taskId}' does not belong to bot '${botId}'`);
       const limit = parsePositiveLimit(args.limit, 30, 200);
       const page = await fetcher(`/api/threads/${encodeURIComponent(taskId)}/messages?limit=${limit}`);
       return {
@@ -812,7 +834,7 @@ export async function handleToolCall(
       const bot = records(state.bots).find((candidate) => candidate.id === botId);
       if (!bot) throw new Error(`Bot not found: ${botId}`);
       const taskId = args.task_id === undefined ? String(bot.threadId) : idArg(args, "task_id");
-      if (!taskBelongsTo(bot, taskId)) throw new Error(`Task '${taskId}' does not belong to bot '${botId}'`);
+      if (!(await taskBelongsTo(fetcher, "bot", bot, taskId))) throw new Error(`Task '${taskId}' does not belong to bot '${botId}'`);
       if (bot.threadId !== taskId) {
         throw new Error(`Task '${taskId}' is not active for bot '${botId}'; switch to it before sending`);
       }
@@ -882,7 +904,7 @@ export async function handleToolCall(
       const channel = records(res.groups).find((candidate) => candidate.id === channelId);
       if (!channel) throw new Error(`Channel not found: ${channelId}`);
       const taskId = args.task_id === undefined ? String(channel.threadId) : idArg(args, "task_id");
-      if (!taskBelongsTo(channel, taskId)) throw new Error(`Task '${taskId}' does not belong to channel '${channelId}'`);
+      if (!(await taskBelongsTo(fetcher, "channel", channel, taskId))) throw new Error(`Task '${taskId}' does not belong to channel '${channelId}'`);
       const limit = parsePositiveLimit(args.limit, 30, 200);
       const page = await fetcher(`/api/threads/${encodeURIComponent(taskId)}/messages?limit=${limit}`);
       return {
@@ -900,7 +922,7 @@ export async function handleToolCall(
       const channel = records(state.groups).find((candidate) => candidate.id === channelId);
       if (!channel) throw new Error(`Channel not found: ${channelId}`);
       const taskId = args.task_id === undefined ? String(channel.threadId) : idArg(args, "task_id");
-      if (!taskBelongsTo(channel, taskId)) {
+      if (!(await taskBelongsTo(fetcher, "channel", channel, taskId))) {
         throw new Error(`Task '${taskId}' does not belong to channel '${channelId}'`);
       }
       if (channel.threadId !== taskId) {
@@ -1039,7 +1061,7 @@ export async function handleToolCall(
       let target = collection.find((candidate) => candidate.id === targetId);
       if (!target) throw new Error(`${targetType === "bot" ? "Bot" : "Channel"} not found: ${targetId}`);
       const taskId = args.task_id === undefined ? String(target.threadId) : idArg(args, "task_id");
-      if (!taskBelongsTo(target, taskId)) {
+      if (!(await taskBelongsTo(fetcher, targetType === "bot" ? "bot" : "channel", target, taskId))) {
         throw new Error(`Task '${taskId}' does not belong to ${targetType} '${targetId}'`);
       }
       let sawBusy = false;
@@ -1047,7 +1069,7 @@ export async function handleToolCall(
         const liveCollection = targetType === "bot" ? records(state.bots) : records(state.groups);
         target = liveCollection.find((candidate) => candidate.id === targetId);
         if (!target) throw new Error(`${targetType === "bot" ? "Bot" : "Channel"} not found: ${targetId}`);
-        if (!taskBelongsTo(target, taskId)) {
+        if (!(await taskBelongsTo(fetcher, targetType === "bot" ? "bot" : "channel", target, taskId))) {
           throw new Error(`Task '${taskId}' no longer belongs to ${targetType} '${targetId}'`);
         }
         const projectedTarget = targetType === "bot" ? projectBot(target) : projectChannel(target);

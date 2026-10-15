@@ -10,11 +10,27 @@ import { redactSecretsInText } from "../redact.ts";
 import { activateGroundedMemory } from "./automatic-learning.ts";
 import { readMemoryLearning } from "./learning-policy.ts";
 import { threadCheckpointId, unsettledIntention } from "./checkpoints.ts";
-import { sourceIsWithheldMessage } from "./replay-lineage.ts";
+import { LineageAllowance, prepareLineageCache, sourceIsWithheldMessage, sourceAwaitsProof } from "./replay-lineage.ts";
 import { enqueueProcedureCorrectionReview } from "./procedure-review.ts";
 import { revokeRecordDisclosures } from "./revocation.ts";
+import { heldStep } from "../observe.ts";
+import { denyLookup, lineageLive, memoryLookup } from "./deny-read.ts";
+import { memoryRefKey, type LineageVerdict } from "./lineage-types.ts";
 
 type Handle={sourceId:string;revision:number;startByte:number;endByte:number};
+/** Write-time (S4): what the consolidator may read of a source now. The source by its marks (deny_memory, tombstones, denied place, the
+ * pending scope window); a captured message also by its line (denyLookup, content reader) once write-time lineage is written on this file.
+ * "checking" defers the source (tried again later), "withheld" leaves it out; neither gives its words to the extractor. */
+export function writetimeSourceState(source:Record<string,unknown>):LineageVerdict["state"]{
+  const db=database();
+  const ref={kind:"source" as const,id:String(source.id),version:Number(source.revision),scopeId:String(source.scope_id)};
+  let state=memoryLookup(db,[ref],{audience:null}).get(memoryRefKey(ref))?.state??"checking";
+  if(state==="shown"&&typeof source.thread_id==="string"&&typeof source.message_id==="string"&&lineageLive(db)){
+    const line=denyLookup(db,{threadId:source.thread_id,lines:[{messageId:source.message_id,author:source.speaker==="owner"||source.speaker==="user"?"owner":"generated"}]},{audience:null}).get(source.message_id);
+    state=line?.state??"checking";
+  }
+  return state;
+}
 const hash=(text:string)=>createHash("sha256").update(text).digest("hex");
 function completedSource(jobId:string){
   const row=database().prepare(`SELECT j.status,j.cursor,s.*,length(CAST(json_extract(v.payload,'$.text') AS BLOB)) AS bytes
@@ -25,7 +41,7 @@ function completedSource(jobId:string){
   if(database().prepare("SELECT 1 FROM memory_tombstones WHERE target_type='source' AND target_id=? AND (revision IS NULL OR revision=?)").get(row.id,row.revision))throw new Error("MEMORY_SOURCE_UNAVAILABLE");
   return row;
 }
-function checkpointEvidence(handle:Handle,scopeId:string){
+function checkpointEvidence(handle:Handle,scopeId:string,pending?:{checking:boolean}){
   const db=database();
   const source=db.prepare(`SELECT s.*,substr(CAST(json_extract(v.payload,'$.text') AS BLOB),?,?) AS excerpt
     FROM memory_sources s JOIN memory_source_versions v ON v.source_id=s.id AND v.revision=s.revision
@@ -38,7 +54,10 @@ function checkpointEvidence(handle:Handle,scopeId:string){
   if(unsettledIntention(db,source))return null;
   // A reply withheld from bots (replay-lineage.ts) is not carried forward
   // either: the next checkpoint is rebuilt without it.
-  if(sourceIsWithheldMessage(source))return null;
+  if(sourceIsWithheldMessage(LineageAllowance.tool(),source))return null;
+  // "checking" is a revoke still being marked (a pending window), not a verdict: the roll waits for it (below) instead of dropping this evidence
+  const verdict=writetimeSourceState(source);
+  if(verdict!=="shown"){if(verdict==="checking"&&pending)pending.checking=true;return null;}
   const bytes=source.excerpt as Uint8Array;
   if(bytes.length!==handle.endByte-handle.startByte||bytes.length===0)return null;
   let text:string;try{text=new TextDecoder("utf-8",{fatal:true}).decode(bytes);}catch{return null;}
@@ -49,7 +68,10 @@ function checkpointEvidence(handle:Handle,scopeId:string){
  * Maintains at most four direct original-source references; never summarizes an
  * earlier summary, deletes source evidence, promotes authority, or writes pins.
  */
-export function refreshMemoryCheckpoint(completedJobId:string){
+export function refreshMemoryCheckpoint(completedJobId:string){ return heldStep("memory.checkpoint", () => refreshMemoryCheckpointUnheld(completedJobId)); }
+function refreshMemoryCheckpointUnheld(completedJobId:string){
+  // its evidence is judged inside the transaction: the lineage verdict cache can serve there once it is current
+  prepareLineageCache();
   return transaction(db=>{
     const source=completedSource(completedJobId);
     if(!source.thread_id)return {status:"deferred" as const,reason:"source-has-no-thread"};
@@ -66,12 +88,15 @@ export function refreshMemoryCheckpoint(completedJobId:string){
       while(length>0){try{new TextDecoder("utf-8",{fatal:true}).decode(raw.subarray(0,length));break;}catch{length--;}}
       if(length)handles.unshift({sourceId:String(source.id),revision:Number(source.revision),startByte:0,endByte:length});
     }
-    const seen=new Set<string>(),items=[];
+    const seen=new Set<string>(),items=[],pending={checking:false};
     for(const handle of handles){
       if(seen.has(handle.sourceId))continue;seen.add(handle.sourceId);
-      const item=checkpointEvidence(handle,String(source.scope_id));if(item)items.push(item);
+      const item=checkpointEvidence(handle,String(source.scope_id),pending);if(item)items.push(item);
       if(items.length===4)break;
     }
+    // Evidence still being checked (a revoke's pending window, 1.0.2 write-time) is neither shown nor withheld: the checkpoint is left as it
+    // is, not rolled over fewer items or archived, and the caller tries again once the window has drained (worker-controller.ts).
+    if(pending.checking)return {status:"deferred" as const,reason:"evidence-checking"};
     if(!items.length){
       if(previous?.state==="active"){
         db.prepare("UPDATE memory_records SET state='archived',valid_to=? WHERE id=? AND version=?").run(Date.now(),id,previous.version);
@@ -179,9 +204,15 @@ export async function consolidateMemorySource(completedJobId:string,extractor:Te
     }
     // A reply withheld from bots (replay-lineage.ts) is not learned from: its
     // words never go to the extractor and nothing new rests on it.
-    if(sourceIsWithheldMessage(source)){
-      persist(source.scope_id,{...state,status:"deferred",reason:"reply-withheld",retryAfter:null});
-      return {done:{status:"deferred" as const,reason:"reply-withheld",candidateIds:[],cursor:state.cursor,candidateCount:state.candidateCount,retryAfter:null}};
+    const lineage=LineageAllowance.tool();
+    const writetime=writetimeSourceState(source);
+    if(sourceIsWithheldMessage(lineage,source)||writetime!=="shown"){
+      // a reply only unproven for now is tried again, not given up on: the allowance ran out, a large set it rests on is still being proven,
+      // or a revoke is still being marked (write-time)
+      const unchecked=lineage.hit||writetime==="checking";
+      const retry=unchecked||sourceAwaitsProof(lineage,source)?Date.now()+60_000:null;
+      persist(source.scope_id,{...state,status:"deferred",reason:unchecked?"reply-unchecked":"reply-withheld",retryAfter:retry});
+      return {done:{status:"deferred" as const,reason:unchecked?"reply-unchecked":"reply-withheld",candidateIds:[],cursor:state.cursor,candidateCount:state.candidateCount,retryAfter:retry}};
     }
     const raw=db.prepare("SELECT substr(CAST(json_extract(payload,'$.text') AS BLOB),?,?) AS bytes FROM memory_source_versions WHERE source_id=? AND revision=?").get(state.cursor+1,CONSOLIDATION_CHUNK_BYTES,source.id,source.revision)!.bytes as Uint8Array;
     let text:string|undefined,length=raw.length;
@@ -212,7 +243,7 @@ export async function consolidateMemorySource(completedJobId:string,extractor:Te
     const current=db.prepare("SELECT policy_revision,deletion_epoch FROM memory_meta").get()!;
     completedSource(completedJobId);
     const intent=JSON.parse(String(db.prepare("SELECT intent FROM memory_scope_bindings WHERE id=?").get(id)!.intent));
-    if(readMemoryLearning(db).revision!==learningRevision||intent.generation!==generation||current.policy_revision!==meta!.policy_revision||current.deletion_epoch!==meta!.deletion_epoch||sourceIsWithheldMessage(source!))throw new Error("MEMORY_CONSOLIDATION_REVOKED");
+    if(readMemoryLearning(db).revision!==learningRevision||intent.generation!==generation||current.policy_revision!==meta!.policy_revision||current.deletion_epoch!==meta!.deletion_epoch||sourceIsWithheldMessage(LineageAllowance.tool(),source!)||writetimeSourceState(source!)!=="shown")throw new Error("MEMORY_CONSOLIDATION_REVOKED");
     if(result.status!=="complete"||signal.aborted){
       const reason=result.status!=="complete"?result.reason:"extraction-incomplete";
       const nextRetry=retryAfter(reason,text!,readMemoryEvolutionPolicy(state!.evolutionPolicyRevision));

@@ -556,6 +556,136 @@ export const HELP_INDEX: readonly HelpEntry[] = [
     "text": "- Image handling is up to date. Murage uses the latest image library for previews and thumbnails.\n- Backups on Windows wait for a slow start. On a busy Windows computer, setting up owner-only backup files now waits longer, so the step completes."
   },
   {
+    "id": "changelog/v1-0-2#memory-in-1-0-2",
+    "title": "What changed in Murage 1.0.2",
+    "description": "Memory stays quick on long histories and asks you about the things that need you, startup and search stay smooth, group chats pick the right bot, Murage for Chrome reads like the app, and new Ferrox Labs teams join the library.",
+    "heading": "Memory in 1.0.2",
+    "breadcrumb": "Murage docs → Changelog → What changed in Murage 1.0.2",
+    "where": "Murage docs → Changelog → What changed in Murage 1.0.2",
+    "url": "https://murage.app/docs/changelog/v1-0-2#memory-in-1-0-2",
+    "text": "- Memory stays compact on long conversations. Memory now stores each reply's sources as a small step from the one before, so a long-running thread takes a fraction of the disk it did and memory search answers quickly. The upgrade screen shows its progress, and Murage hands freed space back to your disk when there is room.\n- Memory answers faster. The first check of a resumed conversation is held to about a tenth of a second, and if it needs longer Murage shows \"checking\" and finishes in the background. Recall reads its index first, and background memory work gives way to what you are doing.\n- Memories that need you are easy to find.…"
+  },
+  {
+    "id": "changelog/v1-0-2#speed-on-long-histories-in-1-0-2",
+    "title": "What changed in Murage 1.0.2",
+    "description": "Memory stays quick on long histories and asks you about the things that need you, startup and search stay smooth, group chats pick the right bot, Murage for Chrome reads like the app, and new Ferrox Labs teams join the library.",
+    "heading": "Speed on long histories in 1.0.2",
+    "breadcrumb": "Murage docs → Changelog → What changed in Murage 1.0.2",
+    "where": "Murage docs → Changelog → What changed in Murage 1.0.2",
+    "url": "https://murage.app/docs/changelog/v1-0-2#speed-on-long-histories-in-1-0-2",
+    "text": "- Quick however much history you have. A turn does work in proportion to what is new, so a conversation with years of messages answers as fast as a new one.\n- The Inbox opens from a ready summary, and stays quick. Suggestions waiting for you are read straight from where they are kept, so it opens quickly however many there are. While it fills for the first time, it shows \"Getting your inbox ready\".\n- Search stays responsive. Results come from the newest matches first, and Murage tells you when it showed a limited set.\n- Your team list loads light. Each bot and room brings just its latest few messages, enough for the sidebar.…"
+  },
+  {
+    "id": "changelog/v1-0-2#engines-in-1-0-2",
+    "title": "What changed in Murage 1.0.2",
+    "description": "Memory stays quick on long histories and asks you about the things that need you, startup and search stay smooth, group chats pick the right bot, Murage for Chrome reads like the app, and new Ferrox Labs teams join the library.",
+    "heading": "Engines in 1.0.2",
+    "breadcrumb": "Murage docs → Changelog → What changed in Murage 1.0.2",
+    "where": "Murage docs → Changelog → What changed in Murage 1.0.2",
+    "url": "https://murage.app/docs/changelog/v1-0-2#engines-in-1-0-2",
+    "text": "- Fuigo 1.0.27. Murage 1.0.2 comes with Fuigo 1.0.27 bundled."
+  },
+  {
+    "id": "changelog/v1-0-2#stopped-and-queued-messages-in-1-0-2",
+    "title": "What changed in Murage 1.0.2",
+    "description": "Memory stays quick on long histories and asks you about the things that need you, startup and search stay smooth, group chats pick the right bot, Murage for Chrome reads like the app, and new Ferrox Labs teams join the library.",
+    "heading": "Stopped and queued messages in 1.0.2",
+    "breadcrumb": "Murage docs → Changelog → What changed in Murage 1.0.2",
+    "where": "Murage docs → Changelog → What changed in Murage 1.0.2",
+    "url": "https://murage.app/docs/changelog/v1-0-2#stopped-and-queued-messages-in-1-0-2",
+    "text": "- A message you stopped stays stopped, including across a restart. It runs only when you press Send again.\n- Send again and Dismiss are shown for any message or hand-off waiting on you.\n- A queued message runs once."
+  },
+  {
+    "id": "changelog/v1-0-2#deleting-a-conversation-in-1-0-2",
+    "title": "What changed in Murage 1.0.2",
+    "description": "Memory stays quick on long histories and asks you about the things that need you, startup and search stay smooth, group chats pick the right bot, Murage for Chrome reads like the app, and new Ferrox Labs teams join the library.",
+    "heading": "Deleting a conversation in 1.0.2",
+    "breadcrumb": "Murage docs → Changelog → What changed in Murage 1.0.2",
+    "where": "Murage docs → Changelog → What changed in Murage 1.0.2",
+    "url": "https://murage.app/docs/changelog/v1-0-2#deleting-a-conversation-in-1-0-2",
+    "text": "- Deleting a conversation also removes it from the coding engines' own files, including engines that keep their files in a synced folder.\n- When an engine is open, Murage says so, and finishes removing the conversation after you close it.\n- For synced folders, Murage tells you that your cloud provider may still hold older copies in its version history."
+  },
+  {
+    "id": "changelog/v1-0-2#routines-in-1-0-2",
+    "title": "What changed in Murage 1.0.2",
+    "description": "Memory stays quick on long histories and asks you about the things that need you, startup and search stay smooth, group chats pick the right bot, Murage for Chrome reads like the app, and new Ferrox Labs teams join the library.",
+    "heading": "Routines in 1.0.2",
+    "breadcrumb": "Murage docs → Changelog → What changed in Murage 1.0.2",
+    "where": "Murage docs → Changelog → What changed in Murage 1.0.2",
+    "url": "https://murage.app/docs/changelog/v1-0-2#routines-in-1-0-2",
+    "text": "- Routines stay light over years of runs. Run history is compacted during scheduled work, so a routine that has run for years costs no more than a new one.\n- Always allow for this routine holds. A command you allow for a routine runs on its later runs without asking again, and your bot reads the results of its own connected-app calls without asking at all, so a routine can run while you sleep.\n- Delete a past run. Each past run on the Routines calendar has a Delete button, so you can keep the history tidy."
+  },
+  {
+    "id": "changelog/v1-0-2#group-chats-in-1-0-2",
+    "title": "What changed in Murage 1.0.2",
+    "description": "Memory stays quick on long histories and asks you about the things that need you, startup and search stay smooth, group chats pick the right bot, Murage for Chrome reads like the app, and new Ferrox Labs teams join the library.",
+    "heading": "Group chats in 1.0.2",
+    "breadcrumb": "Murage docs → Changelog → What changed in Murage 1.0.2",
+    "where": "Murage docs → Changelog → What changed in Murage 1.0.2",
+    "url": "https://murage.app/docs/changelog/v1-0-2#group-chats-in-1-0-2",
+    "text": "- Group chats pick the right bot to answer. With a Flux key, Murage's decision model chooses which bot should reply in a group chat, asks Flux not to keep anything it sends, and decides within about a second. If it takes longer, or is not sure, the lead answers. You can switch it off in Settings."
+  },
+  {
+    "id": "changelog/v1-0-2#chats-and-bots-in-1-0-2",
+    "title": "What changed in Murage 1.0.2",
+    "description": "Memory stays quick on long histories and asks you about the things that need you, startup and search stay smooth, group chats pick the right bot, Murage for Chrome reads like the app, and new Ferrox Labs teams join the library.",
+    "heading": "Chats and bots in 1.0.2",
+    "breadcrumb": "Murage docs → Changelog → What changed in Murage 1.0.2",
+    "where": "Murage docs → Changelog → What changed in Murage 1.0.2",
+    "url": "https://murage.app/docs/changelog/v1-0-2#chats-and-bots-in-1-0-2",
+    "text": "- Unmatched actions live in the Inspector. When a bot says it did something Murage has no record of, the note now sits in the Inspector sidebar beside the chat, and actions a teammate ran for the bot count as records.\n- House rules keep up with your typing. The house rules editor keeps every word you type, however fast you write.\n- Edits you are typing stay with their message. An edit keeps its words when you switch bots or while Murage is busy, and you can edit again if a change has not gone through after 20 seconds.\n- Any engine can run your bot. A bot moved to an engine that cannot reach its computer still answers, and says what it can do without the computer.…"
+  },
+  {
+    "id": "changelog/v1-0-2#murage-for-chrome-in-1-0-2",
+    "title": "What changed in Murage 1.0.2",
+    "description": "Memory stays quick on long histories and asks you about the things that need you, startup and search stay smooth, group chats pick the right bot, Murage for Chrome reads like the app, and new Ferrox Labs teams join the library.",
+    "heading": "Murage for Chrome in 1.0.2",
+    "breadcrumb": "Murage docs → Changelog → What changed in Murage 1.0.2",
+    "where": "Murage docs → Changelog → What changed in Murage 1.0.2",
+    "url": "https://murage.app/docs/changelog/v1-0-2#murage-for-chrome-in-1-0-2",
+    "text": "- Murage for Chrome reads like the app. The panel shows the bot's own name and colour, cards have plain headings such as \"click on example.com\", access levels use the app's names (Ask each step, Ask once per task, Full access), an approval card waits 15 minutes like every other card, and the browser check finishes in the background and says \"checking\" while it runs."
+  },
+  {
+    "id": "changelog/v1-0-2#connected-apps-in-1-0-2",
+    "title": "What changed in Murage 1.0.2",
+    "description": "Memory stays quick on long histories and asks you about the things that need you, startup and search stay smooth, group chats pick the right bot, Murage for Chrome reads like the app, and new Ferrox Labs teams join the library.",
+    "heading": "Connected apps in 1.0.2",
+    "breadcrumb": "Murage docs → Changelog → What changed in Murage 1.0.2",
+    "where": "Murage docs → Changelog → What changed in Murage 1.0.2",
+    "url": "https://murage.app/docs/changelog/v1-0-2#connected-apps-in-1-0-2",
+    "text": "- Connected apps keep every valid tool. If one tool in a connected app's list is malformed, Murage keeps all the others and your bot can use them.\n- A real action through a connected app is recorded as done. When your bot sends an email, adds a calendar event or posts through a connected app, Murage records the action, so the reply and the Inspector agree with what happened.\n- Approvals read in plain words. Each approval card says what your bot wants to do in everyday language, and your bot no longer asks to read its own results.\n- Delegations, team names and the business crew's lead show correctly.…"
+  },
+  {
+    "id": "changelog/v1-0-2#windows-in-1-0-2",
+    "title": "What changed in Murage 1.0.2",
+    "description": "Memory stays quick on long histories and asks you about the things that need you, startup and search stay smooth, group chats pick the right bot, Murage for Chrome reads like the app, and new Ferrox Labs teams join the library.",
+    "heading": "Windows in 1.0.2",
+    "breadcrumb": "Murage docs → Changelog → What changed in Murage 1.0.2",
+    "where": "Murage docs → Changelog → What changed in Murage 1.0.2",
+    "url": "https://murage.app/docs/changelog/v1-0-2#windows-in-1-0-2",
+    "text": "- Windows installs and uninstalls cleanly without admin rights. Murage installs for a standard user in a couple of minutes, starts healthy, and uninstalls completely, including its entry in Apps."
+  },
+  {
+    "id": "changelog/v1-0-2#flux-in-1-0-2",
+    "title": "What changed in Murage 1.0.2",
+    "description": "Memory stays quick on long histories and asks you about the things that need you, startup and search stay smooth, group chats pick the right bot, Murage for Chrome reads like the app, and new Ferrox Labs teams join the library.",
+    "heading": "Flux in 1.0.2",
+    "breadcrumb": "Murage docs → Changelog → What changed in Murage 1.0.2",
+    "where": "Murage docs → Changelog → What changed in Murage 1.0.2",
+    "url": "https://murage.app/docs/changelog/v1-0-2#flux-in-1-0-2",
+    "text": "- Pictures and voice through Flux use Flux's current services. Image generation goes straight to Flux's live image service, and live transcription stays behind its own switch until you turn it on.\n- Murage checks your Flux key once and waits for you. If Flux does not accept a key, Murage stops asking until you test, save or re-enter it, and connected apps and web search try again on a steady schedule of their own."
+  },
+  {
+    "id": "changelog/v1-0-2#under-the-hood-in-1-0-2",
+    "title": "What changed in Murage 1.0.2",
+    "description": "Memory stays quick on long histories and asks you about the things that need you, startup and search stay smooth, group chats pick the right bot, Murage for Chrome reads like the app, and new Ferrox Labs teams join the library.",
+    "heading": "Under the hood in 1.0.2",
+    "breadcrumb": "Murage docs → Changelog → What changed in Murage 1.0.2",
+    "where": "Murage docs → Changelog → What changed in Murage 1.0.2",
+    "url": "https://murage.app/docs/changelog/v1-0-2#under-the-hood-in-1-0-2",
+    "text": "- A wide set of everyday improvements. Up to eight per-bot desktops, MCP tools that start from Windows command shims, remote MCP servers that get 30 seconds to list their tools, phone pairing that picks your real Wi-Fi or Ethernet address, chats that follow the newest message after you switch threads, routines that keep their detailed error, and settings files saved with a byte order mark all work as you would expect.\n- Every release is checked on Intel Macs. Each build now starts on a real Intel Mac and checks its WhatsApp connection before it is published."
+  },
+  {
     "id": "computers/cloud-and-vps#box-cloud-computer",
     "title": "Cloud computer and your own VPS",
     "description": "Choose a managed Box desktop or a hardened container on a Linux server you own.",
@@ -1605,7 +1735,7 @@ export const HELP_INDEX: readonly HelpEntry[] = [
     "breadcrumb": "Murage docs → Features → Chat, tasks, rooms, and teams",
     "where": "Murage docs → Features → Chat, tasks, rooms, and teams",
     "url": "https://murage.app/docs/features/chat-and-teams#deleting-conversations-and-channels",
-    "text": "Right-click a channel in the sidebar, or use the channel's More actions menu, and choose Delete. Type the name to confirm. Every message in it goes, but the bots stay. Deleting the last conversation in a channel leaves a fresh, empty one, and a channel shows an error instead of failing quietly when something goes wrong.\n\nEditing a message and running it again starts the new run once."
+    "text": "Right-click a channel in the sidebar, or use the channel's More actions menu, and choose Delete. Type the name to confirm. Every message in it goes, but the bots stay. Deleting the last conversation in a channel leaves a fresh, empty one, and a channel shows an error instead of failing quietly when something goes wrong.\n\nWhen you delete a conversation, Murage removes its words from the coding engines' files on this computer. If an engine is using one of those files, Murage leaves that file alone, tells you, and finishes later. Murage never changes another conversation's words. Copies in backups or in an engine's online account are not removed by Murage.…"
   },
   {
     "id": "features/engine-commands#engine-commands",

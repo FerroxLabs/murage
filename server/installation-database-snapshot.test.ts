@@ -12,8 +12,9 @@ import { initializeImageLibrary, initializeImageOperations } from "./image-opera
 import { initializeThreadSnooze } from "./thread-snooze.ts";
 import { initializeMobilePush } from "./mobile-push-store.ts";
 import { initializeSharedRequestProvenance } from "./shared-provenance-schema.ts";
+import { initializePendingDelegations } from "./pending-delegations-schema.ts";
 import { inspectInstallationDatabase, snapshotInstallationDatabase, withOfflineInstallation, type OfflineInstallation } from "./installation-database-snapshot.ts";
-import { MEMORY_SCHEMA_V2,MEMORY_SCHEMA_V3,migrateMemorySchema } from "./memory/schema.ts";
+import { MEMORY_SCHEMA_VERSION,MEMORY_SCHEMA_V2,MEMORY_SCHEMA_V3,migrateMemorySchema } from "./memory/schema.ts";
 import { pauseRestoredMemory } from "./memory/restore.ts";
 import { readMemoryLearning, updateMemoryLearning } from "./memory/learning-policy.ts";
 
@@ -90,6 +91,22 @@ it("accepts the inbox and saved-file tables the harness creates, and an older ar
   initializeInbox(older.db); initializeArtifacts(older.db);
   older.db.exec("ALTER TABLE artifacts DROP COLUMN publication_id; ALTER TABLE artifacts DROP COLUMN producer");
   expect(await snapshotInstallationDatabase(older.data, older.target)).toMatchObject({ status: "copied" });
+});
+
+it("does not hold the Inbox projection to its byte-exact text: it is derived data that restore discards", async () => {
+  // A later release changes a trigger body, a counter or an index in the projection; every archive an earlier release wrote must still restore.
+  const f = fixture();
+  initializeInbox(f.db);
+  f.db.exec(`DROP TRIGGER inbox_project_delete;
+    CREATE TRIGGER inbox_project_delete AFTER DELETE ON messages BEGIN /* an earlier release's wording */ DELETE FROM inbox_raw WHERE thread_id=OLD.thread_id AND message_id=OLD.id; END;
+    DROP INDEX inbox_raw_rank_4; CREATE INDEX inbox_raw_rank_4 ON inbox_raw(source_key,at DESC);
+    DROP INDEX setup_marks_tail_4; CREATE INDEX setup_marks_tail_4 ON setup_marks(thread_id,at);`);
+  expect(await snapshotInstallationDatabase(f.data, f.target)).toMatchObject({ status: "copied", messages: 1 });
+  // a trigger that is not the projection's is still refused
+  const hostile = fixture();
+  initializeInbox(hostile.db);
+  hostile.db.exec("CREATE TRIGGER hostile AFTER INSERT ON messages BEGIN DELETE FROM thread_state; END");
+  await expect(snapshotInstallationDatabase(hostile.data, hostile.target)).rejects.toMatchObject({ code: "DATABASE_SCHEMA_UNSUPPORTED" });
 });
 
 it("accepts conversation snoozes with and without the until-new-activity column", async () => {
@@ -393,7 +410,7 @@ it.each([2,3])("inspects and restores a v%s memory archive into v4",async versio
  expect(await snapshotInstallationDatabase(f.data,f.target)).toMatchObject({status:"copied"});
  const restored=new DatabaseSync(f.target);try{
  migrateMemorySchema(restored);restored.exec("BEGIN IMMEDIATE");pauseRestoredMemory(restored);restored.exec("COMMIT");
- expect(restored.prepare("SELECT schema_version,mode FROM memory_meta").get()).toEqual({schema_version:6,mode:"paused"});expect(readMemoryLearning(restored)).toMatchObject({version:2,dailyInputTokens:400000});
+ expect(restored.prepare("SELECT schema_version,mode FROM memory_meta").get()).toEqual({schema_version:MEMORY_SCHEMA_VERSION,mode:"paused"});expect(readMemoryLearning(restored)).toMatchObject({version:2,dailyInputTokens:400000});
  }finally{restored.close();}
 });
 
@@ -416,4 +433,28 @@ it("accepts shared_request_provenance with rows, snapshots it, and still accepts
   prep(hostile);
   hostile.db.exec("CREATE TABLE shared_request_provenance (request_id TEXT PRIMARY KEY, origin TEXT NOT NULL, permission_mode TEXT, trigger_source TEXT)");
   expect(() => inspectInstallationDatabase(hostile.db)).toThrow();
+});
+
+// Astra r20 (e): the queue table is part of the reference schema; an older archive without it, and without the owed-set index, still passes.
+it("accepts the pending_delegations table with its indexes, accepts an older archive without it, and rejects a tampered pd_due", () => {
+  const fresh = fixture();
+  initializePendingDelegations(fresh.db);
+  fresh.db.prepare("INSERT INTO pending_delegations(id, source_thread_id, to_bot_id, from_bot_id, phase, retry_at, item) VALUES('a','s','t','f','parked',1,'{}')").run();
+  expect(inspectInstallationDatabase(fresh.db)).toMatchObject({ messages: 1, threads: 1 });
+  const older = fixture();
+  expect(inspectInstallationDatabase(older.db)).toMatchObject({ messages: 1, threads: 1 });
+  for (const tamper of [
+    "DROP INDEX pd_due; CREATE INDEX pd_due ON pending_delegations(retry_at)",                                            // no longer partial
+    "DROP INDEX pd_due; CREATE INDEX pd_due ON pending_delegations(retry_at, id) WHERE retry_at IS NOT NULL AND phase='parked'",
+    "DROP INDEX pd_thread; CREATE UNIQUE INDEX pd_thread ON pending_delegations(source_thread_id)",
+    "CREATE INDEX pd_extra ON pending_delegations(item)",
+  ]) {
+    const hostile = fixture();
+    initializePendingDelegations(hostile.db);
+    hostile.db.exec(tamper);
+    expect(() => inspectInstallationDatabase(hostile.db), tamper).toThrow();
+  }
+  const badTable = fixture();
+  badTable.db.exec("CREATE TABLE pending_delegations (id TEXT PRIMARY KEY NOT NULL, item TEXT NOT NULL)");
+  expect(() => inspectInstallationDatabase(badTable.db)).toThrow();
 });

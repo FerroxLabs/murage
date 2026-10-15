@@ -61,3 +61,42 @@ describe("api() failures", () => {
     await expect(api("/api/routines")).resolves.toEqual({ routines: [], runs: [] });
   });
 });
+
+describe("api() repeats a settings write only on the server's own busy answer", () => {
+  /** The route answers each call in turn from `answers`; the desktop-secret probe is answered as a phone surface's. */
+  const sequence = (answers: Array<{ status: number; body: unknown }>) => {
+    const calls: string[] = [];
+    globalThis.fetch = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const path = typeof input === "string" ? input : String(input);
+      if (path.includes("/api/desktop-secret")) return new Response("{}", { status: 404, headers: { "content-type": "application/json" } });
+      calls.push(`${init?.method ?? "GET"} ${path}`);
+      const next = answers.shift() ?? { status: 200, body: { ok: true } };
+      return new Response(JSON.stringify(next.body), { status: next.status, headers: { "content-type": "application/json" } });
+    }) as typeof fetch;
+    return calls;
+  };
+
+  it("a failed save answered with a plain 503 reaches the caller on the first try", async () => {
+    const calls = sequence([{ status: 503, body: { error: "Fixture save unavailable" } }, { status: 200, body: { ok: true } }]);
+    const error = await api("/api/config", { method: "PUT", body: "{}" }).then(() => null, (cause: unknown) => cause);
+    expect((error as { status?: number }).status).toBe(503);
+    expect((error as Error).message).toBe("Fixture save unavailable");
+    expect(calls).toEqual(["PUT /api/config"]);
+  });
+
+  it("a DATABASE_BUSY answer is repeated after its Retry-After, with the same request", async () => {
+    vi.useFakeTimers();
+    try {
+      const calls = sequence([
+        { status: 503, body: { error: "Busy for a moment", code: "DATABASE_BUSY", retryable: true, retryAfterSeconds: 1 } },
+        { status: 200, body: { ok: true } },
+      ]);
+      const done = api("/api/config", { method: "PATCH", body: "{}" });
+      await vi.advanceTimersByTimeAsync(1_000);
+      await expect(done).resolves.toMatchObject({ ok: true });
+      expect(calls).toEqual(["PATCH /api/config", "PATCH /api/config"]);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+});

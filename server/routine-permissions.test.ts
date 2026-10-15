@@ -210,6 +210,30 @@ describe("Always allow for this routine", () => {
     expect(autoVerdict(ask, "Bash", exact.command, { ...routine, scope: "local-computer", exactCommand: exact, routineAllow: [exactKey] }).approve).toBeNull();
   });
 
+  // Astra's two reviews of id-tolerant routine grants (release 1.0.2): every
+  // pair below was covered by a grant on the first command once ids could
+  // vary. A routine grant covers only the exact command, as in 1.0.1, so
+  // each later command asks.
+  it("covers no other command where only an id changed (Astra pairs)", () => {
+    for (const [approved, later] of [
+      ["aws s3 rm s3://bucket/a1b2c3d4", "aws s3 rm s3://bucket/e5f6a7b8"],
+      ["curl -X DELETE https://api.example.com/items/a1b2c3d4", "curl -X DELETE https://api.example.com/items/e5f6a7b8"],
+      ["curl -X POST -d hello https://api.example.com/inbox/a1b2c3d4", "curl -X POST -d hello https://api.example.com/inbox/e5f6a7b8"],
+      ["git push origin a1b2c3d4", "git push origin e5f6a7b8"],
+      ["/opt/tools/a1b2c3d4 --check", "/opt/tools/e5f6a7b8 --check"],
+      [`python3 -c "open('/archive/a1b2c3d4','w').write('')"`, `python3 -c "open('/archive/e5f6a7b8','w').write('')"`],
+      ["cat /Users/ada/.murage/workspaces/a1b2c3d4/MEMORY.md", "cat /Users/ada/.murage/workspaces/e5f6a7b8/MEMORY.md"],
+      [
+        "cat /Users/ada/.claude/projects/-Users-ada-work/550e8400-e29b-41d4-a716-446655440000/tool-results/result.txt",
+        "cat /Users/ada/.claude/projects/-Users-ada-work/9b2d6f1e-4a7c-4e3b-8d5f-0c1a2b3c4d5e/tool-results/result.txt",
+      ],
+    ]) {
+      const granted = exactCommandKey({ ...exact, command: approved! })!;
+      expect(autoVerdict(ask, "Bash", approved!, { ...routine, exactCommand: { ...exact, command: approved! }, routineAllow: [granted] }).source, approved).toBe("routine-allow");
+      expect(autoVerdict(ask, "Bash", later!, { ...routine, exactCommand: { ...exact, command: later! }, routineAllow: [granted] }), later).toMatchObject({ approve: null, source: "no-grant" });
+    }
+  });
+
   it("keeps only exact-command and stop-line keys", () => {
     expect(routineGrantKeys(["Bash", "Bash:git", exactKey, "stop:delete:/x", "stop:pay:stripe:cus_1", 3, "exact:nonsense"])).toEqual([exactKey, "stop:delete:/x", "stop:pay:stripe:cus_1"]);
     expect(isRoutineGrantKey("Bash:git")).toBe(false);

@@ -107,11 +107,11 @@ posixOnly("the owner's integrations in a 1:1 turn", () => {
   }, 120000);
 
   it("mounts the owner's connected apps for the owner's words, and not for words nobody proved", async () => {
-    expect(await directTurnServers(lead, "owner asks for connected apps", true)).toContain("composio");
-    expect(await directTurnServers(lead, "unproven caller asks for connected apps", false)).not.toContain("composio");
+    expect(await directTurnServers(lead, "owner asks for connected apps", true)).toContain("murage_connectors");
+    expect(await directTurnServers(lead, "unproven caller asks for connected apps", false)).not.toContain("murage_connectors");
     // the bot is told its connected apps are off for this turn, never handed the tool guide
     expect(readDump().systemPrompt ?? "").not.toContain("COMPOSIO_MULTI_EXECUTE_TOOL");
-    expect(await directTurnServers(lead, "owner asks for connected apps again", true)).toContain("composio");
+    expect(await directTurnServers(lead, "owner asks for connected apps again", true)).toContain("murage_connectors");
   }, 120000);
 
   it("mounts the owner's browser for the owner's words, and not for words nobody proved", async () => {
@@ -171,7 +171,7 @@ posixOnly("the owner's integrations in a 1:1 turn", () => {
     expect(started.status, JSON.stringify(started.body)).toBe(201);
     await expect.poll(() => dumpHas("routine sweep: check my android"), { timeout: 30000 }).toBe(true);
     const servers = Object.keys(readDump().mcpConfig?.mcpServers ?? {});
-    for (const name of ["owner-tools", "composio", "browser", "phone", "dweb", "agents"]) expect(servers).toContain(name);
+    for (const name of ["owner-tools", "murage_connectors", "browser", "phone", "dweb", "agents"]) expect(servers).toContain(name);
     await expect.poll(async () => (await api("GET", "/api/routines")).body.runs.find((run: any) => run.id === started.body.run.id)?.status, { timeout: 30000 })
       .toMatch(/completed|failed|cancelled/);
   }, 120000);

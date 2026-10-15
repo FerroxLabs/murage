@@ -2,11 +2,15 @@
 // A disk and CPU watchdog with application byte accounting. Periodic work
 // consults its source's backoff before starting. Turns, routines, user actions,
 // claimed jobs and owner-requested writes always proceed; it never stops a turn.
+// CPU is judged on the whole computer too (system-load.ts: load average and all
+// cores busy, children and other apps included), not only Murage's own process.
 import { AsyncLocalStorage } from "node:async_hooks";
 import { closeSync, openSync, readSync, statSync } from "node:fs";
 import { endianness } from "node:os";
-import type { DatabaseSync } from "node:sqlite";
+import type { DatabaseSync, StatementSync } from "node:sqlite";
 import { turnTraceEnabled } from "./turn-trace.ts";
+import { activeTaskName, oldestLongOp, rateLimited, reportSlowSql, SLOW_SQL_MS } from "./observe.ts";
+import { systemLoad } from "./system-load.ts";
 
 export const IO_BUDGET_INTERVAL_MS = 60_000;
 export const IO_BUDGET_BYTES_PER_MINUTE = 50 * 1024 * 1024;
@@ -33,6 +37,8 @@ export interface IoBudgetOptions {
   cpuMinutes?: number;
   isIdle?: () => boolean;
   onMemoryWork?: () => void;
+  /** The whole computer is overloaded (default: the system-load sampler, which reads nothing until started). */
+  systemOverloaded?: () => { overloaded: boolean; why: string } | null;
 }
 
 export function readProcess(): IoReading {
@@ -58,6 +64,7 @@ export class IoBudget {
   private sourceContext = new AsyncLocalStorage<string>();
   private isIdle: () => boolean;
   private onMemoryWork?: () => void;
+  private systemOverloaded: () => { overloaded: boolean; why: string } | null;
   private deferredSource: string | null = null;
   private deferUntil = 0;
   /** Totals at the last statement-trace line, so each line is one minute's cost. */
@@ -73,6 +80,7 @@ export class IoBudget {
     this.cpuMinutes = options.cpuMinutes ?? IO_BUDGET_CPU_MINUTES;
     this.isIdle = options.isIdle ?? (() => false);
     this.onMemoryWork = options.onMemoryWork;
+    this.systemOverloaded = options.systemOverloaded ?? (() => systemLoad.reading());
   }
 
   /** Replace the listener told when the scale changes. */
@@ -118,8 +126,21 @@ export class IoBudget {
     return [...this.bytes.values()].reduce((sum, bytes) => sum + bytes, 0);
   }
 
-  withSource<T>(source: string, operation: () => T): T { return this.sourceContext.run(source, operation); }
-  currentSource(): string | undefined { return this.sourceContext.getStore(); }
+  /** A source for the synchronous part of a call only (withSyncSource); an inner withSource takes over while it runs. */
+  private syncSource: string | undefined;
+  withSource<T>(source: string, operation: () => T): T {
+    const outer = this.syncSource;
+    this.syncSource = undefined;
+    try { return this.sourceContext.run(source, operation); } finally { this.syncSource = outer; }
+  }
+  /** Names the SYNCHRONOUS part of `operation` only: the timers and promises it starts do not inherit the source (an after-listen step
+   *  starts long-lived loops, whose later slices must keep their own source, or none). */
+  withSyncSource<T>(source: string, operation: () => T): T {
+    const outer = this.syncSource;
+    this.syncSource = source;
+    try { return operation(); } finally { this.syncSource = outer; }
+  }
+  currentSource(): string | undefined { return this.syncSource ?? this.sourceContext.getStore(); }
 
   shouldDefer(source: string): boolean {
     if (source !== this.deferredSource || this.scale === 1) return false;
@@ -145,6 +166,7 @@ export class IoBudget {
       if (this.statements.size >= 500) this.statements.clear();
       this.statements.set(key, { sql: key, calls: 1, ms });
     }
+    if (keyed && ms > SLOW_SQL_MS) reportSlowSql(shortStatement(key), ms, this.currentSource() ?? statementSource(key) ?? (key.startsWith(EXEC_PREFIX) ? execSource(key.slice(EXEC_PREFIX.length)) : undefined) ?? unclaimedStatementSource());
   }
 
   topStatements(count = 3): StatementCost[] {
@@ -179,7 +201,10 @@ export class IoBudget {
     const osBytes = Math.max(0, (reading.fsWriteBlocks - previous.fsWriteBlocks) * BLOCK_BYTES);
     const writeBytesPerMinute = Math.max(osBytes, applicationBytes) / minutes;
     const cpu = (reading.cpuMicros - previous.cpuMicros) / 1000 / (reading.at - previous.at);
-    this.hotCpuMinutes = cpu > this.cpuFraction ? this.hotCpuMinutes + 1 : 0;
+    let system: { overloaded: boolean; why: string } | null = null;
+    try { system = this.systemOverloaded(); } catch { /* unknown load: Murage's own CPU decides */ }
+    const systemHot = system?.overloaded === true;
+    this.hotCpuMinutes = cpu > this.cpuFraction || systemHot ? this.hotCpuMinutes + 1 : 0;
     let idle = false;
     try { idle = this.isIdle(); } catch { /* startup uses the active budget */ }
     const budget = idle ? IO_BUDGET_IDLE_BYTES_PER_MINUTE : this.bytesPerMinute;
@@ -193,7 +218,7 @@ export class IoBudget {
       this.deferredSource = [...this.bytes].sort((a,b) => b[1]-a[1])[0]?.[0] ?? this.topStatements(1)[0]?.sql ?? "process";
       this.deferUntil = reading.at + next * IO_BUDGET_INTERVAL_MS;
       this.log(`[io-budget] ${writing ? `writing ${(writeBytesPerMinute / 1048576).toFixed(1)} MB/min (budget ${(budget / 1048576).toFixed(0)})` : ""}`
-        + `${writing && spinning ? ", " : ""}${spinning ? `cpu ${(cpu * 100).toFixed(0)}% for ${this.hotCpuMinutes} min` : ""}; source: ${this.deferredSource}; top statements: ${top}; poll rate x1/${next}`);
+        + `${writing && spinning ? ", " : ""}${spinning ? `cpu ${(cpu * 100).toFixed(0)}%${systemHot ? ` (computer: ${system!.why})` : ""} for ${this.hotCpuMinutes} min` : ""}; source: ${this.deferredSource}; top statements: ${top}; poll rate x1/${next}`);
       this.setScale(next);
       this.statements.clear(); this.traced.clear();
       if (spinning) this.hotCpuMinutes = 0;
@@ -235,6 +260,21 @@ export class IoBudget {
 /** The text a statement is filed under. Done once per prepare, not per run:
  *  the Inbox projection is ten kilobytes of SQL. */
 export function statementKey(sql: string): string { return sql.replace(/\s+/g, " ").trim().slice(0, 160); }
+
+/** The lineage checks (memory/replay-lineage.ts) run for whichever caller asks, under no source of their own.
+ *  Their statements are known by the tables only they read, so a slow one is reported as `lineage`. */
+const LINEAGE_SQL = /\b(?:memory_disclosure_outputs|memory_output_roots|memory_session_roots|memory_root_set\w*|lineage_(?:dirty|epoch|structure))\b|^WITH (?:RECURSIVE )?direct\(b\)/i;
+/** The source a statement with no source of its own is reported under, when its text says. */
+export function statementSource(key: string): string | undefined { return LINEAGE_SQL.test(key) ? "lineage" : undefined; }
+
+/** The source a request's statements are filed under: `route:<METHOD> <path>`, with id-like segments (long, or holding a digit) as `:id`, cut at 80 characters. */
+export function routeSource(method: string | undefined, url: string | undefined): string {
+  const path = (url ?? "/").split(/[?#]/)[0].split("/").map(part => (part.length > 24 || /\d/.test(part) ? ":id" : part)).join("/");
+  return `route:${method ?? "GET"} ${path}`.slice(0, 80);
+}
+/** The label of a db.exec: its first words, with literals gone, so a long DDL, checkpoint or backfill names itself in the stall log. */
+const EXEC_PREFIX = "exec: ";
+export function execSource(sql: string): string { return `exec:${shortStatement(sql).slice(0, 40)}`; }
 
 /** A statement for a trace line: literals (quoted text, numbers) replaced by ?, cut at 80 characters. */
 export function shortStatement(sql: string): string {
@@ -316,6 +356,146 @@ export function walFrameReader(databaseFile: string): (() => number) & { close()
   return Object.assign(read, { close, fd: () => held?.fd });
 }
 
+// The lock wait each handle runs with now (database.ts setBusy keeps it). A statement that waited on the write lock with no budget below the
+// handle's default is the bug the stall work hunts (database.ts invariant 4): it is named, with its caller, by `[sqlite] busy ... budget=none`.
+const busyNow = new WeakMap<object, number>();
+export function noteBusyTimeout(db: object, ms: number): void { busyNow.set(db, ms); }
+/** The lock wait (ms) the handle has now; undefined for a handle database.ts never set. */
+export function currentBusy(db: object): number | undefined { return busyNow.get(db); }
+interface BusyWitness { defaultMs: number; /** the background wait (BACKGROUND_BUSY_MS) */ holdMs: number; held: () => boolean; /** the ambient source is a background one (db-busy.ts BACKGROUND_SOURCES) */ background: () => boolean; transactionEnded: (db: object) => void }
+let busyWitness: BusyWitness | null = null;
+/** database.ts registers what the witness needs from it (the default wait, whether a writer hold is in force, the end-of-transaction hook). */
+export function setBusyWitness(witness: BusyWitness): void { busyWitness = witness; }
+const BEGIN_WRITE = /^\s*BEGIN\s+(?:IMMEDIATE|EXCLUSIVE)\b/i;
+const END_TRANSACTION = /^\s*(?:COMMIT|END|ROLLBACK)\b(?!\s+TO\b)/i;
+const isBusyFailure = (error: unknown): boolean => {
+  const e = error as { errcode?: unknown; message?: unknown } | null;
+  if (!e || typeof e !== "object") return false;
+  if (typeof e.errcode === "number" && (e.errcode & 0xff) === 5) return true;
+  return typeof e.message === "string" && /database is locked|SQLITE_BUSY/i.test(e.message);
+};
+/** The database layer's own frames, by FUNCTION name: the packaged server is one bundled index.js, where no frame carries database.ts or
+ *  io-budget.ts as its file, so the file test below matches nothing there. A bundler that renames a function on a name clash appends digits
+ *  (transaction2), which the match allows. The instrumented exec and statement methods are named functions for this reason. */
+export const LAYER_FUNCTIONS: ReadonlySet<string> = new Set([
+  "waitCaller", "witnessWait", "traceWrite", "instrumentedExec", "instrumentedStatement", "lowerForHold", "restoreAfterHold",
+  "transaction", "withBusyBudget", "backgroundWrite", "beginBackground", "beginForSource", "setBusy", "unclaimedStatementSource",
+]);
+/** The label of a slow statement no source claims, so no slow line or stall holder is ever `unattributed` (rc13 real-data run: a 1032 ms and a
+ *  714 ms holder with no name): the named step running (observe.ts heldStep), else `caller:` and the first frames outside the database layer
+ *  (`function@index.js:line` in the bundle). A stack is read only for a statement over SLOW_SQL_MS. */
+function unclaimedStatementSource(): string {
+  const task = activeTaskName();
+  if (task) return `step:${task}`;
+  const limit = Error.stackTraceLimit;
+  let stack = "";
+  Error.stackTraceLimit = 30;
+  try { stack = new Error().stack ?? ""; } finally { Error.stackTraceLimit = limit; }
+  // IoBudget.note is a method, so its frame is dropped here by name (LAYER_FUNCTIONS lists function declarations only)
+  return `caller:${waitCaller(stack.split("\n").filter(line => frameFunction(line) !== "note").join("\n"))}`;
+}
+const LAYER_FILE = /(?:^|[\\/(])(?:database|db-busy|io-budget|observe)\.ts:|node:|internal\//;
+/** The function a stack line names (`at DatabaseSync.instrumentedExec [as exec] (...)` gives instrumentedExec), digits a bundler added cut. */
+function frameFunction(line: string): string {
+  const named = /^\s*at (?:async )?(?:new )?([^\s(]+)(?: \[as [^\]]+\])? \(/.exec(line);
+  if (!named) return "";
+  const last = named[1]!.split(".").pop() ?? "";
+  return last.replace(/\d+$/, "");
+}
+/** `file.ts:line` (in the bundle `name@index.js:line`) of the first two frames outside the database layer: who asked for the wait. */
+export function waitCaller(stack?: string): string {
+  if (stack === undefined) {
+    const limit = Error.stackTraceLimit;
+    Error.stackTraceLimit = 30;
+    try { stack = new Error().stack ?? ""; } finally { Error.stackTraceLimit = limit; }
+  }
+  const frames: string[] = [];
+  for (const line of stack.split("\n").slice(1)) {
+    if (LAYER_FILE.test(line)) continue;
+    const name = frameFunction(line);
+    if (name && LAYER_FUNCTIONS.has(name)) continue;
+    const at = /([^\\/( ]+\.[cm]?[jt]s):(\d+)/.exec(line);
+    if (!at) continue;
+    // a bundle has one file name for every frame: the function's name is what says where the frame is
+    const bundled = !/\.ts$/.test(at[1]!) && name && name !== "<anonymous>" && name !== "Object";
+    frames.push(`${bundled ? `${name}@` : ""}${at[1]}:${at[2]}`);
+    if (frames.length === 2) break;
+  }
+  return frames.length ? frames.join("<") : "unknown";
+}
+/** A statement over SLOW_SQL_MS that waited on the write lock (a BEGIN IMMEDIATE, or one that ended in SQLITE_BUSY) while the handle still had
+ *  its default wait: `[sqlite] busy op= waited= holder= budget=none at=<caller>`. The stack is read only here, rate limited per op and caller. */
+function witnessWait(db: object, sql: string, ms: number, failed: unknown, budget: IoBudget): void {
+  const witness = busyWitness;
+  if (!witness || ms <= SLOW_SQL_MS || busyNow.get(db) !== witness.defaultMs) return;
+  if (!BEGIN_WRITE.test(sql) && !isBusyFailure(failed)) return;
+  const op = shortStatement(sql).slice(0, 60), at = waitCaller();
+  let holder: string;
+  try { holder = witness.held() ? "writer-hold" : oldestLongOp() ?? "other-connection"; } catch { holder = "other-connection"; }
+  const source = budget.currentSource();
+  rateLimited(`sqlite-unbudgeted:${op}:${at}`, 60_000, suppressed => `[sqlite] busy op=${op} waited=${Math.round(ms)} holder=${holder} budget=none at=${at}${source ? ` source=${source}` : ""}${suppressed ? ` more=${suppressed}` : ""}`);
+}
+
+// Statement reuse for a synchronous pass that runs the same few statements thousands of times (a session's receipts are
+// checked record by record: ~60,000 prepares for one check). While a pass is open, preparing the same SQL again on the same
+// handle returns the statement already made. Statements are only shared inside the pass, which is synchronous, so no two users
+// ever hold one at the same time; the cache is dropped when the next outermost pass opens.
+let reuseDepth = 0, reuseGeneration = 0;
+export function withStatementReuse<T>(work: () => T): T {
+  if (reuseDepth++ === 0) reuseGeneration++;
+  try { return work(); } finally { reuseDepth--; }
+}
+const REUSE_LIMIT = 512;
+// Every write through an instrumented handle moves its counter (conservatively: a statement that can write, or any exec). A memo
+// that only needs to know "did this connection write since I looked" reads it instead of asking SQLite for total_changes().
+const writeCounts = new WeakMap<object, number>();
+export const writeStamp = (db: object): number | undefined => writeCounts.get(db);
+const wrote = (db: object) => writeCounts.set(db, (writeCounts.get(db) ?? 0) + 1);
+// Statements that really write (INSERT, UPDATE, DELETE, REPLACE, a write transaction's BEGIN), per handle: the start-up witness counts them
+// between listen and the first health answer (index.ts), where there should be none.
+const writeStatements = new WeakMap<object, number>();
+const WRITE_EXEC = /\b(?:INSERT|UPDATE|DELETE|REPLACE)\b|^\s*BEGIN\s+(?:IMMEDIATE|EXCLUSIVE)\b/i;
+// While traced (the start-up witness, listen until the first health answer) every counted write also notes who made it.
+let writeTrace: Map<string, number> | null = null;
+function traceWrite(): void { if (writeTrace) { const at = waitCaller(); writeTrace.set(at, (writeTrace.get(at) ?? 0) + 1); } }
+const countWrite = (db: object) => { writeStatements.set(db, (writeStatements.get(db) ?? 0) + 1); traceWrite(); };
+/** Starts noting the caller of every counted write; stopWriteTrace() hands back `caller xN` pairs, most first, and stops. */
+export function startWriteTrace(): void { writeTrace = new Map(); }
+export function stopWriteTrace(): string {
+  const trace = writeTrace; writeTrace = null;
+  if (!trace) return "";
+  return [...trace].sort((a, b) => b[1] - a[1]).slice(0, 8).map(([at, n]) => `${at}x${n}`).join(",");
+}
+/** A write about to start outside a transaction (an autocommit statement, a bare BEGIN IMMEDIATE), on a handle at its default wait, while the
+ *  process's own writer hold is in force (a CREATE INDEX, the VACUUM) or under a background source: it waits the background budget, never the
+ *  owner's 1 s on the serving thread (database.ts invariants 1 and 2). Owner writes were gated before a hold (gateWriteRequest, the turn start,
+ *  the delivery gate), and background work treats the busy failure as "try later". True when the wait was lowered (the caller restores it). */
+function lowerForHold(db: DatabaseSync, exec: (sql: string) => void): boolean {
+  const witness = busyWitness;
+  try {
+    if (!witness || busyNow.get(db) !== witness.defaultMs || db.isTransaction || !(witness.held() || witness.background())) return false;
+    exec(`PRAGMA busy_timeout=${witness.holdMs}`); busyNow.set(db, witness.holdMs);
+    return true;
+  } catch { return false; }
+}
+function restoreAfterHold(db: DatabaseSync, exec: (sql: string) => void, sql: string, ms: number, failed: unknown): void {
+  const witness = busyWitness;
+  if (!witness) return;
+  try { if (db.isOpen) { exec(`PRAGMA busy_timeout=${witness.defaultMs}`); busyNow.set(db, witness.defaultMs); } } catch { /* closed */ }
+  if (failed !== undefined && isBusyFailure(failed)) {
+    const op = shortStatement(sql).slice(0, 60), at = waitCaller();
+    let holder: string;
+    try { holder = witness.held() ? "writer-hold" : oldestLongOp() ?? "other-connection"; } catch { holder = "other-connection"; }
+    rateLimited(`sqlite-lowered:${op}:${at}`, 60_000, suppressed => `[sqlite] busy op=${op} waited=${Math.round(ms)} holder=${holder} budget=${witness.holdMs} at=${at}${suppressed ? ` more=${suppressed}` : ""}`);
+  }
+}
+/** How many writing statements this handle has run (0 for a handle that is not instrumented). */
+export const writeStatementCount = (db: object): number => writeStatements.get(db) ?? 0;
+/** Whether a synchronous pass is open (the data folder cannot be swapped under it). */
+export const inStatementReusePass = () => reuseDepth > 0;
+/** Identifies the open pass (0 when none), so a memo made inside one is never read in another. */
+export const statementReusePassId = () => reuseDepth > 0 ? reuseGeneration : 0;
+
 /** Time every statement run through this handle, so a trip can name the culprits. */
 export function instrumentDatabase(db: DatabaseSync, budget: IoBudget = ioBudget): () => void {
   const prepare = db.prepare.bind(db);
@@ -325,13 +505,36 @@ export function instrumentDatabase(db: DatabaseSync, budget: IoBudget = ioBudget
   let transactionSource = source;
   const sample = (name: string) => { if (source) budget.sampleByteSource(source, name); };
   const exec = db.exec.bind(db);
-  db.exec = (sql: string) => {
+  writeCounts.set(db, 0);
+  const instrumentedExec = (sql: string) => {
     const inTransaction = db.isTransaction;
     if (!inTransaction) sample(source);
-    exec(sql);
+    wrote(db);
+    const writing = WRITE_EXEC.test(sql);
+    if (writing) countWrite(db);
+    const lowered = writing && lowerForHold(db, exec);
+    const started = performance.now();
+    let failed: unknown;
+    try { exec(sql); } catch (error) { failed = error; throw error; }
+    finally {
+      const ms = performance.now() - started;
+      if (lowered) restoreAfterHold(db, exec, sql, ms, failed);
+      budget.note(EXEC_PREFIX + statementKey(sql), ms, true);
+      if (!lowered && ms > SLOW_SQL_MS) witnessWait(db, sql, ms, failed, budget);
+      // the end of a transaction: database.ts puts back what a background slice relaxed for its commit (synchronous)
+      if (inTransaction && END_TRANSACTION.test(sql)) { try { if (!db.isTransaction) busyWitness?.transactionEnded(db); } catch { /* closed */ } }
+    }
     if (!db.isTransaction) sample(budget.currentSource() ?? (inTransaction ? transactionSource : statementKey(sql)));
   };
+  db.exec = instrumentedExec;
+  const reuse = new Map<string, StatementSync>();
+  let reuseSeen = -1;
   (db as unknown as { prepare: unknown }).prepare = (sql: string) => {
+    if (reuseDepth > 0) {
+      if (reuseSeen !== reuseGeneration) { reuse.clear(); reuseSeen = reuseGeneration; }
+      const known = reuse.get(sql);
+      if (known) return known;
+    }
     const statement = prepare(sql);
     const key = statementKey(sql);
     const tokens = sql.replace(/'(?:''|[^'])*'|--[^\n]*|\/\*[\s\S]*?\*\//g, " ");
@@ -339,8 +542,10 @@ export function instrumentDatabase(db: DatabaseSync, budget: IoBudget = ioBudget
     const memoryWork = /\b(?:INSERT\s+(?:OR\s+\w+\s+)?INTO|UPDATE\s+(?:OR\s+\w+\s+)?|REPLACE\s+INTO)\s*["`\[]?(?:main["`\]]?\s*\.\s*["`\[]?)?memory_(?:jobs|projection_receipts|scope_bindings)["`\]]?(?=\s|\(|$)/i.test(tokens);
     for (const method of ["get", "all", "run"] as const) {
       const original = statement[method].bind(statement) as (...args: unknown[]) => unknown;
-      (statement as unknown as Record<string, unknown>)[method] = (...args: unknown[]) => {
+      const instrumentedStatement = (...args: unknown[]) => {
+        const lowered = writes && method === "run" && lowerForHold(db, exec);
         const started = performance.now();
+        let failed: unknown;
         try {
           const result = original(...args);
           if (writes) {
@@ -349,9 +554,18 @@ export function instrumentDatabase(db: DatabaseSync, budget: IoBudget = ioBudget
           }
           if (memoryWork && method === "run" && Number((result as {changes:number|bigint}).changes) > 0) budget.notifyMemoryWork();
           return result;
-        } finally { budget.note(key, performance.now() - started, true); }
+        } catch (error) { failed = error; throw error; }
+        finally {
+          if (writes) { wrote(db); if (method === "run") countWrite(db); }
+          const ms = performance.now() - started;
+          budget.note(key, ms, true);
+          if (lowered) restoreAfterHold(db, exec, sql, ms, failed);
+          else if (failed !== undefined && writes && ms > SLOW_SQL_MS) witnessWait(db, sql, ms, failed, budget);
+        }
       };
+      (statement as unknown as Record<string, unknown>)[method] = instrumentedStatement;
     }
+    if (reuseDepth > 0 && reuse.size < REUSE_LIMIT) reuse.set(sql, statement);
     return statement;
   };
   return unregister;

@@ -30,6 +30,7 @@ import { PIP_ALL_KINDS, PIP_ALL_KINDS_SQL, PIP_OWNER_KINDS, isPipKind, isPipOwne
 import { PIP_ATTRIBUTION, PIP_IMPORTED_SUFFIX, cutAtSentence, importFadeMultiplier, observedReservation, pipKindLabel, reinforcedAtOf, selfSlotOrder } from "./pip-render.ts";
 import { isPipReflectThread, parseContinuityOptions } from "./pip-types.ts";
 import { MEMORY_FRAME_TOKENS } from "./bundle.ts";
+import { LineageAllowance } from "./lineage-allowance.ts";
 
 const roster = {
   bots: [
@@ -89,7 +90,7 @@ function synthetic(kind: string, key: string) {
 }
 function deliver(botId: string, threadId: string) {
   const a = access(botId, threadId);
-  return buildMemoryBundle("", a, emptyBridge).then(bundle => {
+  return buildMemoryBundle("", a, emptyBridge, {allowance: LineageAllowance.tool()}).then(bundle => {
     const receipt = new MemoryDispatchReceipt(bundle, a, "driver-one");
     receipt.sessionStarted("session-one"); receipt.accepted();
     return { bundle, receipt, state: () => String(database().prepare("SELECT state FROM memory_disclosures WHERE bundle_id=?").get(bundle.bundleId)!.state) };
@@ -124,26 +125,73 @@ describe("PIP kind list", () => {
       if (n) counts[file] = n;
     }
     // Readers that hand rows to a model or the owner exclude PIP_ALL_KINDS_SQL or isPipKind in their own file.
-    for (const file of ["memory/eligibility.ts", "memory/recent.ts", "memory/search.ts", "memory/projection.ts", "memory/owner-list.ts", "memory/bundle.ts", "memory/routes.ts", "memory/retention.ts", "memory/authority.ts", "memory/consolidate.ts", "memory/settings.ts", "skills.ts"])
+    for (const file of ["memory/eligibility.ts", "memory/recent.ts", "memory/readable.ts", "memory/projection.ts", "memory/owner-list.ts", "memory/bundle.ts", "memory/retention.ts", "memory/authority.ts", "memory/consolidate.ts", "memory/settings.ts", "skills.ts"])
       expect(readFileSync(new URL(file, root), "utf8"), file).toMatch(/PIP_ALL_KINDS_SQL|isPipKind|pip-kinds\.ts/);
+    // memory_get (routes.ts) and memory_search (search.ts) read every record through readableMemoryRecord as the bot's own
+    // tool (agent: true), which refuses PIP kinds in readable.ts (msearch review round 2).
+    for (const file of ["memory/routes.ts", "memory/search.ts"]) expect(readFileSync(new URL(file, root), "utf8"), file).toMatch(/agent:true/);
     // Nothing still imports the P1 names.
     for (const file of files) expect(readFileSync(new URL(file, root), "utf8"), file).not.toMatch(/\bPIP_KINDS(?:_SQL)?\b/);
     expect(counts).toEqual({
-      "memory/authority.ts": 11, "memory/automatic-learning.ts": 2, "memory/bring-in.ts": 2, "memory/bundle.ts": 6, "memory/capture.ts": 1, "memory/checkpoints.ts": 2,
-      "memory/consolidate.ts": 3, "memory/eligibility.ts": 3, "memory/evolution-forgetting.ts": 1, "memory/forget.ts": 2, "memory/identity.ts": 8, "memory/import.ts": 1,
-      "memory/learning-history.ts": 4, "memory/lessons.ts": 1, "memory/memory-moments.ts": 1, "memory/metrics.ts": 1, "memory/owner-list.ts": 2, "memory/procedure-review.ts": 3,
-      "memory/projection.ts": 2, "memory/recent.ts": 2,
+      "memory/authority.ts": 11, "memory/automatic-learning.ts": 2, "memory/bring-in.ts": 2,
+      // -2: bundle hydration, memory_get and every search path read through readableMemoryRecord (readable.ts: one point
+      // lookup per read mode, PIP kinds refused for the bot's own tools)
+      // revoke-bounded r3: capture.ts's bot deletion no longer lists the bot's records (its durable job's scope phase reads them in
+      // key windows, memory-revocation.ts)
+      "memory/bundle.ts": 4, "memory/readable.ts": 4, "memory/checkpoints.ts": 2,
+      // +1 evolution-forgetting.ts: the per-binding forgotten test is its own function (a record's state by id and version, no text)
+      "memory/consolidate.ts": 3, "memory/eligibility.ts": 3, "memory/evolution-forgetting.ts": 2, "memory/forget.ts": 2, "memory/identity.ts": 8, "memory/import.ts": 1, "memory/index-reader.ts": 1,
+      "memory/learning-history.ts": 4, "memory/lessons.ts": 1, "memory/memory-moments.ts": 1, "memory/metrics.ts": 1, "memory/owner-list.ts": 8, "memory/owner-tail-index.ts": 3, "memory/procedure-review.ts": 3,
+      // owner-list +2 and owner-tail-index +3 (msearch2): owner search reads the never-indexed kinds through the owner-tail table in bounded slices;
+      // the backfill reads record keys, kinds and times only, never text
+      // +1: pendingProjectionRefsIn names the reader's own pending records (ids only) behind the PENDING predicate, which excludes PIP kinds (msearch review round 4)
+      "memory/projection.ts": 4,
+      // +2: keywordMemoryHits, the keyword fallback for memory_search, excludes PIP_ALL_KINDS_SQL and CURRENT_MEMORY in its own statement (fix/1.0.2-memory-search)
+      // +1: the keyword fallback reads a row's text by rowid only after its size passed the byte cap (msearch review round 2)
+      "memory/recent.ts": 5,
       // +3: derivationAncestryCurrent reads parent states only, never text (revoke fix round 2)
-      "memory/replay-lineage.ts": 12, "memory/restore.ts": 7, "memory/retention.ts": 8, "memory/reveal-capture.ts": 2, "memory/routes.ts": 8,
-      "memory/schema.ts": 3, "memory/search.ts": 1, "memory/settings.ts": 3, "memory/worker-controller.ts": 3, "skills.ts": 6, "human-principals.ts": 1,
+      // revoke-bounded r3: +1 restore.ts (the installation-wide pass seeds a deleted bot's records by scope, ids and versions only)
+      "memory/replay-lineage.ts": 12, "memory/restore.ts": 8, // revoke-bounded r2: the forget's record seeds moved to memory-revocation.ts, RECORD_TOMBSTONE_AFFECTED to revocation.ts; +1: the status scan counts records by state and adds up text lengths, never returning text
+      "memory/retention.ts": 9, "memory/reveal-capture.ts": 2, "memory/routes.ts": 8,
+      // +1 write-time v10: the memory_flow_derivation trigger reads the parent's and the child's scope ids (no text)
+      "memory/schema.ts": 6, "memory/settings.ts": 3,
+      // the background integrity pass checks that a learning event's record exists (a key lookup, no text), and the upgrade counts use max(rowid) (fast upgrade)
+      "memory/integrity-pass.ts": 1, "memory/upgrade-counts.ts": 1, "memory/worker-controller.ts": 3, "skills.ts": 6, "human-principals.ts": 1,
       // B3: the lived family, episodes and reflection read only PIP kinds, named in their own statements.
       // Round 2 removed the redundant episode check from pip-reflect; pip-episodes owns it.
       "memory/pip-episodes.ts": 4, "memory/pip-lived.ts": 8, "memory/pip-reflect.ts": 2, "memory/pip-stance.ts": 4,
       // Mobile lane merge (reviewed against I-15): the identity source set moved from skills.ts to
       // provenance-stamp.ts (it names its kinds) plus a rowid chunk bound; replay-lineage gained a
       // point lookup by id; schema.ts folded two administrative checks into one marked statement.
-      "memory/provenance-stamp.ts": 2,
+      // rc4 identity: the identity read (kind-named id union, its record join) and the chunked fallback; no incremental refresh readers remain
+      "memory/provenance-stamp.ts": 5,
+      // revoke-bounded r2: the durable forget job reads record states and versions by id (point lookups and one id's versions by
+      // cursor) to end them and to test a receipt's citation; it returns no text to a model or the owner
+      // r3: +2, the scope phase reads a deleted bot's record ids and versions in key windows and the expand step one id's versions
+      "memory/memory-revocation.ts": 6, "memory/revocation.ts": 1,
+      // notebook fix: memory-revocation.ts supersede phase reads one record's state, pin and assertion by id and version (point lookup, no text)
+      // write-time S3: the revoke commit reads a record's scope by id; the marker reads one record's kind (a room's notes keep what
+      // they quoted), and a denied scope's record ids and versions in key windows (ids, never text)
+      "memory/revoke-commit.ts": 1, "memory/revoke-marker.ts": 3,
+      // write-time S4: the read predicate's point lookups (a record's scope, created lsn, deny mark and tombstone; never text)
+      "memory/deny-read.ts": 3,
+      // write-time S5 and integration: the backfill folds a receipt's record scopes and walks evidence and derivations for scope -> scope
+      // flow edges; a receipt's scopes for the footprint (disclosures.ts receiptLineageRef); U2 reads a cited record's state, kind and scope to
+      // seed the receipts the RC held bad on content (+2); Astra audit P1 2: +5, the same receipts' cited records are asked for their derivation
+      // ancestors' states and their evidence sources (ids, states and revisions). Scope ids and states only, never text.
+      "memory/lineage-backfill.ts": 11, "memory/disclosures.ts": 1,
+      // Memory review lane (reviewed against I-15): review.ts lists waiting candidates with kind NOT IN PIP_ALL_KINDS_SQL and
+      // every id+version lookup (keep, edit, undo) rejects isPipKind rows through candidateRow or reads an owner-keep receipt's
+      // own record; review-eligibility.ts adds one point lookup of the pinned record a candidate supersedes, returning no text.
+      // +2 rc11-inbox (a899b4827): waitingScopes lists the scopes that hold waiting candidates, through the optional
+      // memory_records_waiting_review index or, before it is built, one join on memory_records_scope; both statements exclude
+      // PIP_ALL_KINDS_SQL themselves and return scope ids, kinds and owner keys, never record text.
+      "memory/review.ts": 10, "memory/review-eligibility.ts": 1,
     });
+    const review = readFileSync(new URL("memory/review.ts", root), "utf8");
+    const scopes = review.slice(review.indexOf("function waitingScopes("), review.indexOf("function collect("));
+    expect(scopes.match(/\b(?:FROM|JOIN) memory_records\b/g)).toHaveLength(2);
+    expect(scopes.match(/kind NOT IN \$\{PIP_ALL_KINDS_SQL\}/g)).toHaveLength(2);
   });
 
   it("keeps PIP rows, the brief included, out of eligibility, search and the agent get route", async () => {
@@ -162,7 +210,7 @@ describe("PIP kind list", () => {
     }
     expect(eligibility.pipRecordIds().sort()).toEqual([...ids].sort());
     const leaky = { search: async () => ({ hits: [...ids].map(id => ({ id, version: 1, score: 9 })) as IndexHit[], vectorRows: 0 }) };
-    expect((await searchMemory("harbour lantern", access(), leaky, { limit: 20 })).hits.filter(hit => ids.has(hit.id))).toEqual([]);
+    expect((await searchMemory("harbour lantern", access(), leaky, { allowance: LineageAllowance.tool(1_000_000_000), limit: 20 })).hits.filter(hit => ids.has(hit.id))).toEqual([]);
     for (const id of ids) await expect(memoryAgentRoute("/api/internal/memory/get", { handles: [{ id, version: 1 }] }, access(), emptyBridge), id).rejects.toThrow(/MEMORY_RECORD_UNAVAILABLE|MEMORY_IDENTITY|MEMORY_SCOPE_DENIED|MEMORY_EVIDENCE_UNAVAILABLE/);
   });
 
@@ -212,10 +260,10 @@ describe("PIP kind list", () => {
 describe("the brief is a PIP kind", () => {
   it("renders exactly as before", async () => {
     writeBotIdentity(ticket, brief(), roster);
-    const off = await buildMemoryBundle("", access(), emptyBridge);
+    const off = await buildMemoryBundle("", access(), emptyBridge, {allowance: LineageAllowance.tool()});
     expect(off.text).toMatch(/- m1 \(owner-authored fictional continuity; not world truth; continuity-brief\) "Moss keeps the harbour log and answers briefly\."/);
     expect(off.continuity).toBeUndefined();
-    const on = await buildMemoryBundle("", access(), emptyBridge, { continuity: true });
+    const on = await buildMemoryBundle("", access(), emptyBridge, { allowance: LineageAllowance.tool(), continuity: true });
     expect(on.text).toBe(off.text);
     expect(on.continuity).toEqual({ brought: 0, total: 0 });
   });
@@ -241,7 +289,7 @@ describe("the brief is a PIP kind", () => {
     expect(mine.state()).toBe("revoked");
     expect(other.state()).toBe("delivered");
     // the next turn rebuilds with the new text
-    const next = await buildMemoryBundle("", access(), emptyBridge);
+    const next = await buildMemoryBundle("", access(), emptyBridge, {allowance: LineageAllowance.tool()});
     expect(next.text).toContain("answers plainly");
   });
 
@@ -305,7 +353,7 @@ describe("deliver-once listeners on the receipt", () => {
   it("runs each listener once, independently, in order, and a throwing listener fails neither the turn nor the next listener", async () => {
     writeBotIdentity(ticket, brief(), roster);
     const a = access();
-    const receipt = new MemoryDispatchReceipt(await buildMemoryBundle("", a, emptyBridge, { continuity: true }), a, "driver-one");
+    const receipt = new MemoryDispatchReceipt(await buildMemoryBundle("", a, emptyBridge, { allowance: LineageAllowance.tool(), continuity: true }), a, "driver-one");
     const calls: string[] = [];
     receipt.addOnDelivered(() => { calls.push("first"); });
     receipt.addOnDelivered(() => { calls.push("throws"); throw new Error("a listener failed"); });
@@ -320,7 +368,7 @@ describe("deliver-once listeners on the receipt", () => {
   });
   it("runs no listener for a turn that was never delivered", async () => {
     const a = access();
-    const receipt = new MemoryDispatchReceipt(await buildMemoryBundle("", a, emptyBridge), a, "driver-one");
+    const receipt = new MemoryDispatchReceipt(await buildMemoryBundle("", a, emptyBridge, {allowance: LineageAllowance.tool()}), a, "driver-one");
     let ran = false;
     receipt.addOnDelivered(() => { ran = true; });
     database().prepare("UPDATE memory_disclosures SET state='revoked' WHERE bundle_id=?").run(receipt.bundle.bundleId);
@@ -365,7 +413,7 @@ describe("PIP bundle order, prefix and cache", () => {
 
   it("places the brief, then attested rows newest first, then observed rows, then reveal state", async () => {
     const ids = seed();
-    const bundle = await buildMemoryBundle("", access(), emptyBridge, { continuity: true });
+    const bundle = await buildMemoryBundle("", access(), emptyBridge, { allowance: LineageAllowance.tool(), continuity: true });
     expect(bundle.recordVersions.map(row => row.id)).toEqual([ids.brief, ids.t1, ids.c2, ids.c1, ids.relation, ids.o1, ids.reveal]);
     expect(bundle.text).not.toContain("CANON_HIDDEN");
     expect(bundle.continuity).toEqual({ brought: 5, total: 5 });
@@ -373,7 +421,7 @@ describe("PIP bundle order, prefix and cache", () => {
 
   it("attributes each line from its tier tag and keeps the brief and reveal lines as they were", async () => {
     seed();
-    const { text } = await buildMemoryBundle("", access(), emptyBridge, { continuity: true });
+    const { text } = await buildMemoryBundle("", access(), emptyBridge, { allowance: LineageAllowance.tool(), continuity: true });
     expect(text).toContain(`(${PIP_ATTRIBUTION.attested}; About me (you said))`);
     expect(text).toContain(`(${PIP_ATTRIBUTION.attested}; Commitments (you said))`);
     expect(text).toContain(`(${PIP_ATTRIBUTION.attested}; How we work together)`);
@@ -385,32 +433,32 @@ describe("PIP bundle order, prefix and cache", () => {
 
   it("keeps a byte-identical PIP prefix across turns and writes one render-cache row", async () => {
     seed();
-    const first = await buildMemoryBundle("", access(), emptyBridge, { continuity: true, continuityOptions: { reflect: true } });
+    const first = await buildMemoryBundle("", access(), emptyBridge, { allowance: LineageAllowance.tool(), continuity: true, continuityOptions: { reflect: true } });
     const row1 = cacheRow()!.intent;
-    const second = await buildMemoryBundle("harbour", access(), emptyBridge, { continuity: true, continuityOptions: { reflect: true } });
+    const second = await buildMemoryBundle("harbour", access(), emptyBridge, { allowance: LineageAllowance.tool(), continuity: true, continuityOptions: { reflect: true } });
     expect(second.text).toBe(first.text);
     expect(cacheRow()!.intent).toBe(row1);
     // recall sits after the PIP prefix: a fact joins, the prefix is unchanged
     const f = fact("moss", "harbour lantern oil is bought on Tuesdays");
-    const recalled = await buildMemoryBundle("harbour lantern", access(), { search: async () => ({ hits: [{ id: f, version: 1, score: 9 } as unknown as IndexHit], vectorRows: 0 }) }, { continuity: true, continuityOptions: { reflect: true } });
+    const recalled = await buildMemoryBundle("harbour lantern", access(), { search: async () => ({ hits: [{ id: f, version: 1, score: 9 } as unknown as IndexHit], vectorRows: 0 }) }, { allowance: LineageAllowance.tool(), continuity: true, continuityOptions: { reflect: true } });
     const close = first.text.lastIndexOf("\n");
     expect(recalled.text.startsWith(first.text.slice(0, close))).toBe(true);
     expect(recalled.text.length).toBeGreaterThan(first.text.length);
     // a different setting is a different key
-    await buildMemoryBundle("", access(), emptyBridge, { continuity: true, continuityOptions: { reflect: true, inner: true } });
+    await buildMemoryBundle("", access(), emptyBridge, { allowance: LineageAllowance.tool(), continuity: true, continuityOptions: { reflect: true, inner: true } });
     expect(cacheRow()!.intent).not.toBe(row1);
   });
 
   it("drops the render cache on every PIP write and delete, and rebuilds the same bytes without it", async () => {
     const ids = seed();
-    const first = await buildMemoryBundle("", access(), emptyBridge, { continuity: true });
+    const first = await buildMemoryBundle("", access(), emptyBridge, { allowance: LineageAllowance.tool(), continuity: true });
     expect(cacheRow()).toBeDefined();
     database().prepare("DELETE FROM memory_scope_bindings WHERE id='pip-render:moss'").run();
-    const rebuilt = await buildMemoryBundle("", access(), emptyBridge, { continuity: true });
+    const rebuilt = await buildMemoryBundle("", access(), emptyBridge, { allowance: LineageAllowance.tool(), continuity: true });
     expect(rebuilt.text).toBe(first.text);
     writeBotIdentity(ticket, pip("commitment", "third", "Call back on Friday."), roster);
     expect(cacheRow()).toBeUndefined();
-    await buildMemoryBundle("", access(), emptyBridge, { continuity: true });
+    await buildMemoryBundle("", access(), emptyBridge, { allowance: LineageAllowance.tool(), continuity: true });
     expect(cacheRow()).toBeDefined();
     deleteBotIdentity(ticket, { action: "identity-delete", botId: "moss", kind: "commitment", key: "first", expectedVersion: 1 }, roster);
     expect(cacheRow()).toBeUndefined();
@@ -421,9 +469,9 @@ describe("PIP bundle order, prefix and cache", () => {
 
   it("never replays a cached selection after a row is deleted behind the cache", async () => {
     const ids = seed();
-    await buildMemoryBundle("", access(), emptyBridge, { continuity: true });
+    await buildMemoryBundle("", access(), emptyBridge, { allowance: LineageAllowance.tool(), continuity: true });
     database().prepare("UPDATE memory_records SET state='archived' WHERE id=?").run(ids.t1);
-    const after = await buildMemoryBundle("", access(), emptyBridge, { continuity: true });
+    const after = await buildMemoryBundle("", access(), emptyBridge, { allowance: LineageAllowance.tool(), continuity: true });
     expect(after.recordVersions.map(row => row.id)).not.toContain(ids.t1);
   });
 
@@ -431,7 +479,7 @@ describe("PIP bundle order, prefix and cache", () => {
     writeBotIdentity(ticket, brief(), roster);
     for (let n = 0; n < 24; n++) { const row = writeBotIdentity(ticket, pip("commitment", `a-${n}`, `Attested ${String(n).padStart(2, "0")} ${"x".repeat(90)}`), roster); stamp(row.id, 10000 + n); }
     const obs = [0, 1, 2].map(n => observed(`r${n}`, `Observed ${n} ${"y".repeat(90)}`, 20000 + n));
-    const bundle = await buildMemoryBundle("", access(), emptyBridge, { continuity: true });
+    const bundle = await buildMemoryBundle("", access(), emptyBridge, { allowance: LineageAllowance.tool(), continuity: true });
     const mounted = bundle.identity.filter(r => obs.includes(r.id));
     expect(mounted.length).toBeGreaterThanOrEqual(1);
     // §2.2 order (attested, then observed) holds inside the advertised prefix (the first pass, frozen by the render
@@ -450,7 +498,7 @@ describe("PIP bundle order, prefix and cache", () => {
   it("cuts a brief that does not fit at a sentence boundary and keeps the receipt valid", async () => {
     const sentences = Array.from({ length: 12 }, (_, n) => `Sentence number ${n} says something plain about the harbour.`).join(" ");
     const row = writeBotIdentity(ticket, brief(sentences.slice(0, 760)), roster);
-    const tiny = await buildMemoryBundle("", access(), emptyBridge, { continuity: true, availableContextTokens: 1200 });
+    const tiny = await buildMemoryBundle("", access(), emptyBridge, { allowance: LineageAllowance.tool(), continuity: true, availableContextTokens: 1200 });
     const brief0 = tiny.identity.find(r => r.id === row.id);
     if (brief0) {
       expect(brief0.cutBytes).toBeGreaterThan(0);
@@ -458,23 +506,23 @@ describe("PIP bundle order, prefix and cache", () => {
       expect(Buffer.byteLength(brief0.text)).toBe(brief0.cutBytes);
     }
     const a = access();
-    const bundle = await buildMemoryBundle("", a, emptyBridge, { continuity: true, availableContextTokens: 1200 });
+    const bundle = await buildMemoryBundle("", a, emptyBridge, { allowance: LineageAllowance.tool(), continuity: true, availableContextTokens: 1200 });
     const receipt = new MemoryDispatchReceipt(bundle, a, "driver-one");
     expect(() => receipt.assertCurrent()).not.toThrow();
     receipt.sessionStarted("s"); receipt.accepted();
     // a wide window keeps the whole brief, with no cut marker
-    const wide = await buildMemoryBundle("", access(), emptyBridge, { continuity: true });
+    const wide = await buildMemoryBundle("", access(), emptyBridge, { allowance: LineageAllowance.tool(), continuity: true });
     expect(wide.identity.find(r => r.id === row.id)!.cutBytes).toBeUndefined();
     expect(wide.text).toContain("Sentence number 5");
   });
 
   it("is byte-identical to today for a bot with Continuity off, whatever PIP rows exist", async () => {
     writeBotIdentity(ticket, brief(), roster);
-    const baseline = await buildMemoryBundle("", access(), emptyBridge);
+    const baseline = await buildMemoryBundle("", access(), emptyBridge, {allowance: LineageAllowance.tool()});
     seed(false);
     database().prepare("UPDATE memory_records SET state='archived' WHERE kind='reveal-state'").run();
     for (const options of [{}, { continuity: false }, { continuity: false, continuityOptions: { reflect: true } }]) {
-      const off = await buildMemoryBundle("", access(), emptyBridge, options);
+      const off = await buildMemoryBundle("", access(), emptyBridge, { ...options, allowance: LineageAllowance.tool() });
       expect(off.text).toBe(baseline.text);
       expect(off.recordVersions).toEqual(baseline.recordVersions);
     }
@@ -485,13 +533,13 @@ describe("PIP bundle order, prefix and cache", () => {
     writeBotIdentity(ticket, brief("Neutral keeps the dock log.", "neutral"), roster);
     writeBotIdentity(ticket, pip("commitment", "dock", "Check the dock lights.", {}, "neutral"), roster);
     seed();
-    const on = await buildMemoryBundle("", access("moss", "private"), emptyBridge, { continuity: true });
-    const off = await buildMemoryBundle("", access("neutral", "neutral-thread"), emptyBridge);
+    const on = await buildMemoryBundle("", access("moss", "private"), emptyBridge, { allowance: LineageAllowance.tool(), continuity: true });
+    const off = await buildMemoryBundle("", access("neutral", "neutral-thread"), emptyBridge, {allowance: LineageAllowance.tool()});
     expect(on.text).toContain("weekly summary");
     expect(off.text).not.toContain("weekly summary");
     expect(off.text).toContain("dock log");
     expect(off.text).not.toContain("dock lights");
-    const room = await buildMemoryBundle("", access("moss", "room-thread"), emptyBridge, { continuity: true });
+    const room = await buildMemoryBundle("", access("moss", "room-thread"), emptyBridge, { allowance: LineageAllowance.tool(), continuity: true });
     expect(room.identity).toEqual([]);
     expect(room.continuity).toBeUndefined();
   });

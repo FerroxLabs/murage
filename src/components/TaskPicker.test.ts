@@ -365,3 +365,37 @@ describe("snooze and questions in the conversation list", () => {
     expect(markup).toContain("Snoozed until tomorrow, 9:00 AM");
   });
 });
+
+describe("tasks past the window", () => {
+  const noop = () => {};
+  const tasks = [
+    { threadId: "chat", title: "Open task", createdAt: 3 },
+    { threadId: "b", title: "Newer one", createdAt: 2 },
+  ];
+  const render = (extra: Record<string, unknown> = {}) =>
+    renderToStaticMarkup(createElement(ConversationTaskPicker, {
+      threadId: "chat", tasks, busy: false, onNew: noop, onSwitch: noop, onRename: noop, onDelete: noop,
+      initialOpen: true, now: Date.parse("2026-09-25T12:00:00-04:00"), timeZone: "America/New_York", locale: "en-US",
+      ...extra,
+    }));
+
+  it("shows the count of every task and a Show older tasks row only while some are left out", () => {
+    const more = render({ total: 5000, older: { hasMore: true, loading: false, failed: false, onLoadMore: noop } });
+    expect(more).toContain(">5000<");
+    expect(more).toContain("Show older tasks");
+    expect(more).toContain("data-show-older");
+    const done = render({ total: 5000, older: { hasMore: false, loading: false, failed: false, onLoadMore: noop } });
+    expect(done).not.toContain("Show older tasks");
+    expect(render()).not.toContain("Show older tasks");
+    expect(render()).toContain(">2<");
+  });
+
+  it("says when it is loading and when it could not, in plain words", () => {
+    const loading = render({ older: { hasMore: true, loading: true, failed: false, onLoadMore: noop } });
+    expect(loading).toContain("Loading older tasks");
+    expect(loading).toContain("disabled");
+    const failed = render({ older: { hasMore: true, loading: false, failed: true, onLoadMore: noop } });
+    expect(failed).toContain("Could not load older tasks. Try again.");
+    for (const text of [loading, failed]) expect(text).not.toContain("—");
+  });
+});

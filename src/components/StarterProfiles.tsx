@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { api, useStore, type Bot, type Group, type ModelSelection } from "@/state/store";
+import { fromAnswer } from "@/state/answer-tag";
 import type { Routine } from "@/lib/routines";
 import { getDraft, getDraftAttachments, restoreComposerDraft } from "@/lib/drafts";
 import { starterFirstTaskDraft } from "@/lib/starter-first-task";
@@ -55,7 +56,7 @@ export function StarterProfiles({ initialProfileId, modelSelection, onFirstTask 
         ...(modelSelection ? { modelSelection } : {}),
         ...(initialProfileId ? { firstRun: true } : {}),
       }) }) as { bots: Bot[]; groups?: Group[]; routines?: Routine[] };
-      for (const bot of result.bots) dispatch({ type: "botAdded", bot });
+      for (const bot of result.bots) dispatch({ type: "botAdded", ...fromAnswer(bot), bot });
       for (const group of result.groups ?? []) dispatch({ type: "groupPatched", group });
       for (const routine of result.routines ?? []) dispatch({ type: "routinePatched", routine });
       setImported({ profileId: selected.id, bots: result.bots, groups: result.groups ?? [], routines: result.routines ?? [] });

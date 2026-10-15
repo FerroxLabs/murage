@@ -16,8 +16,11 @@ import { ownerMemoryTicket } from "./authority.ts";
 import { forgetMemory } from "./forget.ts";
 import { mergeDestinationMemoryDeletions, mergeOriginalMemoryDeletions, pauseRestoredMemory } from "./restore.ts";
 import { inspectInstallationDatabase } from "../installation-database-snapshot.ts";
+import { stopWalMaintenance } from "../wal-maintenance.ts";
 
-beforeEach(()=>{closeDatabase();rmSync(DATA_DIR,{recursive:true,force:true});mkdirSync(DATA_DIR,{recursive:true});setMemoryMode("capture");});
+// closeDatabase stops the WAL checkpointer without waiting (wal3): its connection, the last one, checkpoints as it closes, so every test waits
+// for it before the files are removed, read or hashed
+beforeEach(async()=>{closeDatabase();await stopWalMaintenance();rmSync(DATA_DIR,{recursive:true,force:true});mkdirSync(DATA_DIR,{recursive:true});setMemoryMode("capture");});
 function seed() {
   appendMessage("thread",{id:"source",at:1,role:"user",kind:"text",text:"private retained source"});
   const work=claimMemoryJob("worker")!;publishMemoryWork(work,"worker",captureWork(work));
@@ -37,7 +40,7 @@ it("does not resurrect deleted records when an old backup is restored",async()=>
   try {
     const candidate=join(root,"candidate");mkdirSync(candidate);
     await backup(database(),join(candidate,"messages.db"));
-    forgetMemory(ownerMemoryTicket(),{kind:"source",id:work.sourceId});closeDatabase();
+    forgetMemory(ownerMemoryTicket(),{kind:"source",id:work.sourceId});closeDatabase();await stopWalMaintenance();
     const receipt=mergeDestinationMemoryDeletions(DATA_DIR,candidate);
     expect(receipt.merged).toBeGreaterThan(0);
     const restored=new DatabaseSync(join(candidate,"messages.db"));
@@ -92,6 +95,21 @@ it("Q12 separate paused restore carries current owner deletions without changing
   const {work,id}=seed(),db=database(),root=mkdtempSync(join(tmpdir(),"murage-q12-deletion-join-"));
   const archive=join(root,"before-forget.db"),candidate=join(root,"separate-restored"),canary="Q12_OPTIMIZER_COPY_CANARY",sharedScope=ensureScope("room","q12-shared-room");
   const hash=(file:string)=>createHash("sha256").update(readFileSync(file)).digest("hex");
+  // The original is a WAL database: after the server's close its committed rows may still sit in the -wal file, and any later connection's
+  // checkpoint moves them into the main file without changing a row. So the original is compared by what SQLite reads (schema and every row,
+  // through a read-only connection, which never checkpoints), not by its main file's bytes.
+  const contentHash=(file:string)=>{
+    const read=new DatabaseSync(file,{readOnly:true}),digest=createHash("sha256");
+    try{
+      const objects=read.prepare("SELECT type,name,tbl_name,sql FROM sqlite_schema ORDER BY type,name").all();
+      digest.update(JSON.stringify([read.prepare("PRAGMA user_version").get(),read.prepare("PRAGMA application_id").get(),objects]));
+      for(const {name} of objects.filter(row=>row.type==="table"&&!String(row.name).startsWith("sqlite_"))){
+        const rows=read.prepare(`SELECT * FROM "${String(name).replaceAll('"','""')}"`).all().map(row=>JSON.stringify(row)).sort();
+        digest.update(`${String(name)}\u0000${rows.length}\u0000`);for(const row of rows)digest.update(row);
+      }
+    }finally{read.close();}
+    return digest.digest("hex");
+  };
   try{
     db.prepare("UPDATE memory_records SET owner_pinned=1 WHERE id=?").run(id);
     db.prepare("INSERT INTO memory_records SELECT 'q12-shared-derived',1,?,kind,text,assertion,state,0,valid_from,valid_to,supersedes_id,created_at FROM memory_records WHERE id=?").run(sharedScope,id);
@@ -121,7 +139,9 @@ it("Q12 separate paused restore carries current owner deletions without changing
     const forgotten=forgetMemory(ownerMemoryTicket(),{kind:"source",id:work.sourceId});expect(forgotten.status).toBe("excluded");
     const tombstones=db.prepare("SELECT * FROM memory_tombstones ORDER BY id").all(),meta=db.prepare("SELECT installation_id,deletion_epoch FROM memory_meta").get()!;
     expect(tombstones.some(row=>row.target_type==="source"&&row.target_id===work.sourceId)).toBe(true);expect(meta.deletion_epoch).toBe(forgotten.deletionEpoch);closeDatabase();
-    const originalHash=hash(join(DATA_DIR,"messages.db"));
+    // closeDatabase stops the WAL checkpointer without waiting (wal3); its connection, the last one, checkpoints as it closes: wait for it
+    await stopWalMaintenance();
+    const originalHash=contentHash(join(DATA_DIR,"messages.db"));
     mkdirSync(candidate);copyFileSync(archive,join(candidate,"messages.db"));
     const paused=new DatabaseSync(join(candidate,"messages.db"));try{
       paused.exec("BEGIN IMMEDIATE");expect(pauseRestoredMemory(paused)).toBe(true);paused.exec("COMMIT");
@@ -152,6 +172,6 @@ it("Q12 separate paused restore carries current owner deletions without changing
       expect(restored.prepare("SELECT state FROM memory_sources WHERE id=?").get(controlWork.sourceId)?.state).toBe("active");
       expect(restored.prepare("SELECT count(*) AS n FROM memory_jobs WHERE status='leased'").get()?.n).toBe(0);
     }finally{restored.close();}
-    expect(hash(archive)).toBe(archiveHash);expect(hash(join(DATA_DIR,"messages.db"))).toBe(originalHash);
+    expect(hash(archive)).toBe(archiveHash);expect(contentHash(join(DATA_DIR,"messages.db"))).toBe(originalHash);
   }finally{closeDatabase();rmSync(root,{recursive:true,force:true});}
 });

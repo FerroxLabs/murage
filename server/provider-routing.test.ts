@@ -4,7 +4,7 @@ import { describe, it, expect } from "vitest";
 import { mkdtempSync, readFileSync, existsSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { applyProviderRoute, type ProviderTurnRoute } from "./provider-routing.ts";
+import { applyProviderRoute, routeEndpoint, type ProviderTurnRoute } from "./provider-routing.ts";
 import { providerEngineProtocol } from "../shared/provider-engine.ts";
 import { recordEvents } from "./testing/events.ts";
 import { fixtureCredentialFingerprint } from "./testing/fixture-dump.ts";
@@ -72,4 +72,14 @@ describe('bound provider routes',()=>{
   }
  });
 
+});
+
+describe("Flux Anthropic base", () => {
+  it("points the Claude engine at /anthropic so the engine's own /v1/messages append lands on /anthropic/v1/messages, never a bare /messages", () => {
+    const route = { preset: "flux", baseUrl: "https://api.fluxrouter.ai/v1/" } as ProviderTurnRoute;
+    const base = routeEndpoint("claudeAgent", route);
+    expect(base).toBe("https://api.fluxrouter.ai/anthropic");
+    expect(`${base}/v1/messages`).toBe("https://api.fluxrouter.ai/anthropic/v1/messages");
+    expect(new URL(`${base}/v1/messages`).pathname).not.toBe("/messages");
+  });
 });

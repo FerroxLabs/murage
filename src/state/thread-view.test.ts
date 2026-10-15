@@ -17,7 +17,7 @@ it("clears only the read thread and keeps offscreen unread state",()=>{
   expect(state.bots[0].tasks?.find(task=>task.threadId==="b")?.unread).toBe(true);
 });
 it("does not retarget a displayed transcript from a metadata-only sibling update",()=>{
-  const state=reducer({...initialState,bots:[bot]},{type:"botPatched",bot:{...bot,threadId:"b",messages:undefined}});
+  const state=reducer({...initialState,bots:[bot]},{type: "botPatched", source: "stream",bot:{...bot,threadId:"b",messages:undefined}});
   expect(state.bots[0].threadId).toBe("a");
   expect(state.bots[0].messages).toEqual([]);
 });
@@ -28,30 +28,30 @@ const deletionState = () => ({...initialState,selectedId:"bot",bots:[{...bot,mes
 const replacement = (messages?: Bot["messages"]) => ({...bot,threadId:"b",tasks:bot.tasks!.filter(task=>task.threadId!=="a"),messages,activeLeafId:survivor.id});
 
 it("clears a deleted transcript immediately until the authoritative replacement arrives",()=>{
-  const waiting=reducer(deletionState(),{type:"botPatched",bot:replacement()});
+  const waiting=reducer(deletionState(),{type: "botPatched", source: "stream",bot:replacement()});
   expect(waiting.bots[0]).toMatchObject({threadId:"b",messages:[],activeLeafId:null,awaitingThreadSnapshot:true});
   expect(pendingThreadActionBlocked(waiting,{type:"send",botId:"bot",threadId:"b",text:"unsafe while loading"})).toBe(true);
   expect(pendingThreadActionBlocked(waiting,{type:"decideRequest",threadId:"a",requestId:"old-request",behavior:"allow"})).toBe(true);
   expect(pendingThreadActionBlocked(waiting,{type:"answerQuestion",threadId:"b",requestId:"new-request",behavior:"skip"})).toBe(true);
-  const restored=reducer(waiting,{type:"botPatched",bot:replacement([survivor])});
+  const restored=reducer(waiting,{type: "botPatched", source: "stream",bot:replacement([survivor])});
   expect(restored.bots[0]).toMatchObject({threadId:"b",messages:[survivor],awaitingThreadSnapshot:false});
   expect(pendingThreadActionBlocked(restored,{type:"send",botId:"bot",threadId:"b",text:"safe after loading"})).toBe(false);
 });
 
 it("preserves intervening replacement patches and ignores duplicate snapshots",()=>{
-  let state=reducer(deletionState(),{type:"botPatched",bot:replacement()});
+  let state=reducer(deletionState(),{type: "botPatched", source: "stream",bot:replacement()});
   state=reducer(state,{type:"messagePatched",threadId:"b",message:{...survivor,text:"Newer live text"}});
-  state=reducer(state,{type:"botPatched",bot:replacement([survivor])});
+  state=reducer(state,{type: "botPatched", source: "stream",bot:replacement([survivor])});
   expect(state.bots[0].messages[0]?.text).toBe("Newer live text");
-  state=reducer(state,{type:"botPatched",bot:replacement([survivor])});
+  state=reducer(state,{type: "botPatched", source: "stream",bot:replacement([survivor])});
   expect(state.bots[0].messages[0]?.text).toBe("Newer live text");
 });
 
 it("accepts full-first deletion but a late replacement cannot undo explicit navigation",()=>{
-  const full=reducer(deletionState(),{type:"botPatched",bot:replacement([survivor])});
+  const full=reducer(deletionState(),{type: "botPatched", source: "stream",bot:replacement([survivor])});
   expect(full.bots[0].messages).toEqual([survivor]);
   const third={...bot,threadId:"c",messages:[{...survivor,id:"third",text:"Third thread"}],tasks:[...replacement().tasks!,{threadId:"c",title:"C",createdAt:3}]} as Bot;
-  const navigated=reducer(full,{type:"taskSwitched",bot:third});
-  const late=reducer(navigated,{type:"botPatched",bot:{...replacement([survivor]),tasks:third.tasks}});
+  const navigated=reducer(full,{type: "taskSwitched", source: "local",bot:third});
+  const late=reducer(navigated,{type: "botPatched", source: "stream",bot:{...replacement([survivor]),tasks:third.tasks}});
   expect(late.bots[0]).toMatchObject({threadId:"c",messages:third.messages});
 });

@@ -162,7 +162,11 @@ jobs:
     runs-on: ${{ matrix.os }}
     # Windows runners are the slowest per shard: a 20-minute cap cancelled
     # shard 3 mid-run (CI 36317693740) before any failure text was printed.
-    timeout-minutes: ${{ matrix.os == 'windows-latest' && 45 || 30 }}
+    # 1.0.2 outgrew 30/45 too (CI 38718877034 and its base 38682984430: 16 of
+    # 18 shards cut off before Vitest printed its failure summary). A cap
+    # that cancels a shard hides every failure in it, so it sits well above
+    # the slowest measured shard.
+    timeout-minutes: ${{ matrix.os == 'windows-latest' && 60 || 45 }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: pnpm/action-setup@ff378ebe6b225b0680b81c1ad4498ae0d1d3a5e3 # v6.0.10
@@ -192,6 +196,25 @@ jobs:
         run: node scripts/prepare-backup-test-fixtures.mjs --tool-directory "$RUNNER_TEMP/backup-test-age" >> "$GITHUB_ENV"
       - name: Build the server bundle that packaged-layout tests import
         run: pnpm build:server
+      - name: Node headers for the engine-exclusion addon
+        # The hosted Windows Node has no include/node folder; scripts/build-engine-exclusion.mjs needs node_api.h. Fetch the headers
+        # of the running Node and check them against the published SHASUMS256.txt.
+        if: matrix.os == 'windows-latest'
+        shell: bash
+        run: |
+          v=$(node -p process.version)
+          dir="$(cygpath -u "$RUNNER_TEMP")/node-headers"; mkdir -p "$dir"
+          curl -fsSL "https://nodejs.org/dist/$v/node-$v-headers.tar.gz" -o "$dir/h.tgz"
+          curl -fsSL "https://nodejs.org/dist/$v/SHASUMS256.txt" -o "$dir/sums"
+          (cd "$dir" && want=$(grep " node-$v-headers.tar.gz\$" sums | cut -d' ' -f1) && echo "$want  h.tgz" | sha256sum -c - && tar xzf h.tgz)
+          echo "NODE_HEADERS_DIR=$(cygpath -w "$dir/node-$v/include/node")" >> "$GITHUB_ENV"
+      - name: Build the engine-exclusion addon
+        # server/engine-exclusion*.test.ts run the REAL addon (dist-native/engine-exclusion/<os>-<arch>) and skip when it is absent;
+        # a runner that skipped them would prove nothing, so build it first, as package:<os> does, and print the receipt.
+        shell: bash
+        run: |
+          pnpm build:engine-exclusion
+          cat dist-native/engine-exclusion/*/build.json
       - name: Build the Windows browser helper
         # On Windows the browser broker and service keep their state through the
         # native ACL helper (electron/browser-extension-windows.mjs) and fail
@@ -232,14 +255,17 @@ jobs:
     # cluster; four shards measured 38 minutes on the slowest while specs were
     # failing and retrying. Each shard spends about 8 minutes installing and
     # building before its first spec, and 1.0.0's shard 4 (267 tests) then
-    # needs about 25, so the cap is 45. Each shard boots its own harness.
+    # needs about 25, so the cap was 45; 1.0.2's shards 3 and 6 reached it
+    # (CI 38718877034) while failing specs burned their retries, and were
+    # cancelled before Playwright printed its summary, so the cap is 60.
+    # Each shard boots its own harness.
     # `required` sees one aggregate result: success only if every shard passed.
     strategy:
       fail-fast: false
       matrix:
         human_shard: [1, 2, 3, 4, 5, 6]
     runs-on: ubuntu-latest
-    timeout-minutes: 45
+    timeout-minutes: 60
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -272,7 +298,7 @@ jobs:
         run: node scripts/run-isolated-human-specs.mjs --shard="$HUMAN_SHARD"
       - name: Upload human spec traces on failure
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
-        if: failure()
+        if: failure() || cancelled()
         with:
           name: murage-human-spec-report-${{ matrix.human_shard }}
           path: |

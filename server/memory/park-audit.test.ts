@@ -8,7 +8,9 @@ import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { DATA_DIR } from "../config.ts";
+import { stopWalMaintenance } from "../wal-maintenance.ts";
 import { closeDatabase, database } from "../database.ts";
+import { prepareSyncOn } from "../branch-fill.ts";
 import { ownerMemoryTicket } from "./authority.ts";
 import { captureBranchChange, captureSource } from "./capture.ts";
 import { claimMemoryJob, deferStaleMemoryWork, publishMemoryWork, resetMemoryClaimCursor } from "./jobs.ts";
@@ -21,17 +23,18 @@ import { memoryOwnerRoute } from "./settings.ts";
 const fix = park as unknown as Record<string, any>;
 const NOW = 5_000_000;
 const roster = { bots: [{ id: "a", threadId: "thread-a" }], groups: [] };
-beforeEach(() => {
-  closeDatabase(); rmSync(DATA_DIR, { recursive: true, force: true }); mkdirSync(DATA_DIR, { recursive: true });
+beforeEach(async () => {
+  closeDatabase(); await stopWalMaintenance(); rmSync(DATA_DIR, { recursive: true, force: true }); mkdirSync(DATA_DIR, { recursive: true });
   reconcileMemoryRoster(roster); setMemoryMode("capture"); resetMemoryClaimCursor(); park.resetParkSweep(); fix.resetParkReconcile?.();
 });
-afterEach(() => { closeDatabase(); });
+afterEach(async () => { closeDatabase(); await stopWalMaintenance(); });
 
 /** Thread: m1 is the root, m2 and m3 are sibling replies (two branches). */
 function thread(id = "t") {
   const db = database();
   const row = (message: string, parent: string | null) => db.prepare("INSERT INTO messages VALUES(?,?,1,'user','text',?,?)").run(id, message, message, JSON.stringify({ parentId: parent }));
   row("m1", null); row("m2", "m1"); row("m3", "m1");
+  prepareSyncOn(db, id); // filled as a first turn leaves it; on an unfilled thread the drain does the branch change
   for (const m of ["m1", "m2", "m3"]) captureSource(db, { id: `message:${id}:${m}`, threadId: id, messageId: m, kind: "text", speaker: "owner", outcome: "recorded", text: `text ${m}` });
   return db;
 }

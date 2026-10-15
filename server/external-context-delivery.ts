@@ -67,6 +67,14 @@ export const heldLine = (count: number): string =>
 /** The owner-facing line for the one queue row in the thread. */
 export const heldQueueText = (count: number): string => `Waiting for a tool-capable engine: ${count} item(s). Open now`;
 
+/** How many items really wait for an engine with tools. Answered cards held
+ * for one always do. A delegated result that arrived outside the session only
+ * waits while the conversation's engine has no tools: with tools, the next
+ * turn simply carries it, so nothing is waiting on an engine. */
+export function heldQueueWaiting(input: { held: number; external: number; routeHasTools: boolean }): number {
+  return input.held + (input.routeHasTools ? 0 : input.external);
+}
+
 /** An answered approval card whose continuation could not start because the
  * engine has no tools. Kept on the task until a route with tools dispatches. */
 export interface HeldContinuation {
@@ -84,6 +92,9 @@ export interface HeldContinuation {
   state?: "ready" | "retry" | "authority" | "recovery";
   retryAt?: number;
   error?: string;
+  /** A restore holds this item (server/restore-fence.ts): only the owner's retry after the restore releases it. */
+  restoreHeld?: boolean;
+  restoreGen?: string;
 }
 
 const DELIVERY_GUARD =

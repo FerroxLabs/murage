@@ -34,12 +34,20 @@ export type DeciderFailure =
   | "unreachable"
   /** 401 or 403: the key was refused. */
   | "rejected"
+  /** 403 `paid_plan_required`: this key's plan does not include the decision
+   * model. Remembered for a cooldown; Auto is hidden meanwhile. */
+  | "plan_required"
   /** 429 */
   | "rate_limited"
   /** 529 or 503 */
   | "overloaded"
   /** Any other non-2xx answer. */
   | "http_error"
+  /** The response did not echo `x-flux-no-retain: applied`. The answer was
+   * discarded; content-bearing calls stay off until a probe shows the echo. */
+  | "privacy_contract_failed"
+  /** The request, with the whole new message, cannot fit Flux's limits. Not sent. */
+  | "state_too_long"
   /** A body that is not JSON, a missing answer, a choice that was never
    * offered, a probability that is not a number. */
   | "malformed";

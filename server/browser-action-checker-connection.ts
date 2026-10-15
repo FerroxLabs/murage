@@ -4,6 +4,7 @@
 import type { ProviderInstance } from "./contracts.ts";
 import { fluxKey } from "./flux-config.ts";
 import { FLUX_OPENAI_BASE } from "./flux-routing.ts";
+import { fluxCallHeaders } from "./flux-memory-headers.ts";
 import type { CheckerTransport } from "./browser-action-checker.ts";
 
 /** Flux honours no-retain (verified live 2026-10-03: `x-flux-no-retain: applied` on flux-pinned-claude-haiku). Every Flux check call
@@ -79,7 +80,7 @@ async function fluxCall(input: { apiKey: string; req: Parameters<CheckerTranspor
   if (!["http:", "https:"].includes(url.protocol) || url.username || url.password) throw new Error("CHECKER_UNAVAILABLE");
   const response = await fetch(url, {
     method: "POST", redirect: "error", signal: AbortSignal.any([req.signal, AbortSignal.timeout(60000)]),
-    headers: { "content-type": "application/json", authorization: `Bearer ${apiKey}`, [NO_RETAIN_HEADER]: "1" },
+    headers: { "content-type": "application/json", authorization: `Bearer ${apiKey}`, [NO_RETAIN_HEADER]: "1", ...fluxCallHeaders("browser-checker") },
     body: JSON.stringify({ model: req.model, messages: [{ role: "system", content: req.system }, { role: "user", content: req.user }], max_tokens: req.maxTokens, stream: false }),
   });
   if (!response.ok || !response.body) {

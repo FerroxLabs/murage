@@ -57,13 +57,17 @@ function compactDetail(value: string | undefined): string {
 }
 
 /** A lifecycle receipt can outlive its isolated execution task. Only offer
- * navigation while the task is still present in the owning bot's task list. */
+ * navigation while the task is still present in the owning bot's task list.
+ * When the list is only a window of the bot's tasks (`outsideWindow`), a run
+ * older than the window may still be there: the link is offered, and the
+ * server says if it is gone when it is followed. */
 export function hasRoutineExecutionTask(
   tasks: ReadonlyArray<{ threadId: string }> | undefined,
   executionThreadId: string | undefined,
+  outsideWindow = false,
 ): executionThreadId is string {
   return Boolean(
-    executionThreadId && tasks?.some((task) => task.threadId === executionThreadId),
+    executionThreadId && (outsideWindow || tasks?.some((task) => task.threadId === executionThreadId)),
   );
 }
 

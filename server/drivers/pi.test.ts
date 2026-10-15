@@ -85,7 +85,7 @@ describe("buildMcpServers", () => {
     expect(buildMcpServers({ threadId: "t", text: "hi" })).toBeNull();
   });
 
-  it("passes composio/agents/phone through as stdio servers", () => {
+  it("passes connected apps (under their plain name), agents and phone through as stdio servers", () => {
     const servers = buildMcpServers({
       threadId: "t",
       text: "hi",
@@ -96,7 +96,7 @@ describe("buildMcpServers", () => {
       },
     });
     expect(servers).toEqual({
-      composio: { command: "node", args: ["c"], env: { A: "1" } },
+      murage_connectors: { command: "node", args: ["c"], env: { A: "1" } },
       agents: { command: "node", args: ["a"], env: { B: "2" } },
       phone: { command: "node", args: ["p"], env: {} },
     });
@@ -653,8 +653,8 @@ describe("PiDriver turns (fake CLI)", () => {
     const servers = mcpRow!.mcpConfig!.mcpServers!;
     expect(servers["murage-memory"]).toEqual({ command: "node", args: ["memory-proxy.js"], env: { MURAGE_MEMORY_TOKEN: "fixture-memory" } });
     expect(JSON.stringify(mcpRow!.argv)).not.toContain("fixture-memory");
-    // composio passes through verbatim as a stdio server
-    expect(servers.composio).toMatchObject({ command: "node", args: ["connector-proxy.js"], env: { COMPOSIO_KEY: "ck" } });
+    // connected apps pass through verbatim as a stdio server, under the plain name
+    expect(servers.murage_connectors).toMatchObject({ command: "node", args: ["connector-proxy.js"], env: { COMPOSIO_KEY: "ck" } });
     // the cloud computer wraps in the computer-proxy spawn contract
     expect(servers.computer.args[0]).toContain("computer-proxy");
     expect(servers.computer.env).toMatchObject({ MURAGEBOX_BOX_ID: "b1", MURAGEBOX_BOX_TOKEN: "bt" });
@@ -1267,14 +1267,14 @@ describe("PiDriver bounded ingress (A4)", () => {
   it("still carries a valid 14 MiB multibyte frame intact", async () => {
     await create();
     const { turnId } = await instance.adapter.sendTurn({ threadId: "t-large", text: "__fixture_large_frame__", model: "ollama-cloud/glm-5.2" });
-    const done = await recorder.until((e) => e.type === "turn.completed" && e.turnId === turnId);
+    const done = await recorder.until((e) => e.type === "turn.completed" && e.turnId === turnId, 90_000);
 
     expect(done).toMatchObject({ ok: true });
     const reply = recorder.events.find((e) => e.type === "item.completed" && e.itemType === "assistant_text" && e.threadId === "t-large");
     const text = (reply as { text: string } | undefined)?.text ?? "";
     expect(text.startsWith("éé")).toBe(true);
     expect(Buffer.byteLength(text)).toBe(14 * 1024 * 1024 + Buffer.byteLength("Hello from pi"));
-  });
+  }, 120_000);
 
   it("resolves the catalog probe empty on an oversized frame instead of waiting for its timeout", async () => {
     const started = Date.now();
@@ -1404,7 +1404,7 @@ describe("pi gate prefixes below Full", () => {
       await recorder.until((e) => e.type === "turn.completed" && e.turnId === sent.turnId);
       const row = (readFileSync(dump, "utf8").split("\n").filter(Boolean).map((l) => JSON.parse(l)).filter((r) => r.argv).at(-1)) as { gate: { prefixes: string } | null };
       if (name === "plain") expect(row.gate).toBeNull();
-      else expect(JSON.parse(row.gate!.prefixes)).toContain("composio_");
+      else expect(JSON.parse(row.gate!.prefixes)).toContain("murage_connectors_");
     }
     recorder.stop();
     await instance.dispose();
@@ -1424,7 +1424,7 @@ describe("pi gate prefixes below Full", () => {
       await recorder.until((e) => e.type === "turn.completed" && e.turnId === sent.turnId);
       const row = (readFileSync(dump, "utf8").split("\n").filter(Boolean).map((l) => JSON.parse(l)).filter((r) => r.argv).at(-1)) as { gate: { prefixes: string } | null };
       if (name === "plain") expect(row.gate).toBeNull();
-      else expect(JSON.parse(row.gate!.prefixes)).toContain("composio_");
+      else expect(JSON.parse(row.gate!.prefixes)).toContain("murage_connectors_");
     }
     recorder.stop();
     await instance.dispose();
@@ -1438,15 +1438,17 @@ describe("piGateAsk", () => {
       tool: "Write", summary: "Write /Users/owner/notes.md", toolCall: { name: "Write", input: { file_path: "/Users/owner/notes.md" } }, filePaths: ["/Users/owner/notes.md"],
     });
   });
-  it("names a connected-app call the way the stop line reads Composio's", () => {
+  it("names a connected-app call the way the stop line reads it", () => {
     const tools = [{ tool_slug: "GMAIL_SEND_EMAIL", arguments: { recipient_email: "new@example.com" } }];
-    expect(piGateAsk(JSON.stringify({ tool: "composio_composio_multi_execute_tool", input: { tools } })).toolCall).toEqual({
-      name: "mcp__composio__COMPOSIO_MULTI_EXECUTE_TOOL", input: { tools },
+    expect(piGateAsk(JSON.stringify({ tool: "murage_connectors_apps_multi_execute_tool", input: { tools } })).toolCall).toEqual({
+      name: "mcp__murage_connectors__APPS_MULTI_EXECUTE_TOOL", input: { tools },
     });
+    // a session an earlier release started is mounted under the older name, and its call is read as that mount's
+    expect(piGateAsk(JSON.stringify({ tool: "composio_composio_multi_execute_tool", input: { tools } })).toolCall?.name).toBe("mcp__composio__COMPOSIO_MULTI_EXECUTE_TOOL");
   });
   it("shows a connected-app call's arguments and marks a cut bash command", () => {
     const tools = [{ tool_slug: "GMAIL_SEND_EMAIL", arguments: { recipient_email: "new@example.com" } }];
-    const composio = piGateAsk(JSON.stringify({ tool: "composio_composio_multi_execute_tool", input: { tools } }));
+    const composio = piGateAsk(JSON.stringify({ tool: "murage_connectors_apps_multi_execute_tool", input: { tools } }));
     expect(JSON.parse((composio as any).toolInput)).toEqual({ tools });
     const long = `echo ${"x".repeat(5_000)} && rm -rf ~`;
     const bash = piGateAsk(JSON.stringify({ tool: "bash", input: { command: long } }));

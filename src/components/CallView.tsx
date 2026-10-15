@@ -32,7 +32,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { Loader2, Mic, MicOff, PhoneOff, X } from "lucide-react";
 
-import { useStore, visibleMessages, type Bot, type OptionCardData } from "@/state/store";
+import { olderOpenCards, useStore, visibleMessages, type Bot, type OptionCardData } from "@/state/store";
 import { currentCall, deferCallCleanup, endCall } from "@/lib/call";
 import { publishCallBarState, type CallBarStatus } from "@/lib/call-bar";
 import { CallBarContent } from "./CallBarContent";
@@ -65,7 +65,8 @@ import { callStatusText } from "@/lib/call-status";
 import { auraPhaseFor } from "@/lib/call-aura";
 import { useKeyboardHints } from "@/lib/use-keyboard-hints";
 import { CallCaption } from "./CallCaption";
-import { isHostConsentApproval, isRoutineApproval, isSkillApproval, pendingApprovals, spokenApprovalPrompt, spokenToolAction } from "./PendingApproval";
+import { isHostConsentApproval, isRoutineApproval, isSkillApproval, openQuestions, pendingApprovals, spokenApprovalPrompt, spokenToolAction } from "./PendingApproval";
+import { holdForPlainWords, usePlainApprovalSettled } from "@/lib/plain-approval";
 import { cn } from "@/lib/cn";
 import { useDesktopCapabilities } from "./DesktopCapabilities";
 
@@ -215,6 +216,8 @@ export function Call({
   /** Call speech waits until begin() has chosen where it is heard, so nothing
    *  said as the call opens goes to the wrong player (spec §4.3.5). */
   const outputReady = useRef(false);
+  /** The microphone could not open on this attempt: prompts are said without opening a turn, which would clear the note. */
+  const micUnavailable = useRef(false);
   /** True until the call's audio really opens: native open resolved and mic
    *  frames flowing, or the web mic ready. Drives the "Connecting…" status
    *  so an open that never answers doesn't read as "Listening" forever. */
@@ -337,7 +340,9 @@ export function Call({
   messagesRef.current = messages;
   /** The last time anyone spoke on the call, for the "still on it" lines. */
   const lastSpeechAt = useRef(Date.now());
-  const approval = pendingApprovals(messages)[0];
+  const approval = pendingApprovals(olderOpenCards(bot, messages))[0];
+  // the plain words an approval is spoken in (loaded after the first paint)
+  const approvalWordsSettled = usePlainApprovalSettled();
   /** Kinds of request the owner said yes to for the rest of this call. Held
    *  only here: never saved, gone when the call ends. Not the permanent
    *  "Always allow" the trust design rules out. */
@@ -416,21 +421,17 @@ export function Call({
   const offeredForCall = useRef(false);
   const approvalRef = useRef(approval);
   approvalRef.current = approval;
-  const question = messages.find(
-    (message) =>
-      message.kind === "options" &&
-      message.card?.requestId &&
-      !message.card.tool &&
-      !message.card.answered &&
-      !message.card.dismissed &&
-      !leftToScreen.current.has(message.card.requestId),
-  );
+  // Includes the questions held beside the page: a call must ask one that is
+  // older than the rows it holds, like an approval.
+  const question = openQuestions(olderOpenCards(bot, messages)).find((message) => !leftToScreen.current.has(message.card!.requestId!));
 
   // Everything already on screen or held when the call starts has been read
-  // or ignored — a call must not open by reciting the backlog.
+  // or ignored — a call must not open by reciting the backlog. A conversation
+  // whose first page is not held yet starts once it is: the page landing
+  // after the call began is backlog, not news.
   const spokenIds = useRef<Set<string>>(new Set());
   const started = useRef(false);
-  if (!started.current) {
+  if (!started.current && !bot.messagesUnloaded && !bot.pageStale && !bot.firstPageEvents) {
     started.current = true;
     spokenIds.current = callStartHeard(messages, bot.messages);
   }
@@ -473,6 +474,8 @@ export function Call({
     if (!alive.current || currentCall() !== bot.id || micLive.current) return;
     // nothing to hear before the microphone is open, or while the call is held
     if (!outputReady.current || heldRef.current) return;
+    // the microphone could not open: no turn until the owner tries again (listen, retryOpen), whatever the phase
+    if (micUnavailable.current) return;
     micLive.current = true;
     lastWordsRef.current.clear();
     utteranceRejected.current = false;
@@ -497,6 +500,7 @@ export function Call({
     heardRef.current = "";
     lastWordsRef.current.clear();
     setNote(null);
+    micUnavailable.current = false;
     openTurn();
   }, [bot.id, move, openTurn]);
 
@@ -740,6 +744,11 @@ export function Call({
       // while the reply is still recorded as said: owed instead, and asked
       // first when the host's turn ends.
       if (gated() || (hostOn.current && (phaseRef.current === "sending" || hostSpeaking.current))) return owe();
+      // No microphone: said, and the call stays where it is (sayQuietly), never a listen() that would clear the note.
+      if (micUnavailable.current) {
+        void say(text).then((said) => { if (said && alive.current && phaseRef.current === "speaking") move("listening"); });
+        return;
+      }
       const startedAt = Date.now();
       // Cut by the call itself (the host's reply starting, another answer),
       // not by the owner talking over it or a hold (which owes it itself):
@@ -749,7 +758,7 @@ export function Call({
         owe();
       });
     },
-    [sayThenListen],
+    [move, say, sayThenListen],
   );
 
   /** Say what is owed and held back, one after another, without opening a
@@ -1834,6 +1843,7 @@ export function Call({
             begin(attempt);
           } else {
             outputReady.current = true;
+            micUnavailable.current = true;
             setConnecting(false);
             setNote("The microphone couldn't start. Check Microphone access for Murage.");
             // As before the output gate: what was due as the call opened (an
@@ -1845,6 +1855,7 @@ export function Call({
       );
     };
     retryOpen.current = () => {
+      micUnavailable.current = false;
       setNoteRetry("listen");
       setNote(null);
       setConnecting(true);
@@ -1918,6 +1929,9 @@ export function Call({
     // Nothing may reopen capture or narrate new work while the server is
     // durably settling this exact decision.
     if (askedApproval.current?.submitted) return;
+    // A new approval is asked in plain words ("Can I search the web?"): wait
+    // for them (they load after the first paint) before anything is said.
+    if (holdForPlainWords(approval?.requestId, askedApproval.current?.requestId, approvalWordsSettled)) return;
     if (
       approval &&
       askedApproval.current?.requestId !== approval.requestId &&
@@ -1997,6 +2011,7 @@ export function Call({
     // unheardMessages: a scrollback page loaded mid-call is not news.
     // Known gap: a live lead-in saved in front of a row this client never loaded
     // stays out of visibleMessages (and unsaid) until that older page loads.
+    if (!started.current) return;
     const fresh = unheardMessages(messages, spokenIds.current, bot.messages);
     if (!fresh.length) return;
     // only the newest of each kind matters: a burst of tool chips should
@@ -2046,7 +2061,7 @@ export function Call({
         });
       }
     }
-  }, [messages, bot.messages, approval, question, phase, held, bot.busy, bot.name, bot.threadId, askPrompt, hush, listen, move, say, sayThenListen, tellReply]);
+  }, [messages, bot.messages, approval, approvalWordsSettled, question, phase, held, bot.busy, bot.name, bot.threadId, askPrompt, hush, listen, move, say, sayThenListen, tellReply]);
 
   // busy is the harness's word for "a turn is running"
   useEffect(() => {

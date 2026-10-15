@@ -345,8 +345,9 @@ function locateAttachment(ref: Extract<NormalizedRef, { source: "attachment" }>,
   const owner = threadOwner(deps.store, ref.threadId);
   if (!owner) fail(404, "unavailable", UNAVAILABLE);
   const directory = join(deps.dataDir, "attachments"), path = join(directory, ref.attachmentId);
-  const message = deps.store.messagesFor(ref.threadId)
-    .find(item => (item.attachments ?? []).some(attachment => attachment.kind === "image" && resolve(attachment.path) === path));
+  // by the message_image index: the row that attaches this file, however far back it is
+  const message = deps.store.rowAttaching(ref.threadId, path);
+  if (message && !(message.attachments ?? []).some(attachment => attachment.kind === "image" && resolve(attachment.path) === path)) fail(404, "unavailable", UNAVAILABLE);
   if (!message) fail(404, "unavailable", UNAVAILABLE);
   // A room message names its speaking member; a person's upload to a room is
   // owned by the room itself.

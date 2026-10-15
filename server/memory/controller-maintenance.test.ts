@@ -6,7 +6,7 @@ import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { DATA_DIR } from "../config.ts";
 import { closeDatabase, database } from "../database.ts";
 import { appendMessage } from "../message-db.ts";
-import { resetParkReconcile, resetParkSweep } from "./park.ts";
+import { claimSettleSweepStep, resetParkReconcile, resetParkSweep } from "./park.ts";
 import { setMemoryMode } from "./repository.ts";
 import { MemoryWorkerController } from "./worker-controller.ts";
 
@@ -50,8 +50,12 @@ function projectionBacklog(records: number) {
 const settle = () => new Promise<void>(resolve => setImmediate(resolve));
 const pending = () => Number(database().prepare("SELECT count(*) AS n FROM memory_projection_receipts WHERE lexical_status='pending'").get()!.n);
 
+// The settle sweep (blocked jobs of an old file) runs a step on every tick until it is done; these tests are about the 16-cycle rule of the
+// other passes, so the sweep is finished first (an empty file has nothing to settle).
+const settleSweepDone = () => { while (!claimSettleSweepStep(database(), () => {}).done); };
+
 it("a projection queue that never empties still reaches parking maintenance within 16 work cycles", async () => {
-  projectionBacklog(16 * 20);
+  projectionBacklog(16 * 20); settleSweepDone();
   for (let i = 0; i < 16; i++) { internals.tick(); await settle(); }
   expect(batches).toBe(16);
   expect(pending()).toBeGreaterThan(0);  // the queue was not empty at any of the 16 cycles
@@ -59,7 +63,7 @@ it("a projection queue that never empties still reaches parking maintenance with
 });
 
 it("maintenance does not run on cycles before the sixteenth while projection work stands", async () => {
-  projectionBacklog(16 * 20);
+  projectionBacklog(16 * 20); settleSweepDone();
   for (let i = 0; i < 15; i++) { internals.tick(); await settle(); }
   expect(batches).toBe(15);
   expect(calls.maintenance).toBe(0);

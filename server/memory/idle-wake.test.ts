@@ -52,13 +52,13 @@ it("idle controller wakes at most once per 30 s",async()=>{
   await vi.advanceTimersByTimeAsync(60*60*1000);
   expect(MEMORY_IDLE_SWEEP_MS).toBe(30_000);
   expect(controller.wakeCount).toBeGreaterThan(0);
-  expect(controller.wakeCount).toBeLessThanOrEqual(120);
+  expect(controller.wakeCount).toBeLessThanOrEqual(121);  // 120 idle sweeps, plus the one startup step of the settle sweep (claim-settle.ts)
   expect(fork).not.toHaveBeenCalled();
   expect(jobs.claimMemoryJob).not.toHaveBeenCalled();
   // The one-second consolidation deadline may skip a wake that lands inside it (never more than one here).
   expect(idle.mock.calls.length).toBeLessThanOrEqual(controller.wakeCount);
-  expect(idle.mock.calls.length).toBeGreaterThanOrEqual(controller.wakeCount-1);
-  expect(reads.mock.calls.filter(([sql])=>/FROM memory_jobs/.test(sql)).length).toBeLessThanOrEqual(245);
+  expect(idle.mock.calls.length).toBeGreaterThanOrEqual(controller.wakeCount-2);  // the startup step of the settle sweep is one more wake inside the deadline
+  expect(reads.mock.calls.filter(([sql])=>/FROM memory_jobs/.test(sql)).length).toBeLessThanOrEqual(250);  // two index reads per wake (the idle probe, the next due time), 121 wakes with the settle sweep's startup step
 });
 
 it("queued work wakes promptly",async()=>{

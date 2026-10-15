@@ -77,6 +77,8 @@ export class IndependentThreadRuns<T> {
   private readonly ownerReserved = new Set<string>();
   /** Owner sends waiting for a slot: served ahead of automation. */
   private readonly ownerWaiting = new Set<string>();
+  /** Every run admitted as the owner's own send, until it is released (owner-first.ts counts them). */
+  private readonly ownerSends = new Set<string>();
 
   /** `queueForSlot` (queued automation only): at the limit, admit without a
    * thread slot instead of refusing; the caller must `awaitSlot` before any
@@ -105,6 +107,7 @@ export class IndependentThreadRuns<T> {
     if (needsSlot) this.slotless.add(owner.generation);
     if (reserved) this.ownerReserved.add(owner.generation);
     if (needsSlot && options.ownerFirst) this.ownerWaiting.add(owner.generation);
+    if (options.ownerFirst) this.ownerSends.add(owner.generation);
     return run;
   }
 
@@ -128,6 +131,8 @@ export class IndependentThreadRuns<T> {
   }
 
   get(threadId: string): DirectThreadRun<T> | undefined { return this.runs.get(threadId); }
+  /** Any run at all, in any phase (setup through settling). */
+  any(): boolean { return this.runs.size > 0; }
   forBot(botId: string): readonly DirectThreadRun<T>[] { return [...this.runs.values()].filter(run => run.botId === botId); }
   current(owner: TurnOwner): boolean { return this.runs.get(owner.threadId)?.generation === owner.generation; }
 
@@ -241,16 +246,31 @@ export class IndependentThreadRuns<T> {
     return true;
   }
 
+  /** Told the conversation whose run was just released, and its bot (the shared queue wakes the teams waiting on that conversation, and on the bot's slot). */
+  onReleased?: (threadId: string, botId: string | undefined) => void;
+
   /** Only after teardown/final capture is confirmed. Late cleanup is harmless. */
   release(owner: TurnOwner): boolean {
     if (!this.current(owner)) return false;
     this.resources.release(owner);
+    const botId = this.runs.get(owner.threadId)?.botId;
     this.runs.delete(owner.threadId);
+    try { this.onReleased?.(owner.threadId, botId); } catch { /* a listener never keeps a run from being released */ }
     this.slotless.delete(owner.generation);
     this.ownerReserved.delete(owner.generation);
     this.ownerWaiting.delete(owner.generation);
+    this.ownerSends.delete(owner.generation);
     this.pump();
     return true;
+  }
+
+  /** Owner sends still preparing, sending or streaming (not stopping or settling). */
+  ownerRunCount(): number {
+    let count = 0;
+    for (const run of this.runs.values()) {
+      if (this.ownerSends.has(run.generation) && run.phase !== "stopping" && run.phase !== "settling") count++;
+    }
+    return count;
   }
 
   private claimable(owner: TurnOwner): boolean {

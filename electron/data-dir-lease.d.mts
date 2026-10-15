@@ -5,7 +5,12 @@ export interface DataDirLease {
   readonly delegated: boolean;
   release(): boolean;
 }
+export interface ExitedServerChild {
+  readonly pid: number;
+  readonly code: number | null;
+}
 export interface OwnedDataDirLease extends DataDirLease {
+  release(options?: { exitedChildren?: readonly ExitedServerChild[] }): boolean;
   readonly delegated: false;
   utilityServerLeaseEnvironment(): Readonly<Record<string, string>>;
 }
