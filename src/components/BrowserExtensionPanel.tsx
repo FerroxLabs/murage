@@ -5,6 +5,7 @@ import { BrowserApprovedSites } from "./BrowserApprovedSites";
 import { BrowserActivityLog } from "./BrowserActivityLog";
 import { t } from "@/lib/i18n";
 import { api, useStore, type Bot } from "@/state/store";
+import { fromAnswer } from "@/state/answer-tag";
 export type ExtensionSiteAccess = "allow" | "ask" | "never";
 export type BrowserExtensionPanelStatus = {
   profiles: { profileId: string; browser: string }[];
@@ -109,7 +110,7 @@ export function BrowserExtensionPanel({ bot }: { bot: Bot }) {
     setRemoving(false); setStatus(result);
     setRemovedNote(result.removed?.status === "removed" ? `Removed the helper registration for ${browserList(browser, result.removed.sharedBrowsers)}.` : `No Murage helper registration was found for ${BROWSER_NAMES[browser]}.`);
   });
-  const patch = (body: Record<string, unknown>) => perform(async () => { const generation = epoch.current; const result = await api(`/api/bots/${encodeURIComponent(bot.id)}`, { method: "PATCH", body: JSON.stringify(body) }); if (generation === epoch.current) dispatch({ type: "botPatched", bot: result.bot }); });
+  const patch = (body: Record<string, unknown>) => perform(async () => { const generation = epoch.current; const result = await api(`/api/bots/${encodeURIComponent(bot.id)}`, { method: "PATCH", body: JSON.stringify(body) }); if (generation === epoch.current) dispatch({ type: "botPatched", ...fromAnswer(result.bot), bot: result.bot }); });
   return <BrowserExtensionPanelView botName={bot.name} profileId={bot.browserExtensionProfileId} status={status} pending={pending} error={error || connectionError} connectBrowser={connectBrowser} onConnectBrowser={setConnectBrowser} onCheck={browser => void action({ action: "connect", browser })} onProfile={profileId => void patch({ useMyChrome: true, browserTransport: "extension", browserExtensionProfileId: profileId })} onAction={(name, bindingId) => void action({ action: name, bindingId })} onStartNew={bindingId => { const route = startNewTaskRoute(status); if (route) void perform(async () => { const generation = epoch.current; await api(route, { method: "POST", body: JSON.stringify({ bindingId }) }); const next = await api(base) as BrowserExtensionPanelStatus; if (generation === epoch.current) setStatus(next); }); }} onSite={(bindingId, origin, access) => void action({ action: "site", bindingId, origin, access })} onOwnBrowser={() => void patch({ useMyChrome: false, browserTransport: null, browserExtensionProfileId: null })}
     settings={<><BrowserApprovalMode bot={bot} /><BrowserApprovedSites bot={bot} profileId={bot.browserExtensionProfileId} endedBindingIds={endedBindingIds(status)} sitesLowered={sitesLoweredIn(status)} /><BrowserActivityLog bot={bot} /></>} removing={removing} removedNote={removedNote} onRepair={browser => void repair(browser)} onRemoveAsk={() => { setRemovedNote(""); setRemoving(true); }} onRemoveConfirm={browser => void remove(browser)} onRemoveCancel={() => setRemoving(false)} />;
 }

@@ -1,10 +1,13 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // Copyright 2026 Ferrox Labs
+import { scopedTx } from "./tx-scope.ts";
 import type { DatabaseSync } from 'node:sqlite';
 import { activeProjectGoal, currentProjectClose, insertProjectActivity, projectCardsForGroup, projectSettingsFor } from './project-records.ts';
 import { cancelProjectCard } from './project-cards.ts';
 import { stopProjectGoal } from './project-goals.ts';
 import { setProjectClosed, setProjectReopened, setProjectRunState } from './project-settings.ts';
+import { releaseRestoreHold } from './restore-fence.ts';
+import { goalCloseHeld, projectCloseHeld, releaseHeldCloseForClose } from './project-restore-hold.ts';
 import { completeRequest, insertRoomRequest, isTerminalRoomRequestState, roomRequest, type RoomRequest, type RoomRequestLineage, type CompletionHooks } from './room-requests.ts';
 
 export class ProjectLifecycleError extends Error {
@@ -38,9 +41,11 @@ function steps(db: DatabaseSync, groupId: string): CloseStep[] {
     .map(row => JSON.parse(row.detail) as CloseStep).filter(row => Number.isInteger(row.closeSeq) && Number.isInteger(row.step));
 }
 function tx<T>(db: DatabaseSync, run: () => T): T {
-  db.exec('SAVEPOINT project_close');
-  try { const result = run(); db.exec('RELEASE project_close'); return result; }
-  catch (error) { db.exec('ROLLBACK TO project_close; RELEASE project_close'); throw error; }
+  return scopedTx(() => {
+    db.exec('SAVEPOINT project_close');
+    try { const result = run(); db.exec('RELEASE project_close'); return result; }
+    catch (error) { db.exec('ROLLBACK TO project_close; RELEASE project_close'); throw error; }
+  });
 }
 function record(db: DatabaseSync, deps: ProjectCloseDeps, step: CloseStep) {
   insertProjectActivity(db,{groupId:deps.groupId,kind:'close',actor:'owner',at:deps.now,requestId:step.summaryRequestId ?? undefined,detail:{...step}});
@@ -52,7 +57,7 @@ export function startProjectClose(db: DatabaseSync, deps: ProjectCloseDeps): {su
     if (settings.endedAt !== null) throw new ProjectLifecycleError('not_allowed','This is a channel now.');
     if (settings.closedAt !== null) throw new ProjectLifecycleError('not_allowed','This project is closed.');
     const previous = currentProjectClose(db,deps.groupId);
-    if (previous && previous.step < 3) return {summaryRequestId:previous.summaryRequestId};
+    if (previous && previous.step < 3) { if (!deps.lineage.notOwnerAudience) releaseHeldCloseForClose(db,deps.groupId); return {summaryRequestId:previous.summaryRequestId}; }
     const goal = activeProjectGoal(db,deps.groupId);
     if (goal && ['planning','working','awaiting_plan_ok'].includes(goal.state)) throw new ProjectLifecycleError('not_allowed','Stop the active goal before closing this project.');
     if (goal && !deps.stopGoal) throw new ProjectLifecycleError('not_allowed','Sign off the goal first, or choose Stop the goal and close.');
@@ -82,7 +87,7 @@ export function startProjectClose(db: DatabaseSync, deps: ProjectCloseDeps): {su
 /** Validate without effects, interrupt the group's live work, then commit step 1. */
 export async function startProjectCloseWithInterrupt(db: DatabaseSync, deps: ProjectCloseDeps, interrupt: () => Promise<unknown>) {
   const current = currentProjectClose(db,deps.groupId);
-  if (current && current.step < 3) return {summaryRequestId:current.summaryRequestId};
+  if (current && current.step < 3) { if (!deps.lineage.notOwnerAudience) releaseHeldCloseForClose(db,deps.groupId); return {summaryRequestId:current.summaryRequestId}; }
   db.exec('SAVEPOINT close_preflight');
   try { startProjectClose(db,{...deps,completionHooks:undefined}); }
   finally { db.exec('ROLLBACK TO close_preflight; RELEASE close_preflight'); }
@@ -113,6 +118,8 @@ export function isProjectCloseRequest(db: DatabaseSync, request: RoomRequest): b
 export function resumeProjectCloses(db: DatabaseSync, deps: ProjectCloseDeps): void {
   let step = currentProjectClose(db,deps.groupId);
   if (!step || projectSettingsFor(db,deps.groupId)?.endedAt !== null) return;
+  // A restore expired the summary request. That is not completion: nothing finishes until the owner acts after the restore.
+  if (step.step < 3 && projectCloseHeld(db,deps.groupId,step.closeSeq)) return;
   if (step.step === 1) {
     let request = step.summaryRequestId ? roomRequest(db,step.summaryRequestId) : null;
     if (request?.state === 'queued' && (request.refusal === 'budget_reached' || deps.now-request.createdAt >= 60_000)) {
@@ -178,7 +185,7 @@ function goalCloseSteps(db: DatabaseSync, groupId: string): GoalCloseStep[] {
 export function startGoalCloseSummary(db:DatabaseSync,deps:ProjectCloseDeps,goalId:string):string|null {
   return tx(db,()=>{
     const prior=goalCloseSteps(db,deps.groupId).find(step=>step.goalSummary===goalId);
-    if(prior)return prior.summaryRequestId;
+    if(prior){ if(prior.step<3&&!deps.lineage.notOwnerAudience)releaseRestoreHold(db,'goal_close',`${deps.groupId}:${prior.goalSummary}`); return prior.summaryRequestId; }
     if(!db.prepare("SELECT id FROM project_goals WHERE id=? AND group_id=? AND state='done'").get(goalId,deps.groupId))throw new ProjectLifecycleError('not_allowed','Sign off the goal first.');
     // Without an owner conversation there is no lead summary: the fallback line still posts.
     const lead=deps.lineage.notOwnerAudience?null:projectSettingsFor(db,deps.groupId)?.leadBotId;
@@ -193,6 +200,7 @@ export function isGoalCloseRequest(db:DatabaseSync,request:RoomRequest):boolean 
 }
 export function resumeGoalCloseSummaries(db:DatabaseSync,deps:ProjectCloseDeps):void {
   for(const step of goalCloseSteps(db,deps.groupId)){
+    if(step.step<3&&goalCloseHeld(db,deps.groupId,step.goalSummary))continue;
     if(step.step===1){
       let request=step.summaryRequestId?roomRequest(db,step.summaryRequestId):null;
       // Same bound as Close: a summary the budget refuses, or that is not admitted in a minute, falls back.

@@ -43,6 +43,7 @@ const RULES = [EM_DASH, SAFE, SERVICE];
 
 function walk(dir: string, out: string[] = []): string[] {
   for (const entry of readdirSync(dir)) {
+    if (entry.startsWith(".")) continue;
     const full = join(dir, entry);
     if (statSync(full).isDirectory()) {
       if (entry === "e2e" || entry === "__fixtures__" || entry === "fixtures" || entry === "node_modules" || entry === "testing" || entry === "vendor" || entry === "resources") continue;
@@ -405,10 +406,20 @@ describe("product copy rules", () => {
   });
 
   it("a one-line preview of a failed turn goes through the plain-sentence mapping, never the raw name", () => {
+    // Since the 1.0.2 sidebar redesign the server ships a structured SidebarLine (shared/sidebar-line.ts: the tool's name cut to 160
+    // code points plus `blocked`, read from the error details on the server) and the renderer reads it in one place, activityLineText.
+    // The rule is unchanged: the raw name is only the last fallback, after the plain-sentence mapping, and no row reads the name directly.
     const sidebar = readFileSync(join(ROOT, "src/components/Sidebar.tsx"), "utf8");
-    const fallbacks = sidebar.match(/[^\n]*\?\? last\.tool\.name\b[^\n]*/g) ?? [];
+    const fallbacks = sidebar.match(/[^\n]*\?\? (?:last\.)?tool\.name\b[^\n]*/g) ?? [];
     expect(fallbacks.length).toBeGreaterThan(0);
-    for (const line of fallbacks) expect(line, line.trim()).toContain("errorPreview(last.tool) ?? last.tool.name");
+    for (const line of fallbacks) expect(line, line.trim()).toMatch(/errorPreview\((?:last\.)?tool\) \?\? (?:last\.)?tool\.name\b/);
+    expect(sidebar).not.toMatch(/last\.tool\.name/);
+    const readings = sidebar.match(/last\.kind === "activity" && last\.tool[^\n]*\n?[^\n]*/g) ?? [];
+    expect(readings.length).toBeGreaterThan(0);
+    for (const reading of readings) expect(reading, reading.trim()).toContain("activityLineText(last.tool)");
+    const line = readFileSync(join(ROOT, "shared/sidebar-line.ts"), "utf8");
+    expect(line).toContain("tool.blocked = true");
+    expect(line).not.toMatch(/line\.text = [^\n]*tool/);
   });
 
   it("the safe rule holds unsafe in a sentence, and not a status code or a CSP keyword", () => {

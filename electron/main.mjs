@@ -7,7 +7,7 @@ import { mutateFluxCredentials } from "./flux-connection-control.mjs";
 import { CRASH_WINDOW_MS, createServerSupervisor } from "./server-supervisor.mjs";
 import { compileCacheEnvironment } from "./compile-cache.mjs";
 import { createDesktopTrace } from "./desktop-trace.mjs";
-import { app, BrowserWindow, WebContentsView, clipboard, desktopCapturer, dialog, ipcMain as electronIpcMain, Menu, Notification, Tray, nativeImage, nativeTheme, net, powerMonitor, powerSaveBlocker, safeStorage, screen, session, shell, systemPreferences, utilityProcess } from "electron";
+import { app, BrowserWindow, WebContentsView, clipboard, desktopCapturer, dialog, ipcMain as electronIpcMain, Menu, MenuItem, Notification, Tray, nativeImage, nativeTheme, net, powerMonitor, powerSaveBlocker, safeStorage, screen, session, shell, systemPreferences, utilityProcess } from "electron";
 import { createNotificationAuthorization } from "./notification-authorization.mjs";
 import { createApprovalNotifications } from "./approval-notification.mjs";
 import { BACKUP_MODE_ARGUMENT, BACKUP_TOOL_STUCK_AFTER, createBackupModeController, createBackupToolCapability, createResticToolCapability, prepareBackupRestart } from "./backup-mode.mjs";
@@ -70,7 +70,8 @@ import { migrateMcpServerSecrets, migrateWorkspaceCredentials, workspaceCredenti
 import { assertIncidentExportSender, prepareSelectedIncidentReport, saveDiagnosticsReport, validateIncidentSelection } from "./incident-export.mjs";
 import { activateExistingWindow } from "./single-instance.mjs";
 import { pollServerIdentity } from "./server-boot-probe.mjs";
-import { buildMemoryUpgradePage, clearMemoryUpgradeStatus, memoryUpgradeBlockedSentence, readMemoryUpgradeStatus, setMemoryUpgradeProgressScript, watchMemoryUpgrade } from "./memory-upgrade-status.mjs";
+import { clearMemoryUpgradeStatus, copiedBytes, describeBytes, memoryUpgradeBlockedSentence, readMemoryUpgradeStatus, watchMemoryUpgrade } from "./memory-upgrade-status.mjs";
+import { createUpgradeScreen } from "./upgrade-screen.mjs";
 import { acquireDataDirLease, dataDirLeasePaths, inspectDataDirLease } from "./data-dir-lease.mjs";
 import { migrateLegacyDataDirectory } from "./data-dir-migration.mjs";
 import { assertRestoreReviewed } from "./restore-review.mjs";
@@ -775,6 +776,7 @@ let desktopRequestedDataDir = null;
 let desktopSelectionActive = false;
 let retainedSeparateDirectory = null;
 const ownedServerChildren = new Set();
+const exitedServerChildren = [];
 const credentialWrites = new Set();
 const managedComposioShutdown = new AbortController();
 const companionStarts = new Set();
@@ -810,7 +812,13 @@ function ownedDesktopDataDir() {
 function trackOwnedServerChild(proc, options) {
   const child = createServerChildLifecycle(proc, options);
   ownedServerChildren.add(child);
-  void child.exit.then(() => ownedServerChildren.delete(child));
+  void child.exit.then(() => {
+    ownedServerChildren.delete(child);
+    // Kept for the lease release: a child that exited cleanly before it could
+    // release its own lease must not block the parent's release.
+    const record = child.exitedRecord;
+    if (record) exitedServerChildren.push(record);
+  });
   return child;
 }
 
@@ -1644,39 +1652,42 @@ async function gatherDiagnostics() {
 // Set by startServerPackaged: true only when every failing candidate port was
 // taken by another process — decides which error-page message renders.
 let serverStartConflictOnly = false;
+// True while the machine is asleep: the server boot probe does not spend its budget meanwhile (electron/server-boot-probe.mjs isSuspended).
+let bootSystemSuspended = false;
 // Set when the server child stopped because the memory upgrade could not run
 // (not enough disk space, a newer data format): the note it left, validated.
 let memoryUpgradeBlocked = null;
-// The "Upgrading your memory" screen. There is no window yet at this point of
-// a first launch, so the shell draws it; see memory-upgrade-status.mjs.
-let memoryUpgradeWindow = null;
-let memoryUpgradeWindowClosing = false;
+// The wait while the memory upgrades. There is one window for the whole start: the start-up splash (startup-splash.mjs). It stays up through
+// the upgrade, shows what the upgrade is doing (upgrade-screen.mjs turns the note into words and numbers), and goes on to open the app. A
+// second window for the upgrade would be a second thing to wait on.
+let upgradeScreen = null;
+/** The system language for the wait window's words (a missing locale reads as English). */
+function systemLanguage() { try { return app.getLocale(); } catch { return undefined; } }
+let lastUpgradeView = "";
+/** One look at the note (or, when it cannot be read, nothing): the reducer in upgrade-screen.mjs takes it in and the window shows what it selects. A
+ * look that changes nothing is not sent again. A look with no note while no upgrade has been seen is ignored. */
 function showMemoryUpgradeProgress(status, percent) {
-  if (status?.state !== "upgrading" || desktopShutdownStarted) return;
-  if (memoryUpgradeWindow && !memoryUpgradeWindow.isDestroyed()) {
-    void memoryUpgradeWindow.webContents.executeJavaScript(setMemoryUpgradeProgressScript(percent ?? 2)).catch(() => {});
-    return;
-  }
-  memoryUpgradeWindow = new BrowserWindow({
-    width: 460, height: 260, resizable: false, minimizable: true, maximizable: false, autoHideMenuBar: true,
-    title: "Murage", backgroundColor: "#070707", show: true,
-    webPreferences: { contextIsolation: true, sandbox: true, nodeIntegration: false, webviewTag: false },
-  });
-  // The person's way out (Windows and Linux have no menu here yet): closing
-  // quits, which stops the child. A stopped upgrade changes nothing: the copy
-  // is only a `.partial` until whole and the upgrade is one transaction, so
-  // the next start begins again from the old version.
-  memoryUpgradeWindow.on("close", () => { if (!memoryUpgradeWindowClosing) app.quit(); });
-  void memoryUpgradeWindow.loadURL(buildMemoryUpgradePage({ language: app.getLocale(), percent })).catch(() => {});
+  if (desktopShutdownStarted) return;
+  if (status && status.state !== "upgrading") return;
+  try {
+    if (!status && !upgradeScreen) return;
+    if (status && !startupSplash) {
+      // an unpackaged run, or one opened at login, has no splash: the upgrade still needs somewhere to be seen
+      startupSplash = createStartupSplash({ BrowserWindow, dark: nativeTheme.shouldUseDarkColors, icon: APP_ICON, language: systemLanguage(), onUserClose: () => app.quit() });
+    }
+    upgradeScreen ??= createUpgradeScreen({ language: systemLanguage(), describeBytes });
+    const view = upgradeScreen.update(status, percent, { copiedBytes: status && desktopDataDir ? copiedBytes(status, desktopDataDir) : null });
+    if (!view || !startupSplash) return;
+    const json = JSON.stringify(view);
+    if (json !== lastUpgradeView) { lastUpgradeView = json; startupSplash.set(view); }
+  } catch { /* a screen glitch never blocks the upgrade */ }
 }
-function closeMemoryUpgradeWindow() {
-  const win = memoryUpgradeWindow;
-  memoryUpgradeWindow = null;
-  if (!win || win.isDestroyed()) return;
-  // Closing the last window must not read as "the person quit" on Windows and Linux.
-  memoryUpgradeWindowClosing = true;
-  win.destroy();
-  setTimeout(() => { memoryUpgradeWindowClosing = false; }, 2000).unref?.();
+/** The upgrade is over. When the app is coming up (ready) the same window simply carries on as the splash; otherwise it goes, and the recovery
+ * page or the retry shows its own. */
+function closeMemoryUpgradeWindow(ready = false) {
+  if (ready) return;
+  upgradeScreen = null; lastUpgradeView = "";
+  if (startupSplash?.upgrading) closeStartupSplash();
 }
 
 function syncBrowserConnection(proc) {
@@ -1783,6 +1794,7 @@ async function startServerOn(port) {
   }
   assertDesktopStartupActive();
   const entry = path.join(process.resourcesPath, "server", "index.js");
+  const bootNonce = Array.from(globalThis.crypto.getRandomValues(new Uint8Array(24)), byte => byte.toString(16).padStart(2, "0")).join("");
   // The companion token reaches the harness over the private utility parent
   // port, never the environment, an argument or a file: an environment copy
   // stays readable at /proc/<pid>/environ on Linux and a file can be raced
@@ -1800,6 +1812,8 @@ async function startServerOn(port) {
     // before the fork, because the child reads them at module load.
     ...harnessResourceEnvironment(process.resourcesPath),
     MURAGE_PORT: String(port),
+    // A random value for this launch only, for this child only: the child echoes it in its health answers and the boot probe compares it (never logged).
+    MURAGE_BOOT_NONCE: bootNonce,
     MURAGE_USER_DATA: app.getPath("userData"),
     // V8 compile cache, per app version; {} (no cache) on any failure.
     ...compileCacheEnvironment({ userData: () => app.getPath("userData"), appVersion: () => app.getVersion() }),
@@ -1843,7 +1857,13 @@ async function startServerOn(port) {
   proc.stderr?.on("data", (d) => slog(`[err] ${String(d).trimEnd()}`));
   proc.on("message", (message) => {
     try {
-      if (message?.type === "startup-stage") { startupSplash?.stage(String(message.stage)); return; }
+      if (message?.type === "startup-stage") {
+        const stage = String(message.stage);
+        // the server is listening: the upgrade window says the app is opening (it stays the one window)
+        if (upgradeScreen && startupSplash?.upgrading && (stage === "listen" || stage === "ready")) { const view = upgradeScreen.finishing({ ready: stage === "ready" }); if (view) { lastUpgradeView = JSON.stringify(view); startupSplash.set(view); } }
+        startupSplash?.stage(stage);
+        return;
+      }
       if (receiveDesktopSurfaceSecret(message)) return;
       if (receiveBrowserControlHold(message)) return;
       if (receiveBrowserLifecycleCleanup(proc, message)) return;
@@ -1916,8 +1936,8 @@ async function startServerOn(port) {
     slog(`exited code=${code}`);
   });
   // wait for the port to answer (fresh machine: first boot writes data dirs).
-  // Identity check is by PID: a dev harness server has the same API shape,
-  // so only the child we actually forked (matching pid + static serving)
+  // Identity check is by the launch nonce: a dev harness server has the same API shape,
+  // so only the child we actually forked (echoing the nonce + static serving)
   // counts as ours.
   // The budget is wall-clock, not a fixed poll count: a healthy boot can take
   // well past 20s on cold machines or when pre-listen network calls stall
@@ -1928,16 +1948,17 @@ async function startServerOn(port) {
   // port conflict apart from slow startup.
   let identity;
   const upgradeWatch = desktopDataDir
-    ? watchMemoryUpgrade({ dataDir: desktopDataDir, pid: () => proc.pid, onUpdate: showMemoryUpgradeProgress })
+    ? watchMemoryUpgrade({ dataDir: desktopDataDir, pid: () => proc.pid, onReading: showMemoryUpgradeProgress })
     : null;
   try {
     identity = await Promise.race([pollServerIdentity({
     extendWhile: () => upgradeWatch?.active() ?? false,
+    onUpgrading: (body) => upgradeWatch?.feed(body),
+    isSuspended: () => bootSystemSuspended,
+    progressFresh: () => upgradeWatch?.fresh() ?? false,
     port,
-    // Getter, not value: proc.pid stays undefined until the async `spawn`
-    // event fires, and capturing it here would make the probe judge our own
-    // child a "foreign owner" on its first health answer.
-    pid: () => proc.pid,
+    // The launch nonce, not the pid: the pid is public, so a foreign listener could echo it.
+    nonce: () => bootNonce,
     bootTimeoutMs: SERVER_BOOT_TIMEOUT_MS,
     isExited: () => exited || lifecycle.failed || desktopShutdownStarted,
     }), lifecycle.exit.then(() => ({ outcome: "exited" }))]);
@@ -1945,13 +1966,13 @@ async function startServerOn(port) {
     // blocked upgrade has already written why.
     const finalNote = desktopDataDir ? readMemoryUpgradeStatus(desktopDataDir, { pid: proc.pid }) : null;
     upgradeWatch?.stop();
-    closeMemoryUpgradeWindow();
+    closeMemoryUpgradeWindow(identity.outcome === "ready" && !lifecycle.exited && !desktopShutdownStarted);
     if (identity.outcome === "ready" && !lifecycle.exited && !desktopShutdownStarted) return { proc, lifecycle };
     // The 30-minute cap ran out with the upgrade still running: another port or
     // another try would start the same upgrade from the beginning again.
     const upgradeSeen = finalNote?.state === "upgrading";
     if (identity.outcome === "timeout" && upgradeSeen) {
-      memoryUpgradeBlocked = { state: "blocked", code: "MEMORY_MIGRATION_FAILED" };
+      memoryUpgradeBlocked = { state: "blocked", code: "MEMORY_MIGRATION_TIMEOUT" };
       slog(`child on port ${port} stopped: memory upgrade still running at the start-up limit`);
       await lifecycle.stop({ graceful: false });
       if (desktopDataDir) clearMemoryUpgradeStatus(desktopDataDir);
@@ -2613,6 +2634,29 @@ function closeStartupSplash({ afterMainWindowClosed = false } = {}) {
   setTimeout(() => { startupSplashClosing = false; }, 1000).unref?.();
 }
 
+/** Help menu: one step back to Murage 1.0.1 after the memory v7 upgrade. Quits
+ * Murage, steps the memory database down to v6 under the recovery lease, then
+ * asks the person to install 1.0.1. The next start of this version brings the
+ * set-aside details up to date again. */
+async function prepareForMurage101() {
+  if (!app.isPackaged || prepareForMurage101.running || desktopRecoveryMode || desktopShutdownStarted || !desktopDataOwner || !desktopDataDir) return;
+  prepareForMurage101.running = true;
+  try {
+    const parent = mainWindow && !mainWindow.isDestroyed() ? mainWindow : undefined;
+    const confirm = await dialog.showMessageBox(...(parent ? [parent] : []), { type: "question", buttons: ["Prepare and quit", "Cancel"], defaultId: 0, cancelId: 1, title: "Prepare to reinstall Murage 1.0.1", message: "Prepare to reinstall Murage 1.0.1?", detail: "Murage will close. Your chats and memories stay. Details that only this version uses are set aside, and the next start of this version brings them up to date again. After Murage closes, install 1.0.1." });
+    if (confirm.response !== 0 || desktopRecoveryMode || desktopShutdownStarted) return;
+    desktopRecoveryMode = true;
+    let failure = null;
+    try { await runDesktopRecovery("memory-downgrade", {}); } catch (error) { if (error?.code !== "MEMORY_DATABASE_MISSING" && error?.message !== "MEMORY_DATABASE_MISSING") failure = typeof error?.code === "string" && /^[A-Z][A-Z0-9_]{0,100}$/.test(error.code) ? error.code : "RECOVERY_OPERATION_FAILED"; }
+    // work that is still owed is named in plain words, with nothing to look up
+    const PREPARE_WAITING = { DOWNGRADE_WORK_PENDING: "Some messages are still waiting to send or restore. Open Murage, send or cancel them, then try again.", DOWNGRADE_CARD_DELIVERY_OWED: "Some card results have not reached their room yet. Reopen this version of Murage to retry delivery, then try again." };
+    if (failure && PREPARE_WAITING[failure]) await dialog.showMessageBox({ type: "warning", buttons: ["Quit"], title: "Murage", message: "Murage will be ready for 1.0.1 once this is done.", detail: `Your chats and memories are as they were. ${PREPARE_WAITING[failure]}` });
+    else if (failure) await dialog.showMessageBox({ type: "warning", buttons: ["Quit"], title: "Murage", message: "Murage will be ready for 1.0.1 after another start.", detail: `Your chats and memories are as they were. The next start of this version picks up where it left off. Code: ${failure}` });
+    else await dialog.showMessageBox({ type: "info", buttons: ["Quit"], title: "Murage", message: "Ready for Murage 1.0.1.", detail: "Install it now; your chats and memories are kept." });
+    app.quit();
+  } finally { prepareForMurage101.running = false; }
+}
+
 function showDesktopRecovery(reasonCode = "STARTUP_FAILED") {
   desktopRecoveryMode = true;
   closeStartupSplash();
@@ -2632,7 +2676,7 @@ function showDesktopRecovery(reasonCode = "STARTUP_FAILED") {
     : reasonCode === "RESTORE_REVIEW_REQUIRED"
     ? "Your restored copy is paused until you review it. Your previous data is kept as it was."
     : reasonCode === "MEMORY_UPGRADE_BLOCKED"
-    ? memoryUpgradeBlockedSentence(memoryUpgradeBlocked, app.getLocale())
+    ? memoryUpgradeBlockedSentence(memoryUpgradeBlocked, app.getLocale(), { logPath: path.join(LOG_DIR, "server.log") })
     : reasonCode === "PORT_CONFLICT"
       ? "Another program is using Murage's ports. Quit it, then choose Retry startup. Restoring a backup won't help with this."
       : "Murage couldn't finish starting. Your data is kept as it is. Choose Retry startup, or restore a backup.";
@@ -2789,7 +2833,8 @@ async function runDesktopRecovery(operation, parameters, separate = null) {
     : operation === "activate" ? ["activate", "--data-dir", dataDirectory, "--review-hash", parameters.reviewHash]
     : operation === "backup" ? ["backup", "--data-dir", dataDirectory, "--output", parameters.output]
     : operation === "restore" ? ["restore", "--data-dir", dataDirectory, "--archive", parameters.archive, "--sha256", parameters.sha256]
-    : operation === "rollback" ? ["rollback", "--data-dir", dataDirectory] : null;
+    : operation === "rollback" ? ["rollback", "--data-dir", dataDirectory]
+    : operation === "memory-downgrade" ? ["memory-downgrade", "--data-dir", dataDirectory, "--to", "6"] : null;
   if (!args || args.some(value => typeof value !== "string" || !value)) throw Object.assign(new Error("Invalid recovery request"), { code: "INVALID_RECOVERY_REQUEST" });
   if(operation==="backup-encrypted"&&parameters.maxBytes!==undefined){
     if(!Number.isSafeInteger(parameters.maxBytes)||parameters.maxBytes<1||parameters.maxBytes>1024**4||!Number.isSafeInteger(parameters.maxDurationMs)||parameters.maxDurationMs<1000||parameters.maxDurationMs>30*60000)throw new Error("INVALID_BACKUP_BUDGET");
@@ -3475,6 +3520,15 @@ ipcMain.handle("desktop:open-external", createOpenExternalHandler({
   isTrustedSender: ownedMainSenderGate({ window: () => mainWindow, origin: trustedRendererOrigin }),
   openExternal: (url) => shell.openExternal(url),
 }));
+
+// The terms screen's Quit (src/components/TermsGate.tsx): the person who will
+// not accept has no other way out of a screen that blocks the app. Same
+// owned-main-window sender gate as above.
+const isTermsQuitSender = ownedMainSenderGate({ window: () => mainWindow, origin: trustedRendererOrigin });
+ipcMain.handle("desktop:quit", (event) => {
+  if (isTermsQuitSender(event) !== true) throw new Error("Quit is available only from the main Murage window");
+  app.quit();
+});
 
 // The Box VNC viewer must be a top-level page for its token exchange. A
 // sandboxed modal BrowserWindow satisfies that requirement while keeping the
@@ -4184,6 +4238,12 @@ async function initializeBackupScheduleHost(){
     },
   });
 }
+// Registered before the first boot (this callback is queued ahead of the boot block below, and powerMonitor may only be used once the app is ready): a sleep
+// during a long upgrade must not read as a stalled start when the machine wakes. It is its own callback so the boot block references nothing but its own wiring.
+app.whenReady().then(() => {
+  powerMonitor.on("suspend", () => { bootSystemSuspended = true; try { upgradeScreen?.suspend(); } catch { /* cosmetic */ } });
+  powerMonitor.on("resume", () => { bootSystemSuspended = false; try { upgradeScreen?.wake(); } catch { /* cosmetic */ } });
+}).catch(() => { /* without the hook the boot probe simply keeps its own clock */ });
 const desktopStartup = app.whenReady().then(async () => {
   desktopMark("app.ready");
   assertDesktopStartupActive();
@@ -4199,7 +4259,7 @@ const desktopStartup = app.whenReady().then(async () => {
   if (app.isPackaged && !process.argv.includes(BACKUP_MODE_ARGUMENT) && !process.argv.includes("--murage-login")) {
     let wasOpenedAtLogin = false;
     try { wasOpenedAtLogin = app.getLoginItemSettings().wasOpenedAtLogin === true; } catch { /* unsupported platform */ }
-    if (!wasOpenedAtLogin) { startupSplash = createStartupSplash({ BrowserWindow, dark: nativeTheme.shouldUseDarkColors, icon: APP_ICON, note: firstStartOfVersion({ userData: () => app.getPath("userData"), appVersion: () => app.getVersion() }) ? FIRST_AFTER_UPDATE_NOTE : "" }); desktopMark("splash.shown"); }
+    if (!wasOpenedAtLogin) { startupSplash = createStartupSplash({ BrowserWindow, dark: nativeTheme.shouldUseDarkColors, icon: APP_ICON, language: app.getLocale?.(), onUserClose: () => app.quit(), note: firstStartOfVersion({ userData: () => app.getPath("userData"), appVersion: () => app.getVersion() }) ? FIRST_AFTER_UPDATE_NOTE : "" }); desktopMark("splash.shown"); }
   }
   const connectionError = error => dialog.showErrorBox("Murage server connection", error.message);
   const serverConnections = createServerConnections({ BrowserWindow, session, onError: connectionError });
@@ -4209,6 +4269,13 @@ const desktopStartup = app.whenReady().then(async () => {
     applicationMenu.append(serverMenu.items[0]);
     Menu.setApplicationMenu(applicationMenu);
   } else Menu.setApplicationMenu(serverMenu);
+  if (app.isPackaged) {
+    const prepareItem = { label: "Prepare to reinstall Murage 1.0.1…", click: () => { void prepareForMurage101().catch(() => {}); } };
+    const currentMenu = Menu.getApplicationMenu();
+    const helpItem = currentMenu?.items.find(item => item.role === "help" || item.label === "Help");
+    if (helpItem?.submenu) { helpItem.submenu.append(new MenuItem(prepareItem)); Menu.setApplicationMenu(currentMenu); }
+    else if (currentMenu) { currentMenu.append(new MenuItem({ label: "Help", submenu: [prepareItem] })); Menu.setApplicationMenu(currentMenu); }
+  }
   if (app.isPackaged) acquireDesktopDataOwner();
   await initializeBackupScheduleHost();
   desktopMark("backup-host.ready");
@@ -4498,7 +4565,6 @@ void desktopStartup.catch((error) => {
 });
 
 app.on("window-all-closed", () => {
-  if(memoryUpgradeWindowClosing)return;
   if(startupSplashClosing)return;
   if(backgroundLifecycle?!backgroundLifecycle.keepAliveWithoutWindows():process.platform!=="darwin")app.quit();
 });
@@ -4629,7 +4695,7 @@ function cleanupDesktopForExit() {
     await androidStopped;
     desktopCleanupStage = "installation lease release";
     if (desktopDataOwner) {
-      desktopDataOwner.release();
+      desktopDataOwner.release({ exitedChildren: exitedServerChildren });
       desktopDataOwner = null;
     }
     cuaCleanedUp = true;
@@ -4730,8 +4796,8 @@ app.on("before-quit", (e) => {
   const operation = cleanupDesktopForExit();
   if (alreadyClosing) return;
   // Let the prevented native quit unwind before re-entering Electron's quit.
-  void operation.then(() => { setImmediate(() => app.quit()); }).catch(() => {
-    slog(`desktop cleanup incomplete (${desktopCleanupStage}); installation ownership retained`);
+  void operation.then(() => { setImmediate(() => app.quit()); }).catch((err) => {
+    slog(`desktop cleanup incomplete (${desktopCleanupStage}, ${typeof err?.code === "string" ? err.code : "no code"}); installation ownership retained`);
     dialog.showErrorBox("Murage is still closing", `Cleanup is waiting on ${desktopCleanupStage}. Installation ownership was kept. Wait, then try Quit again. You can force quit through your operating system, but that is not a verified clean shutdown.`);
   });
 });

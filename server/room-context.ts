@@ -56,17 +56,19 @@ export function roomContextMessageIds(
 export const ROOM_REPLY_WITHHELD = "Reply withheld: it used something you deleted or changed";
 /** The same line for a reply the owner forgot itself (0.1.61 final check D4). */
 export const ROOM_REPLY_FORGOTTEN = "Reply withheld: the owner chose to forget it";
+/** The same line for a reply left out only because earlier context is still being checked (1.0.2 lineage-cold): nothing was withdrawn. */
+export const ROOM_REPLY_CHECKING = "Reply left out until earlier memory is checked";
 
-export function withheldRoomLine(message: Pick<Message, "from" | "at">, forgotten = false): string {
+export function withheldRoomLine(message: Pick<Message, "from" | "at">, forgotten = false, checking = false): string {
   const at = new Date(message.at).toISOString().slice(0, 16).replace("T", " ");
-  return `[${forgotten ? ROOM_REPLY_FORGOTTEN : ROOM_REPLY_WITHHELD}] (${message.from?.name ?? "Bot"}, ${at} UTC)`;
+  return `[${forgotten ? ROOM_REPLY_FORGOTTEN : checking ? ROOM_REPLY_CHECKING : ROOM_REPLY_WITHHELD}] (${message.from?.name ?? "Bot"}, ${at} UTC)`;
 }
 
 /** The room as a member turn may read it: each withheld reply stays in its
  * place as its withheld line, with nothing of the original left to quote. */
-export function withholdRoomReplies(messages: readonly Message[], withheld: ReadonlySet<string>, forgotten: ReadonlySet<string> = new Set()): Message[] {
+export function withholdRoomReplies(messages: readonly Message[], withheld: ReadonlySet<string>, forgotten: ReadonlySet<string> = new Set(), checking: ReadonlySet<string> = new Set()): Message[] {
   if (!withheld.size) return [...messages];
   return messages.map((message) => withheld.has(message.id)
-    ? { ...message, text: withheldRoomLine(message, forgotten.has(message.id)), replyToId: undefined, routineRunPrompt: undefined, attachments: undefined, artifactIds: undefined }
+    ? { ...message, text: withheldRoomLine(message, forgotten.has(message.id), checking.has(message.id) && !forgotten.has(message.id)), replyToId: undefined, routineRunPrompt: undefined, attachments: undefined, artifactIds: undefined }
     : message);
 }

@@ -117,11 +117,11 @@ for(const width of widths){
     const group=`lifecycle-${width}-${variant}`;rmSync(gate(),{force:true});await enter(page,width,group);
     const dialog=await lifecycleDialog(page,group,'Close project');await inspect(page,dialog,`close-${variant}-${width}`);
     await dialog.getByRole('button',{name:variant==='stop'?'Stop the goal and close':'Close project',exact:true}).click();
-    await expect(page.getByRole('status').filter({hasText:/^Closing: waiting for/})).toBeVisible();expect((await readProject(group)).closing).toBe(true);
+    await expect(page.locator('[role=status]:not(.sr-only)').filter({hasText:/^Closing: waiting for/})).toBeVisible();expect((await readProject(group)).closing).toBe(true);
     await page.getByRole('main').getByRole('button',{name:`More actions for ${group}`,exact:true}).click();await expect(page.getByRole('menuitem',{name:'Close project',exact:true})).toHaveCount(0);await expect(page.getByRole('menuitem',{name:'End project',exact:true})).toHaveCount(0);await page.keyboard.press('Escape');
-    writeFileSync(gate(),'release');await expect(page.getByRole('status').filter({hasText:'This project is closed.'})).toBeVisible({timeout:30000});
+    writeFileSync(gate(),'release');await expect(page.locator('[role=status]:not(.sr-only)').filter({hasText:'This project is closed.'})).toBeVisible({timeout:30000});
     if(variant==='stop')expect((await readProject(group)).goal?.state).toBe('stopped');
-    await page.getByRole('button',{name:'Reopen',exact:true}).click();await expect(page.getByRole('status').filter({hasText:'Project reopened.'})).toBeVisible();expect((await readProject(group)).settings).toMatchObject({closedAt:null,runState:'paused'});
+    await page.getByRole('button',{name:'Reopen',exact:true}).click();await expect(page.locator('[role=status]:not(.sr-only)').filter({hasText:'Project reopened.'})).toBeVisible();expect((await readProject(group)).settings).toMatchObject({closedAt:null,runState:'paused'});
   });
   test(`End project confirmation at ${width}`,async({page})=>{
     const group=`lifecycle-${width}-end`;await enter(page,width,group);const dialog=await lifecycleDialog(page,group,'End project');await inspect(page,dialog,`end-${width}`);

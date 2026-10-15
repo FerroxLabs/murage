@@ -159,4 +159,39 @@ describe("EventBus", () => {
     emit(testEvent());
     expect(seenAfterDetach).toHaveLength(0);
   });
+
+  it("one thread's backlog (events or bytes) closes that thread's intake, never the global cap, so another bot is not paused", async () => {
+    const bus = new EventBus();
+    bus.omitLog(() => true);
+    bus.setDeliveryLimits({ maxEvents: 100, maxBytes: 10_000, batch: 5, retryMinMs: 10, retryMaxMs: 20 });
+    let gateHeld = true;
+    bus.gateDeliveries({ held: () => gateHeld, wait: async () => { await new Promise(r => setTimeout(r, 20)); }, isBusy: () => false });
+    bus.subscribe(() => {});
+    // a few huge events from one thread: under the event share, over the byte share
+    for (let i = 0; i < 3; i++) bus.publish(testEvent({ eventId: `big-${i}`, threadId: "noisy", type: "item.completed", text: "x".repeat(2_500) } as unknown as Partial<RuntimeEvent>));
+    expect(bus.valve.isOpen("noisy")).toBe(false);
+    expect(bus.valve.isOpen("quiet")).toBe(true); // another bot's stream keeps flowing
+    expect(bus.valve.isOpen(null)).toBe(true); // and the global cap was never reached
+    gateHeld = false;
+    await vi.waitFor(() => expect(bus.valve.isOpen("noisy")).toBe(true), { timeout: 3000 });
+  });
+
+  it("a gate whose wait returns at once while still held does not spin the delivery loop", async () => {
+    const bus = new EventBus();
+    bus.omitLog(() => true);
+    bus.setDeliveryLimits({ maxEvents: 100, maxBytes: 10_000, batch: 5, retryMinMs: 10, retryMaxMs: 20 });
+    let gateHeld = true, waits = 0;
+    bus.gateDeliveries({ held: () => gateHeld, wait: () => { waits++; return Promise.resolve(); }, isBusy: () => false });
+    const seen: string[] = [];
+    bus.subscribe(e => { seen.push(e.eventId); }, { durable: true });
+    bus.publish(testEvent({ eventId: "held-1" }));
+    // a timer-drift probe: the loop stays free, and the drain makes few calls rather than millions
+    const t0 = performance.now(); let worstGap = 0, last = t0;
+    await new Promise<void>(resolve => { const iv = setInterval(() => { const now = performance.now(); worstGap = Math.max(worstGap, now - last); last = now; if (now - t0 > 400) { clearInterval(iv); resolve(); } }, 10); });
+    expect(waits).toBeLessThan(40);
+    expect(worstGap).toBeLessThan(150);
+    expect(seen).toHaveLength(0);
+    gateHeld = false;
+    await vi.waitFor(() => expect(seen).toEqual(["held-1"]), { timeout: 3000 });
+  });
 });

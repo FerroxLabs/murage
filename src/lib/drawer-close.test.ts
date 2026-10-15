@@ -7,11 +7,13 @@ import { describe, expect, it, vi } from "vitest";
 import { closedDrawerInert, drawerCloseKey, focusLeavesClosedDrawer } from "./drawer-close";
 import { initialState, reducer, type Action, type AppState } from "@/state/store";
 import { openInboxLink } from "./open-inbox-link";
+import { httpNow } from "../state/test-origins";
+import { asAnswer } from "@/state/answer-tag";
 
 // The Inbox switches the task over HTTP itself, then reports it
 // (taskSwitched) and selects; it never dispatches switchTask.
 const inboxApi = vi.hoisted(() => ({ reply: {} as unknown }));
-vi.mock("@/state/store", async (actual) => ({ ...(await actual<typeof import("@/state/store")>()), api: async () => inboxApi.reply }));
+vi.mock("@/state/store", async (actual) => ({ ...(await actual<typeof import("@/state/store")>()), api: async () => asAnswer(inboxApi.reply) }));
 
 const base = { ...initialState, selectedId: "chief", activeView: "chat", pluginsOpen: false, settingsOpen: false, bots: [{ id: "chief", threadId: "main" }], groups: [] } as never;
 
@@ -42,11 +44,11 @@ describe("the phone drawer closes when a conversation is picked", () => {
   it("does not count the selection the app settles by itself", () => {
     // Built through the reducer's own hydrate, the way the app settles it.
     const loading = { ...initialState, activeView: "chat" } as AppState;
-    const settled = reducer(loading, { type: "hydrate", bots: [{ id: "chief", threadId: "main", messages: [] }] as never, groups: [], computerControl: {} });
+    const settled = reducer(loading, { type: "hydrate", ...httpNow, bots: [{ id: "chief", threadId: "main", messages: [] }] as never, groups: [], computerControl: {} });
     expect(settled.selectedId).toBe("chief");
     expect(drawerCloseKey(settled)).toBe(drawerCloseKey(loading));
     expect(drawerCloseKey(reducer(base, { type: "select", id: "chief" }))).not.toBe(drawerCloseKey(base));
-    expect(drawerCloseKey(reducer(base, { type: "botAdded", bot: { id: "new", threadId: "t", messages: [] } } as never))).not.toBe(drawerCloseKey(base));
+    expect(drawerCloseKey(reducer(base, { type: "botAdded", ...httpNow, bot: { id: "new", threadId: "t", messages: [] } } as never))).not.toBe(drawerCloseKey(base));
   });
 
   it("does not count a thread change nobody asked for here", () => {

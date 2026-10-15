@@ -232,7 +232,7 @@ describe("words", () => {
     const asked = new Set<string>();
     for (const match of (source + lib).matchAll(/\bs\("([\w.]+)"|screenText\("([\w.]+)"/g)) asked.add(match[1] ?? match[2]);
     for (const name of ["from.feedback", "from.edit", "from.mark", "from.typed", "from.suggested", "kind.won", "kind.lost", "kind.good", "kind.bad", "results.needOne", "results.needMany", "why.feedback", "why.edit", "why.mark", "why.other",
-      "procedure.skill", "procedure.routine", "recent.procedure.auto", "recent.procedure.applied", "recent.procedure.suggested", "recent.procedure.undone", "recent.procedure.skill", "recent.procedure.routine"]) asked.add(name);
+      "procedure.skill", "procedure.routine", "recent.procedure.auto", "recent.procedure.applied", "recent.procedure.suggested", "recent.procedure.undone", "recent.procedure.held", "recent.procedure.skill", "recent.procedure.routine"]) asked.add(name);
     const en = new Set(ownKeys("en"));
     for (const name of asked) expect(en.has(`learningScreen.${name}`), name).toBe(true);
     for (const key of en) expect(asked.has(key.slice("learningScreen.".length)), `unused ${key}`).toBe(true);

@@ -1,6 +1,9 @@
 import { lstatSync } from "node:fs";
 import { chmod, lstat, open, readFile, readdir, writeFile } from "node:fs/promises";
 import path from "node:path";
+import { execFileSync } from "node:child_process";
+import { validateEngineExclusionResource, loadEngineExclusionResource } from "./engine-exclusion-resource.mjs";
+import { ADDON_VERSION as ENGINE_EXCLUSION_ADDON_VERSION } from "../server/engine-exclusion.ts";
 import { validateNotificationAuthorizationResource } from "./notification-authorization-resource.mjs";
 import { LICENSE_FILES } from "./cua-linux-release.mjs";
 import {
@@ -182,6 +185,18 @@ export async function validatePackagedThumbnailRuntime(server, manifest, platfor
     return { available: false, package: "sharp", missing: error.message };
   }
 }
+/** Where Node resolves `name` for the staged package at `fromDir`. The runtime tree is hoisted
+ * (scripts/stage-hoisted.mjs), so sharp's @img/* binaries sit beside it rather than under it; a nested copy
+ * (a version conflict, or an older layout) is found first. Falls back to the nested path for the error text. */
+async function stagedDependency(server, fromDir, name) {
+  const modules = path.join(server, "node_modules");
+  for (let dir = fromDir; ; dir = path.dirname(dir)) {
+    const candidate = path.basename(dir) === "node_modules" ? path.join(dir, name) : path.join(dir, "node_modules", name);
+    try { await lstat(path.join(candidate, "package.json")); return candidate; } catch { /* keep walking */ }
+    if (dir === modules || path.dirname(dir) === dir) break;
+  }
+  return path.join(fromDir, "node_modules", name);
+}
 async function checkPackagedSharp(server, manifest, platform, arch) {
   const target = `${platform}-${arch}`;
   const entries = manifest.packages?.filter(entry => entry.name === "sharp");
@@ -198,7 +213,7 @@ async function checkPackagedSharp(server, manifest, platform, arch) {
   const record = file => path.relative(server, file).split(path.sep).join("/");
   const files = [];
   // sharp <=0.34 ships sharp-<target>.node; 0.35 versions the file name (sharp-<target>-0.35.5.node).
-  const addonDirectory = path.join(packageRoot, "node_modules/@img", `sharp-${target}`, "lib");
+  const addonDirectory = path.join(await stagedDependency(server, packageRoot, `@img/sharp-${target}`), "lib");
   const addonPattern = new RegExp(`^sharp-${target}(?:-\\d+\\.\\d+\\.\\d+)?\\.node$`);
   let addonNames;
   try { addonNames = (await readdir(addonDirectory)).filter(name => addonPattern.test(name)); }
@@ -208,7 +223,7 @@ async function checkPackagedSharp(server, manifest, platform, arch) {
   await requireTargetBinary(addon, target, record(addon));
   files.push(record(addon));
   const [libvipsPackage, pattern] = SHARP_LIBVIPS[platform](arch);
-  const libDirectory = path.join(packageRoot, "node_modules/@img", libvipsPackage, "lib");
+  const libDirectory = path.join(await stagedDependency(server, packageRoot, `@img/${libvipsPackage}`), "lib");
   let names;
   try { names = (await readdir(libDirectory)).filter(name => pattern.test(name)); }
   catch (error) { if (error?.code === "ENOENT") names = []; else throw error; }
@@ -231,7 +246,8 @@ export async function validatePackagedMemoryRuntime(resources, platform, archVal
   const arch = typeof archValue === "string" ? archValue : ({ 1: "x64", 3: "arm64" })[archValue];
   const target = `${platform}-${arch}`;
   if (!["darwin-arm64", "darwin-x64", "linux-x64", "win32-x64"].includes(target)) throw new Error(`Unsupported packaged memory target: ${target}`);
-  for (const file of [manifestFile, path.join(server, "memory-model-manifest.json"), path.join(server, "memory/worker.js"), path.join(server, "bot-package-guard-worker.js")]) await requireRegularFile(file);
+  for (const file of [manifestFile, path.join(server, "memory-model-manifest.json"), path.join(server, "memory/worker.js"), path.join(server, "bot-package-guard-worker.js"), path.join(server, "engine-history-worker.js"),
+    path.join(server, "transcript-read-worker.js"), path.join(server, "inbox-fill-worker.js")]) await requireRegularFile(file);
   const manifest = JSON.parse(await readFile(manifestFile, "utf8"));
   const model = JSON.parse(await readFile(path.join(server, "memory-model-manifest.json"), "utf8"));
   const runtimes = manifest.packages?.filter(entry => entry.name === "onnxruntime-node");
@@ -272,6 +288,14 @@ export async function validatePackagedMemoryRuntime(resources, platform, archVal
   return verified;
 }
 
+/** The packaged Electron executable of the target (what the engine-exclusion addon is loaded with). */
+function packagedElectronBinary(context) {
+  const name = context.packager?.appInfo?.productFilename ?? "Murage";
+  if (context.electronPlatformName === "darwin") return path.join(context.appOutDir, `${name}.app`, "Contents", "MacOS", name);
+  if (context.electronPlatformName === "win32") return path.join(context.appOutDir, `${name}.exe`);
+  return path.join(context.appOutDir, context.packager.executableName ?? name);
+}
+
 // electron-builder normalizes copied resource directories to 0775. That is
 // unsafe for a root-owned executable path after DEB/AppImage installation, so
 // repair and revalidate the exact tree after resources are copied and before
@@ -284,6 +308,14 @@ export default async function afterPack(context) {
   );
   validatePackagedGepa(resources, context);
   if(context.electronPlatformName==="darwin"&&context.packager){const arch=typeof context.arch==="string"?context.arch:({1:"x64",3:"arm64"})[context.arch];validateNotificationAuthorizationResource(resources,arch);await requireRegularFile(path.join(resources,"notification-authorization.node"),0o755);}
+  // Without the engine-exclusion addon Murage cannot clean a deleted conversation out of the engines' files; refuse a package that lacks it.
+  if (context.packager) {
+    const exclusionArch = typeof context.arch === "string" ? context.arch : ({ 1: "x64", 3: "arm64" })[context.arch];
+    const exclusionFile = validateEngineExclusionResource(resources, context.electronPlatformName, exclusionArch);
+    await requireRegularFile(exclusionFile, context.electronPlatformName === "win32" ? undefined : 0o755);
+    // Loads it for real with the TARGET package's own Electron binary (run as Node); a package this machine cannot run is refused.
+    console.log(`engine-exclusion addon: ${loadEngineExclusionResource(exclusionFile, context.electronPlatformName, exclusionArch, ENGINE_EXCLUSION_ADDON_VERSION, (command, args, env) => execFileSync(command, args, { timeout: 30000, env: { ...process.env, ...env } }), packagedElectronBinary(context))}`);
+  }
   await validateCloudflared(resources, context.electronPlatformName, Boolean(context.packager));
   await validateFuigo(resources, context.electronPlatformName, Boolean(context.packager));
   const fuigoProbe = await validateFuigoProbeResources(resources, context.electronPlatformName, Boolean(context.packager));

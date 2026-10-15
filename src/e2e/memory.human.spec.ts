@@ -3,7 +3,7 @@
 // Synthetic source-backed candidates are seeded before the browser opens;
 // review/correction/sharing/pinning/forgetting go through the actual UI/API.
 // No intercepted routes, external models, existing server or user profile.
-import { test, expect, type Page } from "@playwright/test";
+import { test, expect, type Locator, type Page } from "@playwright/test";
 import { createServer, type ViteDevServer } from "vite";
 import react from "@vitejs/plugin-react";
 import tailwindcss from "@tailwindcss/vite";
@@ -54,6 +54,8 @@ function seed(id:string,scopeId:string,text:string,threadId:string) {
   database.prepare("INSERT INTO memory_records(id,version,scope_id,kind,text,assertion,state,owner_pinned,valid_from,created_at) VALUES(?,1,?,'fact',?,'owner-statement','candidate',0,1,1)")
     .run(id,scopeId,text);
   database.prepare("INSERT INTO memory_evidence(record_id,record_version,source_id,source_revision,start_byte,end_byte) VALUES(?,1,?,1,0,?)").run(id,`source-${id}`,Buffer.byteLength(text));
+  // Every product writer queues the record for the search index (a pending receipt); owner search reads only the index and that queue.
+  database.prepare("INSERT INTO memory_projection_receipts VALUES(?,1,0,'pending','pending',NULL)").run(id);
 }
 
 test.beforeAll(async()=>{
@@ -119,14 +121,14 @@ async function fitsViewport(page:Page) {
   const panel=page.getByRole("heading",{name:"Workspace memory",exact:true});
   await expect(panel).toBeVisible();
 }
-async function clickAction(page:Page,label:string,action:string) {
+async function clickAction(page:Page,label:string,action:string,within?:Locator) {
   const response=page.waitForResponse(response=>response.url().endsWith("/api/memory/action")&&response.request().method()==="POST"&&response.request().postDataJSON()?.action===action);
-  await page.getByRole("button",{name:label,exact:true}).click();
+  await (within??page).getByRole("button",{name:label,exact:true}).click();
   expect((await response).ok(),`${action} owner action failed`).toBe(true);
 }
 async function inspectActive(page:Page,id:string) {
   await page.getByRole("combobox",{name:"Audience",exact:true}).selectOption(botScope);
-  await page.getByRole("combobox",{name:"Record status",exact:true}).selectOption("active");
+  await page.getByRole("combobox",{name:"Show",exact:true}).selectOption("active");
   await clickAction(page,"Search","list");
   await page.locator(`[data-memory-id="${id}"]`).getByRole("button",{name:"Inspect memory",exact:true}).click();
   await expect(page.getByRole("region",{name:"Memory details",exact:true})).toHaveAttribute("data-memory-detail-id",id);
@@ -148,7 +150,7 @@ test("reviewed memory survives sharing and correction, then forgetting excludes 
   await page.getByRole("button",{name:"Manage memory",exact:true}).click();
   await expect(page.getByRole("heading",{name:"Workspace memory",exact:true})).toBeVisible();
   const audience=page.getByRole("combobox",{name:"Audience",exact:true});
-  const status=page.getByRole("combobox",{name:"Record status",exact:true});
+  const status=page.getByRole("combobox",{name:"Show",exact:true});
   const search=page.getByRole("textbox",{name:"Search memory",exact:true});
   await expect(audience).toBeVisible();await expect(status).toBeVisible();await expect(search).toBeVisible();
   await audience.selectOption(botScope);
@@ -157,8 +159,8 @@ test("reviewed memory survives sharing and correction, then forgetting excludes 
   await clickAction(page,"Search","list");
   const inspect=page.locator('[data-memory-id="browser-candidate"]').getByRole("button",{name:"Inspect memory",exact:true});
   await expect(inspect).toBeVisible();
-  await page.locator("summary").filter({hasText:/^Local model$/}).click();
-  await expect(page.getByTestId("memory-model-status")).toHaveText("Local model: missing");
+  await page.locator("summary").filter({hasText:/^Search model$/}).click();
+  await expect(page.getByTestId("memory-model-status")).toHaveText("Search model: not downloaded");
   await expect(page.getByText("Semantic recall is unavailable until the local model is verified. Lexical recall can still be used.",{exact:true})).toBeVisible();
   await fitsViewport(page);
   await screenshot("memory-settings");
@@ -166,10 +168,9 @@ test("reviewed memory survives sharing and correction, then forgetting excludes 
   await expect(page.getByRole("heading",{name:"Memory details",exact:true})).toBeVisible();
   await expect(page.getByText(ORIGINAL,{exact:true}).first()).toBeVisible();
   const details=page.getByRole("region",{name:"Memory details",exact:true});
-  await details.locator("summary").filter({hasText:"source-browser-candidate"}).click();
-  await expect(details.getByText(/Source hash:/)).toBeVisible();
+  await details.locator("summary").filter({hasText:"A conversation"}).click();
   await screenshot("memory-review");
-  await clickAction(page,"Approve candidate","approve");
+  await clickAction(page,"Keep","approve",details);
   await inspectActive(page,"browser-candidate");
   await expect(page.getByRole("button",{name:"Save correction",exact:true})).toBeVisible();
   await page.getByRole("textbox",{name:"Correction text",exact:true}).fill(CORRECTED);
@@ -298,8 +299,8 @@ test("owner imports full notebooks, tracks changes, and selects existing Flux ex
 test("paged bot memory handles 3000 records in both skins without accumulating cards", async ({page}, info) => {
   await page.addInitScript(()=>localStorage.setItem("murage-flux-invite-dismissed","1"));
   database.exec("BEGIN IMMEDIATE");
-  for(let n=0;n<3000;n++)database.prepare("INSERT INTO memory_records(id,version,scope_id,kind,text,assertion,state,owner_pinned,valid_from,created_at) VALUES(?,1,?,'fact',?,'owner-statement','active',?,?,?)")
-    .run(`paged-${String(n).padStart(4,"0")}`,botScope,`PAGEDMEMORY: useful note ${n}`,n===2999?1:0,Date.UTC(2026,8,1)+n,Date.UTC(2026,8,1)+n);
+  for(let n=0;n<3000;n++){database.prepare("INSERT INTO memory_records(id,version,scope_id,kind,text,assertion,state,owner_pinned,valid_from,created_at) VALUES(?,1,?,'fact',?,'owner-statement','active',?,?,?)")
+    .run(`paged-${String(n).padStart(4,"0")}`,botScope,`PAGEDMEMORY: useful note ${n}`,n===2999?1:0,Date.UTC(2026,8,1)+n,Date.UTC(2026,8,1)+n);database.prepare("INSERT INTO memory_projection_receipts VALUES(?,1,0,'pending','pending',NULL)").run(`paged-${String(n).padStart(4,"0")}`);}
   seed("paged-candidate",botScope,"PAGEDMEMORY: proposed detail",bot.threadId);
   database.exec("UPDATE memory_meta SET data_revision=data_revision+1; COMMIT");
   await page.addInitScript(()=>localStorage.setItem("murage-email-gate","skipped"));
@@ -322,7 +323,7 @@ test("paged bot memory handles 3000 records in both skins without accumulating c
   await expect(panel.locator("[data-memory-id]").first()).toHaveAttribute("data-memory-id","paged-2999");
   await panel.getByRole("button",{name:"Important",exact:true}).click();
   await expect(panel.locator("[data-memory-id]")).toHaveCount(1);
-  await panel.getByRole("button",{name:"Needs review",exact:true}).click();
+  await panel.getByRole("button",{name:"Waiting",exact:true}).click();
   await expect(panel.locator("[data-memory-id]")).toHaveCount(1);
   await expect(panel.locator("[data-memory-id]").first()).toHaveAttribute("data-memory-id","paged-candidate");
   for(const skin of ["light","dark"]){

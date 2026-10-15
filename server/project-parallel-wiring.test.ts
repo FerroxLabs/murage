@@ -12,7 +12,7 @@ it("a 429 retry reuses exactly one persisted user prompt for its request", () =>
   // Lane D: the block also stamps the automation origin, so its helpers are passed in too.
   const append = (...args: unknown[]) => new Function("opts", "store", "threadId", "text", "turnImages", "routineRunPrompt", "randomUUID", "automationForTurn", "automationRunForTurn", "routines", ts.transpileModule(source.slice(start, end) + "return userMessage;", { compilerOptions: { target: ts.ScriptTarget.ES2022 } }).outputText)(...args, automationForTurn, automationRunForTurn, undefined);
   const messages: any[] = [];
-  const store = { messagesFor: () => messages, appendMessage: (_thread: string, m: any) => { const row = { ...m, id: `m${messages.length}` }; messages.push(row); return row; } };
+  const store = { messagesFor: () => messages, scanNewest: (_thread: string, visit: (m: any) => boolean) => { for (let at = messages.length - 1; at >= 0; at -= 1) if (visit(messages[at])) return true; return false; }, appendMessage: (_thread: string, m: any) => { const row = { ...m, id: `m${messages.length}` }; messages.push(row); return row; } };
   const opts = { projectCardRun: { request: { id: "request" } } };
   const first = append(opts, store, "desk", "Work on card 1", { promote: () => [] }, undefined, () => "uuid");
   const retry = append(opts, store, "desk", "Work on card 1", { promote: () => [] }, undefined, () => "uuid");

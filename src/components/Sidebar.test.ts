@@ -29,15 +29,24 @@ import type {
   TeamImportSkillError,
 } from "./TeamLibraryPanel";
 import { botRole } from "@/lib/bot-role";
-import type { Bot, Group, Message } from "@/state/store";
+import { visibleMessages, type Bot, type Group, type Message } from "@/state/store";
+import { sidebarLineOf } from "../../shared/sidebar-line";
+import { stateForBot } from "@/lib/mascot";
 
 describe("plain-text sidebar message previews", () => {
   const message = (text: string, extra: Partial<Message> = {}): Message => ({
     id: "preview-message", role: "bot", kind: "text", text, at: 1, ...extra,
   } as Message);
-  const bot = (messages: Message[], extra: Partial<Bot> = {}): Bot => ({
-    id: "preview-bot", name: "Kessler", messages, ...extra,
-  } as Bot);
+  // The sidebar reads only the line (shared/sidebar-line.ts); these rows hold no transcript, as an unopened conversation does.
+  const bot = (messages: Message[], extra: Partial<Bot> = {}): Bot => {
+    const held = { id: "preview-bot", name: "Kessler", messages, ...extra } as Bot;
+    const head = visibleMessages(held).at(-1);
+    return { ...held, messages: [], messagesUnloaded: true, ...(head ? { sidebarLine: sidebarLineOf(head) } : {}) } as Bot;
+  };
+  const room = (messages: Message[], extra: Partial<Group> = {}): Group => {
+    const head = messages.at(-1);
+    return { memberIds: ["preview-bot"], ...extra, messages: [], messagesUnloaded: true, ...(head ? { sidebarLine: sidebarLineOf(head) } : {}) } as Group;
+  };
 
   it("strips message Markdown without modifying the transcript", () => {
     const original = message("**Kessler secured** the `report` and [sources](https://example.com).\n- Ready for review");
@@ -73,7 +82,7 @@ describe("plain-text sidebar message previews", () => {
     expect(sidebarBotPreview(bot([failed({ name: "error: Flux Router needs credits", ok: false, providerError: { provider: "flux-router", kind: "credits", httpStatus: 402 } as never })])))
       .toBe("Flux Router needs credits.");
     expect(sidebarBotPreview(bot([failed({ name: "error: claude is not signed in", ok: false, setup: true })]))).toBe("This engine needs setup.");
-    const group = { messages: [failed({ name: raw, ok: false })], memberIds: ["preview-bot"] } as Group;
+    const group = room([failed({ name: raw, ok: false })]);
     expect(sidebarGroupPreview(group, [])).toBe("This request hit a problem.");
     for (const text of [rateLimited, sidebarGroupPreview(group, [])]) expect(text).not.toMatch(/\bstatus [45]\d\d\b|api_error|^error:/i);
     // An ordinary tool activity still shows its name.
@@ -82,10 +91,33 @@ describe("plain-text sidebar message previews", () => {
 
   it("strips team message Markdown while preserving the sender label", () => {
     const original = message("**Ready** with [notes](https://example.com)", { from: { botId: "preview-bot", name: "Kessler", color: "blue" } });
-    const group = { messages: [original], memberIds: ["preview-bot"] } as Group;
+    const group = room([original]);
     expect(sidebarGroupPreview(group, [])).toBe("Kessler: Ready with notes");
     expect(original.text).toBe("**Ready** with [notes](https://example.com)");
-    expect(sidebarGroupPreview({ ...group, messages: [message("__Reviewed__", { role: "user" })] }, [])).toBe("You: Reviewed");
+    expect(sidebarGroupPreview(room([message("__Reviewed__", { role: "user" })]), [])).toBe("You: Reviewed");
+  });
+
+  // design test 14: every preview kind from the line alone (no rows held)
+  it("reads screen, card, activity labels, goal runs and the provider's safety refusal from the sidebar line", () => {
+    expect(sidebarBotPreview(bot([message("", { kind: "screen", hasImage: true })]))).toBe("Screen frame");
+    const long = "a".repeat(2_000);
+    const cut = bot([message(long)]);
+    expect(cut.sidebarLine!.text).toHaveLength(160);
+    expect(sidebarBotPreview(cut)).toBe("a".repeat(160));
+    const blocked = message("", { kind: "activity", tool: { name: "error: request failed", ok: false, errorDetails: "Your request was blocked by our safety systems." } });
+    const line = bot([blocked]).sidebarLine!;
+    expect(line.tool).toEqual({ name: "error: request failed", ok: false, blocked: true });
+    expect(JSON.stringify(line)).not.toContain("safety systems");
+    expect(sidebarBotPreview(bot([blocked]))).toBe("The provider blocked this request.");
+    const run = message("", { kind: "goal.run", goalRun: { runId: "r", goal: "Ship the **launch** plan", status: "working", coordinatorBotId: "b", coordinatorName: "Kessler", turnCount: 1, maxTurns: 5, startedAt: 1 } });
+    expect(sidebarGroupPreview(room([run]), [])).toMatch(/Ship the \*\*launch\*\* plan|Ship the launch plan/);
+    expect(room([run]).sidebarLine!.goalRun).toEqual({ status: "working", goal: "Ship the **launch** plan" });
+    expect(sidebarGroupPreview(room([]), [])).toBe("1 bot");
+  });
+
+  it("the avatar's state reads the line: a failed activity alerts, a card is curious", () => {
+    expect(stateForBot(bot([message("", { kind: "activity", tool: { name: "Bash", ok: false } })]))).toBe("alerting");
+    expect(stateForBot(bot([message("", { kind: "options", card: { title: "Pick", subtitle: "", options: [] } })]))).toBe("curious");
   });
 });
 
@@ -507,4 +539,13 @@ it("P7 keeps defaults-only New project for non-desktop surfaces", () => {
   const source = readFileSync(new URL("./Sidebar.tsx", import.meta.url), "utf8");
   expect(source).not.toContain('showNewProject={desktop === true}');
   expect(source).toContain('newRoom === "project" && desktop === false && <NewRoomPanel kind="project"');
+});
+
+describe("the delete dialogs count every conversation, not the window of them a frame carries", () => {
+  it("uses the server's total", () => {
+    const windowed = { id: "b", name: "Old", threadId: "t0", tasks: [{ threadId: "t0", title: "a", createdAt: 1 }], tasksTotal: 5000 } as never;
+    expect(archivedBotDeleteDetail(windowed, [])).toContain("5000 conversations");
+    expect(archivedBotsDeleteDetail([windowed], [])).toContain("5000 conversations");
+    expect(archivedBotsDeleteItems([windowed])[0]).toContain("5000 conversations");
+  });
 });

@@ -55,7 +55,7 @@ it.each([["team","Sales"],["project","project"],["room","room"]])("activates a s
 });
 it("keeps general evidence as a candidate with a review reason and no event",()=>{
  candidate("bot","bot#general");expect(activate()).toBe(false);expect(state()).toBe("candidate");expect(events()).toEqual([]);
- expect(database().prepare("SELECT confidence_basis FROM memory_record_details WHERE record_id='candidate'").get()?.confidence_basis).toBe("Review this memory in Needs review before using it.");
+ expect(database().prepare("SELECT confidence_basis FROM memory_record_details WHERE record_id='candidate'").get()?.confidence_basis).toBe("This memory needs you before it is used.");
 });
 it("refuses a destination scope different from the caller and a retired partition",()=>{
  const {db,scope}=candidate();uninstall.push(installLearningDestination(()=>({ok:true,scopeId:"another",audienceKey:"fixture",partition:{kind:"home"}})));

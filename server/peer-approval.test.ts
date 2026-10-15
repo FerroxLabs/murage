@@ -20,6 +20,7 @@ import {
   type ApprovalBus,
 } from "./peer-approval.ts";
 import { closeMessageDb } from "./message-db.ts";
+import { stopWalMaintenance } from "./wal-maintenance.ts";
 import { Store, type BotRecord } from "./store.ts";
 
 const selection = (): ModelSelection => ({ instanceId: "claude", model: "fake-model" });
@@ -43,8 +44,10 @@ describe("peer approval card lifecycle", () => {
     bus = { store, broadcast: () => {} };
   });
 
-  afterEach(() => {
+  // closeDatabase stops the WAL checkpointer without waiting; one still writing -wal/-shm while the dir is removed leaves it non-empty (ENOTEMPTY)
+  afterEach(async () => {
     closeMessageDb();
+    await stopWalMaintenance();
     rmSync(DATA_DIR, { recursive: true, force: true });
   });
 

@@ -30,11 +30,13 @@ import { resolveFuigoCli } from "../../env-path.ts";
 import { DATA_DIR, deleteEnvNames } from "../../config.ts";
 import { headlessTextOnlyTurn } from "../headless-text-only.ts";
 import { fluxKey } from "../../flux-config.ts";
+import { fuigoConfigOverlay } from "../../flux-memory-headers.ts";
 import { catalogFetchAllowed, noteCatalogResult } from "../../flux-key-health.ts";
 import { isFluxKeyShape } from "../../../electron/provider-connections.mjs";
 import { FLUX_TIERS, mergeFluxCatalog } from "../../flux-surface.ts";
 import { execCli } from "../../procs.ts";
 import { createAcpDriver, type AcpConfig, type AcpSupport } from "./core.ts";
+import { fuigoToolResultDirs, sessionFolders } from "../../own-tool-results.ts";
 import {
   cachedLocalTestFor,
   decodeInjectId,
@@ -451,6 +453,9 @@ export function isolateFuigoFromExternalMcp(env: Record<string, string | undefin
 const support: AcpSupport = {
   driverKind: DRIVER_KIND,
   displayName: "Fuigo",
+  // A cut MCP result is saved in this session's own `mcp/` folder; reading it
+  // back is the bot reading its own output (server/own-tool-results.ts).
+  toolResultDirs: ({ env, cwd, sessionId }) => fuigoToolResultDirs(fuigoHome(env), sessionFolders(cwd), sessionId),
 
   // Bundled 1.0.13 accepts inline ACP images despite omitting the handshake
   // flag. Murage resolves authorized bytes; the transport fixture pins them.
@@ -613,6 +618,9 @@ const support: AcpSupport = {
    *  holds the first prompt for it, bounded (core.ts MCP_READY_WAIT_MS). */
   mcpReadyNotification: "_fuigo/mcp_initialized",
   mcpProgressNotification: "_fuigo/mcp/init_progress",
+  /** Per-server status (fuigo-shell extensions/mcp.rs `fuigo/mcp/list`, sent
+   *  with the ACP `_` prefix): read before the prompt for Murage's required servers. */
+  mcpListMethod: "_fuigo/mcp/list",
 
   /** One process per thread between turns (upstream #1575, core.ts pool
    *  notes). Safe here because `load_session` on a session already resident
@@ -662,6 +670,20 @@ const support: AcpSupport = {
    * Same "degrade to native rather than 401" rule `applyFluxSurface` follows
    * (flux-routing.ts:334).
    */
+  /**
+   * Flux Memory headers (PROPOSAL-v2 5.4). Fuigo has no FUIGO_EXTRA_HEADERS
+   * and needs none: its config loader merges an inline `FUIGO_CONFIG` JSON
+   * overlay, the overlay allowlist keeps the whole `[models]` table, and
+   * `[models].extra_headers` is a global default folded into every model
+   * (fuigo-shell agent/config.rs apply_global_extra_headers; the sampler
+   * applies them verbatim to the request, fuigo-sampler client.rs). Set per
+   * turn, after the route is settled, so it lands in the pooled-process
+   * contract digest. A Flux-shaped FUIGO_API_KEY is the only credential, so
+   * the headers go to Flux and nowhere else.
+   */
+  applyFluxMemory: (env, { decision }) => {
+    env.FUIGO_CONFIG = fuigoConfigOverlay(decision.headers, env.FUIGO_CONFIG);
+  },
   transformEnv: (env) => {
     reachBundledFuigo(env);
     isolateFuigoFromExternalMcp(env);

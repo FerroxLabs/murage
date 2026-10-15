@@ -45,6 +45,7 @@ import { searchHelp, helpTopics } from "../../shared/help-search.ts";
 import { boundedAgentResult } from "./agents-result.ts";
 import { IMAGE_LIBRARY_ENV, IMAGE_LIBRARY_TOOLS } from "../../shared/image-library-audience.ts";
 import { turnSecret } from "../turn-credential.ts";
+import { markMcpListedAfterFlush } from "../mcp-listed.ts";
 
 const HARNESS = process.env.MURAGE_HARNESS_URL ?? "http://127.0.0.1:8799";
 const BOT_ID = process.env.MURAGE_BOT_ID ?? "";
@@ -1375,6 +1376,7 @@ async function handle(msg: Json) {
       return;
     case "tools/list":
       ok(id, { tools: AVAILABLE_TOOLS });
+      markMcpListedAfterFlush();
       return;
     case "tools/call": {
       const name = params.name as string;

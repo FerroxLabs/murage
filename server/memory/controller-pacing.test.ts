@@ -8,7 +8,7 @@ import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { DATA_DIR } from "../config.ts";
 import { closeDatabase, database } from "../database.ts";
 import { appendMessage } from "../message-db.ts";
-import { resetParkSweep } from "./park.ts";
+import { claimSettleSweepStep, resetParkSweep } from "./park.ts";
 import { ioBudget } from "../io-budget.ts";
 import { setMemoryMode } from "./repository.ts";
 import { MemoryWorkerController } from "./worker-controller.ts";
@@ -117,6 +117,7 @@ it("the work timeout fires while the pacing deadline is far away", async () => {
 
 it("the park sweep waits for an idle tick instead of running ahead of work", async () => {
   messages(2);
+  while (!claimSettleSweepStep(database(), () => {}).done);  // the settle sweep (one step per tick until done) is not what this test is about
   database().prepare("UPDATE memory_sources SET state='retired' WHERE id=(SELECT source_id FROM memory_jobs ORDER BY rowid DESC LIMIT 1)").run();  // a job stuck behind a retired source
   const stuckStatus = () => String(database().prepare("SELECT j.status FROM memory_jobs j JOIN memory_sources s ON s.id=j.source_id WHERE s.state='retired'").get()!.status);
   controller.start();

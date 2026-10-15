@@ -25,6 +25,7 @@
     "agents": [
       {
         "key": "business-planner",
+        "role": "leader",
         "name": "Business Planner",
         "title": "Priorities and scope",
         "description": "Turns your goal, workload and constraints into one bounded next deliverable.",

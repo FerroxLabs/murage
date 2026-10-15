@@ -1,7 +1,10 @@
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { expect, it } from "vitest";
-import { HeldQueueRow, ReplyActionNote } from "./EngineNotes";
+import { readFileSync } from "node:fs";
+import * as EngineNotes from "./EngineNotes";
+import { HeldQueueRow } from "./EngineNotes";
+import { ClaimRow } from "./InspectorPanel";
 import { groupTranscript } from "../lib/activity-runs";
 import { engineDividers } from "../../shared/chat-engine-notes";
 import type { Message } from "../state/store";
@@ -10,13 +13,19 @@ it("F11 opens an inspectable queue with links to original rows", () => {
   const html = renderToStaticMarkup(createElement(HeldQueueRow, { text: "Waiting for a tool-capable engine: 1 item(s). Open now", count: 1, items: [{ id: "request", text: "Continue original routine", rowId: "card" }], onJump: () => {} }));
   expect(html).toContain("<details"); expect(html).toContain("Continue original routine"); expect(html).toContain("Open original");
 });
-it("F15 renders an earlier-action navigation control with its recorded row", () => {
-  const props = { text: "I sent it", check: { state: "earlier" as const, claims: [{ class: "send" as const, span: [0, 6] as [number, number], state: "earlier" as const, rowId: "record" }] }, onJump: (id: string) => { target = id; } };
-  let target = "";
-  const element = ReplyActionNote(props)!;
-  const button = (element.props.children[1] as any[])[0];
-  button.props.onClick(); expect(target).toBe("record");
-  expect(renderToStaticMarkup(element)).toContain("<button");
+it("the chat renders no claim notice: the component and the call site are gone", () => {
+  expect(EngineNotes).not.toHaveProperty("ReplyActionNote");
+  const chat = readFileSync(new URL("./ChatView.tsx", import.meta.url), "utf8");
+  expect(chat).not.toMatch(/ReplyActionNote|FLAGGED_REPLY_LINE|data-claim-state/);
+});
+it("the sidebar row carries the sentence, the explanation and a jump to the chat", () => {
+  let jumped = 0;
+  const element = ClaimRow({ row: { key: "claim:a", kind: "claim", at: "2026-10-09T10:00:00.000Z", sentence: "I ran the report", messageId: "m1" }, onJump: () => { jumped++; } });
+  const html = renderToStaticMarkup(element);
+  expect(html).toContain("No matching action found for: &quot;I ran the report&quot;");
+  expect(html).toContain("Murage found no record of this action in this reply. It may have been done by another bot or in an earlier reply. Check before relying on it.");
+  expect(html).not.toMatch(/Nothing was done/);
+  element.props.onClick(); expect(jumped).toBe(1);
 });
 it("F15 keeps folded runs on engine boundaries and exposes the narration seam", () => {
   const row = (id: string, engine: string, extra = {}): Message => ({ id, at: 1, role: "bot", kind: "activity", engine: { instanceId: engine, driverKind: "fake", model: "one", capabilityHash: "hash" }, tool: { name: "read_file", ok: true }, ...extra });

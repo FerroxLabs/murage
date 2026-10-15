@@ -50,6 +50,7 @@ if (window.__hostOff) delete window.__config.tts.routes.host;
 window.__setBot = (patch) => { window.__bot = { ...window.__bot, ...patch }; for (const l of listeners) l(); };
 const subscribe = (l) => { listeners.add(l); return () => listeners.delete(l); };
 export const visibleMessages = (bot) => bot.messages;
+export const olderOpenCards = (owner, visible) => visible;
 // CallControls.tsx's CallOverlaySlot imports this for real (callbar-rereview.md
 // I7); this fixture never selects a different task, so a passthrough is
 // exactly what the real one would project it to anyway.
@@ -1861,6 +1862,7 @@ const dispatch = (a) => {
 window.__select = (id) => dispatch({ type: "select", id });
 export const viewedTaskBot = (bot) => bot;
 export const visibleMessages = (bot) => bot.messages;
+export const olderOpenCards = (owner, visible) => visible;
 export const useStore = () => ({ state: useSyncExternalStore(subscribe, getSnapshot, getSnapshot), dispatch });
 export const api = async () => ({});
 `;
@@ -2085,6 +2087,7 @@ export const useStreaming = () => ({ streaming: useSyncExternalStore(subscribe, 
 export const api = async () => ({});
 export const visibleMessages = (bot) => bot.messages;
 export const viewedTaskBot = (bot) => bot;
+export const olderOpenCards = (owner, visible) => visible;
 export const useFixtureRoom = () => useSyncExternalStore(subscribe, () => window.__room);
 `;
 
