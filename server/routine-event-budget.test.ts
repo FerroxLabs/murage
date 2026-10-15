@@ -78,7 +78,7 @@ describe("durable cumulative event action budget", () => {
     const routine = f.manager.create({ name: "Manual", botId: "bot", prompt: "Fixture", runOn: "ember", enabled: false, schedule: { type: "once", at: 1 }, durationMinutes: 5 });
     const run = f.manager.runNow(routine.id)!;
     expect(run.event?.budgetId).toBe(run.id);
-    expect(f.manager.getEventBudget(run.id)).toEqual({ version: 1, limits: { create: 4, handoff: 4 }, admissions: [], closed: false });
+    expect(f.manager.getEventBudget(run.id)).toEqual({ version: 2, limits: { create: 4, handoff: 4 }, admissions: [], closed: false });
     await f.manager.cancelRun(run.id);
     expect(new RoutineManager(f.options).getEventBudget(run.id)?.closed).toBe(true);
     expect(f.manager.admitEventAction(run.id, "cancelled", "handoff")).toBe(false);

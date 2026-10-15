@@ -26,27 +26,35 @@
 //    rowids by rowid seek, then an update over exactly that rowid range;
 //  - the reconciliation after a downgrade: the next window of `cancelled`
 //    index entries, then one rowid update per candidate.
+import { memoryClaimIndex } from "./claim-index.ts";
+import { CLAIMABLE_SOURCE, MARKER_PREFIX, PARK_SET, settleRows } from "./claim-settle.ts";
 import type { DatabaseSync } from "node:sqlite";
+import { beginBackground } from "../db-busy.ts";
 import { runningAppVersion } from "./app-version.ts";
 import { turnTraceEnabled } from "../turn-trace.ts";
 
 const OPEN = "('pending','partial','deferred','leased')";
-const MARKER_PREFIX = "parked:v1:";
-const PARK_SET = `status='cancelled',error='${MARKER_PREFIX}'||json_object('s',CASE status WHEN 'leased' THEN 'pending' ELSE status END,'e',error),
-  lease_generation=lease_generation+1,lease_owner=NULL,lease_until=0`;
+export { MARKER_PREFIX, PARK_SET };
 /** True only for a well-formed marker on a cancelled row; the CASE keeps the JSON functions from running on anything else. */
 const parkedMarker = (p: string) => `(CASE WHEN ${p}status='cancelled' AND substr(${p}error,1,${MARKER_PREFIX.length + 1})='${MARKER_PREFIX}{' AND json_valid(substr(${p}error,${MARKER_PREFIX.length + 1})) THEN
   (json_type(substr(${p}error,${MARKER_PREFIX.length + 1}))='object' AND json_extract(substr(${p}error,${MARKER_PREFIX.length + 1}),'$.s') IN ('pending','partial','deferred')
    AND json_type(substr(${p}error,${MARKER_PREFIX.length + 1}),'$.e') IN ('null','text')) ELSE 0 END)`;
 const REOPEN_SET = `status=json_extract(substr(error,${MARKER_PREFIX.length + 1}),'$.s'),error=json_extract(substr(error,${MARKER_PREFIX.length + 1}),'$.e')`;
 export const PARK_WINDOW_SQL = 500;
+/** Reopened jobs filed one by one; the sweep files the rest. */
+const REOPEN_HINT_LIMIT = 256;
 export const PARK_SWEEP_WINDOW = PARK_WINDOW_SQL;
 
 export const PARK_SQL = {
   thread: `UPDATE memory_jobs SET ${PARK_SET} WHERE rowid IN (SELECT j.rowid FROM memory_sources s CROSS JOIN memory_jobs j ON j.source_id=s.id
     WHERE s.thread_id=? AND s.state='retired' AND +j.status IN ${OPEN})`,  // the unary plus keeps the status index out of the plan: the jobs are probed by source id
   reopenThread: `UPDATE memory_jobs SET ${REOPEN_SET} WHERE rowid IN (SELECT j.rowid FROM memory_sources s CROSS JOIN memory_jobs j ON j.source_id=s.id AND j.source_revision=s.revision
-    WHERE s.thread_id=? AND s.state='active' AND +j.status='cancelled' AND ${parkedMarker("j.")})`,
+    WHERE s.thread_id=? AND ${CLAIMABLE_SOURCE("s")} AND +j.status='cancelled' AND ${parkedMarker("j.")}) RETURNING id`,
+  // the same, for the sources of these messages only (a branch change moves a few rows, not the thread)
+  threadMessages: `UPDATE memory_jobs SET ${PARK_SET} WHERE rowid IN (SELECT j.rowid FROM memory_sources s CROSS JOIN memory_jobs j ON j.source_id=s.id
+    WHERE s.thread_id=? AND s.message_id IN (SELECT value FROM json_each(?)) AND s.state='retired' AND +j.status IN ${OPEN})`,
+  reopenThreadMessages: `UPDATE memory_jobs SET ${REOPEN_SET} WHERE rowid IN (SELECT j.rowid FROM memory_sources s CROSS JOIN memory_jobs j ON j.source_id=s.id AND j.source_revision=s.revision
+    WHERE s.thread_id=? AND s.message_id IN (SELECT value FROM json_each(?)) AND ${CLAIMABLE_SOURCE("s")} AND +j.status='cancelled' AND ${parkedMarker("j.")}) RETURNING id`,
   restore: `UPDATE memory_jobs SET ${PARK_SET} WHERE status='leased' AND EXISTS (SELECT 1 FROM memory_sources s WHERE s.id=memory_jobs.source_id AND s.state='retired')`,
   sweepSelect: `SELECT rowid AS r FROM memory_jobs NOT INDEXED WHERE rowid>? ORDER BY rowid LIMIT ${PARK_WINDOW_SQL}`,
   sweepPark: `UPDATE memory_jobs NOT INDEXED SET ${PARK_SET} WHERE rowid>? AND rowid<=? AND status IN ${OPEN}
@@ -59,7 +67,7 @@ export const PARK_SQL = {
   reconcileLater: `SELECT retry_at AS t,rowid AS r FROM memory_jobs INDEXED BY memory_jobs_pending WHERE status='cancelled' AND retry_at>?
     ORDER BY retry_at,rowid LIMIT ?`,
   reconcileReopen: `UPDATE memory_jobs SET ${REOPEN_SET} WHERE rowid=? AND ${parkedMarker("")}
-    AND EXISTS (SELECT 1 FROM memory_sources s WHERE s.id=memory_jobs.source_id AND s.revision=memory_jobs.source_revision AND s.state='active')`,
+    AND EXISTS (SELECT 1 FROM memory_sources s WHERE s.id=memory_jobs.source_id AND s.revision=memory_jobs.source_revision AND ${CLAIMABLE_SOURCE("s")})`,
   // The unary plus on status keeps the (status,retry_at) index out of the plan: these seek the jobs by source id
   // and never walk the cancelled range, which holds every job ever cancelled.
   forgetSource: `UPDATE memory_jobs SET error=NULL WHERE source_id=? AND +status='cancelled' AND substr(error,1,7)='parked:'`,
@@ -79,14 +87,26 @@ export function jobErrorText(reason: string): string {
 }
 
 /** Park the open jobs of every retired source of one thread. */
-export function parkRetiredThreadJobs(db: DatabaseSync, threadId: string) {
+export function parkRetiredThreadJobs(db: DatabaseSync, threadId: string, messageIds?: readonly string[]) {
+  if (messageIds) return messageIds.length ? Number(db.prepare(PARK_SQL.threadMessages).run(threadId, JSON.stringify(messageIds)).changes) : 0;
   return Number(db.prepare(PARK_SQL.thread).run(threadId).changes);
 }
 
 /** Re-open, as they were, the parked jobs of every active source of one thread
- * (only for the revision the job belongs to: a newer revision already replaced it). */
-export function reopenParkedThreadJobs(db: DatabaseSync, threadId: string) {
-  return Number(db.prepare(PARK_SQL.reopenThread).run(threadId).changes);
+ * (only for the revision the job belongs to: a newer revision already replaced it). A source that is no longer claimable
+ * (claim-settle.ts CLAIMABLE_SOURCE: its conversation or scope deleted, the source tombstoned, a working turn, a failed tool)
+ * keeps its job closed: nothing deleted or forgotten is reopened, even before the revocation runner reaches it. */
+export function reopenParkedThreadJobs(db: DatabaseSync, threadId: string, messageIds?: readonly string[]) {
+  const ids = messageIds
+    ? (messageIds.length ? db.prepare(PARK_SQL.reopenThreadMessages).all(threadId, JSON.stringify(messageIds)) : []) as Array<{ id: string }>
+    : db.prepare(PARK_SQL.reopenThread).all(threadId) as Array<{ id: string }>;
+  // The claim's ready index dropped these jobs when they were parked: the jobs are filed again directly (a bounded
+  // number), and the sweep is asked for as well, for the rest (review finding 5, round 2 P2-B).
+  if (ids.length) {
+    for (const row of ids.slice(0, REOPEN_HINT_LIMIT)) memoryClaimIndex.hint(db, String(row.id));
+    memoryClaimIndex.reopened();
+  }
+  return ids.length;
 }
 
 /** A restore requeues leased jobs; one whose source is retired is parked, not requeued. */
@@ -108,7 +128,8 @@ export function forgetParkedThreads(db: DatabaseSync, threadIds: readonly string
  * own; reports whether the work is durable once this returns. */
 function inTransaction<T>(db: DatabaseSync, work: () => T): { value: T; durable: boolean } {
   if (db.isTransaction) return { value: work(), durable: false };
-  db.exec("BEGIN IMMEDIATE");
+  // parking maintenance is background work (the memory worker's idle step): within the background budget, a busy start is retried
+  beginBackground(db, "park-maintenance");
   try { const value = work(); db.exec("COMMIT"); return { value, durable: true }; }
   catch (error) { try { db.exec("ROLLBACK"); } catch { /* the transaction is already gone */ } throw error; }
 }
@@ -118,7 +139,7 @@ const SWEEP_MARKER = "memory-parked-sweep";
 let sweepDone = false;
 export function parkSweepFinished() { return sweepDone; }
 /** Test hook: forget the in-memory done flag. */
-export function resetParkSweep() { sweepDone = false; }
+export function resetParkSweep() { sweepDone = false; settleDone = false; }
 
 /** One resumable step of the one-time sweep that parks jobs already stuck behind
  * retired sources in an existing database. A step takes the next
@@ -181,9 +202,10 @@ function writeReconcileMarker(db: DatabaseSync, marker: ReconcileMarker) {
  * reopens, by rowid, the ones holding a well-formed marker whose source is
  * active at the job's own revision.
  *
- * A downgrade followed by an upgrade always changes the version, so the pass
- * only matters when the running version differs from the one recorded when the
- * last pass finished. The marker (memory_scope_bindings, like the sweep's)
+ * A downgrade to 1.0.1 deletes the marker (schema.ts downgradeMemorySchema),
+ * so the next newer start runs the pass from the start even when the round
+ * trip ends on the same version; otherwise the pass only matters when the
+ * running version differs from the one recorded when the last pass finished. The marker (memory_scope_bindings, like the sweep's)
  * holds that version and, while a pass is under way, its cursor, so an
  * interrupted pass resumes where it stopped and a finished one is skipped. */
 export function parkReconcileStep(db: DatabaseSync, sink: (line: string) => void = line => console.log(line)): { reopened: number; done: boolean } {
@@ -203,6 +225,7 @@ export function parkReconcileStep(db: DatabaseSync, sink: (line: string) => void
     const reopen = db.prepare(PARK_SQL.reconcileReopen);
     let reopened = 0;
     for (const row of rows) reopened += Number(reopen.run(row.r).changes);
+    if (reopened) memoryClaimIndex.reopened();
     const done = rows.length < PARK_WINDOW_SQL, last = rows.at(-1) ?? reconcileCursor;
     if (version !== null) writeReconcileMarker(db, { version, done, t: String(last.t), r: String(last.r) });
     return { reopened, rows, done };
@@ -217,10 +240,68 @@ export function parkReconcileStep(db: DatabaseSync, sink: (line: string) => void
   return { reopened: step.value.reopened, done: step.value.done };
 }
 
-/** True while either maintenance pass still has work for this launch. */
-export function parkMaintenancePending() { return !sweepDone || !reconcileDone; }
-/** One bounded maintenance step: the one-time sweep first, then the per-launch reconciliation. */
+const SETTLE_MARKER = "memory-claim-settle-sweep";
+const SETTLE_STATUSES = ["deferred", "leased", "partial", "pending"] as const;
+let settleDone = false;
+export function claimSettleSweepFinished() { return settleDone; }
+/** True while the settle sweep still has work for this launch (the worker runs one step per tick until it is done). */
+export function claimSettleSweepPending() { return !settleDone; }
+/** Test hook: forget the in-memory done flag, as a new launch does. */
+export function resetClaimSettleSweep() { settleDone = false; }
+
+export const SETTLE_SWEEP_SQL = {
+  // (status,retry_at,rowid) order over the open statuses only, in two seeks like the reconciliation: the cost follows the
+  // open backlog, never the history. Future retries are included (a blocked job with a retry in the future is still blocked).
+  tied: `SELECT retry_at AS t,rowid AS r FROM memory_jobs INDEXED BY memory_jobs_pending WHERE status=? AND retry_at=? AND rowid>? ORDER BY rowid LIMIT ?`,
+  later: `SELECT retry_at AS t,rowid AS r FROM memory_jobs INDEXED BY memory_jobs_pending WHERE status=? AND retry_at>? ORDER BY retry_at,rowid LIMIT ?`,
+} as const;
+interface SettleMarker { version: string; si: number; t: string; r: string; done: boolean }
+function readSettleMarker(db: DatabaseSync): SettleMarker | null {
+  const row = db.prepare("SELECT intent FROM memory_scope_bindings WHERE id=?").get(SETTLE_MARKER);
+  try { const value = row ? JSON.parse(String(row.intent)) : null; return value && typeof value.version === "string" && Number.isInteger(value.si) ? value : null; } catch { return null; }
+}
+
+/** One resumable step of the settle sweep (CLAIM-REDESIGN.md section 6): closes out the open jobs of a database written
+ * before blocked jobs left the open statuses (or by an older build, or restored from a backup). A step reads at most
+ * PARK_WINDOW_SQL open job rowids after the marker's cursor, settles those that are blocked (claim-settle.ts, at most six
+ * statements), and records the cursor in the same transaction, so an interrupted sweep resumes and settles nothing twice.
+ * The marker is keyed on the running version (a restored file, a newer build run it once more), and a downgrade to 1.0.1 deletes
+ * it (schema.ts downgradeMemorySchema), so the next start after 1.0.2 -> 1.0.1 -> 1.0.2 runs it from the start. */
+export function claimSettleSweepStep(db: DatabaseSync, sink: (line: string) => void = line => console.log(line), now = Date.now()): { settled: number; done: boolean } {
+  if (settleDone) return { settled: 0, done: true };
+  const version = runningVersion() ?? "unknown";
+  const step = inTransaction(db, () => {
+    const marker = readSettleMarker(db);
+    const resume = marker && marker.version === version ? marker : null;
+    if (resume?.done) return { settled: 0, done: true, quiet: true };
+    const scope = db.prepare("SELECT id FROM memory_scopes LIMIT 1").get()?.id;
+    if (scope == null) return { settled: 0, done: true, quiet: true };  // no scope, so no sources and no jobs
+    let si = resume?.si ?? 0, t = BigInt(resume?.t ?? MIN_INT64.toString()), r = BigInt(resume?.r ?? MIN_INT64.toString());
+    const rids: bigint[] = [];
+    for (; si < SETTLE_STATUSES.length && rids.length < PARK_WINDOW_SQL; si++, t = MIN_INT64, r = MIN_INT64) {
+      const status = SETTLE_STATUSES[si]!;
+      const tied = bigRows(db, SETTLE_SWEEP_SQL.tied).all(status, t, r, PARK_WINDOW_SQL - rids.length) as Array<{ t: bigint; r: bigint }>;
+      const rows = [...tied];
+      if (rows.length < PARK_WINDOW_SQL - rids.length) rows.push(...bigRows(db, SETTLE_SWEEP_SQL.later).all(status, t, PARK_WINDOW_SQL - rids.length - rows.length) as Array<{ t: bigint; r: bigint }>);
+      for (const row of rows) { rids.push(row.r); t = row.t; r = row.r; }
+      if (rids.length >= PARK_WINDOW_SQL) break;  // full: stay on this status, the next step carries on after (t,r)
+    }
+    const done = si >= SETTLE_STATUSES.length;
+    const settled = settleRows(db, rids, now).length;
+    db.prepare("INSERT INTO memory_scope_bindings VALUES(?,?,'system','claim-settle-sweep',0,'granted',?) ON CONFLICT(id) DO UPDATE SET intent=excluded.intent")
+      .run(SETTLE_MARKER, scope, JSON.stringify({ version, si: Math.min(si, SETTLE_STATUSES.length), t: t.toString(), r: r.toString(), done } satisfies SettleMarker));
+    return { settled, done, quiet: false };
+  });
+  if (step.durable && step.value.done) settleDone = true;
+  if (turnTraceEnabled() && !step.value.quiet && (step.value.settled || step.value.done)) sink(`[turn-trace] phase=memory.claim-settle${step.value.settled ? ` settled=${step.value.settled}` : ""}${step.value.done ? " done=true" : ""}`);
+  return { settled: step.value.settled, done: step.value.done };
+}
+
+/** True while any maintenance pass still has work for this launch. */
+export function parkMaintenancePending() { return !sweepDone || !settleDone || !reconcileDone; }
+/** One bounded maintenance step: the one-time park sweep, then the settle sweep, then the per-launch reconciliation. */
 export function parkMaintenanceStep(db: DatabaseSync, sink?: (line: string) => void) {
   if (!sweepDone) parkStuckJobsStep(db, sink);
+  else if (!settleDone) claimSettleSweepStep(db, sink);
   else if (!reconcileDone) parkReconcileStep(db, sink);
 }

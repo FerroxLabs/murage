@@ -105,6 +105,11 @@ describe("teamChangePatches", () => {
     expect(patches.groups[0]).toEqual({ id: "ch", patch: { name: "Ops", section: undefined, hidden: undefined } });
     expect("section" in patches.groups[0].patch).toBe(true);
   });
+
+  it("carries the room's number with its patch, so the store orders it against the copy it holds (I-H2)", () => {
+    const patches = teamChangePatches({ bots: [], groups: [{ id: "ch", name: "Ops", section: "Ops", hidden: null, recordSeq: 5, recordEpoch: "e1" }] });
+    expect(patches.groups[0]).toEqual({ id: "ch", patch: { name: "Ops", section: "Ops", hidden: undefined, recordSeq: 5, recordEpoch: "e1" } });
+  });
 });
 
 describe("members save (D11)", () => {

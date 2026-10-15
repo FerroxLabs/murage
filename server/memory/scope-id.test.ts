@@ -1,6 +1,8 @@
 // Scope ids are looked up on every captured message and access build; the
 // statement that finds them must not be compiled and run per lookup.
 import { mkdirSync, rmSync } from "node:fs";
+import { join } from "node:path";
+import { DatabaseSync } from "node:sqlite";
 import { beforeEach, expect, it } from "vitest";
 import { DATA_DIR } from "../config.ts";
 import { closeDatabase, database, transaction } from "../database.ts";
@@ -49,4 +51,37 @@ it("a scope created in a rolled-back transaction is not remembered", () => {
   const db = database();
   try { transaction(() => { ensureScope("bot", "ghost"); expect(scopeRow(db, "bot", "ghost")).toBeDefined(); throw new Error("roll back"); }); } catch { /* expected */ }
   expect(scopeRow(db, "bot", "ghost")).toBeUndefined();
+});
+
+it("a lookup that finds nothing is remembered: 5,000 repeated misses run the kind-and-owner lookup at most once", () => {
+  const db = database();
+  // counted from before the first lookup: the statement is prepared once per connection
+  const runs = runCounter(db, "SELECT id FROM memory_scopes WHERE kind=? AND owner_key=?");
+  for (let i = 0; i < 5000; i++) expect(scopeRow(db, "conversation", `absent${i % 10}`)).toBeUndefined();
+  expect(runs()).toBeLessThanOrEqual(10);
+});
+
+it("a remembered miss is forgotten when a scope is created or renamed, on this connection or another", () => {
+  const db = database();
+  expect(scopeRow(db, "bot", "late")).toBeUndefined();
+  const id = ensureScope("bot", "late");
+  expect(scopeRow(db, "bot", "late")?.id).toBe(id);
+  expect(scopeRow(db, "team", "Renamed")).toBeUndefined();
+  const team = ensureScope("team", "Before");
+  db.prepare("UPDATE memory_scopes SET owner_key='Renamed' WHERE id=?").run(team);
+  expect(scopeRow(db, "team", "Renamed")?.id).toBe(team);
+  // another connection's commit
+  expect(scopeRow(db, "workspace", "elsewhere")).toBeUndefined();
+  const other = new DatabaseSync(join(DATA_DIR, "messages.db"));
+  try { other.prepare("INSERT INTO memory_scopes VALUES('w-other','workspace','elsewhere','[]',0)").run(); } finally { other.close(); }
+  expect(scopeRow(db, "workspace", "elsewhere")?.id).toBe("w-other");
+});
+
+it("a miss is still a miss after a scope made in a rolled-back transaction", () => {
+  const db = database();
+  expect(scopeRow(db, "bot", "phantom")).toBeUndefined();
+  try { transaction(() => { ensureScope("bot", "phantom"); expect(scopeRow(db, "bot", "phantom")).toBeDefined(); throw new Error("roll back"); }); } catch { /* expected */ }
+  expect(scopeRow(db, "bot", "phantom")).toBeUndefined();
+  const id = ensureScope("bot", "phantom");
+  expect(scopeRow(db, "bot", "phantom")?.id).toBe(id);
 });

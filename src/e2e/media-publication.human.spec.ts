@@ -104,7 +104,7 @@ async function bytesOf(path: string, withProof = true): Promise<Buffer> {
  * with this launch's desktop proof in the query (desktopResourceUrl), since
  * an <img> or a download link cannot send the proof as a header. */
 const provenAttachment = (id: string) => `/api/attachments/${id}?surface=desktop&surfaceSecret=${headers["x-murage-surface-secret"]}`;
-const messagesOf = async (bot: Bot) => (await api("/api/bots?messages=200")).bots.find((item: Bot) => item.id === bot.id).messages as any[];
+const messagesOf = async (bot: Bot) => (await api(`/api/threads/${bot.threadId}/messages?limit=200`)).messages as any[];
 const imageArtifactsOf = async (bot: Bot) => (await api(`/api/artifacts?botId=${bot.id}&kind=image`)).items as Artifact[];
 const busy = async (bot: Bot) => Boolean((await api("/api/bots?messages=0")).bots.find((item: Bot) => item.id === bot.id)?.busy);
 const imageReceipt = () => readFileSync(join(fixture.info.dataDir, "image-fixture-calls.json"), "utf8");

@@ -19,22 +19,10 @@ import type { AppState, Message } from "@/state/store";
  * the switch reply hold the same rows. */
 export const MESSAGE_PAGE_SIZE = 100;
 
-/** A phone's boot page per thread (spec §6 phone mode). One row, which the
- * server widens to reach back to every open request card and the active
- * branch head (server newestPageLimit), so a phone still sees what needs it
- * and each thread's latest line, without every thread's history. `0` would
- * be settings only: no cards, no latest line, and nothing to page back from. */
-export const PHONE_HYDRATE_PAGE = 1;
-
-export function hydratePageSize(phone: boolean): number {
-  return phone ? PHONE_HYDRATE_PAGE : MESSAGE_PAGE_SIZE;
-}
-
-/** A conversation holding less than a newest page while the server has more:
- * a phone's slim boot page. A snapshot or switch always holds at least a full
- * page when there is more, so on the desktop this is never true. */
-export function needsNewestPage(owner: { messages: Message[]; hasMore?: boolean }): boolean {
-  return Boolean(owner.hasMore) && owner.messages.length < MESSAGE_PAGE_SIZE;
+/** A conversation the boot roster sent without rows (`view=sidebar`), or whose rows predate a rehydrate, and whose first page is not on the wire
+ * yet. The conversation on screen fetches it (store top-up effect, `loadFirstPage`). Desktop and phone boot the same way. */
+export function needsFirstPage(owner: { messagesUnloaded?: true; pageStale?: true; firstPageEvents?: unknown[] }): boolean {
+  return (owner.messagesUnloaded === true || owner.pageStale === true) && !owner.firstPageEvents;
 }
 
 /** The largest page the server hands out; a jump walks back in these. */
@@ -49,20 +37,37 @@ export const MAX_JUMP_PAGES = 200;
  * through a whole transcript over cellular (final review M5). */
 export const DEEP_LINK_MAX_PAGES = 5;
 
+/** The thread page route's `view=switch` answer: the page a switch to the thread opens on (branch head, cards beside, version). */
+export interface FirstPageAnswer {
+  messages?: Message[];
+  hasMore?: boolean;
+  olderFrom?: string | null;
+  openCards?: Message[];
+  openCardsLeaf?: string;
+  openCardsPending?: boolean;
+  activeLeafId?: string | null;
+  version?: string;
+}
+
 type OlderMessagesAction =
   | { type: "loadOlderMessages"; threadId: string }
-  | { type: "olderMessages"; threadId: string; generation: number; messages: Message[]; hasMore: boolean };
+  | { type: "olderMessages"; threadId: string; generation: number; messages: Message[]; hasMore: boolean; olderFrom?: string | null }
+  | { type: "firstPageStarted"; threadId: string }
+  | { type: "firstPage"; threadId: string; generation: number; page: FirstPageAnswer }
+  | { type: "firstPageFailed"; threadId: string };
 
 export interface ScrollbackPage {
   messages?: Message[];
   hasMore?: boolean;
+  /** The next ancestor to page back to, when the page is a branch page. */
+  olderFrom?: string | null;
 }
 
 export interface ScrollbackDeps {
   /** The newest state the store has rendered. */
   getState: () => Pick<AppState, "bots" | "groups" | "transcriptGeneration">;
   dispatch: (action: OlderMessagesAction) => void;
-  request: (path: string) => Promise<ScrollbackPage>;
+  request: (path: string) => Promise<ScrollbackPage & FirstPageAnswer>;
   onError: (error: unknown) => void;
   /** Resolves after the store has had a chance to render (tests pass a
    * microtask). A jump usually follows a thread switch dispatched a moment
@@ -94,6 +99,8 @@ export function createScrollback(deps: ScrollbackDeps) {
     return running;
   };
   const generationOf = (threadId: string) => deps.getState().transcriptGeneration[threadId] ?? 0;
+  /** Threads whose `busy` walk is a first page. */
+  const firstPages = new Set<string>();
 
   /** The page before the oldest message this client holds. A no-op while a
    * page for the thread is already on the wire. */
@@ -120,8 +127,14 @@ export function createScrollback(deps: ScrollbackDeps) {
     paging.add(threadId);
     return exclusive(threadId, async () => {
       try {
-        const page = await deps.request(pagePath(threadId, `limit=${MESSAGE_PAGE_SIZE}&before=${encodeURIComponent(before)}`));
-        deps.dispatch({ type: "olderMessages", threadId, generation, messages: page.messages ?? [], hasMore: Boolean(page.hasMore) });
+        // A branch page is paged back along the branch's own parent links
+        // (`branchFrom`); storage order says nothing about ancestry once a
+        // thread has forked. Any other page is paged back by storage order.
+        const cursor = owner.olderFrom && !owner.messages.some((m) => m.id === owner.olderFrom) ? owner.olderFrom : undefined;
+        const page = await deps.request(pagePath(threadId, cursor
+          ? `limit=${MESSAGE_PAGE_SIZE}&branchFrom=${encodeURIComponent(cursor)}`
+          : `limit=${MESSAGE_PAGE_SIZE}&before=${encodeURIComponent(before)}`));
+        deps.dispatch({ type: "olderMessages", threadId, generation, messages: page.messages ?? [], hasMore: Boolean(page.hasMore), ...(cursor ? { olderFrom: page.olderFrom ?? null } : {}) });
       } catch (error) {
         // Clear the flag on the way out, or scrolling up never asks again.
         deps.dispatch({ type: "olderMessages", threadId, generation, messages: [], hasMore: true });
@@ -130,6 +143,34 @@ export function createScrollback(deps: ScrollbackDeps) {
         paging.delete(threadId);
       }
     });
+  };
+
+  /** The first page of a conversation that holds no rows yet (`needsFirstPage`): the page a switch opens on, through the thread page route with
+   * `view=switch` (branch head within reach or the head's branch page, open cards beside, version). Live events for the conversation queue in
+   * the reducer while it is on the wire and are replayed over the page there (`firstPage`), so nothing that lands meanwhile is lost or
+   * overwritten. A failure leaves the conversation unloaded; sends are never held for it. Shares the per-thread walk, so a jump waits for it. */
+  const loadFirstPage = (threadId: string): Promise<void> => {
+    const pending = busy.get(threadId);
+    if (pending && firstPages.has(threadId)) return pending.then(() => undefined, () => undefined);
+    const owner = ownerOf(deps.getState(), threadId);
+    if (!owner || !needsFirstPage(owner)) return pending ? pending.then(() => undefined, () => undefined) : Promise.resolve();
+    deps.dispatch({ type: "firstPageStarted", threadId });
+    // Captured after the start: the reducer compares it when the page lands, and anything that replaces the transcript meanwhile moves it.
+    const generation = generationOf(threadId);
+    firstPages.add(threadId);
+    const run = async () => {
+      try {
+        const page = await deps.request(pagePath(threadId, `view=switch&limit=${MESSAGE_PAGE_SIZE}`));
+        deps.dispatch({ type: "firstPage", threadId, generation, page });
+      } catch (error) {
+        deps.dispatch({ type: "firstPageFailed", threadId });
+        deps.onError(error);
+      } finally {
+        firstPages.delete(threadId);
+      }
+    };
+    // Behind any walk already running for the thread, never beside it.
+    return exclusive(threadId, () => (pending ? pending.catch(() => {}).then(run) : run()));
   };
 
   /** Page back until `messageId` is held, so a jump can open a window around
@@ -147,7 +188,13 @@ export function createScrollback(deps: ScrollbackDeps) {
     }
     for (let pending = busy.get(threadId); pending; pending = busy.get(threadId)) await pending.catch(() => {});
     owner = ownerOf(deps.getState(), threadId);
-    if (!owner) return "missing";
+    // A conversation that holds no rows yet takes its first page before the walk (the walk pages back from the oldest row held).
+    if (owner && needsFirstPage(owner)) {
+      await loadFirstPage(threadId);
+      await settle();
+      owner = ownerOf(deps.getState(), threadId);
+    }
+    if (!owner || owner.messagesUnloaded) return "missing";
     if (owner.messages.some((message) => message.id === messageId)) return "held";
     if (!owner.hasMore || !owner.messages[0]) return "missing";
     const start = owner.messages[0].id;
@@ -161,28 +208,35 @@ export function createScrollback(deps: ScrollbackDeps) {
       }
       const generation = generationOf(threadId);
       let before = start;
+      // The same cursor loadOlder pages with: a branch page is walked back
+      // along the branch's own parent links, so a late-stored ancestor spliced
+      // in earlier in the branch is reached, and the cursor stays right.
+      let cursor: string | undefined = owner.olderFrom && !owner.messages.some((m) => m.id === owner.olderFrom) ? owner.olderFrom : undefined;
       for (let pages = 0; pages < maxPages; pages++) {
         if (generationOf(threadId) !== generation) return "missing";
         deps.dispatch({ type: "loadOlderMessages", threadId });
         let page: ScrollbackPage;
         try {
-          page = await deps.request(pagePath(threadId, `limit=${MESSAGE_PAGE_MAX}&before=${encodeURIComponent(before)}`));
+          page = await deps.request(pagePath(threadId, cursor
+            ? `limit=${MESSAGE_PAGE_MAX}&branchFrom=${encodeURIComponent(cursor)}`
+            : `limit=${MESSAGE_PAGE_MAX}&before=${encodeURIComponent(before)}`));
         } catch (error) {
           deps.dispatch({ type: "olderMessages", threadId, generation, messages: [], hasMore: true });
           deps.onError(error);
           return "missing";
         }
         const messages = page.messages ?? [];
-        deps.dispatch({ type: "olderMessages", threadId, generation, messages, hasMore: Boolean(page.hasMore) });
+        deps.dispatch({ type: "olderMessages", threadId, generation, messages, hasMore: Boolean(page.hasMore), ...(cursor ? { olderFrom: page.olderFrom ?? null } : {}) });
         if (messages.some((message) => message.id === messageId)) return "fetched";
         if (!page.hasMore || !messages[0]) return "missing";
         before = messages[0].id;
+        if (cursor) cursor = page.olderFrom ?? undefined;
       }
       return "missing";
     });
   };
 
-  return { loadOlder, loadThrough };
+  return { loadOlder, loadFirstPage, loadThrough };
 }
 
 /** What a call should still read out: every message it has not heard that

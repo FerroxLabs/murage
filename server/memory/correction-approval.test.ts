@@ -21,6 +21,7 @@ import { forgetMemory } from "./forget.ts";
 import { archiveMemoryRecord } from "./retention.ts";
 import { buildMemoryBundle } from "./bundle.ts";
 import { CURRENT_MEMORY, HISTORICAL_MEMORY } from "./eligibility.ts";
+import { LineageAllowance } from "./lineage-allowance.ts";
 
 beforeEach(() => { closeDatabase(); rmSync(DATA_DIR, { recursive: true, force: true }); mkdirSync(DATA_DIR, { recursive: true }); });
 
@@ -58,7 +59,7 @@ describe("correction proposal before approval", () => {
       status: "current",
       target: { id: f.target, version: 1, text: "The deploy window is Tuesday", state: "active", ownerPinned: true, scopeId: expect.any(String) },
     });
-    const bundle = await buildMemoryBundle("deploy window", f.access(), f.bridge);
+    const bundle = await buildMemoryBundle("deploy window", f.access(), f.bridge, {allowance: LineageAllowance.tool()});
     expect(bundle.pinned.map(record => record.text)).toEqual(["The deploy window is Tuesday"]);
   });
 
@@ -88,7 +89,7 @@ describe("owner approval of a correction", () => {
     expect(f.current()).toEqual([{ id: candidate, version: 1, text: "The deploy window is Thursday" }]);
     const historical = database().prepare(`SELECT r.id FROM memory_records r WHERE ${HISTORICAL_MEMORY} ORDER BY r.id`).all().map(r => String(r.id));
     expect(historical.sort()).toEqual([candidate, f.target].sort());
-    const bundle = await buildMemoryBundle("deploy window", f.access(), f.bridge);
+    const bundle = await buildMemoryBundle("deploy window", f.access(), f.bridge, {allowance: LineageAllowance.tool()});
     expect(bundle.pinned.map(record => ({ id: record.id, text: record.text }))).toEqual([{ id: candidate, text: "The deploy window is Thursday" }]);
   });
 
@@ -99,7 +100,7 @@ describe("owner approval of a correction", () => {
     expect(f.row(candidate)).toMatchObject({ state: "active", owner_pinned: 0 });
     expect(f.row(f.target)).toMatchObject({ state: "superseded" });
     expect(f.current().map(record => record.id)).toEqual([candidate]);
-    expect((await buildMemoryBundle("deploy window", f.access(), f.bridge)).pinned).toEqual([]);
+    expect((await buildMemoryBundle("deploy window", f.access(), f.bridge, {allowance: LineageAllowance.tool()})).pinned).toEqual([]);
   });
 
   it("approves an unpinned target without a choice and refuses a stale pin choice", async () => {

@@ -268,9 +268,25 @@ export interface SetupBotReading {
   tasks?: readonly SetupTaskReading[];
 }
 
+/** The two facts the checklist reads from one conversation. */
+export interface SetupThreadFacts {
+  /** A settled, non-empty engine reply sits in the conversation. */
+  answered: boolean;
+  /** When the newest settled engine reply landed, or -1. */
+  answeredAt: number;
+  /** The newest provider refusal, when it is newer than that reply. */
+  refusal: { at: number; refusal: SetupRefusalReading } | null;
+  /** False while the first fill has not read this conversation completely and nothing written since decides it:
+   *  `refusal` is then never reported (an unfinished picture can hold an answered refusal) and `answered` is
+   *  only what has been seen so far. Absent when the facts are complete. */
+  known?: false;
+}
+
 export interface SetupWorkspaceReading {
   bots: readonly SetupBotReading[];
-  messagesFor(threadId: string): readonly SetupMessageReading[];
+  /** The facts by index (the server). Preferred over `messagesFor`, which loads a whole conversation. */
+  threadFacts?(threadId: string): SetupThreadFacts;
+  messagesFor?(threadId: string): readonly SetupMessageReading[];
   /** Whether a picked model routes through Flux Router — the app's own
    *  `isFluxModel`, injected so this module stays free of the engine tables. */
   routesThroughFlux(model: string): boolean;
@@ -320,28 +336,41 @@ function latestRefusal(messages: readonly SetupMessageReading[]): { at: number; 
   return newest && newest.at > answeredAt ? newest : null;
 }
 
+/** The same facts, from a conversation already in hand. */
+export function setupThreadFacts(messages: readonly SetupMessageReading[]): SetupThreadFacts {
+  let answeredAt = -1;
+  for (const message of messages) {
+    if (message.role === "bot" && message.kind === "text" && message.turnTerminal === true) answeredAt = Math.max(answeredAt, message.at ?? 0);
+  }
+  return { answered: threadAnswered(messages), answeredAt, refusal: latestRefusal(messages) };
+}
+
 /** The workspace facts the checklist measures. Threads other than the
  *  Chief's stop being scanned once one reply has been found: a mature
  *  workspace has thousands, and one is all that step asks for. */
 export function readWorkspace(
   workspace: SetupWorkspaceReading,
   chiefBotId?: string,
-): Pick<SetupLiveState, "chiefInstanceId" | "chiefAnsweredBy" | "chiefRefusal" | "chiefUsesFlux" | "crewSize" | "botReplyExists"> {
+): Pick<SetupLiveState, "chiefInstanceId" | "chiefAnsweredBy" | "chiefRefusal" | "chiefUsesFlux" | "crewSize" | "botReplyExists"> & { threadFactsUnknown?: true } {
   const chief = chiefBotId ? workspace.bots.find((bot) => bot.id === chiefBotId) : undefined;
   const chiefAnsweredBy = new Set<string>();
-  let botReplyExists = false;
+  let botReplyExists = false, threadFactsUnknown = false;
   let chiefRefusal: { at: number; refusal: SetupRefusalReading } | null = null;
+  const factsFor = (threadId: string): SetupThreadFacts => workspace.threadFacts
+    ? workspace.threadFacts(threadId)
+    : setupThreadFacts(workspace.messagesFor?.(threadId) ?? []);
   for (const bot of workspace.bots) {
     const isChief = bot.id === chief?.id;
     if (botReplyExists && !isChief) continue;
     const tasks: readonly SetupTaskReading[] = bot.tasks?.length ? bot.tasks : [{ threadId: bot.threadId }];
     for (const task of tasks) {
-      const messages = workspace.messagesFor(task.threadId);
+      const facts = factsFor(task.threadId);
+      if (facts.known === false) threadFactsUnknown = true;
       if (isChief) {
-        const refusal = latestRefusal(messages);
+        const refusal = facts.refusal;
         if (refusal && (chiefRefusal === null || refusal.at >= chiefRefusal.at)) chiefRefusal = refusal;
       }
-      if (!threadAnswered(messages)) continue;
+      if (!facts.answered) continue;
       botReplyExists = true;
       // A task with no recorded dispatch predates the field; it cannot prove
       // WHICH engine answered, so it counts for "a reply exists" and not for
@@ -356,6 +385,7 @@ export function readWorkspace(
     chiefUsesFlux: chief ? workspace.routesThroughFlux(chief.modelSelection.model) : false,
     crewSize: workspace.bots.filter((bot) => !bot.hidden && bot.id !== chief?.id).length,
     botReplyExists,
+    ...(threadFactsUnknown ? { threadFactsUnknown: true as const } : {}),
   };
 }
 

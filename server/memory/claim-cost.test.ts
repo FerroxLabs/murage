@@ -6,6 +6,8 @@ import { closeDatabase, database } from "../database.ts";
 import { setMemoryMode } from "./repository.ts";
 import * as jobs from "./jobs.ts";
 import { memoryTickGapMs, resetBacklogTrace, traceBacklog, traceSlowStep } from "./claim-trace.ts";
+import { TOMBSTONED } from "./claim-settle.ts";
+import { DENIED_PLACE } from "./deny.ts";
 
 const NOW = 1_000_000;
 // These tests commit thousands of rows one by one; the default synchronous=FULL makes that fsync-bound
@@ -38,20 +40,25 @@ function seed(count: number, scopes: number, mix = false) {
       else if (m === 9) status = "complete";
       else if (m === 10) status = "partial";
     }
-    db.prepare("INSERT INTO memory_sources VALUES(?,?,?,?,?,1,?,?,?,?,NULL,?)").run(`src-${i}`, scope, `thread-${i % 50}`, `m${i}`, null, `h${i}`, kind, "owner", outcome, state);
+    // with `mix`, some jobs belong to a deleted conversation (a deny row) or to a source forgotten at its revision (a tombstone)
+    const thread = mix && i % 24 === 11 ? "thread-deleted" : `thread-${i % 50}`;
+    db.prepare("INSERT INTO memory_sources VALUES(?,?,?,?,?,1,?,?,?,?,NULL,?)").run(`src-${i}`, scope, thread, `m${i}`, null, `h${i}`, kind, "owner", outcome, state);
+    if (mix && i % 36 === 0) db.prepare("INSERT INTO memory_tombstones VALUES(?,'source',?,1,NULL,1,'owner-forget',1)").run(`tomb-${i}`, `src-${i}`);
     db.prepare("INSERT INTO memory_source_versions VALUES(?,1,?,?,?)").run(`src-${i}`, `h${i}`, JSON.stringify({ text: `${i} ${text}` }), 1);
     db.prepare("INSERT INTO memory_jobs(id,source_id,source_revision,stage,stage_version,status,retry_at,attempts,lease_until,policy_revision,deletion_epoch) VALUES(?,?,1,'capture','1',?,?,?,?,0,0)")
       .run(`job-${String(i).padStart(5, "0")}`, `src-${i}`, status, retry, attempts, lease);
   }
+  if (mix) db.prepare("INSERT INTO memory_deny(kind,id,epoch,created_at) VALUES('thread','thread-deleted',1,1)").run();
   db.exec("COMMIT");
 }
 
-/** The claim query as it was before this change: the oracle for order and filters. */
+/** The claim query as it was before this change: the oracle for order and filters. It gains the deny and tombstone terms
+ * (CLAIM-DESIGN-FABLE.md I4), so a seed may hold jobs of deleted conversations, scopes and tombstoned sources. */
 const OLD_CLAIM = `SELECT j.*,s.scope_id,s.kind,s.speaker,s.outcome,
       length(CAST(json_extract(v.payload,'$.text') AS BLOB)) AS total_bytes
       FROM memory_jobs j JOIN memory_sources s ON s.id=j.source_id AND s.revision=j.source_revision
       JOIN memory_source_versions v ON v.source_id=j.source_id AND v.revision=j.source_revision
-      WHERE s.state='active' AND s.outcome!='working' AND NOT (s.kind IN ('tool-outcome','activity') AND s.outcome='failed') AND j.attempts<3 AND j.retry_at<=?
+      WHERE s.state='active' AND s.outcome!='working' AND NOT (s.kind IN ('tool-outcome','activity') AND s.outcome='failed') AND NOT ${DENIED_PLACE("s")} AND NOT ${TOMBSTONED("s")} AND j.attempts<3 AND j.retry_at<=?
       AND (j.status IN ('pending','partial','deferred') OR (j.status='leased' AND j.lease_until<?))
       AND (? IS NULL OR (j.stage='capture' AND s.scope_id IN (SELECT value FROM json_each(?))))
       ORDER BY CASE WHEN s.scope_id>? THEN 0 ELSE 1 END,s.scope_id,j.rowid LIMIT 1`;
@@ -105,16 +112,19 @@ describe("claim cost", () => {
     seed(200, 10);
     const db = database();
     const q = jobs.MEMORY_CLAIM_SQL;
-    const params: Record<string, SQLInputValue[]> = { anyOpen: [NOW, NOW], scope: ["", NOW, NOW], head: [NOW, NOW, "scope-001"], recent: [NOW, NOW, '["scope-001"]'], row: [1] };
-    for (const name of ["anyOpen", "scope", "head", "row"] as const) {
+    const params: Record<string, SQLInputValue[]> = { anyOpen: [NOW, NOW], scope: ["", '["1"]', NOW], head: ['["1"]', "scope-001", NOW], window: ["pending", NOW, 256], windowTied: ["pending", 0, 0, NOW, 256], windowLater: ["pending", 0, 0, NOW, 256], nextDue: [NOW, NOW, NOW, NOW, NOW], recentNewest: [NOW, NOW, '["scope-001"]', null, "[]", 256], row: [1] };
+    for (const name of ["anyOpen", "window", "windowTied", "windowLater", "nextDue", "scope", "head", "row"] as const) {
       const plan = db.prepare(`EXPLAIN QUERY PLAN ${q[name]}`).all(...params[name]).map(r => String(r.detail)).join("\n");
       expect(plan, name).not.toMatch(/TEMP B-TREE/);
       expect(plan, name).not.toMatch(/memory_source_versions/);
       expect(plan, name).not.toMatch(/SCAN (j|memory_jobs)\b/);
     }
-    const recentPlan = db.prepare(`EXPLAIN QUERY PLAN ${q.recent}`).all(...params.recent).map(r => String(r.detail)).join("\n");
+    const recentPlan = db.prepare(`EXPLAIN QUERY PLAN ${q.recentNewest}`).all(...params.recentNewest).map(r => String(r.detail)).join("\n");
     expect(recentPlan).not.toMatch(/TEMP B-TREE/);
     expect(recentPlan).not.toMatch(/memory_source_versions/);
+    // the one table scan is the CTE's newest rowids (ORDER BY rowid DESC LIMIT ?6), nowhere else
+    expect(recentPlan.match(/SCAN memory_jobs/g)).toHaveLength(1);
+    expect(recentPlan).toMatch(/MATERIALIZE n\nSCAN memory_jobs\n/);
   });
 
   it("with nothing claimable does one indexed existence check and opens no write transaction", () => {

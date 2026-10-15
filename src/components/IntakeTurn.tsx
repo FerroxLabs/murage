@@ -1,6 +1,7 @@
 import { useState } from "react";
 
 import { api, useStore, type Bot, type BotAnnouncement, type Message } from "@/state/store";
+import { fromAnswer } from "@/state/answer-tag";
 import { cn } from "@/lib/cn";
 import { setSkillCount } from "@/lib/bot-skill-count";
 import { useDesktopSurface } from "@/lib/use-surface";
@@ -91,7 +92,7 @@ export function IntakeTurn({ bot, message }: { bot: Bot; message: Message }) {
         // Straight into the sidebar and the chat header, without waiting for
         // the broadcast to come back around. The question asked for something,
         // so the answer has to change something visible.
-        announceBot: (next) => dispatch({ type: "botPatched", bot: next as BotAnnouncement }),
+        announceBot: (next) => dispatch({ type: "botPatched", ...fromAnswer(next), bot: next as BotAnnouncement }),
         publishSkillCount: setSkillCount,
       });
       setErrors(applied.errors);

@@ -83,7 +83,7 @@ export class TurnImages {
   }
   private prune() {
     for (const [key, entry] of this.pending) {
-      if (entry.expires <= this.now() || this.store.messagesFor(entry.threadId).some(message => message.attachments?.some(item => item.path === entry.item.path))) this.pending.delete(key);
+      if (entry.expires <= this.now() || this.store.boundAttachments(entry.threadId, [entry.item.path]).has(entry.item.path)) this.pending.delete(key);
     }
   }
   register(threadId: string, saved: { path: string; mime: string }): void {
@@ -103,7 +103,8 @@ export class TurnImages {
     if (!paths.length) return [];
     if (!turnImageAudience(this.store, threadId)) throw fail();
     this.prune();
-    const historical = new Map(this.store.messagesFor(threadId).flatMap(message => (message.attachments ?? []).map(item => [item.path, item] as const)));
+    // The rows that bound these paths, found by index: never the thread's history.
+    const historical = this.store.boundAttachments(threadId, paths);
     return paths.flatMap(path => {
       if (!this.canonical(path)) return [];
       const item = historical.get(path) ?? this.pending.get(`${threadId}\0${path}`)?.item;
@@ -142,7 +143,7 @@ export class TurnImages {
     const tooLarge: string[] = [];
     if (!paths.length) return { images, unbound, overCount, tooLarge };
     if (!turnImageAudience(this.store, threadId, botId)) throw fail();
-    const allowed = new Set(this.store.messagesFor(threadId).flatMap(message => (message.attachments ?? []).map(item => item.path)));
+    const allowed = new Set(this.store.boundAttachments(threadId, paths).keys());
     // A forged path inside the count is refused before anything is read,
     // wherever the byte budget would have run out.
     if (paths.some(path => !this.canonical(path))) throw fail();

@@ -9,6 +9,10 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { ToolResults, TOOL_RESULT_PREVIEW_CHARS } from "../tool-results.ts";
+import type { HandoffOutcome } from "../event-limit.ts";
+import { formatHandoff } from "../handoff-outcome.ts";
+import { released } from "../testing/released.ts";
+import type { BotName } from "../murage-status.ts";
 
 const PROXY = join(dirname(fileURLToPath(import.meta.url)), "agents-proxy.ts");
 const TOKEN = "test-comms-token";
@@ -1227,6 +1231,28 @@ describe("agents-proxy MCP surface", () => {
       expect(res.result.isError).toBe(true);
       expect(res.result.content[0].text).toMatch(/takes bot_id \(a bot id from .*list_bots.*, or a teammate's exact name\) and message\./);
     }
+  });
+
+  // Review round 4 #5: a hand-off asked one way and again the other way is presented by the harness in the asking route's own shape
+  // (handoff-outcome.ts); the proxy must read every one of those shapes.
+  it("renders every hand-off outcome the harness presents, for ask_bot and for delegate_bot", async () => {
+    const who = { targetName: "Helper" as BotName, resolvable: () => true, answerText: () => released("Paid") };
+    const outcomes: HandoffOutcome[] = [{ kind: "queued", taskId: "t-queued1" }, { kind: "timeout", taskId: "t-timeout1" }, { kind: "answer", threadId: "chan", messageId: "m1" }, { kind: "ended", reason: "failed" }];
+    const expectedAsk = [/queued as a delegation.*Task id: t-queued1/s, /still working.*Task id: t-timeout1/s, /Helper replied:\nYou already asked @Helper this in this run\. Their answer: Paid/, /Helper replied:\n.*ended: its turn did not finish/s];
+    const expectedDelegate = [/Already handed to @Helper in this run.*Task id: t-queued1/s, /still working.*Task id: t-timeout1/s, /Their answer: Paid/, /ended: its turn did not finish/];
+    const previousAsk = askResponse, previousDelegate = delegateResponse;
+    try {
+      for (const [index, outcome] of outcomes.entries()) {
+        askResponse = formatHandoff(outcome, "ask", who, true)!.body as StubAskResponse;
+        const asked = await callTool("ask_bot", { bot_id: "bot-helper", message: `again ${index}` });
+        expect(asked.result.isError, JSON.stringify(askResponse)).not.toBe(true);
+        expect(asked.result.content[0].text).toMatch(expectedAsk[index]);
+        delegateResponse = formatHandoff(outcome, "delegate", who, true)!.body;
+        const delegated = await callTool("delegate_bot", { bot_id: "bot-helper", message: `again ${index}` });
+        expect(delegated.result.isError, JSON.stringify(delegateResponse)).not.toBe(true);
+        expect(delegated.result.content[0].text).toMatch(expectedDelegate[index]);
+      }
+    } finally { askResponse = previousAsk; delegateResponse = previousDelegate; }
   });
 
   it("answers a register_artifact input mistake in one plain line naming its fields", async () => {

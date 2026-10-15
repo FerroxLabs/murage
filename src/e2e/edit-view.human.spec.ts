@@ -55,7 +55,7 @@ test("Edit then Enter shows the edited message and new answer without switching 
   // A phone has no hover row: a tap on the bubble opens its Message actions
   // sheet (telegram-message.human.spec.ts does the same).
   if (info.project.name === "mobile") {
-    await page.getByText("P1 original question", { exact: true }).first().tap();
+    await page.locator("[data-row]").getByText("P1 original question", { exact: true }).first().tap();
     await page.getByRole("dialog", { name: "Message actions" }).getByRole("button", { name: "Edit message", exact: true }).click();
   } else {
     await page.getByRole("button", { name: "Edit message", exact: true }).click();

@@ -9,15 +9,21 @@
 import type { DatabaseSync } from "node:sqlite";
 import type { InboxLearningSuggestion } from "../shared/inbox.ts";
 import { recipientViews } from "./memory/lesson-sharing.ts";
-import { listProcedureSuggestions } from "./memory/procedure-landing.ts";
+import { listProcedureSuggestionsByBot } from "./memory/procedure-landing.ts";
 
 export type { InboxLearningSuggestion };
 
 /** One row per lesson waiting for a decision, newest first. `nameOf` drops bots that no longer exist. */
-export function inboxSuggestionRows(db: DatabaseSync, nameOf: (botId: string) => string | undefined, botIds: readonly string[] = []): InboxLearningSuggestion[] {
-  const rows = db.prepare(`SELECT id,version,bot_id,scope,recipients,kind,text,created_at FROM memory_lessons
-    WHERE state='suggested' AND version=(SELECT MAX(version) FROM memory_lessons m WHERE m.id=memory_lessons.id)
-    ORDER BY created_at DESC,rowid DESC LIMIT 50`).all() as Array<Record<string, any>>;
+export function inboxSuggestionRows(db: DatabaseSync, nameOf: (botId: string) => string | undefined, botIds?: readonly string[]): InboxLearningSuggestion[] {
+  const LIMIT = 50;
+  const select = `SELECT id,version,bot_id,scope,recipients,kind,text,created_at,rowid AS rid FROM memory_lessons`;
+  const latest = `version=(SELECT MAX(version) FROM memory_lessons m WHERE m.id=memory_lessons.id)`;
+  // Keyed by bot: memory_lessons_bot_state(bot_id,state) answers each bot's waiting lessons without reading the rest of the table, so the read costs what
+  // is waiting, never how many lessons the file holds. Without a roster (a caller with none) the whole table is asked, as before.
+  const rows = (botIds
+    ? botIds.flatMap(botId => db.prepare(`${select} WHERE bot_id=? AND state='suggested' AND ${latest} ORDER BY created_at DESC,rowid DESC LIMIT ${LIMIT}`).all(botId) as Array<Record<string, any>>)
+        .sort((a, b) => Number(b.created_at) - Number(a.created_at) || Number(b.rid) - Number(a.rid)).slice(0, LIMIT)
+    : db.prepare(`${select} WHERE state='suggested' AND ${latest} ORDER BY created_at DESC,rowid DESC LIMIT ${LIMIT}`).all() as Array<Record<string, any>>);
   const out: InboxLearningSuggestion[] = [];
   for (const row of rows) {
     const botName = nameOf(String(row.bot_id));
@@ -28,10 +34,11 @@ export function inboxSuggestionRows(db: DatabaseSync, nameOf: (botId: string) =>
     out.push({ botId: String(row.bot_id), botName, lessonId: String(row.id), version: Number(row.version), text: String(row.text), at: Number(row.created_at), kind: "lesson", lessonKind: row.kind === "style" ? "style" : "note", ...share });
   }
   // Skill and routine changes waiting for the owner (psug-): the sentence only, never the whole skill text.
-  for (const botId of botIds) {
+  const procedures = botIds?.length ? listProcedureSuggestionsByBot(db, botIds) : new Map();
+  for (const botId of botIds ?? []) {
     const botName = nameOf(botId);
     if (botName === undefined) continue;
-    for (const item of listProcedureSuggestions(db, botId)) {
+    for (const item of procedures.get(botId) ?? []) {
       out.push({ botId, botName, lessonId: item.id, version: item.version, text: item.summary, at: item.createdAt, kind: "procedure", targetKind: item.targetKind, label: item.label,
         summary: item.summary, reasons: [...item.reasons], proposedHash: item.proposedHash, edited: item.edited });
     }

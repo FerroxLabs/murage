@@ -1,3 +1,7 @@
+import { Worker } from "node:worker_threads";
+import { inboxDeferredDrain, INBOX_FILL_MAX_HOLD_MS, type InboxDeferredSql } from "./inbox-fill-worker.ts";
+import { observeLine } from "./observe.ts";
+import { SPAWNED_PROXIES } from "./proxy-paths.ts";
 import { createHash } from "node:crypto";
 import type { DatabaseSync } from "node:sqlite";
 import type { InboxItem, InboxPage, InboxQuery, InboxStateUpdate } from "../shared/inbox.ts";
@@ -40,8 +44,10 @@ const reject = (status: number, message: string): never => { throw new InboxErro
 const version = (json: string) => createHash("sha256").update(json).digest("hex");
 const text = (value: unknown, limit = 280) => redactSecretsInText(typeof value === "string" ? value : "").replace(/[\u0000-\u001f]/g, " ").trim().slice(0, limit);
 
-/** Additive metadata only. Messages remain the only source of action state;
- * no capture hook, second approval record or content backfill is required. */
+/** Additive metadata, and the projection derived from messages (kept by
+ * triggers in the write's own transaction). Messages remain the only source of
+ * action state: no second approval record exists, and the projection is
+ * rebuilt from them whenever it cannot be trusted. */
 export function initializeInbox(db: DatabaseSync) {
   db.exec(`CREATE TABLE IF NOT EXISTS inbox_item_state (
     source_key TEXT PRIMARY KEY, read_version TEXT, read_at INTEGER, snoozed_until INTEGER);
@@ -57,34 +63,33 @@ export function initializeInbox(db: DatabaseSync) {
   // Added after the table shipped, so an existing database gains the column.
   const columns = db.prepare("PRAGMA table_info(inbox_item_state)").all() as Array<{ name: string }>;
   if (!columns.some(column => column.name === "cleared_at")) db.exec("ALTER TABLE inbox_item_state ADD COLUMN cleared_at INTEGER");
+  // After cleared_at exists: the projection's triggers read it.
+  createInboxProjection(db);
 }
 
-// The full leg's row set, as two index-reachable branches. Plain chat text
-// (kind='text' with no saved file) is the bulk of a busy history and can never
-// pass the CASE in raw, but reading it meant visiting and json_extract-ing
-// every such row (the 60 s cold load). A single OR/IN over kind cannot be
-// split by the planner, so the text branch is its own SELECT over the partial
-// index messages_inbox_text_artifact (created in initializeInbox), unioned by
-// rowid. ?1 is the same thread list the rest of the query uses.
-const FULL_ROWS = `(
-  SELECT rowid AS r FROM messages WHERE role='bot' AND kind IN ('options','secret','connector','mcpSignIn','routine.run','goal.run','activity')
-    AND thread_id IN (SELECT value FROM json_each(?1))
-  UNION ALL
-  SELECT rowid FROM messages INDEXED BY messages_inbox_text_artifact WHERE role='bot' AND kind='text'
-    AND json_extract(json,'$.artifactIds[0]') IS NOT NULL AND thread_id IN (SELECT value FROM json_each(?1))
-) src`;
-// Restrict sources to permitted threads before grouping or searching. A
-// resolved copy wins over a replayed pending request with the same identity.
-// No secret/connector descriptions, option subtitles or tool commands enter
-// the projection. Run output is redacted again at the response boundary.
+// THE PROJECTION IS KEPT, NOT RECOMPUTED.
 //
-// DISK BURN (0.1.58 on): raw used to carry the whole message json, so the
-// window sort in `ranked` had to materialise every message body and spilled
-// SQLite temp files on every poll. It now carries only the columns extracted
-// from the json. The page query joins the json back for the rows it returns,
-// because the read mark is a hash of the full message.
-const buildSource = (rawFilter: string, pruneText = false) => `WITH raw AS (
-  SELECT m.rowid AS source_row, m.thread_id, m.id AS message_id, m.at, m.kind,
+// Every Inbox answer used to rebuild this from the messages table: every
+// message of an Inbox kind, in every conversation, from the start of history,
+// with about twenty json_extract calls each, on the main connection. On three
+// years of use that was a 51 s freeze, paid again after any new card or run.
+//
+// Now each message is reduced ONCE, when it is written, into `inbox_raw` (the
+// triggers below run in the same transaction as the write, so the projection
+// can never disagree with the message it came from); `inbox_keys` keeps how
+// many copies each item has; `inbox_items` holds each item's winning copy with
+// its read, snooze and clear marks; and `inbox_counts` holds, per
+// conversation, how many items each list and each badge has. All four move in
+// the write's own transaction. A read is a walk down one list's own index for
+// the rows on the page, plus one counter row per permitted conversation. The
+// Inbox holds exactly what it always held, of every age; nothing is windowed
+// except the routine roll-up, as before.
+//
+// The CASE logic below is the same text the old query ran, so what an item
+// says, where it is filed and whether it is owed cannot drift.
+/** The most characters of summary and title the projection stores. */
+const PREVIEW_CHARS = 2048;
+const RAW_COLUMNS = `m.rowid AS source_row, m.thread_id, m.id AS message_id, m.at, m.kind,
     COALESCE(json_extract(m.json,'$.card.expired'),0) AS expired,
     json_extract(m.json,'$.routineRun.runId') AS run_id, json_extract(m.json,'$.routineRun.routineId') AS routine_id,
     json_array(m.thread_id,m.kind,CASE m.kind
@@ -120,11 +125,12 @@ const buildSource = (rawFilter: string, pruneText = false) => `WITH raw AS (
       WHEN 'routine.run' THEN COALESCE(json_extract(m.json,'$.routineRun.goalStatus'),json_extract(m.json,'$.routineRun.status'))
       WHEN 'activity' THEN CASE WHEN json_extract(m.json,'$.actorKind')='murage' AND json_extract(m.json,'$.murage.kind')='status' AND json_type(m.json,'$.murage.digestDay')='text' THEN 'digest' ELSE 'failed' END
       WHEN 'goal.run' THEN json_extract(m.json,'$.goalRun.status') WHEN 'text' THEN 'completed' ELSE 'failed' END AS status,
-    CASE m.kind WHEN 'activity' THEN CASE WHEN json_extract(m.json,'$.actorKind')='murage' AND json_extract(m.json,'$.murage.kind')='status' AND json_type(m.json,'$.murage.digestDay')='text' THEN COALESCE(json_extract(m.json,'$.tool.name'),'') ELSE '' END
+    -- The projection keeps a PREVIEW (the list shows 280 characters, a digest 1000): capped in SQL so the full text of a huge message is never copied into the projection.
+    substr(CASE m.kind WHEN 'activity' THEN CASE WHEN json_extract(m.json,'$.actorKind')='murage' AND json_extract(m.json,'$.murage.kind')='status' AND json_type(m.json,'$.murage.digestDay')='text' THEN COALESCE(json_extract(m.json,'$.tool.name'),'') ELSE '' END
       WHEN 'routine.run' THEN COALESCE(json_extract(m.json,'$.routineRun.summary'),json_extract(m.json,'$.routineRun.error'),'')
       WHEN 'goal.run' THEN COALESCE(json_extract(m.json,'$.goalRun.detail'),'') WHEN 'text' THEN COALESCE(json_extract(m.json,'$.text'),'Saved file')
-      WHEN 'mcpSignIn' THEN COALESCE(json_extract(m.json,'$.mcpSignIn.body'),'') ELSE '' END AS summary,
-    CASE m.kind WHEN 'options' THEN CASE
+      WHEN 'mcpSignIn' THEN COALESCE(json_extract(m.json,'$.mcpSignIn.body'),'') ELSE '' END, 1, ${PREVIEW_CHARS}) AS summary,
+    substr(CASE m.kind WHEN 'options' THEN CASE
       WHEN json_type(m.json,'$.card.routineRequest')='object' THEN 'Routine proposal'
       WHEN json_type(m.json,'$.card.skillRequest')='object' THEN 'Skill proposal'
       -- Expired is checked before the tool, so every expired card called
@@ -145,7 +151,7 @@ const buildSource = (rawFilter: string, pruneText = false) => `WITH raw AS (
         WHEN json_extract(m.json,'$.tool.authRequired')=1 THEN 'Sign in needed'
         WHEN json_extract(m.json,'$.tool.setup')=1 THEN 'Setup needed'
         ELSE 'Provider needs attention' END
-      ELSE 'Provider needs attention' END AS title,
+      ELSE 'Provider needs attention' END, 1, ${PREVIEW_CHARS}) AS title,
     -- WHICH OF THE FIVE LISTS THIS BELONGS IN.
     --
     -- The kind column says what SHAPE the message is. This says what it
@@ -166,11 +172,10 @@ const buildSource = (rawFilter: string, pruneText = false) => `WITH raw AS (
       WHEN 'secret' THEN 'connection' WHEN 'connector' THEN 'connection' WHEN 'mcpSignIn' THEN 'connection'
       WHEN 'activity' THEN CASE WHEN json_extract(m.json,'$.actorKind')='murage' AND json_extract(m.json,'$.murage.kind')='status' AND json_type(m.json,'$.murage.digestDay')='text' THEN 'result' WHEN json_extract(m.json,'$.tool.authRequired')=1 OR json_extract(m.json,'$.tool.setup')=1 THEN 'connection' ELSE 'routine' END
       WHEN 'routine.run' THEN 'routine' WHEN 'goal.run' THEN 'routine'
-      ELSE 'result' END AS kind_segment
-  FROM ${pruneText ? `${FULL_ROWS} JOIN messages m ON m.rowid=src.r` : "messages m"}
-  WHERE m.role='bot' AND m.thread_id IN (SELECT value FROM json_each(${pruneText ? "?1" : "?"}))${rawFilter}
-    AND m.kind IN ('options','secret','connector','mcpSignIn','routine.run','goal.run','activity','text')
-    AND CASE m.kind
+      ELSE 'result' END AS kind_segment`;
+/** Which messages are items at all. Damaged JSON is never an item and never
+ *  blocks the write it rides on: json_valid runs before any json_extract. */
+const RAW_VALID = `CASE WHEN json_valid(m.json) THEN CASE m.kind
       WHEN 'options' THEN json_type(m.json,'$.card.requestId')='text' OR json_type(m.json,'$.card.routineRequest')='object' OR json_type(m.json,'$.card.skillRequest')='object'
       WHEN 'secret' THEN json_type(m.json,'$.secret')='object'
       WHEN 'connector' THEN json_type(m.json,'$.connector')='object'
@@ -179,73 +184,685 @@ const buildSource = (rawFilter: string, pruneText = false) => `WITH raw AS (
       WHEN 'goal.run' THEN json_extract(m.json,'$.goalRun.status')!='working'
       WHEN 'activity' THEN (json_extract(m.json,'$.actorKind')='murage' AND json_extract(m.json,'$.murage.kind')='status' AND json_type(m.json,'$.murage.digestDay')='text') OR (json_extract(m.json,'$.tool.ok')=0 AND (json_extract(m.json,'$.tool.setup')=1 OR json_extract(m.json,'$.tool.authRequired')=1 OR json_type(m.json,'$.tool.providerError')='object'))
       WHEN 'text' THEN json_type(m.json,'$.artifactIds[0]')='text' AND length(json_extract(m.json,'$.artifactIds[0]'))=36
-    END
-), ranked AS (
-  SELECT *, ROW_NUMBER() OVER (PARTITION BY source_key ORDER BY CASE WHEN status IN ('resolved','completed','failed','cancelled','stopped','missed') THEN 1 ELSE 0 END DESC,at DESC,source_row DESC) AS position,
-    COUNT(*) OVER (PARTITION BY source_key) AS copies FROM raw
-), items AS (
-  SELECT r.*, s.read_version, s.snoozed_until, s.cleared_at,
-    -- TWO FLAGS, NOT ONE. A decision is owed on the first set and nothing is
-    -- owed on the second: see the comment at the top of shared/inbox.ts for
-    -- why putting them in one bucket made the count unreadable. The status
-    -- lists live there too, and are spliced in below so SQL and TypeScript
-    -- cannot drift apart.
-    CASE WHEN status IN (${DECISION_SQL}) THEN 1 ELSE 0 END AS decision,
-    CASE WHEN status IN (${TO_READ_SQL}) THEN 1 ELSE 0 END AS to_read,
-    -- A RUN THAT HAS STOPPED AND IS ASKING IS NOT A NOTIFICATION.
-    --
-    -- Rule 4 says a routine run never asks, and that is right about the
-    -- thirty five rows it was written for: a run that failed, retried, or
-    -- ran on a timer is news. It is NOT right about a run whose goal came
-    -- back needs-input. routines.ts parks that run at status 'waiting'
-    -- with "The team needs your input" on it, and says so in its own words:
-    -- "a team asking the human a question is still waiting on them".
-    --
-    -- Kept kind-derived and then overridden HERE, rather than in raw,
-    -- because status does not exist until this layer.
-    --
-    -- WHY IT HAS TO BE A COUNTED SEGMENT. decisions counts everything
-    -- owed. If an owed run stayed segment 'routine' it would be inside that
-    -- number and inside no tab that can show it: the badge would say three,
-    -- the three tabs would add to two, and the missing one would be
-    -- unreachable except by scrolling the umbrella. That is the defect this
-    -- whole redesign exists to remove, reintroduced by arithmetic.
-    CASE WHEN kind_segment='routine' AND status IN (${DECISION_SQL}) THEN 'question'
-      ELSE kind_segment END AS segment,
-    -- WHAT A SEGMENT TAB SHOWS, WHICH IS NOT THE SAME AS WHAT IT COUNTS.
-    --
-    -- The three tabs filtered on decision=1, and two kinds of thing that
-    -- belong to them are not owed and never can be:
-    --
-    --   An ENGINE THAT IS NOT SIGNED IN arrives as a failed activity. It
-    --   needs the owner's hands, which is the definition of a connection,
-    --   but it is a log line with nothing on it to resolve, so it can only
-    --   ever be 'failed'. It was therefore in no tab at all: Connections
-    --   asked for owed, results asks for neither owed nor news, and the
-    --   to-read list that used to carry it lost its tab in this redesign.
-    --   A dead login reachable only by scrolling "All" is THE original
-    --   complaint, made worse by the thing built to fix it.
-    --
-    --   A REQUEST THAT EXPIRED UNATTENDED is 'missed' for the same reason,
-    --   and "I cannot tell whether it expired or where to look" was reported
-    --   on the same evening.
-    --
-    -- So the tab shows both and counts only the first. The count stays
-    -- exactly "what is waiting on you", so the three still sum to the
-    -- umbrella and nothing can badge for ever with no way to clear it; the
-    -- LIST is the place a person goes to look, and it has to hold everything
-    -- of that kind or they will look in it and conclude it is not there.
-    CASE WHEN status IN (${DECISION_SQL}) OR status IN (${TO_READ_SQL}) THEN 1 ELSE 0 END AS owed_or_over
-  FROM ranked r LEFT JOIN inbox_item_state s ON s.source_key=r.source_key
-  WHERE position=1 AND NOT(status='completed' AND length(trim(summary))=0)
-) `;
-const SOURCE = buildSource("", true);
-/** Same projection restricted to the kinds that can be kind_segment
- *  'routine' (the only rows the rollup reads): routine and goal runs AND
- *  failed tool activity, which raw files under 'routine' (a provider error is
- *  routine news, and its 401s feed connectionsToRestore). Partitions never
- *  cross kinds, so the rows are identical. */
-const ROUTINE_SOURCE = buildSource("\n    AND m.kind IN ('routine.run','goal.run','activity')");
+    END ELSE 0 END`;
+const PROJECTED_KINDS = "'options','secret','connector','mcpSignIn','routine.run','goal.run','activity','text'";
+const ITEM_KINDS = "'options','secret','connector','mcpSignIn','routine.run','goal.run','activity'";
+/** A copy in one of these states outranks a newer pending replay of the same item. */
+const TERMINAL_SQL = "'resolved','completed','failed','cancelled','stopped','missed'";
+/** The reduced rows of the messages `where` selects, ready to insert. */
+const projectedRows = (where: string, source = "messages m") => `SELECT p.*, CASE WHEN p.status IN (${TERMINAL_SQL}) THEN 1 ELSE 0 END, CASE WHEN p.status IN (${DECISION_SQL}) THEN 1 ELSE 0 END
+  FROM (SELECT ${RAW_COLUMNS}
+    FROM ${source} WHERE ${where} AND m.role='bot' AND m.kind IN (${PROJECTED_KINDS}) AND ${RAW_VALID}) p`;
+const RAW_COLUMNS_LIST = "source_row,thread_id,message_id,at,kind,expired,run_id,routine_id,source_key,status,summary,title,kind_segment,terminal,decision";
+const RAW_INSERT = `INSERT INTO inbox_raw(${RAW_COLUMNS_LIST})`;
+
+// WHAT SETUP NEEDS FROM A CONVERSATION, kept as rows so each of its two facts
+// is one index seek whatever the length of the history: a settled engine
+// reply (turnTerminal; `solid` when it carries text) and a provider refusal.
+// Only those messages are rows, so the table is the size of the turns and the
+// refusals, never of the history. Derived data like the rest of the projection.
+const MARK_CANDIDATE = (row: string) => `(instr(${row}.json,'turnTerminal')>0 OR instr(${row}.json,'providerError')>0)`;
+const MARK_VALID = `CASE WHEN json_valid(m.json) THEN CASE m.kind
+      WHEN 'text' THEN m.role='bot' AND json_extract(m.json,'$.turnTerminal')=1
+      WHEN 'activity' THEN json_type(m.json,'$.tool.providerError')='object'
+    END ELSE 0 END`;
+const markRows = (where: string, source = "messages m") => `SELECT m.rowid, m.thread_id, m.id,
+    CASE m.kind WHEN 'text' THEN 'reply' ELSE 'refusal' END,
+    CASE WHEN m.kind='text' AND trim(COALESCE(m.text,''),char(32,9,10,11,12,13,160))<>'' THEN 1 ELSE 0 END, m.at,
+    CASE WHEN m.kind='activity' THEN json_extract(m.json,'$.tool.providerError.httpStatus') END,
+    CASE WHEN m.kind='activity' THEN json_extract(m.json,'$.tool.providerError.provider') END
+  FROM ${source} WHERE ${where} AND m.kind IN ('text','activity') AND ${MARK_CANDIDATE("m")} AND ${MARK_VALID}`;
+const MARK_COLUMNS_LIST = "source_row,thread_id,message_id,kind,solid,at,http_status,provider";
+const MARK_INSERT = `INSERT INTO setup_marks(${MARK_COLUMNS_LIST})`;
+/** A message row that can be an item: an Inbox kind, or a bot text that names a saved file. */
+const candidate = (row: "NEW" | "OLD") => `(${row}.role='bot' AND (${row}.kind IN (${ITEM_KINDS}) OR (${row}.kind='text' AND instr(${row}.json,'artifactIds')>0)))`;
+
+/** The projection's layout. A database holding another layout's objects has
+ *  them dropped and rebuilt from its messages (they are derived data). */
+const PROJECTION_VERSION = 4;
+/** Index names carry the layout, so an older layout's indexes (which stay with its set-aside tables) never collide with these. */
+const ix = (name: string) => `${name}_${PROJECTION_VERSION}`;
+
+// WHAT ONE ITEM IS: its winning copy, with the owner's marks on it.
+//
+// TWO FLAGS, NOT ONE. A decision is owed on the first set and nothing is owed
+// on the second: see the comment at the top of shared/inbox.ts for why putting
+// them in one bucket made the count unreadable. The status lists live there
+// too, and are spliced in below so SQL and TypeScript cannot drift apart.
+//
+// A RUN THAT HAS STOPPED AND IS ASKING IS NOT A NOTIFICATION.
+//
+// Rule 4 says a routine run never asks, and that is right about the thirty
+// five rows it was written for: a run that failed, retried, or ran on a timer
+// is news. It is NOT right about a run whose goal came back needs-input.
+// routines.ts parks that run at status 'waiting' with "The team needs your
+// input" on it, and says so in its own words: "a team asking the human a
+// question is still waiting on them". Kept kind-derived and then overridden
+// here, because status does not exist until this layer.
+//
+// WHY IT HAS TO BE A COUNTED SEGMENT. decisions counts everything owed. If an
+// owed run stayed segment 'routine' it would be inside that number and inside
+// no tab that can show it: the badge would say three, the three tabs would add
+// to two, and the missing one would be unreachable except by scrolling the
+// umbrella. That is the defect this whole redesign exists to remove,
+// reintroduced by arithmetic.
+//
+// WHAT A SEGMENT TAB SHOWS, WHICH IS NOT THE SAME AS WHAT IT COUNTS
+// (owed_or_over). The three tabs filtered on decision=1, and two kinds of
+// thing that belong to them are not owed and never can be: an ENGINE THAT IS
+// NOT SIGNED IN arrives as a failed activity (it needs the owner's hands, but
+// it is a log line with nothing on it to resolve), and a REQUEST THAT EXPIRED
+// UNATTENDED is 'missed'. A dead login reachable only by scrolling "All" is
+// THE original complaint. So the tab shows both and counts only the first: the
+// count stays exactly "what is waiting on you", so the three still sum to the
+// umbrella; the LIST is the place a person goes to look, and it has to hold
+// everything of that kind or they will look in it and conclude it is not
+// there.
+//
+// The winning copy: a resolved copy wins over a replayed pending request with
+// the same identity, then the newest. A completed run that said nothing is not
+// an item at all. `live` is the clear mark: set aside until something newer
+// happens to it.
+const ITEM_COLUMNS = "source_key,thread_id,message_id,source_row,at,kind,expired,run_id,routine_id,status,summary,title,kind_segment,copies,decision,to_read,segment,owed_or_over,read_version,snoozed_until,cleared_at,live";
+const refreshItem = (key: string) => `DELETE FROM inbox_items WHERE source_key=${key};
+    INSERT INTO inbox_items(${ITEM_COLUMNS})
+    SELECT h.source_key, h.thread_id, h.message_id, h.source_row, h.at, h.kind, h.expired, h.run_id, h.routine_id, h.status, h.summary, h.title, h.kind_segment, k.copies,
+      CASE WHEN h.status IN (${DECISION_SQL}) THEN 1 ELSE 0 END,
+      CASE WHEN h.status IN (${TO_READ_SQL}) THEN 1 ELSE 0 END,
+      CASE WHEN h.kind_segment='routine' AND h.status IN (${DECISION_SQL}) THEN 'question' ELSE h.kind_segment END,
+      CASE WHEN h.status IN (${DECISION_SQL}) OR h.status IN (${TO_READ_SQL}) THEN 1 ELSE 0 END,
+      s.read_version, s.snoozed_until, s.cleared_at,
+      CASE WHEN s.cleared_at IS NULL OR h.at>s.cleared_at THEN 1 ELSE 0 END
+    FROM inbox_raw h JOIN inbox_keys k ON k.source_key=h.source_key LEFT JOIN inbox_item_state s ON s.source_key=h.source_key
+    WHERE h.rowid=(SELECT x.rowid FROM inbox_raw x WHERE x.source_key=${key} ORDER BY x.terminal DESC,x.at DESC,x.source_row DESC LIMIT 1)
+      AND NOT(h.status='completed' AND length(trim(h.summary))=0);`;
+
+// THE LISTS, as conditions on an item row (`p` is a trigger's NEW./OLD.).
+//
+// `approvals`, `questions` and `connections` show what needs the owner of that
+// kind, owed or over; `decisions` is everything still owed and not expired;
+// `routines` is everything a routine did (the caller rolls those up);
+// `to-read` is news, a digest only until it is opened; `results` is what runs
+// and saved files produced that is neither owed nor news.
+type ListName = "all" | "approvals" | "decisions" | "questions" | "connections" | "routines" | "to-read" | "results";
+const LISTS: readonly ListName[] = ["all", "approvals", "decisions", "questions", "connections", "routines", "to-read", "results"];
+const listTerms = (list: ListName, p = ""): string[] => {
+  switch (list) {
+    case "all": return [];
+    case "approvals": return [`${p}owed_or_over=1`, `${p}segment='approval'`];
+    case "decisions": return [`${p}expired=0`, `${p}decision=1`];
+    case "questions": return [`${p}owed_or_over=1`, `${p}segment='question'`];
+    case "connections": return [`${p}owed_or_over=1`, `${p}segment='connection'`];
+    case "routines": return [`${p}kind_segment='routine'`];
+    case "to-read": return [`${p}to_read=1`, `(${p}status<>'digest' OR ${p}read_version IS NULL)`];
+    case "results": return [`${p}decision=0`, `${p}to_read=0`, `${p}kind IN ('routine.run','goal.run','text')`];
+  }
+};
+const ident = (list: ListName) => list.replace("-", "_");
+/** A list's terms, with the clear mark when `live`. Never empty: SQL wants a condition. */
+const listWhere = (list: ListName, live: boolean, p = "") => [...listTerms(list, p), ...(live ? [`${p}live=1`] : [])].join(" AND ") || "1";
+const listIndex = (list: ListName, live: boolean) => ix(`inbox_items_${live ? "l" : "v"}_${ident(list)}`);
+
+// THE BADGES. Reading a request never removes it from the decisions count,
+// because reading is not answering; reading DOES clear it from the to-read
+// count, because there reading is the whole action. Never opened, rather than
+// "not current", for to-read: the read mark is a hash of the message computed
+// in JS, and SQL cannot recompute it, so an item that was read and has since
+// changed is counted as read. Erring that way keeps the badge quiet rather
+// than crying wolf. `owed_open` is owedThreads: owed and unexpired, whatever
+// the marks say.
+const BADGES = (p = "") => ({
+  o_approvals: `${p}decision=1 AND ${p}segment='approval' AND ${p}live=1`,
+  o_questions: `${p}decision=1 AND ${p}segment='question' AND ${p}live=1`,
+  o_connections: `${p}decision=1 AND ${p}segment='connection' AND ${p}live=1`,
+  o_decisions: `${p}decision=1 AND ${p}live=1`,
+  o_unread: `${p}to_read=1 AND ${p}read_version IS NULL AND ${p}live=1`,
+  owed_open: `${p}decision=1 AND ${p}expired=0`,
+});
+/** Every counter kept per conversation: each list with and without the clear mark, and each badge. */
+const COUNTERS = (p = ""): Array<[string, string]> => [
+  ...LISTS.map((list): [string, string] => [`v_${ident(list)}`, listWhere(list, false, p)]),
+  ...LISTS.map((list): [string, string] => [`l_${ident(list)}`, listWhere(list, true, p)]),
+  ...Object.entries(BADGES(p)),
+];
+const bump = (p: "NEW." | "OLD.", sign: "+" | "-") => COUNTERS(p).map(([name, condition]) => `${name}=${name}${sign}(CASE WHEN ${condition} THEN 1 ELSE 0 END)`).join(",\n      ");
+
+// NO STATEMENT IN THESE TRIGGERS CAN CONFLICT. A trigger's statements take the
+// conflict policy of the statement that fired it, and messages are written
+// with INSERT OR REPLACE: an inner "insert or ignore" or upsert would become a
+// REPLACE and silently reset a counter row. So every insert here is guarded by
+// NOT EXISTS or follows the delete of the same key.
+
+/** Messages triggers, and the projection's own. Listed so an old layout can be dropped whole. */
+const PROJECTION_TRIGGERS = ["inbox_project_insert", "inbox_project_update", "inbox_project_delete", "inbox_raw_added", "inbox_raw_removed",
+  "inbox_state_added", "inbox_state_changed", "inbox_state_removed", "inbox_item_added", "inbox_item_removed",
+  "setup_marks_insert", "setup_marks_update", "setup_marks_delete", "inbox_deferred_removed", "inbox_deferred_updated", "inbox_deferred_reinserted",
+  // the first layout's
+  "inbox_raw_counted", "inbox_raw_uncounted"];
+const PROJECTION_TABLES = ["inbox_counts", "inbox_items", "inbox_keys", "inbox_raw", "inbox_projection_state", "setup_marks", "inbox_fill_deferred"];
+/** Whether a schema object belongs to the projection (derived data, discarded at restore, so its text is never compared). */
+export function isInboxProjectionObject(item: { type: string; name: string; tbl_name: string }): boolean {
+  return PROJECTION_TABLES.includes(item.tbl_name) || RETIRED_TABLE.test(item.tbl_name) || (item.type === "trigger" && PROJECTION_TRIGGERS.includes(item.name));
+}
+
+const PROJECTION_DDL = `CREATE TABLE IF NOT EXISTS inbox_raw(thread_id TEXT NOT NULL, message_id TEXT NOT NULL, source_row INTEGER NOT NULL, at INTEGER NOT NULL,
+    kind TEXT NOT NULL, expired INTEGER NOT NULL, run_id, routine_id, source_key TEXT NOT NULL, status TEXT, summary TEXT, title TEXT,
+    kind_segment TEXT NOT NULL, terminal INTEGER NOT NULL, decision INTEGER NOT NULL, PRIMARY KEY(thread_id,message_id));
+  CREATE INDEX IF NOT EXISTS ${ix("inbox_raw_rank")} ON inbox_raw(source_key,terminal DESC,at DESC,source_row DESC);
+  CREATE TABLE IF NOT EXISTS inbox_keys(source_key TEXT PRIMARY KEY, copies INTEGER NOT NULL) WITHOUT ROWID;
+  CREATE TABLE IF NOT EXISTS inbox_items(source_key TEXT PRIMARY KEY, thread_id TEXT NOT NULL, message_id TEXT NOT NULL, source_row INTEGER NOT NULL,
+    at INTEGER NOT NULL, kind TEXT NOT NULL, expired INTEGER NOT NULL, run_id, routine_id, status TEXT, summary TEXT, title TEXT, kind_segment TEXT NOT NULL,
+    copies INTEGER NOT NULL, decision INTEGER NOT NULL, to_read INTEGER NOT NULL, segment TEXT NOT NULL, owed_or_over INTEGER NOT NULL,
+    read_version TEXT, snoozed_until INTEGER, cleared_at INTEGER, live INTEGER NOT NULL);
+  ${LISTS.flatMap(list => [false, true].map(live => {
+    const where = listWhere(list, live);
+    return `CREATE INDEX IF NOT EXISTS ${listIndex(list, live)} ON inbox_items(decision DESC,at DESC,source_key)${where === "1" ? "" : ` WHERE ${where}`};`;
+  })).join("\n  ")}
+  CREATE INDEX IF NOT EXISTS ${ix("inbox_items_routine_at")} ON inbox_items(at) WHERE kind_segment='routine';
+  CREATE INDEX IF NOT EXISTS ${ix("inbox_items_snoozed")} ON inbox_items(snoozed_until) WHERE snoozed_until IS NOT NULL;
+  CREATE TABLE IF NOT EXISTS inbox_counts(thread_id TEXT PRIMARY KEY, ${COUNTERS().map(([name]) => `${name} INTEGER NOT NULL DEFAULT 0`).join(", ")}) WITHOUT ROWID;
+  CREATE TABLE IF NOT EXISTS inbox_projection_state(name TEXT PRIMARY KEY, done INTEGER NOT NULL, cursor INTEGER NOT NULL) WITHOUT ROWID;
+  CREATE TABLE IF NOT EXISTS setup_marks(source_row INTEGER PRIMARY KEY, thread_id TEXT NOT NULL, message_id TEXT NOT NULL, kind TEXT NOT NULL, solid INTEGER NOT NULL, at INTEGER NOT NULL, http_status, provider);
+  CREATE INDEX IF NOT EXISTS ${ix("setup_marks_message")} ON setup_marks(thread_id,message_id);
+  CREATE INDEX IF NOT EXISTS ${ix("setup_marks_tail")} ON setup_marks(thread_id,kind,at DESC,source_row DESC);
+  CREATE INDEX IF NOT EXISTS ${ix("setup_marks_solid")} ON setup_marks(thread_id,kind,solid);
+  CREATE TABLE IF NOT EXISTS inbox_fill_deferred(source_row INTEGER PRIMARY KEY, thread_id TEXT NOT NULL);
+  CREATE INDEX IF NOT EXISTS ${ix("inbox_fill_deferred_thread")} ON inbox_fill_deferred(thread_id);
+  CREATE TRIGGER IF NOT EXISTS inbox_deferred_removed AFTER DELETE ON messages BEGIN
+    DELETE FROM inbox_fill_deferred WHERE source_row=OLD.rowid;
+  END;
+  -- A write to a deferred row projects it (the triggers below) and so settles its entry: the worker's staged copy of the old content is then stale, and the entry's absence is how its guard knows.
+  -- A fresh insert at a rowid (INSERT OR REPLACE reuses the rowid of the row it replaced without firing delete triggers) means any older deferred entry for that rowid is stale.
+  CREATE TRIGGER IF NOT EXISTS inbox_deferred_reinserted AFTER INSERT ON messages BEGIN
+    DELETE FROM inbox_fill_deferred WHERE source_row=NEW.rowid;
+  END;
+  CREATE TRIGGER IF NOT EXISTS inbox_deferred_updated AFTER UPDATE ON messages BEGIN
+    DELETE FROM inbox_fill_deferred WHERE source_row=OLD.rowid;
+  END;
+  CREATE TRIGGER IF NOT EXISTS setup_marks_insert AFTER INSERT ON messages BEGIN
+    DELETE FROM setup_marks WHERE thread_id=NEW.thread_id AND message_id=NEW.id;
+    ${MARK_INSERT} ${markRows("m.rowid=NEW.rowid")};
+  END;
+  CREATE TRIGGER IF NOT EXISTS setup_marks_update AFTER UPDATE ON messages WHEN ${MARK_CANDIDATE("OLD")} OR ${MARK_CANDIDATE("NEW")} BEGIN
+    DELETE FROM setup_marks WHERE thread_id=OLD.thread_id AND message_id=OLD.id;
+    ${MARK_INSERT} ${markRows("m.rowid=NEW.rowid")};
+  END;
+  CREATE TRIGGER IF NOT EXISTS setup_marks_delete AFTER DELETE ON messages WHEN ${MARK_CANDIDATE("OLD")} BEGIN
+    DELETE FROM setup_marks WHERE thread_id=OLD.thread_id AND message_id=OLD.id;
+  END;
+  CREATE TRIGGER IF NOT EXISTS inbox_raw_added AFTER INSERT ON inbox_raw BEGIN
+    UPDATE inbox_keys SET copies=copies+1 WHERE source_key=NEW.source_key;
+    INSERT INTO inbox_keys(source_key,copies) SELECT NEW.source_key,1 WHERE NOT EXISTS (SELECT 1 FROM inbox_keys WHERE source_key=NEW.source_key);
+    ${refreshItem("NEW.source_key")}
+  END;
+  CREATE TRIGGER IF NOT EXISTS inbox_raw_removed AFTER DELETE ON inbox_raw BEGIN
+    UPDATE inbox_keys SET copies=copies-1 WHERE source_key=OLD.source_key;
+    DELETE FROM inbox_keys WHERE source_key=OLD.source_key AND copies<=0;
+    ${refreshItem("OLD.source_key")}
+  END;
+  CREATE TRIGGER IF NOT EXISTS inbox_state_added AFTER INSERT ON inbox_item_state BEGIN ${refreshItem("NEW.source_key")} END;
+  CREATE TRIGGER IF NOT EXISTS inbox_state_changed AFTER UPDATE ON inbox_item_state BEGIN ${refreshItem("NEW.source_key")} END;
+  CREATE TRIGGER IF NOT EXISTS inbox_state_removed AFTER DELETE ON inbox_item_state BEGIN ${refreshItem("OLD.source_key")} END;
+  CREATE TRIGGER IF NOT EXISTS inbox_item_added AFTER INSERT ON inbox_items BEGIN
+    INSERT INTO inbox_counts(thread_id) SELECT NEW.thread_id WHERE NOT EXISTS (SELECT 1 FROM inbox_counts WHERE thread_id=NEW.thread_id);
+    UPDATE inbox_counts SET ${bump("NEW.", "+")} WHERE thread_id=NEW.thread_id;
+  END;
+  CREATE TRIGGER IF NOT EXISTS inbox_item_removed AFTER DELETE ON inbox_items BEGIN
+    UPDATE inbox_counts SET ${bump("OLD.", "-")} WHERE thread_id=OLD.thread_id;
+    DELETE FROM inbox_counts WHERE thread_id=OLD.thread_id AND v_all<=0;
+  END;
+  CREATE TRIGGER IF NOT EXISTS inbox_project_insert AFTER INSERT ON messages BEGIN
+    DELETE FROM inbox_raw WHERE thread_id=NEW.thread_id AND message_id=NEW.id;
+    ${RAW_INSERT} ${projectedRows("m.rowid=NEW.rowid")};
+  END;
+  CREATE TRIGGER IF NOT EXISTS inbox_project_update AFTER UPDATE ON messages WHEN ${candidate("OLD")} OR ${candidate("NEW")} BEGIN
+    DELETE FROM inbox_raw WHERE thread_id=OLD.thread_id AND message_id=OLD.id;
+    ${RAW_INSERT} ${projectedRows("m.rowid=NEW.rowid")};
+  END;
+  CREATE TRIGGER IF NOT EXISTS inbox_project_delete AFTER DELETE ON messages WHEN ${candidate("OLD")} BEGIN
+    DELETE FROM inbox_raw WHERE thread_id=OLD.thread_id AND message_id=OLD.id;
+  END;`;
+
+/** The projection tables a layout change sets aside (inbox_projection_state is the layout's own marker: it stays). */
+const RETIRABLE_TABLES = ["inbox_counts", "inbox_items", "inbox_keys", "inbox_raw", "setup_marks", "inbox_fill_deferred"];
+/** What a set-aside table is called: the layout it held, then its name. */
+const RETIRED_TABLE = /^retired\d+_(inbox_counts|inbox_items|inbox_keys|inbox_raw|setup_marks|inbox_fill_deferred)$/;
+const tableExists = (db: DatabaseSync, name: string) => db.prepare("SELECT 1 FROM sqlite_schema WHERE type='table' AND name=?").get(name) !== undefined;
+const retiredTables = (db: DatabaseSync): string[] =>
+  (db.prepare("SELECT name FROM sqlite_schema WHERE type='table' AND name LIKE 'retired%'").all() as Array<{ name: string }>).map(row => row.name).filter(name => RETIRED_TABLE.test(name));
+
+/** Remove every projection object, set-aside tables included (triggers first:
+ *  the messages triggers write into the tables). Dropping fires no triggers,
+ *  but the pages of a large table are freed, so this is for a restored archive
+ *  and never for a start. */
+function dropInboxProjection(db: DatabaseSync): void {
+  for (const trigger of PROJECTION_TRIGGERS) db.exec(`DROP TRIGGER IF EXISTS ${trigger}`);
+  for (const table of [...PROJECTION_TABLES, ...retiredTables(db)]) db.exec(`DROP TABLE IF EXISTS ${table}`);
+}
+
+/** Take another layout out of the way at a start, doing no work that grows
+ *  with the history: its triggers are dropped (they cost nothing to drop) and
+ *  its tables, with their indexes, are renamed (a schema edit). Their rows are
+ *  freed later, in slices, by the background loop (reclaimRetiredInboxProjection),
+ *  never before the server listens. The layout marker table is kept and
+ *  cleared; the next layout is created empty under the usual names. */
+function retireInboxProjection(db: DatabaseSync, layout: number | undefined): void {
+  for (const trigger of PROJECTION_TRIGGERS) db.exec(`DROP TRIGGER IF EXISTS ${trigger}`);
+  for (const table of RETIRABLE_TABLES) {
+    if (!tableExists(db, table)) continue;
+    const to = `retired${layout ?? 0}_${table}`;
+    if (tableExists(db, to)) db.exec(`DROP TABLE ${to}`);
+    db.exec(`ALTER TABLE ${table} RENAME TO ${to}`);
+  }
+  if (tableExists(db, "inbox_projection_state")) db.exec("DELETE FROM inbox_projection_state");
+}
+
+/** The highest message rowid that existed when the fill began. Rows above it
+ *  are projected by the triggers from then on, so what the projection says
+ *  about them is complete; null when it was not recorded. */
+export function inboxProjectionHighWater(db: DatabaseSync): number | null {
+  const row = db.prepare("SELECT cursor FROM inbox_projection_state WHERE name='high'").get() as { cursor: number } | undefined;
+  return row ? row.cursor : null;
+}
+/** Where the first fill stands: its cursor and the high-water rowid; null when the high-water was not recorded. */
+export function inboxProjectionPosition(db: DatabaseSync): { cursor: number; high: number } | null {
+  const rows = db.prepare("SELECT name, cursor FROM inbox_projection_state WHERE name IN ('inbox','high')").all() as Array<{ name: string; cursor: number }>;
+  const high = rows.find(row => row.name === "high");
+  return high ? { cursor: rows.find(row => row.name === "inbox")?.cursor ?? 0, high: high.cursor } : null;
+}
+const recordHighWater = (db: DatabaseSync) => db.prepare("INSERT OR REPLACE INTO inbox_projection_state(name,done,cursor) SELECT 'high',1,COALESCE(max(rowid),0) FROM messages").run();
+
+/** Create the projection (or set another layout's aside and create this one).
+ *  Never reads the history: an installation that has messages from before the
+ *  projection existed is filled after the server listens
+ *  (startInboxProjectionFill), and the Inbox says it is getting ready until
+ *  then. A new installation has nothing to fill and is ready at once.
+ *
+ *  ONE TRANSACTION, AND SELF-REPAIRING. Setting the old layout aside, creating
+ *  the new one and writing the markers commit together, so an interruption
+ *  leaves either the old state or the finished one. Independently of that, a
+ *  missing fill marker is written whenever it is found missing (a database
+ *  interrupted by an earlier build of this code, or edited by hand), whatever
+ *  the layout marker says: the fill is resumable from its cursor and keeps
+ *  whatever the triggers already projected, so repairing it can only cost time.
+ *  The fill marker is written with the high-water rowid (see
+ *  inboxProjectionHighWater), in the same transaction as the triggers. */
+function createInboxProjection(db: DatabaseSync): void {
+  db.exec("SAVEPOINT inbox_projection_init");
+  try {
+    const layout = tableExists(db, "inbox_projection_state")
+      ? (db.prepare("SELECT cursor FROM inbox_projection_state WHERE name='layout'").get() as { cursor: number } | undefined)?.cursor
+      : undefined;
+    const fresh = layout !== PROJECTION_VERSION;
+    if (fresh) retireInboxProjection(db, layout);
+    db.exec(PROJECTION_DDL);
+    if (fresh) db.prepare("INSERT OR REPLACE INTO inbox_projection_state(name,done,cursor) VALUES('layout',1,?)").run(PROJECTION_VERSION);
+    const marker = db.prepare("SELECT 1 FROM inbox_projection_state WHERE name='inbox'").get() !== undefined;
+    if (fresh || !marker) {
+      const empty = db.prepare("SELECT 1 FROM messages LIMIT 1").get() === undefined;
+      db.prepare("INSERT OR REPLACE INTO inbox_projection_state(name,done,cursor) VALUES('inbox',?,0)").run(empty ? 1 : 0);
+      recordHighWater(db);
+    }
+    db.exec("RELEASE inbox_projection_init");
+  } catch (error) {
+    try { db.exec("ROLLBACK TO inbox_projection_init; RELEASE inbox_projection_init"); } catch { /* the connection is gone: nothing was committed */ }
+    throw error;
+  }
+}
+
+interface ProjectionState { done: number; cursor: number }
+function projectionState(db: DatabaseSync): ProjectionState {
+  return (db.prepare("SELECT done, cursor FROM inbox_projection_state WHERE name='inbox'").get() as ProjectionState | undefined) ?? { done: 0, cursor: 0 };
+}
+const ready = new WeakSet<DatabaseSync>();
+/** Whether the projection holds every message: until then the Inbox says it
+ *  is getting ready rather than showing part of the history as all of it. */
+export function inboxProjectionReady(db: DatabaseSync): boolean {
+  if (ready.has(db)) return true;
+  if (!tableExists(db, "inbox_projection_state") || projectionState(db).done !== 1) return false;
+  ready.add(db);
+  return true;
+}
+
+/** What a row costs beyond its bytes: the statement, the index entries, the triggers. */
+const SLICE_ROW_WEIGHT = 256;
+const SLICE_MAX_ROWS = 10_000;
+/** A row weighs its bytes (from the record header alone) plus a fixed amount. The fill's statements and the sizing rule use this one text. */
+const ROW_WEIGHT_SQL = `octet_length(m.json)+${SLICE_ROW_WEIGHT}`;
+/** The budget stands for "no budget" in the row-count form of a slice. */
+const NO_BUDGET = Number.MAX_SAFE_INTEGER;
+
+/** The fill's statements. `NOT INDEXED` is deliberate: without statistics the
+ *  planner prefers the (role, kind) index over the rowid range the slice is
+ *  written for, and every slice then walks every bot message in the database.
+ *  The triggers' own statements address one rowid and are left alone.
+ *
+ *  Parameters: (after, up to, budget). The last term, right after the rowid
+ *  range and header-only like the sizing rule's, keeps the statement away from
+ *  the content of a row the budget cannot admit: that row is deferred
+ *  (inbox_fill_deferred) and projected off the main thread. */
+export const INBOX_FILL_SQL = {
+  raw: `${RAW_INSERT.replace("INSERT INTO", "INSERT OR IGNORE INTO")} ${projectedRows(`m.rowid>? AND m.rowid<=? AND ${ROW_WEIGHT_SQL}<=?`, "messages m NOT INDEXED")}`,
+  marks: `${MARK_INSERT.replace("INSERT INTO", "INSERT OR IGNORE INTO")} ${markRows(`m.rowid>? AND m.rowid<=? AND ${ROW_WEIGHT_SQL}<=?`, "messages m NOT INDEXED")}`,
+};
+/** The same projection for ONE conversation's rows in (after, up to], through messages_thread (the Chief's threads are completed first).
+ *  Parameters: (thread, after, up to, budget). */
+export const INBOX_THREAD_FILL_SQL = {
+  raw: `${RAW_INSERT.replace("INSERT INTO", "INSERT OR IGNORE INTO")} ${projectedRows(`m.thread_id=? AND m.rowid>? AND m.rowid<=? AND ${ROW_WEIGHT_SQL}<=?`, "messages m INDEXED BY messages_thread")}`,
+  marks: `${MARK_INSERT.replace("INSERT INTO", "INSERT OR IGNORE INTO")} ${markRows(`m.thread_id=? AND m.rowid>? AND m.rowid<=? AND ${ROW_WEIGHT_SQL}<=?`, "messages m INDEXED BY messages_thread")}`,
+};
+/** The deferred rows' projection. The staging statements parse the row and run OUTSIDE the writer lock into connection-private temp tables;
+ *  the apply statements inside the lock only move the staged rows, and the guard (header-only) says the staging still describes the row. */
+export const INBOX_DEFERRED_SQL: InboxDeferredSql = {
+  setup: `CREATE TEMP TABLE IF NOT EXISTS inbox_stage_raw AS SELECT ${RAW_COLUMNS_LIST} FROM main.inbox_raw WHERE 0;
+    CREATE TEMP TABLE IF NOT EXISTS inbox_stage_marks AS SELECT ${MARK_COLUMNS_LIST} FROM main.setup_marks WHERE 0;`,
+  clear: ["DELETE FROM temp.inbox_stage_raw", "DELETE FROM temp.inbox_stage_marks"],
+  stageRaw: `INSERT INTO temp.inbox_stage_raw(${RAW_COLUMNS_LIST}) ${projectedRows("m.rowid=?")}`,
+  stageMarks: `INSERT INTO temp.inbox_stage_marks(${MARK_COLUMNS_LIST}) ${markRows("m.rowid=?")}`,
+  applyRaw: `INSERT OR IGNORE INTO main.inbox_raw(${RAW_COLUMNS_LIST}) SELECT ${RAW_COLUMNS_LIST} FROM temp.inbox_stage_raw`,
+  applyMarks: `INSERT OR IGNORE INTO main.setup_marks(${MARK_COLUMNS_LIST}) SELECT ${MARK_COLUMNS_LIST} FROM temp.inbox_stage_marks`,
+  guard: "SELECT 1 FROM inbox_fill_deferred d JOIN messages m ON m.rowid=d.source_row WHERE d.source_row=?1 AND m.thread_id=?2 AND m.id=?3 AND octet_length(m.json)=?4",
+};
+export interface InboxSlice { finished: boolean; rows: number; weight: number; /** Nothing follows the cursor, but deferred rows are still to be projected ("priority": a priority conversation waits only on its own deferred rows). */ deferred?: true | "priority" }
+
+/** Rows whose sizes one sizing step reads. */
+const SIZING_STEP_ROWS = 16;
+/** The rows a byte budget admits, from the SIZE of each row alone.
+ *
+ *  octet_length(json) is answered from the record header (the serial type of
+ *  the column), so a row's size costs the same whether the row is 32 KiB or
+ *  2 MiB: server/inbox.slice-sizing.test.ts measures that against length(json)
+ *  and length(CAST(json AS BLOB)), which both read the content. The window is
+ *  walked in small steps and the walk stops as soon as the next row does not fit.
+ *
+ *  A row heavier than the whole budget is DEFERRED, wherever it sits, the
+ *  first included: it is never read here. Any other row is admitted while the
+ *  total so far plus its weight stays within the budget, so a slice reads at
+ *  most the budget. */
+function sizeSlice(db: DatabaseSync, cursor: number, cap: number, budget: number, scope?: { thread: string; high: number }): { upper: number | null; rows: number; weight: number; deferred: Array<{ r: number; t: string }> } {
+  const step = scope
+    ? db.prepare(`SELECT rowid AS r, thread_id AS t, octet_length(json)+${SLICE_ROW_WEIGHT} AS l FROM messages INDEXED BY messages_thread WHERE thread_id=? AND rowid>? AND rowid<=? ORDER BY rowid LIMIT ?`)
+    : db.prepare(`SELECT rowid AS r, thread_id AS t, octet_length(json)+${SLICE_ROW_WEIGHT} AS l FROM messages WHERE rowid>? ORDER BY rowid LIMIT ?`);
+  let at = cursor, upper: number | null = null, rows = 0, weight = 0, full = false;
+  const deferred: Array<{ r: number; t: string }> = [];
+  while (rows < cap && !full) {
+    const batch = (scope ? step.all(scope.thread, at, scope.high, Math.min(SIZING_STEP_ROWS, cap - rows)) : step.all(at, Math.min(SIZING_STEP_ROWS, cap - rows))) as Array<{ r: number; t: string; l: number }>;
+    if (batch.length === 0) break;
+    for (const row of batch) {
+      if (row.l > budget) deferred.push({ r: row.r, t: row.t });
+      else if (weight + row.l > budget) { full = true; break; }
+      else weight += row.l;
+      upper = row.r; at = row.r; rows++;
+    }
+  }
+  return { upper, rows, weight, deferred };
+}
+
+/** The per-conversation completion marker: inbox_projection_state 't:<thread>', done=1 once every row of the
+ *  conversation up to the high-water rowid is projected and none of it waits in inbox_fill_deferred. */
+export const threadFillName = (threadId: string) => `t:${threadId}`;
+
+/** THE CHIEF'S CONVERSATIONS FIRST. Before the unrelated history, the fill completes the conversations it is told
+ *  matter to setup: their rows in (cursor, high] by the messages_thread index, in the same bounded slices (the
+ *  same budget, the same deferral of rows the budget cannot admit), then their deferred rows. A finished
+ *  conversation is marked, so its setup facts are KNOWN by one primary-key probe, whatever the length of the
+ *  rest of the history. Runs inside the caller's transaction. `slice` is set when this call did the slice's work. */
+function prioritySlice(db: DatabaseSync, state: ProjectionState, limit: { rows: number; weight?: number }, priority: readonly string[]): { slice: InboxSlice | null; completed: boolean } {
+  const high = inboxProjectionPosition(db)?.high;
+  if (high === undefined || limit.weight === undefined) return { slice: null, completed: false };
+  const get = db.prepare("SELECT done, cursor FROM inbox_projection_state WHERE name=?");
+  const budget = limit.weight;
+  const cap = Math.max(1, Math.min(Math.trunc(limit.rows), SLICE_MAX_ROWS, Math.ceil(budget / SLICE_ROW_WEIGHT)));
+  let completed = false;
+  for (const thread of priority) {
+    const name = threadFillName(thread);
+    let mark = get.get(name) as { done: number; cursor: number } | undefined;
+    if (!mark) { db.prepare("INSERT OR IGNORE INTO inbox_projection_state(name,done,cursor) VALUES(?,0,?)").run(name, state.cursor); mark = { done: 0, cursor: state.cursor }; }
+    if (mark.done === 1) continue;
+    const from = Math.max(mark.cursor, state.cursor);
+    const sized = sizeSlice(db, from, cap, budget, { thread, high });
+    if (typeof sized.upper === "number") {
+      const defer = db.prepare("INSERT OR IGNORE INTO inbox_fill_deferred(source_row,thread_id) VALUES(?,?)");
+      for (const row of sized.deferred) defer.run(row.r, row.t);
+      db.prepare(INBOX_THREAD_FILL_SQL.raw).run(thread, from, sized.upper, budget);
+      db.prepare(INBOX_THREAD_FILL_SQL.marks).run(thread, from, sized.upper, budget);
+      db.prepare("UPDATE inbox_projection_state SET cursor=? WHERE name=?").run(sized.upper, name);
+      return { slice: { finished: false, rows: sized.rows, weight: sized.weight }, completed };
+    }
+    if (db.prepare("SELECT 1 FROM inbox_fill_deferred WHERE thread_id=? LIMIT 1").get(thread) !== undefined) {
+      return { slice: { finished: false, rows: 0, weight: 0, deferred: "priority" }, completed };
+    }
+    db.prepare("UPDATE inbox_projection_state SET done=1 WHERE name=?").run(name);
+    completed = true;
+  }
+  return { slice: null, completed };
+}
+
+/** One slice of the first fill: the messages after the cursor by storage
+ *  position, up to `rows` of them and, when given, up to `weight` (their bytes
+ *  plus a fixed amount per row: the cost of a slice follows bytes, not rows),
+ *  committed with the cursor so an interrupted fill resumes where it was. A
+ *  row the triggers already projected (written since) is kept as they wrote
+ *  it. A missing fill marker is written first, so the fill always has a
+ *  cursor to advance.
+ *
+ *  With a weight, a row heavier than the budget is not read: its rowid goes to
+ *  inbox_fill_deferred in this same transaction and the cursor passes it. The
+ *  fill is finished only when nothing follows the cursor AND that table is
+ *  empty; until then the slice reports `deferred` (see drainInboxDeferred). */
+export function inboxProjectionSlice(db: DatabaseSync, limit: { rows: number; weight?: number }, priority: readonly string[] = []): InboxSlice {
+  if (tableExists(db, "inbox_projection_state") && projectionState(db).done) return { finished: true, rows: 0, weight: 0 };
+  let result: InboxSlice = { finished: false, rows: 0, weight: 0 };
+  let completedAny = false;
+  db.exec("BEGIN IMMEDIATE");
+  try {
+    if (Number(db.prepare("INSERT OR IGNORE INTO inbox_projection_state(name,done,cursor) VALUES('inbox',0,0)").run().changes) > 0) recordHighWater(db);
+    const state = projectionState(db);
+    if (limit.weight !== undefined && priority.length > 0) {
+      const first = prioritySlice(db, state, limit, priority);
+      if (first.slice) { db.exec("COMMIT"); if (first.completed) bumpMessagesVersion(); return first.slice; }
+      if (first.completed) completedAny = true;
+    }
+    let upper: number | null | undefined, rows = 0, weight = 0, budget = NO_BUDGET, diverted: Array<{ r: number; t: string }> = [];
+    if (limit.weight === undefined) {
+      upper = (db.prepare("SELECT max(r) AS r FROM (SELECT rowid AS r FROM messages WHERE rowid>? ORDER BY rowid LIMIT ?)").get(state.cursor, Math.max(1, Math.trunc(limit.rows))) as { r: number | null } | undefined)?.r;
+    } else {
+      // Every row weighs at least SLICE_ROW_WEIGHT, so the budget never admits more rows than this.
+      const cap = Math.max(1, Math.min(Math.trunc(limit.rows), SLICE_MAX_ROWS, Math.ceil(limit.weight / SLICE_ROW_WEIGHT)));
+      budget = limit.weight;
+      ({ upper, rows, weight, deferred: diverted } = sizeSlice(db, state.cursor, cap, budget));
+    }
+    if (typeof upper === "number") {
+      if (diverted.length > 0) {
+        const defer = db.prepare("INSERT OR IGNORE INTO inbox_fill_deferred(source_row,thread_id) VALUES(?,?)");
+        for (const row of diverted) defer.run(row.r, row.t);
+      }
+      db.prepare(INBOX_FILL_SQL.raw).run(state.cursor, upper, budget);
+      db.prepare(INBOX_FILL_SQL.marks).run(state.cursor, upper, budget);
+      db.prepare("UPDATE inbox_projection_state SET cursor=? WHERE name='inbox'").run(upper);
+      result = { finished: false, rows, weight };
+    } else if (db.prepare("SELECT 1 FROM inbox_fill_deferred LIMIT 1").get() !== undefined) {
+      result = { finished: false, rows: 0, weight: 0, deferred: true };
+    } else {
+      db.prepare("UPDATE inbox_projection_state SET done=1 WHERE name='inbox'").run();
+      result = { finished: true, rows: 0, weight: 0 };
+    }
+    db.exec("COMMIT");
+  } catch (error) { try { db.exec("ROLLBACK"); } catch { /* already rolled back */ } throw error; }
+  // Every held answer was "getting ready": drop them and tell the pollers.
+  if (result.finished || completedAny) bumpMessagesVersion();
+  return result;
+}
+
+/** Project every deferred row here, on this connection. For tools, tests and a
+ *  database with no file; the server drains them on a worker (startInboxProjectionFill). */
+export function drainInboxDeferredInline(db: DatabaseSync, options: { priorityOnly?: boolean } = {}): void {
+  const drain = inboxDeferredDrain(db, INBOX_DEFERRED_SQL, options);
+  while (drain.step()) { /* next row */ }
+}
+
+/** Row-count form of one slice. Returns true once everything is projected. */
+export function inboxProjectionStep(db: DatabaseSync, rows: number): boolean {
+  const slice = inboxProjectionSlice(db, { rows });
+  if (slice.deferred) drainInboxDeferredInline(db);
+  return slice.finished;
+}
+
+/** The whole first fill at once. For tools and tests; the server uses startInboxProjectionFill. */
+export function fillInboxProjection(db: DatabaseSync): void {
+  while (!inboxProjectionStep(db, 20_000)) { /* next slice */ }
+}
+
+/** Slice length the background fill aims for, and never far over. */
+export const INBOX_FILL_TARGET_MS = 20;
+export const INBOX_FILL_PAUSE_MS = 5;
+/** While an owner turn is live the fill slows, it never stops. */
+export const INBOX_FILL_BUSY_PAUSE_MS = 250;
+/** While an owner turn is live the freeing of an older layout waits: it is not owed to anyone. */
+export const INBOX_RECLAIM_BUSY_PAUSE_MS = 2_000;
+const DEFERRED_WORKER_MEMORY_MB = 512;
+const FILL_START_WEIGHT = 64 * 1024, FILL_MIN_WEIGHT = 4 * 1024, FILL_MAX_WEIGHT = 512 * 1024, FILL_GROWTH = 1.5;
+/** Rows freed per statement while reclaiming, and the time a reclaim slice may take. */
+const RECLAIM_CHUNK_ROWS = 100;
+const RECLAIM_TARGET_MS = 15;
+/** How each set-aside table names a row: by rowid, or by its primary key when it has none. */
+const RECLAIM_KEY: Record<string, string> = { inbox_raw: "rowid", inbox_items: "rowid", setup_marks: "rowid", inbox_fill_deferred: "rowid", inbox_keys: "source_key", inbox_counts: "thread_id" };
+
+/** Free some of an older layout's set-aside tables: rows in small chunks for
+ *  about RECLAIM_TARGET_MS, one transaction, and the table itself once it is
+ *  empty. Takes the writer lock without waiting (a busy database is retried
+ *  later by the loop), and never runs before the server listens. Returns
+ *  whether any set-aside table remains. */
+export function reclaimRetiredInboxProjection(db: DatabaseSync, targetMs = RECLAIM_TARGET_MS): boolean {
+  const tables = retiredTables(db);
+  if (tables.length === 0) return false;
+  const waited = (db.prepare("PRAGMA busy_timeout").get() as { timeout: number } | undefined)?.timeout ?? 0;
+  db.exec("PRAGMA busy_timeout=0");
+  try {
+    db.exec("BEGIN IMMEDIATE");
+    try {
+      const until = performance.now() + targetMs;
+      for (const table of tables) {
+        const key = RECLAIM_KEY[table.replace(/^retired\d+_/, "")] ?? "rowid";
+        const remove = db.prepare(`DELETE FROM ${table} WHERE ${key} IN (SELECT ${key} FROM ${table} LIMIT ?)`);
+        while (performance.now() < until) {
+          if (Number(remove.run(RECLAIM_CHUNK_ROWS).changes) === 0) break;
+        }
+        if (db.prepare(`SELECT 1 FROM ${table} LIMIT 1`).get() === undefined) db.exec(`DROP TABLE ${table}`);
+        if (performance.now() >= until) break;
+      }
+      db.exec("COMMIT");
+    } catch (error) { try { db.exec("ROLLBACK"); } catch { /* already rolled back */ } throw error; }
+  } finally { try { db.exec(`PRAGMA busy_timeout=${Math.trunc(waited)}`); } catch { /* closed */ } }
+  return retiredTables(db).length > 0;
+}
+
+export interface InboxProjectionFill { done: Promise<{ filled: boolean }>; stop(): void; stats: { slices: number; maxSliceMs: number; reclaimSlices: number; maxReclaimMs: number } }
+
+/** The first fill, after the server listens: short writer transactions sized
+ *  by measured cost, with the event loop handed back between them on a real
+ *  timer. A slice is bounded by BYTES (plus a fixed amount per row), because
+ *  that is what it costs: a stretch of large tool outputs after a stretch of
+ *  short chat lines would otherwise authorise one slice far over the limit on
+ *  the strength of the cheap ones before it. The size of a slice is worked out
+ *  from the rows' record headers (sizeSlice), so even choosing the slice reads
+ *  no content. The cost per unit is the worst of
+ *  the last slice and a slowly fading memory of earlier ones, the budget grows
+ *  by at most half per slice, and it has a hard ceiling (512 KiB: about 30 ms
+ *  even on a 17 MB/s disk, whatever the earlier slices cost). The owner comes
+ *  first: `admit` (the writer gate) is awaited before each slice, and while an
+ *  owner turn is live the pause is longer. A lock held elsewhere retries
+ *  later; any other failure stops the run quietly and the next start carries
+ *  on from the saved cursor.
+ *
+ *  AFTER THE FILL (or at once, when it was already done) the same loop frees
+ *  the tables of an older layout that the start set aside, in slices of about
+ *  15 ms, only while no owner turn is live, without waiting for a lock. */
+export function startInboxProjectionFill(db: DatabaseSync, options: { busy?: () => boolean; admit?: () => Promise<void>; targetMs?: number; onError?: (error: unknown) => void; /** The conversations setup depends on (the Chief's): completed before the unrelated history. */ priorityThreads?: () => readonly string[] } = {}): InboxProjectionFill {
+  const target = options.targetMs ?? INBOX_FILL_TARGET_MS;
+  const stats = { slices: 0, maxSliceMs: 0, reclaimSlices: 0, maxReclaimMs: 0 };
+  let stopped = false, timer: ReturnType<typeof setTimeout> | null = null, resolve!: (value: { filled: boolean }) => void;
+  const done = new Promise<{ filled: boolean }>(r => { resolve = r; });
+  let filling = !inboxProjectionReady(db), filled = false;
+  if (!filling && retiredTables(db).length === 0) { resolve({ filled: false }); return { done, stop() {}, stats }; }
+  let budget = FILL_START_WEIGHT, rate = 0;
+  let worker: Worker | undefined;
+  const finish = (result: boolean) => { stopped = true; if (timer) clearTimeout(timer); void worker?.terminate(); resolve({ filled: result }); };
+  /** Project the deferred rows on a worker and wait for its one "drained" message (no polling).
+   *  An in-memory database has no file for a worker to open: it drains here (tests and tools only). */
+  const drainDeferred = (priorityOnly: boolean): Promise<void> => new Promise<void>((done, fail) => {
+    const file = (db.prepare("PRAGMA database_list").all() as Array<{ name: string; file: string }>).find(row => row.name === "main")?.file;
+    if (!file) { try { drainInboxDeferredInline(db, { priorityOnly }); done(); } catch (error) { fail(error); } return; }
+    const spawned = new Worker(SPAWNED_PROXIES.inboxFillWorker, { workerData: { kind: "inbox-fill", file, sql: INBOX_DEFERRED_SQL, priorityOnly, maxHoldMs: INBOX_FILL_MAX_HOLD_MS }, resourceLimits: { maxOldGenerationSizeMb: DEFERRED_WORKER_MEMORY_MB } });
+    worker = spawned;
+    spawned.on("message", (message: { type: string; message?: string; ms?: number; size?: number; more?: number }) => {
+      // one deferred row's write held the lock past INBOX_FILL_MAX_HOLD_MS (the worker reports at most one per INBOX_SLOW_ROW_REPORT_MS)
+      if (message.type === "slow-row") { observeLine(`[inbox] fill slow-row ms=${Math.round(Number(message.ms) || 0)} size=${Math.round(Number(message.size) || 0)}${message.more ? ` more=${message.more}` : ""}`); return; }
+      if (message.type === "drained") done();
+      else if (message.type === "error") fail(new Error(message.message ?? "the deferred rows could not be projected"));
+    });
+    spawned.on("error", fail);
+    spawned.on("exit", () => fail(new Error("the deferred-row worker stopped")));
+  }).finally(() => { void worker?.terminate(); worker = undefined; });
+  const tick = async () => {
+    timer = null;
+    if (stopped) return;
+    let delay = INBOX_FILL_PAUSE_MS;
+    try {
+      if (options.admit) await options.admit();
+      if (stopped) return;
+      if (filling) {
+        const started = performance.now();
+        let priority: readonly string[] = [];
+        try { priority = options.priorityThreads?.() ?? []; } catch { /* the list is a hint: the fill goes on in storage order */ }
+        const slice = inboxProjectionSlice(db, { rows: SLICE_MAX_ROWS, weight: budget }, priority);
+        const ms = performance.now() - started;
+        stats.slices++; stats.maxSliceMs = Math.max(stats.maxSliceMs, ms);
+        if (slice.finished) {
+          filled = true; filling = false;
+          if (retiredTables(db).length === 0) { finish(true); return; }
+        } else if (slice.deferred) {
+          // Nothing follows the cursor; the rows the budget could not admit are projected off this thread.
+          await drainDeferred(slice.deferred === "priority");
+          if (stopped) return;
+          delay = 0;
+        } else if (slice.weight > 0) {
+          rate = Math.max(ms / slice.weight, rate * 0.9);
+          const wanted = rate > 0 ? target / rate : FILL_MAX_WEIGHT;
+          budget = Math.round(Math.max(FILL_MIN_WEIGHT, Math.min(FILL_MAX_WEIGHT, wanted, slice.weight * FILL_GROWTH)));
+        }
+        if (options.busy?.()) delay = INBOX_FILL_BUSY_PAUSE_MS;
+      } else if (options.busy?.()) {
+        delay = INBOX_RECLAIM_BUSY_PAUSE_MS;
+      } else {
+        const started = performance.now();
+        const remaining = reclaimRetiredInboxProjection(db);
+        const ms = performance.now() - started;
+        stats.reclaimSlices++; stats.maxReclaimMs = Math.max(stats.maxReclaimMs, ms);
+        if (!remaining) { finish(filled); return; }
+      }
+    } catch (error) {
+      if (stopped) return;
+      const message = error instanceof Error ? error.message : String(error);
+      if (/SQLITE_BUSY|SQLITE_LOCKED|database is locked/i.test(message)) delay = 1000;
+      else { try { options.onError?.(error); } catch { /* reporting never throws into the loop */ } finish(false); return; }
+    }
+    if (!stopped) timer = setTimeout(() => { void tick(); }, delay);
+  };
+  timer = setTimeout(() => { void tick(); }, 0);
+  return { done, stop() { finish(false); }, stats };
+}
+
+/** A restored archive is untrusted input: its projection is dropped whole and
+ *  rebuilt from its messages after the next start, never trusted blind. */
+export function discardInboxProjection(db: DatabaseSync): void {
+  dropInboxProjection(db);
+}
+
+/** The json of an item's message, for the rows actually returned (the read mark is a hash of it). */
+const ITEM_JSON = "(SELECT json FROM messages WHERE thread_id=inbox_items.thread_id AND id=inbox_items.message_id) AS json";
+const SCOPE = "thread_id IN (SELECT value FROM json_each(?))";
+const NOT_SNOOZED = "(snoozed_until IS NULL OR snoozed_until<=?)";
 interface Row {
   source_key: string; thread_id: string; message_id: string; at: number; kind: string; expired: number; json: string;
   status: string; title: string; summary: string; segment: string; decision: number; to_read: number; read_version: string | null; snoozed_until: number | null; cleared_at: number | null; copies: number;
@@ -266,18 +883,20 @@ const ROUTINE_ROW_LIMIT = 2_000;
 interface RoutineRow { thread_id: string; message_id: string; title: string; summary: string; status: string; at: number; decision: number; run_id: unknown; routine_id: unknown }
 /** The SQL half of routineFacts: the only part that reads the table, so the only part worth caching. */
 function routineRows(db: DatabaseSync, allowed: string, now: number): RoutineRow[] {
-  return db.prepare(ROUTINE_SOURCE + `SELECT thread_id, message_id, title, summary, status, at, decision, run_id, routine_id FROM items
-    WHERE kind_segment='routine' AND at>=? ORDER BY at DESC LIMIT ?`)
-    .all(allowed, now - ROUTINE_WINDOW_MS, ROUTINE_ROW_LIMIT) as unknown as RoutineRow[];
+  return db.prepare(`SELECT thread_id, message_id, title, summary, status, at, decision, run_id, routine_id FROM inbox_items INDEXED BY ${ix("inbox_items_routine_at")}
+    WHERE kind_segment='routine' AND at>=? AND ${SCOPE} ORDER BY at DESC LIMIT ?`)
+    .all(now - ROUTINE_WINDOW_MS, allowed, ROUTINE_ROW_LIMIT) as unknown as RoutineRow[];
 }
 function routineFacts(sqlRows: readonly RoutineRow[], threads: InboxAccess["threads"], now: number, records: readonly InboxRoutineRun[] = []): RoutineRunFact[] {
   const rows = sqlRows.filter(row => row.at >= now - ROUTINE_WINDOW_MS);
+  // One lookup per row, not a walk of every conversation per row.
+  const byThread = threadsById(threads);
   const carded = new Set(rows.map(row => row.run_id).filter((id): id is string => typeof id === "string"));
   return [...rows.map(row => ({
     // one routine is one row whichever record a run came from
     routineKey: typeof row.routine_id === "string" && row.routine_id ? `routine:${row.routine_id}` : `${row.thread_id}:${row.title}`,
     routineName: text(row.title, 120),
-    botLabel: text(threads.find(thread => thread.threadId === row.thread_id)?.label ?? "", 100),
+    botLabel: text(byThread.get(row.thread_id)?.label ?? "", 100),
     at: row.at,
     // Anything that is not a clean finish is a failure for the rules'
     // purposes, EXCEPT a run that stopped to ask something. Being generous
@@ -291,18 +910,18 @@ function routineFacts(sqlRows: readonly RoutineRow[], threads: InboxAccess["thre
     owed: row.decision === 1,
     detail: row.summary,
     link: { threadId: row.thread_id, messageId: row.message_id },
-  })), ...routineRecordFacts(records, carded, threads, now)];
+  })), ...routineRecordFacts(records, carded, byThread, now)];
 }
 
 /** Runs in the routine's own record that posted no card: finished ones, and
  *  ones waiting on the owner, inside the window and the Inbox's scope. A run
  *  still working is not a result yet. The same rules as a card: anything but
  *  a clean finish is a failure, except a run that is waiting on the owner. */
-function routineRecordFacts(records: readonly InboxRoutineRun[], carded: ReadonlySet<string>, threads: InboxAccess["threads"], now: number): RoutineRunFact[] {
+function routineRecordFacts(records: readonly InboxRoutineRun[], carded: ReadonlySet<string>, threads: ReadonlyMap<string, InboxThread>, now: number): RoutineRunFact[] {
   const facts: RoutineRunFact[] = [];
   for (const run of records.slice(0, ROUTINE_ROW_LIMIT)) {
     if (carded.has(run.runId) || !run.threadId || run.at < now - ROUTINE_WINDOW_MS || ["queued", "running"].includes(run.status)) continue;
-    const thread = threads.find(candidate => candidate.threadId === run.threadId);
+    const thread = threads.get(run.threadId);
     if (!thread) continue;
     const owed = run.status === "waiting" || run.status === "needs-you";
     facts.push({
@@ -319,13 +938,19 @@ function routineRecordFacts(records: readonly InboxRoutineRun[], carded: Readonl
   return facts;
 }
 
+const threadIndex = new WeakMap<readonly InboxThread[], Map<string, InboxThread>>();
+function threadsById(threads: readonly InboxThread[]): ReadonlyMap<string, InboxThread> {
+  let index = threadIndex.get(threads);
+  if (!index) { index = new Map(); for (const thread of threads) if (!index.has(thread.threadId)) index.set(thread.threadId, thread); threadIndex.set(threads, index); }
+  return index;
+}
 function scope(access: InboxAccess) {
   if (access.owner !== true) reject(404, "Inbox is unavailable.");
   if (!Array.isArray(access.threads) || access.threads.length > 20_000 || access.threads.some(thread => !thread.threadId || typeof thread.threadId !== "string")) reject(400, "Invalid Inbox scope.");
   return JSON.stringify([...new Set(access.threads.map(thread => thread.threadId))]);
 }
 function item(row: Row, access: InboxAccess): InboxItem {
-  const source = access.threads.find(thread => thread.threadId === row.thread_id)!;
+  const source = threadsById(access.threads).get(row.thread_id)!;
   const message = JSON.parse(row.json);
   const runId = row.kind === "routine.run" ? message.routineRun?.runId : row.kind === "goal.run" ? message.goalRun?.runId : undefined;
   const kind = row.kind === "options" ? "request" : row.kind === "secret" || row.kind === "connector" || row.kind === "mcpSignIn" ? "connection" : row.kind === "activity" ? "error" : row.kind === "routine.run" ? "routine" : row.kind === "text" ? "artifact" : "goal";
@@ -352,8 +977,23 @@ function queryValues(query: InboxQuery) {
   const view = query.view ?? "decisions", page = query.page ?? 0, pageSize = query.pageSize ?? 25;
   if (!["decisions", "approvals", "questions", "connections", "routines", "to-read", "results", "all"].includes(view) || !Number.isInteger(page) || page < 0 || page > 100_000 || !Number.isInteger(pageSize) || pageSize < 1 || pageSize > 100
     || (query.query !== undefined && (typeof query.query !== "string" || query.query.length > 200))
-    || (query.includeSnoozed !== undefined && typeof query.includeSnoozed !== "boolean")) reject(400, "Invalid Inbox query.");
-  return { view, page, pageSize, search: (query.query ?? "").trim().toLowerCase() };
+    || (query.includeSnoozed !== undefined && typeof query.includeSnoozed !== "boolean")
+    || (query.after !== undefined && (typeof query.after !== "string" || query.after.length > 12_000))) reject(400, "Invalid Inbox query.");
+  return { view: view as ListName, page, pageSize, search: (query.query ?? "").trim().toLowerCase(), after: query.after ? decodeCursor(query.after) : undefined };
+}
+
+/** Where the next page starts: the last row's place in the list order
+ *  (owed first, then newest, then key). Opaque to the client. */
+interface Cursor { decision: 0 | 1; at: number; key: string }
+function encodeCursor(row: Row): string {
+  return Buffer.from(JSON.stringify([row.decision === 1 ? 1 : 0, row.at, row.source_key])).toString("base64url");
+}
+function decodeCursor(value: string): Cursor {
+  let parsed: unknown;
+  try { parsed = JSON.parse(Buffer.from(value, "base64url").toString("utf8")); } catch { return reject(400, "Invalid Inbox query."); }
+  if (!Array.isArray(parsed) || parsed.length !== 3 || (parsed[0] !== 0 && parsed[0] !== 1) || !Number.isSafeInteger(parsed[1]) || typeof parsed[2] !== "string" || parsed[2].length > 8192) reject(400, "Invalid Inbox query.");
+  const [decision, at, key] = parsed as [0 | 1, number, string];
+  return { decision, at, key };
 }
 
 export function listInbox(db: DatabaseSync, query: InboxQuery, access: InboxAccess, now = Date.now()): InboxPage {
@@ -362,7 +1002,7 @@ export function listInbox(db: DatabaseSync, query: InboxQuery, access: InboxAcce
 
 /** What the SQL half of an Inbox answer holds: everything that costs a scan. */
 interface InboxData {
-  rows: Row[]; total: number; approvals: number; questions: number; connections: number; decisions: number; toRead: number;
+  rows: Row[]; next?: string; total: number; approvals: number; questions: number; connections: number; decisions: number; toRead: number;
   questionThreads: Record<string, number>;
   /** The first moment a snooze in the answer runs out, after which the answer is stale. */
   wakeAt: number; filledAt: number;
@@ -412,8 +1052,14 @@ function cachedAnswer(db: DatabaseSync, key: string, now: number, load: () => In
 }
 
 function inboxPage(db: DatabaseSync, query: InboxQuery, access: InboxAccess, now: number, cache: boolean): InboxPage {
-  const allowed = scope(access), { view, page, pageSize, search } = queryValues(query);
+  const allowed = scope(access), { view, page, pageSize, search, after } = queryValues(query);
   const decisions = view === "decisions";
+  // GETTING READY IS SAID, NEVER SHOWN AS AN EMPTY INBOX. Until the first fill
+  // has read the history from before the projection, any list or number would
+  // be part of it presented as all of it. Every count is zero and `preparing`
+  // says why; the clients show "Getting your inbox ready" and keep their last
+  // badge, and the end of the fill tells them to read again.
+  if (!inboxProjectionReady(db)) return { items: [], total: 0, page, pageSize, unread: 0, decisions: 0, toRead: 0, approvals: 0, questions: 0, connections: 0, preparing: true };
   // A DECISION IS A DECISION WHATEVER SHAPE IT ARRIVED IN.
   //
   // This used to also require `kind='options'`, which is the shape an
@@ -438,73 +1084,80 @@ function inboxPage(db: DatabaseSync, query: InboxQuery, access: InboxAccess, now
   // sidebar badge asks for `decisions` by name; narrowing it here would have
   // left that number silently missing every approval and every dead
   // connection.
-  const predicate = `${decisions ? "expired=0 AND" : ""}
-    (?='all'
-      OR (?='approvals' AND owed_or_over=1 AND segment='approval')
-      OR (?='decisions' AND decision=1)
-      OR (?='questions' AND owed_or_over=1 AND segment='question')
-      OR (?='connections' AND owed_or_over=1 AND segment='connection')
-      OR (?='routines' AND kind_segment='routine')
-      OR (?='to-read' AND to_read=1 AND (status<>'digest' OR read_version IS NULL))
-      OR (?='results' AND decision=0 AND to_read=0 AND kind IN ('routine.run','goal.run','text')))
-    AND (?=1 OR ((snoozed_until IS NULL OR snoozed_until<=?) AND (cleared_at IS NULL OR at>cleared_at)))
-    AND (?='' OR instr(lower(title || ' ' || summary || ' ' || status),?)>0
-      OR thread_id IN (SELECT json_extract(value,'$.threadId') FROM json_each(?) WHERE instr(lower(json_extract(value,'$.label')),?)>0))`;
+  //
+  // Each list is read down its own partial index (listTerms), in list order,
+  // so a page costs the rows on it. Without "show snoozed" the index already
+  // leaves out what was cleared, and the walk skips what is snoozed now.
+  //
   // Snooze applies to decisions too. "Not now" is a legitimate answer to
   // being asked, and the checkbox brings them back; what snooze must never do
   // is make a decision look ANSWERED, and it does not: the item keeps its
   // pending status and returns the moment the snooze expires.
-  const params = [allowed, view, view, view, view, view, view, view, view, query.includeSnoozed ? 1 : 0, now, search, search,
-    JSON.stringify(access.threads.map(thread => ({ threadId: thread.threadId, label: text(thread.label, 100) }))), search];
-  // Counts describe the visible page's filter, not hidden audiences. Reading
-  // a request never removes it from the decisions count, because reading is
-  // not answering; reading DOES clear it from the to-read count, because
-  // there reading is the whole action.
-  const live = "(snoozed_until IS NULL OR snoozed_until<=?) AND (cleared_at IS NULL OR at>cleared_at)";
+  const includeSnoozed = query.includeSnoozed === true;
+  const listed = listWhere(view, !includeSnoozed), index = listIndex(view, !includeSnoozed);
+  // The conversation names are only read by a search, so only a search pays
+  // for them (one redaction per conversation was a cost of every poll).
+  const labels = search ? JSON.stringify(access.threads.map(thread => ({ threadId: thread.threadId, label: text(thread.label, 100) }))) : "[]";
+  const filter = `${listed} AND ${SCOPE}${includeSnoozed ? "" : ` AND ${NOT_SNOOZED}`}${search ? ` AND (instr(lower(title || ' ' || summary || ' ' || status),?)>0
+      OR thread_id IN (SELECT json_extract(value,'$.threadId') FROM json_each(?) WHERE instr(lower(json_extract(value,'$.label')),?)>0))` : ""}`;
+  const filterParams = [allowed, ...(includeSnoozed ? [] : [now]), ...(search ? [search, labels, search] : [])];
   // ONE COUNT PER THING THAT CAN BE ASKED OF A PERSON, AND NONE FOR THE REST.
   //
-  // Routines and results are never counted here, and that is the point of the
-  // whole redesign: the owner's badge said thirty six because it counted
-  // things that happened. A number he cannot act on is a number he stops
-  // reading, and then the one he could act on is invisible inside it.
+  // Routines and results are never counted in the badges, and that is the
+  // point of the whole redesign: the owner's badge said thirty six because it
+  // counted things that happened. A number he cannot act on is a number he
+  // stops reading, and then the one he could act on is invisible inside it.
   //
-  // All of them come from ONE statement grouped by conversation (the old code
-  // ran the projection once per number). The per-conversation question count
-  // the sidebar badges with is that grouping, so it costs nothing extra.
-  //
-  // Never opened, rather than "not current", for the to-read count. The read
-  // mark is a hash of the message computed in JS, and SQL cannot recompute it,
-  // so an item that was read and has since changed is counted as read here.
-  // Erring that way keeps the badge quiet rather than crying wolf, and the row
-  // itself still shows as unread once the list is open.
+  // KEPT, NOT COUNTED. Every number comes from the per-conversation counters
+  // the projection keeps in the write's own transaction (one row per permitted
+  // conversation), less what is snoozed right now: a snooze runs out with no
+  // write, so those few are read from the snooze index and taken off. A
+  // search is the one exception: what it matches is only known by reading.
   const load = (): InboxData => {
-    const grouped = db.prepare(SOURCE + `SELECT thread_id,
-      SUM(CASE WHEN ${predicate} THEN 1 ELSE 0 END) AS total,
-      SUM(CASE WHEN decision=1 AND segment='approval' AND ${live} THEN 1 ELSE 0 END) AS approvals,
-      SUM(CASE WHEN decision=1 AND segment='question' AND ${live} THEN 1 ELSE 0 END) AS questions,
-      SUM(CASE WHEN decision=1 AND segment='connection' AND ${live} THEN 1 ELSE 0 END) AS connections,
-      SUM(CASE WHEN decision=1 AND ${live} THEN 1 ELSE 0 END) AS decisions,
-      SUM(CASE WHEN to_read=1 AND read_version IS NULL AND ${live} THEN 1 ELSE 0 END) AS to_read
-      FROM items GROUP BY thread_id ORDER BY thread_id`)
-      .all(...params, now, now, now, now, now) as unknown as Array<Record<"thread_id" | "total" | "approvals" | "questions" | "connections" | "decisions" | "to_read", string | number | null>>;
-    const sum = (key: "total" | "approvals" | "questions" | "connections" | "decisions" | "to_read") => grouped.reduce((n, row) => n + Number(row[key] ?? 0), 0);
+    const badges = BADGES();
+    const kept = db.prepare(`SELECT SUM(${includeSnoozed ? "v" : "l"}_${ident(view)}) AS total, SUM(o_approvals) AS approvals, SUM(o_questions) AS questions,
+      SUM(o_connections) AS connections, SUM(o_decisions) AS decisions, SUM(o_unread) AS to_read FROM inbox_counts WHERE ${SCOPE}`).get(allowed) as Record<string, number | null>;
+    const snoozed = db.prepare(`SELECT thread_id, SUM(CASE WHEN ${listWhere(view, true)} THEN 1 ELSE 0 END) AS total,
+      SUM(CASE WHEN ${badges.o_approvals} THEN 1 ELSE 0 END) AS approvals, SUM(CASE WHEN ${badges.o_questions} THEN 1 ELSE 0 END) AS questions,
+      SUM(CASE WHEN ${badges.o_connections} THEN 1 ELSE 0 END) AS connections, SUM(CASE WHEN ${badges.o_decisions} THEN 1 ELSE 0 END) AS decisions,
+      SUM(CASE WHEN ${badges.o_unread} THEN 1 ELSE 0 END) AS to_read
+      FROM inbox_items INDEXED BY ${ix("inbox_items_snoozed")} WHERE snoozed_until IS NOT NULL AND snoozed_until>? AND ${SCOPE} GROUP BY thread_id`)
+      .all(now, allowed) as Array<Record<"thread_id" | "total" | "approvals" | "questions" | "connections" | "decisions" | "to_read", string | number | null>>;
+    const less = (key: "total" | "approvals" | "questions" | "connections" | "decisions" | "to_read") => snoozed.reduce((n, row) => n + Number(row[key] ?? 0), 0);
+    const count = (key: "approvals" | "questions" | "connections" | "decisions" | "to_read") => Number(kept[key] ?? 0) - less(key);
+    const total = search
+      ? Number((db.prepare(`SELECT COUNT(*) AS n FROM inbox_items INDEXED BY ${index} WHERE ${filter}`).get(...filterParams) as { n: number }).n)
+      : Number(kept.total ?? 0) - (includeSnoozed ? 0 : less("total"));
     // Owed first. A tab that holds both must not float a request that expired
     // last week above one that is waiting now. The json comes back only for the
-    // rows on this page: the read mark is a hash of the whole message.
-    const order = "decision DESC,at DESC,source_key";
-    const rows = db.prepare(SOURCE + `SELECT p.*, (SELECT json FROM messages WHERE rowid=p.source_row) AS json
-      FROM (SELECT * FROM items WHERE ${predicate} ORDER BY ${order} LIMIT ? OFFSET ?) p ORDER BY ${order}`)
-      .all(...params, pageSize, page * pageSize) as unknown as Row[];
+    // rows on this page: the read mark is a hash of the whole message. A
+    // cursor continues from the last row of the page before, as an index seek.
+    const order = "ORDER BY decision DESC,at DESC,source_key";
+    const select = (extra: string) => `SELECT inbox_items.*, ${ITEM_JSON} FROM inbox_items INDEXED BY ${index} WHERE ${filter}${extra} ${order} LIMIT ? OFFSET ?`;
+    let rows: Row[];
+    if (after) {
+      rows = db.prepare(select(" AND decision=? AND at<=? AND NOT(at=? AND source_key<=?)")).all(...filterParams, after.decision, after.at, after.at, after.key, pageSize, 0) as unknown as Row[];
+      if (rows.length < pageSize && after.decision === 1) rows.push(...db.prepare(select(" AND decision=0")).all(...filterParams, pageSize - rows.length, 0) as unknown as Row[]);
+    } else {
+      rows = db.prepare(select("")).all(...filterParams, pageSize, page * pageSize) as unknown as Row[];
+    }
     // THE SAME QUESTIONS, SPLIT BY CONVERSATION, so a row can carry a question
     // badge that attributes part of this number and never adds to it; only the
     // view the sidebar polls.
-    const questionThreads = decisions ? Object.fromEntries(grouped.filter(row => Number(row.questions ?? 0) > 0).map(row => [String(row.thread_id), Number(row.questions)])) : {};
-    const next = db.prepare("SELECT MIN(snoozed_until) AS next FROM inbox_item_state WHERE snoozed_until>?").get(now)?.next;
-    return { rows, total: sum("total"), approvals: sum("approvals"), questions: sum("questions"), connections: sum("connections"),
-      decisions: sum("decisions"), toRead: sum("to_read"), questionThreads,
-      wakeAt: typeof next === "number" ? next : Infinity, filledAt: now };
+    const questionThreads: Record<string, number> = {};
+    if (decisions) {
+      for (const row of db.prepare(`SELECT thread_id, o_questions FROM inbox_counts WHERE o_questions>0 AND ${SCOPE}`).all(allowed) as Array<{ thread_id: string; o_questions: number }>) questionThreads[row.thread_id] = row.o_questions;
+      for (const row of snoozed) {
+        const id = String(row.thread_id), left = (questionThreads[id] ?? 0) - Number(row.questions ?? 0);
+        if (left > 0) questionThreads[id] = left; else delete questionThreads[id];
+      }
+    }
+    const wake = (db.prepare(`SELECT MIN(snoozed_until) AS next FROM inbox_items INDEXED BY ${ix("inbox_items_snoozed")} WHERE snoozed_until IS NOT NULL AND snoozed_until>?`).get(now) as { next: number | null } | undefined)?.next;
+    return { rows, ...(rows.length === pageSize ? { next: encodeCursor(rows[rows.length - 1]) } : {}), total,
+      approvals: count("approvals"), questions: count("questions"), connections: count("connections"), decisions: count("decisions"), toRead: count("to_read"),
+      questionThreads, wakeAt: typeof wake === "number" ? wake : Infinity, filledAt: now };
   };
-  const data = cache ? cachedAnswer(db, JSON.stringify([view, page, pageSize, search, query.includeSnoozed === true, allowed, params[params.length - 2]]), now, load) : load();
+  const data = cache ? cachedAnswer(db, JSON.stringify([view, page, pageSize, search, includeSnoozed, allowed, labels, query.after ?? ""]), now, load) : load();
   const { rows, total } = data;
   const approvalCount = data.approvals, questionCount = data.questions, questionThreads = decisions ? data.questionThreads : undefined;
   const connectionCount = data.connections, decisionCount = data.decisions, toReadCount = data.toRead;
@@ -542,7 +1195,7 @@ function inboxPage(db: DatabaseSync, query: InboxQuery, access: InboxAccess, now
   // connection cause anyway. Coarse evidence, coarse rule, and it errs
   // towards asking once rather than twice.
   const restore = connectionCount === 0 ? connectionsToRestore(rollups) : [];
-  return { items: rows.map(row => item(row, access)), total, page, pageSize,
+  return { items: rows.map(row => item(row, access)), total, page, pageSize, ...(data.next ? { next: data.next } : {}),
     unread: rows.filter(row => row.read_version !== version(row.json)).length,
     // IT IS ADDED TO BOTH OR IT IS ADDED TO NEITHER. The three segment counts
     // sum to the umbrella, and that invariant is the one this Inbox has
@@ -570,8 +1223,12 @@ function inboxPage(db: DatabaseSync, query: InboxQuery, access: InboxAccess, now
  *  not owed: nothing is waiting on it any more. */
 export function owedThreads(db: DatabaseSync, access: InboxAccess): Set<string> {
   const allowed = scope(access);
-  const rows = db.prepare(SOURCE + `SELECT DISTINCT thread_id FROM items
-    WHERE decision=1 AND expired=0`).all(allowed) as Array<{ thread_id: string }>;
+  // Until the first fill is done the answer would be part of the history read
+  // as all of it. Nothing is reported owed then: a snoozed conversation wakes
+  // for an owed item a little late (the next sweep after the fill) rather
+  // than being woken, and marked unread, by an item a later copy answered.
+  if (!inboxProjectionReady(db)) return new Set();
+  const rows = db.prepare(`SELECT thread_id FROM inbox_counts WHERE owed_open>0 AND ${SCOPE}`).all(allowed) as Array<{ thread_id: string }>;
   return new Set(rows.map(row => row.thread_id));
 }
 
@@ -598,7 +1255,7 @@ export function updateInboxState(db: DatabaseSync, update: InboxStateUpdate, acc
     || (update.snoozedUntil !== undefined && update.snoozedUntil !== null && (!Number.isSafeInteger(update.snoozedUntil) || update.snoozedUntil <= now || update.snoozedUntil > now + 30 * 24 * 60 * 60 * 1000))
     || (update.read === undefined && update.snoozedUntil === undefined && update.cleared === undefined)) reject(400, "Invalid Inbox update.");
   const sourceKey = Buffer.from(update.id, "base64url").toString("utf8");
-  const row = db.prepare(SOURCE + "SELECT items.*, (SELECT json FROM messages WHERE rowid=items.source_row) AS json FROM items WHERE source_key=?").get(allowed, sourceKey) as unknown as Row | undefined;
+  const row = db.prepare(`SELECT inbox_items.*, ${ITEM_JSON} FROM inbox_items WHERE source_key=? AND ${SCOPE}`).get(sourceKey, allowed) as unknown as Row | undefined;
   if (!row) throw new InboxError(404, "Inbox item is unavailable.");
   if (version(row.json) !== update.version) reject(409, "This item changed. Refresh Inbox before updating it.");
   // Clearing is never answering: something still waiting on the owner is

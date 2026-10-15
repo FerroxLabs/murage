@@ -136,7 +136,7 @@ it("preserves ordinary turns and this bindings, clears failed delivery, and unsu
     await f.live.adapter.sendTurn(turn);
     expect(f.captured.at(-1)?.text).toContain(bundle.text);
   } finally { await f.registry.disposeAll(); }
-  expect(f.unsubscriptions()).toBe(1);
+  expect(f.unsubscriptions()).toBe(2); // the memory decoration's and the hold decoration's
 });
 
 it("suppresses an unchanged reference only for the confirmed native resume identity", async () => {

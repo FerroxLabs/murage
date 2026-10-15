@@ -18,6 +18,7 @@ import {
 } from "@/lib/new-team";
 import { saveSectionContext } from "@/lib/section-context-client";
 import { api, useStore, type Bot } from "@/state/store";
+import { fromAnswer } from "@/state/answer-tag";
 import { BotPickerList } from "./BotPickerList";
 
 export interface NewTeamDraftState {
@@ -188,7 +189,7 @@ export function NewTeamDialog({ onClose, onDone }: { onClose: () => void; onDone
       {
         request: (path, init) => api(path, init),
         applyBots: (filed) => {
-          for (const bot of filed) dispatch({ type: "botPatched", bot });
+          for (const bot of filed) dispatch({ type: "botPatched", ...fromAnswer(bot), bot });
         },
         setRole: (botId, role) => dispatch({ type: "updateBot", botId, patch: botRolePatch(role) }),
         saveInstructions: (section, text) => saveSectionContext(section, text, api),

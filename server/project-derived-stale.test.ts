@@ -107,22 +107,24 @@ function projectStore() {
   return { store, group, task, desk, say, card, roster: liveRoster };
 }
 
-it("places a forgotten message in any thread of its project, reading each thread once", () => {
+it("places a forgotten message in any thread of its project, reading each message by its key and no thread", () => {
   const { store, group, task, desk, say, roster } = projectStore();
   const inRoom = say(group.threadId, "room", NOW - 30), inTask = say(task.threadId, "task", NOW - 20);
   const inTaskToo = say(task.threadId, "task again", NOW - 15), atDesk = say(desk.threadId, "desk", NOW - 10);
   const reads: string[] = [];
-  const messagesFor = (threadId: string) => { reads.push(threadId); return store.messagesFor(threadId); };
-  const places = projectMessagePlaces(database(), { roster, messagesFor, messageIds: [inRoom, inTask, inTaskToo, atDesk, "not-captured"] });
+  const whole = vi.spyOn(store, "messagesFor");
+  const messageAt = (threadId: string, id: string) => { reads.push(`${threadId}:${id}`); return store.messageById(threadId, id)?.at; };
+  const places = projectMessagePlaces(database(), { roster, messageAt, messageIds: [inRoom, inTask, inTaskToo, atDesk, "not-captured"] });
   expect(Object.fromEntries(places)).toEqual({
     [inRoom]: { groupId: group.id, at: NOW - 30 }, [inTask]: { groupId: group.id, at: NOW - 20 },
     [inTaskToo]: { groupId: group.id, at: NOW - 15 }, [atDesk]: { groupId: group.id, at: NOW - 10 },
   });
-  expect(reads.sort()).toEqual([group.threadId, task.threadId, desk.threadId].sort());
-  // a thread named by the caller is read once for all of its messages
+  expect(reads.sort()).toEqual([`${group.threadId}:${inRoom}`, `${task.threadId}:${inTask}`, `${task.threadId}:${inTaskToo}`, `${desk.threadId}:${atDesk}`].sort());
+  // a thread named by the caller: each of its messages by key
   reads.length = 0;
-  expect(projectMessagePlaces(database(), { roster, messagesFor, messageIds: [inTask, inTaskToo], threadId: task.threadId }).size).toBe(2);
-  expect(reads).toEqual([task.threadId]);
+  expect(projectMessagePlaces(database(), { roster, messageAt, messageIds: [inTask, inTaskToo], threadId: task.threadId }).size).toBe(2);
+  expect(reads.sort()).toEqual([`${task.threadId}:${inTask}`, `${task.threadId}:${inTaskToo}`].sort());
+  expect(whole).not.toHaveBeenCalled();
 });
 
 // Round 10 (S2): deleting a project's task thread forgets its messages for
@@ -136,7 +138,7 @@ it("deleting a project's task thread marks the cards derived from it stale", () 
   card("c2", "[]", NOW + 10);
   card("c3", JSON.stringify([first]), NOW - 20);
   card("c4", '["m-other"]', NOW + 10);
-  const forget = projectThreadDeletion(database(), { roster, messagesFor: (threadId) => store.messagesFor(threadId), threadIds: [task.threadId] });
+  const forget = projectThreadDeletion(database(), { roster, firstAt: (threadId) => store.firstRow(threadId)?.at, hasMessage: (threadId, id) => store.hasRow(threadId, id), threadIds: [task.threadId] });
   expect(store.deleteGroupTask(group.id, task.threadId)).toBeTruthy();
   expect(forget()).toBe(2);
   expect(database().prepare("SELECT id, stale FROM project_work_items ORDER BY id").all()).toEqual([
@@ -154,7 +156,7 @@ it("deleting a member's project desk conversation marks the cards derived from i
   card("c2", "[]", NOW + 10);
   card("c3", JSON.stringify([first]), NOW - 20);
   const bot = store.bots[0]!;
-  const forget = projectThreadDeletion(database(), { roster, messagesFor: (threadId) => store.messagesFor(threadId), threadIds: [desk.threadId] });
+  const forget = projectThreadDeletion(database(), { roster, firstAt: (threadId) => store.firstRow(threadId)?.at, hasMessage: (threadId, id) => store.hasRow(threadId, id), threadIds: [desk.threadId] });
   expect(store.deleteTask(bot.id, desk.threadId)).toBeTruthy();
   expect(forget()).toBe(2);
   expect(database().prepare("SELECT id, stale FROM project_work_items ORDER BY id").all()).toEqual([
@@ -168,7 +170,7 @@ it("deleting a member marks the cards derived from any of its desks stale", () =
   card("c3", JSON.stringify([first]), NOW - 20);
   const bot = store.bots[0]!;
   const threadIds = [bot.threadId, ...(bot.tasks ?? []).map((task) => task.threadId)];
-  const forget = projectThreadDeletion(database(), { roster, messagesFor: (threadId) => store.messagesFor(threadId), threadIds });
+  const forget = projectThreadDeletion(database(), { roster, firstAt: (threadId) => store.firstRow(threadId)?.at, hasMessage: (threadId, id) => store.hasRow(threadId, id), threadIds });
   store.deleteBot(bot.id);
   expect(forget()).toBe(1);
   expect(database().prepare("SELECT id, stale FROM project_work_items ORDER BY id").all()).toEqual([{ id: "c1", stale: 0 }, { id: "c3", stale: 1 }]);
@@ -180,7 +182,7 @@ it("a failure marking stale after the deletion is logged, not thrown", () => {
   const { store, group, task, say, card, roster } = projectStore();
   say(task.threadId, "Plan around the 12 price.", NOW - 5);
   card("c2", "[]", NOW + 10);
-  const forget = projectThreadDeletion(database(), { roster, messagesFor: (threadId) => store.messagesFor(threadId), threadIds: [task.threadId] });
+  const forget = projectThreadDeletion(database(), { roster, firstAt: (threadId) => store.firstRow(threadId)?.at, hasMessage: (threadId, id) => store.hasRow(threadId, id), threadIds: [task.threadId] });
   expect(store.deleteGroupTask(group.id, task.threadId)).toBeTruthy();
   database().exec("CREATE TRIGGER stale_boom BEFORE UPDATE ON project_work_items BEGIN SELECT RAISE(ABORT, 'boom'); END");
   const warned = vi.spyOn(console, "warn").mockImplementation(() => undefined);
@@ -200,7 +202,7 @@ it("a read that throws before a deletion leaves a step that marks nothing, and l
   card("c2", "[]", NOW + 10);
   const warned = vi.spyOn(console, "warn").mockImplementation(() => undefined);
   try {
-    const forget = projectThreadDeletion(database(), { roster, messagesFor: () => { throw new Error("read boom"); }, threadIds: [task.threadId] });
+    const forget = projectThreadDeletion(database(), { roster, firstAt: () => { throw new Error("read boom"); }, hasMessage: () => false, threadIds: [task.threadId] });
     expect(store.deleteGroupTask(group.id, task.threadId)).toBeTruthy();
     expect(forget()).toBe(0);
     const diag = warned.mock.calls.filter((c) => !String(c[0]).startsWith("memory receipts revoked"));
@@ -220,7 +222,7 @@ it("a read that throws for one deleted thread still marks what the other threads
   card("c3", JSON.stringify([first]), NOW - 20);
   const warned = vi.spyOn(console, "warn").mockImplementation(() => undefined);
   try {
-    const forget = projectThreadDeletion(database(), { roster, messagesFor: (threadId) => { if (threadId === task.threadId) throw new Error("read boom"); return store.messagesFor(threadId); }, threadIds: [task.threadId, desk.threadId] });
+    const forget = projectThreadDeletion(database(), { roster, firstAt: (threadId) => { if (threadId === task.threadId) throw new Error("read boom"); return store.firstRow(threadId)?.at; }, hasMessage: (threadId, id) => store.hasRow(threadId, id), threadIds: [task.threadId, desk.threadId] });
     expect(store.deleteGroupTask(group.id, task.threadId)).toBeTruthy();
     expect(forget()).toBe(1);
     const diag = warned.mock.calls.filter((c) => !String(c[0]).startsWith("memory receipts revoked"));
@@ -229,13 +231,15 @@ it("a read that throws for one deleted thread still marks what the other threads
   } finally { warned.mockRestore(); }
   expect(database().prepare("SELECT id, stale FROM project_work_items ORDER BY id").all()).toEqual([{ id: "c1", stale: 0 }, { id: "c3", stale: 1 }]);
 });
-it("reads each deleted thread once", () => {
+it("reads each deleted thread's first row once, and no thread whole", () => {
   const { store, task, desk, say, roster } = projectStore();
   say(task.threadId, "task", NOW - 5);
   say(desk.threadId, "desk", NOW - 5);
   const reads: string[] = [];
-  projectThreadDeletion(database(), { roster, messagesFor: (threadId) => { reads.push(threadId); return store.messagesFor(threadId); }, threadIds: [task.threadId, desk.threadId, task.threadId] });
+  const whole = vi.spyOn(store, "messagesFor");
+  projectThreadDeletion(database(), { roster, firstAt: (threadId) => { reads.push(threadId); return store.firstRow(threadId)?.at; }, hasMessage: (threadId, id) => store.hasRow(threadId, id), threadIds: [task.threadId, desk.threadId, task.threadId] });
   expect(reads.sort()).toEqual([task.threadId, desk.threadId].sort());
+  expect(whole).not.toHaveBeenCalled();
 });
 
 it("Astra r1 #7: the room turn renders the project layers again after its withholding check marks text stale", () => {

@@ -35,7 +35,6 @@ import { decodeGeneratedImage } from "./generated-image.ts";
 import { locateWorkspaceMedia, readPinnedMediaFile, sniffMedia, type MediaAssetsDeps } from "./media-assets.ts";
 import type { DelegatedRequest, DelegatedResult } from "./route-delegation.ts";
 import type { Store } from "./store.ts";
-import { splitTranscriptAttachments } from "../src/lib/composer-attachments.ts";
 import {
   IMAGE_GENERATION_REFERENCE_MAX, IMAGE_GENERATION_REFERENCE_MAX_TOTAL_BYTES, IMAGE_REFERENCE_LIMITS, IMAGE_REFERENCE_MIMES, isImageReferenceSource,
   type ImageReferenceErrorBody, type ImageReferenceErrorCode, type ImageReferenceMime, type ImageReferenceSource,
@@ -80,25 +79,32 @@ const attachmentsDirectory = (deps: Pick<ImageReferenceDeps, "dataDir">) => join
 // ---------------------------------------------------------------------------
 // Which attachments belong to a conversation
 
+/** How many of the conversation's newest pictures a request's bytes are compared with for a duplicate. */
+const DUPLICATE_CANDIDATES = 64;
+
 /** Image attachments this exact conversation already shows: harness-stored
  * attachments (generated images, prepared references) and images the person
  * uploaded with a message (`<attached-image path>` tags the composer writes
  * into user messages). A tag only counts when it names a file directly in
  * Murage's attachment directory; a bot's text never grants an attachment.
- * Returns name -> canonical attachment path. */
-export function conversationImageAttachments(store: Store, threadId: string, attachmentsDir: string): Map<string, string> {
+ * Read without loading the conversation: the images `asked` about (names) are
+ * found through the message_image index however far back they are, by attachment
+ * or by tag (the thread's fill, branch-store.ts, put the older rows there).
+ * Returns name -> canonical attachment path: the names asked, and the newest pictures the conversation holds. */
+export function conversationImageAttachments(store: Store, threadId: string, attachmentsDir: string, asked: readonly string[] = []): Map<string, string> {
   const allowed = new Map<string, string>();
   const add = (path: string) => {
     const name = basename(path);
     const canonical = join(attachmentsDir, name);
     if (ATTACHMENT_NAME.test(name) && resolve(path) === canonical) allowed.set(name, canonical);
   };
-  for (const message of store.messagesFor(threadId)) {
-    for (const item of message.attachments ?? []) if (item.kind === "image") add(item.path);
-    if (message.role === "user" && typeof message.text === "string" && message.text.includes("<attached-image")) {
-      for (const path of splitTranscriptAttachments(message.text).images) add(path);
-    }
-  }
+  // the images asked about, found by the message_image index wherever in the conversation they are named: an attachment
+  // a message carries, or the tag the composer wrote into an upload's text
+  const paths = asked.map(name => join(attachmentsDir, name));
+  for (const [path, item] of store.boundAttachments(threadId, paths)) if (item.kind === "image") add(path);
+  for (const path of store.imagePathsNamed(threadId, paths)) add(path);
+  // and the conversation's newest pictures, the candidates a duplicate is looked for among (a copy of an older one is stored again, harmlessly)
+  for (const path of store.recentImagePaths(threadId, DUPLICATE_CANDIDATES)) add(path);
   return allowed;
 }
 
@@ -245,7 +251,8 @@ export async function loadImageReferences(sources: readonly unknown[], audience:
     if (!isImageReferenceSource(source)) refuse("invalid-request", "Name an image attachment of this conversation, a saved file with its sha256, or a relative path in this task's workspace. Absolute paths and URLs are not accepted.", index);
   });
   assertAudience(deps.store, audience);
-  const allowed = conversationImageAttachments(deps.store, audience.threadId, attachmentsDirectory(deps));
+  const allowed = conversationImageAttachments(deps.store, audience.threadId, attachmentsDirectory(deps),
+    (sources as ImageReferenceSource[]).flatMap(source => source.kind === "attachment" ? [source.attachmentId] : []));
   const loaded: Loaded[] = [];
   let total = 0;
   for (const [index, source] of (sources as ImageReferenceSource[]).entries()) {

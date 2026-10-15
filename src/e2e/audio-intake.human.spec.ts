@@ -41,6 +41,7 @@ test.beforeAll(async () => {
           if (mode === "error") throw new TranscriptionUnavailable("premium", "Fixture plan does not cover transcription");
           return { text: "Fixture transcript to review", language: "en", duration: 1, model: "flux-voice-fast", billedSeconds: 10 };
         } });
+        else if (req.method === "POST" && /^\/api\/bots\/[^/]+\/(typing|warm)$/.test(path)) { res.statusCode = 204; res.end(); }
         else if (req.method === "POST") { unexpectedPosts.push(path); json({ error: "Unexpected fixture mutation" }, 400); }
         else if (path === "/api/desktop-secret") json({ error: "Not found" }, 404);
         else if (path === "/api/events") { res.statusCode = 204; res.end(); }

@@ -169,8 +169,8 @@ describe("harness HTTP API", () => {
       const run = (await api("GET", "/api/routines")).body.runs.find((item: { id: string }) => item.id === runId);
       expect(run, JSON.stringify(run)).toMatchObject({ status: "completed" });
       const threadId = run.threadId as string;
-      const task = (await api("GET", "/api/bots?messages=0")).body.bots
-        .find((candidate: { id: string }) => candidate.id === bot.id)
+      // the roster leaves the procedure pin out (rc11); the record route carries it
+      const task = (await api("GET", `/api/bots/${bot.id}`)).body.bot
         ?.tasks.find((item: { threadId: string }) => item.threadId === threadId);
       const bundleId = task?.procedurePin?.bundleId as string;
       expect(bundleId).toMatch(/^[a-f0-9]{64}$/);
@@ -1065,7 +1065,7 @@ describe("harness HTTP API", () => {
     expect(firstStatus.body.container_name).not.toBe(secondStatus.body.container_name);
     expect(firstStatus.body.workspace_path).not.toBe(secondStatus.body.workspace_path);
 
-    const invalid = await desktopApi("PATCH", "/api/config", { localVm: { maxInstances: 5 } });
+    const invalid = await desktopApi("PATCH", "/api/config", { localVm: { maxInstances: 9 } });
     expect(invalid.status).toBe(400);
     expect(invalid.body.error).toContain("localVm.maxInstances");
 
@@ -1296,7 +1296,7 @@ describe("harness HTTP API", () => {
       await once(permissionClient, "connect");
       permissionClient.write(JSON.stringify({ t: "ask", id: "c03-private-request-canary", tool: "Bash", input: { command: "rm -rf ./C03_SYNTHETIC_PRIVATE_COMMAND_NEVER_RUN" } }) + "\n");
       await expect.poll(async () => (await desktopApi("GET", `/api/bots/${bot.id}/access`)).body.pending.length, { timeout: 5_000 }).toBe(1);
-      const token = dump.mcpConfig.mcpServers.composio.env.MURAGE_CONNECTORS_TOKEN;
+      const token = dump.mcpConfig.mcpServers.murage_connectors.env.MURAGE_CONNECTORS_TOKEN;
       expect(token).toMatch(/^[a-f0-9]{48}$/);
       const headers = { authorization: `Bearer ${token}`, "content-type": "application/json" };
       const listed = await fetch(`${BASE}/api/internal/connectors/mcp`, { method: "POST", headers, body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "tools/list" }) });

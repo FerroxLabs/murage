@@ -25,6 +25,7 @@
     "agents": [
       {
         "key": "team-coordinator",
+        "role": "leader",
         "name": "Team Coordinator",
         "title": "Scope and coordination",
         "description": "Organizes the user's project notes, responsibilities and next decisions.",

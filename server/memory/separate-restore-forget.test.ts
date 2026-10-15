@@ -12,6 +12,7 @@ import { backup, DatabaseSync } from "node:sqlite";
 import { beforeEach, expect, it } from "vitest";
 import { DATA_DIR } from "../config.ts";
 import { closeDatabase, database } from "../database.ts";
+import { stopWalMaintenance } from "../wal-maintenance.ts";
 import { appendMessage } from "../message-db.ts";
 import { setMemoryMode } from "./repository.ts";
 import { claimMemoryJob, publishMemoryWork } from "./jobs.ts";
@@ -42,6 +43,7 @@ it("a plain restore into a separate installation keeps a forgotten memory forgot
     writeFileSync(join(target, "restore-review.json"), JSON.stringify({ version: 1, status: "review-required", modifications: [] }));
     forgetMemory(ownerMemoryTicket(), { kind: "source", id: work.sourceId }); // the user said forget, after the backup
     closeDatabase();
+    await stopWalMaintenance(); // the checkpointer stops after the close: the original is read next, and must not meet its lock
     const events: string[] = [];
     const run = realSeparateRestore({
       canRestoreSeparateInstallation: () => true,

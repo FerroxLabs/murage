@@ -15,13 +15,13 @@ import { dataDirLeasePaths } from "../electron/data-dir-lease.mjs";
 //   darwin: Auto and explicit Local both mount host control.
 //   linux:  explicit Local mounts the supervised Linux driver; Auto never falls
 //           back to the user's desktop, even with a ready driver present.
-//   win32:  host control is never mounted; explicit Local is refused before
-//           the engine starts, Auto runs without host tools.
-type HostOutcome = "host" | "none" | "refused";
+//   win32:  host control is never mounted; explicit Local and Auto both run
+//           the turn without a computer (no error card).
+type HostOutcome = "host" | "none";
 const HOST_ADMISSION: Partial<Record<NodeJS.Platform, Record<"auto" | "local", HostOutcome>>> = {
   darwin: { auto: "host", local: "host" },
   linux: { auto: "none", local: "host" },
-  win32: { auto: "none", local: "refused" },
+  win32: { auto: "none", local: "none" },
 };
 const admission = HOST_ADMISSION[process.platform];
 
@@ -121,25 +121,13 @@ it.each(["auto", "local"] as const)(`runs distinct %s bots on ${process.platform
     }
     expect(bots[0].id).not.toBe(bots[1].id);
 
-    if (outcome === "refused") {
-      // Windows: explicit Local is refused at dispatch, before any engine
-      // receives the prompt, and neither bot is left holding work.
-      for (let i = 0; i < bots.length; i++) {
-        const bot = bots[i], label = `${destination}-refused-${i}`;
-        expect((await api("POST", `/api/bots/${bot.id}/messages`, { threadId: bot.threadId, text: `__fixture_hold_authority__ ${label}` })).status).toBe(202);
-        await expect.poll(async () => (await messages(bot.threadId)).some(message => message.tool?.name?.includes("cannot control this computer")), { timeout: 10000 }).toBe(true);
-        expect(JSON.stringify(dump(i === 1)?.prompt ?? "")).not.toContain(label);
-        await expect.poll(async () => (await task(bot)).busy, { timeout: 10000 }).toBe(false);
-      }
-      return;
-    }
 
     for (let i = 0; i < bots.length; i++) {
       const bot = bots[i], label = `${destination}-concurrency-${i}`;
       expect((await api("POST", `/api/bots/${bot.id}/messages`, { threadId: bot.threadId, text: `__fixture_hold_authority__ ${label}` })).status).toBe(202);
       await expect.poll(async () => {
         if ((JSON.stringify(dump(i === 1)?.prompt) ?? "").includes(label)) return "engine-started";
-        const error = (await messages(bot.threadId)).find(message => message.tool?.name?.includes("Another thread is using this computer") || message.tool?.name?.includes("CUA Driver is not ready"));
+        const error = (await messages(bot.threadId)).find(message => message.tool?.name?.includes("Another thread is using this computer") || message.tool?.name?.includes("CUA Driver is not ready") || message.tool?.name?.startsWith("error:"));
         if (error) return `rejected: ${error.tool.name}`;
         return "waiting";
       }, { timeout: 10000 }).toBe("engine-started").catch(async error => {

@@ -1,7 +1,10 @@
 import { useEffect, useRef, useState, type ReactNode } from "react";
 import { api } from "@/state/store";
+import { findTask } from "@/lib/task-window";
+import { useEnsureTask } from "@/lib/use-ensure-task";
 import { desktopSurfaceHeaders, ensureDesktopSurfaceSecret } from "@/lib/live-events";
 import { t } from "@/lib/i18n";
+import { runNativeAction } from "@/lib/native-action-error";
 import { clickDownload } from "@/lib/save-file";
 import { activeSavedFilters, type SavedFilters, type SavedVersionResult } from "@/lib/files-view";
 import type { Artifact, ArtifactKind, ArtifactPage, ArtifactPreview } from "../../shared/artifacts";
@@ -11,13 +14,13 @@ import { WorkspaceFiles, type WorkspaceOpenInPane } from "./WorkspaceFiles";
 
 const button = "min-h-10 rounded-lg border border-hairline/50 bg-control px-3 py-2 text-[13px] text-ink hover:bg-raised-hover focus-visible:outline focus-visible:outline-2 focus-visible:outline-focus disabled:opacity-50";
 const field = "min-h-10 min-w-0 rounded-lg border border-hairline/50 bg-inset px-3 py-2 text-[13px] text-ink focus-visible:outline focus-visible:outline-2 focus-visible:outline-focus";
-export interface FilesBot { id: string; name: string; threadId: string; tasks?: { threadId: string; title: string }[] }
+export interface FilesBot { id: string; name: string; threadId: string; tasks?: { threadId: string; title: string; createdAt?: number }[]; tasksTotal?: number; extraTasks?: { threadId: string; title: string; createdAt?: number }[] }
 type NativeAction = (artifact: Artifact, action: "open" | "reveal") => void | Promise<void>;
 export interface FilesOpenDetail { botId?: string; threadId?: string; artifactId?: string }
 export function openFiles(detail: FilesOpenDetail = {}) { window.dispatchEvent(new CustomEvent("murage:open-files", { detail })); }
 export function artifactNativeAction() {
   const bridge = window.muragebox as (NonNullable<Window["muragebox"]> & { artifactAction?: (id: string, action: "open" | "reveal") => Promise<void> }) | undefined;
-  return typeof bridge?.artifactAction === "function" ? (artifact: Artifact, action: "open" | "reveal") => bridge.artifactAction!(artifact.id, action) : undefined;
+  return typeof bridge?.artifactAction === "function" ? (artifact: Artifact, action: "open" | "reveal") => runNativeAction(() => bridge.artifactAction!(artifact.id, action), "This saved file could not be opened.") : undefined;
 }
 export async function downloadSavedArtifact(artifact: Artifact) {
   // Artifacts are desktop-authority-only (server/route-policy.ts, class
@@ -143,7 +146,9 @@ export function Files({ bots, initialBotId = "", initialThreadId = "", initialAr
   // A scope is a bot plus one conversation. Without both there is no root to
   // resolve, so the workspace half says so rather than guessing a folder.
   const scope: WorkspaceScopeRef | null = bot && targetThread ? { botId: bot.id, threadId: targetThread } : null;
-  const taskTitle = bot?.tasks?.find(task => task.threadId === threadId)?.title;
+  useEnsureTask("bot", bot?.id, threadId || undefined);
+  const taskTitle = findTask(bot, threadId)?.title;
+  const taskOptions = [...(bot?.tasks ?? []), ...(bot?.extraTasks ?? []).filter(extra => !bot?.tasks?.some(task => task.threadId === extra.threadId))];
   const scopeLabel = bot ? (threadId ? `${bot.name} · ${taskTitle ?? t("filesWorkspace.currentTask")}` : bot.name) : "";
   const savedBotId = savedEveryBot ? "" : botId, savedThreadId = savedEveryBot ? "" : threadId;
   const savedFilters: SavedFilters = { botId: savedBotId, threadId: savedThreadId, kind, since, until, query };
@@ -203,7 +208,7 @@ export function Files({ bots, initialBotId = "", initialThreadId = "", initialAr
     <p className="mt-2 text-[13px] text-ink-secondary">The files in a bot's working folder, and the verified copies Murage has saved. Refresh reloads both. A path mentioned in chat is not automatically a saved file.</p>
     <div className="mt-4 grid grid-cols-2 gap-2 sm:grid-cols-4">
       <label className="text-[12px]">Bot<select className={`${field} mt-1 w-full`} value={botId} onChange={event => { rescopeOpened.current = false; setBotId(event.target.value); setThreadId(""); setPage(0); setSavedEveryBot(false); setNotice(null); }}><option value="">All bots</option>{bots.map(bot => <option key={bot.id} value={bot.id}>{bot.name}</option>)}</select></label>
-      <label className="text-[12px]">Task<select className={`${field} mt-1 w-full`} value={threadId} disabled={!bot} onChange={event => { rescopeOpened.current = false; setThreadId(event.target.value); setPage(0); setSavedEveryBot(false); setNotice(null); }}><option value="">All tasks</option>{bot?.tasks?.map(task => <option key={task.threadId} value={task.threadId}>{task.title}</option>)}</select></label>
+      <label className="text-[12px]">Task<select className={`${field} mt-1 w-full`} value={threadId} disabled={!bot} onChange={event => { rescopeOpened.current = false; setThreadId(event.target.value); setPage(0); setSavedEveryBot(false); setNotice(null); }}><option value="">All tasks</option>{taskOptions.map(task => <option key={task.threadId} value={task.threadId}>{task.title}</option>)}</select></label>
     </div>
     {notice && <p role="status" className="mt-3 text-[13px] text-ink-secondary">{notice}</p>}
     <WorkspaceFiles scope={scope} scopeLabel={scopeLabel} refreshToken={revision} renderHtml={artifactPreviewHtml} onSaved={savedFromWorkspace} onRevealFolder={onRevealFolder} onOpenInPane={onOpenInPane} />

@@ -41,6 +41,10 @@ export const SPAWNED_PROXIES = {
   whatsappBridge: resolveProxy("channels/whatsapp/bridge"),
   // A worker thread, not a process: reads a large import off the main thread.
   importGuardWorker: resolveProxy("bot-package-guard-worker"),
+  // A worker thread: removes a deleted conversation's history from the engines' own files off the main thread.
+  engineHistoryWorker: resolveProxy("engine-history-worker"),
+  transcriptReadWorker: resolveProxy("transcript-read-worker"),
+  inboxFillWorker: resolveProxy("inbox-fill-worker"),
   computer: resolveProxy("computer-proxy"),
   permission: resolveProxy("permission-proxy"),
   containerMcp: resolveProxy("container-mcp"),

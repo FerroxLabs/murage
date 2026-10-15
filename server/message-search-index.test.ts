@@ -9,7 +9,7 @@ import { DatabaseSync } from "node:sqlite";
 import { beforeEach, describe, expect, it } from "vitest";
 
 import { DATA_DIR } from "./config.ts";
-import { database } from "./database.ts";
+import { database, finishBackgroundUpgradeWorkNow } from "./database.ts";
 import { closeMessageDb, deleteThread, insertMessage, searchMessages, updateMessage } from "./message-db.ts";
 import {
   backfillMessageSearchIndex,
@@ -205,7 +205,8 @@ describe("backfill", () => {
     insertMessage("t", msg("m1", "indexed already"));
     raw("m2", "added by an older release", 5);
     raw("m3", "Bash: from an old chip", 6, "activity");
-    closeMessageDb(); // the next open runs the backfill
+    closeMessageDb(); // the next open notes where the index ends; the background work fills the rest
+    finishBackgroundUpgradeWorkNow();
     expect(found("older release")).toEqual(["t/m2"]);
     expect(found("old chip")).toEqual(["t/m3"]);
     expect(indexedRows()).toBe(3);
@@ -221,8 +222,25 @@ describe("backfill", () => {
     db.exec("INSERT INTO messages_fts(messages_fts) VALUES('delete-all')");
     expect(indexedRows()).toBe(0);
     closeMessageDb();
+    finishBackgroundUpgradeWorkNow();
     expect(found("number 1234 with")).toEqual(["t/r1234"]);
     expect(indexedRows()).toBe(1300);
+  });
+
+  it("walks the rows in bounded slices of rowids and reports each, ending at the last row", () => {
+    const db = database();
+    db.exec("BEGIN");
+    for (let i = 0; i < 1300; i++) raw(`s${i}`, `sliced row number ${i} with some text`, i + 1);
+    db.exec("COMMIT");
+    db.exec("INSERT INTO messages_fts(messages_fts) VALUES('delete-all')");
+    const last = Number(db.prepare("SELECT max(rowid) AS top FROM messages").get()!.top);
+    const seen: Array<{ done: number; total: number }> = [];
+    expect(backfillMessageSearchIndex(db, { onProgress: (progress) => seen.push(progress) })).toBe(1300);
+    expect(seen.length).toBeGreaterThanOrEqual(Math.floor(last / 500));
+    expect(seen.every((progress, at) => progress.total === last && (at === 0 || progress.done > seen[at - 1]!.done))).toBe(true);
+    expect(seen.at(-1)).toEqual({ done: last, total: last });
+    expect(indexedRows()).toBe(1300);
+    expect(backfillMessageSearchIndex(db, { onProgress: (progress) => seen.push(progress) })).toBe(0);
   });
 
   it("resumes an interrupted backfill and agrees with the scan afterwards", () => {
@@ -231,6 +249,7 @@ describe("backfill", () => {
     rebuildMessageSearchIndex(db);
     db.prepare("DELETE FROM messages_fts WHERE rowid > 20").run(); // killed halfway
     closeMessageDb();
+    finishBackgroundUpgradeWorkNow();
     for (const query of ["resumable row 3", "resumable row 39", "resumable"]) expect(found(query)).toEqual(scan(query));
     expect(indexedRows()).toBe(40);
   });

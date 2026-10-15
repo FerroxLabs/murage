@@ -20,8 +20,10 @@ import {
   TURN_PROMPTS,
   automationPrompt,
   directPersona,
+  COMPUTER_UNAVAILABLE,
   directTurnLayers,
   nowPrompt,
+  peerTaskPrompt,
   roomBulletinLine,
   roomMembersLine,
   roomPersonaLines,
@@ -38,7 +40,6 @@ import { loadBundledSkills, renderSkillInstructions } from "./skill-library.ts";
 import { renderInstalledPlaybooks } from "./installed-playbooks.ts";
 import { importedSkillsPrompt } from "./procedure-bundles.ts";
 import { chiefOfStaffSystemPrompt, individualAssistantSystemPrompt, type ChiefTeamMember } from "./chief-of-staff.ts";
-import { openMurageStatusSystemPrompt } from "./murage-status-capsule.ts";
 import { channelProjectSystemLine } from "./project-channel.ts";
 import { groupGoalCoordinatorInstructions, groupGoalWorkerInstructions } from "./group-goal-run.ts";
 import { ensureWorkspace, memorySystemPrompt } from "./workspace.ts";
@@ -55,10 +56,8 @@ import { migrateMemorySchema } from "./memory/schema.ts";
 /** Names the model must read exactly as written. Each is removed from the
  *  text before the brand check, so only these spellings may carry a brand. */
 const FUNCTIONAL_TOKENS: ReadonlyArray<{ token: string; why: string }> = [
-  // The connected-app tools' real names: the model calls them by these.
-  { token: "COMPOSIO_SEARCH_TOOLS", why: "tool name" },
-  { token: "COMPOSIO_GET_TOOL_SCHEMAS", why: "tool name" },
-  { token: "COMPOSIO_MULTI_EXECUTE_TOOL", why: "tool name" },
+  // The connected-app tools carry no brand: the model is shown them as
+  // APPS_SEARCH_TOOLS and the rest (shared/connected-app-names.ts), so none is listed here.
   // The durable folder inside the computer sandbox: a real path.
   { token: "/home/cua/workspace", why: "filesystem path" },
 ];
@@ -158,6 +157,8 @@ add("room persona", roomPersonaLines({ name: "Moss", title: "Researcher", descri
 add("room members", roomMembersLine("@Moss (Researcher), @Quill", "Sean"));
 add("room bulletin", roomBulletinLine("Ship on Thursdays."));
 add("speak-as", speakAsLine("Moss"));
+add("peer-task", peerTaskPrompt("[Delegated by @Moss, task 1] Tidy the notes.", true));
+add("computer-unavailable", COMPUTER_UNAVAILABLE);
 for (const status of ["active", "paused", "done"] as const) add(`project ${status}`, channelProjectSystemLine({ goal: "Launch the site", status, createdAt: 1, updatedAt: 1 } as never));
 add("goal coordinator", groupGoalCoordinatorInstructions({ goal: "Launch", members: [{ id: "a", name: "Moss" }], turn: 1, maxTurns: 6, remainingTurns: 5, note: "Quill stayed busy." }));
 add("goal worker", groupGoalWorkerInstructions({ goal: "Launch", coordinatorName: "Moss", assignment: "Draft the page", turn: 2, maxTurns: 6 }));
@@ -178,7 +179,6 @@ for (const canDelegate of [true, false]) {
 }
 add("chief empty workspace", chiefOfStaffSystemPrompt("chief", [team[0]!], true));
 add("individual alone", individualAssistantSystemPrompt("bruce", [team[4]!], true));
-add("murage status", openMurageStatusSystemPrompt({ cachePath: "/nonexistent/murage-status.json" }));
 
 // ── capabilities primer: every line in every combination that picks it ───
 const keys = Object.keys(INTEGRATION_FACTS) as IntegrationKey[];
@@ -248,7 +248,7 @@ describe("prompt copy: every layer a bot can read", () => {
     const byLabel: Record<string, string> = {
       "house-rules": "house", "about-me": "about-me", persona: "persona", room: "room", computer: "direct", "computer-protected-input": "direct",
       "connected-apps": "connected-apps", "required-apps": "required-apps", browser: "browser", coordination: "chief",
-      "speak-as": "speak-as", credential: "turn", images: "images", "web-search": "direct", routines: "turn", learn: "turn",
+      "peer-task": "peer-task", "speak-as": "speak-as", credential: "turn", images: "images", "web-search": "direct", routines: "turn", learn: "turn",
       goal: "goal", "skills-index": "imported", "team-brief": "team-brief", memory: "memory", capabilities: "primer", skill: "skill",
       "chief-guide": "skill", "own-skill": "skill", playbooks: "playbooks", "output-folder": "output", automation: "automation",
       tagged: "direct", now: "direct", "working-context": "working-context", "project-brief": "project-layers", "project-status": "project-layers",

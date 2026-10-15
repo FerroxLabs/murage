@@ -66,6 +66,13 @@ test("an earlier page keeps the message still when the speaker's name leaves its
   await sidebar.getByText(ROOM, { exact: true }).click();
   await expect(page.locator(`[data-row="${ids[TOTAL - 1]}"]`)).toBeAttached();
   await expect.poll(async () => (await mounted(page)).length).toBeGreaterThan(1);
+  // The transcript mounts only what is on screen (05683e461): wheel up to the
+  // top of the loaded page, short of the earlier-page trigger
+  // (SCROLLBACK_TRIGGER_PX, 200), so the oldest loaded row is the oldest mounted.
+  const scroller = page.getByTestId("chat-scroll");
+  await scroller.hover();
+  for (let i = 0; i < 80 && (await scroller.evaluate((el) => el.scrollTop)) > 700; i++) { await page.mouse.wheel(0, -500); await page.waitForTimeout(60); }
+  await expect.poll(async () => (await page.locator(`[data-testid="chat-scroll"] [data-row] [data-testid="room-speaker"]`).count())).toBe(1);
   const held = await mounted(page);
   expect(held.length).toBeLessThan(TOTAL);
   const firstHeld = held[0]!;

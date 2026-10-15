@@ -111,6 +111,6 @@ describe("team order across a bot drop", () => {
     const drop = source.slice(source.indexOf("const dropBot"), source.indexOf("const dropSection"));
     const freeze = drop.indexOf("commitSectionOrder(sectionIds)");
     expect(freeze).toBeGreaterThan(drop.indexOf("if (result.ok)"));
-    expect(freeze).toBeLessThan(drop.indexOf('type: "botPatched"'));
+    expect(freeze).toBeLessThan(drop.indexOf('type: "botPatched", ...fromAnswer(moved)'));
   });
 });

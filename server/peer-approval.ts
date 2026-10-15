@@ -15,6 +15,7 @@
 // `alwaysAllow`, so the two sides never disagree about what was granted.
 
 import { newId } from "./contracts.ts";
+import { messagesHighWater, openToolCardPage, openToolCardRowsInRange, openToolCardRowsIndexed, type OpenCardKey } from "./message-db.ts";
 import { peerAllowKey, type PeerAction } from "./peer-approval-key.ts";
 import type { BotRecord, Message, Store } from "./store.ts";
 import type { RoutinePeerSource } from "./routine-permissions.ts";
@@ -93,9 +94,7 @@ interface Pending {
  * what the `request.resolved` fold does for provider cards; a harness-native
  * card never emits that event, so it has to settle itself. */
 function settleCard(pending: Pending, behavior: string, source: "user" | "system"): void {
-  const existing = pending.bus.store
-    .messagesFor(pending.threadId)
-    .find((m) => m.id === pending.messageId);
+  const existing = pending.bus.store.messageById(pending.threadId, pending.messageId);
   if (!existing?.card || existing.card.answered) return;
   pending.bus.store.patchMessage(pending.threadId, pending.messageId, {
     card: { ...existing.card, answered: behavior, dismissed: source !== "user" },
@@ -117,7 +116,8 @@ function closeHeld(pending: Pending, answer: "allow" | "deny" | "none"): void {
   if (!pending.held) return;
   let resumed = false;
   try { resumed = pending.bus.routineCard?.closed(pending.threadId, pending.requestId, answer) === true; } catch { /* delivery never changes authority */ }
-  if (resumed && answer === "allow") lateAllows.add(`${pending.threadId}\u0000${pending.allowKey}`);
+  // An event-limit Allow already raised the run's saved limit, which carries into the resumed turn: remembering it too would extend twice.
+  if (resumed && answer === "allow" && !pending.allowKey.startsWith("event_limit:")) lateAllows.add(`${pending.threadId}\u0000${pending.allowKey}`);
 }
 
 /** The narrow grant "always allow" remembers for a peer comm. Mirrored
@@ -172,11 +172,25 @@ export function requestPeerApproval(
   }
   const late = `${sourceThreadId}\u0000${peerAllowKey(action, target.id)}`;
   if (lateAllows.delete(late)) return Promise.resolve("allow");
+  return waitOnCard(bus, from.id, target.id, message, peerAllowKey(action, target.id), sourceThreadId, boundRequestId,
+    (requestId) => pushApprovalCard(bus, from, target, message, action, requestId, sourceThreadId));
+}
+
+/** The one place a harness-native card is opened and awaited: the card has to
+ * exist before the entry, so a timeout or an answer can always find it. */
+function waitOnCard(
+  bus: ApprovalBus,
+  fromBotId: string,
+  toBotId: string,
+  message: string,
+  allowKey: string,
+  sourceThreadId: string,
+  boundRequestId: string | undefined,
+  push: (requestId: string) => Message,
+): Promise<PeerApprovalOutcome> {
   return new Promise((resolve) => {
     const requestId = newId();
-    // the card has to exist before the entry, so a timeout or an answer can
-    // always find it to settle
-    const card = pushApprovalCard(bus, from, target, message, action, requestId, sourceThreadId);
+    const card = push(requestId);
     let held = false;
     try { held = bus.routineCard?.opened(sourceThreadId, requestId, card.card?.title ?? "A bot-to-bot contact") === true; } catch { /* delivery never changes authority */ }
     const timer = held || bus.holdProjectApproval?.(sourceThreadId) ? undefined : setTimeout(() => {
@@ -193,18 +207,60 @@ export function requestPeerApproval(
       resolve,
       timer,
       held,
-      allowKey: peerAllowKey(action, target.id),
+      allowKey,
       requestId,
-      fromBotId: from.id,
-      toBotId: target.id,
+      fromBotId,
+      toBotId,
       message,
       threadId: sourceThreadId,
       messageId: card.id,
       bus,
       ...(boundRequestId ? { boundRequestId } : {}),
     });
-    try { bus.onApproval?.(from.id, sourceThreadId, requestId, card.id); } catch { /* Delivery never changes approval authority. */ }
+    try { bus.onApproval?.(fromBotId, sourceThreadId, requestId, card.id); } catch { /* Delivery never changes approval authority. */ }
   });
+}
+
+/** The two tools an event-run limit card carries. They are not peer contacts:
+ * there is no "always allow" for them, so no allowKey rides on the card. */
+export const EVENT_LIMIT_TOOLS = ["more_handoffs", "more_new_bots"] as const;
+
+/** An event-started run (a channel message, a webhook, a routine) has reached
+ * how many hand-offs or new bots it may do on its own. Ask the owner, in the
+ * source thread, whether it may do another batch of that kind. "Allow" extends
+ * the run by that batch; "Not now" ends that kind for the rest of the run; no
+ * answer or a cancelled turn leaves it as it was. */
+export function requestEventLimitApproval(
+  bus: ApprovalBus,
+  from: BotRecord,
+  kind: "create" | "handoff",
+  done: number,
+  eventId: string,
+  sourceThreadId = from.threadId,
+  targetName?: string,
+  /** How many more Allow gives, and whether those are the last this run can ever do. */
+  allowMore = 4,
+  lastOnes = false,
+): Promise<PeerApprovalOutcome> {
+  const plural = (n: number, one: string, many: string) => `${n} ${n === 1 ? one : many}`;
+  const more = allowMore;
+  const last = lastOnes ? ", the last ones this run can do" : "";
+  const title = kind === "handoff" ? `@${from.name} wants to hand off more work` : `@${from.name} wants to add more bots`;
+  const body = kind === "handoff"
+    ? `This run has handed off ${plural(done, "task", "tasks")}, the most it can without you. Next it wants to ask @${targetName ?? "another bot"}. Allow lets this run hand off up to ${more} more${last}. Not now stops hand-offs for the rest of this run. Work already handed off carries on.`
+    : `This run has added ${plural(done, "bot", "bots")}, the most it can without you. Next it wants to add @${targetName ?? "another bot"}. Allow lets this run add up to ${more} more${last}. Not now stops new bots for the rest of this run.`;
+  return waitOnCard(bus, from.id, from.id, title, `event_limit:${eventId}:${kind}`, sourceThreadId, undefined, (requestId) =>
+    bus.store.appendMessage(sourceThreadId, {
+      role: "bot",
+      kind: "options",
+      card: {
+        title,
+        subtitle: body,
+        options: ["Allow", "Not now"],
+        requestId,
+        tool: kind === "handoff" ? "more_handoffs" : "more_new_bots",
+      },
+    }));
 }
 
 /** Called by the respond endpoints BEFORE forwarding to the provider
@@ -273,33 +329,103 @@ export function cancelPeerApprovalsForRequest(requestId: string): boolean {
 
 /** Cards left on disk by a previous run can never be answered — their
  * in-memory approval died with the process. Settle them at boot so a
- * crashed run doesn't leave a thread with a permanently blocked composer. */
-export function dismissStalePeerCards(bus: ApprovalBus): number {
+ * crashed run doesn't leave a thread with a permanently blocked composer.
+ * Only the open cards are read (the open-card list, or a bounded rowid range),
+ * never a transcript: a 48 GB history costs the same as an empty one. */
+export const STALE_PEER_CARD_TOOLS = ["ask_bot", "delegate_bot", ...EVENT_LIMIT_TOOLS] as const;
+export function dismissStalePeerCards(bus: ApprovalBus, range?: { after: number; upTo: number } | "indexed", owned?: ReadonlySet<string>): number {
+  return dismissStaleToolCards(bus, STALE_PEER_CARD_TOOLS, (card) => !card.requestId || pendingComms.has(card.requestId), range, owned);
+}
+/** A kind of card a dead run leaves open: the tools it carries and which of them are still answerable (kept). */
+export interface StaleCardKind { tools: readonly string[]; keep: (card: NonNullable<Message["card"]>) => boolean }
+export function stalePeerCardKind(): StaleCardKind {
+  return { tools: STALE_PEER_CARD_TOOLS, keep: (card) => !card.requestId || pendingComms.has(card.requestId) };
+}
+/** One page of the open-card list (openToolCardPage), every kind settled from it at once: the cards of a dead run are dismissed, as dismissStaleToolCards
+ * does. `next` is where the following page starts (null: the list is done); null as a whole while the list is not complete. */
+export function settleStaleCardPage(bus: ApprovalBus, kinds: readonly StaleCardKind[], after: OpenCardKey | null, limit: number, upTo: number, ownedThreads?: ReadonlySet<string>): { dismissed: number; next: OpenCardKey | null } | null {
+  const tools = kinds.flatMap((kind) => [...kind.tools]);
+  const page = openToolCardPage(tools, after, limit, upTo);
+  if (!page) return null;
+  const owned = ownedThreads ?? ownedCardThreads(bus);
   let dismissed = 0;
-  // Every thread a peer card can be pushed into. Rooms are included because
-  // a Chief's peer call is made FROM a room thread, and that card is where
-  // the room's composer stays blocked until something settles it — a sweep
-  // over each bot's own threads alone can never reach it.
-  const threadIds = new Set<string>();
+  for (const { threadId, message } of page.rows) {
+    const card = message.card;
+    const kind = kinds.find((candidate) => candidate.tools.includes(String(card?.tool)));
+    if (!card || !kind || !owned.has(threadId) || card.answered || card.dismissed || kind.keep(card)) continue;
+    if (bus.store.patchMessagePoint(threadId, message.id, { card: { ...card, answered: "deny", dismissed: true } })) dismissed += 1;
+  }
+  return { dismissed, next: page.next };
+}
+/** Rows of the open-card list one page reads. */
+export const STALE_CARD_PAGE = 2_000;
+/** The rest of the open-card list after `after` (all of it from null), page by page with the loop handed back between pages, every kind settled up to
+ * `upTo` (the start's high-water mark). The start uses it after listen: for what its page before listen did not reach, and as the explicit handoff
+ * when the list was completed while the rowid sweep ran (the sweep stops there; the cards it had not reached are settled here, and dismissed, not
+ * orphaned). Returns how many it dismissed; 0 while the list is not complete. */
+export async function settleStaleCardsFromList(bus: ApprovalBus, kinds: readonly StaleCardKind[], after: OpenCardKey | null, upTo: number, ownedThreads?: ReadonlySet<string>, pause: () => Promise<void> = () => new Promise<void>((resolve) => setImmediate(resolve))): Promise<number> {
+  const owned = ownedThreads ?? ownedCardThreads(bus);
+  let dismissed = 0;
+  for (let at: OpenCardKey | null = after, first = true; first || at !== null; first = false) {
+    const page = settleStaleCardPage(bus, kinds, at, STALE_CARD_PAGE, upTo, owned);
+    if (!page) break;
+    dismissed += page.dismissed;
+    at = page.next;
+    if (at !== null) await pause();
+  }
+  return dismissed;
+}
+
+/** Where the start's walk of the open-card list stands: undefined while the list is not complete (or from its start), otherwise the key the walk after
+ * listen resumes from, null once the last page committed. */
+export interface StaleCardMark { at: OpenCardKey | null | undefined }
+/** settleStaleCardsFromList from `mark`, moving the mark past each page only once that page committed and to null only after the last one: a page that
+ * throws (a held write lock) leaves the mark where the walk stood, so a retry carries on from there and never reads the walk as done. A list that is not
+ * complete (no page) leaves the mark as it is. Returns how many it dismissed. */
+export async function settleStaleCardsFromMark(bus: ApprovalBus, kinds: readonly StaleCardKind[], mark: StaleCardMark, upTo: number, ownedThreads?: ReadonlySet<string>, pause: () => Promise<void> = () => new Promise<void>((resolve) => setImmediate(resolve))): Promise<number> {
+  if (mark.at === null) return 0;
+  const owned = ownedThreads ?? ownedCardThreads(bus);
+  let dismissed = 0;
+  for (;;) {
+    const page = settleStaleCardPage(bus, kinds, mark.at ?? null, STALE_CARD_PAGE, upTo, owned);
+    if (!page) return dismissed;
+    dismissed += page.dismissed;
+    mark.at = page.next;
+    if (mark.at === null) return dismissed;
+    await pause();
+  }
+}
+
+/** Every thread a peer card can be pushed into: built once by a caller that settles several kinds of card, not once per kind. */
+export function ownedCardThreads(bus: ApprovalBus): Set<string> {
+  const owned = new Set<string>();
   for (const bot of bus.store.bots) {
-    threadIds.add(bot.threadId);
-    for (const task of bot.tasks ?? []) threadIds.add(task.threadId);
+    owned.add(bot.threadId);
+    for (const task of bot.tasks ?? []) owned.add(task.threadId);
   }
   for (const group of bus.store.groups) {
-    threadIds.add(group.threadId);
-    for (const task of group.tasks ?? []) threadIds.add(task.threadId);
+    owned.add(group.threadId);
+    for (const task of group.tasks ?? []) owned.add(task.threadId);
   }
-  for (const threadId of threadIds) {
-    for (const message of bus.store.messagesFor(threadId)) {
-      const card = message.card;
-      if (!card?.requestId || card.answered || card.dismissed) continue;
-      if (card.tool !== "ask_bot" && card.tool !== "delegate_bot") continue;
-      if (pendingComms.has(card.requestId)) continue;
-      const patched = bus.store.patchMessage(threadId, message.id, {
-        card: { ...card, answered: "deny", dismissed: true },
-      });
-      if (patched) dismissed += 1;
-    }
+  return owned;
+}
+
+/** Settle every open card of `tools` in a bot, task or room thread whose resolver is gone. `range` walks one slice of storage positions (the sweep that runs
+ * after the server listens); "indexed" answers from the open-card list only (nothing while it is still being built: the sweep after listen covers it);
+ * without it the list answers, or, while that list is still being built, the whole range in one go. */
+export function dismissStaleToolCards(bus: ApprovalBus, tools: readonly string[], keep: (card: NonNullable<Message["card"]>) => boolean, range?: { after: number; upTo: number } | "indexed", ownedThreads?: ReadonlySet<string>): number {
+  // Every thread a peer card can be pushed into. Rooms are included because
+  // a Chief's peer call is made FROM a room thread, and that card is where
+  // the room's composer stays blocked until something settles it.
+  const owned = ownedThreads ?? ownedCardThreads(bus);
+  const hits = range === "indexed" ? (openToolCardRowsIndexed(tools) ?? [])
+    : range ? openToolCardRowsInRange(tools, range.after, range.upTo)
+      : (openToolCardRowsIndexed(tools) ?? openToolCardRowsInRange(tools, 0, messagesHighWater()));
+  let dismissed = 0;
+  for (const { threadId, message } of hits) {
+    const card = message.card;
+    if (!card || !owned.has(threadId) || card.answered || card.dismissed || keep(card)) continue;
+    if (bus.store.patchMessagePoint(threadId, message.id, { card: { ...card, answered: "deny", dismissed: true } })) dismissed += 1;
   }
   return dismissed;
 }

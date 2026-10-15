@@ -64,8 +64,10 @@ posixOnly("memory off: a paraphrase of a memory-derived reply follows its source
     const y = await turn(bot, "say that again in other words");
     expect(y.text).toContain("PARAPHRASE-Y");
     expect(JSON.stringify(dump().prompt)).toContain("X-PRIME");
-    // Y rests on X' (its root), recorded with memory off
-    expect(query<{ root_message_id: string }>("SELECT m.root_message_id FROM memory_output_roots o JOIN memory_root_set_members m ON m.set_id=o.set_id WHERE o.thread_id=? AND o.message_id=?", bot.threadId, y.id).map(row => row.root_message_id)).toContain(xPrime.id);
+    // Y rests on X' (1.0.2: the write-time line row carries it; root sets are frozen and no longer written). The withholding of Y and the
+    // reset below, after X is revoked with memory off, are what prove that the lineage held.
+    expect(query<{ n: number }>("SELECT count(*) AS n FROM memory_line_lineage WHERE message_id=?", y.id)[0]!.n).toBe(1);
+    expect(query<{ n: number }>("SELECT count(*) AS n FROM memory_output_roots WHERE thread_id=?", bot.threadId)[0]!.n).toBe(0);
     const ySession = dump().argv[dump().argv.indexOf("--session-id") + 1] ?? dump().argv[dump().argv.indexOf("--resume") + 1];
     expect(ySession).toBeTruthy();
     // X is revoked with memory still off
@@ -78,6 +80,6 @@ posixOnly("memory off: a paraphrase of a memory-derived reply follows its source
     expect(prompt).not.toContain("X-PRIME");
     // and the session that was shown X' was not resumed
     expect(dump().argv).not.toContain(ySession);
-    expect(log()).toMatch(new RegExp(`memory continuation reset thread=${bot.threadId} engine=\\S+ reason=memory-off session-roots`));
+    expect(log()).toMatch(new RegExp(`memory continuation reset thread=${bot.threadId} engine=\\S+ reason=memory-off (?:session-roots|writetime-deny-session)`));
   }, 120000);
 });

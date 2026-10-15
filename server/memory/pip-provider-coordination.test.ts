@@ -7,8 +7,8 @@ import { expect, it, vi } from "vitest";
 function fixture() {
   const source = readFileSync(new URL("../index.ts", import.meta.url), "utf8");
   const callback = source.slice(source.indexOf("onContinuity: async signal =>") + "onContinuity: ".length, source.indexOf(",onCompletedSource:async(jobId,signal)=>"));
-  const run = vi.fn(), pending = vi.fn(() => "bot");
-  const host = new Function("runPipReflect", "pipReflectPending", `
+  const run = vi.fn(), pending = vi.fn(async () => "bot");
+  const host = new Function("runPipReflect", "pipReflectPendingSliced", `
     let providerConfigBusy = false, fenced = false, fluxMediaRequests = 0;
     const providerBankDispatchFenced = () => fenced, pipReflectDeps = {};
     return { dispatch: ${callback}, count: () => fluxMediaRequests,
@@ -29,6 +29,8 @@ it.each([false, true])("new-high: provider counter covers cancellation through a
   let settle!: () => void;
   f.run.mockImplementation(() => new Promise((resolve, fail) => { settle = () => reject ? fail(new Error("cancelled")) : resolve("done"); }));
   const outcome = f.dispatch(abort.signal).catch(error => error.message);
+  // the pending check is awaited (it runs in slices): the counter is up once the run has started
+  await vi.waitFor(() => expect(f.run).toHaveBeenCalled());
   expect(f.count()).toBe(1);
   abort.abort(); await Promise.resolve();
   expect(f.count()).toBe(1);

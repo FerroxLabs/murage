@@ -150,9 +150,9 @@ describe.sequential("connector access reporting", () => {
     for (const [index, cause] of causes.entries()) {
       // Only a turn that actually mounted them may be told to call them —
       // telling an assistant with no connector tools to run
-      // COMPOSIO_SEARCH_TOOLS is how the denial got invented in the first
+      // APPS_SEARCH_TOOLS is how the denial got invented in the first
       // place.
-      expect(/COMPOSIO_[A-Z_]+/.test(notices[index]!)).toBe(cause === "mounted");
+      expect(/APPS_[A-Z_]+/.test(notices[index]!)).toBe(cause === "mounted");
     }
   });
 
