@@ -272,16 +272,19 @@ jobs:
       - name: Explain an x64 engine-exclusion load failure
         if: failure()
         run: |
-          app=release/mac/Murage.app
-          ls -la "$app/Contents/Resources/engine-exclusion.node" || true
-          lipo -info "$app/Contents/Resources/engine-exclusion.node" || true
-          code='const a=require(process.argv[1]);process.stdout.write(JSON.stringify([a.version(),typeof a.processes]))'
+          set +e
+          app="$PWD/release/mac/Murage.app"
+          node="$app/Contents/Resources/engine-exclusion.node"
+          ls -la "$node"; lipo -info "$node"; file "$app/Contents/MacOS/Murage"
+          code='const a=require(process.argv[1]);const l=a.processes();process.stdout.write(JSON.stringify([a.version(),typeof a.processes,typeof a.lock,typeof a.renameNoReplace,Array.isArray(l)&&l.some(p=>p&&p.pid===process.pid)]))'
           for n in 1 2; do
             start=$(date +%s)
-            ELECTRON_RUN_AS_NODE=1 /usr/bin/arch -x86_64 "$app/Contents/MacOS/Murage" -e "$code" "$app/Contents/Resources/engine-exclusion.node"; rc=$?
+            ELECTRON_RUN_AS_NODE=1 /usr/bin/arch -x86_64 "$app/Contents/MacOS/Murage" -e "$code" "$node" > "$RUNNER_TEMP/out.txt" 2> "$RUNNER_TEMP/err.txt"; rc=$?
             echo "attempt $n: exit $rc after $(( $(date +%s) - start )) s"
+            echo "--- stdout:"; head -c 2000 "$RUNNER_TEMP/out.txt"; echo
+            echo "--- stderr:"; head -c 4000 "$RUNNER_TEMP/err.txt"; echo
           done
-
+          exit 0
       - name: Qualify packaged WhatsApp (darwin-arm64)
         shell: bash
         run: |
