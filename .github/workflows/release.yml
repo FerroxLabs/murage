@@ -271,6 +271,18 @@ jobs:
           open(p, "w").write(s)
           EOF
           grep -c "engine-exclusion load failed" scripts/engine-exclusion-resource.mjs
+          # The x64 load runs under Rosetta, which translates the freshly extracted x64 Electron
+          # from scratch on every package run; on the arm64 runner that outlasts 30 s (spawnSync
+          # ETIMEDOUT, seen in run 38880138683), while the load itself takes 1-4 s once translated.
+          # Give this one check 4 minutes; what it checks is unchanged.
+          python3 - <<'EOF'
+          p = "scripts/after-pack.mjs"
+          s = open(p).read()
+          a = "execFileSync(command, args, { timeout: 30000, env: { ...process.env, ...env } })"
+          assert s.count(a) == 1
+          open(p, "w").write(s.replace(a, "execFileSync(command, args, { timeout: 240000, env: { ...process.env, ...env } })"))
+          EOF
+          grep -c "timeout: 240000" scripts/after-pack.mjs
       - name: Package both architectures
         run: |
           set -euo pipefail
