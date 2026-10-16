@@ -269,6 +269,19 @@ jobs:
             "--config.extraMetadata.murageGepaManifests.darwin-arm64=$gepa_hash" \
             "--config.extraMetadata.murageGepaManifests.darwin-x64=unavailable"
 
+      - name: Explain an x64 engine-exclusion load failure
+        if: failure()
+        run: |
+          app=release/mac/Murage.app
+          ls -la "$app/Contents/Resources/engine-exclusion.node" || true
+          lipo -info "$app/Contents/Resources/engine-exclusion.node" || true
+          code='const a=require(process.argv[1]);process.stdout.write(JSON.stringify([a.version(),typeof a.processes]))'
+          for n in 1 2; do
+            start=$(date +%s)
+            ELECTRON_RUN_AS_NODE=1 /usr/bin/arch -x86_64 "$app/Contents/MacOS/Murage" -e "$code" "$app/Contents/Resources/engine-exclusion.node"; rc=$?
+            echo "attempt $n: exit $rc after $(( $(date +%s) - start )) s"
+          done
+
       - name: Qualify packaged WhatsApp (darwin-arm64)
         shell: bash
         run: |
