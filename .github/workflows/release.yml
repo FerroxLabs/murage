@@ -265,9 +265,23 @@ jobs:
           ulimit -n 262144 || ulimit -n "$(ulimit -Hn)"
           echo "after: kern.maxfiles=$(sysctl -n kern.maxfiles) kern.maxfilesperproc=$(sysctl -n kern.maxfilesperproc) ulimit=$(ulimit -n)"
           gepa_hash="$(node -e 'const fs=require("node:fs"); const m=JSON.parse(fs.readFileSync("qualification-evidence/gepa-package-metadata.json","utf8")); const h=m.extraMetadata.murageGepaManifests["darwin-arm64"]; if(!/^[a-f0-9]{64}$/.test(h))process.exit(1); process.stdout.write(h)')"
-          pnpm package:mac \
-            "--config.extraMetadata.murageGepaManifests.darwin-arm64=$gepa_hash" \
-            "--config.extraMetadata.murageGepaManifests.darwin-x64=unavailable"
+          # The x64 package check loads the addon through Rosetta; its first translation of the x64
+          # Electron on a fresh arm64 runner can outlast the check's 30 s. Translations are cached,
+          # so one retry on exactly that error passes (the load itself takes 1-3 s once cached).
+          for attempt in 1 2; do
+            set +e
+            pnpm package:mac \
+              "--config.extraMetadata.murageGepaManifests.darwin-arm64=$gepa_hash" \
+              "--config.extraMetadata.murageGepaManifests.darwin-x64=unavailable" 2>&1 | tee "$RUNNER_TEMP/package-$attempt.log"
+            rc=${PIPESTATUS[0]}
+            set -e
+            [ "$rc" = 0 ] && break
+            if [ "$attempt" = 1 ] && grep -q ENGINE_EXCLUSION_RESOURCE_UNLOADABLE "$RUNNER_TEMP/package-1.log"; then
+              echo "x64 addon load timed out on the cold Rosetta translation; packaging once more"
+              continue
+            fi
+            exit "$rc"
+          done
 
       - name: Explain an x64 engine-exclusion load failure
         if: failure()
