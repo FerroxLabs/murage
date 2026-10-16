@@ -246,6 +246,15 @@ jobs:
           mkdir -p qualification-evidence
           python3 native/gepa/build-mac.py "$RUNNER_TEMP/gepa-mac-build" "$RUNNER_TEMP/release.keychain-db"
 
+      - name: Rosetta for the x64 package checks
+        # after-pack loads the engine-exclusion addon inside each packaged app;
+        # the x64 app on this arm64 runner runs through arch -x86_64, which needs Rosetta.
+        run: |
+          set -euo pipefail
+          if ! /usr/bin/arch -x86_64 /usr/bin/true 2>/dev/null; then
+            sudo softwareupdate --install-rosetta --agree-to-license
+          fi
+          /usr/bin/arch -x86_64 /usr/bin/true && echo "Rosetta ready"
       - name: Package both architectures
         run: |
           set -euo pipefail
