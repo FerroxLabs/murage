@@ -255,6 +255,22 @@ jobs:
             sudo softwareupdate --install-rosetta --agree-to-license
           fi
           /usr/bin/arch -x86_64 /usr/bin/true && echo "Rosetta ready"
+      - name: Make the engine-exclusion load check print why it fails
+        # Logging only: the check still refuses exactly as before; it now prints the child's
+        # exit, signal, stderr and stdout, so a refusal names its cause.
+        run: |
+          set -euo pipefail
+          python3 - <<'EOF'
+          p = "scripts/engine-exclusion-resource.mjs"
+          s = open(p).read()
+          a = 'try { out = run(command, args, { ELECTRON_RUN_AS_NODE: "1" }); } catch { throw new Error("ENGINE_EXCLUSION_RESOURCE_UNLOADABLE"); }'
+          b = 'try { answer = JSON.parse(String(out)); } catch { throw new Error("ENGINE_EXCLUSION_RESOURCE_UNLOADABLE"); }'
+          assert s.count(a) == 1 and s.count(b) == 1
+          s = s.replace(a, 'try { out = run(command, args, { ELECTRON_RUN_AS_NODE: "1" }); } catch (e) { console.error("engine-exclusion load failed:", JSON.stringify({ command, args, status: e?.status, signal: e?.signal, code: e?.code, stderr: String(e?.stderr ?? "").slice(0, 4000), stdout: String(e?.stdout ?? "").slice(0, 2000), message: String(e?.message ?? "").slice(0, 2000) })); throw new Error("ENGINE_EXCLUSION_RESOURCE_UNLOADABLE"); }')
+          s = s.replace(b, 'try { answer = JSON.parse(String(out)); } catch { console.error("engine-exclusion answer unreadable:", JSON.stringify(String(out).slice(0, 4000))); throw new Error("ENGINE_EXCLUSION_RESOURCE_UNLOADABLE"); }')
+          open(p, "w").write(s)
+          EOF
+          grep -c "engine-exclusion load failed" scripts/engine-exclusion-resource.mjs
       - name: Package both architectures
         run: |
           set -euo pipefail
