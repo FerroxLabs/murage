@@ -503,8 +503,11 @@ const playPermissionTool = async (): Promise<void> => {
 const playCustomTool = async (name: string, prompt: JsonValue): Promise<void> => {
   const configPath = argAfter("--mcp-config");
   let server: { command: string; args?: string[]; env?: Record<string, string> } | undefined;
+  // A real CLI reads its MCP config once at start; a warm process keeps serving
+  // after the driver removes the temp file, so prefer the copy read at startup.
   try {
-    server = configPath ? (JSON.parse(readFileSync(configPath, "utf8")) as { mcpServers?: Record<string, typeof server> }).mcpServers?.[name] : undefined;
+    server = (startupMcpConfig as { mcpServers?: Record<string, typeof server> } | null)?.mcpServers?.[name]
+      ?? (configPath ? (JSON.parse(readFileSync(configPath, "utf8")) as { mcpServers?: Record<string, typeof server> }).mcpServers?.[name] : undefined);
   } catch {
     server = undefined;
   }

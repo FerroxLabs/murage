@@ -538,7 +538,8 @@ export async function askBotRoute(bx: AskBotRouteContext): Promise<void> {
     if (!allowed.ok) return botReply(403, { error: allowed.line, code: allowed.code });
   }
   // the ask's reply, checked against what is stored now (the request it answers, or the hand-off this conversation started)
-  const releaseReply = (text: WorkerText) => releaseAskReply({ ...(outcome.copyOf ? { origin: outcome.copyOf } : {}), ...(askRequestId ? { requestId: askRequestId } : {}) },
+  // askBotAndWait started the peer's turn with this turn's not-owner audience, so the reply is judged as that audience's own (result-egress step 1)
+  const releaseReply = (text: WorkerText) => releaseAskReply({ ...(outcome.copyOf ? { origin: outcome.copyOf } : {}), ...(askRequestId ? { requestId: askRequestId } : {}), ...(internalClaim.notOwnerAudience === true ? { peerTurnNotOwner: true as const } : {}) },
     toBotId, fromThreadId, { fromBotId }, internalClaim.notOwnerAudience === true, text);
   const peerThreadId=comms.audienceTask(toBotId, threadHumanPrincipal(fromThreadId), sourceExecutionAudience(fromBotId, fromThreadId))!.threadId;
   if (outcome.status === "timeout" && !delegationWatch.has(peerThreadId)) {

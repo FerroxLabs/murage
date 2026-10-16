@@ -583,7 +583,7 @@ export const HELP_INDEX: readonly HelpEntry[] = [
     "breadcrumb": "Murage docs → Changelog → What changed in Murage 1.0.2",
     "where": "Murage docs → Changelog → What changed in Murage 1.0.2",
     "url": "https://murage.app/docs/changelog/v1-0-2#engines-in-1-0-2",
-    "text": "- Fuigo 1.0.27. Murage 1.0.2 comes with Fuigo 1.0.27 bundled."
+    "text": "- Fuigo 1.0.28. Murage 1.0.2 comes with Fuigo 1.0.28 bundled."
   },
   {
     "id": "changelog/v1-0-2#stopped-and-queued-messages-in-1-0-2",

@@ -12,17 +12,95 @@
 // starts CI and Release together, so a run that is still queued or in progress
 // is waited for (bounded); no run at all is given a short grace period to
 // appear, then refused. Cancelled, skipped, failed and timed-out all refuse.
+//
+// One narrow exception: a reviewed, approved waiver (docs/releases/ci-waiver-template.md).
+// CI_WAIVER names a waiver file; it is honoured only on a workflow_dispatch run,
+// only when the file is committed in the pinned commit, names that commit and
+// the exact CI run that failed for it, states "Critical: 0", lists the reviewed
+// failure classes and carries an approval line. Anything else stays strict.
+import { createHash } from "node:crypto";
+import { appendFileSync } from "node:fs";
 import { spawnSync } from "node:child_process";
+
+/** Newest attempt first: a re-run that went green replaces the red one. */
+function newestRun(runs, sha) {
+  const mine = (Array.isArray(runs) ? runs : []).filter(run => run?.head_sha === sha);
+  return [...mine].sort((a, b) => (Number(b.run_attempt ?? 1) - Number(a.run_attempt ?? 1)) || (Date.parse(b.created_at ?? 0) - Date.parse(a.created_at ?? 0)))[0];
+}
 
 /** What the runs for `sha` say: pass, fail, wait (still running) or none. */
 export function ciVerdict(runs, sha) {
-  const mine = (Array.isArray(runs) ? runs : []).filter(run => run?.head_sha === sha);
-  if (mine.length === 0) return { state: "none", reason: `no CI run found for ${sha}` };
-  // Newest attempt wins: a re-run that went green replaces the red one.
-  const newest = [...mine].sort((a, b) => (Number(b.run_attempt ?? 1) - Number(a.run_attempt ?? 1)) || (Date.parse(b.created_at ?? 0) - Date.parse(a.created_at ?? 0)))[0];
+  const newest = newestRun(runs, sha);
+  if (!newest) return { state: "none", reason: `no CI run found for ${sha}` };
   if (newest.status !== "completed") return { state: "wait", reason: `CI is ${newest.status ?? "not finished"} for ${sha}` };
   if (newest.conclusion === "success") return { state: "pass", reason: `CI concluded success for ${sha}` };
-  return { state: "fail", reason: `CI concluded ${newest.conclusion ?? "without a result"} for ${sha}` };
+  return { state: "fail", run: newest, reason: `CI concluded ${newest.conclusion ?? "without a result"} for ${sha}` };
+}
+
+// Who may sign a waiver. Sean approves every release exception.
+const APPROVER = /^Sean(\s+Donahoe)?$/i;
+const SAFE_PATH = /^(?!\/)(?!.*(^|\/)\.\.(\/|$))[A-Za-z0-9._/-]+$/;
+
+function single(text, pattern, label) {
+  const hits = [...text.matchAll(pattern)];
+  if (hits.length !== 1) throw new Error(hits.length ? `waiver has ${hits.length} "${label}" lines; it must have exactly one` : `waiver has no "${label}" line`);
+  return hits[0];
+}
+
+/**
+ * Reads a waiver file (format in docs/releases/ci-waiver-template.md). Every
+ * key line starts at column 0 and appears once; anything else is free prose.
+ */
+export function parseWaiver(text) {
+  const body = String(text ?? "").replace(/\r\n/g, "\n");
+  const commit = single(body, /^Commit:[ \t]*(\S*)[ \t]*$/gm, "Commit:")[1];
+  const runId = single(body, /^CI run:[ \t]*(\S*)[ \t]*$/gm, "CI run:")[1];
+  const critical = single(body, /^Critical:[ \t]*(\S*)[ \t]*$/gm, "Critical:")[1];
+  const approval = single(body, /^Approved-by:[ \t]*(.*?)[ \t]*$/gm, "Approved-by:")[1];
+  const heading = single(body, /^Reviewed failure classes:[ \t]*$/gm, "Reviewed failure classes:");
+  const classes = [];
+  for (const line of body.slice(heading.index + heading[0].length).split("\n").slice(1)) {
+    const item = /^- +(\S.*?)\s*$/.exec(line);
+    if (!item) break;
+    classes.push(item[1]);
+  }
+  const signed = /^([A-Za-z][A-Za-z .'-]*?) on (\d{4}-\d{2}-\d{2})$/.exec(approval);
+  return { commit, runId, critical, classes, approver: signed?.[1] ?? null, date: signed?.[2] ?? null, approval };
+}
+
+function realDate(value) {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(value ?? "")) return false;
+  const date = new Date(`${value}T00:00:00Z`);
+  return !Number.isNaN(date.getTime()) && date.toISOString().slice(0, 10) === value;
+}
+
+/**
+ * Whether a waiver lets a red CI through. `ok` is true only when every rule
+ * holds; the reason names the first rule that did not.
+ */
+export function waiverVerdict({ eventName, waiverPath, waiverText, sha, runs }) {
+  const refuse = reason => ({ ok: false, reason });
+  if (!waiverPath) return refuse("no waiver given; CI must pass");
+  if (eventName !== "workflow_dispatch") return refuse(`a ${eventName || "non-dispatch"} run can never waive CI`);
+  if (!SAFE_PATH.test(waiverPath)) return refuse(`waiver path ${JSON.stringify(waiverPath)} is not a plain repository path`);
+  if (waiverText == null) return refuse(`waiver ${waiverPath} is not in the dispatch commit`);
+  let waiver;
+  try { waiver = parseWaiver(waiverText); } catch (error) { return refuse(error.message); }
+  if (waiver.commit !== sha) return refuse(`waiver names commit ${waiver.commit || "(none)"}, not the pinned ${sha}`);
+  if (!/^[1-9]\d*$/.test(waiver.runId)) return refuse(`waiver CI run ${JSON.stringify(waiver.runId)} is not a run id`);
+  const verdict = ciVerdict(runs, sha);
+  if (verdict.state !== "fail") return refuse(`CI for ${sha} is not a completed failure (${verdict.reason}); nothing to waive`);
+  if (String(verdict.run.id) !== waiver.runId) return refuse(`waiver names CI run ${waiver.runId}, but the CI run that decided ${sha} is ${verdict.run.id}`);
+  if (waiver.critical !== "0") return refuse(`waiver states Critical: ${waiver.critical || "(blank)"}; only Critical: 0 can be waived`);
+  if (waiver.classes.length === 0) return refuse("waiver lists no reviewed failure classes");
+  if (!waiver.approver || !waiver.date) return refuse(`approval line ${JSON.stringify(waiver.approval)} must read "Approved-by: <name> on YYYY-MM-DD"`);
+  if (!APPROVER.test(waiver.approver)) return refuse(`waiver approved by ${waiver.approver}; only Sean can approve a CI waiver`);
+  if (!realDate(waiver.date)) return refuse(`approval date ${waiver.date} is not a real date`);
+  return {
+    ok: true,
+    reason: `CI run ${waiver.runId} for ${sha} waived by ${waiverPath} (approved by ${waiver.approver} on ${waiver.date}; ${waiver.classes.length} reviewed failure classes)`,
+    waiver: { ...waiver, path: waiverPath, run: verdict.run, sha256: createHash("sha256").update(String(waiverText)).digest("hex") },
+  };
 }
 
 function listRuns({ repository, workflow, sha }) {
@@ -31,21 +109,78 @@ function listRuns({ repository, workflow, sha }) {
   return JSON.parse(result.stdout || "[]");
 }
 
+/** The waiver as committed in `ref` (not the working tree), or null when it is not there. */
+function readCommitted(ref, file) {
+  const result = spawnSync("git", ["show", `${ref}:${file}`], { encoding: "utf8" });
+  return result.status === 0 ? result.stdout : null;
+}
+
+/** True when `sha` is `ref` or one of its ancestors. */
+function isAncestor(sha, ref) {
+  return spawnSync("git", ["merge-base", "--is-ancestor", sha, ref]).status === 0;
+}
+
+function record(lines, outputs) {
+  if (process.env.GITHUB_STEP_SUMMARY) appendFileSync(process.env.GITHUB_STEP_SUMMARY, lines.join("\n") + "\n");
+  if (process.env.GITHUB_OUTPUT) appendFileSync(process.env.GITHUB_OUTPUT, Object.entries(outputs).map(([key, value]) => `${key}=${value}`).join("\n") + "\n");
+}
+
 async function main() {
   const sha = String(process.env.SHA ?? "");
   const repository = process.env.GITHUB_REPOSITORY;
   const workflow = process.env.CI_WORKFLOW || "ci.yml";
+  const waiverPath = String(process.env.CI_WAIVER ?? "").trim();
+  const eventName = process.env.GITHUB_EVENT_NAME ?? "";
   if (!/^[0-9a-f]{40}$/.test(sha) || !repository) {
     console.error("::error::release-ci-gate needs SHA (40 hex) and GITHUB_REPOSITORY");
     process.exit(2);
+  }
+  if (waiverPath && eventName !== "workflow_dispatch") {
+    console.error(`::error::a ${eventName || "non-dispatch"} run can never waive CI; refusing`);
+    process.exit(1);
   }
   const waitMs = Number(process.env.CI_WAIT_MINUTES ?? 75) * 60_000;
   const graceMs = Number(process.env.CI_GRACE_MINUTES ?? 10) * 60_000;
   const started = Date.now();
   for (;;) {
-    const verdict = ciVerdict(listRuns({ repository, workflow, sha }), sha);
-    if (verdict.state === "pass") { console.log(`ok: ${verdict.reason}`); return; }
-    if (verdict.state === "fail") { console.error(`::error::${verdict.reason}; refusing to release a commit CI did not pass`); process.exit(1); }
+    const runs = listRuns({ repository, workflow, sha });
+    const verdict = ciVerdict(runs, sha);
+    if (verdict.state === "pass") {
+      console.log(`ok: ${verdict.reason}`);
+      record([`CI gate: ${verdict.reason}${waiverPath ? ` (waiver ${waiverPath} not needed)` : ""}`], { waived: "false" });
+      return;
+    }
+    if (verdict.state === "fail") {
+      if (!waiverPath) { console.error(`::error::${verdict.reason}; refusing to release a commit CI did not pass`); process.exit(1); }
+      // A file cannot name the commit that contains it, so the waiver is read
+      // from the commit this run was dispatched from (WAIVER_FROM, github.sha),
+      // which must descend from the pinned commit.
+      const waiverFrom = /^[0-9a-f]{40}$/.test(process.env.WAIVER_FROM ?? "") ? process.env.WAIVER_FROM : sha;
+      if (!isAncestor(sha, waiverFrom)) { console.error(`::error::${verdict.reason}; waiver refused: dispatch commit ${waiverFrom} does not descend from the pinned ${sha}`); process.exit(1); }
+      const result = waiverVerdict({ eventName, waiverPath, waiverText: readCommitted(waiverFrom, waiverPath), sha, runs });
+      if (!result.ok) { console.error(`::error::${verdict.reason}; waiver refused: ${result.reason}`); process.exit(1); }
+      const { waiver } = result;
+      console.log(`::warning::${result.reason}`);
+      record([
+        "## CI waiver used",
+        "",
+        `- Commit: \`${sha}\``,
+        `- Failing CI run: [${waiver.runId}](${waiver.run.html_url ?? ""}) (${waiver.run.conclusion})`,
+        `- Waiver file: \`${waiver.path}\` (sha256 \`${waiver.sha256}\`)`,
+        `- Critical: ${waiver.critical}`,
+        `- Approved by ${waiver.approver} on ${waiver.date}`,
+        "- Reviewed failure classes:",
+        ...waiver.classes.map(item => `  - ${item}`),
+      ], {
+        waived: "true",
+        waiver_path: waiver.path,
+        waiver_sha256: waiver.sha256,
+        waiver_run: waiver.runId,
+        waiver_run_url: String(waiver.run.html_url ?? "").replace(/[\r\n]/g, ""),
+        waiver_approval: `${waiver.approver} on ${waiver.date}`,
+      });
+      return;
+    }
     const elapsed = Date.now() - started;
     if (verdict.state === "none" && elapsed >= graceMs) { console.error(`::error::${verdict.reason} after ${Math.round(elapsed / 60000)} minutes; refusing to release an untested commit`); process.exit(1); }
     if (verdict.state === "wait" && elapsed >= waitMs) { console.error(`::error::${verdict.reason} after ${Math.round(elapsed / 60000)} minutes; refusing`); process.exit(1); }

@@ -1,0 +1,135 @@
+// Copyright 2026 Ferrox Labs
+// SPDX-License-Identifier: AGPL-3.0-or-later
+//
+// The release CI gate's one-time waiver: strict by default, and a red CI passes
+// only under a committed, approved waiver naming the pinned commit and the exact
+// CI run that failed for it, on a hand-started (workflow_dispatch) run.
+import { readFileSync } from "node:fs";
+import { dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
+import { describe, expect, it } from "vitest";
+import { parse } from "yaml";
+
+import { ciVerdict, parseWaiver, waiverVerdict } from "./release-ci-gate.mjs";
+
+const SHA = "a".repeat(40);
+const OTHER = "b".repeat(40);
+const PATH = "docs/releases/ci-waivers/1.0.2.md";
+const run = (over = {}) => ({ id: 4242, head_sha: SHA, status: "completed", conclusion: "failure", run_attempt: 1, created_at: "2026-10-16T10:00:00Z", html_url: "https://github.com/o/r/actions/runs/4242", ...over });
+const waiver = ({ commit = SHA, runId = "4242", critical = "0", classes = ["Windows shard timeout: known flake, green on re-run"], approval = "Sean Donahoe on 2026-10-16" } = {}) => [
+  "# CI waiver: Murage 1.0.2",
+  "",
+  commit === null ? "" : `Commit: ${commit}`,
+  runId === null ? "" : `CI run: ${runId}`,
+  critical === null ? "" : `Critical: ${critical}`,
+  "",
+  "Reviewed failure classes:",
+  ...classes.map(item => `- ${item}`),
+  "",
+  approval === null ? "" : `Approved-by: ${approval}`,
+  "",
+  "## Evidence",
+  "Free prose.",
+].join("\n");
+const dispatch = (over = {}) => ({ eventName: "workflow_dispatch", waiverPath: PATH, waiverText: waiver(), sha: SHA, runs: [run()], ...over });
+
+describe("strict by default", () => {
+  it("a red CI without a waiver is still a failure", () => {
+    expect(ciVerdict([run()], SHA).state).toBe("fail");
+    const result = waiverVerdict(dispatch({ waiverPath: "" }));
+    expect(result.ok).toBe(false);
+    expect(result.reason).toMatch(/no waiver/);
+  });
+  it("a green CI still passes on its own", () => {
+    expect(ciVerdict([run({ conclusion: "success" })], SHA).state).toBe("pass");
+  });
+});
+
+describe("a valid waiver", () => {
+  it("passes a red CI and reports what it waived", () => {
+    const result = waiverVerdict(dispatch());
+    expect(result.ok).toBe(true);
+    expect(result.waiver).toMatchObject({ commit: SHA, runId: "4242", critical: "0", approver: "Sean Donahoe", date: "2026-10-16", path: PATH });
+    expect(result.waiver.classes).toEqual(["Windows shard timeout: known flake, green on re-run"]);
+    expect(result.waiver.sha256).toMatch(/^[0-9a-f]{64}$/);
+    expect(result.reason).toContain(PATH);
+  });
+  it("names the newest attempt when CI was re-run and failed again", () => {
+    const runs = [run({ id: 1, run_attempt: 1 }), run({ id: 4242, run_attempt: 2 })];
+    expect(waiverVerdict(dispatch({ runs })).ok).toBe(true);
+  });
+});
+
+describe("a waiver is refused", () => {
+  const refused = (over, pattern) => {
+    const result = waiverVerdict(dispatch(over));
+    expect(result.ok).toBe(false);
+    expect(result.reason).toMatch(pattern);
+  };
+  it("for another commit", () => refused({ waiverText: waiver({ commit: OTHER }) }, /not the pinned/));
+  it("for another CI run", () => refused({ waiverText: waiver({ runId: "999" }) }, /decided/));
+  it("for a run that belongs to another commit", () => refused({ runs: [run(), run({ id: 999, head_sha: OTHER })], waiverText: waiver({ runId: "999" }) }, /decided/));
+  it("for an older attempt than the one that decided the commit", () => refused({ runs: [run({ id: 4242, run_attempt: 1 }), run({ id: 5000, run_attempt: 2 })] }, /decided/));
+  it("when CI did not fail (still running, or none)", () => {
+    refused({ runs: [run({ status: "in_progress", conclusion: null })] }, /not a completed failure/);
+    refused({ runs: [] }, /not a completed failure/);
+  });
+  it("without an approval line", () => refused({ waiverText: waiver({ approval: null }) }, /no "Approved-by:"/));
+  it("with an approval missing its date", () => refused({ waiverText: waiver({ approval: "Sean Donahoe" }) }, /must read/));
+  it("approved by anyone but Sean", () => refused({ waiverText: waiver({ approval: "Mallory on 2026-10-16" }) }, /only Sean/));
+  it("with an impossible approval date", () => refused({ waiverText: waiver({ approval: "Sean on 2026-02-30" }) }, /not a real date/));
+  it("on a push event", () => refused({ eventName: "push" }, /push run can never waive/));
+  it("on any other non-dispatch event", () => refused({ eventName: "" }, /never waive/));
+  it("when the file is not in the dispatch commit", () => refused({ waiverText: null }, /not in the dispatch commit/));
+  it("unless Critical is 0", () => {
+    refused({ waiverText: waiver({ critical: "1" }) }, /only Critical: 0/);
+    refused({ waiverText: waiver({ critical: null }) }, /no "Critical:"/);
+  });
+  it("with two Critical lines", () => refused({ waiverText: `${waiver()}\nCritical: 2\n` }, /exactly one/));
+  it("without reviewed failure classes", () => refused({ waiverText: waiver({ classes: [] }) }, /no reviewed failure classes/));
+  it("for a path outside the repository", () => {
+    refused({ waiverPath: "../secrets.md" }, /plain repository path/);
+    refused({ waiverPath: "/etc/passwd" }, /plain repository path/);
+    refused({ waiverPath: "docs/$(id).md" }, /plain repository path/);
+  });
+});
+
+describe("the waiver template", () => {
+  const template = readFileSync(join(dirname(fileURLToPath(import.meta.url)), "..", "docs", "releases", "ci-waiver-template.md"), "utf8");
+  it("parses with the same reader, and is refused until filled in", () => {
+    const parsed = parseWaiver(template);
+    expect(parsed.critical).toBe("0");
+    expect(parsed.classes.length).toBe(1);
+    expect(waiverVerdict(dispatch({ waiverText: template })).ok).toBe(false);
+  });
+});
+
+describe("release.yml wiring", () => {
+  const release = parse(readFileSync(join(dirname(fileURLToPath(import.meta.url)), "..", ".github", "workflows", "release.yml"), "utf8"));
+  const on = release.on ?? release[true];
+  it("ci_waiver is an optional dispatch input only", () => {
+    expect(on.workflow_dispatch.inputs.ci_waiver).toMatchObject({ required: false, type: "string" });
+    expect(on.push.inputs).toBeUndefined();
+  });
+  it("the gate receives the waiver only on workflow_dispatch and exposes its outputs", () => {
+    const step = release.jobs["ci-gate"].steps.find(s => s.id === "gate");
+    expect(step.env.CI_WAIVER).toBe("${{ github.event_name == 'workflow_dispatch' && inputs.ci_waiver || '' }}");
+    expect(Object.keys(release.jobs["ci-gate"].outputs)).toEqual(expect.arrayContaining(["waived", "waiver_path", "waiver_run", "waiver_approval"]));
+  });
+  it("assemble writes the waiver into the draft notes before uploading", () => {
+    const steps = release.jobs.assemble.steps;
+    const record = steps.findIndex(s => s.if === "needs.ci-gate.outputs.waived == 'true'");
+    expect(record).toBeGreaterThan(-1);
+    expect(steps[record].run).toContain("release-notes.md");
+    expect(record).toBeLessThan(steps.findIndex(s => s.id === "upload"));
+  });
+  it("the Windows job fetches verified Node headers before packaging", () => {
+    const steps = release.jobs.windows.steps;
+    const headers = steps.findIndex(s => s.name === "Node headers for the engine-exclusion addon");
+    expect(headers).toBeGreaterThan(steps.findIndex(s => s.run === "pnpm install --frozen-lockfile"));
+    expect(headers).toBeLessThan(steps.findIndex(s => String(s.name ?? "").startsWith("Package")));
+    expect(steps[headers].run).toContain("SHASUMS256.txt");
+    expect(steps[headers].run).toContain("sha256sum -c");
+    expect(steps[headers].run).toContain("NODE_HEADERS_DIR=");
+  });
+});

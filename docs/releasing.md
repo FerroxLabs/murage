@@ -131,6 +131,22 @@ for (up to 75 minutes); no run at all is refused after a ten minute grace; a
 failed, cancelled or skipped one is refused straight away. Re-run CI on the
 commit (Actions, Re-run all jobs) and re-run the release to continue.
 
+### One-time CI waiver
+
+When a CI failure has been reviewed and judged not to block a release, Sean
+can approve a one-time waiver instead. Copy
+`docs/releases/ci-waiver-template.md` to `docs/releases/ci-waivers/<version>.md`,
+fill it in and commit it on a branch on top of the commit being released (a file
+cannot name the commit that holds it), then run **Release** by hand from that
+branch with `ref` set to the commit being released and `ci_waiver` set to that
+path. The gate passes a red CI only when the run was started by hand (a
+push-started release can never waive), the file is in the dispatch commit, that
+commit descends from the pinned one, the file names the pinned commit and the exact failing CI run for it (the
+gate checks the run against GitHub), states `Critical: 0`, lists the reviewed
+failure classes, and carries `Approved-by: Sean Donahoe on YYYY-MM-DD`. The
+waiver is printed in the ci-gate job summary and recorded in the draft release
+notes. Without `ci_waiver` the gate is unchanged.
+
 ## One-time setup: four secrets
 
 Set these in **Murage → Settings → Secrets and variables → Actions**.

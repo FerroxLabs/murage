@@ -56,6 +56,33 @@ describe("the one gate for a stored result", () => {
     expect(release(world(stored, { ownUnsharedWork: () => true }), { requestId: undefined })).toMatchObject({ kind: "text", text: SECRET });
   });
 
+  // 1.0.2 R1: a turn started from the phone or browser door asks a teammate. The peer's turn ran with the same not-owner audience, so its reply
+  // comes back; anything owner-only on its lines is still withheld from that reader, and nothing else about the refusal changes.
+  it("a not-owner turn's own direct ask gets its peer's reply back, and owner-only material on it stays hidden", () => {
+    const stored = { id: "m1", text: SECRET };
+    const unbound = { requestId: undefined, peerTurnNotOwner: true as const };
+    expect(release(world(stored, { ownUnsharedWork: () => true }), unbound, true)).toMatchObject({ kind: "text", text: SECRET });
+    // the flag alone proves nothing about whose work it is
+    expect(release(world(stored), unbound, true)).toMatchObject({ kind: "refused", code: "origin_unconfirmed" });
+    expect(release(world(stored, { ownUnsharedWork: () => true }), { ...unbound, binding: "mismatch" }, true).kind).toBe("refused");
+    expect(release(world(stored, { ownUnsharedWork: () => true }), { ...unbound, recordedNotOwner: true }, true).kind).toBe("refused");
+    // owner-only material is judged for the not-owner reader: memory, write-time lines, a captured or forgotten source
+    const audiences: boolean[] = [];
+    for (const over of [
+      { messageMadeWithMemory: () => true },
+      { linesShown: (_thread: string, _ids: readonly string[], notOwner: boolean) => { audiences.push(notOwner); return !notOwner; } },
+      { capturedMessageWithheld: () => true },
+      { messageSourceForgotten: () => true },
+    ] satisfies Array<Partial<ResultEgressDeps>>) {
+      const released = release(world(stored, { ownUnsharedWork: () => true, ...over }), unbound, true);
+      expect(released).toEqual({ kind: "withheld", line: "[withheld]" });
+      expect(JSON.stringify(released)).not.toContain("41");
+    }
+    expect(audiences).toEqual([true]);
+    // the same memory-made reply still reaches the owner's own reader
+    expect(release(world(stored, { ownUnsharedWork: () => true, messageMadeWithMemory: () => true }), { requestId: undefined })).toMatchObject({ kind: "text", text: SECRET });
+  });
+
   it.each([
     ["a source forgotten after the request settled", { messageSourceForgotten: () => true }],
     ["a captured message", { capturedMessageWithheld: () => true }],

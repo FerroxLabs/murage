@@ -237,4 +237,39 @@ describe("every registered owner-only surface", () => {
     expect(calls).toEqual(["humanIsOwner", "humanIsOwner", "turnAudienceIsOwner(threadId)"]);
     expect(source).toMatch(/const humanIsOwner=turnAudienceIsOwner\(threadId\);/);
   });
+
+  // 1.0.2 R1 review (Astra H): an ask or delegation started for a not-owner turn carries that bit itself, and it decides every owner-only
+  // surface of the turn it starts (About me and the notebook, the session it resumes), whatever the per-thread record reads. And a start that
+  // is refused because the thread is already working never records its audience over the running turn's.
+  it("an explicit not-owner start decides its owner-only surfaces, and a refused start leaves the running turn's audience alone", () => {
+    const source = readFileSync(join(ROOT, "server", "index.ts"), "utf8");
+    const start = source.indexOf("async function startTurnAdmitting(");
+    expect(start).toBeGreaterThan(-1);
+    // the function up to admission: every write and refusal checked below must sit before the run is admitted
+    const admit = source.indexOf("directRuns.admit(", start);
+    expect(admit).toBeGreaterThan(start);
+    const body = source.slice(start, admit);
+    const whole = source.slice(start, source.indexOf("\nasync function ", start + 10) > 0 ? source.indexOf("\nasync function ", start + 10) : undefined);
+    const surfaces = /const surfacesForOwner=([\s\S]*?);\n/.exec(body)?.[1] ?? "";
+    expect(surfaces).toMatch(/&&opts\?\.notOwnerAudience!==true/);
+    // About me and the notebook read that same value
+    expect(whole).toMatch(/standingContextParts\(bot, \{[^}]*ownerAudience: surfacesForOwner/);
+    // the session a turn resumes is keyed on the explicit bit too
+    expect(whole).toMatch(/turnSessionAudience\([\s\S]{0,200}opts\?\.notOwnerAudience === true/);
+    // the per-thread record is written once, after the busy and thread-limit refusals
+    const writes = [...body.matchAll(/ownerSurfacesByThread\.set\(threadId,surfacesForOwner\)/g)].map(match => match.index!);
+    expect(writes).toHaveLength(1);
+    const busy = body.indexOf("this thread or its group is already working");
+    const limit = body.indexOf("this bot is already working on three threads");
+    expect(busy).toBeGreaterThan(-1);
+    expect(limit).toBeGreaterThan(-1);
+    expect(writes[0]).toBeGreaterThan(busy);
+    expect(writes[0]).toBeGreaterThan(limit);
+    // and nothing from the busy refusal through admission can wait (an await would let another start in between)
+    expect(body.slice(busy)).not.toMatch(/\bawait\b/);
+    // with that value false the standing context carries no About me
+    saveAboutMe("ABOUT_ME_CANARY I run a candle shop");
+    const bot = { id: "b1", name: "B" } as Parameters<typeof standingContextParts>[0];
+    expect(JSON.stringify(standingContextParts(bot, { ownerAudience: false, fileTools: false }))).not.toContain("ABOUT_ME_CANARY");
+  });
 });

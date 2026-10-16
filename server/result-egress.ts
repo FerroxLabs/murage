@@ -8,7 +8,8 @@
 // else for worker words (server/bot-egress.ts, server/murage-status.ts). The order is fixed:
 //   1. delivery authorization for the request the result was written for (sharing revoked since: the reason, no text). A result with no
 //      request, or whose request is not this asker's own hand-off, is read only when both sides are positively the owner's own unshared
-//      conversations; anything unresolved fails closed.
+//      conversations and the reader is the owner, or the reader is not the owner and the reply comes from the peer turn its own ask started
+//      with that same not-owner audience; anything unresolved fails closed.
 //   2. every message the result stands on is read now, and so is every message those were copied from, all the way back (a breadth-first walk
 //      of the copy links, at most 8 deep and 64 messages, each once): one gone means the result is gone (a receipt's cached words never outlive
 //      their original); a cycle, a walk past its limits, or an error means withheld.
@@ -75,6 +76,11 @@ export interface StoredResultRef {
   binding?: "mismatch";
   /** A receipt records who the result was made for; set (true or false) only for receipts. */
   recordedNotOwner?: boolean;
+  /** The result was written by the peer turn a direct ask just started for this same not-owner reader, and that turn ran with the reader's
+   * not-owner audience (no owner memory, About me, integrations or computers). Only the ask route sets it, and only when it started the turn
+   * that way. With it, a not-owner reader is no reason on its own to refuse an unbound reply: the reply must still be the owner's own
+   * unshared work, and every message-level rule below still judges it for a not-owner audience. */
+  peerTurnNotOwner?: true;
   /** A receipt written before results carried their lineage: its text cannot be checked, so it is withheld. */
   lineageUnknown?: boolean;
   /** The record is Murage's own account of how a request ended (a stop, a refusal, a failure to start), not a worker's words. It references no
@@ -171,7 +177,7 @@ export function releaseStoredResult(
   if (ref.requestId && ref.binding !== "mismatch") {
     const verdict = deps.authorize(ref.requestId, worker, destinationThreadId);
     if (!verdict.ok) return { kind: "refused", line: hostLine(verdict.line), code: verdict.code };
-  } else if (ref.binding === "mismatch" || notOwnerAudience || ref.recordedNotOwner === true
+  } else if (ref.binding === "mismatch" || (notOwnerAudience && ref.peerTurnNotOwner !== true) || ref.recordedNotOwner === true
     || !deps.ownUnsharedWork({ fromBotId: authority.fromBotId, toBotId: worker, fromThreadId: destinationThreadId }, stored?.copyOf ?? origin)) {
     return { kind: "refused", line: status("origin_unconfirmed"), code: "origin_unconfirmed" };
   }

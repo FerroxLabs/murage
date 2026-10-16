@@ -8444,8 +8444,9 @@ async function startTurnAdmitting(
   // answer goes back to it (the chain rule, carried per thread below).
   const surfacesForOwner=turnAudienceIsOwner(threadId,{origin:opts?.origin,rootThreadId:opts?.chainRootThreadId})
     &&!opts?.chainNotOwner
-    &&(!opts?.chainRootThreadId||ownerSurfacesByThread.get(opts.chainRootThreadId)!==false);
-  ownerSurfacesByThread.set(threadId,surfacesForOwner);
+    &&(!opts?.chainRootThreadId||ownerSurfacesByThread.get(opts.chainRootThreadId)!==false)
+    // An ask or delegation started for a not-owner turn says so itself: that bit decides, whatever the per-thread record reads now.
+    &&opts?.notOwnerAudience!==true;
   // Words nobody proved are the owner's (or a chain such words started, an
   // ask or a delegation) in the owner's own thread: memory, quoted replies
   // and owed copies read it as a non-owner audience (0.1.61). A
@@ -8482,6 +8483,9 @@ async function startTurnAdmitting(
   // automation (independent-thread-runs.ts).
   const ownerFirst = isOwnerOrigin(opts?.origin) && !opts?.automationSource && !opts?.commsDepth && !opts?.cardContinuation && !opts?.unattended && !opts?.waitForThreadSlot;
   if(!opts?.waitForThreadSlot&&!ownerFirst&&directRuns.forBot(botId).length>=MAX_CONCURRENT_BOT_THREADS)throw Object.assign(new Error("this bot is already working on three threads"),{status:409,code:"thread_limit"});
+  // Recorded only once this start is past the busy and thread-limit checks (all in this same tick, before admission): a start refused there
+  // never overwrites the audience of the turn already running on the thread.
+  ownerSurfacesByThread.set(threadId,surfacesForOwner);
   // a webhook turn, or one inherited from a bot already running unattended
   if (opts?.automationSource === "webhook" || opts?.automationSource === "channel" || opts?.unattended) markUnattended(threadId);
   // a person typing into this bot ends the unattended window immediately
@@ -8750,7 +8754,7 @@ async function startTurnAdmitting(
   // made under another audience is never resumed; this turn starts a new
   // session and gets the same replay a fresh engine gets.
   const sessionAudience = partitionSessionAudience(turnSessionAudience(threadId, { origin: opts?.origin, rootThreadId: opts?.chainRootThreadId },
-    Boolean(opts?.chainNotOwner) || (opts?.chainRootThreadId !== undefined && ownerSurfacesByThread.get(opts.chainRootThreadId) === false)), bot, threadId, selectFileWorkspace(DATA_DIR, store, bot.id, threadId, true)?.root);
+    Boolean(opts?.chainNotOwner) || opts?.notOwnerAudience === true || (opts?.chainRootThreadId !== undefined && ownerSurfacesByThread.get(opts.chainRootThreadId) === false)), bot, threadId, selectFileWorkspace(DATA_DIR, store, bot.id, threadId, true)?.root);
   const audienceMoved = sessionAudienceChanged(task.resumeAudiences?.[instanceId], task.resumeCursors[instanceId] !== undefined, sessionAudience);
   // A cursor made under an older session contract (Claude: before the current isolation, whose
   // recorded prompt --resume would restore) is never resumed: a fresh session, with the replay a

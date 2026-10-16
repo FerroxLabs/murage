@@ -37,6 +37,11 @@ on:
         required: false
         type: boolean
         default: false
+      ci_waiver:
+        description: "Optional: path of a committed, approved CI waiver (docs/releases/ci-waiver-template.md). Empty = CI must pass"
+        required: false
+        type: string
+        default: ""
   # Merging a version bump to main IS the release trigger. `publish` is a
   # workflow_dispatch input only, so a push-started run leaves a DRAFT — a
   # human still publishes it. The should_release guard below is what keeps
@@ -132,16 +137,36 @@ jobs:
     permissions:
       contents: read
       actions: read
+    # Set only when an approved waiver let a red CI through; assemble writes
+    # them into the draft notes so the release records the exception.
+    outputs:
+      waived: ${{ steps.gate.outputs.waived }}
+      waiver_path: ${{ steps.gate.outputs.waiver_path }}
+      waiver_sha256: ${{ steps.gate.outputs.waiver_sha256 }}
+      waiver_run: ${{ steps.gate.outputs.waiver_run }}
+      waiver_run_url: ${{ steps.gate.outputs.waiver_run_url }}
+      waiver_approval: ${{ steps.gate.outputs.waiver_approval }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: ${{ needs.prepare.outputs.sha }}
           persist-credentials: false
+          # Full history: a waiver is read from the dispatch commit, which
+          # must descend from the pinned one.
+          fetch-depth: 0
       - name: Require that CI passed on the pinned commit
+        id: gate
         env:
           GH_TOKEN: ${{ github.token }}
           SHA: ${{ needs.prepare.outputs.sha }}
           CI_WORKFLOW: ci.yml
+          # A waiver is a workflow_dispatch input only; a push-started run
+          # never carries one (and the script refuses one on any other event).
+          # It is read from the dispatch commit (a descendant of the pinned
+          # one) and names the failing CI run for the pinned commit; see
+          # docs/releasing.md "One-time CI waiver".
+          WAIVER_FROM: ${{ github.sha }}
+          CI_WAIVER: ${{ github.event_name == 'workflow_dispatch' && inputs.ci_waiver || '' }}
         run: node scripts/release-ci-gate.mjs
 
   abort-on-ci-failure:
@@ -530,6 +555,18 @@ jobs:
       - name: Check the shipped Murage release key
         run: node scripts/check-release-key.mjs
       - run: pnpm install --frozen-lockfile
+      - name: Node headers for the engine-exclusion addon
+        # The hosted Windows Node has no include/node folder; scripts/build-engine-exclusion.mjs (run by package:win) needs
+        # node_api.h. Fetch the headers of the running Node and check them against the published SHASUMS256.txt.
+        # Mirrors package-win.yml and ci.yml; the macOS and Ubuntu runners' Node already ships include/node.
+        shell: bash
+        run: |
+          v=$(node -p process.version)
+          dir="$(cygpath -u "$RUNNER_TEMP")/node-headers"; mkdir -p "$dir"
+          curl -fsSL "https://nodejs.org/dist/$v/node-$v-headers.tar.gz" -o "$dir/h.tgz"
+          curl -fsSL "https://nodejs.org/dist/$v/SHASUMS256.txt" -o "$dir/sums"
+          (cd "$dir" && want=$(grep " node-$v-headers.tar.gz\$" sums | cut -d' ' -f1) && echo "$want  h.tgz" | sha256sum -c - && tar xzf h.tgz)
+          echo "NODE_HEADERS_DIR=$(cygpath -w "$dir/node-$v/include/node")" >> "$GITHUB_ENV"
       # Murage for Chrome: the store item ID and public key (plan 2.3). The
       # committed placeholder fails here, so a release cannot ship without it.
       - name: Murage for Chrome release identity
@@ -1092,6 +1129,30 @@ jobs:
             printf 'Built by the release workflow from %s@%s.\n' "$GITHUB_REPOSITORY" "$SHA" > "$notes"
             echo "::warning::could not generate notes from pull requests; using the commit reference"
           fi
+      - name: Record an approved CI waiver in the draft notes
+        # Only when ci-gate let a red CI through under a committed waiver: the
+        # release itself says which run failed, which file waived it and who
+        # approved it.
+        if: needs.ci-gate.outputs.waived == 'true'
+        env:
+          SHA: ${{ needs.prepare.outputs.sha }}
+          WAIVER_PATH: ${{ needs.ci-gate.outputs.waiver_path }}
+          WAIVER_SHA256: ${{ needs.ci-gate.outputs.waiver_sha256 }}
+          WAIVER_RUN: ${{ needs.ci-gate.outputs.waiver_run }}
+          WAIVER_RUN_URL: ${{ needs.ci-gate.outputs.waiver_run_url }}
+          WAIVER_APPROVAL: ${{ needs.ci-gate.outputs.waiver_approval }}
+        run: |
+          set -euo pipefail
+          notes="$RUNNER_TEMP/release-notes.md"
+          {
+            printf '\n## CI review record\n\n'
+            printf 'Built from %s@%s. CI run %s (%s) was reviewed and released under the approved waiver `%s` (sha256 `%s`), approved by %s.\n' \
+              "$GITHUB_REPOSITORY" "$SHA" "$WAIVER_RUN" "$WAIVER_RUN_URL" "$WAIVER_PATH" "$WAIVER_SHA256" "$WAIVER_APPROVAL"
+          } >> "$notes"
+          {
+            echo "## CI waiver recorded in the draft notes"
+            echo "- \`$WAIVER_PATH\` for CI run $WAIVER_RUN, approved by $WAIVER_APPROVAL"
+          } >> "$GITHUB_STEP_SUMMARY"
       - name: Create or update the draft with the complete asset set
         id: upload
         env:
