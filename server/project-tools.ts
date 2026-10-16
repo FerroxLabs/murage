@@ -8,6 +8,7 @@ import { partitionSourcesAllowed } from "./partition-sources.ts";
 // request: the request must be running, the project open and not paused, and
 // the caller's role is read from current state (the lead is
 // project_settings.lead_bot_id now, not at turn start).
+import { scopedTx } from "./tx-scope.ts";
 import { createHash } from "node:crypto";
 import { z } from "zod";
 import type { DatabaseSync } from "node:sqlite";
@@ -292,16 +293,18 @@ function projectToolBriefUpdateImpl(db: DatabaseSync, ctx: ProjectToolContext, b
 
 function projectToolTransaction(db: DatabaseSync, ctx: ProjectToolContext, body: Record<string, unknown>, apply: (db: DatabaseSync, ctx: ProjectToolContext, body: Record<string, unknown>) => ProjectToolResult): ProjectToolResult {
   if (!ctx.ownerAudience) return AUDIENCE_REFUSAL;
-  db.exec("SAVEPOINT project_tool");
-  try {
-    const result = apply(db, ctx, body);
-    if (result.status !== 200) db.exec("ROLLBACK TO project_tool");
-    db.exec("RELEASE project_tool");
-    return result;
-  } catch (error) {
-    db.exec("ROLLBACK TO project_tool; RELEASE project_tool");
-    throw error;
-  }
+  return scopedTx(() => {
+    db.exec("SAVEPOINT project_tool");
+    try {
+      const result = apply(db, ctx, body);
+      if (result.status !== 200) db.exec("ROLLBACK TO project_tool");
+      db.exec("RELEASE project_tool");
+      return result;
+    } catch (error) {
+      db.exec("ROLLBACK TO project_tool; RELEASE project_tool");
+      throw error;
+    }
+  }, (result) => result.status !== 200);
 }
 
 export function projectToolAccept(db: DatabaseSync, ctx: ProjectToolContext, body: Record<string, unknown>): ProjectToolResult {

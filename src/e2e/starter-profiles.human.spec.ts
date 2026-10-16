@@ -18,7 +18,7 @@ test.beforeAll(async () => {
       name: "starter-profiles-fixture",
       resolveId(id) { if (id === "/__starters.js") return "\0starter-profiles"; if (id === "/starter-fixture-store") return "\0starter-store"; },
       load(id) {
-        if (id === "\0starter-store") return "import {useSyncExternalStore} from 'react';let state={instances:[]};const listeners=new Set();export async function api(path,init){const r=await fetch(path,init);const data=await r.json();if(!r.ok)throw Object.assign(new Error(data.error),{status:r.status});return data;}function dispatch(action){(window.fixtureActions??=[]).push(action);if(action.type==='instances'){state={...state,instances:action.instances};listeners.forEach(fn=>fn())}}export function useStore(){return {state:useSyncExternalStore(fn=>{listeners.add(fn);return ()=>listeners.delete(fn)},()=>state),dispatch}}";
+        if (id === "\0starter-store") return "import {useSyncExternalStore} from 'react';import {asAnswer} from '/src/state/answer-tag.ts';let state={instances:[]};const listeners=new Set();export async function api(path,init){const r=await fetch(path,init);const data=await r.json();if(!r.ok)throw Object.assign(new Error(data.error),{status:r.status});return asAnswer(data);}function dispatch(action){(window.fixtureActions??=[]).push(action);if(action.type==='instances'){state={...state,instances:action.instances};listeners.forEach(fn=>fn())}}export function useStore(){return {state:useSyncExternalStore(fn=>{listeners.add(fn);return ()=>listeners.delete(fn)},()=>state),dispatch}}";
         if (id !== "\0starter-profiles") return;
         return "import React from 'react';import {createRoot} from 'react-dom/client';import {StarterProfiles} from '/src/components/StarterProfiles.tsx';import '/src/styles.css';document.documentElement.dataset.skin=new URLSearchParams(location.search).get('skin')||'dark';window.fixtureActions=[];createRoot(document.getElementById('root')).render(React.createElement(StarterProfiles));";
       },
@@ -92,7 +92,7 @@ test("three starters require selection and fresh review, import inert records, t
   await page.getByRole("button", { name: "Import starter profile" }).click();
   await expect(page.getByRole("status")).toContainText("No task has been sent");
   const actions = await page.evaluate(() => (window as any).fixtureActions);
-  expect(actions).toEqual([{ type: "botAdded", bot: importedBot }]);
+  expect(actions).toEqual([{ type: "botAdded", source: "http", sentAt: expect.any(Number), expired: false, bot: importedBot }]);
   expect(await page.evaluate(id => JSON.parse(localStorage.getItem("murage-drafts") ?? "{}")[id], draftId)).toBeUndefined();
   await page.getByRole("button", { name: "Open first task" }).click();
   const opened = await page.evaluate(id => ({ text: JSON.parse(localStorage.getItem("murage-drafts") ?? "{}")[id], actions: (window as any).fixtureActions }), draftId);

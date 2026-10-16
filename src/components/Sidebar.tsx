@@ -8,10 +8,11 @@ import { track } from "@/lib/analytics";
 import { prepareArchiveFlight } from "@/lib/archive-flight";
 import { errorPreview } from "@/lib/error-preview";
 import { hostStoppedLabel } from "@/lib/host-stop";
+import { sendNoticeLabel } from "@/lib/send-notice";
 import { folderTrustLabel } from "@/lib/folder-trust";
 import { plainText } from "@/lib/plain-text";
 import { useAnchoredMenu, type MenuAnchor } from "@/lib/menu-placement";
-import { useEffect, useLayoutEffect, useRef, useState, useSyncExternalStore } from "react";
+import { memo, useCallback, useEffect, useLayoutEffect, useRef, useState, useSyncExternalStore } from "react";
 import { createPortal } from "react-dom";
 import { closedDrawerInert, focusLeavesClosedDrawer } from "@/lib/drawer-close";
 import { useMediaQuery, useNarrowViewport } from "@/lib/media-query";
@@ -60,7 +61,10 @@ import {
 import { SectionContextDialog } from "./SectionContextDialog";
 import { sidebarBotRowTone, sidebarGroupRowTone } from "@/lib/sidebar-row-tone";
 import { SIDEBAR_BOT_DRAG_TYPE, moveSidebarBot, planSidebarBotDrop, sidebarBotDraggable } from "@/lib/sidebar-bot-drop";
-import { api, useStore, visibleMessages, type AppSettingsSection, type Bot, type Group } from "@/state/store";
+import { api, useStore, useStoreActions, type AppSettingsSection, type AppState, type Bot, type Group, type DeleteOutcome } from "@/state/store";
+import { fromAnswer } from "@/state/answer-tag";
+import { newDeleteAttempt } from "@/state/page-intent";
+import type { SidebarLine } from "../../shared/sidebar-line";
 import { CHANNEL_PROJECT_GOAL_MAX } from "../../shared/project";
 import { formatRelativeListTime, formatTaskMoment } from "@/lib/task-list";
 import { useRelativeNow } from "@/lib/relative-now";
@@ -72,17 +76,15 @@ import { useUpdaterState } from "@/lib/updater";
 import { cn } from "@/lib/cn";
 import { skillRecorderEnabled } from "@/lib/feature-flags";
 import { nextRename } from "@/lib/rename";
-import { TeamExportDialog } from "./TeamExportDialog";
 import { useDesktopCapabilities } from "./DesktopCapabilities";
 import { MIN_QUERY, SearchResults } from "./SearchResults";
 import {
-  TeamLibraryPanel,
   archivedRestorePatch,
   teamImportSkillSummary,
   type ArchivedTeamBot,
   type TeamImportResult,
   type TeamImportSkillError,
-} from "./TeamLibraryPanel";
+} from "@/lib/team-import-result";
 import { RenameTitle } from "./RenameTitle";
 import { RoleIcon } from "./RoleBadge";
 import { botRole, botRolePatch, BOT_ROLE_BADGE, BOT_ROLE_TITLE } from "@/lib/bot-role";
@@ -146,6 +148,11 @@ import { openFirstRun } from "@/lib/first-run";
 import { SidebarNeedsYou } from "./SidebarNeedsYou";
 // The shortcut list loads when someone asks for it, not with the first paint.
 const ShortcutsDialog = retryableLazy(() => import("./KeyboardShortcutsDialog").then((module) => ({ default: module.KeyboardShortcutsDialog })));
+// Opened from a menu, never on the first paint: each loads on first use.
+const TeamExportDialog = retryableLazy(() => import("./TeamExportDialog").then((module) => ({ default: module.TeamExportDialog })));
+const NewFromTemplateDialog = retryableLazy(() => import("./NewFromTemplateDialog").then((module) => ({ default: module.NewFromTemplateDialog })));
+// The team library (explore, import, scout) opens on a tap: its chunk loads then.
+const TeamLibraryPanel = retryableLazy(() => import("./TeamLibraryPanel").then((module) => ({ default: module.TeamLibraryPanel })));
 import { WhatsNewHost } from "./WhatsNewHost";
 import { AnnouncementsHost } from "./Announcements";
 import { useWhatsNew } from "@/lib/whats-new";
@@ -160,10 +167,11 @@ import { SHARING_COPY } from "@/lib/shared-teams";
 import { QuestionBadge, SnoozedMarker, SnoozePopover } from "./ConversationSnooze";
 import { useThreadAttention } from "@/lib/thread-attention";
 import { formatSnoozedUntil, questionBadgeLabel, sidebarBotAttention, sidebarGroupAttention } from "@/lib/thread-snooze";
-import { TeamSettingsHost } from "./TeamSettingsDialog";
+import { TeamSettingsHost } from "./TeamSettingsHost";
 import { openTeamSettings, renameSidebarLayout } from "@/lib/team-manage";
-import { NewFromTemplateDialog, type TemplateKind } from "./NewFromTemplateDialog";
+import type { TemplateKind } from "./NewFromTemplateDialog";
 import { NewTeamDialog } from "./NewTeamDialog";
+import { taskCount } from "@/lib/task-window";
 import { LEADERSHIP_BLOCKED_HINT, leadershipPromotionBlocked } from "@/lib/new-team";
 import { isUnseenRoutineProblem } from "../../shared/routine-problems";
 
@@ -442,17 +450,33 @@ function UpdateButton() {
   );
 }
 
+/** The one-line reading of an activity line: a host stop, a send notice, a folder trust note, a failed turn's plain sentence, else the tool. */
+function activityLineText(tool: NonNullable<SidebarLine["tool"]>): string {
+  return hostStoppedLabel(tool.name) ?? sendNoticeLabel(tool.name) ?? folderTrustLabel(tool.name) ?? errorPreview(tool) ?? tool.name;
+}
+
+/** The text of a bot's sidebar line (the visible branch head, shared/sidebar-line.ts), remembered per line object: a row asks for it on every
+ * render, and the reducer replaces the line only when it changes. */
+const tailPreviewCache = new WeakMap<SidebarLine, string>();
+
+function tailPreview(bot: Bot): string {
+  const last = bot.sidebarLine;
+  if (!last) return "";
+  const cached = tailPreviewCache.get(last);
+  if (cached !== undefined) return cached;
+  let text = "";
+  if (last.kind === "options" && last.cardTitle !== undefined) text = plainText(last.cardTitle);
+  else if (last.kind === "activity" && last.tool) text = activityLineText(last.tool);
+  else if (last.kind === "screen") text = "Screen frame";
+  else text = plainText(last.text ?? "");
+  tailPreviewCache.set(last, text);
+  return text;
+}
+
 export function sidebarBotPreview(bot: Bot): string {
   if (bot.activity === "waiting-on-you") return "Waiting for you…";
   if (bot.busy) return "Working…";
-  // the visible branch's tail — bot.messages holds every fork, so its last
-  // entry can belong to a version the user switched away from
-  const last = visibleMessages(bot).at(-1);
-  if (!last) return "";
-  if (last.kind === "options" && last.card) return plainText(last.card.title);
-  if (last.kind === "activity" && last.tool) return hostStoppedLabel(last.tool.name) ?? folderTrustLabel(last.tool.name) ?? errorPreview(last.tool) ?? last.tool.name;
-  if (last.kind === "screen") return "Screen frame";
-  return plainText(last.text ?? "");
+  return tailPreview(bot);
 }
 
 interface MenuState extends MenuAnchor {
@@ -464,10 +488,10 @@ export function sidebarGroupPreview(group: Group, bots: Bot[]): string {
     return `${bots.find((b) => b.id === group.busyBotId)?.name ?? "A bot"} is working…`;
   }
   if (group.working) return "The team is working…";
-  const last = group.messages.at(-1);
+  const last = group.sidebarLine;
   if (!last) return `${group.memberIds.length} ${group.memberIds.length === 1 ? "bot" : "bots"}`;
   const text = last.kind === "activity" && last.tool
-    ? hostStoppedLabel(last.tool.name) ?? folderTrustLabel(last.tool.name) ?? errorPreview(last.tool) ?? last.tool.name
+    ? activityLineText(last.tool)
     : last.kind === "goal.run" && last.goalRun
       ? sidebarGoalRunPreview(last.goalRun)
       : plainText(last.text ?? "");
@@ -566,7 +590,7 @@ function GroupListItem({
   const members = group.memberIds
     .map((id) => state.bots.find((b) => b.id === id))
     .filter((b): b is Bot => Boolean(b));
-  const last = group.messages.at(-1);
+  const last = group.sidebarLine;
   const RowIcon = conversationNoun(group) === "project" ? Target : Users;
   // A snoozed open conversation holds back the channel's unread; questions
   // waiting in any of its conversations get their own badge.
@@ -1397,8 +1421,14 @@ export function BotContextMenu({
   );
 }
 
-function BotListItem({
+/** One row of the bot list. Memoised: a row re-renders when its own bot, its
+ * selection or its motion change, never because another bot streamed or the
+ * store dispatched something unrelated (it reads `useStoreActions`, which does
+ * not change with the state). The callbacks arrive stable from the list. */
+export const BotListItem = memo(function BotListItem({
   bot,
+  selected,
+  mascotMotion,
   density,
   onMenu,
   onArchive,
@@ -1408,6 +1438,8 @@ function BotListItem({
   onBotDragEnd,
 }: {
   bot: Bot;
+  selected: boolean;
+  mascotMotion: AppState["mascotMotion"] | null;
   density: SidebarDensity;
   onMenu: (menu: MenuState) => void;
   onArchive: (bot: Bot) => void;
@@ -1417,11 +1449,9 @@ function BotListItem({
   onBotDragStart?: (bot: Bot, event: React.DragEvent<HTMLDivElement>) => void;
   onBotDragEnd?: () => void;
 }) {
-  const { state, dispatch } = useStore();
+  const { dispatch } = useStoreActions();
   const [renaming, setRenaming] = useState(false);
   const pressSelected = useRef(false);
-  const selected = state.activeView === "chat" && state.selectedId === bot.id;
-  const mascotMotion = selected && state.mascotMotion?.botId === bot.id ? state.mascotMotion : null;
   const iconOnly = density === "icons";
   useEffect(() => {
     if (iconOnly) setRenaming(false);
@@ -1429,9 +1459,8 @@ function BotListItem({
   // Standard and the rail: 36px, Roomy: 48px (0.1.62; was 40, 44 and 56).
   // Rows come out at 48 and 64px, so a 1440x900 window shows about 14 bots.
   const avatarSize = density === "comfortable" ? 48 : 36;
-  // the visible branch, so a version switch changes the row with the chat
-  const visible = visibleMessages(bot);
-  const last = visible.at(-1);
+  // the visible branch head's line, so a version switch changes the row with the chat
+  const last = bot.sidebarLine;
   // A snoozed conversation's unread is held back from this row until it
   // wakes; anything owed in it wakes it at once (src/lib/thread-snooze.ts).
   const now = Date.now();
@@ -1464,7 +1493,7 @@ function BotListItem({
       <span className="pointer-events-none relative z-10 shrink-0">
       <BotAvatar
         bot={bot}
-        state={stateForBot({ ...bot, messages: visible })}
+        state={stateForBot(bot)}
         size={avatarSize}
         motion={mascotMotion?.kind ?? "none"}
         motionKey={mascotMotion?.nonce ?? 0}
@@ -1641,14 +1670,14 @@ function BotListItem({
       </button>}
     </div>
   );
-}
+});
 
 /** What deleting one archived bot takes and what it leaves. Specific on
  * purpose: the count of conversations that go, and the channels that stay
  * with the bot's lines still in them. A generic "are you sure" is exactly
  * what this dialog must not be. No em dashes: this is read under stress. */
 export function archivedBotDeleteDetail(bot: Bot, groups: Group[]): string {
-  const conversations = Math.max(1, bot.tasks?.length ?? 1);
+  const conversations = Math.max(1, taskCount(bot));
   const channels = groups.filter((group) => !group.dm && group.memberIds.includes(bot.id));
   const going = `Permanently deletes ${bot.name}: ${conversations} ${conversations === 1 ? "conversation" : "conversations"} with it, plus its files, memory and any skills it was given. There is no undo and nothing to restore from.`;
   if (!channels.length) return `${going} It was in no channels, so nothing else changes.`;
@@ -1666,7 +1695,7 @@ export function botDeleteDetail(bot: Bot, groups: Group[]): string {
  * (archivedBotsDeleteItems), so this paragraph carries the totals and the
  * rule for a bot that cannot be deleted right now. */
 export function archivedBotsDeleteDetail(bots: Bot[], groups: Group[]): string {
-  const conversations = bots.reduce((sum, bot) => sum + Math.max(1, bot.tasks?.length ?? 1), 0);
+  const conversations = bots.reduce((sum, bot) => sum + Math.max(1, taskCount(bot)), 0);
   const channels = new Set(
     groups.filter((group) => !group.dm && bots.some((bot) => group.memberIds.includes(bot.id))).map((group) => group.id),
   );
@@ -1679,7 +1708,7 @@ export function archivedBotsDeleteDetail(bots: Bot[], groups: Group[]): string {
 /** One line per bot, so the person can read every name before confirming. */
 export function archivedBotsDeleteItems(bots: Bot[]): string[] {
   return bots.map((bot) => {
-    const conversations = Math.max(1, bot.tasks?.length ?? 1);
+    const conversations = Math.max(1, taskCount(bot));
     return `${bot.name}${bot.title ? ` (${bot.title})` : ""}: ${conversations} ${conversations === 1 ? "conversation" : "conversations"}`;
   });
 }
@@ -1729,7 +1758,7 @@ function ArchivedBotsPanel({
         method: "PATCH",
         body: JSON.stringify({ hidden: false }),
       });
-      dispatch({ type: "botPatched", bot: response.bot });
+      dispatch({ type: "botPatched", ...fromAnswer(response.bot), bot: response.bot });
       dispatch({ type: "select", id: bot.id });
       onRestored(`${bot.name} restored`);
       if (bots.length === 1) onClose();
@@ -1752,7 +1781,7 @@ function ArchivedBotsPanel({
           }),
         ),
       );
-      for (const response of responses) dispatch({ type: "botPatched", bot: response.bot });
+      for (const response of responses) dispatch({ type: "botPatched", ...fromAnswer(response.bot), bot: response.bot });
       const first = bots[0];
       if (first) dispatch({ type: "select", id: first.id });
       onRestored(`${bots.length} ${bots.length === 1 ? "bot" : "bots"} restored`);
@@ -1775,13 +1804,10 @@ function ArchivedBotsPanel({
     let deleted = 0;
     const refused: string[] = [];
     for (const bot of targets) {
-      try {
-        await api(`/api/bots/${bot.id}?ifArchived=1`, { method: "DELETE" });
-        dispatch({ type: "botRemoved", botId: bot.id });
-        deleted += 1;
-      } catch (cause) {
-        refused.push(`${bot.name}: ${cause instanceof Error ? cause.message : String(cause)}`);
-      }
+      // The store's Delete (pending, retried until the server answers, settled by its own attempt); the list waits for each outcome.
+      const result = await new Promise<DeleteOutcome>((resolve) => dispatch({ type: "deleteBot", source: "local", botId: bot.id, attempt: newDeleteAttempt(), archived: true, onSettled: resolve }));
+      if (result.outcome === "deleted") deleted += 1;
+      else refused.push(`${bot.name}: ${result.error ?? "Not deleted."}`);
     }
     setDeleting(false);
     if (deleted) onDeleted(`${deleted === 1 ? (targets.length === 1 ? `${targets[0]!.name} deleted` : "1 bot deleted") : `${deleted} bots deleted`}`);
@@ -1905,9 +1931,10 @@ export function archivedChannelsDeleteItems(groups: Group[]): string[] {
   return groups.map((group) => `${group.name}: ${heldMessageCount(group)}`);
 }
 
-/** "N messages" for a channel. This client holds a page of a long one
- * (upstream #1527), so the count is a floor, and says so. */
+/** "N messages" for a channel: the count the roster sent (`messagesTotal`). Without one, this client holds a page of a long channel
+ * (upstream #1527), so the held count is a floor, and says so. */
 function heldMessageCount(group: Group): string {
+  if (group.messagesTotal !== undefined) return `${group.messagesTotal} ${group.messagesTotal === 1 ? "message" : "messages"}`;
   const held = group.messages.length;
   return `${held}${group.hasMore ? "+" : ""} ${held === 1 && !group.hasMore ? "message" : "messages"}`;
 }
@@ -2290,7 +2317,7 @@ export function Sidebar({ open, onClose, onReturnFocus }: { open: boolean; onClo
           }),
         ),
       );
-      for (const response of archiveNew) dispatch({ type: "botPatched", bot: response.bot });
+      for (const response of archiveNew) dispatch({ type: "botPatched", ...fromAnswer(response.bot), bot: response.bot });
 
       // One map, one patch builder. This used to split the archive into
       // chiefs and everyone else and hand-write each body, and the chief
@@ -2307,7 +2334,7 @@ export function Sidebar({ open, onClose, onReturnFocus }: { open: boolean; onClo
           api(`/api/bots/${id}`, { method: "PATCH", body: JSON.stringify(body) }),
         ),
       );
-      for (const response of restored) dispatch({ type: "botPatched", bot: response.bot });
+      for (const response of restored) dispatch({ type: "botPatched", ...fromAnswer(response.bot), bot: response.bot });
       const first = result.archived[0];
       if (first) dispatch({ type: "select", id: first.id });
       setTeamFeedback({ error: false, text: "Previous team restored" });
@@ -2328,7 +2355,7 @@ export function Sidebar({ open, onClose, onReturnFocus }: { open: boolean; onClo
         method: "PATCH",
         body: JSON.stringify({ hidden: true }),
       });
-      dispatch({ type: "botPatched", bot: response.bot });
+      dispatch({ type: "botPatched", ...fromAnswer(response.bot), bot: response.bot });
       flight.launch();
       if (state.selectedId === bot.id) {
         const next = activeBots.find((candidate) => candidate.id !== bot.id);
@@ -2349,7 +2376,7 @@ export function Sidebar({ open, onClose, onReturnFocus }: { open: boolean; onClo
       const response = await api(`/api/bots/${bot.id}`, {
         method: "PATCH", body: JSON.stringify({ sidebarHidden: !bot.sidebarHidden }),
       });
-      dispatch({ type: "botPatched", bot: response.bot });
+      dispatch({ type: "botPatched", ...fromAnswer(response.bot), bot: response.bot });
       setTeamFeedback({ error: false, text: bot.sidebarHidden ? `${bot.name} restored to sidebar` : `${bot.name} hidden from sidebar. Its work continues.` });
     } catch (cause) {
       setTeamFeedback({ error: true, text: cause instanceof Error ? cause.message : String(cause) });
@@ -2394,7 +2421,7 @@ export function Sidebar({ open, onClose, onReturnFocus }: { open: boolean; onClo
         method: "PATCH",
         body: JSON.stringify({ hidden: false }),
       });
-      dispatch({ type: "botPatched", bot: response.bot });
+      dispatch({ type: "botPatched", ...fromAnswer(response.bot), bot: response.bot });
       dispatch({ type: "select", id: bot.id });
       setTeamFeedback({ error: false, text: `${bot.name} restored` });
     } catch (cause) {
@@ -2566,6 +2593,17 @@ export function Sidebar({ open, onClose, onReturnFocus }: { open: boolean; onClo
     setBotDropSectionId(null);
   };
 
+  // Rows are memoised (BotListItem), so the callbacks they receive must keep
+  // their identity across renders. They call through to the latest closures.
+  const rowHandlers = useRef({ archiveBot, startBotDrag, resetBotDrag, onNavigate });
+  rowHandlers.current = { archiveBot, startBotDrag, resetBotDrag, onNavigate };
+  const navigateRow = useCallback(() => rowHandlers.current.onNavigate(), []);
+  const archiveRow = useCallback((bot: Bot) => void rowHandlers.current.archiveBot(bot), []);
+  const dragStartRow = useCallback((bot: Bot, event: React.DragEvent<HTMLDivElement>) => rowHandlers.current.startBotDrag(bot, event), []);
+  const dragEndRow = useCallback(() => rowHandlers.current.resetBotDrag(), []);
+  const rowSelected = (botId: string) => state.activeView === "chat" && state.selectedId === botId;
+  const rowMotion = (botId: string) => (rowSelected(botId) && state.mascotMotion?.botId === botId ? state.mascotMotion : null);
+
   /** True when a bot drag is in progress, whether or not `id` accepts it —
    *  a bot hovering a section must never fall through to section reorder. */
   const updateBotDropTarget = (event: React.DragEvent<HTMLDivElement>, id: string) => {
@@ -2596,7 +2634,7 @@ export function Sidebar({ open, onClose, onReturnFocus }: { open: boolean; onClo
         // under a team made the whole team jump past the others. Keep the
         // order the person was looking at when they dropped.
         commitSectionOrder(sectionIds);
-        for (const moved of result.bots) dispatch({ type: "botPatched", bot: moved });
+        for (const moved of result.bots) dispatch({ type: "botPatched", ...fromAnswer(moved), bot: moved });
         setTeamFeedback({ error: false, text: result.text });
         setReorderAnnouncement(result.text);
       } else {
@@ -2883,10 +2921,12 @@ export function Sidebar({ open, onClose, onReturnFocus }: { open: boolean; onClo
             <div className="mb-1.5">
               <BotListItem
                 bot={unsectionedChief}
-                onNavigate={onNavigate}
+                selected={rowSelected(unsectionedChief.id)}
+                mascotMotion={rowMotion(unsectionedChief.id)}
+                onNavigate={navigateRow}
                 density={density}
                 onMenu={setMenu}
-                onArchive={(bot) => void archiveBot(bot)}
+                onArchive={archiveRow}
                 archiveDisabled
               />
             </div>
@@ -2975,14 +3015,16 @@ export function Sidebar({ open, onClose, onReturnFocus }: { open: boolean; onClo
                     {sectionChiefItems.map((bot) => (
                       <BotListItem
                         key={bot.id}
-                        onNavigate={onNavigate}
+                        onNavigate={navigateRow}
                         bot={bot}
+                        selected={rowSelected(bot.id)}
+                        mascotMotion={rowMotion(bot.id)}
                         density={density}
                         onMenu={setMenu}
-                        onArchive={(candidate) => void archiveBot(candidate)}
+                        onArchive={archiveRow}
                         archiveDisabled
-                        onBotDragStart={layoutInteractive ? startBotDrag : undefined}
-                        onBotDragEnd={resetBotDrag}
+                        onBotDragStart={layoutInteractive ? dragStartRow : undefined}
+                        onBotDragEnd={dragEndRow}
                       />
                     ))}
                     {sectionGroupItems.map((group) => (
@@ -2997,14 +3039,16 @@ export function Sidebar({ open, onClose, onReturnFocus }: { open: boolean; onClo
                     {sectionBotItems.map((bot) => (
                       <BotListItem
                         key={bot.id}
-                        onNavigate={onNavigate}
+                        onNavigate={navigateRow}
                         bot={bot}
+                        selected={rowSelected(bot.id)}
+                        mascotMotion={rowMotion(bot.id)}
                         density={density}
                         onMenu={setMenu}
-                        onArchive={(candidate) => void archiveBot(candidate)}
+                        onArchive={archiveRow}
                         archiveDisabled={activeBotCount <= 1}
-                        onBotDragStart={layoutInteractive ? startBotDrag : undefined}
-                        onBotDragEnd={resetBotDrag}
+                        onBotDragStart={layoutInteractive ? dragStartRow : undefined}
+                        onBotDragEnd={dragEndRow}
                       />
                     ))}
                     {sectionName && density !== "icons" && <SidebarSharedRows section={sectionName} onNavigate={onNavigate} />}
@@ -3099,10 +3143,10 @@ export function Sidebar({ open, onClose, onReturnFocus }: { open: boolean; onClo
           onClose={() => setSnoozeTarget(null)}
         />
       )}
-      {exportTeamOpen && <TeamExportDialog initialBotIds={state.groups.find(group => group.id === state.selectedId)?.memberIds ?? (state.bots.some(bot => bot.id === state.selectedId) ? [state.selectedId!] : [])} onClose={() => setExportTeamOpen(false)} onExported={exported => {
+      {exportTeamOpen && <LazyBoundary onRetry={TeamExportDialog.retry} onDismiss={() => setExportTeamOpen(false)}><Suspense fallback={null}><TeamExportDialog.Component initialBotIds={state.groups.find(group => group.id === state.selectedId)?.memberIds ?? (state.bots.some(bot => bot.id === state.selectedId) ? [state.selectedId!] : [])} onClose={() => setExportTeamOpen(false)} onExported={exported => {
         track("team_exported", { members: exported.members, scope: "selected" });
         setTeamFeedback({ error: false, text: `${exported.members} bots exported` });
-      }} />}
+      }} /></Suspense></LazyBoundary>}
       {inboxOpen && <InboxDialog onClose={() => setInboxOpen(false)} />}
       {/* Portalled: Settings > Help & updates opens these while a phone's
           drawer is shut, and a shut drawer is inert, dialogs and all. */}
@@ -3158,7 +3202,7 @@ export function Sidebar({ open, onClose, onReturnFocus }: { open: boolean; onClo
           }
           onCancel={() => setPendingDelete(null)}
           onConfirm={() => {
-            if (pendingDelete.kind === "bot") dispatch({ type: "deleteBot", botId: pendingDelete.id });
+            if (pendingDelete.kind === "bot") dispatch({ type: "deleteBot", source: "local", botId: pendingDelete.id, attempt: newDeleteAttempt() });
             else dispatch({ type: "deleteGroup", groupId: pendingDelete.id });
             setPendingDelete(null);
           }}
@@ -3195,7 +3239,7 @@ export function Sidebar({ open, onClose, onReturnFocus }: { open: boolean; onClo
         />
       )}
       {chooser && (
-        <NewFromTemplateDialog
+        <LazyBoundary onRetry={NewFromTemplateDialog.retry} onDismiss={() => setChooser(null)}><Suspense fallback={null}><NewFromTemplateDialog.Component
           kind={chooser}
           onClose={() => setChooser(null)}
           onBlank={() => {
@@ -3214,10 +3258,10 @@ export function Sidebar({ open, onClose, onReturnFocus }: { open: boolean; onClo
             setChooser(null);
             setTeamFeedback(teamImportFeedback(result));
           }}
-        />
+        /></Suspense></LazyBoundary>
       )}
       {state.teamLibrary.open && (
-        <TeamLibraryPanel
+        <LazyBoundary onRetry={TeamLibraryPanel.retry} onDismiss={() => { dispatch({ type: "hideTeamLibrary" }); setTeamInstallUrl(null); }}><Suspense fallback={<LazyFallback />}><TeamLibraryPanel.Component
           returnFocusRef={importReturnRef}
           preselectedBotId={state.teamLibrary.botId}
           initialView={state.teamLibrary.view}
@@ -3232,7 +3276,7 @@ export function Sidebar({ open, onClose, onReturnFocus }: { open: boolean; onClo
             setTeamInstallUrl(null);
             setTeamFeedback(teamImportFeedback(result));
           }}
-        />
+        /></Suspense></LazyBoundary>
       )}
       {teamFeedback &&
         createPortal(

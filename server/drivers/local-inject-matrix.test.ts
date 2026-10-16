@@ -77,6 +77,9 @@ const OFFICIAL_SLUGS = [
   "auto",
 ] as const;
 
+/** The isolation switches every Qwen turn now carries (qwenIsolationArgs); these tests are about the rest of the argv. */
+const withoutQwenIsolation = (argv: string[]): string[] => argv.filter((arg, i) => !arg.startsWith("--allowed-mcp-server-names=") && arg !== "--exclude-tools=skill" && !(arg === "-e" && argv[i + 1] === "none") && !(arg === "none" && argv[i - 1] === "-e"));
+
 describe("inject id dialect", () => {
   it.each(UNIQUE_HOSTS)("encodes $id as a pickable Custom row", (host) => {
     const id = encodeInjectId(host.id, "gemma-4-31b-it-bf16");
@@ -438,7 +441,7 @@ describe("Qwen / Hermes ACP turns", () => {
     const instance = await QwenAgentDriver.create({
       instanceId: "qwen",
       displayName: "Qwen",
-      environment: { HOME: home, FAKE_ACP_DUMP: dump, OPENAI_API_KEY: "sk-flux-should-not-leak" },
+      environment: { HOME: home, FAKE_ACP_DUMP: dump, FAKE_ACP_VERSION: "qwen-code 0.15.6", OPENAI_API_KEY: "sk-flux-should-not-leak" },
       enabled: true,
       config: { cli: FAKE_ACP, fullAuto: true },
     });
@@ -447,7 +450,7 @@ describe("Qwen / Hermes ACP turns", () => {
       await instance.adapter.sendTurn({ threadId: "t-qwen", text: "hi", model: "omlx::gemma-4-31b-it-bf16" });
       await recorder.until((e) => e.type === "turn.completed");
       const seen = JSON.parse(readFileSync(dump, "utf8")) as { argv: string[]; env: Record<string, string> };
-      expect(seen.argv).toEqual(["--acp", "--auth-type", "openai", "-m", "gemma-4-31b-it-bf16"]);
+      expect(withoutQwenIsolation(seen.argv)).toEqual(["--acp", "--auth-type", "openai", "-m", "gemma-4-31b-it-bf16"]);
       expect(seen.env.OPENAI_BASE_URL).toBe("http://127.0.0.1:8080/v1");
       expect(seen.env.OPENAI_BASE_URL).not.toContain("fluxrouter");
       expect(seen.env.OPENAI_API_KEY).toBe(fixtureCredentialFingerprint("omlx"));
@@ -510,7 +513,7 @@ describe("room turns must pass the picker model", () => {
     const instance = await QwenAgentDriver.create({
       instanceId: "qwen",
       displayName: "Qwen",
-      environment: { HOME: home, FAKE_ACP_DUMP: dump },
+      environment: { HOME: home, FAKE_ACP_DUMP: dump, FAKE_ACP_VERSION: "qwen-code 0.15.6" },
       enabled: true,
       config: { cli: FAKE_ACP, fullAuto: true },
     });
@@ -519,7 +522,7 @@ describe("room turns must pass the picker model", () => {
       await instance.adapter.sendTurn({ threadId: "t-qwen-bare", text: "hi" });
       await recorder.until((e) => e.type === "turn.completed");
       const seen = JSON.parse(readFileSync(dump, "utf8")) as { argv: string[] };
-      expect(seen.argv).toEqual(["--acp"]);
+      expect(withoutQwenIsolation(seen.argv)).toEqual(["--acp"]);
     } finally {
       await instance.dispose();
     }

@@ -294,7 +294,7 @@ function shutdownFixture({stop=async()=>{},writes=[],backupOperations=[],cleanup
   const state=new Function(...Object.keys(scope),"stop","writes","backupOperations","release",`
     let desktopShutdownStarted=false,cuaCleanedUp=false,desktopCleanup=null,desktopCleanupStage="owned harness";
     let desktopDataOwner={release};const CUA_STOP_TIMEOUT_MS=25;
-    const ownedServerChildren=new Set([{stop}]),credentialWrites=new Set(writes),backupRemoteOperations=new Set(backupOperations),companionStarts=new Set();
+    const exitedServerChildren=[];const ownedServerChildren=new Set([{stop}]),credentialWrites=new Set(writes),backupRemoteOperations=new Set(backupOperations),companionStarts=new Set();
     ${text};return {cleanupWithoutQuit:cleanupDesktopForExit,get cleanup(){return desktopCleanup;},get owned(){return Boolean(desktopDataOwner);}};
   `)(...Object.values(scope),stop,writes,backupOperations,release);
   return {state,messages,quit:()=>quit,backgroundQuits:()=>backgroundQuits,androidStops:()=>androidStops,trigger:()=>trigger({preventDefault(){}})};

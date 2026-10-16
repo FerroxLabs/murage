@@ -1,0 +1,98 @@
+{
+  "filler 2": [
+    "- m1 (working notes; checkpoint) \"Working evidence; statements are not fulfilled commitments.",
+    "- m2 (the owner said; source) \"filler line 0",
+    "- m3 (the owner said; source) \"filler line 1",
+    "Assistant hypothesis (completed): \\\"Bash",
+    "Assistant hypothesis (recorded): \\\"<greeting>",
+    "Assistant hypothesis (recorded): \\\"hello from fake claude",
+    "Owner statement (recorded): \\\"The launch date is the 14th, keep that in mind.",
+    "Owner statement (recorded): \\\"filler line 0",
+    "Owner statement (recorded): \\\"filler line 1"
+  ],
+  "filler 0": [
+    "- m1 (working notes; checkpoint) \"Working evidence; statements are not fulfilled commitments.",
+    "Assistant hypothesis (completed): \\\"Bash",
+    "Assistant hypothesis (recorded): \\\"<greeting>",
+    "Assistant hypothesis (recorded): \\\"hello from fake claude",
+    "Owner statement (recorded): \\\"The launch date is the 14th, keep that in mind."
+  ],
+  "filler 1": [
+    "- m1 (working notes; checkpoint) \"Working evidence; statements are not fulfilled commitments.",
+    "- m2 (the owner said; source) \"filler line 0",
+    "Assistant hypothesis (completed): \\\"Bash",
+    "Assistant hypothesis (recorded): \\\"<greeting>",
+    "Assistant hypothesis (recorded): \\\"hello from fake claude",
+    "Owner statement (recorded): \\\"The launch date is the 14th, keep that in mind.",
+    "Owner statement (recorded): \\\"filler line 0"
+  ],
+  "edit": [
+    "- m1 (working notes; checkpoint) \"Working evidence; statements are not fulfilled commitments.",
+    "- m2 (the owner said; source) \"The launch date is the 14th, keep that in mind.",
+    "Assistant hypothesis (completed): \\\"Bash",
+    "Assistant hypothesis (recorded): \\\"<greeting>",
+    "Assistant hypothesis (recorded): \\\"hello from fake claude",
+    "Owner statement (recorded): \\\"The launch date is the 14th, keep that in mind.",
+    "Owner statement (recorded): \\\"filler line 0",
+    "Owner statement (recorded): \\\"filler line 1",
+    "Owner statement (recorded): \\\"filler line 2"
+  ],
+  "partitioned": [
+    "- m1 (working notes; checkpoint) \"Working evidence; statements are not fulfilled commitments.",
+    "- m2 (earlier assistant inference; source) \"<greeting>",
+    "Assistant hypothesis (recorded): \\\"<greeting>"
+  ],
+  "resumed": [
+    "- m1 (working notes; checkpoint) \"Working evidence; statements are not fulfilled commitments.",
+    "Assistant hypothesis (completed): \\\"Bash",
+    "Assistant hypothesis (completed): \\\"Waking up: starting a fresh engine after a quiet spell",
+    "Assistant hypothesis (recorded): \\\"<greeting>",
+    "Assistant hypothesis (recorded): \\\"hello from fake claude",
+    "Owner statement (recorded): \\\"Anything new from the team?",
+    "Owner statement (recorded): \\\"Remind me what we settled.",
+    "Owner statement (recorded): \\\"The launch date is the 14th, keep that in mind.",
+    "Owner statement (recorded): \\\"Which date did I give you?",
+    "Owner statement (recorded): \\\"filler line 0",
+    "Owner statement (recorded): \\\"filler line 1",
+    "Owner statement (recorded): \\\"filler line 2"
+  ],
+  "first": [
+    "- m1 (working notes; checkpoint) \"Working evidence; statements are not fulfilled commitments.",
+    "Assistant hypothesis (recorded): \\\"<greeting>"
+  ],
+  "quote": [
+    "- m1 (working notes; checkpoint) \"Working evidence; statements are not fulfilled commitments.",
+    "- m2 (the owner said; source) \"The launch date is the 14th, keep that in mind.",
+    "- m3 (earlier assistant inference; source) \"<greeting>",
+    "Assistant hypothesis (completed): \\\"Bash",
+    "Assistant hypothesis (recorded): \\\"<greeting>",
+    "Assistant hypothesis (recorded): \\\"hello from fake claude",
+    "Owner statement (recorded): \\\"The launch date is the 14th, keep that in mind.",
+    "Owner statement (recorded): \\\"filler line 0",
+    "Owner statement (recorded): \\\"filler line 1"
+  ],
+  "after eviction": [
+    "- m1 (working notes; checkpoint) \"Working evidence; statements are not fulfilled commitments.",
+    "Assistant hypothesis (completed): \\\"Bash",
+    "Assistant hypothesis (recorded): \\\"<greeting>",
+    "Assistant hypothesis (recorded): \\\"hello from fake claude",
+    "Owner statement (recorded): \\\"The launch date is the 14th, keep that in mind.",
+    "Owner statement (recorded): \\\"Which date did I give you?",
+    "Owner statement (recorded): \\\"filler line 0",
+    "Owner statement (recorded): \\\"filler line 1",
+    "Owner statement (recorded): \\\"filler line 2"
+  ],
+  "external update": [
+    "- m1 (working notes; checkpoint) \"Working evidence; statements are not fulfilled commitments.",
+    "- m2 (earlier assistant inference; source) \"<greeting>",
+    "Assistant hypothesis (completed): \\\"Bash",
+    "Assistant hypothesis (recorded): \\\"<greeting>",
+    "Assistant hypothesis (recorded): \\\"hello from fake claude",
+    "Owner statement (recorded): \\\"Remind me what we settled.",
+    "Owner statement (recorded): \\\"The launch date is the 14th, keep that in mind.",
+    "Owner statement (recorded): \\\"Which date did I give you?",
+    "Owner statement (recorded): \\\"filler line 0",
+    "Owner statement (recorded): \\\"filler line 1",
+    "Owner statement (recorded): \\\"filler line 2"
+  ]
+}

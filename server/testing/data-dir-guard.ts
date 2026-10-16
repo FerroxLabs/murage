@@ -26,7 +26,8 @@ function sourceFiles(): string[] {
   const walk = (dir: string) => {
     for (const name of readdirSync(dir)) {
       const path = join(dir, name);
-      if (name === "node_modules" || name === "vendor" || name === "testing" || name.startsWith("dist")) continue;
+      // a dot folder is never source: parallel shards put their fixture data folders (server/.e2a-fixtures-*) in this tree while it is walked
+      if (name === "node_modules" || name === "vendor" || name === "testing" || name.startsWith("dist") || name.startsWith(".")) continue;
       if (statSync(path).isDirectory()) walk(path);
       else if (/\.(?:ts|tsx|mts|mjs|cjs|js)$/.test(name) && !/\.(?:test|node-test|spec|fixture)\.|\.d\.m?ts$/.test(name)) files.push(path);
     }

@@ -124,7 +124,10 @@ const countLaunch = (): number => {
 const TRANSIENT_STDERR = "Error: connection reset by peer\n";
 
 if (process.argv[2] === "--version") {
-  process.stdout.write("codex-cli 0.147.0\n");
+  // FAKE_CODEX_VERSION_LOG counts probes; FAKE_CODEX_VERSION overrides the version, "fail" makes the probe fail.
+  if (process.env.FAKE_CODEX_VERSION_LOG) appendFileSync(process.env.FAKE_CODEX_VERSION_LOG, "probe\n");
+  if (process.env.FAKE_CODEX_VERSION === "fail") process.exit(1);
+  process.stdout.write(`${process.env.FAKE_CODEX_VERSION ?? "codex-cli 0.147.0"}\n`);
   process.exit(0);
 }
 if (process.argv[2] === "login" && process.argv[3] === "status") {

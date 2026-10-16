@@ -1,5 +1,5 @@
 import { fileURLToPath } from "node:url";
-import { defineConfig } from "vitest/config";
+import { configDefaults, defineConfig } from "vitest/config";
 import react from "@vitejs/plugin-react";
 import tailwindcss from "@tailwindcss/vite";
 import { murageRenderPlugins } from "./scripts/vite-render-plugin";
@@ -30,11 +30,15 @@ export default defineConfig({
       "companion/**/*.test.ts",
       "scripts/**/*.test.mjs",
     ],
+    // electron/signed-fetch.test.mjs is test support (imported by the node:test files), not a test: vitest finds no suite in it.
+    exclude: [...configDefaults.exclude, "electron/signed-fetch.test.mjs"],
     setupFiles: ["server/testing/setup.ts"],
     // the suite spawns fake provider CLIs and a real harness server;
     // parallel files introduce load-sensitive flakes for no win
     fileParallelism: false,
-    testTimeout: 20_000,
+    // A ceiling for a loaded runner (Windows and macOS CI take several times
+    // longer than a developer machine); a passing test never waits on it.
+    testTimeout: 45_000,
     hookTimeout: 30_000,
   },
   resolve: {

@@ -5,6 +5,7 @@ export class TurnSubmissionBoundary {
   private checks: Array<() => void> = [];
   private accepted = false;
   private onLateRefusal?: (refusal: unknown) => void;
+  private passed?: () => void;
   started() { this.state = "unknown"; }
   /** A further check run on every submission, after the caller's own. */
   alsoCheck(check: () => void) { this.checks.push(check); }
@@ -12,6 +13,8 @@ export class TurnSubmissionBoundary {
    * handing its id back (ACP, Codex) can still be refused at that write;
    * `onLateRefusal` hears of it (nothing was written, so it may re-run). */
   acceptedBy(onLateRefusal?: (refusal: unknown) => void) { this.accepted = true; this.onLateRefusal = onLateRefusal; }
+  /** Heard after every submission whose checks all passed: the prompt is released to the adapter's write. */
+  onPassed(passed: () => void) { this.passed = passed; }
   /** Every adapter write calls this, every time: validation is never skipped
    * because an earlier write or acceptance passed. */
   beforeSubmit(validate: () => void) {
@@ -21,6 +24,12 @@ export class TurnSubmissionBoundary {
       if (this.accepted) { try { this.onLateRefusal?.(error); } catch { /* the refusal itself still stands */ } }
       throw error;
     }
+    try { this.passed?.(); } catch { /* a listener never decides the submission */ }
+  }
+  /** A refusal that happened before the adapter wrote (the send fence runs ahead of beforeSubmit): the same state beforeSubmit leaves. */
+  refuse(error: unknown) {
+    this.state = "refused"; this.refusal = error;
+    if (this.accepted) { try { this.onLateRefusal?.(error); } catch { /* the refusal itself still stands */ } }
   }
   assertNotRefused() { if (this.state === "refused") throw this.refusal; }
   get canRetry() { return this.state !== "unknown"; }

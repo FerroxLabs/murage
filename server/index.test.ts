@@ -69,7 +69,9 @@ describe("harness HTTP API", () => {
     }
   }, 20000);
 
-  it("persists structured provider 402 credit guidance from the real ACP error fold without raw secrets", async () => {
+  // The second run is an engine that never announces MCP readiness: the reply must still arrive
+  // (the first prompt waits at most MURAGE_ACP_MCP_READY_MS) and the lifecycle records mcp_ready_timeout.
+  for (const announces of [true, false]) it(`persists structured provider 402 credit guidance from the real ACP error fold without raw secrets${announces ? "" : " (engine that never announces MCP readiness)"}`, async () => {
     const isolatedHome = mkdtempSync(join(tmpdir(), "murage-provider402-api-"));
     const data = join(isolatedHome, ".murage");
     const staticRoot = join(isolatedHome, "static");
@@ -83,7 +85,7 @@ describe("harness HTTP API", () => {
     writeFileSync(join(data, "config.json"), JSON.stringify({ engineDiscovery: "explicit", instances: {
       fixture402: { driver: "grokAgent", displayName: "Fixture 402", config: { cli: join(SERVER_DIR, "testing", "fake-acp-cli.ts") } },
     } }));
-    const env: NodeJS.ProcessEnv = { HOME: isolatedHome, USERPROFILE: isolatedHome, MURAGE_DATA_DIR: data, MURAGE_STATIC_DIR: staticRoot, MURAGE_PORT: String(port), MURAGE_WEBHOOK_PORT: String(port + 1), MURAGE_DEV_DESKTOP_SECRET: DESKTOP_SECRET, FAKE_ACP_MODE: "credit-exhausted", PATH: process.env.PATH };
+    const env: NodeJS.ProcessEnv = { HOME: isolatedHome, USERPROFILE: isolatedHome, MURAGE_DATA_DIR: data, MURAGE_STATIC_DIR: staticRoot, MURAGE_PORT: String(port), MURAGE_WEBHOOK_PORT: String(port + 1), MURAGE_DEV_DESKTOP_SECRET: DESKTOP_SECRET, FAKE_ACP_MODE: "credit-exhausted", ...(announces ? { FAKE_ACP_MCP_READY: "1", FAKE_ACP_MCP_READY_METHOD: "_x.ai/mcp_initialized" } : { MURAGE_ACP_MCP_READY_MS: "1500" }), PATH: process.env.PATH };
     if (process.env.SystemRoot) env.SystemRoot = process.env.SystemRoot;
     const isolatedChild = spawn(process.execPath, [join(SERVER_DIR, "index.ts")], { cwd: ROOT, env, stdio: ["ignore", "ignore", "pipe"] });
     let isolatedStderr = "";
@@ -100,10 +102,15 @@ describe("harness HTTP API", () => {
       expect((await request("PATCH", `/api/bots/${bot.id}`, { computer: "off", autoApprove: false })).status).toBe(200);
       expect((await request("POST", `/api/bots/${bot.id}/messages`, { text: "Trigger the fake credit-exhausted response only." })).status).toBe(202);
       let errorMessage: any;
+      // The roster (`?messages=n`) is a preview since rc10-preview2: a row over ROSTER_ROW_BYTES (512 since the rc11 roster bound) loses
+      // providerError and errorDetails there, and an opened thread reads its full page. So `busy` comes from the roster and the error row
+      // from the thread's own page, which is what the card renders from.
       await expect.poll(async () => {
         const state = (await request("GET", "/api/bots?messages=50")).body.bots.find((entry: { id: string }) => entry.id === bot.id);
-        errorMessage = state?.messages.find((message: any) => message.tool?.providerError?.kind === "credits");
-        return Boolean(errorMessage) && state.busy === false;
+        if (state?.busy !== false) return false;
+        const page = (await request("GET", `/api/threads/${bot.threadId}/messages?limit=50`)).body;
+        errorMessage = page?.messages?.find((message: any) => message.tool?.providerError?.kind === "credits");
+        return Boolean(errorMessage);
       }, { timeout: 10000 }).toBe(true);
       expect(errorMessage).toMatchObject({ role: "bot", kind: "activity", tool: { ok: false, providerError: { kind: "credits", httpStatus: 402 } } });
       expect(errorMessage.tool.name).toContain("credit balance is exhausted");
@@ -125,6 +132,10 @@ describe("harness HTTP API", () => {
         expect(persisted.tool.errorKind).toBe("api");
         expect(JSON.stringify(persisted)).not.toMatch(/fake-secret-canary|billing\.invalid/);
       } finally { db.close(); }
+      if (!announces) {
+        const rows = readFileSync(join(data, "native", `${bot.threadId}.ndjson`), "utf8").split("\n").filter(Boolean).map((line) => JSON.parse(line) as { dir: string; msg: Record<string, unknown> });
+        expect(rows.filter((row) => row.dir === "lifecycle").map((row) => row.msg.event)).toContain("mcp_ready_timeout");
+      }
     } finally {
       await waitForExit(isolatedChild, { signal: "SIGTERM" });
       await removeTempDir(isolatedHome);
@@ -393,8 +404,11 @@ describe("harness HTTP API", () => {
       const deleted = await desktopApi("DELETE", `/api/bots/${archived.id}?ifArchived=1`);
       expect(deleted.status).toBe(200);
       expect(await listed()).toBe(false);
-      // a repeat is a clean 404, not a second teardown
-      expect((await desktopApi("DELETE", `/api/bots/${archived.id}?ifArchived=1`)).status).toBe(404);
+      // a repeat (a retry whose first answer was lost) is told what happened, numbered like the deletion, never a second teardown
+      // (BOTADDED-DESIGN-V3 r6 §4)
+      const repeat = await desktopApi("DELETE", `/api/bots/${archived.id}?ifArchived=1`);
+      expect(repeat.status).toBe(200);
+      expect(repeat.body).toMatchObject({ ok: true, alreadyDeleted: true, tasksSeq: deleted.body.tasksSeq, tasksEpoch: deleted.body.tasksEpoch });
 
       const state = (await api("GET", "/api/bots")).body;
       const survivor = state.groups.find((candidate: { id: string }) => candidate.id === room.id);

@@ -193,6 +193,13 @@ describe("reconcileProjectRecords", () => {
     writeFileSync(file, JSON.stringify(raw.filter(g => g.id !== gone.id)));
     const { Store } = await import("./store.ts");
     const cold = new Store(() => ({ instanceId: "claude", model: "m" }));
+    // Absence from groups.json alone proves nothing (a partial file): the rows stay without the owner's recorded deletion.
+    migration.reconcileProjectRecords(cold);
+    expect(records.projectSettingsFor(database(), gone.id)).not.toBeNull();
+    expect(readdirSync(join(home, "data")).filter(name => name.startsWith("project-rows-before-prune-"))).toHaveLength(0);
+    // deleteGroup records the deletion before the registry forgets the channel; a crash after that is repaired here.
+    const { recordOwnerDeletion, groupDeletionKey } = await import("./owner-deletions.ts");
+    recordOwnerDeletion(database(), groupDeletionKey(gone.id));
     migration.reconcileProjectRecords(cold);
     expect(records.projectSettingsFor(database(), gone.id)).toBeNull();
     expect(records.projectSettingsFor(database(), keep.id)).not.toBeNull();

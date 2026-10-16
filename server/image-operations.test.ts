@@ -5,19 +5,29 @@ import { DatabaseSync } from "node:sqlite";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { DATA_DIR } from "./config.ts";
 import { closeDatabase, database } from "./database.ts";
+import { stopWalMaintenance } from "./wal-maintenance.ts";
 import { Store } from "./store.ts";
 import { saveImage } from "./attachments.ts";
 import { describeArtifact } from "./artifacts.ts";
 import { IMAGE_APPROVAL_TIMEOUT_MS, ImageOperations, imageReferences, publishImage } from "./image-operations.ts";
 import { ImageGenerationService, type ImageReference } from "./image-generation.ts";
 import { managedImageOutputPath } from "./output-publication.ts";
+import { fenceRestoredSql, releaseHeldImageOperation, sqlRowRestoreHeld } from "./restore-fence.ts";
 import { composeMessage } from "../src/lib/composer-attachments.ts";
 import { writeInstallationArchive } from "./installation-archive.ts";
 import { prepareInstallationRestore } from "./installation-restore-preparation.ts";
 import { inspectInstallationDatabase } from "./installation-database-snapshot.ts";
 import { assertRestoreReviewed } from "../electron/restore-review.mjs";
 // C2 fault injection: attachment storage refuses the next N image commits.
-const faults = vi.hoisted(() => ({ saveImage: 0 }));
+const faults = vi.hoisted(() => ({ saveImage: 0, register: 0 }));
+// Files quota fault: the next N saves to Files (registerArtifact) are refused with the quota status.
+vi.mock("./artifacts.ts", async importOriginal => {
+  const actual = await importOriginal<typeof import("./artifacts.ts")>();
+  return { ...actual, registerArtifact: (...args: Parameters<typeof actual.registerArtifact>) => {
+    if (faults.register > 0) { faults.register--; throw Object.assign(new Error("Files quota reached"), { status: 507 }); }
+    return actual.registerArtifact(...args);
+  } };
+});
 vi.mock("./attachments.ts", async importOriginal => {
   const actual = await importOriginal<typeof import("./attachments.ts")>();
   return { ...actual, saveImage: (...args: Parameters<typeof actual.saveImage>) => {
@@ -25,10 +35,10 @@ vi.mock("./attachments.ts", async importOriginal => {
     return actual.saveImage(...args);
   } };
 });
-beforeEach(() => { faults.saveImage = 0; });
+beforeEach(() => { faults.saveImage = 0; faults.register = 0; });
 const png = Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+aD1sAAAAASUVORK5CYII=", "base64");
 const detail = { connectionId: "openai", provider: "openai" as const, model: "gpt-image-2", operation: "generate" as const, count: 1 as const, referenceCount: 0 };
-beforeEach(() => { closeDatabase(); rmSync(DATA_DIR, {recursive:true,force:true}); mkdirSync(DATA_DIR,{recursive:true}); });
+beforeEach(async () => { closeDatabase(); await stopWalMaintenance(); rmSync(DATA_DIR, {recursive:true,force:true}); mkdirSync(DATA_DIR,{recursive:true}); });
 afterEach(() => closeDatabase());
 function fixture() {
   const store = new Store(() => ({instanceId:"fixture",model:"fixture"})); const bot = store.createBot();
@@ -264,6 +274,9 @@ it("backs up production startup schema and WAL data with image receipts into an 
   await approveNext(f); await refusal;
   const db = database();
   db.exec("PRAGMA wal_autocheckpoint=0");
+  // The server's WAL checkpointer (its own connection) folds the log into messages.db whenever it ticks; the test compares the file's bytes before and
+  // after the backup, so the checkpointer is ended first and nothing but this test touches the files afterwards.
+  await stopWalMaintenance();
   const message = f.store.appendMessage(f.bot.threadId, { role: "user", kind: "text", text: "WAL backup canary" });
   db.exec("INSERT INTO memory_scopes VALUES('backup-scope','bot','backup-owner','[]',0)");
   db.exec("INSERT INTO memory_records VALUES('backup-memory',1,'backup-scope','fact','Retain this memory','owner-statement','active',0,1,NULL,NULL,1)");
@@ -427,6 +440,111 @@ it("B16 keeps a received Flux edit locally when publication fails and finishes i
   expect(imageMessages(f)).toHaveLength(1);
   expect(approvalCards(f)).toHaveLength(1);
   expect(f.waiting.mock.calls.filter(call => call[1])).toHaveLength(1);
+});
+
+it("a restore holds a received image: startup publishes nothing, the owner's same request_id finishes it with no new provider call", async () => {
+  const f = generationFixture();
+  faults.saveImage = 1;
+  const job = f.run("restore-held", fluxEdit, pngReference()), refusal = expect(job).rejects.toThrow("kept locally");
+  await approveNext(f); await refusal;
+  expect(operationState(f.actor.generation)).toBe("publish-pending");
+  fenceRestoredSql(database(), "gen-1");
+  const held = database().prepare("SELECT id FROM image_operations WHERE generation=?").get(f.actor.generation) as { id: string };
+  expect(sqlRowRestoreHeld(database(), "image_operation", held.id)).toBe(true);
+  expect(f.operations.resumePendingPublications()).toBe(0);
+  expect(operationState(f.actor.generation)).toBe("publish-pending");
+  expect(imageMessages(f)).toHaveLength(0);
+  // The owner asks again in a NEW turn (new generation): the held operation is found by bot, thread, request id and hash.
+  const nextTurn = { ...f.actor, generation: randomUUID() };
+  const service = new ImageGenerationService({ resolveConnection: () => ({ id: "flux", provider: "flux", apiKey: "FAKE_B15", revision: "1" }), connectionIds: () => ["flux"], fetch: f.fetcher });
+  const resumed = await f.operations.execute(nextTurn, "restore-held", fluxEdit, (reserve, publish) => service.generate(fluxEdit, { reserve, publish, assertActive: nextTurn.assertActive, signal: nextTurn.signal }, pngReference()));
+  expect(database().prepare("SELECT COUNT(*) AS n FROM image_operations").get()).toEqual({ n: 1 });
+  expect(sqlRowRestoreHeld(database(), "image_operation", held.id)).toBe(false);
+  expect(operationState(f.actor.generation)).toBe("published");
+  expect(readFileSync(resumed.artifact.path)).toEqual(png);
+  expect(f.fetcher).toHaveBeenCalledOnce();
+  expect(imageMessages(f)).toHaveLength(1);
+});
+
+it("the owner's re-ask of a held image keeps the hold when the Files copy fails, and drops it only once truly published", async () => {
+  const f = generationFixture();
+  faults.saveImage = 1;
+  const job = f.run("quota-held", fluxEdit, pngReference()), refusal = expect(job).rejects.toThrow("kept locally");
+  await approveNext(f); await refusal;
+  fenceRestoredSql(database(), "gen-1");
+  const held = database().prepare("SELECT id FROM image_operations WHERE generation=?").get(f.actor.generation) as { id: string };
+  const service = new ImageGenerationService({ resolveConnection: () => ({ id: "flux", provider: "flux", apiKey: "FAKE_B15", revision: "1" }), connectionIds: () => ["flux"], fetch: f.fetcher });
+  const again = () => { const turn = { ...f.actor, generation: randomUUID() }; return f.operations.execute(turn, "quota-held", fluxEdit, (reserve, publish) => service.generate(fluxEdit, { reserve, publish, assertActive: turn.assertActive, signal: turn.signal }, pngReference())); };
+  faults.register = 1;
+  await expect(again()).rejects.toThrow();
+  expect(sqlRowRestoreHeld(database(), "image_operation", held.id)).toBe(true);
+  expect(operationState(f.actor.generation)).toBe("publish-pending");
+  expect(database().prepare("SELECT COUNT(*) AS n FROM restore_holds WHERE kind='output_receipt'").get()).toEqual({ n: 1 });
+  const resumed = await again();
+  expect(sqlRowRestoreHeld(database(), "image_operation", held.id)).toBe(false);
+  expect(database().prepare("SELECT COUNT(*) AS n FROM restore_holds").get()).toEqual({ n: 0 });
+  expect(operationState(f.actor.generation)).toBe("published");
+  expect(resumed.artifact).toMatchObject({ artifactId: expect.any(String) });
+  expect(f.fetcher).toHaveBeenCalledOnce();
+});
+
+it("a held received image made before resumeKey existed is still found by a re-ask in a later turn: one row, retained bytes published, no new provider call", async () => {
+  const f = generationFixture();
+  faults.saveImage = 1;
+  const job = f.run("legacy-held", fluxEdit, pngReference()), refusal = expect(job).rejects.toThrow("kept locally");
+  await approveNext(f); await refusal;
+  // The row as an older version wrote it: no resumeKey in its record.
+  database().prepare("UPDATE image_operations SET result=json_remove(result,'$.resumeKey') WHERE generation=?").run(f.actor.generation);
+  expect(database().prepare("SELECT json_extract(result,'$.resumeKey') AS k FROM image_operations").get()).toEqual({ k: null });
+  fenceRestoredSql(database(), "gen-1");
+  const held = database().prepare("SELECT id FROM image_operations WHERE generation=?").get(f.actor.generation) as { id: string };
+  expect(f.operations.resumePendingPublications()).toBe(0);
+  const nextTurn = { ...f.actor, generation: randomUUID() };
+  const service = new ImageGenerationService({ resolveConnection: () => ({ id: "flux", provider: "flux", apiKey: "FAKE_B15", revision: "1" }), connectionIds: () => ["flux"], fetch: f.fetcher });
+  const resumed = await f.operations.execute(nextTurn, "legacy-held", fluxEdit, (reserve, publish) => service.generate(fluxEdit, { reserve, publish, assertActive: nextTurn.assertActive, signal: nextTurn.signal }, pngReference()));
+  expect(database().prepare("SELECT COUNT(*) AS n FROM image_operations").get()).toEqual({ n: 1 });
+  expect(sqlRowRestoreHeld(database(), "image_operation", held.id)).toBe(false);
+  expect(operationState(f.actor.generation)).toBe("published");
+  expect(readFileSync(resumed.artifact.path)).toEqual(png);
+  expect(f.fetcher).toHaveBeenCalledOnce();
+  expect(imageMessages(f)).toHaveLength(1);
+  // A different request id in a later turn never claims the held row.
+  const other = { ...f.actor, generation: randomUUID() };
+  expect(f.operations.resumable(other, "someone-else", fluxEdit)).toBeUndefined();
+});
+
+it("50 newer unrelated legacy holds do not hide the held image being asked for again: the re-ask finds it among every candidate, one row, no new provider call", async () => {
+  const f = generationFixture();
+  faults.saveImage = 1;
+  const job = f.run("legacy-crowd", fluxEdit, pngReference()), refusal = expect(job).rejects.toThrow("kept locally");
+  await approveNext(f); await refusal;
+  database().prepare("UPDATE image_operations SET result=json_remove(result,'$.resumeKey') WHERE generation=?").run(f.actor.generation);
+  const real = database().prepare("SELECT id,request_hash,result FROM image_operations WHERE generation=?").get(f.actor.generation) as { id: string; request_hash: string; result: string };
+  // 55 newer legacy holds of other requests (half share nothing, half even share the request hash of another bot's identical ask)
+  for (let i = 0; i < 55; i++) database().prepare("INSERT INTO image_operations VALUES(?,?,?,'publish-pending',?,?)").run(`crowd-${i}`, `crowd-gen-${i}`, i % 2 ? real.request_hash : `other-${i}`, real.result, Date.now() + 1000 + i);
+  fenceRestoredSql(database(), "gen-1");
+  const nextTurn = { ...f.actor, generation: randomUUID() };
+  const service = new ImageGenerationService({ resolveConnection: () => ({ id: "flux", provider: "flux", apiKey: "FAKE_B15", revision: "1" }), connectionIds: () => ["flux"], fetch: f.fetcher });
+  const resumed = await f.operations.execute(nextTurn, "legacy-crowd", fluxEdit, (reserve, publish) => service.generate(fluxEdit, { reserve, publish, assertActive: nextTurn.assertActive, signal: nextTurn.signal }, pngReference()));
+  expect(database().prepare("SELECT COUNT(*) AS n FROM image_operations").get()).toEqual({ n: 56 });
+  expect(sqlRowRestoreHeld(database(), "image_operation", real.id)).toBe(false);
+  expect(readFileSync(resumed.artifact.path)).toEqual(png);
+  expect(f.fetcher).toHaveBeenCalledOnce();
+});
+
+it("the startup resume of image operations skips held rows before its limit: 55 older held rows never starve a released one", async () => {
+  const f = generationFixture();
+  faults.saveImage = 1;
+  const job = f.run("starve", fluxEdit, pngReference()), refusal = expect(job).rejects.toThrow("kept locally");
+  await approveNext(f); await refusal;
+  const real = database().prepare("SELECT id FROM image_operations WHERE generation=?").get(f.actor.generation) as { id: string };
+  database().prepare("UPDATE image_operations SET updated_at=1000000 WHERE id=?").run(real.id);
+  for (let i = 0; i < 55; i++) database().prepare("INSERT INTO image_operations VALUES(?,?,?,'publish-pending','{}',?)").run(`older-${i}`, `older-gen-${i}`, `h-${i}`, i + 1);
+  fenceRestoredSql(database(), "gen-1");
+  expect(f.operations.resumePendingPublications()).toBe(0);
+  expect(releaseHeldImageOperation(database(), real.id)).toBe(true);
+  expect(f.operations.resumePendingPublications()).toBe(1);
+  expect(operationState(f.actor.generation)).toBe("published");
 });
 
 it("B16 releases an ungranted Flux alias edit before approval, while a refused OpenRouter edit keeps the turn's one attempt", async () => {

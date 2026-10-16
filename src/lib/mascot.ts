@@ -1,5 +1,7 @@
 import { EMBER_AVATAR_STATES, type EmberAvatarState } from "@/components/EmberAvatar";
 import { hostStoppedReason } from "../../shared/host-stop";
+import { sendNoticeCode } from "../../shared/send-notice";
+import { EMBER_COLOR_HEX } from "../../shared/ember-colors";
 
 /** The mascot's behaviour vocabulary — EmberAvatar's 39 states, under the
  * app's historical names. */
@@ -61,18 +63,7 @@ export const EMBER_COLOR_NAMES = [
 
 export type EmberColor = (typeof EMBER_COLOR_NAMES)[number];
 
-export const EMBER_COLORS = {
-  green: "#009957",
-  blue: "#377FE6",
-  red: "#D94B52",
-  orange: "#FF6B35",
-  purple: "#8057C8",
-  cyan: "#0EA5C6",
-  pink: "#D84F8B",
-  yellow: "#D8A729",
-  teal: "#01A492",
-  coral: "#E5634E",
-} satisfies Record<EmberColor, string>;
+export const EMBER_COLORS: Record<EmberColor, string> = EMBER_COLOR_HEX;
 
 export const EMBER_MOTIONS = [
   "arrive",
@@ -159,7 +150,7 @@ type MascotMessage = {
  * the transcript shows a StoppedRow, not a red card — and the face must not
  * flinch at it. */
 export function activityFailed(message: Pick<MascotMessage, "kind" | "tool"> | undefined): boolean {
-  return message?.kind === "activity" && message.tool?.ok === false && hostStoppedReason(message.tool.name) === undefined;
+  return message?.kind === "activity" && message.tool?.ok === false && hostStoppedReason(message.tool.name) === undefined && sendNoticeCode(message.tool.name) === undefined;
 }
 
 export type MascotBotProfile = {
@@ -170,6 +161,8 @@ export type MascotBotProfile = {
   busy?: boolean;
   unread?: boolean;
   messages?: MascotMessage[];
+  /** The conversation's sidebar line (shared/sidebar-line.ts): what the face reads when present, since a conversation not opened holds no rows. */
+  sidebarLine?: MascotMessage;
 };
 
 /**
@@ -181,7 +174,7 @@ export function stateForBot(bot: MascotBotProfile): EmberState {
   const pinned = normalizeState(bot.mascotExpression);
   if (pinned) return pinned;
 
-  const last = bot.messages?.[bot.messages.length - 1];
+  const last = bot.sidebarLine ?? bot.messages?.[bot.messages.length - 1];
 
   if (activityFailed(last)) return "alerting";
   if (bot.busy) return "working";

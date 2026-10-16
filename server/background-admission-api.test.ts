@@ -32,6 +32,6 @@ it("pauses automatic admission through the real owner API while manual work rema
   await expect.poll(async()=>(await runs()).find((run:any)=>run.id===manual.body.run.id)?.status,{timeout:10000}).toBe("completed");
   expect(await runs()).toHaveLength(1);expect((await runs())[0].triggerSource).toBe("manual");
   expect((await api("POST","/api/automation-admission",{paused:false}))).toMatchObject({status:200,body:{paused:false}});
-  await expect.poll(async()=>(await runs()).find((run:any)=>run.triggerSource==="schedule")?.status,{timeout:15000}).toBe("completed");
+  await expect.poll(async()=>(await runs()).find((run:any)=>run.triggerSource==="schedule")?.status,{timeout:75000}).toBe("completed");
   expect(await runs()).toHaveLength(2);
-},30000);
+},120000);

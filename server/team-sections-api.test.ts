@@ -42,12 +42,25 @@ it("renames, changes members and lead, and deletes a team, and only for the desk
   const spoofed = await call("POST", "/api/team-sections/rename", { section: "Operations", name: "X", revision: "0".repeat(64) }, { "x-murage-surface": "desktop" });
   expect(spoofed.status).toBe(404);
 
+  // The team's channel: its answer carries the room's number, as every answer carrying a room does (CI-OVERLAY-DESIGN I-H2).
+  const created = await call("POST", "/api/groups", { name: "Operations", memberIds: [ava.id, ben.id], section: "Operations" });
+  expect(created.status).toBe(201);
+  expect(created.body.group).toMatchObject({ section: "Operations" });
+  expect(created.body.group.recordSeq).toBeGreaterThanOrEqual(1);
+  expect(typeof created.body.group.recordEpoch).toBe("string");
+
   let current = await team("Operations");
   expect(current.members.map((bot: any) => bot.id).sort()).toEqual([ava.id, ben.id].sort());
 
   const renamed = await call("POST", "/api/team-sections/rename", { section: "Operations", name: "Ops", revision: current.revision });
   expect(renamed.status).toBe(200);
   expect(renamed.body.team.name).toBe("Ops");
+  // The rename's own row for the channel is numbered at the rename's frame, past the create's, so a client holding a later
+  // change drops it and one holding the create applies it.
+  const row = renamed.body.changed.groups.find((group: any) => group.id === created.body.group.id);
+  expect(row).toMatchObject({ name: "Ops", section: "Ops", recordEpoch: created.body.group.recordEpoch });
+  expect(row.recordSeq).toBeGreaterThan(created.body.group.recordSeq);
+  expect((await call("GET", "/api/bots?messages=0")).body.groups.find((group: any) => group.id === created.body.group.id)).toMatchObject({ recordSeq: row.recordSeq });
 
   // The old revision is now stale.
   const stale = await call("POST", "/api/team-sections/members", { section: "Ops", revision: current.revision, add: [cal.id] });

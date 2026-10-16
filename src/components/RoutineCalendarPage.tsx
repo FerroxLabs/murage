@@ -1,3 +1,4 @@
+import { RoutineSchedulerNotice, useRoutineSchedulerLate } from "./RoutineSchedulerNotice";
 import { RoutineVersionHistory } from "./ProcedureVersionHistory";
 import {
   useCallback,
@@ -145,13 +146,22 @@ function roomCanRunGoal(group: Group): boolean {
   return !hasSetupMarker ||
     group.setupCompletedAt != null ||
     group.setupSkippedAt != null ||
-    (group.messages?.length ?? 0) > 0;
+    (group.messages?.length ?? 0) > 0 ||
+    // a channel not opened yet holds no rows; the roster's count and line say it has messages
+    (group.messagesTotal ?? 0) > 0 ||
+    group.sidebarLine !== undefined;
 }
 
 /** What "Choose a channel" says when no channel can run a goal yet. A
  * channel whose setup was never finished is left out of the list, so the
  * sentence names it rather than telling the person to create a channel that
  * is already in their sidebar (0.1.60 low). */
+async function loadSchedulerLate(): Promise<boolean> {
+  const now = Date.now();
+  const response = await api(`/api/routines?from=${now}&to=${now}`);
+  return response?.scheduler?.stalled === true;
+}
+
 export function goalChannelHint(groups: Group[]): string {
   const waiting = groups.filter((group) => !group.dm && !group.hidden && !roomCanRunGoal(group)).map((group) => group.name);
   if (!waiting.length) return "Create a channel from the sidebar first, then come back to schedule its goal.";
@@ -958,7 +968,7 @@ function QuickComposer({
         </div>
         <div className="flex items-start gap-3 text-[12.5px] text-ink">
           <Clock3 size={16} className="mt-0.5 shrink-0 text-ink-secondary" />
-          <div><div>{niceDate(seed.at)}</div><div className="mt-0.5 text-ink-secondary">{niceTime(seed.at)}{kind === "call" ? ` – ${niceTime(seed.at + durationMinutes * 60_000)}` : ""}</div></div>
+          <div><div>{niceDate(seed.at)}</div><div className="mt-0.5 text-ink-secondary">{niceTime(seed.at)}{kind === "call" ? ` to ${niceTime(seed.at + durationMinutes * 60_000)}` : ""}</div></div>
         </div>
         <div className="flex items-center gap-3">
           <Repeat2 size={16} className="shrink-0 text-ink-secondary" />
@@ -1332,11 +1342,29 @@ function EventDetails({
     }
   };
 
+  // A past run's record only: the routine and its other runs stay. A run
+  // still going is cancelled instead (the server refuses to delete it).
+  const runIsPast = Boolean(run && !["queued", "running", "waiting", "needs-you"].includes(run.status));
+  const deleteRun = async () => {
+    if (!run || !canEdit || working || !runIsPast || !window.confirm("Delete this run from the history? The routine and its other runs stay.")) return;
+    setWorking(true);
+    setError("");
+    try {
+      await api(`/api/routine-runs/${encodeURIComponent(run.id)}`, { method: "DELETE" });
+      dispatch({ type: "routineRunDeleted", runId: run.id });
+      onClose();
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : String(cause));
+    } finally {
+      setWorking(false);
+    }
+  };
+
   const eventSchedule = (routine ?? call)?.schedule ?? null;
   const timeCaption = eventTimeCaption({
     ran: item.kind === "routine" && Boolean(item.run),
     at: item.at,
-    when: `${niceDate(item.at)} · ${niceTime(item.at)}${isCall ? ` – ${niceTime(item.at + item.durationMinutes * 60_000)}` : ""}`,
+    when: `${niceDate(item.at)} · ${niceTime(item.at)}${isCall ? ` to ${niceTime(item.at + item.durationMinutes * 60_000)}` : ""}`,
     schedule: eventSchedule,
     scheduleText: eventSchedule ? scheduleLabel(eventSchedule) : null,
   });
@@ -1394,6 +1422,7 @@ function EventDetails({
           {!canEdit && (routine || call) && <p className="w-full text-[12px] text-ink-secondary">Create or change schedules in the desktop app. You can also ask the bot to propose a routine for your review here.</p>}
           {canEdit && <div className="ml-auto flex items-center gap-1">
             {(routine || call) && <button onClick={onEdit} className="rounded-lg px-3 py-2 text-[12px] text-ink-secondary hover:bg-raised hover:text-ink">Edit</button>}
+            {run && runIsPast && <button disabled={working} onClick={() => void deleteRun()} className="flex items-center gap-1.5 rounded-lg px-3 py-2 text-[12px] text-ink-secondary hover:bg-danger/10 hover:text-danger disabled:opacity-40"><Trash2 size={13} />Delete run</button>}
             {routine && <button disabled={working} onClick={() => void invoke(`/api/routines/${routine.id}`, "PATCH", { enabled: !routine.enabled })} className="rounded-lg p-2 text-ink-secondary hover:bg-raised hover:text-ink disabled:opacity-40" aria-label={routine.enabled ? "Pause routine" : "Resume routine"} title={routine.enabled ? "Pause routine" : "Resume routine"}>{routine.enabled ? <Pause size={15} /> : <Play size={15} />}</button>}
             {(routine || call) && <button disabled={working} onClick={() => void deleteEvent()} className="rounded-lg p-2 text-ink-secondary hover:bg-danger/10 hover:text-danger disabled:opacity-40" aria-label={isCall ? "Delete call" : "Delete routine"} title={isCall ? "Delete call" : "Delete routine"}><Trash2 size={15} /></button>}
           </div>}
@@ -1535,6 +1564,8 @@ export function RoutinesPage({ onBack, onOpenRoom }: { onBack: () => void; onOpe
     }
   }, []);
   useEffect(() => { void loadCalls(); }, [loadCalls]);
+  // The scheduler's own health: shown while it is behind, cleared by the next good check.
+  const schedulerLate = useRoutineSchedulerLate(loadSchedulerLate);
   useEffect(() => { backButtonRef.current?.focus({ preventScroll: true }); }, []);
 
   const items = useMemo<CalendarEventItem[]>(() => {
@@ -1656,6 +1687,7 @@ export function RoutinesPage({ onBack, onOpenRoom }: { onBack: () => void; onOpe
           <div className="min-w-[220px] px-2 text-[15px] font-medium text-ink">{calendarRangeLabel(rangeStart, viewDays)}</div>
           <div className="ml-auto flex items-center gap-2" style={windowNoDragStyle}>
             {running > 0 && <span className="hidden items-center gap-1.5 rounded-full bg-accent/10 px-2.5 py-1.5 text-[10.5px] text-accent sm:flex"><Loader2 size={11} className="animate-spin" />{running} active</span>}
+            <RoutineSchedulerNotice late={schedulerLate} />
             {unseenFailures > 0 && <button type="button" onClick={() => setProblemsOpen(true)} aria-label="Show routine problems" title="Show routine problems" className="hidden items-center gap-1.5 rounded-full bg-danger/10 px-2.5 py-1.5 text-[10.5px] text-danger hover:bg-danger/15 sm:flex"><CircleAlert size={11} />{unseenFailures}</button>}
             {paused.length > 0 && <button onClick={() => setPausedOpen(true)} aria-label={`Paused routines (${paused.length})`} className="hidden items-center gap-1.5 rounded-full border border-hairline/50 px-2.5 py-1.5 text-[10.5px] text-ink-secondary hover:bg-raised sm:flex"><Pause size={11} />{paused.length}</button>}
             <select value={botFilter} onChange={(event) => setBotFilter(event.target.value)} className="hidden rounded-lg border border-hairline/50 bg-panel px-2.5 py-2 text-[11.5px] text-ink outline-none focus:border-accent sm:block"><option value="all">All bots</option>{visibleBots.map((bot) => <option key={bot.id} value={bot.id}>{bot.name}</option>)}</select>

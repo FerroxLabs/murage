@@ -28,12 +28,50 @@ export const WHATS_NEW_BY_VERSION: Readonly<Record<string, WhatsNewEntry>> = {
   "1.0.0": { kind: "none" },
   // A patch: no page (release notes are written at publish).
   "1.0.1": { kind: "none" },
+  // 1.0.2: the page, with art made for it (whats-new-art-0102).
+  "1.0.2": { kind: "page", releaseNotesUrl: "https://github.com/FerroxLabs/murage-releases/releases/tag/v1.0.2" },
 };
 
 /** The page for `version`, or null when it has none. */
 export function whatsNewPage(version: string = APP_VERSION): Extract<WhatsNewEntry, { kind: "page" }> | null {
   const entry = WHATS_NEW_BY_VERSION[version];
   return entry?.kind === "page" ? entry : null;
+}
+
+function parts(version: string): number[] {
+  return version.split(".").map((part) => Number.parseInt(part, 10) || 0);
+}
+
+function compareVersions(a: string, b: string): number {
+  const left = parts(a), right = parts(b);
+  for (let i = 0; i < Math.max(left.length, right.length); i += 1) {
+    const diff = (left[i] ?? 0) - (right[i] ?? 0);
+    if (diff !== 0) return diff;
+  }
+  return 0;
+}
+
+/** The release notes for `version` on the docs changelog, which exists for every release. */
+export function changelogUrl(version: string = APP_VERSION): string {
+  return `https://docs.murage.ai/docs/changelog/v${version.replace(/\./g, "-")}`;
+}
+
+export type WhatsNewTarget =
+  | { kind: "page"; version: string; releaseNotesUrl: string }
+  | { kind: "notes"; url: string };
+
+/** What the What's new menu item opens for `version`: its own page, else the
+ *  newest page on the same major line that is not newer than it, else the
+ *  release notes for the version on the docs changelog. */
+export function whatsNewTarget(version: string = APP_VERSION): WhatsNewTarget {
+  const own = whatsNewPage(version);
+  if (own) return { kind: "page", version, releaseNotesUrl: own.releaseNotesUrl };
+  const major = parts(version)[0];
+  const newest = Object.entries(WHATS_NEW_BY_VERSION)
+    .filter(([candidate, entry]) => entry.kind === "page" && parts(candidate)[0] === major && compareVersions(candidate, version) <= 0)
+    .sort(([a], [b]) => compareVersions(b, a))[0];
+  if (newest && newest[1].kind === "page") return { kind: "page", version: newest[0], releaseNotesUrl: newest[1].releaseNotesUrl };
+  return { kind: "notes", url: changelogUrl(version) };
 }
 
 type Request = (path: string, init?: RequestInit) => Promise<unknown>;
@@ -61,8 +99,10 @@ export async function recordWhatsNewSeen(desktop: boolean | undefined, request: 
   }
 }
 
-/** Opens by itself once when the server says so; `reopen` is the You menu;
- *  `close` always records the version as seen. */
+/** Opens by itself once when the server says so; `reopen` is the You menu and
+ *  Settings: it opens the page, or the release notes when there is no page, so
+ *  the item is always there on the desktop; `close` always records the version
+ *  as seen. */
 export function useWhatsNew(desktop: boolean | undefined, request: Request) {
   const [open, setOpen] = useState(false);
   const asked = useRef(false);
@@ -73,10 +113,14 @@ export function useWhatsNew(desktop: boolean | undefined, request: Request) {
     asked.current = true;
     void shouldOpenWhatsNew(desktop, request).then((show) => { if (show) setOpen(true); });
   }, [desktop, request]);
-  const reopen = useCallback(() => setOpen(true), []);
+  const reopen = useCallback(() => {
+    const target = whatsNewTarget();
+    if (target.kind === "page") { setOpen(true); return; }
+    void import("./open-external").then((module) => module.openExternalPage(target.url, "Murage could not open the release notes.")).catch(() => {});
+  }, []);
   const close = useCallback(() => {
     setOpen(false);
     void recordWhatsNewSeen(desktop, request);
   }, [desktop, request]);
-  return { open, reopen, close, available: desktop === true && whatsNewPage() !== null };
+  return { open, reopen, close, available: desktop === true };
 }

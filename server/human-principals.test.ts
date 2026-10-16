@@ -11,6 +11,7 @@ import { hydrateMemoryRecord } from "./memory/bundle.ts";
 import { searchMemory } from "./memory/search.ts";
 import { getOrCreateChannel, mirrorExchange } from "./comms-visibility.ts";
 import { knownHumanNames, observeVerifiedHuman, ownerChannelUserIds, threadHumanChannelUserId, linkHumanBinding, resolveHumanBinding, humanTask, threadHumanPrincipal, revokeHumanConnection, shareHumanScope, assertHumanPrincipal, bindHumanThread, resolveHumanDelivery, humanBindingStatus } from "./human-principals.ts";
+import { LineageAllowance } from "./memory/lineage-allowance.ts";
 
 beforeEach(()=>{closeDatabase();rmSync(DATA_DIR,{recursive:true,force:true});mkdirSync(DATA_DIR,{recursive:true});});
 const fresh=()=>new Store(()=>({instanceId:"fixture",model:"fixture"}));
@@ -59,8 +60,8 @@ it("allows explicit room sharing but rejects private canon on get and search eve
   const context=access(store,bot.id,task.threadId);
   expect(()=>assertMemoryAccess(context.access,ensureScope("room",room.id))).not.toThrow();
   expect(()=>assertMemoryAccess(context.access,ensureScope("conversation",bot.threadId))).toThrow("MEMORY_SCOPE_DENIED");
-  expect(()=>hydrateMemoryRecord(canon.id,canon.version,context.access)).toThrow("MEMORY_SCOPE_DENIED");
-  const result=await searchMemory("OWNER_CANON_CANARY",context.access,{search:async()=>({hits:[{id:canon.id,version:canon.version,score:1,text:canon.text}],vectorRows:0})});
+  expect(()=>hydrateMemoryRecord(canon.id,canon.version,context.access, {allowance: LineageAllowance.tool(1_000_000_000)})).toThrow("MEMORY_SCOPE_DENIED");
+  const result=await searchMemory("OWNER_CANON_CANARY",context.access,{search:async()=>({hits:[{id:canon.id,version:canon.version,score:1,text:canon.text}],vectorRows:0})}, {allowance: LineageAllowance.tool(1_000_000_000)});
   expect(JSON.stringify(result)).not.toContain("OWNER_CANON_CANARY");
   shareHumanScope(ticket,{personId:principal.personId,scopeId:ensureScope("room",room.id),granted:false});
   expect(()=>assertMemoryAccess(context.access)).toThrow("MEMORY_CONTEXT_REVOKED");

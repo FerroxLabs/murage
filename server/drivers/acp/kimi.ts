@@ -542,6 +542,9 @@ function readKimiModelCatalog(env: Record<string, string | undefined>): ModelCat
 
 const support: AcpSupport = {
   driverKind: "kimiAgent",
+  // Kimi answers initialize with mcpCapabilities and takes the servers handed
+  // at session/new (kimi-code 0.29.1, file header), with no readiness signal.
+  mcpListedWait: true,
   displayName: "Kimi",
   // Aliases from the CLI's own catalog (~/.kimi-code/config.toml
   // [models."kimi-code/…"] — `kimi provider list` reports the same four).

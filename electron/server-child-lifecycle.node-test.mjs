@@ -143,3 +143,35 @@ test("stopRequested is false for an outside kill and true once the app asked to 
   await b.stop();
   assert.equal(b.stopRequested,true);
 });
+
+test("exitedRecord reports the pid and exit code once the child exited, so the lease release can clear it", async () => {
+  const child = new EventEmitter();
+  child.pid = 4242;
+  child.kill = () => { child.emit("exit", 0); };
+  const lifecycle = createServerChildLifecycle(child, { timeoutMs: 20 });
+  assert.equal(lifecycle.exitedRecord, null);
+  await lifecycle.stop();
+  assert.deepEqual({ ...lifecycle.exitedRecord }, { pid: 4242, code: 0 });
+});
+
+test("a utility process whose pid exists only between spawn and exit still leaves an exit record", async () => {
+  const child = new EventEmitter();
+  let livePid;
+  Object.defineProperty(child, "pid", { get: () => livePid });
+  child.kill = () => { livePid = undefined; child.emit("exit", 0); };
+  const lifecycle = createServerChildLifecycle(child, { timeoutMs: 20 });
+  livePid = 5151; child.emit("spawn");
+  await lifecycle.stop();
+  assert.equal(child.pid, undefined);
+  assert.deepEqual({ ...lifecycle.exitedRecord }, { pid: 5151, code: 0 });
+});
+
+test("a child process with a pid from fork keeps it when the pid is gone by exit", async () => {
+  const child = new EventEmitter();
+  let livePid = 6262;
+  Object.defineProperty(child, "pid", { get: () => livePid });
+  child.kill = () => { livePid = undefined; child.emit("exit", 1); };
+  const lifecycle = createServerChildLifecycle(child, { timeoutMs: 20 });
+  await lifecycle.stop();
+  assert.deepEqual({ ...lifecycle.exitedRecord }, { pid: 6262, code: 1 });
+});

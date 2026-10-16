@@ -81,7 +81,7 @@ const roomRun = async (text: string, proven: boolean, options: { hold?: boolean 
   const ran = turns().slice(from).filter((turn) => turn.threadId === legacy.threadId);
   return { lead: ran.filter((turn) => turn.botId === lead.id), second: ran.filter((turn) => turn.botId === second.id) };
 };
-const OWNER_TOOLS = ["browser", "composio", "owner-tools"];
+const OWNER_TOOLS = ["browser", "murage_connectors", "owner-tools"];
 const shape = (turn: Turn) => ({ servers: turn.servers, depth: turn.depth, skillAuthoring: turn.skillAuthoring });
 
 posixOnly("a queued room turn runs as the turn it was queued for", () => {
