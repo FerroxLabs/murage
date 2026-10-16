@@ -1,4 +1,5 @@
 import { existsSync, mkdirSync, readFileSync, realpathSync, writeFileSync } from "node:fs";
+import { CLAUDE_ISOLATION_CONTRACT } from "./drivers/claude.ts";
 import { join } from "node:path";
 import { afterAll, beforeAll, expect, it } from "vitest";
 import { launchVerificationServer, type VerificationServer } from "../scripts/control-murage.ts";
@@ -19,12 +20,13 @@ const identify = async () => {
 };
 beforeAll(async () => {
   // The only state migration is fixture-owned and happens before Store loads,
-  // while the restart launcher has confirmed its previous child exited.
+  // while the restart launcher has confirmed its previous child exited. The retained session also gets the session lineage row U1 gives a
+  // 1.0.1 file's session (last_lsn -1): a session with no row resets once write-time lineage is live.
   const instrumentationSource = [
-    "import fs from 'node:fs'; import path from 'node:path';",
+    "import fs from 'node:fs'; import path from 'node:path'; import { DatabaseSync } from 'node:sqlite';",
     "process.env.FAKE_CLAUDE_DUMP_EACH_TURN = '1';",
     "const dir = process.env.MURAGE_DATA_DIR; const seed = path.join(dir, 'b11-legacy-seed');",
-    "if (fs.existsSync(seed)) { const id = fs.readFileSync(seed, 'utf8'); const file = path.join(dir, 'bots.json'); const bots = JSON.parse(fs.readFileSync(file, 'utf8')); const bot = bots.find(bot => bot.id === id); if (!bot) throw new Error('legacy fixture missing'); bot.tasks[0].cwd = null; bot.tasks[0].resumeCursors = {verification:'b11-retained-session'}; delete bot.tasks[0].localOutputs; bot.resumeCursors = {...bot.tasks[0].resumeCursors}; fs.writeFileSync(file, JSON.stringify(bots)); fs.unlinkSync(seed); }",
+    `if (fs.existsSync(seed)) { const id = fs.readFileSync(seed, 'utf8'); const file = path.join(dir, 'bots.json'); const bots = JSON.parse(fs.readFileSync(file, 'utf8')); const bot = bots.find(bot => bot.id === id); if (!bot) throw new Error('legacy fixture missing'); bot.tasks[0].cwd = null; bot.tasks[0].resumeCursors = {verification:'b11-retained-session'}; bot.tasks[0].resumeContracts = {verification:${CLAUDE_ISOLATION_CONTRACT}}; delete bot.tasks[0].localOutputs; bot.resumeCursors = {...bot.tasks[0].resumeCursors}; fs.writeFileSync(file, JSON.stringify(bots)); { const db = new DatabaseSync(path.join(dir, 'messages.db')); db.exec('PRAGMA busy_timeout=5000'); db.prepare('INSERT OR IGNORE INTO memory_session_lineage(thread_id,driver_instance,native_session,first_lsn,last_lsn) VALUES(?,?,?,?,?)').run(bot.threadId, 'verification', 'b11-retained-session', 1, -1); db.close(); } fs.unlinkSync(seed); }`,
   ].join("\n");
   fixture = await launchVerificationServer(process.env, undefined, { instrumentationSource });
   await identify();

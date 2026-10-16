@@ -17,6 +17,19 @@ const transcript = [
 ];
 
 describe("buildTurnContext", () => {
+  it("words a session Murage restarted on the same engine as a restart, not a switch", () => {
+    const restarted = buildTurnContext({ text: "next", transcript, rewound: false, fresh: true, sessionRestarted: true, externallyUpdated: false, replaysNatively: false });
+    expect(restarted.resume).toBe(false);
+    expect(restarted.turnText.startsWith("[Murage started a fresh engine session for this conversation; here is the conversation so far.]")).toBe(true);
+    expect(restarted.turnText).not.toContain("switched over");
+    expect(restarted.turnText.split("\n")[0]).not.toContain("\u2014");
+    expect(restarted.turnText).toContain("User: my dog is named Biscuit");
+    // a real engine switch keeps its own wording
+    expect(buildTurnContext({ text: "next", transcript, rewound: false, fresh: true, externallyUpdated: false, replaysNatively: false }).turnText).toContain("switched over to you");
+    // a rewind wins over a restart
+    expect(buildTurnContext({ text: "next", transcript, rewound: true, fresh: true, sessionRestarted: true, externallyUpdated: false, replaysNatively: false }).turnText).toContain("rewound");
+  });
+
   it("passes text through untouched on a plain resumed turn", () => {
     const out = buildTurnContext({ text: "hi", transcript, rewound: false, fresh: false, externallyUpdated: false, replaysNatively: false });
     expect(out).toEqual({ turnText: "hi", resume: true });

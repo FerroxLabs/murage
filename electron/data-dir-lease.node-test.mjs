@@ -1173,3 +1173,20 @@ test("Windows identity: inspection mirrors acquisition without changing records"
   assert.deepEqual(snapshot(), before);
   assert.equal(stillRunning(holder), true);
 });
+
+test("parent release clears the record of a child it watched exit cleanly, and still refuses any other live holder", () => {
+  const f = fixture();
+  const parent = acquireDataDirLease(f.dataDir);
+  const child = acquireDataDirLeaseForProcess(f.dataDir, { ...parent.utilityServerLeaseEnvironment() });
+  assert.equal(child.delegated, true);
+  // No observation, a different pid, or a non-clean exit: the live holder keeps the guard.
+  assert.throws(() => parent.release(), errorCode("LEASE_CHILD_BUSY"));
+  assert.throws(() => parent.release({ exitedChildren: [{ pid: process.pid + 1, code: 0 }] }), errorCode("LEASE_CHILD_BUSY"));
+  assert.throws(() => parent.release({ exitedChildren: [{ pid: process.pid, code: 1 }] }), errorCode("LEASE_CHILD_BUSY"));
+  assert.throws(() => parent.release({ exitedChildren: [{ pid: process.pid, code: null }] }), errorCode("LEASE_CHILD_BUSY"));
+  assert.equal(existsSync(f.childLeasePath), true);
+  // The parent saw exactly this child exit with code 0 before it could release.
+  assert.equal(parent.release({ exitedChildren: [{ pid: process.pid, code: 0 }] }), true);
+  assert.equal(existsSync(f.childLeasePath), false);
+  assert.equal(existsSync(f.leasePath), false);
+});

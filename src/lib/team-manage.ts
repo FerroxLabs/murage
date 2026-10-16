@@ -22,15 +22,23 @@ export interface TeamView {
   sharedIn?: Array<{ botId: string; name: string; from: string; load: string }>;
 }
 
-/** What a change touched, every field spelled out (null = none). */
+/** What a change touched, every field spelled out (null = none). A group row carries the room's number (`recordSeq`,
+ * `recordEpoch`, CI-OVERLAY-DESIGN I-H2): the store orders it against the copy it holds, so a delayed answer never lands over a
+ * later change. */
 export interface TeamChanges {
   bots: Array<{ id: string; section: string | null; chiefOfStaff: boolean; chiefScope: "workspace" | null; individual: boolean | null; hidden: boolean | null }>;
-  groups: Array<{ id: string; name: string; section: string | null; hidden: boolean | null }>;
+  groups: Array<{ id: string; name: string; section: string | null; hidden: boolean | null; recordSeq?: number; recordEpoch?: string }>;
 }
 
-/** Patches to fold into the store. Frames from the harness merge field by
- * field, so a team that was cleared has to be cleared here as `undefined`
- * or the old heading would stay on screen until the next reload. */
+/** The bot fields a team change writes (server/team-sections.ts changesFor). The team dialog has each changed bot's whole
+ * record read from the detail route with these fields settled from it (store.tsx `botPatched` settled): a cleared team or
+ * lead is an omitted key on the bots' own frames, and a frame merges over the held copy, so only a settling answer takes
+ * the old heading off the sidebar. Nothing served ever rides over admission (CI-OVERLAY-DESIGN). */
+export const TEAM_CHANGE_FIELDS: ReadonlyArray<"section" | "chiefOfStaff" | "chiefScope" | "individual" | "hidden"> =
+  ["section", "chiefOfStaff", "chiefScope", "individual", "hidden"];
+
+/** Patches to fold into the store: the groups' are applied as they are, under the room's number;
+ * the bots' name which records changed (see TEAM_CHANGE_FIELDS). */
 export function teamChangePatches(changed: TeamChanges) {
   const none = <T>(value: T | null) => (value === null ? undefined : value);
   return {
@@ -38,7 +46,10 @@ export function teamChangePatches(changed: TeamChanges) {
       id,
       patch: { section: none(section), chiefOfStaff, chiefScope: none(chiefScope), individual: none(individual), hidden: none(hidden) },
     })),
-    groups: changed.groups.map(({ id, name, section, hidden }) => ({ id, patch: { name, section: none(section), hidden: none(hidden) } })),
+    groups: changed.groups.map(({ id, name, section, hidden, recordSeq, recordEpoch }) => ({
+      id,
+      patch: { name, section: none(section), hidden: none(hidden), ...(recordSeq !== undefined && recordEpoch !== undefined ? { recordSeq, recordEpoch } : {}) },
+    })),
   };
 }
 

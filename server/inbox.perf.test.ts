@@ -13,6 +13,10 @@ import * as inbox from "./inbox.ts";
 import { initializeInbox, listInbox, owedThreads, type InboxAccess } from "./inbox.ts";
 import * as legacy from "./inbox.legacy-reference.ts";
 import { bumpMessagesVersion } from "./inbox-version.ts";
+import type { InboxPage } from "../shared/inbox.ts";
+
+/** The answer without the cursor the old code never had. */
+const plain = (page: InboxPage) => ({ ...page, next: undefined });
 
 const roots: string[] = [], databases: DatabaseSync[] = [];
 afterEach(() => { for (const db of databases.splice(0)) { try { db.close(); } catch {} } for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true }); });
@@ -51,15 +55,16 @@ function seed(rows = ROWS) {
   return db;
 }
 
-/** Counts executions of the Inbox projection. "Bounded" ones are restricted to
- *  routine rows (kind filter in raw) and read from a narrow index range. */
+/** Counts Inbox reads. "Full" is an answer's read of the kept counters (one
+ *  per answer: every number in it); "bounded" is the routine roll-up's read of
+ *  the routine runs inside its window. */
 function counting(db: DatabaseSync) {
   const counts = { full: 0, bounded: 0, other: 0 };
   const prepare = db.prepare.bind(db);
   (db as unknown as { prepare: unknown }).prepare = (sql: string) => {
     const statement = prepare(sql);
-    if (!sql.includes("WITH raw AS")) return statement;
-    const kind = /m\.kind IN \('routine\.run','goal\.run'(,'activity')?\)/.test(sql) ? "bounded" : "full";
+    const kind = /inbox_items_routine_at/.test(sql) ? "bounded" : /SUM\([lv]_\w+\) AS total[\s\S]*FROM inbox_counts/.test(sql) ? "full" : undefined;
+    if (!kind) return statement;
     for (const method of ["get", "all", "run"] as const) {
       const original = statement[method].bind(statement) as (...a: unknown[]) => unknown;
       (statement as unknown as Record<string, unknown>)[method] = (...args: unknown[]) => { counts[kind]++; return original(...args); };
@@ -128,9 +133,9 @@ it("the rewritten queries return exactly what the old ones did, on every view", 
   const views = ["decisions", "approvals", "questions", "connections", "routines", "to-read", "results", "all"] as const;
   for (const view of views) for (const page of [0, 1]) for (const includeSnoozed of [false, true]) {
     const query = { view, page, pageSize: 25, includeSnoozed };
-    expect(listInbox(db, query, access, 9_000_000), `${view} p${page}`).toEqual(legacy.listInbox(db, query, access, 9_000_000));
+    expect(plain(listInbox(db, query, access, 9_000_000)), `${view} p${page}`).toEqual(legacy.listInbox(db, query, access, 9_000_000));
   }
-  expect(listInbox(db, { view: "all", query: "routine 3" }, access, 9_000_000)).toEqual(legacy.listInbox(db, { view: "all", query: "routine 3" }, access, 9_000_000));
+  expect(plain(listInbox(db, { view: "all", query: "routine 3" }, access, 9_000_000))).toEqual(legacy.listInbox(db, { view: "all", query: "routine 3" }, access, 9_000_000));
   expect([...owedThreads(db, access)].sort()).toEqual([...legacy.owedThreads(db, access)].sort());
   expect(listInbox(db, { view: "decisions" }, access, 9_000_000).total).toBeGreaterThan(0);
 }, 300_000);
@@ -197,13 +202,13 @@ it("the rewritten queries match the old ones on every row shape, mark and search
   for (const now of [9_000_000, 9_600_000]) for (const view of views) for (const query of searches) for (const includeSnoozed of [false, true]) for (const page of query === "" ? [0, 2] : [0]) {
     const q = { view, page, pageSize: 10, includeSnoozed, query };
     const label = `${view} "${query}" snoozed=${includeSnoozed} p${page} now=${now}`;
-    const mine = listInbox(db, q, access, now), theirs = legacy.listInbox(db, q, access, now);
+    const mine = plain(listInbox(db, q, access, now)), theirs = legacy.listInbox(db, q, access, now);
     expect(mine, label).toEqual(theirs);
-    if (now === 9_000_000) expect(cached(db, q, access, now), `cached ${label}`).toEqual(theirs);
+    if (now === 9_000_000) expect(plain(cached(db, q, access, now)), `cached ${label}`).toEqual(theirs);
     compared++;
   }
   const narrow: InboxAccess = { owner: true, threads: access.threads.slice(0, 3) };
-  for (const view of views) expect(listInbox(db, { view }, narrow, 9_000_000), `narrow ${view}`).toEqual(legacy.listInbox(db, { view }, narrow, 9_000_000));
+  for (const view of views) expect(plain(listInbox(db, { view }, narrow, 9_000_000)), `narrow ${view}`).toEqual(legacy.listInbox(db, { view }, narrow, 9_000_000));
   expect([...owedThreads(db, access)].sort()).toEqual([...legacy.owedThreads(db, access)].sort());
   expect([...owedThreads(db, narrow)].sort()).toEqual([...legacy.owedThreads(db, narrow)].sort());
   const sample = listInbox(db, { view: "all", pageSize: 100 }, access, 9_000_000);
@@ -223,11 +228,9 @@ it("the routine rows are read once per audience, not once per view, page and sea
  *  is kind='text'; a busy user has tens of thousands, and only those with a
  *  saved file (artifactIds[0]) are ever items. The full projection used to scan
  *  and json_extract ALL of them, then drop them after the window sort.
- *  Deterministic cost metric: the query plan of the full projection must
- *  never SCAN messages and must reach the text rows through the partial index
- *  on saved files. At base the plan was `SEARCH m USING INDEX messages_inbox`
- *  with kind='text' (every chat row visited, ~20 json_extract each), so the
- *  partial-index assertion FAILS at base (verified) and passes with the fix. */
+ *  Deterministic cost metric: no statement an answer runs may SCAN messages
+ *  or the projection: chat text is never an item, so it never enters the
+ *  projection at all, and each list is walked down its own index. */
 function seedBulk() {
   const db = seed(2000);
   const insert = db.prepare("INSERT INTO messages(thread_id,id,at,role,kind,text,json) VALUES(?,?,?,?,?,?,?)");
@@ -250,7 +253,7 @@ it("the full Needs-you projection never scans messages, and returns what the old
   const prepare = db.prepare.bind(db);
   (db as unknown as { prepare: unknown }).prepare = (sql: string) => {
     const statement = prepare(sql);
-    if (!sql.includes("WITH raw AS")) return statement;
+    if (!/FROM inbox_(items|counts)/.test(sql)) return statement;
     for (const method of ["get", "all"] as const) {
       const original = statement[method].bind(statement) as (...a: unknown[]) => unknown;
       (statement as unknown as Record<string, unknown>)[method] = (...args: unknown[]) => { seen.push({ sql, args }); return original(...args); };
@@ -258,17 +261,19 @@ it("the full Needs-you projection never scans messages, and returns what the old
     return statement;
   };
   const page = listInbox(db, { view: "decisions" }, access, 9_000_000);
-  const full = seen.find(s => !/m\.kind IN \('routine\.run','goal\.run'(,'activity')?\)/.test(s.sql));
-  expect(full, "a full-leg projection statement ran").toBeDefined();
-  const plan = (db.prepare("EXPLAIN QUERY PLAN " + full!.sql) as unknown as { all: (...a: unknown[]) => Array<{ detail: string }> })
-    .all(...full!.args).map(r => r.detail);
-  console.log("[perf] full-leg plan:\n  " + plan.join("\n  "));
-  expect(plan.filter(d => /^SCAN (m|messages)\b/.test(d)), "full projection scans messages").toEqual([]);
-  expect(plan.some(d => /messages_inbox_text_artifact/.test(d)), "text branch uses the partial index").toBe(true);
+  expect(seen.length, "the answer read the projection").toBeGreaterThan(2);
+  for (const statement of [...seen]) {
+    const plan = (db.prepare("EXPLAIN QUERY PLAN " + statement.sql) as unknown as { all: (...a: unknown[]) => Array<{ detail: string }> })
+      .all(...statement.args).map(r => r.detail);
+    expect(plan.filter(d => /^SCAN (m|messages)\b/.test(d)), "an answer scans messages").toEqual([]);
+    expect(plan.filter(d => /^SCAN inbox_(items|counts|raw)\b(?! USING)/.test(d)), `an answer scans the projection: ${plan.join(" | ")}`).toEqual([]);
+  }
+  // the chat text never entered the projection
+  expect((db.prepare("SELECT COUNT(*) AS n FROM inbox_raw WHERE kind='text'").get() as { n: number }).n).toBe(400);
   // Same answer as the old query on the big seed, every view.
   for (const view of ["decisions", "approvals", "questions", "connections", "routines", "to-read", "results", "all"] as const) {
     const query = { view, pageSize: 25 };
-    expect(listInbox(db, query, access, 9_000_000), view).toEqual(legacy.listInbox(db, query, access, 9_000_000));
+    expect(plain(listInbox(db, query, access, 9_000_000)), view).toEqual(legacy.listInbox(db, query, access, 9_000_000));
   }
   expect([...owedThreads(db, access)].sort()).toEqual([...legacy.owedThreads(db, access)].sort());
   expect(page.total).toBeGreaterThan(0);

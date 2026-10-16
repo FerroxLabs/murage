@@ -6,6 +6,7 @@ import { InternalCapabilities } from "../internal-capabilities.ts";
 import { memoryAccess, reconcileMemoryRoster } from "./policy.ts";
 import { buildMemoryBundle } from "./bundle.ts";
 import { MemoryDispatchReceipt, memoryContinuationChanged } from "./dispatch.ts";
+import { LineageAllowance } from "./lineage-allowance.ts";
 
 beforeEach(()=>{closeDatabase();rmSync(DATA_DIR,{recursive:true,force:true});mkdirSync(DATA_DIR,{recursive:true});});
 async function fixture(){
@@ -13,7 +14,7 @@ async function fixture(){
   const registry=new InternalCapabilities(),generation=registry.begin("bot","thread");
   const token=registry.mint({botId:"bot",threadId:"thread",generation,depth:10,kind:"memory",skillAuthoring:false});
   const access=memoryAccess(registry,registry.resolve(`Bearer ${token}`)!,()=>roster);
-  const bundle=await buildMemoryBundle("query",access,{search:async()=>({hits:[],vectorRows:0})});
+  const bundle=await buildMemoryBundle("query",access,{search:async()=>({hits:[],vectorRows:0})}, {allowance: LineageAllowance.tool()});
   return {registry,generation,receipt:new MemoryDispatchReceipt(bundle,access,"driver")};
 }
 it("finishes a synchronous successful turn before capability revocation without rejecting its later handshake",async()=>{

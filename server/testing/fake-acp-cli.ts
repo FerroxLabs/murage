@@ -99,7 +99,11 @@
 //   FAKE_ACP_PERMISSION_COMMAND  the command a permission-mode ask names
 //                   (default "echo hi")
 //   FAKE_ACP_PERMISSION_TOOLCALL  JSON tool call a permission-mode ask sends
+//   FAKE_ACP_PERMISSION_SESSION=1  the permission-mode ask names the live session
 //                   verbatim instead of the default shell command
+//   FAKE_ACP_PERMISSION_TIMING_FILE  append {askedAt, waitMs} per answered
+//                   permission-mode ask: how long the client took to answer,
+//                   as the engine sees it (Grok's own wait_ms)
 //   FAKE_ACP_DUMP   path to write {argv, env} as JSON, so a test can assert
 //                   argv shape (agent/stdio flags) and env hygiene
 //   FAKE_ACP_LOAD_ERROR  JSON-RPC error object session/load answers with
@@ -143,6 +147,21 @@
 //                        session/new or session/load hands it servers, and —
 //                        like Fuigo — after a resident load only when the
 //                        servers actually changed
+//   FAKE_ACP_MCP_READY_DELAY_MS  announce that long after the servers were
+//                        handed over (a real engine announces once they settle)
+//   FAKE_ACP_MCP_LIST_READY_AFTER_MS  with FAKE_ACP_MCP_LIST "all:<status>",
+//                        report every server "initializing" until that long
+//                        after the servers were handed over
+//   FAKE_ACP_MCP_CONNECT=1  connect to every handed server the way a real
+//                        engine does: start it (command, args, env as handed),
+//                        initialize, then tools/list; a session/load with
+//                        changed servers restarts them. With
+//                        FAKE_ACP_MCP_CONNECT_DELAY_MS, start them that late
+//   FAKE_ACP_MCP_TIMELINE  append one JSON line {event, at, name?} per MCP
+//                        readiness moment: "ready" (announced, or the list
+//                        first showed every server settled), "listed" (a
+//                        connected server answered tools/list) and "prompt"
+//                        (a session/prompt arrived)
 //   FAKE_ACP_MCP_READY_NEW_ONLY=1  announce readiness after session/new only,
 //                        never after session/load (servers that never report
 //                        ready on a reused process)
@@ -308,12 +327,20 @@ const dumpEnv = Object.fromEntries(
     "FUIGO_HOME",
     "HERMES_HOME",
     "OPENCODE_DISABLE_PROJECT_CONFIG",
+    // Flux Memory headers: config overlays and settings paths, no secret
+    "FUIGO_CONFIG",
+    "GROK_CONFIG",
+    "QWEN_CODE_SYSTEM_SETTINGS_PATH",
+    "HERMES_MANAGED_DIR",
+    "OPENCODE_CONFIG_CONTENT",
     // routing switches: stripped unconditionally, never allowlistable
     "ANTHROPIC_BASE_URL",
     "ANTHROPIC_MODEL",
     "OPENAI_BASE_URL",
     "OPENAI_MODEL",
     ...dumpCredentials,
+    // engine isolation switches (no secret): compat cells, memory, discovery off
+    ...Object.keys(process.env).filter((key) => /^(?:GROK|FUIGO)_[A-Z]+_[A-Z]+_ENABLED$|^(?:GROK|FUIGO)_MEMORY$|^OPENCODE_DISABLE_|^OPENCODE_PURE$|^(?:GEMINI_CLI|QWEN_CODE)_SYSTEM_SETTINGS_PATH$|^GEMINI_CLI_HOME$|^GROK_HOME$|^OPENCODE_CONFIG_DIR$|^FACTORY_HOME_OVERRIDE$/.test(key)),
   ].flatMap((key) => (process.env[key] === undefined ? [] : [[key, dumpCredentials.has(key) ? fixtureCredentialFingerprint(process.env[key]!) : process.env[key]]] as const)),
 );
 const dumpState: Record<string, unknown> = { argv, env: dumpEnv };
@@ -329,7 +356,10 @@ async function printProbeAndExit(text: string): Promise<never> {
   process.exit(0);
 }
 if (argv.includes("--version")) {
-  await printProbeAndExit("fake-acp 1.0.0");
+  // FAKE_ACP_VERSION sets the reported version (the default is past every engine's scoped-home floor, so a turn is not rejected as too old); FAKE_ACP_VERSION_LOG counts probes; FAKE_ACP_VERSION_FAIL=1 makes `--version` fail (a working CLI with a broken probe).
+  if (process.env.FAKE_ACP_VERSION_LOG) appendFileSync(process.env.FAKE_ACP_VERSION_LOG, "probe\n");
+  if (process.env.FAKE_ACP_VERSION_FAIL === "1") process.exit(1);
+  await printProbeAndExit(process.env.FAKE_ACP_VERSION ?? "fake-acp 1.0.60");
 }
 // Cursor's driver probes `agent status` / `agent models` on the same binary
 // it later spawns for ACP. Answer those without entering the JSON-RPC loop
@@ -498,6 +528,8 @@ let pendingPermissionId: number | null = null;
 /** project-propose mode's own permission asks, answered by id. */
 const proposalAsks = new Map<number, (result: any) => void>();
 let onPermissionAnswered: (() => void) | null = null;
+/** When the open permission ask was sent (FAKE_ACP_PERMISSION_TIMING_FILE). */
+let permissionAskedAt: number | null = null;
 // folder-trust mode: what the client advertised and whether the folder was
 // trusted when the session was built (argv --trust, the way `fuigo --trust`
 // grants the process cwd up front)
@@ -551,6 +583,11 @@ const agentsMdForReply = () => {
 // ask-peer mode: the "agents" MCP server entry from session/new's mcpServers
 type McpEntry = { name?: string; command: string; args?: string[]; env?: Array<{ name: string; value: string }> };
 let agentsMcp: McpEntry | null = null;
+/** memory-search mode: the session's memory MCP server (the memory proxy). */
+let memoryMcp: McpEntry | null = null;
+const memoryServerOf = (servers: unknown): McpEntry | null => Array.isArray(servers)
+  ? (servers.find((s: any) => Array.isArray(s?.args) && s.args.some((arg: unknown) => /memory-proxy/.test(String(arg)))) as McpEntry | undefined) ?? null
+  : null;
 /** The session this process built or loaded, as Fuigo keeps it resident. */
 let liveSession: string | null = null;
 /** The serialized servers the live session was last handed. */
@@ -568,10 +605,82 @@ const startMcpChild = (servers: unknown) => {
     : spawn("sleep", ["300"], { stdio: "ignore" });
   appendFileSync(log, `${mcpChild.pid}\n`);
 };
-const announceMcpReady = (sessionId: string, servers: unknown) => {
-  if (process.env.FAKE_ACP_MCP_READY !== "1" || !Array.isArray(servers) || !servers.length) return;
-  out({ jsonrpc: "2.0", method: "_fuigo/mcp_initialized", params: { sessionId, mcpToolCount: servers.length, elapsedMs: 1 } });
+/** The server names the last session/new or session/load carried (FAKE_ACP_MCP_LIST "all:<status>"). */
+let lastMcpServerNames: string[] = [];
+/** When those servers were handed over, and whether the list has shown them settled since. */
+let mcpHandedAt = 0;
+let mcpListSettledLogged = false;
+const mcpTimeline = (event: "ready" | "listed" | "prompt", name?: string) => {
+  const file = process.env.FAKE_ACP_MCP_TIMELINE;
+  if (file) appendFileSync(file, `${JSON.stringify({ event, at: Date.now(), ...(name ? { name } : {}) })}\n`);
 };
+const announceMcpReady = (sessionId: string, servers: unknown) => {
+  if (Array.isArray(servers)) lastMcpServerNames = servers.map((server) => String((server as { name?: unknown })?.name ?? "")).filter(Boolean);
+  mcpHandedAt = Date.now();
+  mcpListSettledLogged = false;
+  connectMcpServers(servers);
+  if (process.env.FAKE_ACP_MCP_READY !== "1" || !Array.isArray(servers) || !servers.length) return;
+  // Grok Build announces the same thing under its own name (FAKE_ACP_MCP_READY_METHOD).
+  const announce = () => {
+    mcpTimeline("ready");
+    out({ jsonrpc: "2.0", method: process.env.FAKE_ACP_MCP_READY_METHOD || "_fuigo/mcp_initialized", params: { sessionId, mcpToolCount: servers.length, elapsedMs: 1 } });
+  };
+  const delay = Number(process.env.FAKE_ACP_MCP_READY_DELAY_MS) || 0;
+  if (delay > 0) setTimeout(announce, delay); else announce();
+};
+/** FAKE_ACP_MCP_CONNECT: the servers this engine holds open, as a real engine does. */
+let connectedMcp: Array<ReturnType<typeof spawn>> = [];
+process.on("exit", () => { for (const child of connectedMcp) child.kill(); });
+// A real engine stops its MCP servers and waits for them before it exits; a
+// child left to its own parent's death would linger unreaped (a zombie keeps
+// the process group alive where nothing reaps orphans, as in a container).
+if (process.env.FAKE_ACP_MCP_CONNECT === "1" && !process.env.FAKE_ACP_TERM) {
+  process.once("SIGTERM", () => {
+    const alive = connectedMcp.filter((child) => child.exitCode === null && child.signalCode === null);
+    if (!alive.length) process.exit(0);
+    let left = alive.length;
+    for (const child of alive) {
+      child.once("exit", () => { if (--left === 0) process.exit(0); });
+      child.kill("SIGTERM");
+    }
+    setTimeout(() => process.exit(0), 1_000).unref();
+  });
+}
+function connectMcpServers(servers: unknown): void {
+  if (process.env.FAKE_ACP_MCP_CONNECT !== "1" || !Array.isArray(servers)) return;
+  for (const child of connectedMcp) child.kill();
+  connectedMcp = [];
+  const start = () => {
+    for (const entry of servers as McpEntry[]) {
+      if (typeof entry?.command !== "string") continue;
+      const env = { ...process.env };
+      for (const { name, value } of entry.env ?? []) env[name] = value;
+      const child = spawn(entry.command, entry.args ?? [], { env, stdio: ["pipe", "pipe", "ignore"] });
+      connectedMcp.push(child);
+      child.on("error", () => undefined);
+      child.stdin.on("error", () => undefined);
+      const write = (message: unknown) => { if (!child.stdin.destroyed) child.stdin.write(`${JSON.stringify(message)}\n`); };
+      let buffer = "";
+      child.stdout.on("data", (chunk) => {
+        buffer += chunk;
+        let nl;
+        while ((nl = buffer.indexOf("\n")) !== -1) {
+          const line = buffer.slice(0, nl);
+          buffer = buffer.slice(nl + 1);
+          let message: any;
+          try { message = JSON.parse(line); } catch { continue; }
+          if (message?.id === 1 && message.result) {
+            write({ jsonrpc: "2.0", method: "notifications/initialized" });
+            write({ jsonrpc: "2.0", id: 2, method: "tools/list", params: {} });
+          } else if (message?.id === 2 && message.result) mcpTimeline("listed", entry.name);
+        }
+      });
+      write({ jsonrpc: "2.0", id: 1, method: "initialize", params: { protocolVersion: "2024-11-05", capabilities: {}, clientInfo: { name: "fake-acp", version: "0" } } });
+    }
+  };
+  const delay = Number(process.env.FAKE_ACP_MCP_CONNECT_DELAY_MS) || 0;
+  if (delay > 0) setTimeout(start, delay); else start();
+}
 const agentsTokenOf = (servers: unknown): string | undefined => {
   if (!Array.isArray(servers)) return undefined;
   const agents = servers.find((s: any) => s?.name === "agents") as McpEntry | undefined;
@@ -603,7 +712,15 @@ function driveMcp(entry: McpEntry, calls: Array<{ name: string; args: (prev: str
     // FAKE_ACP_MCP_TIMEOUT_MS: the engine gives up on a tool call that long
     // after it started (the tool's own connection closes), as a real engine's
     // tool timeout does; the turn then goes on
-    const timer = setTimeout(() => (child.kill(), reject(new Error("mcp timeout"))), Number(process.env.FAKE_ACP_MCP_TIMEOUT_MS) || 60_000);
+    // A real engine stops a server it is done with and waits for it: the
+    // answer goes on only once the child has exited (and is reaped), so no
+    // server outlives this process unreaped.
+    const stopThen = (done: () => void) => {
+      if (child.exitCode !== null || child.signalCode !== null) return done();
+      child.once("exit", () => done());
+      child.kill();
+    };
+    const timer = setTimeout(() => stopThen(() => reject(new Error("mcp timeout"))), Number(process.env.FAKE_ACP_MCP_TIMEOUT_MS) || 60_000);
     let step = -1; // -1 = initialize in flight
     let last = "";
     const write = (obj: unknown) => child.stdin.write(JSON.stringify(obj) + "\n");
@@ -611,8 +728,7 @@ function driveMcp(entry: McpEntry, calls: Array<{ name: string; args: (prev: str
       step += 1;
       if (step >= calls.length) {
         clearTimeout(timer);
-        child.kill();
-        return resolve(last);
+        return stopThen(() => resolve(last));
       }
       const call = calls[step];
       write({ jsonrpc: "2.0", id: step + 2, method: "tools/call", params: { name: call.name, arguments: call.args(last) } });
@@ -839,6 +955,10 @@ function handle(msg: any) {
   // client's response to our permission request
   if (msg.id !== undefined && (msg.result !== undefined || msg.error !== undefined) && msg.id === pendingPermissionId) {
     pendingPermissionId = null;
+    if (process.env.FAKE_ACP_PERMISSION_TIMING_FILE && permissionAskedAt !== null) {
+      appendFileSync(process.env.FAKE_ACP_PERMISSION_TIMING_FILE, `${JSON.stringify({ askedAt: permissionAskedAt, waitMs: Date.now() - permissionAskedAt })}\n`);
+      permissionAskedAt = null;
+    }
     if (process.env.FAKE_ACP_DUMP) {
       dumpState.decision = msg.result ?? { error: msg.error };
       writeFileSync(process.env.FAKE_ACP_DUMP, JSON.stringify(dumpState, null, 2));
@@ -904,6 +1024,7 @@ function handle(msg: any) {
         writeFileSync(process.env.FAKE_ACP_DUMP, JSON.stringify(dumpState, null, 2));
       }
       agentsMcp = servers.find((s: any) => s?.name === "agents" || /^murage-agents-[a-f0-9]{20}$/.test(String(s?.name))) ?? null;
+      memoryMcp = memoryServerOf(servers);
       if (process.env.FAKE_ACP_DUMP) {
         writeFileSync(`${process.env.FAKE_ACP_DUMP}.mcp.json`, JSON.stringify(dumpedServers(servers), null, 2));
       }
@@ -950,11 +1071,13 @@ function handle(msg: any) {
         break;
       }
       const loadServers = JSON.stringify(msg.params?.mcpServers ?? []);
+      if (Array.isArray(msg.params?.mcpServers)) memoryMcp = memoryServerOf(msg.params.mcpServers) ?? memoryMcp;
       const serversChanged = !resident || loadServers !== liveServers;
       if (resident && Array.isArray(msg.params?.mcpServers)) {
         // Fuigo's reconnect: the resident session takes the new servers
         const servers: McpEntry[] = msg.params.mcpServers;
         agentsMcp = servers.find((s: any) => s?.name === "agents" || /^murage-agents-[a-f0-9]{20}$/.test(String(s?.name))) ?? null;
+        memoryMcp = memoryServerOf(servers);
         if (process.env.FAKE_ACP_DUMP) writeFileSync(`${process.env.FAKE_ACP_DUMP}.mcp.json`, JSON.stringify(dumpedServers(servers), null, 2));
         if (serversChanged) startMcpChild(servers);
       }
@@ -1026,6 +1149,7 @@ function handle(msg: any) {
       break;
     }
     case "session/prompt": {
+      mcpTimeline("prompt");
       if (mode === "parallel-card-retry" && process.env.FAKE_ACP_FAIL_ONCE_FILE && !existsSync(process.env.FAKE_ACP_FAIL_ONCE_FILE)) {
         writeFileSync(process.env.FAKE_ACP_FAIL_ONCE_FILE, "failed launch");
         out({ jsonrpc: "2.0", id: msg.id, error: { code: -32603, message: "429 too many requests", data: { http_status: 429, error_kind: "rate_limited" } } });
@@ -1658,6 +1782,25 @@ function handle(msg: any) {
           });
         return;
       }
+      if (mode === "memory-search" && memoryMcp) {
+        // A bot's explicit recall: the prompt names the query after MSEARCH:,
+        // the injected memory proxy is asked through memory_search, and the
+        // outcome (never the remembered text) goes to FAKE_ACP_MEMORY_LOG.
+        const allText = (Array.isArray(msg.params?.prompt) ? msg.params.prompt : []).map((part: { text?: unknown }) => String(part?.text ?? "")).join("\n");
+        const query = /MSEARCH: ([^\n]+)/.exec(allText)?.[1]?.trim() || "weekly client report";
+        const started = performance.now();
+        const say = (text: string) => { out({ jsonrpc: "2.0", method: "session/update", params: { update: { sessionUpdate: "agent_message_chunk", content: { text } } } }); complete(); };
+        const note = (row: object) => { if (process.env.FAKE_ACP_MEMORY_LOG) appendFileSync(process.env.FAKE_ACP_MEMORY_LOG, JSON.stringify({ at: Date.now(), ms: Math.round(performance.now() - started), ...row }) + "\n"); };
+        void driveMcp(memoryMcp, [{ name: "memory_search", args: () => ({ query }) }]).then(text => {
+          let body: any = null;
+          try { body = JSON.parse(text); } catch { /* the proxy's own sentence */ }
+          note(body && typeof body === "object"
+            ? { hits: Array.isArray(body.hits) ? body.hits.length : null, degradedReason: body.degradedReason ?? null, partial: body.partial ?? null, recentFallback: body.recentFallback ?? null, coverageComplete: body.coverageComplete ?? null, keys: Object.keys(body).filter(key => key !== "hits") }
+            : { hits: null, proxy: text.slice(0, 120) });
+          say(`memory search answered: ${body && Array.isArray(body.hits) ? body.hits.length : 0} hits`);
+        }).catch(error => { note({ hits: null, error: String(error?.message ?? error).slice(0, 120) }); say("memory search failed"); });
+        return;
+      }
       if ((mode === "ask-peer" || mode === "create-peer") && agentsMcp && Number(agentsMcp.env?.find(entry => entry.name === "MURAGE_TURN_DEPTH")?.value ?? "0") > 0) {
         // A nested helper answers its assignment, while proving that the
         // actual injected MCP server still supplies its scoped directory.
@@ -1957,12 +2100,16 @@ function handle(msg: any) {
         // request_permission (named in the tool call), exactly the shape a
         // question must never be auto-approved from.
         pendingPermissionId = 9001;
+        permissionAskedAt = Date.now();
         onPermissionAnswered = complete;
         out({
           jsonrpc: "2.0",
           id: pendingPermissionId,
           method: "session/request_permission",
           params: {
+            // FAKE_ACP_PERMISSION_SESSION=1: name the live session, as the ACP
+            // spec has a real engine do (the shorthand ask omits it)
+            ...(process.env.FAKE_ACP_PERMISSION_SESSION === "1" && liveSession ? { sessionId: liveSession } : {}),
             toolCall: permissionToolCall && mode === "permission"
               ? permissionToolCall
               : mode === "question-tool"
@@ -2005,6 +2152,20 @@ function handle(msg: any) {
         return;
       }
       complete();
+      break;
+    }
+    case "_x.ai/mcp/list":
+    case "_fuigo/mcp/list": {
+      // FAKE_ACP_MCP_LIST: per-server status JSON ({name: "ready" | "initializing"
+      // | ...}), answered as Grok Build and Fuigo answer it; unset: method not found.
+      if (!process.env.FAKE_ACP_MCP_LIST) { if (msg.id !== undefined) out({ jsonrpc: "2.0", id: msg.id, error: { code: -32601, message: "method not found" } }); break; }
+      const listed = process.env.FAKE_ACP_MCP_LIST;
+      const settling = Date.now() - mcpHandedAt < (Number(process.env.FAKE_ACP_MCP_LIST_READY_AFTER_MS) || 0);
+      const states = listed.startsWith("all:")
+        ? Object.fromEntries(lastMcpServerNames.map((name) => [name, settling ? "initializing" : listed.slice(4)]))
+        : JSON.parse(listed) as Record<string, string>;
+      if (!settling && listed.startsWith("all:") && !mcpListSettledLogged) { mcpListSettledLogged = true; mcpTimeline("ready"); }
+      result(msg.id, { servers: Object.entries(states).map(([name, status]) => ({ name, session: { enabled: true, status } })) });
       break;
     }
     case "_fuigo/interject": {

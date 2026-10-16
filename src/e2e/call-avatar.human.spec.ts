@@ -13,7 +13,7 @@ test.beforeAll(async () => {
     resolveId(id){const map:Record<string,string>={"@/state/store":"store","@/lib/call":"call","@/lib/tts":"tts","@/lib/tts/useSpeech":"speech","@/lib/push-to-talk":"push"};for(const[alias,key]of Object.entries(map))if(id===alias||id.endsWith("/src/"+alias.slice(2)))return "\0avatar-"+key;if(id==="/__call.js")return "\0avatar-entry";},
     load(id){
       if(id.endsWith("/src/styles.css"))return readFileSync(id,"utf8").replace('@import "tailwindcss";','@import "tailwindcss" source(none);\n@source "./components";');
-      if(id==="\0avatar-store")return `const empty=[];export const visibleMessages=()=>empty;export const viewedTaskBot=bot=>bot;export const useStreaming=()=>null;export const useStore=()=>({state:{config:{}},dispatch:()=>{}});export const api=async()=>({});`;
+      if(id==="\0avatar-store")return `const empty=[];export const visibleMessages=()=>empty;export const olderOpenCards=(owner,visible)=>visible;export const viewedTaskBot=bot=>bot;export const useStreaming=()=>null;export const useStore=()=>({state:{config:{}},dispatch:()=>{}});export const api=async()=>({});`;
       if(id==="\0avatar-call")return `export const useOnCall=()=>"portrait-bot";export const currentCall=()=>"portrait-bot";export const deferCallCleanup=()=>{};export const requestCall=()=>{};export const takeCallRequest=()=>false;export const useCallRequest=()=>null;export const endCall=()=>{};export const startCall=()=>{};`;
       if(id==="\0avatar-tts")return `export const speaker={isSpeaking:()=>false,speak:async()=>{},stop:()=>{}};export const onClipElement=()=>()=>{};`;
       if(id==="\0avatar-speech")return `export const useSpeech=()=>({caption:"",error:null});`;

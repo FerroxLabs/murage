@@ -121,7 +121,7 @@ test("the routine editor stores a selected ceiling and lists its remembered appr
   await expect(grants.getByText(COMMAND, { exact: true })).toBeVisible();
   await expect(grants.getByText("/tmp/rwa")).toBeVisible();
   // what a grant covers across runs is said where the grants are listed
-  await expect(grants.getByText("Each one covers exactly the command you approved.", { exact: false })).toBeVisible();
+  await expect(grants.getByText("Each one covers the exact command you approved.", { exact: false })).toBeVisible();
   await page.screenshot({ path: info.outputPath("routine-editor-approvals.png"), fullPage: true });
 
   await grants.getByRole("button", { name: `Remove always allow for ${COMMAND}` }).click();

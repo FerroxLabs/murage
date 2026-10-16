@@ -69,5 +69,8 @@ it("joins background restaging before releasing desktop ownership", () => {
   const cleanup = main.slice(main.indexOf("function cleanupDesktopForExit() {"));
   const join = cleanup.indexOf("await awaitOwnedWork(backupToolCheck,");
   expect(join).toBeGreaterThan(-1);
-  expect(join).toBeLessThan(cleanup.indexOf("desktopDataOwner.release()"));
+  // f30368945 (rc10-lease) passes the exited children to release(); match the call, not its argument list.
+  const release = cleanup.indexOf("desktopDataOwner.release(");
+  expect(release).toBeGreaterThan(-1);
+  expect(join).toBeLessThan(release);
 });

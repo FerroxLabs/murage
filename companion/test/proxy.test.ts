@@ -422,6 +422,29 @@ describe("the sidecar in front of an unmodified harness", () => {
     // contain them.
   });
 
+  it("reads a bot's whole record through the door when the fleet carried its description cut", async () => {
+    // rc12 review: Settings on the phone fetches GET /api/bots/:id for a bot whose description arrived cut, and keeps the field closed until it
+    // lands. The sidecar used to refuse the read, so a long description stayed cut and uneditable on the phone.
+    const description = "A long brief. ".repeat(60).trim();
+    const made = await device("POST", "/api/bots", { body: { name: "Long brief", description } });
+    expect(made.status).toBe(201);
+    const id = made.body.bot.id as string;
+    const roster = await device("GET", "/api/bots?messages=3");
+    const listed = roster.body.bots.find((bot: { id: string }) => bot.id === id);
+    expect(listed.descriptionCut).toBe(true);
+    expect(listed.description.length).toBeLessThan(description.length);
+    const record = await device("GET", `/api/bots/${id}`);
+    expect(record.status).toBe(200);
+    expect(record.body.bot.id).toBe(id);
+    expect(record.body.bot.description).toBe(description);
+    expect(record.body.bot).not.toHaveProperty("descriptionCut");
+    expect(record.body.bot).not.toHaveProperty("messages");
+    // a bot that does not exist is the harness's 404, not the sidecar's refusal
+    const missing = await device("GET", "/api/bots/no-such-bot");
+    expect(missing.status).toBe(404);
+    expect(missing.body.error).toBe("no such bot");
+  });
+
   it("streams events through, terminated and scrubbed, keeping the resume cursor", async () => {
     const controller = new AbortController();
     const res = await fetch(`${SIDECAR}/api/events`, {

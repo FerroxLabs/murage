@@ -77,7 +77,7 @@ test.beforeAll(async () => {
       enforce: "pre",
       resolveId(id) { if (id.endsWith("/src/state/store") || id === "@/state/store") return "\0pane-store"; if (id === "/__pane.js") return "\0pane-fixture"; },
       load(id) {
-        if (id === "\0pane-store") return `export * from '/src/state/store.tsx?original';import {useSyncExternalStore} from 'react';export function useStore(){return useSyncExternalStore(window.subscribeFixture,()=>window.fixtureStore);}`;
+        if (id === "\0pane-store") return `export * from '/src/state/store.tsx?original';import {useSyncExternalStore} from 'react';export function useStore(){return useSyncExternalStore(window.subscribeFixture,()=>window.fixtureStore);}export function useStoreActions(){return window.fixtureStore;}`;
         if (id !== "\0pane-fixture") return;
         // The real surface, the real reducer, a stand-in chat column. The
         // reducer's state and dispatch are exposed so a test can do what
@@ -191,12 +191,13 @@ for (const width of [390, 820, 1440]) for (const skin of ["light", "dark"]) test
   // (src/lib/surface.ts), so the stub answers as it does for the desktop app.
   await page.route("**/api/config", route => route.fulfill({ json: { surface: "desktop", features: {}, box: { configured: false } } }));
   // The server now returns v2 learning settings and a token allowance, with no cost block.
-  await page.route("**/api/memory/status", route => route.fulfill({ json: { mode, configuration: { excludedThreadIds: [], extractorInstanceId: null }, scopes: [{ id: "research", kind: "bot", ownerKey: "research", label: "Research bot" }, { id: "other", kind: "bot", ownerKey: "other", label: "Other bot" }], model: { state: "missing" }, records: { active: 2 }, backlog: {}, learning: {revision:0,settings:{version:2,automaticFacts:true,automaticProcedures:true,reviewMode:false,perCallOutputTokens:{extraction:2000,grounding:64,reflection:8000},dailyInputTokens:400000,dailyOutputTokens:60000,callsPerMinute:6,learnFrom:{chats:true,channels:true},botsPaused:[]},connection:{instanceId:null,label:"No connection",source:"none"},allowance:{day:"2026-09-29",inputUsed:0,outputUsed:0,usedPercent:0},defaultOn:false}, deletion: {}, extractors: [], workerError: null } }));
+  await page.route("**/api/memory/status", route => route.fulfill({ json: { mode, configuration: { excludedThreadIds: [], extractorInstanceId: null }, scopes: [{ id: "research", kind: "bot", ownerKey: "research", label: "Research bot" }, { id: "other", kind: "bot", ownerKey: "other", label: "Other bot" }], model: { state: "missing" }, records: { active: 2 }, backlog: { pending: 0, leased: 0, deferred: 0, failed: 0 }, learning: {revision:0,settings:{version:2,automaticFacts:true,automaticProcedures:true,reviewMode:false,perCallOutputTokens:{extraction:2000,grounding:64,reflection:8000},dailyInputTokens:400000,dailyOutputTokens:60000,callsPerMinute:6,learnFrom:{chats:true,channels:true},botsPaused:[]},connection:{instanceId:null,label:"No connection",source:"none"},allowance:{day:"2026-09-29",inputUsed:0,outputUsed:0,usedPercent:0},defaultOn:false}, deletion: {}, extractors: [], workerError: null } }));
   await page.route("**/api/memory/action", async route => {
     const body = route.request().postDataJSON(); actions.push(body);
     if (body.action === "list" && body.query === "delayed") await new Promise<void>(resolve => { releaseOld = resolve; });
     if (body.action === "list") return route.fulfill({ json: { records: [record(body.botId)], scopeIds: [body.botId] } });
     if (body.action === "import-review-list") return route.fulfill({ json: { links: [] } });
+    if (body.action === "waiting-summary") return route.fulfill({ json: { subjects: [], total: 0, later: 0 } });
     if (body.action === "inspect") return route.fulfill({ json: { record: record(String(body.id).replace("memory-", "")), evidence: [], lineage: [] } });
     return route.fulfill({ status: 400, json: { error: "Unexpected memory mutation" } });
   });
@@ -217,12 +218,12 @@ for (const width of [390, 820, 1440]) for (const skin of ["light", "dark"]) test
   await page.getByRole("tab", { name: "Memory", exact: true }).click();
   await expect(page.getByTestId("memory-settings")).toHaveAttribute("data-compact", "true");
   await expect(page.getByText(`Private note for research`, { exact: true })).toBeVisible();
-  await expect(page.getByTestId("memory-settings")).toContainText(mode === "active" ? "Capture and recall are on." : mode === "off" ? "Memory is off." : "Processing and recall are paused.");
-  for (const view of ["Important", "Recent", "Needs review"]) { await page.getByRole("button", { name: view, exact: true }).click(); await expect(page.getByRole("button", { name: view, exact: true })).toBeEnabled(); }
+  await expect(page.getByTestId("memory-settings")).toContainText(mode === "active" ? "Memory is on." : mode === "off" ? "Memory is off." : "Memory is paused. Your chats work as usual.");
+  for (const view of ["Important", "Recent", "Waiting"]) { await page.getByRole("button", { name: view, exact: true }).click(); await expect(page.getByRole("button", { name: view, exact: true })).toBeEnabled(); }
   await page.getByRole("button", { name: "Inspect memory", exact: true }).click();
   await page.getByRole("checkbox", { name: "Confirm forgetting this memory" }).check();
   await page.getByRole("button", { name: "Close details", exact: true }).click();
-  expect(actions.every(action => ["list", "inspect", "import-review-list"].includes(String(action.action)))).toBe(true);
+  expect(actions.every(action => ["list", "inspect", "import-review-list", "waiting-summary", "waiting-list", "waiting-sources"].includes(String(action.action)))).toBe(true);
   await page.getByRole("tab", { name: "Memory", exact: true }).focus(); await page.keyboard.press("Home");
   await expect(page.getByRole("tab", { name: "Files", exact: true })).toBeFocused();
   await expect(sourceBox(page)).toHaveValue("# Unsaved owner draft");

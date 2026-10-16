@@ -119,7 +119,7 @@ export function makeLateTerminalDriver(): AnyProviderDriver {
                   return;
                 }
                 if (dump) appendFileSync(dump, `${JSON.stringify({ prompt: true, turnId, threadId: turn.threadId })}\n`);
-                emit({ type: "item.completed", itemType: "assistant_text", text: "Hello from late", threadId: turn.threadId, turnId });
+                emit({ type: "item.completed", itemType: "assistant_text", origin: "engine", text: "Hello from late", threadId: turn.threadId, turnId });
                 active.delete(turn.threadId);
                 emit({ type: "turn.completed", ok: true, threadId: turn.threadId, turnId });
               })();
@@ -142,7 +142,7 @@ export function makeLateTerminalDriver(): AnyProviderDriver {
             // inside the acceptance hook is seen before anything is said.
             setTimeout(() => {
               if (entry.interrupted || active.get(turn.threadId) !== entry) return;
-              emit({ type: "item.completed", itemType: "assistant_text", text: "Hello from late", threadId: turn.threadId, turnId });
+              emit({ type: "item.completed", itemType: "assistant_text", origin: "engine", text: "Hello from late", threadId: turn.threadId, turnId });
               active.delete(turn.threadId);
               emit({ type: "turn.completed", ok: true, threadId: turn.threadId, turnId });
             }, 25);

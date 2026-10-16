@@ -10,6 +10,7 @@ import { memoryState } from "./repository.ts";
 import { prepareMemoryDisclosure, deliverMemoryDisclosure } from "./disclosures.ts";
 import { requiresDesktopAuthority } from "../desktop-policy.ts";
 import { bindHumanThread, linkHumanBinding, observeVerifiedHuman, resolveHumanBinding } from "../human-principals.ts";
+import { LineageAllowance } from "./lineage-allowance.ts";
 
 beforeEach(() => { closeDatabase(); rmSync(DATA_DIR,{recursive:true,force:true}); mkdirSync(DATA_DIR,{recursive:true}); });
 function fixture(thread = "private-a", humanPrincipal?: ReturnType<typeof resolveHumanBinding>) {
@@ -90,7 +91,7 @@ it("keeps an in-flight private bundle authorized when new peer rooms are added",
       }
       return {hits:[],vectorRows:0};
     },
-  });
+  }, {allowance: LineageAllowance.tool(1_000_000_000)});
   expect(memoryState().policyRevision).toBe(before);
   expect(f.access.scopeIds).toEqual(scopes);
   expect(() => assertMemoryBundle(bundle, f.access)).not.toThrow();
@@ -165,7 +166,7 @@ function taskNavigationFixture(kind: "bot" | "room") {
 
 it.each(["bot", "room"] as const)("opening another existing %s task preserves background authority and disclosures",async kind=>{
   const f=taskNavigationFixture(kind),before=memoryState().policyRevision;
-  const bundle=await buildMemoryBundle("",f.access,{search:async()=>({hits:[],vectorRows:0})});
+  const bundle=await buildMemoryBundle("",f.access,{search:async()=>({hits:[],vectorRows:0})}, {allowance: LineageAllowance.tool()});
   prepareMemoryDisclosure(bundle,f.access,"fixture");deliverMemoryDisclosure(bundle.bundleId,f.access);
   const next=structuredClone(f.roster),subject=kind==="room"?next.groups[0]:next.bots[0];
   subject.threadId=subject.tasks![1].threadId;
@@ -193,7 +194,7 @@ it.each(["membership", "task-removal", "team"])("task navigation still revokes a
 
 it("adding a collision-free room task preserves unrelated original access and durable receipts",async()=>{
   const f=fixture(),before=memoryState().policyRevision;
-  const bundle=await buildMemoryBundle("",f.access,{search:async()=>({hits:[],vectorRows:0})});
+  const bundle=await buildMemoryBundle("",f.access,{search:async()=>({hits:[],vectorRows:0})}, {allowance: LineageAllowance.tool()});
   prepareMemoryDisclosure(bundle,f.access,"fixture");deliverMemoryDisclosure(bundle.bundleId,f.access);
   const next=structuredClone(f.roster);
   next.groups[0].tasks=[{threadId:"room-thread"},{threadId:"new-scheduled-thread"}];
@@ -220,7 +221,7 @@ it.each(["private-alias","other-room-alias","membership","remove-thread"])("room
 
 it("adding a fresh independent owner task preserves prior access and grant epoch",async()=>{
   const f=fixture(),before=memoryState().policyRevision;
-  const bundle=await buildMemoryBundle("",f.access,{search:async()=>({hits:[],vectorRows:0})});
+  const bundle=await buildMemoryBundle("",f.access,{search:async()=>({hits:[],vectorRows:0})}, {allowance: LineageAllowance.tool()});
   prepareMemoryDisclosure(bundle,f.access,"fixture");deliverMemoryDisclosure(bundle.bundleId,f.access);
   const next=structuredClone(f.roster);next.bots[0].tasks=[{threadId:"private-a"},{threadId:"fresh-owner-task"}];
   persistMemoryRoster(next,()=>Object.assign(f.roster,next));

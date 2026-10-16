@@ -56,9 +56,24 @@ const VERBS: Record<ActionClass, { past: string[]; participle: string[] }> = {
   },
 };
 
-/** Multi-word first person forms the single-verb table cannot express. */
-const PHRASES: Array<{ class: ActionClass; first: RegExp }> = [
+/** Multi-word first person forms the single-verb table cannot express. An
+ * `antecedent` phrase also needs the text just before it (the previous sentence
+ * and this one up to the phrase) to name what "it" is. */
+const CALENDAR_ITEM = String.raw`(?:events?|meetings?|appointments?|reminders?|calls?)`;
+/** "to your calendar" ends the clause: punctuation, the end, or a word that starts a new phrase
+ * ("for Monday", "at 10", "and"), never a noun that makes the calendar a modifier ("your calendar guide"). */
+const CLAUSE_END = /(?=\s*(?:$|[.!?,;:)\u2014\u2013])|\s+(?:and|but|so|for|at|on|from|starting|this|next|tomorrow|today|tonight|every|each|too|already|now|then)\b)/.source;
+const ON_YOUR_CALENDAR = String.raw`(?:to|on) (?:your|my) (?:calendar|schedule|agenda)s?${CLAUSE_END}`;
+const PHRASES: Array<{ class: ActionClass; first: RegExp; antecedent?: RegExp }> = [
   { class: "schedule", first: /\bset (?:up )?(?:a |the |your )?(?:reminder|routine)s?\b/i },
+  // "I've added both events to your calendar": an event, meeting, appointment, reminder or call as the
+  // direct object, put on your calendar, schedule or agenda, and the clause ends there. Anything else
+  // ("a link to your calendar in this reply", "example events to your calendar guide below") is reply content.
+  { class: "schedule", first: new RegExp(String.raw`\b(?:added|put) (?:(?!(?:to|on|in|into|onto|of|for|from|with|about)\b)[\w'-]+ ){0,4}?${CALENDAR_ITEM} ${ON_YOUR_CALENDAR}`, "i") },
+  // "Found the dentist appointment. I put it on your calendar.": "it" is scheduling only when the
+  // clause before names the event.
+  { class: "schedule", first: new RegExp(String.raw`\b(?:added|put) (?:it|them|both|that|those) ${ON_YOUR_CALENDAR}`, "i"),
+    antecedent: new RegExp(String.raw`\b${CALENDAR_ITEM}\b`, "i") },
   { class: "delegate", first: /\b(?:handed|passed) (?:it |this |that |the \w+ )?(?:off|over)(?: to)?\b/i },
   { class: "delegate", first: /\basked @?[A-Z][a-z]+ to\b/ },
 ];
@@ -166,7 +181,10 @@ export function detectActionClaims(text: string): ClaimScan {
     claims.push({ class: cls, span: [start, end] });
   };
 
+  let previousSentenceStart = 0;
   for (const sentence of sentences(masked)) {
+    const antecedentFrom = previousSentenceStart;
+    previousSentenceStart = sentence.start;
     if (sentence.question) continue; // 3: a question
     const body = masked.slice(sentence.start, sentence.end);
     if (!body.trim()) continue;
@@ -215,6 +233,7 @@ export function detectActionClaims(text: string): ClaimScan {
       const m = phrase.first.exec(body);
       if (!m) continue;
       const at = sentence.start + m.index;
+      if (phrase.antecedent && !phrase.antecedent.test(masked.slice(antecedentFrom, at))) continue;
       // phrases carry their own subject-less form; require "I" in the lead-up
       if (/\bI(?:['’]ve|\s+have)?\s+(?:(?:just|already|now|also|successfully|finally|then)\s+)*$/i.test(masked.slice(Math.max(sentence.start, at - 40), at))
         && guard(at)) add(phrase.class, at, at + m[0].length);
@@ -265,9 +284,11 @@ export interface ActionCheck {
   claims: CheckedClaim[];
 }
 
-/** The exact line the chat shows under a flagged reply. */
-export const FLAGGED_REPLY_LINE = "This reply describes an action that has no record. Nothing was done.";
-export const EARLIER_CLAIM_TITLE = "recorded earlier in this conversation";
+/** The reply's activity details (the Inspector) carry one quiet row per claim
+ * with no matching record. The chat itself shows the reply text clean. */
+export const unmatchedActionLabel = (sentence: string): string => `No matching action found for: "${sentence}"`;
+export const UNMATCHED_ACTION_EXPLANATION =
+  "Murage found no record of this action in this reply. It may have been done by another bot or in an earlier reply. Check before relying on it.";
 
 /** Replace a flagged reply's text in a window a reader sees (the span count stays honest). */
 export const HELD_REPLY_TEXT = "[reply held: it described an action with no record]";

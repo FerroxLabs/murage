@@ -35,6 +35,7 @@ import { COUNTER_TEXT, LIVED_BASIS } from "./pip-lived.ts";
 import { LIVED_SYSTEM, supportCopy } from "./pip-reflect.ts";
 import { EPISODE_BASIS } from "./pip-episodes.ts";
 import { HELD_PLUGIN_COPY, LOGIN_ROUTE_COPY } from "./pip-transport.ts";
+import { LineageAllowance } from "./lineage-allowance.ts";
 
 const T0 = 1_760_000_000_000;
 const MIN = 60_000;
@@ -706,10 +707,10 @@ describe("episodes", () => {
     const registry = new InternalCapabilities(), generation = registry.begin("moss", "private");
     const token = registry.mint({ botId: "moss", threadId: "private", generation, depth: 0, kind: "memory", skillAuthoring: false });
     const access = memoryAccess(registry, registry.resolve(`Bearer ${token}`)!, () => roster as never);
-    const on = await buildMemoryBundle("tide tables", access, emptyBridge, { continuity: true });
+    const on = await buildMemoryBundle("tide tables", access, emptyBridge, { allowance: LineageAllowance.tool(), continuity: true });
     expect(on.text).toContain("review the tide tables on Friday");
     expect(on.text).toContain("a summary I wrote of an earlier conversation");
-    const off = await buildMemoryBundle("tide tables", access, emptyBridge);
+    const off = await buildMemoryBundle("tide tables", access, emptyBridge, {allowance: LineageAllowance.tool()});
     expect(off.text).not.toContain("tide tables on Friday");
   });
 });
@@ -921,6 +922,20 @@ describe("Astra audit2 production regressions", () => {
     expect(readCounter(database(), "moss", target.id, 1)?.occasions).toEqual([]);
     expect(await memoryOwnerRoute("/api/memory/action", { action: "pip-reflect-exclude", botId: "moss", threadId: "private", excluded: true }, ticket, roster as never)).toEqual({ ok: true });
     await expect(memoryOwnerRoute("/api/memory/action", { action: "pip-reflect-exclude", botId: "moss", threadId: "other-thread", excluded: true }, ticket, roster as never)).rejects.toThrow();
+  });
+
+  it("revoke-bounded: forgetting one of five contradicting sources reconciles the stance the way the installation-wide pass does", async () => {
+    const { forgetMemory } = await import("./forget.ts");
+    const target = writeBotIdentity(ticket, { action: "identity-write", botId: "moss", kind: "commitment", key: "brief", expectedVersion: 0, text: "I will be brief", basis: "owner-fact", audience: "owner-private" }, roster as never);
+    const sources = [0, 1, 2, 3, 4].map(n => owner(`contra-${n}`, T0 + n * 1000, "Please be detailed."));
+    applyStanceEvents(database(), "moss", scopeOf("moss"), sources.map(sourceId => ({ targetId: target.id, quote: "Please be detailed.", handle: { sourceId, revision: 1, start: 0, end: 19 } })));
+    const claim = () => String(database().prepare("SELECT claim_status FROM memory_record_details WHERE record_id=? ORDER BY record_version DESC LIMIT 1").get(target.id)!.claim_status);
+    expect(readCounter(database(), "moss", target.id, 1)?.occasions).toHaveLength(5);
+    expect(claim()).toBe("disputed");
+    forgetMemory(ticket, { kind: "source", id: sources[2]! });
+    // a replacement counter holds the four that remain, and the claim is current again (not left disputed by a deleted counter)
+    expect(readCounter(database(), "moss", target.id, 1)?.occasions?.slice().sort()).toEqual(sources.filter((_, n) => n !== 2).sort());
+    expect(claim()).toBe("current");
   });
 
   it("25: confirmation enforces expiry and maintenance recovers missed trace days without inference", async () => {

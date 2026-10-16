@@ -141,11 +141,41 @@ describe("bot patch queue", () => {
     queue.enqueue("bot-1", { name: "x".repeat(101) }, bot());
     await vi.advanceTimersByTimeAsync(400);
 
-    expect(authoritative).toHaveBeenCalledWith(serverBot, {});
+    // the re-read record settles the refused field under the version rules (CI-OVERLAY-DESIGN); nothing served rides as an overlay
+    expect(authoritative).toHaveBeenCalledWith(serverBot, {}, ["name"]);
     expect(onError).toHaveBeenCalledWith(
       expect.objectContaining({ message: "name must be at most 100 characters" }),
       { name: "x".repeat(101) },
     );
+  });
+
+  it("a refusal settles every refused field, absent on the re-read included, and keeps a later edit as the overlay", async () => {
+    const authoritative = vi.fn();
+    const serverBot = bot();
+    const reconciliation = deferredBot();
+    let sends = 0;
+    const queue = createBotPatchQueue({
+      send: async () => {
+        if (++sends === 1) throw new Error("not found");
+        return serverBot;
+      },
+      reconcile: async () => reconciliation.promise,
+      onAuthoritative: authoritative,
+      onError: vi.fn(),
+    });
+
+    queue.enqueue("bot-1", { fullAccess: true, acknowledgeFullAccess: true }, bot());
+    await vi.advanceTimersByTimeAsync(400);
+    // typed while the re-read is still out: pending, so it rides as the overlay
+    queue.enqueue("bot-1", { name: "Second" }, bot());
+    reconciliation.resolve(serverBot);
+    await vi.runAllTicks();
+    await Promise.resolve();
+
+    // the wire-only acknowledgement is not a record field; the server's record (no fullAccess at all) settles the refused one
+    expect(authoritative).toHaveBeenCalledWith(serverBot, { name: "Second" }, ["fullAccess"]);
+    await queue.flush("bot-1");
+    expect(authoritative).toHaveBeenLastCalledWith(serverBot, {});
   });
 
   it("does not restore a bot whose queued mutation was cancelled for deletion", async () => {
@@ -281,10 +311,11 @@ describe("bot patch queue", () => {
     for (const overlay of overlays) expect(overlay).not.toHaveProperty("chiefTier");
   });
 
-  it("clears a refused optimistic value the server bot omits, and names the refused patch", async () => {
+  it("a refused optimistic value the server bot omits is settled by the re-read, which names the refused fields", async () => {
     // A bot that never had Full access has no `fullAccess` field at all, so
-    // a plain spread of the re-read bot over the optimistic one kept the
-    // refused `fullAccess: true` on screen, and its two options live.
+    // the re-read record is handed over unchanged with the refused fields
+    // named: the store settles them from it (absent = cleared) under the
+    // version rules, instead of a spread that kept `fullAccess: true`.
     const authoritative = vi.fn();
     const onError = vi.fn();
     const queue = createBotPatchQueue({
@@ -298,11 +329,11 @@ describe("bot patch queue", () => {
     await vi.advanceTimersByTimeAsync(400);
     await queue.flush("bot-1");
 
-    const [folded, overlay] = authoritative.mock.lastCall!;
-    const onScreen = { ...bot({ autoApprove: true, fullAccess: true }), ...folded, ...overlay };
-    expect(onScreen.fullAccess).toBeUndefined();
-    expect(onScreen.autoApprove).toBe(false);
-    expect(folded).not.toHaveProperty("acknowledgeFullAccess");
+    const [record, overlay, settled] = authoritative.mock.lastCall!;
+    expect(record).toEqual(bot({ autoApprove: false }));
+    expect(overlay).toEqual({});
+    // the wire-only acknowledgement and scope are not record fields
+    expect(settled).toEqual(["fullAccess"]);
     expect(onError).toHaveBeenCalledWith(expect.objectContaining({ message: "not found" }), expect.objectContaining({ fullAccess: true }));
   });
 

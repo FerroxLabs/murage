@@ -1,0 +1,92 @@
+---
+title: What changed in Murage 1.0.2
+description: Memory stays quick on long histories and asks you about the things that need you, startup and search stay smooth, group chats pick the right bot, Murage for Chrome reads like the app, and new Ferrox Labs teams join the library.
+icon: Clock
+---
+
+## Memory in 1.0.2
+
+- **Memory stays compact on long conversations.** Memory now stores each reply's sources as a small step from the one before, so a long-running thread takes a fraction of the disk it did and memory search answers quickly. The upgrade screen shows its progress, and Murage hands freed space back to your disk when there is room.
+- **Memory answers faster.** The first check of a resumed conversation is held to about a tenth of a second, and if it needs longer Murage shows "checking" and finishes in the background. Recall reads its index first, and background memory work gives way to what you are doing.
+- **Memories that need you are easy to find.** A Needs you block and an Inbox card list the memories waiting for your word, with Keep, Keep all, Later, Edit and Undo, and your phone gets one quiet note when some are waiting.
+- **Flux Memory follows each engine and your settings.** Every engine's calls through Flux carry the memory settings meant for that bot, engines keep their own built-in memory out of the way, and you can turn each part of Flux Memory on or off in your settings.
+- **Memory search keeps itself in shape.** Its search index compacts itself as it grows, and rebuilds itself from your stored memory if it ever grows too large to add to.
+- **Memory settings name each conversation.** Every memory shows the name of the conversation it came from, however long your history.
+- **Memory notebooks update in the background.** Editing a bot's notebook updates its memory without holding up anything you are doing.
+- **The upgrade shows every step.** The progress bar follows each step through to the end, including "Settling earlier memory".
+- **You can go back to Murage 1.0.1 in one step.** Choose Help, then Prepare to reinstall Murage 1.0.1. Murage gets your memory ready for 1.0.1 and closes; your chats and memories come with you, and search is complete when you get there.
+
+## Speed on long histories in 1.0.2
+
+- **Quick however much history you have.** A turn does work in proportion to what is new, so a conversation with years of messages answers as fast as a new one.
+- **The Inbox opens from a ready summary, and stays quick.** Suggestions waiting for you are read straight from where they are kept, so it opens quickly however many there are. While it fills for the first time, it shows "Getting your inbox ready".
+- **Search stays responsive.** Results come from the newest matches first, and Murage tells you when it showed a limited set.
+- **Your team list loads light.** Each bot and room brings just its latest few messages, enough for the sidebar. The conversation you open fills to a full page at once, and older messages load as you scroll.
+- **Startup is smooth.** Murage opens and answers right away while it catches up in the background, so nothing pauses while your history, memory and search get ready.
+- **Search finds common words quickly on long histories.** Looking up a word that appears all through years of messages comes back in a fraction of a second.
+- **Chat export works in small pieces on long chats.** Exporting a long conversation runs a piece at a time, so Murage stays responsive while the file is prepared.
+- **The sidebar shows full lines and loads faster.** Each bot and room shows its whole latest line, never cut off, and the sidebar fills from a light summary so your team appears quickly. The conversation you open loads when you open it.
+- **Scrolling in rooms stays filled in.** Long room conversations show their messages as you scroll, with no blank stretches.
+- **Local model servers are checked when you use them.** Murage looks at a model server you added when you open model choice or press Check again, and checks each server once per refresh. Everyday background refreshes leave it alone and keep listing the models your bots use.
+
+## Engines in 1.0.2
+
+- **Fuigo 1.0.27.** Murage 1.0.2 comes with Fuigo 1.0.27 bundled.
+
+## Stopped and queued messages in 1.0.2
+
+- **A message you stopped stays stopped,** including across a restart. It runs only when you press Send again.
+- **Send again and Dismiss** are shown for any message or hand-off waiting on you.
+- **A queued message runs once.**
+
+## Deleting a conversation in 1.0.2
+
+- **Deleting a conversation also removes it from the coding engines' own files,** including engines that keep their files in a synced folder.
+- **When an engine is open, Murage says so,** and finishes removing the conversation after you close it.
+- **For synced folders,** Murage tells you that your cloud provider may still hold older copies in its version history.
+
+## Routines in 1.0.2
+
+- **Routines stay light over years of runs.** Run history is compacted during scheduled work, so a routine that has run for years costs no more than a new one.
+- **Always allow for this routine holds.** A command you allow for a routine runs on its later runs without asking again, and your bot reads the results of its own connected-app calls without asking at all, so a routine can run while you sleep.
+- **Delete a past run.** Each past run on the Routines calendar has a Delete button, so you can keep the history tidy.
+
+## Group chats in 1.0.2
+
+- **Group chats pick the right bot to answer.** With a Flux key, Murage's decision model chooses which bot should reply in a group chat, asks Flux not to keep anything it sends, and decides within about a second. If it takes longer, or is not sure, the lead answers. You can switch it off in Settings.
+
+## Chats and bots in 1.0.2
+
+- **Unmatched actions live in the Inspector.** When a bot says it did something Murage has no record of, the note now sits in the Inspector sidebar beside the chat, and actions a teammate ran for the bot count as records.
+- **House rules keep up with your typing.** The house rules editor keeps every word you type, however fast you write.
+- **Edits you are typing stay with their message.** An edit keeps its words when you switch bots or while Murage is busy, and you can edit again if a change has not gone through after 20 seconds.
+- **Any engine can run your bot.** A bot moved to an engine that cannot reach its computer still answers, and says what it can do without the computer. The engine picker names a ready engine that runs the same model with pictures, and the vision icon matches what the engine can see.
+- **A new bot keeps the name you give it.** The name you choose during setup is the name your bot keeps, even when the app and the server finish setting up at the same moment.
+- **Deleted and archived bots stay that way on every device.** A bot you delete or archive stays gone across your devices and after a reconnect.
+- **Ferrox Labs teams join the library.** The team library now offers teams written by Ferrox Labs, ready to add to your workspace.
+
+## Murage for Chrome in 1.0.2
+
+- **Murage for Chrome reads like the app.** The panel shows the bot's own name and colour, cards have plain headings such as "click on example.com", access levels use the app's names (Ask each step, Ask once per task, Full access), an approval card waits 15 minutes like every other card, and the browser check finishes in the background and says "checking" while it runs.
+
+## Connected apps in 1.0.2
+
+- **Connected apps keep every valid tool.** If one tool in a connected app's list is malformed, Murage keeps all the others and your bot can use them.
+- **A real action through a connected app is recorded as done.** When your bot sends an email, adds a calendar event or posts through a connected app, Murage records the action, so the reply and the Inspector agree with what happened.
+- **Approvals read in plain words.** Each approval card says what your bot wants to do in everyday language, and your bot no longer asks to read its own results.
+- **Delegations, team names and the business crew's lead show correctly.** A delegation is labelled for what it is, a team shows its own name, the "Help me run my business" crew has its lead, and the waiting-for-engine line clears once an engine is ready.
+- **Connected apps go by their own names.** Your bot talks about Gmail, Google Calendar and your other apps by name, and conversations from 1.0.1 pick up right where they left off.
+
+## Windows in 1.0.2
+
+- **Windows installs and uninstalls cleanly without admin rights.** Murage installs for a standard user in a couple of minutes, starts healthy, and uninstalls completely, including its entry in Apps.
+
+## Flux in 1.0.2
+
+- **Pictures and voice through Flux use Flux's current services.** Image generation goes straight to Flux's live image service, and live transcription stays behind its own switch until you turn it on.
+- **Murage checks your Flux key once and waits for you.** If Flux does not accept a key, Murage stops asking until you test, save or re-enter it, and connected apps and web search try again on a steady schedule of their own.
+
+## Under the hood in 1.0.2
+
+- **A wide set of everyday improvements.** Up to eight per-bot desktops, MCP tools that start from Windows command shims, remote MCP servers that get 30 seconds to list their tools, phone pairing that picks your real Wi-Fi or Ethernet address, chats that follow the newest message after you switch threads, routines that keep their detailed error, and settings files saved with a byte order mark all work as you would expect.
+- **Every release is checked on Intel Macs.** Each build now starts on a real Intel Mac and checks its WhatsApp connection before it is published.

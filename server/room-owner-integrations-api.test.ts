@@ -103,12 +103,12 @@ posixOnly("the owner's integrations in a room turn", () => {
   }, 120000);
 
   it("mounts the owner's connected apps for the owner's words, and not for words nobody proved", async () => {
-    expect(await roomTurnServers("owner asks for connected apps", true)).toContain("composio");
-    expect(await roomTurnServers("unproven caller asks for connected apps", false)).not.toContain("composio");
+    expect(await roomTurnServers("owner asks for connected apps", true)).toContain("murage_connectors");
+    expect(await roomTurnServers("unproven caller asks for connected apps", false)).not.toContain("murage_connectors");
     // the member is told its connected apps are off for it, never handed the tool guide
     const dump = JSON.parse(readFileSync(dumpFile(), "utf8")) as { systemPrompt: string | null };
     expect(dump.systemPrompt ?? "").not.toContain("COMPOSIO_MULTI_EXECUTE_TOOL");
-    expect(await roomTurnServers("owner asks for connected apps again", true)).toContain("composio");
+    expect(await roomTurnServers("owner asks for connected apps again", true)).toContain("murage_connectors");
   }, 120000);
 
   it("mounts the owner's browser for the owner's words, and not for words nobody proved", async () => {

@@ -36,20 +36,24 @@ let recorder: EventRecorder | undefined;
 
 const settingsPath = () => join(home, ".qwen", "settings.json");
 
+/** The isolation switches every Qwen turn now carries (qwenIsolationArgs); these tests are about the rest of the argv. */
+const withoutQwenIsolation = (argv: string[]): string[] => argv.filter((arg, i) => !arg.startsWith("--allowed-mcp-server-names=") && arg !== "--exclude-tools=skill" && !(arg === "-e" && argv[i + 1] === "none") && !(arg === "none" && argv[i - 1] === "-e"));
+
 /** Run one turn and hand back exactly what the CLI was spawned with. */
 async function spawnFor(model: string | undefined): Promise<{ argv: string[]; env: Record<string, string> }> {
   const dump = join(home, "dump.json");
   instance = await QwenAgentDriver.create({
     instanceId: "qwen-flux",
     displayName: "Qwen",
-    environment: { HOME: home, FAKE_ACP_DUMP: dump },
+    environment: { HOME: home, FAKE_ACP_DUMP: dump, FAKE_ACP_VERSION: "qwen-code 0.15.6" },
     enabled: true,
     config: { cli: FAKE_ACP, fullAuto: true },
   });
   recorder = recordEvents(instance.adapter);
   await instance.adapter.sendTurn({ threadId: "t-flux", text: "hi", model });
   await recorder.until((e) => e.type === "turn.completed");
-  return JSON.parse(readFileSync(dump, "utf8")) as { argv: string[]; env: Record<string, string> };
+  const seen = JSON.parse(readFileSync(dump, "utf8")) as { argv: string[]; env: Record<string, string> };
+  return { ...seen, argv: withoutQwenIsolation(seen.argv) };
 }
 
 beforeEach(() => {

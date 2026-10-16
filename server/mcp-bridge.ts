@@ -42,7 +42,7 @@ import {
   ControlUnavailableError,
   createControlClient,
 } from "./control-client.ts";
-import { augmentedPath } from "./env-path.ts";
+import { augmentedPath, resolveCliSpawn } from "./env-path.ts";
 import { createToolListNormalizer } from "./mcp-tool-schema.ts";
 
 // 45s of TOTAL silence before the bridge even probes. An MCP session is
@@ -316,7 +316,11 @@ export function writeMcpLine(destination: Writable, line: string): Promise<void>
 }
 
 export function runMcpBridge(options: BridgeOptions): void {
-  const child = spawn(options.command, options.args, {
+  // On Windows a bare name or a .cmd/.bat shim (npx, a package's bin) cannot be
+  // started by a plain spawn; resolve it the way every engine launch does
+  // (OpenMausBot #2055, Apache-2.0). Identity on other systems.
+  const resolved = resolveCliSpawn(options.command, options.args);
+  const child = spawn(resolved.command, resolved.args, {
     shell: false,
     env: { ...process.env, PATH: augmentedPath() },
     stdio: ["pipe", "pipe", "pipe"],

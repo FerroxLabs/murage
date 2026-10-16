@@ -240,13 +240,30 @@ describe("an engine change or an app close around a run waiting for the person",
     await start();
 
     // Still answerable where it stands (the answer then says the run ended),
-    // but no longer waiting in the Inbox.
-    const left = (await messagesOf(bot.threadId)).find((message) => message.id === card.id)?.card as Record<string, unknown> | undefined;
+    // but no longer waiting in the Inbox. (rc13: the card sweep is an after-listen step, so it runs in the first turns after the first
+    // health answer, not before it: the card is closed a moment after the start, STALLS-FINAL-DESIGN 3.4.)
+    const cardNow = async () => (await messagesOf(bot.threadId)).find((message) => message.id === card.id)?.card as Record<string, unknown> | undefined;
+    await expect.poll(async () => (await cardNow())?.orphaned, { timeout: 10_000 }).toBe(true);
+    const left = await cardNow();
     expect(left).toMatchObject({ orphaned: true });
     expect(left?.answered).toBeUndefined();
     expect(await pendingApprovals()).toBe(0);
     expect((await desktopApi("POST", `/api/threads/${bot.threadId}/respond`, { requestId: card.card!.requestId, behavior: "allow" })).status).toBe(200);
     await expect.poll(async () => (await messagesOf(bot.threadId)).some((message) => message.tool?.name === "Couldn't deliver that answer. The request is no longer open, so the action was not run."), { timeout: 10_000 }).toBe(true);
+    await desktopApi("DELETE", `/api/bots/${bot.id}`);
+  }, 90_000);
+
+  it("a replayed answer for a card that already settled adds no second \"Couldn't deliver\" message", async () => {
+    const bot = await makeBot("Replayed answer");
+    const card = await waitingForApproval(bot);
+    await waitForExit(child!, { signal: "SIGKILL" });
+    await start();
+    const respond = { requestId: card.card!.requestId, behavior: "allow" };
+    const undelivered = async () => (await messagesOf(bot.threadId)).filter((message) => message.tool?.name?.startsWith("Couldn't deliver that answer")).length;
+    expect((await desktopApi("POST", `/api/threads/${bot.threadId}/respond`, respond)).status).toBe(200);
+    await expect.poll(undelivered, { timeout: 10_000 }).toBe(1);
+    expect((await desktopApi("POST", `/api/threads/${bot.threadId}/respond`, respond)).status).toBe(200);
+    expect(await undelivered()).toBe(1);
     await desktopApi("DELETE", `/api/bots/${bot.id}`);
   }, 90_000);
 });

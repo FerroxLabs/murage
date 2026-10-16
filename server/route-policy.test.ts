@@ -80,6 +80,17 @@ describe("route policy (strict)", () => {
     expect(routeClass("PATCH", "/api/bots/b1/cards/m1")).toBe("companion");
   });
 
+  it("the terms status is readable by a door caller without the launch proof; accepting stays on the companion", () => {
+    const nobody = { desktop: false, companion: false, door: false, bot: false };
+    expect(routeClass("GET", "/api/terms")).toBe("conversation");
+    expect(routeAdmits(routeClass("GET", "/api/terms"), { ...nobody, door: true })).toBe(true);
+    expect(routeAdmits(routeClass("GET", "/api/terms"), nobody)).toBe(false);
+    expect(routeAdmits(routeClass("GET", "/api/terms"), { ...nobody, bot: true })).toBe(false);
+    expect(routeClass("POST", "/api/terms/accept")).toBe("companion");
+    expect(routeAdmits(routeClass("POST", "/api/terms/accept"), { ...nobody, door: true })).toBe(false);
+    expect(routeAdmits(routeClass("POST", "/api/terms/accept"), { ...nobody, companion: true })).toBe(true);
+  });
+
   it("refuses with the sentence only a caller that proved who it is", () => {
     const nobody = { desktop: false, companion: false, door: false, bot: false };
     expect(routeAdmits("desktop", nobody)).toBe(false);
@@ -211,5 +222,17 @@ describe("route policy (strict)", () => {
     } finally {
       server.close();
     }
+  });
+});
+
+describe("the restore-hold routes are listed by name as desktop-only", () => {
+  it("each has its own entry (not the default), is desktop class, and no other caller is admitted", () => {
+    const own = (method: string, path: string) => ROUTE_POLICY.filter(entry => matches(entry, method, path));
+    for (const [method, path] of [["GET", "/api/restore-holds"], ["POST", "/api/restore-holds/output_receipt/abc-1/release"], ["POST", "/api/restore-holds/shared_result/req_9/release"]] as const) {
+      expect(own(method, path), `${method} ${path}`).toHaveLength(1);
+      expect(routeClass(method, path)).toBe("desktop");
+    }
+    expect(own("POST", "/api/restore-holds/other_kind/abc/release")).toHaveLength(0);
+    expect(own("DELETE", "/api/restore-holds")).toHaveLength(0);
   });
 });

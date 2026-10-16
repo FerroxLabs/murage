@@ -18,6 +18,7 @@ import { buildMemoryBundle } from "./bundle.ts";
 import { recordMemorySettlement, reconcileInterruptedMemoryTurns } from "./settlement.ts";
 import type { TextOnlyExtractor } from "./extract.ts";
 import { readMemoryLearning, updateMemoryLearning } from "./learning-policy.ts";
+import { LineageAllowance } from "./lineage-allowance.ts";
 
 const roster = { bots: [{ id: "bot", threadId: "thread" }], groups: [] };
 const keywordOnly: MemorySearchBridge = { search: async () => ({ hits: [], vectorRows: 0, degradedReason: "keyword-only" }) };
@@ -48,9 +49,9 @@ const extract = (quote: string, claimType: string, text = quote): TextOnlyExtrac
 const settings = (patch: unknown) => updateMemoryLearning(database(), patch, readMemoryLearning(database()).revision);
 const count = (sql: string, ...values: string[]) => Number(database().prepare(sql).get(...values)!.n);
 const kindOf = (hit: { id: string; version: number }) => String(database().prepare("SELECT kind FROM memory_records WHERE id=? AND version=?").get(hit.id, hit.version)?.kind);
-async function recall(query: string, bridge: MemorySearchBridge = keywordOnly, historical = false) { return (await searchMemory(query, access(), bridge, { historical })).hits; }
+async function recall(query: string, bridge: MemorySearchBridge = keywordOnly, historical = false) { return (await searchMemory(query, access(), bridge, { allowance: LineageAllowance.tool(1_000_000_000), historical })).hits; }
 const facts = <T extends { id: string; version: number }>(hits: T[]) => hits.filter(hit => kindOf(hit) === "fact");
-const bundleText = async (query: string) => (await buildMemoryBundle(query, access(), keywordOnly)).text;
+const bundleText = async (query: string) => (await buildMemoryBundle(query, access(), keywordOnly, {allowance: LineageAllowance.tool()})).text;
 
 it("makes an ordinary grounded owner fact current recall without an approval step", async () => {
   const text = "My report colour is charcoal.", job = capture("colour", text);

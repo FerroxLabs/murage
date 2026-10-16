@@ -21,7 +21,11 @@ async function freshStore() {
 
 afterEach(async () => {
   const { closeMessageDb } = await import("./message-db.ts");
+  const { stopWalMaintenance } = await import("./wal-maintenance.ts");
   closeMessageDb();
+  // the checkpointer thread holds the database files until it has exited: the folder is removed after it, or Windows refuses
+  // (EPERM) and macOS finds a file written back mid-removal (ENOTEMPTY)
+  expect(await stopWalMaintenance()).toBe(true);
   vi.unstubAllEnvs();
   rmSync(home, { recursive: true, force: true });
 });

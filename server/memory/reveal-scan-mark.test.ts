@@ -207,3 +207,30 @@ it("thousands of due, eligible receipts: each visit reads at most 64 of them, ne
     expect(reads - before).toBeLessThanOrEqual(60 * 64);   // was 2,000 reads per sweep
   } finally { (db as any).prepare = real; }
 });
+
+it("rc13: a range window that reads slower than REVEAL_WINDOW_TARGET_MS is halved for the next (never below REVEAL_WINDOW_MIN), a quick one grows back", () => {
+  seed(9000, "owner");
+  const db = database(), real = db.prepare.bind(db);
+  let slow = true;
+  const windows: number[] = [];
+  (db as any).prepare = (sql: string) => {
+    const statement = real(sql);
+    if (!sql.includes("NOT INDEXED") || sql.includes("json_each")) return statement;
+    const all = statement.all.bind(statement);
+    (statement as any).all = (from: number, upto: number) => {
+      windows.push(upto - from);
+      if (slow) { const end = performance.now() + reveal.REVEAL_WINDOW_TARGET_MS + 5; while (performance.now() < end) { /* beside the upgrade */ } }
+      return all(from, upto);
+    };
+    return statement;
+  };
+  try {
+    expect(reveal.revealScanWindow()).toBe(1024);
+    for (let i = 0; i < 8; i++) reveal.pendingBotRevealJobs();
+    expect(windows.slice(0, 4)).toEqual([1024, 512, 256, reveal.REVEAL_WINDOW_MIN]);
+    expect(Math.min(...windows)).toBe(reveal.REVEAL_WINDOW_MIN);
+    slow = false;
+    fullPass();
+    expect(reveal.revealScanWindow()).toBeGreaterThan(reveal.REVEAL_WINDOW_MIN);
+  } finally { (db as any).prepare = real; }
+});

@@ -48,5 +48,5 @@ export function bumpForMessage(message: { role?: unknown; kind?: unknown; artifa
  *  Routine run RECORDS feed the roll-ups and the "connection to restore" rows,
  *  and those count in `decisions` (inbox.ts), so the badge must hear of them. */
 export function frameChangesInbox(payload: Record<string, unknown>): boolean {
-  return payload.kind === "routine.run" || payload.kind === "routine.deleted";
+  return payload.kind === "routine.run" || payload.kind === "routine.deleted" || payload.kind === "routine.run.deleted";
 }

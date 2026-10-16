@@ -23,6 +23,8 @@ import { setMemoryMode } from "./repository.ts";
 import { appendMessage } from "../message-db.ts";
 import type { Message } from "../store.ts";
 import { workingContextBlock, workingContextSources } from "../working-context.ts";
+import { addTurnParents, closeTurnLineage, memberTurnId, openTurnLineage } from "./lineage-write.ts";
+import { LineageAllowance } from "./lineage-allowance.ts";
 
 const roster: MemoryRoster = { bots: [{ id: "bot", threadId: "chat", tasks: [{ threadId: "older" }] }], groups: [] };
 const empty = { async search() { return { hits: [], vectorRows: 0, coverageComplete: false }; } };
@@ -39,23 +41,23 @@ it("a reply built from memory_get rests on what it looked up, and is withheld wh
   const turn = access();
   const record = saveMemoryCandidate(text, [{ sourceId: "message:older:m1", revision: 1, startByte: 0, endByte: Buffer.byteLength(text) }], "k", turn);
   database().prepare("UPDATE memory_records SET state='active' WHERE id=?").run(record);
-  const bundle = await buildMemoryBundle("", turn, empty);
+  const bundle = await buildMemoryBundle("", turn, empty, {allowance: LineageAllowance.tool()});
   const receipt = new MemoryDispatchReceipt(bundle, turn, "engine");
   receipt.accepted();
   const got = await memoryAgentRoute("/api/internal/memory/get", { handles: [{ id: record, version: 1 }] }, turn, empty, receipt) as { records: Array<{ text: string }> };
   expect(got.records[0]!.text).toBe(text);
   receipt.output("reply-1");
-  expect(capturedMessageWithheld("chat", "reply-1")).toBe(false);
+  expect(capturedMessageWithheld(LineageAllowance.tool(1_000_000_000), "chat", "reply-1")).toBe(false);
   // the frame's receipt still decides whether the session continues
   database().prepare("UPDATE memory_disclosures SET native_session='s' WHERE bundle_id LIKE ?").run(`${bundle.bundleId}%`);
   expect(memoryContinuationChanged(bundle, "chat", "engine", "s")).toBe(false);
   forgetMemory(ownerMemoryTicket(), { kind: "record", id: record });
-  expect(capturedMessageWithheld("chat", "reply-1")).toBe(true);
+  expect(capturedMessageWithheld(LineageAllowance.tool(1_000_000_000), "chat", "reply-1")).toBe(true);
 });
 
 it("a lookup by another turn's capability is not noted on this dispatch", async () => {
   const turn = access();
-  const receipt = new MemoryDispatchReceipt(await buildMemoryBundle("", turn, empty), turn, "engine");
+  const receipt = new MemoryDispatchReceipt(await buildMemoryBundle("", turn, empty, {allowance: LineageAllowance.tool()}), turn, "engine");
   const registry = new InternalCapabilities(); registry.begin("bot", "chat", "other");
   const other = memoryAccess(registry, registry.resolve(`Bearer ${registry.mint({ botId: "bot", threadId: "chat", generation: "other", depth: 0, kind: "memory", skillAuthoring: false })}`)!, () => roster);
   receipt.noteLookup([{ id: "r", version: 1, evidence: [] }], other);
@@ -65,23 +67,29 @@ it("a lookup by another turn's capability is not noted on this dispatch", async 
 it("Astra r1 #6: a reply built from the working context rests on the replies it quotes", async () => {
   appendMessage("older", { id: "r-old", role: "bot", kind: "text", text: "Shipped the Acme order.", at: 1 } as Message);
   const turn = access();
-  const receipt = new MemoryDispatchReceipt(await buildMemoryBundle("", turn, empty), turn, "engine");
+  const receipt = new MemoryDispatchReceipt(await buildMemoryBundle("", turn, empty, {allowance: LineageAllowance.tool()}), turn, "engine");
   receipt.accepted();
-  const working = workingContextBlock(true, { botId: "bot", currentThreadId: "chat", bots: [{ id: "bot", threadId: "chat", tasks: [{ threadId: "older", title: "Orders" }] }], groups: [], routines: [], now: 10 });
+  const working = workingContextBlock(LineageAllowance.tool(1_000_000_000), true, { botId: "bot", currentThreadId: "chat", bots: [{ id: "bot", threadId: "chat", tasks: [{ threadId: "older", title: "Orders" }] }], groups: [], routines: [], now: 10 });
   expect(working.text).toContain("Shipped the Acme order.");
   expect(receipt.noteSources(workingContextSources(working.quoted))).toBe(true);
   receipt.output("reply-2");
-  expect(capturedMessageWithheld("chat", "reply-2")).toBe(false);
+  // 1.0.2 (DESIGN-WRITETIME 2.2, prompt-borne text): the reply is a stored line written inside the turn whose prompt quoted r-old, so it rests on it
+  const turnLineage = openTurnLineage(database(), { threadId: "chat", turnId: memberTurnId("bot") });
+  try {
+    addTurnParents(turnLineage, [{ kind: "line", threadId: "older", messageId: "r-old" }]);
+    appendMessage("chat", { id: "reply-2", role: "bot", kind: "text", text: "Sent the Acme order.", at: 11, from: { botId: "bot", name: "Bot", color: "x" } } as Message);
+  } finally { closeTurnLineage(turnLineage); }
+  expect(capturedMessageWithheld(LineageAllowance.tool(1_000_000_000), "chat", "reply-2")).toBe(false);
   forgetMemory(ownerMemoryTicket(), { kind: "source", id: "message:older:r-old" });
-  expect(capturedMessageWithheld("chat", "reply-2")).toBe(true);
+  expect(capturedMessageWithheld(LineageAllowance.tool(1_000_000_000), "chat", "reply-2")).toBe(true);
 });
 
 it("sources noted before acceptance (a room turn's working context) are delivered with the frame", async () => {
   appendMessage("older", { id: "r-early", role: "bot", kind: "text", text: "Booked the venue.", at: 1 } as Message);
   const turn = access();
-  const bundle = await buildMemoryBundle("", turn, empty);
+  const bundle = await buildMemoryBundle("", turn, empty, {allowance: LineageAllowance.tool()});
   const receipt = new MemoryDispatchReceipt(bundle, turn, "engine");
-  const working = workingContextBlock(true, { botId: "bot", currentThreadId: "chat", bots: [{ id: "bot", threadId: "chat", tasks: [{ threadId: "older", title: "Venue" }] }], groups: [], routines: [], now: 10 });
+  const working = workingContextBlock(LineageAllowance.tool(1_000_000_000), true, { botId: "bot", currentThreadId: "chat", bots: [{ id: "bot", threadId: "chat", tasks: [{ threadId: "older", title: "Venue" }] }], groups: [], routines: [], now: 10 });
   expect(receipt.noteSources(workingContextSources(working.quoted))).toBe(true);
   const states = () => database().prepare("SELECT bundle_id,state FROM memory_disclosures ORDER BY created_at").all().map(row => [String(row.bundle_id), String(row.state)]);
   expect(states()).toEqual([[`${bundle.bundleId}:lookup`, "prepared"], [bundle.bundleId, "prepared"]]);
@@ -91,7 +99,7 @@ it("sources noted before acceptance (a room turn's working context) are delivere
 
 it("Astra r1 #9: past the receipt bound a lookup is refused, not handed over unrecorded", async () => {
   const turn = access();
-  const receipt = new MemoryDispatchReceipt(await buildMemoryBundle("", turn, empty), turn, "engine");
+  const receipt = new MemoryDispatchReceipt(await buildMemoryBundle("", turn, empty, {allowance: LineageAllowance.tool()}), turn, "engine");
   const many = Array.from({ length: 257 }, (_, index) => ({ id: `r${index}`, version: 1, evidence: [] }));
   expect(() => receipt.noteLookup(many, turn)).toThrow("MEMORY_LOOKUP_LIMIT");
 });

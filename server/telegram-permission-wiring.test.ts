@@ -27,7 +27,7 @@ it("actual root approval actions bind live card, instance and thread and resolve
   const bot = { id: "bot", name: "Fixture", threadId: "thread", modelSelection: { instanceId: "claude" } };
   const message = { id: "card", card: { requestId: "request", tool: "Write", subtitle: "fixture.txt", answered: undefined as string | undefined } };
   let currentChief: typeof bot | null = bot;
-  const store = { bot: () => bot, workspaceChief: () => currentChief, messagesFor: () => [message], projectBotForTask: () => bot };
+  const store = { bot: () => bot, workspaceChief: () => currentChief, messagesFor: () => [message], openRequestCardRows: () => [message], messageById: (_t: string, id: string) => [message].find((m) => m.id === id), projectBotForTask: () => bot };
   const answerRequest = vi.fn(async () => { message.card.answered = "allow"; return "allowed-once"; });
   let binding: string | undefined = "person";
   const actions = channelApprovalActions(store, new Map([["thread:request", "card"]]), answerRequest, () => ({ kind: "none" }), () => binding);
@@ -53,7 +53,7 @@ it("actual root approval actions bind live card, instance and thread and resolve
 it("a card whose tool input was cut is never offered on Telegram (full review stays in-app)", () => {
   const bot = { id: "bot", name: "Fixture", threadId: "thread", modelSelection: { instanceId: "claude" } };
   const message = { id: "card", card: { requestId: "request", tool: "Bash", subtitle: "ls", toolInputTruncated: undefined as boolean | undefined, answered: undefined as string | undefined } };
-  const store = { bot: () => bot, workspaceChief: () => bot, messagesFor: () => [message], projectBotForTask: () => bot };
+  const store = { bot: () => bot, workspaceChief: () => bot, messagesFor: () => [message], openRequestCardRows: () => [message], messageById: (_t: string, id: string) => [message].find((m) => m.id === id), projectBotForTask: () => bot };
   const actions = channelApprovalActions(store, new Map([["thread:request", "card"]]), vi.fn(), () => ({ kind: "none" }), () => "owner");
   expect(actions.pending()).toHaveLength(1);
   message.card.toolInputTruncated = true;
@@ -70,7 +70,7 @@ it("actual root approval actions publish a question with its questions and answe
   const questions = [{ id: "q1", question: "Which format?", options: [{ label: "Summary" }, { label: "Detailed" }], multiSelect: false, allowOther: true }];
   const message = { id: "card", card: { requestId: "request", subtitle: "Which format?", options: ["Summary", "Detailed"], questions, answered: undefined as string | undefined } };
   const secret = { id: "secret", card: { requestId: "request-2", subtitle: "Token?", options: [], questions: [{ id: "q1", question: "Token?", options: [], multiSelect: false, allowOther: true, secret: true }] } };
-  const store = { bot: () => bot, workspaceChief: () => bot, messagesFor: () => [message, secret], projectBotForTask: () => bot };
+  const store = { bot: () => bot, workspaceChief: () => bot, messagesFor: () => [message, secret], openRequestCardRows: () => [message, secret], messageById: (_t: string, id: string) => [message, secret].find((m) => m.id === id), projectBotForTask: () => bot };
   const answerRequest = vi.fn(async () => { message.card.answered = "answer"; return "answered"; });
   const questionReply = vi.fn((_thread: string, _request: string, body: any, skip: boolean) =>
     skip ? { kind: "deliver", behavior: "deny", message: "skipped" } : { kind: "deliver", behavior: "answer", message: "Detailed", answers: body.answers });
@@ -96,7 +96,7 @@ it.each(["local-computer", "unknown-scope"])("a %s card is never allowable from 
   const { PermissionApprovals } = await import("./channels/permission-approvals.ts");
   const bot = { id: "bot", name: "Fixture", threadId: "thread", modelSelection: { instanceId: "claude" } };
   const message = { id: "card", card: { requestId: "request", tool: "mcp__computer__click", subtitle: "click (100, 200)", approvalScope: scope as string | undefined, answered: undefined as string | undefined } };
-  const store = { bot: () => bot, workspaceChief: () => bot, messagesFor: () => [message], projectBotForTask: () => bot };
+  const store = { bot: () => bot, workspaceChief: () => bot, messagesFor: () => [message], openRequestCardRows: () => [message], messageById: (_t: string, id: string) => [message].find((m) => m.id === id), projectBotForTask: () => bot };
   const answerRequest = vi.fn(async (..._args: unknown[]) => _args[3] === "deny" ? "rejected" : "allowed-once");
   const actions = channelApprovalActions(store, new Map([["thread:request", "card"]]), answerRequest, () => ({ kind: "none" }), () => "owner");
   const owner = { senderId: "7", chatId: "7" }, signal = new AbortController().signal;
@@ -138,7 +138,7 @@ it("Telegram offers only Deny for a computer-control card, and the Deny tap answ
   const { TelegramApprovals } = await import("./telegram-approvals.ts");
   const bot = { id: "bot", name: "Fixture", threadId: "thread", modelSelection: { instanceId: "claude" } };
   const message = { id: "card", card: { requestId: "request", tool: "mcp__computer__click", subtitle: "click (100, 200)", approvalScope: "local-computer", answered: undefined as string | undefined } };
-  const store = { bot: () => bot, workspaceChief: () => bot, messagesFor: () => [message], projectBotForTask: () => bot };
+  const store = { bot: () => bot, workspaceChief: () => bot, messagesFor: () => [message], openRequestCardRows: () => [message], messageById: (_t: string, id: string) => [message].find((m) => m.id === id), projectBotForTask: () => bot };
   const answerRequest = vi.fn(async (..._args: unknown[]) => _args[3] === "deny" ? "rejected" : "allowed-once");
   const actions = channelApprovalActions(store, new Map([["thread:request", "card"]]), answerRequest, () => ({ kind: "none" }), () => "owner");
   const owner = { senderId: "7", chatId: "7" }, signal = new AbortController().signal;

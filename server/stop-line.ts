@@ -28,6 +28,7 @@
 // catch. It is pure: every fact about the machine (the folders, the home
 // folder, the recipients the bot has written to, how links resolve) is passed
 // in, so it is table-tested without touching a disk.
+import { canonicalConnectedAppToolName } from "../shared/connected-app-names.ts";
 import { posix } from "node:path";
 import { EXACT_COMMAND_MAX_CHARS, normalizeCommand } from "../shared/exact-command.ts";
 
@@ -1339,7 +1340,7 @@ function httpHit(name: string, args: Word[]): StopHit | null {
 // ── connected-app tools ───────────────────────────────────────────────
 
 interface ToolCall {
-  /** lowercased app: the MCP server, or a Composio slug's toolkit */
+  /** lowercased app: the MCP server, or a connected-app slug's toolkit */
   app: string;
   /** the tool's own name, without the server prefix */
   name: string;
@@ -1351,14 +1352,15 @@ interface ToolCall {
 function toolCalls(tool: string, input: unknown): ToolCall[] {
   const args = input && typeof input === "object" && !Array.isArray(input) ? (input as Record<string, unknown>) : {};
   let app = "";
-  let name = tool.trim();
+  // The connected-app tools by one name, whichever the engine was shown (shared/connected-app-names.ts).
+  let name = canonicalConnectedAppToolName(tool.trim());
   const mcp = /^mcp__(.+?)__(.+)$/.exec(name);
   if (mcp) { app = mcp[1]!.toLowerCase(); name = mcp[2]!; }
   else {
     const ns = /^([\w-]+)[:/.]\s*([\w-]+)$/.exec(name);
     if (ns) { app = ns[1]!.toLowerCase(); name = ns[2]!; }
   }
-  // Composio's one tool carries every connected-app call it makes
+  // The connected-app service's one tool carries every connected-app call it makes
   if (/^composio_multi_execute_tool$/i.test(name) && args.tools !== undefined) {
     // A batch it cannot read is not a batch it can wave through: it stops as a
     // send to nobody it can name, so no mode covers it.

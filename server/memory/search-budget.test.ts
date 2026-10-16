@@ -9,6 +9,7 @@ import { InternalCapabilities } from "../internal-capabilities.ts";
 import { memoryAccess, reconcileMemoryRoster } from "./policy.ts";
 import { searchMemory, SEARCH_BUDGET_MS, type MemorySearchBridge } from "./search.ts";
 import type { MemorySearchInput } from "./worker-protocol.ts";
+import { LineageAllowance } from "./lineage-allowance.ts";
 
 const prep = vi.hoisted(() => ({ busyMs: 0 }));
 vi.mock("./recent.ts", async importOriginal => {
@@ -34,7 +35,7 @@ it("a bridge busy on a long job and deaf to the abort cannot hold the turn past 
   // The roster and its fresh database are set up before the clock starts: the budget is the search's, not the fixture's.
   const memory = access();
   const started = performance.now();
-  const result = await searchMemory("what is the plan", memory, slow);
+  const result = await searchMemory("what is the plan", memory, slow, {allowance: LineageAllowance.tool(1_000_000_000)});
   expect(performance.now() - started).toBeLessThan(SEARCH_BUDGET_MS + 300);
   expect(result.hits).toEqual([]);
   expect(result.degradedReason).toBe("MEMORY_RECALL_UNAVAILABLE");
@@ -46,7 +47,7 @@ it("the worker is told the deadline, counted from the start of the search and no
   const bridge: MemorySearchBridge = { search: async input => { seen = input; return { hits: [], vectorRows: 0 }; } };
   const memory = access();
   const started = Date.now();
-  await searchMemory("what is the plan", memory, bridge);
+  await searchMemory("what is the plan", memory, bridge, {allowance: LineageAllowance.tool(1_000_000_000)});
   expect(seen?.deadlineAt).toBeGreaterThanOrEqual(started + SEARCH_BUDGET_MS - 5);
   expect(seen?.deadlineAt).toBeLessThanOrEqual(started + SEARCH_BUDGET_MS + 60);
 });

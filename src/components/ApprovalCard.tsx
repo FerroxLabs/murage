@@ -11,6 +11,8 @@ import { SkillRequestPreview } from "@/components/SkillRequestPreview";
 import { ApprovalDetailBody } from "@/components/ApprovalDetailBody";
 import { CollapsibleText } from "@/components/CollapsibleText";
 import { knownToolAction } from "@/components/PendingApproval";
+import { plainApproval, usePlainApprovalReady } from "@/lib/plain-approval";
+import { delegationToolKind } from "../../shared/delegation-tool";
 import { t } from "@/lib/i18n";
 import type { LocaleKey } from "@/locales";
 import { useDecisionFeedback } from "@/lib/approval-feedback";
@@ -275,6 +277,8 @@ export function ApprovalCard({
   /** Murage for Chrome cards only: the card's own buttons answer through this. Without it a browser card shows no buttons. */
   onAnswer?: (choice: BrowserChoice) => void | Promise<unknown>;
 }) {
+  // the plain words load after the first paint; re-render when they arrive
+  const plainReady = usePlainApprovalReady();
   const card = message.card;
   if (!card) return null;
   const browser = browserCardData(card);
@@ -289,11 +293,21 @@ export function ApprovalCard({
   // The one-time "use this computer" question (server/host-computer-consent.ts)
   // is not a tool call: it reads as a sentence with a plain explanation.
   const isHostConsent = card.tool === "local_computer_consent";
+  // A hand-off reads as one ("ask Draft Partner to draft the intro") on every
+  // engine; a peer card's own title names the teammate ("... @Draft Partner").
+  const delegation = !isRoutineRequest && !isSkillRequest && Boolean(card.tool) && delegationToolKind(card.tool!, card.subtitle ?? "") !== null;
+  const peerTarget = delegation ? card.title?.match(/ @([^@]{1,40})$/)?.[1] : undefined;
   const displayTool = isRoutineRequest
     ? routineAction === "create" ? "schedule_routine" : "manage_routine"
     : isSkillRequest
       ? skillAction === "update" ? "update_skill" : "stage_skill"
     : card.tool;
+  // An engine's request, said in plain words (shared/approval-plain.ts).
+  // Until they load, an ACP "other" request reads "wants to use a tool" with
+  // the whole request below it: guessing from its words ("Google invoice" in
+  // a Gmail send) could name a softer action than the one asked for.
+  const plain = !isRoutineRequest && !isSkillRequest && !isHostConsent && card.tool !== "browser_extension_action"
+    ? plainApproval(card.tool, card.subtitle) : undefined;
 
   return (
     <div
@@ -306,9 +320,10 @@ export function ApprovalCard({
         <div className="text-[15px] font-semibold text-ink">
           {isHostConsent
             ? `${bot ? `@${bot.name}` : "This bot"} wants to use this computer`
-            : <>{bot ? `${bot.name} wants to ` : "Wants to "}{(displayTool === "other" && knownToolAction("other", card.subtitle)) || toolLabel(displayTool)}</>}
+            : card.tool === "browser_extension_action" && card.title ? card.title
+            : <>{bot ? `${bot.name} wants to ` : "Wants to "}{(delegation && knownToolAction(displayTool ?? "other", card.subtitle ?? "", peerTarget ? { who: peerTarget } : undefined)) || plain?.action || (plainReady && (displayTool === "other") && knownToolAction("other", card.subtitle ?? "")) || toolLabel(displayTool)}</>}
         </div>
-        {displayTool && !isHostConsent && !isAcpPermissionKind(displayTool) && <span className="shrink-0 font-mono text-[11px] text-ink-secondary">{displayTool}</span>}
+        {displayTool && !plain && !isHostConsent && displayTool !== "browser_extension_action" && !isAcpPermissionKind(displayTool) && <span className="shrink-0 font-mono text-[11px] text-ink-secondary">{displayTool}</span>}
       </div>
 
       {/* what, exactly */}

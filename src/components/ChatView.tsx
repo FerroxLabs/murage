@@ -1,7 +1,7 @@
 import { BrowserSetupCard, McpSignInCard, PublishCard } from "./LazyChatCards";
 import { readPublishCard } from "../../shared/publish-card";
 import { readBrowserSetupCard } from "../../shared/browser-setup-card";
-import { Component, Suspense, memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { Component, Suspense, memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore, type ReactNode, type RefObject } from "react";
 import { DeletionNoteBanner } from "./DeletionNoteBanner";
 import { createPortal } from "react-dom";
 import {
@@ -25,14 +25,18 @@ import {
 import { WorkingDots } from "@/components/WorkingIndicator";
 import { HelpersLine, HelpersSummary } from "@/components/HelpersLine";
 import { pickSubtasks } from "@/lib/subtasks";
+import { beginEdit, discardEdit, editDraftStore, editFailed, editSent, stopSaving, type EditDrafts } from "@/lib/edit-drafts";
+import { newSendId } from "@/lib/send-id";
 import { plainTextClamped } from "@/lib/plain-text";
 import { telegramMessageDisplay } from "@/lib/telegram-message-display";
 import {
   api,
   useStore,
   useStreaming,
+  useStreamHelpers,
   formatTime,
   messageVersions,
+  olderOpenCards,
   openNotificationTarget,
   visibleMessages,
   viewedTaskBot,
@@ -40,8 +44,9 @@ import {
   type InstanceInfo,
   type Message,
 } from "@/state/store";
+import { newDeleteAttempt } from "@/state/page-intent";
 import { EngineSetup } from "./EngineSetup";
-import { retryableLazy } from "./LazyBoundary";
+import { LazyBoundary, retryableLazy } from "./LazyBoundary";
 import { claudeUpdateTarget } from "@/lib/claude-update";
 import { hermesPinNoteProfile, hermesPinNoteText } from "../../shared/hermes-pin-note";
 import { ProviderErrorCard } from "./ProviderErrorCard";
@@ -75,10 +80,11 @@ import { IntakeTurn } from "./IntakeTurn";
 import { readIntakeCard } from "@/lib/onboarding-intake";
 import { FirstRunCard } from "./FirstRunCard";
 import { readSetupCard } from "../../shared/setup-card";
-import { ChatFindBar } from "./ChatFindBar";
 import { ReplyQuote } from "./ReplyQuote";
 import { ConnectorCard } from "./ConnectorCard";
 import { StoppedByYouRow, StoppedMidActionRow, StoppedRow } from "./StoppedRow";
+import { SendNoticeRow } from "./SendNoticeRow";
+import { sendNoticeCode } from "../../shared/send-notice";
 import { FolderTrustRow } from "./FolderTrustRow";
 import { BrowserUnavailableRow } from "./BrowserUnavailableRow";
 import { ImagesNotSentRow } from "./ImagesNotSentRow";
@@ -93,6 +99,7 @@ import { routineRunMarker } from "../../shared/routine-run-marker";
 import { RoutineRunDivider } from "./RoutineRunDivider";
 import { RoutineRunAgainRow } from "./RoutineRunAgainRow";
 import { DelegationWaitRow } from "./DelegationWaitRow";
+import { DelegationHeldRow, heldAction } from "./DelegationHeldRow";
 import { SecretRequestCard } from "./SecretRequestCard";
 import { hasRoutineExecutionTask, RoutineRunCard } from "./RoutineRunCard";
 import { AttachedFileChips, AttachedImageGallery } from "./AttachmentPreview";
@@ -113,7 +120,10 @@ import { useThreadChips } from "@/lib/learned-chips";
 import { AccessLinkProvider, ChipsProvider, MessageChip } from "./LearnedChip";
 import { MessageOutcome, OutcomeRailButtons, OutcomesProvider, ProposedOutcomeCard, outcomeSheetActions, useOutcomes } from "./OutcomeMark";
 import { useFocusMessage } from "@/lib/focus-message";
-import { groupTranscript } from "@/lib/activity-runs";
+import { groupTranscript, itemKeyHolding, transcriptItemKey } from "@/lib/activity-runs";
+import { TranscriptTail } from "./TranscriptTail";
+import { tailOf } from "@/lib/transcript-tail";
+import { VirtualTranscript } from "./VirtualTranscript";
 import { ActivityRun } from "./ActivityRun";
 import { TurnNarrationRun } from "./TurnNarrationRun";
 import { webhookMessageView } from "@/lib/webhook-message";
@@ -136,7 +146,6 @@ import { fetchOriginalScreenFrame, usePagedScreenFrame } from "@/lib/paged-scree
 import { isPhoneClient } from "@/lib/phone-client";
 import { commChipAction } from "@/lib/comm-chip-visibility";
 import { useMessageById } from "@/lib/held-message";
-import { needsNewestPage } from "@/lib/scrollback";
 import {
   SCROLLBACK_TRIGGER_PX,
   TRANSCRIPT_WINDOW_SIZE,
@@ -153,8 +162,9 @@ import {
 import { captureRowAnchor, captureViewportAnchor, observeSeenRows, restoreRowAnchor, type ScrollAnchor } from "@/lib/transcript-rows";
 import { timelineEvents } from "@/lib/taskTimeline";
 import { engineDividers, engineHoverLabel } from "../../shared/chat-engine-notes";
-import { HeldQueueRow, ReplyActionNote } from "./EngineNotes";
+import { HeldQueueRow } from "./EngineNotes";
 import { useReplyDraft } from "@/lib/drafts";
+import { findTask, isTruncated } from "@/lib/task-window";
 
 /** Long user messages collapse behind a fade so pasted walls of text don't
  * bury the conversation; bots get full markdown. */
@@ -371,9 +381,11 @@ export function MessageActionSheet({
  * the terminal. */
 // "Update Claude for me" loads on first use; most chats never need it.
 const ClaudeUpdatePrompt = retryableLazy(() => import("./ClaudeUpdatePrompt")).Component;
+// Find in this conversation loads when someone asks for it (Cmd+F).
+const ChatFindBar = retryableLazy(() => import("./ChatFindBar").then((module) => ({ default: module.ChatFindBar })));
 
-export function ErrorRow({ message, details, errorKind, localFailure, diagnostic, turnId, incident, onRetry, setupInstance, authRequired = false, claudeUpdateInstance, providerError, botName, onOpenProviderSettings }: {
-  message: string; details?: string; errorKind?: string; localFailure?: string; onRetry?: () => void; setupInstance?: InstanceInfo; botName?: string; claudeUpdateInstance?: InstanceInfo;
+export function ErrorRow({ message, details, errorKind, localFailure, localFailureEngine, diagnostic, turnId, incident, onRetry, setupInstance, authRequired = false, claudeUpdateInstance, providerError, botName, onOpenProviderSettings }: {
+  message: string; details?: string; errorKind?: string; localFailure?: string; localFailureEngine?: string; onRetry?: () => void; setupInstance?: InstanceInfo; botName?: string; claudeUpdateInstance?: InstanceInfo;
   authRequired?: boolean; providerError?: ProviderErrorInfo; diagnostic?: unknown; turnId?: string; incident?:IncidentMessageSelection; onOpenProviderSettings: () => void;
 }) {
   const [authRecovered, setAuthRecovered] = useState(false);
@@ -384,7 +396,7 @@ export function ErrorRow({ message, details, errorKind, localFailure, diagnostic
     return <RuntimeErrorCard message={message} details={details} botName={botName} diagnostic={diagnostic} turnId={turnId} incident={incident} onOpenProviderSettings={onOpenProviderSettings}
       setup={<Suspense fallback={null}><ClaudeUpdatePrompt instance={claudeUpdateInstance} onRetry={onRetry} /></Suspense>} />;
   }
-  return <RuntimeErrorCard message={message} details={details} errorKind={errorKind} localFailure={localFailure} botName={botName} diagnostic={diagnostic} turnId={turnId} incident={incident} onRetry={onRetry} onOpenProviderSettings={onOpenProviderSettings}
+  return <RuntimeErrorCard message={message} details={details} errorKind={errorKind} localFailure={localFailure} localFailureEngine={localFailureEngine} botName={botName} diagnostic={diagnostic} turnId={turnId} incident={incident} onRetry={onRetry} onOpenProviderSettings={onOpenProviderSettings}
     setup={needsSetup ? <EngineSetup instance={setupInstance} authRequired={forceSignIn} onReady={() => setAuthRecovered(true)} className="mt-3 text-ink-secondary" /> : undefined} />;
 }
 
@@ -413,10 +425,16 @@ class MessageBoundary extends Component<{ children: ReactNode; fallbackText: str
  * composer (lib/composer-enter.ts). */
 function BubbleEditor({
   initial,
+  saving = false,
+  error,
   onCancel,
   onSubmit,
 }: {
   initial: string;
+  /** Its edit is in flight: the words show, and they cannot be sent again until the server answers (or Cancel stops the wait). */
+  saving?: boolean;
+  /** Why its last submission did not go through: shown under the words until they are sent again. */
+  error?: string;
   onCancel: () => void;
   onSubmit: (text: string) => void;
 }) {
@@ -430,13 +448,15 @@ function BubbleEditor({
     el.setSelectionRange(el.value.length, el.value.length);
   }, []);
   const submit = () => {
-    if (draft.trim()) onSubmit(draft.trim());
+    if (!saving && draft.trim()) onSubmit(draft.trim());
   };
   return (
     <div className="w-full max-w-[min(42rem,78%)] max-md:max-w-full rounded-2xl border border-hairline/40 bg-bubble-user px-4 py-3">
       <textarea
         ref={ref}
         value={draft}
+        readOnly={saving}
+        aria-busy={saving}
         onChange={(e) => setDraft(e.target.value)}
         onKeyDown={(e) => {
           // isComposing: an IME confirm-Enter must not submit the edit
@@ -450,6 +470,7 @@ function BubbleEditor({
         rows={Math.min(10, Math.max(2, draft.split("\n").length))}
         className="w-full resize-none bg-transparent text-[15px] leading-relaxed text-ink focus:outline-none"
       />
+      {error && !saving && <p role="alert" className="mt-1 text-[13px] text-danger">{error}</p>}
       <div className="mt-2 flex items-center justify-end gap-2">
         <button
           onClick={onCancel}
@@ -459,10 +480,10 @@ function BubbleEditor({
         </button>
         <button
           onClick={submit}
-          disabled={!draft.trim()}
+          disabled={saving || !draft.trim()}
           className="rounded-full bg-accent px-3 py-1 text-[13px] font-medium text-white disabled:opacity-40"
         >
-          Send
+          {saving ? "Saving…" : "Send"}
         </button>
       </div>
     </div>
@@ -473,6 +494,9 @@ function Bubble({
   bot,
   message,
   editing,
+  editText,
+  editSaving = false,
+  editError,
   isLastBotText,
   onStartEdit,
   onCancelEdit,
@@ -485,6 +509,12 @@ function Bubble({
   bot: Bot;
   message: Message;
   editing: boolean;
+  /** The words of an edit the server has not acknowledged (it failed): the editor reopens with them, not the old message. */
+  editText?: string;
+  /** That edit is in flight: the editor shows Saving and cannot send it again. */
+  editSaving?: boolean;
+  /** Why that edit did not go through (failed or timed out). */
+  editError?: string;
   isLastBotText: boolean;
   onStartEdit: () => void;
   onCancelEdit: () => void;
@@ -513,7 +543,7 @@ function Bubble({
   if (user && editing && !webhookView) {
     return (
       <div className="flex w-full justify-end">
-        <BubbleEditor initial={text} onCancel={onCancelEdit} onSubmit={onSubmitEdit} />
+        <BubbleEditor initial={editText ?? text} saving={editSaving} error={editError} onCancel={onCancelEdit} onSubmit={onSubmitEdit} />
       </div>
     );
   }
@@ -737,7 +767,6 @@ function Bubble({
               ) : null}
               {text ? <ChatMarkdown text={text} scope={{ botId: bot.id, threadId: bot.threadId }} /> : null}
               {message.artifactIds?.length ? <ArtifactCards ids={message.artifactIds} /> : null}
-              {message.actionCheck ? <ReplyActionNote text={text} check={message.actionCheck} onJump={messageId => dispatch({ type: "focusMessage", threadId: bot.threadId, messageId })} /> : null}
             </MessageBoundary>
           )}
         </div>
@@ -965,6 +994,7 @@ const MessagesList = memo(function MessagesList({
   messages,
   transcript,
   editingId,
+  editDrafts,
   lastBotTextId,
   emergingId,
   canRetryLast,
@@ -974,22 +1004,31 @@ const MessagesList = memo(function MessagesList({
   onSubmitEdit,
   onRegenerate,
   onReply,
+  scrollRef,
+  followRef,
+  follow,
 }: {
   bot: Bot;
   messages: Message[];
   /** Active-branch messages, including ones outside the mounted window. */
   transcript: Message[];
   editingId: string | null;
+  /** Edits sent but not acknowledged yet, per message (lib/edit-drafts.ts): their words, kept so a failure reopens the editor with them. */
+  editDrafts: EditDrafts;
   lastBotTextId: string | undefined;
   emergingId?: string | null;
   canRetryLast: boolean;
   /** This bot's engine, for rendering setup help on a `setup` error. */
   engine: InstanceInfo | undefined;
   onStartEdit: (id: string) => void;
-  onCancelEdit: () => void;
+  onCancelEdit: (id: string) => void;
   onSubmitEdit: (id: string, text: string) => void;
   onRegenerate: () => void;
   onReply: (message: Message) => void;
+  /** The transcript scroller and its follow state: only the rows in view mount. */
+  scrollRef: RefObject<HTMLDivElement | null>;
+  followRef: RefObject<boolean>;
+  follow: boolean;
 }) {
   const { state, dispatch } = useStore();
   const showToolCalls = showToolCallsEnabled(state.config);
@@ -999,7 +1038,7 @@ const MessagesList = memo(function MessagesList({
   const narrow = useNarrowViewport();
   // Finished tool chips become compact runs; settled assistant narration
   // becomes one reversible turn row while the terminal answer stays visible.
-  const helperRuns = useStreaming().helpers.runs[bot.threadId];
+  const helperRuns = useStreamHelpers().runs[bot.threadId];
   const items = useMemo(() => groupTranscript(messages, helperRuns), [messages, helperRuns]);
   const instances = state.instances;
   const engineLabel = useCallback(
@@ -1016,7 +1055,7 @@ const MessagesList = memo(function MessagesList({
   const focusedId = focus && !focus.consumed && focus.threadId === bot.threadId ? focus.messageId : null;
   return (
     <>
-      {messages.length === 0 && !bot.busy && (
+      {messages.length === 0 && !bot.busy && !bot.messagesUnloaded && (
         <div className="flex flex-1 flex-col items-center justify-center gap-3 py-24 text-center">
           <BotAvatar bot={bot} state="idle" size={64} motion="none" motionKey={0} />
           <RenameTitle
@@ -1032,7 +1071,16 @@ const MessagesList = memo(function MessagesList({
           </div>
         </div>
       )}
-      {items.map((item, i) => {
+      <VirtualTranscript
+        items={items}
+        keyOf={transcriptItemKey}
+        scrollRef={scrollRef}
+        followRef={followRef}
+        follow={follow}
+        resetKey={bot.threadId}
+        focusKey={itemKeyHolding(items, focusedId)}
+        pinKey={editingId}
+        render={(item, i) => {
         const previous = items[i - 1];
         const prev = previous && (previous.kind === "message" ? previous.message : previous.kind === "helpers" ? { at: previous.at } : previous.messages.at(-1));
         const first = item.kind === "message" ? item.message : item.kind === "helpers" ? { at: item.at } : item.messages[0];
@@ -1137,7 +1185,7 @@ const MessagesList = memo(function MessagesList({
               return <OptionCard botId={bot.id} message={m} />;
             case "routine.run": {
               const executionThreadId = m.routineRun?.executionThreadId;
-              const canOpen = hasRoutineExecutionTask(bot.tasks, executionThreadId);
+              const canOpen = hasRoutineExecutionTask(bot.tasks, executionThreadId, isTruncated(bot) || findTask(bot, executionThreadId) !== undefined);
               return (
                 <RoutineRunCard
                   message={m}
@@ -1152,7 +1200,7 @@ const MessagesList = memo(function MessagesList({
               );
             }
             case "activity": {
-              if (m.murage?.held) return <HeldQueueRow text={m.tool?.name ?? ""} count={m.murage.held.count} items={m.murage.held.items} bots={state.bots} onRetry={async (id, botId) => { await api(`/api/bots/${botId}/held-continuations/${id}/retry`, { method: "POST", body: JSON.stringify({ threadId: bot.threadId }) }); }} onJump={messageId => dispatch({ type: "focusMessage", threadId: bot.threadId, messageId })} />;
+              if (m.murage?.held) return <HeldQueueRow text={m.tool?.name ?? ""} count={m.murage.held.count} items={m.murage.held.items} bots={state.bots} onRetry={async (id, botId, restoreGen) => { await api(`/api/bots/${botId}/held-continuations/${id}/retry`, { method: "POST", body: JSON.stringify({ threadId: bot.threadId, ...(restoreGen ? { restoreGen } : {}) }) }); }} onJump={messageId => dispatch({ type: "focusMessage", threadId: bot.threadId, messageId })} />;
               // a failed turn is an error, not a tool run — render it as one.
               // a host-stopped turn is neither: a neutral stopped row that says
               // why, visible whether or not Tool calls is on (STOP2).
@@ -1172,9 +1220,16 @@ const MessagesList = memo(function MessagesList({
                 const delegationId = m.delegationWait.id;
                 return <DelegationWaitRow text={m.tool.name} onStop={() => dispatch({ type: "stopDelegation", delegationId })} />;
               }
+              // a hand-off a restart cut off after the provider may have taken it: Send again or Dismiss
+              if (m.delegationHeld && m.tool) {
+                const delegationId = m.delegationHeld.id;
+                return <DelegationHeldRow text={m.tool.name} onSendAgain={() => heldAction(dispatch, "resendDelegation", delegationId, bot.threadId)} onDismiss={() => heldAction(dispatch, "dismissDelegation", delegationId, bot.threadId)} />;
+              }
               // where one run of a routine begins in its own conversation
               const runMarker = routineRunMarker(m);
               if (runMarker) return <RoutineRunDivider trigger={runMarker.trigger} routineName={runMarker.routineName} at={m.at} />;
+              const noticeCode = sendNoticeCode(m.tool?.name);
+              if (noticeCode) return <SendNoticeRow code={noticeCode} />;
               const stoppedReason = hostStoppedReason(m.tool?.name);
               if (stoppedReason) return <StoppedRow reason={stoppedReason} />;
               // the person's Stop caught a desktop action mid-flight: say to
@@ -1213,6 +1268,7 @@ const MessagesList = memo(function MessagesList({
                     details={m.tool.errorDetails}
                     errorKind={m.tool.errorKind}
                     localFailure={m.tool.localFailure}
+                    localFailureEngine={m.tool.localFailureEngine}
                     providerError={m.tool.providerError}
                     diagnostic={m.tool.diagnostic}
                     turnId={m.turnId}
@@ -1232,9 +1288,12 @@ const MessagesList = memo(function MessagesList({
                   bot={bot}
                   message={m}
                   editing={editingId === m.id}
+                  editText={editDrafts[m.id]?.text}
+                  editSaving={editDrafts[m.id]?.saving === true}
+                  editError={editDrafts[m.id]?.error}
                   isLastBotText={m.id === lastBotTextId}
                   onStartEdit={() => onStartEdit(m.id)}
-                  onCancelEdit={onCancelEdit}
+                  onCancelEdit={() => onCancelEdit(m.id)}
                   onSubmitEdit={(text) => onSubmitEdit(m.id, text)}
                   onRegenerate={onRegenerate}
                   replyTarget={m.replyToId ? bot.messages.find((candidate) => candidate.id === m.replyToId) : undefined}
@@ -1254,7 +1313,8 @@ const MessagesList = memo(function MessagesList({
             {m.role === "bot" && m.engine ? <div className="contents" title={engineHoverLabel(m.engine, engineLabel)}>{row}</div> : row}
           </div>
         );
-      })}
+      }}
+      />
     </>
   );
 });
@@ -1307,6 +1367,11 @@ function PinnedBanner({
   );
 }
 
+/** The delivery of each edit still saving, by bot and message: Cancel aborts it. */
+const editsInFlight = new Map<string, AbortController>();
+const editKey = (botId: string, messageId: string) => `${botId}\u0000${messageId}`;
+const editErrorLine = (error: unknown): string => (error instanceof Error && error.message ? error.message : "That edit did not go through. Try again.");
+
 export function ChatView({ bot:profile }: { bot: Bot }) {
   const bot=viewedTaskBot(profile);
   const { state, dispatch } = useStore();
@@ -1357,7 +1422,10 @@ export function ChatView({ bot:profile }: { bot: Bot }) {
   }, []);
 
   // only the active branch is rendered; forks stay reachable via ‹ › nav
-  const messages = useMemo(() => visibleMessages(bot), [bot]);
+  // Open request cards older than the held page are rows too, whatever they ask
+  // (an approval, a question, a publish): they ride beside the page, and a
+  // card nobody renders cannot be answered.
+  const messages = useMemo(() => olderOpenCards(bot, visibleMessages(bot)), [bot]);
 
   // Windowed transcript: only a tail of the thread mounts (screenshots make
   // full threads DOM-heavy). The boundary is anchored per bot+task; a
@@ -1410,16 +1478,57 @@ export function ChatView({ bot:profile }: { bot: Bot }) {
 
   // one message at a time may be in edit mode
   const [editingId, setEditingId] = useState<string | null>(null);
-  useEffect(() => setEditingId(null), [bot.id]);
+  // The words of an edit are the person's until the server acknowledged them (lib/edit-drafts.ts): one draft per message, kept in a store per
+  // bot that switching bots never clears. ONE edit per message is in flight: its editor shows Saving and cannot send again until the answer, the
+  // deadline (send-delivery.ts EDIT_DEADLINE_MS) or Cancel; then the words are editable again with their sendId. A failure that lands while the
+  // person is on another bot waits in the draft, and coming back reopens the editor with the words and the error.
+  const editDrafts = useSyncExternalStore(editDraftStore.subscribe, () => editDraftStore.get(bot.id));
+  const botIdRef = useRef(bot.id);
+  useEffect(() => {
+    botIdRef.current = bot.id;
+    setEditingId(Object.keys(editDraftStore.get(bot.id))[0] ?? null);
+  }, [bot.id]);
   // stable handler identities — MessagesList is memo'd on them
   const startEdit = useCallback((id: string) => setEditingId(id), []);
-  const cancelEdit = useCallback(() => setEditingId(null), []);
+  const cancelEdit = useCallback((id: string) => {
+    const botId = bot.id;
+    if (editDraftStore.get(botId)[id]?.saving) {
+      // Cancel while saving stops the wait: the editor stays open, editable, with the words and their sendId
+      editsInFlight.get(editKey(botId, id))?.abort();
+      editsInFlight.delete(editKey(botId, id));
+      editDraftStore.update(botId, (drafts) => stopSaving(drafts, id));
+      return;
+    }
+    setEditingId((current) => (current === id ? null : current));
+    editDraftStore.update(botId, (drafts) => discardEdit(drafts, id));
+  }, [bot.id]);
   const submitEdit = useCallback(
     (messageId: string, text: string) => {
-      setEditingId(null); // closes the editor first — a double Enter can't fork twice
-      dispatch({ type: "editMessage", botId: bot.id,threadId:bot.threadId, messageId, text });
+      const botId = bot.id;
+      const next = beginEdit(editDraftStore.get(botId), messageId, text, newSendId());
+      if (!next) return; // this message's edit is still saving: a double Enter can't fork twice
+      const sendId = next[messageId]!.sendId; // a resubmit of the same words keeps its sendId
+      editDraftStore.update(botId, () => next);
+      const key = editKey(botId, messageId), stop = new AbortController();
+      editsInFlight.set(key, stop);
+      const settled = () => { if (editsInFlight.get(key) === stop) editsInFlight.delete(key); };
+      dispatch({
+        type: "editMessage", botId, threadId: bot.threadId, messageId, text, sendId, signal: stop.signal,
+        onSent: () => {
+          settled();
+          editDraftStore.update(botId, (drafts) => editSent(drafts, messageId, sendId));
+          if (botIdRef.current === botId) setEditingId((current) => (current === messageId ? null : current));
+        },
+        // the error is still shown (the store's default); the draft holds THIS submission's words, sendId and the reason, and its editor
+        // reopens (now, or when the person comes back to this bot)
+        onError: (error) => {
+          settled();
+          editDraftStore.update(botId, (drafts) => editFailed(drafts, messageId, sendId, editErrorLine(error)));
+          if (botIdRef.current === botId) setEditingId((current) => current ?? messageId);
+        },
+      });
     },
-    [bot.id, dispatch],
+    [bot.id, bot.threadId, dispatch],
   );
   const lastUserMessage = useMemo(
     () => [...messages].reverse().find((m) => m.role === "user" && m.kind === "text"),
@@ -1433,7 +1542,7 @@ export function ChatView({ bot:profile }: { bot: Bot }) {
   const toolInFlight = lastMessage?.kind === "activity" && lastMessage.tool?.ok === undefined;
   // A turn queued behind another thread's folder, computer or browser says
   // what it is waiting for instead of "Thinking".
-  const resourceWait = profile.tasks?.find((task) => task.threadId === bot.threadId)?.waitingFor;
+  const resourceWait = findTask(profile, bot.threadId)?.waitingFor;
   const activityLabel = (bot.busy ? resourceWaitLabel(resourceWait) : undefined) ?? liveActivityLabel(lastMessage);
   const waiting = Boolean(
     bot.busy &&
@@ -1501,7 +1610,9 @@ export function ChatView({ bot:profile }: { bot: Bot }) {
     setFollow(next);
   }, []);
 
-  useEffect(() => setBottomFollow(true), [bot.id, setBottomFollow]);
+  // Another thread of the same bot is another transcript: re-arm on the key,
+  // not the bot (OpenMausBot #2462, Apache-2.0).
+  useEffect(() => setBottomFollow(true), [transcriptKey, setBottomFollow]);
   useBottomFollowResize(scrollRef, transcriptRef, followRef, transcriptKey);
 
   // A search result may be hundreds of rows before the mounted tail. Open a
@@ -1545,7 +1656,7 @@ export function ChatView({ bot:profile }: { bot: Bot }) {
     // keyboardInsetPx: the pane loses clientHeight when the keyboard opens
     // while scrollHeight is unchanged, so a pinned transcript has to re-pin or
     // the last message slides up behind the composer.
-  }, [bot.id, messages.length, streaming, liveReply, reasoning, plan, bot.busy, composerDock.pad, keyboardInsetPx]);
+  }, [transcriptKey, messages.length, streaming, liveReply, reasoning, plan, bot.busy, composerDock.pad, keyboardInsetPx]);
 
   // Reading scrollback (follow === false): preserve the anchor rather than let
   // the shrinking pane scroll the reader's row up out of view by exactly the
@@ -1619,15 +1730,16 @@ export function ChatView({ bot:profile }: { bot: Bot }) {
   }, [chips.byReply]);
   // A page that came back empty or was dropped as stale moved nothing, so
   // its capture must not be applied to some later, unrelated growth. A
-  // phone's slim boot page is topped up by the store, not by a click here
-  // (scrollback needsNewestPage): capture for it too, so its newest page
-  // mounts and the viewport holds still exactly as for "Load earlier".
-  // transcriptKey: switching back to a thread whose top-up is still in
+  // conversation's first page is fetched by the store, not by a click here
+  // (scrollback loadFirstPage): capture while it is on the wire too, so the
+  // page mounts and the viewport holds still exactly as for "Load earlier".
+  // transcriptKey: switching back to a thread whose first page is still in
   // flight captures for it again.
+  const firstPagePending = bot.firstPageEvents !== undefined;
   useLayoutEffect(() => {
-    if (olderPending && !preExpandAnchor.current && needsNewestPage(bot)) captureAnchor("first");
-    if (!olderPending) preExpandAnchor.current = null;
-  }, [olderPending, transcriptKey]);
+    if (firstPagePending && !preExpandAnchor.current) captureAnchor("first");
+    if (!olderPending && !firstPagePending) preExpandAnchor.current = null;
+  }, [olderPending, firstPagePending, transcriptKey]);
   // Reaching the top keeps reading back: first the rows already held, then
   // the server's. Only while the reader is scrolled away from the live end,
   // so the programmatic scroll to the bottom never pulls in history.
@@ -1715,11 +1827,11 @@ export function ChatView({ bot:profile }: { bot: Bot }) {
       <CallBarStrip ownId={bot.id} ownThreadId={bot.threadId} />
 
       <WorkThreadNotice bot={bot} />
-      {findOpen && <ChatFindBar threadId={bot.threadId} onClose={() => setFindOpen(false)} />}
+      {findOpen && <LazyBoundary onRetry={ChatFindBar.retry} onDismiss={() => setFindOpen(false)}><Suspense fallback={null}><ChatFindBar.Component threadId={bot.threadId} onClose={() => setFindOpen(false)} /></Suspense></LazyBoundary>}
 
       {/* Error banner */}
       {state.error && <ErrorBanner message={state.error} onDismiss={() => dispatch({ type: "error", message: null })}/>}
-      {state.deletionNote && <DeletionNoteBanner note={state.deletionNote} onDismiss={() => dispatch({ type: "deletionNote", note: null })} />}
+      {state.deletionNote && <DeletionNoteBanner note={state.deletionNote} onDismiss={() => dispatch({ type: "deletionNote", note: null })} onRetry={() => { const again = state.deletionNote?.retryBotId; if (again) { dispatch({ type: "deletionNote", note: null }); dispatch({ type: "deleteBot", source: "local", botId: again, attempt: newDeleteAttempt() }); return; } void api("/api/deletions/retry", { method: "POST" }).then((response) => dispatch({ type: "deletionOwed", notices: response?.notices, rev: response?.rev })).catch(() => {}); }} />}
 
       {/* Pinned message banner */}
       <PinnedBanner
@@ -1739,6 +1851,10 @@ export function ChatView({ bot:profile }: { bot: Bot }) {
       {/* Messages + composer share one pane so bubbles scroll into the pill
           instead of dying on a rectangular clip above a black dock. */}
       <div className="relative min-h-0 flex-1">
+      {/* The live region sits beside the scrolling transcript, not in it: it
+          repeats the newest message, and inside the transcript every reading
+          of the conversation would meet that message twice. */}
+      <TranscriptTail scope={bot.threadId} last={tailOf(messages.at(-1))} />
       <div
         ref={scrollRef}
         data-testid="chat-scroll"
@@ -1784,7 +1900,7 @@ export function ChatView({ bot:profile }: { bot: Bot }) {
           style={{ paddingBottom: composerDock.pad }}
           ref={transcriptRef}
           role="log"
-          aria-live="polite"
+          aria-live="off"
           aria-label={`Conversation with ${bot.name}`}
         >
           {hiddenCount > 0 ? (
@@ -1796,6 +1912,8 @@ export function ChatView({ bot:profile }: { bot: Bot }) {
                 Show earlier messages ({hiddenCount} more)
               </button>
             </div>
+          ) : bot.messagesUnloaded ? (
+            <div className="flex justify-center pt-2 text-[12.5px] text-ink-secondary" data-testid="first-page-loading" role="status">Loading messages…</div>
           ) : bot.hasMore ? (
             <div className="flex justify-center pt-2">
               <button
@@ -1813,6 +1931,7 @@ export function ChatView({ bot:profile }: { bot: Bot }) {
             messages={windowedMessages}
             transcript={messages}
             editingId={editingId}
+            editDrafts={editDrafts}
             lastBotTextId={lastBotTextId}
             emergingId={popping?.id}
             canRetryLast={!bot.busy && Boolean(lastUserMessage)}
@@ -1822,6 +1941,9 @@ export function ChatView({ bot:profile }: { bot: Bot }) {
             onSubmitEdit={submitEdit}
             onRegenerate={regenerate}
             onReply={selectReply}
+            scrollRef={scrollRef}
+            followRef={followRef}
+            follow={follow}
           />
           {!bot.busy && <ProposedOutcomeCard bot={bot} />}
           {laterCount > 0 && (
