@@ -3,6 +3,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { SKILL_LIBRARY_ROOT, checkLibrarySkill } from "./skills.ts";
+import { removeTempDirSync } from "./testing/cleanup.ts";
 
 /** The catalog builder is plain JS with no declaration file, and this repo has
  * no .d.ts anywhere under scripts/. Rather than add one, the single export this
@@ -46,7 +47,7 @@ function libraryCopy(ids: readonly string[]): string {
 }
 
 afterEach(() => {
-  while (temporaries.length) rmSync(temporaries.pop()!, { recursive: true, force: true });
+  while (temporaries.length) removeTempDirSync(temporaries.pop()!);
 });
 
 describe("shipped skill library", () => {

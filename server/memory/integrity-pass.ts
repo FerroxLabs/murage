@@ -40,12 +40,17 @@ export const INTEGRITY_SHAPE_SLICE = 5_000;
 export const INTEGRITY_LEARNING_SLICE = 5_000;
 /** The first row window of a shape, learning or reference statement. Each later window follows what the last one measured (see adaptiveWindow). */
 export const INTEGRITY_FIRST_WINDOW = 256, INTEGRITY_MIN_WINDOW = 16;
-const windowsByDb = new WeakMap<object, Map<string, number>>();
+/** Per check: the window the next statement covers, what the last one covered and took, and the size below which the window no longer shrinks. */
+interface WindowState { next: number; size: number; took: number; floor: number }
+const windowsByDb = new WeakMap<object, Map<string, WindowState>>();
 /** The rows the next statement of check `key` may cover: the first is small, then it follows time, so no statement runs far past the slice budget
  * (a fixed 5,000-row window held the loop for 430 ms on a 48 GB file). */
 export function adaptiveWindow(db: object, key: string, cap: number): number {
-  return Math.max(1, Math.min(cap, windowsByDb.get(db)?.get(key) ?? Math.min(cap, INTEGRITY_FIRST_WINDOW)));
+  return Math.max(1, Math.min(cap, windowsByDb.get(db)?.get(key)?.next ?? Math.min(cap, INTEGRITY_FIRST_WINDOW)));
 }
+/** A statement over half the rows that still takes at least this share of the time the larger one took: its time is the statement's own fixed
+ * cost, not its rows. */
+export const INTEGRITY_FIXED_COST_RATIO = 0.8;
 /** The rows the next statement covers after one over `size` rows took `tookMs`: halved as soon as it ran past the target, doubled when it took under a
  * quarter of it, kept otherwise (PagedScan's rule; rc13 real-data run: integrity slices of 23 to 149 ms against the 20 ms budget, each one statement
  * that the old rule, which halved only past twice the target and grew toward it, let run long). */
@@ -56,7 +61,16 @@ export function nextWindowSize(size: number, tookMs: number, cap: number, min: n
 /** Records what a statement over `size` rows took, for the next statement of the same check (nextWindowSize). */
 export function adaptWindow(db: object, key: string, size: number, tookMs: number, cap: number): void {
   let map = windowsByDb.get(db); if (!map) { map = new Map(); windowsByDb.set(db, map); }
-  map.set(key, nextWindowSize(size, tookMs, cap, INTEGRITY_MIN_WINDOW));
+  const prev = map.get(key);
+  let floor = prev?.floor ?? INTEGRITY_MIN_WINDOW;
+  // stall r2 L3: a statement whose time is a fixed cost (a seek, a probe) takes as long over half the rows, so halving it again shortens nothing
+  // and only slows the check, which sat at INTEGRITY_MIN_WINDOW rows a statement for good. The window stops shrinking at the size where halving
+  // stopped helping, but only when both statements are within twice the target: a floor is never granted to statements that run long (two noisy slow
+  // readings in a row must not pin a 5,000-row window at 150 ms a statement, Fable r1), and any statement over twice the target drops the floor.
+  const long = tookMs > 2 * INTEGRITY_SLICE_TARGET_MS;
+  if (long) floor = INTEGRITY_MIN_WINDOW;
+  else if (tookMs > INTEGRITY_SLICE_TARGET_MS && prev && prev.size > size && prev.took <= 2 * INTEGRITY_SLICE_TARGET_MS && tookMs >= prev.took * INTEGRITY_FIXED_COST_RATIO) floor = Math.min(cap, prev.size);
+  map.set(key, { next: nextWindowSize(size, tookMs, cap, floor), size, took: tookMs, floor });
 }
 /** The share of the bar each proof owns (thousandths). */
 export const OUTPUT_END = 300, REFERENCES_END = 700, SHAPES_END = 950;

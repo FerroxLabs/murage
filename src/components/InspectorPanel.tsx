@@ -46,6 +46,7 @@ export function InspectorPanel({ bot }: { bot: Bot }) {
         signal: controller.signal,
         // The marker alone is a forgery the harness now refuses; the
         // per-launch secret is what makes it the desktop.
+        redirect: "error",
         headers: { "x-murage-surface": "desktop", ...desktopSurfaceHeaders() },
       });
       if (!res.ok) throw new Error(`${res.status}`);

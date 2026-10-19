@@ -16,6 +16,7 @@ import type { DatabaseSync } from "node:sqlite";
 import { awaitWriterGate, DEFAULT_BUSY_MS, isDatabaseBusy, setBusy } from "../database.ts";
 import { ownerFirst, type OwnerFirstGate } from "../owner-first.ts";
 import { ioBudget } from "../io-budget.ts";
+import { INTEGRITY_SLICE_TARGET_MS, nextWindowSize } from "./integrity-pass.ts";
 import { LEGACY_OWNER_TAIL_INDEX, OWNER_TAIL_BUILD, OWNER_TAIL_KINDS_SQL, OWNER_TAIL_SCHEMA, OWNER_TAIL_TABLE, ownerTailPresent, ownerTailReady } from "./schema.ts";
 
 /** Where the background backfill of this process stands: nothing to do, waiting for a quiet moment, filling, done, or failed (the next start carries on). */
@@ -30,7 +31,14 @@ export const OWNER_TAIL_SLICE_TARGET_MS = 5;
 /** Records one slice starts with, the most it grows to, and the size of the chunks it checks the clock between. */
 export const OWNER_TAIL_START_ROWS = 256;
 export const OWNER_TAIL_MAX_ROWS = 4096;
-const OWNER_TAIL_CHUNK = 64;
+/** Records one statement of a slice reads: the first statement on a connection reads OWNER_TAIL_FIRST_CHUNK, then each one follows what the last
+ * one took by integrity-pass.ts nextWindowSize (halved past 20 ms, doubled under 5 ms), between 1 and OWNER_TAIL_CHUNK. The slice's clock is
+ * checked only between statements, so a fixed chunk of 64 wide records read cold beside the upgrade's writes held the loop for 714 ms in one
+ * statement (rc13 real-data run, server3.log:94); the rows per statement are bounded, not only the time per slice. */
+export const OWNER_TAIL_CHUNK = 64, OWNER_TAIL_FIRST_CHUNK = 16;
+const chunkByDb = new WeakMap<object, number>();
+/** The records the next statement of the backfill on `db` reads. */
+export function ownerTailChunk(db: object): number { return chunkByDb.get(db) ?? OWNER_TAIL_FIRST_CHUNK; }
 /** The pause between slices (a real timer), and the retry after a lock held by another connection. */
 export const OWNER_TAIL_PAUSE_MS = 5;
 export const OWNER_TAIL_LOCKED_RETRY_MS = 1000;
@@ -76,8 +84,8 @@ export function createOwnerTail(db: DatabaseSync): boolean {
 
 /** One slice of the backfill: the next records in key order after the recorded key, the ones of the owner-tail kinds added, chunk by
  * chunk until `budgetMs`, and the key it got to recorded, all in one transaction. Returns whether the table is ready. */
-export function fillOwnerTailSlice(db: DatabaseSync, rows: number, options: { budgetMs?: number } = {}): { ready: boolean; read: number; busy?: true } {
-  const budget = options.budgetMs ?? OWNER_TAIL_SLICE_TARGET_MS;
+export function fillOwnerTailSlice(db: DatabaseSync, rows: number, options: { budgetMs?: number; now?: () => number } = {}): { ready: boolean; read: number; busy?: true } {
+  const budget = options.budgetMs ?? OWNER_TAIL_SLICE_TARGET_MS, now = options.now ?? (() => performance.now());
   if (!createOwnerTail(db)) return { ready: false, read: 0, busy: true };
   const build = db.prepare(`SELECT ready,cursor_id,cursor_version FROM ${OWNER_TAIL_BUILD} WHERE id=1`).get();
   if (!build || Number(build.ready) === 1) return { ready: true, read: 0 };
@@ -85,18 +93,21 @@ export function fillOwnerTailSlice(db: DatabaseSync, rows: number, options: { bu
   const after = db.prepare(`SELECT id,version,created_at,${OWNER_TAIL_KINDS_SQL} AS tail FROM memory_records WHERE (id,version)>(?,?) ORDER BY id,version LIMIT ?`);
   const add = db.prepare(`INSERT OR IGNORE INTO ${OWNER_TAIL_TABLE} VALUES(?,?,?)`);
   let cursor: [string, number] | null = build.cursor_id === null ? null : [String(build.cursor_id), Number(build.cursor_version)];
-  const started = performance.now();
+  const started = now();
   let read = 0, ended = false;
   if (!beginNoWait(db)) return { ready: false, read: 0, busy: true };
   try {
     while (read < rows) {
-      const want = Math.min(OWNER_TAIL_CHUNK, rows - read);
+      const size = ownerTailChunk(db), want = Math.min(size, rows - read), t0 = now();
       const chunk = cursor ? after.all(cursor[0], cursor[1], want) : first.all(want);
       for (const row of chunk) if (Number(row.tail) === 1) add.run(Number(row.created_at), String(row.id), Number(row.version));
+      const t1 = now();
+      // a slow statement always halves the next; only a full chunk of the current size may grow it (a short last one says nothing about speed)
+      if (t1 - t0 > INTEGRITY_SLICE_TARGET_MS || (want === size && chunk.length === want)) chunkByDb.set(db, nextWindowSize(size, t1 - t0, OWNER_TAIL_CHUNK, 1));
       read += chunk.length;
       if (chunk.length) { const last = chunk.at(-1)!; cursor = [String(last.id), Number(last.version)]; }
       if (chunk.length < want) { ended = true; break; }
-      if (performance.now() - started >= budget) break;
+      if (t1 - started >= budget) break;
     }
     if (ended) {
       db.prepare(`UPDATE ${OWNER_TAIL_BUILD} SET ready=1,cursor_id=NULL,cursor_version=NULL WHERE id=1`).run();

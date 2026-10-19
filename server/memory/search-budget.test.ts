@@ -1,7 +1,7 @@
 // A turn's memory search returns within its 500 ms budget whatever the worker is busy with:
 // the budget starts before the synchronous preparation, a bridge that does not honour the
 // abort cannot hold the turn, and the worker is told the deadline so it drops what no one waits for.
-import { mkdirSync, rmSync } from "node:fs";
+import { mkdirSync } from "node:fs";
 import { beforeEach, expect, it, vi } from "vitest";
 import { DATA_DIR } from "../config.ts";
 import { closeDatabase } from "../database.ts";
@@ -10,6 +10,7 @@ import { memoryAccess, reconcileMemoryRoster } from "./policy.ts";
 import { searchMemory, SEARCH_BUDGET_MS, type MemorySearchBridge } from "./search.ts";
 import type { MemorySearchInput } from "./worker-protocol.ts";
 import { LineageAllowance } from "./lineage-allowance.ts";
+import { removeTempDirSync } from "../testing/cleanup.ts";
 
 const prep = vi.hoisted(() => ({ busyMs: 0 }));
 vi.mock("./recent.ts", async importOriginal => {
@@ -20,7 +21,7 @@ vi.mock("./recent.ts", async importOriginal => {
   } };
 });
 
-beforeEach(() => { closeDatabase(); rmSync(DATA_DIR, { recursive: true, force: true }); mkdirSync(DATA_DIR, { recursive: true }); prep.busyMs = 0; });
+beforeEach(() => { closeDatabase(); removeTempDirSync(DATA_DIR); mkdirSync(DATA_DIR, { recursive: true }); prep.busyMs = 0; });
 function access() {
   const roster = { bots: [{ id: "a", threadId: "thread", section: "alpha" }], groups: [] };
   reconcileMemoryRoster(roster);

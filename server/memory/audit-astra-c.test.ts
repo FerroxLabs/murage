@@ -3,7 +3,7 @@
 //
 // Astra's confirm audit (int102-gate/audit-astra-c/REPORT.md): two privacy leaks, each reproduced here first and fixed after, and two scale
 // findings Sean moved to the post-release scale track (it.todo, with Astra's measured numbers).
-import { mkdirSync, rmSync } from "node:fs";
+import { mkdirSync } from "node:fs";
 import { beforeEach, describe, expect, it } from "vitest";
 import { DATA_DIR } from "../config.ts";
 import { closeDatabase, database } from "../database.ts";
@@ -18,6 +18,7 @@ import { buildPrompt, ownShownLineIds, promptPart, recordTurnObject, sendFence, 
 import { commitRevoke } from "./revoke-commit.ts";
 import { markerSlice, setScopeFlowEdgesRecorded } from "./revoke-marker.ts";
 import { forgetKeptLineageForTest } from "./testing/legacy-lineage/replay-lineage.ts";
+import { removeTempDirSync } from "../testing/cleanup.ts";
 
 const CONTENT: LineageReader = { audience: null };
 const msg = (id: string, extra: Partial<Message> = {}): Message => ({ id, role: "bot", kind: "text", text: id, at: Date.now(), ...extra });
@@ -30,7 +31,7 @@ const inTurn = (thread: string, turnId: string, write: () => void) => {
 
 beforeEach(() => {
   closeMessageDb(); closeDatabase(); resetLineageBackfillForTest(); forgetKeptLineageForTest();
-  rmSync(DATA_DIR, { recursive: true, force: true }); mkdirSync(DATA_DIR, { recursive: true });
+  removeTempDirSync(DATA_DIR); mkdirSync(DATA_DIR, { recursive: true });
 });
 
 describe("Astra confirm audit", () => {

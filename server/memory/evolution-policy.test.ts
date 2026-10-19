@@ -2,7 +2,7 @@ import { captureSource } from "./capture.ts";
 import { claimMemoryJob, publishMemoryWork } from "./jobs.ts";
 import { captureWork } from "./chunks.ts";
 import { consolidateMemorySource } from "./consolidate.ts";
-import { mkdirSync, rmSync } from "node:fs";
+import { mkdirSync } from "node:fs";
 import { beforeEach, expect, it } from "vitest";
 import { DATA_DIR } from "../config.ts";
 import { closeDatabase, database } from "../database.ts";
@@ -18,8 +18,9 @@ import { searchMemory } from "./search.ts";
 import { buildMemoryBundle, MEMORY_FRAME_TOKENS } from "./bundle.ts";
 import { InternalCapabilities } from "../internal-capabilities.ts";
 import { LineageAllowance } from "./lineage-allowance.ts";
+import { removeTempDirSync } from "../testing/cleanup.ts";
 const roster={bots:[{id:"policy-bot",threadId:"policy-thread"}],groups:[]};
-beforeEach(()=>{closeDatabase();rmSync(DATA_DIR,{recursive:true,force:true});mkdirSync(DATA_DIR,{recursive:true});reconcileMemoryRoster(roster);setMemoryMode("capture");});
+beforeEach(()=>{closeDatabase();removeTempDirSync(DATA_DIR);mkdirSync(DATA_DIR,{recursive:true});reconcileMemoryRoster(roster);setMemoryMode("capture");});
 const fields=(ratio=0.7,guidance=""):MemoryEvolutionFields=>({extraction:{classificationGuidance:guidance},retrieval:{semanticBandRatio:ratio,rareFacetDivisor:4}});
 it("revokes superseded corpus grants only within their host-selected family",()=>{
   const ticket=ownerMemoryTicket(),corpus={kind:"synthetic" as const,corpusDigest:"a".repeat(64),holdoutDigest:"b".repeat(64)};
@@ -60,8 +61,8 @@ it("frozen classification messages sent to the extractor equal the reserved inpu
   const source="The parcel arrived.",before=readMemoryLearning(database());
   const result=await extractCandidates(source,async(_text,_maximum,_signal,dispatch)=>{captured=dispatch;publishMemoryEvolutionPolicy(p.snapshot,p.receipt,p.admission);return "[]";},new AbortController().signal,frozen);
   expect(result.status).toBe("complete");expect(captured?.policyRevision).toBe(frozen.revision);expect(captured?.messages).toEqual(memoryExtractionMessages(source,frozen));expect(JSON.stringify(captured?.messages)).not.toContain("Classify completed observations");
-  // V2 reserves estimated tokens for the exact frozen messages, not bytes.
-  const budget=database().prepare("SELECT intent FROM memory_scope_bindings WHERE subject_id='extract-budget'").get()!;expect(JSON.parse(String(budget.intent)).input).toBe(Math.ceil(Buffer.byteLength(JSON.stringify(captured?.messages))/3.5));
+  // 1.0.3 (r4.1) reserves one token per byte of the exact frozen messages plus the provider allowance.
+  const budget=database().prepare("SELECT intent FROM memory_scope_bindings WHERE subject_id='extract-budget'").get()!;expect(JSON.parse(String(budget.intent)).input).toBe(Buffer.byteLength(JSON.stringify(captured?.messages))+2048);
   expect(readMemoryLearning(database())).toEqual(before);expect(memoryExtractionMessages(source,readMemoryEvolutionPolicy())[0]!.content).toContain("Classify completed observations");
   expect(memoryExtractionMessages(source)[0]!.content).not.toContain("Classify completed observations");
 });

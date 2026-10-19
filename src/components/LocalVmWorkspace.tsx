@@ -81,6 +81,7 @@ function bestEffortRelease(botId: string, controlLeaseId: string) {
     method: "POST",
     // Control acquisition already cached the proof. Start the keepalive now;
     // asynchronous discovery during teardown could lose the release entirely.
+    redirect: "error",
     headers: { "content-type": "application/json", "x-murage-surface": "desktop", ...desktopSurfaceHeaders() },
     body: JSON.stringify({ action: "release", controlLeaseId }),
     keepalive: true,

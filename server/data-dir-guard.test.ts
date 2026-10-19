@@ -5,6 +5,7 @@
 // invented — the "must still be allowed" list is every production recursive
 // delete that targets a path inside DATA_DIR, taken from the audit of
 // server/, electron/, shared/, src/ and companion/.
+import { removeTempDirSync } from "./testing/cleanup.ts";
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync, existsSync, rmSync as namedRmSync } from "node:fs";
 import * as namespaceFs from "node:fs";
 import { createRequire } from "node:module";
@@ -120,7 +121,7 @@ describe("the wiring", () => {
     expect(existsSync(join(data, "workspaces"))).toBe(true);
 
     uninstallDataDirGuardForTests();
-    rmSync(parent, { recursive: true, force: true });
+    removeTempDirSync(parent);
   });
 
   it("is seen by every way a caller can reach fs.rmSync", () => {
@@ -145,7 +146,7 @@ describe("the wiring", () => {
     expect(existsSync(data)).toBe(true);
 
     uninstallDataDirGuardForTests();
-    rmSync(parent, { recursive: true, force: true });
+    removeTempDirSync(parent);
   });
 
   it("leaves a NON-recursive delete alone, and skips a temp-dir installation", () => {
@@ -156,7 +157,7 @@ describe("the wiring", () => {
     // A data dir under the OS temp dir is a test rig; the guard declines to
     // install so existing fixtures can still clean themselves up.
     expect(installDataDirGuard(data)).toBe(false);
-    rmSync(parent, { recursive: true, force: true });
+    removeTempDirSync(parent);
     expect(existsSync(parent)).toBe(false);
   });
 });

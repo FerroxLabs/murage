@@ -3,7 +3,7 @@
 //
 // Going back to 1.0.1 with a long branch switch cut short (a crash after the head moved, before the slices finished) finishes the switch first, so no
 // memory source is left half way between the two branches, and the queue that held its place is dropped only when it is empty.
-import { mkdirSync, rmSync } from "node:fs";
+import { mkdirSync } from "node:fs";
 import { beforeEach, expect, it } from "vitest";
 import { DATA_DIR } from "./config.ts";
 import { closeDatabase, database } from "./database.ts";
@@ -11,8 +11,9 @@ import { downgradeApplicationSchemaTo101 } from "./installation-app-schema-downg
 import * as messages from "./message-db.ts";
 import { branchChangeTuning, pendingBranchChanges } from "./memory/branch-change.ts";
 import { setMemoryMode } from "./memory/repository.ts";
+import { removeTempDirSync } from "./testing/cleanup.ts";
 
-beforeEach(() => { closeDatabase(); rmSync(DATA_DIR, { recursive: true, force: true }); mkdirSync(DATA_DIR, { recursive: true }); setMemoryMode("capture"); delete branchChangeTuning.sync; delete branchChangeTuning.slice; });
+beforeEach(() => { closeDatabase(); removeTempDirSync(DATA_DIR); mkdirSync(DATA_DIR, { recursive: true }); setMemoryMode("capture"); delete branchChangeTuning.sync; delete branchChangeTuning.slice; });
 const message = (id: string, parentId: string | null) => ({ id, text: `words of ${id}`, parentId, at: 1, role: "user" as const, kind: "text" as const });
 
 it("a pending branch change is finished (in slices) before its queue is dropped: the sources end on the selected branch", () => {

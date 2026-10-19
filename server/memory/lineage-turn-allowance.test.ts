@@ -7,7 +7,7 @@
 // external replies, working context, recall, the continuation check, the replay window and the output roots. Every reader takes it as a
 // REQUIRED parameter, so a reader that is given none does not compile; spending on a closed allowance stops the read with the limit error,
 // so a check that ran after the turn's setup (or outside any turn) is refused, never free. Successive checks do not replenish it.
-import { mkdirSync, readFileSync, readdirSync, rmSync } from "node:fs";
+import { mkdirSync, readFileSync, readdirSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { beforeEach, expect, it } from "vitest";
@@ -22,13 +22,14 @@ import { capturedMessageWithheld, forgetKeptLineageForTest, isLineageLimit, repl
 import { stopWalMaintenance } from "../wal-maintenance.ts";
 import { LineageAllowance } from "./lineage-allowance.ts";
 import { writerAllowance } from "./replay-lineage.ts";
+import { removeTempDirSync } from "../testing/cleanup.ts";
 
 const thread = "allow-direct", driver = "drv", session = "sess";
 const here = dirname(fileURLToPath(import.meta.url));
 
 // closeDatabase stops the WAL checkpointer without waiting; one still alive when the data dir is deleted and rebuilt removes the NEW file's -wal/-shm
 // by path (or leaves the directory non-empty for the delete), so every close that precedes a delete awaits it.
-beforeEach(async () => { closeDatabase(); await stopWalMaintenance(); rmSync(DATA_DIR, { recursive: true, force: true }); mkdirSync(DATA_DIR, { recursive: true }); });
+beforeEach(async () => { closeDatabase(); await stopWalMaintenance(); removeTempDirSync(DATA_DIR); mkdirSync(DATA_DIR, { recursive: true }); });
 
 /** A retained session of `receipts` receipts (one lineage row), which a check of the session reads at a cost the allowance counts. */
 function sessionOf(receipts: number): void {
@@ -120,7 +121,8 @@ it("the turn creates its allowance, threads it to the engine send, and closes it
   const server = join(here, "..");
   const source = readFileSync(join(server, "index.ts"), "utf8");
   expect(source).toMatch(/async function startTurn\([\s\S]{0,1800}const allowance = LineageAllowance\.turn\(\);\s*return startTurnAdmitting\(allowance, \.\.\.args\);/);
-  expect(source).toMatch(/\}\)\(\)\.finally\(\(\) => allowance\.close\(\)\);\s*return userMessage;/);
+  // closed when the task ends, and when a start that failed after admission gives the thread back (admitted-turn.ts)
+  expect(source).toMatch(/\}\)\(\)\.finally\(\(\) => allowance\.close\(\)\);\s*\}, \(error, phase\) => \{ allowance\.close\(\); giveBackAdmittedTurn\(run, bot\.id, threadId, admitted, phase, error, opts\?\.onDispatchError\); \}\);\s*return userMessage;/);
   expect(source).toMatch(/endLineage\(\);[\s\S]{0,400}allowance\.close\(\);/);
   expect(source).toMatch(/function replyForPrompt\([\s\S]{0,700}capturedMessageVerdict\(LineageAllowance\.tool\(\), threadId, target\.id\)/);
   // a member's turn in a room owns one allowance for its setup too
@@ -167,7 +169,7 @@ function coldTaskB(n: number): string {
 it("the first message of chat A quoting the newest reply of a cold task B: the lineage reads are charged to the turn (nodes > 0, at most the allowance) and the work does not follow B's history (r2: 0 charged, 141,853 to 1,047,941 rows)", async () => {
   const work: Record<number, { rows: number; spent: number; withheld: boolean; over: boolean }> = {};
   for (const n of [300, 600, 1_200]) {
-    closeDatabase(); await stopWalMaintenance(); rmSync(DATA_DIR, { recursive: true, force: true }); mkdirSync(DATA_DIR, { recursive: true }); database();
+    closeDatabase(); await stopWalMaintenance(); removeTempDirSync(DATA_DIR); mkdirSync(DATA_DIR, { recursive: true }); database();
     const taskB = coldTaskB(n);
     const turn = LineageAllowance.turn();
     resetReplayRowsRead();

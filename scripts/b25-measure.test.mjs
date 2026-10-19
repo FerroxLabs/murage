@@ -4,9 +4,9 @@ import { mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { spawnSync } from "node:child_process";
-import { safeWipeSync } from "../server/testing/safe-wipe.mjs";
 import { compare, summarize } from "./b25-measure.mjs";
 import { fileURLToPath } from "node:url";
+import { removeTempDirSync } from "../server/testing/cleanup.ts";
 
 function fixture() {
   return { version: 1, kind: "product", attributionComplete: true,
@@ -90,5 +90,5 @@ test("CLI processes only supplied synthetic exports and fingerprints its input",
     const report = JSON.parse(result.stdout); assert.equal(report.costReductionPercent, 0);
     assert.match(report.inputSha256[0], /^[a-f0-9]{64}$/);
     assert.equal(spawnSync(process.execPath, [script], { encoding: "utf8" }).status, 2);
-  } finally { safeWipeSync(root); }
+  } finally { removeTempDirSync(root); }
 });

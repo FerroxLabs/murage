@@ -9,6 +9,7 @@
 import { useState } from "react";
 import { api, useStore } from "@/state/store";
 import { describeGrant } from "@/lib/remembered-grants";
+import { grantKeyWords } from "@/lib/routine-grant-words";
 import { PERMISSION_MODES } from "./PermissionModeMenu";
 import type { PermissionMode } from "@/lib/permission-mode";
 import type { Routine } from "@/lib/routines";
@@ -72,7 +73,7 @@ export function RoutineGrants({ routine }: { routine: Pick<Routine, "id" | "alwa
       <div className="text-[12px] text-ink">Always allowed for this routine</div>
       <div className="mt-0.5 text-[10.5px] leading-relaxed text-ink-secondary">
         {keys.length
-          ? "Runs of this routine do these without asking. Each one covers the exact command you approved. Reading your keys still asks."
+          ? "Runs of this routine do these without asking. Each covers only the action, command or place you approved, and Murage still asks before sending to anyone new. Reading your keys still asks."
           : "Nothing yet. Choose Always allow for this routine on an approval from one of its runs."}
       </div>
       {error && <div role="alert" className="mt-1.5 text-[11px] text-danger">{error}</div>}
@@ -80,7 +81,8 @@ export function RoutineGrants({ routine }: { routine: Pick<Routine, "id" | "alwa
         <ul className="mt-2 space-y-1.5">
           {keys.map((key) => {
             const grant = describeGrant(key, state.instances);
-            const label = grant.kind === "exact" ? grant.command : grant.text;
+            // Rule 82d: the same plain names the card and "Saved for" use
+            const label = grant.kind === "exact" ? grant.command : grantKeyWords(key);
             return (
               <li key={key} data-routine-grant={grant.kind} className="flex items-start justify-between gap-3 rounded-lg bg-panel px-3 py-2">
                 <div className="min-w-0 flex-1">
@@ -90,7 +92,7 @@ export function RoutineGrants({ routine }: { routine: Pick<Routine, "id" | "alwa
                       <div className="mt-0.5 break-words text-[11px] text-ink-secondary">In <span className="font-mono">{grant.folder}</span> · {grant.engine}</div>
                     </>
                   ) : (
-                    <div className="break-words text-[12px] text-ink">{grant.text}</div>
+                    <div className="break-words text-[12px] text-ink">{label}</div>
                   )}
                 </div>
                 <button

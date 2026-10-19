@@ -18,7 +18,7 @@ import { database, transaction } from "./database.ts";
 import { DEFAULT_GOAL_REVIEW, DEFAULT_PROJECT_PARALLEL_CARDS, DEFAULT_PROJECT_PARTS } from "./project-defaults.ts";
 import { deleteProjectRows, validateProjectRows } from "./project-tables.ts";
 import { groupDeletionKey, ownerDeletedThread } from "./owner-deletions.ts";
-import { currentProjectBrief, insertProjectBriefVersion, projectSettingsFor, projectSettingsFromRow, activeProjectGoal } from "./project-records.ts";
+import { currentProjectBrief, insertProjectBriefVersion, noteProjectCloseRecords, projectSettingsFor, projectSettingsFromRow, activeProjectGoal } from "./project-records.ts";
 import type { GroupRecord, Store } from "./store.ts";
 
 const MIGRATED_GOAL_REASON = "From before the update: Start it to run it as a goal";
@@ -110,6 +110,7 @@ export function materializeProjectCreation(store: Store, groupId: string): void 
   const group = store.materializeProjectGroup(creation);
   db.prepare("INSERT INTO project_activity (id,group_id,at,kind,actor,detail) VALUES (?,?,?,'settings','server',?)")
     .run(randomUUID(),group.id,Date.now(),JSON.stringify({creation:'materialized'}));
+  noteProjectCloseRecords(db);
 }
 
 /** A consistent copy of messages.db beside it, taken before a boot-time bulk

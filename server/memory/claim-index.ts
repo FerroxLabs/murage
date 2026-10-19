@@ -11,12 +11,22 @@
 // What it holds: every open job (pending, partial, deferred, leased; under
 // the attempt cap) whose source is at the job's revision, filed by scope in
 // rowid order, plus a heap of jobs that are open but not yet due (a retry in
-// the future, a live lease). Every read of the table is a BOUNDED rowid range
-// (memory_jobs NOT INDEXED, rowid>? AND rowid<=?, at most SCAN_CHUNK rowids):
-// the cursor advances over every rowid it examined, matching or not, so a
-// backlog of finished jobs is walked once, never again (review finding 6: the
+// the future, a live lease). Two kinds of bounded read (review finding 6: the
 // planner had chosen memory_jobs_pending plus a sort over every open job on
-// every claim). The first build is chunked: one chunk per claim and the rest
+// every claim; neither read sorts):
+// - The first build and the reconcile sweep walk the OPEN statuses only,
+//   through memory_jobs_pending in its own (status,retry_at,rowid) order, in
+//   keyset pages of at most OPEN_PAGE_ROWS index rows (1.0.3 preflight: they
+//   used to walk every rowid of the table, so every sweep re-read the whole
+//   finished history on the server thread, 156k rows on the owner's file, and
+//   under the revoke drain's disk load one chunk held the thread 13 to 33 s).
+//   Their cost follows the open backlog, never the history. Each pass walks a snapshot (1.0.3 round 3, MEMORY-STALL-FIX-DESIGN.md):
+//   the rows up to the table's end and the retry times up to the claim's `now` when it began, so jobs written later never keep it
+//   going (they are filed by the read of new rows and the writers' hints), and a pass steps at most passRowCap rows whatever the
+//   writers do. Jobs not due yet are filed by the due frontier as their retry time passes.
+// - Rows appended since the last look are read as a rowid range (memory_jobs
+//   NOT INDEXED, rowid>? AND rowid<=?, at most SCAN_CHUNK rowids).
+// The first build is chunked: one page per claim and the rest
 // on later turns of the event loop; until it is complete the claim is chosen
 // from the rows read so far (round 2 P2-C: the SQL aggregate over every open
 // job is never asked for during a build, and the claimer is woken as the build
@@ -41,8 +51,15 @@ import type { DatabaseSync, StatementSync } from "node:sqlite";
 import { settleRows, TOMBSTONED, type SettleCategory } from "./claim-settle.ts";
 import { DENIED_PLACE } from "./deny.ts";
 import { SCAN_PAGE_TARGET_MS } from "./status-scan.ts";
+import { RidList } from "./rid-list.ts";
 
 const OPEN = "('pending','partial','deferred','leased')";
+/** The open walk's filing terms (the same as the rowid scan's WHERE), NULL when the job has no source at its revision. */
+const OPEN_FILEABLE = "(s.state='active' AND NOT (coalesce(s.kind,'') IN ('tool-outcome','activity') AND coalesce(s.outcome,'')='failed'))";
+/** The open statuses the walk goes through one after the other, pending first: nearly every open job is pending, so a page is usually one
+ * read of the index, and the three seeks into the other statuses come only when pending left room (under the upgrade each read is paid for
+ * by the budgeted pause). */
+const OPEN_WALK_STATUSES = ["pending", "partial", "deferred", "leased"] as const;
 export const CLAIM_INDEX_SQL = {
   /** Rows added since the last look, in rowid order: a range scan of the primary key and one probe per row. */
   scan: `SELECT j.rowid AS rid,s.scope_id AS scope FROM memory_jobs AS j NOT INDEXED CROSS JOIN memory_sources AS s ON s.id=j.source_id AND s.revision=j.source_revision
@@ -50,6 +67,21 @@ export const CLAIM_INDEX_SQL = {
     AND NOT (coalesce(s.kind,'') IN ('tool-outcome','activity') AND coalesce(s.outcome,'')='failed') ORDER BY j.rowid`,
   /** Where the table ends: the last rowid (one step down the primary key). */
   end: `SELECT max(rowid) AS rid FROM memory_jobs`,
+  /** The open jobs of one status (?1) with retry times in [?2, ?3] in memory_jobs_pending's own order, from the front of that range (?4 page
+   * size), each with its scope and whether its source can be filed (the scan's terms, as a column: every index row stepped is returned,
+   * so the keyset moves past it). */
+  openFirst: `SELECT j.rowid AS rid,j.retry_at AS t,j.attempts AS a,s.scope_id AS scope,${OPEN_FILEABLE} AS ok
+    FROM memory_jobs AS j INDEXED BY memory_jobs_pending LEFT JOIN memory_sources AS s ON s.id=j.source_id AND s.revision=j.source_revision
+    WHERE j.status=?1 AND j.retry_at>=?2 AND j.retry_at<=?3 ORDER BY j.retry_at,j.rowid LIMIT ?4`,
+  /** The next page after (?2 retry_at, ?3 rowid), in two seeks as the settle sweep does: the rest of that retry_at up to the walk's last
+   * rowid (?5: rows written after the walk began are read as new rows, so jobs arriving at the same retry_at never keep it going), then
+   * the later ones up to the pass's retry bound (?4: retry times stamped after the pass began are past it). */
+  openTied: `SELECT j.rowid AS rid,j.retry_at AS t,j.attempts AS a,s.scope_id AS scope,${OPEN_FILEABLE} AS ok
+    FROM memory_jobs AS j INDEXED BY memory_jobs_pending LEFT JOIN memory_sources AS s ON s.id=j.source_id AND s.revision=j.source_revision
+    WHERE j.status=?1 AND j.retry_at=?2 AND j.rowid>?3 AND j.rowid<=?5 ORDER BY j.rowid LIMIT ?4`,
+  openLater: `SELECT j.rowid AS rid,j.retry_at AS t,j.attempts AS a,s.scope_id AS scope,${OPEN_FILEABLE} AS ok
+    FROM memory_jobs AS j INDEXED BY memory_jobs_pending LEFT JOIN memory_sources AS s ON s.id=j.source_id AND s.revision=j.source_revision
+    WHERE j.status=?1 AND j.retry_at>?2 AND j.retry_at<=?4 ORDER BY j.retry_at,j.rowid LIMIT ?3`,
   /** The next existing rowid after one (a primary key probe), to jump gaps in the rowids. */
   nextRid: `SELECT rowid AS rid FROM memory_jobs WHERE rowid>? ORDER BY rowid LIMIT 1`,
   /** One candidate, by rowid, with everything the claim rules read. */
@@ -60,8 +92,10 @@ export const CLAIM_INDEX_SQL = {
   byId: `SELECT j.rowid AS rid,s.scope_id AS scope FROM memory_jobs j JOIN memory_sources s ON s.id=j.source_id AND s.revision=j.source_revision WHERE j.id=?`,
 } as const;
 
-/** Rowids one table read examines (the first build, new rows, a reconcile step): a few ms each. */
+/** Rowids one read of NEW rows examines: a few ms each. */
 export const SCAN_CHUNK = 4096;
+/** Most index rows one page of the open walk (a build or reconcile step) reads; halved while pages run past SCAN_PAGE_TARGET_MS. */
+export const OPEN_PAGE_ROWS = 1024;
 /** A reconcile step at most this often while a sweep runs; a new sweep this long after the last one ended. */
 export const RECONCILE_STEP_MS = 1_000;
 export const RECONCILE_INTERVAL_MS = 30_000;
@@ -76,23 +110,35 @@ const RECENT_WAITING_CHECKS = 8;
  * follows time as PagedScan's pages do: halved when a read took longer than SCAN_PAGE_TARGET_MS, doubled back (up to SCAN_CHUNK) when one took a
  * quarter of it (rc13 real-data run: a 4096-rowid read was 70 to 86 ms beside the upgrade's I/O, three of them in one claim). */
 export const CLAIM_SCAN_MIN_ROWS = 64;
-/** The pause between two background steps of the index while the upgrade runs (a step per turn of the loop otherwise). */
+/** The most a background step of the index pauses for while the upgrade runs. The pause is budgeted, not fixed: a step whose read took t ms
+ * hands the loop back for t ms (at most this), so the index holds at most half the loop beside the upgrade, and a quick read waits one turn only
+ * (stall r2 L2: a fixed 20 ms pause was still paid once after the upgrade ended). A step scheduled with a pause is run at once by the first turn
+ * that finds the upgrade over. */
 export const CLAIM_SCAN_UPGRADE_PAUSE_MS = 20;
-type Pending = { cancel(): void };
+type Pending = { cancel(): void; paused: boolean; run: () => void };
+/** One pass of the open walk over a snapshot: the status (index into OPEN_WALK_STATUSES) and the last (retry_at, rowid) read in it (t null
+ * at its front); the retry times it covers [lo, hi] and the last rowid it files (`end`), both fixed when it begins; `left`, the rows it
+ * may still step (passRowCap). Writers stamp a retry time of 0 (a new job), keep it, or stamp their `now` plus a delay, so after the
+ * pass began a row up to `end` holds at most two keys in the range (its own, and (hi, rowid)) and a later row sits at 0 or at hi: in each
+ * status the cursor passes a row at most twice, and a later row only on the one page that crosses 0 or hi. */
+interface Walk { si: number; t: bigint | null; r: bigint; lo: bigint; hi: bigint; end: bigint; left: number }
+const RETRY_MIN = -(2n ** 63n);
+/** The rows one pass may step: twice per status for each rowid up to its end (rowids start at 1) and a page per status at 0 and at hi.
+ * Never reached while writers keep the rule above; a pass that reaches it ends (stats.cut), so every pass ends whatever happens. */
+export function passRowCap(end: bigint): number { return 8 * Math.max(0, Number(end) + 1) + 8 * OPEN_PAGE_ROWS; }
 function later(run: () => void, pauseMs: number): Pending {
-  if (pauseMs > 0) { const timer = setTimeout(run, pauseMs); timer.unref?.(); return { cancel: () => clearTimeout(timer) }; }
+  if (pauseMs > 0) { const timer = setTimeout(run, pauseMs); timer.unref?.(); return { cancel: () => clearTimeout(timer), paused: true, run }; }
   const immediate = setImmediate(run); immediate.unref?.();
-  return { cancel: () => clearImmediate(immediate) };
+  return { cancel: () => clearImmediate(immediate), paused: false, run };
 }
 const OPEN_STATUSES = new Set(["pending", "partial", "deferred", "leased"]);
 
 /** `settle`: the job is blocked for good (or parked, for a retired source); the claim closes it out in its transaction (claim-settle.ts). */
 type Verdict = { kind: "claimable" } | { kind: "gone" } | { kind: "skip" } | { kind: "settle"; category: SettleCategory } | { kind: "wait"; due: number };
-interface ScopeList { rids: bigint[]; head: number }
 interface Waiting { due: number; rid: bigint; scope: string }
 export interface RecentFilter { exclude?: { threadId: string; messageIds: ReadonlySet<string> } }
 /** What one selection cost, for tests and the trace. */
-export interface ClaimIndexStats { checks: number; scanned: number; rebuilds: number; examined: number; reconciled: number }
+export interface ClaimIndexStats { checks: number; scanned: number; rebuilds: number; examined: number; reconciled: number; cut: number }
 
 const ascii = /^[\x00-\x7f]*$/;
 /** SQLite's BINARY collation: UTF-8 bytes. JS `<` compares UTF-16 units, which agrees for ASCII. */
@@ -106,11 +152,13 @@ function lowerBound<T>(list: readonly T[], value: T, compare: (a: T, b: T) => nu
   return lo;
 }
 const compareRid = (a: bigint, b: bigint) => (a < b ? -1 : a > b ? 1 : 0);
+/** The last retry time a pass started at `now` covers (retry times are whole ms). */
+const retryBound = (now: number): bigint => BigInt(Math.floor(now));
 
 export class MemoryClaimIndex {
   private db: DatabaseSync | null = null;
   private statements = new Map<string, StatementSync>();
-  private scopes = new Map<string, ScopeList>();
+  private scopes = new Map<string, RidList>();
   private order: string[] = [];
   private ready = new Set<bigint>();
   private waiting: Waiting[] = [];
@@ -123,11 +171,17 @@ export class MemoryClaimIndex {
   /** The first build is complete up to `buildEnd` (the table's end when it started). */
   private building = false;
   private buildEnd = -1n;
+  /** The first build's pass (null once it is done). */
+  private buildWalk: Walk | null = null;
+  /** The due frontier: every retry time up to here has been walked; its pass over (frontier, now] while one runs. */
+  private frontier = RETRY_MIN;
+  private frontierWalk: Walk | null = null;
+  /** Which reader is first in line for a turn's one read while the upgrade runs: 0 new rows, 1 the sweep, 2 the frontier (the one after the last reader). */
+  private turn = 0;
   private buildTimer: Pending | null = null;
   private stale = true;
-  /** The reconcile sweep: its cursor (null when no sweep runs) and when its next step may run (monotonic ms). */
-  private reconcileFrom: bigint | null = null;
-  private reconcileEnd = -1n;
+  /** The reconcile sweep: its pass (null when no sweep runs), and when its next step may run (monotonic ms). */
+  private reconcileWalk: Walk | null = null;
   private reconcileAt = 0;
   /** A reopen was reported while the first build ran: sweep as soon as it completes. */
   private reopenAsked = false;
@@ -146,7 +200,9 @@ export class MemoryClaimIndex {
   /** Ranges this turn may still read (Infinity when no upgrade runs), and the rowids the next range covers while one does. */
   private scansLeft = Infinity;
   private scanRows = SCAN_CHUNK;
-  readonly stats: ClaimIndexStats = { checks: 0, scanned: 0, rebuilds: 0, examined: 0, reconciled: 0 };
+  /** What the last read under the upgrade took (ms): the pause before the next background step (budgeted, see CLAIM_SCAN_UPGRADE_PAUSE_MS). */
+  private lastReadMs = 0;
+  readonly stats: ClaimIndexStats = { checks: 0, scanned: 0, rebuilds: 0, examined: 0, reconciled: 0, cut: 0 };
 
   constructor(clock: () => number = () => performance.now()) { this.clock = clock; }
 
@@ -159,21 +215,31 @@ export class MemoryClaimIndex {
     let constrained = false;
     try { constrained = this.upgradeRunning(); } catch { constrained = false; }
     this.scansLeft = constrained ? 1 : Infinity;
+    // the upgrade is over: a background step still waiting out a pause taken under it runs now
+    if (!constrained) { this.buildTimer = this.hurry(this.buildTimer); this.catchTimer = this.hurry(this.catchTimer); }
     return constrained;
+  }
+  private hurry(pending: Pending | null): Pending | null {
+    if (!pending?.paused) return pending;
+    pending.cancel();
+    return later(pending.run, 0);
   }
   private get constrained(): boolean { return this.scansLeft !== Infinity; }
   private canScan(): boolean { return this.scansLeft > 0; }
   /** The rowids one range read covers now. */
   private chunkRows(): bigint { return BigInt(this.constrained ? this.scanRows : SCAN_CHUNK); }
   /** The pause before the next background step (none unless the upgrade runs). */
-  private pauseMs(): number { return this.constrained ? CLAIM_SCAN_UPGRADE_PAUSE_MS : 0; }
+  private pauseMs(): number {
+    if (!this.constrained || this.lastReadMs < SCAN_PAGE_TARGET_MS / 4) return 0;
+    return Math.min(CLAIM_SCAN_UPGRADE_PAUSE_MS, Math.ceil(this.lastReadMs));
+  }
   /** Forget everything; the next selection rebuilds from the table (chunked). */
   invalidate(): void { this.stale = true; }
   /** A writer made jobs claimable again behind the index (a park reopen, a branch restore): sweep now. */
   reopened(): void {
     // A sweep that is running keeps its cursor (restarting it on every notification starves it); one more pass is
     // queued behind it for jobs reopened below the cursor. Otherwise a pass is due now.
-    if (this.reconcileFrom !== null) { this.reconcilePassQueued = true; return; }
+    if (this.reconcileWalk !== null) { this.reconcilePassQueued = true; return; }
     this.reconcileAt = 0; this.reopenAsked = true;
   }
   /** Say what to call when a background step of the index finishes (the claimer has something new to look at). */
@@ -207,6 +273,7 @@ export class MemoryClaimIndex {
       this.scansLeft--;
       // PagedScan's rule: halve when the read ran past the target, double back when it took a quarter of it
       const took = performance.now() - started;
+      this.lastReadMs = took;
       if (took > SCAN_PAGE_TARGET_MS) this.scanRows = Math.max(CLAIM_SCAN_MIN_ROWS, Math.floor(this.scanRows / 2));
       else if (took < SCAN_PAGE_TARGET_MS / 4) this.scanRows = Math.min(SCAN_CHUNK, this.scanRows * 2);
     }
@@ -220,23 +287,63 @@ export class MemoryClaimIndex {
       this.addReady(row.rid, String(row.scope));
     }
   }
-  /** One chunk of the first build. True when the build is complete. */
-  private buildStep(db: DatabaseSync): boolean {
-    if (!this.canScan()) return false;
-    this.high = this.skipGap(db, this.high, this.buildEnd);
-    const chunk = this.chunkRows();
-    const to = this.high + chunk < this.buildEnd ? this.high + chunk : this.buildEnd;
-    this.walk(db, this.high, to, false);
-    this.high = to;
-    if (this.high >= this.buildEnd) {
-      this.building = false;
-      this.wake?.();
-      this.reconcileFrom = null; this.reconcileAt = this.reopenAsked ? 0 : this.clock() + RECONCILE_INTERVAL_MS; this.reopenAsked = false;
-      return true;
+  /** A pass over the retry times [lo, hi] and the rowids up to `end`, fixed now. */
+  private pass(lo: bigint, hi: bigint, end: bigint): Walk { return { si: 0, t: null, r: -1n, lo, hi, end, left: passRowCap(end) }; }
+  /** One page of a pass: at most a page of memory_jobs_pending rows, in its own order, across the open statuses. Files the open jobs with
+   * rowids up to the pass's end (later rows are read as new rows) that the index does not hold yet. True when the pass is done. */
+  private page(db: DatabaseSync, walk: Walk, reconcile: boolean): boolean {
+    const started = performance.now();
+    const size = Math.min(this.scanRows, OPEN_PAGE_ROWS);
+    let room = Math.min(size, walk.left);
+    let done = false;
+    const rows: Array<Record<string, unknown>> = [];
+    // at most `size` index rows in all: a page moves on to the next status while it has room (at most two seeks per status)
+    while (!done && room > 0) {
+      const status = OPEN_WALK_STATUSES[walk.si]!;
+      const got: Array<Record<string, unknown>> = walk.t === null
+        ? this.statement(db, CLAIM_INDEX_SQL.openFirst).all(status, walk.lo, walk.hi, room) as Array<Record<string, unknown>>
+        : this.statement(db, CLAIM_INDEX_SQL.openTied).all(status, walk.t, walk.r, room, walk.end) as Array<Record<string, unknown>>;
+      if (walk.t !== null && got.length < room) got.push(...this.statement(db, CLAIM_INDEX_SQL.openLater).all(status, walk.t, room - got.length, walk.hi) as Array<Record<string, unknown>>);
+      for (const row of got) rows.push(row);
+      room -= got.length; walk.left -= got.length;
+      const last: Record<string, unknown> | undefined = got[got.length - 1];
+      if (last) { walk.t = last.t as bigint; walk.r = last.rid as bigint; }
+      // fewer rows than asked: this status is read to the pass's bound
+      if (room > 0) { if (walk.si + 1 < OPEN_WALK_STATUSES.length) { walk.si++; walk.t = null; walk.r = -1n; } else done = true; }
     }
-    return false;
+    if (!done && walk.left <= 0) { done = true; this.stats.cut++; }
+    // what the reads took (the filing is the index's own work): the budgeted pause before the next background step, as after a range read
+    if (this.constrained) { this.scansLeft--; this.lastReadMs = performance.now() - started; }
+    this.stats.examined += rows.length;
+    let filed = 0;
+    for (const row of rows) {
+      const rid = row.rid as bigint;
+      if (rid > walk.end || row.scope == null || !Number(row.ok) || Number(row.a) >= 3) continue;
+      if (this.ready.has(rid) || this.waitingSet.has(rid)) continue;
+      if (reconcile) this.stats.reconciled++;
+      this.addReady(rid, String(row.scope));
+      filed++;
+    }
+    this.stats.scanned += filed;
+    // PagedScan's rule, always, on the whole step (reads and filing): a page that ran long makes the next one half the size of this one
+    const took = performance.now() - started;
+    if (took > SCAN_PAGE_TARGET_MS) this.scanRows = Math.max(CLAIM_SCAN_MIN_ROWS, Math.floor(size / 2));
+    else if (took < SCAN_PAGE_TARGET_MS / 4) this.scanRows = Math.min(SCAN_CHUNK, this.scanRows * 2);
+    return done;
   }
-  /** The rest of the first build runs a chunk per turn of the event loop, never in one block. */
+  /** One page of the first build. True when the build is complete. */
+  private buildStep(db: DatabaseSync): boolean {
+    if (this.buildWalk !== null) {
+      if (!this.canScan()) return false;
+      if (!this.page(db, this.buildWalk, false)) return false;
+      this.buildWalk = null;
+    }
+    this.building = false;
+    this.wake?.();
+    this.reconcileWalk = null; this.reconcileAt = this.reopenAsked ? 0 : this.clock() + RECONCILE_INTERVAL_MS; this.reopenAsked = false;
+    return true;
+  }
+  /** The rest of the first build runs a page per turn of the event loop, never in one block. */
   private continueBuild(db: DatabaseSync): void {
     if (this.buildTimer) return;
     this.buildTimer = later(() => {
@@ -278,7 +385,7 @@ export class MemoryClaimIndex {
 
   /** Bring the index up to date with `db`, within a bounded amount of work. False while the first build is still
    * running; while it (or a catch-up of a large append) runs, the index answers from what it holds so far. */
-  private sync(db: DatabaseSync): boolean {
+  private sync(db: DatabaseSync, now: number): boolean {
     if (db !== this.db || this.stale) {
       // A timer left from the previous build or handle would make continueBuild believe one is pending.
       if (this.buildTimer) { this.buildTimer.cancel(); this.buildTimer = null; }
@@ -286,37 +393,69 @@ export class MemoryClaimIndex {
       if (db !== this.db) this.scanRows = SCAN_CHUNK; // another file: its reads are measured afresh
       this.db = db; this.statements.clear(); this.scopes.clear(); this.order = []; this.ready.clear();
       this.waiting = []; this.waitingSet.clear(); this.waitingByScope.clear(); this.high = -1n; this.stale = false; this.stats.rebuilds++;
-      this.building = true; this.catchingUp = false; this.buildEnd = this.tableEnd(db); this.reconcileFrom = null; this.reconcilePassQueued = false;
+      this.building = true; this.catchingUp = false; this.buildEnd = this.tableEnd(db); this.reconcileWalk = null; this.reconcilePassQueued = false;
+      // the build walks the open statuses up to the table's end and the jobs due now; rows written after it are read as new rows, and
+      // jobs due later by the due frontier
+      const due = retryBound(now);
+      this.high = this.buildEnd; this.buildWalk = this.pass(RETRY_MIN, due, this.buildEnd);
+      this.frontier = due; this.frontierWalk = null;
     }
     if (this.building) {
       if (this.buildStep(db)) return true;
       this.continueBuild(db);
       return false;
     }
-    // New rows since the last look: a bounded range of the primary key, nothing when nothing was added.
-    if (!this.advance(db, SYNC_CHUNKS_PER_CALL)) { this.catchingUp = true; this.continueCatchUp(db); return true; }
-    this.catchingUp = false;
-    this.reconcileStep(db);
+    if (!this.constrained) {
+      // New rows since the last look: a bounded range of the primary key, nothing when nothing was added.
+      if (!this.advance(db, SYNC_CHUNKS_PER_CALL)) { this.catchingUp = true; this.continueCatchUp(db); return true; }
+      this.catchingUp = false;
+      // the sweep first: it steps at most once per RECONCILE_STEP_MS, so the frontier has every other turn
+      this.reconcileStep(db, now);
+      this.frontierStep(db, now);
+      return true;
+    }
+    // Under the upgrade a turn reads once, so the three readers take the read in turn: new rows, the sweep, the frontier (Astra build3 H2:
+    // new rows alone took every turn's read while jobs kept arriving, and a job due after the build waited out the whole upgrade). The one
+    // first in line reads if it has work to do, else the next; the reader after the one that read is first next turn, so a reader with work
+    // waits at most two turns. New rows left unread go on in the background catch-up, on its own turns.
+    const first = this.turn;
+    let caughtUp = true, reader = -1;
+    for (let k = 0; k < 3; k++) {
+      const who = (first + k) % 3;
+      if (who === 0) caughtUp = this.advance(db, SYNC_CHUNKS_PER_CALL);
+      else if (who === 1) this.reconcileStep(db, now);
+      else this.frontierStep(db, now);
+      if (reader < 0 && !this.canScan()) reader = who;
+    }
+    if (reader >= 0) this.turn = (reader + 1) % 3;
+    if (!caughtUp) { this.catchingUp = true; this.continueCatchUp(db); } else this.catchingUp = false;
     return true;
   }
 
-  /** One step of the reconcile sweep, when one is due: re-file open jobs the index lost track of. */
-  private reconcileStep(db: DatabaseSync): void {
-    const now = this.clock();
-    if (now < this.reconcileAt || !this.canScan()) return;
-    if (this.reconcileFrom === null) { this.reconcileFrom = -1n; this.reconcileEnd = this.high; this.reopenAsked = false; this.reconcilePassQueued = false; }
-    const from = this.skipGap(db, this.reconcileFrom, this.reconcileEnd);
-    const chunk = this.chunkRows();
-    const to = from + chunk < this.reconcileEnd ? from + chunk : this.reconcileEnd;
-    this.walk(db, from, to, true);
-    if (to >= this.reconcileEnd) { this.reconcileFrom = null; this.reconcileAt = this.reconcilePassQueued ? now : now + RECONCILE_INTERVAL_MS; }
-    else { this.reconcileFrom = to; this.reconcileAt = now + RECONCILE_STEP_MS; }
+  /** One page of the due frontier, when retry times have passed since it last ran: jobs that were not due when the index walked them. */
+  private frontierStep(db: DatabaseSync, now: number): void {
+    if (!this.canScan()) return;
+    if (this.frontierWalk === null) {
+      const due = retryBound(now);
+      if (due <= this.frontier) return;
+      this.frontierWalk = this.pass(this.frontier + 1n, due, this.high);
+    }
+    if (this.page(db, this.frontierWalk, false)) { this.frontier = this.frontierWalk.hi; this.frontierWalk = null; }
   }
 
-  private list(scope: string): ScopeList {
+  /** One step of the reconcile sweep, when one is due: re-file open jobs the index lost track of (a page of the open walk). */
+  private reconcileStep(db: DatabaseSync, now: number): void {
+    const at = this.clock();
+    if (at < this.reconcileAt || !this.canScan()) return;
+    if (this.reconcileWalk === null) { this.reconcileWalk = this.pass(RETRY_MIN, retryBound(now), this.high); this.reopenAsked = false; this.reconcilePassQueued = false; }
+    if (this.page(db, this.reconcileWalk, true)) { this.reconcileWalk = null; this.reconcileAt = this.reconcilePassQueued ? at : at + RECONCILE_INTERVAL_MS; }
+    else this.reconcileAt = at + RECONCILE_STEP_MS;
+  }
+
+  private list(scope: string): RidList {
     let list = this.scopes.get(scope);
     if (!list) {
-      list = { rids: [], head: 0 };
+      list = new RidList();
       this.scopes.set(scope, list);
       this.order.splice(lowerBound(this.order, scope, compareScope), 0, scope);
     }
@@ -325,14 +464,8 @@ export class MemoryClaimIndex {
 
   private addReady(rid: bigint, scope: string): void {
     if (this.ready.has(rid)) return;
-    const list = this.list(scope);
-    const tail = list.rids.length ? list.rids[list.rids.length - 1]! : -1n;
-    if (rid > tail) list.rids.push(rid);
-    else {
-      // Out of order (a job coming back from the heap or a hint): insert in place, unless a stale copy is still there.
-      const at = lowerBound(list.rids, rid, compareRid, list.head);
-      if (list.rids[at] !== rid) list.rids.splice(at, 0, rid);
-    }
+    // in rowid order, out of order too (a job back from the heap, a hint, a page of the open walk); a stale copy still there is kept once
+    this.list(scope).insert(rid);
     this.ready.add(rid);
   }
 
@@ -418,29 +551,26 @@ export class MemoryClaimIndex {
   /** Jobs another path closed out (the fallback's windows): they leave the ready set, so a later selection does not spend a check on each. */
   dropped(rids: readonly bigint[]): void { for (const rid of rids) this.ready.delete(rid); }
 
-  private compact(list: ScopeList): void {
-    if (list.head > 1024 && list.head * 2 > list.rids.length) { list.rids = list.rids.slice(list.head); list.head = 0; }
-  }
-
   /** The oldest claimable job of `scope`, dropping or moving the stale entries met on the way. */
   private head(db: DatabaseSync, scope: string, now: number, budget: { left: number }): bigint | null | undefined {
     const list = this.scopes.get(scope);
     if (!list) return null;
-    for (let at = list.head; at < list.rids.length; at++) {
-      const rid = list.rids[at]!;
-      const contiguous = at === list.head;
-      if (!this.ready.has(rid)) { if (contiguous) list.head++; continue; }
-      if (budget.left-- <= 0) return undefined;
-      const verdict = this.verdict(db, rid, now);
-      if (verdict.kind === "claimable") { this.compact(list); return rid; }
-      if (verdict.kind === "skip") continue;
-      if (verdict.kind === "settle") this.noteSettle(rid, verdict.category);
-      else if (verdict.kind === "gone") this.ready.delete(rid);
-      else this.addWaiting(rid, scope, verdict.due);
-      if (contiguous) list.head++;
-    }
-    this.compact(list);
-    return null;
+    // the entries passed from the front with nothing kept before them are dropped once the walk stops
+    let drop = 0, contiguous = true;
+    try {
+      for (const rid of list.ascending()) {
+        if (!this.ready.has(rid)) { if (contiguous) drop++; continue; }
+        if (budget.left-- <= 0) return undefined;
+        const verdict = this.verdict(db, rid, now);
+        if (verdict.kind === "claimable") return rid;
+        if (verdict.kind === "skip") { contiguous = false; continue; }
+        if (verdict.kind === "settle") this.noteSettle(rid, verdict.category);
+        else if (verdict.kind === "gone") this.ready.delete(rid);
+        else this.addWaiting(rid, scope, verdict.due);
+        if (contiguous) drop++;
+      }
+      return null;
+    } finally { list.dropFront(drop); }
   }
 
   /** Round robin over scopes. `undefined` when the check budget ran out (the caller asks SQL instead). */
@@ -448,7 +578,7 @@ export class MemoryClaimIndex {
     // While the first build runs the choice comes from the rows read so far (a bounded answer; the order among
     // scopes may differ until the build ends). The SQL aggregate over every open job is never asked for it.
     this.beginTurn();
-    this.sync(db);
+    this.sync(db, now);
     // Nothing filed yet while rows are still unread (finished history ahead of a pending backlog): keep reading
     // chunks, inside a small time budget, until a candidate appears. The rest continues on later turns.
     if (!this.order.length && (this.building || this.catchingUp)) {
@@ -475,7 +605,7 @@ export class MemoryClaimIndex {
         if (rid === undefined) return undefined;
         if (rid !== null) return { rid, scope };
         const list = this.scopes.get(scope);
-        if (list && list.head >= list.rids.length) emptied.push(scope);
+        if (list && list.size === 0) emptied.push(scope);
       }
       return null;
     } finally {
@@ -483,7 +613,7 @@ export class MemoryClaimIndex {
       // Scopes with nothing left are forgotten (they come back when a job arrives).
       for (const scope of emptied) {
         const list = this.scopes.get(scope);
-        if (!list || list.head < list.rids.length) continue;
+        if (!list || list.size > 0) continue;
         this.scopes.delete(scope);
         const at = lowerBound(this.order, scope, compareScope);
         if (this.order[at] === scope) this.order.splice(at, 1);
@@ -495,7 +625,10 @@ export class MemoryClaimIndex {
   recent(db: DatabaseSync, now: number, scopes: readonly string[], filter: RecentFilter = {}): bigint | null | undefined {
     // A catch-up leaves the newest rows (what this mode wants) unread: the SQL lookup by scope answers instead.
     this.beginTurn();
-    if (!this.sync(db) || this.catchingUp) return undefined;
+    if (!this.sync(db, now) || this.catchingUp) return undefined;
+    // The newest claimable may be a job that came due since the frontier last finished (Astra build3 Medium): while a frontier pass runs, or
+    // one is owed and the turn's read went elsewhere, the index may hold an older due job and not the newest, so it does not answer.
+    if (this.frontierWalk !== null || this.frontier < retryBound(now)) return undefined;
     this.promote(now);
     const budget = { left: CLAIM_INDEX_CHECK_LIMIT };
     let best: bigint | null = null;
@@ -503,8 +636,7 @@ export class MemoryClaimIndex {
       for (const scope of new Set(scopes)) {
         const list = this.scopes.get(scope);
         if (!list) continue;
-        for (let at = list.rids.length - 1; at >= list.head; at--) {
-          const rid = list.rids[at]!;
+        for (const rid of list.descending()) {
           if (best !== null && rid <= best) break;
           if (!this.ready.has(rid)) continue;
           if (budget.left-- <= 0) return undefined;

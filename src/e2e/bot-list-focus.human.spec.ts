@@ -11,7 +11,7 @@
 // reads document.activeElement back out of Chromium.
 //
 // Nothing here touches a real app, data directory, engine or network.
-import { test, expect, type Page } from "@playwright/test";
+import { test, expect, type Page } from "./page-error-guard";
 import { createServer, type ViteDevServer } from "vite";
 import react from "@vitejs/plugin-react";
 import { mkdtempSync } from "node:fs";

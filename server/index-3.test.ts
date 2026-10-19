@@ -15,6 +15,7 @@ import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, realpath
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it, vi } from "vitest";
+import { removeTempDirSync } from "./testing/cleanup.ts";
 
 // These cases need connected apps, which run through Flux Router only: the
 // harness points its build at a fake broker when this is set.
@@ -814,7 +815,7 @@ describe("harness HTTP API", () => {
       // Win the replacement atomically by retrying until the path is a
       // directory; subsequent Store saves then fail deterministically.
       for (let attempt = 0; attempt < 50 && !statSync(botsFile, { throwIfNoEntry: false })?.isDirectory(); attempt += 1) {
-        rmSync(botsFile, { recursive: true, force: true });
+        removeTempDirSync(botsFile);
         try {
           mkdirSync(botsFile);
         } catch (error) {
@@ -836,7 +837,7 @@ describe("harness HTTP API", () => {
       expect(JSON.parse(readFileSync(join(isolatedData, "browser-cleanups.json"), "utf8")))
         .toEqual([expect.objectContaining({ kind: "profile", id: "unused", phase: "prepared" })]);
     } finally {
-      rmSync(botsFile, { recursive: true, force: true });
+      removeTempDirSync(botsFile);
       writeFileSync(botsFile, "[]");
       await waitForExit(isolatedChild, { signal: "SIGTERM" });
       await removeTempDir(isolatedHome);

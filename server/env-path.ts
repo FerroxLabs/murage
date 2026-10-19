@@ -10,8 +10,10 @@
 // on this machine, plus (async, best-effort) whatever PATH the user's
 // real login shell reports.
 import { execFile, spawnSync } from "node:child_process";
-import { accessSync, closeSync, constants, existsSync, openSync, readFileSync, readSync, realpathSync, statSync, readdirSync } from "node:fs";
-import { homedir } from "node:os";
+import { createHash, randomBytes } from "node:crypto";
+import { accessSync, chmodSync, closeSync, constants, existsSync, mkdirSync, openSync, readFileSync, readSync, realpathSync, statSync, readdirSync, writeFileSync } from "node:fs";
+import { CAPTURE_BYTES, CAPTURE_MS } from "../shared/scan-limits.ts";
+import { homedir, userInfo } from "node:os";
 import { basename, delimiter, dirname, extname, isAbsolute, join, resolve } from "node:path";
 
 /** nvm keeps every node version's bin dir separately; newest first so a
@@ -167,36 +169,227 @@ export function augmentedPath(): string {
       ...installScanDirs().filter((d) => existsSync(d)),
     ]);
   }
-  // belt-and-braces: fold in the login shell's PATH once, in the
-  // background — catches anything the known-dirs list doesn't (custom
-  // rc exports). Never blocks a spawn; the next one benefits.
+  // The owner's interactive login capture (captureOwnerEnv, Rule 74a) is the
+  // one probe: started here in the background so the Engines panel sees the
+  // owner's PATH, and awaited by every engine spawn before it is handed.
   if (!probed && !process.env.VITEST && process.platform !== "win32") {
     probed = true;
-    probeLoginShellPath();
+    void captureOwnerEnv();
   }
   return cached;
+}
+
+/** The install directories that exist and that `path` does not already
+ * name: what an engine's handed PATH gains after the owner's own order. */
+export function installPathTail(path: string): string[] {
+  const have = new Set(path.split(delimiter).filter(Boolean));
+  return installScanDirs().filter((dir) => !have.has(dir) && existsSync(dir));
 }
 
 function mergePaths(parts: string[]): string {
   return [...new Set(parts.filter(Boolean))].join(delimiter);
 }
 
-function probeLoginShellPath(): void {
-  const shell = process.env.SHELL || "/bin/zsh";
-  // -l -i: nvm and friends live in .zshrc/.bashrc, which only interactive
-  // shells read. A marker isolates $PATH from any rc-file noise.
-  execFile(
-    shell,
-    ["-l", "-i", "-c", 'printf "__MURAGE_PATH__%s" "$PATH"'],
-    { timeout: 5000 },
-    (err, stdout) => {
-      if (err || !stdout) return;
-      const m = /__MURAGE_PATH__([^\n]*)/.exec(stdout);
-      if (!m || !m[1]) return;
-      loginShellPath = m[1];
-      cached = mergePaths([...(cached ?? "").split(delimiter), ...m[1].split(delimiter)]);
-    },
-  );
+// ---------------------------------------------------------------------------
+// Rule 74a (APP-GRANT-DESIGN-FINAL.AGREED-r10.md): the owner's toolchain
+// environment, captured the way the owner's terminal gets it, once per server
+// process per account shell, awaited before the first engine spawn.
+
+/** One validated capture: the whole exported map, and where it came from. */
+export interface OwnerEnv {
+  env: Readonly<Record<string, string>>;
+  capture: "session" | "kept" | "fallback";
+  /** when the map was captured (kept) and why the latest capture failed */
+  capturedAt?: number;
+  cause?: string;
+}
+
+let ownerEnvStoreDir: string | null = null;
+let lastValid: { env: Record<string, string>; at: number } | null = null;
+/** The capture in use and the generation it was published under. */
+let current: (OwnerEnv & { generation: number }) | null = null;
+/** The capture in flight and the generation it started under. */
+let pending: { generation: number; run: Promise<OwnerEnv> } | null = null;
+
+// Rules 74a, 74d: one environment generation fences the capture and every consistency check. It only moves forward, and
+// only invalidateEnvCapture moves it: a capture or a check that started under an older generation never publishes.
+let generation = 0;
+let invalidatedBecause: string | undefined;
+const onInvalidate: Array<() => void> = [];
+
+/** The current environment generation. */
+export function envGeneration(): number {
+  return generation;
+}
+
+/** Why the generation last moved (an approved startup-file write, the Engines panel's "check again"). */
+export function envInvalidationCause(): string | undefined {
+  return invalidatedBecause;
+}
+
+/** Register what an invalidation clears besides the capture (engine-env.ts registers its check map). */
+export function onEnvInvalidate(clear: () => void): void {
+  onInvalidate.push(clear);
+}
+
+/** The one place the environment goes stale: the next spawn captures again, a capture in flight is discarded when it
+ *  finishes, and every cached check is dropped. A RUNNING engine keeps the map it was handed. */
+export function invalidateEnvCapture(cause: string): void {
+  generation++;
+  invalidatedBecause = cause;
+  // the capture in use is left as it was: "kept" is written only by a capture that failed (r3 (f))
+  for (const clear of onInvalidate) clear();
+}
+
+/** Where the last validated map is persisted (`<dataDir>/env`). Set once at boot. */
+export function setOwnerEnvStore(dir: string): void {
+  ownerEnvStoreDir = dir;
+}
+
+/** The account shell, the same account record Codex reads; `$SHELL`, then `/bin/zsh`. */
+export function accountShell(): string {
+  let shell = "";
+  try { shell = userInfo().shell ?? ""; } catch { shell = ""; }
+  return shell || process.env.SHELL || "/bin/zsh";
+}
+
+/** Parse `name=value\0` pairs to the last byte; null when any byte is left over
+ * or a pair has no name. */
+export function parseEnvBlock(block: string): Record<string, string> | null {
+  if (block === "") return null;
+  if (!block.endsWith("\0")) return null;
+  const out: Record<string, string> = {};
+  for (const pair of block.slice(0, -1).split("\0")) {
+    const eq = pair.indexOf("=");
+    if (eq <= 0) return null;
+    const name = pair.slice(0, eq);
+    if (!/^[^=\0]+$/.test(name)) return null;
+    Object.defineProperty(out, name, { value: pair.slice(eq + 1), enumerable: true, writable: true, configurable: true });
+  }
+  return out;
+}
+
+/** Validated complete: both markers present and outermost around the map,
+ * the map parses whole, and it holds PATH and HOME. */
+export function readCapture(stdout: string, mark: string): Record<string, string> | null {
+  const first = stdout.indexOf(mark);
+  const last = stdout.lastIndexOf(mark);
+  if (first < 0 || last <= first) return null;
+  const map = parseEnvBlock(stdout.slice(first + mark.length, last));
+  if (!map || !map.PATH || !map.HOME) return null;
+  delete map.MURAGE_ENV_MARK;
+  return map;
+}
+
+function storeFile(shell: string): string | null {
+  if (!ownerEnvStoreDir) return null;
+  return join(ownerEnvStoreDir, `owner-env.${createHash("sha256").update(shell).digest("hex").slice(0, 16)}`);
+}
+
+function persist(shell: string, env: Record<string, string>): void {
+  const file = storeFile(shell);
+  if (!file) return;
+  try {
+    mkdirSync(dirname(file), { recursive: true, mode: 0o700 });
+    const body = Object.entries(env).map(([name, value]) => `${name}=${value}\0`).join("");
+    writeFileSync(file, body, { mode: 0o600 });
+    chmodSync(file, 0o600);
+  } catch {
+    // a failed write only loses the kept copy; the session map still stands
+  }
+}
+
+function readKept(shell: string): Record<string, string> | null {
+  const file = storeFile(shell);
+  if (!file) return null;
+  try {
+    const map = parseEnvBlock(readFileSync(file, "utf8"));
+    return map && map.PATH && map.HOME ? map : null;
+  } catch {
+    return null;
+  }
+}
+
+/** Run the interactive login capture once. Murage's own process, not a tool
+ * call; no model text anywhere in it. */
+function runCapture(shell: string): Promise<{ env: Record<string, string> } | { cause: string }> {
+  const mark = `__MURAGE_ENV_${randomBytes(12).toString("hex")}__`;
+  const script = `printf '%s' "$MURAGE_ENV_MARK"; env -0; printf '%s' "$MURAGE_ENV_MARK"`;
+  return new Promise((resolve) => {
+    const child = execFile(
+      shell,
+      ["-l", "-i", "-c", script],
+      { timeout: CAPTURE_MS, maxBuffer: CAPTURE_BYTES, encoding: "utf8", env: { ...process.env, MURAGE_ENV_MARK: mark } },
+      (error, stdout) => {
+        if (error) return resolve({ cause: error.killed ? "it took too long" : `the shell exited with ${String((error as { code?: unknown }).code ?? "an error")}` });
+        const env = readCapture(stdout, mark);
+        resolve(env ? { env } : { cause: "its output could not be read whole" });
+      },
+    );
+    child.stdin?.end();
+  });
+}
+
+/**
+ * The owner's environment for an engine spawn (Rule 74a). Captured once and
+ * reused; a failed capture hands the last validated map (`kept`) or, with
+ * none, Murage's own process environment with PATH = augmentedPath()
+ * (`fallback`), and is retried before the next spawn. On Windows the GUI
+ * launch already carries the user's registry environment whole, so it is read
+ * live on every spawn (as 1.0.2 did), never kept from the first one: a frozen
+ * copy would hand later engines names Murage has since changed or removed.
+ */
+export async function captureOwnerEnv(options: { shell?: string } = {}): Promise<OwnerEnv> {
+  const at = generation;
+  if (process.platform === "win32" && !options.shell) {
+    const env = { ...(process.env as Record<string, string>), PATH: augmentedPath() };
+    current = { env, capture: "session", generation: at };
+    return current;
+  }
+  if (current?.capture === "session" && current.generation === at) return current;
+  if (pending && pending.generation === at) return pending.run;
+  const run: Promise<OwnerEnv> = (async (): Promise<OwnerEnv> => {
+    const shell = options.shell ?? accountShell();
+    // under test only a named shell is run: never the account's real startup files
+    const result = process.env.VITEST && !options.shell ? { cause: "not captured under test" } : await runCapture(shell);
+    // invalidated while it ran: this capture is discarded unpublished, and the caller gets one from the new generation
+    if (generation !== at) return captureOwnerEnv(options);
+    if ("env" in result) {
+      lastValid = { env: result.env, at: Date.now() };
+      persist(shell, result.env);
+      loginShellPath = result.env.PATH ?? null;
+      cached = null;
+      current = { env: result.env, capture: "session", generation: at };
+      return current;
+    }
+    const kept = lastValid ?? (() => { const map = readKept(shell); return map ? { env: map, at: 0 } : null; })();
+    if (kept) {
+      lastValid = kept;
+      current = { env: kept.env, capture: "kept", capturedAt: kept.at || undefined, cause: result.cause, generation: at };
+      return current;
+    }
+    current = { env: { ...(process.env as Record<string, string>), PATH: augmentedPath() }, capture: "fallback", cause: result.cause, generation: at };
+    return current;
+  })().finally(() => { if (pending?.run === run) pending = null; });
+  pending = { generation: at, run };
+  return run;
+}
+
+/** The last capture's state, for the Engines panel line. */
+export function ownerEnvState(): OwnerEnv | null {
+  return current;
+}
+
+/** The Engines panel's status after discovery (r3 (f), Rule 74a). `fresh` (Check again) invalidates the capture and
+ *  awaits a new one, then discovery is awaited, and only THEN is the capture state read, so the line reports the
+ *  capture that this check produced: session, kept (with when and why) or fallback. */
+export async function ownerEnvAfterDiscovery<T>(fresh: boolean, discover: () => Promise<T>, options: { shell?: string } = {}): Promise<{ discovered: T; owner: OwnerEnv | null }> {
+  if (fresh) {
+    invalidateEnvCapture("the owner asked to check again");
+    await captureOwnerEnv(options);
+  }
+  const discovered = await discover();
+  return { discovered, owner: ownerEnvState() };
 }
 
 /** Test hook — the cache is process-wide otherwise. */
@@ -204,6 +397,9 @@ export function resetPathCacheForTests(): void {
   cached = null;
   probed = false;
   loginShellPath = null;
+  current = null;
+  lastValid = null;
+  pending = null;
 }
 
 /** Every `name` binary on the augmented PATH as absolute paths, in PATH
@@ -474,8 +670,10 @@ function fuigoVersion(binary: string): number[] | null {
     // Only platform launch essentials, never provider credentials or app config.
     const env: NodeJS.ProcessEnv = { PATH: augmentedPath() };
     if (process.env.SystemRoot) env.SystemRoot = process.env.SystemRoot;
+    // An engine probe (Rule 74c launch clause): posix, a session of its own, so neither the binary nor a descendant has
+    // a controlling terminal; win32, a hidden console, never detached. stdin is a pipe closed at once.
     const result = spawnSync(absolute, ["--version"], {
-      env, encoding: "utf8", timeout: 3000, windowsHide: true, maxBuffer: 16 * 1024,
+      env, encoding: "utf8", timeout: 3000, windowsHide: true, maxBuffer: 16 * 1024, input: "", stdio: ["pipe", "pipe", "pipe"], ...(process.platform === "win32" ? {} : { detached: true }),
     });
     const match = !result.error && result.status === 0
       ? /\bfuigo\s+(\d+)\.(\d+)\.(\d+)\b/i.exec(`${result.stdout}\n${result.stderr}`)

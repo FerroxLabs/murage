@@ -15,7 +15,7 @@
 // skin, and at 1440x900 and 390x844 in the dark skin (the approved preview's
 // widths), land in WHATS_NEW_SHOTS_DIR when it is set, else in the test's output
 // directory.
-import { test, expect, type Page } from "@playwright/test";
+import { test, expect, type Page } from "./page-error-guard";
 import { createServer, type ViteDevServer } from "vite";
 import react from "@vitejs/plugin-react";
 import tailwindcss from "@tailwindcss/vite";
@@ -57,7 +57,7 @@ test.beforeAll(async () => {
       resolveId(id) { if (id === "/whats-new-fixture-store") return "\0whats-new-store"; },
       load(id) {
         // Ada and the Chief; dispatch only records.
-        if (id === "\0whats-new-store") return "window.__dispatched=[];export function useStore(){return {state:{bots:[{id:'ada',name:'Ada'},{id:'chief',name:'Chief',chiefOfStaff:true,chiefScope:'workspace'}],groups:[],selectedId:null},dispatch(action){window.__dispatched.push(action);}};}";
+        if (id === "\0whats-new-store") return "window.__dispatched=[];export function useStoreIfAny(){return useStore();} export function useStore(){return {state:{bots:[{id:'ada',name:'Ada'},{id:'chief',name:'Chief',chiefOfStaff:true,chiefScope:'workspace'}],groups:[],selectedId:null},dispatch(action){window.__dispatched.push(action);}};}";
       },
       configureServer(vite) { vite.middlewares.use((req, res, next) => {
         if (!(req.url === "/__whats-new" || req.url?.startsWith("/__whats-new?"))) return next();
@@ -72,7 +72,6 @@ test.beforeAll(async () => {
 });
 test.afterAll(async () => { await server?.close(); await harness?.close(); if (cache) safeWipeSync(cache); });
 test.beforeEach(({ page }) => {
-  page.on("pageerror", (error) => console.log("page error:", error.message));
   page.on("console", (message) => { if (message.type() === "error") console.log("console error:", message.text()); });
   page.on("dialog", (dialog) => { throw new Error(`a native ${dialog.type()} dialog opened`); });
 });
@@ -123,7 +122,7 @@ test("a 0.1.59 install updating sees the page once, walks all three cards, and a
 
   await page.goto(origin + "/__whats-new?skin=dark");
   await expect(card(page, "hero")).toBeVisible();
-  await expect(dialog(page).getByRole("heading", { name: "Your team, in step." })).toBeFocused();
+  await expect(dialog(page).getByRole("heading", { name: "Bots that remember what matters" })).toBeFocused();
   // focus stays inside: Tab from the last control (the last pager dot) comes back round
   await dialog(page).getByRole("button", { name: "Card 3", exact: true }).focus();
   await page.keyboard.press("Tab");
@@ -144,7 +143,7 @@ test("a 0.1.59 install updating sees the page once, walks all three cards, and a
   await dialog(page).getByRole("button", { name: "Card 1", exact: true }).click();
   await expect(card(page, "hero")).toBeVisible();
   // back to the title (no ring) so the pictures show the resting state
-  await dialog(page).getByRole("heading", { name: "Your team, in step." }).focus();
+  await dialog(page).getByRole("heading", { name: "Bots that remember what matters" }).focus();
 
   await walkCards(page, "dark", dir);
   await expect(dialog(page).getByRole("link", { name: "Read the full release notes" })).toHaveAttribute("href", `https://github.com/FerroxLabs/murage-releases/releases/tag/v${VERSION}`);
@@ -173,22 +172,22 @@ test("reopens from the sidebar menu in the light skin, closes on Escape, and eac
   await page.keyboard.press("Escape");
   await expect(dialog(page)).toHaveCount(0);
 
-  // the hero's shortcut opens the Team map
+  // the hero's shortcut opens Settings > Memory
   await page.evaluate(() => { (window as unknown as { __dispatched: unknown[] }).__dispatched.length = 0; });
   await chooseFromAccountMenu(page, "What's new");
-  await dialog(page).getByRole("button", { name: "Open Teams" }).click();
+  await dialog(page).getByRole("button", { name: "Open Memory" }).click();
   await expect(dialog(page)).toHaveCount(0);
-  expect(await page.evaluate(() => (window as unknown as { __dispatched: unknown[] }).__dispatched)).toEqual([{ type: "showTeamMap" }]);
+  expect(await page.evaluate(() => (window as unknown as { __dispatched: unknown[] }).__dispatched)).toEqual([{ type: "toggleAppSettings", open: true, section: "memory" }]);
 
   // the six highlights, each through the real host
   const expected: Record<string, unknown[]> = {
-    rooms: [{ type: "showTeamMap" }],
-    // 0.1.62: image settings have their own page, Channel turns sit under Bot defaults
-    blocks: [{ type: "toggleAppSettings", open: true, section: "images" }],
-    packs: [{ type: "toggleAppSettings", open: true, section: "images" }],
-    shapes: [{ type: "toggleAppSettings", open: true, section: "images" }],
-    gemini: [{ type: "toggleAppSettings", open: true, section: "models" }],
-    longwork: [{ type: "toggleAppSettings", open: true, section: "botDefaults" }],
+    // the 1.0.2 lineup (WHATS_NEW_TILES_102), each tile's shortcut through runWhatsNewAction
+    routing: [{ type: "toggleAppSettings", open: true, section: "botDefaults", anchor: "room-routing-label" }],
+    library: [{ type: "showTeamLibrary", view: "teams" }],
+    engines: [{ type: "toggleAppSettings", open: true, section: "engines" }],
+    chrome: [{ type: "toggleAppSettings", open: true, section: "computer" }],
+    speed: [{ type: "toggleAppSettings", open: true, section: "memory" }],
+    desktops: [{ type: "toggleAppSettings", open: true, section: "computer" }],
   };
   for (const [tile, dispatched] of Object.entries(expected)) {
     await page.evaluate(() => { (window as unknown as { __dispatched: unknown[] }).__dispatched.length = 0; (window as unknown as { __navigated: number }).__navigated = 0; });

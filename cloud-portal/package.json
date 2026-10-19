@@ -1,0 +1,28 @@
+{
+  "name": "@murage/cloud-portal",
+  "private": true,
+  "version": "0.1.0",
+  "description": "cloud.murage.ai customer portal. Signs in against the control plane (one identity); no second login system.",
+  "scripts": {
+    "dev": "next dev",
+    "build": "next build",
+    "start": "next start",
+    "typecheck": "tsc --noEmit",
+    "test:e2e": "playwright test"
+  },
+  "dependencies": {
+    "next": "15.5.4",
+    "react": "19.1.1",
+    "react-dom": "19.1.1",
+    "server-only": "0.0.1"
+  },
+  "devDependencies": {
+    "@playwright/test": "1.57.0",
+    "@types/node": "^24.0.0",
+    "@types/react": "19.1.13",
+    "@types/react-dom": "19.1.9",
+    "tsx": "^4.20.5",
+    "typescript": "^5.8.3",
+    "zod": "4.4.3"
+  }
+}

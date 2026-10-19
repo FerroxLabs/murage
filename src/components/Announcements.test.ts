@@ -91,7 +91,7 @@ describe("actions", () => {
     expect(dispatched).toEqual([
       // the six published targets land where they always did
       ...["general", "models", "connections", "skills", "houseRules", "backups"].map(open),
-      // updates moved from General to Help & updates in 0.1.62
+      // updates moved from General to About & updates in 0.1.62
       open("about"),
       // the four 0.1.62 targets
       ...["images", "webSearch", "voice", "about"].map(open),

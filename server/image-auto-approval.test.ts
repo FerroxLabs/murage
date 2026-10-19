@@ -7,7 +7,7 @@
 // library still gets the image and its kept prompt, and a decision that says
 // "ask" leaves the card exactly as it was.
 import { randomUUID } from "node:crypto";
-import { mkdirSync, rmSync } from "node:fs";
+import { mkdirSync } from "node:fs";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { DATA_DIR } from "./config.ts";
 import { closeDatabase, database } from "./database.ts";
@@ -16,10 +16,11 @@ import { ImageOperations, type ImageAutoApproval, type ImageAutoAsk } from "./im
 import { decideImageApproval } from "./image-approval.ts";
 import { ImageGenerationService } from "./image-generation.ts";
 import { renderPrompt } from "./image-library.ts";
+import { removeTempDirSync } from "./testing/cleanup.ts";
 
 const png = Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+aD1sAAAAASUVORK5CYII=", "base64");
 const LONG = "A very long image prompt. ".repeat(40).trim();
-beforeEach(() => { closeDatabase(); rmSync(DATA_DIR, { recursive: true, force: true }); mkdirSync(DATA_DIR, { recursive: true }); });
+beforeEach(() => { closeDatabase(); removeTempDirSync(DATA_DIR); mkdirSync(DATA_DIR, { recursive: true }); });
 afterEach(() => closeDatabase());
 
 function fixture(decide: (ask: ImageAutoAsk) => ImageAutoApproval | null, extra: { speaker?: ConstructorParameters<typeof ImageOperations>[0]["speaker"] } = {}) {

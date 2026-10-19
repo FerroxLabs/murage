@@ -30,6 +30,12 @@ describe("describeGrant", () => {
     expect(describeGrant("local-computer:Edit", engines)).toEqual({ kind: "other", text: "Edit on this computer" });
     expect(describeGrant("mcp__box__read", engines)).toEqual({ kind: "other", text: "mcp__box__read" });
   });
+
+  it("names a connected-app grant's app and action", () => {
+    expect(describeGrant("app-action:GMAIL_SEND_EMAIL", engines)).toEqual({ kind: "other", text: "Gmail: send email" });
+    expect(describeGrant("app-action:SLACK_SEND_MESSAGE", engines)).toEqual({ kind: "other", text: "Slack: send message" });
+    expect(describeGrant("mcp__murage_connectors__APPS_SEARCH_TOOLS", engines)).toEqual({ kind: "other", text: "Connected apps: find app tools" });
+  });
 });
 
 // 0.1.60 Linux pass D2: a delete Murage cannot place is remembered by the

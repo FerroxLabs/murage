@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // Copyright 2026 Ferrox Labs
-import { test, expect, type Page, type Locator } from "@playwright/test";
+import { test, expect, type Page, type Locator } from "./page-error-guard";
 import { createServer, type ViteDevServer } from "vite";
 import react from "@vitejs/plugin-react";
 import tailwindcss from "@tailwindcss/vite";
@@ -274,11 +274,27 @@ for (const width of [390, 820, 1440]) {
     // server's frames. Only its reconnect cursor is perturbed for the gap test.
     await page.addInitScript(() => {
       const Native = window.EventSource;
-      const sources: EventSource[] = []; let stream = "", gap = false;
+      const sources: EventSource[] = []; let stream = "", gap = false, since = "";
+      // 1.0.3: the desktop's stream URL is bound to a single-use ticket minted for that exact URL, so the perturbed
+      // cursor has to be in the URL the ticket is minted for as well as in the URL that opens: rewrite both with one value.
+      const nativeFetch = window.fetch.bind(window);
+      window.fetch = (input, init) => {
+        const target = typeof input === "string" ? input : input instanceof URL ? input.href : input.url;
+        if (gap && stream && new URL(target, location.href).pathname === "/api/desktop/resource-ticket" && typeof init?.body === "string") {
+          const body = JSON.parse(init.body) as { resource?: string };
+          const raw = body.resource;
+          const resource = raw ? new URL(raw, location.href) : null;
+          if (raw && resource && resource.pathname === "/api/events") {
+            since = `${stream}:9007199254740990`; resource.searchParams.set("since", since);
+            init = { ...init, body: JSON.stringify({ ...body, resource: raw.startsWith("http") ? resource.href : resource.pathname + resource.search }) };
+          }
+        }
+        return nativeFetch(input, init);
+      };
       class ObservedSource extends Native {
         constructor(url: string | URL, options?: EventSourceInit) {
           const next = new URL(String(url), location.href);
-          if (gap && stream && next.pathname === "/api/events") { next.searchParams.set("since", `${stream}:9007199254740990`); gap = false; }
+          if (gap && stream && next.pathname === "/api/events") { next.searchParams.set("since", since || `${stream}:9007199254740990`); gap = false; since = ""; }
           super(next, options); sources.push(this);
           this.addEventListener("message", event => { const frame = JSON.parse(event.data); if (frame.kind === "hello" && frame.cursor) stream = frame.cursor.split(":")[0]; });
         }

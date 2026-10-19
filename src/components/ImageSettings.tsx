@@ -4,7 +4,7 @@ import { IMAGE_BUDGET_NOTES, ratioLabel, type ImageModelCapabilities, type SizeR
 import { t } from "@/lib/i18n";
 import { api } from "@/state/store";
 import { LazyBoundary, retryableLazy } from "./LazyBoundary";
-import { Switch } from "./SettingsPrimitives";
+import { InAdvanced, Switch } from "./SettingsPrimitives";
 
 /** Saved prompt blocks and reference packs load only when opened. */
 const Library = retryableLazy(() => import("./ImageLibrary"));
@@ -227,10 +227,10 @@ export function ImageSettingsView({ snapshot, busy, error, notice, onChange, onR
           <button type="button" onClick={() => setConfirming(false)} className={`min-h-11 rounded-lg bg-control px-3 text-[12px] text-ink ${focus}`}>{t("imageSettings.check.cancel")}</button>
         </div>
       </div> : <button type="button" disabled={probing || Boolean(busy)} onClick={() => setConfirming(true)} className={`mt-2 min-h-11 rounded-lg bg-control px-3 text-[12px] text-ink disabled:opacity-50 ${focus}`}>{probing ? t("imageSettings.check.running") : t("imageSettings.check.now")}</button>)}
-      {snapshot && onProbe && <div className="mt-3 flex min-h-11 items-center justify-between gap-3 text-[13px] text-ink">
+      {snapshot && onProbe && <InAdvanced><div id="image-daily-check-heading" tabIndex={-1} className="rounded-xl bg-card p-4 outline-none"><div className="flex min-h-11 items-center justify-between gap-3 text-[13px] text-ink">
         <span id="image-settings-daily">{t("imageSettings.check.daily")}<span className="block text-[12px] text-ink-secondary">{t("imageSettings.check.dailyNote")}</span></span>
         <Switch aria-labelledby="image-settings-daily" checked={snapshot.dailyProbe === true} disabled={Boolean(busy)} onClick={() => onChange({ dailyProbe: snapshot.dailyProbe !== true })} className={focus} />
-      </div>}
+      </div></div></InAdvanced>}
       {catalog && !usable && <p className="mt-2 text-[12px] leading-relaxed text-ink-secondary">{t("imageSettings.chooseAvailable")}</p>}
       {connection && <p className="mt-3 text-[12px] leading-relaxed text-ink-secondary">{t("imageSettings.usesConnection", { label: connection.label })}</p>}
     </>}

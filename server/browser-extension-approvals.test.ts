@@ -1,12 +1,13 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { readFileSync, rmSync, existsSync, statSync } from "node:fs";
+import { readFileSync, existsSync, statSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { privateTestDirectorySync, writePrivateTestFile } from "./testing/private-test-dir.ts";
 import { join } from "node:path";
 import { BrowserExtensionApprovals, BROWSER_EXTENSION_APPROVAL_TOOL, CARD_LIFETIME_MS, type ApprovalBinding, type ContinuationInfo } from "./browser-extension-approvals.ts";
 import type { ApprovalBus } from "./peer-approval.ts";
 import type { Message } from "./store.ts";
+import { removeTempDirSync } from "./testing/cleanup.ts";
 function fixture() {
   const messages = new Map<string, Message[]>(); let counter=0;
   const store = {
@@ -52,7 +53,7 @@ describe("Fable M3, M9, H4: human decision time, long text, push bodies",()=>{
 describe("T22 durable cards", () => {
   let dir: string, file: string;
   beforeEach(() => { const made = privateTestDirectorySync(join(tmpdir(), "approvals-durable-")); dir = made.root; file = join(made.directory, "approvals.json"); });
-  afterEach(() => { rmSync(dir, { recursive: true, force: true }); });
+  afterEach(() => { removeTempDirSync(dir); });
   const binding = (over: Partial<ApprovalBinding> = {}): ApprovalBinding => ({ generation: 3, documentEpoch: "1:7:https://example.com", targetDigest: "1".repeat(64), submissionDigest: "2".repeat(64), payloadDigest: "3".repeat(64), actionDigest: "4".repeat(64), ...over });
   type Clock = { t: number };
   function durable(clock: Clock = { t: 1_000_000 }, extra: { valid?: () => boolean; started?: boolean } = {}) {

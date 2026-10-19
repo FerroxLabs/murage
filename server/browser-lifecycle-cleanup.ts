@@ -3,6 +3,7 @@ import { readFileSync } from "node:fs";
 
 import { z } from "zod";
 import { writeFileAtomic } from "./atomic.ts";
+import { cloudHomeCopy } from "./cloud-home/copy.ts";
 
 const BOT_ID = /^[A-Za-z0-9_-]{1,120}$/;
 const PROFILE_ID = /^[a-z0-9_-]{1,40}$/;
@@ -23,6 +24,7 @@ const browserCleanupTargetSchema = z.discriminatedUnion("kind", [
     kind: z.literal("profile"),
     id: z.string().regex(PROFILE_ID).refine((id) => id !== "guest"),
     partitionId: z.string().regex(PROFILE_PARTITION_ID).refine((id) => id !== "guest"),
+    cloudBotIds: z.array(z.string().regex(BOT_ID)).max(512).refine(ids => new Set(ids).size === ids.length).optional(),
     phase: z.enum(["prepared", "committed"]),
   }).strict(),
 ]);
@@ -53,6 +55,7 @@ export type BrowserCleanupWireRequest = {
   requestId: string;
   botId?: string;
   partitionId?: string;
+  cloudBotIds?: string[];
 };
 export interface BrowserCleanupIncomingMessage {
   type?: string;
@@ -145,6 +148,7 @@ export class BrowserCleanupCoordinator {
   readonly #timeoutMs: number;
   readonly #retryMs: readonly number[];
   readonly #write: CleanupJournalWriter;
+  readonly #erased?: (bots: readonly string[]) => void;
   readonly #pending = new Map<string, BrowserCleanupRequest>();
   readonly #waiters = new Map<string, Waiter>();
   readonly #inflight = new Map<string, Promise<boolean>>();
@@ -157,12 +161,14 @@ export class BrowserCleanupCoordinator {
     timeoutMs?: number;
     retryMs?: readonly number[];
     write?: CleanupJournalWriter;
+    cloudErased?: (bots: readonly string[]) => void;
   }) {
     this.#file = options.file;
     this.#send = options.send;
     this.#timeoutMs = Math.max(10, options.timeoutMs ?? 10_000);
     this.#retryMs = options.retryMs?.length ? options.retryMs : [1_000, 5_000, 30_000, 120_000];
     this.#write = options.write ?? writeFileAtomic;
+    this.#erased = options.cloudErased;
     this.#load();
   }
 
@@ -194,15 +200,16 @@ export class BrowserCleanupCoordinator {
     this.#write(this.#file, JSON.stringify([...this.#pending.values()], null, 2), { mode: 0o600 });
   }
 
-  prepare(kind: BrowserCleanupKind, id: string, partitionId = id): BrowserCleanupRequest {
+  prepare(kind: BrowserCleanupKind, id: string, partitionId = id, cloudBotIds?: readonly string[]): BrowserCleanupRequest {
     this.#assertHealthy();
     if (!validTarget(kind, id, partitionId)) throw new Error(`invalid browser ${kind} cleanup target`);
+    if (cloudBotIds !== undefined && (kind !== "profile" || cloudBotIds.length > 512 || cloudBotIds.some(bot => !BOT_ID.test(bot)))) throw new Error(cloudHomeCopy.invalidProfileCleanupMapping);
     const existing = [...this.#pending.values()].find((request) => request.kind === kind && request.id === id);
     if (existing) return existing;
     if (this.#pending.size >= MAX_PENDING) throw new Error("too many pending browser data cleanups");
     const request: BrowserCleanupRequest = kind === "bot"
       ? { requestId: randomUUID(), kind, id, phase: "prepared" }
-      : { requestId: randomUUID(), kind, id, partitionId, phase: "prepared" };
+      : { requestId: randomUUID(), kind, id, partitionId, phase: "prepared", ...(cloudBotIds === undefined ? {} : { cloudBotIds: [...new Set(cloudBotIds)].sort() }) };
     this.#pending.set(request.requestId, request);
     try {
       this.#save();
@@ -261,6 +268,10 @@ export class BrowserCleanupCoordinator {
       request.kind === "profile"
       && (request.id === profileId || request.partitionId.toLowerCase() === foldedPartitionId));
   }
+  hasPendingBrowserBot(botId: string): boolean {
+    this.#assertHealthy();
+    return [...this.#pending.values()].some(request => request.kind === "bot" ? request.id === botId : request.cloudBotIds === undefined || request.cloudBotIds.includes(botId));
+  }
 
   /** Profile references are secondary durable state. Before a committed wipe
    * is replayed at boot, the server clears every bot that still names one of
@@ -297,8 +308,12 @@ export class BrowserCleanupCoordinator {
     const request = this.#pending.get(requestId);
     if (!request) return true;
     if (request.phase !== "committed") return false;
-    this.#pending.delete(requestId);
     try {
+      if (this.#erased) {
+        if (request.kind === "profile" && request.cloudBotIds === undefined) return false;
+        this.#erased(request.kind === "bot" ? [request.id] : request.cloudBotIds!);
+      }
+      this.#pending.delete(requestId);
       this.#save();
     } catch (error) {
       // Repeating a successful wipe is safe. Keep the in-memory item when the
@@ -337,7 +352,7 @@ export class BrowserCleanupCoordinator {
         ? "murage:browser-bot-deleted"
         : "murage:browser-profile-deleted",
       requestId: current.requestId,
-      ...(current.kind === "bot" ? { botId: current.id } : { partitionId: current.partitionId }),
+      ...(current.kind === "bot" ? { botId: current.id } : { partitionId: current.partitionId, ...(current.cloudBotIds === undefined ? {} : { cloudBotIds: current.cloudBotIds }) }),
     });
     if (!sent) {
       const waiter = this.#waiters.get(request.requestId);

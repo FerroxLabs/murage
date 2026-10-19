@@ -9,7 +9,7 @@
 // back to snippet.txt; the Blob URL is revoked afterwards; the save makes no
 // network request; nothing claims "Saved"; controls stay inside the block and
 // reachable at phone and desktop widths in both skins.
-import { test, expect, type Page } from "@playwright/test";
+import { test, expect, type Page } from "./page-error-guard";
 import { createServer, type ViteDevServer } from "vite";
 import react from "@vitejs/plugin-react";
 import tailwindcss from "@tailwindcss/vite";

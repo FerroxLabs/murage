@@ -4,10 +4,11 @@
 // 0.1.61 cross-audit (Astra round 1): the ways a withheld reply, a
 // copy of it or a member's private memory still reached a bot after the
 // first T2 commits, each reproduced here and closed.
-import { mkdirSync, rmSync } from "node:fs";
+import { mkdirSync } from "node:fs";
 import { beforeEach, expect, it, vi } from "vitest";
 import { afterEach as thawAfterEach, beforeEach as thawBeforeEach } from "vitest";
 import { thawRootSetWritesForTest } from "./memory/replay-lineage.ts";
+import { removeTempDirSync } from "./testing/cleanup.ts";
 // 1.0.2: this test models a 1.0.1 file (legacy root-set rows) for the read-time judge, which still decides legacy data until S6.
 thawBeforeEach(() => thawRootSetWritesForTest(true));
 thawAfterEach(() => thawRootSetWritesForTest(false));
@@ -52,7 +53,7 @@ const roster: MemoryRoster = {
     { id: "pair", threadId: "pair-chat", memberIds: ["finch", "dax"] },
   ],
 };
-beforeEach(() => { closeDatabase(); rmSync(DATA_DIR, { recursive: true, force: true }); mkdirSync(DATA_DIR, { recursive: true }); });
+beforeEach(() => { closeDatabase(); removeTempDirSync(DATA_DIR); mkdirSync(DATA_DIR, { recursive: true }); });
 
 function access(botId: string, thread: string, notOwnerAudience = false) {
   reconcileMemoryRoster(roster);

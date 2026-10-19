@@ -254,7 +254,7 @@ export function cloudKeyMoved(value: unknown): string {
 /** What one act of setup reports back: the usual status, plus the key it made
  * for the person so the page can offer to keep a copy of it. */
 export type BackupSetupResult = (BackupScheduleStatus | { cancelled: true }) & { created?: { label: string; publicKey: string | null; folder: string }; refused?: string };
-export type BackupScheduleBridge = NonNullable<NonNullable<Window["muragebox"]>["backupSchedule"]> & { runNow?(revision: number): Promise<BackupScheduleStatus>; clearReview?(revision: number): Promise<BackupScheduleStatus>; setUp?(options?: { existingKey?: boolean }): Promise<BackupSetupResult> };
+export type BackupScheduleBridge = NonNullable<NonNullable<Window["muragebox"]>["backupSchedule"]> & { runNow?(revision: number): Promise<BackupScheduleStatus>; clearReview?(revision: number): Promise<BackupScheduleStatus>; setUp?(options?: { existingKey?: boolean } | { firstRun: true }): Promise<BackupSetupResult> };
 
 /** Keeps only the label, the folder's own name and a well-formed public key
  * from a setup answer. A path or a secret is never carried into the page. */
@@ -324,7 +324,7 @@ export interface BackupSetupSteps {
  *
  * Hard failures throw, so the page shows them where every other schedule
  * failure appears. */
-export async function completeBackupSetup(bridge: BackupScheduleBridge, options: { existingKey?: boolean } | undefined, steps: BackupSetupSteps, pending?: { preUpgrade?: boolean }): Promise<BackupSetupOutcome> {
+export async function completeBackupSetup(bridge: BackupScheduleBridge, options: { existingKey?: boolean } | { firstRun: true } | undefined, steps: BackupSetupSteps, pending?: { preUpgrade?: boolean }): Promise<BackupSetupOutcome> {
   if (!bridge.setUp) throw Error("BACKUP_UNAVAILABLE");
   const answer = await bridge.setUp(options);
   // The desktop app answers an expected refusal (a name already taken, a
@@ -410,4 +410,113 @@ export function recoveryKeyError(cause: unknown, fallback = "The recovery key co
   ];
   for (const [key, message] of messages) if (code.includes(key)) return message;
   return fallback;
+}
+
+// ---------------------------------------------------------------------------
+// First run: a local backup is on from the start, and setup ends verified.
+// ---------------------------------------------------------------------------
+
+/** The checked receipt belongs to the folder and key backups use NOW. A
+ * receipt from before the folder or key changed proves nothing about them. */
+export function backupReceiptCurrent(status: BackupScheduleStatus | null | undefined): boolean {
+  const r = status?.lastVerified, refs = status?.refs, schedule = status?.schedule;
+  return Boolean(r && refs && schedule
+    && r.installationRef === refs.installationRef && r.destinationRef === refs.destinationRef
+    && schedule.installationRef === refs.installationRef && schedule.destinationRef === refs.destinationRef && schedule.recoveryRef === refs.recoveryRef);
+}
+
+/** Backups are on, a folder and key stand behind them, and a backup of that
+ * folder with that key has run and been checked. Anything less is
+ * configured, not protected. */
+export function backupSetupVerified(status: BackupScheduleStatus | null | undefined): boolean {
+  return Boolean(status?.supported && status.enabled && backupReceiptCurrent(status));
+}
+
+/** "off": the person chose to keep backups off. "not-first-run": this data
+ * folder has had backups before, so the first run leaves them as they are.
+ * "unsupported": backups cannot run on this computer yet while setup still
+ * waits on this step. */
+export type FirstRunBackupResult = "verified" | "unverified" | "cancelled" | "unavailable" | "off" | "not-first-run" | "unsupported";
+
+export const FIRST_RUN_BACKUP_COPY = {
+  working: "Setting up your backups and taking the first one",
+  verified: "Your first backup ran and was checked. Backups stay on and run every day.",
+  unverified: "Backups are on, but the first one has not been checked yet. Try again, or use Back up now in Settings, under Backups.",
+  failed: "The first backup did not go through. Try again, or use Back up now in Settings, under Backups.",
+  tryAgain: "Try again",
+  cancelled: "Nothing was changed. Try again to turn backups on, or do it any time in Settings, under Backups.",
+  keptKey: "Keep your recovery key where only you can reach it. Without it a backup cannot be opened, not even by us.",
+} as const;
+
+/**
+ * The first-run backup step. A fresh install turns a local backup on, runs one
+ * and waits until it has been checked, and only then answers "verified".
+ * A window that reopened mid-backup (the backup closes and reopens it) picks
+ * up where it left off: it never sets up twice, and it does not answer
+ * "verified" until the receipt is there.
+ */
+export async function ensureFirstRunBackup(
+  bridge: BackupScheduleBridge,
+  steps: BackupSetupSteps,
+  options: { waitMs?: number; pollMs?: number; sleep?: (ms: number) => Promise<void>; reason?: (text: string) => void } = {},
+): Promise<FirstRunBackupResult> {
+  const sleep = options.sleep ?? ((ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms)));
+  const pollMs = options.pollMs ?? 2000, waitMs = options.waitMs ?? 5 * 60_000;
+  let status = await bridge.status();
+  // Backups cannot run on this computer yet, but setup still waits on this
+  // step: the card stays, with Try again and Keep backups off.
+  if (!status.supported) return status.firstRun?.owed === true ? "unsupported" : "unavailable";
+  // A first run that already ended stays ended: reopening this card never
+  // turns backups back on, replaces the folder or key, or starts a backup.
+  if (status.firstRun?.completed === "off") { steps.applyStatus(status); return "off"; }
+  // "verified" is the desktop's answer for the folder and key in use now,
+  // checked again here against the same bindings: never a record from before.
+  if (status.firstRun?.completed === "verified" && backupSetupVerified(status)) { steps.applyStatus(status); return "verified"; }
+  const finish = async (): Promise<FirstRunBackupResult> => {
+    // The desktop re-checks the receipt and the archive before it records
+    // setup as finished; an older app without the record answers as before.
+    if (!bridge.finishFirstRun) return "verified";
+    try { steps.applyStatus(await bridge.finishFirstRun("verified")); return "verified"; }
+    catch { options.reason?.(FIRST_RUN_BACKUP_COPY.unverified); return "unverified"; }
+  };
+  if (backupSetupVerified(status)) { steps.applyStatus(status); return finish(); }
+  if (!status.enabled) {
+    // Only the desktop knows whether this data folder has ever had backups.
+    if (status.firstRun?.eligible !== true) { steps.applyStatus(status); return "not-first-run"; }
+    const outcome = await completeBackupSetup(bridge, { firstRun: true }, steps);
+    if (outcome.state === "cancelled") return "cancelled";
+    if (outcome.state === "first-backup-failed") { options.reason?.(outcome.message); return "unverified"; }
+    if (outcome.state === "no-first-backup") { options.reason?.(SETUP_NO_FIRST_BACKUP); return "unverified"; }
+    if (outcome.state !== "capturing") { options.reason?.(FIRST_RUN_BACKUP_COPY.unverified); return "unverified"; }
+    status = await bridge.status();
+  } else if (!status.pending && !backupReceiptCurrent(status) && bridge.runNow) {
+    // On, but no backup behind it: take one now rather than call it done.
+    try { status = await bridge.runNow(status.revision); } catch (cause) { options.reason?.(firstBackupError(cause)); return "unverified"; }
+  }
+  for (let waited = 0; waited <= waitMs; waited += pollMs) {
+    steps.applyStatus(status);
+    if (backupSetupVerified(status)) return finish();
+    if (!status.pending && status.phase && scheduleNeedsReview(status.phase)) { options.reason?.(schedulePhase(status.phase)); return "unverified"; }
+    await sleep(pollMs);
+    try { status = await bridge.status(); } catch { /* the next read decides */ }
+  }
+  options.reason?.(FIRST_RUN_BACKUP_COPY.unverified);
+  return "unverified";
+}
+
+/** The sentence under "Backups on" / "Backups off" on the Backups page. */
+export function backupHeadline(status: BackupScheduleStatus | null, now: number = Date.now(), formatTime: (ms: number) => string = (ms) => new Date(ms).toLocaleString()): { title: string; lines: string[]; verified: boolean } {
+  if (!status) return { title: "Checking backups", lines: [], verified: false };
+  if (!status.supported) return { title: "Backups need the desktop app", lines: [], verified: false };
+  const title = status.enabled ? "Backups on" : "Backups off";
+  const lines: string[] = [];
+  const last = status.lastVerified;
+  if (last) {
+    const minutes = Math.max(0, Math.round((now - last.verifiedAt) / 60_000));
+    const ago = minutes < 1 ? "just now" : minutes < 60 ? `${minutes} minute${minutes === 1 ? "" : "s"} ago` : minutes < 24 * 60 ? `${Math.round(minutes / 60)} hour${Math.round(minutes / 60) === 1 ? "" : "s"} ago` : formatTime(last.verifiedAt);
+    lines.push(`Last backup ${ago}, checked and complete.`);
+  } else if (status.enabled) lines.push("Waiting for the first backup to finish and be checked.");
+  else lines.push("Turn backups on to take one and check it.");
+  if (status.enabled) lines.push(`Every day at ${status.schedule.time ?? "?"}, on this computer.`);
+  return { title, lines, verified: Boolean(last) };
 }

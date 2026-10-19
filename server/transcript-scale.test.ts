@@ -1,7 +1,7 @@
 // Lane E (1.0.2 scale): bounded transcript work. The loaded-thread cache is an
 // LRU, turn prep and terminal capture stop early instead of materialising the
 // whole thread, and quote targets resolve one id at a time.
-import { rmSync, statSync } from "node:fs";
+import { statSync } from "node:fs";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -15,6 +15,7 @@ import { promptQuoteTargets } from "./prompt-quotes.ts";
 import { Store, type Message } from "./store.ts";
 import { LruMap } from "./thread-cache.ts";
 import { wholeTurnText } from "./memory/capture.ts";
+import { removeTempDirSync } from "./testing/cleanup.ts";
 
 const selection = (): ModelSelection => ({ instanceId: "claude", model: "claude-sonnet-5" });
 
@@ -40,7 +41,7 @@ describe("LruMap", () => {
 });
 
 describe("Store transcript scale", () => {
-  beforeEach(() => rmSync(DATA_DIR, { recursive: true, force: true }));
+  beforeEach(() => removeTempDirSync(DATA_DIR));
 
   function thread(store: Store, count: number): { threadId: string; ids: string[] } {
     const bot = store.createBot();
@@ -147,7 +148,7 @@ describe("Store transcript scale", () => {
 import { createTaskDelta, FULL_TASK_LIST_EVERY_MS } from "./task-delta.ts";
 
 describe("roster bookkeeping and run anchors", () => {
-  beforeEach(() => rmSync(DATA_DIR, { recursive: true, force: true }));
+  beforeEach(() => removeTempDirSync(DATA_DIR));
   const pause = () => Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 25);
 
   it("a roster save that changes nothing on disk writes nothing; a real change still does", () => {
@@ -241,7 +242,7 @@ describe("bot frames carry changed tasks only", () => {
 });
 
 describe("lane E review findings (ui-review/REPORT.md)", () => {
-  beforeEach(() => rmSync(DATA_DIR, { recursive: true, force: true }));
+  beforeEach(() => removeTempDirSync(DATA_DIR));
   const ask = (requestId: string) => ({ role: "bot", kind: "options", text: "May I?", card: { title: "May I?", options: [], requestId, tool: "Bash" } }) as never;
   const lines = (store: Store, threadId: string, count: number, tag: string) => {
     const ids: string[] = [];
@@ -325,7 +326,7 @@ describe("lane E review findings (ui-review/REPORT.md)", () => {
 });
 
 describe("lane E round 2 findings (ui-review-r2/REPORT.md)", () => {
-  beforeEach(() => rmSync(DATA_DIR, { recursive: true, force: true }));
+  beforeEach(() => removeTempDirSync(DATA_DIR));
   afterEach(() => vi.restoreAllMocks());
   const ask = (requestId: string) => ({ role: "bot", kind: "options", text: "May I?", card: { title: "May I?", options: [], requestId, tool: "Bash" } }) as never;
   const lines = (store: Store, threadId: string, count: number, tag: string) => {

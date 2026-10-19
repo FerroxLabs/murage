@@ -3,7 +3,7 @@
 //
 // W8 (design 5.6, 6): voice notes in through the shared transcription path, images as stored attachments, placeholders for
 // everything else, the media sweep that spares files an unfinished receipt needs, and voice notes out.
-import { existsSync, mkdirSync, mkdtempSync, rmSync, readFileSync, utimesSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, utimesSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, expect, it, vi } from "vitest";
@@ -12,11 +12,12 @@ import type { ChannelTranscript } from "../../voice/channel-transcribe.ts";
 import type { InboundEnvelope } from "./core/protocol.ts";
 import { VOICE_REPLIES, WhatsAppService, chatKeyOf, type WhatsAppSettings } from "./service.ts";
 import type { HealthEvent, TransportHandlers, WhatsAppTransport } from "./transport.ts";
+import { removeTempDirSync } from "../../testing/cleanup.ts";
 
 const T = 1_700_000_000_000;
 const OWNER = "15550001111@s.whatsapp.net";
 const roots: string[] = [], services: WhatsAppService[] = [];
-afterEach(async () => { for (const s of services.splice(0)) await s.stop().catch(() => undefined); for (const r of roots.splice(0)) rmSync(r, { recursive: true, force: true }); });
+afterEach(async () => { for (const s of services.splice(0)) await s.stop().catch(() => undefined); for (const r of roots.splice(0)) removeTempDirSync(r); });
 const flush = async () => { for (let i = 0; i < 160; i++) await Promise.resolve(); };
 
 function rig(over: { transcribeVoice?: (clip: { bytes: Uint8Array; mime: string }) => Promise<ChannelTranscript>; voiceNotes?: ChannelRuns["voiceNotes"] } = {}) {
