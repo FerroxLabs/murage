@@ -11,7 +11,7 @@
 //     allowed for this routine, each removable.
 //
 // Real harness, real UI, no model call. Data lives under MURAGE_E2E_DATA_DIR.
-import { test, expect } from "@playwright/test";
+import { test, expect } from "./page-error-guard";
 import { createServer, type ViteDevServer } from "vite";
 import react from "@vitejs/plugin-react";
 import tailwindcss from "@tailwindcss/vite";
@@ -121,7 +121,7 @@ test("the routine editor stores a selected ceiling and lists its remembered appr
   await expect(grants.getByText(COMMAND, { exact: true })).toBeVisible();
   await expect(grants.getByText("/tmp/rwa")).toBeVisible();
   // what a grant covers across runs is said where the grants are listed
-  await expect(grants.getByText("Each one covers the exact command you approved.", { exact: false })).toBeVisible();
+  await expect(grants.getByText("Each covers only the action, command or place you approved", { exact: false })).toBeVisible();
   await page.screenshot({ path: info.outputPath("routine-editor-approvals.png"), fullPage: true });
 
   await grants.getByRole("button", { name: `Remove always allow for ${COMMAND}` }).click();

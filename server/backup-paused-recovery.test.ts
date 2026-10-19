@@ -26,7 +26,7 @@ import { InstallationSnapshotError } from "./installation-database-snapshot.ts";
 import { inspectEncryptedInstallationBackup, restoreEncryptedInstallationNew } from "./installation-encrypted-backup.ts";
 import { installationRecoveryCommand } from "./installation-recovery-command.ts";
 import { backupFixture, testAgeKeys } from "./testing/backup-fixture.ts";
-import { safeWipeSync } from "./testing/safe-wipe.mjs";
+import { removeTempDirSync } from "./testing/cleanup.ts";
 
 const noPinnedAge = !backupAgePinForTarget(process.platform, process.arch) || !process.env.MURAGE_BACKUP_TEST_AGE_DIR;
 const ABOUT = "I run a small candle shop and like short answers.";
@@ -111,6 +111,6 @@ describe("backups paused by the About me defect recover after the update", () =>
     await restoreEncryptedInstallationNew(restored, archive, ended.lastVerified.sha256, { ageExecutable: keys.ageExecutable, identity: keys.identity });
     expect(readFileSync(path.join(restored, "about-me.md"), "utf8")).toBe(readFileSync(path.join(fixture.data, "about-me.md"), "utf8"));
 
-    safeWipeSync(fixture.parent);
+    removeTempDirSync(fixture.parent);
   });
 });

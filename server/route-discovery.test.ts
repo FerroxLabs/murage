@@ -8,14 +8,15 @@
 // These tests hold the reader to the shapes the dispatcher uses, on a
 // fixture and on the real server; route-policy.test.ts classifies what it
 // finds.
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterAll, describe, expect, it } from "vitest";
 import { describeRoute, discoverRoutes, regexSamples, type DiscoveredRoute } from "./testing/route-discovery.ts";
+import { removeTempDirSync } from "./testing/cleanup.ts";
 
 const scratch = mkdtempSync(join(tmpdir(), "murage-route-discovery-"));
-afterAll(() => rmSync(scratch, { recursive: true, force: true }));
+afterAll(() => removeTempDirSync(scratch));
 
 const find = (routes: DiscoveredRoute[], pattern: string, kind?: DiscoveredRoute["kind"]) => routes.find(route => route.pattern === pattern && (!kind || route.kind === kind));
 

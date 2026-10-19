@@ -4,7 +4,7 @@
 // assert what would have been dispatched to the harness. The harness itself
 // stays out of these — the integration happens in comms.test.ts (the full
 // e2e through the agents proxy + fake ACP CLI).
-import { existsSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -42,6 +42,7 @@ import {
   unknownTargetBackoffMs,
 } from "./delegations.ts";
 import { drainDelegations, heldNotices } from "./testing/handoff-turn.ts";
+import { removeTempDirSync } from "./testing/cleanup.ts";
 beforeEach(() => { heldNotices.length = 0; });
 import { cancelPeerApprovalsForThread, peerAllowKey, resolvePeerComms } from "./peer-approval.ts";
 import { Store, type BotRecord } from "./store.ts";
@@ -102,7 +103,7 @@ describe("queueDelegation", () => {
   let broadcasts: unknown[];
 
   beforeEach(() => {
-    rmSync(DATA_DIR, { recursive: true, force: true });
+    removeTempDirSync(DATA_DIR);
     store = new Store(selection);
     from = store.createBot();
     target = store.createBot();
@@ -231,7 +232,7 @@ describe("drainDelegations", () => {
   let runTargetCalls: Array<{ toBotId: string; message: string; commsDepth: number; sourceThreadId?: string }>;
 
   beforeEach(() => {
-    rmSync(DATA_DIR, { recursive: true, force: true });
+    removeTempDirSync(DATA_DIR);
     store = new Store(selection);
     from = store.createBot();
     target = store.createBot();
@@ -258,7 +259,7 @@ describe("drainDelegations", () => {
     // there before the open, so this test starts from a closed database
     closeDatabase();
     await stopWalMaintenance();
-    rmSync(DATA_DIR, { recursive: true, force: true });
+    removeTempDirSync(DATA_DIR);
     mkdirSync(DATA_DIR, { recursive: true });
     const legacy = { [from.threadId]: [{ id: "legacy-task-1", toBotId: target.id, message: "do this", depth: 0, attempts: 0, fromBotId: from.id }] };
     writeFileSync(join(DATA_DIR, "delegations.json"), JSON.stringify(legacy));
@@ -737,7 +738,7 @@ describe("delegations survive a restart", () => {
   const file = () => join(DATA_DIR, "delegations.json");
 
   beforeEach(() => {
-    rmSync(DATA_DIR, { recursive: true, force: true });
+    removeTempDirSync(DATA_DIR);
     _resetPending();
     store = new Store(selection);
     from = store.createBot();
@@ -858,7 +859,7 @@ describe("busy retries and receipts", () => {
   let approvalBus: { store: Store; broadcast: (payload: unknown) => void };
 
   beforeEach(() => {
-    rmSync(DATA_DIR, { recursive: true, force: true });
+    removeTempDirSync(DATA_DIR);
     store = new Store(selection);
     from = store.createBot();
     target = store.createBot();
@@ -1089,7 +1090,7 @@ describe("delegations queued from a room", () => {
   };
 
   beforeEach(() => {
-    rmSync(DATA_DIR, { recursive: true, force: true });
+    removeTempDirSync(DATA_DIR);
     _resetPending();
     store = new Store(selection);
     chief = store.patchBot(store.createBot({ name: "Ember" }).id, { chiefOfStaff: true })!;
@@ -1366,7 +1367,7 @@ describe("a busy teammate with a free thread", () => {
   let broadcastOnly: CommsBus["broadcast"];
 
   beforeEach(() => {
-    rmSync(DATA_DIR, { recursive: true, force: true });
+    removeTempDirSync(DATA_DIR);
     store = new Store(selection);
     from = store.createBot();
     target = store.createBot();
@@ -1574,7 +1575,7 @@ describe("the harness answers that question the way it dispatches", () => {
 
 describe("dropUnreachableDelegations", () => {
   beforeEach(() => {
-    rmSync(DATA_DIR, { recursive: true, force: true });
+    removeTempDirSync(DATA_DIR);
     _resetPending();
   });
 
@@ -1619,7 +1620,7 @@ describe("a parked handoff whose wake-up already passed", () => {
   let bus: CommsBus;
 
   beforeEach(() => {
-    rmSync(DATA_DIR, { recursive: true, force: true });
+    removeTempDirSync(DATA_DIR);
     _resetPending();
     store = new Store(selection);
     from = store.createBot();

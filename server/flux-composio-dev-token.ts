@@ -138,6 +138,7 @@ export function devFluxTokenInFlight(): boolean {
 /** Whether this harness mints its own token: a plain dev harness with the
  * Flux broker turned on and no token pinned through the env. */
 export function devFluxTokenApplies(fluxBrokerUrl: string, env: NodeJS.ProcessEnv = process.env): boolean {
+  if (env.MURAGE_CLOUD_ROLE === "home") return false;
   return fluxBrokerUrl !== "" && !harnessEmbeddedInDesktop(env) && !(env.MURAGE_FLUX_COMPOSIO_BROKER_TOKEN ?? "").trim();
 }
 

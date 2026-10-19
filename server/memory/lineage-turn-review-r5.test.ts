@@ -6,7 +6,7 @@
 // reached was reused through groupRests without the taint, and a proof of a later reply was kept without the ancestor the first one rests
 // on. Revising that ancestor then showed what an unbounded cold check withholds. The rule now: once ANY memo hit in a check lacks its
 // dependencies, nothing further in that check is kept and what it kept is discarded when it ends.
-import { mkdirSync, rmSync } from "node:fs";
+import { mkdirSync } from "node:fs";
 import { afterEach, beforeEach, expect, it } from "vitest";
 import { DATA_DIR } from "../config.ts";
 import { closeDatabase, database } from "../database.ts";
@@ -15,11 +15,12 @@ import { setMemoryMode } from "./repository.ts";
 import { chainStore } from "./schema.ts";
 import { replayExclusions, setReplayNodeBudgetForTest, type ReplayAudience, type ReplayMessage } from "./replay-lineage.ts";
 import { LineageAllowance } from "./lineage-allowance.ts";
+import { removeTempDirSync } from "../testing/cleanup.ts";
 
 const thread = "r3-direct";
 const key = (message: string) => `${thread}\u0000${message}`;
 const messageSource = (message: string) => `message:${thread}:${message}`;
-function reset(): void { closeDatabase(); rmSync(DATA_DIR, { recursive: true, force: true }); mkdirSync(DATA_DIR, { recursive: true }); }
+function reset(): void { closeDatabase(); removeTempDirSync(DATA_DIR); mkdirSync(DATA_DIR, { recursive: true }); }
 beforeEach(reset);
 afterEach(() => setReplayNodeBudgetForTest(null));
 

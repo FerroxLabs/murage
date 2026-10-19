@@ -3,9 +3,10 @@
 //
 // RC3 follow-up (P2-1, P2-4): the sliced hand-back runs beside the owner (no idle wait); only the one VACUUM waits for the owner to be away,
 // the button path included, so an owner send never meets the rewrite.
-import { mkdirSync, rmSync } from "node:fs";
+import { mkdirSync } from "node:fs";
 import type { DatabaseSync } from "node:sqlite";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { removeTempDirSync } from "../testing/cleanup.ts";
 
 const { DATA_DIR } = await import("../config.ts");
 const { closeDatabase, database } = await import("../database.ts");
@@ -15,7 +16,7 @@ const { reclaimRootSetsWhenIdle, reclaimVacuumWaiting, ROOT_SET_RECLAIM_TABLES, 
 
 let seeds = 0;
 setLineageSeedCommitForTest(() => ++seeds);
-beforeEach(() => { closeDatabase(); resetLineageBackfillForTest(); rmSync(DATA_DIR, { recursive: true, force: true }); mkdirSync(DATA_DIR, { recursive: true }); seeds = 0; });
+beforeEach(() => { closeDatabase(); resetLineageBackfillForTest(); removeTempDirSync(DATA_DIR); mkdirSync(DATA_DIR, { recursive: true }); seeds = 0; });
 afterEach(() => { setReadTimeJudgeRetired(false); });
 const gate = (ownerIdleMs: number) => ({ ownerIdleMs: () => ownerIdleMs, liveTurn: () => false, typingHeld: () => false, routineDueWithin: () => false, healthAnswered: () => true, integrityPending: () => false, revocationWaiting: () => false });
 const tablesLeft = (db: DatabaseSync) => ROOT_SET_RECLAIM_TABLES.filter(name => db.prepare("SELECT 1 FROM sqlite_schema WHERE name=?").get(name)).length;

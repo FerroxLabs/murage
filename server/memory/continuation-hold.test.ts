@@ -5,7 +5,7 @@
 // judged once and kept; a later turn judges only the receipts written since, UNLESS something that could take a receipt away was written
 // (the authority epoch), and then the whole session is judged again. A revoked, forgotten, tombstoned, archived, undone or policy-changed
 // record must never be treated as still allowed. Fail closed: a missing trigger makes one of these tests fail.
-import { mkdirSync, rmSync } from "node:fs";
+import { mkdirSync } from "node:fs";
 import { beforeEach, describe, expect, it } from "vitest";
 import { afterEach as thawAfterEach, beforeEach as thawBeforeEach } from "vitest";
 import { thawRootSetWritesForTest } from "./replay-lineage.ts";
@@ -23,13 +23,14 @@ import { setMemoryMode } from "./repository.ts";
 import { archiveMemoryRecord } from "./retention.ts";
 import { reviewKeep, reviewUndo } from "./review.ts";
 import { LineageAllowance } from "./lineage-allowance.ts";
+import { removeTempDirSync } from "../testing/cleanup.ts";
 // 1.0.2: this test models a 1.0.1 file (legacy root-set rows) for the read-time judge, which still decides legacy data until S6.
 thawBeforeEach(() => thawRootSetWritesForTest(true));
 thawAfterEach(() => thawRootSetWritesForTest(false));
 
 const roster: MemoryRoster = { bots: [{ id: "bot", threadId: "chat", tasks: [{ threadId: "older" }] }], groups: [] };
 beforeEach(() => {
-  closeDatabase(); rmSync(DATA_DIR, { recursive: true, force: true }); mkdirSync(DATA_DIR, { recursive: true });
+  closeDatabase(); removeTempDirSync(DATA_DIR); mkdirSync(DATA_DIR, { recursive: true });
   setMemoryMode("active"); reconcileMemoryRoster(roster); resetSessionHolds();
 });
 

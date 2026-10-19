@@ -8,6 +8,7 @@ import { closeDatabase, database } from "../database.ts";
 import { reconcileMemoryRoster } from "./policy.ts";
 import { maintainPip, mutateReflect, type ReflectBot, type ReflectDeps } from "./pip-reflect.ts";
 import { MemoryWorkerController } from "./worker-controller.ts";
+import { removeTempDirSync } from "../testing/cleanup.ts";
 
 vi.mock("node:fs", async original => {
   const actual = await original<typeof import("node:fs")>();
@@ -19,7 +20,7 @@ const bots: ReflectBot[] = [{ id: "moss", threadIds: [], continuity: false }, { 
 let now: number;
 let deps: ReflectDeps;
 beforeEach(() => {
-  closeDatabase(); fs.rmSync(DATA_DIR, { recursive: true, force: true }); fs.mkdirSync(DATA_DIR, { recursive: true });
+  closeDatabase(); removeTempDirSync(DATA_DIR); fs.mkdirSync(DATA_DIR, { recursive: true });
   reconcileMemoryRoster({ bots: bots.map(bot => ({ id: bot.id, threadId: bot.id })), groups: [] });
   now = Date.now();
   deps = { now: () => now, bootEpoch: { pid: 1, startedAt: 1 }, tmpBase: join(DATA_DIR, "pip-tmp"), bots: () => bots.map(bot => ({ ...bot })), memoryMode: () => "off", resolveRoute: vi.fn(), reaper: { platform: "linux", sweep: async () => [] } }; // Windows always keeps orphan dirs (no job name)

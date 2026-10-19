@@ -6,7 +6,7 @@
 // bots, change the lead, and delete the team. Runs the real app against a
 // verification server with its own data dir (never ~/.murage, never 8799).
 // Run: MURAGE_E2E_DATA_DIR=<scratch dir> npx playwright test -c src/e2e/team-management.config.ts
-import { test, expect, type Page } from "@playwright/test";
+import { test, expect, type Page } from "./page-error-guard";
 import { createServer, type ViteDevServer } from "vite";
 import react from "@vitejs/plugin-react";
 import tailwindcss from "@tailwindcss/vite";

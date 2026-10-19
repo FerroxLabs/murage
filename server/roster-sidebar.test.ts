@@ -269,3 +269,31 @@ it("test 6: a script's grant and the companion see only the conversations they m
   expect(asPhone.text).not.toContain("HiddenBotCanary");
   expect(asPhone.text).not.toContain("QuietRoomCanary");
 }, 300_000);
+
+it("the roster carries the room horizon for the owner's surfaces only: roomClock, removedGroups and tasksEpoch, in the sidebar view and the full one (ROOM-ORDER R5)", async () => {
+  fixture = await launchVerificationServer({}, undefined, { env: { MURAGE_COMPANION_TOKEN: COMPANION_TOKEN } });
+  await authHeaders();
+  const member = (await api("POST", "/api/bots", { name: "Horizon member" })).body.bot;
+  const first = (await api("POST", "/api/groups", { name: "Horizon one", memberIds: [member.id] })).body.group;
+  const second = (await api("POST", "/api/groups", { name: "Horizon two", memberIds: [member.id] })).body.group;
+  expect((await api("DELETE", `/api/groups/${first.id}`)).status).toBe(200);
+  const bare = { "x-test-bare-loopback": "1" };
+  const phone = { ...bare, "x-murage-companion": "1", "x-murage-companion-token": COMPANION_TOKEN };
+  for (const query of ["view=sidebar", "messages=0"]) {
+    const desk = (await api("GET", `/api/bots?${query}`)).body;
+    expect(typeof desk.tasksEpoch).toBe("string");
+    // every statement numbered at or below the horizon is in the rows: the survivor is listed at a number the clock covers
+    const row = desk.groups.find((group: any) => group.id === second.id);
+    expect(row.recordSeq).toBeLessThanOrEqual(desk.roomClock);
+    expect(desk.removedGroups).toEqual([expect.objectContaining({ id: first.id, kind: "deleted", recordEpoch: desk.tasksEpoch })]);
+    expect(desk.removedGroups[0].recordSeq).toBeLessThanOrEqual(desk.roomClock);
+    const raw = async (extra: Record<string, string>) => { const response = await fetch(`${fixture!.info.url}/api/bots?${query}`, { headers: extra }); return { status: response.status, body: await response.json().catch(() => ({})) as any }; };
+    const scopedRoster = await raw(phone);
+    expect(scopedRoster.body.tasksEpoch).toBe(desk.tasksEpoch);
+    expect(typeof scopedRoster.body.roomClock).toBe("number");
+    expect(Array.isArray(scopedRoster.body.removedGroups)).toBe(true);
+    // a caller that is none of the owner's surfaces gets none of it
+    const stranger = await raw(bare);
+    if (stranger.status === 200) for (const key of ["roomClock", "removedGroups", "tasksEpoch", "removed"]) expect(stranger.body, key).not.toHaveProperty(key);
+  }
+}, 120_000);

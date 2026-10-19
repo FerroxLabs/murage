@@ -2,15 +2,16 @@
 // devices.ts). Three properties: it survives a restart, nobody else on the
 // machine can read it, and an unreadable file is never quietly replaced,
 // because replacing it would orphan every successor already handed out.
-import { mkdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { mkdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import { beforeEach, describe, expect, it } from "vitest";
 
 import { loadSessionSecret, SESSION_SECRET_FILE } from "../src/session-secret.ts";
 import { DATA_DIR } from "../src/state.ts";
+import { removeTempDirSync } from "../../server/testing/cleanup.ts";
 
 describe("the session secret", () => {
   beforeEach(() => {
-    rmSync(DATA_DIR, { recursive: true, force: true });
+    removeTempDirSync(DATA_DIR);
   });
 
   it("is created once, owner-only, and read back unchanged", () => {

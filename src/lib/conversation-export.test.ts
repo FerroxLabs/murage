@@ -3,7 +3,7 @@ import { conversationExportFilename, downloadConversation } from "./conversation
 import { resetNativeShellForTest } from "./native-shell";
 
 const auth = vi.hoisted(() => ({ ensure: vi.fn(), headers: vi.fn(() => ({ "x-murage-surface-secret": "synthetic-proof" })) }));
-vi.mock("@/lib/live-events", () => ({ ensureDesktopSurfaceSecret: auth.ensure, desktopSurfaceHeaders: auth.headers, desktopResourceUrl: (url: unknown) => url }));
+vi.mock("@/lib/live-events", () => ({ ensureDesktopSurfaceSecret: auth.ensure, desktopSurfaceHeaders: auth.headers, ticketedResourceUrl: async (url: unknown) => url }));
 let link: { href: string; download: string; click: ReturnType<typeof vi.fn>; remove: ReturnType<typeof vi.fn> };
 let fetchMock: ReturnType<typeof vi.fn>;
 beforeEach(() => {
@@ -28,7 +28,7 @@ it("pins URL and filename before authentication, supplies proof and cleans downl
   while (!auth.ensure.mock.calls.length) await Promise.resolve();
   expect(fetchMock).not.toHaveBeenCalled(); release();
   expect(await pending).toBe("conversation-quarterly-report.md");
-  expect(fetchMock).toHaveBeenCalledWith("/api/threads/task%2Fone/export?format=markdown", { headers: { "x-murage-surface": "desktop", "x-murage-surface-secret": "synthetic-proof" } });
+  expect(fetchMock).toHaveBeenCalledWith("/api/threads/task%2Fone/export?format=markdown", { redirect: "error", headers: { "x-murage-surface": "desktop", "x-murage-surface-secret": "synthetic-proof" } });
   expect(link.download).toBe("conversation-quarterly-report.md"); expect(link.href).toBe("blob:synthetic");
   expect(link.click).toHaveBeenCalledOnce(); expect(link.remove).toHaveBeenCalledOnce();
   vi.runAllTimers(); expect(URL.revokeObjectURL).toHaveBeenCalledWith("blob:synthetic");

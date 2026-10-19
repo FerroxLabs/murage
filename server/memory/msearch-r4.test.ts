@@ -34,6 +34,7 @@ import { answerQuery, scanLimits } from "./worker-query.ts";
 import { workerMemoryGate } from "./worker-rss-gate.ts";
 import type { MemorySearchInput } from "./worker-protocol.ts";
 import { LineageAllowance } from "./lineage-allowance.ts";
+import { removeTempDirSync } from "../testing/cleanup.ts";
 
 const ROSTER: MemoryRoster = { bots: [{ id: "a", threadId: "thread-a", section: "crew" }, { id: "b", threadId: "thread-b", section: "crew" }], groups: [] };
 const INDEX_PATH = () => join(DATA_DIR, "memory-index.db");
@@ -41,7 +42,7 @@ const QUERY = "harbour lantern";
 
 beforeEach(() => {
   closeMemoryIndexReader(); closeDatabase(); clearMemorySearchCache();
-  rmSync(DATA_DIR, { recursive: true, force: true }); mkdirSync(DATA_DIR, { recursive: true });
+  removeTempDirSync(DATA_DIR); mkdirSync(DATA_DIR, { recursive: true });
   reconcileMemoryRoster(ROSTER); setMemoryMode("active");
 });
 afterEach(() => { closeMemoryIndexReader(); eligibleLimits.chunk = 12000; scanLimits.chunks = 8; scanLimits.budgetMs = 700; });
@@ -97,7 +98,7 @@ describe("P1: equal scores order by (score, record id, version), never by cache 
     index.close();
   });
 
-  it("crossing the vector cache's capacity does not reorder equal-score results", () => {
+  it("crossing the vector cache's capacity does not reorder equal-score results", { tags: ["nightly"], timeout: 60_000 }, () => {
     // 12,001 vectors written one after another overflow the resident cache (it is dropped and reloaded in table order);
     // before, results that tie came out in whichever order the cache happened to hold them.
     const ids = ["tie-z", "tie-b", "tie-m"];
@@ -116,7 +117,7 @@ describe("P1: equal scores order by (score, record id, version), never by cache 
     big.close();
     expect(resident).toEqual(["tie-b", "tie-m", "tie-z"]);
     expect(crossed).toEqual(resident);
-  }, 60_000);
+  });
 
   it("equal word ranks order by record id however the rows were written, through the helper's list and the main process's page", () => {
     const text = "harbour lantern notes for the Friday review";
@@ -419,7 +420,7 @@ describe("P2: a merge a deletion owes is durable and cannot be starved", () => {
       const third = new MemoryIndex(path);
       expect(third.maintenanceOwed()).toBe(false);
       third.close();
-    } finally { rmSync(root, { recursive: true, force: true }); }
+    } finally { removeTempDirSync(root); }
   });
 
   it("under load that never goes quiet, one bounded step still runs every MAINTENANCE_MAX_DEFER_MS", () => {

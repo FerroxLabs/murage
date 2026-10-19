@@ -1,0 +1,17 @@
+# SPDX-License-Identifier: AGPL-3.0-or-later
+[Unit]
+Description=Murage destroy cloud-init user-data copies (enrollment token, backup credentials) after first boot
+# Triggered only by murage-scrub-userdata.path (it has no install section): a unit wanted by multi-user.target that is ordered After
+# cloud-final.service forms an ordering cycle (cloud-final runs after multi-user.target) and systemd drops the job.
+# After= still holds the scrub back while cloud-final is running, so it never deletes the cloud-init scripts mid-run.
+After=cloud-final.service murage-volume.service murage-backup-authorize.service
+ConditionPathExists=/var/lib/murage-home/credential
+
+[Service]
+Type=oneshot
+# Stays "active" after it ran: a PathExists trigger fires again whenever its service is inactive, which would loop.
+RemainAfterExit=yes
+User=root
+UMask=0077
+ExecStart=/usr/local/libexec/murage-scrub-userdata
+

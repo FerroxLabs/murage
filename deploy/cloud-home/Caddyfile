@@ -1,0 +1,58 @@
+{
+	admin off
+	# No ACME, no 80/443: the home is reached only through the Cloudflare Tunnel,
+	# which dials out and forwards to this loopback listener.
+	auto_https off
+	servers {
+		# cloudflared connects from loopback, and nft lets only root and
+		# murage-tunnel reach this port. Cloudflare's edge sets Cf-Connecting-Ip.
+		trusted_proxies static 127.0.0.0/8 ::1/128
+		client_ip_headers Cf-Connecting-Ip
+	}
+}
+
+# MURAGE_PUBLIC_HOST is the host part of MURAGE_PUBLIC_ORIGIN (murage-proxy.service).
+(forwarded) {
+	# The server reads the first X-Forwarded-For hop and X-Forwarded-Host (see
+	# server/cloud-request-auth.ts). Set (never append to) both here, so nothing
+	# a visitor or Cloudflare put in an earlier X-Forwarded-For can win.
+	header_up X-Forwarded-For {client_ip}
+	header_up X-Forwarded-Host {$MURAGE_PUBLIC_HOST}
+	header_up X-Forwarded-Proto https
+}
+
+# The site address carries no host: a host there would make Caddy match only
+# requests whose Host is that literal, and everything else would fall through
+# to an empty 200 (seen on a real home). The listener is pinned by `bind`.
+http://:8830 {
+	bind 127.0.0.1
+	# Every response: HTTPS only from now on, no MIME sniffing, no framing, no referrer.
+	header {
+		Strict-Transport-Security "max-age=31536000"
+		X-Content-Type-Options "nosniff"
+		X-Frame-Options "DENY"
+		Referrer-Policy "no-referrer"
+		-Server
+		-Via
+	}
+	@public host {$MURAGE_PUBLIC_HOST}
+	@hooks path /hooks/*
+	handle @public {
+		handle @hooks {
+			# Preserve /hooks path and Authorization for the endpoint's hashed secret.
+			# The ingress itself enforces 60 requests/minute per endpoint.
+			reverse_proxy 127.0.0.1:{$WEBHOOK_PORT} {
+				import forwarded
+			}
+		}
+		handle {
+			reverse_proxy unix//data/proxy/murage.sock {
+				import forwarded
+			}
+		}
+	}
+	# Any other Host is not this home.
+	handle {
+		respond "Not found" 404
+	}
+}

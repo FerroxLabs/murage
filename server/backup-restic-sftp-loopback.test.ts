@@ -7,10 +7,10 @@ import { createServer } from "node:net";
 import { tmpdir,userInfo } from "node:os";
 import { join } from "node:path";
 import { afterEach,describe,expect,it } from "vitest";
-import { safeWipeSync } from "./testing/safe-wipe.mjs";
 import { BackupRestic } from "./backup-restic.ts";
 import type { ResticSftpTarget } from "./backup-restic-target.ts";
 import { createSshKeyPair,resolveSshTools,sshFingerprint } from "./backup-sftp.ts";
+import { removeTempDirSync } from "./testing/cleanup.ts";
 
 // Pinned restic 0.19.1 and the system OpenSSH client against an unprivileged
 // loopback sshd (internal-sftp) that this test starts on a free port. The same
@@ -38,7 +38,7 @@ async function sshd(root:string,name:string){
 }
 
 async function fixture(){
-  const root=realpathSync.native(mkdtempSync(join(tmpdir(),"murage-sftp-loopback-")));cleanups.push(()=>safeWipeSync(root));
+  const root=realpathSync.native(mkdtempSync(join(tmpdir(),"murage-sftp-loopback-")));cleanups.push(()=>removeTempDirSync(root));
   writeFileSync(join(root,"authorized_keys"),"",{mode:0o600});
   const server=await sshd(root,"first");
   const key=createSshKeyPair(),password=randomBytes(24).toString("hex");

@@ -1,4 +1,4 @@
-import { chmodSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -12,12 +12,13 @@ import {
   readCodexModelCatalog,
   STATIC_CODEX_MODELS,
 } from "./codex-catalog.ts";
+import { removeTempDirSync } from "../testing/cleanup.ts";
 
 const scratchDirs: string[] = [];
 const FAKE_CLI = join(dirname(fileURLToPath(import.meta.url)), "..", "testing", "fake-codex-app-server.ts");
 
 afterEach(() => {
-  for (const dir of scratchDirs.splice(0)) rmSync(dir, { recursive: true, force: true });
+  for (const dir of scratchDirs.splice(0)) removeTempDirSync(dir);
 });
 
 function scratchHome(files: Record<string, string>): string {

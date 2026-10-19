@@ -1,6 +1,6 @@
 // Copyright 2026 Ferrox Labs
 // SPDX-License-Identifier: AGPL-3.0-or-later
-import { mkdirSync, rmSync } from "node:fs";
+import { mkdirSync } from "node:fs";
 import { beforeEach, expect, it } from "vitest";
 import { DATA_DIR } from "./config.ts";
 import { closeDatabase, database } from "./database.ts";
@@ -15,7 +15,8 @@ import { renameTeam, deleteTeam, teamRevision } from "./team-sections.ts";
 import { ownerMemoryTicket } from "./memory/authority.ts";
 import { repairRestoredSharing } from "./sharing-restore.ts";
 import { roomRequest } from "./room-requests.ts";
-beforeEach(()=>{closeDatabase();rmSync(DATA_DIR,{recursive:true,force:true});mkdirSync(DATA_DIR,{recursive:true});});
+import { removeTempDirSync } from "./testing/cleanup.ts";
+beforeEach(()=>{closeDatabase();removeTempDirSync(DATA_DIR);mkdirSync(DATA_DIR,{recursive:true});});
 const deps={memoryTicket:ownerMemoryTicket(),leadershipError:()=>null,groupWorking:()=>false,channelArchived:()=>{},reachabilityChanged:()=>{}};
 function fixture(){
  const store=new Store(()=>({instanceId:"fixture",model:"fixture"}));const make=(name:string,section:string,lead=false)=>{const b=store.createBot();store.patchBot(b.id,{name,section,chiefOfStaff:lead});return b;};

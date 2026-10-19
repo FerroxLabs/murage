@@ -1,6 +1,6 @@
 // Copyright 2026 Ferrox Labs
 // SPDX-License-Identifier: AGPL-3.0-or-later
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { afterEach, expect, it } from "vitest";
@@ -9,10 +9,11 @@ import { createBotPackageExport } from "./package-export.ts";
 import { collectPackageExportSkills } from "./package-export-files.ts";
 import { classifyRoutineOutbound } from "./routine-outbound.ts";
 import type { BotRecord } from "./store.ts";
+import { removeTempDirSync } from "./testing/cleanup.ts";
 
 const SECRET = "Harborview needs a forty percent discount";
 const roots: string[] = [];
-afterEach(() => { for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true }); });
+afterEach(() => { for (const root of roots.splice(0)) removeTempDirSync(root); });
 
 it("a bot with prospect learning on exports no learning field, lesson or prospect wording", () => {
   const bot = { id: "dax", threadId: "t", name: "Dax", title: "Sales", description: "Sells", color: "green", notifications: true, unread: false, createdAt: 1,

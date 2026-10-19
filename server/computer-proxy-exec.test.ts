@@ -13,6 +13,7 @@ import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
+import { removeTempDirSync } from "./testing/cleanup.ts";
 
 const PROXY = join(dirname(fileURLToPath(import.meta.url)), "computer-proxy.ts");
 const REQUEST_LIMIT_MS = 3_000;
@@ -98,7 +99,7 @@ describe.skipIf(process.platform !== "linux")("computer_exec on the cloud box (r
 
   afterAll(async () => {
     box.close();
-    rmSync(home, { recursive: true, force: true });
+    removeTempDirSync(home);
   });
 
   afterEach(async () => {

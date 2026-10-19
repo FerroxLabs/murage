@@ -5,18 +5,19 @@
 // resolved row must be disabled). And Flux's own answer to Murage's catalog
 // call is what marks a key refused (Fuigo falls back to bundled models and
 // exits 0 on a 401, so its exit code cannot).
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdtempSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { mutateProviderBank } from "../electron/provider-connections.mjs";
 import { ProviderConnectionsService } from "./provider-connections.ts";
 import { legacyFluxError } from "./flux-config.ts";
+import { removeTempDirSync } from "./testing/cleanup.ts";
 
 const REAL = "sk-flux-Aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
 const BAD = ["https://api.fluxrouter.ai/v1", "abc12345xyz", "sk-0123456789abcdef0123456789abcdef"];
 const roots: string[] = [];
-afterEach(() => { roots.splice(0).forEach(root => rmSync(root, { recursive: true, force: true })); });
+afterEach(() => { roots.splice(0).forEach(root => removeTempDirSync(root)); });
 
 function service(options: { legacy?: string; bank?: string; onCatalogOutcome?: (c: { id: string; key: string }, o: "ok" | "refused") => void; status?: number }) {
   const cacheDir = mkdtempSync(join(tmpdir(), "flux-leak-"));

@@ -17,7 +17,12 @@ import { memberTurnProvenance, turnIsBackground } from "./message-automation.ts"
 import { isLiveRoutineRunStatus } from "./routines.ts";
 import { adoptStagedImages, memoryEchoDecision, retainSession } from "./fold-steps.ts";
 import { providerReplyOf } from "./provider-reply.ts";
+import { murageLine } from "./murage-line.ts";
+import { isEngineOutput } from "./message-db.ts";
 import { LineageAllowance } from "./memory/lineage-allowance.ts";
+import { handedPinsOf, noteStartupFileEvent, promptFactsOf } from "./engine-env.ts";
+import { commandCwdFromToolInput, commandFromToolInput } from "../shared/exact-command.ts";
+import { grantRequestFor, routineCardFields } from "./approval-grant-request.ts";
 
 /** Execute the production event fold with isolated storage and inert outside
  * services. This is a behavior test, not a census of source substrings. */
@@ -30,6 +35,8 @@ function foldFixture() {
   const noop = () => undefined;
   const scope: Record<string, unknown> = {
     store, toolAction, startedToolAction, completedToolAction, engineStamp, plainConnectedAppMessage: (row: unknown) => row,
+    // what index.ts imports for every permission event (engine-env.ts Rule 74a, shared/exact-command.ts): the real ones, as in production
+    noteStartupFileEvent, handedPinsOf, promptFactsOf, commandCwdFromToolInput, commandFromToolInput, turnCwdByThread: new Map(), routineCardFields, grantRequestFor,
     fluxFirstTokenProbe: { observe: noop, begin: noop },
     accountProjectEvent: noop, shouldIgnoreProviderEvent: () => false, replyGuardContext: () => null,
     accountPresentedProjectEvent: () => true, presentedRequests: { publish: noop },
@@ -43,7 +50,7 @@ function foldFixture() {
     questionFromChoices: (summary: string, choices: string[]) => ({ question: summary, options: choices }),
     lowRiskStamp: () => ({}), askMessageByRequest: new Map(), resolveAutoReviewMode: () => "off",
     createHash, retainSession, adoptStagedImages, memoryEchoDecision, generatedImagesByTurn: new Map(), memoryEchoReplies: new Map(),
-    performance, providerReplyOf, appendDecision: noop, addSourcesToRunningTurn: noop, DATA_DIR: "fixture", workAdmission: { liveTurns: () => [] }, notify: noop, buildNotification: noop,
+    performance, providerReplyOf, murageLine, appendDecision: noop, turnIsBackground, addSourcesToRunningTurn: noop, DATA_DIR: "fixture", workAdmission: { liveTurns: () => [] }, notify: noop, buildNotification: noop,
   };
   const source = readFileSync(new URL("./index.ts", import.meta.url), "utf8");
   const plainStart = source.indexOf("function plainConnectedAppMessage");
@@ -205,7 +212,7 @@ it("F11 room continuation admission preserves the originating connection card", 
   // the real provenance seam: a room turn is told its automation by memberTurnAutomation, so it is extracted, not stubbed
   const memberStart = source.indexOf("function memberTurnAutomation(");
   const memberEnd = source.indexOf("/** The message the owner pinned", memberStart);
-  const scope = { LineageAllowance, store, memberTurnProvenance, turnIsBackground, isLiveRoutineRunStatus, backupRestartAdmission: { held: () => false }, routineRunLevel: () => null, roomRounds: new Map(), cfg: {},
+  const scope = { LineageAllowance, store, homeExecutionGate: undefined, memberTurnProvenance, turnIsBackground, isLiveRoutineRunStatus, backupRestartAdmission: { held: () => false }, routineRunLevel: () => null, roomRounds: new Map(), cfg: {},
     registry: { get: () => ({ adapter: { capabilities: {} } }) }, routeHasTools: () => false,
     threadHumanPrincipal: () => ({ kind: "owner" }), routines: { listRuns: () => [] },
     botPermissionMode: () => "ask", routinePeerSource: () => undefined, turnSessionAudience: () => "audience", latestRoomUserMessage: () => undefined, noteHeldQueue: () => {}, heldScanYield, runnableContinuation, isRestoreHeld, releaseHeldContinuation, currentRestoreGeneration: () => null };
@@ -484,6 +491,25 @@ describe("the production fold marks only the engine's own reply as the proof tha
     fold({ ...base, eventId: "e3", type: "item.started", itemType: "tool", itemId: "wake", origin: "murage", title: "Waking up" });
     fold({ ...base, eventId: "e4", type: "item.completed", itemType: "assistant_text", origin: "murage", text: "a cap note" });
     expect(evidence()).toBeNull();
+  });
+  it("every line the fold writes in Murage's voice carries the Murage marker and is no turn's engine output; the engine's own reply and tool start are (1.0.3 lifecycle card)", () => {
+    const { fold, store, bot, base } = handoffThread();
+    fold({ ...base, eventId: "m1", type: "runtime.error", message: "spawn failed" });
+    fold({ ...base, eventId: "m2", type: "turn.retrying", attempt: 1, delayMs: 1000, reason: "x" });
+    fold({ ...base, eventId: "m3", type: "item.started", itemType: "tool", itemId: "wake", origin: "murage", title: "Waking up" });
+    fold({ ...base, eventId: "m4", type: "item.started", itemType: "tool", itemId: "read", origin: "engine", title: "Read" });
+    fold({ ...base, eventId: "m5", type: "item.completed", itemType: "tool", itemId: "read", ok: true });
+    fold({ ...base, eventId: "m6", type: "item.completed", itemType: "assistant_text", origin: "engine", text: "done" });
+    const rows = store.activePath(bot.threadId).filter(row => row.role === "bot");
+    const row = (match: (row: Message) => boolean) => { const found = rows.find(match); expect(found).toBeDefined(); return found!; };
+    const murage = [row(r => r.tool?.name === "error: spawn failed"), row(r => r.tool?.name?.startsWith("retrying:") === true), row(r => r.tool?.name === "Waking up")];
+    for (const line of murage) {
+      expect(line.murageLine, line.tool?.name).toBe(true);
+      expect(line.turnId, "the line still reads as the turn's (its chip group)").toBe("turn-1");
+      expect(isEngineOutput(line), line.tool?.name).toBe(false);
+    }
+    const engine = [row(r => r.tool?.name === "Read"), row(r => r.kind === "text" && r.text === "done")];
+    for (const line of engine) { expect(line.murageLine).toBeUndefined(); expect(isEngineOutput(line)).toBe(true); }
   });
   it("the engine's reply after Murage's own lines of the same turn is the proof (the walk goes on past Murage's lines)", () => {
     const { fold, evidence, base } = handoffThread();

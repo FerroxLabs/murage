@@ -6,7 +6,7 @@
 // its files busy. The component cases of r14 (a late paste, a late child, a late session folder) are in
 // engine-history-plan.test.ts; the generic crash and fault matrices are in engine-history-invariant.test.ts.
 import { EventEmitter } from "node:events";
-import { appendFileSync, closeSync, existsSync, mkdirSync, mkdtempSync, openSync, readFileSync, realpathSync, rmSync, writeFileSync, writeSync } from "node:fs";
+import { appendFileSync, closeSync, existsSync, mkdirSync, mkdtempSync, openSync, readFileSync, realpathSync, writeFileSync, writeSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
@@ -24,10 +24,11 @@ import { decorateHoldInstance, InstanceHolds, WAITING_NOTE } from "./harness/ins
 import { buildFixture, canaryHits, ENGINES, THREAD, type Fixture } from "./testing/engine-history-fixtures.ts";
 import { keepOut } from "./testing/keep-out.ts";
 import type { ProviderInstance, RuntimeEvent } from "./contracts.ts";
+import { removeTempDirSync } from "./testing/cleanup.ts";
 
 const scratch = realpathSync.native(mkdtempSync(join(tmpdir(), "murage-r15-")));
 const openDatabases: DatabaseSync[] = [];
-afterAll(() => { for (const db of openDatabases) db.close(); rmSync(scratch, { recursive: true, force: true }); });
+afterAll(() => { for (const db of openDatabases) db.close(); removeTempDirSync(scratch); });
 afterEach(() => {
   for (const name of Object.keys(engineHistoryTestHooks)) delete (engineHistoryTestHooks as Record<string, unknown>)[name];
 });

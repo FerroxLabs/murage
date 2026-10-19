@@ -147,6 +147,8 @@ export const OWNER_DECISION_ROUTES = [
   { method: "GET", path: /^\/api\/groups\/[\w-]+\/usage$/ },
   { method: "POST", path: /^\/api\/sidebar-sections$/ },
   { method: "POST", path: /^\/api\/routines\/[\w-]+\/run$/ },
+  // AMEND-13 Rule 81d: "Always allow for this routine" from the paired phone; the harness rereads the pending card
+  { method: "POST", path: /^\/api\/routines\/[\w-]+\/always-allow(?:\/remove)?$/ },
   { method: "POST", path: /^\/api\/bots$/ },
   { method: "PATCH", path: /^\/api\/bots\/[\w-]+\/profile$/ },
   { method: "DELETE", path: /^\/api\/(?:bots|groups)\/[\w-]+\/tasks\/[\w-]+$/ },
@@ -382,6 +384,7 @@ const DEVICE_ALLOWED: ReadonlyArray<{ method: string; path: RegExp }> = [
   { method: "PATCH", path: /^\/api\/routines\/[\w-]+$/ },
   { method: "DELETE", path: /^\/api\/routines\/[\w-]+$/ },
   { method: "POST", path: /^\/api\/routines\/[\w-]+\/run$/ },
+  { method: "POST", path: /^\/api\/routines\/[\w-]+\/always-allow(?:\/remove)?$/ },
 
   // Multi-account Composio management exposes opaque ids and aliases only.
   // Revocation stays on the Mac: the account DELETE route is deliberately

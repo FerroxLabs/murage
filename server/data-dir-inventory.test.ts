@@ -32,6 +32,7 @@ const ROOT = join(import.meta.dirname, "..");
 
 /** A scan hit that is not the Murage data folder: file -> joined name -> why. */
 const NOT_THE_DATA_FOLDER: Record<string, Record<string, string>> = {
+  "server/cloud-home/supervisor.ts": { "<<name>>": "Fixed root volume layout under /data (home, home/secrets, server-home, proxy, caddy, browser); the application DATA_DIR is /data/home, not this volume root" },
   "server/user-chrome.ts": { DevToolsActivePort: "Chrome's own user-data folder, read only" },
   "server/env-path.ts": { shims: "mise's own data folder (MISE_DATA_DIR), read for PATH only" },
   "server/engine-plan-acp.ts": {
@@ -73,6 +74,9 @@ describe("every top-level name Murage writes is classified for backup", () => {
       configPath: "config.json", preferenceFile: "startup-background.json",
       // In Electron's userData, not the data folder.
       file: null, CREDENTIALS_FILE: null,
+      // electron/cloud-home-store.mjs: sealed Cloud home records and the pending connect, in <userData>/cloud-homes
+      // (electron/main.mjs), not the data folder.
+      target: null, pendingFile: null,
     };
     const found = new Set<string>();
     for (const name of readdirSync(join(ROOT, "electron"))) {

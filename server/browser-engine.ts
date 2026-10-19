@@ -15,6 +15,8 @@ import { BEFOREUNLOAD_GUARD_SCRIPT } from "./browser-beforeunload-guard.ts";
 import { murageTool } from "./murage-tool-surface.ts";
 import { DATA_DIR } from "./config.ts";
 import { AGENT_BROWSER_VERSION, agentBrowserReleaseVersion, agentBrowserReleaseUrl, resolveAgentBrowserReleaseAsset, type AgentBrowserReleaseAsset } from "./browser-engine-release.ts";
+import { browserLaunchFailure, CLOUD_BROWSER_BOT, spawnCloudBrowser } from "./cloud-home/browser-process.ts";
+import { cloudHomeCopy } from "./cloud-home/copy.ts";
 
 const KEY_FILE = "browser-engine-key";
 type ResolveOptions = { dataDir?: string; env?: NodeJS.ProcessEnv; platform?: NodeJS.Platform; arch?: string; musl?: boolean; /** false: read what is already known and never launch a signature check. */ startCheck?: boolean };
@@ -333,7 +335,7 @@ export function browserEngineEncryptionKey(dataDir = DATA_DIR): string {
 
 export function browserSessionId(botId: string, partitionId: string, realmId: string): string {
   if (!realmId) throw new Error("Browser session requires an installation authentication realm");
-  const digest = createHash("sha256").update(JSON.stringify([realmId, partitionId ? ["profile", partitionId] : ["bot", botId]])).digest("hex").slice(0, 32);
+  const digest = createHash("sha256").update(JSON.stringify([realmId, ...(process.env.MURAGE_CLOUD_ROLE === "home" ? [botId] : []), partitionId ? ["profile", partitionId] : ["bot", botId]])).digest("hex").slice(0, 32);
   return partitionId === "guest" ? `guest-${randomUUID()}` : `murage-${digest}`;
 }
 
@@ -345,6 +347,13 @@ export function userChromeSessionId(botId: string, realmId: string): string {
   return `murage-uc-${createHash("sha256").update(JSON.stringify([realmId, ["user-chrome", botId]])).digest("hex").slice(0, 32)}`;
 }
 
+/** Match the pinned browser's implicit sandbox-disabling host checks. CI is
+ * removed by the child environment allow-list, so a CI host is not refused. */
+export function browserHostRequiresSandboxBypass(input: {
+  platform: NodeJS.Platform; uid: number | undefined; markerPresent: boolean; cgroup: string;
+}): boolean {
+  return input.platform === "linux" && (input.uid === 0 || input.markerPresent || /docker|kubepods|lxc/iu.test(input.cgroup));
+}
 /** True where the pinned engine's dialog auto-answer is dead (Windows). The `tabs` profile carries
  * the dialog tools; the model's own tool list stays the owned policy list. */
 export const engineNeedsOwnDialogAnswers = (platform: NodeJS.Platform): boolean => platform === "win32";
@@ -358,15 +367,39 @@ const BEFOREUNLOAD_GUARD_FILE = "beforeunload-guard.js";
 export function agentBrowserIntegration(input: {
   binaryPath: string; session: string; encryptionKey: string; dataDir: string; realmId: string;
   persistent?: boolean; env?: NodeJS.ProcessEnv;
+  botId?: string;
   /** The owner's running Chrome (server/user-chrome.ts). Only ever passed
    * explicitly by the caller; AGENT_BROWSER_CDP is never inherited. */
   attachCdpUrl?: string;
 }): AgentBrowserSpec {
   // Pinned upstream silently adds --no-sandbox in root/container environments.
   // Refuse those hosts rather than weakening Murage's production sandbox.
-  if (process.platform === "linux" && (process.getuid?.() === 0 || ["/.dockerenv", "/run/.containerenv"].some(file => { try { return lstatSync(file).isFile(); } catch { return false; } }))) throw new Error("The browser engine requires a sandbox-capable non-container host");
+  let cgroup = "";
+  if (process.platform === "linux") {
+    try { cgroup = readFileSync("/proc/1/cgroup", "utf8"); }
+    catch {
+      // A Cloud home mounts /proc with hidepid, so the server (not root) cannot
+      // see pid 1. Its own cgroup answers the same container question.
+      if (process.env.MURAGE_CLOUD_ROLE !== "home") throw new Error("The browser engine could not verify its host sandbox");
+      try { cgroup = readFileSync("/proc/self/cgroup", "utf8"); }
+      catch { throw new Error("The browser engine could not verify its host sandbox"); }
+    }
+  }
+  if (browserHostRequiresSandboxBypass({ platform: process.platform, uid: process.getuid?.(), cgroup,
+    markerPresent: ["/.dockerenv", "/run/.containerenv"].some(file => { try { return lstatSync(file).isFile(); } catch { return false; } }),
+  })) throw new Error("The browser engine requires a sandbox-capable non-container host");
   if (!/^[a-f0-9]{64}$/u.test(input.encryptionKey)) throw new Error("Invalid browser encryption key");
   if (!/^[A-Za-z0-9_-]{1,80}$/u.test(input.session) || !input.realmId) throw new Error("Invalid browser session or authentication realm");
+  if (process.env.MURAGE_CLOUD_ROLE === "home") {
+    if (!input.botId || !/^[\w-]+$/.test(input.botId) || input.attachCdpUrl) throw new Error(cloudHomeCopy.invalidCloudBrowserIdentity);
+    const home = `/data/browser/${input.botId}`;
+    const env = { [CLOUD_BROWSER_BOT]: input.botId, HOME: home, USERPROFILE: home,
+      AGENT_BROWSER_SOCKET_DIR: `${home}/sockets`, AGENT_BROWSER_SESSION: input.session,
+      AGENT_BROWSER_ENCRYPTION_KEY: input.encryptionKey,
+      AGENT_BROWSER_RESTORE_SAVE: input.persistent === false || input.session.startsWith("guest-") ? "never" : "auto" };
+    return { command: input.binaryPath, args: ["mcp", "--tools", "core", "--no-webmcp"], env: {
+      ...env, ...(env.AGENT_BROWSER_RESTORE_SAVE === "auto" ? { AGENT_BROWSER_RESTORE: input.session } : {}) } };
+  }
   const realm = createHash("sha256").update(input.realmId).digest("hex").slice(0, 24);
   const root = join(resolve(input.dataDir), "browser-engine");
   privateDirectory(root);
@@ -402,6 +435,7 @@ export function agentBrowserIntegration(input: {
     env.AGENT_BROWSER_IDLE_TIMEOUT_MS = "1800000";
   }
   if (env.AGENT_BROWSER_RESTORE_SAVE === "auto") env.AGENT_BROWSER_RESTORE = input.session;
+  // CI must never reach agent-browser: it disables Chromium sandboxing.
   // Windows: the engine's own alert/beforeunload answer never reaches Chrome (agent-browser 0.36.0
   // native/actions.rs eprintln!s to the daemon's stderr pipe, whose read end the CLI drops after
   // starting the daemon, connection.rs:889-918; only Unix redirects it, daemon.rs:35-61). That pipe
@@ -428,7 +462,10 @@ export function agentBrowserIntegration(input: {
  * on timeout. No process-name kill or shell interpolation. */
 function runEngine(binary: string, args: string[], env: NodeJS.ProcessEnv, timeoutMs: number): Promise<string> {
   return new Promise((resolveRun, reject) => {
-    const child = spawn(binary, args, { env, shell: false, stdio: ["ignore", "pipe", "pipe"], windowsHide: true });
+    const child = spawnCloudBrowser(args, env) ?? (() => {
+      const child = spawn(binary, args, { env, shell: false, stdio: ["ignore", "pipe", "pipe"], windowsHide: true });
+      return child;
+    })();
     let output = "";
     let timedOut = false;
     const timer = setTimeout(() => { timedOut = true; child.kill("SIGKILL"); }, timeoutMs);
@@ -438,7 +475,7 @@ function runEngine(binary: string, args: string[], env: NodeJS.ProcessEnv, timeo
     child.on("error", (error) => { clearTimeout(timer); reject(error); });
     child.on("close", (code) => {
       clearTimeout(timer);
-      if (timedOut || code !== 0) reject(new Error(timedOut ? "agent-browser command timed out" : `agent-browser command failed (${code})`));
+      if (timedOut || code !== 0) reject(timedOut ? new Error("agent-browser command timed out") : browserLaunchFailure(code) ?? new Error(`agent-browser command failed (${code})`));
       else resolveRun(output.trim());
     });
   });

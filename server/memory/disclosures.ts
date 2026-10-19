@@ -128,7 +128,9 @@ function continuationMemoryRevokedWork(allowance: LineageAllowance, threadId: st
   // the write-time session predicate first, before any hold (S6): deny_session, the session's forgotten set, its pending window. A revoke bumps
   // deny_generation, not the authority stamp a hold rests on, so a hold never answers for it. O(1) seeks.
   if (lineageLive(database())) {
-    const verdict = sessionLookup(database(), { threadId, driverInstance, nativeSession }, { audience: null });
+    // the owner's own direct chat is judged by content (an audience-only revoke never resets it, 1.0.2 Keep all P0); any other reader keeps
+    // every mark, audience-only ones included
+    const verdict = sessionLookup(database(), { threadId, driverInstance, nativeSession }, ownerDirectChat(threadId, access) ? { audience: null } : { audience: { owner: memoryAccessIsOwnerAudience(access), scopeIds: access.scopeIds } });
     if (verdict.state !== "shown") { if (why && !why.reason) why.reason = verdict.state === "checking" ? "checking" : `writetime-${verdict.reason}`; return true; }
   }
   const parts = authorityParts(), key = sessionHoldKey(threadId, driverInstance, nativeSession, access);
