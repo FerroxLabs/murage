@@ -150,7 +150,7 @@ jobs:
     if: ${{ !inputs.human_files }}
     name: ${{ inputs.vitest_file && 'Scoped Vitest confirmation' || format('Vitest shard {0}/6', matrix.vitest_shard) }} (${{ matrix.os }})
     # Preserve the previous validator-before-tests ordering for scoped dispatch.
-    needs: quality
+    # baseline-only CI try: scoped Vitest runs even when quality gates fail
     strategy:
       fail-fast: false
       matrix:
@@ -246,7 +246,7 @@ jobs:
           pnpm exec vitest run "${test_paths[@]}"
 
   human:
-    if: ${{ !inputs.windows_only && !inputs.human_files }}
+    if: ${{ !inputs.windows_only && !inputs.human_files && !inputs.vitest_file }}
     name: human specs ${{ matrix.human_shard }}/6 (Ubuntu)
     # One worker per process (the harness owns one store), so the suite is
     # split across runners instead: about 920 desktop+mobile tests need close
