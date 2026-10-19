@@ -4,7 +4,7 @@
 // Round 30, item 5 (Fable r28 P3 "every pump re-admits 8 heads per bot"): the server's pump works only on the teams an event made ready, a bounded number of
 // bots per pump, never a page of waiting heads per bot. Statements per pump are the same with 10 and with 500 bots that each have waiting teams. Fails on
 // 7f28cf52b (there the pump drained every bot, each waking 8 waiting heads).
-import { mkdirSync, rmSync } from "node:fs";
+import { mkdirSync } from "node:fs";
 import type { DatabaseSync } from "node:sqlite";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { DATA_DIR } from "./config.ts";
@@ -14,9 +14,10 @@ import { _resetOwnerMigration } from "./pending-delegations-schema.ts";
 import { botsWithReadyTeams } from "./shared-ready.ts";
 import { _resetDrainDiagnostics, _resetSharedPump, _sharedSweepDueAt, pumpSharedWork } from "./shared-work.ts";
 import { sharedWorld } from "./testing/handoff-worlds.ts";
+import { removeTempDirSync } from "./testing/cleanup.ts";
 
 const tick = () => new Promise<void>((resolve) => setImmediate(resolve));
-const fresh = () => { closeDatabase(); rmSync(DATA_DIR, { recursive: true, force: true }); mkdirSync(DATA_DIR, { recursive: true }); _resetPending(); _resetOwnerMigration(); _resetDrainDiagnostics(); _resetSharedPump(); };
+const fresh = () => { closeDatabase(); removeTempDirSync(DATA_DIR); mkdirSync(DATA_DIR, { recursive: true }); _resetPending(); _resetOwnerMigration(); _resetDrainDiagnostics(); _resetSharedPump(); };
 beforeEach(fresh);
 afterEach(() => { onDelegationReceipt(undefined); _resetOwnerMigration(); _resetPending(); closeDatabase(); });
 

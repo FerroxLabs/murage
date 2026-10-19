@@ -4,12 +4,12 @@ import { mkdirSync,mkdtempSync,readFileSync,readdirSync,realpathSync,statSync } 
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach,describe,expect,it } from "vitest";
-import { safeWipeSync } from "./testing/safe-wipe.mjs";
 import { BackupRestic,type ResticRun,type ResticResult } from "./backup-restic.ts";
 import type { ResticS3Target,ResticSftpTarget } from "./backup-restic-target.ts";
 import { createSshKeyPair,type SftpFolderState } from "./backup-sftp.ts";
+import { removeTempDirSync } from "./testing/cleanup.ts";
 
-const roots:string[]=[];afterEach(()=>{for(const root of roots.splice(0))safeWipeSync(root);});
+const roots:string[]=[];afterEach(()=>{for(const root of roots.splice(0))removeTempDirSync(root);});
 const repositoryId="e".repeat(64);
 const blob=(type:string)=>{const name=Buffer.from(type),length=Buffer.alloc(4);length.writeUInt32BE(name.length);const body=Buffer.alloc(36);body.writeUInt32BE(32);return Buffer.concat([length,name,body]).toString("base64");};
 const key=createSshKeyPair();

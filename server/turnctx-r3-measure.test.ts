@@ -7,7 +7,7 @@
 //  - the first turn on a cold 200,000-message thread: how long the thread's fill takes,
 //    and the longest stretch it holds the event loop (a slice, and the loop's own lag);
 //  - the writers' share: the cost of appending to a prepared 200,000-message thread.
-import { mkdirSync, rmSync } from "node:fs";
+import { mkdirSync } from "node:fs";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { afterAll, beforeAll, expect, it } from "vitest";
@@ -16,12 +16,13 @@ import type { ModelSelection } from "./contracts.ts";
 import { database } from "./database.ts";
 import { prepareStats } from "./branch-fill.ts";
 import { Store } from "./store.ts";
+import { removeTempDirSync } from "./testing/cleanup.ts";
 
 const selection = (): ModelSelection => ({ instanceId: "claude", model: "claude-sonnet-5" });
 const messagesDb = () => join(DATA_DIR, "messages.db");
 let store: Store, side: DatabaseSync;
 
-beforeAll(() => { rmSync(DATA_DIR, { recursive: true, force: true }); mkdirSync(DATA_DIR, { recursive: true }); store = new Store(selection); side = new DatabaseSync(messagesDb()); side.exec("PRAGMA busy_timeout=30000"); }, 60_000);
+beforeAll(() => { removeTempDirSync(DATA_DIR); mkdirSync(DATA_DIR, { recursive: true }); store = new Store(selection); side = new DatabaseSync(messagesDb()); side.exec("PRAGMA busy_timeout=30000"); }, 60_000);
 afterAll(() => { side?.close(); });
 
 /** A realistic conversation: a quarter of the rows are the owner's words, a fifth the bot's, the rest tool activity. */
@@ -104,7 +105,7 @@ it("the first turn on a cold 200,000-message thread waits for the thread's fill;
   console.log(`MEASURE append-on-200k ${JSON.stringify({ msPerAppend: +((performance.now() - t0) / 200).toFixed(2) })}`);
 }, 900_000);
 
-it("a million messages in forty threads: the background pass keeps the event loop free, and the derived tables stay a few percent", async () => {
+it("a million messages in forty threads: the background pass keeps the event loop free, and the derived tables stay a few percent", { tags: ["perf-budget"], timeout: 1_800_000 }, async () => {
   const total = Number(process.env.MEASURE_BULK ?? 1_000_000), threads = 40, each = Math.floor(total / threads);
   const builtAt = performance.now();
   side.exec("DELETE FROM thread_key; DELETE FROM seg; DELETE FROM msg_branch; DELETE FROM line; DELETE FROM turn_first");
@@ -139,4 +140,4 @@ it("a million messages in forty threads: the background pass keeps the event loo
   const sorted = [...prepareStats.sliceMs].sort((a, b) => a - b);
   console.log(`MEASURE bulk ${JSON.stringify({ messages: total, threads, preparedThreads: prepared, fillTotalSeconds: +(took / 1000).toFixed(1), slices: sorted.length, p50SliceMs: +sorted[Math.floor(sorted.length / 2)]!.toFixed(1), p99SliceMs: +sorted[Math.floor(sorted.length * 0.99)]!.toFixed(1), maxSliceMs: +prepareStats.maxSliceMs.toFixed(1), worstEventLoopLagMs: +worst.toFixed(1), derivedBytesPerMessage: +(derived / total).toFixed(2), perTableBytesPerMessage: perTable, pctOfMessageTable: messageTable ? +((derived / messageTable) * 100).toFixed(2) : null })}`);
   expect(prepared).toBeGreaterThanOrEqual(threads);
-}, 1_800_000);
+});

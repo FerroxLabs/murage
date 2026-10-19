@@ -14,9 +14,11 @@ export function BrowserSetupCardView({ bot, subtitle, setup, profiles, profile, 
   const remembered = !!setup.profileId && setup.decision === "accepted";
   const rememberedConnected = remembered && profiles.some(item => item.profileId === setup.profileId);
   const rememberedName = setup.browser ? BROWSER_NAMES[setup.browser] : "browser";
-  // A release build whose listing is not public yet, or a copy without the
-  // helper, has nothing to set up: say so and keep Not now.
-  const unavailable = extensionBuild === "none" ? "This copy of Murage is not set up for Murage for Chrome yet." : extensionBuild === "release" && !storeUrl ? "Murage for Chrome is not in the Chrome Web Store yet." : "";
+  // A copy without the helper has nothing to set up: say so and keep Not now.
+  // A release build whose listing is not public yet can still be set up, for
+  // an extension that is already installed, so it stays enabled.
+  const unavailable = extensionBuild === "none" ? "This copy of Murage is not set up for Murage for Chrome yet." : "";
+  const comingSoon = extensionBuild === "release" && !storeUrl;
   return <section aria-label="Optional browser setup" className="flex max-w-full flex-col gap-3 rounded-xl border border-hairline bg-card p-4 text-sm text-ink">
     <h3 className="font-medium">Use your browser for this task?</h3>
     <p className="text-ink-secondary">{subtitle}</p>
@@ -25,6 +27,7 @@ export function BrowserSetupCardView({ bot, subtitle, setup, profiles, profile, 
       <p>Set up also enables browser tools in this workspace.</p>
       <p className="text-ink-secondary">This is optional. Your request stays in this conversation if you choose not to connect.</p>
       {unavailable && <p role="status">{unavailable} Choose Not now to continue without it.</p>}
+      {comingSoon && <p role="status">Murage for Chrome is coming to the Chrome Web Store. If you already have it installed, set it up here.</p>}
       <label className="flex flex-col gap-2">Browser to connect<select className={control} value={browser} disabled={pending || !!unavailable} onChange={event=>onBrowser(event.target.value as Browser)}><option value="chrome">Chrome</option><option value="edge">Edge</option><option value="brave">Brave</option></select></label>
       <div className="flex flex-wrap gap-2"><button className={control} disabled={pending || !!unavailable} onClick={()=>onAct("accept")}>Set up my browser</button><button className={control} disabled={pending} onClick={()=>onAct("decline")}>Not now</button></div>
     </>}

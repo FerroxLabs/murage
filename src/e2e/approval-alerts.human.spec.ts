@@ -1,6 +1,6 @@
 // Real StoreProvider + live-events + notification delivery, fake SSE/native bridge.
 // No app profile, OS notifications, audio, or provider calls.
-import { test, expect } from "@playwright/test";
+import { test, expect } from "./page-error-guard";
 import { createServer, type ViteDevServer } from "vite";
 import react from "@vitejs/plugin-react";
 import { mkdtempSync } from "node:fs";
@@ -32,7 +32,7 @@ test("fresh approvals cue once; replay and redraw stay quiet; native click opens
   await page.route("**/api/**",async route=>{
     const path=new URL(route.request().url()).pathname;
     if(route.request().method()!=="GET")writes.push(path);
-    const json=path==="/api/bots"?{bots,groups:[],computerControl:{}}:path==="/api/instances"?{instances:[]}:path==="/api/config"?{}:path==="/api/routines"?{routines:[],runs:[]}:path==="/api/webhooks"?{webhooks:[],attempts:[]}:path==="/api/bots/b/tasks/b-detached"?{bot:{...bots[1],threadId:"b-detached"}}:{};
+    const json=path==="/api/bots"?{bots,groups:[],computerControl:{}}:path==="/api/instances"?{instances:[]}:path==="/api/config"?{}:path==="/api/routines"?{routines:[],runs:[]}:path==="/api/webhooks"?{webhooks:[],attempts:[]}:path==="/api/bots/b/tasks/b-detached"?{bot:{...bots[1],threadId:"b-detached"}}:path==="/api/desktop/resource-ticket"?{ticket:"fixture-ticket"}:{};
     return route.fulfill({json});
   });
   await page.addInitScript(()=>{
@@ -48,6 +48,8 @@ test("fresh approvals cue once; replay and redraw stay quiet; native click opens
   });
   await page.goto(origin+"/__approval");
   await expect(page.getByTestId("selected")).toHaveText("a");
+  // The desktop opens its stream only after it trades the proof for a single-use ticket (the route above mints one), so wait for it.
+  await expect.poll(()=>page.evaluate(()=>(window as any).sources.length)).toBe(1);
   await page.getByRole("button",{name:"Focus and redraw"}).click();
   expect(await page.evaluate(()=>document.hasFocus())).toBe(true);
   const approval={kind:"approval",botId:"a",threadId:"a-task",requestId:"one",messageId:"card-one",title:"Murage",body:"Your attention is needed.",privatePreview:true};

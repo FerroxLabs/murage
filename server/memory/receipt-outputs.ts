@@ -13,7 +13,7 @@
 //
 // Every path that turns a receipt 'revoked' (settings, restore, bookkeeping, the dispatch checks) goes through the v10 trigger
 // memory_receipt_flip into memory_receipt_flips; readers hold the receipt's lines "checking" from its first output (deny-read.ts) until
-// drainReceiptFlips commits it as a receipt root (run first in every marker slice).
+// drainReceiptFlips commits it as a root of that drain's one audience bulk revoke (run first in every marker slice).
 import type { DatabaseSync } from "node:sqlite";
 import { ensureThreadNo, threadIdOf } from "./thread-no.ts";
 import type { SessionKey } from "./lineage-types.ts";
@@ -49,10 +49,16 @@ export function receiptStart(db: DatabaseSync, bundleId: string): { threadId: st
   return { threadId, firstLsn: Number(row.first_lsn), session };
 }
 
-/** Commits up to `limit` queued flips as receipt roots (the caller's transaction), oldest first. Returns how many it committed. */
-export function drainReceiptFlips(db: DatabaseSync, commit: (bundleId: string) => void, limit = 64): number {
+/** Most flips one drain commits: one drain is one audience bulk revoke (revoke-commit.ts drainFlipsIntoBulk), so 122 flips from one
+ * install-wide revoke are one walk, not 122 (1.0.3 revoke storm, M5). */
+export const FLIP_DRAIN_MAX = 1024;
+/** Commits up to `limit` queued flips as receipt roots (the caller's transaction), oldest first, stopping at the first flip `fits` says the
+ * slice's write budget has no room for (`first`: nothing was committed yet). Each flip row is deleted in the transaction that committed
+ * it, so a crash replays it. Returns how many it committed. */
+export function drainReceiptFlips(db: DatabaseSync, commit: (bundleId: string) => void, limit = 64, fits: (bundleId: string, first: boolean) => boolean = () => true): number {
   let done = 0;
   for (const row of db.prepare("SELECT thread_no,first_lsn,bundle_id FROM memory_receipt_flips LIMIT ?").all(limit)) {
+    if (!fits(String(row.bundle_id), done === 0)) break;
     commit(String(row.bundle_id));
     db.prepare("DELETE FROM memory_receipt_flips WHERE thread_no=? AND first_lsn=? AND bundle_id=?").run(Number(row.thread_no), Number(row.first_lsn), String(row.bundle_id));
     done++;

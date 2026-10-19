@@ -6,6 +6,7 @@ import { createHash } from "node:crypto";
 import { parse } from "yaml";
 import { afterEach, expect, it, vi } from "vitest";
 import { ZipFile } from "yazl";
+import { removeTempDirSync } from "../server/testing/cleanup.ts";
 vi.mock("../shared/windows-backup-tools.mjs", async () => {
   const { createHash } = await import("node:crypto"); const sha = value => createHash("sha256").update(value).digest("hex");
   return { WINDOWS_BACKUP_RAW_SHA256: { age: sha("raw age fixture"), keygen: sha("raw keygen fixture"), license: sha("raw license fixture") }, WINDOWS_BACKUP_ARCHIVE: { url: "https://invalid.example/never-used", sha256: "0".repeat(64) } };
@@ -50,7 +51,7 @@ import { verifyFuigoExecutable } from "./prepare-fuigo.mjs";
 const temporaryDirectories = [];
 afterEach(() => {
   vi.resetAllMocks();
-  for (const directory of temporaryDirectories.splice(0)) fs.rmSync(directory, { recursive: true, force: true });
+  for (const directory of temporaryDirectories.splice(0)) removeTempDirSync(directory);
 });
 
 function fixture() {
@@ -85,9 +86,19 @@ function fixture() {
   fs.writeFileSync(path.join(server, "engine-history-worker.js"), "// fixture worker");
   fs.writeFileSync(path.join(server, "inbox-fill-worker.js"), "// fixture worker");
   fs.writeFileSync(path.join(server, "transcript-read-worker.js"), "// fixture worker");
-  fs.writeFileSync(path.join(server, "memory-model-manifest.json"), JSON.stringify({ runtimeVersion: "4.2.0" }));
+  fs.writeFileSync(path.join(server, "memory-model-manifest.json"), JSON.stringify({ runtimeVersion: "4.2.0", files: [{ path: "config.json", bytes: 1, sha256: "0".repeat(64) }] }));
   fs.writeFileSync(path.join(runtime, "package.json"), JSON.stringify({ name: "onnxruntime-node", version: "1.24.3" }));
+  const commonDir = path.join(server, "node_modules/onnxruntime-common");
+  fs.mkdirSync(commonDir, { recursive: true });
+  fs.writeFileSync(path.join(commonDir, "package.json"), JSON.stringify({ name: "onnxruntime-common", version: "1.24.3" }));
+  const wasmFiles = ["ort.node.min.mjs", "ort-wasm-simd-threaded.mjs", "ort-wasm-simd-threaded.wasm"].map(name => {
+    const file = `memory/ort-wasm/${name}`, bytes = Buffer.from(`fixture ${name}`);
+    fs.mkdirSync(path.join(server, "memory/ort-wasm"), { recursive: true });
+    fs.writeFileSync(path.join(server, file), bytes);
+    return { path: file, bytes: bytes.length, sha256: createHash("sha256").update(bytes).digest("hex") };
+  });
   fs.writeFileSync(path.join(server, "memory-runtime-manifest.json"), JSON.stringify({
+    wasmBackend: { package: "onnxruntime-web", version: "1.24.3", license: "MIT", common: { version: "1.24.3", path: "node_modules/onnxruntime-common" }, files: wasmFiles },
     platform: "win32", arch: "x64", packages: [
       { name: "@huggingface/transformers", version: "4.2.0", path: "node_modules/@huggingface/transformers" },
       { name: "onnxruntime-node", version: "1.24.3", path: runtimePath },

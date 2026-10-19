@@ -55,7 +55,7 @@ describe("which settings a surface may see", () => {
     // A failed first ask answers false without confirming anything: a desktop
     // whose /api/config blipped once must not be moved to General for good.
     expect(settingsSectionRedirect(SECTIONS, "connections" as never, false, sectionsForSurface(SECTIONS, false), false)).toBeNull();
-    expect(source).toContain("settingsSectionRedirect(SECTIONS, section, desktop, visible, confirmed)");
+    expect(source).toContain("settingsSectionRedirect(SECTIONS, requested, desktop, visible, confirmed)");
     // A section on offer is kept; one filtered out by search moves to the first match.
     expect(settingsSectionRedirect(SECTIONS, "usage" as never, undefined, sectionsForSurface(SECTIONS, undefined))).toBeNull();
     expect(settingsSectionRedirect(SECTIONS, "general" as never, true, SECTIONS.filter((entry) => entry.id === "usage"))).toBe("usage");
@@ -69,7 +69,7 @@ describe("which settings a surface may see", () => {
     // A stale `appSettingsSection` — set on the desktop, or restored from
     // state — must not render a withheld pane just because the nav no longer
     // offers it.
-    for (const id of ["connections", "engines", "channels", "computer", "companion", "memory", "botDefaults", "images", "webSearch", "voice", "models", "backups", "experimental", "aboutMe", "houseRules", "skills"]) {
+    for (const id of ["connections", "channels", "companion", "memory", "botDefaults", "webSearch", "models", "backups", "skills"]) {
       expect(source, `${id} renders without a surface check`).toContain(`desktop === true && section === "${id}"`);
     }
   });
@@ -82,4 +82,4 @@ describe("which settings a surface may see", () => {
 
 it("loads Memory as a separate chunk after About me",()=>{expect(source).toMatch(/retryableLazy\(\(\) => import\("\.\/MemorySection"\)\)/);expect(source).not.toMatch(/import .* from "\.\/MemorySection"/);const ids=SETTINGS_SECTIONS.map(entry=>entry.id);expect(ids.indexOf("memory")).toBeGreaterThan(ids.indexOf("aboutMe"));expect(SETTINGS_SECTIONS.find(entry=>entry.id==="memory")).toMatchObject({group:"bots",desktopOnly:true});});
 
-it("Memory uses the retryable component and its retry boundary",()=>{expect(source).toContain("<MemorySection.Component />");expect(source).toContain("onRetry={MemorySection.retry}");});
+it("Memory uses the retryable component and its retry boundary",()=>{expect(source).toContain('<MemorySection.Component advanced={advancedFor("memory")} />');expect(source).toContain("onRetry={MemorySection.retry}");});

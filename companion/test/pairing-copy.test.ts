@@ -2,15 +2,16 @@
 // door's /enter page (browser.ts `say("Could not sign in", body.error)` and
 // the typed-code `note.textContent = body.error`). The copy rules say no em
 // dash and no raw error codes or computer paths reach a person.
-import { mkdirSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import { DATA_DIR } from "../src/state.ts";
 import { DeviceRegistry, MAX_PAIRING_ATTEMPTS, PAIRING_SAVE_FAILED } from "../src/devices.ts";
+import { removeTempDirSync } from "../../server/testing/cleanup.ts";
 
 describe("pairing refusal copy shown on /enter", () => {
-  beforeEach(() => rmSync(DATA_DIR, { recursive: true, force: true }));
+  beforeEach(() => removeTempDirSync(DATA_DIR));
 
   it("an expired / used / burned / wrong code sentence carries no em dash", () => {
     const registry = new DeviceRegistry();

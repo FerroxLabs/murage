@@ -4,9 +4,10 @@
 // Kimi audit #5: a file another program holds open on Windows (EBUSY, a
 // sharing violation) in a bot's folder is left out and listed, like an
 // unreadable one. Murage's own records stay strict.
-import { mkdirSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { expect, it, vi } from "vitest";
+import { removeTempDirSync } from "./testing/cleanup.ts";
 
 vi.mock("node:fs", async importOriginal => {
   const real = await importOriginal<typeof import("node:fs")>();
@@ -25,13 +26,13 @@ it("a sharing-locked file in a bot's folder is skipped and listed", async () => 
     await withOfflineInstallation(f.data, async installation => {
       const stage = await stageInstallationStateWhileOwned(installation, f.parent);
       expect(stage.manifest.skipped).toContainEqual({ path: "workspaces/bot/locked.pst", reason: "unreadable" });
-      rmSync(stage.directory, { recursive: true, force: true });
+      removeTempDirSync(stage.directory);
     });
-  } finally { f.db.close(); rmSync(f.parent, { recursive: true, force: true }); }
+  } finally { f.db.close(); removeTempDirSync(f.parent); }
 });
 it("a sharing-locked record of Murage's own still stops the backup", async () => {
   const f = backupFixture(); process.env.EBUSY_RECORD = "1";
   try {
     await expect(withOfflineInstallation(f.data, installation => stageInstallationStateWhileOwned(installation, f.parent))).rejects.toThrow();
-  } finally { delete process.env.EBUSY_RECORD; f.db.close(); rmSync(f.parent, { recursive: true, force: true }); }
+  } finally { delete process.env.EBUSY_RECORD; f.db.close(); removeTempDirSync(f.parent); }
 });

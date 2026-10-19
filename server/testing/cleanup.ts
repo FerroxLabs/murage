@@ -11,6 +11,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 
+import { settleTestHandles, settleTestHandlesSync } from "../test-handle-registry.ts";
 import { assertSafeToWipe, SafeWipeRefused } from "./safe-wipe.mjs";
 
 /** How `waitForExit` should end the child, and how long to allow. */
@@ -99,13 +100,71 @@ export function waitForExit(
   });
 }
 
+/** How a removal retries. The defaults suit a directory a just-closed database or a just-killed child is still letting go of. */
+export interface RemoveTempDirOptions {
+  /** Total time the retries may take. Default 15 s. */
+  budgetMs?: number;
+  /** Wait after the first failed attempt; doubles from there. Default 50 ms. */
+  firstDelayMs?: number;
+  /** The wait never grows past this. Default 1 s. */
+  maxDelayMs?: number;
+  /** Throw when the directory will not go, instead of warning. The async default is to warn (a leaked temp dir is not a red
+   * suite); the sync default is to throw, because its callers reset a directory they are about to reuse. */
+  strict?: boolean;
+  /** Close every open data handle under `dir` first (async: also wait for the checkpointer threads to exit). Default true. */
+  settle?: boolean;
+}
+
+/** The delays between attempts: firstDelayMs, doubling, capped at maxDelayMs, until budgetMs is spent. */
+export function backoffDelays({ budgetMs = 15_000, firstDelayMs = 50, maxDelayMs = 1_000 }: RemoveTempDirOptions = {}): number[] {
+  const delays: number[] = [];
+  for (let spent = 0, next = firstDelayMs; spent < budgetMs; next = Math.min(next * 2, maxDelayMs)) {
+    const wait = Math.min(next, budgetMs - spent);
+    delays.push(wait); spent += wait;
+  }
+  return delays;
+}
+
+/** Seams for cleanup.test.ts only. */
+export const cleanupInternals = {
+  remove: (path: string): void => rmSync(path, { recursive: true, force: true, maxRetries: 3, retryDelay: 25 }),
+  sleep: (ms: number): Promise<void> => new Promise(r => setTimeout(r, ms)),
+  sleepSync: (ms: number): void => { Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms); },
+  warn: (message: string): void => console.warn(message),
+};
+
+/**
+ * assertSafeToWipe for a test directory. Most are under the OS temp directory; some suites make theirs in the checkout
+ * (a scratch folder beside the sources, so a path stays short or on the same volume), which the plain check refuses as "not a
+ * temp directory". That one refusal is retried with the working directory as the `within` root; every other rule (a home, a
+ * data directory, a live lease, the working directory itself) still applies, and anything outside both is refused as before.
+ */
+function admit(dir: string): { path: string } {
+  try {
+    return assertSafeToWipe(dir);
+  } catch (error) {
+    if (!(error instanceof SafeWipeRefused) || !/not under the OS temp directory/.test(error.message)) throw error;
+    return assertSafeToWipe(dir, { within: process.cwd() });
+  }
+}
+
+const giveUp = (dir: string, lastError: unknown, strict: boolean | undefined, strictDefault: boolean): void => {
+  if (lastError instanceof SafeWipeRefused) throw lastError;
+  if (strict ?? strictDefault) throw lastError;
+  cleanupInternals.warn(`test cleanup could not remove ${dir}: ${lastError instanceof Error ? lastError.message : String(lastError)}`);
+};
+
 /**
  * Remove a temp directory, and never fail a green suite over one.
  *
- * A just-killed child lets go of its files a beat after the kill returns, and
- * `rmSync`'s own `maxRetries` does not cover an EACCES/EPERM on the directory
- * itself. Retry briefly; if the directory still will not go, warn and leave
- * it for the OS to reap. A leaked temp dir is a non-event — a red CI run that
+ * Three things keep a database directory from going: a connection the test (or a
+ * `vi.resetModules()` copy of the module) left open, the log checkpointer thread that holds the
+ * file until it is told to leave, and the filesystem itself (Windows answers EPERM/EBUSY while a
+ * scanner or a just-closed handle lingers; Linux answers ENOTEMPTY while the checkpointer's last
+ * close is still copying or deleting the -wal). So this first settles every open data handle under
+ * the directory (server/test-handle-registry.ts: flush, close, await the checkpointer's exit), then
+ * retries with exponential backoff (50 ms doubling to 1 s, 15 s in all). If the directory still will
+ * not go, warn and leave it for the OS to reap: a leaked temp dir is a non-event, a red CI run that
  * says nothing about the code under test is not.
  *
  * The one thing that is not a non-event: the path not being a temp directory
@@ -117,22 +176,47 @@ export function waitForExit(
  * turned that beat into a one-off SafeWipeRefused on a green suite
  * (FOLLOW7, SAFEWIPE1 verifier). Nothing is deleted while a refusal stands.
  */
-export async function removeTempDir(dir: string): Promise<void> {
+export async function removeTempDir(dir: string, options: RemoveTempDirOptions = {}): Promise<void> {
+  if (options.settle !== false) await settleTestHandles(dir);
+  const delays = backoffDelays(options);
   let lastError: unknown;
-  for (let i = 0; i < 20; i++) {
+  for (let attempt = 0; ; attempt++) {
     try {
-      const { path } = assertSafeToWipe(dir);
-      rmSync(path, { recursive: true, force: true });
+      const { path } = admit(dir);
+      cleanupInternals.remove(path);
       return;
     } catch (error) {
       lastError = error;
-      await new Promise((r) => setTimeout(r, 100));
+      if (attempt >= delays.length) break;
+      await cleanupInternals.sleep(delays[attempt]!);
     }
   }
-  if (lastError instanceof SafeWipeRefused) throw lastError;
-  console.warn(
-    `test cleanup could not remove ${dir}: ${lastError instanceof Error ? lastError.message : String(lastError)}`,
-  );
+  giveUp(dir, lastError, options.strict, false);
+}
+
+/**
+ * removeTempDir for a hook that cannot await (a sync `beforeEach` that resets a data directory, a `finally`).
+ * Same admission check per attempt and the same backoff, waited out with Atomics.wait (the checkpointer and any
+ * other thread keep running while this one waits). It closes the data handles under `dir` and asks their
+ * checkpointers to leave, but cannot wait for the exit event, so the backoff does that waiting. Throws when the
+ * directory will not go (the removal it replaces threw too), unless `strict: false`.
+ */
+export function removeTempDirSync(dir: string, options: RemoveTempDirOptions = {}): void {
+  if (options.settle !== false) settleTestHandlesSync(dir);
+  const delays = backoffDelays(options);
+  let lastError: unknown;
+  for (let attempt = 0; ; attempt++) {
+    try {
+      const { path } = admit(dir);
+      cleanupInternals.remove(path);
+      return;
+    } catch (error) {
+      lastError = error;
+      if (attempt >= delays.length) break;
+      cleanupInternals.sleepSync(delays[attempt]!);
+    }
+  }
+  giveUp(dir, lastError, options.strict, true);
 }
 
 /**

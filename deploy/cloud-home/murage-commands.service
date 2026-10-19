@@ -1,0 +1,33 @@
+# SPDX-License-Identifier: AGPL-3.0-or-later
+# Self-service commands from the members area (restart, safe mode, update, reset, undo, logs, export).
+# Not PartOf/BindsTo murage-home: it restarts and stops that unit itself, and must outlive it.
+[Unit]
+Description=Murage self-service command runner
+After=murage-volume.service data.mount network-online.target murage-control.service
+Requires=data.mount
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=root
+Group=root
+UMask=0077
+LimitCORE=0
+WorkingDirectory=/
+ExecStart=/usr/bin/python3 -I /usr/local/libexec/murage-commands
+# A reset or export can take a while; an interrupted one is finished or rolled back on the next start.
+TimeoutStopSec=60
+Restart=always
+RestartSec=60
+RestartPreventExitStatus=78
+PrivateTmp=yes
+ProtectHome=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+RestrictSUIDSGID=yes
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+ProtectSystem=full
+ReadWritePaths=/opt /data /var/lib/murage-home /var/cache/restic /run
+
+[Install]
+WantedBy=multi-user.target

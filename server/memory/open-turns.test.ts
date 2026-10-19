@@ -12,7 +12,7 @@
 // - the downgrade is the exact inverse and the real 1.0.1 inspector (d950cbf67) accepts what it leaves;
 // - start-up and a settlement read only memory_open_turns, flat from 10,000 to 1,000,000 completed turns.
 import { fork } from "node:child_process";
-import { existsSync, mkdirSync, mkdtempSync, rmSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { monitorEventLoopDelay } from "node:perf_hooks";
@@ -26,16 +26,17 @@ import {
 import { OPEN_TURNS_OF_THREAD_SQL, interruptOpenTurn, recordMemorySettlement, reconcileInterruptedMemoryTurns } from "./settlement.ts";
 import { setMemoryMode } from "./repository.ts";
 import { LISTING_SQL } from "./replay-lineage.ts";
-import { downgradeMemorySchema, MEMORY_SCHEMA, MEMORY_SCHEMA_V8, MEMORY_SCHEMA_VERSION, WRITETIME_TABLES, migrateMemorySchema, openTurnsDiffer, openTurnsReady, validateMemorySchema, WRITETIME_TRIGGERS } from "./schema.ts";
+import { downgradeMemorySchema, LANE2_DERIVED_NAMES, MEMORY_SCHEMA, MEMORY_SCHEMA_V8, MEMORY_SCHEMA_VERSION, WRITETIME_TABLES, migrateMemorySchema, openTurnsDiffer, openTurnsReady, validateMemorySchema, WRITETIME_TRIGGERS } from "./schema.ts";
 
 // (msearch2: the owner-tail table, its build row and its triggers are derived and made at every open from v8 on: they are not part of this step)
 const ownerTailObjects = ["memory_owner_tail", "memory_owner_tail_build", "memory_owner_tail_insert", "memory_owner_tail_update", "memory_owner_tail_delete", "memory_records_owner_tail"];
 import { validateMemorySchema as validateAs101 } from "./testing/schema-1.0.1.ts";
+import { removeTempDirSync } from "../testing/cleanup.ts";
 
 const dbs: DatabaseSync[] = [];
 const dirs: string[] = [];
 beforeEach(() => { vi.spyOn(console, "warn").mockImplementation(() => {}); });
-afterEach(() => { vi.restoreAllMocks(); vi.useRealTimers(); for (const db of dbs.splice(0)) { try { db.close(); } catch { /* closed */ } } for (const dir of dirs.splice(0)) rmSync(dir, { recursive: true, force: true }); });
+afterEach(() => { vi.restoreAllMocks(); vi.useRealTimers(); for (const db of dbs.splice(0)) { try { db.close(); } catch { /* closed */ } } for (const dir of dirs.splice(0)) removeTempDirSync(dir); });
 
 const SOURCE_COLUMNS = "id,scope_id,thread_id,message_id,turn_id,revision,content_hash,kind,speaker,outcome,branch_id,state";
 /** `turns` turn sources in 97 threads, every `working`-th one working, the rest completed; ids in the `turn:` range. */
@@ -85,7 +86,8 @@ it("the upgrade from v8 creates no index on a table that holds rows, and the tri
   migrateMemorySchema(db);
   const after = db.prepare("SELECT name,type,tbl_name,sql FROM sqlite_schema").all() as Array<{ name: string; type: string; tbl_name: string; sql: string | null }>;
   // (revoke-bounded r3's late objects are made at every open from v9 on, beside the versioned text: schema.ts REVOKE_LATE_SQL)
-  const revokeLate = new Set([...ownerTailObjects, "memory_deny", "memory_revocation_targets", "memory_evidence_by_source", "memory_source_origins", "memory_late_build", "memory_evidence_by_source_insert", "memory_evidence_by_source_delete", "memory_source_origins_insert"]);
+  // (1.0.3 lane 2's derived objects, the age-key table and its company, are made empty at every v10 open too: schema.ts ensureRecordKeys)
+  const revokeLate = new Set([...ownerTailObjects, ...LANE2_DERIVED_NAMES, "memory_deny", "memory_revocation_targets", "memory_evidence_by_source", "memory_source_origins", "memory_late_build", "memory_revoke_fold", "memory_revoke_fold_bulk", "memory_evidence_by_source_insert", "memory_evidence_by_source_delete", "memory_source_origins_insert"]);
   const added = after.filter(row => !before.has(row.name) && !revokeLate.has(row.name) && !(WRITETIME_TRIGGERS as readonly string[]).includes(row.name));
   // everything that appeared belongs to the new tables or to a trigger on the sources: no index on a table that already held rows
   const indexes = added.filter(row => row.type === "index");
@@ -375,7 +377,7 @@ for (const turns of [10_000, 100_000, 1_000_000]) it(`start-up with ${turns.toLo
 }, 120_000);
 
 it("a settlement settles the other working turns of its thread from the table, and a restart settles the turns the last start left", () => {
-  closeDatabase(); rmSync(DATA_DIR, { recursive: true, force: true }); mkdirSync(DATA_DIR, { recursive: true });
+  closeDatabase(); removeTempDirSync(DATA_DIR); mkdirSync(DATA_DIR, { recursive: true });
   const db = database();
   setMemoryMode("capture");
   recordMemorySettlement("chat", "turn-1", "working");

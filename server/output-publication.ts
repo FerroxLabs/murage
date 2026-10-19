@@ -28,7 +28,7 @@ import {
 import { OUTPUT_NAMESPACE, WORKSPACE_SEARCH_MAX_DEPTH, WORKSPACE_SEARCH_MAX_ENTRIES } from "../shared/workspace-files.ts";
 import type { Artifact } from "../shared/artifacts.ts";
 import { ARTIFACT_PREVIEW_MAX_BYTES, ARTIFACT_TEXT_EXTENSIONS, ArtifactError, artifactWorkspaceIdentity, readArtifact, registerArtifact, verifiedArtifactSource, type ArtifactScope } from "./artifacts.ts";
-import { GENERATED_IMAGE_MAX_BYTES, IMAGE_MAX_BYTES, saveImage, type SavedAttachment } from "./attachments.ts";
+import { GENERATED_IMAGE_MAX_BYTES, IMAGE_MAX_BYTES, saveReceiptImage, writeNewReceiptImage, type SavedAttachment } from "./attachments.ts";
 import type { RuntimeEvent } from "./contracts.ts";
 import type { Store } from "./store.ts";
 import { turnSucceeded } from "./turn-outcome.ts";
@@ -68,10 +68,10 @@ export interface OutputPublisher {
   publishTerminalOutputs(event: TerminalTurnEvent): Promise<void>;
   /** Startup reconciliation of pending assistant images and already registered
    * successful shell outputs. Shell recovery only repairs their missing cards. */
-  resumePending(options?: ResumePendingOptions): void;
+  resumePending(options?: ResumePendingOptions): Promise<void>;
   /** The owner released this held receipt: finish it directly (verify, save to Files, announce), whatever kind it is. Throws
    * an OutputPublicationError when it cannot finish, so the caller keeps the hold and the item stays listed for a retry. */
-  completeReleased(receiptId: string): void;
+  completeReleased(receiptId: string): Promise<void>;
 }
 
 /** Host facts only. Prose directs creation but never authorizes publication. */
@@ -341,8 +341,8 @@ export function createOutputPublisher(deps: OutputPublicationDeps): OutputPublis
     }
   };
 
-  const resumePending = (options: ResumePendingOptions = {}) => {
-    try { resumePendingAssistantImages({ db: deps.database(), dataDir: deps.dataDir, store: deps.store }, options.limit ?? 50, options.tried); }
+  const resumePending = async (options: ResumePendingOptions = {}) => {
+    try { await resumePendingAssistantImages({ db: deps.database(), dataDir: deps.dataDir, store: deps.store }, options.limit ?? 50, options.tried); }
     catch (error) { log(`pending image recovery stopped (${outputErrorCategory(error, "database")})`); }
     if (options.shellCards === false) return;
     try { resumeRegisteredShellCards(deps); }
@@ -378,17 +378,17 @@ export function createOutputPublisher(deps: OutputPublicationDeps): OutputPublis
       catch (error) { log(`automatic publication stopped (${outputErrorCategory(error, "database")})`); }
     },
     resumePending,
-    completeReleased: receiptId => completeReleasedReceipt(deps, receiptId),
+    completeReleased: async receiptId => { await completeReleasedReceipt(deps, receiptId); },
   };
 }
 
 /** Owner-authorized completion of ONE receipt a restore held, for every receipt kind (retained, failed or registered
  * shell outputs and generated images). It never depends on a recovery batch picking the receipt up. */
-function completeReleasedReceipt(deps: OutputPublicationDeps, receiptId: string): void {
+async function completeReleasedReceipt(deps: OutputPublicationDeps, receiptId: string): Promise<void> {
   const db = deps.database();
   const receipt = outputReceipt(db, receiptId);
   if (!receipt) throw new OutputPublicationError("scope", "This saved output is unavailable.", 404);
-  if (receipt.producer === "assistant-image" || receipt.producer === "image-operation") { finishImageReceipt({ db, dataDir: deps.dataDir, store: deps.store }, receipt.id); return; }
+  if (receipt.producer === "assistant-image" || receipt.producer === "image-operation") { await finishImageReceipt({ db, dataDir: deps.dataDir, store: deps.store }, receipt.id); return; }
   const scope = deps.artifactScopes().find(item => item.botId === receipt.botId && item.threadId === receipt.threadId && item.threadAvailable !== false && item.managedOutput !== true);
   const owner = deps.store.botByThread(receipt.threadId)?.id === receipt.botId || Boolean(deps.store.groupByThread(receipt.threadId)?.memberIds.includes(receipt.botId));
   if (!scope || !owner) throw new OutputPublicationError("scope", "The conversation this output belongs to is unavailable.", 404);
@@ -539,6 +539,9 @@ export interface CompleteImageOptions {
    * attaches the image to its own turn message (native assistant_image). */
   transcriptText?: string;
   artifactName: string;
+  /** Asked again after the awaited attachment step, before anything is
+   * attached or saved; throwing (a revoked caller) leaves the receipt as it was. */
+  recheck?: () => void;
 }
 
 function botName(store: Store, botId: string) {
@@ -549,31 +552,71 @@ function botName(store: Store, botId: string) {
 /** Idempotent completion from retained bytes: attachment (same upload id),
  * optional transcript entry (found again after a crash), then Files. An
  * attachment or transcript failure throws after recording `failed`; a Files
- * failure is reported in the result so a received image is never hidden. */
-export function completeImageOutput(deps: ImageOutputDeps, receiptId: string, options: CompleteImageOptions): ImageOutputCompletion {
+ * failure is reported in the result so a received image is never hidden.
+ * The attachment step awaits a byte-for-byte check of an existing entry
+ * (saveReceiptImage); everything after it is synchronous, and the receipt and
+ * its conversation are read again once that await returns. */
+export async function completeImageOutput(deps: ImageOutputDeps, receiptId: string, options: CompleteImageOptions): Promise<ImageOutputCompletion> {
+  const { receipt, root, bytes } = verifiedImageReceipt(deps, receiptId);
+  let saved: SavedAttachment;
+  try { saved = await saveReceiptImage(bytes, receipt.mime, receipt.id, imageOutputMaxBytes(receipt.producer)); }
+  catch (error) { throw attachmentFailure(deps, receipt.id, error); }
+  // Asked again after the await: the conversation may have gone, another
+  // completion may have advanced the receipt, the caller may have been revoked.
+  const current = outputReceipt(deps.db, receipt.id);
+  if (!current) throw new OutputPublicationError("scope", "This image result is unavailable.", 404);
+  if (!imageReceiptOwned(deps.store, current)) throw new OutputPublicationError("scope", "This image result belongs to a conversation that is no longer available.", 404);
+  options.recheck?.();
+  return finishImageCompletion(deps, current, root, saved, options);
+}
+
+/** completeImageOutput for a receipt retained earlier in the same synchronous
+ * step (publishAssistantImage, inside the runtime event fold, which stages the
+ * image for its turn before the turn's completion is folded). Its attachment
+ * id is new, so there is nothing to compare: write only, no await. */
+function completeNewImageOutput(deps: ImageOutputDeps, receiptId: string, options: CompleteImageOptions): ImageOutputCompletion {
+  const { receipt, root, bytes } = verifiedImageReceipt(deps, receiptId);
+  let saved: SavedAttachment;
+  try { saved = writeNewReceiptImage(bytes, receipt.mime, receipt.id, imageOutputMaxBytes(receipt.producer)); }
+  catch (error) { throw attachmentFailure(deps, receipt.id, error); }
+  return finishImageCompletion(deps, receipt, root, saved, options);
+}
+
+const imageReceiptOwned = (store: Store, receipt: LocalOutputReceipt) =>
+  store.botByThread(receipt.threadId)?.id === receipt.botId || Boolean(store.groupByThread(receipt.threadId)?.memberIds.includes(receipt.botId));
+
+/** Scope, ownership and the retained bytes against the receipt's sha256. */
+function verifiedImageReceipt(deps: ImageOutputDeps, receiptId: string): { receipt: LocalOutputReceipt; root: string; bytes: Buffer } {
   const { db, store } = deps;
-  let receipt = outputReceipt(db, receiptId);
+  const receipt = outputReceipt(db, receiptId);
   if (!receipt || (receipt.producer !== "image-operation" && receipt.producer !== "assistant-image")) throw new OutputPublicationError("scope", "This image result is unavailable.", 404);
-  const owner = store.botByThread(receipt.threadId)?.id === receipt.botId || Boolean(store.groupByThread(receipt.threadId)?.memberIds.includes(receipt.botId));
-  if (!owner) throw new OutputPublicationError("scope", "This image result belongs to a conversation that is no longer available.", 404);
-  let root: string, bytes: Buffer;
+  if (!imageReceiptOwned(store, receipt)) throw new OutputPublicationError("scope", "This image result belongs to a conversation that is no longer available.", 404);
   try {
-    root = managedImageOutputRoot(deps.dataDir, receipt.botId, receipt.threadId, false);
+    const root = managedImageOutputRoot(deps.dataDir, receipt.botId, receipt.threadId, false);
     if (!/^[a-f0-9-]{36}\.(png|jpg|gif|webp)$/.test(receipt.pathToken)) throw new OutputPublicationError("verification", "The retained image identity is invalid.");
-    bytes = readStableFile(join(root, receipt.pathToken), imageOutputMaxBytes(receipt.producer));
+    const bytes = readStableFile(join(root, receipt.pathToken), imageOutputMaxBytes(receipt.producer));
     if (bytes.length !== receipt.bytes || sha256(bytes) !== receipt.sha256) throw new OutputPublicationError("verification", "The retained image changed.");
+    return { receipt, root, bytes };
   } catch (error) {
     const category = outputErrorCategory(error, "verification");
     if (receipt.stage !== "registered") failReceipt(db, receipt.id, category);
     throw new OutputPublicationError(category, "The retained image could not be verified. It was not published.");
   }
-  let saved: SavedAttachment;
-  try { saved = saveImage(bytes, receipt.mime, receipt.id, imageOutputMaxBytes(receipt.producer)); }
-  catch (error) {
-    const category = outputErrorCategory(error, "attachment");
-    if (receipt.stage !== "registered") failReceipt(db, receipt.id, category);
-    throw new OutputPublicationError(category, "Image received and kept locally, but its conversation attachment could not finish.", 409);
-  }
+}
+
+/** The attachment step failed: record it (unless already registered) and
+ * answer with the attachment error. */
+function attachmentFailure(deps: ImageOutputDeps, receiptId: string, error: unknown): OutputPublicationError {
+  const category = outputErrorCategory(error, "attachment");
+  const current = outputReceipt(deps.db, receiptId);
+  if (current && current.stage !== "registered") failReceipt(deps.db, receiptId, category);
+  return new OutputPublicationError(category, "Image received and kept locally, but its conversation attachment could not finish.", 409);
+}
+
+/** Transcript entry and Files, synchronously after the attachment step. */
+function finishImageCompletion(deps: ImageOutputDeps, start: LocalOutputReceipt, root: string, saved: SavedAttachment, options: CompleteImageOptions): ImageOutputCompletion {
+  const { db, store } = deps;
+  let receipt = start;
   const attachmentId = basename(saved.path);
   if (options.transcriptText !== undefined && !receipt.messageId) {
     try {
@@ -608,12 +651,12 @@ export function completeImageOutput(deps: ImageOutputDeps, receiptId: string, op
  * attached for the caller's turn message, then saved to Files. */
 export function publishAssistantImage(deps: ImageOutputDeps, input: { botId: string; threadId: string; runId: string; bytes: Buffer; mime: string }): SavedAttachment {
   const receipt = retainImageOutput(deps, { producer: "assistant-image", ...input });
-  return completeImageOutput(deps, receipt.id, { artifactName: "Generated image" }).saved;
+  return completeNewImageOutput(deps, receipt.id, { artifactName: "Generated image" }).saved;
 }
 
 /** Startup reconciliation for assistant images whose attachment or Files
  * step did not finish. Only known receipts are read; no directory scan. */
-export function resumePendingAssistantImages(deps: ImageOutputDeps, limit = 50, tried?: Set<string>): number {
+export async function resumePendingAssistantImages(deps: ImageOutputDeps, limit = 50, tried?: Set<string>): Promise<number> {
   // Held rows are excluded in SQL, before the LIMIT: a restore's held images must never fill the batch and starve a released one.
   // `tried` (a start's recovery in slices): rows an earlier slice looked at are passed over, so one that stays failed never fills the next slice.
   const rows = (deps.db.prepare(`SELECT * FROM output_publications WHERE producer='assistant-image' AND stage IN ('retained','failed')${notRestoreHeldSql(deps.db, "output_receipt", "output_publications.id")} ORDER BY updated_at,id LIMIT ?`).all(limit + (tried?.size ?? 0)) as unknown as ReceiptRow[])
@@ -624,17 +667,17 @@ export function resumePendingAssistantImages(deps: ImageOutputDeps, limit = 50, 
     try {
       // belt: a restore keeps this image until the owner releases it
       if (sqlRowRestoreHeld(deps.db, "output_receipt", row.id)) continue;
-      if (finishImageReceipt(deps, row.id)) completed++;
+      if (await finishImageReceipt(deps, row.id)) completed++;
     } catch { /* stays failed with its category for the next startup */ }
   }
   return completed;
 }
 
 /** Completes one retained image receipt and attaches it once. True when a Files artifact was saved by this call. Throws on failure. */
-function finishImageReceipt(deps: ImageOutputDeps, receiptId: string): boolean {
+async function finishImageReceipt(deps: ImageOutputDeps, receiptId: string): Promise<boolean> {
   const receipt = outputReceipt(deps.db, receiptId);
   if (!receipt) throw new OutputPublicationError("scope", "This saved output is unavailable.", 404);
-  const done = completeImageOutput(deps, receipt.id, { artifactName: "Generated image" });
+  const done = await completeImageOutput(deps, receipt.id, { artifactName: "Generated image" });
   // The in-memory turn attachment was lost with the process: attach once.
   // A receipt that already names its message is attached: on a thread not yet filled after an upgrade rowAttaching answers from an empty index, and a second message would be added.
   if (!receipt.messageId && !done.receipt.messageId && !deps.store.rowAttaching(receipt.threadId, done.saved.path)) {

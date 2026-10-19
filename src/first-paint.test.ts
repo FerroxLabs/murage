@@ -186,6 +186,25 @@ describe("the first paint", () => {
     }
   });
 
+  it("loads a Cloud home's engine sign-in terminal, with xterm, the first time a sign-in opens (1.0.3)", () => {
+    const reached = staticallyReached(graph);
+    expect(reached).not.toContain("src/components/EngineLoginTerminal.tsx");
+    expect(graph.inputs["src/components/EngineLoginTerminal.tsx"]).toBeDefined();
+    expect([...reached].filter((path) => path.startsWith("@xterm/"))).toEqual([]);
+  });
+
+  it("loads the Cloud home's door only on a page a Cloud home served, and the Connect panel when it opens (1.0.3)", () => {
+    const reached = staticallyReached(graph);
+    for (const file of ["src/components/cloud/Door.tsx", "src/lib/cloud-door.ts", "src/components/cloud/ConnectHome.tsx", "src/components/cloud/EngineSignIns.tsx"]) {
+      expect(reached, file).not.toContain(file);
+      expect(graph.inputs[file], file).toBeDefined();
+    }
+    // what the first paint does carry: the meta read that decides, and the workspace switch itself
+    for (const file of ["src/lib/cloud-home-meta.ts", "src/components/cloud/WorkspaceSwitch.tsx"]) {
+      expect(reached, file).toContain(file);
+    }
+  });
+
   it("leaves both Markdown editors and Tiptap to the first edit", () => {
     const reached = staticallyReached(graph);
     for (const file of ["src/components/MarkdownEditor.tsx", "src/components/editor/RichMarkdownEditor.tsx", "src/lib/markdown-fidelity.ts"]) {

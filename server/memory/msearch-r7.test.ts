@@ -16,6 +16,7 @@ import { ensureScope, memoryAccess, reconcileMemoryRoster, type MemoryAccess, ty
 import { setMemoryMode } from "./repository.ts";
 import { clearMemorySearchCache, searchMemory, setAuthorizeSliceMsForTest, type MemorySearchBridge } from "./search.ts";
 import { LineageAllowance } from "./lineage-allowance.ts";
+import { removeTempDirSync } from "../testing/cleanup.ts";
 
 const ROSTER: MemoryRoster = { bots: [{ id: "a", threadId: "thread-a", section: "crew" }], groups: [] };
 const INDEX_PATH = () => join(DATA_DIR, "memory-index.db");
@@ -24,7 +25,7 @@ const TEXT = "harbour lantern notes for the Friday review of the long quiet quay
 
 beforeEach(() => {
   resetScanAdmission(); closeMemoryIndexReader(); closeDatabase(); clearMemorySearchCache();
-  rmSync(DATA_DIR, { recursive: true, force: true }); mkdirSync(DATA_DIR, { recursive: true });
+  removeTempDirSync(DATA_DIR); mkdirSync(DATA_DIR, { recursive: true });
   reconcileMemoryRoster(ROSTER); setMemoryMode("active");
 });
 afterEach(() => { resetScanAdmission(); closeMemoryIndexReader(); setWalCheckpointRequester(null); setWalDrainThreshold(64 * 1024 * 1024); setAuthorizeSliceMsForTest(8); });

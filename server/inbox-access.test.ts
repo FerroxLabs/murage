@@ -5,7 +5,7 @@
 // always has. A request the companion proved it forwarded gets the threads
 // the phone's sidebar shows — the same `visibleToCompanion` answer the live
 // stream and the transcript routes give — and nothing else gets anything.
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
@@ -16,12 +16,13 @@ import { createCompanionAuthority } from "./companion-authority.ts";
 import { companionInboxRoute, inboxAccessFor, inboxDoor, type InboxRosterStore } from "./inbox-access.ts";
 import { inboxRequest, initializeInbox } from "./inbox.ts";
 import { desktopSurfaceSecret } from "./sse-visibility.ts";
+import { removeTempDirSync } from "./testing/cleanup.ts";
 
 const PROOF = "c".repeat(64);
 const proven = createCompanionAuthority(PROOF);
 
 const roots: string[] = [], databases: DatabaseSync[] = [];
-afterEach(() => { for (const db of databases.splice(0)) { try { db.close(); } catch {} } for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true }); });
+afterEach(() => { for (const db of databases.splice(0)) { try { db.close(); } catch {} } for (const root of roots.splice(0)) removeTempDirSync(root); });
 function fixture() {
   const root = mkdtempSync(join(tmpdir(), "murage-inbox-access-")); roots.push(root);
   const db = new DatabaseSync(join(root, "messages.db")); databases.push(db);

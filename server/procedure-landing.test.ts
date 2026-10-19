@@ -1,4 +1,4 @@
-import { mkdirSync, rmSync } from "node:fs";
+import { mkdirSync } from "node:fs";
 import { join } from "node:path";
 import { beforeEach, expect, it, vi } from "vitest";
 import { DATA_DIR } from "./config.ts";
@@ -19,6 +19,7 @@ import { startRecoveryScheduler } from "./recovery-scheduler.ts";
 import { changeLearningEvent, learningHistory } from "./memory/learning-history.ts";
 import { DEFAULT_BOT_LEARNING } from "./bot-learning.ts";
 import { reconcileOutstandingChangesPass, reconcileOutstandingChanges, applyProcedureSuggestion, editProcedureSuggestion, landingReasons, listProcedureSuggestions, notNowProcedureSuggestion, improvedMomentForEvent, procedureChipItemsForThread, procedureEvidenceProspectDerived, procedureHardCheck, setImprovedListener } from "./memory/procedure-landing.ts";
+import { removeTempDirSync } from "./testing/cleanup.ts";
 
 /** A full reset of the data dir between fixtures. A reset inside a test must do what the suite's afterEach does between tests (testing/setup.ts): the
  * message log and the WAL upkeep hold their own handles and the stores hold deferred writes, so a bare rm leaves the next fixture reading a
@@ -26,7 +27,7 @@ import { reconcileOutstandingChangesPass, reconcileOutstandingChanges, applyProc
 async function resetDataDir() {
   try { flushCoalesced(); } catch { /* nothing left to write */ }
   closeMessageDb(); await stopWalMaintenance(); closeDatabase();
-  rmSync(DATA_DIR, { recursive: true, force: true }); mkdirSync(DATA_DIR, { recursive: true });
+  removeTempDirSync(DATA_DIR); mkdirSync(DATA_DIR, { recursive: true });
 }
 beforeEach(resetDataDir);
 const markdown = (text: string) => `---\nname: checked-method\ndescription: Check actual results\n---\n${text}\n`;

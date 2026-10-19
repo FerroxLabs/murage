@@ -2,12 +2,12 @@ import { mkdtempSync, readFileSync, readdirSync, renameSync, mkdirSync, writeFil
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, expect, it, vi } from "vitest";
-import { safeWipeSync } from "../../testing/safe-wipe.mjs";
 import { DiscordService } from "./service.ts";
 import type { DiscordTransport } from "./transport.ts";
 import { ChannelSendError } from "../durable-delivery.ts";
+import { removeTempDirSync } from "../../testing/cleanup.ts";
 const roots:string[]=[],services:DiscordService[]=[];
-afterEach(async()=>{for(const s of services.splice(0))await s.stop();for(const root of roots.splice(0))safeWipeSync(root);vi.useRealTimers();});
+afterEach(async()=>{for(const s of services.splice(0))await s.stop();for(const root of roots.splice(0))removeTempDirSync(root);vi.useRealTimers();});
 const flush=async()=>{for(let i=0;i<20;i++)await Promise.resolve();};
 function fixture(){
   const dir=mkdtempSync(join(tmpdir(),"murage-discord-service-"));roots.push(dir);let chief=true,now=1000000000,sequence=100;

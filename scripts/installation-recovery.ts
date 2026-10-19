@@ -1,6 +1,7 @@
 import { realpathSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { installationRecoveryCommand, usage } from "../server/installation-recovery-command.ts";
+import { setPathWalkNotice } from "../server/link-removal.ts";
 export { installationRecoveryCommand };
 
 function invokedAsMain(): boolean {
@@ -10,6 +11,9 @@ function invokedAsMain(): boolean {
 }
 
 if (invokedAsMain()) {
+  // stdout carries the result and stderr the one JSON error line its callers parse: the link-removal path-walk note (no native
+  // removeTree here) is left out of both. The server says it in its own log at every start.
+  setPathWalkNotice(() => {});
   try {
     process.stdout.write(JSON.stringify(await installationRecoveryCommand(process.argv.slice(2))) + "\n");
   } catch (error) {

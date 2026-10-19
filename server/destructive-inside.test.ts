@@ -6,10 +6,14 @@
 // every target the stop line places inside the bot's own roots (its
 // workspace and thread folders, the turn's folder, the temp folders) is not
 // "destructive" for this guard. Everything else it guarded still is.
+import { posix, win32 } from "node:path";
 import { describe, expect, it } from "vitest";
 
 import { autoVerdict } from "./auto-approve.ts";
 import { classifyStopLine, deletesPlacedInside, stopLineKey, stopLineKeyCovers, type StopLinePlace } from "./stop-line.ts";
+
+// these paths are made up and hold no link, so resolving them in order is collapsing them
+const madeUpRealpath = (p: string) => (/^[A-Za-z]:\\|^\\\\/.test(p) ? win32.normalize(p) : posix.normalize(p));
 
 const HOME = "/Users/ada";
 const CWD = "/Users/ada/Projects/site";
@@ -18,6 +22,7 @@ const place: StopLinePlace = {
   roots: [CWD, "/Users/ada/.murage/workspaces/dax", "/tmp"],
   home: HOME,
   knownRecipients: new Set(),
+  realpath: madeUpRealpath,
 };
 
 describe("deletesPlacedInside", () => {
@@ -107,7 +112,7 @@ describe("Auto's destructive guard with the delete placed inside", () => {
 // thread folder. The card reads the same inside-roots rule as Auto's guard.
 describe("the card's wording for a delete inside the bot's own folder", () => {
   const thread = "/Users/ada/.murage/workspaces/dax/threads/t1";
-  const own: StopLinePlace = { cwd: thread, roots: [thread, "/Users/ada/.murage/workspaces/dax", "/tmp"], home: HOME, knownRecipients: new Set() };
+  const own: StopLinePlace = { cwd: thread, roots: [thread, "/Users/ada/.murage/workspaces/dax", "/tmp"], home: HOME, knownRecipients: new Set(), realpath: madeUpRealpath };
   const command = [
     `cd "${thread}" && \\`,
     "mkdir -p notes && \\",
@@ -147,7 +152,7 @@ describe("the card's wording for a delete inside the bot's own folder", () => {
 // once, so it could never be always allowed.
 describe("a delete through a variable set earlier in the same command", () => {
   const thread = "/home/tester/.murage/workspaces/dax/threads/t1";
-  const own: StopLinePlace = { cwd: thread, roots: [thread, "/tmp"], home: "/home/tester", knownRecipients: new Set() };
+  const own: StopLinePlace = { cwd: thread, roots: [thread, "/tmp"], home: "/home/tester", knownRecipients: new Set(), realpath: madeUpRealpath };
   const hit = (command: string) => classifyStopLine("Bash", { command }, command, own);
 
   it("is placed when the variable is a dated name in the bot's folder, or a mktemp file", () => {
@@ -181,8 +186,11 @@ describe("a delete through a variable set earlier in the same command", () => {
     expect(stopLineKeyCovers(stopLineKey(hit(dated("2026-09-25"))!)!, hit(dated("2026-09-26"))!)).toBe(false);
     // another command is not
     expect(stopLineKeyCovers(key, hit('tmp="$(cat other.txt)"; rm "$tmp"')!)).toBe(false);
-    // and the routine's own grant covers it in the routine's runs
+    // outside the routine carve-out a delete through a value always asks, and no grant answers it
     expect(autoVerdict({ autoApprove: false }, "Bash", command, { automated: true, routineLevel: true, stopLine: stop, routineAllow: [key] }))
+      .toMatchObject({ approve: null, source: "always-ask" });
+    // in a scheduled or manual run's carve-out, with the engine's whole command, the routine's own grant covers it
+    expect(autoVerdict({ autoApprove: false }, "Bash", command, { automated: true, routineLevel: true, routineCarveOut: true, commandText: command, stopLine: stop, routineAllow: [key] }))
       .toMatchObject({ source: "routine-allow", rule: key });
   });
 });
@@ -195,7 +203,7 @@ describe("a delete through a variable set earlier in the same command", () => {
 describe("a mktemp file made in the bot's own folder", () => {
   // the bot's folder is the only root besides temp, so one level up is outside
   const thread = "/Users/ada/.murage/workspaces/dax/threads/t1";
-  const own: StopLinePlace = { cwd: thread, roots: [thread, "/tmp"], home: HOME, knownRecipients: new Set() };
+  const own: StopLinePlace = { cwd: thread, roots: [thread, "/tmp"], home: HOME, knownRecipients: new Set(), realpath: madeUpRealpath };
   const hit = (command: string) => classifyStopLine("Bash", { command }, command, own);
 
   const placed = [
@@ -241,7 +249,7 @@ describe("a mktemp file made in the bot's own folder", () => {
   // the same command on a Linux home (0.1.60 Linux re-test 2, R1 / D3)
   it("placed inside on a Linux home: the Linux report's exact command", () => {
     const linuxThread = "/home/tester/.murage/workspaces/ember/threads/t1";
-    const linux: StopLinePlace = { cwd: linuxThread, roots: [linuxThread, "/tmp"], home: "/home/tester", knownRecipients: new Set() };
+    const linux: StopLinePlace = { cwd: linuxThread, roots: [linuxThread, "/tmp"], home: "/home/tester", knownRecipients: new Set(), realpath: madeUpRealpath };
     const command = 'tmp=$(mktemp ./tmp.XXXXXX); echo x > "$tmp"; rm "$tmp"; echo cleaned';
     expect(classifyStopLine("Bash", { command }, command, linux)).toBeNull();
     expect(deletesPlacedInside(command, linux)).toBe(true);

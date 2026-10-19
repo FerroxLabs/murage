@@ -13,3 +13,44 @@ COMPANION_HOST_SUFFIX=murage.test
 # wrangler.jsonc's vars.
 SENDLANE_API_KEY=replace-with-the-sendlane-v1-api-key
 SENDLANE_HASH_KEY=replace-with-the-sendlane-v1-hash-key
+CANCELLATION_MAIL_KEY=replace-with-at-least-32-random-bytes
+
+# CP0 staging only; never share the KEK with a home.
+CLOUD_KEK_V1=replace-with-base64-encoded-32-random-bytes
+CLOUD_ADMIN_TOKEN=replace-with-at-least-32-random-bytes
+
+# B5 billing (Stripe TEST mode only; live keys are refused unless STRIPE_ALLOW_LIVE=1)
+STRIPE_SECRET_KEY=sk_test_replace
+STRIPE_WEBHOOK_SECRET=whsec_replace
+STRIPE_PRICE_STARTER=price_replace
+STRIPE_PRICE_PRO=price_replace
+STRIPE_PRICE_MAX=price_replace
+BILLING_RETURN_ORIGIN=https://cloud.murage.test
+# Optional: STRIPE_PORTAL_CONFIGURATION=bpc_..., FP_COMMISSION_PRICE_IDS=price_a,price_b, FLUX_TOPUP_PRICE_IDS=price_x
+# B5 provisioner: images per provider/arch, EU-only locations, quarantine firewall; plus HCLOUD_TOKEN and VULTR_API_KEY secrets.
+# CLOUD_B3_MODE=live switches the lifecycle from the fake provider to the real adapters.
+B5_PROVISIONER_CONFIG={"images":{"hetzner":{"x86":"123","arm":"456"},"vultr":{"x86":"snapshot-id"}},"quarantineFirewallId":1,"storageBox":[{"id":1,"host":"u1.your-storagebox.de","mainUser":"u1","baseDir":"murage","knownHosts":"[u1.your-storagebox.de]:23 ssh-ed25519 AAAA..."}]}
+# storageBox is a LIST (a box holds 100 sub-accounts; the first box under 95 is used, an alert fires when all are full). Secrets: STORAGEBOX_API_TOKEN, STORAGEBOX_MAIN_PASSWORD.
+# One 7-day refund per person (refund-identity.ts): HMAC key for the refund-identity hashes, at least 32 random characters
+# (openssl rand -hex 32). A Worker secret; required to SELL live (checkout refuses without it; withdrawals and refunds never need it). To rotate: new key with REFUND_KEY_VERSION=2, the old one
+# in REFUND_KEY_SECRET_PREVIOUS (REFUND_KEY_VERSION_PREVIOUS=1) until the sweep raises refund_key.previous_retired (about 24 months),
+# then remove it. Replacing it in place stops the 7-day check and alerts ops.
+REFUND_KEY_SECRET=replace-with-64-hex-characters
+# Checkout disclosure token (src/disclosure-token.ts): HMAC key, at least 32 random characters (openssl rand -hex 32). A Worker secret; without it
+# GET /v1/legal/disclosure?declaredCountry= and POST /v1/billing/checkout answer 503 disclosure_key_missing. Rotating it voids tokens in flight (24 h max).
+CHECKOUT_DISCLOSURE_TOKEN_SECRET=replace-with-64-hex-characters
+# Optional: cloud-terms version ids (comma-separated) that carry the one-per-person limit, added to REFUND_LIMIT_TERMS_VERSIONS in
+# refund-identity.ts. The limit binds only customers who accepted one of them; with none listed nobody is bound.
+# REFUND_LIMIT_TERMS_VERSIONS=cloud-terms-xxxxxxxxxxxx
+# B4 Flux (b4-flux.ts, b4-flux-config.ts). Every Flux route, the machine flux_renewal_due field and the Flux cron are OFF unless
+# CLOUD_FLUX_ROUTES_ENABLED is exactly 1; never set it on staging or production before Sean's go. Switched on, the owner routes
+# (/v1/flux/link*, /v1/homes/:id/flux*) take only the Supabase members-area token (mapped Cloud account) with a fresh trusted
+# second factor for link, key, cap and Stop. FLUX_CLOUD_SERVICE_TOKEN is a Worker secret (Flux's narrow cloud-home bearer, at
+# least 32 characters, never the Flux master key); the cron does nothing without it.
+# CLOUD_FLUX_ROUTES_ENABLED=1
+# FLUX_CLOUD_SERVICE_TOKEN=replace-with-the-flux-cloud-home-service-token
+# FLUX_API_BASE=https://api.fluxrouter.ai
+# FLUX_APP_BASE=https://fluxrouter.ai
+# FLUX_LINK_PUBLIC_KEY=replace-with-base64url-of-the-32-byte-ed25519-public-key
+# FLUX_AUTHORIZE_URL=https://fluxrouter.ai/cloud/link   (the default)
+# FLUX_B4_CONFIG={"plans":{...}}   (optional; unset means the defaults in b4-flux-config.ts)

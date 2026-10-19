@@ -6,10 +6,11 @@
 // else it lives too: its captured chunk in recall and memory search, the
 // room checkpoint built from it, and every copy of it mirrored into a pair
 // room or back into the room that asked.
-import { mkdirSync, rmSync } from "node:fs";
+import { mkdirSync } from "node:fs";
 import { beforeEach, expect, it } from "vitest";
 import { afterEach as thawAfterEach, beforeEach as thawBeforeEach } from "vitest";
 import { thawRootSetWritesForTest } from "./memory/replay-lineage.ts";
+import { removeTempDirSync } from "./testing/cleanup.ts";
 // 1.0.2: this test models a 1.0.1 file (legacy root-set rows) for the read-time judge, which still decides legacy data until S6.
 thawBeforeEach(() => thawRootSetWritesForTest(true));
 thawAfterEach(() => thawRootSetWritesForTest(false));
@@ -44,7 +45,7 @@ const roster: MemoryRoster = {
     { id: "pair", threadId: "pair-chat", memberIds: ["finch", "dax"] },
   ],
 };
-beforeEach(() => { closeDatabase(); rmSync(DATA_DIR, { recursive: true, force: true }); mkdirSync(DATA_DIR, { recursive: true }); });
+beforeEach(() => { closeDatabase(); removeTempDirSync(DATA_DIR); mkdirSync(DATA_DIR, { recursive: true }); });
 
 function access(botId: string, thread: string) {
   reconcileMemoryRoster(roster);

@@ -1,10 +1,11 @@
-import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { expect, it, vi } from "vitest";
 import { launchVerificationServer } from "../scripts/control-murage.ts";
 import { ProviderConnectionsService } from "./provider-connections.ts";
 import { TurnSubmissionBoundary } from "./turn-dispatch-guard.ts";
+import { removeTempDirSync } from "./testing/cleanup.ts";
 
 it("actual direct and room submission callbacks reject changed provider revision before memory acceptance", () => {
   const source = readFileSync(new URL("./index.ts", import.meta.url), "utf8");
@@ -25,7 +26,7 @@ it("actual direct and room submission callbacks reject changed provider revision
       // The new provider guard must not break memory acceptance on native/no-route turns.
       const native = new TurnSubmissionBoundary(); native.started(); native.beforeSubmit(() => callback(current, undefined, { accepted }, undefined)); expect(accepted).toHaveBeenCalledTimes(2);
     }
-  } finally { rmSync(cacheDir, { recursive: true, force: true }); }
+  } finally { removeTempDirSync(cacheDir); }
 });
 
 it("owner key rotation during real Grok ACP setup prevents the old route from submitting", async () => {

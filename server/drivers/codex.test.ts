@@ -6,7 +6,7 @@ import { fixtureCredentialFingerprint } from "../testing/fixture-dump.ts";
 //
 // The fake is a shebang script — the same constraint codex.cmd itself
 // hits on Windows. resolveCliSpawn covers both, so these run everywhere.
-import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readlinkSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readlinkSync, realpathSync, statSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -15,10 +15,28 @@ import * as procs from "../procs.ts";
 
 import type { ProviderInstance } from "../contracts.ts";
 import { recordEvents, type EventRecorder } from "../testing/events.ts";
-import { CODEX_MCP_TOOL_TIMEOUT_SEC, CodexDriver } from "./codex.ts";
+import { CODEX_MCP_TOOL_TIMEOUT_SEC, CodexDriver, codexCloudBilling } from "./codex.ts";
+import { setCodexFloorsForTests } from "./codex-hook.ts";
+import { DATA_DIR } from "../config.ts";
+import { flushDecisionLog } from "../decision-log.ts";
+import { resetIsolationCache } from "./isolation-cache.ts";
+import { scopedCliHomeRoot } from "./scoped-cli-home.ts";
+import { EventEmitter } from "node:events";
+import type { ChildProcess } from "node:child_process";
+import { PassThrough } from "node:stream";
+import { TURN_BOT, TURN_RENDER, cloudTurnLaunch } from "../cloud-home/turn-process.ts";
+import { ABSENT_PINS, valuePins } from "../../shared/arg-vocabulary.ts";
+import type { CloudLauncherSpawn } from "../cloud-home/bot-state.ts";
 import { buildRemoteMount } from "../custom-mcp-mounts.ts";
 import { removeTempDir } from "../testing/cleanup.ts";
 import { NATIVE_DIR } from "../config.ts";
+import { resolveCall } from "../../shared/app-action-grant.ts";
+import { isMountRecord } from "../../shared/mount-identity.ts";
+import { autoVerdict } from "../auto-approve.ts";
+import { execChecks, gate, resetExecChecks } from "../testing/exec-check-spy.ts";
+import { approveStartupWrite } from "../testing/startup-write.ts";
+
+vi.mock("node:child_process", async (original) => (await import("../testing/exec-check-spy.ts")).withExecCheckSpy(await original()));
 
 const FAKE_CLI = join(dirname(fileURLToPath(import.meta.url)), "..", "testing", "fake-codex-app-server.ts");
 
@@ -58,6 +76,11 @@ describe("CodexDriver turns (fake app-server)", () => {
 
   afterEach(async () => {
     delete process.env.FAKE_CODEX_MODE;
+    delete process.env.FAKE_CODEX_ESCALATION;
+    delete process.env.FAKE_CODEX_HOOKS;
+    delete process.env.FAKE_CODEX_TOOLS;
+    delete process.env.FAKE_CODEX_VERSION;
+    delete process.env.MURAGE_CODEX_HOOK_LIVENESS_MS;
     delete process.env.FAKE_CODEX_MCP_SERVER;
     delete process.env.FAKE_CODEX_MCP_TOOL;
     delete process.env.FAKE_CODEX_DUMP;
@@ -1099,6 +1122,77 @@ describe("CodexDriver turns (fake app-server)", () => {
     expect(calls.find((c) => c.method === "turn/start")!.params.input[0].text).toBe("again");
   });
 
+  it("on a Cloud home names the bot, renders the resumed thread's policy and resumes under the start policy", async () => {
+    await create({ mode: "resume" });
+    const dump = join(scratch, "dump.json");
+    process.env.FAKE_CODEX_DUMP = dump;
+    // The spawn is captured as the launcher would get it, then run as a desktop spawn of the fake.
+    const realSpawnCli = procs.spawnCli;
+    const spawned: Record<string, string | undefined>[] = [];
+    const spy = vi.spyOn(procs, "spawnCli").mockImplementation((cli, args, opts, ...rest) => {
+      spawned.push({ ...(opts.env as Record<string, string | undefined>) });
+      vi.stubEnv("MURAGE_CLOUD_ROLE", "");
+      try { return realSpawnCli(cli, args, { ...opts, env: { ...process.env } }, ...rest); }
+      finally { vi.stubEnv("MURAGE_CLOUD_ROLE", "home"); }
+    });
+    vi.stubEnv("MURAGE_CLOUD_ROLE", "home");
+    try {
+      await instance.adapter.sendTurn({ threadId: "t-cloud-resume", text: "again", cwd: scratch, resumeCursor: "codex-thread-9", warmIdentity: { botId: "bot-atlas", audience: "owner" } });
+      await recorder.until((e) => e.type === "turn.completed");
+      const resumed = JSON.parse(readFileSync(dump, "utf8")).calls.find((c: { method: string }) => c.method === "thread/resume");
+      expect(resumed.params).toEqual({ threadId: "codex-thread-9", sandbox: "workspace-write", approvalPolicy: "on-request" });
+      const first = spawned.at(-1)!;
+      expect(first[TURN_BOT]).toBe("bot-atlas");
+      expect(JSON.parse(first[TURN_RENDER]!)).toMatchObject({ resume: "codex-thread-9", codexPolicy: { approval: "on-request", sandbox: "workspace-write" } });
+      const request = JSON.parse(cloudTurnLaunch("codex", ["app-server"], first, scratch)!.request);
+      expect(request.bot).toBe("bot-atlas");
+      expect(request.render.codexPolicy).toEqual({ approval: "on-request", sandbox: "workspace-write" });
+      expect(Object.keys(request.env)).not.toContain(TURN_BOT);
+      // Rule 74 on a Cloud home: the handed pins sit on top of the cloudTurnEnvironment map and ride the launcher request.
+      for (const [name, value] of valuePins(process.platform)) { expect(first[name], name).toBe(value); expect(request.env[name], name).toBe(value); }
+      // (the ssh program is the identified OpenSSH, or plain ssh; the launcher pins the plain form either way)
+      expect(first.GIT_SSH_COMMAND).toMatch(/^'(?:\/[^']*\/)?ssh' '-o' 'BatchMode=yes'$/);
+      expect(request.env.GIT_SSH_COMMAND).toBe(first.GIT_SSH_COMMAND);
+      expect(request.env.RSYNC_RSH).toBe(first.GIT_SSH_COMMAND);
+      for (const name of ABSENT_PINS) expect(request.env, name).not.toHaveProperty(name);
+
+      // A new thread names no rollout and so no resume policy.
+      const before = spawned.length;
+      await instance.adapter.sendTurn({ threadId: "t-cloud-fresh", text: "hi", cwd: scratch, warmIdentity: { botId: "bot-atlas", audience: "owner" } });
+      await recorder.until((e) => e.type === "turn.completed" && e.threadId === "t-cloud-fresh");
+      const fresh = JSON.parse(spawned[before][TURN_RENDER] ?? "{}");
+      expect(fresh).not.toHaveProperty("resume");
+      expect(fresh).not.toHaveProperty("codexPolicy");
+      expect(spawned[before][TURN_BOT]).toBe("bot-atlas");
+    } finally {
+      vi.unstubAllEnvs();
+      spy.mockRestore();
+    }
+  });
+
+  it("reports API billing on a Cloud home only when the launcher says Codex runs on an enrolled key", async () => {
+    const answer = (code: number, stdout: string): CloudLauncherSpawn => () => {
+      const child = new EventEmitter() as unknown as ChildProcess;
+      const stdoutStream = new PassThrough(), stderrStream = new PassThrough();
+      Object.assign(child, { stdout: stdoutStream, stderr: stderrStream, kill: () => true });
+      setImmediate(() => { stdoutStream.end(stdout); stderrStream.end(); setImmediate(() => (child as unknown as EventEmitter).emit("close", code)); });
+      return child;
+    };
+    const engines = (mode: string) => JSON.stringify({ tombstoned: false, engines: { codex: { mode, signedIn: true, expiresAt: null } } });
+    expect(await codexCloudBilling(answer(0, engines("apikey")))).toBe("subscription"); // off a home: unchanged
+    vi.stubEnv("MURAGE_CLOUD_ROLE", "home");
+    try {
+      expect(await codexCloudBilling(answer(0, engines("apikey")))).toBe("metered");
+      expect(await codexCloudBilling(answer(0, engines("chatgpt")))).toBe("subscription");
+      expect(await codexCloudBilling(answer(0, JSON.stringify({ tombstoned: false, engines: {} })))).toBe("subscription");
+      expect(await codexCloudBilling(answer(1, ""))).toBe("subscription");
+      expect(await codexCloudBilling(answer(0, "garbage"))).toBe("subscription");
+      expect(await codexCloudBilling(() => { throw new Error("spawn failed"); })).toBe("subscription");
+    } finally {
+      vi.unstubAllEnvs();
+    }
+  });
+
   it("surfaces an approval request and forwards the user's decision", async () => {
     await create({ mode: "approval" });
     const dump = join(scratch, "dump.json");
@@ -1150,9 +1244,11 @@ describe("CodexDriver turns (fake app-server)", () => {
 
     await instance.adapter.sendTurn({ threadId: "t-mcp-elicitation", text: "list bots" });
     const opened = await recorder.until((e) => e.type === "request.opened");
+    // Rule 12: the fake's ask names its tool only in the message prose, which
+    // is never read, so the call is named by the server with an empty tool part
     expect(opened).toMatchObject({
       requestType: "permission",
-      tool: "list_bots",
+      tool: "mcp__agents__",
       summary: 'Allow the agents MCP server to run tool "list_bots"?',
     });
     // the arguments reach the card, not only the question
@@ -1304,7 +1400,7 @@ describe("CodexDriver turns (fake app-server)", () => {
     await create({ mode: "mcp-elicitation" });
     await instance.adapter.sendTurn({ threadId: "t-host-mcp", text: "list", integrations: hostComputer });
     const opened = await recorder.until((e) => e.type === "request.opened");
-    expect(opened).toMatchObject({ toolCall: { name: "mcp__agents__list_bots" } });
+    expect(opened).toMatchObject({ toolCall: { name: "mcp__agents__" } });
     expect((opened as { approvalScope?: string }).approvalScope).toBeUndefined();
     await instance.adapter.respondToRequest("t-host-mcp", opened.requestId!, { behavior: "deny" });
     await recorder.until((e) => e.type === "turn.completed");
@@ -1428,9 +1524,180 @@ describe("CodexDriver turns (fake app-server)", () => {
     await create({ mode: "mcp-elicitation" });
     await instance.adapter.sendTurn({ threadId: "t-mcp-toolcall", text: "go" });
     const opened = await recorder.until((e) => e.type === "request.opened");
-    expect(opened).toMatchObject({ toolCall: { name: "mcp__agents__list_bots", input: {} } });
+    expect(opened).toMatchObject({ toolCall: { name: "mcp__agents__", input: { bot: "lena", limit: 3 } } });
     await instance.adapter.respondToRequest("t-mcp-toolcall", opened.requestId!, { behavior: "allow" });
     await recorder.until((e) => e.type === "turn.completed");
+  });
+
+  describe("F4 records and structured MCP names (T3, T11, T63, T64, T74)", () => {
+    const agentsMount = {
+      command: process.execPath,
+      args: ["/tmp/agents-proxy.js"],
+      env: { ELECTRON_RUN_AS_NODE: "1", MURAGE_HARNESS_URL: "http://127.0.0.1:8799", MURAGE_BOT_ID: "captain", MURAGE_THREAD_ID: "t", MURAGE_COMMS_TOKEN: "peer", MURAGE_TURN_DEPTH: "0" },
+    };
+    const mcpAsk = (serverName: string, meta: Record<string, unknown>) => {
+      process.env.FAKE_CODEX_APPROVAL = JSON.stringify({
+        method: "mcpServer/elicitation/request",
+        params: {
+          serverName,
+          mode: "form",
+          _meta: { codex_approval_kind: "mcp_tool_call", ...meta },
+          message: `Allow the ${serverName} MCP server to run tool "decoy_from_prose"?`,
+          requestedSchema: { type: "object", properties: {} },
+        },
+      });
+    };
+    type Opened = {
+      tool: string;
+      toolEngine?: string;
+      mcpMounts?: Array<{ engineName: string; mountId: string; provenance: string }>;
+      toolCall?: { name: string; input?: unknown };
+      toolInputMissing?: string;
+    };
+    const ask = async (threadId: string, integrations?: Record<string, unknown>): Promise<Opened> => {
+      await instance.adapter.sendTurn({ threadId, text: "go", ...(integrations ? { integrations } : {}) } as never);
+      const opened = await recorder.until((e) => e.type === "request.opened" && e.threadId === threadId);
+      await instance.adapter.respondToRequest(threadId, opened.requestId!, { behavior: "deny" });
+      await recorder.until((e) => e.type === "turn.completed" && e.threadId === threadId);
+      return opened as unknown as Opened;
+    };
+    const resolved = (opened: Opened) =>
+      resolveCall({ engine: "codex", toolCall: opened.toolCall as never, mcpMounts: opened.mcpMounts as never, inputMissing: opened.toolInputMissing });
+
+    it("names the MCP tool from the structured field, never from the message prose (T11)", async () => {
+      mcpAsk("agents", { tool_name: "list_bots", tool_params: { limit: 3 } });
+      await create({ mode: "approval" });
+      const opened = await ask("t-named", { agents: agentsMount });
+      expect(opened.toolEngine).toBe("codex");
+      expect(opened.toolCall).toEqual({ name: "mcp__agents__list_bots", input: { limit: 3 } });
+      expect(opened.tool).toBe("list_bots");
+      expect(resolved(opened)).toMatchObject({ kind: "mcp", server: "agents", tool: "list_bots", mountId: "own:agents", own: false });
+    });
+
+    it("an MCP ask with no structured tool name is called mcp__<server>__ and resolves unproven (T11)", async () => {
+      mcpAsk("agents", { tool_params: {} });
+      await create({ mode: "approval" });
+      const opened = await ask("t-unnamed", { agents: agentsMount });
+      expect(opened.toolCall).toEqual({ name: "mcp__agents__", input: {} });
+      expect(opened.tool).toBe("mcp__agents__");
+      expect(resolved(opened)).toMatchObject({ kind: "unproven" });
+    });
+
+    it("an MCP ask with no tool_params states the field missing and carries no input (F5)", async () => {
+      mcpAsk("agents", { tool_name: "list_bots" });
+      await create({ mode: "approval" });
+      const opened = await ask("t-noparams", { agents: agentsMount });
+      expect(opened.toolInputMissing).toBe("_meta.tool_params");
+      expect(opened.toolCall).toEqual({ name: "mcp__agents__list_bots" });
+      expect("input" in opened.toolCall!).toBe(false);
+      expect(autoVerdict({ autoApprove: true }, opened.tool, "x", { call: { toolCall: opened.toolCall as never, mcpMounts: opened.mcpMounts as never, inputMissing: opened.toolInputMissing, engine: "codex" } }))
+        .toMatchObject({ approve: null, source: "unread-call" });
+    });
+
+    it("an MCP name that fits no record resolves unproven (T3)", async () => {
+      mcpAsk("ghost", { tool_name: "do_it", tool_params: {} });
+      await create({ mode: "approval" });
+      const opened = await ask("t-ghost", { agents: agentsMount });
+      expect(opened.toolCall?.name).toBe("mcp__ghost__do_it");
+      expect(opened.mcpMounts!.map((r) => r.engineName)).toEqual(["agents"]);
+      expect(resolved(opened)).toMatchObject({ kind: "unproven" });
+    });
+
+    it("a shell ask with no command is unread, and the command is never replaced by the summary (T64)", async () => {
+      process.env.FAKE_CODEX_APPROVAL = JSON.stringify({ method: "item/commandExecution/requestApproval", params: { cwd: "/tmp" } });
+      await create({ mode: "approval" });
+      const opened = await ask("t-nocommand");
+      expect(opened.toolInputMissing).toBe("command");
+      expect(opened.toolCall).toEqual({ name: "shell" });
+      const verdict = autoVerdict({ autoApprove: true }, opened.tool, "shell", { call: { toolCall: opened.toolCall as never, mcpMounts: opened.mcpMounts as never, inputMissing: opened.toolInputMissing, engine: "codex" } });
+      expect(verdict).toMatchObject({ approve: null, source: "unread-call" });
+    });
+
+    it("a shell ask that carries its command reports it as written", async () => {
+      process.env.FAKE_CODEX_APPROVAL = JSON.stringify({ method: "execCommandApproval", params: { command: ["ls", "-la"], cwd: "/tmp" } });
+      await create({ mode: "approval" });
+      const opened = await ask("t-command");
+      expect(opened.toolInputMissing).toBeUndefined();
+      expect(opened.toolCall).toEqual({ name: "shell", input: { command: ["ls", "-la"], cwd: "/tmp" } });
+    });
+
+    it("records own and custom mounts with the registry name before aliasing (T63)", async () => {
+      const codexHome = join(scratch, "records-home");
+      mkdirSync(codexHome, { recursive: true });
+      writeFileSync(join(codexHome, "config.toml"), '[mcp_servers.fibery]\nurl = "https://example.invalid/mcp"\n');
+      mcpAsk("fibery_murage", { tool_name: "search", tool_params: { q: "x" } });
+      await create({ mode: "approval", environment: { CODEX_HOME: codexHome } });
+      const opened = await ask("t-records", {
+        agents: agentsMount,
+        custom: {
+          fibery: { command: "uv", args: ["run", "f"], env: {} },
+          notes: { command: "npx", args: ["-y", "n"], env: {} },
+          bad__name: { command: "x", args: [], env: {} },
+        },
+      });
+      const mounts = opened.mcpMounts!;
+      expect(mounts.every(isMountRecord)).toBe(true);
+      expect(mounts).toContainEqual({ engineName: "agents", mountId: "own:agents", provenance: "own" });
+      // engineName after aliasing, mountId the registry name before it
+      expect(mounts).toContainEqual({ engineName: "fibery_murage", mountId: "custom:fibery", provenance: "custom" });
+      expect(mounts).toContainEqual({ engineName: "notes", mountId: "custom:notes", provenance: "custom" });
+      // a name holding __ is refused: no record
+      expect(mounts.some((r) => r.engineName.includes("__"))).toBe(false);
+      expect(resolved(opened)).toMatchObject({ kind: "mcp", server: "fibery_murage", mountId: "custom:fibery", provenance: "custom" });
+    });
+
+    it("does not mount a custom server whose name holds a double underscore (Rule 11)", async () => {
+      await create();
+      const dump = join(scratch, "double-underscore.json");
+      process.env.FAKE_CODEX_DUMP = dump;
+      await instance.adapter.sendTurn({
+        threadId: "t-dunder",
+        text: "go",
+        integrations: { custom: { bad__name: { command: "x", args: [], env: {} }, ok: { command: "y", args: [], env: {} } } },
+      });
+      await recorder.until((event) => event.type === "turn.completed");
+      const joined = (JSON.parse(readFileSync(dump, "utf8")).argv as string[]).join(" ");
+      expect(joined).not.toContain("bad__name");
+      expect(joined).toContain("mcp_servers.ok.command");
+    });
+
+    it("adds an external record for each table in the config.toml under the spawn's CODEX_HOME (T74)", async () => {
+      const homeA = join(scratch, "home-a");
+      const homeB = join(scratch, "home-b");
+      for (const dir of [homeA, homeB]) mkdirSync(dir, { recursive: true });
+      const table = '[mcp_servers.shared]\ncommand = "tool"\nargs = ["--x"]\nenv = { TOKEN = "t" }\n[mcp_servers.agents]\ncommand = "owner-agents"\n';
+      writeFileSync(join(homeA, "config.toml"), table);
+      writeFileSync(join(homeB, "config.toml"), table);
+      mcpAsk("shared", { tool_name: "go", tool_params: {} });
+
+      await create({ mode: "approval", environment: { CODEX_HOME: homeA } });
+      const first = await ask("t-ext-a", { agents: agentsMount });
+      await instance.dispose();
+      await create({ mode: "approval", environment: { CODEX_HOME: homeB } });
+      const second = await ask("t-ext-b", { agents: agentsMount });
+
+      const externals = (o: Opened) => o.mcpMounts!.filter((r) => r.provenance === "external");
+      expect(externals(first)).toHaveLength(1);
+      expect(externals(first)[0]).toMatchObject({ engineName: "shared", provenance: "external" });
+      expect(externals(first)[0]!.mountId).toMatch(/^external:codex:[0-9a-f]{16}:shared$/);
+      // the table Murage wrote over (agents) is not external
+      expect(first.mcpMounts!.filter((r) => r.engineName === "agents")).toEqual([{ engineName: "agents", mountId: "own:agents", provenance: "own" }]);
+      // the same table in two Codex homes is two identities
+      expect(externals(second)[0]!.mountId).not.toBe(externals(first)[0]!.mountId);
+      expect(resolved(first)).toMatchObject({ kind: "mcp", provenance: "external", own: false });
+    });
+
+    it("states no mount list when the config.toml cannot be read, so the MCP ask is unproven (T74)", async () => {
+      const codexHome = join(scratch, "broken-home");
+      mkdirSync(codexHome, { recursive: true });
+      writeFileSync(join(codexHome, "config.toml"), "[mcp_servers.broken\ncommand = ");
+      mcpAsk("agents", { tool_name: "list_bots", tool_params: {} });
+      await create({ mode: "approval", environment: { CODEX_HOME: codexHome } });
+      const opened = await ask("t-broken", { agents: agentsMount });
+      expect(opened.toolEngine).toBe("codex");
+      expect(opened.mcpMounts).toBeUndefined();
+      expect(resolved(opened)).toMatchObject({ kind: "unproven" });
+    });
   });
 
   it("a user Stop settles the turn as cancelled with no runtime error (STOP1)", async () => {
@@ -1986,5 +2253,547 @@ describe("CodexDriver bounded ingress (A4)", () => {
     expect(done).toMatchObject({ ok: true });
     const image = recorder.events.find((e) => e.type === "item.completed" && e.itemType === "assistant_image" && e.itemId === "img-large");
     expect((image as { data: string } | undefined)?.data).toHaveLength(4 * Math.ceil((10 * 1024 * 1024) / 3));
+  });
+});
+
+// Rules 67 and 68 on the fake app-server: the PreToolUse gate, the per-version policy, the tripwire. The fake runs the hook script
+// from hooks.json in the scoped CODEX_HOME for every tool call, the way Codex does (server/testing/fake-codex-app-server.ts).
+describe("Codex PreToolUse gate (fake app-server)", () => {
+  let instance: ProviderInstance;
+  let recorder: EventRecorder;
+  let scratch: string;
+  let ownerHome: string;
+  const AGENTS = { command: process.execPath, args: ["-e", ""], env: {} };
+
+  const create = async (version = "codex-cli 0.150.0", opts: { fullAuto?: boolean; codexHome?: string } = {}) => {
+    resetIsolationCache();
+    process.env.FAKE_CODEX_VERSION = version;
+    instance = await CodexDriver.create({
+      instanceId: "codex-gate", displayName: "Codex Test", environment: { CODEX_HOME: opts.codexHome ?? ownerHome }, enabled: true,
+      config: { cli: FAKE_CLI, fullAuto: opts.fullAuto ?? false },
+    });
+    recorder = recordEvents(instance.adapter);
+  };
+  const recreate = async (version?: string, opts?: { fullAuto?: boolean }) => {
+    recorder?.stop();
+    await instance?.dispose();
+    await create(version, opts);
+  };
+
+  beforeEach(() => {
+    chmodSync(FAKE_CLI, 0o755);
+    scratch = realpathSync(mkdtempSync(join(tmpdir(), "murage-codex-gate-")));
+    ownerHome = join(scratch, "owner-home");
+    mkdirSync(ownerHome, { recursive: true });
+    writeFileSync(join(ownerHome, "config.toml"), [
+      'model = "gpt-owner"', "[hooks]", 'owner = "hook"', "[hooks.state]", '"/x/hooks.json:pre_tool_use:0:0" = { trusted_hash = "sha256:aa" }',
+      "[mcp_servers.owner_files]", 'command = "files"', "",
+    ].join("\n"));
+  });
+
+  afterEach(async () => {
+    for (const name of ["FAKE_CODEX_MODE", "FAKE_CODEX_VERSION", "FAKE_CODEX_TOOLS", "FAKE_CODEX_HOOKS", "FAKE_CODEX_DUMP", "FAKE_CODEX_CALL_LOG", "FAKE_CODEX_SPAWN_LOG",
+      "FAKE_CODEX_ESCALATION", "MURAGE_CODEX_HOOK_LIVENESS_MS", "FAKE_CODEX_SESSION_DELAY_MS", "FAKE_CODEX_SESSION_LOG", "FAKE_CODEX_INTERRUPT_DELAY_MS",
+      "FAKE_CODEX_EARLY_ITEM"]) delete process.env[name];
+    setCodexFloorsForTests();
+    recorder?.stop();
+    await instance?.dispose();
+    await removeTempDir(scratch);
+  });
+
+  /** One turn that makes the given tool calls; every ask is answered by `decide` (null leaves it pending). */
+  const run = async (threadId: string, tools: unknown[], decide: (e: any, n: number) => any = () => ({ behavior: "allow" }), turn: Record<string, unknown> = {}) => {
+    process.env.FAKE_CODEX_TOOLS = JSON.stringify(tools);
+    const dumpPath = join(scratch, `dump-${threadId}.json`);
+    process.env.FAKE_CODEX_DUMP = dumpPath;
+    const sent = await instance.adapter.sendTurn({ threadId, text: "go", cwd: scratch, integrations: { agents: AGENTS }, ...turn } as never);
+    const answered = new Set<string>();
+    const opened: any[] = [];
+    for (;;) {
+      const e: any = await recorder.until((ev: any) => ev.turnId === sent.turnId && ((ev.type === "request.opened" && !answered.has(ev.requestId)) || ev.type === "turn.completed"));
+      if (e.type === "turn.completed") return { sent, done: e, opened, dump: (): any => JSON.parse(readFileSync(dumpPath, "utf8")) };
+      answered.add(e.requestId);
+      opened.push(e);
+      const decision = decide(e, opened.length - 1);
+      if (decision) await instance.adapter.respondToRequest(threadId, e.requestId, decision);
+    }
+  };
+  const calls = (dump: any): string[] => dump.calls.map((c: { method: string }) => c.method);
+  const retired = ["un", "trusted"].join("");
+
+  // Section (d) of APP-GRANT-FIXPLAN-r6 (Rules 74a, 74d): each command card's environment is checked when the card opens,
+  // in the generation it opens in; an approved startup-file write between two asks makes the second check again
+  it("checks each command ask in the environment generation its card opens in", async () => {
+    await create();
+    resetExecChecks();
+    const runsAtOpen: number[] = [];
+    const r = await run("t-gen-codex", [
+      { kind: "shell", id: "g1", command: "ls", cwd: scratch },
+      { kind: "shell", id: "g2", command: "pwd", cwd: scratch },
+    ], (_e, n) => {
+      runsAtOpen.push(execChecks.runs);
+      if (n === 0) expect(approveStartupWrite()).toBe(true);
+      return { behavior: "allow" };
+    });
+    expect(r.opened.map((e) => e.tool)).toEqual(["shell", "shell"]);
+    expect(runsAtOpen).toEqual([1, 2]);
+    expect(r.opened[1].execEnv).toMatchObject({ cwd: scratch, env: { PAGER: "cat" } });
+  });
+
+  it("never reports a check whose environment generation changed while it was awaiting", async () => {
+    await create();
+    resetExecChecks();
+    const held = gate();
+    execChecks.hold = held.promise;
+    execChecks.onRun = (n) => {
+      if (n === 1) setTimeout(() => { approveStartupWrite(); execChecks.hold = null; held.open(); }, 50);
+    };
+    const runsAtOpen: number[] = [];
+    const r = await run("t-gen-codex-race", [{ kind: "shell", id: "r1", command: "ls", cwd: scratch }], () => {
+      runsAtOpen.push(execChecks.runs);
+      return { behavior: "allow" };
+    });
+    expect(runsAtOpen).toEqual([2]);
+    expect(r.opened[0].execEnv).toMatchObject({ cwd: scratch, env: { PAGER: "cat" } });
+  });
+
+  // The fake of item 5: it asks only what the real app-server asks under the policy it was given.
+  it("asks nothing for an ordinary command under on-request and everything under the retired policy", async () => {
+    process.env.FAKE_CODEX_ESCALATION = "0";
+    process.env.FAKE_CODEX_MODE = "approval";
+    await create("codex-cli 0.147.0");
+    const quiet = await instance.adapter.sendTurn({ threadId: "t-quiet", text: "go", cwd: scratch });
+    const done = await recorder.until((e: any) => e.type === "turn.completed" && e.turnId === quiet.turnId);
+    expect(done).toMatchObject({ ok: true });
+    expect(recorder.events.some((e: any) => e.type === "request.opened" && e.turnId === quiet.turnId)).toBe(false);
+    const asked = await instance.adapter.sendTurn({ threadId: "t-asked", text: "go", cwd: scratch, stopLine: true });
+    const opened: any = await recorder.until((e: any) => e.type === "request.opened" && e.turnId === asked.turnId);
+    expect(opened).toMatchObject({ tool: "shell", toolEngine: "codex" });
+    await instance.adapter.respondToRequest("t-asked", opened.requestId, { behavior: "deny" });
+    await recorder.until((e: any) => e.type === "turn.completed" && e.turnId === asked.turnId);
+  });
+
+  // T91
+  it("keeps the retired policy below the version that refuses it and gates from there", async () => {
+    for (const [version, gated] of [["codex-cli 0.147.0", false], ["codex-cli 0.148.0", false], ["codex-cli 0.149.0", true], ["codex-cli 0.163.0", true]] as const) {
+      await recreate(version);
+      const r = await run(`t-pol-${version}`, [], () => null, { stopLine: true });
+      expect(r.done).toMatchObject({ ok: true });
+      const dump = r.dump();
+      const start = dump.calls.find((c: any) => c.method === "thread/start").params;
+      const prompt = dump.calls.find((c: any) => c.method === "turn/start").params;
+      expect(start.approvalPolicy).toBe(gated ? "on-request" : retired);
+      expect(prompt.approvalPolicy).toBe(gated ? "on-request" : retired);
+      expect(dump.argv.join(" ").includes('approval_policy="on-request"')).toBe(gated);
+      expect(dump.argv.join(" ").includes("features.hooks=true")).toBe(gated);
+      expect(calls(dump).includes("hooks/list")).toBe(gated);
+      expect(existsSync(join(dump.env.CODEX_HOME, "hooks.json"))).toBe(gated);
+      if (gated) expect(JSON.stringify({ argv: dump.argv, calls: dump.calls })).not.toContain(retired);
+    }
+    // the owner's No limits keeps never below the retirement and runs on-request behind the gate from it
+    await recreate("codex-cli 0.147.0", { fullAuto: true });
+    expect((await run("t-pol-full-old", [], () => null)).dump().calls.find((c: any) => c.method === "thread/start").params).toMatchObject({ approvalPolicy: "never", sandbox: "danger-full-access" });
+    await recreate("codex-cli 0.150.0", { fullAuto: true });
+    expect((await run("t-pol-full-new", [], () => null)).dump().calls.find((c: any) => c.method === "thread/start").params).toMatchObject({ approvalPolicy: "on-request", sandbox: "danger-full-access" });
+  });
+
+  it("refuses a retired build that cannot carry the gate before any process starts", async () => {
+    setCodexFloorsForTests({ retired: [0, 100, 0], gate: [0, 129, 0] });
+    await recreate("codex-cli 0.110.0");
+    // set after create: the model catalog starts its own app-server at create
+    const spawnLog = join(scratch, "spawns.log");
+    process.env.FAKE_CODEX_SPAWN_LOG = spawnLog;
+    const r = await run("t-below-gate", [], () => null);
+    expect(r.done).toMatchObject({ ok: false, stopReason: "scope_unavailable" });
+    expect(recorder.events.find((e) => e.type === "runtime.error")).toMatchObject({ localFailure: "engine-update-required" });
+    expect(existsSync(spawnLog)).toBe(false);
+  });
+
+  it("refuses the turn before turn/start when hooks/list is missing or the trust does not take", async () => {
+    const log = join(scratch, "calls.log");
+    process.env.FAKE_CODEX_CALL_LOG = log;
+    for (const [mode, failure] of [["none", "engine-update-required"], ["untrusted-stays", "engine-folder-unavailable"]] as const) {
+      process.env.FAKE_CODEX_HOOKS = mode;
+      writeFileSync(log, "");
+      await recreate();
+      const r = await run(`t-refuse-${mode}`, [], () => null);
+      expect(r.done).toMatchObject({ ok: false, stopReason: "scope_unavailable" });
+      expect(recorder.events.find((e) => e.type === "runtime.error")).toMatchObject({ localFailure: failure });
+      const methods = readFileSync(log, "utf8").split("\n").filter(Boolean).map((line) => line.split(" ")[1]);
+      expect(methods).toContain("hooks/list");
+      expect(methods).not.toContain("thread/start");
+      expect(methods).not.toContain("turn/start");
+    }
+  });
+
+  it("interrupts and refuses when the SessionStart handler never posts", async () => {
+    process.env.FAKE_CODEX_HOOKS = "dead";
+    process.env.MURAGE_CODEX_HOOK_LIVENESS_MS = "400";
+    const log = join(scratch, "calls-dead.log");
+    process.env.FAKE_CODEX_CALL_LOG = log;
+    await recreate();
+    const r = await run("t-dead", [], () => null);
+    expect(r.done).toMatchObject({ ok: false, stopReason: "scope_unavailable" });
+    expect(recorder.events.find((e) => e.type === "runtime.error")).toMatchObject({ message: expect.stringContaining("pre-execution hook did not start") });
+    expect(readFileSync(log, "utf8")).toContain("turn/interrupt");
+    expect(recorder.events.some((e: any) => e.type === "item.started" && e.origin === "engine")).toBe(false);
+  });
+
+  // Astra BLOCK 2: the turn is held until the hook is proven, so a Codex that carries on past a dead hook never ends a turn cleanly
+  it("refuses a turn that completes before the SessionStart proof, and stops a call that starts unproven", async () => {
+    process.env.FAKE_CODEX_HOOKS = "dead-runs";
+    process.env.MURAGE_CODEX_HOOK_LIVENESS_MS = "400";
+    await recreate();
+    const quiet = await run("t-dead-quiet", [], () => null);
+    expect(quiet.done).toMatchObject({ ok: false, stopReason: "scope_unavailable" });
+    expect(recorder.events.find((e: any) => e.type === "runtime.error" && e.turnId === quiet.sent.turnId)).toMatchObject({ message: expect.stringContaining("pre-execution hook did not start") });
+    await recreate();
+    const busy = await run("t-dead-call", [{ kind: "shell", id: "c-dead", command: "echo hi" }], () => null);
+    expect(busy.done).toMatchObject({ ok: false });
+    expect(recorder.events.some((e: any) => e.type === "item.started" && e.origin === "engine" && e.turnId === busy.sent.turnId)).toBe(false);
+  });
+
+  // r6 (a), Rule 68c: one refusal per turn, one way. A proof that lands after the bound, while the interrupt is still pending, revives
+  // nothing: the next delivery is denied, the clean completion settles scope_unavailable, and the process is closed with the turn.
+  it("keeps a turn refused when the SessionStart proof lands after the bound while turn/interrupt is pending", async () => {
+    process.env.MURAGE_CODEX_HOOK_LIVENESS_MS = "400";
+    process.env.FAKE_CODEX_SESSION_DELAY_MS = "450";
+    process.env.FAKE_CODEX_INTERRUPT_DELAY_MS = "2000";
+    const sessions = join(scratch, "sessions-late.log");
+    process.env.FAKE_CODEX_SESSION_LOG = sessions;
+    const log = join(scratch, "calls-late.log");
+    process.env.FAKE_CODEX_CALL_LOG = log;
+    await recreate();
+    const warm = { warmIdentity: { botId: "b-late", audience: "owner" as const } };
+    const r = await run("t-late", [{ kind: "shell", id: "a1", command: "ls -la", cwd: scratch }], () => ({ behavior: "allow" }), warm);
+    expect(r.done).toMatchObject({ ok: false, stopReason: "scope_unavailable" });
+    expect(readFileSync(sessions, "utf8")).toContain("SessionStart");
+    expect(readFileSync(log, "utf8")).toContain("turn/interrupt");
+    expect(r.opened).toEqual([]);
+    const firstPid = r.dump().pid;
+    expect(r.dump().hookLog.find((h: any) => h.id === "a1")).toMatchObject({ verdict: "deny" });
+    expect(recorder.events.find((e: any) => e.type === "runtime.error" && e.turnId === r.sent.turnId)).toMatchObject({ message: expect.stringContaining("pre-execution hook did not start") });
+    // the refused process is never kept: the next turn on the thread runs on a new one
+    delete process.env.FAKE_CODEX_SESSION_DELAY_MS;
+    delete process.env.FAKE_CODEX_INTERRUPT_DELAY_MS;
+    const next = await run("t-late", [], () => null, { ...warm, resumeCursor: "codex-thread-1" });
+    expect(next.done).toMatchObject({ ok: true });
+    expect(next.dump().pid).not.toBe(firstPid);
+  });
+
+  it("answers a card still open when the turn is refused with a deny, even when the owner allows it", async () => {
+    process.env.FAKE_CODEX_INTERRUPT_DELAY_MS = "2500";
+    await recreate();
+    process.env.FAKE_CODEX_TOOLS = JSON.stringify([
+      { kind: "shell", id: "p1", command: "ls -la", cwd: scratch, concurrent: true },
+      { kind: "shell", id: "p2", command: "cat /etc/hostname", cwd: scratch, hook: false, delayMs: 1200 },
+    ]);
+    const dumpPath = join(scratch, "dump-t-pending.json");
+    process.env.FAKE_CODEX_DUMP = dumpPath;
+    const sent = await instance.adapter.sendTurn({ threadId: "t-pending", text: "go", cwd: scratch, integrations: { agents: AGENTS } } as never);
+    const card: any = await recorder.until((e: any) => e.turnId === sent.turnId && e.type === "request.opened");
+    expect(card).toMatchObject({ tool: "shell" });
+    await recorder.until((e: any) => e.turnId === sent.turnId && e.type === "runtime.error");
+    await instance.adapter.respondToRequest("t-pending", card.requestId, { behavior: "allow" } as never);
+    const resolved: any = await recorder.until((e: any) => e.type === "request.resolved" && e.requestId === card.requestId);
+    expect(resolved.behavior).toBe("deny");
+    const done: any = await recorder.until((e: any) => e.type === "turn.completed" && e.turnId === sent.turnId);
+    expect(done).toMatchObject({ ok: false, stopReason: "gate_incident" });
+    expect(JSON.parse(readFileSync(dumpPath, "utf8")).hookLog.find((h: any) => h.id === "p1")).toMatchObject({ verdict: "deny" });
+  });
+
+  it("says the turn stopped as soon as it started when an item started before the refusal, and before it ran anything otherwise", async () => {
+    process.env.FAKE_CODEX_HOOKS = "dead";
+    process.env.MURAGE_CODEX_HOOK_LIVENESS_MS = "400";
+    await recreate();
+    const quiet = await run("t-line-quiet", [], () => null);
+    expect(quiet.done).toMatchObject({ ok: false, stopReason: "scope_unavailable" });
+    expect(recorder.events.find((e: any) => e.type === "runtime.error" && e.turnId === quiet.sent.turnId))
+      .toMatchObject({ message: "Codex Test's pre-execution hook did not start, so this turn was stopped before it ran anything." });
+    process.env.FAKE_CODEX_EARLY_ITEM = "1";
+    await recreate();
+    const begun = await run("t-line-begun", [], () => null);
+    expect(begun.done).toMatchObject({ ok: false, stopReason: "scope_unavailable" });
+    expect(recorder.events.find((e: any) => e.type === "runtime.error" && e.turnId === begun.sent.turnId))
+      .toMatchObject({ message: "Codex Test's pre-execution hook did not start, so this turn was stopped as soon as it started." });
+  });
+
+  it("carries the proof on a kept process, and after an incident the next turn waits for a fresh SessionStart", async () => {
+    const sessions = join(scratch, "sessions-void.log");
+    process.env.FAKE_CODEX_SESSION_LOG = sessions;
+    const waits = () => readFileSync(sessions, "utf8").split("\n").filter(Boolean).length;
+    await recreate();
+    const warm = { warmIdentity: { botId: "b-proof", audience: "owner" as const } };
+    const clean = await run("t-carry", [], () => null, warm);
+    expect(clean.done).toMatchObject({ ok: true });
+    const cleanPid = clean.dump().pid;
+    const kept = await run("t-carry", [], () => null, { ...warm, resumeCursor: "codex-thread-1" });
+    expect(kept.done).toMatchObject({ ok: true });
+    expect(kept.dump().pid).toBe(cleanPid);
+    expect(waits()).toBe(1);
+    writeFileSync(sessions, "");
+    const tripped = await run("t-void", [{ kind: "shell", id: "v1", command: "cat /etc/hostname", cwd: scratch, hook: false }], () => null, warm);
+    expect(tripped.done).toMatchObject({ ok: false, stopReason: "gate_incident" });
+    const after = await run("t-void", [], () => null, { ...warm, resumeCursor: "codex-thread-1" });
+    expect(after.done).toMatchObject({ ok: true });
+    expect(waits()).toBe(2);
+  });
+
+  // Rule 68c with Rule 67: a call Codex starts before the SessionStart proof ran without the gate. It is an incident: the turn is
+  // interrupted and refused with the tripwire line, and the approval request that follows is never allowed.
+  it("treats a call that starts before the SessionStart proof as an incident and never allows the approval held behind it", async () => {
+    process.env.FAKE_CODEX_MODE = "mcp-elicitation";
+    process.env.FAKE_CODEX_SESSION_DELAY_MS = "600";
+    process.env.MURAGE_CODEX_HOOK_LIVENESS_MS = "3000";
+    const log = join(scratch, "calls-early.log");
+    process.env.FAKE_CODEX_CALL_LOG = log;
+    const dumpPath = join(scratch, "dump-t-early.json");
+    process.env.FAKE_CODEX_DUMP = dumpPath;
+    await recreate();
+    const sent = await instance.adapter.sendTurn({ threadId: "t-early", text: "go", cwd: scratch, integrations: { agents: AGENTS } } as never);
+    const done: any = await recorder.until((e: any) => e.type === "turn.completed" && e.turnId === sent.turnId);
+    expect(done).toMatchObject({ ok: false, stopReason: "gate_incident" });
+    expect(recorder.events.find((e: any) => e.type === "runtime.error" && e.turnId === sent.turnId))
+      .toMatchObject({ message: expect.stringContaining("`ls -la` without Murage's check") });
+    expect(readFileSync(log, "utf8")).toContain("turn/interrupt");
+    expect(recorder.events.some((e: any) => e.type === "request.opened" && e.turnId === sent.turnId)).toBe(false);
+    const decision = existsSync(dumpPath) ? JSON.parse(readFileSync(dumpPath, "utf8")).decision : null;
+    expect(JSON.stringify(decision ?? null)).not.toMatch(/accept|allow/);
+  });
+
+  // Rule 68c: the proof carries only under the hook configuration it was given under. A changed configuration ends reuse, and the
+  // next turn waits for a fresh SessionStart on a new process.
+  it("does not carry the proof to a turn whose hook configuration changed", async () => {
+    const sessions = join(scratch, "sessions-config.log");
+    process.env.FAKE_CODEX_SESSION_LOG = sessions;
+    const waits = () => readFileSync(sessions, "utf8").split("\n").filter(Boolean).length;
+    await recreate();
+    const warm = { warmIdentity: { botId: "b-config", audience: "owner" as const } };
+    const first = await run("t-config", [], () => null, warm);
+    expect(first.done).toMatchObject({ ok: true });
+    expect(waits()).toBe(1);
+    const firstPid = first.dump().pid;
+    // the hook command names the runtime it runs on: another path to the same runtime is another hook configuration
+    const runtime = join(scratch, "node-alias");
+    symlinkSync(process.execPath, runtime);
+    const realExecPath = process.execPath;
+    const info = vi.spyOn(console, "info");
+    try {
+      process.execPath = runtime;
+      expect(process.execPath).toBe(runtime);
+      const next = await run("t-config", [], () => null, { ...warm, resumeCursor: "codex-thread-1" });
+      expect(next.done).toMatchObject({ ok: true });
+      expect(info.mock.calls.map((c) => String(c[0])).filter((line) => line.startsWith("codex dispatch thread=t-config"))).toEqual(["codex dispatch thread=t-config process=spawned reason=hook-config-changed"]);
+      expect(next.dump().pid).not.toBe(firstPid);
+      expect(waits()).toBe(2);
+    } finally {
+      process.execPath = realExecPath;
+      info.mockRestore();
+    }
+  });
+
+  // Astra BLOCK 1 (Rule 68a): a gated plan whose scoped home cannot be named is refused before any spawn, never run without its hook
+  it("refuses a gated turn when the scoped home resolves to nothing", async () => {
+    await create("codex-cli 0.150.0", { codexHome: join(scopedCliHomeRoot("codex"), "no-such-scope") });
+    const spawnLog = join(scratch, "spawns-noscope.log");
+    process.env.FAKE_CODEX_SPAWN_LOG = spawnLog;
+    const r = await run("t-no-scope", [], () => null);
+    expect(r.done).toMatchObject({ ok: false, stopReason: "scope_unavailable" });
+    expect(existsSync(spawnLog)).toBe(false);
+  });
+
+  // T100 a..c
+  it("writes the gate into the scoped home only, drops the owner's hooks, and trusts through hooks/list and config/batchWrite", async () => {
+    await create();
+    const r = await run("t-files", [], () => null);
+    const dump = r.dump();
+    const home = dump.env.CODEX_HOME as string;
+    expect(home).not.toBe(ownerHome);
+    expect(existsSync(join(ownerHome, "hooks.json"))).toBe(false);
+    const hooks = JSON.parse(readFileSync(join(home, "hooks.json"), "utf8"));
+    expect(hooks.hooks.PreToolUse).toHaveLength(1);
+    expect(hooks.hooks.SessionStart).toHaveLength(1);
+    expect(readFileSync(join(home, "hooks.json"), "utf8")).not.toContain(readFileSync(join(home, "murage-hook.env"), "utf8").split("TOKEN=")[1]!.trim());
+    if (process.platform !== "win32") expect(statSync(join(home, "murage-hook.env")).mode & 0o777).toBe(0o600);
+    const config = readFileSync(join(home, "config.toml"), "utf8");
+    expect(config).toContain('model = "gpt-owner"');
+    expect(config).not.toContain("owner = \"hook\"");
+    expect(config).not.toContain("trusted_hash = \"sha256:aa\"");
+    expect(dump.argv).toEqual(expect.arrayContaining(["features.hooks=true"]));
+    expect(JSON.stringify(dump)).not.toContain("bypass_hook_trust");
+    const order = calls(dump);
+    expect(order.indexOf("hooks/list")).toBeGreaterThan(order.indexOf("initialize"));
+    expect(order.indexOf("config/batchWrite")).toBeGreaterThan(order.indexOf("hooks/list"));
+    expect(order.lastIndexOf("hooks/list")).toBeGreaterThan(order.indexOf("config/batchWrite"));
+    expect(order.lastIndexOf("hooks/list")).toBeLessThan(order.indexOf("thread/start"));
+    expect(dump.calls.find((c: any) => c.method === "config/batchWrite").params).toMatchObject({ reloadUserConfig: true, edits: [{ keyPath: "hooks.state", mergeStrategy: "upsert" }] });
+    // Rule 74: the pinned non-login shell form and the handed environment, per turn
+    expect(dump.argv.join(" ")).toContain("allow_login_shell=false");
+    expect(dump.argv.join(" ")).toContain("features.shell_snapshot=false");
+    expect(dump.argv.join(" ")).toMatch(/shell_environment_policy\.set=\{[^}]*PAGER="cat"/);
+    expect(dump.env.PAGER).toBe("cat");
+  });
+
+  // T86 and T103, Codex half
+  it("turns each delivery into the decision Rule 68e gives it, as an ordinary ask through request.opened", async () => {
+    await create();
+    writeFileSync(join(scratch, ".env"), "KEY=1");
+    const patch = (...body: string[]) => ["*** Begin Patch", ...body, "*** End Patch"].join("\n");
+    const tools = [
+      { kind: "update_plan", id: "c1" },
+      { kind: "view_image", id: "c2", input: { path: ".env" }, cwd: scratch },
+      { kind: "other", id: "c3", name: "web_fetch", input: { url: "https://x.test" } },
+      { kind: "shell", id: "c4", command: "ls -la", cwd: scratch },
+      { kind: "apply_patch", id: "c5", cwd: scratch, patch: patch("*** Add File: notes.txt", "+hi") },
+      { kind: "apply_patch", id: "c6", cwd: scratch, patch: patch("*** Add File: ../outside.txt", "+hi") },
+      { kind: "mcp", id: "c7", server: "agents", tool: "list_bots", input: {} },
+      { kind: "mcp", id: "c8", server: "agents", tool: "publish_site", input: { site: "x" } },
+      { kind: "shell", id: "c9", cwd: scratch },
+    ];
+    const r = await run("t-table", tools, (e) => (e.tool === "shell" && e.toolCall?.input ? { behavior: "allow" } : { behavior: "deny", message: "no" }));
+    expect(r.done).toMatchObject({ ok: true });
+    const verdicts = Object.fromEntries(r.dump().hookLog.map((h: any) => [h.id, h]));
+    // answered by Murage with no card
+    expect(verdicts.c1).toMatchObject({ name: "update_plan", verdict: "allow" });
+    expect(verdicts.c3).toMatchObject({ name: "web_fetch", verdict: "deny", reason: "Murage does not know this tool" });
+    expect(verdicts.c5).toMatchObject({ name: "apply_patch", verdict: "allow" });
+    expect(verdicts.c7).toMatchObject({ name: "mcp__agents__list_bots", verdict: "allow" });
+    // asked: view_image of .env, the command, the patch that leaves the project, an own tool outside the unasked rows, a command with no command
+    expect(r.opened.map((e) => e.tool)).toEqual(["view_image", "shell", "edit", "publish_site", "shell"]);
+    expect(verdicts.c2.verdict).toBe("deny");
+    expect(verdicts.c4.verdict).toBe("allow");
+    expect(verdicts.c6.verdict).toBe("deny");
+    expect(verdicts.c8.verdict).toBe("deny");
+    const [, shell, edit, own, missing] = r.opened;
+    expect(shell).toMatchObject({ requestType: "permission", toolEngine: "codex", toolCall: { name: "shell", input: { command: "ls -la", cwd: scratch } } });
+    expect(shell.mcpMounts).toEqual(expect.arrayContaining([expect.objectContaining({ engineName: "agents", mountId: "own:agents", provenance: "own" })]));
+    // F12: the handed map with the pins and the absence set, from the delivery's cwd
+    expect(shell.execEnv).toMatchObject({ cwd: scratch, env: { PAGER: "cat", GIT_TERMINAL_PROMPT: "0" } });
+    expect(shell.execEnv.absent).toEqual(expect.arrayContaining(["PYTHONINSPECT", "BASH_ENV"]));
+    expect(shell.execEnv.env.PYTHONINSPECT).toBeUndefined();
+    expect(edit).toMatchObject({ tool: "edit", toolCall: { name: "edit", input: { paths: ["../outside.txt"] } } });
+    expect(own).toMatchObject({ tool: "publish_site", toolCall: { name: "mcp__agents__publish_site", input: { site: "x" } } });
+    // F5: a command that never arrived is stated missing and never replaced
+    expect(missing).toMatchObject({ tool: "shell", toolInputMissing: "command", toolCall: { name: "shell" } });
+    expect(missing.toolCall).not.toHaveProperty("input");
+    // the calls that ran: the allowed ones started, the denied ones never did
+    const started = recorder.events.filter((e: any) => e.type === "item.started" && e.origin === "engine").map((e: any) => e.itemId);
+    expect(started).toEqual(expect.arrayContaining(["c4", "c5", "c7"]));
+    expect(started).not.toEqual(expect.arrayContaining(["c6"]));
+    expect(started).not.toEqual(expect.arrayContaining(["c8"]));
+  });
+
+  // Rule 68e: the verdict mapping, narrowing denials and the one counter
+  it("delivers a narrowing denial as the deny reason and raises the card on the third identical one", async () => {
+    await create();
+    process.env.FAKE_CODEX_TOOLS = JSON.stringify([1, 2, 3].map((n) => ({ kind: "shell", id: `n${n}`, command: "find / -name x", cwd: scratch })));
+    process.env.FAKE_CODEX_DUMP = join(scratch, "dump-narrow.json");
+    const sent = await instance.adapter.sendTurn({ threadId: "t-narrow", text: "go", cwd: scratch } as never);
+    const seen = new Set<string>();
+    const next = async () => (await recorder.until((e: any) => e.turnId === sent.turnId && e.type === "request.opened" && !seen.has(e.requestId))) as any;
+    for (const n of [1, 2]) {
+      const e = await next();
+      seen.add(e.requestId);
+      expect(await instance.adapter.respondToRequest("t-narrow", e.requestId, { behavior: "deny", message: `search a folder (${n})`, source: "narrow" } as never)).toBe("rejected");
+    }
+    const third = await next();
+    seen.add(third.requestId);
+    // not delivered: the ask stays pending as the owner's card
+    expect(await instance.adapter.respondToRequest("t-narrow", third.requestId, { behavior: "deny", message: "search a folder (3)", source: "narrow" } as never)).toBe("card");
+    expect(await instance.adapter.respondToRequest("t-narrow", third.requestId, { behavior: "allow" })).toBe("allowed-once");
+    await recorder.until((e: any) => e.type === "turn.completed" && e.turnId === sent.turnId);
+    const log = JSON.parse(readFileSync(join(scratch, "dump-narrow.json"), "utf8")).hookLog;
+    expect(log.map((h: any) => [h.id, h.verdict])).toEqual([["n1", "deny"], ["n2", "deny"], ["n3", "allow"]]);
+    expect(log[0].reason).toBe("search a folder (1)");
+  });
+
+  it("answers a call that reaches the approval path after the hook with the hook's decision, one card", async () => {
+    await create();
+    const r = await run("t-once", [{ kind: "shell", id: "e1", command: "pip install x", cwd: scratch, escalate: true }]);
+    expect(r.done).toMatchObject({ ok: true });
+    expect(r.opened).toHaveLength(1);
+    expect(r.dump().decision).toMatchObject({ decision: "accept" });
+    // a hook deny is final on the approval path too: nothing runs and nothing asks again
+    const denied = await run("t-once-deny", [{ kind: "shell", id: "e2", command: "pip install y", cwd: scratch, escalate: true, runAnyway: true }], () => ({ behavior: "deny" }));
+    expect(denied.opened).toHaveLength(1);
+  });
+
+  it("keeps the gate on a retained app-server: one handshake, a fresh token each turn, and every call still asked", async () => {
+    const log = join(scratch, "calls-warm.log");
+    process.env.FAKE_CODEX_CALL_LOG = log;
+    await create();
+    const warm = { warmIdentity: { botId: "b-warm", audience: "owner" as const } };
+    const first = await run("t-warm", [{ kind: "shell", id: "w1", command: "ls", cwd: scratch }], () => ({ behavior: "allow" }), warm);
+    const home = first.dump().env.CODEX_HOME as string;
+    const tokenOne = readFileSync(join(home, "murage-hook.env"), "utf8");
+    const second = await run("t-warm", [{ kind: "shell", id: "w2", command: "ls -a", cwd: scratch }], () => ({ behavior: "deny" }), { ...warm, resumeCursor: "codex-thread-1" });
+    expect(second.done).toMatchObject({ ok: true });
+    expect(second.opened.map((e) => e.tool)).toEqual(["shell"]);
+    expect(second.dump().hookLog.at(-1)).toMatchObject({ id: "w2", verdict: "deny" });
+    expect(second.dump().pid).toBe(first.dump().pid);
+    expect(readFileSync(join(home, "murage-hook.env"), "utf8")).not.toBe(tokenOne);
+    const handshakes = readFileSync(log, "utf8").split("\n").filter((l) => l.startsWith(`${first.dump().pid} `) && l.endsWith(" initialize"));
+    expect(handshakes).toHaveLength(1);
+  });
+
+  // Rule 67
+  it("stops the turn when Codex starts a call the hook never reached, and carries the line to the next turn", async () => {
+    const log = join(scratch, "calls-trip.log");
+    process.env.FAKE_CODEX_CALL_LOG = log;
+    await create();
+    const r = await run("t-trip", [{ kind: "shell", id: "x1", command: "cat /etc/hostname", cwd: scratch, hook: false }], () => null);
+    const line = "Codex ran `cat /etc/hostname` without Murage's check; the turn was stopped";
+    expect(r.done).toMatchObject({ ok: false, stopReason: "gate_incident" });
+    expect(recorder.events.find((e: any) => e.type === "runtime.error")).toMatchObject({ message: line });
+    expect(readFileSync(log, "utf8")).toContain("turn/interrupt");
+    expect(r.dump().interrupted).toBe(true);
+    await flushDecisionLog(DATA_DIR);
+    const rows = readFileSync(join(DATA_DIR, "decisions.ndjson"), "utf8").split("\n").filter((l) => l.includes("cat /etc/hostname")).map((l) => JSON.parse(l));
+    expect(rows.at(-1)).toMatchObject({ threadId: "t-trip", source: "observed", decision: "auto-denied" });
+    // the next turn re-runs the handshake on a fresh process and its prompt carries the line
+    writeFileSync(log, "");
+    const next = await run("t-trip", [], () => null);
+    expect(next.done).toMatchObject({ ok: true });
+    const turnStart = next.dump().calls.find((c: any) => c.method === "turn/start");
+    expect(turnStart.params.input[0].text.startsWith(line)).toBe(true);
+    expect(readFileSync(log, "utf8").split("\n").filter((l) => l.endsWith(" hooks/list")).length).toBeGreaterThanOrEqual(1);
+    // and only that turn
+    const third = await run("t-trip", [], () => null);
+    expect(third.dump().calls.find((c: any) => c.method === "turn/start").params.input[0].text).not.toContain("without Murage's check");
+  });
+
+  it("stops the turn when Codex runs a call the hook denied", async () => {
+    await create();
+    const r = await run("t-denied-ran", [{ kind: "shell", id: "d1", command: "rm -rf build", cwd: scratch, runAnyway: true }], () => ({ behavior: "deny" }));
+    expect(r.done).toMatchObject({ ok: false, stopReason: "gate_incident" });
+    expect(recorder.events.find((e: any) => e.type === "runtime.error")).toMatchObject({ message: expect.stringContaining("rm -rf build") });
+  });
+
+  it("keeps the tripwire off a turn that is not gated", async () => {
+    await create("codex-cli 0.147.0");
+    const r = await run("t-legacy-free", [{ kind: "shell", id: "l1", command: "ls", cwd: scratch, hook: false }], () => null);
+    expect(r.done).toMatchObject({ ok: true });
+    expect(r.dump().calls.map((c: any) => c.method)).not.toContain("hooks/list");
+  });
+
+  // The coordinator's regression proof: nothing that was gated before runs unchecked now
+  it("still puts every shell, patch and MCP call of an Ask, Auto and Full access bot, fullAuto or not, in front of a card or the gate", async () => {
+    for (const fullAuto of [false, true]) {
+      await recreate("codex-cli 0.150.0", { fullAuto });
+      for (const [name, flags] of [["ask", { routeAsks: true }], ["auto", { routeAsks: true }], ["full", { stopLine: true }], ["bare", {}]] as const) {
+        const tools = [
+          { kind: "shell", id: "s1", command: "rm -rf build", cwd: scratch },
+          { kind: "apply_patch", id: "p1", cwd: scratch, patch: ["*** Begin Patch", "*** Add File: /etc/murage-test", "+x", "*** End Patch"].join("\n") },
+          { kind: "mcp", id: "m1", server: "agents", tool: "publish_site", input: {} },
+        ];
+        const r = await run(`t-reg-${fullAuto}-${name}`, tools, () => ({ behavior: "deny" }), flags);
+        expect(r.done).toMatchObject({ ok: true });
+        // each of the three reached Murage's ask path before it could run, and none started
+        expect(r.opened.map((e) => e.tool)).toEqual(["shell", "edit", "publish_site"]);
+        expect(r.dump().hookLog.map((h: any) => h.verdict)).toEqual(["deny", "deny", "deny"]);
+        expect(recorder.events.some((e: any) => e.type === "item.started" && e.origin === "engine" && ["s1", "p1", "m1"].includes(e.itemId) && e.turnId === r.sent.turnId)).toBe(false);
+        expect(r.dump().calls.find((c: any) => c.method === "turn/start").params.approvalPolicy).toBe("on-request");
+      }
+    }
   });
 });

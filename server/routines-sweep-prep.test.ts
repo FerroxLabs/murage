@@ -1,15 +1,16 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // 1.0.2 bgwork (Fable r1 P2/P3): the sweep is incremental, a package addition names its own state generation,
 // and a cloned run shares no raw object with its consumer.
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { RoutineManager } from "./routines.ts";
 import { readRoutinesWithRuns } from "./routine-runs-journal.ts";
+import { removeTempDirSync } from "./testing/cleanup.ts";
 
 const dirs: string[] = [];
-afterEach(() => { for (const dir of dirs.splice(0)) rmSync(dir, { recursive: true, force: true }); });
+afterEach(() => { for (const dir of dirs.splice(0)) removeTempDirSync(dir); });
 const START = new Date(2026, 9, 12, 8, 0, 0).getTime(), HOUR = 60 * 60_000;
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 type Internals = any;

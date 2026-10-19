@@ -7,7 +7,7 @@
 // history. Forgetting the notes now forgets the notes: a reply made with them
 // is still withheld (it used something the owner deleted), and every other
 // reply stays in the room for the bots.
-import { mkdirSync, rmSync } from "node:fs";
+import { mkdirSync } from "node:fs";
 import { beforeEach, expect, it } from "vitest";
 import { DATA_DIR } from "./config.ts";
 import { closeDatabase, database } from "./database.ts";
@@ -23,6 +23,7 @@ import { applyMemoryTombstones } from "./memory/restore.ts";
 import { roomReplayWithheld } from "./memory/disclosures.ts";
 import { messageSourceForgotten } from "./memory/replay-lineage.ts";
 import { LineageAllowance } from "./memory/lineage-allowance.ts";
+import { removeTempDirSync } from "./testing/cleanup.ts";
 
 const roster: MemoryRoster = {
   bots: [
@@ -31,7 +32,7 @@ const roster: MemoryRoster = {
   ],
   groups: [{ id: "closing", threadId: "closing-chat", memberIds: ["finch", "dax"] }],
 };
-beforeEach(() => { closeDatabase(); rmSync(DATA_DIR, { recursive: true, force: true }); mkdirSync(DATA_DIR, { recursive: true }); });
+beforeEach(() => { closeDatabase(); removeTempDirSync(DATA_DIR); mkdirSync(DATA_DIR, { recursive: true }); });
 
 function access(botId: string, thread: string) {
   reconcileMemoryRoster(roster);

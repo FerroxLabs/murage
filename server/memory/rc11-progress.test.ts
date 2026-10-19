@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
-import { mkdirSync, rmSync } from "node:fs";
+import { mkdirSync } from "node:fs";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
@@ -13,11 +13,12 @@ import { openBulkRevoke } from "./revoke-commit.ts";
 import { enqueueNode, holdRevoke, markerSlice, upgradeMarkerWalked } from "./revoke-marker.ts";
 import { backgroundStatus, BACKGROUND_DEFER_PROGRESS_MS, startBackgroundUpgradeWork, type BackgroundHandle } from "./upgrade-background.ts";
 import { markUpgraded } from "./testing/legacy-history-fixture.ts";
+import { removeTempDirSync } from "../testing/cleanup.ts";
 
 let running: BackgroundHandle | undefined;
 beforeEach(async () => {
   closeDatabase(); await stopWalMaintenance(); resetLineageBackfillForTest();
-  rmSync(DATA_DIR, { recursive: true, force: true }); mkdirSync(DATA_DIR, { recursive: true });
+  removeTempDirSync(DATA_DIR); mkdirSync(DATA_DIR, { recursive: true });
 });
 afterEach(() => { running?.stop(); running = undefined; vi.useRealTimers(); });
 
@@ -126,7 +127,7 @@ it("a held upgrade job adds no completed work while another job runs or every jo
   for (let i = 0; i < 20; i++) enqueueNode(db, other, { kind: "scope", scopeId: `absent-${i}` });
   let moved = false;
   for (let i = 0; i < 30; i++) {
-    moved = markerSlice(db, 6) || moved;
+    moved = markerSlice(db, 6) === true || moved;
     expect(upgradeMarkerWalked(db)).toBe(0);
   }
   expect(moved).toBe(true);

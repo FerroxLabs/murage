@@ -4,7 +4,7 @@
 // a second identity. Everything below is a consequence of that choice, and
 // the reason it was made: there is no second store to keep consistent, so
 // revocation works on browsers on day one with no new revocation path.
-import { readFileSync, rmSync, writeFileSync } from "node:fs";
+import { readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -15,6 +15,7 @@ import {
   SESSION_ABSOLUTE_MS,
   SESSION_IDLE_MS,
 } from "../src/devices.ts";
+import { removeTempDirSync } from "../../server/testing/cleanup.ts";
 
 const pair = (registry: DeviceRegistry, name = "iPhone") => {
   const { code } = registry.openPairing();
@@ -25,7 +26,7 @@ const pair = (registry: DeviceRegistry, name = "iPhone") => {
 
 describe("browser sessions", () => {
   beforeEach(() => {
-    rmSync(DATA_DIR, { recursive: true, force: true });
+    removeTempDirSync(DATA_DIR);
     vi.useRealTimers();
   });
 

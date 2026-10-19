@@ -368,7 +368,9 @@ function serverStop(name: string, deps: Record<string, unknown>) {
   const begin = source.indexOf(`async function ${name}(`), end = source.indexOf("\n/**", begin);
   expect(begin).toBeGreaterThan(0); expect(end).toBeGreaterThan(begin);
   const code = ts.transpileModule(source.slice(begin, end), { compilerOptions: { target: ts.ScriptTarget.ES2022 } }).outputText;
-  return new Function(...Object.keys(deps), code + `return ${name};`)(...Object.values(deps));
+  // the owed asker wakes a bot Stop forgets (lane 0163-delegate-wake) are not under test here
+  const all: Record<string, unknown> = { askerWakes: { dropBot: () => {} }, ...deps };
+  return new Function(...Object.keys(all), code + `return ${name};`)(...Object.values(all));
 }
 it.each(["Stop all", "bot Stop"])("%s wiring drains live and backoff cards without replay or double release", async action => {
   const f = fixture(), a = f.card("a", "g", "/one"), b = f.card(action === "bot Stop" ? "a" : "b", action === "bot Stop" ? "h" : "g", "/two");

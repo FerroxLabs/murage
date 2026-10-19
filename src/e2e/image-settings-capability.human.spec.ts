@@ -16,7 +16,7 @@
 //      and switching connections switches the connection and model.
 // No request leaves the machine: the suite preload answers the OpenAI image
 // origin, and a spec-local preload fails every Flux Router request offline.
-import { test, expect, type Locator, type Page } from "@playwright/test";
+import { test, expect, type Locator, type Page } from "./page-error-guard";
 import { createServer, type ViteDevServer } from "vite";
 import react from "@vitejs/plugin-react";
 import tailwindcss from "@tailwindcss/vite";
@@ -132,7 +132,7 @@ const shot = (target: Locator, name: string) => target.screenshot({ path: join(E
 
 test("a keyless install has no image connection, and claims no model capability", async ({ page }) => {
   await openApp(page);
-  const images = imageRegion(await openSettings(page, "Images"));
+  const images = imageRegion(await openSettings(page, "Tools"));
   await images.scrollIntoViewIfNeeded();
   await expect(images.getByText("No supported image connections are available.", { exact: false })).toBeVisible();
   await expect(images.getByRole("button", { name: "Refresh connections", exact: true })).toBeEnabled();
@@ -144,7 +144,7 @@ test("a keyless install has no image connection, and claims no model capability"
 
 test("a Flux Router key added in Settings → Models makes Image generation state create-and-edit", async ({ page }) => {
   await openApp(page);
-  const settings = await openSettings(page, "Models");
+  const settings = await openSettings(page, "Models & engines");
   const field = settings.getByLabel("Flux Router key", { exact: true });
   // A Flux Router key is sk-flux- and at least 16 more characters
   // (src/lib/flux-key-paste.ts); anything else is refused before it is saved.
@@ -152,7 +152,7 @@ test("a Flux Router key added in Settings → Models makes Image generation stat
   await settings.locator("#flux-router-connection").getByRole("button", { name: "Connect", exact: true }).click();
   await expect(settings.getByText("Key saved. Test the connection to check its model catalog.")).toBeVisible();
 
-  const images = imageRegion(await openSettings(page, "Images"));
+  const images = imageRegion(await openSettings(page, "Tools"));
   await images.scrollIntoViewIfNeeded();
   // The smoke's exact check, now against an install that has a connection.
   await expect(images.getByText(CAPABILITY).first()).toBeVisible({ timeout: 30_000 });
@@ -174,7 +174,7 @@ test("a Flux Router key added in Settings → Models makes Image generation stat
 test("an OpenAI image key states create-and-edit, and switching connections switches the statement", async ({ page }) => {
   expect((await fixtureRequest("/api/config?secretStorage=external", "PATCH", { imageGen: { key: "fixture-image-key" } })).status).toBe(200);
   await openApp(page);
-  const images = imageRegion(await openSettings(page, "Images"));
+  const images = imageRegion(await openSettings(page, "Tools"));
   await images.scrollIntoViewIfNeeded();
   const connection = images.getByRole("combobox", { name: "Image connection" });
   await expect(connection.locator("option", { hasText: "OpenAI image key" })).toHaveCount(1);
@@ -208,7 +208,7 @@ test("every image-capable key saved in Models is an image connection", async ({ 
     expect((await fixtureRequest("/api/provider-connections/mutate", "POST", { action: "create", preset, key })).status).toBe(200);
   }
   await openApp(page);
-  const images = imageRegion(await openSettings(page, "Images"));
+  const images = imageRegion(await openSettings(page, "Tools"));
   await images.scrollIntoViewIfNeeded();
   const connection = images.getByRole("combobox", { name: "Image connection" });
   for (const label of ["Flux Router", "OpenAI image key", "OpenAI", "xAI", "OpenRouter", "Google"]) await expect(connection.locator("option", { hasText: new RegExp(`^${label}$`) })).toHaveCount(1);

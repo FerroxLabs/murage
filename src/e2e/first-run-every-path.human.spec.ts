@@ -24,6 +24,7 @@
 import type { Page } from "@playwright/test";
 
 import { clippedText } from "./clipped-text";
+import { chiefHasSpoken } from "./first-run-chief";
 import { expect, test } from "./fixtures";
 import { HARNESS_URL, desktopHeaders } from "./rig";
 
@@ -81,24 +82,6 @@ async function screenIsUsable(app: Page, where: string): Promise<void> {
 
   const clipped = await clippedText(app);
   expect(clipped, `${where}: text runs past the right edge — ${JSON.stringify(clipped)}`).toEqual([]);
-}
-
-/**
- * THE CHIEF HAS TO EXIST BEFORE HE CAN BE DRIVEN.
- *
- * He is created by the RENDERER's first `GET /api/setup`, and `driveSetup` is
- * what appends each card. Posting answers in the moment after `goto` returns
- * beats that first poll: the checklist advances against a workspace with no
- * Chief in it, no card is ever said, and the transcript stays empty for ever
- * because the driver does nothing when nothing changed. A person cannot hit
- * that — you cannot answer a card that was never drawn — but a spec can, and
- * it reads on screen exactly like a flow that never arrived.
- */
-async function chiefHasSpoken(app: Page): Promise<void> {
-  await expect(
-    app.getByText(/who am I working for/i),
-    "the Chief must have asked before the checklist is driven",
-  ).toBeVisible();
 }
 
 /**

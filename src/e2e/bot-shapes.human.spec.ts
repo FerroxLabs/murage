@@ -8,7 +8,7 @@
 // recorded on window so the Edit links can be checked without the whole app.
 // The app's stylesheet pins the page itself, so the fixture's <main> scrolls,
 // and it carries the bot window's own h1 and section h2 around the panel.
-import { test, expect } from "@playwright/test";
+import { test, expect } from "./page-error-guard";
 import { createServer, type ViteDevServer } from "vite";
 import tailwindcss from "@tailwindcss/vite";
 import { fileURLToPath } from "node:url";
@@ -51,7 +51,7 @@ test.beforeAll(async () => {
       resolveId(id) { if (id === "/__shapes.js") return "\0bot-shapes"; if (id === "/shapes-fixture-store") return "\0shapes-store"; },
       load(id) {
         // The real api() contract, and a dispatch that only records what it was asked.
-        if (id === "\0shapes-store") return "export async function api(path,init){const r=await fetch(path,{...init,headers:{'content-type':'application/json',...(init&&init.headers)}});const data=await r.json().catch(()=>({}));if(!r.ok)throw Object.assign(new Error(data.error||r.statusText),{status:r.status,body:data});return data;}window.__dispatched=[];export function useStore(){return {state:{config:{},botSettingsIntent:null},dispatch(action){window.__dispatched.push(action);}};}";
+        if (id === "\0shapes-store") return "export async function api(path,init){const r=await fetch(path,{...init,headers:{'content-type':'application/json',...(init&&init.headers)}});const data=await r.json().catch(()=>({}));if(!r.ok)throw Object.assign(new Error(data.error||r.statusText),{status:r.status,body:data});return data;}window.__dispatched=[];export function useStoreIfAny(){return useStore();} export function useStore(){return {state:{config:{},botSettingsIntent:null},dispatch(action){window.__dispatched.push(action);}};}";
         if (id !== "\0bot-shapes") return;
         return "import React from 'react';import {createRoot} from 'react-dom/client';import {BotShapesPanel} from '/src/components/BotShapesPanel.tsx';import '/src/styles.css';const q=new URLSearchParams(location.search);document.documentElement.dataset.skin=q.get('skin')||'dark';createRoot(document.getElementById('root')).render(React.createElement(BotShapesPanel,{bot:{id:q.get('id'),name:q.get('name')}}));";
       },
@@ -68,7 +68,6 @@ test.beforeAll(async () => {
 });
 test.afterAll(async () => { await server?.close(); await harness?.close(); safeWipeSync(cache); });
 test.beforeEach(({ page }) => {
-  page.on("pageerror", (error) => console.log("page error:", error.message));
   page.on("console", (message) => { if (message.type() === "error") console.log("console error:", message.text()); });
   page.on("dialog", (dialog) => { throw new Error(`a native ${dialog.type()} dialog opened`); });
 });

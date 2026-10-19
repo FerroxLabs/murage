@@ -8,6 +8,7 @@ import {
   type CallAudioEvent,
   hasNativeUserAgent,
   inNativeShell,
+  opensPurchasePages,
   nativeAvailable,
   nativeHas,
   nativeHello,
@@ -70,6 +71,26 @@ describe("knowing we are inside the phone app", () => {
     fakeBridge({ version: 1, methods: [] });
     vi.stubGlobal("navigator", { userAgent: "Mozilla/5.0" });
     expect(inNativeShell()).toBe(true);
+  });
+});
+
+describe("pages that sell or sign up (App Store guideline 3.1.1)", () => {
+  it("are not opened from the store apps, on iPhone, iPad or Android", () => {
+    for (const userAgent of [
+      "Mozilla/5.0 (iPhone; CPU iPhone OS 18_0 like Mac OS X) MurageApp/1.0.0 (ios)",
+      "Mozilla/5.0 (iPad; CPU OS 18_0 like Mac OS X) MurageApp/1.0.0 (ios)",
+      "Mozilla/5.0 (Linux; Android 14; wv) MurageApp/1.0.0 (android)",
+    ]) {
+      vi.stubGlobal("navigator", { userAgent });
+      expect(opensPurchasePages()).toBe(false);
+    }
+  });
+
+  it("stay on the desktop and in a phone's browser", () => {
+    vi.stubGlobal("navigator", { userAgent: "Mozilla/5.0 (Macintosh) Electron/37.0.0" });
+    expect(opensPurchasePages()).toBe(true);
+    vi.stubGlobal("navigator", { userAgent: "Mozilla/5.0 (iPhone; CPU iPhone OS 18_0 like Mac OS X) Safari/604.1" });
+    expect(opensPurchasePages()).toBe(true);
   });
 });
 

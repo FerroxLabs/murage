@@ -83,7 +83,9 @@ posixOnly("local access: archived rooms, saved images and script grants", () => 
       const closed = await seen(headers);
       expect(closed.list.status).toBe(200);
       expect(closed.list.text).not.toContain(canary);
-      expect(closed.list.text).not.toContain(room.id);
+      // the room is gone from the rows; the roster names its id (and nothing else) as hidden, so the phone settles its copy
+      expect((closed.list.body as { groups: Array<{ id: string }> }).groups.some((row) => row.id === room.id)).toBe(false);
+      expect((closed.list.body as { removedGroups: Array<{ id: string; kind: string }> }).removedGroups).toContainEqual(expect.objectContaining({ id: room.id, kind: "hidden" }));
       expect(closed.messages.status).toBe(404);
       expect(closed.messages.text).not.toContain(canary);
       expect(closed.exported.status).toBe(404);
