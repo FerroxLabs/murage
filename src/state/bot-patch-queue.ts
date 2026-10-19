@@ -77,6 +77,12 @@ interface BotPatchQueueEntry {
 
 export interface BotPatchQueueOptions {
   delayMs?: number;
+  /**
+   * Cloud window (renderer served from murage-home://): the home may be unreachable, and a write must then FAIL AT ONCE,
+   * not wait. Edits send without the debounce, and when a send fails every edit still waiting behind it is dropped with it
+   * (rolled back and reported), so nothing is sent after the home comes back. Off (default): the desktop's behavior.
+   */
+  failFast?: boolean;
   send: (
     botId: string,
     patch: BotUpdatePatch,
@@ -129,7 +135,8 @@ const settledKeys = (rejected: BotUpdatePatch): ReadonlyArray<keyof BotStateOver
  */
 export function createBotPatchQueue(options: BotPatchQueueOptions): BotPatchQueue {
   const entries = new Map<string, BotPatchQueueEntry>();
-  const delayMs = options.delayMs ?? 400;
+  const failFast = options.failFast === true;
+  const delayMs = failFast ? 0 : options.delayMs ?? 400;
   let disposed = false;
 
   const settleIfIdle = (entry: BotPatchQueueEntry) => {
@@ -157,6 +164,11 @@ export function createBotPatchQueue(options: BotPatchQueueOptions): BotPatchQueu
         // A rejected patch is no longer optimistic. Re-read before rolling back
         // because a lost HTTP response may still have committed and broadcast.
         entry.inFlight = {};
+        // failFast: edits queued behind the failed send go down with it. They would otherwise be sent the moment the
+        // home returns, which is exactly the replay the Cloud window must never do.
+        const dropped = failFast ? entry.pending : {};
+        if (failFast) entry.pending = {};
+        const refused = failFast ? { ...patch, ...dropped } : patch;
         let bot: BotAnnouncement | null = entry.fallback;
         try {
           bot = await options.reconcile(entry.botId, controller.signal);
@@ -168,8 +180,8 @@ export function createBotPatchQueue(options: BotPatchQueueOptions): BotPatchQueu
         // Deletion may cancel this lane while the re-read is in flight. Folding
         // that result back into state would resurrect the deleted bot.
         if (disposed || entry.cancelled) return;
-        if (bot) options.onAuthoritative(bot, stateOverlay(entry.pending), settledKeys(patch));
-        options.onError(caught instanceof Error ? caught : new Error(String(caught)), patch);
+        if (bot) options.onAuthoritative(bot, stateOverlay(entry.pending), settledKeys(refused));
+        options.onError(caught instanceof Error ? caught : new Error(String(caught)), refused);
       }
     } finally {
       entry.controller = null;

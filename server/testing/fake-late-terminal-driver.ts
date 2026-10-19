@@ -38,8 +38,18 @@
 //                            turn settles failed (stopReason
 //                            "submission_refused") with nothing written. Each
 //                            write that happens appends {prompt: true, turnId}.
+//   FAKE_LATE_GATE_EACH      "1" (with FAKE_LATE_HANDBACK): the session gate is
+//                            taken by the turn that passes it (the gate and
+//                            its `.waiting` file are removed), so every later
+//                            turn waits for its own: a test can land a revoke
+//                            before each attempt's late write.
+//   FAKE_LATE_SESSION        "1" (with FAKE_LATE_HANDBACK): the engine reports its native session (session.started) after handing the
+//                            id back and before the prompt is written, as ACP does: the turn's resume cursor when it resumes, a new
+//                            session otherwise. The write waits a moment, so the harness folds the session first.
+//   FAKE_LATE_ENGINE_REFUSES "1" (with FAKE_LATE_HANDBACK): the engine itself refuses the late write (nothing written, stopReason
+//                            "submission_refused") without the harness's fence having refused it: a refusal nothing re-dispatches.
 // An uninterrupted turn replies "Hello from late" and completes on its own.
-import { appendFileSync, existsSync, writeFileSync } from "node:fs";
+import { appendFileSync, existsSync, rmSync, writeFileSync } from "node:fs";
 import type {
   AnyProviderDriver,
   DriverCreateInput,
@@ -112,7 +122,19 @@ export function makeLateTerminalDriver(): AnyProviderDriver {
                   writeFileSync(`${sessionGate}.waiting`, turnId);
                   await waitForFile(sessionGate, 25);
                 }
+                if (sessionGate && input.environment.FAKE_LATE_GATE_EACH === "1") for (const file of [sessionGate, `${sessionGate}.waiting`]) rmSync(file, { force: true });
                 if (entry.interrupted || active.get(turn.threadId) !== entry) return;
+                if (input.environment.FAKE_LATE_SESSION === "1") {
+                  const resumed = !turn.sessionReset && typeof turn.resumeCursor === "string" ? turn.resumeCursor : undefined;
+                  emit({ type: "session.started", sessionId: resumed ?? `late-session-${turnCounter}-${turn.threadId.slice(0, 8)}`, model: "late-1", threadId: turn.threadId, turnId });
+                  await new Promise(resolve => setTimeout(resolve, 60));
+                  if (entry.interrupted || active.get(turn.threadId) !== entry) return;
+                }
+                if (input.environment.FAKE_LATE_ENGINE_REFUSES === "1") {
+                  active.delete(turn.threadId);
+                  emit({ type: "turn.completed", ok: false, stopReason: "submission_refused", threadId: turn.threadId, turnId });
+                  return;
+                }
                 try { turn.beforeSubmit?.(); } catch {
                   active.delete(turn.threadId);
                   emit({ type: "turn.completed", ok: false, stopReason: "submission_refused", threadId: turn.threadId, turnId });

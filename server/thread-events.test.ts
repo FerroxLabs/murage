@@ -1,7 +1,8 @@
-import { appendFileSync, mkdtempSync, openSync, readFileSync, readSync, renameSync, rmSync, writeFileSync } from "node:fs";
+import { appendFileSync, mkdtempSync, openSync, readFileSync, readSync, renameSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { removeTempDirSync } from "./testing/cleanup.ts";
 
 vi.mock("node:fs", async (original) => {
   const fs = await original<typeof import("node:fs")>();
@@ -36,7 +37,7 @@ function tmp() {
 afterEach(() => {
   vi.mocked(openSync).mockImplementation(actualFs.openSync);
   vi.mocked(readSync).mockImplementation(actualFs.readSync);
-  for (const d of dirs.splice(0)) rmSync(d, { recursive: true, force: true });
+  for (const d of dirs.splice(0)) removeTempDirSync(d);
 });
 
 const line = (o: unknown) => JSON.stringify(o) + "\n";

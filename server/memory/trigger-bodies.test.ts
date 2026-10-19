@@ -3,12 +3,13 @@
 //
 // Some SQLite builds refuse a qualified table name (main.x) in the BODY of a trigger; a TEMP trigger may name main.<table> only in its ON clause.
 // The 48 GB probe crashed at boot on exactly that. The scan is by source, so it holds on any SQLite build; the boot test uses the real initializer.
-import { mkdirSync, readFileSync, readdirSync, rmSync } from "node:fs";
+import { mkdirSync, readFileSync, readdirSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { beforeEach, expect, it } from "vitest";
 import { DATA_DIR } from "../config.ts";
 import { closeDatabase, database } from "../database.ts";
+import { removeTempDirSync } from "../testing/cleanup.ts";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const sources = (): string[] => {
@@ -30,7 +31,7 @@ it("no trigger body in the branch names a qualified table", () => {
   expect(bad).toEqual([]);
 });
 
-beforeEach(() => { closeDatabase(); rmSync(DATA_DIR, { recursive: true, force: true }); mkdirSync(DATA_DIR, { recursive: true }); });
+beforeEach(() => { closeDatabase(); removeTempDirSync(DATA_DIR); mkdirSync(DATA_DIR, { recursive: true }); });
 it("the real initializer boots on an on-disk file, reopens it, and a counted write moves the revision", () => {
   const first = database();
   first.prepare("INSERT INTO messages(thread_id,id,at,role,kind,text,json) VALUES('t','m1',1,'user','text','x','{}')").run();

@@ -64,8 +64,11 @@ const DELIVERY_HEADER =
 export const heldLine = (count: number): string =>
   `[${count} item(s) that need tools are waiting for an engine with tools. You cannot act on them here; say so if asked.]`;
 
-/** The owner-facing line for the one queue row in the thread. */
-export const heldQueueText = (count: number): string => `Waiting for a tool-capable engine: ${count} item(s). Open now`;
+/** The owner-facing line for the one queue row in the thread. With an engine that has tools, what waits is
+ * not waiting on the engine (a retry, or an item that needs its original authority), so the line says only that it waits. */
+export const heldQueueText = (count: number, routeHasTools = false): string => routeHasTools
+  ? `Waiting to continue: ${count} item(s). Open now`
+  : `Waiting for a tool-capable engine: ${count} item(s). Open now`;
 
 /** How many items really wait for an engine with tools. Answered cards held
  * for one always do. A delegated result that arrived outside the session only

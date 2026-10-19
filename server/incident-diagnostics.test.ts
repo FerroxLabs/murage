@@ -2,13 +2,13 @@ import { appendFileSync,linkSync,mkdirSync,mkdtempSync,readFileSync,symlinkSync,
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach,expect,it,vi } from "vitest";
-import { safeWipeSync } from "./testing/safe-wipe.mjs";
 import { createLifecycleRecorder } from "./drivers/lifecycle-diagnostic.ts";
 import { INCIDENT_LINE_BYTES,INCIDENT_MAX_ROWS,INCIDENT_OUTPUT_BYTES,INCIDENT_READ_BYTES,parseIncidentDiagnostics,readIncidentDiagnostics } from "./incident-diagnostics.ts";
+import { removeTempDirSync } from "./testing/cleanup.ts";
 const mutation=vi.hoisted(()=>({file:""}));
 vi.mock("node:fs",async original=>{const fs=await original<typeof import("node:fs")>();return{...fs,readSync:(...args:Parameters<typeof fs.readSync>)=>{const count=fs.readSync(...args);if(mutation.file){fs.appendFileSync(mutation.file,"changed\n");mutation.file="";}return count;}};});
 const roots:string[]=[];
-afterEach(()=>{mutation.file="";for(const root of roots.splice(0))safeWipeSync(root);});
+afterEach(()=>{mutation.file="";for(const root of roots.splice(0))removeTempDirSync(root);});
 function fixture(){
  const nativeDir=mkdtempSync(join(tmpdir(),"murage-incident-reader-"));roots.push(nativeDir);
  const turnId="11111111-1111-4111-8111-111111111111",threadId="thread-fixture";let raw:any;

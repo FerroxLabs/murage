@@ -40,7 +40,7 @@ const rowidOf = (db: DatabaseSync, threadId: string, id: string): number | null 
   (db.prepare("SELECT rowid AS r FROM messages WHERE thread_id = ? AND id = ?").get(threadId, id) as { r: number } | undefined)?.r ?? null;
 
 /** A row's parent id as a load reads it: its parentId, or for a legacy row with none the row stored before it. Null at a root. */
-function parentOf(db: DatabaseSync, threadId: string, id: string): string | null {
+export function parentOf(db: DatabaseSync, threadId: string, id: string): string | null {
   const row = db.prepare("SELECT rowid AS pos, CASE WHEN json_valid(json) THEN json_type(json, '$.parentId') END AS t, CASE WHEN json_valid(json) THEN json_extract(json, '$.parentId') END AS p FROM messages WHERE thread_id = ? AND id = ?")
     .get(threadId, id) as { pos: number; t: string | null; p: string | null } | undefined;
   if (!row) return null;

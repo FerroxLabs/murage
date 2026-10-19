@@ -12,6 +12,7 @@ import { DatabaseSync } from "node:sqlite";
 import { expect, it } from "vitest";
 import { MEMORY_PRE_V3_SNAPSHOT, MEMORY_SCHEMA_V2, migrateMemorySchema } from "./schema.ts";
 import { DEFAULT_MEMORY_LEARNING_V1 } from "./learning-policy.ts";
+import { removeTempDirSync } from "../testing/cleanup.ts";
 
 const SIZE_FILE = join(process.cwd(), ".memmigrate-mb");
 const MB = Number(process.env.MEMMIGRATE_MB ?? (existsSync(SIZE_FILE) ? readFileSync(SIZE_FILE, "utf8") : 0));
@@ -57,5 +58,5 @@ gate("times the v2 -> v4 upgrade and its copy on a large messages.db", () => {
     console.log(`TIMING copy file: ${(statSync(join(root, MEMORY_PRE_V3_SNAPSHOT)).size / 1048576).toFixed(0)} MB`);
     expect(db.prepare("SELECT schema_version FROM memory_meta").get()?.schema_version).toBe(5);
     db.close();
-  } finally { rmSync(root, { recursive: true, force: true }); }
+  } finally { removeTempDirSync(root); }
 }, 3_600_000);

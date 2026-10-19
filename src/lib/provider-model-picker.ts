@@ -218,7 +218,7 @@ export function pickerTriggerTitle(
 export function pickerCountLine(engineChosen: boolean, count: number): string {
   if (!engineChosen) return "Pick an engine above to see the models it can run";
   if (count === 0) return "No models to choose here yet";
-  return `${count} compatible chat model${count === 1 ? "" : "s"} · prices per million tokens`;
+  return `${count} compatible chat model${count === 1 ? "" : "s"}`;
 }
 /** The body of the list when it has nothing in it. `null` means the caller's
  *  own branches (engine setup card, "no matching…") own this state. */

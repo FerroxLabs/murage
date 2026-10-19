@@ -789,6 +789,7 @@ export class Speaker {
   async fetchClip(text: string, opts: { botId?: string; voiceId?: string; signal?: AbortSignal }): Promise<Blob> {
     const res = await fetch("/api/tts/speak", {
       method: "POST",
+      redirect: "error",
       headers: { "content-type": "application/json", ...desktopCallerHeaders() },
       body: JSON.stringify({ text, voiceId: opts.voiceId, botId: opts.botId }),
       signal: opts.signal,
@@ -804,6 +805,7 @@ export class Speaker {
   private async prepare(text: string, voiceId: string | undefined, signal: AbortSignal, botId?: string): Promise<string[]> {
     const res = await fetch("/api/tts/prepare", {
       method: "POST",
+      redirect: "error",
       headers: { "content-type": "application/json", ...desktopCallerHeaders() },
       body: JSON.stringify({ text, voiceId, botId }),
       signal,
@@ -821,6 +823,7 @@ export class Speaker {
     const askedAt = this.now();
     const res = await fetch("/api/tts/speak", {
       method: "POST",
+      redirect: "error",
       headers: { "content-type": "application/json", ...desktopCallerHeaders() },
       body: JSON.stringify({ text, voiceId, botId }),
       signal,

@@ -45,7 +45,7 @@ export function surface(): Promise<SurfaceAnswer> {
   // "am I the desktop?" in the voice of an impostor and was told no — in the
   // desktop app.
   pending ??= ensureDesktopSurfaceSecret()
-    .then(() => fetch("/api/config", { headers: { "x-murage-surface": "desktop", ...desktopSurfaceHeaders() } }))
+    .then(() => fetch("/api/config", { redirect: "error", headers: { "x-murage-surface": "desktop", ...desktopSurfaceHeaders() } }))
     .then((response) => (response.ok ? response.json() : null))
     .then((body: unknown) => {
       if (body && typeof body === "object" && !Array.isArray(body) && "surface" in body) {

@@ -3,7 +3,7 @@
 // Production runner with an offline process boundary: no sockets or engine binary.
 import { EventEmitter } from "node:events";
 import { PassThrough } from "node:stream";
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { beforeEach, afterEach, expect, it, vi } from "vitest";
@@ -13,12 +13,13 @@ import { withContinuityInferenceLease } from "../memory/extract.ts";
 import { DATA_DIR } from "../config.ts";
 import { database } from "../database.ts";
 import type { TextOnlyTurnInput } from "../memory/pip-transport.ts";
+import { removeTempDirSync } from "../testing/cleanup.ts";
 
 vi.mock("../procs.ts", async original => ({ ...await original<typeof import("../procs.ts")>(), spawnCli: vi.fn(), awaitCliTreeStopped: vi.fn() }));
 vi.mock("../memory/pip-reaper.ts", async original => ({ ...await original<typeof import("../memory/pip-reaper.ts")>(), registerChild: async (pid: number) => ({ pid, startTime: "fixture", registeredAt: Date.now() }) }));
 let base: string;
 beforeEach(() => { mkdirSync(DATA_DIR, { recursive: true }); base = mkdtempSync(join(tmpdir(), "pip-audit2-runner-")); vi.mocked(awaitCliTreeStopped).mockReset(); vi.mocked(awaitCliTreeStopped).mockResolvedValue(true); });
-afterEach(() => { rmSync(base, { recursive: true, force: true }); });
+afterEach(() => { removeTempDirSync(base); });
 const input = (signal = new AbortController().signal): TextOnlyTurnInput => ({ system: "SYSTEM", text: "You are reliable. ".repeat(1800), model: "fixture", outputSchema: { type: "object", required: ["ok"], properties: { ok: { type: "boolean" } } }, signal, maxOutputBytes: 12000, maxOutputTokens: 3000, context: { botId: "fixture", family: "lived", runId: "run", attempt: 1 } });
 function fixture(onOutput?: (child: EventEmitter) => void, debug?: string, outputTokens = 13) {
   let recorded: { argv: string[]; prompt: string } | undefined;

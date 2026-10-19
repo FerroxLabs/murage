@@ -160,6 +160,67 @@ export class SqliteOperationJournal implements OperationJournal {
   }
 }
 
+/** What the relay saw the app complete for a turn (server/connected-app-receipts.ts), kept beside the operation ledger so a
+ * restart between a send and the end of its turn still finds the receipt. Identity only: thread, bot, turn, action classes. */
+export interface StoredReceipt { threadId: string; botId: string; generation: string; classes: string[]; at: number; key?: string; dispatchedAt?: number; turnId?: string }
+
+export class SqliteReceiptStore {
+  private readonly file: string;
+  constructor(file: string) { this.file = file; }
+
+  /** Opened for one piece of work and closed again: receipts are rare, and the ledger file may be moved by a restore, so no handle is held. */
+  private run<T>(work: (db: DatabaseSync) => T): T {
+    mkdirSync(dirname(this.file), { recursive: true, mode: 0o700 });
+    closeSync(openSync(this.file, "a", 0o600));
+    try { chmodSync(this.file, 0o600); } catch { /* platform without modes */ }
+    const db = new DatabaseSync(this.file);
+    try {
+      db.exec("PRAGMA busy_timeout=1000;");
+      db.exec(`CREATE TABLE IF NOT EXISTS connected_app_receipts (
+        id INTEGER PRIMARY KEY AUTOINCREMENT, thread_id TEXT NOT NULL, bot_id TEXT NOT NULL, generation TEXT NOT NULL, classes TEXT NOT NULL, at INTEGER NOT NULL)`);
+      const columns = (db.prepare("PRAGMA table_info(connected_app_receipts)").all() as Array<{ name: string }>).map((column) => column.name);
+      if (!columns.includes("op_key")) db.exec("ALTER TABLE connected_app_receipts ADD COLUMN op_key TEXT");
+      if (!columns.includes("dispatched_at")) db.exec("ALTER TABLE connected_app_receipts ADD COLUMN dispatched_at INTEGER");
+      // The provider turn that owns the receipt; the reply check matches on it and nothing else survives a restart.
+      // Rows written before this column (dev builds of this lane only; no release carries the table) keep turn_id
+      // NULL and so never match any turn. That is intended: a receipt with no known owner is nobody's. Do not add a
+      // data migration that fills it from a timestamp; a time says when, never whose.
+      if (!columns.includes("turn_id")) db.exec("ALTER TABLE connected_app_receipts ADD COLUMN turn_id TEXT");
+      db.exec("CREATE UNIQUE INDEX IF NOT EXISTS connected_app_receipts_op_key ON connected_app_receipts(op_key)");
+      db.exec("CREATE INDEX IF NOT EXISTS connected_app_receipts_turn ON connected_app_receipts(thread_id, turn_id)");
+      return work(db);
+    } finally { db.close(); }
+  }
+
+  /** Receipts newer than `cutoff`, oldest first; older ones are dropped. */
+  load(cutoff: number): StoredReceipt[] {
+    return this.run((db) => {
+      db.prepare("DELETE FROM connected_app_receipts WHERE at < ?").run(cutoff);
+      const rows = db.prepare("SELECT thread_id, bot_id, generation, classes, at, op_key, dispatched_at, turn_id FROM connected_app_receipts ORDER BY id").all() as unknown as Array<{ thread_id: string; bot_id: string; generation: string; classes: string; at: number; op_key: string | null; dispatched_at: number | null; turn_id: string | null }>;
+      return rows.map((row) => ({
+        threadId: row.thread_id, botId: row.bot_id, generation: row.generation, classes: JSON.parse(row.classes) as string[], at: row.at,
+        ...(row.op_key ? { key: row.op_key } : {}), ...(row.dispatched_at !== null ? { dispatchedAt: row.dispatched_at } : {}),
+        ...(row.turn_id ? { turnId: row.turn_id } : {}),
+      }));
+    });
+  }
+
+  /** Keep one receipt (a receipt with the same key is already kept), drop those older than `cutoff`, and keep at most `max`, the newest. */
+  add(receipt: StoredReceipt, cutoff: number, max: number): void {
+    this.run((db) => {
+      db.prepare("INSERT OR IGNORE INTO connected_app_receipts (thread_id,bot_id,generation,classes,at,op_key,dispatched_at,turn_id) VALUES (?,?,?,?,?,?,?,?)")
+        .run(receipt.threadId, receipt.botId, receipt.generation, JSON.stringify(receipt.classes), receipt.at, receipt.key ?? null, receipt.dispatchedAt ?? null, receipt.turnId ?? null);
+      db.prepare("DELETE FROM connected_app_receipts WHERE at < ?").run(cutoff);
+      db.prepare("DELETE FROM connected_app_receipts WHERE id <= (SELECT id FROM connected_app_receipts ORDER BY id DESC LIMIT 1 OFFSET ?)").run(max);
+    });
+  }
+
+  /** Name the turn of a receipt kept before its turn was known (the call reached the relay before the turn was bound). Never renames one. */
+  bindTurn(key: string, turnId: string): void {
+    this.run((db) => { db.prepare("UPDATE connected_app_receipts SET turn_id=? WHERE op_key=? AND turn_id IS NULL").run(turnId, key); });
+  }
+}
+
 /** Every record of a ledger file without opening it for writing. A missing file or a file with no ledger table holds none. */
 export function readJournalFile(file: string): JournalRecord[] {
   if (!existsSync(file)) return [];

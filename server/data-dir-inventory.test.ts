@@ -32,6 +32,8 @@ const ROOT = join(import.meta.dirname, "..");
 
 /** A scan hit that is not the Murage data folder: file -> joined name -> why. */
 const NOT_THE_DATA_FOLDER: Record<string, Record<string, string>> = {
+  "server/cloud-home/supervisor.ts": { "<<name>>": "Fixed root volume layout under /data (home, home/secrets, server-home, proxy, caddy, browser); the application DATA_DIR is /data/home, not this volume root" },
+  "server/setup-backup.ts": { "<<SETUP_BACKUP_FILE_NAME>>": "setup-backup.json (classified), the name shared/setup-backup-record.mjs exports" },
   "server/user-chrome.ts": { DevToolsActivePort: "Chrome's own user-data folder, read only" },
   "server/env-path.ts": { shims: "mise's own data folder (MISE_DATA_DIR), read for PATH only" },
   "server/engine-plan-acp.ts": {
@@ -59,9 +61,12 @@ describe("every top-level name Murage writes is classified for backup", () => {
     expect(unknown).toEqual([]);
     expect(stale).toEqual([]);
     // The scan must keep finding the writers it was built against.
-    for (const name of ["about-me.md", "decisions.ndjson", "whats-new.json", "house-rules.md", "skill-collection", "stop-line", "telegram", "whatsapp", "browser-engine-key", "queued-messages.json", "setup.json", "engine-commands.json", "announcements.json", "restored-connections.json", "connected-apps-catalog.json", "image-reference-packs"]) {
+    for (const name of ["about-me.md", "decisions.ndjson", "whats-new.json", "house-rules.md", "skill-collection", "telegram", "whatsapp", "browser-engine-key", "queued-messages.json", "setup.json", "engine-commands.json", "announcements.json", "restored-connections.json", "connected-apps-catalog.json", "image-reference-packs"]) {
       expect(hits.map(hit => hit.name)).toContain(name);
     }
+    // stop-line-state.ts builds its folder with [dataDir, "stop-line", ...].join(sep) since 1.0.3, which the scan does not read; the name
+    // stays classified here directly, so its writer can never stop a backup.
+    expect(classifyDataDirEntry("stop-line")?.backup).toBe("excluded");
   });
 
   // 0.1.60 audit A-07: the desktop writes `${file}.${process.pid}.tmp` and
@@ -73,6 +78,9 @@ describe("every top-level name Murage writes is classified for backup", () => {
       configPath: "config.json", preferenceFile: "startup-background.json",
       // In Electron's userData, not the data folder.
       file: null, CREDENTIALS_FILE: null,
+      // electron/cloud-home-store.mjs: sealed Cloud home records and the pending connect, in <userData>/cloud-homes
+      // (electron/main.mjs), not the data folder.
+      target: null, pendingFile: null,
     };
     const found = new Set<string>();
     for (const name of readdirSync(join(ROOT, "electron"))) {

@@ -3,7 +3,7 @@
 //
 // 0.1.60 Kimi audit: each finding reproduced here first, then fixed.
 import { execFileSync } from "node:child_process";
-import { chmodSync, existsSync, lstatSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, lstatSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { expect, it } from "vitest";
 import { recoveryDesktopSummary } from "../electron/installation-recovery-protocol.mjs";
@@ -14,6 +14,7 @@ import { reviewInstallation } from "./installation-activation.ts";
 import { backupFixture, testAgeKeys } from "./testing/backup-fixture.ts";
 import { backupSkippedLines } from "../shared/backup-skipped.mjs";
 import { WINDOWS_BACKUP_BYTES } from "./installation-encrypted-backup.ts";
+import { removeTempDirSync } from "./testing/cleanup.ts";
 
 const selection = { scope: "application-data", credentialPolicy: "preserve-in-encrypted-fidelity" } as const;
 
@@ -31,7 +32,7 @@ it.skipIf(process.platform === "win32" || !process.env.MURAGE_BACKUP_TEST_AGE_DI
     expect(summary.skipped.items.map((item: { path: string }) => item.path).sort()).toEqual(["workspaces/bot/..\\plug", "workspaces/bot/\\"]);
     const lines = backupSkippedLines(summary.skipped).join(" ");
     expect(lines).toContain("..\\plug"); expect(lines).not.toContain("../plug"); expect(lines).not.toMatch(/[\x00-\x1f]/);
-  } finally { chmodSync(join(desk, "\\"), 0o600); f.db.close(); rmSync(f.parent, { recursive: true, force: true }); }
+  } finally { chmodSync(join(desk, "\\"), 0o600); f.db.close(); removeTempDirSync(f.parent); }
 }, 60_000);
 
 it("a malformed skipped list never fails a good result", () => {
@@ -70,7 +71,7 @@ it("a restored shortcut must stay inside the restored data folder; others are le
     // The review refuses a link that leads out, however it got there.
     symlinkSync("/etc", join(target, "workspaces", "bot", "planted"));
     expect(() => reviewInstallation(target)).toThrow();
-  } finally { f.db.close(); rmSync(f.parent, { recursive: true, force: true }); }
+  } finally { f.db.close(); removeTempDirSync(f.parent); }
 });
 
 // #6: past what Windows' backup tool holds, the 20 GB sentence, not a key error.

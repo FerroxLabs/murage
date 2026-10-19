@@ -33,6 +33,7 @@ import {
   PHONE_SETUP_PROVISIONING_TIMEOUT_MS,
   claimPhonePairingAttempt,
   closePhonePairingIfOwned,
+  closePhonePairingOutcome,
   completePhonePairingAttempt,
   companionPairingMode,
   companionPairingOpenFailure,
@@ -268,6 +269,8 @@ type AccountBridge = NonNullable<NonNullable<Window["muragebox"]>["companionAcco
 type StateBridge<T> = { state: () => Promise<T> };
 const DIRECT_PAIRING_UNAVAILABLE =
   "Direct Wi-Fi pairing isn’t available on this computer right now. Connect this computer to Wi-Fi, then try again.";
+/** Shown when Cancel could not close the pairing window, so the code may still pair a phone until it expires. */
+export const PAIRING_STILL_OPEN = "The pairing code is still open. Try closing it again, or it will expire on its own.";
 const PROTECTED_PAIRING_UNAVAILABLE =
   "The HTTPS pairing route became unavailable. Check secure access, then create a new code.";
 
@@ -364,6 +367,8 @@ export interface PhoneSetupController {
   busy: boolean;
   accountBusy: boolean;
   error: string | null;
+  pairingCloseFailed: boolean;
+  retryPairingClose: () => void;
   accountError: string | null;
   pairingLink: string | null;
   secondsLeft: number;
@@ -440,6 +445,26 @@ export function usePhoneSetupController(profileEmail = ""): PhoneSetupController
   const setupGeneration = useRef(0);
   const mounted = useRef(true);
   const companionMutationEpoch = useRef(0);
+  // Closing the pairing window can fail (the helper says so). The screen must not look cancelled while the code still pairs a phone.
+  const [pairingCloseFailed, setPairingCloseFailed] = useState(false);
+  const lastPairingClose = useRef<{ snapshot: CompanionState; companion: NonNullable<ReturnType<typeof companionBridge>>; mayClose: () => boolean } | null>(null);
+  const closeOwnedPairing = useCallback(async (snapshot: CompanionState, companion: NonNullable<ReturnType<typeof companionBridge>>, mayClose: () => boolean) => {
+    lastPairingClose.current = { snapshot, companion, mayClose };
+    setPairingCloseFailed(false);
+    const outcome = await closePhonePairingOutcome(
+      snapshot,
+      () => companion.state(),
+      () => mutateCompanionBridgeState(companionMutationEpoch, () => companion.pairing(false, snapshot.pairing?.token)),
+      mayClose,
+    );
+    if (outcome === "failed") { setPairingCloseFailed(true); setError(PAIRING_STILL_OPEN); }
+    else { lastPairingClose.current = null; setError((current) => (current === PAIRING_STILL_OPEN ? null : current)); }
+    return outcome;
+  }, []);
+  const retryPairingClose = useCallback(() => {
+    const last = lastPairingClose.current;
+    if (last) void closeOwnedPairing(last.snapshot, last.companion, last.mayClose);
+  }, [closeOwnedPairing]);
   const loadInFlight = useRef<Promise<void> | null>(null);
 
   const publishPairingRoutePin = useCallback((pin: OwnedCompanionPairingRoutePin | null) => {
@@ -916,19 +941,11 @@ export function usePhoneSetupController(profileEmail = ""): PhoneSetupController
       : "The pairing code changed before setup finished. Create a new code and try again.");
     dispatchFlow({ type: "reset" });
 
-    if (tokenMatches && companion) {
-      void closePhonePairingIfOwned(
-        state,
-        () => companion.state(),
-        () => mutateCompanionBridgeState(
-          companionMutationEpoch,
-          () => companion.pairing(false, state.pairing?.token),
-        ),
-        () => {
-          const activePin = pairingRoutePinRef.current;
-          return !activePin || activePin.generation === pin.generation;
-        },
-      );
+    if (tokenMatches && companion && state) {
+      void closeOwnedPairing(state, companion, () => {
+        const activePin = pairingRoutePinRef.current;
+        return !activePin || activePin.generation === pin.generation;
+      });
     }
   }, [pairingRoutePinState, publishPairingRoutePin, state]);
 
@@ -1023,15 +1040,7 @@ export function usePhoneSetupController(profileEmail = ""): PhoneSetupController
     publishPairingRoutePin(null);
     setState((current) => current ? { ...current, pairing: null } : current);
     if (companion && snapshot?.pairing) {
-      void closePhonePairingIfOwned(
-        snapshot,
-        () => companion.state(),
-        () => mutateCompanionBridgeState(
-          companionMutationEpoch,
-          () => companion.pairing(false, snapshot.pairing?.token),
-        ),
-        () => pairingRoutePinRef.current === null,
-      );
+      void closeOwnedPairing(snapshot, companion, () => pairingRoutePinRef.current === null);
     }
     setProvisioning(false);
     setAccountBusy(false);
@@ -1051,6 +1060,8 @@ export function usePhoneSetupController(profileEmail = ""): PhoneSetupController
     busy: actionBusy || pairingBusy,
     accountBusy,
     error,
+    pairingCloseFailed,
+    retryPairingClose,
     accountError,
     pairingLink,
     secondsLeft: state?.pairing
@@ -1389,6 +1400,7 @@ export function PhoneSetupFlowView({
           </p>
         )}
         {c.error && <p role="alert" className="mt-3 max-w-[390px] text-[12.5px] text-danger">{c.error}</p>}
+        {c.pairingCloseFailed && <button type="button" onClick={c.retryPairingClose} className="mt-2 rounded-lg border border-hairline/60 px-3 py-1.5 text-[12.5px] text-ink hover:bg-inset">Retry closing the code</button>}
         {variant === "onboarding" && (
           <>
             <button

@@ -1,4 +1,4 @@
-import { chmodSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -10,6 +10,7 @@ import extension, {
   toTypebox,
   truncateToolText,
 } from "./pi-mcp-extension.ts";
+import { removeTempDirSync } from "../testing/cleanup.ts";
 
 const tempDirs: string[] = [];
 const clients: StdioMcp[] = [];
@@ -52,7 +53,7 @@ function createClient(source: string, env: Record<string, string> = {}): StdioMc
 afterEach(() => {
   vi.restoreAllMocks();
   for (const client of clients.splice(0)) client.dispose();
-  for (const dir of tempDirs.splice(0)) rmSync(dir, { recursive: true, force: true });
+  for (const dir of tempDirs.splice(0)) removeTempDirSync(dir);
   if (originalMcpConfig === undefined) delete process.env.MURAGE_MCP_CONFIG;
   else process.env.MURAGE_MCP_CONFIG = originalMcpConfig;
 });
@@ -550,7 +551,7 @@ describe("Pi MCP extension registration", () => {
       });
     `);
     const config = join(tempDir(), "mcp.json");
-    writeFileSync(config, JSON.stringify({ mcpServers: { test: { command: process.execPath, args: [script] } } }));
+    writeFileSync(config, JSON.stringify({ mcpServers: { test: { command: process.execPath, args: [script], murageMountId: "custom:test" } } }));
     process.env.MURAGE_MCP_CONFIG = config;
     const registrations: RegisteredTool[] = [];
     let active = ["test_exec", "test_dropped", "read"];
@@ -571,6 +572,61 @@ describe("Pi MCP extension registration", () => {
     await expect(retired.execute("c", {}, undefined, undefined, { ui: { confirm: async () => true } }))
       .resolves.toMatchObject({ content: [{ type: "text", text: expect.stringContaining("no longer available") }] });
     expect(active).toEqual(["test_exec", "read"]);
+    // Rule 14b: the gate's table holds the live tool with its mount, and the retired one is gone
+    const table = (globalThis as Record<string, unknown>).__murageMcpTools as Map<string, unknown>;
+    expect(table.get("test_exec")).toEqual({ piName: "test_exec", mount: "test", mcpTool: "EXEC", mountId: "custom:test" });
+    expect(table.has("test_dropped")).toBe(false);
+    await handlers.get("session_shutdown")?.();
+  });
+
+  const listServer = (names: string[]) => fakeMcpScript(`
+    let buffer = "";
+    process.stdin.setEncoding("utf8");
+    const send = (value) => process.stdout.write(JSON.stringify(value) + "\\n");
+    process.stdin.on("data", (chunk) => {
+      buffer += chunk;
+      let newline;
+      while ((newline = buffer.indexOf("\\n")) !== -1) {
+        const line = buffer.slice(0, newline); buffer = buffer.slice(newline + 1);
+        if (!line.trim()) continue;
+        const msg = JSON.parse(line);
+        if (msg.method === "initialize") send({ jsonrpc: "2.0", id: msg.id, result: { capabilities: { tools: {} } } });
+        else if (msg.method === "tools/list") send({ jsonrpc: "2.0", id: msg.id, result: { tools: ${JSON.stringify(names)}.map((name) => ({ name, inputSchema: { type: "object", properties: {} } })) } });
+        else if (msg.method === "tools/call") send({ jsonrpc: "2.0", id: msg.id, result: { content: [{ type: "text", text: "ran" }] } });
+      }
+    });
+  `);
+
+  it("T12/T37: a suffixed piName maps to the right mount and tool in the table, by entry, not by parsing", async () => {
+    const dir = tempDir();
+    const config = join(dir, "mcp.json");
+    writeFileSync(config, JSON.stringify({ mcpServers: {
+      a: { command: process.execPath, args: [listServer(["b_c"])], murageMountId: "custom:a" },
+      a_b: { command: process.execPath, args: [listServer(["c"])], murageMountId: "custom:a_b" },
+    } }));
+    process.env.MURAGE_MCP_CONFIG = config;
+    const tools: RegisteredTool[] = [];
+    const handlers = new Map<string, ShutdownHandler>();
+    await extension({ registerTool(tool) { tools.push(tool); }, on(event, handler) { handlers.set(event, handler); } });
+    const names = tools.map((tool) => tool.name).sort();
+    expect(names).toEqual(["a_b_c", "a_b_c_2"]);
+    const table = (globalThis as Record<string, unknown>).__murageMcpTools as Map<string, { mount: string; mcpTool: string }>;
+    const rows = names.map((name) => `${table.get(name)!.mount}/${table.get(name)!.mcpTool}`).sort();
+    expect(rows).toEqual(["a/b_c", "a_b/c"]);
+    await handlers.get("session_shutdown")?.();
+  });
+
+  it("raises no confirm of its own when the permission gate asks for the call", async () => {
+    const config = join(tempDir(), "mcp.json");
+    writeFileSync(config, JSON.stringify({ mcpServers: { cust: { command: process.execPath, args: [listServer(["go"])], scope: "custom", murageGated: true } } }));
+    process.env.MURAGE_MCP_CONFIG = config;
+    const tools: RegisteredTool[] = [];
+    const handlers = new Map<string, ShutdownHandler>();
+    await extension({ registerTool(tool) { tools.push(tool); }, on(event, handler) { handlers.set(event, handler); } });
+    let asked = 0;
+    await expect(tools[0]!.execute("c", {}, undefined, undefined, { ui: { confirm: async () => { asked += 1; return false; } } }))
+      .resolves.toMatchObject({ content: [{ type: "text", text: "ran" }] });
+    expect(asked).toBe(0);
     await handlers.get("session_shutdown")?.();
   });
 });

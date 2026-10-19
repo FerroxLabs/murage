@@ -19,6 +19,7 @@ export async function downloadConversation(threadId: string, title: string): Pro
   }
   await ensureDesktopSurfaceSecret();
   const response = await fetch(path, {
+    redirect: "error",
     headers: { "x-murage-surface": "desktop", ...desktopSurfaceHeaders() },
   });
   if (!response.ok) throw new Error(response.status === 404

@@ -4,7 +4,7 @@
 // (audit A-1). This runs the real runSeparateDesktopRecovery from
 // electron/main.mjs against real messages.db files, with only the restore
 // worker and the selection publisher stubbed, and checks the memory outcome.
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { fileURLToPath } from "node:url";
@@ -20,8 +20,9 @@ import { captureWork } from "./chunks.ts";
 import { ownerMemoryTicket } from "./authority.ts";
 import { forgetMemory } from "./forget.ts";
 import * as memoryRestore from "./restore.ts";
+import { removeTempDirSync } from "../testing/cleanup.ts";
 
-beforeEach(() => { closeDatabase(); rmSync(DATA_DIR, { recursive: true, force: true }); mkdirSync(DATA_DIR, { recursive: true }); setMemoryMode("capture"); });
+beforeEach(() => { closeDatabase(); removeTempDirSync(DATA_DIR); mkdirSync(DATA_DIR, { recursive: true }); setMemoryMode("capture"); });
 
 const main = readFileSync(fileURLToPath(new URL("../../electron/main.mjs", import.meta.url)), "utf8");
 function realSeparateRestore(scope: Record<string, unknown>) {
@@ -62,7 +63,7 @@ it("a plain restore into a separate installation keeps a forgotten memory forgot
     });
     await run({ archive: "/chosen.zip", sha256: "a".repeat(64) }, { originalRoot: DATA_DIR, dataDirectory: target });
     expect(events).toEqual(["publish", "release"]);
-  } finally { rmSync(root, { recursive: true, force: true }); }
+  } finally { removeTempDirSync(root); }
 });
 
 it("a restore that cannot carry the original's deletions never publishes the selection", async () => {

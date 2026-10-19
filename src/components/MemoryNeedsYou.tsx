@@ -10,6 +10,8 @@
 // at the same markup a person sees.
 import { useCallback, useEffect, useRef, useState } from "react";
 import { api } from "@/state/store";
+import { t } from "@/lib/i18n";
+import { Disclosure } from "./MemoryLearningControls";
 import { useMemoryWaiting } from "@/lib/use-memory-waiting";
 import {
   applyWaitingSummary, batchSentence, errorSentence, headline, itemsForTab, keepAllLabel, keepAllTargets, keepTogetherLine, memoryAction, newActionId, newArrivals,
@@ -44,25 +46,25 @@ export interface ViewProps {
 function RowActions({ item, view, on }: { item: ReviewItem; view: ViewProps; on: Handlers }) {
   const editing = view.editing?.id === item.id, asking = view.pinAsk === item.id;
   if (editing) return <div className="grid grid-cols-2 gap-2 sm:flex sm:flex-wrap">
-    <button type="button" className={`${PRIMARY} col-span-2`} onClick={() => on.saveEdit(item)} disabled={!view.editing?.draft.trim()}>Save and keep</button>
-    <button type="button" className={BUTTON} onClick={on.cancel}>Cancel</button>
+    <button type="button" className={`${PRIMARY} col-span-2`} onClick={() => on.saveEdit(item)} disabled={!view.editing?.draft.trim()}>{t("memoryNeeds.saveAndKeep")}</button>
+    <button type="button" className={BUTTON} onClick={on.cancel}>{t("memoryNeeds.cancel")}</button>
   </div>;
   if (asking) return <div className="space-y-2">
-    <p className="text-[13px]">You pinned "{item.correction?.targetText ?? "an earlier memory"}". What should happen to the pin?</p>
+    <p className="text-[13px]">{t("memoryNeeds.pinAsk", { text: item.correction?.targetText ?? t("memoryNeeds.earlierMemory") })}</p>
     <div className="grid grid-cols-1 gap-2 sm:flex sm:flex-wrap">
-      <button type="button" className={PRIMARY} onClick={() => on.pinKeep(item, "transfer")}>Keep the pin on the new one</button>
-      <button type="button" className={BUTTON} onClick={() => on.pinKeep(item, "unpin")}>Remove the pin</button>
-      <button type="button" className={BUTTON} onClick={on.cancel}>Cancel</button>
+      <button type="button" className={PRIMARY} onClick={() => on.pinKeep(item, "transfer")}>{t("memoryNeeds.pinTransfer")}</button>
+      <button type="button" className={BUTTON} onClick={() => on.pinKeep(item, "unpin")}>{t("memoryNeeds.pinRemove")}</button>
+      <button type="button" className={BUTTON} onClick={on.cancel}>{t("memoryNeeds.cancel")}</button>
     </div>
   </div>;
   if (item.later) return <div className="grid grid-cols-2 gap-2 sm:flex sm:flex-wrap">
-    <button type="button" className={PRIMARY} onClick={() => on.keep(item)}>Keep</button>
-    <button type="button" className={BUTTON} onClick={() => on.back(item)}>Back to waiting</button>
+    <button type="button" className={PRIMARY} onClick={() => on.keep(item)}>{t("memoryNeeds.keep")}</button>
+    <button type="button" className={BUTTON} onClick={() => on.back(item)}>{t("memoryNeeds.backToWaiting")}</button>
   </div>;
   return <div className="grid grid-cols-2 gap-2 sm:flex sm:flex-wrap">
-    <button type="button" className={`${PRIMARY} col-span-2 sm:col-span-1`} onClick={() => on.keep(item)}>Keep</button>
-    <button type="button" className={BUTTON} onClick={() => on.later(item)}>Not now</button>
-    <button type="button" className={BUTTON} onClick={() => on.edit(item)}>Edit</button>
+    <button type="button" className={`${PRIMARY} col-span-2 sm:col-span-1`} onClick={() => on.keep(item)}>{t("memoryNeeds.keep")}</button>
+    <button type="button" className={BUTTON} onClick={() => on.later(item)}>{t("memoryNeeds.notNow")}</button>
+    <button type="button" className={BUTTON} onClick={() => on.edit(item)}>{t("memoryNeeds.edit")}</button>
   </div>;
 }
 
@@ -71,26 +73,27 @@ function Row({ item, view, on }: { item: ReviewItem; view: ViewProps; on: Handle
   return <li data-memory-item={item.id} aria-busy={view.pending.has(item.id) || undefined} className="space-y-2 border-t border-hairline/40 py-3 first:border-t-0">
     <RowActions item={item} view={view} on={on} />
     {editing
-      ? <label className="block space-y-1 text-[13px]">Edit what {view.subject.name} keeps
+      ? <label className="block space-y-1 text-[13px]">{t("memoryNeeds.editLabel", { name: view.subject.name })}
           <textarea autoFocus rows={3} maxLength={4096} className="w-full min-w-0 rounded-lg border border-hairline/50 bg-inset px-3 py-2 text-[13px] text-ink focus-visible:outline focus-visible:outline-2 focus-visible:outline-focus"
             value={view.editing?.draft ?? ""} onChange={event => on.draft(event.target.value)} onKeyDown={event => { if (event.key === "Escape") on.cancel(); }} />
         </label>
       : <p className="whitespace-pre-wrap break-words text-[13px]" data-testid="memory-waiting-text">{item.text}</p>}
-    <p className="text-[12px] text-ink-secondary">{editing ? `Was: "${item.text}"` : reasonSentence(item, view.subject.name, view.now)}</p>
-    <details onToggle={event => { if ((event.currentTarget as HTMLDetailsElement).open) on.sources(item); }}>
-      <summary className={`min-h-6 cursor-pointer text-[12px] text-ink-secondary ${FOCUS}`}>Why this?</summary>
+    <p className="text-[12px] text-ink-secondary">{editing ? t("memoryNeeds.was", { text: item.text }) : reasonSentence(item, view.subject.name, view.now)}</p>
+    <Disclosure label={<span className="text-[12px] font-normal text-ink-secondary">{t("memoryNeeds.whyThis")}</span>} onOpenChange={open => { if (open) on.sources(item); }}>
       <div className="mt-1 space-y-1 text-[12px] text-ink-secondary">
-        {known === undefined || known === "loading" ? <p>Looking up where this came from.</p>
-          : known === "error" ? <p>Could not look that up right now.</p>
-          : !known.length ? <p>No longer available: the message it came from was deleted.</p>
+        {known === undefined || known === "loading" ? <p>{t("memoryNeeds.lookingUp")}</p>
+          : known === "error" ? <p>{t("memoryNeeds.lookupError")}</p>
+          : !known.length ? <p>{t("memoryNeeds.noLonger")}</p>
           : known.map((line, index) => <p key={index} className="break-words">
-              From {line.where.kind === "room" ? `${line.where.name}` : line.where.kind === "chat" ? `your chat with ${line.where.name}` : "a conversation"}
-              {line.at ? `, ${new Date(line.at).toLocaleDateString(undefined, { month: "short", day: "numeric" })}` : ""}
-              {line.excerpt ? `: "${line.excerpt}"` : "."}
+              {t("memoryNeeds.sourceLine", {
+                where: line.where.kind === "room" ? `${line.where.name}` : line.where.kind === "chat" ? t("memoryNeeds.sourceChat", { name: line.where.name }) : t("memoryNeeds.sourceOther"),
+                date: line.at ? `, ${new Date(line.at).toLocaleDateString(undefined, { month: "short", day: "numeric" })}` : "",
+                tail: line.excerpt ? t("memoryNeeds.sourceExcerpt", { excerpt: line.excerpt }) : ".",
+              })}
             </p>)}
-        <p>Used in your chats with {view.subject.name}. Only you can see it.</p>
+        <p>{t("memoryNeeds.usedIn", { name: view.subject.name })}</p>
       </div>
-    </details>
+    </Disclosure>
   </li>;
 }
 
@@ -103,47 +106,47 @@ export function MemoryNeedsYouView(view: ViewProps) {
   const oneByOne = rows.filter(item => item.rank < 2), everyday = rows.filter(item => item.rank >= 2);
   const grouped = expanded && view.tab === "waiting";
   return <>
-    <section aria-label="Needs you" data-testid="memory-needs-you" className="rounded-xl border border-hairline/50 bg-panel">
+    <section aria-label={t("memoryNeeds.title")} data-testid="memory-needs-you" className="rounded-xl border border-hairline/50 bg-panel">
       <header className="sticky top-0 z-10 space-y-3 rounded-t-xl border-b border-hairline/40 bg-panel p-4">
         <div className="flex flex-wrap items-start justify-between gap-3">
           <div className="min-w-0">
-            <h3 className="text-[15px] font-medium" data-testid="memory-needs-you-count">{expanded ? `Needs you · ${view.subject.name} · ` : ""}{headline(counts.waiting)}</h3>
+            <h3 className="text-[15px] font-medium" data-testid="memory-needs-you-count">{expanded ? t("memoryNeeds.headingPrefix", { name: view.subject.name }) : ""}{headline(counts.waiting)}</h3>
             <p className="min-h-[18px] text-[12px] text-ink-secondary">{keepTogetherLine(counts.everyday, counts.waiting)}</p>
           </div>
           <div className="flex min-h-11 flex-wrap items-center gap-2 max-sm:w-full">
             {counts.everyday > 0 && <button type="button" className={`${PRIMARY} max-sm:flex-1`} onClick={on.keepAll}>{keepAllLabel(counts.everyday)}</button>}
-            {!expanded && counts.waiting > INLINE_ROWS && <button type="button" className={`${BUTTON} max-sm:flex-1`} onClick={on.expand}>Review all {counts.waiting}</button>}
-            {expanded && <button type="button" className={BUTTON} onClick={on.collapse}>Show less</button>}
+            {!expanded && counts.waiting > INLINE_ROWS && <button type="button" className={`${BUTTON} max-sm:flex-1`} onClick={on.expand}>{t("memoryNeeds.reviewAll", { count: counts.waiting })}</button>}
+            {expanded && <button type="button" className={BUTTON} onClick={on.collapse}>{t("memoryNeeds.showLess")}</button>}
           </div>
         </div>
-        {expanded && <div role="tablist" aria-label="Filter" className="flex gap-2">
-          <button type="button" role="tab" aria-selected={view.tab === "waiting"} className={BUTTON} onClick={() => on.tab("waiting")}>Waiting {counts.waiting}</button>
-          <button type="button" role="tab" aria-selected={view.tab === "later"} className={BUTTON} onClick={() => on.tab("later")}>Later {counts.later}</button>
+        {expanded && <div role="tablist" aria-label={t("memoryNeeds.filter")} className="flex gap-2">
+          <button type="button" role="tab" aria-selected={view.tab === "waiting"} className={BUTTON} onClick={() => on.tab("waiting")}>{t("memoryNeeds.tabWaiting", { count: counts.waiting })}</button>
+          <button type="button" role="tab" aria-selected={view.tab === "later"} className={BUTTON} onClick={() => on.tab("later")}>{t("memoryNeeds.tabLater", { count: counts.later })}</button>
         </div>}
       </header>
       <div className="px-4 pb-2">
         <p role="alert" className="min-h-0 text-[13px] text-danger">{view.error}</p>
         {view.newCount > 0 && <button type="button" className={`${BUTTON} my-2`} onClick={on.showNew}>{newArrivals(view.newCount)}</button>}
-        <ul aria-label="Waiting memories">
-          {grouped && oneByOne.length > 0 && <li role="presentation" className="pt-3 text-[12px] font-medium text-ink-secondary">One by one</li>}
+        <ul aria-label={t("memoryNeeds.listLabel")}>
+          {grouped && oneByOne.length > 0 && <li role="presentation" className="pt-3 text-[12px] font-medium text-ink-secondary">{t("memoryNeeds.oneByOne")}</li>}
           {(grouped ? oneByOne : rows).map(item => <Row key={item.id} item={item} view={view} on={on} />)}
-          {grouped && everyday.length > 0 && <li role="presentation" className="pt-3 text-[12px] font-medium text-ink-secondary">Everyday</li>}
+          {grouped && everyday.length > 0 && <li role="presentation" className="pt-3 text-[12px] font-medium text-ink-secondary">{t("memoryNeeds.everyday")}</li>}
           {grouped && everyday.map(item => <Row key={item.id} item={item} view={view} on={on} />)}
         </ul>
         {!rows.length && view.loading && counts.waiting > 0 && <div aria-hidden="true" className="h-24" />}
-        {!rows.length && !view.loading && (view.tab === "later" || counts.later > 0) && <p className="py-3 text-[13px] text-ink-secondary">{view.tab === "later" ? "Nothing in Later. Not now puts things here until you decide." : `${counts.later} in Later`}</p>}
+        {!rows.length && !view.loading && (view.tab === "later" || counts.later > 0) && <p className="py-3 text-[13px] text-ink-secondary">{view.tab === "later" ? t("memoryNeeds.emptyLater") : t("memoryNeeds.inLater", { count: counts.later })}</p>}
       </div>
     </section>
     <div className="fixed inset-x-4 bottom-4 z-50 mx-auto max-w-md" role="status" aria-live="polite">
       {view.toast && <div className="flex items-center justify-between gap-3 rounded-xl border border-hairline bg-card px-4 py-3 text-[13px] shadow-xl">
         <span className="min-w-0 break-words">{view.toast.message}</span>
-        {view.toast.undo && <button type="button" className={BUTTON} onClick={view.toast.undo}>Undo</button>}
+        {view.toast.undo && <button type="button" className={BUTTON} onClick={view.toast.undo}>{t("memoryNeeds.undo")}</button>}
       </div>}
     </div>
   </>;
 }
 
-const keptMessage = (subject: ReviewSubject) => subject.kind === "bot" ? `Kept for your chats with ${subject.name}.` : `Kept for ${subject.name}.`;
+const keptMessage = (subject: ReviewSubject) => subject.kind === "bot" ? t("memoryNeeds.keptBot", { name: subject.name }) : t("memoryNeeds.keptOther", { name: subject.name });
 
 /** The block with its behaviour: loads the list, answers a press at once, undoes from the toast. */
 export function MemoryNeedsYou({ subject }: { subject: ReviewSubject }) {
@@ -216,7 +219,7 @@ export function MemoryNeedsYou({ subject }: { subject: ReviewSubject }) {
       if (last?.summary) applyWaitingSummary(last.summary);
       await load();
       const archived = outcomes.filter(status => status === "archived").length;
-      say({ message: archived === 0 ? "Back in Needs you." : archived === outcomes.length ? `Undone. ${subject.name} will not use this here.` : `Undone. ${archived} will not be used here.` });
+      say({ message: archived === 0 ? t("memoryNeeds.backInNeeds") : archived === outcomes.length ? t("memoryNeeds.undoneAll", { name: subject.name }) : t("memoryNeeds.undoneSome", { count: archived }) });
     } catch (cause) { say({ message: errorSentence(cause) }); }
   };
 
@@ -224,7 +227,7 @@ export function MemoryNeedsYou({ subject }: { subject: ReviewSubject }) {
     if (item.correction?.targetPinned && !pin) { setPinAsk(item.id); return; }
     const actionId = newActionId();
     void answer([item.id], () => memoryAction(api, { action: "review-keep", actionId, id: item.id, version: item.version, ...(pin ? { correctionPin: pin } : {}) }),
-      result => ({ message: pin ? "Kept. The pin is updated." : keptMessage(subject), undo: () => void undoKeeps([{ actionId, id: item.id, version: result.result.version }])() }));
+      result => ({ message: pin ? t("memoryNeeds.keptPin") : keptMessage(subject), undo: () => void undoKeeps([{ actionId, id: item.id, version: result.result.version }])() }));
   };
   const handlers: Handlers = {
     keep: item => keep(item),
@@ -232,10 +235,10 @@ export function MemoryNeedsYou({ subject }: { subject: ReviewSubject }) {
     later: item => {
       const actionId = newActionId();
       void answer([item.id], () => memoryAction(api, { action: "review-later", actionId, id: item.id, version: item.version }),
-        () => ({ message: "Moved to Later. It stays there until you decide.", undo: () => { void (async () => { try { const back = await memoryAction(api, { action: "review-back", id: item.id }); applyWaitingSummary(back.summary); await load(); say({ message: "Back in Needs you." }); } catch (cause) { say({ message: errorSentence(cause) }); } })(); } }));
+        () => ({ message: t("memoryNeeds.movedLater"), undo: () => { void (async () => { try { const back = await memoryAction(api, { action: "review-back", id: item.id }); applyWaitingSummary(back.summary); await load(); say({ message: t("memoryNeeds.backInNeeds") }); } catch (cause) { say({ message: errorSentence(cause) }); } })(); } }));
     },
     back: item => {
-      void answer([item.id], () => memoryAction(api, { action: "review-back", id: item.id }), () => ({ message: "Back in Needs you." }));
+      void answer([item.id], () => memoryAction(api, { action: "review-back", id: item.id }), () => ({ message: t("memoryNeeds.backInNeeds") }));
     },
     edit: item => { setPinAsk(null); setEditing({ id: item.id, draft: item.text }); },
     draft: text => setEditing(current => (current ? { ...current, draft: text } : current)),
@@ -245,7 +248,7 @@ export function MemoryNeedsYou({ subject }: { subject: ReviewSubject }) {
       if (!text) return;
       const actionId = newActionId();
       void answer([item.id], () => memoryAction(api, { action: "review-edit", actionId, id: item.id, version: item.version, text, keep: true }),
-        result => ({ message: "Saved your wording and kept it.", undo: () => void undoKeeps([{ actionId, id: item.id, version: result.result.version }])() }));
+        result => ({ message: t("memoryNeeds.savedKept"), undo: () => void undoKeeps([{ actionId, id: item.id, version: result.result.version }])() }));
     },
     keepAll: () => {
       const targets = keepAllTargets(itemsRef.current);

@@ -214,6 +214,12 @@ describe("comms e2e (fake ACP fleet)", () => {
             environment: { ...GROK_MCP_READY, FAKE_ACP_MODE: "ask-peer" },
             config: { cli: FAKE_CLI, fullAuto: true },
           },
+          // like `grok`, but a lead woken by its teammate's late reply finishes
+          askerResume: {
+            driver: "grokAgent",
+            environment: { ...GROK_MCP_READY, FAKE_ACP_MODE: "ask-peer-resume" },
+            config: { cli: FAKE_CLI, fullAuto: true },
+          },
           // Normal Gemini 3.x bots use Antigravity print mode rather than
           // the standalone Gemini ACP driver. This instance proves its
           // leased global MCP mount reaches the same agents proxy safely.
@@ -622,7 +628,11 @@ describe("comms e2e (fake ACP fleet)", () => {
       );
       expect(helperNote?.comm?.groupId).toBe(note.comm.groupId);
       expect(helperBot.busy).toBeFalsy();
-      expect(askerBot.busy).toBeFalsy();
+      // the returned result starts A's follow-through (r#4); A settles once it has run
+      await waitUntil(async () => {
+        const settled = (await api("GET", "/api/bots")).body.bots.find((b: any) => b.id === asker.id);
+        return !settled.busy && settled.messages.some((m: any) => m.kind === "text" && m.role === "bot" && m.text?.includes("LEAD RESUMED"));
+      }, 15_000, "A never settled after its follow-through");
     },
     45_000,
   );
@@ -695,11 +705,8 @@ describe("comms e2e (fake ACP fleet)", () => {
         }, 20_000, "worker result did not return to the Chief conversation");
 
         // The result is not only visible in storage/UI. It was appended
-        // outside the Chief provider's native session, so the next resumed
-        // turn must replay it into model context before answering.
-        expect((await api("POST", `/api/bots/${chief.id}/messages`, {
-          text: "CHIEF_RESULT_CONTEXT: what did LongWorker report?",
-        })).status).toBe(202);
+        // outside the Chief provider's native session, so the turn its return
+        // starts (r#4: no owner message needed) must replay it into model context.
         await waitUntil(async () => {
           chiefBot = (await api("GET", "/api/bots")).body.bots.find((bot: any) => bot.id === chief.id);
           return chiefBot.messages.some(
@@ -1053,6 +1060,122 @@ describe("comms e2e (fake ACP fleet)", () => {
       }, 10_000, "peer stayed busy after its late reply was delivered");
     },
     75_000,
+  );
+
+  // Lane 0163-delegate-wake: in a direct (1:1) chat the converted ask used to
+  // leave the lead stalled after its first step; the late reply landed but
+  // nothing woke the asker. The reply must now resume the lead.
+  it(
+    "wakes the lead in a direct chat when a slow teammate's reply lands",
+    async () => {
+      rmSync(gateFile, { force: true });
+      for (const existing of (await api("GET", "/api/bots")).body.bots) {
+        await api("PATCH", `/api/bots/${existing.id}`, { hidden: true });
+      }
+      const helper = (await api("POST", "/api/bots")).body.bot;
+      await api("PATCH", `/api/bots/${helper.id}`, {
+        name: "SlowMate",
+        modelSelection: { instanceId: "helperGate", model: "fake-model" },
+      });
+      const lead = (await api("POST", "/api/bots")).body.bot;
+      await api("PATCH", `/api/bots/${lead.id}`, {
+        name: "WakeLead",
+        modelSelection: { instanceId: "askerResume", model: "fake-model" },
+      });
+      expect((await api("POST", `/api/bots/${lead.id}/messages`, { text: "ask @SlowMate for the numbers" })).status).toBe(202);
+      let leadBot: any;
+      await waitUntil(async () => {
+        leadBot = (await api("GET", "/api/bots")).body.bots.find((b: any) => b.id === lead.id);
+        const reply = leadBot.messages.findLast((m: any) => m.kind === "text" && m.role === "bot");
+        return Boolean(reply?.text?.includes("converted to a delegation") && !leadBot.busy);
+      }, 30_000, "lead never got the timeout-conversion reply");
+      writeFileSync(gateFile, "go");
+      await waitUntil(async () => {
+        leadBot = (await api("GET", "/api/bots")).body.bots.find((b: any) => b.id === lead.id);
+        return leadBot.messages.some((m: any) => m.kind === "text" && m.role === "bot" && m.text?.includes("LEAD RESUMED"));
+      }, 30_000, "lead never resumed after the teammate's late reply");
+      await waitUntil(async () => !(await api("GET", "/api/bots?messages=0")).body.bots.find((b: any) => b.id === lead.id).busy, 15_000, "lead stayed busy");
+      // woken once, not looped
+      expect(leadBot.messages.filter((m: any) => m.kind === "text" && m.role === "bot" && m.text?.includes("LEAD RESUMED"))).toHaveLength(1);
+    },
+    90_000,
+  );
+
+  // Opus gate: Stop pressed in the lead's chat while it is idle and its
+  // teammate is still working. The reply still lands; it restarts nothing.
+  it(
+    "does not wake a lead whose chat was stopped while the teammate worked",
+    async () => {
+      rmSync(gateFile, { force: true });
+      for (const existing of (await api("GET", "/api/bots")).body.bots) {
+        await api("PATCH", `/api/bots/${existing.id}`, { hidden: true });
+      }
+      const helper = (await api("POST", "/api/bots")).body.bot;
+      await api("PATCH", `/api/bots/${helper.id}`, {
+        name: "SlowMateTwo",
+        modelSelection: { instanceId: "helperGate", model: "fake-model" },
+      });
+      const lead = (await api("POST", "/api/bots")).body.bot;
+      await api("PATCH", `/api/bots/${lead.id}`, {
+        name: "StoppedLead",
+        modelSelection: { instanceId: "askerResume", model: "fake-model" },
+      });
+      expect((await api("POST", `/api/bots/${lead.id}/messages`, { text: "ask @SlowMateTwo for the numbers" })).status).toBe(202);
+      let leadBot: any;
+      await waitUntil(async () => {
+        leadBot = (await api("GET", "/api/bots")).body.bots.find((b: any) => b.id === lead.id);
+        const reply = leadBot.messages.findLast((m: any) => m.kind === "text" && m.role === "bot");
+        return Boolean(reply?.text?.includes("converted to a delegation") && !leadBot.busy);
+      }, 30_000, "lead never got the timeout-conversion reply");
+      await api("POST", `/api/bots/${lead.id}/interrupt`, {});
+      writeFileSync(gateFile, "go");
+      await waitUntil(async () => {
+        leadBot = (await api("GET", "/api/bots")).body.bots.find((b: any) => b.id === lead.id);
+        return leadBot.messages.some((m: any) => m.kind === "text" && m.role === "bot" && m.text?.includes("replied to the delegated task"));
+      }, 30_000, "the teammate's late reply never landed in the lead's chat");
+      await new Promise((resolve) => setTimeout(resolve, 2_500));
+      leadBot = (await api("GET", "/api/bots")).body.bots.find((b: any) => b.id === lead.id);
+      expect(leadBot.busy).toBeFalsy();
+      expect(leadBot.messages.some((m: any) => m.text?.includes("LEAD RESUMED"))).toBe(false);
+    },
+    90_000,
+  );
+
+  // r#4 (lane D): a delegate_bot hand-off made in a direct (1:1) chat ends the
+  // asking turn; when the teammate's result lands, the delegating bot's
+  // follow-through starts by itself, once, with no owner message.
+  it(
+    "starts the delegating bot's continuation when a direct delegate_bot hand-off returns",
+    async () => {
+      for (const existing of (await api("GET", "/api/bots")).body.bots) {
+        await api("PATCH", `/api/bots/${existing.id}`, { hidden: true });
+      }
+      const helper = (await api("POST", "/api/bots")).body.bot;
+      await api("PATCH", `/api/bots/${helper.id}`, { name: "AckMate", modelSelection: { instanceId: "grok", model: "fake-model" } });
+      const lead = (await api("POST", "/api/bots")).body.bot;
+      await api("PATCH", `/api/bots/${lead.id}`, { name: "DelegateLead", modelSelection: { instanceId: "askerDelegate", model: "fake-model" } });
+      const userMessages = () => leadBot.messages.filter((m: any) => m.role === "user");
+      let leadBot: any;
+      expect((await api("POST", `/api/bots/${lead.id}/messages`, { text: "hand @AckMate a short acknowledgment task" })).status).toBe(202);
+      await waitUntil(async () => {
+        leadBot = (await api("GET", "/api/bots")).body.bots.find((b: any) => b.id === lead.id);
+        return leadBot.messages.some((m: any) => m.kind === "text" && m.from?.botId === helper.id && m.text?.includes("replied to the delegated task"));
+      }, 30_000, "the teammate's result never returned to the delegating bot");
+      await waitUntil(async () => {
+        leadBot = (await api("GET", "/api/bots")).body.bots.find((b: any) => b.id === lead.id);
+        return leadBot.messages.some((m: any) => m.kind === "text" && m.role === "bot" && m.text?.includes("LEAD RESUMED"));
+      }, 30_000, "the delegating bot never continued after the hand-off returned");
+      await waitUntil(async () => !(await api("GET", "/api/bots?messages=0")).body.bots.find((b: any) => b.id === lead.id).busy, 15_000, "lead stayed busy");
+      await new Promise((resolve) => setTimeout(resolve, 1_500));
+      leadBot = (await api("GET", "/api/bots")).body.bots.find((b: any) => b.id === lead.id);
+      // the continuation follows the returned result, ran once, and needed no second owner message
+      const resumedAt = leadBot.messages.findIndex((m: any) => m.kind === "text" && m.role === "bot" && m.text?.includes("LEAD RESUMED"));
+      const returnedAt = leadBot.messages.findIndex((m: any) => m.kind === "text" && m.from?.botId === helper.id && m.text?.includes("replied to the delegated task"));
+      expect(resumedAt).toBeGreaterThan(returnedAt);
+      expect(leadBot.messages.filter((m: any) => m.kind === "text" && m.role === "bot" && m.text?.includes("LEAD RESUMED"))).toHaveLength(1);
+      expect(userMessages()).toHaveLength(1);
+    },
+    90_000,
   );
 
   // ── delegation terminal-state mirroring ─────────────────────────────

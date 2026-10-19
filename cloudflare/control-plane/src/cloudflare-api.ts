@@ -2,6 +2,9 @@ import { z } from "zod";
 import type { ControlPlaneConfig } from "./config";
 
 export const MANAGED_COMPANION_ORIGIN_URL = "http://127.0.0.1:8812";
+/** Where the cloudflared connector on a cloud home VM reaches the home's web
+ *  origin. Loopback only: the VM exposes no inbound port. */
+export const MANAGED_CLOUD_HOME_ORIGIN_URL = "http://127.0.0.1:8830";
 
 const API_BASE = "https://api.cloudflare.com/client/v4/";
 const API_TIMEOUT_MS = 5_000;
@@ -246,7 +249,7 @@ export class CloudflareAPI {
     return { id: tunnel.id, name: tunnel.name };
   }
 
-  async configureTunnel(tunnelId: string, hostname: string): Promise<void> {
+  async configureTunnel(tunnelId: string, hostname: string, originUrl: string): Promise<void> {
     const result = await this.request(
       `accounts/${encodeURIComponent(this.config.accountId)}/cfd_tunnel/${encodeURIComponent(tunnelId)}/configurations`,
       configurationSchema,
@@ -254,7 +257,7 @@ export class CloudflareAPI {
         body: {
           config: {
             ingress: [
-              { hostname, service: MANAGED_COMPANION_ORIGIN_URL },
+              { hostname, service: originUrl },
               { service: "http_status:404" },
             ],
           },
@@ -266,7 +269,7 @@ export class CloudflareAPI {
     if (
       ingress.length !== 2
       || ingress[0]?.hostname !== hostname
-      || ingress[0]?.service !== MANAGED_COMPANION_ORIGIN_URL
+      || ingress[0]?.service !== originUrl
       || ingress[1]?.hostname !== undefined
       || ingress[1]?.service !== "http_status:404"
     ) {
@@ -348,6 +351,18 @@ export class CloudflareAPI {
       proxied: record.proxied,
       type: record.type,
     };
+  }
+
+  /** Replaces the tunnel's secret. The connector token embeds the secret, so a
+   *  token fetched before this call stops authenticating new connectors. */
+  async rotateTunnelSecret(tunnelId: string): Promise<void> {
+    const secret = btoa(String.fromCharCode(...crypto.getRandomValues(new Uint8Array(32))));
+    const tunnel = await this.request(
+      `accounts/${encodeURIComponent(this.config.accountId)}/cfd_tunnel/${encodeURIComponent(tunnelId)}`,
+      tunnelSchema,
+      { body: { tunnel_secret: secret }, method: "PATCH" },
+    );
+    if (tunnel.id !== tunnelId) throw new CloudflareAPIError("cf_invalid_response");
   }
 
   async getConnectorToken(tunnelId: string): Promise<string> {

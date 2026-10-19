@@ -29,7 +29,7 @@ it("B16 serializes one/four scoped references over real local HTTP after approva
   const controller = new AbortController(), actor = { botId: bot.id, threadId: bot.threadId, generation: randomUUID(), signal: controller.signal, assertActive: () => {} };
   const uploads = Array.from({ length: count }, (_, i) => saveImage(Buffer.concat([png, Buffer.from([i])]), "image/png"));
   store.appendMessage(bot.threadId, { role: "user", kind: "text", text: "Edit these", attachments: uploads.map(item => ({ kind: "image", path: item.path, mime: item.mime })) });
-  const refs = imageReferences(store, bot.threadId, uploads.map(item => basename(item.path)));
+  const refs = (await imageReferences(store, bot.threadId, uploads.map(item => basename(item.path)), () => {}));
   let posts = 0;
   const forms: FormData[] = [];
   const server = createServer(async (req, res) => {
@@ -152,7 +152,7 @@ it("B16 publishes the exact byte-distinct Flux edit output as a registered artif
  const actor = { botId: bot.id, threadId: bot.threadId, generation: randomUUID(), signal: new AbortController().signal, assertActive: () => {} };
  const upload = saveImage(Buffer.concat([png, Buffer.from([9])]), "image/png");
  store.appendMessage(bot.threadId, { role: "user", kind: "text", text: "Edit this", attachments: [{ kind: "image", path: upload.path, mime: upload.mime }] });
- const refs = imageReferences(store, bot.threadId, [basename(upload.path)]);
+ const refs = (await imageReferences(store, bot.threadId, [basename(upload.path)], () => {}));
  expect(provided.equals(refs[0]!.bytes)).toBe(false); expect(provided.equals(png)).toBe(false);
  f.fetcher.mockImplementation(async () => Response.json({ data: [{ b64_json: provided.toString("base64") }], model: "flux-image" }));
  const operations = new ImageOperations({ store, waiting: () => {} });

@@ -1,13 +1,14 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // 1.0.1 Episode 1: the "Help me run my business" crew arrived with no team
 // lead, and its team name carried part of the import id.
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { importBotPackageContents, previewBotPackageContents } from "./bot-package-import.ts";
 import { importedTeamName, legacyImportedLabel, tidyImportedTeams, type ImportedTeamBot } from "./imported-team.ts";
 import { starterProfileContents } from "./starter-profiles.ts";
+import { removeTempDirSync } from "./testing/cleanup.ts";
 
 async function importStarter(id: string, extra: { existingSections?: string[]; starterLeads?: boolean }) {
   const root = mkdtempSync(join(tmpdir(), "murage-imported-team-"));
@@ -20,7 +21,7 @@ async function importStarter(id: string, extra: { existingSections?: string[]; s
       expectedArchiveSha256: preview.archiveSha256, expectedReviewHash: preview.reviewHash,
       modelSelection: { instanceId: "fixture", model: "fixture" }, acknowledgeWarnings: true, atomicCommit: () => {}, ...extra });
     return { pkg, bots: imported.bots, leads: imported.leadBotIds };
-  } finally { rmSync(root, { recursive: true, force: true }); }
+  } finally { removeTempDirSync(root); }
 }
 
 describe("the business starter crew", () => {

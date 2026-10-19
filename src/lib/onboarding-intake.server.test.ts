@@ -11,12 +11,13 @@
 // unknown driver pinned, the same trick server/index.test.ts uses to keep the
 // suite off the network and off any agent CLI the host happens to have.
 import { spawn, type ChildProcess } from "node:child_process";
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { removeTempDirSync } from "../../server/testing/cleanup.ts";
 
 const REPO = fileURLToPath(new URL("../..", import.meta.url));
 const PORT = 19100 + Math.floor(Math.random() * 5_000);
@@ -98,7 +99,7 @@ afterAll(async () => {
   child?.kill("SIGTERM");
   await new Promise((resolve) => setTimeout(resolve, 300));
   child?.kill("SIGKILL");
-  rmSync(home, { recursive: true, force: true });
+  removeTempDirSync(home);
 });
 
 describe("GET /api/library/suggest", () => {

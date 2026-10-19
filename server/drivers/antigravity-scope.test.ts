@@ -15,6 +15,7 @@ import { recordEvents } from "../testing/events.ts";
 import { AntigravityDriver } from "./antigravity.ts";
 import { antigravityLockConfig, buildAntigravityScopedHome, forgetLiveScopes, recoverAllScopedHomes, removeAntigravityLegacyMcpEntries, type MirrorOps } from "./antigravity-scope.ts";
 import { processIdentity } from "./process-identity.ts";
+import { removeTempDirSync } from "../testing/cleanup.ts";
 
 const FAKE_CLI = join(dirname(fileURLToPath(import.meta.url)), "..", "testing", "fake-agy-cli.ts");
 
@@ -113,8 +114,8 @@ describe("buildAntigravityScopedHome", () => {
       scoped.dispose();
       expect(existsSync(scoped.home)).toBe(false);
     } finally {
-      rmSync(home, { recursive: true, force: true });
-      rmSync(root, { recursive: true, force: true });
+      removeTempDirSync(home);
+      removeTempDirSync(root);
     }
   });
 
@@ -130,8 +131,8 @@ describe("buildAntigravityScopedHome", () => {
       expect(existsSync(join(home, ".gemini", "config", "plugins", "personal-plugin", "mcp_config.json"))).toBe(true);
       expect(readFileSync(join(home, ".gemini", "antigravity-cli", "auth.json"), "utf8")).toBe("LOGIN-TOKEN-FIXTURE");
     } finally {
-      rmSync(home, { recursive: true, force: true });
-      rmSync(root, { recursive: true, force: true });
+      removeTempDirSync(home);
+      removeTempDirSync(root);
     }
   });
 
@@ -152,8 +153,8 @@ describe("buildAntigravityScopedHome", () => {
       // but a file the owner never had in the personal set is never adopted over theirs
       expect(readFileSync(join(home, ".gemini", "GEMINI.md"), "utf8")).toBe("personal instructions");
     } finally {
-      rmSync(home, { recursive: true, force: true });
-      rmSync(root, { recursive: true, force: true });
+      removeTempDirSync(home);
+      removeTempDirSync(root);
     }
   });
 });
@@ -187,7 +188,7 @@ describe("removeAntigravityLegacyMcpEntries", () => {
       expect(removeAntigravityLegacyMcpEntries(home)).toEqual(["murage-agents"]);
       expect(Object.keys(JSON.parse(readFileSync(path, "utf8")).mcpServers).sort()).toEqual(["murage-computer", "murage-computer-2", "murage-custom-notes", "murage-custom-other", "my-murage-custom-x"]);
     } finally {
-      rmSync(home, { recursive: true, force: true });
+      removeTempDirSync(home);
     }
   });
 
@@ -203,7 +204,7 @@ describe("removeAntigravityLegacyMcpEntries", () => {
         expect(readFileSync(path, "utf8")).toBe(bytes);
       }
     } finally {
-      rmSync(home, { recursive: true, force: true });
+      removeTempDirSync(home);
     }
   });
 });
@@ -236,12 +237,12 @@ describe("Antigravity driver isolation (fake CLI)", () => {
         owner: () => JSON.parse(readFileSync(join(home, ".gemini", "config", "mcp_config.json"), "utf8")),
         done: () => recorder.events.find((e) => e.type === "turn.completed"),
         errors: () => recorder.events.filter((e) => e.type === "runtime.error"),
-        cleanup: async () => { recorder.stop(); await instance.dispose(); rmSync(home, { recursive: true, force: true }); },
+        cleanup: async () => { recorder.stop(); await instance.dispose(); removeTempDirSync(home); },
       };
     } catch (error) {
       recorder.stop();
       await instance.dispose();
-      rmSync(home, { recursive: true, force: true });
+      removeTempDirSync(home);
       throw error;
     }
   };
@@ -314,17 +315,20 @@ describe("legacy cleanup keeps a symlinked mcp_config.json a symlink", () => {
       const target = join(dotfiles, "agy-mcp.json");
       writeFileSync(target, readFileSync(link));
       chmodSync(target, 0o640);
+      // POSIX keeps the 640 asked for; Windows has no such bits (it reports 666 for a writable file), so the claim is "unchanged".
+      const modeBefore = lstatSync(target).mode & 0o777;
+      if (process.platform !== "win32") expect(modeBefore).toBe(0o640);
       rmSync(link);
       symlinkSync(target, link);
       expect(removeAntigravityLegacyMcpEntries(home).sort()).toEqual(["murage-computer", "murage-custom-notes"]);
       expect(lstatSync(link).isSymbolicLink()).toBe(true);
       expect(readlinkSync(link)).toBe(target);
       expect(Object.keys(JSON.parse(readFileSync(target, "utf8")).mcpServers).sort()).toEqual(OWNER_KEPT);
-      expect(lstatSync(target).mode & 0o777).toBe(0o640);
+      expect(lstatSync(target).mode & 0o777).toBe(modeBefore);
       expect(readdirSync(dotfiles)).toEqual(["agy-mcp.json"]); // no temp file left behind
     } finally {
-      rmSync(home, { recursive: true, force: true });
-      rmSync(dotfiles, { recursive: true, force: true });
+      removeTempDirSync(home);
+      removeTempDirSync(dotfiles);
     }
   });
 });
@@ -347,8 +351,8 @@ describe("scoped homes reconcile what agy wrote; nothing is discarded", () => {
       expect(readFileSync(join(convs, "conv-b.pb"), "utf8")).toBe("conv-b");
       expect(existsSync(a.home) || existsSync(b.home)).toBe(false);
     } finally {
-      rmSync(home, { recursive: true, force: true });
-      rmSync(base, { recursive: true, force: true });
+      removeTempDirSync(home);
+      removeTempDirSync(base);
     }
   });
 
@@ -368,9 +372,9 @@ describe("scoped homes reconcile what agy wrote; nothing is discarded", () => {
       expect(lstatSync(realAuth).isSymbolicLink()).toBe(true);
       expect(readFileSync(target, "utf8")).toBe("REFRESHED-TOKEN");
     } finally {
-      rmSync(home, { recursive: true, force: true });
-      rmSync(dotfiles, { recursive: true, force: true });
-      rmSync(base, { recursive: true, force: true });
+      removeTempDirSync(home);
+      removeTempDirSync(dotfiles);
+      removeTempDirSync(base);
     }
   });
 
@@ -397,8 +401,8 @@ describe("scoped homes reconcile what agy wrote; nothing is discarded", () => {
       expect(readFileSync(realAuth, "utf8")).toBe("OURS-NEWER");
       expect(filesUnder(kept).map((f) => readFileSync(join(kept, f), "utf8"))).toContain("OTHER-OLDER");
     } finally {
-      rmSync(home, { recursive: true, force: true });
-      rmSync(base, { recursive: true, force: true });
+      removeTempDirSync(home);
+      removeTempDirSync(base);
     }
   });
 
@@ -412,8 +416,8 @@ describe("scoped homes reconcile what agy wrote; nothing is discarded", () => {
       expect(readFileSync(join(home, ".gemini", "GEMINI.md"), "utf8")).toBe("personal instructions");
       expect(filesUnder(kept).map((f) => readFileSync(join(kept, f), "utf8"))).toContain("bot memory");
     } finally {
-      rmSync(home, { recursive: true, force: true });
-      rmSync(base, { recursive: true, force: true });
+      removeTempDirSync(home);
+      removeTempDirSync(base);
     }
   });
 
@@ -434,8 +438,8 @@ describe("scoped homes reconcile what agy wrote; nothing is discarded", () => {
       // Murage's mount file never reaches the owner's home
       expect(JSON.stringify(JSON.parse(readFileSync(join(home, ".gemini", "config", "mcp_config.json"), "utf8")))).not.toContain(SPAWNED_PROXIES.agents);
     } finally {
-      rmSync(home, { recursive: true, force: true });
-      rmSync(base, { recursive: true, force: true });
+      removeTempDirSync(home);
+      removeTempDirSync(base);
     }
   });
 });
@@ -489,8 +493,8 @@ describe("round 2: token freshness, ownership, provenance", () => {
         // the older token is kept aside, never lost
         expect(filesUnder(kept).map((f) => readFileSync(join(kept, f), "utf8")), order.join()).toContain("T1-OLDER");
       } finally {
-        rmSync(home, { recursive: true, force: true });
-        rmSync(base, { recursive: true, force: true });
+        removeTempDirSync(home);
+        removeTempDirSync(base);
       }
     }
   });
@@ -505,8 +509,8 @@ describe("round 2: token freshness, ownership, provenance", () => {
       a.dispose();
       expect(Math.abs(lstatSync(authPath(home)).mtimeMs - (now - 30_000))).toBeLessThan(2_000);
     } finally {
-      rmSync(home, { recursive: true, force: true });
-      rmSync(base, { recursive: true, force: true });
+      removeTempDirSync(home);
+      removeTempDirSync(base);
     }
   });
 
@@ -536,8 +540,8 @@ describe("round 2: token freshness, ownership, provenance", () => {
     } finally {
       Object.assign(antigravityLockConfig, saved);
       await stopped(holder);
-      rmSync(home, { recursive: true, force: true });
-      rmSync(base, { recursive: true, force: true });
+      removeTempDirSync(home);
+      removeTempDirSync(base);
     }
   });
 
@@ -563,8 +567,8 @@ describe("round 2: token freshness, ownership, provenance", () => {
       expect(readdirSync(root)).toEqual([]);
     } finally {
       await stopped(child);
-      rmSync(home, { recursive: true, force: true });
-      rmSync(base, { recursive: true, force: true });
+      removeTempDirSync(home);
+      removeTempDirSync(base);
     }
   });
 
@@ -583,8 +587,8 @@ describe("round 2: token freshness, ownership, provenance", () => {
       expect(readdirSync(root)).toEqual([]);
     } finally {
       await stopped(stranger);
-      rmSync(home, { recursive: true, force: true });
-      rmSync(base, { recursive: true, force: true });
+      removeTempDirSync(home);
+      removeTempDirSync(base);
     }
   });
 
@@ -604,8 +608,8 @@ describe("round 2: token freshness, ownership, provenance", () => {
       expect(readFileSync(authPath(home), "utf8")).toBe("MID-TURN");
     } finally {
       await stopped(otherServer);
-      rmSync(home, { recursive: true, force: true });
-      rmSync(base, { recursive: true, force: true });
+      removeTempDirSync(home);
+      removeTempDirSync(base);
     }
   });
 
@@ -621,8 +625,8 @@ describe("round 2: token freshness, ownership, provenance", () => {
       a.dispose();
       expect(readFileSync(authPath(home), "utf8")).toBe("LIVE");
     } finally {
-      rmSync(home, { recursive: true, force: true });
-      rmSync(base, { recursive: true, force: true });
+      removeTempDirSync(home);
+      removeTempDirSync(base);
     }
   });
 
@@ -657,7 +661,7 @@ describe("round 2: token freshness, ownership, provenance", () => {
       } }));
       expect(removeAntigravityLegacyMcpEntries(home).sort()).toEqual(["murage-agents", "murage-computer"]);
     } finally {
-      rmSync(home, { recursive: true, force: true });
+      removeTempDirSync(home);
     }
   });
 });
@@ -697,8 +701,8 @@ describe("Windows without symlink rights (file ops mocked: no runner here)", () 
       expect(readFileSync(join(home, ".gitconfig"), "utf8")).toBe("git");
       expect(existsSync(scope.home)).toBe(false);
     } finally {
-      rmSync(home, { recursive: true, force: true });
-      rmSync(base, { recursive: true, force: true });
+      removeTempDirSync(home);
+      removeTempDirSync(base);
     }
   });
 
@@ -714,8 +718,8 @@ describe("Windows without symlink rights (file ops mocked: no runner here)", () 
       scope.dispose();
       expect(readFileSync(join(home, ".gemini", "antigravity-cli", "auth.json"), "utf8")).toBe("REFRESHED-BY-RENAME");
     } finally {
-      rmSync(home, { recursive: true, force: true });
-      rmSync(base, { recursive: true, force: true });
+      removeTempDirSync(home);
+      removeTempDirSync(base);
     }
   });
 });

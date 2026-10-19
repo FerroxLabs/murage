@@ -1629,15 +1629,19 @@ const provenanceOf = (op: ConnectedAppOperation): ConnectedAppProvenance => ({ r
 
 /** The call each operation in this process was started with, for the receipt
  * of what the app completed (server/connected-app-receipts.ts). Not journaled. */
-const operationCalls = new WeakMap<ConnectedAppOperation, { name: string; args: unknown }>();
-export type ConnectedAppAnswered = (call: { name: string; args: unknown }, answer: Record<string, unknown> | null) => void;
+const operationCalls = new WeakMap<ConnectedAppOperation, { name: string; args: unknown; origin?: ConnectedAppOrigin }>();
+/** (above) the call and who made it; the operation itself names the receipt (handle) and when it was dispatched. */
+/** The turn whose bridge made the call that started an action. A status check or a repeat that collects the answer later
+ * is another turn's call, but the action, and so its receipt, belongs to this one. */
+export interface ConnectedAppOrigin { threadId: string; botId: string; generation: string; /** The provider turn that generation dispatched, when it is known yet. */ turnId?: string }
+export type ConnectedAppAnswered = (call: { name: string; args: unknown; origin?: ConnectedAppOrigin; key: string; dispatchedAt: number }, answer: Record<string, unknown> | null) => void;
 
 /** Tell the caller an operation's answer reached the bot. Never throws into the relay. */
 function reportAnswered(op: ConnectedAppOperation, outcome: OperationOutcome | undefined, onAnswered: ConnectedAppAnswered | undefined): void {
   if (!onAnswered || outcome?.kind !== "answered") return;
   const call = operationCalls.get(op);
   if (!call) return;
-  try { onAnswered(call, replyMessage(outcome.reply, op.requestId)); } catch (error) {
+  try { onAnswered({ ...call, key: op.handle, dispatchedAt: op.startedAt }, replyMessage(outcome.reply, op.requestId)); } catch (error) {
     console.warn("connected app receipt failed:", error instanceof Error ? error.message : String(error));
   }
 }
@@ -1687,6 +1691,8 @@ export async function relayConnectedAppCall(
     authorizeStored?: (used: ConnectedAppProvenance) => void;
     /** Called when an action's answer from the app is handed to the bot (first, joined or collected). */
     onAnswered?: ConnectedAppAnswered;
+    /** Who is making this call; kept with an action it starts, for its receipt. */
+    origin?: ConnectedAppOrigin;
   },
 ): Promise<RelayReply> {
   const message = payload && typeof payload === "object" && !Array.isArray(payload) ? payload as Record<string, JsonValue> : null;
@@ -1753,7 +1759,10 @@ export async function relayConnectedAppCall(
     const label = connectedAppActionLabel(action.args);
     return textReply(action.id, error.reason === "busy" ? connectedAppBusyText(label) : connectedAppUnrecordedText(label), true);
   }
-  operationCalls.set(op, { name: action.name, args: action.args });
+  operationCalls.set(op, { name: action.name, args: action.args, ...(options.origin ? { origin: options.origin } : {}) });
+  // The receipt is kept when the app answers, not when someone collects: a slow action that finishes after the bot's wait
+  // ran out, then a restart before any status check, still leaves its record (the same key is never kept twice).
+  void op.done.then((settled) => reportAnswered(op, settled, options.onAnswered), () => undefined);
   const outcome = await waitForOperation(op, waitMs);
   reportAnswered(op, outcome, options.onAnswered);
   return outcome ? outcomeReply(op, outcome, action.id, true) : textReply(action.id, connectedAppPendingText(op.label, op.handle, false));

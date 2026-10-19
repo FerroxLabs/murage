@@ -1,11 +1,12 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // Real isolated Murage HTTP server with fake engine. No browser is launched.
-import { mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, realpathSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { beforeAll, afterAll, expect, it } from "vitest";
 import { launchVerificationServer, type VerificationServer } from "../scripts/control-murage.ts";
 import { sharedRegistrationBrowsers } from "../scripts/browser-extension-host-registration.mjs";
+import { removeTempDirSync } from "./testing/cleanup.ts";
 let fixture: VerificationServer;
 let headers: Record<string, string> = {};
 let model: string;
@@ -33,7 +34,7 @@ const {registerHooks}=await import('node:module');registerHooks({load(url,contex
   headers = { "x-murage-surface": "desktop", "x-murage-surface-secret": secret.body.secret };
   model = (await api("GET", "/api/instances")).body.instances.find((item: any) => item.instanceId === "verification").models.options[0].id;
 }, 60000);
-afterAll(async () => { await fixture?.close(); if (runtimeRoot) rmSync(runtimeRoot, { recursive: true, force: true }); if (resourcesRoot) rmSync(resourcesRoot, { recursive: true, force: true }); });
+afterAll(async () => { await fixture?.close(); if (runtimeRoot) removeTempDirSync(runtimeRoot); if (resourcesRoot) removeTempDirSync(resourcesRoot); });
 it("requires owner authority and does not claim installation or connection", async () => {
   const one = await bot("Extension setup fixture");
   // No proof of who is asking: the route gate answers 404 before the handler (route-policy.ts).

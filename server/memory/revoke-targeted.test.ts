@@ -3,7 +3,7 @@
 // bumped policy_revision, which every receipt is compared against. Now it ends
 // only the sessions that were shown the record; policy and identity changes,
 // and forgetting, still end what they always did.
-import { mkdirSync, rmSync } from "node:fs";
+import { mkdirSync } from "node:fs";
 import { beforeEach, expect, it, vi } from "vitest";
 import { afterEach as thawAfterEach, beforeEach as thawBeforeEach } from "vitest";
 import { thawRootSetWritesForTest } from "./replay-lineage.ts";
@@ -19,11 +19,12 @@ import { archiveMemoryRecord } from "./retention.ts";
 import { forgetMemory } from "./forget.ts";
 import type { MemorySearchBridge } from "./search.ts";
 import { LineageAllowance } from "./lineage-allowance.ts";
+import { removeTempDirSync } from "../testing/cleanup.ts";
 // 1.0.2: this test models a 1.0.1 file (legacy root-set rows) for the read-time judge, which still decides legacy data until S6.
 thawBeforeEach(() => thawRootSetWritesForTest(true));
 thawAfterEach(() => thawRootSetWritesForTest(false));
 
-beforeEach(() => { closeDatabase(); rmSync(DATA_DIR,{recursive:true,force:true}); mkdirSync(DATA_DIR,{recursive:true}); });
+beforeEach(() => { closeDatabase(); removeTempDirSync(DATA_DIR); mkdirSync(DATA_DIR,{recursive:true}); });
 const empty: MemorySearchBridge = {search:async()=>({hits:[],vectorRows:0})};
 
 function record(id:string,scopeId:string,text:string,opts:{pinned?:boolean;state?:string;source?:boolean}={}) {
@@ -155,7 +156,7 @@ it("a derived record whose parent is corrected while the search waits cannot be 
 // from (a quoted reply, working context), in another thread, ends with it.
 it("archiving or correcting a record ends receipts that carried only its evidence source, in any thread",async()=>{
   for(const change of ["archive","correct"] as const){
-    closeDatabase(); rmSync(DATA_DIR,{recursive:true,force:true}); mkdirSync(DATA_DIR,{recursive:true});
+    closeDatabase(); removeTempDirSync(DATA_DIR); mkdirSync(DATA_DIR,{recursive:true});
     const w=await world();
     const db=database(),meta=db.prepare("SELECT policy_revision,deletion_epoch FROM memory_meta WHERE id=1").get()!;
     db.prepare("INSERT INTO memory_disclosures(bundle_id,thread_id,driver_instance,native_session,record_versions,source_versions,policy_revision,deletion_epoch,token_count,state,created_at) VALUES('elsewhere:lookup','elsewhere','claude','session-9','[]',?,?,?,0,'delivered',1)")

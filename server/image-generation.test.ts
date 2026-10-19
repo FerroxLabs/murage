@@ -372,3 +372,16 @@ it("passes the reservation's refusal through as the tool's words", async () => {
  const other = fixture(); other.reserve.mockRejectedValueOnce(new Error("internal detail"));
  await expect(other.service.generate(other.request, other.hooks)).rejects.toMatchObject({ code: "permission-denied", message: "Image generation was not approved." });
 });
+
+it("B1b probe cannot dispatch its paid fallback after authority closes during catalog preparation",async()=>{
+ const f=fixture("openrouter");expect((await f.service.probe("openrouter","openai/gpt-image-2")).ok).toBe(true);f.fetcher.mockClear();let open=true,release!:()=>void;
+ const prepared=new Promise<void>(resolve=>{release=resolve;});let started!:()=>void;const entered=new Promise<void>(resolve=>{started=resolve;});
+ f.fetcher.mockImplementation(async(input,init)=>{
+  if(String(input).endsWith("/images/models")){started();await prepared;return new Response(JSON.stringify({data:[{id:"openai/gpt-image-2",name:"GPT Image 2",architecture:{output_modalities:["image"]},supported_parameters:parameters}]}));}
+  if(String(input).endsWith("/endpoints"))return new Response(JSON.stringify({endpoints:[{provider_tag:"openai",supported_parameters:parameters}]}));
+  if(init?.method === "POST")return image();return new Response(JSON.stringify({data:[]}));
+ });
+ const control={signal:new AbortController().signal,assertActive:()=>{if(!open)throw Error("fixture hold");}};
+ const probe=f.service.probe("openrouter","openai/gpt-image-2",control);await entered;open=false;release();
+ const result=await probe;expect(f.fetcher.mock.calls.filter(([,init])=>init?.method === "POST")).toHaveLength(0);expect(result).toMatchObject({ok:false,errorCode:"not-authorized"});
+});

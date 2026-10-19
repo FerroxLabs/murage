@@ -1,19 +1,19 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // T20: task access. A grant is (binding, task, site, level), held in server state, and ends with the task. Spec 2.3, 2.4, 2.7.
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import fs from 'node:fs/promises';
 import path from 'node:path';
 import { createBrowserExtensionService } from './browser-extension-service.ts';
 import { BrowserExtensionPolicy } from './browser-extension-policy.ts';
 import type { BrowserExtensionCommand, BrowserExtensionResponse, BrowserExtensionHello } from '../shared/browser-extension-protocol.ts';
 import { privateTestDirectory } from "./testing/private-test-dir.ts";
+import { removeTempDir } from "./testing/cleanup.ts";
 
 const A = 'https://fixture.test';
 const B = 'https://other.test';
 const cleanup: string[] = [];
 // A service saves its state in the background; stop each one (and wait for its last save) before its folder is removed.
 const services: { close(): Promise<void> }[] = [];
-afterEach(async () => { for (const service of services.splice(0)) await service.close().catch(() => {}); for (const directory of cleanup.splice(0)) await fs.rm(directory, { recursive: true, force: true }); });
+afterEach(async () => { for (const service of services.splice(0)) await service.close().catch(() => {}); for (const directory of cleanup.splice(0)) await removeTempDir(directory); });
 
 type Tab = { tabId: number; navigationEpoch: number; origin: string; url: string };
 /** M3: an ended task only restarts after a new owner message. */

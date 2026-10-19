@@ -30,6 +30,7 @@ describe("harnessResourceEnvironment", () => {
       MURAGE_BOT_LIBRARY_DIR: join(resources, "bot-library"),
       MURAGE_FUIGO_DIR: join(resources, "fuigo"),
       MURAGE_GEPA_DIR: join(resources, "gepa-worker"),
+      MURAGE_MEMORY_MODEL_DIR: join(resources, "memory-model"),
     });
   });
 

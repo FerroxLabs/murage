@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // Copyright 2026 Ferrox Labs
-import { mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, realpathSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { randomUUID } from "node:crypto";
@@ -11,14 +11,15 @@ import { Store } from "../store.ts";
 import { validInstallationMessagePayload } from "../installation-message-validation.ts";
 import { readPublishCard } from "../../shared/publish-card.ts";
 import { PublishOperations } from "./publish-ops.ts";
+import { removeTempDirSync } from "../testing/cleanup.ts";
 
 let workspace = "";
 beforeEach(() => {
-  closeDatabase(); rmSync(DATA_DIR, { recursive: true, force: true }); mkdirSync(DATA_DIR, { recursive: true });
+  closeDatabase(); removeTempDirSync(DATA_DIR); mkdirSync(DATA_DIR, { recursive: true });
   workspace = realpathSync(mkdtempSync(join(tmpdir(), "publish-persist-"))); mkdirSync(join(workspace, "site"));
   writeFileSync(join(workspace, "site", "index.html"), "<html><title>My Shop</title></html>");
 });
-afterEach(() => { closeDatabase(); rmSync(workspace, { recursive: true, force: true }); });
+afterEach(() => { closeDatabase(); removeTempDirSync(workspace); });
 
 const json = (status: number, body: unknown) => new Response(JSON.stringify(body), { status, headers: { "content-type": "application/json" } });
 const netlify = vi.fn<typeof fetch>(async (input, init) => {

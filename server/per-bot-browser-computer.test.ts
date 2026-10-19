@@ -906,7 +906,7 @@ it("keeps two bots apart even when a browser profile is named after a bot's id",
 // NEXT turn, so that turn's browser answered 403 "browser turn is no longer
 // authorized" for its whole life (19 of 20 runs). The release is now scoped
 // to the generation the completing provider turn was bound to.
-it("keeps the browser working on the turn after a Stop, every time", async () => {
+it("keeps the browser working on the turn after a Stop, every time", { tags: ["nightly"], timeout: 240_000 }, async () => {
   const bot = await makeBot("Browser after stop", "slowclose", { computer: "off" });
   const statuses: number[] = [];
   const late: number[] = [];
@@ -941,7 +941,7 @@ it("keeps the browser working on the turn after a Stop, every time", async () =>
   } finally {
     await api("POST", `/api/bots/${bot.id}/interrupt`, { threadId: bot.threadId }).catch(() => undefined);
   }
-}, 240_000);
+});
 
 it("drops every browser and computer grant when the app restarts, leaving nothing dispatchable", async () => {
   expect((await patchBrowserProfiles([{ id: "restart", name: "Restart" }])).status).toBe(200);

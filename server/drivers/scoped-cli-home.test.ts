@@ -14,6 +14,7 @@ import {
   QUARANTINE_MAX_AGE_MS, SCOPE_MARKER, SCOPE_QUARANTINE, SCOPE_RETIRE_MAX_AGE_MS, SESSION_CONTRACT, enforceQuarantineBounds, pruneScopeCache, quarantineBytes, resetScopeBookkeeping, retireScopes,
   awaitScopeStart, migrateAsideLogins, scopedCliHome, scopeLockPath, scopedCliHomeRoot, setLeaseWaitMs, setScopeRetentionHooks,
 } from "./scoped-cli-home.ts";
+import { removeTempDirSync } from "../testing/cleanup.ts";
 
 const dirs: string[] = [];
 const tmp = (prefix: string) => { const d = mkdtempSync(join(tmpdir(), prefix)); dirs.push(d); return d; };
@@ -38,7 +39,7 @@ const quarantine = () => join(scopedCliHomeRoot("gemini"), SCOPE_QUARANTINE);
 beforeEach(() => { ensureDirs(); resetScopeBookkeeping(); setScopeRetentionHooks({ botExists: () => false }); });
 afterEach(() => {
   setScopeRetentionHooks({});
-  for (const d of dirs.splice(0)) rmSync(d, { recursive: true, force: true });
+  for (const d of dirs.splice(0)) removeTempDirSync(d);
 });
 
 /** A scope as the earlier content-addressed Gemini build left it: `.gemini/.murage-scope`, no root marker. */
@@ -183,7 +184,7 @@ describe("a bot's disk use is bounded", () => {
     expect(existsSync(join(root, "sessions", "s.jsonl"))).toBe(true);
     expect(readFileSync(join(root, "auth.json"), "utf8")).toBe("LOGIN"); // still the link to the owner's login
     expect(readFileSync(join(real, "auth.json"), "utf8")).toBe("LOGIN");
-    rmSync(root, { recursive: true, force: true });
+    removeTempDirSync(root);
   });
 });
 
@@ -229,7 +230,7 @@ describe("pruning never touches a scope in use", () => {
 
 describe("quarantine is bounded", () => {
   const aside = () => join(quarantine(), "logins");
-  beforeEach(() => { rmSync(quarantine(), { recursive: true, force: true }); });
+  beforeEach(() => { removeTempDirSync(quarantine()); });
   const strand = (home: string, bot: string, text: string) => {
     const stale = botScope(home, bot);
     const login = join(stale, ".gemini", "oauth_creds.json");
@@ -310,7 +311,7 @@ describe("startup and pruning exclude each other", () => {
     const real = tmp("murage-lease-real-");
     writeFileSync(join(real, "auth.json"), "LOGIN");
     let seen: { held: boolean; pid: number | null; pruned: string[] } | null = null;
-    rmSync(scopedCliHomeRoot("leasetest"), { recursive: true, force: true }); // earlier tests' scopes would make the lookup below order-dependent
+    removeTempDirSync(scopedCliHomeRoot("leasetest")); // earlier tests' scopes would make the lookup below order-dependent
     const root = scopedCliHome({
       ...spec(real, "bot-hold"),
       generated: () => {
@@ -346,7 +347,7 @@ describe("startup and pruning exclude each other", () => {
 
 describe("quarantine byte pressure and old-format logins", () => {
   const aside = () => join(quarantine(), "logins");
-  beforeEach(() => { rmSync(quarantine(), { recursive: true, force: true }); mkdirSync(aside(), { recursive: true }); });
+  beforeEach(() => { removeTempDirSync(quarantine()); mkdirSync(aside(), { recursive: true }); });
   const put = (file: string, size: number, fill: number) => writeFileSync(join(aside(), file), Buffer.alloc(size, fill));
   const hex = (c: string) => c.repeat(16);
 

@@ -15,7 +15,7 @@
 // chip; a path is never fetched as a URL; bytes that will not decode produce
 // a truthful error and keep Save a copy; and unmounting the transcript pauses
 // the element and drops its source instead of leaving audio playing.
-import { test, expect, type Page } from "@playwright/test";
+import { test, expect, type Page } from "./page-error-guard";
 import { createServer, type ViteDevServer } from "vite";
 import react from "@vitejs/plugin-react";
 import tailwindcss from "@tailwindcss/vite";

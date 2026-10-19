@@ -1,11 +1,12 @@
-import { mkdtempSync,rmSync } from "node:fs";
+import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach,expect,it,vi } from "vitest";
 import { RoutineManager } from "./routines.ts";
+import { removeTempDirSync } from "./testing/cleanup.ts";
 
 const roots:string[]=[];
-afterEach(()=>{for(const root of roots.splice(0))rmSync(root,{recursive:true,force:true});});
+afterEach(()=>{for(const root of roots.splice(0))removeTempDirSync(root);});
 function fixture(){
   const root=mkdtempSync(join(tmpdir(),"murage-pause-"));roots.push(root);
   let now=Date.UTC(2026,8,9),paused=false,sequence=0;const busy=new Set<string>();

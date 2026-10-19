@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // A short query, or any query before the trigram index is ready, is answered
 // from a bounded newest window and says so; it never LIKE-scans the table.
-import { mkdirSync, rmSync } from "node:fs";
+import { mkdirSync } from "node:fs";
 import { beforeEach, expect, it, vi } from "vitest";
 
 import { DATA_DIR } from "./config.ts";
@@ -9,12 +9,13 @@ import { database } from "./database.ts";
 import { closeMessageDb, insertMessage, searchMessagesWithMeta, SHORT_QUERY_WINDOW, TRIGRAM_CANDIDATE_CAP } from "./message-db.ts";
 import { rebuildMessageSearchIndex } from "./message-search-index.ts";
 import type { Message } from "./store.ts";
+import { removeTempDirSync } from "./testing/cleanup.ts";
 
 const msg = (id: string, text: string, at: number): Message => ({ id, role: "user", kind: "text", text, at });
 
 beforeEach(() => {
   closeMessageDb();
-  rmSync(DATA_DIR, { recursive: true, force: true });
+  removeTempDirSync(DATA_DIR);
   mkdirSync(DATA_DIR, { recursive: true });
 });
 
