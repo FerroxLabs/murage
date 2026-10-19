@@ -1,10 +1,11 @@
 import { randomUUID } from "node:crypto";
-import { mkdtempSync,rmSync } from "node:fs";
+import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { expect,it,vi } from "vitest";
 import { createBackupRestartAdmission } from "./backup-restart-admission.ts";
 import { RoutineManager } from "./routines.ts";
+import { removeTempDirSync } from "./testing/cleanup.ts";
 it("claims idle state synchronously, is idempotent, and only its token releases",()=>{
   let busy=true,releases=0;const gate=createBackupRestartAdmission({isBusy:()=>busy,onRelease:()=>releases++}),token=randomUUID();
   expect(()=>gate.prepare(token)).toThrow("BACKUP_WORK_ACTIVE");expect(gate.held()).toBe(false);
@@ -20,5 +21,5 @@ it.each(["slack","discord"] as const)("holds %s channel receipts queued without 
     const run=manager.enqueueWebhook({webhookId:`${platform}:binding`,webhookName:platform,deliveryId:"event",prompt:"held owner message",botId:"chief",runOn:"ember",receivedAt:Date.now(),channelOrigin:{platform,connectionId:"binding"},humanPrincipal:{personId:"workspace-owner",bindingId:"local",revision:1}});
     await manager.tick();expect(startTurn).not.toHaveBeenCalled();expect(manager.listRuns().find(item=>item.id===run.id)?.status).toBe("queued");
     gate.cancel(token);await manager.tick();expect(startTurn).toHaveBeenCalledOnce();
-  }finally{manager.stop();rmSync(root,{recursive:true,force:true});}
+  }finally{manager.stop();removeTempDirSync(root);}
 });

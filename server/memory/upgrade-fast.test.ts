@@ -3,7 +3,7 @@
 //
 // The fast upgrade (docs: lanes/int102-gate/UPGRADE-DESIGN.md). A 1.0.1 history (memory v6) opens after the structure check and the migration
 // alone; the proofs that read rows run in the background pass and hold what depends on them until they pass.
-import { mkdirSync, rmSync } from "node:fs";
+import { mkdirSync } from "node:fs";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { beforeEach, expect, it } from "vitest";
@@ -18,10 +18,11 @@ import { buildSyntheticV6 } from "./testing/upgrade-fast-fixture.ts";
 import { appendMessage } from "../message-db.ts";
 import { indexBrowserCheckChunk } from "../message-tables.ts";
 import { indexOpenCardsChunk } from "../transcript-backfill.ts";
+import { removeTempDirSync } from "../testing/cleanup.ts";
 
 const FILE = () => join(DATA_DIR, "messages.db");
 const SHAPE = { threads: 30, perThread: 40, payloadBytes: 200, receiptsPerThread: 3, setThreads: 3, repliesPerSetThread: 10 };
-beforeEach(() => { closeDatabase(); rmSync(DATA_DIR, { recursive: true, force: true }); mkdirSync(DATA_DIR, { recursive: true }); });
+beforeEach(() => { closeDatabase(); removeTempDirSync(DATA_DIR); mkdirSync(DATA_DIR, { recursive: true }); });
 /** A v6 file in the data directory, with `edit` applied to it on a plain connection (the way a 1.0.1 history could have been left). */
 function v6(edit: (db: DatabaseSync) => void = () => {}) {
   const built = buildSyntheticV6(FILE(), SHAPE);
@@ -113,9 +114,9 @@ it("the pass is resumable: killed after any number of slices, the final state eq
   let db = database();
   finishBackgroundUpgradeWorkNow();
   const whole = signature(db);
-  closeDatabase(); rmSync(DATA_DIR, { recursive: true, force: true }); mkdirSync(DATA_DIR, { recursive: true });
+  closeDatabase(); removeTempDirSync(DATA_DIR); mkdirSync(DATA_DIR, { recursive: true });
   for (const kill of [1, 3, 9]) {
-    closeDatabase(); rmSync(DATA_DIR, { recursive: true, force: true }); mkdirSync(DATA_DIR, { recursive: true });
+    closeDatabase(); removeTempDirSync(DATA_DIR); mkdirSync(DATA_DIR, { recursive: true });
     v6();
     db = database();
     // slices of one receipt-run, one-row reference runs and a zero-length repair slice, so every job has many slices to be killed between
@@ -139,7 +140,7 @@ it("a kill in the middle of each derived fill resumes from its place: open cards
   const again = database();
   finishBackgroundUpgradeWorkNow();
   const resumed = signature(again);
-  closeDatabase(); rmSync(DATA_DIR, { recursive: true, force: true }); mkdirSync(DATA_DIR, { recursive: true });
+  closeDatabase(); removeTempDirSync(DATA_DIR); mkdirSync(DATA_DIR, { recursive: true });
   v6();
   const fresh = database();
   finishBackgroundUpgradeWorkNow();

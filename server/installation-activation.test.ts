@@ -11,9 +11,10 @@ import { assertRestoreReviewed, RESTORE_REVIEW_FILE } from "../electron/restore-
 import { RESTORED_CONNECTIONS_FILE } from "../electron/restored-connections.mjs";
 import { acquireDataDirLease } from "../electron/data-dir-lease.mjs";
 import { freePortBlock } from "./testing/ports.ts";
+import { removeTempDirSync } from "./testing/cleanup.ts";
 
 const roots: string[] = [];
-afterEach(() => { for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true }); });
+afterEach(() => { for (const root of roots.splice(0)) removeTempDirSync(root); });
 async function fixture() {
   const root = mkdtempSync(join(tmpdir(), "murage-activation-")); roots.push(root);
   const source = join(root, "source"), target = join(root, "target"); mkdirSync(source); mkdirSync(target);

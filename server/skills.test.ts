@@ -40,6 +40,7 @@ import {
 } from "./skills.ts";
 import { parseSkillSource } from "./skill-fetch.ts";
 import { workspaceDir } from "./workspace.ts";
+import { removeTempDirSync } from "./testing/cleanup.ts";
 
 // skills.ts resolves storage through workspaceDir(botId) → DATA_DIR, which
 // reads MURAGE_DATA_DIR at import time — so point the suite at a scratch dir
@@ -296,7 +297,7 @@ describe("install → review → enable lifecycle", () => {
 
     const stateDir = join(DATA_DIR, "skill-state", bot);
     const secureManifest = readFileSync(join(stateDir, "skills.json"), "utf8");
-    rmSync(stateDir, { recursive: true, force: true });
+    removeTempDirSync(stateDir);
     const legacyManifest = join(workspaceDir(bot), "skills", "skills.json");
     writeFileSync(legacyManifest, secureManifest);
 
@@ -345,7 +346,7 @@ describe("install → review → enable lifecycle", () => {
     symlinkSync(userTarget, replaced, process.platform === "win32" ? "junction" : "dir");
 
     // The other two app links now point at a missing target and are broken.
-    rmSync(join(root, "skills", "link-safety"), { recursive: true, force: true });
+    removeTempDirSync(join(root, "skills", "link-safety"));
     expect(skillsSystemPrompt(bot)).toBe("");
     expect(realpathSync(replaced)).toBe(realpathSync(userTarget));
     for (const dir of [".agents/skills", ".grok/skills"]) {
@@ -394,7 +395,7 @@ describe("install → review → enable lifecycle", () => {
     mkdirSync(outsideSkill, { recursive: true });
     writeFileSync(join(outsideSkill, "SKILL.md"), SKILL("root-replaced", "Attacker-controlled replacement."));
 
-    rmSync(skillsRoot, { recursive: true, force: true });
+    removeTempDirSync(skillsRoot);
     symlinkSync(outsideRoot, skillsRoot, process.platform === "win32" ? "junction" : "dir");
 
     // Before reconciliation, each app-created link now reaches the unreviewed
@@ -422,7 +423,7 @@ describe("install → review → enable lifecycle", () => {
 
     const outsideRoot = join(scratch, "replacement-skills-user-link");
     mkdirSync(join(outsideRoot, "root-replaced-user-link"), { recursive: true });
-    rmSync(join(root, "skills"), { recursive: true, force: true });
+    removeTempDirSync(join(root, "skills"));
     symlinkSync(outsideRoot, join(root, "skills"), process.platform === "win32" ? "junction" : "dir");
 
     expect(skillsSystemPrompt(bot)).toBe("");
@@ -665,7 +666,7 @@ describe("staged skill writes", () => {
     const outside = join(scratch, "linked-update-outside");
     mkdirSync(outside);
     writeFileSync(join(outside, "SKILL.md"), original);
-    rmSync(directory, { recursive: true, force: true });
+    removeTempDirSync(directory);
     symlinkSync(outside, directory, process.platform === "win32" ? "junction" : "dir");
 
     expect(applyStagedSkillWrite(bot, staged.id, { expectedSha256: staged.sha256 })).toMatchObject({
@@ -885,7 +886,7 @@ describe("staged skill writes", () => {
     const activeLink = join(root, ".agents", "skills", "remove-revision-link");
     const revision = basename(realpathSync(activeLink));
     const revisions = join(root, "skills", ".revisions");
-    rmSync(revisions, { recursive: true, force: true });
+    removeTempDirSync(revisions);
     const outside = join(scratch, "outside-revisions");
     const outsideRevision = join(outside, revision);
     mkdirSync(outsideRevision, { recursive: true });

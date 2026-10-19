@@ -4,7 +4,7 @@
 // so every phase can be looked at for each avatar shape, at 1440 and 390.
 // Screenshots land in MURAGE_AURA_SHOTS when set, else the evidence dir.
 // Nothing here touches a server, a key or a data directory.
-import { test, expect, type Page } from "@playwright/test";
+import { test, expect, type Page } from "./page-error-guard";
 import { createServer, type ViteDevServer } from "vite";
 import tailwindcss from "@tailwindcss/vite";
 import { fileURLToPath } from "node:url";

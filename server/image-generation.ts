@@ -716,31 +716,39 @@ export class ImageGenerationService {
    * lowest quality and smallest legal square, never published, bytes
    * discarded, never retried. Failures are the result, not a throw.
    */
-  async probe(connectionId: string, modelId: string, options: { signal?: AbortSignal } = {}): Promise<ImageProbeResult> {
+  async probe(connectionId: string, modelId: string, options: { signal?: AbortSignal; assertActive?: () => void } = {}): Promise<ImageProbeResult> {
     const now = this.options.now ?? Date.now, started = now();
+    const active = () => {
+      if(options.signal?.aborted)fail("cancelled","Image model check was cancelled.");
+      try {options.assertActive?.();} catch {fail("not-authorized","This image model check is no longer authorized.");}
+    };
     const done = (result: Omit<ImageProbeResult, "durationMs">): ImageProbeResult => ({ ...result, durationMs: Math.max(0, now() - started) });
     try {
+      active();
       const connection = this.connection(connectionId);
       if (connection.provider === "flux" && this.options.fluxCatalogue && (await this.fluxCatalogue(connection, options.signal))?.probe) {
+        active();
         const url = URLS.flux;
         assertCredentialOrigin("flux", url);
         const timeout = AbortSignal.timeout(ENDPOINT_TIMEOUT_MS);
         const response = await this.fetcher(url, { method: "POST", headers: { "content-type": "application/json", authorization: `Bearer ${connection.apiKey}`, ...fluxCallHeaders("image-generation") },
           body: JSON.stringify({ model: modelId, probe: true }), signal: options.signal ? AbortSignal.any([options.signal, timeout]) : timeout, redirect: "error" });
-        if (!response.ok) return done({ ok: false, free: true, errorCode: "provider-error", errorMessage: `Flux answered HTTP ${response.status}${await providerErrorDetail(response)}.` });
-        const body = await boundedJson(response, 64 * 1024);
+        active();
+        if (!response.ok) {const detail=await providerErrorDetail(response);active();return done({ ok: false, free: true, errorCode: "provider-error", errorMessage: `Flux answered HTTP ${response.status}${detail}.` });}
+        const body = await boundedJson(response, 64 * 1024);active();
         if (!record(body) || body.contract !== 1 || body.kind !== "image-probe" || !["ok", "down"].includes(String(body.state))) return done({ ok: false, free: true, errorCode: "invalid-response", errorMessage: "Flux's check answer was not understood." });
         const detail = typeof body.detail === "string" ? redactSecretsInText(body.detail.replace(/\s+/g, " ").trim()).slice(0, 300) : "";
         return body.state === "ok" ? done({ ok: true, free: true }) : done({ ok: false, free: true, errorCode: "down", errorMessage: detail || "Flux reports this model is down." });
       }
-      const catalog = await this.getCatalog(connectionId, { signal: options.signal, discoverEdits: false });
+      const catalog = await this.getCatalog(connectionId, { signal: options.signal, discoverEdits: false });active();
       const model = catalog.models.find(item => item.id === modelId);
       if (!model?.generate || model.disabledReason) return done({ ok: false, free: false, errorCode: "unsupported-model", errorMessage: "This model is not available for image generation here." });
       const caps = model.capabilities;
       const quality = IMAGE_QUALITIES.find(item => caps.qualities.includes(item));
       const square = resolveImageSize(caps.sizeRule, { aspectRatio: "1:1", resolution: "small" }, caps.defaultSize);
       const request = { connectionId, model: modelId, prompt: IMAGE_PROBE_PROMPT, n: 1, ...(quality ? { quality } : {}), ...(square.ok ? { aspectRatio: "1:1", resolution: "small" as const } : {}) };
-      const result = await this.generate<number>(request, { signal: options.signal, assertActive: () => {}, reserve: async () => ({ finish: () => {} }), publish: async image => image.bytes.length });
+      const result = await this.generate<number>(request, { signal: options.signal, assertActive: active, reserve: async () => ({ finish: () => {} }), publish: async image => {active();return image.bytes.length;} });
+      active();
       const costUsd = result.metadata.usage?.costUsd;
       return done({ ok: true, free: false, ...(costUsd !== undefined ? { costUsd } : {}) });
     } catch (error) {

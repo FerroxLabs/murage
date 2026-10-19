@@ -4,7 +4,7 @@
 // The voice picker in a real browser: the real VoiceSettings, VoicePicker
 // and speaker, with the harness's /api/tts routes answered here. Audio is a
 // local 3 s tone; nothing calls Flux or xAI, and no key exists.
-import { test, expect, type Page } from "@playwright/test";
+import { test, expect, type Page } from "./page-error-guard";
 import { createServer, type ViteDevServer } from "vite";
 import react from "@vitejs/plugin-react";
 import tailwindcss from "@tailwindcss/vite";

@@ -10,7 +10,7 @@ import { t } from "@/lib/i18n";
 import type { LocaleKey } from "@/locales";
 import { KEEP_WINDOW_MS } from "../../shared/learned-chip";
 import type { LearningEvent, LearningPage, MemoryLearning } from "./memory-learning";
-import { requestLearningAction } from "./memory-learning";
+import { formatTokens, requestLearningAction } from "./memory-learning";
 
 export type Request = (path: string, init?: RequestInit) => Promise<any>;
 
@@ -272,11 +272,11 @@ export function recentChanges(events: readonly LearningEvent[], label: (kind: st
   }));
 }
 
-/** The usage line, from what memory status really reports (today's share of the allowance); null when it reports nothing. */
+/** The usage line, from what memory status really reports (this month's tokens against the monthly limit); null when it reports nothing. */
 export function usageLine(status: MemoryStatusView | null): string | null {
-  const allowance = status?.learning?.allowance;
-  if (!allowance || typeof allowance.usedPercent !== "number") return null;
-  return screenText("usage.today", { percent: Math.round(allowance.usedPercent) });
+  const ceiling = status?.learning?.ceiling;
+  if (!ceiling || typeof ceiling.inputUsed !== "number" || typeof ceiling.outputUsed !== "number") return null;
+  return t("settings.l2.usage.month", { read: formatTokens(ceiling.inputUsed), written: formatTokens(ceiling.outputUsed) });
 }
 
 /** Forget this learning data: the server removes lessons, results, feedback, examples, ledger snippets and learning-local notes for this bot. */

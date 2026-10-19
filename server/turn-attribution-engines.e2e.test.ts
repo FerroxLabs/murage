@@ -5,15 +5,16 @@
 // the provider turn its words were released to, at the server's own submission fence plus acceptance, whichever comes second.
 // Claude fences before it hands its id back; Fuigo (ACP) and Codex hand it back first. Parity is the point: the same stamp on
 // every engine, and a later turn never moves an earlier row's stamp.
-import { chmodSync, mkdtempSync, realpathSync, rmSync } from "node:fs";
+import { chmodSync, mkdtempSync, realpathSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import { launchVerificationServer, type VerificationServer } from "../scripts/control-murage.ts";
-import { slimMessage } from "./transcript-page.ts";
+import { wireThread } from "./transcript-page.ts";
 import { transcriptForDriver } from "./turn-context.ts";
 import type { Message } from "./store.ts";
+import { removeTempDirSync } from "./testing/cleanup.ts";
 
 const SERVER = fileURLToPath(new URL(".", import.meta.url));
 const FAKE_ACP = join(SERVER, "testing", "fake-acp-cli.ts");
@@ -43,7 +44,7 @@ describe.skipIf(process.platform === "win32")("dispatchedIn on every engine", ()
     ` });
     headers = { "x-murage-surface": "desktop", "x-murage-surface-secret": (await (await fetch(`${fixture.info.url}/api/desktop-secret`)).json() as { secret: string }).secret };
   }, 120_000);
-  afterAll(async () => { await fixture?.close(); if (fixtureRoot) rmSync(fixtureRoot, { recursive: true, force: true }); vi.unstubAllEnvs(); });
+  afterAll(async () => { await fixture?.close(); if (fixtureRoot) removeTempDirSync(fixtureRoot); vi.unstubAllEnvs(); });
 
   const transcript = async (botId: string): Promise<any[]> => ((await api("GET", "/api/bots?messages=40")).body.bots.find((bot: any) => bot.id === botId)?.messages ?? []);
   const settled = async (botId: string, text: string) => {
@@ -85,8 +86,9 @@ describe("dispatchedIn exposure", () => {
   it("rides a page row wherever the row's turnId already does, and never reaches an engine's replay", () => {
     const user = { id: "u", at: 1, role: "user", kind: "text", text: "hi", dispatchedIn: "T1" } as Message;
     const reply = { id: "b", at: 2, role: "bot", kind: "text", text: "hello", turnId: "T1" } as Message;
-    expect(slimMessage(user)).toMatchObject({ dispatchedIn: "T1" });
-    expect(slimMessage(reply)).toMatchObject({ turnId: "T1" });
+    const legacy = { threadNumbered: () => false, newestSeq: () => undefined, messageSeq: () => null };
+    expect(wireThread(legacy, "t", { message: user }).message).toMatchObject({ dispatchedIn: "T1" });
+    expect(wireThread(legacy, "t", { message: reply }).message).toMatchObject({ turnId: "T1" });
     const replay = transcriptForDriver([{ ...user, role: "user" } as any, { ...reply, role: "assistant" } as any]);
     for (const entry of replay) {
       expect(entry).not.toHaveProperty("dispatchedIn");

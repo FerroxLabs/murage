@@ -33,7 +33,7 @@ describe.skipIf(process.platform === "win32")("a start whose writes meet a held 
     if (home) await removeTempDir(home);
   });
 
-  it("never waits on the serving thread past the background budget, and writes nothing before the first health answer", async () => {
+  it("never waits on the serving thread past the background budget, and writes nothing before the first health answer", { tags: ["perf-budget"], timeout: 90_000 }, async () => {
     const port = await freePortBlock([0, 1], 19_499, 200);
     const base = `http://127.0.0.1:${port}`;
     home = mkdtempSync(join(tmpdir(), "murage-boot-hold-"));
@@ -84,5 +84,5 @@ describe.skipIf(process.platform === "win32")("a start whose writes meet a held 
     expect(out.split("\n").filter(line => /\[loop\] stall .*sqlite:/.test(line)), out).toEqual([]);
     expect(Math.max(...pings), pings.map(Math.round).join(",")).toBeLessThan(250);
     expect(out).not.toMatch(/a boot recovery met a held lock/);
-  }, 90_000);
+  });
 });

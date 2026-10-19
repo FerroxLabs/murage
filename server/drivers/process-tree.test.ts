@@ -1,11 +1,12 @@
 import { spawn, type ChildProcess } from "node:child_process";
-import { mkdirSync, mkdtempSync, realpathSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, realpathSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 
 import { setPlatformProcessHooks } from "../platform-process-hooks.ts";
 import { baselineFromListing, descendantBaseline, descendantIdentities, descendantPids, isBrowserPath, parseEtime, settleArgsProbe, startedBeforeFromListing, untrackedDescendants, untrackedIdentified, walk, type ExemptLayout } from "./process-tree.ts";
+import { removeTempDirSync } from "../testing/cleanup.ts";
 
 // A stand-in CLI: starts a long-lived "server" child at once, then on a line
 // of stdin the server starts its own child (an npx wrapper's real server) and
@@ -25,7 +26,7 @@ setTimeout(() => {}, 60000);
 let cli: ChildProcess | null = null;
 let scratch: string | null = null;
 afterEach(async () => {
-  if (scratch) rmSync(scratch, { recursive: true, force: true });
+  if (scratch) removeTempDirSync(scratch);
   scratch = null;
   if (!cli?.pid) return;
   const all = (await descendantPids(cli.pid)) ?? new Set<number>();
@@ -150,7 +151,7 @@ describe("walk with exact exempt layouts", () => {
       expect(found(exe, injected)).toEqual(new Set());
       expect(found(join(root, "Applications/Google Chrome.app/Contents/MacOS/other"), injected)).toEqual(new Set([3]));
     } finally {
-      rmSync(root, { recursive: true, force: true });
+      removeTempDirSync(root);
     }
   });
 });

@@ -8,7 +8,7 @@
 // recorded on window so the Edit links can be checked without the whole app.
 // The app's stylesheet pins the page itself, so the fixture's <main> scrolls,
 // and it carries the bot window's own h1 and section h2 around the panel.
-import { test, expect } from "@playwright/test";
+import { test, expect } from "./page-error-guard";
 import { createServer, type ViteDevServer } from "vite";
 import tailwindcss from "@tailwindcss/vite";
 import { fileURLToPath } from "node:url";
@@ -68,7 +68,6 @@ test.beforeAll(async () => {
 });
 test.afterAll(async () => { await server?.close(); await harness?.close(); safeWipeSync(cache); });
 test.beforeEach(({ page }) => {
-  page.on("pageerror", (error) => console.log("page error:", error.message));
   page.on("console", (message) => { if (message.type() === "error") console.log("console error:", message.text()); });
   page.on("dialog", (dialog) => { throw new Error(`a native ${dialog.type()} dialog opened`); });
 });

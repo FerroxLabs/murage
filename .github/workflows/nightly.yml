@@ -1,0 +1,67 @@
+# Copyright 2026 Ferrox Labs
+# SPDX-License-Identifier: AGPL-3.0-or-later
+#
+# The tests CI's per-push shards leave out, run every night and on demand. Nothing here is skipped:
+#   - `nightly`: tests over 60 s on a hosted runner (the 500k-version purge, 100k-row queues, 1M postings and
+#     the like). They run on all three OSes, sharded, with the same runtime as ci.yml.
+#   - `perf-budget` tests assert a wall-clock budget measured on dedicated hardware. Hosted runners are
+#     several times slower and noisier (1.0.2 CI 38854980345: 150 ms budgets measured 153-413 ms on macOS),
+#     so they are not run here; the maintainers run them on their own perf hardware.
+# The tags live in vite.config.ts. A release needs the newest completed run of this workflow green, on the
+# release commit or an ancestor, and under 72 h old (scripts/release-ci-gate.mjs). Before a release, dispatch
+# it on the release commit if the last night's run is older or red.
+name: Nightly
+
+on:
+  schedule:
+    - cron: "41 2 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: nightly-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  slow:
+    name: nightly tests ${{ matrix.shard }}/3 (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [macos-latest, ubuntu-latest, windows-latest]
+        shard: [1, 2, 3]
+    runs-on: ${{ matrix.os }}
+    # The slowest single test measured 13.7 min (Windows, 1.0.2); the tagged set is about 70 Windows
+    # minutes in all, so three shards of about 25-30 minutes each, with a cap well above.
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: pnpm/action-setup@ff378ebe6b225b0680b81c1ad4498ae0d1d3a5e3 # v6.0.10
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 24
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - uses: ./.github/actions/vitest-runtime
+      - name: Run the nightly tests
+        shell: bash
+        run: pnpm exec vitest run --shard=${{ matrix.shard }}/3 --tags-filter=nightly
+        env:
+          MURAGE_SKIP_REAL_ELECTRON_BROWSER_FIXTURE: ${{ matrix.os == 'windows-latest' && '1' || '0' }}
+
+  nightly:
+    # One result for the release gate and for branch rules: success only if every job passed.
+    if: ${{ always() }}
+    needs: [slow]
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - env:
+          SLOW: ${{ needs.slow.result }}
+        run: |
+          echo "nightly tests: $SLOW"
+          test "$SLOW" = success

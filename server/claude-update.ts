@@ -46,6 +46,7 @@ function updateFailure(error: unknown, cli: string): Error {
  * The caller owns the environment, so credentials are stripped before the
  * executable (a configured wrapper included) starts. */
 export async function updateClaudeCli(cli: string, env: NodeJS.ProcessEnv, execute: ExecCli = execCli): Promise<{ version: string }> {
+  if (process.env.MURAGE_CLOUD_ROLE === "home") throw new Error("Cloud engine updates are managed with the home image");
   try {
     await run(execute, cli, ["update"], { env, timeout: 180_000, killSignal: "SIGKILL", maxBuffer: 1024 * 1024 });
   } catch (error) {

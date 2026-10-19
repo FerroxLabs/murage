@@ -33,26 +33,22 @@
 // not protected, and this row must never say "backed up" about a schedule
 // with nothing behind it.
 //
-// On a computer where backups are already running, this is one quiet line and
-// no button at all.
+// 1.0.3 (Settings L5): a local backup is ON BY DEFAULT from the first run.
+// There is no longer a button to press: the row sets backups up by itself,
+// takes the first one and reports "verified" only when that backup has been
+// checked (ensureFirstRunBackup). The recovery key note stays on screen with
+// it. Off-site copies stay a choice, made in Settings under Backups.
+//
+// Settings L5 fix: the desktop decides whether this data folder may set
+// backups up without asking, and it records how this step ended. A card
+// reopened after "Keep backups off", or after a checked backup, shows that
+// ending and touches nothing.
 
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 
-import { FIRST_RUN_COPY } from "@/lib/first-run-copy";
-import {
-  FIRST_RUN_CHIP,
-  FIRST_RUN_FOCUS,
-  FirstRunFailure,
-  FirstRunLine,
-} from "./FirstRunChrome";
-import { completeBackupSetup, type BackupScheduleBridge } from "./backups-section-ui";
-
-const copy = FIRST_RUN_COPY.backups;
-
-/** What this computer can say about its backups right now. `unknown` renders
- *  nothing: a first run is not the place to explain that a status call
- *  failed, and silence is the honest answer to "we could not ask". */
-type Standing = "unknown" | "on" | "off";
+import { FIRST_RUN_BACKUP_COPY, ensureFirstRunBackup, type BackupScheduleBridge, type FirstRunBackupResult } from "./backups-section-ui";
+import { FIRST_RUN_CHIP, FIRST_RUN_FOCUS, FirstRunFailure, FirstRunLine } from "./FirstRunChrome";
+import { t } from "@/lib/i18n";
 
 /** No window at all is the server-render and unit-test case, and it answers
  *  the same as a browser with no desktop bridge: we cannot see this machine's
@@ -63,101 +59,74 @@ function bridge(): BackupScheduleBridge | null {
   return desktop ? (desktop as BackupScheduleBridge) : null;
 }
 
-/**
- * Running means running: a schedule that is on AND has the folder and key
- * behind it. `enabled` alone has been true on installs whose references were
- * never chosen, which is exactly the state this row must not describe as
- * done.
- */
-function standingFrom(status: unknown): Standing {
-  if (!status || typeof status !== "object") return "unknown";
-  const value = status as { supported?: unknown; enabled?: unknown; refs?: unknown; relaunchBlocked?: unknown };
-  if (value.supported === false) return "unknown";
-  // Where Murage can't reopen itself no backup can run, so first run doesn't
-  // offer to turn them on; Settings > Backups says why.
-  if (value.relaunchBlocked && value.enabled !== true) return "unknown";
-  return value.enabled === true && value.refs ? "on" : "off";
-}
-
 export function FirstRunBackupsRow() {
-  const [standing, setStanding] = useState<Standing>("unknown");
-  const [busy, setBusy] = useState(false);
-  const [notice, setNotice] = useState("");
-  const [failure, setFailure] = useState("");
+  const [result, setResult] = useState<FirstRunBackupResult | "working" | "idle">("idle");
   const [keyName, setKeyName] = useState("");
+  // Why the first backup is not confirmed yet, in the words the page uses.
+  const [why, setWhy] = useState("");
   const mounted = useRef(true);
+
+  const run = useCallback(() => {
+    const host = bridge();
+    if (!host) return;
+    setResult("working");
+    setWhy("");
+    void (async () => {
+      let reason = "";
+      try {
+        const outcome = await ensureFirstRunBackup(host, {
+          applyStatus: () => {},
+          createdKey: (note) => { if (mounted.current) setKeyName(note.label); },
+          notice: () => {},
+        }, { reason: (text) => { reason = text; } });
+        if (!mounted.current) return;
+        setWhy(outcome === "unverified" ? reason : "");
+        setResult(outcome);
+      } catch {
+        if (mounted.current) { setWhy(FIRST_RUN_BACKUP_COPY.failed); setResult("unverified"); }
+      }
+    })();
+  }, []);
 
   useEffect(() => {
     mounted.current = true;
-    const host = bridge();
-    if (!host) return () => { mounted.current = false; };
-    void (async () => {
-      try {
-        const status = await host.status();
-        if (mounted.current) setStanding(standingFrom(status));
-      } catch {
-        // Unknown stays unknown, and unknown says nothing.
-      }
-    })();
+    run();
     return () => { mounted.current = false; };
+  }, [run]);
+
+  // The person's own choice, recorded by the desktop, so setup ends saying so.
+  const keepOff = useCallback(() => {
+    const host = bridge();
+    if (!host?.finishFirstRun) return;
+    setResult("working");
+    void host.finishFirstRun("off").then(
+      () => { if (mounted.current) { setWhy(""); setResult("off"); } },
+      () => { if (mounted.current) { setWhy(t("settings.l5.firstRun.offFailed")); setResult("unverified"); } },
+    );
   }, []);
 
-  const turnOn = () => {
-    const host = bridge();
-    if (!host || busy) return;
-    setBusy(true);
-    setFailure("");
-    setNotice("");
-    void (async () => {
-      try {
-        const outcome = await completeBackupSetup(host, undefined, {
-          // The status the sequence reports back is what decides the line, so
-          // the row can never get ahead of what actually happened.
-          applyStatus: (next) => { if (mounted.current) setStanding(standingFrom(next)); },
-          createdKey: (note) => { if (mounted.current) setKeyName(note.label); },
-          // Settings' own running commentary is written for Settings, and
-          // some of it carries punctuation this flow does not use. The three
-          // outcomes that matter are worded here instead.
-          notice: () => {},
-        });
-        if (!mounted.current) return;
-        if (outcome.state === "capturing") setNotice(copy.capturing);
-        else if (outcome.state === "cancelled") setNotice(copy.cancelled);
-        else setNotice(copy.unfinished);
-      } catch {
-        if (mounted.current) setFailure(copy.failure);
-      } finally {
-        if (mounted.current) setBusy(false);
-      }
-    })();
-  };
-
-  if (!bridge() || standing === "unknown") return null;
-  if (standing === "on" && !notice) return <FirstRunLine quiet>{copy.on}</FirstRunLine>;
-
+  // Unavailable and idle say nothing: a first run is not the place to explain
+  // that a status call failed.
+  if (result === "idle" || result === "unavailable") return null;
+  const offButton = bridge()?.finishFirstRun
+    ? <button type="button" onClick={keepOff} className={`${FIRST_RUN_CHIP} ${FIRST_RUN_FOCUS}`}>{t("settings.l5.firstRun.keepOff")}</button>
+    : null;
+  const tryAgain = (
+    <div className="mt-2 flex flex-wrap gap-2">
+      <button type="button" onClick={run} className={`${FIRST_RUN_CHIP} ${FIRST_RUN_FOCUS}`}>{FIRST_RUN_BACKUP_COPY.tryAgain}</button>
+      {offButton}
+    </div>
+  );
   return (
     <div className="mt-3">
-      {standing === "on" ? (
-        <FirstRunLine quiet>{copy.on}</FirstRunLine>
-      ) : (
-        <>
-          <FirstRunLine quiet>{copy.offer}</FirstRunLine>
-          <FirstRunLine quiet>{copy.offerSecond}</FirstRunLine>
-          <div className="mt-2">
-            <button
-              type="button"
-              disabled={busy}
-              onClick={turnOn}
-              className={`${FIRST_RUN_CHIP} ${FIRST_RUN_FOCUS}`}
-            >
-              {busy ? copy.working : copy.turnOn}
-            </button>
-          </div>
-        </>
-      )}
-      {notice && <FirstRunLine quiet>{notice}</FirstRunLine>}
-      {keyName && <FirstRunLine quiet>{copy.keptKey}</FirstRunLine>}
-      {failure && <FirstRunFailure message={failure} />}
+      {result === "working" && <FirstRunLine quiet>{FIRST_RUN_BACKUP_COPY.working}</FirstRunLine>}
+      {result === "verified" && <FirstRunLine quiet>{FIRST_RUN_BACKUP_COPY.verified}</FirstRunLine>}
+      {result === "unverified" && <><FirstRunFailure message={why || FIRST_RUN_BACKUP_COPY.unverified} />{tryAgain}</>}
+      {result === "cancelled" && <><FirstRunLine quiet>{FIRST_RUN_BACKUP_COPY.cancelled}</FirstRunLine>{tryAgain}</>}
+      {result === "off" && <FirstRunLine quiet>{t("settings.l5.firstRun.off")}</FirstRunLine>}
+      {result === "unsupported" && <><FirstRunFailure message={t("settings.l5.firstRun.unsupported")} />{tryAgain}</>}
+      {result === "not-first-run" && <><FirstRunLine quiet>{t("settings.l5.firstRun.inSettings")}</FirstRunLine>{offButton && <div className="mt-2">{offButton}</div>}</>}
+      {keyName && <FirstRunLine quiet>{FIRST_RUN_BACKUP_COPY.keptKey}</FirstRunLine>}
     </div>
   );
 }

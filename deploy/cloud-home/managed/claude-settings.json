@@ -1,0 +1,7 @@
+{
+  "_license": "SPDX-License-Identifier: AGPL-3.0-or-later",
+  "allowManagedHooksOnly": true,
+  "allowManagedMcpServersOnly": true,
+  "enableAllProjectMcpServers": false,
+  "env": { "DISABLE_UPDATES": "1", "DISABLE_AUTOUPDATER": "1" }
+}

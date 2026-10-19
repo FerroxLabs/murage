@@ -44,8 +44,10 @@ const APP = { "x-flux-memory-app": "murage" };
 const OFF = { ...APP, "x-flux-memory-capture": "off", "x-flux-memory-inject": "off" };
 
 /** The four audiences of the matrix, as the harness stamps them on a turn. */
-const CASES: Array<{ name: string; turn: Partial<SendTurnInput>; headers: Record<string, string> }> = [
+const CASES: Array<{ name: string; turn: Partial<SendTurnInput>; headers: Record<string, string>; external?: boolean }> = [
   { name: "owner", turn: { warmIdentity: { botId: "b", audience: "owner", decidedOwner: true } }, headers: APP },
+  // "Use Flux memory" off (lane 2.2): no Flux capture and no Flux inject on the owner's own turn either
+  { name: "owner with Use Flux memory off", turn: { warmIdentity: { botId: "b", audience: "owner", decidedOwner: true } }, headers: OFF, external: false },
   { name: "non-owner", turn: { warmIdentity: { botId: "b", audience: "non-owner", decidedOwner: false } }, headers: OFF },
   { name: "unproven room turn", turn: { warmIdentity: { botId: "b", audience: "owner", decidedOwner: false } }, headers: OFF },
   { name: "background", turn: { background: true, warmIdentity: { botId: "b", audience: "owner", decidedOwner: true } }, headers: OFF },
@@ -101,7 +103,9 @@ describe("claude: ANTHROPIC_CUSTOM_HEADERS in the spawn env", () => {
     return JSON.parse(readFileSync(dump, "utf8")) as { pid: number; env: Record<string, string | undefined> };
   };
 
-  it.each(CASES)("$name", async ({ turn, headers }) => {
+  it.each(CASES)("$name", async ({ turn, headers, external }) => {
+      // the switch as the decision reads it (a config load in the driver re-reads the saved value, so the override layer carries it here)
+      setFluxMemorySettings(external === undefined ? {} : { external });
     const seen = await spawnFor(turn);
     expect(parseLines(seen.env.ANTHROPIC_CUSTOM_HEADERS)).toEqual(headers);
   });
@@ -111,7 +115,7 @@ describe("claude: ANTHROPIC_CUSTOM_HEADERS in the spawn env", () => {
     recorder?.stop();
     await instance?.dispose();
     delete process.env.FLUX_API_KEY;
-    expect((await spawnFor({ warmIdentity: CASES[1]!.turn.warmIdentity }, "claude-sonnet-4-5")).env.ANTHROPIC_CUSTOM_HEADERS).toBeUndefined();
+    expect((await spawnFor({ warmIdentity: CASES[2]!.turn.warmIdentity }, "claude-sonnet-4-5")).env.ANTHROPIC_CUSTOM_HEADERS).toBeUndefined();
   });
 
   it("a user's own ANTHROPIC_CUSTOM_HEADERS never rides a Flux turn", async () => {
@@ -131,7 +135,7 @@ describe("claude: ANTHROPIC_CUSTOM_HEADERS in the spawn env", () => {
     await oneTurn({ threadId: id, model: "flux-auto", ...CASES[0]!.turn });
     const owner = JSON.parse(readFileSync(dump, "utf8")) as { pid: number; env: Record<string, string> };
     expect(parseLines(owner.env.ANTHROPIC_CUSTOM_HEADERS)).toEqual(APP);
-    await oneTurn({ threadId: id, model: "flux-auto", ...CASES[1]!.turn });
+    await oneTurn({ threadId: id, model: "flux-auto", ...CASES[2]!.turn });
     const other = JSON.parse(readFileSync(dump, "utf8")) as { pid: number; env: Record<string, string> };
     expect(parseLines(other.env.ANTHROPIC_CUSTOM_HEADERS)).toEqual(OFF);
     expect(other.pid).not.toBe(owner.pid);
@@ -144,7 +148,7 @@ describe("claude: ANTHROPIC_CUSTOM_HEADERS in the spawn env", () => {
 
   it("a Flux connection (named provider route) carries the headers too", async () => {
     const route = { connectionId: "c1", revision: "r1", preset: "flux", protocol: "anthropic", baseUrl: "https://api.fluxrouter.ai/v1", apiKey: FLUX_KEY, model: "claude-opus-5-5" } as SendTurnInput["providerRoute"];
-    expect(parseLines((await spawnFor({ ...CASES[1]!.turn, providerRoute: route })).env.ANTHROPIC_CUSTOM_HEADERS)).toEqual(OFF);
+    expect(parseLines((await spawnFor({ ...CASES[2]!.turn, providerRoute: route })).env.ANTHROPIC_CUSTOM_HEADERS)).toEqual(OFF);
   });
 });
 
@@ -161,7 +165,9 @@ describe("codex: three provider tables, one chosen per thread", () => {
   };
   const providerOf = (seen: { calls: Array<{ method: string; params: Record<string, unknown> | null }> }) => seen.calls.find((call) => call.method === "thread/start")?.params?.modelProvider;
 
-  it.each(CASES)("$name", async ({ turn, headers }) => {
+  it.each(CASES)("$name", async ({ turn, headers, external }) => {
+      // the switch as the decision reads it (a config load in the driver re-reads the saved value, so the override layer carries it here)
+      setFluxMemorySettings(external === undefined ? {} : { external });
     const seen = await spawnFor(turn);
     expect(providerOf(seen)).toBe(headers === APP ? "flux" : "flux-off");
     const argv = seen.argv.join("\n");
@@ -177,7 +183,7 @@ describe("codex: three provider tables, one chosen per thread", () => {
   });
 
   it("a native turn names no Flux table", async () => {
-    const seen = await spawnFor(CASES[1]!.turn, "gpt-5.6-sol");
+    const seen = await spawnFor(CASES[2]!.turn, "gpt-5.6-sol");
     expect(providerOf(seen)).toBe("openai");
   });
 });
@@ -196,11 +202,13 @@ describe("ACP engines: the headers land in the spawn env after the route settles
 
   describe("fuigo: FUIGO_CONFIG models.extra_headers", () => {
     const create = (environment: Record<string, string>) => FuigoAgentDriver.create({ instanceId: "fuigo-hdr", displayName: "Fuigo", environment, enabled: true, config: { cli: FAKE_ACP, fullAuto: true } });
-    it.each(CASES)("$name", async ({ turn, headers }) => {
+    it.each(CASES)("$name", async ({ turn, headers, external }) => {
+      // the switch as the decision reads it (a config load in the driver re-reads the saved value, so the override layer carries it here)
+      setFluxMemorySettings(external === undefined ? {} : { external });
       expect(overlayHeaders((await acpDump(create, turn, "flux-auto")).env.FUIGO_CONFIG)).toEqual(headers);
     });
     it("keeps the user's own overlay keys and replaces their memory headers", async () => {
-      const seen = await acpDump(create, CASES[1]!.turn, "flux-auto", { FUIGO_CONFIG: JSON.stringify({ models: { extra_headers: { "x-team": "a", "x-flux-memory-inject": "on" } } }) });
+      const seen = await acpDump(create, CASES[2]!.turn, "flux-auto", { FUIGO_CONFIG: JSON.stringify({ models: { extra_headers: { "x-team": "a", "x-flux-memory-inject": "on" } } }) });
       expect(overlayHeaders(seen.env.FUIGO_CONFIG)).toEqual({ "x-team": "a", ...OFF });
     });
   });
@@ -208,7 +216,9 @@ describe("ACP engines: the headers land in the spawn env after the route settles
   describe("grok build: GROK_CONFIG models.extra_headers", () => {
     const route = { connectionId: "g1", revision: "r1", preset: "flux", protocol: "openai", baseUrl: "https://api.fluxrouter.ai/v1", apiKey: FLUX_KEY, model: "claude-opus-5-5" } as SendTurnInput["providerRoute"];
     const create = (environment: Record<string, string>) => GrokAgentDriver.create({ instanceId: "grok-hdr", displayName: "Grok", environment: { ...environment, GROK_HOME: join(scratch, "grok") }, enabled: true, config: GrokAgentDriver.decodeConfig({ cli: FAKE_ACP, fullAuto: true }) });
-    it.each(CASES)("$name", async ({ turn, headers }) => {
+    it.each(CASES)("$name", async ({ turn, headers, external }) => {
+      // the switch as the decision reads it (a config load in the driver re-reads the saved value, so the override layer carries it here)
+      setFluxMemorySettings(external === undefined ? {} : { external });
       mkdirSync(join(scratch, "grok"), { recursive: true });
       expect(overlayHeaders((await acpDump(create, { ...turn, providerRoute: route }, "claude-opus-5-5")).env.GROK_CONFIG)).toEqual(headers);
     });
@@ -216,7 +226,9 @@ describe("ACP engines: the headers land in the spawn env after the route settles
 
   describe("hermes: model.extra_headers in a per-turn managed overlay, one shared home", () => {
     const create = (environment: Record<string, string>) => HermesAgentDriver.create({ instanceId: "hermes-hdr", displayName: "Hermes", environment, enabled: true, config: { cli: FAKE_ACP, fullAuto: true } });
-    it.each(CASES)("$name", async ({ turn, headers }) => {
+    it.each(CASES)("$name", async ({ turn, headers, external }) => {
+      // the switch as the decision reads it (a config load in the driver re-reads the saved value, so the override layer carries it here)
+      setFluxMemorySettings(external === undefined ? {} : { external });
       const seen = await acpDump(create, turn, "flux-auto", { FAKE_ACP_VERSION: "Hermes Agent v0.21.3 (2026.9.14)" });
       // the home is the one shared Flux home, whatever the audience
       expect(seen.env.HERMES_HOME).toBe(join(scratch, "state", "flux-hermes-home"));
@@ -228,7 +240,9 @@ describe("ACP engines: the headers land in the spawn env after the route settles
 
   describe("qwen: a system-settings file with model.generationConfig.customHeaders", () => {
     const create = (environment: Record<string, string>) => QwenAgentDriver.create({ instanceId: "qwen-hdr", displayName: "Qwen", environment, enabled: true, config: { cli: FAKE_ACP, fullAuto: true } });
-    it.each(CASES)("$name", async ({ turn, headers }) => {
+    it.each(CASES)("$name", async ({ turn, headers, external }) => {
+      // the switch as the decision reads it (a config load in the driver re-reads the saved value, so the override layer carries it here)
+      setFluxMemorySettings(external === undefined ? {} : { external });
       const seen = await acpDump(create, turn, "flux-auto");
       const path = seen.env.QWEN_CODE_SYSTEM_SETTINGS_PATH!;
       expect(path.startsWith(join(DATA_DIR, "native", "flux-memory"))).toBe(true);
@@ -239,7 +253,9 @@ describe("ACP engines: the headers land in the spawn env after the route settles
 
   describe("opencode: OPENCODE_CONFIG_CONTENT provider.flux.options.headers", () => {
     const create = (environment: Record<string, string>) => OpenCodeGoDriver.create({ instanceId: "opencode-hdr", displayName: "OpenCode", environment: { ...environment, OPENCODE_API_KEY: "fixture-only-not-real" }, enabled: true, config: { cli: FAKE_ACP, fullAuto: true } });
-    it.each(CASES)("$name", async ({ turn, headers }) => {
+    it.each(CASES)("$name", async ({ turn, headers, external }) => {
+      // the switch as the decision reads it (a config load in the driver re-reads the saved value, so the override layer carries it here)
+      setFluxMemorySettings(external === undefined ? {} : { external });
       const seen = await acpDump(create, turn, "flux-auto");
       expect(JSON.parse(seen.env.OPENCODE_CONFIG_CONTENT!).provider.flux.options.headers).toEqual(headers);
     });
@@ -247,14 +263,14 @@ describe("ACP engines: the headers land in the spawn env after the route settles
 
   it("an engine with no Flux surface is left alone on a model id that merely starts with flux-", async () => {
     const create = (environment: Record<string, string>) => GeminiAgentDriver.create({ instanceId: "gemini-hdr", displayName: "Gemini", environment, enabled: true, config: { cli: FAKE_ACP, fullAuto: true } });
-    const seen = await acpDump(create, CASES[1]!.turn, "flux-looking-local-model");
+    const seen = await acpDump(create, CASES[2]!.turn, "flux-looking-local-model");
     expect(seen.env.FUIGO_CONFIG).toBeUndefined();
     expect(recorder!.events.some((event) => event.type === "turn.completed" && (event as { ok?: boolean }).ok === false)).toBe(false);
   });
 
   it("an ACP engine that is not Flux-routed gets nothing", async () => {
     const create = (environment: Record<string, string>) => QwenAgentDriver.create({ instanceId: "qwen-native", displayName: "Qwen", environment, enabled: true, config: { cli: FAKE_ACP, fullAuto: true } });
-    const seen = await acpDump(create, CASES[1]!.turn, "qwen3-coder-plus");
+    const seen = await acpDump(create, CASES[2]!.turn, "qwen3-coder-plus");
     // no Flux headers; the system settings carry only the memory switch (engine-memory-off.test.ts)
     expect(JSON.parse(readFileSync(seen.env.QWEN_CODE_SYSTEM_SETTINGS_PATH!, "utf8"))).toEqual({ memory: { enableManagedAutoMemory: false }, disableAllHooks: true });
   });
@@ -293,11 +309,13 @@ describe("openai-compat and the other HTTP engines: the request headers", () => 
   };
   const memoryOf = (headers: Headers) => Object.fromEntries([...headers.entries()].filter(([name]) => name.startsWith("x-flux-memory")));
 
-  it.each(CASES)("$name", async ({ turn, headers }) => {
+  it.each(CASES)("$name", async ({ turn, headers, external }) => {
+      // the switch as the decision reads it (a config load in the driver re-reads the saved value, so the override layer carries it here)
+      setFluxMemorySettings(external === undefined ? {} : { external });
     expect(memoryOf(await run("https://api.fluxrouter.ai/v1", turn))).toEqual(headers);
   });
 
   it("sends none to a host that is not Flux", async () => {
-    expect(memoryOf(await run("https://openrouter.ai/api/v1", CASES[1]!.turn))).toEqual({});
+    expect(memoryOf(await run("https://openrouter.ai/api/v1", CASES[2]!.turn))).toEqual({});
   });
 });

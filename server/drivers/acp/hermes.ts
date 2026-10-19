@@ -1,10 +1,11 @@
+import { cloudEngineHome } from "../../cloud-home/turn-process.ts";
+import { cloudHomeCopy } from "../../cloud-home/copy.ts";
 // Hermes Agent — Nous Research's `hermes acp` CLI. Custom-only: Hermes is
 // a BYOK/local harness. ACP ignores `hermes -m` (cmd_acp does not forward
 // it), and setting OPENAI_API_KEY makes provider:auto resolve to OpenRouter
 // without an OpenRouter key — that is the "HTTP 401: Missing Authentication
 // header" failure. Inject writes providers.<host> and session/set_model
 // `custom:<host>:<model>` instead.
-import { spawn } from "node:child_process";
 import { createHash } from "node:crypto";
 import { chmodSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
@@ -14,6 +15,7 @@ import { parse as parseYaml, stringify as stringifyYaml } from "yaml";
 import type { ModelCatalog } from "../../contracts.ts";
 import { writeFileAtomic } from "../../atomic.ts";
 import { quietChildPipes } from "../../child-pipe-quiet.mjs";
+import { killCliTree, spawnCli } from "../../procs.ts";
 import { DATA_DIR } from "../../config.ts";
 import { fluxKey } from "../../flux-config.ts";
 import { FLUX_OPENAI_BASE, fluxModelId } from "../../flux-routing.ts";
@@ -90,7 +92,7 @@ const DRIVER_KIND = "hermesAgent";
  * the module constant so a test rig can redirect the whole thing.
  */
 export function fluxHermesHome(env: Record<string, string | undefined>): string {
-  return join(env.MURAGE_DATA_DIR || DATA_DIR, "flux-hermes-home");
+  return join(process.env.MURAGE_CLOUD_ROLE === "home" ? cloudEngineHome("hermesAgent") : env.MURAGE_DATA_DIR || DATA_DIR, "flux-hermes-home");
 }
 
 /**
@@ -144,6 +146,8 @@ export function materializeFluxHermesHome(
     "  user_profile_enabled: false",
     "",
   ].join("\n");
+  // Hermes is not in a Cloud home's engine manifest, and the launcher renders no Hermes config.
+  if (process.env.MURAGE_CLOUD_ROLE === "home") throw new Error(cloudHomeCopy.hermesOnHome);
   writeFileAtomic(join(dir, "config.yaml"), text, { mode: 0o600 });
   return dir;
 }
@@ -503,27 +507,27 @@ export function hermesConfiguredModel(
  * Failure is non-fatal and returns [] — a catalog probe must never be the
  * reason an agent becomes unselectable.
  */
-async function fetchHermesAcpModels(
+export async function fetchHermesAcpModels(
   cli: string,
   env: Record<string, string | undefined>,
   profile: string,
 ): Promise<{ id: string; label: string; custom: true }[]> {
   return await new Promise((resolve) => {
-    let child: ReturnType<typeof spawn>;
+    let child: ReturnType<typeof spawnCli>;
     try {
       // The probe asks the same profile the turns will run, or the picker
-      // would list another agent's catalog.
-      child = spawn(cli, ["-p", profile, "acp"], { stdio: ["pipe", "pipe", "ignore"], env: env as NodeJS.ProcessEnv });
+      // would list another agent's catalog. It goes through the shared
+      // launcher like a turn (Rule 74c): no controlling terminal, stdin a pipe.
+      child = spawnCli(cli, ["-p", profile, "acp"], { stdio: ["pipe", "pipe", "ignore"], env: env as NodeJS.ProcessEnv });
     } catch {
       return resolve([]);
     }
     // THIS PROBE ENDED THE OWNER'S SERVER ON 2026-09-22 AT 05:43:42Z.
     //
-    // It is the one place in the drivers that spawns raw instead of going
-    // through `spawnCli`, and `spawnCli` is where the stdin guard lives
-    // (server/procs.ts) — put there by somebody who hit this same class on
-    // Windows and reasoned it through correctly. Bypassing that helper
-    // bypassed the guard with it.
+    // It was then the one place in the drivers that spawned raw instead of
+    // going through `spawnCli`, where the stdin guard lives (server/procs.ts).
+    // It goes through `spawnCli` now, and quietChildPipes stays as a second
+    // listener on every pipe.
     //
     // `send` below writes to this child's stdin from inside the stdout
     // handler, chaining initialize → authenticate → session/new. If the CLI
@@ -538,22 +542,14 @@ async function fetchHermesAcpModels(
     quietChildPipes(child);
     let settled = false;
     let timer: ReturnType<typeof setTimeout> | undefined;
-    let hardKillTimer: ReturnType<typeof setTimeout> | undefined;
     const done = (out: { id: string; label: string; custom: true }[]) => {
       if (settled) return;
       settled = true;
       if (timer) clearTimeout(timer);
+      // The probe is in a session and process group of its own: stop the
+      // whole tree (SIGTERM, then SIGKILL past the grace), not just the root.
       try {
-        if (child.kill()) {
-          hardKillTimer = setTimeout(() => {
-            try {
-              child.kill("SIGKILL");
-            } catch {
-              /* already gone */
-            }
-          }, 1_000);
-          hardKillTimer.unref?.();
-        }
+        killCliTree(child);
       } catch {
         /* already gone */
       }
@@ -561,10 +557,7 @@ async function fetchHermesAcpModels(
     };
     timer = setTimeout(() => done([]), 5_000);
     child.once("error", () => done([]));
-    child.once("close", () => {
-      if (hardKillTimer) clearTimeout(hardKillTimer);
-      done([]);
-    });
+    child.once("close", () => done([]));
 
     let buf = "";
     let id = 0;

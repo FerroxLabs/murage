@@ -7,7 +7,7 @@
 // speaker the name leaves the row that used to be the oldest. Holding that
 // row's top still moved the message up by the label's height (0.1.61 CI
 // audit on d851c9c4, which fixed the same thing for the day separator).
-import { test, expect, type Page } from "@playwright/test";
+import { test, expect, type Page } from "./page-error-guard";
 import { createServer, type ViteDevServer } from "vite";
 import react from "@vitejs/plugin-react";
 import tailwindcss from "@tailwindcss/vite";
@@ -71,7 +71,11 @@ test("an earlier page keeps the message still when the speaker's name leaves its
   // (SCROLLBACK_TRIGGER_PX, 200), so the oldest loaded row is the oldest mounted.
   const scroller = page.getByTestId("chat-scroll");
   await scroller.hover();
-  for (let i = 0; i < 80 && (await scroller.evaluate((el) => el.scrollTop)) > 700; i++) { await page.mouse.wheel(0, -500); await page.waitForTimeout(60); }
+  // The oldest LOADED row is the only one that starts the turn (and carries the name); it mounts once the viewport is within the
+  // overscan of it. Which scrollTop that is depends on the rows' measured heights, so wheel until that row is mounted rather than
+  // to a fixed offset, and stop short of the earlier-page trigger either way.
+  const speakers = page.locator(`[data-testid="chat-scroll"] [data-row] [data-testid="room-speaker"]`);
+  for (let i = 0; i < 120 && (await speakers.count()) === 0 && (await scroller.evaluate((el) => el.scrollTop)) > 260; i++) { await page.mouse.wheel(0, -300); await page.waitForTimeout(60); }
   await expect.poll(async () => (await page.locator(`[data-testid="chat-scroll"] [data-row] [data-testid="room-speaker"]`).count())).toBe(1);
   const held = await mounted(page);
   expect(held.length).toBeLessThan(TOTAL);

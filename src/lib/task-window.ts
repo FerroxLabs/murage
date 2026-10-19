@@ -106,3 +106,24 @@ export function withExtraTasks<T extends { threadId: string }>(held: T[] | undef
   for (const task of fetched) rows.set(task.threadId, task);
   return [...rows.values()];
 }
+
+/** A position in the newest-first order, as the server encodes it (server/task-window.ts encodeTaskCursor). */
+export function decodeTaskCursor(cursor: string): { createdAt: number; threadId: string } | null {
+  const at = cursor.indexOf(":");
+  if (at < 1) return null;
+  const createdAt = Number(cursor.slice(0, at));
+  const threadId = cursor.slice(at + 1);
+  return Number.isFinite(createdAt) && threadId ? { createdAt, threadId } : null;
+}
+
+/** Which held rows a statement's task window speaks for (ROOM-ORDER-DESIGN r3 R6). `tasksOlder === null` means the statement holds every
+ * task, so any held row it lacks is gone. Otherwise `tasksOlder` is the cursor of the oldest row of the newest-first ranking: a row that
+ * ranks at or before it is inside the window (so absent means gone), a row after it (a paged-in `extraTasks` row, or one from a wider frame)
+ * is outside it and is kept. A window whose cursor cannot be read speaks for nothing. */
+export function windowCovers(statement: { tasks: readonly { threadId: string }[]; tasksTotal?: number; tasksOlder?: string | null }): (task: { threadId: string; createdAt: number }) => boolean {
+  const { tasksOlder } = statement;
+  if (tasksOlder === null || (tasksOlder === undefined && (statement.tasksTotal === undefined || statement.tasksTotal <= statement.tasks.length))) return () => true;
+  const cursor = typeof tasksOlder === "string" ? decodeTaskCursor(tasksOlder) : null;
+  if (!cursor) return () => false;
+  return (task) => task.createdAt > cursor.createdAt || (task.createdAt === cursor.createdAt && task.threadId <= cursor.threadId);
+}

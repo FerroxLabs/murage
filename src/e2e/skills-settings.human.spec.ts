@@ -1,7 +1,7 @@
 // Settings → Skills in a real browser against the REAL harness: the page's
 // /api calls are proxied to a verification server with the desktop proof,
 // so Skill Guard, the collection store and the bot gate all run for real.
-import { test, expect } from "@playwright/test";
+import { test, expect } from "./page-error-guard";
 import { createServer, type ViteDevServer } from "vite";
 import tailwindcss from "@tailwindcss/vite";
 import { fileURLToPath } from "node:url";
@@ -57,7 +57,6 @@ test.beforeAll(async () => {
 test.afterAll(async () => { await server?.close(); await harness?.close(); safeWipeSync(cache); });
 // A module that fails to load leaves an empty page; say why.
 test.beforeEach(({ page }) => {
-  page.on("pageerror", (error) => console.log("page error:", error.message));
   page.on("console", (message) => { if (message.type() === "error") console.log("console error:", message.text()); });
 });
 

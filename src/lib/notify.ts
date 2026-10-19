@@ -2,6 +2,7 @@
 // The server decides *whether* something is worth an interruption (it owns
 // the per-bot toggle); this only decides how to show it here.
 import type { Notification } from "../../server/notify.ts";
+import { notificationBridge } from "./cloud-workspace";
 import { notificationSoundsEnabled } from "./notification-sounds";
 
 export type NotifyFrame = Notification;
@@ -58,7 +59,7 @@ export function showNotification(
   if (Notification.permission !== "granted") return;
   if (frame.kind === "approval" && frame.requestId && frame.messageId) {
     if (!claimApproval(frame)) return;
-    const bridge = window.muragebox;
+    const bridge = notificationBridge();
     if (bridge?.approvalNotifications && (bridge.platform === "darwin" || bridge.platform === "win32")) {
       // Only server-filtered text and opaque routing identity cross the bridge.
       // A failed native delivery is not retried with a second audible channel.

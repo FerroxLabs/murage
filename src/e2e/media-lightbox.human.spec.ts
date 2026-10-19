@@ -13,7 +13,7 @@
 // desktop widths in both skins; reduced motion drops the animation; a remote
 // image makes no request until asked (and then sends no referrer); a local
 // path is never requested; opening a screen frame makes no request at all.
-import { test, expect, type Page } from "@playwright/test";
+import { test, expect, type Page } from "./page-error-guard";
 import { createServer, type ViteDevServer } from "vite";
 import react from "@vitejs/plugin-react";
 import tailwindcss from "@tailwindcss/vite";
@@ -62,10 +62,12 @@ const MARKDOWN = [
 
 let server: ViteDevServer, origin: string, cache: string;
 const served: string[] = [];
-/** An attachment as the desktop window asks for it: an <img> cannot send
- *  headers, so the window's per-launch proof rides in the query. */
+/** The window's per-launch proof: an <img> cannot send headers, so the
+ *  window trades it (in a POST header) for a single-use ticket per image. */
 const FIXTURE_PROOF = "media-fixture-proof";
-const proofed = (path: string) => `${path}?surface=desktop&surfaceSecret=${FIXTURE_PROOF}`;
+/** The desktop loads an /api image through a single-use ticket, never with the proof in the URL. */
+const proofed = (path: string) => new RegExp(`^${path.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\?surfaceTicket=fixture-ticket-\\d+$`);
+let fixtureTickets = 0;
 
 test.beforeAll(async () => {
   const root = fileURLToPath(new URL("../../", import.meta.url));
@@ -115,6 +117,7 @@ createRoot(document.getElementById('root')).render(h(React.StrictMode,{},h('main
         }
         const json = (body: unknown) => { res.setHeader("content-type", "application/json"); res.end(JSON.stringify(body)); };
         if (url.pathname === "/api/desktop-secret") return json({ secret: FIXTURE_PROOF });
+        if (url.pathname === "/api/desktop/resource-ticket") return json({ ticket: `fixture-ticket-${++fixtureTickets}`, expiresInMs: 15000 });
         if (url.pathname === "/api/artifacts/art-chart/preview") return json({ artifact: ARTIFACT, mode: "image", content: SAVED });
         if (url.pathname === "/api/artifacts") return json({ items: [ARTIFACT], total: 1, page: 0, pageSize: 25 });
         next();

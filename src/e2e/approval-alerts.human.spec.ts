@@ -1,6 +1,6 @@
 // Real StoreProvider + live-events + notification delivery, fake SSE/native bridge.
 // No app profile, OS notifications, audio, or provider calls.
-import { test, expect } from "@playwright/test";
+import { test, expect } from "./page-error-guard";
 import { createServer, type ViteDevServer } from "vite";
 import react from "@vitejs/plugin-react";
 import { mkdtempSync } from "node:fs";

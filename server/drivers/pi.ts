@@ -1,5 +1,7 @@
 import { cliSig, knownCliVersion, memoDeps, noteVersionProbe, pathExists, rememberCliVersion, versionProbeAllowed } from "./isolation-cache.ts";
 import { engineUpdateRequired } from "./scoped-cli-home.ts";
+import { cloudTurnBot, cloudTurnEnvironment } from "../cloud-home/turn-process.ts";
+import { cloudHomeCopy } from "../cloud-home/copy.ts";
 import { PI_TOOL_SURFACE, renderMurageTurn } from "../murage-tool-surface.ts";
 // pi — the pi coding agent (@earendil-works/pi-coding-agent) as a native engine.
 //
@@ -65,12 +67,15 @@ import { isPlainObject, readNativeJsonConfig } from "./native-config-file.ts";
 import { primeLocalContext } from "../local-server-probe.ts";
 import { approvalSummary } from "../../shared/approval-summary.ts";
 import { boundedToolInput } from "../approval-text.ts";
+import type { McpMountRecord } from "../../shared/mount-identity.ts";
 import { PI_GATE_TITLE_PREFIX } from "./pi-permission-gate.ts";
+import { execEnvHanded, execEnvNow, handedEngineEnv } from "../engine-env.ts";
+import type { ExecEnv } from "../../shared/mount-identity.ts";
 import { createTodoBlockFilter, extractTodoBlocks, type TodoFilterOutput } from "../../shared/todo-block.ts";
 import { plainDuration } from "./stop-copy.ts";
 import { redactSecretsInText } from "../redact.ts";
 import { toolFailureText } from "../../shared/tool-activity.ts";
-import { CONNECTED_APPS_SERVER, LEGACY_CONNECTED_APPS_SERVER, connectedAppsServerName } from "../../shared/connected-app-names.ts";
+import { connectedAppsServerName } from "../../shared/connected-app-names.ts";
 
 /** Pi's window for a local model whose server has not reported one. */
 const PI_UNKNOWN_CONTEXT_WINDOW = 131072;
@@ -231,6 +236,8 @@ export function buildMcpServers(turn: SendTurnInput, options: { askBeforeCustom?
   // instance that runs without asks (Full access) mounts them ungated, which
   // is what Claude's bypass mode does for the same servers.
   for (const mount of customMountEntries(turn.integrations?.custom, (name) => name in servers)) {
+    // Rule 11: a name holding `__` cannot be told apart from its tools.
+    if (mount.name.includes("__")) continue;
     servers[mount.name] = {
       command: mount.command,
       args: mount.args,
@@ -239,6 +246,20 @@ export function buildMcpServers(turn: SendTurnInput, options: { askBeforeCustom?
     };
   }
   return Object.keys(servers).length ? servers : null;
+}
+
+/** Rule 54: one record per server in the mcp.json written for the MCP
+ * extension. No external records. */
+export function piMountRecords(turn: SendTurnInput, servers: Record<string, unknown> | null): McpMountRecord[] {
+  const own = new Map<string, string>([["murage-memory", "own:memory"], ["agents", "own:agents"], ["phone", "own:phone"], ["dweb", "own:dweb"], ["computer", "own:computer"]]);
+  if (turn.integrations?.composio) own.set(connectedAppsServerName(turn.integrations.composio.env), "own:connector");
+  const records: McpMountRecord[] = [];
+  for (const name of Object.keys(servers ?? {})) {
+    if (name.includes("__")) continue;
+    const mountId = own.get(name);
+    records.push(mountId ? { engineName: name, mountId, provenance: "own" } : { engineName: name, mountId: `custom:${name}`, provenance: "custom" });
+  }
+  return records;
 }
 
 /** A pi `get_available_models` response payload, parsed at its I/O boundary. */
@@ -559,7 +580,7 @@ interface PiEvent {
 type PiAskAnswer = (decision: { behavior: "allow" | "deny" | "answer"; message?: string; answers?: QuestionAnswer[] }) => void;
 
 function piEnvironment(source: Record<string, string | undefined>): Record<string, string | undefined> {
-  const env: Record<string, string | undefined> = { ...source, PATH: augmentedPath() };
+  const env: Record<string, string | undefined> = { ...cloudTurnEnvironment("pi", source, ["MURAGE_MCP_CONFIG", "MURAGE_PI_GATE", "MURAGE_PI_GATE_PREFIXES", "MURAGE_PI_GATE_ONLY"]), PATH: augmentedPath() };
   // pi is BYOK and reads provider keys straight from its environment: an
   // inherited key would silently flip billing onto one the user never granted
   // pi, and workspace credentials are the harness's secrets, not pi's. The
@@ -573,43 +594,111 @@ function piEnvironment(source: Record<string, string | undefined>): Record<strin
   return env;
 }
 
-/** The name the pi-mcp-extension gives Murage's connected-apps tools: the
- *  server name, then the tool, lower-cased (sanitizeToolName). */
-const PI_COMPOSIO_TOOL_PREFIX = `${CONNECTED_APPS_SERVER}_`;
-/** The same for a session an earlier release started, mounted under the older name. */
-const PI_LEGACY_COMPOSIO_TOOL_PREFIX = `${LEGACY_CONNECTED_APPS_SERVER}_`;
+/** What a pi-permission-gate ask is about, as the card and the guards read it. */
+export interface PiGateAsk {
+  tool: string;
+  summary: string;
+  toolInput?: string;
+  toolCall?: { name: string; input: unknown };
+  filePaths?: string[];
+  /** The gate could not send the call whole (its input ran past
+   * PI_GATE_MESSAGE_MAX), or sent a shape this could not read: what the card
+   * shows is not the whole call. The ask is then unproven: no standing grant
+   * is offered and no mode answers it (server/auto-approve.ts unread-call). */
+  truncated?: true;
+  /** F5: a field the contract needs was absent on the wire. */
+  toolInputMissing?: string;
+  /** Rule 13/16: a mounted MCP tool is filed as `{namespace: "mcp", name:
+   * "<engineName>__<mcpTool>"}`, resolved against F4 by exact engineName; a
+   * call the gate could not tie to a mount is `{namespace: "", name: ""}`
+   * (unproven). Pi's own tools carry none. */
+  toolIdentity?: { namespace: string; name: string };
+  /** The input exactly as the gate sent it: echoed back on Allow (Rule 73d). */
+  gateInput?: Record<string, unknown>;
+}
+
+/** Rule 13: the identity of an ask that did not come from this turn's gate. */
+export const PI_UNPROVEN_IDENTITY = { namespace: "", name: "" } as const;
+/** The owner-facing reason for a call the gate sent cut. */
+const PI_GATE_CUT_REASON = "Murage could not read this call whole, so it did not run.";
+
 
 /**
  * What a pi-permission-gate ask is about, from the JSON the gate sends. The
- * stop line reads `toolCall` (a shell command, a file, a connected-app call),
- * so these carry the engine's own input, never display text. A message that
- * does not parse still becomes a card, with no `toolCall`: the stop line then
- * cannot clear it, so under Full access it waits for the owner.
+ * stop line reads `toolCall` (a shell command, a file, a connected-app call,
+ * any other tool by pi's own name for it), so these carry the engine's own
+ * input, never display text. A message that does not parse, carries the
+ * gate's `truncated` mark, or names a tool without the input that tool needs
+ * is a cut call: it is marked so, and never filed under the engine's own name
+ * as if that named the tool (Astra r3).
  */
-export function piGateAsk(message: string): { tool: string; summary: string; toolInput?: string; toolCall?: { name: string; input: unknown }; filePaths?: string[] } {
-  let parsed: { tool?: unknown; input?: unknown } = {};
+export function piGateAsk(message: string, mounts: readonly McpMountRecord[] = []): PiGateAsk {
+  let parsed: { tool?: unknown; input?: unknown; truncated?: unknown; mount?: unknown; mcpTool?: unknown; note?: unknown } = {};
+  let readable = false;
   try {
     const value: unknown = JSON.parse(message);
-    if (value && typeof value === "object" && !Array.isArray(value)) parsed = value as typeof parsed;
+    if (value && typeof value === "object" && !Array.isArray(value)) { parsed = value as typeof parsed; readable = true; }
   } catch {
-    // unreadable: a card with nothing for the stop line to clear
+    // unreadable: a cut call, below
   }
-  const tool = typeof parsed.tool === "string" ? parsed.tool : "";
+  const tool = typeof parsed.tool === "string" ? parsed.tool.trim() : "";
   const input = parsed.input && typeof parsed.input === "object" && !Array.isArray(parsed.input) ? (parsed.input as Record<string, unknown>) : undefined;
-  if ((tool === "bash" || tool === "powershell") && typeof input?.command === "string") {
-    return { tool: tool === "bash" ? "Bash" : "PowerShell", summary: approvalSummary(input.command), toolCall: { name: tool, input: { command: input.command } } };
+  const cut = !readable || !tool || parsed.truncated === true;
+  const shown = tool ? `pi wants to use ${tool.slice(0, 80)}` : "pi wants to run a tool";
+  const note = typeof parsed.note === "string" && parsed.note ? ` (${parsed.note.slice(0, 200)})` : "";
+  // Rule 14b: a mounted MCP tool. The mount is resolved against F4 by exact
+  // engineName; one that matches no record, or more than one, is unproven.
+  if (parsed.mount !== undefined || parsed.mcpTool !== undefined) {
+    const mount = typeof parsed.mount === "string" ? parsed.mount : "";
+    const mcpTool = typeof parsed.mcpTool === "string" ? parsed.mcpTool : "";
+    const matches = mount && !mount.includes("__") ? mounts.filter((record) => record.engineName === mount) : [];
+    if (matches.length !== 1 || !mcpTool) {
+      return { tool: tool || "pi", summary: `${shown} (Murage could not tell which app this is)${note}`, truncated: true, toolIdentity: PI_UNPROVEN_IDENTITY };
+    }
+    const name = `mcp__${mount}__${mcpTool}`;
+    const identity = { namespace: "mcp", name: `${mount}__${mcpTool}` };
+    if (cut) return { tool: name, summary: `${mcpTool.slice(0, 300)} (the call was cut)${note}`, truncated: true, toolIdentity: identity };
+    if (!input) return { tool: name, summary: `${mcpTool.slice(0, 300)} (the call was cut)${note}`, truncated: true, toolInputMissing: "input", toolIdentity: identity };
+    return { tool: name, summary: `${mcpTool.slice(0, 300)}${note}`, ...(boundedToolInput(input) ? { toolInput: boundedToolInput(input) } : {}), toolCall: { name, input }, toolIdentity: identity, gateInput: input };
   }
-  if ((tool === "edit" || tool === "write") && typeof input?.path === "string") {
-    const name = tool === "edit" ? "Edit" : "Write";
-    return { tool: name, summary: `${name} ${input.path}`.slice(0, 2_000), toolCall: { name, input: { file_path: input.path } }, filePaths: [input.path] };
+  const display = tool === "bash" ? "Bash" : tool === "powershell" ? "PowerShell" : tool === "edit" ? "Edit" : tool === "write" ? "Write" : tool || "pi";
+  if (cut) return { tool: display, summary: `${shown} (the call was cut)${note}`, truncated: true };
+  if (!input) return { tool: display, summary: `${shown} (the call was cut)${note}`, truncated: true, toolInputMissing: "input" };
+  // Rule 15: the WHOLE input, every field, is the call; nothing is projected.
+  const base = { toolCall: { name: tool, input }, gateInput: input };
+  if (tool === "bash" || tool === "powershell") {
+    // F5: a command that is not a string is never read as one
+    if (typeof input.command !== "string") return { tool: display, summary: `${shown} (the command was cut)`, truncated: true, toolInputMissing: "command" };
+    return { tool: display, summary: approvalSummary(input.command), ...base };
   }
-  // A session an earlier release started is mounted under the older name, and is read the same way.
-  const connectedAppPrefix = [PI_COMPOSIO_TOOL_PREFIX, PI_LEGACY_COMPOSIO_TOOL_PREFIX].find((prefix) => tool.startsWith(prefix));
-  if (connectedAppPrefix && input) {
-    const rest = tool.slice(connectedAppPrefix.length);
-    return { tool: "Connected app", summary: rest.slice(0, 300), ...(boundedToolInput(input) ? { toolInput: boundedToolInput(input) } : {}), toolCall: { name: `mcp__${connectedAppPrefix.slice(0, -1)}__${rest.toUpperCase()}`, input } };
+  if (tool === "edit" || tool === "write") {
+    if (typeof input.path !== "string") return { tool: display, summary: `${shown} (the file was cut)`, truncated: true, toolInputMissing: "path" };
+    return { tool: display, summary: `${display} ${input.path}`.slice(0, 2_000), ...base, filePaths: [input.path] };
   }
-  return { tool: "pi", summary: tool ? `pi wants to use ${tool.slice(0, 80)}` : "pi wants to run a tool" };
+  // Any other gated tool (read, grep, find, ls) is filed under pi's own name
+  // for it, with its input. The engine's name ("pi") never stands in for a tool.
+  return { tool, summary: `${shown}${note}`, ...(boundedToolInput(input) ? { toolInput: boundedToolInput(input) } : {}), ...base };
+}
+
+/** Rule 14b/54: stamp each server of the written mcp.json with its mountId,
+ * which the extension copies into the gate's table, and mark that the gate
+ * asks so the tool raises no confirm of its own. */
+export function stampMcpServers(turn: SendTurnInput, servers: Record<string, unknown> | null, gated: boolean): Record<string, unknown> | null {
+  if (!servers) return servers;
+  const ids = new Map(piMountRecords(turn, servers).map((record) => [record.engineName, record.mountId]));
+  const out: Record<string, unknown> = {};
+  for (const [name, def] of Object.entries(servers)) {
+    const id = ids.get(name);
+    out[name] = def && typeof def === "object" ? { ...(def as object), ...(id ? { murageMountId: id } : {}), ...(gated ? { murageGated: true } : {}) } : def;
+  }
+  return out;
+}
+
+/** Rule 74: Pi's bash tool runs `<shell> -c <command>` (bash from the engine
+ * source: /bin/bash, else bash on PATH, `-c`; a login or interactive shell is
+ * never used). */
+export function piShellForm(platform: NodeJS.Platform = process.platform): string[] {
+  return platform === "win32" ? ["bash.exe", "-c"] : [existsSync("/bin/bash") ? "/bin/bash" : "bash", "-c"];
 }
 
 export const PiDriver: ProviderDriver<PiConfig> = {
@@ -725,8 +814,8 @@ export const PiDriver: ProviderDriver<PiConfig> = {
       if (requestedModel) {
         // Read the server's loaded context first, so a new models.json row
         // carries the real window (spec T2) even before any catalog refresh.
-        await primeLocalContext(requestedModel, { ...process.env, ...input.environment });
-        ensurePiInjectModel(requestedModel, { ...process.env, ...input.environment });
+        await primeLocalContext(requestedModel, piEnvironment({ ...process.env, ...input.environment }));
+        ensurePiInjectModel(requestedModel, piEnvironment({ ...process.env, ...input.environment }));
       }
 
       // The isolation switches depend on pi's version: read it now (a failed or backed-off probe is tried once more), before any
@@ -746,11 +835,19 @@ export const PiDriver: ProviderDriver<PiConfig> = {
       // into a 0600 temp file removed when the turn settles — never on argv.
       const mcpServers = buildMcpServers(turn, { askBeforeCustom: !skipPermissions });
       turn = renderMurageTurn(turn, PI_TOOL_SURFACE, { agents: mcpServers?.agents ? "agents" : undefined, memory: mcpServers?.["murage-memory"] ? "murage-memory" : undefined, phone: mcpServers?.phone ? "phone" : undefined });
+      // Murage's approvals (pi-permission-gate.ts). Pi runs its tools without
+      // asking anyone, so without the gate Ask mode never asked and Full
+      // access could not stop before a delete, a payment or a new contact.
+      // Off only when the instance skips asks and this turn requests neither
+      // broker enforcement nor the stop line.
+      const gateSecret = !skipPermissions || turn.proposalOnly === true ? randomBytes(24).toString("hex") : null;
       let mcpTempDir: string | null = null;
       if (mcpServers) {
+        // Pi is not in a Cloud home's engine manifest, and the launcher renders no Pi config.
+        if (process.env.MURAGE_CLOUD_ROLE === "home") throw new Error(cloudHomeCopy.piOnHome);
         mcpTempDir = mkdtempSync(join(tmpdir(), "murage-pi-mcp-"));
         try {
-          writeFileSync(join(mcpTempDir, "mcp.json"), JSON.stringify({ mcpServers }), { mode: 0o600 });
+          writeFileSync(join(mcpTempDir, "mcp.json"), JSON.stringify({ mcpServers: stampMcpServers(turn, mcpServers, gateSecret !== null) }), { mode: 0o600 });
         } catch (err) {
           // A failed write must not leave the temp dir behind — a partial file
           // could still hold the box token / composio key / comms token.
@@ -762,15 +859,6 @@ export const PiDriver: ProviderDriver<PiConfig> = {
           throw err;
         }
       }
-      // Murage's approvals (pi-permission-gate.ts). Pi runs its tools without
-      // asking anyone, so without the gate Ask mode never asked and Full
-      // access could not stop before a delete, a payment or a new contact.
-      // Off only when the instance skips asks and this turn requests neither
-      // broker enforcement nor the stop line.
-      const gateSecret = !skipPermissions || turn.proposalOnly === true ? randomBytes(24).toString("hex") : null;
-      // Connected-app calls are asked about only when the stop line has to
-      // see them, as Claude pre-allows its connected-apps tool otherwise.
-      const gatePrefixes = (turn.stopLine === true || turn.routeAsks === true) && turn.integrations?.composio ? [PI_COMPOSIO_TOOL_PREFIX, PI_LEGACY_COMPOSIO_TOOL_PREFIX] : [];
       if (piVersion && cliSig(config.cli, { ...process.env, ...input.environment }) !== piCliSig) piVersion = "";
       // A pi whose `--version` keeps failing is re-probed on a bounded backoff
       // (isolation-cache.ts), not on every turn; the version stays unknown meanwhile.
@@ -787,6 +875,37 @@ export const PiDriver: ProviderDriver<PiConfig> = {
         ...(gateSecret ? ["-e", SPAWNED_PROXIES.piPermissionGate] : []),
       ];
 
+      // Rule 74: the exact map this engine process gets is the owner's
+      // captured toolchain environment with the pins written last, passed as
+      // the explicit `env`. Pi's bash runs `<shell> -c`, so no startup file of
+      // the owner's runs again (piShellForm); the one file no flag removes is
+      // checked, never trusted (Rule 74d).
+      const instanceEnv: Record<string, string> = {};
+      for (const [name, value] of Object.entries(input.environment)) if (typeof value === "string") instanceEnv[name] = value;
+      const handed = await handedEngineEnv({
+        cwd: turn.cwd,
+        strip: (env) => {
+          const cleaned = piEnvironment(env);
+          const out: Record<string, string> = {};
+          for (const [name, value] of Object.entries(cleaned)) if (typeof value === "string") out[name] = value;
+          if (env.PATH !== undefined) out.PATH = env.PATH;
+          return out;
+        },
+        extra: {
+          // (a Cloud home: the instance's names reach the engine only through cloudTurnEnvironment, as before)
+          ...(process.env.MURAGE_CLOUD_ROLE === "home" ? {} : instanceEnv),
+          ...(mcpServers && mcpTempDir ? { MURAGE_MCP_CONFIG: join(mcpTempDir, "mcp.json") } : {}),
+          ...(gateSecret ? { MURAGE_PI_GATE: gateSecret } : {}),
+          // The Chief's proposal turn: the agents server's propose tool, as
+          // pi-mcp-extension.ts names it, is the one tool that runs unasked.
+          ...(gateSecret && turn.proposalOnly ? { MURAGE_PI_GATE_ONLY: "agents_project_propose" } : {}),
+        },
+      }, process.env.MURAGE_CLOUD_ROLE === "home" ? piEnvironment({ ...process.env, ...input.environment }) : undefined);
+      // A turn names its bot (the launcher scopes per-bot state by it); the --version probe does not.
+      const turnEnv = handed.env;
+      cloudTurnBot(turnEnv, turn.warmIdentity?.botId);
+      const shellForm = piShellForm();
+
       // spawnCli can throw synchronously (unresolvable CLI); if it does, the
       // 0600 temp file with the box token / composio key / comms token must
       // not be left on disk — settle() never runs because no child existed.
@@ -795,15 +914,7 @@ export const PiDriver: ProviderDriver<PiConfig> = {
           return spawnCli(config.cli, childArgs, {
             stdio: ["pipe", "pipe", "pipe"],
             cwd: turn.cwd,
-            env: piEnvironment({
-              ...process.env,
-              ...input.environment,
-              ...(mcpServers && mcpTempDir ? { MURAGE_MCP_CONFIG: join(mcpTempDir, "mcp.json") } : {}),
-              ...(gateSecret ? { MURAGE_PI_GATE: gateSecret, MURAGE_PI_GATE_PREFIXES: JSON.stringify(gatePrefixes) } : {}),
-              // The Chief's proposal turn: the agents server's propose tool, as
-              // pi-mcp-extension.ts names it, is the one tool that runs unasked.
-              ...(gateSecret && turn.proposalOnly ? { MURAGE_PI_GATE_ONLY: "agents_project_propose" } : {}),
-            }),
+            env: handed.env,
           });
         } catch (err) {
           if (mcpTempDir) {
@@ -977,7 +1088,11 @@ export const PiDriver: ProviderDriver<PiConfig> = {
               // (0.1.52 ASK3). Before this, a select was carded as a
               // permission whose Allow sent {confirmed:true} — not even pi's
               // reply shape for a select. `confirm` stays a permission.
-              const question = evt.method === "confirm" ? null : fromPi(evt);
+              // Rule 13/73d: this turn's gate asks as an `editor` whose title
+              // carries the secret and whose prefill is the call. It is
+              // recognised BEFORE an editor is treated as an owner question.
+              const isGateAsk = !!gateSecret && evt.method === "editor" && evt.title === `${PI_GATE_TITLE_PREFIX}${gateSecret}`;
+              const question = evt.method === "confirm" || isGateAsk ? null : fromPi(evt);
               if (question && !question.ok) {
                 // a dialog the owner cannot be shown is cancelled at once,
                 // and the owner sees why, instead of a card nobody can answer
@@ -1013,6 +1128,10 @@ export const PiDriver: ProviderDriver<PiConfig> = {
               // inside its synchronous request.opened listener. Emitting first
               // made respondToRequest see no pending ask, return unavailable,
               // then fall back to a human card on every "Always allow" call.
+              const mountRecords = piMountRecords(turn, mcpServers);
+              // Murage's own gate, recognised by this turn's secret: the call it
+              // carries is what the stop line and the card read.
+              const gate = isGateAsk ? piGateAsk(typeof evt.prefill === "string" ? evt.prefill : "", mountRecords) : null;
               pending.set(reqId, (decision) => {
                 if (timer) clearTimeout(timer);
                 if (questions) {
@@ -1026,27 +1145,57 @@ export const PiDriver: ProviderDriver<PiConfig> = {
                   else send({ type: "extension_ui_response", id: reqId, cancelled: true });
                   return;
                 }
+                if (isGateAsk) {
+                  // Rule 73d: Allow echoes the input the gate sent (a rewrite,
+                  // when the verdict makes one, replaces it); Deny carries the
+                  // reason, which for a narrowing denial (Rule 72) is the
+                  // verdict's own text.
+                  const allowed = decision.behavior === "allow" && gate?.gateInput !== undefined && !gate.truncated;
+                  const reply = allowed
+                    ? { allow: true, input: gate!.gateInput }
+                    : { deny: true, reason: decision.behavior === "allow" ? PI_GATE_CUT_REASON : decision.message?.trim() || "The owner did not allow this in Murage." };
+                  send({ type: "extension_ui_response", id: reqId, value: JSON.stringify(reply) });
+                  return;
+                }
                 if (decision.behavior === "deny") send({ type: "extension_ui_response", id: reqId, cancelled: true });
                 else send({ type: "extension_ui_response", id: reqId, confirmed: true });
               });
-              // Murage's own gate, recognised by this turn's secret: the call it
-              // carries is what the stop line and the card read.
-              const gate = !questions && gateSecret && evt.method === "confirm" && evt.title === `${PI_GATE_TITLE_PREFIX}${gateSecret}`
-                ? piGateAsk(typeof evt.message === "string" ? evt.message : "")
-                : null;
-              emit({
-                ...base(threadId, turnId),
-                requestId: reqId,
-                type: "request.opened",
-                requestType: questions ? "question" : "permission",
-                tool: questions ? String(evt.method) : gate ? gate.tool : String(evt.title ?? "pi"),
-                summary: questions ? questions[0]!.question.slice(0, 300) : gate ? gate.summary : String(evt.title ?? "pi wants confirmation"),
-                ...(gate?.toolInput ? { toolInput: gate.toolInput } : {}),
-                ...(gate?.toolCall ? { toolCall: gate.toolCall } : {}),
-                ...(gate?.filePaths ? { filePaths: gate.filePaths } : {}),
-                ...(questions ? { choices: questions[0]!.options.map((option) => option.label), questions } : {}),
-                ...(scoped ? { approvalScope: "local-computer" as const } : {}),
-              });
+              // F12 when the card opens (Rule 74d): the check of the generation the card opens in, computed for this ask
+              const open = (execEnv: ExecEnv) => {
+                if (!pending.has(reqId)) return;
+                emit({
+                  ...base(threadId, turnId),
+                  requestId: reqId,
+                  type: "request.opened",
+                  requestType: questions ? "question" : "permission",
+                  tool: questions ? String(evt.method) : gate ? gate.tool : String(evt.title ?? "pi"),
+                  summary: questions ? questions[0]!.question.slice(0, 300) : gate ? gate.summary : String(evt.title ?? "pi wants confirmation"),
+                  ...(gate?.toolInput ? { toolInput: gate.toolInput } : {}),
+                  ...(gate?.toolCall ? { toolCall: gate.toolCall } : {}),
+                  ...(gate?.filePaths ? { filePaths: gate.filePaths } : {}),
+                  // the gate could not send the call whole: the card says so,
+                  // offers no standing grant, and no mode answers it
+                  ...(gate?.truncated ? { toolInputTruncated: true } : {}),
+                  // F5: a field the contract needs was absent; nothing stands in for it
+                  ...(gate?.toolInputMissing ? { toolInputMissing: gate.toolInputMissing } : {}),
+                  // Rule 54: the servers in the mcp.json this turn wrote, no external records
+                  // Rule 13: a permission that did not come from this turn's gate
+                  // (any other extension's confirm) is unproven: no grant, stop,
+                  // no mode answers it. The gate's own set-b ask carries an mcp
+                  // identity, resolved against F4 by exact engineName.
+                  ...(!questions && (gate ? gate.toolIdentity : PI_UNPROVEN_IDENTITY) ? { toolIdentity: gate ? gate.toolIdentity! : PI_UNPROVEN_IDENTITY } : {}),
+                  // Rule 74 / F12: the environment this engine's commands run in
+                  execEnv,
+                  mcpMounts: mountRecords,
+                  toolEngine: "pi" as const,
+                  ...(questions ? { choices: questions[0]!.options.map((option) => option.label), questions } : {}),
+                  ...(scoped ? { approvalScope: "local-computer" as const } : {}),
+                });
+              };
+              // only the gate's command ask is checked (and so only a command card can carry U20); any other ask reports the
+              // map as handed, unchecked
+              if (gate && !questions && (gate.tool === "Bash" || gate.tool === "PowerShell")) void execEnvNow(threadId, shellForm, handed, turn.cwd ?? process.cwd()).then(open);
+              else open(execEnvHanded(handed, turn.cwd ?? process.cwd(), shellForm));
             }
             return;
           }

@@ -1,0 +1,22 @@
+# SPDX-License-Identifier: AGPL-3.0-or-later
+[Unit]
+Description=Murage Cloud home recovery after a transient volume unlock failure
+After=network-online.target
+# Never started (by boot, the recovery timer or anyone) while murage-commands holds a data transition (a reset, undo or update swap)
+# unresolved: it sets this file before stopping the writers and removes it only once the transition is durably resolved.
+ConditionPathExists=!/var/lib/murage-home/recovery-inhibit
+
+[Service]
+Type=oneshot
+User=root
+Group=root
+# Skipped (not failed) when the home is already running AND its tunnel connector has been fetched. A tunnel-token job that
+# failed by dependency while the volume was still locked at first boot is never retried by systemd itself, so it is retried here.
+ExecCondition=/bin/sh -c '! { /usr/bin/systemctl is-active --quiet murage-home.service && /usr/bin/systemctl is-active --quiet murage-tunnel-token.service; }'
+# Exit 78 from murage-enroll --boot (StaleGeneration/DeviceReadinessExpired) is terminal: never retried.
+ExecCondition=/bin/sh -c '! /usr/bin/systemctl show -p ExecMainStatus --value murage-volume.service | /usr/bin/grep -qx 78'
+# The home's own envelope unwrap can also end in terminal 78 after the volume unlocked.
+ExecCondition=/bin/sh -c '! /usr/bin/systemctl show -p ExecMainStatus --value murage-home.service | /usr/bin/grep -qx 78'
+# Pulls murage-volume -> data.mount -> murage-egress again through the Requires chain.
+ExecStart=/usr/bin/systemctl start murage-home.service murage-proxy.service murage-egress-proxy.service
+ExecStart=/usr/bin/systemctl start --no-block murage-tunnel-token.service

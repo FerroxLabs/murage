@@ -3,9 +3,10 @@ import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, rmSync, symlinkSyn
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { collectGepaBuildEvidence } from "./collect-gepa-build-evidence.mjs";
+import { removeTempDirSync } from "../server/testing/cleanup.ts";
 
 const roots = [];
-afterEach(() => { for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true }); });
+afterEach(() => { for (const root of roots.splice(0)) removeTempDirSync(root); });
 function fixture(stage = "sign-0") {
   const root = mkdtempSync(join(tmpdir(), "murage-gepa-evidence-")); roots.push(root);
   mkdirSync(join(root, "logs"));

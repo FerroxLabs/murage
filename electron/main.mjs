@@ -1,3 +1,4 @@
+import { FluxSigninError, assertFluxDesktopSigninEnabled, cancelFluxDesktopSignin, runFluxDesktopSignin } from "./flux-desktop-signin.mjs";
 import { writeCallTrace } from "./call-trace.mjs";
 import { createProviderBankReconciliation, fenceProviderDocumentUpdate, mutateProviderCredentials } from "./provider-connection-control.mjs";
 import { closedVolumeProblem } from "./backup-closed-volume.mjs";
@@ -8,10 +9,24 @@ import { CRASH_WINDOW_MS, createServerSupervisor } from "./server-supervisor.mjs
 import { compileCacheEnvironment } from "./compile-cache.mjs";
 import { createDesktopTrace } from "./desktop-trace.mjs";
 import { app, BrowserWindow, WebContentsView, clipboard, desktopCapturer, dialog, ipcMain as electronIpcMain, Menu, MenuItem, Notification, Tray, nativeImage, nativeTheme, net, powerMonitor, powerSaveBlocker, safeStorage, screen, session, shell, systemPreferences, utilityProcess } from "electron";
+import { protocol as electronProtocol } from "electron";
+import { installCloudHome, cloudHomeEnabled } from "./cloud-home-window.mjs";
+import { resolveCloudControlPlane } from "./cloud-control-plane.mjs";
+import { createCloudLiveGate } from "./cloud-live.mjs";
+import { channelClass } from "./ipc-channel-classes.mjs";
+import { COPY as CLOUD_COPY, createCloudHomeClient, createNativeStepUpConfirm } from "./cloud-home-client.mjs";
+import { createCloudHomeStore } from "./cloud-home-store.mjs";
+import { registerCloudHomeIpc } from "./cloud-home-ipc.mjs";
+import { doorLinkFromCommandLine, doorLinkFromDeepLink, parseDoorLink, parseOpenCloudLink } from "./cloud-door-link.mjs";
+import { createCloudLinkQueue } from "./cloud-link-queue.mjs";
+import { handOffDoorLink, needsDoorHandoff, takeStashedDoorLink } from "./cloud-link-handoff.mjs";
+import { ensureLinuxUrlHandler } from "./linux-url-handler.mjs";
+import { createEngineLoginRelay, registerEngineLoginIpc } from "./cloud-home-engine-login.mjs";
+import { WebSocket as EngineLoginWebSocket } from "ws";
 import { createNotificationAuthorization } from "./notification-authorization.mjs";
 import { createApprovalNotifications } from "./approval-notification.mjs";
 import { BACKUP_MODE_ARGUMENT, BACKUP_TOOL_STUCK_AFTER, createBackupModeController, createBackupToolCapability, createResticToolCapability, prepareBackupRestart } from "./backup-mode.mjs";
-import { BACKUP_SCHEDULE_BINDINGS_KEY, createBackupScheduleHost, setUpBackupsRequest } from "./backup-schedule-host.mjs";
+import { BACKUP_SCHEDULE_BINDINGS_KEY, createBackupScheduleHost, firstRunWithoutHost, setUpBackupsRequest } from "./backup-schedule-host.mjs";
 import { BACKUP_UNAVAILABLE_SENTENCES, backupUnavailableCode, captureFailureSentence, describeCaptureError } from "../shared/backup-capture-failure.mjs";
 import { pathWithin } from "../shared/path-identity.mjs";
 import { cloudNoticeStore, createRecoveryKeyFlow, hostCloudFolder, recoveryKeyFolderStore, settleRecoveryKeyRequest } from "./backup-recovery-key.mjs";
@@ -82,6 +97,7 @@ import { captureRecoveryCopy } from "./installation-recovery-snapshot.mjs";
 import { resolveInstallationSelection, retireUndoneInstallationSelection, planSeparateInstallation, allocateSeparateInstallation, publishInstallationSelection } from "./installation-selection.mjs";
 import { createRendererRecovery, repaintAfterGpuLoss, RECONNECTING_LINE } from "./renderer-recovery.mjs";
 import { createCompanionRestarter } from "./companion-restart.mjs";
+import { safeStorageSeal } from "./companion-stale.mjs";
 import { createServerChildLifecycle, awaitOwnedWork, SERVER_CHILD_STOP_TIMEOUT_MS } from "./server-child-lifecycle.mjs";
 import { desktopViewerPermissionAllowed } from "./desktop-viewer-permissions.mjs";
 import {
@@ -134,6 +150,7 @@ import { answerWhatsAppAuthKeyRequest, isWhatsAppAuthKeyRequest } from "./whatsa
 import { createControlPlaneClient } from "./control-plane-client.mjs";
 import {
   companionAccountCleanupPending,
+  COMPANION_ACCOUNT_TOKEN_FIELD,
   createCompanionAccountService,
   resolveCompanionControlPlaneURL,
 } from "./companion-account-service.mjs";
@@ -198,6 +215,29 @@ const { createCuaConnectionStore: createDescriptorStore } = require("./cua-conne
 const { normalizeUnreadCount, parseWindowState, resolveWindowState } = require("./window-state.cjs");
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
+
+/** Where Cloud keeps its sealed files: home records, the pending Connect, the revocation queue, the door link handoff. */
+const cloudHomesDirectory = () => path.join(app.getPath("userData"), "cloud-homes");
+// Murage Cloud (B3): null only under MURAGE_DESKTOP_CLOUD=0; otherwise inert until the live gate (or, unpackaged only, the force-on flag) turns it on.
+// Flag on: registers the murage-home scheme (before app ready) and starts the WP2 store/client; the proxy gets client.provider
+// and client.onAuthFailure. WP4 opens the window.
+// The force-on override exists only in unpackaged (development / qualification) builds; a packaged build honours only =0.
+const cloudDevOverride = cloudHomeEnabled({ env: process.env, userDataDir: () => app.getPath("userData"), packaged: app.isPackaged });
+const cloudCp = resolveCloudControlPlane({ env: process.env, qualification: cloudDevOverride });
+// Which control plane and site Connect uses: the one the shared resolver pinned (prod in a packaged build).
+const CLOUD_CP_ENVIRONMENT = cloudCp?.environment ?? "prod";
+const cloudLive = createCloudLiveGate({ resolve: () => resolveCloudControlPlane({ env: process.env }), cacheDir: () => app.getPath("userData"), warn: (m) => console.warn(`[cloud-live] ${m}`),
+  hardOff: () => process.env.MURAGE_DESKTOP_CLOUD === "0" });
+const cloudHome = installCloudHome({ liveGate: cloudLive, packaged: app.isPackaged, protocol: electronProtocol, session, BrowserWindow, shell, net, env: process.env,
+  userDataDir: () => app.getPath("userData"), distDir: path.join(__dirname, "..", "dist"), warn: (m) => console.warn(`[cloud-home] ${m}`),
+  createClient: () => createCloudHomeClient({ cp: cloudCp ? { [cloudCp.environment]: cloudCp } : {}, appVersion: app.getVersion(), cpEnvironment: CLOUD_CP_ENVIRONMENT,
+    openExternal: (url) => shell.openExternal(url),
+    store: createCloudHomeStore({ safeStorage, directory: cloudHomesDirectory() }),
+    confirmStepUp: createNativeStepUpConfirm({ systemPreferences, dialog, getWindow: () => mainWindow,
+      resolveBotName: async (homeId, botId) => { // best effort: a bot's display name in the step-up sentence
+        const response = await cloudHome?.client?.fetch(homeId, "/api/bots?messages=0", { headers: { accept: "application/json" } });
+        return response?.ok ? (await response.json()).bots?.find((bot) => bot?.id === botId)?.name : undefined; } }) }),
+  cloudPreload: path.join(__dirname, "preload-cloud.cjs"), onWindowClosed: () => applyUnreadBadge() });
 // 127.0.0.1 explicitly — vite binds IPv4; a bare "localhost" here can
 // resolve to ::1 and paint a black window
 const DEV_URL = process.env.ELECTRON_START_URL ?? "http://127.0.0.1:5199";
@@ -274,6 +314,9 @@ const refusedIpcChannels = new Set();
 let lastRefusalWhy = "";
 const ipcMain = createOwnedMainIpc({
   ipcMain: electronIpcMain,
+  // B3 WP3: only with the Cloud flag on. Off, this gate is the main-window-only gate it always was.
+  cloud: cloudHome ? { isCloudSender: (event) => cloudHome.isCloudSender(event), classOf: channelClass,
+    onRefused: (channel) => slog(`refused ${channel} from the Cloud-home window (local-only)`) } : undefined,
   isTrusted: (event) => {
     const expected = { window: mainWindow, origin: trustedRendererOrigin() };
     const ok = isOwnedMainSender(event, expected);
@@ -286,6 +329,9 @@ const ipcMain = createOwnedMainIpc({
     slog(`refused ${channel} from a sender other than the main Murage window (${lastRefusalWhy})`);
   },
 });
+// B3 WP5: the Cloud engine sign-in terminal relay, main window only. Registered at every start (MURAGE_DESKTOP_CLOUD=0 registers nothing); refuses every call until Cloud is live.
+if (cloudHome?.client) registerEngineLoginIpc({ ipcMain, active: () => cloudHome.active(), relay: createEngineLoginRelay({ client: cloudHome.client,
+  createSocket: (url, options) => new EngineLoginWebSocket(url, options), openExternal: (url) => shell.openExternal(url), log: slog }) });
 let backgroundLifecycle=null;
 let backupScheduleHost=null;
 let backupRemoteHost=null;
@@ -339,7 +385,7 @@ function ensureDesktopUpdater(scheduleChecks=true){
       readActivity:async()=>{
         if(backupMode.isPreparing()||backupScheduleHost?.isPreparing()||!serverReady||!desktopSurfaceSecret)throw Error("Updater activity check unavailable");
         const response=await fetch(`http://127.0.0.1:${SERVER_PORT}/api/bots?messages=0`,{
-          headers:{"x-murage-surface":"desktop","x-murage-surface-secret":desktopSurfaceSecret},signal:AbortSignal.timeout(5000)});
+          headers:{"x-murage-surface":"desktop","x-murage-surface-secret":desktopSurfaceSecret},signal:AbortSignal.timeout(5000),redirect:"error"});
         if(!response.ok)throw Error("Updater activity check unavailable");return response.json();
       },cleanup:cleanupDesktopForExit,
     }),
@@ -350,14 +396,14 @@ async function readBackupActivity(){
   if(backupRemoteOperations.size)throw new Error("BACKUP_WORK_ACTIVE");
   if(speechActive()||recorderActive())throw new Error("BACKUP_WORK_ACTIVE");
   if(!serverReady||!desktopSurfaceSecret||credentialWrites.size||companionStarts.size)throw new Error("BACKUP_ACTIVITY_UNAVAILABLE");
-  const response=await fetch(`http://127.0.0.1:${SERVER_PORT}/api/bots?messages=0`,{headers:{"x-murage-surface":"desktop","x-murage-surface-secret":desktopSurfaceSecret},signal:AbortSignal.timeout(5000)});
+  const response=await fetch(`http://127.0.0.1:${SERVER_PORT}/api/bots?messages=0`,{headers:{"x-murage-surface":"desktop","x-murage-surface-secret":desktopSurfaceSecret},signal:AbortSignal.timeout(5000),redirect:"error"});
   if(!response.ok)throw new Error("BACKUP_ACTIVITY_UNAVAILABLE");return response.json();
 }
 // `occasion` tells the server whether a scheduled backup is being held up
 // (it then says so in the Inbox and a notification) or one the person asked for.
 async function prepareDesktopBackup(occasion="manual"){
   return prepareBackupRestart(async(action,token)=>{
-    const response=await fetch(`http://127.0.0.1:${SERVER_PORT}/api/backup-restart`,{method:"POST",headers:{"content-type":"application/json","x-murage-surface":"desktop","x-murage-surface-secret":desktopSurfaceSecret},body:JSON.stringify(action==="prepare"?{action,token,occasion}:{action,token}),signal:AbortSignal.timeout(5000)});
+    const response=await fetch(`http://127.0.0.1:${SERVER_PORT}/api/backup-restart`,{method:"POST",headers:{"content-type":"application/json","x-murage-surface":"desktop","x-murage-surface-secret":desktopSurfaceSecret},body:JSON.stringify(action==="prepare"?{action,token,occasion}:{action,token}),signal:AbortSignal.timeout(5000),redirect:"error"});
     if(!response.ok){
       if(action!=="prepare")throw new Error("BACKUP_RELEASE_UNCONFIRMED");
       let body=null;try{body=await response.json();}catch{/* An unreadable refusal is still a refusal. */}
@@ -484,7 +530,10 @@ ipcMain.handle("backup-mode:move-recovery-key",(_event,...args)=>{if(args.length
 ipcMain.handle("backup-mode:keep-recovery-key",(_event,...args)=>{if(args.length)throw new Error("INVALID_BACKUP_REQUEST");return backupRecoveryKeys.keepInCloud();});
 // The copy is read and written here; the renderer is told only the new name.
 ipcMain.handle("backup-mode:save-recovery-key-copy",(_event,...args)=>{if(args.length)throw new Error("INVALID_BACKUP_REQUEST");if(backupMode.isPreparing())throw new Error("BACKUP_UNAVAILABLE");return settleRecoveryKeyRequest(()=>backupRecoveryKeys.saveCopy());});
-ipcMain.handle("backup-schedule:status",(_event,...args)=>{if(args.length)throw new Error("INVALID_BACKUP_REQUEST");return backupScheduleHost?.status()??{supported:false,pending:false,enabled:false,revision:0,phase:"idle",schedule:{enabled:false,preUpgrade:false}};});
+ipcMain.handle("backup-schedule:status",(_event,...args)=>{if(args.length)throw new Error("INVALID_BACKUP_REQUEST");return backupScheduleHost?.status()??hostlessBackupStatus();});
+/** The status when the backup host could not start: nothing runs, and a
+ * first-run step the harness still owes keeps its way out (Settings L5). */
+function hostlessBackupStatus(){return {supported:false,pending:false,enabled:false,revision:0,phase:"idle",schedule:{enabled:false,preUpgrade:false},...(desktopDataDir?{firstRun:firstRunWithoutHost(desktopDataDir)}:{})};}
 ipcMain.handle("backup-schedule:select",(_event,...args)=>{if(args.length||!backupScheduleHost||backupMode.isPreparing())throw new Error("BACKUP_UNAVAILABLE");return backupScheduleHost.selectReferences();});
 // One act: choose the folder, the key is written here, one confirmation.
 ipcMain.handle("backup-schedule:set-up",(_event,...args)=>{
@@ -494,6 +543,12 @@ ipcMain.handle("backup-schedule:set-up",(_event,...args)=>{
 });
 ipcMain.handle("backup-schedule:run-now",(_event,...args)=>{if(args.length!==1||!Number.isSafeInteger(args[0])||args[0]<0)throw new Error("INVALID_BACKUP_REQUEST");if(!backupScheduleHost||backupMode.isPreparing()||backupRecoveryKeys.isPending())throw new Error("BACKUP_UNAVAILABLE");return backupScheduleHost.runNow(args[0]);});
 ipcMain.handle("backup-schedule:clear-review",async(_event,...args)=>{if(args.length!==1||!Number.isSafeInteger(args[0])||args[0]<0)throw new Error("INVALID_BACKUP_REQUEST");if(!backupScheduleHost||backupMode.isPreparing())throw new Error("BACKUP_UNAVAILABLE");const cleared=await backupScheduleHost.clearReview(args[0]);void announceLastBackupFailure().catch(()=>{});return cleared;});
+// How the first run's backup step ends: "verified" (re-checked here) or "off".
+// Without a backup host only "off" can be chosen, as a request to the harness.
+ipcMain.handle("backup-schedule:finish-first-run",async(_event,...args)=>{if(args.length!==1||!["verified","off"].includes(args[0])||backupMode.isPreparing())throw new Error("INVALID_BACKUP_REQUEST");
+  if(backupScheduleHost)return backupScheduleHost.finishFirstRun(args[0]);
+  if(args[0]!=="off")throw new Error("BACKUP_UNAVAILABLE");
+  await harnessJson("/api/setup/backup",{choice:"off"});return hostlessBackupStatus();});
 ipcMain.handle("backup-schedule:configure",(_event,...args)=>{if(args.length!==2||!Number.isSafeInteger(args[0])||args[0]<0||!backupScheduleHost||backupMode.isPreparing())throw new Error("INVALID_BACKUP_REQUEST");return backupScheduleHost.configure(args[0],args[1]);});
 for(const action of ["status","stage","install","disable"]){
   ipcMain.handle(`backup-closed:${action}`,(_event,...args)=>{
@@ -513,14 +568,27 @@ for(const [action,arity] of [["status",0],["save",2],["testConnection",2],["trus
   });
 }
 const notificationAuthorization=createNotificationAuthorization();
-async function currentDesktopApproval(payload){
+const approvalAuthorize=async request=>{const result=await(request===false?notificationAuthorization.current():notificationAuthorization.ensure());return result.authorized&&!desktopShutdownStarted;};
+async function currentDesktopApproval(payload,cloudHomeId){
+  // B3 WP4: with a homeId the approval is re-read from THAT Cloud home through the paired client, never from this computer's server.
+  const cloud=typeof cloudHomeId==="string";
+  let current,read;
+  if(cloud){
+    if(!cloudHome||desktopShutdownStarted||!cloudHome.windows().has(cloudHomeId))return null;
+    current=()=>!desktopShutdownStarted&&cloudHome.windows().has(cloudHomeId);
+    read=async route=>{
+      const response=await cloudHome.client.fetch(cloudHomeId,route,{headers:{accept:"application/json"},signal:AbortSignal.timeout(5000)});
+      if(!response.ok||!current())throw Error("APPROVAL_NO_LONGER_AVAILABLE");return response.json();
+    };
+  }else{
   const owner=desktopDataOwner,secret=desktopSurfaceSecret,proc=serverProc;
   if(!owner||!secret||!proc||!serverReady||desktopShutdownStarted||desktopRecoveryMode)return null;
-  const current=()=>owner===desktopDataOwner&&secret===desktopSurfaceSecret&&proc===serverProc&&serverReady&&!desktopShutdownStarted&&!desktopRecoveryMode;
-  const read=async route=>{
+  current=()=>owner===desktopDataOwner&&secret===desktopSurfaceSecret&&proc===serverProc&&serverReady&&!desktopShutdownStarted&&!desktopRecoveryMode;
+  read=async route=>{
     const response=await fetch(`http://127.0.0.1:${SERVER_PORT}${route}`,{headers:{"x-murage-surface":"desktop","x-murage-surface-secret":secret},signal:AbortSignal.timeout(5000),redirect:"error"});
     if(!response.ok||!current())throw Error("APPROVAL_NO_LONGER_AVAILABLE");return response.json();
   };
+  }
   const [config,bot,page]=await Promise.all([read("/api/config"),read("/api/bots?messages=0"),read("/api/threads/"+encodeURIComponent(payload.threadId)+"/messages?around="+encodeURIComponent(payload.messageId)+"&limit=1")]);
   const entry=app.isPackaged?path.join(process.resourcesPath,"server","approval-notification-state.js"):path.join(__dirname,"..","dist-server","approval-notification-state.js");
   const {currentApprovalNotification}=await import(pathToFileURL(entry).href);
@@ -528,7 +596,7 @@ async function currentDesktopApproval(payload){
   return currentApprovalNotification(payload,bot.bots?.find(value=>value.id===payload.botId),page.messages,config.notifications);
 }
 const showApprovalNotification = createApprovalNotifications({ Notification, platform: process.platform,
-  authorize:async request=>{const result=await(request===false?notificationAuthorization.current():notificationAuthorization.ensure());return result.authorized&&!desktopShutdownStarted;},
+  authorize:approvalAuthorize,
   revalidate:currentDesktopApproval,
   onOpen: target => {
   const win = mainWindow;
@@ -537,8 +605,47 @@ const showApprovalNotification = createApprovalNotifications({ Notification, pla
   win.show(); win.focus();
   win.webContents.send("approval-notification:open", target);
 } });
-ipcMain.handle("approval-notification:show", (_event, payload) => showApprovalNotification(payload));
+// B3 WP4 (cloud-safe channel, adapted): a notification asked for by a Cloud window is revalidated against THAT home and its click
+// opens THAT window. One notifier per home keeps the dedupe sets apart; with the flag off none exists.
+const cloudApprovalNotifiers = new Map();
+function cloudApprovalNotifier(homeId) {
+  let notify = cloudApprovalNotifiers.get(homeId);
+  if (!notify) {
+    notify = createApprovalNotifications({ Notification, platform: process.platform, authorize: approvalAuthorize,
+      revalidate: (payload) => currentDesktopApproval(payload, homeId),
+      onOpen: target => {
+        const win = cloudHome?.windows().get(homeId);
+        if (!win || win.isDestroyed()) return;
+        if (win.isMinimized()) win.restore();
+        win.show(); win.focus();
+        win.webContents.send("approval-notification:open", target);
+      } });
+    cloudApprovalNotifiers.set(homeId, notify);
+  }
+  return notify;
+}
+ipcMain.handle("approval-notification:show", (event, payload) => {
+  const homeId = cloudHome?.senderHomeId(event);
+  return homeId ? cloudApprovalNotifier(homeId)(payload) : showApprovalNotification(payload);
+});
+// B3 WP4: the pairing UI's channels (local window) and the Cloud window's reachability check. Flag off: not registered at all.
+if (cloudHome) cloudHome.onActiveChange((live) => { for (const win of BrowserWindow.getAllWindows()) { try { if (!win.isDestroyed() && win === mainWindow) win.webContents.send("cloud-home:live", { live }); } catch {} } });
+// A Cloud link waiting while Cloud was not live drains the moment the gate flips on.
+if (cloudHome) cloudHome.onActiveChange((live) => { if (live) cloudLinks.drain(); });
+// Cloud Door v2: this computer was disconnected (from the Cloud window's Settings, or revoked from My Cloud). The Cloud window
+// closes and the local window comes forward on the Connect panel.
+function showCloudConnect(homeId) {
+  cloudHome?.close(homeId);
+  if (!mainWindow || mainWindow.isDestroyed()) { backgroundLifecycle?.open(); return; }
+  activateExistingWindow([mainWindow]);
+  mainWindow.webContents.send("cloud-home:show-connect");
+}
+if (cloudHome) registerCloudHomeIpc(ipcMain, { cloudHome, active: () => cloudHome.active(), showConnect: showCloudConnect, clipboard,
+  cpEnvironment: CLOUD_CP_ENVIRONMENT,
+  getCpToken: () => (secureCredentialState?.read() ?? secureCredentials)?.[COMPANION_ACCOUNT_TOKEN_FIELD] });
 let unreadCount = 0;
+// B3 WP4: unread counts reported by Cloud windows, per home. The badge shows this computer's count plus every OPEN Cloud window's.
+const cloudUnreadCounts = new Map();
 let unreadOverlayIcon = null;
 
 function windowStateFile() {
@@ -615,7 +722,9 @@ function installWindowStatePersistence(win) {
 }
 
 function applyUnreadBadge(win = mainWindow) {
-  const count = normalizeUnreadCount(unreadCount);
+  let cloudTotal = 0;
+  for (const homeId of cloudHome ? cloudHome.windows().keys() : []) cloudTotal += cloudUnreadCounts.get(homeId) ?? 0;
+  const count = normalizeUnreadCount(normalizeUnreadCount(unreadCount) + cloudTotal);
   if (process.platform === "win32") {
     if (!win || win.isDestroyed()) return;
     unreadOverlayIcon ??= nativeImage.createFromPath(APP_ICON).resize({ width: 16, height: 16 });
@@ -668,13 +777,113 @@ function queuePackageInstall(rawLink) {
   return true;
 }
 
+// Cloud links: murage://open-cloud?h=, murage://connect-cloud and murage://door?h=&o=#t=. Every source (open-url before
+// or after ready, argv on a Windows or Linux cold start, second-instance, the sealed handoff, "Use copied link") goes into
+// ONE slot (cloud-link-queue.mjs); it drains once the app is ready, Cloud is live and the main window has loaded. A door
+// link carries a ticket, so nothing here logs a link: only `[cloud] door: <reason>`. The window hears the kind, never the link.
+let cloudLinkReady = false;
+const cloudLinkWindowLoaded = () => Boolean(mainWindow && !mainWindow.isDestroyed() && !mainWindow.webContents.isLoadingMainFrame());
+function tellCloudLinkWindow(event) {
+  try { if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.send("cloud-home:link-event", event); } catch { /* the window went away */ }
+}
+function focusConnectCard(kind) {
+  if (mainWindow && !mainWindow.isDestroyed()) activateExistingWindow([mainWindow]);
+  tellCloudLinkWindow({ kind });
+}
+async function handleCloudLink(link) {
+  try {
+    const client = cloudHome?.client;
+    if (!client) { console.log("[cloud] door: cloud-off"); return; }
+    const paired = async (homeId) => Boolean(homeId) && (await client.pairedHomes()).some((home) => home.homeId === homeId);
+    if (link.kind === "open-cloud") {
+      const { homeId } = parseOpenCloudLink(link.url) ?? { homeId: null };
+      if (await paired(homeId)) {
+        await client.activate(homeId);
+        cloudHome.open(homeId);
+        tellCloudLinkWindow({ kind: "open-cloud", homeId });
+        console.log("[cloud] door: open-cloud");
+        return;
+      }
+      // Not connected to that home (or no home named): the Connect flow starts, and the person is back on the site.
+    }
+    if (link.kind === "open-cloud" || link.kind === "connect-cloud") {
+      if ((await client.pairedHomes()).length > 0) { focusConnectCard("connect-cloud"); console.log("[cloud] door: already-connected"); return; }
+      focusConnectCard("connect-cloud");
+      await client.startConnect({ cpEnvironment: CLOUD_CP_ENVIRONMENT });
+      tellCloudLinkWindow({ kind: "connect-cloud" });
+      console.log("[cloud] door: connect-started");
+      return;
+    }
+    const result = await client.acceptDoorLink(link.url);
+    if (result.ignored) {
+      // A repeat after success brings that home's Cloud window forward; a cancelled or expired Connect just shows the card.
+      const homeId = parseDoorLink(link.url)?.homeId;
+      if (await paired(homeId)) { await client.activate(homeId); cloudHome.open(homeId); console.log("[cloud] door: already-connected"); return; }
+      focusConnectCard("door");
+      console.log("[cloud] door: no-pending-connect");
+      return;
+    }
+    console.log("[cloud] door: connected");
+    await client.activate(result.homeId);
+    cloudHome.open(result.homeId);
+    tellCloudLinkWindow({ kind: "door" });
+  } catch (error) {
+    console.log(`[cloud] door: ${typeof error?.code === "string" ? error.code : "failed"}`);
+    focusConnectCard(link.kind); // the card shows what happened (connectStatus().lastResult); never a dialog from a link
+  }
+}
+const cloudLinks = createCloudLinkQueue({
+  ready: () => cloudLinkReady,
+  live: () => cloudHome?.active() === true,
+  windowLoaded: cloudLinkWindowLoaded,
+  handle: handleCloudLink,
+  probe: async () => { if (!cloudHome) return false; await cloudLive.probeNow(); return cloudHome.active() === true; },
+  notLive: () => {
+    console.log("[cloud] door: not-live");
+    const options = { type: "info", buttons: ["OK"], defaultId: 0, message: CLOUD_COPY.notLive };
+    void (mainWindow && !mainWindow.isDestroyed() ? dialog.showMessageBox(mainWindow, options) : dialog.showMessageBox(options)).catch(() => {});
+  },
+});
+/** One Cloud link from any source: queued (newer replaces older), a window brought up for it, and drained when it can be. */
+function queueCloudLink(rawLink) {
+  const link = typeof rawLink === "string" ? doorLinkFromDeepLink(rawLink) : rawLink;
+  if (!link) return false;
+  cloudLinks.enqueue(link);
+  // The link drains into the MAIN window's Connect card: bring that window up (a Cloud window being open is not enough).
+  if (cloudLinkReady && !cloudLinkWindowLoaded()) { if (!mainWindow || mainWindow.isDestroyed()) backgroundLifecycle?.open(); else activateExistingWindow([mainWindow]); }
+  return true;
+}
+
+// macOS, running or cold: open-url is registered here, before ready. A cold start waits in the queue.
 app.on("open-url", (event, url) => {
+  if (queueCloudLink(url)) { event.preventDefault(); return; }
   if (!queuePackageInstall(url)) return;
   event.preventDefault();
 });
 
+// Windows/Linux cold start: the OS passes the link as the launch argument. A door link is handed over at ready (sealed,
+// relaunched without it, see cloud-link-handoff.mjs) so its ticket leaves the command line; the others carry no secret.
+const launchCloudLink = doorLinkFromCommandLine(process.argv);
+/** At ready: hand a cold-start door link over (true: this process is exiting), else queue what this launch brought. */
+async function takeLaunchCloudLink() {
+  if (cloudHome && launchCloudLink && needsDoorHandoff({ link: launchCloudLink })) {
+    const handedOver = await handOffDoorLink({ app, safeStorage, directory: cloudHomesDirectory(), url: launchCloudLink.url,
+      relaunch: (args) => relaunchDesktop({ app, args }), blocked: () => relaunchBlockedCode() });
+    if (handedOver) return true;
+    console.log("[cloud] door: handoff-skipped");
+  }
+  cloudLinkReady = true;
+  const stashed = await takeStashedDoorLink({ safeStorage, directory: cloudHomesDirectory() });
+  if (stashed) queueCloudLink(stashed);
+  else if (launchCloudLink) queueCloudLink(launchCloudLink);
+  return false;
+}
+
 app.on("second-instance", (_event, commandLine) => {
   if(commandLine.includes(CLOSED_DUE_FLAG)||commandLine.includes(CLOSED_DESCRIPTOR_FLAG))return;
+  // The second process exits within milliseconds (the single-instance lock), so its command line holds a ticket only that long.
+  const cloudLink = doorLinkFromCommandLine(commandLine);
+  if (cloudLink) { queueCloudLink(cloudLink); activateExistingWindow(BrowserWindow.getAllWindows()); return; }
   const packageUrl = packageUrlFromCommandLine(commandLine);
   if (packageUrl) pendingPackageInstallUrl = packageUrl;
   activateExistingWindow(BrowserWindow.getAllWindows());
@@ -1321,6 +1530,9 @@ function companionLaunchOptions(hostedUrl = null) {
     harnessPort: SERVER_PORT,
     hostedUrl,
     remoteAccess: remoteAccessLaunch(),
+    // Encrypts the record that lets the next launch stop a sidecar this one
+    // leaves behind after a crash (electron/companion-stale.mjs).
+    sidecarSeal: safeStorageSeal(safeStorage),
     log: slog,
   };
 }
@@ -1625,7 +1837,7 @@ async function gatherDiagnostics() {
   const serverStatus = await fetch(`http://127.0.0.1:${SERVER_PORT}/api/config`, {
     // /api/config needs a proven caller (audit C5): this is the desktop's own read.
     headers: desktopSurfaceSecret ? { "x-murage-surface": "desktop", "x-murage-surface-secret": desktopSurfaceSecret } : {},
-    signal: AbortSignal.timeout(3_000),
+    signal: AbortSignal.timeout(3_000), redirect: "error",
   })
     .then((res) => (res.ok ? res.json() : null))
     .catch(() => null);
@@ -1807,6 +2019,10 @@ async function startServerOn(port) {
     MURAGE_DESKTOP_PARENT: "1",
     ...launchSecretVia("MURAGE_COMPANION_TOKEN", "parent"),
     MURAGE_DATA_DIR: desktopDataDir,
+    // Where the backup host keeps its schedule, receipt and first-run record,
+    // so the harness derives the first run's backup step from them (Settings
+    // L5) instead of taking it from a caller.
+    ...(desktopDataDir ? { MURAGE_BACKUP_CONTROL_DIR: closedControlDirectory(desktopDataDir) } : {}),
     ...desktopDataOwner.utilityServerLeaseEnvironment(),
     // ui / skills / skills-library, all resolved out of Resources. Set here,
     // before the fork, because the child reads them at module load.
@@ -1892,6 +2108,11 @@ async function startServerOn(port) {
       // the same name. A failed drop is logged with the name only (L-f).
       if (message?.type === "murage:mcp-secrets-stale") {
         void mcpServers.handleSecretsStale(message);
+        return;
+      }
+      // A server was renamed and nothing else changed: its encrypted secrets move to the new name.
+      if (message?.type === "murage:mcp-secrets-renamed") {
+        void mcpServers.handleSecretsRenamed(message);
         return;
       }
       // A link server answered 401 to its access token: refresh it here (the
@@ -2608,6 +2829,12 @@ ipcMain.on("desktop:surface-secret", (event) => {
 }, { refusedReturnValue: "" });
 
 ipcMain.on("desktop:unread-count", (event, value) => {
+  const cloudId = cloudHome?.senderHomeId(event); // B3 WP4: a Cloud window reports its own count; the badge lives on the main window
+  if (cloudId) {
+    cloudUnreadCounts.set(cloudId, normalizeUnreadCount(value));
+    if (mainWindow && !mainWindow.isDestroyed()) applyUnreadBadge(mainWindow);
+    return;
+  }
   const sender = BrowserWindow.fromWebContents(event.sender);
   if (!sender || sender !== mainWindow || sender.isDestroyed()) return;
   unreadCount = normalizeUnreadCount(value);
@@ -2634,28 +2861,37 @@ function closeStartupSplash({ afterMainWindowClosed = false } = {}) {
   setTimeout(() => { startupSplashClosing = false; }, 1000).unref?.();
 }
 
-/** Help menu: one step back to Murage 1.0.1 after the memory v7 upgrade. Quits
- * Murage, steps the memory database down to v6 under the recovery lease, then
- * asks the person to install 1.0.1. The next start of this version brings the
- * set-aside details up to date again. */
-async function prepareForMurage101() {
-  if (!app.isPackaged || prepareForMurage101.running || desktopRecoveryMode || desktopShutdownStarted || !desktopDataOwner || !desktopDataDir) return;
-  prepareForMurage101.running = true;
+/** Help menu: one step back to Murage 1.0.2 after the memory v11 upgrade. Quits
+ * Murage, steps the memory database down to v10 under the recovery lease, then
+ * asks the person to install 1.0.2. The next start of this version brings the
+ * set-aside details up to date again. (1.0.2 has its own step back to 1.0.1.) */
+async function prepareForPreviousVersion() {
+  if (!app.isPackaged || prepareForPreviousVersion.running || desktopRecoveryMode || desktopShutdownStarted || !desktopDataOwner || !desktopDataDir) return;
+  prepareForPreviousVersion.running = true;
   try {
     const parent = mainWindow && !mainWindow.isDestroyed() ? mainWindow : undefined;
-    const confirm = await dialog.showMessageBox(...(parent ? [parent] : []), { type: "question", buttons: ["Prepare and quit", "Cancel"], defaultId: 0, cancelId: 1, title: "Prepare to reinstall Murage 1.0.1", message: "Prepare to reinstall Murage 1.0.1?", detail: "Murage will close. Your chats and memories stay. Details that only this version uses are set aside, and the next start of this version brings them up to date again. After Murage closes, install 1.0.1." });
+    const confirm = await dialog.showMessageBox(...(parent ? [parent] : []), { type: "question", buttons: ["Prepare and quit", "Cancel"], defaultId: 0, cancelId: 1, title: "Prepare to reinstall Murage 1.0.2", message: "Prepare to reinstall Murage 1.0.2?", detail: "Murage will close. Your chats and memories stay. Details that only this version uses are set aside, and the next start of this version brings them up to date again. After Murage closes, install 1.0.2." });
     if (confirm.response !== 0 || desktopRecoveryMode || desktopShutdownStarted) return;
     desktopRecoveryMode = true;
     let failure = null;
     try { await runDesktopRecovery("memory-downgrade", {}); } catch (error) { if (error?.code !== "MEMORY_DATABASE_MISSING" && error?.message !== "MEMORY_DATABASE_MISSING") failure = typeof error?.code === "string" && /^[A-Z][A-Z0-9_]{0,100}$/.test(error.code) ? error.code : "RECOVERY_OPERATION_FAILED"; }
     // work that is still owed is named in plain words, with nothing to look up
     const PREPARE_WAITING = { DOWNGRADE_WORK_PENDING: "Some messages are still waiting to send or restore. Open Murage, send or cancel them, then try again.", DOWNGRADE_CARD_DELIVERY_OWED: "Some card results have not reached their room yet. Reopen this version of Murage to retry delivery, then try again." };
-    if (failure && PREPARE_WAITING[failure]) await dialog.showMessageBox({ type: "warning", buttons: ["Quit"], title: "Murage", message: "Murage will be ready for 1.0.1 once this is done.", detail: `Your chats and memories are as they were. ${PREPARE_WAITING[failure]}` });
-    else if (failure) await dialog.showMessageBox({ type: "warning", buttons: ["Quit"], title: "Murage", message: "Murage will be ready for 1.0.1 after another start.", detail: `Your chats and memories are as they were. The next start of this version picks up where it left off. Code: ${failure}` });
-    else await dialog.showMessageBox({ type: "info", buttons: ["Quit"], title: "Murage", message: "Ready for Murage 1.0.1.", detail: "Install it now; your chats and memories are kept." });
+    if (failure && PREPARE_WAITING[failure]) await dialog.showMessageBox({ type: "warning", buttons: ["Quit"], title: "Murage", message: "Murage will be ready for 1.0.2 once this is done.", detail: `Your chats and memories are as they were. ${PREPARE_WAITING[failure]}` });
+    else if (failure) await dialog.showMessageBox({ type: "warning", buttons: ["Quit"], title: "Murage", message: "Murage will be ready for 1.0.2 after another start.", detail: `Your chats and memories are as they were. The next start of this version picks up where it left off. Code: ${failure}` });
+    else await dialog.showMessageBox({ type: "info", buttons: ["Quit"], title: "Murage", message: "Ready for Murage 1.0.2.", detail: "Install it now; your chats and memories are kept." });
     app.quit();
-  } finally { prepareForMurage101.running = false; }
+  } finally { prepareForPreviousVersion.running = false; }
 }
+
+// Settings > About & updates: the same step back as the Help menu item. No arguments; refused while recovery
+// or shutdown is under way. Answers at once; the native confirm dialog does the rest.
+ipcMain.handle("update:prepare-previous-version", (_event, ...args) => {
+  if (args.length) throw new Error("INVALID_REQUEST");
+  if (!app.isPackaged || desktopRecoveryMode || desktopShutdownStarted || prepareForPreviousVersion.running) return { started: false };
+  void prepareForPreviousVersion().catch(() => {});
+  return { started: true };
+});
 
 function showDesktopRecovery(reasonCode = "STARTUP_FAILED") {
   desktopRecoveryMode = true;
@@ -2834,7 +3070,7 @@ async function runDesktopRecovery(operation, parameters, separate = null) {
     : operation === "backup" ? ["backup", "--data-dir", dataDirectory, "--output", parameters.output]
     : operation === "restore" ? ["restore", "--data-dir", dataDirectory, "--archive", parameters.archive, "--sha256", parameters.sha256]
     : operation === "rollback" ? ["rollback", "--data-dir", dataDirectory]
-    : operation === "memory-downgrade" ? ["memory-downgrade", "--data-dir", dataDirectory, "--to", "6"] : null;
+    : operation === "memory-downgrade" ? ["memory-downgrade", "--data-dir", dataDirectory, "--to", "10"] : null;
   if (!args || args.some(value => typeof value !== "string" || !value)) throw Object.assign(new Error("Invalid recovery request"), { code: "INVALID_RECOVERY_REQUEST" });
   if(operation==="backup-encrypted"&&parameters.maxBytes!==undefined){
     if(!Number.isSafeInteger(parameters.maxBytes)||parameters.maxBytes<1||parameters.maxBytes>1024**4||!Number.isSafeInteger(parameters.maxDurationMs)||parameters.maxDurationMs<1000||parameters.maxDurationMs>30*60000)throw new Error("INVALID_BACKUP_BUDGET");
@@ -2905,7 +3141,7 @@ function initializeBackgroundLifecycle(){
   const login=createBackgroundLogin({platform:process.platform,app,installed:app.isPackaged,primaryProfile:profileDir===(fs.existsSync(primaryPath)?fs.realpathSync(primaryPath):primaryPath),profileDir,userDataDir:app.getPath("userData"),executable:process.env.APPIMAGE??app.getPath("exe"),autostartDir:path.join(path.isAbsolute(process.env.XDG_CONFIG_HOME??"")?process.env.XDG_CONFIG_HOME:path.join(app.getPath("home"),".config"),"autostart")});
   const automation=async(paused)=>{
     if(!serverReady||!desktopSurfaceSecret)throw new Error("Automatic-work controls are unavailable until the desktop server is ready.");
-    const response=await fetch(`http://127.0.0.1:${SERVER_PORT}/api/automation-admission`,{method:paused===undefined?"GET":"POST",headers:{"content-type":"application/json","x-murage-surface":"desktop","x-murage-surface-secret":desktopSurfaceSecret},...(paused===undefined?{}:{body:JSON.stringify({paused})}),signal:AbortSignal.timeout(5000)});
+    const response=await fetch(`http://127.0.0.1:${SERVER_PORT}/api/automation-admission`,{method:paused===undefined?"GET":"POST",headers:{"content-type":"application/json","x-murage-surface":"desktop","x-murage-surface-secret":desktopSurfaceSecret},...(paused===undefined?{}:{body:JSON.stringify({paused})}),signal:AbortSignal.timeout(5000),redirect:"error"});
     if(!response.ok)throw new Error("Automatic-work settings could not be confirmed.");
     const value=await response.json();if(typeof value.paused!=="boolean")throw new Error("Automatic-work status is unavailable.");return value;
   };
@@ -2983,10 +3219,11 @@ function createWindow({quiet=false}={}) {
       contextIsolation: true,
       preload: path.join(__dirname, "preload.cjs"),
       // The preload exposes the bridge only on this origin (B6).
-      additionalArguments: rendererOriginArguments(trustedRendererOrigin()),
+      additionalArguments: [...rendererOriginArguments(trustedRendererOrigin()), ...(cloudHome ? ["--murage-cloud=1"] : [])],
     },
   });
   mainWindow = win;
+  win.on("focus", () => cloudLive.probeOnFocus());
   desktopMark("window.created");
   win.once("ready-to-show", () => { desktopMark("window.ready-to-show"); noteVersionStarted({ userData: () => app.getPath("userData"), appVersion: () => app.getVersion() }); });
   // The bar reaches 100% when the real window exists; the window appears, and
@@ -3049,7 +3286,7 @@ function createWindow({quiet=false}={}) {
   });
   win.webContents.on("will-navigate", navigationGuard.willNavigate);
   win.webContents.on("will-redirect", navigationGuard.willRedirect);
-  win.webContents.on("did-finish-load", () => deliverPackageInstall(win));
+  win.webContents.on("did-finish-load", () => { deliverPackageInstall(win); cloudLinks.drain(); });
 
   // A renderer crash used to leave NO trace anywhere. RootErrorBoundary logs
   // "Murage failed to render" to the renderer console, and the renderer
@@ -3301,7 +3538,7 @@ ipcMain.handle("engine:open-setup-terminal", async (event, input) => {
   try {
     const response = await fetch(`http://127.0.0.1:${SERVER_PORT}/api/engine-setup-command`, {
       method: "POST", headers: { "content-type": "application/json", "x-murage-surface": "desktop", "x-murage-surface-secret": desktopSurfaceSecret },
-      body: JSON.stringify(input), signal: AbortSignal.timeout(10000),
+      body: JSON.stringify(input), signal: AbortSignal.timeout(10000), redirect: "error",
     });
     const result = await response.json();
     if (!response.ok || typeof result.command !== "string" || !result.command.trim() || result.command.length > 2000) return false;
@@ -3744,6 +3981,7 @@ async function modelProviderCommitRequest(route, { method = "POST", body, failur
     method,
     headers: { ...(body === undefined ? {} : { "content-type": "application/json" }), "x-murage-surface": "desktop", "x-murage-surface-secret": desktopSurfaceSecret, authorization: `Bearer ${modelProviderCommitToken}` },
     ...(body === undefined ? {} : { body: JSON.stringify(body) }),
+    redirect: "error",
   });
   const result = await response.json().catch(() => null);
   if (!response.ok) throw new Error(result?.error || failure);
@@ -3771,7 +4009,7 @@ const providerBankReconciliation = createProviderBankReconciliation({
   },
 });
 
-ipcMain.handle("flux-connection:mutate", async (_event, input) => {
+async function mutateFluxConnectionInMain(input) {
   if (!(await ensureDesktopSurfaceSecret())) throw new Error("Desktop authorization is not ready. Try again shortly.");
   if (app.isPackaged) await assertSecretStorageWritable();
   return mutateFluxCredentials(input, {
@@ -3790,7 +4028,27 @@ ipcMain.handle("flux-connection:mutate", async (_event, input) => {
     }
     return status;
   });
+}
+ipcMain.handle("flux-connection:mutate", (_event, input) => mutateFluxConnectionInMain(input));
+
+// One-click Flux sign-in. The key is minted by the token endpoint and stored by
+// the SAME road a pasted key takes; it never reaches the renderer.
+ipcMain.handle("flux-signin:start", async (_event, input) => {
+  const action = input?.action === "replace" ? "replace" : "connect";
+  const revision = typeof input?.revision === "string" ? input.revision : "";
+  try {
+    let config = null;
+    try { config = JSON.parse(fs.readFileSync(path.join(ownedDesktopDataDir(), "config.json"), "utf8")); } catch { /* unreadable config means the switch is off */ }
+    assertFluxDesktopSigninEnabled(config);
+    const { key } = await runFluxDesktopSignin({ openExternal: (url) => shell.openExternal(url) });
+    const status = await mutateFluxConnectionInMain({ action, revision, key });
+    return { ok: true, status };
+  } catch (error) {
+    if (error instanceof FluxSigninError) return { ok: false, code: error.code, message: error.message };
+    throw error;
+  }
 });
+ipcMain.handle("flux-signin:cancel", () => { cancelFluxDesktopSignin(); });
 
 // The consent button in Connected apps. It is the ONLY trigger for a shared
 // (team) FluxRouter account, because every holder of that account's keys would
@@ -3867,6 +4125,7 @@ async function mcpCommitRequest(route, { method = "GET", body } = {}) {
     headers: { ...(body === undefined ? {} : { "content-type": "application/json" }), "x-murage-surface": "desktop", "x-murage-surface-secret": desktopSurfaceSecret, authorization: `Bearer ${mcpCommitToken}` },
     ...(body === undefined ? {} : { body: JSON.stringify(body) }),
     signal: AbortSignal.timeout(90_000),
+    redirect: "error",
   });
   return { status: response.status, body: await response.json().catch(() => null) };
 }
@@ -3935,6 +4194,7 @@ ipcMain.handle("credential:set", async (_event, name, value) => {
         "x-murage-surface-secret": desktopSurfaceSecret,
       },
       body: JSON.stringify(patchFor(secret)),
+      redirect: "error",
     });
     const body = await response.json().catch(() => null);
     if (!response.ok) throw new Error(body?.error || `Could not save credential (HTTP ${response.status})`);
@@ -3978,6 +4238,15 @@ let desktopResticTool = null;
 const remoteBackupAttestation = new AbortController();
 /** Tells the harness about a backup that stopped (Inbox row, one notification)
  * or that none is pending review. Waits for the harness, briefly; never throws. */
+/** Asks the harness to re-derive the first run's backup step (Settings L5)
+ * from the backup host's own files, now rather than at its next read. The
+ * request carries no state: the harness never takes "verified" or "off" from
+ * a caller. Waits for the harness, briefly; never throws. */
+async function firstRunBackupChanged(){
+  for(let tries=0;tries<120&&!(serverReady&&desktopSurfaceSecret)&&!desktopShutdownStarted;tries++)await new Promise(resolve=>setTimeout(resolve,1000));
+  if(desktopShutdownStarted||desktopRecoveryMode||!serverReady||!desktopSurfaceSecret)return;
+  try{await harnessJson("/api/setup/backup",{});}catch{/* the harness re-derives on its next read */}
+}
 async function announceLastBackupFailure(){
   for(let tries=0;tries<120&&!(serverReady&&desktopSurfaceSecret)&&!desktopShutdownStarted;tries++)await new Promise(resolve=>setTimeout(resolve,1000));
   if(!backupScheduleHost||desktopShutdownStarted||desktopRecoveryMode||!serverReady||!desktopSurfaceSecret)return;
@@ -4198,6 +4467,8 @@ async function initializeBackupScheduleHost(){
       await updateSecureCredentialDocument(current=>({...current,[key]:value}));
     },
     chooseDestination:()=>choose(["openDirectory","createDirectory"],"Choose scheduled backup destination"),
+    // First run only: where backups go when nobody has been asked. Settings > Backups > Advanced shows it as the backup folder.
+    defaultDestination:()=>path.join(os.homedir(),"Murage Backups"),
     backupFolderRefusal:folder=>backupFolderRefusal(folder),
     // Start where a key was just created here; the user still picks it.
     chooseKey:()=>choose(["openFile"],"Choose your recovery key file",backupRecoveryKeys.lastFolder()).then(file=>{if(file)backupRecoveryKeys.rememberKeyFile(file);return file;}),
@@ -4227,6 +4498,9 @@ async function initializeBackupScheduleHost(){
     // A backup stopped before it could start (folder or key gone): the Inbox
     // row and one notification, as after a failed capture (D3).
     announceFailure:()=>announceLastBackupFailure(),
+    // A key Murage made or was shown before: the first run then asks first.
+    recoveryKeyKnown:()=>Boolean(backupRecoveryKeys.lastKeyFile()),
+    firstRunChanged:()=>firstRunBackupChanged(),
     reportCaptureFailure:failure=>{
       try{fs.mkdirSync(LOG_DIR,{recursive:true});fs.appendFileSync(path.join(LOG_DIR,"server.log"),`[${new Date().toISOString()}] backup capture failed ${JSON.stringify(failure)}\n`,{mode:0o600});}catch{/* Logging never changes backup authority or result. */}
     },
@@ -4245,6 +4519,8 @@ app.whenReady().then(() => {
   powerMonitor.on("resume", () => { bootSystemSuspended = false; try { upgradeScreen?.wake(); } catch { /* cosmetic */ } });
 }).catch(() => { /* without the hook the boot probe simply keeps its own clock */ });
 const desktopStartup = app.whenReady().then(async () => {
+  if (await takeLaunchCloudLink()) return; // a cold-start door link was handed to a relaunched copy; this one exits
+  cloudLive.start(); // schedules the first probe ~15 s out, unref'd; never awaited, never blocks the first paint
   desktopMark("app.ready");
   assertDesktopStartupActive();
   if(closedBackupRequested){
@@ -4270,7 +4546,7 @@ const desktopStartup = app.whenReady().then(async () => {
     Menu.setApplicationMenu(applicationMenu);
   } else Menu.setApplicationMenu(serverMenu);
   if (app.isPackaged) {
-    const prepareItem = { label: "Prepare to reinstall Murage 1.0.1…", click: () => { void prepareForMurage101().catch(() => {}); } };
+    const prepareItem = { label: "Prepare to reinstall Murage 1.0.2…", click: () => { void prepareForPreviousVersion().catch(() => {}); } };
     const currentMenu = Menu.getApplicationMenu();
     const helpItem = currentMenu?.items.find(item => item.role === "help" || item.label === "Help");
     if (helpItem?.submenu) { helpItem.submenu.append(new MenuItem(prepareItem)); Menu.setApplicationMenu(currentMenu); }
@@ -4326,6 +4602,8 @@ const desktopStartup = app.whenReady().then(async () => {
     assertRestoreReviewed(ownedDesktopDataDir());
   }
   if (app.isPackaged) app.setAsDefaultProtocolClient("murage");
+  // Linux AppImage: nothing registers murage:// unless something integrates it; write the handler for this copy at ready.
+  if (app.isPackaged && process.platform === "linux") void ensureLinuxUrlHandler({ app }).then((outcome) => { if (outcome.reason === "failed") console.warn("[cloud] linux url handler: not registered"); });
   configureRestoredDesktopConnections();
   if (process.platform === "darwin") app.dock.setIcon(APP_ICON);
   secureCredentials = await loadSecureCredentials();
@@ -4485,8 +4763,20 @@ void androidDevice.reclaimOrphan().catch(() => {});
   assertDesktopStartupActive();
   if(mainWindow&&!mainWindow.isDestroyed())background.lifecycle.open();
   else createWindow({quiet:loginLaunch&&background.lifecycle.shouldStartQuietly()});
+  // Cloud Door v2: a Connect the home enrolled before a restart is finished, and a device from a cancelled Connect that the
+  // home has not confirmed forgetting yet is removed there now. Never throws; the next door open tries again.
+  if(cloudHome?.client?.settleUnfinished)void cloudHome.client.settleUnfinished().catch(()=>console.log("[cloud] door: settle-failed"));
   powerMonitor.on("suspend",()=>backgroundLifecycle?.setSuspended(true));
   powerMonitor.on("resume",()=>backgroundLifecycle?.setSuspended(false));
+  // Cloud Door v2: silent reattach after sleep. A revoked computer closes its Cloud window; the Connect panel then shows.
+  powerMonitor.on("resume",()=>{
+    const client=cloudHome?.client;
+    if(!client)return;
+    void client.pairedHomes().then(homes=>Promise.all(homes.map(async({homeId})=>{
+      const result=await client.resume(homeId);
+      if(result.disconnected){showCloudConnect(homeId);console.log("[cloud] door: revoked");}
+    }))).catch(()=>console.log("[cloud] door: resume-failed"));
+  });
   powerMonitor.on("shutdown",()=>backgroundLifecycle?.beginQuit());
   stopDeskPresence=startDeskPresenceReporting();
   // Reconcile incomplete setup and resume interrupted sign-out only after the
@@ -4541,6 +4831,8 @@ void androidDevice.reclaimOrphan().catch(() => {});
 // With a main window, its reveal (ready-to-show or the 15 s fallback) closes the splash; this is only for paths that never make one.
 function closeSplashWhenNoMainWindow() { if (!mainWindow || mainWindow.isDestroyed()) closeStartupSplash(); }
 void desktopStartup.finally(closeSplashWhenNoMainWindow).catch(()=>{});
+// A Cloud link that arrived during startup drains once startup is through (and again on window load and the live flip).
+void desktopStartup.then(() => cloudLinks.drain()).catch(() => {});
 void desktopStartup.then(()=>{if(!desktopRecoveryMode&&!desktopShutdownStarted){backupScheduleHost?.start();void backupRemoteReady.then(()=>{if(!desktopRecoveryMode&&!desktopShutdownStarted)startAutomaticRemoteBackups();});}}).catch(()=>{});
 void desktopStartup.catch((error) => {
   if(closedBackupRequested){closedTrace(`startup failed ${String(error?.name??"Error").replace(/[^\w]/g,"").slice(0,40)} ${String(error?.code??error?.message??"").replace(/[^A-Z0-9_]/g,"").slice(0,60)}`);void finishClosedBackup({status:error?.name==="DataDirLeaseError"?"busy":"unavailable"});return;}

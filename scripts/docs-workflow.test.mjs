@@ -1,10 +1,11 @@
 import { execFileSync } from "node:child_process";
-import { copyFileSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync, existsSync } from "node:fs";
+import { copyFileSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync, existsSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join, relative } from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 import { parse } from "yaml";
+import { removeTempDirSync } from "../server/testing/cleanup.ts";
 
 const root = fileURLToPath(new URL("../", import.meta.url));
 const workflow = parse(readFileSync(join(root, ".github/workflows/docs.yml"), "utf8"));
@@ -44,6 +45,6 @@ describe("docs input trigger coverage (upstream 4f84fce3)", () => {
       for (const extension of ["png", "jpg", "webp"]) expect(readFileSync(join(scratch, `apps/docs/public/screenshots/fixture.${extension}`), "utf8")).toBe(`fixture-${extension}`);
       expect(readFileSync(join(scratch, "apps/docs/public/app-icon.svg"), "utf8")).toBe('<svg xmlns="http://www.w3.org/2000/svg"/>');
       expect(existsSync(join(scratch, "apps/docs/public/screenshots/private.txt"))).toBe(false);
-    } finally { rmSync(scratch, { recursive: true, force: true }); }
+    } finally { removeTempDirSync(scratch); }
   });
 });

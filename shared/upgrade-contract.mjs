@@ -20,14 +20,14 @@ function contractKit() {
   const CONTRACT = 2;
   const SOURCES = ["note", "responder", "health"];
   const STAGES = ["starting", "background", "blocked", "idle", "unknown"];
-  const PHASES = ["checking", "copying", "migrating", "search-index", "output-index", "references", "shapes", "learning", "lineage", "storage", "message-index"];
-  const UNITS = ["messages", "conversations", "bytes", "sets", "none"];
+  const PHASES = ["checking", "copying", "migrating", "search-index", "output-index", "references", "shapes", "learning", "lineage", "writetime", "marker", "storage", "message-index"];
+  const UNITS = ["messages", "conversations", "bytes", "sets", "open", "none"];
   const STORAGE = ["converting", "reclaim-available", "waiting-for-disk", "idle", "unknown"];
   const MODES = ["off", "capture", "active", "paused", "unknown"];
   const TRI = [true, false, "unknown"];
   const ONOFF = ["on", "off", "unknown"];
   /** What each phase counts when (and only when) its figures are exact: the unit a screen may show a "done of total" for. Every other phase is "none". */
-  const COUNTED = { copying: "bytes", lineage: "conversations", "message-index": "messages", storage: "sets" };
+  const COUNTED = { copying: "bytes", lineage: "conversations", "message-index": "messages", storage: "sets", marker: "open" };
   const KEYS = ["v", "launch", "seq", "source", "stage", "phase", "overall", "complete", "held", "holdKey", "capture", "recall", "storedMode", "counts", "keepOpen", "step", "eta", "storage", "heartbeatAt", "progressAt", "blocked", "checking"];
   const isObject = (value) => value !== null && typeof value === "object" && !Array.isArray(value);
   const count = (value) => typeof value === "number" && Number.isFinite(value) && value >= 0;
@@ -67,7 +67,11 @@ function contractKit() {
     const step = s.step;
     if (!isObject(step) || !count(step.awakeElapsedMs) || !UNITS.includes(step.unit)) return "step";
     if (step.unit === "none") { if (step.done !== undefined || step.total !== undefined) return "step-uncounted"; }
-    else {
+    else if (step.unit === "open") {
+      // an open-ended step: what has been handled so far, never a total (its end moves as it goes), so a screen shows no percent and no time left
+      if (!count(step.done) || step.total !== undefined) return "step-figures";
+      if (COUNTED[s.phase] !== step.unit) return "step-unit";
+    } else {
       if (!count(step.done) || !count(step.total) || step.done > step.total) return "step-figures";
       if (COUNTED[s.phase] !== step.unit) return "step-unit";
     }
@@ -84,7 +88,8 @@ function contractKit() {
   /** A clean copy: known fields only, in a fixed order (the step's total is never below its done). */
   function clean(s) {
     const step = { awakeElapsedMs: s.step.awakeElapsedMs, unit: s.step.unit };
-    if (s.step.unit !== "none") { step.done = s.step.done; step.total = Math.max(s.step.total, s.step.done); }
+    if (s.step.unit === "open") step.done = s.step.done;
+    else if (s.step.unit !== "none") { step.done = s.step.done; step.total = Math.max(s.step.total, s.step.done); }
     const out = {};
     for (const key of KEYS) out[key] = s[key];
     out.step = step;

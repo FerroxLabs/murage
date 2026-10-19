@@ -14,10 +14,11 @@ import { SCOPE_MARKER, ScopeUnavailableError, SCOPE_RETIRE_MAX_AGE_MS, SCOPE_RET
 import { QwenAgentDriver, qwenIsolationArgs } from "./qwen.ts";
 import { qwenSettingsJson } from "../../flux-memory-headers.ts";
 import { resetVersionProbeBackoff } from "../isolation-cache.ts";
+import { removeTempDirSync } from "../../testing/cleanup.ts";
 
 const cli = fileURLToPath(new URL("../../testing/fake-acp-cli.ts", import.meta.url));
 const homes: string[] = [];
-afterEach(() => { for (const home of homes.splice(0)) rmSync(home, { recursive: true, force: true }); });
+afterEach(() => { for (const home of homes.splice(0)) removeTempDirSync(home); });
 
 function geminiHome(): string {
   const home = mkdtempSync(join(tmpdir(), "murage-gemini-iso-"));

@@ -1,10 +1,10 @@
 // Incoming images are authorized by server-owned message metadata or an
 // upload bound to this exact conversation. Text paths never grant a read.
-import { lstatSync } from "node:fs";
 import { basename, join } from "node:path";
 import type { Store, Message } from "./store.ts";
 import type { SendTurnInput } from "./contracts.ts";
-import { readPinnedMediaFile, sniffMedia } from "./media-assets.ts";
+import { sniffMedia } from "./media-assets.ts";
+import { ATTACHMENT_READ_CEILING, attachmentNameOf, attachmentsHomeOf, readAttachmentFile } from "./attachment-read.ts";
 import { IMAGE_REFERENCE_MIMES, TURN_IMAGE_LIMITS } from "../shared/media-assets.ts";
 import { splitTranscriptAttachments, withoutImageTags } from "../src/lib/composer-attachments.ts";
 
@@ -153,20 +153,23 @@ export class TurnImages {
     // the bot sees is the first images in order, never a gap. An unbound tag
     // costs no bytes and keeps its engine's own rule.
     let spent = false;
+    const included: string[] = [];
     for (const path of paths) {
       if (!allowed.has(path)) { unbound.push(path); continue; }
       if (spent) { tooLarge.push(path); continue; }
-      const directory = join(this.dataDir, "attachments");
-      let parent, stat;
-      try { parent = lstatSync(directory); stat = lstatSync(path); } catch { throw fail(); }
-      if (!parent.isDirectory() || parent.isSymbolicLink() || !stat.isFile() || stat.isSymbolicLink() || stat.nlink !== 1) throw fail();
+      const home = attachmentsHomeOf(this.dataDir), name = attachmentNameOf(home, path);
+      if (!name) throw fail();
       const remaining = TURN_IMAGE_LIMITS.maxTotalBytes - total;
       if (remaining < MIN_IMAGE_BUDGET) { spent = true; tooLarge.push(path); continue; }
-      // Read only what can be sent or shrunk; anything larger stays out unread.
-      const readable = shrink ? TURN_IMAGE_LIMITS.maxReadBytes : fit.hardMaxBytes;
-      if (stat.size > readable) { tooLarge.push(path); continue; }
-      const bytes = await readPinnedMediaFile({ state: "ready", path, stat, observed: [[directory, parent]] }, readable);
-      if (!bytes || !turnImageAudience(this.store, threadId, botId)) throw fail();
+      // Read only what can be sent or shrunk, never more than the attachment
+      // ceiling; anything larger stays out unread. No link, FIFO, device or
+      // hard link is opened (attachment-read.ts).
+      const readable = Math.min(shrink ? TURN_IMAGE_LIMITS.maxReadBytes : fit.hardMaxBytes, ATTACHMENT_READ_CEILING);
+      const read = await readAttachmentFile(home, name, readable);
+      if (!read.ok && read.reason === "too-large") { tooLarge.push(path); continue; }
+      // The read awaited: the audience and the path's binding to this thread are asked again.
+      if (!read.ok || !turnImageAudience(this.store, threadId, botId) || !this.store.boundAttachments(threadId, [path]).has(path)) throw fail();
+      const bytes = read.bytes;
       const sniffed = sniffMedia(bytes, bytes.length);
       if (!sniffed.supported || sniffed.kind !== "image" || !(IMAGE_REFERENCE_MIMES as readonly string[]).includes(sniffed.mime)) throw invalid();
       let picture: { bytes: Buffer; mime: string } | null = null;
@@ -192,11 +195,17 @@ export class TurnImages {
         continue;
       }
       total += picture.bytes.length;
+      included.push(path);
       images.push({ mimeType: picture.mime, data: picture.bytes.toString("base64") });
     }
-    // A shrink can take a while: the audience is asked again before any
-    // bytes leave, as it was right after each read.
-    if (images.length && !turnImageAudience(this.store, threadId, botId)) throw fail();
+    // Later reads and shrinks can take a while: after the last await, with
+    // nothing awaited in between, the audience and every returned image's
+    // binding to this thread are asked again before any bytes leave.
+    if (images.length) {
+      if (!turnImageAudience(this.store, threadId, botId)) throw fail();
+      const bound = this.store.boundAttachments(threadId, included);
+      if (included.some(path => !bound.has(path))) throw fail();
+    }
     return { images, unbound, overCount, tooLarge };
   }
   /** `collect`, but an unbound path is a refusal of the whole turn. This is

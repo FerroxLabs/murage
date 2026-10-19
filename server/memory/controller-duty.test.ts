@@ -2,7 +2,7 @@
 // the time the cycle held the loop, with no one-second ceiling, and the idle consolidation pass's
 // synchronous time is charged to that same deadline. A long cycle therefore cannot hold the loop for
 // most of the wall time; over a long run the loop is held for at most a quarter of it.
-import { mkdirSync, rmSync } from "node:fs";
+import { mkdirSync } from "node:fs";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { DATA_DIR } from "../config.ts";
 import { closeDatabase } from "../database.ts";
@@ -11,6 +11,7 @@ import { resetParkSweep } from "./park.ts";
 import { setMemoryMode } from "./repository.ts";
 import { MemoryWorkerController } from "./worker-controller.ts";
 import type { MemoryWork } from "./worker-protocol.ts";
+import { removeTempDirSync } from "../testing/cleanup.ts";
 
 const state = vi.hoisted(() => ({ claimCost: 0, idleCost: 0, cost: 0, busy: [] as Array<[number, number]> }));
 vi.mock("./jobs.ts", async importOriginal => {
@@ -34,7 +35,7 @@ const build = (options: ConstructorParameters<typeof MemoryWorkerController>[0] 
   internals.ready = true;
 };
 beforeEach(() => {
-  closeDatabase(); rmSync(DATA_DIR, { recursive: true, force: true }); mkdirSync(DATA_DIR, { recursive: true }); setMemoryMode("capture"); resetParkSweep();
+  closeDatabase(); removeTempDirSync(DATA_DIR); mkdirSync(DATA_DIR, { recursive: true }); setMemoryMode("capture"); resetParkSweep();
   state.claimCost = 0; state.idleCost = 0; state.cost = 0; state.busy.length = 0; sent = [];
   vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout", "setInterval", "clearInterval", "setImmediate", "clearImmediate", "Date"] });
   vi.spyOn(performance, "now").mockImplementation(() => Date.now() + state.cost);

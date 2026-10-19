@@ -12,11 +12,11 @@
 import { withoutDroppedTableTriggers } from "./read-time-retired.ts";
 import type { DatabaseSync } from "node:sqlite";
 import { turnTraceEnabled } from "../turn-trace.ts";
-import { ancestryUnrepaired, connectionId } from "../database.ts";
+import { ancestryUnrepaired, connectionId, DEFAULT_BUSY_MS, isDatabaseBusy, setBusy } from "../database.ts";
 import { Worker } from "node:worker_threads";
 import { pauseReclaim } from "./root-set-reclaim.ts";
 import { buildOptionalIndexOffThread, databaseFile, optionalIndexReady } from "./optional-index.ts";
-import { IDENTITY_CANON, IDENTITY_CANON_INDEX, IDENTITY_PARTITION, IDENTITY_PARTITION_INDEX } from "./schema.ts";
+import { IDENTITY_ALLOW_TABLE, IDENTITY_CANON, IDENTITY_CANON_INDEX, IDENTITY_PARTITION, IDENTITY_PARTITION_INDEX, IDENTITY_STAMP_TABLE } from "./schema.ts";
 
 // Trigger bodies name their write target unqualified: SQLite forbids a
 // qualified one there, and an unqualified name resolves to the temp table.
@@ -243,8 +243,11 @@ export function recomputeIdentityOffThread(db: DatabaseSync, attempts = 6): Prom
       // The reclaim commits every ~100 ms for half an hour; each commit moves the data_version, so a scan of seconds never agreed with it.
       // Park the reclaim between batches for the length of the scan: then ANY movement of the data_version or the counter is somebody else's
       // commit (a promotion included) and the result is thrown away, exactly as before. Nothing is excused, so no promotion can be missed.
+      // With the durable mirror (1.0.3, 2.3) the rule is its counter alone: it moves on every identity write of any connection and on
+      // nothing else, so an unrelated commit during the scan no longer throws the result away, and the kept set is written to the file.
       const parked = await pauseReclaim();
       try {
+      const n0 = db.isTransaction ? null : durableIdentityStamp(db);
       const first = db.isTransaction ? undefined : identityReading(db);
       if (!first) { await new Promise<void>(r => setTimeout(r, 25 * (attempt + 1))); continue; }
       identityRecomputeStats.started++;
@@ -262,10 +265,12 @@ export function recomputeIdentityOffThread(db: DatabaseSync, attempts = 6): Prom
         } catch { resolve(undefined); }
       });
       const last = db.isTransaction ? undefined : identityReading(db);
-      if (sources && last && last.epoch === first.epoch && last.version === first.version) {
+      const unmoved = n0 !== null ? durableIdentityStamp(db) === n0 : Boolean(last && last.epoch === first.epoch && last.version === first.version);
+      if (sources && last && unmoved) {
         identity.builds++; identityRecomputeStats.kept++;
         committedEpoch.set(db, last.epoch);
         identity.db = db; identity.epoch = last.epoch; identity.stamp = `${last.epoch}:${last.version}`; identity.sources = sources; identity.generation++;
+        if (n0 !== null) storeIdentityAllow(db, n0, sources);
         return true;
       }
       identityRecomputeStats.moved++;
@@ -284,9 +289,60 @@ export function identityForAllow(db: DatabaseSync): ReadonlySet<string> | null {
   const reading = identityReading(db);
   const stamp = reading ? `${reading.epoch}:${reading.version}` : undefined;
   if (stamp !== undefined && identity.db === db && identity.stamp === stamp && identity.sources) return identity.sources;
-  if (!reading || identityIndexesReady(db) || smallStore(db)) return identitySourceSet(db);
+  // 1.0.3 (2.3): the set kept in the file serves while the durable counter it was computed under has not moved, whatever this connection's
+  // memo says: a fresh process with the indexes deferred, or a check after an unrelated commit, answers at once.
+  const n = durableIdentityStamp(db);
+  if (n !== null) { const stored = storedIdentitySet(db, n); if (stored) return stored; }
+  if (!reading || identityIndexesReady(db) || smallStore(db)) {
+    const sources = identitySourceSet(db);
+    if (n !== null && !db.isTransaction && durableIdentityStamp(db) === n) storeIdentityAllow(db, n, sources);
+    return sources;
+  }
   void recomputeIdentityOffThread(db).catch(() => false);
   return null;
+}
+// ---- The durable mirror (1.0.3 lane 2, item 2.3; schema.ts IDENTITY_STAMP_SCHEMA) ---------------------------------------------------------
+// The temp counter above is per connection: a fresh process, or a commit by another connection, could not say whether the set last computed
+// still held, so every procedural skill was withheld while it was recomputed. `memory_identity_stamp.n` is moved by permanent triggers on
+// exactly the writes the temp identity triggers count, from any connection; `memory_identity_allow` keeps the last computed set with the
+// `n` it was computed under. A set is served from the file only while `n` is what it was computed under; a computed set is written only
+// while `n` is still what it was read as before the scan (otherwise an identity write landed in between and the set is thrown away).
+const durable = { db: null as DatabaseSync | null, n: -1, sources: null as Set<string> | null };
+/** The durable identity counter, or null when the file has no mirror (a file an older build left, or one being prepared for it). */
+export function durableIdentityStamp(db: DatabaseSync): number | null {
+  try { const row = db.prepare(`SELECT n FROM ${IDENTITY_STAMP_TABLE} WHERE id=1`).get(); return row ? Number(row.n) : null; }
+  catch { return null; }
+}
+/** The stored set when it was computed under counter `n`, else null. Parsed once per counter value per connection. */
+function storedIdentitySet(db: DatabaseSync, n: number): ReadonlySet<string> | null {
+  if (durable.db === db && durable.n === n && durable.sources) return durable.sources;
+  let row: Record<string, unknown> | undefined;
+  try { row = db.prepare(`SELECT stamp,ids_json FROM ${IDENTITY_ALLOW_TABLE} WHERE id=1`).get(); } catch { return null; }
+  if (!row || Number(row.stamp) !== n) return null;
+  try {
+    const ids: unknown = JSON.parse(String(row.ids_json));
+    if (!Array.isArray(ids) || !ids.every(id => typeof id === "string")) return null;
+    const sources = new Set<string>(ids as string[]);
+    durable.db = db; durable.n = n; durable.sources = sources;
+    return sources;
+  } catch { return null; }
+}
+/** Keeps a computed set in the file under the counter `n` it was computed under: written only when the counter is still `n` at the write
+ * (an identity write in between moved it, and the set is discarded), never inside a caller's transaction, and never waiting for a write
+ * lock another connection holds (the next computation writes instead). Returns whether it was kept. */
+export function storeIdentityAllow(db: DatabaseSync, n: number, sources: ReadonlySet<string>, now = Date.now()): boolean {
+  if (db.isTransaction) return false;
+  setBusy(db, 0);
+  try { db.exec("BEGIN IMMEDIATE"); }
+  catch (error) { if (isDatabaseBusy(error)) return false; throw error; }
+  finally { try { setBusy(db, DEFAULT_BUSY_MS); } catch { /* handle closed */ } }
+  try {
+    if (durableIdentityStamp(db) !== n) { db.exec("ROLLBACK"); return false; }
+    db.prepare(`INSERT OR REPLACE INTO ${IDENTITY_ALLOW_TABLE}(id,stamp,ids_json,computed_at) VALUES(1,?,?,?)`).run(n, JSON.stringify([...sources]), now);
+    db.exec("COMMIT");
+  } catch (error) { try { db.exec("ROLLBACK"); } catch { /* rolled back */ } if (isDatabaseBusy(error)) return false; throw error; }
+  durable.db = db; durable.n = n; durable.sources = new Set(sources);
+  return true;
 }
 /** The last set read, current or not (for a consumer that only withholds), or null when none was read yet. */
 export function lastKnownIdentitySet(db: DatabaseSync): ReadonlySet<string> | null { return identity.db === db ? identity.sources : null; }

@@ -1,12 +1,13 @@
 // Spec §3.5 "Two scoped tokens per device": bound to the device record and
 // revoked with it on sign-out, device revocation or re-pair.
-import { readFileSync, rmSync, writeFileSync } from "node:fs";
+import { readFileSync, writeFileSync } from "node:fs";
 import * as nodeCrypto from "node:crypto";
 import { join } from "node:path";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { DATA_DIR } from "../src/state.ts";
 import { DeviceRegistry, PUSH_BINDING, PUSH_TOKEN, PUSH_TOKEN_TTL_MS } from "../src/devices.ts";
 import { TOKEN_PATTERNS, UUID } from "../../shared/mobile-push.ts";
+import { removeTempDirSync } from "../../server/testing/cleanup.ts";
 
 // Vitest cannot spy on a native ESM module's export directly ("Module
 // namespace is not configurable"), so the rollback test below instead mocks
@@ -43,7 +44,7 @@ const breakPersist = (registry: DeviceRegistry): (() => void) => {
 };
 
 describe("push tokens in the device record", () => {
-  beforeEach(() => rmSync(DATA_DIR, { recursive: true, force: true }));
+  beforeEach(() => removeTempDirSync(DATA_DIR));
 
   // The review that followed this task's first pass found that devices.ts
   // had started importing shared/mobile-push.ts's patterns directly, which
