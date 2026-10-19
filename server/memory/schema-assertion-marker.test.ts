@@ -2,14 +2,15 @@
 // memory_records on every start: 1.8 s on the live store. It now keeps its newest-rowid mark in the same marker as
 // the JSON shape checks, so the next open reads only records added since; markers written before it stay valid for
 // the JSON shapes, and a table whose newest rowid fell below its mark is read in full again.
-import { mkdirSync, rmSync } from "node:fs";
+import { mkdirSync } from "node:fs";
 import { afterEach, beforeEach, expect, it } from "vitest";
 import { DATA_DIR } from "../config.ts";
 import { closeDatabase, database } from "../database.ts";
 import { ensureScope, reconcileMemoryRoster } from "./policy.ts";
 import { validateMemorySchema } from "./schema.ts";
+import { removeTempDirSync } from "../testing/cleanup.ts";
 
-beforeEach(() => { closeDatabase(); rmSync(DATA_DIR, { recursive: true, force: true }); mkdirSync(DATA_DIR, { recursive: true }); reconcileMemoryRoster({ bots: [{ id: "bot", threadId: "chat" }], groups: [] }); });
+beforeEach(() => { closeDatabase(); removeTempDirSync(DATA_DIR); mkdirSync(DATA_DIR, { recursive: true }); reconcileMemoryRoster({ bots: [{ id: "bot", threadId: "chat" }], groups: [] }); });
 afterEach(() => closeDatabase());
 
 function records(from: number, count: number, assertion = "assistant-inference") {

@@ -1,6 +1,6 @@
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
-import { copyFileSync,existsSync,mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { copyFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -8,8 +8,9 @@ import { afterEach, expect, it } from "vitest";
 import { Worker } from "node:worker_threads";
 import { pathToFileURL } from "node:url";
 import { backupFixture,testAgeKeys,rawAgeHost } from "./testing/backup-fixture.ts";
+import { removeTempDirSync } from "./testing/cleanup.ts";
 const roots: string[] = [];
-afterEach(() => { for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true }); });
+afterEach(() => { for (const root of roots.splice(0)) removeTempDirSync(root); });
 const worker = fileURLToPath(new URL("../scripts/installation-recovery-worker.ts", import.meta.url));
 
 it("the actual worker emits a bounded summary without archive contents or inherited provider configuration", async () => {

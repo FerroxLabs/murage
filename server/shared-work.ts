@@ -24,6 +24,7 @@ import { DATA_DIR } from "./config.ts";
 import { writeFileAtomic } from "./atomic.ts";
 import { completeRequest, insertRoomRequest, isTerminalRoomRequestState, markRequestDispatched, queuedRoomRequests, recordRoomRequestRefusal, roomRequest, roomRequestByKey, type RoomRequest, type CompletionHooks } from "./room-requests.ts";
 import { ROOT_CAP_WAKES, type AdmissionClaim, type AdmissionInput, type ExecutionAudience, type WorkAdmission } from "./work-admission.ts";
+import { murageLine } from "./murage-line.ts";
 
 export function sharedRowAudience(row: RoomRequest): ExecutionAudience | null { return validExecutionAudience(row.executionAudience) ? row.executionAudience : null; }
 /** Whether a request is shared work, decided by what the database recorded when the work was created, never by the live registry (Astra r18).
@@ -533,7 +534,7 @@ export function changeSharing(store:Store,botId:string,next:NonNullable<BotRecor
     completeRequest(database(),row.id,{state:"cancelled",now:deps.now,outcomeNote:"sharing-removed"});
     // A cancelled request's approval card can no longer be answered (Astra r3 #1).
     cancelPeerApprovalsForRequest(row.id);
-    const destination=requestSourceThread(row.id);if(destination)store.appendMessage(destination,{role:"bot",kind:"activity",tool:{name:`${bot.name} is no longer shared with this team.`,ok:false},requestId:row.id});
+    const destination=requestSourceThread(row.id);if(destination)store.appendMessage(destination,murageLine({role:"bot",kind:"activity",tool:{name:`${bot.name} is no longer shared with this team.`,ok:false},requestId:row.id}));
   }
   work.closedAt=deps.now;work.closedReason="revoked";delete work.finishing;
   const generation=deps.generationFor?.(task.threadId);

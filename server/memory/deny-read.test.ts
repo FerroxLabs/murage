@@ -277,6 +277,48 @@ describe("sessions (sessionLookup)", () => {
   });
 });
 
+// 1.0.2 Keep all P0 (F1): a roster or settings change flips every receipt (an audience-only revoke, memory_revoke_audience). The owner's own
+// direct chat is a content reader: those marks change what other audiences may be shown, never what the owner's chat holds, so its session
+// is not reset by them. 1.0.2 counted them for every reader and reset the owner's session on every turn after Keep all.
+describe("sessions: the owner's content reader and audience-only revokes", () => {
+  const key = { threadId: "T", driverInstance: "d", nativeSession: "n" };
+  const audienceOnly = (f: WritetimeFixture, revoke: number) => f.db.prepare("INSERT OR IGNORE INTO memory_revoke_audience(revoke_id) VALUES(?)").run(revoke);
+  it("audience-only deny_session, pending and receipt flips: shown for the content reader, withheld or checking for an audience reader", () => {
+    const f = make().owner("T", "o1", 1).reply("T", "g1", 2, { turnLsn: 1 }).sessionLineage("T", "d", "n", 1, 10);
+    audienceOnly(f, 7);
+    f.denySession("T", "d", "n", 7);
+    expect(sessionLookup(f.db, key, CONTENT)).toEqual(SHOWN);
+    expect(sessionLookup(f.db, key, MEMBER)).toEqual(W("deny-session"));
+    expect(sessionLookup(f.db, key, OWNER)).toEqual(W("deny-session"));
+    f.db.exec("DELETE FROM memory_deny_session");
+    f.pending("T", 5, 7).pending("*", 3, 7);
+    expect(sessionLookup(f.db, key, CONTENT)).toEqual(SHOWN);
+    expect(sessionLookup(f.db, key, MEMBER)).toEqual(C("pending"));
+    f.db.exec("DELETE FROM memory_deny_pending");
+    // a receipt flipped and not yet committed by the marker (memory_receipt_flips): audience-only too
+    const no = Number(f.db.prepare("SELECT no FROM memory_thread_no WHERE thread_id='T'").get()!.no);
+    f.db.prepare("INSERT INTO memory_receipt_flips(thread_no,first_lsn,bundle_id) VALUES(?,?,?)").run(no, 2, "flipped");
+    expect(sessionLookup(f.db, key, CONTENT)).toEqual(SHOWN);
+    expect(sessionLookup(f.db, key, MEMBER)).toEqual(C("pending"));
+    f.db.exec("DELETE FROM memory_receipt_flips");
+    // the session's own revoked receipt: the content reader leaves it to the continuation check (state, policy, epoch), an audience reader withholds
+    f.receipt("b1", "T", "d", "n", { state: "revoked" });
+    expect(sessionLookup(f.db, key, CONTENT)).toEqual(SHOWN);
+    expect(sessionLookup(f.db, key, MEMBER)).toEqual(W("deny-session"));
+  });
+  it("a revoke that is not audience-only still resets the owner's session", () => {
+    const f = make().owner("T", "o1", 1).sessionLineage("T", "d", "n", 1, 10);
+    f.denySession("T", "d", "n", 9);
+    expect(sessionLookup(f.db, key, CONTENT)).toEqual(W("deny-session"));
+    f.db.exec("DELETE FROM memory_deny_session");
+    f.pending("T", 5, 9);
+    expect(sessionLookup(f.db, key, CONTENT)).toEqual(C("pending"));
+    f.db.exec("DELETE FROM memory_deny_pending");
+    f.deny("thread", "T");
+    expect(sessionLookup(f.db, key, CONTENT)).toEqual(W("thread-deny"));
+  });
+});
+
 describe("refs and the send fence", () => {
   it("(h, k, n, A3) line refs: a copy's original, a hand-off result, a carried line; gone originals and positional originals are withheld", () => {
     // A3: B repeats A's secret in T; B is mirrored into U; forget A: B is withheld by its range, and so is a ref to B from the mirror

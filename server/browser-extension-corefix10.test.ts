@@ -16,6 +16,7 @@ import { DESCRIBE_TARGET_SOURCE } from "./browser-extension-page-scripts.ts";
 import { COLLECT_FLOOR_FACTS_SOURCE } from "./browser-floor-facts.ts";
 import { classifyFloor } from "./browser-floor.ts";
 import { createBrowserExtensionService } from "./browser-extension-service.ts";
+import { removeTempDir } from "./testing/cleanup.ts";
 
 describe("R9-03 default-ignorable marks never hide a number", () => {
   it.each(["123͏456", "123️456", "@123͏456", "4111͏1111͏1111͏1111", "123́456", "12\u0000\u0008 3456", "123᠋456", "123\u{e0100}456", "123ㅤ456", "123⠀456"])("%j is a secret", value => {
@@ -265,7 +266,7 @@ describe("R9-08 incomplete facts are the owner's before any safe consent verdict
 describe("R9-09 the extension is fenced before the new state is persisted", () => {
   const A = "https://fixture.test";
   const cleanup: string[] = [];
-  afterEach(async () => { for (const directory of cleanup.splice(0)) await fs.rm(directory, { recursive: true, force: true }); });
+  afterEach(async () => { for (const directory of cleanup.splice(0)) await removeTempDir(directory); });
   it("at the moment of the bind, the state file does not yet hold the new setting", async () => {
     const { root: directoryRoot, directory } = await privateTestDirectory(path.resolve(".corefix10-")); cleanup.push(directoryRoot);
     const stateFile = path.join(directory, "state.json");
@@ -430,7 +431,7 @@ describe("R10-01 controls tied to a form by id are part of its payload and its r
 describe("R10-03 every restrictive route fences the extension before the file is written", () => {
   const A = "https://fixture.test";
   const cleanup: string[] = [];
-  afterEach(async () => { for (const directory of cleanup.splice(0)) await fs.rm(directory, { recursive: true, force: true }); });
+  afterEach(async () => { for (const directory of cleanup.splice(0)) await removeTempDir(directory); });
   async function rig() {
     const { root: directoryRoot, directory } = await privateTestDirectory(path.resolve(".corefix10-")); cleanup.push(directoryRoot);
     const stateFile = path.join(directory, "state.json");

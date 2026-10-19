@@ -2,17 +2,18 @@
 // components. Every cancelled job is visited once per pass, however many of
 // them share one retry_at (the ordinary value is 0), so a pass is linear in the
 // cancelled jobs and not quadratic.
-import { mkdirSync, rmSync } from "node:fs";
+import { mkdirSync } from "node:fs";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { DATA_DIR } from "../config.ts";
 import { closeDatabase, database } from "../database.ts";
 import * as park from "./park.ts";
 import { reconcileMemoryRoster } from "./policy.ts";
 import { setMemoryMode } from "./repository.ts";
+import { removeTempDirSync } from "../testing/cleanup.ts";
 
 const fix = park as unknown as Record<string, any>;
 beforeEach(() => {
-  closeDatabase(); rmSync(DATA_DIR, { recursive: true, force: true }); mkdirSync(DATA_DIR, { recursive: true });
+  closeDatabase(); removeTempDirSync(DATA_DIR); mkdirSync(DATA_DIR, { recursive: true });
   reconcileMemoryRoster({ bots: [], groups: [] }); setMemoryMode("capture"); park.resetParkSweep(); fix.resetParkReconcile();
 });
 afterEach(() => { closeDatabase(); });

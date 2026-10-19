@@ -34,7 +34,7 @@ describe("FullAccessWarning", () => {
   it("has its own wording for No limits", () => {
     const markup = renderToStaticMarkup(createElement(FullAccessWarning, { open: true, botName: "Vega", level: "unlimited", onThisComputer: false, onCancel: () => {}, onConfirm: () => {} }));
     expect(markup).toContain("Give @Vega no limits?");
-    expect(markup).toContain("will do anything without asking, except reading your keys and passwords");
+    expect(markup).toContain("will do everything without asking, except reading your keys and passwords and commands Murage recognizes as able to wipe your computer, which ask first");
     expect(markup).toContain("Turn on no limits");
     expect(markup).not.toContain("still asks before deleting anything outside its folder");
     expect(markup).not.toMatch(/\u2014|\bsafe\b/);

@@ -37,6 +37,8 @@ export interface CheckerConnectionInput {
   instances: ProviderInstance[];
   readKey?: () => string | null;
   botInstanceId?: string;
+  /** The bot whose action is checked; a review on its engine runs for it (a Cloud home requires one). */
+  botId?: string;
   models?: { stage1?: string; stage2?: string };
   /** Activity-log hook: every Flux call and every missing no-retain confirmation. */
   record?: (event: CheckerConnectionEvent) => void;
@@ -120,7 +122,7 @@ export function resolveCheckerConnection(input: CheckerConnectionInput): Checker
       count++;
       const instance = input.instances.find((i) => i.instanceId === chosen.instanceId && usableCheckerInstance(i));
       if (!instance) throw new Error("CHECKER_UNAVAILABLE");
-      if (instance.reviewPermission) return instance.reviewPermission(`${req.system}\n\n${req.user}`, req.signal);
+      if (instance.reviewPermission) return instance.reviewPermission(`${req.system}\n\n${req.user}`, req.signal, input.botId);
       const messages = [{ role: "system", content: req.system }, { role: "user", content: req.user }];
       return instance.extractMemory!(req.user, Math.min(req.maxTokens, 2000), req.signal, { policyRevision: "browser-check", messages });
     };

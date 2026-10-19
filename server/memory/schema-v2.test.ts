@@ -31,7 +31,7 @@ it.each(["off", "paused", "capture", "active"])("migrates v1 %s without altering
   expect(db.prepare("SELECT * FROM memory_scopes").all()).toEqual(scopes);
   expect(db.prepare("SELECT * FROM memory_tombstones").all()).toEqual(deleted);
   expect(db.prepare("SELECT partition,claim_status,observed_at FROM memory_record_details").get()).toEqual({ partition: "semantic", claim_status: "provisional", observed_at: null });
-  expect(readMemoryLearning(db)).toMatchObject({ automaticFacts: true, automaticProcedures: true, reviewMode: true, version: 2 });
+  expect(readMemoryLearning(db)).toMatchObject({ automaticFacts: true, automaticProcedures: true, reviewMode: true, version: 3 });
   const after = db.prepare("SELECT * FROM memory_meta").get(); migrateMemorySchema(db);
   expect(db.prepare("SELECT * FROM memory_meta").get()).toEqual(after); expect(validateMemorySchema(db).has("memory_learning_config")).toBe(true);
 });
@@ -68,7 +68,7 @@ it("rejects unknown schema and malformed learning config without migration", () 
 });
 it("owner learning policy updates are versioned and cannot silently widen limits", () => {
   const db = legacy(); migrateMemorySchema(db);
-  expect(updateMemoryLearning(db, { automaticFacts: false, reviewMode: true, dailyOutputTokens: 100 }, 0)).toMatchObject({ revision: 1, automaticFacts: false, reviewMode: true });
+  expect(updateMemoryLearning(db, { automaticFacts: false, reviewMode: true, ceiling: { input: 100, output: 100 } }, 0)).toMatchObject({ revision: 1, automaticFacts: false, reviewMode: true });
   expect(() => updateMemoryLearning(db, { automaticFacts: true }, 0)).toThrow("REVISION_CONFLICT");
   expect(() => updateMemoryLearning(db, { callsPerMinute: -1 }, 1)).toThrow();
   expect(() => updateMemoryLearning(db, { recipient: "unrelated" }, 1)).toThrow();

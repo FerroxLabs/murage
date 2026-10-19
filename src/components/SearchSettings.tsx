@@ -1,6 +1,7 @@
 import { useRef, useState } from "react";
 import { api, useStore, type ConfigStatus } from "@/state/store";
 import { t } from "@/lib/i18n";
+import { InAdvanced } from "./SettingsPrimitives";
 
 type SearchProvider = "engine" | "auto" | "flux" | "tavily" | "exa" | "firecrawl" | "off";
 type KeyProvider = "tavily" | "exa" | "firecrawl";
@@ -18,12 +19,14 @@ export function SearchSettings() {
   const [busy, setBusy] = useState<string | null>(null);
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
+  // Where the last result belongs: a key saved under Advanced reports there, a provider choice reports above it.
+  const [where, setWhere] = useState<"provider" | "keys">("provider");
   const gate = useRef(false);
   const focus = "focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus";
 
   const choose = async (provider: SearchProvider) => {
     if (!search || gate.current || provider === search.provider) return;
-    gate.current = true; setBusy("provider"); setError(""); setNotice("");
+    gate.current = true; setBusy("provider"); setWhere("provider"); setError(""); setNotice("");
     try {
       const config = await api("/api/config", { method: "PUT", body: JSON.stringify({ webSearch: { provider } }) }) as ConfigStatus;
       if (config.webSearch?.provider !== provider) throw new Error("Provider save was not confirmed");
@@ -36,7 +39,7 @@ export function SearchSettings() {
     if (!search || gate.current) return;
     const value = clear ? "" : values[provider].trim();
     if (!clear && !value) return;
-    gate.current = true; setBusy(provider + (clear ? "-clear" : "-save")); setError(""); setNotice("");
+    gate.current = true; setBusy(provider + (clear ? "-clear" : "-save")); setWhere("keys"); setError(""); setNotice("");
     try {
       const config: ConfigStatus = window.muragebox?.setCredential
         ? await window.muragebox.setCredential(credentialNames[provider], value)
@@ -49,7 +52,7 @@ export function SearchSettings() {
     } catch { setError(t(clear ? "searchSettings.keyRemoveError" : "searchSettings.keySaveError", { provider: labels[provider] })); }
     finally { gate.current = false; setBusy(null); }
   };
-  return <section aria-labelledby="web-search-settings-title" className="rounded-xl border border-hairline/40 bg-card p-4">
+  return <><section aria-labelledby="web-search-settings-title" className="rounded-xl border border-hairline/40 bg-card p-4">
     <h3 id="web-search-settings-title" className="text-[15px] font-medium text-ink">{t("searchSettings.title")}</h3>
     <p className="mt-1 text-[12px] leading-relaxed text-ink-secondary">{t("searchSettings.intro")}</p>
     {!search && <p role="status" className="mt-3 text-[12px] text-ink-secondary">{t("searchSettings.unavailable")}</p>}
@@ -74,6 +77,13 @@ export function SearchSettings() {
       : search?.provider === "engine"
         ? "Use the engine's own search first. If unavailable, failed or limited, the bot can use Murage's backup: Parallel, then DuckDuckGo. Backup queries are sent to those services; your own search keys are never used automatically."
         : t("searchSettings.externalHelp")}</p>
+    {busy === "provider" && <p role="status" className="mt-3 text-[12px] text-ink-secondary">{t("searchSettings.savingProvider")}</p>}
+    {where === "provider" && notice && <p role="status" className="mt-3 text-[12px] text-success">{notice}</p>}
+    {where === "provider" && error && <p role="alert" className="mt-3 text-[12px] text-danger">{error}</p>}
+  </section>
+  <InAdvanced><section id="search-keys-heading" tabIndex={-1} aria-label={t("settings.l4.searchKeys.title")} className="rounded-xl bg-card p-4 outline-none">
+    <h3 className="text-[15px] font-medium text-ink">{t("settings.l4.searchKeys.title")}</h3>
+    <p className="mt-1 text-[12px] leading-relaxed text-ink-secondary">{t("settings.l4.searchKeys.note")}</p>
     <div className="mt-4 space-y-4">
       {(["tavily", "exa", "firecrawl"] as const).map(provider => {
         const configured = search?.[configuredFields[provider]] === true;
@@ -103,8 +113,7 @@ export function SearchSettings() {
       })}
     </div>
     <p className="mt-3 text-[11px] leading-relaxed text-ink-secondary">{t("searchSettings.charges")}</p>
-    {busy === "provider" && <p role="status" className="mt-3 text-[12px] text-ink-secondary">{t("searchSettings.savingProvider")}</p>}
-    {notice && <p role="status" className="mt-3 text-[12px] text-success">{notice}</p>}
-    {error && <p role="alert" className="mt-3 text-[12px] text-danger">{error}</p>}
-  </section>;
+    {where === "keys" && notice && <p role="status" className="mt-3 text-[12px] text-success">{notice}</p>}
+    {where === "keys" && error && <p role="alert" className="mt-3 text-[12px] text-danger">{error}</p>}
+  </section></InAdvanced></>;
 }

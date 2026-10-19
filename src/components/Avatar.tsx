@@ -4,7 +4,7 @@
 // face/state for a moment, and the eyes follow the pointer. The previous
 // hand-built Ember body + face engine (ember-engine/face/driver) is gone;
 // EmberAvatar owns morphing, blinking, drift, body motion and effects.
-import { desktopResourceUrl } from "@/lib/live-events";
+import { DesktopImg } from "./DesktopImg";
 import {
   forwardRef,
   memo,
@@ -294,8 +294,8 @@ export function BotAvatar({ bot, size = 44, label, presentation, ...mascotProps 
   }
 
   return (
-    <img
-      src={desktopResourceUrl(profile.avatarUrl)}
+    <DesktopImg
+      src={profile.avatarUrl}
       alt={label ?? (bot.name ? `${bot.name} avatar` : "Bot avatar")}
       width={size}
       height={size}

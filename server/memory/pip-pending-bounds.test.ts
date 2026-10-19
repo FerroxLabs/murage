@@ -3,7 +3,7 @@
 //
 // RC7 branch B (RC6-SPEED-DIAG.md 2d(ii)): the reflect "anything new" check reads the newest sources until the cursor, never the whole thread.
 // Counted in payloads read, which does not depend on how long the thread is.
-import { mkdirSync, rmSync } from "node:fs";
+import { mkdirSync } from "node:fs";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { DATA_DIR } from "../config.ts";
 import { closeDatabase, database } from "../database.ts";
@@ -12,11 +12,12 @@ import { setMemoryCaptureRoster } from "./capture-scope.ts";
 import { reconcileMemoryRoster } from "./policy.ts";
 import { setMemoryMode } from "./repository.ts";
 import { admissibleOwnerSources, hasAdmissibleAfter } from "./pip-admission.ts";
+import { removeTempDirSync } from "../testing/cleanup.ts";
 
 const T0 = 1_760_000_000_000;
 const roster = { bots: [{ id: "moss", threadId: "private", tasks: [] as Array<{ threadId: string }> }], groups: [] as never[] };
 beforeEach(() => {
-  closeDatabase(); rmSync(DATA_DIR, { recursive: true, force: true }); mkdirSync(DATA_DIR, { recursive: true });
+  closeDatabase(); removeTempDirSync(DATA_DIR); mkdirSync(DATA_DIR, { recursive: true });
   reconcileMemoryRoster(roster); setMemoryMode("active"); setMemoryCaptureRoster(() => roster as never);
   database().exec("PRAGMA synchronous=OFF");
 });

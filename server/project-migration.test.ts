@@ -4,10 +4,11 @@
 // cross-store rules): upgrade of existing channel projects, idempotency,
 // interruption, and the boot reconciler that repairs a crash between the
 // messages.db rows and the groups.json write.
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { removeTempDirSync } from "./testing/cleanup.ts";
 
 let home = "";
 
@@ -31,7 +32,7 @@ afterEach(async () => {
   const { closeDatabase } = await import("./database.ts");
   closeDatabase();
   vi.unstubAllEnvs();
-  rmSync(home, { recursive: true, force: true });
+  removeTempDirSync(home);
 });
 
 const NOW = 1_700_000_000_000;

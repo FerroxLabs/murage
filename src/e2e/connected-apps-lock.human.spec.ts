@@ -8,7 +8,7 @@
 // keyboard order starts at the primary and skips the
 // showcase, a saved key flips the panel open without a reopen, and how it
 // looks narrow and wide, light and dark.
-import { expect, test, type Page } from "@playwright/test";
+import { expect, test, type Page } from "./page-error-guard";
 import { createServer, type ViteDevServer } from "vite";
 import tailwindcss from "@tailwindcss/vite";
 import { fileURLToPath } from "node:url";

@@ -5,7 +5,7 @@
 // brief as a PIP kind, the I-10 guards, the deliver-once receipt listeners, the
 // continuity settings, the bundle order and render cache, and the copy rules.
 // Synthetic fixture text only.
-import { mkdirSync, readdirSync, readFileSync, rmSync } from "node:fs";
+import { mkdirSync, readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
@@ -31,6 +31,7 @@ import { PIP_ATTRIBUTION, PIP_IMPORTED_SUFFIX, cutAtSentence, importFadeMultipli
 import { isPipReflectThread, parseContinuityOptions } from "./pip-types.ts";
 import { MEMORY_FRAME_TOKENS } from "./bundle.ts";
 import { LineageAllowance } from "./lineage-allowance.ts";
+import { removeTempDirSync } from "../testing/cleanup.ts";
 
 const roster = {
   bots: [
@@ -44,7 +45,7 @@ const ACTION = "/api/memory/action";
 const emptyBridge = { search: async () => ({ hits: [] as IndexHit[], vectorRows: 0 }) };
 const opened: Array<{ close(): void }> = [];
 
-beforeEach(() => { closeDatabase(); rmSync(DATA_DIR, { recursive: true, force: true }); mkdirSync(DATA_DIR, { recursive: true }); reconcileMemoryRoster(roster); setMemoryMode("active"); });
+beforeEach(() => { closeDatabase(); removeTempDirSync(DATA_DIR); mkdirSync(DATA_DIR, { recursive: true }); reconcileMemoryRoster(roster); setMemoryMode("active"); });
 afterEach(() => { for (const handle of opened.splice(0)) try { handle.close(); } catch { /* already closed */ } });
 
 function pip(kind: "commitment" | "self-trait" | "relation", key: string, text: string, patch: Partial<IdentityWrite> = {}, botId = "moss"): IdentityWrite {
@@ -141,7 +142,7 @@ describe("PIP kind list", () => {
       "memory/bundle.ts": 4, "memory/readable.ts": 4, "memory/checkpoints.ts": 2,
       // +1 evolution-forgetting.ts: the per-binding forgotten test is its own function (a record's state by id and version, no text)
       "memory/consolidate.ts": 3, "memory/eligibility.ts": 3, "memory/evolution-forgetting.ts": 2, "memory/forget.ts": 2, "memory/identity.ts": 8, "memory/import.ts": 1, "memory/index-reader.ts": 1,
-      "memory/learning-history.ts": 4, "memory/lessons.ts": 1, "memory/memory-moments.ts": 1, "memory/metrics.ts": 1, "memory/owner-list.ts": 8, "memory/owner-tail-index.ts": 3, "memory/procedure-review.ts": 3,
+      "memory/learning-history.ts": 4, "memory/lessons.ts": 1, "memory/memory-moments.ts": 1, "memory/metrics.ts": 1, "memory/owner-list.ts": 11, "memory/owner-tail-index.ts": 3, "memory/record-keys.ts": 4, "memory/procedure-review.ts": 3,
       // owner-list +2 and owner-tail-index +3 (msearch2): owner search reads the never-indexed kinds through the owner-tail table in bounded slices;
       // the backfill reads record keys, kinds and times only, never text
       // +1: pendingProjectionRefsIn names the reader's own pending records (ids only) behind the PENDING predicate, which excludes PIP kinds (msearch review round 4)
@@ -154,12 +155,14 @@ describe("PIP kind list", () => {
       "memory/replay-lineage.ts": 12, "memory/restore.ts": 8, // revoke-bounded r2: the forget's record seeds moved to memory-revocation.ts, RECORD_TOMBSTONE_AFFECTED to revocation.ts; +1: the status scan counts records by state and adds up text lengths, never returning text
       "memory/retention.ts": 9, "memory/reveal-capture.ts": 2, "memory/routes.ts": 8,
       // +1 write-time v10: the memory_flow_derivation trigger reads the parent's and the child's scope ids (no text)
-      "memory/schema.ts": 6, "memory/settings.ts": 3,
+      "memory/schema.ts": 8, "memory/settings.ts": 3,
       // the background integrity pass checks that a learning event's record exists (a key lookup, no text), and the upgrade counts use max(rowid) (fast upgrade)
       "memory/integrity-pass.ts": 1, "memory/upgrade-counts.ts": 1, "memory/worker-controller.ts": 3, "skills.ts": 6, "human-principals.ts": 1,
       // B3: the lived family, episodes and reflection read only PIP kinds, named in their own statements.
       // Round 2 removed the redundant episode check from pip-reflect; pip-episodes owns it.
-      "memory/pip-episodes.ts": 4, "memory/pip-lived.ts": 8, "memory/pip-reflect.ts": 2, "memory/pip-stance.ts": 4,
+      "memory/pip-episodes.ts": 4, "memory/pip-lived.ts": 8, // Astra pip-build H1/H2: livedRowAdmissible and livedRowStillShown (pip-admission.ts, point lookups by id and version) admit the
+      // `current` rows the request shows and re-check them at publication
+      "memory/pip-admission.ts": 2, "memory/pip-reflect.ts": 2, "memory/pip-stance.ts": 4,
       // Mobile lane merge (reviewed against I-15): the identity source set moved from skills.ts to
       // provenance-stamp.ts (it names its kinds) plus a rowid chunk bound; replay-lineage gained a
       // point lookup by id; schema.ts folded two administrative checks into one marked statement.

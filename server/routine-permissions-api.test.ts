@@ -108,6 +108,18 @@ describe.skipIf(process.platform === "win32")("routine approval levels", () => {
           environment: { FAKE_ACP_MODE: "permission", FAKE_ACP_PERMISSION_COMMAND: 'tmp="tempfile_$(date +%s).txt" && date > "$tmp" && cat "$tmp" >> notes/log.md && rm "$tmp"' },
           config: { cli: FAKE_CLI, fullAuto: false },
         },
+        // 1.0.3 routine carve-out: a write whose target a value holds runs,
+        // and the run's history says so; a literal home delete still holds
+        vartarget: {
+          driver: "grokAgent",
+          environment: { FAKE_ACP_MODE: "permission", FAKE_ACP_PERMISSION_COMMAND: 'OUT="$(cat target.txt)"; cat x > "$OUT"' },
+          config: { cli: FAKE_CLI, fullAuto: false },
+        },
+        homedelete: {
+          driver: "grokAgent",
+          environment: { FAKE_ACP_MODE: "permission", FAKE_ACP_PERMISSION_COMMAND: "rm -rf ~" },
+          config: { cli: FAKE_CLI, fullAuto: false },
+        },
         // and one whose delete cannot be placed at all
         unplaced: {
           driver: "grokAgent",
@@ -157,7 +169,7 @@ describe.skipIf(process.platform === "win32")("routine approval levels", () => {
     expect(card, `no stop-line card at No limits. stderr: ${stderr.slice(-1500)}`).not.toBeNull();
     expect(card.card).toMatchObject({ routineId: routine.id });
     expect(card.card.routineAllowKey).toMatch(/^stop:delete:\/.*\/Documents\/old$/);
-    expect((await desktopApi("POST", `/api/routines/${routine.id}/always-allow`, { allowKey: card.card.routineAllowKey, threadId })).status).toBe(200);
+    expect((await desktopApi("POST", `/api/routines/${routine.id}/always-allow`, { answer: true, allowKey: card.card.routineAllowKey, threadId, requestId: card.card.requestId })).status).toBe(200);
     expect((await desktopApi("POST", `/api/threads/${threadId}/respond`, { requestId: card.card.requestId, behavior: "allow" })).body).toMatchObject({ ok: true });
     const first = await settled(runId);
     expect(first, `run never settled. stderr: ${stderr.slice(-1500)}`).toMatchObject({ status: "completed" });
@@ -191,9 +203,9 @@ describe.skipIf(process.platform === "win32")("routine approval levels", () => {
     expect(card.card).toMatchObject({ routineId: routine.id });
     expect(card.card.routineAllowKey).toMatch(/^stop:delete:\/.*\/Documents\/old$/);
     // a forged key is refused; the card's own is kept on the routine
-    expect((await desktopApi("POST", `/api/routines/${routine.id}/always-allow`, { allowKey: "stop:delete:/", threadId })).status).toBe(409);
-    expect((await api("POST", `/api/routines/${routine.id}/always-allow`, { allowKey: card.card.routineAllowKey, threadId })).status).toBe(404);
-    expect((await desktopApi("POST", `/api/routines/${routine.id}/always-allow`, { allowKey: card.card.routineAllowKey, threadId })).status).toBe(200);
+    expect((await desktopApi("POST", `/api/routines/${routine.id}/always-allow`, { answer: true, allowKey: "stop:delete:/", threadId, requestId: card.card.requestId })).status).toBe(409);
+    expect((await api("POST", `/api/routines/${routine.id}/always-allow`, { answer: true, allowKey: card.card.routineAllowKey, threadId, requestId: card.card.requestId })).status).toBe(404);
+    expect((await desktopApi("POST", `/api/routines/${routine.id}/always-allow`, { answer: true, allowKey: card.card.routineAllowKey, threadId, requestId: card.card.requestId })).status).toBe(200);
     expect((await desktopApi("POST", `/api/threads/${threadId}/respond`, { requestId: card.card.requestId, behavior: "allow" })).body).toMatchObject({ ok: true });
     expect(await settled(runId)).toMatchObject({ status: "completed" });
     expect((await routineState(routine.id)).alwaysAllow).toEqual([card.card.routineAllowKey]);
@@ -227,13 +239,39 @@ describe.skipIf(process.platform === "win32")("routine approval levels", () => {
     expect(card.card.held).toContain("cannot place");
     expect(card.card.taskAllowKey).toMatch(/^stop:delete:unplaced:/);
     expect(card.card.routineAllowKey).toBe(card.card.taskAllowKey);
-    expect((await desktopApi("POST", `/api/routines/${routine.id}/always-allow`, { allowKey: card.card.routineAllowKey, threadId })).status).toBe(200);
+    expect((await desktopApi("POST", `/api/routines/${routine.id}/always-allow`, { answer: true, allowKey: card.card.routineAllowKey, threadId, requestId: card.card.requestId })).status).toBe(200);
     await desktopApi("POST", `/api/threads/${threadId}/respond`, { requestId: card.card.requestId, behavior: "allow" });
     expect(await settled(runId)).toMatchObject({ status: "completed" });
     // the next run of the same command is covered
     const next = await settled(await runOnce(routine.id));
     expect(next).toMatchObject({ status: "completed" });
   }, 120_000);
+
+  it("a routine's write to a target a value holds runs on Auto, and the run's history records it", async () => {
+    const bot = await makeBot("Var", "vartarget");
+    expect((await desktopApi("PATCH", `/api/bots/${bot.id}`, { noLimits: true, acknowledgeNoLimits: true })).status).toBe(200);
+    const routine = await makeRoutine(bot.id, { permissionMode: "auto" });
+    const run = await settled(await runOnce(routine.id));
+    expect(run, `stderr: ${stderr.slice(-1500)}`).toMatchObject({ status: "completed" });
+    expect((await threadMessages(run!.threadId)).filter((m) => m.kind === "options" && m.card?.requestId)).toHaveLength(0);
+    expect(run!.notes).toEqual(['Ran without asking, target held in a value: a redirect to "$OUT"']);
+  }, 90_000);
+
+  it("a routine's literal home delete still holds, even at No limits", async () => {
+    const bot = await makeBot("Hom", "homedelete");
+    expect((await desktopApi("PATCH", `/api/bots/${bot.id}`, { noLimits: true, acknowledgeNoLimits: true })).status).toBe(200);
+    const routine = await makeRoutine(bot.id);
+    expect((await routineState(routine.id)).permissionMode).toBe("unlimited");
+    const runId = await runOnce(routine.id);
+    const threadId = await poll(async () => (await runState(runId))?.threadId ?? null, 20_000);
+    const card = await poll(() => liveCard(threadId!), 20_000);
+    expect(card, `no card. stderr: ${stderr.slice(-1500)}`).not.toBeNull();
+    expect(card.card.held).toContain("whole home folder");
+    expect(card.card.routineAllowKey).toBeUndefined();
+    expect((await runState(runId)).notes).toBeUndefined();
+    await desktopApi("POST", `/api/threads/${threadId}/respond`, { requestId: card.card.requestId, behavior: "deny" });
+    await settled(runId);
+  }, 90_000);
 
   it("the owner's message in a routine's conversation runs at the routine's level", async () => {
     const bot = await makeBot("Kit");

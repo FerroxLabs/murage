@@ -16,9 +16,10 @@ import { planEngineHistory, removeEngineHistoryFiles } from "./engine-history-ru
 import { redoDirectory } from "./engine-redo.ts";
 import { useFakeExclusion, type FakeExclusion } from "./testing/engine-exclusion-fake.ts";
 import { buildFixture, canaryHits, type Fixture } from "./testing/engine-history-fixtures.ts";
+import { removeTempDirSync } from "./testing/cleanup.ts";
 
 const scratch = realpathSync.native(mkdtempSync(join(tmpdir(), "murage-r30c-")));
-afterAll(() => rmSync(scratch, { recursive: true, force: true }));
+afterAll(() => removeTempDirSync(scratch));
 let fake: FakeExclusion;
 function clearJournals(): void { const dir = redoDirectory(); if (dir && existsSync(dir)) for (const name of readdirSync(dir)) rmSync(join(dir, name), { force: true }); }
 const journalFiles = (): string[] => { const dir = redoDirectory(); return dir && existsSync(dir) ? readdirSync(dir) : []; };

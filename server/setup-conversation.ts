@@ -378,6 +378,15 @@ export function setupConversationPlan(
 
   if (view.next !== null) wanted.push(plan(view.next, variantForCurrentStep(view.next, view)));
 
+  // The closing card carries the first backup: setup ends VERIFIED, so once
+  // the job is done the card that turns backups on and shows the checked
+  // receipt (FirstRunBackupsRow) arrives. It never settles; it is a record.
+  // Setup is not finished by this card arriving: `view.complete` stays false
+  // until the desktop reports a checked backup or the person's choice to keep
+  // backups off (shared/setup.ts, server/setup-backup.ts).
+  const flow = stepView(view, "flow");
+  if (flow?.done === true || flow?.skipped === true) wanted.push(plan("flow", "next"));
+
   // SETTLED FOLLOWS THE STEP, IN BOTH DIRECTIONS. A step that is finished
   // shows its card settled; a step that is outstanding shows its card live,
   // including one that WAS finished and has been put back. Deciding both here

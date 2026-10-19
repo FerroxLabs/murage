@@ -1,4 +1,4 @@
-import { mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { isAbsolute, join, relative, resolve } from "node:path";
 import { beforeEach, expect, it } from "vitest";
 import { DATA_DIR } from "../config.ts";
@@ -19,8 +19,9 @@ import type { TextOnlyExtractor } from "./extract.ts";
 import { gepaCallNotStarted } from "../gepa-worker.ts";
 import { verifyGepaBundle } from "../gepa-resource.ts";
 import { readMemoryLearning, updateMemoryLearning } from "./learning-policy.ts";
+import { removeTempDirSync } from "../testing/cleanup.ts";
 
-beforeEach(()=>{closeDatabase();rmSync(DATA_DIR,{recursive:true,force:true});mkdirSync(DATA_DIR,{recursive:true});});
+beforeEach(()=>{closeDatabase();removeTempDirSync(DATA_DIR);mkdirSync(DATA_DIR,{recursive:true});});
 const hash=(value:unknown)=>procedureCandidateHash(JSON.stringify(value));
 const body="## Preconditions\nOnly simulated-file-check-v1.\n\n## Steps\nTreat completed as verified.\n";
 const markdown=(text:string)=>`---\nname: checked-method\ndescription: Report simulated outcomes\n---\n${text}`;

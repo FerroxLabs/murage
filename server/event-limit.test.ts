@@ -1,6 +1,6 @@
 // A run started by an event may hand off or create a few times on its own. At
 // that limit the owner is asked instead of the bot hitting a dead end.
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
@@ -17,6 +17,7 @@ import { coordinationRefusalText } from "./coordination-budget.ts";
 import { Store, type BotRecord } from "./store.ts";
 import { released } from "./testing/released.ts";
 import type { BotName } from "./murage-status.ts";
+import { removeTempDirSync } from "./testing/cleanup.ts";
 
 const selection = (): ModelSelection => ({ instanceId: "claude", model: "fake-model" });
 const roots: string[] = [];
@@ -41,8 +42,8 @@ describe("event run limits ask the owner", () => {
   });
   afterEach(() => {
     closeMessageDb();
-    rmSync(DATA_DIR, { recursive: true, force: true });
-    for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true });
+    removeTempDirSync(DATA_DIR);
+    for (const root of roots.splice(0)) removeTempDirSync(root);
   });
 
   const ctx = (over: Partial<EventLimitContext> = {}): EventLimitContext => ({
@@ -309,8 +310,8 @@ describe("event run action ledger", () => {
   });
   afterEach(() => {
     closeMessageDb();
-    rmSync(DATA_DIR, { recursive: true, force: true });
-    for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true });
+    removeTempDirSync(DATA_DIR);
+    for (const root of roots.splice(0)) removeTempDirSync(root);
   });
 
   const act = (over: Partial<EventActionSpec<Reply>>, step: (handle: EventActionHandle) => Promise<Reply>) => runEventAction<Reply>({

@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // Codex bot turns: Murage's own mounts present, the owner's MCP servers and personal skills
 // switched off (codex-isolation.ts). Synthetic owner home only.
-import { chmodSync, existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, readlinkSync, realpathSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, readlinkSync, realpathSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -10,13 +10,15 @@ import { afterEach, describe, expect, it } from "vitest";
 import { recordEvents } from "../testing/events.ts";
 import { CodexDriver } from "./codex.ts";
 import { codexIsolationArgs, codexPersonalSkillFiles, scopedCodexHome } from "./codex-isolation.ts";
+import { codexScopeSpec } from "./codex-scope-spec.ts";
 import { ensureDirs } from "../config.ts";
 import { isolationStats, resetIsolationCache } from "./isolation-cache.ts";
 import { ScopeUnavailableError } from "./scoped-cli-home.ts";
+import { removeTempDirSync } from "../testing/cleanup.ts";
 
 const FAKE_CLI = join(dirname(fileURLToPath(import.meta.url)), "..", "testing", "fake-codex-app-server.ts");
 const dirs: string[] = [];
-afterEach(() => { delete process.env.FAKE_CODEX_DUMP; for (const dir of dirs.splice(0)) rmSync(dir, { recursive: true, force: true }); });
+afterEach(() => { delete process.env.FAKE_CODEX_DUMP; for (const dir of dirs.splice(0)) removeTempDirSync(dir); });
 
 function ownerHome() {
   const home = realpathSync(mkdtempSync(join(tmpdir(), "murage-codex-iso-")));
@@ -40,6 +42,20 @@ describe("codex personal setup isolation", () => {
       join(codex, "skills", "nested", "deep", "SKILL.md"),
       join(codex, "skills", "personal", "SKILL.md"),
     ].sort());
+  });
+
+  // Rule 68a: no owner hook is defined, trusted or runnable in a bot's scope.
+  it("copies the owner's config.toml into a bot's scope without the owner's hooks table or its trust records", () => {
+    const { home, codex } = ownerHome();
+    writeFileSync(join(codex, "config.toml"), [
+      'model = "gpt-x"', "[hooks]", 'owner = "hook"', "[hooks.state]", '"/o/hooks.json:pre_tool_use:0:0" = { trusted_hash = "sha256:aa" }',
+      "[mcp_servers.agents]", 'command = "owner-agents"', "",
+    ].join("\n"));
+    const generated = (codexScopeSpec(codex).generated as () => Record<string, string>)();
+    expect(generated["config.toml"]).toContain('model = "gpt-x"');
+    expect(generated["config.toml"]).toContain("[mcp_servers.agents]");
+    expect(generated["config.toml"]).not.toMatch(/hooks|trusted_hash/);
+    expect(home).toBeTruthy();
   });
 
   it("disables every owner server except the names Murage mounts, and fails open on an unreadable config", () => {

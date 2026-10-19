@@ -15,7 +15,7 @@
 //  - rebuildable folders (node_modules, virtual environments, caches) left out and listed;
 //  - items past the file limit, or unreadable, left out and listed; the backup completes.
 import { execFileSync, spawnSync } from "node:child_process";
-import { chmodSync, existsSync, linkSync, lstatSync, mkdirSync, readFileSync, readlinkSync, readdirSync, rmSync, statSync, symlinkSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, linkSync, lstatSync, mkdirSync, readFileSync, readlinkSync, readdirSync, statSync, symlinkSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { expect, it } from "vitest";
 import { withOfflineInstallation } from "./installation-database-snapshot.ts";
@@ -25,6 +25,7 @@ import { writeEncryptedInstallationBackup, restoreEncryptedInstallationNew } fro
 import { reviewInstallation } from "./installation-activation.ts";
 import { validateInstallationArchiveManifest } from "./installation-archive.ts";
 import { backupFixture, testAgeKeys } from "./testing/backup-fixture.ts";
+import { removeTempDirSync } from "./testing/cleanup.ts";
 
 const selection = { scope: "application-data", credentialPolicy: "preserve-in-encrypted-fidelity" } as const;
 const has = (tool: string, args: string[] = ["--version"]) => spawnSync(tool, args, { stdio: "ignore" }).status === 0;
@@ -39,7 +40,7 @@ async function stageAndInventory(data: string, parent: string, options: { maxFil
       validateInstallationArchiveManifest({ ...stage.manifest, format: "murage.installation" }, options);
       return stage.manifest;
     }
-    finally { rmSync(stage.directory, { recursive: true, force: true }); }
+    finally { removeTempDirSync(stage.directory); }
   });
 }
 
@@ -76,7 +77,7 @@ for (const [name, make] of Object.entries(artefacts)) {
     mkdirSync(desk, { recursive: true });
     make(desk);
     try { await stageAndInventory(f.data, f.parent); }
-    finally { f.db.close(); rmSync(f.parent, { recursive: true, force: true }); }
+    finally { f.db.close(); removeTempDirSync(f.parent); }
   });
 }
 
@@ -94,7 +95,7 @@ it("leaves rebuildable folders out and lists them; keeps real work", async () =>
     expect(skipped).toEqual([".venv", "app/.next", "crate/target", "env-by-another-name", "site/node_modules", "src/__pycache__"]);
     expect(manifest.files.map(file => file.path)).toContain("workspaces/bot/threads/thread/src/main.py");
     expect(manifest.files.some(file => file.path.includes("node_modules"))).toBe(false);
-  } finally { f.db.close(); rmSync(f.parent, { recursive: true, force: true }); }
+  } finally { f.db.close(); removeTempDirSync(f.parent); }
 });
 
 it("past the file limit, items in owner folders are left out and listed; the backup completes", async () => {
@@ -109,7 +110,7 @@ it("past the file limit, items in owner folders are left out and listed; the bac
     expect(manifest.skipped?.every(item => item.reason === "file-limit")).toBe(true);
     // Murage's own records are never the ones left out.
     for (const record of ["bots.json", "config.json", "groups.json", "messages.db"]) expect(manifest.files.map(file => file.path)).toContain(record);
-  } finally { f.db.close(); rmSync(f.parent, { recursive: true, force: true }); }
+  } finally { f.db.close(); removeTempDirSync(f.parent); }
 });
 
 it.skipIf(process.platform === "win32" || process.getuid?.() === 0)("an unreadable file in a bot's folder is left out and listed, not a failure", async () => {
@@ -120,7 +121,7 @@ it.skipIf(process.platform === "win32" || process.getuid?.() === 0)("an unreadab
   try {
     const manifest = await stageAndInventory(f.data, f.parent);
     expect(manifest.skipped).toContainEqual({ path: "workspaces/bot/threads/thread/locked.txt", reason: "unreadable" });
-  } finally { chmodSync(join(desk, "locked.txt"), 0o600); f.db.close(); rmSync(f.parent, { recursive: true, force: true }); }
+  } finally { chmodSync(join(desk, "locked.txt"), 0o600); f.db.close(); removeTempDirSync(f.parent); }
 });
 
 it.skipIf(process.platform === "win32" || process.getuid?.() === 0)("an unreadable file whose name holds a line break is listed printably", async () => {
@@ -131,7 +132,7 @@ it.skipIf(process.platform === "win32" || process.getuid?.() === 0)("an unreadab
   try {
     const manifest = await stageAndInventory(f.data, f.parent);
     expect(manifest.skipped).toContainEqual({ path: "workspaces/bot/threads/thread/odd?name.txt", reason: "unreadable" });
-  } finally { chmodSync(join(desk, "odd\nname.txt"), 0o600); f.db.close(); rmSync(f.parent, { recursive: true, force: true }); }
+  } finally { chmodSync(join(desk, "odd\nname.txt"), 0o600); f.db.close(); removeTempDirSync(f.parent); }
 });
 
 it("a refusal about Murage's own records names the file", async () => {
@@ -140,7 +141,7 @@ it("a refusal about Murage's own records names the file", async () => {
   try {
     const error = await stageAndInventory(f.data, f.parent).then(() => null, (caught: { code?: string; path?: string }) => caught);
     expect({ code: error?.code, path: error?.path }).toEqual({ code: "INVALID_JSON_COMPONENT", path: "routines.json" });
-  } finally { f.db.close(); rmSync(f.parent, { recursive: true, force: true }); }
+  } finally { f.db.close(); removeTempDirSync(f.parent); }
 });
 
 // The real thing: tools a bot runs, then Back up now, restore into a new
@@ -205,7 +206,7 @@ it.skipIf(!process.env.MURAGE_BACKUP_TEST_AGE_DIR)("round trip: a used bot folde
     expect(reviewInstallation(restored).status).toBe("ready-for-review");
     await writeEncryptedInstallationBackup(restored, join(f.parent, "second.age"), { ...keys, selection });
     expect(readdirSync(f.parent)).toContain("second.age");
-  } finally { f.db.close(); rmSync(f.parent, { recursive: true, force: true }); }
+  } finally { f.db.close(); removeTempDirSync(f.parent); }
 }, 120_000);
 
 // 0.1.60 audit W-A2: the stage holds only Murage's projected records and the
@@ -226,7 +227,7 @@ it("the stage copies no owner file, and refuses one that changed after it was ha
         stage.openFile(stored).destroy();
         writeFileSync(join(desk, "notes.md"), "changed after hashing\n");
         expect(() => stage.openFile(stored)).toThrow(expect.objectContaining({ code: "SOURCE_CHANGED", path: "workspaces/bot/threads/thread/notes.md" }));
-      } finally { rmSync(stage.directory, { recursive: true, force: true }); }
+      } finally { removeTempDirSync(stage.directory); }
     });
-  } finally { f.db.close(); rmSync(f.parent, { recursive: true, force: true }); }
+  } finally { f.db.close(); removeTempDirSync(f.parent); }
 });

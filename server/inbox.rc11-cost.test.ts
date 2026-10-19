@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
-import { mkdirSync, rmSync } from "node:fs";
+import { mkdirSync } from "node:fs";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { beforeEach, expect, it, vi } from "vitest";
@@ -15,11 +15,12 @@ import { waitingSummary } from "./memory/review.ts";
 import { WAITING_REVIEW, WAITING_REVIEW_INDEX, validateMemorySchema } from "./memory/schema.ts";
 import { buildOptionalIndexOffThread, dropOptionalIndexes } from "./memory/optional-index.ts";
 import type { MemoryRoster } from "./memory/policy.ts";
+import { removeTempDirSync } from "./testing/cleanup.ts";
 
 const roster = { bots: [{ id: "bot", name: "Ember", threadId: "chat", tasks: [] }], groups: [] } as unknown as MemoryRoster;
 beforeEach(async () => {
   closeDatabase(); await stopWalMaintenance();
-  rmSync(DATA_DIR, { recursive: true, force: true }); mkdirSync(DATA_DIR, { recursive: true });
+  removeTempDirSync(DATA_DIR); mkdirSync(DATA_DIR, { recursive: true });
 });
 
 function seed(history: number) {
@@ -86,7 +87,7 @@ function cards(db: DatabaseSync, now: number) {
 it("all database card sources keep the same statement and row cost with 10x history and scopes, including expiry and other-connection commits", async () => {
   const samples: Array<{ statements: number; rows: number; candidateVisits: number }> = [];
   for (const history of [1_000, 10_000]) {
-    closeDatabase(); await stopWalMaintenance(); rmSync(DATA_DIR, { recursive: true, force: true }); mkdirSync(DATA_DIR, { recursive: true });
+    closeDatabase(); await stopWalMaintenance(); removeTempDirSync(DATA_DIR); mkdirSync(DATA_DIR, { recursive: true });
     const db = seed(history);
     await buildOptionalIndexOffThread(db, WAITING_REVIEW, { inline: true });
     cards(db, 0);

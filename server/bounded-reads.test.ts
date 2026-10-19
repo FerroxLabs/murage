@@ -5,7 +5,7 @@
 // they look for, never with the thread's history: on a conversation of 1,000
 // messages and on one of 200,000 each reads the same statements and the same
 // rows, every one an index search, and neither is ever loaded whole.
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
@@ -13,7 +13,8 @@ import { afterAll, beforeAll, expect, it } from "vitest";
 import { DATA_DIR } from "./config.ts";
 import type { ModelSelection } from "./contracts.ts";
 import { initializeArtifacts } from "./artifacts.ts";
-import { ATTACHMENTS_DIR } from "./attachments.ts";
+import { ATTACHMENTS_HOME } from "./attachments.ts";
+const ATTACHMENTS_DIR = join(DATA_DIR, "attachments");
 import { conversationImageAttachments } from "./image-reference-resolver.ts";
 import { imageReferences } from "./image-operations.ts";
 import { __resetMediaAssetsForTests, mediaAssetsRoute, type MediaAssetsDeps } from "./media-assets.ts";
@@ -22,6 +23,7 @@ import { RoutineManager } from "./routines.ts";
 import { Store } from "./store.ts";
 import { expectSameReads, measureReads, refillThread } from "./testing/bounded-reads.ts";
 import { MEDIA_ROUTES, type MediaResolveResponse } from "../shared/media-assets.ts";
+import { removeTempDirSync } from "./testing/cleanup.ts";
 
 const selection = (): ModelSelection => ({ instanceId: "claude", model: "claude-sonnet-5" });
 const u32 = (value: number) => { const b = Buffer.alloc(4); b.writeUInt32BE(value); return b; };
@@ -66,7 +68,7 @@ function chain(threadId: string, count: number) {
 const loaded = (threadId: string) => (store as unknown as { threads: { has(id: string): boolean } }).threads.has(threadId);
 
 beforeAll(async () => {
-  rmSync(DATA_DIR, { recursive: true, force: true });
+  removeTempDirSync(DATA_DIR);
   store = new Store(selection);
   const a = store.createBot({ name: "Thousand" }), b = store.createBot({ name: "Two hundred thousand" });
   small = { threadId: a.threadId, botId: a.id }; large = { threadId: b.threadId, botId: b.id };
@@ -148,10 +150,10 @@ const step = (name: string, run: () => Promise<void>) => { steps.push([name, run
   });
 
   step("lets the image tool name an image the conversation shows, 500 rows back, and none it does not", async () => {
-    const allowed = (threadId: string) => measureReads(threadId, messagesDb(), () => ({
-      named: conversationImageAttachments(store, threadId, ATTACHMENTS_DIR, [IMAGE]).has(IMAGE),
-      unnamed: conversationImageAttachments(store, threadId, ATTACHMENTS_DIR, ["22222222-2222-4222-8222-222222222222.png"]).has("22222222-2222-4222-8222-222222222222.png"),
-      reference: imageReferences(store, threadId, [IMAGE]).length,
+    const allowed = (threadId: string) => measureReads(threadId, messagesDb(), async () => ({
+      named: conversationImageAttachments(store, threadId, ATTACHMENTS_HOME, [IMAGE]).has(IMAGE),
+      unnamed: conversationImageAttachments(store, threadId, ATTACHMENTS_HOME, ["22222222-2222-4222-8222-222222222222.png"]).has("22222222-2222-4222-8222-222222222222.png"),
+      reference: (await imageReferences(store, threadId, [IMAGE], () => {})).length,
     }));
     const a = await allowed(small.threadId), b = await allowed(large.threadId);
     for (const outcome of [a, b]) expect(outcome.result).toEqual({ named: true, unnamed: false, reference: 1 });

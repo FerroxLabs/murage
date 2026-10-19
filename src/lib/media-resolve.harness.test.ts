@@ -12,7 +12,7 @@
 // functions are called directly with the same DelegatedRequest shape
 // server/index.ts hands them, and `desktop: true` because the desktop proof
 // is index.ts's decision, not these modules'.
-import { mkdirSync, mkdtempSync, realpathSync, rmSync, symlinkSync, utimesSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, realpathSync, symlinkSync, utimesSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
@@ -25,6 +25,7 @@ import { workspaceFilesRoute, type WorkspaceFilesDeps } from "../../server/works
 import { MEDIA_ROUTES } from "../../shared/media-assets.ts";
 import { WORKSPACE_FILES_ROUTES } from "../../shared/workspace-files.ts";
 import { forgetLocalMedia, localMedia, resolveLocalMedia, type MediaApi } from "./media-resolve.ts";
+import { removeTempDirSync } from "../../server/testing/cleanup.ts";
 
 // ── bytes ────────────────────────────────────────────────────────────────
 const le16 = (value: number) => { const b = Buffer.alloc(2); b.writeUInt16LE(value); return b; };
@@ -79,7 +80,7 @@ function scopesFor(dataDir: string, bots: FakeBot[], groups: FakeGroup[], retain
 }
 
 const roots: string[] = [];
-afterEach(() => { for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true }); __resetMediaAssetsForTests(); });
+afterEach(() => { for (const root of roots.splice(0)) removeTempDirSync(root); __resetMediaAssetsForTests(); });
 beforeEach(() => { forgetLocalMedia(); __resetMediaAssetsForTests(); });
 
 function fixture() {
