@@ -3,12 +3,12 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createHash, randomUUID } from "node:crypto";
 import { afterEach, expect, it, vi } from "vitest";
-import { safeWipeSync } from "./testing/safe-wipe.mjs";
 import { BackupCoordinator, type BackupCaptureRequest } from "./backup-coordinator.ts";
 import { backupScheduleSchema, latestBackupOccurrence } from "../shared/backup-schedule.ts";
 import { canonicalUpdateDescriptor, type UpdateCandidate } from "../shared/update-candidate.mjs";
+import { removeTempDirSync } from "./testing/cleanup.ts";
 const roots:string[]=[];
-afterEach(()=>{for(const root of roots.splice(0))safeWipeSync(root);vi.useRealTimers();});
+afterEach(()=>{for(const root of roots.splice(0))removeTempDirSync(root);vi.useRealTimers();});
 const choices={enabled:true,installationRef:"installation-one",destinationRef:"destination-one",recoveryRef:"recovery-one",timezone:"Asia/Bangkok",time:"09:00",catchupMs:3*86400000,maxBytes:100000,maxDurationMs:1000,selection:{scope:"application-data" as const,credentialPolicy:"preserve-in-encrypted-fidelity" as const},preUpgrade:false};
 const selectionHash=createHash("sha256").update(JSON.stringify(choices.selection)).digest("hex");
 function fixture(){const stateDirectory=mkdtempSync(join(tmpdir(),"murage-backup-coordinator-"));roots.push(stateDirectory);let now=Date.parse("2026-09-13T01:00:00Z");
@@ -170,4 +170,21 @@ it("a backup that stopped unconfirmed can be cleared by the person, and only the
  // The stopped run is not repeated; a new request is a fresh job.
  expect(()=>c.requestManual(1,"manual-one")).toThrow("BACKUP_HANDOFF_CHANGED");
  expect(c.requestManual(1,"manual-two")).toMatchObject({phase:"due",job:{occurrence:"1:manual:manual-two"}});
+});
+// Settings L5: a receipt proves a backup of one folder with one key. Pointing
+// the schedule at a new folder or key starts it unverified; turning backups
+// off keeps the same refs, and the receipt with them.
+it("a reconfigured folder or key never inherits the old receipt",async()=>{
+ const f=fixture();f.coordinator.configure(0,choices);f.setNow("2026-09-13T03:00:00Z");
+ const done=await f.coordinator.tick();expect(done.lastVerified).toBeDefined();
+ const off=f.coordinator.configure(done.revision,{...choices,enabled:false});expect(off.lastVerified).toEqual(done.lastVerified);
+ const moved=f.coordinator.configure(off.revision,{...choices,destinationRef:"destination-two",recoveryRef:"recovery-two"});expect(moved.lastVerified).toBeUndefined();
+ const f2=fixture();f2.coordinator.configure(0,choices);f2.setNow("2026-09-13T03:00:00Z");const d2=await f2.coordinator.tick();
+ expect(f2.coordinator.configure(d2.revision,{...choices,recoveryRef:"recovery-two"}).lastVerified).toBeUndefined();
+});
+it("the first run's ending is recorded once and stands",()=>{
+ const f=fixture();expect(f.coordinator.firstRunRecord()).toBeUndefined();
+ expect(f.coordinator.recordFirstRun({state:"off"})).toMatchObject({version:1,state:"off"});
+ expect(f.coordinator.recordFirstRun({state:"verified",jobId:"a".repeat(64),sha256:"b".repeat(64),installationRef:"installation-one",destinationRef:"destination-one",recoveryRef:"recovery-one"}).state).toBe("off");
+ writeFileSync(join(f.stateDirectory,"backup-first-run.json"),"{");expect(()=>f.coordinator.firstRunRecord()).toThrow("BACKUP_FIRST_RUN_STATE_INVALID");
 });

@@ -4,7 +4,7 @@
 // Write-time privacy, 1.0.2 S6 (U2): a forget made BEFORE the upgrade has a time (its tombstone's), and the U2 seed gives its range a proven bound
 // from it (`until`, lineage-backfill.ts forgetBound): a generated line whose turn began after the forget was built without the forgotten line
 // and is not withheld by position; one whose turn began before it (or that was written before it) is.
-import { mkdirSync, rmSync } from "node:fs";
+import { mkdirSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 import { DATA_DIR } from "../config.ts";
 import { closeDatabase, database } from "../database.ts";
@@ -13,6 +13,7 @@ import { lineageBackfillSlice, resetLineageBackfillForTest } from "./lineage-bac
 import { drainRevokeMarker } from "./memory-revocation.ts";
 import { setScopeFlowEdgesRecorded } from "./revoke-marker.ts";
 import { buildLegacyHistory, markUpgraded, messageSource, type LegacyHistory } from "./testing/legacy-history-fixture.ts";
+import { removeTempDirSync } from "../testing/cleanup.ts";
 
 setScopeFlowEdgesRecorded(true);
 const THREAD = "wt-1-t0";
@@ -20,7 +21,7 @@ const THREAD = "wt-1-t0";
 /** m0..m11 of one thread: even = owner, odd = reply (turn of the owner line before it), `at` = its index; only the forgotten reply is captured (a captured later reply would carry the forgotten line's contamination on through the marker's walk of its source: that is the design's own contagion, not the bound). */
 function build(): LegacyHistory {
   closeDatabase(); resetLineageBackfillForTest();
-  rmSync(DATA_DIR, { recursive: true, force: true }); mkdirSync(DATA_DIR, { recursive: true });
+  removeTempDirSync(DATA_DIR); mkdirSync(DATA_DIR, { recursive: true });
   return buildLegacyHistory(database(), { seed: 1, threads: 1, lines: 12, receipts: 0, captured: 0, copies: 0, rootSets: 0 });
 }
 /** The owner forgot reply `id` at time `forgetAt` (a tombstone and a deleted source, as 1.0.1 left it). */

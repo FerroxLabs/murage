@@ -4,7 +4,7 @@
 // Owner team management over a real Store in a throwaway data dir: rename,
 // members and lead, and delete. The HTTP wiring and its desktop gate are in
 // team-sections-api.test.ts.
-import { mkdirSync, rmSync } from "node:fs";
+import { mkdirSync } from "node:fs";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import { DATA_DIR } from "./config.ts";
@@ -19,10 +19,11 @@ import {
   renameTeam,
   type TeamDeps,
 } from "./team-sections.ts";
+import { removeTempDirSync } from "./testing/cleanup.ts";
 
 beforeEach(() => {
   closeDatabase();
-  rmSync(DATA_DIR, { recursive: true, force: true });
+  removeTempDirSync(DATA_DIR);
   mkdirSync(DATA_DIR, { recursive: true });
 });
 

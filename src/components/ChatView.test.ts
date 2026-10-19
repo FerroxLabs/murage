@@ -191,7 +191,7 @@ describe("one image surface", () => {
     expect(media).toMatch(/onLoad=\{\(event\) => \{[\s\S]{0,400}truePixelWidth\(current\)\.then\(\(pixels\) => \{\s*if \(!servedOriginal\(current, pixels\)\) return;\s*rememberServedOriginal\(item\.src\);\s*setSmallOriginal\(true\)/);
     expect(media).not.toContain("img.naturalWidth");
     // dropping the srcset remounts the <img> so it draws at natural density
-    expect(media).toMatch(/<img\s*\/\/[^\n]*\n(?:\s*\/\/[^\n]*\n)*\s*key=\{srcSet \? "srcset" : "original"\}\s*src=\{desktopResourceUrl\(item\.src\)\}\s*srcSet=\{srcSet\}/);
+    expect(media).toMatch(/<DesktopImg\s*\/\/[^\n]*\n(?:\s*\/\/[^\n]*\n)*\s*key=\{srcSet \? "srcset" : "original"\}\s*src=\{item\.src\}\s*srcSet=\{srcSet\}/);
   });
 
   it("routes Markdown images, attachment galleries and the Files preview the same way", () => {

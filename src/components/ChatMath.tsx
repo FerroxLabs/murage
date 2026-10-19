@@ -11,6 +11,7 @@
 // before. No DOMPurify, no KaTeX: the source shows instead.
 import { useEffect, useState } from "react";
 import type { MathSpan } from "@/lib/chat-math";
+import { trustedHtml } from "@/lib/trusted-html";
 
 interface KatexApi {
   renderToString(tex: string, options: Record<string, unknown>): string;
@@ -91,6 +92,6 @@ export function ChatMath({ span }: { span: MathSpan }) {
       : <code className="rounded bg-inset px-1 py-px text-[13px] [overflow-wrap:anywhere]">{span.raw}</code>;
   }
   return span.display
-    ? <span className="chat-math-display my-1 block max-w-full overflow-x-auto overflow-y-hidden" dangerouslySetInnerHTML={{ __html: html }} />
-    : <span className="chat-math-inline" dangerouslySetInnerHTML={{ __html: html }} />;
+    ? <span className="chat-math-display my-1 block max-w-full overflow-x-auto overflow-y-hidden" dangerouslySetInnerHTML={{ __html: trustedHtml(html) }} />
+    : <span className="chat-math-inline" dangerouslySetInnerHTML={{ __html: trustedHtml(html) }} />;
 }

@@ -1,12 +1,20 @@
 import { createHash, randomUUID } from "node:crypto";
-import { execFile, spawn } from "node:child_process";
 import { chmod, lstat, mkdir, mkdtemp, readFile, realpath, rm, writeFile } from "node:fs/promises";
 import { dirname, join, relative, resolve, sep } from "node:path";
-import { promisify } from "node:util";
 import { brotliDecompressSync, gunzipSync } from "node:zlib";
 import { createFuigoIsolation, type FuigoIsolation } from "./fuigo-probe-isolation.ts";
+import { execCli, spawnCli } from "./procs.ts";
+import type { ExecFileOptions } from "node:child_process";
 
-const exec = promisify(execFile);
+/** execCli as a promise, with execFile's error shape (`code` is the exit code). */
+function execCliAsync(file: string, args: string[], opts: ExecFileOptions): Promise<{ stdout: string; stderr: string }> {
+  return new Promise((resolveRun, reject) => {
+    execCli(file, args, opts, (error, stdout, stderr) => {
+      if (error) reject(Object.assign(error, { stdout, stderr: stderr ?? "" }));
+      else resolveRun({ stdout, stderr: stderr ?? "" });
+    });
+  });
+}
 const REGISTRY = "https://registry.npmjs.org";
 const MAX_ARCHIVE = 64 * 1024 * 1024;
 const MAX_TAR = 96 * 1024 * 1024;
@@ -106,14 +114,15 @@ export const probeNativeFuigo: FuigoProbe = async (cli, expectedVersion, scratch
     isolation = await createFuigoIsolation(cli, home, env);
     const { command, prefix } = isolation;
     let result;
-    try { result = await exec(command, [...prefix, "--version"], { cwd: home, env, timeout: 15000, windowsHide: true, maxBuffer: 65536 }); }
+    // Through the shared launcher (Rule 74c): the candidate engine runs with no controlling terminal.
+    try { result = await execCliAsync(command, [...prefix, "--version"], { cwd: home, env, timeout: 15000, windowsHide: true, maxBuffer: 65536 }); }
     catch (error) {
       if ((error as { code?: unknown }).code === 72) throw Object.assign(new Error("Private Fuigo update isolation is unavailable. Keep the selected engine."), { code: "FUIGO_PROBE_UNQUALIFIED" });
       throw error;
     }
     const version = nativeFuigoVersion(result.stdout);
     if (!version || expectedVersion && version !== expectedVersion) throw new Error("Fuigo executable version did not match the verified release.");
-    const child = spawn(command, [...prefix, "--permission-mode", "default", "--no-memory", "agent", "--no-leader", "-m", "murage_native_probe", "stdio"], { cwd: home, env, stdio: ["pipe", "pipe", "pipe"], windowsHide: true });
+    const child = spawnCli(command, [...prefix, "--permission-mode", "default", "--no-memory", "agent", "--no-leader", "-m", "murage_native_probe", "stdio"], { cwd: home, env, stdio: ["pipe", "pipe", "pipe"] });
     // Only the isolated synthetic probe can populate these bounded diagnostics.
     const diagnostic = { cause: "unknown", exitCode: null as number | null, signal: null as string | null, stderr: "", stdoutBytes: 0, stderrBytes: 0 };
     let stderrSample = "";

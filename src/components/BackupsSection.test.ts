@@ -31,7 +31,9 @@ describe("Backups settings section", () => {
 
   it("General no longer renders backups, and the Backups pane is surface-gated", () => {
     expect(generalPane(modal)).not.toContain("BackupSettings");
-    expect(modal).toContain('desktop === true && section === "backups" && <BackupSettings />');
+    // 1.0.3 attachment-cap: the Backups page also carries the Storage card; both sit behind the same desktop gate
+    expect(modal).toMatch(/desktop === true && section === "backups" && <div className="space-y-4"><BackupSettings \/><div id="storage-heading"><StorageSettings \/><\/div><\/div>/);
+    expect(modal.match(/<BackupSettings \/>/g)).toHaveLength(1);
   });
 
   it("deep link: opening settings on Backups selects the Backups pane", () => {
@@ -171,7 +173,7 @@ describe("backup summary", () => {
     // the very list the "Needs attention" block renders above it.
     expect(source).toContain("scheduleCardNotice(local,status?.error,attention,status?.refs?.destinationLabel)");
     expect(source).not.toContain("{local??scheduleError(status?.error)}");
-    expect(source).toContain("<ScheduleCard s={s} attention={summary.attention}/>");
+    expect(source).toContain("<ScheduleCard s={s} attention={summary.attention} keepsafe={false}/>");
     expect(source).toContain("<ScheduleSetup s={s} attention={summary.attention}");
   });
   it("never claims availability without a bridge", () => {

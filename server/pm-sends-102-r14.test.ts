@@ -2,7 +2,7 @@
 // removed, with progress between bounded batches; (2) the old partial index is dropped on upgrade and accepted, exactly, in older
 // archives; (3) a held shared result keeps its hold until it is truly delivered; (4) transient unavailability never clears the
 // delivery debt, only a confirmed delivery or a durable terminal decision does.
-import { mkdirSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { basename, join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
@@ -16,8 +16,9 @@ import { initializeProjectTables } from "./project-tables.ts";
 import { fenceRestoredSql, releaseSharedResultAfterDelivery, sqlRowRestoreHeld } from "./restore-fence.ts";
 import { roomRequest } from "./room-requests.ts";
 import { BACKFILL_NAME, LEGACY_SHARED_OWED_INDEX_DDL, OWED_RETRY_FIRST_MS, backfillRoomRequestOwed, settleOwedSharedResults, upgradeRoomRequestOwed, type OwedSharedDeps } from "./room-request-owed.ts";
+import { removeTempDirSync } from "./testing/cleanup.ts";
 
-beforeEach(() => { closeDatabase(); rmSync(DATA_DIR, { recursive: true, force: true }); mkdirSync(DATA_DIR, { recursive: true }); });
+beforeEach(() => { closeDatabase(); removeTempDirSync(DATA_DIR); mkdirSync(DATA_DIR, { recursive: true }); });
 afterEach(() => closeDatabase());
 
 const TRIGGERS = ["room_request_owed_classify", "room_request_owed_shared_ins", "room_request_owed_shared_upd", "room_request_owed_shared_clear", "room_request_owed_fanout_ins", "room_request_owed_fanout_upd", "room_request_owed_fanout_child", "room_request_owed_gone"];
@@ -68,7 +69,7 @@ describe("(1) the backfill of a heavy history is an upgrade step with progress, 
       expect(readMemoryUpgradeStatus(root, { pid: process.pid })).toMatchObject({ state: "upgrading", phase: "indexing", done: 2_000, total: 5_000 });
       report.indexing();
       expect(readMemoryUpgradeStatus(root, { pid: process.pid })).toMatchObject({ phase: "indexing" });
-    } finally { rmSync(root, { recursive: true, force: true }); }
+    } finally { removeTempDirSync(root); }
     const source = readFileSync(new URL("./database.ts", import.meta.url), "utf8");
     const backfill = source.indexOf("upgradeRoomRequestOwed(db, (done, total) => upgrade.indexing({ done, total })");
     expect(backfill).toBeGreaterThan(-1);
@@ -188,13 +189,13 @@ describe("(4) delivery debt survives transient unavailability", () => {
       ["requester deleted (tombstone)", (s: ReturnType<typeof harness>["state"]) => { s.deleted = true; }],
       ["receipt exists", (s: ReturnType<typeof harness>["state"]) => { s.live = true; s.delivered = true; }],
     ] as const) {
-      closeDatabase(); rmSync(DATA_DIR, { recursive: true, force: true }); mkdirSync(DATA_DIR, { recursive: true });
+      closeDatabase(); removeTempDirSync(DATA_DIR); mkdirSync(DATA_DIR, { recursive: true });
       const db = oneOwed(), h = harness(db);
       set(h.state); h.settle();
       expect(owed(db), name).toEqual([]);
       expect(h.delivered, name).toEqual([]);
     }
-    const db = (closeDatabase(), rmSync(DATA_DIR, { recursive: true, force: true }), mkdirSync(DATA_DIR, { recursive: true }), oneOwed());
+    const db = (closeDatabase(), removeTempDirSync(DATA_DIR), mkdirSync(DATA_DIR, { recursive: true }), oneOwed());
     db.prepare("DELETE FROM room_requests WHERE id='r1'").run();
     expect(owed(db)).toEqual([]);                                              // request row gone
   });

@@ -102,9 +102,9 @@ posixOnly("a queued room turn runs as the turn it was queued for", () => {
         const start=source.indexOf('export async function verifyAgentBrowserBinary(');
         const end=source.indexOf('export async function ensureChrome(',start);
         if(start<0||end<0)throw new Error('Browser version fixture anchor changed');
-        const hostCheck='if (process.platform === "linux" && (process.getuid?.() === 0';
+        const hostCheck='if (browserHostRequiresSandboxBypass({';
         if(!source.includes(hostCheck))throw new Error('Browser host-check fixture anchor changed');
-        const body=source.slice(0,start).replace(hostCheck,'if (false && (process.getuid?.() === 0')+'export async function verifyAgentBrowserBinary() {}\\n'+source.slice(end);
+        const body=source.slice(0,start).replace(hostCheck,'if (false && browserHostRequiresSandboxBypass({')+'export async function verifyAgentBrowserBinary() {}\\n'+source.slice(end);
         return { format:'module-typescript', shortCircuit:true, source: body };
       } });
       const file=path.join(data,'config.json');const cfg=JSON.parse(fs.readFileSync(file,'utf8'));

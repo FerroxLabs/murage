@@ -1,10 +1,11 @@
-import { existsSync,mkdtempSync,readFileSync,rmSync,writeFileSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { PassThrough,Readable } from "node:stream";
 import { expect,it } from "vitest";
 import { backupIdentity,backupRecipient,encryptBackupStream,decryptBackupFile,stopBackupAgeProcess } from "./installation-backup-encryption.ts";
 import { testAgeKeys,rawAgeHost } from "./testing/backup-fixture.ts";
+import { removeTempDirSync } from "./testing/cleanup.ts";
 it.skipIf(!rawAgeHost)("round trips through pinned age with private identity on stdin; wrong key and tampering refuse",async()=>{
   const keys=testAgeKeys(),other=testAgeKeys(),root=mkdtempSync(join(tmpdir(),"murage-age-roundtrip-test-"));
   try{
@@ -15,7 +16,7 @@ it.skipIf(!rawAgeHost)("round trips through pinned age with private identity on 
     await expect(decryptBackupFile(keys.ageExecutable,other.identity,encrypted,join(root,"wrong"),{maxBytes:4096})).rejects.toThrow("AGE_PROCESS_FAILED");
     const bytes=readFileSync(encrypted);bytes[bytes.length-1]^=1;writeFileSync(join(root,"tampered.age"),bytes);
     await expect(decryptBackupFile(keys.ageExecutable,keys.identity,join(root,"tampered.age"),join(root,"tampered"),{maxBytes:4096})).rejects.toThrow("AGE_PROCESS_FAILED");
-  }finally{rmSync(root,{recursive:true,force:true});}
+  }finally{removeTempDirSync(root);}
 });
 it("rejects plugin, passphrase and malformed recipient/identity inputs before execution",()=>{
   for(const key of ["AGE-PLUGIN-1COMMAND","ssh-private-key", "AGE-SECRET-KEY-1ABC\nAGE-SECRET-KEY-1DEF"])expect(()=>backupIdentity(key)).toThrow();
@@ -26,7 +27,7 @@ it.skipIf(!rawAgeHost)("bounds an actual tool waiting forever on input and remov
   try{
     await expect(encryptBackupStream(keys.ageExecutable,keys.recipient,input,output,{maxBytes:4096,timeoutMs:50,closeTimeoutMs:1000})).rejects.toMatchObject({code:"AGE_TOOL_TIMEOUT"});
     expect(existsSync(output)).toBe(false);expect(input.destroyed).toBe(true);
-  }finally{input.destroy();rmSync(root,{recursive:true,force:true});}
+  }finally{input.destroy();removeTempDirSync(root);}
 });
 it("never reports an unobserved close after bounded TERM and KILL attempts",async()=>{
   const signals:NodeJS.Signals[]=[];

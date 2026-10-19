@@ -1,14 +1,15 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // Copyright 2026 Ferrox Labs
-import { linkSync, mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync, realpathSync } from "node:fs";
+import { linkSync, mkdirSync, mkdtempSync, symlinkSync, writeFileSync, realpathSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, expect, it } from "vitest";
 import { listSite, resolveSiteFolder, SITE_LIMITS } from "./site-files.ts";
+import { removeTempDirSync } from "../testing/cleanup.ts";
 
 let base = "";
 beforeEach(() => { base = realpathSync(mkdtempSync(join(tmpdir(), "publish-site-"))); mkdirSync(join(base, "site")); });
-afterEach(() => rmSync(base, { recursive: true, force: true }));
+afterEach(() => removeTempDirSync(base));
 const put = (rel: string, body = "x") => { const path = join(base, "site", rel); mkdirSync(join(path, ".."), { recursive: true }); writeFileSync(path, body); };
 const failure = (run: () => unknown) => { try { run(); } catch (error) { return error as Error & { code?: string }; } throw new Error("expected a refusal"); };
 

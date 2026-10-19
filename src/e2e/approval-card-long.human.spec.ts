@@ -8,7 +8,7 @@
 // viewport-bound height so the decisions and the composer stay on screen.
 //
 // Real harness, real UI, no model call.
-import { test, expect, type Page } from "@playwright/test";
+import { test, expect, type Page } from "./page-error-guard";
 import { createServer, type ViteDevServer } from "vite";
 import react from "@vitejs/plugin-react";
 import tailwindcss from "@tailwindcss/vite";

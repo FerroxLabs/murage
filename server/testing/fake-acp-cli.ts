@@ -238,7 +238,7 @@
 //
 // Keep this file dependency-free — it runs as a bare `node` subprocess.
 import { execFileSync, spawn } from "node:child_process";
-import { appendFileSync, closeSync, constants, existsSync, fstatSync, lstatSync, openSync, readFileSync, readSync, realpathSync, unlinkSync, writeFileSync, writeSync } from "node:fs";
+import { appendFileSync, closeSync, constants, existsSync, fstatSync, lstatSync, openSync, readFileSync, readSync, realpathSync, renameSync, unlinkSync, writeFileSync, writeSync } from "node:fs";
 import { once } from "node:events";
 import { homedir } from "node:os";
 import { basename, dirname, isAbsolute, join, resolve } from "node:path";
@@ -343,9 +343,21 @@ const dumpEnv = Object.fromEntries(
     ...Object.keys(process.env).filter((key) => /^(?:GROK|FUIGO)_[A-Z]+_[A-Z]+_ENABLED$|^(?:GROK|FUIGO)_MEMORY$|^OPENCODE_DISABLE_|^OPENCODE_PURE$|^(?:GEMINI_CLI|QWEN_CODE)_SYSTEM_SETTINGS_PATH$|^GEMINI_CLI_HOME$|^GROK_HOME$|^OPENCODE_CONFIG_DIR$|^FACTORY_HOME_OVERRIDE$/.test(key)),
   ].flatMap((key) => (process.env[key] === undefined ? [] : [[key, dumpCredentials.has(key) ? fixtureCredentialFingerprint(process.env[key]!) : process.env[key]]] as const)),
 );
+// Folder-trust readers must see a complete snapshot at each publication.
+// Other fake modes retain their existing direct-write behavior.
+let folderTrustDumpSequence = 0;
+function writeMainDump(path: string, encoded: string): void {
+  if (mode !== "folder-trust") {
+    writeFileSync(path, encoded);
+    return;
+  }
+  const temporary = `${path}.${process.pid}.${++folderTrustDumpSequence}.tmp`;
+  writeFileSync(temporary, encoded);
+  renameSync(temporary, path);
+}
 const dumpState: Record<string, unknown> = { argv, env: dumpEnv };
 if (process.env.FAKE_ACP_DUMP) {
-  writeFileSync(process.env.FAKE_ACP_DUMP, JSON.stringify({ argv, env: dumpEnv }, null, 2));
+  writeMainDump(process.env.FAKE_ACP_DUMP, JSON.stringify({ argv, env: dumpEnv }, null, 2));
 }
 async function printProbeAndExit(text: string): Promise<never> {
   // Forced exit can discard pending pipe output. Probe callers must receive
@@ -861,10 +873,10 @@ process.stdin.on("data", (c) => {
 function afterSessionBuilt() {
   if (mode !== "folder-trust") return;
   dumpState.folderTrust = { trustedAtBuild: folderTrustedAtBuild, interactive: folderTrustInteractive, requested: false };
-  if (process.env.FAKE_ACP_DUMP) writeFileSync(process.env.FAKE_ACP_DUMP, JSON.stringify(dumpState, null, 2));
+  if (process.env.FAKE_ACP_DUMP) writeMainDump(process.env.FAKE_ACP_DUMP, JSON.stringify(dumpState, null, 2));
   if (!folderTrustedAtBuild && folderTrustInteractive) {
     (dumpState.folderTrust as { requested: boolean }).requested = true;
-    if (process.env.FAKE_ACP_DUMP) writeFileSync(process.env.FAKE_ACP_DUMP, JSON.stringify(dumpState, null, 2));
+    if (process.env.FAKE_ACP_DUMP) writeMainDump(process.env.FAKE_ACP_DUMP, JSON.stringify(dumpState, null, 2));
     pendingPermissionId = 9006;
     out({
       jsonrpc: "2.0",
@@ -961,7 +973,7 @@ function handle(msg: any) {
     }
     if (process.env.FAKE_ACP_DUMP) {
       dumpState.decision = msg.result ?? { error: msg.error };
-      writeFileSync(process.env.FAKE_ACP_DUMP, JSON.stringify(dumpState, null, 2));
+      writeMainDump(process.env.FAKE_ACP_DUMP, JSON.stringify(dumpState, null, 2));
     }
     onPermissionAnswered?.();
     return;
@@ -999,7 +1011,7 @@ function handle(msg: any) {
       folderTrustInteractive = msg.params?.clientCapabilities?._meta?.["fuigo/folderTrust"]?.interactive === true;
       if (process.env.FAKE_ACP_DUMP) {
         dumpState.initialize = msg.params ?? null;
-        writeFileSync(process.env.FAKE_ACP_DUMP, JSON.stringify(dumpState, null, 2));
+        writeMainDump(process.env.FAKE_ACP_DUMP, JSON.stringify(dumpState, null, 2));
       }
       const initDelay = Number(process.env.FAKE_ACP_INIT_DELAY_MS) || 0;
       const answer = () => result(msg.id, { protocolVersion: 1, authMethods, ...(mode.startsWith("fuigo-retry:disc-") ? { agentCapabilities: { _meta: { "fuigo/capabilities": { retryDiscard: { version: 1 } } } } } : {}), _meta: { modelState: { currentModelId: "fake-acp-model" } } });
@@ -1021,7 +1033,7 @@ function handle(msg: any) {
       const servers: McpEntry[] = Array.isArray(msg.params?.mcpServers) ? msg.params.mcpServers : [];
       if (process.env.FAKE_ACP_DUMP) {
         dumpState.mcpServers = dumpedServers(servers);
-        writeFileSync(process.env.FAKE_ACP_DUMP, JSON.stringify(dumpState, null, 2));
+        writeMainDump(process.env.FAKE_ACP_DUMP, JSON.stringify(dumpState, null, 2));
       }
       agentsMcp = servers.find((s: any) => s?.name === "agents" || /^murage-agents-[a-f0-9]{20}$/.test(String(s?.name))) ?? null;
       memoryMcp = memoryServerOf(servers);
@@ -2102,9 +2114,10 @@ function handle(msg: any) {
         pendingPermissionId = 9001;
         permissionAskedAt = Date.now();
         onPermissionAnswered = complete;
-        out({
+        // FAKE_ACP_PERMISSION_TWICE=1: the same ask again (id 9002) once the first is answered, then complete
+        const ask = (askId: number) => out({
           jsonrpc: "2.0",
-          id: pendingPermissionId,
+          id: askId,
           method: "session/request_permission",
           params: {
             // FAKE_ACP_PERMISSION_SESSION=1: name the live session, as the ACP
@@ -2149,6 +2162,15 @@ function handle(msg: any) {
                 ],
           },
         });
+        ask(9001);
+        if (process.env.FAKE_ACP_PERMISSION_TWICE === "1") {
+          onPermissionAnswered = () => {
+            pendingPermissionId = 9002;
+            permissionAskedAt = Date.now();
+            onPermissionAnswered = complete;
+            ask(9002);
+          };
+        }
         return;
       }
       complete();

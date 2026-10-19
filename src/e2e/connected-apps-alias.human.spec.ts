@@ -2,7 +2,7 @@
 // OpenMausBot PR #758, merge 86b19df10a0aaebdc66f9da41c46f42d26dd3843,
 // Apache-2.0). The real PluginsPanel renders against a synthetic broker:
 // every authorization request is counted, and no real sign-in happens.
-import { test, expect, type Page } from "@playwright/test";
+import { test, expect, type Page } from "./page-error-guard";
 import { createServer, type ViteDevServer } from "vite";
 import tailwindcss from "@tailwindcss/vite";
 import { fileURLToPath } from "node:url";

@@ -30,7 +30,7 @@
 //      Files shows the current revision, and a further edit saves without a
 //      conflict. Below `md` the pane covers the chat and Back to chat
 //      returns the composer.
-import { test, expect, type Page } from "@playwright/test";
+import { test, expect, type Page } from "./page-error-guard";
 import { createServer, type ViteDevServer } from "vite";
 import react from "@vitejs/plugin-react";
 import tailwindcss from "@tailwindcss/vite";

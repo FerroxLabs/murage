@@ -31,6 +31,7 @@ import { beginBackground } from "../database.ts";
 import { noteRevocation, revocationIndexReady, RECORD_REVOCATION_SCAN_SQL, RECORD_TOMBSTONE_AFFECTED, RECORD_TOMBSTONE_REVOCATION_SCAN_TAIL } from "./revocation.ts";
 import { newLearningPurgeCursor, purgeLearningStep, purgeEvolutionBinding, EVOLUTION_BINDING_SUBJECTS, type LearningPurgeCursor, type LearningLookup } from "./evolution-forgetting.ts";
 import { reconcilePipStances } from "./pip-stance.ts";
+import { budgetedMarkerSlice, revokeSliceNeed, revokeWriteWaitMs } from "./revoke-budget.ts";
 import { enqueueReceipts, markerSlice, markerWorkPending, releaseHold } from "./revoke-marker.ts";
 import { setFlipWake } from "./receipt-outputs.ts";
 import { setSendFenceDeps } from "./send-fence.ts";
@@ -859,13 +860,18 @@ export const REVOCATION_MIN_PAUSE_MS = 4;
 /** The pause after a slice is at least this many times the slice: the runner keeps the main thread at most a quarter busy. */
 export const REVOCATION_PAUSE_FACTOR = 3;
 export const REVOCATION_BUSY_PAUSE_MS = 250;
+/** The longest the marker yields to foreground turns in a row (1.0.3 revoke storm, M3): then one budgeted slice runs, so turns that never
+ * stop (a routine every few seconds) do not hold every revoke's window open for good. */
+export const REVOCATION_MAX_YIELD_MS = 10_000;
 const START_ROWS = 64, MIN_ROWS = 8, MAX_ROWS = 4096, LOCK_RETRY_MS = 1000, RETRY_CAP_MS = 60_000;
 export type RevocationRunnerOptions = { admit?: () => Promise<void>; busy?: () => boolean; sliceMs?: number; pauseMs?: number; busyPauseMs?: number; retryMs?: number };
 /** maxSliceMs is the whole slice, its COMMIT included (on a file database that can carry SQLite's WAL auto-checkpoint, a disk cost
  * every writer shares); maxWorkMs is this module's own work in a slice, before the COMMIT. */
-export const memoryRevocationStats = { slices: 0, maxSliceMs: 0, maxWorkMs: 0, busyPauses: 0, errorRetries: 0, lockedRetries: 0, workMs: 0, pauseMs: 0, maxJobBytes: 0, lateSlices: 0, markerSlices: 0 };
+export const memoryRevocationStats = { slices: 0, maxSliceMs: 0, maxWorkMs: 0, busyPauses: 0, errorRetries: 0, lockedRetries: 0, workMs: 0, pauseMs: 0, maxJobBytes: 0, lateSlices: 0, markerSlices: 0, budgetWaits: 0, markerYields: 0 };
 let getDbRef: (() => DatabaseSync) | null = null, options: RevocationRunnerOptions = {}, timer: ReturnType<typeof setTimeout> | null = null;
 let running = false, stopped = false, rowsPerSlice = START_ROWS, backoff = LOCK_RETRY_MS, idleWaiters: Array<() => void> = [];
+/** When the marker began yielding to foreground turns (null: it is not yielding). */
+let yieldingSince: number | null = null;
 
 /** Next slice size: grow while well inside the budget, halve at once when a slice came near it. */
 export function nextRevocationRows(rows: number, ms: number, budget: number): number {
@@ -883,14 +889,29 @@ async function tick(): Promise<void> {
     if (options.admit) await options.admit();
     if (stopped) { running = false; wakeAll(); return; }
     const db = getDbRef();
+    // the marker walks inside its write budget and yields to foreground turns (1.0.3 revoke storm, M3; revoke-budget.ts)
+    if (markerWorkPending(db)) {
+      const wait = revokeWriteWaitMs(revokeSliceNeed(db));
+      if (wait > 0) { memoryRevocationStats.budgetWaits++; schedule(wait); return; }
+      if (options.busy?.()) {
+        const now = performance.now();
+        yieldingSince ??= now;
+        if (now - yieldingSince < REVOCATION_MAX_YIELD_MS) { memoryRevocationStats.markerYields++; schedule(options.busyPauseMs ?? REVOCATION_BUSY_PAUSE_MS); return; }
+        yieldingSince = now;
+      } else yieldingSince = null;
+    }
     const budget = options.sliceMs ?? REVOCATION_SLICE_MS, t0 = performance.now();
-    let more = false;
+    let more = false, budgetWait = false;
     // a background runner: the write lock is taken within the background budget, never the handle's 1 s wait (a busy start retries)
     beginBackground(db, "revocation-job");
     try {
       // the write-time marker first: its pending rows hold lines and memory "checking" until it is done (revoke-marker.ts)
-      const row = markerSlice(db, rowsPerSlice, budget, lateBuildStep) ? null : st(db, NEXT_JOB).get();
-      if (row === null) { more = true; memoryRevocationStats.markerSlices++; }
+      const moved = budgetedMarkerSlice(db, rowsPerSlice, budget, lateBuildStep);
+      const row = moved === true ? null : st(db, NEXT_JOB).get();
+      // the minute had no room for the marker (a waiting receipt flip's whole commit, revoke-budget.ts): with no job row to run either,
+      // the runner wakes when the minute has room, never stops here
+      if (moved === "budget" && !row) { budgetWait = true; more = true; }
+      else if (row === null) { more = true; memoryRevocationStats.markerSlices++; }
       else if (row) {
         let job: RevocationJob | null = null;
         try { job = JSON.parse(String(row.intent)) as RevocationJob; } catch { /* unreadable: dropped below */ }
@@ -911,6 +932,7 @@ async function tick(): Promise<void> {
     } catch (error) { if (db.isTransaction) { try { db.exec("ROLLBACK"); } catch { /* already rolled back */ } } throw error; }
     const ms = performance.now() - t0;
     if (!more) { running = false; wakeAll(); return; }
+    if (budgetWait) { memoryRevocationStats.budgetWaits++; schedule(Math.max(1, revokeWriteWaitMs(revokeSliceNeed(db)))); return; }
     memoryRevocationStats.slices++; memoryRevocationStats.workMs += ms;
     memoryRevocationStats.maxSliceMs = Math.max(memoryRevocationStats.maxSliceMs, ms);
     rowsPerSlice = nextRevocationRows(rowsPerSlice, ms, budget); backoff = options.retryMs ?? LOCK_RETRY_MS;
@@ -990,14 +1012,15 @@ export function drainRevokeMarkerBounded(db: DatabaseSync, budget: { rows: numbe
   while (rows > 0 && performance.now() < deadline) {
     // the upgrade's slices take the background budget; the send fence (an owner's send is waiting) keeps the handle's owner wait
     if (options.background) beginBackground(db, "revoke-marker"); else db.exec("BEGIN IMMEDIATE");
-    let moved: boolean;
-    try { moved = markerSlice(db, Math.min(rows, MARKER_SLICE_ROWS), Math.max(1, deadline - performance.now()), lateBuildStep); db.exec("COMMIT"); }
+    let moved: boolean | "budget";
+    // inside the marker's write budget (revoke-budget.ts): a minute with no room left walks nothing more here; the runner carries on later
+    try { moved = budgetedMarkerSlice(db, Math.min(rows, MARKER_SLICE_ROWS), Math.max(1, deadline - performance.now()), lateBuildStep); db.exec("COMMIT"); }
     catch (error) {
       if (db.isTransaction) { try { db.exec("ROLLBACK"); } catch { /* rolled back */ } }
       if (error instanceof Error && error.message === "MEMORY_REVOKE_NODE_UNREADABLE") return true;
       throw error;
     }
-    if (!moved) break;
+    if (!moved || moved === "budget") break;
     rows -= Math.min(rows, MARKER_SLICE_ROWS);
   }
   return markerWorkPending(db);
@@ -1015,7 +1038,10 @@ export async function settleRevokesForTurn(db: DatabaseSync, maxMs = REDISPATCH_
     try { pending = db.isTransaction ? true : drainRevokeMarkerBounded(db); } catch { return false; }
     if (!pending) return true;
     if (performance.now() >= deadline) return false;
-    await new Promise<void>(resolve => setImmediate(resolve));
+    // a minute whose write budget is spent walks nothing until it has room: wait for that (or the deadline) instead of spinning
+    const wait = revokeWriteWaitMs(revokeSliceNeed(db));
+    if (wait > 0) await new Promise<void>(resolve => { setTimeout(resolve, Math.max(1, Math.min(wait, deadline - performance.now()))).unref?.(); });
+    else await new Promise<void>(resolve => setImmediate(resolve));
   }
 }
 /** Wakes the runner if this process started it, once the caller's synchronous transaction is over (a microtask runs after it):

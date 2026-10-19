@@ -15,6 +15,7 @@ const builder = readFileSync(new URL("electron-builder.yml", root), "utf8");
 const BUNDLED = [
   { name: "silero-vad", asset: "public/vad/silero_vad.onnx", license: "LICENSE", text: /MIT License/ },
   { name: "instrument-serif", asset: "src/assets/fonts/instrument-serif-latin-400-normal.woff2", license: "OFL.txt", text: /SIL Open Font License/ },
+  { name: "xterm", asset: "src/components/EngineLoginTerminal.tsx", license: "LICENSE", text: /Permission is hereby granted/ },
 ];
 
 describe("bundled third-party licenses", () => {

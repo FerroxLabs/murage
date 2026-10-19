@@ -1,6 +1,6 @@
 // Copyright 2026 Ferrox Labs
 // SPDX-License-Identifier: AGPL-3.0-or-later
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
@@ -17,6 +17,7 @@ import { fenceRestoredSql, sqlRowRestoreHeld, heldCardDeliveries } from "./resto
 import { setProjectRunState } from "./project-settings.ts";
 import { buildPrompt, noneRef, promptPart } from "./memory/prompt-parts.ts";
 import { createProjectCardExecutor, cardRequestOwnerApproved, cardSteeringMode, cardRequestIsReview, queueRoutineCardRun, steerBusyDesk, projectRestartLine } from "./project-card-executor.ts";
+import { removeTempDirSync } from "./testing/cleanup.ts";
 /** A steer's engine input: the owner's words, resting on nothing stored (steerBusyDesk takes a BuiltPrompt). */
 const steerPrompt = (text: string) => buildPrompt(undefined, [promptPart(text, [noneRef("owner-turn")])]);
 
@@ -421,7 +422,7 @@ it("a finished card's undelivered room result survives a restore held, is not po
 
 // T4 (STALLS-FINAL-DESIGN 3.1): the dispatch takes the write lock within the background budget; a held lock leaves the request queued and
 // the card untouched (it is not a refusal, the run is not cancelled), and the next pump dispatches it once.
-it("a dispatch that meets a held write lock stays queued and goes out once the lock is free", () => {
+it("a dispatch that meets a held write lock stays queued and goes out once the lock is free", { tags: ["perf-budget"] }, () => {
   const dir = mkdtempSync(join(tmpdir(), "murage-card-busy-"));
   try {
     const f = setup(undefined, undefined, join(dir, "cards.db")), card = f.card();
@@ -441,6 +442,6 @@ it("a dispatch that meets a held write lock stays queued and goes out once the l
   } finally {
     for (const executor of executors.splice(0)) executor.stop();
     for (const db of databases.splice(0)) { try { db.close(); } catch { /* closed */ } }
-    rmSync(dir, { recursive: true, force: true });
+    removeTempDirSync(dir);
   }
 });

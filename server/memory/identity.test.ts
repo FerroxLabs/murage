@@ -1,4 +1,4 @@
-import { mkdirSync, rmSync } from "node:fs";
+import { mkdirSync } from "node:fs";
 import { beforeEach, expect, it } from "vitest";
 import { DATA_DIR } from "../config.ts";
 import { closeDatabase, database } from "../database.ts";
@@ -11,10 +11,11 @@ import { forgetMemory } from "./forget.ts";
 import { memoryOwnerRoute } from "./settings.ts";
 import { personalityImprint } from "../../shared/bot-identity.ts";
 import { LineageAllowance } from "./lineage-allowance.ts";
+import { removeTempDirSync } from "../testing/cleanup.ts";
 
 const roster={bots:[{id:"moss",threadId:"private",tasks:[{threadId:"new-task"}]},{id:"neutral",threadId:"neutral-thread"}],groups:[{id:"room",threadId:"room-thread",memberIds:["moss","neutral"]}]};
 const ticket=ownerMemoryTicket(),bridge={search:async()=>({hits:[],vectorRows:0})};
-beforeEach(()=>{closeDatabase();rmSync(DATA_DIR,{recursive:true,force:true});mkdirSync(DATA_DIR,{recursive:true});reconcileMemoryRoster(roster);});
+beforeEach(()=>{closeDatabase();removeTempDirSync(DATA_DIR);mkdirSync(DATA_DIR,{recursive:true});reconcileMemoryRoster(roster);});
 function input(patch:Partial<IdentityWrite>={}):IdentityWrite{return {action:"identity-write",botId:"moss",kind:"continuity-brief",key:"core",expectedVersion:0,text:"Moss speaks gently; finish the lighthouse story.",basis:"fiction",audience:"owner-private",...patch};}
 function access(botId="moss",threadId="private"){
   const registry=new InternalCapabilities(),generation=registry.begin(botId,threadId);

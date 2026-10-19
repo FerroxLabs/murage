@@ -1,7 +1,7 @@
 // The cache triggers install on the real node:sqlite database (SQLite forbids a
 // qualified write target inside a trigger body on the versions that enforce it),
 // installation is observable, and the caches survive a write they do not rest on.
-import { mkdirSync, readFileSync, rmSync } from "node:fs";
+import { mkdirSync, readFileSync } from "node:fs";
 import { DatabaseSync } from "node:sqlite";
 import { beforeEach, expect, it } from "vitest";
 import { DATA_DIR } from "../config.ts";
@@ -10,8 +10,9 @@ import { appendMessage } from "../message-db.ts";
 import { provenanceStamp, provenanceTriggersInstalled } from "./provenance-stamp.ts";
 import { lineageTriggersInstalled } from "./replay-lineage.ts";
 import type { Message } from "../store.ts";
+import { removeTempDirSync } from "../testing/cleanup.ts";
 
-beforeEach(() => { closeDatabase(); rmSync(DATA_DIR, { recursive: true, force: true }); mkdirSync(DATA_DIR, { recursive: true }); });
+beforeEach(() => { closeDatabase(); removeTempDirSync(DATA_DIR); mkdirSync(DATA_DIR, { recursive: true }); });
 
 it("no trigger body qualifies its write target", () => {
   for (const file of ["provenance-stamp.ts", "replay-lineage.ts"]) {

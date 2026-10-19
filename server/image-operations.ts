@@ -1,12 +1,12 @@
 import { createHash, randomUUID } from "node:crypto";
-import { lstatSync, readFileSync, realpathSync } from "node:fs";
-import { basename, join, relative, isAbsolute, sep } from "node:path";
+import { basename } from "node:path";
 import type { Message, Store } from "./store.ts";
 import type { RoutineCardHooks } from "./peer-approval.ts";
 import { database } from "./database.ts";
 import { initializeImageOperations } from "./image-operations-schema.ts";
 import { notRestoreHeldSql, releaseHeldImageOperation, sqlRowRestoreHeld } from "./restore-fence.ts";
-import { ATTACHMENTS_DIR, GENERATED_IMAGE_MAX_BYTES } from "./attachments.ts";
+import { ATTACHMENTS_HOME, GENERATED_IMAGE_MAX_BYTES } from "./attachments.ts";
+import { ATTACHMENT_READ_CEILING, readAttachmentFile } from "./attachment-read.ts";
 import { IMAGE_GENERATION_REFERENCE_MAX, IMAGE_GENERATION_REFERENCE_MAX_TOTAL_BYTES } from "../shared/media-assets.ts";
 import { DATA_DIR } from "./config.ts";
 import type { ImageOperationDetails, ImageAttemptOutcome, ImageReference, GeneratedImageMetadata, ImageApprovalCardInput } from "./image-generation.ts";
@@ -19,6 +19,7 @@ import { conversationImageAttachments } from "./image-reference-resolver.ts";
 import { recordRenderPrompt } from "./image-library.ts";
 import { murageToolOnThisServer } from "./murage-tool-surface.ts";
 import { redactSecretsInText } from "./redact.ts";
+import { murageLine } from "./murage-line.ts";
 
 export interface ImageActor { botId: string; threadId: string; generation: string; assertActive: () => void; signal: AbortSignal }
 interface Pending { threadId: string; botId: string; messageId: string; settle: (allow: boolean, source?: "user" | "system") => void; active: () => void;
@@ -44,25 +45,37 @@ const NOT_APPROVED: Record<Exclude<ApprovalAnswer, "allow">, string> = {
   gone: "Image generation was not approved; no image request was sent.",
 };
 const hash = (text: string) => createHash("sha256").update(text).digest("hex");
-function inside(root: string, file: string) { const tail = relative(root, file); return tail !== ".." && !tail.startsWith(`..${sep}`) && !isAbsolute(tail); }
 /** No caller path is accepted. References must already belong to this exact
  * conversation: an uploaded or generated image it shows, or one prepared by
  * resolve_image_reference (F5-T4), which stores its pinned bytes the same way. */
-export function imageReferences(store: Store, threadId: string, names: unknown): ImageReference[] {
+export async function imageReferences(store: Store, threadId: string, names: unknown, assertLive: () => void): Promise<ImageReference[]> {
   if (names === undefined) return [];
   if (Array.isArray(names) && names.length > IMAGE_GENERATION_REFERENCE_MAX) throw error(400, `${names.length} reference images; Murage takes at most ${IMAGE_GENERATION_REFERENCE_MAX}. Nothing was sent.`);
   if (!Array.isArray(names) || names.some(name => typeof name !== "string" || !/^[\w-]+\.(png|jpg|jpeg|webp)$/i.test(name))) throw error(400, `Choose up to ${IMAGE_GENERATION_REFERENCE_MAX} image attachments from this conversation.`);
-  const allowed = new Set(conversationImageAttachments(store, threadId, ATTACHMENTS_DIR, names as string[]).values());
+  const asked = names as string[];
+  const allowed = new Set(conversationImageAttachments(store, threadId, ATTACHMENTS_HOME, asked).keys());
   let total = 0;
-  return names.map(name => {
-    const file = join(ATTACHMENTS_DIR, name), root = realpathSync(ATTACHMENTS_DIR);
-    const stat = lstatSync(file);
-    if (!allowed.has(file) || !stat.isFile() || stat.isSymbolicLink() || stat.nlink !== 1 || !inside(root, realpathSync(file)) || stat.size > GENERATED_IMAGE_MAX_BYTES) throw error(403, "Image reference is unavailable in this conversation.");
+  const references: ImageReference[] = [];
+  for (const name of asked) {
+    if (!allowed.has(name)) throw error(403, "Image reference is unavailable in this conversation.");
+    // Every byte read goes through the bounded attachment reader: no link,
+    // FIFO, device or hard link, at most the generated-image cap.
+    const read = await readAttachmentFile(ATTACHMENTS_HOME, name, Math.min(GENERATED_IMAGE_MAX_BYTES, ATTACHMENT_READ_CEILING));
+    if (!read.ok) {
+      if (read.reason === "io" || read.reason === "busy") throw error(503, "Could not read that image just now. Try again.");
+      throw error(403, "Image reference is unavailable in this conversation.");
+    }
     // A generated image is a reference up to its own cap; the model's limit is checked before the card.
-    const decoded = decodeGeneratedImage(readFileSync(file).toString("base64"), GENERATED_IMAGE_MAX_BYTES); total += decoded.bytes.length;
+    const decoded = decodeGeneratedImage(read.bytes.toString("base64"), GENERATED_IMAGE_MAX_BYTES); total += decoded.bytes.length;
     if (total > IMAGE_GENERATION_REFERENCE_MAX_TOTAL_BYTES || decoded.mime === "image/gif") throw error(400, `References must be PNG, JPEG or WebP and total at most ${IMAGE_GENERATION_REFERENCE_MAX_TOTAL_BYTES / (1024 * 1024)} MB.`);
-    return { bytes: decoded.bytes, mime: decoded.mime };
-  });
+    references.push({ bytes: decoded.bytes, mime: decoded.mime });
+  }
+  // The reads awaited: every name must still belong to this conversation, and
+  // the turn must still be live, before the bytes are used.
+  const still = conversationImageAttachments(store, threadId, ATTACHMENTS_HOME, asked);
+  if (asked.some(name => !still.has(name))) throw error(403, "Image reference is unavailable in this conversation.");
+  assertLive();
+  return references;
 }
 
 export interface ImageArtifact {
@@ -129,15 +142,17 @@ const isOperationResult = (value: unknown): value is ImageOperationResult =>
 
 /** Retains the provider bytes with a receipt first, then completes the
  * existing conversation attachment flow and Files registration from those
- * bytes. No async gap during authority + artifact commit. */
-export function publishImage(store: Store, actor: ImageActor, image: DecodedGeneratedImage, metadata: GeneratedImageMetadata, options: PublishImageOptions = {}): ImageArtifact {
+ * bytes. The one await (the attachment step) is followed by a fresh check
+ * of the actor before anything is attached or saved. */
+export async function publishImage(store: Store, actor: ImageActor, image: DecodedGeneratedImage, metadata: GeneratedImageMetadata, options: PublishImageOptions = {}): Promise<ImageArtifact> {
   actor.assertActive();
   if (actor.signal.aborted) throw error(409, "Image operation was cancelled.");
   const deps = outputDeps(store);
   const receipt = retainImageOutput(deps, { producer: "image-operation", botId: actor.botId, threadId: actor.threadId, runId: options.operationId ?? actor.generation,
     bytes: image.bytes, mime: image.mime, beforeCommit: () => { actor.assertActive(); if (actor.signal.aborted) throw error(409, "Image operation was cancelled."); } });
   options.onRetained?.(receipt);
-  return imageArtifact(completeImageOutput(deps, receipt.id, { transcriptText: imageTranscriptText(metadata), artifactName: artifactName(metadata) }));
+  return imageArtifact(await completeImageOutput(deps, receipt.id, { transcriptText: imageTranscriptText(metadata), artifactName: artifactName(metadata),
+    recheck: () => { actor.assertActive(); if (actor.signal.aborted) throw error(409, "Image operation was cancelled."); } }));
 }
 
 export const imagePublishRecoveryMessage = (category?: string) => `Image received and kept locally, but publishing it to this conversation did not finish${category ? ` (${category})` : ""}. `
@@ -266,7 +281,10 @@ export class ImageOperations {
       void joined.then(settle, settle);
       return joined;
     }
-    if (prior?.state === "published" && prior.result) { const value = this.refreshPublished(actor, id, JSON.parse(prior.result) as T); this.releaseHoldWhenPublished(id, value); return Promise.resolve(value); }
+    if (prior?.state === "published" && prior.result) {
+      const published = JSON.parse(prior.result) as T;
+      return (async () => { const value = await this.refreshPublished(actor, id, published); this.releaseHoldWhenPublished(id, value); return value; })();
+    }
     // The owner asking for an operation a restore held is the explicit action that releases it: it is finished from the
     // retained bytes (no provider call), also when the restore caught it before it was marked publish-pending.
     const heldByRestore = prior !== undefined && sqlRowRestoreHeld(this.db(), "image_operation", prior.id);
@@ -314,7 +332,7 @@ export class ImageOperations {
       this.db().prepare("UPDATE image_operations SET state=?,result=COALESCE(?,result),updated_at=? WHERE id=?").run(state, patch ? JSON.stringify({ ...current, ...patch, resumeKey }) : null, Date.now(), id);
     };
     const retained: string[] = [], items: GeneratedImageMetadata[] = [];
-    const publish: PublishOperationImage = async (image, metadata) => publishImage(this.store, actor, image, metadata, { operationId: id,
+    const publish: PublishOperationImage = async (image, metadata) => await publishImage(this.store, actor, image, metadata, { operationId: id,
       onRetained: receipt => {
         retained.push(receipt.id); items.push(metadata);
         // The whole render's facts (every image's delivered pixels) plus each image's own.
@@ -362,11 +380,13 @@ export class ImageOperations {
     this.jobs.set(id, job); return job;
   }
   /** Completes every retained image of one operation from its receipts. */
-  private completeAll(receipts: Array<{ id: string }>, metadata: GeneratedImageMetadata, items?: GeneratedImageMetadata[], strict = false): ImageOperationResult {
-    const artifacts = receipts.map((receipt, index) => {
+  private async completeAll(receipts: Array<{ id: string }>, metadata: GeneratedImageMetadata, items?: GeneratedImageMetadata[], strict = false, recheck?: () => void): Promise<ImageOperationResult> {
+    // One at a time, in order, as before: each image's transcript entry follows the one before it.
+    const artifacts: ImageArtifact[] = [];
+    for (const [index, receipt] of receipts.entries()) {
       const each: GeneratedImageMetadata = items?.[index] ?? (receipts.length > 1 ? { ...metadata, imageIndex: index, delivered: metadata.delivered?.[index] ? [metadata.delivered[index]!] : metadata.delivered } : metadata);
-      return imageArtifact(completeImageOutput(outputDeps(this.store), receipt.id, { transcriptText: imageTranscriptText(each), artifactName: artifactName(each) }));
-    });
+      artifacts.push(imageArtifact(await completeImageOutput(outputDeps(this.store), receipt.id, { transcriptText: imageTranscriptText(each), artifactName: artifactName(each), recheck })));
+    }
     // A held release needs the Files copy too; anything less throws so the caller keeps the hold.
     if (strict && artifacts.some(item => item.filesError || !item.artifactId)) throw error(409, imagePublishRecoveryMessage(artifacts.find(item => item.filesError)?.filesError));
     return { artifact: artifacts[0]!, artifacts, metadata };
@@ -378,10 +398,11 @@ export class ImageOperations {
     if (!pending || !receipts || receipts[0]!.id !== pending.receiptId) throw error(409, "This image request already finished or was interrupted. Check its earlier result and provider billing; it will not be retried automatically.");
     if (this.workspaces.has(actor.botId)) throw error(409, "An image request is already active in this bot's workspace.");
     this.workspaces.add(actor.botId);
-    const job = Promise.resolve().then(() => {
+    const job = Promise.resolve().then(async () => {
       actor.assertActive();
       if (actor.signal.aborted) throw error(409, "Image operation was cancelled.");
-      const value = this.completeAll(receipts, pending.metadata, pending.items, releaseHold);
+      const value = await this.completeAll(receipts, pending.metadata, pending.items, releaseHold,
+        () => { actor.assertActive(); if (actor.signal.aborted) throw error(409, "Image operation was cancelled."); });
       this.db().prepare("UPDATE image_operations SET state='published',result=?,updated_at=? WHERE id=? AND state='publish-pending'").run(JSON.stringify(value), Date.now(), id);
       if (releaseHold) releaseHeldImageOperation(this.db(), id);
       return value as T;
@@ -401,17 +422,19 @@ export class ImageOperations {
   }
   /** A published image whose Files copy did not finish is retried from its
    * retained bytes when the same request is repeated; no provider work. */
-  private refreshPublished<T>(actor: ImageActor, id: string, value: T): T {
+  private async refreshPublished<T>(actor: ImageActor, id: string, value: T): Promise<T> {
     if (!isOperationResult(value)) return value;
     const artifacts = value.artifacts?.length ? value.artifacts : [value.artifact];
     if (artifacts.every(artifact => artifact.artifactId)) return value;
     const receipts = outputReceiptsForRun(database(), "image-operation", actor.botId, actor.threadId, id);
     try {
       actor.assertActive();
-      const refreshed = artifacts.map(artifact => {
+      const refreshed: ImageArtifact[] = [];
+      for (const artifact of artifacts) {
         const receipt = receipts.find(item => item.id === artifact.id);
-        return artifact.artifactId || !receipt ? artifact : imageArtifact(completeImageOutput(outputDeps(this.store), receipt.id, { transcriptText: imageTranscriptText(value.metadata), artifactName: artifactName(value.metadata) }));
-      });
+        refreshed.push(artifact.artifactId || !receipt ? artifact : imageArtifact(await completeImageOutput(outputDeps(this.store), receipt.id, { transcriptText: imageTranscriptText(value.metadata), artifactName: artifactName(value.metadata),
+          recheck: () => actor.assertActive() })));
+      }
       const updated: ImageOperationResult = { ...value, artifact: refreshed[0]!, ...(value.artifacts ? { artifacts: refreshed } : {}) };
       this.db().prepare("UPDATE image_operations SET result=?,updated_at=? WHERE id=? AND state='published'").run(JSON.stringify(updated), Date.now(), id);
       return updated as T;
@@ -419,7 +442,7 @@ export class ImageOperations {
   }
   /** Startup reconciliation: only operations that recorded a retained image
    * receipt are completed, into their exact recorded conversation. */
-  resumePendingPublications(limit = 50, options: { tried?: Set<string>; release?: boolean } = {}): number {
+  async resumePendingPublications(limit = 50, options: { tried?: Set<string>; release?: boolean } = {}): Promise<number> {
     if (options.release !== false) this.releaseUndispatchedOperations();
     // `tried` (a start's recovery in slices): operations an earlier slice looked at are passed over, so one that stays pending never fills the next slice
     const tried = options.tried;
@@ -435,7 +458,7 @@ export class ImageOperations {
       const receipts = pending ? pending.receiptIds!.map(receiptId => outputReceipt(database(), receiptId)) : [];
       if (!pending || !receipts.length || receipts.some(receipt => !receipt || receipt.producer !== "image-operation" || receipt.runId !== row.id)) continue;
       try {
-        const value = this.completeAll(receipts as Array<{ id: string }>, pending.metadata, pending.items);
+        const value = await this.completeAll(receipts as Array<{ id: string }>, pending.metadata, pending.items);
         this.db().prepare("UPDATE image_operations SET state='published',result=?,updated_at=? WHERE id=? AND state=?").run(JSON.stringify(value), Date.now(), row.id, row.state);
         completed++;
       } catch { /* stays pending with the receipt's recorded category */ }
@@ -504,10 +527,10 @@ export class ImageOperations {
       if (actor.signal.aborted) return Promise.resolve("gone");
       // logged only now: a Stop before this point must not log an image that was never made
       try { this.autoApprovalLogged?.(actor, details, auto); } catch { /* the log never changes the render */ }
-      this.store.appendMessage(actor.threadId, { role: "bot", kind: "activity", ...(from ? { from } : {}), tool: {
+      this.store.appendMessage(actor.threadId, murageLine({ role: "bot", kind: "activity", ...(from ? { from } : {}), tool: {
         name: `Making an image without asking (${auto.basis})`, ok: true,
         imageRecord: { summary: imageApprovalSubtitle(details), prompt: redactSecretsInText(prompt) },
-      } });
+      } }));
       return Promise.resolve("allow");
     }
     const card = this.store.appendMessage(actor.threadId, { role: "bot", kind: "options", ...(from ? { from } : {}), card: {

@@ -18,11 +18,13 @@ test("desktop summary rejects activation, oversized fields and malformed operati
     { ok: true, operation: "restore" },
     { ok: true, operation: "rollback", status: "rolled-back" },
     { ok: true, operation: "memory-downgrade" },
-    { ok: true, operation: "memory-downgrade", status: "downgraded", from: 7, to: 5 },
-    { ok: true, operation: "memory-downgrade", status: "downgraded", from: 6, to: 6 },
-    { ok: true, operation: "memory-downgrade", status: "already-v6", from: 7, to: 6 },
-    { ok: true, operation: "memory-downgrade", status: "already-v5", from: 5, to: 5 },
-    { ok: true, operation: "memory-downgrade", status: "downgraded", from: "7", to: 6 },
+    { ok: true, operation: "memory-downgrade", status: "downgraded", from: 11, to: 9 },
+    { ok: true, operation: "memory-downgrade", status: "downgraded", from: 10, to: 10 },
+    { ok: true, operation: "memory-downgrade", status: "already-v10", from: 11, to: 10 },
+    { ok: true, operation: "memory-downgrade", status: "already-v9", from: 9, to: 9 },
+    { ok: true, operation: "memory-downgrade", status: "downgraded", from: "11", to: 10 },
+    { ok: true, operation: "memory-downgrade", status: "downgraded", from: 7, to: 6 },
+    { ok: true, operation: "memory-downgrade", status: "already-v6", from: 6, to: 6 },
   ]) assert.throws(() => recoveryDesktopSummary(value), /INVALID_RECOVERY_RESULT/);
 });
 test("revalidating a worker summary retains inspected counts and restore hash", () => {
@@ -36,7 +38,7 @@ test("encrypted summaries keep coverage bounded and preserve both encrypted and 
   assert.deepEqual(recoveryDesktopSummary(result),result);
   assert.throws(()=>recoveryDesktopSummary({...value,rawFidelityActivated:true}));
 });
-test("memory-downgrade results are accepted only for the v7 to v6 step", () => {
-  assert.deepEqual(recoveryDesktopSummary({ ok: true, operation: "memory-downgrade", status: "downgraded", from: 7, to: 6, extra: "private" }), { ok: true, operation: "memory-downgrade", status: "downgraded", from: 7, to: 6, omittedCount: 0, missingCount: 0, quarantinedCount: 0, modificationsCount: 0 });
-  assert.deepEqual(recoveryDesktopSummary({ ok: true, operation: "memory-downgrade", status: "already-v6", from: 6, to: 6 }), { ok: true, operation: "memory-downgrade", status: "already-v6", from: 6, to: 6, omittedCount: 0, missingCount: 0, quarantinedCount: 0, modificationsCount: 0 });
+test("memory-downgrade results are accepted only for the 11 to 10 step", () => {
+  assert.deepEqual(recoveryDesktopSummary({ ok: true, operation: "memory-downgrade", status: "downgraded", from: 11, to: 10, extra: "private" }), { ok: true, operation: "memory-downgrade", status: "downgraded", from: 11, to: 10, omittedCount: 0, missingCount: 0, quarantinedCount: 0, modificationsCount: 0 });
+  assert.deepEqual(recoveryDesktopSummary({ ok: true, operation: "memory-downgrade", status: "already-v10", from: 10, to: 10 }), { ok: true, operation: "memory-downgrade", status: "already-v10", from: 10, to: 10, omittedCount: 0, missingCount: 0, quarantinedCount: 0, modificationsCount: 0 });
 });

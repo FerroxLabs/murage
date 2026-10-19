@@ -1,4 +1,4 @@
-import { test, expect } from "@playwright/test";
+import { test, expect } from "./page-error-guard";
 import { safeWipeSync } from "../../server/testing/safe-wipe.mjs";
 import { createServer, type ViteDevServer } from "vite";
 import react from "@vitejs/plugin-react";

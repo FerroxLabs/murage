@@ -1,20 +1,12 @@
 import { createRequire, syncBuiltinESMExports } from "node:module";
-import {
-  chmodSync,
-  existsSync,
-  mkdirSync,
-  mkdtempSync,
-  readdirSync,
-  readFileSync,
-  rmSync,
-  statSync,
-} from "node:fs";
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, statSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { renameWithRetry, writeFileAtomic } from "./atomic.ts";
+import { removeTempDirSync } from "./testing/cleanup.ts";
 
 // The builtin module object itself: replacing renameSync here and re-syncing
 // the ESM facade is what atomic.ts's named import observes (the same technique
@@ -27,7 +19,7 @@ describe("writeFileAtomic", () => {
     dir = mkdtempSync(join(tmpdir(), "murage-atomic-"));
   });
   afterEach(() => {
-    rmSync(dir, { recursive: true, force: true });
+    removeTempDirSync(dir);
   });
 
   it("writes the file", () => {
@@ -157,7 +149,7 @@ describe("writeFileAtomic when the replacement is refused", () => {
   afterEach(() => {
     Object.defineProperty(process, "platform", platform);
     withRename(realRename);
-    rmSync(dir, { recursive: true, force: true });
+    removeTempDirSync(dir);
   });
 
   it.skipIf(process.platform === "win32")(

@@ -1,11 +1,12 @@
-import { mkdirSync, rmSync } from "node:fs";
+import { mkdirSync } from "node:fs";
 import { beforeEach, expect, it } from "vitest";
 import { DATA_DIR } from "../config.ts";
 import { closeDatabase, database } from "../database.ts";
 import { ensureScope } from "./policy.ts";
 import { createGepaCallLedger } from "./gepa-ledger.ts";
+import { removeTempDirSync } from "../testing/cleanup.ts";
 
-beforeEach(() => { closeDatabase(); rmSync(DATA_DIR, { recursive: true, force: true }); mkdirSync(DATA_DIR, { recursive: true }); });
+beforeEach(() => { closeDatabase(); removeTempDirSync(DATA_DIR); mkdirSync(DATA_DIR, { recursive: true }); });
 function options(assertCurrent = () => {}) {
   return { scopeId: ensureScope("bot", "ledger-bot"), jobId: "job-one", snapshotDigest: "a".repeat(64), evidence: [], maxMetricCalls: 24, maxReflections: 2, assertCurrent };
 }

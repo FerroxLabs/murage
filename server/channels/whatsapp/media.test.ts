@@ -5,9 +5,10 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, expect, it } from "vitest";
 import { MEDIA_MAX_AGE_MS, mediaRoot, ownedMediaFile, sweepMedia } from "./media.ts";
+import { removeTempDirSync } from "../../testing/cleanup.ts";
 
 const roots: string[] = [];
-afterEach(() => { for (const r of roots.splice(0)) rmSync(r, { recursive: true, force: true }); });
+afterEach(() => { for (const r of roots.splice(0)) removeTempDirSync(r); });
 const NOW = 2_000_000_000_000;
 function fixture() {
   const dir = mkdtempSync(join(tmpdir(), "murage-wa-media-unit-")); roots.push(dir);
@@ -82,7 +83,7 @@ it("works when the data folder itself is reached through a link, and still refus
   const old = join(root, "chat", "old.jpg"); writeFileSync(old, "x"); utimesSync(old, new Date(NOW - MEDIA_MAX_AGE_MS - 1000), new Date(NOW - MEDIA_MAX_AGE_MS - 1000));
   expect(sweepMedia({ dataDir, connectionId: "conn", keep: [], nowMs: NOW })).toBe(1);
   const elsewhere = mkdtempSync(join(tmpdir(), "murage-wa-media-elsewhere-")); roots.push(elsewhere);
-  rmSync(join(real, "whatsapp"), { recursive: true }); symlinkSync(elsewhere, join(real, "whatsapp"));
+  removeTempDirSync(join(real, "whatsapp")); symlinkSync(elsewhere, join(real, "whatsapp"));
   mkdirSync(join(elsewhere, "media", "conn", "chat"), { recursive: true }); writeFileSync(join(elsewhere, "media", "conn", "chat", "b.jpg"), "x");
   expect(ownedMediaFile(dataDir, "conn", join(root, "chat", "b.jpg"))).toBeNull();
 });

@@ -34,6 +34,8 @@ describe("the Auto switch in Settings", () => {
   });
   it("is mounted in Settings, under channel defaults", () => {
     const settings = readFileSync(new URL("./SettingsModal.tsx", import.meta.url), "utf8");
-    expect(settings).toMatch(/section === "botDefaults"[\s\S]*?<RoomRoutingSettings \/>/);
+    expect(settings).toMatch(/section === "botDefaults"[\s\S]*?<BotsSettings/);
+    // The Bots page keeps it under its Advanced.
+    expect(readFileSync(new URL("./BotsSettings.tsx", import.meta.url), "utf8")).toMatch(/<AdvancedSection[\s\S]*?<RoomRoutingSettings \/>/);
   });
 });

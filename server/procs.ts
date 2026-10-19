@@ -1,3 +1,5 @@
+import { cloudTurnLaunch } from "./cloud-home/turn-process.ts";
+import { registerCloudTurnUnit } from "./cloud-home/cloud-process-hooks.ts";
 // Cross-platform process spawning for the agent CLIs. Four Windows
 // differences are exposed to drivers through this module:
 //   1. CreateProcess can't exec npm .cmd/.bat shims or node-shebang scripts
@@ -17,6 +19,7 @@ import {
   type ChildProcessByStdio,
   type ExecFileOptions,
   type SpawnOptions,
+  type StdioOptions,
 } from "node:child_process";
 import type { Readable, Writable } from "node:stream";
 import { join } from "node:path";
@@ -99,21 +102,47 @@ export function spawnCli(
   args: string[],
   opts: SpawnOptions,
   job?: { name: string; argsFile: string },
+  /** Cloud home only: the Docker client the SERVER itself runs against the owner's own
+   * server (vps-computer.ts). It is not an engine turn, holds the home's ssh key and
+   * must not go through the turn launcher. Nothing else may ask for this. */
+  mode?: { serverTool: "docker" },
 ): ChildProcessByStdio<Writable, Readable, Readable> {
   const resolved = resolveCli(cli, args);
   assertSafeCliArgv(resolved);
-  let command = resolved.command, launchArgs = resolved.args;
-  if (process.platform === "win32" && job) {
+  const launch = mode?.serverTool === "docker" && cli === "docker" ? null : cloudTurnLaunch(resolved.command, resolved.args, opts.env, opts.cwd);
+  let command = launch?.command ?? resolved.command, launchArgs = launch?.args ?? resolved.args;
+  if (process.platform === "win32" && job && !launch) {
     writeFileSync(job.argsFile, JSON.stringify(resolved), { mode: 0o600 });
     command = "powershell.exe";
     launchArgs = [...powershellArgs, "-JobName", job.name, "-Cwd", String(opts.cwd), "-ArgsFile", job.argsFile];
   }
+  const { stdio, closeStdin } = launchStdio(opts.stdio);
+  const rest: SpawnOptions = { ...opts };
+  delete rest.detached;
+  delete rest.windowsHide;
   const child = spawn(command, launchArgs, {
-    ...opts,
-    // posix: own process group so kill(-pid) reaps child MCP servers;
-    // win32: PIP uses a named job; other CLIs use taskkill /T.
+    ...rest,
+    stdio,
+    // Cloud home: the launcher itself gets a fixed PATH and cwd and four pipes;
+    // the turn's env (handed pins included) rides the request on fd 3, and
+    // stdin stays a pipe as Rule 74c requires.
+    ...(launch ? { env: { PATH: "/usr/bin:/bin" }, cwd: "/", stdio: ["pipe", "pipe", "pipe", "pipe"] as SpawnOptions["stdio"] } : {}),
+    // posix: a new session (setsid), so neither the CLI nor any descendant has
+    // a controlling terminal (Rule 74c), and its own process group, so
+    // kill(-pid) reaps child MCP servers. win32: a hidden console of its own
+    // (CREATE_NO_WINDOW, every stdio piped), never DETACHED_PROCESS: a console
+    // descendant of a console-less process would get a new visible console.
+    // PIP uses a named job; other CLIs use taskkill /T.
     ...(process.platform === "win32" ? { windowsHide: true } : { detached: true }),
   }) as ChildProcessByStdio<Writable, Readable, Readable>; // callers always pipe all three
+  if (closeStdin) child.stdin?.end();
+
+  if (launch) {
+    registerCloudTurnUnit(child.pid, launch.unit); // so the Cloud process hooks find the turn's scope without /proc
+    const requestPipe = child.stdio[3] as Writable;
+    requestPipe.on("error", () => {});
+    requestPipe.end(launch.request);
+  }
 
   // A write to a dying child's stdin fails differently per platform, and one
   // of the ways is fatal. On POSIX the kill is synchronous, the stream is
@@ -145,6 +174,26 @@ export function execCli(
   opts: ExecFileOptions,
   cb: (err: Error | null, stdout: string, stderr?: string) => void,
 ): void {
+  if (process.env.MURAGE_CLOUD_ROLE === "home") {
+    let child: ReturnType<typeof spawnCli>;
+    try { child = spawnCli(cli, args, { env: opts.env, cwd: opts.cwd, stdio: ["pipe", "pipe", "pipe"] }); }
+    catch (error) { queueMicrotask(() => cb(error instanceof Error ? error : new Error(String(error)), "", "")); return; }
+    let stdout = "", stderr = "", done = false;
+    const finish = (error: Error | null) => { if (done) return; done = true; clearTimeout(timer); cb(error, stdout, stderr); };
+    const timer = setTimeout(() => { killCliTree(child); finish(new Error("Cloud CLI probe timed out")); }, opts.timeout || 8000);
+    const receive = (stream: "out" | "err", data: Buffer) => {
+      if (stream === "out") stdout += data.toString(); else stderr += data.toString();
+      if (Buffer.byteLength(stdout) + Buffer.byteLength(stderr) > (opts.maxBuffer ?? 1024 * 1024)) {
+        killCliTree(child); finish(new Error("Cloud CLI probe output limit exceeded"));
+      }
+    };
+    child.stdout.on("data", data => receive("out", data));
+    child.stderr.on("data", data => receive("err", data));
+    child.once("error", finish);
+    child.once("close", code => finish(code === 0 ? null : new Error("Cloud CLI probe failed")));
+    child.stdin.end();
+    return;
+  }
   const resolved = resolveCli(cli, args);
   try {
     assertSafeCliArgv(resolved);
@@ -152,9 +201,77 @@ export function execCli(
     queueMicrotask(() => cb(error instanceof Error ? error : new Error(String(error)), "", ""));
     return;
   }
-  execFile(resolved.command, resolved.args, { ...opts, windowsHide: true, encoding: "utf8" }, (err, stdout, stderr) =>
-    cb(err, stdout, stderr),
-  );
+  // execFile cannot start a new session (it drops `detached`), so this is
+  // execFile's contract on spawn: all three stdio piped, stdin closed at once
+  // (no caller writes to it), output bounded by maxBuffer, the run bounded by
+  // timeout. posix: a new session, so the probe and every descendant have no
+  // controlling terminal, and a timeout or overflow stops the whole group;
+  // win32: a hidden console, never detached (Rule 74c, as spawnCli).
+  const win32 = process.platform === "win32";
+  const maxBuffer = opts.maxBuffer ?? 1024 * 1024;
+  const killSignal = opts.killSignal ?? "SIGTERM";
+  let child: ChildProcess;
+  try {
+    child = spawn(resolved.command, resolved.args, {
+      cwd: opts.cwd,
+      env: opts.env,
+      stdio: ["pipe", "pipe", "pipe"],
+      windowsHide: true,
+      ...(win32 ? {} : { detached: true }),
+    });
+  } catch (error) {
+    queueMicrotask(() => cb(error instanceof Error ? error : new Error(String(error)), "", ""));
+    return;
+  }
+  child.stdin?.on("error", () => {});
+  child.stdin?.end();
+  const out: Buffer[] = [], err: Buffer[] = [];
+  let bytes = 0, killed = false, overflow = false, settled = false;
+  const stop = () => {
+    killed = true;
+    const pid = child.pid;
+    if (!win32 && pid) {
+      try { process.kill(-pid, killSignal); return; } catch { /* the group is gone: the child below */ }
+    }
+    try { child.kill(killSignal); } catch { /* already gone */ }
+  };
+  const take = (into: Buffer[]) => (chunk: Buffer) => {
+    if (overflow) return;
+    bytes += chunk.length;
+    if (bytes > maxBuffer) { overflow = true; stop(); return; }
+    into.push(chunk);
+  };
+  child.stdout?.on("data", take(out));
+  child.stderr?.on("data", take(err));
+  const timer = opts.timeout && opts.timeout > 0 ? setTimeout(stop, opts.timeout) : undefined;
+  const finish = (error: Error | null) => {
+    if (settled) return;
+    settled = true;
+    if (timer) clearTimeout(timer);
+    cb(error, Buffer.concat(out).toString("utf8"), Buffer.concat(err).toString("utf8"));
+  };
+  child.once("error", (error) => finish(error));
+  child.once("close", (code, signal) => {
+    if (code === 0 && !killed) return finish(null);
+    const error = Object.assign(
+      new Error(overflow ? "stdout or stderr maxBuffer length exceeded" : `Command failed: ${[resolved.command, ...resolved.args].join(" ")}`),
+      { code: overflow ? "ERR_CHILD_PROCESS_STDIO_MAXBUFFER" : code, killed, signal, cmd: [resolved.command, ...resolved.args].join(" ") },
+    );
+    finish(error);
+  });
+}
+
+/** The stdio an engine process gets (Rule 74c): stdin is always a pipe, never
+ * inherited (a caller that asked to ignore it gets a pipe closed at once);
+ * stdout and stderr are pipes unless the caller ignores them. Extra entries
+ * (fds past 2) are kept as given. */
+function launchStdio(stdio: SpawnOptions["stdio"]): { stdio: StdioOptions; closeStdin: boolean } {
+  const given = Array.isArray(stdio) ? stdio : [stdio, stdio, stdio];
+  const out = (value: unknown) => (value === "ignore" ? "ignore" : "pipe");
+  return {
+    stdio: ["pipe", out(given[1]), out(given[2]), ...given.slice(3)] as StdioOptions,
+    closeStdin: given[0] === "ignore",
+  };
 }
 
 /** Human wording for a failed CLI spawn.

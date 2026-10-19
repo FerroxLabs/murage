@@ -142,9 +142,9 @@ describe("connected apps: the service's name stays out of what a bot reads", () 
     // the old call reaches the service by the same id it always did
     const call = serviceMessage({ jsonrpc: "2.0", id: 2, method: "tools/call", params: { name: "COMPOSIO_MULTI_EXECUTE_TOOL", arguments: {} } });
     expect((call.params as { name: string }).name).toBe("COMPOSIO_MULTI_EXECUTE_TOOL");
-    // Pi's ask for that old call reads as the connected-app tool, and a 1.0.1 grant covers it
-    const ask = piGateAsk(JSON.stringify({ tool: "composio_composio_multi_execute_tool", input: { tools: [] } }));
-    expect(ask.tool).toBe("Connected app");
+    // Pi's gate names the mount and tool from its table (Rule 14b), so the old
+    // call reads as the connector's own tool and a 1.0.1 grant covers it
+    const ask = piGateAsk(JSON.stringify({ tool: "composio_composio_multi_execute_tool", mount: "composio", mcpTool: "COMPOSIO_MULTI_EXECUTE_TOOL", input: { tools: [] } }), [{ engineName: "composio", mountId: "own:connector", provenance: "own" }]);
     expect(ask.toolCall?.name).toBe("mcp__composio__COMPOSIO_MULTI_EXECUTE_TOOL");
     expect(sameToolGrant("mcp__composio__COMPOSIO_MULTI_EXECUTE_TOOL", ask.toolCall!.name)).toBe(true);
     // A session started now is marked, and a turn that starts over is never legacy.
@@ -206,11 +206,15 @@ const INTERNAL_ONLY: Record<string, string> = {
   "electron/composio-release-config.mjs": "the broker's address",
   "electron/diagnostics.mjs": "environment names redacted from diagnostics",
   "electron/flux-composio-token.mjs": "credential storage keys",
+  "electron/ipc-channel-classes.mjs": "IPC channel names",
   "electron/main.mjs": "broker address, credential keys and IPC event types",
   "electron/managed-composio.mjs": "environment names and credential keys",
   "electron/preload.cjs": "IPC channel names",
   "electron/restored-connections.mjs": "environment names",
   "server/bot-access.ts": "the service's tool id; the bridge shows engines the plain name",
+  "server/cloud-home/credential-projection.ts": "credential keys a Cloud home projects from the supervisor",
+  "server/cloud-home/credentials.ts": "a config section id and an environment name",
+  "server/cloud-home/supervisor-port.ts": "supervisor IPC event types",
   "server/composio-standard-tools.ts": "the service's tool ids; the bridge shows engines the plain names",
   "server/composio.ts": "event types, log tags, the service's host and error codes",
   "server/config.ts": "environment names",

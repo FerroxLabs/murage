@@ -9,7 +9,7 @@ import { released } from "./testing/released.ts";
 //     only after that line has committed
 //  3  a receipt that owes a reply never expires: Murage closed for 49 hours, the next start delivers the reply once and the request ends done, not failed
 //  4  (RC2 integration) a queued hand-off whose start fails before the engine is handed the turn leaves its "could not start" chip again, owner and room origin
-import { mkdirSync, mkdtempSync, rmSync } from "node:fs";
+import { mkdirSync, mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
@@ -28,6 +28,7 @@ import { pendingItem, sendStore } from "./send-store.ts";
 import { drainSteeredMessages, type SteerStore } from "./steer-queue.ts";
 import { Store, type BotRecord, type Message } from "./store.ts";
 import { ownerWorld, type OwnerWorld } from "./testing/handoff-worlds.ts";
+import { removeTempDirSync } from "./testing/cleanup.ts";
 
 const quietly = async <T>(run: () => T | Promise<T>): Promise<T> => { const error = console.error; console.error = () => {}; try { return await run(); } finally { console.error = error; } };
 
@@ -38,7 +39,7 @@ describe("1. an automatic retry of an earlier Send again never runs a stopped me
   let file = "";
   const start = () => { const db = new DatabaseSync(file); handles.push(db); sendStore.reset(); sendStore.use(() => db); };
   beforeEach(() => { const dir = mkdtempSync(join(tmpdir(), "r31-stop-")); dirs.push(dir); file = join(dir, "messages.db"); start(); });
-  afterEach(() => { sendStore.reset(); for (const h of handles.splice(0)) { try { h.close(); } catch { /* closed */ } } for (const d of dirs.splice(0)) rmSync(d, { recursive: true, force: true }); });
+  afterEach(() => { sendStore.reset(); for (const h of handles.splice(0)) { try { h.close(); } catch { /* closed */ } } for (const d of dirs.splice(0)) removeTempDirSync(d); });
 
   /** A request as the delivery client posts it: an automatic retry replays exactly the press it repeats (its resend, its action token, its stop token). */
   type Press = { resend: true; actionId: string; stopGen?: string };
@@ -106,7 +107,7 @@ describe("1. an automatic retry of an earlier Send again never runs a stopped me
 });
 
 // ── 2 and 3 ───────────────────────────────────────────────────────────────────────────
-const fresh = () => { closeDatabase(); rmSync(DATA_DIR, { recursive: true, force: true }); mkdirSync(DATA_DIR, { recursive: true }); _resetPending(); _resetOwnerMigration(); };
+const fresh = () => { closeDatabase(); removeTempDirSync(DATA_DIR); mkdirSync(DATA_DIR, { recursive: true }); _resetPending(); _resetOwnerMigration(); };
 const HOURS = 60 * 60 * 1000;
 
 /** A finished hand-off whose process dies after its receipt reached disk and before its final commit, then the restarts that follow. The writer and listener

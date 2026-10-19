@@ -1,16 +1,17 @@
 import { spawn } from "node:child_process";
-import { chmod, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { chmod, mkdtemp, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { afterEach, describe, expect, it } from "vitest";
 
 import { vpsContainerName } from "./vps-computer.ts";
+import { removeTempDir } from "./testing/cleanup.ts";
 
 const temporary: string[] = [];
 
 afterEach(async () => {
-  await Promise.all(temporary.splice(0).map((path) => rm(path, { recursive: true, force: true })));
+  await Promise.all(temporary.splice(0).map((path) => removeTempDir(path)));
 });
 
 function runBridge(bin: string, input: string) {

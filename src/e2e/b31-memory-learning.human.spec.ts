@@ -1,4 +1,4 @@
-import { test, expect, type Page } from "@playwright/test";
+import { test, expect, type Page } from "./page-error-guard";
 import { createServer, type ViteDevServer } from "vite";
 import react from "@vitejs/plugin-react";
 import tailwindcss from "@tailwindcss/vite";
@@ -69,9 +69,10 @@ test.afterAll(async () => { try { await vite?.close(); } finally { await fixture
 test("learning choices persist, stale edits require refresh, and workspace activity remains honest", async ({ page }, info) => {
   const panel = await openWorkspaceMemory(page);
   // G2 moves the v2 choices to Settings > Memory; switches save with a revision.
-  const controls = panel.getByRole("region", { name: "Learning", exact: true });
-  const facts = controls.getByRole("switch", { name: "Learn facts automatically",exact:true });
-  const procedures = controls.getByRole("switch", { name: "Learn procedures automatically",exact:true });
+  // 1.0.3: "Learn as we talk" is one switch over facts and procedures; the two live in Advanced.
+  const controls = panel.getByRole("region", { name: "How it learns", exact: true });
+  const facts = controls.getByRole("switch", { name: "Learn as we talk",exact:true });
+  const procedures = facts;
   const review = controls.getByRole("switch", { name: "Review before using",exact:true });
   await expect(facts).toBeChecked(); await expect(procedures).toBeChecked(); await expect(review).not.toBeChecked();
   const before = await api("/api/memory/status");
@@ -80,17 +81,18 @@ test("learning choices persist, stale edits require refresh, and workspace activ
   await expect.poll(async () => (await api("/api/memory/status")).learning.revision).toBe(before.learning.revision + 2);
   const current = await api("/api/memory/status");
   expect(current.configuration).toEqual(before.configuration); expect(current.model.state).toBe(before.model.state);
-  expect(current.learning.settings.dailyInputTokens).toBe(before.learning.settings.dailyInputTokens);
+  expect(current.learning.settings.ceiling).toEqual(before.learning.settings.ceiling);
   await api("/api/memory/action", { action: "configure", learning: { automaticProcedures: false }, learningRevision: current.learning.revision });
   await review.click();
   await expect(page.getByRole("alert")).toContainText("changed elsewhere");await expect(review).toBeDisabled();
   await page.getByRole("button", { name: "Refresh changed settings" }).click();
   await expect(procedures).not.toBeChecked();await expect(review).toBeEnabled();
-  await panel.getByText("Workspace learning activity", { exact: true }).click();
-  await expect(panel.getByText(/Counts cover the whole workspace/)).toBeVisible();
-  await expect(panel.getByText("No activity recorded", { exact: false }).first()).toBeVisible();
-  await expect(panel.getByText(/Synthesis: disabled/)).toBeVisible();
-  await expect(panel.getByText("Supplied to turns", { exact: true })).toBeVisible();
+  await page.getByRole("button", { name: /^Advanced/ }).click();
+  const advanced = page.getByRole("region", { name: "Advanced", exact: true });
+  await expect(advanced.getByText(/Counts cover the whole workspace/)).toBeVisible();
+  await expect(advanced.getByText("No activity recorded", { exact: false }).first()).toBeVisible();
+  await expect(advanced.getByText(/Synthesis: disabled/)).toBeVisible();
+  await expect(advanced.getByText("Supplied to turns", { exact: true })).toBeVisible();
   for (const width of [390, 820, 1440]) {
     await inspectWidth(page, width, panel, controls, facts);
     await page.keyboard.press("Space"); await expect(facts).toBeChecked(); await expect(facts).toBeEnabled(); await page.keyboard.press("Space"); await expect(facts).not.toBeChecked(); await expect(facts).toBeEnabled();

@@ -1,8 +1,12 @@
 // First: no schema may be built before Zod is told not to probe for eval.
 import "./lib/zod-config";
+// Second: the Cloud home requires Trusted Types, so the "murage" policy exists before anything writes markup.
+import { installTrustedTypes, sanitizerReady } from "./lib/trusted-html";
 import { StrictMode } from "react";
 import { createRoot } from "react-dom/client";
 import App from "./App";
+import { CloudDoor } from "./components/cloud/Door";
+import { homeMeta } from "./lib/cloud-door";
 import { RootErrorBoundary } from "./components/RootErrorBoundary";
 import { browserChunkReloadDeps, installChunkReload } from "./lib/chunk-reload";
 import { bootLocaleReady } from "./lib/i18n";
@@ -12,6 +16,8 @@ import { routeNativeClicks } from "./lib/open-external";
 import { registerServiceWorker } from "./lib/register-sw";
 import { applySkin, readPreference, resolveSkin, watchSystemSkin } from "./lib/skins";
 import "./styles.css";
+
+installTrustedTypes();
 
 // index.html has already stamped the palette before the stylesheet resolved;
 // this repeats it because that inline copy cannot run the migration's storage
@@ -47,11 +53,13 @@ installChunkReload(browserChunkReloadDeps());
 // system's) before the first render, but never long: past the cap the app
 // paints in English and switches when the pack arrives.
 const LOCALE_WAIT_MS = 1500;
-void Promise.race([bootLocaleReady, new Promise((done) => setTimeout(done, LOCALE_WAIT_MS))]).finally(() => {
+// The markup sanitizer (src/lib/trusted-html.ts) loads alongside it, under the same cap, so the first paint can
+// already draw mascots and other sanitized markup.
+void Promise.race([Promise.all([bootLocaleReady, sanitizerReady()]), new Promise((done) => setTimeout(done, LOCALE_WAIT_MS))]).finally(() => {
   createRoot(document.getElementById("root")!).render(
     <StrictMode>
       <RootErrorBoundary>
-        <App />
+        {homeMeta(document).homeId ? <CloudDoor><App /></CloudDoor> : <App />}
       </RootErrorBoundary>
     </StrictMode>,
   );

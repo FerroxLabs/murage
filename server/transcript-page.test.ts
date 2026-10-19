@@ -5,7 +5,7 @@
 // on what it says it can fold. A 1.0.2 renderer takes open request cards beside
 // its page; a 1.0.1 renderer, the phone and the companion never read that field
 // and are sent every open card inside their page, as they always were.
-import { rmSync } from "node:fs";
+
 import { beforeEach, describe, expect, it } from "vitest";
 
 import { DATA_DIR } from "./config.ts";
@@ -13,11 +13,12 @@ import type { ModelSelection } from "./contracts.ts";
 import { SseReplay } from "./sse-buffer.ts";
 import { Store } from "./store.ts";
 import { takesCardsBeside, transcriptPage, wirePage } from "./transcript-page.ts";
+import { removeTempDirSync } from "./testing/cleanup.ts";
 
 const selection = (): ModelSelection => ({ instanceId: "claude", model: "claude-sonnet-5" });
 
 describe("the page each client is sent", () => {
-  beforeEach(() => rmSync(DATA_DIR, { recursive: true, force: true }));
+  beforeEach(() => removeTempDirSync(DATA_DIR));
 
   function longThreadWithOldCard() {
     const store = new Store(selection);
