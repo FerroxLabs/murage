@@ -2,10 +2,12 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { afterEach, expect, it, vi } from "vitest";
-import { validatePackagedMemoryRuntime } from "./after-pack.mjs";
+import { createHash } from "node:crypto";
+import { MEMORY_WASM_FILES, validatePackagedMemoryRuntime } from "./after-pack.mjs";
+import { removeTempDirSync } from "../server/testing/cleanup.ts";
 
 const roots=[];
-afterEach(()=>{for(const root of roots.splice(0))fs.rmSync(root,{recursive:true,force:true});});
+afterEach(()=>{for(const root of roots.splice(0))removeTempDirSync(root);});
 function header(platform,arch){
   const bytes=Buffer.alloc(128);
   if(platform==="darwin"){bytes.writeUInt32LE(0xfeedfacf,0);bytes.writeUInt32LE(arch==="arm64"?0x0100000c:0x01000007,4);}
@@ -32,10 +34,13 @@ function fixture(platform,arch,flat=false){
   fs.mkdirSync(sharp,{recursive:true});
   if(flat)for(const dir of [`sharp-${target}`,`sharp-libvips-${target}`].filter(dir=>fs.existsSync(path.join(img,dir))))fs.writeFileSync(path.join(img,dir,"package.json"),JSON.stringify({name:`@img/${dir}`,version:"0.35.5"}));
   fs.writeFileSync(path.join(sharp,"package.json"),JSON.stringify({name:"sharp",version:"0.35.5"}));
-  fs.writeFileSync(manifest,JSON.stringify({platform:"darwin",arch:"arm64",packages:[{name:"@huggingface/transformers",version:"4.2.0",path:"node_modules/@huggingface/transformers"},{name:"onnxruntime-node",version:"1.24.3",path:runtimePath},{name:"sharp",version:"0.35.5",path:sharpPath}]}));
+  const commonDir=path.join(server,"node_modules/onnxruntime-common");fs.mkdirSync(commonDir,{recursive:true});fs.writeFileSync(path.join(commonDir,"package.json"),JSON.stringify({name:"onnxruntime-common",version:"1.24.3"}));
+  const wasmFiles=MEMORY_WASM_FILES.map(file=>{const bytes=Buffer.from(`fixture ${file}`);fs.mkdirSync(path.dirname(path.join(server,file)),{recursive:true});fs.writeFileSync(path.join(server,file),bytes);return {path:file,bytes:bytes.length,sha256:createHash("sha256").update(bytes).digest("hex")};});
+  const wasmBackend={package:"onnxruntime-web",version:"1.24.3",license:"MIT",common:{version:"1.24.3",path:"node_modules/onnxruntime-common"},files:wasmFiles};
+  fs.writeFileSync(manifest,JSON.stringify({platform:"darwin",arch:"arm64",packages:[{name:"@huggingface/transformers",version:"4.2.0",path:"node_modules/@huggingface/transformers"},{name:"onnxruntime-node",version:"1.24.3",path:runtimePath},{name:"sharp",version:"0.35.5",path:sharpPath}],wasmBackend}));
   const names=["onnxruntime_binding.node",...(platform==="darwin"?["libonnxruntime.1.24.3.dylib"]:platform==="linux"?["libonnxruntime.so.1"]:["onnxruntime.dll","DirectML.dll","dxcompiler.dll","dxil.dll"])];
   for(const name of names)fs.writeFileSync(path.join(native,name),header(platform,arch));
-  return {root,manifest,native,names,addon,libvips};
+  return {root,manifest,native,names,addon,libvips,server};
 }
 
 it("records the actual target and validated native files while retaining the distinct staging host",async()=>{
@@ -67,7 +72,7 @@ it("fails required native targets when their binding or runtime library is missi
 it("records unavailable Intel native payload without relabeling an ARM binary as Intel",async()=>{
   const f=fixture("darwin","x64");for(const name of f.names)fs.unlinkSync(path.join(f.native,name));
   const unavailable=await validatePackagedMemoryRuntime(f.root,"darwin",1);
-  expect(unavailable).toMatchObject({platform:"darwin",arch:"x64",nativeBackendAvailable:false,stagingHost:{platform:"darwin",arch:"arm64"}});
+  expect(unavailable).toMatchObject({platform:"darwin",arch:"x64",nativeBackendAvailable:false,wasmBackendAvailable:true,stagingHost:{platform:"darwin",arch:"arm64"}});
   expect(unavailable.nativeBackend.files).toEqual([]);expect(unavailable.nativeBackend.missingFiles).toHaveLength(2);
   fs.writeFileSync(path.join(f.native,"onnxruntime_binding.node"),header("darwin","arm64"));
   await expect(validatePackagedMemoryRuntime(f.root,"darwin",1)).rejects.toThrow("architecture mismatch");
@@ -87,7 +92,7 @@ it("refuses a package whose thumbnail runtime (sharp, its native addon and libvi
     await expect(validatePackagedMemoryRuntime(missingAddon.root,platform,arch)).rejects.toThrow("thumbnail runtime is missing");
     const missingLibvips=fixture(platform,arch);fs.unlinkSync(missingLibvips.libvips);
     await expect(validatePackagedMemoryRuntime(missingLibvips.root,platform,arch)).rejects.toThrow("missing libvips");
-    const missingPackage=fixture(platform,arch);fs.rmSync(path.join(missingPackage.root,"server/node_modules/@huggingface/transformers/node_modules/sharp"),{recursive:true});
+    const missingPackage=fixture(platform,arch);removeTempDirSync(path.join(missingPackage.root,"server/node_modules/@huggingface/transformers/node_modules/sharp"));
     await expect(validatePackagedMemoryRuntime(missingPackage.root,platform,arch)).rejects.toThrow("thumbnail runtime is missing");
     expect(JSON.parse(fs.readFileSync(missingPackage.manifest,"utf8"))).not.toHaveProperty("thumbnailBackend");
   }
@@ -103,7 +108,7 @@ it("only warns about a missing thumbnail runtime where the memory runtime may be
       const f=fixture("darwin","x64");
       if(drop==="addon")fs.unlinkSync(f.addon);
       else if(drop==="libvips")fs.unlinkSync(f.libvips);
-      else if(drop==="package")fs.rmSync(path.join(f.root,"server/node_modules/@huggingface/transformers/node_modules/sharp"),{recursive:true});
+      else if(drop==="package")removeTempDirSync(path.join(f.root,"server/node_modules/@huggingface/transformers/node_modules/sharp"));
       else{const manifest=JSON.parse(fs.readFileSync(f.manifest,"utf8"));manifest.packages=manifest.packages.filter(entry=>entry.name!=="sharp");fs.writeFileSync(f.manifest,JSON.stringify(manifest));}
       warn.mockClear();
       const result=await validatePackagedMemoryRuntime(f.root,"darwin",1);
@@ -117,4 +122,25 @@ it("only warns about a missing thumbnail runtime where the memory runtime may be
   const wrongArch=fixture("darwin","x64");fs.writeFileSync(wrongArch.addon,header("darwin","arm64"));
   await expect(validatePackagedMemoryRuntime(wrongArch.root,"darwin","x64")).rejects.toThrow("thumbnail architecture mismatch");
   expect(JSON.parse(fs.readFileSync(wrongArch.manifest,"utf8"))).not.toHaveProperty("thumbnailBackend");
+});
+
+it("requires the exact WebAssembly executor on every target, Intel macOS included, where it is the only one",async()=>{
+  for(const [platform,arch,value] of [["darwin","arm64",3],["darwin","x64",1],["linux","x64",1],["win32","x64",1]]){
+    const ok=fixture(platform,arch);
+    expect((await validatePackagedMemoryRuntime(ok.root,platform,value)).wasmBackend.files.map(file=>file.path)).toEqual([...MEMORY_WASM_FILES]);
+    const missing=fixture(platform,arch);fs.unlinkSync(path.join(missing.server,MEMORY_WASM_FILES[2]));
+    await expect(validatePackagedMemoryRuntime(missing.root,platform,value)).rejects.toThrow("WebAssembly backend is missing");
+    const altered=fixture(platform,arch);fs.appendFileSync(path.join(altered.server,MEMORY_WASM_FILES[2]),"x");
+    await expect(validatePackagedMemoryRuntime(altered.root,platform,value)).rejects.toThrow("differs from its staging record");
+    const linked=fixture(platform,arch),target=path.join(linked.server,MEMORY_WASM_FILES[0]);fs.renameSync(target,`${target}.real`);fs.symlinkSync(`${target}.real`,target);
+    await expect(validatePackagedMemoryRuntime(linked.root,platform,value)).rejects.toThrow("regular file");
+    const unrecorded=fixture(platform,arch),manifest=JSON.parse(fs.readFileSync(unrecorded.manifest,"utf8"));delete manifest.wasmBackend;fs.writeFileSync(unrecorded.manifest,JSON.stringify(manifest));
+    await expect(validatePackagedMemoryRuntime(unrecorded.root,platform,value)).rejects.toThrow("no WebAssembly backend");
+  }
+  const intel=fixture("darwin","x64");for(const name of intel.names)fs.unlinkSync(path.join(intel.native,name));fs.unlinkSync(path.join(intel.server,MEMORY_WASM_FILES[1]));
+  await expect(validatePackagedMemoryRuntime(intel.root,"darwin",1)).rejects.toThrow("WebAssembly backend is missing");
+  const escaping=fixture("linux","x64"),manifest=JSON.parse(fs.readFileSync(escaping.manifest,"utf8"));manifest.wasmBackend.files.push({path:"../outside.wasm",bytes:1,sha256:"0".repeat(64)});fs.writeFileSync(escaping.manifest,JSON.stringify(manifest));
+  await expect(validatePackagedMemoryRuntime(escaping.root,"linux","x64")).rejects.toThrow("escapes server resources");
+  const version=fixture("linux","x64"),stale=JSON.parse(fs.readFileSync(version.manifest,"utf8"));stale.wasmBackend.version="1.26.0-dev";fs.writeFileSync(version.manifest,JSON.stringify(stale));
+  await expect(validatePackagedMemoryRuntime(version.root,"linux","x64")).rejects.toThrow("differs from the native ONNX Runtime");
 });

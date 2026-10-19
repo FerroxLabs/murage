@@ -4,7 +4,7 @@
 // rc4 identity: an existing record promoted IN PLACE (kind to character-canon, or its details to partition 'identity') by another connection
 // writes no new rowid, so a watermark refresh cannot see it. The identity set must be exact on the very next check, with and without the
 // identity indexes, a skill's evidence check must then refuse (never a remembered pass), and the cost must stay flat as the store grows.
-import { mkdirSync, readdirSync, readFileSync, rmSync, statSync } from "node:fs";
+import { mkdirSync, readdirSync, readFileSync, statSync } from "node:fs";
 import { join, relative } from "node:path";
 import { fileURLToPath } from "node:url";
 import { DatabaseSync } from "node:sqlite";
@@ -18,8 +18,10 @@ import { buildEagerIndexes } from "./optional-index.ts";
 import { holdWritersForIndexBuild, writersHeldForIndexBuild } from "../database.ts";
 import { identityRecomputeStats, ensureIdentityIndexes, identityGeneration, identityIndexesReady, identitySourceSet, IDENTITY_SQL, recomputeIdentityOffThread, SMALL_STORE_ROWS } from "./provenance-stamp.ts";
 import { assertSkillProcedureEvidence, type SkillProcedureContext } from "../skills.ts";
+import { dropRecordKeys } from "./schema.ts";
+import { removeTempDirSync } from "../testing/cleanup.ts";
 
-beforeEach(() => { closeDatabase(); rmSync(DATA_DIR, { recursive: true, force: true }); mkdirSync(DATA_DIR, { recursive: true }); setMemoryMode("capture"); });
+beforeEach(() => { closeDatabase(); removeTempDirSync(DATA_DIR); mkdirSync(DATA_DIR, { recursive: true }); setMemoryMode("capture"); });
 
 function source(threadId: string) {
   const id = `source:${threadId}`;
@@ -77,7 +79,7 @@ it("the identity version moves when the set is replaced and reads -1 once anothe
 it("a read through the indexes costs the same rows with 10 and with 100,000 records, and walks only the indexes", async () => {
   const rows: number[] = [];
   for (const n of [10, 100_000]) {
-    closeDatabase(); rmSync(DATA_DIR, { recursive: true, force: true }); mkdirSync(DATA_DIR, { recursive: true }); setMemoryMode("capture");
+    closeDatabase(); removeTempDirSync(DATA_DIR); mkdirSync(DATA_DIR, { recursive: true }); setMemoryMode("capture");
     const item = source("c"), db = database();
     db.exec("PRAGMA foreign_keys=OFF"); db.exec("BEGIN");
     db.prepare(`WITH RECURSIVE c(n) AS (SELECT 1 UNION ALL SELECT n+1 FROM c WHERE n<?) INSERT INTO memory_records SELECT 'h-'||n,1,?,'fact','x','owner-statement','active',0,1,NULL,NULL,1 FROM c`).run(n, item.scopeId);
@@ -111,7 +113,7 @@ it("the files that write partition or kind on memory records are the known ones"
 function bulk(n: number, scope: string) {
   const db = database();
   db.exec("PRAGMA foreign_keys=OFF"); db.exec("BEGIN");
-  db.prepare(`WITH RECURSIVE c(n) AS (SELECT 1 UNION ALL SELECT n+1 FROM c WHERE n<?) INSERT INTO memory_records SELECT 'h-'||n,1,?,'fact','x','owner-statement','active',0,1,NULL,NULL,1 FROM c`).run(n, scope);
+  db.prepare(`WITH RECURSIVE c(n) AS (SELECT 1 UNION ALL SELECT n+1 FROM c WHERE n<?) INSERT INTO memory_records SELECT 'h-'||n,1,?,'fact','x','owner-statement','active',0,1,NULL,NULL,n FROM c`).run(n, scope);
   db.prepare(`WITH RECURSIVE c(n) AS (SELECT 1 UNION ALL SELECT n+1 FROM c WHERE n<?) INSERT OR REPLACE INTO memory_record_details(record_id,record_version,partition,attention,claim_status) SELECT 'h-'||n,1,'semantic','current','current' FROM c`).run(n);
   db.exec("COMMIT");
 }
@@ -199,12 +201,22 @@ it("a promotion made during the recount is caught: the result is thrown away and
   } finally { reclaim.stop(); }
 }, 60_000);
 
-it("a writer that does not park (not the reclaim) still keeps a snapshot from being accepted", async () => {
+it("on a file without the durable identity counter, a writer that does not park (not the reclaim) still keeps a snapshot from being accepted", async () => {
   const item = source("rg");
   record("plain", item.scopeId, item.id);
   bulk(SMALL_STORE_ROWS + 5_000, item.scopeId);
-  const db = database(), rogue = standInReclaim(false, 2);
+  const db = database();
+  dropRecordKeys(db); // the shape an older build left: no memory_identity_stamp, so any other commit moves the reading
+  const rogue = standInReclaim(false, 2);
   try { expect(await recomputeIdentityOffThread(db, 2)).toBe(false); } finally { rogue.stop(); }
+}, 60_000);
+
+it("with the durable identity counter (1.0.3, 2.3), a writer that does not park but writes nothing identity rests on no longer throws the snapshot away", async () => {
+  const item = source("rk");
+  record("plain", item.scopeId, item.id);
+  bulk(SMALL_STORE_ROWS + 5_000, item.scopeId);
+  const db = database(), rogue = standInReclaim(false, 2);
+  try { expect(await recomputeIdentityOffThread(db, 2)).toBe(true); } finally { rogue.stop(); }
 }, 60_000);
 
 it("the early identity index build holds the writers while it runs and lets go after", async () => {

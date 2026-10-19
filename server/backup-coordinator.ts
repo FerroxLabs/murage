@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { lstatSync, mkdirSync, readFileSync, rmSync } from "node:fs";
+import { lstatSync, mkdirSync, readFileSync, renameSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { z } from "zod";
 import { acquireDataDirLeaseForProcess } from "./data-dir-lease.ts";
@@ -29,6 +29,17 @@ const skippedSchema = z.object({
   bots: z.record(z.string().max(160), z.string().max(80)),
 }).strict();
 export type BackupSkipped = z.infer<typeof skippedSchema>;
+/** How the first run's backup step ended (Settings L5): a checked backup, or
+ * the person's own choice to keep backups off. Written by the desktop host
+ * only, in its own file for the same reason as the failure note. It is never
+ * an answer by itself: "verified" is re-derived from the current receipt and
+ * the current folder and key every time it is read. A "verified" record names the receipt and the
+ * folder and key it was checked against. */
+const firstRunSchema = z.discriminatedUnion("state", [
+  z.object({ version: z.literal(1), state: z.literal("verified"), at: z.number().int().nonnegative(), jobId: z.string().regex(/^[a-f0-9]{64}$/), sha256: z.string().regex(/^[a-f0-9]{64}$/), installationRef: backupReferenceSchema, destinationRef: backupReferenceSchema, recoveryRef: backupReferenceSchema }).strict(),
+  z.object({ version: z.literal(1), state: z.literal("off"), at: z.number().int().nonnegative() }).strict(),
+]);
+export type BackupFirstRun = z.infer<typeof firstRunSchema>;
 const jobSchema = z.object({ id:z.string().regex(/^[a-f0-9]{64}$/), occurrence:z.string().max(200), revision:z.number().int().nonnegative(), scheduledAt:z.number().int().nonnegative(),
   phase:z.enum(["due","waiting-idle","waiting-backup-mode","claiming","capturing","local-verified","skipped","needs-review","handoff-prepared","handoff-armed","offline-claimed","return-pending","returned","install-requested","upgrade-complete","upgrade-cancelled"]),
   handoff:backupHandoffSchema.optional(),
@@ -106,6 +117,32 @@ export class BackupCoordinator {
     mkdirSync(this.options.stateDirectory,{recursive:true,mode:0o700});
     writeFileAtomic(this.failureFile(),JSON.stringify({...parsed.data,at:this.now()}),{mode:0o600});
   }
+  private firstRunFile(){return join(this.options.stateDirectory,"backup-first-run.json");}
+  /** The first run's recorded ending, or undefined when it has none yet. An
+   * unreadable record throws: the caller treats that as "already decided". */
+  firstRunRecord():BackupFirstRun|undefined{
+    let stat;try{stat=lstatSync(this.firstRunFile());}catch(error){if((error as NodeJS.ErrnoException).code==="ENOENT")return undefined;throw new Error("BACKUP_FIRST_RUN_STATE_INVALID");}
+    if(!stat.isFile()||stat.isSymbolicLink()||stat.size>4*1024)throw new Error("BACKUP_FIRST_RUN_STATE_INVALID");
+    const parsed=firstRunSchema.safeParse((()=>{try{return JSON.parse(readFileSync(this.firstRunFile(),"utf8"));}catch{return null;}})());
+    if(!parsed.success)throw new Error("BACKUP_FIRST_RUN_STATE_INVALID");
+    return parsed.data;
+  }
+  /** Records how the first run's backup step ended. The first record stands
+   * unless the caller (the desktop host, acting on the person's own request)
+   * asks to replace it. A record that cannot be read never traps the step: it
+   * is moved aside, kept for review, and the new record takes its place. */
+  recordFirstRun(input:unknown,options:{replace?:boolean}={}){
+    let existing:BackupFirstRun|undefined;
+    try{existing=this.firstRunRecord();}catch{
+      const aside=join(this.options.stateDirectory,`backup-first-run.unreadable-${this.now()}.json`);
+      try{renameSync(this.firstRunFile(),aside);}catch{rmSync(this.firstRunFile(),{force:true});}
+    }
+    if(existing&&!options.replace)return existing;
+    const record=firstRunSchema.parse({...(input&&typeof input==="object"?input:{}),version:1,at:this.now()});
+    mkdirSync(this.options.stateDirectory,{recursive:true,mode:0o700});
+    writeFileAtomic(this.firstRunFile(),JSON.stringify(record),{mode:0o600});
+    return record;
+  }
   clearCaptureFailure(){try{rmSync(this.failureFile(),{force:true});}catch{/* A retained note never blocks a backup. */}}
   private captureFailure(){
     try{
@@ -122,7 +159,12 @@ export class BackupCoordinator {
     const lease=this.lease();try{const s=this.read();if(s.revision!==expectedRevision)throw new Error("BACKUP_SCHEDULE_CHANGED");
       const schedule=backupScheduleSchema.parse(input);const unresolved=s.job&&["claiming","capturing","needs-review","handoff-prepared","handoff-armed","offline-claimed","return-pending","install-requested"].includes(s.job.phase);
       if(unresolved&&(schedule.enabled||hash({...schedule,enabled:false})!==hash({...s.schedule,enabled:false})))throw new Error("BACKUP_REVIEW_REQUIRED");
-      this.save({...s,revision:s.revision+1,configuredAt:this.now(),schedule,job:unresolved?s.job:undefined});return this.status();
+      // A receipt proves a backup of THIS folder with THIS key. A schedule
+      // pointed at another folder or key starts unverified until its own
+      // checked backup lands; turning backups off keeps the refs, and the receipt.
+      const {lastVerified,...rest}=s;
+      const receiptCurrent=Boolean(lastVerified&&lastVerified.installationRef===schedule.installationRef&&lastVerified.destinationRef===schedule.destinationRef&&s.schedule.recoveryRef===schedule.recoveryRef);
+      this.save({...rest,revision:s.revision+1,configuredAt:this.now(),schedule,job:unresolved?s.job:undefined,...(receiptCurrent?{lastVerified}:{})});return this.status();
     }finally{lease.release();}
   }
   tick(upgradeId?:string){if(this.running)return this.running;this.running=this.work(upgradeId).finally(()=>{this.running=undefined;});return this.running;}

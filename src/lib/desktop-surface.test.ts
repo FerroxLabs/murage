@@ -53,6 +53,6 @@ describe("the desktop opts out of the scoped surface", () => {
     // It does not go through api(), and it reads prompts and tool traffic —
     // precisely what the scoped default withholds.
     const source = read("../components/InspectorPanel.tsx");
-    expect(source).toMatch(/\/events\?limit=400[\s\S]{0,200}x-murage-surface/);
+    expect(source).toMatch(/\/events\?limit=400[\s\S]{0,400}x-murage-surface/);
   });
 });

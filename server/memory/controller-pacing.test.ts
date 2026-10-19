@@ -3,7 +3,7 @@
 // cycle, every wake-up included; each cycle's own synchronous time is
 // counted once; timeouts stay independent of the deadline; the one-time park
 // sweep runs when the controller has nothing else to do, not ahead of work.
-import { mkdirSync, rmSync } from "node:fs";
+import { mkdirSync } from "node:fs";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { DATA_DIR } from "../config.ts";
 import { closeDatabase, database } from "../database.ts";
@@ -13,6 +13,7 @@ import { ioBudget } from "../io-budget.ts";
 import { setMemoryMode } from "./repository.ts";
 import { MemoryWorkerController } from "./worker-controller.ts";
 import type { MemoryWork } from "./worker-protocol.ts";
+import { removeTempDirSync } from "../testing/cleanup.ts";
 
 const state = vi.hoisted(() => ({ claimCost: 0, cost: 0, claims: [] as number[], gapArgs: [] as number[] }));
 vi.mock("./jobs.ts", async importOriginal => {
@@ -32,7 +33,7 @@ type Internals = { child: unknown; ready: boolean; work: MemoryWork | null; dead
 let controller: MemoryWorkerController, internals: Internals, sent: MemoryWork[], killed: number;
 
 beforeEach(() => {
-  closeDatabase(); rmSync(DATA_DIR, { recursive: true, force: true }); mkdirSync(DATA_DIR, { recursive: true }); setMemoryMode("capture"); resetParkSweep();
+  closeDatabase(); removeTempDirSync(DATA_DIR); mkdirSync(DATA_DIR, { recursive: true }); setMemoryMode("capture"); resetParkSweep();
   state.claimCost = 0; state.cost = 0; state.claims.length = 0; state.gapArgs.length = 0; sent = []; killed = 0;
   vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout", "setInterval", "clearInterval", "setImmediate", "clearImmediate", "Date"] });
   vi.spyOn(performance, "now").mockImplementation(() => Date.now() + state.cost);

@@ -1,12 +1,13 @@
-import { mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync, renameSync, mkdirSync } from "node:fs";
+import { mkdtempSync, readFileSync, readdirSync, writeFileSync, renameSync, mkdirSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, expect, it, vi } from "vitest";
 import { SlackService } from "./service.ts";
 import type { SlackTransport } from "./transport.ts";
 import { ChannelSendError } from "../durable-delivery.ts";
+import { removeTempDirSync } from "../../testing/cleanup.ts";
 const roots: string[] = [], services: SlackService[] = [];
-afterEach(async () => { for (const s of services.splice(0)) await s.stop(); for (const p of roots.splice(0)) rmSync(p, { recursive: true, force: true }); vi.useRealTimers(); });
+afterEach(async () => { for (const s of services.splice(0)) await s.stop(); for (const p of roots.splice(0)) removeTempDirSync(p); vi.useRealTimers(); });
 const flush = async () => { for (let i = 0; i < 15; i++) await Promise.resolve(); };
 function fixture() {
   const dir = mkdtempSync(join(tmpdir(), "murage-slack-service-")); roots.push(dir);

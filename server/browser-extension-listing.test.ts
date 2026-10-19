@@ -1,14 +1,15 @@
 // Copyright 2026 Ferrox Labs
 // SPDX-License-Identifier: AGPL-3.0-or-later
-import { mkdtempSync, mkdirSync, realpathSync, rmSync, writeFileSync } from "node:fs";
+import { mkdtempSync, mkdirSync, realpathSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, expect, it } from "vitest";
 import { browserExtensionListing, readBrowserExtensionBuild } from "./browser-extension-listing.ts";
+import { removeTempDirSync } from "./testing/cleanup.ts";
 
 const ID = "abcdefghijklmnopabcdefghijklmnop";
 const roots: string[] = [];
-afterEach(() => { for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true }); });
+afterEach(() => { for (const root of roots.splice(0)) removeTempDirSync(root); });
 function resources(build: unknown) {
   const root = realpathSync.native(mkdtempSync(join(tmpdir(), "bx-listing-"))); roots.push(root);
   mkdirSync(join(root, "browser-extension"));

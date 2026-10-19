@@ -10,7 +10,7 @@
 // all of them, silently. The owner's direct chat now follows the room rule:
 // a reply is withheld only when content it used was forgotten, deleted or
 // changed, and then it stays in place as a visible withheld line.
-import { mkdirSync, rmSync } from "node:fs";
+import { mkdirSync } from "node:fs";
 import { beforeEach, expect, it } from "vitest";
 import { DATA_DIR } from "../config.ts";
 import { closeDatabase, database } from "../database.ts";
@@ -20,8 +20,9 @@ import { continuationMemoryRevoked, filterDirectReplay } from "./disclosures.ts"
 import { revokeAllDisclosures } from "./revocation.ts";
 import { recordSessionRoots } from "./replay-lineage.ts";
 import { LineageAllowance } from "./lineage-allowance.ts";
+import { removeTempDirSync } from "../testing/cleanup.ts";
 
-beforeEach(() => { closeDatabase(); rmSync(DATA_DIR, { recursive: true, force: true }); mkdirSync(DATA_DIR, { recursive: true }); });
+beforeEach(() => { closeDatabase(); removeTempDirSync(DATA_DIR); mkdirSync(DATA_DIR, { recursive: true }); });
 
 const roster: MemoryRoster = { bots: [{ id: "sable", threadId: "sable-direct", section: "office" }], groups: [] };
 function access(notOwnerAudience = false) {

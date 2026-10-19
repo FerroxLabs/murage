@@ -15,7 +15,7 @@
 // is a protected frame; the PDF keeps today's buttons; no card has a Preview
 // button; every byte request carries a capability and none goes to the
 // download route; and nothing ever navigates to the Files section.
-import { test, expect, type Page } from "@playwright/test";
+import { test, expect, type Page } from "./page-error-guard";
 import { createServer, type ViteDevServer } from "vite";
 import react from "@vitejs/plugin-react";
 import tailwindcss from "@tailwindcss/vite";

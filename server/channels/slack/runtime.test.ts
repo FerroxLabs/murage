@@ -1,10 +1,11 @@
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, expect, it, vi } from "vitest";
 import { RoutineManager } from "../../routines.ts";
+import { removeTempDirSync } from "../../testing/cleanup.ts";
 const roots: string[] = [];
-afterEach(() => { for (const p of roots.splice(0)) rmSync(p, { recursive: true, force: true }); });
+afterEach(() => { for (const p of roots.splice(0)) removeTempDirSync(p); });
 function fixture() {
   const dir = mkdtempSync(join(tmpdir(), "murage-slack-runtime-")); roots.push(dir);
   let valid = true, busy = true;

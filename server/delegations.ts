@@ -39,6 +39,7 @@ import { ROUTINE_PERMISSION_MODES, type RoutinePeerSource } from "./routine-perm
 
 import type { BotRecord, Store } from "./store.ts";
 import type { OwedReply } from "./handoff-reply.ts";
+import { murageLine } from "./murage-line.ts";
 
 /** Every row a handoff leaves in its source conversation names who handed
  * off when that conversation is a room. Several bots delegate in a room, and
@@ -52,7 +53,9 @@ export function appendDelegationRow(
   message: Parameters<CommsBus["store"]["appendMessage"]>[1],
 ): ReturnType<CommsBus["store"]["appendMessage"]> {
   const sender = senderId && bus.store.groupByThread(threadId) ? bus.store.bot(senderId) : undefined;
-  return bus.store.appendMessage(threadId, sender ? { ...message, from: { botId: sender.id, name: sender.name, color: sender.color } } : message);
+  // every row a delegation writes here is Murage's own chip about the hand-off, never a turn's engine output (murage-line.ts)
+  const row = murageLine(message);
+  return bus.store.appendMessage(threadId, sender ? { ...row, from: { botId: sender.id, name: sender.name, color: sender.color } } : row);
 }
 
 export interface DelegationItem {
@@ -1414,8 +1417,8 @@ export const heldLineId = (id: string): string => `held-${id}`.slice(0, 160);
 export function appendHeldLine(store: Pick<Store, "botByThread" | "groupByThread" | "bot" | "appendMessage">, held: HeldDelegation): void {
   if (!store.botByThread(held.sourceThreadId) && !store.groupByThread(held.sourceThreadId)) return;
   const sender = held.fromBotId && store.groupByThread(held.sourceThreadId) ? store.bot(held.fromBotId) : undefined;
-  store.appendMessage(held.sourceThreadId, { role: "bot", kind: "activity", tool: { name: held.text, ok: false }, delegationHeld: { id: held.id },
-    ...(sender ? { from: { botId: sender.id, name: sender.name, color: sender.color } } : {}) }, heldLineId(held.id), () => registerHeldLine(held));
+  store.appendMessage(held.sourceThreadId, murageLine({ role: "bot", kind: "activity", tool: { name: held.text, ok: false }, delegationHeld: { id: held.id },
+    ...(sender ? { from: { botId: sender.id, name: sender.name, color: sender.color } } : {}) }), heldLineId(held.id), () => registerHeldLine(held));
 }
 /** Registers the owner-facing line of a held hand-off in the queue (`held_notice_lines`). Called as the line is written, by the line's own `within`, so the line and
  * its registration commit together or not at all. Idempotent. */

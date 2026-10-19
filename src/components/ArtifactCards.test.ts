@@ -134,7 +134,7 @@ describe("no card fetches bytes without a capability", () => {
     expect(acceptedArtifactMedia({ asset: readyAsset, url: `/api/artifacts/${base.id}/download` })).toBeNull();
     expect(acceptedArtifactMedia({ asset: readyAsset, url: `http://127.0.0.1:8799/api/media/bytes/${ASSET_ID}?cap=${CAP}` })).toBeNull();
     expect(acceptedArtifactMedia({ asset: readyAsset, url: `//evil.example/api/media/bytes/${ASSET_ID}?cap=${CAP}` })).toBeNull();
-    expect(acceptedArtifactMedia({ asset: readyAsset, url: "/Users/sean/desk/chart.png" })).toBeNull();
+    expect(acceptedArtifactMedia({ asset: readyAsset, url: "/Users/alex/desk/chart.png" })).toBeNull();
   });
 
   it("builds the image item from the capability URL, pinned to the digest, with the reference rule of the Files preview", () => {
@@ -238,8 +238,8 @@ describe("wiring the browser proof depends on", () => {
   it("text is rendered through ChatMarkdown or a code block, HTML through the same protected frame Files uses", () => {
     expect(cards).toContain("<ChatMarkdown text={slice.text} scope={scope} />");
     expect(cards).toContain("<CodeBlock code={slice.text} lang={artifactCodeLanguage(artifact.filename)} streaming={false} />");
-    expect(cards).toContain('sandbox="" referrerPolicy="no-referrer" srcDoc={html}');
-    expect(cards).toContain("const html = useMemo(() => artifactPreviewHtml(content), [content]);");
+    expect(cards).toContain('sandbox="" referrerPolicy="no-referrer" html={html}');
+    expect(cards).toContain("const html = useMemo(() => artifactPreviewHtml(content), [content, sanitizer]);");
   });
 
   it("Open here still opens the working file in the pane by the identity the server registered", () => {

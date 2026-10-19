@@ -4,7 +4,7 @@
 // Three causes of the loop stalls seen in the real-data test, each pinned: the delivered-receipt figure no longer walks the receipts, the identity
 // set follows another connection's commits by the change (not by a pass over every record), and a statement or exec that holds the loop is
 // filed under its route or its own label instead of "unattributed".
-import { mkdirSync, rmSync } from "node:fs";
+import { mkdirSync } from "node:fs";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { beforeEach, expect, it } from "vitest";
@@ -16,12 +16,13 @@ import { memoryHealth, SUPPLIED_SMALL_ROWS } from "./health.ts";
 import { ensureIdentityIndexes, identityRefreshCount, identityScanCount, identitySourceSet } from "./provenance-stamp.ts";
 import { stopWalMaintenance } from "../wal-maintenance.ts";
 import { setObserveSink, startLoopStallWatch, stopLoopStallWatch } from "../observe.ts";
+import { removeTempDirSync } from "../testing/cleanup.ts";
 
 const roster = { bots: [{ id: "a", threadId: "thread-a" }], groups: [] };
 // closeDatabase stops the WAL checkpointer without waiting: one still alive when the data dir is rebuilt removes the NEW file's -wal/-shm by
 // path and the previous run's rows resurface (UNIQUE bundle_id). The checkpointer is awaited after every close.
 async function fresh() {
-  closeDatabase(); await stopWalMaintenance(); rmSync(DATA_DIR, { recursive: true, force: true }); mkdirSync(DATA_DIR, { recursive: true });
+  closeDatabase(); await stopWalMaintenance(); removeTempDirSync(DATA_DIR); mkdirSync(DATA_DIR, { recursive: true });
   reconcileMemoryRoster(roster); database().exec("UPDATE memory_meta SET mode='active'");
 }
 beforeEach(fresh);
@@ -75,7 +76,7 @@ function fillRecords(n: number): void {
   db.exec("PRAGMA foreign_keys=OFF");
   db.exec("BEGIN");
   db.prepare(`WITH RECURSIVE c(n) AS (SELECT 1 UNION ALL SELECT n+1 FROM c WHERE n<?) INSERT INTO memory_records
-    SELECT 'h-'||n,1,?,'fact','x','owner-statement','active',0,1,NULL,NULL,1 FROM c`).run(n, scope);
+    SELECT 'h-'||n,1,?,'fact','x','owner-statement','active',0,1,NULL,NULL,n FROM c`).run(n, scope);
   db.prepare(`WITH RECURSIVE c(n) AS (SELECT 1 UNION ALL SELECT n+1 FROM c WHERE n<?) INSERT OR REPLACE INTO memory_record_details(record_id,record_version,partition,attention,claim_status)
     SELECT 'h-'||n,1,'semantic','current','current' FROM c`).run(n);
   db.prepare("INSERT INTO memory_records VALUES('canon',1,?,'character-canon','c','owner-statement','active',0,1,NULL,NULL,1)").run(scope);

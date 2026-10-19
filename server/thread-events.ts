@@ -15,6 +15,7 @@ import { closeSync, fstatSync, openSync, readSync, type Stats } from "node:fs";
 import { join } from "node:path";
 import type { RuntimeEvent } from "./contracts.ts";
 import { eventLogForgetPending } from "./harness/event-log.ts";
+import { requestOpenedOut } from "./runtime-event-out.ts";
 
 /** One line of native/<threadId>.ndjson (server/drivers/native.ts). */
 export interface NativeRecord {
@@ -295,7 +296,8 @@ export function readThreadEvents(input: {
   // chattier than the runtime stream, and one shared cap would leave the
   // Events lens with a handful of rows behind hundreds of raw ones
   const merged: InspectorEntry[] = [
-    ...runtime.lines.map((data): InspectorEntry => ({ kind: "runtime", at: data.createdAt, data })),
+    // an ask goes out as a stream gets it: its server-side records (on a line an older build wrote with them) stay here
+    ...runtime.lines.map((data): InspectorEntry => ({ kind: "runtime", at: data.createdAt, data: data.type === "request.opened" ? requestOpenedOut(data) : data })),
     ...native.lines.map((data): InspectorEntry => ({ kind: "native", at: data.at, data })),
   ];
   // stable sort: ties keep file order, which is emit order

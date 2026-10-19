@@ -1,4 +1,4 @@
-import { expect, test } from "@playwright/test";
+import { expect, test } from "./page-error-guard";
 import { createServer, type ViteDevServer } from "vite";
 import { fileURLToPath } from "node:url";
 import { freePortBlock } from "../../server/testing/ports";

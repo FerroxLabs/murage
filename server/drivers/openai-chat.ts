@@ -1,6 +1,7 @@
 import { NO_TOOL_SURFACE, renderMurageTurn } from "../murage-tool-surface.ts";
 import { awaitIntake, isIntakeOpen } from "../harness/intake.ts";
-import { fluxMemoryContextForTurn, fluxMemoryDecision, isFluxUrl, type FluxMemoryDecision } from "../flux-memory-headers.ts";
+import { readFluxMemoryResponse } from "../flux-memory-envelope.ts";
+import { fluxMemoryAtSend, fluxMemoryContextForTurn, fluxMemorySend, isFluxUrl, type FluxMemorySend } from "../flux-memory-headers.ts";
 import type {
   DriverCreateInput,
   ModelCatalog,
@@ -14,7 +15,7 @@ import type { AgentPlanEntry } from "../../shared/agent-plan.ts";
 import { newEventId, newId } from "../contracts.ts";
 import { appendNative } from "./native.ts";
 import { classifyError, computeBackoff, interruptibleDelay, RETRY_MAX_ATTEMPTS } from "./retry.ts";
-import { classifyProviderError, isEndpointUnreachable, unreachableEndpointMessage } from "../../shared/provider-error.ts";
+import { classifyProviderError, isEndpointUnreachable, neverConnected, unreachableEndpointMessage } from "../../shared/provider-error.ts";
 import { checkLocalServerUrl } from "../local-address-guard.ts";
 import { providerDispatcher } from "../provider-dispatcher.ts";
 import { httpTextOnlyTurn } from "./http-text-only.ts";
@@ -433,11 +434,16 @@ export function createOpenAIChatRuntime<Config>(options: RuntimeOptions<Config>)
     /** The turn's submission fence, run right before every request write
      *  (each redirect hop too) with no await in between. */
     beforeWrite?: () => void,
-    /** Flux Memory headers for this call; a caller with no turn is off/off. */
-    fluxMemory: FluxMemoryDecision = fluxMemoryDecision(),
+    /** Flux Memory for this call, decided again at every request write; a caller with no turn is off/off. */
+    fluxMemory: FluxMemorySend = fluxMemorySend(),
     /** The thread this stream feeds, so the bus backpressure holds THIS thread at its own allowance. A call with no thread
      *  (a one-off generate) is the only caller that may pass null. */
     threadId: string | null = null,
+    /** The turn's `notWritten`: the request the fence released never went out (the connection failed before any answer). */
+    notWritten?: () => void,
+    /** Shared by every attempt of one turn (ROOM-ORDER-DESIGN r4 S1): set the instant any hop of any attempt gets a response, after which
+     *  no later failure may withdraw the stamp, since a server received the request and may have written it. */
+    delivered: { value: boolean } = { value: false },
   ): Promise<Completion> => {
     const local = providerRoute ? null : options.localEndpoint?.(model) ?? null;
     const endpoint: ChatEndpoint | undefined = local
@@ -455,7 +461,7 @@ export function createOpenAIChatRuntime<Config>(options: RuntimeOptions<Config>)
     // same errno.
     const reached = { value: false };
     try {
-      return await completeWithin(requestSignal, idle, reached, messages, model, stream, onDelta, endpoint, beforeWrite, fluxMemory, threadId);
+      return await completeWithin(requestSignal, idle, reached, messages, model, stream, onDelta, endpoint, beforeWrite, fluxMemory, threadId, notWritten, delivered);
     } catch (value) {
       // An idle expiry outside the stream reader (connect, headers, or a
       // non-streamed body) is the provider's timeout failure. The caller's own
@@ -513,8 +519,10 @@ export function createOpenAIChatRuntime<Config>(options: RuntimeOptions<Config>)
     onDelta?: (delta: string, kind: "assistant_text" | "reasoning_text") => void,
     providerRoute?: ChatEndpoint,
     beforeWrite?: () => void,
-    fluxMemory: FluxMemoryDecision = fluxMemoryDecision(),
+    fluxMemory: FluxMemorySend = fluxMemorySend(),
     threadId: string | null = null,
+    notWritten?: () => void,
+    delivered: { value: boolean } = { value: false },
   ): Promise<Completion> => {
     const label = providerRoute?.preset ?? options.httpErrorLabel;
     const secret = providerRoute?.apiKey ?? options.apiKey;
@@ -527,10 +535,11 @@ export function createOpenAIChatRuntime<Config>(options: RuntimeOptions<Config>)
     // https URLs answer from the shared rule without any lookup, so every
     // hosted provider route pays nothing for this.
     const firstEndpoint = `${providerRoute?.baseUrl ?? options.apiUrl}/chat/completions`;
-    const requestBody = JSON.stringify(options.requestBody(model, messages, stream));
-    // Redirects are followed by hand so every hop is held to the same address
-    // rule as the first URL, and the key never leaves the origin it was
-    // configured for.
+    const requestObject = options.requestBody(model, messages, stream);
+    const requestBody = JSON.stringify(requestObject);
+    // Redirects are followed by hand, and only within the origin the request
+    // was configured for: every hop is held to the same address rule as the
+    // first URL, and neither the body nor the key ever leaves that origin.
     let endpoint = firstEndpoint;
     let response!: Response;
     for (let redirects = 0; ; redirects++) {
@@ -549,20 +558,38 @@ export function createOpenAIChatRuntime<Config>(options: RuntimeOptions<Config>)
       if (beforeWrite) {
         try { beforeWrite(); } catch (refusal) { throw new SubmissionRefused(refusal); }
       }
+      // Flux Memory, only on a Flux host (a Flux connection, or a compat URL that is Flux): decided for THIS write from the switch as it
+      // stands now, with no await before the fetch, so "Use Flux memory" turned off while an earlier hop or attempt was out reaches it.
+      const flux = isFluxUrl(endpoint) ? fluxMemoryAtSend(fluxMemory) : undefined;
+      try {
       response = await fetch(endpoint, {
         method: "POST",
         headers: {
           ...(sameOrigin ? { authorization: `Bearer ${secret}` } : {}),
           "content-type": "application/json",
-          // Flux Memory: only on a Flux host (a Flux connection, or a compat URL that is Flux).
-          ...(isFluxUrl(endpoint) ? fluxMemory.headers : {}),
+          ...(flux?.headers ?? {}),
         },
-        body: requestBody,
+        // the envelope (lane 2.2) rides as request metadata only while capture and inject are still on for this write
+        body: flux?.envelope
+          ? JSON.stringify({ ...requestObject, metadata: { ...((requestObject as { metadata?: object }).metadata ?? {}), flux_memory: flux.envelope } })
+          : requestBody,
         signal: requestSignal,
         redirect: "manual",
         // No transport clock of its own (server/provider-dispatcher.ts).
         dispatcher: providerDispatcher(endpoint),
       } as RequestInit);
+      } catch (failure) {
+        // The fence released this request and no answer came back. Only a failure that never connected proves the endpoint did not
+        // hear it (the name did not resolve, the address refused, the handshake failed): then the words were not delivered
+        // (turn-attribution.ts, I14). A connection that broke after it opened (a reset, a broken pipe, a socket that went quiet) may
+        // have carried the request before it failed, so the stamp stands (Astra r7, order 2); a Stop or an idle expiry aborts the
+        // signal and is neither. And a request that any earlier hop or attempt delivered (a 307 is a server that received it; a retry
+        // follows an attempt that was answered) is possibly written whatever this hop did (r4 S1): the stamp stands.
+        if (!requestSignal.aborted && !delivered.value && neverConnected(failure)) { try { notWritten?.(); } catch { /* a listener never decides the request */ } }
+        throw failure;
+      }
+      // A response object, whatever its status: a server received this request.
+      delivered.value = true;
       const location = response.headers.get("location");
       if (![301, 302, 307, 308].includes(response.status) || !location) break;
       void response.body?.cancel().catch(() => {});
@@ -572,15 +599,29 @@ export function createOpenAIChatRuntime<Config>(options: RuntimeOptions<Config>)
           `${label} redirected the request more than ${MAX_PROVIDER_REDIRECTS} times, so Murage stopped. Check the server address in settings.`,
         );
       }
+      let next: URL;
       try {
-        endpoint = new URL(location, endpoint).toString();
+        next = new URL(location, endpoint);
       } catch {
         throw new Error(addressRefusal(label, location, "unresolved-address"));
       }
+      // This request carries the conversation: it goes only to the origin it was configured for, with that origin's key, and never on
+      // to another address (a redirect into Flux would reach it without the key; one out of Flux would hand the body to a stranger).
+      if (next.origin !== new URL(firstEndpoint).origin) {
+        reached.value = true;
+        throw new Error(
+          `${label} tried to send this conversation on to a different address (${next.host}), so Murage stopped and sent nothing there. Check the server address in settings.`,
+        );
+      }
+      endpoint = next.toString();
     }
     // Headers are back: something is listening at that address. Everything
     // after this point is a server that answered, however badly.
     reached.value = true;
+    if (fluxMemory.onResponse && isFluxUrl(endpoint)) {
+      const answer = readFluxMemoryResponse(response.headers);
+      if (answer) { try { fluxMemory.onResponse(answer); } catch { /* recording must not fail the turn */ } }
+    }
     if (!response.ok) {
       const rawBody = await readBoundedBody(response, requestSignal, RAW_BODY_MAX, true).catch(() => "");
       const body = redact(rawBody);
@@ -813,11 +854,17 @@ export function createOpenAIChatRuntime<Config>(options: RuntimeOptions<Config>)
     emit({ ...base(turn.threadId, turnId), type: "turn.started" });
     emit({ ...base(turn.threadId, turnId), type: "session.started", sessionId: null, model });
 
+    // Flux memory: the turn's context and envelope; the headers and the envelope are decided again at every write (fluxMemoryAtSend).
+    const fluxSend = fluxMemorySend(fluxMemoryContextForTurn(turn), {
+      ...(turn.fluxMemory ? { envelope: turn.fluxMemory } : {}), ...(turn.onFluxMemory ? { onResponse: turn.onFluxMemory } : {}),
+    });
     void (async () => {
       let attempt = 0;
       // One-way: once text or reasoning has streamed, a replay would repeat
       // output the user already saw. Never reset across attempts.
       let sawOutput = false;
+      // One-way too: once any attempt's request reached a server, no later attempt's connect failure withdraws the stamp (r4 S1).
+      const delivered = { value: false };
       for (;;) {
         // These engines have no plan channel, so some models write their
         // to-do list into the answer as a <todo> block (issue #7). It becomes
@@ -844,7 +891,7 @@ export function createOpenAIChatRuntime<Config>(options: RuntimeOptions<Config>)
             const out = todo.push(delta);
             emitPlans(out.plans);
             emitAnswerDelta(out.text);
-          }, turn.providerRoute, turn.beforeSubmit, fluxMemoryDecision(fluxMemoryContextForTurn(turn)), turn.threadId);
+          }, turn.providerRoute, turn.beforeSubmit, fluxSend, turn.threadId, turn.notWritten, delivered);
           const rest = todo.flush();
           emitPlans(rest.plans);
           emitAnswerDelta(rest.text);
@@ -990,7 +1037,7 @@ export function createOpenAIChatRuntime<Config>(options: RuntimeOptions<Config>)
     adapter: {
       provider: options.driverKind,
       mcpToolSurface: NO_TOOL_SURFACE,
-      capabilities: { sessionModelSwitch: "in-session", textOnlyTurn: true },
+      capabilities: { sessionModelSwitch: "in-session", textOnlyTurn: true, fluxEnvelope: true },
       // PIP reflection: no tools field, max_tokens, optional json-schema response, capped body.
       textOnlyTurn: async (turn) => {
         // The same route rules as an ordinary turn: the route is validated, and its model (not the turn's) is what is sent.

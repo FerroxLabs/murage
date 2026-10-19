@@ -29,6 +29,7 @@ import { withTurnSecrets } from "./testing/fixture-dump.ts";
 const SERVER_DIR = dirname(fileURLToPath(import.meta.url));
 const FAKE_ACP = join(SERVER_DIR, "testing", "fake-acp-cli.ts");
 const FAKE_CLAUDE = join(SERVER_DIR, "testing", "fake-claude-cli.ts");
+const IDLE_LOAD_PRELOAD = pathToFileURL(join(SERVER_DIR, "testing", "idle-load-preload.mjs")).href;
 const TELEGRAM_PRELOAD = pathToFileURL(join(SERVER_DIR, "testing", "telegram-fetch-preload.mjs")).href;
 /** A shell profile read: Auto stops at it, Full access does not. */
 /** Auto stops at this (destructive guard); Full access, inside the bot's own
@@ -201,7 +202,7 @@ describe.skipIf(process.platform === "win32")("Full access default and its optio
         },
       }),
     );
-    child = spawn(process.execPath, ["--import", TELEGRAM_PRELOAD, join(SERVER_DIR, "index.ts")], {
+    child = spawn(process.execPath, ["--import", TELEGRAM_PRELOAD, "--import", IDLE_LOAD_PRELOAD, join(SERVER_DIR, "index.ts")], {
       cwd: join(SERVER_DIR, ".."),
       env: {
         ...(process.env.PATH ? { PATH: process.env.PATH } : {}),

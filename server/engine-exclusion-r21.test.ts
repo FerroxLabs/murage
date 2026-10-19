@@ -26,11 +26,12 @@ import { homeKey, Known, Planner, type HomePlanData } from "./engine-plan-core.t
 import { redoDirectory } from "./engine-redo.ts";
 import { useFakeExclusion, type FakeExclusion } from "./testing/engine-exclusion-fake.ts";
 import { legacyRejoin, buildFixture, canaryHits, type Fixture } from "./testing/engine-history-fixtures.ts";
+import { removeTempDirSync } from "./testing/cleanup.ts";
 
 const removeEngineHistoryFiles = legacyRejoin(removeRaw);
 const scratch = realpathSync.native(mkdtempSync(join(tmpdir(), "murage-r21-")));
 const openDatabases: DatabaseSync[] = [];
-afterAll(() => { for (const db of openDatabases) db.close(); rmSync(scratch, { recursive: true, force: true }); });
+afterAll(() => { for (const db of openDatabases) db.close(); removeTempDirSync(scratch); });
 
 let fake: FakeExclusion;
 beforeEach(() => { fake = useFakeExclusion(); clearJournals(); });

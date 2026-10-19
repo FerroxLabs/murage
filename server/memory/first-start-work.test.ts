@@ -5,13 +5,14 @@
 // index, memory validation and the output-lineage repair; each must (a) be announced in the start-up note BEFORE it starts, on
 // the first start and on every later start while work remains, (b) be bounded by the rows it scans and keep its progress, and
 // (c) keep its working memory linear in the history.
-import { mkdirSync, rmSync } from "node:fs";
+import { mkdirSync } from "node:fs";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { afterEach, beforeEach, expect, it } from "vitest";
 import { stopWalMaintenance } from "../wal-maintenance.ts";
 import { thawRootSetWritesForTest } from "./replay-lineage.ts";
 import { legacyFile, restartLegacy } from "./testing/legacy-file-model.ts";
+import { removeTempDirSync } from "../testing/cleanup.ts";
 // 1.0.2: this file drives the read-time root-set machinery over rows a 1.0.1 file holds; thaw the frozen root-set writes to model them.
 beforeEach(() => thawRootSetWritesForTest(true));
 afterEach(() => thawRootSetWritesForTest(false));
@@ -49,7 +50,7 @@ const wrapReporter: typeof memoryUpgradeReporter = (...args) => {
 
 const roster: MemoryRoster = { bots: [{ id: "bot", threadId: "chat", tasks: [] }], groups: [] };
 beforeEach(() => {
-  closeDatabase(); rmSync(DATA_DIR, { recursive: true, force: true }); mkdirSync(DATA_DIR, { recursive: true });
+  closeDatabase(); removeTempDirSync(DATA_DIR); mkdirSync(DATA_DIR, { recursive: true });
   setMemoryMode("active"); reconcileMemoryRoster(roster); calls.length = 0;
   setUpgradeReporterForTest(wrapReporter);
 });
@@ -116,7 +117,7 @@ it("S1: a fresh or fully indexed file writes no index note at all", () => {
 
 it("S1: lineage repair keeps its working memory linear: no set copy per output (N and 2N peaks differ by about 2x, not 4x)", () => {
   const peakFor = (n: number) => {
-    closeDatabase(); rmSync(DATA_DIR, { recursive: true, force: true }); mkdirSync(DATA_DIR, { recursive: true });
+    closeDatabase(); removeTempDirSync(DATA_DIR); mkdirSync(DATA_DIR, { recursive: true });
     setMemoryMode("active"); reconcileMemoryRoster(roster);
     chainThread("chat", n, "B1");
     const stats = { peakRetained: 0 };
@@ -198,7 +199,7 @@ const sortedKeys = (thread: string, ids: string[]) => ids.map(id => keyOf(thread
 it("P1 r1: repairing one long thread is linear (10k vs 20k outputs), every reply rests on exactly the outputs above it, and no set is a copy", async () => {
   // Work is counted, not timed: statement executions and rows read while the repair runs. Wall time on a shared machine swings by more than the bound.
   const runFor = async (n: number) => {
-    closeDatabase(); await stopWalMaintenance(); rmSync(DATA_DIR, { recursive: true, force: true }); mkdirSync(DATA_DIR, { recursive: true });
+    closeDatabase(); await stopWalMaintenance(); removeTempDirSync(DATA_DIR); mkdirSync(DATA_DIR, { recursive: true });
     setMemoryMode("active"); reconcileMemoryRoster(roster);
     const ids = chainThread("chat", n, "B1");
     const db = database();
@@ -345,7 +346,7 @@ it("P2 r1: a heavy tail of rows since the last launch is announced, and validati
 }, 240_000);
 
 it("r3: the repair stops at its deadline: no thread is begun past it, it says so, the threads not reached stay unrepaired (withheld), and a later run finishes", () => {
-  closeDatabase(); rmSync(DATA_DIR, { recursive: true, force: true }); mkdirSync(DATA_DIR, { recursive: true });
+  closeDatabase(); removeTempDirSync(DATA_DIR); mkdirSync(DATA_DIR, { recursive: true });
   setMemoryMode("active"); reconcileMemoryRoster(roster);
   chainThread("chat", 200, "B1");
   const db = legacyFile(database()); // a 1.0.1-shaped file (v10 never has a repair pending)

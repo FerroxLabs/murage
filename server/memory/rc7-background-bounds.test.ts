@@ -3,7 +3,7 @@
 //
 // RC7 branch B (RC6-SPEED-DIAG.md 2c, 2d, 2f, 3): the background upgrade work is bounded by what one statement may cost, and its progress moves.
 // These tests count statements and rows, never wall time: the cost of each step is flat in the size of the data, and the progress is monotonic.
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
@@ -17,12 +17,13 @@ import { openBulkRevoke } from "./revoke-commit.ts";
 import { upgradeMarkerWork } from "./lineage-backfill.ts";
 import { BACKGROUND_SEED_RETRY_MAX_MS } from "./upgrade-background.ts";
 import { migrateMemorySchema } from "./schema.ts";
+import { removeTempDirSync } from "../testing/cleanup.ts";
 
 const dirs: string[] = [], dbs: DatabaseSync[] = [];
 afterEach(() => {
   vi.restoreAllMocks();
   for (const db of dbs.splice(0)) { try { db.close(); } catch { /* closed */ } }
-  for (const dir of dirs.splice(0)) rmSync(dir, { recursive: true, force: true });
+  for (const dir of dirs.splice(0)) removeTempDirSync(dir);
 });
 function fresh(): DatabaseSync {
   const dir = mkdtempSync(join(tmpdir(), "murage-rc7bg-")); dirs.push(dir);
@@ -79,7 +80,7 @@ describe("2d(i): the event-log prune reads forgotten messages a page at a time",
     const db = new DatabaseSync(":memory:"); dbs.push(db);
     db.exec("CREATE TABLE messages(thread_id TEXT NOT NULL,id TEXT NOT NULL,at INTEGER NOT NULL,role TEXT NOT NULL,kind TEXT NOT NULL,text TEXT,json TEXT NOT NULL,PRIMARY KEY(thread_id,id)); CREATE TABLE memory_sources(id TEXT PRIMARY KEY, message_id TEXT); CREATE TABLE memory_tombstones(id TEXT PRIMARY KEY, target_type TEXT, target_id TEXT)");
     db.exec("BEGIN");
-    const message = db.prepare("INSERT INTO messages VALUES(?,?,1,'user','text',?,?)"), source = db.prepare("INSERT INTO memory_sources VALUES(?,?)"), tomb = db.prepare("INSERT INTO memory_tombstones VALUES(?,?,?)");
+    const message = db.prepare("INSERT INTO messages(thread_id,id,at,role,kind,text,json) VALUES(?,?,1,'user','text',?,?)"), source = db.prepare("INSERT INTO memory_sources VALUES(?,?)"), tomb = db.prepare("INSERT INTO memory_tombstones VALUES(?,?,?)");
     for (let i = 0; i < count; i++) {
       message.run(`t${i % 7}`, `m${i}`, `forget ${i}`, JSON.stringify({ turnId: `u${i}` })); source.run(`s${i}`, `m${i}`);
       tomb.run(`x${String(i).padStart(6, "0")}`, i % 10 === 9 ? "import" : "source", `s${i}`);

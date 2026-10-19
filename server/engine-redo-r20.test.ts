@@ -18,9 +18,10 @@ import { sha16 } from "./engine-plan-core.ts";
 import { useFakeExclusion, type FakeExclusion } from "./testing/engine-exclusion-fake.ts";
 import { buildFixture, type Fixture } from "./testing/engine-history-fixtures.ts";
 import type { DeletionEngine } from "./conversation-deletion.ts";
+import { removeTempDirSync } from "./testing/cleanup.ts";
 
 const scratch = realpathSync.native(mkdtempSync(join(tmpdir(), "murage-r20c-")));
-afterAll(() => rmSync(scratch, { recursive: true, force: true }));
+afterAll(() => removeTempDirSync(scratch));
 
 let fake: FakeExclusion;
 beforeEach(() => { fake = useFakeExclusion(); clearJournals(); });

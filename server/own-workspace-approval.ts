@@ -31,9 +31,10 @@
 //     nothing needs it: the bot is handed the exact path it should use.
 // Every unreadable, unusual or unrecognized shape answers false, and false
 // means the card is raised exactly as it is today.
+import { inProjectCheck } from "../shared/in-project.ts";
 import { executionStore, threadPartition, partitionRoots, isHomePartition } from "./execution-audience.ts";
 import { lstatSync } from "node:fs";
-import { isAbsolute, join } from "node:path";
+import { dirname, isAbsolute } from "node:path";
 
 import { artifactWorkspaceIdentity } from "./artifacts.ts";
 import { botWorkspacePath, taskWorkspacePath } from "./workspace.ts";
@@ -129,7 +130,8 @@ export function within(rootPath: string, candidate: unknown, bookkeeping = true)
  * refuses an import through a linked workspace. */
 function managedPathIsLinked(dataDir: string, botId: string): boolean {
   let components: string[];
-  try { components = [dataDir, join(dataDir, "workspaces"), botWorkspacePath(dataDir, botId)]; }
+  // the workspaces folder is the bot folder's parent, by server/workspace.ts's own derivation
+  try { const bot = botWorkspacePath(dataDir, botId); components = [dataDir, dirname(bot), bot]; }
   catch { return true; }
   for (const path of components) {
     try { if (lstatSync(path).isSymbolicLink()) return true; }
@@ -186,5 +188,9 @@ export function isOwnWorkspaceBookkeeping(request: OwnWorkspaceRequest): boolean
   const roots = ownWorkspaceRoots(request);
   if (!roots.length) return false;
   if (managedPathIsLinked(request.dataDir, request.botId)) return false;
-  return paths.every(path => roots.some(root => within(root, path)));
+  // Rule 63 (APP-GRANT-DESIGN-FINAL.AGREED-r10.md): the own-workspace outcome
+  // fires only after the shared in-project check passes too: real-path
+  // placement segment by segment and the sensitive list, so a `.env` or a
+  // `.git/config` inside the managed folders still asks.
+  return paths.every(path => roots.some(root => within(root, path) && inProjectCheck(path, root).ok));
 }

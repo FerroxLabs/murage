@@ -5,6 +5,7 @@ import net from 'node:net';
 import path from 'node:path';
 import os from 'node:os';
 import { realpathSync } from 'node:fs';
+import { removeTempDir } from "./testing/cleanup.ts";
 // A short real root keeps sockets inside macOS sockaddr_un's bound on every runner.
 const SHORT_ROOT = process.platform === 'win32' ? os.tmpdir() : realpathSync('/tmp');
 import { fork, type ChildProcess } from 'node:child_process';
@@ -17,7 +18,7 @@ const cleanup: (() => Promise<unknown>)[] = [];
 afterEach(async () => { for (const fn of cleanup.splice(0).reverse()) await fn(); });
 async function fixture(capabilities = ['ordered_requests_v1'], onMessage?: (profileId: string, message: unknown) => void) {
     const { root: stateRoot, directory: stateDir } = await privateTestDirectory(path.join(SHORT_ROOT, 'bex-'));
-  cleanup.push(() => fs.rm(stateRoot, { recursive: true, force: true }));
+  cleanup.push(() => removeTempDir(stateRoot));
   const broker = await startBrowserExtensionBroker({ stateDir, ...(onMessage ? { onMessage: onMessage as never } : {}) }); cleanup.push(() => broker.close());
   const input = new PassThrough(), output = new PassThrough(); const messages: unknown[] = [];
   const decoder = new FrameDecoder(value => messages.push(value)); output.on('data', chunk => decoder.push(chunk));
@@ -127,7 +128,7 @@ describe('optional stable native config alias', () => {
 
 async function recoveryDir() {
   const outer = await fs.mkdtemp(path.join(SHORT_ROOT, 'bxr-')); await fs.chmod(outer, 0o700);
-  cleanup.push(() => fs.rm(outer, { recursive: true, force: true }));
+  cleanup.push(() => removeTempDir(outer));
   const stateDir = path.join(outer, 'state'); await makePrivateTestSubdirectory(stateDir); return stateDir;
 }
 async function childBroker(stateDir: string) {
@@ -228,7 +229,7 @@ describe('R6 crash recovery boundary (real isolated child processes)', () => {
 describe('Astra 13: a connection that used all its request ids is rotated', () => {
   it('refuses the next request with reconnect_required, drops the connection, and accepts the extension again on a new one', async () => {
     const { root: stateRoot, directory: stateDir } = await privateTestDirectory(path.join(SHORT_ROOT, 'bex-'));
-    cleanup.push(() => fs.rm(stateRoot, { recursive: true, force: true }));
+    cleanup.push(() => removeTempDir(stateRoot));
     const broker = await startBrowserExtensionBroker({ stateDir, maxRequestsPerConnection: 3 }); cleanup.push(() => broker.close());
     const connect = async () => {
       const input = new PassThrough(), output = new PassThrough(); const messages: unknown[] = [];

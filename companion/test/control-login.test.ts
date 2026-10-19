@@ -4,8 +4,9 @@
 // the only place that can say which account that is, is the computer. The
 // sidecar reads it from `tailscale status --json` (see listener.test.ts) and
 // hands it to the desktop panel in its state. Absent, not empty, when unknown.
-import { rmSync } from "node:fs";
+
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { removeTempDirSync } from "../../server/testing/cleanup.ts";
 
 let stdout = "";
 vi.mock("node:child_process", () => ({
@@ -33,7 +34,7 @@ const options = () =>
   }) as Parameters<typeof companionState>[0];
 
 beforeEach(() => {
-  rmSync(DATA_DIR, { recursive: true, force: true });
+  removeTempDirSync(DATA_DIR);
 });
 
 describe("the computer's Tailscale account in the panel's state", () => {

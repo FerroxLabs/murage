@@ -2,7 +2,7 @@
 // runtime's WebAssembly, the model from public/): a beep is not speech,
 // spoken words are. The call's other specs fake the model; this one proves
 // the real one loads and decides in a browser.
-import { test, expect } from "@playwright/test";
+import { test, expect } from "./page-error-guard";
 import { createServer, type ViteDevServer } from "vite";
 import { execFileSync } from "node:child_process";
 import { fileURLToPath } from "node:url";

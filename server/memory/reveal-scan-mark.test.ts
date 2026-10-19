@@ -3,15 +3,16 @@
 // found, a job that finishes below the mark is still found, and a restart
 // resumes from the mark instead of rowid 0. Work is counted by the statements
 // run, which do not depend on the machine.
-import { mkdirSync, rmSync } from "node:fs";
+import { mkdirSync } from "node:fs";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { DATA_DIR } from "../config.ts";
 import { closeDatabase, database } from "../database.ts";
 import { ensureScope, reconcileMemoryRoster } from "./policy.ts";
 import * as reveal from "./reveal-capture.ts";
+import { removeTempDirSync } from "../testing/cleanup.ts";
 
 const roster = { bots: [{ id: "moss", threadId: "private" }], groups: [] };
-beforeEach(() => { closeDatabase(); rmSync(DATA_DIR, { recursive: true, force: true }); mkdirSync(DATA_DIR, { recursive: true }); reconcileMemoryRoster(roster); (reveal as any).resetRevealScan?.(); });
+beforeEach(() => { closeDatabase(); removeTempDirSync(DATA_DIR); mkdirSync(DATA_DIR, { recursive: true }); reconcileMemoryRoster(roster); (reveal as any).resetRevealScan?.(); });
 
 afterEach(() => { vi.useRealTimers(); });
 let counter = 0;

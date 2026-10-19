@@ -3,7 +3,7 @@
 // Isolation-all round 9: an engine whose version is unknown (the probe is retried ONCE) or older than the first one proven to honour
 // its own home setting is not started for a bot. The turn is rejected before any spawn with a structured update-required error
 // (rendered in the owner's language by the chat), never run in the owner's own engine home.
-import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -15,6 +15,7 @@ import { scopeGrokHome } from "./acp/grok-scope.ts";
 import { CodexDriver } from "./codex.ts";
 import { resetIsolationCache } from "./isolation-cache.ts";
 import { ScopeUnavailableError, resetScopeBookkeeping, scopedCliHomeRoot, setScopeRetryBoundMs } from "./scoped-cli-home.ts";
+import { removeTempDirSync } from "../testing/cleanup.ts";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const FAKE_ACP = join(here, "..", "testing", "fake-acp-cli.ts");
@@ -29,7 +30,7 @@ beforeEach(() => { ensureDirs(); resetScopeBookkeeping(); resetIsolationCache();
 afterEach(() => {
   setScopeRetryBoundMs(10_000);
   delete process.env.FAKE_CODEX_DUMP;
-  for (const d of dirs.splice(0)) rmSync(d, { recursive: true, force: true });
+  for (const d of dirs.splice(0)) removeTempDirSync(d);
 });
 
 describe("ACP engines that scope their home (Grok shown): version gate", () => {
@@ -92,6 +93,17 @@ describe("ACP engines that scope their home (Grok shown): version gate", () => {
   });
 });
 
+/** A gated Codex turn's ordinary command is an ask (Rule 68e); the owner's allow lets the turn finish. */
+async function codexTurnDone(instance: { adapter: { respondToRequest: (t: string, r: string, d: { behavior: "allow" }) => Promise<unknown> } }, recorder: ReturnType<typeof recordEvents>, threadId: string) {
+  const answered = new Set<string>();
+  for (;;) {
+    const event: any = await recorder.until((e: any) => e.threadId === threadId && ((e.type === "request.opened" && !answered.has(e.requestId)) || e.type === "turn.completed"), 15_000);
+    if (event.type === "turn.completed") return event;
+    answered.add(event.requestId);
+    await instance.adapter.respondToRequest(threadId, event.requestId, { behavior: "allow" });
+  }
+}
+
 describe("Codex: version gate", () => {
   async function run(version: string) {
     chmodSync(FAKE_CODEX, 0o755);
@@ -107,7 +119,7 @@ describe("Codex: version gate", () => {
     const recorder = recordEvents(instance.adapter);
     try {
       await instance.adapter.sendTurn({ threadId: "codex-v-1", text: "go", warmIdentity: { botId: "bot-cv", audience: "owner" } });
-      const done = await recorder.until((event) => event.type === "turn.completed", 15_000);
+      const done = await codexTurnDone(instance, recorder, "codex-v-1");
       return { done, events: recorder.events, dump, probes: probes(log), codex };
     } finally { recorder.stop(); await instance.dispose(); }
   }
@@ -144,7 +156,7 @@ describe("Codex: version gate", () => {
       try {
         for (const turn of [1, 2]) {
           await instance.adapter.sendTurn({ threadId: `${id}-${turn}`, text: "go", warmIdentity: { botId: "bot-probe", audience: "owner" } });
-          expect(await recorder.until((event) => event.type === "turn.completed" && event.threadId === `${id}-${turn}`, 15_000)).toMatchObject({ ok: true });
+          expect(await codexTurnDone(instance, recorder, `${id}-${turn}`)).toMatchObject({ ok: true });
         }
       } finally { recorder.stop(); await instance.dispose(); }
     }

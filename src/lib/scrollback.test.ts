@@ -2,8 +2,9 @@ import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it, vi } from "vitest";
 
-import { initialState, reducer, visibleMessages, type AppState, type Bot, type Message } from "@/state/store";
-import { createScrollback, DEEP_LINK_MAX_PAGES, MESSAGE_PAGE_MAX, MESSAGE_PAGE_SIZE, needsFirstPage, heardReplyAfter, unheardMessages, callStartHeard } from "./scrollback";
+import { initialState, reducer, visibleMessages, type AppState, type Bot, type Group, type Message } from "@/state/store";
+import { transcriptState } from "@/state/transcript-seq";
+import { createFirstPageTopUp, createScrollback, DEEP_LINK_MAX_PAGES, firstPageRetryDelayMs, MESSAGE_PAGE_MAX, MESSAGE_PAGE_SIZE, needsFirstPage, heardReplyAfter, unheardMessages, callStartHeard } from "./scrollback";
 
 // A thread of `total` messages m0..m{total-1}; the client holds the newest
 // `held`. The fake server answers `before=` and `around=` like the harness.
@@ -332,5 +333,121 @@ describe("loadOlder while a jump holds the thread", () => {
     expect(r.state.loadingOlder).toEqual({ t: true });
     await pending;
     expect(r.state.loadingOlder).toEqual({});
+  });
+});
+
+// r6 Q4: a numbered room whose transcript has a gap (a windowed page landed over a row held in front of it) pages the gap first, by number.
+describe("loadOlder and loadThrough fill a gap before they continue past it (ROOM-ORDER-DESIGN r6 Q4)", () => {
+  function gapRig() {
+    const all: Message[] = Array.from({ length: 12 }, (_, i) => ({ id: `m${i + 1}`, at: 0, role: "user", kind: "text", text: `#${i + 1}`, seq: i + 1 }));
+    // held: m1 and the newest window m10..m12, the tail known; m2..m9 sit in the gap before m10
+    const group = { id: "room", threadId: "t", memberIds: ["x"], messages: [all[0]!, ...all.slice(9)], numbered: true, tail: 12 } as never as Group;
+    let state: AppState = { ...initialState, groups: [group] };
+    const requests: string[] = [];
+    const request = vi.fn(async (path: string) => {
+      requests.push(path);
+      const url = new URL(path, "http://x");
+      const limit = Number(url.searchParams.get("limit"));
+      const around = url.searchParams.get("around");
+      if (around) return { messages: all.filter((m) => m.id === around), hasMore: true, newestSeq: 12 };
+      const end = all.findIndex((m) => m.id === url.searchParams.get("before"));
+      const start = Math.max(0, end - limit);
+      return { messages: all.slice(start, end), hasMore: start > 0, newestSeq: 12 };
+    });
+    const scrollback = createScrollback({ getState: () => state, dispatch: (a) => { state = reducer(state, a); }, request, onError: vi.fn(), settle: () => Promise.resolve() });
+    return { scrollback, requests, all, get state() { return state; } };
+  }
+  const ids = (r: { state: AppState }) => r.state.groups[0]!.messages.map((m) => m.id);
+
+  it("loadOlder asks for the page before the held row just above the gap, holds it by number, and the room is complete", async () => {
+    const r = gapRig();
+    await r.scrollback.loadOlder("t");
+    expect(r.requests).toEqual([`/api/threads/t/messages?limit=${MESSAGE_PAGE_SIZE}&before=m10`]);
+    expect(ids(r)).toEqual(r.all.map((m) => m.id));
+    expect(transcriptState(r.state.groups[0]!)).toBe("complete");
+    expect(r.state.loadingOlder).toEqual({});
+    // nothing left to page: the flag clears without a request
+    await r.scrollback.loadOlder("t");
+    expect(r.requests).toHaveLength(1);
+  });
+
+  it("loadThrough walks the gap to a message inside it", async () => {
+    const r = gapRig();
+    await expect(r.scrollback.loadThrough("t", "m4")).resolves.toBe("fetched");
+    expect(r.requests[1]).toBe(`/api/threads/t/messages?limit=${MESSAGE_PAGE_MAX}&before=m10`);
+    expect(ids(r)).toEqual(r.all.map((m) => m.id));
+    expect(r.state.loadingOlder).toEqual({});
+  });
+
+  it("a room whose next page is the newest one asks it through the first-page path", () => {
+    const r = gapRig();
+    const room = { ...r.state.groups[0]!, tail: undefined };
+    expect(needsFirstPage(room)).toBe(true);
+    expect(needsFirstPage({ ...room, firstPageEvents: [] })).toBe(false);
+  });
+});
+
+describe("the first-page top-up asks again after a failed page, with a growing wait (r5)", () => {
+  function plan() {
+    const asked: string[] = [];
+    const timers: Array<{ run: () => void; ms: number; cancelled: boolean }> = [];
+    const topUp = createFirstPageTopUp({
+      ask: (threadId) => asked.push(threadId),
+      later: (run, ms) => { const timer = { run, ms, cancelled: false }; timers.push(timer); return () => { timer.cancelled = true; }; },
+    });
+    const wake = vi.fn();
+    return { topUp, asked, timers, wake };
+  }
+
+  it("asks once per thread and generation, waits 1 s, 2 s, 4 s ... 30 s after each failure, and asks again when the wait is over", () => {
+    const p = plan();
+    p.topUp.review("t", 0, false, p.wake);
+    expect(p.asked).toEqual(["t"]);
+    // the page is on the wire: nothing
+    p.topUp.review("t", 0, true, p.wake);
+    expect(p.asked).toEqual(["t"]);
+    // it came back failed (still needs its page, nothing on the wire): a retry is scheduled, not sent
+    p.topUp.review("t", 0, false, p.wake);
+    expect(p.asked).toEqual(["t"]);
+    expect(p.timers.map((t) => t.ms)).toEqual([1000]);
+    // reviews meanwhile schedule nothing more
+    p.topUp.review("t", 0, false, p.wake);
+    expect(p.timers).toHaveLength(1);
+    p.timers[0]!.run();
+    expect(p.wake).toHaveBeenCalledTimes(1);
+    p.topUp.review("t", 0, false, p.wake);
+    expect(p.asked).toEqual(["t", "t"]);
+    const waits: number[] = [];
+    for (let failure = 0; failure < 7; failure++) {
+      p.topUp.review("t", 0, true, p.wake);
+      p.topUp.review("t", 0, false, p.wake);
+      const timer = p.timers[p.timers.length - 1]!;
+      waits.push(timer.ms);
+      timer.run();
+      p.topUp.review("t", 0, false, p.wake);
+    }
+    expect(waits).toEqual([2000, 4000, 8000, 16000, 30000, 30000, 30000]);
+    expect(p.asked).toHaveLength(9);
+    expect(firstPageRetryDelayMs(1)).toBe(1000);
+    expect(firstPageRetryDelayMs(9)).toBe(30000);
+  });
+
+  it("a thread switch or the window coming back (forget) drops the wait and asks at once; a page that landed forgets the failures", () => {
+    const p = plan();
+    p.topUp.review("t", 0, false, p.wake);
+    p.topUp.review("t", 0, false, p.wake);
+    expect(p.timers).toHaveLength(1);
+    p.topUp.forget();
+    expect(p.timers[0]!.cancelled).toBe(true);
+    p.topUp.review("t", 0, false, p.wake);
+    expect(p.asked).toEqual(["t", "t"]);
+    // a new transcript generation is a new question
+    p.topUp.review("t", 1, false, p.wake);
+    expect(p.asked).toEqual(["t", "t", "t"]);
+    // loaded: nothing needs a page; the next time it does, the wait starts over at 1 s
+    p.topUp.review(null, 0, false, p.wake);
+    p.topUp.review("t", 2, false, p.wake);
+    p.topUp.review("t", 2, false, p.wake);
+    expect(p.timers[p.timers.length - 1]!.ms).toBe(1000);
   });
 });

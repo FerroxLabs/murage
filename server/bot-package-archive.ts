@@ -15,6 +15,8 @@ export class BotPackageArchiveError extends Error {
   readonly code: string;
   constructor(code: string) { super(`Package archive refused (${code}).`); this.code = code; }
 }
+/** A caller's authority refusal survives intake's malformed-archive wrapper. */
+export class BotPackageManifestAdmissionError extends Error { readonly status = 403; }
 function fail(code: string): never { throw new BotPackageArchiveError(code); }
 const check = (signal?: AbortSignal) => { if (signal?.aborted) fail("PACKAGE_ARCHIVE_CANCELLED"); };
 const digest = (value: Uint8Array) => createHash("sha256").update(value).digest("hex");
@@ -22,7 +24,7 @@ const MAX_ARCHIVE_BYTES = MAX_BOT_PACKAGE_EXPANDED_BYTES + MAX_BOT_PACKAGE_ENTRI
 
 /** Read-only, in-memory intake. This never extracts or executes payloads,
  * resolves dependencies, grants authority, or imports anything into a store. */
-export async function readBotPackageArchive(path: string, options: { signal?: AbortSignal; guard?: boolean; scanId?: string } = {}) {
+export async function readBotPackageArchive(path: string, options: { signal?: AbortSignal; admitManifest?: (manifest: unknown) => void; guard?: boolean; scanId?: string } = {}) {
   check(options.signal);
   let fd: number | undefined, zip: yauzl.ZipFile | undefined, inFlight: Promise<void> | undefined;
   try {
@@ -87,7 +89,9 @@ export async function readBotPackageArchive(path: string, options: { signal?: Ab
             if (expected) payloads.set(name, content);
             else {
               manifestBytes = content;
-              manifest = parseBotPackageManifest(JSON.parse(new TextDecoder("utf-8", { fatal: true }).decode(content)));
+              const rawManifest: unknown = JSON.parse(new TextDecoder("utf-8", { fatal: true }).decode(content));
+              options.admitManifest?.(rawManifest);
+              manifest = parseBotPackageManifest(rawManifest);
               if (manifest.entries.length + 1 !== source.entryCount) fail("PACKAGE_ENTRY_COUNT_MISMATCH");
             }
           } finally { raw.destroy(); counter.destroy(); decoded.destroy(); await transferred.catch(() => {}); }
@@ -116,7 +120,7 @@ export async function readBotPackageArchive(path: string, options: { signal?: Ab
     return { manifest, payloads, scan, official, sha256: hash.digest("hex") };
   } catch (error) {
     if (options.signal?.aborted) fail("PACKAGE_ARCHIVE_CANCELLED");
-    throw error instanceof BotPackageArchiveError ? error : new BotPackageArchiveError("INVALID_PACKAGE_ARCHIVE");
+    throw error instanceof BotPackageArchiveError || error instanceof BotPackageManifestAdmissionError ? error : new BotPackageArchiveError("INVALID_PACKAGE_ARCHIVE");
   } finally {
     await inFlight?.catch(() => {});
     if (zip) zip.close(); else if (fd !== undefined) closeSync(fd);

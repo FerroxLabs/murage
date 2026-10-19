@@ -3,7 +3,8 @@
 //
 // Loads the native addon that takes real exclusion on a coding engine's file (native/engine-exclusion/exclusion.c): the engine's
 // own whole-file lock, the list of running processes (so Murage knows whether an engine is open), an atomic rename that never
-// replaces, and (Windows) handles nobody else can open. Node has none of these. Only engine-fs.ts imports this module, and it exposes the
+// replaces, (Windows) handles nobody else can open, and (Windows) a tree removal by handle that never follows a junction
+// (link-removal.ts). Node has none of these. Only engine-fs.ts imports this module, and it exposes the
 // result as `exclOps`.
 //
 // Where it looks: the app's resources folder ($MURAGE_RESOURCES_PATH/engine-exclusion.node) and dist-native/engine-exclusion/
@@ -50,6 +51,13 @@ export interface ExclusionAddon {
   version(): number;
   /** macOS: this boot of the system's own id (kern.bootsessionuuid); null elsewhere or when it cannot be read. Absent in an older build. */
   bootId?(): string | null;
+  /** Windows: WinVerifyTrust's answer for a file's Authenticode signature, on a worker thread: { status (Get-AuthenticodeSignature's
+   * names), publisher (the signer's simple name when Valid), code }. Absent in an older build. */
+  authenticode?(path: string): Promise<{ status: string; publisher: string; code: number }>;
+  /** Windows: removes `path` and everything under it by handle, never following a symlink or junction and never resolving a path
+   * below `path` again (link-removal.ts). true removed, false nothing there; throws with a Node errno name as `code`.
+   * `beforeFolder` (tests) runs after each folder is opened and before it is listed. Absent in an older build. */
+  removeTree?(path: string, beforeFolder?: (relative: string) => void): boolean;
 }
 
 /** A running process as the addon reports it. `mine`: this user's (null: could not be told). `exe` "" is a process with no program

@@ -18,6 +18,7 @@ import { connectorSystemPrompt, requiredAppsSystemPrompt } from "./composio.ts";
 import { redactSecretsInText } from "./redact.ts";
 import { parseBotPackage } from "./bot-package.ts";
 import { BASE, DESKTOP_HEADERS, PAIRED_PHONE, SERVER_DIR, STATE_ONLY_SELECTION, api, delayedJsonBody, desktopApi, fakeClaudeDump, home, readJsonFileWhenReady, startInternalFixtureTurn } from "./testing/index-harness.ts";
+import { removeTempDirSync } from "./testing/cleanup.ts";
 
 
 describe("harness HTTP API", () => {
@@ -246,7 +247,7 @@ describe("harness HTTP API", () => {
       expect((await desktopApi("POST", "/api/packages/export", { ...download, previewHash: blocked.body.previewHash, acknowledgeWarnings: true })).status).toBe(422);
     } finally {
       await desktopApi("DELETE", `/api/bots/${bot.id}`);
-      rmSync(root, { recursive: true, force: true });
+      removeTempDirSync(root);
     }
   });
 
@@ -861,7 +862,7 @@ describe("harness HTTP API", () => {
 
     expect((await desktopApi("DELETE", `/api/groups/${imported.body.group.id}`)).status).toBe(200);
     for (const bot of imported.body.bots) await desktopApi("DELETE", `/api/bots/${bot.id}`);
-    rmSync(folder, { recursive: true, force: true });
+    removeTempDirSync(folder);
   });
 
   it("team import is additive-only: smuggled grants, claimed ids, and re-imports never touch existing records", async () => {
@@ -2348,21 +2349,23 @@ describe("harness HTTP API", () => {
     // the turn-engine switches are served with their defaults (lane E1)
     // Lane D flag, SPEC-P 14: the served learning default stays off.
     const learning = { learningDefaultOn: false };
+    // 1.0.3 flux-signin: desktop Sign in with Flux is served from its one default constant (off)
+    const signin = { fluxDesktopSignin: false };
     const engine = { roomsThreadAdmission: true, roomsQueue: true, roomsMentionChain: true, projectsAutonomy: true, projectsAutoWake: true, projectsParallelCards: true };
-    expect(before.body.features).toEqual({ browser: false, projectsLead: true, projectsGoals: true, projectsBudgets: true, projectsWorkProfile: true, projectsBoard: true, projectsDigest: true, skillRecorder: false, showToolCalls: false, ...engine, ...learning });
+    expect(before.body.features).toEqual({ browser: false, projectsLead: true, projectsGoals: true, projectsBudgets: true, projectsWorkProfile: true, projectsBoard: true, projectsDigest: true, skillRecorder: false, showToolCalls: false, ...engine, ...learning, ...signin });
 
     const saved = await desktopApi("PATCH", "/api/config", {
       features: { skillRecorder: true },
     });
     expect(saved.status).toBe(200);
-    expect(saved.body.features).toEqual({ botsSharedAcrossTeams: true, browser: false, projectsLead: true, projectsGoals: true, projectsBudgets: true, projectsWorkProfile: true, projectsBoard: true, projectsDigest: true, skillRecorder: true, showToolCalls: false, ...engine, ...learning });
+    expect(saved.body.features).toEqual({ botsSharedAcrossTeams: true, browser: false, projectsLead: true, projectsGoals: true, projectsBudgets: true, projectsWorkProfile: true, projectsBoard: true, projectsDigest: true, skillRecorder: true, showToolCalls: false, ...engine, ...learning, ...signin });
 
     const disk = JSON.parse(readFileSync(join(home, ".murage", "config.json"), "utf8"));
     expect(disk.features).toEqual({ skillRecorder: true });
 
     const tools = await desktopApi("PATCH", "/api/config", { features: { showToolCalls: true } });
     expect(tools.status).toBe(200);
-    expect(tools.body.features).toEqual({ botsSharedAcrossTeams: true, browser: false, projectsLead: true, projectsGoals: true, projectsBudgets: true, projectsWorkProfile: true, projectsBoard: true, projectsDigest: true, skillRecorder: true, showToolCalls: true, ...engine, ...learning });
+    expect(tools.body.features).toEqual({ botsSharedAcrossTeams: true, browser: false, projectsLead: true, projectsGoals: true, projectsBudgets: true, projectsWorkProfile: true, projectsBoard: true, projectsDigest: true, skillRecorder: true, showToolCalls: true, ...engine, ...learning, ...signin });
 
     await desktopApi("PATCH", "/api/config", { features: { skillRecorder: false, showToolCalls: false } });
   });

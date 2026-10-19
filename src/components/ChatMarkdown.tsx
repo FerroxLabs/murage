@@ -28,6 +28,7 @@ import { api } from "@/state/store";
 import { extractMath, rehypeChatMath } from "@/lib/chat-math";
 import { ChatMath } from "./ChatMath";
 import { MermaidDiagram } from "./MermaidDiagram";
+import { trustedHtml, useSanitizerReady } from "@/lib/trusted-html";
 import type { WorkspaceScopeRef } from "../../shared/workspace-files";
 
 // react-markdown drops every data: URL. Raster image bytes already inside the
@@ -101,6 +102,7 @@ const localFilePath = (href?: string): string | null => {
 };
 
 export function CodeBlock({ code, lang, streaming }: { code: string; lang: string; streaming: boolean }) {
+  useSanitizerReady(); // markup made before the sanitizer loaded is empty: draw again when it arrives
   const [html, setHtml] = useState<string | null>(null);
   const [copied, setCopied] = useState(false);
   const [copyError, setCopyError] = useState(false);
@@ -203,7 +205,7 @@ export function CodeBlock({ code, lang, streaming }: { code: string; lang: strin
       {html ? (
         <div
           className={"text-[13px] leading-relaxed [&_pre]:!bg-transparent [&_pre]:m-0 [&_pre]:p-3 " + (wrapped ? "overflow-x-hidden [&_pre]:!whitespace-pre-wrap [&_code]:!whitespace-pre-wrap [&_pre]:[overflow-wrap:anywhere]" : "overflow-x-auto")}
-          dangerouslySetInnerHTML={{ __html: html }}
+          dangerouslySetInnerHTML={{ __html: trustedHtml(html) }}
         />
       ) : (
         <pre className={"p-3 text-[13px] leading-relaxed text-ink " + (wrapped ? "whitespace-pre-wrap [overflow-wrap:anywhere]" : "overflow-x-auto")}>{code}</pre>

@@ -5,9 +5,10 @@ import { join } from "node:path";
 import { afterEach, expect, it } from "vitest";
 import { admitBundledGepa, GEPA_RESOURCE_LICENSES, GEPA_RESOURCE_TARGETS, inventoryGepaBundle, verifyGepaBundle, type GepaResourceManifest } from "./gepa-resource.ts";
 import { GEPA_MANIFEST_UNAVAILABLE, GEPA_UNAVAILABLE_TARGETS, validatePackagedGepa } from "../scripts/after-pack.mjs";
+import { removeTempDirSync } from "./testing/cleanup.ts";
 
 const roots:string[]=[];
-afterEach(()=>{for(const root of roots.splice(0))rmSync(root,{recursive:true,force:true});});
+afterEach(()=>{for(const root of roots.splice(0))removeTempDirSync(root);});
 const sha=(bytes:string|Buffer)=>createHash("sha256").update(bytes).digest("hex");
 function header(target:string){const bytes=Buffer.alloc(256);if(target.startsWith("darwin")){bytes.writeUInt32LE(0xfeedfacf);bytes.writeUInt32LE(target.endsWith("arm64")?0x0100000c:0x01000007,4);}else if(target==="linux-x64"){bytes.set([127,69,76,70,2,1]);bytes.writeUInt16LE(0x3e,18);}else{bytes.write("MZ");bytes.writeUInt32LE(64,60);bytes.write("PE\0\0",64);bytes.writeUInt16LE(0x8664,68);}return bytes;}
 function fixture(target:typeof GEPA_RESOURCE_TARGETS[number]="darwin-arm64"){

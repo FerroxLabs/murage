@@ -6,12 +6,13 @@
 // the turn for silence ends it. A preload compresses any long deadline the
 // proxy might set to 300 ms, so a fixed clock shows up at once.
 import { spawn, type ChildProcess } from "node:child_process";
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdtempSync, writeFileSync } from "node:fs";
 import { createServer, type IncomingMessage, type Server } from "node:http";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { removeTempDirSync } from "../testing/cleanup.ts";
 
 const PROXY = join(dirname(fileURLToPath(import.meta.url)), "host-computer-proxy.ts");
 
@@ -50,7 +51,7 @@ describe("host computer proxy", () => {
 
   afterAll(() => {
     server.close();
-    rmSync(dir, { recursive: true, force: true });
+    removeTempDirSync(dir);
   });
 
   const start = () => {

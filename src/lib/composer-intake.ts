@@ -22,6 +22,7 @@
 
 import { intakeFiles, type Attachment, type DroppedFile } from "./composer-attachments";
 import { trackComposerUpload } from "./composer-uploads";
+import { batchRefusalLine } from "../../shared/attachment-storage.ts";
 
 export interface ComposerFileIntake<T extends DroppedFile & { type: string }> {
   /** The conversation the draft belongs to. One bucket per thread, so an
@@ -84,13 +85,24 @@ export interface ComposerPasteIntake<T> {
  */
 export function composerPasteIntake<T>(intake: ComposerPasteIntake<T>): Promise<void> {
   return trackComposerUpload(intake.threadId, async () => {
+    // Failures are collected and reported once: four pictures refused by a
+    // full disk are one line, not four.
+    const failures: { name: string; message: string }[] = [];
     for (const file of intake.files) {
       try {
         const attachment = await intake.uploadImage(file);
         if (attachment) intake.onAdd([attachment]);
       } catch (err) {
-        intake.onError(err instanceof Error ? err.message : "image upload failed");
+        failures.push({ name: pastedName(file), message: err instanceof Error ? err.message : "image upload failed" });
       }
     }
+    if (failures.length === 1 && !failures[0]!.name) intake.onError(failures[0]!.message);
+    else if (failures.length) intake.onError(batchRefusalLine(failures)!);
   });
+}
+
+/** A clipboard image's name, when it has one. Most are called "image.png". */
+function pastedName(file: unknown): string {
+  const name = (file as { name?: unknown } | null)?.name;
+  return typeof name === "string" ? name : "";
 }

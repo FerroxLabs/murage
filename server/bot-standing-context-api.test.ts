@@ -33,10 +33,14 @@ const readJson = (path: string) => { try { return existsSync(path) ? JSON.parse(
 const idle = async () => { const state = await api("GET", "/api/bots?messages=0"); return !state.bots.some((bot: any) => bot.busy) && !state.groups.some((group: any) => group.busyBotId || group.working); };
 const marker = () => `STANDING_TURN_${++sequence}`;
 
+// A turn's own events end this wait (the engine child receiving the prompt, then the bot and the room going idle). How long a cold
+// engine takes to start on a loaded runner is not the product's to promise, so the only bound is the test's own budget (every test
+// here carries one), not a per-step guess that a slow first start can overrun.
+const TURN_EVENT_BOUND_MS = 85_000;
 async function captured(tag: string) {
   let dump: any;
-  await expect.poll(() => { dump = readJson(fixture.fixtureDumpPath); return JSON.stringify(dump?.prompt ?? null).includes(tag); }, { timeout: 20000 }).toBe(true);
-  await expect.poll(idle, { timeout: 20000 }).toBe(true);
+  await expect.poll(() => { dump = readJson(fixture.fixtureDumpPath); return JSON.stringify(dump?.prompt ?? null).includes(tag); }, { timeout: TURN_EVENT_BOUND_MS, message: `the engine never received ${tag}` }).toBe(true);
+  await expect.poll(idle, { timeout: TURN_EVENT_BOUND_MS, message: `the turn ${tag} never ended` }).toBe(true);
   return { prompt: JSON.stringify(dump.prompt), system: String(dump.systemPrompt ?? "") };
 }
 async function directTurn(bot: { id: string; threadId: string }) {

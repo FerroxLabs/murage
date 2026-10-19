@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import { EventEmitter } from "node:events";
 import { fork } from "node:child_process";
-import { mkdirSync, rmSync } from "node:fs";
+import { mkdirSync } from "node:fs";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { DATA_DIR } from "../config.ts";
 import { closeDatabase, database } from "../database.ts";
@@ -11,6 +11,7 @@ import * as jobs from "./jobs.ts";
 import { setMemoryMode } from "./repository.ts";
 import { MEMORY_IDLE_SWEEP_MS, MemoryWorkerController } from "./worker-controller.ts";
 import type { MemorySearchInput } from "./worker-protocol.ts";
+import { removeTempDirSync } from "../testing/cleanup.ts";
 
 vi.mock("node:child_process",async importOriginal=>({...await importOriginal<typeof import("node:child_process")>(),fork:vi.fn()}));
 vi.mock("./jobs.ts",async importOriginal=>{
@@ -32,7 +33,7 @@ function enqueue(id="source"){
   captureSource(database(),{id,threadId:"thread",kind:"text",speaker:"owner",outcome:"recorded",text:"A notebook remembers the owner's context"});
 }
 beforeEach(()=>{
-  closeDatabase();rmSync(DATA_DIR,{recursive:true,force:true});mkdirSync(DATA_DIR,{recursive:true});
+  closeDatabase();removeTempDirSync(DATA_DIR);mkdirSync(DATA_DIR,{recursive:true});
   vi.useFakeTimers();vi.setSystemTime(new Date("2026-10-03T00:00:00Z"));
   setMemoryMode("capture");
   helper=new Helper();
