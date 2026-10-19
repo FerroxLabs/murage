@@ -9,10 +9,11 @@
 // The harness relays contract A both ways and holds the Flux key; the page
 // never sees it. Off by default (streamFlagOn): the Flux side is not live yet
 // (Flux FLUX-940, subprotocol flux.stt.v1). The harness never reconnects to Flux: the page owns fallback.
-import { randomBytes } from "node:crypto";
 import type { IncomingHttpHeaders, IncomingMessage, ServerResponse } from "node:http";
 import type { Duplex } from "node:stream";
 import { WebSocketServer, type WebSocket } from "ws";
+
+import { createTicketStore as createSingleUseTicketStore, type TicketStore } from "../single-use-ticket.ts";
 
 import { LEASE_MS, LIMITS, SLOW_CONSUMER_BYTES, SUBPROTOCOL, fatal, parseClientMessage, type ClientMessage, type StreamError } from "../../shared/flux-stream-contract.ts";
 import { FluxStreamRefused, failureForClose, openFluxStream, type FluxStream } from "./flux-stream.ts";
@@ -78,24 +79,9 @@ export function upgradeAdmitted(headers: IncomingHttpHeaders, checks: { host(hos
   return !origin || checks.origin(origin);
 }
 
-export function createTicketStore(opts: { ttlMs?: number; now?: () => number } = {}) {
-  const ttl = opts.ttlMs ?? TICKET_TTL_MS;
-  const now = opts.now ?? Date.now;
-  const tickets = new Map<string, { principal: string; expires: number }>();
-  return {
-    mint(principal: string): string {
-      for (const [t, v] of tickets) if (v.expires < now()) tickets.delete(t);
-      const ticket = randomBytes(32).toString("base64url");
-      tickets.set(ticket, { principal, expires: now() + ttl });
-      return ticket;
-    },
-    /** Single use: spent whether or not it matches. */
-    redeem(ticket: string, principal: string): boolean {
-      const found = tickets.get(ticket);
-      tickets.delete(ticket);
-      return Boolean(found && found.expires >= now() && found.principal === principal);
-    },
-  };
+/** The shared single-use ticket (server/single-use-ticket.ts), at this route's 30 s lifetime. */
+export function createTicketStore(opts: { ttlMs?: number; now?: () => number } = {}): TicketStore {
+  return createSingleUseTicketStore({ ttlMs: opts.ttlMs ?? TICKET_TTL_MS, now: opts.now });
 }
 
 export interface StreamSlot {

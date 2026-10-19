@@ -2,7 +2,7 @@
 // Copyright 2026 Ferrox Labs
 import { scopedTx } from "./tx-scope.ts";
 import type { DatabaseSync } from 'node:sqlite';
-import { activeProjectGoal, currentProjectClose, insertProjectActivity, projectCardsForGroup, projectSettingsFor } from './project-records.ts';
+import { activeProjectGoal, closeRecordCache, currentProjectClose, insertProjectActivity, projectCardsForGroup, projectSettingsFor } from './project-records.ts';
 import { cancelProjectCard } from './project-cards.ts';
 import { stopProjectGoal } from './project-goals.ts';
 import { setProjectClosed, setProjectReopened, setProjectRunState } from './project-settings.ts';
@@ -36,7 +36,12 @@ export interface ProjectCloseDeps {
   sync(): void;
 }
 interface CloseStep { closeSeq: number; step: number; summaryRequestId: string | null; stopGoal?: boolean; goalId?: string }
-function steps(db: DatabaseSync, groupId: string): CloseStep[] {
+/** A group's close steps, read again only after a close record changed (closeRecordCache): the room sweep and every tool call ask. */
+const closeStepsCache = closeRecordCache<readonly CloseStep[]>();
+function steps(db: DatabaseSync, groupId: string): readonly CloseStep[] {
+  return closeStepsCache(db, groupId, () => readSteps(db, groupId));
+}
+function readSteps(db: DatabaseSync, groupId: string): CloseStep[] {
   return (db.prepare("SELECT detail FROM project_activity WHERE group_id=? AND kind='close' ORDER BY rowid").all(groupId) as {detail:string}[])
     .map(row => JSON.parse(row.detail) as CloseStep).filter(row => Number.isInteger(row.closeSeq) && Number.isInteger(row.step));
 }
@@ -174,7 +179,19 @@ export function reopenProject(db: DatabaseSync, deps: Pick<ProjectCloseDeps,'gro
 /** Goal sign-off shares the summary and lessons, but keeps the project open
  * for its next goal. It grants no paused-project admission exception. */
 interface GoalCloseStep { goalSummary: string; step: number; summaryRequestId: string | null }
-function goalCloseSteps(db: DatabaseSync, groupId: string): GoalCloseStep[] {
+/** A group's goal sign-offs, all and the unfinished ones, read again only after a close record changed (closeRecordCache): the 30 s room
+ * sweep resumes the unfinished ones, so a sweep never reads or parses the history of finished sign-offs. */
+const goalCloseCache = closeRecordCache<{ all: readonly GoalCloseStep[]; open: readonly GoalCloseStep[] }>();
+function goalCloseRecords(db: DatabaseSync, groupId: string): { all: readonly GoalCloseStep[]; open: readonly GoalCloseStep[] } {
+  return goalCloseCache(db, groupId, () => {
+    const all = readGoalCloseSteps(db, groupId);
+    return { all, open: all.filter(step => step.step < 3) };
+  });
+}
+function goalCloseSteps(db: DatabaseSync, groupId: string): readonly GoalCloseStep[] {
+  return goalCloseRecords(db, groupId).all;
+}
+function readGoalCloseSteps(db: DatabaseSync, groupId: string): GoalCloseStep[] {
   const latest = new Map<string,GoalCloseStep>();
   for (const row of db.prepare("SELECT detail FROM project_activity WHERE group_id=? AND kind='close' ORDER BY rowid").all(groupId)) {
     const detail = JSON.parse(String(row.detail)) as GoalCloseStep;
@@ -199,7 +216,8 @@ export function isGoalCloseRequest(db:DatabaseSync,request:RoomRequest):boolean 
   return goalCloseSteps(db,request.groupId).some(step=>request.id===step.summaryRequestId || (request.parentId===step.summaryRequestId && request.admissionKey===`goal-close-lesson:${request.groupId}:${step.goalSummary}:${request.toBotId}`));
 }
 export function resumeGoalCloseSummaries(db:DatabaseSync,deps:ProjectCloseDeps):void {
-  for(const step of goalCloseSteps(db,deps.groupId)){
+  // only the sign-offs not yet finished: a finished one (step 3) did nothing here
+  for(const step of goalCloseRecords(db,deps.groupId).open){
     if(step.step<3&&goalCloseHeld(db,deps.groupId,step.goalSummary))continue;
     if(step.step===1){
       let request=step.summaryRequestId?roomRequest(db,step.summaryRequestId):null;

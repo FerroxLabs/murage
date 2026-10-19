@@ -3,7 +3,7 @@
 // reads, never WHICH rows it returns. Every test here either proves the index
 // stays in step with messages through each write path, or compares the
 // indexed search against the plain scan it replaced.
-import { mkdirSync, rmSync } from "node:fs";
+import { mkdirSync } from "node:fs";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { beforeEach, describe, expect, it } from "vitest";
@@ -18,6 +18,7 @@ import {
   trigramQuery,
 } from "./message-search-index.ts";
 import type { Message } from "./store.ts";
+import { removeTempDirSync } from "./testing/cleanup.ts";
 
 let clock = 1_000;
 const msg = (id: string, text: string, extra: Partial<Message> = {}): Message => ({ id, role: "user", kind: "text", text, at: ++clock, ...extra });
@@ -46,7 +47,7 @@ const fts = (query: string) =>
 
 beforeEach(() => {
   closeMessageDb();
-  rmSync(DATA_DIR, { recursive: true, force: true });
+  removeTempDirSync(DATA_DIR);
   mkdirSync(DATA_DIR, { recursive: true });
 });
 

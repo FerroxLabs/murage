@@ -4,7 +4,7 @@
 // The write-ahead log of messages.db is copied and shrunk without any connection but the server's ever holding the writer
 // lock (wal-maintenance.ts). Invariants I1 to I5 of the 1.0.2 design are each pinned here.
 import { monitorEventLoopDelay } from "node:perf_hooks";
-import { copyFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { copyFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
@@ -18,6 +18,7 @@ import { appendMessage, closeMessageDb } from "./message-db.ts";
 import { maintainLineageStorage } from "./memory/root-set-compaction.ts";
 import type { Message } from "./store.ts";
 import { checkpointPassive, readWalHeader, scrubWalAfterDelete, settleWal, startWalMaintenance, stopWalMaintenance, walMark, walMaintenanceReady, walMaintenanceTestHooks, walScrubPending, walScrubbed } from "./wal-maintenance.ts";
+import { removeTempDirSync } from "./testing/cleanup.ts";
 
 const messagesFile = () => join(DATA_DIR, "messages.db");
 const walFile = () => `${messagesFile()}-wal`;
@@ -28,7 +29,7 @@ const message = (id: string, text: string): Message => ({ id, role: "user", kind
 const MB = 1024 * 1024;
 
 beforeEach(() => {
-  closeDatabase(); rmSync(DATA_DIR, { recursive: true, force: true }); mkdirSync(DATA_DIR, { recursive: true });
+  closeDatabase(); removeTempDirSync(DATA_DIR); mkdirSync(DATA_DIR, { recursive: true });
   walMaintenanceTestHooks.holdMs = 0; walMaintenanceTestHooks.retryMs = 30_000; walMaintenanceTestHooks.restartDelaysMs = [1000, 5000, 30_000, 120_000, 300_000]; walMaintenanceTestHooks.unreadableReads = 0;
   unhandled.length = 0; process.on("unhandledRejection", onUnhandled);
 });
@@ -119,7 +120,7 @@ it("a reader that pins the log holds the scrub back without stalling the app, an
   expect(fileHas(walFile(), canary)).toBe(false);
 });
 
-it("main-thread writes all commit quickly with no BUSY while the worker copies a log of 200 MB", async () => {
+it("main-thread writes all commit quickly with no BUSY while the worker copies a log of 200 MB", { tags: ["perf-budget"] }, async () => {
   const db = await ready();
   fill(db, 200);
   expect(statSync(walFile()).size).toBeGreaterThan(200 * MB);
@@ -213,6 +214,7 @@ it("no connection of the server process runs TRUNCATE or RESTART on messages.db 
     "sqlite-checkpoint.ts",             // the helper itself; engine databases only
     "engine-exec.ts",                   // engine databases, run in a worker thread
     "installation-memory-downgrade.ts", // offline downgrade
+    "memory/age-index.ts",              // 1.0.3 lane 2: downgradeMemoryIndexFile, the offline downgrade step's memory-index.db (never messages.db)
     "memory/root-set-compaction.ts",    // start-up conversion and reclaim, before listen
     "memory/schema.ts",                 // migration, before listen
     "memory/index.ts",                  // the memory child process's own file
@@ -246,7 +248,7 @@ it("every promise the module hands out resolves, even with no checkpointer runni
 });
 
 const SCALE_MB = Number(process.env.WAL_SCALE_MB ?? 256);
-it(`a ${SCALE_MB} MB log with a writer every 10 ms: deletion scrub and idle sweep leave the loop free and lose no write`, async () => {
+it(`a ${SCALE_MB} MB log with a writer every 10 ms: deletion scrub and idle sweep leave the loop free and lose no write`, { tags: ["perf-budget"], timeout: 600_000 }, async () => {
   const db = await ready();
   db.exec("CREATE TABLE IF NOT EXISTS beat(n INTEGER)");
   const canary = `CANARY-${crypto.randomUUID()}`;
@@ -268,7 +270,7 @@ it(`a ${SCALE_MB} MB log with a writer every 10 ms: deletion scrub and idle swee
     old.exec("PRAGMA wal_checkpoint(TRUNCATE)");
     baselineMs = performance.now() - started;
     old.close();
-  } finally { rmSync(copyDir, { recursive: true, force: true }); }
+  } finally { removeTempDirSync(copyDir); }
   const before = walMark(walFile());
   let attempted = 0, failed = 0;
   const writer = setInterval(() => {
@@ -291,7 +293,7 @@ it(`a ${SCALE_MB} MB log with a writer every 10 ms: deletion scrub and idle swee
   expect(walScrubbed(walFile(), before)).toBe(true);
   expect(fileHas(walFile(), canary)).toBe(false);
   expect(fileHas(messagesFile(), canary)).toBe(false);
-}, 600_000);
+});
 
 
 // ── r9 ─────────────────────────────────────────────────────────────────────
@@ -316,7 +318,7 @@ it("r9 finding 5: a log that cannot be read is unknown, never absent: no scrub i
     expect(readWalHeader(join(folder, "absent")).unknown).toBeUndefined();
     expect(walMark(join(folder, "absent"))).toBeNull();
     expect(walScrubbed(join(folder, "absent"), "unknown")).toBe(true);
-  } finally { rmSync(folder, { recursive: true, force: true }); }
+  } finally { removeTempDirSync(folder); }
 
   // The report's scenario: a reader holds the latest log, PASSIVE copies everything, the nudge merely appends, and the very
   // first read of the log header fails (EMFILE). That used to certify the scrub; the text is still in the log.
@@ -439,7 +441,7 @@ it("r9 finding 7: the messages log scrub starts without waiting for the engine-h
     expect(settled).toBe(false); // the engine job was still hanging when the log was already clean
     const { report } = await run;
     expect(report.failed).toEqual([home]);
-  } finally { await run.catch(() => {}); deletions.dispose(); rmSync(data, { recursive: true, force: true }); }
+  } finally { await run.catch(() => {}); deletions.dispose(); removeTempDirSync(data); }
 });
 
 it("r9 finding 4: shutdown refuses new engine jobs, ends the running one, and frees the lease only after the real exit of every writer", async () => {
@@ -473,7 +475,7 @@ it("r9 finding 4: shutdown refuses new engine jobs, ends the running one, and fr
   const late = await runEngineHistoryOffThread(job, { workerPath: silent, onWorker: () => { created++; } });
   expect(late.failed).toEqual([job.homes[0]!.home]);
   expect(created).toBe(1);
-  rmSync(data, { recursive: true, force: true });
+  removeTempDirSync(data);
 });
 
 it("r9 finding 4: a writer that is still alive keeps the lease", async () => {

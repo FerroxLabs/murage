@@ -1,7 +1,7 @@
 // The identity set is warmed in rowid slices after the port opens, so the
 // first skills request finds it built. The set it keeps must be exactly the
 // one the one-shot query gives, and never one a write has outdated.
-import { mkdirSync, rmSync } from "node:fs";
+import { mkdirSync } from "node:fs";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { beforeEach, expect, it } from "vitest";
@@ -10,11 +10,12 @@ import { closeDatabase, database, transaction } from "../database.ts";
 import { captureSource } from "./capture.ts";
 import { setMemoryMode } from "./repository.ts";
 import { IDENTITY_CHUNK_HI_SQL, IDENTITY_CHUNK_SQL, identityScanCount, identitySourceSet, warmIdentitySourceSet } from "./provenance-stamp.ts";
+import { removeTempDirSync } from "../testing/cleanup.ts";
 
 const ONE_SHOT = "SELECT e.source_id,e.source_revision FROM memory_records r LEFT JOIN memory_record_details d ON d.record_id=r.id AND d.record_version=r.version CROSS JOIN memory_evidence e ON e.record_id=r.id AND e.record_version=r.version WHERE r.kind='character-canon' OR d.partition='identity'";
 const SOURCES = 40, TOTAL = 20_500;
 let scopeId = "";
-beforeEach(() => { closeDatabase(); rmSync(DATA_DIR, { recursive: true, force: true }); mkdirSync(DATA_DIR, { recursive: true }); setMemoryMode("capture"); seed(); });
+beforeEach(() => { closeDatabase(); removeTempDirSync(DATA_DIR); mkdirSync(DATA_DIR, { recursive: true }); setMemoryMode("capture"); seed(); });
 function seed() {
   for (let i = 0; i < SOURCES; i++) transaction(db => captureSource(db, { id: `source:s${i}`, threadId: `t${i}`, kind: "tool-outcome", speaker: "tool", outcome: "completed", text: `o${i}`, action: { label: "fixture-check", reportedOutcome: "completed", verification: "tool-reported" } }));
   scopeId = String(database().prepare("SELECT scope_id FROM memory_sources WHERE id='source:s0'").get()!.scope_id);

@@ -435,6 +435,7 @@ export function TeamLibraryPanel({
   const [teamOrder, setTeamOrder] = useState<string[] | null>(null);
   const [skillHits, setSkillHits] = useState<SkillHit[]>([]);
   const [searching, setSearching] = useState(false);
+  const [searchUnavailable, setSearchUnavailable] = useState(false);
   const [facets, setFacets] = useState<Facet[]>([]);
   const [totalSkills, setTotalSkills] = useState(0);
   const [activeFacet, setActiveFacet] = useState<string | null>(null);
@@ -539,6 +540,7 @@ export function TeamLibraryPanel({
       setTeamOrder(null);
       setSkillHits([]);
       setSearching(false);
+      setSearchUnavailable(false);
       return;
     }
     const token = ++searchRequest.current;
@@ -552,11 +554,13 @@ export function TeamLibraryPanel({
           if (token !== searchRequest.current) return;
           setTeamOrder((response.teams ?? []).map((hit) => hit.slug));
           setSkillHits(response.skills ?? []);
+          setSearchUnavailable(false);
         } catch {
           if (token !== searchRequest.current) return;
           // An unreachable index must not blank the team list.
           setTeamOrder(null);
           setSkillHits([]);
+          setSearchUnavailable(true);
         } finally {
           if (token === searchRequest.current) setSearching(false);
         }
@@ -632,7 +636,7 @@ export function TeamLibraryPanel({
 
   const finishBundleImport = (result: BundleImportResult) => {
     for (const bot of result.bots) dispatch({ type: "botAdded", ...fromAnswer(bot), bot });
-    for (const group of result.groups) dispatch({ type: "groupPatched", group });
+    for (const group of result.groups) dispatch({ type: "groupPatched", origin: fromAnswer(group), group });
     for (const routine of result.routines) dispatch({ type: "routinePatched", routine });
     if (result.bots[0]) dispatch({ type: "select", id: result.bots[0].id });
     setBundleFile(null);
@@ -706,7 +710,7 @@ export function TeamLibraryPanel({
       };
       for (const bot of response.archivedBots ?? []) dispatch({ type: "botPatched", ...fromAnswer(bot), bot });
       for (const bot of response.bots) dispatch({ type: "botAdded", ...fromAnswer(bot), bot });
-      for (const group of response.groups ?? []) dispatch({ type: "groupPatched", group });
+      for (const group of response.groups ?? []) dispatch({ type: "groupPatched", origin: fromAnswer(group), group });
       for (const routine of response.routines ?? []) dispatch({ type: "routinePatched", routine });
       const first = response.bots[0];
       if (first) dispatch({ type: "select", id: first.id });
@@ -805,7 +809,7 @@ export function TeamLibraryPanel({
       for (const bot of response.bots) dispatch({ type: "botAdded", ...fromAnswer(bot), bot });
       if (response.group) {
         // upsert now instead of waiting for the SSE frame, then land in the room
-        dispatch({ type: "groupPatched", group: { ...response.group, messages: [] } });
+        dispatch({ type: "groupPatched", origin: fromAnswer(response.group), group: { ...response.group, messages: [] } });
         dispatch({ type: "select", id: response.group.id });
       }
       track("team_imported", { members: response.bots.length, source: "scout", mode: "project" });
@@ -1183,6 +1187,9 @@ export function TeamLibraryPanel({
                     {activeFacet ? `Skills in ${facetLabel(activeFacet)}` : view === "skills" ? "Skills" : `${visibleTeams.length} ${view}`}
                     {searching && <Loader2 size={12} className="animate-spin" />}
                   </div>
+                  {searchUnavailable && !searching && (
+                    <p role="status" className="mb-3 text-[12.5px] text-warning" data-testid="library-search-unavailable">Search is unavailable right now, so this shows all teams.</p>
+                  )}
                   {catalogLoading && (
                     <div className="flex items-center justify-center gap-2 py-24 text-[13px] text-ink-secondary">
                       <Loader2 size={16} className="animate-spin" /> Loading library…

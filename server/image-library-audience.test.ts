@@ -9,7 +9,7 @@
 // of every library route; the agents proxy is spawned the way a driver
 // mounts it.
 import { spawn } from "node:child_process";
-import { mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterAll, beforeEach, describe, expect, it } from "vitest";
@@ -25,10 +25,11 @@ import { IMAGE_LIBRARY_ENV, IMAGE_LIBRARY_TOOLS } from "../shared/image-library-
 import { TURN_PROMPTS, imageToolsPrompt, skillLayers } from "./bot-shapes.ts";
 import { loadBundledSkills } from "./skill-library.ts";
 import { CLAUDE_TOOL_SURFACE, FUIGO_TOOL_SURFACE, renderMurageTools } from "./murage-tool-surface.ts";
+import { removeTempDirSync } from "./testing/cleanup.ts";
 
 beforeEach(() => {
   closeDatabase();
-  rmSync(DATA_DIR, { recursive: true, force: true });
+  removeTempDirSync(DATA_DIR);
   mkdirSync(DATA_DIR, { recursive: true });
 });
 
@@ -169,7 +170,7 @@ describe("the image skill on a contact turn", () => {
     for (const name of ["SKILL.md", "manifest.json"]) writeFileSync(join(directory, name), readFileSync(join(bundled, "image-generation", name), "utf8").replace(/\r?\n/g, "\r\n"));
     return root;
   })();
-  afterAll(() => rmSync(crlf, { recursive: true, force: true }));
+  afterAll(() => removeTempDirSync(crlf));
   const load = (root: string) => loadBundledSkills(root).find(item => item.manifest.id === "image-generation")!;
   const layer = (root: string, ownerAudience?: boolean) => { const skill = load(root); return skillLayers([skill], { murageSkill: item => item === skill, agentsMounted: true, ownerAudience })[0]!.text; };
   it("cuts the guide that a task pinned by an earlier version kept with CRLF", () => {

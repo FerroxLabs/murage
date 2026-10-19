@@ -1,0 +1,1894 @@
+#!/usr/bin/python3 -I
+# SPDX-License-Identifier: AGPL-3.0-or-later
+"""Root self-service command runner (home side of cloudflare/control-plane/src/self-service.ts).
+
+Polls GET /v1/machines/<id>/commands with the machine credential murage-control uses for the lease and heartbeat,
+runs each command at most once, and reports it: POST commands/ack, or POST logs (collect_logs) / export-ready
+(export_archive), which acknowledge the command themselves.
+
+  restart_service    restart murage-home.service (normal mode)
+  safe_mode          restart it with bots, schedules and add-ons paused, until the next start (/run/murage-safe-mode)
+  update_software    fetch the signed release named by /etc/murage-home/release.json, verify, swap /opt/murage, restart;
+                     /data (files, settings, logins) is not touched; every step is journaled (update-journal.json) and
+                     committed only once the app answers its health check; otherwise, or after an interruption, the
+                     previous release is put back
+  reset_from_backup  with the home and its turn/browser slices confirmed stopped, keep the current /data as a complete
+                     restic snapshot (exit 0 only; its exact id verified and recorded, kept keepSnapshotDays from
+                     completion), then rebuild /data from the newest nightly confirmed complete; engine sign-ins and the
+                     home's own sign-in state (devices, revocations, pair-hold ledger) stay current; the swap is recorded
+                     durably outside the staging tree, so an interruption is undone exactly or finished
+  undo_reset         put back exactly the snapshot that reset recorded
+  collect_logs       recent journal lines of the allow-listed Murage units; only allowed diagnostic events (the shared
+                     contract's logEvents) are sent, any other line becomes a count; scrubbed here and again by the
+                     control plane; engine sign-in directories are never read
+  export_archive     tar of /data without credentials, zstd, age-encrypted to a one-time key (given to age-keygen on
+                     stdin, never written), at most maxBytes and never below the data disk's headroom, both enforced while
+                     it is produced; uploaded to the backup space at the contract path; the key is sent once with
+                     export-ready and never stored
+
+Reboot is not here: the control plane power-cycles through the provider. Every command id is journaled in
+/var/lib/murage-home/commands before it runs; a journaled command is never run again (an interrupted one is reported
+failed, or done when an interrupted reset had already swapped the data in; at start the runner recovers interrupted
+resets and undos whether or not the control plane still lists them). A command's expiresAt is its run deadline: it is
+never started after it, and no irreversible step (a data swap, a code swap, an upload) begins after it, so the control
+plane can fail the job once the deadline (plus a grace) passes. A finished result the control plane has not acknowledged is
+re-sent on every loop, whether or not the command is still listed. Unknown kinds or payload fields are answered
+"unsupported". No field ever reaches a shell: every process gets an argument vector. The wire shapes are pinned by
+shared/self-service-contract.json.
+"""
+import base64
+import datetime
+import errno
+import fcntl
+import hashlib
+import importlib.machinery
+import importlib.util
+import io
+import json
+import os
+import re
+import secrets as random_source
+import shutil
+import stat
+import subprocess
+import sys
+import tarfile
+import tempfile
+import threading
+import time
+import urllib.error
+import urllib.parse
+import urllib.request
+
+CONTROL = "/usr/local/libexec/murage-control"
+BACKUP = "/usr/local/libexec/murage-backup"
+STATE = "/var/lib/murage-home"
+CONFIG = "/etc/murage-home"
+DATA = "/data"
+OPT = "/opt/murage"
+RUN = "/run"
+HOME_UNIT = "murage-home.service"
+POLL_SECONDS = 15
+UUID = re.compile(r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}")
+REQUEST_ID = re.compile(r"[A-Za-z0-9_-]{1,128}")
+REASON = re.compile(r"[a-z_:]{1,64}")
+MAX_SAFE = 9007199254740991
+PRE_RESET_TAG = "murage-pre-reset"
+WORK_DIRS = (".murage-reset", ".murage-export", "lost+found")
+# The only log sources: these units, by the unit journald recorded (never a field a process can set). Anything else is dropped.
+LOG_UNITS = {"murage-home.service": "murage", "murage-control.service": "system", "murage-commands.service": "update",
+             "murage-backup.service": "backup", "murage-tunnel.service": "tunnel", "murage-proxy.service": "system",
+             "murage-egress-proxy.service": "system", "murage-volume.service": "system"}
+LOG_CHUNK, LOG_CHUNKS, LOG_MESSAGE = 60, 8, 200
+# Engine sign-ins and their files, wherever they are (backup-excludes.txt is the full list for exports).
+CREDENTIAL_NAMES = frozenset((".claude", ".claude.json", ".claude.json.backup", ".codex", ".grok", ".kimi-code", ".gemini", ".qwen",
+                              ".cursor", ".factory", ".droid", ".antigravity", "auth.json", ".credentials.json", "credentials",
+                              "credentials.json"))
+CREDENTIAL_SUFFIXES = (".config/opencode", ".local/share/opencode")
+# The launcher's versioned sign-in stores (murage-turn-launch.py ENGINE_ROOT, SIGNIN_DIR): engine-homes/<engine>/signin and
+# engine-homes/<engine>/bots/<bot>/signin, every generation. Never in a backup or an export (backup-excludes.txt), so kept across a reset.
+SIGNIN_ROOT, SIGNIN_DIR = "engine-homes", "signin"
+# Never in an export: the sealed secret store (sign-ins, keys) and the proxy's sockets.
+EXPORT_SKIP = ("home/secrets", "proxy")
+
+
+class Unsupported(Exception):
+    pass
+
+
+class Expired(Exception):
+    """The command's run deadline passed before an irreversible step: nothing more is done."""
+
+
+def before_deadline(ctx, command):
+    if ctx["now"]() >= command["expiresAt"]:
+        raise Expired()
+
+
+# ---- strict command shapes ------------------------------------------------------------------------------------------
+
+def _exact(value, fields):
+    if not isinstance(value, dict) or set(value) != set(fields):
+        raise Unsupported()
+
+def _int(value, minimum=0):
+    return type(value) is int and minimum <= value <= MAX_SAFE
+
+def _reason(payload):
+    _exact(payload, ("reason",))
+    if not isinstance(payload["reason"], str) or not REASON.fullmatch(payload["reason"]):
+        raise Unsupported()
+
+def _update(payload):
+    _exact(payload, ("keep", "reason"))
+    if payload["keep"] != ["files", "settings", "logins"] or not isinstance(payload["reason"], str) or not REASON.fullmatch(payload["reason"]):
+        raise Unsupported()
+
+def _reset(payload):
+    _exact(payload, ("resetId", "from", "snapshotFirst", "snapshotTag", "keepSnapshotDays"))
+    if (not isinstance(payload["resetId"], str) or not UUID.fullmatch(payload["resetId"]) or payload["from"] != "last_good_backup"
+            or payload["snapshotFirst"] is not True or payload["snapshotTag"] != PRE_RESET_TAG + "-" + payload["resetId"]
+            or not _int(payload["keepSnapshotDays"], 7) or payload["keepSnapshotDays"] > 30):
+        raise Unsupported()
+
+def _undo(payload):
+    _exact(payload, ("resetId", "snapshotTag"))
+    if (not isinstance(payload["resetId"], str) or not UUID.fullmatch(payload["resetId"])
+            or payload["snapshotTag"] != PRE_RESET_TAG + "-" + payload["resetId"]):
+        raise Unsupported()
+
+def _logs(payload):
+    _exact(payload, ("maxLines", "redact", "chatContent"))
+    if not _int(payload["maxLines"], 1) or payload["maxLines"] > LOG_CHUNK * LOG_CHUNKS or payload["redact"] is not True or payload["chatContent"] is not False:
+        raise Unsupported()
+
+def _export(payload):
+    _exact(payload, ("requestId", "deliverBy", "format", "path", "maxBytes"))
+    rid = payload["requestId"]
+    if (not isinstance(rid, str) or not REQUEST_ID.fullmatch(rid) or not _int(payload["deliverBy"], 1)
+            or payload["format"] != "tar.zst.age" or payload["path"] != "exports/%s/archive.tar.zst.age" % rid
+            or not _int(payload["maxBytes"], 1)):
+        raise Unsupported()
+
+SHAPES = {"restart_service": _reason, "safe_mode": _reason, "update_software": _update, "reset_from_backup": _reset,
+          "undo_reset": _undo, "collect_logs": _logs, "export_archive": _export}
+
+def command_envelope(value):
+    """The outer command. A malformed id cannot be acknowledged, so it is skipped (None)."""
+    if (not isinstance(value, dict) or set(value) != {"id", "kind", "payload", "issuedAt", "expiresAt"}
+            or not isinstance(value["id"], str) or not UUID.fullmatch(value["id"]) or not _int(value["expiresAt"], 1)):
+        return None
+    return value
+
+
+# ---- transport ------------------------------------------------------------------------------------------------------
+
+OPERATIONS = {"commands": "GET", "commands/ack": "POST", "logs": "POST", "export-ready": "POST"}
+
+class NoRedirect(urllib.request.HTTPRedirectHandler):
+    def redirect_request(self, *_args, **_kwargs):
+        raise ValueError("Redirect refused")
+
+def machine_request(binding, operation, body=None):
+    method = OPERATIONS.get(operation)
+    if method is None or (method == "GET") != (body is None):
+        raise ValueError("Invalid command operation")
+    url = binding["adminUrl"] + "/v1/machines/" + binding["homeId"] + "/" + operation
+    headers = {"Authorization": "Bearer " + binding["credential"], "Content-Type": "application/json", "User-Agent": "murage-home/1"}
+    request = urllib.request.Request(url, headers=headers, method=method,
+                                     data=None if body is None else json.dumps(body, allow_nan=False).encode())
+    opener = urllib.request.build_opener(urllib.request.ProxyHandler({}), NoRedirect())
+    with opener.open(request, timeout=30) as response:
+        raw = response.read(262145)
+        if response.status not in (200, 202) or len(raw) > 262144:
+            raise ValueError("Command response refused")
+    return strict_json(raw.decode("utf-8"))
+
+def strict_json(raw):
+    def pairs(items):
+        result = {}
+        for name, value in items:
+            if name in result:
+                raise ValueError("Duplicate field")
+            result[name] = value
+        return result
+    return json.loads(raw, object_pairs_hook=pairs, parse_constant=lambda _v: (_ for _ in ()).throw(ValueError("Invalid number")))
+
+def fetch(url, destination=None, limit=65536):
+    """HTTPS only, no proxy, no redirect. Returns bytes, or streams to destination and returns its sha256 hex."""
+    parsed = urllib.parse.urlsplit(url)
+    if parsed.scheme != "https" or not parsed.hostname or parsed.username or parsed.password:
+        raise ValueError("Release URL refused")
+    opener = urllib.request.build_opener(urllib.request.ProxyHandler({}), NoRedirect())
+    with opener.open(urllib.request.Request(url, headers={"User-Agent": "murage-home/1"}), timeout=60) as response:
+        if response.status != 200:
+            raise ValueError("Release fetch refused")
+        if destination is None:
+            raw = response.read(limit + 1)
+            if len(raw) > limit:
+                raise ValueError("Oversize release file")
+            return raw
+        digest, total = hashlib.sha256(), 0
+        with open(destination, "wb") as out:
+            while True:
+                chunk = response.read(1 << 20)
+                if not chunk:
+                    break
+                total += len(chunk)
+                if total > limit:
+                    raise ValueError("Oversize release archive")
+                digest.update(chunk)
+                out.write(chunk)
+        return digest.hexdigest(), total
+
+
+# ---- host operations (each replaceable in tests) ----------------------------------------------------------------------
+
+def run_process(argv, env=None, stdin=None, limit=8 << 20, timeout=None):
+    """An argument vector, never a shell. Output is returned (capped), never logged."""
+    if not isinstance(argv, list) or not all(isinstance(a, str) and "\0" not in a for a in argv):
+        raise ValueError("Invalid argument vector")
+    process = subprocess.Popen(argv, stdin=subprocess.PIPE if stdin is not None else subprocess.DEVNULL, stdout=subprocess.PIPE,
+                               stderr=subprocess.DEVNULL, env=env if env is not None else {"PATH": "/usr/bin:/bin"}, close_fds=True)
+    try:
+        out, _ = process.communicate(stdin, timeout=timeout)
+    except subprocess.TimeoutExpired:
+        process.kill()
+        process.communicate()
+        return 124, b""
+    return process.returncode, out[:limit]
+
+def systemctl(*args):
+    return run_process(["/usr/bin/systemctl"] + list(args), timeout=300)[0]
+
+def load_module(name, path):
+    loader = importlib.machinery.SourceFileLoader(name, path)
+    spec = importlib.util.spec_from_loader(loader.name, loader)
+    module = importlib.util.module_from_spec(spec)
+    loader.exec_module(module)
+    return module
+
+def unit_state(unit):
+    """systemd's ActiveState of a unit ("active", "inactive", "deactivating", "failed", ...); "unknown" when it cannot be read."""
+    code, out = run_process(["/usr/bin/systemctl", "show", "-p", "ActiveState", "--value", unit], timeout=60)
+    value = out.decode(errors="replace").strip() if code == 0 else ""
+    return value if re.fullmatch(r"[a-z-]{1,32}", value) else "unknown"
+
+def disk_free(target):
+    info = os.statvfs(target)
+    return info.f_bavail * info.f_frsize
+
+def default_context(binding, backup_module=None, control_module=None):
+    def app_healthy():
+        # The Murage app answering /api/health through Caddy (murage-control's probe), never the unit merely running.
+        return bool(control_module and control_module.app_responding(binding.get("publicOrigin", "")))
+    return {"binding": binding, "request": machine_request, "systemctl": systemctl, "run": run_process, "fetch": fetch,
+            "now": lambda: int(time.time() * 1000), "sleep": time.sleep, "backup": backup_module,
+            "upload": upload_export, "environs": process_environs, "unit_state": unit_state, "app_healthy": app_healthy,
+            "disk_free": disk_free, "spawn": subprocess.Popen,
+            "paths": {"data": DATA, "state": STATE, "config": CONFIG, "opt": OPT, "run": RUN}}
+
+def path(ctx, name, *rest):
+    return os.path.join(ctx["paths"][name], *rest)
+
+
+# ---- journal: every command id runs at most once ------------------------------------------------------------------------
+
+def journal_file(ctx, command_id):
+    return path(ctx, "state", "commands", command_id + ".json")
+
+def journal_read(ctx, command_id):
+    try:
+        with open(journal_file(ctx, command_id), "rb") as handle:
+            return json.loads(handle.read(65536))
+    except FileNotFoundError:
+        return None
+
+def write_private(target, value):
+    """Durable once it returns: the file's data is fsynced, it is renamed into place, and then its directory is fsynced, so the new
+    entry itself survives a power cut (fsync of the file alone does not persist the rename). Every record the runner relies on after a
+    crash (the start inhibition, swap phases, journals, results) is written this way, before the step that depends on it."""
+    directory = os.path.dirname(target)
+    os.makedirs(directory, mode=0o700, exist_ok=True)
+    fd, temporary = tempfile.mkstemp(prefix=".tmp-", dir=directory)
+    try:
+        with os.fdopen(fd, "w") as handle:
+            json.dump(value, handle)
+            handle.flush()
+            os.fsync(handle.fileno())
+        os.replace(temporary, target)
+        fsync_dir(directory)
+    finally:
+        if os.path.exists(temporary):
+            os.unlink(temporary)
+
+def journal_claim(ctx, command_id, record):
+    target = journal_file(ctx, command_id)
+    os.makedirs(os.path.dirname(target), mode=0o700, exist_ok=True)
+    fd = os.open(target, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600)
+    with os.fdopen(fd, "w") as handle:
+        json.dump(record, handle)
+        handle.flush()
+        os.fsync(handle.fileno())
+    fsync_dir(os.path.dirname(target))
+
+def journal_prune(ctx, keep_ms=30 * 86400000):
+    directory = path(ctx, "state", "commands")
+    cutoff = ctx["now"]() - keep_ms
+    for name in os.listdir(directory) if os.path.isdir(directory) else []:
+        record = journal_read(ctx, name[:-5]) if name.endswith(".json") else None
+        if record and record.get("state") == "finished" and record.get("acked") and record.get("startedAt", 0) < cutoff:
+            os.unlink(os.path.join(directory, name))
+
+
+# ---- the poll -----------------------------------------------------------------------------------------------------------
+
+def poll_once(ctx):
+    binding = ctx["binding"]
+    response = ctx["request"](binding, "commands")
+    _exact_or_error(response, ("homeId", "generation", "pollEveryMs", "commands"))
+    if (response["homeId"] != binding["homeId"] or response["generation"] != binding["generation"]
+            or not isinstance(response["commands"], list) or len(response["commands"]) > 10):
+        raise ValueError("Command list refused")
+    handled = []
+    for raw in response["commands"]:
+        command = command_envelope(raw)
+        if command is None:
+            continue
+        handled.append((command["kind"] if command["kind"] in SHAPES else "unknown", handle(ctx, command)))
+    return handled
+
+def _exact_or_error(value, fields):
+    if not isinstance(value, dict) or set(value) != set(fields):
+        raise ValueError("Command response refused")
+
+def handle(ctx, command):
+    cid, kind = command["id"], command["kind"]
+    record = journal_read(ctx, cid)
+    if record is None:
+        record = {"kind": kind if kind in SHAPES else "unknown", "state": "running", "startedAt": ctx["now"](), "acked": False,
+                  "deadline": command["expiresAt"]}
+        payload = command.get("payload")
+        if kind in ("reset_from_backup", "undo_reset") and isinstance(payload, dict) and isinstance(payload.get("resetId"), str) \
+                and UUID.fullmatch(payload["resetId"]):
+            record["resetId"] = payload["resetId"]  # what start-up recovery needs, nothing more
+        journal_claim(ctx, cid, record)
+        try:
+            if kind not in SHAPES:
+                raise Unsupported()
+            SHAPES[kind](command["payload"])
+            before_deadline(ctx, command)  # never started after its run deadline
+            if kind in BLOCKED_BY_RECOVERY and recovery_pending(ctx, cid):
+                raise Blocked()  # an unfinished reset/undo recovery owns /data: no conflicting work until it completes
+            outcome = RUNNERS[kind](ctx, command)
+        except Unsupported:
+            outcome = "unsupported"
+        except Exception:
+            outcome = "failed"
+        if swap_state(ctx, record) in ("swap", "committed"):
+            # Data may be swapped in with sign-ins not yet carried, or a rollback not finished: never reported as done (or failed).
+            # The command stays "running" with its swap record; recovery is retried every loop and at start.
+            print("Self-service recovery pending", file=sys.stderr)
+            return "pending"
+        if outcome == "failed" and swap_state(ctx, record) == "carried":
+            outcome = "done"  # fully installed (sign-ins carried): whatever failed after that, the reset (or undo) happened
+        record.update(state="finished", outcome=outcome)
+        if outcome == "reported":  # logs / export-ready acknowledged it
+            record.update(outcome="done", acked=True)
+        write_private(journal_file(ctx, cid), record)
+        forget_results(ctx, cid, record)
+    elif record.get("state") == "running":
+        # Interrupted (crash, stop, power loss): never run again. A reset or undo is finished or rolled back first.
+        try:
+            outcome = recover(ctx, record, command, cid)
+        except Exception:
+            print("Self-service recovery pending", file=sys.stderr)
+            return "pending"  # still "running": retried on the next poll and at start, never reported as a guess
+        record.update(state="finished", outcome=outcome)
+        write_private(journal_file(ctx, cid), record)
+        forget_results(ctx, cid, record)
+    if not record.get("acked"):
+        acknowledge(ctx, cid, record)
+    print("Self-service command %s: %s" % (record["kind"], record["outcome"]), file=sys.stderr)
+    return record["outcome"]
+
+def _swap_of(record):
+    reset_id = record.get("resetId")
+    if record.get("kind") in ("reset_from_backup", "undo_reset") and isinstance(reset_id, str) and UUID.fullmatch(reset_id):
+        return reset_id, "undo" if record["kind"] == "undo_reset" else "reset"
+    return None
+
+class Blocked(Exception):
+    """A data command arrived while a reset or undo recovery is unfinished."""
+
+DATA_KINDS = ("reset_from_backup", "undo_reset", "update_software", "export_archive")
+# Restart and safe mode would start the home's writers under an unfinished recovery: refused like data work.
+BLOCKED_BY_RECOVERY = DATA_KINDS + ("restart_service", "safe_mode")
+
+def swap_state(ctx, record):
+    """The phase of this command's swap record: None (no swap began), "swap", "committed", "carried" or "rolled_back".
+    An unreadable record counts as unfinished."""
+    swap = _swap_of(record)
+    try:
+        found = read_swap(ctx, *swap) if swap else None
+    except ValueError:
+        return "swap"
+    return found["phase"] if found else None
+
+def recovery_pending(ctx, current=None):
+    """Any reset or undo whose swap is not finished (installed with sign-ins carried, or rolled back)."""
+    directory = path(ctx, "state", "commands")
+    for name in sorted(os.listdir(directory)) if os.path.isdir(directory) else []:
+        if not name.endswith(".json") or name[:-5] == current:
+            continue
+        record = journal_read(ctx, name[:-5])
+        if isinstance(record, dict) and record.get("state") == "running" and swap_state(ctx, record) in ("swap", "committed"):
+            return True
+    swaps = path(ctx, "state", "swaps")
+    for name in os.listdir(swaps) if os.path.isdir(swaps) else []:
+        try:
+            with open(os.path.join(swaps, name), "rb") as handle:
+                if json.loads(handle.read(1 << 20)).get("phase") in ("swap", "committed"):
+                    return True
+        except (OSError, ValueError, AttributeError):
+            return True
+    return False
+
+def forget_results(ctx, cid, record):
+    forget_swaps(ctx, record)
+    if record.get("kind") == "update_software":
+        result = read_update_result(ctx)
+        if result and result.get("commandId") == cid:
+            os.unlink(update_result_file(ctx))
+
+def forget_swaps(ctx, record):
+    """The swap record outlives the staging tree until the terminal outcome is journaled (never before), and is kept while any
+    staging is left (a rollback that needs a person)."""
+    swap = _swap_of(record)
+    if swap and not os.path.isdir(work_dir(ctx, *swap)):
+        try:
+            os.unlink(swap_record(ctx, *swap))
+        except FileNotFoundError:
+            pass
+
+def retry_unacknowledged(ctx):
+    """Finished results the control plane has not acknowledged are re-sent on their own, whether or not the command is still listed
+    (a reset that happened must never stay reported as failed or lost because a poll stopped listing it)."""
+    directory = path(ctx, "state", "commands")
+    for name in sorted(os.listdir(directory)) if os.path.isdir(directory) else []:
+        if not name.endswith(".json") or not UUID.fullmatch(name[:-5]):
+            continue
+        record = journal_read(ctx, name[:-5])
+        if isinstance(record, dict) and record.get("state") == "finished" and not record.get("acked") \
+                and record.get("outcome") in ("done", "failed", "unsupported"):
+            acknowledge(ctx, name[:-5], record)
+
+def acknowledge(ctx, cid, record):
+    try:
+        answer = ctx["request"](ctx["binding"], "commands/ack",
+                                {"generation": ctx["binding"]["generation"], "commandId": cid, "outcome": record["outcome"]})
+        if answer != {"acknowledged": True}:
+            return
+    except urllib.error.HTTPError as error:
+        if error.code not in (404, 409):  # gone or stale: nothing more to tell
+            return
+    except Exception:
+        return  # the command stays listed; the next poll acknowledges again without running it
+    record["acked"] = True
+    write_private(journal_file(ctx, cid), record)
+
+def recover(ctx, record, command=None, cid=None):
+    reset_id = record.get("resetId")
+    if reset_id is None and command is not None and isinstance(command.get("payload"), dict):
+        reset_id = command["payload"].get("resetId")
+    if record.get("kind") in ("reset_from_backup", "undo_reset") and isinstance(reset_id, str) and UUID.fullmatch(reset_id):
+        # An error here propagates: the command stays "running" with its swap record, and recovery is tried again (never guessed).
+        outcome = recover_swap(ctx, reset_id, "undo" if record["kind"] == "undo_reset" else "reset")
+        if outcome == "done" and record["kind"] == "reset_from_backup":
+            try:
+                keep_snapshot_from_now(ctx, reset_id)
+            except Exception:
+                pass  # the record written before the swap still keeps the snapshot keepSnapshotDays from the request
+        return outcome
+    if record.get("kind") in ("reset_from_backup", "undo_reset"):
+        start_home(ctx)  # no reset id recorded: nothing was swapped
+    if record.get("kind") == "update_software":
+        # Keyed to the command: if start-up already finished this command's update, its recorded result is returned again.
+        if read_update_journal(ctx) is not None:
+            recover_update(ctx)
+        result = read_update_result(ctx)
+        return result["outcome"] if result and result.get("commandId") == cid else "failed"
+    if record.get("kind") == "export_archive":
+        clean_export_staging(ctx)
+    if record.get("kind") == "safe_mode":
+        remove_flag(ctx)
+    return "failed"
+
+def recover_interrupted(ctx):
+    """At start: every journaled command still "running" was interrupted. Resets and undos are rolled back or finished now,
+    whether or not the control plane still lists them (it may have failed the job already); each is then reported once."""
+    directory = path(ctx, "state", "commands")
+    for name in sorted(os.listdir(directory)) if os.path.isdir(directory) else []:
+        if not name.endswith(".json") or not UUID.fullmatch(name[:-5]):
+            continue
+        record = journal_read(ctx, name[:-5])
+        if not isinstance(record, dict) or record.get("state") != "running":
+            continue
+        try:
+            outcome = recover(ctx, record, None, name[:-5])
+        except Exception:
+            print("Self-service recovery pending", file=sys.stderr)
+            continue
+        record.update(state="finished", outcome=outcome)
+        write_private(journal_file(ctx, name[:-5]), record)
+        forget_results(ctx, name[:-5], record)
+        acknowledge(ctx, name[:-5], record)
+
+
+# ---- restart and safe mode ------------------------------------------------------------------------------------------------
+
+def flag_path(ctx):
+    return path(ctx, "run", "murage-safe-mode")
+
+def remove_flag(ctx):
+    try:
+        os.unlink(flag_path(ctx))
+    except FileNotFoundError:
+        pass
+
+def wait_active(ctx, seconds=90):
+    for _ in range(max(1, seconds // 3)):
+        if ctx["systemctl"]("is-active", "--quiet", HOME_UNIT) == 0:
+            return True
+        ctx["sleep"](3)
+    return False
+
+def restart_home(ctx, safe=False):
+    remove_flag(ctx)
+    if safe:
+        # start-home.sh consumes the flag on the next start: safe mode lasts until the next restart.
+        fd = os.open(flag_path(ctx), os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600)
+        os.write(fd, b"1\n")
+        os.close(fd)
+    if ctx["systemctl"]("restart", HOME_UNIT) != 0 or not wait_active(ctx):
+        remove_flag(ctx)
+        return "failed"
+    return "done"
+
+def run_restart(ctx, _command):
+    return restart_home(ctx)
+
+def run_safe_mode(ctx, _command):
+    return restart_home(ctx, safe=True)
+
+
+# ---- update ---------------------------------------------------------------------------------------------------------------
+
+RELEASE_FORMAT = "murage-cloud-home-release-v1"
+ARCHIVE_NAME = re.compile(r"murage-cloud-home-[A-Za-z0-9._-]{1,100}\.tar\.gz")
+
+def release_config(ctx):
+    try:
+        with open(path(ctx, "config", "release.json"), "rb") as handle:
+            config = strict_json(handle.read(4096).decode())
+        key = path(ctx, "config", "release-public-key.pem")
+        if not os.path.isfile(key):
+            raise FileNotFoundError(key)
+    except FileNotFoundError:
+        raise Unsupported() from None  # this image has no release channel
+    _exact_or_error(config, ("channelUrl",))
+    parsed = urllib.parse.urlsplit(config["channelUrl"]) if isinstance(config["channelUrl"], str) else None
+    if not parsed or parsed.scheme != "https" or not parsed.hostname or parsed.query or parsed.fragment or parsed.username:
+        raise ValueError("Invalid release channel")
+    return config["channelUrl"].rstrip("/"), key
+
+def verify_manifest(ctx, raw, signature, key):
+    with tempfile.TemporaryDirectory(prefix="murage-release-") as work:
+        for name, value in (("manifest", raw), ("signature", signature)):
+            with open(os.path.join(work, name), "wb") as handle:
+                handle.write(value)
+        code, out = ctx["run"](["openssl", "pkeyutl", "-verify", "-pubin", "-inkey", key, "-rawin",
+                                "-in", os.path.join(work, "manifest"), "-sigfile", os.path.join(work, "signature")], timeout=60)
+    if code != 0 or b"Signature Verified Successfully" not in out:
+        raise ValueError("Release signature refused")
+    manifest = strict_json(raw.decode("utf-8"))
+    _exact_or_error(manifest, ("format", "sequence", "revision", "arch", "archive", "bytes", "sha256"))
+    if (manifest["format"] != RELEASE_FORMAT or not _int(manifest["sequence"], 1) or not isinstance(manifest["revision"], str)
+            or not re.fullmatch(r"[0-9a-f]{40}", manifest["revision"]) or manifest["arch"] != os.uname().machine
+            or not isinstance(manifest["archive"], str) or not ARCHIVE_NAME.fullmatch(manifest["archive"])
+            or not _int(manifest["bytes"], 1) or manifest["bytes"] > (4 << 30)
+            or not isinstance(manifest["sha256"], str) or not re.fullmatch(r"[0-9a-f]{64}", manifest["sha256"])):
+        raise ValueError("Release manifest refused")
+    return manifest
+
+def safe_extract(archive, target):
+    """Regular files, directories and in-tree relative symlinks only; root-owned, never group/world writable, no set-id."""
+    os.makedirs(target, mode=0o755)
+    total = 0
+    with tarfile.open(archive, "r:gz") as tar:
+        for member in tar:
+            name = os.path.normpath(member.name)
+            if name in (".", "") or name.startswith("/") or name == ".." or name.startswith("../") or "\0" in name:
+                raise ValueError("Release entry refused")
+            destination = os.path.join(target, name)
+            if member.issym():
+                link = os.path.normpath(os.path.join(os.path.dirname(name), member.linkname))
+                if member.linkname.startswith("/") or link == ".." or link.startswith("../"):
+                    raise ValueError("Release link refused")
+                os.makedirs(os.path.dirname(destination), mode=0o755, exist_ok=True)
+                os.symlink(member.linkname, destination)
+                if os.geteuid() == 0:
+                    os.lchown(destination, 0, 0)
+            elif member.isdir():
+                os.makedirs(destination, mode=0o755, exist_ok=True)
+                os.chmod(destination, 0o755)
+            elif member.isreg():
+                total += member.size
+                if total > (16 << 30):
+                    raise ValueError("Release too large")
+                os.makedirs(os.path.dirname(destination), mode=0o755, exist_ok=True)
+                source = tar.extractfile(member)
+                fd = os.open(destination, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600)
+                with os.fdopen(fd, "wb") as out:
+                    shutil.copyfileobj(source, out, 1 << 20)
+                os.chmod(destination, 0o755 if member.mode & 0o111 else 0o644)
+            else:
+                raise ValueError("Release entry type refused")
+            if os.geteuid() == 0 and not member.issym():
+                os.chown(destination, 0, 0)
+
+def run_update(ctx, command):
+    channel, key = release_config(ctx)
+    arch = os.uname().machine
+    raw = ctx["fetch"](channel + "/" + arch + "/manifest.json")
+    signature = ctx["fetch"](channel + "/" + arch + "/manifest.json.sig", limit=128)
+    manifest = verify_manifest(ctx, raw, signature, key)
+    state_file = path(ctx, "state", "release.json")
+    try:
+        with open(state_file) as handle:
+            installed = json.load(handle)
+    except FileNotFoundError:
+        installed = {"sequence": 0, "revision": None}
+    if manifest["revision"] == installed.get("revision"):
+        return "done"  # already this release
+    if manifest["sequence"] <= installed.get("sequence", 0):
+        return "failed"  # never a downgrade, even a signed one
+    opt = ctx["paths"]["opt"]
+    staging, previous = opt + ".next", opt + ".prev"
+    download = path(ctx, "state", "update.tar.gz")
+    shutil.rmtree(staging, ignore_errors=True)
+    try:
+        digest, size = ctx["fetch"](channel + "/" + arch + "/" + manifest["archive"], download, limit=manifest["bytes"])
+        if digest != manifest["sha256"] or size != manifest["bytes"]:
+            raise ValueError("Release archive digest mismatch")
+        safe_extract(download, staging)
+        for required in ("dist-server/cloud-home-supervisor.js", "dist-server/index.js"):
+            if not os.path.isfile(os.path.join(staging, required)):
+                raise ValueError("Release incomplete")
+    except Exception:
+        shutil.rmtree(staging, ignore_errors=True)
+        raise
+    finally:
+        if os.path.exists(download):
+            os.unlink(download)
+    try:
+        before_deadline(ctx, command)  # the code swap is the irreversible step
+    except Expired:
+        shutil.rmtree(staging, ignore_errors=True)
+        raise
+    if not stop_writers(ctx):
+        shutil.rmtree(staging, ignore_errors=True)
+        start_home(ctx)
+        return "failed"  # the home did not stop: its code is not swapped under it
+    # An older kept release is moved out of the way first (a partly deleted copy is never mistaken for the previous release).
+    if os.path.lexists(previous):
+        shutil.rmtree(opt + ".old", ignore_errors=True)
+        os.rename(previous, opt + ".old")
+        shutil.rmtree(opt + ".old", ignore_errors=True)
+    # Every step from here is journaled outside /opt, so an interruption is recovered before any command is accepted.
+    update_journal(ctx, {"phase": "swap", "sequence": manifest["sequence"], "revision": manifest["revision"], "commandId": command["id"]})
+    try:
+        os.rename(opt, previous)
+        os.rename(staging, opt)
+    except Exception:
+        recover_update(ctx)  # the journal says how far it got: the previous release goes back
+        return "failed"
+    update_journal(ctx, {"phase": "verify", "sequence": manifest["sequence"], "revision": manifest["revision"], "commandId": command["id"]})
+    remove_flag(ctx)
+    if start_home(ctx) == 0 and wait_healthy(ctx):
+        commit_update(ctx, {"phase": "committed", "sequence": manifest["sequence"], "revision": manifest["revision"], "commandId": command["id"]})
+        return "done"
+    # The new release did not come up healthy: put the previous one back, and check it answers again.
+    return rollback_update(ctx)
+
+UPDATE_HEALTH_SECONDS, UPDATE_HEALTH_PASSES = 180, 2
+
+def wait_healthy(ctx, seconds=UPDATE_HEALTH_SECONDS, passes=UPDATE_HEALTH_PASSES):
+    """Bounded: the unit is active AND the Murage app answers its health check on `passes` consecutive probes, within `seconds`.
+    systemd's Type=simple says nothing about readiness, so is-active alone is never enough."""
+    good = 0
+    for _ in range(max(1, seconds // 3)):
+        if ctx["systemctl"]("is-active", "--quiet", HOME_UNIT) == 0 and ctx["app_healthy"]():
+            good += 1
+            if good >= passes:
+                return True
+        else:
+            good = 0
+        ctx["sleep"](3)
+    return False
+
+def update_journal_file(ctx):
+    return path(ctx, "state", "update-journal.json")
+
+def update_journal(ctx, value):
+    write_private(update_journal_file(ctx), value)
+
+def update_result_file(ctx):
+    return path(ctx, "state", "update-result.json")
+
+def read_update_result(ctx):
+    try:
+        with open(update_result_file(ctx), "rb") as handle:
+            result = json.loads(handle.read(4096))
+    except FileNotFoundError:
+        return None
+    return result if isinstance(result, dict) and result.get("outcome") in ("done", "failed") else None
+
+def finish_update(ctx, entry, outcome):
+    """The terminal outcome is written for the update's command before the journal goes, and kept until that command's own journal
+    records it (forget_results): recovering twice, or recovering at start and again for the command, gives the same answer."""
+    write_private(update_result_file(ctx), {"commandId": entry.get("commandId"), "outcome": outcome})
+    os.unlink(update_journal_file(ctx))
+
+def commit_update(ctx, entry):
+    update_journal(ctx, entry)  # committed first: an interruption below re-applies it
+    write_private(path(ctx, "state", "release.json"), {"sequence": entry["sequence"], "revision": entry["revision"]})
+    finish_update(ctx, entry, "done")
+
+def rollback_update(ctx):
+    opt = ctx["paths"]["opt"]
+    previous, failed = opt + ".prev", opt + ".failed"
+    entry = read_update_journal(ctx) or {}
+    update_journal(ctx, dict(entry, phase="rollback"))
+    stop_writers(ctx)
+    if os.path.lexists(opt) and os.path.lexists(previous):
+        shutil.rmtree(failed, ignore_errors=True)
+        os.rename(opt, failed)
+    if not os.path.lexists(opt) and os.path.lexists(previous):
+        os.rename(previous, opt)
+    shutil.rmtree(failed, ignore_errors=True)
+    finish_update(ctx, entry, "failed")
+    start_home(ctx)
+    if not wait_healthy(ctx):
+        print("Self-service update rollback unhealthy", file=sys.stderr)
+    return "failed"
+
+def read_update_journal(ctx):
+    try:
+        with open(update_journal_file(ctx), "rb") as handle:
+            entry = json.loads(handle.read(4096))
+    except FileNotFoundError:
+        return None
+    if not isinstance(entry, dict) or entry.get("phase") not in ("swap", "verify", "committed", "rollback"):
+        raise ValueError("Invalid update journal")
+    return entry
+
+def recover_update(ctx):
+    """An update interrupted at any step: a committed one is finished; anything else goes back to the previous release (verified).
+    "failed" with nothing to do when no swap had begun."""
+    entry = read_update_journal(ctx)
+    if entry is None:
+        return "failed"
+    opt = ctx["paths"]["opt"]
+    staging = opt + ".next"
+    if entry["phase"] == "committed":
+        commit_update(ctx, entry)
+        start_home(ctx)
+        return "done"
+    if entry["phase"] == "swap" and os.path.lexists(staging):
+        # The new release never reached /opt/murage: at most the first rename happened.
+        if not os.path.lexists(opt) and os.path.lexists(opt + ".prev"):
+            os.rename(opt + ".prev", opt)
+        shutil.rmtree(staging, ignore_errors=True)
+        finish_update(ctx, entry, "failed")
+        start_home(ctx)
+        return "failed"
+    return rollback_update(ctx)
+
+
+# ---- reset and undo -----------------------------------------------------------------------------------------------------
+
+def backup_config(ctx):
+    with open(path(ctx, "config", "backup.json"), "rb") as handle:
+        cfg = strict_json(handle.read(16384).decode())
+    if not isinstance(cfg, dict) or not isinstance(cfg.get("repository"), str) or not isinstance(cfg.get("passwordFile"), str):
+        raise ValueError("Invalid backup config")
+    return cfg
+
+def restic(ctx, cfg, args, limit=16 << 20):
+    backup = ctx["backup"]
+    return ctx["run"](["restic"] + args + backup.restic_options(cfg), env=backup.restic_env(cfg), limit=limit, timeout=4 * 3600)
+
+def restic_time(value):
+    match = re.fullmatch(r"(\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d)(?:\.(\d+))?(Z|[+-]\d\d:\d\d)", value)
+    if not match:
+        raise ValueError("Invalid snapshot time")
+    zone = "+00:00" if match.group(3) == "Z" else match.group(3)
+    return datetime.datetime.fromisoformat(match.group(1) + "." + (match.group(2) or "0").ljust(6, "0")[:6] + zone)
+
+HEX64 = re.compile(r"[0-9a-f]{64}")
+COMPLETE_TAG = "complete"
+
+def list_snapshots(ctx, cfg, tags):
+    code, out = restic(ctx, cfg, ["snapshots", "--json", "--tag", ",".join(tags)])
+    if code != 0:
+        raise ValueError("Snapshot list unavailable")
+    snapshots = json.loads(out.decode())
+    return [s for s in snapshots if isinstance(s, dict) and isinstance(s.get("id"), str) and HEX64.fullmatch(s["id"])
+            and isinstance(s.get("time"), str) and all(t in (s.get("tags") or []) for t in tags)]
+
+def last_good_snapshot(ctx, cfg):
+    """The newest nightly that murage-backup confirmed complete (restic exit 0, tagged "complete"). A nightly that skipped unreadable
+    files (restic exit 3) is never a reset source."""
+    candidates = list_snapshots(ctx, cfg, ["nightly", COMPLETE_TAG])
+    return max(candidates, key=lambda s: restic_time(s["time"]))["id"] if candidates else None
+
+def ops_lock(ctx, wait_seconds=7200):
+    handle = open(path(ctx, "run", "murage-data-ops.lock"), "a")
+    for _ in range(max(1, wait_seconds // 5)):
+        try:
+            fcntl.flock(handle.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+            return handle
+        except BlockingIOError:
+            ctx["sleep"](5)
+    handle.close()
+    raise ValueError("Data operations busy")
+
+def work_dir(ctx, reset_id, operation):
+    return path(ctx, "data", ".murage-reset", operation + "-" + reset_id)
+
+def swap_record(ctx, reset_id, operation):
+    """The durable swap manifest and commit marker: on the state disk, outside the staging tree the swap deletes."""
+    return path(ctx, "state", "swaps", operation + "-" + reset_id + ".json")
+
+def read_swap(ctx, reset_id, operation):
+    try:
+        with open(swap_record(ctx, reset_id, operation), "rb") as handle:
+            record = json.loads(handle.read(1 << 20))
+    except FileNotFoundError:
+        return None
+    if (not isinstance(record, dict) or record.get("phase") not in ("swap", "committed", "carried", "rolled_back")
+            or not all(isinstance(record.get(k), list) and all(isinstance(n, str) and "/" not in n and n not in ("", ".", "..") for n in record[k])
+                       for k in ("aside", "incoming"))):
+        raise ValueError("Invalid swap record")
+    return record
+
+# Every unit that writes /data. The home unit's own stop also stops the slices (ExecStopPost), but that is not waited for.
+WRITERS = (HOME_UNIT, "murage-turns.slice", "murage-browsers.slice")
+
+# A persistent start inhibition, honoured by murage-home.service and murage-home-recover.service themselves (ConditionPathExists=!),
+# so no start of the home (the recovery timer, a boot, an explicit start) can pass while a data transition is unresolved. Set durably
+# BEFORE the writers are stopped; cleared only once the transition is durably resolved (carried, rolled back, committed or put back).
+INHIBIT = "recovery-inhibit"
+
+def inhibit_path(ctx):
+    return path(ctx, "state", INHIBIT)
+
+def inhibit_starts(ctx):
+    """Publishes the inhibition durably (file and directory entry flushed) before anything stops a writer. An inhibition already present
+    is flushed again: it may have been published by a run that crashed before its directory reached the disk."""
+    if not os.path.exists(inhibit_path(ctx)):
+        write_private(inhibit_path(ctx), {"since": ctx["now"]()})
+    else:
+        fsync_dir(os.path.dirname(inhibit_path(ctx)))
+
+def start_home(ctx):
+    """The only way the runner starts the home after a data transition: lifts the inhibition, then starts it. While any other reset or
+    undo swap is still unresolved the inhibition stays and nothing is started."""
+    if recovery_pending(ctx):
+        return 0
+    # Every terminal record that resolved the transition was written durably (write_private flushes its directory) before this point,
+    # so the inhibition is never lifted ahead of the record that justifies lifting it.
+    try:
+        os.unlink(inhibit_path(ctx))
+        fsync_dir(os.path.dirname(inhibit_path(ctx)))
+    except FileNotFoundError:
+        pass
+    return ctx["systemctl"]("start", HOME_UNIT)
+
+def release_stale_inhibit(ctx):
+    """An inhibition with nothing unresolved behind it (all recovered) is lifted and the home started."""
+    if os.path.exists(inhibit_path(ctx)) and not recovery_pending(ctx) and read_update_journal(ctx) is None:
+        start_home(ctx)
+
+def stop_writers(ctx):
+    """Inhibits every start of the home first, then stops the home and its turn/browser slices and confirms each is inactive.
+    False: something still runs; touch nothing."""
+    inhibit_starts(ctx)
+    ok = ctx["systemctl"]("stop", *WRITERS) == 0
+    for _ in range(20):
+        states = [ctx["unit_state"](unit) for unit in WRITERS]
+        if all(state in ("inactive", "failed") for state in states):
+            return ok
+        ctx["sleep"](3)
+    return False
+
+def fsync_dir(directory):
+    fd = os.open(directory, os.O_RDONLY | os.O_DIRECTORY)
+    try:
+        os.fsync(fd)
+    finally:
+        os.close(fd)
+
+def is_credential(rel):
+    parts = rel.split("/")
+    return (os.path.basename(rel) in CREDENTIAL_NAMES or any(rel == s or rel.endswith("/" + s) for s in CREDENTIAL_SUFFIXES)
+            or (len(parts) >= 3 and parts[0] == SIGNIN_ROOT and parts[-1] == SIGNIN_DIR))
+
+# r5 R5.1 (murage-turn-launch.py MASK_NAMES, ensure_placeholder): before a turn mounts its masks, the launcher makes these directories in
+# the bots' workspaces immutable (FS_IMMUTABLE_FL), so nothing a running turn holds can move them. Nobody, root included, can rename or
+# delete an immutable directory or change what is in it until the flag is cleared. A reset or undo runs with every writer stopped (no
+# turn holds a mask), so it clears the flag on the placeholders of the tree it moved aside before it carries or deletes anything, and
+# freezes each one again at its place in the new tree (the launcher also freezes every placeholder again before a turn mounts on it).
+PLACEHOLDER_NAMES = frozenset((".claude", ".codex", ".fuigo", ".grok", ".kimi-code", ".opencode"))
+WORKSPACES = "home/workspaces"
+FS_IOC_GETFLAGS, FS_IOC_SETFLAGS, FS_IMMUTABLE_FL = 0x80086601, 0x40086602, 0x00000010
+PLACEHOLDER_OPEN = os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_NONBLOCK | os.O_CLOEXEC
+
+def inode_flags(fd):
+    """The FS_IOC_GETFLAGS word; 0 on a filesystem without inode flags (nothing there can be immutable)."""
+    flags = bytearray(8)
+    try:
+        fcntl.ioctl(fd, FS_IOC_GETFLAGS, flags)
+    except OSError as error:
+        if error.errno in (errno.ENOTTY, errno.EOPNOTSUPP, errno.EINVAL):
+            return 0
+        raise
+    return int.from_bytes(flags[:4], sys.byteorder)
+
+def set_inode_flags(fd, value):
+    fcntl.ioctl(fd, FS_IOC_SETFLAGS, value.to_bytes(4, sys.byteorder) + bytes(4))
+
+def placeholder_frozen(full):
+    """True when full is a real directory (never through a link at its last component) carrying FS_IMMUTABLE_FL."""
+    try:
+        fd = os.open(full, PLACEHOLDER_OPEN)
+    except OSError:
+        return False
+    try:
+        return bool(inode_flags(fd) & FS_IMMUTABLE_FL)
+    finally:
+        os.close(fd)
+
+def freeze_placeholder(full, frozen):
+    """Sets (frozen) or clears FS_IMMUTABLE_FL on the directory at full. Nothing there, or not a directory: nothing to do. Idempotent."""
+    try:
+        fd = os.open(full, PLACEHOLDER_OPEN)
+    except OSError as error:
+        if error.errno in (errno.ENOENT, errno.ELOOP, errno.ENOTDIR):
+            return
+        raise
+    try:
+        value = inode_flags(fd)
+        wanted = value | FS_IMMUTABLE_FL if frozen else value & ~FS_IMMUTABLE_FL
+        if wanted != value:
+            set_inode_flags(fd, wanted)
+    finally:
+        os.close(fd)
+
+def frozen_placeholders(root):
+    """Relative paths (from root) of the immutable placeholders under root/home/workspaces, at any depth, nested ones included (a turn
+    whose folder is inside a .fuigo folder has placeholders below it). Links are never followed, and a credential-named folder is never
+    entered: it moves whole, with whatever is frozen inside it (what an owner keeps in a .claude folder is not read)."""
+    found = []
+    for current, dirs, _files in os.walk(os.path.join(root, WORKSPACES), followlinks=False):
+        for name in [d for d in dirs if d in PLACEHOLDER_NAMES]:
+            full = os.path.join(current, name)
+            if placeholder_frozen(full):
+                found.append(os.path.relpath(full, root))
+            if name in CREDENTIAL_NAMES:
+                dirs.remove(name)
+    return sorted(found)
+
+def thaw_tree(root):
+    """Clears FS_IMMUTABLE_FL on every directory left under root (the moved-aside tree, about to be deleted, with every writer stopped):
+    nothing frozen anywhere in it can keep the reset from finishing. Links are never followed."""
+    for current, dirs, _files in os.walk(root, followlinks=False):
+        for name in dirs:
+            full = os.path.join(current, name)
+            if placeholder_frozen(full):
+                freeze_placeholder(full, False)
+
+def read_frozen(manifest):
+    """The placeholders a reset recorded before clearing their flags ([] before any was recorded). Read whole; a damaged list raises
+    (the recovery stays pending for a person rather than guessing)."""
+    try:
+        with open(manifest, "rb") as handle:
+            found = json.loads(handle.read())
+    except FileNotFoundError:
+        return []
+    if not isinstance(found, list) or not all(placeholder_rel(r) for r in found):
+        raise ValueError("Invalid placeholder list")
+    return sorted(found)
+
+def placeholder_rel(rel):
+    """A placeholder path a swap record may name: relative, under home/workspaces, no empty, "." or ".." part, a placeholder name last."""
+    parts = rel.split("/") if isinstance(rel, str) else []
+    return (len(parts) >= 4 and "/".join(parts[:2]) == WORKSPACES and parts[-1] in PLACEHOLDER_NAMES
+            and all(p not in ("", ".", "..") for p in parts))
+
+def credential_paths(root, depth=None, skip_top=()):
+    """Engine sign-in paths under root (relative), never descending into them: names only, nothing is opened. At every depth by
+    default: the reset deletes the tree it moved aside, so a sign-in folder the search did not reach would be lost with it."""
+    found = []
+    for current, dirs, files in os.walk(root, followlinks=False):
+        rel_dir = os.path.relpath(current, root)
+        if rel_dir == ".":
+            dirs[:] = [d for d in dirs if d not in skip_top]
+        if depth is not None and rel_dir != "." and rel_dir.count("/") >= depth:
+            dirs[:] = []
+            continue
+        for name in list(dirs) + files:
+            rel = name if rel_dir == "." else rel_dir + "/" + name
+            if is_credential(rel):
+                found.append(rel)
+                if name in dirs:
+                    dirs.remove(name)
+    return found
+
+def ensure_parent(data, previous, rel):
+    """Creates the missing parents of data/rel like their counterparts in previous (owner, mode). Never through a link."""
+    current, source = data, previous
+    for part in rel.split("/")[:-1]:
+        current, source = os.path.join(current, part), os.path.join(source, part)
+        if os.path.lexists(current):
+            if os.path.islink(current) or not os.path.isdir(current):
+                raise ValueError("Unsafe sign-in parent")
+            continue
+        info = os.lstat(source)
+        os.mkdir(current, 0o700)
+        if os.geteuid() == 0:
+            os.chown(current, info.st_uid, info.st_gid)
+        os.chmod(current, stat.S_IMODE(info.st_mode))
+
+def carry_preflight(data, restored):
+    """Before anything is swapped: every current sign-in can be carried into the restored tree (each parent there is missing or a real
+    directory, never a link or a file). Otherwise the reset is refused with nothing changed."""
+    for rel in credential_paths(data, skip_top=WORK_DIRS):
+        current = restored
+        for part in rel.split("/")[:-1]:
+            current = os.path.join(current, part)
+            if not os.path.lexists(current):
+                break
+            if os.path.islink(current) or not os.path.isdir(current):
+                raise ValueError("Sign-in path blocked in the restored data")
+
+def carry_credentials(previous, data, displaced=None, extra=()):
+    """Engine sign-ins never leave the home (never in a backup): a reset or undo keeps the ones it had. Missing parents are recreated;
+    the current sign-in wins over anything at the same path; every one is verified moved before the previous tree may be deleted.
+    extra: credential-named placeholders found at any depth (credential_paths stops at its depth), carried the same way."""
+    found = credential_paths(previous)
+    for rel in found + [r for r in extra if r not in found]:
+        if not os.path.lexists(os.path.join(previous, rel)):
+            continue  # inside a folder carried whole just before, or carried by an earlier, interrupted run
+        target = os.path.join(data, rel)
+        ensure_parent(data, previous, rel)
+        if os.path.lexists(target):
+            if displaced is None:
+                raise ValueError("Sign-in path occupied")
+            os.makedirs(displaced, mode=0o700, exist_ok=True)
+            os.rename(target, os.path.join(displaced, rel.replace("/", "%")))
+        os.rename(os.path.join(previous, rel), target)
+    if credential_paths(previous) or any(os.path.lexists(os.path.join(previous, r)) for r in extra):
+        raise ValueError("Sign-ins not carried")
+
+# The home's own sign-in state (paired devices, revocations, recovery and pair-hold ledgers) lives in the app database. It is never
+# rolled back by a reset or undo: the current rows replace the restored ones before the swap. Outstanding pairing codes are carried
+# only when minted at the home's current generation pin: legacy codes (no generation) and codes of a superseded generation are dropped
+# (Astra STEPUP-EMAIL-8 #1), as the app itself does the moment its pin appears or changes.
+AUTH_DB = os.path.join("home", "messages.db")
+AUTH_TABLES = ("cloud_meta", "cloud_devices", "cloud_browser_factors", "cloud_recovery", "cloud_access", "cloud_challenges", "cloud_codes",
+               "cloud_nonces", "cloud_lockout", "cloud_code_limits", "cloud_source_limits")
+
+def carry_auth_state(current_db, restored_db, generation=None):
+    import sqlite3
+    if not os.path.isfile(current_db):
+        return
+    owner = os.lstat(current_db)
+    created = not os.path.exists(restored_db)
+    if created:
+        os.makedirs(os.path.dirname(restored_db), mode=0o700, exist_ok=True)
+    connection = sqlite3.connect(restored_db, isolation_level=None)
+    try:
+        connection.execute("ATTACH DATABASE ? AS cur", (current_db,))
+        connection.execute("BEGIN IMMEDIATE")
+        try:
+            for table in AUTH_TABLES:
+                row = connection.execute("SELECT sql FROM cur.sqlite_master WHERE type='table' AND name=?", (table,)).fetchone()
+                exists = connection.execute("SELECT 1 FROM main.sqlite_master WHERE type='table' AND name=?", (table,)).fetchone()
+                if row is None:
+                    if exists:
+                        connection.execute('DELETE FROM main."%s"' % table)
+                    continue
+                if not exists:
+                    connection.execute(row[0])
+                mine = [c[1] for c in connection.execute('PRAGMA main.table_info("%s")' % table)]
+                theirs = [c[1] for c in connection.execute('PRAGMA cur.table_info("%s")' % table)]
+                if sorted(mine) != sorted(theirs):
+                    raise ValueError("Sign-in tables differ")
+                columns = ",".join('"%s"' % c.replace('"', '""') for c in mine)
+                connection.execute('DELETE FROM main."%s"' % table)
+                connection.execute('INSERT INTO main."%s" (%s) SELECT %s FROM cur."%s"' % (table, columns, columns, table))
+                if table == "cloud_codes":
+                    connection.execute("DELETE FROM main.cloud_codes WHERE json_extract(payload,'$.homeGeneration') IS NOT ?", (generation,))
+            connection.execute("COMMIT")
+        except Exception:
+            connection.execute("ROLLBACK")
+            raise
+    finally:
+        connection.close()
+    if created and os.geteuid() == 0:
+        os.chown(restored_db, owner.st_uid, owner.st_gid)
+    os.chmod(restored_db, 0o600)
+
+def swap_in(ctx, work, restored, reset_id, operation):
+    """Moves the current top level of /data aside and the restored one in. The swap record (names on both sides) is durable before
+    the first rename and marked committed after the last, so recover_swap undoes or finishes it exactly at any interruption."""
+    data = ctx["paths"]["data"]
+    previous = os.path.join(work, "previous")
+    os.makedirs(previous, mode=0o700, exist_ok=True)
+    record = {"phase": "swap", "aside": sorted(n for n in os.listdir(data) if n not in WORK_DIRS),
+              "incoming": sorted(n for n in os.listdir(restored) if n not in WORK_DIRS)}
+    write_private(swap_record(ctx, reset_id, operation), record)
+    for name in record["aside"]:
+        os.rename(os.path.join(data, name), os.path.join(previous, name))
+    for name in record["incoming"]:
+        os.rename(os.path.join(restored, name), os.path.join(data, name))
+    fsync_dir(data)
+    write_private(swap_record(ctx, reset_id, operation), dict(record, phase="committed"))
+    finish_swap(ctx, work, reset_id, operation, record)
+
+def finish_swap(ctx, work, reset_id, operation, record):
+    data = ctx["paths"]["data"]
+    if os.path.isdir(work):
+        previous = os.path.join(work, "previous")
+        # Every caller has the writers confirmed stopped (swap_in after stop_writers, recover_swap after its own), so no turn holds a
+        # mask on a placeholder. Which ones were frozen is durable before any flag is cleared: a recovery after a crash at any step
+        # here clears and freezes the same set again (each step is idempotent), never losing one that was already cleared or moved.
+        # The set lives in the staging folder (as long as it is needed, and of any size), never in the small swap record.
+        manifest = os.path.join(work, "frozen.json")
+        known = read_frozen(manifest)
+        frozen = sorted(set(known) | set(frozen_placeholders(previous)))
+        if frozen != known:
+            write_private(manifest, frozen)
+        for rel in frozen:
+            freeze_placeholder(os.path.join(previous, rel), False)
+        carry_credentials(previous, data, os.path.join(work, "displaced"), [r for r in frozen if os.path.basename(r) in CREDENTIAL_NAMES])
+        for rel in frozen:
+            freeze_placeholder(os.path.join(data, rel), True)
+        thaw_tree(previous)
+        write_private(swap_record(ctx, reset_id, operation), dict(record, phase="carried"))
+        shutil.rmtree(work)
+    else:
+        write_private(swap_record(ctx, reset_id, operation), dict(record, phase="carried"))
+
+def rollback_swap(ctx, work, record, reset_id, operation):
+    """Exactly the state before the swap: every installed restored name goes back into staging, every moved name comes back."""
+    data = ctx["paths"]["data"]
+    previous = os.path.join(work, "previous")
+    restored = os.path.join(work, "restore", data.lstrip("/"))
+    stray = os.path.join(work, "stray")
+    for name in record["incoming"]:
+        if not os.path.lexists(os.path.join(restored, name)) and os.path.lexists(os.path.join(data, name)):
+            os.makedirs(restored, mode=0o700, exist_ok=True)
+            os.rename(os.path.join(data, name), os.path.join(restored, name))
+    for name in record["aside"]:
+        if os.path.lexists(os.path.join(previous, name)):
+            if os.path.lexists(os.path.join(data, name)):  # never expected (the home is stopped): kept aside, not deleted
+                os.makedirs(stray, mode=0o700, exist_ok=True)
+                os.rename(os.path.join(data, name), os.path.join(stray, name))
+            os.rename(os.path.join(previous, name), os.path.join(data, name))
+    fsync_dir(data)
+    if os.path.isdir(stray):
+        raise ValueError("Unexpected data during the swap")  # recovery stays pending for a person; nothing is deleted
+    write_private(swap_record(ctx, reset_id, operation), dict(record, phase="rolled_back"))
+    shutil.rmtree(work, ignore_errors=True)
+
+RECOVERY_LOCK_SECONDS = 60
+
+def recover_swap(ctx, reset_id, operation, locked=False):
+    """From the swap record: none means no rename ever happened (staging is dropped, failed); "swap" is rolled back exactly (failed);
+    "committed"/"carried" is finished (done). Runs under the data-operation lock with every writer confirmed stopped before anything
+    is moved; the home is started again only once the swap is resolved (carried or rolled back). Any error leaves the writers stopped
+    and the recovery pending (raised)."""
+    work = work_dir(ctx, reset_id, operation)
+    lock = None if locked else ops_lock(ctx, RECOVERY_LOCK_SECONDS)
+    try:
+        if not stop_writers(ctx):
+            raise ValueError("Writers still running")
+        record = read_swap(ctx, reset_id, operation)
+        if record is None:
+            shutil.rmtree(work, ignore_errors=True)
+            outcome = "failed"
+        elif record["phase"] == "swap":
+            rollback_swap(ctx, work, record, reset_id, operation)
+            outcome = "failed"
+        elif record["phase"] == "rolled_back":
+            shutil.rmtree(work, ignore_errors=True)
+            outcome = "failed"
+        else:
+            finish_swap(ctx, work, reset_id, operation, record)
+            outcome = "done"
+    finally:
+        if lock is not None:
+            lock.close()
+    start_home(ctx)
+    return outcome
+
+def swap_unresolved(ctx, reset_id, operation):
+    """True while this reset's (or undo's) swap is neither carried nor rolled back: the home must stay stopped."""
+    try:
+        found = read_swap(ctx, reset_id, operation)
+    except ValueError:
+        return True
+    return found is not None and found["phase"] in ("swap", "committed")
+
+def restore_into_place(ctx, cfg, snapshot, reset_id, operation, check_deadline=lambda: None):
+    work = work_dir(ctx, reset_id, operation)
+    shutil.rmtree(work, ignore_errors=True)
+    os.makedirs(work, mode=0o700)
+    target = os.path.join(work, "restore")
+    code, _ = restic(ctx, cfg, ["restore", snapshot, "--target", target])
+    data = ctx["paths"]["data"]
+    restored = os.path.join(target, data.lstrip("/"))
+    try:
+        if code != 0 or not os.path.isdir(restored):
+            raise ValueError("Restore failed")
+        # The current sign-in state replaces the restored one in the staged copy, before anything is swapped.
+        carry_auth_state(os.path.join(data, AUTH_DB), os.path.join(restored, AUTH_DB), ctx["binding"].get("generation"))
+        carry_preflight(data, restored)
+        check_deadline()  # the swap is the irreversible step: never begun after the run deadline
+    except Exception:
+        shutil.rmtree(work, ignore_errors=True)
+        raise
+    try:
+        swap_in(ctx, work, restored, reset_id, operation)
+    except Exception:
+        if recover_swap(ctx, reset_id, operation, locked=True) != "done":
+            raise
+
+def keep_record(ctx, reset_id):
+    return path(ctx, "state", "resets", reset_id + ".json")
+
+DAY_MS = 86400000
+
+def keep_snapshot_from_now(ctx, reset_id):
+    """The pre-reset snapshot is kept keepDays from the reset's completion, so Undo has its full window."""
+    target = keep_record(ctx, reset_id)
+    with open(target) as handle:
+        record = json.load(handle)
+    record["keepUntil"] = ctx["now"]() + int(record.get("keepDays", 9)) * DAY_MS
+    write_private(target, record)
+
+def pre_reset_snapshot(ctx, cfg, payload):
+    """Keeps the current /data as a complete restic snapshot (exit 0 only: exit 3 means files were left out) and returns its exact id,
+    verified in the repository with the reset's tags. None: not kept, and nothing may be changed."""
+    data = ctx["paths"]["data"]
+    code, out = restic(ctx, cfg, ["backup", "--json", "--quiet", data, "--exclude-file", path(ctx, "config", "backup-excludes.txt")]
+                       + [arg for name in WORK_DIRS[:2] for arg in ("--exclude", os.path.join(data, name))]
+                       + ["--one-file-system", "--tag", PRE_RESET_TAG, "--tag", payload["snapshotTag"]])
+    if code != 0:
+        return None
+    reported = None
+    for line in out.decode(errors="replace").splitlines():
+        try:
+            message = json.loads(line)
+        except ValueError:
+            continue
+        if isinstance(message, dict) and message.get("message_type") == "summary" and isinstance(message.get("snapshot_id"), str):
+            reported = message["snapshot_id"]
+    if reported is None or not re.fullmatch(r"[0-9a-f]{8,64}", reported):
+        return None
+    matches = [s for s in list_snapshots(ctx, cfg, [PRE_RESET_TAG, payload["snapshotTag"]]) if s["id"].startswith(reported)]
+    if len(matches) != 1 or os.path.normpath(data) not in [os.path.normpath(p) for p in matches[0].get("paths") or [] if isinstance(p, str)]:
+        return None
+    return matches[0]["id"]
+
+def run_reset(ctx, command):
+    payload = command["payload"]
+    cfg = backup_config(ctx)
+    lock = ops_lock(ctx)
+    try:
+        last_good = last_good_snapshot(ctx, cfg)
+        if last_good is None:
+            return "failed"  # no confirmed complete backup to reset to; nothing was changed
+        try:
+            if not stop_writers(ctx):
+                return "failed"  # something still writes /data: nothing is kept or changed
+            kept = pre_reset_snapshot(ctx, cfg, payload)
+            if kept is None:
+                return "failed"  # the current state could not be kept completely: do not touch it
+            # Recorded before the swap (so an aborted reset's snapshot is still forgotten in time); restarted from completion below.
+            # Undo restores exactly this snapshot id.
+            write_private(keep_record(ctx, payload["resetId"]),
+                          {"snapshotTag": payload["snapshotTag"], "snapshotId": kept, "keepDays": payload["keepSnapshotDays"],
+                           "keepUntil": ctx["now"]() + payload["keepSnapshotDays"] * DAY_MS})
+            restore_into_place(ctx, cfg, last_good, payload["resetId"], "reset", lambda: before_deadline(ctx, command))
+            try:
+                keep_snapshot_from_now(ctx, payload["resetId"])
+            except Exception:
+                pass  # the record written before the swap still keeps the snapshot keepSnapshotDays from the request
+            return "done"
+        finally:
+            if not swap_unresolved(ctx, payload["resetId"], "reset"):
+                start_home(ctx)  # never while a swap or its sign-in carry is unfinished
+    finally:
+        lock.close()
+
+def run_undo(ctx, command):
+    payload = command["payload"]
+    try:
+        with open(keep_record(ctx, payload["resetId"])) as handle:
+            record = json.load(handle)
+    except FileNotFoundError:
+        return "failed"  # this home never ran that reset, or its window ended
+    if record.get("snapshotTag") != payload["snapshotTag"] or record.get("keepUntil", 0) <= ctx["now"]():
+        return "failed"
+    cfg = backup_config(ctx)
+    lock = ops_lock(ctx)
+    try:
+        kept = record.get("snapshotId")
+        if not isinstance(kept, str) or not HEX64.fullmatch(kept) or kept not in [s["id"] for s in list_snapshots(ctx, cfg, [payload["snapshotTag"]])]:
+            return "failed"  # exactly the snapshot that reset verified, or nothing
+        try:
+            if not stop_writers(ctx):
+                return "failed"
+            restore_into_place(ctx, cfg, kept, payload["resetId"], "undo", lambda: before_deadline(ctx, command))
+            return "done"
+        finally:
+            if not swap_unresolved(ctx, payload["resetId"], "undo"):
+                start_home(ctx)  # never while a swap or its sign-in carry is unfinished
+    finally:
+        lock.close()
+
+
+def prune_reset_snapshots(ctx):
+    """At keepSnapshotUntil the pre-reset snapshot is forgotten (the nightly prune then frees its data)."""
+    directory = path(ctx, "state", "resets")
+    if not os.path.isdir(directory):
+        return
+    now, cfg = ctx["now"](), None
+    for name in sorted(os.listdir(directory)):
+        if not name.endswith(".json"):
+            continue
+        with open(os.path.join(directory, name)) as handle:
+            record = json.load(handle)
+        if record.get("keepUntil", 0) > now or not re.fullmatch(PRE_RESET_TAG + "-" + UUID.pattern, str(record.get("snapshotTag"))):
+            continue
+        cfg = cfg or backup_config(ctx)
+        # restic forget needs snapshot ids (a bare --tag filter with no policy removes nothing).
+        code, out = restic(ctx, cfg, ["snapshots", "--json", "--tag", record["snapshotTag"]])
+        if code != 0:
+            continue
+        ids = [s["id"] for s in json.loads(out.decode()) if isinstance(s, dict) and re.fullmatch(r"[0-9a-f]{64}", str(s.get("id")))
+               and record["snapshotTag"] in (s.get("tags") or [])]
+        if not ids or restic(ctx, cfg, ["forget"] + ids)[0] == 0:
+            os.unlink(os.path.join(directory, name))
+
+
+# ---- redaction (logs and the export's secret scan) ---------------------------------------------------------------------
+# The same rules as the control plane's redact() (cloudflare/control-plane/src/self-service.ts), which applies them again.
+# Engine sign-in directories are never opened for this: secrets are found by pattern, by field name and by the few
+# literal values this runner already holds (its machine credential, the backup password, secret-named environment values).
+
+CREDENTIAL_PATH = re.compile(r"[^\s\"'=]*/(?:\.claude(?:\.json)?|\.codex|\.grok|\.kimi-code|\.gemini|\.qwen|\.cursor|\.factory|\.droid|"
+                             r"\.antigravity|\.config/opencode|\.local/share/opencode|auth\.json|\.credentials\.json|credentials(?:\.json)?)"
+                             r"(?:/[^\s\"']*)?")
+SECRET_NAME = r"[A-Za-z0-9_]*(?:TOKEN|SECRET|KEY|PASSWORD|PASSWD|CREDENTIAL|AUTH|COOKIE|SESSION)[A-Za-z0-9_]*"
+SECRET_FIELD = (r"[A-Za-z0-9_.-]*(?:password|passwd|passphrase|secret|token|api[_-]?key|apikey|auth|authorization|credential|cookie|session|"
+                r"private[_-]?key|client[_-]?secret|code[_-]?verifier|signature|bearer)[A-Za-z0-9_.-]*")
+TEXT_FIELD = r"(?:content|prompt|text|body|transcript|completion|reply|message_text|input|output)"
+VALUE = r"(?:\"(?:[^\"\\]|\\.)*\"?|'(?:[^'\\]|\\.)*'?|[^\s,;&}\]]+)"
+PATTERNS = [
+    (re.compile(r"[\u0000-\u001f\u007f]"), " "),
+    (re.compile(r"-----BEGIN [A-Z ]+-----[\s\S]*?(-----END [A-Z ]+-----|$)"), "[redacted-key]"),
+    # Whole header values: every cookie in a Cookie line, every scheme of an Authorization line.
+    (re.compile(r"\b((?:proxy-)?authorization|cookie|set-cookie)\b(\s*[\"']?\s*[:=]\s*).*$", re.I), r"\1\2[redacted]"),
+    (re.compile(r"\b(bearer|basic)\s+[^\s\"',;]+", re.I), r"\1 [redacted]"),
+    # name=value, name: value, "name": "value", JSON and query strings: the whole value, quoted values with spaces included.
+    (re.compile(r"([\"']?)\b(" + SECRET_FIELD + r")\b\1(\s*[:=]\s*)(?!\[redacted)" + VALUE, re.I), r"\1\2\1\3[redacted]"),
+    # Free text a person wrote (chat, prompts, files) under its usual field names.
+    (re.compile(r"([\"'])(" + TEXT_FIELD + r")\1(\s*:\s*)\"(?:[^\"\\]|\\.)*\"?", re.I), r'\1\2\1\3"[redacted-text]"'),
+    (re.compile(r"\beyJ[\w-]{4,}\.[\w-]{4,}\.[\w-]*"), "[redacted-token]"),
+    (re.compile(r"\b(sk-ant-|sk-proj-|sk-|xai-|AIza|AKIA|murage_install_|sk_live_|sk_test_|rk_live_|whsec_|ghp_|gho_|github_pat_|xox[abpr]-|"
+                r"sb_secret_|sb_publishable_)[\w.-]+", re.I), "[redacted-token]"),
+    (CREDENTIAL_PATH, "[redacted-path]"),
+    (re.compile(r"[\w.+-]+@[\w-]+(\.[\w-]+)+"), "[redacted-email]"),
+    (re.compile(r"\b(\d{1,3}\.){3}\d{1,3}\b"), "[redacted-ip]"),
+    (re.compile(r"\b[0-9a-f]{0,4}(:[0-9a-f]{0,4}){2,7}\b", re.I), lambda m: "[redacted-ip]" if m.group(0).count(":") > 2 else m.group(0)),
+    # Long quoted free text.
+    (re.compile(r"\"[^\"]{40,}\"|'[^']{40,}'"), '"[redacted-text]"'),
+    (re.compile(r"[A-Za-z0-9+/_=-]{24,}"), "[redacted]"),
+]
+
+def redact(message, known):
+    for value in known:
+        message = message.replace(value, "[redacted]")
+    for pattern, replacement in PATTERNS:
+        message = pattern.sub(replacement, message)
+    return message
+
+def process_environs(ctx):
+    """Environments that may hold secrets: this process and the Murage server's main process."""
+    environs = [dict(os.environ)]
+    code, out = ctx["run"](["/usr/bin/systemctl", "show", "-p", "MainPID", "--value", HOME_UNIT], timeout=30)
+    pid = out.decode(errors="replace").strip() if code == 0 else ""
+    if re.fullmatch(r"[1-9][0-9]{0,9}", pid):
+        try:
+            with open("/proc/%s/environ" % pid, "rb") as handle:
+                pairs = handle.read(1 << 20).split(b"\0")
+            environs.append(dict(p.decode(errors="replace").split("=", 1) for p in pairs if b"=" in p))
+        except OSError:
+            pass
+    return environs
+
+def known_secrets(ctx):
+    """Literal values that must never leave the home and that this runner already holds: the machine credential, the
+    backup password and secret-named environment values. Engine sign-in files are never opened (patterns cover them)."""
+    found = {ctx["binding"]["credential"]}
+    for environ in ctx["environs"](ctx):
+        for name, value in environ.items():
+            if re.fullmatch(SECRET_NAME, name, re.I) and len(value) >= 8:
+                found.add(value)
+    try:
+        cfg = backup_config(ctx)
+        with open(cfg["passwordFile"], "rb") as handle:
+            found.add(handle.read(4096).decode(errors="replace").strip())
+    except (OSError, ValueError):
+        pass
+    return sorted((v for v in found if v and len(v) >= 8), key=len, reverse=True)
+
+
+# ---- collect_logs ---------------------------------------------------------------------------------------------------------
+
+LEVELS = {0: "error", 1: "error", 2: "error", 3: "error", 4: "warn", 5: "info", 6: "info", 7: "debug"}
+# The only messages that leave the home: these diagnostic events (shared/self-service-contract.json logEvents, which both sides are
+# tested against). Each is fixed text with bounded numbers or fixed words; nothing a person typed can match one. Any other line, from
+# any unit, is replaced by a count before it is sent ("[3 lines omitted]"). Secret scrubbing still runs over what is kept.
+LOG_EVENTS = (
+    r"server started on port \d{1,5}",
+    r"started scheduler in \d{1,7} ms",
+    r"backup finished: \d{1,9} files, \d{1,9} MB",
+    r"backup refused: exclusion list incomplete",
+    r"Cloud control (?:clock authority unavailable|poll unavailable|readiness refused)",
+    r"Cloud enrollment refused",
+    r"Cloud home stopped: stale generation; operator recovery required",
+    r"Cloud home unwrap (?:failed|returned no valid envelope)",
+    r"Self-service command (?:restart_service|safe_mode|update_software|reset_from_backup|undo_reset|collect_logs|export_archive|unknown): "
+    r"(?:done|failed|unsupported|reported)",
+    r"Self-service (?:command poll|housekeeping|start-up recovery) unavailable",
+    r"Self-service (?:command runner refused|recovery pending|update rollback unhealthy)",
+    # The Cloud door (server/cloud-home/door-log.ts): one fixed line per outcome, no ticket, key, cookie, id or address.
+    r"Cloud door (?:state|enter): (?:source_locked|budget_closed|internal_error|origin_refused|query_token_refused|bearer_refused|body_too_large|body_malformed|state_answered|state_rate_limited|door_unconfigured|home_unbound|ticket_malformed|ticket_wrong_type|ticket_bad_signature|ticket_wrong_home|ticket_expired|ticket_bad_times|ticket_stale_step_up|ticket_reused|account_suspended|account_mismatch|device_key_invalid|device_bind_refused|device_proof_refused|device_limit|desktop_hold_required|pair_hold_refused|signed_in_first|signed_in_known|signed_in_added)",
+    r"Cloud door page: (?:no_ticket|device_load|device_save|device_forget|refresh|bounce|v1_record|unexpected|unknown) (?:none|NotAllowedError|AbortError|InvalidStateError|SecurityError|NotSupportedError|ConstraintError|UnknownError|DataError|QuotaExceededError|TimeoutError|TypeError|NetworkError|OperationError|VersionError|ReadOnlyError|SyntaxError|unknown)",
+    r"Cloud door page: device_open (?:timeout|blocked|error|unknown) (?:chrome|safari|firefox|edge|other|unknown)",
+    r"(?:Error|TypeError|RangeError|ReferenceError|SyntaxError|AbortError|TimeoutError)(?: \[ERR_[A-Z0-9_]{1,60}\])?",
+    r"at (?:(?:async )?[A-Za-z0-9_$.<>\[\] ]{1,100} )?\(?(?:/opt/murage/[A-Za-z0-9_./@-]{1,200}|node:[a-z_/]{1,80}):\d{1,7}:\d{1,7}\)?",
+    r"\[\d{1,4} lines? omitted\]",
+)
+LOG_EVENT_PATTERNS = tuple(re.compile(p) for p in LOG_EVENTS)
+
+def allowed_event(message):
+    """The message itself when it is an allowed diagnostic event, else None (it is never sent)."""
+    text = re.sub(r"[\u0000-\u001f\u007f]", " ", message).strip()
+    return text if any(p.fullmatch(text) for p in LOG_EVENT_PATTERNS) else None
+
+def run_logs(ctx, command):
+    limit = command["payload"]["maxLines"]
+    argv = ["journalctl", "--no-pager", "-o", "json", "-n", str(limit)]
+    for unit in LOG_UNITS:
+        argv += ["-u", unit]
+    code, out = ctx["run"](argv, limit=16 << 20, timeout=120)
+    if code != 0:
+        return "failed"
+    known = known_secrets(ctx)
+    lines = []
+    for raw in out.splitlines()[-limit:]:
+        try:
+            entry = json.loads(raw)
+            message = entry.get("MESSAGE")
+            if isinstance(message, list):
+                message = bytes(b for b in message if isinstance(b, int) and 0 <= b < 256).decode(errors="replace")
+            if not isinstance(message, str) or not message.strip():
+                continue
+            at = int(entry["__REALTIME_TIMESTAMP"]) // 1000  # microseconds -> epoch milliseconds
+            level = LEVELS.get(int(entry.get("PRIORITY", 6)), "info")
+        except (ValueError, KeyError, TypeError):
+            continue
+        source = LOG_UNITS.get(entry.get("_SYSTEMD_UNIT"))
+        if source is None:
+            continue  # not an allow-listed unit (journalctl -u also matches other fields): dropped, never relabelled
+        if not 0 <= at <= MAX_SAFE:
+            continue
+        event = allowed_event(message)
+        text = redact(event, known)[:LOG_MESSAGE].strip() if event is not None else ""
+        if text and text == event:
+            lines.append({"at": at, "level": level, "source": source, "message": text})
+            continue
+        # Not an allowed event (or scrubbing had to change it): only the fact that a line was there is sent, never its text.
+        last = lines[-1] if lines else None
+        omitted = re.fullmatch(r"\[(\d{1,4}) lines? omitted\]", last["message"]) if last else None
+        if omitted and last["source"] == source and last["level"] == level and int(omitted.group(1)) < 9999:
+            count = int(omitted.group(1)) + 1
+            last["message"] = "[%d lines omitted]" % count
+        else:
+            lines.append({"at": at, "level": level, "source": source, "message": "[1 line omitted]"})
+    chunks = [lines[i:i + LOG_CHUNK] for i in range(0, len(lines), LOG_CHUNK)][:LOG_CHUNKS] or [[]]
+    binding = ctx["binding"]
+    for index, chunk in enumerate(chunks):
+        answer = ctx["request"](binding, "logs", {"generation": binding["generation"], "commandId": command["id"], "chunk": index,
+                                                  "final": index == len(chunks) - 1, "lines": chunk})
+        if not isinstance(answer, dict) or answer.get("accepted") is not True:
+            return "failed"
+    return "reported"
+
+
+# ---- export_archive -------------------------------------------------------------------------------------------------------
+
+BECH32 = "qpzry9x8gf2tvdw0s3jn54khce6mua7l"
+
+def _polymod(values):
+    generator = [0x3b6a57b2, 0x26508e6d, 0x1ea119fa, 0x3d4233dd, 0x2a1462b3]
+    check = 1
+    for value in values:
+        top = check >> 25
+        check = (check & 0x1ffffff) << 5 ^ value
+        for i in range(5):
+            check ^= generator[i] if ((top >> i) & 1) else 0
+    return check
+
+def age_identity(key):
+    """The age X25519 identity for 32 secret bytes (AGE-SECRET-KEY-1..., bech32)."""
+    hrp, data, acc, bits = "age-secret-key-", [], 0, 0
+    for byte in key:
+        acc, bits = (acc << 8) | byte, bits + 8
+        while bits >= 5:
+            bits -= 5
+            data.append((acc >> bits) & 31)
+    if bits:
+        data.append((acc << (5 - bits)) & 31)
+    expanded = [ord(c) >> 5 for c in hrp] + [0] + [ord(c) & 31 for c in hrp]
+    polymod = _polymod(expanded + data + [0] * 6) ^ 1
+    checksum = [(polymod >> 5 * (5 - i)) & 31 for i in range(6)]
+    return (hrp + "1" + "".join(BECH32[d] for d in data + checksum)).upper()
+
+def export_rules(ctx):
+    """backup-excludes.txt (the same list the backup refuses to run without) plus the export-only skips."""
+    with open(path(ctx, "config", "backup-excludes.txt")) as handle:
+        patterns = [l.strip() for l in handle if l.strip() and not l.startswith("#")]
+    backup = ctx["backup"]
+    if any(r not in patterns for r in backup.REQUIRED_EXCLUDES):
+        raise ValueError("Exclusion list incomplete")
+    expressions = []
+    for pattern in patterns:
+        body = re.escape(pattern).replace(r"\*\*", "\0").replace(r"\*", "[^/]*").replace("\0", ".*")
+        if pattern.startswith("/"):  # anchored: matched against the /data path
+            expressions.append(re.compile("^" + body + "(/.*)?$"))
+        else:
+            expressions.append(re.compile("(^|/)" + body + "(/.*)?$"))
+    return expressions
+
+def excluded(rel, rules):
+    absolute = "/data/" + rel
+    if rel.split("/")[0] in WORK_DIRS or any(rel == s or rel.startswith(s + "/") for s in EXPORT_SKIP) or is_credential(rel):
+        return True
+    return any(r.search(absolute) if r.pattern.startswith("^") else r.search(rel) for r in rules)
+
+def contains_secret(full, known, scan_limit=16 << 20):
+    try:
+        if os.lstat(full).st_size > scan_limit:
+            return False
+        with open(full, "rb") as handle:
+            content = handle.read(scan_limit)
+    except OSError:
+        return True
+    return any(value.encode() in content for value in known)
+
+def write_tar(ctx, stream, known, rules, stopped=lambda: False):
+    data = ctx["paths"]["data"]
+    skipped = 0
+    with tarfile.open(fileobj=stream, mode="w|", format=tarfile.PAX_FORMAT) as tar:
+        for current, dirs, files in os.walk(data, followlinks=False):
+            if stopped():
+                raise ExportStopped()
+            rel_dir = os.path.relpath(current, data)
+            keep = []
+            for name in sorted(dirs):
+                rel = name if rel_dir == "." else rel_dir + "/" + name
+                full = os.path.join(current, name)
+                if excluded(rel, rules):
+                    continue
+                if os.path.islink(full):
+                    files.append(name)  # a link to a directory is stored as a link
+                    continue
+                keep.append(name)
+                tar.add(full, arcname="data/" + rel, recursive=False)
+            dirs[:] = keep
+            for name in sorted(files):
+                if stopped():
+                    raise ExportStopped()
+                rel = name if rel_dir == "." else rel_dir + "/" + name
+                full = os.path.join(current, name)
+                if excluded(rel, rules):
+                    continue
+                info = os.lstat(full)
+                if stat.S_ISLNK(info.st_mode):
+                    tar.add(full, arcname="data/" + rel, recursive=False)
+                elif stat.S_ISREG(info.st_mode):
+                    if contains_secret(full, known):
+                        skipped += 1  # a file holding a home secret is left out
+                        continue
+                    tar.add(full, arcname="data/" + rel, recursive=False)
+    return skipped
+
+class ExportStopped(Exception):
+    """The archive outgrew its limit, the disk's headroom or the run deadline while it was being produced."""
+
+def sftp_target(repository):
+    """(user, host, port) of the backup space from the restic repository the provisioner writes (sftp://user@host:23/restic), or the
+    older sftp:user@host:path form (port 22). Validated; the port is kept."""
+    if repository.startswith("sftp://"):
+        parts = urllib.parse.urlsplit(repository)
+        try:
+            port = parts.port or 22
+        except ValueError:
+            raise ValueError("No backup space") from None
+        user, host = parts.username, parts.hostname
+        if parts.password is not None or parts.query or parts.fragment:
+            raise ValueError("No backup space")
+    else:
+        match = re.fullmatch(r"sftp:([^@/:]+)@([^@/:]+):.*", repository)
+        if not match:
+            raise ValueError("No backup space")
+        user, host, port = match.group(1), match.group(2), 22
+    if (not isinstance(user, str) or not re.fullmatch(r"[A-Za-z0-9._-]{1,64}", user) or user.startswith("-")
+            or not isinstance(host, str) or not re.fullmatch(r"[A-Za-z0-9.-]{1,253}", host) or host.startswith(("-", "."))
+            or not 1 <= port <= 65535):
+        raise ValueError("No backup space")
+    return user, host, port
+
+def upload_export(ctx, local, remote):
+    """sftp batch to the backup space (the restic sub-account). Fixed commands; the paths are validated above."""
+    cfg = backup_config(ctx)
+    user, host, port = sftp_target(cfg["repository"])
+    directory = os.path.dirname(remote)
+    with tempfile.NamedTemporaryFile("w", prefix="murage-export-", suffix=".batch", delete=False) as batch:
+        batch.write("-mkdir exports\n-mkdir %s\nput %s %s.part\n-rm %s\nrename %s.part %s\n"
+                    % (directory, local, remote, remote, remote, remote))
+    try:
+        code, _ = ctx["run"](["sftp", "-b", batch.name, "-P", str(port), "-o", "BatchMode=yes", "-o", "StrictHostKeyChecking=yes",
+                              "-o", "UserKnownHostsFile=" + cfg["knownHosts"], "-i", cfg["sshKey"], user + "@" + host], timeout=6 * 3600)
+    finally:
+        os.unlink(batch.name)
+    if code != 0:
+        raise ValueError("Export upload failed")
+
+# The export never fills the data disk: production stops before less than this is left (or the archive passes maxBytes).
+EXPORT_HEADROOM_BYTES = 2 << 30
+
+def export_staging(ctx):
+    return path(ctx, "data", ".murage-export")
+
+def clean_export_staging(ctx):
+    """Export staging belongs to the one export that may run (ops lock): anything left there was abandoned by an interruption."""
+    shutil.rmtree(export_staging(ctx), ignore_errors=True)
+
+EXPORT_DEADLINE_POLL_SECONDS = 1
+EXPORT_STOP_SECONDS = 60
+
+def bounded_wait(child, halt):
+    """A child's exit code, waited for at most EXPORT_STOP_SECONDS (then killed and waited again, briefly). None: it did not exit."""
+    try:
+        return child.wait(timeout=EXPORT_STOP_SECONDS)
+    except subprocess.TimeoutExpired:
+        halt("stuck")
+        try:
+            return child.wait(timeout=10)
+        except subprocess.TimeoutExpired:
+            return None
+
+def produce_archive(ctx, command, archive, recipient, known, rules, limit):
+    """tar | zstd | age, written here by this process so the size is enforced while the archive is produced: past `limit`, below the
+    disk headroom or past the run deadline both children are stopped and ExportStopped is raised. Returns (bytes, sha256 hex)."""
+    env = {"PATH": "/usr/bin:/bin"}
+    spawn = ctx["spawn"]
+    zstd = spawn(["zstd", "-q", "-T0", "-c"], stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, env=env, close_fds=True)
+    age = spawn(["age", "-r", recipient], stdin=zstd.stdout, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, env=env, close_fds=True)
+    zstd.stdout.close()
+    state = {"size": 0, "digest": hashlib.sha256(), "stop": None}
+    data = ctx["paths"]["data"]
+
+    def halt(reason):
+        state["stop"] = reason
+        for child in (zstd, age):
+            try:
+                child.kill()
+            except OSError:
+                pass
+
+    def drain():
+        try:
+            fd = os.open(archive, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600)
+            with os.fdopen(fd, "wb") as out:
+                chunks = 0
+                while True:
+                    chunk = age.stdout.read(1 << 20)
+                    if not chunk:
+                        return
+                    if state["size"] + len(chunk) > limit:
+                        return halt("limit")
+                    chunks += 1
+                    if chunks % 16 == 0 and (ctx["disk_free"](data) < EXPORT_HEADROOM_BYTES or ctx["now"]() >= command["expiresAt"]):
+                        return halt("room")
+                    state["size"] += len(chunk)
+                    state["digest"].update(chunk)
+                    out.write(chunk)
+        except BaseException:
+            halt("error")
+
+    finished = threading.Event()
+
+    def deadline_watch():
+        # The run deadline holds whatever the output does (a highly compressible archive writes almost nothing).
+        while not finished.wait(EXPORT_DEADLINE_POLL_SECONDS):
+            if ctx["now"]() >= command["expiresAt"]:
+                return halt("deadline")
+
+    reader = threading.Thread(target=drain, daemon=True)
+    watch = threading.Thread(target=deadline_watch, daemon=True)
+    reader.start()
+    watch.start()
+
+    def stopped():
+        if state["stop"] is None and ctx["now"]() >= command["expiresAt"]:
+            halt("deadline")
+        return state["stop"] is not None
+
+    try:
+        write_tar(ctx, zstd.stdin, known, rules, stopped=stopped)
+    except (OSError, ValueError, ExportStopped, tarfile.TarError):
+        if state["stop"] is None:
+            halt("error")
+    finally:
+        try:
+            zstd.stdin.close()
+        except OSError:
+            pass
+        zstd_code, age_code = bounded_wait(zstd, halt), None
+        reader.join(EXPORT_STOP_SECONDS)
+        if reader.is_alive():
+            halt("stuck")
+            reader.join(EXPORT_STOP_SECONDS)
+        age_code = bounded_wait(age, halt)
+        finished.set()
+        watch.join(EXPORT_STOP_SECONDS)
+    if reader.is_alive() or zstd_code is None or age_code is None:
+        raise ValueError("Export children did not stop")
+    if state["stop"] is not None:
+        raise ExportStopped()
+    if zstd_code != 0 or age_code != 0:
+        raise ValueError("Export archive failed")
+    return state["size"], state["digest"].hexdigest()
+
+def run_export(ctx, command):
+    payload = command["payload"]
+    rid, remote = payload["requestId"], payload["path"]
+    rules = export_rules(ctx)
+    known = known_secrets(ctx)
+    lock = ops_lock(ctx)
+    work = os.path.join(export_staging(ctx), rid)
+    key = bytearray(random_source.token_bytes(32))
+    try:
+        clean_export_staging(ctx)
+        os.makedirs(work, mode=0o700)
+        # The identity goes to age-keygen on stdin: it is never written to a file.
+        code, out = ctx["run"](["age-keygen", "-y"], stdin=(age_identity(bytes(key)) + "\n").encode(), timeout=60)
+        recipient = out.decode(errors="replace").strip()
+        if code != 0 or not re.fullmatch(r"age1[0-9a-z]{58}", recipient):
+            raise ValueError("Export key failed")
+        limit = min(payload["maxBytes"], ctx["disk_free"](ctx["paths"]["data"]) - EXPORT_HEADROOM_BYTES)
+        if limit <= 0:
+            return "failed"  # no room on the data disk: the operator sends it by hand
+        archive = os.path.join(work, "archive.tar.zst.age")
+        try:
+            size, digest = produce_archive(ctx, command, archive, recipient, known, rules, limit)
+        except ExportStopped:
+            return "failed"  # over the home's archive budget, the disk's headroom or the deadline: the operator sends it by hand
+        before_deadline(ctx, command)  # the upload is the step that uses storage: never begun after the run deadline
+        ctx["upload"](ctx, archive, remote)
+        binding = ctx["binding"]
+        body = {"generation": binding["generation"], "commandId": command["id"], "requestId": rid, "file": remote,
+                "format": "tar.zst.age", "bytes": size, "sha256": digest,
+                "key": base64.urlsafe_b64encode(bytes(key)).decode().rstrip("=")}
+        for attempt in range(3):
+            try:
+                answer = ctx["request"](binding, "export-ready", body)
+                if isinstance(answer, dict) and answer.get("accepted") is True:
+                    return "reported"
+                return "failed"
+            except urllib.error.HTTPError:
+                return "failed"
+            except Exception:
+                if attempt == 2:
+                    return "failed"
+                ctx["sleep"](10)
+        return "failed"
+    finally:
+        for i in range(len(key)):
+            key[i] = 0
+        clean_export_staging(ctx)
+        lock.close()
+
+
+def run(ctx, monotonic=time.monotonic):
+    # Before any command is accepted: an interrupted code swap is finished or rolled back, abandoned export staging removed, and
+    # interrupted resets and undos recovered.
+    for step in (recover_update, clean_export_staging, recover_interrupted, release_stale_inhibit):
+        try:
+            step(ctx)
+        except Exception:
+            print("Self-service start-up recovery unavailable", file=sys.stderr)
+    next_prune = monotonic()
+    while True:
+        try:
+            poll_once(ctx)
+        except Exception:
+            # Remote bytes and local errors stay private.
+            print("Self-service command poll unavailable", file=sys.stderr)
+        try:
+            recover_interrupted(ctx)  # unfinished recoveries (a sign-in carry that failed) are retried until they complete
+            release_stale_inhibit(ctx)
+            retry_unacknowledged(ctx)
+        except Exception:
+            print("Self-service command poll unavailable", file=sys.stderr)
+        if monotonic() >= next_prune:
+            try:
+                prune_reset_snapshots(ctx)
+                journal_prune(ctx)
+            except Exception:
+                print("Self-service housekeeping unavailable", file=sys.stderr)
+            next_prune = monotonic() + 3600
+        ctx["sleep"](POLL_SECONDS)
+
+
+RUNNERS = {"restart_service": run_restart, "safe_mode": run_safe_mode, "update_software": run_update, "reset_from_backup": run_reset,
+           "undo_reset": run_undo, "collect_logs": run_logs, "export_archive": run_export}
+
+
+# ---- main -----------------------------------------------------------------------------------------------------------------
+
+def main():
+    control = load_module("murage_control", CONTROL)
+    backup = load_module("murage_backup", BACKUP)
+    deadline = time.monotonic() + 300
+    while True:
+        try:
+            binding = control.load_private_binding()
+            break
+        except FileNotFoundError:
+            if time.monotonic() >= deadline:
+                raise ValueError("Command binding readiness expired") from None
+            time.sleep(5)
+    ctx = default_context(binding, backup, control)
+    os.makedirs(path(ctx, "state", "commands"), mode=0o700, exist_ok=True)
+    run(ctx)
+
+if __name__ == "__main__":
+    try:
+        if os.geteuid() != 0 or sys.argv[1:]:
+            raise ValueError("Root runner required")
+        os.umask(0o077)
+        main()
+    except Exception:
+        print("Self-service command runner refused", file=sys.stderr)
+        sys.exit(78)

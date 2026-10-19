@@ -11,7 +11,7 @@
 // phone gets a full-bleed sheet with a grouped strip and nothing clipped
 // sideways, and Settings search still finds pages across the groups.
 // Screenshots land in NAV_SHOTS_DIR when set, else the test's output dir.
-import { test, expect, type Page } from "@playwright/test";
+import { test, expect, type Page } from "./page-error-guard";
 import { createServer, type ViteDevServer } from "vite";
 import react from "@vitejs/plugin-react";
 import tailwindcss from "@tailwindcss/vite";

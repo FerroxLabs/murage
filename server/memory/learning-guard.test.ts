@@ -3,7 +3,7 @@
 import { afterEach,beforeEach,expect,it,vi } from "vitest";
 import { database,closeDatabase,transaction } from "../database.ts";
 import { DATA_DIR } from "../config.ts";
-import { mkdirSync,rmSync } from "node:fs";
+import { mkdirSync } from "node:fs";
 import { captureSource } from "./capture.ts";
 import { learningWriteDecision } from "./learning-guard.ts";
 import { installLearningDestination,learningDestination,LEARNING_WRITERS } from "./learning-destination.ts";
@@ -13,8 +13,9 @@ import { claimMemoryJob,publishMemoryWork } from "./jobs.ts";
 import { captureWork } from "./chunks.ts";
 import { consolidateMemorySource } from "./consolidate.ts";
 import { pendingProcedureReviews,processProcedureReview,procedureCandidateHash,procedureSnapshotDigest,procedureTargetDigest,type ProcedureReviewHost,type ProcedureReviewSnapshot,type ProcedureEvaluationReceipt } from "./procedure-review.ts";
+import { removeTempDirSync } from "../testing/cleanup.ts";
 const uninstall:Array<()=>void>=[];
-beforeEach(()=>{closeDatabase();rmSync(DATA_DIR,{recursive:true,force:true});mkdirSync(DATA_DIR,{recursive:true});setMemoryCaptureRoster(()=>({bots:[{id:"bot",threadId:"t"}],groups:[]}));});
+beforeEach(()=>{closeDatabase();removeTempDirSync(DATA_DIR);mkdirSync(DATA_DIR,{recursive:true});setMemoryCaptureRoster(()=>({bots:[{id:"bot",threadId:"t"}],groups:[]}));});
 afterEach(()=>{while(uninstall.length)uninstall.pop()!();setMemoryCaptureRoster(null);});
 function candidate(kind="conversation",owner="t",thread="t"){
  const db=database();db.exec("UPDATE memory_meta SET mode='active'");

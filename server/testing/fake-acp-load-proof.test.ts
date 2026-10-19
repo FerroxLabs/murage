@@ -1,10 +1,11 @@
 import { spawn } from "node:child_process";
 import { once } from "node:events";
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { expect, it } from "vitest";
+import { removeTempDirSync } from "./cleanup.ts";
 
 it.each(["release", "timeout"])("runs the real ACP load-proof stdio fixture with bounded %s", async scenario => {
   const root = mkdtempSync(join(tmpdir(), "murage-load-proof-fixture-"));
@@ -50,6 +51,6 @@ it.each(["release", "timeout"])("runs the real ACP load-proof stdio fixture with
     expect(stderr).toBe("");
   } finally {
     const exited = once(child, "exit"); child.kill(); await exited;
-    rmSync(root, { recursive: true, force: true });
+    removeTempDirSync(root);
   }
 }, 10000);

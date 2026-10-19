@@ -6,7 +6,7 @@
 // the design's read predicate (section 1) over the tables S3 writes: S4's deny-read.ts is the production reader of the same rows.
 // The revbound r3 cases closed in the write-time slices (REPORT.md A1-A6, FABLE-REPORT.md P1-1/P1-2 as F1/F2) have their commit side
 // here; S4 owns their reader side (lessons.ts, readable.ts, deny-read.ts) and references these tests. Every test runs on the build host.
-import { mkdirSync, mkdtempSync, rmSync } from "node:fs";
+import { mkdirSync, mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
@@ -18,6 +18,8 @@ import { captureThreadDeletion } from "./capture.ts";
 import { forgetMemory } from "./forget.ts";
 import * as revocation from "./memory-revocation.ts";
 import { INLINE_REVOCATION, runRevocationJobsNow, stopMemoryRevocation } from "./memory-revocation.ts";
+import { removeTempDirSync } from "../testing/cleanup.ts";
+import { stopWalMaintenance } from "../wal-maintenance.ts";
 /** (read through the namespace so the failing-first run on the base, which has no such export, fails on its assertion, not its import) */
 const SOURCE_WORK_ROWS = (revocation as { SOURCE_WORK_ROWS?: number }).SOURCE_WORK_ROWS ?? 256;
 import { ensureScope, reconcileMemoryRoster } from "./policy.ts";
@@ -28,17 +30,18 @@ import { FIRST_LSN, lineChildRef } from "./lineage-types.ts";
 import { testThreadNo } from "./testing/writetime-fixture.ts";
 import { noteReceiptOutput } from "./receipt-outputs.ts";
 import { migrateMemorySchema } from "./schema.ts";
+import { sessionLookup } from "./deny-read.ts";
 
 const inline = { ...INLINE_REVOCATION };
 const dirs: string[] = [], dbs: DatabaseSync[] = [];
 beforeEach(() => {
   vi.spyOn(console, "warn").mockImplementation(() => {}); vi.spyOn(console, "log").mockImplementation(() => {});
-  closeDatabase(); rmSync(DATA_DIR, { recursive: true, force: true }); mkdirSync(DATA_DIR, { recursive: true });
+  closeDatabase(); removeTempDirSync(DATA_DIR); mkdirSync(DATA_DIR, { recursive: true });
 });
 afterEach(() => {
   stopMemoryRevocation(); Object.assign(INLINE_REVOCATION, inline); vi.restoreAllMocks();
   for (const db of dbs.splice(0)) { try { db.close(); } catch { /* closed */ } }
-  for (const dir of dirs.splice(0)) rmSync(dir, { recursive: true, force: true });
+  for (const dir of dirs.splice(0)) removeTempDirSync(dir);
 });
 /** No bookkeeping step inside the commit, no runner: the window stays open until a test drains it. */
 const stopJobs = () => { INLINE_REVOCATION.rows = 1; INLINE_REVOCATION.ms = 0; stopMemoryRevocation(); };
@@ -148,7 +151,7 @@ const count = (db: DatabaseSync, sql: string, ...args: unknown[]) => Number(db.p
 
 // ---- the commit and the window
 
-it("forgetting an early line in a 200k-line thread: the commit is flat, every descendant is withheld from it, copies read checking until marked, and every slice stays inside its budget", () => {
+it("forgetting an early line in a 200k-line thread: the commit is flat, every descendant is withheld from it, copies read checking until marked, and every slice stays inside its budget", { tags: ["nightly"], timeout: 240_000 }, () => {
   const db = fresh();
   const ids = thread(db, "T", 200_000);
   // 60 replies elsewhere carried a late line of T (copies, quotes, hand-off results)
@@ -189,7 +192,7 @@ it("forgetting an early line in a 200k-line thread: the commit is flat, every de
   expect(count(db, "SELECT count(*) AS n FROM memory_revoke_reached")).toBe(0);
   expect(count(db, "SELECT count(*) AS n FROM memory_deny_range WHERE thread_id='T'")).toBe(1);
   expect(Number(db.prepare("SELECT from_lsn FROM memory_deny_range WHERE thread_id='T'").get()!.from_lsn)).toBe(a);
-}, 240_000);
+});
 
 /** Counts the statements a call runs and the rows they return, on a wrapper of the connection. */
 function instrumented(db: DatabaseSync) {
@@ -380,7 +383,7 @@ it("A3/A4: a copy of a reply that repeated a forgotten line is withheld (checkin
   expect(verdict(db, "U", "mirror")).toBe("withheld"); // A3
 });
 
-it("A5: one much-revised source never ends all of its history in one statement: the commit cancels a page, the job the rest", () => {
+it("A5: one much-revised source never ends all of its history in one statement: the commit cancels a page, the job the rest", { tags: ["nightly"] }, () => {
   const scope = live();
   const db = database();
   addLine(db, "T", "m", true);
@@ -441,4 +444,34 @@ it("F1: a reply made under a receipt citing only a promoted copy (no evidence) o
   expect(verdict(db, "proj", "pr")).toBe("withheld");
   expect(memVerdict(db, "record", "C", 1, "proj-scope")).toBe("withheld");
   expect(db.prepare("SELECT 1 FROM memory_deny_session WHERE thread_id='proj' AND native_session='n'").get()).toBeTruthy();
+});
+
+// the session readers of memory/dispatch.ts (an owner room or direct chat reads by content, every other room for its audience)
+const CONTENT_SESSION_READER = { audience: null }, AUDIENCE_SESSION_READER = { audience: { owner: false, scopeIds: [] as string[] } };
+// 1.0.3 keep-all refused (Fable High): a room member's engine keeps its session across turns with memory off. A line its first prompt carried
+// is then forgotten or edited: the walker marks that session (deny_session), so the room path's session check resets it, owner room included.
+it("a room member's retained session that held a forgotten or edited room line reads deny-session, for the content reader too", async () => {
+  for (const cause of ["forget", "edit"] as const) {
+    // the WAL checkpointer thread must have exited before its folder is removed (park-audit: ENOTEMPTY and database is locked otherwise)
+    closeDatabase(); await stopWalMaintenance(); removeTempDirSync(DATA_DIR); mkdirSync(DATA_DIR, { recursive: true });
+    const scope = live();
+    setMemoryMode("off");
+    const db = database();
+    const room = `room-${cause}`;
+    const q = addLine(db, room, "q", false);
+    addLine(db, room, "a", true, q);
+    const q2 = addLine(db, room, "q2", false);
+    addLine(db, room, "a2", true, q2);
+    if (cause === "forget") source(`message:${room}:q`, scope, room, "q");
+    // the member's engine session: begun on q (its first prompt's head) and resumed through the second turn
+    db.prepare("INSERT INTO memory_session_lineage(thread_id,driver_instance,native_session,first_lsn,last_lsn) VALUES(?,?,?,?,?)").run(room, "keep", "s1", q, q2 + 1);
+    const key = { threadId: room, driverInstance: "keep", nativeSession: "s1" };
+    expect(sessionLookup(db, key, CONTENT_SESSION_READER)).toEqual({ state: "shown" });
+    if (cause === "forget") forgetMemory(ownerMemoryTicket(), { kind: "source", id: `message:${room}:q` });
+    else transaction(tx => commitRevoke(tx, { kind: "line", threadId: room, messageIds: ["q"], cause: "edit" }));
+    drainAll();
+    expect(db.prepare("SELECT 1 FROM memory_deny_session WHERE thread_id=? AND driver_instance='keep' AND native_session='s1'").get(room)).toBeTruthy();
+    expect(sessionLookup(db, key, CONTENT_SESSION_READER)).toEqual({ state: "withheld", reason: "deny-session" });
+    expect(sessionLookup(db, key, AUDIENCE_SESSION_READER)).toEqual({ state: "withheld", reason: "deny-session" });
+  }
 });

@@ -6,10 +6,27 @@ export function updateVerificationError(cause) {
 }
 export const isUpdateVerificationError = (error) => error?.code === "ERR_MURAGE_UPDATE_VERIFICATION";
 
+export const WINDOWS_SIGNATURE_TIMEOUT_MESSAGE = "Signature check timed out: Windows took too long to check this update's signature, so Murage did not install it. Try the update again in a few minutes.";
+export const WINDOWS_SIGNATURE_UNAVAILABLE_MESSAGE = "Signature check unavailable: Windows could not check this update's signature, so Murage did not install it. Try the update again, or install from the official Murage release page.";
+export const WINDOWS_SIGNATURE_MISMATCH_MESSAGE = "Signature mismatch: this update is not signed by Ferrox Labs, so Murage did not install it. Download a fresh installer from the official Murage release page.";
+
 export function updateErrorMessage(error) {
   if (isUpdateVerificationError(error)) return UPDATE_VERIFICATION_MESSAGE;
   const message = String(error?.message ?? error);
   const detail = `${error?.code ?? ""} ${message}`;
+
+  // Windows signature checks say which check failed (murage-releases #2): a
+  // check that ran out of time or could not run is not a bad download, so it
+  // never sends the user off to download again. The update is still refused.
+  if (error?.signatureCheck === "timeout" || /Windows signature check timed out/i.test(message)) {
+    return WINDOWS_SIGNATURE_TIMEOUT_MESSAGE;
+  }
+  if (error?.signatureCheck === "unavailable" || /Windows signature verification unavailable/i.test(message)) {
+    return WINDOWS_SIGNATURE_UNAVAILABLE_MESSAGE;
+  }
+  if (/is not signed by the application owner/i.test(message)) {
+    return WINDOWS_SIGNATURE_MISMATCH_MESSAGE;
+  }
 
   // Explicit updater integrity codes take precedence over every incidental
   // certificate, network, or filesystem detail in the diagnostic.

@@ -6,7 +6,7 @@
 // replaced or cut; a current ownership conflict wins over saved names; discovery inputs are compared by what they name and a
 // folder is removed entry by entry from its re-listing; a hold is atomic with the running count and needs a confirmed teardown;
 // a thrown retry arms the next one.
-import { appendFileSync, closeSync, existsSync, lstatSync, mkdirSync, mkdtempSync, openSync, readFileSync, readdirSync, realpathSync, rmSync, writeFileSync, writeSync } from "node:fs";
+import { appendFileSync, closeSync, existsSync, lstatSync, mkdirSync, mkdtempSync, openSync, readFileSync, readdirSync, realpathSync, writeFileSync, writeSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
@@ -24,10 +24,11 @@ import type { ProviderInstance, RuntimeEvent } from "./contracts.ts";
 import type { EngineHistoryJob } from "./engine-history-offthread.ts";
 import { EventEmitter } from "node:events";
 import type { Worker } from "node:worker_threads";
+import { removeTempDirSync } from "./testing/cleanup.ts";
 
 const scratch = realpathSync.native(mkdtempSync(join(tmpdir(), "murage-r16-")));
 const openDatabases: DatabaseSync[] = [];
-afterAll(() => { for (const db of openDatabases) db.close(); rmSync(scratch, { recursive: true, force: true }); });
+afterAll(() => { for (const db of openDatabases) db.close(); removeTempDirSync(scratch); });
 afterEach(() => { for (const name of Object.keys(engineHistoryTestHooks)) delete (engineHistoryTestHooks as Record<string, unknown>)[name]; });
 
 const dump = (value: unknown) => `${JSON.stringify(value)}\n`;

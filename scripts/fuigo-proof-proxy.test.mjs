@@ -1,10 +1,10 @@
 import { spawn } from "node:child_process";
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createInterface } from "node:readline";
 import { afterEach, expect, it } from "vitest";
-import { waitForExit } from "../server/testing/cleanup.ts";
+import { removeTempDirSync, waitForExit } from "../server/testing/cleanup.ts";
 import { isProofPermissionCard, permittedProofPermission } from "./fuigo-proof-proxy.mjs";
 
 let child;
@@ -36,7 +36,7 @@ afterEach(async () => {
     await waitForExit(child, 2_000);
     child = undefined;
   }
-  if (directory) rmSync(directory, { recursive: true, force: true });
+  if (directory) removeTempDirSync(directory);
 });
 
 function start() {

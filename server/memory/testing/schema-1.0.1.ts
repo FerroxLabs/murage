@@ -11,7 +11,8 @@ import { dirname } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { LEARNING_EVENT_KINDS_V4, LEARNING_EVENT_KINDS_V5 } from "../learning-kinds.ts";
 import { startupMark } from "../../startup-trace.ts";
-import { DEFAULT_MEMORY_LEARNING, memoryLearningSchema, memoryLearningV1Schema, upgradeMemoryLearning, downgradeMemoryLearning } from "../learning-policy.ts";
+// 1.0.3: learning-policy.ts moved its current names to v3; 1.0.1 stored v2, so the frozen v2 names stand in for them here.
+import { DEFAULT_MEMORY_LEARNING_V2 as DEFAULT_MEMORY_LEARNING, memoryLearningV2Schema as memoryLearningSchema, memoryLearningV1Schema, upgradeMemoryLearning, downgradeMemoryLearning } from "../learning-policy.ts";
 
 /** Ordinary authoritative tables only. Search indexes are rebuilt separately. */
 export const MEMORY_SCHEMA_V1 = `

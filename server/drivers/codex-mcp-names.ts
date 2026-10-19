@@ -28,8 +28,11 @@
 // `murage-memory`, `murage_phone`) are NOT handled here: a bot's custom server
 // can never take one of those names, because mcp-registry.ts rejects them at
 // the config boundary (RESERVED_MCP_NAMES).
+import { createHash } from "node:crypto";
 import { memoDeps, readText } from "./isolation-cache.ts";
 import { join } from "node:path";
+
+import type { McpMountRecord } from "../../shared/mount-identity.ts";
 
 import { codexHome } from "./codex-catalog.ts";
 
@@ -78,7 +81,29 @@ const BARE = /[A-Za-z0-9_-]/;
  * server aside needlessly; under-collecting lets the merge happen, so where
  * this is inexact it is inexact towards collecting. */
 export function mcpServerNamesInToml(toml: string): Set<string> {
+  return scanMcpServers(toml).names;
+}
+
+/** One assignment inside an `mcp_servers.<name>` table: its key path below the
+ * table and the value's text exactly as the file spells it (trimmed). */
+export interface TomlAssignment {
+  readonly key: readonly string[];
+  readonly raw: string;
+}
+
+/** Every `mcp_servers.<name>` table of a Codex config.toml with ALL of its
+ * assignments, however the file spells them (headers, dotted keys, inline
+ * tables). Inline tables are walked into, so `env = { A = "1" }` and
+ * `[mcp_servers.x.env]` / `A = "1"` give the same assignment. Nothing is
+ * left out: the identity of an external server (Rule 54) covers every key.
+ * Throws {@link TomlScanError} for a file this cannot parse. */
+export function mcpServerTablesInToml(toml: string): Map<string, TomlAssignment[]> {
+  return scanMcpServers(toml).tables;
+}
+
+function scanMcpServers(toml: string): { names: Set<string>; tables: Map<string, TomlAssignment[]> } {
   const names = new Set<string>();
+  const tables = new Map<string, TomlAssignment[]>();
   const src = toml.charCodeAt(0) === 0xfeff ? toml.slice(1) : toml;
   const n = src.length;
   let i = 0;
@@ -90,7 +115,26 @@ export function mcpServerNamesInToml(toml: string): Set<string> {
 
   // `mcp_servers.<name>` and anything below it names <name>.
   const record = (path: readonly string[]): void => {
-    if (path.length >= 2 && path[0] === "mcp_servers" && path[1]) names.add(path[1]);
+    if (path.length >= 2 && path[0] === "mcp_servers" && path[1]) {
+      names.add(path[1]);
+      if (!tables.has(path[1])) tables.set(path[1], []);
+    }
+  };
+  // A scalar or array value assigned under `mcp_servers.<name>`.
+  const leaf = (path: readonly string[], raw: string): void => {
+    if (path.length >= 2 && path[0] === "mcp_servers" && path[1]) tables.get(path[1])?.push({ key: path.slice(2), raw });
+  };
+  /** The value after `=`: an inline table is walked into (its own assignments
+   * are the leaves), anything else is captured as written. */
+  const assigned = (path: readonly string[]): void => {
+    spaces();
+    if (src[i] === "{") {
+      value(path);
+      return;
+    }
+    const start = i;
+    value(path);
+    leaf(path, src.slice(start, i).trim());
   };
 
   const spaces = (): void => {
@@ -268,7 +312,7 @@ export function mcpServerNamesInToml(toml: string): Set<string> {
       spaces();
       if (src[i] !== "=") fail("expected = in inline table");
       i++;
-      value(full);
+      assigned(full);
       gap();
       if (src[i] === ",") {
         i++;
@@ -301,13 +345,13 @@ export function mcpServerNamesInToml(toml: string): Set<string> {
       spaces();
       if (src[i] !== "=") fail("expected = after a key");
       i++;
-      value(full);
+      assigned(full);
     }
     spaces();
     comment();
     if (i < n && src[i] !== "\n" && src[i] !== "\r") fail("trailing text after a statement");
   }
-  return names;
+  return { names, tables };
 }
 
 /** What the config.toml of the Codex home THIS child will use declares. The
@@ -392,4 +436,61 @@ export function mountedMcpServerNames(
     mounts.set(name, candidate);
   }
   return mounts;
+}
+
+/** The `external` F4 records (Rule 54) of the config.toml this spawn reads.
+ *
+ * `records` is an answer: these are the `mcp_servers.<name>` tables in the
+ * file under the Codex home in effect that Murage did not write, and no
+ * others. An absent file declares nothing. `unreadable` is the absence of an
+ * answer: the turn then states no mount list at all, so every MCP ask on it
+ * resolves unproven. */
+export type ExternalMcpRecords =
+  | { readonly kind: "records"; readonly records: McpMountRecord[] }
+  | { readonly kind: "unreadable"; readonly why: string };
+
+/** One record per `mcp_servers.<name>` table of `<CODEX_HOME in effect>/config.toml`
+ * whose name is not in `written` (the mounts Murage's own `-c` overrides
+ * name). The mountId digest is sha256 (first 16 hex) over the canonical
+ * serialization of the WHOLE table (every key and value, sorted, nothing left
+ * out), the file path and the Codex home, so a change to `env`,
+ * `bearer_token_env_var`, `http_headers`, `cwd` or any key added later is a
+ * new identity, and the same name under two homes is two identities.
+ * A name holding `__` gets no record: it cannot be told apart from its tools
+ * (Rule 11), and the owner's server is switched off for the bot anyway. */
+export function externalMcpRecords(
+  env: Record<string, string | undefined>,
+  written: ReadonlySet<string>,
+): ExternalMcpRecords {
+  const home = codexHome(env);
+  const path = join(home, "config.toml");
+  const scanned = memoDeps("codex-config-tables", path, (): { ok: true; tables: Map<string, TomlAssignment[]> } | { ok: false; why: string } => {
+    let text: string;
+    try {
+      text = readText(path);
+    } catch (err) {
+      const code = (err as NodeJS.ErrnoException)?.code;
+      if (code === "ENOENT" || code === "ENOTDIR") return { ok: true, tables: new Map() };
+      return { ok: false, why: code ?? "unreadable" };
+    }
+    try {
+      return { ok: true, tables: mcpServerTablesInToml(text) };
+    } catch {
+      return { ok: false, why: "unparsable" };
+    }
+  });
+  if (!scanned.ok) return { kind: "unreadable", why: scanned.why };
+  const records: McpMountRecord[] = [];
+  for (const [name, assignments] of scanned.tables) {
+    if (written.has(name) || name.includes("__")) continue;
+    const table = assignments
+      .map((a) => JSON.stringify([a.key, a.raw]))
+      .sort();
+    const digest = createHash("sha256")
+      .update(JSON.stringify({ table, file: path, home }))
+      .digest("hex")
+      .slice(0, 16);
+    records.push({ engineName: name, mountId: `external:codex:${digest}:${name}`, provenance: "external" });
+  }
+  return { kind: "records", records };
 }

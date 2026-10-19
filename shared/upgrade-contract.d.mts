@@ -5,12 +5,12 @@ export type Tri = true | false | "unknown";
 export type OnOff = "on" | "off" | "unknown";
 export type UpgradeSource = "note" | "responder" | "health";
 export type UpgradeStage = "starting" | "background" | "blocked" | "idle" | "unknown";
-export type UpgradePhaseId = "checking" | "copying" | "migrating" | "search-index" | "output-index" | "references" | "shapes" | "learning" | "lineage" | "storage" | "message-index";
-export type CountedUnit = "messages" | "conversations" | "bytes" | "sets";
+export type UpgradePhaseId = "checking" | "copying" | "migrating" | "search-index" | "output-index" | "references" | "shapes" | "learning" | "lineage" | "writetime" | "marker" | "storage" | "message-index";
+export type CountedUnit = "messages" | "conversations" | "bytes" | "sets" | "open";
 export type StoredMode = "off" | "capture" | "active" | "paused" | "unknown";
 export type StorageState = "converting" | "reclaim-available" | "waiting-for-disk" | "idle" | "unknown";
 export type UpgradeCounts = { exact: true; messages: number; conversations: number; memoryRecords: number; firstMessageAt: number | null } | { exact: false };
-export type UpgradeStep = { awakeElapsedMs: number; unit: "none" } | { awakeElapsedMs: number; unit: CountedUnit; done: number; total: number };
+export type UpgradeStep = { awakeElapsedMs: number; unit: "none" } | { awakeElapsedMs: number; unit: "open"; done: number } | { awakeElapsedMs: number; unit: Exclude<CountedUnit, "open">; done: number; total: number };
 export interface UpgradeState {
   v: 2;
   /** SHA-256 of the server launch's boot nonce, or "unknown". */

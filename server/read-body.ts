@@ -3,7 +3,15 @@
 // Decode fix adapted from OpenMausBot #2387 (Apache-2.0).
 import type { IncomingMessage } from "node:http";
 
+/** A body a front gate already read and verified (the Cloud home's request auth, cloud-request-auth.ts `cloudBodies`):
+ *  the route reads it from here, under the same size bound, since the stream is spent. */
+export const preReadBodies = new WeakMap<IncomingMessage, { body: unknown; bytes: number }>();
+
 export function readBody(req: IncomingMessage, maxBytes = 1_000_000): Promise<any> {
+  const cached = preReadBodies.get(req);
+  if (cached) return cached.bytes > maxBytes
+    ? Promise.reject(Object.assign(new Error("body too large"), { status: 413 }))
+    : Promise.resolve(cached.body);
   return new Promise((resolve, reject) => {
     // Collect bytes and decode once: decoding per chunk turns a multi-byte
     // character split across two chunks into U+FFFD.

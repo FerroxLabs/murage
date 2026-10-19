@@ -13,7 +13,8 @@
 //                                 (plain HTTP on the local network, so never
 //                                 a default). `loopback`, `tailnet` and `off`
 //                                 narrow it further. See the block below.
-//   :8811  127.0.0.1  you         pairing and revocation — never off-machine
+//   :8811  127.0.0.1  you         pairing and revocation — never off-machine,
+//                                 and only with this launch's control token
 //   :8813  tailnet    browsers    cookie required, its OWN allowlist, its own
 //                                 origin policy. Binds the Tailscale address
 //                                 when there is one and loopback when there
@@ -57,7 +58,7 @@ import {
   type BoundIdentity,
   type BrowserBindMode,
 } from "./browser.ts";
-import { createControlServer, hostCandidates } from "./control.ts";
+import { createControlServer, hostCandidates, resolveControlToken } from "./control.ts";
 import { createConnectedDeviceTracker } from "./connected-devices.ts";
 import { DeviceRegistry } from "./devices.ts";
 import { companionEndpointCandidates, hostedCompanionUrl } from "./endpoints.ts";
@@ -88,12 +89,26 @@ import { createPushRevocations, revokeDeviceSender, watchDeviceRemovals } from "
 import { DATA_DIR } from "./state.ts";
 import { takeLaunchSecret } from "./launch-secret.ts";
 
-const companionToken = await takeLaunchSecret("MURAGE_COMPANION_TOKEN");
+// Both secrets are asked for before either is awaited: each one's listener has
+// to be on the parent port before the app sends it, and the app sends them
+// back to back.
+const [companionToken, providedControlToken, providedRecoveryToken] = await Promise.all([
+  takeLaunchSecret("MURAGE_COMPANION_TOKEN"),
+  takeLaunchSecret("MURAGE_COMPANION_CONTROL_TOKEN"),
+  takeLaunchSecret("MURAGE_COMPANION_RECOVERY_TOKEN"),
+]);
 // Node has already read the compile cache setting; children (tools, pushes) must not inherit it.
 delete process.env.NODE_COMPILE_CACHE;
 /** The headless installer's door nonce, taken out of the environment for the
  * same reason as the token: no child of this process may inherit it. */
 const doorIdentity = takeDoorIdentity(process.env);
+/** This launch's control-port token (see control.ts `resolveControlToken`).
+ * Never in a log line except the one link printed for a person who started
+ * this by hand, which is the only way they could otherwise reach the page. */
+const controlAccess = resolveControlToken(providedControlToken, doorIdentity?.nonce);
+/** The desktop's recovery secret: enough to ask "is this you?" and "stop",
+ * nothing else (control.ts `RECOVERY_TOKEN_HEADER`). Absent outside the app. */
+const recoveryToken = providedRecoveryToken && /^[A-Za-z0-9_-]{32,128}$/.test(providedRecoveryToken) ? providedRecoveryToken : null;
 
 /** A port from the environment, or the default. Anything that is not a whole
  * number in range is the default — a typo'd port must not become port 0. */
@@ -497,6 +512,11 @@ if (managedOrigin && managedOrigin.listeners("request")[0] === browser.listeners
 }
 
 const control = createControlServer({
+  controlToken: () => controlAccess.token,
+  recoveryToken: () => recoveryToken,
+  // A later launch of the desktop asking this one, left behind by a crash, to
+  // stop. The same path as a signal, so stopping means stopped.
+  selfStop: () => { setImmediate(() => void shutdown("recovery stop")); },
   devices,
   companionPort: COMPANION_PORT,
   hostedUrl: () => hostedUrl,
@@ -716,7 +736,18 @@ async function main(): Promise<void> {
       ? `companion  not listening  (MURAGE_COMPANION_BIND=off)`
       : `companion  http://${deviceHost}:${COMPANION_PORT}  →  harness 127.0.0.1:${HARNESS_PORT}`,
   );
-  console.log(`pair here  http://127.0.0.1:${CONTROL_PORT}`);
+  // The token rides after the #, which the browser keeps to itself. Printed
+  // only when this sidecar made the token up and a person is at the
+  // terminal to read it: the app and `murage pair` already hold theirs, and
+  // a log file or a service manager's output is no place for it, so off a
+  // TTY the link shows a masked token and says how to get the real one.
+  console.log(
+    controlAccess.source === "printed"
+      ? process.stdout.isTTY
+        ? `pair here  http://127.0.0.1:${CONTROL_PORT}/#token=${controlAccess.token}`
+        : `pair here  http://127.0.0.1:${CONTROL_PORT}/#token=${controlAccess.token.slice(0, 4)}…  (full link only on a terminal: start it there, or pair from the Murage app)`
+      : "pair here  from the Murage app, or `murage pair` on a headless box",
+  );
   // Where it is bound, not where it was asked to bind. Under `auto` those
   // differ on exactly the machines where the difference matters.
   const door = browserDoor();

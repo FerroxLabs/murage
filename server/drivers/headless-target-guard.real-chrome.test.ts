@@ -3,7 +3,7 @@
 // creation. Runs only where CHROME_BIN names a Chrome (build host container); writes a CDP trace to
 // CHROME_TRACE when set.
 import { spawn, type ChildProcess } from "node:child_process";
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdtempSync, writeFileSync } from "node:fs";
 import { createServer } from "node:http";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -11,6 +11,7 @@ import WebSocket from "ws";
 import { afterAll, describe, expect, it } from "vitest";
 import { BEFOREUNLOAD_GUARD_SCRIPT } from "../browser-beforeunload-guard.ts";
 import { startTargetGuard } from "./headless-target-guard.ts";
+import { removeTempDirSync } from "../testing/cleanup.ts";
 
 const chrome = process.env.CHROME_BIN;
 const trace: string[] = [];
@@ -100,6 +101,6 @@ describe.skipIf(!chrome)("beforeunload guard on a real Chrome", () => {
       note(`tab creation: baseline ${plain.ms.toFixed(1)} ms, guarded mean ${mean.toFixed(1)} ms`);
       expect(mean - plain.ms).toBeLessThan(100);
       guard.close(); baseline.close();
-    } finally { child.kill("SIGKILL"); rmSync(dir, { recursive: true, force: true }); }
+    } finally { child.kill("SIGKILL"); removeTempDirSync(dir); }
   }, 60_000);
 });

@@ -1,0 +1,69 @@
+#!/bin/sh
+# SPDX-License-Identifier: AGPL-3.0-or-later
+# After enrollment has consumed it, destroy every on-disk copy of the cloud-init user-data. That data carried the
+# one-time enrollment token, the Storage Box sub-account password, the backup private key and the restic password;
+# cloud-init keeps copies under /var/lib/cloud/instances/<id>/ (user-data.txt, its .i form, cloud-config.txt, scripts/
+# and the obj.pkl cache), in /run/cloud-init/instance-data*.json and, for a warm-pool claim, in
+# /etc/murage-home/claim-user-data. The files the home needs live in /etc/murage-home.
+# Runs only once /var/lib/murage-home/credential exists (enrollment is finished, so murage-enroll no longer reads
+# user-data). Then cloud-init is disabled so it cannot re-fetch user-data from the metadata service and re-create the
+# copies on a later boot; networking is already rendered into /etc/netplan. The optional $1 is a root prefix (tests only).
+set -u
+R="${1:-}"
+[ -e "$R/var/lib/murage-home/credential" ] || exit 0
+umask 077
+# wipe PATH [MODE]: destroy one file by descriptor, never by path. Opened with O_NOFOLLOW (a symlink is unlinked, never
+# followed); overwritten through that fd only if it is a regular file with exactly one link, owned by this (root) user and,
+# when MODE is given, of exactly that mode. A hardlink or any other mismatch is never written (that would destroy the
+# other name's data): its name alone is removed. The name is unlinked only while it still names the inode overwritten.
+wipe() { python3 -I -c "$WIPE_PY" "$@"; }
+WIPE_PY='
+import os, stat, sys
+path, mode = sys.argv[1], (int(sys.argv[2], 8) if len(sys.argv) > 2 else None)
+def unlink_name():
+    try:
+        if not stat.S_ISDIR(os.lstat(path).st_mode):
+            os.unlink(path)
+    except OSError:
+        pass
+try:
+    fd = os.open(path, os.O_RDWR | os.O_NOFOLLOW | os.O_NONBLOCK | os.O_NOCTTY)
+except FileNotFoundError:
+    sys.exit(0)
+except OSError:
+    unlink_name(); sys.exit(0)
+try:
+    info = os.fstat(fd)
+    if (stat.S_ISREG(info.st_mode) and info.st_nlink == 1 and info.st_uid == os.geteuid()
+            and (mode is None or stat.S_IMODE(info.st_mode) == mode)):
+        for fill in (None, b"\0"):
+            os.lseek(fd, 0, os.SEEK_SET); left = info.st_size
+            while left > 0:
+                n = min(left, 1 << 20)
+                os.write(fd, os.urandom(n) if fill is None else fill * n); left -= n
+            os.fsync(fd)
+        os.ftruncate(fd, 0); os.fsync(fd)
+    else:
+        print("murage-scrub-userdata: not overwritten (not a single-link file of this owner and mode), name removed: " + path, file=sys.stderr)
+    current = os.lstat(path)
+    if (current.st_dev, current.st_ino) == (info.st_dev, info.st_ino):
+        os.unlink(path)
+except FileNotFoundError:
+    pass
+finally:
+    os.close(fd)
+'
+for d in "$R"/var/lib/cloud/instances/*; do
+  [ -d "$d" ] || continue
+  for f in user-data.txt user-data.txt.i cloud-config.txt vendor-data.txt vendor-data.txt.i vendor-cloud-config.txt obj.pkl; do wipe "$d/$f"; done
+  for sub in scripts boothooks handlers; do
+    [ -d "$d/$sub" ] && find "$d/$sub" -type f | while IFS= read -r f; do wipe "$f"; done
+  done
+done
+for f in "$R"/run/cloud-init/instance-data.json "$R"/run/cloud-init/instance-data-sensitive.json; do wipe "$f"; done
+# Warm-pool claim identity (murage-enroll reads it when user-data.txt holds only the #include line). The served
+# cloud-config writes it with write_files, permissions '0600', owner root:root; see read_claim in murage-enroll.
+wipe "$R/etc/murage-home/claim-user-data" 600
+[ -d "$R/var/lib/cloud/seed" ] && find "$R/var/lib/cloud/seed" -type f | while IFS= read -r f; do wipe "$f"; done
+mkdir -p "$R/etc/cloud" && : > "$R/etc/cloud/cloud-init.disabled"
+exit 0

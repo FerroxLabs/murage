@@ -2,16 +2,17 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import { beforeEach,expect,it } from "vitest";
 import { z } from "zod";
-import { mkdirSync,rmSync } from "node:fs";
+import { mkdirSync } from "node:fs";
 import { DATA_DIR } from "../config.ts";
 import { database,closeDatabase } from "../database.ts";
 import { ownerMemoryTicket } from "./authority.ts";
 import { memoryOwnerRoute,memoryOwnerStatus } from "./settings.ts";
+import { removeTempDirSync } from "../testing/cleanup.ts";
 const roster={bots:[{id:"bot",threadId:"thread"}],groups:[]};
-beforeEach(()=>{closeDatabase();rmSync(DATA_DIR,{recursive:true,force:true});mkdirSync(DATA_DIR,{recursive:true});});
-it("serves v2 status without a monetary field and revision checks bot switches",async()=>{
+beforeEach(()=>{closeDatabase();removeTempDirSync(DATA_DIR);mkdirSync(DATA_DIR,{recursive:true});});
+it("serves v3 status (one monthly ceiling) without a monetary field and revision checks bot switches",async()=>{
  const ticket=ownerMemoryTicket(),status=memoryOwnerStatus(ticket,roster);
- expect(status.learning.settings.version).toBe(2);expect(status).not.toHaveProperty("cost");
+ expect(status.learning.settings.version).toBe(3);expect(status.learning.ceiling).toMatchObject({inputUsed:0,outputUsed:0,paused:false});expect(status).not.toHaveProperty("cost");
  await memoryOwnerRoute("/api/memory/action",{action:"learning-bot",botId:"bot",enabled:false,learningRevision:0},ticket,roster);
  expect(memoryOwnerStatus(ticket,roster).learning.settings.botsPaused).toEqual(["bot"]);
  await expect(memoryOwnerRoute("/api/memory/action",{action:"configure",learning:{dailyCostUsd:5},learningRevision:1},ticket,roster)).rejects.toMatchObject({status:400});

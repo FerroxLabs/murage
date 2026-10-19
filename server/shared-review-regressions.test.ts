@@ -1,6 +1,6 @@
 // Copyright 2026 Ferrox Labs
 // SPDX-License-Identifier: AGPL-3.0-or-later
-import { mkdirSync, rmSync } from "node:fs";
+import { mkdirSync } from "node:fs";
 import { beforeEach, expect, it, vi } from "vitest";
 import { DATA_DIR } from "./config.ts";
 import { closeDatabase, database } from "./database.ts";
@@ -11,7 +11,8 @@ import { OWNER, humanTask, observeVerifiedHuman, linkHumanBinding, resolveHumanB
 import { ownerMemoryTicket } from "./memory/authority.ts";
 import { ensureScope } from "./memory/policy.ts";
 import { insertRoomRequest } from "./room-requests.ts";
-beforeEach(() => { closeDatabase(); rmSync(DATA_DIR, { recursive: true, force: true }); mkdirSync(DATA_DIR, { recursive: true }); });
+import { removeTempDirSync } from "./testing/cleanup.ts";
+beforeEach(() => { closeDatabase(); removeTempDirSync(DATA_DIR); mkdirSync(DATA_DIR, { recursive: true }); });
 function fixture() {
   const store = new Store(() => ({ instanceId: "fixture", model: "fixture" }));
   const make = (name: string, section: string) => { const b = store.createBot(); store.patchBot(b.id, { name, section }); return b; };

@@ -4,7 +4,7 @@
 // Lane M, plan 3.10: roster lines with capabilities and "now", connected app
 // names only on an owner-audience turn, the Chief's "now", and an assignment
 // refused when the bot lacks what the card needs (F9).
-import { mkdirSync, rmSync } from "node:fs";
+import { mkdirSync } from "node:fs";
 import { afterEach, beforeEach, expect, it } from "vitest";
 import { chiefOfStaffSystemPrompt } from "./chief-of-staff.ts";
 import { DATA_DIR } from "./config.ts";
@@ -12,10 +12,11 @@ import { closeDatabase, database } from "./database.ts";
 import { createProjectCard, reassignProjectCard } from "./project-cards.ts";
 import { botCapabilityTags, capabilityRefusal, missingCapabilities, projectBotNowAnywhere, projectMemberNow, projectRosterBlock, setProjectBotFacts, withProjectNow, type ProjectBotFacts } from "./project-roster.ts";
 import { channelToProjectRows } from "./project-settings.ts";
+import { removeTempDirSync } from "./testing/cleanup.ts";
 
 const NOW = 1_790_000_000_000;
 const env = { worksInWorkspace: true, builtInBrowser: true, imageGeneration: false, webSearch: true, connectedApps: ["gmail", "slack"] };
-beforeEach(() => { closeDatabase(); rmSync(DATA_DIR, { recursive: true, force: true }); mkdirSync(DATA_DIR, { recursive: true }); });
+beforeEach(() => { closeDatabase(); removeTempDirSync(DATA_DIR); mkdirSync(DATA_DIR, { recursive: true }); });
 afterEach(() => setProjectBotFacts(null));
 
 it("derives tags from the bot's settings and the workspace", () => {

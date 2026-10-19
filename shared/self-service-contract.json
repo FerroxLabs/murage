@@ -1,0 +1,68 @@
+{
+  "$comment": "The self-service wire between the control plane (cloudflare/control-plane/src/self-service.ts) and the home runner (deploy/cloud-home/murage-commands). Both test suites check their side against this file: the CP's real commands have exactly these payload fields and JSON types, the runner accepts exactly these payloads, and each side's bodies have exactly these fields. redactionVectors are fake secrets both redactors must remove.",
+  "commandsResponse": ["homeId", "generation", "pollEveryMs", "commands"],
+  "commandEnvelope": ["id", "kind", "payload", "issuedAt", "expiresAt"],
+  "commands": {
+    "restart_service": { "reason": "customer" },
+    "safe_mode": { "reason": "customer" },
+    "update_software": { "keep": ["files", "settings", "logins"], "reason": "customer" },
+    "reset_from_backup": { "resetId": "0b1c2d3e-aaaa-4bbb-8ccc-123456789abc", "from": "last_good_backup", "snapshotFirst": true,
+      "snapshotTag": "murage-pre-reset-0b1c2d3e-aaaa-4bbb-8ccc-123456789abc", "keepSnapshotDays": 9 },
+    "undo_reset": { "resetId": "0b1c2d3e-aaaa-4bbb-8ccc-123456789abc", "snapshotTag": "murage-pre-reset-0b1c2d3e-aaaa-4bbb-8ccc-123456789abc" },
+    "collect_logs": { "maxLines": 480, "redact": true, "chatContent": false },
+    "export_archive": { "requestId": "export-0b1c2d3e-aaaa-4bbb-8ccc-123456789abc", "deliverBy": 1800000000000, "format": "tar.zst.age",
+      "path": "exports/export-0b1c2d3e-aaaa-4bbb-8ccc-123456789abc/archive.tar.zst.age", "maxBytes": 107374182400 }
+  },
+  "homeBodies": {
+    "commands/ack": ["generation", "commandId", "outcome"],
+    "ackOutcomes": ["done", "failed", "unsupported"],
+    "logs": ["generation", "commandId", "chunk", "final", "lines"],
+    "logLine": ["at", "level", "source", "message"],
+    "logSources": ["murage", "backup", "update", "tunnel", "system"],
+    "export-ready": ["generation", "commandId", "requestId", "file", "format", "bytes", "sha256", "key"]
+  },
+  "ageIdentityVector": {
+    "$comment": "32 key bytes 0x00..0x1f, base64url as sent on export-ready, and the AGE-SECRET-KEY-1 identity the member is shown.",
+    "keyB64url": "AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8",
+    "identity": "AGE-SECRET-KEY-1QQQSYQCYQ5RQWZQFPG9SCRGWPUGPZYSNZS23V9CCRYDPK8QARC0SWRYDWG"
+  },
+  "redactionVectors": [
+    { "input": "login password=\"two word secret\" for pat", "leaks": ["two word secret", "word secret"] },
+    { "input": "Cookie: sid=short; csrf=second-secret", "leaks": ["short", "second-secret"] },
+    { "input": "Set-Cookie: session=abc123; Path=/; HttpOnly", "leaks": ["abc123"] },
+    { "input": "{\"access_token\": \"ab.cd\", \"refresh_token\": \"r1.s2\", \"id_token\": \"i.j\"}", "leaks": ["ab.cd", "r1.s2", "i.j"] },
+    { "input": "oauth refresh access_token=q.w&client_secret=zz9", "leaks": ["q.w", "zz9"] },
+    { "input": "Authorization: Basic dXNlcjpwYXNz extra", "leaks": ["dXNlcjpwYXNz"] },
+    { "input": "engine said {\"content\": \"my private chat about the merger\"}", "leaks": ["private chat", "merger"] },
+    { "input": "turn prompt=\"please summarise my diary entry for today\" done", "leaks": ["diary entry"] },
+    { "input": "claude refreshed sk-ant-oat01-FAKEclaudeToken0123456789abcdefXYZ", "leaks": ["FAKEclaudeToken"], "note": "secret-scan: fixture" },
+    { "input": "codex {\"tokens\": {\"refresh_token\": \"codexRefresh7f3k2m9p1q8r4t6v0w5x\"}}", "leaks": ["codexRefresh7f3k2m9p1q8r4t6v0w5x"] },
+    { "input": "auth failed for pat@example.test from 198.51.100.7 with Bearer abc.def", "leaks": ["pat@example.test", "198.51.100.7", "abc.def"] },
+    { "input": "key eyJhbGciOiJFUzI1NiJ9.eyJzdWIiOiJ4In0.sig and sk_live_1234567890", "leaks": ["eyJhbGciOiJFUzI1NiJ9", "sk_live_1234567890"] },
+    { "input": "read /data/home/engines/codex/.codex/auth.json done", "leaks": [".codex/auth.json"] }
+  ],
+  "redactionKeeps": ["started scheduler in 120 ms", "backup finished: 42 files, 3 MB", "Cloud door enter: ticket_expired", "Cloud door enter: ticket_bad_signature", "Cloud door enter: signed_in_first", "Cloud door state: state_answered", "Cloud door enter: device_limit", "Cloud door page: bounce NotAllowedError", "Cloud door page: unknown unknown", "Cloud door page: device_open blocked safari"],
+  "logEventsComment": "The only log messages that leave a home (the runner) or are stored (the control plane): each must fullmatch one of these. Anything else becomes \"[N lines omitted]\".",
+  "logEvents": [
+    "server started on port \\d{1,5}",
+    "started scheduler in \\d{1,7} ms",
+    "backup finished: \\d{1,9} files, \\d{1,9} MB",
+    "backup refused: exclusion list incomplete",
+    "Cloud control (?:clock authority unavailable|poll unavailable|readiness refused)",
+    "Cloud enrollment refused",
+    "Cloud home stopped: stale generation; operator recovery required",
+    "Cloud home unwrap (?:failed|returned no valid envelope)",
+    "Self-service command (?:restart_service|safe_mode|update_software|reset_from_backup|undo_reset|collect_logs|export_archive|unknown): (?:done|failed|unsupported|reported)",
+    "Self-service (?:command poll|housekeeping|start-up recovery) unavailable",
+    "Self-service (?:command runner refused|recovery pending|update rollback unhealthy)",
+    "Cloud door (?:state|enter): (?:source_locked|budget_closed|internal_error|origin_refused|query_token_refused|bearer_refused|body_too_large|body_malformed|state_answered|state_rate_limited|door_unconfigured|home_unbound|ticket_malformed|ticket_wrong_type|ticket_bad_signature|ticket_wrong_home|ticket_expired|ticket_bad_times|ticket_stale_step_up|ticket_reused|account_suspended|account_mismatch|device_key_invalid|device_bind_refused|device_proof_refused|device_limit|desktop_hold_required|pair_hold_refused|signed_in_first|signed_in_known|signed_in_added)",
+    "Cloud door page: (?:no_ticket|device_load|device_save|device_forget|refresh|bounce|v1_record|unexpected|unknown) (?:none|NotAllowedError|AbortError|InvalidStateError|SecurityError|NotSupportedError|ConstraintError|UnknownError|DataError|QuotaExceededError|TimeoutError|TypeError|NetworkError|OperationError|VersionError|ReadOnlyError|SyntaxError|unknown)",
+    "Cloud door page: device_open (?:timeout|blocked|error|unknown) (?:chrome|safari|firefox|edge|other|unknown)",
+    "(?:Error|TypeError|RangeError|ReferenceError|SyntaxError|AbortError|TimeoutError)(?: \\[ERR_[A-Z0-9_]{1,60}\\])?",
+    "at (?:(?:async )?[A-Za-z0-9_$.<>\\[\\] ]{1,100} )?\\(?(?:/opt/murage/[A-Za-z0-9_./@-]{1,200}|node:[a-z_/]{1,80}):\\d{1,7}:\\d{1,7}\\)?",
+    "\\[\\d{1,4} lines? omitted\\]"
+  ],
+  "logEventsKept": ["server started on port 8799", "Cloud door enter: ticket_expired", "Cloud door enter: ticket_bad_signature", "Cloud door enter: signed_in_first", "Cloud door state: state_answered", "Cloud door enter: device_limit", "Cloud door page: bounce NotAllowedError", "Cloud door page: unknown unknown", "Cloud door page: device_open timeout chrome", "started scheduler in 120 ms", "backup finished: 42 files, 3 MB", "Self-service command reset_from_backup: done", "    at Server.listen (/opt/murage/dist-server/index.js:12:5)", "TypeError [ERR_INVALID_ARG_TYPE]"],
+  "logEventsPrivate": ["Cloud door enter: ticket_expired account=owner-1", "Cloud door page: bounce my bank pin is 4321", "Cloud door page: device_open blocked Mozilla/5.0", "Cloud door enter: eyJhbGciOiJFUzI1NiJ9", "Cloud door enter: signed_in_first 0f9b1c2d", "prompt=\"diary pin 4321\"", "turn prompt=\"please summarise my diary entry for today\" done", "user said: my bank pin is 4321", "server started on port 8799 prompt=diary"],
+  "pairDeviceDigestVector": {"$comment": "SHA-256 hex of \"murage-pair-device-v1\\n<scope>\\n<publicKey>\\n<assertionKey>\": the device a pair hold is spent on (pairing.ts, cloud-request-auth.ts).", "device": {"scope": "owner-desktop", "publicKey": "-----BEGIN PUBLIC KEY-----\nMCowBQYDK2VwAyEAfixturepublickeyfixturepublickeyfixtur=\n-----END PUBLIC KEY-----\n", "assertionKey": "-----BEGIN PUBLIC KEY-----\nMCowBQYDK2VwAyEAfixtureassertionkeyfixtureassertionke=\n-----END PUBLIC KEY-----\n"}, "digest": "8f63b23dc25ba6b066f8c272ae0fd0c1581a02c5040f11f2872b5eaa0df238e7"}
+}
