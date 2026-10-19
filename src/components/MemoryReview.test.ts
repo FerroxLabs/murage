@@ -89,3 +89,9 @@ it("offers reversible archival only for unpinned active records",()=>{
 it("shows a candidate's plain review reason",()=>{
  expect(render({...inspection,record:{...inspection.record,reviewReason:"Learning from this bot is paused."}})).toContain("Learning from this bot is paused.");
 });
+it("folds each source with a button, not a details element", () => {
+  const html = render();
+  expect(html).not.toContain("<details");
+  expect(html).toContain('aria-expanded="false"');
+  expect(html).toContain("A conversation");
+});

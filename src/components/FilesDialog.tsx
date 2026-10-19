@@ -22,7 +22,7 @@ export function FilesDialog({ onClose, ...initial }: FilesOpenDetail & { onClose
       if (group) {
         const result = await api(`/api/groups/${group.id}/tasks/${artifact.threadId}?messages=${MESSAGE_PAGE_SIZE}`, { method: "POST" });
         if (!result.group || result.group.threadId !== artifact.threadId) throw new Error(t("source.openError"));
-        dispatch({ type: "groupPatched", group: result.group }); dispatch({ type: "select", id: group.id });
+        dispatch({ type: "groupPatched", origin: fromAnswer(result.group), group: result.group }); dispatch({ type: "select", id: group.id });
       } else {
         const intent = requestPage(dispatch, state, bot.id);
         const result = await api(`/api/bots/${bot.id}/tasks/${artifact.threadId}?messages=${MESSAGE_PAGE_SIZE}`, { method: "POST" });

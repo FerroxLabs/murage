@@ -149,7 +149,7 @@ describe("a frame that changes the window", () => {
     expect(findTask(group, "t4")).toBeDefined();
     expect(dispatch({ ...start, groups: [group] }, { type: "renameGroupTask", groupId: "g", threadId: "t4", title: "Room" }).groups[0]!.extraTasks?.[0]?.title).toBe("Room");
     // a group frame that holds the whole list drops the extras
-    expect(dispatch({ ...start, groups: [group] }, { type: "groupPatched", group: { id: "g", tasks: [task(4)], tasksTotal: 1 } as never }).groups[0]!.extraTasks).toBeUndefined();
+    expect(dispatch({ ...start, groups: [group] }, { type: "groupPatched", origin: { source: "stream" }, group: { id: "g", tasks: [task(4)], tasksTotal: 1 } as never }).groups[0]!.extraTasks).toBeUndefined();
   });
 
   it("opens a notification for an old task of a known bot, and a conversation from the cache", () => {

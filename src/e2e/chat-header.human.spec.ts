@@ -18,7 +18,7 @@
 // Nothing here touches a real app, data directory, engine or network: a Vite
 // fixture mounts the component against a fake store, and every /api call is
 // intercepted.
-import { test, expect, type Page } from "@playwright/test";
+import { test, expect, type Page } from "./page-error-guard";
 import { createServer, type ViteDevServer } from "vite";
 import react from "@vitejs/plugin-react";
 import tailwindcss from "@tailwindcss/vite";
@@ -63,7 +63,7 @@ test.beforeAll(async () => {
           if (id === "\0header-store")
             return `export * from '/src/state/store.tsx?original';
 import {useSyncExternalStore} from 'react';
-export function useStore(){return useSyncExternalStore(window.subscribeFixture,()=>window.fixtureStore);}`;
+export function useStoreIfAny(){return useStore();} export function useStore(){return useSyncExternalStore(window.subscribeFixture,()=>window.fixtureStore);}`;
           if (id === "\0header-memory")
             return `import React from 'react';
 export function MemorySettings(){return React.createElement('textarea',{'aria-label':'Memory draft',rows:3});}`;

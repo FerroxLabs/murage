@@ -336,6 +336,33 @@ export function createMcpServers(deps) {
     }
   }
 
+  /** `murage:mcp-secrets-renamed {from, to}` from the harness: a pure rename (r3 "Rename"). The encrypted doc moves
+   *  from `from` to `to` in one write, a sign-in in flight for `from` is cancelled, and the refresher follows the new
+   *  name. A move that fails is logged with the names and nothing else. */
+  async function handleSecretsRenamed(message) {
+    const from = message?.from, to = message?.to;
+    if (typeof from !== "string" || typeof to !== "string" || from === to || !SERVER_NAME.test(from) || !SERVER_NAME.test(to)) return false;
+    cancelSignIn(from);
+    await refresher.settle(from);
+    // a refreshed doc the writer has not saved yet is the newest copy
+    const held = refresher.heldDoc(from);
+    refresher.forget(from);
+    let moved = false;
+    try {
+      await deps.updateDocument((credentials) => {
+        const doc = held ?? readServerDoc(credentials, from);
+        if (!doc) return credentials;
+        moved = true;
+        return withServerDoc(withServerDoc(credentials, from, null), to, { ...doc, savedAt: now() });
+      });
+    } catch {
+      log(`mcp server ${from}: its saved secrets could not be moved to ${to}`);
+      return false;
+    }
+    if (moved) refresher.resume(to, now());
+    return true;
+  }
+
   return {
     saveSecrets,
     signIn,
@@ -346,6 +373,7 @@ export function createMcpServers(deps) {
     refresh: (name, options) => (typeof name === "string" && SERVER_NAME.test(name) ? refresher.refresh(name, options) : Promise.resolve(false)),
     handleTokenRejected: (name) => (typeof name === "string" && SERVER_NAME.test(name) ? refresher.refresh(name, { reactive: true }) : Promise.resolve(false)),
     handleSecretsStale: (message) => handleSecretsStale(message, { updateDocument: deps.updateDocument, log }),
+    handleSecretsRenamed,
     dispose() {
       for (const name of [...flows.keys()]) cancelSignIn(name);
       refresher.dispose();

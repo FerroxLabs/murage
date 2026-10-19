@@ -1,4 +1,4 @@
-import { mkdirSync,rmSync } from "node:fs";
+import { mkdirSync } from "node:fs";
 import { beforeEach,expect,it } from "vitest";
 import { DATA_DIR } from "../config.ts";
 import { closeDatabase,database } from "../database.ts";
@@ -11,8 +11,9 @@ import { catchUpRecentMemory, materializeRecentMemory } from "./recent.ts";
 import { claimMemoryJob,publishMemoryWork } from "./jobs.ts";
 import { captureWork } from "./chunks.ts";
 import { LineageAllowance } from "./lineage-allowance.ts";
+import { removeTempDirSync } from "../testing/cleanup.ts";
 
-beforeEach(()=>{closeDatabase();rmSync(DATA_DIR,{recursive:true,force:true});mkdirSync(DATA_DIR,{recursive:true});});
+beforeEach(()=>{closeDatabase();removeTempDirSync(DATA_DIR);mkdirSync(DATA_DIR,{recursive:true});});
 const roster=()=>({bots:[{id:"a",threadId:"new",tasks:[{threadId:"new"},{threadId:"old"}]},{id:"b",threadId:"other"}],groups:[{id:"room",threadId:"shared",memberIds:["a","b"]}]});
 function context(r=roster(),thread="new"){
   reconcileMemoryRoster(r);const registry=new InternalCapabilities();const generation=registry.begin("a",thread);

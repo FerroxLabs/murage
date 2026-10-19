@@ -1,8 +1,11 @@
+import { downgradeTranscriptSeqTo102 } from "./transcript-seq.ts";
 import { existsSync, lstatSync, readFileSync } from "node:fs";
+import { downgradePushRetentionIndexesTo102 } from "./mobile-push-store.ts";
 import { dirname, join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { acquireDataDirLeaseForProcess, dataDirLeasePaths } from "../electron/data-dir-lease.mjs";
-import { downgradeMemorySchema } from "./memory/schema.ts";
+import { downgradeMemorySchema, type MemoryDowngradeTarget } from "./memory/schema.ts";
+import { downgradeMemoryIndexFile } from "./memory/age-index.ts";
 import { downgradeApplicationSchemaTo101 } from "./installation-app-schema-downgrade.ts";
 import { writeFileAtomic } from "./atomic.ts";
 import { foldRoutineStateForDowngrade } from "./routine-runs-journal.ts";
@@ -49,12 +52,14 @@ export function resetRetainedSessionCursors(root: string): number {
  * later Murage already migrated to a newer memory schema. Takes the same
  * exclusive lease as the running app (so it refuses while Murage is open),
  * rewrites the memory objects to the frozen shape of `to` (1: 0.1.53 and
- * older; 2: 0.1.54 to 0.1.60; 3 and 4: development builds; 5: before the 1.0 lineage tables; 6: 1.0.0 and 1.0.1; 7: before the 1.0.2 revocation index; 8: before the 1.0.2 cold-lineage indexes) and folds the WAL so the file stands alone.
+ * older; 2: 0.1.54 to 0.1.60; 3 and 4: development builds; 5: before the 1.0 lineage tables; 6: 1.0.0 and 1.0.1; 7: before the 1.0.2 revocation index; 8: before the 1.0.2 cold-lineage indexes; 9: the 1.0.2 RC; 10: 1.0.2, which refuses the derived objects 1.0.3 adds) and folds the WAL so the file stands alone.
  * Chat history and memory rows are kept; only derived or learning-only
  * objects are dropped. The pre-upgrade copies are left untouched. Routine
  * state lines are folded into routines.json first (foldRoutineStateForDowngrade),
  * also when there is no memory database yet. */
-export function downgradeInstallationMemorySchema(dataDir: string, to: 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9 = 1) {
+/** The memory schema versions `memory-downgrade --to` accepts (10: 1.0.2). */
+export const MEMORY_DOWNGRADE_TARGETS = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10] as const satisfies readonly MemoryDowngradeTarget[];
+export function downgradeInstallationMemorySchema(dataDir: string, to: MemoryDowngradeTarget = 1) {
   const root = dataDirLeasePaths(dataDir).canonicalDataDir;
   const file = join(root, "messages.db");
   const stat = existsSync(file) ? lstatSync(file) : null;
@@ -72,11 +77,18 @@ export function downgradeInstallationMemorySchema(dataDir: string, to: 1 | 2 | 3
       db.exec("PRAGMA journal_mode=WAL; PRAGMA synchronous=FULL; PRAGMA foreign_keys=ON; PRAGMA busy_timeout=5000;");
       // Going back to a build before 1.0.2: its waiting handoffs return to delegations.json (the file it reads), the ones whose turn was taken are
       // receipted as interrupted, and every application object 1.0.1 does not know leaves (installation-app-schema-downgrade.ts), all before the memory step.
+      // every older build lacks messages.seq and its index (1.0.3): they leave first, whatever the target (transcript-seq.ts)
+      downgradeTranscriptSeqTo102(db);
+      // every older build lacks the push retention indexes (1.0.3): they leave first, whatever the target (mobile-push-store.ts)
+      downgradePushRetentionIndexesTo102(db);
       const app = to <= 6 ? downgradeApplicationSchemaTo101(db, dirname(file)) : { exported: 0, interrupted: 0, dropped: 0, rebuilt: 0 };
       // before the memory step, so a stopped run finds the marker again and does it again
       if (to < 10 && reclaimHasRun(db)) resetRetainedSessionCursors(dirname(file));
       const result = downgradeMemorySchema(db, to);
       db.exec("PRAGMA wal_checkpoint(TRUNCATE);");
+      // 1.0.3 lane 2: the search index file goes back to what 1.0.2 wrote (its second word table and the lane's markers leave; a renamed
+      // word table with age rowids stays, 1.0.2 reads it by rowid and by rank and is correct either way).
+      downgradeMemoryIndexFile(join(root, "memory-index.db"));
       return app.exported || app.interrupted ? { ...result, handoffs: app.exported, handoffsStarted: app.interrupted } : result;
     } finally { db.close(); }
   } finally { lease.release(); }

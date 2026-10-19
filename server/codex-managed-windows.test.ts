@@ -1,12 +1,13 @@
 import { afterEach, expect, it, vi } from "vitest";
-import { mkdtemp, mkdir, writeFile, rm } from "node:fs/promises";
+import { mkdtemp, mkdir, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { removeTempDir } from "./testing/cleanup.ts";
 const resolver=vi.hoisted(()=>vi.fn());
 vi.mock("./env-path.ts",()=>({resolveCliSpawn:resolver}));
 import { ManagedNpmUnavailable, verifiedWindowsCodexPath, windowsNpmCommand } from "./codex-managed-windows.ts";
 const roots:string[]=[];
-afterEach(async()=>{vi.clearAllMocks();await Promise.all(roots.splice(0).map(root=>rm(root,{recursive:true,force:true})));});
+afterEach(async()=>{vi.clearAllMocks();await Promise.all(roots.splice(0).map(root=>removeTempDir(root)));});
 async function fixture(){
  const root=await mkdtemp(join(tmpdir(),"murage-managed-windows-"));roots.push(root);
  const key="node_modules/@openai/codex-win32-x64",pkg=join(root,key),dir=join(pkg,"vendor/x86_64-pc-windows-msvc/bin");await mkdir(dir,{recursive:true});

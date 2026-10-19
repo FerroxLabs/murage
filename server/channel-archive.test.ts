@@ -3,10 +3,11 @@
 // clear a finished room out of the list destroyed its transcript with it.
 // These tests hold the new end state to the promise: everything is kept,
 // the channel simply leaves the main list.
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { removeTempDirSync } from "./testing/cleanup.ts";
 
 let home: string;
 
@@ -27,7 +28,7 @@ afterEach(async () => {
   // (EPERM) and macOS finds a file written back mid-removal (ENOTEMPTY)
   expect(await stopWalMaintenance()).toBe(true);
   vi.unstubAllEnvs();
-  rmSync(home, { recursive: true, force: true });
+  removeTempDirSync(home);
 });
 
 describe("archiving a channel", () => {

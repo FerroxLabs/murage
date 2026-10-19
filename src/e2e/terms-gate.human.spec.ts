@@ -5,7 +5,7 @@
 // a desktop window), keyboard-only use, initial focus, and the fail-closed
 // "couldn't check, retrying" state with Retry. The page runs the real
 // TermsGate; the only stand-in is the request function, scripted per test.
-import { test, expect, type Page } from "@playwright/test";
+import { test, expect, type Page } from "./page-error-guard";
 import { createServer, type ViteDevServer } from "vite";
 import react from "@vitejs/plugin-react";
 import tailwindcss from "@tailwindcss/vite";
@@ -29,7 +29,7 @@ test.beforeAll(async () => {
       name: "terms-gate-fixture",
       resolveId(id) { if (id === "/terms-gate-fixture-store") return "\0terms-gate-store"; },
       load(id) {
-        if (id === "\0terms-gate-store") return "export async function api(path,init){return window.__termsRequest(path,init);}export function useStore(){return {state:{bots:[],groups:[],selectedId:null},dispatch(){}};}";
+        if (id === "\0terms-gate-store") return "export async function api(path,init){return window.__termsRequest(path,init);}export function useStoreIfAny(){return useStore();} export function useStore(){return {state:{bots:[],groups:[],selectedId:null},dispatch(){}};}";
       },
       configureServer(vite) { vite.middlewares.use((req, res, next) => {
         if (!(req.url === "/__terms" || req.url?.startsWith("/__terms?"))) return next();

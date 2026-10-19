@@ -64,10 +64,12 @@ const dayKey = (at: number) => { const d = new Date(at); return `${d.getFullYear
 
 /** Sable section 6. A day with at least one admissible owner turn and no episode still leaves a mark: a
  * deterministic line of thread titles and turn counts, flagged `trace`. No model, at most 300 bytes. */
-export function writeTraceEpisode(db: DatabaseSync, o: { botId: string; scopeId: string; day: number; byThread: ReadonlyArray<{ threadId: string; title: string; turns: readonly AdmittedSource[] }> }): { written: boolean; reason?: string } {
+/** One thread of a trace day: how many admissible owner turns it had, and its last EPISODE_MAX_HANDLES of them in time order (the reader
+ *  counts and keeps a bounded tail while it pages, PIP-REDESIGN 2.7: nothing here walks every turn of the day). */
+export interface TraceThread { threadId: string; title: string; count: number; lastHandles: readonly AdmittedSource[] }
+export function writeTraceEpisode(db: DatabaseSync, o: { botId: string; scopeId: string; day: number; byThread: ReadonlyArray<TraceThread> }): { written: boolean; reason?: string } {
   const day = dayKey(o.day);
-  const turns = o.byThread.flatMap(t => t.turns);
-  if (!turns.length) return { written: false, reason: "no-turns" };
+  if (!o.byThread.some(t => t.count > 0)) return { written: false, reason: "no-turns" };
   const start = new Date(o.day); start.setHours(0, 0, 0, 0);
   const end = new Date(start); end.setDate(end.getDate() + 1);
   // Older model episodes have no day marker: their latest evidence supplies the represented day.
@@ -77,12 +79,13 @@ export function writeTraceEpisode(db: DatabaseSync, o: { botId: string; scopeId:
         FROM memory_evidence e JOIN memory_source_versions v ON v.source_id=e.source_id AND v.revision=e.source_revision
         WHERE e.record_id=r.id AND e.record_version=r.version) BETWEEN ? AND ?)) LIMIT 1`).get(o.scopeId, "day:" + day, start.getTime(), end.getTime() - 1);
   if (existing) return { written: false, reason: "day-has-episode" };
-  const parts = o.byThread.filter(t => t.turns.length).map(t => `${t.turns.length} ${t.turns.length === 1 ? "message" : "messages"} in "${noDashes(t.title).replace(/\s+/g, " ").slice(0, 40)}"`);
+  const parts = o.byThread.filter(t => t.count > 0).map(t => `${t.count} ${t.count === 1 ? "message" : "messages"} in "${noDashes(t.title).replace(/\s+/g, " ").slice(0, 40)}"`);
   let text = `On ${day} we talked: ${parts.join(", ")}.`;
   while (Buffer.byteLength(text) > TRACE_MAX_BYTES && parts.length > 1) { parts.pop(); text = `On ${day} we talked: ${parts.join(", ")}.`; }
   if (Buffer.byteLength(text) > TRACE_MAX_BYTES) text = Buffer.from(text).subarray(0, TRACE_MAX_BYTES - 1).toString("utf8").replace(/�+$/, "") + ".";
-  const handles = turns.slice(-EPISODE_MAX_HANDLES).map(handleOf);
-  const first = o.byThread.find(t => t.turns.length)!;
+  // the last handles of the day in thread order, each thread's in time order: the tail of every thread's bounded tail
+  const handles = o.byThread.flatMap(t => t.lastHandles.slice(-EPISODE_MAX_HANDLES)).slice(-EPISODE_MAX_HANDLES).map(handleOf);
+  const first = o.byThread.find(t => t.count > 0)!;
   const written = write(db, { botId: o.botId, scopeId: o.scopeId, id: pipEpisodeId(o.botId, "trace", day), text, entities: [first.threadId, "trace", "day:" + day], handles });
   return { written };
 }

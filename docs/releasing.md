@@ -42,8 +42,8 @@ and the after-pack gate refuses to package without that receipt. The one
 exception is the Intel Mac: `native/gepa/build-mac.py` builds only the runner's
 own architecture, and the release runner is arm64, so `darwin-x64` is packaged
 with an explicit `murageGepaManifests.darwin-x64=unavailable` opt-out. The app
-treats that as unpinned and takes its documented "no local semantic runtime"
-path; the gate still refuses an Intel package that somehow carries a worker
+treats that as unpinned and takes its documented "no GEPA worker" path (smart
+search still works there, on the bundled model and ONNX Runtime WebAssembly); the gate still refuses an Intel package that somehow carries a worker
 tree. The `*-gepa-evidence` artifacts hold each job's sanitized build
 evidence and never merge into the release asset set.
 
@@ -130,6 +130,14 @@ to main starts CI and Release together, so a run still in progress is waited
 for (up to 75 minutes); no run at all is refused after a ten minute grace; a
 failed, cancelled or skipped one is refused straight away. Re-run CI on the
 commit (Actions, Re-run all jobs) and re-run the release to continue.
+
+The same gate needs the latest nightly green. CI's Vitest shards leave out
+two tags (`vite.config.ts`): `nightly` (tests over 60 s on a hosted runner) and
+`perf-budget` (tests that assert a wall-clock budget, run by the maintainers on
+dedicated hardware). `nightly.yml` runs the `nightly` tag every night. The newest completed `Nightly` run
+must have concluded `success`, on the pinned commit or one of its ancestors,
+and be under 72 hours old; no waiver covers it. If it is red or stale, fix it,
+dispatch `Nightly` on the release commit, and re-run the release.
 
 ### One-time CI waiver
 

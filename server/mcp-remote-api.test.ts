@@ -151,7 +151,7 @@ describe("inspect saves nothing and asks before it connects", () => {
     const answer = await inspectMcpInput({ input: '{"mcpServers":{"computer":{"command":"a"},"notes":{"command":"b"}}}' }, { existingNames: new Set(["notes"]) });
     expect(answer.body).toMatchObject({ ok: true, source: "json" });
     const names = (answer.body as { drafts: Array<{ name: string; probe?: unknown }> }).drafts;
-    expect(names.map((draft) => draft.name)).toEqual(["computer-2", "notes-2"]);
+    expect(names.map((draft) => draft.name)).toEqual(["computer2", "notes2"]);
     expect(names.every((draft) => draft.probe === undefined)).toBe(true);
   });
 

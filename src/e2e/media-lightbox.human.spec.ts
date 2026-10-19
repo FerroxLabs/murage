@@ -13,7 +13,7 @@
 // desktop widths in both skins; reduced motion drops the animation; a remote
 // image makes no request until asked (and then sends no referrer); a local
 // path is never requested; opening a screen frame makes no request at all.
-import { test, expect, type Page } from "@playwright/test";
+import { test, expect, type Page } from "./page-error-guard";
 import { createServer, type ViteDevServer } from "vite";
 import react from "@vitejs/plugin-react";
 import tailwindcss from "@tailwindcss/vite";
@@ -62,10 +62,12 @@ const MARKDOWN = [
 
 let server: ViteDevServer, origin: string, cache: string;
 const served: string[] = [];
-/** An attachment as the desktop window asks for it: an <img> cannot send
- *  headers, so the window's per-launch proof rides in the query. */
+/** The window's per-launch proof: an <img> cannot send headers, so the
+ *  window trades it (in a POST header) for a single-use ticket per image. */
 const FIXTURE_PROOF = "media-fixture-proof";
-const proofed = (path: string) => `${path}?surface=desktop&surfaceSecret=${FIXTURE_PROOF}`;
+/** The desktop loads an /api image through a single-use ticket, never with the proof in the URL. */
+const proofed = (path: string) => new RegExp(`^${path.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\?surfaceTicket=fixture-ticket-\\d+$`);
+let fixtureTickets = 0;
 
 test.beforeAll(async () => {
   const root = fileURLToPath(new URL("../../", import.meta.url));
@@ -115,6 +117,7 @@ createRoot(document.getElementById('root')).render(h(React.StrictMode,{},h('main
         }
         const json = (body: unknown) => { res.setHeader("content-type", "application/json"); res.end(JSON.stringify(body)); };
         if (url.pathname === "/api/desktop-secret") return json({ secret: FIXTURE_PROOF });
+        if (url.pathname === "/api/desktop/resource-ticket") return json({ ticket: `fixture-ticket-${++fixtureTickets}`, expiresInMs: 15000 });
         if (url.pathname === "/api/artifacts/art-chart/preview") return json({ artifact: ARTIFACT, mode: "image", content: SAVED });
         if (url.pathname === "/api/artifacts") return json({ items: [ARTIFACT], total: 1, page: 0, pageSize: 25 });
         next();
@@ -143,7 +146,9 @@ async function open(page: Page, skin = "dark") {
 }
 
 /** Opens a thumbnail from the keyboard and checks the dialog shows the same
- * bytes: same src string, fully decoded, one dialog, labelled. */
+ * bytes: same attachment URL, fully decoded, one dialog, labelled. The desktop
+ * mints a single-use ticket per image load (1.0.3), so the dialog's own load
+ * carries its own ticket: everything but the ticket value is the same string. */
 async function openFromKeyboard(page: Page, thumb: ReturnType<Page["getByRole"]>, name: string) {
   await thumb.focus();
   await page.keyboard.press("Enter");
@@ -151,7 +156,9 @@ async function openFromKeyboard(page: Page, thumb: ReturnType<Page["getByRole"]>
   await expect(page.locator("dialog[data-testid=image-lightbox]")).toHaveCount(1);
   await expect(lightbox(page)).toHaveAccessibleName(`Preview ${name}`);
   const inline = await thumb.locator("img").getAttribute("src");
-  await expect(lightboxImage(page)).toHaveAttribute("src", inline!);
+  const withoutTicket = (src: string) => src.replace(/([?&])surfaceTicket=[^&]+&?/, "$1").replace(/[?&]$/, "");
+  const ticketed = /surfaceTicket=fixture-ticket-\d+/;
+  await expect.poll(async () => { const shown = (await lightboxImage(page).getAttribute("src")) ?? ""; return ticketed.test(shown) === ticketed.test(inline!) && withoutTicket(shown) === withoutTicket(inline!); }).toBe(true);
   await expect.poll(() => lightboxImage(page).evaluate((img: HTMLImageElement) => img.complete && img.naturalWidth > 0)).toBe(true);
 }
 

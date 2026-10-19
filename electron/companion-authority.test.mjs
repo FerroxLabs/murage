@@ -27,6 +27,7 @@ it("the real main-process launch blocks share one fresh private token without mu
     const portAvailable=async()=>true;
     const SERVER_PORT=8799;
     const remoteAccessLaunch=()=>null, slog=()=>{};
+    const safeStorage={kind:"credential-store"}, safeStorageSeal=(store)=>({sealedBy:store});
     const secureCredentials={}, credentialStoreUnavailable=false;
     const restoredConnections=null,restoredHarnessEnvironment=env=>env;
     const desktopDataDir="/fixture/canonical-installation";
@@ -56,6 +57,8 @@ it("the real main-process launch blocks share one fresh private token without mu
   expect(first.env.MURAGE_COMPANION_TOKEN).toBeUndefined();
   expect(first.env.MURAGE_COMPANION_TOKEN_FILE).toBeUndefined();
   expect(first.env.MURAGE_COMPANION_TOKEN_VIA).toBe("parent");
+  // The stale-sidecar record is sealed by the OS credential store, never written plain.
+  expect(first.options.sidecarSeal).toEqual({sealedBy:{kind:"credential-store"}});
   const firstToken = first.options.companionToken;
   const secondToken = second.options.companionToken;
   expect(JSON.stringify(first.env)).not.toContain(firstToken);
@@ -80,7 +83,11 @@ it("the real companion child environment overrides inherited device state for a 
     const companionToken="fresh-private-token",hostedUrl=null,allocatedOrigin={socketPath:"/owned/private.sock"};
     ${source.slice(start,end)}; return childEnvironment;
   `);
-  const ambient = { MURAGE_COMPANION_DIR: "/old/device-bindings", MURAGE_INTERNAL_DATA_DIR_LEASE: "private-parent" };
-  expect(build({env:ambient}, {stateDirectory:"/restored/new-bindings"})).toMatchObject({MURAGE_COMPANION_DIR:"/restored/new-bindings"});
+  const ambient = { MURAGE_COMPANION_DIR: "/old/device-bindings", MURAGE_INTERNAL_DATA_DIR_LEASE: "private-parent", MURAGE_COMPANION_CONTROL_TOKEN: "ambient-control-token", MURAGE_COMPANION_RECOVERY_TOKEN: "ambient-recovery" };
+  const built = build({env:ambient}, {stateDirectory:"/restored/new-bindings"});
+  expect(built).toMatchObject({MURAGE_COMPANION_DIR:"/restored/new-bindings", MURAGE_COMPANION_CONTROL_TOKEN_VIA:"parent", MURAGE_COMPANION_RECOVERY_TOKEN_VIA:"parent"});
+  expect(built.MURAGE_COMPANION_RECOVERY_TOKEN).toBeUndefined();
+  // The control token never rides the environment, and an inherited one is dropped.
+  expect(built.MURAGE_COMPANION_CONTROL_TOKEN).toBeUndefined();
   expect(ambient.MURAGE_COMPANION_DIR).toBe("/old/device-bindings");
 });

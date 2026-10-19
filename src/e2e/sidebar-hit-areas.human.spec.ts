@@ -3,7 +3,7 @@
 // 2eb4c7c5d32c85d8e0ae3e43d7f7861e81c2977f, Apache-2.0). A static markup
 // assertion cannot prove which element owns a pixel, so every claim below
 // clicks or taps the actual coordinates in Chromium.
-import { test, expect, chromium, type Locator, type Page } from "@playwright/test";
+import { test, expect, chromium, type Locator, type Page } from "./page-error-guard";
 import { createServer, type ViteDevServer } from "vite";
 import tailwindcss from "@tailwindcss/vite";
 import { fileURLToPath } from "node:url";
@@ -21,7 +21,7 @@ test.beforeAll(async () => {
     name: "sidebar-hit-fixture", enforce: "pre",
     resolveId(id) { if (id.endsWith("/src/state/store") || id === "@/state/store") return "\0hit-store"; if (id === "/__hit.js") return "\0hit-entry"; },
     load(id) {
-      if (id === "\0hit-store") return `export * from '/src/state/store.tsx?original';import {useSyncExternalStore} from 'react';export function useStore(){return useSyncExternalStore(window.subscribeFixture,()=>window.fixtureStore);}export function useStoreActions(){return window.fixtureStore;}`;
+      if (id === "\0hit-store") return `export * from '/src/state/store.tsx?original';import {useSyncExternalStore} from 'react';export function useStoreIfAny(){return useStore();} export function useStore(){return useSyncExternalStore(window.subscribeFixture,()=>window.fixtureStore);}export function useStoreActions(){return window.fixtureStore;}`;
       if (id !== "\0hit-entry") return;
       return `import React from 'react';import {createRoot} from 'react-dom/client';import {initialState} from '/src/state/store.tsx?original';import {Sidebar} from '/src/components/Sidebar.tsx';import '/src/styles.css';
         const listeners=new Set();window.subscribeFixture=fn=>{listeners.add(fn);return()=>listeners.delete(fn);};

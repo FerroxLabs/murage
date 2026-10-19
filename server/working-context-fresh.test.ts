@@ -5,8 +5,9 @@
 // turns is only which threads and which replies to look at; whether a line may be shown, and its words, are asked
 // again on every turn. Each case builds the block once (so it is kept), changes something the kept discovery does
 // not see, and builds it again.
-import { mkdirSync, rmSync } from "node:fs";
+import { mkdirSync } from "node:fs";
 import { beforeEach, expect, it, vi } from "vitest";
+import { removeTempDirSync } from "./testing/cleanup.ts";
 
 const lineage = vi.hoisted(() => ({ withheld: new Set<string>() }));
 vi.mock("./memory/replay-lineage.ts", async (importOriginal) => {
@@ -37,7 +38,7 @@ const NOW = Date.UTC(2026, 9, 12, 12, 0, 0);
 const HOUR = 3_600_000;
 let input: WorkingContextInput;
 beforeEach(() => {
-  closeDatabase(); rmSync(DATA_DIR, { recursive: true, force: true }); mkdirSync(DATA_DIR, { recursive: true });
+  closeDatabase(); removeTempDirSync(DATA_DIR); mkdirSync(DATA_DIR, { recursive: true });
   lineage.withheld.clear(); scope.live = false; scope.otherPartition.clear();
   input = {
     botId: "reed", currentThreadId: "reed-direct", now: NOW,

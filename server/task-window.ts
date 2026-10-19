@@ -148,3 +148,49 @@ export function taskGrants(tasks: ReadonlyArray<{ alwaysAllow?: string[] }>): st
   for (const task of tasks) for (const key of task.alwaysAllow ?? []) seen.add(key);
   return [...seen];
 }
+
+/** What a record's windowing costs, counted in tasks looked at: a test reads it to show an idle broadcast does none. */
+export const taskWindowWork = { builds: 0, tasksVisited: 0 };
+
+export interface TaskAggregates<T> {
+  window: TaskWindow<T>;
+  usage: UsageLike;
+  grants: string[];
+}
+
+interface CachedAggregates { tasks: readonly WindowTask[]; length: number; key: string; value: TaskAggregates<never> }
+
+/** Remembers each bot's window, usage total and grant list until something they were built from changes. `revision` is the
+ * caller's counter, moved by any task, usage or grant write (Store.revision) and by any run write (the live run threads the window
+ * keeps); with it unmoved, a broadcast does O(1) work however many tasks the bot holds. The entry also lapses when the task list
+ * is replaced or changes length, whatever the counter says. */
+export function createTaskAggregateCache(maxBots = 4096) {
+  const entries = new Map<string, CachedAggregates>();
+  return {
+    get<T extends WindowTask & { usage?: UsageLike; alwaysAllow?: string[] }>(
+      botId: string,
+      tasks: readonly T[],
+      currentThreadId: string,
+      revision: string,
+      size: number | undefined,
+      extra: () => ReadonlySet<string> | undefined,
+    ): TaskAggregates<T> {
+      const key = `${revision}\0${currentThreadId}\0${size ?? ""}`;
+      const held = entries.get(botId);
+      if (held && held.tasks === tasks && held.length === tasks.length && held.key === key) {
+        entries.delete(botId); entries.set(botId, held);
+        return held.value as unknown as TaskAggregates<T>;
+      }
+      taskWindowWork.builds++;
+      taskWindowWork.tasksVisited += tasks.length;
+      const value: TaskAggregates<T> = {
+        window: windowTasks(tasks, currentThreadId, extra(), size),
+        usage: sumTaskUsage(tasks),
+        grants: taskGrants(tasks),
+      };
+      entries.set(botId, { tasks, length: tasks.length, key, value: value as unknown as TaskAggregates<never> });
+      if (entries.size > maxBots) entries.delete(entries.keys().next().value as string);
+      return value;
+    },
+  };
+}

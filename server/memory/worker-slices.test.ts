@@ -3,7 +3,7 @@
 //
 // A worker message applied on the main thread is applied in slices: a large index-result writes its receipts
 // a slice at a time, each its own transaction of at most about 50 ms, with a turn of the event loop between.
-import { mkdirSync, rmSync } from "node:fs";
+import { mkdirSync } from "node:fs";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { DATA_DIR } from "../config.ts";
 import { closeDatabase, database, transaction as realTransaction } from "../database.ts";
@@ -11,6 +11,7 @@ import { appendMessage } from "../message-db.ts";
 import { resetParkReconcile, resetParkSweep } from "./park.ts";
 import { setMemoryMode } from "./repository.ts";
 import { MemoryWorkerController } from "./worker-controller.ts";
+import { removeTempDirSync } from "../testing/cleanup.ts";
 
 const slices = vi.hoisted(() => ({ ms: [] as number[], on: false }));
 vi.mock("../database.ts", async importOriginal => {
@@ -25,7 +26,7 @@ vi.mock("../database.ts", async importOriginal => {
 type Internals = { child: unknown; ready: boolean; indexing: boolean; indexRequestId: string | null; onWorkerMessage(child: unknown, message: unknown): void };
 let controller: MemoryWorkerController, internals: Internals;
 beforeEach(() => {
-  closeDatabase(); rmSync(DATA_DIR, { recursive: true, force: true }); mkdirSync(DATA_DIR, { recursive: true }); setMemoryMode("capture"); resetParkSweep(); resetParkReconcile();
+  closeDatabase(); removeTempDirSync(DATA_DIR); mkdirSync(DATA_DIR, { recursive: true }); setMemoryMode("capture"); resetParkSweep(); resetParkReconcile();
   slices.ms = []; slices.on = false;
   controller = new MemoryWorkerController();
   internals = controller as unknown as Internals;

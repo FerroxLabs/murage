@@ -3,7 +3,7 @@
 // A backup keeps saved prompt blocks, reference packs (rows and pinned
 // images), render prompts and model checks, and the restored pack still
 // resolves to the same bytes.
-import { mkdirSync, rmSync } from "node:fs";
+import { mkdirSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { afterEach, beforeEach, expect, it } from "vitest";
@@ -14,9 +14,10 @@ import { writeInstallationArchive } from "./installation-archive.ts";
 import { prepareInstallationRestore } from "./installation-restore-preparation.ts";
 import { inspectInstallationDatabase } from "./installation-database-snapshot.ts";
 import { recordImageProbe, recordRenderPrompt, resolveReferencePack, savePromptBlock, saveReferencePack } from "./image-library.ts";
+import { removeTempDirSync } from "./testing/cleanup.ts";
 
 const PNG = Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=", "base64");
-beforeEach(() => { closeDatabase(); rmSync(DATA_DIR, { recursive: true, force: true }); mkdirSync(DATA_DIR, { recursive: true }); });
+beforeEach(() => { closeDatabase(); removeTempDirSync(DATA_DIR); mkdirSync(DATA_DIR, { recursive: true }); });
 afterEach(() => closeDatabase());
 
 it("backs up and restores the image library with its pinned pack images", async () => {

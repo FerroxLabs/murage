@@ -3,17 +3,18 @@
 // every room and thread scope by primary key: 976,072 confirmations in one
 // minute on the live store. Within one synchronous pass an audience is worked
 // out once per bot and thread; any write, or a changed roster, ends the memo.
-import { mkdirSync, rmSync } from "node:fs";
+import { mkdirSync } from "node:fs";
 import { beforeEach, expect, it } from "vitest";
 import { DATA_DIR } from "../config.ts";
 import { closeDatabase, database } from "../database.ts";
 import { createProcedureReviewHost } from "../procedure-review-host.ts";
 import { backgroundMemoryScopes, reconcileMemoryRoster, type MemoryRoster } from "./policy.ts";
-import { inEligibilityPass } from "./eligibility-pass.ts";
+import { inEligibilityPass, passLookup } from "./eligibility-pass.ts";
 import { setMemoryMode } from "./repository.ts";
 import { pendingProcedureReviews, procedureCandidateHash, procedureSnapshotDigest, procedureTargetDigest, type ProcedureReviewSnapshot } from "./procedure-review.ts";
+import { removeTempDirSync } from "../testing/cleanup.ts";
 
-beforeEach(() => { closeDatabase(); rmSync(DATA_DIR, { recursive: true, force: true }); mkdirSync(DATA_DIR, { recursive: true }); });
+beforeEach(() => { closeDatabase(); removeTempDirSync(DATA_DIR); mkdirSync(DATA_DIR, { recursive: true }); });
 
 /** Counts the RUNS (get, all, run) of statements whose SQL contains `needle`, from the
  * moment of the call on, for statements prepared after it: install it before first use. */
@@ -99,4 +100,18 @@ it("inside a pass the answer is remembered; a deleted scope, a roster change or 
   const mark = runs();
   backgroundMemoryScopes("bot0", "bot0-main", roster); backgroundMemoryScopes("bot0", "bot0-main", roster);
   expect(runs() - mark).toBeGreaterThan(400);
+});
+
+// Astra idle-scan r8: a rollback reports no changes but undoes rows a lookup read inside the transaction.
+it("a lookup remembered from inside a rolled-back transaction is not served after the rollback", () => {
+  const db = database();
+  db.exec("CREATE TABLE IF NOT EXISTS r8_probe (v TEXT)");
+  const read = () => (db.prepare("SELECT COUNT(*) AS n FROM r8_probe").get() as { n: number }).n;
+  inEligibilityPass(db, () => {
+    db.exec("BEGIN IMMEDIATE");
+    db.prepare("INSERT INTO r8_probe (v) VALUES ('x')").run();
+    expect(passLookup(db, "r8", read)).toBe(1);
+    db.exec("ROLLBACK");
+    expect(passLookup(db, "r8", read)).toBe(0);
+  });
 });

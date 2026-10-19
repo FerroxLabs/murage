@@ -4,6 +4,8 @@
 // Team management through the real HTTP routes on a verification server with
 // its own data directory: the desktop gate, rename, members and lead, and
 // delete. The rules themselves are pinned in team-sections.test.ts.
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
 import { afterAll, beforeAll, expect, it } from "vitest";
 import { launchVerificationServer, type VerificationServer } from "../scripts/control-murage.ts";
 
@@ -60,7 +62,11 @@ it("renames, changes members and lead, and deletes a team, and only for the desk
   const row = renamed.body.changed.groups.find((group: any) => group.id === created.body.group.id);
   expect(row).toMatchObject({ name: "Ops", section: "Ops", recordEpoch: created.body.group.recordEpoch });
   expect(row.recordSeq).toBeGreaterThan(created.body.group.recordSeq);
-  expect((await call("GET", "/api/bots?messages=0")).body.groups.find((group: any) => group.id === created.body.group.id)).toMatchObject({ recordSeq: row.recordSeq });
+  const listedRoster = (await call("GET", "/api/bots?messages=0")).body;
+  expect(listedRoster.groups.find((group: any) => group.id === created.body.group.id)).toMatchObject({ recordSeq: row.recordSeq });
+  // The roster is the horizon: every statement numbered at or below roomClock was made before it and is in its rows.
+  expect(listedRoster.roomClock).toBeGreaterThanOrEqual(row.recordSeq);
+  expect(listedRoster.tasksEpoch).toBe(created.body.group.recordEpoch);
 
   // The old revision is now stale.
   const stale = await call("POST", "/api/team-sections/members", { section: "Ops", revision: current.revision, add: [cal.id] });
@@ -80,3 +86,21 @@ it("renames, changes members and lead, and deletes a team, and only for the desk
   const after = (await call("GET", "/api/bots?messages=0")).body.bots;
   for (const id of [ava.id, cal.id]) expect(after.find((bot: any) => bot.id === id).hidden ?? false).toBe(false);
 }, 60000);
+
+it("ROOM-ORDER R1 (static): every `group` broadcast is built by id and numbered by the registry's builders; every removal frame takes a number", () => {
+  const source = readFileSync(join(process.cwd(), "server/index.ts"), "utf8");
+  // a bounded page (task switch, new or deleted task) goes through broadcastGroupPage, which numbers once for both shapes
+  expect(source.match(/broadcastPage\("group"/g)).toHaveLength(1);
+  expect(source).toMatch(/function broadcastGroupPage\(groupId: string,[\s\S]{0,500}broadcastPage\("group", \(beside\) => \(\{ \.\.\.page\(group, beside\), \.\.\.numbers \}\)\)/);
+  // no call site hands either builder a record: they take an id and re-read the registry
+  const calls = [...source.matchAll(/^(?!\s*function ).*\b(groupFrame|broadcastGroupPage)\(([^,)]*)/gm)].map((match) => match[2]!.trim());
+  expect(calls.length).toBeGreaterThanOrEqual(4);
+  for (const argument of calls) expect(argument, argument).toMatch(/^(groupId|(group|switched|updated)\.id)$/);
+  expect(source.match(/broadcastGroupPage\((group|switched|updated)\.id, /g)).toHaveLength(3);
+  // `kind: "group"` is built only by groupFrame; `kind: "group.deleted"` only by groupDeletedFrame, numbered
+  expect(source.match(/kind: "group" as const/g)).toHaveLength(1);
+  expect(source).not.toMatch(/broadcast\(\{ kind: "group\.deleted"/);
+  expect(source.match(/kind: "group\.deleted" as const/g)).toHaveLength(1);
+  expect(source).toMatch(/const groupDeletedFrame = \(groupId: string, seq: number, audience\?: "remote"\) => \(\{ kind: "group\.deleted" as const, groupId, [^\n]*recordSeq: seq, recordEpoch: taskDelta\.epoch \}\)/);
+  expect(source.match(/broadcast\(groupDeletedFrame\(/g)).toHaveLength(2);
+});

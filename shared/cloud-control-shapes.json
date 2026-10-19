@@ -1,0 +1,606 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "_license": "SPDX-License-Identifier: AGPL-3.0-or-later",
+  "version": 1,
+  "$defs": {
+    "controlSnapshot": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "version",
+        "homeId",
+        "cpGeneration",
+        "requestId",
+        "bootId",
+        "requestSend",
+        "conservativeDeadlineBootMs",
+        "receivedAt",
+        "desired"
+      ],
+      "properties": {
+        "version": {
+          "const": 1
+        },
+        "homeId": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9_-]{1,128}$"
+        },
+        "cpGeneration": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 9007199254740991
+        },
+        "requestId": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9_-]{1,128}$"
+        },
+        "bootId": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+        },
+        "requestSend": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "wallMs",
+            "bootMs",
+            "monoMs"
+          ],
+          "properties": {
+            "wallMs": {
+              "type": "number",
+              "minimum": 0,
+              "maximum": 9007199254740991
+            },
+            "bootMs": {
+              "type": "number",
+              "minimum": 0,
+              "maximum": 9007199254740991
+            },
+            "monoMs": {
+              "type": "number",
+              "minimum": 0,
+              "maximum": 9007199254740991
+            }
+          }
+        },
+        "conservativeDeadlineBootMs": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 9007199254740991
+        },
+        "receivedAt": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 9007199254740991
+        },
+        "desired": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "wire",
+            "homeId",
+            "generation",
+            "desiredState",
+            "engineSubscriptionGates",
+            "lease",
+            "executionAllowed",
+            "heartbeatFresh",
+            "heartbeatEveryMs",
+            "homeKey"
+          ],
+          "properties": {
+            "wire": {
+              "const": 1
+            },
+            "homeId": {
+              "type": "string",
+              "pattern": "^[A-Za-z0-9_-]{1,128}$"
+            },
+            "generation": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 9007199254740991
+            },
+            "desiredState": {
+              "enum": [
+                "payment_pending",
+                "provisioning",
+                "checking",
+                "ready",
+                "payment_problem",
+                "stopped",
+                "suspended",
+                "deleting",
+                "deleted",
+                "failed"
+              ]
+            },
+            "engineSubscriptionGates": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "claudeAgent",
+                "codex",
+                "grokAgent",
+                "kimiAgent",
+                "opencodeGo"
+              ],
+              "properties": {
+                "claudeAgent": {
+                  "type": "boolean"
+                },
+                "codex": {
+                  "type": "boolean"
+                },
+                "grokAgent": {
+                  "type": "boolean"
+                },
+                "kimiAgent": {
+                  "type": "boolean"
+                },
+                "opencodeGo": {
+                  "type": "boolean"
+                }
+              }
+            },
+            "lease": {
+              "anyOf": [
+                {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "required": [
+                    "holder",
+                    "generation",
+                    "expiresAt"
+                  ],
+                  "properties": {
+                    "holder": {
+                      "type": "string",
+                      "pattern": "^[A-Za-z0-9_-]{1,128}$"
+                    },
+                    "generation": {
+                      "type": "integer",
+                      "minimum": 1,
+                      "maximum": 9007199254740991
+                    },
+                    "expiresAt": {
+                      "type": "integer",
+                      "minimum": 0,
+                      "maximum": 9007199254740991
+                    }
+                  }
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "executionAllowed": {
+              "type": "boolean"
+            },
+            "heartbeatFresh": {
+              "type": "boolean"
+            },
+            "heartbeatEveryMs": {
+              "const": 60000
+            },
+            "homeKey": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "payload",
+                "signature",
+                "algorithm"
+              ],
+              "properties": {
+                "payload": {
+                  "type": "string",
+                  "maxLength": 4096
+                },
+                "signature": {
+                  "type": "string",
+                  "maxLength": 128
+                },
+                "algorithm": {
+                  "const": "ES256"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "linuxClockHealth": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "wallMs",
+        "bootMs",
+        "monoMs",
+        "bootId",
+        "ntpSynced"
+      ],
+      "properties": {
+        "wallMs": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 9007199254740991
+        },
+        "bootMs": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 9007199254740991
+        },
+        "monoMs": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 9007199254740991
+        },
+        "bootId": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+        },
+        "ntpSynced": {
+          "type": "boolean"
+        }
+      }
+    },
+    "desiredResponse": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "wire",
+        "homeId",
+        "generation",
+        "desiredState",
+        "engineSubscriptionGates",
+        "lease",
+        "executionAllowed",
+        "heartbeatFresh",
+        "heartbeatEveryMs",
+        "homeKey"
+      ],
+      "properties": {
+        "wire": {
+          "const": 1
+        },
+        "homeId": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9_-]{1,128}$"
+        },
+        "generation": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 9007199254740991
+        },
+        "desiredState": {
+          "enum": [
+            "payment_pending",
+            "provisioning",
+            "checking",
+            "ready",
+            "payment_problem",
+            "stopped",
+            "suspended",
+            "deleting",
+            "deleted",
+            "failed"
+          ]
+        },
+        "engineSubscriptionGates": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "claudeAgent",
+            "codex",
+            "grokAgent",
+            "kimiAgent",
+            "opencodeGo"
+          ],
+          "properties": {
+            "claudeAgent": {
+              "type": "boolean"
+            },
+            "codex": {
+              "type": "boolean"
+            },
+            "grokAgent": {
+              "type": "boolean"
+            },
+            "kimiAgent": {
+              "type": "boolean"
+            },
+            "opencodeGo": {
+              "type": "boolean"
+            }
+          }
+        },
+        "lease": {
+          "anyOf": [
+            {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "holder",
+                "generation",
+                "expiresAt"
+              ],
+              "properties": {
+                "holder": {
+                  "type": "string",
+                  "pattern": "^[A-Za-z0-9_-]{1,128}$"
+                },
+                "generation": {
+                  "type": "integer",
+                  "minimum": 1,
+                  "maximum": 9007199254740991
+                },
+                "expiresAt": {
+                  "type": "integer",
+                  "minimum": 0,
+                  "maximum": 9007199254740991
+                }
+              }
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "executionAllowed": {
+          "type": "boolean"
+        },
+        "heartbeatFresh": {
+          "type": "boolean"
+        },
+        "heartbeatEveryMs": {
+          "const": 60000
+        },
+        "homeKey": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "payload",
+            "signature",
+            "algorithm"
+          ],
+          "properties": {
+            "payload": {
+              "type": "string",
+              "maxLength": 4096
+            },
+            "signature": {
+              "type": "string",
+              "maxLength": 128
+            },
+            "algorithm": {
+              "const": "ES256"
+            }
+          }
+        }
+      }
+    },
+    "leaseRequest": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "generation",
+        "holder"
+      ],
+      "properties": {
+        "generation": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 9007199254740991
+        },
+        "holder": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9_-]{1,128}$"
+        }
+      }
+    },
+    "leaseResponse": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "wire",
+        "installationId",
+        "holder",
+        "generation",
+        "expiresAt",
+        "renewAfterMs",
+        "ttlMs",
+        "skewMs"
+      ],
+      "properties": {
+        "wire": {
+          "const": 1
+        },
+        "installationId": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9_-]{1,128}$"
+        },
+        "holder": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9_-]{1,128}$"
+        },
+        "generation": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 9007199254740991
+        },
+        "expiresAt": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 9007199254740991
+        },
+        "renewAfterMs": {
+          "const": 60000
+        },
+        "ttlMs": {
+          "const": 3600000
+        },
+        "skewMs": {
+          "const": 120000
+        }
+      }
+    },
+    "heartbeatRequest": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "generation"
+      ],
+      "properties": {
+        "generation": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 9007199254740991
+        }
+      }
+    },
+    "heartbeatResponse": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "wire",
+        "accepted"
+      ],
+      "properties": {
+        "wire": {
+          "const": 1
+        },
+        "accepted": {
+          "const": true
+        }
+      }
+    },
+    "enrollmentPendingResponse": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "error"
+      ],
+      "properties": {
+        "error": {
+          "const": "enrollment_pending"
+        }
+      }
+    },
+    "volumeDescriptor": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "provider",
+        "id",
+        "homeId",
+        "resourceGeneration",
+        "device",
+        "serial",
+        "new",
+        "attachment"
+      ],
+      "properties": {
+        "provider": {
+          "enum": [
+            "hetzner",
+            "vultr"
+          ]
+        },
+        "id": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9_-]{1,128}$"
+        },
+        "homeId": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9_-]{1,128}$"
+        },
+        "resourceGeneration": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 9007199254740991
+        },
+        "device": {
+          "type": "string",
+          "pattern": "^/dev/disk/by-id/(scsi-0HC_Volume_[A-Za-z0-9_-]+|virtio-[A-Za-z0-9_-]+)$"
+        },
+        "serial": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9_-]{1,128}$"
+        },
+        "new": {
+          "type": "boolean"
+        },
+        "attachment": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "serverId",
+            "state"
+          ],
+          "properties": {
+            "serverId": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "pattern": "^[A-Za-z0-9_-]{1,128}$"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "state": {
+              "enum": [
+                "detached",
+                "attaching",
+                "attached"
+              ]
+            }
+          }
+        }
+      }
+    },
+    "bootVolumeMetadata": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "provider",
+        "id",
+        "device",
+        "new",
+        "generation",
+        "homeId"
+      ],
+      "properties": {
+        "provider": {
+          "enum": [
+            "hetzner",
+            "vultr"
+          ]
+        },
+        "id": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9_-]{1,128}$"
+        },
+        "device": {
+          "type": "string",
+          "pattern": "^/dev/disk/by-id/(scsi-0HC_Volume_[A-Za-z0-9_-]+|virtio-[A-Za-z0-9_-]+)$"
+        },
+        "new": {
+          "type": "boolean"
+        },
+        "generation": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 9007199254740991
+        },
+        "homeId": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9_-]{1,128}$"
+        }
+      }
+    }
+  }
+}

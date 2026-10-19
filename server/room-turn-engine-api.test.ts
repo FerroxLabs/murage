@@ -263,7 +263,7 @@ posixOnly("the turn engine: queue, durable sends, wakes, caps", () => {
     await api("POST", "/api/memory/action", { action: "configure", mode: "active" });
   }, 90000);
 
-  it("a lead that keeps handing work over is paused after six team steps, with one line", async () => {
+  it("a lead that keeps handing work over is paused after six team steps, with one line", { tags: ["nightly"], timeout: 200000 }, async () => {
     await hideEveryone();
     const lead = await bot("Loop", "looper");
     const worker = await bot("Jax2", "verification");
@@ -286,5 +286,5 @@ posixOnly("the turn engine: queue, durable sends, wakes, caps", () => {
     // stop the loop: interrupt the room and drop what waits
     await api("POST", `/api/groups/${team.id}/interrupt`, {});
     for (const request of (await api("GET", `/api/groups/${team.id}/requests?open=1`)).body.requests) await api("POST", `/api/groups/${team.id}/requests/${request.id}/cancel`, {});
-  }, 200000);
+  });
 });

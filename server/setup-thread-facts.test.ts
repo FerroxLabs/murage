@@ -2,7 +2,7 @@
 // GET /api/setup reads the Chief's task conversations by index, never whole,
 // and a poll that finds nothing changed reads nothing at all. The cost is the
 // same with 10 task conversations as with 2,000.
-import { mkdtempSync, readFileSync, rmSync, statSync } from "node:fs";
+import { mkdtempSync, readFileSync, statSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
@@ -11,6 +11,7 @@ import { emptySetupState, nextSetupStep, setupIsFirstRun, setupStepDone, setupSt
 import { fillInboxProjection, initializeInbox, inboxProjectionReady, inboxProjectionSlice } from "./inbox.ts";
 import { SetupChecklist, readWorkspace, setupThreadFacts, type SetupBotReading, type SetupMessageReading } from "./setup.ts";
 import { SETUP_FACT_STATEMENTS, SetupThreadFactsCache, readSetupThreadFacts } from "./setup-thread-facts.ts";
+import { removeTempDirSync } from "./testing/cleanup.ts";
 
 const databases: DatabaseSync[] = [];
 afterAll(() => { for (const db of databases.splice(0)) { try { db.close(); } catch { /* closed */ } } });
@@ -265,7 +266,7 @@ describe("setup facts while the first fill is partial", () => {
       cache.touch("chief");
       expect(cache.facts("chief")).toMatchObject({ answered: true, answeredAt: 2_000, refusal: { at: 3_000 } });
       expect(cache.facts("chief")).not.toHaveProperty("known");
-    } finally { rmSync(directory, { recursive: true, force: true }); }
+    } finally { removeTempDirSync(directory); }
   }, 120_000);
 
   it("is complete again, and unchanged from the complete reading, once the fill is done", () => {

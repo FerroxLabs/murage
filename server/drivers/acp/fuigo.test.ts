@@ -27,11 +27,12 @@
 // half — its dump carries a fixed allowlist of variable names that does not
 // include FUIGO_API_KEY, so every assertion here would pass vacuously.
 import { toolsMayBeLoadingNotice, toolsUnavailableNotice } from "../mcp-readiness.ts";
-import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { cacheEnvFromProcess, markMountIncomplete } from "../../connector-cache.ts";
 import { tmpdir } from "node:os";
 import { delimiter, join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, onTestFinished, vi } from "vitest";
+import { removeTempDirSync } from "../../testing/cleanup.ts";
 
 // core.ts reads MURAGE_ACP_SESSION_CONFIG_MS once at import, so it has to be
 // set before the imports below run. Short enough for the hung set_model test,
@@ -93,8 +94,9 @@ Available models:
  * executable bit, and it is the only shape that behaves identically on Windows,
  * where there is no shebang at all.
  */
-const FAKE_SOURCE = `import { appendFileSync, writeFileSync } from "node:fs";
+const FAKE_SOURCE = `import { appendFileSync, existsSync, readFileSync, unlinkSync, writeFileSync } from "node:fs";
 import { createHash } from "node:crypto";
+import { spawn as spawnHolder } from "node:child_process";
 import { delimiter, join } from "node:path";
 const argv = process.argv.slice(2);
 const kind = argv.includes("--version") ? "version" : argv[0] === "models" ? "models" : "agent";
@@ -175,6 +177,36 @@ const helperAnswered = (decision) => {
       update: { sessionUpdate: "subagent_finished", subagent_id: "helper-1", status: "completed" } } });
   }, 200);
 };
+// FUIGO_FAKE_LOCK_FILE models session_writer.lock: held from session/new or a successful
+// session/load until this process exits. FUIGO_FAKE_EXIT_DELAY_MS delays that exit after
+// SIGTERM or stdin close. FUIGO_FAKE_LOAD_BUSY=N refuses the first N loads (999 = always).
+const lockFile = process.env.FUIGO_FAKE_LOCK_FILE;
+// The lock follows the process: a lock file whose owner is gone (exit, SIGKILL, taskkill /F) is not held.
+const lockHeld = () => {
+  if (!lockFile || !existsSync(lockFile)) return false;
+  const body = readFileSync(lockFile, "utf8");
+  if (body.startsWith("free-at:")) return Date.now() < Number(body.slice(8));
+  try { process.kill(Number(body), 0); return true; } catch { return false; }
+};
+// FUIGO_FAKE_HOLD_AFTER_EXIT_MS: a separate holder process keeps the lock until that long AFTER this process is gone,
+// however it died (SIGTERM, SIGKILL, taskkill /F), so "the old session is still busy" does not depend on a signal handler.
+const holdAfterExitMs = Number(process.env.FUIGO_FAKE_HOLD_AFTER_EXIT_MS ?? 0);
+const holderSource = "const ppid = Number(process.argv[1]); const hold = Number(process.argv[2]); const t = setInterval(() => { try { process.kill(ppid, 0); } catch { clearInterval(t); setTimeout(() => process.exit(0), hold); } }, 25);";
+const holdLock = () => {
+  if (!lockFile) return;
+  if (holdAfterExitMs > 0) {
+    const holder = spawnHolder(process.execPath, ["-e", holderSource, String(process.pid), String(holdAfterExitMs)], { detached: true, stdio: "ignore" });
+    holder.unref();
+    writeFileSync(lockFile, String(holder.pid));
+  } else writeFileSync(lockFile, String(process.pid));
+};
+// FUIGO_FAKE_LOCK_LAG_MS: the lock is freed that long AFTER the process has exited (1.0.30 was seen lagging about 2 s).
+const lagMs = Number(process.env.FUIGO_FAKE_LOCK_LAG_MS ?? 0);
+const releaseAndExit = () => setTimeout(() => { try { if (lockFile) { if (lagMs > 0) writeFileSync(lockFile, "free-at:" + (Date.now() + lagMs)); else unlinkSync(lockFile); } } catch {} process.exit(0); }, Number(process.env.FUIGO_FAKE_EXIT_DELAY_MS ?? 0));
+// FUIGO_FAKE_HARD_KILL=1: SIGTERM is a hard kill with no cleanup (Windows taskkill /F).
+if (process.env.FUIGO_FAKE_HARD_KILL === "1") process.on("SIGTERM", () => { setTimeout(() => process.kill(process.pid, "SIGKILL"), Number(process.env.FUIGO_FAKE_EXIT_DELAY_MS ?? 0)); });
+else if (process.env.FUIGO_FAKE_EXIT_DELAY_MS) { process.on("SIGTERM", releaseAndExit); process.stdin.on("end", releaseAndExit); }
+let busyLoads = Number(process.env.FUIGO_FAKE_LOAD_BUSY ?? 0);
 const reconnected = {};
 let buf = "";
 process.stdin.on("data", (d) => {
@@ -191,6 +223,8 @@ process.stdin.on("data", (d) => {
     if (m.method === "initialize") ok({ protocolVersion: 1, authMethods: [{ id: "fuigo.api_key" }], ...(process.env.FUIGO_FAKE_RETRY_DISCARD ? { agentCapabilities: { _meta: { "fuigo/capabilities": { retryDiscard: { version: 1 } } } } } : {}) });
     else if (m.method === "authenticate") ok({});
     else if (m.method === "session/new") {
+      holdLock();
+      if (process.env.FUIGO_FAKE_DUMP_DIR) appendFileSync(join(process.env.FUIGO_FAKE_DUMP_DIR, "news.log"), "new\\n");
       if (process.env.FUIGO_FAKE_DUMP_DIR) writeFileSync(join(process.env.FUIGO_FAKE_DUMP_DIR, "session.json"), JSON.stringify(m.params));
       const hasMcp = Array.isArray(m.params?.mcpServers) && m.params.mcpServers.length > 0;
       if (hasMcp) send({ jsonrpc: "2.0", method: "_fuigo/mcp/init_progress", params: { sessionId: SID, total: 1, connected: 0 } });
@@ -221,6 +255,15 @@ process.stdin.on("data", (d) => {
       }
     }
     else if (m.method === "session/load") {
+      if (process.env.FUIGO_FAKE_DUMP_DIR) appendFileSync(join(process.env.FUIGO_FAKE_DUMP_DIR, "load-attempts.log"), "load\\n");
+      if (busyLoads > 0 || lockHeld()) {
+        busyLoads -= 1;
+        const busyMessage = "This session is open in another Fuigo window. Close it there, or turn on the shared leader (--leader) to use it from several windows.";
+        // 1.0.30's real shape: generic -32603, data.error_kind in snake_case, data.message, data.verdicts all false.
+        send({ jsonrpc: "2.0", id: m.id, error: { code: -32603, message: busyMessage, ...(process.env.FUIGO_FAKE_TEXT_ONLY === "1" ? {} : { data: { error_kind: "session_unavailable", message: busyMessage, verdicts: { retryable: false, auth: false } } }) } });
+        continue;
+      }
+      holdLock();
       // A session this process already holds (the pool's reuse, #1575):
       // re-applied servers are announced again, as 1.0.20 does.
       if (process.env.FUIGO_FAKE_DUMP_DIR) appendFileSync(join(process.env.FUIGO_FAKE_DUMP_DIR, "loads.log"), JSON.stringify(m.params) + "\\n");
@@ -1436,7 +1479,7 @@ describe("fuigo waits for MCP readiness before the first prompt", () => {
   it("(k) connected apps 'ready' by status but still on the stand-in list: reconnected once, and the bot is not told they are unavailable", async () => {
     process.env.MURAGE_MCP_RECONNECT_WAIT_MS = "800";
     const dir = mkdtempSync(join(tmpdir(), "murage-standin-"));
-    onTestFinished(() => rmSync(dir, { recursive: true, force: true }));
+    onTestFinished(() => removeTempDirSync(dir));
     const identity = "d".repeat(32);
     const threadId = `t-fuigo-standin-${Date.now()}`;
     markMountIncomplete({ cache: cacheEnvFromProcess({ MURAGE_CONNECTOR_TOOLS_CACHE_DIR: dir }), identity, revision: "rev-1", thread: threadId });
@@ -1454,7 +1497,7 @@ describe("fuigo waits for MCP readiness before the first prompt", () => {
 
   it("(k2) connected apps 'ready' with a real list (no marker): no reconnect", async () => {
     const dir = mkdtempSync(join(tmpdir(), "murage-standin-"));
-    onTestFinished(() => rmSync(dir, { recursive: true, force: true }));
+    onTestFinished(() => removeTempDirSync(dir));
     const composio = { composio: { command: process.execPath, args: ["/fake/composio-mcp.js"], env: { MURAGE_CONNECTOR_IDENTITY: "e".repeat(32), MURAGE_CONNECTOR_REVISION: "rev-1", MURAGE_CONNECTOR_TOOLS_CACHE_DIR: dir } } } as unknown as NonNullable<SendTurnInput["integrations"]>;
     const { threadId, turnId } = await start({ FUIGO_FAKE_MCP: "ready", FUIGO_FAKE_MCP_LIST: JSON.stringify({ murage_connectors: "ready" }) }, composio);
     expect(await recorder!.until((e) => e.type === "turn.completed")).toMatchObject({ ok: true });
@@ -1888,4 +1931,138 @@ describe("steer (fuigo/interject)", () => {
     expect(interjects()[0]).toMatchObject({ interjectionId: "steer-id-7" });
     await recorder!.until((e) => e.type === "turn.completed", 15_000);
   }, 20_000);
+});
+
+describe("a session open in only one Fuigo process (1.0.30)", () => {
+  const lines = (name: string) => { try { return readFileSync(join(dumps, name), "utf8").split("\n").filter(Boolean); } catch { return []; } };
+  const twoTurns = async (environment: Record<string, string>) => {
+    delete process.env.MURAGE_ACP_POOL;
+    instance = await FuigoAgentDriver.create({
+      instanceId: "fuigo-lock",
+      displayName: "Fuigo",
+      environment: { HOME: home, FUIGO_FAKE_DUMP_DIR: dumps, ...environment },
+      enabled: true,
+      config: { cli: fakeCli, fullAuto: false },
+    });
+    recorder = recordEvents(instance.adapter);
+    const first = await instance.adapter.sendTurn({ threadId: "t-fuigo-lock", text: "one" });
+    await recorder.until((e) => e.type === "turn.completed" && e.turnId === first.turnId);
+    const second = await instance.adapter.sendTurn({ threadId: "t-fuigo-lock", text: "two", resumeCursor: "fake-fuigo-session" });
+    await recorder.until((e) => e.type === "turn.completed" && e.turnId === second.turnId);
+    return recorder.events.filter((e) => e.type === "item.started" && (e as { title?: string }).title === "Picked up this conversation in a fresh session");
+  };
+
+  it("back-to-back turns resume the same session when the old child exits late", async () => {
+    const notices = await twoTurns({ FUIGO_FAKE_LOCK_FILE: join(root, "session.lock"), FUIGO_FAKE_EXIT_DELAY_MS: "1500" });
+    expect(lines("news.log")).toHaveLength(1);
+    expect(notices).toHaveLength(0);
+  });
+
+  it("retries session/load once after a SessionUnavailable, then resumes", async () => {
+    const notices = await twoTurns({ FUIGO_FAKE_LOAD_BUSY: "1" });
+    expect(lines("load-attempts.log")).toHaveLength(2);
+    expect(lines("news.log")).toHaveLength(1);
+    expect(notices).toHaveLength(0);
+  });
+
+  it("a persistent SessionUnavailable retries once, then starts fresh with the normal notice and never the raw text", async () => {
+    const notices = await twoTurns({ FUIGO_FAKE_LOAD_BUSY: "999" });
+    expect(lines("load-attempts.log")).toHaveLength(3); // first, after teardown, after the backoff
+    expect(lines("news.log")).toHaveLength(2);
+    expect(notices).toHaveLength(1);
+    expect(JSON.stringify(recorder!.events)).not.toMatch(/open in another Fuigo/i);
+  });
+
+  it("a hard-killed old child (taskkill /F, no cleanup) leaves no held lock: the session resumes", async () => {
+    const notices = await twoTurns({ FUIGO_FAKE_LOCK_FILE: join(root, "session.lock"), FUIGO_FAKE_EXIT_DELAY_MS: "300", FUIGO_FAKE_HARD_KILL: "1" });
+    expect(lines("news.log")).toHaveLength(1);
+    expect(notices).toHaveLength(0);
+  });
+
+  it("the narrow text form (no structured kind) is still recognised for Fuigo", async () => {
+    const notices = await twoTurns({ FUIGO_FAKE_LOAD_BUSY: "1", FUIGO_FAKE_TEXT_ONLY: "1" });
+    expect(lines("load-attempts.log")).toHaveLength(2);
+    expect(notices).toHaveLength(0);
+  });
+
+  it("a lock freed 1.5 s after the old child exits is waited out by the one backoff retry", async () => {
+    const notices = await twoTurns({ FUIGO_FAKE_LOCK_FILE: join(root, "session.lock"), FUIGO_FAKE_EXIT_DELAY_MS: "300", FUIGO_FAKE_LOCK_LAG_MS: "1500" });
+    expect(lines("news.log")).toHaveLength(1);
+    expect(notices).toHaveLength(0);
+  });
+
+  // The lock is held by a separate holder for 6 s after the old child dies, so the second load (right after the
+  // teardown) is refused and the turn sits in the 3 s backoff. This holds whether the child died on SIGTERM or taskkill /F.
+  const untilLoads = async (n: number) => {
+    const deadline = Date.now() + 15_000;
+    while (Date.now() < deadline) {
+      try { if (lines("load-attempts.log").length >= n) return; } catch { /* not written yet */ }
+      await new Promise((r) => setTimeout(r, 25));
+    }
+    throw new Error("the fake never reached load attempt " + n);
+  };
+
+  it("Stop while the old session is still busy ends the turn: no third load", async () => {
+    delete process.env.MURAGE_ACP_POOL;
+    instance = await FuigoAgentDriver.create({
+      instanceId: "fuigo-lock-stop",
+      displayName: "Fuigo",
+      environment: { HOME: home, FUIGO_FAKE_DUMP_DIR: dumps, FUIGO_FAKE_LOCK_FILE: join(root, "session.lock"), FUIGO_FAKE_HOLD_AFTER_EXIT_MS: "6000" },
+      enabled: true,
+      config: { cli: fakeCli, fullAuto: false },
+    });
+    recorder = recordEvents(instance.adapter);
+    const first = await instance.adapter.sendTurn({ threadId: "t-fuigo-lock-stop", text: "one" });
+    await recorder.until((e) => e.type === "turn.completed" && e.turnId === first.turnId);
+    const second = await instance.adapter.sendTurn({ threadId: "t-fuigo-lock-stop", text: "two", resumeCursor: "fake-fuigo-session" });
+    await untilLoads(2); // the old child is gone, the new one has loaded twice and is now in the backoff
+    await instance.adapter.interruptTurn("t-fuigo-lock-stop", first.turnId);
+    await recorder.until((e) => e.type === "turn.completed" && e.turnId === second.turnId);
+    await new Promise((r) => setTimeout(r, 3500)); // longer than the 3 s backoff: a third load would have happened by now
+    expect(lines("spawns.log")).toHaveLength(2);
+    expect(lines("load-attempts.log")).toHaveLength(2);
+  });
+
+  it("Stop All while the old session is still busy fences the pending send: no third load", async () => {
+    delete process.env.MURAGE_ACP_POOL;
+    instance = await FuigoAgentDriver.create({
+      instanceId: "fuigo-lock-stopall",
+      displayName: "Fuigo",
+      environment: { HOME: home, FUIGO_FAKE_DUMP_DIR: dumps, FUIGO_FAKE_LOCK_FILE: join(root, "session.lock"), FUIGO_FAKE_HOLD_AFTER_EXIT_MS: "6000" },
+      enabled: true,
+      config: { cli: fakeCli, fullAuto: false },
+    });
+    recorder = recordEvents(instance.adapter);
+    const first = await instance.adapter.sendTurn({ threadId: "t-fuigo-stopall", text: "one" });
+    await recorder.until((e) => e.type === "turn.completed" && e.turnId === first.turnId);
+    const second = await instance.adapter.sendTurn({ threadId: "t-fuigo-stopall", text: "two", resumeCursor: "fake-fuigo-session" });
+    await untilLoads(2);
+    await instance.adapter.stopAll?.().catch(() => undefined);
+    await recorder.until((e) => e.type === "turn.completed" && e.turnId === second.turnId);
+    await new Promise((r) => setTimeout(r, 3500)); // longer than the 3 s backoff: a third load would have happened by now
+    expect(lines("spawns.log")).toHaveLength(2);
+    expect(lines("load-attempts.log")).toHaveLength(2);
+  });
+
+  // The lock is held until 4.5 s after the retire (2 s to exit + 2.5 s lag), past the first 3 s backoff retry, so only waiting
+  // for the retired pooled child (poolTeardowns) puts the retry after the release. Skipped on Windows: the child dies at once there (no SIGTERM handler).
+  it.skipIf(process.platform === "win32")("a retired pooled child that still holds the lock is waited for before the retry", async () => {
+    process.env.MURAGE_ACP_POOL = "1";
+    onTestFinished(() => { delete process.env.MURAGE_ACP_POOL; });
+    instance = await FuigoAgentDriver.create({
+      instanceId: "fuigo-lock-pool",
+      displayName: "Fuigo",
+      environment: { HOME: home, FUIGO_FAKE_DUMP_DIR: dumps, FUIGO_FAKE_LOCK_FILE: join(root, "session.lock"), FUIGO_FAKE_EXIT_DELAY_MS: "2000", FUIGO_FAKE_LOCK_LAG_MS: "2500" },
+      enabled: true,
+      config: { cli: fakeCli, fullAuto: false },
+    });
+    recorder = recordEvents(instance.adapter);
+    const first = await instance.adapter.sendTurn({ threadId: "t-fuigo-pool-lock", text: "one", model: "flux-auto" });
+    await recorder.until((e) => e.type === "turn.completed" && e.turnId === first.turnId);
+    const second = await instance.adapter.sendTurn({ threadId: "t-fuigo-pool-lock", text: "two", resumeCursor: "fake-fuigo-session", model: "flux-fast" }); // a changed spawn contract retires the idle child
+    await recorder.until((e) => e.type === "turn.completed" && e.turnId === second.turnId);
+    expect(lines("spawns.log")).toHaveLength(2);
+    expect(lines("news.log")).toHaveLength(1);
+    expect(recorder.events.filter((e) => e.type === "item.started" && (e as { title?: string }).title === "Picked up this conversation in a fresh session")).toHaveLength(0);
+  });
 });

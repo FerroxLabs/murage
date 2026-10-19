@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
-import { mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { mkdtempSync, readFileSync } from "node:fs";
 import { createServer } from "node:http";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -7,12 +7,13 @@ import { DatabaseSync } from "node:sqlite";
 import { afterEach, expect, it, vi } from "vitest";
 import { TranscriptReader, TRANSCRIPT_READ_PENDING } from "./transcript-read.ts";
 import { SPAWNED_PROXIES } from "./proxy-paths.ts";
+import { removeTempDirSync } from "./testing/cleanup.ts";
 
 const roots: string[] = [], readers: TranscriptReader[] = [];
 afterEach(async () => {
   await Promise.all(readers.splice(0).map(reader => reader.close()));
   vi.restoreAllMocks();
-  for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true });
+  for (const root of roots.splice(0)) removeTempDirSync(root);
 });
 function fixture() {
   const root = mkdtempSync(join(tmpdir(), "transcript-read-")); roots.push(root);
@@ -22,7 +23,7 @@ function fixture() {
     CREATE INDEX messages_at ON messages(at DESC);
     CREATE TABLE memory_sources(id TEXT PRIMARY KEY, message_id TEXT);
     CREATE TABLE memory_tombstones(target_type TEXT,target_id TEXT);
-    INSERT INTO messages VALUES('t','m',1,'user','text','remember this email','{"turnId":"turn"}');
+    INSERT INTO messages(thread_id,id,at,role,kind,text,json) VALUES('t','m',1,'user','text','remember this email','{"turnId":"turn"}');
     INSERT INTO memory_sources VALUES('s','m'); INSERT INTO memory_tombstones VALUES('source','s');`);
   db.close();
   return file;
