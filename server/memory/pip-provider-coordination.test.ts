@@ -2,18 +2,21 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import { readFileSync } from "node:fs";
 import { expect, it, vi } from "vitest";
+import { endsWithHandle } from "./handle-guard.ts";
 
 // Execute the server callback with offline dependencies; importing index starts a server.
 function fixture() {
   const source = readFileSync(new URL("../index.ts", import.meta.url), "utf8");
   const callback = source.slice(source.indexOf("onContinuity: async signal =>") + "onContinuity: ".length, source.indexOf(",onCompletedSource:async(jobId,signal)=>"));
   const run = vi.fn(), pending = vi.fn(async () => "bot");
-  const host = new Function("runPipReflect", "pipReflectPendingSliced", `
+  // both walks run through the closed-handle guard (1.0.3 L3, handle-guard.ts) on one open handle
+  const handle = { isOpen: true }, database = () => handle;
+  const host = new Function("runPipReflect", "pipReflectPendingSliced", "endsWithHandle", "database", `
     let providerConfigBusy = false, fenced = false, fluxMediaRequests = 0;
     const providerBankDispatchFenced = () => fenced, pipReflectDeps = {};
     return { dispatch: ${callback}, count: () => fluxMediaRequests,
       fence: (busy, bank) => { providerConfigBusy = busy; fenced = bank; } };
-  `)(run, pending) as { dispatch(signal: AbortSignal): Promise<unknown>; count(): number; fence(busy: boolean, bank: boolean): void };
+  `)(run, pending, endsWithHandle, database) as { dispatch(signal: AbortSignal): Promise<unknown>; count(): number; fence(busy: boolean, bank: boolean): void };
   return { ...host, run, pending };
 }
 

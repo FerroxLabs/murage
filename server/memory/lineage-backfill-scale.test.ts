@@ -5,13 +5,14 @@
 // chain per thread, each reply's set the one before it plus a few roots, so a walk that re-reads the chain per reply (or per slice)
 // costs the chain length every time. The rate (lines per second) on a history 5x larger stays within 2x of the smaller one.
 // WRITETIME_PROFILE=1 prints the functions that took the most time on the larger history.
-import { mkdirSync, rmSync } from "node:fs";
+import { mkdirSync } from "node:fs";
 import { Session } from "node:inspector";
 import { expect, it } from "vitest";
 import { DATA_DIR } from "../config.ts";
 import { closeDatabase, database } from "../database.ts";
 import { lineageBackfillSlice, lineageCertProgress, resetLineageBackfillForTest } from "./lineage-backfill.ts";
 import { buildLegacyHistory, markUpgraded } from "./testing/legacy-history-fixture.ts";
+import { removeTempDirSync } from "../testing/cleanup.ts";
 
 interface ProfileNode { id: number; callFrame: { functionName: string; url: string; lineNumber: number }; children?: number[] }
 
@@ -21,7 +22,7 @@ function post<T>(session: Session, method: string, params?: object): Promise<T> 
 
 async function backfillRate(lines: number, longThread: number, profile: boolean): Promise<{ messages: number; seconds: number; rate: number }> {
   closeDatabase(); resetLineageBackfillForTest();
-  rmSync(DATA_DIR, { recursive: true, force: true }); mkdirSync(DATA_DIR, { recursive: true });
+  removeTempDirSync(DATA_DIR); mkdirSync(DATA_DIR, { recursive: true });
   const db = database();
   buildLegacyHistory(db, { seed: 7, threads: 12, lines, longThread });
   const messages = Number(db.prepare("SELECT count(*) AS n FROM messages").get()!.n);

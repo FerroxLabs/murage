@@ -10,6 +10,8 @@ import { BOT_OPENERS, openerAt } from "../shared/bot-openers.ts";
 import { BOT_PROFILE_LIMITS } from "../shared/bot-profile.ts";
 import { resolveToolLabel } from "../shared/tool-activity.ts";
 import { DATA_DIR } from "./config.ts";
+import { flushCoalesced } from "./atomic.ts";
+import { usageMonthKey } from "../shared/usage-month.ts";
 import { closeDatabase, database, finishBackgroundUpgradeWorkNow } from "./database.ts";
 import type { ModelSelection } from "./contracts.ts";
 import * as mdb from "./message-db.ts";
@@ -18,12 +20,13 @@ import { canReach, isIndividualAssistant, isWorkspaceChief, Store, type BotRecor
 import { BROWSER_CHECKING_REASON, BROWSER_CHECK_FAILED_REASON, browserUnavailableActivityName } from "../shared/browser-unavailable.ts";
 import { TURN_INTERRUPTED_NOTE } from "./turn-outcome.ts";
 import { roomTranscript } from "../src/lib/room-transcript.ts";
+import { removeTempDirSync } from "./testing/cleanup.ts";
 
 const selection = (): ModelSelection => ({ instanceId: "claude", model: "claude-sonnet-5" });
 
 describe("Store", () => {
   beforeEach(() => {
-    rmSync(DATA_DIR, { recursive: true, force: true });
+    removeTempDirSync(DATA_DIR);
   });
 
   // Assert the SHAPE of the seed, never the sentence. Three tests in this
@@ -209,6 +212,33 @@ describe("Store", () => {
     expect(reloaded.taskByThread(bot.id, bot.threadId)?.usage).toEqual({ input: 100, output: 20, costUsd: 0.5, turns: 1 });
     reloaded.addTaskUsage(bot.id, bot.threadId, turn, "turn-b");
     expect(reloaded.taskByThread(bot.id, bot.threadId)?.usage).toEqual({ input: 200, output: 40, costUsd: 1, turns: 2 });
+  });
+
+  it("addTaskUsage keeps a per-bot bucket for the current month: two bots stay apart, a redelivery adds nothing, a restart keeps it, all-time totals still work", () => {
+    const store = new Store(selection);
+    const a = store.createBot();
+    const b = store.createBot();
+    const key = usageMonthKey();
+    store.addTaskUsage(a.id, a.threadId, { input: 100, output: 20, cachedInput: 40, costUsd: null }, "t1");
+    store.addTaskUsage(a.id, a.threadId, { input: 100, output: 20, cachedInput: 40, costUsd: null }, "t1");
+    store.addTaskUsage(a.id, a.threadId, { input: 10, output: 5, costUsd: null }, "t2");
+    store.addTaskUsage(b.id, b.threadId, { input: 7, output: 3, costUsd: null }, "t3");
+    expect(store.bot(a.id)?.usageMonths?.[key]).toMatchObject({ replies: 2, input: 110, output: 25, cachedInput: 40 });
+    expect(store.bot(b.id)?.usageMonths?.[key]).toMatchObject({ replies: 1, input: 7, output: 3 });
+    expect(store.taskByThread(a.id, a.threadId)?.usage).toMatchObject({ input: 110, output: 25, turns: 2 });
+    flushCoalesced();
+    const reloaded = new Store(selection);
+    expect(reloaded.bot(a.id)?.usageMonths?.[key]?.replies).toBe(2);
+  });
+
+  it("turn path cost: one usage write adds one bounded bucket update, never a scan of history", () => {
+    const store = new Store(selection);
+    const bot = store.createBot();
+    const save = vi.spyOn(store as unknown as { saveBots: (...args: unknown[]) => void }, "saveBots");
+    for (let i = 0; i < 50; i += 1) store.addTaskUsage(bot.id, bot.threadId, { input: 1, output: 1, costUsd: null }, `turn-${i}`);
+    expect(save).toHaveBeenCalledTimes(50);
+    for (const call of save.mock.calls) expect(call[1]).toEqual({ defer: true });
+    expect(Object.keys(store.bot(bot.id)?.usageMonths ?? {})).toHaveLength(1);
   });
 
   it("addTaskUsage accumulates settled-turn totals per task and survives a restart", () => {
@@ -657,6 +687,54 @@ describe("Store", () => {
     new Store(selection);
     const again: BotRecord[] = JSON.parse(readFileSync(botsFile, "utf8"));
     expect(again.find((candidate) => candidate.id === bot.id)?.alwaysAllow).toEqual(["Bash:git", "Read"]);
+  });
+
+  it("drops remembered grants that cover more than one action on load (1.0.3 app grant)", () => {
+    const store = new Store(selection);
+    const bot = store.createBot();
+    const botsFile = join(DATA_DIR, "bots.json");
+    const legacy: BotRecord[] = JSON.parse(readFileSync(botsFile, "utf8"));
+    const record = legacy.find((candidate) => candidate.id === bot.id)!;
+    // what "Always allow" on a Fuigo or Claude connected-app card saved before
+    record.alwaysAllow = [
+      "other", "Bash:git", "mcp__murage_connectors__APPS_MULTI_EXECUTE_TOOL", "app-action:GMAIL_FETCH_EMAILS",
+      "mcp__composio__COMPOSIO_REMOTE_BASH_TOOL", "mcp__murage_connectors__APPS_SEARCH_TOOLS", "use_tool",
+    ];
+    record.tasks![0]!.alwaysAllow = ["local-computer:other", "COMPOSIO_MULTI_EXECUTE_TOOL", "Read", "mcp__github__create_issue"];
+    // written by this lane's key builder, which marks the record (Rule 57b)
+    record.grantSchema = 2;
+    writeFileSync(botsFile, JSON.stringify(legacy));
+
+    const reloaded = new Store(selection);
+    const saved = (JSON.parse(readFileSync(botsFile, "utf8")) as BotRecord[]).find((candidate) => candidate.id === bot.id)!;
+    expect(saved.alwaysAllow).toEqual(["Bash:git", "app-action:GMAIL_FETCH_EMAILS", "mcp__murage_connectors__APPS_SEARCH_TOOLS"]);
+    expect(saved.tasks![0]!.alwaysAllow).toEqual(["Read", "mcp__github__create_issue"]);
+    expect(reloaded.taskByThread(bot.id, saved.tasks![0]!.threadId)?.alwaysAllow).toEqual(["Read", "mcp__github__create_issue"]);
+    new Store(selection);
+    const again = (JSON.parse(readFileSync(botsFile, "utf8")) as BotRecord[]).find((candidate) => candidate.id === bot.id)!;
+    expect(again.alwaysAllow).toEqual(saved.alwaysAllow);
+  });
+
+  it("drops every pre-schema-2 key of the three app shapes on load, and keeps schema-2 keys (T68, Rule 57b)", () => {
+    const store = new Store(selection);
+    const bot = store.createBot();
+    const other = store.createBot();
+    const botsFile = join(DATA_DIR, "bots.json");
+    const legacy: BotRecord[] = JSON.parse(readFileSync(botsFile, "utf8"));
+    const appKeys = ["app-action:GMAIL_SEND_EMAIL", "acp-tool:mcp:github__create_issue", "acp-tool:v2:custom%3Agh/create%5Fissue", "mcp__murage_connectors__APPS_SEARCH_TOOLS", "local-computer:app-action:SLACK_SEND_MESSAGE"];
+    const unmarked = legacy.find((candidate) => candidate.id === bot.id)!;
+    unmarked.alwaysAllow = ["Bash:git", ...appKeys];
+    unmarked.tasks![0]!.alwaysAllow = ["Read", "app-action:GMAIL_FETCH_EMAILS"];
+    const marked = legacy.find((candidate) => candidate.id === other.id)!;
+    marked.alwaysAllow = ["Bash:git", "app-action:GMAIL_SEND_EMAIL", "mcp__murage_connectors__APPS_SEARCH_TOOLS"];
+    marked.grantSchema = 2;
+    writeFileSync(botsFile, JSON.stringify(legacy));
+
+    new Store(selection);
+    const saved = JSON.parse(readFileSync(botsFile, "utf8")) as BotRecord[];
+    expect(saved.find((candidate) => candidate.id === bot.id)!.alwaysAllow).toEqual(["Bash:git"]);
+    expect(saved.find((candidate) => candidate.id === bot.id)!.tasks![0]!.alwaysAllow).toEqual(["Read"]);
+    expect(saved.find((candidate) => candidate.id === other.id)!.alwaysAllow).toEqual(["Bash:git", "app-action:GMAIL_SEND_EMAIL", "mcp__murage_connectors__APPS_SEARCH_TOOLS"]);
   });
 
   it("persists a bot's effort level across a restart, defaulting to unset", () => {
@@ -1172,7 +1250,7 @@ describe("Store", () => {
       try {
         expect(() => store.deleteBot(doomed.id)).toThrow();
       } finally {
-        rmSync(botsFile, { recursive: true, force: true });
+        removeTempDirSync(botsFile);
         writeFileSync(botsFile, original);
       }
       // nothing was dismembered: record still listed, transcript and
@@ -1183,6 +1261,45 @@ describe("Store", () => {
       expect(existsSync(workspace)).toBe(true);
       expect(store.deleteBot(doomed.id)).toBe(true);
       expect(new Store(selection).bot(doomed.id)).toBeNull();
+    });
+
+    it("a releaseBotState that throws leaves the bot, its transcript and its workspace untouched", () => {
+      const store = new Store(selection);
+      const doomed = store.createBot({ name: "Doomed" }, { seedMessages: false });
+      store.appendMessage(doomed.threadId, { role: "user", kind: "text", text: "still here" });
+      const workspace = join(DATA_DIR, "workspaces", doomed.id);
+      mkdirSync(workspace, { recursive: true });
+      const release = vi.fn(() => { throw new Error("Cloud bot state is in use"); });
+      store.releaseBotState = release;
+      expect(() => store.deleteBot(doomed.id)).toThrow("Cloud bot state is in use");
+      expect(release).toHaveBeenCalledTimes(1);
+      expect(store.bot(doomed.id)).toBeTruthy();
+      expect(new Store(selection).bot(doomed.id)).toBeTruthy();
+      expect(store.messagesFor(doomed.threadId).map((m) => m.text)).toEqual(["still here"]);
+      expect(existsSync(workspace)).toBe(true);
+    });
+
+    it("calls releaseBotState exactly once with the id, before the bot disappears", () => {
+      const store = new Store(selection);
+      const doomed = store.createBot({ name: "Doomed" }, { seedMessages: false });
+      const seen: Array<{ id: string; stillListed: boolean }> = [];
+      store.releaseBotState = (id) => { seen.push({ id, stillListed: store.bot(id) !== null }); };
+      expect(store.deleteBot(doomed.id)).toBe(true);
+      expect(seen).toEqual([{ id: doomed.id, stillListed: true }]);
+      expect(store.bot(doomed.id)).toBeNull();
+      // an unknown id never reaches the hook
+      expect(store.deleteBot(doomed.id)).toBe(false);
+      expect(seen).toHaveLength(1);
+    });
+
+    it("createBot asks botIdGuard about the fresh id and creates nothing when it throws", () => {
+      const store = new Store(selection);
+      const before = store.bots.length;
+      const guard = vi.fn((_id: string) => { throw new Error("tombstoned"); });
+      store.botIdGuard = guard;
+      expect(() => store.createBot({ name: "Nope" }, { seedMessages: false })).toThrow("tombstoned");
+      expect(guard).toHaveBeenCalledTimes(1);
+      expect(store.bots).toHaveLength(before);
     });
 
     it("is idempotent: a second delete finds nothing and changes nothing", () => {
@@ -1224,7 +1341,7 @@ describe("Store", () => {
 // settings, and went through the atomic writer with no mode (0644).
 describe.skipIf(process.platform === "win32")("Store registry file modes", () => {
   beforeEach(() => {
-    rmSync(DATA_DIR, { recursive: true, force: true });
+    removeTempDirSync(DATA_DIR);
   });
 
   it("writes bots.json and groups.json owner only", () => {
@@ -1244,7 +1361,7 @@ describe.skipIf(process.platform === "win32")("Store registry file modes", () =>
 
 describe("Store change stream", () => {
   beforeEach(() => {
-    rmSync(DATA_DIR, { recursive: true, force: true });
+    removeTempDirSync(DATA_DIR);
   });
 
   const record = (store: Store) => {
@@ -1360,7 +1477,7 @@ describe("Store change stream", () => {
     expect(store.group(g.id)?.unread).toBe(true);
     store.deleteGroup(g.id);
     expect(events).toContainEqual({ type: "thread.deleted", threadId: g.threadId });
-    expect(events.at(-1)).toEqual({ type: "group.deleted", groupId: g.id });
+    expect(events.at(-1)).toEqual({ type: "group.deleted", groupId: g.id, group: expect.objectContaining({ id: g.id, name: "ops" }) });
   });
 
   it("delivers each change to the listener snapshot captured before emission", () => {
@@ -1393,7 +1510,7 @@ describe("Store change stream", () => {
 
 describe("Store bot activity state", () => {
   beforeEach(() => {
-    rmSync(DATA_DIR, { recursive: true, force: true });
+    removeTempDirSync(DATA_DIR);
   });
 
   it("derives busy from activity, so every existing busy reader keeps working", () => {
@@ -1437,7 +1554,7 @@ describe("Store bot activity state", () => {
 
 describe("Store redacts bot-authored secrets on write", () => {
   beforeEach(() => {
-    rmSync(DATA_DIR, { recursive: true, force: true });
+    removeTempDirSync(DATA_DIR);
   });
 
   it("preserves bounded runtime details across reload and redacts credentials", () => {
@@ -1656,7 +1773,7 @@ describe("Store redacts bot-authored secrets on write", () => {
 
 describe("Store task usage", () => {
   beforeEach(() => {
-    rmSync(DATA_DIR, { recursive: true, force: true });
+    removeTempDirSync(DATA_DIR);
   });
 
   it("banks each turn's tokens and cost on the task, counting turns", () => {
@@ -1700,7 +1817,7 @@ describe("Store task usage", () => {
 
 describe("Store task working folder", () => {
   beforeEach(() => {
-    rmSync(DATA_DIR, { recursive: true, force: true });
+    removeTempDirSync(DATA_DIR);
   });
 
   it("pins the bot's folder onto a task on its first turn, and never again", () => {
@@ -1749,7 +1866,7 @@ describe("Store task working folder", () => {
 
 describe("Store room working folder", () => {
   beforeEach(() => {
-    rmSync(DATA_DIR, { recursive: true, force: true });
+    removeTempDirSync(DATA_DIR);
   });
 
   it("pins the room's folder on its first turn, and never again", () => {
@@ -1784,7 +1901,7 @@ describe("Store room working folder", () => {
 
 describe("Store task working folder — cloud runs", () => {
   beforeEach(() => {
-    rmSync(DATA_DIR, { recursive: true, force: true });
+    removeTempDirSync(DATA_DIR);
   });
   it("a cloud run pins the default so the bot's host folder never shows for that task", () => {
     const store = new Store(selection);
@@ -1989,7 +2106,7 @@ describe("canReach — individual assistants", () => {
 
 describe("Store.setIndividual", () => {
   beforeEach(() => {
-    rmSync(DATA_DIR, { recursive: true, force: true });
+    removeTempDirSync(DATA_DIR);
   });
 
   it("marks a bot as working alone under the Chief, and persists it", () => {
@@ -2071,7 +2188,7 @@ describe("Store.setIndividual", () => {
 
 describe("Store.setChiefOfStaff scope", () => {
   beforeEach(() => {
-    rmSync(DATA_DIR, { recursive: true, force: true });
+    removeTempDirSync(DATA_DIR);
   });
 
   const team = (store: Store) => {
@@ -2204,7 +2321,7 @@ describe("Store.setChiefOfStaff scope", () => {
 
 describe("Store.workspaceChief", () => {
   beforeEach(() => {
-    rmSync(DATA_DIR, { recursive: true, force: true });
+    removeTempDirSync(DATA_DIR);
   });
 
   it("is null in a workspace that has never elected one", () => {
@@ -2248,7 +2365,7 @@ describe("Store.workspaceChief", () => {
 
 describe("a team's first lead", () => {
   beforeEach(() => {
-    rmSync(DATA_DIR, { recursive: true, force: true });
+    removeTempDirSync(DATA_DIR);
   });
 
   it("is elected at SECTION scope, never at the workspace tier", () => {
@@ -2287,7 +2404,7 @@ describe("a team's first lead", () => {
 // honest again before any client reads it.
 describe("Store.reconcileInterruptedGroupGoals", () => {
   beforeEach(() => {
-    rmSync(DATA_DIR, { recursive: true, force: true });
+    removeTempDirSync(DATA_DIR);
   });
 
   const seedWorkingGoal = (store: Store, threadId: string, runId: string) =>
@@ -2486,7 +2603,7 @@ describe("Store bounded message pages", () => {
 
   beforeEach(() => {
     mdb.closeMessageDb();
-    rmSync(DATA_DIR, { recursive: true, force: true });
+    removeTempDirSync(DATA_DIR);
     mkdirSync(DATA_DIR, { recursive: true });
   });
 

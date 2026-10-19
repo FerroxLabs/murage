@@ -94,7 +94,7 @@ import { fixtureDumpEnvironment } from "./fixture-dump.ts";
 import { fakeReviewReply } from "./fake-review.ts";
 import { callFirstCustomTool, customToolReply, customToolServer } from "./fake-custom-tool.ts";
 import { spawn } from "node:child_process";
-import { appendFileSync, existsSync, mkdirSync, readFileSync, realpathSync, unlinkSync, writeFileSync } from "node:fs";
+import { appendFileSync, existsSync, mkdirSync, readdirSync, readFileSync, realpathSync, unlinkSync, writeFileSync } from "node:fs";
 import { dirname, join, sep } from "node:path";
 
 const mode = process.env.FAKE_CLAUDE_MODE ?? "happy";
@@ -248,7 +248,7 @@ if (argAfter("--output-format") === "text" || (argv.includes("-p") && argAfter("
   if (process.env.FAKE_CLAUDE_DUMP) {
     writeFileSync(
       process.env.FAKE_CLAUDE_DUMP,
-      JSON.stringify({ pid: process.pid, argv, env: fixtureDumpEnvironment(), prompt, mcpConfig: null }, null, 2),
+      JSON.stringify({ pid: process.pid, argv, env: fixtureDumpEnvironment(), prompt, mcpConfig: null, cwd: process.cwd(), cwdEntries: readdirSync(process.cwd()) }, null, 2),
     );
   }
   if (process.env.FAKE_CLAUDE_REVIEW_LOG) appendFileSync(process.env.FAKE_CLAUDE_REVIEW_LOG, "one-shot\n");
@@ -264,6 +264,11 @@ if (argAfter("--output-format") === "text" || (argv.includes("-p") && argAfter("
   // a launch-flag refusal before a nonzero exit (that is not a refusal of Murage's flags)
   if (process.env.FAKE_CLAUDE_ONE_SHOT_FAIL === "after-init") {
     process.stderr.write("error: unknown option '--settings'\n", () => process.exit(1));
+    await new Promise(() => {});
+  }
+  // FAKE_CLAUDE_ONE_SHOT_ERROR: the one-shot ends in an error result with this text (a usage limit, a signed-out login)
+  if (process.env.FAKE_CLAUDE_ONE_SHOT_ERROR) {
+    process.stdout.write(JSON.stringify({ type: "result", subtype: "error", is_error: true, result: process.env.FAKE_CLAUDE_ONE_SHOT_ERROR }) + "\n", () => process.exit(1));
     await new Promise(() => {});
   }
   process.stdout.write(JSON.stringify({ type: "result", subtype: "success", is_error: false, result: answer }) + "\n", () => process.exit(0));

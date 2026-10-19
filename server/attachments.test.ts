@@ -1,38 +1,35 @@
 // attachments.ts: save + read-back, the mime allowlist, size ceiling, and
 // the name-lock that keeps the serving route inside the attachments dir.
-import {
-  existsSync,
-  mkdirSync,
-  mkdtempSync,
-  readFileSync,
-  readdirSync,
-  rmSync,
-  statSync,
-  truncateSync,
-  unlinkSync,
-  utimesSync,
-  writeFileSync,
-} from "node:fs";
+import { createHash } from "node:crypto";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, statSync, truncateSync, unlinkSync, utimesSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
-import { link, unlink } from "node:fs/promises";
+import { dirname, join } from "node:path";
+import { link, open, unlink } from "node:fs/promises";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { removeTempDirSync } from "./testing/cleanup.ts";
 
 vi.mock("node:fs/promises", async (importOriginal) => {
   const fs = await importOriginal<typeof import("node:fs/promises")>();
-  return { ...fs, link: vi.fn(fs.link), unlink: vi.fn(fs.unlink) };
+  return { ...fs, link: vi.fn(fs.link), unlink: vi.fn(fs.unlink), open: vi.fn(fs.open) };
 });
 vi.mock("node:fs", async (importOriginal) => {
   const fs = await importOriginal<typeof import("node:fs")>();
-  return { ...fs, unlinkSync: vi.fn(fs.unlinkSync), readdirSync: vi.fn(fs.readdirSync) };
+  return { ...fs, unlinkSync: vi.fn(fs.unlinkSync), readdirSync: vi.fn(fs.readdirSync), writeFileSync: vi.fn(fs.writeFileSync), mkdirSync: vi.fn(fs.mkdirSync) };
 });
 const realUnlink = (await vi.importActual<typeof import("node:fs/promises")>("node:fs/promises")).unlink;
 const realLink = (await vi.importActual<typeof import("node:fs/promises")>("node:fs/promises")).link;
-const realUnlinkSync = (await vi.importActual<typeof import("node:fs")>("node:fs")).unlinkSync;
+const realOpen = (await vi.importActual<typeof import("node:fs/promises")>("node:fs/promises")).open;
+const actualFs = await vi.importActual<typeof import("node:fs")>("node:fs");
+const realUnlinkSync = actualFs.unlinkSync;
+const realWriteFileSync = actualFs.writeFileSync;
+const realMkdirSync = actualFs.mkdirSync;
 afterEach(() => {
+  vi.mocked(open).mockReset().mockImplementation(realOpen);
+  vi.mocked(writeFileSync).mockReset().mockImplementation(realWriteFileSync);
   vi.mocked(unlink).mockReset().mockImplementation(realUnlink);
   vi.mocked(link).mockReset().mockImplementation(realLink);
   vi.mocked(unlinkSync).mockReset().mockImplementation(realUnlinkSync);
+  vi.mocked(mkdirSync).mockReset().mockImplementation(realMkdirSync);
 });
 
 // The module reads DATA_DIR at import time, so the env var must be set
@@ -41,12 +38,11 @@ const DATA_ROOT = mkdtempSync(join(tmpdir(), "murage-attachments-"));
 process.env.MURAGE_DATA_DIR = join(DATA_ROOT, "data");
 
 const {
-  ATTACHMENTS_DIR,
-  ATTACHMENTS_MAX_BYTES,
   ATTACHMENT_PARTIAL_MAX_AGE_MS,
   FILE_MAX_BYTES,
   IMAGE_MAX_BYTES,
   __resetAttachmentAccountingForTests,
+  attachmentStorageUsage,
   cleanupStaleAttachmentPartials,
   deleteAttachment,
   extensionForFileMime,
@@ -56,16 +52,43 @@ const {
   saveFile,
   saveImage,
   saveImageUpload,
+  writeNewReceiptImage,
   savedAsNewFile,
   validateAttachmentUploadId,
 } = await import("./attachments.ts");
+const { storedPathOf } = await import("./attachment-read.ts");
+const ATTACHMENTS_DIR = dirname(storedPathOf((await import("./attachments.ts")).ATTACHMENTS_HOME, "x.png"));
+const { DISK_FLOOR_BYTES, __resetOutstandingBytesForTests, __setFreeDiskProbeForTests, outstandingBytes } = await import("./disk-space.ts");
+const { DISK_FULL_MESSAGE, DISK_UNKNOWN_MESSAGE } = await import("../shared/attachment-storage.ts");
+
+/** The room a modelled disk has above the floor in the quota-shaped tests.
+ * 1.0.3: there is no fixed attachment total any more; these tests keep their
+ * shape against a disk whose free space shrinks with what the folder holds. */
+const TEST_ROOM = 512 * 1024 * 1024;
+const NO_ROOM = /almost out of disk space/;
+/** Free bytes on a disk holding only this folder: apparent sizes, each inode
+ * once (a committed file and its not-yet-removed partial are one link). */
+function modelledDiskFree(): number {
+  let used = 0;
+  const seen = new Set<number>();
+  try {
+    for (const name of actualFs.readdirSync(ATTACHMENTS_DIR)) {
+      try {
+        const stat = actualFs.statSync(join(ATTACHMENTS_DIR, name));
+        if (!stat.isFile() || seen.has(stat.ino)) continue;
+        seen.add(stat.ino); used += stat.size;
+      } catch { /* vanished */ }
+    }
+  } catch { /* no folder yet */ }
+  return DISK_FLOOR_BYTES + TEST_ROOM - used;
+}
 
 // The cache tracks committed bytes in memory; anything that mutates
 // ATTACHMENTS_DIR directly on disk (rmSync/truncateSync/writeFileSync, all
 // used below to force quota states without a real 512MiB file) must reset it
 // so the next quota check rescans instead of trusting stale counts.
 function resetDir() {
-  rmSync(ATTACHMENTS_DIR, { recursive: true, force: true });
+  removeTempDirSync(ATTACHMENTS_DIR);
   __resetAttachmentAccountingForTests();
 }
 
@@ -112,38 +135,44 @@ describe("saveImage", () => {
     }
   });
 
-  it("round-trips through readAttachment with the right mime", () => {
+  it("round-trips through readAttachment with the right mime", async () => {
     const saved = saveImage(Buffer.from("gif!"), "image/gif");
     const name = saved.path.split(/[\\/]/).pop()!;
-    const back = readAttachment(name);
-    expect(back?.bytes.toString()).toBe("gif!");
-    expect(back?.mime).toBe("image/gif");
+    const back = await readAttachment(name);
+    if (!back.ok) throw new Error(back.reason);
+    expect(back.bytes.toString()).toBe("gif!");
+    expect(back.mime).toBe("image/gif");
   });
 
-  it("tells a newly written upload from an idempotent retry that found the file", () => {
+  it("tells a newly written upload from an idempotent retry that found the file", async () => {
     const uploadId = "33333333-3333-4333-8333-333333333333";
-    const first = saveImage(Buffer.from("pixels-N"), "image/png", uploadId);
-    const retry = saveImage(Buffer.from("pixels-N"), "image/png", uploadId);
+    const first = await saveImageUpload(Buffer.from("pixels-N"), "image/png", uploadId);
+    const retry = await saveImageUpload(Buffer.from("pixels-N"), "image/png", uploadId);
     expect(savedAsNewFile(first)).toBe(true);
     expect(savedAsNewFile(retry)).toBe(false);
     expect(savedAsNewFile(saveImage(Buffer.from("pixels-M"), "image/png"))).toBe(true);
   });
 
-  it("names the bytes it read with a version that changes when a reused name gets other bytes", () => {
+  it("names the bytes it read with a version that changes when a reused name gets other bytes", async () => {
     const uploadId = "22222222-2222-4222-8222-222222222222";
-    const saved = saveImage(Buffer.from("pixels-A"), "image/png", uploadId);
+    const saved = await saveImageUpload(Buffer.from("pixels-A"), "image/png", uploadId);
     const name = saved.path.split(/[\\/]/).pop()!;
-    const first = readAttachment(name);
-    expect(first?.version).toMatch(/^8:[0-9a-f]{32}$/);
+    const first = await readAttachment(name);
+    if (!first.ok) throw new Error(first.reason);
+    expect(first.version).toMatch(/^8:[0-9a-f]{32}$/);
+    // the same digits as 1.0.2: size, then the first 32 hex of the sha256
+    expect(first.version).toBe(`8:${createHash("sha256").update("pixels-A").digest("hex").slice(0, 32)}`);
     // Read again, unchanged: the same version, so a cached thumbnail is reused.
-    expect(readAttachment(name)?.version).toBe(first?.version);
+    const again = await readAttachment(name);
+    expect(again.ok && again.version).toBe(first.version);
     // Deleted with its message, then saved again under the same uploadId with
     // other bytes of the same length: the thumbnail cache must not match.
     deleteAttachment(saved.path);
-    saveImage(Buffer.from("pixels-B"), "image/png", uploadId);
-    const second = readAttachment(name);
-    expect(second?.bytes.toString()).toBe("pixels-B");
-    expect(second?.version).not.toBe(first?.version);
+    await saveImageUpload(Buffer.from("pixels-B"), "image/png", uploadId);
+    const second = await readAttachment(name);
+    if (!second.ok) throw new Error(second.reason);
+    expect(second.bytes.toString()).toBe("pixels-B");
+    expect(second.version).not.toBe(first.version);
     deleteAttachment(saved.path);
   });
 
@@ -153,14 +182,14 @@ describe("saveImage", () => {
     expect(() => saveImage(Buffer.alloc(IMAGE_MAX_BYTES + 1), "image/png")).toThrow(/too large/);
   });
 
-  it("makes UUID-keyed image retries idempotent without changing legacy callers", () => {
-    const first = saveImage(Buffer.from("same"), "image/png", UPLOAD_A);
-    const retry = saveImage(Buffer.from("same"), "image/png", UPLOAD_A.toUpperCase());
+  it("makes UUID-keyed image retries idempotent without changing legacy callers", async () => {
+    const first = await saveImageUpload(Buffer.from("same"), "image/png", UPLOAD_A);
+    const retry = await saveImageUpload(Buffer.from("same"), "image/png", UPLOAD_A.toUpperCase());
     expect(retry).toEqual(first);
     expect(readdirSync(ATTACHMENTS_DIR).filter((name) => !name.startsWith("."))).toEqual([`${UPLOAD_A}.png`]);
 
-    expect(() => saveImage(Buffer.from("different"), "image/png", UPLOAD_A)).toThrow(/different image bytes/);
-    expect(() => saveImage(Buffer.from("same"), "image/jpeg", UPLOAD_A)).toThrow(/another content type/);
+    await expect(saveImageUpload(Buffer.from("different"), "image/png", UPLOAD_A)).rejects.toThrow(/different image bytes/);
+    await expect(saveImageUpload(Buffer.from("same"), "image/jpeg", UPLOAD_A)).rejects.toThrow(/another content type/);
 
     const legacyOne = saveImage(Buffer.from("same"), "image/png");
     const legacyTwo = saveImage(Buffer.from("same"), "image/png");
@@ -178,14 +207,17 @@ describe("saveImage", () => {
 describe("aggregate attachment storage", () => {
   beforeEach(() => {
     resetDir();
+    __setFreeDiskProbeForTests(() => modelledDiskFree());
   });
   afterEach(() => {
     resetDir();
+    __setFreeDiskProbeForTests(undefined);
+    __resetOutstandingBytesForTests();
   });
 
   it("rejects new data at the aggregate ceiling without pruning committed attachments", () => {
     const referenced = saveImage(Buffer.from("x"), "image/png");
-    truncateSync(referenced.path, ATTACHMENTS_MAX_BYTES);
+    truncateSync(referenced.path, TEST_ROOM);
     __resetAttachmentAccountingForTests();
 
     try {
@@ -193,29 +225,30 @@ describe("aggregate attachment storage", () => {
       throw new Error("expected quota rejection");
     } catch (error) {
       expect(error).toMatchObject({ status: 507 });
-      expect(error).toHaveProperty("message", expect.stringMatching(/no more room for attachments/));
+      expect(error).toHaveProperty("message", DISK_FULL_MESSAGE);
+      expect(error).toMatchObject({ code: "disk-full" });
     }
     expect(existsSync(referenced.path)).toBe(true);
-    expect(statSync(referenced.path).size).toBe(ATTACHMENTS_MAX_BYTES);
+    expect(statSync(referenced.path).size).toBe(TEST_ROOM);
     expect(readdirSync(ATTACHMENTS_DIR)).toEqual([referenced.path.split(/[\\/]/).pop()!]);
   });
 
   it("counts concurrent reservations so uploads cannot race past the ceiling", async () => {
     const existing = saveImage(Buffer.from("x"), "image/png");
-    truncateSync(existing.path, ATTACHMENTS_MAX_BYTES - 5);
+    truncateSync(existing.path, TEST_ROOM - 5);
     __resetAttachmentAccountingForTests();
 
     const first = saveFile((async function* () {
       yield Buffer.from("four");
     })(), "first.txt", "text/plain", { expectedBytes: 4 });
 
-    expect(() => saveImage(Buffer.from("xx"), "image/png")).toThrow(/no more room for attachments/);
+    expect(() => saveImage(Buffer.from("xx"), "image/png")).toThrow(NO_ROOM);
     await expect(first).resolves.toMatchObject({ bytes: 4 });
   });
 
   it("lets an unknown-length stream use the exact space left below a reservation increment", async () => {
     const existing = saveImage(Buffer.from("x"), "image/png");
-    truncateSync(existing.path, ATTACHMENTS_MAX_BYTES - 2);
+    truncateSync(existing.path, TEST_ROOM - 2);
     __resetAttachmentAccountingForTests();
 
     const saved = await saveFile((async function* () {
@@ -227,7 +260,7 @@ describe("aggregate attachment storage", () => {
 
   it("releases reservations and removes partials after failed uploads", async () => {
     const existing = saveImage(Buffer.from("x"), "image/png");
-    truncateSync(existing.path, ATTACHMENTS_MAX_BYTES - 3);
+    truncateSync(existing.path, TEST_ROOM - 3);
     __resetAttachmentAccountingForTests();
 
     await expect(saveFile((async function* () {})(), "empty.txt", "text/plain", { expectedBytes: 3 }))
@@ -237,7 +270,7 @@ describe("aggregate attachment storage", () => {
   });
 
   it("cleans only stale upload partials, never committed or active-looking files", () => {
-    saveImage(Buffer.from("kept"), "image/png", UPLOAD_A);
+    writeNewReceiptImage(Buffer.from("kept"), "image/png", UPLOAD_A, IMAGE_MAX_BYTES);
     const stale = `${ATTACHMENTS_DIR}/.murage-upload-${UPLOAD_A}-${UPLOAD_B}.partial`;
     const fresh = `${ATTACHMENTS_DIR}/.murage-upload-${UPLOAD_B}-${UPLOAD_A}.partial`;
     const unrelated = `${ATTACHMENTS_DIR}/notes.partial`;
@@ -257,12 +290,12 @@ describe("aggregate attachment storage", () => {
 
   it("counts fresh crash leftovers against quota, then reclaims them when stale", () => {
     const existing = saveImage(Buffer.from("x"), "image/png");
-    truncateSync(existing.path, ATTACHMENTS_MAX_BYTES - 2);
+    truncateSync(existing.path, TEST_ROOM - 2);
     __resetAttachmentAccountingForTests();
     const orphan = `${ATTACHMENTS_DIR}/.murage-upload-${UPLOAD_A}-${UPLOAD_B}.partial`;
     writeFileSync(orphan, "xx");
 
-    expect(() => saveImage(Buffer.from("y"), "image/png")).toThrow(/no more room for attachments/);
+    expect(() => saveImage(Buffer.from("y"), "image/png")).toThrow(NO_ROOM);
     const old = new Date(Date.now() - ATTACHMENT_PARTIAL_MAX_AGE_MS - 1_000);
     utimesSync(orphan, old, old);
     // Quota pressure still triggers cleanup, without scanning each MiB of a
@@ -273,7 +306,7 @@ describe("aggregate attachment storage", () => {
 
   it("reclaims an inactive partial immediately when its upload ID retries", async () => {
     const existing = saveImage(Buffer.from("x"), "image/png");
-    truncateSync(existing.path, ATTACHMENTS_MAX_BYTES - 3);
+    truncateSync(existing.path, TEST_ROOM - 3);
     __resetAttachmentAccountingForTests();
     const orphan = `${ATTACHMENTS_DIR}/.murage-upload-${UPLOAD_A}-${UPLOAD_B}.partial`;
     writeFileSync(orphan, "old");
@@ -287,9 +320,9 @@ describe("aggregate attachment storage", () => {
 
   it("frees quota after deleteAttachment, without a rescan, for a file the cache already knows about", () => {
     const first = saveImage(Buffer.from("x"), "image/png");
-    truncateSync(first.path, ATTACHMENTS_MAX_BYTES - 2);
+    truncateSync(first.path, TEST_ROOM - 2);
     __resetAttachmentAccountingForTests();
-    expect(() => saveImage(Buffer.from("yyy"), "image/png")).toThrow(/no more room for attachments/);
+    expect(() => saveImage(Buffer.from("yyy"), "image/png")).toThrow(NO_ROOM);
 
     deleteAttachment(first.path);
     expect(existsSync(first.path)).toBe(false);
@@ -300,7 +333,7 @@ describe("aggregate attachment storage", () => {
 
   it.each([1, 2])("counts a committed upload after %i partial-cleanup failures and an idempotent retry", async (failures) => {
     const existing = saveImage(Buffer.from("x"), "image/png");
-    truncateSync(existing.path, ATTACHMENTS_MAX_BYTES - 3);
+    truncateSync(existing.path, TEST_ROOM - 3);
     __resetAttachmentAccountingForTests();
     const cleanupError = Object.assign(new Error("partial file is locked"), { code: "EPERM" });
     for (let attempt = 0; attempt < failures; attempt++) {
@@ -317,12 +350,12 @@ describe("aggregate attachment storage", () => {
       .resolves.toMatchObject({ bytes: 2 });
     expect(readdirSync(ATTACHMENTS_DIR).some((name) => name.endsWith(".partial"))).toBe(false);
     expect(() => saveImage(Buffer.from("y"), "image/png")).not.toThrow();
-    expect(() => saveImage(Buffer.from("z"), "image/png")).toThrow(/no more room for attachments/);
+    expect(() => saveImage(Buffer.from("z"), "image/png")).toThrow(NO_ROOM);
   });
 
   it.each([1, 2])("counts an image after %i partial-cleanup failures and an idempotent retry", async (failures) => {
     const existing = saveImage(Buffer.from("x"), "image/png");
-    truncateSync(existing.path, ATTACHMENTS_MAX_BYTES - 3);
+    truncateSync(existing.path, TEST_ROOM - 3);
     __resetAttachmentAccountingForTests();
     for (let attempt = 0; attempt < failures; attempt++) {
       vi.mocked(unlinkSync).mockImplementationOnce(() => {
@@ -330,18 +363,18 @@ describe("aggregate attachment storage", () => {
       });
     }
 
-    expect(() => saveImage(Buffer.from("xx"), "image/png", UPLOAD_A)).toThrow("partial file is locked");
+    expect(() => writeNewReceiptImage(Buffer.from("xx"), "image/png", UPLOAD_A, IMAGE_MAX_BYTES)).toThrow("partial file is locked");
     expect(readFileSync(join(ATTACHMENTS_DIR, `${UPLOAD_A}.png`), "utf8")).toBe("xx");
     expect(readdirSync(ATTACHMENTS_DIR).filter((name) => name.endsWith(".partial"))).toHaveLength(failures - 1);
     await expect(saveImageUpload(Buffer.from("xx"), "image/png", UPLOAD_A)).resolves.toMatchObject({ bytes: 2 });
     expect(readdirSync(ATTACHMENTS_DIR).some((name) => name.endsWith(".partial"))).toBe(false);
     expect(() => saveImage(Buffer.from("y"), "image/png")).not.toThrow();
-    expect(() => saveImage(Buffer.from("z"), "image/png")).toThrow(/no more room for attachments/);
+    expect(() => saveImage(Buffer.from("z"), "image/png")).toThrow(NO_ROOM);
   });
 
   it("does not count an in-flight commit twice when cleanup failure causes a rescan", async () => {
     const existing = saveImage(Buffer.from("x"), "image/png");
-    truncateSync(existing.path, ATTACHMENTS_MAX_BYTES - 5);
+    truncateSync(existing.path, TEST_ROOM - 5);
     __resetAttachmentAccountingForTests();
     let markLinked!: () => void;
     let finishCommit!: () => void;
@@ -362,16 +395,16 @@ describe("aggregate attachment storage", () => {
           throw Object.assign(new Error("partial file is locked"), { code: "EPERM" });
         });
       }
-      expect(() => saveImage(Buffer.from("x"), "image/png", UPLOAD_B)).toThrow("partial file is locked");
+      expect(() => writeNewReceiptImage(Buffer.from("x"), "image/png", UPLOAD_B, IMAGE_MAX_BYTES)).toThrow("partial file is locked");
       // This scan sees the linked file while its commit callback is pending.
-      expect(() => saveImage(Buffer.from("y"), "image/png")).toThrow(/no more room for attachments/);
+      expect(() => saveImage(Buffer.from("y"), "image/png")).toThrow(NO_ROOM);
     } finally {
       finishCommit();
       await pending;
     }
     await saveImageUpload(Buffer.from("x"), "image/png", UPLOAD_B);
     expect(() => saveImage(Buffer.from("yy"), "image/png")).not.toThrow();
-    expect(() => saveImage(Buffer.from("z"), "image/png")).toThrow(/no more room for attachments/);
+    expect(() => saveImage(Buffer.from("z"), "image/png")).toThrow(NO_ROOM);
   });
 
   it("initializes correctly on a fresh process against a directory that already has files", () => {
@@ -382,9 +415,9 @@ describe("aggregate attachment storage", () => {
     mkdirSync(ATTACHMENTS_DIR, { recursive: true });
     const preexisting = join(ATTACHMENTS_DIR, "11111111-1111-4111-8111-111111111111.png");
     writeFileSync(preexisting, "x");
-    truncateSync(preexisting, ATTACHMENTS_MAX_BYTES - 2);
+    truncateSync(preexisting, TEST_ROOM - 2);
 
-    expect(() => saveImage(Buffer.from("yyy"), "image/png")).toThrow(/no more room for attachments/);
+    expect(() => saveImage(Buffer.from("yyy"), "image/png")).toThrow(NO_ROOM);
     expect(() => saveImage(Buffer.from("y"), "image/png")).not.toThrow();
   });
 
@@ -402,10 +435,10 @@ describe("aggregate attachment storage", () => {
   it("counts a stale partial whose cleanup is denied rather than freeing phantom quota", () => {
     mkdirSync(ATTACHMENTS_DIR, { recursive: true });
     const orphan = join(ATTACHMENTS_DIR, `.murage-upload-${UPLOAD_A}-${UPLOAD_B}.partial`);
-    writeFileSync(orphan, "x"); truncateSync(orphan, ATTACHMENTS_MAX_BYTES);
+    writeFileSync(orphan, "x"); truncateSync(orphan, TEST_ROOM);
     const old = new Date(Date.now() - ATTACHMENT_PARTIAL_MAX_AGE_MS - 1000); utimesSync(orphan, old, old);
     vi.mocked(unlinkSync).mockImplementation(() => { throw Object.assign(new Error("locked"), { code: "EPERM" }); });
-    expect(() => saveImage(Buffer.from("x"), "image/png")).toThrow(/no more room for attachments/);
+    expect(() => saveImage(Buffer.from("x"), "image/png")).toThrow(NO_ROOM);
     expect(existsSync(orphan)).toBe(true);
   });
 
@@ -423,12 +456,10 @@ describe("readAttachment name lock", () => {
     resetDir();
   });
 
-  it("refuses traversal, dotfiles, and names the saver never writes", () => {
-    expect(readAttachment("..%2F..%2Fconfig.json")).toBeNull();
-    expect(readAttachment(".env")).toBeNull();
-    expect(readAttachment("a/b.png")).toBeNull();
-    expect(readAttachment("no-extension")).toBeNull();
-    expect(readAttachment("uuid.jpeg")).toBeNull(); // saved as .jpg
+  it("refuses traversal, dotfiles, and names the saver never writes", async () => {
+    for (const name of ["..%2F..%2Fconfig.json", ".env", "a/b.png", "no-extension", "uuid.jpeg" /* saved as .jpg */]) {
+      expect(await readAttachment(name)).toEqual({ ok: false, reason: "missing" });
+    }
   });
 });
 
@@ -537,7 +568,8 @@ describe("shared files", () => {
 describe("attachment limit sentences", () => {
   it("say sizes in human units, never a raw byte count", async () => {
     const { ATTACHMENTS_FULL_MESSAGE, FILE_TOO_LARGE_MESSAGE, IMAGE_TOO_LARGE_MESSAGE, humanBytes } = await import("./attachments.ts");
-    expect(ATTACHMENTS_FULL_MESSAGE).toContain("512 MB");
+    // 1.0.3: the limit is the disk, so the refusal names no fixed size.
+    expect(ATTACHMENTS_FULL_MESSAGE).toBe(DISK_FULL_MESSAGE);
     expect(FILE_TOO_LARGE_MESSAGE).toContain("25 MB");
     expect(IMAGE_TOO_LARGE_MESSAGE).toContain("10 MB");
     for (const text of [ATTACHMENTS_FULL_MESSAGE, FILE_TOO_LARGE_MESSAGE, IMAGE_TOO_LARGE_MESSAGE]) {
@@ -548,5 +580,137 @@ describe("attachment limit sentences", () => {
   });
   it("the oversized image refusal is one of them", () => {
     expect(() => saveImage(Buffer.alloc(IMAGE_MAX_BYTES + 1), "image/png")).toThrow("That image is too large. Images can be up to 10 MB.");
+  });
+});
+
+// 1.0.3 (ATTACHMENT-CAP-DESIGN.md): a 243 KB photo was refused with "Murage
+// keeps up to 512 MB" on a computer with plenty of free space. The limit now
+// follows the disk and keeps 1 GiB free.
+describe("room follows the disk", () => {
+  const PLENTY = 200 * 1024 * 1024 * 1024;
+  beforeEach(() => {
+    resetDir();
+  });
+  afterEach(() => {
+    resetDir();
+    __setFreeDiskProbeForTests(undefined);
+    __resetOutstandingBytesForTests();
+  });
+
+  it("attaches a 243 KB photo while more than 512 MB of attachments already exist", () => {
+    __setFreeDiskProbeForTests(() => PLENTY);
+    const existing = saveImage(Buffer.from("x"), "image/png");
+    truncateSync(existing.path, 600 * 1024 * 1024);
+    __resetAttachmentAccountingForTests();
+
+    const photo = saveImage(Buffer.alloc(243 * 1024, 7), "image/jpeg");
+    expect(photo.bytes).toBe(243 * 1024);
+    expect(statSync(photo.path).size).toBe(243 * 1024);
+    expect(attachmentStorageUsage().attachmentBytes).toBe(600 * 1024 * 1024 + 243 * 1024);
+  });
+
+  it("refuses with the disk-full words and code when free space is under the floor, holding nothing after", async () => {
+    __setFreeDiskProbeForTests(() => DISK_FLOOR_BYTES + 100);
+    let refusal: unknown;
+    try { saveImage(Buffer.alloc(243 * 1024), "image/png"); } catch (error) { refusal = error; }
+    expect(refusal).toMatchObject({ status: 507, code: "disk-full", message: DISK_FULL_MESSAGE });
+    expect(outstandingBytes()).toBe(0);
+    expect(readdirSync(ATTACHMENTS_DIR)).toEqual([]);
+
+    // A stream that fails part way gives back every byte it held.
+    __setFreeDiskProbeForTests(() => PLENTY);
+    await expect(saveFile((async function* () {
+      yield Buffer.from("first chunk");
+      throw new Error("connection dropped");
+    })(), "half.txt", "text/plain")).rejects.toThrow("connection dropped");
+    expect(outstandingBytes()).toBe(0);
+    expect(readdirSync(ATTACHMENTS_DIR).some((name) => name.endsWith(".partial"))).toBe(false);
+  });
+
+  it("refuses when the free space cannot be read, never unlimited", async () => {
+    __setFreeDiskProbeForTests(() => { throw Object.assign(new Error("statfs failed"), { code: "EIO" }); });
+    expect(() => saveImage(Buffer.from("png"), "image/png")).toThrow(DISK_UNKNOWN_MESSAGE);
+    try { saveImage(Buffer.from("png"), "image/png"); } catch (error) { expect(error).toMatchObject({ status: 507, code: "disk-unknown" }); }
+    await expect(saveFile((async function* () { yield Buffer.from("doc"); })(), "a.txt", "text/plain", { expectedBytes: 3 }))
+      .rejects.toMatchObject({ status: 507, code: "disk-unknown" });
+    __setFreeDiskProbeForTests(() => Number.NaN);
+    expect(() => saveImage(Buffer.from("png"), "image/png")).toThrow(DISK_UNKNOWN_MESSAGE);
+    expect(readdirSync(ATTACHMENTS_DIR)).toEqual([]);
+    expect(outstandingBytes()).toBe(0);
+  });
+
+  it("answers a write that runs out of disk (ENOSPC) with the same disk-full refusal", async () => {
+    __setFreeDiskProbeForTests(() => PLENTY);
+    const noSpace = () => Object.assign(new Error("ENOSPC: no space left on device, write"), { code: "ENOSPC" });
+    vi.mocked(writeFileSync).mockImplementationOnce(() => { throw noSpace(); });
+    expect(() => saveImage(Buffer.from("png"), "image/png")).toThrow(DISK_FULL_MESSAGE);
+
+    vi.mocked(open).mockImplementationOnce(async (...args: Parameters<typeof realOpen>) => {
+      const handle = await realOpen(...args);
+      Object.defineProperty(handle, "write", { value: async () => { throw noSpace(); } });
+      return handle;
+    });
+    await expect(saveFile((async function* () { yield Buffer.from("doc"); })(), "a.txt", "text/plain"))
+      .rejects.toMatchObject({ status: 507, code: "disk-full", message: DISK_FULL_MESSAGE });
+    expect(readdirSync(ATTACHMENTS_DIR)).toEqual([]);
+    expect(outstandingBytes()).toBe(0);
+  });
+
+  it("answers a full disk while creating the attachments folder with the disk-full refusal", async () => {
+    __setFreeDiskProbeForTests(() => PLENTY);
+    removeTempDirSync(ATTACHMENTS_DIR);
+    const noSpace = () => Object.assign(new Error("ENOSPC: no space left on device, mkdir"), { code: "ENOSPC" });
+    vi.mocked(mkdirSync).mockImplementationOnce(() => { throw noSpace(); });
+    try { saveImage(Buffer.from("png"), "image/png"); expect.unreachable(); } catch (error) {
+      expect(error).toMatchObject({ status: 507, code: "disk-full", message: DISK_FULL_MESSAGE });
+    }
+    vi.mocked(mkdirSync).mockImplementationOnce(() => { throw noSpace(); });
+    await expect(saveFile((async function* () { yield Buffer.from("doc"); })(), "a.txt", "text/plain"))
+      .rejects.toMatchObject({ status: 507, code: "disk-full", message: DISK_FULL_MESSAGE });
+  });
+
+  it("counts bytes another upload still holds before letting a second one in", async () => {
+    __setFreeDiskProbeForTests(() => DISK_FLOOR_BYTES + 5);
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => { release = resolve; });
+    const first = saveFile((async function* () { await gate; yield Buffer.from("four"); })(), "first.txt", "text/plain", { expectedBytes: 4 });
+    expect(outstandingBytes()).toBe(4);
+    expect(() => saveImage(Buffer.from("xx"), "image/png")).toThrow(DISK_FULL_MESSAGE);
+    release();
+    await expect(first).resolves.toMatchObject({ bytes: 4 });
+    expect(outstandingBytes()).toBe(0);
+  });
+
+  it("start-up sweep clears a fresh leftover partial but never a live upload", async () => {
+    __setFreeDiskProbeForTests(() => PLENTY);
+    mkdirSync(ATTACHMENTS_DIR, { recursive: true });
+    const leftover = join(ATTACHMENTS_DIR, `.murage-upload-${UPLOAD_A}-${UPLOAD_B}.partial`);
+    writeFileSync(leftover, "left by a crash a minute ago");
+
+    let started!: () => void;
+    let release!: () => void;
+    const streaming = new Promise<void>((resolve) => { started = resolve; });
+    const gate = new Promise<void>((resolve) => { release = resolve; });
+    const live = saveFile((async function* () {
+      yield Buffer.from("first ");
+      started();
+      await gate;
+      yield Buffer.from("second");
+    })(), "live.txt", "text/plain", { uploadId: UPLOAD_B });
+    await streaming;
+    const livePartial = readdirSync(ATTACHMENTS_DIR).find((name) => name.startsWith(`.murage-upload-${UPLOAD_B}-`));
+    expect(livePartial).toBeTruthy();
+
+    // An ordinary sweep keeps a partial younger than the hour.
+    expect(cleanupStaleAttachmentPartials()).toBe(0);
+    expect(existsSync(leftover)).toBe(true);
+    // The start-up sweep removes it at any age, and leaves the live one alone.
+    expect(cleanupStaleAttachmentPartials(Date.now(), { startup: true })).toBe(1);
+    expect(existsSync(leftover)).toBe(false);
+    expect(existsSync(join(ATTACHMENTS_DIR, livePartial!))).toBe(true);
+
+    release();
+    const saved = await live;
+    expect(readFileSync(saved.path, "utf8")).toBe("first second");
   });
 });

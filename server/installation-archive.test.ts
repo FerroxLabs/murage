@@ -1,5 +1,5 @@
 import { createHash, randomUUID } from "node:crypto";
-import { createWriteStream, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
+import { createWriteStream, mkdirSync, mkdtempSync, readFileSync, readdirSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { pipeline } from "node:stream/promises";
@@ -10,6 +10,7 @@ import { afterEach, expect, it } from "vitest";
 import { inspectInstallationArchive, portableArchivePath, writeInstallationArchive } from "./installation-archive.ts";
 import { prepareInstallationRestore } from "./installation-restore-preparation.ts";
 import { initializeMessageTables } from "./message-tables.ts";
+import { removeTempDirSync } from "./testing/cleanup.ts";
 
 const roots: string[] = [];
 const sha = (bytes: string | Buffer) => createHash("sha256").update(bytes).digest("hex");
@@ -22,7 +23,7 @@ function fixture() {
   writeFileSync(join(data, "bots.json"), '[{"id":"bot","threadId":"thread","name":"Fixture"}]');
   return { parent, data, archive: join(parent, "fixture.murage-backup.zip") };
 }
-afterEach(() => { for (const path of roots.splice(0)) rmSync(path, { recursive: true, force: true }); });
+afterEach(() => { for (const path of roots.splice(0)) removeTempDirSync(path); });
 
 async function crafted(f: ReturnType<typeof fixture>, files: Array<{ path: string; text: string | Buffer; mode?: number }>, mutate?: (manifest: any) => void, zip64 = false, compress = false) {
   const manifest = {
@@ -44,7 +45,7 @@ it.each(["trigger", "counts", "cycle"])("rejects a hash-valid external database 
   const db = new DatabaseSync(path);
   try {
     initializeMessageTables(db);
-    db.prepare("INSERT INTO messages VALUES(?,?,?,?,?,?,?)").run("t", "m", 1, "user", "text", null, JSON.stringify({ id: "m", at: 1, role: "user", kind: "text", parentId: kind === "cycle" ? "m" : null }));
+    db.prepare("INSERT INTO messages(thread_id,id,at,role,kind,text,json) VALUES(?,?,?,?,?,?,?)").run("t", "m", 1, "user", "text", null, JSON.stringify({ id: "m", at: 1, role: "user", kind: "text", parentId: kind === "cycle" ? "m" : null }));
     db.exec("INSERT INTO thread_state VALUES('t','m')");
     if (kind === "trigger") db.exec("CREATE TRIGGER hostile AFTER UPDATE ON messages BEGIN UPDATE thread_state SET active_leaf_id=NULL WHERE thread_id='t'; END");
   } finally { db.close(); }

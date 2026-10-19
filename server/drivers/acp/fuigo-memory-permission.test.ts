@@ -1,5 +1,5 @@
 import { afterEach, expect, it } from "vitest";
-import { mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { mkdtempSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { basename, join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -8,9 +8,10 @@ import { fuigoMemoryAllowOnce, newFuigoMemoryAlias } from "./fuigo-memory-permis
 import { recordEvents } from "../../testing/events.ts";
 import { NATIVE_DIR } from "../../config.ts";
 import type { ProviderInstance, SendTurnInput } from "../../contracts.ts";
+import { removeTempDirSync } from "../../testing/cleanup.ts";
 
 const roots: string[] = [], instances: ProviderInstance[] = [];
-afterEach(async () => { for (const instance of instances.splice(0)) await instance.dispose(); for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true }); });
+afterEach(async () => { for (const instance of instances.splice(0)) await instance.dispose(); for (const root of roots.splice(0)) removeTempDirSync(root); });
 const names = ["memory_search", "memory_get", "memory_save", "memory_propose_correction"];
 it("requires exact canonical identity and a unique one-time option", () => {
   const alias = newFuigoMemoryAlias(), call = { _meta: { "fuigo/tool": { version: 1, namespace: "mcp", name: `${alias}__memory_search` } } };

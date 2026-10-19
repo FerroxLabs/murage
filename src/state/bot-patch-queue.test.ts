@@ -358,4 +358,41 @@ describe("bot patch queue", () => {
     await queue.flush("bot-1");
     expect(sent).toEqual([{ title: "still saves" }]);
   });
+
+  describe("failFast (the Cloud window: no queue, no replay)", () => {
+    it("sends at once, and an edit made behind a failed send is dropped, never sent after the home returns", async () => {
+      let homeUp = false;
+      const sent: BotUpdatePatch[] = [];
+      const errors: BotUpdatePatch[] = [];
+      const gate = deferredBot();
+      const queue = createBotPatchQueue({
+        failFast: true,
+        send: async (_botId, patch) => { sent.push(patch); if (!homeUp) return gate.promise; return bot({ ...patch, computer: patch.computer ?? undefined }); },
+        reconcile: async () => bot(),
+        onAuthoritative: vi.fn(),
+        onError: (_error, rejected) => errors.push(rejected),
+      });
+      queue.enqueue("bot-1", { name: "A" }, bot());
+      await vi.advanceTimersByTimeAsync(0); // no debounce
+      expect(sent).toEqual([{ name: "A" }]);
+      queue.enqueue("bot-1", { title: "B" }, bot()); // made while the first is in flight and the home is down
+      gate.reject(new Error("Your Cloud home isn't reachable"));
+      await vi.advanceTimersByTimeAsync(0);
+      expect(errors).toEqual([{ name: "A", title: "B" }]); // both rolled back and reported
+      homeUp = true; // the home is back
+      await vi.advanceTimersByTimeAsync(60_000);
+      expect(sent).toEqual([{ name: "A" }]); // nothing was replayed
+      expect(queue.overlayFor("bot-1")).toEqual({});
+    });
+
+    it("off (the desktop default) keeps the debounce", async () => {
+      const send = vi.fn(async (_id: string, patch: BotUpdatePatch) => bot({ ...patch, computer: patch.computer ?? undefined }));
+      const queue = createBotPatchQueue({ send, reconcile: async () => bot(), onAuthoritative: vi.fn(), onError: vi.fn() });
+      queue.enqueue("bot-1", { name: "A" }, bot());
+      await vi.advanceTimersByTimeAsync(100);
+      expect(send).not.toHaveBeenCalled();
+      await vi.advanceTimersByTimeAsync(400);
+      expect(send).toHaveBeenCalledTimes(1);
+    });
+  });
 });

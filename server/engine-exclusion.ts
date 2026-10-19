@@ -50,6 +50,9 @@ export interface ExclusionAddon {
   version(): number;
   /** macOS: this boot of the system's own id (kern.bootsessionuuid); null elsewhere or when it cannot be read. Absent in an older build. */
   bootId?(): string | null;
+  /** Windows: WinVerifyTrust's answer for a file's Authenticode signature, on a worker thread: { status (Get-AuthenticodeSignature's
+   * names), publisher (the signer's simple name when Valid), code }. Absent in an older build. */
+  authenticode?(path: string): Promise<{ status: string; publisher: string; code: number }>;
 }
 
 /** A running process as the addon reports it. `mine`: this user's (null: could not be told). `exe` "" is a process with no program

@@ -8,7 +8,7 @@
 // MemoryWorkerController and a stand-in child: the starting thread's capture is claimed, published and its
 // checkpoint refreshed while the hold stands; another thread's capture, a routine start's hold and typing
 // keep everything else back until the hold ends.
-import { mkdirSync, rmSync } from "node:fs";
+import { mkdirSync } from "node:fs";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { DATA_DIR } from "../config.ts";
 import { closeDatabase, database } from "../database.ts";
@@ -20,12 +20,13 @@ import { MemoryWorkerController } from "./worker-controller.ts";
 import { resetWorkerLog } from "./worker-log.ts";
 import { resetMemoryClaimCursor } from "./jobs.ts";
 import type { MemoryWork } from "./worker-protocol.ts";
+import { removeTempDirSync } from "../testing/cleanup.ts";
 
 type Internals = { child: unknown; ready: boolean; onWorkerMessage(child: unknown, message: unknown): void };
 let controller: MemoryWorkerController, internals: Internals, sent: Array<Record<string, any>>, releases: Array<() => void>;
 
 beforeEach(() => {
-  closeDatabase(); rmSync(DATA_DIR, { recursive: true, force: true }); mkdirSync(DATA_DIR, { recursive: true }); setMemoryMode("active"); resetParkSweep(); resetMemoryClaimCursor(); resetWorkerLog();
+  closeDatabase(); removeTempDirSync(DATA_DIR); mkdirSync(DATA_DIR, { recursive: true }); setMemoryMode("active"); resetParkSweep(); resetMemoryClaimCursor(); resetWorkerLog();
   sent = []; releases = [];
   vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout", "setInterval", "clearInterval", "setImmediate", "clearImmediate", "Date"] });
   vi.spyOn(performance, "now").mockImplementation(() => Date.now());

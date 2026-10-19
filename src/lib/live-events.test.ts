@@ -5,7 +5,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   DEV_SECRET_PATH,
   LIVE_EVENTS_STALE_MS,
-  desktopResourceUrl,
+  SURFACE_TICKET_PATH,
   desktopSurfaceHeaders,
   desktopSurfaceSecret,
   desktopSurfaceSecretNeedsRetry,
@@ -13,7 +13,9 @@ import {
   isLivePing,
   liveEventsUrl,
   openLiveEvents,
+  resourceNeedsTicket,
   setDesktopSurfaceSecretForTest,
+  ticketedResourceUrl,
   shouldReconnectLiveEvents,
   type LiveEventSourceLike,
   type LiveEventsPlatform,
@@ -133,20 +135,17 @@ describe("live events URL", () => {
   });
 
   // EventSource cannot set a request header, which is why the marker travels
-  // in the query string — and it is why the proof has to as well. Without it
-  // the harness reads this stream as a paired phone's and scopes it, and the
-  // symptom is a desktop that silently stops seeing its own hidden bots.
-  it("carries this launch's desktop secret once the renderer has one", () => {
+  // in the query string. The proof never does: the stream URL is the same with
+  // or without it, and the browser adapter adds a single-use ticket instead.
+  it("never puts this launch's desktop secret in the stream URL", () => {
     const secret = "9".repeat(64);
     try {
       setDesktopSurfaceSecretForTest(secret);
       expect(desktopSurfaceSecret()).toBe(secret);
-      expect(liveEventsUrl()).toBe(`/api/events?surface=desktop&surfaceSecret=${secret}`);
-      // appended last, so every parameter that existed before keeps its place
-      expect(liveEventsUrl({ since: "ab12cd34:9", screens: false })).toBe(
-        `/api/events?surface=desktop&since=ab12cd34%3A9&screens=off&surfaceSecret=${secret}`,
-      );
-      // and the same proof for the fetch callers, who can use a header
+      expect(liveEventsUrl()).toBe("/api/events?surface=desktop");
+      expect(liveEventsUrl({ since: "ab12cd34:9", screens: false })).toBe("/api/events?surface=desktop&since=ab12cd34%3A9&screens=off");
+      expect(liveEventsUrl()).not.toContain(secret);
+      // the fetch callers carry it in a header
       expect(desktopSurfaceHeaders()).toEqual({ "x-murage-surface-secret": secret });
     } finally {
       setDesktopSurfaceSecretForTest("");
@@ -175,8 +174,9 @@ describe("live events URL", () => {
 
       expect(await ensureDesktopSurfaceSecret()).toBe(secret);
       expect(calls).toEqual([DEV_SECRET_PATH]);
-      // and the stream URL is built from it immediately afterwards
-      expect(liveEventsUrl()).toContain(`surfaceSecret=${secret}`);
+      // and the stream now needs a ticket, never the secret itself
+      expect(resourceNeedsTicket(liveEventsUrl())).toBe(true);
+      expect(liveEventsUrl()).not.toContain(secret);
       // memoized — a second caller must not re-ask
       expect(await ensureDesktopSurfaceSecret()).toBe(secret);
       expect(calls).toHaveLength(1);
@@ -465,12 +465,13 @@ describe("desktop proof recovery", () => {
     vi.stubGlobal("fetch", request);
     const test = harness();
     const stop = openLiveEvents({ onFrame: vi.fn(), onSnapshotRequired: async () => true }, test.platform);
-    expect(test.sources[0].url).toContain("surfaceSecret=old-launch");
+    expect(test.sources[0].url).not.toContain("old-launch"); // the proof never rides in the URL
     test.sources[0].error();
     await vi.advanceTimersByTimeAsync(500);
     expect(request).toHaveBeenCalledExactlyOnceWith(DEV_SECRET_PATH);
     expect(test.sources).toHaveLength(2);
-    expect(test.sources[1].url).toContain("surfaceSecret=new-launch");
+    expect(test.sources[1].url).not.toContain("new-launch");
+    expect(desktopSurfaceSecret()).toBe("new-launch"); // renewed before the replacement opened
     expect(desktopSurfaceHeaders()).toEqual({ "x-murage-surface-secret": "new-launch" });
     stop();
   });
@@ -512,7 +513,8 @@ describe("desktop proof recovery", () => {
     expect(test.sources).toHaveLength(1);
     await vi.advanceTimersByTimeAsync(1_000);
     expect(test.sources).toHaveLength(2);
-    expect(test.sources[1].url).toContain("surfaceSecret=new-launch");
+    expect(test.sources[1].url).not.toContain("new-launch");
+    expect(desktopSurfaceSecret()).toBe("new-launch"); // renewed before the replacement opened
     expect(request).toHaveBeenCalledTimes(2);
     stop();
   });
@@ -658,29 +660,131 @@ describe("the phone app coming back to the front", () => {
   });
 });
 
-describe("desktopResourceUrl", () => {
-  afterEach(() => setDesktopSurfaceSecretForTest(""));
+type StubAnswer = { status: number; body?: unknown };
+/** A harness stub: answers the ticket route as told and records every request. */
+function stubHarness(answer: (path: string, init: RequestInit | undefined) => StubAnswer) {
+  const calls: Array<{ path: string; init: RequestInit | undefined }> = [];
+  const realFetch = globalThis.fetch;
+  globalThis.fetch = (async (input: unknown, init?: RequestInit) => {
+    const path = String(input);
+    calls.push({ path, init });
+    const { status, body } = answer(path, init);
+    return { ok: status >= 200 && status < 300, status, json: async () => body ?? null } as unknown as Response;
+  }) as typeof fetch;
+  return { calls, restore: () => { globalThis.fetch = realFetch; } };
+}
 
-  it("puts the surface mark and secret in the query of a local /api url", () => {
-    setDesktopSurfaceSecretForTest("s3cret");
-    expect(desktopResourceUrl("/api/attachments/a.png")).toBe("/api/attachments/a.png?surface=desktop&surfaceSecret=s3cret");
-    expect(desktopResourceUrl("/api/attachments/a.png?w=480")).toBe("/api/attachments/a.png?w=480&surface=desktop&surfaceSecret=s3cret");
-  });
-
-  it("leaves other urls and a renderer with no secret (a phone) alone", () => {
-    setDesktopSurfaceSecretForTest("s3cret");
-    expect(desktopResourceUrl("https://example.com/a.png")).toBe("https://example.com/a.png");
-    expect(desktopResourceUrl("data:image/png;base64,AAAA")).toBe("data:image/png;base64,AAAA");
-    expect(desktopResourceUrl(undefined)).toBeUndefined();
+describe("ticketedResourceUrl", () => {
+  let restore = () => {};
+  afterEach(() => {
+    restore();
     setDesktopSurfaceSecretForTest("");
-    expect(desktopResourceUrl("/api/attachments/a.png")).toBe("/api/attachments/a.png");
   });
 
-  it("leaves a signed media byte url exactly as issued", () => {
+  it("mints a single-use ticket for exactly this resource, with the proof in the POST header only", async () => {
     setDesktopSurfaceSecretForTest("s3cret");
+    const stub = stubHarness(() => ({ status: 200, body: { ticket: "T1", expiresInMs: 15000 } }));
+    restore = stub.restore;
+    expect(await ticketedResourceUrl("/api/attachments/a.png")).toBe("/api/attachments/a.png?surfaceTicket=T1");
+    expect(await ticketedResourceUrl("/api/attachments/a.png?w=480#top")).toBe("/api/attachments/a.png?w=480&surfaceTicket=T1#top");
+    expect(stub.calls.map((c) => c.path)).toEqual([SURFACE_TICKET_PATH, SURFACE_TICKET_PATH]);
+    const first = stub.calls[0]!.init!;
+    expect(first.method).toBe("POST");
+    expect(first.redirect).toBe("error");
+    expect(first.headers).toMatchObject({ "x-murage-surface": "desktop", "x-murage-surface-secret": "s3cret" });
+    expect(JSON.parse(String(first.body))).toEqual({ resource: "/api/attachments/a.png" });
+    expect(JSON.parse(String(stub.calls[1]!.init!.body))).toEqual({ resource: "/api/attachments/a.png?w=480" });
+  });
+
+  it("leaves other urls, signed media bytes and a renderer with no proof (a phone, a Cloud window) alone, and asks nothing", async () => {
+    const stub = stubHarness(() => ({ status: 500 }));
+    restore = stub.restore;
+    setDesktopSurfaceSecretForTest("s3cret");
+    expect(await ticketedResourceUrl("https://example.com/a.png")).toBe("https://example.com/a.png");
+    expect(await ticketedResourceUrl("data:image/png;base64,AAAA")).toBe("data:image/png;base64,AAAA");
+    expect(await ticketedResourceUrl(undefined)).toBeUndefined();
     const signed = "/api/media/bytes/ma1_abc?cap=mc1.payload.signature";
-    expect(desktopResourceUrl(signed)).toBe(signed);
-    expect(desktopResourceUrl("/api/media/bytes")).toBe("/api/media/bytes");
-    expect(desktopResourceUrl("/api/media/assets/x")).toBe("/api/media/assets/x?surface=desktop&surfaceSecret=s3cret");
+    expect(await ticketedResourceUrl(signed)).toBe(signed);
+    setDesktopSurfaceSecretForTest("");
+    expect(await ticketedResourceUrl("/api/attachments/a.png")).toBe("/api/attachments/a.png");
+    expect(stub.calls).toEqual([]);
+  });
+
+  it("against a harness with no ticket route, loads the URL unproven and never with the proof", async () => {
+    setDesktopSurfaceSecretForTest("s3cret");
+    const stub = stubHarness(() => ({ status: 404, body: { error: "no such route" } }));
+    restore = stub.restore;
+    const url = await ticketedResourceUrl("/api/attachments/a.png");
+    expect(url).toBe("/api/attachments/a.png");
+    expect(url).not.toContain("s3cret");
+  });
+});
+
+describe("the live stream against a harness without tickets (a Cloud home on image 4F)", () => {
+  class FakeNativeEventSource {
+    static opened: string[] = [];
+    onopen: (() => void) | null = null;
+    onerror: (() => void) | null = null;
+    onmessage: ((event: MessageEvent) => void) | null = null;
+    closed = false;
+    constructor(readonly url: string) { FakeNativeEventSource.opened.push(url); }
+    close() { this.closed = true; }
+  }
+  const realEventSource = globalThis.EventSource;
+  let restore = () => {};
+  beforeEach(() => {
+    FakeNativeEventSource.opened = [];
+    (globalThis as { EventSource?: unknown }).EventSource = FakeNativeEventSource;
+  });
+  afterEach(() => {
+    restore();
+    (globalThis as { EventSource?: unknown }).EventSource = realEventSource;
+    setDesktopSurfaceSecretForTest("");
+  });
+  const open = () => openLiveEvents({ onFrame: () => {}, onSnapshotRequired: async () => true }, { isOnline: () => true, isVisible: () => true });
+  // Fake timers are on for this file: drain the ticket's promise chain instead.
+  const settle = async () => { for (let i = 0; i < 20; i += 1) await Promise.resolve(); };
+
+  it("a window with no proof opens the stream exactly as today and asks for no ticket", async () => {
+    const stub = stubHarness(() => ({ status: 404 }));
+    restore = stub.restore;
+    const stop = open();
+    await settle();
+    expect(FakeNativeEventSource.opened).toEqual(["/api/events?surface=desktop"]);
+    expect(stub.calls).toEqual([]);
+    stop();
+  });
+
+  it("the desktop window opens it with a fresh ticket for that exact URL", async () => {
+    setDesktopSurfaceSecretForTest("s3cret");
+    const stub = stubHarness(() => ({ status: 200, body: { ticket: "T9" } }));
+    restore = stub.restore;
+    const stop = open();
+    await settle();
+    expect(FakeNativeEventSource.opened).toEqual(["/api/events?surface=desktop&surfaceTicket=T9"]);
+    expect(JSON.parse(String(stub.calls[0]!.init!.body))).toEqual({ resource: "/api/events?surface=desktop" });
+    stop();
+  });
+
+  it("the desktop window never opens its stream without a ticket: no ticket is a dropped connection, retried", async () => {
+    setDesktopSurfaceSecretForTest("s3cret");
+    const stub = stubHarness(() => ({ status: 503 }));
+    restore = stub.restore;
+    const onError = vi.fn();
+    const stop = openLiveEvents({ onFrame: () => {}, onSnapshotRequired: async () => true, onError }, { isOnline: () => true, isVisible: () => true });
+    await settle();
+    expect(FakeNativeEventSource.opened).toEqual([]);
+    expect(onError).toHaveBeenCalled();
+    stop();
+  });
+
+  it("closing before the ticket arrives opens nothing", async () => {
+    setDesktopSurfaceSecretForTest("s3cret");
+    const stub = stubHarness(() => ({ status: 200, body: { ticket: "T2" } }));
+    restore = stub.restore;
+    const stop = open();
+    stop();
+    await settle();
+    expect(FakeNativeEventSource.opened).toEqual([]);
   });
 });

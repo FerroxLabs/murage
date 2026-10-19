@@ -117,3 +117,19 @@ describe("OpenAICompatDriver.textOnlyTurn", () => {
     expect(r.usage).toEqual({ inputTokens: 20, outputTokens: 9 });
   });
 });
+
+describe("httpTextOnlyTurn redirects", () => {
+  it("a 307 to another origin is never followed: the second server receives nothing", async () => {
+    const elsewhere: string[] = [];
+    const other = createServer((req, res) => { let d = ""; req.on("data", c => { d += c; }); req.on("end", () => { elsewhere.push(d); res.end("{}"); }); });
+    await new Promise<void>((r) => other.listen(0, "127.0.0.1", r));
+    const otherUrl = `http://127.0.0.1:${(other.address() as AddressInfo).port}/v1/chat/completions`;
+    reply = (res) => { res.statusCode = 307; res.setHeader("location", otherUrl); res.end(); };
+    try {
+      const r = await httpTextOnlyTurn(turn({ text: "a private sentence" }), options()).catch((error: unknown) => error);
+      expect(r).not.toMatchObject({ verdict: { state: "validated" } });
+      expect(seen).toHaveLength(1);
+      expect(elsewhere).toEqual([]);
+    } finally { other.closeAllConnections(); await new Promise<void>((r) => other.close(() => r())); }
+  });
+});

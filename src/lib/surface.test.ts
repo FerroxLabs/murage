@@ -79,6 +79,7 @@ describe("surface handshake", () => {
     expect(fetchMock).toHaveBeenCalledTimes(1);
     expect(ensureSecret).toHaveBeenCalledTimes(1);
     expect(fetchMock).toHaveBeenCalledWith("/api/config", {
+      redirect: "error",
       headers: { "x-murage-surface": "desktop", "x-murage-surface-secret": "fixture-secret" },
     });
   });

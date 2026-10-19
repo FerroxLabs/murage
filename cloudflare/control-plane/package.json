@@ -20,6 +20,8 @@
     "test": "vitest run",
     "types": "wrangler types --config wrangler.jsonc worker-configuration.d.ts",
     "types:check": "wrangler types --check --config wrangler.jsonc worker-configuration.d.ts",
-    "dry-run": "wrangler deploy --dry-run --config wrangler.jsonc"
+    "dry-run": "wrangler deploy --dry-run --config wrangler.jsonc",
+    "check-deploy": "node scripts/check-deploy.mjs wrangler.jsonc",
+    "deploy:staging": "node scripts/deploy.mjs staging"
   }
 }

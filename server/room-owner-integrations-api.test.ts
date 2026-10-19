@@ -63,9 +63,9 @@ posixOnly("the owner's integrations in a room turn", () => {
         if(start<0||end<0)throw new Error('Browser version fixture anchor changed');
         // The test container is a container: the engine's host check (it
         // refuses root and container hosts) is the one line this fixture lifts.
-        const hostCheck='if (process.platform === "linux" && (process.getuid?.() === 0';
+        const hostCheck='if (browserHostRequiresSandboxBypass({';
         if(!source.includes(hostCheck))throw new Error('Browser host-check fixture anchor changed');
-        const body=source.slice(0,start).replace(hostCheck,'if (false && (process.getuid?.() === 0')+'export async function verifyAgentBrowserBinary() {}\\n'+source.slice(end);
+        const body=source.slice(0,start).replace(hostCheck,'if (false && browserHostRequiresSandboxBypass({')+'export async function verifyAgentBrowserBinary() {}\\n'+source.slice(end);
         return { format:'module-typescript', shortCircuit:true, source: body };
       } });
       const file=path.join(process.env.MURAGE_DATA_DIR,'config.json');const cfg=JSON.parse(fs.readFileSync(file,'utf8'));

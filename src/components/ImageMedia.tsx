@@ -17,7 +17,8 @@
 // The dialog is a native modal <dialog>, not a positioned <div>: the Files
 // browser is itself a modal <dialog>, and only another top-layer dialog can sit
 // above it without being made inert.
-import { desktopResourceUrl } from "@/lib/live-events";
+import { resourceNeedsTicket, ticketedResourceUrl } from "@/lib/live-events";
+import { clickDownload } from "@/lib/save-file";
 import { useCallback, useLayoutEffect, useMemo, useRef, useState, type KeyboardEvent, type SyntheticEvent } from "react";
 import { createPortal } from "react-dom";
 import { ChevronLeft, ChevronRight, Download, ImageOff, Maximize2, X } from "lucide-react";
@@ -31,6 +32,7 @@ import { t } from "@/lib/i18n";
 import type { ImageReferenceSource, MediaAssetSource } from "../../shared/media-assets";
 import type { Artifact } from "../../shared/artifacts";
 import { UseAsReferenceButton } from "./UseAsReferenceButton";
+import { DesktopImg } from "./DesktopImg";
 
 /** Where an enlarged image came from. `MediaAssetSource` from the frozen media
  * contract, plus `inline-data`: raster bytes embedded in the message text
@@ -221,12 +223,12 @@ export function ImageThumb({ item, label, onOpen, className, imgClassName, sizes
         className,
       )}
     >
-      <img
+      <DesktopImg
         // A new element when the srcset is dropped: Chromium keeps the old
         // candidate's density on a live <img> after srcset is removed, so the
         // original drew at a fraction of its size (phone verification f2).
         key={srcSet ? "srcset" : "original"}
-        src={desktopResourceUrl(item.src)}
+        src={item.src}
         srcSet={srcSet}
         sizes={srcSet ? sizes : undefined}
         alt={item.alt}
@@ -345,8 +347,8 @@ function LightboxImage({ item }: { item: ImageMediaItem }) {
     );
   }
   return (
-    <img
-      src={desktopResourceUrl(item.src)}
+    <DesktopImg
+      src={item.src}
       alt={item.alt}
       referrerPolicy="no-referrer"
       onError={() => setFailed(true)}
@@ -506,8 +508,17 @@ export function ImageLightbox({ items, index, onIndexChange, onClose }: {
             )}
             {item.download && (
               <a
-                href={desktopResourceUrl(item.src)}
+                // An /api file in the desktop window downloads through a
+                // single-use ticket minted at the click (it lives seconds), so
+                // its bare path never sits in the href; anything else is a
+                // plain link, exactly as given.
+                href={resourceNeedsTicket(item.src) ? "#" : item.src}
                 download={item.name}
+                onClick={(event) => {
+                  if (!resourceNeedsTicket(item.src)) return;
+                  event.preventDefault();
+                  void ticketedResourceUrl(item.src).then((url) => clickDownload(url, item.name));
+                }}
                 referrerPolicy="no-referrer"
                 className={HEADER_BUTTON}
                 aria-label={t("media.lightbox.download", { name: item.name })}

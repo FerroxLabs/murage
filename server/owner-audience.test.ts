@@ -7,7 +7,7 @@
 // person's thread started (the task humanTask binds to that person), and in
 // an owner thread whose chain a channel person started.
 import { sharedLoadPrompt } from "./shared-bots-roster.ts";
-import { mkdirSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { mkdirSync, readdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import { join, relative } from "node:path";
 import ts from "typescript";
 import { beforeEach, describe, expect, it } from "vitest";
@@ -30,12 +30,13 @@ import { projectRosterLine } from "./project-roster.ts";
 import { insertProjectBriefVersion } from "./project-records.ts";
 import { channelToProjectRows } from "./project-settings.ts";
 import { LineageAllowance } from "./memory/lineage-allowance.ts";
+import { removeTempDirSync } from "./testing/cleanup.ts";
 
 const ROOT = join(import.meta.dirname, "..");
 
 beforeEach(() => {
   closeDatabase();
-  rmSync(DATA_DIR, { recursive: true, force: true });
+  removeTempDirSync(DATA_DIR);
   mkdirSync(DATA_DIR, { recursive: true });
 });
 

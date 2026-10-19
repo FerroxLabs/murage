@@ -26,6 +26,7 @@ import { fileURLToPath } from "node:url";
 import { afterEach, describe, expect, it } from "vitest";
 
 import { composerFileIntake, composerPasteIntake } from "./composer-intake";
+import { DISK_FULL_MESSAGE } from "../../shared/attachment-storage.ts";
 import { composerSendGate } from "./composer-send-gate";
 import {
   composerUploadsPending,
@@ -299,6 +300,19 @@ describe("every way a file gets into a draft holds the send", () => {
     expect(composerSendGate({ text: "look at this", threadId: "thread-a" })).toEqual({ kind: "compose" });
   });
 
+  it("reports a batch of pasted images refused for one reason once (1.0.3)", async () => {
+    const errors: string[] = [];
+    await composerPasteIntake({
+      threadId: "thread-a",
+      files: [png("a.png"), png("b.png"), png("c.png"), png("d.png")],
+      uploadImage: async () => { throw new Error(DISK_FULL_MESSAGE); },
+      onAdd: () => {},
+      onError: (message) => errors.push(message),
+    });
+    expect(errors).toEqual([`4 images were not attached. ${DISK_FULL_MESSAGE}`]);
+    expect(composerUploadsPending("thread-a")).toBe(false);
+  });
+
   it("releases the gate for every path when the upload fails", async () => {
     // A refused image must never wedge the composer shut, whichever way it
     // arrived.
@@ -310,7 +324,7 @@ describe("every way a file gets into a draft holds the send", () => {
       onAdd: () => {},
       onError: (message) => errors.push(message),
     });
-    expect(errors).toEqual(["upload failed"]);
+    expect(errors).toEqual(["bad.png was not attached. upload failed"]);
     expect(composerUploadsPending("thread-a")).toBe(false);
 
     await composerFileIntake({

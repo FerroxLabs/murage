@@ -5,7 +5,7 @@
 // ancestry interleaves with the members they add; (P1-2) cache loading and the stray walk report progress; (P1-3) reference checks cut
 // by key seek (no min/max scan, sparse keys, WITHOUT ROWID) and the one indivisible statement runs under a heartbeat; (P2-1) reference
 // checks agree with the pragma on affinity and on a column named rowid; (P2-2) end() waits for the writer's last write.
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
@@ -16,10 +16,11 @@ import { reconcileMemoryRoster, type MemoryRoster } from "./policy.ts";
 import { setMemoryMode } from "./repository.ts";
 import { chainStore, downgradeMemorySchema, migrateMemorySchema, referencesBroken, repairOutputRootBackfill, rootSetMembers, validateMemorySchema, REFERENCE_SLICE } from "./schema.ts";
 import { startBlockingHeartbeat } from "./blocking-heartbeat.ts";
+import { removeTempDirSync } from "../testing/cleanup.ts";
 
 const roster: MemoryRoster = { bots: [{ id: "bot", threadId: "chat", tasks: [] }], groups: [] };
 beforeEach(() => {
-  closeDatabase(); rmSync(DATA_DIR, { recursive: true, force: true }); mkdirSync(DATA_DIR, { recursive: true });
+  closeDatabase(); removeTempDirSync(DATA_DIR); mkdirSync(DATA_DIR, { recursive: true });
   setMemoryMode("active"); reconcileMemoryRoster(roster);
 });
 afterEach(() => closeDatabase());
@@ -56,7 +57,7 @@ function seedInterleaved(db: DatabaseSync, ids: string[]) {
   db.exec("COMMIT");
 }
 function traversal(n: number) {
-  closeDatabase(); rmSync(DATA_DIR, { recursive: true, force: true }); mkdirSync(DATA_DIR, { recursive: true });
+  closeDatabase(); removeTempDirSync(DATA_DIR); mkdirSync(DATA_DIR, { recursive: true });
   setMemoryMode("active"); reconcileMemoryRoster(roster);
   const ids = chainThread("chat", n, "B1");
   const db = database();
@@ -219,5 +220,5 @@ it("P2 r3: end() returns only after the writer's last write has landed, so a slo
     await sleep(1_500);
     expect(JSON.parse(readFileSync(file, "utf8"))).toEqual({ state: "ready" });
     expect(readdirSync(dir).filter(name => name !== "memory-upgrade-status.json"), "no stray temp file").toEqual([]);
-  } finally { rmSync(dir, { recursive: true, force: true }); }
+  } finally { removeTempDirSync(dir); }
 }, 60_000);

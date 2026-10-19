@@ -2,6 +2,7 @@
 // hand-edited config.json or from the desktop settings panel. config.ts reads
 // it to mount the fleet; index.ts reads it to answer the /api/mcp/servers
 // routes. Two parsers for one file format is how the file and the UI drift.
+import { mountNameRefusal } from "../shared/mount-identity.ts";
 import { z } from "zod";
 
 import { MASK, displayUrl, splitSecretUrl, urlHasSecret } from "../shared/mcp-secret-url.mjs";
@@ -15,6 +16,9 @@ export interface StoredMcpServer {
    * T16). Present only when non-empty. A mount resolves them at mount time. */
   heldEnv?: string[];
   enabled: boolean;
+  /** Why Murage turned this entry off at load (Rule 57a,
+   * `name-collision:<survivor>`); kept only while the entry is off. */
+  disabledReason?: string;
 }
 
 export interface StoredMcpParseOptions {
@@ -57,7 +61,10 @@ function environmentNameError(name: string): string | null {
 }
 
 /** Server keys the harness mounts itself — a custom entry must never
- * shadow or clobber one of these across any driver's namespace. */
+ * shadow or clobber one of these across any driver's namespace. The refusal
+ * reads RESERVED_MOUNTS (shared/mount-identity.ts, Rule 29), the union of
+ * every driver's built-ins under `nf`; this raw list stays for the drivers
+ * that check a spelling before a name reaches the registry. */
 export const RESERVED_MCP_NAMES: ReadonlySet<string> = new Set([
   "muragebox",
   "computer",
@@ -68,6 +75,7 @@ export const RESERVED_MCP_NAMES: ReadonlySet<string> = new Set([
   "dweb",
   "murage_connectors",
   "murage_phone",
+  "murage-memory",
 ]);
 
 const storedEntrySchema = z.object({
@@ -75,16 +83,22 @@ const storedEntrySchema = z.object({
   args: z.array(z.string().max(4_096)).max(MAX_ARGS).optional(),
   env: z.record(z.string(), z.union([z.string().max(16_384), z.literal(true)])).optional(),
   enabled: z.boolean().optional(),
+  disabledReason: z.string().max(200).optional(),
 }).strict();
 
 const mutationEntrySchema = storedEntrySchema;
 
-export function mcpServerNameError(name: string): string | null {
+/** Why a custom server name is refused, or null (Rules 26, 28). `others`
+ * is every OTHER stored server's name: a name that cannot be told apart from
+ * one of them on every engine is refused too. */
+export function mcpServerNameError(name: string, others: readonly string[] = []): string | null {
   if (!MCP_NAME.test(name)) {
     return "Use 1–32 lowercase letters, numbers, underscores, or hyphens, starting with a letter.";
   }
-  if (RESERVED_MCP_NAMES.has(name)) return "That name is reserved by Murage.";
-  return null;
+  // Engines join a server to its tools with `__` (Claude, Codex, Fuigo) or
+  // `_` (Pi), and every policy check reads a tool's server back out of that
+  // name (lanes/release103/APP-GRANT-DESIGN-FINAL.AGREED-r10.md Rule 28).
+  return mountNameRefusal(name, others.filter((other) => other !== name));
 }
 
 export function parseStoredMcpServer(
@@ -122,6 +136,7 @@ export function parseStoredMcpServer(
       ...(heldEnv.length > 0 ? { heldEnv } : {}),
       // A hand-authored entry has always mounted unless it said otherwise.
       enabled: parsed.data.enabled !== false,
+      ...(parsed.data.enabled === false && parsed.data.disabledReason ? { disabledReason: parsed.data.disabledReason } : {}),
     },
   };
 }
@@ -146,9 +161,9 @@ export function parseMcpServerMutation(
   name: string,
   raw: unknown,
   existing?: StoredMcpServer,
-  options: { secretsInBody?: boolean } = {},
+  options: { secretsInBody?: boolean; otherNames?: readonly string[] } = {},
 ): { ok: true; server: StoredMcpServer } | { ok: false; error: string } {
-  const nameError = mcpServerNameError(name);
+  const nameError = mcpServerNameError(name, options.otherNames);
   if (nameError) return { ok: false, error: nameError };
   const parsed = mutationEntrySchema.safeParse(raw);
   if (!parsed.success) {
@@ -186,6 +201,7 @@ export function parseMcpServerMutation(
       // explicitly enabled it. Existing file-authored entries keep today's
       // enabled-by-default behavior through parseStoredMcpServer.
       enabled: existing ? (parsed.data.enabled ?? existing.enabled) : false,
+      ...(existing?.disabledReason && (parsed.data.enabled ?? existing.enabled) === false ? { disabledReason: existing.disabledReason } : {}),
     },
   };
 }
@@ -224,6 +240,8 @@ export interface StoredRemoteMcpServer {
   local?: McpLocalConfirmation;
   urlSecret?: true;
   enabled: boolean;
+  /** As for a command server (Rule 57a). */
+  disabledReason?: string;
 }
 
 export type AnyStoredMcpServer = StoredMcpServer | StoredRemoteMcpServer;
@@ -310,6 +328,7 @@ const remoteEntrySchema = z.object({
   local: z.enum(["this-computer", "local-network"]).optional(),
   urlSecret: z.literal(true).optional(),
   enabled: z.boolean().optional(),
+  disabledReason: z.string().max(200).optional(),
 }).strict();
 
 /** Fold the vendor spellings into the canonical keys. Returns an error
@@ -376,6 +395,7 @@ function buildRemote(
     ...(defaults.local ? { local: defaults.local } : {}),
     ...(parsed.data.urlSecret ? { urlSecret: true as const } : {}),
     enabled: defaults.enabled,
+    ...(mutation === null && !defaults.enabled && parsed.data.disabledReason ? { disabledReason: parsed.data.disabledReason } : {}),
   };
   return { ok: true, server: out };
 }
@@ -409,6 +429,8 @@ export interface McpMutationOptions {
    * value or a link that holds a secret in a mutation body. Dev and headless
    * runs, which keep secrets in config.json, pass true. */
   secretsInBody?: boolean;
+  /** Every OTHER stored server's name, for Rule 28e. */
+  otherNames?: readonly string[];
 }
 
 /** Parse a renderer mutation of either shape. A `local` key in `raw` (which may
@@ -420,9 +442,9 @@ export function parseAnyMcpServerMutation(
   options: McpMutationOptions = {},
 ): { ok: true; server: AnyStoredMcpServer } | { ok: false; error: string } {
   if (!hasUrlKey(raw)) {
-    return parseMcpServerMutation(name, raw, existing && !isRemoteMcpServer(existing) ? existing : undefined, { secretsInBody: options.secretsInBody });
+    return parseMcpServerMutation(name, raw, existing && !isRemoteMcpServer(existing) ? existing : undefined, { secretsInBody: options.secretsInBody, otherNames: options.otherNames });
   }
-  const nameError = mcpServerNameError(name);
+  const nameError = mcpServerNameError(name, options.otherNames);
   if (nameError) return { ok: false, error: nameError };
   if (options.confirmLocal !== undefined && !LOCAL_CONFIRMATIONS.has(options.confirmLocal)) {
     return { ok: false, error: "Unknown local confirmation." };
@@ -477,6 +499,8 @@ export interface StdioMcpListing extends McpServerListing {
   /** Present only when some env value lives in the secret store (T16):
    * "needs-key" while one of them is held nowhere. */
   status?: "ready" | "needs-key";
+  /** Rule 57a: why Murage turned it off at load. */
+  disabledReason?: string;
 }
 
 export interface RemoteMcpListing {
@@ -489,6 +513,8 @@ export interface RemoteMcpListing {
   headerNames: string[];
   local?: McpLocalConfirmation;
   enabled: boolean;
+  /** Rule 57a: why Murage turned it off at load. */
+  disabledReason?: string;
   status: McpRemoteStatus;
 }
 
@@ -522,6 +548,7 @@ export function listAllMcpServers(
         args: server.args,
         envKeys: [...Object.keys(server.env), ...held].sort(),
         enabled: server.enabled,
+        ...(server.disabledReason ? { disabledReason: server.disabledReason } : {}),
         ...(held.length > 0 ? { status: held.every((key) => secrets?.hasEnv?.(name, key) === true) ? "ready" as const : "needs-key" as const } : {}),
       }];
     }
@@ -535,7 +562,71 @@ export function listAllMcpServers(
       headerNames: Object.keys(server.headers).sort(),
       ...(server.local ? { local: server.local } : {}),
       enabled: server.enabled,
+      ...(server.disabledReason ? { disabledReason: server.disabledReason } : {}),
       status: remoteStatus(name, server, secrets),
     }];
   });
+}
+
+
+/**
+ * Rule 57a: stored custom servers walked in stored order; the first of any
+ * group whose `nf` or Pi form collide (equal, or one a `_`-prefix of the
+ * other) keeps its name, and each later one is turned off with
+ * `disabledReason: "name-collision:<survivor>"`. No server is renamed by
+ * Murage. Returns the new map, or null when nothing changed.
+ */
+/**
+ * Rule 57a's rename action: the owner gives a server Murage turned off for a
+ * name clash (or any other) a new name. The entry keeps its place in stored
+ * order and stays off until the owner turns it on; the clash note goes with
+ * the old name. The new name is checked against every OTHER server exactly as
+ * a new one is. Murage never picks the name.
+ */
+export function renameMcpServer(raw: Record<string, unknown> | undefined, from: string, to: string): { ok: true; next: Record<string, unknown> } | { ok: false; error: string } {
+  const current = raw ?? {};
+  if (!Object.hasOwn(current, from)) return { ok: false, error: "MCP server not found." };
+  if (to === from) return { ok: false, error: "That is already this server's name." };
+  if (Object.hasOwn(current, to)) return { ok: false, error: "An MCP server with that name already exists." };
+  const nameError = mcpServerNameError(to, Object.keys(current).filter((name) => name !== from));
+  if (nameError) return { ok: false, error: nameError };
+  const next: Record<string, unknown> = {};
+  for (const [name, entry] of Object.entries(current)) {
+    if (name !== from) { next[name] = entry; continue; }
+    if (entry && typeof entry === "object" && !Array.isArray(entry)) {
+      const { disabledReason: _reason, ...rest } = entry as Record<string, unknown>;
+      next[to] = rest;
+    } else {
+      next[to] = entry;
+    }
+  }
+  return { ok: true, next };
+}
+
+export function migrateMcpNameCollisions(raw: Record<string, unknown> | undefined): Record<string, unknown> | null {
+  if (!raw) return null;
+  const survivors: string[] = [];
+  let changed = false;
+  const next: Record<string, unknown> = {};
+  for (const [name, entry] of Object.entries(raw)) {
+    const survivor = survivors.find((kept) => mountNameRefusal(name, [kept]) !== null && mountNameRefusal(name, []) === null);
+    if (survivor === undefined) {
+      survivors.push(name);
+      next[name] = entry;
+      continue;
+    }
+    const reason = `name-collision:${survivor}`;
+    if (entry && typeof entry === "object" && !Array.isArray(entry)) {
+      const record = entry as Record<string, unknown>;
+      if (record.enabled === false && record.disabledReason === reason) {
+        next[name] = entry;
+        continue;
+      }
+      next[name] = { ...record, enabled: false, disabledReason: reason };
+      changed = true;
+    } else {
+      next[name] = entry;
+    }
+  }
+  return changed ? next : null;
 }

@@ -5,7 +5,7 @@
 // G3, every Settings section reachable at 1280x720 with a visible scrollbar
 // when the list does not fit; G4, the archive note with Restore that stays;
 // G11, the picture-left-out note and the plain error sentence naming the bot.
-import { expect, test, type Page } from "@playwright/test";
+import { expect, test, type Page } from "./page-error-guard";
 import { createServer, type ViteDevServer } from "vite";
 import tailwindcss from "@tailwindcss/vite";
 import { fileURLToPath } from "node:url";

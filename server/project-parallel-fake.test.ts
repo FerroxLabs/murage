@@ -2,11 +2,12 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import { spawn } from "node:child_process";
 import { once } from "node:events";
-import { mkdtempSync, readdirSync, rmSync, writeFileSync } from "node:fs";
+import { mkdtempSync, readdirSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { expect, it } from "vitest";
+import { removeTempDirSync } from "./testing/cleanup.ts";
 it.each([["parallel-card", false], ["cancel-ack", true], ["parallel-card-retry", false], ["parallel-card-retry", true]] as const)("%s publishes prompt acceptance while held (cancel: %s)", async (mode, cancel) => {
   const root = mkdtempSync(join(tmpdir(), "parallel-proof-"));
   const child = spawn(process.execPath, [fileURLToPath(new URL("./testing/fake-acp-cli.ts", import.meta.url))], { env: { ...process.env, FAKE_ACP_MODE: mode, FAKE_ACP_ACCEPT_DIR: root, FAKE_ACP_GATE_FILE: join(root, "finish"), FAKE_ACP_FAIL_ONCE_FILE: join(root, "failed") }, stdio: ["pipe", "pipe", "pipe"] });
@@ -28,6 +29,6 @@ it.each([["parallel-card", false], ["cancel-ack", true], ["parallel-card-retry",
     await expect.poll(() => messages.find(m => m.id === id)?.result?.stopReason).toBe(cancel ? "cancelled" : "end_turn");
   } finally {
     const closed = once(child, "close"); child.kill(); await closed;
-    rmSync(root, { recursive: true, force: true });
+    removeTempDirSync(root);
   }
 });

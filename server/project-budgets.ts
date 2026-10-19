@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // Copyright 2026 Ferrox Labs
 import type { DatabaseSync } from "node:sqlite";
-import { projectBudgetsForGroup, type ProjectBudget } from "./project-defaults.ts";
-import { projectUsage } from "./usage-ledger.ts";
+import { liveProjectBudgetsForGroup, projectBudgetsForGroup, type ProjectBudget } from "./project-defaults.ts";
+import { budgetUsageTotals } from "./usage-ledger.ts";
 import { budgetPeriodStart } from "./project-budget-period.ts";
 import { pauseProjectGoal } from "./project-goals.ts";
 import { setProjectRunState } from "./project-settings.ts";
@@ -20,7 +20,7 @@ export function createProjectBudgetGate(db: DatabaseSync, hooks: { running?: () 
   /** The budget is used up: stop the card work running in its scope (a goal's, or the whole project's for a period budget). Called on every evaluation while over, so work that slipped in is stopped too. */
   stop?: (groupId: string, goalId: string | null) => void } = {}): ProjectBudgetGate {
   const usage = (budget: ProjectBudget, now: number) => {
-    const settled = projectUsage(db, { groupId: budget.groupId, ...(budget.goalId ? { goalId: budget.goalId } : { since: budget.periodStart }) }).totals;
+    const settled = budgetUsageTotals(db, { groupId: budget.groupId, ...(budget.goalId ? { goalId: budget.goalId } : { since: budget.periodStart }) });
     let workMs = settled.workMs;
     for (const turn of hooks.running?.() ?? []) {
       if (turn.groupId !== budget.groupId || (budget.goalId && turn.goalId !== budget.goalId)) continue;
@@ -31,7 +31,7 @@ export function createProjectBudgetGate(db: DatabaseSync, hooks: { running?: () 
   };
   const evaluate = (groupId: string, now: number) => {
     if (hooks.enabled?.() === false) return;
-    for (let budget of projectBudgetsForGroup(db, groupId)) {
+    for (let budget of liveProjectBudgetsForGroup(db, groupId)) {
       if(budget.goalId && db.prepare("SELECT 1 FROM project_goals WHERE id=? AND state IN ('done','stopped','failed')").get(budget.goalId))continue;
       if (budget.period !== "goal") {
         const start = budgetPeriodStart(budget.period, budget.tz, now);

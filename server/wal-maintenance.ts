@@ -16,6 +16,7 @@
 // the last one (a last close would copy the whole log on the way out and hold shutdown).
 import { closeSync, fstatSync, openSync, readSync, statSync } from "node:fs";
 import { Worker } from "node:worker_threads";
+import { pathIsWithin, registerTestHandle } from "./test-handle-registry.ts";
 
 export interface PassiveResult { busy: number; log: number; checkpointed: number }
 /** The salt pair in the log header: a new pair means the log was restarted. */
@@ -392,3 +393,9 @@ export async function stopWalMaintenance(grace = 3000, kill = 1500): Promise<boo
   const results = await Promise.all(all.map(m => retire(m, grace, kill)));
   return results.every(Boolean) && live.size === 0;
 }
+
+// Under vitest only: lets test cleanup await this copy's checkpointer even after vi.resetModules() made it a stranger.
+registerTestHandle("stop", dir => {
+  if (dir !== undefined && ![...live].some(m => pathIsWithin(m.walFile, dir)) && !(portsFile && pathIsWithin(portsFile, dir))) return;
+  return stopWalMaintenance();
+}, () => [...live].flatMap(m => [m.walFile, `${m.file}-shm`]));

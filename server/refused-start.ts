@@ -7,8 +7,9 @@
 import { ERROR_MESSAGE_MAX } from "../shared/provider-error.ts";
 import { redactSecretsInText } from "./redact.ts";
 import type { Message } from "./store.ts";
+import { murageLine } from "./murage-line.ts";
 
 export function recordRefusedStart(store: { appendMessage(threadId: string, message: Omit<Message, "id" | "at">): Message }, threadId: string, why: string): Message {
   const detail = redactSecretsInText(why);
-  return store.appendMessage(threadId, { role: "bot", kind: "activity", tool: { name: `error: ${detail.slice(0, ERROR_MESSAGE_MAX)}`, ok: false, errorDetails: detail.slice(0, 4096) } });
+  return store.appendMessage(threadId, murageLine({ role: "bot", kind: "activity", tool: { name: `error: ${detail.slice(0, ERROR_MESSAGE_MAX)}`, ok: false, errorDetails: detail.slice(0, 4096) } }));
 }

@@ -5,12 +5,13 @@ import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 
 import { companionOriginSocket, listenCompanionOrigin } from "../src/origin.ts";
+import { removeTempDirSync } from "../../server/testing/cleanup.ts";
 
 const directories: string[] = [];
 
 afterEach(() => {
   for (const directory of directories.splice(0)) {
-    fs.rmSync(directory, { force: true, recursive: true });
+    removeTempDirSync(directory);
   }
 });
 

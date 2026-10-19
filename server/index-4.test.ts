@@ -19,6 +19,7 @@ import { createBotPackageEntry } from "./bot-package-manifest.ts";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { beforeAll, describe, expect, it, vi } from "vitest";
+import { removeTempDirSync } from "./testing/cleanup.ts";
 
 // These cases need connected apps, which run through Flux Router only: the
 // harness points its build at a fake broker when this is set.
@@ -26,7 +27,7 @@ vi.hoisted(() => { process.env.MURAGE_TEST_FAKE_FLUX_BROKER = "1"; });
 import { z } from "zod";
 import { openSse } from "./testing/sse.ts";
 import { intakeChips, intakeNarrowPickChips, type IntakeCandidate, type IntakeCardData } from "../shared/intake-turn.ts";
-import { BASE, DESKTOP_HEADERS, DESKTOP_QUERY, DESKTOP_SECRET, FAKE_CLAUDE_CLI, PAIRED_PHONE, PORT, SERVER_DIR, STATE_ONLY_SELECTION, api, boxStubPort, browserMount, browserNativeEvents, browserSession, connectorAliasFixture, delayedJsonBody, desktopApi, fakeClaudeDump, home, readJsonFileWhenReady, setConnectorAliasFixture, startInternalFixtureTurn, stopFixtureTurn, storedMessageCount, turnMemoryOutcomes } from "./testing/index-harness.ts";
+import { BASE, DESKTOP_HEADERS, DESKTOP_QUERY, DESKTOP_SECRET, desktopTicketed, FAKE_CLAUDE_CLI, PAIRED_PHONE, PORT, SERVER_DIR, STATE_ONLY_SELECTION, api, boxStubPort, browserMount, browserNativeEvents, browserSession, connectorAliasFixture, delayedJsonBody, desktopApi, fakeClaudeDump, home, readJsonFileWhenReady, setConnectorAliasFixture, startInternalFixtureTurn, stopFixtureTurn, storedMessageCount, turnMemoryOutcomes } from "./testing/index-harness.ts";
 import { browserEngineRefusesHost } from "./testing/index-harness.ts";
 
 
@@ -1202,7 +1203,7 @@ describe("internal capability authority", () => {
     } finally {
       for (const id of routineIds) await desktopApi("DELETE", `/api/routines/${id}`);
       for (const id of importedIds) await desktopApi("DELETE", `/api/bots/${id}`);
-      rmSync(root, { recursive: true, force: true });
+      removeTempDirSync(root);
     }
   });
 
@@ -1820,7 +1821,7 @@ describe("internal capability authority", () => {
   }, 90_000);
 
   // Review round 4 #5: two different names cleared while one card waits cannot both take the last place.
-  it("two different new bots waiting on the same card cannot both take the last place in the workspace", async () => {
+  it("two different new bots waiting on the same card cannot both take the last place in the workspace", { tags: ["nightly"], timeout: 180_000 }, async () => {
     const bot = (await desktopApi("POST", "/api/bots")).body.bot;
     const made: string[] = [];
     let routineId = "", runId = "";
@@ -1882,7 +1883,7 @@ describe("internal capability authority", () => {
       for (const id of made) await desktopApi("DELETE", `/api/bots/${id}`);
       await desktopApi("DELETE", `/api/bots/${bot.id}`);
     }
-  }, 180_000);
+  });
 
   it("a Not now on hand-offs covers every later hand-off in the run, whoever it is for, and asks nothing more", async () => {
     const bot = (await desktopApi("POST", "/api/bots")).body.bot;
@@ -2223,7 +2224,7 @@ describe("remote surfaces see only the conversations a person can see", () => {
     // marker. Opening the desktop stream second and waiting on IT proves the
     // scoped stream was given a real chance to receive the frame.
     const scoped = await openSse(`${BASE}/api/events`);
-    const desktop = await openSse(`${BASE}/api/events?${DESKTOP_QUERY}`);
+    const desktop = await openSse(`${BASE}${await desktopTicketed("/api/events")}`);
     try {
       await scoped.until((f) => f.kind === "hello");
       await desktop.until((f) => f.kind === "hello");
@@ -2247,7 +2248,7 @@ describe("remote surfaces see only the conversations a person can see", () => {
     // connection for one second got the firehose back on resume.
     const bot = await seedHiddenBot("firehose probe beta");
 
-    const first = await openSse(`${BASE}/api/events?${DESKTOP_QUERY}`);
+    const first = await openSse(`${BASE}${await desktopTicketed("/api/events")}`);
     const hello = await first.until((f) => f.kind === "hello");
     expect((await desktopApi("PATCH", `/api/bots/${bot.id}`, { unread: true })).status).toBe(200);
     await first.until((f) => f.kind === "bot" && f.bot?.id === bot.id);
@@ -2255,7 +2256,7 @@ describe("remote surfaces see only the conversations a person can see", () => {
 
     const since = encodeURIComponent(hello.cursor);
     const resumed = await openSse(`${BASE}/api/events?since=${since}`);
-    const resumedDesktop = await openSse(`${BASE}/api/events?since=${since}&${DESKTOP_QUERY}`);
+    const resumedDesktop = await openSse(`${BASE}${await desktopTicketed(`/api/events?since=${since}`)}`);
     try {
       expect((await resumed.until((f) => f.kind === "hello")).resumed).toBe(true);
       // the desktop's replay carries the frame, so it really was in the
@@ -2273,7 +2274,7 @@ describe("remote surfaces see only the conversations a person can see", () => {
     const bot = await seedHiddenBot(needle);
 
     const q = `/api/search?q=${encodeURIComponent(needle)}`;
-    const desktop = await api("GET", `${q}&${DESKTOP_QUERY}`);
+    const desktop = await api("GET", await desktopTicketed(q));
     expect(desktop.status).toBe(200);
     expect(desktop.body.hits.some((hit: any) => hit.threadId === bot.threadId)).toBe(true);
 
@@ -2303,8 +2304,7 @@ describe("remote surfaces see only the conversations a person can see", () => {
       // them would hand back exactly the ids the scoping just withheld
       const scoped = await fetch(`${BASE}${path}`);
       expect(scoped.status, path).toBe(404);
-      const joiner = path.includes("?") ? "&" : "?";
-      const desktop = await fetch(`${BASE}${path}${joiner}${DESKTOP_QUERY}`);
+      const desktop = await fetch(`${BASE}${await desktopTicketed(path)}`);
       expect(desktop.status, path).toBe(200);
     }
   });
@@ -2354,7 +2354,7 @@ describe("remote surfaces see only the conversations a person can see", () => {
     // still a working hydration, not an empty one
     expect(scoped.body.bots.length).toBeGreaterThan(0);
 
-    const desktop = await api("GET", `/api/bots?messages=20&${DESKTOP_QUERY}`);
+    const desktop = await api("GET", await desktopTicketed("/api/bots?messages=20"));
     expect(desktop.body.bots.some((b: any) => b.id === bot.id)).toBe(true);
     expect(JSON.stringify(desktop.body)).toContain("firehose probe zeta");
   }, 40_000);

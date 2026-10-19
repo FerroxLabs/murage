@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
@@ -10,6 +10,7 @@ import {
   routinePair, routineSiblingPointers, selectRefusal, setupOutcome, validateAdapterArtifacts, validateReceipt,
   type AdapterSpec, type Q14LeaseSnapshot, type Q14ReadbackEvidence, type Q14ReviewEvidence, type Receipt,
 } from "../../../scripts/b34-receipt-matrix.ts";
+import { removeTempDirSync } from "../../testing/cleanup.ts";
 
 // Contract checks for the B34 receipt runner itself. Nothing here launches a
 // server, engine or model; receipts, adapter artifacts and lease snapshots below
@@ -211,7 +212,7 @@ describe("B34 executable receipt matrix", () => {
       expect(await loadAdapter(spec, place("wrong-row", `export const ${spec.export} = { row: "Q03", run: async () => ({}) };\n`))).toEqual({ blocked: expect.stringContaining("Adapter unusable") });
       const loaded = await loadAdapter(spec, place("valid", `export const ${spec.export} = { row: "Q06", run: async () => ({}) };\n`));
       expect("adapter" in loaded && loaded.adapter.row).toBe("Q06");
-    } finally { rmSync(parent, { recursive: true, force: true }); }
+    } finally { removeTempDirSync(parent); }
   });
 
   it("accepts only complete adapter artifacts for distillation, index readiness and evaluator semantics", () => {
@@ -404,7 +405,7 @@ describe("B34 executable receipt matrix", () => {
       expect(resolveTaskPinRevision(dataDir, "thread-4", routineId, "skill", "routine-1")).toMatchObject({ ok: false });
       writeFileSync(join(directory, `${id}.json`), bundle.replace("rev-base", "rev-forg"));
       expect(resolveTaskPinRevision(dataDir, "thread-1", id, "skill", "checked-method")).toEqual({ ok: false, reason: "task bundle bytes do not match the pinned id" });
-    } finally { rmSync(dataDir, { recursive: true, force: true }); }
+    } finally { removeTempDirSync(dataDir); }
   });
 
   it("requires runner-snapshotted lease sessions, ledger delta and per-session charges consistent with each receipt's callbacks", () => {

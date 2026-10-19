@@ -1,10 +1,11 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { EngineManager, LATEST_VERSION_TTL_MS, type ManagedEngineInstance } from "./engine-management.js";
+import { removeTempDir } from "./testing/cleanup.ts";
 const roots: string[] = [];
-afterEach(async () => { await Promise.all(roots.splice(0).map(root => rm(root, { recursive: true, force: true }))); });
+afterEach(async () => { await Promise.all(roots.splice(0).map(root => removeTempDir(root))); });
 async function fixture(options: { driver?: string; platform?: NodeJS.Platform; arch?: string; busy?: () => boolean; probe?: string } = {}) {
   const root = await mkdtemp(join(tmpdir(), "murage-engine-manager-test-")); roots.push(root);
   const instance: ManagedEngineInstance = { instanceId: "fixture", driverKind: options.driver ?? "codex", cli: "/preserved/old-cli", snapshot: { state: "available", version: "codex-cli 1.0.0" } };
