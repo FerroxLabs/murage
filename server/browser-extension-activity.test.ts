@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
-import { existsSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, readdirSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
@@ -9,6 +9,7 @@ import {
 } from "./browser-extension-activity.ts";
 import { BROWSER_EXTENSION_FILES, classifyDataDirEntry } from "./data-dir-inventory.ts";
 import { routeClass, conversationSubject } from "./route-policy.ts";
+import { removeTempDirSync } from "./testing/cleanup.ts";
 
 let dir: string;
 let clock = 1_800_000_000_000;
@@ -18,7 +19,7 @@ const entry = (over: Record<string, unknown> = {}) => ({
   target: "Save draft", level: 2 as const, decision: "allowed for this task" as const, decidedBy: "grant" as const, outcome: "done" as const, ...over,
 });
 beforeEach(() => { dir = mkdtempSync(join(tmpdir(), "activity-")); clock = 1_800_000_000_000; });
-afterEach(() => { configureBrowserActivity(undefined); rmSync(dir, { recursive: true, force: true }); });
+afterEach(() => { configureBrowserActivity(undefined); removeTempDirSync(dir); });
 
 describe("browser activity store", () => {
   it("records the allowed fields and nothing else", () => {

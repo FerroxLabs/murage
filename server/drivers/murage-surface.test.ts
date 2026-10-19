@@ -1,7 +1,7 @@
 import { murageToolList } from "../testing/murage-tool-list.ts";
 // Copyright 2026 Ferrox Labs
 // SPDX-License-Identifier: AGPL-3.0-or-later
-import { mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { mkdtempSync, readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -16,7 +16,8 @@ import { recordEvents } from "../testing/events.ts";
 import { ROOM_TOOLS_LINE, goalWakePrompt, projectCardPrompt } from "../project-prompt.ts";
 import { chiefOfStaffSystemPrompt } from "../chief-of-staff.ts";
 import { TURN_PROMPTS } from "../bot-shapes.ts";
-import { murageTool } from "../murage-tool-surface.ts";
+import { THREAD_RECALL_LINE, murageTool } from "../murage-tool-surface.ts";
+import { removeTempDirSync } from "../testing/cleanup.ts";
 
 beforeEach(() => {
   for (const key of Object.keys(process.env)) if (/KEY|TOKEN|SECRET|PASSWORD|AUTH|CREDENTIAL/i.test(key)) vi.stubEnv(key, "");
@@ -64,7 +65,7 @@ it.each(cases)("$driver.driverKind renders the mounted MCP names in lead/member/
       }
       expect(shown).not.toContain("{{murage-tool:");
     }
-  } finally { recorder.stop(); await instance.dispose(); rmSync(dir, { recursive: true, force: true }); }
+  } finally { recorder.stop(); await instance.dispose(); removeTempDirSync(dir); }
 }, 60000);
 
 it.each([OpenAICompatDriver, BoxAgentDriver])("$driverKind declares no mounted MCP tools", async driver => {
@@ -76,7 +77,7 @@ it.each([OpenAICompatDriver, BoxAgentDriver])("$driverKind declares no mounted M
     expect(instance.adapter.mcpToolSurface).toEqual({ kind: "none" });
     expect(instance.adapter.capabilities.agentsMcp).not.toBe(true);
     expect(instance.adapter.capabilities.memoryMcp).not.toBe(true);
-  } finally { await instance.dispose(); rmSync(dir, { recursive: true, force: true }); }
+  } finally { await instance.dispose(); removeTempDirSync(dir); }
 });
 
 // The phone and the browser are their own servers: a reference to one of
@@ -103,5 +104,34 @@ it.each([
     expect(shown).toContain(phone);
     if (browser) expect(shown).toContain(browser);
     expect(shown).not.toContain("{{murage-tool:");
-  } finally { recorder.stop(); await instance.dispose(); rmSync(dir, { recursive: true, force: true }); }
+  } finally { recorder.stop(); await instance.dispose(); removeTempDirSync(dir); }
 }, 60000);
+
+// Thread recall (r6 rules 18 and 22): the memory mount carries the thread tools, and the turn text says so only for an eligible turn.
+it.each(cases.slice(0, 3))("$driver.driverKind says thread recall once, only for an eligible turn with a memory mount", async ({ driver, cli, key }) => {
+  const dir = mkdtempSync(join(tmpdir(), "tr-surface-"));
+  const dump = join(dir, "dump.json");
+  const config = driver.decodeConfig({ cli: fileURLToPath(new URL(`../testing/${cli}`, import.meta.url)), fullAuto: true, permissionMode: "acceptEdits" });
+  const instance = await driver.create({ instanceId: "tr-fixture", displayName: "TR", enabled: true, config: config as never, environment: { HOME: dir, USERPROFILE: dir, [key]: dump } });
+  const recorder = recordEvents(instance.adapter);
+  const memory = { command: process.execPath, args: ["fixture-memory"], env: {} };
+  let seen = 0; // Pi's dump grows by lines across turns; read only this turn's
+  const shownFor = async (threadId: string, extra: Record<string, unknown>) => {
+    await instance.adapter.sendTurn({ threadId, text: `Hello ${threadId}.`, cwd: dir, ...extra });
+    await recorder.until(event => event.threadId === threadId && event.type === "turn.completed", 15000);
+    const raw = readFileSync(dump, "utf8");
+    const all = driver === PiDriver ? raw.trim().split("\n").map(line => JSON.parse(line)) : [JSON.parse(raw)];
+    const rows = driver === PiDriver ? all.slice(seen) : all;
+    seen = all.length;
+    return JSON.stringify(rows.map(row => ({ prompt: row.prompt, systemPrompt: row.systemPrompt, calls: row.calls, message: row.message })));
+  };
+  try {
+    const say = JSON.stringify(THREAD_RECALL_LINE).slice(1, -1);
+    expect(await shownFor("tr-yes", { integrations: { memory }, threadRecall: true })).toContain(say);
+    expect(await shownFor("tr-not-eligible", { integrations: { memory } })).not.toContain(say);
+    expect(await shownFor("tr-no-mount", { integrations: {}, threadRecall: true })).not.toContain(say);
+  } finally { recorder.stop(); await instance.dispose(); removeTempDirSync(dir); }
+}, 60000);
+it("the shipped memory proxy lists the four memory tools and the three thread tools", async () => {
+  expect([...await murageToolList("memory", "")].sort()).toEqual(["memory_get", "memory_propose_correction", "memory_save", "memory_search", "thread_list", "thread_read", "thread_search"]);
+});

@@ -17,11 +17,12 @@ import { dropLegacyOwnerTailIndex, fillOwnerTailNow, fillOwnerTailSlice, startOw
 import { PIP_ALL_KINDS } from "./pip-kinds.ts";
 import { ensureScope, reconcileMemoryRoster } from "./policy.ts";
 import { downgradeMemorySchema, dropOwnerTail, LEGACY_OWNER_TAIL_INDEX, LEGACY_OWNER_TAIL_INDEX_SQL, OWNER_TAIL_KINDS_SQL, OWNER_TAIL_TABLE, ownerTailPresent, ownerTailReady, validateMemorySchema } from "./schema.ts";
+import { removeTempDirSync } from "../testing/cleanup.ts";
 
 const INDEX_PATH = () => join(DATA_DIR, "memory-index.db");
 const roster = { bots: [{ id: "a", threadId: "ta" }], groups: [] };
 
-beforeEach(() => { closeMemoryIndexReader(); closeDatabase(); rmSync(DATA_DIR, { recursive: true, force: true }); mkdirSync(DATA_DIR, { recursive: true }); });
+beforeEach(() => { closeMemoryIndexReader(); closeDatabase(); removeTempDirSync(DATA_DIR); mkdirSync(DATA_DIR, { recursive: true }); });
 
 /** `count` indexed records that all say "weekly" (three of them, the oldest among them, also "zephyrine"), plus, older than all of them,
  * a continuity brief and a rolled checkpoint version that say "zephyrine" and are never in the search index. */
@@ -115,14 +116,14 @@ describe("owner search: the notice only when a limit was reached", () => {
     expect(memoryIndexReaderOpens()).toBe(opens);
   });
 
-  it("continuity and checkpoint rows are never hidden: found past any window, and before the index is built the owner is told", { timeout: 300_000 }, async () => {
+  it("continuity and checkpoint rows are never hidden: found past any window, with or without the owner-tail table (1.0.3: the key table's kind index answers)", { timeout: 300_000 }, async () => {
     seed(30_000);
     const db = database();
     dropOwnerTail(db);
     const before = await ownerMemoryList({ botId: "a", query: "zephyrine" }, roster);
-    // not filled yet: the old brief and checkpoint lie past the newest 20,000 records, so the search says it read only the newest
-    expect(ids(before.rows)).not.toContain("brief-old:1");
-    expect(before).toMatchObject({ coverageComplete: false, searchNotice: OWNER_NEWEST_NOTICE });
+    // the old brief and checkpoint lie past the newest 20,000 records: the kind scans of the key table reach them whatever the table holds
+    expect(ids(before.rows)).toEqual(expect.arrayContaining(["brief-old:1", "cp-old:1"]));
+    expect(before.coverageComplete).toBe(true);
     fillOwnerTailNow(db);
     const after = await ownerMemoryList({ botId: "a", query: "zephyrine" }, roster);
     expect(ids(after.rows)).toEqual(expect.arrayContaining(["brief-old:1", "cp-old:1"]));
@@ -142,9 +143,9 @@ describe("owner search: the notice only when a limit was reached", () => {
     expect(found).toMatchObject({ coverageComplete: false, searchNotice: OWNER_NEWEST_NOTICE });
   });
 
-  it("the statements, and the rows they step, are the same at 20k and 500k records, and none reads the records table whole", { timeout: 900_000 }, async () => {
+  it("the statements, and the rows they step, are the same at 20k and 500k records, and none reads the records table whole", { tags: ["nightly"], timeout: 900_000 }, async () => {
     const run = async (count: number) => {
-      closeMemoryIndexReader(); closeDatabase(); rmSync(DATA_DIR, { recursive: true, force: true }); mkdirSync(DATA_DIR, { recursive: true });
+      closeMemoryIndexReader(); closeDatabase(); removeTempDirSync(DATA_DIR); mkdirSync(DATA_DIR, { recursive: true });
       seed(count);
       const before = { ...ownerSearchWork };
       ownerSearchTrace.statements = []; ownerSearchTrace.on = true;
@@ -160,13 +161,19 @@ describe("owner search: the notice only when a limit was reached", () => {
       return { statements, plans, visited, ran };
     };
     const small = await run(20_000), large = await run(500_000);
-    expect(large.statements).toEqual(small.statements);
-    expect(large.plans).toEqual(small.plans);
-    expect(large.visited).toBe(small.visited);
-    expect(large.ran).toBe(small.ran);
-    // the records table is only ever searched by key, never scanned; the never-indexed kinds come from the owner-tail table (bounded by its LIMIT)
-    for (const plan of large.plans) for (const step of plan) expect(step).not.toMatch(/^SCAN (r|memory_records)\b/);
-    expect(large.plans.flat().some(step => step.includes(OWNER_TAIL_TABLE))).toBe(true);
+    // 1.0.3: the index walk reads one key range (4,096 keys) at a time, so a rare word costs one short range probe per 4,096 records
+    // (LANE2-MEMORY-DESIGN r3.3); the SET of statements, their plans, and the rows the word table steps are the same at any size
+    const ranges = (run: typeof small) => run.statements.filter(statement => statement.sql.includes("OFFSET 4095")).length;
+    const distinct = (run: typeof small) => [...new Set(run.statements.map(statement => `${statement.db}\u0000${statement.sql}`))].sort();
+    expect(distinct(large)).toEqual(distinct(small));
+    expect(new Set(large.plans.map(plan => plan.join("|")))).toEqual(new Set(small.plans.map(plan => plan.join("|"))));
+    expect(large.visited - ranges(large)).toBe(small.visited - ranges(small));
+    // an empty range costs its probe and one empty step of the word table: at most two statements per extra range
+    expect(large.ran - small.ran).toBeLessThanOrEqual(2 * (ranges(large) - ranges(small)));
+    expect(ranges(large)).toBeLessThanOrEqual(Math.ceil(500_000 / 4096) + 2);
+    // the records table is only ever searched by key, never scanned; the never-indexed kinds come from the key table's kind index (bounded by its LIMIT)
+    for (const plan of large.plans) for (const step of plan) expect(step).not.toMatch(/^SCAN (r|memory_records|memory_record_keys)\b/);
+    expect(large.plans.flat().some(step => step.includes("memory_record_keys_kind"))).toBe(true);
   });
 });
 
@@ -245,7 +252,7 @@ function seedTail(count: number) {
 }
 
 describe("the owner-tail backfill", () => {
-  it("a send's write during the backfill is never held more than 50 ms by it, and the writer gate is never taken", { timeout: 300_000 }, async () => {
+  it("a send's write during the backfill is never held more than 50 ms by it, and the writer gate is never taken", { tags: ["perf-budget"], timeout: 300_000 }, async () => {
     seedTail(300_000);
     const db = database();
     dropOwnerTail(db);

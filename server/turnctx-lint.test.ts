@@ -32,11 +32,25 @@ it("the windows, caps and tail fallbacks the class fix deleted are gone from eve
 });
 
 it("no index is created on the messages table beyond the shipped list", () => {
-  const shipped = new Set(["messages_thread", "messages_at", "messages_inbox_kind_thread_at", "messages_inbox", "messages_inbox_text_artifact", "messages_pending_browser_check"]);
+  // messages_thread_seq (transcript-seq.ts SEQ_INDEX): ROOM-ORDER-DESIGN r8 "Column and index": made with the schema only on an empty table, else
+  // an optional index built in an idle window off the serving thread under the writer hold, never a history-sized build under the writers
+  const shipped = new Set(["messages_thread", "messages_at", "messages_inbox_kind_thread_at", "messages_inbox", "messages_inbox_text_artifact", "messages_pending_browser_check", "messages_thread_seq", "messages_id"]);
+  const seqModule = join(root, "transcript-seq.ts");
+  expect(readFileSync(seqModule, "utf8")).toContain('export const SEQ_INDEX = "messages_thread_seq";');
+  const idModule = join(root, "message-id-index.ts");
+  expect(readFileSync(idModule, "utf8")).toContain('export const MESSAGE_ID_INDEX = "messages_id";');
   const found: string[] = [];
   for (const path of sources()) {
     const text = readFileSync(path, "utf8");
-    for (const match of text.matchAll(/CREATE\s+(?:UNIQUE\s+)?INDEX\s+(?:IF\s+NOT\s+EXISTS\s+)?([\w${}]+)\s+ON\s+messages\b/gi)) if (!shipped.has(match[1]!) && match[1] !== "${PENDING_BROWSER_CHECK_INDEX}") found.push(`${relative(root, path)}: ${match[1]}`);
+    for (const match of text.matchAll(/CREATE\s+(?:UNIQUE\s+)?INDEX\s+(?:IF\s+NOT\s+EXISTS\s+)?([\w${}]+)\s+ON\s+messages\b/gi)) {
+      const name = match[1]!;
+      if (shipped.has(name) || name === "${PENDING_BROWSER_CHECK_INDEX}") continue;
+      // through its constant only in the module that defines it as "messages_thread_seq" (checked above)
+      if (name === "${SEQ_INDEX}" && path === seqModule) continue;
+      // messages_id (message-id-index.ts MESSAGE_ID_INDEX): the copy-ancestry seek by id alone, the same idle-window life as the sequence index
+      if (name === "${MESSAGE_ID_INDEX}" && path === idModule) continue;
+      found.push(`${relative(root, path)}: ${name}`);
+    }
   }
   expect([...new Set(found)]).toEqual([]);
 });
@@ -44,9 +58,11 @@ it("no index is created on the messages table beyond the shipped list", () => {
 it("only the UI load and the exports read or walk a whole thread", () => {
   const allowed = [
     "{ bots: store.bots, messagesFor: (threadId) => store.messagesFor(threadId), routesThroughFlux: isFluxModel },",
-    "messages: store.messagesFor(bot.threadId),",
-    "messages: store.messagesFor(group.threadId),",
-    "if (limit === undefined) return { messages: store.messagesFor(threadId) };",
+    // the same UI loads, their rows gated through wireThread (transcript-page.ts) for the sequence (ROOM-ORDER-DESIGN r8 R8): the gate reads
+    // only the rows the load already holds (a row's number by key, the thread's newest by the index), never the thread again
+    "...wireThread(store, bot.threadId, { messages: store.messagesFor(bot.threadId) }, { slim: false }),",
+    "...wireThread(store, group.threadId, { messages: store.messagesFor(group.threadId) }, { slim: false }),",
+    "if (limit === undefined) return wireThread(store, threadId, { messages: store.messagesFor(threadId) }, { slim: false });",
     "activePath: threadId => store.activePath(threadId),",
   ];
   const lines = code(join(root, "index.ts")).map((line) => line.trim()).filter((line) => /\b(?:messagesFor|activePath|walkActivePath)\(/.test(line));

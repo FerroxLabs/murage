@@ -6,9 +6,10 @@ import { stripTypeScriptTypes } from "node:module";
 import { fileURLToPath } from "node:url";
 import { runInNewContext } from "node:vm";
 import { describe, expect, it, vi } from "vitest";
-import { database } from "./database.ts";
+import { database, transaction } from "./database.ts";
+import { bindProviderTurn, closeTurnLineage, memberTurnId, openTurnLineage, runningTurnFor, turnOfProvider, writeSessionLineage } from "./memory/lineage-write.ts";
 import { heldQueueWaiting } from "./external-context-delivery.ts";
-import { Store, type Message } from "./store.ts";
+import { Store, threadSealed, type Message } from "./store.ts";
 import { checkReplyActions, completedToolAction, startedToolAction, toolAction } from "./reply-action-guard.ts";
 import { renderDriverReplay, replayMetadata } from "./turn-context.ts";
 import { plainConnectedAppText } from "../shared/connected-app-tools.ts";
@@ -17,7 +18,14 @@ import { memberTurnProvenance, turnIsBackground } from "./message-automation.ts"
 import { isLiveRoutineRunStatus } from "./routines.ts";
 import { adoptStagedImages, memoryEchoDecision, retainSession } from "./fold-steps.ts";
 import { providerReplyOf } from "./provider-reply.ts";
+import { murageLine } from "./murage-line.ts";
+import { isEngineOutput } from "./message-db.ts";
 import { LineageAllowance } from "./memory/lineage-allowance.ts";
+import { allocateIncarnation, latestIncarnation, sessionKeyOf, startFreshSession } from "./memory/session-incarnation.ts";
+import { handedPinsOf, noteStartupFileEvent, promptFactsOf } from "./engine-env.ts";
+import { windowRuntimeEvent } from "./runtime-event-out.ts";
+import { commandCwdFromToolInput, commandFromToolInput } from "../shared/exact-command.ts";
+import { grantRequestFor, routineCardFields } from "./approval-grant-request.ts";
 
 /** Execute the production event fold with isolated storage and inert outside
  * services. This is a behavior test, not a census of source substrings. */
@@ -30,6 +38,10 @@ function foldFixture() {
   const noop = () => undefined;
   const scope: Record<string, unknown> = {
     store, toolAction, startedToolAction, completedToolAction, engineStamp, plainConnectedAppMessage: (row: unknown) => row,
+    // what index.ts imports for every permission event (engine-env.ts Rule 74a, shared/exact-command.ts): the real ones, as in production
+    noteStartupFileEvent, handedPinsOf, promptFactsOf, commandCwdFromToolInput, commandFromToolInput, turnCwdByThread: new Map(), routineCardFields, grantRequestFor,
+    // the window's copy of every runtime event (runtime-event-out.ts), the real one, as in production
+    windowRuntimeEvent,
     fluxFirstTokenProbe: { observe: noop, begin: noop },
     accountProjectEvent: noop, shouldIgnoreProviderEvent: () => false, replyGuardContext: () => null,
     accountPresentedProjectEvent: () => true, presentedRequests: { publish: noop },
@@ -43,11 +55,15 @@ function foldFixture() {
     questionFromChoices: (summary: string, choices: string[]) => ({ question: summary, options: choices }),
     lowRiskStamp: () => ({}), askMessageByRequest: new Map(), resolveAutoReviewMode: () => "off",
     createHash, retainSession, adoptStagedImages, memoryEchoDecision, generatedImagesByTurn: new Map(), memoryEchoReplies: new Map(),
-    performance, providerReplyOf, appendDecision: noop, addSourcesToRunningTurn: noop, DATA_DIR: "fixture", workAdmission: { liveTurns: () => [] }, notify: noop, buildNotification: noop,
+    performance, providerReplyOf, murageLine, database, sessionKeyOf, latestIncarnation, allocateIncarnation, startFreshSession, threadSealed, appendDecision: noop, turnIsBackground, addSourcesToRunningTurn: noop, DATA_DIR: "fixture", workAdmission: { liveTurns: () => [] }, notify: noop, buildNotification: noop,
   };
   const source = readFileSync(new URL("./index.ts", import.meta.url), "utf8");
   const plainStart = source.indexOf("function plainConnectedAppMessage");
   scope.plainConnectedAppMessage = runInNewContext(stripTypeScriptTypes(source.slice(plainStart, source.indexOf('const SETUP_TASK_TITLE', plainStart))) + "\nplainConnectedAppMessage;", { plainConnectedAppText });
+  // the memory session a session.started names (S6 rule 27), compiled in the same context so it reads the fixture's maps
+  const startsAt = source.indexOf("type SessionStart =");
+  const startsEnd = source.indexOf("\n}\n", source.indexOf("function sessionStartOf", startsAt)) + 2;
+  scope.sessionStartOf = runInNewContext(stripTypeScriptTypes(source.slice(startsAt, startsEnd)) + "\nsessionStartOf;", scope);
   const start = source.indexOf("const foldRuntimeEvent =");
   const end = source.indexOf("\nbus.subscribe(foldRuntimeEvent)", start);
   const code = stripTypeScriptTypes(source.slice(start, end)) + "\nfoldRuntimeEvent;";
@@ -205,7 +221,7 @@ it("F11 room continuation admission preserves the originating connection card", 
   // the real provenance seam: a room turn is told its automation by memberTurnAutomation, so it is extracted, not stubbed
   const memberStart = source.indexOf("function memberTurnAutomation(");
   const memberEnd = source.indexOf("/** The message the owner pinned", memberStart);
-  const scope = { LineageAllowance, store, memberTurnProvenance, turnIsBackground, isLiveRoutineRunStatus, backupRestartAdmission: { held: () => false }, routineRunLevel: () => null, roomRounds: new Map(), cfg: {},
+  const scope = { LineageAllowance, store, homeExecutionGate: undefined, memberTurnProvenance, turnIsBackground, isLiveRoutineRunStatus, backupRestartAdmission: { held: () => false }, routineRunLevel: () => null, roomRounds: new Map(), cfg: {},
     registry: { get: () => ({ adapter: { capabilities: {} } }) }, routeHasTools: () => false,
     threadHumanPrincipal: () => ({ kind: "owner" }), routines: { listRuns: () => [] },
     botPermissionMode: () => "ask", routinePeerSource: () => undefined, turnSessionAudience: () => "audience", latestRoomUserMessage: () => undefined, noteHeldQueue: () => {}, heldScanYield, runnableContinuation, isRestoreHeld, releaseHeldContinuation, currentRestoreGeneration: () => null };
@@ -485,6 +501,25 @@ describe("the production fold marks only the engine's own reply as the proof tha
     fold({ ...base, eventId: "e4", type: "item.completed", itemType: "assistant_text", origin: "murage", text: "a cap note" });
     expect(evidence()).toBeNull();
   });
+  it("every line the fold writes in Murage's voice carries the Murage marker and is no turn's engine output; the engine's own reply and tool start are (1.0.3 lifecycle card)", () => {
+    const { fold, store, bot, base } = handoffThread();
+    fold({ ...base, eventId: "m1", type: "runtime.error", message: "spawn failed" });
+    fold({ ...base, eventId: "m2", type: "turn.retrying", attempt: 1, delayMs: 1000, reason: "x" });
+    fold({ ...base, eventId: "m3", type: "item.started", itemType: "tool", itemId: "wake", origin: "murage", title: "Waking up" });
+    fold({ ...base, eventId: "m4", type: "item.started", itemType: "tool", itemId: "read", origin: "engine", title: "Read" });
+    fold({ ...base, eventId: "m5", type: "item.completed", itemType: "tool", itemId: "read", ok: true });
+    fold({ ...base, eventId: "m6", type: "item.completed", itemType: "assistant_text", origin: "engine", text: "done" });
+    const rows = store.activePath(bot.threadId).filter(row => row.role === "bot");
+    const row = (match: (row: Message) => boolean) => { const found = rows.find(match); expect(found).toBeDefined(); return found!; };
+    const murage = [row(r => r.tool?.name === "error: spawn failed"), row(r => r.tool?.name?.startsWith("retrying:") === true), row(r => r.tool?.name === "Waking up")];
+    for (const line of murage) {
+      expect(line.murageLine, line.tool?.name).toBe(true);
+      expect(line.turnId, "the line still reads as the turn's (its chip group)").toBe("turn-1");
+      expect(isEngineOutput(line), line.tool?.name).toBe(false);
+    }
+    const engine = [row(r => r.tool?.name === "Read"), row(r => r.kind === "text" && r.text === "done")];
+    for (const line of engine) { expect(line.murageLine).toBeUndefined(); expect(isEngineOutput(line)).toBe(true); }
+  });
   it("the engine's reply after Murage's own lines of the same turn is the proof (the walk goes on past Murage's lines)", () => {
     const { fold, evidence, base } = handoffThread();
     fold({ ...base, eventId: "e1", type: "item.started", itemType: "tool", itemId: "wait", origin: "murage", title: "Waiting for connected apps" });
@@ -499,5 +534,73 @@ describe("the production fold marks only the engine's own reply as the proof tha
     const tool = handoffThread();
     tool.fold({ ...tool.base, eventId: "e1", type: "item.started", itemType: "tool", itemId: "t1", origin: "engine", title: "Read" });
     expect(tool.evidence()).not.toBeNull();
+  });
+});
+
+describe("a resume cursor is saved only once the session's lineage is committed", () => {
+  const sessionFixture = () => {
+    const fx = foldFixture();
+    const turn = openTurnLineage(database(), { threadId: fx.bot.threadId, turnId: memberTurnId(fx.bot.id) });
+    bindProviderTurn(turn, "turn");
+    Object.assign(fx.scope, {
+      transaction, writeSessionLineage, turnOfProvider, runningTurnFor, recordSessionRoots: () => undefined, legacyToolNamesByThread: new Map(),
+      turnOutputRoots: new Map([[fx.bot.threadId, { instanceId: "fixture", roots: { roots: new Set(), over: false } }]]),
+    });
+    const start = (sessionId: string) => { try { fx.fold({ type: "session.started", threadId: fx.bot.threadId, turnId: "turn", providerInstanceId: "fixture", sessionId }); } catch { /* a commit failure propagates for redelivery */ } };
+    const cursor = () => fx.store.bot(fx.bot.id)?.resumeCursors.fixture;
+    const row = (sessionId: string) => database().prepare("SELECT 1 FROM memory_session_lineage WHERE thread_id=? AND native_session=?").get(fx.bot.threadId, sessionId);
+    return { ...fx, turn, start, cursor, row };
+  };
+  it("S6 rule 27: fresh starts repeating one native id save the cursor with the next incarnation; the row is keyed and stamped", () => {
+    const fx = sessionFixture();
+    const stamp = (key: string) => database().prepare("SELECT door_epoch FROM memory_session_lineage WHERE thread_id=? AND native_session=?").get(fx.bot.threadId, key)?.door_epoch;
+    const fresh = () => (fx.scope.turnOutputRoots as Map<string, unknown>).set(fx.bot.threadId, { instanceId: "fixture", roots: { roots: new Set(), over: false } });
+    const task = () => fx.store.taskByThread(fx.bot.id, fx.bot.threadId)!;
+    try {
+      fx.start("s-rep");
+      expect(fx.row("s-rep")).toBeTruthy();
+      expect(task().resumeIncarnations?.fixture).toBeUndefined();
+      fresh(); fx.start("s-rep");
+      expect(fx.row("s-rep#2")).toBeTruthy();
+      expect(stamp("s-rep#2")).not.toBeNull();
+      expect(fx.cursor()).toBe("s-rep");
+      expect(task().resumeIncarnations?.fixture).toBe(2);
+      // a resumed turn (its dispatch set the key, the raw cursor and the incarnation) keeps the key and never stamps
+      database().prepare("UPDATE memory_session_lineage SET door_epoch=NULL WHERE native_session='s-rep#2'").run();
+      (fx.scope.turnOutputRoots as Map<string, unknown>).set(fx.bot.threadId, { instanceId: "fixture", roots: { roots: new Set(), over: false }, session: "s-rep#2", cursor: "s-rep", incarnation: 2 });
+      fx.start("s-rep");
+      expect(stamp("s-rep#2")).toBeNull();
+      expect(task().resumeIncarnations?.fixture).toBe(2);
+      expect(Number(database().prepare("SELECT count(*) AS c FROM memory_session_incarnation WHERE native_id='s-rep'").get()!.c)).toBe(2);
+    } finally { closeTurnLineage(fx.turn); }
+  });
+  it("a committed session lineage row saves the cursor", () => {
+    const fx = sessionFixture();
+    try {
+      fx.start("s-ok");
+      expect(fx.row("s-ok")).toBeTruthy();
+      expect(fx.cursor()).toBe("s-ok");
+    } finally { closeTurnLineage(fx.turn); }
+  });
+  it("a statement failure in the session lineage write leaves no cursor", () => {
+    const fx = sessionFixture();
+    database().exec("CREATE TEMP TRIGGER fail_session_lineage BEFORE INSERT ON memory_session_lineage BEGIN SELECT RAISE(ABORT, 'session lineage refused'); END");
+    try {
+      fx.start("s-statement");
+      expect(fx.row("s-statement")).toBeFalsy();
+      expect(fx.cursor()).toBeUndefined();
+    } finally { database().exec("DROP TRIGGER IF EXISTS fail_session_lineage"); closeTurnLineage(fx.turn); }
+  });
+  it("a COMMIT failure of the session lineage write leaves no cursor", () => {
+    const fx = sessionFixture();
+    const db = database();
+    const exec = db.exec.bind(db);
+    const spy = vi.spyOn(db, "exec").mockImplementation((sql: string) => { if (sql === "COMMIT") throw new Error("disk I/O error"); return exec(sql); });
+    try {
+      fx.start("s-commit");
+      spy.mockRestore();
+      expect(fx.row("s-commit")).toBeFalsy();
+      expect(fx.cursor()).toBeUndefined();
+    } finally { spy.mockRestore(); closeTurnLineage(fx.turn); }
   });
 });

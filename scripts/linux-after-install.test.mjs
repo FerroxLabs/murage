@@ -5,6 +5,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { afterEach, describe, expect, it } from "vitest";
 import { parse } from "yaml";
+import { removeTempDirSync } from "../server/testing/cleanup.ts";
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const hook = path.join(root, "build", "linux-after-install.sh");
@@ -65,7 +66,7 @@ function runHook(appRoot) {
 
 afterEach(() => {
   for (const directory of temporaryDirectories.splice(0)) {
-    fs.rmSync(directory, { recursive: true, force: true });
+    removeTempDirSync(directory);
   }
 });
 
@@ -209,7 +210,7 @@ describe.skipIf(process.platform !== "linux")("Linux DEB upgrade hook", () => {
     const external = fs.mkdtempSync(path.join(fs.realpathSync(os.tmpdir()), "murage-deb-external-"));
     temporaryDirectories.push(external);
     fs.chmodSync(external, 0o777);
-    fs.rmSync(resources, { recursive: true });
+    removeTempDirSync(resources);
     fs.symlinkSync(external, resources, "dir");
 
     const result = runHook(appRoot);

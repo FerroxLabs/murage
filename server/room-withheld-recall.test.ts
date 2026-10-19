@@ -6,10 +6,11 @@
 // else it lives too: its captured chunk in recall and memory search, the
 // room checkpoint built from it, and every copy of it mirrored into a pair
 // room or back into the room that asked.
-import { mkdirSync, rmSync } from "node:fs";
+import { mkdirSync } from "node:fs";
 import { beforeEach, expect, it } from "vitest";
 import { afterEach as thawAfterEach, beforeEach as thawBeforeEach } from "vitest";
 import { thawRootSetWritesForTest } from "./memory/replay-lineage.ts";
+import { removeTempDirSync } from "./testing/cleanup.ts";
 // 1.0.2: this test models a 1.0.1 file (legacy root-set rows) for the read-time judge, which still decides legacy data until S6.
 thawBeforeEach(() => thawRootSetWritesForTest(true));
 thawAfterEach(() => thawRootSetWritesForTest(false));
@@ -18,6 +19,7 @@ import { closeDatabase, database, transaction } from "./database.ts";
 import { InternalCapabilities } from "./internal-capabilities.ts";
 import { memoryAccess, reconcileMemoryRoster, type MemoryRoster } from "./memory/policy.ts";
 import { captureSource } from "./memory/capture.ts";
+import { storeAnchorMessage } from "./memory/testing/anchor-message.ts";
 import { claimMemoryJob, publishMemoryWork } from "./memory/jobs.ts";
 import { captureWork } from "./memory/chunks.ts";
 import { refreshMemoryCheckpoint } from "./memory/consolidate.ts";
@@ -44,7 +46,7 @@ const roster: MemoryRoster = {
     { id: "pair", threadId: "pair-chat", memberIds: ["finch", "dax"] },
   ],
 };
-beforeEach(() => { closeDatabase(); rmSync(DATA_DIR, { recursive: true, force: true }); mkdirSync(DATA_DIR, { recursive: true }); });
+beforeEach(() => { closeDatabase(); removeTempDirSync(DATA_DIR); mkdirSync(DATA_DIR, { recursive: true }); });
 
 function access(botId: string, thread: string) {
   reconcileMemoryRoster(roster);
@@ -71,6 +73,7 @@ function daxMemory() {
  * real capture job, so its chunk is recallable and the checkpoint can roll. */
 function captured(thread: string, messageId: string, speaker: string, text: string) {
   const id = `message:${thread}:${messageId}`;
+  storeAnchorMessage(database(), thread, messageId, text, speaker === "owner" ? "user" : "bot");
   captureSource(database(), { id, threadId: thread, messageId, kind: "text", speaker, outcome: "recorded", text });
   // publish every pending capture (the owner's memory source included)
   let jobId = "";
@@ -246,7 +249,7 @@ it("gap 2: a copy owed to the asking bot's next turn is known withheld (external
   // the delivery path reads it this way (server/index.ts, planExternalDelivery input)
   const source = readFileSync(new URL("./index.ts", import.meta.url), "utf8");
   expect(source).toContain("const verdict = memoryNotOwner ? { withheld: true, unproven: false } : capturedMessageVerdict(allowance, threadId, id);");
-  expect(source).toContain("if (verdict.withheld) { pendingWithheld.add(id); return { id, text: withheldRoomLine(message, false, verdict.unproven) }; }");
+  expect(source).toContain("if (verdict.withheld) { pendingWithheld.add(id); return { id, text: withheldRoomLine(message, false, verdict.unproven), source }; }");
 });
 
 // Astra P1 audit #3: the owner rewrites a pinned note that rested on a

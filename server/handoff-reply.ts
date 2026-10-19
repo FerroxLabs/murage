@@ -7,17 +7,24 @@
 // Exactly once, by construction: the line has a stable id per hand-off (`dres-<id>`), so a second write of it returns the first; and the recovery writes it in
 // the same transaction that ends the request and removes the hand-off's row (delegations.ts settleReceipted), so it is written with the settle or not at all.
 import type { DelegationReceipt } from "./delegations.ts";
+import type { EgressOrigin } from "./released-text.ts";
 import type { Message, Store } from "./store.ts";
+import { murageLine } from "./murage-line.ts";
 
-/** What the source conversation is owed, kept on the receipt until the final commit has landed (delegations.ts finishHandoff). */
-export type OwedReply = { text: string } | { line: string; ok: boolean };
+/** What the source conversation is owed, kept on the receipt until the final commit has landed (delegations.ts finishHandoff). A held reply
+ * (REPLY-WITHHELD-CONTRACT C3, R3) carries the originals its words rest on: it is written as the worker's row flagged "checking", so the owner
+ * reads the words and bots read the checking line until the hold settles (server/held-replies.ts). */
+export type OwedReply = { text: string } | { text: string; held: { copyOf: EgressOrigin } } | { line: string; ok: boolean };
 
 export const HANDOFF_REPLY_PREFIX = "dres-";
 export function handoffReplyId(handoffId: string): string { return `${HANDOFF_REPLY_PREFIX}${handoffId}`; }
 
 /** The line a finished hand-off owes: the target's words when it replied, else its activity line. */
-export function owedReplyOf(input: { ok: boolean; reply: string; targetName: string; failureName: string; stopped: boolean }): OwedReply {
-  if (input.ok && input.reply.trim()) return { text: input.reply.trim() };
+export function owedReplyOf(input: { ok: boolean; reply: string; targetName: string; failureName: string; stopped: boolean; held?: EgressOrigin }): OwedReply {
+  if (input.ok && input.reply.trim()) {
+    const held = input.held?.messageIds.length ? { copyOf: { threadId: input.held.threadId, messageIds: [...input.held.messageIds] } } : undefined;
+    return held ? { text: input.reply.trim(), held } : { text: input.reply.trim() };
+  }
   const line = input.ok
     ? `Delegation to @${input.targetName} completed without a text reply`
     : input.stopped
@@ -32,6 +39,9 @@ export function appendHandoffReply(store: ReplyStore, input: { handoffId?: strin
   const id = input.handoffId ? handoffReplyId(input.handoffId) : undefined;
   if ("text" in input.owed) {
     const target = store.bot(input.targetBotId);
+    // a held reply rests on its own originals and is flagged "checking": bots read the checking line until the hold settles
+    const held = "held" in input.owed ? input.owed.held : undefined;
+    const copyOf = held ? held.copyOf : input.copyOf;
     const message: Omit<Message, "id" | "at"> = {
       role: "bot",
       kind: "text",
@@ -39,23 +49,31 @@ export function appendHandoffReply(store: ReplyStore, input: { handoffId?: strin
       text: `@${input.targetName} replied to the delegated task:\n\n${input.owed.text}`,
       // the result carries its request from the moment it is written, so a restart before the request completes can still find it (SPEC-P 6.3)
       ...(input.askRequestId ? { requestId: input.askRequestId, actorKind: "bot" as const } : {}),
-      ...(input.copyOf ? { copyOf: input.copyOf } : {}),
+      ...(copyOf ? { copyOf } : {}),
+      ...(held ? { withheldFromBots: "checking" as const } : {}),
     };
     if (target) message.from = { botId: target.id, name: target.name, color: target.color };
-    return store.appendMessage(input.sourceThreadId, message, id);
+    // a reply with its original is the worker's own row (LINEAGE-DESIGN-S6 rule 5): role bot, `from` the producing bot, `copyOf`, no stamp;
+    // one with no original names no bot's words and stays Murage's line
+    if (copyOf?.messageIds.length) {
+      message.from ??= { botId: input.targetBotId, name: input.targetName, color: "" };
+      return store.appendMessage(input.sourceThreadId, message, id);
+    }
+    return store.appendMessage(input.sourceThreadId, murageLine(message), id);
   }
-  return store.appendMessage(input.sourceThreadId, {
+  return store.appendMessage(input.sourceThreadId, murageLine({
     role: "bot",
     kind: "activity",
     ...(input.askRequestId ? { requestId: input.askRequestId, actorKind: "murage" as const } : {}),
     tool: { name: input.owed.line, ok: input.owed.ok },
-  }, id);
+  }), id);
 }
 
 /** The recovery: a receipt that still carries an owed line (its final commit never landed) writes it now, inside the settle's transaction. Returns the line, or
  * null when nothing is owed (an older receipt, a receipt from any other path, or a source conversation that is gone). */
-export function replayOwedReply(store: ReplyStore & Pick<Store, "botByThread" | "groupByThread">, receipt: DelegationReceipt): Message | null {
-  if (!receipt.reply) return null;
+export function replayOwedReply(store: ReplyStore & Pick<Store, "botByThread" | "groupByThread" | "messageById">, receipt: DelegationReceipt): Message | null {
+  // a held reply already written (its owed line delivered): the row under its stable id is the line, never a second one
+  if (!receipt.reply) return receipt.held ? store.messageById(receipt.sourceThreadId, receipt.held.messageId) ?? null : null;
   if (!store.botByThread(receipt.sourceThreadId) && !store.groupByThread(receipt.sourceThreadId)) return null;
   return appendHandoffReply(store, {
     handoffId: receipt.id, sourceThreadId: receipt.sourceThreadId, owed: receipt.reply, targetBotId: receipt.toBotId, targetName: receipt.toBotName,

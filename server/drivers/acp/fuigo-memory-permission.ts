@@ -1,6 +1,6 @@
 import { randomBytes } from "node:crypto";
 
-const tools = new Set(["memory_search", "memory_get", "memory_save", "memory_propose_correction"]);
+const tools = new Set(["memory_search", "memory_get", "memory_save", "memory_propose_correction", "thread_search", "thread_list", "thread_read"]);
 const record = (value: unknown): value is Record<string, unknown> => Boolean(value && typeof value === "object" && !Array.isArray(value));
 
 /** One unpredictable alias per turn; the longest qualified tool is 61 bytes. */
@@ -15,7 +15,7 @@ export function fuigoMemoryAllowOnce(toolCall: unknown, options: unknown, alias:
   let target: unknown = identity.namespace === "mcp" ? identity.name : undefined;
   // Fuigo 1.0.17 stamps the registered dispatcher, not its discovered MCP target.
   // Unwrap only that typed dispatcher shape; the current turn's nonce still owns
-  // the exact four destinations. Their arguments remain checked by our proxy.
+  // the exact seven destinations (four memory_*, three thread_*). Their arguments remain checked by our proxy.
   if (identity.namespace === "fuigo_build" && identity.name === "use_tool" && identity.kind === "use_tool" && identity.read_only === false) {
     const input = toolCall.rawInput;
     if (!record(input) || input.variant !== "UseTool" || typeof input.tool_name !== "string" || !record(input.tool_input) ||

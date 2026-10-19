@@ -8,9 +8,10 @@ import type { DatabaseSync } from "node:sqlite";
 import type { Artifact, ArtifactKind, ArtifactPage, ArtifactPreview, ArtifactQuery, ArtifactRegistration } from "../shared/artifacts.ts";
 import { isOutputProducer, type OutputProducer } from "../shared/output-publication.ts";
 import { redactSecretsInText } from "./redact.ts";
+import { availableForNewBytes, isNoSpaceError, type DiskSpaceError } from "./disk-space.ts";
+import { DISK_FULL_MESSAGE, isDiskSpaceCode, type DiskSpaceCode } from "../shared/attachment-storage.ts";
 
 export const ARTIFACT_MAX_BYTES = 25 * 1024 * 1024;
-export const ARTIFACT_STORAGE_MAX_BYTES = 512 * 1024 * 1024;
 export const ARTIFACT_PREVIEW_MAX_BYTES = 2 * 1024 * 1024;
 /** `managedOutput` marks a Murage-owned output root (generated images) that
  * authorizes reading saved rows only. Registration never selects it unless a
@@ -27,8 +28,10 @@ export class ArtifactError extends Error {
   readonly status: number;
   /** "content-changed": the source no longer holds the bytes the caller
    * verified (`expectedSha256`). Nothing was written. */
-  readonly reason?: "content-changed";
-  constructor(status: number, message: string, reason?: "content-changed") { super(message); this.status = status; if (reason !== undefined) this.reason = reason; }
+  /** "disk-full" / "disk-unknown": no room on the disk for the copy, or its
+   * free space could not be read (disk-space.ts). Nothing was written. */
+  readonly reason?: "content-changed" | DiskSpaceCode;
+  constructor(status: number, message: string, reason?: "content-changed" | DiskSpaceCode) { super(message); this.status = status; if (reason !== undefined) this.reason = reason; }
 }
 function fail(status: number, message: string): never { throw new ArtifactError(status, message); }
 const hash = (value: Uint8Array) => createHash("sha256").update(value).digest("hex");
@@ -129,6 +132,21 @@ function format(path: string): { kind: ArtifactKind; mime: string; extension: st
   if (ARTIFACT_TEXT_EXTENSIONS.includes(extension)) return { kind: "text", mime: "text/plain", extension };
   return { kind: "other", mime: "application/octet-stream", extension: /^\.[a-z0-9]{1,12}$/.test(extension) ? extension : ".bin" };
 }
+/** Start-up only: a `.candidate-*` is a copy a save was writing when the app
+ * stopped. Saves are synchronous, so none is mid-write when this runs, and
+ * every one found is a leftover that would otherwise take disk forever.
+ * Returns how many were removed. A missing library is nothing to sweep. */
+export function sweepArtifactCandidates(storageRoot: string): number {
+  let names: string[];
+  try { names = readdirSync(resolve(storageRoot)); } catch { return 0; }
+  let removed = 0;
+  for (const name of names) {
+    if (!/^\.candidate-[0-9a-f-]{36}$/i.test(name)) continue;
+    const path = join(resolve(storageRoot), name);
+    try { const stat = lstatSync(path); if (!stat.isFile() || stat.isSymbolicLink()) continue; unlinkSync(path); removed += 1; } catch { /* gone or not ours to remove */ }
+  }
+  return removed;
+}
 function storage(path: string) {
   const parent = resolve(path); directory(join(parent, ".."));
   try { mkdirSync(parent, { mode: 0o700 }); } catch (error) { if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error; }
@@ -167,6 +185,9 @@ export function initializeArtifacts(db: DatabaseSync) {
     -- Shell card recovery (output-publication.ts resumeRegisteredShellCards) reads only registered, unannounced receipts that have
     -- an artifact: its work follows the runs still owing a card, never the history of published outputs. Same WHERE as that query.
     CREATE INDEX IF NOT EXISTS output_publications_unannounced ON output_publications(bot_id,thread_id,run_id,created_at) WHERE producer='shell-output' AND stage='registered' AND message_id IS NULL AND artifact_id IS NOT NULL;`);
+  // the producing provider turn, kept with the receipt so a card written after a restart still names it (output-publication.ts)
+  const receiptColumns = new Set((db.prepare("PRAGMA table_info(output_publications)").all() as Array<{ name: string }>).map(column => column.name));
+  if (!receiptColumns.has("turn_id")) db.exec("ALTER TABLE output_publications ADD COLUMN turn_id TEXT");
 }
 interface Row { id: string; name: string; kind: ArtifactKind; mime: string; bytes: number; sha256: string; extension: string; created_at: number; bot_id: string; thread_id: string; run_id: string; source_root: string; relative_path: string; source_fingerprint: string; producer: string | null; publication_id: string | null }
 const blobName = (row: Pick<Row, "sha256" | "extension">) => {
@@ -212,9 +233,12 @@ export function registerArtifact(db: DatabaseSync, storageRoot: string, input: A
     try { exists = hash(readVerified(blob, ARTIFACT_MAX_BYTES)) === sha256; if (!exists) fail(409, "The saved copy failed verification."); }
     catch (error) { if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error; }
     if (!exists) {
-      let usage = 0; const names = readdirSync(directoryPath); if (names.length >= 10_000) fail(507, "The Files library has reached its storage limit.");
-      for (const name of names) { const stat = lstatSync(join(directoryPath, name)); if (!stat.isFile() || stat.isSymbolicLink()) fail(409, "The Files storage needs attention."); usage += stat.size; }
-      if (usage + bytes.length > ARTIFACT_STORAGE_MAX_BYTES) fail(507, "The Files library has reached its 512 MiB storage limit. No saved files were removed.");
+      // Room follows the disk (disk-space.ts): no fixed total, no count, and no
+      // walk of the whole library per save. A nearly full disk is the refusal.
+      let available: number;
+      try { available = availableForNewBytes(directoryPath); }
+      catch (error) { const refusal = error as DiskSpaceError; throw new ArtifactError(507, refusal.message, isDiskSpaceCode(refusal.code) ? refusal.code : "disk-unknown"); }
+      if (available < bytes.length) throw new ArtifactError(507, DISK_FULL_MESSAGE, "disk-full");
       const candidate = join(directoryPath, `.candidate-${randomUUID()}`); let fd: number | undefined, created = false;
       try {
         fd = openSync(candidate, constants.O_CREAT | constants.O_EXCL | constants.O_WRONLY, 0o600); created = true;
@@ -232,6 +256,7 @@ export function registerArtifact(db: DatabaseSync, storageRoot: string, input: A
   } catch (error) {
     if (error instanceof ArtifactError) throw error;
     if ((error as NodeJS.ErrnoException).code === "ENOENT") fail(404, "That file was not found inside this task's workspace.");
+    if (isNoSpaceError(error)) throw new ArtifactError(507, DISK_FULL_MESSAGE, "disk-full");
     fail(409, "The file could not be saved. The original was preserved.");
   }
 }
@@ -311,5 +336,17 @@ export function artifactsRequest(db: DatabaseSync, storageRoot: string, request:
       return { status: 200, bytes, headers: { "content-type": "application/octet-stream", "content-disposition": `attachment; filename*=UTF-8''${encodeURIComponent(artifact.filename).replace(/['()*]/g, char => '%' + char.charCodeAt(0).toString(16))}`, "x-content-type-options": "nosniff", "cache-control": "no-store" } };
     }
     return { status: 404, body: { error: "Files are unavailable." } };
-  } catch (error) { if (error instanceof ArtifactError) return { status: error.status, body: { error: error.message } }; throw error; }
+  } catch (error) { if (error instanceof ArtifactError) return { status: error.status, body: { error: error.message, ...(isDiskSpaceCode(error.reason) ? { code: error.reason } : {}) } }; throw error; }
+}
+
+/** Bytes the Files library holds on disk, for storage settings. Reporting
+ * only: one walk when someone opens the page, never on the save path. */
+export function artifactStorageBytes(storageRoot: string): number {
+  let names: string[];
+  try { names = readdirSync(resolve(storageRoot)); } catch { return 0; }
+  let bytes = 0;
+  for (const name of names) {
+    try { const stat = lstatSync(join(resolve(storageRoot), name)); if (stat.isFile()) bytes += stat.size; } catch { /* vanished */ }
+  }
+  return bytes;
 }

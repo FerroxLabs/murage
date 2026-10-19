@@ -1,0 +1,27 @@
+{
+  "source": "The connected-app catalog's public toolkit pages, read 2026-10-18: each operation's input schema as the catalog lists it. An operation the catalog does not list is absent.",
+  "operations": {
+    "GMAIL_SEND_EMAIL": { "type": "object", "properties": {
+      "cc": { "type": "array" }, "bcc": { "type": "array" }, "body": { "type": "string" }, "is_html": { "type": "boolean" },
+      "subject": { "type": "string" }, "user_id": { "type": "string" }, "attachment": { "type": "string" },
+      "from_email": { "type": "string" }, "recipient_email": { "type": "string" }, "extra_recipients": { "type": "array" } } },
+    "GMAIL_REPLY_TO_THREAD": { "type": "object", "required": ["thread_id"], "properties": {
+      "cc": { "type": "array" }, "bcc": { "type": "array" }, "is_html": { "type": "boolean" }, "user_id": { "type": "string" },
+      "thread_id": { "type": "string" }, "attachment": { "type": "string" }, "message_body": { "type": "string" },
+      "recipient_email": { "type": "string" }, "extra_recipients": { "type": "array" } } },
+    "OUTLOOK_REPLY_EMAIL": { "type": "object", "required": ["comment", "message_id"], "properties": {
+      "comment": { "type": "string" }, "is_html": { "type": "boolean" }, "user_id": { "type": "string" }, "cc_emails": { "type": "array" },
+      "attachment": { "type": "string" }, "bcc_emails": { "type": "array" }, "message_id": { "type": "string" } } },
+    "OUTLOOK_SEND_EMAIL": { "type": "object", "required": ["to", "body", "subject"], "properties": {
+      "to": { "type": "string" }, "body": { "type": "string" }, "is_html": { "type": "boolean" }, "subject": { "type": "string" },
+      "to_name": { "type": "string" }, "user_id": { "type": "string" }, "cc_emails": { "type": "array" }, "attachment": { "type": "string" },
+      "bcc_emails": { "type": "array" }, "from_address": { "type": "string" }, "save_to_sent_items": { "type": "boolean" } } },
+    "SLACK_SEND_MESSAGE": { "type": "object", "required": ["channel"], "properties": {
+      "blocks": { "type": "array" }, "channel": { "type": "string" }, "thread_ts": { "type": "string" }, "unfurl_links": { "type": "boolean" },
+      "unfurl_media": { "type": "boolean" }, "fallback_text": { "type": "string" }, "markdown_text": { "type": "string" },
+      "reply_broadcast": { "type": "boolean" } } },
+    "TELEGRAM_SEND_MESSAGE": { "type": "object", "required": ["text", "chat_id"], "properties": {
+      "text": { "type": "string" }, "chat_id": { "type": "string" }, "parse_mode": { "type": "string" }, "reply_markup": { "type": "string" },
+      "reply_to_message_id": { "type": "integer" }, "disable_notification": { "type": "boolean" }, "disable_web_page_preview": { "type": "boolean" } } }
+  }
+}

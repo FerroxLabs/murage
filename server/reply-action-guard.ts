@@ -9,6 +9,7 @@
 // Nothing is cut from the reply; the owner reads the words that were said.
 
 import type { Message } from "./store.ts";
+import { isMurageVoice } from "./murage-voice.ts";
 import {
   detectActionClaims,
   type ActionCheck,
@@ -160,7 +161,7 @@ export function rowActions(row: Message): ReturnType<typeof toolAction> {
 export function authoredTurnPieces(path: readonly Message[], reply: Pick<Message, "id" | "text" | "turnId" | "from">): readonly Pick<Message, "id" | "text" | "turnId" | "from">[] {
   if (!reply.turnId) return [reply];
   const pieces = path.filter(row => row.turnId === reply.turnId && row.role === "bot" && row.kind === "text"
-    && row.actorKind !== "murage" && !row.murage && !row.copyOf && row.removedText === undefined && row.from?.botId === reply.from?.botId);
+    && !isMurageVoice(row) && !row.copyOf && row.removedText === undefined && row.from?.botId === reply.from?.botId);
   return pieces.length ? pieces : [reply];
 }
 

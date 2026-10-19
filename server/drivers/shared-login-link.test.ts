@@ -20,6 +20,7 @@ import * as scopedHome from "./scoped-cli-home.ts";
 import { resetScopeBookkeeping, ScopeUnavailableError, scopeLocalFailureOf, setLinkIo } from "./scoped-cli-home.ts";
 import * as linkModule from "./shared-login-link.ts";
 import { LoginLinkUnavailableError, linkSharedEntry, nodeLinkIo, sharesFile, type LinkIo, type LinkStat } from "./shared-login-link.ts";
+import { removeTempDirSync } from "../testing/cleanup.ts";
 
 /** An in-memory file system with inodes, symlinks and the failures a Windows account without symlink rights meets. */
 class FakeFs implements LinkIo {
@@ -186,7 +187,7 @@ describe("a scope built where the symlink is refused (Windows without the privil
   const tmp = (prefix: string) => { const d = mkdtempSync(join(tmpdir(), prefix)); dirs.push(d); return d; };
   const refuseSymlinks: LinkIo = { ...nodeLinkIo, symlinkSync: () => { throw Object.assign(new Error("A required privilege is not held by the client"), { code: "EPERM" }); } };
   beforeEach(() => { ensureDirs(); resetScopeBookkeeping(); resetIsolationCache(); setLinkIo(refuseSymlinks); });
-  afterEach(() => { setLinkIo(null); for (const d of dirs.splice(0)) rmSync(d, { recursive: true, force: true }); });
+  afterEach(() => { setLinkIo(null); for (const d of dirs.splice(0)) removeTempDirSync(d); });
   const thrown = (run: () => unknown): ScopeUnavailableError => {
     try { run(); } catch (error) { return error as ScopeUnavailableError; }
     throw new Error("expected a ScopeUnavailableError");
@@ -458,7 +459,7 @@ describe("r14: an established generation's login is never created, recreated or 
   };
   const replaceOwner = (dir: string, text: string) => { writeFileSync(join(dir, "auth.json.new"), text); renameSync(join(dir, "auth.json.new"), join(dir, "auth.json")); };
   beforeEach(() => { ensureDirs(); resetScopeBookkeeping(); resetIsolationCache(); setLinkIo(refuseSymlinks); });
-  afterEach(() => { setLinkIo(null); vi.useRealTimers(); for (const d of dirs.splice(0)) rmSync(d, { recursive: true, force: true }); });
+  afterEach(() => { setLinkIo(null); vi.useRealTimers(); for (const d of dirs.splice(0)) removeTempDirSync(d); });
 
   it("P1: a missing generation-0 login is NOT rebuilt in place (an old process would overwrite the owner's); a new generation is linked to the owner's current login", () => {
     const codex = tmp("iso14-p1-");
@@ -584,7 +585,7 @@ describe("r15: persistence failures block the launch; deletions are durable; inh
   const replaceOwner = (dir: string, text: string) => { writeFileSync(join(dir, "auth.json.new"), text); renameSync(join(dir, "auth.json.new"), join(dir, "auth.json")); };
   const allText = (dir: string): string[] => readdirSync(dir).flatMap((n) => { try { return lstatSync(join(dir, n)).isDirectory() ? [] : [readFileSync(join(dir, n), "utf8")]; } catch { return []; } });
   beforeEach(() => { ensureDirs(); resetScopeBookkeeping(); resetIsolationCache(); setLinkIo(refuseSymlinks); });
-  afterEach(() => { setLinkIo(null); for (const d of dirs.splice(0)) rmSync(d, { recursive: true, force: true }); });
+  afterEach(() => { setLinkIo(null); for (const d of dirs.splice(0)) removeTempDirSync(d); });
 
   it("P1: a marker that cannot be written blocks the launch with a retryable busy rejection (first build, and the generation pointer)", () => {
     const codex = tmp("iso15-p1-");
@@ -594,13 +595,13 @@ describe("r15: persistence failures block the launch; deletions are durable; inh
     mkdirSync(join(root, `${scopedHome.SCOPE_MARKER}.tmp-${process.pid}`), { recursive: true }); // the marker's temporary file cannot be created
     expect(thrown(() => scopedCodexHome(env, CODEX, "bot-p1w")).busy).toBe(true);
     expect(existsSync(join(root, scopedHome.SCOPE_MARKER))).toBe(false);
-    rmSync(join(root, `${scopedHome.SCOPE_MARKER}.tmp-${process.pid}`), { recursive: true });
+    removeTempDirSync(join(root, `${scopedHome.SCOPE_MARKER}.tmp-${process.pid}`));
     const first = scopedCodexHome(env, CODEX, "bot-p1w")!;
     // a split whose generation pointer cannot be saved is not launched on
     replaceOwner(codex, "T2");
     mkdirSync(join(first, `${scopedHome.SCOPE_MARKER}.tmp-${process.pid}`));
     expect(thrown(() => scopedCodexHome(env, CODEX, "bot-p1w")).busy).toBe(true);
-    rmSync(join(first, `${scopedHome.SCOPE_MARKER}.tmp-${process.pid}`), { recursive: true });
+    removeTempDirSync(join(first, `${scopedHome.SCOPE_MARKER}.tmp-${process.pid}`));
     expect(scopedCodexHome(env, CODEX, "bot-p1w")).toBe(join(first, "login-g1"));
   });
 
@@ -643,7 +644,7 @@ describe("r15: persistence failures block the launch; deletions are durable; inh
     mkdirSync(join(codex, "config.toml"));
     try { scopedCodexHome(env, CODEX, "bot-bad"); } catch { /* rejected or tolerated: either way the record below must hold */ }
     replaceOwner(codex, "T2");
-    rmSync(join(codex, "config.toml"), { recursive: true });
+    removeTempDirSync(join(codex, "config.toml"));
     const second = scopedCodexHome(env, CODEX, "bot-bad")!;
     expect(existsSync(join(second, "config.toml"))).toBe(false);
     expect(allText(second).join("\n")).not.toContain("OLD-PROVIDER");
@@ -721,7 +722,7 @@ describe("r16: symlinks are verified in every mode; generated files come only fr
   beforeEach(() => { ensureDirs(); resetScopeBookkeeping(); resetIsolationCache(); setLinkIo(refuseSymlinks); });
   afterEach(() => {
     setLinkIo(null);
-    for (const d of dirs.splice(0)) rmSync(d, { recursive: true, force: true });
+    for (const d of dirs.splice(0)) removeTempDirSync(d);
   });
 
   it("P2: a detached symlink in a hardlink-mode scope is not trusted: owner signed out rejects (turn and catalog), owner present rotates", async () => {

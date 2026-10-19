@@ -14,13 +14,13 @@ import { reconcilePipStances } from "./pip-stance.ts";
 import { redactSecretsInText } from "../redact.ts";
 import { ensureScope } from "./policy.ts";
 import { withContinuityInferenceLease, continuityDay, reportMemoryUsage, type TextOnlyExtractor } from "./extract.ts";
-import { admissibleActionSources, admissibleOwnerSources, hasAdmissibleAfter, hasAdmissibleAfterSliced, type AdmittedSource } from "./pip-admission.ts";
+import { admissibleActionSources, admissibleOwnerSources, admissionStamp, admissionVector, eachPageNow, forEachThreadSourcePage, hasAdmissibleAfter, hasAdmissibleAfterSliced, livedRowAdmissible, livedRowStillShown, newestThreadSource, readShownNow, readShownSliced, settingsGen, compareAdmitted, stampMoved, THREAD_SOURCE_PAGE_ROWS, visitAdmittedActionSourcesSliced, visitAdmittedOwnerSourcesSliced, admissibleOwnerSourcesSliced, admissibleActionSourcesSliced, type AdmissionStamp, type AdmittedSource, type StampCheck, type WalkAnswer } from "./pip-admission.ts";
 import { heldStep } from "../observe.ts";
 import { applyLivedResult, expireProposals, validOwnerNominations, LIVED_SCHEMA, validLivedResult, type LivedResult } from "./pip-lived.ts";
-import { writeEpisode, writeTraceEpisode } from "./pip-episodes.ts";
+import { EPISODE_MAX_HANDLES, writeEpisode, writeTraceEpisode, type TraceThread } from "./pip-episodes.ts";
 import { admissibleSentenceRanges } from "./pip-claims.ts";
 import { MAX_ATTEMPTS, deadlinePassed, ensureDeadline, reconcileAttempt, sweepOrphanTempDirs, type ReaperDeps } from "./pip-reaper.ts";
-import { HELD_PLUGIN_COPY, LOGIN_ROUTE_COPY, MAX_OUTPUT_BYTES, emptyMissHistory, recordMiss, type AttemptTransport, type BootEpoch, type IsolationReport, type MissHistory, type TextOnlyTurnInput, type TextOnlyTurnResult, type TransportIntent, type Verdict } from "./pip-transport.ts";
+import { HELD_PLUGIN_COPY, LOGIN_ROUTE_COPY, MAX_OUTPUT_BYTES, emptyMissHistory, isReadMoved, recordMiss, runAdmissionFence, type AdmissionFenceAnswer, type AttemptTransport, type BootEpoch, type IsolationReport, type MissHistory, type TextOnlyTurnInput, type TextOnlyTurnResult, type TransportIntent, type Verdict } from "./pip-transport.ts";
 import type { ProviderTurnRoute } from "../provider-routing.ts";
 import type { ContinuityOptions } from "./pip-types.ts";
 
@@ -37,6 +37,21 @@ export const REQUEST_BYTES = 60_000;
 export const SYSTEM_BYTES = 4096;
 export const TRANSIENT_RETRY_MS = [3_600_000, 4 * 3_600_000, 24 * 3_600_000] as const;
 export const FAMILIES = ["lived"] as const;
+/** Reads of one family in one run that may move (PIP-REDESIGN 2.4) before it is refused as unstable: a moved read is not a provider
+ *  failure, so it never spends a transport attempt; the fourth move refuses with the cooldown, and nothing is ever published from a read
+ *  that did not verify. */
+export const READ_MOVE_BUDGET = 3;
+/** One family-wide cap on calls that reach a provider within a run, probes included (r7, Astra pip-build r5 High). */
+export const MAX_PAID_CALLS = 3;
+/** The family's paid calls so far: the stored count, or what the durable record shows was sent, whichever is higher (r8, Astra pip-build r6
+ *  High). The record: every attempt before the current one ended in a call (a refused or moved call never spends an attempt), and every
+ *  probe validated during this run (a validated probe spends no attempt) was a call. A record of an older build (no stored count) is taken
+ *  as having spent the current attempt too: what cannot be known is counted as sent. */
+function paidCallsOf(s: ReflectState, r: RunRecord, f: FamilyRecord): number {
+  const probes = Object.values(s.support).filter(e => e.probe?.verdict.state === "validated" && e.probe.at >= r.createdAt).length;
+  const derived = Math.max(0, f.attempt - 1) + probes;
+  return Math.max(f.paidCalls ?? Math.max(1, f.attempt), derived);
+}
 export type Family = typeof FAMILIES[number];
 export const reflectBindingId = (botId: string) => "pip-reflect:" + botId;
 /** The pseudo thread id of one attempt; `shouldIgnoreProviderEvent` ignores the prefix. */
@@ -47,12 +62,23 @@ export const reflectThreadId = (c: { botId: string; runId: string; family: strin
 export type FamilyStateName = "pending" | "requested" | "uncertain-transport" | "validated" | "applied" | "catch-up" | "off" | `refused:${string}`;
 export interface FamilyRecord {
   state: FamilyStateName; appliedAt?: number; attempt: number; snapshotGen: string;
-  resultDigest?: string; result?: LivedResult; reason?: string; isolation?: IsolationReport; reportedOverLimit?: boolean;
+  resultDigest?: string;
+  /** The validated result, stored only by the transaction that revalidated admission after the call (conclude, PIP-REDESIGN 2.9) and
+   *  then marked `resultAdmitted`; a result without the mark was left by an older build and the startup sweep clears it. */
+  result?: LivedResult; resultAdmitted?: boolean; reason?: string; isolation?: IsolationReport; reportedOverLimit?: boolean;
   transport?: AttemptTransport;
   /** Record versions the request showed the model (for the "only targets changed" row). */
   targets?: Array<{ id: string; version: number }>;
   /** First source (by time) the request showed; the span is [fromAt, run.toAt]. */
   fromAt?: number;
+  /** The request's window by identity, in (occurredAt, messageId) order: the list snapshotGen digests. Publication re-reads exactly these. */
+  shown?: Array<[string, number]>;
+  /** Reads of this family in this run whose admission stamp moved (READ_MOVE_BUDGET). */
+  readMoves?: number;
+  /** Calls of this family in this run that reached a provider, probes and content alike (MAX_PAID_CALLS, r7). Charged by the adapter's
+   *  fence, synchronously and immediately before the request leaves or the process starts; a record without it (an older build's) counts
+   *  every attempt before the current one as paid. */
+  paidCalls?: number;
 }
 export interface RunRecord {
   runId: string; kind: "reflect"; threadId: string; fromMessageId: string | null; toMessageId: string | null; toAt: number;
@@ -77,7 +103,15 @@ export function readReflectState(db: DatabaseSync, botId: string): ReflectState 
   if (!row) return fresh();
   try { return { ...fresh(), ...JSON.parse(String(row.intent)) }; } catch { return fresh(); }
 }
+/** A family state nothing further is asked or published from. */
+export const isTerminalFamilyState = (state: FamilyStateName): boolean => state.startsWith("refused:") || state === "applied" || state === "off";
+/** The one exit path of every reflect state (r8, Astra pip-build r6 High): a family in a terminal state never keeps result words. Runs in
+ *  the writer's transaction, so the transition and the clearing commit together whichever path made the transition. */
+function clearTerminalResults(state: ReflectState): void {
+  for (const f of Object.values(state.run?.families ?? {})) if (isTerminalFamilyState(f.state)) { f.result = undefined; f.resultAdmitted = undefined; }
+}
 function writeReflectState(db: DatabaseSync, botId: string, state: ReflectState) {
+  clearTerminalResults(state);
   db.prepare("INSERT INTO memory_scope_bindings VALUES(?,?,'system','pip-reflect',0,'granted',?) ON CONFLICT(id) DO UPDATE SET intent=excluded.intent")
     .run(reflectBindingId(botId), ensureScope("bot", botId), JSON.stringify(state));
 }
@@ -112,7 +146,6 @@ const activeAttempts = new Set<string>();
 const attemptKey = (botId: string, runId: string, family: string, attempt: number) => JSON.stringify([botId, runId, family, attempt]);
 const nowOf = (deps: ReflectDeps) => (deps.now ?? Date.now)();
 
-const settingsGen = (bot: ReflectBot) => digest([bot.continuity, bot.options, bot.threadIds, bot.settingsGeneration]);
 function settingsCurrent(deps: ReflectDeps, bot: ReflectBot, run?: RunRecord): boolean {
   const current = deps.bots().find(b => b.id === bot.id);
   return !!current?.continuity && !!current.options?.reflect && settingsGen(current) === (run?.settingsGen ?? settingsGen(bot));
@@ -142,19 +175,85 @@ export function sentenceRanges(text: string, options: { botName?: string } = {})
 
 export interface Snapshot { sources: AdmittedSource[]; replies: Array<{ at: number; chars: number }>; truncated: AdmittedSource[]; bytes: number }
 
+/** One text row for replyCharsIn: a reply's size when it is not the owner's or a person's and falls in (afterAt, untilAt]. */
+function replyChars(r: Record<string, unknown>, afterAt: number, untilAt: number, out: Array<{ at: number; chars: number }>): void {
+  const speaker = String(r.speaker);
+  if (speaker === "owner" || speaker.startsWith("person:")) return;
+  try { const p = JSON.parse(String(r.payload)); const at = Number(p.occurredAt) || 0; if (at > afterAt && at <= untilAt && typeof p.text === "string") out.push({ at, chars: p.text.length }); } catch { /* skip */ }
+}
+/** The thread's replies in (afterAt, untilAt], read in pages of the thread index (pip-admission.ts threadSourcePager): no statement reads the
+ *  whole thread. */
 function replyCharsIn(db: DatabaseSync, threadId: string, afterAt: number, untilAt: number): Array<{ at: number; chars: number }> {
   const out: Array<{ at: number; chars: number }> = [];
-  for (const r of db.prepare(`SELECT v.payload FROM memory_sources s JOIN memory_source_versions v ON v.source_id=s.id AND v.revision=s.revision
-    WHERE s.thread_id=? AND s.kind='text' AND s.state='active' AND s.speaker!='owner' AND s.speaker NOT LIKE 'person:%'`).all(threadId)) {
-    try { const p = JSON.parse(String(r.payload)); const at = Number(p.occurredAt) || 0; if (at > afterAt && at <= untilAt && typeof p.text === "string") out.push({ at, chars: p.text.length }); } catch { /* skip */ }
-  }
+  eachPageNow(db, threadId, "text", r => replyChars(r, afterAt, untilAt, out));
   return out.sort((a, b) => a.at - b.at);
+}
+/** replyCharsIn with the loop handed back between pages; `check` (the admission stamp) ends it when the read moved. */
+async function replyCharsInSliced(db: DatabaseSync, threadId: string, afterAt: number, untilAt: number, between: () => Promise<void>, signal?: AbortSignal, check?: StampCheck): Promise<{ answer: WalkAnswer; replies: Array<{ at: number; chars: number }> }> {
+  const out: Array<{ at: number; chars: number }> = [];
+  const answer = await forEachThreadSourcePage(db, threadId, "text", between, page => { for (const r of page) replyChars(r, afterAt, untilAt, out); }, "asc", THREAD_SOURCE_PAGE_ROWS, signal, check);
+  return { answer, replies: out.sort((a, b) => a.at - b.at) };
 }
 
 export function buildSnapshot(db: DatabaseSync, botId: string, threadId: string, cursor: ThreadCursor | undefined, excluded: readonly string[]): Snapshot {
   const q = { threadId, afterAt: cursor?.cursorAt, afterMessageId: cursor?.cursorMessageId ?? null, excludedThreads: excluded };
-  const all = [...admissibleOwnerSources(db, botId, q), ...admissibleActionSources(db, botId, q)]
-    .sort((a, b) => a.occurredAt - b.occurredAt || (a.messageId ?? "").localeCompare(b.messageId ?? ""));
+  const { repliesAfter, untilAt, ...window } = snapshotWindow([...admissibleOwnerSources(db, botId, q), ...admissibleActionSources(db, botId, q)], cursor);
+  return { ...window, replies: replyCharsIn(db, threadId, repliesAfter, untilAt) };
+}
+/** buildSnapshot, the same snapshot, read in pages with `between()` between them (the run's own reads: startRun, attemptFamily). Undefined when
+ *  `signal` stopped it, or (with `check`) when the read moved. */
+export async function buildSnapshotSliced(db: DatabaseSync, botId: string, threadId: string, cursor: ThreadCursor | undefined, excluded: readonly string[],
+  between: () => Promise<void>, signal?: AbortSignal, check?: StampCheck): Promise<Snapshot | undefined> {
+  const read = await readSnapshotSliced(db, botId, threadId, cursor, excluded, between, signal, check);
+  return read.answer === "none" ? read.snap : undefined;
+}
+/** The newest admitted sources a window can hold (each costs at least 96 bytes of WINDOW_BYTES), and the skipped ids recordUnreflected keeps. */
+const WINDOW_MAX_SOURCES = Math.floor(WINDOW_BYTES / 96);
+const SKIPPED_KEPT = 200;
+const byTime = compareAdmitted;
+/** The newest `limit` sources by (occurredAt, messageId) of everything offered, in bounded memory: offered rows collect, and every time
+ *  they reach twice the limit they are sorted and cut back to the limit (O(N log K) across a read, never a sort of the whole list). */
+class NewestTail {
+  private items: AdmittedSource[] = [];
+  count = 0;
+  private readonly limit: number;
+  // no parameter property: the server runs this file in Node's strip-only TypeScript mode
+  constructor(limit: number) { this.limit = limit; }
+  add(source: AdmittedSource): void {
+    this.items.push(source); this.count++;
+    if (this.items.length >= 2 * this.limit + 64) this.compact();
+  }
+  private compact(): void { this.items.sort(byTime); if (this.items.length > this.limit) this.items = this.items.slice(-this.limit); }
+  /** The kept sources, oldest first. */
+  sorted(): AdmittedSource[] { this.compact(); return this.items; }
+}
+/** The snapshot read (2.7): owner turns and completed actions after the cursor, kept as a bounded tail (the newest that can fit WINDOW_BYTES
+ *  and the newest SKIPPED_KEPT of the prefix the window skips), then the replies inside the window's time range. Every page is checked
+ *  against the admission stamp (`check`): a read that moved answers "moved" or "off" and no snapshot. */
+export async function readSnapshotSliced(db: DatabaseSync, botId: string, threadId: string, cursor: ThreadCursor | undefined, excluded: readonly string[],
+  between: () => Promise<void>, signal?: AbortSignal, check?: StampCheck): Promise<{ answer: WalkAnswer; snap?: Snapshot }> {
+  const q = { threadId, afterAt: cursor?.cursorAt, afterMessageId: cursor?.cursorMessageId ?? null, excludedThreads: excluded };
+  const tail = new NewestTail(WINDOW_MAX_SOURCES + SKIPPED_KEPT);
+  const owner = await visitAdmittedOwnerSourcesSliced(db, botId, q, between, signal, check, a => tail.add(a));
+  if (owner !== "none") return { answer: owner };
+  if (signal?.aborted) return { answer: "aborted" };
+  await between();
+  const ownerDone = check?.();
+  if (ownerDone && ownerDone !== "none") return { answer: ownerDone };
+  const actions = await visitAdmittedActionSourcesSliced(db, botId, q, between, signal, check, a => tail.add(a));
+  if (actions !== "none") return { answer: actions };
+  if (signal?.aborted) return { answer: "aborted" };
+  await between();
+  const readDone = check?.();
+  if (readDone && readDone !== "none") return { answer: readDone };
+  const { repliesAfter, untilAt, ...window } = snapshotWindow(tail.sorted(), cursor);
+  const replies = await replyCharsInSliced(db, threadId, repliesAfter, untilAt, between, signal, check);
+  if (replies.answer !== "none") return { answer: replies.answer };
+  if (signal?.aborted) return { answer: "aborted" };
+  return { answer: "none", snap: { ...window, truncated: window.truncated.slice(-SKIPPED_KEPT), replies: replies.replies } };
+}
+function snapshotWindow(admitted: AdmittedSource[], cursor: ThreadCursor | undefined): Omit<Snapshot, "replies"> & { repliesAfter: number; untilAt: number } {
+  const all = admitted.sort(byTime);
   // Keep the newest sources that fit; the skipped prefix is `unreflected`, never described as reflected.
   let bytes = 0; const kept: AdmittedSource[] = [];
   for (let i = all.length - 1; i >= 0; i--) {
@@ -164,7 +263,7 @@ export function buildSnapshot(db: DatabaseSync, botId: string, threadId: string,
   }
   const truncated = all.slice(0, all.length - kept.length);
   const untilAt = kept.length ? kept[kept.length - 1].occurredAt : cursor?.cursorAt ?? 0;
-  return { sources: kept, replies: replyCharsIn(db, threadId, kept.length ? kept[0].occurredAt - 1 : untilAt, untilAt), truncated, bytes };
+  return { sources: kept, truncated, bytes, repliesAfter: kept.length ? kept[0].occurredAt - 1 : untilAt, untilAt };
 }
 
 function recordUnreflected(botId: string, threadId: string, sources: AdmittedSource[], now: number) {
@@ -179,11 +278,15 @@ export const snapshotGen = (sources: readonly AdmittedSource[], excluded: readon
   digest([sources.map(s => [s.sourceId, s.revision]), [...excluded].sort(), excluded.includes(threadId)]);
 
 interface CurrentRow { id: string; version: number; kind: string; text: string }
-export function currentLivedRows(db: DatabaseSync, botId: string): CurrentRow[] {
+/** The rows the request shows the model as `current`: the newest active commitments and self-traits that pass source admission
+ *  (livedRowAdmissible, Astra pip-build H1): a row resting on a forgotten, denied or excluded source is not shown. */
+export function currentLivedRows(db: DatabaseSync, botId: string, excluded: readonly string[] = []): CurrentRow[] {
   const scopeId = ensureScope("bot", botId);
   return db.prepare("SELECT id,version,kind,text FROM memory_records WHERE scope_id=? AND kind IN ('commitment','self-trait') AND state='active' ORDER BY created_at DESC,id LIMIT 24").all(scopeId)
-    .map(r => ({ id: String(r.id), version: Number(r.version), kind: String(r.kind), text: String(r.text) }));
+    .map(r => ({ id: String(r.id), version: Number(r.version), kind: String(r.kind), text: String(r.text) }))
+    .filter(r => livedRowAdmissible(db, botId, r.id, r.version, excluded));
 }
+
 
 export function buildEnvelope(snap: Snapshot, bot: ReflectBot, rows: readonly CurrentRow[]): string {
   const turns: unknown[] = snap.sources.map(s => s.kind === "owner"
@@ -216,6 +319,26 @@ function newestIsSettledBotReply(db: DatabaseSync, threadId: string, now: number
   const isOwnerish = row.speaker === "owner" || String(row.speaker).startsWith("person:");
   return !isOwnerish && now - Number(row.at ?? 0) >= REFLECTABLE_AGE_MS;
 }
+/** newestIsSettledBotReply, the same answer, its newest row found in pages of the thread (pip-admission.ts newestThreadSource, no sort): the one
+ *  statement sorted every text source of the thread and read each row to filter it (rc13 real-data run, server3.log:27: 158 ms for one thread). */
+async function newestIsSettledBotReplySliced(db: DatabaseSync, threadId: string, now: number, between: () => Promise<void>, signal?: AbortSignal): Promise<boolean> {
+  const newest = await newestThreadSource(db, threadId, "text", between, signal);
+  if (signal?.aborted) return false;
+  if (!newest) return false;
+  const speaker = String(newest.speaker);
+  let at = 0;
+  try { at = Number((JSON.parse(String(newest.payload)) as { occurredAt?: unknown }).occurredAt ?? 0); } catch { at = 0; }
+  const isOwnerish = speaker === "owner" || speaker.startsWith("person:");
+  return !isOwnerish && now - at >= REFLECTABLE_AGE_MS;
+}
+/** newestIsSettledBotReplySliced, true only when the admission stamp taken before the snapshot has not moved (a capture in this thread moves its
+ *  epoch; captures elsewhere do not), so the answer holds for the thread as it stands when this returns. A thread that changed meanwhile is
+ *  left for the next pass. */
+async function threadStillSettled(db: DatabaseSync, threadId: string, now: number, signal: AbortSignal, check: StampCheck): Promise<boolean> {
+  const settled = await newestIsSettledBotReplySliced(db, threadId, now, sliceBetween(), signal);
+  if (signal.aborted || database() !== db) return false;
+  return settled && check() === "none";
+}
 /** A held route is re-resolved at most this often: a changed binary or route (new fingerprint) clears the entry then. */
 export const SUPPORT_RECHECK_MS = 5 * 60_000;
 export function routeBlocked(state: ReflectState, fingerprint: string | undefined, now: number, scheduling = false): string | null {
@@ -238,21 +361,24 @@ function reflectGateOpen(deps: ReflectDeps, bot: ReflectBot, state: ReflectState
 }
 /** The pending form of reflectableThreads (pendingOnly), in slices: at most PIP_PENDING_SLICE_MS of the serving thread at a time, the loop handed
  *  back between slices (between threads, and between pages of one thread's walk). True when some thread has something to reflect. */
-async function anyThreadPendingSliced(db: DatabaseSync, deps: ReflectDeps, bot: ReflectBot, state: ReflectState, now: number, between: () => Promise<void>): Promise<boolean> {
+async function anyThreadPendingSliced(db: DatabaseSync, deps: ReflectDeps, bot: ReflectBot, state: ReflectState, now: number, between: () => Promise<void>, signal?: AbortSignal): Promise<boolean> {
   if (!reflectGateOpen(deps, bot, state, now)) return false;
   for (const threadId of bot.threadIds) {
     if (state.excludedThreads.includes(threadId)) continue;
     const cursor = state.threads[threadId];
     if (cursor && now - cursor.lastRunAt < MIN_RUN_INTERVAL_MS) continue;
     await between();
-    if (!heldStep("memory.pip.threads", () => newestIsSettledBotReply(db, threadId, now))) continue;
+    if (signal?.aborted) return false;
+    if (!await newestIsSettledBotReplySliced(db, threadId, now, between, signal)) continue;
     const q = { threadId, afterAt: cursor?.cursorAt, afterMessageId: cursor?.cursorMessageId ?? null, excludedThreads: state.excludedThreads };
-    if (await hasAdmissibleAfterSliced(db, bot.id, q, between)) return true;
+    if (await hasAdmissibleAfterSliced(db, bot.id, q, between, signal) && !signal?.aborted) return true;
   }
   return false;
 }
 /** The longest one slice of the pending check holds the serving thread. */
-export const PIP_PENDING_SLICE_MS = 20;
+/** 10 ms, not more: a slice is followed at times by a bounded tail of its own work in the same turn (the run's snapshot fit, a long list's sort,
+ *  about 4-11 ms on a 100,000-source thread), and the turn as a whole stays well under 50 ms (pip-publish-sliced.test.ts). */
+export const PIP_PENDING_SLICE_MS = 10;
 
 /** §3.2: toggle on, memory capture or active, own direct thread, settled reply, a new admissible turn, spacing, caps. */
 export function reflectableThreads(db: DatabaseSync, deps: ReflectDeps, bot: ReflectBot, state: ReflectState, now: number, pendingOnly = false): Candidate[] {
@@ -285,12 +411,51 @@ export function reflectableThreads(db: DatabaseSync, deps: ReflectDeps, bot: Ref
   return out.sort((a, b) => b.surprise - a.surprise || a.cursorAt - b.cursorAt || a.threadId.localeCompare(b.threadId));
 }
 
+/** reflectableThreads (the run's full form), the same candidates in the same order, read in slices: `between()` is awaited between threads and
+ *  between pages of each thread, so the run's choice of a thread never holds the serving thread for every thread's whole history (rc13 real-data
+ *  run, server3.log:31: a 2292 ms stall, ten whole-thread source reads of about 103 ms each under no name). Each page runs as `memory.pip.threads`. */
+export async function reflectableThreadsSliced(db: DatabaseSync, deps: ReflectDeps, bot: ReflectBot, state: ReflectState, now: number, between: () => Promise<void>, signal?: AbortSignal): Promise<Candidate[]> {
+  if (!reflectGateOpen(deps, bot, state, now)) return [];
+  const out: Candidate[] = [];
+  for (const threadId of bot.threadIds) {
+    if (state.excludedThreads.includes(threadId)) continue;
+    const cursor = state.threads[threadId];
+    if (cursor && now - cursor.lastRunAt < MIN_RUN_INTERVAL_MS) continue;
+    await between();
+    // a stop ends the choice at the next page: no candidate comes from a partial read
+    if (signal?.aborted) return [];
+    if (!await newestIsSettledBotReplySliced(db, threadId, now, between, signal)) continue;
+    const q = { threadId, afterAt: cursor?.cursorAt, afterMessageId: cursor?.cursorMessageId ?? null, excludedThreads: state.excludedThreads };
+    const owner = await admissibleOwnerSourcesSliced(db, bot.id, q, between, signal), actions = await admissibleActionSourcesSliced(db, bot.id, q, between, signal);
+    if (signal?.aborted) return [];
+    if (!owner.length && !actions.length) continue;
+    out.push({ bot, threadId, surprise: actions.length, cursorAt: cursor?.cursorAt ?? 0 });
+  }
+  return out.sort((a, b) => b.surprise - a.surprise || a.cursorAt - b.cursorAt || a.threadId.localeCompare(b.threadId));
+}
+/** Test seam: called at every `between()` of the sliced reads (PIP-REDESIGN section 4: "hook between"), before the slice clock. */
+export const pipReadHooks: { between?: () => void | Promise<void> } = {};
+/** When a sliced scan last handed the loop back. One clock for every `between()`: two scans run back to back (a snapshot, then its recheck)
+ *  share one slice, rather than each starting a fresh one in the same turn of the loop. */
+let lastHandBack = performance.now();
+/** A `between()` for the sliced scans: hands the event loop back once `sliceMs` of the serving thread has been spent since the last hand-back
+ *  by any sliced scan. */
+export function sliceBetween(sliceMs = PIP_PENDING_SLICE_MS): () => Promise<void> {
+  return async () => {
+    if (pipReadHooks.between) { await pipReadHooks.between(); }
+    if (performance.now() - lastHandBack < sliceMs) return;
+    await new Promise<void>(resolve => setImmediate(resolve));
+    lastHandBack = performance.now();
+  };
+}
+
 /** True when lane 5 has something to do: a reflectable thread, or an attempt the reaper must settle. */
 export function pipReflectPending(deps: ReflectDeps): string | undefined {
   return heldStep("memory.pip.pending", () => pipReflectPendingUnnamed(deps));
 }
-/** The per-bot thread scan of the pending check, remembered per bot while nothing it reads moved: the memory data revision, the bot's reflect
- *  state and settings, the memory mode, the newest message, and the minute. A maintenance pass then costs one map read
+/** The per-bot thread scan of the pending check, remembered per bot while nothing it reads moved: the memory data revision, the admission
+ *  vector of the bot's threads (pip-admission.ts admissionVector: a reactivate, a retire or a completion in one thread changes it), the bot's
+ *  reflect state and settings, the memory mode, the newest message, and the minute. A maintenance pass then costs one map read
  *  per bot instead of a scan of every thread (34.6 s stall, STALLS-FINAL-DESIGN section 4). */
 const pendingScans = new Map<string, { key: string; pending: boolean }>();
 export const pipPendingScanStats = { scans: 0, memoHits: 0 };
@@ -307,7 +472,9 @@ function pipReflectPendingUnnamed(deps: ReflectDeps): string | undefined {
     const row = db.prepare("SELECT intent FROM memory_scope_bindings WHERE id=?").get(reflectBindingId(bot.id));
     const state = readReflectState(db, bot.id);
     if (state.run && Object.values(state.run.families).some(f => ["requested", "uncertain-transport", "validated", "pending", "catch-up"].includes(f.state))) return bot.id;
-    const key = revision === null ? null : `${revision}|${Math.floor(now / PENDING_SCAN_BUCKET_MS)}|${deps.memoryMode()}|${bot.settingsGeneration ?? ""}|${JSON.stringify(bot.options ?? null)}|${bot.threadIds.join(",")}|${String(row?.intent ?? "")}`;
+    // r2 M1: the full admission vector (global, data_version and every thread's epoch), never an aggregate of it
+    const vector = revision === null ? null : admissionVector(db, bot.threadIds);
+    const key = vector === null ? null : `${revision}|${vector}|${Math.floor(now / PENDING_SCAN_BUCKET_MS)}|${deps.memoryMode()}|${bot.settingsGeneration ?? ""}|${JSON.stringify(bot.options ?? null)}|${bot.threadIds.join(",")}|${String(row?.intent ?? "")}`;
     const memo = key === null ? undefined : pendingScans.get(bot.id);
     let pending: boolean;
     if (memo && memo.key === key) { pending = memo.pending; pipPendingScanStats.memoHits++; }
@@ -324,31 +491,30 @@ function pipReflectPendingUnnamed(deps: ReflectDeps): string | undefined {
 /** pipReflectPending, the same answer and the same per-bot memo, with the thread scan in slices of at most PIP_PENDING_SLICE_MS: the idle lane's
  *  check (index.ts onContinuity) never holds the serving thread for a bot's whole history (rc13 real-data boot: a 581 ms stall,
  *  `memory.pip.pending:261ms others=memory.pip.threads:261msx2`). */
-export async function pipReflectPendingSliced(deps: ReflectDeps, sliceMs = PIP_PENDING_SLICE_MS): Promise<string | undefined> {
-  let sliceStart = performance.now();
-  const between = async () => {
-    if (performance.now() - sliceStart < sliceMs) return;
-    await new Promise<void>(resolve => setImmediate(resolve));
-    sliceStart = performance.now();
-  };
+export async function pipReflectPendingSliced(deps: ReflectDeps, sliceMs = PIP_PENDING_SLICE_MS, signal?: AbortSignal): Promise<string | undefined> {
+  const between = sliceBetween(sliceMs);
   const db = database(), now = nowOf(deps);
   let revision: string | null = null;
   try { revision = `${connectionId(db)}:${Number(db.prepare("SELECT data_revision FROM memory_meta WHERE id=1").get()?.data_revision ?? 0)}:${Number(db.prepare("SELECT COALESCE(MAX(rowid),0) AS n FROM messages").get()?.n ?? 0)}`; } catch { /* unknown: no memo */ }
   for (const bot of deps.bots()) {
     if (!bot.continuity) continue;
     await between();
-    // the data folder may have changed while the loop was handed back: the scan reads the connection it began on, or stops
-    if (database() !== db) return undefined;
+    // the data folder may have changed while the loop was handed back: the scan reads the connection it began on, or stops; a stop ends it too
+    if (database() !== db || signal?.aborted) return undefined;
     const row = db.prepare("SELECT intent FROM memory_scope_bindings WHERE id=?").get(reflectBindingId(bot.id));
     const state = readReflectState(db, bot.id);
     if (state.run && Object.values(state.run.families).some(f => ["requested", "uncertain-transport", "validated", "pending", "catch-up"].includes(f.state))) return bot.id;
-    const key = revision === null ? null : `${revision}|${Math.floor(now / PENDING_SCAN_BUCKET_MS)}|${deps.memoryMode()}|${bot.settingsGeneration ?? ""}|${JSON.stringify(bot.options ?? null)}|${bot.threadIds.join(",")}|${String(row?.intent ?? "")}`;
+    // r2 M1: the full admission vector (global, data_version and every thread's epoch), never an aggregate of it
+    const vector = revision === null ? null : admissionVector(db, bot.threadIds);
+    const key = vector === null ? null : `${revision}|${vector}|${Math.floor(now / PENDING_SCAN_BUCKET_MS)}|${deps.memoryMode()}|${bot.settingsGeneration ?? ""}|${JSON.stringify(bot.options ?? null)}|${bot.threadIds.join(",")}|${String(row?.intent ?? "")}`;
     const memo = key === null ? undefined : pendingScans.get(bot.id);
     let pending: boolean;
     if (memo && memo.key === key) { pending = memo.pending; pipPendingScanStats.memoHits++; }
     else {
       pipPendingScanStats.scans++;
-      pending = await anyThreadPendingSliced(db, deps, bot, state, now, between);
+      pending = await anyThreadPendingSliced(db, deps, bot, state, now, between, signal);
+      // a stopped scan's answer is partial: never memoized
+      if (signal?.aborted) return undefined;
       if (key !== null) pendingScans.set(bot.id, { key, pending });
     }
     if (pending) return bot.id;
@@ -386,20 +552,24 @@ function createRun(deps: ReflectDeps, bot: ReflectBot, candidate: Candidate, rou
   return {
     runId, kind: "reflect", settingsGen: settingsGen(bot), threadId: candidate.threadId, fromMessageId: null, toMessageId: last?.messageId ?? null, toAt: last?.occurredAt ?? 0,
     window: { bytes: snap.bytes, ...(first?.messageId ? { truncatedBeforeMessageId: first.messageId } : {}) }, bootEpoch: deps.bootEpoch, createdAt: now, fingerprint: route.fingerprint,
-    families: Object.fromEntries(FAMILIES.map(f => [f, { state: "pending" as FamilyStateName, attempt: 1, snapshotGen: gen, targets: targets.map(t => ({ id: t.id, version: t.version })) }])),
+    families: Object.fromEntries(FAMILIES.map(f => [f, { state: "pending" as FamilyStateName, attempt: 1, paidCalls: 0, snapshotGen: gen, targets: targets.map(t => ({ id: t.id, version: t.version })) }])),
   };
 }
 
 /** Pick one thread (unease first once P3 lands, then surprise, then oldest cursor) and run it to a terminal state. */
 export async function runPipReflect(deps: ReflectDeps, botIdHint: string | undefined, signal: AbortSignal): Promise<ReflectOutcome> {
   const db = database(), now0 = nowOf(deps);
-  await reconcilePipRuns(deps);
+  await reconcilePipRuns(deps, { signal });
+  if (signal.aborted) return { status: "idle" };
   const bots = deps.bots().filter(b => b.continuity && (!botIdHint || b.id === botIdHint));
   for (const bot of bots) {
     const state = readReflectState(db, bot.id);
     // An unfinished run (restart, catch-up) resumes before anything new starts.
     if (state.run) { const resumed = await driveRun(deps, bot, signal); if (resumed.status !== "idle") return resumed; continue; }
-    const candidates = reflectableThreads(db, deps, bot, state, now0);
+    // in slices (reflectableThreadsSliced): the choice of a thread reads every candidate thread's sources
+    const candidates = await reflectableThreadsSliced(db, deps, bot, state, now0, sliceBetween(), signal);
+    // the loop was handed back: a stop, or a data folder changed meanwhile, ends the pass
+    if (signal.aborted || database() !== db) return { status: "idle" };
     for (const candidate of candidates) {
       const started = await startRun(deps, bot, candidate, signal);
       if (started.status !== "idle") return started;
@@ -417,6 +587,17 @@ async function startRun(deps: ReflectDeps, bot: ReflectBot, candidate: Candidate
     mutateReflect(bot.id, (s) => { s.lastFingerprint = "unresolved:" + bot.id; noteSupport(s, "unresolved:" + bot.id, now, "transient", String((error as Error)?.message ?? error).slice(0, 160)); });
     return { status: "refused", reason: "route-unavailable", botId: bot.id };
   }
+  // The snapshot is read in slices; then, because the choice of this thread was read in slices and the route was awaited, its newest reply is
+  // read again: an owner message that arrived meanwhile leaves the thread unsettled and the run does not start. The admission stamp is taken
+  // before the snapshot and checked after every page and after that recheck, so the snapshot is the thread the recheck saw.
+  const stamp = admissionStamp(db, deps, bot.id, [candidate.threadId], { reflect: true }), cursorState = readReflectState(db, bot.id);
+  // "off" here is not a reason to stop reading: the run's first attempt refuses it with its refusal recorded, before anything is sent
+  const check = () => { const answer = stampMoved(db, deps, bot.id, stamp); return answer === "off" ? "none" : answer; };
+  const read = await readSnapshotSliced(db, bot.id, candidate.threadId, cursorState.threads[candidate.threadId], cursorState.excludedThreads, sliceBetween(), signal, check);
+  if (signal.aborted || database() !== db) return { status: "idle" };
+  if (read.answer !== "none" || !read.snap) return { status: "idle", reason: "unsettled" };
+  const raw = read.snap;
+  if (!await threadStillSettled(db, candidate.threadId, nowOf(deps), signal, check)) return { status: "idle", reason: "unsettled" };
   mutateReflect(bot.id, (s) => { s.lastFingerprint = route.fingerprint; s.lastEngine = route.engine; });
   const pre = readReflectState(db, bot.id);
   const blocked = routeBlocked(pre, route.fingerprint, now);
@@ -429,8 +610,7 @@ async function startRun(deps: ReflectDeps, bot: ReflectBot, candidate: Candidate
     mutateReflect(bot.id, (s) => { noteSupport(s, route.fingerprint, now, "unsupported", (route.unsupported?.reason ?? "no-text-only-turn") + (route.unsupported?.detail ? ":" + route.unsupported.detail.slice(0, 300) : "")); s.lastEngine = route.engine; });
     return { status: "refused", reason: "unsupported", botId: bot.id };
   }
-  const rows = currentLivedRows(db, bot.id);
-  const raw = buildSnapshot(db, bot.id, candidate.threadId, pre.threads[candidate.threadId], pre.excludedThreads);
+  const rows = currentLivedRows(db, bot.id, pre.excludedThreads);
   if (!raw.sources.length) { recordUnreflected(bot.id, candidate.threadId, raw.truncated, now); return { status: "idle" }; }
   const { snap, envelope } = fitSnapshot(db, raw, bot, rows);
   if (!snap.sources.length || Buffer.byteLength(JSON.stringify([{ role: "user", content: envelope }])) > REQUEST_BYTES) { recordUnreflected(bot.id, candidate.threadId, snap.truncated, now); return { status: "refused", reason: "input-limit" }; }
@@ -462,12 +642,19 @@ async function driveRun(deps: ReflectDeps, bot: ReflectBot, signal: AbortSignal,
     const family = FAMILIES.find(f => ["pending", "catch-up", "validated"].includes(run.families[f]?.state)) ;
     if (!family) break;
     const rec = run.families[family];
-    if (rec.state === "validated") { outcome = applyFamily(deps, bot, run.runId, family); continue; }
+    if (rec.state === "validated") {
+      outcome = await applyFamilySliced(deps, bot, run.runId, family, signal);
+      // a stop, or a thread that kept moving: the run stays as it is for the next pass
+      if (outcome.status === "uncertain" || outcome.reason === "read-moved") return outcome;
+      continue;
+    }
     if (signal.aborted) return { status: "uncertain", reason: "cancelled", runId: run.runId, botId: bot.id };
     const route = knownRoute ?? await resolveOrFail(deps, bot, run);
     if (!route) { outcome = { status: "refused", reason: "route-unavailable", runId: run.runId, botId: bot.id }; break; }
     outcome = await attemptFamily(deps, bot, run.runId, family, route, signal);
     if (outcome.status === "uncertain" && signal.aborted) return outcome;
+    // a read that moved is retried on the next idle pass, not here: the thread is likely still being written to (2.4)
+    if (outcome.reason === "read-moved") return outcome;
   }
   settleRun(deps, bot.id);
   return outcome;
@@ -494,14 +681,34 @@ async function attemptFamily(deps: ReflectDeps, bot: ReflectBot, runId: string, 
     mutateReflect(bot.id, (s) => { const f = s.run?.families[family]; if (f) { f.state = "refused:off"; } if (s.run) noteRefusal(s, now, runId, "refused:off", "switched-off"); });
     return { status: "refused", reason: "off", runId, botId: bot.id };
   }
+  // every paid call of this family in this run, probes included, is spent: nothing more is asked (r7)
+  if (paidCallsOf(state0, run0, rec0) >= MAX_PAID_CALLS) return refusePaidCap(deps, bot.id, runId, family, rec0.attempt);
   const withDeadline = ensureDeadline(run0, now);
-  if (deadlinePassed(withDeadline.deadlineAt, now) && rec0.attempt > 1) {
+  // a run whose reads keep moving cannot outlive its deadline on attempt 1 either (2.4)
+  if (deadlinePassed(withDeadline.deadlineAt, now) && (rec0.attempt > 1 || (rec0.readMoves ?? 0) > 0)) {
     mutateReflect(bot.id, (s) => { const f = s.run?.families[family]; if (f) { f.state = "refused:unstable"; f.reason = "run-bound"; } if (s.run) noteRefusal(s, now, runId, "refused:unstable", "run-bound"); s.cooldownUntil = now + COOLDOWN_MS; });
     return { status: "refused", reason: "unstable", runId, botId: bot.id };
   }
-  // Fresh snapshot for this attempt; a stale one re-renders the span.
-  const rows = currentLivedRows(db, bot.id);
-  const raw = buildSnapshot(db, bot.id, run0.threadId, state0.threads[run0.threadId], state0.excludedThreads);
+  // Fresh snapshot for this attempt; a stale one re-renders the span. The admission stamp is taken first: it is checked after every page, after
+  // the snapshot, by the adapter immediately before the request leaves (transport.fence), and nothing read across a move is used.
+  // The `current` rows' evidence may rest in any of the bot's own threads: those are covered too (moved), the read thread alone carries
+  // the "off" rules.
+  const stamp = admissionStamp(db, deps, bot.id, [run0.threadId], { run: { runId, family, attempt: rec0.attempt }, reflect: true, covered: bot.threadIds.filter(t => t !== run0.threadId) });
+  const check = () => stampMoved(db, deps, bot.id, stamp);
+  const rows = currentLivedRows(db, bot.id, state0.excludedThreads);
+  const read = await readSnapshotSliced(db, bot.id, run0.threadId, state0.threads[run0.threadId], state0.excludedThreads, sliceBetween(), signal, check);
+  if (read.answer === "aborted" || signal.aborted) return { status: "uncertain", reason: "cancelled", runId, botId: bot.id };
+  // The snapshot was read across turns of the loop: the toggle, the mode, an exclusion, a forget, a branch, the run itself may have moved
+  // meanwhile, and none of them aborts this signal. Checked again before anything is recorded or sent.
+  const state1 = readReflectState(db, bot.id), run1 = state1.run, rec1 = run1?.families[family];
+  if (!run1 || run1.runId !== runId || !rec1 || rec1.state !== rec0.state || rec1.attempt !== rec0.attempt) return { status: "idle" };
+  const answer = read.answer !== "none" ? read.answer : check();
+  if (answer === "off" || !settingsCurrent(deps, bot, run1)) {
+    mutateReflect(bot.id, (s) => { const f = s.run?.families[family]; if (f) { f.state = "refused:off"; } if (s.run) noteRefusal(s, now, runId, "refused:off", "switched-off"); });
+    return { status: "refused", reason: "off", runId, botId: bot.id };
+  }
+  if (answer === "moved" || !read.snap) return noteReadMove(deps, bot, runId, family, rec0.attempt, rec0.state, withDeadline.deadlineAt);
+  const raw = read.snap;
   if (!raw.sources.length) { mutateReflect(bot.id, (s) => { s.run = undefined; }); return { status: "idle" }; }
   const { snap, envelope } = fitSnapshot(db, raw, bot, rows);
   if (!snap.sources.length || Buffer.byteLength(JSON.stringify([{ role: "user", content: envelope }])) > REQUEST_BYTES) {
@@ -514,6 +721,7 @@ async function attemptFamily(deps: ReflectDeps, bot: ReflectBot, runId: string, 
   mutateReflect(bot.id, (s) => {
     const r = s.run!, f = r.families[family];
     r.deadlineAt = withDeadline.deadlineAt; f.state = "requested"; f.snapshotGen = gen; f.fromAt = snap.sources[0]?.occurredAt ?? 0; f.targets = rows.map(t => ({ id: t.id, version: t.version }));
+    f.shown = snap.sources.map(x => [x.sourceId, x.revision]);
     f.transport = undefined; f.reason = undefined;
     r.toMessageId = snap.sources[snap.sources.length - 1]?.messageId ?? r.toMessageId; r.toAt = snap.sources[snap.sources.length - 1]?.occurredAt ?? r.toAt;
   });
@@ -524,6 +732,17 @@ async function attemptFamily(deps: ReflectDeps, bot: ReflectBot, runId: string, 
   const requestSystem = needsProbe ? "Return the requested JSON object." : LIVED_SYSTEM;
   const requestText = needsProbe ? 'Return {"ok":true}.' : envelope;
   const box: { captured?: TextOnlyTurnResult; transportError?: unknown; leaseRefusal?: string; probe?: boolean } = {};
+  // The adapter's fence is the last synchronous step before the bytes leave (2.9): a call it lets through is charged right there, in the same
+  // turn of the loop, before the request is sent; one past MAX_PAID_CALLS is refused and nothing is sent (r7).
+  // An adapter that never calls its fence is charged when its call returns (the next attempt's cap check sees it).
+  let charged = false;
+  const fence = (): AdmissionFenceAnswer => { const answer = check(); if (answer !== "none") return answer; const paid = chargePaidCall(bot.id, runId, family, attempt); charged = paid === "none"; return paid; };
+  const turn = async (call: TextOnlyTurnInput): Promise<TextOnlyTurnResult> => {
+    charged = false;
+    const got = await route.textOnlyTurn!(call);
+    if (!charged) chargePaidCall(bot.id, runId, family, attempt, true);
+    return got;
+  };
   let acceptingHooks = true;
   const hooks = {
     onUsage: (usage: { outputTokens?: number }) => {
@@ -540,10 +759,12 @@ async function attemptFamily(deps: ReflectDeps, bot: ReflectBot, runId: string, 
       const input: TextOnlyTurnInput = {
         system: text, text: envelope, model: route.model, providerRoute: route.providerRoute, outputSchema: LIVED_SCHEMA as unknown as Record<string, unknown>,
         signal: requestSignal, maxOutputTokens: maxTokens, maxOutputBytes: MAX_OUTPUT_BYTES, context: ctx,
-        transport: { bootEpoch: deps.bootEpoch, deadlineAt: withDeadline.deadlineAt, hooks, history },
+        transport: { bootEpoch: deps.bootEpoch, deadlineAt: withDeadline.deadlineAt, hooks, history, fence },
       };
+      // a cheap early exit before the adapter; the adapter checks again after its own last await, immediately before dispatch
+      runAdmissionFence(check);
       if (needsProbe) {
-        const probe = await route.textOnlyTurn!({ ...input, system: requestSystem, text: requestText, outputSchema: { type: "object", properties: { ok: { const: true } }, required: ["ok"], additionalProperties: false } });
+        const probe = await turn({ ...input, system: requestSystem, text: requestText, outputSchema: { type: "object", properties: { ok: { const: true } }, required: ["ok"], additionalProperties: false } });
         mutateReflect(bot.id, s => {
           const f = s.run?.families[family];
           if (s.run?.runId !== runId || f?.attempt !== attempt) return;
@@ -554,11 +775,15 @@ async function attemptFamily(deps: ReflectDeps, bot: ReflectBot, runId: string, 
         // probe returns to pending without spending a family attempt.
         box.probe = true;
         box.captured = probe;
-      } else box.captured = await route.textOnlyTurn!(input);
-    } catch (error) { box.transportError = error; throw error; }
+      } else box.captured = await turn(input);
+    } catch (error) {
+      // nothing was sent: the lease's reservation settles at nothing
+      if (isReadMoved(error)) reportMemoryUsage({ prompt_tokens: 0, completion_tokens: 0 });
+      box.transportError = error; throw error;
+    }
     // Settle against what the provider reported; the lease's ledger handle receives it (A.3).
     const got = box.captured;
-    reportMemoryUsage({ prompt_tokens: got.usage?.inputTokens, completion_tokens: got.usage?.outputTokens ?? Math.ceil(Buffer.byteLength(got.text) / 3.5) });
+    reportMemoryUsage({ prompt_tokens: got.usage?.inputTokens, completion_tokens: got.usage?.outputTokens, replyBytes: Buffer.byteLength(got.text), engineRun: true });
     return got.text;
   };
   const requestSignal = AbortSignal.any([signal, AbortSignal.timeout(Math.max(1, withDeadline.deadlineAt - now))]);
@@ -579,28 +804,94 @@ async function attemptFamily(deps: ReflectDeps, bot: ReflectBot, runId: string, 
   acceptingHooks = false;
   requestSignal.removeEventListener("abort", aborted);
   activeAttempts.delete(key);
+  // the fence answered before dispatch: no request left and no process exists, so no transport attempt is charged (2.4)
+  if (isReadMoved(box.transportError)) {
+    if (box.transportError.kind === "off") {
+      mutateReflect(bot.id, (s) => { const f = s.run?.families[family]; if (s.run?.runId === runId && f?.attempt === attempt) { f.state = "refused:off"; f.transport = undefined; noteRefusal(s, now, runId, "refused:off", "switched-off"); } });
+      return { status: "refused", reason: "off", runId, botId: bot.id };
+    }
+    if (box.transportError.kind === "paid-cap") return refusePaidCap(deps, bot.id, runId, family, attempt);
+    return noteReadMove(deps, bot, runId, family, attempt, rec0.state, withDeadline.deadlineAt);
+  }
   if (box.probe && box.captured?.verdict.state === "validated") {
     mutateReflect(bot.id, s => { if (box.captured?.reportedOverLimit) s.reportedOverLimit = true; const f = s.run?.families[family]; if (s.run?.runId === runId && f?.attempt === attempt) { f.state = "pending"; f.transport = undefined; } });
     return { status: "idle", runId, botId: bot.id };
   }
-  return conclude(deps, bot, runId, family, attempt, route, { captured: box.captured, transportError: box.transportError, leaseRefusal: box.leaseRefusal, history });
+  const held: { result?: LivedResult } = {};
+  const outcome = conclude(deps, bot, runId, family, attempt, route, { captured: box.captured, transportError: box.transportError, leaseRefusal: box.leaseRefusal, history }, stamp, held);
+  if (!held.result) return outcome;
+  // Admission moved while the model ran: the result was not stored. It is held here, in memory only, and published (or discarded) by the
+  // publication path now, whose re-read and transaction decide on the window as it stands; if that cannot finish, the words are dropped.
+  return applyFamilySliced(deps, bot, runId, family, signal, held.result);
+}
+
+/** A read of `family` moved (2.4): the family goes back to `restore` (pending or catch-up for an attempt, validated for a publication) with
+ *  `readMoves` counted and `attempt` unchanged, and the run waits for the next idle pass; the move past READ_MOVE_BUDGET refuses it as
+ *  unstable (`read-moved`) with the cooldown and drops any validated result. The run's deadline is fixed by the first move, so a run whose
+ *  first attempt keeps moving is still bounded. */
+function noteReadMove(deps: ReflectDeps, bot: ReflectBot, runId: string, family: Family, attempt: number, restore: FamilyStateName, deadlineAt: number, spent = false): ReflectOutcome {
+  const now = nowOf(deps);
+  return mutateReflect(bot.id, (s, db): ReflectOutcome => {
+    const r = s.run, f = r?.families[family];
+    if (!r || r.runId !== runId || !f || f.attempt !== attempt) return { status: "idle" };
+    r.deadlineAt ??= deadlineAt;
+    f.readMoves = (f.readMoves ?? 0) + 1; f.transport = undefined;
+    // `spent`: the move dropped words a paid call returned (a held result), so that call counts toward MAX_ATTEMPTS like any other
+    if (f.readMoves > READ_MOVE_BUDGET || (spent && f.attempt >= MAX_ATTEMPTS)) {
+      f.state = "refused:unstable"; f.reason = "read-moved"; f.result = undefined;
+      noteRefusal(s, now, runId, "refused:unstable", "read-moved"); s.cooldownUntil = now + COOLDOWN_MS;
+      return { status: "refused", reason: "unstable", runId, botId: bot.id };
+    }
+    if (spent) { f.attempt++; f.resultDigest = undefined; }
+    f.state = restore;
+    // a stored result left in place across the move is kept only while its window is still admitted now (r7, Astra pip-build r5 High)
+    if (!keepStoredResultIfAdmitted(db, deps, bot.id, s, r, f, now)) return { status: "uncertain", reason: "result-revoked", runId, botId: bot.id };
+    return { status: "uncertain", reason: "read-moved", runId, botId: bot.id };
+  });
+}
+/** Charges one paid call of `family` (the adapter's fence, immediately before dispatch): "none" lets the call go, "paid-cap" refuses it with
+ *  nothing sent, "moved" when the attempt is no longer the run's. */
+function chargePaidCall(botId: string, runId: string, family: Family, attempt: number, after = false): AdmissionFenceAnswer {
+  return mutateReflect(botId, (s): AdmissionFenceAnswer => {
+    const r = s.run, f = r?.families[family];
+    if (!r || r.runId !== runId || !f || f.attempt !== attempt) return "moved";
+    const paid = paidCallsOf(s, r, f);
+    if (paid >= MAX_PAID_CALLS && !after) return "paid-cap";
+    f.paidCalls = paid + 1;
+    return "none";
+  });
+}
+/** The family has spent MAX_PAID_CALLS: refused as unstable with the cooldown, its result dropped. */
+function refusePaidCap(deps: ReflectDeps, botId: string, runId: string, family: Family, attempt: number): ReflectOutcome {
+  const now = nowOf(deps);
+  return mutateReflect(botId, (s): ReflectOutcome => {
+    const f = s.run?.families[family];
+    if (s.run?.runId !== runId || !f || f.attempt !== attempt) return { status: "idle" };
+    f.state = "refused:unstable"; f.reason = "paid-calls"; f.transport = undefined; f.result = undefined; f.resultAdmitted = undefined; f.resultDigest = undefined;
+    noteRefusal(s, now, runId, "refused:unstable", "paid-calls"); s.cooldownUntil = now + COOLDOWN_MS;
+    return { status: "refused", reason: "unstable", runId, botId };
+  });
 }
 
 /** The §3.1 transition for what the transport returned. */
-function conclude(deps: ReflectDeps, bot: ReflectBot, runId: string, family: Family, attempt: number, route: ResolvedRoute, got: { captured?: TextOnlyTurnResult; transportError?: unknown; leaseRefusal?: string; history: MissHistory }): ReflectOutcome {
+/** A validated result is stored (`f.result`) only when this transaction, after the call, finds the attempt's admission stamp unmoved: nothing
+ *  admission depends on changed since the fence, so the window it was shaped by is still admitted at this commit. When it moved (a deny,
+ *  retire or edit may have landed while the model ran), nothing of the result is written: it is handed back in `held` for publication to
+ *  revalidate; when it answers off, the result is refused and dropped. */
+function conclude(deps: ReflectDeps, bot: ReflectBot, runId: string, family: Family, attempt: number, route: ResolvedRoute, got: { captured?: TextOnlyTurnResult; transportError?: unknown; leaseRefusal?: string; history: MissHistory }, stamp: AdmissionStamp, held: { result?: LivedResult }): ReflectOutcome {
   const now = nowOf(deps);
   const retryOrStop = (s: ReflectState, f: FamilyRecord, why: string, terminal: string): ReflectOutcome => {
     if (f.attempt < MAX_ATTEMPTS) { f.state = "pending"; f.attempt++; f.reason = why; f.transport = undefined; return { status: "uncertain", reason: why, runId, botId: bot.id }; }
     f.state = `refused:${terminal}`; f.reason = why; s.cooldownUntil = now + COOLDOWN_MS; noteRefusal(s, now, runId, `refused:${terminal}`, why);
     return { status: "refused", reason: terminal, runId, botId: bot.id };
   };
-  return mutateReflect(bot.id, (s) => {
+  return mutateReflect(bot.id, (s, db) => {
     const r = s.run; const f = r?.families[family];
     if (!r || r.runId !== runId || !f || f.attempt !== attempt || !["requested", "uncertain-transport"].includes(f.state)) return { status: "idle" };
     if (got.leaseRefusal) {
       // Certain not-started: nothing was spent beyond a refused reservation.
       const reason = got.leaseRefusal;
-      f.state = reason === "budget-exhausted" ? "refused:cap" : "refused:transient"; f.reason = reason;
+      f.state = reason === "budget-exhausted" || reason === "spend-ceiling" ? "refused:cap" : "refused:transient"; f.reason = reason;
       if (reason === "extractor-busy" || reason === "request-busy") { f.state = "pending"; return { status: "idle", reason, runId, botId: bot.id }; }
       noteRefusal(s, now, runId, f.state, reason);
       return { status: "refused", reason, runId, botId: bot.id };
@@ -623,7 +914,15 @@ function conclude(deps: ReflectDeps, bot: ReflectBot, runId: string, family: Fam
         let parsed: unknown;
         try { parsed = JSON.parse(result.text); } catch { parsed = undefined; }
         if (!validLivedResult(parsed)) return retryOrStop(s, f, "schema", "unstable");
-        f.state = "validated"; f.result = parsed; f.resultDigest = digest(parsed); f.transport = undefined;
+        f.transport = undefined; f.result = undefined; f.resultAdmitted = undefined;
+        // Revalidate admission in this BEGIN IMMEDIATE transaction (no writer interleaves) before anything of the result is stored.
+        const admission = stampMoved(db, deps, bot.id, stamp);
+        if (admission === "off" || !settingsCurrent(deps, bot, r) || s.excludedThreads.includes(r.threadId)) {
+          f.state = "refused:off"; f.resultDigest = undefined; noteRefusal(s, now, runId, "refused:off", "switched-off");
+          return { status: "refused", reason: "off", runId, botId: bot.id };
+        }
+        f.state = "validated"; f.resultDigest = digest(parsed);
+        if (admission === "none") { f.result = parsed; f.resultAdmitted = true; } else held.result = parsed;
         noteSupport(s, route.fingerprint, now, "ok", "", s.support[route.fingerprint]?.history);
         return { status: "idle", runId, botId: bot.id };
       }
@@ -655,24 +954,131 @@ function conclude(deps: ReflectDeps, bot: ReflectBot, runId: string, family: Fam
 // ------------------------------------------------------------ application ----
 
 /** `validated` to `applied` in one transaction: revalidate, write, mark. Replays make no model call. */
-export function applyFamily(deps: ReflectDeps, bot: ReflectBot, runId: string, family: Family): ReflectOutcome {
+/** What applyFamilySliced read outside the publication transaction: the request's window re-read by identity, and the stamp taken before. */
+interface PublicationRead { shown: AdmittedSource[]; stamp: AdmissionStamp; held?: LivedResult }
+/** applyFamily with the window read outside its transaction (rc13 Astra High: the whole-thread read inside the write transaction held the loop
+ *  436-557 ms on 100,000 sources; r3 M3: no time range and no sort of a list either). The request persisted its window by identity
+ *  (`f.shown`); this re-reads exactly those rows in pages of 64, then the transaction compares the admission stamp and the digest of what it
+ *  re-read with the request's. A read that moved is counted against the family's read-move budget and the family stays validated for the
+ *  next idle pass. */
+async function applyFamilySliced(deps: ReflectDeps, bot: ReflectBot, runId: string, family: Family, signal: AbortSignal, held?: LivedResult): Promise<ReflectOutcome> {
+  const db = database();
+  const s0 = readReflectState(db, bot.id), r0 = s0.run, f0 = r0?.families[family];
+  if (!r0 || r0.runId !== runId || !f0 || f0.state !== "validated") return { status: "idle" };
+  // validated with no stored result and none held: the process that held it stopped before publication (2.9); the words are gone
+  if (!held && !f0.result) { dropHeldResult(deps, bot.id, runId, family, f0.attempt, "result-lost"); return { status: "uncertain", reason: "result-lost", runId, botId: bot.id }; }
+  // a held result that cannot be published now is dropped, never stored: the family asks again (a move costs no attempt, a stop does)
+  // a stored result is kept across a stop only while its window is still admitted now (r6): a deny or revoke since conclusion clears it
+  const cancelled = (): ReflectOutcome => {
+    if (held) dropHeldResult(deps, bot.id, runId, family, f0.attempt, "cancelled");
+    else revalidateStoredResult(deps, bot.id, runId, family, f0.attempt);
+    return { status: "uncertain", reason: "cancelled", runId, botId: bot.id };
+  };
+  const restore: FamilyStateName = held ? "pending" : "validated";
+  const stamp = admissionStamp(db, deps, bot.id, [r0.threadId], { run: { runId, family, attempt: f0.attempt }, reflect: true });
+  const check = () => stampMoved(db, deps, bot.id, stamp);
+  const read = f0.shown ? await readShownSliced(db, bot.id, r0.threadId, f0.shown, s0.excludedThreads, sliceBetween(), signal, check)
+    : await readLegacyShownSliced(db, bot.id, s0, r0, f0, sliceBetween(), signal, check);
+  if (read.answer === "aborted" || signal.aborted || database() !== db) return cancelled();
+  // the transaction starts a slice of its own when the read spent one (what moved meanwhile, it sees by the stamp)
+  await sliceBetween()();
+  if (signal.aborted || database() !== db) return cancelled();
+  if (read.answer === "moved") return noteReadMove(deps, bot, runId, family, f0.attempt, restore, r0.deadlineAt ?? nowOf(deps), Boolean(held));
+  // "off" is refused by the transaction's own check
+  const outcome = applyFamily(deps, bot, runId, family, { shown: read.rows, stamp, held });
+  if (outcome.reason === "read-moved") return noteReadMove(deps, bot, runId, family, f0.attempt, restore, r0.deadlineAt ?? nowOf(deps), Boolean(held));
+  return outcome;
+}
+/** A validated family whose result was never stored (held in memory by an attempt that stopped, or a process that died first): the family
+ *  asks again with the next attempt, or is refused as unstable after the last; nothing of the result exists to clear. */
+function dropHeldResult(deps: ReflectDeps, botId: string, runId: string, family: Family, attempt: number, why: string): void {
+  const now = nowOf(deps);
+  mutateReflect(botId, s => {
+    const f = s.run?.families[family];
+    if (s.run?.runId !== runId || !f || f.attempt !== attempt || f.state !== "validated" || f.result) return;
+    f.resultDigest = undefined; f.reason = why;
+    if (f.attempt < MAX_ATTEMPTS) { f.state = "pending"; f.attempt++; return; }
+    f.state = "refused:unstable"; s.cooldownUntil = now + COOLDOWN_MS; noteRefusal(s, now, runId, "refused:unstable", why);
+  });
+}
+/** The window a stored result was shaped by is still admitted now (r6, Astra pip-build r4 High): the bot's settings and the memory mode
+ *  still allow the run, the thread is not excluded, the request's window re-read by identity digests as the request's did, and every
+ *  `current` row it showed is still shown. The same checks publication makes, synchronously, inside the caller's transaction. A record
+ *  without `f.shown` (an older build's) cannot be checked and does not hold. */
+function storedResultHolds(db: DatabaseSync, deps: ReflectDeps, botId: string, s: ReflectState, r: RunRecord, f: FamilyRecord): boolean {
+  const bot = deps.bots().find(b => b.id === botId);
+  if (!bot || !f.shown || !settingsCurrent(deps, bot, r) || !["capture", "active"].includes(deps.memoryMode()) || s.excludedThreads.includes(r.threadId)) return false;
+  const rows = readShownNow(db, botId, r.threadId, f.shown, s.excludedThreads);
+  if (snapshotGen(rows, s.excludedThreads, r.threadId) !== f.snapshotGen) return false;
+  return (f.targets ?? []).every(t => livedRowStillShown(db, botId, t.id, t.version, s.excludedThreads));
+}
+/** Clears a stored result: the family asks again with the next attempt (the paid call that made it is spent), or is refused as unstable
+ *  after the last. */
+function clearStoredResult(s: ReflectState, r: RunRecord, f: FamilyRecord, now: number, why: string): void {
+  f.result = undefined; f.resultAdmitted = undefined;
+  if (f.state !== "validated") return;
+  f.resultDigest = undefined; f.reason = why;
+  if (f.attempt < MAX_ATTEMPTS) { f.state = "pending"; f.attempt++; }
+  else { f.state = "refused:unstable"; s.cooldownUntil = now + COOLDOWN_MS; noteRefusal(s, now, r.runId, "refused:unstable", why); }
+}
+/** The one rule for every path that leaves a stored result in place after a move, a stop or a restart (r7): it is kept only when it was
+ *  stored by a revalidating conclusion (`resultAdmitted`) and its window is still admitted now (storedResultHolds); otherwise it is cleared
+ *  (clearStoredResult) and the family asks again. Runs inside the caller's transaction. Answers whether nothing was cleared. */
+function keepStoredResultIfAdmitted(db: DatabaseSync, deps: ReflectDeps, botId: string, s: ReflectState, r: RunRecord, f: FamilyRecord, now: number): boolean {
+  if (f.result === undefined) return true;
+  const unmarked = f.resultAdmitted !== true;
+  if (!unmarked && storedResultHolds(db, deps, botId, s, r, f)) return true;
+  clearStoredResult(s, r, f, now, unmarked ? "result-cleared" : "result-revoked");
+  return false;
+}
+/** A stop before publication finished: the stored result stays only if its window is still admitted (keepStoredResultIfAdmitted). */
+function revalidateStoredResult(deps: ReflectDeps, botId: string, runId: string, family: Family, attempt: number): void {
+  mutateReflect(botId, (s, db) => {
+    const r = s.run, f = r?.families[family];
+    if (!r || r.runId !== runId || !f || f.attempt !== attempt || f.state !== "validated") return;
+    keepStoredResultIfAdmitted(db, deps, botId, s, r, f, nowOf(deps));
+  });
+}
+/** A validated family persisted by a build before the window was kept by identity (no `f.shown`): its window is the span it asked for,
+ *  [fromAt, toAt] after the cursor, read once in pages with the stamp checked. Only such a record takes this path; every request since
+ *  persists `f.shown`. */
+async function readLegacyShownSliced(db: DatabaseSync, botId: string, s: ReflectState, r: RunRecord, f: FamilyRecord, between: () => Promise<void>, signal: AbortSignal, check: StampCheck): Promise<{ answer: WalkAnswer; rows: AdmittedSource[] }> {
+  const cursor = s.threads[r.threadId];
+  const q = { threadId: r.threadId, afterAt: cursor?.cursorAt, afterMessageId: cursor?.cursorMessageId ?? null, untilAt: r.toAt, excludedThreads: s.excludedThreads };
+  const rows: AdmittedSource[] = [];
+  const keep = (a: AdmittedSource) => { if (a.occurredAt >= (f.fromAt ?? 0)) rows.push(a); };
+  for (const visit of [visitAdmittedOwnerSourcesSliced, visitAdmittedActionSourcesSliced]) {
+    const answer = await visit(db, botId, q, between, signal, check, keep);
+    if (answer !== "none") return { answer, rows };
+  }
+  return { answer: "none", rows: rows.sort(compareAdmitted) };
+}
+/** Publish one validated family from `read` (applyFamilySliced): the transaction checks the stamp and the window's digest, and reads no span. */
+export function applyFamily(deps: ReflectDeps, bot: ReflectBot, runId: string, family: Family, read: PublicationRead): ReflectOutcome {
   const now = nowOf(deps);
   return mutateReflect(bot.id, (s, db) => {
     const r = s.run, f = r?.families[family];
-    if (!r || r.runId !== runId || !f || f.state !== "validated" || !f.result) return { status: "idle" };
+    const kept = read.held ?? f?.result;
+    if (!r || r.runId !== runId || !f || f.state !== "validated" || !kept) return { status: "idle" };
     // Toggle or mode off at publication: refused, no re-snapshot.
-    if (!settingsCurrent(deps, bot, r) || !["capture", "active"].includes(deps.memoryMode()) || s.excludedThreads.includes(r.threadId)) {
+    const answer = stampMoved(db, deps, bot.id, read.stamp);
+    if (answer === "off" || !settingsCurrent(deps, bot, r) || !["capture", "active"].includes(deps.memoryMode()) || s.excludedThreads.includes(r.threadId)) {
       f.state = "refused:off"; f.result = undefined; noteRefusal(s, now, runId, "refused:off", "switched-off");
       return { status: "refused", reason: "off", runId, botId: bot.id };
     }
-    const q = { threadId: r.threadId, afterAt: s.threads[r.threadId]?.cursorAt, afterMessageId: s.threads[r.threadId]?.cursorMessageId ?? null, untilAt: r.toAt, excludedThreads: s.excludedThreads };
-    const admitted = [...admissibleOwnerSources(db, bot.id, q), ...admissibleActionSources(db, bot.id, q)];
-    // The request showed [fromAt, toAt]; anything older was cut at a source boundary and is `unreflected`.
-    const shown = admitted.filter(a => a.occurredAt >= (f.fromAt ?? 0) && a.occurredAt <= r.toAt).sort((a, b) => a.occurredAt - b.occurredAt || (a.messageId ?? "").localeCompare(b.messageId ?? ""));
+    if (answer === "moved") return { status: "idle", reason: "read-moved", runId, botId: bot.id };
+    // The request showed `f.shown`; anything older was cut at a source boundary and is `unreflected`. The re-read keeps only what is still
+    // admissible, so a source retired, denied, tombstoned or re-revisioned since the request changes the digest and re-snapshots.
+    const shown = read.shown;
     const gen = snapshotGen(shown, s.excludedThreads, r.threadId);
-    if (gen !== f.snapshotGen) {
-      // Sources, branch or exclusion changed: re-render the span; applied families become catch-up.
-      if (f.attempt >= MAX_ATTEMPTS) { f.state = "refused:unstable"; f.reason = "snapshot-moved"; noteRefusal(s, now, runId, "refused:unstable", "snapshot-moved"); s.cooldownUntil = now + COOLDOWN_MS; return { status: "refused", reason: "unstable", runId, botId: bot.id }; }
+    // A `current` row the request showed that was deleted, forgotten or denied while the model ran, or (edited since or not) whose
+    // shown words rested on evidence since retired (Astra pip-build H2, r2): the result was shaped by words the owner has since
+    // removed, so nothing of it is written; the family re-snapshots without the row.
+    const gone = (f.targets ?? []).some(t => !livedRowStillShown(db, bot.id, t.id, t.version, s.excludedThreads));
+    if (gen !== f.snapshotGen || gone) {
+      // Sources, branch, exclusion or a shown row changed: re-render the span; applied families become catch-up.
+      const why = gone ? "current-moved" : "snapshot-moved";
+      if (f.attempt >= MAX_ATTEMPTS) { f.state = "refused:unstable"; f.reason = why; noteRefusal(s, now, runId, "refused:unstable", why); s.cooldownUntil = now + COOLDOWN_MS; return { status: "refused", reason: "unstable", runId, botId: bot.id }; }
       f.state = "pending"; f.attempt++; f.result = undefined;
       for (const [name, other] of Object.entries(r.families)) if (name !== family && other.state === "applied") other.state = "catch-up";
       return { status: "idle", reason: "re-snapshot", runId, botId: bot.id };
@@ -680,7 +1086,7 @@ export function applyFamily(deps: ReflectDeps, bot: ReflectBot, runId: string, f
     const scopeId = ensureScope("bot", bot.id);
     // Only target record versions changed (owner edit, Keep): drop stance events on those targets, apply the rest.
     const moved = new Set((f.targets ?? []).filter(t => { const cur = db.prepare("SELECT MAX(version) AS v FROM memory_records WHERE id=?").get(t.id); return Number(cur?.v ?? 0) !== t.version; }).map(t => t.id));
-    const result: LivedResult = { ...f.result, stance: f.result.stance.filter(x => !moved.has(x.targetId)) };
+    const result: LivedResult = { ...kept, stance: kept.stance.filter(x => !moved.has(x.targetId)) };
     if (!validOwnerNominations(shown, result, { botName: bot.name })) {
       f.result = undefined; f.reason = "bad-output:owner-evidence";
       noteRefusal(s, now, runId, "refused:bad-output", f.reason);
@@ -693,7 +1099,7 @@ export function applyFamily(deps: ReflectDeps, bot: ReflectBot, runId: string, f
       const lastMessage = shown.filter(a => a.kind === "owner").map(a => a.messageId).filter((x): x is string => Boolean(x)).pop() ?? r.toMessageId ?? runId;
       writeEpisode(db, { botId: bot.id, scopeId, threadId: r.threadId, closingMessageId: lastMessage, day: r.toAt, text: applied.episode.text, handles: applied.episode.handles });
     }
-    f.state = "applied"; f.appliedAt = now; f.reason = moved.size ? "partial" : undefined; f.result = undefined;
+    f.state = "applied"; f.appliedAt = now; f.reason = moved.size ? "partial" : undefined; f.result = undefined; f.resultAdmitted = undefined;
     return { status: "applied", runId, botId: bot.id };
   });
 }
@@ -730,11 +1136,29 @@ function persistedReflectStates(): Map<string, ReflectState> {
 }
 
 /** Startup and idle-tick reconciliation (A.2). Orphan discovery is requested separately from run recovery. */
-interface ReconcileOptions { discoverOrphans?: boolean; persisted?: Map<string, ReflectState> }
-const recovery = new WeakMap<ReflectDeps, ReturnType<typeof reconcilePipRunsOnce>>();
-export function reconcilePipRuns(deps: ReflectDeps, options: ReconcileOptions = {}): ReturnType<typeof reconcilePipRunsOnce> {
+interface ReconcileOptions { discoverOrphans?: boolean; persisted?: Map<string, ReflectState>; signal?: AbortSignal }
+type ReconcileCounts = Awaited<ReturnType<typeof reconcilePipRunsOnce>>;
+const NO_COUNTS: ReconcileCounts = { retried: 0, unstable: 0, unconfirmed: 0, swept: 0 };
+const recovery = new WeakMap<ReflectDeps, Promise<ReconcileCounts>>();
+/** `pending`, or the counts so far (none) the moment `signal` aborts: a joiner's stop never waits on the run in flight, which belongs to its
+ *  starter and finishes under that starter's signal. */
+function untilAborted(pending: Promise<ReconcileCounts>, signal?: AbortSignal): Promise<ReconcileCounts> {
+  if (!signal) return pending;
+  if (signal.aborted) return Promise.resolve(NO_COUNTS);
+  return new Promise<ReconcileCounts>((resolve, reject) => {
+    const stop = () => resolve(NO_COUNTS);
+    signal.addEventListener("abort", stop, { once: true });
+    pending.then(resolve, reject).finally(() => signal.removeEventListener("abort", stop));
+  });
+}
+export function reconcilePipRuns(deps: ReflectDeps, options: ReconcileOptions = {}): Promise<ReconcileCounts> {
   const active = recovery.get(deps);
-  if (active) return options.discoverOrphans ? active.then(() => reconcilePipRuns(deps, { discoverOrphans: true })) : active;
+  if (active) {
+    // a joiner keeps its own signal (T7): its wait ends at once on a stop, and the orphan discovery it asked for runs after the active
+    // pass under the joiner's own options, unless that stop came first
+    const joined = options.discoverOrphans ? active.then(() => options.signal?.aborted ? NO_COUNTS : reconcilePipRuns(deps, options)) : active;
+    return untilAborted(joined, options.signal);
+  }
   const pending = reconcilePipRunsOnce(deps, options).finally(() => { recovery.delete(deps); });
   recovery.set(deps, pending);
   return pending;
@@ -744,11 +1168,15 @@ async function reconcilePipRunsOnce(deps: ReflectDeps, options: ReconcileOptions
   const out = { retried: 0, unstable: 0, unconfirmed: 0, swept: 0 };
   const known = new Set<string>();
   const bots = new Map(deps.bots().map(bot => [bot.id, bot]));
+  // a stop answers with the counts so far: every step below either finished or changed nothing (an interrupted reap answers "none")
+  const signal = options.signal, reaper: ReaperDeps = { ...deps.reaper, ...(signal ? { abort: signal } : {}) };
   for (const [id, state] of options.persisted ?? persistedReflectStates()) {
+    if (signal?.aborted) return out;
     const run = state.run;
     if (!run) continue;
     const bot = bots.get(id) ?? { id, threadIds: [], continuity: false };
     for (const [name, f] of Object.entries(run.families)) {
+      if (signal?.aborted) return out;
       if (f.transport?.intent.tempRoot) known.add(f.transport.intent.tempRoot);
       if (activeAttempts.has(attemptKey(bot.id, run.runId, name, f.attempt))) continue;
       if (!["requested", "uncertain-transport"].includes(f.state) && !(f.state.startsWith("refused:") && f.transport)) continue;
@@ -760,7 +1188,7 @@ async function reconcilePipRunsOnce(deps: ReflectDeps, options: ReconcileOptions
         out.retried++; continue;
       }
       // An unconfirmed exit of THIS process is retried too (kill and verify at the idle tick); a `requested` attempt of this process is active and left alone.
-      const action = await reconcileAttempt(t, f.attempt, deps.bootEpoch, deps.tmpBase, deps.reaper, { uncertain: f.state !== "requested" });
+      const action = await reconcileAttempt(t, f.attempt, deps.bootEpoch, deps.tmpBase, reaper, { uncertain: f.state !== "requested" });
       mutateReflect(bot.id, (s) => {
         const g = s.run?.families[name];
         if (!g || s.run?.runId !== run.runId || g.attempt !== f.attempt || g.state !== f.state) return;
@@ -779,60 +1207,122 @@ async function reconcilePipRunsOnce(deps: ReflectDeps, options: ReconcileOptions
         }
       });
     }
+    if (signal?.aborted) return out;
     settleRun(deps, bot.id);
   }
-  if (options.discoverOrphans) {
+  if (options.discoverOrphans && !signal?.aborted) {
     // Refresh ownership after awaited reaping, before considering orphan directories.
     for (const latest of persistedReflectStates().values()) {
       for (const f of Object.values(latest.run?.families ?? {})) if (f.transport?.intent.tempRoot) known.add(f.transport.intent.tempRoot);
     }
-    out.swept = (await sweepOrphanTempDirs(deps.tmpBase, known, deps.reaper)).removed.length;
+    out.swept = (await sweepOrphanTempDirs(deps.tmpBase, known, reaper)).removed.length;
   }
   return out;
 }
 
 // ---------------------------------------------------------- trace episode ----
 
-/** Recover one completed local calendar day at a time, without a model call. */
-export function maybeTraceEpisode(deps: ReflectDeps, bot: ReflectBot): boolean {
+/** The daily trace episode (one completed local calendar day at a time, no model call), its thread reads in pages with the loop handed back
+ *  between them (maintainPip, startup included): the day's owner turns and the earliest one were whole-thread reads in one hold (rc13 real-data
+ *  run 3, server3.log:18: a 555 ms stall). Each thread's turns are counted and only its last EPISODE_MAX_HANDLES kept while paging (2.7). The
+ *  admission stamp over the bot's threads is taken before the read and checked after every page and inside the transaction that writes; a
+ *  read that moved, or a stop, writes nothing and leaves the day to the next pass. */
+export async function maybeTraceEpisodeSliced(deps: ReflectDeps, bot: ReflectBot, between: () => Promise<void>, signal?: AbortSignal): Promise<boolean> {
   const now = nowOf(deps), today = new Date(now); today.setHours(0, 0, 0, 0);
   const db = database();
   if (!bot.continuity || !["capture", "active"].includes(deps.memoryMode())) return false;
   const state = readReflectState(db, bot.id);
-  const date = state.lastTraceDay ? new Date(state.lastTraceDay + "T00:00:00") : new Date(bot.threadIds.reduce((earliest, threadId) => admissibleOwnerSources(db, bot.id, { threadId, excludedThreads: state.excludedThreads }).reduce((at, s) => Math.min(at, s.occurredAt), earliest), now));
+  const stamp = admissionStamp(db, deps, bot.id, bot.threadIds);
+  const check = () => stampMoved(db, deps, bot.id, stamp);
+  let earliest = now;
+  if (!state.lastTraceDay) for (const threadId of bot.threadIds) {
+    // between threads too: a bot with many short task threads never reads them all in one hold
+    await between();
+    if (signal?.aborted || database() !== db) return false;
+    if (check() !== "none") return false;
+    const answer = await visitAdmittedOwnerSourcesSliced(db, bot.id, { threadId, excludedThreads: state.excludedThreads }, between, signal, check, s => { earliest = Math.min(earliest, s.occurredAt); });
+    if (answer !== "none" || signal?.aborted || database() !== db) return false;
+  }
+  const date = state.lastTraceDay ? new Date(state.lastTraceDay + "T00:00:00") : new Date(earliest);
   date.setHours(0, 0, 0, 0);
   if (state.lastTraceDay) date.setDate(date.getDate() + 1);
   if (date.getTime() >= today.getTime()) return false;
   const start = date.getTime(), dayKey = dayOf(start);
   date.setDate(date.getDate() + 1);
   const end = date.getTime() - 1;
+  const byThread: TraceThread[] = [];
+  for (const threadId of bot.threadIds.filter(t => !state.excludedThreads.includes(t))) {
+    await between();
+    if (signal?.aborted || database() !== db) return false;
+    if (check() !== "none") return false;
+    const tail = new NewestTail(EPISODE_MAX_HANDLES);
+    const answer = await visitAdmittedOwnerSourcesSliced(db, bot.id, { threadId, afterAt: start - 1, untilAt: end, excludedThreads: state.excludedThreads }, between, signal, check, s => tail.add(s));
+    if (answer !== "none" || signal?.aborted || database() !== db) return false;
+    byThread.push({ threadId, title: deps.titleOf?.(threadId) ?? "our conversation", count: tail.count, lastHandles: tail.sorted() });
+  }
+  // The day was read across turns of the loop: anything admission depends on may have moved meanwhile, and another pass may have written the
+  // day. Both are checked inside the transaction that writes; a stale read writes nothing.
   const scopeId = ensureScope("bot", bot.id);
-  const byThread = bot.threadIds.filter(t => !state.excludedThreads.includes(t)).map(threadId => ({
-    threadId, title: deps.titleOf?.(threadId) ?? "our conversation",
-    turns: admissibleOwnerSources(db, bot.id, { threadId, afterAt: start - 1, untilAt: end, excludedThreads: state.excludedThreads }),
-  }));
-  const wrote = transaction(tx => writeTraceEpisode(tx, { botId: bot.id, scopeId, day: start, byThread }).written);
+  const wrote = transaction(tx => {
+    if (readReflectState(tx, bot.id).lastTraceDay !== state.lastTraceDay) return null;
+    if (stampMoved(tx, deps, bot.id, stamp) !== "none") return null;
+    return writeTraceEpisode(tx, { botId: bot.id, scopeId, day: start, byThread }).written;
+  });
+  if (wrote === null) return false;
   mutateReflect(bot.id, (s) => { s.lastTraceDay = dayKey; });
   return wrote;
 }
 
+/** Startup sweep (2.9): an older build stored the model's result in the reflect binding before revalidating admission, so a crash or a stop
+ *  could leave words there that a deny had already removed. Every such result (no `resultAdmitted` mark) is cleared, and a validated family
+ *  left without a result (this build's held result, lost with its process) asks again: the next attempt, or refused unstable after the
+ *  last. A marked result is revalidated against admission as it stands now (r6): one whose window a deny, revoke or exclusion has
+ *  changed since conclusion is cleared the same way. Answers the number of families changed. */
+export function sweepUnadmittedResults(deps: ReflectDeps): number {
+  let changed = 0;
+  for (const [botId, state] of persistedReflectStates()) {
+    if (!Object.values(state.run?.families ?? {}).some(f => f.result !== undefined || f.state === "validated")) continue;
+    const now = nowOf(deps);
+    mutateReflect(botId, (s, db) => {
+      const r = s.run;
+      if (!r) return;
+      for (const f of Object.values(r.families)) {
+        // a validated family whose held result was lost with its process asks again
+        if (f.state === "validated" && f.result === undefined) { changed++; clearStoredResult(s, r, f, now, "result-cleared"); continue; }
+        // r6/r7: an unmarked result is cleared, a marked one kept only while its window is still admitted now
+        if (!keepStoredResultIfAdmitted(db, deps, botId, s, r, f, now)) changed++;
+      }
+    });
+  }
+  return changed;
+}
+
 /** Startup and bounded maintenance ticks run without inference eligibility. */
 const nextOrphanDiscovery = new WeakMap<ReflectDeps, number>();
-export async function maintainPip(deps: ReflectDeps, options: { startup?: boolean } = {}): Promise<void> {
+export async function maintainPip(deps: ReflectDeps, options: { startup?: boolean; signal?: AbortSignal } = {}): Promise<void> {
+  const between = sliceBetween(), signal = options.signal;
+  // a stop ends maintenance at the next page, directory entry or 25 ms poll of whatever it is awaiting (2.5)
+  if (signal?.aborted) return;
   const now = nowOf(deps), next = nextOrphanDiscovery.get(deps) ?? now + 60 * 60_000;
   const discoverOrphans = options.startup === true || now >= next;
   nextOrphanDiscovery.set(deps, discoverOrphans ? now + 60 * 60_000 : next);
+  if (options.startup) sweepUnadmittedResults(deps);
   // The binding prefix uses the primary index. Reuse this inventory for recovery and bot eligibility.
   const persisted = persistedReflectStates();
   const bots = deps.bots().filter(bot => bot.continuity || persisted.has(bot.id));
   if (!bots.length && !persisted.size && !discoverOrphans) return;
-  await reconcilePipRuns(deps, { persisted, discoverOrphans });
+  await reconcilePipRuns(deps, { persisted, discoverOrphans, signal });
+  if (signal?.aborted) return;
   for (const bot of bots) {
-    transaction(db => reconcilePipStances(db, bot.id));
-    expireProposals(bot.id, nowOf(deps));
+    if (signal?.aborted) return;
+    heldStep("memory.pip.stances", () => transaction(db => reconcilePipStances(db, bot.id)));
+    if (signal?.aborted) return;
+    heldStep("memory.pip.proposals", () => expireProposals(bot.id, nowOf(deps)));
     for (let i = 0; i < 7; i++) {
+      if (signal?.aborted) return;
       const before = readReflectState(database(), bot.id).lastTraceDay;
-      maybeTraceEpisode(deps, bot);
+      await maybeTraceEpisodeSliced(deps, bot, between, signal);
+      if (signal?.aborted) return;
       if (readReflectState(database(), bot.id).lastTraceDay === before) break;
     }
   }

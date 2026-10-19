@@ -24,6 +24,7 @@ import { MemoryIndex, type IndexedMemory } from "./index.ts";
 import { closeMemoryIndexReader, lexicalPage, lexicalPageSliced } from "./index-reader.ts";
 import { ensureScope, memoryAccess, reconcileMemoryRoster, type MemoryAccess, type MemoryRoster } from "./policy.ts";
 import * as readableModule from "./readable.ts";
+import { removeTempDirSync } from "../testing/cleanup.ts";
 const { readableMemoryRecord } = readableModule;
 const plausiblyReadable = (...args: Parameters<typeof readableModule.plausiblyReadable>) => readableModule.plausiblyReadable(...args);
 import { recentMemoryHits } from "./recent.ts";
@@ -40,7 +41,7 @@ const TEXT = "harbour lantern notes for the Friday review of the long quiet quay
 
 beforeEach(() => {
   closeMemoryIndexReader(); closeDatabase(); clearMemorySearchCache();
-  rmSync(DATA_DIR, { recursive: true, force: true }); mkdirSync(DATA_DIR, { recursive: true });
+  removeTempDirSync(DATA_DIR); mkdirSync(DATA_DIR, { recursive: true });
   reconcileMemoryRoster(ROSTER); setMemoryMode("active");
 });
 afterEach(() => { closeMemoryIndexReader(); eligibleLimits.chunk = 12000; scanLimits.chunks = 8; scanLimits.budgetMs = 700; });
@@ -90,27 +91,54 @@ const emptyBridge: MemorySearchBridge = { search: async () => ({ hits: [], vecto
 const failing: MemorySearchBridge = { search: async () => { throw new Error("MEMORY_WORKER_EXITED"); } };
 /** The fixture's own garbage is collected before the stall is measured, so a collection of it is not counted against the search. */
 function collectGarbage() { v8.setFlagsFromString("--expose-gc"); (vm.runInNewContext("gc") as () => void)(); }
+/** This thread's own CPU time in ms (user + system). */
+const threadCpuMs = () => { const usage = process.threadCpuUsage(); return (usage.user + usage.system) / 1000; };
+/**
+ * The longest time the loop was held by work on this thread. Each gap between 1 ms ticks counts only the CPU this
+ * thread spent inside it (never more than the gap itself), so a host that takes the CPU away from the process (the
+ * sharded suite runs 16 at once) is not read as the search holding the loop, while any synchronous work, garbage
+ * collection on this thread included, still counts in full.
+ */
+function loopHoldMonitor() {
+  let longest = 0, wall = performance.now(), cpu = threadCpuMs();
+  const ticker = setInterval(() => {
+    const nowWall = performance.now(), nowCpu = threadCpuMs();
+    longest = Math.max(longest, Math.min(nowWall - wall, nowCpu - cpu));
+    wall = nowWall; cpu = nowCpu;
+  }, 1);
+  return { stop: () => { clearInterval(ticker); return longest; } };
+}
+/** Holds this thread for `ms` of its own CPU time, however busy the host is. */
+const holdThread = (ms: number) => { const until = threadCpuMs() + ms; while (threadCpuMs() < until) { /* spin */ } };
 const bulk = (work: () => void) => { database().exec("BEGIN"); try { work(); } finally { database().exec("COMMIT"); } };
 
 describe("P1: authorization never holds the event loop", () => {
+  it("the hold monitor sees a synchronous block: 80 ms of this thread's CPU reads as a hold of at least 75 ms", async () => {
+    const monitor = loopHoldMonitor();
+    await new Promise(resolve => setTimeout(resolve, 5));
+    holdThread(80);
+    await new Promise(resolve => setTimeout(resolve, 5));
+    expect(monitor.stop()).toBeGreaterThanOrEqual(75);
+  });
+
   it("1,000 candidates only a full read refuses leave the loop free (longest stall under 50 ms) and change nothing the reader sees", async () => {
     const scope = ensureScope("bot", "a");
     readable("kept", scope);
     const records = [entry("kept", scope, TEXT)];
     bulk(() => { for (let n = 0; n < 1000; n++) { const id = `a-denied-${String(n).padStart(4, "0")}`; deniedByRead(id, scope); records.push(entry(id, scope, TEXT)); } });
     world(records).close();
+    // as in the 100,000 case: the fixture's own garbage is collected first, so a collection of it is not counted as the search's hold
+    await new Promise(resolve => setTimeout(resolve, 100)); collectGarbage();
     // ids sort ahead of the readable one, so every refused candidate is read before it is reached
-    let longest = 0, last = performance.now();
-    const ticker = setInterval(() => { const now = performance.now(); longest = Math.max(longest, now - last); last = now; }, 1);
-    last = performance.now();
+    const monitor = loopHoldMonitor();
     const answer = await searchMemory(QUERY, accessOf(), emptyBridge, { allowance: LineageAllowance.tool(1_000_000_000), caller: "tool", limit: 20 });
-    clearInterval(ticker);
+    const longest = monitor.stop();
     expect(answer.hits.map(hit => hit.id)).toEqual(["kept"]);
     expect(longest).toBeLessThan(50);
     expect(JSON.stringify(answer)).not.toContain("denied");
   }, 60_000);
 
-  it("100,000 mostly refused records (99,990 only a full read refuses) leave the loop free: longest stall under 50 ms, the search answers what it can inside its limit", async () => {
+  it("100,000 mostly refused records (99,990 only a full read refuses) leave the loop free: longest stall under 50 ms, the search answers what it can inside its limit", { tags: ["perf-budget"], timeout: 300_000 }, async () => {
     const scope = ensureScope("bot", "a");
     // the fixture is built in its own function so none of it stays referenced while the search is measured
     (() => {
@@ -120,15 +148,13 @@ describe("P1: authorization never holds the event loop", () => {
       world(records).close();
     })();
     await new Promise(resolve => setTimeout(resolve, 500)); collectGarbage();
-    let longest = 0, last = performance.now();
-    const ticker = setInterval(() => { const now = performance.now(); longest = Math.max(longest, now - last); last = now; }, 1);
-    last = performance.now();
+    const monitor = loopHoldMonitor();
     const answer = await searchMemory(QUERY, accessOf(), emptyBridge, { allowance: LineageAllowance.tool(1_000_000_000), caller: "tool", limit: 20 });
-    clearInterval(ticker);
+    const longest = monitor.stop();
     console.log(`R5-100K max event-loop stall ${Math.round(longest * 10) / 10} ms, hits ${answer.hits.length}, degraded ${String(answer.degradedReason ?? "none")}`);
     expect(longest).toBeLessThan(50);
     expect(JSON.stringify(answer)).not.toContain("denied");
-  }, 300_000);
+  });
 
   it("candidates certain to be refused (forgotten, no evidence) are spared the full read: one statement decides them for all", () => {
     const scope = ensureScope("bot", "a");
@@ -343,7 +369,7 @@ describe("P2: a merge a walk's deletion owes is written with the deletion", () =
       const third = new MemoryIndex(path);
       expect(third.maintenanceOwed()).toBe(false);
       third.close();
-    } finally { rmSync(root, { recursive: true, force: true }); }
+    } finally { removeTempDirSync(root); }
   });
 
   it("a removal whose merge could not run still owes it after a restart, and a removal that merged owes nothing", () => {
@@ -362,7 +388,7 @@ describe("P2: a merge a walk's deletion owes is written with the deletion", () =
       const third = new MemoryIndex(path);
       expect(third.maintenanceOwed()).toBe(false);
       third.close();
-    } finally { rmSync(root, { recursive: true, force: true }); }
+    } finally { removeTempDirSync(root); }
   });
 });
 

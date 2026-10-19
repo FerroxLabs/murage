@@ -30,8 +30,9 @@ function quote(text: string): string {
   return `"${flat.length > MAX_CHARS ? `${flat.slice(0, MAX_CHARS - 1)}…` : flat}"`;
 }
 
+function wholeMinutes(ms: number): number { return Math.max(1, Math.round(ms / 60_000)); }
 function minutes(ms: number): string {
-  const m = Math.max(1, Math.round(ms / 60_000));
+  const m = wholeMinutes(ms);
   return m === 1 ? "1 min" : `${m} min`;
 }
 
@@ -57,7 +58,8 @@ export function callNoteText(log: CallLogEntry[], durationMs: number): string | 
 
 export interface CallNoteDeps {
   bot(id: string): { id: string; threadId: string; tasks?: Array<{ threadId: string }> } | null;
-  append(threadId: string, text: string): void;
+  /** Writes what a call leaves (LINEAGE-DESIGN-S6 rule 21): its length as Murage's status line, and the owner's own words as an owner row. */
+  record(threadId: string, note: { minutes: number; ownerWords: string }): void;
   readBody(req: IncomingMessage): Promise<any>;
 }
 
@@ -98,8 +100,9 @@ export async function handleCallNoteRoute(
     return send(409, { error: "that task does not belong to this bot" });
   }
   const duration = Number(body.durationMs);
-  const text = callNoteText(parseLog(body.log), Number.isFinite(duration) ? duration : 0);
-  if (!text) return send(200, { ok: true, written: false });
-  deps.append(threadId, text);
+  // only what the owner said: the call's answers are a model's words and never become owner words
+  const said = parseLog(body.log).map((entry) => entry.said.trim()).filter(Boolean);
+  if (!said.length) return send(200, { ok: true, written: false });
+  deps.record(threadId, { minutes: wholeMinutes(Number.isFinite(duration) ? duration : 0), ownerWords: said.join("\n") });
   return send(200, { ok: true, written: true });
 }

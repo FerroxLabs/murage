@@ -4,7 +4,7 @@
 // Write-time privacy, S4 wiring: the read-side files ask the deny tables as a stricter layer beside the read-time judge (which S6 removes).
 // readable.ts and consolidate.ts (memory marks), disclosures.ts (replay pages), dispatch.ts (session predicate, send fence),
 // result-egress.ts (result lines), lessons.ts (revbound r3 A1, A4, F2 read halves) and bundle.ts (recall's own budget, partial not empty).
-import { mkdirSync, rmSync } from "node:fs";
+import { mkdirSync } from "node:fs";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { DATA_DIR } from "../config.ts";
 import { closeDatabase, database } from "../database.ts";
@@ -22,8 +22,9 @@ import { catchUpRecentMemory } from "./recent.ts";
 import { buildPrompt, promptPart } from "./prompt-parts.ts";
 import { writetimeRecordRefusal } from "./readable.ts";
 import { WritetimeFixture } from "./testing/writetime-fixture.ts";
+import { removeTempDirSync } from "../testing/cleanup.ts";
 
-beforeEach(() => { vi.spyOn(console, "warn").mockImplementation(() => {}); closeDatabase(); rmSync(DATA_DIR, { recursive: true, force: true }); mkdirSync(DATA_DIR, { recursive: true }); });
+beforeEach(() => { vi.spyOn(console, "warn").mockImplementation(() => {}); closeDatabase(); removeTempDirSync(DATA_DIR); mkdirSync(DATA_DIR, { recursive: true }); });
 afterEach(() => { vi.restoreAllMocks(); closeDatabase(); });
 const app = () => new WritetimeFixture(database());
 
@@ -40,10 +41,11 @@ it("replay pages: a deny-ranged reply is withheld and a pending one checking, on
 
 it("the session predicate resets a retained session on deny_session, on a pending window, and on a session with no lineage once lineage is live", () => {
   const f = app();
-  expect(writetimeSessionVerdict("T", "d", "n")).toEqual({ state: "shown" }); // not live: read-time checks alone
+  // S6 rule 29: the door epoch first, live or not: a session with no stamped row resets (door-epoch.test covers the stamp)
+  expect(writetimeSessionVerdict("T", "d", "n")).toEqual({ state: "withheld", reason: "door-epoch" });
   f.reply("T", "g", 5).sessionLineage("T", "d", "n", 1, 5);
   expect(writetimeSessionVerdict("T", "d", "n")).toEqual({ state: "shown" });
-  expect(writetimeSessionVerdict("T", "d", "unknown")).toEqual({ state: "checking", reason: "no-lineage" });
+  expect(writetimeSessionVerdict("T", "d", "unknown")).toEqual({ state: "withheld", reason: "door-epoch" });
   f.pending("T", 4);
   expect(writetimeSessionVerdict("T", "d", "n")).toEqual({ state: "checking", reason: "pending" });
   f.denySession("T", "d", "n");

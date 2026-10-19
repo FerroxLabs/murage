@@ -85,7 +85,8 @@ it("legacy null CWD receives a separate durable file desk without moving the res
   await api("POST", `/api/bots/${bot.id}/messages`, { threadId: bot.threadId, text: "Create HTML, MD and TXT files named b11-legacy" });
   await checkFiles(bot, bot.threadId, 1);
   const observed = observations().find(item => item.name === "b11-legacy")!;
-  expect(observed.resumed).toBe(true);
+  // LINEAGE-DESIGN-S6 (i), rules 25-27: a retained session from before the door epoch resets once, so this first turn starts fresh
+  expect(observed.resumed).toBe(false);
   expect(observed.cwd).toBe(realpathSync.native(fixture.info.dataDir));
   expect(observed.destination).not.toBe(join(observed.cwd, "outputs"));
   const state = await api<{ bots: Bot[] }>("GET", "/api/bots?messages=0");

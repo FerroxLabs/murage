@@ -6,6 +6,7 @@
 // only through the one result gate (server/result-egress.ts), asked again now.
 import { releaseStoredResult, type EgressMessage, type ResultEgressDeps } from "./result-egress.ts";
 import { status, type Outbound } from "./murage-status.ts";
+import { ROOM_REPLY_CHECKING } from "./room-context.ts";
 
 export interface StoredAnswerRef { threadId: string; messageId: string; requestId?: string }
 export interface StoredAnswerWho { fromBotId: string; toBotId: string; fromThreadId: string }
@@ -18,6 +19,10 @@ export type { EgressMessage };
 
 /** The text to hand back for a stored answer, or undefined when it can no longer be read (the ask then counts as ended). */
 export function storedAnswerText(deps: StoredAnswerDeps, answer: StoredAnswerRef, who: StoredAnswerWho, notOwnerAudience: boolean): Outbound | undefined {
+  // a mirror that is itself the checking line (a synchronous ask answered while its reply was being checked, REPLY-WITHHELD-CONTRACT R9) replays as
+  // that line: it is Murage's own words, which the gate would read as a classified row and call withheld (R10)
+  const mirror = deps.message(answer.threadId, answer.messageId);
+  if (mirror?.murageLine === true && mirror.text === `[${ROOM_REPLY_CHECKING}]`) return status("checking");
   const bound = answer.requestId ? deps.request(answer.requestId) : null;
   // a found request that is not this asker's own hand-off to this worker is never trusted
   const sameWork = bound !== null && bound.toBotId === who.toBotId

@@ -5,7 +5,7 @@
 // 0.7): the waiting counts and what they exclude, the live counter and its
 // frames, Keep / Keep all / Later / Edit-and-keep / Undo, and the durable
 // action ids that make a retried press return the first result, restart or not.
-import { mkdirSync, rmSync } from "node:fs";
+import { mkdirSync } from "node:fs";
 import { randomUUID } from "node:crypto";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { DATA_DIR } from "../config.ts";
@@ -25,8 +25,9 @@ import { waitingEpoch } from "./waiting-epoch.ts";
 import { memoryEligibility, sensitiveReasons, type EligibilityRow } from "./review-eligibility.ts";
 import { memoryWaitingRows, withMemoryWaiting } from "../inbox-memory-waiting.ts";
 import { KNOWN_FRAME_KINDS, frameSubject } from "../sse-visibility.ts";
+import { removeTempDirSync } from "../testing/cleanup.ts";
 
-beforeEach(() => { closeDatabase(); rmSync(DATA_DIR, { recursive: true, force: true }); mkdirSync(DATA_DIR, { recursive: true }); });
+beforeEach(() => { closeDatabase(); removeTempDirSync(DATA_DIR); mkdirSync(DATA_DIR, { recursive: true }); });
 afterEach(() => { vi.restoreAllMocks(); });
 
 const TEXT_ONE = "The deploy window is Tuesday and reports go out Monday";

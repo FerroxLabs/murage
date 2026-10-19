@@ -68,7 +68,7 @@ function forgottenReplies(threadId: string, messages: readonly Message[], withhe
  * owner's turn and as a dropped line for anyone else. A room that never used
  * memory (no receipt, no copy, no reply with output roots) is read as it is. */
 export function roomTranscriptWithoutMemory(allowance: LineageAllowance, threadId: string, messages: readonly Message[], ownerAudience: boolean, pinnedMessageId?: string, unprovenInOwnerRoom = false, options: { byId?: MessageById; whole?: boolean } = {}): { messages: Message[]; withheld: Set<string>; forgotten: Set<string>; checking: Set<string>; checked: Set<string> } | undefined {
-  // `whole`: a direct conversation's replay window, already bounded by the caller (partitionTranscriptWindow); a room is cut to what a member prompt shows.
+  // `whole`: a direct conversation's replay window, already bounded by the caller (botWindow); a room is cut to what a member prompt shows.
   const candidates = options.whole ? [...messages] : promptCandidates(messages, pinnedMessageId, GROUP_CONTEXT_MESSAGES, options.byId);
   // A thread with no receipt of its own may still hold replies built on
   // memory from elsewhere (v6 output roots, e.g. cross-thread working

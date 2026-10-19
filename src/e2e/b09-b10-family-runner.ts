@@ -13,7 +13,7 @@
 // it never grants. Artifacts are checked as saved bytes, registrations, card
 // downloads and restarts. Without live inputs every case fails as NOT RUN.
 // Nothing is scripted.
-import { chromium, test, expect } from "@playwright/test";
+import { chromium, test, expect } from "./page-error-guard";
 import { createServer, type ViteDevServer } from "vite";
 import react from "@vitejs/plugin-react";
 import tailwindcss from "@tailwindcss/vite";

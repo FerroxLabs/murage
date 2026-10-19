@@ -255,7 +255,8 @@ describe("ClaudeDriver warm process (fake CLI)", () => {
     });
   recycled("an audience change", "audience", () => ({ warmIdentity: identity("b1", "non-owner") }));
   recycled("a different bot", "bot", () => ({ warmIdentity: identity("b2") }));
-  recycled("a permission-mode change", "permissionMode", () => ({ stopLine: true }), { permissionMode: "bypassPermissions" });
+  // Rule 69b: bypassPermissions is acceptEdits plus the broker on every turn, so the stop line no longer changes the mode
+  recycled("a change of routed asks", "routeAsks", () => ({ routeAsks: true }), { permissionMode: "default" });
   recycled("a model change", "model", () => ({ model: "claude-other" }));
   const route = (revision: string) => ({ connectionId: "c1", revision, preset: "anthropic", protocol: "anthropic", baseUrl: "https://api.anthropic.com", apiKey: "fixture-only-not-real", model: "claude-fixture" }) as unknown as SendTurnInput["providerRoute"];
   recycled("a provider-route change", "providerRoute", () => ({ providerRoute: route("r2") }), {}, { ...base, model: "claude-fixture", providerRoute: route("r1") });
@@ -292,6 +293,23 @@ describe("ClaudeDriver warm process (fake CLI)", () => {
   recycled("a browser mount change", "mcp", () => ({ integrations: { ...agents("tok-1"), browser: { command: process.execPath, args: ["b"], env: { MURAGE_BROWSER_TOKEN: "br-1" } } } }));
   recycled("a computer mount change", "mcp", () => ({ integrations: { ...agents("tok-1"), computer: { boxId: "box", token: "box-token" } } }));
   recycled("a sessionReset", "sessionReset", () => ({ sessionReset: true }));
+
+  // Thread recall, design S5: a sealed thread dispatches sessionReset true and never a cursor, turn after turn. The
+  // warm engine kept from the turn before is closed each time and a new session starts (never --resume).
+  it("a sealed thread's consecutive turns each recycle the warm engine for sessionReset and never resume", async () => {
+    await create();
+    const pre = await run("t-sealed-warm", "before the seal", base);
+    const pids = [pre.pid];
+    for (const text of ["sealed one", "sealed two", "sealed three"]) {
+      const sealed = await run("t-sealed-warm", text, { ...base, sessionReset: true, resumeCursor: undefined });
+      expect(sealed.trace).toMatch(/process=spawned reason=sessionReset/);
+      expect(sealed.seen.argv).not.toContain("--resume");
+      expect(pids).not.toContain(sealed.pid);
+      pids.push(sealed.pid);
+    }
+    expect(new Set(pids).size).toBe(4);
+    for (const earlier of pids.slice(0, 3)) await vi.waitFor(() => { expect(() => process.kill(earlier, 0)).toThrow(); }, { timeout: 5_000 });
+  });
 
   it("a different thread never adopts another thread's process even with identical inputs", async () => {
     await create();

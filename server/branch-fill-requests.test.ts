@@ -5,7 +5,7 @@
 // the inbox's project approvals, asked of a thread that is not prepared yet, read the same statements on 1,000 messages as on
 // 200,000, never call prepareThreadSync, and queue the thread at the front of the background fill. The background pass then fills
 // it in short slices, says so (onThreadCardsReady), and the thread reads through the index; a turn waits on the same fill.
-import { mkdirSync, rmSync } from "node:fs";
+import { mkdirSync } from "node:fs";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { afterAll, beforeAll, expect, it } from "vitest";
@@ -18,6 +18,7 @@ import { Store } from "./store.ts";
 import { onThreadCardsReady, runTranscriptBackfill } from "./transcript-backfill.ts";
 import { expectSameReads, measureReads } from "./testing/bounded-reads.ts";
 import * as messages from "./message-db.ts";
+import { removeTempDirSync } from "./testing/cleanup.ts";
 
 const selection = (): ModelSelection => ({ instanceId: "claude", model: "claude-sonnet-5" });
 let store: Store, side: DatabaseSync, small: string, large: string;
@@ -36,7 +37,7 @@ function chain(threadId: string, count: number) {
 }
 
 beforeAll(() => {
-  rmSync(DATA_DIR, { recursive: true, force: true });
+  removeTempDirSync(DATA_DIR);
   mkdirSync(DATA_DIR, { recursive: true });
   store = new Store(selection);
   small = store.createBot({ name: "Thousand" }).threadId; large = store.createBot({ name: "Two hundred thousand" }).threadId;

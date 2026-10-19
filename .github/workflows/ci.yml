@@ -95,6 +95,16 @@ jobs:
         # before Vitest starts so a cold download cannot consume the fixture
         # timeout.
         run: node --input-type=commonjs -e "require('electron')"
+      - name: Link removal under the app's Electron runtime
+        # murage#16: plain Node removes a Windows junction as a link, but the
+        # app's runtime (ELECTRON_RUN_AS_NODE=1 electron) throws on rmSync and
+        # its recursive rmSync deletes what the junction points to. Vitest runs
+        # on plain Node, so this file runs link-removal.ts inside Electron
+        # itself. Required here: a missing Electron binary fails the step.
+        if: matrix.os == 'windows-latest'
+        env:
+          MURAGE_REQUIRE_ELECTRON_LINK_TEST: "1"
+        run: pnpm exec vitest run server/link-removal.electron.test.ts
       - name: Typecheck
         # The server project outgrew Node's default heap on the 7 GB macOS
         # runner (tsc -p tsconfig.server.json aborted with exit 134).
@@ -148,7 +158,7 @@ jobs:
 
   vitest:
     if: ${{ !inputs.human_files }}
-    name: ${{ inputs.vitest_file && 'Scoped Vitest confirmation' || format('Vitest shard {0}/6', matrix.vitest_shard) }} (${{ matrix.os }})
+    name: ${{ inputs.vitest_file && 'Scoped Vitest confirmation' || format('Vitest shard {0}/10', matrix.vitest_shard) }} (${{ matrix.os }})
     # Preserve the previous validator-before-tests ordering for scoped dispatch.
     needs: quality
     strategy:
@@ -156,17 +166,23 @@ jobs:
       matrix:
         os: ${{ fromJSON(inputs.windows_only && '["windows-latest"]' || '["macos-latest","ubuntu-latest","windows-latest"]') }}
         # Scoped dispatch keeps its existing single selected-file confirmation;
-        # ordinary CI uses six bounded shards: 1.0.0's suite outgrew three
-        # (every 20-minute shard was cancelled mid-run, CI 37727970532).
-        vitest_shard: ${{ fromJSON(inputs.vitest_file && '[1]' || '[1,2,3,4,5,6]') }}
+        # ordinary CI uses ten bounded shards: 1.0.0's suite outgrew three
+        # (every 20-minute shard was cancelled mid-run, CI 37727970532) and
+        # 1.0.2's outgrew six (CI 38854980345: Windows 1, 3, 5, 6, macOS 6 and
+        # ubuntu 1 cancelled at the cap; about 324 shard-minutes on Windows,
+        # 205 on macOS and ubuntu). Tests over 60 s and wall-clock budget
+        # tests are tagged out of these shards and run in nightly.yml.
+        vitest_shard: ${{ fromJSON(inputs.vitest_file && '[1]' || '[1,2,3,4,5,6,7,8,9,10]') }}
     runs-on: ${{ matrix.os }}
     # Windows runners are the slowest per shard: a 20-minute cap cancelled
     # shard 3 mid-run (CI 36317693740) before any failure text was printed.
     # 1.0.2 outgrew 30/45 too (CI 38718877034 and its base 38682984430: 16 of
     # 18 shards cut off before Vitest printed its failure summary). A cap
     # that cancels a shard hides every failure in it, so it sits well above
-    # the slowest measured shard.
-    timeout-minutes: ${{ matrix.os == 'windows-latest' && 60 || 45 }}
+    # the slowest measured shard. With ten shards and the nightly/perf-budget
+    # tags out, the expected slowest shard is about 30 min on Windows, 22 on
+    # macOS and 20 on ubuntu (setup included); each cap is about twice that.
+    timeout-minutes: ${{ matrix.os == 'windows-latest' && 60 || matrix.os == 'macos-latest' && 45 || 40 }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: pnpm/action-setup@ff378ebe6b225b0680b81c1ad4498ae0d1d3a5e3 # v6.0.10
@@ -175,65 +191,25 @@ jobs:
           node-version: 24
           cache: pnpm
       - run: pnpm install --frozen-lockfile
-      - name: Restore the pinned local memory test model
-        # Keyed on the hash-pinned manifest; the prepare step below still
-        # verifies every file's size and SHA-256 and downloads only what is missing.
-        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
-        with:
-          path: ${{ github.workspace }}/.planning/memory-evidence/model
-          key: memory-model-${{ hashFiles('shared/memory-model-manifest.json') }}
-      - name: Prepare the pinned local memory test model
-        # P06 executes real offline inference; a clean runner must prepare the
-        # hash-pinned fixture before tests, not skip it or fetch during inference.
-        run: node --experimental-strip-types scripts/qualify-memory-runtime.ts --prepare-model --allow-download --destination "${{ github.workspace }}/.planning/memory-evidence/model"
-      - name: Prepare Electron test runtime
-        run: node --input-type=commonjs -e "require('electron')"
-      - name: Stage pinned backup test fixtures
-        # Test-only: hash-pinned upstream age/restic bytes that backup tests read
-        # or execute, plus this host's age tools for MURAGE_BACKUP_TEST_AGE_DIR
-        # where a pin exists. Packaging stages its own copies.
-        shell: bash
-        run: node scripts/prepare-backup-test-fixtures.mjs --tool-directory "$RUNNER_TEMP/backup-test-age" >> "$GITHUB_ENV"
-      - name: Build the server bundle that packaged-layout tests import
-        run: pnpm build:server
-      - name: Node headers for the engine-exclusion addon
-        # The hosted Windows Node has no include/node folder; scripts/build-engine-exclusion.mjs needs node_api.h. Fetch the headers
-        # of the running Node and check them against the published SHASUMS256.txt.
-        if: matrix.os == 'windows-latest'
-        shell: bash
-        run: |
-          v=$(node -p process.version)
-          dir="$(cygpath -u "$RUNNER_TEMP")/node-headers"; mkdir -p "$dir"
-          curl -fsSL "https://nodejs.org/dist/$v/node-$v-headers.tar.gz" -o "$dir/h.tgz"
-          curl -fsSL "https://nodejs.org/dist/$v/SHASUMS256.txt" -o "$dir/sums"
-          (cd "$dir" && want=$(grep " node-$v-headers.tar.gz\$" sums | cut -d' ' -f1) && echo "$want  h.tgz" | sha256sum -c - && tar xzf h.tgz)
-          echo "NODE_HEADERS_DIR=$(cygpath -w "$dir/node-$v/include/node")" >> "$GITHUB_ENV"
-      - name: Build the engine-exclusion addon
-        # server/engine-exclusion*.test.ts run the REAL addon (dist-native/engine-exclusion/<os>-<arch>) and skip when it is absent;
-        # a runner that skipped them would prove nothing, so build it first, as package:<os> does, and print the receipt.
-        shell: bash
-        run: |
-          pnpm build:engine-exclusion
-          cat dist-native/engine-exclusion/*/build.json
-      - name: Build the Windows browser helper
-        # On Windows the browser broker and service keep their state through the
-        # native ACL helper (electron/browser-extension-windows.mjs) and fail
-        # closed without it. package:win builds it the same way, with the
-        # runner's own MSVC, into dist-native/browser-extension/win32-x64.
-        if: matrix.os == 'windows-latest'
-        run: pnpm build:browser-extension-windows
-      - name: Alias the second loopback address (macOS)
-        # macOS answers only on 127.0.0.1; Linux and Windows answer on all of
-        # 127.0.0.0/8. shared/guarded-http.test.ts proves a socket on a
-        # different local address than the validated one is refused, which
-        # needs 127.0.0.2 to be reachable here too.
-        if: matrix.os == 'macos-latest'
-        run: sudo ifconfig lo0 alias 127.0.0.2 up
+      # The model, Electron, backup fixtures, server bundle and native helpers
+      # every Vitest run needs; nightly.yml runs the same steps.
+      - uses: ./.github/actions/vitest-runtime
       - name: Run Vitest shard
         if: inputs.vitest_file == ''
-        run: pnpm exec vitest run --shard=${{ matrix.vitest_shard }}/6
+        shell: bash
+        # nightly and perf-budget tests are not skipped: nightly.yml runs them,
+        # and the release gate needs its latest run green (vite.config.ts tags).
+        # server/cloud-home/app-health.test.ts is left out here and run as root in the next step: its volume cases need
+        # root and a /dev/shm mount and fail loudly (by design) for any other user. Nothing skips it.
+        run: pnpm exec vitest run --shard=${{ matrix.vitest_shard }}/10 --tags-filter='!nightly && !perf-budget' --exclude server/cloud-home/app-health.test.ts
         env:
           MURAGE_SKIP_REAL_ELECTRON_BROWSER_FIXTURE: ${{ matrix.os == 'windows-latest' && '1' || '0' }}
+      - name: Run the root-only app-health test as root
+        # Linux job only; one shard carries it (the file is excluded from every shard above). Same node and vitest as the
+        # shard run: sudo -E keeps the environment, and PATH is passed through because sudo resets it.
+        if: inputs.vitest_file == '' && matrix.os == 'ubuntu-latest' && matrix.vitest_shard == 1
+        shell: bash
+        run: sudo -E env "PATH=$PATH" "$(command -v node)" node_modules/vitest/vitest.mjs run server/cloud-home/app-health.test.ts
       - name: Scoped Vitest confirmation
         if: inputs.vitest_file != ''
         shell: bash
@@ -284,6 +260,13 @@ jobs:
         # spec §6; one shard is enough, every shard built the same dist/
         if: matrix.human_shard == 1
         run: pnpm check:bundle-budget
+      - name: Page-error guard proof
+        # a throwing page must fail in seconds, not after a 120 s locator wait
+        if: matrix.human_shard == 1
+        env:
+          # its evidence goes to the lane scratch directory, never inside the checkout (src/e2e/lane-data-dir.ts)
+          MURAGE_E2E_DATA_DIR: ${{ runner.temp }}/murage-e2e-scratch
+        run: pnpm test:human:guard
       - name: Run human specs
         env:
           MURAGE_E2E_DATA_DIR: ${{ runner.temp }}/murage-e2e-scratch

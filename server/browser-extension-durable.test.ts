@@ -7,6 +7,7 @@ import { createBrowserExtensionService } from './browser-extension-service.ts';
 import { TASK_IDLE_MS, TASK_LIMIT_MS } from './browser-extension-service.ts';
 import type { BrowserExtensionCommand, BrowserExtensionResponse, BrowserExtensionHello } from '../shared/browser-extension-protocol.ts';
 import { privateTestDirectory, writePrivateTestFile } from "./testing/private-test-dir.ts";
+import { removeTempDir } from "./testing/cleanup.ts";
 // Disk-fault injection reaches the writer the product uses on each platform: fs.writeFile of a temp file on
 // macOS and Linux, the native helper's private write on Windows (browser-extension-windows.mjs).
 const windowsWriteFault = vi.hoisted(() => ({ match: null as null | ((file: string) => boolean) }));
@@ -24,7 +25,7 @@ const cleanup: string[] = [];
 // Close every service before its folder goes: a save still in flight would recreate state.json mid-removal (ENOTEMPTY on macOS).
 const services: { close(): Promise<void> }[] = [];
 const track = <T extends { close(): Promise<void> }>(service: T): T => { services.push(service); return service; };
-afterEach(async () => { for (const service of services.splice(0)) await service.close().catch(() => {}); for (const directory of cleanup.splice(0)) await fs.rm(directory, { recursive: true, force: true, maxRetries: 5 }); });
+afterEach(async () => { for (const service of services.splice(0)) await service.close().catch(() => {}); for (const directory of cleanup.splice(0)) await removeTempDir(directory); });
 
 type Tab = { tabId: number; navigationEpoch: number; origin: string; url: string };
 async function fixture(extra: Record<string, unknown> = {}) {

@@ -176,7 +176,7 @@ export function ErrorBanner({message,onDismiss}:{message:string;onDismiss:()=>vo
   return <div className="w-full px-5"><div role="alert" className="mb-2 flex items-start gap-2 rounded-lg border border-danger/30 bg-danger/10 px-3 py-2 text-[13px] text-danger"><span className="min-w-0 flex-1">{message}</span><button type="button" aria-label="Dismiss error" title="Dismiss error" onClick={onDismiss} className="shrink-0 rounded p-0.5 text-danger hover:bg-danger/10 focus-visible:ring-2 focus-visible:ring-danger"><X size={16}/></button></div></div>;
 }
 
-/** "Today" / "Yesterday" / "Mon, Aug 11" — real dates, not a hardcoded label. */
+/** "Today" / "Yesterday" / "Mon, Aug 11" - real dates, not a hardcoded label. */
 function dayLabel(at: number): string {
   const d = new Date(at);
   const now = new Date();
@@ -267,7 +267,7 @@ export type MessageAction = {
   label: string;
   icon: ReactNode;
   onSelect: () => void;
-  /** Kept in the list rather than dropped, with the reason as the label —
+  /** Kept in the list rather than dropped, with the reason as the label -
    *  "Add an ElevenLabs key…" tells you what to do; a missing row does not. */
   disabled?: boolean;
 };
@@ -276,7 +276,7 @@ export type MessageAction = {
  *
  * Shared by both transcripts (ChatView's 1:1 and GroupView's channel) because
  * both lost the same capability to the same fix. Portalled to `<body>` and
- * `fixed`, so it never becomes part of a transcript row's layout — the
+ * `fixed`, so it never becomes part of a transcript row's layout - the
  * transcript's width cannot change no matter what this contains.
  *
  * Modal in the ways that matter on a phone: Escape and a tap on the ground
@@ -295,7 +295,7 @@ export function MessageActionSheet({
 }) {
   const panelRef = useRef<HTMLDivElement>(null);
   // `onClose` is an inline arrow at every call site, so depending on it would
-  // re-run this effect on every parent render — which, while the sheet is
+  // re-run this effect on every parent render - which, while the sheet is
   // open, means re-focusing the first row out from under a thumb that had
   // moved on. The effect depends on `open` alone and reads the current
   // handler through a ref.
@@ -374,7 +374,7 @@ export function MessageActionSheet({
 
 /** A failed turn: a real error block with a retry, not a truncated pill.
  *
- * A `setup` error — CLI missing, or installed but not signed in — shows what
+ * A `setup` error - CLI missing, or installed but not signed in - shows what
  * to do instead of a Retry, because retrying hits the same wall every time.
  * Once the engine reports itself fixed the card flips back to Retry, which
  * (with the on-focus re-probe) happens by itself when the user returns from
@@ -400,7 +400,7 @@ export function ErrorRow({ message, details, errorKind, localFailure, localFailu
     setup={needsSetup ? <EngineSetup instance={setupInstance} authRequired={forceSignIn} onReady={() => setAuthRecovered(true)} className="mt-3 text-ink-secondary" /> : undefined} />;
 }
 
-/** One bad markdown node must not white-screen the app — the transcript
+/** One bad markdown node must not white-screen the app - the transcript
  * degrades to a plain-text bubble instead. */
 class MessageBoundary extends Component<{ children: ReactNode; fallbackText: string }, { failed: boolean }> {
   state = { failed: false };
@@ -490,6 +490,17 @@ function BubbleEditor({
   );
 }
 
+/** How long a reply may stay held before the owner is told the check did not finish (server/delegations.ts HELD_MAX_AGE_MS). */
+const HELD_NOTE_STALE_MS = 24 * 60 * 60 * 1000;
+/** The owner's note under a reply bots do not see as stored: forgotten, withdrawn, or held until earlier memory is checked (REPLY-WITHHELD-CONTRACT C3, C4). */
+function withheldNote(message: Pick<Message, "withheldFromBots" | "at">, now = Date.now()): string {
+  if (message.withheldFromBots === "forgotten") return "Bots no longer see this reply: you chose to forget it.";
+  if (message.withheldFromBots !== "checking") return "Bots no longer see this reply: it used something you deleted or changed.";
+  return now - message.at > HELD_NOTE_STALE_MS
+    ? "Bots will see this reply once earlier memory is checked. This check did not finish; bots still read only that it is left out."
+    : "Bots will see this reply once earlier memory is checked.";
+}
+
 function Bubble({
   bot,
   message,
@@ -556,7 +567,7 @@ function Bubble({
       patch: { pinnedMessageId: pinned ? "" : message.id },
     });
 
-  // The hover rail, as words. Same controls, same conditions, same order —
+  // The hover rail, as words. Same controls, same conditions, same order -
   // the parity this sheet exists to restore is only real if it is derived
   // from the same predicates the rail is.
   const tts = state.config?.tts;
@@ -592,7 +603,7 @@ function Bubble({
         { id: "pin", label: pinned ? "Unpin message" : "Pin message", icon: pinned ? <PinOff size={18} /> : <Pin size={18} />, onSelect: togglePin },
       ];
 
-  /** A tap on the bubble is the phone's whole affordance — see the note in
+  /** A tap on the bubble is the phone's whole affordance - see the note in
    *  transcript-chrome.ts for why it is a tap and not a long press. */
   const openFromTap = (target: EventTarget | null) => {
     if (
@@ -605,7 +616,7 @@ function Bubble({
     setSheetOpen(true);
   };
 
-  // "‹ 2/3 ›" under an edited message — every fork it belongs to
+  // "‹ 2/3 ›" under an edited message - every fork it belongs to
   const versions = user ? messageVersions(bot, message) : [message];
   const versionIndex = versions.findIndex((v) => v.id === message.id);
   const switchTo = (v: Message | undefined) => {
@@ -616,13 +627,13 @@ function Bubble({
     <div className={cn("group flex w-full flex-col", user ? "animate-msg-in items-end" : "items-start")}>
       <div className={cn("flex w-full items-center gap-1.5", user ? "justify-end" : "justify-start")}>
         {/* HOVER-ONLY RAIL. Every control in here is `opacity-0` until a
-            pointer hovers the row, and a phone reports `hover: none` — so on
+            pointer hovers the row, and a phone reports `hover: none` - so on
             a phone these were invisible AND still reserving ~130px of the
             row, which is most of why the transcript read as ~75% of the
             screen. `md:contents` keeps them as flex items of this row on a
             pointer device; below `md` they leave the layout entirely. */}
         <div className="max-md:hidden md:contents">
-        {/* editing rewinds the thread, so it waits for the turn to end —
+        {/* editing rewinds the thread, so it waits for the turn to end -
             same rule as the version switcher below */}
         {user && message.kind === "text" && !webhookView && !bot.busy && (
           <button
@@ -767,10 +778,14 @@ function Bubble({
               ) : null}
               {text ? <ChatMarkdown text={text} scope={{ botId: bot.id, threadId: bot.threadId }} /> : null}
               {message.artifactIds?.length ? <ArtifactCards ids={message.artifactIds} /> : null}
+              {message.withheldFromBots && (
+                // the owner reads the words; this says what bots read of them (the same words as GroupView)
+                <div className="mt-1 text-[11px] text-ink-secondary/70">{withheldNote(message)}</div>
+              )}
             </MessageBoundary>
           )}
         </div>
-        {/* the bot side of the same hover-only rail — see the note above */}
+        {/* the bot side of the same hover-only rail - see the note above */}
         <div className="max-md:hidden md:contents">
         {!user && (
           <>
@@ -984,8 +999,8 @@ function PagedScreenFrame({ threadId, messageId }: { threadId: string; messageId
 
 /** The settled transcript, memoized as one unit: during streaming every
  * frame re-renders ChatView, but all of these props keep their identity
- * (bot/messages only change on real message events), so the whole list —
- * every markdown tree, every code block — bails out of React work and only
+ * (bot/messages only change on real message events), so the whole list -
+ * every markdown tree, every code block - bails out of React work and only
  * the streaming tail below it commits. This is the t3code structural-sharing
  * idea at component granularity. */
 
@@ -1171,7 +1186,7 @@ const MessagesList = memo(function MessagesList({
               // putting a site online (or taking one down): its own inline card with its own buttons
               if (m.card?.kind === "publish") return readPublishCard(m.card) ? <PublishCard threadId={bot.threadId} message={m} /> : null;
               // a live provider question gets the question card (header,
-              // options with descriptions, multi-select, Other, expiry) —
+              // options with descriptions, multi-select, Other, expiry) -
               // before the approval box, which only answers permissions
               if (isQuestionCard(m.card)) {
                 return <QuestionCard message={m} threadId={bot.threadId} botId={bot.id} botName={bot.name} />;
@@ -1201,7 +1216,7 @@ const MessagesList = memo(function MessagesList({
             }
             case "activity": {
               if (m.murage?.held) return <HeldQueueRow text={m.tool?.name ?? ""} count={m.murage.held.count} items={m.murage.held.items} bots={state.bots} onRetry={async (id, botId, restoreGen) => { await api(`/api/bots/${botId}/held-continuations/${id}/retry`, { method: "POST", body: JSON.stringify({ threadId: bot.threadId, ...(restoreGen ? { restoreGen } : {}) }) }); }} onJump={messageId => dispatch({ type: "focusMessage", threadId: bot.threadId, messageId })} />;
-              // a failed turn is an error, not a tool run — render it as one.
+              // a failed turn is an error, not a tool run - render it as one.
               // a host-stopped turn is neither: a neutral stopped row that says
               // why, visible whether or not Tool calls is on (STOP2).
               // bot⇄bot comm chips stay because they link to another conversation.
@@ -1488,7 +1503,7 @@ export function ChatView({ bot:profile }: { bot: Bot }) {
     botIdRef.current = bot.id;
     setEditingId(Object.keys(editDraftStore.get(bot.id))[0] ?? null);
   }, [bot.id]);
-  // stable handler identities — MessagesList is memo'd on them
+  // stable handler identities - MessagesList is memo'd on them
   const startEdit = useCallback((id: string) => setEditingId(id), []);
   const cancelEdit = useCallback((id: string) => {
     const botId = bot.id;
@@ -1582,7 +1597,7 @@ export function ChatView({ bot:profile }: { bot: Bot }) {
     setBusySince(bot.busy ? bot.turnStartedAt ?? Date.now() : null);
   }, [bot.busy, bot.id, bot.threadId, bot.turnStartedAt]);
 
-  // regenerate = fork the last user message with the same text — reuses the
+  // regenerate = fork the last user message with the same text - reuses the
   // existing branch machinery, so the old answer stays reachable via ‹ ›
   const regenerate = useCallback(() => {
     if (lastUserMessage?.text && !bot.busy) {
@@ -1592,7 +1607,7 @@ export function ChatView({ bot:profile }: { bot: Bot }) {
 
   // Scroll pinning: follow the bottom while the user hasn't scrolled away.
   // Follow breaks ONLY on an upward user gesture (wheel/touch), never on
-  // scroll position checks — streamed content growth flickers "at bottom"
+  // scroll position checks - streamed content growth flickers "at bottom"
   // false for a frame, and breaking there kills follow permanently
   // (upstream-verified failure). Scrolling back to the end re-arms it.
   const [follow, setFollow] = useState(true);
@@ -1600,7 +1615,7 @@ export function ChatView({ bot:profile }: { bot: Bot }) {
   const previousScrollTop = useRef(0);
   // Distance from the end at the reader's last deliberate scroll. The keyboard
   // shrinks the pane *between* frames, so there is no "before" to measure once
-  // React has re-rendered — this is the before, kept live by onScroll.
+  // React has re-rendered - this is the before, kept live by onScroll.
   const distanceFromBottom = useRef(0);
   const keyboardInsetPx = useKeyboardInset();
   const touchY = useRef(0);
@@ -1697,7 +1712,7 @@ export function ChatView({ bot:profile }: { bot: Bot }) {
   };
   const showEarlier = () => {
     captureAnchor("first");
-    // expanding means reading scrollback — never let a mid-expand stream
+    // expanding means reading scrollback - never let a mid-expand stream
     // event pin the viewport back to the bottom
     setBottomFollow(false);
     setTranscriptWindow((w) => ({ ...w, ...expandEarlier({ start: startIndex, end: w.end }, messages.length) }));
@@ -1758,7 +1773,7 @@ export function ChatView({ bot:profile }: { bot: Bot }) {
 
   // keyboard is a scroll gesture too (upstream lesson): PageUp/Home/ArrowUp
   // break follow like an upward wheel; the at-end onScroll check re-arms it.
-  // ArrowUp only counts outside inputs — in the composer it edits, not scrolls.
+  // ArrowUp only counts outside inputs - in the composer it edits, not scrolls.
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       const typing = e.target instanceof HTMLTextAreaElement || e.target instanceof HTMLInputElement;
@@ -1812,7 +1827,7 @@ export function ChatView({ bot:profile }: { bot: Bot }) {
           so it covers this column only, never the sidebar or side panels
           (callbar-review.md I3). */}
       <div ref={callSlotRef} className="pointer-events-none absolute inset-0" />
-      {/* Header — a priority layout that measures its own container (U0-T1).
+      {/* Header - a priority layout that measures its own container (U0-T1).
           It lives in ChatHeader.tsx so it can be mounted and measured on its
           own at real widths; everything it needs is passed in. */}
       <ChatHeader
@@ -1831,7 +1846,7 @@ export function ChatView({ bot:profile }: { bot: Bot }) {
 
       {/* Error banner */}
       {state.error && <ErrorBanner message={state.error} onDismiss={() => dispatch({ type: "error", message: null })}/>}
-      {state.deletionNote && <DeletionNoteBanner note={state.deletionNote} onDismiss={() => dispatch({ type: "deletionNote", note: null })} onRetry={() => { const again = state.deletionNote?.retryBotId; if (again) { dispatch({ type: "deletionNote", note: null }); dispatch({ type: "deleteBot", source: "local", botId: again, attempt: newDeleteAttempt() }); return; } void api("/api/deletions/retry", { method: "POST" }).then((response) => dispatch({ type: "deletionOwed", notices: response?.notices, rev: response?.rev })).catch(() => {}); }} />}
+      {state.deletionNote && <DeletionNoteBanner note={state.deletionNote} onDismiss={() => dispatch({ type: "deletionNote", note: null })} onRetry={async () => { const again = state.deletionNote?.retryBotId; if (again) { dispatch({ type: "deletionNote", note: null }); dispatch({ type: "deleteBot", source: "local", botId: again, attempt: newDeleteAttempt() }); return; } const response = await api("/api/deletions/retry", { method: "POST" }); dispatch({ type: "deletionOwed", notices: response?.notices, rev: response?.rev }); }} />}
 
       {/* Pinned message banner */}
       <PinnedBanner
@@ -1859,11 +1874,11 @@ export function ChatView({ bot:profile }: { bot: Bot }) {
         ref={scrollRef}
         data-testid="chat-scroll"
         /* A phone gets a trim, not a margin: `px-5` is a desktop gutter, and
-           on a 390px screen it spent 40px — a tenth of the screen — before
+           on a 390px screen it spent 40px - a tenth of the screen - before
            the bubble's own padding had started. See transcript-width.human. */
         className="h-full overflow-x-hidden overflow-y-auto overscroll-y-contain px-5 max-md:px-3 [overflow-anchor:none]"
         onPointerDown={(e) => {
-          // grabbing the scrollbar is a scroll gesture too — the lane lives
+          // grabbing the scrollbar is a scroll gesture too - the lane lives
           // past the content box (clientWidth excludes it)
           const el = scrollRef.current;
           if (el && e.target === el && e.nativeEvent.offsetX >= el.clientWidth) setBottomFollow(false);
@@ -2007,7 +2022,7 @@ export function ChatView({ bot:profile }: { bot: Bot }) {
         </div>
       </div>
 
-      {/* Reading scrollback — one tap back to the end, streaming or not */}
+      {/* Reading scrollback - one tap back to the end, streaming or not */}
       {!follow && (
         <button
           onClick={jumpToLatest}
@@ -2028,7 +2043,7 @@ export function ChatView({ bot:profile }: { bot: Bot }) {
           number when a keyboard is up; `max-h-full` is the second belt, in the
           coordinate space that actually contains the composer. `flex-col` +
           `min-h-0` is what lets the card be the thing that gives, so the
-          composer keeps its size and the transcript keeps its padding — the
+          composer keeps its size and the transcript keeps its padding - the
           dock's measured height is what `useComposerDockPad` feeds back into
           the transcript, so a dock that could exceed the pane would silently
           pad the transcript out of existence. */}

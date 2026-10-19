@@ -9,7 +9,7 @@ it("room instructions defer callable names until the driver knows its mounted se
   expect(ROOM_TOOLS_LINE).toContain(murageTool("ask_bot"));
 });
 
-import { CLAUDE_TOOL_SURFACE, CODEX_TOOL_SURFACE, FUIGO_TOOL_SURFACE, PI_TOOL_SURFACE, NEUTRAL_TOOL_SURFACE, NO_TOOL_SURFACE, murageTool, renderMurageTurn } from "./murage-tool-surface.ts";
+import { CLAUDE_TOOL_SURFACE, CODEX_TOOL_SURFACE, FUIGO_TOOL_SURFACE, PI_TOOL_SURFACE, NEUTRAL_TOOL_SURFACE, NO_TOOL_SURFACE, THREAD_RECALL_LINE, murageTool, renderMurageTurn } from "./murage-tool-surface.ts";
 import { recordTurnShapes, lastTurnShapes, shapeLayer, TURN_PROMPTS, directTurnLayers, directPersona, joinShapeLayers, roomPersonaLines, roomMembersLine } from "./bot-shapes.ts";
 import { continuationResultsPrompt, goalWakePrompt } from "./project-prompt.ts";
 import { readFileSync } from "node:fs";
@@ -182,4 +182,47 @@ it("tells a search-then-call engine to look up a tool's inputs before its first 
   const system = renderMurageTurn({ threadId: "x", text: "hi" }, FUIGO_TOOL_SURFACE, { agents: "agents" }).system!;
   expect(system).toContain("Before you first use a tool, call search_tool for its inputs and pass them in tool_input.");
   expect(system).not.toContain("search_tool shows the inputs");
+});
+
+const SEVEN = ["memory_search", "memory_get", "memory_save", "memory_propose_correction", "thread_search", "thread_list", "thread_read"];
+it.each([
+  ["Claude", CLAUDE_TOOL_SURFACE, "murage-memory", (tool: string) => `mcp__murage-memory__${tool}`],
+  ["Codex", CODEX_TOOL_SURFACE, "murage-memory", (tool: string) => `mcp__murage-memory__${tool}`],
+  ["pi", PI_TOOL_SURFACE, "murage-memory", (tool: string) => `murage_memory_${tool}`],
+  ["Fuigo under a rotated alias", FUIGO_TOOL_SURFACE, "murage-memory-0123456789abcdef0123", (tool: string) => `use_tool with tool_name "murage-memory-0123456789abcdef0123__${tool}"`],
+  ["ACP neutral", NEUTRAL_TOOL_SURFACE, "murage-memory", (tool: string) => `the tool "${tool}" on MCP server "murage-memory"`],
+] as const)("%s lists all seven memory-mount tools on the memory mount", (_name, surface, mount, spelled) => {
+  const text = SEVEN.map(tool => murageTool(tool)).join("\n");
+  const out = renderMurageTurn({ threadId: "t", text }, surface, { memory: mount, agents: "agents" });
+  for (const tool of SEVEN) expect(out.text).toContain(spelled(tool));
+  expect(out.text).not.toContain("agents");
+});
+it("rule 22: the sentence is prepended only when the memory mount is set and the turn is eligible, never to the system stack", () => {
+  const base = { threadId: "t", text: "Hello.", system: "Rules." };
+  const on = renderMurageTurn({ ...base, threadRecall: true }, CLAUDE_TOOL_SURFACE, { memory: "murage-memory" });
+  expect(on.text).toBe(`${THREAD_RECALL_LINE}\n\nHello.`);
+  expect(on.system ?? "").not.toContain("thread_search");
+  expect(THREAD_RECALL_LINE).toBe("Your past conversations with the owner, in this chat and in your task threads, are yours to read: before saying you do not know, do not remember, or cannot see another thread, call thread_search; thread_read opens the thread around a hit.");
+  expect(THREAD_RECALL_LINE).not.toMatch(/[\u2014\u2013]|\b(safe|unsafe|safety|composio)\b/i);
+  expect(renderMurageTurn({ ...base, threadRecall: true }, NEUTRAL_TOOL_SURFACE, { memory: "murage-memory" }).text).toContain(THREAD_RECALL_LINE);
+  // not eligible, flag false, no memory mount, no tool surface, or an engine command: no sentence
+  expect(renderMurageTurn(base, CLAUDE_TOOL_SURFACE, { memory: "murage-memory" }).text).toBe("Hello.");
+  expect(renderMurageTurn({ ...base, threadRecall: false }, CLAUDE_TOOL_SURFACE, { memory: "murage-memory" }).text).toBe("Hello.");
+  expect(renderMurageTurn({ ...base, threadRecall: true }, CLAUDE_TOOL_SURFACE, { agents: "agents" }).text).toBe("Hello.");
+  expect(renderMurageTurn({ ...base, threadRecall: true }, CLAUDE_TOOL_SURFACE, {}).text).toBe("Hello.");
+  expect(renderMurageTurn({ ...base, threadRecall: true }, NO_TOOL_SURFACE, { memory: "murage-memory" }).text).toBe("Hello.");
+  expect(renderMurageTurn({ threadId: "t", text: "/help", engineCommand: { name: "help", args: "" }, threadRecall: true }, CLAUDE_TOOL_SURFACE, { memory: "murage-memory" }).text).toBe("/help");
+});
+it("rule 22: Fuigo's rotating alias binding line comes first, then the sentence", () => {
+  const alias = "murage-memory-0123456789abcdef0123";
+  const out = renderMurageTurn({ threadId: "t", text: "Hi.", threadRecall: true }, FUIGO_TOOL_SURFACE, { memory: alias, servers: [alias] }, "murage-memory");
+  expect(out.text.startsWith(`For this turn only, the memory server is mounted as "${alias}"`)).toBe(true);
+  expect(out.text).toContain(`${THREAD_RECALL_LINE}\n\nHi.`);
+  expect(out.system ?? "").not.toContain(alias);
+});
+it("rule 19: openai-chat and boxagent surfaces carry no tools and no sentence", () => {
+  const out = renderMurageTurn({ threadId: "t", text: `${murageTool("thread_search")} here`, threadRecall: true }, NO_TOOL_SURFACE, {});
+  expect(out.text).not.toContain("thread_search");
+  expect(out.text).not.toContain(THREAD_RECALL_LINE);
+  expect(out.system).toBeUndefined();
 });

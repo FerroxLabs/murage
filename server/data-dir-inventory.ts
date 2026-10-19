@@ -127,6 +127,8 @@ export const DATA_DIR_ENTRIES: Readonly<Record<string, DataDirEntry>> = Object.f
   "memory-index.db": { backup: "retained", why: "Consistent memory search projection retained encrypted only; rebuild from paused messages.db authority after review" },
   "channels": { backup: "retained", why: "Channel bindings and receipt history retained encrypted only; re-pairing required before use" },
   "startup-background.json": { backup: "retained", why: "Startup preferences retained encrypted only; automatic startup is not restored" },
+  "owner.json": { backup: "retained", why: "Cloud owner timezone preferences retained encrypted; review and apply them on the restored home" },
+  "cloud-browser-profile-usage.json": excluded(TRUST),
 
   // Runtime and derived state.
   "pip-tmp": excluded("Temporary reflection prompts, engine homes and logs; not restored. Durable continuity and reflection state is preserved in messages.db"),
@@ -134,6 +136,12 @@ export const DATA_DIR_ENTRIES: Readonly<Record<string, DataDirEntry>> = Object.f
   "messages.pre-memory-v4.db": excluded("Pre-upgrade memory v3 copy for manual reinstall; messages.db remains authoritative"),
   "messages.pre-memory-v3.db": excluded("Pre-upgrade copy of messages.db (memory v2) kept for a manual 0.1.60 reinstall only; the live messages.db is the backed-up authority"),
   "memory-upgrade-overall.json": excluded("Start-up note holding how far the memory upgrade got, so a restart's progress bar never moves back; removed when the upgrade finishes"),
+  "memory-repairs.json": excluded("Start-up note naming the one-time memory repairs already run on this memory file (by its installation id); a missing note runs them again, and they change nothing a second time"),
+  "memory-repairs.json.tmp": excluded(LEFTOVER),
+  // 1.0.3 names the static scan found unclassified (each one stopped every backup once written):
+  "env": excluded("Kept copy of the owner's login-shell environment (env-path.ts), used only when a fresh capture fails; the next capture writes it again, and it can hold secrets, so it is not restored"),
+  "pending-grants.json": excluded("Remembered approvals still waiting for their answer to land (pending-grants.ts); no reader treats a row as a grant, and an unanswered one is simply asked again, so it is not restored"),
+  "setup-backup.json": excluded("The harness's record of the first-run backup step (setup-backup.ts); a missing record means the step is not owed, and a restored folder already has backups, so it is not restored"),
   "memory-upgrade-counts.json": excluded("Cache of the exact message counts the upgrade screen shows, keyed on messages.db's write revision; recounted when absent or stale"),
   "memory-upgrade-status.json": excluded("Start-up note written while the memory upgrade runs (progress, or why it could not run); removed when the upgrade finishes"),
   "native": excluded(RUNTIME), "decider-log": excluded("Decision-model call log (no message text); regenerates and expires after 180 days"), "pending-deletions.json": excluded(RUNTIME), "memory-index": excluded(RUNTIME),
@@ -170,6 +178,14 @@ export const DATA_DIR_ENTRIES: Readonly<Record<string, DataDirEntry>> = Object.f
   "engine-commands.json": excluded(DOWNLOADED),
   // The engine the last start chose (default-engine.ts): a start-up speed cache that the probe rewrites on every start, so a restore has nothing to bring back.
   "default-engine.json": excluded(RUNTIME),
+  // When the bundled memory model first verifies, records indexed without a model are re-queued once (memory/model-adoption.ts);
+  // this marker records that it finished. The memory index is not restored, so a restored computer runs the catch-up again.
+  "memory-model-adopted.json": excluded("Marker that the memory model's one-time catch-up finished; run again on the restored computer, so not restored"),
+  // Its temp file before the rename (writeMarker); a crash between the two leaves it behind.
+  "memory-model-adopted.json.tmp": excluded(LEFTOVER),
+  // "Leave paused" on the learning-paused Inbox item (inbox-learning-paused.ts): the one month it was set aside for. It clears
+  // itself when the month changes; after a restore the item is simply asked again.
+  "learning-paused-left.json": excluded("This month's Leave paused choice on the learning-paused item; clears itself when the month changes, so not restored"),
 
   // Trust Murage asks for again on a restored computer: the host identity,
   // folders the owner trusted, and the stop line's remembered recipients
@@ -198,6 +214,12 @@ export const DATA_DIR_ENTRIES: Readonly<Record<string, DataDirEntry>> = Object.f
   // package or export carries it. A restored installation starts it empty.
   "learning-local": excluded("What a bot learned from prospects and customers stays on this computer; not backed up or restored"),
   "browser-extension": excluded(CREDENTIAL),
+  // Home supervision owns these outside ordinary workspace restoration.
+  ".murage-home-machine": excluded(TRUST),
+  // The root-owned scratch directory murage-control's data-write readiness check writes one temp file in and removes
+  // (cloud-home/supervisor.ts prepareHealthProbeDir). Empty between checks; made again on every home start.
+  ".murage-health": excluded("Readiness check scratch directory, made again on every home start; not restored"),
+  "secrets": excluded(CREDENTIAL), "server-home": excluded(CREDENTIAL), "proxy": excluded(RUNTIME),
   // Murage for Chrome's runtime folder (browser-extension-paths.ts): the broker socket, its token
   // file and the launcher config the browser's helper reads. Made again on every start.
   "bx-run": excluded(CREDENTIAL),

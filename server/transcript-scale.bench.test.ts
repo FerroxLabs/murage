@@ -3,7 +3,7 @@
 // only what both have, so the two numbers are comparable.
 //   LANE_E_BENCH=1 LANE_E_ROWS=100000 vitest run server/transcript-scale.bench.test.ts
 import { randomUUID } from "node:crypto";
-import { rmSync } from "node:fs";
+
 import { describe, it } from "vitest";
 
 import { DATA_DIR } from "./config.ts";
@@ -11,8 +11,9 @@ import type { ModelSelection } from "./contracts.ts";
 import { database, transaction } from "./database.ts";
 import { promptRows } from "./external-context-delivery.ts";
 import * as mdb from "./message-db.ts";
-import { partitionTranscriptMessages } from "./partition-sources.ts";
+import { botMessages, botViewer } from "./bot-read.ts";
 import { Store, type Message } from "./store.ts";
+import { removeTempDirSync } from "./testing/cleanup.ts";
 
 const selection = (): ModelSelection => ({ instanceId: "claude", model: "claude-sonnet-5" });
 const ROWS = Number(process.env.LANE_E_ROWS ?? 100_000);
@@ -21,7 +22,7 @@ const mb = (n: number) => Math.round(n / 1048576);
 
 describe.skipIf(!process.env.LANE_E_BENCH)("lane E bench", () => {
   it("measures", { timeout: 1_800_000 }, async () => {
-    rmSync(DATA_DIR, { recursive: true, force: true });
+    removeTempDirSync(DATA_DIR);
     const out: Record<string, unknown> = { rows: ROWS };
     const store = new Store(selection);
     const bots = Array.from({ length: 60 }, () => store.createBot());
@@ -70,11 +71,11 @@ describe.skipIf(!process.env.LANE_E_BENCH)("lane E bench", () => {
       const quotes = await import("./prompt-quotes.ts").catch(() => null);
       const prep = () => {
         const t = performance.now();
-        const branch = partitionTranscriptMessages(database(), "b", long.threadId, reader.activePath(long.threadId));
+        const branch = botMessages(database(), botViewer("b"), long.threadId, reader.activePath(long.threadId));
         const active = promptRows(branch, true, []);
         const lookup = quotes
           ? quotes.promptQuoteTargets(reader as never, database(), "b", long.threadId, true, [])
-          : new Map(promptRows(partitionTranscriptMessages(database(), "b", long.threadId, reader.messagesFor(long.threadId)), true, []).map((m) => [m.id, m]));
+          : new Map(promptRows(botMessages(database(), botViewer("b"), long.threadId, reader.messagesFor(long.threadId)), true, []).map((m) => [m.id, m]));
         for (const m of active.slice(-40)) if (m.replyToId) lookup.get(m.replyToId);
         return ms(t);
       };

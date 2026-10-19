@@ -8,7 +8,7 @@
 //   P2. a proof that ran into the budget left its finished parts kept, and the next check, charged nothing for them, got further
 //       and showed what the first one withheld. A kept proof is now charged what judging it costs, the first time a check reads it.
 // Plus the class: warm equals cold over random sequences with shared captured replies, memo hits and misses, and tight budgets.
-import { mkdirSync, rmSync } from "node:fs";
+import { mkdirSync } from "node:fs";
 import { afterEach, beforeEach, expect, it } from "vitest";
 import { DATA_DIR } from "../config.ts";
 import { closeDatabase, database } from "../database.ts";
@@ -17,11 +17,12 @@ import { setMemoryMode } from "./repository.ts";
 import { chainStore } from "./schema.ts";
 import { forgetKeptLineageForTest, keptVerdictCount, replayExclusions, setReplayNodeBudgetForTest, type ReplayAudience } from "./replay-lineage.ts";
 import { LineageAllowance } from "./lineage-allowance.ts";
+import { removeTempDirSync } from "../testing/cleanup.ts";
 
 const thread = "r3-direct";
 const key = (message: string) => `${thread}\u0000${message}`;
 const messageSource = (message: string) => `message:${thread}:${message}`;
-function reset(): void { closeDatabase(); rmSync(DATA_DIR, { recursive: true, force: true }); mkdirSync(DATA_DIR, { recursive: true }); }
+function reset(): void { closeDatabase(); removeTempDirSync(DATA_DIR); mkdirSync(DATA_DIR, { recursive: true }); }
 beforeEach(reset);
 afterEach(() => setReplayNodeBudgetForTest(null));
 

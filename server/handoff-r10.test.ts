@@ -10,7 +10,7 @@
 //   R10-03  a room turn's memory check costs its window, not the room's history (memory on and off);
 //   R10-04  a finished ask settles the moment its reply row is stored;
 //   P3      the direct window follows the byte budget; a saved card summary is released again; an unlisted admission refusal has its own line.
-import { mkdirSync, readFileSync, rmSync } from "node:fs";
+import { mkdirSync, readFileSync } from "node:fs";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { releasedCardSummary } from "./card-summary.ts";
 import { configureBotEgress } from "./bot-egress.ts";
@@ -21,12 +21,14 @@ import { authorizeWork } from "./execution-audience.ts";
 import { REPLAY_BUDGET_CAP_BYTES } from "./memory/disclosures.ts";
 import { closeMessageDb } from "./message-db.ts";
 import { configureStatusRoster, outboundWords } from "./murage-status.ts";
-import { DIRECT_TRANSCRIPT_WINDOW_ROWS, directTranscriptRows, directTranscriptWindowFull, partitionTranscriptWindow, TRANSCRIPT_EXAMINED_ROWS } from "./partition-sources.ts";
+import { DIRECT_TRANSCRIPT_WINDOW_ROWS, directTranscriptRows, directTranscriptWindowFull, TRANSCRIPT_EXAMINED_ROWS } from "./partition-sources.ts";
+import { botViewer, botWindow } from "./bot-read.ts";
 import { applyCardRunDispatched, applyReviewVerdict, enqueueCardRun, redoContext, releasedRedoNotes, sendProjectCardBack } from "./project-cards.ts";
 import { cardAskText, continuationResultsPrompt } from "./project-prompt.ts";
 import { inheritedRequestLineage, roomRequestById } from "./project-records.ts";
 import { initializeProjectTables } from "./project-tables.ts";
 import { applyCardRunEffect, cardGenerationCurrent, leadNextStep, reviewWakeTarget } from "./project-turn-engine.ts";
+import { removeTempDirSync } from "./testing/cleanup.ts";
 // evhand's note recorder is superseded by write-time lineage (project-notes.ts recordNoteLineage): inert here, so these scenarios run on the write-time rules
 // (preview2 merge: scenarios that assert evhand's holders/sources/ranges note design are it.skip: writetime wins, notes rest on write-time lineage)
 const configureNoteRecorder = (_recorder?: unknown): void => {};
@@ -41,7 +43,7 @@ import { Store, type Message } from "./store.ts";
 
 const selection = (): ModelSelection => ({ instanceId: "claude", model: "fake-model" });
 afterEach(() => { configureNoteRecorder(undefined); configureResultEgress(undefined); configureBotEgress(undefined); configureStatusRoster(undefined); });
-beforeEach(() => { closeMessageDb(); closeDatabase(); rmSync(DATA_DIR, { recursive: true, force: true }); mkdirSync(DATA_DIR, { recursive: true }); });
+beforeEach(() => { closeMessageDb(); closeDatabase(); removeTempDirSync(DATA_DIR); mkdirSync(DATA_DIR, { recursive: true }); });
 
 describe("R10-01: a card note is released against the messages that hold its own words, through the real deliver edge", () => {
   const SECRET = "LEAD PRIVATE BUDGET 12345";
@@ -61,7 +63,7 @@ describe("R10-01: a card note is released against the messages that hold its own
   /** Notes the server's link tied to a turn's roots, as [thread, message]. */
   const linked: Array<[string, string]> = [];
   /** A turn begins in `threadId` for `botId`: its sources are the lines it is shown, by the server's own rule (server/steer-lineage.ts). */
-  const beginTurn = (botId: string, threadId: string) => turns.set(threadId, { roots: { roots: new Set(), over: false }, instanceId: "claude", botId,
+  const beginTurn = (botId: string, threadId: string) => turns.set(threadId, { roots: { roots: new Set(), over: false }, instanceId: "claude", botId, generation: "g", turn: {} as never, 
     sources: turnSources(store.messagesFor(threadId).map(row => ({ threadId, id: row.id, role: row.role, copyOf: row.copyOf })), line => Boolean(store.messageById(threadId, line.id)?.withheldFromBots)) });
   /** A message written into a conversation joins the running turn there, as every stored reply does (linkOutput). */
   const say = (threadId: string, text: string, requestId?: string): Message => {
@@ -92,7 +94,7 @@ describe("R10-01: a card note is released against the messages that hold its own
     configureStatusRoster(name => store.bots.some(b => b.name === name));
     // the gate's questions answered by the real delivery authorization and the real store; nothing else is stubbed but what a fresh store has none of
     configureResultEgress({
-      message: (threadId, id) => deleted.has(id) ? undefined : store.messageById(threadId, id), threadMessages: threadId => store.messagesFor(threadId),
+      message: (threadId, id) => deleted.has(id) ? undefined : store.messageById(threadId, id),
       authorize: (requestId, worker, destinationThreadId) => authorizeWork({ edge: "deliver", requestId, fromBotId: worker, destinationThreadId }),
       copyOriginWithheld: () => false, capturedMessageWithheld: () => false, messageSourceForgotten: () => false, messageMadeWithMemory: () => false,
       partitionAllowed: () => true, ownUnsharedWork: () => true,
@@ -358,7 +360,7 @@ describe("R10-01: a card note is released against the messages that hold its own
       expect(sendProjectCardBack(db(), { cardId: "c1", actor: leadActor(), note: "Fresh words from nowhere", now: tick() }).ok).toBe(true);
       expect(store.messagesFor(group.threadId)).toHaveLength(before);
       expect(redo()).not.toContain("Fresh words from nowhere");
-      turns.set(group.threadId, { roots: { roots: new Set(), over: false }, instanceId: "claude", botId: lead.id, sources: "over" });
+      turns.set(group.threadId, { roots: { roots: new Set(), over: false }, instanceId: "claude", botId: lead.id, generation: "g", turn: {} as never, sources: "over" });
       expect(runningTurnSources(turns.get(group.threadId), lead.id)).toBeUndefined();
       expect(turnSources(Array.from({ length: TURN_SOURCES_MAX + 1 }, (_, index) => ({ threadId: "t", id: `m${index}`, role: "bot" })), () => false)).toBe("over");
       // owner lines are never sources, and a line withheld when the turn began was carried as its withheld line
@@ -393,7 +395,7 @@ describe("R10-02 / R10-03: a transcript check costs its window, not the history"
   const reply = (index: number): Message => ({ id: `r${index}`, role: "bot", kind: "text", text: `reply ${index}`, at: index, from: { botId: "dax", name: "Dax", color: "#000" } } as Message);
   const roomOf = (rows: number): Message[] => Array.from({ length: rows }, (_, index) => reply(index));
   /** A cold database each time: a memo warmed by an earlier run would hide the cost. */
-  const cold = () => { closeMessageDb(); closeDatabase(); rmSync(DATA_DIR, { recursive: true, force: true }); mkdirSync(DATA_DIR, { recursive: true }); database(); };
+  const cold = () => { closeMessageDb(); closeDatabase(); removeTempDirSync(DATA_DIR); mkdirSync(DATA_DIR, { recursive: true }); database(); };
   const seedReceipt = () => database().prepare("INSERT INTO memory_disclosures(bundle_id,thread_id,driver_instance,record_versions,source_versions,output_message_ids,policy_revision,deletion_epoch,token_count,state,created_at) VALUES('b1','busy','driver','[]','[]','[\"r5\"]',1,1,0,'delivered',1)").run();
 
   it("memory off: 1k and 50k room rows run the same statements", () => {
@@ -431,9 +433,9 @@ describe("R10-02 / R10-03: a transcript check costs its window, not the history"
   it("a window over copies whose originals are gone stops at its cap (rejected rows count)", () => {
     cold();
     const copies: Message[] = Array.from({ length: 20_000 }, (_, index) => ({ id: `c${index}`, at: index, role: "bot", kind: "text", text: `copy ${index}`, copyOf: { threadId: "worker", messageIds: [`gone${index}`] } }) as Message);
-    const first = statements(() => partitionTranscriptWindow(database(), "bot", "lead", copies, () => false));
+    const first = statements(() => botWindow(database(), botViewer("bot"), "lead", copies, () => false, TRANSCRIPT_EXAMINED_ROWS));
     cold();
-    const second = statements(() => partitionTranscriptWindow(database(), "bot", "lead", copies.slice(-5_000), () => false));
+    const second = statements(() => botWindow(database(), botViewer("bot"), "lead", copies.slice(-5_000), () => false, TRANSCRIPT_EXAMINED_ROWS));
     expect(first.value.window).toHaveLength(0);
     expect(first.value.olderRows).toBe(20_000 - TRANSCRIPT_EXAMINED_ROWS);
     expect(first.count).toBeLessThan(TRANSCRIPT_EXAMINED_ROWS * 4);
@@ -443,7 +445,7 @@ describe("R10-02 / R10-03: a transcript check costs its window, not the history"
   it("a room window crossing many activity rows is bounded by rows, not only by text lines", () => {
     const source = readFileSync(new URL("./index.ts", import.meta.url), "utf8");
     const room = source.slice(source.indexOf("function renderRoomContext("), source.indexOf("// comms bus: passed into the visibility helpers"));
-    expect(room).toMatch(/partitionTranscriptWindow\([^]*?ROOM_TRANSCRIPT_EXAMINED_ROWS\)/);
+    expect(room).toMatch(/botWindow\([^]*?ROOM_TRANSCRIPT_EXAMINED_ROWS, \{ standIns: withheld \}\)/);
   });
 });
 
@@ -461,7 +463,7 @@ describe("P3: the direct window, and an unlisted admission refusal", () => {
   it("the direct window follows the byte budget: short lines are carried past 400 rows, up to what the budget can hold", () => {
     expect(directTranscriptRows(REPLAY_BUDGET_CAP_BYTES)).toBeGreaterThan(DIRECT_TRANSCRIPT_WINDOW_ROWS);
     const lines: Message[] = Array.from({ length: 4_000 }, (_, index) => ({ id: `s${index}`, at: index, role: "user", kind: "text", text: `ok ${index}` }) as Message);
-    const judged = partitionTranscriptWindow(database(), "bot", "t", lines, directTranscriptWindowFull(REPLAY_BUDGET_CAP_BYTES), directTranscriptRows(REPLAY_BUDGET_CAP_BYTES) * 3);
+    const judged = botWindow(database(), botViewer("bot"), "t", lines, directTranscriptWindowFull(REPLAY_BUDGET_CAP_BYTES), directTranscriptRows(REPLAY_BUDGET_CAP_BYTES) * 3);
     expect(judged.window.length).toBeGreaterThan(DIRECT_TRANSCRIPT_WINDOW_ROWS);
     expect(judged.window.length).toBeLessThanOrEqual(directTranscriptRows(REPLAY_BUDGET_CAP_BYTES));
   });

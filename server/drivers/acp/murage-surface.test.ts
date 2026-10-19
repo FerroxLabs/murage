@@ -1,7 +1,7 @@
 import { murageToolList } from "../../testing/murage-tool-list.ts";
 // Copyright 2026 Ferrox Labs
 // SPDX-License-Identifier: AGPL-3.0-or-later
-import { mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { mkdtempSync, readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -21,6 +21,7 @@ import { ROOM_TOOLS_LINE, goalWakePrompt, projectCardPrompt } from "../../projec
 import { chiefOfStaffSystemPrompt } from "../../chief-of-staff.ts";
 import { TURN_PROMPTS } from "../../bot-shapes.ts";
 import { murageTool } from "../../murage-tool-surface.ts";
+import { removeTempDirSync } from "../../testing/cleanup.ts";
 
 // The fixture mounts here are not real MCP servers, so they never write the
 // marker an engine without a readiness signal is waited for (core.ts
@@ -76,5 +77,5 @@ it.each(drivers)("$driverKind resolves references against the real session mount
         expect(shown).not.toMatch(/use (ask_bot|delegate_bot)\b/);
       }
     }
-  } finally { recorder.stop(); await instance.dispose(); rmSync(dir, { recursive: true, force: true }); }
+  } finally { recorder.stop(); await instance.dispose(); removeTempDirSync(dir); }
 }, 60000);

@@ -1,11 +1,12 @@
 import { afterEach, expect, it, vi } from "vitest";
-import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, readFile, writeFile } from "node:fs/promises";
 import { dirname, join, basename } from "node:path";
 import { tmpdir } from "node:os";
 import { EngineManager, type ManagedEngineInstance } from "./engine-management.ts";
 import { nativeFixtureAsset } from "./testing/fuigo-native-fixture.ts";
+import { removeTempDir } from "./testing/cleanup.ts";
 const roots: string[] = [];
-afterEach(async () => { await Promise.all(roots.splice(0).map(root => rm(root, { recursive: true, force: true }))); });
+afterEach(async () => { await Promise.all(roots.splice(0).map(root => removeTempDir(root))); });
 async function fixture(custom = false, platform: NodeJS.Platform = "darwin", arch = "arm64") {
   const root = await mkdtemp(join(tmpdir(), "murage-fuigo-manager-")); roots.push(root);
   let version = "1.0.9", busy = false;

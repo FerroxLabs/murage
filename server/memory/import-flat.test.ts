@@ -5,7 +5,7 @@
 // evidence rows and disclosures from other sources (before, each import scanned memory_evidence by source and memory_disclosures by state, 6-17 s
 // on the main thread on a 77 MB file). And the source id no longer depends on where the data dir is, so a moved data dir imports nothing again.
 import { createHash } from "node:crypto";
-import { mkdirSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { beforeEach, expect, it } from "vitest";
 import { DATA_DIR } from "../config.ts";
@@ -14,10 +14,11 @@ import { ensureWorkspace } from "../workspace.ts";
 import { reconcileMemoryRoster } from "./policy.ts";
 import { migrateDetectedMemoryNotebooks, syncTrackedMemoryImports } from "./import.ts";
 import { ensureDisclosuresLiveIndex } from "./schema.ts";
+import { removeTempDirSync } from "../testing/cleanup.ts";
 
 const roster = { bots: [{ id: "a", threadId: "thread-a" }], groups: [] };
 beforeEach(() => {
-  closeDatabase(); rmSync(DATA_DIR, { recursive: true, force: true }); mkdirSync(DATA_DIR, { recursive: true });
+  closeDatabase(); removeTempDirSync(DATA_DIR); mkdirSync(DATA_DIR, { recursive: true });
   reconcileMemoryRoster(roster); database().exec("UPDATE memory_meta SET mode='active'");
 });
 function walk() {
@@ -61,7 +62,7 @@ const touches = (sql: string) => /memory_evidence|memory_disclosures/.test(sql) 
 it("a new and a changed notebook import read the same statements and rows at 10 and at 200,000 other evidence rows", () => {
   const runs: Seen[][] = [];
   for (const others of [10, 200_000]) {
-    closeDatabase(); rmSync(DATA_DIR, { recursive: true, force: true }); mkdirSync(DATA_DIR, { recursive: true });
+    closeDatabase(); removeTempDirSync(DATA_DIR); mkdirSync(DATA_DIR, { recursive: true });
     reconcileMemoryRoster(roster); database().exec("UPDATE memory_meta SET mode='active'");
     fill(others);
     const root = ensureWorkspace("a");

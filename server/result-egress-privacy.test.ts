@@ -1,6 +1,6 @@
 // Copyright 2026 Ferrox Labs
 // SPDX-License-Identifier: AGPL-3.0-or-later
-import { mkdirSync, readFileSync, rmSync } from "node:fs";
+import { mkdirSync, readFileSync } from "node:fs";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { boundaryStore } from "./boundary-ports.ts";
 import { configureBotEgress, RowSink } from "./bot-egress.ts";
@@ -27,11 +27,12 @@ import { configureResultEgress, releaseAskReply, writetimeLinesShown, type Resul
 import { WorkerText } from "./released-text.ts";
 import { insertRoomRequest } from "./room-requests.ts";
 import { Store } from "./store.ts";
+import { removeTempDirSync } from "./testing/cleanup.ts";
 
 const SECRET = "DELEGATED_RESULT_41";
 beforeEach(() => {
   closeMessageDb(); closeDatabase();
-  rmSync(DATA_DIR, { recursive: true, force: true }); mkdirSync(DATA_DIR, { recursive: true });
+  removeTempDirSync(DATA_DIR); mkdirSync(DATA_DIR, { recursive: true });
 });
 afterEach(() => {
   configureResultEgress(undefined); configureBotEgress(undefined); configureStatusRoster(undefined);
@@ -153,7 +154,7 @@ it.each([false, true])("a person's scope revocation withholds a nested request-b
       if (drained) expect(drainRevokeMarker(database()).pending).toBe(false);
       // No deleted content: the old null-audience exception still shows these exact words.
       expect(denyLookup(database(), page, { audience: null }).get(message.id)?.state).toBe("shown");
-      expect(deps.linesShown!(workerThread, [message.id], false)).toBe(false);
+      expect(deps.linesShown!(workerThread, [message.id], false)).not.toBe("shown");
       return { status: "reply", hasText: true, text: new WorkerText(SECRET), copyOf: { threadId: workerThread, messageIds: [message.id] } };
     },
   } as unknown as AskBotRouteContext;

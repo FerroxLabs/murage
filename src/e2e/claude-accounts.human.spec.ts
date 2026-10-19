@@ -1,4 +1,4 @@
-import { expect, test as base } from "@playwright/test";
+import { expect, test as base } from "./page-error-guard";
 import { createServer, type ViteDevServer } from "vite";
 import react from "@vitejs/plugin-react";
 import tailwindcss from "@tailwindcss/vite";
@@ -29,7 +29,7 @@ async function launch() {
       name: "accounts-fixture", enforce: "pre",
       resolveId(id) { if (id === "/__accounts.js") return "\0accounts-fixture"; if (id === "@/state/store" || id.endsWith("/src/state/store")) return "\0accounts-store"; },
       load(id) {
-        if (id === "\0accounts-store") return `export * from '/src/state/store.tsx?original';import {useSyncExternalStore} from 'react';export function useStore(){return useSyncExternalStore(window.subscribeFixture,()=>window.fixtureStore)}`;
+        if (id === "\0accounts-store") return `export * from '/src/state/store.tsx?original';import {useSyncExternalStore} from 'react';export function useStoreIfAny(){return useStore();} export function useStore(){return useSyncExternalStore(window.subscribeFixture,()=>window.fixtureStore)}`;
         if (id !== "\0accounts-fixture") return;
         return `import React from 'react';import {createRoot} from 'react-dom/client';import {api} from '/src/state/store.tsx?original';import {ClaudeAccountsSettings} from '/src/components/ClaudeAccountsSettings.tsx';import '/src/styles.css';
 document.documentElement.dataset.skin=new URLSearchParams(location.search).get('skin')||'light';window.copied=[];Object.defineProperty(navigator,'clipboard',{value:{writeText:async value=>window.copied.push(value)},configurable:true});
@@ -247,7 +247,8 @@ test("the accounts section stays usable while the engine list re-probes", async 
   await expectNoNamedAccounts();
   await page.goto(origin + "/__accounts?component=engines&skin=" + (info.project.name === "narrow" ? "dark" : "light"));
   const section = page.getByRole("region", { name: "Claude accounts" });
-  const engineRow = (name: string) => page.locator(`span[title="${name}"]`);
+  const engineRow = (name: string) => // The engine list row; the Advanced "Engine command lines" card repeats each name, so it is left out.
+  page.locator(`span[title="${name}"]:not(#engine-command-lines-heading *)`);
   await expect(engineRow("Verification fixture")).toBeVisible();
   await expect(section.getByText("Verification fixture", { exact: true })).toBeVisible();
   const others = page.getByText(/^Other accounts and installations/);
@@ -354,7 +355,7 @@ test("reports an engine list that could not refresh, without greying the section
   await expect(section.getByRole("alert")).toHaveCount(0);
   await expect(others).toHaveText(/Other accounts and installations · 1/);
   await others.click();
-  await expect(page.locator('span[title="Work renamed"]')).toBeVisible();
+  await expect(page.locator('span[title="Work renamed"]:not(#engine-command-lines-heading *)')).toBeVisible();
   expect(failed).toBe(1);
 
   await section.getByRole("button", { name: "Remove Work renamed account", exact: true }).click();

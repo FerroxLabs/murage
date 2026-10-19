@@ -1,4 +1,4 @@
-import { mkdirSync, rmSync } from "node:fs";
+import { mkdirSync } from "node:fs";
 import { randomUUID } from "node:crypto";
 import { beforeEach, expect, it } from "vitest";
 import { DATA_DIR } from "../config.ts";
@@ -15,13 +15,15 @@ import { memoryAccess, reconcileMemoryRoster } from "./policy.ts";
 import { setMemoryMode } from "./repository.ts";
 import { searchMemory, type MemorySearchBridge } from "./search.ts";
 import { LineageAllowance } from "./lineage-allowance.ts";
+import { removeTempDirSync } from "../testing/cleanup.ts";
+import { storeAnchorMessage } from "./testing/anchor-message.ts";
 
 const roster = { bots: [{ id: "bot", threadId: "thread" }], groups: [] };
 
 beforeEach(() => {
   resetMemoryCounters();
   closeDatabase();
-  rmSync(DATA_DIR, { recursive: true, force: true });
+  removeTempDirSync(DATA_DIR);
   mkdirSync(DATA_DIR, { recursive: true });
   reconcileMemoryRoster(roster);
   setMemoryMode("capture");
@@ -35,7 +37,9 @@ function access() {
 }
 
 function capture(id = `source:${randomUUID()}`, text = "Durable evidence") {
-  captureSource(database(), { id, threadId: "thread", messageId: randomUUID(), kind: "text", speaker: "owner", outcome: "recorded", text });
+  const messageId = randomUUID();
+  storeAnchorMessage(database(), "thread", messageId, text);
+  captureSource(database(), { id, threadId: "thread", messageId, kind: "text", speaker: "owner", outcome: "recorded", text });
   return id;
 }
 
@@ -58,7 +62,7 @@ it("reports current v2 sources as captured before their real capture job is publ
   // current source only, rather than count both historical revisions.
   capture(id, "Current evidence");
 
-  expect(database().prepare("SELECT schema_version FROM memory_meta WHERE id=1").get()).toEqual({ schema_version: 10 });
+  expect(database().prepare("SELECT schema_version FROM memory_meta WHERE id=1").get()).toEqual({ schema_version: 12 });
   expect(memoryHealth("extractor")).toMatchObject({
     captured: { sources: 1 },
     processed: { sources: 0, lastAt: null },

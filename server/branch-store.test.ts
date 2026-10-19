@@ -5,7 +5,7 @@
 // through appends, forks, rows stored again, inserts before and after; a thread
 // stored before it existed is filled in slices that writes interleave with, that
 // survive a restart between slices, and that give the answers a parent walk gives.
-import { mkdirSync, rmSync } from "node:fs";
+import { mkdirSync } from "node:fs";
 import { beforeEach, expect, it, vi } from "vitest";
 import { DATA_DIR } from "./config.ts";
 import { closeDatabase, database } from "./database.ts";
@@ -13,9 +13,10 @@ import { fillSlice, threadKey, verifyDerivedRows } from "./branch-index.ts";
 import { branchTester, withBranchWalkBudget, isPrepared, prepareStats, prepareThread, prepareThreadSync } from "./branch-store.ts";
 import * as messages from "./message-db.ts";
 import { Store, type Message } from "./store.ts";
+import { removeTempDirSync } from "./testing/cleanup.ts";
 
 const T = "th";
-beforeEach(() => { closeDatabase(); rmSync(DATA_DIR, { recursive: true, force: true }); mkdirSync(DATA_DIR, { recursive: true }); prepareStats.syncPrepares = 0; });
+beforeEach(() => { closeDatabase(); removeTempDirSync(DATA_DIR); mkdirSync(DATA_DIR, { recursive: true }); prepareStats.syncPrepares = 0; });
 const row = (id: string, parentId: string | null | undefined, extra: object = {}): Message => ({ id, text: `words of ${id}`, ...(parentId === undefined ? {} : { parentId }), at: 1, role: "user", kind: "text", ...extra }) as Message;
 
 /** The ids on the branch ending at `leaf`, by following parent links in the stored JSON (a legacy row with none follows the row before it). */

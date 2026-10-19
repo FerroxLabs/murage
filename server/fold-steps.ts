@@ -8,11 +8,14 @@ import type { Message } from "./store.ts";
 
 /** What a session was shown is written BEFORE the cursor that lets a later turn continue it. If the roots cannot be written the
  * cursor is withheld (an older one for this instance is dropped) and the failure propagates: a session continued without its
- * roots could carry context that was revoked since. */
-export function retainSession(steps: { recordRoots?: () => void; saveCursor: () => void; dropCursor: () => void }): void {
+ * roots could carry context that was revoked since. `recordRoots` returning false means its lineage write did not commit and was
+ * already rolled back and reported: the cursor is withheld the same way, and the cursor is published only after a committed write. */
+export function retainSession(steps: { recordRoots?: () => unknown; saveCursor: () => void; dropCursor: () => void }): void {
   if (steps.recordRoots) {
-    try { steps.recordRoots(); }
+    let recorded: unknown;
+    try { recorded = steps.recordRoots(); }
     catch (error) { steps.dropCursor(); throw error; }
+    if (recorded === false) { steps.dropCursor(); return; }
   }
   steps.saveCursor();
 }

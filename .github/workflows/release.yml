@@ -160,6 +160,10 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           SHA: ${{ needs.prepare.outputs.sha }}
           CI_WORKFLOW: ci.yml
+          # The latest completed nightly.yml run (tests over 60 s on every OS,
+          # wall-clock budgets on the build host perf job) must be green, on this
+          # commit or an ancestor, and under 72 h old. No waiver covers it.
+          NIGHTLY_WORKFLOW: nightly.yml
           # A waiver is a workflow_dispatch input only; a push-started run
           # never carries one (and the script refuses one on any other event).
           # It is read from the dispatch commit (a descendant of the pinned
@@ -234,8 +238,8 @@ jobs:
 
       # Mirrors package-mac-qualification.yml. build-mac.py builds and signs
       # the worker for the runner's OWN arch only (arm64 here), so darwin-x64
-      # cannot get a pinned runtime from this runner; Intel Macs ship without
-      # a local semantic runtime by design (README "Current boundaries") and
+      # cannot get a pinned GEPA worker from this runner; Intel Macs ship without
+      # it (README "Current boundaries"; smart search is unaffected) and
       # the after-pack gate accepts an explicit "unavailable" pin for that one
       # target. The build reads the pinned SOURCE_SHA and refuses any other.
       - name: Build pinned GEPA worker (darwin-arm64) in the release keychain
@@ -246,6 +250,28 @@ jobs:
           mkdir -p qualification-evidence
           python3 native/gepa/build-mac.py "$RUNNER_TEMP/gepa-mac-build" "$RUNNER_TEMP/release.keychain-db"
 
+      - name: Restore the memory model download cache
+        # Keyed by the pinned revision (the manifest hash). Staging re-verifies every cached file.
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ${{ runner.temp }}/memory-model-cache
+          key: memory-model-release-${{ hashFiles('shared/memory-model-manifest.json') }}
+      - name: Stage the bundled local memory model
+        # Fetches the exact pinned revision, fails on any size or SHA-256 mismatch.
+        shell: bash
+        run: |
+          set -euo pipefail
+          node scripts/stage-memory-model.mjs --target darwin-arm64 --out dist-native/memory-model --cache "$RUNNER_TEMP/memory-model-cache"
+          node scripts/stage-memory-model.mjs --target darwin-x64 --out dist-native/memory-model --cache "$RUNNER_TEMP/memory-model-cache"
+      - name: Rosetta for the x64 package checks
+        # after-pack loads the engine-exclusion addon inside each packaged app;
+        # the x64 app on this arm64 runner runs through arch -x86_64, which needs Rosetta.
+        run: |
+          set -euo pipefail
+          if ! /usr/bin/arch -x86_64 /usr/bin/true 2>/dev/null; then
+            sudo softwareupdate --install-rosetta --agree-to-license
+          fi
+          /usr/bin/arch -x86_64 /usr/bin/true && echo "Rosetta ready"
       - name: Package both architectures
         run: |
           set -euo pipefail
@@ -256,9 +282,24 @@ jobs:
           ulimit -n 262144 || ulimit -n "$(ulimit -Hn)"
           echo "after: kern.maxfiles=$(sysctl -n kern.maxfiles) kern.maxfilesperproc=$(sysctl -n kern.maxfilesperproc) ulimit=$(ulimit -n)"
           gepa_hash="$(node -e 'const fs=require("node:fs"); const m=JSON.parse(fs.readFileSync("qualification-evidence/gepa-package-metadata.json","utf8")); const h=m.extraMetadata.murageGepaManifests["darwin-arm64"]; if(!/^[a-f0-9]{64}$/.test(h))process.exit(1); process.stdout.write(h)')"
-          pnpm package:mac \
-            "--config.extraMetadata.murageGepaManifests.darwin-arm64=$gepa_hash" \
-            "--config.extraMetadata.murageGepaManifests.darwin-x64=unavailable"
+          export MURAGE_REQUIRE_BUNDLED_MODEL=1
+          # The x64 package check loads the addon through Rosetta; its first translation of the x64
+          # Electron on a fresh arm64 runner can be slow. Translations are cached, so one retry on
+          # exactly that error passes (the load itself takes 1-3 s once cached).
+          for attempt in 1 2; do
+            set +e
+            pnpm package:mac \
+              "--config.extraMetadata.murageGepaManifests.darwin-arm64=$gepa_hash" \
+              "--config.extraMetadata.murageGepaManifests.darwin-x64=unavailable" 2>&1 | tee "$RUNNER_TEMP/package-$attempt.log"
+            rc=${PIPESTATUS[0]}
+            set -e
+            [ "$rc" = 0 ] && break
+            if [ "$attempt" = 1 ] && grep -q ENGINE_EXCLUSION_RESOURCE_UNLOADABLE "$RUNNER_TEMP/package-1.log"; then
+              echo "x64 addon load failed on the cold Rosetta translation; packaging once more"
+              continue
+            fi
+            exit "$rc"
+          done
 
       - name: Qualify packaged WhatsApp (darwin-arm64)
         shell: bash
@@ -505,6 +546,29 @@ jobs:
           tar -xf x64-app/mac-x64-app.tar -C release/mac
           test "$(uname -m)" = x86_64
           lipo -archs release/mac/Murage.app/Contents/MacOS/Murage | grep -q x86_64
+      - name: Qualify packaged smart search (darwin-x64, ONNX Runtime WebAssembly)
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p qualification-evidence
+          R="$PWD/release/mac/Murage.app/Contents/Resources"
+          # The package must have the WebAssembly executor, must not have the native one, and must bundle the model.
+          node -e '
+            const m = require(process.argv[1] + "/server/memory-runtime-manifest.json");
+            if (m.platform !== "darwin" || m.arch !== "x64") throw Error("not the x64 runtime manifest");
+            if (m.nativeBackendAvailable !== false) throw Error("an Intel package unexpectedly carries a native ONNX binding");
+            if (m.wasmBackendAvailable !== true || m.wasmBackend?.version !== "1.24.3") throw Error("WebAssembly backend missing");
+          ' "$R"
+          test -f "$R/memory-model/onnx/model_quantized.onnx"
+          test ! -e "$R/memory-model/NOT-BUNDLED.txt"
+          # Real offline inference with the packaged Electron as Node: index, lexical hit, a semantic-only hit
+          # ("car fuel" -> "gasoline"), denied/deleted exclusion, restart. On Intel, WebAssembly is the only executor.
+          node scripts/smoke-memory-packaged.mjs --resources "$R" --model-directory "$R/memory-model" \
+            | tee qualification-evidence/memory-darwin-x64.json
+          node -e '
+            const r = JSON.parse(require("fs").readFileSync("qualification-evidence/memory-darwin-x64.json","utf8").trim().split("\n").at(-1));
+            if (!r.ok || r.arch !== "x64" || !r.checks.includes("independent-semantic-hit-and-denied-source-exclusion")) throw Error("Intel smart search smoke failed");
+          '
       - name: Qualify packaged WhatsApp (darwin-x64)
         shell: bash
         run: |
@@ -532,7 +596,9 @@ jobs:
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: mac-x64-whatsapp-gepa-evidence
-          path: qualification-evidence/whatsapp-*
+          path: |
+            qualification-evidence/whatsapp-*
+            qualification-evidence/memory-*
           if-no-files-found: error
           retention-days: 7
 
@@ -616,12 +682,25 @@ jobs:
           node native/gepa/create-manifest.mjs "$pwd/dist-native/gepa/win32-x64" win32-x64 "$pwd/qualification-evidence/gepa-package-metadata.json"
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
+      - name: Restore the memory model download cache
+        # Keyed by the pinned revision (the manifest hash). Staging re-verifies every cached file.
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ${{ runner.temp }}/memory-model-cache
+          key: memory-model-release-${{ hashFiles('shared/memory-model-manifest.json') }}
+      - name: Stage the bundled local memory model
+        # Fetches the exact pinned revision, fails on any size or SHA-256 mismatch.
+        shell: bash
+        run: |
+          set -euo pipefail
+          node scripts/stage-memory-model.mjs --target win32-x64 --out dist-native/memory-model --cache "$RUNNER_TEMP/memory-model-cache"
       - name: Package (Azure Trusted Signing)
         shell: pwsh
         run: |
           $metadata = Get-Content -Raw -LiteralPath qualification-evidence/gepa-package-metadata.json | ConvertFrom-Json
           $hash = $metadata.extraMetadata.murageGepaManifests.'win32-x64'
           if ($hash -notmatch '^[a-f0-9]{64}$') { throw 'Missing trusted GEPA manifest hash' }
+          $env:MURAGE_REQUIRE_BUNDLED_MODEL = '1'
           pnpm package:win "--config.extraMetadata.murageGepaManifests.win32-x64=$hash"
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
         env:
@@ -841,9 +920,21 @@ jobs:
         env:
           SOURCE_SHA: ${{ needs.prepare.outputs.sha }}
         run: python3 -I native/gepa/build-linux.py "$RUNNER_TEMP/gepa-linux"
+      - name: Restore the memory model download cache
+        # Keyed by the pinned revision (the manifest hash). Staging re-verifies every cached file.
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ${{ runner.temp }}/memory-model-cache
+          key: memory-model-release-${{ hashFiles('shared/memory-model-manifest.json') }}
+      - name: Stage the bundled local memory model
+        # Fetches the exact pinned revision, fails on any size or SHA-256 mismatch.
+        run: |
+          set -euo pipefail
+          node scripts/stage-memory-model.mjs --target linux-x64 --out dist-native/memory-model --cache "$RUNNER_TEMP/memory-model-cache"
       - name: Package with the frozen GEPA manifest
         run: |
           gepa_hash="$(node -e 'const fs=require("node:fs"); const m=JSON.parse(fs.readFileSync("qualification-evidence/gepa-package-metadata.json","utf8")); const h=m.extraMetadata.murageGepaManifests["linux-x64"]; if(!/^[a-f0-9]{64}$/.test(h))process.exit(1); process.stdout.write(h)')"
+          export MURAGE_REQUIRE_BUNDLED_MODEL=1
           pnpm package:linux "--config.extraMetadata.murageGepaManifests.linux-x64=$gepa_hash"
       - name: Qualify packaged WhatsApp (linux-x64)
         shell: bash

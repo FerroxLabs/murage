@@ -1,15 +1,16 @@
 // Copyright 2026 Ferrox Labs
 // SPDX-License-Identifier: AGPL-3.0-or-later
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterAll, describe, expect, it } from "vitest";
 import { importGuardSummary, scanBotPackageForImport } from "./bot-package-guard.ts";
 import { ImportScanCancelled, importScanProgress, scanBotPackageForImportAsync } from "./bot-package-guard-runner.ts";
 import type { BotPackageScanFile } from "./bot-package-scan.ts";
+import { removeTempDirSync } from "./testing/cleanup.ts";
 
 const scratch = mkdtempSync(join(tmpdir(), "murage-guard-runner-"));
-afterAll(() => rmSync(scratch, { recursive: true, force: true }));
+afterAll(() => removeTempDirSync(scratch));
 
 const PROSE = "A normal paragraph about invoices, reminders and the weekly report for the team. ";
 /** A package of `files` text files that add up to about `megabytes`. */

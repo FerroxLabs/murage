@@ -18,6 +18,7 @@ import { refreshMemoryCheckpoint } from "./consolidate.ts";
 import { flushMemoryCounters, recordMemoryRetrieval, resetMemoryCounters } from "./health.ts";
 import { THREAD, accessFor, captureAndPublish, emptyBridge, freshDataDir } from "./testing/recall-fixture.ts";
 import { LineageAllowance } from "./lineage-allowance.ts";
+import { stampFreshSession } from "./testing/writetime-fixture.ts";
 // 1.0.2: this test models a 1.0.1 file (legacy root-set rows) for the read-time judge, which still decides legacy data until S6.
 thawBeforeEach(() => thawRootSetWritesForTest(true));
 thawAfterEach(() => thawRootSetWritesForTest(false));
@@ -125,6 +126,7 @@ it("a resumed session is checked in full at most once per epoch across the dispa
   captureAndPublish("The launch review is on Friday.");
   const first = new MemoryDispatchReceipt(await buildMemoryBundle("launch", access, emptyBridge, {allowance: LineageAllowance.tool()}), access, "engine");
   first.sessionStarted("session-1"); first.accepted();
+  stampFreshSession(sql(), THREAD, "engine", "session-1"); // a 1.0.3 fresh start leaves its lineage row stamped (S6 rule 26)
   const second = new MemoryDispatchReceipt(await buildMemoryBundle("launch", access, emptyBridge, {allowance: LineageAllowance.tool()}), access, "engine");
   expect(continuationMemoryRevoked(LineageAllowance.tool(), THREAD, "engine", "session-1", access)).toBe(false);
   // a full check opens with the session's two end receipts (revoke-bounded: a stale end decides at once), then reads the rest
@@ -159,6 +161,7 @@ it("the early continuation check is not repeated while nothing that could take a
   captureAndPublish("The launch review is on Friday.");
   const first = new MemoryDispatchReceipt(await buildMemoryBundle("launch", access, emptyBridge, {allowance: LineageAllowance.tool()}), access, "engine");
   first.sessionStarted("session-1"); first.accepted();
+  stampFreshSession(sql(), THREAD, "engine", "session-1"); // a 1.0.3 fresh start leaves its lineage row stamped (S6 rule 26)
   const fullChecks = countStatements(text => text.startsWith("SELECT rowid AS rid,bundle_id,thread_id,driver_instance,native_session,record_versions,source_versions,policy_revision,deletion_epoch,state,created_at FROM memory_disclosures WHERE thread_id=? AND driver_instance=? AND native_session=?"));
   try {
     expect(continuationMemoryRevoked(LineageAllowance.tool(), THREAD, "engine", "session-1", access)).toBe(false);
@@ -192,6 +195,7 @@ it("a full session check looks at each record a session was shown once, however 
     try { expect(continuationMemoryRevoked(LineageAllowance.tool(), THREAD, "engine", "session-1", access)).toBe(false); return hydrated.n; } finally { hydrated.restore(); }
   };
   await receiptsInSession(1);
+  stampFreshSession(sql(), THREAD, "engine", "session-1"); // a 1.0.3 fresh start leaves its lineage row stamped (S6 rule 26)
   const one = hydrations();
   await receiptsInSession(5);
   expect(sql().prepare("SELECT count(*) n FROM memory_disclosures WHERE native_session='session-1'").get()!.n).toBe(6);

@@ -22,13 +22,16 @@ import { PublishError } from "./errors.ts";
 import { createSite, deleteDeploy, deleteSite, deployZip, findSiteByAddress, getDeploy, getSite, isPublicHttpsUrl, liveCheck } from "./netlify.ts";
 import { listSite, resolveSiteFolder } from "./site-files.ts";
 import { zipStore } from "./zip.ts";
+import { murageLine } from "../murage-line.ts";
 
 export const PUBLISH_APPROVAL_TIMEOUT_MS = 15 * 60_000;
 const ID = /^[A-Za-z0-9-]{1,64}$/;
 /** readPublishedSites keeps this many records, so a new site is refused before it is made once the list is full. */
 const MAX_SITES_PER_BOT = 200;
 
-export interface PublishActor { botId: string; threadId: string; generation: string; signal: AbortSignal; assertActive: () => void }
+export interface PublishActor { botId: string; threadId: string; generation: string; signal: AbortSignal; assertActive: () => void;
+  /** The provider turn running this generation, read from the turn's capability (never a request body). */
+  turnId?: string }
 export interface PublishResult {
   status: "live" | "taken-down";
   url: string; siteId: string; deployId?: string; fileCount?: number; totalBytes?: number; skipped?: string[];
@@ -292,10 +295,10 @@ export class PublishOperations {
     const { store } = this.options;
     if (store.keyedCards(actor.threadId, "publish", "connect").some(item => item.card?.publish?.action === "connect" && item.card.publish.connect?.state === "needed")) return;
     const from = this.options.speaker?.(actor.threadId, actor.botId);
-    store.appendMessage(actor.threadId, { role: "bot", kind: "options", ...(from ? { from } : {}), card: {
+    store.appendMessage(actor.threadId, murageLine({ role: "bot", kind: "options", ...(from ? { from } : {}), card: {
       title: "Connect Netlify", subtitle: "", options: [], kind: "publish",
       publish: { action: "connect", host: "netlify", url: "https://app.netlify.com", connect: { state: "needed", botId: actor.botId } },
-    } });
+    } }));
   }
 
   /** The bot a connect card was raised for. */
@@ -317,9 +320,9 @@ export class PublishOperations {
   private failureNotice(actor: PublishActor, action: PublishCardData["action"], url: string | undefined, progress: PublishProgress) {
     const from = this.options.speaker?.(actor.threadId, actor.botId);
     const title = action === "take-down" ? "Take this site down?" : action === "update" ? "Update your live site?" : "Publish this site?";
-    this.options.store.appendMessage(actor.threadId, { role: "bot", kind: "options", ...(from ? { from } : {}), card: {
+    this.options.store.appendMessage(actor.threadId, murageLine({ role: "bot", kind: "options", ...(from ? { from } : {}), card: {
       title, subtitle: "", options: [], kind: "publish", answered: "failed", publish: { action, host: "netlify", url: url ?? "https://www.netlify.com", progress },
-    } });
+    } }));
   }
 
   private async exclusive<T>(actor: PublishActor, run: () => Promise<T>): Promise<T> {
@@ -339,10 +342,11 @@ export class PublishOperations {
     const { store } = this.options, requestId = `publish-${randomUUID()}`;
     const from = this.options.speaker?.(actor.threadId, actor.botId);
     // No allowKey, taskAllowKey or routineAllowKey: nothing can be remembered.
-    const message = store.appendMessage(actor.threadId, { role: "bot", kind: "options", ...(from ? { from } : {}), card: {
+    // `held` lists what the model chose to publish: the card names the producing turn so it is withheld with that turn's inputs
+    const message = store.appendMessage(actor.threadId, murageLine({ role: "bot", kind: "options", turnId: actor.turnId, ...(from ? { from } : {}), card: {
       title: card.title, subtitle: card.subtitle, held: card.held, options: ["Allow", "Deny"], requestId, tool: "publish_site",
       kind: "publish", publish: card.data, pushBody: card.pushBody,
-    } });
+    } }));
     this.options.waiting(actor.threadId, true, requestId, message.id, actor.botId);
     return new Promise<{ answer: Answer; messageId: string }>(resolve => {
       let done = false, expired = false;

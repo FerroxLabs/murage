@@ -1,5 +1,5 @@
 import { teamLabel } from "./team-identities.ts";
-import { MurageStatus, outboundCopy, outboundWords, status, type Outbound } from "./murage-status.ts";
+import { MurageStatus, outboundCopy, outboundWords, status, statusRecordOf, type Outbound } from "./murage-status.ts";
 import { ReleasedText } from "./released-text.ts";
 import type { ExecutionAudience } from "./work-admission.ts";
 import { audienceTask, defaultThreadId, issueExecutionAudience, issueWorkAudience, threadPartition } from "./execution-audience.ts";
@@ -9,12 +9,16 @@ import { threadHumanPrincipal, assertHumanPrincipal, bindHumanThread } from "./h
 // (delegate_bot) and any future peer flow reuse the same UX without a copy.
 
 import { sectionKey, type BotRecord, type GroupRecord, type Message, type MessageMurage, type Store } from "./store.ts";
+import { murageLine } from "./murage-line.ts";
 
 /** What a peer-exchange helper needs from the outside world:
  * the store (for persisted messages + groups) and the SSE broadcasters
  * so chat clients see the change without waiting for a refresh. */
 export interface CommsBus {
   store: Store;
+  /** The provider turn running in a conversation now (internal-capabilities.ts providerTurnOf), from the server's own turn state, never a request.
+   * The room copy of a bot's outgoing message names it, so revoking that turn's inputs withholds the copy. */
+  turnOf?: (threadId: string) => string | undefined;
   /** The durable ask:delegation record of a handoff when a room turn made it (a room request, or shared work), made in the transaction that queues
    * it. Returns who owns the request side: `room`, `shared`, or `owner` (an owner-conversation handoff has no record: its queue row is all there is). */
   prepareDelegation?(fromBotId: string, toBotId: string, sourceThreadId: string, message: string, requestId: string): "owner" | "room" | "shared" | void;
@@ -61,11 +65,29 @@ export function getOrCreateChannel(store: Store, from: BotRecord, target: BotRec
   return group;
 }
 
+/** The source row of a queued hand-off's message (see mirrorExchange): the sender's "Messaged" row written when it was queued, or none for a queue
+ * item from before it was kept. */
+export type QueuedSource = { sourceMessageId: string | undefined };
+
+/** The sender's "Messaged @target" row: its own activity, the engine row of the turn that sent the message (LINEAGE-DESIGN-S6 rule 6), so the
+ * line's lineage keeps that turn. `turnId` is the provider turn that sent it, none when no turn ran. */
+export function messagedRow(from: BotRecord, target: BotRecord, turnId: string | undefined, comm?: Message["comm"]): Omit<Message, "id" | "at"> {
+  return {
+    role: "bot",
+    kind: "activity",
+    tool: { name: `Messaged @${target.name}` },
+    from: { botId: from.id, name: from.name, color: from.color },
+    ...(turnId ? { turnId } : {}),
+    ...(comm ? { comm } : {}),
+  };
+}
+
 /** Mirror `from`'s outgoing message into the channel, drop chips into
  * both 1:1 threads linking to the channel, and bump the channel's unread
  * count. The chips are what make bot-to-bot turns observable — those
  * turns cost the user tokens, and a hidden exchange is exactly the kind
- * of mistake peer coordination is supposed to avoid. */
+ * of mistake peer coordination is supposed to avoid. Returns the source row's id (the sender's "Messaged" row a hand-off's prompt names by
+ * `handoffOf`, LINEAGE-DESIGN-S6 rule 7), none for a legacy queue item. */
 export function mirrorExchange(
   bus: CommsBus,
   from: BotRecord,
@@ -75,43 +97,42 @@ export function mirrorExchange(
   sourceThreadId = defaultThreadId(from),
   audience?: ExecutionAudience | null,
   inboundKind: "action" | "question" = "question",
-): void {
-  const note = (threadId: string, m: Omit<Message, "id" | "at">) => {
-    bus.store.appendMessage(threadId, m);
-    return message;
-  };
-  if (channel) {
-    note(channel.threadId, {
-      role: "bot",
-      kind: "text",
-      text: message,
-      inboundKind,
-      from: { botId: from.id, name: from.name, color: from.color },
-    });
+  /** A queued hand-off: its source row was written when it was queued (delegations.ts queueDelegation), so the turn running in the source thread
+   * now is not its author. Omitted (an immediate send): the source row is written now, naming the turn running now. */
+  queued?: QueuedSource,
+): string | undefined {
+  const comm = channel ? { groupId: channel.id, withBotId: target.id, withName: target.name, withColor: target.color } : undefined;
+  let sourceId: string | undefined;
+  if (!queued) sourceId = bus.store.appendMessage(sourceThreadId, messagedRow(from, target, bus.turnOf?.(sourceThreadId), comm)).id;
+  else if (queued.sourceMessageId) {
+    sourceId = queued.sourceMessageId;
+    // the row was written before the room existed: it now links to it
+    if (comm) bus.store.patchMessage(sourceThreadId, sourceId, { comm });
+  } else {
+    // a queue item from before the source row was kept: Murage's chip about the exchange, as it was written then
+    bus.store.appendMessage(sourceThreadId, murageLine({ role: "bot", kind: "activity", tool: { name: `Messaged @${target.name}` },
+      ...(bus.store.groupByThread(sourceThreadId) ? { from: { botId: from.id, name: from.name, color: from.color } } : {}), ...(comm ? { comm } : {}) }));
   }
-  note(sourceThreadId, {
-    role: "bot",
-    kind: "activity",
-    tool: { name: `Messaged @${target.name}` },
-    // A room is several bots in one thread: name who sent it.
-    ...(bus.store.groupByThread(sourceThreadId) ? { from: { botId: from.id, name: from.name, color: from.color } } : {}),
-    comm: channel
-      ? { groupId: channel.id, withBotId: target.id, withName: target.name, withColor: target.color }
-      : undefined,
-  });
+  if (channel) {
+    // the room copy is the sender's bot row naming its source row (rules 5 and 6); with no source row to name, Murage's withheld line
+    if (sourceId) bus.store.appendMessage(channel.threadId, { role: "bot", kind: "text", text: message, inboundKind, from: { botId: from.id, name: from.name, color: from.color }, copyOf: { threadId: sourceThreadId, messageIds: [sourceId] } });
+    else mirrorMurageLine(bus, channel, status("withheld"), { kind: "failure" });
+  }
   const targetTask=audienceTask(bus.store,target.id,threadHumanPrincipal(sourceThreadId), audience === undefined ? issueWorkAudience(from.id, target.id, sourceThreadId, issueExecutionAudience(from.id, sourceThreadId, sourceThreadId), sourceThreadId, true) : audience);
   if(!targetTask)throw new Error("HUMAN_TASK_UNAVAILABLE");
-  note(targetTask.threadId, {
+  // Murage's chip in the target's conversation about the exchange, never a turn's engine output (murage-line.ts)
+  bus.store.appendMessage(targetTask.threadId, murageLine({
     role: "bot",
     kind: "activity",
     tool: { name: `Message from @${from.name}` },
     comm: channel
       ? { groupId: channel.id, withBotId: from.id, withName: from.name, withColor: from.color }
       : undefined,
-  });
+  }));
   if (channel) {
     bus.store.patchGroup(channel.id, { unread: true });
   }
+  return sourceId;
 }
 
 /** Mirror `target`'s reply into the channel so the channel stays the
@@ -130,18 +151,22 @@ export function mirrorReply(
   if (!channel || !words.trim()) return undefined;
   // A copy of a worker's words is written only with the link to its original; without one the channel gets Murage's withheld line instead.
   const quotesWorker = ReleasedText.is(reply) || (MurageStatus.is(reply) && reply.quotes.length > 0);
-  if (quotesWorker && !(copyOf?.messageIds.length || outboundCopy(reply)?.messageIds.length)) {
+  // the copyOf it uses, the caller's or the one the reply carries, is the one stored (LINEAGE-DESIGN-S6 rule 8)
+  const effective = copyOf?.messageIds.length ? copyOf : outboundCopy(reply);
+  if (quotesWorker && !effective?.messageIds.length) {
     mirrorMurageLine(bus, channel, status("withheld"), { kind: "failure" });
     return undefined;
   }
-  const written = bus.store.appendMessage(channel.threadId, {
+  // a copy is the target's own bot row, resting on its original through copyOf (rule 5); a status line that quotes no worker is Murage's
+  const row: Omit<Message, "id" | "at"> = {
     role: "bot",
     kind: "text",
     text: words,
     inboundKind,
     from: { botId: target.id, name: target.name, color: target.color },
-    ...(copyOf?.messageIds.length ? { copyOf } : {}),
-  });
+    ...(effective?.messageIds.length ? { copyOf: { threadId: effective.threadId, messageIds: [...effective.messageIds] } } : {}),
+  };
+  const written = bus.store.appendMessage(channel.threadId, row.copyOf ? row : murageLine(row));
   bus.store.patchGroup(channel.id, { unread: true });
   return written.id;
 }
@@ -164,12 +189,13 @@ export function mirrorMurageLine(
   lineage: { requestId?: string; replyToId?: string } = {},
 ): void {
   if (!channel) return;
+  const kept = statusRecordOf(text);
   bus.store.appendMessage(channel.threadId, {
     role: "bot",
     kind: "activity",
     tool: { name: outboundWords(text), ok: murage.kind !== "failure" && murage.kind !== "cap" },
     actorKind: "murage",
-    murage,
+    murage: kept ? { ...murage, status: kept } : murage,
     ...(lineage.requestId ? { requestId: lineage.requestId } : {}),
     ...(lineage.replyToId ? { replyToId: lineage.replyToId } : {}),
   });
@@ -189,11 +215,13 @@ export function mirrorActivity(
   ok: boolean,
 ): void {
   if (!channel) return;
-  bus.store.appendMessage(channel.threadId, {
+  const kept = statusRecordOf(name);
+  bus.store.appendMessage(channel.threadId, murageLine({
     role: "bot",
     kind: "activity",
     tool: { name: outboundWords(name), ok },
     from: { botId: from.id, name: from.name, color: from.color },
-  });
+    ...(kept ? { murage: { kind: ok ? "status" as const : "failure" as const, status: kept } } : {}),
+  }));
   bus.store.patchGroup(channel.id, { unread: true });
 }

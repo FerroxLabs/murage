@@ -10,7 +10,7 @@
 //            line(T, l)     deny_line, then range(T, l)
 //            range(T, a)    once per thread per revoke (memory_revoke_reached): deny_range(T, a, now); out-carries with parent_lsn >= a
 //                           (point carries only from generated lines or a itself), captures of generated lines (and a) as source
-//                           nodes, the thread's sessions used after a as deny_session
+//                           nodes, the thread's sessions begun before the range's cap and used after a as deny_session
 //            source(s)      deny_memory; its message line; records resting on it (memory_evidence_by_source); copies brought in from
 //                           it (memory_source_origins); receipts citing it (memory_disclosure_refs)
 //            record(r, v)   deny_memory (not for a soft root: archive, correct, revise only withdraw what was shown); the forgotten
@@ -26,7 +26,7 @@
 import type { DatabaseSync, StatementSync } from "node:sqlite";
 import { currentLsn } from "./lineage-write.ts";
 import { threadIdOf, threadNo } from "./thread-no.ts";
-import { drainReceiptFlips, receiptStart } from "./receipt-outputs.ts";
+import { FLIP_DRAIN_MAX, receiptStart } from "./receipt-outputs.ts";
 import { AUDIENCE_COALESCED, CONSUMED_REF_KINDS, decodeCarryChild, decodeNode, DENY_RANGE_COALESCE, encodeNode, MARKER_SLICE_ROWS, objectCarryThread, PENDING_ALL_SCOPES, PENDING_ALL_THREADS, UNKNOWN_LSN, type FrontierNode, type MemoryRefKind } from "./lineage-types.ts";
 
 export { PENDING_ALL_SCOPES };
@@ -57,13 +57,49 @@ export function hasWritetime(db: DatabaseSync): boolean {
   return has;
 }
 const hasTable = (db: DatabaseSync, name: string) => Boolean(st(db, "SELECT 1 FROM sqlite_schema WHERE type='table' AND name=?").get(name));
+const foldTable = new WeakMap<DatabaseSync, boolean>();
+/** Whether this file holds the revoke fold's map (schema.ts REVOKE_LATE_SQL; only a positive answer is kept). */
+export function hasFoldMap(db: DatabaseSync): boolean {
+  if (foldTable.get(db)) return true;
+  const has = hasTable(db, "memory_revoke_fold");
+  if (has) foldTable.set(db, true);
+  return has;
+}
+/** The revoke id that now carries `revokeId`'s work: the fold bulk it was folded into, or itself (1.0.3 revoke fold, F1.6). One seek; the map
+ * is one hop (a fold bulk is never folded), so no chain is followed. Applied at every entry that takes a revoke id from a mark row or a
+ * caller (inheritance, enqueueReceipts, holds). */
+export function resolveRevoke(db: DatabaseSync, revokeId: number): number {
+  if (!(revokeId > 0) || !hasFoldMap(db)) return revokeId;
+  const to = st(db, "SELECT bulk_id FROM memory_revoke_fold WHERE old_id=?").get(revokeId)?.bulk_id;
+  return to === undefined || to === null ? revokeId : Number(to);
+}
+/** Whether undoing `revokeId` is refused (1.0.3 REVOKE-FOLD-DESIGN F1.7, r4 A2): it was folded (a map row), it is a fold bulk (a map
+ * destination, whatever its job row now is, or a root with cause "fold"), or it is listed in a seeding fold bulk's cohort and not yet
+ * enrolled. Read before the job row, so a pruned or recreated fold bulk is refused too. */
+export function foldRefusesUndo(db: DatabaseSync, revokeId: number): boolean {
+  if (hasFoldMap(db) && st(db, "SELECT 1 AS x FROM memory_revoke_fold WHERE old_id=?1 OR bulk_id=?1 LIMIT 1").get(revokeId)) return true;
+  const job = st(db, "SELECT root FROM memory_revoke_jobs WHERE revoke_id=?").get(revokeId);
+  if (job && isFoldBulk(db, revokeId, String(job.root))) return true;
+  return Boolean(st(db, `SELECT 1 AS x FROM memory_revoke_jobs j, json_each(CASE WHEN json_valid(j.root) THEN j.root ELSE '{}' END,'$.cohort.ids') e
+    WHERE j.state='seeding' AND j.kind='bulk' AND e.value=? LIMIT 1`).get(revokeId));
+}
+/** Whether `revokeId` is a fold bulk: its root says so, or (after its job row was pruned and perhaps recreated by inheritance) it is the
+ * destination of a fold map row (REVOKE-FOLD-DESIGN r4 A2). */
+export function isFoldBulk(db: DatabaseSync, revokeId: number, root?: string): boolean {
+  if (root !== undefined) { try { if (JSON.parse(root)?.cause === "fold") return true; } catch { /* unreadable root: the map decides */ } }
+  return hasFoldMap(db) && Boolean(st(db, "SELECT 1 AS x FROM memory_revoke_fold WHERE bulk_id=? LIMIT 1").get(revokeId));
+}
 
-export type JobState = "active" | "undoing" | "done" | "undone";
+/** 'folded' (1.0.3 revoke fold, revoke-fold.ts): the job's work was copied into a fold bulk; no slice serves it, and the bulk's tidy
+ * deletes its row. 'seeding': a bulk revoke whose roots are still being added (revoke-commit.ts openBulkRevoke). */
+export type JobState = "active" | "undoing" | "done" | "undone" | "folded" | "seeding";
 export type JobPhase = "flow" | "mark" | "hold" | "tidy" | "undo" | "done";
 type JobRow = { revoke_id: number; kind: string; root: string; root_lsn: number; started_lsn: number; phase: JobPhase; cursor: string; state: JobState };
-type Budget = { rows: number; deadline: number };
+type Budget = { rows: number; deadline: number; over?: () => boolean };
 const spend = (budget: Budget, n: number) => { budget.rows -= Math.max(1, n); };
-const exhausted = (budget: Budget) => budget.rows <= 0 || performance.now() >= budget.deadline;
+const exhausted = (budget: Budget) => budget.rows <= 0 || performance.now() >= budget.deadline || Boolean(budget.over?.());
+/** Rows this connection changed so far (inserts, updates and deletes, trigger writes included): the marker's write meter. */
+export const totalChanges = (db: DatabaseSync): number => Number(st(db, "SELECT total_changes() AS n").get()?.n ?? 0);
 /** Rows one step reads. A step that enqueues a node per row (several statements each) reads at most a quarter of MARKER_SLICE_ROWS, so
  * one step stays well inside a slice: the deadline is checked between steps. */
 const page = (budget: Budget) => Math.max(1, Math.min(MARKER_SLICE_ROWS / 4, budget.rows));
@@ -91,12 +127,19 @@ function pushFlow(db: DatabaseSync, revokeId: number, node: string, since: numbe
   const seq = Math.min(0, Number(first ?? 0)) - 1;
   st(db, "INSERT INTO memory_revoke_frontier(revoke_id,seq,node) VALUES(?,?,?)").run(revokeId, seq, JSON.stringify({ node, since }));
 }
-/** Pending row for a thread or `scope:` node of a revoke, kept at the smallest since. True when it was new or moved earlier. */
+/** Pending row for a thread or `scope:` node of a revoke, kept at the smallest since. True when it was new or moved earlier.
+ * A thread row at or before the revoke's commit (started_lsn) holds only lines of turns begun before the commit (deny-read.ts
+ * pendingWindows); a row after it (an inherit hold for a line derived after the commit) holds every line from its since. So an earlier row
+ * covers a later one only on the same side of the commit: a post-commit hold is kept beside the revoke's own window, never folded into it. */
 export function markPending(db: DatabaseSync, revokeId: number, node: string, since: number): boolean {
   const scope = node.startsWith("scope:");
   const table = scope ? "memory_deny_pending_scope" : "memory_deny_pending", column = scope ? "scope_id" : "thread_id";
   const key = scope ? node.slice("scope:".length) : node;
-  const held = st(db, `SELECT min(since_lsn) AS s FROM ${table} WHERE ${column}=? AND revoke_id=?`).get(key, revokeId)?.s;
+  const started = scope ? undefined : st(db, "SELECT started_lsn FROM memory_revoke_jobs WHERE revoke_id=?").get(revokeId)?.started_lsn;
+  const after = started !== undefined && started !== null && since > Number(started);
+  const held = after
+    ? st(db, `SELECT min(since_lsn) AS s FROM ${table} WHERE ${column}=? AND revoke_id=? AND since_lsn>?`).get(key, revokeId, Number(started))?.s
+    : st(db, `SELECT min(since_lsn) AS s FROM ${table} WHERE ${column}=? AND revoke_id=?`).get(key, revokeId)?.s;
   if (held !== null && held !== undefined && Number(held) <= since) return false;
   st(db, `INSERT OR IGNORE INTO ${table}(${column},since_lsn,revoke_id) VALUES(?,?,?)`).run(key, since, revokeId);
   return true;
@@ -152,15 +195,18 @@ const visit = (db: DatabaseSync, revokeId: number, key: string): boolean =>
 /** Holds keep the revoke's pending rows while a bookkeeping job (memory-revocation.ts) still has work readers depend on. */
 export const HOLD_PREFIX = "hold:";
 export function holdRevoke(db: DatabaseSync, revokeId: number, bookkeepingJobId: string): void {
+  if (revokeId > 0 && hasWritetime(db)) revokeId = resolveRevoke(db, revokeId);
   if (revokeId > 0 && hasWritetime(db)) st(db, "INSERT OR IGNORE INTO memory_revoke_reached(revoke_id,thread_id,from_lsn) VALUES(?,?,0)").run(revokeId, `${HOLD_PREFIX}${bookkeepingJobId}`);
 }
 export function releaseHold(db: DatabaseSync, revokeId: number, bookkeepingJobId: string): void {
+  if (revokeId > 0 && hasWritetime(db)) revokeId = resolveRevoke(db, revokeId);
   if (revokeId > 0 && hasWritetime(db)) st(db, "DELETE FROM memory_revoke_reached WHERE revoke_id=? AND thread_id=?").run(revokeId, `${HOLD_PREFIX}${bookkeepingJobId}`);
 }
 /** The receipts a bookkeeping job flipped for a revoke: their refs rows are gone with the flip (schema v8 triggers), so the marker could
  * not find them again by what they cite; they enter its frontier here. */
 export function enqueueReceipts(db: DatabaseSync, revokeId: number, bundleIds: readonly string[]): void {
   if (!(revokeId > 0) || !bundleIds.length || !hasWritetime(db)) return;
+  revokeId = resolveRevoke(db, revokeId);
   const job = st(db, "SELECT state FROM memory_revoke_jobs WHERE revoke_id=?").get(revokeId);
   if (!job || job.state === "undoing" || job.state === "undone") return;
   enqueueNodes(db, revokeId, bundleIds.map(bundleId => ({ kind: "receipt" as const, bundleId })));
@@ -199,9 +245,9 @@ type Handler = (db: DatabaseSync, job: JobRow, node: any, c: Cursor, budget: Bud
 const reasonOf = (job: JobRow) => { try { return String(JSON.parse(job.root)?.cause ?? job.kind); } catch { return job.kind; } };
 function rootOf(job: JobRow): Record<string, any> { try { return JSON.parse(job.root) ?? {}; } catch { return {}; } }
 
-function lineNode(db: DatabaseSync, job: JobRow, node: { threadId: string; lsn: number }): boolean {
+function lineNode(db: DatabaseSync, job: JobRow, node: { threadId: string; lsn: number; from?: number }): boolean {
   writeLine(db, job.revoke_id, node.threadId, node.lsn, reasonOf(job));
-  enqueueNode(db, job.revoke_id, { kind: "range", threadId: node.threadId, fromLsn: node.lsn });
+  enqueueNode(db, job.revoke_id, { kind: "range", threadId: node.threadId, fromLsn: node.from ?? node.lsn });
   return true;
 }
 /** A carry's child as a frontier node (lineage-types.ts decodeCarryChild: the one child_ref encoding every writer uses). A child_ref that does
@@ -257,7 +303,10 @@ function rangeNode(db: DatabaseSync, job: JobRow, node: { threadId: string; from
     const bounded = root.kind === "line" && root.threadId === T && Number.isSafeInteger(root.until);
     // (a walk that runs after a turn began is capped at the revoke's own commit: a turn begun after the owner's action is a new turn, not one the
     // action reached; a line of such a turn that rests on a denied parent is written into the frontier at write time, DESIGN-WRITETIME 2.3)
-    const until = bounded ? Math.min(Number(root.until), currentLsn(db)) : Math.min(currentLsn(db), Number(job.started_lsn));
+    // a root's own range row, written at its commit with its own slot as the cap (revoke-commit.ts commitRevoke), keeps that cap: a root
+    // added to a bulk revoke after it opened commits later than the job's started_lsn
+    const rootCap = bound ? Number(bound.u) : Number(job.started_lsn);
+    const until = bounded ? Math.min(Number(root.until), currentLsn(db)) : Math.min(currentLsn(db), Math.max(Number(job.started_lsn), rootCap));
     writeRange(db, R, T, a, until, reasonOf(job));
     c.stage = "carry"; c.hi = held === undefined || held === null ? null : Number(held); c.at = null;
     // what rests on a line of a later turn is not reached through this range (rangeReached): an ordinary revoke's range ends at its commit
@@ -302,11 +351,19 @@ function rangeNode(db: DatabaseSync, job: JobRow, node: { threadId: string; from
     c.stage = "sess"; c.at = null;
     return false;
   }
-  // sessions of the thread that ran after the line: their engines hold it
+  // sessions of the thread that held the line: begun before the range's cap (first_lsn, the head its first prompt was built on, below
+  // c.until: the revoke's commit, its own lsn slot, or a bounded root's own bound) and run to or past the line (last_lsn >= a: a session
+  // begun on the line itself as its head held it, and an in-place edit of that line leaves it holding the old words). A session row written
+  // after this stage ran is marked at its write (lineage-write.ts writeSessionLineage). A session begun at or after the cap
+  // never held the line: its first prompt was built under the window this revoke opened, or on the new branch a bounded root (an edit, a
+  // regenerate) stops at (1.0.3 engine-switch: a long walk on a large thread marked every session started while it ran, so each resume
+  // reset, Claude included). One begun between the line and the cap did hold it (an engine switched in mid-thread is replayed the
+  // transcript), so it is still marked.
   const rows = (c.at
-    ? st(db, "SELECT driver_instance,native_session,last_lsn FROM memory_session_lineage WHERE thread_id=? AND (driver_instance,native_session)>(?,?) ORDER BY driver_instance,native_session LIMIT ?").all(T, c.at[0], c.at[1], n)
-    : st(db, "SELECT driver_instance,native_session,last_lsn FROM memory_session_lineage WHERE thread_id=? ORDER BY driver_instance,native_session LIMIT ?").all(T, n)) as Array<{ driver_instance: string; native_session: string; last_lsn: number }>;
-  for (const row of rows) if (Number(row.last_lsn) > a) writeSession(db, R, T, String(row.driver_instance), String(row.native_session));
+    ? st(db, "SELECT driver_instance,native_session,first_lsn,last_lsn FROM memory_session_lineage WHERE thread_id=? AND (driver_instance,native_session)>(?,?) ORDER BY driver_instance,native_session LIMIT ?").all(T, c.at[0], c.at[1], n)
+    : st(db, "SELECT driver_instance,native_session,first_lsn,last_lsn FROM memory_session_lineage WHERE thread_id=? ORDER BY driver_instance,native_session LIMIT ?").all(T, n)) as Array<{ driver_instance: string; native_session: string; first_lsn: number; last_lsn: number }>;
+  const cap = Number(c.until ?? Math.min(currentLsn(db), Number(job.started_lsn)));
+  for (const row of rows) if (Number(row.first_lsn) < cap && Number(row.last_lsn) >= a) writeSession(db, R, T, String(row.driver_instance), String(row.native_session));
   spend(budget, rows.length);
   if (rows.length === n) { const last = rows[rows.length - 1]!; c.at = [String(last.driver_instance), String(last.native_session)]; return false; }
   return true;
@@ -508,7 +565,9 @@ function pruneFinished(db: DatabaseSync): void {
   st(db, "DELETE FROM memory_revoke_jobs WHERE state IN ('done','undone') AND revoke_id<(SELECT max(revoke_id) FROM memory_revoke_jobs)").run();
 }
 
-function advance(db: DatabaseSync, job: JobRow, budget: Budget, late: LateBuild | null): Step {
+/** `flowOnly` (1.0.3 revoke drain, F3): the slice is running every pending job's flow phase before any job marks; the job stops at the end
+ * of its flow phase (its '*' rows already gone, its phase 'mark') so the next job's flow runs next. */
+function advance(db: DatabaseSync, job: JobRow, budget: Budget, late: LateBuild | null, flowOnly = false): Step {
   let c: Cursor = {};
   try { c = job.cursor ? JSON.parse(job.cursor) : {}; } catch { c = {}; }
   let progressed = false;
@@ -519,12 +578,14 @@ function advance(db: DatabaseSync, job: JobRow, budget: Budget, late: LateBuild 
     try {
     if (job.phase === "flow") {
       if (flowStep(db, job, c, budget)) {
-        if (scopeFlowEdgesRecorded && Number(st(db, "SELECT ready FROM memory_lineage_cert WHERE id=1").get()?.ready ?? 0) === 1) {
+        // a fold bulk keeps its '*' rows to its tidy (REVOKE-FOLD-DESIGN F1.4): nothing rests on its members' earlier flow passes
+        if (scopeFlowEdgesRecorded && Number(st(db, "SELECT ready FROM memory_lineage_cert WHERE id=1").get()?.ready ?? 0) === 1 && !isFoldBulk(db, job.revoke_id, job.root)) {
           st(db, "DELETE FROM memory_deny_pending WHERE thread_id=? AND revoke_id=?").run(PENDING_ALL_THREADS, job.revoke_id);
           st(db, "DELETE FROM memory_deny_pending_scope WHERE scope_id=? AND revoke_id=?").run(PENDING_ALL_SCOPES, job.revoke_id);
           bumpDenyGeneration(db);
         }
         job.phase = "mark"; c = {};
+        if (flowOnly) { save(); return "progress"; }
       }
     } else if (job.phase === "mark") {
       const done = markStep(db, job, c, budget);
@@ -546,7 +607,18 @@ function advance(db: DatabaseSync, job: JobRow, budget: Budget, late: LateBuild 
       else { job.phase = "tidy"; c = {}; }
     } else if (job.phase === "tidy") {
       if (st(db, "SELECT 1 FROM memory_revoke_frontier WHERE revoke_id=? LIMIT 1").get(job.revoke_id)) { job.phase = "mark"; continue; }
-      if (tidyStep(db, job, budget)) { job.phase = "done"; job.state = "done"; c = {}; bumpDenyGeneration(db); save(); pruneFinished(db); return "progress"; }
+      if (tidyStep(db, job, budget)) {
+        // a fold bulk's members leave their 'folded' rows last (F1.4), a page per step (a cohort holds up to FLIP_DRAIN_MAX members): the
+        // bulk is done only once none is left, and a restart resumes the tidy. Their ids stay in the map and in memory_revoke_audience.
+        if (hasFoldMap(db)) {
+          const n = page(budget);
+          const gone = Number(st(db, `DELETE FROM memory_revoke_jobs WHERE revoke_id IN (SELECT f.old_id FROM memory_revoke_fold f JOIN memory_revoke_jobs j
+            ON j.revoke_id=f.old_id WHERE f.bulk_id=?1 AND j.state='folded' LIMIT ?2)`).run(job.revoke_id, n).changes);
+          if (gone) spend(budget, gone);
+          if (gone >= n) { progressed = true; continue; }
+        }
+        job.phase = "done"; job.state = "done"; c = {}; bumpDenyGeneration(db); save(); pruneFinished(db); return "progress";
+      }
     } else if (job.phase === "undo") {
       if (undoStep(db, job, budget)) { job.phase = "done"; job.state = "undone"; c = {}; bumpDenyGeneration(db); save(); pruneFinished(db); return "progress"; }
     } else { job.state = job.state === "undoing" ? "undone" : "done"; save(); return "progress"; }
@@ -558,17 +630,50 @@ function advance(db: DatabaseSync, job: JobRow, budget: Budget, late: LateBuild 
 }
 
 const ACTIVE_JOBS = "SELECT revoke_id,kind,root,root_lsn,started_lsn,phase,cursor,state FROM memory_revoke_jobs WHERE state IN ('active','undoing') ORDER BY revoke_id LIMIT 16";
+/** The oldest job still narrowing (1.0.3 revoke drain, F3). */
+const FLOW_JOB = "SELECT revoke_id,kind,root,root_lsn,started_lsn,phase,cursor,state FROM memory_revoke_jobs WHERE state='active' AND phase='flow' ORDER BY revoke_id LIMIT 1";
+const ACTIVE_JOB_ONE = "SELECT revoke_id,kind,root,root_lsn,started_lsn,phase,cursor,state FROM memory_revoke_jobs WHERE state IN ('active','undoing') AND revoke_id=?";
 /** One marker slice (caller's transaction): the oldest revoke with work moves within the budget. True when it did work; false when no
  * revoke waits or every waiting one is held by its bookkeeping job (the runner then runs that job). */
-/** The receipt commit drainReceiptFlips runs (revoke-commit.ts commitRevoke; set there, which imports this module). A `var` with no
+/** The flip drain (revoke-commit.ts drainFlipsIntoBulk: one audience bulk per drain; set there, which imports this module). A `var` with no
  * initializer: revoke-commit.ts may set it while this module is still being evaluated (the lineage-write -> revoke-commit import cycle),
  * when a `let` would still be in its temporal dead zone and an initializer would later overwrite the value. */
 // eslint-disable-next-line no-var
-var commitFlip: ((db: DatabaseSync, bundleId: string) => void) | undefined;
-export function setFlipCommit(commit: (db: DatabaseSync, bundleId: string) => void): void { commitFlip = commit; }
-export function markerSlice(db: DatabaseSync, rows: number = MARKER_SLICE_ROWS, ms: number = Number.POSITIVE_INFINITY, late: LateBuild | null = null): boolean {
+var drainFlips: ((db: DatabaseSync, limit: number, fits: (cost: number, first: boolean) => boolean) => number) | undefined;
+/** The rows committing the oldest queued flip writes, its bulk's opening included (revoke-commit.ts receiptCommitCost); 0 when none waits. */
+// eslint-disable-next-line no-var
+var headFlipCostOf: ((db: DatabaseSync) => number) | undefined;
+export function setFlipDrain(drain: (db: DatabaseSync, limit: number, fits: (cost: number, first: boolean) => boolean) => number, headCost?: (db: DatabaseSync) => number): void {
+  drainFlips = drain;
+  if (headCost) headFlipCostOf = headCost;
+}
+/** Rows the oldest queued receipt flip's commit writes (0: no flip waits). revoke-budget.ts admits a slice only with room for it. */
+export function headFlipCost(db: DatabaseSync): number {
+  try { return hasWritetime(db) ? Math.max(headFlipCostOf ? headFlipCostOf(db) : 0, foldHooks ? foldHooks.need(db) : 0) : 0; } catch { return 0; }
+}
+/** One fold slice's view of the marker's budget (revoke-fold.ts). */
+export type FoldBudget = { rows: () => number; spend: (n: number) => void; exhausted: () => boolean; fits: (cost: number, first: boolean) => boolean };
+/** The revoke fold (revoke-fold.ts, 1.0.3 REVOKE-FOLD-DESIGN): `slice` moves a seeding fold bulk or opens one (null: no fold work this
+ * slice); `need`: rows its next indivisible step writes (0: none); `pending`: a fold bulk is still seeding. Set there, as setFlipDrain is. */
+export type FoldHooks = { slice: (db: DatabaseSync, budget: FoldBudget) => boolean | "blocked" | null; need: (db: DatabaseSync) => number; pending: (db: DatabaseSync) => boolean };
+// eslint-disable-next-line no-var
+var foldHooks: FoldHooks | undefined;
+export function setFoldHooks(hooks: FoldHooks): void { foldHooks = hooks; }
+const flipQueued = (db: DatabaseSync) => Boolean(st(db, "SELECT 1 FROM memory_receipt_flips LIMIT 1").get());
+/** Changes a write-capped slice may run past its cap: more than one marker step writes (a step reads at most MARKER_SLICE_ROWS / 4 rows).
+ * revoke-budget.ts holds it back from every slice's cap, so the minute's writes stay inside the budget. The first flip of a drain may use
+ * it too (its whole cost is then at most the minute's room; no flip costs more than a whole minute: revoke-commit.ts receiptHoldPlan). */
+export const MARKER_STEP_RESERVE = 512;
+/** Options of one capped slice. `only`: an owner's inline walk (revoke-commit.ts markInline) moves only its own revoke and never drains
+ * the queued flips (unrelated backlog the runner carries). */
+export type MarkerSliceOptions = { only?: number };
+/** One marker slice. `maxChanges` (1.0.3 revoke storm, M3): the most rows the slice may change, every write counted (marks, frontier
+ * enqueues, visits, pending, hold and job rows; SQLite's total_changes(), which counts trigger writes too). It is checked between steps, so a
+ * slice ends within one step of it (revoke-budget.ts holds the per-minute budget this comes from). "blocked": a receipt flip waits and the
+ * cap had no room to commit it, so nothing moved (no revoke advances while a flip waits: see runMarkerSlice). */
+export function markerSlice(db: DatabaseSync, rows: number = MARKER_SLICE_ROWS, ms: number = Number.POSITIVE_INFINITY, late: LateBuild | null = null, maxChanges: number = Number.POSITIVE_INFINITY, opts: MarkerSliceOptions = {}): boolean | "blocked" {
   const before = upgradeWork.get(db) ?? 0;
-  const moved = runMarkerSlice(db, rows, ms, late);
+  const moved = runMarkerSlice(db, rows, ms, late, maxChanges, opts);
   const worked = (upgradeWork.get(db) ?? 0) - before;
   // The count lives in the certificate's cursor JSON. A ready certificate's empty default cursor becomes '{...}' (the backfill no longer reads
   // it); an unstarted backfill's empty cursor is left alone, because the backfill reads any non-empty cursor as its own position.
@@ -576,12 +681,49 @@ export function markerSlice(db: DatabaseSync, rows: number = MARKER_SLICE_ROWS, 
     '$.markerWork',CASE WHEN json_valid(cursor) THEN coalesce(json_extract(cursor,'$.markerWork'),0) ELSE 0 END + ?) WHERE id=1 AND (json_valid(cursor) OR ready=1)`).run(worked);
   return moved;
 }
-function runMarkerSlice(db: DatabaseSync, rows: number, ms: number, late: LateBuild | null): boolean {
+function runMarkerSlice(db: DatabaseSync, rows: number, ms: number, late: LateBuild | null, maxChanges: number, opts: MarkerSliceOptions): boolean | "blocked" {
   if (!hasWritetime(db)) return false;
-  // receipts some path turned 'revoked' (the v10 flip trigger) become receipt roots first: until then readers hold their lines "checking"
-  if (commitFlip && drainReceiptFlips(db, bundleId => commitFlip!(db, bundleId), Math.max(1, Math.min(64, rows))) > 0) return true;
-  const budget: Budget = { rows: Math.max(1, rows), deadline: performance.now() + ms };
-  for (const row of st(db, ACTIVE_JOBS).all() as JobRow[]) {
+  // the slice's deadline and write cap hold from its start, the flip drain included
+  const capped = Number.isFinite(maxChanges), start = capped ? totalChanges(db) : 0;
+  const over = capped ? () => totalChanges(db) - start >= maxChanges : undefined;
+  const budget: Budget = { rows: Math.max(1, rows), deadline: performance.now() + ms, ...(over ? { over } : {}) };
+  // A queued flip has already left memory_disclosure_refs, and its consumer edges are written only when it is drained (revoke-commit.ts
+  // holdRevokedReceipt). Until then a content forget walking the items it cites would find neither, so NO revoke advances while a flip
+  // waits: the flips are drained first, and a slice that cannot drain one moves nothing ("blocked"; the runner waits for room).
+  if (flipQueued(db)) {
+    if (opts.only !== undefined || !drainFlips) return false; // an owner's inline walk never drains the backlog; the runner does
+    // a flip is committed only when its whole cost fits the cap and the deadline; the first of a drain may use the step reserve
+    const fits = (cost: number, first: boolean) => {
+      if (!first && performance.now() >= budget.deadline) return false;
+      return !capped || totalChanges(db) - start + cost <= maxChanges + (first ? MARKER_STEP_RESERVE : 0);
+    };
+    return drainFlips(db, FLIP_DRAIN_MAX, fits) > 0 ? true : "blocked";
+  }
+  // Every pending job's flow phase runs before any job marks (1.0.3 revoke drain, F3). A flow phase is the cheap narrowing of the job's own
+  // windows: from a '*' pending row over every thread and scope to one row per thread or scope its root can reach (its end is where the
+  // design drops the '*' rows: the module header, "the flow phase ends the '*' pending rows at once"). Only the order across jobs changes,
+  // never a job's own phases: each job still narrows, then marks, holds and tidies in that order, and its pending rows stay until its
+  // last mark (REVOKE-STORM-DESIGN-M M1: the pending windows and the flow narrowing as they are; M3: bounded slices under the budget;
+  // M4: each existing job finishes as it is). No job's marks read another job's flow rows, so marking later withholds no less. The queued
+  // flips still go first (above), and an owner's inline walk (`only`) still moves only its own revoke.
+  // The revoke fold (1.0.3 REVOKE-FOLD-DESIGN F1.1): after the flips, before any job's flow or marks. A seeding fold bulk takes the marker's
+  // turn (no slice advances a member while its rows are copied); at listen, and in the runner when two or more flow-phase bulks wait, the
+  // cohorts are tested and one is folded per slice. An owner's inline walk never folds.
+  if (opts.only === undefined && foldHooks) {
+    const folded = foldHooks.slice(db, {
+      rows: () => budget.rows, spend: n => spend(budget, n), exhausted: () => exhausted(budget),
+      // a step's whole cost must fit the cap; the slice's first step may use the step reserve (as the first flip of a drain does)
+      fits: (cost, firstStep) => !capped || totalChanges(db) - start + cost <= maxChanges + (firstStep ? MARKER_STEP_RESERVE : 0),
+    });
+    if (folded !== null) return folded;
+  }
+  if (opts.only === undefined) {
+    for (let flow = st(db, FLOW_JOB).get() as JobRow | undefined; flow; flow = st(db, FLOW_JOB).get() as JobRow | undefined) {
+      advance(db, { ...flow, revoke_id: Number(flow.revoke_id) } as JobRow, budget, late, true);
+      if (exhausted(budget)) return true;
+    }
+  }
+  for (const row of st(db, opts.only === undefined ? ACTIVE_JOBS : ACTIVE_JOB_ONE).all(...(opts.only === undefined ? [] : [opts.only])) as JobRow[]) {
     const job = { ...row, revoke_id: Number(row.revoke_id) } as JobRow;
     if (advance(db, job, budget, late) === "progress") return true;
   }
@@ -589,6 +731,6 @@ function runMarkerSlice(db: DatabaseSync, rows: number, ms: number, late: LateBu
 }
 /** Whether any revoke still has work (a start-up VACUUM and the idle wait both wait for it). */
 export function markerWorkPending(db: DatabaseSync): boolean {
-  try { return hasWritetime(db) && (Boolean(st(db, "SELECT 1 FROM memory_revoke_jobs WHERE state IN ('active','undoing') LIMIT 1").get()) || Boolean(st(db, "SELECT 1 FROM memory_receipt_flips LIMIT 1").get())); }
+  try { return hasWritetime(db) && (Boolean(st(db, "SELECT 1 FROM memory_revoke_jobs WHERE state IN ('active','undoing') LIMIT 1").get()) || Boolean(st(db, "SELECT 1 FROM memory_receipt_flips LIMIT 1").get()) || Boolean(foldHooks?.pending(db))); }
   catch { return false; }
 }

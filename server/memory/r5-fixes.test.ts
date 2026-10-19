@@ -3,9 +3,10 @@
 //
 // Astra mem-review round 5. P1 ancestry (a row naming no parent is never a proven root, any role), P1 repair failure (replay of outputs is
 // withheld, fail closed, until a repair succeeds), P1 holds and stamps bound to the connection, P2 terminal capture costs the turn, not the history.
-import { mkdirSync, rmSync } from "node:fs";
+import { mkdirSync } from "node:fs";
 import { beforeEach, expect, it, afterEach } from "vitest";
 import { thawRootSetWritesForTest } from "./replay-lineage.ts";
+import { removeTempDirSync } from "../testing/cleanup.ts";
 // 1.0.2: this file drives the read-time root-set machinery over rows a 1.0.1 file holds; thaw the frozen root-set writes to model them.
 beforeEach(() => thawRootSetWritesForTest(true));
 afterEach(() => thawRootSetWritesForTest(false));
@@ -24,11 +25,13 @@ import { outputRootsFor, recordSessionRoots, replayExclusions } from "./replay-l
 import { setMemoryMode } from "./repository.ts";
 import { backfillOutputRoots } from "./schema.ts";
 import { LineageAllowance } from "./lineage-allowance.ts";
+import { stampFreshSession } from "./testing/writetime-fixture.ts";
+import { storeAnchorMessage } from "./testing/anchor-message.ts";
 
 const roster: MemoryRoster = { bots: [{ id: "bot", threadId: "chat", tasks: [{ threadId: "older" }] }], groups: [] };
 beforeEach(() => {
   setRepairRunnerForTest(null); setRepairRetryBaseMs(1_000_000_000);
-  closeDatabase(); rmSync(DATA_DIR, { recursive: true, force: true }); mkdirSync(DATA_DIR, { recursive: true });
+  closeDatabase(); removeTempDirSync(DATA_DIR); mkdirSync(DATA_DIR, { recursive: true });
   setMemoryMode("active"); reconcileMemoryRoster(roster); resetSessionHolds();
 });
 
@@ -39,7 +42,7 @@ function access() {
 let counter = 0;
 function secretRecord() {
   const text = `The alarm code is ${4800 + counter++}.`, sourceId = `message:older:m${counter}`;
-  captureSource(database(), { id: sourceId, threadId: "older", messageId: `m${counter}`, kind: "text", speaker: "owner", outcome: "recorded", text });
+  storeAnchorMessage(database(), "older", `m${counter}`, text); captureSource(database(), { id: sourceId, threadId: "older", messageId: `m${counter}`, kind: "text", speaker: "owner", outcome: "recorded", text });
   const record = saveMemoryCandidate(text, [{ sourceId, revision: 1, startByte: 0, endByte: Buffer.byteLength(text) }], `k${counter}`, access());
   database().prepare("UPDATE memory_records SET state='active' WHERE id=?").run(record);
   return record;
@@ -122,6 +125,7 @@ it("P1 connection identity: a replacement connection never matches the stamps of
   receiptFor(record, "A");
   put("A", 10, { parentId: null });
   recordSessionRoots("chat", "engine", "S", outputRootsFor(LineageAllowance.tool(1_000_000_000), []));
+  stampFreshSession(database(), "chat", "engine", "S"); // stamped as a 1.0.3 fresh start leaves it (S6 rule 26)
   const check = () => continuationMemoryRevoked(LineageAllowance.tool(), "chat", "engine", "S", access());
   expect(check()).toBe(false);
   const before = authorityStamp(), parts = authorityParts();

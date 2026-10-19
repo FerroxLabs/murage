@@ -8,9 +8,10 @@
 //   fence   the driver send types run the send fence before every engine write and refuse when a part may no longer be shown;
 //   cost    read_messages costs the same statements and rows, and records the same number of refs, at 1,000 and 100,000 lines.
 // S1's running turn and S4's predicate are S0 stubs at this point of the lane; memory/testing/fake-lineage.ts models them.
-import { mkdirSync, rmSync } from "node:fs";
+import { mkdirSync } from "node:fs";
 import type { StatementSync } from "node:sqlite";
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
+import { removeTempDirSync } from "./testing/cleanup.ts";
 
 vi.mock("./memory/lineage-write.ts", async importOriginal => ({ ...(await importOriginal<object>()), ...(await import("./memory/testing/fake-lineage.ts")).fakeWrite }));
 vi.mock("./memory/deny-read.ts", async importOriginal => ({ ...(await importOriginal<object>()), ...(await import("./memory/testing/fake-lineage.ts")).fakeRead }));
@@ -31,12 +32,12 @@ async function load() {
   const mods = await Promise.all([import("./database.ts"), import("./internal-capabilities.ts"), import("./message-db.ts"), import("./memory/authority.ts"),
     import("./memory/bring-in.ts"), import("./memory/capture.ts"), import("./memory/capture-scope.ts"), import("./memory/deny-read.ts"), import("./memory/policy.ts"),
     import("./memory/prompt-parts.ts"), import("./memory/repository.ts"), import("./project-memory-tools.ts"), import("./project-tool-routing.ts"),
-    import("./project-settings.ts"), import("./room-transcript.ts"), import("./working-context.ts"), import("./drivers/engine-input.ts"), import("./skills.ts"), import("./memory/procedure-review.ts")]);
+    import("./project-settings.ts"), import("./room-transcript.ts"), import("./working-context.ts"), import("./drivers/engine-input.ts"), import("./skills.ts"), import("./memory/procedure-review.ts"), import("./execution-audience.ts")]);
   return Object.assign({}, fake, ...mods) as typeof fake & typeof import("./database.ts") & typeof import("./internal-capabilities.ts") & typeof import("./message-db.ts")
     & typeof import("./memory/authority.ts") & typeof import("./memory/bring-in.ts") & typeof import("./memory/capture.ts") & typeof import("./memory/capture-scope.ts")
     & typeof import("./memory/deny-read.ts") & typeof import("./memory/policy.ts") & typeof import("./memory/prompt-parts.ts") & typeof import("./memory/repository.ts")
     & typeof import("./project-memory-tools.ts") & typeof import("./project-tool-routing.ts") & typeof import("./project-settings.ts") & typeof import("./room-transcript.ts")
-    & typeof import("./working-context.ts") & typeof import("./drivers/engine-input.ts") & typeof import("./skills.ts") & typeof import("./memory/procedure-review.ts");
+    & typeof import("./working-context.ts") & typeof import("./drivers/engine-input.ts") & typeof import("./skills.ts") & typeof import("./memory/procedure-review.ts") & typeof import("./execution-audience.ts");
 }
 let M: Awaited<ReturnType<typeof load>>;
 beforeAll(async () => { M = await load(); }, 120_000);
@@ -45,7 +46,7 @@ const NOW = 1_790_000_000_000;
 type Roster = MemoryRoster & { bots: Array<MemoryRoster["bots"][number] & { name: string }> };
 let roster: Roster;
 beforeEach(() => {
-  M.closeDatabase(); rmSync(DATA_DIR, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 }); mkdirSync(DATA_DIR, { recursive: true });
+  M.closeDatabase(); removeTempDirSync(DATA_DIR); mkdirSync(DATA_DIR, { recursive: true });
   M.fakeLineage.reset();
   roster = {
     bots: [
@@ -59,7 +60,7 @@ beforeEach(() => {
   M.reconcileMemoryRoster(roster);
   M.channelToProjectRows(M.database(), { groupId: "launch", bulletin: "", leadBotId: "finch", now: NOW });
 });
-afterEach(() => { M.fakeLineage.reset(); heads.clear(); });
+afterEach(() => { M.fakeLineage.reset(); heads.clear(); M.setExecutionStore(undefined as never); });
 
 let n = 0;
 /** The newest line of each thread: a line is said in reply to it (a line with another parent is a branch switch, which revokes the old head). */
@@ -71,7 +72,9 @@ function say(threadId: string, text: string, extra: Partial<Message> = {}) {
   M.appendMessage(threadId, message);
   return message;
 }
-const call = (consuming: string) => ({ db: M.database(), groupId: "launch", botId: "dax", role: "member" as const, request: { targetThreadId: consuming, rootThreadId: consuming } as never, memberIds: ["dax", "finch"], ownerAudience: true, now: NOW });
+// the reading bot's record (a project page reads nothing to a bot not on the roster, project-page-door.test.ts); reset after each test
+const reading = () => M.setExecutionStore({ bot: (id: string) => roster.bots.find(bot => bot.id === id) } as never);
+const call = (consuming: string) => (reading(), { db: M.database(), groupId: "launch", botId: "dax", role: "member" as const, request: { targetThreadId: consuming, rootThreadId: consuming } as never, memberIds: ["dax", "finch"], ownerAudience: true, now: NOW });
 const lineIds = (refs: readonly LineageRef[]) => refs.filter(ref => ref.kind === "line").map(ref => (ref as { messageId: string }).messageId);
 
 describe("hole 1: project read_messages records the lines it shows on the running turn", () => {
@@ -266,7 +269,7 @@ describe("cost: read_messages is flat in history", () => {
 
   it("the same statements, rows and recorded refs at 1,000 and 100,000 lines", () => {
     const small = turnOver(1_000);
-    M.closeDatabase(); rmSync(DATA_DIR, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 }); mkdirSync(DATA_DIR, { recursive: true });
+    M.closeDatabase(); removeTempDirSync(DATA_DIR); mkdirSync(DATA_DIR, { recursive: true });
     M.setMemoryMode("active"); M.reconcileMemoryRoster(roster);
     M.channelToProjectRows(M.database(), { groupId: "launch", bulletin: "", leadBotId: "finch", now: NOW });
     M.fakeLineage.reset();
