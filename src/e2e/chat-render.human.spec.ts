@@ -9,7 +9,7 @@
 // workspace. MURAGE_RENDER_DEPS_DIR may name a folder whose node_modules holds
 // them (for a lane that cannot install); without either, the tests that need
 // them skip and the fallback test checks the source is shown instead.
-import { test, expect, type Frame, type Page } from "@playwright/test";
+import { test, expect, type Frame, type Page } from "./page-error-guard";
 import { createServer, type ViteDevServer } from "vite";
 import react from "@vitejs/plugin-react";
 import tailwindcss from "@tailwindcss/vite";

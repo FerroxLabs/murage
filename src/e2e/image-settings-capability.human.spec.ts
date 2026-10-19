@@ -16,7 +16,7 @@
 //      and switching connections switches the connection and model.
 // No request leaves the machine: the suite preload answers the OpenAI image
 // origin, and a spec-local preload fails every Flux Router request offline.
-import { test, expect, type Locator, type Page } from "@playwright/test";
+import { test, expect, type Locator, type Page } from "./page-error-guard";
 import { createServer, type ViteDevServer } from "vite";
 import react from "@vitejs/plugin-react";
 import tailwindcss from "@tailwindcss/vite";

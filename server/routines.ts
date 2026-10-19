@@ -1,4 +1,5 @@
 import { REQUIRED_MCP_SERVERS, startsWithNotDone, toolsUnavailableRunError } from "./drivers/mcp-readiness.ts";
+import { readOwnerTimeZone, nextOwnerDailyOccurrence } from "./cloud-home/timezone.ts";
 import { assertHumanPrincipal, type HumanPrincipal } from "./human-principals.ts";
 import { ROUTINE_INSTRUCTIONS_MAX, routineInstructionsTooLongMessage } from "../shared/routine-instructions.ts";
 import { createHash, randomUUID } from "node:crypto";
@@ -729,6 +730,7 @@ export function nextOccurrence(schedule: RoutineSchedule, after: number): number
     const candidate = schedule.anchorAt + (intervalsElapsed + 1) * intervalMs;
     return Number.isSafeInteger(candidate) && candidate <= MAX_DATE_MS ? candidate : null;
   }
+  if (process.env.MURAGE_CLOUD_ROLE === "home") return nextOwnerDailyOccurrence(schedule.time, cleanDays(schedule.weekdays), after, readOwnerTimeZone(DATA_DIR));
   const [hour, minute] = schedule.time.split(":").map(Number);
   const weekdays = new Set(cleanDays(schedule.weekdays));
   for (let offset = 0; offset <= 8; offset++) {
@@ -1091,6 +1093,10 @@ export class RoutineManager {
       .sort((a, b) => b.scheduledFor - a.scheduledFor)
       .map(cloneRun);
   }
+
+  private runRevision = 0;
+  /** Changes on any write to a run (or the list of runs), so a caller holding something built from the live runs can keep it until they move. */
+  get runsRevision(): number { return this.runRevision; }
 
   /** The conversations of this bot's runs that are still going (queued,
    * running, waiting, or needing the owner). Their cards link to the task, so
@@ -2749,6 +2755,7 @@ export class RoutineManager {
    * uncommitted action for a durable one.
    */
   private commitMutation(mutate: () => void): void {
+    this.runRevision++;
     this.fleetDueAt = null;
     const before = {
       routines: this.routines.map(cloneRoutine),
@@ -2796,6 +2803,7 @@ export class RoutineManager {
    * written by another path is left out. A save that passes neither rewrites
    * routines.json and compares everything, as before. */
   private save(options: { defer?: boolean; runs?: readonly RoutineRun[]; routines?: readonly Routine[] } = {}) {
+    this.runRevision++;
     const hinted = options.runs !== undefined || options.routines !== undefined;
     if (hinted) {
       for (const run of options.runs ?? []) this.dirtyRuns.add(run);
@@ -2849,7 +2857,7 @@ export class RoutineManager {
 
   private trackRun(run: RoutineRun): RoutineRun {
     if (isTracked(run)) return run;
-    const tracked: RoutineRun = track(run, () => { this.dirtyRuns.add(tracked); });
+    const tracked: RoutineRun = track(run, () => { this.dirtyRuns.add(tracked); this.runRevision++; });
     return tracked;
   }
 

@@ -6,7 +6,7 @@
 // request) is E1's routing, tested there; these are the effects, with the
 // privacy rules that belong to them: bring-in takes only the owner's own
 // material and its copy is forgotten with the original.
-import { mkdirSync, rmSync } from "node:fs";
+import { mkdirSync } from "node:fs";
 import { beforeEach, expect, it } from "vitest";
 import { DATA_DIR } from "./config.ts";
 import { closeDatabase, database } from "./database.ts";
@@ -28,12 +28,13 @@ import { channelToProjectRows } from "./project-settings.ts";
 import type { Message } from "./store.ts";
 import { writtenWithReceipts } from "./memory/testing/legacy-file-model.ts";
 import { LineageAllowance } from "./memory/lineage-allowance.ts";
+import { removeTempDirSync } from "./testing/cleanup.ts";
 
 const NOW = 1_790_000_000_000;
 type Roster = MemoryRoster & { bots: Array<MemoryRoster["bots"][number] & { name: string }> };
 let roster: Roster;
 beforeEach(() => {
-  closeDatabase(); rmSync(DATA_DIR, { recursive: true, force: true }); mkdirSync(DATA_DIR, { recursive: true });
+  closeDatabase(); removeTempDirSync(DATA_DIR); mkdirSync(DATA_DIR, { recursive: true });
   roster = {
     bots: [
       { id: "dax", name: "Dax", threadId: "dax-direct", section: "Sales", tasks: [{ threadId: "dax-task" }, { threadId: "dax-desk", channelProjectDesk: { groupId: "launch" } }] },

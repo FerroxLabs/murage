@@ -1,15 +1,16 @@
 // Copyright 2026 Ferrox Labs
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // Behaviour adapted from OpenMausBot #2522 (Apache-2.0).
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, expect, it } from "vitest";
 import { PersistedStateRecoveryError } from "./persisted-state.ts";
 import { RoutineManager } from "./routines.ts";
+import { removeTempDirSync } from "./testing/cleanup.ts";
 
 const roots: string[] = [];
-afterEach(() => { for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true }); });
+afterEach(() => { for (const root of roots.splice(0)) removeTempDirSync(root); });
 function options(file: string) {
   return { file, botState: () => "ready" as const, createTask: () => ({ threadId: "t" }), startTurn: async () => {} };
 }

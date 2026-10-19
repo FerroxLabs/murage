@@ -17,6 +17,7 @@ import {
   type RoutineRun,
   type RoutineSchedule,
 } from "./routines.ts";
+import { removeTempDirSync } from "./testing/cleanup.ts";
 
 const dirs: string[] = [];
 
@@ -109,7 +110,7 @@ function harness(start = new Date(2026, 7, 17, 8, 0, 0).getTime()) {
 
 afterEach(() => {
   vi.restoreAllMocks();
-  for (const dir of dirs.splice(0)) rmSync(dir, { recursive: true, force: true });
+  for (const dir of dirs.splice(0)) removeTempDirSync(dir);
 });
 
 describe("versioned routine instructions", () => {
@@ -749,7 +750,7 @@ describe("RoutineManager", () => {
     expect(h.manager.routineRequestReceipt(request.requestId)).toBeNull();
     expect(h.emitted).toEqual([]);
 
-    rmSync(file, { recursive: true, force: true });
+    removeTempDirSync(file);
     rmSync(`${file}.tmp`, { force: true });
     const routine = h.manager.create(input, request);
     expect(h.manager.listRoutines()).toHaveLength(1);
@@ -1035,7 +1036,7 @@ describe("RoutineManager", () => {
       schedule: { type: "daily", time: "09:00", weekdays: [1] },
     });
 
-    rmSync(file, { recursive: true, force: true });
+    removeTempDirSync(file);
     rmSync(`${file}.tmp`, { force: true });
     expect(h.manager.update(routine.id, { name: "Renamed" })).toMatchObject({ name: "Renamed", nextRunAt: due });
   });

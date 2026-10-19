@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
-import { mkdirSync, rmSync } from "node:fs";
+import { mkdirSync } from "node:fs";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { DATA_DIR } from "../config.ts";
 import { closeDatabase, database } from "../database.ts";
@@ -7,9 +7,10 @@ import { setMemoryMode } from "./repository.ts";
 import * as jobs from "./jobs.ts";
 import { CLAIM_INDEX_SQL, compareScope, memoryClaimIndex, RECONCILE_INTERVAL_MS, RECONCILE_STEP_MS, SCAN_CHUNK, SYNC_CHUNKS_PER_CALL } from "./claim-index.ts";
 import { reopenParkedThreadJobs } from "./park.ts";
+import { removeTempDirSync } from "../testing/cleanup.ts";
 
 const NOW = 1_000_000;
-beforeEach(() => { closeDatabase(); rmSync(DATA_DIR, { recursive: true, force: true }); mkdirSync(DATA_DIR, { recursive: true }); setMemoryMode("capture"); jobs.resetMemoryClaimCursor(); database().exec("PRAGMA synchronous=OFF"); });
+beforeEach(() => { closeDatabase(); removeTempDirSync(DATA_DIR); mkdirSync(DATA_DIR, { recursive: true }); setMemoryMode("capture"); jobs.resetMemoryClaimCursor(); database().exec("PRAGMA synchronous=OFF"); });
 afterEach(() => { vi.restoreAllMocks(); });
 
 function seed(count: number, scopes: number, from = 0) {
@@ -48,9 +49,9 @@ function sqlDuring<T>(work: () => T): { result: T; sql: string[]; checks: number
 }
 
 describe("memory claim index (A10)", () => {
-  it("claims in O(1): after the first claim, one candidate check and no aggregate over the backlog, at 200 or 20,000 jobs", async () => {
+  it("claims in O(1): after the first claim, one candidate check and no aggregate over the backlog, at 200 or 20,000 jobs", { tags: ["perf-budget"] }, async () => {
     for (const backlog of [200, 20_000]) {
-      closeDatabase(); rmSync(DATA_DIR, { recursive: true, force: true }); mkdirSync(DATA_DIR, { recursive: true }); setMemoryMode("capture"); jobs.resetMemoryClaimCursor();
+      closeDatabase(); removeTempDirSync(DATA_DIR); mkdirSync(DATA_DIR, { recursive: true }); setMemoryMode("capture"); jobs.resetMemoryClaimCursor();
       database().exec("PRAGMA synchronous=OFF");
       seed(backlog, 40);
       expect(jobs.claimMemoryJob("w", NOW)).not.toBeNull(); // starts the build (chunked: the rest on later turns of the loop)
@@ -274,7 +275,7 @@ describe("memory claim index (A10)", () => {
 });
 
 describe("memory claim index: warming never runs the aggregate fallback (round-3 P2)", () => {
-  it("50,000 finished rows then 200,000 pending: the first claim returns a pending job within a bounded step and runs no aggregate SQL", () => {
+  it("50,000 finished rows then 200,000 pending: the first claim returns a pending job within a bounded step and runs no aggregate SQL", { tags: ["perf-budget"], timeout: 60_000 }, () => {
     const db = database();
     db.exec("BEGIN");
     db.prepare("INSERT OR IGNORE INTO memory_scopes VALUES('scope-a','conversation','owner-a','[]',0)").run();
@@ -295,7 +296,7 @@ describe("memory claim index: warming never runs the aggregate fallback (round-3
     expect(elapsed).toBeLessThan(50 + 40); // one bounded step; headroom for the lease write
     expect(result).not.toBeNull();
     expect(result!.id >= "job-050000").toBe(true);
-  }, 60_000);
+  });
 });
 
 describe("blocked jobs met by a selection are closed out in its transaction", () => {

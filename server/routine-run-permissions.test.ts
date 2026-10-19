@@ -5,7 +5,7 @@
 // routine as a concrete ceiling, survives a reload, and is reported for the run
 // working in a thread so the host can judge that run at it. Webhook and
 // channel work never carries one.
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
@@ -14,9 +14,10 @@ import { RoutineManager, type RoutineManagerOptions, type RoutineRun } from "./r
 import { exactCommandKey } from "../shared/exact-command.ts";
 import { autoVerdict } from "./auto-approve.ts";
 import { applyRoutinePermissionMode, botPermissionMode, effectiveRoutinePermissionMode } from "./routine-permissions.ts";
+import { removeTempDirSync } from "./testing/cleanup.ts";
 
 const dirs: string[] = [];
-afterEach(() => { for (const dir of dirs.splice(0)) rmSync(dir, { recursive: true, force: true }); });
+afterEach(() => { for (const dir of dirs.splice(0)) removeTempDirSync(dir); });
 
 function harness(file?: string) {
   const dir = mkdtempSync(join(tmpdir(), "murage-routine-perm-"));

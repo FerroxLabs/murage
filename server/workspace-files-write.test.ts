@@ -16,13 +16,15 @@ import {
   saveWorkspaceVersion, workspaceFilesRoute, workspaceNewlineStyle, writeWorkspaceMarkdown, type WorkspaceFilesDeps, type WorkspaceWriteHooks,
 } from "./workspace-files.ts";
 import { WORKSPACE_TEXT_MAX_BYTES, type FileRevision, type SaveReceipt, type WorkspaceScopeRef } from "../shared/workspace-files.ts";
+import { removeTempDirSync } from "./testing/cleanup.ts";
+import { DISK_FLOOR_BYTES, __setFreeDiskProbeForTests } from "./disk-space.ts";
 
 const roots: string[] = [];
 const databases: DatabaseSync[] = [];
 afterEach(() => {
   vi.restoreAllMocks();
   for (const db of databases.splice(0)) db.close();
-  for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true });
+  for (const root of roots.splice(0)) removeTempDirSync(root);
 });
 
 const BOM = Buffer.from([0xef, 0xbb, 0xbf]);
@@ -128,7 +130,7 @@ describe("bounded workspace read", () => {
     f.put("a.md", "x");
     f.task.cwd = null;
     expect(await codeOf(() => f.read("a.md"))).toBe("no-dedicated-workspace");
-    f.task.cwd = undefined; rmSync(f.taskRoot, { recursive: true });
+    f.task.cwd = undefined; removeTempDirSync(f.taskRoot);
     expect(await codeOf(() => f.read("a.md"))).toBe("not-found");
     expect(await codeOf(() => readWorkspaceFile(f.deps, { scope: { botId: "nobody", threadId: "thread" }, relativePath: "a.md" }))).toBe("scope-unavailable");
   });
@@ -544,10 +546,12 @@ describe("previous revision must be kept", () => {
     expect(readFileSync(path, "utf8")).toBe("# Base\n");
     expect(f.leftovers()).toEqual([]);
     rmSync(f.storage);
-    // 10,000 saved files is the library's count limit.
+    // 1.0.3 attachment-cap: the library has no fixed count or total; room follows the disk (disk-space.ts), so a full disk is the refusal.
     mkdirSync(f.storage);
-    for (let index = 0; index < 10_000; index++) writeFileSync(join(f.storage, `f${index}.txt`), "");
-    const full = await refusal(() => f.save("a.md", "# Edit\n", opened.revision));
+    __setFreeDiskProbeForTests(() => DISK_FLOOR_BYTES); // nothing above the floor
+    let full: WorkspaceFileError;
+    try { full = await refusal(() => f.save("a.md", "# Edit\n", opened.revision)); }
+    finally { __setFreeDiskProbeForTests(undefined); }
     expect([full.code, full.status]).toEqual(["quota-exceeded", 507]);
     expect(readFileSync(path, "utf8")).toBe("# Base\n");
     expect(f.leftovers()).toEqual([]);
@@ -589,7 +593,7 @@ describe("save version", () => {
   });
 });
 
-// Hetzner int-head (Linux, 48 workers): an equal-length rewrite made inside
+// build host int-head (Linux, 48 workers): an equal-length rewrite made inside
 // one timestamp tick kept size, inode, mtime and ctime, so a revision built
 // from metadata alone stayed valid and Save version copied bytes nobody chose.
 // Each case rewrites the same number of bytes and puts the modification time

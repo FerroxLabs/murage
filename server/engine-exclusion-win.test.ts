@@ -6,7 +6,7 @@
 // named process that was really started, and whole deletions of engine history through all of it. These run on Windows only; the POSIX
 // twin of each is in engine-exclusion.test.ts.
 import { spawn, type ChildProcess } from "node:child_process";
-import { chmodSync, copyFileSync, existsSync, lstatSync, mkdirSync, mkdtempSync, openSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, copyFileSync, existsSync, lstatSync, mkdirSync, mkdtempSync, openSync, readFileSync, realpathSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
@@ -19,11 +19,12 @@ import { planEngineHistory, removeEngineHistoryFiles } from "./engine-history-ru
 import { homeKey } from "./engine-plan-core.ts";
 import { builtAddonPath, useRealExclusion } from "./testing/engine-exclusion-fake.ts";
 import { buildFixture, canaryHits } from "./testing/engine-history-fixtures.ts";
+import { removeTempDirSync } from "./testing/cleanup.ts";
 
 const built = builtAddonPath();
 const windows = process.platform === "win32";
 const scratch = realpathSync.native(mkdtempSync(join(tmpdir(), "murage-excl-win-")));
-afterAll(() => rmSync(scratch, { recursive: true, force: true, maxRetries: 10, retryDelay: 200 }));
+afterAll(() => removeTempDirSync(scratch));
 
 const children: ChildProcess[] = [];
 afterEach(() => { for (const child of children.splice(0)) { try { child.kill(); } catch { /* gone */ } } });

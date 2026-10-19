@@ -1,0 +1,105 @@
+#!/usr/bin/python3 -I
+# SPDX-License-Identifier: AGPL-3.0-or-later
+"""Nightly restic backup of /data. Config: /etc/murage-home/backup.json (root, 0600):
+  {"repository": "sftp:<user>@<host>:<dir>", "passwordFile": "/etc/murage-home/backup.pass",
+   "sshKey": "/etc/murage-home/backup.key", "knownHosts": "/etc/murage-home/backup.known_hosts"}
+The restic password is HKDF(dataKey) derived by the control plane (admin route backup-password), so it
+can always be recovered. Credentials of the AI engines are excluded by backup-excludes.txt; this script
+refuses to run if that file is missing or lacks the required entries."""
+import fcntl
+import json
+import os
+import subprocess
+import sys
+import time
+
+CONFIG = "/etc/murage-home/backup.json"
+EXCLUDES = "/etc/murage-home/backup-excludes.txt"
+LAST = "/var/lib/murage-home/backup-last"
+SOURCE = "/data"
+REQUIRED_EXCLUDES = (".claude", ".claude.json", ".codex", ".grok", ".kimi-code", "auth.json", ".credentials.json")
+KEEP_DAILY, KEEP_WEEKLY = "7", "4"
+# murage-commands takes the same lock for a reset, undo or export: never two writers on /data or the repository.
+OPS_LOCK = "/run/murage-data-ops.lock"
+# Working folders of murage-commands: never backed up.
+WORK_EXCLUDES = ("/data/.murage-reset", "/data/.murage-export")
+
+def restic_env(cfg):
+    return {"PATH": "/usr/bin:/bin", "HOME": "/root", "RESTIC_REPOSITORY": cfg["repository"], "RESTIC_PASSWORD_FILE": cfg["passwordFile"],
+            "RESTIC_CACHE_DIR": "/var/cache/restic"}
+
+def restic_options(cfg):
+    if not cfg["repository"].startswith("sftp:"):
+        return []
+    ssh = "ssh -o BatchMode=yes -o StrictHostKeyChecking=yes -o UserKnownHostsFile=%s -i %s" % (cfg["knownHosts"], cfg["sshKey"])
+    return ["-o", "sftp.args=" + ssh.replace("ssh ", "", 1)]
+
+def ops_lock(path=OPS_LOCK):
+    handle = open(path, "a")
+    fcntl.flock(handle.fileno(), fcntl.LOCK_EX)
+    return handle
+
+def run(args, env):
+    # restic output is never forwarded: paths and repository errors are not logged.
+    return subprocess.run(args, env=env, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=False).returncode
+
+def capture(args, env):
+    """(exit code, stdout): the backup's JSON summary names the snapshot it made. Never logged."""
+    done = subprocess.run(args, env=env, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, check=False)
+    return done.returncode, done.stdout[-(1 << 20):]
+
+# Only a nightly restic finished with exit 0 is tagged complete; murage-commands resets only to a complete one (exit 3 means
+# unreadable files were left out of the snapshot).
+COMPLETE_TAG = "complete"
+
+def snapshot_id(out):
+    found = None
+    for line in out.decode(errors="replace").splitlines():
+        try:
+            message = json.loads(line)
+        except ValueError:
+            continue
+        if isinstance(message, dict) and message.get("message_type") == "summary" and isinstance(message.get("snapshot_id"), str):
+            found = message["snapshot_id"]
+    return found if found and all(c in "0123456789abcdef" for c in found) and 8 <= len(found) <= 64 else None
+
+def main(config_path=CONFIG, excludes=EXCLUDES, last=LAST, source=SOURCE, runner=run, lock=ops_lock, capturer=capture):
+    with open(config_path) as handle:
+        cfg = json.load(handle)
+    with open(excludes) as handle:
+        entries = {l.strip() for l in handle if l.strip() and not l.startswith("#")}
+    if any(r not in entries for r in REQUIRED_EXCLUDES):
+        print("backup refused: exclusion list incomplete", file=sys.stderr)
+        return 3
+    env = restic_env(cfg)
+    sftp = restic_options(cfg)
+    held = lock()
+    try:
+        return _backup(env, sftp, excludes, last, source, runner, capturer)
+    finally:
+        held.close()
+
+def _backup(env, sftp, excludes, last, source, runner, capturer=capture):
+    if runner(["restic", "snapshots", "--no-lock", "--json"] + sftp, env) != 0:
+        if runner(["restic", "init"] + sftp, env) != 0:
+            return 1
+    work = [arg for path in WORK_EXCLUDES for arg in ("--exclude", path)]
+    code, out = capturer(["restic", "backup", "--json", "--quiet", source, "--exclude-file", excludes] + work
+                         + ["--one-file-system", "--tag", "nightly"] + sftp, env)
+    if code not in (0, 3):  # 3 = some files unreadable; the snapshot still exists (but is never marked complete)
+        return 1
+    made = snapshot_id(out) if code == 0 else None
+    if code == 0 and (made is None or runner(["restic", "tag", "--add", COMPLETE_TAG, made] + sftp, env) != 0):
+        return 1
+    # Only nightly snapshots follow the retention policy. A pre-reset snapshot (tag murage-pre-reset) is kept for its
+    # 7-day undo window and forgotten by murage-commands when the window ends.
+    if runner(["restic", "forget", "--tag", "nightly", "--prune", "--keep-daily", KEEP_DAILY, "--keep-weekly", KEEP_WEEKLY] + sftp, env) != 0:
+        return 1
+    tmp = last + ".tmp"
+    with open(tmp, "w") as handle:
+        handle.write(str(int(time.time() * 1000)))
+    os.replace(tmp, last)
+    return 0
+
+if __name__ == "__main__":
+    sys.exit(main())

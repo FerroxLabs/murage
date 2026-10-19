@@ -17,6 +17,7 @@ import { reviewedSkillSha256 } from "../../shared/skill-request";
 import { plainApproval, plainApprovalReady, usePlainApprovalReady } from "@/lib/plain-approval";
 import { delegationAction } from "../../shared/delegation-tool";
 import { canonicalConnectedAppToolName } from "../../shared/connected-app-names";
+import { actionGrantWords } from "../../shared/app-action-words";
 import { useDesktopSurface } from "@/lib/use-surface";
 import { inNativeShell } from "@/lib/native-shell";
 import { allowNeedsComputer, approvalSurface, useComputerOnlyRefusal } from "@/lib/approval-surface";
@@ -266,7 +267,10 @@ const PROGRAM_GRANT = /^(?:bash|shell|execute|exec_command|run_command|computer_
  * from the exact one beside it. */
 export function alwaysAllowLabel(pending: Pending): string {
   const program = pending.allowKey?.startsWith(`${pending.tool}:`) ? PROGRAM_GRANT.exec(pending.allowKey)?.[1] : undefined;
-  return program ? `Always allow any ${program} command` : "Always allow";
+  if (program) return `Always allow any ${program} command`;
+  // a connected-app grant covers the one action shown: say which
+  const action = pending.allowKey ? actionGrantWords(pending.allowKey) : undefined;
+  return action ? `Always allow ${action}` : "Always allow";
 }
 
 export function PendingApprovalActions({
@@ -346,7 +350,7 @@ export function PendingApprovalActions({
       {grants.always && bot && pending.allowKey && (
         <button
           onClick={() => decide("program", "allow", "program")}
-          title={`Stop asking ${bot.name} about ${pending.allowKey}`}
+          title={`Stop asking ${bot.name} about ${actionGrantWords(pending.allowKey) ?? pending.allowKey}`}
           {...btn("program", cn(base, "border border-hairline/50 text-ink hover:bg-control"))}
         >
           <ApprovalBusyLabel busy={feedback.busy === "program"}>{alwaysAllowLabel(pending)}</ApprovalBusyLabel>

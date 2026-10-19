@@ -4,7 +4,7 @@
 // The outcome routes and the decision-site watch, against the real database
 // (a clean test data directory). The server-level shape (desktop only,
 // revision and idempotency rules) is covered in bot-learning-api.test.ts.
-import { mkdirSync, rmSync } from "node:fs";
+import { mkdirSync } from "node:fs";
 import { beforeEach, expect, it } from "vitest";
 import { DATA_DIR } from "../config.ts";
 import { closeDatabase, database } from "../database.ts";
@@ -13,13 +13,14 @@ import { appendDecision, flushDecisionLog } from "../decision-log.ts";
 import { proposeOutcomeFromAgent, setOutcomeBotLookup } from "./outcomes.ts";
 import { chipItemsForThread } from "./lessons.ts";
 import "./outcomes-routes.ts";
+import { removeTempDirSync } from "../testing/cleanup.ts";
 
 const bot = { id: "bot", name: "Dax", threadId: "t1", learning: { enabled: true, askFirst: false, prospectLearning: false, revision: 0 } };
 const call = async (id: Parameters<typeof learningRouteHandler>[0], context: Partial<LearningRouteContext>) =>
   learningRouteHandler(id)!({ botId: "bot", method: "POST", url: new URL("http://x/api"), body: {}, ...context } as LearningRouteContext);
 
 beforeEach(() => {
-  closeDatabase(); rmSync(DATA_DIR, { recursive: true, force: true }); mkdirSync(DATA_DIR, { recursive: true });
+  closeDatabase(); removeTempDirSync(DATA_DIR); mkdirSync(DATA_DIR, { recursive: true });
   setOutcomeBotLookup(id => (id === "bot" ? bot : null));
   const db = database();
   db.exec("UPDATE memory_meta SET mode='active'");

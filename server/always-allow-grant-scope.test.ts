@@ -44,6 +44,11 @@ const TASKS_THREAD = "grant-tasks-thread";
 // "Always allow this exact command here" (shared/exact-command.ts)
 const EXACT_THREAD = "grant-exact-thread";
 const EXACT_KEY = 'exact:["claude","/Users/ada/project","npm test && npm run build"]';
+// A Fuigo connected-app card: one built before 1.0.3 offered the bare kind,
+// which covered every connected-app action; one built now names the action.
+const BROAD_THREAD = "grant-broad-thread";
+const APP_THREAD = "grant-app-thread";
+const APP_KEY = "app-action:GMAIL_FETCH_EMAILS";
 
 let base: string;
 let child: ChildProcess;
@@ -129,6 +134,8 @@ posixOnly("an always-allow grant is remembered for the bot", () => {
         bot("grant-outsider", "Grant outsider", OUTSIDER_THREAD),
         bot("grant-tasks", "Grant tasks", TASKS_THREAD),
         bot("grant-exact", "Grant exact", EXACT_THREAD),
+        bot("grant-broad", "Grant broad", BROAD_THREAD),
+        bot("grant-app", "Grant app", APP_THREAD),
       ]),
     );
     writeFileSync(
@@ -161,6 +168,15 @@ posixOnly("an always-allow grant is remembered for the bot", () => {
     writeFileSync(
       join(data, `messages-${EXACT_THREAD}.json`),
       cardFile("exact-card", { botId: "grant-exact", name: "Grant exact" }, { exactAllowKey: EXACT_KEY }),
+    );
+
+    writeFileSync(
+      join(data, `messages-${BROAD_THREAD}.json`),
+      cardFile("broad-card", { botId: "grant-broad", name: "Grant broad" }, { tool: "other", allowKey: "other" }),
+    );
+    writeFileSync(
+      join(data, `messages-${APP_THREAD}.json`),
+      cardFile("app-card", { botId: "grant-app", name: "Grant app" }, { tool: "other", allowKey: APP_KEY }),
     );
 
     child = spawn(process.execPath, [join(SERVER_DIR, "index.ts")], {
@@ -300,6 +316,24 @@ posixOnly("an always-allow grant is remembered for the bot", () => {
       const stored = storedBot("grant-exact");
       expect(stored.alwaysAllow ?? []).not.toContain(EXACT_KEY);
       for (const task of stored.tasks ?? []) expect(task.alwaysAllow ?? []).not.toContain(EXACT_KEY);
+    },
+    60_000,
+  );
+
+  it(
+    "never stores a grant over every connected-app action, even from a card an older build rendered",
+    async () => {
+      const broad = await desktopApi("POST", "/api/bots/grant-broad/always-allow", { allowKey: "other", threadId: BROAD_THREAD });
+      expect(broad.status).toBe(400);
+      expect(storedBot("grant-broad").alwaysAllow ?? []).not.toContain("other");
+      // nor through the settings patch
+      const patched = await desktopApi("PATCH", "/api/bots/grant-broad", { alwaysAllow: ["other", "mcp__murage_connectors__APPS_MULTI_EXECUTE_TOOL", APP_KEY] });
+      expect(patched.status, JSON.stringify(patched.body)).toBe(200);
+      expect(storedBot("grant-broad").alwaysAllow).toEqual([APP_KEY]);
+
+      const granted = await desktopApi("POST", "/api/bots/grant-app/always-allow", { allowKey: APP_KEY, threadId: APP_THREAD });
+      expect(granted.status, JSON.stringify(granted.body)).toBe(200);
+      expect(storedBot("grant-app").alwaysAllow).toEqual([APP_KEY]);
     },
     60_000,
   );

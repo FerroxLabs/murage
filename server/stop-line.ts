@@ -28,9 +28,12 @@
 // catch. It is pure: every fact about the machine (the folders, the home
 // folder, the recipients the bot has written to, how links resolve) is passed
 // in, so it is table-tested without touching a disk.
+import { resolveCall, stampedToolCall, type GrantCall } from "../shared/app-action-grant.ts";
+import { requiredFields } from "./drivers/contracts.ts";
 import { canonicalConnectedAppToolName } from "../shared/connected-app-names.ts";
 import { posix } from "node:path";
 import { EXACT_COMMAND_MAX_CHARS, normalizeCommand } from "../shared/exact-command.ts";
+import { WRAPPER_PREFIXES } from "../shared/arg-vocabulary.ts";
 
 export type StopKind = "delete" | "pay" | "message";
 
@@ -62,9 +65,12 @@ export interface StopLinePlace {
   /** Recipients this bot has already sent to, or that the conversation
    * itself belongs to, normalized with `normalizeRecipient`. */
   knownRecipients: ReadonlySet<string>;
-  /** Optional: resolve links for an absolute path (the deepest existing
-   * ancestor). Without it the check is lexical only. */
-  realpath?: (path: string) => string;
+  /** Required: the real path of an absolute path, resolved part by part in
+   * order with a missing tail kept as written (server/stop-line-state.ts
+   * `stopLineRealpath`, over shared/in-project.ts). `null`, a throw, a
+   * missing resolver or an answer that still holds a `..` makes the target a
+   * stop: this file never places a path by its text. */
+  realpath: (path: string) => string | null;
   /** Optional: the GitHub `owner/repo` a folder's origin remote points at,
    * for a `gh` post that names no `--repo`. */
   repoOf?: (dir: string) => string | undefined;
@@ -131,7 +137,29 @@ export function nativePath(path: string): string {
   return path;
 }
 
-const clean = (path: string) => posix.normalize(canonPath(path)).replace(/(.)\/+$/, "$1");
+/** The canonical form with repeated separators, `.` parts and a trailing
+ * separator dropped. A `..` is kept as written: only the resolver climbs,
+ * from where a link really points (Rules 63.2, 75d). */
+const clean = (path: string) => {
+  const canon = canonPath(path);
+  const parts = canon.split("/").filter((part) => part !== "" && part !== ".");
+  return canon.startsWith("/") ? `/${parts.join("/")}` : parts.join("/") || ".";
+};
+
+/** The resolver's answer in this file's form, or null when the path cannot
+ * be placed: the resolver is missing, threw, said null, or answered a path
+ * that still climbs (not a real path). Every null is a stop. */
+function realIn(place: StopLinePlace, path: string): string | null {
+  let out: string | null;
+  try {
+    out = typeof place.realpath === "function" ? place.realpath(path) : null;
+  } catch {
+    return null;
+  }
+  if (typeof out !== "string" || !out) return null;
+  const real = clean(out);
+  return real.startsWith("/") && !real.split("/").includes("..") ? real : null;
+}
 /** Windows paths compare without regard to letter case. */
 const same = (path: string) => (WIN_CANON.test(path) ? path.toLowerCase() : path);
 
@@ -200,9 +228,10 @@ function resolveWord(word: Word, cwd: string | undefined, home: string): Target 
       raw = `${drive}${raw}`;
     }
   }
-  if (!posix.isAbsolute(raw)) {
+  if (!raw.startsWith("/")) {
     if (!cwd) return { text };
-    raw = posix.join(cwd, raw);
+    // joined as written: the resolver places `link/..` from where the link points
+    raw = `${cwd}/${raw}`;
   }
   return globTarget(raw, text);
 }
@@ -437,7 +466,8 @@ function splitShell(line: string): { commands: Word[][]; complex: boolean; scan:
   return { commands, complex, scan, words };
 }
 
-const PREFIXES = new Set(["sudo", "doas", "command", "builtin", "nohup", "time", "nice", "exec", "env", "timeout", "caffeinate", "rtk", "stdbuf", "unbuffer", "ionice", "chronic"]);
+/** The wrapper words, one list with the prompt-capable reader (shared/arg-vocabulary.ts). */
+const PREFIXES = WRAPPER_PREFIXES;
 
 /** Strip wrappers (`sudo`, `env X=1`, `timeout 5`) down to the real program. */
 function program(cmd: Word[]): { name: string; args: Word[] } | undefined {
@@ -1255,17 +1285,17 @@ function sameUnplaced(granted: string, place: string): boolean {
 }
 
 function deleteHit(found: Collected, place: StopLinePlace, line?: string): StopHit | null {
-  const real = (path: string) => {
-    try { return place.realpath ? clean(place.realpath(path)) : path; } catch { return path; }
-  };
+  const real = (path: string) => realIn(place, path);
   // the home folder by both spellings: a linked home (macOS /var ->
-  // /private/var) must not make ~/Documents look like an ordinary folder
+  // /private/var) must not make ~/Documents look like an ordinary folder.
+  // A home that cannot be placed leaves no root trusted.
   const realHome = real(clean(place.home));
-  const tooBroad = (path: string) => isTooBroad(path, place.home) || isTooBroad(path, realHome);
-  const roots = place.roots.filter((root) => root).map(clean).filter((root) => posix.isAbsolute(root) && !tooBroad(root));
+  const tooBroad = (path: string) => isTooBroad(path, place.home) || (realHome !== null && isTooBroad(path, realHome));
+  const roots = realHome === null ? [] : place.roots.filter((root) => root).map(clean).filter((root) => root.startsWith("/") && !root.split("/").includes("..") && !tooBroad(root));
   const inside = (t: Target) => {
     if (!t.path) return false;
     const p = real(t.path);
+    if (p === null) return false;
     return roots.some((root) => within(root, p) || (t.glob === true && clean(root) === p));
   };
   const outside = found.deletes.filter((t) => !inside(t));
@@ -1281,19 +1311,21 @@ function deleteHit(found: Collected, place: StopLinePlace, line?: string): StopH
     };
   }
   if (!outside.length) return null;
+  const reals = outside.map((t) => (t.path ? real(t.path) : null));
   const glob = WIN_CANON.test(clean(place.home)) ? "\\…" : "/…";
-  const shown = outside.map((t) => (t.path ? shownPath(t.path, place.home) + (t.glob ? glob : "") : t.text));
+  // the card names where each target really is when it can be placed, and the words as written when it cannot
+  const shown = outside.map((t, i) => (t.path ? shownPath(reals[i] ?? t.path, place.home) + (t.glob ? glob : "") : t.text));
   const list = shown.slice(0, 3).join(", ") + (shown.length > 3 ? ` and ${shown.length - 3} more` : "");
   const count = outside.length === 1 ? "1 item" : `${outside.length} items`;
   // the place a "for this task" grant would cover: the folder that holds
   // every target, never the home folder or a disk root
   let scope: string | undefined;
-  if (!found.unknownDelete && outside.every((t) => t.path)) {
+  if (!found.unknownDelete && reals.every((path): path is string => path !== null)) {
     // each target's folder, or the target itself when its folder is the home
     // folder, Documents or a disk root (a grant over all of those is not
     // what one card asked about)
-    const parents = outside.map((t) => {
-      const path = real(t.path!);
+    const parents = outside.map((t, i) => {
+      const path = reals[i]!;
       const parent = t.glob ? path : posix.dirname(path);
       return tooBroad(parent) && !t.glob ? path : parent;
     });
@@ -1361,9 +1393,10 @@ function toolCalls(tool: string, input: unknown): ToolCall[] {
     if (ns) { app = ns[1]!.toLowerCase(); name = ns[2]!; }
   }
   // The connected-app service's one tool carries every connected-app call it makes
-  if (/^composio_multi_execute_tool$/i.test(name) && args.tools !== undefined) {
+  if (/^composio_multi_execute_tool$/i.test(name)) {
     // A batch it cannot read is not a batch it can wave through: it stops as a
-    // send to nobody it can name, so no mode covers it.
+    // send to nobody it can name, so no mode covers it. A run with no `tools`
+    // list at all is one it cannot read either (Astra r3).
     const unreadable: ToolCall = { app: "composio", name: "send_unreadable_batch", args: {} };
     if (!Array.isArray(args.tools)) return [unreadable];
     return (args.tools as unknown[]).flatMap((item): ToolCall[] => {
@@ -1405,18 +1438,49 @@ const RECIPIENT_KEYS = ["to", "recipient", "recipients", "recipient_email", "rec
   "target", "room", "room_id", "group", "group_id", "receiver", "receiver_id", "peer", "username"];
 const REPLY_KEYS = ["thread_ts", "thread_id", "threadid", "in_reply_to", "reply_to", "reply_to_message_id", "reply_to_id", "parent_id", "comment_id"];
 
-function recipientsOf(args: Record<string, unknown>): string[] {
-  const out: string[] = [];
-  for (const key of Object.keys(args)) {
-    if (!RECIPIENT_KEYS.includes(key.toLowerCase())) continue;
-    for (const s of stringValues(args[key])) for (const part of s.split(/[,;]/)) if (part.trim()) out.push(normalizeRecipient(part));
-  }
-  return [...new Set(out)];
+/** Whether a recipient value holds something `stringValues` does not read:
+ * an object with no address key, a value nested deeper than it looks, a
+ * boolean. Such a send names someone it cannot see, and stops. */
+function unreadRecipient(value: unknown, depth = 0): boolean {
+  if (value === undefined || value === null || value === "") return false;
+  if (typeof value === "string") return false;
+  if (typeof value === "number") return !Number.isFinite(value);
+  if (typeof value !== "object") return true;
+  if (depth > 2) return true;
+  if (Array.isArray(value)) return value.some((v) => unreadRecipient(v, depth + 1));
+  const obj = value as Record<string, unknown>;
+  return !["email", "address", "id", "name", "handle", "username"].some((key) => typeof obj[key] === "string");
 }
 
-function messageHit(app: string, recipients: string[], place: StopLinePlace, reply: boolean, fallback: string, explicitExtra: string[] = []): StopHit | null {
+function recipientsOf(args: Record<string, unknown>): string[] {
+  const out: string[] = [];
+  let unread = false;
+  for (const key of Object.keys(args)) {
+    if (!RECIPIENT_KEYS.includes(key.toLowerCase())) continue;
+    if (unreadRecipient(args[key])) unread = true;
+    for (const s of stringValues(args[key])) for (const part of s.split(/[,;]/)) if (part.trim()) out.push(normalizeRecipient(part));
+  }
+  // a recipient this could not read is someone it cannot name: messageHit stops
+  return unread ? [UNREAD_RECIPIENT] : [...new Set(out)];
+}
+
+/** Stands in for a recipient value the reader could not see through. */
+const UNREAD_RECIPIENT = "\u0000unread";
+
+function messageHit(app: string, recipients: string[], place: StopLinePlace, reply: boolean, fallback: string, explicitExtra: string[] = [], hasThread = false): StopHit | null {
+  // a recipient value the reader could not see through: nobody it can name
+  if (recipients.includes(UNREAD_RECIPIENT) || explicitExtra.includes(UNREAD_RECIPIENT)) {
+    return { kind: "message", what: `${fallback}, and Murage cannot tell who it goes to` };
+  }
   if (reply) {
-    // a reply stays in its conversation; only people it ADDS are new
+    // A reply may only go to people already in its conversation. The one
+    // proof this has of that is the people the bot already writes to: every
+    // address the call names must be one of them, under any argument key
+    // (`recipient_email` as much as `to`), and a reply that names nobody it
+    // can read is a send to someone it cannot name (Astra r3). A reply in a
+    // thread with no address argument goes only to the thread's own
+    // participants, so it is never a new recipient.
+    if (!explicitExtra.length) return hasThread ? null : { kind: "message", what: `${fallback}, and Murage cannot tell who it goes to` };
     const added = explicitExtra.filter((r) => !place.knownRecipients.has(r));
     if (!added.length) return null;
     return { kind: "message", place: added.sort().join(","), recipients: explicitExtra, what: `Add someone new to a conversation: ${added.join(", ")}` };
@@ -1483,9 +1547,11 @@ function appHit(call: ToolCall, place: StopLinePlace): StopHit | null {
     (all.has("post") && (all.has("message") || all.has("chat"))) || (all.has("create") && ["message", "reply"].some((n) => all.has(n)));
   if (!sendVerb) return null;
   const argKeys = Object.keys(call.args).map((k) => k.toLowerCase());
-  const reply = all.has("reply") || argKeys.some((k) => REPLY_KEYS.includes(k) && call.args[k] !== undefined && call.args[k] !== "");
-  const extras = reply ? recipientsOf(Object.fromEntries(Object.entries(call.args).filter(([k]) => ["cc", "bcc", "to", "recipients"].includes(k.toLowerCase())))) : [];
-  return messageHit(app, recipientsOf(call.args), place, reply, `Send a message (${label})`, extras);
+  const hasThread = argKeys.some((k) => REPLY_KEYS.includes(k) && call.args[k] !== undefined && call.args[k] !== null && call.args[k] !== "");
+  const reply = all.has("reply") || hasThread;
+  // a reply is judged on every address it names, never on a chosen few keys
+  const recipients = recipientsOf(call.args);
+  return messageHit(app, recipients, place, reply, `Send a message (${label})`, reply ? recipients : [], reply && hasThread);
 }
 
 // ── entry point ───────────────────────────────────────────────────────
@@ -1504,12 +1570,11 @@ function appHit(call: ToolCall, place: StopLinePlace): StopHit | null {
 export function deletesPlacedInside(command: string, given: StopLinePlace): boolean {
   const place = canonPlace(given);
   if (WIN_CANON.test(place.home)) return false;
-  const real = (path: string) => {
-    try { return place.realpath ? clean(place.realpath(path)) : path; } catch { return path; }
-  };
+  const real = (path: string) => realIn(place, path);
   const realHome = real(clean(place.home));
+  if (realHome === null) return false;
   const tooBroad = (path: string) => isTooBroad(path, place.home) || isTooBroad(path, realHome);
-  const roots = place.roots.filter((root) => root).map(clean).filter((root) => posix.isAbsolute(root) && !tooBroad(root));
+  const roots = place.roots.filter((root) => root).map(clean).filter((root) => root.startsWith("/") && !root.split("/").includes("..") && !tooBroad(root));
   if (!roots.length) return false;
   const { commands } = splitShell(command);
   const vars = new Map<string, string>([["HOME", place.home]]);
@@ -1536,7 +1601,10 @@ export function deletesPlacedInside(command: string, given: StopLinePlace): bool
     for (const word of ops) targets.push(resolveWord(word, cwd, place.home));
   }
   if (!seen || seen !== (command.match(/\brm\b/g) ?? []).length) return false;
-  return targets.every((target) => target.path !== undefined && roots.some((root) => within(root, real(target.path!))));
+  return targets.every((target) => {
+    const placed = target.path === undefined ? null : real(target.path);
+    return placed !== null && roots.some((root) => within(root, placed));
+  });
 }
 
 function commandText(tool: string, input: unknown, summary: string): string | undefined {
@@ -1584,7 +1652,12 @@ function canonPlace(place: StopLinePlace): StopLinePlace {
     cwd: place.cwd ? clean(place.cwd) : place.cwd,
     home: clean(place.home),
     roots: place.roots.map((root) => (root ? clean(root) : root)),
-    ...(realpath ? { realpath: (path: string) => canonPath(realpath(nativePath(path))) } : {}),
+    // a missing resolver places nothing, so every delete it would judge stops
+    realpath: (path: string) => {
+      if (typeof realpath !== "function") return null;
+      const out = realpath(nativePath(path));
+      return typeof out === "string" ? canonPath(out) : null;
+    },
     ...(repoOf ? { repoOf: (dir: string) => repoOf(nativePath(dir)) } : {}),
   };
 }
@@ -1609,6 +1682,23 @@ export function classifyStopLine(tool: string, input: unknown, summary: string, 
   if (hits.length === 1) return hits[0]!;
   // several stops in one call: Allow once only, and the card lists them
   return { kind: hits[0]!.kind, what: `${hits[0]!.what}, and ${hits.length - 1} more`, recipients: hits.flatMap((h) => h.recipients ?? []) };
+}
+
+/** The stop line for one engine ask. An ACP engine's `toolCall.name` is the
+ * model-written title, so the tool the engine STAMPED is judged first, the
+ * same identity a grant is keyed by (shared/app-action-grant.ts). The name
+ * the call came with is judged too, but only ever to add a stop: a neutral
+ * title can never clear one. A stamp this cannot read stops. */
+export function classifyAsk(
+  ask: GrantCall & { tool: string; summary: string },
+  given: StopLinePlace,
+): StopHit | null {
+  const stamped = stampedToolCall(ask);
+  if (stamped === null) return { kind: "delete", what: "Murage could not tell which tool this runs, so it is waiting for you." };
+  // Rule 25: a call its driver's contract cannot read whole stops too.
+  if (!requiredFields(ask.engine, resolveCall(ask), ask).ok) return { kind: "delete", what: "Murage could not read this call whole, so it is waiting for you." };
+  const first = stamped ? classifyStopLine(stamped.name, stamped.input, ask.summary, given) : null;
+  return first ?? classifyStopLine(ask.toolCall?.name ?? ask.tool, ask.toolCall?.input, ask.summary, given);
 }
 
 /** The grant "Allow for this task" or "Always allow" records for a hit, or

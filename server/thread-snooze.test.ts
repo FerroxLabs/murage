@@ -1,6 +1,6 @@
 // Copyright 2026 Ferrox Labs
 // SPDX-License-Identifier: AGPL-3.0-or-later
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
@@ -10,11 +10,12 @@ import {
   initializeThreadSnooze, isSnoozeActivity, isSnoozeReport, wakesActivitySnooze, listThreadSnoozes, snoozeThread, threadSnoozeRequest, unsnoozeThread, wakeThreadOnActivity, wakeThreadSnoozes,
   type ThreadSnoozeDeps,
 } from "./thread-snooze.ts";
+import { removeTempDirSync } from "./testing/cleanup.ts";
 
 const roots: string[] = [], databases: DatabaseSync[] = [];
 afterEach(() => {
   for (const db of databases.splice(0)) { try { db.close(); } catch {} }
-  for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true });
+  for (const root of roots.splice(0)) removeTempDirSync(root);
 });
 function fixture() {
   const root = mkdtempSync(join(tmpdir(), "murage-thread-snooze-")); roots.push(root);

@@ -90,6 +90,7 @@ import type {
 import { api, useStore, type Bot, type Group } from "@/state/store";
 import { permissionModeOf } from "@/lib/permission-mode";
 import { RoutineApprovalLevel, RoutineGrants, type RoutineLevelChoice } from "./RoutineApprovals";
+import { fromAnswer } from "@/state/answer-tag";
 
 const HOUR_HEIGHT = 64;
 const DAY_NAMES = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
@@ -1313,7 +1314,7 @@ function EventDetails({
     setError("");
     try {
       const { group: created } = await api(`/api/calendar-calls/${call.id}/room`, { method: "POST" });
-      dispatch({ type: "groupPatched", group: created });
+      dispatch({ type: "groupPatched", origin: fromAnswer(created), group: created });
       onOpenRoom(created.id);
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : String(cause));

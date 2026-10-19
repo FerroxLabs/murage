@@ -2,7 +2,7 @@
 // images resolve through one exact-byte reference flow, all-or-nothing and
 // before any approval or billing. A numeric seed is never a substitute.
 import { createHash } from "node:crypto";
-import { mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readdirSync, readFileSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
@@ -18,6 +18,7 @@ import { Store } from "./store.ts";
 import { COMPANION_HEADER } from "./sse-visibility.ts";
 import { composeMessage } from "../src/lib/composer-attachments.ts";
 import { MEDIA_ROUTES, type MediaReferenceResponse, type ResolveImageReferenceResponse } from "../shared/media-assets.ts";
+import { removeTempDirSync } from "./testing/cleanup.ts";
 
 // Attachment storage fault injection for the rollback case.
 const faults = vi.hoisted(() => ({ saveImageAfter: -1 }));
@@ -45,7 +46,7 @@ interface Fixture {
   botId: string; threadId: string; otherBotId: string; otherThreadId: string;
 }
 const cleanups: Array<() => void> = [];
-beforeEach(() => { rmSync(DATA_DIR, { recursive: true, force: true }); faults.saveImageAfter = -1; __resetMediaAssetsForTests(); });
+beforeEach(() => { removeTempDirSync(DATA_DIR); faults.saveImageAfter = -1; __resetMediaAssetsForTests(); });
 afterEach(() => { for (const cleanup of cleanups.splice(0)) { try { cleanup(); } catch { /* best effort */ } } });
 
 function fixture(): Fixture {
@@ -224,7 +225,7 @@ describe("resolve-image-reference: authority", () => {
   it.skipIf(process.platform === "win32")("refuses links, private files, changed revisions and files that are not images", async () => {
     const f = fixture();
     writeFileSync(join(f.root, "real.png"), png(0x91));
-    const outside = mkdtempSync(join(tmpdir(), "murage-imgref-outside-")); cleanups.push(() => rmSync(outside, { recursive: true, force: true }));
+    const outside = mkdtempSync(join(tmpdir(), "murage-imgref-outside-")); cleanups.push(() => removeTempDirSync(outside));
     writeFileSync(join(outside, "x.png"), png(0x92));
     symlinkSync(join(outside, "x.png"), join(f.root, "linked.png"));
     symlinkSync(outside, join(f.root, "linked-dir"));

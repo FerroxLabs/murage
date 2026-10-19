@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { copyFileSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { copyFileSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { backup, DatabaseSync } from "node:sqlite";
@@ -17,10 +17,11 @@ import { forgetMemory } from "./forget.ts";
 import { mergeDestinationMemoryDeletions, mergeOriginalMemoryDeletions, pauseRestoredMemory } from "./restore.ts";
 import { inspectInstallationDatabase } from "../installation-database-snapshot.ts";
 import { stopWalMaintenance } from "../wal-maintenance.ts";
+import { removeTempDirSync } from "../testing/cleanup.ts";
 
 // closeDatabase stops the WAL checkpointer without waiting (wal3): its connection, the last one, checkpoints as it closes, so every test waits
 // for it before the files are removed, read or hashed
-beforeEach(async()=>{closeDatabase();await stopWalMaintenance();rmSync(DATA_DIR,{recursive:true,force:true});mkdirSync(DATA_DIR,{recursive:true});setMemoryMode("capture");});
+beforeEach(async()=>{closeDatabase();await stopWalMaintenance();removeTempDirSync(DATA_DIR);mkdirSync(DATA_DIR,{recursive:true});setMemoryMode("capture");});
 function seed() {
   appendMessage("thread",{id:"source",at:1,role:"user",kind:"text",text:"private retained source"});
   const work=claimMemoryJob("worker")!;publishMemoryWork(work,"worker",captureWork(work));
@@ -49,7 +50,7 @@ it("does not resurrect deleted records when an old backup is restored",async()=>
       expect(restored.prepare("SELECT mode FROM memory_meta").get()?.mode).toBe("paused");
       expect(restored.prepare("SELECT state FROM memory_records").get()?.state).toBe("deleted");
     } finally{restored.close();}
-  } finally{rmSync(root,{recursive:true,force:true});}
+  } finally{removeTempDirSync(root);}
 });
 it("restore proceeds when the destination memory database is damaged, and says the ledger was unreadable",()=>{
   const root=mkdtempSync(join(tmpdir(),"murage-p05-damaged-"));
@@ -58,7 +59,7 @@ it("restore proceeds when the destination memory database is damaged, and says t
     writeFileSync(join(destination,"messages.db"),Buffer.from("this is not a sqlite database at all, just damaged bytes".repeat(40)));
     const receipt=mergeDestinationMemoryDeletions(destination,candidate);
     expect(receipt).toEqual({merged:0,history:"destination-ledger-unreadable"});
-  } finally{rmSync(root,{recursive:true,force:true});}
+  } finally{removeTempDirSync(root);}
 });
 it("specific revision forgetting preserves the corrected current source",()=>{
   const {work,id}=seed();
@@ -173,5 +174,5 @@ it("Q12 separate paused restore carries current owner deletions without changing
       expect(restored.prepare("SELECT count(*) AS n FROM memory_jobs WHERE status='leased'").get()?.n).toBe(0);
     }finally{restored.close();}
     expect(hash(archive)).toBe(archiveHash);expect(contentHash(join(DATA_DIR,"messages.db"))).toBe(originalHash);
-  }finally{closeDatabase();rmSync(root,{recursive:true,force:true});}
+  }finally{closeDatabase();removeTempDirSync(root);}
 });

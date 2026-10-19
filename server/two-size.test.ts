@@ -9,7 +9,7 @@
 // same rows on a conversation of 1,000 messages as on one of 200,000, every one
 // an index search, and neither is ever loaded whole. The thread is prepared first,
 // as a turn does; the sync-prepare counter stays where it was.
-import { mkdirSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { afterAll, beforeAll, expect, it } from "vitest";
@@ -25,6 +25,7 @@ import { readRoomTurnRows } from "./room-turn-rows.ts";
 import { Store } from "./store.ts";
 import { expectSameReads, measureReads } from "./testing/bounded-reads.ts";
 import * as messages from "./message-db.ts";
+import { removeTempDirSync } from "./testing/cleanup.ts";
 
 const selection = (): ModelSelection => ({ instanceId: "claude", model: "claude-sonnet-5" });
 const messagesDb = () => join(DATA_DIR, "messages.db");
@@ -92,7 +93,7 @@ function build(threadId: string, count: number) {
 }
 
 beforeAll(async () => {
-  rmSync(DATA_DIR, { recursive: true, force: true });
+  removeTempDirSync(DATA_DIR);
   mkdirSync(ATTACHMENTS_DIR, { recursive: true });
   writeFileSync(join(ATTACHMENTS_DIR, IMAGE), Buffer.alloc(8)); writeFileSync(join(ATTACHMENTS_DIR, TAGGED), Buffer.alloc(8));
   store = new Store(selection);

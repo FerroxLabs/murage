@@ -181,23 +181,16 @@ describe("where the shortcuts go", () => {
     expect(run("gemini").dispatch.mock.calls).toEqual([[{ type: "toggleAppSettings", open: true, section: "models" }]]);
   });
 
-  it("opens Bot defaults at the no activity limit, in view and focused, for Work runs to the end", () => {
-    frames.length = 0;
-    elements.clear();
+  it("opens Bot defaults at the no activity limit for Work runs to the end, by anchor so the page's Advanced opens first", () => {
     const { dispatch, went } = run("longwork");
     expect(went).toBe(true);
-    expect(dispatch.mock.calls).toEqual([[{ type: "toggleAppSettings", open: true, section: "botDefaults" }]]);
-    const field = new FakeElement();
-    elements.set("room-turn-timeout", field);
-    while (frames.length) frames.shift()!(0);
-    expect(field.scrolled).toEqual({ block: "start" });
-    expect(field.focused).toBe(true);
+    expect(dispatch.mock.calls).toEqual([[{ type: "toggleAppSettings", open: true, section: "botDefaults", anchor: "room-turn-timeout" }]]);
   });
 
   it("gives up quietly when the setting never renders", () => {
     frames.length = 0;
     elements.clear();
-    expect(run("longwork").went).toBe(true);
+    expect(run("shapes").went).toBe(true);
     let spins = 0;
     while (frames.length && spins < 100) { frames.shift()!(0); spins += 1; }
     expect(frames.length).toBe(0);
@@ -207,11 +200,14 @@ describe("where the shortcuts go", () => {
   it("goes to the targets the settings really render", () => {
     expect(readFileSync(new URL("./ImageSettings.tsx", import.meta.url), "utf8")).toContain('id="image-settings-heading"');
     expect(readFileSync(new URL("./RoomTurnTimeoutSettings.tsx", import.meta.url), "utf8")).toContain('id="room-turn-timeout"');
-    expect(readFileSync(new URL("./SettingsModal.tsx", import.meta.url), "utf8")).toContain("id={`images-tab-${id}`}");
     const settings = readFileSync(new URL("./SettingsModal.tsx", import.meta.url), "utf8");
-    expect(settings).toMatch(/section === "images" && <ImagesSettings \/>/);
-    expect(settings).toMatch(/function ImagesSettings\(\)[\s\S]*?<ImageSettings showLibrary=\{false\} \/>/);
-    expect(settings).toMatch(/section === "botDefaults"[\s\S]*?<RoomTurnTimeoutSettings \/>/);
+    const tools = readFileSync(new URL("./ToolsSettings.tsx", import.meta.url), "utf8");
+    expect(tools).toContain("id={`images-tab-${id}`}");
+    expect(settings).toMatch(/section === "webSearch"[\s\S]*?<ToolsSettings/);
+    expect(tools).toMatch(/<ImagesSettings \/>/);
+    expect(tools).toMatch(/function ImagesSettings\(\)[\s\S]*?<ImageSettings showLibrary=\{false\} \/>/);
+    expect(settings).toMatch(/section === "botDefaults"[\s\S]*?<BotsSettings/);
+    expect(readFileSync(new URL("./BotsSettings.tsx", import.meta.url), "utf8")).toMatch(/<RoomTurnTimeoutSettings \/>/);
   });
 
   it("loads the dialog, art included, only when the page opens", () => {
@@ -313,10 +309,6 @@ describe("the 1.0.2 page", () => {
     expect(limit.scrolled).toEqual({ block: "start" });
     expect(go("library")).toEqual({ went: true, calls: [[{ type: "showTeamLibrary", view: "teams" }]] });
     const routing = go("routing");
-    expect(routing.calls).toEqual([[{ type: "toggleAppSettings", open: true, section: "botDefaults" }]]);
-    const label = new FakeElement();
-    elements.set("room-routing-label", label);
-    while (frames.length) frames.shift()!(0);
-    expect(label.scrolled).toEqual({ block: "start" });
+    expect(routing.calls).toEqual([[{ type: "toggleAppSettings", open: true, section: "botDefaults", anchor: "room-routing-label" }]]);
   });
 });

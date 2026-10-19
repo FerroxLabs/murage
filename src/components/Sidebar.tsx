@@ -34,6 +34,7 @@ import {
   Folder,
   FolderMinus,
   FolderPlus,
+  Info,
   Keyboard,
   LayoutTemplate,
   Loader2,
@@ -155,7 +156,7 @@ const NewFromTemplateDialog = retryableLazy(() => import("./NewFromTemplateDialo
 const TeamLibraryPanel = retryableLazy(() => import("./TeamLibraryPanel").then((module) => ({ default: module.TeamLibraryPanel })));
 import { WhatsNewHost } from "./WhatsNewHost";
 import { AnnouncementsHost } from "./Announcements";
-import { useWhatsNew } from "@/lib/whats-new";
+import { APP_VERSION, useWhatsNew } from "@/lib/whats-new";
 import { usePendingApprovals } from "./usePendingApprovals";
 import { InboxDialog } from "./InboxDialog";
 import { useTrayIntents } from "./useTrayIntents";
@@ -173,7 +174,11 @@ import type { TemplateKind } from "./NewFromTemplateDialog";
 import { NewTeamDialog } from "./NewTeamDialog";
 import { taskCount } from "@/lib/task-window";
 import { LEADERSHIP_BLOCKED_HINT, leadershipPromotionBlocked } from "@/lib/new-team";
+import { hiddenPatchFrom } from "@/lib/record-numbers";
 import { isUnseenRoutineProblem } from "../../shared/routine-problems";
+
+/** Shown when a dragged section order was kept on this device but did not reach the computer. */
+export const SECTION_ORDER_NOT_SYNCED = "Couldn't sync the order to your computer. It is kept on this device for now.";
 
 /** What the bottom-left toast is currently saying. `detail` is a second,
  *  quieter line: present when something about the thing that just happened
@@ -1973,7 +1978,7 @@ function ArchivedChannelsPanel({
     setError("");
     try {
       const response = await api(`/api/groups/${group.id}`, { method: "PATCH", body: JSON.stringify({ hidden: false }) });
-      dispatch({ type: "groupPatched", group: { id: group.id, hidden: response.group?.hidden === true ? true : undefined } });
+      dispatch({ type: "groupPatched", origin: fromAnswer(response.group ?? response), group: hiddenPatchFrom(group.id, response.group) });
       dispatch({ type: "select", id: group.id });
       onRestored(`${group.name} is back`);
       if (groups.length === 1) onClose();
@@ -1990,7 +1995,7 @@ function ArchivedChannelsPanel({
     try {
       for (const group of groups) {
         const response = await api(`/api/groups/${group.id}`, { method: "PATCH", body: JSON.stringify({ hidden: false }) });
-        dispatch({ type: "groupPatched", group: { id: group.id, hidden: response.group?.hidden === true ? true : undefined } });
+        dispatch({ type: "groupPatched", origin: fromAnswer(response.group ?? response), group: hiddenPatchFrom(group.id, response.group) });
       }
       const first = groups[0];
       if (first) dispatch({ type: "select", id: first.id });
@@ -2156,7 +2161,7 @@ export function Sidebar({ open, onClose, onReturnFocus }: { open: boolean; onClo
   const [movedNote, setMovedNote] = useState(() => shouldShowMovedNote());
   const youTriggerRef = useRef<HTMLButtonElement>(null);
   // What's new: opens by itself once after an update (desktop only), and
-  // again from the You menu or Settings > Help & updates whenever asked.
+  // again from the You menu or Settings > About & updates whenever asked.
   const whatsNew = useWhatsNew(desktop, api);
   const reopenWhatsNew = whatsNew.reopen;
   useEffect(() => {
@@ -2304,8 +2309,8 @@ export function Sidebar({ open, onClose, onReturnFocus }: { open: boolean; onClo
           ),
         ),
         ...result.importedGroupIds.map((groupId) =>
-          api(`/api/groups/${groupId}`, { method: "DELETE" }).then(() =>
-            dispatch({ type: "groupDeleted", groupId }),
+          api(`/api/groups/${groupId}`, { method: "DELETE" }).then((answer) =>
+            dispatch({ type: "groupDeleted", origin: fromAnswer(answer), groupId, recordSeq: answer?.recordSeq, recordEpoch: answer?.recordEpoch }),
           ),
         ),
       ]);
@@ -2391,7 +2396,7 @@ export function Sidebar({ open, onClose, onReturnFocus }: { open: boolean; onClo
     setTeamFeedback(null);
     try {
       const response = await api(`/api/groups/${group.id}`, { method: "PATCH", body: JSON.stringify({ hidden: true }) });
-      dispatch({ type: "groupPatched", group: { id: group.id, hidden: response.group?.hidden === true ? true : undefined } });
+      dispatch({ type: "groupPatched", origin: fromAnswer(response.group ?? response), group: hiddenPatchFrom(group.id, response.group) });
       if (state.selectedId === group.id) {
         const next = state.bots.find((candidate) => !candidate.hidden);
         if (next) dispatch({ type: "select", id: next.id });
@@ -2406,7 +2411,7 @@ export function Sidebar({ open, onClose, onReturnFocus }: { open: boolean; onClo
     setTeamFeedback(null);
     try {
       const response = await api(`/api/groups/${group.id}`, { method: "PATCH", body: JSON.stringify({ hidden: false }) });
-      dispatch({ type: "groupPatched", group: { id: group.id, hidden: response.group?.hidden === true ? true : undefined } });
+      dispatch({ type: "groupPatched", origin: fromAnswer(response.group ?? response), group: hiddenPatchFrom(group.id, response.group) });
       dispatch({ type: "select", id: group.id });
       setTeamFeedback({ error: false, text: `${group.name} is back` });
     } catch (cause) {
@@ -2533,6 +2538,7 @@ export function Sidebar({ open, onClose, onReturnFocus }: { open: boolean; onClo
   const shareSectionOrder = (next: string[]) => {
     void saveSectionOrderToComputer(next, (path, init) => api(path, init)).then((order) => {
       if (order) dispatch({ type: "sidebarSectionOrder", order });
+      else setTeamFeedback({ error: true, text: SECTION_ORDER_NOT_SYNCED });
     });
   };
 
@@ -2718,6 +2724,7 @@ export function Sidebar({ open, onClose, onReturnFocus }: { open: boolean; onClo
       { key: "phone", label: t("nav.phone"), icon: <Smartphone size={17} />, onSelect: () => dispatch(phoneSettingsAction()) },
     ] : []),
     ...(whatsNew.available ? [{ key: "whats-new", label: t("settings.about.whatsNewTitle"), icon: <Megaphone size={17} />, onSelect: whatsNew.reopen }] : []),
+    { key: "version", label: t("nav.versionItem", { version: APP_VERSION }), icon: <Info size={17} />, onSelect: () => openSettings("about") },
     { key: "keyboard-shortcuts", label: t("settings.about.shortcutsTitle"), icon: <Keyboard size={17} />, onSelect: () => setShortcutsOpen(true) },
     ...(skillRecorderEnabled(state.config)
       ? [{ key: "skill-recorder", label: t("nav.teachSkill"), icon: <Sparkles size={17} />, onSelect: () => { dispatch({ type: "showSkillRecorder" }); onNavigate(); } }]
@@ -3148,7 +3155,7 @@ export function Sidebar({ open, onClose, onReturnFocus }: { open: boolean; onClo
         setTeamFeedback({ error: false, text: `${exported.members} bots exported` });
       }} /></Suspense></LazyBoundary>}
       {inboxOpen && <InboxDialog onClose={() => setInboxOpen(false)} />}
-      {/* Portalled: Settings > Help & updates opens these while a phone's
+      {/* Portalled: Settings > About & updates opens these while a phone's
           drawer is shut, and a shut drawer is inert, dialogs and all. */}
       {shortcutsOpen && createPortal(<LazyBoundary onRetry={ShortcutsDialog.retry} onDismiss={() => setShortcutsOpen(false)}><Suspense fallback={null}><ShortcutsDialog.Component open onClose={() => setShortcutsOpen(false)} returnFocusRef={youTriggerRef} /></Suspense></LazyBoundary>, document.body)}
       {filesOpen && <FilesDialog key={`${filesOpen.botId ?? ""}:${filesOpen.threadId ?? ""}:${filesOpen.artifactId ?? ""}`} {...filesOpen} onClose={() => setFilesOpen(null)} />}

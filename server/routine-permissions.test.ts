@@ -219,7 +219,8 @@ describe("Always allow for this routine", () => {
       ["aws s3 rm s3://bucket/a1b2c3d4", "aws s3 rm s3://bucket/e5f6a7b8"],
       ["curl -X DELETE https://api.example.com/items/a1b2c3d4", "curl -X DELETE https://api.example.com/items/e5f6a7b8"],
       ["curl -X POST -d hello https://api.example.com/inbox/a1b2c3d4", "curl -X POST -d hello https://api.example.com/inbox/e5f6a7b8"],
-      ["git push origin a1b2c3d4", "git push origin e5f6a7b8"],
+      // a git network command with no repository facts holds under the prompt guard (Rule 68f), so a local one stands in
+      ["git show a1b2c3d4", "git show e5f6a7b8"],
       ["/opt/tools/a1b2c3d4 --check", "/opt/tools/e5f6a7b8 --check"],
       [`python3 -c "open('/archive/a1b2c3d4','w').write('')"`, `python3 -c "open('/archive/e5f6a7b8','w').write('')"`],
       ["cat /Users/ada/.murage/workspaces/a1b2c3d4/MEMORY.md", "cat /Users/ada/.murage/workspaces/e5f6a7b8/MEMORY.md"],
@@ -232,6 +233,11 @@ describe("Always allow for this routine", () => {
       expect(autoVerdict(ask, "Bash", approved!, { ...routine, exactCommand: { ...exact, command: approved! }, routineAllow: [granted] }).source, approved).toBe("routine-allow");
       expect(autoVerdict(ask, "Bash", later!, { ...routine, exactCommand: { ...exact, command: later! }, routineAllow: [granted] }), later).toMatchObject({ approve: null, source: "no-grant" });
     }
+  });
+
+  it("a routine grant on a git network command with no repository facts holds under the prompt guard", () => {
+    const granted = exactCommandKey({ ...exact, command: "git push origin a1b2c3d4" })!;
+    expect(autoVerdict(ask, "Bash", "git push origin a1b2c3d4", { ...routine, exactCommand: { ...exact, command: "git push origin a1b2c3d4" }, routineAllow: [granted] }).source).toBe("prompt-guard");
   });
 
   it("keeps only exact-command and stop-line keys", () => {

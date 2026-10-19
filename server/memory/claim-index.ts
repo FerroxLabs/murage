@@ -76,13 +76,16 @@ const RECENT_WAITING_CHECKS = 8;
  * follows time as PagedScan's pages do: halved when a read took longer than SCAN_PAGE_TARGET_MS, doubled back (up to SCAN_CHUNK) when one took a
  * quarter of it (rc13 real-data run: a 4096-rowid read was 70 to 86 ms beside the upgrade's I/O, three of them in one claim). */
 export const CLAIM_SCAN_MIN_ROWS = 64;
-/** The pause between two background steps of the index while the upgrade runs (a step per turn of the loop otherwise). */
+/** The most a background step of the index pauses for while the upgrade runs. The pause is budgeted, not fixed: a step whose read took t ms
+ * hands the loop back for t ms (at most this), so the index holds at most half the loop beside the upgrade, and a quick read waits one turn only
+ * (stall r2 L2: a fixed 20 ms pause was still paid once after the upgrade ended). A step scheduled with a pause is run at once by the first turn
+ * that finds the upgrade over. */
 export const CLAIM_SCAN_UPGRADE_PAUSE_MS = 20;
-type Pending = { cancel(): void };
+type Pending = { cancel(): void; paused: boolean; run: () => void };
 function later(run: () => void, pauseMs: number): Pending {
-  if (pauseMs > 0) { const timer = setTimeout(run, pauseMs); timer.unref?.(); return { cancel: () => clearTimeout(timer) }; }
+  if (pauseMs > 0) { const timer = setTimeout(run, pauseMs); timer.unref?.(); return { cancel: () => clearTimeout(timer), paused: true, run }; }
   const immediate = setImmediate(run); immediate.unref?.();
-  return { cancel: () => clearImmediate(immediate) };
+  return { cancel: () => clearImmediate(immediate), paused: false, run };
 }
 const OPEN_STATUSES = new Set(["pending", "partial", "deferred", "leased"]);
 
@@ -146,6 +149,11 @@ export class MemoryClaimIndex {
   /** Ranges this turn may still read (Infinity when no upgrade runs), and the rowids the next range covers while one does. */
   private scansLeft = Infinity;
   private scanRows = SCAN_CHUNK;
+  /** What the last read under the upgrade took (ms): the pause before the next background step (budgeted, see CLAIM_SCAN_UPGRADE_PAUSE_MS). */
+  private lastReadMs = 0;
+  /** A reconcile step was due and the turn's one range went to new rows: the next turn goes to the reconcile first (stall r2, Astra: steady
+   * appends took the single scan slot of every turn under the upgrade, and an older reopened job was never filed again). */
+  private reconcileTurn = false;
   readonly stats: ClaimIndexStats = { checks: 0, scanned: 0, rebuilds: 0, examined: 0, reconciled: 0 };
 
   constructor(clock: () => number = () => performance.now()) { this.clock = clock; }
@@ -159,14 +167,24 @@ export class MemoryClaimIndex {
     let constrained = false;
     try { constrained = this.upgradeRunning(); } catch { constrained = false; }
     this.scansLeft = constrained ? 1 : Infinity;
+    // the upgrade is over: a background step still waiting out a pause taken under it runs now
+    if (!constrained) { this.buildTimer = this.hurry(this.buildTimer); this.catchTimer = this.hurry(this.catchTimer); }
     return constrained;
+  }
+  private hurry(pending: Pending | null): Pending | null {
+    if (!pending?.paused) return pending;
+    pending.cancel();
+    return later(pending.run, 0);
   }
   private get constrained(): boolean { return this.scansLeft !== Infinity; }
   private canScan(): boolean { return this.scansLeft > 0; }
   /** The rowids one range read covers now. */
   private chunkRows(): bigint { return BigInt(this.constrained ? this.scanRows : SCAN_CHUNK); }
   /** The pause before the next background step (none unless the upgrade runs). */
-  private pauseMs(): number { return this.constrained ? CLAIM_SCAN_UPGRADE_PAUSE_MS : 0; }
+  private pauseMs(): number {
+    if (!this.constrained || this.lastReadMs < SCAN_PAGE_TARGET_MS / 4) return 0;
+    return Math.min(CLAIM_SCAN_UPGRADE_PAUSE_MS, Math.ceil(this.lastReadMs));
+  }
   /** Forget everything; the next selection rebuilds from the table (chunked). */
   invalidate(): void { this.stale = true; }
   /** A writer made jobs claimable again behind the index (a park reopen, a branch restore): sweep now. */
@@ -207,6 +225,7 @@ export class MemoryClaimIndex {
       this.scansLeft--;
       // PagedScan's rule: halve when the read ran past the target, double back when it took a quarter of it
       const took = performance.now() - started;
+      this.lastReadMs = took;
       if (took > SCAN_PAGE_TARGET_MS) this.scanRows = Math.max(CLAIM_SCAN_MIN_ROWS, Math.floor(this.scanRows / 2));
       else if (took < SCAN_PAGE_TARGET_MS / 4) this.scanRows = Math.min(SCAN_CHUNK, this.scanRows * 2);
     }
@@ -293,12 +312,20 @@ export class MemoryClaimIndex {
       this.continueBuild(db);
       return false;
     }
+    // A turn whose range a due reconcile step lost to new rows last time goes to the reconcile first; the new rows follow on the next turn
+    // (or the catch-up's own steps), so neither can starve the other.
+    if (this.reconcileTurn && this.reconcileDue()) this.reconcileStep(db);
+    this.reconcileTurn = false;
     // New rows since the last look: a bounded range of the primary key, nothing when nothing was added.
-    if (!this.advance(db, SYNC_CHUNKS_PER_CALL)) { this.catchingUp = true; this.continueCatchUp(db); return true; }
+    if (!this.advance(db, SYNC_CHUNKS_PER_CALL)) { this.catchingUp = true; this.continueCatchUp(db); this.reconcileTurn = this.reconcileDue(); return true; }
     this.catchingUp = false;
     this.reconcileStep(db);
+    this.reconcileTurn = this.reconcileDue();
     return true;
   }
+
+  /** Whether a reconcile step may run now (one is under way or a new sweep is due). */
+  private reconcileDue(): boolean { return this.clock() >= this.reconcileAt; }
 
   /** One step of the reconcile sweep, when one is due: re-file open jobs the index lost track of. */
   private reconcileStep(db: DatabaseSync): void {

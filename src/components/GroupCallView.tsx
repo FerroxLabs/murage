@@ -135,7 +135,7 @@ export function GroupCall({
   const spokenIds = useRef<Set<string>>(new Set());
   const started = useRef(false);
   // A room whose first page is not held yet starts once it is: the page landing after the call began is backlog, not news.
-  if (!started.current && !group.messagesUnloaded && !group.pageStale && !group.firstPageEvents) {
+  if (!started.current && !group.messagesUnloaded && !group.firstPageEvents) {
     started.current = true;
     for (const message of messages) spokenIds.current.add(message.id);
   }

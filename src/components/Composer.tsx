@@ -13,6 +13,9 @@ import { enterSends } from "@/lib/composer-enter";
 import { COARSE_POINTER_QUERY, useCoarsePointer, useNarrowViewport } from "@/lib/media-query";
 import { newSendId } from "@/lib/send-id";
 import { openIntakeCard, replyToIntake } from "@/lib/onboarding-intake";
+
+/** Shown when a sent message could not also be recorded as the answer to the open setup question. */
+export const INTAKE_NOT_RECORDED = "Your message was sent. It could not be added as your answer to the setup question. Answer it on the setup card if you want it counted.";
 import {
   draftRevision,
   appendComposerDraftAttachments,
@@ -62,6 +65,7 @@ import {
   composerTakesFocusOnOpen,
   replyTargetTakesFocus,
   isLongPaste,
+  noticeOffersStorage,
   pasteAttachment,
   type Attachment,
   type PasteAttachment,
@@ -375,6 +379,13 @@ export function Composer({
   );
   const [recording, setRecording] = useState(false);
   const [speechError, setSpeechError] = useState<string | null>(null);
+  // The send went through but the setup question did not hear it. Said quietly beside the composer, never as a failed send.
+  const [intakeNotice, setIntakeNotice] = useState<string | null>(null);
+  useEffect(() => {
+    if (!intakeNotice) return;
+    const timer = window.setTimeout(() => setIntakeNotice(null), 10_000);
+    return () => window.clearTimeout(timer);
+  }, [intakeNotice]);
   const [caret, setCaret] = useState(0);
   const [highlight, setHighlight] = useState(0);
   const [dismissedAt, setDismissedAt] = useState<number | null>(null); // Esc'd this @
@@ -959,7 +970,7 @@ export function Composer({
         onSent: acknowledged,
         onError: failedSend,
       });
-      if (question) void replyToIntake(bot.id, question.id, t, api, { alongside: true }).catch(() => {});
+      if (question) replyToIntake(bot.id, question.id, t, api, { alongside: true }).then(() => setIntakeNotice(null), () => setIntakeNotice(INTAKE_NOT_RECORDED));
       track("message_sent", { driver: bot.modelSelection?.instanceId, queued: busy && !canSteer });
     }
   };
@@ -1074,6 +1085,11 @@ export function Composer({
           >
             Undo clean-up
           </button>
+        </div>
+      )}
+      {intakeNotice && (
+        <div role="status" data-testid="intake-reply-notice" className="pointer-events-auto mb-2 w-full rounded-lg border border-warning/30 bg-warning/10 px-3 py-2 text-[12px] text-warning">
+          {intakeNotice}
         </div>
       )}
       {speechError && (
@@ -1240,6 +1256,7 @@ export function Composer({
           allowImages={engineSupportsImages}
           notice={attachmentNotice}
           onNotice={setAttachmentNotice}
+          onManageStorage={() => dispatch({ type: "toggleAppSettings", open: true, section: "storage" })}
           onAudioFile={queueAudioFile}
           frozen={sendPending}
         />
@@ -1330,7 +1347,8 @@ export function Composer({
                 files: imageFiles,
                 uploadImage: file => imageAttachmentFromFile(file, threadId),
                 onAdd: addUploadedAttachments,
-                onError: (message) => dispatch({ type: "error", message }),
+                // A full disk goes to the attachment notice, which offers Manage storage.
+                onError: (message) => noticeOffersStorage(message) ? setAttachmentNotice(message) : dispatch({ type: "error", message }),
               });
               return;
             }

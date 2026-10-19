@@ -11,7 +11,7 @@
 //     allowed for this routine, each removable.
 //
 // Real harness, real UI, no model call. Data lives under MURAGE_E2E_DATA_DIR.
-import { test, expect } from "@playwright/test";
+import { test, expect } from "./page-error-guard";
 import { createServer, type ViteDevServer } from "vite";
 import react from "@vitejs/plugin-react";
 import tailwindcss from "@tailwindcss/vite";

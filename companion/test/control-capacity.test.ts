@@ -1,13 +1,14 @@
 // The computer's half of a full fleet. A phone told "too many devices" can
 // do nothing about it; the pairing screen on the computer has to offer the
 // fix, in the order that makes the right choice obvious.
-import { rmSync } from "node:fs";
+
 import type { Server } from "node:http";
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { createControlServer } from "../src/control.ts";
 import { DeviceRegistry, MAX_DEVICES } from "../src/devices.ts";
 import { DATA_DIR } from "../src/state.ts";
+import { removeTempDirSync } from "../../server/testing/cleanup.ts";
 
 let control: Server;
 let port = 0;
@@ -41,7 +42,7 @@ afterAll(async () => {
 });
 
 beforeEach(() => {
-  rmSync(DATA_DIR, { recursive: true, force: true });
+  removeTempDirSync(DATA_DIR);
   devices = new DeviceRegistry();
 });
 

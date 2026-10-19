@@ -1,4 +1,4 @@
-import { mkdirSync,rmSync,writeFileSync,readFileSync } from "node:fs";
+import { mkdirSync, writeFileSync, readFileSync } from "node:fs";
 import { join,resolve } from "node:path";
 import { beforeEach,expect,it } from "vitest";
 import { DATA_DIR } from "../config.ts";
@@ -16,8 +16,9 @@ import { ownerMemoryTicket } from "./authority.ts";
 import { forgetMemory } from "./forget.ts";
 import { LineageAllowance } from "./lineage-allowance.ts";
 import { writeTinyModel } from "./tiny-model-fixture.ts";
+import { removeTempDirSync } from "../testing/cleanup.ts";
 
-beforeEach(()=>{closeDatabase();rmSync(DATA_DIR,{recursive:true,force:true});mkdirSync(DATA_DIR,{recursive:true});});
+beforeEach(()=>{closeDatabase();removeTempDirSync(DATA_DIR);mkdirSync(DATA_DIR,{recursive:true});});
 /** Hermetic: nothing here downloads or needs a prepared model. The worker test runs the real loading, verification and search code over a tiny
  * local ONNX model written into the data dir (tiny-model-fixture.ts); the pinned multilingual model itself is qualified by the memory runtime
  * qualification script, not by this unit file. */

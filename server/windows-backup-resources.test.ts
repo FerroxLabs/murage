@@ -1,13 +1,14 @@
 import { createHash } from "node:crypto";
-import { linkSync, mkdtempSync, renameSync, rmSync, symlinkSync, writeFileSync, type BigIntStats } from "node:fs";
+import { linkSync, mkdtempSync, renameSync, symlinkSync, writeFileSync, type BigIntStats } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, win32 } from "node:path";
 import { afterEach, expect, it, vi } from "vitest";
+import { removeTempDirSync } from "./testing/cleanup.ts";
 vi.mock("./browser-windows-identity.ts", () => ({ verifyWindowsBrowserSignatures: vi.fn(async () => { throw new Error("Native signature calls are forbidden in this source fixture"); }) }));
 import { createWindowsBackupResourceResolver, observeWindowsBackupFile, WINDOWS_BACKUP_RAW_SHA256, type WindowsBackupResourceDependencies } from "./windows-backup-resources.ts";
 
 const roots: string[] = [];
-afterEach(() => { for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true }); });
+afterEach(() => { for (const root of roots.splice(0)) removeTempDirSync(root); });
 function localFile(bytes = "fixture-content") {
   const directory = mkdtempSync(join(tmpdir(), "murage-windows-resource-test-")); roots.push(directory);
   const path = join(directory, "resource"); writeFileSync(path, bytes); return { directory, path };

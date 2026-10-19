@@ -1,7 +1,7 @@
 // F5-T1 (media design M1): scoped MediaAsset resolver and the authorized byte
 // route. Every type below comes from validated bytes, never from a suffix.
 import { createHash } from "node:crypto";
-import { existsSync, mkdirSync, mkdtempSync, rmSync, symlinkSync, unlinkSync, utimesSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, symlinkSync, unlinkSync, utimesSync, writeFileSync } from "node:fs";
 import { createServer, type Server, type ServerResponse } from "node:http";
 import type { AddressInfo } from "node:net";
 import { tmpdir } from "node:os";
@@ -24,6 +24,7 @@ import {
   MEDIA_BYTES_RESPONSE_HEADERS, MEDIA_CAPABILITY_QUERY_PARAM, MEDIA_CAPABILITY_TTL_MS, MEDIA_ROUTES, isMediaCapabilityToken, redactMediaCapability,
   type MediaAsset, type MediaResolveResponse,
 } from "../shared/media-assets.ts";
+import { removeTempDirSync } from "./testing/cleanup.ts";
 
 // ── byte fixtures ──────────────────────────────────────────────────────────
 const u32 = (value: number) => { const b = Buffer.alloc(4); b.writeUInt32BE(value); return b; };
@@ -150,7 +151,7 @@ interface Fixture {
 }
 const cleanups: Array<() => void> = [];
 afterEach(() => { for (const cleanup of cleanups.splice(0)) { try { cleanup(); } catch {} } __resetMediaAssetsForTests(); });
-beforeEach(() => { rmSync(DATA_DIR, { recursive: true, force: true }); __resetMediaAssetsForTests(); });
+beforeEach(() => { removeTempDirSync(DATA_DIR); __resetMediaAssetsForTests(); });
 
 function fixture(): Fixture {
   const store = new Store(selection);

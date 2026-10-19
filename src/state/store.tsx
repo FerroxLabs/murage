@@ -25,6 +25,7 @@ import {
 import type { CloudBackend, EffortLevel, Subtask } from "../../server/contracts.ts";
 import type { LocalSetupFailure, ProviderErrorInfo } from "../../shared/provider-error";
 import type { RuntimeErrorDiagnostic } from "../../shared/error-diagnostic";
+import type { UsageMonth } from "../../shared/usage-month";
 import { hostStoppedReason } from "../../shared/host-stop";
 import { sendNoticeCode, type SendNoticeCode } from "../../shared/send-notice";
 import { sendNoticeFromBody } from "@/lib/send-notice";
@@ -34,11 +35,12 @@ import { EMPTY_HELPERS, helpersAfterEvent, type HelperState } from "@/lib/subtas
 import { normalizeAgentPlan, type AgentPlanEntry } from "../../shared/agent-plan";
 import type { EmberColor, EmberMotion } from "@/lib/mascot";
 import { botRole } from "@/lib/bot-role";
-import { extraTasksPatch, findTask, mayHoldTask, viewedThreadGone, withExtraTasks } from "@/lib/task-window";
+import { extraTasksPatch, findTask, mayHoldTask, viewedThreadGone, windowCovers, withExtraTasks } from "@/lib/task-window";
 import { forgetProjectTab } from "@/lib/project-tab";
 import { createIndexedDbDraftBackend, forgetMarkdownDrafts } from "@/lib/markdown-drafts";
 import { initialWorkspacePaneState, workspacePaneReducer, type WorkspacePaneAction, type WorkspacePaneState } from "@/lib/workspace-pane";
 import { normalizeSettingsSection, type AppSettingsSection } from "@/lib/settings-sections";
+import { resolveSettingsSection } from "@/lib/settings-pages";
 import type { BotAvatarCrop } from "../../shared/bot-avatar";
 import type { MascotBodyId } from "../../shared/mascot-bodies";
 import type { RoutineRequestCardData } from "../../shared/routine-request";
@@ -67,10 +69,11 @@ import { refreshAfterFluxKey } from "@/lib/flux-key-paste";
 import { createBotPatchQueue, type BotUpdatePatch } from "./bot-patch-queue";
 import type { ImageApprovalSetting } from "../../shared/image-approval-setting";
 import { fullAccessRefusalMessage } from "@/lib/permission-mode";
-import { createScrollback, MESSAGE_PAGE_SIZE, needsFirstPage, type FirstPageAnswer } from "@/lib/scrollback";
+import { createFirstPageTopUp, createScrollback, MESSAGE_PAGE_SIZE, needsFirstPage, type FirstPageAnswer } from "@/lib/scrollback";
 import { sameSidebarLine, sidebarLineOf, type SidebarLine } from "../../shared/sidebar-line";
 import { ThreadSettingsWrites } from "./thread-settings-writes";
 import { persistCardPatch } from "./card-persist";
+import { applyTranscriptInput, hydrateTranscript, legacyTranscriptInput, transcriptState, vouches, type InputKind, type SeqTranscript } from "./transcript-seq";
 import { skillRecorderEnabled } from "@/lib/feature-flags";
 import { desktopSurfaceHeaders, ensureDesktopSurfaceSecret, openLiveEvents } from "@/lib/live-events";
 import { newSendId } from "@/lib/send-id";
@@ -80,11 +83,13 @@ import { checkSession, onSignedOut, sessionSignedOut } from "@/lib/session-check
 import { onSaveFailed } from "@/lib/save-file";
 import { callNative, nativeAvailable } from "@/lib/native-shell";
 import { isPhoneClient } from "@/lib/phone-client";
+import { isCloudOrigin, notificationBridge } from "@/lib/cloud-workspace";
 import { applyThreadDelta, conversationCache, loadConversationCache } from "@/lib/conversation-cache-host";
 import type { CachedConversation } from "@/lib/conversation-cache";
 import { deletionErrorSentence, deletionNote, owedNote } from "@/lib/deletion-notes";
-import { ANSWER_TTL_MS, answerClock, carryAnswerTag, fromAnswer, tagAnswer, type HttpOrigin } from "./answer-tag";
+import { ANSWER_TTL_MS, answerClock, carryAnswerTag, fromAnswer, sentAtOf, tagAnswer, type HttpOrigin, type RoomOrigin } from "./answer-tag";
 export { asAnswer, freshAnswer, fromAnswer } from "./answer-tag";
+import { hiddenPatchFrom } from "@/lib/record-numbers";
 import { requestPage } from "./page-intent";
 export { newDeleteAttempt, requestPage } from "./page-intent";
 
@@ -222,6 +227,11 @@ export interface Message {
   /** The row the server saved this message in front of (Store
    * insertMessageBefore). It arrives after that row, live and in pages. */
   insertedBefore?: string;
+  /** ROOM-ORDER-DESIGN r6: the row's storage position in its thread (1, 2, 3 ...), on every row of a numbered thread. The transcript
+   * orders, merges, finds gaps and pages by it alone (transcript-seq.ts). Absent on a legacy thread's rows. */
+  seq?: number;
+  /** Client only (r7 R4): a numbered row held across a stream gap, not yet re-read; the walk replaces it with a vouched copy. */
+  unvouched?: true;
   actorKind?: "owner" | "person" | "bot" | "murage" | "routine";
   origin?: "desktop" | "companion" | "unproven";
   routineRunPrompt?: { routineName: string; trigger?: string };
@@ -391,13 +401,32 @@ export interface Group {
    * room carries the number of the last frame built for it. `groupPatched` drops a numbered input older than the held copy. */
   recordSeq?: number;
   recordEpoch?: string;
+  /** This client's own mark that the room's setup card was answered (GroupView). Local: a statement never sets or clears it; only a `groupEdited` does. */
+  setupPending?: boolean;
+  /** Order this room reached this client (`admitTick`), as on a bot: a room admitted after a roster was asked for survives that roster (ROOM-ORDER-DESIGN §2.4). */
+  admittedAt?: number;
   /** See Bot.messagesUnloaded. */
   messagesUnloaded?: true;
-  /** See Bot.pageStale. */
-  pageStale?: true;
   /** See Bot.firstPageEvents. */
   firstPageEvents?: FirstPageEvent[];
+  /** ROOM-ORDER-DESIGN r6-r8, client only: the transcript was promoted by a numbered input this run (rows sorted by `seq`); absent, it is
+   * legacy (arrival order, never complete). */
+  numbered?: true;
+  /** r7 R4, client only: the highest `newestSeq` a vouching input carried (the server's newest number); undefined until one did and after a hydrate. */
+  tail?: number;
+  /** Astra build r5 H2, client only: a legacy transcript's held rows each just above a run it may lack (transcript-seq.ts `legacyGaps`). */
+  legacyGaps?: string[];
 }
+
+/** The keys of a room only this client writes (`groupEdited`); every server statement keeps the held values (ROOM-ORDER-DESIGN r2 M2, r3 R6). */
+export type RoomLocalKey = "unread" | "setupPending";
+/** The per-task keys only this client writes. */
+export type RoomTaskLocalKey = "unread" | "unreadCount" | "unreadMessageIds" | "sending";
+/** Every server-owned key of a room: one statement sets every one of them, absent meaning cleared (ROOM-ORDER-DESIGN r2 upstream rule). */
+export const ROOM_SERVER_KEYS: ReadonlyArray<keyof Group> = [
+  "name", "memberIds", "defaultResponder", "bulletin", "section", "hidden", "cwd", "pinnedCwd", "pinnedMessageId", "readOnlyReason",
+  "humanPrincipalKind", "channelProject", "setupCompletedAt", "setupSkippedAt", "busyBotId", "turnStartedAt", "tasksTotal", "tasksOlder", "tasks",
+];
 
 /** One of a channel's independent conversations. The channel's threadId
  * points at the active one; folder and pin state belong to the task. */
@@ -408,6 +437,8 @@ export interface GroupTask {
   unreadCount?: number;
   /** Renderer deduplication of live unread events until a server count arrives. */
   unreadMessageIds?: string[];
+  /** Local marker a send to a non-open thread stamps; no statement sets or clears it. */
+  sending?: true;
   threadId: string;
   title: string;
   createdAt: number;
@@ -496,6 +527,8 @@ export interface Bot {
   tasksOlder?: string | null;
   /** What every task of the bot has spent, summed by the server. */
   usageTotal?: TaskUsage;
+  /** What the bot used per local calendar month ("YYYY-MM"); the Usage page reads this month's. */
+  usageMonths?: Record<string, UsageMonth>;
   /** The "Always allow" keys across every task, each once. */
   grantsAll?: string[];
   /** Rows outside the window this client asked for by thread id. Never sent. */
@@ -803,7 +836,7 @@ export interface ConfigStatus {
   /** UI language override; "" (or absent) follows the system language. */
   language?: string;
   /** Opt-in flags. Absent means off. */
-  features?: { skillRecorder: boolean; showToolCalls?: boolean; browser?: boolean; projectsLead?: boolean; projectsGoals?: boolean; projectsBoard?: boolean; projectsDigest?: boolean; projectsAutonomy?: boolean; projectsParallelCards?: boolean; roomsQueue?: boolean };
+  features?: { skillRecorder: boolean; fluxDesktopSignin?: boolean; showToolCalls?: boolean; browser?: boolean; projectsLead?: boolean; projectsGoals?: boolean; projectsBoard?: boolean; projectsDigest?: boolean; projectsAutonomy?: boolean; projectsParallelCards?: boolean; roomsQueue?: boolean };
   /** Named browser sessions any bot can be pointed at. */
   browserProfiles?: BrowserProfile[];
   /** The harness announcing itself: `platform` is its `process.platform`,
@@ -877,6 +910,8 @@ export interface InstanceInfo {
     version?: string | null;
     /** a reported cost on a subscription is notional; the UI says so */
     billing?: "metered" | "subscription";
+    /** Cloud home: offer this engine's sign-in again (Claude's token is near expiry or no longer accepted) */
+    renewSignIn?: boolean;
   };
   models: { default: string; options: Array<{ id: string; label: string; custom?: boolean; loaded?: boolean; provider?: string }> };
   capabilities?: {
@@ -918,10 +953,22 @@ export type BotSettingsIntent =
   | { section: "skills"; addSkill: boolean }
   | { section: "shapes" | "identity" | "memory" | "permissions" | "teams" | "learning"; addSkill?: undefined };
 
+/** GET /api/instances `shellEnvironment` (Rule 74a): whether engines run with the owner's shell environment read this session,
+ *  a kept one (with when and why it could not be re-read), or the app's own. */
+export interface ShellEnvironment {
+  capture: "session" | "kept" | "fallback";
+  capturedAt?: number;
+  cause?: string;
+  /** One line per owner ssh setting engines do not use, or no OpenSSH found (the displaced-settings rule). */
+  sshNotes?: string[];
+}
+
 export interface AppState {
   bots: Bot[];
   groups: Group[];
   instances: InstanceInfo[];
+  /** Rule 74a, from GET /api/instances; null until the server has said */
+  shellEnvironment?: ShellEnvironment | null;
   config: ConfigStatus | null;
   /** selected chat — a bot id OR a group id */
   selectedId: string;
@@ -955,6 +1002,8 @@ export interface AppState {
   workspacePane: WorkspacePaneState;
   appSettingsOpen: boolean;
   appSettingsSection: AppSettingsSection;
+  /** The card the open Settings should scroll to once its page renders (an alias, or a search result); null otherwise. */
+  appSettingsAnchor: string | null;
   /** latest live frame of a bot's computer, per botId */
   screens: Record<string, { png: string; mime: string }>;
   /** A bounded preview warning; the last good pixels remain available. */
@@ -1019,12 +1068,27 @@ export interface AppState {
   pageIntent?: Record<string, number>;
   /** The server run the stream belongs to; undefined = an older server (legacy mode, today's merges). */
   streamEpoch?: string;
+  /** `sentTick` of the roster that named `streamEpoch`: `admitTick` when that roster was asked for. Server runs succeed one another in
+   * one line, and a roster asked for after an input of run X was received is answered by a run at or after X, so a tombstone of another
+   * run written at or before this tick belongs to a run this client has moved past (left, or skipped). One written after it may belong
+   * to a run the client has not reached yet (seed 524), or to one it has, and local arrival order cannot tell those apart: it waits
+   * for a roster asked for after it (Astra r7 H1: the moment of adoption says nothing about run succession, a delayed roster of an
+   * earlier run can be adopted after a later run's answer). */
+  streamEpochTick?: number;
   /** Runs held before, each with when it was last current; bounded by ANSWER_TTL_MS (§9.4). */
   pastEpochs?: Array<{ epoch: string; seenAt: number }>;
   /** Counts every insert into `bots`; a hydrate carries the value read when its request was sent (`sentTick`). */
   admitTick?: number;
   /** A phone or browser (scoped surface): hidden records never show and a hide fences the id. */
   scopedClient?: boolean;
+  /** Confirmed removals of rooms, numbered by the server: they order every later input for the id (ROOM-ORDER-DESIGN §2.2 step 3). */
+  roomTombstones?: Record<string, Tombstone>;
+  /** The newest statement number the last roster of the current run reflected (`roomClock`, r3 R5): a whole record of the run for a room
+   * this client does not hold, numbered at or below it, is dropped. */
+  roomHorizon?: { epoch: string; seq: number };
+  /** The `sentAt` of the last numbered roster applied (ROOM-ORDER-DESIGN r4 T4): an answer's page closes a room's gap (unloaded or stale ->
+   * live) only when its request was sent at or after it, since only then is every later row sure to follow as a frame on this connection. */
+  transcriptFloor?: number;
   /** Bumped when an input says the roster must be read again (an expired answer, an unfamiliar run). The provider hydrates. */
   reconcileRequested?: number;
   /** Threads with a scrollback page in flight, so one scroll or click cannot
@@ -1062,7 +1126,13 @@ export interface Tombstone {
   tick?: number;
 }
 
-/** One entry of the roster's `removed[]` (server/bot-deletion-ledger.ts RemovedEntry). */
+/** The payload of `groupEdited`: the room's local keys, and local keys of its task rows, by thread id. */
+export type RoomEdit = { id: string; tasks?: Array<{ threadId: string } & Partial<Pick<GroupTask, RoomTaskLocalKey>>> } & Partial<Pick<Group, RoomLocalKey>>;
+
+/** One entry of the roster's `removedGroups[]`: a room removed (or hidden from a scoped audience), at the removal's own number. */
+export interface RemovedRoomEntry { id: string; recordSeq: number; recordEpoch: string; kind: "deleted" | "hidden" }
+
+/** One of the roster's `removed[]` (server/bot-deletion-ledger.ts RemovedEntry). */
 export interface RemovedEntry { id: string; tasksSeq: number; tasksEpoch: string; kind: "deleted" | "hidden" }
 
 function rememberConsumedQueueId(
@@ -1235,6 +1305,10 @@ export type Action =
       tasksEpoch?: string;
       /** This run's removals younger than ANSWER_TTL_MS (§2.8): each becomes a tombstone. */
       removed?: RemovedEntry[];
+      /** The roster's rooms removed within ANSWER_TTL_MS (owner audiences), numbered: each becomes a room tombstone (ROOM-ORDER-DESIGN §2.4). */
+      removedGroups?: RemovedRoomEntry[];
+      /** The server's room clock when the roster was built: every statement numbered at or below it is reflected in the rows (r3 R5). */
+      roomClock?: number;
       /** `admitTick` read when the request was sent (§2.8 r6): an unlisted held bot inserted at or before it is gone. Absent = every
        * unlisted bot is gone (today's behaviour). */
       sentTick?: number;
@@ -1266,8 +1340,13 @@ export type Action =
   | { type: "cancelRoutineRun"; runId: string }
   | { type: "markRoutineRunSeen"; runId: string }
   | { type: "markAllRoutineRunsSeen" }
-  | { type: "groupPatched"; group: Partial<Group> & { id: string } }
-  | { type: "groupDeleted"; groupId: string }
+  /** The server's statement about a room: an answer or a frame, never the client's own change (ROOM-ORDER-DESIGN §2.1). */
+  | { type: "groupPatched"; origin: RoomOrigin; group: Partial<Group> & { id: string }; removedTaskIds?: string[] }
+  /** This client's own change to the keys only it writes. Applies to a held room; never inserts, never numbers, never touches a tombstone. */
+  | { type: "groupEdited"; group: RoomEdit }
+  /** A channel edit the server refused: puts the fields the optimistic patch changed back, so the control does not show a value that was never saved. */
+  | { type: "groupPatchReverted"; groupId: string; fields: Partial<Group> }
+  | { type: "groupDeleted"; origin: RoomOrigin; groupId: string; recordSeq?: number; recordEpoch?: string; hidden?: true }
   | {
       type: "createGroup";
       memberIds: string[];
@@ -1328,7 +1407,7 @@ export type Action =
   | { type: "deleteGroupTask"; groupId: string; threadId: string }
   /** queueIds: an inject for these queued sends; a no-op once they started. */
   | { type: "interruptGroup"; groupId: string; queueIds?: string[] }
-  | { type: "instances"; instances: InstanceInfo[] }
+  | { type: "instances"; instances: InstanceInfo[]; shellEnvironment?: ShellEnvironment | null }
   | { type: "configStatus"; config: ConfigStatus }
   | { type: "select"; id: string; threadId?: string }
   | {
@@ -1468,8 +1547,10 @@ export type Action =
   /** The provider drained the frames buffered behind a hydrate: that roster's tombstones are now stream-acked (§9 builder row). */
   | { type: "streamDrained" }
   /** A verification fetch (verifyBots) ended without a record: `gone` (404) removes a held bot and settles it. Otherwise (no answer)
-   * the id stays asked for and is fetched again (order P17), unless `giveUp` (the provider's bound on repeated failures). */
-  | { type: "verifySettled"; botId: string; gone: boolean; giveUp?: true }
+   * the id stays asked for and is fetched again (order P17), unless `giveUp` (the provider's bound on repeated failures).
+   * `sentTick`: `admitTick` when the fetch was sent. A 404 to a fetch sent before the held bot was admitted (a restore frame that
+   * outran it) answers an older question: the bot is kept and verified again, as a hydrate keeps a bot admitted after its send (§2.8). */
+  | { type: "verifySettled"; botId: string; gone: boolean; giveUp?: true; sentTick?: number }
   /** Whether this client is a scoped surface (phone, browser): set once the desktop proof is known. */
   | { type: "clientScope"; scoped: boolean }
   | { type: "duplicateBot"; botId: string }
@@ -1479,8 +1560,10 @@ export type Action =
    * the record fields this answer states completely (a refused edit's fields, a team change's): at the held number or past it the
    * held copy takes the record's value for each, absent included; an answer a frame outran is asked again (CI-OVERLAY-DESIGN). */
   | ({ type: "botPatched"; bot: BotAnnouncement; overlay?: Partial<BotAnnouncement> } & ((HttpOrigin & { intent?: number; verified?: boolean; settled?: ReadonlyArray<keyof Bot> }) | StreamOrigin | LocalOrigin))
-  | { type: "messageAdded"; threadId: string; message: Message }
-  | { type: "messagePatched"; threadId: string; message: Message }
+  /** `newestSeq`: the envelope's newest number (r8 wire contract), on a numbered thread's frame or POST answer. `origin`: a POST answer's
+   * (absent: the stream's frame), which decides whether the row is vouched for (r6 Q3). */
+  | { type: "messageAdded"; threadId: string; message: Message; newestSeq?: number; origin?: RoomOrigin }
+  | { type: "messagePatched"; threadId: string; message: Message; newestSeq?: number; origin?: RoomOrigin }
   | { type: "screenFrame"; botId: string; png: string; mime: string }
   | { type: "screenUnavailable"; botId: string; message: string }
   | { type: "provisioning"; botId: string; on: boolean }
@@ -1507,7 +1590,7 @@ export type Action =
   | { type: "focusMessage"; threadId: string; messageId: string; maxPages?: number; sentence?: string }
   // scrollback: ask the server for the page before the oldest message held
   | { type: "loadOlderMessages"; threadId: string }
-  | { type: "olderMessages"; threadId: string; generation: number; messages: Message[]; hasMore: boolean; olderFrom?: string | null }
+  | { type: "olderMessages"; threadId: string; generation: number; messages: Message[]; hasMore: boolean; olderFrom?: string | null; before?: string; newestSeq?: number }
   // a conversation's first page (scrollback loadFirstPage): asked for, landed, failed
   | { type: "loadFirstPage"; threadId: string }
   | { type: "firstPageStarted"; threadId: string }
@@ -1526,7 +1609,10 @@ export type Action =
   /** Fetch one bot's whole record (its full description) when the roster sent a cut copy; `settled`: the fields that record settles
    * (a team change's), see `botPatched`. */
   | { type: "ensureBotDetail"; botId: string; settled?: ReadonlyArray<keyof Bot> }
-  | { type: "toggleAppSettings"; open?: boolean; section?: AppSettingsSection }
+  /** `anchor`: a DOM id on the page to scroll to and highlight (a search result); without it an alias supplies its own. */
+  | { type: "toggleAppSettings"; open?: boolean; section?: AppSettingsSection; anchor?: string }
+  /** The modal has scrolled to the anchor (or gave up): forget it. */
+  | { type: "appSettingsAnchorDone" }
   | {
       type: "updateBot";
       botId: string;
@@ -1668,16 +1754,52 @@ function bumpTranscriptGeneration(state: AppState, ...threadIds: Array<string | 
  * held copy, which is the newer one. That includes an open card held beside
  * the page (`openCards`): the page now reaches it, so it moves into page
  * order with the held contents (an answer may have landed while the page was
- * on the wire) and leaves `openCards`. */
-function prependOlder<T extends { messages: Message[]; hasMore?: boolean; openCards?: Message[]; olderFrom?: string }>(owner: T, older: Message[], hasMore: boolean, olderFrom?: string | null): T {
-  const held = new Set(owner.messages.map((message) => message.id));
+ * on the wire) and leaves `openCards`. A room's page is held by number
+ * (transcript-seq.ts, `older`); a bot's, and a legacy room's, prepends. */
+function prependOlder<T extends Bot | Group>(owner: T, older: Message[], hasMore: boolean, olderFrom?: string | null, newestSeq?: number, asked?: string): T {
   const beside = new Map(owner.openCards?.map((card) => [card.id, card]));
-  const fresh = older.filter((message) => !held.has(message.id)).map((message) => beside.get(message.id) ?? message);
-  const reached = new Set(fresh.map((message) => message.id));
+  const rows = older.map((message) => beside.get(message.id) ?? message);
+  const before = owner.messages;
+  const laid = isGroupOwner(owner)
+    ? roomTranscriptInput(owner, { kind: "older", rows, newestSeq, vouched: true, hasMore, olderFrom, before: asked })
+    : { ...owner, ...legacyTranscriptInput(transcriptOf(owner), { kind: "older", rows, vouched: true, hasMore, olderFrom }) };
+  const reached = new Set(laid.messages.filter((message) => !before.includes(message)).map((message) => message.id));
   const openCards = owner.openCards?.filter((card) => !reached.has(card.id));
-  // A branch page names the next ancestor; a storage page leaves the cursor as it was.
-  const cursor = olderFrom === undefined ? owner.olderFrom : olderFrom ?? undefined;
-  return { ...owner, messages: [...fresh, ...owner.messages], openCards: openCards?.length ? openCards : undefined, hasMore, olderFrom: hasMore ? cursor : undefined };
+  return { ...laid, openCards: openCards?.length ? openCards : undefined } as T;
+}
+
+/** The r8 wire contract: an envelope carrying a numbered thread's rows carries `newestSeq` (page bodies, frames, POST answers). */
+function seqEnvelope(body: unknown): { newestSeq?: number } {
+  const newestSeq = body && typeof body === "object" ? (body as { newestSeq?: unknown }).newestSeq : undefined;
+  return typeof newestSeq === "number" && Number.isFinite(newestSeq) ? { newestSeq } : {};
+}
+
+/** A POST answer's origin for its row: when its request was sent (an untagged body vouches for nothing). */
+function answerOrigin(body: unknown): RoomOrigin {
+  const sentAt = sentAtOf(body);
+  return { source: "http", sentAt: sentAt ?? Number.NEGATIVE_INFINITY, expired: false };
+}
+
+/** The transcript keys of a conversation, as transcript-seq.ts reads them. */
+function transcriptOf(owner: Bot | Group): SeqTranscript {
+  const room = isGroupOwner(owner) ? owner : undefined;
+  return { messages: owner.messages, numbered: room?.numbered, tail: room?.tail, legacyGaps: room?.legacyGaps, hasMore: owner.hasMore, olderFrom: owner.olderFrom, messagesUnloaded: owner.messagesUnloaded };
+}
+
+/** One input laid into a room's transcript (transcript-seq.ts `applyTranscriptInput`), with the count kept: the newest number once the
+ * transcript is complete, else no less than the server's count a page carried. The same room object when nothing changed. */
+function roomTranscriptInput(group: Group, input: { kind: InputKind; rows: Message[]; newestSeq?: number; vouched: boolean; hasMore?: boolean; olderFrom?: string | null; before?: string }, messagesTotal?: number): Group {
+  const before = transcriptOf(group);
+  const after = applyTranscriptInput(before, input);
+  if (after === before && messagesTotal === undefined) return group;
+  const complete = transcriptState(after) === "complete";
+  const counted = messagesTotal !== undefined || group.messagesTotal !== undefined;
+  const total = complete ? after.tail : counted ? Math.max(group.messagesTotal ?? 0, messagesTotal ?? 0) : undefined;
+  const next: Group = { ...group, ...after, messagesTotal: total };
+  if (next.numbered === undefined) delete next.numbered;
+  if (next.tail === undefined) delete next.tail;
+  if (next.legacyGaps === undefined) delete next.legacyGaps;
+  return next;
 }
 
 /** The line a held transcript's head makes: a bot's visible branch head, a room's newest row. `undefined` when nothing is held; `null` when the
@@ -1935,12 +2057,32 @@ function bumpPageIntent(state: AppState, botId: string): AppState {
 
 /** Retire what has outlived every answer that could still be applied (§2.7): a tombstone once the stream passed it (or its run is
  * over), `lastSeen` with its tombstone or on its own after the TTL, and past runs not seen within the TTL. Same state when nothing goes. */
+/** A tombstone's run is over when it carries no run (an unnumbered fence), or it is of another run than the current one and was
+ * written before the roster that named the current run was asked for (`streamEpochTick`): that roster was answered by a run at or
+ * after the tombstone's, so a different run is a run behind. A tombstone written after that roster was asked for is of a run this
+ * client cannot place (ahead of it, as a roster stalled across a restart leaves it, seed 524; or behind a run adopted from a delayed
+ * roster, Astra r7 H1) and is not over: retiring it would let a buffered frame of the older run bring the id back. It retires once a
+ * roster asked for after it has drained (`ackOnDrain`) or its run is adopted and left. */
+function tombstoneRunOver(state: AppState, t: Tombstone): boolean {
+  if (t.epoch === "" || state.streamEpoch === undefined) return true;
+  if (t.epoch === state.streamEpoch) return false;
+  return isPastEpoch(state, t.epoch) || (t.tick ?? 0) <= (state.streamEpochTick ?? 0);
+}
+
 function retireAdmission(state: AppState, now: number): AppState {
   let tombstones = state.tombstones;
   for (const [id, t] of Object.entries(tombstones ?? {})) {
-    if (now - t.confirmedAt > ANSWER_TTL_MS && (t.streamAcked || t.epoch !== state.streamEpoch)) {
+    if (now - t.confirmedAt > ANSWER_TTL_MS && (t.streamAcked || tombstoneRunOver(state, t))) {
       if (tombstones === state.tombstones) tombstones = { ...tombstones };
       delete tombstones![id];
+    }
+  }
+  // Rooms retire by the same rule (ROOM-ORDER-DESIGN §2.5): older than the TTL and passed by the stream or from a run that is over.
+  let roomTombstones = state.roomTombstones;
+  for (const [id, t] of Object.entries(roomTombstones ?? {})) {
+    if (now - t.confirmedAt > ANSWER_TTL_MS && (t.streamAcked || tombstoneRunOver(state, t))) {
+      if (roomTombstones === state.roomTombstones) roomTombstones = { ...roomTombstones };
+      delete roomTombstones![id];
     }
   }
   let lastSeen = state.lastSeen;
@@ -1953,14 +2095,14 @@ function retireAdmission(state: AppState, now: number): AppState {
   }
   const pastEpochs = (state.pastEpochs ?? []).filter((entry) => now - entry.seenAt <= ANSWER_TTL_MS);
   const epochsChanged = pastEpochs.length !== (state.pastEpochs ?? []).length;
-  if (tombstones === state.tombstones && lastSeen === state.lastSeen && !epochsChanged) return state;
-  return { ...state, tombstones, lastSeen, ...(epochsChanged ? { pastEpochs } : {}) };
+  if (tombstones === state.tombstones && roomTombstones === state.roomTombstones && lastSeen === state.lastSeen && !epochsChanged) return state;
+  return { ...state, tombstones, roomTombstones, lastSeen, ...(epochsChanged ? { pastEpochs } : {}) };
 }
 
 /** Write a tombstone; an existing one of the same run keeps the higher number. Every write re-evaluates retirement (§2.7). */
-function writeTombstone(state: AppState, botId: string, entry: Omit<Tombstone, "confirmedAt"> & { confirmedAt?: number }): AppState {
-  const now = Date.now();
-  const held = state.tombstones?.[botId];
+function writeTombstone(state: AppState, botId: string, entry: Omit<Tombstone, "confirmedAt"> & { confirmedAt?: number }, table: "tombstones" | "roomTombstones" = "tombstones"): AppState {
+  const now = answerClock.now();
+  const held = state[table]?.[botId];
   const sameRun = held && held.epoch === entry.epoch;
   const next: Tombstone = {
     epoch: entry.epoch,
@@ -1972,7 +2114,7 @@ function writeTombstone(state: AppState, botId: string, entry: Omit<Tombstone, "
     ...(entry.ackOnDrain && !entry.streamAcked ? { ackOnDrain: true as const } : {}),
   };
   const tick = (state.admitTick ?? 0) + 1;
-  return retireAdmission({ ...state, admitTick: tick, tombstones: { ...state.tombstones, [botId]: { ...next, tick } } }, now);
+  return retireAdmission({ ...state, admitTick: tick, [table]: { ...state[table], [botId]: { ...next, tick } } }, now);
 }
 
 function dropTombstone(state: AppState, botId: string): AppState {
@@ -1986,7 +2128,7 @@ function noteSeen(state: AppState, botId: string, record: { tasksSeq?: unknown; 
   if (!numberedRecord(record)) return state;
   const held = state.lastSeen?.[botId];
   if (held && held.epoch === record.tasksEpoch && held.seq >= record.tasksSeq) return state;
-  return { ...state, lastSeen: { ...state.lastSeen, [botId]: { epoch: record.tasksEpoch, seq: record.tasksSeq, at: Date.now() } } };
+  return { ...state, lastSeen: { ...state.lastSeen, [botId]: { epoch: record.tasksEpoch, seq: record.tasksSeq, at: answerClock.now() } } };
 }
 
 /** Remove a held bot (a removal, a scoped hide, an unlisted roster row); the selection moves off it. */
@@ -2141,12 +2283,252 @@ function forgetSettle(state: AppState, botId: string): AppState {
   return { ...state, settleOnVerify };
 }
 
-/** A numbered group input that is older than the held copy of the same run (I-H2). Unnumbered on either side, or another run: not stale. */
-function staleGroupInput(held: Group | undefined, incoming: Partial<Group> & { id: string }): boolean {
-  if (!held || typeof held.recordSeq !== "number" || typeof incoming.recordSeq !== "number") return false;
-  if (held.recordEpoch === undefined || incoming.recordEpoch !== held.recordEpoch) return false;
-  return incoming.recordSeq < held.recordSeq;
+// ── Room admission (ROOM-ORDER-DESIGN §2, r2, r3) ───────────────────────
+// One room version is `(recordEpoch, recordSeq)`, drawn from the server's run-wide clock: every statement about any room takes the next
+// number. `admitRoom` is the only judge of a room record, `admitRoomRemoval` of a room removal. This client never makes or borrows a number.
+
+const numberedRoom = (record: { recordSeq?: unknown; recordEpoch?: unknown }): record is { recordSeq: number; recordEpoch: string } =>
+  typeof record.recordSeq === "number" && typeof record.recordEpoch === "string";
+
+/** A whole statement carries the room's open thread; a partial row (a hidden flag, a team row) does not. */
+const wholeRoom = (record: { threadId?: unknown }): boolean => typeof record.threadId === "string";
+
+/** Remove a held room; the selection moves off it. */
+function removeHeldRoom(state: AppState, groupId: string): AppState {
+  if (!state.groups.some((group) => group.id === groupId)) return state;
+  const groups = state.groups.filter((group) => group.id !== groupId);
+  return { ...state, groups, selectedId: state.selectedId === groupId ? (state.bots[0]?.id ?? "") : state.selectedId };
 }
+
+function dropRoomTombstone(state: AppState, groupId: string): AppState {
+  if (!state.roomTombstones?.[groupId]) return state;
+  const { [groupId]: _gone, ...roomTombstones } = state.roomTombstones;
+  return { ...state, roomTombstones };
+}
+
+/**
+ * §2.2 steps 0-6 for one room statement. The returned state carries the side effects (a reconcile request, a scoped hide's tombstone,
+ * a tombstone cleared by a number past it). `roster`: the input is a row of the roster itself, which is the verdict on membership at its
+ * horizon and asks for no further roster (r3 R5).
+ */
+export function admitRoom(state: AppState, record: Partial<Group> & { id: string }, origin: RoomOrigin, roster = false): { state: AppState; verdict: Verdict } {
+  const id = record.id;
+  const reconcile = (next: AppState): AppState => (roster ? next : requestReconcile(next));
+  // 0. Life: an HTTP answer older than the TTL is never applied. Frames have no life: the stream orders them.
+  if (origin.source === "http" && origin.expired) return { state: requestReconcile(state), verdict: "drop" };
+  // 1. Legacy: an older server numbers nothing.
+  if (state.streamEpoch === undefined) return { state, verdict: "legacy" };
+  // 2. Unnumbered in a numbered run: a wire or dispatch defect, repaired by the roster; never merged, held or not (r2 M2).
+  if (!numberedRoom(record)) return { state: reconcile(state), verdict: "drop" };
+  const { recordSeq, recordEpoch } = record;
+  const held = state.groups.find((group) => group.id === id);
+  let next = state;
+  let clearTomb = false;
+  // 3. Tombstone.
+  const tomb = state.roomTombstones?.[id];
+  if (tomb) {
+    if (recordEpoch === tomb.epoch) {
+      if (recordSeq <= tomb.seq) return { state, verdict: "drop" };
+      clearTomb = true;
+    } else if (isPastEpoch(state, recordEpoch)) return { state, verdict: "drop" };
+    else if (recordEpoch === state.streamEpoch) clearTomb = true; // the tombstone is from an earlier run: the roster that named this run is the truth
+    else return { state: reconcile(state), verdict: "drop" };
+  }
+  // 4. Run.
+  if (recordEpoch !== state.streamEpoch) {
+    if (isPastEpoch(state, recordEpoch)) return { state: next, verdict: "stale" };
+    return { state: reconcile(next), verdict: "drop" };
+  }
+  // 5. Version against the held copy (r3 R5: the horizon decides a room this client does not hold).
+  let verdict: Verdict;
+  if (!held) {
+    if (!wholeRoom(record)) return { state: reconcile(next), verdict: "drop" };
+    const horizon = state.roomHorizon;
+    if (!roster && horizon && horizon.epoch === recordEpoch && recordSeq <= horizon.seq) return { state: next, verdict: "drop" };
+    verdict = "insert";
+  } else if (held.recordEpoch === recordEpoch) {
+    const heldSeq = held.recordSeq ?? -1;
+    verdict = recordSeq > heldSeq ? "newer" : recordSeq === heldSeq ? "same" : "stale";
+  } else verdict = "newer";
+  if (verdict === "stale") return { state: next, verdict };
+  // 6. Visibility: a scoped client never shows a hidden room; the hide removes the held copy and fences the id at its number.
+  if (state.scopedClient && record.hidden === true) {
+    next = writeTombstone(removeHeldRoom(next, id), id, { epoch: recordEpoch, seq: recordSeq, kind: "hidden", streamAcked: origin.source === "stream" }, "roomTombstones");
+    return { state: next, verdict: "drop" };
+  }
+  if (clearTomb) next = dropRoomTombstone(next, id);
+  return { state: next, verdict };
+}
+
+/** §2.3 steps 0-4 for one room removal (a `group.deleted` frame, a DELETE answer): the only judge, returns the next state. */
+export function admitRoomRemoval(state: AppState, input: { groupId: string; recordSeq?: number; recordEpoch?: string; hidden?: true }, origin: RoomOrigin): AppState {
+  const id = input.groupId;
+  if (origin.source === "http" && origin.expired) return requestReconcile(state);
+  if (state.streamEpoch === undefined) return removeHeldRoom(state, id);
+  // The client never borrows the held copy's numbers: an unnumbered removal against a numbered server removes nothing.
+  if (typeof input.recordSeq !== "number" || typeof input.recordEpoch !== "string") return requestReconcile(state);
+  const { recordSeq: seq, recordEpoch: epoch } = input;
+  if (epoch !== state.streamEpoch) return isPastEpoch(state, epoch) ? state : requestReconcile(state);
+  const held = state.groups.find((group) => group.id === id);
+  // r2 M1: a removal older than the held copy (a restore that already landed) changes nothing.
+  if (held && held.recordEpoch === epoch && seq < (held.recordSeq ?? -1)) return state;
+  return writeTombstone(removeHeldRoom(state, id), id, { epoch, seq, kind: input.hidden ? "hidden" : "deleted", streamAcked: origin.source === "stream" }, "roomTombstones");
+}
+
+/**
+ * The room as a statement leaves it: server keys from the statement, local keys from the held copy. A whole numbered statement sets every
+ * server-owned key, absent meaning cleared; a partial one sets only the keys it carries (r2). Transcript and card handling stay with the caller.
+ */
+function mergeRoomRecord(state: AppState, held: Group, incoming: Partial<Group> & { id: string }, whole: boolean, removedTaskIds: ReadonlySet<string>): Group {
+  const next: Group = { ...held, ...incoming };
+  // local keys no statement writes
+  if (held.setupPending === undefined) delete next.setupPending;
+  else next.setupPending = held.setupPending;
+  if (whole) {
+    for (const key of ROOM_SERVER_KEYS) if (!(key in incoming)) delete next[key];
+  } else if (incoming.threadId !== undefined && incoming.threadId !== held.threadId) {
+    // an unnumbered switch of the open task: the server omits an unset task pin, so the previous task's folder lock must not stay
+    if (!("pinnedCwd" in incoming)) delete next.pinnedCwd;
+    if (!("pinnedMessageId" in incoming)) delete next.pinnedMessageId;
+    if (!("readOnlyReason" in incoming)) delete next.readOnlyReason;
+    if (!("humanPrincipalKind" in incoming)) delete next.humanPrincipalKind;
+  }
+  // tasks[] merge by threadId (r3 R6)
+  const heldRows = [...(held.tasks ?? []), ...(held.extraTasks ?? [])];
+  const heldRow = (threadId: string) => heldRows.find((task) => task.threadId === threadId);
+  if (Array.isArray(incoming.tasks)) {
+    const rows = incoming.tasks.filter((task) => !removedTaskIds.has(task.threadId));
+    next.tasks = rows.map((task) => {
+      const old = heldRow(task.threadId);
+      const read = state.selectedId === held.id && state.activeView === "chat" && task.threadId === next.threadId;
+      return {
+        ...task,
+        unreadCount: read ? 0 : task.unreadCount ?? 0,
+        unread: read ? false : task.unreadCount !== undefined ? task.unreadCount > 0 : task.unread ?? old?.unread,
+        unreadMessageIds: read ? [] : old?.unreadMessageIds,
+        ...(task.sending === undefined && old?.sending ? { sending: old.sending } : {}),
+      };
+    });
+    const listed = new Set(rows.map((task) => task.threadId));
+    const covers = windowCovers({ tasks: incoming.tasks, tasksTotal: incoming.tasksTotal, tasksOlder: incoming.tasksOlder });
+    const kept = new Map<string, GroupTask>();
+    for (const task of heldRows) if (!listed.has(task.threadId) && !removedTaskIds.has(task.threadId) && !covers(task)) kept.set(task.threadId, task);
+    if (kept.size) next.extraTasks = [...kept.values()];
+    else delete next.extraTasks;
+  } else if (whole) {
+    delete next.extraTasks;
+  } else if (removedTaskIds.size) {
+    if (held.tasks) next.tasks = held.tasks.filter((task) => !removedTaskIds.has(task.threadId));
+    if (held.extraTasks) next.extraTasks = held.extraTasks.filter((task) => !removedTaskIds.has(task.threadId));
+  }
+  return next;
+}
+
+/** A room statement's page (ROOM-ORDER-DESIGN r4 T3): the rows and the keys that describe them; `newestSeq` rides the statement (r8 R8). */
+interface RoomStatementPage {
+  messages: Message[];
+  hasMore?: boolean;
+  olderFrom?: string | null;
+  openCards?: Message[];
+  openCardsLeaf?: string;
+  openCardsPending?: boolean;
+  messagesTotal?: number;
+  newestSeq?: number;
+}
+
+/** The page a room statement carries, if any. */
+function roomPageOf(record: Partial<Group>): RoomStatementPage | undefined {
+  if (!Array.isArray(record.messages)) return undefined;
+  const { messages, hasMore, olderFrom, openCards, openCardsLeaf, openCardsPending, messagesTotal } = record;
+  const newestSeq = (record as { newestSeq?: unknown }).newestSeq;
+  return { messages, hasMore, olderFrom, openCards, openCardsLeaf, openCardsPending, messagesTotal, newestSeq: typeof newestSeq === "number" ? newestSeq : undefined };
+}
+
+/** r4 T4 / r6 Q3: whether an input vouches for its rows (and may load an unloaded room, and set the tail): a frame always, the stream orders
+ * every later row behind it; an answer only when its request was sent at or after this connection's roster was asked for (`transcriptFloor`).
+ * A legacy run has no floor. */
+function pageClosesGap(state: AppState, origin: RoomOrigin): boolean {
+  if (state.streamEpoch === undefined) return true;
+  return vouches(origin, state.transcriptFloor);
+}
+
+/** r4 T2: the transcript of a room inserted without a page, or whose open conversation moved without one (a new thread starts legacy). */
+const UNLOADED_TRANSCRIPT = {
+  messages: [] as Message[], hasMore: undefined, olderFrom: undefined, openCards: undefined, openCardsLeaf: undefined, openCardsPending: undefined,
+  messagesTotal: undefined, messagesUnloaded: true as const, firstPageEvents: undefined, numbered: undefined, tail: undefined, legacyGaps: undefined,
+};
+
+/** A statement's page laid into a room (transcript-seq.ts `statement`): rows by number (or the legacy union), the open cards beside them
+ * from a page that vouches, else the held ones; a card whose row is held is dropped (r4). */
+function roomWithPage(group: Group, page: RoomStatementPage, vouched: boolean): Group {
+  const next = roomTranscriptInput(group, { kind: "statement", rows: page.messages, newestSeq: page.newestSeq, vouched, hasMore: page.hasMore, olderFrom: page.olderFrom }, page.messagesTotal);
+  if (next === group) return group;
+  const loaded = group.messagesUnloaded && !next.messagesUnloaded;
+  const fresh = vouched && (loaded || page.openCards !== undefined);
+  const ids = new Set(next.messages.map((row) => row.id));
+  const cards = (fresh ? page.openCards : group.openCards)?.filter((card) => !ids.has(card.id));
+  return {
+    ...next,
+    openCards: cards?.length ? cards : undefined,
+    openCardsLeaf: fresh ? page.openCardsLeaf : group.openCardsLeaf,
+    openCardsPending: (fresh ? page.openCardsPending : group.openCardsPending) || undefined,
+  };
+}
+
+/**
+ * r4 T1-T4 with r6: the transcript of a held room after a statement, written onto `next` (the record `mergeRoomRecord` built, whose spread
+ * took the statement's transcript keys as they came). The open conversation moved: the held rows belong to another task, and the page is
+ * the new thread's base when it vouches, else the thread starts unloaded. Same thread: the page is held into what is held; one that does not
+ * vouch leaves an unloaded room as it was, flags and queue intact, so the first-page GET loads it.
+ */
+function applyRoomTranscript(next: Group, held: Group, page: RoomStatementPage | undefined, closesGap: boolean, threadMoved: boolean): void {
+  delete (next as { newestSeq?: unknown }).newestSeq;
+  const base: Group = threadMoved ? { ...held, ...UNLOADED_TRANSCRIPT } : held;
+  const laid = page ? roomWithPage(base, page, closesGap) : base;
+  const transcript = {
+    messages: laid.messages, hasMore: laid.hasMore, olderFrom: laid.olderFrom, openCards: laid.openCards, openCardsLeaf: laid.openCardsLeaf,
+    openCardsPending: laid.openCardsPending, messagesTotal: page?.messagesTotal !== undefined && laid.messagesUnloaded ? page.messagesTotal : laid.messagesTotal,
+    messagesUnloaded: laid.messagesUnloaded, firstPageEvents: closesGap ? undefined : laid.firstPageEvents, numbered: laid.numbered, tail: laid.tail,
+    legacyGaps: laid.legacyGaps,
+  };
+  Object.assign(next, transcript);
+  for (const key of ["numbered", "tail", "legacyGaps", "hasMore", "olderFrom", "openCards", "openCardsLeaf", "openCardsPending", "messagesTotal", "messagesUnloaded", "firstPageEvents"] as const) {
+    if (next[key] === undefined) delete next[key];
+  }
+}
+
+/** r4 T5: a stale statement's rows join a live transcript of the same thread; its record, flags and queue are untouched. It vouches nothing. */
+function unionStaleRoomPage(state: AppState, record: Partial<Group> & { id: string }): AppState {
+  const page = roomPageOf(record);
+  const held = state.groups.find((group) => group.id === record.id);
+  if (!page || !held || (record.threadId !== undefined && record.threadId !== held.threadId)) return state;
+  const merged = roomWithPage(held, page, false);
+  if (merged === held) return state;
+  return { ...state, groups: state.groups.map((group) => (group.id === held.id ? merged : group)) };
+}
+
+/** A `groupEdited`: the room's local keys, and the local keys of the task rows it names. Nothing else is read from the edit. */
+function applyRoomEdit(group: Group, edit: RoomEdit): Group {
+  const next: Group = { ...group };
+  if ("unread" in edit && typeof edit.unread === "boolean") next.unread = edit.unread;
+  if ("setupPending" in edit) next.setupPending = edit.setupPending;
+  if (edit.tasks?.length) {
+    const patch = (rows: GroupTask[] | undefined) => rows?.map((row) => {
+      const change = edit.tasks!.find((entry) => entry.threadId === row.threadId);
+      if (!change) return row;
+      const out: GroupTask = { ...row };
+      if ("unread" in change) out.unread = change.unread;
+      if ("unreadCount" in change) out.unreadCount = change.unreadCount;
+      if ("unreadMessageIds" in change) out.unreadMessageIds = change.unreadMessageIds;
+      if ("sending" in change) out.sending = change.sending;
+      return out;
+    });
+    if (next.tasks) next.tasks = patch(next.tasks);
+    if (next.extraTasks) next.extraTasks = patch(next.extraTasks);
+  }
+  return next;
+}
+// ── end of admission ──────────────────────────────────────────────────────
 
 /** The overlay of edits still in flight, laid over whatever record is held after admission. */
 function withOverlay(state: AppState, botId: string, overlay: Partial<BotAnnouncement> | undefined): AppState {
@@ -2372,42 +2754,77 @@ function reduceState(state: AppState, action: Action): AppState {
           : (chief?.id ?? visible[0]?.id ?? action.bots[0]?.id ?? "");
       // Every transcript in the snapshot replaces the one held before it.
       const fenced = bumpTranscriptGeneration(state, ...action.bots.map((b) => b.threadId), ...action.groups.map((g) => g.threadId));
-      // The boot roster (`view=sidebar`) carries no rows: every conversation arrives unloaded, with its sidebar line. The one on screen keeps
-      // the rows it holds when its thread did not move (no blank), marked stale so its first page is fetched again and replaces them; every
-      // other conversation drops its rows. An entry that does carry rows (an older listing) is held as it came.
+      // The boot roster (`view=sidebar`) carries no rows: every conversation arrives unloaded, with its sidebar line. A room of the same thread
+      // in the same run keeps the rows it holds by number, each unvouched and its tail forgotten (ROOM-ORDER-DESIGN r7 R4): the walk re-reads
+      // them; a legacy room, and every room of a new run (a restore may have renumbered), arrives unloaded. The bot on screen keeps its rows
+      // (no blank), marked stale so its first page is fetched again when it is opened; every other bot drops its rows (its branch head may
+      // have moved, and its page replaces the rows). An entry that does carry rows (an older listing) is held as it came.
       const onScreenId = state.activeView === "chat" ? state.selectedId : "";
+      const sameRun = action.tasksEpoch !== undefined && state.streamEpoch === action.tasksEpoch;
       const arrive = <T extends Bot | Group>(entry: T, held: T | undefined): T => {
+        if (isGroupOwner(entry)) {
+          const { firstPageEvents: _queue, newestSeq: _newest, ...rest } = entry as Group & { newestSeq?: unknown };
+          const sameThread = held !== undefined && isGroupOwner(held) && held.threadId === entry.threadId;
+          const base = hydrateTranscript(sameThread ? transcriptOf(held) : { messages: [] }, sameRun && sameThread);
+          const kept = sameThread && !base.messagesUnloaded;
+          let room = {
+            ...rest, ...base,
+            openCards: kept ? held.openCards : undefined, openCardsLeaf: kept ? held.openCardsLeaf : undefined, openCardsPending: kept ? held.openCardsPending : undefined,
+          } as Group;
+          const page = roomPageOf(entry);
+          // r4 T3: a listing that carries rows is a page, vouched by its origin (the roster's own answer)
+          if (page) room = roomWithPage(room, page, true);
+          for (const key of ["numbered", "tail", "legacyGaps", "hasMore", "olderFrom", "openCards", "openCardsLeaf", "openCardsPending", "messagesUnloaded"] as const) if (room[key] === undefined) delete room[key];
+          return room as unknown as T;
+        }
         if (Array.isArray((entry as { messages?: unknown }).messages)) return entry;
-        const { firstPageEvents: _queue, pageStale: _stale, ...rest } = entry;
-        if (held && held.id === onScreenId && held.threadId === entry.threadId && !held.messagesUnloaded && held.messages.length) {
+        const { firstPageEvents: _queue, pageStale: _stale, ...rest } = entry as Bot;
+        // a transcript with no rows holds nothing to keep: it arrives unloaded (its first page, a window, is then what it holds)
+        const keepsRows = held !== undefined && held.threadId === entry.threadId && !held.messagesUnloaded && held.messages.length > 0 && held.id === onScreenId;
+        if (held && keepsRows) {
           return { ...rest, messages: held.messages, hasMore: held.hasMore, olderFrom: held.olderFrom, openCards: held.openCards, openCardsLeaf: held.openCardsLeaf, openCardsPending: held.openCardsPending, messagesUnloaded: undefined, pageStale: true } as unknown as T;
         }
         return { ...rest, messages: [], messagesUnloaded: true } as unknown as T;
       };
-      const groups = action.groups.map((group) => arrive(group, state.groups.find((held) => held.id === group.id)));
       // §2.8: the roster's own removals become tombstones first, then each row is admitted by number, then membership of an unlisted
       // held bot is decided by when it reached this client against when the roster was asked for. Never a wholesale replacement.
       let admission: AppState = fenced;
       if (action.tasksEpoch !== undefined && admission.streamEpoch !== action.tasksEpoch) {
         // a run this client already left: the roster is dropped whole (§9.4)
         if (isPastEpoch(admission, action.tasksEpoch)) return state;
-        const now = Date.now();
+        const now = answerClock.now();
         admission = {
           ...admission,
           streamEpoch: action.tasksEpoch,
+          // when this roster was asked for, not when it landed (Astra r7 H1); a caller without `sentTick` asks and applies at once
+          streamEpochTick: action.sentTick ?? admission.admitTick ?? 0,
           pastEpochs: admission.streamEpoch === undefined ? admission.pastEpochs ?? [] : [...(admission.pastEpochs ?? []).filter((entry) => entry.epoch !== admission.streamEpoch), { epoch: admission.streamEpoch, seenAt: now }],
         };
+      }
+      // r4 T4: the roster's request time is the floor under which no answer's page may close a room's gap; never lowered by a late roster.
+      if (action.tasksEpoch !== undefined && typeof action.sentAt === "number") {
+        admission = { ...admission, transcriptFloor: Math.max(admission.transcriptFloor ?? Number.NEGATIVE_INFINITY, action.sentAt) };
+      }
+      // r3 R5: the roster's clock is the horizon; a delivered-out-of-order roster never lowers it, and a new run resets it.
+      if (action.tasksEpoch !== undefined && typeof action.roomClock === "number") {
+        const before = admission.roomHorizon?.epoch === action.tasksEpoch ? admission.roomHorizon.seq : -1;
+        admission = { ...admission, roomHorizon: { epoch: action.tasksEpoch, seq: Math.max(before, action.roomClock) } };
       }
       if (action.tasksEpoch !== undefined && action.sentTick !== undefined) {
         // A tombstone written before this roster was asked for: the new connection behind it carries only later frames, so once its
         // buffer is drained the stream has passed the removal (an unacked hide or deletion whose frame went with the old connection).
-        let tombstones = admission.tombstones;
-        for (const [id, t] of Object.entries(admission.tombstones ?? {})) {
-          if (t.streamAcked || t.ackOnDrain || (t.tick ?? 0) > action.sentTick) continue;
-          if (tombstones === admission.tombstones) tombstones = { ...tombstones };
-          tombstones![id] = { ...t, ackOnDrain: true };
-        }
-        if (tombstones !== admission.tombstones) admission = { ...admission, tombstones };
+        const ackable = (table: Record<string, Tombstone> | undefined): Record<string, Tombstone> | undefined => {
+          let out = table;
+          for (const [id, t] of Object.entries(table ?? {})) {
+            if (t.streamAcked || t.ackOnDrain || (t.tick ?? 0) > action.sentTick!) continue;
+            if (out === table) out = { ...out };
+            out![id] = { ...t, ackOnDrain: true };
+          }
+          return out;
+        };
+        const tombstones = ackable(admission.tombstones);
+        const roomTombstones = ackable(admission.roomTombstones);
+        if (tombstones !== admission.tombstones || roomTombstones !== admission.roomTombstones) admission = { ...admission, tombstones, roomTombstones };
       }
       if (action.tasksEpoch !== undefined) {
         for (const entry of action.removed ?? []) {
@@ -2418,6 +2835,68 @@ function reduceState(state: AppState, action: Action): AppState {
           admission = writeTombstone(removeHeldBot(admission, entry.id), entry.id, { epoch: entry.tasksEpoch, seq: entry.tasksSeq, kind: entry.kind, streamAcked: false, ackOnDrain: true });
         }
       }
+      // Rooms (ROOM-ORDER-DESIGN §2.4, r3 R5): the roster's room removals become tombstones first (a hydrate never clears one), then each
+      // row is admitted by number, then membership of an unlisted held room is decided by when it reached this client.
+      const removedRoomIds = new Set<string>();
+      if (action.tasksEpoch !== undefined) {
+        for (const entry of action.removedGroups ?? []) {
+          if (typeof entry?.id !== "string" || typeof entry.recordSeq !== "number" || typeof entry.recordEpoch !== "string") continue;
+          removedRoomIds.add(entry.id);
+          // hides fence only a scoped client: the desktop holds archived rooms as hidden records
+          if (entry.kind === "hidden" && !admission.scopedClient) continue;
+          const heldRoom = admission.groups.find((group) => group.id === entry.id);
+          if (heldRoom && heldRoom.recordEpoch === entry.recordEpoch && (heldRoom.recordSeq ?? -1) > entry.recordSeq) continue;
+          admission = writeTombstone(removeHeldRoom(admission, entry.id), entry.id, { epoch: entry.recordEpoch, seq: entry.recordSeq, kind: entry.kind, streamAcked: false, ackOnDrain: true }, "roomTombstones");
+        }
+      }
+      const listedRooms = new Set(action.groups.map((group) => group.id));
+      const groups: Group[] = [];
+      for (const row of action.groups) {
+        const heldRoom = admission.groups.find((group) => group.id === row.id);
+        if (action.tasksEpoch === undefined) {
+          // an older server, or a caller the server gives no numbers: the roster is the truth, as before
+          groups.push(arrive(row, heldRoom));
+          continue;
+        }
+        const admitted = admitRoom(admission, row, action, true);
+        admission = admitted.state;
+        const nowRoom = admission.groups.find((group) => group.id === row.id);
+        switch (admitted.verdict) {
+          case "drop":
+          case "stale": {
+            // a dropped or stale row keeps the copy this client holds (§2.4); a scoped hide or a tombstone already removed it
+            if (!nowRoom) break;
+            const { messages: _messages, ...record } = nowRoom;
+            groups.push(arrive(record as Group, nowRoom));
+            break;
+          }
+          default: {
+            if (nowRoom) {
+              const merged = mergeRoomRecord(admission, nowRoom, row, wholeRoom(row), new Set());
+              const { messages: _messages, ...record } = merged;
+              groups.push(arrive(Array.isArray(row.messages) ? { ...record, messages: row.messages } as Group : record as Group, nowRoom));
+            } else {
+              const admittedAt = (admission.admitTick ?? 0) + 1;
+              admission = { ...admission, admitTick: admittedAt };
+              groups.push(arrive({ ...row, admittedAt }, undefined));
+            }
+          }
+        }
+      }
+      // Membership: an unlisted held room admitted at or before the roster's request is gone, and is fenced at the roster's clock unless
+      // its removal is named; one admitted after it (a create during the hydrate) is kept, its own buffered frames settle it.
+      for (const heldRoom of admission.groups) {
+        if (listedRooms.has(heldRoom.id) || groups.some((group) => group.id === heldRoom.id)) continue;
+        if (action.sentTick !== undefined && (heldRoom.admittedAt ?? 0) > action.sentTick) {
+          groups.push(heldRoom);
+          continue;
+        }
+        if (action.tasksEpoch !== undefined && typeof action.roomClock === "number" && heldRoom.recordEpoch === action.tasksEpoch && !removedRoomIds.has(heldRoom.id)) {
+          admission = writeTombstone(admission, heldRoom.id, { epoch: action.tasksEpoch, seq: action.roomClock, kind: admission.scopedClient ? "hidden" : "deleted", streamAcked: false, ackOnDrain: true }, "roomTombstones");
+        }
+      }
+      const roomOrder = new Map(action.groups.map((group, index) => [group.id, index]));
+      groups.sort((a, b) => (roomOrder.get(a.id) ?? -1) - (roomOrder.get(b.id) ?? -1));
       const listed = new Set(action.bots.map((bot) => bot.id));
       const bots: Bot[] = [];
       for (const row of action.bots) {
@@ -2469,7 +2948,7 @@ function reduceState(state: AppState, action: Action): AppState {
       const order = new Map(action.bots.map((bot, index) => [bot.id, index]));
       bots.sort((a, b) => (order.get(a.id) ?? -1) - (order.get(b.id) ?? -1));
       const heldIds = new Set(bots.map((bot) => bot.id));
-      const knownHeld = (id: string) => heldIds.has(id) || action.groups.some((g) => g.id === id);
+      const knownHeld = (id: string) => heldIds.has(id) || groups.some((g) => g.id === id);
       const visibleHeld = bots.filter((candidate) => !candidate.hidden);
       const chiefHeld = visibleHeld.find((candidate) => botRole(candidate) === "chief");
       const settledSelection =
@@ -2563,7 +3042,7 @@ function reduceState(state: AppState, action: Action): AppState {
         ...state,
         loadingOlder,
         bots: state.bots.map((bot) => (bot.threadId === action.threadId ? prependOlder(bot, action.messages, action.hasMore, action.olderFrom) : bot)),
-        groups: state.groups.map((group) => (group.threadId === action.threadId ? prependOlder(group, action.messages, action.hasMore, action.olderFrom) : group)),
+        groups: state.groups.map((group) => (group.threadId === action.threadId ? prependOlder(group, action.messages, action.hasMore, action.olderFrom, action.newestSeq, action.before) : group)),
       };
     }
     case "loadFirstPage":
@@ -2581,7 +3060,12 @@ function reduceState(state: AppState, action: Action): AppState {
       }
       const page = action.page;
       const messages = page.messages ?? [];
-      const opened = updateOwnerByThread(bumpTranscriptGeneration(state, action.threadId), action.threadId, (owner) => ({
+      // r6 Q3: a room's newest page is held by number and vouched (its GET was sent after the roster: the generation fences any older one),
+      // its `newestSeq` the tail; a legacy room's unions. A bot keeps its branch-aware replace.
+      const opened = updateOwnerByThread(bumpTranscriptGeneration(state, action.threadId), action.threadId, (owner) => (isGroupOwner(owner) ? {
+        ...roomWithPage({ ...owner, firstPageEvents: undefined }, { ...page, messages }, true),
+        firstPageEvents: undefined,
+      } as typeof owner : {
         ...owner,
         messages,
         openCards: page.openCards?.length ? page.openCards : undefined,
@@ -2700,66 +3184,54 @@ function reduceState(state: AppState, action: Action): AppState {
       return { ...state, webhookAttempts: attempts.slice(-2_000) };
     }
     case "groupPatched": {
-      // Ordered as bots are (I-H2): a numbered input older than the held copy, in the same run, describes a state this client has
-      // already moved past (a delayed rename answer after another window's delete+archive) and lands nothing. Same or newer
-      // applies as before; an unnumbered input (a partial patch this client built) applies as before. A partial row for a room
-      // this client does not hold applies to nothing: it is not a record.
-      const heldGroup = state.groups.find((g) => g.id === action.group.id);
-      if (staleGroupInput(heldGroup, action.group)) return state;
-      if (!heldGroup && action.group.threadId === undefined) return state;
-      // A payload carrying a transcript replaces what this client holds, so
-      // pages asked for under the old one no longer describe it.
-      const fenced = action.group.messages ? bumpTranscriptGeneration(state, action.group.threadId) : state;
-      const exists = fenced.groups.some((g) => g.id === action.group.id);
-      const groups = exists
-        ? fenced.groups.map((g) => {
-            if (g.id !== action.group.id) return g;
-            const next: Group = {
-              ...g,
-              ...action.group,
-              messages: action.group.messages ?? g.messages,
-              // A transcript in the frame is this room's page: it is loaded from here on (anything queued for a first page is replayed below).
-              ...(action.group.messages ? { messagesUnloaded: undefined, pageStale: undefined, firstPageEvents: undefined } : {}),
-              // The cards beside a transcript belong to it: replaced with it, kept without it.
-              openCards: action.group.messages ? action.group.openCards : g.openCards,
-              openCardsLeaf: action.group.messages ? action.group.openCardsLeaf : g.openCardsLeaf,
-              openCardsPending: action.group.messages ? action.group.openCardsPending : g.openCardsPending,
-              olderFrom: action.group.messages ? action.group.olderFrom : g.olderFrom,
-              // A transcript answers the scrollback question with it: a page
-              // says so, and one without the marker is the whole thread.
-              hasMore: action.group.messages ? Boolean(action.group.hasMore) : g.hasMore,
-            };
-            // The server omits an unset task pin, so a switch to another task
-            // (New task, or picking one) must not keep the previous task's
-            // folder lock or pinned message on screen.
-            if (action.group.threadId !== undefined && action.group.threadId !== g.threadId) {
-              if (!("pinnedCwd" in action.group)) delete next.pinnedCwd;
-              if (!("pinnedMessageId" in action.group)) delete next.pinnedMessageId;
-              if (!("readOnlyReason" in action.group)) delete next.readOnlyReason;
-              if (!("humanPrincipalKind" in action.group)) delete next.humanPrincipalKind;
-            }
-            if (next.tasks) next.tasks = next.tasks.map((task) => {
-              const old = g.tasks?.find((entry) => entry.threadId === task.threadId);
-              const read = state.selectedId === g.id && state.activeView === "chat" && task.threadId === next.threadId;
-              return { ...task, unreadCount: read ? 0 : task.unreadCount ?? 0,
-                unread: read ? false : task.unreadCount !== undefined ? task.unreadCount > 0 : task.unread ?? old?.unread,
-                unreadMessageIds: read ? [] : old?.unreadMessageIds };
-            });
-            Object.assign(next, extraTasksPatch(g, next));
-            return next;
-          })
-        : [{ ...(action.group as Group), messages: action.group.messages ?? [] }, ...fenced.groups];
-      const held = state.groups.find((g) => g.id === action.group.id);
-      const queued = action.group.messages && held?.firstPageEvents && (action.group.threadId ?? held.threadId) === held.threadId ? held.firstPageEvents : undefined;
+      // ROOM-ORDER-DESIGN §2.2: one judge decides whether this statement lands (pending nothing, tombstone, life, run, number, hide).
+      const admitted = admitRoom(state, action.group, action.origin);
+      if (admitted.verdict === "drop") return admitted.state;
+      // r4 T5: versions decide metadata, not membership. A stale statement's record is dropped; its page's rows are the thread's rows all
+      // the same and join a live transcript of the same thread. It closes no gap and inserts nothing.
+      if (admitted.verdict === "stale") return unionStaleRoomPage(admitted.state, action.group);
+      state = admitted.state;
+      const incoming = action.group;
+      const heldGroup = state.groups.find((g) => g.id === incoming.id);
+      // A partial row for a room this client does not hold applies to nothing: it is not a record.
+      if (!heldGroup && incoming.threadId === undefined) return state;
+      // A whole numbered statement sets every server-owned key, absent meaning cleared (r2); anything else sets the keys it carries.
+      const whole = admitted.verdict !== "legacy" && wholeRoom(incoming);
+      const removedTaskIds = new Set(action.removedTaskIds ?? []);
+      // r4 T1-T4: the page unions into the held transcript (never replaces it); whether it may close a gap is decided by its origin.
+      const page = roomPageOf(incoming);
+      const closesGap = page !== undefined && pageClosesGap(state, action.origin);
+      const threadMoved = heldGroup !== undefined && incoming.threadId !== undefined && incoming.threadId !== heldGroup.threadId;
+      if (!heldGroup) {
+        // r4 T2: a record inserted without a page is unloaded (its first page is fetched on open); one with a page it may hold holds it.
+        const tick = (state.admitTick ?? 0) + 1;
+        const { messages: _rows, ...record } = incoming as Group;
+        const { newestSeq: _newest, ...bare } = record as Group & { newestSeq?: unknown };
+        const unloaded = { ...bare, ...UNLOADED_TRANSCRIPT, admittedAt: tick } as Group;
+        const inserted = page && closesGap ? roomWithPage(unloaded, page, true) : unloaded;
+        const fenced = inserted !== unloaded ? bumpTranscriptGeneration(state, inserted.threadId) : state;
+        return { ...fenced, admitTick: tick, groups: [inserted, ...fenced.groups] };
+      }
+      const groups = state.groups.map((g) => {
+        if (g.id !== incoming.id) return g;
+        const next = mergeRoomRecord(state, g, incoming, whole, removedTaskIds);
+        applyRoomTranscript(next, g, page, closesGap, threadMoved);
+        return next;
+      });
+      // In-flight scrollback pages describe the transcript this client holds, unless the page became its base (a gap closed, the thread moved).
+      const fenced = threadMoved || closesGap ? bumpTranscriptGeneration(state, heldGroup.threadId, threadMoved ? incoming.threadId : undefined) : state;
+      // A page that closed the gap replays what queued for the first page over it, in arrival order; a moved thread drops the old thread's queue.
+      const queued = closesGap && !threadMoved ? heldGroup.firstPageEvents : undefined;
       return replayFirstPageEvents({ ...fenced, groups }, queued);
     }
-    case "groupDeleted": {
-      const groups = state.groups.filter((g) => g.id !== action.groupId);
-      const selectedId = state.selectedId === action.groupId ? (state.bots[0]?.id ?? "") : state.selectedId;
-      return { ...state, groups, selectedId };
-    }
+    case "groupEdited":
+      return state.groups.some((g) => g.id === action.group.id)
+        ? { ...state, groups: state.groups.map((g) => (g.id === action.group.id ? applyRoomEdit(g, action.group) : g)) }
+        : state;
+    case "groupDeleted":
+      return admitRoomRemoval(state, action, action.origin);
     case "instances":
-      return { ...state, instances: action.instances };
+      return { ...state, instances: action.instances, ...(action.shellEnvironment !== undefined ? { shellEnvironment: action.shellEnvironment } : {}) };
     case "configStatus":
       return {
         ...state,
@@ -2922,11 +3394,24 @@ function reduceState(state: AppState, action: Action): AppState {
       const next = { ...state, pendingDeletes };
       if (action.outcome === "deleted") {
         const numbered = typeof action.tasksSeq === "number" && typeof action.tasksEpoch === "string";
-        return writeTombstone(next, action.botId, numbered
+        const written = writeTombstone(next, action.botId, numbered
           ? { epoch: action.tasksEpoch!, seq: action.tasksSeq!, kind: "deleted", streamAcked: false }
           : { epoch: "", seq: Number.POSITIVE_INFINITY, kind: "deleted", streamAcked: false });
+        // A deletion numbered in a run this client neither holds nor left: the server restarted under it. The roster names the run;
+        // asked for after this tombstone, it also acks it on drain, so the tombstone retires by the TTL rule (seed 666), while until
+        // then it outlives any frame of the client's older run still buffered (seed 524, tombstoneRunOver).
+        const unknownRun = numbered && state.streamEpoch !== undefined && action.tasksEpoch !== state.streamEpoch && !isPastEpoch(state, action.tasksEpoch);
+        return unknownRun ? requestReconcile(written) : written;
       }
-      // refused, or no answer after every retry: no tombstone; the bot is fetched again (a 200 re-inserts it unloaded)
+      if (action.outcome === "gaveUp") {
+        // No answer after every retry: the DELETE may have committed whose answer and frame were both lost, with a pre-delete answer
+        // still within its life (Astra r5 #5, M-r6-4). Until an authoritative read says otherwise the id is fenced by an unnumbered,
+        // unacked entry: any unverified input for it is verified first and dropped. A verified 200 clears it (the bot is alive, and is
+        // inserted unloaded); a 404 never does, so the fence outlives the verification and retires ANSWER_TTL_MS after this settlement
+        // (the epoch "" run is never the current one), which is past the life of every answer sent before the last attempt.
+        return markVerify(writeTombstone(next, action.botId, { epoch: "", seq: Number.POSITIVE_INFINITY, kind: "hidden", streamAcked: false }), action.botId);
+      }
+      // refused: no tombstone; the bot is fetched again (a 200 re-inserts it unloaded)
       return markVerify(next, action.botId);
     }
     case "pageRequested":
@@ -2937,17 +3422,30 @@ function reduceState(state: AppState, action: Action): AppState {
       // Every frame buffered behind the snapshot has been applied (each older than a tombstone was dropped by it), and the new
       // connection carries only later frames: the stream has passed every removal held now, including one written by an answer
       // while the hydrate ran (a DELETE answered alreadyDeleted whose frame went with the abandoned connection, R10's common case).
-      let tombstones = state.tombstones;
-      for (const [id, t] of Object.entries(state.tombstones ?? {})) {
-        if (t.streamAcked) continue;
-        if (tombstones === state.tombstones) tombstones = { ...tombstones };
-        const { ackOnDrain: _ack, ...rest } = t;
-        tombstones![id] = { ...rest, streamAcked: true };
-      }
-      return tombstones === state.tombstones ? state : retireAdmission({ ...state, tombstones }, Date.now());
+      const acked = (table: Record<string, Tombstone> | undefined): Record<string, Tombstone> | undefined => {
+        let out = table;
+        for (const [id, t] of Object.entries(table ?? {})) {
+          if (t.streamAcked) continue;
+          if (out === table) out = { ...out };
+          const { ackOnDrain: _ack, ...rest } = t;
+          out![id] = { ...rest, streamAcked: true };
+        }
+        return out;
+      };
+      const tombstones = acked(state.tombstones);
+      const roomTombstones = acked(state.roomTombstones);
+      return tombstones === state.tombstones && roomTombstones === state.roomTombstones ? state : retireAdmission({ ...state, tombstones, roomTombstones }, answerClock.now());
     }
     case "verifySettled": {
-      if (action.gone) return removeHeldBot(clearVerify(forgetSettle(state, action.botId), action.botId), action.botId);
+      if (action.gone) {
+        const kept = state.bots.find((bot) => bot.id === action.botId);
+        if (kept && action.sentTick !== undefined && (kept.admittedAt ?? 0) > action.sentTick) {
+          // admitted after this fetch was sent: its 404 is older than the admitting input; one more fetch answers for the bot held now
+          const done = clearVerify(state, action.botId);
+          return done.verifyBots?.[action.botId] ? done : markVerify(done, action.botId);
+        }
+        return removeHeldBot(clearVerify(forgetSettle(state, action.botId), action.botId), action.botId);
+      }
       if (action.giveUp) return clearVerify(clearVerify(forgetSettle(state, action.botId), action.botId), action.botId);
       // no answer: still unknown, so it is asked again (a refused Delete's bot must come back once the server answers)
       return state;
@@ -2965,17 +3463,25 @@ function reduceState(state: AppState, action: Action): AppState {
         if (!group) return state;
         const active = group.threadId === action.threadId;
         const task = group.tasks?.find((entry) => entry.threadId === action.threadId);
-        if ((active && group.messages.some((m) => m.id === action.message.id)) || task?.unreadMessageIds?.includes(action.message.id)) return state;
-        const visible = active && state.selectedId === group.id && state.activeView === "chat";
-        const unseen = !visible && action.message.role === "bot" && ["text", "options"].includes(action.message.kind);
+        const already = active && group.messages.some((m) => m.id === action.message.id);
+        // r6 Q3: a row a numbered room holds may still be laid again (a vouched copy replaces an unvouched one, the tail moves); a legacy room folds it once
+        if ((already && !group.numbered) || task?.unreadMessageIds?.includes(action.message.id)) return state;
         // A room that holds no rows yet: the row moves its sidebar line only (its page, read when it opens, holds it).
         const unloaded = active && group.messagesUnloaded;
+        // r6 Q5: a loaded room holds the row at its number (a numbered room) or behind what it holds (a legacy one); its frame vouches for it,
+        // a POST answer when it was sent at or after the roster (r4 T4).
+        const vouched = action.origin ? pageClosesGap(state, action.origin) : true;
+        const placed = active && !unloaded ? roomTranscriptInput(group, { kind: "live", rows: [action.message], newestSeq: action.newestSeq, vouched }) : group;
+        if (already) return placed === group ? state : { ...state, groups: state.groups.map((g) => (g.id === group.id ? placed : g)) };
+        const visible = active && state.selectedId === group.id && state.activeView === "chat";
+        const unseen = !visible && action.message.role === "bot" && ["text", "options"].includes(action.message.kind);
+        const counted = placed.messagesTotal !== group.messagesTotal;
         return {
           ...state,
           groups: state.groups.map((g) => g.id === group.id ? {
-            ...g, messages: active && !unloaded ? [...g.messages, action.message] : g.messages,
+            ...placed,
             ...(unloaded ? { sidebarLine: sidebarLineOf(action.message) } : {}),
-            ...(active && g.messagesTotal !== undefined ? { messagesTotal: g.messagesTotal + 1 } : {}),
+            ...(active && !counted && g.messagesTotal !== undefined ? { messagesTotal: g.messagesTotal + 1 } : {}),
             unread: g.unread || unseen,
             tasks: g.tasks?.map((entry) => entry.threadId === action.threadId && unseen ? {
               ...entry, unread: true, unreadCount: entry.unreadCount ?? 0,
@@ -3043,11 +3549,14 @@ function reduceState(state: AppState, action: Action): AppState {
           if (group.sidebarLine?.messageId !== action.message.id) return state;
           return { ...state, groups: state.groups.map((g) => (g.id === group.id ? { ...g, sidebarLine: sidebarLineOf(action.message) } : g)) };
         }
+        // r6 Q3 / r8 R8: a patch replaces the row by id; in a numbered room it is held at its number (it may promote a legacy room)
+        const vouched = action.origin ? pageClosesGap(state, action.origin) : true;
+        const patched = roomTranscriptInput(group, { kind: "patch", rows: [action.message], newestSeq: action.newestSeq, vouched });
         return {
           ...state,
           groups: state.groups.map((g) =>
             g.id === group.id
-              ? { ...g, messages: g.messages.map((m) => (m.id === action.message.id ? action.message : m)), openCards: patchOpenCards(g.openCards, action.message.id, () => action.message), ...(action.message.kind === "options" ? { cardsRev: (g.cardsRev ?? 0) + 1 } : {}) }
+              ? { ...patched, openCards: patchOpenCards(g.openCards, action.message.id, () => action.message), ...(action.message.kind === "options" ? { cardsRev: (g.cardsRev ?? 0) + 1 } : {}) }
               : g,
           ),
         };
@@ -3186,12 +3695,16 @@ function reduceState(state: AppState, action: Action): AppState {
         // Every caller's id goes through one door, so a stale or unknown
         // value can never open Settings on nothing (lib/settings-sections.ts).
         appSettingsSection: action.section === undefined ? state.appSettingsSection : normalizeSettingsSection(action.section),
+        // An alias lands on a card of its page (lib/settings-pages.ts); closing, or opening without a section, leaves none.
+        appSettingsAnchor: !open || action.section === undefined ? null : action.anchor ?? resolveSettingsSection(action.section).anchor,
         settingsOpen: open ? false : state.settingsOpen,
         computerOpen: open ? false : state.computerOpen,
         inspectorOpen: open ? false : state.inspectorOpen,
         pluginsOpen: open ? false : state.pluginsOpen,
       };
     }
+    case "appSettingsAnchorDone":
+      return state.appSettingsAnchor === null ? state : { ...state, appSettingsAnchor: null };
     case "updateBot": {
       const mascotChanged =
         Object.prototype.hasOwnProperty.call(action.patch, "color") ||
@@ -3282,6 +3795,8 @@ function reduceState(state: AppState, action: Action): AppState {
         groups: state.groups.map((g) => (g.id === action.groupId ? { ...g, ...optimistic } : g)),
       };
     }
+    case "groupPatchReverted":
+      return { ...state, groups: state.groups.map((g) => (g.id === action.groupId ? { ...g, ...action.fields } : g)) };
     // handled entirely by the async wrapper
     case "pendingQueued": {
       if (state.consumedQueueIds[action.queueId]) {
@@ -3550,6 +4065,7 @@ export const initialState: AppState = {
   workspacePane: initialWorkspacePaneState,
   appSettingsOpen: false,
   appSettingsSection: "general",
+  appSettingsAnchor: null,
   screens: {},
   provisioning: {},
   computerControl: {},
@@ -3613,6 +4129,9 @@ export async function api(path: string, init?: RequestInit, busyTries: number = 
       ...desktopSurfaceHeaders(),
       ...init?.headers,
     },
+    // After the spreads, so a caller's `redirect: "follow"` cannot undo it: a followed
+    // redirect would hand the launch secret to whatever it points at.
+    redirect: "error",
   });
   const body = await res.json().catch(() => ({}));
   // Not proof on its own: a harness route answers 401 for a provider it
@@ -3903,7 +4422,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
         settleSending: (entry) => rawDispatch({ type: "sendingSettled", threadId: entry.threadId, sendId: entry.sendId }),
         receipt: (entry, body) => {
           if (body?.message && typeof body.threadId === "string") {
-            rawDispatch({ type: "messageAdded", threadId: body.threadId, message: body.message });
+            rawDispatch({ type: "messageAdded", threadId: body.threadId, message: body.message, ...seqEnvelope(body), origin: answerOrigin(body) });
           }
           if (body?.queued && typeof body.threadId === "string" && typeof body.queueId === "string") {
             rawDispatch({ type: "pendingQueued", threadId: body.threadId, queueId: body.queueId, text: entry.text });
@@ -4026,6 +4545,8 @@ export function StoreProvider({ children }: { children: ReactNode }) {
   const botPatchQueue = useMemo(
     () =>
       createBotPatchQueue({
+        // Cloud window: no retry queue. A failed write is rolled back and dropped, never re-sent after the home returns.
+        failFast: isCloudOrigin(),
         send: async (botId, patch, signal) => {
           // `chiefTier` is the queue's name for a value the harness reads as
           // `chiefScope`; it is renamed here rather than shared, because the
@@ -4196,6 +4717,9 @@ export function StoreProvider({ children }: { children: ReactNode }) {
       // what its document drafts are keyed by.
       const groupBeforeDelete =
         action.type === "deleteGroup" ? stateRef.current.groups.find((group) => group.id === action.groupId) : undefined;
+      // Read before the optimistic patch lands: what a refused edit goes back to.
+      const groupBeforePatch =
+        action.type === "patchGroup" ? stateRef.current.groups.find((group) => group.id === action.groupId) : undefined;
       if (action.type !== "cancelQueued" && action.type !== "cancelGroupQueued") rawDispatch(action);
       switch (action.type) {
         case "createRoutine":
@@ -4407,7 +4931,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
           void retryWhileBusy(post)
             .then((body) => {
               if (body?.message && typeof body.threadId === "string") {
-                rawDispatch({ type: "messageAdded", threadId: body.threadId, message: body.message });
+                rawDispatch({ type: "messageAdded", threadId: body.threadId, message: body.message, ...seqEnvelope(body), origin: answerOrigin(body) });
               }
               if (body?.queued && typeof body.threadId === "string" && typeof body.queueId === "string") {
                 rawDispatch({ type: "pendingQueued", threadId: body.threadId, queueId: body.queueId, text: action.text });
@@ -4576,7 +5100,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
             }),
           })
             .then(({ group }) => {
-              rawDispatch({ type: "groupPatched", group });
+              rawDispatch({ type: "groupPatched", origin: fromAnswer(group), group });
               rawDispatch({ type: "select", id: group.id });
             })
             .catch(showError);
@@ -4634,20 +5158,35 @@ export function StoreProvider({ children }: { children: ReactNode }) {
               if (!result?.group) return;
               rawDispatch({
                 type: "groupPatched",
+                origin: fromAnswer(result.group),
                 group: {
-                  id: action.groupId,
-                  hidden: result.group.hidden === true ? true : undefined,
+                  ...hiddenPatchFrom(action.groupId, result.group),
                   channelProject: result.group.channelProject ?? undefined,
                 },
               });
             })
-            .catch(showError);
+            .catch((error: unknown) => {
+              if (groupBeforePatch) {
+                const { channelProject: _serverOwned, ...sent } = action.patch;
+                const fields: Record<string, unknown> = {};
+                for (const key of Object.keys(sent).filter((name) => name !== "hidden")) fields[key] = (groupBeforePatch as unknown as Record<string, unknown>)[key];
+                rawDispatch({ type: "groupPatchReverted", groupId: action.groupId, fields: fields as Partial<Group> });
+              }
+              showError(error);
+            });
           break;
         case "deleteGroup":
           forgetDeletedDrafts({ groupId: action.groupId });
           forgetProjectTab(action.groupId);
           if (groupBeforeDelete) forgetDocumentDrafts({ threadIds: [groupBeforeDelete.threadId, ...(groupBeforeDelete.tasks ?? []).map((task) => task.threadId)] });
-          api(`/api/groups/${action.groupId}`, { method: "DELETE" }).then(showDeletionNote).catch(showError);
+          api(`/api/groups/${action.groupId}`, { method: "DELETE" })
+            .then((answer: any) => {
+              showDeletionNote(answer);
+              // the answer carries the deletion's own number (ROOM-ORDER-DESIGN §1): it orders against the frames and answers about this room
+              rawDispatch({ type: "groupDeleted", origin: fromAnswer(answer), groupId: action.groupId, recordSeq: answer?.recordSeq, recordEpoch: answer?.recordEpoch });
+            })
+            // the room is not in the server's registry or ledger: the roster says what is left (r2 §2.3, DELETE 404)
+            .catch((error: unknown) => { if ((error as { status?: unknown } | null)?.status === 404) reconcileRef.current(); else showError(error); });
           break;
         case "setModel":
           if(action.threadId){void saveThread(action.botId,action.threadId,{modelSelection:action.selection}).catch(showError);break;}
@@ -4743,12 +5282,12 @@ export function StoreProvider({ children }: { children: ReactNode }) {
         // switching atomically replaces its transcript, folder and pin.
         case "newGroupTask":
           api(`/api/groups/${action.groupId}/tasks`, { method: "POST", body: "{}" })
-            .then((r: any) => r?.group && dispatch({ type: "groupPatched", group: r.group }))
+            .then((r: any) => r?.group && dispatch({ type: "groupPatched", origin: fromAnswer(r.group), group: r.group }))
             .catch(showError);
           break;
         case "switchGroupTask":
           api(`/api/groups/${action.groupId}/tasks/${action.threadId}?messages=${MESSAGE_PAGE_SIZE}`, { method: "POST" })
-            .then((r: any) => r?.group && dispatch({ type: "groupPatched", group: r.group }))
+            .then((r: any) => r?.group && dispatch({ type: "groupPatched", origin: fromAnswer(r.group), group: r.group }))
             .catch(showError);
           break;
         case "renameGroupTask":
@@ -4761,7 +5300,11 @@ export function StoreProvider({ children }: { children: ReactNode }) {
           forgetDeletedDrafts({ threadId: action.threadId });
           forgetDocumentDrafts({ threadIds: [action.threadId] });
           api(`/api/groups/${action.groupId}/tasks/${action.threadId}`, { method: "DELETE" })
-            .then((r: any) => { showDeletionNote(r); if (r?.group) dispatch({ type: "groupPatched", group: r.group }); })
+            .then((r: any) => {
+              showDeletionNote(r);
+              // the answer states the deletion with the room (numbered); the thread leaves whatever the window, extras included (r3 R6)
+              if (r?.group) dispatch({ type: "groupPatched", origin: fromAnswer(r.group), group: r.group, removedTaskIds: Array.isArray(r.removedTaskIds) ? r.removedTaskIds : [action.threadId] });
+            })
             .catch((e: unknown) => showError(new Error(deletionErrorSentence(e))));
           break;
         case "interruptGroup":
@@ -4814,26 +5357,33 @@ export function StoreProvider({ children }: { children: ReactNode }) {
   }, [botPatchQueue,threadWrites]);
 
   // The boot roster holds no rows (view=sidebar): the conversation on screen fetches its first page right away, whenever it is selected or
-  // switched to (needsFirstPage). The fetch runs once per (thread, transcript generation) so a dead link does not loop; opening the thread
-  // again, or the window coming back into view or online, clears that guard and asks again. A failed or discarded fetch leaves the
-  // conversation unloaded, so nothing is ever suppressed for good.
+  // switched to (needsFirstPage). The fetch runs once per (thread, transcript generation) so a dead link does not loop; a failed fetch
+  // leaves the conversation unloaded and is asked again after a growing wait (createFirstPageTopUp, r5), the failure itself shown by
+  // scrollback's onError; opening the thread again, or the window coming back into view or online, asks at once.
   const onScreen =
     state.bots.find((candidate) => candidate.id === state.selectedId) ??
     state.groups.find((candidate) => candidate.id === state.selectedId);
   const topUpThread = onScreen && needsFirstPage(onScreen) ? onScreen.threadId : null;
   const topUpGeneration = topUpThread ? state.transcriptGeneration[topUpThread] ?? 0 : 0;
   const topUpBusy = Boolean(onScreen?.firstPageEvents);
-  const toppedUp = useRef("");
   const screenThread = onScreen?.threadId ?? "";
   const [freshRetry, setFreshRetry] = useState(0);
+  // the newest wrapped dispatch, so the one planner made on the first render never asks through a stale one
+  const topUpDispatch = useRef(dispatch);
+  topUpDispatch.current = dispatch;
+  const topUp = useRef(createFirstPageTopUp({
+    ask: (threadId) => topUpDispatch.current({ type: "loadFirstPage", threadId }),
+    later: (run, ms) => { const timer = setTimeout(run, ms); return () => clearTimeout(timer); },
+  }));
   useEffect(() => {
-    toppedUp.current = "";
+    topUp.current.forget();
   }, [screenThread]);
+  useEffect(() => () => topUp.current.forget(), []);
   useEffect(() => {
     if (typeof document === "undefined") return;
     const again = () => {
       if (document.visibilityState === "hidden") return;
-      toppedUp.current = "";
+      topUp.current.forget();
       setFreshRetry((n) => n + 1);
     };
     document.addEventListener("visibilitychange", again);
@@ -4844,11 +5394,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     };
   }, []);
   useEffect(() => {
-    if (!topUpThread || topUpBusy) return;
-    const key = `${topUpThread}:${topUpGeneration}`;
-    if (toppedUp.current === key) return;
-    toppedUp.current = key;
-    dispatch({ type: "loadFirstPage", threadId: topUpThread });
+    topUp.current.review(topUpThread, topUpGeneration, topUpBusy, () => setFreshRetry((n) => n + 1));
   }, [topUpThread, topUpGeneration, topUpBusy, freshRetry, screenThread, dispatch]);
 
   // The selected branch head is older than every held row (another window
@@ -4946,7 +5492,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
   useEffect(() => { if (reconcileAsked) reconcileRef.current(); }, [reconcileAsked]);
   // Tombstones, last-seen numbers and past runs retire on a one-minute sweep.
   useEffect(() => {
-    const timer = setInterval(() => rawDispatch({ type: "tombstonesSweep", now: Date.now() }), 60_000);
+    const timer = setInterval(() => rawDispatch({ type: "tombstonesSweep", now: answerClock.now() }), 60_000);
     return () => clearInterval(timer);
   }, []);
   // Each id to verify is fetched once: its record is the authoritative current state; a 404 means it is gone.
@@ -4957,6 +5503,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     for (const id of verifyIds ? verifyIds.split(",") : []) {
       if (verifying.current.has(id)) continue;
       verifying.current.add(id);
+      const sentTick = stateRef.current.admitTick ?? 0;
       void api(`/api/bots/${encodeURIComponent(id)}`)
         .then((result: { bot?: BotAnnouncement }) => {
           const settled = stateRef.current.settleOnVerify?.[id];
@@ -4970,7 +5517,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
           verifyFailures.current.set(id, failures);
           const giveUp = !gone && failures >= VERIFY_FAILURES_MAX;
           if (gone || giveUp) verifyFailures.current.delete(id);
-          rawDispatch({ type: "verifySettled", botId: id, gone, ...(giveUp ? { giveUp: true as const } : {}) });
+          rawDispatch({ type: "verifySettled", botId: id, gone, sentTick, ...(giveUp ? { giveUp: true as const } : {}) });
           // asked again after a pause, never in a tight loop while the server is unreachable
           return gone || giveUp ? 0 : VERIFY_RETRY_MS;
         })
@@ -5008,8 +5555,8 @@ export function StoreProvider({ children }: { children: ReactNode }) {
       {
         key: "instances",
         request: async () => {
-          const { instances } = await api("/api/instances");
-          return () => rawDispatch({ type: "instances", instances });
+          const { instances, shellEnvironment } = await api("/api/instances");
+          return () => rawDispatch({ type: "instances", instances, shellEnvironment: shellEnvironment ?? null });
         },
       },
       {
@@ -5102,7 +5649,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
         // The fleet with one sidebar line per conversation and no transcript rows (1.0.2, desktop and phone alike): the boot page does not grow
         // with history, and the conversation on screen fetches its first page at once (scrollback loadFirstPage).
         api(`/api/bots?view=sidebar`).then((answer) => {
-          const { bots, groups, computerControl, sidebarSectionOrder, pendingSends, tasksEpoch, removed } = answer;
+          const { bots, groups, computerControl, sidebarSectionOrder, pendingSends, tasksEpoch, removed, removedGroups, roomClock } = answer;
           if (!alive) return;
           if (askedUnder !== liveGen) { rehydrateRequested = true; return; }
           // A fresh snapshot: frames may have been missed, so nothing cached is trusted.
@@ -5111,7 +5658,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
           rawDispatch({
             type: "hydrate",
             ...fromAnswer(answer),
-            ...(typeof tasksEpoch === "string" ? { tasksEpoch, removed: Array.isArray(removed) ? removed : [] } : {}),
+            ...(typeof tasksEpoch === "string" ? { tasksEpoch, removed: Array.isArray(removed) ? removed : [], removedGroups: Array.isArray(removedGroups) ? removedGroups : [], ...(typeof roomClock === "number" ? { roomClock } : {}) } : {}),
             sentTick,
             liveGen: askedUnder,
             bots,
@@ -5234,7 +5781,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
         }
         case "message": {
           conversationCache()?.applyFrame(frame);
-          rawDispatch({ type: "messageAdded", threadId: frame.threadId, message: frame.message });
+          rawDispatch({ type: "messageAdded", threadId: frame.threadId, message: frame.message, ...seqEnvelope(frame) });
           if (frame.message?.role === "user" && typeof frame.message.sendId === "string") {
             rawDispatch({ type: "sendingSettled", threadId: frame.threadId, sendId: frame.message.sendId });
           }
@@ -5266,7 +5813,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
         }
         case "message.patch":
           conversationCache()?.applyFrame(frame);
-          rawDispatch({ type: "messagePatched", threadId: frame.threadId, message: frame.message });
+          rawDispatch({ type: "messagePatched", threadId: frame.threadId, message: frame.message, ...seqEnvelope(frame) });
           break;
         case "thread":
           conversationCache()?.applyFrame(frame);
@@ -5308,7 +5855,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
             group.unread = false;
             void api(`/api/groups/${group.id}/read`, { method: "POST" }).catch(() => {});
           }
-          rawDispatch({ type: "groupPatched", group });
+          rawDispatch({ type: "groupPatched", origin: { source: "stream" }, group });
           break;
         }
         // engine copies of deleted conversations that are still owed (fixed sentences from the server, no paths): shown in the
@@ -5334,7 +5881,15 @@ export function StoreProvider({ children }: { children: ReactNode }) {
           );
           break;
         case "group.deleted":
-          rawDispatch({ type: "groupDeleted", groupId: frame.groupId });
+          rawDispatch({
+            type: "groupDeleted",
+            origin: { source: "stream" },
+            groupId: frame.groupId,
+            recordSeq: frame.recordSeq,
+            recordEpoch: frame.recordEpoch,
+            // a hide sent to a scoped stream (`audience: "remote"`), else a real deletion
+            ...(frame.audience === "remote" ? { hidden: true as const } : {}),
+          });
           break;
         case "routine":
           rawDispatch({ type: "routinePatched", routine: frame.routine });
@@ -5477,7 +6032,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
         stillSignedIn: async () => (await checkSession()) !== "signed-out",
       });
     });
-    const stopApprovalClicks = window.muragebox?.approvalNotifications?.onOpen(target => {
+    const stopApprovalClicks = notificationBridge()?.approvalNotifications?.onOpen(target => {
       openNotificationTarget(dispatch, target, stateRef.current);
       // land on the card itself, not just its conversation
       if (typeof target.messageId === "string" && target.messageId) dispatch({ type: "focusMessage", threadId: target.threadId, messageId: target.messageId });
@@ -5520,8 +6075,8 @@ export function StoreProvider({ children }: { children: ReactNode }) {
   // (FOLLOW4). Callers with nothing to tell the user catch it themselves.
   const refreshInstances = useCallback(async () => {
     // An explicit refresh (Enable, Check again, a saved change) rechecks every CLI version.
-    const { instances } = await api("/api/instances?fresh=1");
-    rawDispatch({ type: "instances", instances });
+    const { instances, shellEnvironment } = await api("/api/instances?fresh=1");
+    rawDispatch({ type: "instances", instances, shellEnvironment: shellEnvironment ?? null });
   }, []);
   const refreshAfterKey = useCallback(
     () => refreshAfterFluxKey({ request: api, applyConfig: (config) => rawDispatch({ type: "configStatus", config }), refreshInstances }),

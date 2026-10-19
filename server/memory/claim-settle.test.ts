@@ -2,7 +2,7 @@
 // Blocked jobs leave the open statuses (CLAIM-REDESIGN.md, CLAIM-DESIGN-FABLE.md): tests T1-T7, T9, T10 and T13. T8 is
 // claim-wake.test.ts, T11 claim-deny-restart.test.ts, T12 claim-settle-downgrade.test.ts. Rows examined per statement are
 // accounted by testing/claim-rows.ts (8.1); T7 asserts the plan each of its formulas rests on.
-import { mkdirSync, rmSync } from "node:fs";
+import { mkdirSync } from "node:fs";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { DATA_DIR } from "../config.ts";
 import { closeDatabase, database } from "../database.ts";
@@ -15,11 +15,12 @@ import { captureSource } from "./capture.ts";
 import { recordMemorySettlement } from "./settlement.ts";
 import { forgetTurnCaptureJob, turnCaptureJobId } from "./turn-capture-jobs.ts";
 import { claimSettleSweepFinished, claimSettleSweepStep, parkMaintenancePending, parkMaintenanceStep, parkReconcileStep, parkRetiredThreadJobs, reopenParkedThreadJobs, resetClaimSettleSweep, resetParkReconcile, resetParkSweep, SETTLE_SWEEP_SQL } from "./park.ts";
+import { removeTempDirSync } from "../testing/cleanup.ts";
 
 const NOW = 1_000_000;
 const OPEN = "('pending','partial','deferred','leased')";
 beforeEach(() => {
-  closeDatabase(); rmSync(DATA_DIR, { recursive: true, force: true }); mkdirSync(DATA_DIR, { recursive: true });
+  closeDatabase(); removeTempDirSync(DATA_DIR); mkdirSync(DATA_DIR, { recursive: true });
   setMemoryMode("capture"); jobs.resetMemoryClaimCursor(); resetParkSweep(); resetClaimSettleSweep();
   database().exec("PRAGMA synchronous=OFF");
 });
@@ -78,7 +79,7 @@ describe("T1: working turns never sit in the open statuses, and a claim costs th
   it("is flat", async () => {
     const perB: Array<{ b: number; execs: number[]; checks: number[]; examined: number[]; rows: number[] }> = [];
     for (const b of BOUNDS) {
-      closeDatabase(); rmSync(DATA_DIR, { recursive: true, force: true }); mkdirSync(DATA_DIR, { recursive: true });
+      closeDatabase(); removeTempDirSync(DATA_DIR); mkdirSync(DATA_DIR, { recursive: true });
       setMemoryMode("capture"); jobs.resetMemoryClaimCursor(); database().exec("PRAGMA synchronous=OFF");
       for (let i = 0; i < b; i++) recordMemorySettlement("thread", `turn-${i}`, "working");
       for (let i = 0; i < 3000; i++) captureSource(database(), { id: `text-${i}`, threadId: "thread", kind: "text", speaker: "owner", outcome: "recorded", text: `a note ${i}` });

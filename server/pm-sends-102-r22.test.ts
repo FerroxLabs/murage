@@ -3,7 +3,9 @@
 //  2. there is no stand-in room record for an owner-conversation hand-off: sweeps, pruning, completion and restore never see one;
 //  3. the owner's recorded deletions (source conversation, sender, target) are checked independently of each other, at import, queue, drain and start;
 //  4. going back to 1.0.1 drops every 1.0.2 application object (frozen list), verified against the REAL 1.0.1 inspector extracted from git (d950cbf67).
+import { SEQ_103_OBJECTS } from "./transcript-seq.ts"; // 1.0.3: removed by the downgrade's own step before this one (installation-memory-downgrade.ts)
 import { isInboxProjectionObject } from "./inbox.ts";
+import { PUSH_RETENTION_103_INDEXES } from "./mobile-push-store.ts"; // 1.0.3: removed by the downgrade's own step before this one (installation-memory-downgrade.ts)
 import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
@@ -29,6 +31,7 @@ import { recordOwnerDeletion } from "./owner-deletions.ts";
 import { Store } from "./store.ts";
 import { haveV101 as haveV101Ref, realV101 } from "./testing/pm-sends-v101.ts";
 import { released } from "./testing/released.ts";
+import { removeTempDirSync } from "./testing/cleanup.ts";
 const haveV101 = haveV101Ref;
 
 const tick = () => new Promise<void>((resolve) => setImmediate(resolve));
@@ -43,7 +46,7 @@ const pendingRows = () => count("SELECT COUNT(*) AS n FROM pending_delegations")
 const requestRows = () => count("SELECT COUNT(*) AS n FROM room_requests");
 const receiptsOf = (id: string) => (existsSync(receiptsFile()) ? JSON.parse(readFileSync(receiptsFile(), "utf8")) as Array<{ id: string }> : []).filter((r) => r.id === id);
 
-beforeEach(() => { closeDatabase(); rmSync(DATA_DIR, { recursive: true, force: true }); mkdirSync(DATA_DIR, { recursive: true }); _resetPending(); });
+beforeEach(() => { closeDatabase(); removeTempDirSync(DATA_DIR); mkdirSync(DATA_DIR, { recursive: true }); _resetPending(); });
 afterEach(() => { _resetPending(); closeDatabase(); });
 
 type Origin = "owner" | "room" | "legacy";
@@ -393,7 +396,7 @@ describe("5. the downgrade drops every 1.0.2 application object (frozen list) an
     const head = db.prepare("SELECT type,name,tbl_name,sql FROM sqlite_schema").all() as Array<{ type: string; name: string; tbl_name: string; sql: string | null }>;
     const known = new Set(SCHEMA_1_0_1.map((object) => object.name));
     const listed = new Set<string>([...APP_SCHEMA_102_ADDITIONS.triggers, ...APP_SCHEMA_102_ADDITIONS.indexes, ...APP_SCHEMA_102_ADDITIONS.tables]);
-    const unlisted = head.filter((row) => row.sql !== null && !row.name.startsWith("memory_") && !row.tbl_name.startsWith("memory_") && !known.has(row.name) && !listed.has(row.name) && !isInboxProjectionObject(row)).map((row) => row.name); // (the Inbox projection is derived data: a restore and the snapshot inspector treat it so)
+    const unlisted = head.filter((row) => row.sql !== null && !row.name.startsWith("memory_") && !row.tbl_name.startsWith("memory_") && !known.has(row.name) && !listed.has(row.name) && !SEQ_103_OBJECTS.includes(row.name) && !PUSH_RETENTION_103_INDEXES.some(([name]) => name === row.name) && !isInboxProjectionObject(row)).map((row) => row.name); // (the Inbox projection is derived data: a restore and the snapshot inspector treat it so)
     expect(unlisted, "a 1.0.2 object that downgradeApplicationSchemaTo101 would leave behind").toEqual([]);
     for (const name of listed) expect(known.has(name), `${name} is in both lists`).toBe(false);
     if (!haveV101) return;

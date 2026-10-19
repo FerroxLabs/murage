@@ -402,6 +402,7 @@ export function insertProjectActivity(
   };
   db.prepare("INSERT INTO project_activity (id, group_id, at, kind, actor, work_item_id, goal_id, request_id, detail) VALUES (?,?,?,?,?,?,?,?,?)")
     .run(activity.id, activity.groupId, activity.at, activity.kind, activity.actor, activity.workItemId, activity.goalId, activity.requestId, JSON.stringify(activity.detail));
+  if (CLOSE_RECORD_KINDS.has(activity.kind)) noteProjectCloseRecords(db);
   return activity;
 }
 
@@ -551,7 +552,39 @@ export function unmarkCriteriaForCard(db: DatabaseSync, cardId: string, now: num
 
 export interface ProjectCloseReceipt { closeSeq: number; step: number; summaryRequestId: string | null; stopGoal?: boolean; goalId?: string }
 /** Row order fences an old close even when a later lifecycle action shares its timestamp. */
+/** The activity kinds the close receipts are read from (currentProjectClose, project-close.ts steps and goal sign-offs). */
+const CLOSE_RECORD_KINDS = new Set<string>(["close", "reopen", "settings"]);
+/** Per database, a count every write that can change those receipts moves on: a close, reopen or settings row, the activity prune, a
+ * project's deletion, a migration's settings row. The 30 s room sweep reads the receipts of every project; it reads each group's rows
+ * again only when this has moved, so a sweep costs the same with ten close records or ten thousand. A write inside a transaction moves
+ * it too, so a write rolled back costs only one more read. */
+const closeRecordRevisions = new WeakMap<DatabaseSync, number>();
+export function noteProjectCloseRecords(db: DatabaseSync): void {
+  closeRecordRevisions.set(db, (closeRecordRevisions.get(db) ?? 0) + 1);
+}
+/** A group's answer read from its close records, kept against the revision above. Never kept from inside a transaction (its rows may
+ * roll back) nor answered from the cache there: a transaction reads the rows. */
+export function closeRecordCache<T>(): (db: DatabaseSync, groupId: string, read: () => T) => T {
+  const caches = new WeakMap<DatabaseSync, Map<string, { revision: number; value: T }>>();
+  return (db, groupId, read) => {
+    if (db.isTransaction) return read();
+    const revision = closeRecordRevisions.get(db) ?? 0;
+    let cache = caches.get(db);
+    if (!cache) caches.set(db, cache = new Map());
+    const hit = cache.get(groupId);
+    if (hit && hit.revision === revision) return hit.value;
+    const value = read();
+    cache.set(groupId, { revision, value });
+    return value;
+  };
+}
+const currentCloseCache = closeRecordCache<ProjectCloseReceipt | null>();
 export function currentProjectClose(db: DatabaseSync, groupId: string): ProjectCloseReceipt | null {
+  const receipt = currentCloseCache(db, groupId, () => readCurrentProjectClose(db, groupId));
+  // a copy: callers spread and keep it, never write it, but the cached receipt stays the rows' own
+  return receipt ? { ...receipt } : null;
+}
+function readCurrentProjectClose(db: DatabaseSync, groupId: string): ProjectCloseReceipt | null {
   const row = db.prepare(`SELECT detail FROM project_activity WHERE group_id=? AND kind='close'
     AND json_type(detail,'$.closeSeq')='integer' AND json_type(detail,'$.step')='integer'
     AND rowid > COALESCE((SELECT MAX(rowid) FROM project_activity WHERE group_id=?

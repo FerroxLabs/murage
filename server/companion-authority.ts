@@ -1,3 +1,4 @@
+import { cloudIdentity } from "./cloud-request-identity.ts";
 import { timingSafeEqual } from "node:crypto";
 import type { IncomingHttpHeaders } from "node:http";
 import { takeLaunchSecret } from "./launch-secret.ts";
@@ -20,7 +21,10 @@ export function createCompanionAuthority(token: string | undefined, header = "x-
 
 // Consume before any later generic CLI/MCP spawn can copy process.env. This
 // closure survives config reloads; only a new trusted parent launch rotates it.
-export const companionAuthorized = createCompanionAuthority(launchToken);
+const desktopCompanionAuthorized = createCompanionAuthority(launchToken);
+export const companionAuthorized = (headers: IncomingHttpHeaders): boolean => process.env.MURAGE_CLOUD_ROLE === "home"
+  ? ["owner-desktop","owner-phone","browser"].includes(cloudIdentity(headers)?.scope ?? "")
+  : desktopCompanionAuthorized(headers);
 /** The same launch secret in a second header: the companion stamps it on every
  * request it forwards (phone and browser door), so the harness can tell a
  * forwarded request from a bare loopback one (audit C5). It claims no owner

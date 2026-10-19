@@ -5,7 +5,7 @@
 // they look for, never with the thread's history: on a conversation of 1,000
 // messages and on one of 200,000 each reads the same statements and the same
 // rows, every one an index search, and neither is ever loaded whole.
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
@@ -22,6 +22,7 @@ import { RoutineManager } from "./routines.ts";
 import { Store } from "./store.ts";
 import { expectSameReads, measureReads, refillThread } from "./testing/bounded-reads.ts";
 import { MEDIA_ROUTES, type MediaResolveResponse } from "../shared/media-assets.ts";
+import { removeTempDirSync } from "./testing/cleanup.ts";
 
 const selection = (): ModelSelection => ({ instanceId: "claude", model: "claude-sonnet-5" });
 const u32 = (value: number) => { const b = Buffer.alloc(4); b.writeUInt32BE(value); return b; };
@@ -66,7 +67,7 @@ function chain(threadId: string, count: number) {
 const loaded = (threadId: string) => (store as unknown as { threads: { has(id: string): boolean } }).threads.has(threadId);
 
 beforeAll(async () => {
-  rmSync(DATA_DIR, { recursive: true, force: true });
+  removeTempDirSync(DATA_DIR);
   store = new Store(selection);
   const a = store.createBot({ name: "Thousand" }), b = store.createBot({ name: "Two hundred thousand" });
   small = { threadId: a.threadId, botId: a.id }; large = { threadId: b.threadId, botId: b.id };

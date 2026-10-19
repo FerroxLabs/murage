@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { HTTPError } from "./http";
 
 const MAX_ALLOWED_ORIGINS = 20;
 const secretSchema = z.string().min(32);
@@ -16,7 +17,28 @@ export interface ControlPlaneConfig {
     companionHostSuffix: string;
     zoneId: string;
   };
+  /** Cloud-home (machine) endpoints. Never falls back to `cloudflare`. */
+  cloudHome: CloudHomeConfig;
   emailFrom: string;
+}
+
+export type CloudflareCredentials = ControlPlaneConfig["cloudflare"];
+
+/** disabled: none of the four settings is set. misconfigured: only some are
+ *  set or a value is invalid. Both fail closed for machine endpoints. */
+export type CloudHomeConfig =
+  | { state: "disabled" }
+  | { state: "misconfigured" }
+  | { state: "ready"; cloudflare: CloudflareCredentials };
+
+export const CLOUD_HOME_DISABLED_CODE = "cloud_home_endpoints_disabled";
+export const CLOUD_HOME_MISCONFIGURED_CODE = "cloud_home_endpoints_misconfigured";
+
+/** The Cloudflare credentials and suffix for machine endpoints, or a
+ *  fail-closed error: 503 with a stable code. */
+export function cloudHomeCloudflare(config: ControlPlaneConfig): CloudflareCredentials {
+  if (config.cloudHome.state === "ready") return config.cloudHome.cloudflare;
+  throw new HTTPError(503, config.cloudHome.state === "disabled" ? CLOUD_HOME_DISABLED_CODE : CLOUD_HOME_MISCONFIGURED_CODE);
 }
 
 function exactHTTPSOrigin(value: string, label: string): string {
@@ -39,20 +61,43 @@ function exactHTTPSOrigin(value: string, label: string): string {
   return url.origin;
 }
 
-function hostnameSuffix(value: string): string {
+function hostnameSuffix(value: string, label = "COMPANION_HOST_SUFFIX"): string {
   // 34-byte opaque label plus the separating dot must remain within the
   // 253-byte DNS hostname limit.
   if (value !== value.toLowerCase() || value.length > 218 || value.endsWith(".")) {
-    throw new Error("COMPANION_HOST_SUFFIX must be a lowercase DNS suffix");
+    throw new Error(`${label} must be a lowercase DNS suffix`);
   }
   const labels = value.split(".");
   if (
     labels.length < 2
     || labels.some((label) => !/^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$/.test(label))
   ) {
-    throw new Error("COMPANION_HOST_SUFFIX must be a valid DNS suffix");
+    throw new Error(`${label} must be a valid DNS suffix`);
   }
   return value;
+}
+
+function readCloudHome(env: Env): CloudHomeConfig {
+  const raw = env as unknown as Record<string, unknown>;
+  const read = (name: string): string => (typeof raw[name] === "string" ? (raw[name] as string).trim() : "");
+  const suffix = read("CLOUD_HOME_HOST_SUFFIX");
+  const zoneId = read("CLOUD_HOME_ZONE_ID");
+  const accountId = read("CLOUD_HOME_ACCOUNT_ID");
+  const apiToken = read("CLOUD_HOME_API_TOKEN");
+  const set = [suffix, zoneId, accountId, apiToken].filter(Boolean).length;
+  if (set === 0) return { state: "disabled" };
+  if (set !== 4) return { state: "misconfigured" };
+  try {
+    if (!cloudflareResourceIdSchema.safeParse(accountId).success
+      || !cloudflareResourceIdSchema.safeParse(zoneId).success
+      || !cloudflareTokenSchema.safeParse(apiToken).success) return { state: "misconfigured" };
+    return {
+      state: "ready",
+      cloudflare: { accountId, apiToken, companionHostSuffix: hostnameSuffix(suffix, "CLOUD_HOME_HOST_SUFFIX"), zoneId },
+    };
+  } catch {
+    return { state: "misconfigured" };
+  }
 }
 
 export function readConfig(env: Env): ControlPlaneConfig {
@@ -98,6 +143,7 @@ export function readConfig(env: Env): ControlPlaneConfig {
       companionHostSuffix: hostnameSuffix(hostSuffix.data),
       zoneId: env.CLOUDFLARE_ZONE_ID,
     },
+    cloudHome: readCloudHome(env),
     emailFrom: emailFrom.data,
   };
 }

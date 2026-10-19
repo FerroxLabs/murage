@@ -3,7 +3,7 @@
 // Every run, routine and the receipt list sit behind a write-tracking proxy (tracked-state.ts), so a path that
 // changes persisted state without naming it to save() is still written by the next save, journal-only or full.
 // And the "Prepare to reinstall Murage 1.0.1" step folds the journal-only state into the files 1.0.1 reads.
-import { existsSync, readFileSync, readdirSync, rmSync, mkdtempSync, statSync } from "node:fs";
+import { existsSync, readFileSync, readdirSync, mkdtempSync, statSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
@@ -11,9 +11,10 @@ import { RoutineManager, type RoutineManagerOptions } from "./routines.ts";
 import { readRoutinesWithRuns, routineRunsDir } from "./routine-runs-journal.ts";
 import { downgradeInstallationMemorySchema } from "./installation-memory-downgrade.ts";
 import { plainCopy, track, untracked } from "./tracked-state.ts";
+import { removeTempDirSync } from "./testing/cleanup.ts";
 
 const dirs: string[] = [];
-afterEach(() => { for (const dir of dirs.splice(0)) rmSync(dir, { recursive: true, force: true }); });
+afterEach(() => { for (const dir of dirs.splice(0)) removeTempDirSync(dir); });
 
 const START = new Date(2026, 9, 12, 8, 0, 0).getTime();
 const HOUR = 60 * 60_000, DAY = 24 * HOUR;

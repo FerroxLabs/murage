@@ -2,7 +2,6 @@
 // BrowserExtensionIntegration.bind against the REAL service with a fake broker,
 // so offline, paused and stopped behave as they do in the app.
 import { afterEach, describe, expect, it, vi } from "vitest";
-import fs from "node:fs/promises";
 import path from "node:path";
 import { BrowserExtensionIntegration } from "./browser-extension-integration.ts";
 import { createBrowserExtensionService } from "./browser-extension-service.ts";
@@ -10,9 +9,10 @@ import { extensionBrowserUnavailablePrompt } from "./browser-extension-prompt.ts
 import type { BotRecord } from "./store.ts";
 import type { BrowserExtensionCommand, BrowserExtensionHello, BrowserExtensionResponse } from "../shared/browser-extension-protocol.ts";
 import { privateTestDirectory } from "./testing/private-test-dir.ts";
+import { removeTempDir, removeTempDirSync } from "./testing/cleanup.ts";
 
 const cleanup: string[] = [];
-afterEach(async () => { for (const directory of cleanup.splice(0)) await fs.rm(directory, { recursive: true, force: true }); });
+afterEach(async () => { for (const directory of cleanup.splice(0)) await removeTempDir(directory); });
 type Tab = { tabId: number; navigationEpoch: number; origin: string; url: string };
 async function fixture(profileIds: string[]) {
   const { root: directoryRoot, directory } = await privateTestDirectory(path.resolve(".integration-")); cleanup.push(directoryRoot);
@@ -122,7 +122,7 @@ describe("Windows Connect (W1): the helper alone creates the private folder", ()
       prepareStateDirectory(windows, "win32"); expect(fs.existsSync(windows)).toBe(false);
       prepareStateDirectory(other, "linux"); expect(fs.statSync(other).isDirectory()).toBe(true);
       prepareStateDirectory(path.join(root, "mac"), "darwin"); expect(fs.existsSync(path.join(root, "mac"))).toBe(true);
-    } finally { fs.rmSync(root, { recursive: true, force: true }); }
+    } finally { removeTempDirSync(root); }
   });
 });
 

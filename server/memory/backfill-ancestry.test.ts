@@ -5,7 +5,7 @@
 // A message stored again takes a new rowid and keeps its timestamp, so the order looked proven when it was not, and a paraphrase B of a
 // receipt-backed reply A could end up with no dependency on A: archive A's record and A was withheld while B stayed readable. The backfill
 // now decides by the message's own parentId chain only; where that is not provable a reply rests on every receipt output of the thread.
-import { mkdirSync, rmSync } from "node:fs";
+import { mkdirSync } from "node:fs";
 import { beforeEach, expect, it } from "vitest";
 import { DATA_DIR } from "../config.ts";
 import { closeDatabase, database } from "../database.ts";
@@ -18,9 +18,10 @@ import { replayExclusions } from "./replay-lineage.ts";
 import { setMemoryMode } from "./repository.ts";
 import { backfillOutputRoots, repairOutputRootBackfill, rootSetMembers } from "./schema.ts";
 import { LineageAllowance } from "./lineage-allowance.ts";
+import { removeTempDirSync } from "../testing/cleanup.ts";
 
 const roster: MemoryRoster = { bots: [{ id: "bot", threadId: "chat", tasks: [{ threadId: "older" }] }], groups: [] };
-beforeEach(() => { closeDatabase(); rmSync(DATA_DIR, { recursive: true, force: true }); mkdirSync(DATA_DIR, { recursive: true }); setMemoryMode("active"); reconcileMemoryRoster(roster); });
+beforeEach(() => { closeDatabase(); removeTempDirSync(DATA_DIR); mkdirSync(DATA_DIR, { recursive: true }); setMemoryMode("active"); reconcileMemoryRoster(roster); });
 
 function access() {
   const registry = new InternalCapabilities(); registry.begin("bot", "chat", "g");

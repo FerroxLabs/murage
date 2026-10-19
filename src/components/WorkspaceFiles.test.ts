@@ -14,6 +14,7 @@ import { describe, expect, it } from "vitest";
 
 import type { FileRevision, WorkspaceEntry } from "../../shared/workspace-files";
 import { WorkspaceFiles, WorkspaceRow } from "./WorkspaceFiles";
+import type { TrustedMarkup } from "@/lib/trusted-html";
 
 const source = readFileSync(fileURLToPath(new URL("./WorkspaceFiles.tsx", import.meta.url)), "utf8");
 const file: WorkspaceEntry = { name: "report.html", relativePath: "outputs/report.html", kind: "file", state: "local", bytes: 42, modifiedAt: 1, revision: "r1.abcdefghij" as FileRevision };
@@ -69,7 +70,7 @@ describe("wiring the desktop proof depends on", () => {
   });
 
   it("renders without a scope in a browser, where there is no bridge", () => {
-    const markup = renderToStaticMarkup(createElement(WorkspaceFiles, { scope: null, scopeLabel: "", refreshToken: 0, renderHtml: value => value, onSaved: noop }));
+    const markup = renderToStaticMarkup(createElement(WorkspaceFiles, { scope: null, scopeLabel: "", refreshToken: 0, renderHtml: value => value as TrustedMarkup, onSaved: noop }));
     expect(markup).toContain("Choose a bot above to browse the folder Murage resolved for its conversation.");
     expect(markup).not.toContain("data-native-action");
   });

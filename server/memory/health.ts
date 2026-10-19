@@ -132,7 +132,7 @@ export function memoryHealth(extractorInstanceId:string|null){
   // the older of the two figures is the one the line is as of
   const asOf=capturedAsOf===null||suppliedAsOf===null?null:Math.min(capturedAsOf,suppliedAsOf);
   const state: "not-configured"|"disabled"|"configured"|"budget-limited" = !learning.automaticFacts&&!learning.automaticProcedures ? "disabled"
-    : !extractorInstanceId ? "not-configured" : learning.dailyInputTokens===0||learning.dailyOutputTokens===0||learning.callsPerMinute===0 ? "budget-limited" : "configured";
+    : !extractorInstanceId ? "not-configured" : learning.ceiling.input===0||learning.ceiling.output===0||learning.callsPerMinute===0 ? "budget-limited" : "configured";
   return {
     asOf,
     captured:{sources:counts.captured,lastAt:counts.lastAt},

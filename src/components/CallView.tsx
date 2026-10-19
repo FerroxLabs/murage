@@ -745,11 +745,18 @@ export function Call({
       // first when the host's turn ends.
       if (gated() || (hostOn.current && (phaseRef.current === "sending" || hostSpeaking.current))) return owe();
       // No microphone: said, and the call stays where it is (sayQuietly), never a listen() that would clear the note.
+      const startedAt = Date.now();
       if (micUnavailable.current) {
-        void say(text).then((said) => { if (said && alive.current && phaseRef.current === "speaking") move("listening"); });
+        // A prompt the call itself cut (another answer started) is owed again, as on the listening path below.
+        void say(text).then((said) => {
+          if (!said) {
+            if (alive.current && !heldRef.current && ownerCutInAt.current < startedAt) owe();
+            return;
+          }
+          if (alive.current && phaseRef.current === "speaking") move("listening");
+        });
         return;
       }
-      const startedAt = Date.now();
       // Cut by the call itself (the host's reply starting, another answer),
       // not by the owner talking over it or a hold (which owes it itself):
       // owed again, so it is asked in full before a yes can answer it.
@@ -1287,6 +1294,7 @@ export function Call({
       if (log.some((entry) => entry.outcome === "answered" || entry.outcome === "looked_up" || entry.outcome === "not_started")) {
         void fetch(`/api/bots/${bot.id}/call-note`, {
           method: "POST",
+          redirect: "error",
           headers: callRouteHeaders(),
           body: JSON.stringify({ threadId: threadRef.current, durationMs: Date.now() - callStartedAt.current, log }),
           // the overlay is closing; the request must outlive it

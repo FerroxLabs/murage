@@ -3,7 +3,7 @@
 //  2a  the open-card walk after listen: a held lock in the middle of it leaves the walk's mark where it stood; the retry settles the card
 //  2b  a boot recovery whose attempts are all spent on held locks runs again later in this process, not at the next launch
 //  3   a kept receipt whose boot settle meets a held lock is settled by the stranded sweep in this process (it was skipped until restart)
-import { mkdirSync, rmSync } from "node:fs";
+import { mkdirSync } from "node:fs";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { readySettle, startRecovery } from "./after-listen.ts";
 import { DATA_DIR } from "./config.ts";
@@ -19,9 +19,10 @@ import { completeRequest, roomRequest } from "./room-requests.ts";
 import type { Message } from "./store.ts";
 import { ownerWorld } from "./testing/handoff-worlds.ts";
 import { ensureOpenCardIndex } from "./transcript-backfill.ts";
+import { removeTempDirSync } from "./testing/cleanup.ts";
 
 const sleep = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms));
-const fresh = () => { closeDatabase(); rmSync(DATA_DIR, { recursive: true, force: true }); mkdirSync(DATA_DIR, { recursive: true }); _resetPending(); _resetOwnerMigration(); };
+const fresh = () => { closeDatabase(); removeTempDirSync(DATA_DIR); mkdirSync(DATA_DIR, { recursive: true }); _resetPending(); _resetOwnerMigration(); };
 const quietly = async <T>(run: () => T | Promise<T>): Promise<T> => {
   const error = console.error, warn = console.warn;
   console.error = () => {}; console.warn = () => {};

@@ -1,4 +1,4 @@
-import { rmSync, readFileSync, writeFileSync } from "node:fs";
+import { readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
@@ -7,6 +7,7 @@ import { DATA_DIR } from "./config.ts";
 import type { ModelSelection } from "./contracts.ts";
 import { Store } from "./store.ts";
 import { XAI_VOICES } from "./tts/xai-speech.ts";
+import { removeTempDirSync } from "./testing/cleanup.ts";
 
 const selection = (): ModelSelection => ({ instanceId: "claude", model: "claude-sonnet-5" });
 const seeded = (seed: number) => () => ((seed = (seed * 1664525 + 1013904223) >>> 0) / 2 ** 32);
@@ -14,7 +15,7 @@ const FEMALE = XAI_VOICES.filter((v) => v.gender === "female").map((v) => v.id);
 
 describe("a default voice for every bot", () => {
   beforeEach(() => {
-    rmSync(DATA_DIR, { recursive: true, force: true });
+    removeTempDirSync(DATA_DIR);
     setVoiceRandom(seeded(7));
   });
   afterEach(() => setVoiceRandom());

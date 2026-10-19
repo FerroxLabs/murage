@@ -7,7 +7,7 @@
 // the collision happens on every machine instead of only on a busy Linux
 // runner, and every surface that issues or checks a revision is asked about it.
 import type { Stats } from "node:fs";
-import { chmodSync, existsSync, lstatSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, lstatSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join, sep } from "node:path";
 import { DatabaseSync } from "node:sqlite";
@@ -23,6 +23,7 @@ import {
   canRememberDigest, probeVolumeClock, sha256Hex, workspaceRevisionOf, workspaceStatFingerprint,
 } from "./workspace-revision.ts";
 import type { WorkspaceScopeRef } from "../shared/workspace-files.ts";
+import { removeTempDirSync } from "./testing/cleanup.ts";
 
 // `held` pins the stamps of chosen inodes; `volume.shape` reshapes every
 // stamp the way a whole mount would (a mirror mount, whole seconds, a clock
@@ -84,7 +85,7 @@ const databases: DatabaseSync[] = [];
 afterEach(() => {
   held.clear(); opened.length = 0; probes.length = 0; pathOps.length = 0; volume.shape = undefined; volume.denyProbeCreate = false; vi.restoreAllMocks(); __resetWorkspaceRevisionCacheForTests();
   for (const db of databases.splice(0)) db.close();
-  for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true });
+  for (const root of roots.splice(0)) removeTempDirSync(root);
 });
 
 const inode = (stat: Stats) => `${stat.dev}:${stat.ino}`;

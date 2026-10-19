@@ -3,10 +3,11 @@
 import { beforeEach,expect,it } from "vitest";
 import { database,closeDatabase } from "../database.ts";
 import { DATA_DIR } from "../config.ts";
-import { mkdirSync,rmSync } from "node:fs";
+import { mkdirSync } from "node:fs";
 import { captureMessage } from "./capture.ts";
 import { isLearnableSource } from "./learnable.ts";
-beforeEach(()=>{closeDatabase();rmSync(DATA_DIR,{recursive:true,force:true});mkdirSync(DATA_DIR,{recursive:true});});
+import { removeTempDirSync } from "../testing/cleanup.ts";
+beforeEach(()=>{closeDatabase();removeTempDirSync(DATA_DIR);mkdirSync(DATA_DIR,{recursive:true});});
 it.each(["attended","schedule","manual","webhook","channel","delegation","card","ask","message","room","unproven","unknown"] as const)("gates %s by its captured provenance",kind=>{
  const db=database();db.exec("UPDATE memory_meta SET mode='active'");
  captureMessage(db,"thread",{id:"m",at:1,role:"user",kind:"text",text:"I like tea",...(kind==="attended"?{origin:"desktop" as const}:kind==="unproven"?{origin:"unproven" as const}:kind==="unknown"?{}:{automation:{kind}})});
