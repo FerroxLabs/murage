@@ -4,7 +4,7 @@
 // The phantom-action guard on two stub engine profiles: profile T mounts
 // tools and emits tool rows, profile N has no tools (a text-only runtime).
 // The same replies must get the same verdict on both.
-import { rmSync, readFileSync } from "node:fs";
+import { readFileSync } from "node:fs";
 import { beforeEach, describe, expect, it } from "vitest";
 
 import { DATA_DIR } from "./config.ts";
@@ -14,6 +14,8 @@ import { heldQueueText, planExternalDelivery, withExternalDelivery } from "./ext
 import { checkReplyActions, delegationSources } from "./reply-action-guard.ts";
 import { Store, type Message } from "./store.ts";
 import { UNMATCHED_ACTION_EXPLANATION, unmatchedActionLabel } from "../shared/reply-action-claims.ts";
+import { sourced } from "./testing/bot-row.ts";
+import { removeTempDirSync } from "./testing/cleanup.ts";
 
 const PROFILE_T: RouteCapabilityFlags = { agentsMcp: true, composioMcp: true };
 const PROFILE_N: RouteCapabilityFlags = {};
@@ -129,10 +131,10 @@ describe("route capabilities", () => {
 });
 
 describe("the hold queue on a route with no tools (I-23)", () => {
-  const pending = [
+  const pending = sourced([
     { id: "m1", text: "@Helper replied to the delegated task:\n\nthe report is ready" },
     { id: "chip", text: "delegation failed" },
-  ];
+  ]);
   it("never delivers the header, consumes nothing, and says what waits", () => {
     const plan = planExternalDelivery({ pending, branchReplay: null, routeHasTools: false });
     expect(plan.consumedIds).toEqual([]);
@@ -160,6 +162,7 @@ describe("the hold queue on a route with no tools (I-23)", () => {
   });
   it("the owner line is the exact copy", () => {
     expect(heldQueueText(2)).toBe("Waiting for a tool-capable engine: 2 item(s). Open now");
+    expect(heldQueueText(2, true)).toBe("Waiting to continue: 2 item(s). Open now");
   });
 });
 
@@ -167,7 +170,7 @@ describe("store: held continuations and the stored check", () => {
   const selection = (): ModelSelection => ({ instanceId: "claude", model: "fake-model" });
   let store: Store;
   beforeEach(() => {
-    rmSync(DATA_DIR, { recursive: true, force: true });
+    removeTempDirSync(DATA_DIR);
     store = new Store(selection);
   });
   it("holds an answered card, counts it with owed messages, and survives a restart", () => {

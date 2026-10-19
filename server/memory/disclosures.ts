@@ -5,11 +5,12 @@ import { assertMemoryBundle, hydrateDisclosedMemoryRecord } from "./bundle.ts";
 import { authorityParts, authorityStamp, softChangedSince } from "./authority-epoch.ts";
 import { isLineageLimit, LineageAllowance, contentRevoked, messageCopy, messageSourceForgotten, outputRootsBad, recordSessionRoots, preLineageSessionRevoked, replayExclusions, sessionLineageBad, sessionOutputRoots, type Disclosure, type ReplayAudience, type ReplayMessage } from "./replay-lineage.ts";
 import { isWorkspaceOwner, threadHumanPrincipal } from "../human-principals.ts";
-import { denyLookup, lineageLive, sessionLookup } from "./deny-read.ts";
+import { denyLookup, doorEpochVerdict, lineageLive, sessionLookup } from "./deny-read.ts";
 import { STALE_MEM_LSN, type LineageReader, type LineageRef } from "./lineage-types.ts";
 import { addTurnParents, currentLsn, extendLineage, runningTurnFor } from "./lineage-write.ts";
 import { noteReceiptOutput, noteReceiptSession, wakeFlipMarker } from "./receipt-outputs.ts";
 import { threadNo } from "./thread-no.ts";
+import { sessionKeyOf } from "./session-incarnation.ts";
 
 /** Persist before dispatch; records contain references, never duplicated memory text. */
 export function prepareMemoryDisclosure(bundle: MemoryBundle, access: MemoryAccess, driverInstance: string) {
@@ -127,8 +128,13 @@ function continuationMemoryRevokedWork(allowance: LineageAllowance, threadId: st
   if (threadId !== access.threadId) throw new Error("MEMORY_SCOPE_DENIED");
   // the write-time session predicate first, before any hold (S6): deny_session, the session's forgotten set, its pending window. A revoke bumps
   // deny_generation, not the authority stamp a hold rests on, so a hold never answers for it. O(1) seeks.
+  // S6 rule 29: the door epoch before the lineageLive bypass, so a file with no line rows still resets every retained session once
+  const door = doorEpochVerdict(database(), { threadId, driverInstance, nativeSession });
+  if (door.state !== "shown") { if (why && !why.reason) why.reason = "writetime-door-epoch"; return true; }
   if (lineageLive(database())) {
-    const verdict = sessionLookup(database(), { threadId, driverInstance, nativeSession }, { audience: null });
+    // the owner's own direct chat is judged by content (an audience-only revoke never resets it, 1.0.2 Keep all P0); any other reader keeps
+    // every mark, audience-only ones included
+    const verdict = sessionLookup(database(), { threadId, driverInstance, nativeSession }, ownerDirectChat(threadId, access) ? { audience: null } : { audience: { owner: memoryAccessIsOwnerAudience(access), scopeIds: access.scopeIds } });
     if (verdict.state !== "shown") { if (why && !why.reason) why.reason = verdict.state === "checking" ? "checking" : `writetime-${verdict.reason}`; return true; }
   }
   const parts = authorityParts(), key = sessionHoldKey(threadId, driverInstance, nativeSession, access);
@@ -333,7 +339,7 @@ export function linkMemoryDisclosureOutput(bundleId: string, messageId: string) 
     for (const row of rows) {
       const ids: string[] = JSON.parse(String(row.output_message_ids));
       if (!ids.includes(messageId)) db.prepare("UPDATE memory_disclosures SET output_message_ids=? WHERE bundle_id=?").run(JSON.stringify([...ids,messageId]),row.bundle_id);
-      if (line) noteReceiptOutput(db, String(row.bundle_id), String(current.thread_id), Number(line.lsn), { driverInstance: String(current.driver_instance), nativeSession: current.native_session === null ? null : String(current.native_session) });
+      if (line) noteReceiptOutput(db, String(row.bundle_id), String(current.thread_id), Number(line.lsn), current.native_session === null ? undefined : sessionKeyOf(String(current.thread_id), String(current.driver_instance), String(current.native_session)));
     }
   });
 }

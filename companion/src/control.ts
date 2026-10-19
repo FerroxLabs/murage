@@ -12,6 +12,13 @@
 // refuses to expose to phones for exactly that reason. Serving it anywhere
 // else would hand away the control plane the design just took care to
 // withhold.
+//
+// Loopback is not the whole fence. Every process on this computer is also on
+// loopback, and that includes a bot's shell and a bot's browser. So every
+// route but the page itself also needs the per-launch control token, which
+// only the app that launched this sidecar holds (or, standing alone, the link
+// it printed).
+import { createHmac, randomBytes, timingSafeEqual } from "node:crypto";
 import { createServer, type Server, type ServerResponse } from "node:http";
 
 import type { BrowserDoor } from "./browser.ts";
@@ -20,9 +27,67 @@ import { companionEndpointCandidates, hostedCompanionUrl } from "./endpoints.ts"
 import { lanAddresses, tailnetLogin, tailnetName, tailscaleAddress } from "./listener.ts";
 import { defaultHostName } from "./mdns.ts";
 
+/** The header every control request but the page carries its token in. */
+export const CONTROL_TOKEN_HEADER = "x-murage-control-token";
+
+/** The header a later desktop launch uses to reach a sidecar its crashed
+ * predecessor left behind. The recovery secret it carries opens exactly two
+ * routes: GET /state, answered with this process's pid and nothing else, and
+ * POST /recovery/stop. It never opens pairing, devices, or any pairing data,
+ * so the encrypted copy the desktop keeps of it is worth nothing to a thief
+ * beyond stopping this sidecar. */
+export const RECOVERY_TOKEN_HEADER = "x-murage-recovery-token";
+
+/** What a control token looks like: base64url or hex, long enough to guess at
+ * no better than chance. Anything else is ignored, never trusted. */
+const CONTROL_TOKEN_SHAPE = /^[A-Za-z0-9_-]{32,128}$/;
+
+/** Where this launch's control token came from, so the sidecar knows whether
+ * to print the one link that carries it. */
+export type ControlTokenSource = "app" | "door" | "printed";
+
+/** This launch's control token.
+ *
+ *   app      the launching app handed one over (the desktop's private parent
+ *            port, or a script's own environment). The app already holds it.
+ *   door     a headless `murage start` recorded a door identity; the token is
+ *            derived from it, so `murage pair`, which reads the same 0600
+ *            record, can derive it too. Nothing extra lands on disk.
+ *   printed  nobody handed one over: a fresh random one, printed once in the
+ *            control page link so the person who started this can use it. */
+export function resolveControlToken(
+  provided: string | undefined,
+  doorNonce: string | null | undefined,
+): { token: string; source: ControlTokenSource } {
+  if (provided && CONTROL_TOKEN_SHAPE.test(provided)) return { token: provided, source: "app" };
+  if (doorNonce && /^[a-f0-9]{64}$/.test(doorNonce)) return { token: controlTokenFromDoorNonce(doorNonce), source: "door" };
+  return { token: randomBytes(32).toString("base64url"), source: "printed" };
+}
+
+/** The headless control token, derived from the door identity nonce. Kept in
+ * step with installer/lib/door-identity.mjs `controlTokenFromDoorNonce`. */
+export function controlTokenFromDoorNonce(nonce: string): string {
+  return createHmac("sha256", Buffer.from(nonce, "hex")).update("murage-companion-control/1").digest("base64url");
+}
+
+/** Constant-time comparison of what the caller sent against this launch's
+ * token. No token yet, or no header, is a refusal. */
+export function controlTokenMatches(presented: string | string[] | undefined, expected: string | null): boolean {
+  if (!expected || typeof presented !== "string") return false;
+  const left = Buffer.from(presented);
+  const right = Buffer.from(expected);
+  return left.length === right.length && timingSafeEqual(left, right);
+}
+
 /** What the pairing page needs to render itself and act on what you click. */
 export interface ControlOptions {
   devices: DeviceRegistry;
+  /** This launch's control token. Null refuses every route but the page. */
+  controlToken: () => string | null;
+  /** The desktop's per-launch recovery secret (see RECOVERY_TOKEN_HEADER). */
+  recoveryToken?: () => string | null;
+  /** Stop this sidecar: the answer to POST /recovery/stop. */
+  selfStop?: () => void;
   /** Where a phone connects — for display, and for the pairing instructions. */
   companionPort: number;
   /** Stable HTTPS route provisioned for this computer, when available. */
@@ -156,7 +221,7 @@ const readHostedEndpoint = (
     });
   });
 
-const currentHostedUrl = (options: ControlOptions): string | null =>
+const currentHostedUrl = (options: Pick<ControlOptions, "hostedUrl">): string | null =>
   options.hostedUrl?.() ?? null;
 
 /** Every host a phone could dial for this computer, best first.
@@ -208,7 +273,7 @@ export function hostCandidates(
 const registryPaused = (problem: string): string =>
   `Phone pairing is paused because ${problem}. The file was left untouched so it can be repaired or restored.`;
 
-export function companionState(options: ControlOptions) {
+export function companionState(options: Omit<ControlOptions, "controlToken" | "recoveryToken" | "selfStop">) {
   const addresses = lanAddresses();
   const tailscale = tailscaleAddress(addresses);
   const name = tailnetName();
@@ -324,6 +389,28 @@ export function createControlServer(options: ControlOptions): Server {
       const html = page();
       res.writeHead(200, { "content-type": "text/html; charset=utf-8", "content-length": Buffer.byteLength(html) });
       return res.end(html);
+    }
+    // The page above holds nothing: no code, no token, no device. Everything
+    // below does, or changes something, so it needs this launch's token. Host
+    // and Origin keep other machines and other web pages out; this keeps out
+    // the processes on this one, a bot's shell or browser included, that
+    // were never handed the token.
+    // The recovery secret is its own narrow door, checked on its own: a
+    // request that carries it is answered from this block and nowhere else.
+    if (req.headers[RECOVERY_TOKEN_HEADER] !== undefined) {
+      if (!controlTokenMatches(req.headers[RECOVERY_TOKEN_HEADER], options.recoveryToken?.() ?? null)) {
+        return json(res, 403, { error: "forbidden: recovery not allowed" });
+      }
+      if (method === "GET" && path === "/state") return json(res, 200, { pid: process.pid });
+      if (method === "POST" && path === "/recovery/stop" && options.selfStop) {
+        json(res, 202, { stopping: true, pid: process.pid });
+        options.selfStop();
+        return;
+      }
+      return json(res, 403, { error: "forbidden: recovery opens only state and stop" });
+    }
+    if (!controlTokenMatches(req.headers[CONTROL_TOKEN_HEADER], options.controlToken())) {
+      return json(res, 403, { error: "forbidden: open this page from the Murage app, or from the link the companion printed" });
     }
     if (method === "GET" && path === "/state") return json(res, 200, companionState(options));
     if (method === "POST" && path === "/tailscale/refresh" && options.refreshTailscale) {
@@ -487,9 +574,20 @@ const ago = (at) => {
   return h < 24 ? h + " h ago" : Math.round(h / 24) + " d ago";
 };
 
+// The link the companion printed carries the control token after the #,
+// which a browser never sends anywhere. Taken once, then wiped from the
+// address bar so it does not sit in history.
+const token = new URLSearchParams(location.hash.slice(1)).get("token") ?? "";
+history.replaceState(null, "", location.pathname);
+
 /** Call the control API and return the state it answers with. */
 async function api(path, method) {
-  const res = await fetch(path, { method: method ?? "GET" });
+  const res = await fetch(path, { method: method ?? "GET", headers: { "${CONTROL_TOKEN_HEADER}": token } });
+  if (res.status === 403) {
+    document.querySelector("main").innerHTML =
+      "<h1>Murage Companion</h1><p class=sub>Open this page from the Murage app, or from the link the companion printed when it started.</p>";
+    throw new Error("control token required");
+  }
   return res.json();
 }
 

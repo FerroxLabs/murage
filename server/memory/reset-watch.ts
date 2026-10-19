@@ -31,5 +31,33 @@ export function noteContinuationReset(threadId: string, engine: string, reason: 
   return line;
 }
 
+/** Thread recall (design S2): a turn on a sealed thread starts fresh by
+ * design, so it is not a loop and never reaches noteContinuationReset. It is
+ * counted here instead, per thread, with no warning, for the beta telemetry. */
+const sealedTurns = new Map<string, { count: number; instances: Set<string>; lastAt: number }>();
+
+/** Count one sealed turn on this thread. Never warns. */
+export function noteSealedTurn(threadId: string, instanceId: string, now = Date.now()): number {
+  const entry = sealedTurns.get(threadId) ?? { count: 0, instances: new Set<string>(), lastAt: now };
+  entry.count++; entry.lastAt = now;
+  if (entry.instances.size < 32) entry.instances.add(instanceId);
+  sealedTurns.delete(threadId); sealedTurns.set(threadId, entry);
+  // bounded like the reset map: keep the most recently used threads
+  while (sealedTurns.size > 2_000) sealedTurns.delete(sealedTurns.keys().next().value!);
+  return entry.count;
+}
+
+/** The thread-recall sealed turn counter: per thread, the turns counted and the engines they ran on. */
+export function sealedTurnCounts(): { threadId: string; count: number; instances: string[]; lastAt: number }[] {
+  return [...sealedTurns].map(([threadId, entry]) => ({ threadId, count: entry.count, instances: [...entry.instances], lastAt: entry.lastAt }));
+}
+
+/** The beta telemetry read of the sealed turn counter: totals and the most recently sealed threads, bounded. It is served in the owner's
+ * memory status (`sealedTurns` on GET /api/memory/status, memory/settings.ts), which is where the other memory diagnostics are read. */
+export function sealedTurnSummary(limit = 20): { threads: number; turns: number; recent: { threadId: string; count: number; instances: string[]; lastAt: number }[] } {
+  const all = sealedTurnCounts();
+  return { threads: all.length, turns: all.reduce((sum, entry) => sum + entry.count, 0), recent: all.sort((a, b) => b.lastAt - a.lastAt).slice(0, limit) };
+}
+
 /** Tests only. */
-export function clearResetWatch() { seen.clear(); }
+export function clearResetWatch() { seen.clear(); sealedTurns.clear(); }

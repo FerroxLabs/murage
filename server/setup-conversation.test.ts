@@ -377,9 +377,10 @@ describe("the two steps that end the flow", () => {
       [...opened, setupCardKey("chat", "jobs"), setupCardKey("flow", "do-it")],
       state({ detect: DETECTED, chat: { note: "brief" }, flow: { note: "tomorrow morning" } }),
     );
-    // The result card carries "take something else off my plate" itself, so a
-    // separate closing card would be a second ending to one scene.
-    expect(finished.append).toEqual([]);
+    // The result card carries "take something else off my plate" itself. The
+    // only thing owed after it is the closing card that turns the local
+    // backup on and shows its checked receipt (setup ends verified).
+    expect(keys(finished.append)).toEqual([setupCardKey("flow", "next")]);
     expect(finished.settle).toContain(setupCardKey("flow", "do-it"));
   });
 });
@@ -420,6 +421,7 @@ describe("called on every read, so it must be idempotent", () => {
       setupCardKey("flux", "key"),
       setupCardKey("chat", "jobs"),
       setupCardKey("flow", "do-it"),
+      setupCardKey("flow", "next"),
     ]);
   });
 
@@ -581,6 +583,8 @@ const LIVE_VARIANTS = [
   "no-key",
   "jobs",
   "do-it",
+  // The closing card: it turns on the local backup and shows the checked receipt.
+  "next",
 ] as const;
 
 const PARKED_VARIANTS = SETUP_CARD_VARIANTS.filter(

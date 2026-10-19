@@ -9,7 +9,7 @@
 // walk); the lane's bounded ones (walkActivePath, promptQuoteTargets, the
 // floored wholeTurnText walk) are compared against them, with the thread both
 // held in memory and evicted.
-import { rmSync } from "node:fs";
+
 import { beforeEach, describe, expect, it } from "vitest";
 
 import { DATA_DIR } from "./config.ts";
@@ -17,11 +17,12 @@ import type { ModelSelection } from "./contracts.ts";
 import { database } from "./database.ts";
 import { promptRows } from "./external-context-delivery.ts";
 import { wholeTurnText } from "./memory/capture.ts";
-import { partitionTranscriptMessages } from "./partition-sources.ts";
+import { botMessages, botViewer } from "./bot-read.ts";
 import { promptQuoteTargets } from "./prompt-quotes.ts";
 import { authoredTurnPieces } from "./reply-action-guard.ts";
 import { transcriptText } from "./replies.ts";
 import { Store, type Message } from "./store.ts";
+import { removeTempDirSync } from "./testing/cleanup.ts";
 
 const selection = (): ModelSelection => ({ instanceId: "claude", model: "claude-sonnet-5" });
 const from = { botId: "b1", name: "Otter" };
@@ -36,7 +37,7 @@ function baseActivePath(store: Store, threadId: string): Message[] {
 
 /** Base: the whole-thread quote map startTurn built. */
 const baseQuotes = (store: Store, botId: string, threadId: string, hasTools: boolean, pending: string[]) =>
-  new Map(promptRows(partitionTranscriptMessages(database(), botId, threadId, store.messagesFor(threadId)), hasTools, pending).map((m) => [m.id, m]));
+  new Map(promptRows(botMessages(database(), botViewer(botId), threadId, store.messagesFor(threadId)), hasTools, pending).map((m) => [m.id, m]));
 
 /** Base: wholeTurnText with the branch walk climbing to the root. */
 function baseWholeTurnText(threadId: string, message: Message): string {
@@ -56,7 +57,7 @@ function payload(store: Store, botId: string, threadId: string, oracle: boolean,
   for (const hasTools of [true, false]) {
     const pending: string[] = [];
     const path = oracle ? baseActivePath(store, threadId) : store.activePath(threadId);
-    const rows = promptRows(partitionTranscriptMessages(database(), botId, threadId, path), hasTools, pending);
+    const rows = promptRows(botMessages(database(), botViewer(botId), threadId, path), hasTools, pending);
     const quotes = oracle ? baseQuotes(store, botId, threadId, hasTools, pending) : promptQuoteTargets(quoteStore, database(), botId, threadId, hasTools, pending);
     out[`transcript:${hasTools}`] = rows.map((m) => `${m.id}|${m.role}|${transcriptText(m, quotes, "Sean")}|${JSON.stringify(m.attachments ?? null)}|${JSON.stringify(m.card ?? null)}`);
   }
@@ -66,7 +67,7 @@ function payload(store: Store, botId: string, threadId: string, oracle: boolean,
 }
 
 describe("engine payload parity with the base (lane E golden)", () => {
-  beforeEach(() => rmSync(DATA_DIR, { recursive: true, force: true }));
+  beforeEach(() => removeTempDirSync(DATA_DIR));
 
   function shapes(store: Store) {
     const bot = store.createBot();

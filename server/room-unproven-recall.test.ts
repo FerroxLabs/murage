@@ -7,13 +7,14 @@
 // memory. Memory now reads such a turn like a stranger in the owner's room:
 // the room and its conversation, nothing private, and none of the replies
 // its transcript leaves out.
-import { mkdirSync, rmSync } from "node:fs";
+import { mkdirSync } from "node:fs";
 import { beforeEach, expect, it } from "vitest";
 import { DATA_DIR } from "./config.ts";
 import { closeDatabase, database } from "./database.ts";
 import { InternalCapabilities } from "./internal-capabilities.ts";
 import { memoryAccess, reconcileMemoryRoster, type MemoryRoster } from "./memory/policy.ts";
 import { captureSource } from "./memory/capture.ts";
+import { storeAnchorMessage } from "./memory/testing/anchor-message.ts";
 import { claimMemoryJob, publishMemoryWork } from "./memory/jobs.ts";
 import { captureWork } from "./memory/chunks.ts";
 import { saveMemoryCandidate } from "./memory/authority.ts";
@@ -24,6 +25,7 @@ import { readerWithheldMessage } from "./memory/disclosures.ts";
 import { roomTranscriptForTurn } from "./room-transcript.ts";
 import type { Message } from "./store.ts";
 import { LineageAllowance } from "./memory/lineage-allowance.ts";
+import { removeTempDirSync } from "./testing/cleanup.ts";
 
 const roster: MemoryRoster = {
   bots: [
@@ -32,7 +34,7 @@ const roster: MemoryRoster = {
   ],
   groups: [{ id: "closing", threadId: "closing-chat", memberIds: ["finch", "dax"] }],
 };
-beforeEach(() => { closeDatabase(); rmSync(DATA_DIR, { recursive: true, force: true }); mkdirSync(DATA_DIR, { recursive: true }); });
+beforeEach(() => { closeDatabase(); removeTempDirSync(DATA_DIR); mkdirSync(DATA_DIR, { recursive: true }); });
 
 function access(botId: string, thread: string, notOwnerAudience = false) {
   reconcileMemoryRoster(roster);
@@ -88,6 +90,7 @@ it("an unproven room turn does not recall an owner-audience reply its transcript
   const a = access("dax", "dax-direct");
   database().prepare("INSERT INTO memory_disclosures(bundle_id,thread_id,driver_instance,native_session,record_versions,source_versions,output_message_ids,policy_revision,deletion_epoch,token_count,state,created_at) VALUES('b-dax','closing-chat','fake',NULL,?,'[]','[\"m-dax\"]',?,?,10,'delivered',?)")
     .run(JSON.stringify([{ id: record, version: version(record) }]), a.policyRevision, a.deletionEpoch, Date.now());
+  storeAnchorMessage(database(), "closing-chat", "m-dax", "The code you asked for is VAULT-5521.", "bot");
   captureSource(database(), { id: "message:closing-chat:m-dax", threadId: "closing-chat", messageId: "m-dax", kind: "text", speaker: "dax", outcome: "recorded", text: "The code you asked for is VAULT-5521." });
   publishCaptures();
   const chunk = database().prepare("SELECT r.id,r.version FROM memory_evidence e JOIN memory_records r ON r.id=e.record_id AND r.version=e.record_version WHERE e.source_id='message:closing-chat:m-dax' AND r.kind='source'").get() as { id: string; version: number };
@@ -124,6 +127,7 @@ function roomReplyPin() {
   database().prepare("INSERT INTO memory_disclosures(bundle_id,thread_id,driver_instance,native_session,record_versions,source_versions,output_message_ids,policy_revision,deletion_epoch,token_count,state,created_at) VALUES('b-fin','closing-chat','fake',NULL,'[]','[]','[\"m-fin\"]',?,?,10,'delivered',?)")
     .run(a.policyRevision, a.deletionEpoch, Date.now());
   const text = "Finch confirmed the vendor call is on Friday.";
+  storeAnchorMessage(database(), "closing-chat", "m-fin", text, "bot");
   captureSource(database(), { id: "message:closing-chat:m-fin", threadId: "closing-chat", messageId: "m-fin", kind: "text", speaker: "finch", outcome: "recorded", text });
   publishCaptures();
   const pin = saveMemoryCandidate("The vendor call is on Friday.", [{ sourceId: "message:closing-chat:m-fin", revision: 1, startByte: 0, endByte: Buffer.byteLength(text) }], "k-pin-fin", a);

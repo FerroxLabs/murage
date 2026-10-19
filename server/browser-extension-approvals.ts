@@ -5,6 +5,7 @@ import path from "node:path";
 import { createPrivateWindowsDirectory, readPrivateWindowsJson, writePrivateWindowsJson } from "../electron/browser-extension-windows.mjs";
 import type { ApprovalBus } from "./peer-approval.ts";
 import type { BotRecord } from "./store.ts";
+import { murageLine } from "./murage-line.ts";
 // A person decides in their own time (fifteen minutes on a card, then it stays open for 24 hours); the tool call's own deadline is separate.
 const MAX_WAIT_MS = 15 * 60_000, MAX_SUMMARY = 12000;
 export const BROWSER_EXTENSION_APPROVAL_TOOL = "browser_extension_action";
@@ -40,6 +41,10 @@ export type ApprovalsOptions = {
   valid?: (record: { bindingId: string; botId: string; threadId: string; generation: number }) => boolean;
   /** Start the continuation turn. Return false when it could not start now (the bot is busy); it is retried by drain. */
   onContinue?: (info: ContinuationInfo) => boolean | void | Promise<boolean | void>;
+  /** The provider turn running in this conversation now (internal-capabilities.ts providerTurnOf), read from the server's own turn state, never
+   * from a request. The card's summary carries the model's words (typed text, a chosen address), so the card names this turn and is withheld
+   * with the turn's inputs when they are revoked. */
+  turnOf?: (threadId: string) => string | undefined;
 };
 const sameBinding = (a: ApprovalBinding, b: ApprovalBinding) => a.generation === b.generation && a.documentEpoch === b.documentEpoch && a.targetDigest === b.targetDigest
   && a.submissionDigest === b.submissionDigest && a.payloadDigest === b.payloadDigest && a.actionDigest === b.actionDigest;
@@ -130,13 +135,14 @@ export class BrowserExtensionApprovals {
     }
     // Every call owns a distinct card and continuation, including identical actions.
     const requestId = "browser-" + randomUUID();
-    const message = this.bus.store.appendMessage(input.threadId, {
-      role: "bot", kind: "options",
+    const turnId = this.options.turnOf?.(input.threadId);
+    const message = this.bus.store.appendMessage(input.threadId, murageLine({
+      role: "bot", kind: "options", turnId,
       from: { botId: input.bot.id, name: input.bot.name, color: input.bot.color },
       card: { title: input.title ?? (input.scope === "site" ? `${input.bot.name} wants to use this site` : `${input.bot.name} needs your approval`), subtitle: summary,
         options: ["Allow", "Deny"], requestId, tool: BROWSER_EXTENSION_APPROVAL_TOOL, ...(input.pushSummary ? { pushBody: input.pushSummary.slice(0, 300) } : {}), ...(input.cardKind && input.scope !== "site" ? { browserCardKind: input.cardKind } : {}),
         held: input.scope === "site" ? "Allow remembers site access for this browser task. You can revoke it in Browser settings. Sending, purchasing and other changes have separate approvals." : "Allow applies to this action once. Site access does not approve actions. Text marked \"From the page\" was written by the website, not by Murage or the bot." + (input.cardKind ? " Murage asks every time for this, in every mode." : "") },
-    });
+    }));
     return new Promise<ApprovalState>(resolve => {
       let settled = false;
       let timer: ReturnType<typeof setTimeout> | undefined;

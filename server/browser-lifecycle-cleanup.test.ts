@@ -1,4 +1,4 @@
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -9,6 +9,7 @@ import {
   finalizeBrowserCleanupMutation,
   requireBrowserCleanupAcknowledged,
 } from "./browser-lifecycle-cleanup.ts";
+import { removeTempDirSync } from "./testing/cleanup.ts";
 
 const folders: string[] = [];
 const journal = () => {
@@ -18,7 +19,7 @@ const journal = () => {
 };
 
 afterEach(() => {
-  for (const folder of folders.splice(0)) rmSync(folder, { recursive: true, force: true });
+  for (const folder of folders.splice(0)) removeTempDirSync(folder);
 });
 
 describe("durable browser lifecycle cleanup", () => {

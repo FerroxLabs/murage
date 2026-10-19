@@ -1,4 +1,6 @@
 import { partitionSourcesAllowed } from "./partition-sources.ts";
+import { botRows, botViewer, type BotRow, type Viewer } from "./bot-read.ts";
+import type { Message } from "./store.ts";
 import { executionStore, sameThreadPartition } from "./execution-audience.ts";
 // Copyright 2026 Ferrox Labs
 // SPDX-License-Identifier: AGPL-3.0-or-later
@@ -19,6 +21,7 @@ import { executionStore, sameThreadPartition } from "./execution-audience.ts";
 //    assignment.
 import type { DatabaseSync } from "node:sqlite";
 import { bringInToProject } from "./memory/bring-in.ts";
+import { redactSecretsInText } from "./redact.ts";
 import { roomReplayWithheld } from "./memory/disclosures.ts";
 import { capturedMessageWithheld, LineageAllowance, messageSourceForgotten } from "./memory/replay-lineage.ts";
 import { copiedFromOwner } from "./memory/bring-in.ts";
@@ -168,28 +171,38 @@ export function projectThreadDeletion(db: DatabaseSync, input: {
 
 type Row = { id: string; rowid: number; at: number; role: string; kind: string; text: string | null; json: string };
 
-export function readProjectMessages(db: DatabaseSync, roster: NamedRoster, groupId: string, body: Record<string, unknown>, caller?: { botId: string; threadId: string }): Result {
+/** Who reads a project page: a bot (its id and the thread of the turn reading) or the owner, named explicitly by OWNER_PAGE. */
+export type ProjectPageReader = { readonly botId: string; readonly threadId: string } | typeof OWNER_PAGE;
+/** The owner's own view of a project page: the owner route through the reader door (LINEAGE-DESIGN-S6 18e). */
+export const OWNER_PAGE: { readonly owner: true } = Object.freeze({ owner: true });
+// the one human viewer literal of this file (bot-read.test.ts 18e, project-page-door.test.ts)
+const ownerPageViewer = (): Viewer => ({ kind: "human" });
+
+export function readProjectMessages(db: DatabaseSync, roster: NamedRoster, groupId: string, body: Record<string, unknown>, caller: ProjectPageReader): Result {
   return readProjectPage(db, roster, groupId, body, caller).result;
 }
 
 /** One page of a project conversation, with the lines whose words it shows (the withheld lines show only their withheld line). The
  * lines it shows are what a reply built from the page rests on: write-time hole 1 (DESIGN-WRITETIME 2.2), see the read-messages handler. */
-export function readProjectPage(db: DatabaseSync, roster: NamedRoster, groupId: string, body: Record<string, unknown>, caller?: { botId: string; threadId: string }): { result: Result; threadId?: string; shown: string[] } {
+export function readProjectPage(db: DatabaseSync, roster: NamedRoster, groupId: string, body: Record<string, unknown>, caller: ProjectPageReader): { result: Result; threadId?: string; shown: string[] } {
   const shown: string[] = [];
   const result = readProjectPageWork(db, roster, groupId, body, caller, shown);
   const threadId = (result.body as { threadId?: unknown } | null)?.threadId;
   return { result, ...(result.status === 200 && typeof threadId === "string" ? { threadId, shown } : { shown: [] }) };
 }
 
-function readProjectPageWork(db: DatabaseSync, roster: NamedRoster, groupId: string, body: Record<string, unknown>, caller: { botId: string; threadId: string } | undefined, shown: string[]): Result {
+function readProjectPageWork(db: DatabaseSync, roster: NamedRoster, groupId: string, body: Record<string, unknown>, caller: ProjectPageReader, shown: string[]): Result {
   const refused = strict(body, ["threadId", "before", "limit"]);
   if (refused) return refused;
   const group = roster.groups.find(entry => entry.id === groupId);
   if (!group) return { status: 404, body: { error: "no such project" } };
   const threadId = body.threadId === undefined ? group.threadId : body.threadId;
   if (typeof threadId !== "string" || !projectThreads(roster, groupId).has(threadId)) return { status: 403, body: { error: "That conversation is not part of this project." } };
-  const reader = caller && executionStore()?.bot(caller.botId);
-  if (reader && !sameThreadPartition(reader, caller!.threadId, threadId)) return { status: 403, body: { error: "That conversation belongs to another team." } };
+  // fail closed: a bot reads only as a bot on the roster now; with no record (removed, or no store) it reads no line
+  const bot = "owner" in caller ? undefined : caller;
+  const reader = bot && executionStore()?.bot(bot.botId);
+  if (bot && !reader) return { status: 403, body: { error: "That reader is not on the team." } };
+  if (bot && reader && !sameThreadPartition(reader, bot.threadId, threadId)) return { status: 403, body: { error: "That conversation belongs to another team." } };
   const limit = body.limit === undefined ? 20 : body.limit;
   if (!Number.isSafeInteger(limit) || (limit as number) < 1 || (limit as number) > READ_MESSAGES_MAX) return bad(`limit is 1 to ${READ_MESSAGES_MAX}`);
   let beforeRowid = Number.MAX_SAFE_INTEGER;
@@ -200,7 +213,7 @@ function readProjectPageWork(db: DatabaseSync, roster: NamedRoster, groupId: str
     beforeRowid = Number(anchor.rowid);
   }
   const rows = db.prepare(`SELECT rowid, id, at, role, kind, text, json FROM messages WHERE thread_id=? AND rowid<?
-    AND (kind='text' OR (kind='activity' AND json_extract(json,'$.actorKind')='murage')) ORDER BY rowid DESC LIMIT ?`).all(threadId, beforeRowid, (limit as number) + 1) as Row[];
+    AND kind='text' ORDER BY rowid DESC LIMIT ?`).all(threadId, beforeRowid, (limit as number) + 1) as Row[];
   const more = rows.length > (limit as number);
   const page = rows.slice(0, limit as number).reverse();
   // A reply that used something the owner removed, or that the owner forgot,
@@ -212,16 +225,27 @@ function readProjectPageWork(db: DatabaseSync, roster: NamedRoster, groupId: str
   try { withheld = roomReplayWithheld(LineageAllowance.tool(), threadId, page.map(row => ({ id: row.id, role: row.role, ...copyOf(row) })), checking); }
   catch { return { status: 403, body: { error: "That conversation is not part of this project." } }; }
   const names = new Map(roster.bots.map(bot => [bot.id, bot.name ?? "a member"]));
+  // A bot reads the page through the reader door (bot-read.ts): a Murage-voice row never, a line the lineage withholds never. Every row is
+  // judged there, a hidden one included (no stand-in passes unjudged): a hidden row the door admits shows only Murage's fixed withheld copy.
+  const asMessage = (row: Row): Message => { let stored: Partial<Message> = {}; try { stored = JSON.parse(row.json); } catch { /* columns only */ } return { ...stored, id: row.id, role: row.role, kind: row.kind, text: row.text ?? undefined, at: Number(row.at) } as Message; };
+  // every line below is built from the door's BotRow for this viewer (rule 18b): its words, its speaker; a row the door left out is not shown
+  const viewer = bot && reader ? botViewer(reader.id) : ownerPageViewer();
+  const lines = new Map<string, BotRow>(botRows(db, viewer, threadId, page.map(asMessage)).map(line => [line.id, line]));
   let bytes = 0;
   const messages: Array<{ id: string; speaker: string; to?: string[]; re?: string; at: number; text: string }> = [];
   for (const row of page.reverse()) {
-    if (reader && !partitionSourcesAllowed(db, reader.id, caller!.threadId, [row.id])) continue;
-    let message: { from?: { botId?: string; name?: string }; to?: string[]; replyToId?: string; actorKind?: string; withheldFromBots?: unknown; tool?: { name?: string } } = {};
+    if (bot && reader && !partitionSourcesAllowed(db, reader.id, bot.threadId, [row.id], { threads: [threadId], only: true })) continue;
+    const line = lines.get(row.id);
+    if (!line) continue;
+    let message: { to?: string[]; replyToId?: string; withheldFromBots?: unknown } = {};
     try { message = JSON.parse(row.json); } catch { /* the row's own columns still say who and what */ }
-    const speaker = message.actorKind === "murage" ? "Murage" : row.role === "user" ? "Owner" : message.from?.name ?? (message.from?.botId ? names.get(message.from.botId) : undefined) ?? "a member";
-    const hidden = row.role !== "user" && (withheld.has(row.id) || Boolean(message.withheldFromBots));
+    const speaker = line.role === "user" ? "Owner" : line.speaker?.name ?? (line.speaker ? names.get(line.speaker.id) : undefined) ?? "a member";
+    // for a bot every role: an owner line the owner forgot reads as its withheld line too, never its words; the owner's own page keeps
+    // showing the owner's lines as written
+    const hidden = (bot !== undefined || line.role !== "user") && (withheld.has(row.id) || Boolean(message.withheldFromBots));
     const forgotten = hidden && (message.withheldFromBots === "forgotten" || messageSourceForgotten(threadId, row.id));
-    const raw = hidden ? (forgotten ? ROOM_REPLY_FORGOTTEN : checking.has(row.id) || message.withheldFromBots === "checking" ? ROOM_REPLY_CHECKING : ROOM_REPLY_WITHHELD) : message.actorKind === "murage" ? String(message.tool?.name ?? row.text ?? "") : String(row.text ?? "");
+    // a hidden line reads as Murage's fixed withheld copy (it is a stand-in); any other line reads as the BotRow's words
+    const raw = hidden ? (forgotten ? ROOM_REPLY_FORGOTTEN : checking.has(row.id) || message.withheldFromBots === "checking" ? ROOM_REPLY_CHECKING : ROOM_REPLY_WITHHELD) : line.text;
     const text = raw.length > MESSAGE_CHARS ? `${raw.slice(0, MESSAGE_CHARS)} [cut]` : raw;
     bytes += Buffer.byteLength(text) + 200;
     if (bytes > PAGE_BYTES && messages.length) break;
@@ -273,8 +297,10 @@ export function updateProjectSummary(db: DatabaseSync, roster: MemoryRoster, con
   // never silently drop what an older version rested on (Astra r2 #8)
   if (sources.length > SUMMARY_SOURCES_MAX) return { status: 409, body: { error: "not_allowed", reason: `The summary would rest on more than ${SUMMARY_SOURCES_MAX} messages. Keep the current summary; Murage's board summary covers the rest.` } };
   const version = Number((db.prepare("SELECT max(version) AS v FROM project_summaries WHERE group_id=?").get(context.groupId) as { v: number | null }).v ?? 0) + 1;
+  // Every member's prompt carries this summary, so a key the lead copied into
+  // it is masked before it is stored, the way captured memory is.
   db.prepare("INSERT INTO project_summaries(group_id, version, text, source_message_ids, made_by, at, stale) VALUES(?,?,?,?,?,?,0)")
-    .run(context.groupId, version, body.text.trim(), JSON.stringify(sources), context.botId, context.now);
+    .run(context.groupId, version, redactSecretsInText(body.text.trim()), JSON.stringify(sources), context.botId, context.now);
   // the summary is the lead's own words, written in its turn: it rests on that turn (DESIGN-WRITETIME 2.5)
   recordTurnObject(db, consuming, murageObjectRef("project-summary", `${context.groupId}:${version}`));
   db.prepare("DELETE FROM project_summaries WHERE group_id=? AND version<=?").run(context.groupId, version - SUMMARY_VERSIONS_KEPT);

@@ -4,7 +4,7 @@
 // Fix round for the fifth upgrade-ui review (lanes/upgui-review/r5/REPORT.md, design r6): every proof checks both ends, large-set proofs outlive the cache and a
 // restart, sweeps are bounded on both sides, and the start no longer reads old cards. The outbox/scheduler tests are in server/procedure-landing.test.ts and the
 // client test is in src/state/open-cards.test.ts.
-import { mkdirSync, readFileSync, rmSync } from "node:fs";
+import { mkdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { beforeEach, expect, it } from "vitest";
@@ -24,8 +24,9 @@ import { ensureRootSetWorklist } from "./upgrade-app-tables.ts";
 import { buildSyntheticV6 } from "./testing/upgrade-fast-fixture.ts";
 import { sessionLookup } from "./deny-read.ts";
 import { LineageAllowance } from "./lineage-allowance.ts";
+import { removeTempDirSync } from "../testing/cleanup.ts";
 
-beforeEach(() => { closeDatabase(); rmSync(DATA_DIR, { recursive: true, force: true }); mkdirSync(DATA_DIR, { recursive: true }); });
+beforeEach(() => { closeDatabase(); removeTempDirSync(DATA_DIR); mkdirSync(DATA_DIR, { recursive: true }); });
 
 // ── 1. root-set proofs read both ends ────────────────────────────────────────────────────────────────────────────────────────────────
 function bigSet(db: DatabaseSync, id: string, declared: number, actual: number, thread = "th") {
@@ -216,7 +217,7 @@ it("r6-3: a point patch of a card in an unloaded 20,000-row thread reads one row
 
 const busOf = (store: Store) => ({ store }) as unknown as ApprovalBus;
 function staleCardRun(rows: number): { dismissed: number; read: number; hydrated: boolean } {
-  closeDatabase(); rmSync(DATA_DIR, { recursive: true, force: true }); mkdirSync(DATA_DIR, { recursive: true });
+  closeDatabase(); removeTempDirSync(DATA_DIR); mkdirSync(DATA_DIR, { recursive: true });
   const db = database();
   const store = new Store(selection);
   const bot = store.createBot();

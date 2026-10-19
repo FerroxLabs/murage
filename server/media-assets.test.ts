@@ -1,7 +1,7 @@
 // F5-T1 (media design M1): scoped MediaAsset resolver and the authorized byte
 // route. Every type below comes from validated bytes, never from a suffix.
 import { createHash } from "node:crypto";
-import { existsSync, mkdirSync, mkdtempSync, rmSync, symlinkSync, unlinkSync, utimesSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, symlinkSync, unlinkSync, utimesSync, writeFileSync } from "node:fs";
 import { createServer, type Server, type ServerResponse } from "node:http";
 import type { AddressInfo } from "node:net";
 import { tmpdir } from "node:os";
@@ -24,6 +24,7 @@ import {
   MEDIA_BYTES_RESPONSE_HEADERS, MEDIA_CAPABILITY_QUERY_PARAM, MEDIA_CAPABILITY_TTL_MS, MEDIA_ROUTES, isMediaCapabilityToken, redactMediaCapability,
   type MediaAsset, type MediaResolveResponse,
 } from "../shared/media-assets.ts";
+import { removeTempDirSync } from "./testing/cleanup.ts";
 
 // ── byte fixtures ──────────────────────────────────────────────────────────
 const u32 = (value: number) => { const b = Buffer.alloc(4); b.writeUInt32BE(value); return b; };
@@ -150,7 +151,7 @@ interface Fixture {
 }
 const cleanups: Array<() => void> = [];
 afterEach(() => { for (const cleanup of cleanups.splice(0)) { try { cleanup(); } catch {} } __resetMediaAssetsForTests(); });
-beforeEach(() => { rmSync(DATA_DIR, { recursive: true, force: true }); __resetMediaAssetsForTests(); });
+beforeEach(() => { removeTempDirSync(DATA_DIR); __resetMediaAssetsForTests(); });
 
 function fixture(): Fixture {
   const store = new Store(selection);
@@ -385,20 +386,24 @@ describe("attachment assets", () => {
     await new Promise(resolve => setTimeout(resolve, 20));
     expect(mediaActiveStreamCount()).toBe(0);
   });
-  it("destroys a stream whose file changes mid-flight instead of completing with mixed bytes", async () => {
+  it("a file that changes mid-flight never mixes bytes: the stream finishes the snapshot it authorized", async () => {
     const f = fixture(), image = png(2, 2, MEDIA_STREAM_CHUNK_BYTES * 4);
     const path = attach(f, f.threadId, "cccccccc-cccc-4ccc-8ccc-cccccccccccc.png", image);
     const { url } = ready(await resolve(f, { source: "attachment", threadId: f.threadId, attachmentId: "cccccccc-cccc-4ccc-8ccc-cccccccccccc.png" }));
     const result = await fetchBytes(f, url);
     expect(result.status).toBe(200);
     const stream = result.stream!, chunks: Buffer[] = [];
-    const first = await new Promise<Buffer>(resolve => stream.once("data", chunk => resolve(chunk as Buffer)));
+    // paused inside the first chunk's handler: a snapshot stream has every chunk ready at once
+    const first = await new Promise<Buffer>(resolve => stream.once("data", chunk => { stream.pause(); resolve(chunk as Buffer); }));
     chunks.push(first);
-    stream.pause();
     writeFileSync(path, png(2, 2, MEDIA_STREAM_CHUNK_BYTES * 4).fill(0x77, 100)); utimesSync(path, new Date(Date.now() + 5000), new Date(Date.now() + 5000));
     const outcome = await new Promise<"error" | "end">(resolve => { stream.on("error", () => resolve("error")); stream.on("end", () => resolve("end")); stream.on("data", chunk => chunks.push(chunk as Buffer)); stream.resume(); });
-    expect(outcome).toBe("error");
-    expect(mediaActiveStreamCount()).toBe(0);
+    // attachments are served from the one bounded read whose digest is the revision
+    expect(outcome).toBe("end");
+    expect(Buffer.concat(chunks).equals(image)).toBe(true);
+    await expect.poll(mediaActiveStreamCount, { timeout: 5000 }).toBe(0);
+    // the next request sees the new bytes no longer match the revision
+    expect((await fetchBytes(f, url)).status).toBe(409);
   });
 });
 
@@ -598,6 +603,10 @@ describe("byte route through sendDelegated", () => {
     const { url } = ready(await resolve(f, { source: "attachment", threadId: f.threadId, attachmentId: "eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee.png" }));
     const racing = await seam(f), base = racing.base;
     await abortReceived(racing, base + url, MEDIA_MAX_ACTIVE_STREAMS * 4);
+    // Attachments are read whole through the bounded reader before a slot
+    // turns into a stream: let the aborted requests finish their reads first.
+    await racing.settled();
+    await expect.poll(mediaActiveStreamCount, { timeout: 5000 }).toBe(0);
     // A seek after the first chunk: the response is piped, then the client leaves.
     for (let index = 0; index < MEDIA_MAX_ACTIVE_STREAMS + 2; index++) {
       const response = await fetch(base + url);

@@ -5,13 +5,14 @@
 // roots must still be on the running turn and its engine session, so the next
 // write's session check resets the session. Through the real Fuigo driver and
 // the fake ACP CLI, whose interjection echo (the acknowledgement) is delayed.
-import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { afterEach as thawAfterEach, beforeEach as thawBeforeEach } from "vitest";
 import { thawRootSetWritesForTest } from "./memory/replay-lineage.ts";
+import { removeTempDirSync } from "./testing/cleanup.ts";
 // 1.0.2: this test models a 1.0.1 file (legacy root-set rows) for the read-time judge, which still decides legacy data until S6.
 thawBeforeEach(() => thawRootSetWritesForTest(true));
 thawAfterEach(() => thawRootSetWritesForTest(false));
@@ -31,6 +32,7 @@ import { setMemoryMode } from "./memory/repository.ts";
 import { appendMessage } from "./message-db.ts";
 import { denyLookup, sessionLookup } from "./memory/deny-read.ts";
 import { closeTurnLineage, openTurnLineage, writeSessionLineage } from "./memory/lineage-write.ts";
+import { stampFreshSession } from "./memory/testing/writetime-fixture.ts";
 import { drainRevokeMarker } from "./memory/memory-revocation.ts";
 import type { TurnLineage } from "./memory/lineage-types.ts";
 import type { Message } from "./store.ts";
@@ -98,7 +100,7 @@ const savedAck = process.env.MURAGE_FUIGO_INTERJECT_ACK_MS;
 
 beforeEach(() => {
   closeDatabase();
-  rmSync(DATA_DIR, { recursive: true, force: true });
+  removeTempDirSync(DATA_DIR);
   mkdirSync(DATA_DIR, { recursive: true });
   ensureDirs();
   setMemoryMode("active");
@@ -139,7 +141,7 @@ async function runningFuigo(echoMs: number) {
   for (let i = 0; i < 500 && !prompted(); i++) await new Promise((r) => setTimeout(r, 20));
   expect(prompted()).toBe(true);
   // the running turn's lineage and its engine session (v6 marks every session it saw)
-  const lineage: RunningTurnLineage = { roots: { roots: new Set(), over: false }, instanceId: "fuigo-steer", session: "s-desk" };
+  const lineage: RunningTurnLineage = { roots: { roots: new Set(), over: false }, instanceId: "fuigo-steer", session: "s-desk", generation: "g-desk", turn: { threadId: "desk", turnId: "t-desk", turnLsn: 0, parents: [] } as unknown as RunningTurnLineage["turn"] };
   recordSessionRoots("desk", "fuigo-steer", "s-desk", lineage.roots);
   return { adapter: instance.adapter, lineage };
 }
@@ -194,6 +196,7 @@ posixOnly("a steer's quoted reply is recorded at the write, not after the acknow
     expect(lineage.roots.roots.size).toBe(0);
     expect(sessionOutputRoots(LineageAllowance.tool(1_000_000_000), "desk", "fuigo-steer", "s-desk").roots.size).toBe(0);
     captureBranchChange(database(), "older", null);
+    stampFreshSession(database(), "desk", "fuigo-steer", "s-desk"); // the session as a 1.0.3 fresh start left it (S6 rule 26)
     expect(retainedSessionInvalid(LineageAllowance.tool(), "desk", "fuigo-steer", "s-desk")).toBe(false);
   }, 30_000);
 
@@ -263,7 +266,7 @@ posixOnly("a Claude steer that waits for init is checked against its quote at th
       });
       const lines = () => (existsSync(log) ? readFileSync(log, "utf8").split("\n").filter(Boolean) : []);
       await instance.adapter.sendTurn({ threadId: "desk", text: "one SLOW_INIT", warmIdentity: { botId: "bot", audience: "owner" } });
-      const lineage: RunningTurnLineage = { roots: { roots: new Set(), over: false }, instanceId: "claude-steer", session: "claude-session" };
+      const lineage: RunningTurnLineage = { roots: { roots: new Set(), over: false }, instanceId: "claude-steer", session: "claude-session", generation: "g-claude", turn: { threadId: "desk", turnId: "t-claude", turnLsn: 0, parents: [] } as unknown as RunningTurnLineage["turn"] };
       const turn = openTurn("desk", "t-desk");
       const session = { threadId: "desk", driverInstance: "claude-steer", nativeSession: "claude-session" };
       writeSessionLineage(database(), session, turn);

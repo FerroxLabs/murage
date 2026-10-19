@@ -1,5 +1,6 @@
 import type { DatabaseSync } from "node:sqlite";
 import { PIP_ALL_KINDS_SQL } from "./pip-kinds.ts";
+import { RECORD_KEYS_TABLE, recordKeysPresent } from "./schema.ts";
 
 /** Records whose derived index entries are waiting to be written or removed.
  * Owner-authored continuity kinds (PIP) are never INSERTED: they are not part of
@@ -43,9 +44,13 @@ export function pendingProjectionRefsAfter(db:DatabaseSync,scopeIds:readonly str
     WHERE p.rowid>? AND ${PENDING} AND r.scope_id IN (SELECT value FROM json_each(?)) ORDER BY p.rowid LIMIT ?`).all(after,JSON.stringify(scopeIds),limit).map(row=>({id:String(row.id),version:Number(row.version),rowid:Number(row.rowid)}));
 }
 
+/** `ageKey`: the record's age key (schema.ts RECORD_KEYS_SCHEMA), the rowid of its FTS row in an index in age order; null until the key
+ * backfill reaches it (or on a file an older build left without the key table). */
 export function pendingProjectionRecords(db:DatabaseSync,limit=16) {
-  return db.prepare(`SELECT r.id,r.version,r.scope_id AS scopeId,CASE WHEN r.kind IN ${PIP_ALL_KINDS_SQL} OR ${rolledCheckpointSql("r")} THEN '' ELSE r.text END AS text,CASE WHEN r.kind IN ${PIP_ALL_KINDS_SQL} OR ${rolledCheckpointSql("r")} THEN 'deleted' ELSE r.state END AS state,CASE WHEN r.kind NOT IN ${PIP_ALL_KINDS_SQL} AND r.state!='deleted' AND p.lexical_status!='delete-pending' AND ${rolledCheckpointSql("r")} THEN 1 ELSE 0 END AS rolled FROM memory_projection_receipts p
+  const keyed=recordKeysPresent(db);
+  return db.prepare(`SELECT r.id,r.version,r.scope_id AS scopeId,CASE WHEN r.kind IN ${PIP_ALL_KINDS_SQL} OR ${rolledCheckpointSql("r")} THEN '' ELSE r.text END AS text,CASE WHEN r.kind IN ${PIP_ALL_KINDS_SQL} OR ${rolledCheckpointSql("r")} THEN 'deleted' ELSE r.state END AS state,CASE WHEN r.kind NOT IN ${PIP_ALL_KINDS_SQL} AND r.state!='deleted' AND p.lexical_status!='delete-pending' AND ${rolledCheckpointSql("r")} THEN 1 ELSE 0 END AS rolled,${keyed?"k.age_key":"NULL"} AS ageKey FROM memory_projection_receipts p
     JOIN memory_records r ON r.id=p.record_id AND r.version=p.record_version
+    ${keyed?`LEFT JOIN ${RECORD_KEYS_TABLE} k ON k.record_id=r.id AND k.record_version=r.version`:""}
     WHERE ${PENDING}
     ORDER BY p.lexical_status,p.record_id,p.record_version LIMIT ?`).all(limit);
 }

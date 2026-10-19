@@ -7,15 +7,16 @@
 // red when a writer creates a name no backup knows, so a green run means
 // something. The writers here are synthetic fixtures in a throwaway folder.
 import { spawnSync } from "node:child_process";
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { pathToFileURL } from "node:url";
 import { afterAll, describe, expect, it } from "vitest";
 import { dataDirWriteRecorder, scanDataDirWrites, unclassifiedDataDirNames, unclassifiedStaticWrites } from "./testing/data-dir-guard.ts";
+import { removeTempDirSync } from "./testing/cleanup.ts";
 
 const scratch = mkdtempSync(join(tmpdir(), "murage-inventory-guard-"));
-afterAll(() => rmSync(scratch, { recursive: true, force: true }));
+afterAll(() => removeTempDirSync(scratch));
 
 describe("the data-folder inventory guard", () => {
   it("static net: a source file writing an unclassified name under the data folder fails", () => {

@@ -84,6 +84,22 @@ export function projectBudgetsForGroup(db: DatabaseSync, groupId: string): Proje
   return rows.map(projectBudgetFromRow);
 }
 
+/** The group's period budget alone (the first non-goal one, as projectBudgetsForGroup(...).find would give), without reading its goals' budgets. */
+export function periodBudgetForGroup(db: DatabaseSync, groupId: string): ProjectBudget | null {
+  const row = db.prepare("SELECT * FROM project_budgets WHERE group_id=? AND period <> 'goal' ORDER BY created_at, id LIMIT 1").get(groupId) as unknown as BudgetRow | undefined;
+  return row ? projectBudgetFromRow(row) : null;
+}
+
+/** The budgets a periodic check can act on: the period budget (its partial unique index) and the budgets of goals still open (the
+ * goals by their (group_id, state) index, each budget by its goal). A finished goal's budget is history: the 30 s check skipped it
+ * after a look per budget; it is not read at all now. Same order as projectBudgetsForGroup. */
+export function liveProjectBudgetsForGroup(db: DatabaseSync, groupId: string): ProjectBudget[] {
+  const rows = db.prepare(`SELECT * FROM (SELECT b.* FROM project_budgets b WHERE b.group_id=?1 AND b.period <> 'goal'
+    UNION ALL SELECT b.* FROM project_goals g JOIN project_budgets b ON b.goal_id=g.id
+    WHERE g.group_id=?1 AND g.state IN ('draft','planning','awaiting_plan_ok','working','awaiting_signoff','paused')) ORDER BY created_at, id`).all(groupId) as unknown as BudgetRow[];
+  return rows.map(projectBudgetFromRow);
+}
+
 /** Goal Start creates the goal budget with the approved defaults (SPEC-P
  * 5.3). Idempotent: the unique index on goal_id makes a repeated Start a
  * no-op returning the existing row. Lane B extends this. */

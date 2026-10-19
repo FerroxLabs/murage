@@ -3,10 +3,11 @@
 //
 // The fix round for the upgrade-fast review (lanes/upgfast-review/r1/REPORT.md). One test (or more) per finding, each written to fail on
 // aaf4d5e60 first.
-import { existsSync, mkdirSync, rmSync } from "node:fs";
+import { existsSync, mkdirSync } from "node:fs";
 import { beforeEach, expect, it, afterEach } from "vitest";
 import { thawRootSetWritesForTest } from "./replay-lineage.ts";
 import { legacyFile, restartLegacy } from "./testing/legacy-file-model.ts";
+import { removeTempDirSync } from "../testing/cleanup.ts";
 // 1.0.2: this file drives the read-time root-set machinery over rows a 1.0.1 file holds; thaw the frozen root-set writes to model them.
 beforeEach(() => thawRootSetWritesForTest(true));
 afterEach(() => thawRootSetWritesForTest(false));
@@ -16,7 +17,7 @@ import { collectRootSets } from "./root-set-compaction.ts";
 import { validateMemorySchema } from "./schema.ts";
 import { lineageRepairPending, repairOutputRootBackfillSteps, rootSetMembers } from "./schema.ts";
 
-beforeEach(() => { closeDatabase(); rmSync(DATA_DIR, { recursive: true, force: true }); mkdirSync(DATA_DIR, { recursive: true }); });
+beforeEach(() => { closeDatabase(); removeTempDirSync(DATA_DIR); mkdirSync(DATA_DIR, { recursive: true }); });
 
 /** A conversation of `n` question/answer pairs, a receipt on every answer. Returns the answers' ids. */
 function longChat(n: number): string[] {
@@ -519,6 +520,6 @@ it("probe: the blocking upgrade drops no index and builds none over the receipts
   expect(has("memory_disclosures_state")).toBe(false);      // optional: building it reads every receipt row through its overflow pages
   expect(() => validateMemorySchema(db)).not.toThrow();
   // a fresh installation still gets the index (its table is empty)
-  closeDatabase(); rmSync(DATA_DIR, { recursive: true, force: true }); mkdirSync(DATA_DIR, { recursive: true });
+  closeDatabase(); removeTempDirSync(DATA_DIR); mkdirSync(DATA_DIR, { recursive: true });
   expect(Boolean(database().prepare("SELECT 1 FROM sqlite_schema WHERE type='index' AND name='memory_disclosures_state'").get())).toBe(true);
 });

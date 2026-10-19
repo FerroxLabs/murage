@@ -6,6 +6,7 @@
 // engine write. They are never recomputed after the engine's acknowledgement:
 // by then the quoted reply can be withheld (its source revoked), and a check
 // made then would record nothing for text the engine already has.
+import { doorReader } from "./bot-read.ts";
 import type { Message } from "./store.ts";
 import type { SteerDelivery } from "./contracts.ts";
 import { LineageAllowance, mergeOutputRoots, outputRootsBad, outputRootsFor, outputRootsShallow, recordSessionRoots, type OutputRoots } from "./memory/replay-lineage.ts";
@@ -26,6 +27,11 @@ import { buildPrompt, noneRef, promptPart } from "./memory/prompt-parts.ts";
  * made under memory; the sources are every line, so what the turn writes
  * apart from its replies (a card note) rests on all of them. */
 export interface RunningTurnLineage { roots: OutputRoots; instanceId: string; session?: string; botId?: string; sources?: ShownLine[] | "over";
+  /** The dispatch claim (internal generation) this running turn belongs to, and the very TurnLineage object `openTurnLineage` returned for
+   * that dispatch (thread tools bind to both: a replacing dispatch of the same bot never lends its turn to them). */
+  generation: string; turn: TurnLineage;
+  /** A resumed turn's raw cursor and the incarnation it was started under (S6 rule 27): `session` is the memory key formed from both. */
+  cursor?: string; incarnation?: number;
   /** Whole stretches of conversations the turn carries (server/turn-source-holds.ts): its own conversation up to the newest line when it began,
    * however long, and any a note it was shown rests on. A line it takes in that one of these already covers is not named again. */
   ranges?: HeldRange[] }
@@ -74,6 +80,27 @@ export function addSourcesToRunningTurn(lineage: RunningTurnLineage | undefined,
     lineage.sources.push(line);
     if (lineage.sources.length > TURN_SOURCES_MAX) { lineage.sources = "over"; return; }
   }
+}
+
+/** How many of `lines` addSourcesToRunningTurn would name one by one, the same walk (known keys, range placement) with nothing changed.
+ * 0 when the turn's sources are not established (the caller refuses that case itself). */
+export function sourcesRoom(lineage: RunningTurnLineage | undefined, lines: ReadonlyArray<ShownLine>): number {
+  if (!lineage || lineage.sources === undefined || lineage.sources === "over") return 0;
+  const known = new Set(lineage.sources.map(line => `${line.threadId}\u0000${line.id}`));
+  let named = 0;
+  for (const line of lines) {
+    const key = `${line.threadId}\u0000${line.id}`;
+    if (line.role === "user" || known.has(key)) continue;
+    const range = lineage.ranges?.length ? widestRange(lineage.ranges, line.threadId) : undefined;
+    if (range) {
+      let position: number | undefined;
+      try { position = storedPosition(line.threadId, line.id); } catch { position = undefined; }
+      if (position !== undefined) continue;
+    }
+    known.add(key);
+    named++;
+  }
+  return named;
 }
 
 /** The range of `threadId` that reaches furthest, if the turn carries one. */
@@ -154,7 +181,7 @@ function rangesUsable(): boolean {
  * `withheldNow` leaves out a line withheld when the turn began (it was carried as its withheld line, not its words). Without the range (a
  * conversation with no lines, or the copy index not filled yet), every line of `ownLines` is named instead. */
 export function beginTurnLineage(input: {
-  threadId: string; botId: string; roots: OutputRoots; instanceId: string; session?: string;
+  threadId: string; botId: string; roots: OutputRoots; instanceId: string; session?: string; generation: string; turn: TurnLineage; cursor?: string; incarnation?: number;
   shown: Iterable<ShownLine>; ownLines?: Iterable<ShownLine>; kept?: { sources?: ShownLine[] | "over"; ranges?: HeldRange[] };
   /** `ownLines` are not every line the turn can carry (a resumed session over a conversation longer than its window): without the range, the
    * turn's sources are then not established. */
@@ -162,7 +189,8 @@ export function beginTurnLineage(input: {
   withheldNow: (line: ShownLine) => boolean;
 }): RunningTurnLineage {
   const { threadId, botId } = input;
-  const base = { roots: input.roots, instanceId: input.instanceId, botId, ...(input.session ? { session: input.session } : {}) };
+  const base = { roots: input.roots, instanceId: input.instanceId, botId, generation: input.generation, turn: input.turn, ...(input.session ? { session: input.session } : {}),
+    ...(input.cursor ? { cursor: input.cursor } : {}), ...(input.incarnation !== undefined ? { incarnation: input.incarnation } : {}) };
   const pending = promptShown.get(promptKey(threadId, botId));
   promptShown.delete(promptKey(threadId, botId));
   if (input.kept?.sources === "over") return { ...base, sources: "over" };
@@ -256,12 +284,14 @@ export function steerWithQuoteLineage(adapter: SteerAdapter, threadId: string, t
   reader?: LineageReader;
   /** The engine's answer when it arrives after the response deadline. */
   onLate?: (delivery: SteerDelivery) => void;
+  /** Run inside the write's fence, after every check passed and with no await before the write: the caller takes the receiving attempt here. */
+  onFence?: () => void;
 }): Promise<"steer" | "queue" | "uncertain"> {
   // the steer's own allowance: its quote is checked when it is rendered and again at the write boundary
   const allowance = LineageAllowance.steer();
   const quoted = opts.quote ? shownLinesRoots(allowance, [opts.quote]) : undefined;
   const refs = quoteLineageRefs(opts.quote);
-  const reader = opts.reader ?? { audience: null };
+  const reader = opts.reader ?? doorReader();
   // the steer's engine input: the owner's words and the quote (built outside the turn, so its refs join the turn only once the fence passed;
   // a prompt built outside a turn is always looked up again at the fence)
   const prompt = buildPrompt(undefined, [promptPart(text, [noneRef("owner-turn"), ...refs])]);
@@ -281,5 +311,6 @@ export function steerWithQuoteLineage(adapter: SteerAdapter, threadId: string, t
     if (opts.quote) addSourcesToRunningTurn(opts.lineage, [opts.quote]);
     // a steer adds parents to the running turn (every later reply and its session carry them); it never moves the turn's turnLsn
     if (opts.turn && refs.length) addTurnParents(opts.turn, refs);
+    opts.onFence?.();
   }, opts.steerId, undefined, opts.onLate, { reader }).finally(() => allowance.close());
 }

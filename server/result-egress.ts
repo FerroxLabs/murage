@@ -19,7 +19,7 @@ import { RECEIPT_ORIGIN_UNCONFIRMED_LINE } from "./card-result-source.ts";
 import { hostLine } from "./host-words.ts";
 import type { FailureCode } from "./failure-code.ts";
 import { MurageStatus, status } from "./murage-status.ts";
-import { ReleasedText, WorkerText, type EgressOrigin, type SourceRange, type TextLineage } from "./released-text.ts";
+import { ReleasedText, WorkerText, type EgressOrigin, type TextLineage } from "./released-text.ts";
 import type { WorkerMessage } from "./worker-message.ts";
 import type { DatabaseSync } from "node:sqlite";
 import { denyLookup, lineageLive } from "./memory/deny-read.ts";
@@ -31,8 +31,6 @@ export interface EgressMessage { id: string; text?: string; copyOf?: { threadId:
 /** What the egress needs to ask about, supplied once by the server (and by tests). */
 export interface ResultEgressDeps {
   message: (threadId: string, messageId: string) => EgressMessage | undefined;
-  /** The stored messages of a thread, for finding which of them hold a given piece of text (`textHolders`). Absent: none are found. */
-  threadMessages?: (threadId: string) => readonly EgressMessage[];
   authorize: (requestId: string, worker: string, destinationThreadId: string) => { ok: true } | { ok: false; code: string; line: string };
   copyOriginWithheld: (copy: EgressOrigin) => boolean;
   capturedMessageWithheld: (threadId: string, messageId: string) => boolean;
@@ -43,13 +41,14 @@ export interface ResultEgressDeps {
   ownUnsharedWork: (who: { fromBotId: string; toBotId: string; fromThreadId: string }, origin: EgressOrigin | undefined) => boolean;
   /** The words a withheld result is replaced by; the status table's own `withheld` line when absent. */
   withheldLine?: string;
-  /** Whether every line of a conversation up to a message still stands since a hold-log entry (server/turn-source-holds.ts rangeHolds).
-   * Absent: no range can be checked, so text that rests on one is not shown. */
-  rangeHolds?: (range: SourceRange) => boolean;
   /** Write-time (DESIGN-WRITETIME 6 k, S4): whether every one of these lines of one thread reads shown to the result's reader. The lines'
    * carries already hold the copy chain, so this replaces the walk's per-message rules once the read-time judge goes (S6); until then both
    * apply. index.ts supplies `writetimeLinesShown(database)`. Absent: the read-time rules alone. */
   linesShown?: (threadId: string, messageIds: readonly string[], notOwnerAudience: boolean) => boolean;
+  /** The reader door (server/bot-read.ts doorEgress, LINEAGE-DESIGN-S6 rule 16): whether these stored lines of one thread read as stored to the
+   * bot the result is released to, judged as every bot-facing read is (classified rows, copy and hand-off chains, the row check, lineage
+   * verdicts). index.ts supplies `doorEgress(database)`. Absent: the gate's own rules alone (the tests of those rules). */
+  doorShown?: (readerBotId: string, threadId: string, messageIds: readonly string[], notOwnerAudience: boolean) => boolean;
 }
 
 /** The write-time lookup on a result's lines, for ResultEgressDeps.linesShown: one page lookup per thread. A not-owner audience is judged
@@ -201,11 +200,12 @@ export function releaseStoredResult(
         if (!deps.partitionAllowed(worker, message.copyOf?.threadId ?? threadId, message.copyOf?.messageIds ?? [message.id])) withheld = true;
       }
       if (ids.length && deps.copyOriginWithheld(origin)) withheld = true;
-      // write-time: every line on the walk, by thread (a page lookup each)
-      if (deps.linesShown) {
-        const byThread = new Map<string, string[]>();
-        for (const { threadId, message } of walk.nodes) byThread.set(threadId, [...(byThread.get(threadId) ?? []), message.id]);
-        for (const [threadId, lineIds] of byThread) if (!deps.linesShown(threadId, lineIds, notOwnerAudience)) withheld = true;
+      // write-time and the reader door: every line on the walk, by thread (a page lookup each)
+      const byThread = new Map<string, string[]>();
+      for (const { threadId, message } of walk.nodes) byThread.set(threadId, [...(byThread.get(threadId) ?? []), message.id]);
+      for (const [threadId, lineIds] of byThread) {
+        if (deps.linesShown && !deps.linesShown(threadId, lineIds, notOwnerAudience)) withheld = true;
+        if (deps.doorShown && !deps.doorShown(authority.fromBotId, threadId, lineIds, notOwnerAudience)) withheld = true;
       }
     }
   } catch { withheld = true; }
@@ -260,69 +260,7 @@ export function releaseMessage(
   return row;
 }
 
-/** At most this many stored lines a piece of worker text's sources may name (server/steer-lineage.ts TURN_SOURCES_MAX). */
-export const SOURCES_MAX = 1600;
-
 /** The same released words, resting on more: a reader shown them takes that into its own turn's sources (server/steer-lineage.ts). */
 export function releasedWithLineage(text: ReleasedText, lineage: Partial<TextLineage>): ReleasedText { return mint(text, undefined, lineage); }
 
-/** Whether every stored line the writing turn carried (its sources) still stands, by the same message rules the gate applies to the message
- * itself: one gone (deleted), withheld from bots, a copy whose original is withheld, captured and withheld on content, forgotten, or (for a
- * reader who is not the owner's audience) made with memory, and the text derived from that turn is not shown. `ranges` are the stretches of
- * conversations it carried: each is one indexed question (no line of it withheld, forgotten or deleted since the turn took it), however long
- * the conversation. Past the limit, or any check that cannot finish: not shown. */
-export function turnSourcesHold(sources: ReadonlyArray<EgressOrigin>, notOwnerAudience: boolean, deps: ResultEgressDeps | undefined = configured,
-  ranges: ReadonlyArray<SourceRange> = []): boolean {
-  if (!deps) return false;
-  let count = 0;
-  try {
-    if (ranges.length && (!deps.rangeHolds || ranges.length > 64)) return false;
-    for (const range of ranges) if (!deps.rangeHolds!(range)) return false;
-    for (const group of sources) for (const id of group.messageIds) {
-      if (++count > SOURCES_MAX) return false;
-      const message = deps.message(group.threadId, id);
-      if (!message) return false;
-      if (message.withheldFromBots !== undefined && message.withheldFromBots !== false) return false;
-      if (message.copyOf && deps.copyOriginWithheld(message.copyOf)) return false;
-      if (deps.capturedMessageWithheld(group.threadId, id) || deps.messageSourceForgotten(group.threadId, id)) return false;
-      if (notOwnerAudience && deps.messageMadeWithMemory(group.threadId, id)) return false;
-    }
-  } catch { return false; }
-  return true;
-}
-
 void RECEIPT_ORIGIN_UNCONFIRMED_LINE;
-
-const squash = (text: string) => text.replace(/\s+/g, " ").trim().toLowerCase();
-/** A stretch of a note this long, found in a message, ties the note to it. */
-const HOLDER_SPAN = 24;
-const HOLDER_STEP = 4;
-const HOLDER_THREADS = 4;
-const HOLDER_MESSAGES = 8;
-const HOLDER_SCAN = 2000;
-
-/** The stored messages that hold words of `text`: the provenance of a piece of worker text that was written down apart from its message (a
- * note on a card). A message holds the note when any stretch of 24 characters of it (or all of it, if shorter) is in the message, or when a
- * message of that length or more is wholly in the note. Newest first, at most eight a thread and four threads. A note that matches nothing has
- * no checkable origin, and the caller leaves it out (server/project-notes.ts). */
-export function textHolders(threadIds: ReadonlyArray<string | null | undefined>, text: string, deps: ResultEgressDeps | undefined = configured): EgressOrigin[] {
-  if (!deps?.threadMessages) return [];
-  const note = squash(text);
-  if (!note) return [];
-  const spans: string[] = [];
-  if (note.length <= HOLDER_SPAN) spans.push(note);
-  else for (let at = 0; at + HOLDER_SPAN <= note.length; at += HOLDER_STEP) spans.push(note.slice(at, at + HOLDER_SPAN));
-  const found: EgressOrigin[] = [];
-  for (const threadId of [...new Set(threadIds.filter((id): id is string => typeof id === "string" && id !== ""))].slice(0, HOLDER_THREADS)) {
-    const rows = deps.threadMessages(threadId);
-    const ids: string[] = [];
-    for (let index = rows.length - 1; index >= Math.max(0, rows.length - HOLDER_SCAN) && ids.length < HOLDER_MESSAGES; index--) {
-      const body = rows[index]!.text;
-      if (typeof body !== "string") continue;
-      const flat = squash(body);
-      if (flat && (spans.some(span => flat.includes(span)) || (flat.length >= 16 && note.includes(flat)))) ids.push(rows[index]!.id);
-    }
-    if (ids.length) found.push({ threadId, messageIds: ids });
-  }
-  return found;
-}

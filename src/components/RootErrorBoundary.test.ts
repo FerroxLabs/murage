@@ -28,8 +28,12 @@ describe("the root error boundary", () => {
   it("wraps the whole app, not a subtree", () => {
     expect(main).toContain("RootErrorBoundary");
     // The boundary has to be OUTSIDE App, or an error thrown while App
-    // renders escapes it and empties the root anyway.
-    expect(main).toMatch(/<RootErrorBoundary>\s*<App \/>\s*<\/RootErrorBoundary>/);
+    // renders escapes it and empties the root anyway. A Cloud home renders
+    // App inside CloudDoor: the boundary sits outside both branches, so the
+    // door and App are covered alike.
+    const plain = String.raw`<App \/>`;
+    const cloud = String.raw`\{[^{}]*\?\s*<CloudDoor>\s*<App \/>\s*<\/CloudDoor>\s*:\s*<App \/>\s*\}`;
+    expect(main).toMatch(new RegExp(String.raw`<RootErrorBoundary>\s*(?:${plain}|${cloud})\s*<\/RootErrorBoundary>`));
   });
 
   it("catches the error rather than letting React unmount the root", () => {

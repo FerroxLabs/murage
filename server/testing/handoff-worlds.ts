@@ -50,7 +50,7 @@ export function ownerWorld(origin: Origin = "owner") {
   }
   const bus = { store, broadcast: () => {}, canDispatch: () => knobs.capacity, canStartHandoff: (_bot: string, _source: string, destination?: string) => !(destination && knobs.busyThreads.has(destination)), ...extra } as unknown as CommsBus;
   const approvalBus = { store, broadcast: () => {} } as never;
-  const turns: Array<{ id: string; thread: string }> = [];
+  const turns: Array<{ id: string; thread: string; handoffOf?: unknown }> = [];
   const held: Array<{ id: string; text: string }> = [];
   const couldNotStart: CouldNotStart[] = [];
   const attach = () => configureHandoffDispatch({
@@ -62,7 +62,7 @@ export function ownerWorld(origin: Origin = "owner") {
       rememberRun(run);
       knobs.beforeStamp?.();
       writePrompt(bus, run, turn.threadId, text);
-      turns.push({ id: run.id, thread: turn.threadId });
+      turns.push({ id: run.id, thread: turn.threadId, ...(turn.handoffOf ? { handoffOf: turn.handoffOf } : {}) });
       if (knobs.submit.has(run.id)) run.submitted();
     },
     noticeHeld: (notice) => { held.push({ id: notice.id, text: notice.text }); },

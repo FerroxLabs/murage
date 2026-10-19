@@ -82,7 +82,8 @@ describe("the composer's send", () => {
     expect(send.match(/onError: failedSend/g)).toHaveLength(2);
     expect(send.match(/refusedForSize\(error\)/g)).toHaveLength(1);
     expect(send.match(/restoreDraft\(sentDraft\)/g)).toHaveLength(1);
-    expect(send).toContain("{ alongside: true }).catch(() => {})");
+    // a setup card that did not hear it is said quietly; it never fails the send
+    expect(send).toContain("{ alongside: true }).then(() => setIntakeNotice(null), () => setIntakeNotice(INTAKE_NOT_RECORDED))");
   });
 
   it("shows the notice above the textarea and points the textarea at it", () => {

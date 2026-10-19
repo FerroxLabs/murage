@@ -9,7 +9,7 @@
 // settlement, capture jobs, checkpoint refresh, frame receipts) and make the
 // same checks, in the same order, as a direct turn (index.ts): the early
 // continuation check, the dispatch check, then the owner's direct replay.
-import { mkdirSync, rmSync } from "node:fs";
+import { mkdirSync } from "node:fs";
 import { beforeEach, expect, it } from "vitest";
 import { afterEach as thawAfterEach, beforeEach as thawBeforeEach } from "vitest";
 import { thawRootSetWritesForTest } from "./replay-lineage.ts";
@@ -34,6 +34,8 @@ import { forgetMemory } from "./forget.ts";
 import { drainRevokeMarker } from "./memory-revocation.ts";
 import { LineageAllowance } from "./lineage-allowance.ts";
 import { markSessionKnown } from "./testing/legacy-file-model.ts";
+import { isMurageVoice } from "../murage-voice.ts";
+import { removeTempDirSync } from "../testing/cleanup.ts";
 // 1.0.2: this test models a 1.0.1 file (legacy root-set rows) for the read-time judge, which still decides legacy data until S6.
 thawBeforeEach(() => thawRootSetWritesForTest(true));
 thawAfterEach(() => thawRootSetWritesForTest(false));
@@ -48,7 +50,7 @@ const bridge = { search: async () => ({ hits: [], vectorRows: 0 }) };
 // (1.0.2: these run on the PRODUCTION lineage allowance. A turn's checks share the one allowance the server gives a turn's setup, as index.ts
 // startTurn does; the turn function below runs inside it.)
 // closeDatabase stops the WAL checkpointer without waiting: one alive when the data dir is rebuilt deletes the new file's -wal by path.
-beforeEach(async () => { closeDatabase(); await stopWalMaintenance(); rmSync(DATA_DIR, { recursive: true, force: true }); mkdirSync(DATA_DIR, { recursive: true }); });
+beforeEach(async () => { closeDatabase(); await stopWalMaintenance(); removeTempDirSync(DATA_DIR); mkdirSync(DATA_DIR, { recursive: true }); });
 
 function drain() {
   for (let n = 0; n < 100; n++) {
@@ -161,7 +163,8 @@ it("a content change after the reset still ends the new session: forgetting what
   for (let n = 4; n <= 5; n++) await w.turn(n);
   expect(w.resets).toHaveLength(1);
   // the owner forgets the bot's first reply, which the new session's frame cites through the checkpoint
-  const first = w.store.activePath(w.threadId).find(m => m.role === "bot")!;
+  // (the bot's own reply: the greeting before it is a Murage line, which never becomes a memory source, S6 rule 22)
+  const first = w.store.activePath(w.threadId).find(m => m.role === "bot" && !isMurageVoice(m))!;
   forgetReply(w.threadId, first.id);
   await w.turn(6);
   expect(w.resets).toHaveLength(2);
@@ -254,7 +257,7 @@ it("past that depth, a real withdrawal still resets the session and withholds wh
 
 // perf/1.0.2-memory (long500): at turn 400 and later of one resumed session nothing is cheaper to withhold than at turn 10.
 // The per-turn work was made flat, so these pin that a withdrawal is still seen by every check at that length.
-it("at turn 420 of one session, forgetting an early reply still resets the session and withholds what rests on it", async () => {
+it("at turn 420 of one session, forgetting an early reply still resets the session and withholds what rests on it", { tags: ["nightly"], timeout: 900_000 }, async () => {
   const w = world("grok", { long: true });
   for (let n = 1; n <= 420; n++) await w.turn(n);
   const before = w.resets.length;
@@ -268,9 +271,9 @@ it("at turn 420 of one session, forgetting an early reply still resets the sessi
   const { withheld } = filterDirectReplay(LineageAllowance.tool(), w.threadId, w.store.activePath(w.threadId) as never, w.access(), new Set());
   // every reply since cites the one before it, so the withdrawal reaches the last reply
   expect(withheld.has(latest.id)).toBe(true);
-}, 900_000);
+});
 
-it("at turn 420 of one session, forgetting the reply before last still withholds the last one", async () => {
+it("at turn 420 of one session, forgetting the reply before last still withholds the last one", { tags: ["nightly"], timeout: 900_000 }, async () => {
   const w = world("grok", { long: true });
   for (let n = 1; n <= 420; n++) await w.turn(n);
   const before = w.resets.length;
@@ -281,7 +284,7 @@ it("at turn 420 of one session, forgetting the reply before last still withholds
   expect(w.resets.length).toBe(before + 1);
   const { withheld } = filterDirectReplay(LineageAllowance.tool(), w.threadId, w.store.activePath(w.threadId) as never, w.access(), new Set());
   expect(withheld.has(resting.id)).toBe(true);
-}, 900_000);
+});
 
 // perf/1.0.2-memory (mem fixer 2): the capture of a reply judges it inside the capture transaction, where the kept verdicts used to be
 // out of reach as soon as the transaction had written its own outputs; the session listing then read every receipt of the session.

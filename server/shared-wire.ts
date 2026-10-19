@@ -12,7 +12,7 @@
 //
 // `wireBot` and `wireTask` in index.ts spread whatever fields a record has,
 // so a field is stripped by naming it, here, rather than by forgetting it.
-import { database } from "./database.ts";
+import { database, databaseGeneration, databaseSharedRowsStamp } from "./database.ts";
 import type { BotRecord, Store, TaskRecord } from "./store.ts";
 import { sectionKey, isIndividualAssistant, isWorkspaceChief } from "./store.ts";
 import { sharedWithTeam } from "./execution-audience.ts";
@@ -72,13 +72,38 @@ export function sharingTeamsRead(store: Pick<Store, "bots" | "groups">, bot: Bot
  * first open, which `all` mode makes the usual case). */
 export function sharedRowsFor(store: Pick<Store, "bots" | "groups">, bot: BotRecord): SharedRow[] {
   if (!bot.sharedWith || bot.sharedWith.mode === "none") return [];
-  const count = database().prepare("SELECT sum(state='queued') AS waiting, sum(state IN ('running','waiting_bot','waiting_owner')) AS working FROM room_requests WHERE to_bot_id=? AND target_thread_id=?");
-  return sharingTeamsRead(store, bot).filter(team => team.covered).map(team => {
+  // Built from the records (Store.revision moves on any bot, channel or task write) and the database (its shared-rows stamp moves on any
+  // room request or team identity write, whichever file makes it), so an idle broadcast reuses the rows and any such write rebuilds
+  // them. Without either counter (a bare record set) nothing is kept.
+  const revision = (store as Partial<Store>).revision, stamp = databaseSharedRowsStamp();
+  const key = typeof revision === "number" && stamp !== undefined ? `${revision}:${stamp}:${databaseGeneration()}` : undefined;
+  const held = key !== undefined ? rowsHeld.get(bot.id) : undefined;
+  if (held && key !== undefined && held.key === key && held.bot === bot && held.tasks === bot.tasks && held.store === store) {
+    rowsHeld.delete(bot.id); rowsHeld.set(bot.id, held);
+    return held.rows;
+  }
+  sharedRowsWork.builds++;
+  sharedRowsWork.itemsVisited += store.bots.length + store.groups.length + (bot.tasks?.length ?? 0);
+  const count = database().prepare("SELECT sum(state='queued') AS waiting, sum(state IN ('running','waiting_bot','waiting_owner')) AS working FROM room_requests WHERE to_bot_id=? AND target_thread_id=? AND state IN ('queued','running','waiting_bot','waiting_owner')");
+  const rows = sharingTeamsRead(store, bot).filter(team => team.covered).map(team => {
     const task = team.id ? bot.tasks?.find(item => item.sharedWork?.teamId === team.id && !item.sharedWork.quarantined) : undefined;
     const load = task ? count.get(bot.id, task.threadId) : undefined;
     return { teamId: team.id, teamName: team.name, threadId: task?.threadId ?? null, working: Number(load?.working ?? 0) > 0 || task?.busy === true, waiting: Number(load?.waiting ?? 0) };
   });
+  // (rows built inside a transaction may rest on room requests that roll back, and a rollback moves no stamp: nothing is kept from there)
+  if (key !== undefined && !database().isTransaction) {
+    // (the key is read after the build: nothing in it writes, so it is still the state the rows were built from)
+    rowsHeld.set(bot.id, { key, bot, tasks: bot.tasks, store, rows });
+    if (rowsHeld.size > SHARED_ROWS_CAP) rowsHeld.delete(rowsHeld.keys().next().value as string);
+  }
+  return rows;
 }
+
+/** What building a shared bot's rows costs, counted in builds and in records looked at (bots, channels, tasks): a test reads it to show
+ * an idle broadcast does none. */
+export const sharedRowsWork = { builds: 0, itemsVisited: 0 };
+const SHARED_ROWS_CAP = 4096;
+const rowsHeld = new Map<string, { key: string; bot: BotRecord; tasks: BotRecord["tasks"]; store: object; rows: SharedRow[] }>();
 
 /** A task's work-thread marker as any client sees it: the team and whether
  * the thread is closed, never the finishing request's ids. */
@@ -129,20 +154,27 @@ export function remoteBody(body: unknown, store: Pick<Store, "bots" | "groups" |
 }
 
 /** A `bot` frame as a scoped stream receives it (live and replay); any other
- * frame as is. */
-export function scopedBotFrame(frame: string, store: Pick<Store, "bots" | "groups" | "bot">, owner: boolean): string {
+ * frame as is. A stream that is none of the owner's own surfaces (`foreign`,
+ * rosterAudience "other") takes its record frames (`bot`, `group`,
+ * `bot.deleted`, `group.deleted`) with the owner's numbering cut, as the JSON
+ * boundary cuts its answers (foreignBody). */
+export function scopedBotFrame(frame: string, store: Pick<Store, "bots" | "groups" | "bot">, owner: boolean, foreign = false): string {
   const match = /^(id: [^\n]*\n)?data: (.*)\n\n$/s.exec(frame);
-  if (!match || !match[2].startsWith('{"kind":"bot"')) return frame;
+  if (!match) return frame;
+  const isBot = match[2].startsWith('{"kind":"bot"');
+  const isRecord = isBot || (foreign && /^\{"kind":"(group|bot\.deleted|group\.deleted)"/.test(match[2]));
+  if (!isRecord) return frame;
   const payload = JSON.parse(match[2]) as { bot?: WireBotShape };
-  if (!payload.bot) return frame;
-  return `${match[1] ?? ""}data: ${JSON.stringify({ ...payload, bot: remoteWireBot(payload.bot, store, owner) })}\n\n`;
+  if (isBot && !payload.bot) return frame;
+  const projected = isBot ? { ...payload, bot: remoteWireBot(payload.bot!, store, owner) } : payload;
+  return `${match[1] ?? ""}data: ${JSON.stringify(foreign ? foreignBody(projected) : projected)}\n\n`;
 }
 
 /** The owner's bookkeeping, never shown to a caller that is not the owner's own surface (a script's grant, a bot's tool call): a
  * bot's stream numbering (`tasksEpoch`, `tasksSeq`), a room's (`recordEpoch`, `recordSeq`), the run's removal ledger, and on
  * transcript rows the turn ids (`turnId`, `dispatchedIn`). Stripped at the response boundary from the body and every nested
  * record and row, wherever they sit. */
-const OWNER_ONLY_TOP = ["tasksEpoch", "tasksSeq", "recordEpoch", "recordSeq", "removed"] as const;
+const OWNER_ONLY_TOP = ["tasksEpoch", "tasksSeq", "recordEpoch", "recordSeq", "removed", "removedGroups", "roomClock"] as const;
 /** The numbering names nothing but the owner's stream order, so it goes wherever it sits (a full bot, a sidebar bot, a room, a wrapper). */
 const OWNER_ONLY_ANY = ["tasksEpoch", "tasksSeq", "recordEpoch", "recordSeq"] as const;
 const OWNER_ONLY_ROW = ["turnId", "dispatchedIn"] as const;

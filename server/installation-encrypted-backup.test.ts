@@ -12,6 +12,7 @@ import * as encryption from "./installation-backup-encryption.ts";
 import { MemoryIndex } from "./memory/index.ts";
 import { MemoryEligibility } from "./memory/eligibility.ts";
 import { InstallationSnapshotError } from "./installation-database-snapshot.ts";
+import { removeTempDirSync } from "./testing/cleanup.ts";
 const selection={scope:"application-data",credentialPolicy:"preserve-in-encrypted-fidelity"} as const;
 it.skipIf(!rawAgeHost)("captures raw fidelity and safe recovery in one encrypted file, then restores a separate paused installation",async()=>{
   const f=backupFixture(),keys=testAgeKeys();
@@ -35,7 +36,7 @@ it.skipIf(!rawAgeHost)("captures raw fidelity and safe recovery in one encrypted
     expect(readFileSync(join(view.stateDirectory,"raw","channels","slack","fixture-connection.json"),"utf8")).toBe(ledger);
     expect(view.manifest.coverage.components).toContainEqual(expect.objectContaining({path:"channels",status:"included",reason:expect.stringContaining("re-pairing")}));
     expect(readFileSync(join(view.stateDirectory,"recovery","config.json"),"utf8")).not.toContain("FAKE-CREDENTIAL-CANARY");
-    rmSync(view.directory,{recursive:true,force:true});
+    removeTempDirSync(view.directory);
     // The recovery identity is retained independently from the installation.
     const identityPath=join(f.parent,"saved-recovery-identity");writeFileSync(identityPath,keys.identity,{mode:0o600});
     const target=join(f.parent,"restored");
@@ -54,7 +55,7 @@ it.skipIf(!rawAgeHost)("captures raw fidelity and safe recovery in one encrypted
     }finally{db.close();}
     paths.forEach((path,index)=>expect(readFileSync(join(f.data,path))).toEqual(original[index]));
     expect(readdirSync(f.parent).filter(name=>name.startsWith(".murage-encrypted"))).toEqual([]);
-  }finally{f.db.close();rmSync(f.parent,{recursive:true,force:true});}
+  }finally{f.db.close();removeTempDirSync(f.parent);}
 },20000);
 it.skipIf(!rawAgeHost)("keeps only the encrypted output, never plaintext, when an owned tool close cannot be confirmed",async()=>{
   const f=backupFixture(),keys=testAgeKeys();
@@ -67,7 +68,7 @@ it.skipIf(!rawAgeHost)("keeps only the encrypted output, never plaintext, when a
     // The staging folder sits in the backup folder, which may be synced: no plaintext copy stays there.
     expect(existsSync(retained)).toBe(true);expect(readdirSync(retained).filter(name=>name!=="backup.age")).toEqual([]);
     expect(existsSync(join(f.parent,"backup.age"))).toBe(false);
-  }finally{mocked.mockRestore();f.db.close();rmSync(f.parent,{recursive:true,force:true});}
+  }finally{mocked.mockRestore();f.db.close();removeTempDirSync(f.parent);}
 });
 it.skipIf(!rawAgeHost)("a failed capture leaves nothing in the backup folder",async()=>{
   const f=backupFixture(),keys=testAgeKeys();
@@ -79,7 +80,7 @@ it.skipIf(!rawAgeHost)("a failed capture leaves nothing in the backup folder",as
     expect(failure).toMatchObject({code:"AGE_PROCESS_FAILED"});
     expect((failure as {retainedDirectory?:string}).retainedDirectory).toBeUndefined();
     expect(readdirSync(f.parent).filter(name=>!before.has(name))).toEqual([]);
-  }finally{mocked.mockRestore();f.db.close();rmSync(f.parent,{recursive:true,force:true});}
+  }finally{mocked.mockRestore();f.db.close();removeTempDirSync(f.parent);}
 });
 it.skipIf(!rawAgeHost).each(["existing","live","quota","cancel","vm"])("refuses %s without publishing or changing originals",async kind=>{
   const f=backupFixture(),keys=testAgeKeys(),archive=join(f.parent,"backup.age"),before=readFileSync(join(f.data,"config.json"));
@@ -93,7 +94,7 @@ it.skipIf(!rawAgeHost).each(["existing","live","quota","cancel","vm"])("refuses 
     expect(readFileSync(join(f.data,"config.json"))).toEqual(before);
     if(kind==="existing")expect(readFileSync(archive,"utf8")).toBe("existing backup");else expect(existsSync(archive)).toBe(false);
     expect(readdirSync(f.parent).filter(name=>name.startsWith(".murage-encrypted"))).toEqual([]);
-  }finally{lease?.release();f.db.close();rmSync(f.parent,{recursive:true,force:true});}
+  }finally{lease?.release();f.db.close();removeTempDirSync(f.parent);}
 });
 it.skipIf(!rawAgeHost)("new encrypted CLI requires an explicit policy and hash-bound separate restore",async()=>{
   const f=backupFixture(),keys=testAgeKeys();try{
@@ -103,7 +104,7 @@ it.skipIf(!rawAgeHost)("new encrypted CLI requires an explicit policy and hash-b
     const target=join(f.parent,"cli-restored");
     const result=await installationRecoveryCommand(["restore-encrypted-new","--data-dir",target,"--archive",archive,"--sha256",String(saved.sha256),"--age-tool",keys.ageExecutable],{readIdentity:async()=>keys.identity});
     expect(result.activationAvailable).toBe(false);expect(existsSync(join(target,"bots.json"))).toBe(true);
-  }finally{f.db.close();rmSync(f.parent,{recursive:true,force:true});}
+  }finally{f.db.close();removeTempDirSync(f.parent);}
 },20000);
 
 it.skipIf(!rawAgeHost)("headless encrypted roundtrip retains WAL-visible memories, pauses authority and rebuilds recall without stale projection",async()=>{
@@ -132,7 +133,7 @@ it.skipIf(!rawAgeHost)("headless encrypted roundtrip retains WAL-visible memorie
     // its archive file list establishes that source WAL/SHM were never copied.
     for(const name of ["memory-index.db-wal","memory-index.db-shm"])expect(inspected.manifest.files.some(file=>file.path===`raw/${name}`)).toBe(false);
     for(const name of ["config.json","door-identity","folder-trust.json","skill-index.db"])expect(existsSync(join(inspected.stateDirectory,"raw",name))).toBe(false);
-    expect(existsSync(join(inspected.stateDirectory,"recovery","memory-index.db"))).toBe(false);rmSync(inspected.directory,{recursive:true,force:true});
+    expect(existsSync(join(inspected.stateDirectory,"recovery","memory-index.db"))).toBe(false);removeTempDirSync(inspected.directory);
     const target=join(f.parent,"headless-restored"),restored=await restoreEncryptedInstallationNew(target,archive,saved.sha256,keys);
     expect(restored.rawFidelityActivated).toBe(false);expect(()=>assertRestoreReviewed(target)).toThrow();
     const config=JSON.parse(readFileSync(join(target,"config.json"),"utf8"));expect(config.engineDiscovery).toBe("explicit");expect(Object.values(config.instances).every((value:any)=>value.enabled===false)).toBe(true);
@@ -153,5 +154,5 @@ it.skipIf(!rawAgeHost)("headless encrypted roundtrip retains WAL-visible memorie
       expect(rebuilt.search("quartz",allowed,null,"fixture-model").hits.map(hit=>hit.id)).toEqual(["remembered"]);
     }finally{rebuilt.close();eligibility.close();}
     paths.forEach((name,i)=>expect(readFileSync(join(f.data,name)),name).toEqual(originals[i]));expect(existsSync(join(f.data,"config.json"))).toBe(false);
-  }finally{index.close();f.db.close();rmSync(f.parent,{recursive:true,force:true});}
+  }finally{index.close();f.db.close();removeTempDirSync(f.parent);}
 },20000);

@@ -13,6 +13,7 @@ import { backupWorkRoot, createBackupWork, sweepBackupWork } from "./backup-loca
 import { publishNoReplace } from "./publish-file.ts";
 import { backupFixture, testAgeKeys } from "./testing/backup-fixture.ts";
 import { MAX_RESTORABLE_PATH_BYTES } from "../shared/backup-limits.ts";
+import { removeTempDirSync } from "./testing/cleanup.ts";
 
 const selection = { scope: "application-data", credentialPolicy: "preserve-in-encrypted-fidelity" } as const;
 const tree = (root: string): string[] => existsSync(root) ? readdirSync(root, { withFileTypes: true }).flatMap(entry => entry.isDirectory() ? [relative(root, join(root, entry.name)) + "/", ...tree(join(root, entry.name)).map(child => entry.name + "/" + child)] : [entry.name]) : [];
@@ -40,7 +41,7 @@ for (const failAt of [null, "readback"] as const) {
       expect(tree(destination)).toEqual(failAt ? [] : ["backup.age"]);
       // And the local plaintext work is gone.
       expect(existsSync(backupWorkRoot(f.data))).toBe(false);
-    } finally { f.db.close(); rmSync(f.parent, { recursive: true, force: true }); rmSync(join(backupWorkRoot(f.data), ".."), { recursive: true, force: true }); }
+    } finally { f.db.close(); removeTempDirSync(f.parent); removeTempDirSync(join(backupWorkRoot(f.data), "..")); }
   }, 60_000);
 }
 
@@ -54,7 +55,7 @@ it("a crash's plaintext work folder is swept once its process has gone, never a 
     expect(sweepBackupWork(f.data)).toBe(1);
     expect(existsSync(dead)).toBe(false);
     expect(existsSync(live)).toBe(true);
-  } finally { f.db.close(); rmSync(f.parent, { recursive: true, force: true }); rmSync(join(backupWorkRoot(f.data), ".."), { recursive: true, force: true }); }
+  } finally { f.db.close(); removeTempDirSync(f.parent); removeTempDirSync(join(backupWorkRoot(f.data), "..")); }
 });
 
 // Codex's scenario, scaled to what macOS can create: nested names of colons
@@ -73,7 +74,7 @@ it.skipIf(!process.env.MURAGE_BACKUP_TEST_AGE_DIR)("a path another computer can'
     await restoreEncryptedInstallationNew(restored, join(f.parent, "b.age"), saved.sha256, keys);
     expect(readFileSync(join(restored, "workspaces", "bot", "n".repeat(200), "m".repeat(200), "o".repeat(200), "kept.md"), "utf8")).toBe("kept\n");
     expect(Buffer.byteLength(`workspaces/bot/${"n".repeat(200)}/${"m".repeat(200)}/${"o".repeat(200)}/kept.md`)).toBeLessThanOrEqual(MAX_RESTORABLE_PATH_BYTES);
-  } finally { f.db.close(); rmSync(f.parent, { recursive: true, force: true }); }
+  } finally { f.db.close(); removeTempDirSync(f.parent); }
 }, 60_000);
 
 it("archive paths are measured in bytes, not characters", () => {
@@ -88,7 +89,7 @@ it("without hard links, a name taken before the reservation is never replaced", 
     writeFileSync(join(f.parent, "src"), "ours"); writeFileSync(join(f.parent, "dst"), "theirs");
     expect(() => publishNoReplace(join(f.parent, "src"), join(f.parent, "dst"), { link: noLinks })).toThrow(/EEXIST/);
     expect(readFileSync(join(f.parent, "dst"), "utf8")).toBe("theirs");
-  } finally { f.db.close(); rmSync(f.parent, { recursive: true, force: true }); }
+  } finally { f.db.close(); removeTempDirSync(f.parent); }
 });
 it("without hard links, a writer racing the reservation can neither take the name nor lose its file", () => {
   const f = backupFixture();
@@ -107,5 +108,5 @@ it("without hard links, a writer racing the reservation can neither take the nam
     const dst3 = join(f.parent, "dst3");
     expect(() => publishNoReplace(join(f.parent, "missing"), dst3, { link: noLinks })).toThrow();
     expect(existsSync(dst3)).toBe(false);
-  } finally { f.db.close(); rmSync(f.parent, { recursive: true, force: true }); }
+  } finally { f.db.close(); removeTempDirSync(f.parent); }
 });

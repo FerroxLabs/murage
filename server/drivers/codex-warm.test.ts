@@ -310,6 +310,26 @@ describe("CodexDriver warm app-server (fake app-server)", () => {
     expect(closes()[0]).toBe("codex close thread=t-reset reason=context reset");
   });
 
+  // Thread recall, design S5: a sealed thread dispatches sessionReset true with no cursor, turn after turn. Each turn
+  // closes the app-server kept from the turn before and starts a new conversation: thread/start, never thread/resume.
+  it("a sealed thread's consecutive turns each respawn and start a new conversation, never thread/resume", async () => {
+    await create();
+    const pre = await run("t-sealed", "before the seal", base);
+    const pids = [pre.pid!];
+    for (const text of ["sealed one", "sealed two", "sealed three"]) {
+      const turn = await run("t-sealed", text, { ...base, sessionReset: true, resumeCursor: undefined });
+      const methods = (turn.seen.calls as Array<{ method: string }>).map((c) => c.method);
+      expect(methods).toContain("thread/start");
+      expect(methods).not.toContain("thread/resume");
+      expect(pids).not.toContain(turn.pid!);
+      pids.push(turn.pid!);
+    }
+    expect(new Set(pids).size).toBe(4);
+    expect(dispatches().slice(1).every((line) => line === "codex dispatch thread=t-sealed process=spawned reason=sessionReset")).toBe(true);
+    expect(closes().slice(0, 3).every((line) => line === "codex close thread=t-sealed reason=context reset")).toBe(true);
+    for (const earlier of pids.slice(0, 3)) await eventually(() => exited(earlier));
+  });
+
   it("respawns when the harness resumes a different conversation than the one the process holds", async () => {
     await create();
     await run("t-cur", "one", base);

@@ -21,7 +21,7 @@ import { MurageStatus, cancelledEnding, status, type Outbound } from "./murage-s
 const isDeletedEnding = (result: Outbound): boolean => MurageStatus.is(result) && result.key === "receipt_deleted";
 import { recordRefusedStart } from "./refused-start.ts";
 import { claimMinter, isLiveTicket } from "./handoff-capability.ts";
-import { getOrCreateChannel, mirrorExchange, type CommsBus } from "./comms-visibility.ts";
+import { getOrCreateChannel, mirrorExchange, type CommsBus, type QueuedSource } from "./comms-visibility.ts";
 import { peerApprovalFailure, requestPeerApproval, type ApprovalBus } from "./peer-approval.ts";
 import { botDeleted, ownerDeletedThread } from "./owner-deletions.ts";
 import { delegationAdmissionHeld, delegationTurnKey } from "./pending-delegations-schema.ts";
@@ -104,7 +104,8 @@ export interface HandoffHost {
     begin(request: RoomRequest, claim: AdmissionClaim | undefined): SharedRun;
     needsApproval(request: RoomRequest): boolean;
     requestApproval(request: RoomRequest): Promise<"allow" | "deny" | "expired" | "cancelled">;
-    mirror(request: RoomRequest): void;
+    /** `queued`: the hand-off's source row, written when it was queued (comms-visibility.ts mirrorExchange) */
+    mirror(request: RoomRequest, queued?: QueuedSource): void;
     /** the turn options of a shared request: its chain, audience, routine ceiling */
     turnOptions(request: RoomRequest): Record<string, unknown>;
     text(request: RoomRequest): string;
@@ -636,11 +637,11 @@ async function launch(ctx: StartContext, env: HandoffEnv, running?: SharedRun, s
     if (ctx.shared) {
       text = sharedOps!.text(request!);
       options = sharedOps!.turnOptions(request!);
-      sharedOps!.mirror(request!);
+      sharedOps!.mirror(request!, { sourceMessageId: item.sourceMessageId });
     } else {
       release = h.reserveSlot(destination);
       const channel = getOrCreateChannel(bus.store, sender, target, source, item.executionAudience);
-      mirrorExchange(bus, sender, target, item.message, channel, source, item.executionAudience);
+      mirrorExchange(bus, sender, target, item.message, channel, source, item.executionAudience, "question", { sourceMessageId: item.sourceMessageId });
       // The waiting line (with its Stop) goes as the turn starts: once the row is started it is no longer in the queue, so the end of the drain cannot find it.
       clearWaitLine(bus, source, item);
       const reasonLine = item.reason ? `\n\n[Reason: ${item.reason}]` : "";
@@ -649,6 +650,8 @@ async function launch(ctx: StartContext, env: HandoffEnv, running?: SharedRun, s
         automation: { kind: "delegation" },
         chainRootThreadId: source,
         handoffSourceThreadId: source,
+        // the prompt rests on the one row that handed it over (rule 7); a legacy item without it keeps the asking conversation's prefix
+        ...(item.sourceMessageId ? { handoffOf: { threadId: source, messageId: item.sourceMessageId } } : {}),
         ...(item.notOwnerAudience === true ? { chainNotOwner: true } : {}),
         eventId: item.eventId,
         coordination: item.coordination as CoordinationTrace | undefined,

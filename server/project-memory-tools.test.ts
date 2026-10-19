@@ -6,9 +6,10 @@
 // request) is E1's routing, tested there; these are the effects, with the
 // privacy rules that belong to them: bring-in takes only the owner's own
 // material and its copy is forgotten with the original.
-import { mkdirSync, rmSync } from "node:fs";
-import { beforeEach, expect, it } from "vitest";
+import { mkdirSync } from "node:fs";
+import { beforeEach, expect, it, onTestFinished } from "vitest";
 import { DATA_DIR } from "./config.ts";
+import { setExecutionStore } from "./execution-audience.ts";
 import { closeDatabase, database } from "./database.ts";
 import { InternalCapabilities } from "./internal-capabilities.ts";
 import { bindHumanThread, linkHumanBinding, observeVerifiedHuman, resolveHumanBinding } from "./human-principals.ts";
@@ -22,18 +23,19 @@ import { forgetMemory } from "./memory/forget.ts";
 import { ensureScope, memoryAccess, reconcileMemoryRoster, type MemoryRoster } from "./memory/policy.ts";
 import { setMemoryMode } from "./memory/repository.ts";
 import { projectSummaryLayer } from "./project-layers.ts";
-import { deliveredProjectSuggestions, pendingProjectSuggestions, readProjectMessages, registerProjectMemoryTools, suggestionLines, suggestToLead, updateProjectSummary } from "./project-memory-tools.ts";
+import { deliveredProjectSuggestions, pendingProjectSuggestions, projectThreads, OWNER_PAGE, readProjectMessages, registerProjectMemoryTools, suggestionLines, suggestToLead, updateProjectSummary } from "./project-memory-tools.ts";
 import { projectToolHandlers } from "./project-tool-routing.ts";
 import { channelToProjectRows } from "./project-settings.ts";
 import type { Message } from "./store.ts";
 import { writtenWithReceipts } from "./memory/testing/legacy-file-model.ts";
 import { LineageAllowance } from "./memory/lineage-allowance.ts";
+import { removeTempDirSync } from "./testing/cleanup.ts";
 
 const NOW = 1_790_000_000_000;
 type Roster = MemoryRoster & { bots: Array<MemoryRoster["bots"][number] & { name: string }> };
 let roster: Roster;
 beforeEach(() => {
-  closeDatabase(); rmSync(DATA_DIR, { recursive: true, force: true }); mkdirSync(DATA_DIR, { recursive: true });
+  closeDatabase(); removeTempDirSync(DATA_DIR); mkdirSync(DATA_DIR, { recursive: true });
   roster = {
     bots: [
       { id: "dax", name: "Dax", threadId: "dax-direct", section: "Sales", tasks: [{ threadId: "dax-task" }, { threadId: "dax-desk", channelProjectDesk: { groupId: "launch" } }] },
@@ -73,23 +75,23 @@ it("read-messages pages the project's chat and its desk threads with speaker, to
   for (let index = 0; index < 5; index++) say("launch-chat", `line ${index}`);
   say("dax-desk", "Card 3 is done.");
   say("dax-direct", "PRIVATE_CANARY");
-  const first = readProjectMessages(database(), roster, "launch", { limit: 3 });
+  const first = readProjectMessages(database(), roster, "launch", { limit: 3 }, OWNER_PAGE);
   expect(first.status).toBe(200);
   const page = first.body as { messages: Array<{ id: string; speaker: string; text: string; to?: string[]; re?: string }>; before?: string };
   expect(page.messages.map(item => item.text)).toEqual(["line 2", "line 3", "line 4"]);
-  const back = readProjectMessages(database(), roster, "launch", { before: page.before, limit: 50 }).body as typeof page;
+  const back = readProjectMessages(database(), roster, "launch", { before: page.before, limit: 50 }, OWNER_PAGE).body as typeof page;
   expect(back.messages[0]).toMatchObject({ speaker: "Owner", text: "What is the price?" });
   expect(back.messages[1]).toMatchObject({ speaker: "Dax", text: "It is 12 a month.", to: ["Finch"], re: ask.id });
   expect(back.before).toBeUndefined();
-  expect((readProjectMessages(database(), roster, "launch", { threadId: "dax-desk" }).body as typeof page).messages.map(item => item.text)).toEqual(["Card 3 is done."]);
-  for (const threadId of ["dax-direct", "other-chat"]) expect(readProjectMessages(database(), roster, "launch", { threadId }).status).toBe(403);
-  expect(readProjectMessages(database(), roster, "launch", { limit: 51 }).status).toBe(400);
-  expect(readProjectMessages(database(), roster, "launch", { cursor: 1 }).status).toBe(400);
+  expect((readProjectMessages(database(), roster, "launch", { threadId: "dax-desk" }, OWNER_PAGE).body as typeof page).messages.map(item => item.text)).toEqual(["Card 3 is done."]);
+  for (const threadId of ["dax-direct", "other-chat"]) expect(readProjectMessages(database(), roster, "launch", { threadId }, OWNER_PAGE).status).toBe(403);
+  expect(readProjectMessages(database(), roster, "launch", { limit: 51 }, OWNER_PAGE).status).toBe(400);
+  expect(readProjectMessages(database(), roster, "launch", { cursor: 1 }, OWNER_PAGE).status).toBe(400);
 });
 
 it("read-messages shows a reply withheld from bots as its withheld line", () => {
   say("launch-chat", "WITHHELD_CANARY", { withheldFromBots: "forgotten" } as Partial<Message>);
-  const page = readProjectMessages(database(), roster, "launch", {}).body as { messages: Array<{ text: string }> };
+  const page = readProjectMessages(database(), roster, "launch", {}, OWNER_PAGE).body as { messages: Array<{ text: string }> };
   expect(JSON.stringify(page)).not.toContain("WITHHELD_CANARY");
   expect(page.messages[0]!.text).toContain("Reply withheld");
 });
@@ -109,9 +111,25 @@ it("summary-update writes the next version with its sources, refuses foreign sou
   const next = say("launch-chat", "And the page is live.");
   expect(updateProjectSummary(database(), roster, ctx, { text: "Live on the 14th.", sourceMessageIds: [next.id] }).status).toBe(200);
   expect(JSON.parse(String(database().prepare("SELECT source_message_ids FROM project_summaries WHERE group_id='launch' ORDER BY version DESC LIMIT 1").get()?.source_message_ids))).toEqual([next.id, source.id]);
-  expect(projectSummaryLayer(database(), { groupId: "launch", botId: "dax", names: new Map([["finch", "Finch"]]) }, true)).toContain("Live on the 14th.");
+  expect(projectSummaryLayer(database(), { groupId: "launch", botId: "dax", names: new Map([["finch", "Finch"]]), threads: projectThreads(roster, "launch") }, true)).toContain("Live on the 14th.");
   for (let index = 0; index < 25; index++) updateProjectSummary(database(), roster, ctx, { text: `v${index}`, sourceMessageIds: [source.id] });
   expect(database().prepare("SELECT count(*) n FROM project_summaries WHERE group_id='launch'").get()?.n).toBe(20);
+});
+
+it("summary-update masks a key before it is stored, so no member's prompt carries it", () => {
+  const source = say("launch-chat", "Use the staging account for the demo.");
+  const ctx = { groupId: "launch", botId: "finch", now: NOW };
+  // Assembled here so no scanner reads a key in this file.
+  const key = ["sk", "proj", "A1b2C3d4E5f6G7h8J9k0L1m2"].join("-");
+  expect(updateProjectSummary(database(), roster, ctx, { text: `Demo uses the staging key ${key} on Friday.`, sourceMessageIds: [source.id] }).status).toBe(200);
+  const stored = String(database().prepare("SELECT text FROM project_summaries WHERE group_id='launch' ORDER BY version DESC LIMIT 1").get()?.text);
+  expect(stored).not.toContain(key);
+  expect(stored).toContain("Demo uses the staging key");
+  expect(stored).toContain("on Friday.");
+  // S6 rule 23: a summary is read with the project's threads, where its cited sources are sought (none known: not shown)
+  const layer = projectSummaryLayer(database(), { groupId: "launch", botId: "dax", names: new Map([["finch", "Finch"]]), threads: projectThreads(roster, "launch") }, true);
+  expect(layer).toContain("Demo uses the staging key");
+  expect(layer).not.toContain(key);
 });
 
 it("suggest leaves a line for the lead's next turn and never assigns", () => {
@@ -125,6 +143,9 @@ it("suggest leaves a line for the lead's next turn and never assigns", () => {
 });
 
 function ownerFact(thread: string, text: string, key: string, botId = "dax") {
+  // the owner's message the fact is anchored at is stored (an anchor the check cannot read is withheld, rule 23 fail closed); written by key,
+  // so no capture of its own runs
+  database().prepare("INSERT OR IGNORE INTO messages(thread_id, id, at, role, kind, text, json) VALUES(?,?,?,'user','text',?,?)").run(thread, key, NOW, text, JSON.stringify({ id: key, role: "user", kind: "text", text, at: NOW }));
   captureSource(database(), { id: `message:${thread}:${key}`, threadId: thread, messageId: key, kind: "text", speaker: "owner", outcome: "recorded", text });
   const id = saveMemoryCandidate(text, [{ sourceId: `message:${thread}:${key}`, revision: 1, startByte: 0, endByte: Buffer.byteLength(text) }], key, access(botId, thread));
   database().prepare("UPDATE memory_records SET state='active' WHERE id=?").run(id);
@@ -230,7 +251,7 @@ it("Astra r2 #13/#14/#8: read-messages withholds a copy of a forgotten original;
   captureSource(database(), { id: `message:dax-direct:${original.id}`, threadId: "dax-direct", messageId: original.id, kind: "text", speaker: "dax", outcome: "recorded", text: "ORIGINAL_CANARY" });
   say("launch-chat", "ORIGINAL_CANARY", { copyOf: { threadId: "dax-direct", messageIds: [original.id] } } as Partial<Message>);
   forgetMemory(ownerMemoryTicket(), { kind: "source", id: `message:dax-direct:${original.id}` });
-  expect(JSON.stringify(readProjectMessages(database(), roster, "launch", {}).body)).not.toContain("ORIGINAL_CANARY");
+  expect(JSON.stringify(readProjectMessages(database(), roster, "launch", {}, OWNER_PAGE).body)).not.toContain("ORIGINAL_CANARY");
   // a contact-bound task thread of the project
   const binding = observeVerifiedHuman({ platform: "slack", connectionId: "fixture", authorityId: "team", userId: "guest3" });
   linkHumanBinding(ownerMemoryTicket(), { bindingId: binding, expectedRevision: 1, as: "person" });
@@ -257,6 +278,9 @@ it("Astra r2 #16: what read-messages returns is recorded on the consuming turn's
   const shown: Array<{ threadId: string; messages: unknown[] }> = [];
   registerProjectMemoryTools({ roster: () => roster, note: () => {}, shown: (threadId, messages) => shown.push({ threadId, messages: [...messages] }) });
   say("launch-chat", "hello");
+  // the reading bot's record: a project page reads nothing to a bot not on the roster (project-page-door.test.ts)
+  setExecutionStore({ bot: (id: string) => roster.bots.find(bot => bot.id === id) } as never);
+  onTestFinished(() => setExecutionStore(undefined as never));
   const result = projectToolHandlers.get("read-messages")!({ db: database(), groupId: "launch", botId: "dax", role: "member", request: { targetThreadId: "launch-chat", rootThreadId: "launch-chat" } as never, memberIds: ["dax", "finch"], ownerAudience: true, now: NOW }, {});
   expect(result.status).toBe(200);
   expect(shown).toHaveLength(1);

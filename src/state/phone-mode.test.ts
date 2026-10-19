@@ -23,19 +23,19 @@ describe("phone mode in the store", () => {
 
   it("fetches the first page of the conversation on screen through the scrollback path", () => {
     expect(store).toMatch(/needsFirstPage\(onScreen\)/);
-    expect(store).toMatch(/dispatch\(\{ type: "loadFirstPage", threadId: topUpThread \}\)/);
+    expect(store).toMatch(/ask: \(threadId\) => topUpDispatch\.current\(\{ type: "loadFirstPage", threadId \}\)/);
   });
 
-  // A resync drops an in-flight top-up as stale; a failure must not loop.
+  // A resync drops an in-flight top-up as stale; a failure must not loop: it is asked again after a growing wait (r5, createFirstPageTopUp,
+  // pinned in lib/scrollback.test.ts), and the effect hands every review to that one planner.
   it("asks again once per transcript generation, and never while a page is in flight", () => {
-    expect(store).toContain("const key = `${topUpThread}:${topUpGeneration}`;");
-    expect(store).toContain("if (!topUpThread || topUpBusy) return;");
+    expect(store).toContain("topUp.current.review(topUpThread, topUpGeneration, topUpBusy, () => setFreshRetry((n) => n + 1));");
     // rc10-preview2 (4fecfadca) adds two deliberate re-asks: opening the thread again (screenThread) and the window coming back into view
-    // or online (freshRetry). Each clears the once-per-generation guard only there; nothing else resets it, so a dead link still does not loop.
+    // or online (freshRetry). Each forgets the once-per-generation guard only there (and drops a pending retry); nothing else resets it.
     expect(store).toContain("}, [topUpThread, topUpGeneration, topUpBusy, freshRetry, screenThread, dispatch]);");
-    expect(store.match(/toppedUp\.current = "";/g)).toHaveLength(2);
-    expect(store).toContain("toppedUp.current = \"\";\n  }, [screenThread]);");
-    expect(store).toMatch(/if \(document\.visibilityState === "hidden"\) return;\s+toppedUp\.current = "";\s+setFreshRetry/);
+    expect(store.match(/topUp\.current\.forget\(\);/g)).toHaveLength(2);
+    expect(store).toContain("topUp.current.forget();\n  }, [screenThread]);");
+    expect(store).toMatch(/if \(document\.visibilityState === "hidden"\) return;\s+topUp\.current\.forget\(\);\s+setFreshRetry/);
   });
 
   // Without a capture, windowAfterPrepend treats a page that replaces held rows (a rehydrated conversation's) like a jump's page and

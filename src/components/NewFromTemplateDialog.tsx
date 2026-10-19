@@ -190,7 +190,7 @@ export function NewFromTemplateDialog({ kind, onClose, onBlank, onOpenFile, onCr
       };
       for (const bot of response.archivedBots ?? []) dispatch({ type: "botPatched", ...fromAnswer(bot), bot });
       for (const bot of response.bots) dispatch({ type: "botAdded", ...fromAnswer(bot), bot });
-      for (const group of response.groups ?? []) dispatch({ type: "groupPatched", group });
+      for (const group of response.groups ?? []) dispatch({ type: "groupPatched", origin: fromAnswer(group), group });
       for (const routine of response.routines ?? []) dispatch({ type: "routinePatched", routine });
       const first = response.bots[0];
       if (first) dispatch({ type: "select", id: first.id });

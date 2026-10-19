@@ -2,6 +2,7 @@
 // file dropped onto the window. Chips fold back into a normal prompt on
 // send, so every driver receives the same message shape.
 import { audioTranscriptionMime, isAudioCandidate } from "./audio-intake.ts";
+import { batchRefusalLine, isDiskSpaceMessage } from "../../shared/attachment-storage.ts";
 export type PasteAttachment = {
   kind: "paste";
   id: string;
@@ -135,6 +136,7 @@ export async function imageAttachmentFromFile(file: File, threadId?: string, sur
     method: "POST",
     headers,
     body: bytes,
+    redirect: "error",
   });
   if (!response.ok) {
     const detail = (await response.json().catch(() => ({ error: response.statusText }))) as { error?: string };
@@ -470,6 +472,7 @@ export async function intakeFiles<T extends DroppedFile & { type: string }>(
   const rejectedNames: string[] = [];
   const refusedImageNames: string[] = [];
   const imageErrors: string[] = [];
+  const uploadFailures: { name: string; message: string }[] = [];
   // Finish each selected file in sequence so the chips retain the order in
   // which the user chose or dropped them.
   for (const file of files) {
@@ -494,7 +497,7 @@ export async function intakeFiles<T extends DroppedFile & { type: string }>(
         const attachment = await uploadImage(file);
         if (attachment) attachments.push(attachment);
       } catch (err) {
-        imageErrors.push(`${file.name}: ${err instanceof Error ? err.message : "upload failed"}`);
+        uploadFailures.push({ name: file.name, message: err instanceof Error ? err.message : "upload failed" });
       }
       continue;
     }
@@ -508,7 +511,9 @@ export async function intakeFiles<T extends DroppedFile & { type: string }>(
   const refused = refusedImageNames.length
     ? `${refusedImageNames.join(", ")} was not attached: the selected responder cannot receive images. Choose an image-capable responder.`
     : null;
-  const failed = imageErrors.length ? imageErrors.join("; ") : null;
+  // Uploads refused for one reason (a full disk refuses every one of them)
+  // share one line instead of repeating the reason per file.
+  const failed = [imageErrors.length ? imageErrors.join("; ") : null, batchRefusalLine(uploadFailures)].filter(Boolean).join(" ") || null;
   return {
     attachments,
     notice: [refused, pathless, failed].filter(Boolean).join(" ") || null,
@@ -592,4 +597,10 @@ interface OpenFocusNode {
 interface ComposerInputNode {
   ownerDocument: { body: FocusNode | null; documentElement: FocusNode | null };
   closest(selector: string): { contains(node: FocusNode | null): boolean } | null;
+}
+
+/** Whether an attachment notice is about the disk itself. The notice then
+ * offers "Manage storage", which opens Settings on the Storage page. */
+export function noticeOffersStorage(notice: string | null | undefined): boolean {
+  return isDiskSpaceMessage(notice);
 }

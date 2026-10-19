@@ -15,11 +15,17 @@ vi.mock("@/state/store", () => ({
   api: async (path: string) => (path === "/api/setup" ? setupReply : {}),
   useStore: () => ({ state: {}, dispatch: () => {} }),
 }));
+// Which door the card came through. A confirmed computer unless a test says
+// otherwise; `undefined` is the moment before the harness has answered.
+let surfaceAnswer: boolean | undefined = true;
+vi.mock("@/lib/use-surface", () => ({ useDesktopSurface: () => surfaceAnswer }));
 vi.mock("@/lib/analytics", () => ({ identifyEmail: () => {}, setEmailGateDone: () => {} }));
 
 const { FirstRunCard } = await import("./FirstRunCard");
 const { helloAnswerReady } = await import("./FirstRunHelloCard");
 const { FirstRunFluxConnect } = await import("./FirstRunFluxCard");
+const { FirstRunAppsCard } = await import("./FirstRunAppsCard");
+const { FirstRunPhoneCard } = await import("./FirstRunPhoneCard");
 const { readSetupView, forgetSetupView } = await import("./FirstRunChrome");
 const { FIRST_RUN_COPY, firstRunAddress, greetingLine, lookedAroundLine } = await import("@/lib/first-run-copy");
 const { SETUP_CARD_VARIANTS, setupCardKey } = await import("../../shared/setup-card");
@@ -753,8 +759,15 @@ describe("card four: the accounts", () => {
 
   it("offers no Connect button until the surface is known to be the desktop", () => {
     // Undecided is not permission. A phone that showed a Connect button for
-    // one frame has already shipped the bug.
-    const markup = render(PARKED, "apps");
+    // one frame has already shipped the bug. FirstRunCard itself now draws
+    // nothing while undecided, so the card's own guard is checked directly.
+    surfaceAnswer = undefined;
+    let markup: string;
+    try {
+      markup = renderToStaticMarkup(createElement(FirstRunAppsCard, { settled: true }));
+    } finally {
+      surfaceAnswer = true;
+    }
     expect(markup).toContain(copy.desktopOnly);
     expect(markup).not.toContain(`>${copy.connect}</button>`);
   });
@@ -881,10 +894,75 @@ describe("card nine: the phone", () => {
   it("never draws a QR code on a surface that cannot pair one", () => {
     // No desktop bridge in a test, which is exactly the shape of a machine
     // without Tailscale: words, and no dead button.
-    for (const variant of ["phone", "phone-needs-tailscale"]) {
-      const markup = render(PARKED, variant);
-      expect.soft(markup, `${variant} drew a QR`).not.toContain("<svg");
+    // Checked on the card itself, undecided: FirstRunCard draws nothing until
+    // the surface is known, so this guard only matters below it.
+    surfaceAnswer = undefined;
+    try {
+      const markup = renderToStaticMarkup(createElement(FirstRunPhoneCard, { settled: true }));
+      expect.soft(markup, "drew a QR").not.toContain("<svg");
       expect.soft(markup).toContain(FIRST_RUN_COPY.phone.phone.title);
+    } finally {
+      surfaceAnswer = true;
+    }
+  });
+});
+
+describe("the first run on a phone", () => {
+  // Every /api/setup route is the computer's, so a phone that drew a step drew
+  // a "Not now" that could not skip and a waiting line that never ended.
+  const asPhoneApp = <T,>(fn: () => T): T => {
+    const nav = globalThis.navigator;
+    Object.defineProperty(globalThis, "navigator", { value: { userAgent: "Mozilla/5.0 (iPhone; CPU iPhone OS 18_0 like Mac OS X) MurageApp/1.0.0 (ios)" }, configurable: true });
+    try {
+      return fn();
+    } finally {
+      Object.defineProperty(globalThis, "navigator", { value: nav, configurable: true });
+    }
+  };
+
+  it("says every open step finishes on the computer, with no controls", async () => {
+    await machine({ steps: [{ id: "flux", done: false, status: "open" }] });
+    for (const variant of SETUP_CARD_VARIANTS) {
+      const markup = asPhoneApp(() => render(PARKED, variant));
+      expect.soft(markup, variant).toContain(asHtml(FIRST_RUN_COPY.elsewhere));
+      expect.soft(markup, variant).not.toContain("<button");
+      expect.soft(markup, variant).not.toContain("<input");
+    }
+  });
+
+  it("draws nothing for a step already done", async () => {
+    await machine({});
+    for (const variant of SETUP_CARD_VARIANTS) {
+      expect.soft(asPhoneApp(() => render(PARKED, variant, { settled: true })), variant).toBe("");
+    }
+  });
+
+  it("draws nothing until it knows it is on the computer", async () => {
+    await machine({ steps: [{ id: "flux", done: false, status: "open" }] });
+    surfaceAnswer = undefined;
+    try {
+      for (const variant of SETUP_CARD_VARIANTS) expect.soft(render(PARKED, variant), variant).toBe("");
+    } finally {
+      surfaceAnswer = true;
+    }
+  });
+
+  it("says the same in a phone browser once it knows", async () => {
+    await machine({ steps: [{ id: "flux", done: false, status: "open" }] });
+    surfaceAnswer = false;
+    try {
+      expect(render(PARKED, SETUP_CARD_VARIANTS[0])).toContain(asHtml(FIRST_RUN_COPY.elsewhere));
+    } finally {
+      surfaceAnswer = true;
+    }
+  });
+
+  it("leaves the computer's cards as they were", async () => {
+    await machine({ steps: [{ id: "flux", done: false, status: "open" }] });
+    for (const variant of SETUP_CARD_VARIANTS) {
+      const markup = render(PARKED, variant);
+      expect.soft(markup, variant).not.toBe("");
+      expect.soft(markup, variant).not.toContain(asHtml(FIRST_RUN_COPY.elsewhere));
     }
   });
 });

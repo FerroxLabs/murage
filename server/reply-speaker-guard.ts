@@ -45,6 +45,13 @@ export function criteriaRecordCorrection(text: string, criteria: readonly { text
   return `On record: ${criteria.length - open.length} of ${criteria.length} done criteria met. Still open: ${open.map(item => item.text).join("; ") || "done criteria have not been set"}.`;
 }
 
+/** The correction a reply's criteria claim gets, as the record's counts (LINEAGE-DESIGN-S6 rule 21: written as status("criteria_claim_corrected")),
+ * or null when the reply makes no claim the record contradicts. The criteria's own words never go into it. */
+export function criteriaClaimCorrection(text: string, criteria: readonly { text: string; met: boolean }[], goalState?: string): { met: number; total: number } | null {
+  if (!criteriaRecordCorrection(text, criteria, goalState)) return null;
+  return { met: criteria.filter(item => item.met).length, total: criteria.length };
+}
+
 /** Stream ordinary prose immediately; retain only a possible next-speaker line. */
 export function createReplySpeakerStream(speakers: Parameters<typeof stripFabricatedSpeakers>[1]) {
   let text = "", emitted = 0, cut = false;

@@ -4,6 +4,7 @@ import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 
 import { openerAt } from "../shared/bot-openers.ts";
+import { sourced } from "./testing/bot-row.ts";
 import {
   buildTurnContext,
   engineIsFresh,
@@ -11,10 +12,10 @@ import {
   TRANSCRIPT_REPLAY_DRIVER_KINDS,
 } from "./turn-context.ts";
 
-const transcript = [
+const transcript = sourced([
   { role: "user" as const, text: "my dog is named Biscuit" },
   { role: "assistant" as const, text: "Noted — Biscuit." },
-];
+]);
 
 describe("buildTurnContext", () => {
   it("words a session Murage restarted on the same engine as a restart, not a switch", () => {
@@ -74,7 +75,7 @@ describe("buildTurnContext", () => {
   it("replays an out-of-band teammate result before the next user turn", () => {
     const updated = [
       ...transcript,
-      { role: "assistant" as const, text: "@Worker replied to the delegated task:\n\nfinished the report" },
+      ...sourced([{ role: "assistant" as const, text: "@Worker replied to the delegated task:\n\nfinished the report" }]),
     ];
     const out = buildTurnContext({
       text: "what did they find?",
@@ -95,7 +96,7 @@ describe("engineIsFresh", () => {
   const withUser = transcript;
   // the real seeded opener, not a copy of one: pinning the sentence is how
   // this fixture went stale the last time the greeting changed
-  const greetingOnly = [{ role: "assistant" as const, text: openerAt(0, "Wren") }];
+  const greetingOnly = sourced([{ role: "assistant" as const, text: openerAt(0, "Wren") }]);
 
   it("is false when the same instance ran the last turn and has a cursor", () => {
     expect(engineIsFresh({ instanceId: "claude", lastInstanceId: "claude", resumeCursors: { claude: "s1" }, transcript: withUser })).toBe(false);
@@ -136,7 +137,7 @@ describe("engineIsFresh", () => {
 
 // Memory refresh must preserve authorized replay without inventing an owner edit.
 it("replays refreshed memory without claiming a user rewind", () => {
-  const result = buildTurnContext({ text: "continue", transcript: [{role: "user", text: "prior request"}], rewound: false, fresh: false, externallyUpdated: false, replaysNatively: false, memoryRefreshed: true });
+  const result = buildTurnContext({ text: "continue", transcript: sourced([{role: "user" as const, text: "prior request"}]), rewound: false, fresh: false, externallyUpdated: false, replaysNatively: false, memoryRefreshed: true });
   expect(result.resume).toBe(false);
   expect(result.turnText).toContain("authorized memory context was refreshed");
   expect(result.turnText).toContain("User: prior request");

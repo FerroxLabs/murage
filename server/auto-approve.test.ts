@@ -19,6 +19,7 @@ import {
   type AutoContext,
 } from "./auto-approve.ts";
 import { exactCommandKey } from "../shared/exact-command.ts";
+import { approvalSummary } from "../shared/approval-summary.ts";
 
 describe("looksDestructive", () => {
   const dangerous = [
@@ -103,9 +104,11 @@ describe("approvalKey", () => {
     expect(approvalKey("shell", "/usr/local/bin/pnpm test")).toBe("shell:pnpm");
   });
 
-  it("looks past env assignments and sudo to the real program", () => {
+  it("looks past env assignments and sudo -n to the real program", () => {
     expect(approvalKey("Bash", "NODE_ENV=test npm run build")).toBe("Bash:npm");
-    expect(approvalKey("Bash", "sudo apt-get install ripgrep")).toBe("Bash:apt-get");
+    expect(approvalKey("Bash", "sudo -n apt-get install ripgrep")).toBe("Bash:apt-get");
+    // a bare sudo can ask for the owner's password (Rule 68f): no program grant answers it
+    expect(approvalKey("Bash", "sudo apt-get install ripgrep")).toBeUndefined();
   });
 
   it("leaves ordinary tools alone", () => {
@@ -144,13 +147,9 @@ describe("approvalKey", () => {
     "git status $ARGS",
     "git status # hidden suffix",
     "git status \\\necho continued",
-    "git status 'unterminated",
-    'git status "unterminated',
     "git status {a,b}",
     "git status *.ts",
-    "git status\u0000echo hidden",
     "GIT_OPTION=$(echo injected) git status",
-    "sudo -u other git status",
     "env MODE=test git status",
     "sh -c 'git status; echo injected'",
     "bash -lc 'git status'",
@@ -163,7 +162,6 @@ describe("approvalKey", () => {
     "'MODE=test' git status",
     "",
     "MODE=test",
-    "sudo",
   ])("does not offer or inherit a program grant for %j", (command) => {
     expect(approvalKey("Bash", command)).toBeUndefined();
     expect(approvalKey("Bash", command, "local-computer")).toBeUndefined();
@@ -173,13 +171,37 @@ describe("approvalKey", () => {
     });
   });
 
+  // Rule 68f: text the prompt-capable reader cannot split, and a bare sudo,
+  // hold their card under the prompt guard, with no program grant either.
+  // A command the always-ask reader cannot read whole (an unterminated quote)
+  // is held one step earlier, by always-ask, which also offers no grant.
+  it.each([
+    ["git status 'unterminated", "always-ask"],
+    ['git status "unterminated', "always-ask"],
+    ["git status\u0000echo hidden", "prompt-guard"],
+    ["sudo -u other make test", "prompt-guard"],
+    ["sudo", "prompt-guard"],
+  ])("does not offer a program grant for %j, and holds it (%s)", (command, source) => {
+    expect(approvalKey("Bash", command)).toBeUndefined();
+    expect(approvalKey("Bash", command, "local-computer")).toBeUndefined();
+    expect(autoVerdict({ alwaysAllow: ["Bash:git", "Bash:sudo", "Bash", ""] }, "Bash", command)).toMatchObject({ approve: null, source });
+  });
+
+  it.each([
+    "git status 'unterminated",
+    'git status "unterminated',
+  ])("a command the shell reader cannot parse offers no grant and always asks: %j", (command) => {
+    expect(approvalKey("Bash", command)).toBeUndefined();
+    expect(autoVerdict({ alwaysAllow: ["Bash:git", "Bash"] }, "Bash", command)).toMatchObject({ approve: null, source: "always-ask", rule: "unreadable" });
+  });
+
   it.each([
     ["git status", "git"],
     ["git\tstatus", "git"],
     ["'git' status", "git"],
     ['"/usr/bin/git" status', "git"],
     ["MODE='two words' git status", "git"],
-    ["mode=test sudo git status", "git"],
+    ["mode=test sudo -n make test", "make"],
     ["git log --format='hello; world | && > $(literal) `literal`'", "git"],
     ['git log --format="hello; world | && >"', "git"],
   ])("keeps literal simple command grants: %j", (command, program) => {
@@ -677,5 +699,58 @@ describe("answering the asks an Ask or Auto bot's engine now sends", () => {
   it("Auto approves an ordinary command and still holds the stop line", () => {
     expect(autoVerdict({ autoApprove: true }, "Bash", "ls -la")).toMatchObject({ source: "auto-mode" });
     expect(autoVerdict({ autoApprove: true }, "Bash", "rm -rf ~/Documents", { stopLine })).toMatchObject({ approve: null, source: "stop-line" });
+  });
+});
+
+describe("always-ask reads the whole command, and asks on a cut copy", () => {
+  const NO_LIMITS = { autoApprove: true, fullAccess: true, noLimits: true };
+
+  it("a catastrophe after the 4,000-character cut is still read", () => {
+    const command = `${Array.from({ length: 300 }, (_, i) => `echo line ${i}`).join("; ")}; rm -rf ~`;
+    expect(command.length).toBeGreaterThan(4_000);
+    const summary = approvalSummary(command);
+    expect(summary).toMatch(/truncated/);
+    // the exact grant is capped, so there is no exactCommand above the cap
+    const verdict = autoVerdict(NO_LIMITS, "Bash", summary, { commandText: command, commandCwd: "/tmp" });
+    expect(verdict).toMatchObject({ approve: null, source: "always-ask", rule: "delete-home" });
+  });
+
+  it("a Codex argv list is read through commandFromToolInput", () => {
+    expect(exactCommandForRequest({ tool: "shell", toolCall: { name: "shell", input: { command: ["rm", "-rf", "/"], cwd: "/tmp" } }, engine: "codex", turnCwd: undefined })).toMatchObject({ command: "rm -rf /" });
+    expect(autoVerdict(NO_LIMITS, "shell", "rm -rf /", { commandText: "rm -rf /", commandCwd: "/tmp" })).toMatchObject({ source: "always-ask", rule: "delete-root" });
+  });
+
+  it("a command tool with only a cut summary asks as unreadable, with no grants", () => {
+    const summary = approvalSummary(`${"echo x; ".repeat(600)}echo end`);
+    const verdict = autoVerdict(NO_LIMITS, "shell", summary);
+    expect(verdict).toMatchObject({ approve: null, source: "always-ask", rule: "unreadable" });
+    expect(approvalHoldNote(verdict)).toMatch(/could not read this command/);
+  });
+
+  it("an uncut ACP summary is read whole", () => {
+    expect(autoVerdict(NO_LIMITS, "shell", "rm -rf ~")).toMatchObject({ source: "always-ask", rule: "delete-home" });
+    expect(autoVerdict(NO_LIMITS, "shell", "git status").approve).not.toBeNull();
+  });
+
+  it("a non-command tool's summary is read as text: an apostrophe never asks", () => {
+    expect(autoVerdict(NO_LIMITS, "Edit", "Edit /Users/alex/it's notes.md").approve).not.toBeNull();
+    expect(autoVerdict(NO_LIMITS, "Edit", `Edit ${"x".repeat(5_000)}`).approve).not.toBeNull();
+  });
+
+  it("a command tool's unparseable summary asks", () => {
+    expect(autoVerdict(NO_LIMITS, "Bash", 'echo "unterminated')).toMatchObject({ source: "always-ask", rule: "unreadable" });
+  });
+
+  it("the whole command outranks the capped copy and the summary", () => {
+    const verdict = autoVerdict(NO_LIMITS, "Bash", "echo fine", { exactCommand: { command: "echo fine", cwd: "/tmp", engine: "claude" }, commandText: "echo fine; rm -rf /", commandCwd: "/tmp" });
+    expect(verdict).toMatchObject({ source: "always-ask", rule: "delete-root" });
+  });
+
+  it("the hold note for the two new rules keeps the plain words", () => {
+    for (const command of ['echo "unterminated', "rm -rf $DIR/"]) {
+      const note = approvalHoldNote(autoVerdict(NO_LIMITS, "Bash", command)) ?? "";
+      expect(note).toMatch(/Murage always asks before a command like this/);
+      expect(note).not.toMatch(/\u2014|\u2013|\bsafe\b|\bunsafe\b/i);
+    }
   });
 });

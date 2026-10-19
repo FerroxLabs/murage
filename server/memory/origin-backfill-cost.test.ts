@@ -1,15 +1,16 @@
 // The origin backfill: rows that already carry an origin are filtered where the data lives and their
 // payload never reaches the caller, an empty last window still writes done, and once done is recorded
 // a later call reads only the marker (no join over sources and versions).
-import { mkdirSync, rmSync } from "node:fs";
+import { mkdirSync } from "node:fs";
 import { beforeEach, expect, it } from "vitest";
 import { DATA_DIR } from "../config.ts";
 import { closeDatabase, database } from "../database.ts";
 import { ensureScope, reconcileMemoryRoster } from "./policy.ts";
 import { backfillMemoryOrigins } from "./origin-backfill.ts";
+import { removeTempDirSync } from "../testing/cleanup.ts";
 
 const roster = { bots: [{ id: "bot", threadId: "chat" }], groups: [] };
-beforeEach(() => { closeDatabase(); rmSync(DATA_DIR, { recursive: true, force: true }); mkdirSync(DATA_DIR, { recursive: true }); reconcileMemoryRoster(roster); });
+beforeEach(() => { closeDatabase(); removeTempDirSync(DATA_DIR); mkdirSync(DATA_DIR, { recursive: true }); reconcileMemoryRoster(roster); });
 function seed(count: number) {
   const db = database(), scope = ensureScope("bot", "bot");
   for (let i = 0; i < count; i++) {

@@ -25,10 +25,11 @@ import { importsOf } from "./engine-structure-check.ts";
 import { proc, useFakeExclusion, type FakeExclusion } from "./testing/engine-exclusion-fake.ts";
 import { buildFixture, canaryHits, walDatabase, type Fixture } from "./testing/engine-history-fixtures.ts";
 import { validateEngineExclusionResource } from "../scripts/engine-exclusion-resource.mjs";
+import { removeTempDirSync } from "./testing/cleanup.ts";
 
 const scratch = realpathSync.native(mkdtempSync(join(tmpdir(), "murage-r19-")));
 const openDatabases: DatabaseSync[] = [];
-afterAll(() => { for (const db of openDatabases) db.close(); rmSync(scratch, { recursive: true, force: true }); });
+afterAll(() => { for (const db of openDatabases) db.close(); removeTempDirSync(scratch); });
 
 let fake: FakeExclusion;
 beforeEach(() => { fake = useFakeExclusion(); });
@@ -294,7 +295,7 @@ describe("r18-2: Claude's directory lock cannot be stolen, outlive its budget, o
     utimesSync(lock, old, old);
     // the third look at the process list is the stale removal's own: the engine takes the lock just then
     fake.onProcesses = (call) => {
-      if (call === 3) { rmSync(lock, { recursive: true }); mkdirSync(lock); writeFileSync(join(lock, "engine"), "engine"); }
+      if (call === 3) { removeTempDirSync(lock); mkdirSync(lock); writeFileSync(join(lock, "engine"), "engine"); }
       return [];
     };
     const ran = run(fx, planned);
@@ -333,7 +334,7 @@ describe("r18-2: Claude's directory lock cannot be stolen, outlive its budget, o
         const other = `${lock}-other`;
         mkdirSync(other); // a different folder (a different inode) takes the name
         writeFileSync(join(other, "engine"), "engine");
-        rmSync(lock, { recursive: true });
+        removeTempDirSync(lock);
         renameSync(other, lock);
       }
     }) as typeof mutOps.fsync;

@@ -59,7 +59,7 @@ describe("rows carry only the words the gate released", () => {
   };
   it("a function passed where a decorator used to go changes nothing", () => {
     const { written, rows } = sink();
-    writeBotRow(rows, "t", {}, released("the checked words"), asAny(() => "raw words"));
+    writeBotRow(rows, "t", { from: { botId: "w", name: "W", color: "" } }, released("the checked words"), asAny(() => "raw words"));
     expect(written[0].text).toBe("the checked words");
   });
 });

@@ -12,7 +12,7 @@
 // Written: all seven gaps, four named extraction seams, fake-CLI controls.
 // Evidence: source review, scope/comment checks and git diff --check passed; runtime results unobserved.
 // Next: implement the named decisions, then run the focused checks in an equipped checkout.
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -23,6 +23,7 @@ import type { AutoApprover } from "./auto-approve.ts";
 import * as routinePermissions from "./routine-permissions.ts";
 import { RoutineManager, routinesPrePinFile, type RoutineInput, type RoutineManagerOptions } from "./routines.ts";
 import { botPermissionMode, effectiveRoutinePermissionMode } from "./routine-permissions.ts";
+import { removeTempDirSync } from "./testing/cleanup.ts";
 
 const NOW = Date.UTC(2026, 9, 3, 12);
 const dirs: string[] = [];
@@ -53,7 +54,7 @@ function record(id: string, fields: Record<string, unknown> = {}) {
 
 afterEach(() => {
   vi.restoreAllMocks();
-  for (const dir of dirs.splice(0)) rmSync(dir, { recursive: true, force: true });
+  for (const dir of dirs.splice(0)) removeTempDirSync(dir);
 });
 
 describe("routine authority", () => {

@@ -13,6 +13,7 @@ import { queueDelegation, type DelegationItem, type DelegationReceipt, type Queu
 import { audienceTask } from "./execution-audience.ts";
 import { refusalStatus } from "./host-words.ts";
 import { WorkerText } from "./released-text.ts";
+import { fixedStatus } from "./bot-read.ts";
 import { botName, botNameOf, cardTitle, outboundWords, statusFromNote, statusFromStored, type BotName, type CardTitle, type MurageStatus, type Outbound } from "./murage-status.ts";
 import { database } from "./database.ts";
 import { projectCardById, projectSettingsFor, type ProjectCard } from "./project-records.ts";
@@ -89,7 +90,9 @@ export interface BoundaryStore {
   /** The released words of a card's result, kept for the member's next prompt. */
   saveCardSummary(groupId: string, botId: string, summary: Outbound, sources: string[]): void;
   /** Murage's own "On record:" lines that answer a message, sealed: they quote what was corrected, so they leave only through the result gate. */
-  corrections(threadId: string, replyToId: string | undefined): Array<{ id: string; text: WorkerText }>;
+  /** The criteria corrections of a line, as their statuses (LINEAGE-DESIGN-S6 rules 16 and 21): read through the door's fixed copy, never
+   * the row's stored words; a legacy correction with no stored status is none. */
+  corrections(threadId: string, replyToId: string | undefined): Array<{ id: string; status: MurageStatus }>;
 }
 
 /** Newest first, back to `sinceMs`, sealing each row only when the walk reaches it. The rows are read by the store's range read from that moment
@@ -127,9 +130,13 @@ export function boundaryStore(store: Store): BoundaryStore {
     corrections: (threadId, replyToId) => {
       const corrected = replyToId === undefined ? undefined : store.messageById(threadId, replyToId);
       if (!corrected) return [];
-      const found: Message[] = [];
-      store.scanSince(threadId, corrected.at, message => { if (message.actorKind === "murage" && message.replyToId === replyToId && message.tool?.name.startsWith("On record:")) found.push(message); return false; });
-      return found.reverse().map(message => ({ id: message.id, text: new WorkerText(message.tool!.name) }));
+      const found: Array<{ id: string; status: MurageStatus }> = [];
+      store.scanSince(threadId, corrected.at, message => {
+        const line = message.replyToId === replyToId ? fixedStatus(message) : undefined;
+        if (line?.key === "criteria_claim_corrected") found.push({ id: message.id, status: line });
+        return false;
+      });
+      return found.reverse();
     },
   };
 }
@@ -141,7 +148,7 @@ export type SharedEnqueueResult =
 
 export interface BoundaryComms {
   channel(from: BotRecord, target: BotRecord, sourceThreadId: string, audience: ExecutionAudience | null | undefined): GroupRecord;
-  exchange(from: BotRecord, target: BotRecord, message: string, channel: GroupRecord | undefined, sourceThreadId: string, audience: ExecutionAudience | null | undefined): void;
+  exchange(from: BotRecord, target: BotRecord, message: string, channel: GroupRecord | undefined, sourceThreadId: string, audience: ExecutionAudience | null | undefined): string | undefined;
   reply(target: BotRecord, reply: Outbound, channel: GroupRecord | undefined, copyOf?: Message["copyOf"], inboundKind?: "action" | "question"): string | undefined;
   murageLine(channel: GroupRecord | undefined, text: Outbound, murage: MessageMurage, lineage?: { requestId?: string; replyToId?: string }): void;
   activity(from: BotRecord, channel: GroupRecord | undefined, name: Outbound, ok: boolean): void;

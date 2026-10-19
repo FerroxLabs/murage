@@ -14,6 +14,7 @@
 // overlap match), so whether they are "fresh" is never guessed: the note gets a prefix carry from the writer's turn (recordNoteLineage),
 // its origin keeps the note's object id, and releaseNote asks the one read predicate (memoryLookup) about that object every time, on
 // top of the result gate. When the owner withholds or deletes anything the turn rested on, the note is withheld with it.
+import { doorReader } from "./bot-read.ts";
 import { randomUUID } from "node:crypto";
 import type { DatabaseSync } from "node:sqlite";
 import { memoryLookup } from "./memory/deny-read.ts";
@@ -97,7 +98,7 @@ export const noteRef = (lineage: string): MemoryRef => murageObjectRef("project-
 function noteLineageShown(db: DatabaseSync, lineage: string): boolean {
   try {
     const ref = noteRef(lineage);
-    const verdict = memoryLookup(db, [ref], { audience: null }).get(memoryRefKey(ref));
+    const verdict = memoryLookup(db, [ref], doorReader()).get(memoryRefKey(ref));
     return verdict !== undefined && verdictShows(verdict);
   } catch { return false; }
 }

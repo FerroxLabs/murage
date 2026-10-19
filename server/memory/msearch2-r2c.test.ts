@@ -14,9 +14,10 @@ import { closeDatabase } from "../database.ts";
 import { MemoryIndex } from "./index.ts";
 import { closeMemoryIndexReader, lexicalPageSliced, recallWork } from "./index-reader.ts";
 import { POSTINGS_BELOW, wordTerms } from "./postings.ts";
+import { removeTempDirSync } from "../testing/cleanup.ts";
 
 const INDEX_PATH = () => join(DATA_DIR, "memory-index.db");
-beforeEach(() => { closeMemoryIndexReader(); closeDatabase(); rmSync(DATA_DIR, { recursive: true, force: true }); mkdirSync(DATA_DIR, { recursive: true }); });
+beforeEach(() => { closeMemoryIndexReader(); closeDatabase(); removeTempDirSync(DATA_DIR); mkdirSync(DATA_DIR, { recursive: true }); });
 afterEach(() => { closeMemoryIndexReader(); });
 
 type Row = { id: string; scope: string; text: string };
@@ -72,7 +73,7 @@ describe("recall: private postings never change what a reader gets", () => {
     expect(withPrivate.work).toEqual(without.work);
   });
 
-  it("the statements, and the postings they read, are the same at 1k and at 1M private postings", { timeout: 900_000 }, async () => {
+  it("the statements, and the postings they read, are the same at 1k and at 1M private postings", { tags: ["nightly"], timeout: 900_000 }, async () => {
     const at = async (count: number) => { indexOf([...readable(1000), { id: "mine-rare", scope: "s", text: "zephyrine plan" }, ...hidden(count, n => `zephyrine pipeline ${n % 2 ? "quarterly" : "plan"}`)]); return recall("pipeline zephyrine quarterly plan"); };
     const small = await at(1_000), large = await at(1_000_000);
     console.log(`[r2c] statements 1k=${small.work.statements} 1M=${large.work.statements}`);

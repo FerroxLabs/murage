@@ -12,9 +12,10 @@
 // - one million messages with one early lineage pointer: every call of the warmer stays near its deadline, and yields to the owner between
 //   pages; the discovery of threads is paged too;
 // - successive sessions after a cold start: the first turn resets the old session for warming, the warmer finishes, the next session stays.
-import { mkdirSync, rmSync } from "node:fs";
+import { mkdirSync } from "node:fs";
 import { afterEach, beforeEach, expect, it } from "vitest";
 import { thawRootSetWritesForTest } from "./replay-lineage.ts";
+import { removeTempDirSync } from "../testing/cleanup.ts";
 // 1.0.2: this file drives the read-time root-set machinery over rows a 1.0.1 file holds; thaw the frozen root-set writes to model them.
 beforeEach(() => thawRootSetWritesForTest(true));
 afterEach(() => thawRootSetWritesForTest(false));
@@ -25,6 +26,7 @@ import { bumpLineageWarm, kickLineageWarm, lineageWarmIdle, lineageWarmParked, l
 import { ensureScope, reconcileMemoryRoster } from "./policy.ts";
 import { setMemoryMode } from "./repository.ts";
 import { LineageAllowance } from "./lineage-allowance.ts";
+import { stampFreshSession } from "./testing/writetime-fixture.ts";
 import {
   capturedMessageWithheld, forgetKeptLineageForTest, keptVerdictCount, lineageUnkeptReasons, outputRootsFor, recordSessionRoots, replayExclusions, sessionLineageBad,
   setReplayNodeBudgetForTest, setTurnLineageNodesForTest,
@@ -32,7 +34,7 @@ import {
 
 const thread = "conv-direct", driver = "drv", session = "sess";
 
-beforeEach(() => { resetLineageWarmForTest(); closeDatabase(); rmSync(DATA_DIR, { recursive: true, force: true }); mkdirSync(DATA_DIR, { recursive: true }); });
+beforeEach(() => { resetLineageWarmForTest(); closeDatabase(); removeTempDirSync(DATA_DIR); mkdirSync(DATA_DIR, { recursive: true }); });
 afterEach(() => { setReplayNodeBudgetForTest(null); setTurnLineageNodesForTest(null); setLineageWarmSlicesForTest(null, null); });
 
 /** An upgrade restart: the file stays, nothing kept in memory does. */
@@ -66,6 +68,7 @@ function longSession(receipts: number): void {
   for (let index = 0; index < receipts; index++) add.run(`rc${index}`, thread, driver, session);
   // a session this build started carries a lineage row (an empty set), or it would be reset as one that predates lineage
   recordSessionRoots(thread, driver, session, outputRootsFor(LineageAllowance.tool(1_000_000_000), []));
+  stampFreshSession(db, thread, driver, session); // stamped as a 1.0.3 fresh start leaves it (S6 rule 26)
   db.exec("COMMIT");
   restart();
 }
@@ -101,6 +104,7 @@ function ownReplySession(receipts: number): string {
   db.prepare("INSERT OR IGNORE INTO memory_scope_bindings VALUES('memory-lineage-backfill-v3',?,'system','lineage-backfill',0,'granted',?)").run(scope, JSON.stringify({ done: true }));
   for (let index = 0; index < receipts; index++) add.run(`rc${index}`, thread, driver, session, JSON.stringify([`r${index}`]));
   recordSessionRoots(thread, driver, session, outputRootsFor(LineageAllowance.tool(1_000_000_000), []));
+  stampFreshSession(db, thread, driver, session); // stamped as a 1.0.3 fresh start leaves it (S6 rule 26)
   db.exec("COMMIT");
   restart();
   return last;
@@ -231,6 +235,7 @@ it("successive sessions after a cold start: the long session is reset once for w
   // a session the reset started is short and stays, turn after turn
   const db = database();
   recordSessionRoots(thread, driver, "fresh", outputRootsFor(LineageAllowance.tool(1_000_000_000), []));
+  stampFreshSession(db, thread, driver, "fresh"); // the reset's fresh start stamps its row (S6 rule 26)
   for (let index = 0; index < 30; index++) {
     db.prepare("INSERT INTO memory_disclosures(bundle_id,thread_id,driver_instance,native_session,record_versions,source_versions,output_message_ids,policy_revision,deletion_epoch,token_count,state,created_at) VALUES(?,?,?,?,'[]','[]','[]',0,0,0,'delivered',9)").run(`n${index}`, thread, driver, "fresh");
     const why: { reason?: string } = {};

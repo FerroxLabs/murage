@@ -1,7 +1,7 @@
 // Copyright 2026 Ferrox Labs
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // Fresh isolated desktop. All Flux requests are intercepted inside the fixture.
-import { test, expect } from "@playwright/test";
+import { test, expect } from "./page-error-guard";
 import { createServer, type ViteDevServer } from "vite";
 import react from "@vitejs/plugin-react";
 import tailwindcss from "@tailwindcss/vite";
@@ -37,18 +37,22 @@ test("a fresh desktop shows learning immediately and saves per-bot choices", asy
   await dialog.getByRole("textbox", { name: "Search settings" }).fill("learning");
   await expect(dialog.getByRole("navigation").getByRole("button", { name: "Memory", exact: true })).toBeVisible();
   await dialog.getByRole("navigation").getByRole("button", { name: "Memory", exact: true }).click();
-  const learning = dialog.getByRole("region", { name: "Learning", exact: true });
-  // Default-off activation still learns candidates; no disclosure is opened to see it.
-  await expect(learning.getByRole("status")).toHaveText("Learning is on. Memories that need your yes wait in Needs you.");
-  await expect(learning.getByRole("combobox", { name: "Connection", exact: true })).toHaveValue("");
+  // 1.0.3 Memory page: the status line sits under the "Memory on" switch, with no disclosure to open.
+  const memory = dialog.getByRole("region", { name: "Memory", exact: true });
+  const learning = dialog.getByRole("region", { name: "How it learns", exact: true });
+  await expect(memory.getByRole("status").first()).toContainText("Learning is on. Uses Flux Fast.");
+  // The connection choice lives under Advanced.
+  const advanced = dialog.getByRole("button", { name: /^Advanced · / });
+  await advanced.click(); await expect(advanced).toHaveAttribute("aria-expanded", "true");
+  await expect(dialog.getByRole("combobox", { name: "Connection", exact: true })).toHaveValue("");
   const status = await api("/api/memory/status"); expect(status.configuration.extractorInstanceId).toBeNull(); expect(status.learning.connection).toMatchObject({ source: "default", instanceId: "@murage/flux-fast" });
-  const bots = dialog.getByRole("region", { name: "Bots", exact: true }); const toggle = bots.getByRole("switch").first();
+  const bots = dialog.getByRole("region", { name: "Your bots", exact: true }); const toggle = bots.getByRole("switch").first();
   await expect(toggle).toBeChecked(); await toggle.click(); await expect(toggle).not.toBeChecked();
   await expect.poll(async () => (await api("/api/memory/status")).learning.settings.botsPaused.length).toBe(1);
   await expect(toggle).toBeEnabled(); await toggle.click(); await expect(toggle).toBeChecked();
   for (const width of [390, 820, 1440]) {
     await page.setViewportSize({ width, height: 1000 });
-    const chats = learning.getByRole("switch", { name: "My chats", exact: true });
+    const chats = learning.getByRole("switch", { name: "Learn from chats", exact: true });
     await chats.scrollIntoViewIfNeeded(); await chats.focus(); await page.keyboard.press("Shift+Tab"); await page.keyboard.press("Tab");
     await expect(chats).toBeFocused(); expect(await chats.evaluate(element => getComputedStyle(element).outlineStyle)).not.toBe("none");
     expect(await dialog.evaluate(element => element.scrollWidth <= element.clientWidth)).toBe(true);
@@ -87,7 +91,7 @@ for(const mutation of ["forget","correct"] as const)test(`workspace ${mutation} 
   // The dev renderer runs under React StrictMode, which mounts the section's
   // effects twice, so the first page can be asked for twice; count from here.
   const firstPage=historyCalls;expect(firstPage).toBeGreaterThanOrEqual(1);
-  await history.getByRole("button",{name:"Show more",exact:true}).click();await expect.poll(()=>historyCalls).toBe(firstPage+1);
+  await history.getByRole("button",{name:"See all",exact:true}).click();await expect.poll(()=>historyCalls).toBe(firstPage+1);
   await dialog.getByRole("button",{name:"Inspect memory",exact:true}).click();
   const detail=dialog.getByRole("region",{name:"Memory details",exact:true});
   if(mutation==="forget"){await detail.getByRole("checkbox",{name:"Confirm forgetting this memory"}).check();await detail.getByRole("button",{name:"Forget memory",exact:true}).click();}

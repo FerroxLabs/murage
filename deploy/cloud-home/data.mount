@@ -1,0 +1,16 @@
+# SPDX-License-Identifier: AGPL-3.0-or-later
+[Unit]
+Description=Murage Cloud persistent data
+DefaultDependencies=no
+Requires=murage-volume.service
+After=murage-volume.service
+Before=murage-egress.service murage-home.service murage-proxy.service
+
+[Mount]
+What=/dev/mapper/murage-data
+Where=/data
+Type=ext4
+Options=nodev,nosuid
+
+[Install]
+WantedBy=multi-user.target

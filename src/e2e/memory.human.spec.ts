@@ -3,7 +3,7 @@
 // Synthetic source-backed candidates are seeded before the browser opens;
 // review/correction/sharing/pinning/forgetting go through the actual UI/API.
 // No intercepted routes, external models, existing server or user profile.
-import { test, expect, type Locator, type Page } from "@playwright/test";
+import { test, expect, type Locator, type Page } from "./page-error-guard";
 import { createServer, type ViteDevServer } from "vite";
 import react from "@vitejs/plugin-react";
 import tailwindcss from "@tailwindcss/vite";
@@ -159,16 +159,17 @@ test("reviewed memory survives sharing and correction, then forgetting excludes 
   await clickAction(page,"Search","list");
   const inspect=page.locator('[data-memory-id="browser-candidate"]').getByRole("button",{name:"Inspect memory",exact:true});
   await expect(inspect).toBeVisible();
-  await page.locator("summary").filter({hasText:/^Search model$/}).click();
-  await expect(page.getByTestId("memory-model-status")).toHaveText("Search model: not downloaded");
-  await expect(page.getByText("Semantic recall is unavailable until the local model is verified. Lexical recall can still be used.",{exact:true})).toBeVisible();
+  // 1.0.3: the search model is a plain section of the workspace memory page, no longer a disclosure.
+  await expect(page.getByRole("heading",{name:"Search model",exact:true})).toBeVisible();
+  await expect(page.getByTestId("memory-model-status")).toHaveText("Not downloaded");
+  await expect(page.getByText("Smart search starts once the local model is verified. Keyword search works meanwhile.",{exact:true})).toBeVisible();
   await fitsViewport(page);
   await screenshot("memory-settings");
   await inspect.focus();await expect(inspect).toBeFocused();await page.keyboard.press("Enter");
   await expect(page.getByRole("heading",{name:"Memory details",exact:true})).toBeVisible();
   await expect(page.getByText(ORIGINAL,{exact:true}).first()).toBeVisible();
   const details=page.getByRole("region",{name:"Memory details",exact:true});
-  await details.locator("summary").filter({hasText:"A conversation"}).click();
+  await details.getByRole("button",{name:/^A conversation/}).click();
   await screenshot("memory-review");
   await clickAction(page,"Keep","approve",details);
   await inspectActive(page,"browser-candidate");
@@ -238,7 +239,7 @@ test("bot memory keeps workspace settings out of the narrow profile panel", asyn
   expect((await api("GET","/api/memory/status")).mode).toBe("active");
   // Dynamic defaults never overwrite the owner selection.
   expect((await api("GET","/api/memory/status")).configuration.extractorInstanceId).toBeNull();
-  expect((await api("GET","/api/memory/status")).learning.settings.version).toBe(2);
+  expect((await api("GET","/api/memory/status")).learning.settings.version).toBe(3);
   await page.screenshot({path:info.outputPath("workspace-memory-settings.png")});
 });
 
@@ -264,6 +265,10 @@ test("owner imports full notebooks, tracks changes, and selects existing Flux ex
   await sidebar.getByRole("button",{name:"App settings",exact:true}).click();
   const appSettings=page.getByRole("dialog",{name:"Settings",exact:true});
   await appSettings.getByRole("navigation").getByRole("button",{name:"Memory",exact:true}).click();
+  // The learning connection lives under the Memory page's Advanced section.
+  const advancedToggle=appSettings.getByRole("button",{name:/^Advanced · /});
+  if((await advancedToggle.getAttribute("aria-expanded"))!=="true")await advancedToggle.click();
+  await expect(advancedToggle).toHaveAttribute("aria-expanded","true");
   const selected=page.waitForResponse(response=>response.url().endsWith("/api/memory/action")&&response.request().postDataJSON()?.action==="configure");
   await appSettings.getByRole("combobox",{name:"Connection",exact:true}).selectOption("@murage/flux-standard");
   expect((await selected).ok()).toBe(true);
@@ -273,7 +278,7 @@ test("owner imports full notebooks, tracks changes, and selects existing Flux ex
   await appSettings.getByRole("combobox",{name:"Connection",exact:true}).selectOption("");expect((await defaulted).ok()).toBe(true);
   expect((await api("GET","/api/memory/status")).configuration.extractorInstanceId).toBeNull();
   await page.screenshot({path:info.outputPath("flux-memory-choice.png")});
-  await page.getByText("Import existing notes",{exact:true}).click();
+  await page.getByRole("button",{name:"Import notes",exact:true}).click();
   await clickAction(page,"Find existing notebooks","import-inventory");
   await page.getByRole("checkbox",{name:"Memory browser fixture · MEMORY.md",exact:true}).check();
   await page.getByRole("checkbox",{name:"Memory browser fixture · detail.md",exact:true}).check();

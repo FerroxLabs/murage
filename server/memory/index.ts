@@ -11,12 +11,15 @@ import { POSTINGS_BELOW, POSTINGS_SCHEMA, POSTINGS_TODO_UPGRADE, postingFiller }
 export const WAL_DRAIN_BYTES = 64 * 1024 * 1024;
 export function walBytes(path: string): number { try { return statSync(`${path}-wal`).size; } catch { return 0; } }
 
-/** `rolled`: a deletion that only retires an old checkpoint version (its words re-quote sources that stay indexed). Its
- * cleanup is the stepped maintenance's job; a deletion that is a forget is not rolled and cleans up at once. */
-export interface IndexedMemory {id:string;version:number;scopeId:string;text:string;deleted:boolean;archived?:boolean;rolled?:boolean}
+/** `rolled`: a deletion that only retires an old checkpoint version (its words re-quote sources that stay indexed), as against
+ * a forget. Both leave the word index through the stepped maintenance (upsert owes it the merge). */
+/** `ageKey`: the record's age key (schema.ts RECORD_KEYS_SCHEMA), the rowid its FTS row takes once the index is in age order (age-index.ts);
+ * null for a record not keyed yet (an index in its preparing mode, or an older binary's write). */
+export interface IndexedMemory {id:string;version:number;scopeId:string;text:string;deleted:boolean;archived?:boolean;rolled?:boolean;ageKey?:number|null}
 export interface IndexHit {id:string;version:number;score:number;similarity?:number;lexical?:boolean}
 export { byScore, compareRefs };
 import { FTS_SEGMENT_LIMIT,isSegmentLimitError } from "./segment-limit.ts";
+import { ageTablesPresent, fillAgeIndexStep, lexicalGeneration, lexicalRowidsAged, markFreshIndexAged, placeLexicalRow, sweepAgeRowidsStep, type AgeFillOptions } from "./age-index.ts";
 export { isSegmentLimitError };
 /** Past this many segments the helper compacts the index once, well before the limit. */
 export const FTS_SEGMENT_COMPACT_AT = 1000;
@@ -80,6 +83,10 @@ export class MemoryIndex {
         db.exec("COMMIT");
       }catch(error){db.exec("ROLLBACK");db.close();throw error;}
     }
+    // Age order (age-index.ts): an index with no word row yet takes age keys as rowids from its first row; one with rows is filled
+    // into a second table by the helper and cut over by rename (fillAgeIndex).
+    try{this.aged=markFreshIndexAged(db);}catch(error){db.close();throw error;}
+    this.ageTables=!this.aged&&ageTablesPresent(db);
     // The scoped word index (postings.ts). Creating it reads nothing: the triggers keep every entry written from here on, and the
     // entries already there are filled newest first by fillPostings, from the rowid recorded here.
     if(!db.prepare("SELECT 1 FROM sqlite_schema WHERE type='table' AND name='postings'").get()){
@@ -99,6 +106,22 @@ export class MemoryIndex {
       catch(error){db.exec("ROLLBACK");db.close();throw error;}
     }
   }
+  /** Whether `lexical` holds every row at its age key (age-index.ts), and whether the second word table exists (the fill is under way). */
+  private aged=false;
+  private ageTables=false;
+  /** Whether the word table still has to be put in age order (the helper runs fillAgeIndex until it is). */
+  ageFillOwed():boolean{return !this.aged;}
+  lexicalGeneration():number{return lexicalGeneration(this.db);}
+  /** One slice of the age fill, or the cutover when the walk has ended (age-index.ts fillAgeIndexStep). `authority`: a read-only
+   * handle on the main database (the key table). Never on the main thread. */
+  fillAgeIndex(authority:DatabaseSync,options:AgeFillOptions={}):ReturnType<typeof fillAgeIndexStep>{
+    const step=fillAgeIndexStep(this.db,authority,options);
+    if(step.cutover||lexicalRowidsAged(this.db)){this.aged=true;this.ageTables=false;}
+    else if(!this.ageTables)this.ageTables=ageTablesPresent(this.db);
+    return step;
+  }
+  /** One slice of the post-cutover sweep (age-index.ts sweepAgeRowidsStep). */
+  sweepAgeRowids(authority:DatabaseSync,options:{maxRows?:number}={}):ReturnType<typeof sweepAgeRowidsStep>{return sweepAgeRowidsStep(this.db,authority,options);}
   /** Scopes readers asked about, most recent first (at most WANTED_SCOPES): their backfill goes first. */
   private wanted:string[]=[];
   private turn=0;
@@ -235,32 +258,45 @@ export class MemoryIndex {
   /** Whether entries are still waiting for their postings. */
   postingsOwed():boolean{return this.postingsBelow()!==null||Boolean(this.db.prepare("SELECT 1 FROM posting_todo LIMIT 1").get());}
   upsert(records: IndexedMemory[]) {
-    const forgets=records.some(row=>row.deleted&&!row.rolled),rolledDeletions=records.filter(row=>row.deleted&&row.rolled).length;
+    const deletions=records.filter(row=>row.deleted).length;
     this.db.exec("BEGIN IMMEDIATE");
     try {
       for(const row of records){
         const previous=this.db.prepare("SELECT fts_rowid FROM lexical_keys WHERE id=? AND version=?").get(row.id,row.version);
         if(previous)this.db.prepare("DELETE FROM lexical WHERE rowid=?").run(previous.fts_rowid);
         this.db.prepare("DELETE FROM lexical_keys WHERE id=? AND version=?").run(row.id,row.version);
+        if(this.ageTables){
+          // the second word table (age-index.ts) is kept in step while the fill runs: one row per record there too, at its key
+          const aged=this.db.prepare("SELECT fts_rowid FROM lexical_age_keys WHERE id=? AND version=?").get(row.id,row.version);
+          if(aged)this.db.prepare("DELETE FROM lexical_age WHERE rowid=?").run(aged.fts_rowid);
+          this.db.prepare("DELETE FROM lexical_age_keys WHERE id=? AND version=?").run(row.id,row.version);
+        }
         if(this.db.prepare("DELETE FROM vectors WHERE id=? AND version=?").run(row.id,row.version).changes&&this.matrix){
           for(const [key,entry] of this.matrix.rows)if(entry.id===row.id&&entry.version===row.version)this.matrix.rows.delete(key);
         }
         if(row.deleted){this.db.prepare("DELETE FROM entries WHERE id=? AND version=?").run(row.id,row.version);continue;}
         this.db.prepare("INSERT OR REPLACE INTO entries VALUES(?,?,?,?)").run(row.id,row.version,row.scopeId,row.text);
-        const inserted=this.db.prepare("INSERT INTO lexical VALUES(?,?,?)").run(row.id,row.version,row.text);
-        this.db.prepare("INSERT INTO lexical_keys VALUES(?,?,?)").run(row.id,row.version,inserted.lastInsertRowid);
+        const ageKey=typeof row.ageKey==="number"&&Number.isSafeInteger(row.ageKey)?row.ageKey:null;
+        if(this.aged&&ageKey!==null)placeLexicalRow(this.db,"lexical",row.id,row.version,row.text,ageKey);
+        else{
+          // an automatic rowid: the preparing or filling index, or a record not keyed yet (the sweep moves it to its key later)
+          const inserted=this.db.prepare("INSERT INTO lexical VALUES(?,?,?)").run(row.id,row.version,row.text);
+          this.db.prepare("INSERT INTO lexical_keys VALUES(?,?,?)").run(row.id,row.version,inserted.lastInsertRowid);
+          if(this.ageTables&&ageKey!==null)placeLexicalRow(this.db,"lexical_age",row.id,row.version,row.text,ageKey);
+        }
       }
-      if(forgets)this.db.exec("INSERT INTO lexical(lexical) VALUES('optimize')");
-      // The obligation to merge a rolled deletion out is written in the same transaction as the deletion.
-      if(rolledDeletions)this.setMergeOwed(true);
+      // The obligation to merge a deletion out of the word index is written in the same transaction as the deletion.
+      if(deletions)this.setMergeOwed(true);
       this.db.exec("COMMIT");
     }catch(error){this.rollback();throw error;}
-    // A rolled checkpoint version leaves the index like any other deletion, but its cleanup is not whole-index work per
-    // batch: the stepped maintenance (purgeRolledCheckpoints) merges it in short steps while the helper is idle, with no walk.
-    if(rolledDeletions){this.purge.merging=true;this.deletionGen++;}
+    // A deletion (a forget, or a rolled checkpoint version) leaves the index with its words still in the FTS5 segments until a
+    // merge removes them, and secure_delete then zeroes the pages the merge frees. That merge is not whole-index work per batch:
+    // the stepped maintenance (purgeRolledCheckpoints) pays it in short steps while the helper is idle, and never later than
+    // MAINTENANCE_MAX_DEFER_MS under sustained load. (1.0.3 rehearsal 2: a whole-index merge and log truncation per batch with a
+    // forget wrote about 47 MB per 16 deletions on the owner's index, 240 MB/min for as long as a drain queued deletions.)
+    if(deletions){this.purge.merging=true;this.deletionGen++;}
     // The old pages stay in the write-ahead log until it is checkpointed.
-    if(forgets)try{this.db.exec("PRAGMA wal_checkpoint(TRUNCATE)");}catch{/* the next checkpoint takes it */}
-    else this.checkpointIfLarge();
+    this.checkpointIfLarge();
   }
   /** Truncate the log when it has grown past WAL_DRAIN_BYTES. Capture batches call this so a log that readers held open gets
    * its window as soon as the readers let go. True when it was truncated. */

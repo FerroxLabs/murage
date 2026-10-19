@@ -31,7 +31,7 @@ import { MurageStatus, outboundWords, status, storedStatusShapeOk, type BotName,
 import { ReleasedText } from "./released-text.ts";
 import { writeFileAtomic } from "./atomic.ts";
 import { coordinationTraceSchema, MAX_HANDOFFS_PER_TURN, type CoordinationTrace } from "./coordination-budget.ts";
-import type { CommsBus } from "./comms-visibility.ts";
+import { messagedRow, type CommsBus } from "./comms-visibility.ts";
 import { DATA_DIR } from "./config.ts";
 import { newId } from "./contracts.ts";
 import type { ApprovalBus } from "./peer-approval.ts";
@@ -39,6 +39,7 @@ import { ROUTINE_PERMISSION_MODES, type RoutinePeerSource } from "./routine-perm
 
 import type { BotRecord, Store } from "./store.ts";
 import type { OwedReply } from "./handoff-reply.ts";
+import { murageLine } from "./murage-line.ts";
 
 /** Every row a handoff leaves in its source conversation names who handed
  * off when that conversation is a room. Several bots delegate in a room, and
@@ -52,7 +53,9 @@ export function appendDelegationRow(
   message: Parameters<CommsBus["store"]["appendMessage"]>[1],
 ): ReturnType<CommsBus["store"]["appendMessage"]> {
   const sender = senderId && bus.store.groupByThread(threadId) ? bus.store.bot(senderId) : undefined;
-  return bus.store.appendMessage(threadId, sender ? { ...message, from: { botId: sender.id, name: sender.name, color: sender.color } } : message);
+  // every row a delegation writes here is Murage's own chip about the hand-off, never a turn's engine output (murage-line.ts)
+  const row = murageLine(message);
+  return bus.store.appendMessage(threadId, sender ? { ...row, from: { botId: sender.id, name: sender.name, color: sender.color } } : row);
 }
 
 export interface DelegationItem {
@@ -75,6 +78,13 @@ export interface DelegationItem {
    *  peer's turn runs unattended too, after a restart too, so Full access
    *  keeps the owner's cards for it. */
   unattended?: boolean;
+  /** The provider turn that queued this hand-off, read from the server's own turn state when it is queued (never from the item a caller passes). The
+   * hand-off can start after that turn ended, and the room copy of the message names this turn so revoking its inputs withholds the copy. `null`
+   * when no turn was running (the message rests on none). A queue row from before it was kept has the field absent: its room copy is withheld. */
+  senderTurnId?: string | null;
+  /** The sender's "Messaged @target" row, written into the source conversation in the queue transaction as the sending turn's engine row
+   * (LINEAGE-DESIGN-S6 rule 6): the room copy names it by copyOf. Absent on a queue row from before it was kept: its room copy is withheld. */
+  sourceMessageId?: string;
   /** The effective parent routine ceiling, captured before its turn ends. */
   routineAuthority?: RoutinePeerSource;
   /** Trusted originating event identity. Survives handoff/retry/restart so
@@ -884,6 +894,9 @@ export function parsePendingItem(value: unknown): PendingDelegationItem | null {
     ...(item.executionAudience ? { executionAudience: item.executionAudience } : {}),
     ...(item.coordination ? { coordination: coordinationTraceSchema.parse(item.coordination) } : {}),
   };
+  if (typeof item.senderTurnId === "string" && item.senderTurnId) loaded.senderTurnId = item.senderTurnId;
+  else if (item.senderTurnId === null) loaded.senderTurnId = null;
+  if (typeof item.sourceMessageId === "string" && item.sourceMessageId) loaded.sourceMessageId = item.sourceMessageId;
   if (item.approvalAlreadyGranted === true) loaded.approvalAlreadyGranted = true;
   if (item.fullAccessWaived === true) loaded.fullAccessWaived = true;
   // fails closed: anything but an explicit false-by-absence keeps the mark
@@ -1023,7 +1036,9 @@ export function queueDelegation(
   const id = newId();
   const executionAudience = issueWorkAudience(from.id, item.toBotId, sourceThreadId, item.executionAudience ?? issueExecutionAudience(from.id, sourceThreadId, id), id, item.notOwnerAudience !== true);
   if (executionAudience && !validExecutionAudience(executionAudience)) throw new Error("Invalid execution audience");
+  const senderTurnId = bus.turnOf?.(sourceThreadId) ?? null;
   const queued: PendingDelegationItem = { ...item, ...(executionAudience ? { executionAudience } : {}), id, attempts: 0, fromBotId: from.id };
+  queued.senderTurnId = senderTurnId;
   // The room request that tracks this handoff and the queue row are accepted together or not at all.
   let inserting = false;
   try {
@@ -1032,6 +1047,8 @@ export function queueDelegation(
       // Shared work already names the conversation it runs in when it is queued; the row stores that destination from the start (the other origins
       // resolve theirs once, at their first admission, and store it then: server/handoff-dispatch.ts).
       const destination = origin === "shared" ? handoffRequest(database(), id)?.targetThreadId ?? null : null;
+      // the source row, in this transaction: its lineage keeps the sending turn before that turn ends or is evicted (rule 6)
+      queued.sourceMessageId = bus.store.appendMessage(sourceThreadId, messagedRow(from, target, senderTurnId ?? undefined)).id;
       inserting = true;
       persistWrites++;
       stmts().insert.run(id, sourceThreadId, queued.toBotId, from.id, "fresh", null, itemJson(queued), origin, delegationTurnKey(id), destination);
@@ -1414,8 +1431,8 @@ export const heldLineId = (id: string): string => `held-${id}`.slice(0, 160);
 export function appendHeldLine(store: Pick<Store, "botByThread" | "groupByThread" | "bot" | "appendMessage">, held: HeldDelegation): void {
   if (!store.botByThread(held.sourceThreadId) && !store.groupByThread(held.sourceThreadId)) return;
   const sender = held.fromBotId && store.groupByThread(held.sourceThreadId) ? store.bot(held.fromBotId) : undefined;
-  store.appendMessage(held.sourceThreadId, { role: "bot", kind: "activity", tool: { name: held.text, ok: false }, delegationHeld: { id: held.id },
-    ...(sender ? { from: { botId: sender.id, name: sender.name, color: sender.color } } : {}) }, heldLineId(held.id), () => registerHeldLine(held));
+  store.appendMessage(held.sourceThreadId, murageLine({ role: "bot", kind: "activity", tool: { name: held.text, ok: false }, delegationHeld: { id: held.id },
+    ...(sender ? { from: { botId: sender.id, name: sender.name, color: sender.color } } : {}) }), heldLineId(held.id), () => registerHeldLine(held));
 }
 /** Registers the owner-facing line of a held hand-off in the queue (`held_notice_lines`). Called as the line is written, by the line's own `within`, so the line and
  * its registration commit together or not at all. Idempotent. */

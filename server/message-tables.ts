@@ -11,6 +11,8 @@ export const PENDING_BROWSER_CHECK_SQL = `'${browserUnavailableActivityName(BROW
 export const PENDING_BROWSER_CHECK_WHERE = `kind = 'activity' AND json_extract(json, '$.tool.name') = ${PENDING_BROWSER_CHECK_SQL}`;
 
 import { BRANCH_TABLES_SQL } from "./branch-index.ts";
+import { SEQ_INDEX_SQL, SEQ_STATE, seqIndexReady } from "./transcript-seq.ts";
+import { MESSAGE_ID_INDEX_SQL, messageIdIndexReady } from "./message-id-index.ts";
 import { ensureKeyedCardIndex, ensureOpenCardIndex, isOpenCardJson, newestRowid, readIndexState, writeIndexState, type EnsureIndexHooks } from "./transcript-backfill.ts";
 
 export { isOpenCardJson };
@@ -26,6 +28,9 @@ export function initializeMessageTables(db: DatabaseSync, indexHooks: EnsureInde
       CREATE INDEX IF NOT EXISTS messages_thread ON messages(thread_id);
       CREATE INDEX IF NOT EXISTS messages_at ON messages(at DESC);
       CREATE TABLE IF NOT EXISTS thread_state(thread_id TEXT PRIMARY KEY, active_leaf_id TEXT);`);
+  // The per-thread storage sequence (transcript-seq.ts, ROOM-ORDER-DESIGN r7 R1): appended by ALTER TABLE on every file, a fresh one
+  // included, so a migrated and a fresh messages table keep one definition text. Metadata only: no row is read or rewritten.
+  ensureSeqColumn(db);
   // Substring-search candidate index (server/message-search-index.ts):
   // contentless, keyed by messages.rowid, so it holds trigrams and no text;
   // detail=none drops positions (about 7x smaller), so a query is an AND of
@@ -67,6 +72,18 @@ export function initializeMessageTables(db: DatabaseSync, indexHooks: EnsureInde
   // start; a write failure propagates instead of passing for done. turn_first,
   // message_image and the branch and line indexes are filled thread by thread.
   // A history with no message has nothing to fill: the table of pending notes is complete from the first write.
+  // The sequence index is made with the schema only on an empty table (a fresh file: every thread numbered from its first row, the walk
+  // has nothing to do). On a file with history it is an optional index built in an idle window (transcript-seq.ts SEQ_OPTIONAL_INDEX);
+  // a file whose index was dropped (a downgrade that kept the column) walks again from the start once it is rebuilt.
+  if (db.prepare("SELECT 1 AS present FROM messages LIMIT 1").get() === undefined) {
+    if (!seqIndexReady(db)) db.exec(SEQ_INDEX_SQL);
+    // the message-id index likewise (message-id-index.ts): empty table now, else built in an idle window
+    if (!messageIdIndexReady(db)) db.exec(MESSAGE_ID_INDEX_SQL);
+    if (readIndexState(db, SEQ_STATE).done !== 1) writeIndexState(db, SEQ_STATE, { done: 1, cursor: 0, skipped: 0 });
+  } else if (!seqIndexReady(db)) {
+    const state = readIndexState(db, SEQ_STATE);
+    if (state.done !== 0 || state.cursor !== 0) writeIndexState(db, SEQ_STATE, { done: 0, cursor: 0, skipped: 0 });
+  }
   if (!browserCheckIndexExists(db) && db.prepare("SELECT 1 AS present FROM messages LIMIT 1").get() === undefined) writeIndexState(db, "browser_check", { done: 1, cursor: 0, skipped: 0 });
   // Cards that carry no request id (a first-run flow card, an intake question, a
   // browser-setup offer, a learned-skill proposal) and the setup flow's own lines
@@ -81,6 +98,12 @@ export function initializeMessageTables(db: DatabaseSync, indexHooks: EnsureInde
     ensureOpenCardIndex(db, indexHooks);
     ensureKeyedCardIndex(db, indexHooks);
   }
+}
+
+/** `messages.seq` (nullable: a row written before its thread is numbered holds NULL until the walk reaches it). */
+export function ensureSeqColumn(db: DatabaseSync): void {
+  const columns = db.prepare("PRAGMA table_info(messages)").all() as Array<{ name: string }>;
+  if (!columns.some((column) => column.name === "seq")) db.exec("ALTER TABLE messages ADD COLUMN seq INTEGER");
 }
 
 /** The partial index an earlier build of 1.0.2 made over the pending notes. It is no longer made (building it read every message row

@@ -34,7 +34,9 @@ import { forgetRootSetHandles, handleFor, handleKeys, layeredOf, LayeredRoots, s
 import { heldStep } from "../observe.ts";
 import { copyFieldsChanged } from "../message-copy-fields.ts";
 import { DENIED_RECORD_SCOPE, DENIED_SOURCE } from "./deny.ts";
-import { denyLookup, memoryLookup } from "./deny-read.ts";
+import { denyLookup, lineageLive, memoryLookup } from "./deny-read.ts";
+import { chainJudge } from "../bot-read.ts";
+import type { Message } from "../store.ts";
 import { readTimeRetired, withoutDroppedTableTriggers } from "./read-time-retired.ts";
 import { memoryRefKey } from "./lineage-types.ts";
 type DatabaseLike = ReturnType<typeof database>;
@@ -191,11 +193,17 @@ export function messageCopy(threadId: string, messageId: string): MessageCopy | 
   } catch { return undefined; }
 }
 
-/** A copy's original is not there to be copied from: the stored message is gone (its conversation was deleted) or is withheld from bots.
- * A copy never outlives the original it was made from, whatever memory is doing. */
+/** A copy's original is not there to be copied from, judged by the reader door's chain judge (bot-read.ts chainJudge, LINEAGE-DESIGN-S6 rules 9
+ * and 16): gone (its conversation was deleted), unreadable, classified, not a bot or owner row, its own chain failing, or reading withheld under
+ * the lineage verdicts. A copy never outlives the original it was made from, whatever memory is doing. While no line lineage is written on
+ * this file the verdicts read nothing, and the owner's note stays this reader's own read-time judge (rule 29). */
 export function copyOriginUnavailable(threadId: string, messageId: string): boolean {
   dirtyMessage(threadId, messageId);
-  const row = stmt(database(), "SELECT json_extract(json,'$.withheldFromBots') AS withheld FROM messages WHERE thread_id=? AND id=?").get(threadId, messageId);
+  const db = database();
+  const probe = { id: COPY_ORIGIN_PROBE, role: "user", kind: "text", at: 0, copyOf: { threadId, messageIds: [messageId] } } as Message;
+  if (!chainJudge(db, threadId, null)(probe)) return true;
+  if (lineageLive(db)) return false;
+  const row = stmt(db, "SELECT json_extract(json,'$.withheldFromBots') AS withheld FROM messages WHERE thread_id=? AND id=?").get(threadId, messageId);
   if (!row) return true;
   return row.withheld !== null && row.withheld !== undefined && row.withheld !== 0 && row.withheld !== "false";
 }

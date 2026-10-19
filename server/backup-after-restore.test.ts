@@ -8,11 +8,12 @@
 // a skill collection, a channel, startup preferences), backs it up, restores
 // it into a new folder, then backs up the restored folder with the real
 // stage + fidelity + age path.
-import { mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { expect, it } from "vitest";
 import { writeEncryptedInstallationBackup, restoreEncryptedInstallationNew } from "./installation-encrypted-backup.ts";
 import { backupFixture, testAgeKeys } from "./testing/backup-fixture.ts";
+import { removeTempDirSync } from "./testing/cleanup.ts";
 
 const selection = { scope: "application-data", credentialPolicy: "preserve-in-encrypted-fidelity" } as const;
 
@@ -38,5 +39,5 @@ it.skipIf(!process.env.MURAGE_BACKUP_TEST_AGE_DIR)("a restored installation can 
     // And the restored folder backs up.
     const second = join(f.parent, "second.age");
     await writeEncryptedInstallationBackup(restoredDir, second, { ...keys, selection });
-  } finally { f.db.close(); rmSync(f.parent, { recursive: true, force: true }); }
+  } finally { f.db.close(); removeTempDirSync(f.parent); }
 });

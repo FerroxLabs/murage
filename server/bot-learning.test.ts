@@ -1,10 +1,11 @@
 // Copyright 2026 Ferrox Labs
 // SPDX-License-Identifier: AGPL-3.0-or-later
-import { mkdtempSync, rmSync, statSync } from "node:fs";
+import { mkdtempSync, statSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { DEFAULT_BOT_LEARNING, ensureLearningLocalDir, learningLocalPath, nextBotLearning, readBotLearning } from "./bot-learning.ts";
+import { removeTempDirSync } from "./testing/cleanup.ts";
 
 describe("bot learning settings", () => {
   it("defaults: learning from the owner on, ask-first off, prospects off, revision 0", () => {
@@ -69,6 +70,6 @@ describe("learning-local folder", () => {
       expect(learningLocalPath(root, "a", "b.json")).toBe(join(root, "learning-local", "a", "b.json"));
       if (process.platform !== "win32") expect(statSync(dir).mode & 0o777).toBe(0o700);
       expect(ensureLearningLocalDir(root)).toBe(dir); // idempotent
-    } finally { rmSync(root, { recursive: true, force: true }); }
+    } finally { removeTempDirSync(root); }
   });
 });

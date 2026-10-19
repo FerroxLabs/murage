@@ -177,6 +177,17 @@ export function clearMcpServerSecrets(name: string): void {
   releaseWaiters((waiter) => waiter.name === name);
 }
 
+/** A pure rename (Rule 54, r3 "Rename"): the secrets held for `from` move to `to` unchanged. A wait for a token under
+ *  `from` ends with nothing; one under `to` is settled by what moved. */
+export function renameMcpServerSecrets(from: string, to: string): void {
+  const doc = store.get(from);
+  store.delete(from);
+  releaseWaiters((waiter) => waiter.name === from);
+  if (doc) store.set(to, doc);
+  else store.delete(to);
+  settleWaiters(to);
+}
+
 export function clearAllMcpServerSecrets(): void {
   store.clear();
   releaseWaiters(() => true);

@@ -75,7 +75,9 @@ function fromParent(port: ParentPort, name: string, waitMs: number): Promise<str
         return;
       }
       if (message?.type === LAUNCH_SECRET_MESSAGE) return;
-      if (!earlyReleased && early.length < EARLY_LIMIT) early.push(event);
+      // More than one secret can be waited on at once, and each wait has its
+      // own listener; one message is still held once.
+      if (!earlyReleased && early.length < EARLY_LIMIT && !early.includes(event)) early.push(event);
     });
   });
 }

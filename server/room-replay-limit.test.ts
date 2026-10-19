@@ -7,13 +7,14 @@
 // now checks only the lines a member prompt can show, reads receipts per
 // line, and withholds a line it cannot finish checking. It never fails the
 // turn and never shows what it could not check.
-import { mkdirSync, rmSync } from "node:fs";
+import { mkdirSync } from "node:fs";
 import { beforeEach, expect, it } from "vitest";
 import { DATA_DIR } from "./config.ts";
 import { closeDatabase, database } from "./database.ts";
 import { InternalCapabilities } from "./internal-capabilities.ts";
 import { memoryAccess, reconcileMemoryRoster, type MemoryRoster } from "./memory/policy.ts";
 import { captureSource } from "./memory/capture.ts";
+import { storeAnchorMessage } from "./memory/testing/anchor-message.ts";
 import { ownerMemoryTicket, saveMemoryCandidate } from "./memory/authority.ts";
 import { forgetMemory } from "./memory/forget.ts";
 import { hydrateMemoryRecord } from "./memory/bundle.ts";
@@ -24,6 +25,7 @@ import { THREAD_RECEIPT_LIMIT } from "./memory/replay-lineage.ts";
 import { roomTranscriptForTurn } from "./room-transcript.ts";
 import type { Message } from "./store.ts";
 import { LineageAllowance } from "./memory/lineage-allowance.ts";
+import { removeTempDirSync } from "./testing/cleanup.ts";
 
 const roster: MemoryRoster = {
   bots: [
@@ -32,7 +34,7 @@ const roster: MemoryRoster = {
   ],
   groups: [{ id: "busy", threadId: "busy-room", memberIds: ["finch", "dax"] }],
 };
-beforeEach(() => { closeDatabase(); rmSync(DATA_DIR, { recursive: true, force: true }); mkdirSync(DATA_DIR, { recursive: true }); });
+beforeEach(() => { closeDatabase(); removeTempDirSync(DATA_DIR); mkdirSync(DATA_DIR, { recursive: true }); });
 
 function access(botId: string, thread: string, notOwnerAudience = false) {
   reconcileMemoryRoster(roster);
@@ -120,6 +122,7 @@ it("a line listed by more than the old per-line receipt cap is judged by all of 
 
 it("recall of a reply in a room past the limit still follows the content rule", () => {
   const { record } = busyRoom(THREAD_RECEIPT_LIMIT + 1);
+  storeAnchorMessage(database(), "busy-room", "reply-last", "Rows 83-86 went out on the 26th.", "bot");
   captureSource(database(), { id: "message:busy-room:reply-last", threadId: "busy-room", messageId: "reply-last", kind: "text", speaker: "dax", outcome: "recorded", text: "Rows 83-86 went out on the 26th." });
   for (let work = claimMemoryJob("t2"); work; work = claimMemoryJob("t2")) publishMemoryWork(work, "t2", captureWork(work));
   const chunk = database().prepare("SELECT r.id,r.version FROM memory_evidence e JOIN memory_records r ON r.id=e.record_id AND r.version=e.record_version WHERE e.source_id='message:busy-room:reply-last' AND r.kind='source'").get() as { id: string; version: number };

@@ -1,4 +1,4 @@
-import { readFileSync, rmSync } from "node:fs";
+import { readFileSync } from "node:fs";
 import { beforeEach, describe, expect, it } from "vitest";
 import { DATA_DIR } from "./config.ts";
 import { closeDatabase, database } from "./database.ts";
@@ -12,6 +12,8 @@ import { replayWindow } from "./memory/disclosures.ts";
 import { captureSource, wholeTurnText } from "./memory/capture.ts";
 import { claimExcerpts } from "../shared/chat-engine-notes.ts";
 import { released } from "./testing/released.ts";
+import { sourced } from "./testing/bot-row.ts";
+import { removeTempDirSync } from "./testing/cleanup.ts";
 
 const row = (id: string, extra: Partial<Message> = {}): Message => ({ id, at: 1, role: "bot", kind: "text", turnId: "t", ...extra });
 const check = (text: string, rows: Message[]) => { const reply = row("reply", { text }); return checkReplyActions({ reply, path: [...rows, reply] }); };
@@ -20,7 +22,7 @@ it("F1 excludes held actions from replay and quote targets while retaining plain
   const rows = [row("action", { inboundKind: "action", text: "SEND_CANARY" }), row("question", { inboundKind: "question", text: "What format?" }), row("old-debt", { text: "LEGACY_CANARY" })];
   const kept = promptRows(rows, false, ["action", "question", "old-debt"]);
   expect(kept.map(row => row.id)).toEqual(["question"]);
-  const plan = planExternalDelivery({ pending: rows.map(row => ({ id: row.id, text: row.text!, needsTools: row.inboundKind !== "question" })), branchReplay: { carriedIds: kept.map(row => row.id) }, routeHasTools: false });
+  const plan = planExternalDelivery({ pending: sourced(rows.map(row => ({ id: row.id, text: row.text!, needsTools: row.inboundKind !== "question" }))), branchReplay: { carriedIds: kept.map(row => row.id) }, routeHasTools: false });
   expect(plan.consumedIds).toEqual(["question"]);
   expect(plan.preamble).not.toMatch(/CANARY/);
   expect(promptRows(rows, true)).toEqual(rows);
@@ -62,12 +64,12 @@ it.each([false, true])("F7 retains omission and continuity metadata even with no
   expect(out.turnText).toContain("14 earlier lines"); expect(out.turnText).toContain("do not restate");
 });
 it("F7 recovery renders the shared metadata and engine headers", () => {
-  const rows = transcriptForDriver([{ role: "assistant", text: "away", engine: { instanceId: "b", label: "Engine B" } }], "a");
+  const rows = transcriptForDriver(sourced([{ role: "assistant" as const, text: "away", engine: { instanceId: "b", label: "Engine B" } }]), "a");
   const replay = renderDriverReplay(rows, replayMetadata(12));
   expect(replay).toContain("12 earlier lines"); expect(replay).toContain("written on Engine B."); expect(replay).toContain("do not restate");
 });
 it("F8 budgets rendered replay including expanded quotes, roles and headers", () => {
-  const rows = Array.from({ length: 40 }, (_, i) => ({ role: "assistant" as const, text: `quoted: ${"é".repeat(1000)}`, engine: { instanceId: String(i % 2), label: "Engine " + i } }));
+  const rows = sourced(Array.from({ length: 40 }, (_, i) => ({ role: "assistant" as const, text: `quoted: ${"é".repeat(1000)}`, engine: { instanceId: String(i % 2), label: "Engine " + i } })));
   const fitted = fitRenderedReplay(rows, "current", 3, 5000);
   expect(fitted.transcript.length).toBeLessThan(3);
   expect(fitted.omitted).toBe(43 - fitted.transcript.length);
@@ -84,7 +86,7 @@ it("F12 keeps coordinated first-person actions distinct from reported speech", (
 });
 
 describe("durable queue and capture", () => {
-  beforeEach(() => { closeDatabase(); rmSync(DATA_DIR, { recursive: true, force: true }); });
+  beforeEach(() => { closeDatabase(); removeTempDirSync(DATA_DIR); });
   const make = () => { const store = new Store(() => ({ instanceId: "a", model: "one" })); return { store, bot: store.createBot({}, { seedMessages: false }) }; };
   it("F1 classifies mirrored teammate questions separately from delegation results", () => {
     const { store, bot } = make();

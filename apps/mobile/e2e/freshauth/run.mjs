@@ -160,8 +160,11 @@ function relayStatement(installId, atMs) {
 function createHashHex(buf) {
   return spawnSync("shasum", ["-a", "256"], { input: buf, encoding: "buffer" }).stdout.toString().split(" ")[0];
 }
+/** The control page's per-launch token, handed to the sidecar below the way a
+ * script launching it by hand does. */
+const CONTROL_TOKEN = randomBytes(32).toString("base64url");
 const mintToken = async () => {
-  const res = await fetch(`http://127.0.0.1:${PORTS.control}/pairing`, { method: "POST", headers: { origin: `http://127.0.0.1:${PORTS.control}`, "content-type": "application/json" } });
+  const res = await fetch(`http://127.0.0.1:${PORTS.control}/pairing`, { method: "POST", headers: { origin: `http://127.0.0.1:${PORTS.control}`, "content-type": "application/json", "x-murage-control-token": CONTROL_TOKEN } });
   const body = await res.json();
   if (!body?.token) throw new Error(`pairing mint failed: HTTP ${res.status}`);
   return body.token;
@@ -177,6 +180,7 @@ try {
   start("companion", join(DESKTOP, "companion/src/index.ts"), {
     MURAGE_COMPANION_PORT: String(PORTS.device),
     MURAGE_CONTROL_PORT: String(PORTS.control),
+    MURAGE_COMPANION_CONTROL_TOKEN: CONTROL_TOKEN,
     MURAGE_BROWSER_PORT: String(PORTS.browser),
     MURAGE_COMPANION_BIND: "loopback",
     MURAGE_BROWSER_BIND: "loopback",

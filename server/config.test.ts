@@ -38,6 +38,7 @@ import { customMcpServers, customMcpServerDescriptors,
   ROUTING_ENV,
   type AppConfig,
 } from "./config.ts";
+import { removeTempDirSync } from "./testing/cleanup.ts";
 
 vi.mock("node:fs", async (original) => {
   const fs = await original<typeof import("node:fs")>();
@@ -210,14 +211,14 @@ describe("saved configuration recovery", () => {
     vi.resetModules();
     ({ loadConfig, saveConfig } = await import("./config.ts"));
     mkdirSync(DATA_DIR, { recursive: true });
-    rmSync(file, { recursive: true, force: true });
+    rmSync(file, { force: true });
   });
   afterEach(async () => {
     vi.mocked(readFileSync).mockReset();
     const realFs = await vi.importActual<typeof import("node:fs")>("node:fs");
     vi.mocked(readFileSync).mockImplementation(realFs.readFileSync);
     vi.unstubAllEnvs();
-    rmSync(file, { recursive: true, force: true });
+    rmSync(file, { force: true });
   });
 
   it("allows a truly missing file and valid empty config without requiring modern fields", () => {
@@ -318,7 +319,7 @@ describe("legacy directory migration scope", () => {
   afterEach(() => {
     vi.unstubAllEnvs();
     vi.resetModules();
-    rmSync(fixtureHome, { recursive: true, force: true });
+    removeTempDirSync(fixtureHome);
   });
   const seedLegacy = () => {
     const legacy = join(fixtureHome, ".opengrokbot");
@@ -1540,10 +1541,11 @@ describe("Flux Memory switches in config", () => {
 
   it("defaults are unchanged (spaces off), saved switches apply, env overrides them", () => {
     loadConfig();
-    expect(fluxMemorySettings()).toEqual({ killSwitch: false, inject: "on", ownerMemory: "on", spaces: false });
+    // "Use Flux memory" (lane 2.2) is on by default: with a Flux key present, Flux Memory works without an opt-in.
+    expect(fluxMemorySettings()).toEqual({ killSwitch: false, inject: "on", ownerMemory: "on", spaces: false, external: true });
     saveConfig({ flux: { memory: { enabled: true, inject: false, spaces: true } } });
     loadConfig();
-    expect(fluxMemorySettings()).toEqual({ killSwitch: false, inject: "off", ownerMemory: "on", spaces: true });
+    expect(fluxMemorySettings()).toEqual({ killSwitch: false, inject: "off", ownerMemory: "on", spaces: true, external: true });
     vi.stubEnv("MURAGE_FLUX_MEMORY_SPACES", "off");
     vi.stubEnv("MURAGE_FLUX_MEMORY", "off");
     expect(fluxMemorySettings()).toMatchObject({ killSwitch: true, spaces: false, inject: "off" });

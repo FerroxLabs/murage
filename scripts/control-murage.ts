@@ -278,6 +278,8 @@ export interface VerificationServer {
   fixtureDumpPath: string;
   /** With `turnLog`: one JSON line per engine turn (bot, thread, prompt text), FAKE_CLAUDE_DUMP_LOG. */
   fixtureTurnLogPath: string;
+  /** With `dumpLog`: every fixture dump (the latest-turn file's content) as one JSON line per dumped turn, FAKE_CLAUDE_DUMP_HISTORY. */
+  fixtureDumpLogPath: string;
   /** Writing a file named after a held fake CLI's pid here lets that turn finish normally. */
   fixtureFinishGateDir: string;
   child: ChildProcess;
@@ -346,6 +348,7 @@ export async function launchVerificationServer(
   signal?: AbortSignal,
   options: {
     instrumentationSource?: string;
+    cloud?: { publicOrigin: string; bootstrapSecret: string };
     /** Fixture startup allowance for slow filesystems or a loaded machine; does
      *  not change turn deadlines. Default 120 s, or MURAGE_VERIFY_READY_TIMEOUT_MS. */
     readyTimeoutMs?: number;
@@ -369,6 +372,9 @@ export async function launchVerificationServer(
     /** Record every engine turn (`fixtureTurnLogPath`) and answer the turns with these scripted replies in order,
      * across fresh CLI processes, so a spec can tell which turn answered what. */
     turnLog?: { replies: string[] };
+    /** Keep every fake engine dump in order (`fixtureDumpLogPath`), not only the latest turn's file: a spec whose turns
+     * overlap other bots' turns finds its own turn there. */
+    dumpLog?: boolean;
   } = {},
 ): Promise<VerificationServer> {
   const port = await freePortBlock([0, 1], options.portRange?.from, options.portRange?.span);
@@ -389,6 +395,7 @@ export async function launchVerificationServer(
   };
   const fixtureDumpPath = join(dataDir, "fake-claude-dump.json");
   const fixtureTurnLogPath = join(dataDir, "fake-claude-turns.jsonl");
+  const fixtureDumpLogPath = join(dataDir, "fake-claude-dumps.jsonl");
   const fixtureFinishGateDir = join(dataDir, "finish-fake");
   mkdirSync(fixtureTemp, { recursive: true });
   mkdirSync(fixtureFinishGateDir, { recursive: true });
@@ -448,7 +455,9 @@ export async function launchVerificationServer(
       FAKE_CLAUDE_REPLIES: JSON.stringify(options.turnLog.replies),
       FAKE_CLAUDE_REPLY_STATE: join(dataDir, "fake-claude-reply-state"),
     } : {}),
+    ...(options.dumpLog ? { FAKE_CLAUDE_DUMP_HISTORY: fixtureDumpLogPath } : {}),
     ...options.env,
+    ...(options.cloud ? { MURAGE_CLOUD_ROLE: "home", MURAGE_PUBLIC_ORIGIN: options.cloud.publicOrigin, MURAGE_CLOUD_SECRETS_FD: "3", MURAGE_TRUSTED_PROXY: `unix:${join(dataDir, ".verification-proxy.sock")}` } : {}),
   });
   // Optional fixture-owned observation only. Existing callers retain exactly
   // their previous launch; no preload path or source enters a live app config.
@@ -463,11 +472,15 @@ export async function launchVerificationServer(
   }
   function startChild() {
     const log = openSync(logPath, "a", 0o600);
-    try { return spawn(process.execPath, ["--experimental-strip-types", ...(options.instrumentationSource === undefined ? [] : ["--import", pathToFileURL(instrumentationPath).href]), join(ROOT, "server", "index.ts")], {
+    try { const launched = spawn(process.execPath, ["--experimental-strip-types", ...(options.instrumentationSource === undefined ? [] : ["--import", pathToFileURL(instrumentationPath).href]), join(ROOT, "server", "index.ts")], {
     cwd: ROOT,
     env: childEnv,
-    stdio: ["ignore", log, log],
-    }); } finally { closeSync(log); }
+    // Cloud fixtures keep the private boot pipe at FD3 and satisfy the
+    // supervisor's separate IPC contract at FD4; desktop stdio is unchanged.
+    stdio: options.cloud ? ["ignore", log, log, "pipe", "ipc"] : ["ignore", log, log],
+    });
+    if(options.cloud) (launched.stdio[3] as import("node:stream").Writable).on("error", () => {}).end(JSON.stringify({ version: 1, bootstrapSecret: options.cloud.bootstrapSecret, credentials: {} }));
+    return launched; } finally { closeSync(log); }
   }
   let child = startChild();
 
@@ -498,6 +511,7 @@ export async function launchVerificationServer(
     info: { url, pid: child.pid!, dataDir, logPath },
     fixtureDumpPath,
     fixtureTurnLogPath,
+    fixtureDumpLogPath,
     fixtureFinishGateDir,
     child,
     async restart() {

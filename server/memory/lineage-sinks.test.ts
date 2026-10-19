@@ -38,16 +38,17 @@ const REVIEWED: Record<string, Partial<Record<Category, Reviewed>>> = {
   "drivers/acp/core.ts": { engineSend: { count: 1, covered: "driver-internal (a prewarm: nothing is sent)" } },
   "harness/instance-holds.ts": { engineSend: { count: 1, covered: "driver-internal (a wrapper passing the turn it was given)" } },
   "harness/memory-adapter.ts": { engineSend: { count: 1, covered: "driver-internal (a wrapper passing the turn it was given)" } },
+  "drivers/cli-memory-learning.ts": { engineSend: { count: 1, covered: "driver-internal (learning's hidden one-shot on a CLI or ACP login: the extraction prompt the memory helper built, a thread no window or bot sees, no tools, every ask denied, its events ignored by the server)" } },
   "index.ts": {
     engineSend: { count: 3, covered: "lineage (the sends inside sendProjectUsageTurn write fencedTurnInput's input: a BuiltPrompt in, the send fence before every write)" },
     toolHandler: { count: 44, covered: "lineage (routes that hand a turn stored or bot-written text answer through toolJson / turnToolText: tool-result, skills, the image library; ask and delegate results join the turn in result-egress.ts; the rest hand over no stored text: capabilities, connectors, browser and computer control, web search, image generation, routines, roster, staging)" },
-    maker: { count: 7, covered: "lineage (the direct, room-member and Chief proposal prompts; toolJson)" },
+    maker: { count: 8, covered: "lineage (the direct, room-member and Chief proposal prompts; toolJson; the room's last rebuild carries an empty working context resting on none)" },
   },
-  "memory/pip-reflect.ts": { engineSend: { count: 2, covered: "lineage (a text-only reflection over the bot's admitted sources; every claim it writes cites them as memory_evidence, which the marker walks source -> records)" } },
+  "memory/pip-reflect.ts": { engineSend: { count: 1, covered: "lineage (a text-only reflection over the bot's admitted sources, probe and content through one paid-call wrapper; every claim it writes cites them as memory_evidence, which the marker walks source -> records)" } },
   "memory/pip-reflect-host.ts": { engineSend: { count: 1, covered: "lineage (the text-only route the reflection calls; see pip-reflect.ts)" } },
   "memory/routes.ts": { toolHandler: { count: 4, covered: "lineage (memory search and recall: each lookup is a receipt that joins the running turn, dispatch.ts noteLookup -> receiptJoinsTurn)" } },
   "image-library-audience.ts": { toolHandler: { count: 2, covered: "lineage (an owner-audience check only; the library routes answer through toolJson in index.ts)" } },
-  "internal-capabilities.ts": { toolHandler: { count: 3, covered: "lineage (none: capability routing only, no stored text)" } },
+  "internal-capabilities.ts": { toolHandler: { count: 4, covered: "lineage (none: capability routing only, no stored text; the Cloud line's /api/internal/box/v1/ prefix maps to the computer kind)" } },
   "shared-bots-roster.ts": { toolHandler: { count: 2, covered: "lineage (none: roster refusals only, no stored text)" } },
   "project-tool-routing.ts": { toolHandler: { count: 3, covered: "lineage (none: card verbs return card state, not stored lines; a card a lead writes rests on its turn, project-cards.ts)" } },
   "project-memory-tools.ts": {
@@ -121,7 +122,8 @@ describe("write-time sinks (DESIGN-WRITETIME 2, Enforcement (b))", () => {
 
   it("every server send of a turn takes a BuiltPrompt: sendProjectUsageTurn's input is contracts.ts BuiltSendTurnInput, unwrapped once by fencedTurnInput", () => {
     const index = readFileSync(join(SERVER, "index.ts"), "utf8");
-    expect(index).toMatch(/async function sendProjectUsageTurn\(instance: ProviderInstance, built: BuiltSendTurnInput, fence: EngineFence\) \{\n  let turn: SendTurnInput = fencedTurnInput\(built, fence\);/);
+    // (a Cloud home first checks its execution gate, which refuses before anything is sent: the Cloud line's requireOpen)
+    expect(index).toMatch(/async function sendProjectUsageTurn\(instance: ProviderInstance, built: BuiltSendTurnInput, fence: EngineFence\) \{\n(?:  homeExecutionGate\?\.requireOpen\(\);\n)?  let turn: SendTurnInput = fencedTurnInput\(built, fence\);/);
     expect(index).not.toMatch(/\btext: withNowLine\(/);
     const contracts = readFileSync(join(SERVER, "contracts.ts"), "utf8");
     expect(contracts).toMatch(/export type BuiltSendTurnInput = Omit<SendTurnInput, "text"> & \{ readonly prompt: import\("\.\/memory\/lineage-types\.ts"\)\.BuiltPrompt \};/);

@@ -36,6 +36,8 @@ export interface McpServerListing {
   args: string[];
   envKeys: string[];
   enabled: boolean;
+  /** Why Murage turned it off at load (Rule 57a: `name-collision:<survivor>`). */
+  disabledReason?: string;
   status?: "ready" | "needs-key";
 }
 
@@ -50,7 +52,14 @@ export interface McpRemoteServerListing {
   headerNames: string[];
   local?: "this-computer" | "local-network";
   enabled: boolean;
+  disabledReason?: string;
   status: "ready" | "needs-sign-in" | "needs-key" | "unknown";
+}
+
+/** Rule 57a: the server another one's name clashed with, when Murage turned this one off for it. */
+export function nameClashWith(server: { disabledReason?: string }): string | null {
+  const reason = server.disabledReason ?? "";
+  return reason.startsWith("name-collision:") && reason.length > "name-collision:".length ? reason.slice("name-collision:".length) : null;
 }
 
 type AnyListing = McpServerListing | McpRemoteServerListing;
@@ -138,6 +147,7 @@ export function McpServersPanel() {
   const [notice, setNotice] = useState<string | null>(null);
   const [probe, setProbe] = useState<Record<string, ProbeView>>({});
   const [removing, setRemoving] = useState<string | null>(null);
+  const [renaming, setRenaming] = useState<{ from: string; to: string } | null>(null);
   const [elapsed, setElapsed] = useState(0);
   const loadGeneration = useRef(0);
 
@@ -219,6 +229,25 @@ export function McpServersPanel() {
       setServers(result.servers);
       setNotice(t("mcp.notice.updated", { name }));
       closeEditor();
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : String(cause));
+    } finally {
+      setBusy(null);
+    }
+  };
+
+  /** Rule 57a's rename action: the owner names the server; it stays off until they turn it on. */
+  const rename = async () => {
+    if (!renaming) return;
+    const { from, to } = renaming;
+    setBusy(`rename:${from}`);
+    loadGeneration.current += 1;
+    setError(null);
+    try {
+      const result = await api(`/api/mcp/servers/${encodeURIComponent(from)}`, { method: "PATCH", body: JSON.stringify({ name: to.trim() }) });
+      setServers(result.servers);
+      setRenaming(null);
+      setNotice(t("mcp.notice.renamed", { from, to: to.trim() }));
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : String(cause));
     } finally {
@@ -447,6 +476,7 @@ export function McpServersPanel() {
                           {remote ? server.url : commandDetails(server)}
                         </code>
                       </details>
+                      {nameClashWith(server) && <div className="mt-1 text-[11.5px] text-warning">{t("mcp.row.nameClash", { other: nameClashWith(server)! })}</div>}
                       {!remote && server.envKeys.length > 0 && <div className="mt-1 truncate text-[11px] text-ink-secondary">{t("mcp.row.secretsSaved", { names: server.envKeys.join(", ") })}</div>}
                       {remote && server.headerNames.length > 0 && <div className="mt-1 truncate text-[11px] text-ink-secondary">{t("mcp.row.secretsSaved", { names: server.headerNames.join(", ") })}</div>}
                     </div>
@@ -459,6 +489,11 @@ export function McpServersPanel() {
                           {busy === `signin:${server.name}` ? <Loader2 size={14} className="animate-spin" /> : <KeyRound size={14} />} {t("mcp.row.signIn")}
                         </button>
                       )}
+                      {nameClashWith(server) && (
+                        <button type="button" disabled={!idle} onClick={() => { setRenaming({ from: server.name, to: "" }); setError(null); setNotice(null); }} className={cn(buttonClass, "text-accent-text")} aria-label={t("mcp.row.renameAria", { name: server.name })}>
+                          <Pencil size={14} /> {t("mcp.row.rename")}
+                        </button>
+                      )}
                       <button type="button" disabled={!idle} onClick={() => void toggle(server)} className={buttonClass} aria-label={server.enabled ? t("mcp.row.turnOffAria", { name: server.name }) : t("mcp.row.turnOnAria", { name: server.name })}>
                         {busy === `toggle:${server.name}` ? <Loader2 size={14} className="animate-spin" /> : <CirclePower size={14} />} {server.enabled ? t("mcp.row.turnOff") : t("mcp.row.turnOn")}
                       </button>
@@ -468,6 +503,16 @@ export function McpServersPanel() {
                       <button type="button" disabled={!idle} onClick={() => setRemoving(server.name)} className="rounded-lg p-2 text-ink-secondary hover:bg-danger/10 hover:text-danger disabled:opacity-40" aria-label={t("mcp.row.removeAria", { name: server.name })}><Trash2 size={14} /></button>
                     </div>
                   </div>
+                  {renaming?.from === server.name && (
+                    <form className="mt-3 flex flex-wrap items-center gap-2 rounded-lg bg-inset px-3 py-2 text-[12.5px] text-ink" onSubmit={(event) => { event.preventDefault(); void rename(); }}>
+                      <label className="flex min-w-0 flex-1 items-center gap-2">
+                        <span className="shrink-0">{t("mcp.rename.label", { name: server.name })}</span>
+                        <input autoFocus value={renaming.to} onChange={(event) => setRenaming({ from: server.name, to: event.target.value })} className="min-w-0 flex-1 rounded-md border border-hairline bg-card px-2 py-1 font-mono text-[12px]" spellCheck={false} autoCapitalize="off" autoComplete="off" />
+                      </label>
+                      <button type="submit" disabled={!idle || !renaming.to.trim()} className="rounded-lg px-2.5 py-1.5 text-accent-text hover:bg-raised disabled:opacity-40">{busy === `rename:${server.name}` && <Loader2 size={13} className="mr-1 inline animate-spin" />}{t("mcp.rename.save")}</button>
+                      <button type="button" onClick={() => setRenaming(null)} className="rounded-lg px-2.5 py-1.5 text-ink-secondary hover:bg-raised">{t("mcp.rename.cancel")}</button>
+                    </form>
+                  )}
                   {removing === server.name && (
                     <div role="alertdialog" aria-label={t("mcp.remove.confirm", { name: server.name })} className="mt-3 flex flex-wrap items-center gap-2 rounded-lg bg-danger/5 px-3 py-2 text-[12.5px] text-ink">
                       <span>{t("mcp.remove.confirm", { name: server.name })}</span>

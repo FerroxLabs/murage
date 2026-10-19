@@ -8,7 +8,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { ioBudget } from "./io-budget.ts";
 import { initializeMessageTables } from "./message-tables.ts";
 import { branchOracle, threadKey } from "./branch-index.ts";
-import { BACKFILL_UPGRADE_RECHECK_MS, BACKFILL_UPGRADE_YIELD_MAX_MS, holdTranscriptBackfillUntil, readIndexState, runTranscriptBackfill, turnFirstRowid } from "./transcript-backfill.ts";
+import { BACKFILL_UPGRADE_RECHECK_MS, BACKFILL_UPGRADE_YIELD_MAX_MS, holdTranscriptBackfillUntil, readIndexState, runTranscriptBackfill, transcriptBackfillWaitingOn, turnFirstRowid } from "./transcript-backfill.ts";
 
 const put = (db: DatabaseSync, thread: string, id: string, parentId: string | null, extra: object = {}) =>
   db.prepare("INSERT INTO messages(thread_id, id, at, role, kind, text, json) VALUES (?, ?, 1, 'bot', ?, 'x', ?)").run(
@@ -265,5 +265,63 @@ describe("rc13 round 2: the start's backfill hold is set before the database ope
     expect(hold).toBeLessThan(firstOpen);
     // (a top-level await before the hold would let a chunk of a backfill started at an earlier open run first)
     expect(hold).toBeLessThan(firstAwait);
+  });
+});
+
+// 1.0.3 lane 3 (stall r2 M1, L1)
+describe("1.0.3: a thread queued at the front ends the backfill's wait on the upgrade, and a waiting backfill holds nothing back", () => {
+  it("a reader that queues a thread (queueFrontFill, no startTranscriptBackfill) has it prepared while the upgrade still runs, without the 5 s look", async () => {
+    const { queueFrontFill } = await import("./branch-fill.ts");
+    const db = new DatabaseSync(":memory:");
+    initializeMessageTables(db);
+    for (let i = 0; i < 30; i++) put(db, "t", `m${i}`, i ? `m${i - 1}` : null, { turnId: "t1" });
+    for (let i = 0; i < 5; i++) put(db, "u", `u${i}`, i ? `u${i - 1}` : null, { turnId: "t2" });
+    upgraded(db);
+    initializeMessageTables(db);
+    let open = true, waits = 0;
+    // the recheck sleep never ends by itself: only a nudge can end the wait
+    const sleep = (ms: number) => { if (ms === BACKFILL_UPGRADE_RECHECK_MS) waits++; return new Promise<void>(() => {}); };
+    const run = runTranscriptBackfill(db, () => open, { gate: always, ready: null, sleep, upgradeRunning: () => true });
+    for (let i = 0; i < 20 && waits === 0; i++) await new Promise(resolve => setImmediate(resolve));
+    expect(waits).toBe(1);
+    expect(transcriptBackfillWaitingOn(db)).toBe(true);
+    expect(threadKey(db, "u")?.state).not.toBe(2);
+    queueFrontFill(db, "u");
+    for (let i = 0; i < 200 && threadKey(db, "u")?.state !== 2; i++) await new Promise(resolve => setImmediate(resolve));
+    expect(threadKey(db, "u")?.state).toBe(2);
+    expect(threadKey(db, "t")?.state, "the backfill's own thread still waits for the upgrade").not.toBe(2);
+    open = false;
+    queueFrontFill(db, "u"); // end the last wait so the loop sees it is closed
+    await run;
+  });
+
+  it("is waiting (reads nothing) on the start hold, and not once it reads again", async () => {
+    const db = oneThread();
+    let release!: () => void;
+    const ready = new Promise<void>(resolve => { release = resolve; });
+    const run = runTranscriptBackfill(db, () => true, { gate: always, ready });
+    for (let i = 0; i < 10; i++) await new Promise(resolve => setImmediate(resolve));
+    expect(transcriptBackfillWaitingOn(db)).toBe(true);
+    release();
+    await run;
+    expect(transcriptBackfillWaitingOn(db)).toBe(false);
+    expect(threadKey(db, "t")?.state).toBe(2);
+  });
+
+  it("historyUpgradeRunning keys on the backfill working, not on its loop existing", async () => {
+    const { readFileSync } = await import("node:fs");
+    const source = readFileSync(new URL("./database.ts", import.meta.url), "utf8");
+    expect(source).toMatch(/deps\.backfill \?\? transcriptBackfillWorking/);
+  });
+
+  it("waiting is kept per connection: an old connection's loop asleep does not make another connection's read as waiting (Astra r1)", async () => {
+    const old = oneThread(), current = oneThread();
+    let open = true;
+    const run = runTranscriptBackfill(old, () => open, { gate: always, ready: new Promise<void>(() => {}) });
+    for (let i = 0; i < 10; i++) await new Promise(resolve => setImmediate(resolve));
+    expect(transcriptBackfillWaitingOn(old)).toBe(true);
+    expect(transcriptBackfillWaitingOn(current)).toBe(false);
+    open = false;
+    void run;
   });
 });

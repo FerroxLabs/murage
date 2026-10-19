@@ -16,6 +16,7 @@ electron/resources/Murage Recorder.app
 release
 .murage-scratch
 .wrangler/
+.wrangler-e2e/
 .dev.vars
 .dev.vars.*
 !cloudflare/control-plane/.dev.vars.example

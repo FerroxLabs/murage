@@ -15,7 +15,15 @@
   "vars": {
     "BETTER_AUTH_URL": "https://accounts.murage.ai",
     "EMAIL_FROM": "noreply@murage.ai",
-    "ALLOWED_ORIGINS": "",
+    // The customer portal's server-side calls carry this Origin (Better Auth's fetch-metadata check requires it).
+    // https://murage.ai: the members area's server-side calls (Supabase bearer) send this Origin.
+    "ALLOWED_ORIGINS": "https://cloud.murage.ai,https://murage.ai",
+    // Cloud customers sign in on the murage.ai members area (Supabase Auth). Set SUPABASE_URL to that project's
+    // https://<ref>.supabase.co project URL, even with a custom domain (Auth keeps the project-domain issuer; optional
+    // SUPABASE_JWKS_URL / SUPABASE_JWT_ISSUER override, ES256 keys only). Not a secret. Unset: Cloud customer routes answer 503
+    // customer_auth_unconfigured. With it, SUPABASE_PUBLISHABLE_KEY (the project's publishable/anon key, public; never a
+    // secret or service_role key) is required: an email change is checked against Supabase Auth's GET /auth/v1/user. A Better Auth (phone-companion) session never acts on a Cloud
+    // route; the old cloud.murage.ai sign-in is gone. See lanes/cloud-v2/makerkit/CONTRACT.md.
     "CLOUDFLARE_ACCOUNT_ID": "b83123326a4b9ad76831b9cb9365b33b",
     "CLOUDFLARE_ZONE_ID": "98521dceb5535df78337fc26a9dc4d73",
     // ONE DOMAIN. This block used to mix murage.ai (the route and the auth
@@ -32,12 +40,23 @@
     // credentials for that account are secrets below and have no default.
     "SENDLANE_LIST_ID": "37"
   },
+  // B4 Flux (wiring step 3): FLUX_CLOUD_SERVICE_TOKEN is deliberately NOT required yet (see the staging note below and
+  // .dev.vars.example); the Flux routes and cron are off until Sean's go.
   "secrets": {
     "required": [
       "BETTER_AUTH_SECRET",
       "CLOUDFLARE_API_TOKEN",
       "SENDLANE_API_KEY",
-      "SENDLANE_HASH_KEY"
+      "SENDLANE_HASH_KEY",
+      // HMAC key for the checkout disclosure token (src/disclosure-token.ts, WP4 r2-3): at least 32 random characters; checkout answers 503 without it.
+      "CHECKOUT_DISCLOSURE_TOKEN_SECRET",
+      // WP8 r2: the key that envelope-encrypts the 312k cancellation mail retry payloads (they carry a hold link until delivered).
+      "CANCELLATION_MAIL_KEY",
+      // WP9: seals the withdrawal-notice mails kept for retries (they hold bearer links). Any long random string; rotating it only makes
+      // queued retries render their mail again.
+      "NOTICE_MAIL_KEY",
+      // R16: the key that derives the refund request identity (refund-identity.ts); required so a deploy without it is refused.
+      "REFUND_KEY_SECRET"
     ]
   },
   "d1_databases": [
@@ -48,11 +67,24 @@
       "migrations_dir": "migrations"
     }
   ],
+  // The identity reader (cloudflare/identity-reader): the ONLY holder of the Supabase secret key. The control plane reaches it through this
+  // service binding and has no service-role or secret key of its own. Used by the emailed single-use links (src/public-tokens.ts).
+  "services": [
+    { "binding": "IDENTITY_READER", "service": "murage-identity-reader", "entrypoint": "IdentityReader" }
+  ],
   "send_email": [
     {
       "name": "EMAIL",
       "allowed_sender_addresses": ["noreply@murage.ai"]
     }
+  ],
+  // Edge rate limits (Workers Rate Limiting), spent before any D1 access on
+  // the machine, pairing and signup routes (src/edge-limits.ts). Open: keyed
+  // by client IP. Bearer: keyed by machine id plus IP. namespace_id is any
+  // positive integer unique in the account; changing it starts fresh counters.
+  "ratelimits": [
+    { "name": "MACHINE_OPEN_LIMIT", "namespace_id": "73101", "simple": { "limit": 30, "period": 60 } },
+    { "name": "MACHINE_BEARER_LIMIT", "namespace_id": "73102", "simple": { "limit": 240, "period": 60 } }
   ],
   "triggers": {
     "crons": ["*/5 * * * *"]
@@ -61,5 +93,86 @@
     "enabled": true,
     "logs": { "enabled": true, "head_sampling_rate": 1 },
     "traces": { "enabled": true, "head_sampling_rate": 0.05 }
+  },
+  "env": {
+    "staging": {
+      "name": "murage-control-plane-staging",
+      // Staging lives on the Ferrox Labs account; murage.ai DNS stays on the
+      // production account and is never handed to this Worker.
+      "account_id": "874fe1689a53e6f56ff74816a9f23b26",
+      "workers_dev": true,
+      "routes": [],
+      "vars": {
+        // Staging carries the Cloud terms with the one-per-person text (page label 2026-10-11.1, id in REFUND_LIMIT_V2_CLOUD_TERMS_IDS), so the one-per-person refund limit is live here (refund-identity.ts).
+        "REFUND_LIMIT_V2_LIVE": "1",
+        // Staging only: 500 responses log the error name, message and top frames (index.ts catch-all). Never set in production.
+        "LOG_INTERNAL_ERRORS": "1",
+        "BETTER_AUTH_URL": "https://murage-control-plane-staging.sean-874.workers.dev",
+        "EMAIL_FROM": "noreply@murage.ai",
+        "ALLOWED_ORIGINS": "https://cloud.murage.test:3443,https://murage.ai,https://murage-site-preview.vercel.app",
+        // Desktop (companion) endpoints, as in production: tunnels and DNS in the
+        // account that holds the murage.ai zone, names c-<hex>.murage.ai (one
+        // level, covered by the zone's free certificate). Staging's
+        // CLOUDFLARE_API_TOKEN is the same scoped token as CLOUD_HOME_API_TOKEN.
+        "CLOUDFLARE_ACCOUNT_ID": "b83123326a4b9ad76831b9cb9365b33b",
+        "CLOUDFLARE_ZONE_ID": "98521dceb5535df78337fc26a9dc4d73",
+        "COMPANION_HOST_SUFFIX": "murage.ai",
+        // Cloud homes (machine endpoints): tunnels and DNS are created in the
+        // account that holds the zone, which is not this Worker's account.
+        // Home names are h-<hex>.murage.ai (one level, covered by the zone's
+        // free certificate). All three vars plus the secret CLOUD_HOME_API_TOKEN
+        // must be set together; a partial set fails closed (503).
+        "CLOUD_HOME_HOST_SUFFIX": "murage.ai",
+        "CLOUD_HOME_ZONE_ID": "98521dceb5535df78337fc26a9dc4d73",
+        "CLOUD_HOME_ACCOUNT_ID": "b83123326a4b9ad76831b9cb9365b33b",
+        "SENDLANE_LIST_ID": "37",
+        // Mounts the CP0 machine create and rotate routes. Never set in production.
+        "CLOUD_CP0_STAGING": "1",
+        // Launch rehearsal: the portal runs on a build host box at this origin; Stripe returns the browser there.
+        "PORTAL_ORIGIN": "https://murage-site-preview.vercel.app",
+        "BILLING_RETURN_ORIGIN": "https://murage-site-preview.vercel.app",
+        "SITE_ORIGIN": "https://murage-site-preview.vercel.app",
+        // Stripe TEST-mode objects (lanes/cloud-v2/b5/STRIPE-TEST-OBJECTS.md). Ids are not secrets.
+        "STRIPE_PRICE_STARTER": "price_1UOhbTItXbM6YxLOQ0atYN61",
+        "STRIPE_PRICE_PRO": "price_1UOhbWItXbM6YxLOwJykFVw7",
+        "STRIPE_PRICE_MAX": "price_1UOhbYItXbM6YxLOU1qRe6aB",
+        "STRIPE_PORTAL_CONFIGURATION": "bpc_1UOhbjItXbM6YxLOsFQw5RCz",
+        // AWS KMS wraps every home key (the access key pair is a Worker secret).
+        "AWS_KMS_KEY_ARN": "arn:aws:kms:eu-west-1:149471050106:key/0c7fb20d-226b-4ccc-91c5-93fd414c1afb",
+        "AWS_KMS_REGION": "eu-west-1",
+        // Real build host/Vultr adapters (HCLOUD_TOKEN is a Worker secret). Capacity slots cap concurrent paid homes.
+        "CLOUD_B3_MODE": "live",
+        "CLOUD_B3_CONFIG": "{\"reservationMs\":1800000,\"graceMs\":259200000,\"retentionMs\":2592000000,\"imageDigest\":\"sha256:294fb5e78367b222df59db83c78070eda8213977d6a112b78868a1b0172177fa\",\"engineSubscriptionGates\":{\"claudeAgent\":true,\"codex\":true,\"grokAgent\":true,\"kimiAgent\":true,\"opencodeGo\":true},\"quarantineRelayIP\":\"192.0.2.20\",\"capacity\":[{\"id\":\"stg-1\",\"projectId\":\"mcq-staging\",\"location\":\"fsn1\",\"serverType\":\"cx23\",\"outcome\":\"available\"},{\"id\":\"stg-2\",\"projectId\":\"mcq-staging\",\"location\":\"fsn1\",\"serverType\":\"cx23\",\"outcome\":\"available\"},{\"id\":\"stg-3\",\"projectId\":\"mcq-staging\",\"location\":\"fsn1\",\"serverType\":\"cx23\",\"outcome\":\"available\"},{\"id\":\"stg-4\",\"projectId\":\"mcq-staging\",\"location\":\"fsn1\",\"serverType\":\"cx23\",\"outcome\":\"available\"},{\"id\":\"stg-5\",\"projectId\":\"mcq-staging\",\"location\":\"fsn1\",\"serverType\":\"cx23\",\"outcome\":\"available\"},{\"id\":\"stg-6\",\"projectId\":\"mcq-staging\",\"location\":\"fsn1\",\"serverType\":\"cx23\",\"outcome\":\"available\"},{\"id\":\"stg-7\",\"projectId\":\"mcq-staging\",\"location\":\"fsn1\",\"serverType\":\"cx23\",\"outcome\":\"available\"},{\"id\":\"stg-8\",\"projectId\":\"mcq-staging\",\"location\":\"fsn1\",\"serverType\":\"cx23\",\"outcome\":\"available\"},{\"id\":\"stg-9\",\"projectId\":\"mcq-staging\",\"location\":\"fsn1\",\"serverType\":\"cx23\",\"outcome\":\"available\"},{\"id\":\"stg-10\",\"projectId\":\"mcq-staging\",\"location\":\"fsn1\",\"serverType\":\"cx23\",\"outcome\":\"available\"},{\"id\":\"stg-11\",\"projectId\":\"mcq-staging\",\"location\":\"fsn1\",\"serverType\":\"cx23\",\"outcome\":\"available\"},{\"id\":\"stg-12\",\"projectId\":\"mcq-staging\",\"location\":\"fsn1\",\"serverType\":\"cx23\",\"outcome\":\"available\"},{\"id\":\"stg-13\",\"projectId\":\"mcq-staging\",\"location\":\"fsn1\",\"serverType\":\"cx23\",\"outcome\":\"available\"},{\"id\":\"stg-14\",\"projectId\":\"mcq-staging\",\"location\":\"fsn1\",\"serverType\":\"cx23\",\"outcome\":\"available\"},{\"id\":\"stg-15\",\"projectId\":\"mcq-staging\",\"location\":\"fsn1\",\"serverType\":\"cx23\",\"outcome\":\"available\"},{\"id\":\"stg-16\",\"projectId\":\"mcq-staging\",\"location\":\"fsn1\",\"serverType\":\"cx23\",\"outcome\":\"available\"},{\"id\":\"stg-17\",\"projectId\":\"mcq-staging\",\"location\":\"fsn1\",\"serverType\":\"cx23\",\"outcome\":\"available\"},{\"id\":\"stg-18\",\"projectId\":\"mcq-staging\",\"location\":\"fsn1\",\"serverType\":\"cx23\",\"outcome\":\"available\"},{\"id\":\"stg-19\",\"projectId\":\"mcq-staging\",\"location\":\"fsn1\",\"serverType\":\"cx23\",\"outcome\":\"available\"},{\"id\":\"stg-20\",\"projectId\":\"mcq-staging\",\"location\":\"fsn1\",\"serverType\":\"cx23\",\"outcome\":\"available\"}]}",
+        "B5_PROVISIONER_CONFIG": "{\"images\":{\"hetzner\":{\"x86\":\"444142455\",\"arm\":\"444142428\"},\"vultr\":{}},\"sshKeyIds\":[130782531],\"firewallIds\":[11725298],\"storageBox\":[{\"id\":669748,\"host\":\"u687784.your-storagebox.de\",\"mainUser\":\"u687784\",\"knownHosts\":\"[u687784.your-storagebox.de]:23 ecdsa-sha2-nistp521 AAAAE2VjZHNhLXNoYTItbmlzdHA1MjEAAAAIbmlzdHA1MjEAAACFBAGK0po6usux4Qv2d8zKZN1dDvbWjxKkGsx7XwFdSUCnF19Q8psHEUWR7C/LtSQ5crU/g+tQVRBtSgoUcE8T+FWp5wBxKvWG2X9gD+s9/4zRmDeSJR77W6gSA/+hpOZoSE+4KgNdnbYSNtbZH/dN74EG7GLb/gcIpbUUzPNXpfKl7mQitw==\\n[u687784.your-storagebox.de]:23 ssh-rsa AAAAB3NzaC1yc2EAAAABIwAAAQEA5EB5p/5Hp3hGW1oHok+PIOH9Pbn7cnUiGmUEBrCVjnAw+HrKyN8bYVV0dIGllswYXwkG/+bgiBlE6IVIBAq+JwVWu1Sss3KarHY3OvFJUXZoZyRRg/Gc/+LRCE7lyKpwWQ70dbelGRyyJFH36eNv6ySXoUYtGkwlU5IVaHPApOxe4LHPZa/qhSRbPo2hwoh0orCtgejRebNtW5nlx00DNFgsvn8Svz2cIYLxsPVzKgUxs8Zxsxgn+Q/UvR7uq4AbAhyBMLxv7DjJ1pc7PJocuTno2Rw9uMZi1gkjbnmiOh6TTXIEWbnroyIhwc8555uto9melEUmWNQ+C+PwAK+MPw==\\n[u687784.your-storagebox.de]:23 ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIICf9svRenC/PLKIL9nk6K/pxQgoiFC41wTNvoIncOxs\",\"baseDir\":\"murage\"}],\"opsSshFrom\":[\"95.216.244.213/32\"],\"quarantineFirewallId\":11769359,\"forbiddenTypePrefixes\":[],\"ladders\":{\"starter\":[{\"provider\":\"hetzner\",\"serverType\":\"cx23\",\"arch\":\"x86\"},{\"provider\":\"hetzner\",\"serverType\":\"cax11\",\"arch\":\"arm\"},{\"provider\":\"hetzner\",\"serverType\":\"cpx22\",\"arch\":\"x86\"}]}}"
+      },
+      // B4 Flux (wiring step 3): FLUX_CLOUD_SERVICE_TOKEN is deliberately NOT in secrets.required yet. The Flux routes, the
+      // flux_renewal_due field and the Flux cron are off (CLOUD_FLUX_ROUTES_ENABLED unset) and the cron is a no-op without the
+      // token, so no deploy may demand it before Sean's go. At that go: add it here, set FLUX_LINK_PUBLIC_KEY, FLUX_AUTHORIZE_URL,
+      // FLUX_API_BASE (and optionally FLUX_APP_BASE, FLUX_B4_CONFIG) as vars, then CLOUD_FLUX_ROUTES_ENABLED="1" (.dev.vars.example).
+      "secrets": {
+        "required": ["BETTER_AUTH_SECRET", "CLOUDFLARE_API_TOKEN", "SENDLANE_API_KEY", "SENDLANE_HASH_KEY", "CLOUD_ADMIN_TOKEN", "CLOUD_KEK_V1", "CHECKOUT_DISCLOSURE_TOKEN_SECRET", "CANCELLATION_MAIL_KEY", "NOTICE_MAIL_KEY", "REFUND_KEY_SECRET"]
+      },
+      "d1_databases": [{
+        "binding": "DB",
+        "database_name": "murage-cloud-staging-enam",
+        "database_id": "2bbc01ca-09b4-4ca9-8cb1-5471f8abb070",
+        "migrations_dir": "migrations"
+      }, {
+        // STAGING ONLY: the mail sink (src/email.ts; TRUST-FIRST-FACTOR.md part C). Engages only with STAGING_MAIL_SINK=1 as well.
+        // Production declares no MAIL_SINK, so the sink cannot engage there. scripts/check-deploy.mjs refuses this binding (or
+        // STAGING_MAIL_SINK) anywhere but env.staging, or with another database id. Its one table: migrations-mailsink/.
+        "binding": "MAIL_SINK",
+        "database_name": "murage-cloud-staging-mailsink",
+        "database_id": "7c9c6777-f7a1-4804-8596-7933a523d392",
+        "migrations_dir": "migrations-mailsink"
+      }],
+      "services": [{ "binding": "IDENTITY_READER", "service": "murage-identity-reader-staging", "entrypoint": "IdentityReader" }],
+      "send_email": [{"name": "EMAIL", "allowed_sender_addresses": ["noreply@murage.ai"]}],
+      "ratelimits": [
+        { "name": "MACHINE_OPEN_LIMIT", "namespace_id": "73201", "simple": { "limit": 30, "period": 60 } },
+        { "name": "MACHINE_BEARER_LIMIT", "namespace_id": "73202", "simple": { "limit": 240, "period": 60 } }
+      ],
+      "triggers": {"crons": ["*/5 * * * *"]}
+    }
   }
 }

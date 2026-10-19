@@ -3,7 +3,7 @@
 // whatever the start order of the memory worker (redrive, first claims) and the revocation runner. The deny row is written by the
 // product function the delete commit uses (revoke-commit.ts commitRevoke), the runner is NOT run, the process restarts, then the
 // worker's start (redrive) and claims until none is left. Every payload read is recorded: none may be of a denied source.
-import { mkdirSync, rmSync } from "node:fs";
+import { mkdirSync } from "node:fs";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { DATA_DIR } from "../config.ts";
 import { closeDatabase, database, transaction } from "../database.ts";
@@ -17,10 +17,11 @@ import { forgetMemory } from "./forget.ts";
 import { ownerMemoryTicket } from "./authority.ts";
 import { resetClaimSettleSweep, resetParkSweep } from "./park.ts";
 import { measure } from "./testing/claim-rows.ts";
+import { removeTempDirSync } from "../testing/cleanup.ts";
 
 const NOW = Date.now() + 60_000;
 beforeEach(() => {
-  closeDatabase(); rmSync(DATA_DIR, { recursive: true, force: true }); mkdirSync(DATA_DIR, { recursive: true });
+  closeDatabase(); removeTempDirSync(DATA_DIR); mkdirSync(DATA_DIR, { recursive: true });
   setMemoryMode("capture"); jobs.resetMemoryClaimCursor(); resetParkSweep(); resetClaimSettleSweep();
   database().exec("PRAGMA synchronous=OFF");
 });

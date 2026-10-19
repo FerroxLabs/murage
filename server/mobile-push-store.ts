@@ -90,6 +90,29 @@ export function initializeMobilePush(db: DatabaseSync): void {
   // RES-009: the host's own record of when a binding's token pair expires.
   // Nullable: a binding from before it has none and keeps publishing.
   if (!bindingColumns.some((column) => column.name === "token_expires_at")) db.exec("ALTER TABLE push_bindings ADD COLUMN token_expires_at INTEGER");
+  // 1.0.3: PushStore.prune asks every few seconds whether a row of each retained-history table is due; without these each ask read the whole table.
+  for (const [name, table, column] of PUSH_RETENTION_103_INDEXES) db.exec(`CREATE INDEX IF NOT EXISTS ${name} ON ${table}(${column})`);
+}
+
+/** The retention indexes 1.0.3 adds (name, table, column). 1.0.2's backup inspector refuses an index it does not know, so the step back drops them. */
+export const PUSH_RETENTION_103_INDEXES = Object.freeze([
+  ["push_events_expires", "push_events", "expires_at"],
+  ["push_risk_rated", "push_risk", "rated_at"],
+  ["push_decisions_decided", "push_decisions", "decided_at"],
+] as const);
+
+/** "Prepare to reinstall" steps a 1.0.3 file back to 1.0.2's shape (installation-memory-downgrade.ts): the retention indexes leave, in one
+ * BEGIN IMMEDIATE. Rows are untouched; only the lookups they served get slower. Idempotent: a file without them is left untouched, and a later
+ * upgrade builds them again (initializeMobilePush). */
+export function downgradePushRetentionIndexesTo102(db: DatabaseSync): { dropped: number } {
+  const present = PUSH_RETENTION_103_INDEXES.filter(([name]) => db.prepare("SELECT 1 AS present FROM sqlite_schema WHERE type = 'index' AND name = ?").get(name) !== undefined);
+  if (!present.length) return { dropped: 0 };
+  db.exec("BEGIN IMMEDIATE");
+  try {
+    for (const [name] of present) db.exec(`DROP INDEX ${name}`);
+    db.exec("COMMIT");
+  } catch (error) { try { db.exec("ROLLBACK"); } catch { /* already rolled back */ } throw error; }
+  return { dropped: present.length };
 }
 
 type Row = Record<string, string | number | null>;
@@ -364,8 +387,14 @@ export class PushStore {
   }
 
   prune(now: number): void {
-    this.db.prepare("DELETE FROM push_events WHERE expires_at<=?").run(now);
-    this.db.prepare("DELETE FROM push_risk WHERE rated_at<=?").run(now - RISK_KEEP_MS);
-    this.db.prepare("DELETE FROM push_decisions WHERE decided_at<=?").run(now - DECISION_KEEP_MS);
+    // One read says whether anything is due; the DELETEs run only then. The flush calls this every few seconds, and a DELETE that
+    // matches nothing still takes the write lock. (A read cannot miss a row another writer just added: it sees the committed state.)
+    const due = this.db.prepare(
+      "SELECT EXISTS(SELECT 1 FROM push_events WHERE expires_at<=?1) AS e, EXISTS(SELECT 1 FROM push_risk WHERE rated_at<=?2) AS r, EXISTS(SELECT 1 FROM push_decisions WHERE decided_at<=?3) AS d",
+    ).get(now, now - RISK_KEEP_MS, now - DECISION_KEEP_MS) as Row | undefined;
+    if (!due) return;
+    if (due.e) this.db.prepare("DELETE FROM push_events WHERE expires_at<=?").run(now);
+    if (due.r) this.db.prepare("DELETE FROM push_risk WHERE rated_at<=?").run(now - RISK_KEEP_MS);
+    if (due.d) this.db.prepare("DELETE FROM push_decisions WHERE decided_at<=?").run(now - DECISION_KEEP_MS);
   }
 }
