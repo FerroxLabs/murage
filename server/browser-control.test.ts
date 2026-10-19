@@ -1,11 +1,12 @@
 import { afterEach, describe, expect, it } from "vitest";
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { UnifiedBrowserController } from "./browser-control.ts";
 import type { NativeBrowser, BrowserFrame } from "./browser-native-relay.ts";
+import { removeTempDirSync } from "./testing/cleanup.ts";
 const directories: string[] = [];
-afterEach(() => { for (const path of directories.splice(0)) rmSync(path,{recursive:true,force:true}); });
+afterEach(() => { for (const path of directories.splice(0)) removeTempDirSync(path); });
 function fixture() {
   const dir=mkdtempSync(join(tmpdir(),"murage-control-test-"));directories.push(dir);
   let frame: (f:BrowserFrame)=>void = ()=>{};

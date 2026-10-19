@@ -144,6 +144,9 @@ type SkillRecordingPayload = {
     heldBy?:{occasion:"daily"|"manual";since:number;bots:import("../../shared/backup-waiting").BackupWaitingBot[]};
     lastClosedResult?:import("../../shared/backup-schedule").BackupClosedResult;
     refs?:{installationRef:string;destinationRef:string;recoveryRef:string;destinationLabel:string;recoveryLabel:string};
+    /** Settings L5, decided by the desktop: whether this data folder may still
+     * set backups up without a dialog, and how the first run's backup step ended. */
+    firstRun?:{eligible:boolean;completed:"verified"|"off"|null;owed?:boolean};
     error?:string|null;
     /** Why the last backup stopped, while it waits to be cleared. */
     reviewReason?:string;
@@ -165,8 +168,22 @@ type SkillRecordingPayload = {
     appFile?:string;
   }
   interface Window {
+    /** B3 WP4: the Cloud-home window's own small bridge (electron/preload-cloud.cjs). Never present in the main window. */
+    muragecloud?: {
+      homeId: string;
+      platform: NodeJS.Platform;
+      setUnreadCount(count: number): void;
+      approvalNotifications: {
+        show(payload: { botId: string; threadId: string; requestId: string; messageId: string; requestTurnId?: string; title: string; body: string; silent?: boolean }): Promise<{ accepted: boolean }>;
+        onOpen(callback: (target: { botId: string; threadId: string; messageId?: string }) => void): () => void;
+      };
+      reachable(): Promise<{ ok: true } | { ok: false; code: string; message: string }>;
+      /** Settings: disconnect this computer from this window's own home. Main then closes the window and shows the Connect panel. */
+      disconnectThisComputer?(): Promise<{ disconnected: true }>;
+    };
     muragebox?: {
       platform: NodeJS.Platform;
+      arch?: string;
       backup?: {
         status(): Promise<{ supported:boolean; pending:boolean; unavailable?:"tool"|"closing" }>; restart(): Promise<{ restarting:boolean }>;
         /** Native save dialog; the private key never reaches the renderer. */
@@ -185,12 +202,15 @@ type SkillRecordingPayload = {
         selectReferences():Promise<BackupScheduleStatus|{cancelled:true}>;
         /** One act of setup: choose the backup folder, Murage writes the
          * recovery key itself, one confirmation. Older apps do not have it. */
-        setUp?(options?:{existingKey?:boolean}):Promise<(BackupScheduleStatus|{cancelled:true})&{created?:{label:string;publicKey:string|null;folder:string};refused?:string}>;
+        setUp?(options?:{existingKey?:boolean}|{firstRun:true}):Promise<(BackupScheduleStatus|{cancelled:true})&{created?:{label:string;publicKey:string|null;folder:string};refused?:string}>;
         configure(revision:number,choices:import("../../shared/backup-schedule").BackupSchedule&{allowIdleRestart?:boolean;allowClosedApp?:boolean}):Promise<BackupScheduleStatus>;
         /** One backup now through the Backup-mode restart; resolves as Murage restarts. */
         runNow(revision:number):Promise<BackupScheduleStatus>;
         /** Clears a backup that stopped without a confirmed result. */
         clearReview?(revision:number):Promise<BackupScheduleStatus>;
+        /** Ends the first run's backup step: "verified" (the desktop re-checks
+         * the receipt and archive) or "off" (backups stay off). Older apps do not have it. */
+        finishFirstRun?(choice:"verified"|"off"):Promise<BackupScheduleStatus>;
       };
       backupClosed?: {
         status():Promise<BackupClosedStatus>;
@@ -220,6 +240,30 @@ type SkillRecordingPayload = {
         applyRetention?(remoteRef:string,revision:number,policy:{keepLast?:number;keepDaily?:number;keepWeekly?:number;keepMonthly?:number;keepYearly?:number},previewId:string):Promise<{state:"nothing-to-remove"|"complete"|"needs-review";previewId:string;removed:number;error?:"repository-locked"|"forget-failed"|"prune-failed"|"operation-failed";lockRelease?:"unconfirmed"}>;
         clearRetentionReview?(remoteRef:string,revision:number,previewId:string):Promise<{cleared:boolean}>;
       };
+      /** B3 WP4: pairing with a Cloud home, from the local window. Present only on a desktop build; with the Cloud flag off every call rejects. */
+      cloudHome?: {
+        state(): Promise<{ enabled: true; cpSignedIn: boolean; paired: { homeId: string; origin: string }[] }>;
+        listHomes(): Promise<{ id: string; name: string; status: string; reachable: boolean; paired: boolean }[]>;
+        /** The bots of a paired home (id and name only): a per-bot engine sign-in names one. */
+        listBots(homeId: string): Promise<{ id: string; name: string }[]>;
+        /** Fires when Cloud goes live (true) or stops being live (false); the entry appears or disappears without a restart. */
+        onLive(callback: (live: boolean) => void): () => void;
+        /** Door v2: Connect from the browser. connectStart opens the system browser; the window then carries on by itself. */
+        connectStart(): Promise<{ pending: true; startedAt: number }>;
+        connectCancel(): Promise<{ pending: false }>;
+        /** "Use copied link": no arguments; main reads the clipboard, so the link never reaches this window. */
+        connectPaste(): Promise<{ homeId: string }>;
+        /** `open` is false while Cloud is not open on this build yet (no pinned control-plane key): the panel says so instead of offering Connect. */
+        /** `attempted`: the home was asked and its answer may be lost (the key is kept). `lastResult`: what happened last, kept
+         * until the next Connect or ten minutes, whether or not a Connect is still pending. */
+        connectStatus(): Promise<{ pending: boolean; startedAt: number | null; attempted: boolean; paired: boolean; lastResult: { code: string; message: string; at: number; retryAfterMs?: number } | null; disconnected: boolean; open: boolean }>;
+        disconnect(homeId: string): Promise<{ disconnected: true }>;
+        open(homeId: string): Promise<{ opened: true }>;
+        /** main -> this window: this computer was disconnected from its Cloud home; show the Connect panel. */
+        onShowConnect?(callback: () => void): () => void;
+        /** main -> this window: main handled a Cloud link. Only its kind and, for open-cloud, the home id: never the link. */
+        onLinkEvent?(callback: (event: { kind: "door" | "connect-cloud" | "open-cloud"; homeId?: string }) => void): () => void;
+      };
       approvalNotifications?: {
         show(payload: { botId: string; threadId: string; requestId: string; messageId: string; requestTurnId?: string; title: string; body: string; silent?: boolean }): Promise<{ accepted: boolean }>;
         onOpen(callback: (target: { botId: string; threadId: string; messageId?: string }) => void): () => void;
@@ -233,6 +277,15 @@ type SkillRecordingPayload = {
         update(patch:{keepRunning?:boolean;startAtLogin?:boolean}):Promise<StartupBackgroundState>;
         onChange(callback:(state:StartupBackgroundState)=>void):()=>void;
         onOpenInbox(callback:()=>void):()=>void;
+      };
+      /** Cloud home engine sign-in terminal relay (main holds the token and step-up). Present only on a desktop with the Cloud flag. */
+      cloudEngineLogin?: {
+        start(request: { homeId: string; engine: "codex" | "claudeAgent" | "grokAgent" | "kimiAgent" | "opencodeGo"; action?: "login" | "logout" | "enroll-key"; bot?: string; provider?: string; secret?: string }): Promise<{ ok: true; id: string } | { ok: false; code: string; message: string }>;
+        input(request: { id: string; data: string }): Promise<{ ok: true } | { ok: false; code: string; message: string }>;
+        stop(request: { id: string }): Promise<{ ok: true } | { ok: false; code: string; message: string }>;
+        openLink(request: { id: string; url: string }): Promise<{ ok: true } | { ok: false; code: string; message: string }>;
+        onData(listener: (payload: { id: string; data: Uint8Array }) => void): () => void;
+        onClosed(listener: (payload: { id: string; reason: string }) => void): () => void;
       };
       getCapabilities(): Promise<DesktopCapabilities>;
       onCapabilitiesChanged(cb: (capabilities: DesktopCapabilities) => void): () => void;
@@ -390,6 +443,10 @@ type SkillRecordingPayload = {
       /** Save a provider credential through Electron's OS-backed store. */
       mutateProviderConnection?(input: import("../../shared/provider-connections").ProviderConnectionMutation): Promise<{ connections: import("../../shared/provider-connections").PublicProviderConnection[]; storage: "encrypted" | "local-config" }>;
       mutateFluxConnection?(input: import("../../shared/flux-connection").FluxConnectionMutation): Promise<import("../../shared/flux-connection").FluxConnectionStatus>;
+      fluxSignin?: {
+        start(input: { action: "connect" | "replace"; revision: string }): Promise<{ ok: true; status: import("../../shared/flux-connection").FluxConnectionStatus } | { ok: false; code: string; message: string }>;
+        cancel(): Promise<void>;
+      };
       /** Plan sign-in (ChatGPT, Grok). Never returns a token. */
       modelSignIn?: {
         status(): Promise<{ providers: import("../../shared/model-signin").SignInProviderStatus[]; ready: boolean }>;
@@ -429,6 +486,8 @@ type SkillRecordingPayload = {
         /** apply the download: quit-and-install, or copy the command and open a terminal */
         install(): Promise<void>;
         retry(): Promise<void>;
+        /** start the step back to the previous version (a native confirm follows); absent on older builds */
+        preparePreviousVersion?(): Promise<{ started: boolean }>;
         onState(cb: (s: UpdaterState) => void): () => void;
       };
     };

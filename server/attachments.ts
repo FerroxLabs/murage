@@ -5,23 +5,35 @@
 // Murage quota-pressure cleanup and failed-partial byte accounting retained.
 import { createHash, randomUUID } from "node:crypto";
 import {
-  closeSync,
-  createReadStream,
-  fstatSync,
   linkSync,
   mkdirSync,
-  openSync,
-  readFileSync,
   readdirSync,
+  renameSync,
   statSync,
   unlinkSync,
   writeFileSync,
 } from "node:fs";
 import { link, open, unlink } from "node:fs/promises";
-import { join, extname, dirname, resolve } from "node:path";
+import { basename, join, extname, dirname, resolve } from "node:path";
 import { DATA_DIR } from "./config.ts";
+import { addOutstandingBytes, availableForNewBytes, diskSpaceError, freeDiskBytes, isNoSpaceError, outstandingBytes } from "./disk-space.ts";
+import { DISK_FULL_MESSAGE } from "../shared/attachment-storage.ts";
+import {
+  ATTACHMENT_READ_CEILING, attachmentsFolderForWriter, attachmentsHomeOf, probeAttachment, readAttachmentFile,
+  type AttachmentsHome, type ProbeResult, type Refusal,
+} from "./attachment-read.ts";
 
-export const ATTACHMENTS_DIR = join(DATA_DIR, "attachments");
+/** The attachment folder as an opaque value (attachment-read.ts). Readers
+ * outside this module take this, never a path string. */
+export const ATTACHMENTS_HOME: AttachmentsHome = attachmentsHomeOf(DATA_DIR);
+/** The writer's own folder path. Not exported: every byte read goes through
+ * attachment-read.ts, and the gate test holds this module to "wx" opens. */
+const ATTACHMENTS_DIR = attachmentsFolderForWriter(ATTACHMENTS_HOME);
+
+/** Free bytes on the disk that holds the attachment folder (Settings > Storage). */
+export function attachmentsFreeBytes(): number | null {
+  return freeDiskBytes(ATTACHMENTS_DIR);
+}
 
 /** The spec's ceiling: a screenshot bigger than this is rejected before it
  * is ever buffered, matching the composer's existing size discipline. */
@@ -40,9 +52,8 @@ export const GENERATED_IMAGE_RECEIVE_MAX_BYTES = 40 * 1024 * 1024;
 export const FILE_MAX_BYTES = 25 * 1024 * 1024;
 
 /** Attachments are durable because prompts refer to their paths. Never
- * silently evict them: once this ceiling is reached, a new upload gets an
- * explicit 507 and the person can decide what to remove. */
-export const ATTACHMENTS_MAX_BYTES = 512 * 1024 * 1024;
+ * silently evict them. There is no fixed total: room follows the disk
+ * (disk-space.ts), and only a nearly full disk gets an explicit 507. */
 
 /** A byte count as a person reads it: 512 MB, 25 MB, 1.5 GB. */
 export function humanBytes(bytes: number): string {
@@ -52,7 +63,7 @@ export function humanBytes(bytes: number): string {
 }
 /** The sentences a composer shows for attachment limits (0.1.60 audit C4:
  * "attachments storage is full (limit 536870912 bytes)" reached it). */
-export const ATTACHMENTS_FULL_MESSAGE = `There's no more room for attachments: Murage keeps up to ${humanBytes(ATTACHMENTS_MAX_BYTES)} of them. Delete conversations you no longer need to make room, then try again.`;
+export const ATTACHMENTS_FULL_MESSAGE = DISK_FULL_MESSAGE;
 export const FILE_TOO_LARGE_MESSAGE = `That file is too large. Files can be up to ${humanBytes(FILE_MAX_BYTES)}.`;
 export const IMAGE_TOO_LARGE_MESSAGE = `That image is too large. Images can be up to ${humanBytes(IMAGE_MAX_BYTES)}.`;
 
@@ -65,10 +76,9 @@ const PARTIAL_NAME = /^\.murage-upload-[0-9a-f-]+-[0-9a-f-]+\.partial$/i;
 const UPLOAD_ID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const activePartials = new Set<string>();
 const uploadLocks = new Map<string, Promise<void>>();
-let reservedAttachmentBytes = 0;
 const STREAM_RESERVATION_INCREMENT_BYTES = 1024 * 1024;
 
-/** Cached total of on-disk bytes that count against the quota: committed
+/** Cached total of on-disk bytes Murage keeps as attachments: committed
  * attachments plus any partial file this process did not itself write (a
  * crash leftover, until it is cleaned up). `null` means a fresh scan is needed
  * after cold start or a cleanup failure. Every normal commit
@@ -130,7 +140,11 @@ export function extensionForMime(mime: string | undefined): string | null {
 }
 
 export function ensureAttachmentsDir(): void {
-  mkdirSync(ATTACHMENTS_DIR, { recursive: true, mode: 0o700 });
+  try {
+    mkdirSync(ATTACHMENTS_DIR, { recursive: true, mode: 0o700 });
+  } catch (error) {
+    throw isNoSpaceError(error) ? diskSpaceError("disk-full") : error;
+  }
 }
 
 export function validateAttachmentUploadId(value: string | undefined): string | undefined {
@@ -146,6 +160,7 @@ export function validateAttachmentUploadId(value: string | undefined): string | 
  * or from an explicit cleanup sweep — never
  * from the per-reservation hot path, which is what made PERF-03 quadratic. */
 function scanAttachmentUsageAndCleanup(now = Date.now()): { bytes: number; removed: number } {
+  // now = +Infinity (start-up) makes every inactive partial stale.
   ensureAttachmentsDir();
   let bytes = 0;
   let removed = 0;
@@ -202,11 +217,21 @@ function addCommittedBytes(delta: number, version = attachmentAccountingVersion)
  * only full directory walk after start-up; nothing on the upload path calls it
  * per byte or per chunk anymore, so callers that want stale partials
  * reclaimed promptly should invoke it on their own schedule. */
-export function cleanupStaleAttachmentPartials(now = Date.now()): number {
-  const { bytes, removed } = scanAttachmentUsageAndCleanup(now);
+export function cleanupStaleAttachmentPartials(now = Date.now(), options: { startup?: boolean } = {}): number {
+  // At start-up no earlier process can still be writing (one server per data
+  // dir), so every partial this process is not writing is a leftover, whatever
+  // its age. A live upload's partial is in activePartials before it is opened.
+  const { bytes, removed } = scanAttachmentUsageAndCleanup(options.startup ? Number.POSITIVE_INFINITY : now);
   committedAttachmentBytes = bytes;
   attachmentAccountingVersion += 1;
   return removed;
+}
+
+/** What attachments hold now, for storage settings: committed bytes on disk
+ * (from the cache, scanning once when cold) and bytes held by uploads still
+ * streaming. Reporting only; neither decides whether an upload fits. */
+export function attachmentStorageUsage(): { attachmentBytes: number; reservedBytes: number } {
+  return { attachmentBytes: committedBytes(), reservedBytes: outstandingBytes() };
 }
 
 /** Delete a committed attachment (e.g. a generated image whose owning
@@ -275,21 +300,21 @@ class AttachmentReservation {
   }
 
   private reserveAtLeast(required: number, preferred: number): void {
-    let available = ATTACHMENTS_MAX_BYTES - committedBytes() - reservedAttachmentBytes;
+    ensureAttachmentsDir();
+    let available = availableForNewBytes(ATTACHMENTS_DIR);
     if (available < required) {
-      // Retain cleanup-on-quota-pressure for old crash leftovers. Successful
-      // growth remains O(1); only a would-be rejection needs reconciliation.
+      // Old crash leftovers still take disk: reclaim them before refusing.
       cleanupStaleAttachmentPartials();
-      available = ATTACHMENTS_MAX_BYTES - committedBytes() - reservedAttachmentBytes;
+      available = availableForNewBytes(ATTACHMENTS_DIR);
     }
     if (available < required) {
-      throw statusError(507, ATTACHMENTS_FULL_MESSAGE);
+      throw diskSpaceError("disk-full");
     }
     // Unknown-length HTTP bodies reserve in bounded chunks. Taking whatever
     // remains below the preferred increment avoids falsely rejecting a small
     // final upload near the quota while still bounding directory scans.
     const granted = Math.min(preferred, available);
-    reservedAttachmentBytes += granted;
+    addOutstandingBytes(granted);
     this.held += granted;
   }
 
@@ -307,7 +332,7 @@ class AttachmentReservation {
   release(): void {
     if (this.released) return;
     this.released = true;
-    reservedAttachmentBytes -= this.held;
+    addOutstandingBytes(-this.held);
     this.held = 0;
   }
 }
@@ -338,37 +363,43 @@ const KNOWN_ATTACHMENT_EXTENSIONS = Array.from(
   new Set([...Object.values(IMAGE_MIMES), ...Object.values(FILE_MIMES)]),
 );
 
-/** Missing or unreadable candidates count as absent here; the atomic link
- * still detects a collision if a file exists when an upload commits. */
-function statSizeIfFile(path: string): number | null {
-  try {
-    const stat = statSync(path);
-    return stat.isFile() ? stat.size : null;
-  } catch {
-    return null;
-  }
-}
+const CHECK_AGAIN_MESSAGE = "Could not check the earlier upload. Try again.";
+
+/** Only `missing` is absence. A busy or failing disk is never read as "not
+ * there": it answers 503 so the client retries (Astra r3 item 5). */
+function retryable(reason: Refusal): boolean { return reason === "io" || reason === "busy"; }
 
 /** Find an idempotent retry without listing the directory, rejecting an ID
- * already committed under a different accepted content type. */
-function committedPathForUpload(uploadId: string, extension: string): string | null {
+ * already committed under a different accepted content type. Anything at the
+ * exact name that is not missing counts as committed; the compare that
+ * follows refuses it unless it is the same bytes. */
+async function committedUpload(uploadId: string, extension: string): Promise<string | null> {
   ensureAttachmentsDir();
-  const exactPath = join(ATTACHMENTS_DIR, `${uploadId}${extension}`);
-  if (statSizeIfFile(exactPath) !== null) return exactPath;
+  const exactName = `${uploadId}${extension}`;
+  const exact = await probeAttachment(ATTACHMENTS_HOME, exactName, ATTACHMENT_READ_CEILING);
+  if (!exact.ok && retryable(exact.reason)) throw statusError(503, CHECK_AGAIN_MESSAGE);
+  if (exact.ok || exact.reason !== "missing") return join(ATTACHMENTS_DIR, exactName);
   for (const other of KNOWN_ATTACHMENT_EXTENSIONS) {
     if (other === extension) continue;
-    if (statSizeIfFile(join(ATTACHMENTS_DIR, `${uploadId}${other}`)) !== null) {
+    const found = await probeAttachment(ATTACHMENTS_HOME, `${uploadId}${other}`, ATTACHMENT_READ_CEILING);
+    if (!found.ok && retryable(found.reason)) throw statusError(503, CHECK_AGAIN_MESSAGE);
+    if (found.ok || found.reason !== "missing") {
       throw statusError(409, "uploadId was already used for another content type");
     }
   }
   return null;
 }
 
-async function digestFile(path: string): Promise<string> {
-  const hash = createHash("sha256");
-  for await (const chunk of createReadStream(path)) hash.update(chunk);
-  return hash.digest("hex");
+/** Compare a committed attachment with the retry's bytes through the bounded
+ * reader. The retry answers the same requester the route authorized and
+ * writes nothing on a refusal, so no membership re-check is needed here. */
+async function committedMatches(path: string, size: number, matches: (bytes: Buffer) => boolean, conflict: string): Promise<void> {
+  const read = await readAttachmentFile(ATTACHMENTS_HOME, basename(path), size);
+  if (!read.ok && retryable(read.reason)) throw statusError(503, CHECK_AGAIN_MESSAGE);
+  if (!read.ok || read.bytes.length !== size || !matches(read.bytes)) throw statusError(409, conflict);
 }
+
+const sha256Hex = (bytes: Uint8Array) => createHash("sha256").update(bytes).digest("hex");
 
 /** Results of saveImage that wrote a NEW file in that call (not an idempotent
  * retry that found the committed file). Kept off the result's own shape, which
@@ -460,7 +491,7 @@ export async function saveFile(
   return withUploadLock(uploadId, async () => {
     ensureAttachmentsDir();
     if (uploadId) cleanupAttachmentPartialsForUpload(uploadId);
-    const existing = uploadId ? committedPathForUpload(uploadId, extension) : null;
+    const existing = uploadId ? await committedUpload(uploadId, extension) : null;
     if (existing) {
       const incomingHash = createHash("sha256");
       let bytes = 0;
@@ -476,9 +507,8 @@ export async function saveFile(
         bytes += chunk.byteLength;
       }
       if (bytes === 0) throw statusError(400, "empty file");
-      if (statSync(existing).size !== bytes || await digestFile(existing) !== incomingHash.digest("hex")) {
-        throw statusError(409, "uploadId was already used for different file bytes");
-      }
+      const incoming = incomingHash.digest("hex");
+      await committedMatches(existing, bytes, saved => sha256Hex(saved) === incoming, "uploadId was already used for different file bytes");
       return { path: existing, name, mime: normalized, bytes };
     }
 
@@ -489,6 +519,7 @@ export async function saveFile(
     if (expectedBytes) reservation.reserve(expectedBytes);
     activePartials.add(partialPath);
     let file: Awaited<ReturnType<typeof open>> | undefined;
+    const writtenHash = createHash("sha256");
     let bytes = 0;
     let closed = false;
     let partialCleanupFailed = false;
@@ -510,6 +541,7 @@ export async function saveFile(
           if (result.bytesWritten === 0) throw new Error("file write made no progress");
           offset += result.bytesWritten;
         }
+        writtenHash.update(chunk);
         bytes += chunk.byteLength;
       }
       if (bytes === 0) throw statusError(400, "empty file");
@@ -522,16 +554,16 @@ export async function saveFile(
         await unlink(partialPath);
       } catch (error) {
         if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error;
-        if (statSync(path).size !== bytes || await digestFile(path) !== await digestFile(partialPath)) {
-          throw statusError(409, "uploadId was already used for different file bytes");
-        }
+        // The chunks were hashed as they were written: the partial is never read back.
+        const written = writtenHash.digest("hex");
+        await committedMatches(path, bytes, saved => sha256Hex(saved) === written, "uploadId was already used for different file bytes");
         await unlink(partialPath);
       }
       return { path, name, mime: normalized, bytes };
     } catch (error) {
       if (file && !closed) await file.close().catch(() => undefined);
       await unlink(partialPath).catch(() => { partialCleanupFailed = true; });
-      throw error;
+      throw isNoSpaceError(error) ? diskSpaceError("disk-full") : error;
     } finally {
       activePartials.delete(partialPath);
       // A leftover partial was excluded from the cache while active. Rescan
@@ -542,36 +574,44 @@ export async function saveFile(
   });
 }
 
-/** Persist one image and return its path. The UUID filename means the name
- * is never attacker-controlled and never collides; the extension preserves
- * the format the sender claimed. */
-export function saveImage(bytes: Buffer, mime: string, requestedUploadId?: string, maxBytes = IMAGE_MAX_BYTES): SavedAttachment {
+/** How an image is committed. writeImage itself never reads an existing file.
+ * - fresh: a new random name; a collision is refused, never trusted.
+ * - receipt: the name is the output receipt's id and the bytes were just
+ *   verified against the receipt's sha256 and length, so an existing entry is
+ *   atomically replaced with them. saveReceiptImage first compares an
+ *   existing entry with them byte for byte through the leaf reader and
+ *   reuses it when identical, so re-completion needs no room on a full disk;
+ *   an entry that differs, or one that could not be read, is never vouched
+ *   for: it is replaced, or the completion stays pending.
+ * - upload: the HTTP path; an existing entry is handed back to the async
+ *   caller, which compares it through the bounded reader. */
+type ImageMode = { mode: "fresh" } | { mode: "receipt"; id: string } | { mode: "upload"; id: string };
+
+function checkedImageExtension(bytes: Buffer, mime: string, maxBytes: number): string {
   const ext = extensionForMime(mime);
   if (!ext) throw Object.assign(new Error("unsupported image type"), { status: 400 });
   if (bytes.byteLength === 0) throw Object.assign(new Error("empty image"), { status: 400 });
   if (bytes.byteLength > maxBytes) {
     throw Object.assign(new Error(maxBytes === IMAGE_MAX_BYTES ? IMAGE_TOO_LARGE_MESSAGE : `That image is too large. Images can be up to ${humanBytes(maxBytes)}.`), { status: 413 });
   }
-  const uploadId = validateAttachmentUploadId(requestedUploadId);
-  ensureAttachmentsDir();
-  const existing = uploadId ? committedPathForUpload(uploadId, ext) : null;
-  if (existing) {
-    const saved = readFileSync(existing);
-    if (!saved.equals(bytes)) {
-      throw statusError(409, "uploadId was already used for different image bytes");
-    }
-    return { path: existing, mime: mime.split(";")[0]!.trim().toLowerCase(), bytes: bytes.byteLength };
-  }
+  return ext;
+}
 
-  const reservation = new AttachmentReservation();
-  reservation.reserve(bytes.byteLength);
-  const id = uploadId ?? randomUUID();
+const imageMime = (mime: string) => mime.split(";")[0]!.trim().toLowerCase();
+
+function writeImage(bytes: Buffer, mime: string, maxBytes: number, how: ImageMode): SavedAttachment | { exists: string } {
+  const ext = checkedImageExtension(bytes, mime, maxBytes);
+  const id = how.mode === "fresh" ? randomUUID() : validateAttachmentUploadId(how.id)!;
+  ensureAttachmentsDir();
   const name = `${id}${ext}`;
   const path = join(ATTACHMENTS_DIR, name);
+  const reservation = new AttachmentReservation();
+  reservation.reserve(bytes.byteLength);
   const partialPath = join(ATTACHMENTS_DIR, `.murage-upload-${id}-${randomUUID()}.partial`);
   activePartials.add(partialPath);
   let partialCleanupFailed = false;
   let createdHere = false;
+  let replaced = false;
   try {
     writeFileSync(partialPath, bytes, { mode: 0o600, flag: "wx" });
     try {
@@ -580,13 +620,17 @@ export function saveImage(bytes: Buffer, mime: string, requestedUploadId?: strin
       createdHere = true;
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error;
-      const saved = readFileSync(path);
-      if (!saved.equals(bytes)) {
-        throw statusError(409, "uploadId was already used for different image bytes");
+      if (how.mode === "fresh") throw statusError(409, "Could not store the image. Try again.");
+      if (how.mode === "upload") {
+        unlinkSync(partialPath);
+        return { exists: path };
       }
+      // receipt: replace the entry with the verified bytes, atomically
+      renameSync(partialPath, path);
+      replaced = true;
     }
-    unlinkSync(partialPath);
-    const result = { path, mime: mime.split(";")[0]!.trim().toLowerCase(), bytes: bytes.byteLength };
+    if (!replaced) unlinkSync(partialPath);
+    const result = { path, mime: imageMime(mime), bytes: bytes.byteLength };
     if (createdHere) newlyWritten.add(result);
     return result;
   } catch (error) {
@@ -595,18 +639,48 @@ export function saveImage(bytes: Buffer, mime: string, requestedUploadId?: strin
     } catch {
       partialCleanupFailed = true;
     }
-    throw error;
+    throw isNoSpaceError(error) ? diskSpaceError("disk-full") : error;
   } finally {
     activePartials.delete(partialPath);
-    if (partialCleanupFailed) invalidateAttachmentAccounting();
+    if (partialCleanupFailed || replaced) invalidateAttachmentAccounting();
     reservation.release();
   }
 }
 
-/** HTTP uploads take the same per-ID lock as streamed files. saveImage stays
- * synchronous for generated avatars, while this wrapper prevents an image
- * and a document using the same caller-supplied UUID from committing with
- * different extensions at the same time. */
+/** Persist one image under a new random name and return its path. Write
+ * only: nothing existing is read. */
+export function saveImage(bytes: Buffer, mime: string, maxBytes = IMAGE_MAX_BYTES): SavedAttachment {
+  return writeImage(bytes, mime, maxBytes, { mode: "fresh" }) as SavedAttachment;
+}
+
+/** Commit an output receipt's verified bytes under the receipt's id (see
+ * ImageMode). An existing entry of the same size is read through the leaf
+ * module and compared byte for byte; when identical it is reused and nothing
+ * is written (re-completion on a full disk finishes). Otherwise, or when the
+ * entry could not be read, the verified bytes are written; on a full disk
+ * that refuses with the disk-space error and the completion stays pending. */
+export async function saveReceiptImage(bytes: Buffer, mime: string, receiptId: string, maxBytes: number): Promise<SavedAttachment> {
+  const ext = checkedImageExtension(bytes, mime, maxBytes);
+  const name = `${validateAttachmentUploadId(receiptId)!}${ext}`;
+  ensureAttachmentsDir();
+  const existing = await readAttachmentFile(ATTACHMENTS_HOME, name, bytes.byteLength);
+  if (existing.ok && existing.bytes.length === bytes.byteLength && existing.bytes.equals(bytes)) {
+    return { path: join(ATTACHMENTS_DIR, name), mime: imageMime(mime), bytes: bytes.byteLength };
+  }
+  return writeNewReceiptImage(bytes, mime, receiptId, maxBytes);
+}
+
+/** Commit the verified bytes of a receipt retained in the same synchronous
+ * step (its id is new, so no entry can exist yet). Write only: nothing is
+ * read; an entry that somehow exists is atomically replaced, never reused. */
+export function writeNewReceiptImage(bytes: Buffer, mime: string, receiptId: string, maxBytes: number): SavedAttachment {
+  return writeImage(bytes, mime, maxBytes, { mode: "receipt", id: receiptId }) as SavedAttachment;
+}
+
+/** HTTP uploads take the same per-ID lock as streamed files, which prevents
+ * an image and a document using the same caller-supplied UUID from
+ * committing with different extensions at the same time. A retry is compared
+ * through the bounded reader and answered without writing. */
 export async function saveImageUpload(
   bytes: Buffer,
   mime: string,
@@ -615,20 +689,38 @@ export async function saveImageUpload(
   const uploadId = validateAttachmentUploadId(requestedUploadId);
   return withUploadLock(uploadId, async () => {
     if (uploadId) cleanupAttachmentPartialsForUpload(uploadId);
-    return saveImage(bytes, mime, uploadId);
+    const ext = checkedImageExtension(bytes, mime, IMAGE_MAX_BYTES);
+    const same = (path: string) => committedMatches(path, bytes.byteLength, saved => saved.equals(bytes), "uploadId was already used for different image bytes")
+      .then(() => ({ path, mime: imageMime(mime), bytes: bytes.byteLength }));
+    if (!uploadId) return saveImage(bytes, mime);
+    const existing = await committedUpload(uploadId, ext);
+    if (existing) return same(existing);
+    const written = writeImage(bytes, mime, IMAGE_MAX_BYTES, { mode: "upload", id: uploadId });
+    return "exists" in written ? same(written.exists) : written;
   });
 }
 
-/** Existence check with the same name discipline as readAttachment, without
- * reading up to 10MB of pixels just to learn the file is there. */
-export function attachmentExists(name: string): boolean {
-  if (!/^[A-Za-z0-9-]+\.(png|jpg|gif|webp)$/.test(name)) return false;
-  try {
-    return statSync(join(ATTACHMENTS_DIR, name)).isFile();
-  } catch {
-    return false;
-  }
+const SERVED_IMAGE = /^[A-Za-z0-9-]+\.(png|jpg|jpeg|gif|webp)$/;
+const servedImageName = (name: string) => SERVED_IMAGE.test(name) && extname(name) !== ".jpeg"; // saved as .jpg; .jpeg is not a name we write
+
+/** readAttachment's own name, folder and size rules without the read: a name
+ * this accepts is one the attachment route can serve. */
+export async function probeServedImage(name: string): Promise<ProbeResult> {
+  if (!servedImageName(name)) return { ok: false, reason: "not-regular" };
+  return probeAttachment(ATTACHMENTS_HOME, name, ATTACHMENT_READ_CEILING);
 }
+
+/** Existence check for avatars: "retry" when the disk could not answer, so a
+ * busy disk is never reported as an invalid avatar. */
+export async function attachmentExists(name: string): Promise<boolean | "retry"> {
+  const probe = await probeServedImage(name);
+  if (probe.ok) return true;
+  return retryable(probe.reason) ? "retry" : false;
+}
+
+export type AttachmentServe =
+  | { ok: true; bytes: Buffer; mime: string; version: string }
+  | { ok: false; reason: Refusal; code?: string };
 
 /** Read an attachment back for serving. Only names that are exactly a bare
  * filename (no separators, no dotfiles) inside ATTACHMENTS_DIR resolve —
@@ -639,21 +731,11 @@ export function attachmentExists(name: string): boolean {
  * uploadId. Size, mtime and inode did not tell those apart on Linux: the
  * freed inode came straight back and both writes landed in one clock tick,
  * so a cached thumbnail of the old image matched the new one (0.1.61 CI). */
-export function readAttachment(name: string): { bytes: Buffer; mime: string; version: string } | null {
-  if (!/^[A-Za-z0-9-]+\.(png|jpg|jpeg|gif|webp)$/.test(name)) return null;
-  const path = join(ATTACHMENTS_DIR, name);
-  if (extname(path) === ".jpeg") return null; // saved as .jpg; .jpeg is not a name we write
-  let fd: number | undefined;
-  try {
-    fd = openSync(path, "r");
-    const stat = fstatSync(fd, { bigint: true });
-    const bytes = readFileSync(fd);
-    return { bytes, mime: mimeForExt(extname(path)), version: `${stat.size}:${createHash("sha256").update(bytes).digest("hex").slice(0, 32)}` };
-  } catch {
-    return null;
-  } finally {
-    if (fd !== undefined) closeSync(fd);
-  }
+export async function readAttachment(name: string): Promise<AttachmentServe> {
+  if (!servedImageName(name)) return { ok: false, reason: "missing" };
+  const read = await readAttachmentFile(ATTACHMENTS_HOME, name, ATTACHMENT_READ_CEILING);
+  if (!read.ok) return read;
+  return { ok: true, bytes: read.bytes, mime: mimeForExt(extname(name)), version: `${read.bytes.length}:${sha256Hex(read.bytes).slice(0, 32)}` };
 }
 
 function mimeForExt(ext: string): string {

@@ -31,7 +31,9 @@ describe("Backups settings section", () => {
 
   it("General no longer renders backups, and the Backups pane is surface-gated", () => {
     expect(generalPane(modal)).not.toContain("BackupSettings");
-    expect(modal).toContain('desktop === true && section === "backups" && <BackupSettings />');
+    // 1.0.3 attachment-cap: the Backups page also carries the Storage card; both sit behind the same desktop gate
+    expect(modal).toMatch(/desktop === true && section === "backups" && <div className="space-y-4"><BackupSettings \/><div id="storage-heading"><StorageSettings \/><\/div><\/div>/);
+    expect(modal.match(/<BackupSettings \/>/g)).toHaveLength(1);
   });
 
   it("deep link: opening settings on Backups selects the Backups pane", () => {
@@ -53,10 +55,10 @@ import { renderToStaticMarkup } from "react-dom/server";
 import { vi } from "vitest";
 import { scheduleCardNotice } from "./backup-schedule-ui";
 import { CLOSED_JOB_MOVED_REASON, CLOSED_JOB_WONT_RUN_REASON, SETUP_FIRST_BACKUP_RUNNING, SETUP_NO_FIRST_BACKUP, SETUP_NO_PRE_UPGRADE, SCHEDULE_CHECKING, backupSummary, closedAppFileSharedReason, withoutRepeats, closedJobNotice, completeBackupSetup, formatBackupSize, recoveryKeyError, recoveryKeyResult, runNowError, setUpClosedJob, timeZoneChoices, type BackupSummaryInput } from "./backups-section-ui";
-import { BackupStatusCard, ScheduleCard, ScheduleSetup, type ScheduleController } from "./BackupSettings";
+import { BackupHeadline, ScheduleCard, ScheduleSetup, type ScheduleController } from "./BackupSettings";
 import { BACKUP_UNAVAILABLE_SENTENCES } from "../../shared/backup-capture-failure.mjs";
 import { scheduleError, schedulePhase } from "./backup-schedule-ui";
-import { remoteBackupStatus, type RemoteController } from "./BackupRemoteSettings";
+import { remoteBackupStatus } from "./BackupRemoteSettings";
 
 const refs = { installationRef: "fixture_install", destinationRef: "fixture_dest", recoveryRef: "fixture_key", destinationLabel: "Fixture backups", recoveryLabel: "Recovery.age" };
 const enabledSchedule = { enabled: true, preUpgrade: false, time: "22:15", timezone: "Asia/Bangkok", catchupMs: 7200000, maxBytes: 1073741824, maxDurationMs: 600000, ...refs, selection: { scope: "application-data" as const, credentialPolicy: "preserve-in-encrypted-fidelity" as const } };
@@ -171,7 +173,7 @@ describe("backup summary", () => {
     // the very list the "Needs attention" block renders above it.
     expect(source).toContain("scheduleCardNotice(local,status?.error,attention,status?.refs?.destinationLabel)");
     expect(source).not.toContain("{local??scheduleError(status?.error)}");
-    expect(source).toContain("<ScheduleCard s={s} attention={summary.attention}/>");
+    expect(source).toContain("<ScheduleCard s={s} attention={summary.attention} keepsafe={false}/>");
     expect(source).toContain("<ScheduleSetup s={s} attention={summary.attention}");
   });
   it("never claims availability without a bridge", () => {
@@ -301,28 +303,27 @@ describe("setup collapses into a schedule card", () => {
   });
 });
 
-describe("Your backups card", () => {
-  const remote = { stale: false, busy: null, refreshNow: () => {} } as unknown as RemoteController;
+describe("Backups headline card", () => {
   const summary = { last: "L", schedule: "S", offsite: "O", attention: ["A backup is running. Settings are locked until it finishes."] };
   it("shows Back up now only when the desktop app provides it, with the attention list", () => {
-    const without = renderToStaticMarkup(createElement(BackupStatusCard, { summary, s: controller({ status: on }), r: remote, onRestore: () => {} }));
-    expect(without).not.toContain("Back up now"); expect(without).toContain(">Restore…<"); expect(without).toMatch(/role="status"[^>]*>.*Needs attention.*A backup is running/);
-    const withRun = renderToStaticMarkup(createElement(BackupStatusCard, { summary, s: controller({ status: on, bridge: { runNow: () => {} } as unknown as ScheduleController["bridge"], canRunNow: true }), r: remote, onRestore: () => {} }));
+    const without = renderToStaticMarkup(createElement(BackupHeadline, { summary, s: controller({ status: on }) }));
+    expect(without).not.toContain("Back up now"); expect(without).toContain("To be sure a restore works, try one from Restore."); expect(without).toMatch(/role="status"[^>]*>.*Needs attention.*A backup is running/);
+    const withRun = renderToStaticMarkup(createElement(BackupHeadline, { summary, s: controller({ status: on, bridge: { runNow: () => {} } as unknown as ScheduleController["bridge"], canRunNow: true }) }));
     expect(withRun).toMatch(/<button[^>]*>Back up now</); expect(withRun).not.toMatch(/disabled=""[^>]*>Back up now</);
-    const confirm = renderToStaticMarkup(createElement(BackupStatusCard, { summary, s: controller({ status: on, bridge: { runNow: () => {} } as unknown as ScheduleController["bridge"], canRunNow: true, confirmRun: true }), r: remote, onRestore: () => {} }));
+    const confirm = renderToStaticMarkup(createElement(BackupHeadline, { summary, s: controller({ status: on, bridge: { runNow: () => {} } as unknown as ScheduleController["bridge"], canRunNow: true, confirmRun: true }) }));
     expect(confirm).toContain("Murage will close and reopen this window to take the backup."); expect(confirm).toContain(">Continue<");
-    const locked = renderToStaticMarkup(createElement(BackupStatusCard, { summary, s: controller({ status: on, bridge: { runNow: () => {} } as unknown as ScheduleController["bridge"], canRunNow: false }), r: remote, onRestore: () => {} }));
+    const locked = renderToStaticMarkup(createElement(BackupHeadline, { summary, s: controller({ status: on, bridge: { runNow: () => {} } as unknown as ScheduleController["bridge"], canRunNow: false }) }));
     expect(locked).toMatch(/disabled=""[^>]*>Back up now</);
   });
 
   it("says a failed Back up now once when Needs attention already says it (0.1.60 Windows final 2 L1)", () => {
     const missing = runNowError(new Error("BACKUP_FOLDER_MISSING"), { folderName: "Murage Backups" });
     const attention = ["The last backup didn't finish; backups are paused until you clear it", `The last backup stopped while checking your backup folder and recovery key. ${missing}`];
-    const html = renderToStaticMarkup(createElement(BackupStatusCard, { summary: { last: "L", schedule: "S", offsite: "O", attention }, s: controller({ status: on, area: "summary", error: missing }), r: remote, onRestore: () => {} }));
+    const html = renderToStaticMarkup(createElement(BackupHeadline, { summary: { last: "L", schedule: "S", offsite: "O", attention }, s: controller({ status: on, area: "summary", error: missing }) }));
     const sentence = renderToStaticMarkup(createElement("i", null, missing)).slice(3, -4);
     expect(html.split(sentence).length - 1).toBe(1);
     // An error the list does not carry still shows beside the buttons.
-    const other = renderToStaticMarkup(createElement(BackupStatusCard, { summary: { last: "L", schedule: "S", offsite: "O", attention }, s: controller({ status: on, area: "summary", error: "Something else went wrong." }), r: remote, onRestore: () => {} }));
+    const other = renderToStaticMarkup(createElement(BackupHeadline, { summary: { last: "L", schedule: "S", offsite: "O", attention }, s: controller({ status: on, area: "summary", error: "Something else went wrong." }) }));
     expect(other).toContain(">Something else went wrong.<");
   });
 });
@@ -412,11 +413,10 @@ describe("customer findings: plain words and reasons where the control is", () =
 
   it("drops the leftover jargon from the Backups copy", () => {
     const summary = { last: "L", schedule: "S", offsite: "O", attention: [] };
-    const remote = { stale: false, busy: null, refreshNow: () => {} } as unknown as RemoteController;
-    const lastVerified = healthy.schedule!.lastVerified;
-    const card = renderToStaticMarkup(createElement(BackupStatusCard, { summary, s: controller({ status: { ...on, lastVerified } }), r: remote, onRestore: () => {} }));
+      const lastVerified = healthy.schedule!.lastVerified;
+    const card = renderToStaticMarkup(createElement(BackupHeadline, { summary, s: controller({ status: { ...on, lastVerified } }) }));
     expect(card).not.toContain("restore-drill");
-    expect(card).toContain("The last backup was checked on this computer.");
+    expect(card).toContain("checked and complete."); expect(card).toContain("To be sure a restore works, try one from Restore.");
     expect(schedulePhase("returned")).not.toContain("Backup mode returned");
     expect(schedulePhase("returned")).toBe("The last backup finished and Murage reopened");
   });

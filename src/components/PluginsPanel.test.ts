@@ -253,6 +253,18 @@ describe("each FluxRouter key problem gets its own sentence", () => {
     expect(panel).toMatch(/action === "reconnect"[\s\S]{0,400}reconnectConnectedApps/);
   });
 
+  it("keeps the budget sentence but drops the billing button inside the phone app", () => {
+    vi.stubGlobal("navigator", { userAgent: "Mozilla/5.0 (iPhone; CPU iPhone OS 18_0 like Mac OS X) MurageApp/1.0.0 (ios)" });
+    try {
+      const tokenError = "flux_key_budget_exhausted";
+      const [notice] = notices({ configured: false }, fields({ fluxBrokerEnabled: true, fluxConfigured: true, migration: { state: "none", legacyUntil: null, tokenError } }));
+      expect(texts([notice])).toContain("used its allowance for this month");
+      expect(notice).not.toHaveProperty("action");
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
+
   it("points the budget case at the billing page rather than at settings", () => {
     expect(FLUXROUTER_BILLING_URL).toBe("https://fluxrouter.ai/dashboard/billing");
   });

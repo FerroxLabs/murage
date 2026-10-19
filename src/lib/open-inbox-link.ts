@@ -24,7 +24,7 @@ export async function openInboxLink(link: Pick<InboxLink, "threadId"> & { messag
   } else if (group) {
     const result = await api(`/api/groups/${group.id}/tasks/${link.threadId}?messages=${MESSAGE_PAGE_SIZE}`, { method: "POST" });
     if (!result.group || result.group.threadId !== link.threadId) throw new Error(t("source.openError"));
-    dispatch({ type: "groupPatched", group: result.group });
+    dispatch({ type: "groupPatched", origin: fromAnswer(result.group), group: result.group });
     dispatch({ type: "select", id: group.id });
   } else throw new Error(t("inbox.conversationUnavailable"));
   if (link.messageId) dispatch({ type: "focusMessage", threadId: link.threadId, messageId: link.messageId });

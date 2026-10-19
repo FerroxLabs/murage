@@ -91,9 +91,9 @@ export function loadEngineExclusionResource(file, platform, arch, expectedVersio
     command = "/usr/bin/arch"; args = [arch === "x64" ? "-x86_64" : "-arm64", binary, ...args];
   }
   let out;
-  try { out = run(command, args, { ELECTRON_RUN_AS_NODE: "1" }); } catch { throw new Error("ENGINE_EXCLUSION_RESOURCE_UNLOADABLE"); }
+  try { out = run(command, args, { ELECTRON_RUN_AS_NODE: "1" }); } catch (e) { console.error("engine-exclusion load failed:", JSON.stringify({ command, args, status: e?.status, signal: e?.signal, code: e?.code, stderr: String(e?.stderr ?? "").slice(0, 4000), stdout: String(e?.stdout ?? "").slice(0, 2000), message: String(e?.message ?? "").slice(0, 2000) })); throw new Error("ENGINE_EXCLUSION_RESOURCE_UNLOADABLE"); }
   let answer;
-  try { answer = JSON.parse(String(out)); } catch { throw new Error("ENGINE_EXCLUSION_RESOURCE_UNLOADABLE"); }
+  try { answer = JSON.parse(String(out)); } catch { console.error("engine-exclusion answer unreadable:", JSON.stringify(String(out).slice(0, 4000))); throw new Error("ENGINE_EXCLUSION_RESOURCE_UNLOADABLE"); }
   if (answer[0] !== expectedVersion || answer[1] !== "function" || answer[2] !== "function" || answer[3] !== "function" || answer[4] !== true) throw new Error("ENGINE_EXCLUSION_RESOURCE_VERSION");
   return "loaded";
 }

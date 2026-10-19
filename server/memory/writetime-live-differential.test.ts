@@ -18,7 +18,7 @@
 //   - the model denies it, the new side shows it: unsafe (always zero);
 //   - the model denies it, the drain is done, the new side does not say withheld: unproven (always zero);
 //   - the model shows it, the new side does not (after the drain; in the window only "checking: pending"): unlisted (always zero).
-import { mkdirSync, rmSync } from "node:fs";
+import { mkdirSync } from "node:fs";
 import { expect, it } from "vitest";
 import { DATA_DIR } from "../config.ts";
 import { closeDatabase, database } from "../database.ts";
@@ -32,6 +32,7 @@ import { buildPrompt, promptPart, recordTurnObject, sendFence, turnToolText } fr
 import { commitRevoke } from "./revoke-commit.ts";
 import { prng } from "./testing/legacy-history-fixture.ts";
 import type { BuiltPrompt } from "./lineage-types.ts";
+import { removeTempDirSync } from "../testing/cleanup.ts";
 
 const SEEDS = Number(process.env.WRITETIME_LIVE_SEEDS ?? 24);
 const ROUNDS = Number(process.env.WRITETIME_LIVE_ROUNDS ?? 14);
@@ -62,7 +63,7 @@ it(`${SEEDS} live histories x ${ROUNDS} rounds: the new side never shows what th
 
 function runSeed(seed: number, tally: { pairs: number; denied: number; clean: number; forgets: number; objects: number; prompts: number; concurrent: number; delayed: number; unsafe: string[]; unproven: string[]; unlisted: string[]; byClass: Map<string, number> }): void {
   closeMessageDb(); closeDatabase();
-  rmSync(DATA_DIR, { recursive: true, force: true }); mkdirSync(DATA_DIR, { recursive: true });
+  removeTempDirSync(DATA_DIR); mkdirSync(DATA_DIR, { recursive: true });
   const db = database();
   const random = prng(seed * 7919 + 13), pick = <T,>(list: readonly T[]) => list[Math.floor(random() * list.length)]!;
   const threads = Array.from({ length: THREADS }, (_, at) => `lv${seed}-t${at}`);

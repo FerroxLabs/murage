@@ -1,0 +1,42 @@
+{
+  // Used only by the cloud-portal browser journey (cloud-portal/e2e). Never deployed; all values are test fixtures.
+  "name": "murage-control-plane-e2e",
+  "main": "dev-entry.ts",
+  "compatibility_date": "2026-08-25",
+  "compatibility_flags": ["nodejs_compat"],
+  "vars": {
+    "BETTER_AUTH_URL": "https://auth.murage.test",
+    "BETTER_AUTH_SECRET": "e2e-only-better-auth-secret-with-more-than-32-characters",
+    "CANCELLATION_MAIL_KEY": "e2e-only-cancellation-mail-key-with-more-than-32-characters",
+    "EMAIL_FROM": "noreply@murage.test",
+    // The portal journeys run the direct (Ferrox) seller path everywhere; the Link (Managed Payments) path is covered by the CP tests.
+    "CLOUD_NONUS_SELLER": "direct",
+    "ALLOWED_ORIGINS": "https://cloud.murage.test:3443",
+    "PORTAL_ORIGIN": "https://cloud.murage.test:3443",
+    "CLOUDFLARE_ACCOUNT_ID": "00000000000000000000000000000000",
+    "CLOUDFLARE_ZONE_ID": "00000000000000000000000000000000",
+    "CLOUDFLARE_API_TOKEN": "e2e-only-cloudflare-api-token-with-no-real-access",
+    "COMPANION_HOST_SUFFIX": "murage.test",
+    "CLOUD_HOME_HOST_SUFFIX": "murage.test",
+    "CLOUD_HOME_ZONE_ID": "00000000000000000000000000000000",
+    "CLOUD_HOME_ACCOUNT_ID": "00000000000000000000000000000000",
+    "CLOUD_HOME_API_TOKEN": "e2e-only-cloud-home-api-token-with-no-real-access",
+    "SENDLANE_API_KEY": "e2e-only-sendlane-api-key-not-a-real-key",
+    "SENDLANE_HASH_KEY": "e2e-only-sendlane-hash-key-not-a-real-key",
+    "SENDLANE_LIST_ID": "1",
+    "CLOUD_ADMIN_TOKEN": "e2e-only-admin-token-0123456789abcdef0123456789",
+    "CLOUD_KEK_V1": "eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHg=",
+    "CLOUD_B3_MODE": "fake",
+    "CLOUD_B3_CONFIG": "{\"reservationMs\":1800000,\"graceMs\":259200000,\"retentionMs\":2592000000,\"imageDigest\":\"sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"engineSubscriptionGates\":{\"claudeAgent\":true,\"codex\":false,\"grokAgent\":false,\"kimiAgent\":false,\"opencodeGo\":true},\"quarantineRelayIP\":\"192.0.2.20\",\"capacity\":[{\"id\":\"slot-1\",\"projectId\":\"p1\",\"location\":\"fsn1\",\"serverType\":\"cx23\",\"outcome\":\"available\"},{\"id\":\"slot-2\",\"projectId\":\"p1\",\"location\":\"fsn1\",\"serverType\":\"cx23\",\"outcome\":\"available\"}]}",
+    "STRIPE_WEBHOOK_SECRET": "whsec_e2efixturesecret0123456789",
+    "STRIPE_PRICE_STARTER": "price_starter0001",
+    "STRIPE_PRICE_PRO": "price_pro00000001",
+    "STRIPE_PRICE_MAX": "price_max000000001",
+    "BILLING_RETURN_ORIGIN": "https://cloud.murage.test:3443"
+  },
+  "d1_databases": [{ "binding": "DB", "database_name": "murage-e2e", "database_id": "00000000-0000-0000-0000-000000000000", "migrations_dir": "../migrations" }],
+  "ratelimits": [
+    { "name": "MACHINE_OPEN_LIMIT", "namespace_id": "1", "simple": { "limit": 1000, "period": 60 } },
+    { "name": "MACHINE_BEARER_LIMIT", "namespace_id": "2", "simple": { "limit": 1000, "period": 60 } }
+  ]
+}

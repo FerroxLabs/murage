@@ -7,10 +7,11 @@ import { join } from "node:path";
 import { afterEach, beforeEach, expect, it } from "vitest";
 import { listSite } from "./site-files.ts";
 import { zipStore } from "./zip.ts";
+import { removeTempDirSync } from "../testing/cleanup.ts";
 
 let base = "";
 beforeEach(() => { base = realpathSync(mkdtempSync(join(tmpdir(), "publish-zip-"))); mkdirSync(join(base, "site")); });
-afterEach(() => rmSync(base, { recursive: true, force: true }));
+afterEach(() => removeTempDirSync(base));
 
 /** A small independent reader: walks the central directory, checks each CRC. */
 function readZip(zip: Buffer) {

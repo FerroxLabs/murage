@@ -8,6 +8,7 @@
 // the same transaction that ends the request and removes the hand-off's row (delegations.ts settleReceipted), so it is written with the settle or not at all.
 import type { DelegationReceipt } from "./delegations.ts";
 import type { Message, Store } from "./store.ts";
+import { murageLine } from "./murage-line.ts";
 
 /** What the source conversation is owed, kept on the receipt until the final commit has landed (delegations.ts finishHandoff). */
 export type OwedReply = { text: string } | { line: string; ok: boolean };
@@ -44,12 +45,12 @@ export function appendHandoffReply(store: ReplyStore, input: { handoffId?: strin
     if (target) message.from = { botId: target.id, name: target.name, color: target.color };
     return store.appendMessage(input.sourceThreadId, message, id);
   }
-  return store.appendMessage(input.sourceThreadId, {
+  return store.appendMessage(input.sourceThreadId, murageLine({
     role: "bot",
     kind: "activity",
     ...(input.askRequestId ? { requestId: input.askRequestId, actorKind: "murage" as const } : {}),
     tool: { name: input.owed.line, ok: input.owed.ok },
-  }, id);
+  }), id);
 }
 
 /** The recovery: a receipt that still carries an owed line (its final commit never landed) writes it now, inside the settle's transaction. Returns the line, or

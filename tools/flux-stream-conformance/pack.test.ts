@@ -9,10 +9,10 @@ import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
 import { afterAll, beforeAll, expect, it } from "vitest";
 
-import { safeWipeSync } from "../../server/testing/safe-wipe.mjs";
 
 import { scriptedProvider } from "../flux-stream-sim/providers/scripted.ts";
 import { createSimServer } from "../flux-stream-sim/server.ts";
+import { removeTempDirSync } from "../../server/testing/cleanup.ts";
 
 const run = promisify(execFile);
 const root = join(dirname(fileURLToPath(import.meta.url)), "..", "..");
@@ -33,7 +33,7 @@ beforeAll(async () => {
 }, 120_000);
 afterAll(async () => {
   await sim.close();
-  safeWipeSync(work);
+  removeTempDirSync(work);
 });
 
 const node = (args: string[], env: Record<string, string> = {}) =>

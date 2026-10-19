@@ -9,7 +9,7 @@
 //   where the last stopped, so the total follows the chain and no single call follows more than its allowance;
 // - the receipts of a retained session (retainedSessionInvalid): never more rows than the allowance can pay for, however long the session;
 // - the kept receipt groups of a thread are brought up to date without a scan of the thread's receipts.
-import { mkdirSync, rmSync } from "node:fs";
+import { mkdirSync } from "node:fs";
 import { DatabaseSync } from "node:sqlite";
 import { afterAll, afterEach, beforeAll, beforeEach, expect, it } from "vitest";
 import { DATA_DIR } from "../config.ts";
@@ -25,6 +25,7 @@ import {
 import { chainStore } from "./schema.ts";
 import { DENIED_SOURCE } from "./deny.ts";
 import { LineageAllowance } from "./lineage-allowance.ts";
+import { removeTempDirSync } from "../testing/cleanup.ts";
 
 // 1.0.2 S6: each public read-time entry first asks whether the judge is retired on this file (read-time-retired.ts: one seek for a line row, one for
 // the reclaim flag); a constant, whatever the chain, so what is measured is still flat in the chain's length
@@ -32,7 +33,7 @@ const RETIRE_GATE_ROWS = 4;
 const thread = "reads-direct", driver = "drv", session = "sess";
 const key = (index: number) => `${thread}\u0000r${index}`;
 
-beforeEach(() => { closeDatabase(); rmSync(DATA_DIR, { recursive: true, force: true }); mkdirSync(DATA_DIR, { recursive: true }); });
+beforeEach(() => { closeDatabase(); removeTempDirSync(DATA_DIR); mkdirSync(DATA_DIR, { recursive: true }); });
 afterEach(() => { setTurnLineageNodesForTest(null); });
 
 const tally = { rows: 0, statements: 0, sql: [] as string[] };
@@ -69,7 +70,7 @@ function chain(n: number): void {
 it("a cold root chain read with no allowance left reads a constant number of rows, whether it holds 300, 1,500 or 12,000 sets, and is unproven", () => {
   const measuredRows: Record<number, { rows: number; chain: number }> = {};
   for (const n of [300, 1_500, 12_000]) {
-    closeDatabase(); rmSync(DATA_DIR, { recursive: true, force: true }); mkdirSync(DATA_DIR, { recursive: true });
+    closeDatabase(); removeTempDirSync(DATA_DIR); mkdirSync(DATA_DIR, { recursive: true });
     database();
     chain(n);
     resetRootSetWork();

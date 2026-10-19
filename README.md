@@ -125,7 +125,7 @@ Combined with managed memory, this gives the team an evolving working playbook: 
 
 **Managed memory is on (Capture and recall) for a new installation; an existing installation keeps the mode it already has.** Open **More → Team map → Manage memory** to choose Off, Capture only or Capture and recall. Local indexing does not require a paid extraction model. Optional model-based extraction is a separate, explicit setting and creates review candidates.
 
-Local storage is not the same as local-only AI processing: recalled context sent to a hosted engine is processed by that provider. Forgetting cannot retract text already sent. Intel Macs use keyword memory in this release; local semantic retrieval is available on Apple Silicon, Windows x64 and Linux x64 after model setup. [Read the memory guide](docs/memory.md).
+Local storage is not the same as local-only AI processing: recalled context sent to a hosted engine is processed by that provider. Forgetting cannot retract text already sent. Local semantic retrieval (smart search) is available on Apple Silicon and Intel Macs, Windows x64 and Linux x64. Intel Macs run the same model on ONNX Runtime WebAssembly, so building the index for a large memory takes longer there; searches during a turn are not held up by it. [Read the memory guide](docs/memory.md).
 
 ## Your workspace, on the device in your hand
 
@@ -189,7 +189,7 @@ Murage also includes a local MCP server for other clients to list the team, send
 |---|---|
 | Windows browser | See [release notes](https://github.com/FerroxLabs/murage-releases/releases/latest) for Windows verification and known limitations. |
 | Ubuntu desktop control | The app runs on GNOME Xorg and Wayland; local computer control is restricted to Xorg. Linux dictation and ARM64 installers are unavailable. |
-| Intel Mac memory | Keyword retrieval and owner controls; no local semantic runtime. |
+| Intel Mac memory | Smart search works with the bundled model, run on ONNX Runtime WebAssembly. Results match the native runtime used on other platforms. Indexing is about 4 times slower and runs in the background, so searches during a turn do not wait for it. Intel builds do not include the GEPA learning worker. |
 | Background work | Murage's host must remain available for routines and Telegram. This release is not an always-on hosted service. |
 | Memory scale | Verified for ordinary interactive use. Sustained high-throughput ingestion and continuous-search saturation tuning remain deferred. |
 | Cross-device memory | No automatic memory synchronization between separate installations or profiles. |

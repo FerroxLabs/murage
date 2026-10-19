@@ -10,7 +10,7 @@ import { Worker } from "node:worker_threads";
 import type { DatabaseSync } from "node:sqlite";
 import { quietForSmallWork, reclaimAllowed, type ReclaimGate } from "./root-set-reclaim.ts";
 
-export type OptionalIndex = { name: string; table: string; sql: string; minSchemaVersion: number; /** small partial index: built at the first moment with no live turn and no typing, without the idle wait */ eager?: boolean };
+export type OptionalIndex = { name: string; table: string; sql: string; minSchemaVersion: number; /** small partial index: built at the first moment with no live turn and no typing, without the idle wait */ eager?: boolean; /** also logs the build hold as `[<logTag>] index build ms=<n> ok=<0|1>` (a greppable line per owner of the index) */ logTag?: string };
 /** Every optional index. The exact text SQLite stores (sql without IF NOT EXISTS) is what validation accepts. */
 export const OPTIONAL_INDEXES: OptionalIndex[] = [];
 export function registerOptionalIndex(index: OptionalIndex): OptionalIndex {
@@ -47,13 +47,18 @@ export const optionalIndexStats = { started: 0, built: 0, failed: 0, gated: 0 };
  * retried a few times with a growing pause, never on the caller's thread. One build per name at a time. `inline: true` (an in-memory database,
  * which a worker cannot open) builds on the caller's connection: tests only. */
 export function buildOptionalIndexOffThread(db: DatabaseSync, index: OptionalIndex, options: { retries?: number; retryMs?: number; inline?: boolean; canStart?: () => boolean; hold?: (on: boolean) => void } = {}): Promise<boolean> {
-  if (Number(db.prepare("SELECT schema_version AS v FROM memory_meta WHERE id=1").get()?.v) < index.minSchemaVersion) return Promise.resolve(false);
+  if (index.minSchemaVersion > 0 && Number(db.prepare("SELECT schema_version AS v FROM memory_meta WHERE id=1").get()?.v) < index.minSchemaVersion) return Promise.resolve(false);
   if (optionalIndexReady(db, index.name)) return Promise.resolve(true);
   const file = databaseFile(db);
   const key = `${file}\0${index.name}`;
   const running = inFlight.get(key);
   if (running) return running;
-  if (!file || options.inline) { db.exec(index.sql); return Promise.resolve(true); }
+  if (!file || options.inline) {
+    const began = performance.now();
+    db.exec(index.sql);
+    if (index.logTag) console.log(`[${index.logTag}] index build ms=${Math.round(performance.now() - began)} ok=1 inline=1`);
+    return Promise.resolve(true);
+  }
   const attempt = (left: number, pause: number): Promise<boolean> => new Promise<boolean>(resolve => {
     // every attempt, a retry included, passes the same gate as the first: a closed gate counts as a failed attempt (no worker starts), the next idle sweep builds
     if (options.canStart && !options.canStart()) { optionalIndexStats.gated++; optionalIndexStats.failed++; if (left <= 0) { resolve(false); return; } const t = setTimeout(() => { void attempt(left - 1, pause * 2).then(resolve); }, pause); t.unref?.(); return; }
@@ -65,7 +70,9 @@ export function buildOptionalIndexOffThread(db: DatabaseSync, index: OptionalInd
     try { options.hold?.(true); } catch { /* not held */ }
     const done = (ok: boolean) => {
       try { options.hold?.(false); } catch { /* released */ }
-      console.log(`[memory] index build done name=${index.name} ms=${Math.round(performance.now() - began)}${ok ? "" : " failed"}`);
+      const held = Math.round(performance.now() - began);
+      console.log(`[memory] index build done name=${index.name} ms=${held}${ok ? "" : " failed"}`);
+      if (index.logTag) console.log(`[${index.logTag}] index build ms=${held} ok=${ok ? 1 : 0}`);
       if (ok) { optionalIndexStats.built++; resolve(true); return; }
       optionalIndexStats.failed++;
       if (left <= 0) { resolve(false); return; }
@@ -100,7 +107,9 @@ export async function buildOptionalIndexesWhenIdle(db: DatabaseSync, gate: Recla
   if (windowBuilt) return null;
   for (const index of OPTIONAL_INDEXES) {
     if (optionalIndexReady(db, index.name)) continue;
-    if (Number(db.prepare("SELECT schema_version AS v FROM memory_meta WHERE id=1").get()?.v) < index.minSchemaVersion) continue;
+    // an index over a table this file does not have (a memory-only file) waits for it, without spending the window
+    if (!db.prepare("SELECT 1 FROM sqlite_schema WHERE type='table' AND name=?").get(index.table)) continue;
+    if (index.minSchemaVersion > 0 && Number(db.prepare("SELECT schema_version AS v FROM memory_meta WHERE id=1").get()?.v) < index.minSchemaVersion) continue;
     windowBuilt = true;
     return (await buildOptionalIndexOffThread(db, index, options.inline ? { inline: true } : { canStart: () => reclaimAllowed(gate, options.idleMs), ...(options.retryMs !== undefined ? { retryMs: options.retryMs } : {}), ...(options.hold ? { hold: options.hold } : {}) })) ? index.name : null;
   }
@@ -135,7 +144,7 @@ export function buildEagerIndexesBeforeListen(db: DatabaseSync, options: { log?:
   for (const index of OPTIONAL_INDEXES) {
     if (!index.eager) continue;
     try {
-      if (Number(db.prepare("SELECT schema_version AS v FROM memory_meta WHERE id=1").get()?.v) < index.minSchemaVersion) continue;
+      if (index.minSchemaVersion > 0 && Number(db.prepare("SELECT schema_version AS v FROM memory_meta WHERE id=1").get()?.v) < index.minSchemaVersion) continue;
       if (optionalIndexReady(db, index.name)) continue;
       const began = performance.now();
       db.exec(index.sql);

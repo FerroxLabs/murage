@@ -1,11 +1,12 @@
 import { createHash, randomUUID } from "node:crypto";
 import { EventEmitter } from "node:events";
-import { closeSync, copyFileSync, existsSync, mkdirSync, mkdtempSync, openSync, readFileSync, readdirSync, realpathSync, renameSync, rmSync, writeFileSync } from "node:fs";
+import { closeSync, copyFileSync, existsSync, mkdirSync, mkdtempSync, openSync, readFileSync, readdirSync, realpathSync, renameSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join, sep } from "node:path";
 import { PassThrough, Readable, Writable } from "node:stream";
 import { DatabaseSync } from "node:sqlite";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
+import { removeTempDirSync } from "./testing/cleanup.ts";
 const mocks = vi.hoisted(() => ({ transport: vi.fn(), resources: vi.fn(), verify: vi.fn(), spawn: vi.fn() }));
 vi.mock("./installation-windows-backup-transport.ts", () => ({ runWindowsBackupTransport: mocks.transport }));
 vi.mock("./windows-backup-resources.ts", () => ({ createWindowsBackupResourceResolver: mocks.resources }));
@@ -39,7 +40,7 @@ let target: string | undefined, failDecrypt = false;
 const caseFoldingScratch = (() => {
   const probe = mkdtempSync(join(tmpdir(), "murage-win-casefold-"));
   try { writeFileSync(join(probe, "Probe"), ""); return existsSync(join(probe, "probe")); }
-  finally { rmSync(probe, { recursive: true, force: true }); }
+  finally { removeTempDirSync(probe); }
 })();
 const staged = it.skipIf(!caseFoldingScratch);
 function fixture() {
@@ -84,7 +85,7 @@ beforeEach(() => {
 });
 afterEach(() => {
   vi.restoreAllMocks(); for (const [key, descriptor] of Object.entries(descriptors)) Object.defineProperty(process, key, descriptor);
-  for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true });
+  for (const root of roots.splice(0)) removeTempDirSync(root);
 });
 
 staged("writes only beneath a native private root and publishes after every stage/age closure", async () => {

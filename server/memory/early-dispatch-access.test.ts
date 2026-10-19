@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { mkdirSync, rmSync } from "node:fs";
+import { mkdirSync } from "node:fs";
 import { beforeEach, expect, it } from "vitest";
 import { DATA_DIR } from "../config.ts";
 import { closeDatabase, database } from "../database.ts";
@@ -12,10 +12,11 @@ import { ownerMemoryTicket } from "./authority.ts";
 import { EarlyBundle, dispatchAccess } from "../early-bundle.ts";
 import { assertMemoryAccess } from "./policy.ts";
 import { databaseStamp } from "./replay-lineage.ts";
+import { removeTempDirSync } from "../testing/cleanup.ts";
 
 const botThread = "0b1c2d3e-4f50-4617-8a9b-0c1d2e3f4a5b", otherThread = "1c2d3e4f-5061-4728-9bac-1d2e3f4a5b6c";
 const roster = { bots: [{ id: "bot", threadId: botThread }, { id: "other", threadId: otherThread }], groups: [] };
-beforeEach(() => { closeDatabase(); rmSync(DATA_DIR, { recursive: true, force: true }); mkdirSync(DATA_DIR, { recursive: true }); reconcileMemoryRoster(roster); setMemoryMode("active"); });
+beforeEach(() => { closeDatabase(); removeTempDirSync(DATA_DIR); mkdirSync(DATA_DIR, { recursive: true }); reconcileMemoryRoster(roster); setMemoryMode("active"); });
 
 function mint() {
   const registry = new InternalCapabilities(), generation = registry.begin("bot", botThread);

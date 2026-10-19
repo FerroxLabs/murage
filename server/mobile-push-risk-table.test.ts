@@ -5,12 +5,14 @@
 import { DatabaseSync } from "node:sqlite";
 import { mkdirSync, mkdtempSync, realpathSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { isAbsolute, join } from "node:path";
+import { join } from "node:path";
 import { describe, expect, it, vi } from "vitest";
 import { pushRiskFor, ratePushRevision, workspaceInside } from "./mobile-push-risk.ts";
 import { LOW_COMMANDS, isReadOnlyCommand } from "./mobile-push-readonly.ts";
 import { respondFromPush } from "./mobile-push-respond.ts";
 import { PushStore, initializeMobilePush } from "./mobile-push-store.ts";
+import { stopLineRealpath } from "./stop-line-state.ts";
+import { removeTempDirSync } from "./testing/cleanup.ts";
 
 const B64 = "cm0gLXJmIH4vRG9jdW1lbnRz";
 const INTERPRETERS: string[] = [
@@ -304,13 +306,13 @@ describe("B1 allowlist round 6: a symlink named - (real filesystem)", () => {
       writeFileSync(join(base, "secret", "k"), "x");
       symlinkSync(join(base, "secret"), join(base, "ws", "-"));
       symlinkSync(join(base, "secret"), join(base, "ws", "lnk"));
-      const real = workspaceInside({ cwd: join(base, "ws"), roots: [join(base, "ws")], home: base, knownRecipients: new Set<string>(), realpath: (p: string) => realpathSync(isAbsolute(p) ? p : join(base, "ws", p)) }, []);
+      const real = workspaceInside({ cwd: join(base, "ws"), roots: [join(base, "ws")], home: base, knownRecipients: new Set<string>(), realpath: stopLineRealpath }, []);
       for (const command of ["head -", "tail -", "wc -", "ls -", "tree -", "cat -", "ls lnk", "ls lnk/", "tree lnk"]) {
         expect(pushRiskFor(null, "Bash", command, { input: { command }, inside: real }), command).toBe("risky");
       }
       rmSync(join(base, "ws", "-"));
       expect(pushRiskFor(null, "Bash", "cat -", { input: { command: "cat -" }, inside: real })).toBe("low");
-    } finally { rmSync(base, { recursive: true, force: true }); }
+    } finally { removeTempDirSync(base); }
   });
 });
 

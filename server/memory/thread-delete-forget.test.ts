@@ -1,13 +1,14 @@
 // Copyright 2026 Ferrox Labs
 // SPDX-License-Identifier: AGPL-3.0-or-later
-import { mkdirSync, rmSync } from "node:fs";
+import { mkdirSync } from "node:fs";
 import { beforeEach, expect, it } from "vitest";
 import { DATA_DIR } from "../config.ts";
 import { closeDatabase, database } from "../database.ts";
 import * as messages from "../message-db.ts";
 import { setMemoryMode } from "./repository.ts";
+import { removeTempDirSync } from "../testing/cleanup.ts";
 
-beforeEach(() => { closeDatabase(); rmSync(DATA_DIR, { recursive: true, force: true }); mkdirSync(DATA_DIR, { recursive: true }); setMemoryMode("capture"); });
+beforeEach(() => { closeDatabase(); removeTempDirSync(DATA_DIR); mkdirSync(DATA_DIR, { recursive: true }); setMemoryMode("capture"); });
 const message = (id: string, text: string) => ({ id, text, parentId: null, at: 1, role: "user" as const, kind: "text" as const });
 const payloads = (threadId: string) => (database().prepare("SELECT v.payload FROM memory_source_versions v JOIN memory_sources s ON s.id=v.source_id WHERE s.thread_id=?").all(threadId) as Array<{ payload: string }>).map(row => String(row.payload));
 

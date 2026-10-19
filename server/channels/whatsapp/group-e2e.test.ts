@@ -5,7 +5,7 @@
 // real RoutineManager, down to the `startTurn` the manager actually calls (a spy). It asserts what the memory layer relies
 // on: the turn is flagged not-owner (eighth argument), the run is bound to the group's guest person and never the owner, and
 // an image in the same group reaches the turn as an attached file. The runs factory mirrors makeWhatsApp in server/index.ts.
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
@@ -18,11 +18,12 @@ import type { InboundEnvelope } from "./core/protocol.ts";
 import { createWhatsAppPeople, ensureGroupGuest, ensureOwnerLinked, whatsappOrigin } from "./people.ts";
 import { WhatsAppService, chatKeyOf } from "./service.ts";
 import type { HealthEvent, TransportHandlers, WhatsAppTransport } from "./transport.ts";
+import { removeTempDirSync } from "../../testing/cleanup.ts";
 
 const OWNER = "15550001111@s.whatsapp.net", BOB = "15550002222@s.whatsapp.net", GROUP = "120363000000000001@g.us";
 const roots: string[] = [], services: WhatsAppService[] = [];
-beforeEach(() => { closeDatabase(); rmSync(DATA_DIR, { recursive: true, force: true }); mkdirSync(DATA_DIR, { recursive: true }); });
-afterEach(async () => { for (const s of services.splice(0)) await s.stop().catch(() => undefined); for (const r of roots.splice(0)) rmSync(r, { recursive: true, force: true }); });
+beforeEach(() => { closeDatabase(); removeTempDirSync(DATA_DIR); mkdirSync(DATA_DIR, { recursive: true }); });
+afterEach(async () => { for (const s of services.splice(0)) await s.stop().catch(() => undefined); for (const r of roots.splice(0)) removeTempDirSync(r); });
 
 async function stack() {
   const dir = mkdtempSync(join(tmpdir(), "murage-wa-e2e-")); roots.push(dir);

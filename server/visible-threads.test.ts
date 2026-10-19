@@ -5,13 +5,14 @@
 // in the shape a WHERE clause can take, and the reason it has to reach the
 // WHERE clause at all is LIMIT — which is a property of the query, not of the
 // store, and cannot be shown from either side alone.
-import { mkdirSync, rmSync } from "node:fs";
+import { mkdirSync } from "node:fs";
 import { beforeEach, describe, expect, it } from "vitest";
 
 import { DATA_DIR } from "./config.ts";
 import { closeMessageDb, insertMessage, searchMessages } from "./message-db.ts";
 import { Store, type Message } from "./store.ts";
 import type { ModelSelection } from "./contracts.ts";
+import { removeTempDirSync } from "./testing/cleanup.ts";
 
 const selection = (): ModelSelection => ({ instanceId: "claude", model: "claude-sonnet-5" });
 let seq = 0;
@@ -26,7 +27,7 @@ const msg = (text: string): Message => ({
 describe("visibleThreadIds", () => {
   beforeEach(() => {
     closeMessageDb();
-    rmSync(DATA_DIR, { recursive: true, force: true });
+    removeTempDirSync(DATA_DIR);
     mkdirSync(DATA_DIR, { recursive: true });
     seq = 0;
   });
@@ -89,7 +90,7 @@ describe("visibleThreadIds", () => {
 describe("searchMessages scoping", () => {
   beforeEach(() => {
     closeMessageDb();
-    rmSync(DATA_DIR, { recursive: true, force: true });
+    removeTempDirSync(DATA_DIR);
     mkdirSync(DATA_DIR, { recursive: true });
     seq = 0;
   });

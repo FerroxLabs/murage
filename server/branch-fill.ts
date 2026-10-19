@@ -134,10 +134,18 @@ export function recentUnpreparedThreads(database: DatabaseSync, scan = 2_000): s
 // A request that meets an unprepared thread never fills it: it answers a bounded way and queues the thread here. The background pass
 // (transcript-backfill.ts) fills queued threads first, a slice at a time, and tells whoever was answered "pending" when one is ready.
 const frontQueues = new WeakMap<DatabaseSync, Set<string>>();
+/** Called when a thread joins the front queue: a backfill waiting out the upgrade looks at it at once (stall r2 M1: a reader that queued a thread
+ * without starting the backfill left it to the backfill's next 5 s look, transcript-backfill.ts BACKFILL_UPGRADE_RECHECK_MS). */
+const frontListeners = new Set<() => void>();
+export function onFrontFillQueued(listener: () => void): () => void {
+  frontListeners.add(listener);
+  return () => { frontListeners.delete(listener); };
+}
 export function queueFrontFill(database: DatabaseSync, threadId: string): void {
   let queue = frontQueues.get(database);
   if (!queue) frontQueues.set(database, queue = new Set());
   queue.add(threadId);
+  for (const listener of [...frontListeners]) { try { listener(); } catch { /* a waiter that fails holds nothing back */ } }
 }
 /** The oldest queued thread that is still not prepared (prepared ones are dropped on the way). */
 export function nextQueuedFill(database: DatabaseSync): string | undefined {

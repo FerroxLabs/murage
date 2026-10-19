@@ -1,5 +1,5 @@
 import { renderMurageTools, CLAUDE_TOOL_SURFACE } from "./murage-tool-surface.ts";
-import { mkdirSync, rmSync } from "node:fs";
+import { mkdirSync } from "node:fs";
 import { join } from "node:path";
 import { beforeEach, afterEach, expect, it } from "vitest";
 import { DATA_DIR } from "./config.ts";
@@ -8,8 +8,9 @@ import { Store } from "./store.ts";
 import { ensureTaskWorkspace, selectFileWorkspace, taskWorkspacePath } from "./workspace.ts";
 import { outputDestinationInstructions } from "./output-publication.ts";
 import { resolveWorkspaceRoot } from "./workspace-files.ts";
+import { removeTempDirSync } from "./testing/cleanup.ts";
 
-beforeEach(() => { closeDatabase(); rmSync(DATA_DIR, { recursive: true, force: true }); mkdirSync(DATA_DIR, { recursive: true }); });
+beforeEach(() => { closeDatabase(); removeTempDirSync(DATA_DIR); mkdirSync(DATA_DIR, { recursive: true }); });
 afterEach(() => closeDatabase());
 const fresh = () => new Store(() => ({ instanceId: "fixture", model: "fixture" }));
 

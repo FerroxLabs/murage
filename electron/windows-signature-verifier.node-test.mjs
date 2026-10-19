@@ -8,7 +8,8 @@ import { dirname, join } from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
 import { build } from "esbuild";
-import { assertWindowsVerifierSource, patchWindowsSignatureVerifier } from "../scripts/patch-windows-signature-verifier.mjs";
+import { assertWindowsVerifierSource, patchWindowsSignatureVerifier, WINDOWS_SIGNATURE_TIMEOUT_MS } from "../scripts/patch-windows-signature-verifier.mjs";
+import { updateErrorMessage, WINDOWS_SIGNATURE_MISMATCH_MESSAGE, WINDOWS_SIGNATURE_TIMEOUT_MESSAGE, WINDOWS_SIGNATURE_UNAVAILABLE_MESSAGE } from "./update-errors.mjs";
 
 const require = createRequire(import.meta.url);
 const root = join(dirname(fileURLToPath(import.meta.url)), "..");
@@ -24,9 +25,12 @@ function fixture(response, publishers = [subject]) {
     execFile(command, args, options, callback) {
       assert.match(command, /powershell\.exe/);
       assert.match(args.at(-1), /Get-AuthenticodeSignature/);
-      assert.equal(options.timeout, 20000);
+      assert.equal(options.timeout, 90000);
+      assert.equal(options.windowsHide, true);
+      assert.deepEqual(args.slice(0, 4), ["-NoProfile", "-NonInteractive", "-WindowStyle", "Hidden"]);
+      const answer = response.sequence ? response.sequence[calls.signature] : response;
       calls.signature++;
-      callback(response.error ?? null, response.stdout ?? JSON.stringify(valid()), response.stderr ?? "");
+      callback(answer.error ?? null, answer.stdout ?? JSON.stringify(valid()), answer.stderr ?? "");
     },
     execFileSync() {
       calls.fallback++;
@@ -119,4 +123,46 @@ test("generated upstream verifier patch rejects missing, duplicate and moved sha
   assert.throws(() => patchWindowsSignatureVerifier(source.replace("function handleError(logger, error, stderr, reject)", "function renamedError(logger, error, stderr, reject)")), /error handler sites, found 0/);
   assert.throws(() => patchWindowsSignatureVerifier(source.replace("Skipping this step of validation.", "Different upstream handling.")), /missing path rejection sites, found 0/);
   assert.throws(() => patchWindowsSignatureVerifier(patchWindowsSignatureVerifier(source)), /sites, found 0/);
+});
+
+// murage-releases #2: a slow check gets a realistic bound and one more try,
+// and every refusal names the check that failed. Verification stays strict.
+const timedOut = () => Object.assign(new Error("Command failed: powershell.exe"), { killed: true, signal: "SIGTERM", code: null });
+test("the patched verifier allows a realistic time per check", () => {
+  assert.equal(WINDOWS_SIGNATURE_TIMEOUT_MS, 90000);
+});
+test("a check that times out once is tried again and a valid signature is accepted", async () => {
+  const { updater, calls, run } = fixture({ sequence: [{ error: timedOut(), stdout: "" }, {}] });
+  assert.deepEqual(await run(), [destination]);
+  assert.equal(calls.signature, 2);
+  assert.equal(updater.installerPath, destination);
+});
+test("a check that times out twice refuses the update and says it timed out", async () => {
+  const { updater, calls, run } = fixture({ sequence: [{ error: timedOut(), stdout: "" }, { error: timedOut(), stdout: "" }] });
+  const error = await run().then(() => assert.fail("must refuse"), value => value);
+  assert.equal(error.code, "ERR_UPDATER_INVALID_SIGNATURE");
+  assert.equal(error.signatureCheck, "timeout");
+  assert.equal(calls.signature, 2);
+  assert.equal(updater.installerPath, null);
+  assert.equal(updateErrorMessage(error), WINDOWS_SIGNATURE_TIMEOUT_MESSAGE);
+  assert.doesNotMatch(updateErrorMessage(error), /download a fresh installer/i);
+});
+test("a check that cannot run is not retried and says so", async () => {
+  const { calls, run } = fixture({ error: new Error("PowerShell unavailable") });
+  const error = await run().then(() => assert.fail("must refuse"), value => value);
+  assert.equal(calls.signature, 1);
+  assert.equal(error.signatureCheck, "unavailable");
+  assert.equal(updateErrorMessage(error), WINDOWS_SIGNATURE_UNAVAILABLE_MESSAGE);
+});
+test("a wrong publisher is never retried and reads as a signature mismatch", async () => {
+  const { calls, run } = fixture({ stdout: JSON.stringify({ ...valid(), SignerCertificate: { Subject: "CN=Other, O=Other" } }) });
+  const error = await run().then(() => assert.fail("must refuse"), value => value);
+  assert.equal(calls.signature, 1);
+  assert.equal(error.code, "ERR_UPDATER_INVALID_SIGNATURE");
+  assert.equal(updateErrorMessage(error), WINDOWS_SIGNATURE_MISMATCH_MESSAGE);
+});
+test("the shipped verifier is exactly the reviewed patch of upstream", async () => {
+  const result = await build({ entryPoints: [require.resolve("electron-updater")], bundle: true, platform: "node", target: "node20", format: "cjs", external: ["electron"], write: false, logLevel: "silent" });
+  const module = (text) => /var require_windowsExecutableCodeSignatureVerifier = __commonJS\(\{[\s\S]*?\n\}\);/.exec(text)?.[0];
+  assert.equal(module(patchWindowsSignatureVerifier(result.outputFiles[0].text)), module(bundle));
 });

@@ -33,7 +33,7 @@ export function backupFixture(){
   mkdirSync(join(data,"workspaces"));writeFileSync(join(data,"workspaces","report.md"),"# Saved output\n");
   const db=new DatabaseSync(join(data,"messages.db"));db.exec("PRAGMA journal_mode=WAL;PRAGMA wal_autocheckpoint=0;");initializeMessageTables(db);initializeImageOperations(db);migrateMemorySchema(db,"active");
   const message={id:"message",at:1,role:"user",kind:"text",text:"WAL-visible transcript"};
-  db.prepare("INSERT INTO messages VALUES(?,?,?,?,?,?,?)").run("thread","message",1,"user","text",message.text,JSON.stringify(message));db.exec("INSERT INTO thread_state VALUES('thread','message')");
+  db.prepare("INSERT INTO messages(thread_id,id,at,role,kind,text,json) VALUES(?,?,?,?,?,?,?)").run("thread","message",1,"user","text",message.text,JSON.stringify(message));db.exec("INSERT INTO thread_state VALUES('thread','message')");
   db.exec("INSERT INTO image_operations VALUES('operation','generation','request-hash','publish-pending',NULL,1)");
   db.exec("INSERT INTO memory_tombstones VALUES('tombstone','record','forgotten',1,NULL,1,'forgotten',1); UPDATE memory_meta SET deletion_epoch=1");
   return{parent,data,db};

@@ -9,7 +9,15 @@ import { request, type Server } from "node:http";
 import { join } from "node:path";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
-import { createControlServer, hostCandidates, originIsLoopback } from "../src/control.ts";
+import {
+  CONTROL_TOKEN_HEADER,
+  RECOVERY_TOKEN_HEADER,
+  controlTokenFromDoorNonce,
+  createControlServer,
+  hostCandidates,
+  originIsLoopback,
+  resolveControlToken,
+} from "../src/control.ts";
 import { DeviceRegistry, PAIRING_TTL_MS } from "../src/devices.ts";
 import { DATA_DIR } from "../src/state.ts";
 
@@ -23,13 +31,23 @@ let tailscaleRefreshes = 0;
 let browserDoor: { scheme: "http" | "https"; host: string; port: number } | null = null;
 let completedTailscaleRefreshes = 0;
 
+/** This launch's control token, as the app would hold it. */
+const CONTROL_TOKEN = "c".repeat(43);
+let controlToken: string | null = CONTROL_TOKEN;
+const withToken = { [CONTROL_TOKEN_HEADER]: CONTROL_TOKEN };
+/** The desktop's crash-recovery secret: state (pid only) and self-stop. */
+const RECOVERY_TOKEN = "r".repeat(43);
+const withRecovery = { [RECOVERY_TOKEN_HEADER]: RECOVERY_TOKEN };
+let selfStops = 0;
+
 const ask = async (
   method: string,
   path: string,
   headers: Record<string, string> = {},
   body?: string,
+  token: Record<string, string> = withToken,
 ): Promise<{ status: number; body: any }> => {
-  const res = await fetch(`http://127.0.0.1:${port}${path}`, { method, headers, body });
+  const res = await fetch(`http://127.0.0.1:${port}${path}`, { method, headers: { ...token, ...headers }, body });
   const text = await res.text();
   try {
     return { status: res.status, body: JSON.parse(text) };
@@ -43,6 +61,9 @@ beforeAll(async () => {
   let hostedUrl: string | null = null;
   control = createControlServer({
     devices,
+    controlToken: () => controlToken,
+    recoveryToken: () => RECOVERY_TOKEN,
+    selfStop: () => { selfStops += 1; },
     companionPort: 8810,
     hostedUrl: () => hostedUrl,
     setHostedUrl: (next) => {
@@ -68,6 +89,162 @@ beforeAll(async () => {
 
 afterAll(async () => {
   await new Promise<void>((resolve) => control.close(() => resolve()));
+});
+
+describe("the crash-recovery secret", () => {
+  const ROUTES: Array<[string, string]> = [
+    ["POST", "/pairing"],
+    ["DELETE", "/pairing"],
+    ["POST", "/tailscale/refresh"],
+    ["PUT", "/hosted-endpoint"],
+    ["DELETE", "/devices/some-phone"],
+    ["POST", "/devices/some-phone/cloud-desktop"],
+    ["DELETE", "/devices/some-phone/cloud-desktop"],
+    ["POST", "/devices/some-phone/script-access"],
+    ["GET", "/recovery/stop"],
+    ["POST", "/state"],
+    ["GET", "/anything-else"],
+  ];
+
+  it("is refused on pairing, devices and every route but state and stop", async () => {
+    for (const [method, path] of ROUTES) {
+      expect((await ask(method, path, {}, undefined, withRecovery)).status, `${method} ${path}`).toBe(403);
+    }
+    expect(devices.pairing()).toBeNull();
+    expect(selfStops).toBe(0);
+  });
+
+  it("reads the pid alone from state, and a wrong one reads nothing", async () => {
+    const state = await ask("GET", "/state", {}, undefined, withRecovery);
+    expect(state).toEqual({ status: 200, body: { pid: process.pid } });
+    expect((await ask("GET", "/state", {}, undefined, { [RECOVERY_TOKEN_HEADER]: "x".repeat(43) })).status).toBe(403);
+    expect((await ask("POST", "/recovery/stop", {}, undefined, { [RECOVERY_TOKEN_HEADER]: "x".repeat(43) })).status).toBe(403);
+    expect(selfStops).toBe(0);
+  });
+
+  it("asks the sidecar to stop itself", async () => {
+    const stop = await ask("POST", "/recovery/stop", {}, undefined, withRecovery);
+    expect(stop).toEqual({ status: 202, body: { stopping: true, pid: process.pid } });
+    expect(selfStops).toBe(1);
+    selfStops = 0;
+  });
+
+  it("a stolen copy cannot pair a phone or read pairing data, even beside the control header", async () => {
+    const open = await ask("POST", "/pairing");
+    expect(open.status).toBe(201);
+    try {
+      const read = await ask("GET", "/state", {}, undefined, withRecovery);
+      expect(JSON.stringify(read.body)).not.toContain(open.body.code);
+      expect(JSON.stringify(read.body)).not.toContain(open.body.token);
+      expect(Object.keys(read.body)).toEqual(["pid"]);
+      // carrying the recovery header keeps the request in the recovery door,
+      // whatever else it carries, so it never borrows another credential
+      const both = { ...withRecovery, [CONTROL_TOKEN_HEADER]: "y".repeat(43) };
+      expect((await ask("POST", "/pairing", {}, undefined, withRecovery)).status).toBe(403);
+      expect((await ask("POST", "/pairing", {}, undefined, both)).status).toBe(403);
+      expect(devices.pairing()?.token).toBe(open.body.token);
+    } finally {
+      await ask("DELETE", "/pairing");
+    }
+  });
+
+  it("is refused everywhere when the sidecar was given none", async () => {
+    const lone = createControlServer({ devices, controlToken: () => CONTROL_TOKEN, companionPort: 8810, discovery: () => ({ advertising: false, name: "x" }) });
+    const lonePort = await new Promise<number>((resolve) => lone.listen(0, "127.0.0.1", () => resolve((lone.address() as { port: number }).port)));
+    try {
+      for (const [method, path] of [["GET", "/state"], ["POST", "/recovery/stop"]]) {
+        const res = await fetch(`http://127.0.0.1:${lonePort}${path}`, { method, headers: withRecovery });
+        expect(res.status).toBe(403);
+      }
+    } finally {
+      await new Promise<void>((resolve) => lone.close(() => resolve()));
+    }
+  });
+});
+
+describe("the per-launch control token", () => {
+  // A bot's shell or browser is on loopback too. Without the token it must not
+  // open pairing, read a pairing code, or change a device.
+  it("refuses every route but the page without it, and never shows a pairing secret", async () => {
+    const open = await ask("POST", "/pairing");
+    expect(open.status).toBe(201);
+    expect(devices.pairing()).not.toBeNull();
+    try {
+      for (const [method, path] of [
+        ["GET", "/state"],
+        ["POST", "/pairing"],
+        ["DELETE", "/pairing"],
+        ["POST", "/tailscale/refresh"],
+        ["PUT", "/hosted-endpoint"],
+        ["DELETE", "/devices/some-phone"],
+        ["POST", "/devices/some-phone/cloud-desktop"],
+        ["POST", "/devices/some-phone/script-access"],
+      ]) {
+        const attempts: Array<Record<string, string>> = [{}, { [CONTROL_TOKEN_HEADER]: "d".repeat(43) }, { [CONTROL_TOKEN_HEADER]: CONTROL_TOKEN.slice(1) }];
+        for (const token of attempts) {
+          const refused = await ask(method, path, {}, undefined, token);
+          expect(refused.status, `${method} ${path}`).toBe(403);
+          const text = JSON.stringify(refused.body);
+          expect(text).not.toContain(open.body.code);
+          expect(text).not.toContain(open.body.token);
+        }
+      }
+      // A bot's browser opening the address sends no Origin and no token.
+      const asBrowser = await ask("GET", "/state", {}, undefined, {});
+      expect(asBrowser.status).toBe(403);
+      // The window the app opened is untouched by the refused calls.
+      expect(devices.pairing()?.token).toBe(open.body.token);
+    } finally {
+      await ask("DELETE", "/pairing");
+    }
+    expect(devices.pairing()).toBeNull();
+    // A refused caller could not open one either.
+    expect((await ask("POST", "/pairing", {}, undefined, {})).status).toBe(403);
+    expect(devices.pairing()).toBeNull();
+  });
+
+  it("still pairs for the app that holds the token", async () => {
+    const opened = await ask("POST", "/pairing", { origin: `http://127.0.0.1:${port}` });
+    expect(opened.status).toBe(201);
+    const state = await ask("GET", "/state");
+    expect(state.body.pairing).toMatchObject({ code: opened.body.code, token: opened.body.token });
+    const paired = devices.redeem(opened.body.code, "Token test phone");
+    if (!("token" in paired)) throw new Error(`pairing failed: ${paired.error}`);
+    expect((await ask("GET", "/state")).body.devices.map((d: { name: string }) => d.name)).toContain("Token test phone");
+    expect((await ask("DELETE", `/devices/${paired.device.id}`)).status).toBe(200);
+  });
+
+  it("serves the page, which holds no state, without one", async () => {
+    const page = await ask("GET", "/", {}, undefined, {});
+    expect(page.status).toBe(200);
+    expect(page.body).toContain(CONTROL_TOKEN_HEADER);
+    expect(page.body).not.toContain(CONTROL_TOKEN);
+  });
+
+  it("fails closed while there is no token", async () => {
+    controlToken = null;
+    try {
+      expect((await ask("GET", "/state")).status).toBe(403);
+      expect((await ask("POST", "/pairing")).status).toBe(403);
+    } finally {
+      controlToken = CONTROL_TOKEN;
+    }
+    expect(devices.pairing()).toBeNull();
+  });
+
+  it("takes the app's token, else derives the headless one, else makes one to print", () => {
+    expect(resolveControlToken(CONTROL_TOKEN, null)).toEqual({ token: CONTROL_TOKEN, source: "app" });
+    const nonce = "ab".repeat(32);
+    expect(resolveControlToken(undefined, nonce)).toEqual({ token: controlTokenFromDoorNonce(nonce), source: "door" });
+    // Pinned in installer/test/pair.test.mjs too: `murage pair` derives the same.
+    expect(controlTokenFromDoorNonce(nonce)).toBe("fIS-z4SGqT2Wu9xViVgNn9RPkx4_GdkHk2vocb06_kg");
+    for (const provided of [undefined, "", "short", `${"c".repeat(42)}!`]) {
+      const made = resolveControlToken(provided, null);
+      expect(made.source).toBe("printed");
+      expect(made.token).toMatch(/^[A-Za-z0-9_-]{43}$/);
+      expect(made.token).not.toBe(resolveControlToken(provided, null).token);
+    }
+  });
 });
 
 it("contains malformed request targets and continues serving state", async () => {
@@ -359,6 +536,7 @@ describe("a paired-device list that cannot be read", () => {
     const unreadable = new DeviceRegistry();
     const server = createControlServer({
       devices: unreadable,
+      controlToken: () => CONTROL_TOKEN,
       companionPort: 8810,
       hostedUrl: () => null,
       discovery: () => ({ advertising: false, name: "Test computer" }),
@@ -367,7 +545,7 @@ describe("a paired-device list that cannot be read", () => {
       server.listen(0, "127.0.0.1", () => resolve((server.address() as { port: number }).port)),
     );
     const call = async (method: string, path: string): Promise<{ status: number; body: any }> => {
-      const res = await fetch(`http://127.0.0.1:${brokenPort}${path}`, { method });
+      const res = await fetch(`http://127.0.0.1:${brokenPort}${path}`, { method, headers: withToken });
       return { status: res.status, body: await res.json() };
     };
     try {

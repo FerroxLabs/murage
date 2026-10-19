@@ -27,6 +27,7 @@
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 
 import { connectApp } from "@/lib/connect-app";
+import { opensPurchasePages } from "@/lib/native-shell";
 import { FIRST_RUN_COPY, firstRunAddress } from "@/lib/first-run-copy";
 import { enableFirstRunReview, installFirstRunCrew } from "@/lib/first-run-crew";
 import { engineRowTitle } from "@/lib/first-run-detect";
@@ -938,7 +939,7 @@ export function FirstRunDoItCard({ bot, settled }: { bot: Bot; settled: boolean 
   const connect = async (need: FirstRunJobNeed) => {
     if (!job || !world || busyNeed) return;
     if (need === "flux") {
-      void openOutside(FLUX_SIGNUP_URL);
+      if (opensPurchasePages()) void openOutside(FLUX_SIGNUP_URL);
       setPasting(true);
       return;
     }
@@ -1071,7 +1072,7 @@ export function FirstRunDoItCard({ bot, settled }: { bot: Bot; settled: boolean 
           if (failure === FLUX_KEY_NOT_A_KEY || failure === FLUX_KEY_REJECTED) setFailure("");
         }}
         onSubmit={() => void saveKey()}
-        onAgain={() => void openOutside(FLUX_SIGNUP_URL)}
+        onAgain={opensPurchasePages() ? () => void openOutside(FLUX_SIGNUP_URL) : undefined}
         onCancel={() => setPasting(false)}
       />
     );

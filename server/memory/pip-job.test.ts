@@ -2,13 +2,14 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import { execFile, spawn } from "node:child_process";
 import { randomUUID } from "node:crypto";
-import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { promisify } from "node:util";
 import { expect, it, vi } from "vitest";
 import { PIP_JOB_SUPERVISOR, powershellArgs, stopWindowsJob } from "./pip-job.ts";
 import { killAndVerify, reapAttemptProcess } from "./pip-reaper.ts";
+import { removeTempDirSync } from "../testing/cleanup.ts";
 
 const name = "Local\\murage-pip-fixture";
 it.each([
@@ -41,7 +42,7 @@ it("restart revokes pending launch data before opening a not-yet-created job", a
     });
     expect(await reapAttemptProcess({ intent: { runId: "r", family: "lived", attempt: 1, tempRoot: root, bootEpoch: { pid: 2, startedAt: 1 }, intentAt: 1, deadlineAt: 2, jobName: name } }, { platform: "win32", jobRunner })).toEqual({ confirmed: true, how: "child" });
     expect(jobRunner).toHaveBeenCalledOnce();
-  } finally { rmSync(root, { recursive: true, force: true }); }
+  } finally { removeTempDirSync(root); }
 });
 it("the supervisor refuses assignment before reading launch data or starting a CLI", () => {
   const source = readFileSync(PIP_JOB_SUPERVISOR, "utf8");
@@ -85,6 +86,6 @@ it.runIf(process.platform === "win32").each([true, false])("real supervisor owns
     supervisor.kill();
     await closed.catch(() => {});
     await stopWindowsJob(jobName);
-    rmSync(root, { recursive: true, force: true });
+    removeTempDirSync(root);
   }
 }, 45_000);
