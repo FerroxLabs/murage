@@ -195,6 +195,15 @@ export class TurnTeardowns {
     return combine(entries, budget);
   }
 
+  /** Close of every child on the thread except the one that served `exceptTurnId`
+   * (the caller's own, live child). */
+  waitOthers(threadId: string, exceptTurnId: string, budget: TeardownWait): Promise<ProviderStopResult> {
+    const entries = [...this.#byTurn.entries()]
+      .filter(([id, entry]) => entry.threadId === threadId && id !== exceptTurnId)
+      .map(([, entry]) => entry.teardown);
+    return combine(entries, budget);
+  }
+
   waitAll(budget: TeardownWait): Promise<ProviderStopResult> {
     return combine([...this.#byTurn.values()].map((entry) => entry.teardown), budget);
   }

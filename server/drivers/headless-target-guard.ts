@@ -3,9 +3,9 @@
 // the navigating call. This holds a second CDP connection to the engine's own Chrome: every new page
 // target is paused at start, gets the guard as a new-document script, and is then resumed, so the
 // guard runs before the first page script. No per-call cost; the connection stays open for the turn.
-import { spawn } from "node:child_process";
 import WebSocket from "ws";
 import type { AgentBrowserSpec } from "../browser-engine.ts";
+import { forceCliTreeStopped, spawnCli } from "../procs.ts";
 
 const STEP_TIMEOUT_MS = 1_500;
 
@@ -34,8 +34,11 @@ export function cdpUrlFromReply(reply: unknown): string | undefined {
 export function cdpUrlFromCli(spec: AgentBrowserSpec, timeoutMs = 5_000): Promise<string | undefined> {
   return new Promise((resolve) => {
     let out = "";
-    const child = spawn(spec.command, ["--session", spec.env.AGENT_BROWSER_SESSION ?? "", "get", "cdp-url"], { env: spec.env, shell: false, stdio: ["ignore", "pipe", "ignore"], windowsHide: true });
-    const timer = setTimeout(() => child.kill("SIGKILL"), timeoutMs);
+    // Through the shared launcher (Rule 74c): no controlling terminal, stdin a pipe closed at once.
+    let child: ReturnType<typeof spawnCli>;
+    try { child = spawnCli(spec.command, ["--session", spec.env.AGENT_BROWSER_SESSION ?? "", "get", "cdp-url"], { env: spec.env, shell: false, stdio: ["ignore", "pipe", "ignore"] }); }
+    catch { resolve(undefined); return; }
+    const timer = setTimeout(() => { void forceCliTreeStopped(child); }, timeoutMs);
     child.stdout.on("data", (chunk) => { out = (out + chunk).slice(-4096); });
     child.on("error", () => { clearTimeout(timer); resolve(undefined); });
     child.on("close", (code) => { clearTimeout(timer); resolve(code === 0 ? cdpUrlFromReply(out) : undefined); });

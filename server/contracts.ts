@@ -5,6 +5,8 @@
 // Stream. The shapes and names are kept so the two codebases stay mutually
 // readable.
 
+import type { ExecEnv, McpMountRecord } from "../shared/mount-identity.ts";
+import type { EngineKind } from "../shared/app-action-grant.ts";
 import type { LocalSetupFailure, ProviderErrorInfo } from "../shared/provider-error.ts";
 import type { RuntimeErrorDiagnostic } from "../shared/error-diagnostic.ts";
 import type { MemoryBundle } from "../shared/memory.ts";
@@ -258,6 +260,31 @@ export type RuntimeEvent = RuntimeEventBase &
          * `_meta["fuigo/tool"]`: namespace, name, kind). A title can be any
          * text; this cannot come from the model. */
         toolIdentity?: { namespace: string; name: string; kind?: string };
+        /** Additive (1.0.3), F4 (APP-GRANT-DESIGN-FINAL.AGREED-r10.md Rule 54):
+         * the MCP servers this engine actually loads for this turn, each
+         * recorded by the driver that mounted or enumerated it
+         * (`{engineName, mountId, provenance}`). An MCP identity is proven
+         * against these records by exact `engineName` and nothing else
+         * (shared/app-action-grant.ts); one that fits no record, or more than
+         * one, offers no grant and stops. Server-side only, stripped with
+         * `toolCall`. */
+        mcpMounts?: McpMountRecord[];
+        /** Additive (1.0.3): which driver filed the ask, so its Rule 55
+         * contract table applies (server/drivers/contracts.ts). */
+        toolEngine?: EngineKind;
+        /** Additive (1.0.3), F5: a field the driver's contract needs was
+         * absent on the wire; the driver never substitutes one. */
+        toolInputMissing?: string;
+        /** Additive (1.0.3), F12 (Rule 74): the exact environment the driver
+         * handed the engine process, the names it removed, the command's
+         * starting directory, the pinned shell form, and where the map came
+         * from. Server-side only. */
+        execEnv?: ExecEnv;
+        /** Additive (1.0.3): the driver could not report the call whole (Pi's
+         * gate sends a call past its size cap without its input). What the
+         * card shows is then not the whole call: it offers no standing grant
+         * and no mode answers it (server/auto-approve.ts unread-call). */
+        toolInputTruncated?: boolean;
       }
     | {
         type: "request.resolved";
@@ -301,7 +328,10 @@ export function stopCloseConfirmed(result: void | ProviderStopResult): boolean |
  * asked-about action — broadening ("always allow") stays a separate,
  * explicit step. `unavailable` is the fail-closed default: no answerer,
  * no action. */
-export type RequestOutcome = "allowed-once" | "rejected" | "answered" | "unavailable";
+export type RequestOutcome = "allowed-once" | "rejected" | "answered" | "unavailable"
+  /** Rule 72: a narrowing denial a driver held back for the owner (the third
+   * identical one in a turn); the ask stays open and the card decides. */
+  | "card";
 
 // ── adapter contract (upstream ProviderAdapterShape, promise-flavored) ──
 // The conversation runtime every provider is flattened into. streamEvents
@@ -340,8 +370,19 @@ export interface SendTurnInput {
    * turn failed without writing, and the server re-runs it once on a reset
    * session. */
   beforeSubmit?: () => void;
+  /** Server-only: the adapter says that the write the last `beforeSubmit` released did not happen (the process never started, the
+   * connection failed before any answer, the write failed whole). BOTADDED-DESIGN-V3 r6 invariant I14 reads "released to the
+   * engine's write", so the server withdraws the delivery bookkeeping that call made; a later write's `beforeSubmit` makes it again.
+   * Optional and best effort: an adapter whose fence sits right before a write that cannot fail first need not call it. */
+  notWritten?: () => void;
   /** Server-authorized reference bundle; the shared adapter consumes it once. */
   memoryContext?: MemoryBundle;
+  /** Flux memory envelope (lane 2.2), set by the memory adapter when this turn
+   *  goes through Flux with "Use Flux memory" on: the driver puts it in the
+   *  request metadata and reports Flux's x-flux-memory answer to
+   *  `onFluxMemory`. Set only for drivers that declare `fluxEnvelope`. */
+  fluxMemory?: import("./flux-memory-envelope.ts").FluxMemoryEnvelope;
+  onFluxMemory?: (report: import("./flux-memory-envelope.ts").FluxMemoryReport) => void;
   threadId: ThreadId;
   /** Who this turn runs for, stamped by the harness. A driver that keeps an
    * engine process warm across turns keys reuse on it, so a process is never
@@ -503,6 +544,8 @@ export interface ProviderAdapter {
   readonly capabilities: {
     memoryDelivery?: "prefixed-reference" | "unavailable";
     memoryMcp?: boolean;
+    /** True when the driver sends `turn.fluxMemory` as request metadata on a Flux request. */
+    fluxEnvelope?: boolean;
     sessionModelSwitch: "in-session" | "unsupported";
     /** True when the driver mounts turn.integrations.agents as MCP tools —
      * the harness only offers agents tooling (and prompts about it) to
@@ -626,7 +669,13 @@ export interface ProviderAdapter {
      * per-question picks for a structured question; `message` is the same
      * answer as plain text for drivers that only read one string. A `deny`
      * on a question is an honest "no answer" (skipped), never a refusal. */
-    decision: { behavior: "allow" | "deny" | "answer"; message?: string; answers?: QuestionAnswer[] },
+    decision: {
+      behavior: "allow" | "deny" | "answer"; message?: string; answers?: QuestionAnswer[];
+      /** Rule 72: a narrowing denial; `message` is the reason the engine reads. */
+      source?: "narrow";
+      /** Rules 69e, 73d: the call as judged, or the narrowed call, to run in place of the one asked. */
+      updatedInput?: Record<string, unknown>;
+    },
   ): Promise<RequestOutcome>;
   /** Deliver a user message into the RUNNING turn on this thread. Resolves
    * false or "rejected" when there is no live turn to steer (the caller then
@@ -656,6 +705,9 @@ export interface ProviderSnapshot {
   /** How this instance is paid for, when the driver can tell: a reported
    * cost on a subscription is notional and the UI labels it as such. */
   billing?: "metered" | "subscription";
+  /** Cloud home: the engine's sign-in should be renewed (Claude's token expires within 30 days or
+   * is no longer accepted). The UI offers the sign-in again. */
+  renewSignIn?: boolean;
 }
 
 // ── engine install descriptor ───────────────────────────────────────────
@@ -739,9 +791,10 @@ export interface ProviderInstance {
   readonly adapter: ProviderAdapter;
   snapshot(): Promise<ProviderSnapshot>;
   /** Cheap one-shot text call (upstream TextGeneration) — titles, summaries. */
-  generateText?(prompt: string): Promise<string>;
+  generateText?(prompt: string, botId?: string): Promise<string>;
   /** One non-persisted owner proposal with tools and hooks disabled. */
-  proposeProject?(prompt: string, signal: AbortSignal, model: string): Promise<string>;
+  /** `botId` is the bot the call is made for: on a Cloud home the launcher refuses an engine run that names none. */
+  proposeProject?(prompt: string, signal: AbortSignal, model: string, botId?: string): Promise<string>;
   /** Explicitly qualified tool-free bounded memory extraction. Absence means
    * unavailable; never infer it from chat, MCP, or generic text generation. */
   groundMemory?(input: import("./memory/extract.ts").MemoryGroundingInput, maximumOutputTokens: number, signal: AbortSignal): Promise<string>;
@@ -749,7 +802,7 @@ export interface ProviderInstance {
   /** Isolated, tool-free permission review on this same provider. Kept
    * separate from generateText so the UI never infers a security capability
    * from a generic helper that may expose prompts in argv or lack approvals. */
-  reviewPermission?(prompt: string, signal?: AbortSignal): Promise<string>;
+  reviewPermission?(prompt: string, signal?: AbortSignal, botId?: string): Promise<string>;
   dispose(): Promise<void>;
 }
 

@@ -7,7 +7,7 @@
 //  6. a held owed row is checked for terminal settlement before it is postponed, and its hold is removed with it;
 //  7. the dismissal receipt is a durable obligation retried until it reaches disk.
 // The scaling tests count the rows the production statements visit (a SQL function called on every row the plan walks) and the queue-file writes, at 1k and 100k rows.
-import { mkdirSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import type { DatabaseSync } from "node:sqlite";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
@@ -27,9 +27,10 @@ import { pruneTerminalRoomRequests, retireSettledRoomRequestHolds, roomRequest, 
 import { LAST_TEAM_DISPATCH_SQL } from "./shared-work.ts";
 import { requestSourceThread } from "./execution-audience.ts";
 import { status } from "./murage-status.ts";
+import { removeTempDirSync } from "./testing/cleanup.ts";
 
 const DAY = 86_400_000;
-beforeEach(() => { closeDatabase(); rmSync(DATA_DIR, { recursive: true, force: true }); mkdirSync(DATA_DIR, { recursive: true }); _resetPending(); });
+beforeEach(() => { closeDatabase(); removeTempDirSync(DATA_DIR); mkdirSync(DATA_DIR, { recursive: true }); _resetPending(); });
 afterEach(() => { _resetPending(); closeDatabase(); });
 
 const COLUMNS = "id,root_id,parent_id,group_id,verb,from_kind,to_bot_id,target_thread_id,state,payload_text,refusal,created_at,deadline_at,finished_at,root_thread_id,return_thread_id,origin,audience_fingerprint,not_owner_audience,unattended,admission_key";
@@ -269,7 +270,7 @@ describe("7. a dismissal keeps its receipt as a durable obligation until the rec
     const receipt = { id: "r1", sourceThreadId: "t", toBotId: "b", toBotName: "B", status: "cancelled" as const, result: status("receipt_dismissed"), lineage: true };
     expect(recordDelegationReceipt(receipt)).toBe(false);
     expect(findDelegationReceipt("r1")).toBeTruthy();             // visible in memory, not on disk
-    rmSync(blocker, { recursive: true, force: true });
+    removeTempDirSync(blocker);
     expect(recordDelegationReceipt(receipt)).toBe(true);
   });
   it("a request that still owes its dismissal receipt is never pruned", () => {

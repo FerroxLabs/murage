@@ -2,13 +2,13 @@ import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, expect, it, vi } from "vitest";
-import { safeWipeSync } from "../testing/safe-wipe.mjs";
 import { DiscordService } from "./discord/service.ts";
 import { SlackService } from "./slack/service.ts";
 import type { PermissionAction } from "./permission-approvals.ts";
+import { removeTempDirSync } from "../testing/cleanup.ts";
 
 const services: Array<DiscordService | SlackService> = [], roots: string[] = [];
-afterEach(async () => { for (const service of services.splice(0)) await service.stop(); for (const root of roots.splice(0)) safeWipeSync(root); });
+afterEach(async () => { for (const service of services.splice(0)) await service.stop(); for (const root of roots.splice(0)) removeTempDirSync(root); });
 const flush = async () => { for (let i = 0; i < 50; i++) await Promise.resolve(); };
 function fixture(platform: "discord" | "slack") {
   const dataDir = mkdtempSync(join(tmpdir(), "murage-permission-service-")); roots.push(dataDir);

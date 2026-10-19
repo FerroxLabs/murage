@@ -20,7 +20,7 @@
 // the cycle its deferral ended; and the size bound of the in-memory map never
 // evicts the live job's own counter (a Map.set on an existing key keeps its
 // insertion position, so the churning job used to be the oldest entry).
-import { mkdirSync, rmSync } from "node:fs";
+import { mkdirSync } from "node:fs";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { DATA_DIR } from "../config.ts";
 import { closeDatabase, database } from "../database.ts";
@@ -29,6 +29,7 @@ import { STALE_MEMORY_REQUEUE_LIMIT } from "./jobs.ts";
 import { setMemoryMode } from "./repository.ts";
 import { MemoryWorkerController } from "./worker-controller.ts";
 import type { MemoryWork } from "./worker-protocol.ts";
+import { removeTempDirSync } from "../testing/cleanup.ts";
 
 // The authority moves inside the lease: the first `moveTimes` publications
 // each find the policy revision one ahead of the one the job was claimed
@@ -59,7 +60,7 @@ const sourceRecords = () => database().prepare("SELECT count(*) AS n FROM memory
 const requeueLine = (count: number) => expect.stringMatching(new RegExp(`^\\[memory\\] worker result for job \\S+ was STALE_MEMORY_SOURCE \\(the authority moved while the job was leased\\); requeued for the next claim \\(stale requeue ${count} of ${STALE_MEMORY_REQUEUE_LIMIT}\\)$`));
 const stale = (n: number) => Array.from({ length: n }, () => "STALE_MEMORY_SOURCE");
 
-beforeEach(() => { closeDatabase(); rmSync(DATA_DIR, { recursive: true, force: true }); mkdirSync(DATA_DIR, { recursive: true }); setMemoryMode("capture"); state.moveTimes = 0; state.script.length = 0; state.requeueAlways = false; state.publications.length = 0; });
+beforeEach(() => { closeDatabase(); removeTempDirSync(DATA_DIR); mkdirSync(DATA_DIR, { recursive: true }); setMemoryMode("capture"); state.moveTimes = 0; state.script.length = 0; state.requeueAlways = false; state.publications.length = 0; });
 afterEach(() => { vi.restoreAllMocks(); });
 
 it("requeues a job whose publication was refused as stale and completes it on the next claim, without an attempt or a worker error", async () => {

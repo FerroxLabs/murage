@@ -141,7 +141,8 @@ describe("assertSafeToWipe refuses", () => {
 
   it("the working directory, its parents, and filesystem roots", () => {
     refuses(process.cwd(), /working directory/);
-    refuses(dirname(process.cwd()), /working directory/);
+    // A checkout directly under / (a container mounted at /work) has the filesystem root as its parent.
+    refuses(dirname(process.cwd()), dirname(dirname(process.cwd())) === dirname(process.cwd()) ? /filesystem root/ : /working directory/);
     refuses("/", /filesystem root/);
     refuses("", /empty/);
     refuses("evil\npath", /control characters/);

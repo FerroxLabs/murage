@@ -2,7 +2,7 @@
 // an in-process Vite renderer; it never reads a normal Murage profile or calls
 // a provider. Independent tests let a positioning-only correction reuse
 // verified banner evidence; cleanup always owns the exact held fake turn.
-import { test, expect, type Locator, type Page, type TestInfo } from "@playwright/test";
+import { test, expect, type Locator, type Page, type TestInfo } from "./page-error-guard";
 import { createServer, type ViteDevServer } from "vite";
 import react from "@vitejs/plugin-react";
 import tailwindcss from "@tailwindcss/vite";

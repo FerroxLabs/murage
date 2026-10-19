@@ -51,6 +51,9 @@ export interface FluxRouterConnectionProps {
   choices?: Array<{ id: string; label: string; enabled: boolean }>;
   onSelect?: (id: string) => Promise<void>;
   onSave: (key: string) => Promise<void>;
+  /** One-click browser sign-in (desktop only). Resolves when the key is saved; a refusal throws a plain sentence. */
+  onSignin?: () => Promise<void>;
+  onCancelSignin?: () => Promise<void> | void;
   onTest: () => Promise<{ modelCount: number; error?: string }>;
   onDisconnect: () => Promise<void>;
   children?: ReactNode;
@@ -59,14 +62,14 @@ export interface FluxRouterConnectionProps {
 const focus = "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent";
 const button = `min-h-11 rounded-lg bg-control px-3 py-2 text-[13px] text-ink hover:bg-raised-hover disabled:opacity-50 ${focus}`;
 
-export function FluxRouterConnection({ configured, conflict = false, choices = [], onSelect, onSave, onTest, onDisconnect, children }: FluxRouterConnectionProps) {
+export function FluxRouterConnection({ configured, conflict = false, choices = [], onSelect, onSave, onSignin, onCancelSignin, onTest, onDisconnect, children }: FluxRouterConnectionProps) {
   const selectionRequired = conflict || configured === false && choices.length > 0;
   const showSavedChoices = selectionRequired || choices.length > 1;
   const input = useRef<HTMLInputElement>(null);
   const running = useRef(false);
   const [editing, setEditing] = useState(false);
   const [disconnecting, setDisconnecting] = useState(false);
-  const [busy, setBusy] = useState<"save" | "test" | "disconnect" | "select" | null>(null);
+  const [busy, setBusy] = useState<"save" | "test" | "disconnect" | "select" | "signin" | null>(null);
   const [notice, setNotice] = useState("");
   const [error, setError] = useState("");
   const [invalid, setInvalid] = useState(false);
@@ -92,6 +95,16 @@ export function FluxRouterConnection({ configured, conflict = false, choices = [
       setError(fluxActionError(kind, cause));
     } finally { running.current = false; setBusy(null); }
   };
+  const signin = async () => {
+    if (running.current || configured === null || !onSignin) return;
+    running.current = true; setBusy("signin"); setError(""); setNotice(""); setInvalid(false);
+    try {
+      await onSignin();
+      setEditing(false); setNotice("Signed in. Flux Router is connected. Test the connection to check its model catalog.");
+    } catch (cause) {
+      setError(serverSentence(cause) || "Sign-in did not finish. Try again, or paste your key instead.");
+    } finally { running.current = false; setBusy(null); }
+  };
   const cancelEdit = () => { if (input.current) input.current.value = ""; setEditing(false); setError(""); setInvalid(false); };
   const selectExisting = async (id: string) => {
     if (running.current || !onSelect) return;
@@ -109,6 +122,7 @@ export function FluxRouterConnection({ configured, conflict = false, choices = [
     {showSavedChoices && <div className="mt-4 space-y-3 text-[13px] text-ink"><p>{conflict ? "Different Flux Router keys are saved. Choose the connection to use for Flux models. Saved keys are never displayed." : "Choose a saved connection to use for Flux models. You do not need to enter its key again."}</p><div className="flex flex-wrap gap-2">{choices.map(choice => <button key={choice.id} type="button" className={`${button} break-words text-left`} disabled={Boolean(busy) || !onSelect} onClick={() => void selectExisting(choice.id)}>Use {choice.label}{choice.enabled ? "" : " (currently disabled)"}</button>)}</div></div>}
     {!selectionRequired && (!configured || editing) && <form className="mt-4 space-y-3" onSubmit={event => { event.preventDefault(); void act("save"); }}>
       <label className="block text-[13px] text-ink">{configured ? "New Flux Router key" : "Flux Router key"}<input ref={input} name="flux-router-key" type="password" autoComplete="off" spellCheck={false} maxLength={4096} disabled={Boolean(busy) || configured === null} aria-invalid={invalid || undefined} aria-describedby={invalid ? "flux-router-error" : undefined} onInput={() => { if (invalid) setInvalid(false); }} placeholder="Paste your Flux Router key…" className={`mt-1.5 min-h-11 w-full min-w-0 rounded-lg border border-hairline/50 bg-inset px-3 py-2 text-[13px] text-ink ${focus}`} /></label>
+      {onSignin && <div className="space-y-2"><div className="flex flex-wrap gap-2"><button type="button" disabled={Boolean(busy) || configured === null} className={`${button} font-medium`} onClick={() => void signin()}>{busy === "signin" ? "Waiting for your browser…" : "Sign in with Flux Router"}</button>{busy === "signin" && <button type="button" className={button} onClick={() => void onCancelSignin?.()}>Cancel sign-in</button>}</div><p className="text-[12px] text-ink-secondary">Opens your browser. Or paste a key below.</p></div>}
       <div className="flex flex-wrap gap-2"><button type="submit" disabled={Boolean(busy) || configured === null} className={`${button} font-medium`}>{busy === "save" ? "Saving…" : configured ? "Replace key" : "Connect"}</button>{editing && <button type="button" disabled={Boolean(busy)} className={button} onClick={cancelEdit}>Cancel</button>}</div>
     </form>}
     {configured && !selectionRequired && !editing && <div className="mt-4 flex flex-wrap gap-2">

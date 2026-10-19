@@ -119,7 +119,7 @@ export class BrowserExtensionIntegration {
         // Flux by default, the bot's own engine on the owner's switch. Not available (no key, or Flux has not shipped no-retain) means none.
         checker: context => {
           const bot = this.options.bot(context.botId); const check = bot?.browserActionCheck ?? "flux";
-          const connection = resolveCheckerConnection({ switch: check, instances: this.options.checkerInstances?.() ?? [], ...(bot?.modelSelection?.instanceId ? { botInstanceId: bot.modelSelection.instanceId } : {}) });
+          const connection = resolveCheckerConnection({ switch: check, instances: this.options.checkerInstances?.() ?? [], ...(bot?.modelSelection?.instanceId ? { botInstanceId: bot.modelSelection.instanceId } : {}), ...(bot?.id ? { botId: bot.id } : {}) });
           return connection ? { deps: { transport: connection.transport, models: connection.models }, key: JSON.stringify([connection.source, connection.fallback === true, bot?.modelSelection?.instanceId ?? null, connection.models]) } : undefined;
         },
         routine: context => this.isRoutineThread(context.threadId),

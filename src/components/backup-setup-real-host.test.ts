@@ -13,14 +13,14 @@ import { mkdirSync, mkdtempSync, realpathSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { BackupCoordinator } from "../../server/backup-coordinator";
-import { safeWipeSync } from "../../server/testing/safe-wipe.mjs";
 import { createBackupScheduleHost, setUpBackupsRequest } from "../../electron/backup-schedule-host.mjs";
-import { completeBackupSetup, type BackupScheduleBridge } from "./backups-section-ui";
+import { backupSetupVerified, completeBackupSetup, ensureFirstRunBackup, type BackupScheduleBridge } from "./backups-section-ui";
 import { enabledSchedule, scheduleDraft } from "./backup-schedule-ui";
+import { removeTempDirSync } from "../../server/testing/cleanup.ts";
 
 const fakeKey = "# public key: age1" + "q".repeat(58) + "\nAGE-SECRET-KEY-1" + "A".repeat(60) + "\n";
 const roots: string[] = [];
-afterEach(() => { for (const root of roots.splice(0)) safeWipeSync(root); });
+afterEach(() => { for (const root of roots.splice(0)) removeTempDirSync(root); });
 
 function realHost(options: { closedApp?: boolean } = {}) {
   const root = realpathSync.native(mkdtempSync(path.join(tmpdir(), "murage-setup-real-host-")));
@@ -28,6 +28,8 @@ function realHost(options: { closedApp?: boolean } = {}) {
   const installation = path.join(root, "installation"), keys = path.join(root, "keys");
   const folders = { first: path.join(root, "backups"), second: path.join(root, "other-backups") };
   for (const folder of [installation, keys, folders.first, folders.second]) mkdirSync(folder);
+  // Settings L5: the harness marks a fresh data folder as owing the first-run backup.
+  writeFileSync(path.join(installation, "setup-backup.json"), JSON.stringify({ version: 2, owed: true, ending: null, at: 0 }));
   let destination = folders.first, keyCount = 0;
   let binding: string | undefined;
   const calls: string[] = [];
@@ -36,6 +38,7 @@ function realHost(options: { closedApp?: boolean } = {}) {
     installation: () => installation, supported: () => true,
     readProtected: async () => binding, writeProtected: async (_key: string, value: string) => { binding = value; },
     chooseDestination: async () => { calls.push("folder"); return destination; },
+    defaultDestination: async () => { calls.push("default-folder"); return path.join(root, "default-backups"); },
     chooseKey: async () => null,
     createRecoveryKey: async () => { calls.push("create-key"); const file = path.join(keys, ++keyCount === 1 ? "murage-recovery-key.txt" : `murage-recovery-key-${keyCount}.txt`); writeFileSync(file, fakeKey, { mode: 0o600 }); return { file, label: "murage-recovery-key.txt", publicKey: "age1" + "q".repeat(58) }; },
     confirmReferences: async () => { calls.push("confirm"); return true; },
@@ -48,7 +51,7 @@ function realHost(options: { closedApp?: boolean } = {}) {
   // What electron/main.mjs's "backup-schedule:set-up" handler does with the
   // preload's forwarded options slot, then the host call it makes.
   const bridge = {
-    setUp: async (options?: { existingKey?: boolean }) => { const request = setUpBackupsRequest([options]); if (!request) throw Error("INVALID_BACKUP_REQUEST"); return host.setUpBackups(request); },
+    setUp: async (options?: { existingKey?: boolean } | { firstRun: true }) => { const request = setUpBackupsRequest([options]); if (!request) throw Error("INVALID_BACKUP_REQUEST"); return host.setUpBackups(request); },
     configure: (revision: number, choices: unknown) => host.configure(revision, choices),
     runNow: (revision: number) => host.runNow(revision),
     status: () => host.status(),
@@ -128,5 +131,45 @@ describe("Choose a different folder after Turn off", () => {
     const now = await host.status();
     expect(now.enabled).toBe(true);
     expect(now.schedule.closedApp).toBe(false);
+  });
+});
+
+
+// First run, end to end through the real host and the real IPC argument check:
+// a fresh data dir, backups on by default, one backup, a checked receipt, and
+// no picker or confirmation dialog anywhere.
+describe("first run turns backups on by default and ends verified", () => {
+  it("fresh install: default folder, key written, one backup, receipt checked, no picker", async () => {
+    const { host, bridge, calls } = realHost();
+    expect((await host.status()).enabled).toBe(false);
+    // The restart a backup makes is simulated: when it relaunches for the
+    // backup, the checked receipt exists by the time the window reads status.
+    let relaunched = false;
+    const withReceipt = {
+      ...bridge,
+      status: async () => {
+        const status = await bridge.status();
+        return relaunched || calls.includes("relaunch:backup") ? { ...status, pending: false, lastVerified: { verifiedAt: Date.now(), bytes: 1, installationRef: status.refs?.installationRef, destinationRef: status.refs?.destinationRef } } : status;
+      },
+    } as unknown as BackupScheduleBridge;
+    const result = await ensureFirstRunBackup(withReceipt, { applyStatus: () => {}, createdKey: () => {}, notice: () => {} }, { pollMs: 1, sleep: async () => { relaunched = true; } });
+    host.stopPolling();
+    expect(result).toBe("verified");
+    const status = await withReceipt.status();
+    expect(status.enabled).toBe(true);
+    expect(backupSetupVerified(status)).toBe(true);
+    expect(status.refs?.destinationLabel).toBe("default-backups");
+    expect(calls).toContain("default-folder");
+    expect(calls).toContain("create-key");
+    expect(calls).not.toContain("folder");
+    expect(calls).not.toContain("confirm");
+    expect(calls.filter(call => call === "relaunch:backup")).toHaveLength(1);
+  });
+
+  it("without a checked receipt it never says verified", async () => {
+    const { host, bridge } = realHost();
+    const result = await ensureFirstRunBackup(bridge, { applyStatus: () => {}, createdKey: () => {}, notice: () => {} }, { pollMs: 1, waitMs: 5, sleep: async () => {} });
+    host.stopPolling();
+    expect(result).toBe("unverified");
   });
 });

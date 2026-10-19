@@ -27,8 +27,8 @@
 // - A prior generated image, or saved bytes that are already an attachment of
 //   this conversation, reuse that attachment instead of copying it again.
 import { createHash } from "node:crypto";
-import { closeSync, constants, fstatSync, lstatSync, openSync, readSync, type Stats } from "node:fs";
-import { basename, join, resolve } from "node:path";
+import { basename, join } from "node:path";
+import { attachmentNameOf, attachmentsHomeOf, probeAttachment, readAttachmentFile, storedPathOf, type AttachmentsHome } from "./attachment-read.ts";
 import { ArtifactError, describeArtifact, readArtifact } from "./artifacts.ts";
 import { deleteAttachment, saveImage } from "./attachments.ts";
 import { decodeGeneratedImage } from "./generated-image.ts";
@@ -41,7 +41,10 @@ import {
   type MediaReferenceResponse, type ResolveImageReferenceResponse, type ResolvedImageReference,
 } from "../shared/media-assets.ts";
 
-export type ImageReferenceDeps = MediaAssetsDeps;
+export type ImageReferenceDeps = MediaAssetsDeps & {
+  /** Throws when the turn that asked is no longer live; asked again after the reads, before anything is written. */
+  assertLive?: () => void;
+};
 /** The conversation a reference is prepared for. */
 export interface ImageReferenceAudience { botId: string; threadId: string }
 /** Identity taken from the verified internal capability, never the body. */
@@ -51,7 +54,6 @@ export interface ImageReferenceClaim { botId: string; threadId: string; generati
  * as the existing reference allowlist accepts it. */
 const ATTACHMENT_NAME = /^[A-Za-z0-9-]{1,160}\.(png|jpg|jpeg|webp)$/i;
 const HEADERS = { "cache-control": "no-store", "referrer-policy": "no-referrer", "x-content-type-options": "nosniff" } as const;
-const FLAGS = constants.O_RDONLY | (constants.O_NOFOLLOW ?? 0);
 
 const STATUS: Record<ImageReferenceErrorCode, number> = {
   "invalid-request": 400, unavailable: 404, denied: 403, missing: 410, changed: 409, unsupported: 415, "too-large": 413, storage: 507,
@@ -73,14 +75,15 @@ function refuse(code: ImageReferenceErrorCode, reason: string, index?: number): 
 }
 
 const sha256 = (bytes: Uint8Array) => createHash("sha256").update(bytes).digest("hex");
-const fingerprint = (stat: Stats) => JSON.stringify([stat.dev, stat.ino, stat.size, stat.mtimeMs, stat.ctimeMs]);
-const attachmentsDirectory = (deps: Pick<ImageReferenceDeps, "dataDir">) => join(deps.dataDir, "attachments");
+const attachmentsHome = (deps: Pick<ImageReferenceDeps, "dataDir">) => attachmentsHomeOf(deps.dataDir);
 
 // ---------------------------------------------------------------------------
 // Which attachments belong to a conversation
 
 /** How many of the conversation's newest pictures a request's bytes are compared with for a duplicate. */
 const DUPLICATE_CANDIDATES = 64;
+/** At most this many same-size candidates are read for a duplicate; past it the bytes are stored as a copy. */
+export const DUPLICATE_READS = 4;
 
 /** Image attachments this exact conversation already shows: harness-stored
  * attachments (generated images, prepared references) and images the person
@@ -91,16 +94,15 @@ const DUPLICATE_CANDIDATES = 64;
  * found through the message_image index however far back they are, by attachment
  * or by tag (the thread's fill, branch-store.ts, put the older rows there).
  * Returns name -> canonical attachment path: the names asked, and the newest pictures the conversation holds. */
-export function conversationImageAttachments(store: Store, threadId: string, attachmentsDir: string, asked: readonly string[] = []): Map<string, string> {
+export function conversationImageAttachments(store: Store, threadId: string, home: AttachmentsHome, asked: readonly string[] = []): Map<string, string> {
   const allowed = new Map<string, string>();
   const add = (path: string) => {
-    const name = basename(path);
-    const canonical = join(attachmentsDir, name);
-    if (ATTACHMENT_NAME.test(name) && resolve(path) === canonical) allowed.set(name, canonical);
+    const name = attachmentNameOf(home, path);
+    if (name && ATTACHMENT_NAME.test(name)) allowed.set(name, storedPathOf(home, name));
   };
   // the images asked about, found by the message_image index wherever in the conversation they are named: an attachment
   // a message carries, or the tag the composer wrote into an upload's text
-  const paths = asked.map(name => join(attachmentsDir, name));
+  const paths = asked.filter(name => ATTACHMENT_NAME.test(name)).map(name => storedPathOf(home, name));
   for (const [path, item] of store.boundAttachments(threadId, paths)) if (item.kind === "image") add(path);
   for (const path of store.imagePathsNamed(threadId, paths)) add(path);
   // and the conversation's newest pictures, the candidates a duplicate is looked for among (a copy of an older one is stored again, harmlessly)
@@ -118,33 +120,14 @@ function conversationBots(store: Store, threadId: string): { botIds: string[]; o
 // ---------------------------------------------------------------------------
 // Reading exact bytes
 
-/** One ordinary, unlinked file directly inside `directory`, read through a
- * handle that is checked to be the same file before and after the read. */
-function readDirectFile(directory: string, name: string, maxBytes: number, index: number): Buffer {
-  let parent: Stats;
-  try { parent = lstatSync(directory); } catch { return refuse("unavailable", "That image is not in this conversation.", index); }
-  if (!parent.isDirectory() || parent.isSymbolicLink()) refuse("denied", "Murage's attachment folder is not a private folder.", index);
-  const path = join(directory, name);
-  let before: Stats;
-  try { before = lstatSync(path); } catch { return refuse("missing", "That image is no longer available.", index); }
-  if (before.isSymbolicLink()) refuse("denied", "Linked files are never used as references.", index);
-  if (!before.isFile() || before.nlink !== 1) refuse("unsupported", "That attachment is not an ordinary image file.", index);
-  if (before.size > maxBytes) refuse("too-large", `Each reference image must be at most ${maxBytes / (1024 * 1024)} MB.`, index);
-  let fd: number;
-  try { fd = openSync(path, FLAGS); } catch { return refuse("changed", "That image changed while it was being read.", index); }
-  try {
-    const opened = fstatSync(fd);
-    if (fingerprint(opened) !== fingerprint(before)) refuse("changed", "That image changed while it was being read.", index);
-    const bytes = Buffer.alloc(opened.size);
-    let offset = 0;
-    while (offset < bytes.length) {
-      const read = readSync(fd, bytes, offset, bytes.length - offset, offset);
-      if (!read) break;
-      offset += read;
-    }
-    if (offset !== bytes.length || fingerprint(fstatSync(fd)) !== fingerprint(before)) refuse("changed", "That image changed while it was being read.", index);
-    return bytes;
-  } finally { closeSync(fd); }
+/** One attachment through the bounded reader (attachment-read.ts). */
+async function readAttachmentReference(home: AttachmentsHome, name: string, maxBytes: number, index: number): Promise<Buffer> {
+  const read = await readAttachmentFile(home, name, maxBytes);
+  if (read.ok) return read.bytes;
+  if (read.reason === "missing") refuse("missing", "That image is no longer available.", index);
+  if (read.reason === "not-regular") refuse("unsupported", "That attachment is not an ordinary image file.", index);
+  if (read.reason === "too-large") refuse("too-large", `Each reference image must be at most ${maxBytes / (1024 * 1024)} MB.`, index);
+  return refuse("changed", "That image changed while it was being read.", index);
 }
 
 interface Image { mime: ImageReferenceMime; width?: number; height?: number }
@@ -176,27 +159,29 @@ interface Loaded extends Image {
   existing?: string;
 }
 
-/** An attachment of the conversation with exactly these bytes, if any. Only
- * same-size files are hashed, so this stays bounded by real candidates. */
-function existingAttachment(allowed: Map<string, string>, bytes: Buffer, digest: string): string | undefined {
-  for (const [name, path] of allowed) {
-    try {
-      const stat = lstatSync(path);
-      if (!stat.isFile() || stat.isSymbolicLink() || stat.size !== bytes.length) continue;
-      const other = readDirectFile(resolve(path, ".."), name, IMAGE_REFERENCE_LIMITS.maxBytesEach, 0);
-      if (sha256(other) === digest) return name;
-    } catch { /* not a usable duplicate; the bytes are copied instead */ }
+/** An attachment of the conversation with exactly these bytes, if any.
+ * Candidates are filtered by size without opening anything; at most
+ * DUPLICATE_READS same-size files are read, one at a time. */
+async function existingAttachment(home: AttachmentsHome, allowed: Map<string, string>, bytes: Buffer, digest: string): Promise<string | undefined> {
+  let reads = 0;
+  for (const name of allowed.keys()) {
+    const probe = await probeAttachment(home, name, IMAGE_REFERENCE_LIMITS.maxBytesEach);
+    if (!probe.ok || probe.id.size !== BigInt(bytes.length)) continue;
+    if (reads >= DUPLICATE_READS) break; // stored as a copy instead, harmlessly
+    reads++;
+    const other = await readAttachmentFile(home, name, IMAGE_REFERENCE_LIMITS.maxBytesEach);
+    if (other.ok && sha256(other.bytes) === digest) return name;
   }
   return undefined;
 }
 
 async function loadOne(source: ImageReferenceSource, index: number, audience: ImageReferenceAudience, deps: ImageReferenceDeps, allowed: Map<string, string>): Promise<Loaded> {
-  const directory = attachmentsDirectory(deps);
+  const home = attachmentsHome(deps);
   if (source.kind === "attachment") {
     // A name alone is never authority: it must be an image this exact
     // conversation already shows.
     if (!allowed.has(source.attachmentId)) refuse("unavailable", "That image is not in this conversation.", index);
-    const bytes = readDirectFile(directory, source.attachmentId, IMAGE_REFERENCE_LIMITS.maxBytesEach, index);
+    const bytes = await readAttachmentReference(home, source.attachmentId, IMAGE_REFERENCE_LIMITS.maxBytesEach, index);
     const image = validImage(bytes, index);
     return { index, source, bytes, sha256: sha256(bytes), label: source.attachmentId, existing: source.attachmentId, ...image };
   }
@@ -219,7 +204,7 @@ async function loadOne(source: ImageReferenceSource, index: number, audience: Im
     const digest = sha256(bytes);
     if (digest !== source.sha256) refuse("changed", "That saved file no longer matches its recorded digest.", index);
     const image = validImage(bytes, index);
-    return { index, source, bytes, sha256: digest, label: artifact.name, existing: existingAttachment(allowed, bytes, digest), ...image };
+    return { index, source, bytes, sha256: digest, label: artifact.name, existing: await existingAttachment(home, allowed, bytes, digest), ...image };
   }
   // Workspace: the root is this conversation's own authorized workspace. The
   // lookup refuses links, private names, HOME and files outside the root.
@@ -234,7 +219,7 @@ async function loadOne(source: ImageReferenceSource, index: number, audience: Im
   if (!bytes) refuse("changed", "That workspace file changed while it was being read.", index);
   const image = validImage(bytes, index);
   const digest = sha256(bytes);
-  return { index, source, bytes, sha256: digest, label: source.relativePath, existing: existingAttachment(allowed, bytes, digest), ...image };
+  return { index, source, bytes, sha256: digest, label: source.relativePath, existing: await existingAttachment(home, allowed, bytes, digest), ...image };
 }
 
 function assertAudience(store: Store, audience: ImageReferenceAudience): void {
@@ -251,7 +236,7 @@ export async function loadImageReferences(sources: readonly unknown[], audience:
     if (!isImageReferenceSource(source)) refuse("invalid-request", "Name an image attachment of this conversation, a saved file with its sha256, or a relative path in this task's workspace. Absolute paths and URLs are not accepted.", index);
   });
   assertAudience(deps.store, audience);
-  const allowed = conversationImageAttachments(deps.store, audience.threadId, attachmentsDirectory(deps),
+  const allowed = conversationImageAttachments(deps.store, audience.threadId, attachmentsHome(deps),
     (sources as ImageReferenceSource[]).flatMap(source => source.kind === "attachment" ? [source.attachmentId] : []));
   const loaded: Loaded[] = [];
   let total = 0;
@@ -273,7 +258,7 @@ export interface PreparedImageReferences {
  * conversation, then (for the agent path) disclose them in one transcript
  * message. Any failure removes what this call wrote: all or nothing. */
 export function commitImageReferences(loaded: readonly Loaded[], audience: ImageReferenceAudience, deps: ImageReferenceDeps, options: { disclose: boolean }): PreparedImageReferences {
-  const directory = attachmentsDirectory(deps);
+  const home = attachmentsHome(deps);
   const created: Array<{ path: string; mime: ImageReferenceMime; label: string }> = [];
   const byDigest = new Map<string, string>();
   const names: string[] = [];
@@ -289,7 +274,7 @@ export function commitImageReferences(loaded: readonly Loaded[], audience: Image
         throw new ImageReferenceError(status === 413 ? "too-large" : "storage", `Reference ${item.index + 1}: Murage could not store a copy of the image (${status === 413 || status === 507 ? "attachment storage is full" : "local storage failed"}). ${NONE}`, item.index);
       }
       const name = basename(saved.path);
-      if (resolve(saved.path) !== join(directory, name)) {
+      if (attachmentNameOf(home, saved.path) !== name) {
         created.push({ path: saved.path, mime: item.mime, label: item.label });
         throw new ImageReferenceError("storage", `Reference ${item.index + 1}: the stored copy landed outside Murage's attachment folder. ${NONE}`, item.index);
       }
@@ -313,12 +298,23 @@ export function commitImageReferences(loaded: readonly Loaded[], audience: Image
       id: names[position]!, sha256: item.sha256, mime: item.mime, bytes: item.bytes.length, source: item.source.kind,
       ...(item.width !== undefined && item.height !== undefined ? { width: item.width, height: item.height } : {}),
     })),
-    attachments: loaded.map((item, position) => ({ path: join(directory, names[position]!), name: names[position]!, mime: item.mime, bytes: item.bytes.length })),
+    attachments: loaded.map((item, position) => ({ path: storedPathOf(home, names[position]!), name: names[position]!, mime: item.mime, bytes: item.bytes.length })),
   };
 }
 
 export async function resolveImageReferences(sources: readonly unknown[], audience: ImageReferenceAudience, deps: ImageReferenceDeps, options: { disclose: boolean }): Promise<PreparedImageReferences> {
-  return commitImageReferences(await loadImageReferences(sources, audience, deps), audience, deps, options);
+  const loaded = await loadImageReferences(sources, audience, deps);
+  // The reads awaited: the conversation, every attachment read and every
+  // duplicate chosen must still be there, and the turn still live, before a
+  // single attachment or message is written.
+  assertAudience(deps.store, audience);
+  const names = loaded.flatMap(item => [...(item.source.kind === "attachment" ? [item.source.attachmentId] : []), ...(item.existing ? [item.existing] : [])]);
+  if (names.length) {
+    const still = conversationImageAttachments(deps.store, audience.threadId, attachmentsHome(deps), names);
+    if (names.some(name => !still.has(name))) throw new ImageReferenceError("unavailable", `That image is not in this conversation. ${NONE}`);
+  }
+  deps.assertLive?.();
+  return commitImageReferences(loaded, audience, deps, options);
 }
 
 // ---------------------------------------------------------------------------

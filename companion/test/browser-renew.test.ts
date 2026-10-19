@@ -39,6 +39,7 @@ import {
 } from "../src/devices.ts";
 import { SESSION_SECRET_FILE } from "../src/session-secret.ts";
 import { DATA_DIR } from "../src/state.ts";
+import { removeTempDirSync } from "../../server/testing/cleanup.ts";
 
 const DAY = 24 * 60 * 60 * 1000;
 
@@ -70,7 +71,7 @@ afterEach(() => {
 // ─────────────────────────────────────────────────────────────────────────
 describe("renewing a browser session, in the registry", () => {
   beforeEach(() => {
-    rmSync(DATA_DIR, { recursive: true, force: true });
+    removeTempDirSync(DATA_DIR);
     vi.useRealTimers();
   });
 
@@ -213,7 +214,7 @@ describe("renewing a browser session, in the registry", () => {
     dayLater();
     expect(registry.renewSession(opened.value)).toBeNull();
 
-    rmSync(file, { recursive: true, force: true });
+    removeTempDirSync(file);
     writeFileSync(file, saved);
     // The cookie the browser is holding still works, in memory and on disk.
     expect(registry.resolveSession(opened.value)?.device.id).toBe(device.id);
@@ -228,7 +229,7 @@ describe("renewing a browser session, in the registry", () => {
 // ─────────────────────────────────────────────────────────────────────────
 describe("renewal is derived, idempotent and committed on first use", () => {
   beforeEach(() => {
-    rmSync(DATA_DIR, { recursive: true, force: true });
+    removeTempDirSync(DATA_DIR);
     vi.useRealTimers();
   });
 
@@ -392,7 +393,7 @@ describe("renewal is derived, idempotent and committed on first use", () => {
       expect(storedSessions()[0].pending).toBeUndefined();
       expect(registry.resolveSession(value)).not.toBeNull();
     } finally {
-      rmSync(SESSION_SECRET_FILE, { recursive: true, force: true });
+      removeTempDirSync(SESSION_SECRET_FILE);
     }
   });
 
@@ -546,7 +547,7 @@ afterAll(async () => {
 
 /** A signed-in browser, through the real door and the real registry. */
 const signIn = async (): Promise<string> => {
-  rmSync(DATA_DIR, { recursive: true, force: true });
+  removeTempDirSync(DATA_DIR);
   registry = new DeviceRegistry();
   pairingCredential = registry.openPairing().token;
   const answer = await new Promise<Answer>((resolve, reject) => {
@@ -766,7 +767,7 @@ describe("the browser actually calls it", () => {
     writeFileSync(file, script);
     // Throws, with the parser's own message, if the served script is broken.
     execFileSync(process.execPath, ["--check", file], { stdio: "pipe" });
-    rmSync(dir, { recursive: true, force: true });
+    removeTempDirSync(dir);
   });
 
   it("renews on load, on a timer, and when a backgrounded tab comes back", () => {

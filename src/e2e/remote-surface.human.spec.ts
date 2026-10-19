@@ -19,7 +19,7 @@
 // with no first-run screens; `surface: "desktop"` must produce exactly what
 // the desktop produced before this change, at the SAME viewport — so a narrow
 // window is proved not to be the test, and the desktop is proved untouched.
-import { expect, test } from "@playwright/test";
+import { expect, test } from "./page-error-guard";
 
 import { openSidebar } from "./fixtures";
 

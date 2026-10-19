@@ -106,8 +106,9 @@ export function createOutbox(storage: OutboxStorage | undefined) {
 
 export type Outbox = ReturnType<typeof createOutbox>;
 
-/** The server's "the database is locked for a moment" answer: 503 with code DATABASE_BUSY and a Retry-After. The send did not
- * run, so the same send id is repeated; this is never a refusal, whatever status carries it (an older server answered 409). */
+/** The server's "the database is locked for a moment" answer is a 503 with code DATABASE_BUSY and a Retry-After. This matches
+ * the code OR any 503 (a gateway's own 503 carries no code): the send did not run, and the same send id is repeated, so the
+ * repeat is always right. Neither is a refusal. Only isDatabaseBusyAnswer below is strict about the code. */
 export function isBusyRefusal(error: unknown): boolean {
   const e = error as { status?: unknown; body?: { code?: unknown } } | null;
   return e?.body?.code === "DATABASE_BUSY" || e?.status === 503;

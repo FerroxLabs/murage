@@ -9,7 +9,7 @@
 // markers of the servers it was handed, at most 5 s, and logs a wait that
 // reaches the cap. An engine that does not connect (Cursor, Hermes) is not
 // waited for. A wait that ran out is not remembered.
-import { mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { mkdtempSync, readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -21,6 +21,7 @@ import { SPAWNED_PROXIES } from "../../proxy-paths.ts";
 import { MCP_LISTED_WAIT_MS, resetAcpMcpReadinessForTests } from "./core.ts";
 import { CursorAgentDriver } from "./cursor.ts";
 import { GeminiAgentDriver } from "./gemini.ts";
+import { removeTempDirSync } from "../../testing/cleanup.ts";
 
 const cli = fileURLToPath(new URL("../../testing/fake-acp-cli.ts", import.meta.url));
 const SETTLE_MS = 1_500;
@@ -61,7 +62,7 @@ afterEach(async () => {
   resetAcpMcpReadinessForTests();
   vi.unstubAllEnvs();
   vi.restoreAllMocks();
-  rmSync(dir, { recursive: true, force: true });
+  removeTempDirSync(dir);
 });
 
 it("the cap is 5 s", () => {

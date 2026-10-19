@@ -8,9 +8,10 @@
 //   fence   the driver send types run the send fence before every engine write and refuse when a part may no longer be shown;
 //   cost    read_messages costs the same statements and rows, and records the same number of refs, at 1,000 and 100,000 lines.
 // S1's running turn and S4's predicate are S0 stubs at this point of the lane; memory/testing/fake-lineage.ts models them.
-import { mkdirSync, rmSync } from "node:fs";
+import { mkdirSync } from "node:fs";
 import type { StatementSync } from "node:sqlite";
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
+import { removeTempDirSync } from "./testing/cleanup.ts";
 
 vi.mock("./memory/lineage-write.ts", async importOriginal => ({ ...(await importOriginal<object>()), ...(await import("./memory/testing/fake-lineage.ts")).fakeWrite }));
 vi.mock("./memory/deny-read.ts", async importOriginal => ({ ...(await importOriginal<object>()), ...(await import("./memory/testing/fake-lineage.ts")).fakeRead }));
@@ -45,7 +46,7 @@ const NOW = 1_790_000_000_000;
 type Roster = MemoryRoster & { bots: Array<MemoryRoster["bots"][number] & { name: string }> };
 let roster: Roster;
 beforeEach(() => {
-  M.closeDatabase(); rmSync(DATA_DIR, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 }); mkdirSync(DATA_DIR, { recursive: true });
+  M.closeDatabase(); removeTempDirSync(DATA_DIR); mkdirSync(DATA_DIR, { recursive: true });
   M.fakeLineage.reset();
   roster = {
     bots: [
@@ -266,7 +267,7 @@ describe("cost: read_messages is flat in history", () => {
 
   it("the same statements, rows and recorded refs at 1,000 and 100,000 lines", () => {
     const small = turnOver(1_000);
-    M.closeDatabase(); rmSync(DATA_DIR, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 }); mkdirSync(DATA_DIR, { recursive: true });
+    M.closeDatabase(); removeTempDirSync(DATA_DIR); mkdirSync(DATA_DIR, { recursive: true });
     M.setMemoryMode("active"); M.reconcileMemoryRoster(roster);
     M.channelToProjectRows(M.database(), { groupId: "launch", bulletin: "", leadBotId: "finch", now: NOW });
     M.fakeLineage.reset();

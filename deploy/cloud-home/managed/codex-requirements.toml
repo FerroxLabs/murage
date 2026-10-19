@@ -1,0 +1,4 @@
+# SPDX-License-Identifier: AGPL-3.0-or-later
+# https://developers.openai.com/codex/config-reference/
+check_for_update_on_startup = false
+allow_managed_hooks_only = true

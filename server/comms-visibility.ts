@@ -9,6 +9,7 @@ import { threadHumanPrincipal, assertHumanPrincipal, bindHumanThread } from "./h
 // (delegate_bot) and any future peer flow reuse the same UX without a copy.
 
 import { sectionKey, type BotRecord, type GroupRecord, type Message, type MessageMurage, type Store } from "./store.ts";
+import { murageLine } from "./murage-line.ts";
 
 /** What a peer-exchange helper needs from the outside world:
  * the store (for persisted messages + groups) and the SSE broadcasters
@@ -189,11 +190,11 @@ export function mirrorActivity(
   ok: boolean,
 ): void {
   if (!channel) return;
-  bus.store.appendMessage(channel.threadId, {
+  bus.store.appendMessage(channel.threadId, murageLine({
     role: "bot",
     kind: "activity",
     tool: { name: outboundWords(name), ok },
     from: { botId: from.id, name: from.name, color: from.color },
-  });
+  }));
   bus.store.patchGroup(channel.id, { unread: true });
 }

@@ -1,15 +1,16 @@
 // Copyright 2026 Ferrox Labs
 // SPDX-License-Identifier: AGPL-3.0-or-later
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, expect, it } from "vitest";
 import { createHoistedStager, wipeStagedTree } from "./stage-hoisted.mjs";
 import { declaredOnly, generateInventory } from "./whatsapp-inventory.mjs";
 import { checkStagedTree } from "./staged-tree-check.mjs";
+import { removeTempDirSync } from "../server/testing/cleanup.ts";
 
 const roots = [];
-afterEach(() => { for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true }); });
+afterEach(() => { for (const root of roots.splice(0)) removeTempDirSync(root); });
 const semver = { satisfies: (version, range) => range.startsWith("^") ? version.split(".")[0] === range.slice(1).split(".")[0] : version === range };
 
 // A plain installed tree: <root>/node_modules/<name>, each with the given dependencies; `nested` places a copy
@@ -76,7 +77,7 @@ it("the tree check reports an unresolved dependency and an out-of-range hoisted 
   stager.stage("a", root);
   writeFileSync(join(dist, "node_modules/zod/package.json"), JSON.stringify({ name: "zod", version: "3.25.0" }));
   expect(checkStagedTree(dist, { semver }).problems.join("\n")).toContain("does not satisfy");
-  rmSync(join(dist, "node_modules/zod"), { recursive: true });
+  removeTempDirSync(join(dist, "node_modules/zod"));
   expect(checkStagedTree(dist, { semver }).problems.join("\n")).toContain("does not resolve");
 });
 
@@ -242,7 +243,7 @@ it("the tree check flags a required peer that resolves out of range or not at al
   mkdirSync(forced, { recursive: true });
   writeFileSync(join(forced, "package.json"), JSON.stringify({ name: "H", version: "2.0.0" }));
   expect(checkStagedTree(dist, { semver }).problems.join("\n")).toMatch(/Q .*peer dependency H@2\.0\.0 .*does not satisfy \^1\.0\.0/);
-  rmSync(forced, { recursive: true, force: true });
+  removeTempDirSync(forced);
   const q = join(dist, "node_modules/A/node_modules/Q/package.json"), pkg = JSON.parse(readFileSync(q, "utf8"));
   writeFileSync(q, JSON.stringify({ ...pkg, peerDependencies: { H: "^1.0.0", missing: "^1.0.0", extra: "^1.0.0" }, peerDependenciesMeta: { extra: { optional: true } } }));
   const problems = checkStagedTree(dist, { semver }).problems;

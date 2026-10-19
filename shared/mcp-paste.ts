@@ -267,11 +267,24 @@ export function sanitizeServerName(raw: string): string {
 
 function uniqueName(base: string, used: Set<string>, options: PasteOptions): string {
   const clean = sanitizeServerName(base);
-  const taken = (name: string) => used.has(name) || (options.isNameTaken?.(name) ?? false);
+  // A name an engine cannot tell apart from one already in this paste is taken
+  // too: under the registry's folding (shared/mount-identity.ts nf, Rule 28e)
+  // `a-2` is `a_2`, which a Pi joiner reads as server `a`.
+  const fold = (name: string) => name.toLowerCase().replace(/[^a-z0-9]+/g, "_").replace(/^_+|_+$/g, "");
+  const clash = (name: string) => [...used].some((other) => {
+    const a = fold(name);
+    const b = fold(other);
+    return a === b || a.startsWith(`${b}_`) || b.startsWith(`${a}_`);
+  });
+  const taken = (name: string) => used.has(name) || clash(name) || (options.isNameTaken?.(name) ?? false);
   let name = clean;
-  for (let n = 2; taken(name); n += 1) {
-    const suffix = `-${n}`;
-    name = `${clean.slice(0, 32 - suffix.length)}${suffix}`;
+  // A digit suffix with no joiner: `github-2` folds to `github_2`, which an
+  // engine cannot tell apart from `github` (Rule 28e), so `github2` is used.
+  // Bounded: past the bound the name is offered as it is and the add refuses it.
+  const stem = clean.replace(/[-_]\d+$/, "") || clean;
+  for (let n = 2; taken(name) && n < 1000; n += 1) {
+    const suffix = `${n}`;
+    name = `${stem.slice(0, 32 - suffix.length)}${suffix}`;
   }
   used.add(name);
   return name;

@@ -3,7 +3,7 @@
 // Synthetic source-backed candidates are seeded before the browser opens;
 // review/correction/sharing/pinning/forgetting go through the actual UI/API.
 // No intercepted routes, external models, existing server or user profile.
-import { test, expect, type Locator, type Page } from "@playwright/test";
+import { test, expect, type Locator, type Page } from "./page-error-guard";
 import { createServer, type ViteDevServer } from "vite";
 import react from "@vitejs/plugin-react";
 import tailwindcss from "@tailwindcss/vite";

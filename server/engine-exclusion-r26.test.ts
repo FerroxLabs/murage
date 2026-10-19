@@ -21,10 +21,11 @@ import { homeKey, Known, Planner, UNDO_JOIN_TRIES, type HomePlanData } from "./e
 import { bootOps, listRedo, rebootedSince, redoDirectory, type BootMark } from "./engine-redo.ts";
 import { useFakeExclusion, type FakeExclusion } from "./testing/engine-exclusion-fake.ts";
 import { legacyRejoin, buildFixture, canaryHits, type Fixture } from "./testing/engine-history-fixtures.ts";
+import { removeTempDirSync } from "./testing/cleanup.ts";
 
 const removeEngineHistoryFiles = legacyRejoin(removeRaw);
 const scratch = realpathSync.native(mkdtempSync(join(tmpdir(), "murage-r26-")));
-afterAll(() => rmSync(scratch, { recursive: true, force: true }));
+afterAll(() => removeTempDirSync(scratch));
 
 const realBoot = bootOps.current;
 const realTells = bootOps.uptimeTellsRestart;

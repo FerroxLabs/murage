@@ -2,10 +2,12 @@ import { PIP_ALL_KINDS_SQL } from "./pip-kinds.ts";
 import { isLearnableSource } from "./learnable.ts";
 import { recordLearningEvent } from "./learning-ledger.ts";
 import { learningSourceBot,learningWriteDecision,learningEvidenceScopes } from "./learning-guard.ts";
-import { readMemoryEvolutionPolicy, type MemoryEvolutionPolicy } from "./evolution-policy.ts";
+import { readMemoryEvolutionPolicy } from "./evolution-policy.ts";
 import { createHash, randomUUID } from "node:crypto";
 import { database, transaction } from "../database.ts";
-import { extractCandidates, groundMemoryClaim, memoryExtractionMessages, type TextOnlyExtractor } from "./extract.ts";
+import { extractCandidates, groundMemoryClaim, type ReservationRecord, type TextOnlyExtractor } from "./extract.ts";
+import { SLICE_ATTEMPT_LIMIT, SLICE_CALL_GUARD, SLICE_CALL_LIMIT_REASON, type SkippedSlice } from "../../shared/memory-learning-contract.ts";
+import type { DatabaseSync } from "node:sqlite";
 import { redactSecretsInText } from "../redact.ts";
 import { activateGroundedMemory } from "./automatic-learning.ts";
 import { readMemoryLearning } from "./learning-policy.ts";
@@ -125,6 +127,95 @@ interface ConsolidationIntent {
   jobId:string;sourceId:string;revision:number;cursor:number;totalBytes:number;
   status:"running"|"partial"|"deferred"|"complete";candidateIds:string[];candidateCount:number;
   generation?:string;expiresAt?:number;retryAfter?:number|null;reason?:string;updatedAt:number;
+  /** Per-slice limits (SETTINGS-REDESIGN r3.2): extraction calls and all calls charged for the slice at the cursor, written by the
+   * reserve transaction only when a call is admitted (a refusal charges nothing), reset when the cursor moves. */
+  extractionAttempts?:number;sliceCalls?:number;
+  /** Slices given up on after SLICE_ATTEMPT_LIMIT attempts; only an explicit retry-skipped runs one again. */
+  skipped?:SkippedSlice[];
+  /** Retried slices waiting to run, in press order (Astra L3 r1): the head is the slice in work, and the main `cursor` never moves for
+   * them, so a second press never overwrites the first and nothing past them is extracted again. */
+  retries?:RetriedSlice[];
+  /** Cursors of retried slices that committed: a later press on one answers "done". */
+  retried?:number[];
+  /** The main slice's counters, set aside while the queue runs and restored when it drains. */
+  parked?:{extractionAttempts:number;sliceCalls:number};
+  /** The queue's own revision (Astra L3 r2): every change to `retries`, `skipped` or `retried` goes through writeConsolidationIntent, a
+   * compare-and-set on it, so a writer holding an older read (a claim that expired while a retry was queued) can never rewrite the queue. */
+  queueRevision?:number;
+}
+const queueOf=(intent:Partial<ConsolidationIntent>|null|undefined)=>JSON.stringify([intent?.retries??[],intent?.skipped??[],intent?.retried??[]]);
+/** The one writer of a consolidation intent's queue. Compare-and-set: the intent must carry the queueRevision it was read at; a queue
+ * change bumps it. Caller owns the transaction. */
+function writeConsolidationIntent(db:DatabaseSync,id:string,scope:unknown,intent:ConsolidationIntent){
+  const row=db.prepare("SELECT intent FROM memory_scope_bindings WHERE id=?").get(id);
+  const current=row?JSON.parse(String(row.intent)) as ConsolidationIntent:null,revision=Number(current?.queueRevision)||0;
+  if((Number(intent.queueRevision)||0)!==revision)throw Object.assign(new Error("MEMORY_CONSOLIDATION_QUEUE_CHANGED"),{status:409});
+  const next={...intent,queueRevision:current&&queueOf(current)!==queueOf(intent)?revision+1:revision};
+  const subject=next.status==="complete"||next.retryAfter===null?"consolidation":"consolidation-pending";
+  if(current)db.prepare("UPDATE memory_scope_bindings SET intent=?,subject_id=? WHERE id=?").run(JSON.stringify(next),subject,id);
+  else db.prepare("INSERT INTO memory_scope_bindings VALUES(?,?,'system',?,0,'granted',?)").run(id,scope as string,subject,JSON.stringify(next));
+}
+interface RetriedSlice{cursor:number;length:number}
+/** Where the slice in work starts and how long it may be: the queue head, or the main cursor. */
+function sliceInWork(state:ConsolidationIntent){
+  const head=state.retries?.[0];
+  return head?{at:head.cursor,size:head.length,head}:{at:state.cursor,size:CONSOLIDATION_CHUNK_BYTES,head:undefined};
+}
+/** The cursor, queue and counters once the slice in work commits or is skipped. */
+function afterSlice(state:ConsolidationIntent,length:number):{cursor:number;extractionAttempts:number;sliceCalls:number;retries?:RetriedSlice[];parked?:ConsolidationIntent["parked"]}{
+  const head=state.retries?.[0];
+  if(!head)return {cursor:state.cursor+length,extractionAttempts:0,sliceCalls:0};
+  const retries=state.retries!.slice(1);
+  return {cursor:state.cursor,retries,parked:retries.length?state.parked:undefined,
+    ...retries.length?{extractionAttempts:0,sliceCalls:0}:{extractionAttempts:state.parked?.extractionAttempts??0,sliceCalls:state.parked?.sliceCalls??0}};
+}
+/** The learning event text of a skipped slice. */
+export const SLICE_SKIPPED_MESSAGE="Could not learn from part of this conversation. Try again";
+/** Skips the slice in work: the main cursor moves past it (a retried slice leaves the queue instead), its coordinates are kept, and a learning
+ * event offers the retry. Caller owns the transaction. */
+function skipSlice(db:DatabaseSync,source:Record<string,unknown>,state:ConsolidationIntent,length:number,persist:(scope:unknown,intent:ConsolidationIntent)=>unknown){
+  const at=Date.now(),skippedAt=sliceInWork(state).at,next=afterSlice(state,length),cursor=next.cursor;
+  const status=cursor===state.totalBytes&&!next.retries?.length?"complete" as const:"partial" as const;
+  const skipped=[...(state.skipped??[]).filter(entry=>entry.cursor!==skippedAt),{cursor:skippedAt,length,reason:"extraction-attempts",at}];
+  persist(source.scope_id,{...state,...next,status,candidateIds:[],skipped,reason:"slice-skipped",retryAfter:status==="partial"?at:null,updatedAt:at});
+  recordLearningEvent(db,{kind:"run-completed",scopeId:String(source.scope_id),sourceId:String(source.id),sourceRevision:Number(source.revision),botId:learningSourceBot(String(source.thread_id))?.id,
+    detail:{outcome:"slice-skipped",message:SLICE_SKIPPED_MESSAGE,sourceId:String(source.id),cursor:skippedAt,length,retry:{action:"retry-skipped",sourceId:String(source.id),cursor:skippedAt}}});
+  db.exec("UPDATE memory_meta SET data_revision=data_revision+1");
+  return {status,reason:"slice-skipped",candidateIds:[] as string[],cursor,candidateCount:state.candidateCount,retryAfter:status==="partial"?at:null};
+}
+const consolidationRows=(db:DatabaseSync,sourceId:string)=>db.prepare("SELECT id,intent FROM memory_scope_bindings WHERE subject_type='system' AND subject_id IN ('consolidation','consolidation-pending') AND json_extract(intent,'$.sourceId')=?").all(sourceId);
+/** The answer to a `retry-skipped` press: `queued` (added to the source's retry queue now), `already-queued` (an earlier press is
+ * waiting or running), `done` (a retry of it already committed). A cursor that was never skipped stays a 404. */
+export interface RetrySkippedResult{status:"queued"|"already-queued"|"done";sourceId:string;cursor:number}
+/** `retry-skipped`: one more run of SLICE_ATTEMPT_LIMIT attempts for one skipped slice. The entry leaves `skipped` and joins the end of
+ * the source's retry queue; the main cursor stays where it is, so every press is kept and each retried slice runs exactly once (a retry
+ * that fails three more times is skipped again, and can be pressed again). The source is due now. Caller owns the transaction. */
+export function retrySkippedSlice(db:DatabaseSync,sourceId:string,cursor:number):RetrySkippedResult{
+  const rows=consolidationRows(db,sourceId).map(row=>({id:String(row.id),intent:JSON.parse(String(row.intent)) as ConsolidationIntent}));
+  if(rows.some(({intent})=>intent.retries?.some(entry=>entry.cursor===cursor)))return {status:"already-queued",sourceId,cursor};
+  for(const {id,intent} of rows){
+    const entry=intent.skipped?.find(item=>item.cursor===cursor);
+    if(!entry)continue;
+    // a slice in flight commits from what it read at its claim: queueing now would be overwritten by that commit
+    if(intent.status==="running"&&typeof intent.expiresAt==="number"&&intent.expiresAt>Date.now())throw Object.assign(new Error("MEMORY_CONSOLIDATION_RUNNING"),{status:409});
+    const now=Date.now(),queue=intent.retries??[];
+    // the first queued slice becomes the slice in work: fresh counters for it, the main slice's own set aside until the queue drains
+    const counters=queue.length?{}:{candidateIds:[],extractionAttempts:0,sliceCalls:0,parked:{extractionAttempts:Number(intent.extractionAttempts)||0,sliceCalls:Number(intent.sliceCalls)||0}};
+    // an expired claim is revoked here (its generation goes): its later charges count nothing and its commit throws, so it can never
+    // write back the queue it read before this press
+    const unclaimed={...intent};delete unclaimed.generation;delete unclaimed.expiresAt;
+    const next:ConsolidationIntent={...unclaimed,...counters,status:"deferred",retries:[...queue,{cursor,length:entry.length}],skipped:intent.skipped!.filter(item=>item.cursor!==cursor),
+      retried:(intent.retried??[]).filter(item=>item!==cursor),reason:"retry-skipped",retryAfter:now,updatedAt:now};
+    writeConsolidationIntent(db,id,null,next);
+    return {status:"queued",sourceId,cursor};
+  }
+  if(rows.some(({intent})=>intent.retried?.includes(cursor)))return {status:"done",sourceId,cursor};
+  throw Object.assign(new Error("MEMORY_SKIPPED_SLICE_UNKNOWN"),{status:404});
+}
+/** A raised ceiling applies now: every source waiting for next month's ceiling is due at once. Caller owns the transaction. */
+export function releaseCeilingDeferrals(db:DatabaseSync,now=Date.now()){
+  return Number(db.prepare(`UPDATE memory_scope_bindings SET intent=json_set(intent,'$.retryAfter',?) WHERE subject_type='system' AND subject_id='consolidation-pending'
+    AND json_extract(intent,'$.status')='deferred' AND json_extract(intent,'$.reason')='spend-ceiling'`).run(now).changes);
 }
 
 /** Existing metadata supplies bounded restart discovery. The controller owns its
@@ -155,13 +246,12 @@ export function pendingMemoryConsolidationJobs(limit=4):string[]{
   return found;
 }
 let consolidationScanCursor=0;
-function retryAfter(reason:string,text:string,policy:MemoryEvolutionPolicy):number {
-  const now=Date.now();
-  if(reason!=="budget-exhausted")return now+(reason==="extractor-busy"?1000:60000);
-  const day=new Date(now).toISOString().slice(0,10),row=database().prepare("SELECT intent FROM memory_scope_bindings WHERE id=?").get(`extract-budget:${day}`);
-  const budget=row?JSON.parse(String(row.intent)):{input:0,output:0};
-  const input=Math.ceil(Buffer.byteLength(JSON.stringify(memoryExtractionMessages(text,policy)))/3.5);
-  return budget.input+input>readMemoryLearning(database()).dailyInputTokens||budget.output+readMemoryLearning(database()).perCallOutputTokens.extraction>readMemoryLearning(database()).dailyOutputTokens?Date.parse(`${day}T00:00:00Z`)+86400000:(Math.floor(now/60000)+1)*60000;
+/** When a deferred slice is due again. `spend-ceiling`: the server-local 1st of next month (a raise moves it to now,
+ * releaseCeilingDeferrals); `budget-exhausted` is pacing only, the next minute. */
+export function retryAfter(reason:string,now=Date.now()):number {
+  if(reason==="spend-ceiling"){const d=new Date(now);return new Date(d.getFullYear(),d.getMonth()+1,1).getTime();}
+  if(reason==="budget-exhausted")return (Math.floor(now/60000)+1)*60000;
+  return now+(reason==="extractor-busy"?1000:60000);
 }
 
 /** One <=16KiB UTF-8 slice per invocation. Candidates and the absolute cursor
@@ -177,7 +267,7 @@ export async function consolidateCompletedMemorySource(jobId:string,extractor:Te
 }
 export async function consolidateMemorySource(completedJobId:string,extractor:TextOnlyExtractor|null,signal:AbortSignal,options:{connection?:string|null;reviewOnly?:boolean;budgetGate?:(scopeId:string)=>boolean}={}){
   const db=database(),id=`consolidation:${hash(completedJobId)}`;
-  const persist=(scope:unknown,intent:ConsolidationIntent)=>db.prepare("INSERT INTO memory_scope_bindings VALUES(?,?,'system',?,0,'granted',?) ON CONFLICT(id) DO UPDATE SET intent=excluded.intent,subject_id=excluded.subject_id").run(id,scope as string,intent.status==="complete"||intent.retryAfter===null?"consolidation":"consolidation-pending",JSON.stringify(intent));
+  const persist=(scope:unknown,intent:ConsolidationIntent)=>writeConsolidationIntent(db,id,scope,intent);
   const budgetSource=completedSource(completedJobId);
   const existing=db.prepare("SELECT intent FROM memory_scope_bindings WHERE id=?").get(id);
   const live=existing?JSON.parse(String(existing.intent)):null;
@@ -186,9 +276,14 @@ export async function consolidateMemorySource(completedJobId:string,extractor:Te
   const claim=transaction(()=>{
     const source=completedSource(completedJobId),prior=db.prepare("SELECT intent FROM memory_scope_bindings WHERE id=?").get(id);
     const saved=prior?JSON.parse(String(prior.intent)):null;
-    const state:ConsolidationIntent={evolutionPolicyRevision:saved?.evolutionPolicyRevision??readMemoryEvolutionPolicy().revision,jobId:completedJobId,sourceId:String(source.id),revision:Number(source.revision),cursor:saved?.cursor??0,totalBytes:Number(source.bytes),status:saved?.status??"partial",candidateIds:saved?.candidateIds??[],candidateCount:saved?.candidateCount??saved?.candidateIds?.length??0,updatedAt:Date.now()};
+    const state:ConsolidationIntent={evolutionPolicyRevision:saved?.evolutionPolicyRevision??readMemoryEvolutionPolicy().revision,jobId:completedJobId,sourceId:String(source.id),revision:Number(source.revision),cursor:saved?.cursor??0,totalBytes:Number(source.bytes),status:saved?.status??"partial",candidateIds:saved?.candidateIds??[],candidateCount:saved?.candidateCount??saved?.candidateIds?.length??0,updatedAt:Date.now(),
+      extractionAttempts:Number(saved?.extractionAttempts)||0,sliceCalls:Number(saved?.sliceCalls)||0,...Array.isArray(saved?.skipped)?{skipped:saved.skipped}:{},
+      ...Array.isArray(saved?.retries)?{retries:saved.retries}:{},...Array.isArray(saved?.retried)?{retried:saved.retried}:{},...saved?.parked?{parked:saved.parked}:{},
+      ...Number.isSafeInteger(saved?.queueRevision)?{queueRevision:saved.queueRevision}:{}};
     if(saved?.status==="complete")return {done:{status:"unchanged" as const,candidateIds:state.candidateIds,cursor:state.totalBytes,candidateCount:state.candidateCount}};
     if(!Number.isSafeInteger(state.cursor)||state.cursor<0||state.cursor>state.totalBytes)throw new Error("MEMORY_CONSOLIDATION_CURSOR_INVALID");
+    const work=sliceInWork(state);
+    if(work.head&&!(Number.isSafeInteger(work.at)&&work.at>=0&&Number.isSafeInteger(work.size)&&work.size>0&&work.size<=CONSOLIDATION_CHUNK_BYTES&&work.at+work.size<=state.totalBytes))throw new Error("MEMORY_CONSOLIDATION_CURSOR_INVALID");
     if(saved?.status==="running"&&saved.expiresAt>Date.now())return {done:{status:"deferred" as const,reason:"extraction-already-running",candidateIds:[],cursor:state.cursor,candidateCount:state.candidateCount,retryAfter:saved.expiresAt as number}};
     const gate=isLearnableSource(db,String(source.id),Number(source.revision));
     if(!gate.learnable||!budgetAllowed){
@@ -198,7 +293,7 @@ export async function consolidateMemorySource(completedJobId:string,extractor:Te
     }
     if(!extractor||source.kind==="turn"||signal.aborted){
       const reason=signal.aborted?"extraction-incomplete":!extractor?"extractor-unavailable":"settlement-is-not-a-fact";
-      const nextRetry=source.kind==="turn"?null:retryAfter(reason,"",readMemoryEvolutionPolicy(state.evolutionPolicyRevision));
+      const nextRetry=source.kind==="turn"?null:retryAfter(reason);
       persist(source.scope_id,{...state,status:"deferred",reason,retryAfter:nextRetry});
       return {done:{status:"deferred" as const,reason,candidateIds:[],cursor:state.cursor,candidateCount:state.candidateCount,retryAfter:nextRetry}};
     }
@@ -214,45 +309,63 @@ export async function consolidateMemorySource(completedJobId:string,extractor:Te
       persist(source.scope_id,{...state,status:"deferred",reason:unchecked?"reply-unchecked":"reply-withheld",retryAfter:retry});
       return {done:{status:"deferred" as const,reason:unchecked?"reply-unchecked":"reply-withheld",candidateIds:[],cursor:state.cursor,candidateCount:state.candidateCount,retryAfter:retry}};
     }
-    const raw=db.prepare("SELECT substr(CAST(json_extract(payload,'$.text') AS BLOB),?,?) AS bytes FROM memory_source_versions WHERE source_id=? AND revision=?").get(state.cursor+1,CONSOLIDATION_CHUNK_BYTES,source.id,source.revision)!.bytes as Uint8Array;
+    const raw=db.prepare("SELECT substr(CAST(json_extract(payload,'$.text') AS BLOB),?,?) AS bytes FROM memory_source_versions WHERE source_id=? AND revision=?").get(work.at+1,work.size,source.id,source.revision)!.bytes as Uint8Array;
     let text:string|undefined,length=raw.length;
     for(let trim=0;trim<=3&&trim<=raw.length;trim++){try{length=raw.length-trim;text=new TextDecoder("utf-8",{fatal:true}).decode(raw.subarray(0,length));break;}catch{/* split code point at the chunk end */}}
-    if(text===undefined||!length&&state.cursor<state.totalBytes)throw new Error("MEMORY_CONSOLIDATION_UTF8_INVALID");
+    if(text===undefined||!length&&(work.head||state.cursor<state.totalBytes))throw new Error("MEMORY_CONSOLIDATION_UTF8_INVALID");
+    // three admitted attempts (across retries and restarts) on this slice: it is skipped, never retried automatically
+    if((state.extractionAttempts??0)>=SLICE_ATTEMPT_LIMIT&&length)return {done:skipSlice(db,source,state,length,persist)};
     const generation=randomUUID(),meta=db.prepare("SELECT policy_revision,deletion_epoch FROM memory_meta").get()!;
     persist(source.scope_id,{...state,status:"running",generation,expiresAt:Date.now()+65000});
-    return {source,state,generation,meta,text,length,learningRevision:readMemoryLearning(db).revision};
+    return {source,state,generation,meta,text,length,at:work.at,learningRevision:readMemoryLearning(db).revision};
   });
   if(claim.done)return claim.done;
-  const {source,state,generation,meta,text,length,learningRevision}=claim;
-  const result=text!.trim()?await extractCandidates(text!,extractor,signal,readMemoryEvolutionPolicy(state!.evolutionPolicyRevision)):{status:"complete" as const,candidates:[]};
+  const {source,state,generation,meta,text,length,at,learningRevision}=claim;
+  // Every admitted call of this slice is counted on the intent inside its reserve transaction (charged before dispatch, kept across a crash).
+  let sliceCalls=state!.sliceCalls??0;
+  const charge=(extraction:boolean):ReservationRecord=>chargeDb=>{
+    const row=chargeDb.prepare("SELECT intent FROM memory_scope_bindings WHERE id=?").get(id);if(!row)return;
+    const intent=JSON.parse(String(row.intent)) as ConsolidationIntent;if(intent.generation!==generation)return;
+    if(extraction)intent.extractionAttempts=(Number(intent.extractionAttempts)||0)+1;
+    intent.sliceCalls=sliceCalls=(Number(intent.sliceCalls)||0)+1;
+    chargeDb.prepare("UPDATE memory_scope_bindings SET intent=? WHERE id=?").run(JSON.stringify(intent),id);
+  };
+  const result=text!.trim()?await extractCandidates(text!,extractor,signal,readMemoryEvolutionPolicy(state!.evolutionPolicyRevision),charge(true)):{status:"complete" as const,candidates:[]};
   const corrections=new Map<object,{id:string;version:number}>();
   const support=new Map<object,{supported:boolean;reason:string}>();
+  // One grounding call per candidate: with a correction target the same call answers the correction and the support check.
+  // At SLICE_CALL_GUARD calls the remaining candidates are left unjudged (never support) and the slice commits.
   if(result.status==="complete")for(const candidate of result.candidates){
-    if(candidate.subject&&candidate.predicate&&candidate.update&&source!.speaker==="owner"){
-      const prior=db.prepare(`SELECT r.id,r.version,r.text FROM memory_records r JOIN memory_record_details d ON d.record_id=r.id AND d.record_version=r.version
+    let prior:Record<string,unknown>[]=[];
+    if(candidate.subject&&candidate.predicate&&candidate.update&&source!.speaker==="owner")prior=db.prepare(`SELECT r.id,r.version,r.text FROM memory_records r JOIN memory_record_details d ON d.record_id=r.id AND d.record_version=r.version
         WHERE r.scope_id=? AND r.state='active' AND r.owner_pinned=0 AND d.entities=? AND r.kind='fact' AND d.partition!='identity' ORDER BY r.created_at DESC LIMIT 2`).all(source!.scope_id,JSON.stringify([candidate.subject,candidate.predicate]));
-      if(prior.length===1&&prior[0].text!==candidate.text){
-        const checked=await groundMemoryClaim({text:candidate.text,quote:candidate.quote,claimType:candidate.claimType??"owner-statement",speaker:String(source!.speaker),outcome:String(source!.outcome),previousClaim:String(prior[0].text)},extractor,signal);
-        if(checked.supported){corrections.set(candidate,{id:String(prior[0].id),version:Number(prior[0].version)});support.set(candidate,checked);}
-      }
-    }
-    if(!support.has(candidate)&&candidate.claimType && candidate.claimType!=="inference" && candidate.text!==candidate.quote)
-      support.set(candidate,await groundMemoryClaim({text:candidate.text,quote:candidate.quote,claimType:candidate.claimType,speaker:String(source!.speaker),outcome:String(source!.outcome)},extractor,signal));
+    const correcting=prior.length===1&&prior[0]!.text!==candidate.text;
+    const needsSupport=Boolean(candidate.claimType&&candidate.claimType!=="inference"&&candidate.text!==candidate.quote);
+    if(!correcting&&!needsSupport)continue;
+    if(sliceCalls>=SLICE_CALL_GUARD){support.set(candidate,{supported:false,reason:SLICE_CALL_LIMIT_REASON});continue;}
+    if(correcting){
+      const checked=await groundMemoryClaim({text:candidate.text,quote:candidate.quote,claimType:candidate.claimType??"owner-statement",speaker:String(source!.speaker),outcome:String(source!.outcome),previousClaim:String(prior[0]!.text)},extractor,signal,charge(false));
+      if(checked.supported){corrections.set(candidate,{id:String(prior[0]!.id),version:Number(prior[0]!.version)});support.set(candidate,{supported:true,reason:checked.reason});}
+      else if(needsSupport)support.set(candidate,checked.entailed?{supported:true,reason:"source-entailment"}:{supported:false,reason:checked.entailed===false?"unsupported-claim":checked.reason});
+    }else support.set(candidate,await groundMemoryClaim({text:candidate.text,quote:candidate.quote,claimType:candidate.claimType!,speaker:String(source!.speaker),outcome:String(source!.outcome)},extractor,signal,charge(false)));
   }
   return transaction(()=>{
     const current=db.prepare("SELECT policy_revision,deletion_epoch FROM memory_meta").get()!;
     completedSource(completedJobId);
     const intent=JSON.parse(String(db.prepare("SELECT intent FROM memory_scope_bindings WHERE id=?").get(id)!.intent));
-    if(readMemoryLearning(db).revision!==learningRevision||intent.generation!==generation||current.policy_revision!==meta!.policy_revision||current.deletion_epoch!==meta!.deletion_epoch||sourceIsWithheldMessage(LineageAllowance.tool(),source!)||writetimeSourceState(source!)!=="shown")throw new Error("MEMORY_CONSOLIDATION_REVOKED");
+    if(readMemoryLearning(db).revision!==learningRevision||intent.generation!==generation||(Number(intent.queueRevision)||0)!==(Number(state!.queueRevision)||0)||current.policy_revision!==meta!.policy_revision||current.deletion_epoch!==meta!.deletion_epoch||sourceIsWithheldMessage(LineageAllowance.tool(),source!)||writetimeSourceState(source!)!=="shown")throw new Error("MEMORY_CONSOLIDATION_REVOKED");
+    // the counters as the reserve transactions left them
+    const counted:ConsolidationIntent={...state!,extractionAttempts:Number(intent.extractionAttempts)||0,sliceCalls:Number(intent.sliceCalls)||0};
     if(result.status!=="complete"||signal.aborted){
       const reason=result.status!=="complete"?result.reason:"extraction-incomplete";
-      const nextRetry=retryAfter(reason,text!,readMemoryEvolutionPolicy(state!.evolutionPolicyRevision));
-      persist(source!.scope_id,{...state!,status:"deferred",reason,retryAfter:nextRetry,updatedAt:Date.now()});
+      if((counted.extractionAttempts??0)>=SLICE_ATTEMPT_LIMIT&&length)return skipSlice(db,source!,counted,length!,persist);
+      const nextRetry=retryAfter(reason);
+      persist(source!.scope_id,{...counted,status:"deferred",reason,retryAfter:nextRetry,updatedAt:Date.now()});
       return {status:"deferred" as const,reason,candidateIds:[],cursor:state!.cursor,candidateCount:state!.candidateCount,retryAfter:nextRetry};
     }
     const candidateIds:string[]=[];let added=0;
     for(const candidate of result.candidates){
-      const absolute={...candidate,startByte:state!.cursor+candidate.startByte,endByte:state!.cursor+candidate.endByte};
+      const absolute={...candidate,startByte:at!+candidate.startByte,endByte:at!+candidate.endByte};
       const candidateId=`candidate:${hash(JSON.stringify([source!.id,source!.revision,absolute]))}`;candidateIds.push(candidateId);
       const inserted=db.prepare("INSERT OR IGNORE INTO memory_records VALUES(?,1,?,'fact',?,'assistant-inference','candidate',0,?,NULL,NULL,?)").run(candidateId,source!.scope_id,redactSecretsInText(candidate.text),Date.now(),Date.now());
       added+=Number(inserted.changes);
@@ -280,8 +393,11 @@ export async function consolidateMemorySource(completedJobId:string,extractor:Te
         if(!active&&support.has(candidate)&&!db.prepare("SELECT 1 FROM memory_record_details WHERE record_id=? AND confidence_basis IS NOT NULL").get(candidateId))db.prepare("UPDATE memory_record_details SET confidence_basis=? WHERE record_id=? AND record_version=1").run(support.get(candidate)!.reason,candidateId);
       }
     }
-    const cursor=state!.cursor+length!,status=cursor===state!.totalBytes?"complete" as const:"partial" as const,candidateCount=state!.candidateCount+added;
-    persist(source!.scope_id,{...state!,status,cursor,candidateIds,candidateCount,retryAfter:status==="partial"?Date.now():null,updatedAt:Date.now()});
+    const next=afterSlice(counted,length!),cursor=next.cursor,candidateCount=state!.candidateCount+added;
+    const status=cursor===state!.totalBytes&&!next.retries?.length?"complete" as const:"partial" as const;
+    // a retried slice that committed is remembered, so a later press on it answers "done"
+    const retried=counted.retries?.length?{retried:[...(counted.retried??[]).filter(item=>item!==at),at!]}:{};
+    persist(source!.scope_id,{...counted,...next,...retried,status,candidateIds,candidateCount,retryAfter:status==="partial"?Date.now():null,updatedAt:Date.now()});
     db.exec("UPDATE memory_meta SET data_revision=data_revision+1");
     return {status,candidateIds,cursor,candidateCount,retryAfter:status==="partial"?Date.now():null};
   });

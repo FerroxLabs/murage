@@ -8,7 +8,7 @@
 // sides, an owner file is stored once, and anything a backup verified at its
 // own limit restores with restore's defaults.
 import { randomBytes } from "node:crypto";
-import { lstatSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { lstatSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { expect, it } from "vitest";
 import { inspectEncryptedInstallationBackup, restoreEncryptedInstallationNew, windowsStageCap, WINDOWS_BACKUP_BYTES, writeEncryptedInstallationBackup } from "./installation-encrypted-backup.ts";
@@ -18,6 +18,7 @@ import { backupFixture, testAgeKeys } from "./testing/backup-fixture.ts";
 import { MAX_BACKUP_BYTES } from "../shared/backup-limits.ts";
 import { backupScheduleSchema } from "../shared/backup-schedule.ts";
 import { installationRecoveryCommand } from "./installation-recovery-command.ts";
+import { removeTempDirSync } from "./testing/cleanup.ts";
 
 const selection = { scope: "application-data", credentialPolicy: "preserve-in-encrypted-fidelity" } as const;
 const MiB = 1024 ** 2;
@@ -43,12 +44,12 @@ it.skipIf(!process.env.MURAGE_BACKUP_TEST_AGE_DIR)("a backup near its size limit
     expect(lstatSync(archive).size).toBeLessThan(42 * MiB);
     // What the backup verified at its own limit, inspection accepts at that
     // same limit and restore accepts with no limit given at all.
-    await inspectEncryptedInstallationBackup(archive, f.parent, { ...keys, maxBytes: 42 * MiB }).then(result => rmSync(result.directory, { recursive: true, force: true }));
+    await inspectEncryptedInstallationBackup(archive, f.parent, { ...keys, maxBytes: 42 * MiB }).then(result => removeTempDirSync(result.directory));
     const restored = join(f.parent, "restored");
     await restoreEncryptedInstallationNew(restored, archive, saved.sha256, keys);
     expect(readFileSync(join(restored, "workspaces", "bot", "video.bin")).equals(video)).toBe(true);
     expect(reviewInstallation(restored).status).toBe("ready-for-review");
-  } finally { f.db.close(); rmSync(f.parent, { recursive: true, force: true }); }
+  } finally { f.db.close(); removeTempDirSync(f.parent); }
 }, 120_000);
 
 it.skipIf(!process.env.MURAGE_BACKUP_TEST_AGE_DIR)("over its size limit, a backup is refused while it is taken, naming the file that passed it", async () => {
@@ -58,7 +59,7 @@ it.skipIf(!process.env.MURAGE_BACKUP_TEST_AGE_DIR)("over its size limit, a backu
   try {
     const error = await writeEncryptedInstallationBackup(f.data, join(f.parent, "b.age"), { ...keys, selection, maxBytes: 8 * MiB }).then(() => null, (caught: { code?: string; path?: string }) => caught);
     expect({ code: error?.code, path: error?.path }).toEqual({ code: "SNAPSHOT_LIMIT_EXCEEDED", path: "workspaces/bot/video.bin" });
-  } finally { f.db.close(); rmSync(f.parent, { recursive: true, force: true }); }
+  } finally { f.db.close(); removeTempDirSync(f.parent); }
 }, 60_000);
 
 // Windows' helper holds 20 GiB whatever the owner's limit says, so there the

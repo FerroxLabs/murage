@@ -278,6 +278,8 @@ describe("token drift", () => {
         "the same QR again, in the first-run chat — a scanner needs pure black on pure white",
       "src/components/RoutineCalendarPage.tsx":
         "calendar chip gradients mixed from EMBER_COLORS; theme-invariant like the mascot",
+      "src/e2e/fixtures/cloud-trusted-types/entry.tsx":
+        "e2e fixture page for the Trusted Types check; its literal colour is test scaffolding, not shipped UI",
     };
     const files: string[] = [];
     (function walk(dir: string) {

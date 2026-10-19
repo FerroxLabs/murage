@@ -1,12 +1,13 @@
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { afterEach, expect, it } from "vitest";
 import { inboxRequest, initializeInbox, listInbox, owedThreads, updateInboxState, type InboxAccess } from "./inbox.ts";
+import { removeTempDirSync } from "./testing/cleanup.ts";
 
 const roots: string[] = [], databases: DatabaseSync[] = [];
-afterEach(() => { for (const db of databases.splice(0)) { try { db.close(); } catch {} } for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true }); });
+afterEach(() => { for (const db of databases.splice(0)) { try { db.close(); } catch {} } for (const root of roots.splice(0)) removeTempDirSync(root); });
 const access: InboxAccess = { owner: true, threads: [{ threadId: "thread", label: "Research bot", botId: "bot" }] };
 function fixture() {
   const root = mkdtempSync(join(tmpdir(), "murage-inbox-")); roots.push(root);

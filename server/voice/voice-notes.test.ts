@@ -1,4 +1,4 @@
-import { existsSync, mkdtempSync, readFileSync, readdirSync, rmSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, readdirSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
@@ -7,12 +7,13 @@ import { afterEach, describe, expect, it } from "vitest";
 import { initializeArtifacts } from "../artifacts.ts";
 import type { AppConfig } from "../config.ts";
 import { createVoiceNote, VOICE_NOTE_MAX_CHARS, voiceNotePieces, type VoiceNoteDeps } from "./voice-notes.ts";
+import { removeTempDirSync } from "../testing/cleanup.ts";
 
 const roots: string[] = [];
 const databases: DatabaseSync[] = [];
 afterEach(() => {
   for (const db of databases.splice(0)) db.close();
-  for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true });
+  for (const root of roots.splice(0)) removeTempDirSync(root);
 });
 
 function fixture(voice = { voice: "eve", voiceProvider: "xai" as const }) {

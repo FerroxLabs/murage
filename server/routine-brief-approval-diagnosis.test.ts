@@ -28,7 +28,7 @@
 //
 // Read the FINDING block at the bottom for the answer in words.
 
-import { readFileSync, rmSync } from "node:fs";
+import { readFileSync } from "node:fs";
 import { beforeEach, describe, expect, it } from "vitest";
 
 import { autoVerdict, type AutoApprover, type AutoVerdictSource } from "./auto-approve.ts";
@@ -36,6 +36,7 @@ import { DATA_DIR } from "./config.ts";
 import type { ModelSelection } from "./contracts.ts";
 import { chiefDecision } from "./setup.ts";
 import { Store } from "./store.ts";
+import { removeTempDirSync } from "./testing/cleanup.ts";
 
 /** server/index.ts boots a server on import, so the three facts this test
  *  needs from it — the brief's prompt, and the turn context a scheduled
@@ -110,7 +111,7 @@ let briefThreadId: string;
 let chiefId: string;
 
 beforeEach(() => {
-  rmSync(DATA_DIR, { recursive: true, force: true });
+  removeTempDirSync(DATA_DIR);
   store = new Store(selection);
   // exactly what a blank machine does: one bot, then opening setup elects it
   const created = store.createBot({ name: "Chief" });

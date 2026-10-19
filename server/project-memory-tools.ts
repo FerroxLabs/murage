@@ -19,6 +19,7 @@ import { executionStore, sameThreadPartition } from "./execution-audience.ts";
 //    assignment.
 import type { DatabaseSync } from "node:sqlite";
 import { bringInToProject } from "./memory/bring-in.ts";
+import { redactSecretsInText } from "./redact.ts";
 import { roomReplayWithheld } from "./memory/disclosures.ts";
 import { capturedMessageWithheld, LineageAllowance, messageSourceForgotten } from "./memory/replay-lineage.ts";
 import { copiedFromOwner } from "./memory/bring-in.ts";
@@ -273,8 +274,10 @@ export function updateProjectSummary(db: DatabaseSync, roster: MemoryRoster, con
   // never silently drop what an older version rested on (Astra r2 #8)
   if (sources.length > SUMMARY_SOURCES_MAX) return { status: 409, body: { error: "not_allowed", reason: `The summary would rest on more than ${SUMMARY_SOURCES_MAX} messages. Keep the current summary; Murage's board summary covers the rest.` } };
   const version = Number((db.prepare("SELECT max(version) AS v FROM project_summaries WHERE group_id=?").get(context.groupId) as { v: number | null }).v ?? 0) + 1;
+  // Every member's prompt carries this summary, so a key the lead copied into
+  // it is masked before it is stored, the way captured memory is.
   db.prepare("INSERT INTO project_summaries(group_id, version, text, source_message_ids, made_by, at, stale) VALUES(?,?,?,?,?,?,0)")
-    .run(context.groupId, version, body.text.trim(), JSON.stringify(sources), context.botId, context.now);
+    .run(context.groupId, version, redactSecretsInText(body.text.trim()), JSON.stringify(sources), context.botId, context.now);
   // the summary is the lead's own words, written in its turn: it rests on that turn (DESIGN-WRITETIME 2.5)
   recordTurnObject(db, consuming, murageObjectRef("project-summary", `${context.groupId}:${version}`));
   db.prepare("DELETE FROM project_summaries WHERE group_id=? AND version<=?").run(context.groupId, version - SUMMARY_VERSIONS_KEPT);

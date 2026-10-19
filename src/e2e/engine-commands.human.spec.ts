@@ -4,7 +4,7 @@
 // The composer's "/" menu with an engine group, in a real browser against the
 // task-owned verification server and its fake Claude Code CLI (command list
 // switched on). It never reads a normal profile or calls a provider.
-import { test, expect, type Page, type TestInfo } from "@playwright/test";
+import { test, expect, type Page, type TestInfo } from "./page-error-guard";
 import { createServer, type ViteDevServer } from "vite";
 import react from "@vitejs/plugin-react";
 import tailwindcss from "@tailwindcss/vite";

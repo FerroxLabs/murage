@@ -73,6 +73,7 @@ export const HOST_OFF_FOR_CALL = new Set(["key", "auth", "premium", "unavailable
 export function warmHost(botId: string): void {
   void fetch(`/api/bots/${botId}/voice-host`, {
     method: "POST",
+    redirect: "error",
     headers: callRouteHeaders(),
     body: JSON.stringify({ warm: true }),
   }).catch(() => undefined);
@@ -93,6 +94,7 @@ export async function hostTurn(
   try {
     res = await fetch(`/api/bots/${botId}/voice-host`, {
       method: "POST",
+      redirect: "error",
       headers: callRouteHeaders(),
       body: JSON.stringify(input),
       signal,

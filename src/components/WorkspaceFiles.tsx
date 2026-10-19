@@ -13,6 +13,8 @@ import {
   WORKSPACE_FILES_ROUTES,
   type WorkspaceEntry, type WorkspaceListResponse, type WorkspaceReadResult, type WorkspaceRootInfo, type WorkspaceScopeRef, type WorkspaceSearchResponse,
 } from "../../shared/workspace-files";
+import { SandboxedFrame } from "./SandboxedFrame";
+import type { TrustedMarkup } from "@/lib/trusted-html";
 
 const button = "min-h-10 rounded-lg border border-hairline/50 bg-control px-3 py-2 text-[13px] text-ink hover:bg-raised-hover focus-visible:outline focus-visible:outline-2 focus-visible:outline-focus disabled:opacity-50";
 const field = "min-h-10 min-w-0 rounded-lg border border-hairline/50 bg-inset px-3 py-2 text-[13px] text-ink focus-visible:outline focus-visible:outline-2 focus-visible:outline-focus";
@@ -34,7 +36,7 @@ export function WorkspaceFiles({ scope, scopeLabel, refreshToken, renderHtml, on
   scopeLabel: string;
   /** Bumped by the Files Refresh button, which reloads both views. */
   refreshToken: number;
-  renderHtml: (content: string) => string;
+  renderHtml: (content: string) => TrustedMarkup;
   onSaved: (result: SavedVersionResult) => void;
   onRevealFolder?: (scope: WorkspaceScopeRef) => void;
   /** Open in app / Show in folder for one live file (F4-T5). Defaults to the
@@ -181,7 +183,7 @@ export function WorkspaceFiles({ scope, scopeLabel, refreshToken, renderHtml, on
       {!viewing.result && !viewing.error && <p role="status" className="text-[12px] text-ink-secondary">{t("filesWorkspace.viewOpening")}</p>}
       {viewing.error && <p role="alert" className="text-[13px] text-danger">{viewing.error}</p>}
       {viewing.result && (isHtmlPath(viewing.entry.relativePath)
-        ? <iframe title={t("filesWorkspace.viewFrame", { name: viewing.entry.name })} sandbox="" referrerPolicy="no-referrer" srcDoc={renderHtml(viewing.result.content)} className="h-[360px] w-full rounded-lg bg-white" />
+        ? <SandboxedFrame title={t("filesWorkspace.viewFrame", { name: viewing.entry.name })} sandbox="" referrerPolicy="no-referrer" html={renderHtml(viewing.result.content)} className="h-[360px] w-full rounded-lg bg-white" />
         : <pre className="max-h-96 overflow-auto whitespace-pre-wrap break-words text-[12px]">{viewing.result.content}</pre>)}
     </section>}
   </section>;

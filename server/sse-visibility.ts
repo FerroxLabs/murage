@@ -1,3 +1,4 @@
+import { cloudIdentity, isOwnerBrowser } from "./cloud-request-identity.ts";
 // Who may see which SSE frame.
 //
 // `broadcast()` writes to every open stream. Until this module existed the
@@ -18,6 +19,9 @@
 // not hidden and every room they made. It is a surface filter, not an
 // authorization model — see the note on `visibleToCompanion`.
 import { randomBytes, timingSafeEqual } from "node:crypto";
+import type { IncomingHttpHeaders } from "node:http";
+
+import { createTicketStore } from "./single-use-ticket.ts";
 
 /** Which door a request came through, and therefore how much of the
  * workspace it may be shown. `remote` is not one client — it is every
@@ -30,11 +34,10 @@ export const SURFACE_HEADER = "x-murage-surface";
 export const SURFACE_QUERY = "surface";
 export const COMPANION_HEADER = "x-murage-companion";
 
-/** Where the per-launch desktop secret travels. Two forms for the same
- * reason the marker has two: `EventSource` cannot set a request header, so
- * `/api/events` has only the query string. */
+/** Where the per-launch desktop secret travels: a request header, only.
+ * `EventSource` and other URL-loaded resources cannot set one, so they carry
+ * a single-use ticket instead (SURFACE_TICKET_QUERY below). */
 export const SURFACE_SECRET_HEADER = "x-murage-surface-secret";
-export const SURFACE_SECRET_QUERY = "surfaceSecret";
 
 /** Is this process the harness that Electron embeds?
  *
@@ -105,6 +108,61 @@ function secretProven(candidate: string | undefined): boolean {
   if (!candidate) return false;
   const got = Buffer.from(candidate, "utf8");
   return got.length === desktopSecretBytes.length && timingSafeEqual(got, desktopSecretBytes);
+}
+
+// ── URL-loaded resources: a ticket, never the proof ─────────────────────
+//
+// An EventSource, an <img src> and a download link cannot send a header, and
+// the launch proof must never ride in a URL: a URL is logged, kept in
+// history, handed to a redirect target and copied by the person. So the
+// desktop window asks for a ticket over an ordinary proven POST (the proof in
+// its header), names the exact resource it is about to load, and appends the
+// ticket. The ticket redeems once, for that resource only, within seconds,
+// the same single-use shape as the voice websocket's (server/voice/stream-route.ts).
+//
+// Local harness only. A cloud home decides the caller from cloud-home auth
+// and never reads the proof, so it neither mints nor redeems these.
+export const SURFACE_TICKET_QUERY = "surfaceTicket";
+export const SURFACE_TICKET_PATH = "/api/desktop/resource-ticket";
+export const RESOURCE_TICKET_TTL_MS = 15_000;
+const resourceTickets = createTicketStore({ ttlMs: RESOURCE_TICKET_TTL_MS, maxOutstanding: 512 });
+
+/** The resource a ticket is bound to: path and query, query sorted, the ticket itself left out. */
+export function resourceTicketBinding(target: URL): string {
+  const params = new URLSearchParams(target.searchParams);
+  params.delete(SURFACE_TICKET_QUERY);
+  params.sort();
+  const query = params.toString();
+  return `desktop GET ${target.pathname}${query ? `?${query}` : ""}`;
+}
+
+/** A ticket for one same-origin /api resource, or null when it names something else. */
+export function mintResourceTicket(resource: unknown): { ticket: string; expiresInMs: number } | null {
+  if (typeof resource !== "string" || !resource.startsWith("/api/") || resource.length > 4096) return null;
+  let target: URL;
+  try { target = new URL(resource, "http://localhost"); } catch { return null; }
+  if (target.origin !== "http://localhost" || target.hash || target.searchParams.has(SURFACE_TICKET_QUERY)) return null;
+  if (target.pathname === SURFACE_TICKET_PATH || !target.pathname.startsWith("/api/")) return null;
+  return { ticket: resourceTickets.mint(resourceTicketBinding(target)), expiresInMs: RESOURCE_TICKET_TTL_MS };
+}
+
+/** Called once per request, before anything reads the surface. Strips every
+ * ticket from `url` (spent or not), and when exactly one redeems for this
+ * GET of this resource, stands the proven desktop headers on the request so
+ * every later `requestSurface()` agrees. True when one redeemed. */
+export function adoptResourceTicket(method: string, headers: IncomingHttpHeaders, url: URL): boolean {
+  const offered = url.searchParams.getAll(SURFACE_TICKET_QUERY);
+  if (!offered.length) return false;
+  const binding = resourceTicketBinding(url);
+  url.searchParams.delete(SURFACE_TICKET_QUERY);
+  if (offered.length !== 1 || (method !== "GET" && method !== "HEAD")) {
+    for (const ticket of offered) resourceTickets.redeem(ticket, "");
+    return false;
+  }
+  if (!resourceTickets.redeem(offered[0]!, binding)) return false;
+  headers[SURFACE_HEADER] = DESKTOP_SURFACE;
+  headers[SURFACE_SECRET_HEADER] = desktopSecret;
+  return true;
 }
 
 const headerValue = (
@@ -180,15 +238,19 @@ export function requestSurface(
   headers: Partial<Record<string, string | string[] | undefined>>,
   query?: URLSearchParams | null,
 ): Surface {
+  if (process.env.MURAGE_CLOUD_ROLE === "home") {
+    const identity = cloudIdentity(headers);
+    return identity?.scope === "owner-desktop" || identity?.scope === "owner-phone" || isOwnerBrowser(identity) || (identity?.scope === "browser" && identity.settingsRead) ? "desktop" : "remote";
+  }
   if (companionMarked(headers)) return "remote";
   const marked =
     headerValue(headers, SURFACE_HEADER) === DESKTOP_SURFACE ||
     query?.get(SURFACE_QUERY) === DESKTOP_SURFACE;
   if (!marked) return "remote";
-  const proven =
-    secretProven(headerValue(headers, SURFACE_SECRET_HEADER)) ||
-    secretProven(query?.get(SURFACE_SECRET_QUERY) ?? undefined);
-  return proven ? DESKTOP_SURFACE : "remote";
+  // The proof is read from its header only. A URL-loaded resource proves
+  // itself with a single-use ticket, which `adoptResourceTicket` has already
+  // turned into this header; the proof itself in a query proves nothing.
+  return secretProven(headerValue(headers, SURFACE_SECRET_HEADER)) ? DESKTOP_SURFACE : "remote";
 }
 
 /** What one frame is about. `workspace` frames belong to no conversation. */

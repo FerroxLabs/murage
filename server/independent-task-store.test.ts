@@ -1,12 +1,13 @@
-import { mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { beforeEach, expect, it, vi } from "vitest";
 import { DATA_DIR } from "./config.ts";
 import { closeDatabase } from "./database.ts";
 import { Store } from "./store.ts";
 import type { ModelSelection } from "./contracts.ts";
+import { removeTempDirSync } from "./testing/cleanup.ts";
 
-beforeEach(()=>{closeDatabase();rmSync(DATA_DIR,{recursive:true,force:true});mkdirSync(DATA_DIR,{recursive:true});});
+beforeEach(()=>{closeDatabase();removeTempDirSync(DATA_DIR);mkdirSync(DATA_DIR,{recursive:true});});
 const fresh=()=>new Store(()=>({instanceId:"engine-one",model:"one",effort:"medium",connectionId:"account-one"}));
 it("keeps thread model/account/approval snapshots and cursors independent across selection and restart",()=>{
   const store=fresh(),bot=store.createBot(),first=bot.threadId;
