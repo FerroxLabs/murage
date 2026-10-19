@@ -7,20 +7,21 @@
 // committed v4 messages.db beside a copy whose pages never reached the disk.
 // The copy must be flushed before its rename, and the folder after it.
 import { randomUUID } from "node:crypto";
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { afterEach, expect, it } from "vitest";
 import * as schema from "./schema.ts";
 import { DEFAULT_MEMORY_LEARNING_V1 } from "./learning-policy.ts";
+import { removeTempDirSync } from "../testing/cleanup.ts";
 
 const roots: string[] = [];
 const io = (schema as unknown as { memorySnapshotIo?: { fsyncSync: (fd: number) => void; renameSync: (from: string, to: string) => void } }).memorySnapshotIo;
 const real = io ? { ...io } : null;
 afterEach(() => {
   if (io && real) Object.assign(io, real);
-  for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true });
+  for (const root of roots.splice(0)) removeTempDirSync(root);
 });
 
 it("flushes the copy to disk before renaming it into place, and the folder after", () => {
@@ -54,6 +55,6 @@ it("retries a rename a Windows scanner briefly blocks, and gives up on a real er
     db.prepare("INSERT INTO memory_meta VALUES(1,2,?,4,5,6,'active')").run(randomUUID());
     db.prepare("INSERT INTO memory_learning_config VALUES(1,3,?)").run(JSON.stringify({ ...DEFAULT_MEMORY_LEARNING_V1, reviewMode: false }));
     schema.migrateMemorySchema(db, "off", { snapshotV2Path: join(root, schema.MEMORY_PRE_V3_SNAPSHOT), freeBytes: () => 1024 ** 4 });
-    expect(Number(db.prepare("SELECT schema_version FROM memory_meta").get()?.schema_version)).toBe(10);
+    expect(Number(db.prepare("SELECT schema_version FROM memory_meta").get()?.schema_version)).toBe(11);
   } finally { db.close(); }
 });

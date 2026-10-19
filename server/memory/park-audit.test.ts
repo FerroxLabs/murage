@@ -3,7 +3,7 @@
 // parking marker is structured and validated; permanent cancellation ends
 // parking; a downgrade is repaired by the per-launch reconciliation; rowids
 // past 2^53 are read and bound exactly.
-import { mkdirSync, rmSync } from "node:fs";
+import { mkdirSync } from "node:fs";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
@@ -18,13 +18,20 @@ import * as park from "./park.ts";
 import { reconcileMemoryRoster } from "./policy.ts";
 import { setMemoryMode } from "./repository.ts";
 import { memoryOwnerRoute } from "./settings.ts";
+import { removeTempDirSync } from "../testing/cleanup.ts";
 
 // Members of the module under test that exist only after the fix are reached through this view.
 const fix = park as unknown as Record<string, any>;
 const NOW = 5_000_000;
 const roster = { bots: [{ id: "a", threadId: "thread-a" }], groups: [] };
+/** A clean data directory. The checkpointer thread must have really exited (stopWalMaintenance resolves on its exit event)
+ * before the directory goes: removeTempDirSync can only ask it to leave, and a thread still closing its connection recreates
+ * files under the removal (ENOTEMPTY) or still holds the lock on the next test's fresh database file. */
+async function freshDataDir() {
+  closeDatabase(); await stopWalMaintenance(); removeTempDirSync(DATA_DIR); mkdirSync(DATA_DIR, { recursive: true });
+}
 beforeEach(async () => {
-  closeDatabase(); await stopWalMaintenance(); rmSync(DATA_DIR, { recursive: true, force: true }); mkdirSync(DATA_DIR, { recursive: true });
+  await freshDataDir();
   reconcileMemoryRoster(roster); setMemoryMode("capture"); resetMemoryClaimCursor(); park.resetParkSweep(); fix.resetParkReconcile?.();
 });
 afterEach(async () => { closeDatabase(); await stopWalMaintenance(); });
@@ -32,7 +39,7 @@ afterEach(async () => { closeDatabase(); await stopWalMaintenance(); });
 /** Thread: m1 is the root, m2 and m3 are sibling replies (two branches). */
 function thread(id = "t") {
   const db = database();
-  const row = (message: string, parent: string | null) => db.prepare("INSERT INTO messages VALUES(?,?,1,'user','text',?,?)").run(id, message, message, JSON.stringify({ parentId: parent }));
+  const row = (message: string, parent: string | null) => db.prepare("INSERT INTO messages(thread_id,id,at,role,kind,text,json) VALUES(?,?,1,'user','text',?,?)").run(id, message, message, JSON.stringify({ parentId: parent }));
   row("m1", null); row("m2", "m1"); row("m3", "m1");
   prepareSyncOn(db, id); // filled as a first turn leaves it; on an unfilled thread the drain does the branch change
   for (const m of ["m1", "m2", "m3"]) captureSource(db, { id: `message:${id}:${m}`, threadId: id, messageId: m, kind: "text", speaker: "owner", outcome: "recorded", text: `text ${m}` });
@@ -204,9 +211,9 @@ describe("finding 5: a downgrade is repaired on the next launch", () => {
 describe("finding 6: the parking marker is structured and validated", () => {
   const reopenAll = (db: ReturnType<typeof database>) => { db.prepare("UPDATE memory_sources SET state='active' WHERE id='message:t:m3'").run(); fix.resetParkReconcile(); fix.parkReconcileStep(db); };
 
-  it("restores NULL, the empty string and an error containing a bar exactly", () => {
+  it("restores NULL, the empty string and an error containing a bar exactly", async () => {
     for (const prior of [null, "", "a|b|c", "plain"]) {
-      closeDatabase(); rmSync(DATA_DIR, { recursive: true, force: true }); mkdirSync(DATA_DIR, { recursive: true }); setMemoryMode("capture");
+      await freshDataDir(); setMemoryMode("capture");
       const db = thread();
       db.prepare("UPDATE memory_jobs SET status='deferred',error=? WHERE source_id='message:t:m3'").run(prior);
       captureBranchChange(db, "t", "m2");
@@ -216,11 +223,11 @@ describe("finding 6: the parking marker is structured and validated", () => {
     }
   });
 
-  it("a forged or malformed parked-looking value is an ordinary cancelled job: never reopened and never an error", () => {
+  it("a forged or malformed parked-looking value is an ordinary cancelled job: never reopened and never an error", async () => {
     const forged = ["parked:pending|worker failure", "parked:ordinary failure", "parked:v1:{\"s\":\"complete\",\"e\":null}", "parked:v1:{\"s\":\"pending\"}",
       "parked:v1:{bad json", "parked:v1:{\"s\":\"pending\",\"e\":5}", "parked:v1:[1,2]", "PARKED:V1:{\"s\":\"pending\",\"e\":null}", "parked:v1:{\"s\":\"leased\",\"e\":null}", "parked:v2:{\"s\":\"pending\",\"e\":null}"];
     for (const value of forged) {
-      closeDatabase(); rmSync(DATA_DIR, { recursive: true, force: true }); mkdirSync(DATA_DIR, { recursive: true }); setMemoryMode("capture");
+      await freshDataDir(); setMemoryMode("capture");
       const db = thread();
       captureBranchChange(db, "t", "m2");
       db.prepare("UPDATE memory_jobs SET error=? WHERE source_id='message:t:m3'").run(value);

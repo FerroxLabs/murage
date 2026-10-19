@@ -248,13 +248,22 @@ async function boundedResponseText(response: Response): Promise<string> {
  * carried on the error so the caller can tell "this account may not do this"
  * apart from "this request went wrong".
  */
+export interface AvatarImageAdmission {signal?: AbortSignal;assertActive?: () => void}
+function assertAvatarActive(admission: AvatarImageAdmission): void {
+  admission.assertActive?.();
+  if(admission.signal?.aborted)throw Object.assign(new Error("Avatar generation was cancelled"),{status:403});
+}
+
 async function attemptAvatarImage(
   route: AvatarImageRoute,
   prompt: string,
   fetchImpl: typeof fetch,
   timeoutMs: number,
+  admission: AvatarImageAdmission,
 ): Promise<GeneratedAvatarImage> {
+  assertAvatarActive(admission);
   const timeoutSignal = AbortSignal.timeout(timeoutMs);
+  const signal=admission.signal ? AbortSignal.any([admission.signal,timeoutSignal]) : timeoutSignal;
   let response: Response;
   try {
     response = await fetchImpl(route.url, {
@@ -266,9 +275,10 @@ async function attemptAvatarImage(
         ...(isFluxUrl(route.url) ? fluxCallHeaders("avatar-image") : {}),
       },
       body: requestBody(route, prompt),
-      signal: timeoutSignal,
+      signal,
     });
   } catch (error) {
+    assertAvatarActive(admission);
     const timedOut = timeoutSignal.aborted || (error instanceof Error && error.name === "TimeoutError");
     throw Object.assign(
       new Error(timedOut ? "Avatar generation timed out" : `Could not reach ${route.label} image generation`),
@@ -276,10 +286,13 @@ async function attemptAvatarImage(
     );
   }
 
+  assertAvatarActive(admission);
   let text: string;
   try {
     text = await boundedResponseText(response);
+    assertAvatarActive(admission);
   } catch (error) {
+    assertAvatarActive(admission);
     // A fetch can resolve its headers before the provider stalls. When the
     // same timeout later aborts the response body, undici may surface either
     // TimeoutError or AbortError; the signal is the authoritative cause.
@@ -324,6 +337,7 @@ async function attemptAvatarImage(
   if (!mime) {
     throw Object.assign(new Error(`${route.label} returned an image format Murage cannot store`), { status: 502 });
   }
+  assertAvatarActive(admission);
   return { bytes, mime, provider: route.provider, model: routeModel(route) };
 }
 
@@ -341,13 +355,19 @@ export async function generateAvatarImage(
   fetchImpl: typeof fetch = fetch,
   timeoutMs = AVATAR_IMAGE_TIMEOUT_MS,
   fluxApiKey: string | null = fluxKey(),
+  admission: AvatarImageAdmission = {},
 ): Promise<GeneratedAvatarImage> {
+  assertAvatarActive(admission);
   const routes = resolveAvatarImageRoutes(apiKey, fluxApiKey);
   const prompt = avatarGenerationPrompt(bot, direction);
   for (let index = 0; index < routes.length; index += 1) {
     try {
-      return await attemptAvatarImage(routes[index]!, prompt, fetchImpl, timeoutMs);
+      assertAvatarActive(admission);
+      const result=await attemptAvatarImage(routes[index]!, prompt, fetchImpl, timeoutMs,admission);
+      assertAvatarActive(admission);
+      return result;
     } catch (error) {
+      assertAvatarActive(admission);
       const upstream = (error as { upstreamStatus?: number }).upstreamStatus;
       const canFallBack = index + 1 < routes.length && upstream !== undefined && CAPABILITY_DENIED.has(upstream);
       if (!canFallBack) throw error;

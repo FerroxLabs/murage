@@ -1,9 +1,10 @@
-import { mkdtempSync,rmSync } from "node:fs";
+import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { expect,it } from "vitest";
 import { MemoryIndex } from "./index.ts";
+import { removeTempDirSync } from "../testing/cleanup.ts";
 
 it("replaces and deletes exact FTS keys without retaining stale text",()=>{
   const root=mkdtempSync(join(tmpdir(),"memory-index-keys-")),index=new MemoryIndex(join(root,"index.db"));
@@ -17,7 +18,7 @@ it("replaces and deletes exact FTS keys without retaining stale text",()=>{
     index.upsert([{...row,deleted:true}]);
     expect(index.search("replacementneedle",allowed,null,"unused").hits).toEqual([]);
     expect(index.search("preservedneedle",allowed,null,"unused").hits.map(h=>h.id)).toEqual(["other"]);
-  }finally{index.close();rmSync(root,{recursive:true,force:true});}
+  }finally{index.close();removeTempDirSync(root);}
 });
 it("backfills legacy FTS rowids independently of ordinary entry rowids",()=>{
   const root=mkdtempSync(join(tmpdir(),"memory-index-legacy-")),path=join(root,"index.db"),db=new DatabaseSync(path);
@@ -29,7 +30,7 @@ it("backfills legacy FTS rowids independently of ordinary entry rowids",()=>{
     index.upsert([{id:"legacy",version:1,scopeId:"scope",text:"newneedle",deleted:false}]);
     expect(index.search("oldneedle",[{id:"legacy",version:1}],null,"unused").hits).toEqual([]);
     expect(index.search("newneedle",[{id:"legacy",version:1}],null,"unused").hits.map(h=>h.id)).toEqual(["legacy"]);
-  }finally{index.close();rmSync(root,{recursive:true,force:true});}
+  }finally{index.close();removeTempDirSync(root);}
 });
 
 
@@ -44,7 +45,7 @@ it("bounds resident vectors by the authorized set despite unrelated retained vec
     expect(second.vectorRows).toBe(1);expect(second.hits.map(row=>row.id)).toEqual(["record-12000"]);
     // A genuinely over-limit authorized set still fails closed at the same cap.
     expect(()=>index.search("semantic",Array.from({length:12001},(_,i)=>({id:`record-${i}`,version:1})),[1,0],"model")).toThrow("MEMORY_SEMANTIC_CAPACITY");
-  }finally{db.close();index.close();rmSync(root,{recursive:true,force:true});}
+  }finally{db.close();index.close();removeTempDirSync(root);}
 });
 
 
@@ -58,7 +59,7 @@ it("does not cache authority from a mutable allowed-set argument",()=>{
     expect(index.search("sharedneedle",allowed,null,"none").hits.map(r=>r.id)).toEqual(["second"]);
     Object.freeze(allowed[0]);Object.freeze(allowed);
     expect(index.search("sharedneedle",allowed,null,"none").hits.map(r=>r.id)).toEqual(["second"]);
-  }finally{index.close();rmSync(root,{recursive:true,force:true});}
+  }finally{index.close();removeTempDirSync(root);}
 });
 
 // 0.1.60 low (Windows RE-TEST 4 L6): after a forget, the raw memory-index.db
@@ -81,5 +82,5 @@ it("leaves no copy of a deleted memory's words anywhere in the file",async()=>{
     expect(raw()).toContain("keptwords");
     index=new MemoryIndex(path);
     expect(index.search("keptwords",[{id:"kept",version:1}],null,"unused").hits.map(h=>h.id)).toEqual(["kept"]);
-  }finally{index.close();rmSync(root,{recursive:true,force:true});}
+  }finally{index.close();removeTempDirSync(root);}
 });

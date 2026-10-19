@@ -2,7 +2,7 @@
 // dictation helper and the store faked, and the REAL speaker and voice-host
 // client. The harness routes are page routes, so nothing here touches a
 // server, a key or a data directory.
-import { test, expect, type Page, type Route } from "@playwright/test";
+import { test, expect, type Page, type Route } from "./page-error-guard";
 import { createServer, type ViteDevServer } from "vite";
 import tailwindcss from "@tailwindcss/vite";
 import { fileURLToPath } from "node:url";

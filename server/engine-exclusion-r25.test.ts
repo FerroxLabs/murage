@@ -20,13 +20,14 @@ import { homeKey, Known, Planner, UNDO_JOIN_TRIES, type HomePlanData } from "./e
 import { bootOps, listRedo, redoDirectory } from "./engine-redo.ts";
 import { useFakeExclusion, type FakeExclusion } from "./testing/engine-exclusion-fake.ts";
 import { legacyRejoin, buildFixture, canaryHits, type Fixture } from "./testing/engine-history-fixtures.ts";
+import { removeTempDirSync } from "./testing/cleanup.ts";
 
 // the boot of the operating system this "run" is in (engine-redo.ts bootOps); a restart of the computer is a new one
 const realBoot = bootOps.current;
 let boots = 1;
 const removeEngineHistoryFiles = legacyRejoin(removeRaw);
 const scratch = realpathSync.native(mkdtempSync(join(tmpdir(), "murage-r25-")));
-afterAll(() => rmSync(scratch, { recursive: true, force: true }));
+afterAll(() => removeTempDirSync(scratch));
 
 let fake: FakeExclusion;
 beforeEach(() => { fake = useFakeExclusion(); clearJournals(); boots = 1; bootOps.current = () => ({ boot: `boot-${boots}`, uptime: 1_000 }); });

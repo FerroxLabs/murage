@@ -8,7 +8,7 @@
 // test here pins through createProcedurePin + preparePinnedProcedures, the
 // way index.ts does, and asks shippedSkillCheck, the check index.ts uses.
 import { randomUUID } from "node:crypto";
-import { mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { DATA_DIR } from "./config.ts";
@@ -19,6 +19,7 @@ import { workspaceDir } from "./workspace.ts";
 import { IMAGE_LIBRARY_TOOLS } from "../shared/image-library-audience.ts";
 import { CLAUDE_TOOL_SURFACE, CODEX_TOOL_SURFACE, FUIGO_TOOL_SURFACE, NEUTRAL_TOOL_SURFACE, PI_TOOL_SURFACE, renderMurageTools, type McpToolSurface, type MurageToolMounts } from "./murage-tool-surface.ts";
 import { CODEX_PHONE_MOUNT } from "./drivers/codex.ts";
+import { removeTempDirSync } from "./testing/cleanup.ts";
 
 const SHIPPED = join(import.meta.dirname, "..", "skills");
 const bundled = loadBundledSkills(SHIPPED);
@@ -40,7 +41,7 @@ const bare = new RegExp(`(?<![A-Za-z0-9_"])(${SKILL_TOOLS.join("|")})(?![A-Za-z0
 
 const owned: string[] = [];
 beforeEach(() => { mkdirSync(DATA_DIR, { recursive: true }); });
-afterEach(() => { for (const path of owned.splice(0)) rmSync(path, { recursive: true, force: true }); });
+afterEach(() => { for (const path of owned.splice(0)) removeTempDirSync(path); });
 function bot(): string {
   const id = `pinned-shipped-${randomUUID()}`;
   owned.push(join(DATA_DIR, "workspaces", id), join(DATA_DIR, "skill-state", id));

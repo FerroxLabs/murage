@@ -1,4 +1,4 @@
-import {test,expect,type Page,type TestInfo} from "@playwright/test";
+import {test,expect,type Page,type TestInfo} from "./page-error-guard";
 import {createServer,type ViteDevServer} from "vite";
 import react from "@vitejs/plugin-react";
 import tailwindcss from "@tailwindcss/vite";

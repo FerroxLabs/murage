@@ -6,13 +6,14 @@
 // scripted fake child under fake timers (backoff, deadlines, ordering). Neither touches Baileys or a network.
 import type { ChildProcess } from "node:child_process";
 import { EventEmitter } from "node:events";
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { BridgeHost, BridgeRequestError, type BridgeHostOptions, type ForkFn, type HostLifecycle } from "./bridge-host.ts";
 import type { ChildMessage } from "./core/protocol.ts";
+import { removeTempDirSync } from "../../testing/cleanup.ts";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const FIXTURE = join(here, "testing", "fixture-child.ts");
@@ -34,7 +35,7 @@ afterEach(async () => {
   vi.useRealTimers();
   await Promise.all(hosts.map((h) => h.stop().catch(() => undefined)));
   hosts = [];
-  for (const root of roots) rmSync(root, { recursive: true, force: true });
+  for (const root of roots) removeTempDirSync(root);
   roots = [];
 });
 

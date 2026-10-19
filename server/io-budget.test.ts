@@ -1,10 +1,11 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
-import { appendFileSync, fstatSync, mkdtempSync, rmSync, statSync } from "node:fs";
+import { appendFileSync, fstatSync, mkdtempSync, statSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { describe, expect, it, vi } from "vitest";
 import { IO_BUDGET_BYTES_PER_MINUTE, IO_BUDGET_CALM_MINUTES, IO_BUDGET_IDLE_BYTES_PER_MINUTE, IO_BUDGET_MAX_SCALE, IoBudget, instrumentDatabase, walFrameReader, type IoReading } from "./io-budget.ts";
+import { removeTempDirSync } from "./testing/cleanup.ts";
 
 const MINUTE = 60_000;
 /** 1 MB written per minute = 2048 blocks of 512 bytes. */
@@ -84,7 +85,7 @@ describe("io-budget", () => {
       expect(verdict.writeBytesPerMinute).toBeLessThanOrEqual(4*1024*1024*1.1);
       expect(minute(0,0)?.writeBytesPerMinute).toBe(0);
       unregister();
-    }finally{rmSync(root,{recursive:true,force:true});}
+    }finally{removeTempDirSync(root);}
   });
 
   it.each([0,4])("measures instrumented WAL growth with an OS reading of %s MiB",osMb=>{
@@ -101,7 +102,7 @@ describe("io-budget", () => {
       expect(budget.sampleBytes()).toBe(delta);
       expect(minute(osMb,0)?.writeBytesPerMinute).toBe(delta);
       budget.noteBytes("explicit",1234);expect(minute(0,0)?.writeBytesPerMinute).toBe(1234);
-    }finally{db.close();rmSync(root,{recursive:true,force:true});}
+    }finally{db.close();removeTempDirSync(root);}
   });
 
   it("names the largest byte source and defers it through a decaying backoff",()=>{
@@ -162,7 +163,7 @@ describe("io-budget", () => {
       const seen=minute(0,0)!.writeBytesPerMinute;
       expect(seen).toBeGreaterThanOrEqual(4*1024*1024*0.9);
       expect(seen).toBeLessThanOrEqual(4*1024*1024*1.1);
-    }finally{db.close();rmSync(root,{recursive:true,force:true});}
+    }finally{db.close();removeTempDirSync(root);}
   });
 
   it("closes the -shm descriptor on unregister and holds a fresh one after re-instrumentation",()=>{
@@ -200,7 +201,7 @@ describe("io-budget", () => {
       expect(openFds()).toBe(instrumented-1);
       second.close();
       expect(openFds()).toBeLessThanOrEqual(base);
-    }finally{try{second?.close();}catch{/* closed */}try{first.close();}catch{/* closed */}rmSync(root,{recursive:true,force:true});}
+    }finally{try{second?.close();}catch{/* closed */}try{first.close();}catch{/* closed */}removeTempDirSync(root);}
   });
 });
 

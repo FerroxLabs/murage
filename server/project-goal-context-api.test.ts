@@ -12,12 +12,13 @@
 // a goal card's run and review carry the goal, the review quotes the files
 // the run saved, the lead's Start wake carries the goal's description, and
 // finishing setup on a project writes its instructions into the brief.
-import { chmodSync, existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { chmodSync, existsSync, mkdtempSync, readFileSync } from "node:fs";
 import { DatabaseSync } from "node:sqlite";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import { launchVerificationServer, type VerificationServer } from "../scripts/control-murage.ts";
+import { removeTempDirSync } from "./testing/cleanup.ts";
 
 const TESTING = join(dirname(fileURLToPath(import.meta.url)), "testing");
 const FAKE_ACP = join(TESTING, "fake-acp-cli.ts");
@@ -49,7 +50,7 @@ beforeAll(async () => {
   ` });
   proof = (await (await fetch(`${fixture.info.url}/api/desktop-secret`)).json() as { secret: string }).secret;
 }, 60000);
-afterAll(async () => { await fixture?.close(); if (fixtureRoot) rmSync(fixtureRoot, { recursive: true, force: true }); vi.unstubAllEnvs(); });
+afterAll(async () => { await fixture?.close(); if (fixtureRoot) removeTempDirSync(fixtureRoot); vi.unstubAllEnvs(); });
 
 let made = 0;
 async function makeBot(name: string, instanceId: string) {

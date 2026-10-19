@@ -1,14 +1,15 @@
 // Copyright 2026 Ferrox Labs
 // SPDX-License-Identifier: AGPL-3.0-or-later
-import { existsSync, mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, expect, it } from "vitest";
 import { wipeTargets, wipeWhatsAppData } from "./wipe.ts";
+import { removeTempDirSync } from "../../testing/cleanup.ts";
 
 let data: string;
 beforeEach(() => { data = mkdtempSync(join(tmpdir(), "murage-wa-wipe-")); });
-afterEach(() => { rmSync(data, { recursive: true, force: true }); });
+afterEach(() => { removeTempDirSync(data); });
 
 function seed(connectionId: string) {
   for (const dir of ["whatsapp/auth", `whatsapp/media/${connectionId}`, `channels/whatsapp/${connectionId}`, "whatsapp/ingress", "whatsapp/outbound"]) mkdirSync(join(data, dir), { recursive: true });
@@ -54,7 +55,7 @@ it("refuses to cross a symbolic link and never deletes through it", async () => 
     symlinkSync(outside, join(data, "channels", "whatsapp"));
     await expect(wipeWhatsAppData(data, "conn-1", "all")).rejects.toThrow("symbolic link");
     expect(existsSync(join(outside, "keep.txt"))).toBe(true);
-  } finally { rmSync(outside, { recursive: true, force: true }); }
+  } finally { removeTempDirSync(outside); }
 });
 
 it("a symbolic link at the leaf is removed as a link, not followed", async () => {
@@ -66,5 +67,5 @@ it("a symbolic link at the leaf is removed as a link, not followed", async () =>
     await wipeWhatsAppData(data, "conn-1", "auth");
     expect(existsSync(join(data, "whatsapp", "auth"))).toBe(false);
     expect(existsSync(join(outside, "keep.txt"))).toBe(true);
-  } finally { rmSync(outside, { recursive: true, force: true }); }
+  } finally { removeTempDirSync(outside); }
 });

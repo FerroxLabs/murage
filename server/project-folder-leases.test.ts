@@ -3,9 +3,10 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { ProjectFolderLeases } from "./project-folder-leases.ts";
+import { removeTempDirSync } from "./testing/cleanup.ts";
 
 const roots: string[] = [];
-afterEach(() => { for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true }); });
+afterEach(() => { for (const root of roots.splice(0)) removeTempDirSync(root); });
 function fixture() {
   const root = realpathSync.native(mkdtempSync(join(tmpdir(), "murage-folder-leases-"))); roots.push(root);
   const project = join(root, "Project"), nested = join(project, "nested"), sibling = join(root, "Project-other");

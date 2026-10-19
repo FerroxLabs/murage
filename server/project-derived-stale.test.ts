@@ -5,7 +5,7 @@
 // that rests on one, the project text derived from it (summaries, cards,
 // brief decisions) goes stale in the same transaction and drops out of the
 // member layers until it is rewritten.
-import { mkdirSync, readFileSync, rmSync } from "node:fs";
+import { mkdirSync, readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { DATA_DIR } from "./config.ts";
@@ -22,6 +22,7 @@ import { channelToProjectRows } from "./project-settings.ts";
 import { markProjectDerivedStale } from "./project-tables.ts";
 import { projectMessagePlaces, projectThreadDeletion } from "./project-memory-tools.ts";
 import { Store } from "./store.ts";
+import { removeTempDirSync } from "./testing/cleanup.ts";
 
 const NOW = 1_790_000_000_000;
 const roster: MemoryRoster = {
@@ -30,7 +31,7 @@ const roster: MemoryRoster = {
 };
 const view = { groupId: "launch", botId: "dax", names: new Map([["finch", "Finch"]]) };
 beforeEach(() => {
-  closeDatabase(); rmSync(DATA_DIR, { recursive: true, force: true }); mkdirSync(DATA_DIR, { recursive: true });
+  closeDatabase(); removeTempDirSync(DATA_DIR); mkdirSync(DATA_DIR, { recursive: true });
   setMemoryCaptureRoster(() => roster); setMemoryMode("active"); reconcileMemoryRoster(roster);
   onMemoryMessagesForgotten((db, ids) => { markProjectDerivedStale(db, ids); });
   channelToProjectRows(database(), { groupId: "launch", bulletin: "", leadBotId: "finch", now: NOW });

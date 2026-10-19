@@ -1831,7 +1831,7 @@ export function ChatView({ bot:profile }: { bot: Bot }) {
 
       {/* Error banner */}
       {state.error && <ErrorBanner message={state.error} onDismiss={() => dispatch({ type: "error", message: null })}/>}
-      {state.deletionNote && <DeletionNoteBanner note={state.deletionNote} onDismiss={() => dispatch({ type: "deletionNote", note: null })} onRetry={() => { const again = state.deletionNote?.retryBotId; if (again) { dispatch({ type: "deletionNote", note: null }); dispatch({ type: "deleteBot", source: "local", botId: again, attempt: newDeleteAttempt() }); return; } void api("/api/deletions/retry", { method: "POST" }).then((response) => dispatch({ type: "deletionOwed", notices: response?.notices, rev: response?.rev })).catch(() => {}); }} />}
+      {state.deletionNote && <DeletionNoteBanner note={state.deletionNote} onDismiss={() => dispatch({ type: "deletionNote", note: null })} onRetry={async () => { const again = state.deletionNote?.retryBotId; if (again) { dispatch({ type: "deletionNote", note: null }); dispatch({ type: "deleteBot", source: "local", botId: again, attempt: newDeleteAttempt() }); return; } const response = await api("/api/deletions/retry", { method: "POST" }); dispatch({ type: "deletionOwed", notices: response?.notices, rev: response?.rev }); }} />}
 
       {/* Pinned message banner */}
       <PinnedBanner

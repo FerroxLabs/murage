@@ -17,6 +17,7 @@ import {
   type RoutineRun,
   type RoutineSchedule,
 } from "./routines.ts";
+import { removeTempDirSync } from "./testing/cleanup.ts";
 
 const dirs: string[] = [];
 
@@ -109,7 +110,7 @@ function harness(start = new Date(2026, 7, 17, 8, 0, 0).getTime()) {
 
 afterEach(() => {
   vi.restoreAllMocks();
-  for (const dir of dirs.splice(0)) rmSync(dir, { recursive: true, force: true });
+  for (const dir of dirs.splice(0)) removeTempDirSync(dir);
 });
 
 describe("versioned routine instructions", () => {
@@ -749,7 +750,7 @@ describe("RoutineManager", () => {
     expect(h.manager.routineRequestReceipt(request.requestId)).toBeNull();
     expect(h.emitted).toEqual([]);
 
-    rmSync(file, { recursive: true, force: true });
+    removeTempDirSync(file);
     rmSync(`${file}.tmp`, { force: true });
     const routine = h.manager.create(input, request);
     expect(h.manager.listRoutines()).toHaveLength(1);
@@ -1035,7 +1036,7 @@ describe("RoutineManager", () => {
       schedule: { type: "daily", time: "09:00", weekdays: [1] },
     });
 
-    rmSync(file, { recursive: true, force: true });
+    removeTempDirSync(file);
     rmSync(`${file}.tmp`, { force: true });
     expect(h.manager.update(routine.id, { name: "Renamed" })).toMatchObject({ name: "Renamed", nextRunAt: due });
   });
@@ -2326,5 +2327,30 @@ describe("startup readiness for scheduled and catch-up runs", () => {
     send({ type: "item.completed", itemType: "assistant_text", text: "Done, with what I had." });
     send({ type: "turn.completed", ok: true, stopReason: "end_turn", cost: 0, mcpReadiness: "unknown" });
     expect(settled()).toMatchObject({ status: "completed", toolsReadiness: "unknown" });
+  });
+});
+
+describe("a run's history lines (the routine carve-out)", () => {
+  it("keeps each new line, counts every repeat and every line past the cap, and survives a restart", async () => {
+    const h = harness(); h.setBot("ready");
+    const routine = h.manager.create({
+      name: "Notes routine", prompt: "Write the report", botId: "bot-a", target: "bot",
+      runOn: "ember", enabled: false, schedule: { type: "interval", everyMinutes: 30, anchorAt: h.nowValue() },
+      durationMinutes: 15, timeoutMinutes: 5,
+    });
+    const queued = h.manager.runNow(routine.id)!;
+    await h.manager.tick();
+    const threadId = h.manager.listRuns().find((run) => run.id === queued.id)!.threadId!;
+    expect(h.manager.noteRunLine("no-such-thread", "x")).toBe(false);
+    expect(h.manager.noteRunLine(threadId, "Ran a write whose folder Murage could not read: a")).toBe(true);
+    h.manager.noteRunLine(threadId, "Ran a write whose folder Murage could not read: a");
+    for (let i = 0; i < 25; i++) h.manager.noteRunLine(threadId, `Ran a write whose folder Murage could not read: ${i}`);
+    const run = h.manager.listRuns().find((item) => item.id === queued.id)!;
+    expect(run.notes).toHaveLength(20);
+    expect(run.notes![0]).toBe("Ran a write whose folder Murage could not read: a");
+    // one repeat, and 6 lines past the cap of 20
+    expect(run.notesMore).toBe(7);
+    const reloaded = new RoutineManager(h.options);
+    expect(reloaded.listRuns().find((item) => item.id === queued.id)).toMatchObject({ notes: run.notes, notesMore: 7 });
   });
 });

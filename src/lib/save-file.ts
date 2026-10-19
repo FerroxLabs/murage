@@ -14,7 +14,7 @@
 //     because each piece is a string held in two processes at once;
 //   - a file on another site is never a native download: it opens in the
 //     system browser (`saveSource`).
-import { desktopResourceUrl } from "./live-events";
+import { ticketedResourceUrl } from "./live-events";
 import { callNative, nativeAvailable } from "./native-shell";
 
 export const NATIVE_SAVE_CHUNK_BYTES = 1024 * 1024;
@@ -31,11 +31,12 @@ export type NativeSaveRequest =
 
 const save = (request: NativeSaveRequest) => callNative("saveFile", request);
 
-/** The browser half: a temporary anchor, always removed. */
+/** The browser half: a temporary anchor, always removed. The URL is clicked
+ * exactly as given: an /api route that needs the desktop gets its single-use
+ * ticket from the caller (ticketedResourceUrl), at the moment of the click. */
 export function clickDownload(url: string, filename: string): void {
   const link = document.createElement("a");
-  // An /api route cannot send headers from an anchor: the proof rides in the query.
-  link.href = desktopResourceUrl(url);
+  link.href = url;
   link.download = filename;
   link.rel = "noopener";
   link.referrerPolicy = "no-referrer";
@@ -171,7 +172,7 @@ export function dataUrlBlob(url: string): Blob {
 /** A file behind a URL: a server route, or a blob:/data: link in the page. */
 export async function saveUrl(url: string, filename: string): Promise<void> {
   if (!(await nativeAvailable("saveFile"))) {
-    clickDownload(url, filename);
+    clickDownload(await ticketedResourceUrl(url), filename);
     return;
   }
   const source = saveSource(url);

@@ -5,7 +5,7 @@
 //   A owner words are dropped only against a durable record of the OWNER's deletion, never on absence
 //   C a Send again token belongs to one restore generation; a later restore makes it stale
 //   E the room-request ownerWords hook publishes only after its transaction commits
-import { existsSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
@@ -23,6 +23,7 @@ import { currentRestoreGeneration, initializeOwnerSends, neutralizeRestoredSends
 import { importLegacyQueueFile } from "./steer-queue.ts";
 import { Store } from "./store.ts";
 import { afterCommit, scopedTx } from "./tx-scope.ts";
+import { removeTempDirSync } from "./testing/cleanup.ts";
 
 const WORDS = "R3_WORDS the person typed";
 const lineage = (rootThreadId: string) => ({ rootThreadId, origin: "desktop" as const, audienceFingerprint: "owner", notOwnerAudience: false, unattended: false });
@@ -31,12 +32,12 @@ const ownerSend = (key: string, threadId: string) =>
 const rows = () => (database().prepare("SELECT thread_id AS t FROM owner_sends ORDER BY seq").all() as Array<{ t: string }>).map((r) => r.t);
 
 const dirs: string[] = [];
-afterEach(() => { for (const d of dirs.splice(0)) rmSync(d, { recursive: true, force: true }); });
+afterEach(() => { for (const d of dirs.splice(0)) removeTempDirSync(d); });
 
 describe("A owner deletion is the only proof that lets owner words go", () => {
   beforeEach(() => {
     closeMessageDb();
-    rmSync(DATA_DIR, { recursive: true, force: true });
+    removeTempDirSync(DATA_DIR);
     mkdirSync(DATA_DIR, { recursive: true });
     initializeProjectTables(database());
     sendStore.use(() => database());
@@ -169,7 +170,7 @@ describe("C a Send again token is bound to one restore generation", () => {
 describe("E the ownerWords hook publishes only after its transaction commits", () => {
   beforeEach(() => {
     closeMessageDb();
-    rmSync(DATA_DIR, { recursive: true, force: true });
+    removeTempDirSync(DATA_DIR);
     mkdirSync(DATA_DIR, { recursive: true });
     initializeProjectTables(database());
     sendStore.use(() => database());

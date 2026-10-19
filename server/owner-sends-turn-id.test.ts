@@ -5,7 +5,7 @@
 // (`owner_sends.turn_id`, an additive column), so the line recovery writes after a failed append or a restart still names it;
 // a late confirmation stamps the row and a late refusal leaves it unstamped. The column is appended like the six before it: an
 // archive from an earlier 1.0.2 build (without it) still restores, and going back to 1.0.1 drops the whole table as before.
-import { mkdirSync, mkdtempSync, rmSync } from "node:fs";
+import { mkdirSync, mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
@@ -18,6 +18,7 @@ import { closeDatabase, database } from "./database.ts";
 import { initializeOwnerSends, recoveredSteerLine, sendStore, type SendRow } from "./send-store.ts";
 import { sendFingerprint } from "./send-idempotency.ts";
 import { reconcileLateSteer, type LateSteerDeps } from "./steer-late.ts";
+import { removeTempDirSync } from "./testing/cleanup.ts";
 
 const dirs: string[] = [];
 const handles: DatabaseSync[] = [];
@@ -27,7 +28,7 @@ beforeEach(() => sendStore.reset());
 afterEach(() => {
   sendStore.reset();
   for (const h of handles.splice(0)) { try { h.close(); } catch { /* closed */ } }
-  for (const d of dirs.splice(0)) rmSync(d, { recursive: true, force: true });
+  for (const d of dirs.splice(0)) removeTempDirSync(d);
 });
 
 describe("a delivered steer's turn on its send row", () => {
@@ -81,7 +82,7 @@ describe("owner_sends.turn_id is additive", () => {
     const db = open(join(data, "messages.db"));
     db.exec("PRAGMA journal_mode=WAL; PRAGMA wal_autocheckpoint=0;");
     initializeMessageTables(db);
-    db.prepare("INSERT INTO messages VALUES (?,?,?,?,?,?,?)").run("t", "m", 1, "bot", "goal.run", null, JSON.stringify({ id: "m", at: 1, role: "bot", kind: "goal.run", goalRun: { status: "completed", detail: "Receipt canary" } }));
+    db.prepare("INSERT INTO messages(thread_id,id,at,role,kind,text,json) VALUES (?,?,?,?,?,?,?)").run("t", "m", 1, "bot", "goal.run", null, JSON.stringify({ id: "m", at: 1, role: "bot", kind: "goal.run", goalRun: { status: "completed", detail: "Receipt canary" } }));
     db.exec("INSERT INTO thread_state VALUES ('t','m')");
     initializeOwnerSends(db);
     // an earlier 1.0.2 build: everything but turn_id
@@ -97,7 +98,7 @@ describe("owner_sends.turn_id is additive", () => {
   it("going back to 1.0.1 drops the whole owner_sends table (turn_id with it) on the installation's own database, and refuses while a send waits", () => {
     // 1.0.1 never sees the column: owner_sends is a 1.0.2 table in the downgrade manifest (APP_SCHEMA_102_ADDITIONS), and preparation drops it whole.
     expect(APP_SCHEMA_102_ADDITIONS.tables).toContain("owner_sends");
-    closeDatabase(); rmSync(DATA_DIR, { recursive: true, force: true }); mkdirSync(DATA_DIR, { recursive: true });
+    closeDatabase(); removeTempDirSync(DATA_DIR); mkdirSync(DATA_DIR, { recursive: true });
     const db = database();
     const columns = (db.prepare("PRAGMA table_info(owner_sends)").all() as Array<{ name: string }>).map((column) => column.name);
     expect(columns).toContain("turn_id");

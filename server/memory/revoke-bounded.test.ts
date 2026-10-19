@@ -5,7 +5,7 @@
 // build survives a lock and reaches ready, a forget applies only its own targets (and ends the same
 // receipts the installation-wide pass would), its cost does not grow with earlier tombstones or receipts,
 // and with the index not ready it never scans: readers already treat the receipts as stale.
-import { mkdirSync, rmSync } from "node:fs";
+import { mkdirSync } from "node:fs";
 import { DatabaseSync } from "node:sqlite";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { afterEach as thawAfterEach, beforeEach as thawBeforeEach } from "vitest";
@@ -25,6 +25,8 @@ import { lockedError, startRevocationIndexBackfill } from "./revocation-index.ts
 import { revocationIndexReady } from "./revocation.ts";
 import type { MemorySearchBridge } from "./search.ts";
 import { LineageAllowance } from "./lineage-allowance.ts";
+import { removeTempDirSync } from "../testing/cleanup.ts";
+import { REVOKE_WRITE_BUDGET, resetRevokeWriteBudget } from "./revoke-budget.ts";
 // 1.0.2: this test models a 1.0.1 file (legacy root-set rows) for the read-time judge, which still decides legacy data until S6.
 thawBeforeEach(() => thawRootSetWritesForTest(true));
 thawAfterEach(() => thawRootSetWritesForTest(false));
@@ -32,6 +34,11 @@ thawAfterEach(() => thawRootSetWritesForTest(false));
 const dbs: DatabaseSync[] = [];
 beforeEach(() => { vi.spyOn(console, "warn").mockImplementation(() => {}); vi.spyOn(console, "log").mockImplementation(() => {}); });
 beforeEach(() => resetMemoryRevocationStats());
+// these bound each slice's rows and time; the per-minute write budget (revoke-budget.ts, 1.0.3 revoke storm M3) has its own tests
+// (revoke-budget.test.ts), and 20k receipts inside it take many minutes by design
+const BUDGET = REVOKE_WRITE_BUDGET.bytesPerMinute;
+beforeEach(() => { REVOKE_WRITE_BUDGET.bytesPerMinute = Number.POSITIVE_INFINITY; resetRevokeWriteBudget(); });
+afterEach(() => { REVOKE_WRITE_BUDGET.bytesPerMinute = BUDGET; resetRevokeWriteBudget(); });
 afterEach(() => { stopMemoryRevocation(); vi.restoreAllMocks(); for (const db of dbs.splice(0)) db.close(); });
 /** Runs every job row of `db` to completion through the runner. */
 async function drain(db: DatabaseSync | (() => DatabaseSync)) { wakeMemoryRevocation(typeof db === "function" ? db : () => db, { pauseMs: 1 }); await memoryRevocationIdle(); }
@@ -137,7 +144,7 @@ it("the index build retries a lock error and any other error with backoff until 
 
 // ---- the live path: a file database through database() ----
 const empty: MemorySearchBridge = { search: async () => ({ hits: [], vectorRows: 0 }) };
-beforeEach(() => { closeDatabase(); rmSync(DATA_DIR, { recursive: true, force: true }); mkdirSync(DATA_DIR, { recursive: true }); });
+beforeEach(() => { closeDatabase(); removeTempDirSync(DATA_DIR); mkdirSync(DATA_DIR, { recursive: true }); });
 
 const BULK = `INSERT INTO memory_disclosures(bundle_id,thread_id,driver_instance,native_session,record_versions,source_versions,policy_revision,deletion_epoch,token_count,state,created_at)
   WITH RECURSIVE n(i) AS (SELECT ?1 UNION ALL SELECT i+1 FROM n WHERE i<?2)
@@ -350,7 +357,7 @@ it("the citing receipts are read by an index seek with a rowid cursor, and the e
   expect(evidence).not.toMatch(/TEMP B-TREE/);
 });
 
-it("one source cited by 300k receipts: the forget and every slice read a bounded number of candidates (no selection of the whole matching set)", async () => {
+it("one source cited by 300k receipts: the forget and every slice read a bounded number of candidates (no selection of the whole matching set)", { tags: ["perf-budget"], timeout: 300_000 }, async () => {
   const db = open();
   db.exec("INSERT INTO memory_sources VALUES('hot','w','t','m',NULL,1,'h','message','owner','ok',NULL,'active'); INSERT INTO memory_source_versions VALUES('hot',1,'h','{}',0)");
   db.prepare(`INSERT INTO memory_disclosures(bundle_id,thread_id,driver_instance,native_session,record_versions,source_versions,policy_revision,deletion_epoch,token_count,state,created_at)
@@ -365,13 +372,13 @@ it("one source cited by 300k receipts: the forget and every slice read a bounded
   expect(memoryRevocationStats.maxSliceMs).toBeLessThan(30);
   // and the runner left the loop most of the time
   expect(memoryRevocationStats.workMs / (memoryRevocationStats.workMs + memoryRevocationStats.pauseMs)).toBeLessThan(0.35);
-}, 300_000);
+});
 
 it("a forget on a file with 300k evidence rows and 60k feedback rows does nothing proportional to them before its commit (evidence index absent)", async () => {
   const db = open();
   db.exec("INSERT INTO memory_sources VALUES('target','w','t','m-target',NULL,1,'h','message','owner','ok',NULL,'active'); INSERT INTO memory_source_versions VALUES('target',1,'h','{}',0)");
   db.exec("INSERT INTO memory_sources VALUES('other','w','t','m-other',NULL,1,'h','message','owner','ok',NULL,'active'); INSERT INTO memory_source_versions VALUES('other',1,'h','{}',0)");
-  db.prepare(`INSERT INTO memory_records WITH RECURSIVE n(i) AS (SELECT 1 UNION ALL SELECT i+1 FROM n WHERE i<300000) SELECT 'r'||i,1,'w','fact','x','assistant-inference','active',0,1,NULL,NULL,1 FROM n`).run();
+  db.prepare(`INSERT INTO memory_records WITH RECURSIVE n(i) AS (SELECT 1 UNION ALL SELECT i+1 FROM n WHERE i<300000) SELECT 'r'||i,1,'w','fact','x','assistant-inference','active',0,1,NULL,NULL,i FROM n`).run();
   db.prepare(`INSERT INTO memory_evidence WITH RECURSIVE n(i) AS (SELECT 1 UNION ALL SELECT i+1 FROM n WHERE i<300000) SELECT 'r'||i,1,CASE WHEN i=150000 THEN 'target' ELSE 'other' END,1,0,1 FROM n`).run();
   db.prepare(`INSERT INTO memory_feedback(id,bot_id,thread_id,message_id,polarity,strength,state,scope,correction,created_at) WITH RECURSIVE n(i) AS (SELECT 1 UNION ALL SELECT i+1 FROM n WHERE i<60000)
     SELECT 'f'||i,'bot','t',CASE WHEN i=30000 THEN 'm-target' ELSE 'm'||i END,'-',1,'detected','chat','said this',0 FROM n`).run();
@@ -472,7 +479,8 @@ it("a failing slice keeps the job and is tried again; an owner turn slows the ru
   wakeMemoryRevocation(() => { if (fail > 0) { fail--; throw new Error("disk I/O error"); } return database(); }, { pauseMs: 1, retryMs: 1, busyPauseMs: 2, busy: () => busy++ < 3 });
   await memoryRevocationIdle();
   expect(memoryRevocationStats.errorRetries).toBe(2);
-  expect(memoryRevocationStats.busyPauses).toBe(3);
+  // a live turn: the marker yields before its slice (markerYields), any other job pauses after its slice (busyPauses)
+  expect(memoryRevocationStats.busyPauses + memoryRevocationStats.markerYields).toBe(3);
   expect(jobRows(db)).toBe(0);
   expect(Number(db.prepare("SELECT count(*) AS n FROM memory_disclosures WHERE state!='revoked'").get()!.n)).toBe(0);
 }, 300_000);

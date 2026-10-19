@@ -16,9 +16,10 @@ import { closeDatabase } from "../database.ts";
 import { MemoryIndex } from "./index.ts";
 import { closeMemoryIndexReader, lexicalPageSliced, recallWork } from "./index-reader.ts";
 import { POSTINGS_BELOW, POSTINGS_SCHEMA, postingFiller } from "./postings.ts";
+import { removeTempDirSync } from "../testing/cleanup.ts";
 
 const INDEX_PATH = () => join(DATA_DIR, "memory-index.db");
-beforeEach(() => { closeMemoryIndexReader(); closeDatabase(); rmSync(DATA_DIR, { recursive: true, force: true }); mkdirSync(DATA_DIR, { recursive: true }); });
+beforeEach(() => { closeMemoryIndexReader(); closeDatabase(); removeTempDirSync(DATA_DIR); mkdirSync(DATA_DIR, { recursive: true }); });
 afterEach(() => { closeMemoryIndexReader(); });
 
 type Row = { id: string; scope: string; text: string };

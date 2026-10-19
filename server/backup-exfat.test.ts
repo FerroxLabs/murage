@@ -9,12 +9,13 @@
 // Needs an exFAT volume: set MURAGE_TEST_EXFAT to its mount point (on macOS:
 // `hdiutil create -size 64m -fs ExFAT -volname T exfat.dmg` then
 // `hdiutil attach exfat.dmg -mountpoint <dir> -nobrowse`). Skipped otherwise.
-import { existsSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdtempSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { expect, it } from "vitest";
 import { writeEncryptedInstallationBackup, restoreEncryptedInstallationNew } from "./installation-encrypted-backup.ts";
 import { writeInstallationArchive } from "./installation-archive.ts";
 import { backupFixture, testAgeKeys } from "./testing/backup-fixture.ts";
+import { removeTempDirSync } from "./testing/cleanup.ts";
 
 const mount = process.env.MURAGE_TEST_EXFAT;
 const selection = { scope: "application-data", credentialPolicy: "preserve-in-encrypted-fidelity" } as const;
@@ -30,7 +31,7 @@ it.skipIf(!mount || !existsSync(mount) || !process.env.MURAGE_BACKUP_TEST_AGE_DI
     const restored = join(f.parent, "restored");
     await restoreEncryptedInstallationNew(restored, join(folder, "backup.age"), saved.sha256, keys);
     expect(readFileSync(join(restored, "about-me.md"), "utf8")).toBe("I keep bees.\n");
-  } finally { f.db.close(); rmSync(folder, { recursive: true, force: true }); rmSync(f.parent, { recursive: true, force: true }); }
+  } finally { f.db.close(); removeTempDirSync(folder); removeTempDirSync(f.parent); }
 }, 60_000);
 
 it.skipIf(!mount || !existsSync(mount))("an older-style .zip recovery file can be saved to an exFAT drive", async () => {
@@ -39,7 +40,7 @@ it.skipIf(!mount || !existsSync(mount))("an older-style .zip recovery file can b
   try {
     await writeInstallationArchive(f.data, join(folder, "recovery.zip"));
     expect(visible(folder)).toEqual(["recovery.zip"]);
-  } finally { f.db.close(); rmSync(folder, { recursive: true, force: true }); rmSync(f.parent, { recursive: true, force: true }); }
+  } finally { f.db.close(); removeTempDirSync(folder); removeTempDirSync(f.parent); }
 }, 60_000);
 
 it.skipIf(!mount || !existsSync(mount) || !process.env.MURAGE_BACKUP_TEST_AGE_DIR)("an existing file of the same name on an exFAT drive is never replaced", async () => {
@@ -51,5 +52,5 @@ it.skipIf(!mount || !existsSync(mount) || !process.env.MURAGE_BACKUP_TEST_AGE_DI
     expect(refused).toBe("DESTINATION_EXISTS");
     expect(readFileSync(join(folder, "backup.age"), "utf8")).toBe("someone else's bytes");
     expect(visible(folder)).toEqual(["backup.age"]);
-  } finally { f.db.close(); rmSync(folder, { recursive: true, force: true }); rmSync(f.parent, { recursive: true, force: true }); }
+  } finally { f.db.close(); removeTempDirSync(folder); removeTempDirSync(f.parent); }
 }, 60_000);

@@ -3,11 +3,12 @@
 //
 // RC7 branch B (RC6-SPEED-DIAG.md section 3): the write-time backfill's certificate progress never goes backwards, and moves inside every sub-phase
 // (sessions, memory edges, live fix, each seed step), so the strip is not flat while one heavy step runs.
-import { mkdirSync, rmSync } from "node:fs";
+import { mkdirSync } from "node:fs";
 import type { DatabaseSync } from "node:sqlite";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { stopWalMaintenance } from "../wal-maintenance.ts";
 import type { RevokeRoot } from "./lineage-types.ts";
+import { removeTempDirSync } from "../testing/cleanup.ts";
 
 const mock = { works: true };
 const commits: RevokeRoot[] = [];
@@ -17,7 +18,7 @@ const { lineageBackfillSlice, lineageCertProgress, resetLineageBackfillForTest, 
 setLineageSeedCommitForTest((_tx, root) => { if (!mock.works) return 0; commits.push(root); return commits.length; });
 const { buildLegacyHistory, markUpgraded } = await import("./testing/legacy-history-fixture.ts");
 
-async function reset(): Promise<void> { closeDatabase(); await stopWalMaintenance(); resetLineageBackfillForTest(); rmSync(DATA_DIR, { recursive: true, force: true }); mkdirSync(DATA_DIR, { recursive: true }); commits.length = 0; mock.works = true; }
+async function reset(): Promise<void> { closeDatabase(); await stopWalMaintenance(); resetLineageBackfillForTest(); removeTempDirSync(DATA_DIR); mkdirSync(DATA_DIR, { recursive: true }); commits.length = 0; mock.works = true; }
 beforeEach(async () => { await reset(); });
 afterEach(() => { mock.works = true; });
 const ticking = (step: number) => { let t = 0; return () => (t += step); };

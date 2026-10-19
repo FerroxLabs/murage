@@ -18,8 +18,8 @@ const MODES: ReadonlyArray<{ mode: PermissionMode; label: string }> = [
 function modeDetail(mode: PermissionMode, onThisComputer: boolean): string {
   if (mode === "unlimited") {
     return onThisComputer
-      ? "Does anything without asking, except reading your keys and passwords. That includes this computer. Webhook turns still ask. Routines use this level unless a routine has its own."
-      : "Does anything without asking, except reading your keys and passwords. Webhook turns still ask. Routines use this level unless a routine has its own.";
+      ? "Runs everything without asking, except reading your keys and passwords and commands Murage recognizes as able to wipe your computer, which ask first. That includes this computer. Webhook turns still ask. Routines use this level unless a routine has its own."
+      : "Runs everything without asking, except reading your keys and passwords and commands Murage recognizes as able to wipe your computer, which ask first. Webhook turns still ask. Routines use this level unless a routine has its own.";
   }
   if (mode === "full") {
     return onThisComputer

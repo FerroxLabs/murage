@@ -3,11 +3,12 @@
 //
 // Fix round for the fourth upgrade-ui review (lanes/upgui-review/r4/REPORT.md): one test per finding that lives in the memory layer.
 // P1 (publication outbox) and P3 (Keep gate) are in procedure-landing.test.ts; the client findings are in src/state/open-cards.test.ts.
-import { mkdirSync, readFileSync, rmSync } from "node:fs";
+import { mkdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { beforeEach, expect, it, afterEach } from "vitest";
 import { thawRootSetWritesForTest } from "./replay-lineage.ts";
 import { legacyFile } from "./testing/legacy-file-model.ts";
+import { removeTempDirSync } from "../testing/cleanup.ts";
 // 1.0.2: this file drives the read-time root-set machinery over rows a 1.0.1 file holds; thaw the frozen root-set writes to model them.
 beforeEach(() => thawRootSetWritesForTest(true));
 afterEach(() => thawRootSetWritesForTest(false));
@@ -19,7 +20,7 @@ import { teamLessonsRenderSql } from "./lessons.ts";
 import { LAZY_ROOT_MIN } from "./root-set-handles.ts";
 import { ROOT_SET_CEILING } from "./replay-lineage.ts";
 
-beforeEach(() => { closeDatabase(); rmSync(DATA_DIR, { recursive: true, force: true }); mkdirSync(DATA_DIR, { recursive: true }); });
+beforeEach(() => { closeDatabase(); removeTempDirSync(DATA_DIR); mkdirSync(DATA_DIR, { recursive: true }); });
 const scope = () => database().prepare("INSERT OR IGNORE INTO memory_scopes VALUES('s-ws','workspace','ws','[]',0)").run();
 
 // ── 3. idle shape refresh: references off, and a capped tail behind a cursor ───────────────────────────────────────────────────────

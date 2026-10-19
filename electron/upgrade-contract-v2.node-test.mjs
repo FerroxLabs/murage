@@ -29,7 +29,7 @@ test("every field is required: a producer that leaves one out throws, never defa
 });
 
 test("a counted step needs a unit the phase may count, figures, and a total that is never below what was done", () => {
-  assert.deepEqual(COUNTED_UNITS, { copying: "bytes", lineage: "conversations", "message-index": "messages", storage: "sets" });
+  assert.deepEqual(COUNTED_UNITS, { copying: "bytes", lineage: "conversations", "message-index": "messages", storage: "sets", marker: "open" });
   assert.throws(() => sampleState({ phase: "shapes" }), /step-unit/);
   assert.throws(() => sampleState({ step: { awakeElapsedMs: 1, unit: "messages" } }), /step-figures/);
   const raised = sampleState({ step: { awakeElapsedMs: 1, unit: "messages", done: 1300, total: 1200 } });

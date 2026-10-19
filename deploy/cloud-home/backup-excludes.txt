@@ -1,0 +1,46 @@
+# Backup exclusions. restic --exclude-file semantics: a pattern without a leading slash matches at any depth.
+# HARD REQUIREMENT (Anthropic hosting terms): never collect or store Claude.ai credentials or session
+# tokens. Every engine credential or auth location is excluded. After a restore the customer signs in again.
+# Sources: RECOVERY_CREDENTIALS and the pinned engine homes in murage-turn-launch.py.
+# Whole engine config/credential directories (credential-bearing ones are excluded entirely).
+.claude
+.claude.json
+.claude.json.backup
+.codex
+.grok
+.kimi-code
+.config/opencode
+.local/share/opencode
+.gemini
+.qwen
+.cursor
+.factory
+.droid
+.antigravity
+# Credential file names wherever they appear.
+auth.json
+.credentials.json
+credentials
+credentials.json
+# The launcher's versioned engine sign-in stores (murage-turn-launch.py ENGINE_ROOT, SIGNIN_DIR): every engine's own store
+# <engine home>/signin and every bot's store <engine home>/bots/<bot>/signin, with all their generations (token, key, auth files,
+# records). One pattern for every engine, bot and generation; murage-backup refuses to run without it.
+/data/engine-homes/**/signin
+# Browser profile secrets (a logged-in claude.ai session lives in the profile cookie jar and storage).
+# Anchored to the browser tree so customer folders with similar names are untouched.
+/data/browser/**/Cookies
+/data/browser/**/Cookies-journal
+/data/browser/**/Login Data
+/data/browser/**/Login Data For Account
+/data/browser/**/Web Data
+/data/browser/**/Local Storage
+/data/browser/**/Session Storage
+/data/browser/**/IndexedDB
+/data/browser/**/Sessions
+/data/browser/**/Network
+# Volatile
+.cache
+# Self-service working folders (reset staging, export staging).
+/data/.murage-reset
+/data/.murage-export
+/data/.murage-health

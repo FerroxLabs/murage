@@ -949,7 +949,8 @@ describe("createOpenAIChatRuntime stream contract", () => {
         if (hops.length === 1) return redirectTo("http://203.0.113.9/v1/chat/completions");
         throw new Error("the redirected address must never be requested");
       }) as typeof fetch;
-      await expect(create().generateText!("hello")).rejects.toThrow(/https/i);
+      // another origin, so it is refused before any address rule is reached
+      await expect(create().generateText!("hello")).rejects.toThrow(/different address \(203\.0\.113\.9\)/);
       expect(hops).toHaveLength(1);
     });
 
@@ -962,17 +963,27 @@ describe("createOpenAIChatRuntime stream contract", () => {
       expect(hops).toHaveLength(1);
     });
 
-    it("drops the Authorization header on a redirect to another origin", async () => {
+    it("never follows a redirect to another origin: the conversation is not sent there", async () => {
       globalThis.fetch = (async (input: string | URL | Request, init?: RequestInit) => {
         record(input, init);
         return hops.length === 1 ? redirectTo("https://other.invalid/v1/chat/completions") : okJson();
       }) as typeof fetch;
-      await create().generateText!("hello");
-      expect(hops).toHaveLength(2);
+      await expect(create().generateText!("hello")).rejects.toThrow(/different address \(other\.invalid\).*sent nothing there/);
+      expect(hops).toHaveLength(1);
       expect(hops[0]?.auth).toBe(`Bearer ${SECRET}`);
-      expect(hops[1]?.url).toBe("https://other.invalid/v1/chat/completions");
-      expect(hops[1]?.auth).toBeNull();
     });
+
+    for (const status of [301, 302, 307, 308]) {
+      it(`a ${status} from a non-Flux endpoint into Flux sends nothing to Flux, keyless or keyed`, async () => {
+        globalThis.fetch = (async (input: string | URL | Request, init?: RequestInit) => {
+          record(input, init);
+          if (String(input).includes("fluxrouter.ai")) throw new Error("the conversation must never reach Flux from a redirect");
+          return redirectTo("https://api.fluxrouter.ai/v1/chat/completions", status);
+        }) as typeof fetch;
+        await expect(create().generateText!("hello")).rejects.toThrow(/different address \(api\.fluxrouter\.ai\)/);
+        expect(hops.map(h => new URL(h.url).host)).toEqual(["chat.invalid"]);
+      });
+    }
 
     it("keeps Authorization on a same-origin redirect", async () => {
       globalThis.fetch = (async (input: string | URL | Request, init?: RequestInit) => {
@@ -982,6 +993,54 @@ describe("createOpenAIChatRuntime stream contract", () => {
       await create().generateText!("hello");
       expect(hops[1]?.url).toBe("https://chat.invalid/v2/chat/completions");
       expect(hops[1]?.auth).toBe(`Bearer ${SECRET}`);
+    });
+
+    const refused = () => Object.assign(new TypeError("fetch failed"), {
+      cause: Object.assign(new Error("connect ECONNREFUSED 127.0.0.1:11434"), { code: "ECONNREFUSED", syscall: "connect" }),
+    });
+    const turnWithStamp = async (threadId: string, overrides: { retryScale?: number } = {}) => {
+      const instance = create(overrides);
+      const recorder = recordEvents(instance.adapter);
+      const notWritten = vi.fn();
+      await instance.adapter.sendTurn({ threadId, text: "hello", notWritten });
+      const completed = await recorder.until((event) => event.type === "turn.completed");
+      recorder.stop();
+      return { completed, notWritten };
+    };
+
+    it("withdraws the stamp when the first hop never connects (order 2 control)", async () => {
+      globalThis.fetch = (async (input: string | URL | Request, init?: RequestInit) => {
+        record(input, init);
+        throw refused();
+      }) as typeof fetch;
+      const { completed, notWritten } = await turnWithStamp("t-stamp-refused");
+      expect(completed).toMatchObject({ ok: false });
+      expect(notWritten).toHaveBeenCalled();
+      expect(hops).toHaveLength(1);
+    });
+
+    it("keeps the stamp when a redirect's hop is refused: the first hop received the request (Astra build r2, order 2)", async () => {
+      globalThis.fetch = (async (input: string | URL | Request, init?: RequestInit) => {
+        record(input, init);
+        if (hops.length === 1) return redirectTo("/v2/chat/completions");
+        throw refused();
+      }) as typeof fetch;
+      const { completed, notWritten } = await turnWithStamp("t-stamp-307");
+      expect(completed).toMatchObject({ ok: false });
+      expect(hops).toHaveLength(2);
+      expect(notWritten, "a 307 is a server that received the request: the stamp stands").not.toHaveBeenCalled();
+    });
+
+    it("keeps the stamp when a retry is refused after an attempt that was answered (Astra build r2, order 2)", async () => {
+      globalThis.fetch = (async (input: string | URL | Request, init?: RequestInit) => {
+        record(input, init);
+        if (hops.length === 1) return sse([frame({ error: { message: "The server is overloaded" } })]);
+        throw refused();
+      }) as typeof fetch;
+      const { completed, notWritten } = await turnWithStamp("t-stamp-retry", { retryScale: 0.001 });
+      expect(completed).toMatchObject({ ok: false });
+      expect(hops.length).toBeGreaterThanOrEqual(2);
+      expect(notWritten, "the first attempt was answered: a refused retry cannot prove the request unwritten").not.toHaveBeenCalled();
     });
 
     it("stops after three redirects", async () => {

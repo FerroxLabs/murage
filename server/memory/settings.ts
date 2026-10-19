@@ -9,6 +9,8 @@ import { isPipKind } from "./pip-kinds.ts";
 import { confirmPipProposal, dismissPipProposal, keepPipRecord, listProposals, pipDisputes } from "./pip-lived.ts";
 import { reflectionStatus, retryReflection, setReflectExcluded } from "./pip-reflect.ts";
 import { supportsNativeMemoryModel } from "./embeddings.ts";
+import { bundledModelState } from "./model-location.ts";
+import { rebuildSearchIndex, semanticIndexStatus } from "./model-adoption.ts";
 import { archiveMemoryRecord, restoreArchivedMemoryRecord, memoryRetentionStatus } from "./retention.ts";
 import { createHash, randomUUID } from "node:crypto";
 import { createReadStream, existsSync, lstatSync, mkdirSync, readFileSync, renameSync, rmSync } from "node:fs";
@@ -28,9 +30,13 @@ import { memoryState } from "./repository.ts";
 import { memoryCaptures, memoryRecalls } from "./capture-gate.ts";
 import { previewMemoryImport, commitMemoryImport, availableMemoryNotebooks, memoryNotebookLinks, stopTrackingMemoryNotebook, migrateDetectedMemoryNotebooks } from "./import.ts";
 import { ownerMemoryList } from "./owner-list.ts";
+import { pastChatsCounters } from "./past-chats-build.ts";
 import type { MemoryRecord } from "../../shared/memory.ts";
 import { prepareMemorySkillReview } from "../skills.ts";
-import { memoryLearningPatchSchema, readMemoryLearning, updateMemoryLearning } from "./learning-policy.ts";
+import { learningCeilingSchema, memoryLearningPatchSchema, readMemoryLearning, retrySkippedRequestSchema, updateMemoryLearning } from "./learning-policy.ts";
+import { ceilingReached, learningSpendLedgerId, learningSpendMonth, type LearningCeilingStatus } from "../../shared/memory-learning-contract.ts";
+import { releaseCeilingDeferrals, retrySkippedSlice } from "./consolidate.ts";
+import { clearUnseenExcess, unmeteredPause } from "./extract.ts";
 import type { MemoryEvolutionRuntime } from "./evolution-runtime.ts";
 import type { ProcedureEvaluatorBridge } from "./procedure-evaluator.ts";
 import { memoryHealth } from "./health.ts";
@@ -48,7 +54,7 @@ export interface MemoryOwnerOptions {
   procedureEvolution?:ProcedureEvaluatorBridge;
   humanBindingChanged?:(bindingId:string)=>Promise<void>;
   extractors?:()=>Extractor[];
-  runtimeStatus?:()=>{running?:boolean;ready?:boolean;indexing?:boolean;queryCount?:number;error?:string|null};
+  runtimeStatus?:()=>{running?:boolean;ready?:boolean;indexing?:boolean;queryCount?:number;error?:string|null;indexNote?:string};
   onModelReady?:()=>Promise<void>;
   startSkillReview?:(input:{botId:string;record:{id:string;version:number};source:string;request:string})=>Promise<{botId:string;threadId:string;messageId:string}>;
   /** Whether the history upgrade runs now (database.ts backgroundUpgradeRunning): the status then serves its table figures from the last reading. */
@@ -108,7 +114,8 @@ const actions=z.discriminatedUnion("action",[
   z.object({action:z.literal("forget"),kind:z.enum(["source","record"]),id,revision:z.number().int().nonnegative().optional()}).strict(),
   z.object({action:z.literal("bind"),scopeId:id,...subject}).strict(),
   z.object({action:z.literal("project"),path:z.string().min(1).max(4096),...subject}).strict(),
-  z.object({action:z.literal("configure"),mode:z.enum(["off","capture","active","paused"]).optional(),excludedThreadIds:z.array(id).max(1000).optional(),extractorInstanceId:id.nullable().optional(),learning:memoryLearningPatchSchema.optional(),learningRevision:z.number().int().nonnegative().optional()}).strict(),
+  z.object({action:z.literal("configure"),mode:z.enum(["off","capture","active","paused"]).optional(),excludedThreadIds:z.array(id).max(1000).optional(),extractorInstanceId:id.nullable().optional(),learning:memoryLearningPatchSchema.optional(),ceiling:learningCeilingSchema.optional(),learningRevision:z.number().int().nonnegative().optional()}).strict(),
+  retrySkippedRequestSchema,
   z.object({action:z.literal("import-preview"),selections:z.array(z.discriminatedUnion("kind",[
     z.object({kind:z.literal("bot"),botId:id,topic:z.string().max(220).optional()}).strict(),
     z.object({kind:z.literal("section"),section:z.string().max(60)}).strict(),
@@ -119,6 +126,7 @@ const actions=z.discriminatedUnion("action",[
   z.object({action:z.literal("enable-and-import")}).strict(),
   z.object({action:z.literal("import-stop-tracking"),id}).strict(),
   z.object({action:z.literal("model-download"),confirm:z.literal(true)}).strict(),
+  z.object({action:z.literal("rebuild-index")}).strict(),
 ]);
 export function memoryExtractorInstanceId(){return configuration().extractorInstanceId;}
 function configuration():Configuration {
@@ -216,11 +224,14 @@ function manifest():Manifest {
   const packaged=join(SERVER_ROOT,"memory-model-manifest.json");
   return JSON.parse(readFileSync(existsSync(packaged)?packaged:join(SERVER_ROOT,"..","shared","memory-model-manifest.json"),"utf8"));
 }
-type ModelState={state:"missing"|"unverified"|"downloading"|"ready"|"failed";bytesDownloaded:number;totalBytes:number;revision:string;model:string;error?:string};
+type ModelState={state:"missing"|"unverified"|"downloading"|"ready"|"failed";bytesDownloaded:number;totalBytes:number;revision:string;model:string;error?:string;/** true when the model ships inside the app: nothing to download */bundled?:boolean};
 let download:ModelState|undefined;
 function modelStatus():ModelState {
   const spec=manifest(),totalBytes=spec.files.reduce((sum,file)=>sum+file.bytes,0);
-  if(!supportsNativeMemoryModel())return {state:"failed",bytesDownloaded:0,totalBytes,revision:spec.revision,model:spec.model,error:"Intel Mac builds use keyword memory in this release. The native semantic model is not available on this platform."};
+  if(!supportsNativeMemoryModel())return {state:"failed",bytesDownloaded:0,totalBytes,revision:spec.revision,model:spec.model,error:"This install is missing the runtime that runs the local semantic model on this Mac, so it uses keyword memory. Reinstall Murage to restore smart search."};
+  const shipped=bundledModelState(spec);
+  if(shipped==="verified")return {state:"ready",bytesDownloaded:totalBytes,totalBytes,revision:spec.revision,model:spec.model,bundled:true};
+  if(shipped==="checking")return {state:"unverified",bytesDownloaded:totalBytes,totalBytes,revision:spec.revision,model:spec.model,bundled:true};
   if(download)return {...download};
   let present=0;
   for(const file of spec.files){const path=join(DATA_DIR,"memory-model",file.path);try{const stat=lstatSync(path);if(stat.isFile()&&!stat.isSymbolicLink()&&stat.size===file.bytes)present+=file.bytes;}catch{/* not installed */}}
@@ -261,6 +272,7 @@ async function downloadModel(options:MemoryOwnerOptions){
   } catch(error){download.state="failed";download.error=error instanceof Error&&/^MEMORY_MODEL_/.test(error.message)?error.message:"MEMORY_MODEL_DOWNLOAD_FAILED";}
 }
 
+export const MEMORY_OLDEST_QUEUED_SQL="SELECT count(*) AS n,min(at) AS at FROM (SELECT v.created_at AS at FROM memory_jobs j JOIN memory_source_versions v ON v.source_id=j.source_id AND v.revision=j.source_revision WHERE j.status IN ('pending','partial','leased','deferred','failed') LIMIT ?)";
 export const MEMORY_STATE_COUNT_SQL="SELECT count(*) AS n FROM (SELECT 1 FROM memory_scopes s CROSS JOIN memory_records r INDEXED BY memory_records_scope WHERE r.scope_id=s.id AND r.state=? LIMIT ?)";
 /** Above this many scopes the status lists the audiences people choose (bots, rooms, teams, folders, preferences) and leaves out the per-conversation ones,
  * which are most of a long history and only ever read as a record's label. The count says how many were left out. */
@@ -271,7 +283,47 @@ interface TableFigures {counts:Record<"candidate"|"active"|"archived"|"supersede
  * 128 to 194 ms a call beside the upgrade's I/O); the first call of a connection, the first after an owner's memory action, and every call when no
  * upgrade runs read them afresh. */
 let lastFigures:{db:object;figures:TableFigures}|null=null;
-export function resetMemoryStatusFigures(){lastFigures=null;}
+/** `status.learning.ceiling` (r3.4): this server-local month's ledger against the stored ceiling; `paused` is derived on every read, never stored.
+ *  Paused also when two paid replies this month came back without usage (their cost is unknown, see UNSEEN_EXCESS_CALLS). */
+export function learningCeilingStatus(db:ReturnType<typeof database>,ceiling:{input:number;output:number},at=Date.now()):LearningCeilingStatus{
+  const month=learningSpendMonth(at),row=db.prepare("SELECT intent FROM memory_scope_bindings WHERE id=?").get(learningSpendLedgerId(month));
+  const spend=row?JSON.parse(String(row.intent)):{};
+  const used={input:Math.max(0,Number(spend.input)||0),output:Math.max(0,Number(spend.output)||0)};
+  return {month,input:ceiling.input,output:ceiling.output,inputUsed:used.input,outputUsed:used.output,paused:ceilingReached(ceiling,used)||unmeteredPause(spend)};
+}
+/** Bumped whenever the last reading is forgotten: a reading that began before then is not kept (it may predate an owner's change). */
+let figuresGeneration=0;
+function forgetFigures(){lastFigures=null;figuresGeneration++;}
+export function resetMemoryStatusFigures(){forgetFigures();}
+/** The reading of a connection that is being taken one statement per turn of the loop (primeFigures). */
+const priming=new WeakMap<object,Promise<void>>();
+/** Take the table figures of `db` one statement per turn of the loop and keep them as the last reading (stall r2 M3: the first status call under
+ * the upgrade, of a connection or after an owner's action, read every figure in one hold of the loop beside the upgrade's I/O). */
+export function primeMemoryStatusFigures(db:ReturnType<typeof database>):Promise<void>{
+  const running=priming.get(db);if(running)return running;
+  const generation=figuresGeneration;
+  const prime=(async()=>{
+    const steps=figureSteps(db);
+    for(;;){
+      const step=steps.next();
+      if(step.done){if(db.isOpen&&generation===figuresGeneration)lastFigures={db,figures:step.value};return;}
+      await new Promise<void>(resolve=>setImmediate(resolve));
+      if(!db.isOpen||database()!==db||generation!==figuresGeneration)return;
+    }
+  })().finally(()=>{priming.delete(db);});
+  priming.set(db,prime);
+  return prime;
+}
+/** The status, with its table figures taken a statement per turn when the upgrade runs and there is no reading to serve yet. */
+async function ownerStatusSliced(ticket:object,roster:MemoryRoster,options:MemoryOwnerOptions){
+  const db=database();
+  let upgrading=false;
+  try{upgrading=options.upgradeRunning?.()??false;}catch{upgrading=false;}
+  // a reading dropped part-way by an owner's action starts again in slices (1.0.3 Astra r1: it fell through to one synchronous read); a few
+  // tries, then the status reads them itself
+  for(let tries=0;upgrading&&lastFigures?.db!==db&&tries<4&&db.isOpen&&database()===db;tries++){try{await primeMemoryStatusFigures(db);}catch{break;}}
+  return memoryOwnerStatus(ticket,roster,options);
+}
 export function memoryOwnerStatus(ticket:object,roster:MemoryRoster,options:MemoryOwnerOptions={}){
   requireMemoryOwner(ticket);const db=database();
   let upgrading=false;
@@ -279,18 +331,24 @@ export function memoryOwnerStatus(ticket:object,roster:MemoryRoster,options:Memo
   const figures=upgrading&&lastFigures?.db===db?lastFigures.figures:tableFigures(db);
   lastFigures={db,figures};
   const {counts,recordsMore,backlog,omittedScopes}=figures;
-  const day=new Date().toISOString().slice(0,10),budgetRow=db.prepare("SELECT intent FROM memory_scope_bindings WHERE id=?").get(`extract-budget:${day}`),budget=budgetRow?JSON.parse(String(budgetRow.intent)):{};
   const runtime=options.runtimeStatus?.();
   const {revision,...settings}=readMemoryLearning(db);
   const resolved=options.learningConnection?.();
   const connection=resolved?{instanceId:resolved.instanceId,label:resolved.label,source:resolved.source,reason:resolved.reason,suggestion:resolved.suggestion}:{instanceId:configuration().extractorInstanceId,label:"No connection",source:"none" as const};
-  const learning={settings,revision,connection,defaultOn:options.learningDefaultOn?.()??false,allowance:{day,callsThisMinute:budget.minute===Math.floor(Date.now()/60000)?budget.calls??0:0,inputUsed:budget.input??0,inputLimit:settings.dailyInputTokens,outputUsed:budget.output??0,outputLimit:settings.dailyOutputTokens,usedPercent:Math.min(100,Math.round(100*Math.max(settings.dailyInputTokens?(budget.input??0)/settings.dailyInputTokens:1,settings.dailyOutputTokens?(budget.output??0)/settings.dailyOutputTokens:1)))}};
+  const ceiling=learningCeilingStatus(db,settings.ceiling);
+  const learning={settings,revision,connection,defaultOn:options.learningDefaultOn?.()??false,ceiling};
   const hold=memoryHoldCode(),stored=String(db.prepare("SELECT mode FROM memory_meta WHERE id=1").get()?.mode??"");
+  const model=modelStatus();
   // what the owner is told about capture and recall comes from the same predicates the capture path uses (capture-gate.ts); a hold switches both off
-  return {...memoryState(),hold,held:hold!==null,capture:memoryCaptures(stored,hold)?"on":"off",recall:memoryRecalls(stored,hold)?"on":"off",storedMode:stored,holdMessage:hold?holdMessage(hold):null,learning,evolution:options.evolution?.status()??null,classificationEvolution:options.evolution?.status("classification")??null,procedureEvolution:options.procedureEvolution?.status(ticket)??null,health:memoryHealth(resolved?(resolved.extractor?resolved.instanceId:null):configuration().extractorInstanceId),retention:memoryRetentionStatus(),configuration:configuration(),scopes:figures.scopeRows.map(row=>scopeAudience(roster,row)),scopesOmitted:omittedScopes,records:counts,recordsMore,backlog,model:modelStatus(),extractors:options.extractors?.()??[],
-    deletion:memoryDeletionStatus(),workerError:runtime?.error??null,runtime:runtime??null};
+  return {...memoryState(),hold,held:hold!==null,capture:memoryCaptures(stored,hold)?"on":"off",recall:memoryRecalls(stored,hold)?"on":"off",storedMode:stored,holdMessage:hold?holdMessage(hold):null,learning,evolution:options.evolution?.status()??null,classificationEvolution:options.evolution?.status("classification")??null,procedureEvolution:options.procedureEvolution?.status(ticket)??null,health:memoryHealth(resolved?(resolved.extractor?resolved.instanceId:null):configuration().extractorInstanceId),retention:memoryRetentionStatus(),configuration:configuration(),scopes:figures.scopeRows.map(row=>scopeAudience(roster,row)),scopesOmitted:omittedScopes,records:counts,recordsMore,backlog,model,semantic:semanticIndexStatus({nativeSupported:supportsNativeMemoryModel(),model:model.state,revision:model.revision}),extractors:options.extractors?.()??[],
+    deletion:memoryDeletionStatus(),workerError:runtime?.error??null,runtime:runtime??null,pastChats:pastChatsCounters(db)};
 }
 function tableFigures(db:ReturnType<typeof database>):TableFigures{
+  const steps=figureSteps(db);
+  for(;;){const step=steps.next();if(step.done)return step.value;}
+}
+/** The statements of the table figures, a yield after each (primeMemoryStatusFigures runs one per turn of the loop). */
+function* figureSteps(db:ReturnType<typeof database>):Generator<void,TableFigures,void>{
   // Every figure here is exact up to MEMORY_COUNT_CAP and then reads "1,000+": a keyed, limited count (the scope+state index, the job status
   // index), so opening Memory costs the same at any history size. Never a count(*) of a table.
   const counts={candidate:0,active:0,archived:0,superseded:0,deleted:0},recordsMore:Record<string,boolean>={};
@@ -299,6 +357,7 @@ function tableFigures(db:ReturnType<typeof database>):TableFigures{
   for(const state of Object.keys(counts)){
     const n=Number(countState.get(state,MEMORY_COUNT_CAP+1)?.n??0);
     counts[state as keyof typeof counts]=Math.min(n,MEMORY_COUNT_CAP);if(n>MEMORY_COUNT_CAP)recordsMore[state]=true;
+    yield;
   }
   const backlog={pending:0,leased:0,deferred:0,failed:0,oldestQueuedAt:null as number|null,more:{} as Record<string,boolean>};
   let queued=0;
@@ -307,10 +366,16 @@ function tableFigures(db:ReturnType<typeof database>):TableFigures{
     const key=(String(row.status)==="partial"?"pending":String(row.status)) as "pending"|"leased"|"deferred"|"failed",n=Number(row.n);
     const total=backlog[key]+n;backlog[key]=Math.min(total,MEMORY_COUNT_CAP);queued+=n;if(total>MEMORY_COUNT_CAP)backlog.more[key]=true;
   }
+  yield;
   if(queued<=MEMORY_COUNT_CAP){
-    const oldest=db.prepare("SELECT min(v.created_at) AS at FROM memory_jobs j JOIN memory_source_versions v ON v.source_id=j.source_id AND v.revision=j.source_revision WHERE j.status IN ('pending','partial','leased','deferred','failed')").get();backlog.oldestQueuedAt=oldest?.at===null?null:Number(oldest?.at??0);
+    // bounded on its own (1.0.3 Astra r1): the count above may be a turn old when the figures are read in slices, and jobs reopened since must not
+    // turn this into a walk of every queued job. Past the cap the oldest is not shown, as when the count was over it.
+    const oldest=db.prepare(MEMORY_OLDEST_QUEUED_SQL).get(MEMORY_COUNT_CAP+1);
+    backlog.oldestQueuedAt=Number(oldest?.n??0)>MEMORY_COUNT_CAP||oldest?.at===null?null:Number(oldest?.at??0);
+    yield;
   }
   const omittedScopes=scopeOmission();
+  yield;
   return {counts,recordsMore,backlog,omittedScopes,scopeRows:scopeRows(omittedScopes>0)};
 }
 
@@ -333,12 +398,12 @@ function plainMemoryEditError<T>(action:()=>T):T{
 
 export async function memoryOwnerRoute(path:string,body:unknown,ticket:object,roster:MemoryRoster,options:MemoryOwnerOptions={}){
   requireMemoryOwner(ticket);
-  if(path==="/api/memory/status")return memoryOwnerStatus(ticket,roster,options);
+  if(path==="/api/memory/status")return ownerStatusSliced(ticket,roster,options);
   if(path!=="/api/memory/action")throw Object.assign(new Error("MEMORY_ROUTE_UNAVAILABLE"),{status:404});
   const parsed=actions.safeParse(body);if(!parsed.success)throw Object.assign(new Error("INVALID_MEMORY_ARGUMENTS"),{status:400});
   const input=parsed.data,db=database();
   // an owner's action may change the figures: the next status reads them afresh, upgrade or not
-  lastFigures=null;
+  forgetFigures();
   if(input.action==="learning-history")return learningHistory(db,roster,input);
   if(input.action==="learning-undo"||input.action==="learning-keep"){const action=input.action==="learning-undo"?"undo" as const:"keep" as const;return undoOwnsItsTransactions(db,input.eventId,action)?changeLearningEvent(db,input.eventId,action):transaction(()=>changeLearningEvent(db,input.eventId,action));}
   if(input.action==="waiting-summary")return reviewSummary(ticket,roster);
@@ -458,15 +523,25 @@ export async function memoryOwnerRoute(path:string,body:unknown,ticket:object,ro
     if(input.extractorInstanceId && !options.extractors?.().some(engine=>engine.instanceId===input.extractorInstanceId&&engine.eligible))throw new Error("MEMORY_EXTRACTOR_UNAVAILABLE");
     if(input.excludedThreadIds){const threads=new Set([...roster.bots.flatMap(bot=>[bot.threadId,...(bot.tasks??[]).map(task=>task.threadId)]),...roster.groups.flatMap(group=>[group.threadId,...(group.tasks??[]).map(task=>task.threadId)])]);if(input.excludedThreadIds.some(thread=>!threads.has(thread)))throw new Error("MEMORY_THREAD_UNKNOWN");}
     transaction(()=>{const updated={excludedThreadIds:input.excludedThreadIds??current.excludedThreadIds,extractorInstanceId:input.extractorInstanceId===undefined?current.extractorInstanceId:input.extractorInstanceId};const scope=ensureScope("workspace",memoryState().installationId);
-      if(input.learning)updateMemoryLearning(db,input.learning,input.learningRevision);
+      if(input.learning||input.ceiling){
+        const before=readMemoryLearning(db).ceiling;
+        const next=updateMemoryLearning(db,{...input.learning,...input.ceiling?{ceiling:input.ceiling}:{}},input.learningRevision);
+        // a raise applies now: every source waiting for next month's ceiling is due at once
+        // a raise of both sides is also the owner's answer to unmetered replies, so they are cleared with it (one side alone is not:
+        // their unknown excess may sit on the other)
+        if(next.ceiling.input>before.input||next.ceiling.output>before.output)releaseCeilingDeferrals(db);
+        if(next.ceiling.input>before.input&&next.ceiling.output>before.output)clearUnseenExcess(db);
+      }
       db.prepare("INSERT INTO memory_scope_bindings VALUES(?,?,'system','owner-settings',0,'granted',?) ON CONFLICT(id) DO UPDATE SET intent=excluded.intent").run(SETTINGS,scope,JSON.stringify(updated));
       if(input.mode)db.prepare("UPDATE memory_meta SET mode=?").run(input.mode);
       db.exec("UPDATE memory_meta SET policy_revision=policy_revision+1,data_revision=data_revision+1");revokeAllDisclosures(db,"memory-settings");
       db.prepare("UPDATE memory_sources SET state='retired' WHERE thread_id IN (SELECT value FROM json_each(?)) AND state='active'").run(JSON.stringify(updated.excludedThreadIds));
       db.prepare("UPDATE memory_jobs SET status='cancelled',lease_generation=lease_generation+1 WHERE source_id IN (SELECT id FROM memory_sources WHERE thread_id IN (SELECT value FROM json_each(?))) AND status NOT IN ('complete','cancelled')").run(JSON.stringify(updated.excludedThreadIds));
       forgetParkedThreads(db,updated.excludedThreadIds);
-    });return memoryOwnerStatus(ticket,roster,options);
+    });return ownerStatusSliced(ticket,roster,options);
   }
+  // the answer says what the press did ({status:"queued"|"already-queued"|"done"}); only a cursor never skipped is a 404
+  if(input.action==="retry-skipped"){const retry=transaction(()=>retrySkippedSlice(db,input.sourceId,input.cursor));return {...memoryOwnerStatus(ticket,roster,options),retry};}
   if(input.action==="import-preview")return previewMemoryImport(ticket,input.selections,roster);
   if(input.action==="import-commit")return commitMemoryImport(ticket,input.previewId,roster,input.track);
   if(input.action==="import-inventory")return {...availableMemoryNotebooks(ticket,roster),links:memoryNotebookLinks()};
@@ -477,9 +552,19 @@ export async function memoryOwnerRoute(path:string,body:unknown,ticket:object,ro
   }
   if(input.action==="enable-and-import"){
     await memoryOwnerRoute(path,{action:"configure",mode:"active"},ticket,roster,options);
-    return {...migrateDetectedMemoryNotebooks(roster),status:memoryOwnerStatus(ticket,roster,options)};
+    const migrated=migrateDetectedMemoryNotebooks(roster);
+    // the nested configure kept a reading taken before the import (stall r2, Astra): the status after it reads the imported figures
+    forgetFigures();
+    return {...migrated,status:await ownerStatusSliced(ticket,roster,options)};
   }
   if(input.action==="import-stop-tracking")return stopTrackingMemoryNotebook(ticket,input.id);
-  if(input.action==="model-download"){if(!supportsNativeMemoryModel())throw Object.assign(new Error("Intel Mac builds use keyword memory; a semantic model download is not available in this release."),{status:409});if(download?.state!=="downloading")void downloadModel(options);return {model:modelStatus()};}
+  if(input.action==="model-download"){if(modelStatus().bundled)return {model:modelStatus()};if(!supportsNativeMemoryModel())throw Object.assign(new Error("This install is missing the runtime that runs the local semantic model, so it uses keyword memory and a model download would not help. Reinstall Murage to restore smart search."),{status:409});if(download?.state!=="downloading")void downloadModel(options);return {model:modelStatus()};}
+  if(input.action==="rebuild-index"){
+    const model=modelStatus();
+    if(String(database().prepare("SELECT mode FROM memory_meta WHERE id=1").get()?.mode??"")==="off")throw Object.assign(new Error("Memory is off. Turn it on to rebuild the search index."),{status:409});
+    if(model.state!=="ready")throw Object.assign(new Error("The search model is not ready yet. Rebuild the search index once it has finished downloading and checking."),{status:409});
+    const run=rebuildSearchIndex({revision:model.revision});
+    return {running:true,started:run.started};
+  }
   throw new Error("MEMORY_ROUTE_UNAVAILABLE");
 }

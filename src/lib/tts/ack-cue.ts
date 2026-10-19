@@ -56,6 +56,7 @@ export function indexedDbStore(): CueStore {
 async function fetchCue(botId: string | undefined, voiceId: string | undefined): Promise<Blob> {
   const res = await fetch("/api/tts/speak", {
     method: "POST",
+    redirect: "error",
     headers: { "content-type": "application/json", ...desktopCallerHeaders() },
     body: JSON.stringify({ text: ACK_TEXT, voiceId, botId }),
   });

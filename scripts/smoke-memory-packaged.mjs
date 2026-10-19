@@ -3,6 +3,8 @@
 // Optional: --model-directory /absolute/model --runtime /absolute/Electron
 // Build-stage alternative: --server-directory /absolute/dist-server --runtime /absolute/runtime
 // --runtime is explicit for staged Resources; the report identifies that limit.
+// --backend wasm runs the worker on the packaged ONNX Runtime WebAssembly files even where the native binding
+// loads (on Intel macOS that is the only executor, so the default run already proves it).
 import assert from "node:assert/strict";
 import { fork, spawn } from "node:child_process";
 import { createHash } from "node:crypto";
@@ -10,7 +12,6 @@ import { cpSync, existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, re
 import { tmpdir } from "node:os";
 import { dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
-import { safeWipeSync } from "../server/testing/safe-wipe.mjs";
 
 const self = fileURLToPath(import.meta.url);
 const args = process.argv.slice(2);
@@ -27,9 +28,9 @@ const inside = (root, path) => { const tail = relative(root, path); return tail 
 async function probe(configPath) {
   const config = JSON.parse(readFileSync(configPath, "utf8"));
   const { DatabaseSync } = await import("node:sqlite");
-  const schemaPath = [join(config.server, "server/memory/schema.js"), join(config.server, "memory/schema.js")].find(existsSync);
+  const schemaPath = [config.schemaModule, join(config.server, "server/memory/schema.js"), join(config.server, "memory/schema.js")].filter(Boolean).find(existsSync);
   assert(schemaPath, "Packaged authoritative schema module missing; fixture cannot substitute a handwritten schema");
-  const { migrateMemorySchema, validateMemorySchema } = await import(pathToFileURL(schemaPath).href);
+  const { migrateMemorySchema, validateMemorySchema, BRANCH_TABLES_SQL } = await import(pathToFileURL(schemaPath).href);
   const authorityPath = join(config.root, "authority.db");
   const indexPath = join(config.root, "index.db");
   const authority = new DatabaseSync(authorityPath);
@@ -41,6 +42,8 @@ async function probe(configPath) {
   try {
     authority.exec("PRAGMA foreign_keys=ON; PRAGMA journal_mode=WAL; PRAGMA synchronous=FULL;");
     migrateMemorySchema(authority);
+    // The worker's eligibility reads the branch index the app keeps in the same database.
+    if (BRANCH_TABLES_SQL) authority.exec(BRANCH_TABLES_SQL);
     authority.exec("BEGIN IMMEDIATE");
     for (const scope of ["allowed", "denied"]) {
       authority.prepare("INSERT INTO memory_scopes(id,kind,owner_key,audience,revision) VALUES(?,'bot',?,'[]',0)").run(scope, scope);
@@ -169,6 +172,8 @@ async function probe(configPath) {
 
 async function main() {
   if (args.includes("--probe")) return probe(option("--probe"));
+  // Imported here, not at the top: the probe runs from a lone copy of this file, beside no checkout.
+  const { safeWipeSync } = await import("../server/testing/safe-wipe.mjs");
   const resourceArgument = option("--resources"), serverArgument = option("--server-directory");
   assert(Boolean(resourceArgument) !== Boolean(serverArgument), "Supply exactly one of --resources or --server-directory");
   assert(isAbsolute(resourceArgument ?? serverArgument), "Resources/server directory must be absolute");
@@ -190,6 +195,13 @@ async function main() {
     // Dereference package-manager links into the isolated copy; none can resolve back into the checkout.
     const server = join(root, "server");
     cpSync(serverSource, server, { recursive: true, dereference: true });
+    // Fixture setup only: the authoritative memory schema, bundled from this checkout into one module, creates the
+    // authority database. The tsc copy under server/server imports modules the server resources do not carry. The
+    // worker under test is still the packaged, bundled one.
+    const schemaModule = join(root, "fixture-schema.mjs");
+    const { build } = await import("esbuild");
+    await build({ stdin: { contents: 'export { migrateMemorySchema, validateMemorySchema } from "./server/memory/schema.ts"; export { BRANCH_TABLES_SQL } from "./server/branch-index.ts";', resolveDir: resolve(dirname(self), ".."), loader: "ts" }, bundle: true, platform: "node", target: "node20", format: "esm", outfile: schemaModule, logLevel: "error",
+      banner: { js: 'import { createRequire as __fixtureRequire } from "node:module"; const require = __fixtureRequire(import.meta.url);' } });
     const model = join(root, "model");
     for (const asset of manifest.files) {
       const source = resolve(modelArgument, asset.path), target = resolve(model, asset.path);
@@ -204,9 +216,12 @@ async function main() {
     writeFileSync(join(server, "package.json"), '{"type":"module"}\n');
     const runner = join(root, "probe.mjs"), config = join(root, "fixture.json");
     cpSync(self, runner);
-    writeFileSync(config, JSON.stringify({ root, server, model }), { mode: 0o600 });
+    writeFileSync(config, JSON.stringify({ root, server, model, schemaModule }), { mode: 0o600 });
     const env = { HOME: home, USERPROFILE: home, TMPDIR: root, TMP: root, TEMP: root, ELECTRON_RUN_AS_NODE: "1", HF_HUB_OFFLINE: "1", TRANSFORMERS_OFFLINE: "1", NODE_PATH: "", XDG_CACHE_HOME: join(home, "cache"), XDG_CONFIG_HOME: join(home, "config") };
     if (process.env.SystemRoot) env.SystemRoot = process.env.SystemRoot;
+    const backend = option("--backend") ?? "auto";
+    assert(["auto", "wasm"].includes(backend), "--backend must be auto or wasm");
+    if (backend === "wasm") env.MURAGE_MEMORY_BACKEND = "wasm";
     child = spawn(runtime, [runner, "--probe", config], { cwd: root, env, stdio: ["ignore", "pipe", "pipe"] });
     let stdout = "", stderr = "";
     child.stdout.on("data", data => { stdout = (stdout + data).slice(-64000); });
@@ -220,7 +235,7 @@ async function main() {
     assert.equal(code, 0, `Packaged memory probe failed: ${stderr}\n${stdout}`);
     const result = JSON.parse(stdout.trim().split("\n").at(-1));
     assert(result.ok && result.checks.length === 5, "Probe returned no complete check set");
-    console.log(JSON.stringify({ ...result, resources, serverSource, artifact: resources ? "packaged-resources" : "build-stage", runtime: realpathSync(runtime), runtimeOverride: Boolean(runtimeArgument), isolatedCopy: true }));
+    console.log(JSON.stringify({ ...result, backend, fixtureSchema: "bundled-from-checkout", resources, serverSource, artifact: resources ? "packaged-resources" : "build-stage", runtime: realpathSync(runtime), runtimeOverride: Boolean(runtimeArgument), isolatedCopy: true }));
   } finally {
     if (child && child.exitCode === null && child.signalCode === null) {
       await new Promise(done => { child.once("exit", done); child.kill("SIGKILL"); });

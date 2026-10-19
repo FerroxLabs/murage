@@ -5,7 +5,7 @@ import { queueFrontFill, threadIsReady } from "./branch-fill.ts";
 import { startTranscriptBackfill } from "./transcript-backfill.ts";
 import { mirrorMurageLine, type CommsBus } from "./comms-visibility.ts";
 import { hostLine } from "./host-words.ts";
-import { projectBudgetsForGroup } from "./project-defaults.ts";
+import { periodBudgetForGroup } from "./project-defaults.ts";
 import { budgetPeriodStart } from "./project-budget-period.ts";
 import { deriveGroupedDecisions, type GroupedDecisions } from "./project-goals.ts";
 import { projectCardsForGroup, projectGoalById } from "./project-records.ts";
@@ -35,7 +35,7 @@ export function runProjectDigests(deps: DigestDeps, now: number): number {
     try {
       const group = bus.store.group(groupId);
       if (!group || group.dm) continue;
-      const tz = projectBudgetsForGroup(db, groupId).find(b => b.period !== "goal")?.tz ?? deps.timeZone ?? Intl.DateTimeFormat().resolvedOptions().timeZone;
+      const tz = periodBudgetForGroup(db, groupId)?.tz ?? deps.timeZone ?? Intl.DateTimeFormat().resolvedOptions().timeZone;
       const parts = Object.fromEntries(new Intl.DateTimeFormat("en-CA", { timeZone: tz, year: "numeric", month: "2-digit", day: "2-digit", hour: "2-digit", hourCycle: "h23" }).formatToParts(now).map(p => [p.type, p.value]));
       if (Number(parts.hour) < 8) continue;
       const digestDay = `${parts.year}-${parts.month}-${parts.day}`;

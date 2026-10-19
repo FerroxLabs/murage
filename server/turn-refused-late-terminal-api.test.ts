@@ -21,13 +21,19 @@
 // last await both the direct path (startTurn) and the room path
 // (runGroupMemberTurn) take before minting the memory token — armed for one
 // thread and released by the test after the late terminal event was emitted.
-import { existsSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, lstatSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { launchVerificationServer, type VerificationServer } from "../scripts/control-murage.ts";
 import { hostStoppedReason } from "../shared/host-stop.ts";
+
+// The fixture stubs only verifyAgentBrowserBinary; the browser engine still refuses a root or container host before it
+// (server/browser-engine.ts), so the hold never arms there. Same rule as browserEngineRefusesHost in
+// server/testing/index-harness.ts, inlined because importing that harness starts its own server.
+const browserEngineRefusesHost = process.platform === "linux"
+  && (process.getuid?.() === 0 || ["/.dockerenv", "/run/.containerenv"].some((file) => { try { return lstatSync(file).isFile(); } catch { return false; } }));
 
 const SERVER_DIR = dirname(fileURLToPath(import.meta.url));
 const posixOnly = describe.skipIf(process.platform === "win32");
@@ -165,6 +171,7 @@ export async function verifyAgentBrowserBinary(binary, env) {
       cfg.features={...(cfg.features??{}),skillRecorder:true,browser:true};
       cfg.instances.late={driver:'fakeLateTerminal',displayName:'Late-terminal fixture',
         environment:{FAKE_LATE_SESSION_GATE:path.join(dataDir,'late-session-gate'),FAKE_LATE_TERMINAL_GATE:path.join(dataDir,'late-terminal-gate'),FAKE_LATE_DUMP:path.join(dataDir,'late-dump.jsonl'),FAKE_LATE_AGENTS_ENV:path.join(dataDir,'late-agents-env.json')}};
+      cfg.instances.refuses={driver:'fakeLateTerminal',displayName:'Refusing fixture',environment:{FAKE_LATE_HANDBACK:'1',FAKE_LATE_ENGINE_REFUSES:'1'}};
       fs.writeFileSync(file,JSON.stringify(cfg));
     ` });
     sessionGate = join(fixture.info.dataDir, "late-session-gate");
@@ -186,7 +193,7 @@ export async function verifyAgentBrowserBinary(binary, env) {
     expect((await api("POST", `/api/bots/${bot.id}/messages`, { threadId: bot.threadId, text: "held, refused, re-dispatched under a late terminal event" })).status).toBe(202);
     const refusedTurnId = await refuseThenLandLateTerminal(bot.threadId, async () => {
       expect((await api("POST", "/api/bots", { name: "Roster change during direct dispatch", modelSelection: { instanceId: "late", model: "late-1" } })).status).toBe(201);
-    }, `[memory] context revoked during dispatch on thread ${bot.threadId}; re-preparing once`);
+    }, `[memory] context revoked during dispatch on thread ${bot.threadId}; re-preparing (1 of 3)`);
 
     // Without the owner-aware fold the re-dispatch dies here with
     // "error: internal turn is no longer active" and no reply.
@@ -218,7 +225,7 @@ export async function verifyAgentBrowserBinary(binary, env) {
       // the policy revision and revokes the room turn's prepared disclosure
       // (a single fresh owner task no longer does: memory/policy.ts).
       expect((await api("PATCH", `/api/bots/${member.id}`, { section: "Moved mid room dispatch" })).status).toBe(200);
-    }, `[memory] context revoked during dispatch on thread ${room.threadId}; re-preparing once (room member Late terminal member)`);
+    }, `[memory] context revoked during dispatch on thread ${room.threadId}; re-preparing (1 of 3, room member Late terminal member)`);
 
     // Without the owner-aware fold the room settles with
     // "error: internal turn is no longer active" and no reply.
@@ -392,6 +399,10 @@ export async function verifyAgentBrowserBinary(binary, env) {
   // member's browser is switched on only after its 1:1 turn, so the room
   // turn is the first to mint (and hold) its capability.
   it("room member path: Stop while the browser capability is minted, before the room claim, drains a continuation queued for the member and idles it", async () => {
+    // The browser engine refuses root and container hosts (browser-engine.ts), so
+    // no capability is minted and the hold below never engages. Fail loudly, not
+    // silently: on a container host run with HZ_NODOCKERENV=1 (hz-test.sh).
+    if (browserEngineRefusesHost) throw new Error("RED2L needs the browser engine, which refuses root and container hosts (/.dockerenv, /run/.containerenv, uid 0). Run it on a non-container host, or with HZ_NODOCKERENV=1 in hz-test.sh.");
     const member = await createBot("Stopped before claim member"), other = await createBot("Stopped before claim other");
     const createdRoom = await api("POST", "/api/groups", { name: "Stopped before claim room", memberIds: [member.id, other.id], setup: { bulletin: "", defaultResponder: { kind: "member", botId: member.id } } });
     expect(createdRoom.status).toBe(201);
@@ -466,4 +477,21 @@ export async function verifyAgentBrowserBinary(binary, env) {
     expect(chips(await messages(member.threadId))).toEqual([]);
     expect(existsSync(`${browserHold}.armed`)).toBe(false);
   }, 120000);
+  // 1.0.2 Keep all P0 (F4): a send refused before anything was written, which nothing re-dispatches, used to end the turn with an empty tail
+  // (the fold settled ok:false and said nothing). Every such refusal now leaves one plain line in the thread, naming the engine, never the code.
+  for (const room of [false, true]) it(`${room ? "room" : "direct"}: a refused send nothing re-dispatches leaves a plain line, never silence`, async () => {
+    const created = await api("POST", "/api/bots", { name: `Refused ${room ? "room" : "direct"}`, modelSelection: { instanceId: "refuses", model: "late-1" } });
+    expect(created.status).toBe(201);
+    const bot = created.body.bot as { id: string; threadId: string };
+    expect((await api("PATCH", `/api/bots/${bot.id}`, { computer: "off", browser: false, composio: false })).status).toBe(200);
+    const group = room ? (await api("POST", "/api/groups", { name: "Refused room", memberIds: [bot.id], setup: { bulletin: "", defaultResponder: { kind: "member", botId: bot.id } } })).body.group : undefined;
+    const threadId = group?.threadId ?? bot.threadId;
+    expect((await api("POST", room ? `/api/groups/${group.id}/messages` : `/api/bots/${bot.id}/messages`, { threadId, text: "refused by the engine" })).status).toBe(202);
+    const line = (message: any) => message.role === "bot" && message.kind === "activity" && /Refusing fixture could not start this reply\. Send it again\.$/.test(String(message.tool?.name ?? ""));
+    await expect.poll(async () => (await messages(threadId)).some(line), { timeout: 20000 }).toBe(true);
+    await expect.poll(async () => room ? (await groupState(group.id)).busyBotId ?? null : (await botState(bot.id)).busy, { timeout: 15000 }).toBe(room ? null : false);
+    const thread = await messages(threadId);
+    expect(thread.filter(line)).toHaveLength(1);
+    expect(thread.some(message => /MEMORY_CONTEXT_REVOKED|submission_refused/.test(String(message.tool?.name ?? "")))).toBe(false);
+  }, 60000);
 });

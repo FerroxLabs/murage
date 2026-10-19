@@ -3,7 +3,7 @@
 //
 // RC4 speed diagnosis item 3: the stepped purge's negative 'merge' steps opened a new FTS5 segment each time until the index hit
 // FTS5's 2,000-segment limit, after which every index write failed ("database or disk is full").
-import { mkdirSync, rmSync } from "node:fs";
+import { mkdirSync } from "node:fs";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { DATA_DIR } from "../config.ts";
@@ -11,11 +11,12 @@ import { closeDatabase } from "../database.ts";
 import { MemoryIndex, isSegmentLimitError, type IndexedMemory } from "./index.ts";
 import { FTS_SEGMENT_LIMIT } from "./segment-limit.ts";
 import { maintenanceRetryDelayMs } from "./maintenance-schedule.ts";
+import { removeTempDirSync } from "../testing/cleanup.ts";
 
 const PATH = () => join(DATA_DIR, "memory-index.db");
 const entry = (id: string, version = 1, text = "harbour lantern notes"): IndexedMemory => ({ id, version, scopeId: "s", text, deleted: false });
 const raw = (index: MemoryIndex) => (index as unknown as { db: { exec(sql: string): void } }).db;
-beforeEach(() => { closeDatabase(); rmSync(DATA_DIR, { recursive: true, force: true }); mkdirSync(DATA_DIR, { recursive: true }); });
+beforeEach(() => { closeDatabase(); removeTempDirSync(DATA_DIR); mkdirSync(DATA_DIR, { recursive: true }); });
 afterEach(() => { closeDatabase(); });
 
 /** An index at the limit, reached the way the old purge reached it: repeated negative 'merge' steps, each opening a new

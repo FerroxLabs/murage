@@ -1,11 +1,13 @@
 import { execFileSync, spawnSync } from "node:child_process";
-import { copyFileSync, mkdirSync, mkdtempSync, rmSync } from "node:fs";
+import { copyFileSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { expect, test } from "vitest";
 import { custodyViolations, privateContentPattern } from "./check-repository-custody.mjs";
+import { removeTempDirSync } from "../server/testing/cleanup.ts";
 
+import { removeTempDirSync } from "../server/testing/cleanup.ts";
 const ROOT = dirname(dirname(fileURLToPath(import.meta.url)));
 const RECEIPT = "native/backup-age/real-main-qualification/native-receipts/journey.json";
 
@@ -47,7 +49,7 @@ test("the index gate fails on a synthetic record staged in a copy of the index",
     expect(result.stderr).toContain("apps/docs/.planning/STATE.md");
     expect(result.stderr).toContain(RECEIPT);
   } finally {
-    rmSync(dir, { recursive: true, force: true });
+    removeTempDirSync(dir);
   }
 });
 
@@ -94,6 +96,35 @@ test("the index gate fails on a private path staged in a copy of the index, and 
     expect(result.stderr).toContain("src/e2e/synthetic-private.spec.ts:3"); // lower-cased volume path
     expect(result.stderr).not.toContain(HOME);
   } finally {
-    rmSync(dir, { recursive: true, force: true });
+    removeTempDirSync(dir);
   }
+});
+
+test("the tree gate (build-image.sh on the unpacked archive) fails on private paths and lines, skips binaries, names only locations", () => {
+  const dir = mkdtempSync(join(tmpdir(), "murage-custody-tree-"));
+  try {
+    const gate = () => spawnSync(process.execPath, ["scripts/check-repository-custody.mjs", "--tree", dir], { cwd: ROOT, encoding: "utf8" });
+    mkdirSync(join(dir, "server", "cloud-home"), { recursive: true });
+    writeFileSync(join(dir, "server", "cloud-home", "boot.ts"), "export const ok = 1;\n");
+    writeFileSync(join(dir, "logo.bin"), Buffer.concat([Buffer.from([0, 1, 2]), Buffer.from(PRIVATE_LINES[0])]));
+    const clean = gate();
+    expect(clean.status, clean.stderr).toBe(0);
+    mkdirSync(join(dir, "docs", ".planning"), { recursive: true });
+    writeFileSync(join(dir, "docs", ".planning", "STATE.md"), "neutral\n");
+    writeFileSync(join(dir, "server", "cloud-home", "notes.md"), `first line\n${PRIVATE_LINES[3]}\n${PRIVATE_LINES[5]}\n`);
+    const result = gate();
+    expect(result.status).toBe(1);
+    expect(result.stderr).toContain("docs/.planning/STATE.md");
+    expect(result.stderr).toContain("server/cloud-home/notes.md:2");
+    expect(result.stderr).toContain("server/cloud-home/notes.md:3");
+    expect(result.stderr).not.toContain("logo.bin");
+    expect(result.stderr).not.toContain("Mando");
+  } finally {
+    removeTempDirSync(dir);
+  }
+});
+
+test("the tree gate refuses to run without a directory", () => {
+  const result = spawnSync(process.execPath, ["scripts/check-repository-custody.mjs", "--tree"], { cwd: ROOT, encoding: "utf8" });
+  expect(result.status).toBe(2);
 });

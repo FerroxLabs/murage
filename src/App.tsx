@@ -10,6 +10,9 @@ import { preloadConnectedApps } from "@/lib/connected-apps-preload";
 import { UpdateBanner } from "@/components/UpdateBanner";
 import { ServerLifecycleBanner } from "@/components/ServerLifecycleBanner";
 import { MemoryIntegrityStrip } from "@/components/MemoryIntegrityStrip";
+import { CloudUnreachableBanner } from "@/components/cloud/CloudUnreachableBanner";
+import { WorkspaceSwitch } from "@/components/cloud/WorkspaceSwitch";
+import { notificationBridge } from "@/lib/cloud-workspace";
 import { RemoteConnectionBanner } from "@/components/RemoteConnectionBanner";
 import { FluxKeyProblemBanner } from "@/components/FluxKeyProblemBanner";
 import { SignedOutCard } from "@/components/SignedOutCard";
@@ -232,7 +235,7 @@ function Shell() {
   }, [state.bots, state.selectedId, dispatch]);
 
   useEffect(() => {
-    window.muragebox?.setUnreadCount?.(unreadCount);
+    notificationBridge()?.setUnreadCount?.(unreadCount);
   }, [unreadCount]);
 
   // Re-assert every authoritative positive hold in the process that owns the
@@ -364,6 +367,8 @@ function Shell() {
       <ServerLifecycleBanner />
       {/* After an update, later memory work runs while chat is open: say so, calmly, with the progress. */}
       {desktop === true && <MemoryIntegrityStrip />}
+      <CloudUnreachableBanner />
+      <WorkspaceSwitch />
       {/* The remote counterpart: a phone or browser whose computer went quiet. */}
       {desktop === false && <RemoteConnectionBanner connected={state.connected} signedOut={state.signedOut === true} />}
       {/* The saved Flux key is not one, or Flux refused it: say so, with the fix. */}
@@ -500,6 +505,8 @@ function Shell() {
 }
 
 export default function App() {
+  // A stable mark that the bundle loaded and React mounted (the Cloud door sets the same mark first).
+  useEffect(() => { document.documentElement.dataset.murageMounted = "1"; }, []);
   // WHO IS ALLOWED TO SEE A FIRST-RUN SCREEN.
   //
   // The welcome / email gate keys off localStorage, and a phone reaching this

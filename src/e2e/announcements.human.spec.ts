@@ -10,7 +10,7 @@
 //
 // Screenshots (card, banner, and the gallery of every layout) land in
 // ANNOUNCEMENTS_SHOTS_DIR when it is set, else in the test's output directory.
-import { test, expect, type Page } from "@playwright/test";
+import { test, expect, type Page } from "./page-error-guard";
 import { createServer, type ViteDevServer } from "vite";
 import react from "@vitejs/plugin-react";
 import tailwindcss from "@tailwindcss/vite";

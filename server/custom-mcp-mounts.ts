@@ -14,6 +14,7 @@
 import type { AppConfig } from "./config.ts";
 import { customMcpServerDescriptors } from "./config.ts";
 import { isHarnessOwnedMcpEnvName } from "./mcp-registry.ts";
+import { nf, RESERVED_MOUNTS } from "../shared/mount-identity.ts";
 
 export interface CustomMountInput {
   command: string;
@@ -47,9 +48,10 @@ export function ownerEnvIsRefused(env: Record<string, string>): boolean {
 
 /**
  * The owner's servers a driver should mount, with each environment merged. An
- * entry is left out when its owner environment names a Murage variable, or when
- * `isTaken` says its name is already a built-in mount (each driver knows its own
- * built-ins, so a residual collision keeps the built-in).
+ * entry is left out when its owner environment names a Murage variable, when
+ * its name under `nf` is one of RESERVED_MOUNTS (the union of every driver's
+ * built-ins, Rule 29), or when `isTaken` says its name is one of this
+ * driver's per-turn built-ins (a residual collision keeps the built-in).
  */
 export function customMountEntries(
   custom: Record<string, CustomMountInput> | undefined,
@@ -57,7 +59,7 @@ export function customMountEntries(
 ): CustomMount[] {
   const mounts: CustomMount[] = [];
   for (const [name, server] of Object.entries(custom ?? {})) {
-    if (isTaken(name)) continue;
+    if (RESERVED_MOUNTS.has(nf(name)) || isTaken(name)) continue;
     if (ownerEnvIsRefused(server.env)) continue;
     mounts.push({ name, command: server.command, args: server.args, env: { ...server.env, ...harnessEnvAllowed(server.harnessEnv) } });
   }

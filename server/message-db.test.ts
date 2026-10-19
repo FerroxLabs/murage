@@ -18,6 +18,7 @@ import {
 } from "./message-db.ts";
 import { Store, type Message } from "./store.ts";
 import type { ModelSelection } from "./contracts.ts";
+import { removeTempDirSync } from "./testing/cleanup.ts";
 
 const selection = (): ModelSelection => ({ instanceId: "claude", model: "claude-sonnet-5" });
 const legacy = (threadId: string) => join(DATA_DIR, `messages-${threadId}.json`);
@@ -33,7 +34,7 @@ const msg = (id: string, text: string, extra: Partial<Message> = {}): Message =>
 describe("message-db", () => {
   beforeEach(() => {
     closeMessageDb();
-    rmSync(DATA_DIR, { recursive: true, force: true });
+    removeTempDirSync(DATA_DIR);
     mkdirSync(DATA_DIR, { recursive: true });
   });
 
@@ -187,7 +188,7 @@ describe("attachment adoption", () => {
 describe("attachment adoption uses the visibility definition of a reference", () => {
   beforeEach(() => {
     closeMessageDb();
-    rmSync(DATA_DIR, { recursive: true, force: true });
+    removeTempDirSync(DATA_DIR);
     mkdirSync(DATA_DIR, { recursive: true });
   });
   it("finds visible owners beyond repeated and substring-only attachment candidates", async () => {

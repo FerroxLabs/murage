@@ -3,9 +3,10 @@
 //
 // Astra mem-review round 5. P1 ancestry (a row naming no parent is never a proven root, any role), P1 repair failure (replay of outputs is
 // withheld, fail closed, until a repair succeeds), P1 holds and stamps bound to the connection, P2 terminal capture costs the turn, not the history.
-import { mkdirSync, rmSync } from "node:fs";
+import { mkdirSync } from "node:fs";
 import { beforeEach, expect, it, afterEach } from "vitest";
 import { thawRootSetWritesForTest } from "./replay-lineage.ts";
+import { removeTempDirSync } from "../testing/cleanup.ts";
 // 1.0.2: this file drives the read-time root-set machinery over rows a 1.0.1 file holds; thaw the frozen root-set writes to model them.
 beforeEach(() => thawRootSetWritesForTest(true));
 afterEach(() => thawRootSetWritesForTest(false));
@@ -28,7 +29,7 @@ import { LineageAllowance } from "./lineage-allowance.ts";
 const roster: MemoryRoster = { bots: [{ id: "bot", threadId: "chat", tasks: [{ threadId: "older" }] }], groups: [] };
 beforeEach(() => {
   setRepairRunnerForTest(null); setRepairRetryBaseMs(1_000_000_000);
-  closeDatabase(); rmSync(DATA_DIR, { recursive: true, force: true }); mkdirSync(DATA_DIR, { recursive: true });
+  closeDatabase(); removeTempDirSync(DATA_DIR); mkdirSync(DATA_DIR, { recursive: true });
   setMemoryMode("active"); reconcileMemoryRoster(roster); resetSessionHolds();
 });
 
