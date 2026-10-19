@@ -8,6 +8,7 @@ import { DurableDelivery } from "../server/channels/durable-delivery.ts";
 import { discordPrompt } from "../server/channels/discord/event.ts";
 import { abortableSleep, abortableWait, askOperator, createRunAbort, finalizeLive, handleFixtureReplySetup, LiveStop, realReplyProblems, expectedReplyProblems, receiptDiagnostics, startReceiptCapture } from "./channel-live-providers.ts";
 import { chiefPromotionBody, engineEnv, harnessConfig, ROOT } from "./channel-live-harness.ts";
+import { removeTempDirSync } from "../server/testing/cleanup.ts";
 
 function fakeHarness({ revokeStatus = 200, pairedAfter = false, unreachable = false } = {}) {
   const calls = [], records = [];
@@ -45,7 +46,7 @@ function ownerActionFixture() {
       return path === "/api/routines" ? { status: 200, body: { runs: state.runs } } : { status: state.messagesStatus, body: { messages: state.messages } }; } };
   return { root, task, run, message, state, calls, records, notices, ownerActions,
     poll: () => handleFixtureReplySetup(harness, "discord", run.botId, new Set(), "owner-engine", new Set(), ownerActions, text => notices.push(text)),
-    close: () => rmSync(root, { recursive: true, force: true }) };
+    close: () => removeTempDirSync(root) };
 }
 
 it.each(["allow", "deny"])("owner action waits without auto-grant or redispatch, then records the exact %s decision even when the run completed", async behavior => {
@@ -259,7 +260,7 @@ it("an early Yes compacts the ack; its receipt must never pass the pairing step 
     // Initial absent ledger is deliberately created below; no error after it exists.
     expect(errors.length).toBe(1);
     expect(errors[0].code).toBe("ENOENT");
-  } finally { stop(); ledger.stop(); rmSync(root, { recursive: true, force: true }); }
+  } finally { stop(); ledger.stop(); removeTempDirSync(root); }
 });
 
 // Actual isolated server, mounted permission host and scripted provider SDK.
@@ -391,7 +392,7 @@ it("fixture folder trust: actual channel host gate is answered only for the cano
     symlinkSync(harness.root, escaped);
     expect(fixtureFolderTrustProblems(harness, chief.id, run, task, card.card)).not.toEqual([]);
     rmSync(escaped);
-    rmSync(join(task.cwd, ".agents"), { recursive: true });
+    removeTempDirSync(join(task.cwd, ".agents"));
     // Refusal uses the exact captured host request; no POST may occur on wrong-instance authority.
     await expect(handleFixtureReplySetup(harness, "slack", chief.id, before, "other-engine", new Set())).rejects.toBeInstanceOf(LiveStop);
     expect((await messages()).find(message => message.id === card.id).card.answered).toBeUndefined();

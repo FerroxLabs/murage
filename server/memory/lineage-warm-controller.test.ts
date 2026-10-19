@@ -4,15 +4,16 @@
 // 1.0.2 (extreme scale, lineage-cold): how the lineage warmer is driven. The real MemoryWorkerController, with the warmer's step stood in for:
 // a cold start asks for slices until the warmer says it is done; an owner's turn holds the slices off, and a slice already running is told to hand
 // back as soon as the owner is waiting (the yield function it is given). The warmer's own steps are covered by lineage-warm-converge.test.ts.
-import { mkdirSync, rmSync } from "node:fs";
+import { mkdirSync } from "node:fs";
 import { afterEach, beforeEach, expect, it } from "vitest";
 import { DATA_DIR } from "../config.ts";
 import { closeDatabase } from "../database.ts";
 import { setMemoryMode } from "./repository.ts";
 import { MemoryWorkerController } from "./worker-controller.ts";
+import { removeTempDirSync } from "../testing/cleanup.ts";
 
 let controller: MemoryWorkerController;
-beforeEach(() => { closeDatabase(); rmSync(DATA_DIR, { recursive: true, force: true }); mkdirSync(DATA_DIR, { recursive: true }); setMemoryMode("capture"); });
+beforeEach(() => { closeDatabase(); removeTempDirSync(DATA_DIR); mkdirSync(DATA_DIR, { recursive: true }); setMemoryMode("capture"); });
 afterEach(async () => { await controller?.stop().catch(() => {}); });
 
 const started = (options: ConstructorParameters<typeof MemoryWorkerController>[0]) => {

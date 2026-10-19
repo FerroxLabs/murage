@@ -5,10 +5,11 @@
 // Windows only: an MCP server launched through a .cmd shim (what npm writes
 // for a package's bin) could not be started by the bridge's plain spawn.
 import { spawn } from "node:child_process";
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { expect, it } from "vitest";
+import { removeTempDirSync } from "./testing/cleanup.ts";
 
 const windowsOnly = it.skipIf(process.platform !== "win32");
 
@@ -40,6 +41,6 @@ windowsOnly("starts an MCP server that is only reachable as a .cmd shim", async 
       if (bridge.exitCode === null && bridge.signalCode === null) bridge.kill("SIGKILL");
     }
   } finally {
-    rmSync(dir, { recursive: true, force: true });
+    removeTempDirSync(dir);
   }
 }, 40_000);

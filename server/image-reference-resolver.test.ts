@@ -1,8 +1,9 @@
 // IMG-SEED (F5-T4, media design M4): uploaded, generated, saved and workspace
 // images resolve through one exact-byte reference flow, all-or-nothing and
 // before any approval or billing. A numeric seed is never a substitute.
+import { attachmentsHomeOf } from "./attachment-read.ts";
 import { createHash } from "node:crypto";
-import { mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readdirSync, readFileSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
@@ -18,6 +19,7 @@ import { Store } from "./store.ts";
 import { COMPANION_HEADER } from "./sse-visibility.ts";
 import { composeMessage } from "../src/lib/composer-attachments.ts";
 import { MEDIA_ROUTES, type MediaReferenceResponse, type ResolveImageReferenceResponse } from "../shared/media-assets.ts";
+import { removeTempDirSync } from "./testing/cleanup.ts";
 
 // Attachment storage fault injection for the rollback case.
 const faults = vi.hoisted(() => ({ saveImageAfter: -1 }));
@@ -45,7 +47,7 @@ interface Fixture {
   botId: string; threadId: string; otherBotId: string; otherThreadId: string;
 }
 const cleanups: Array<() => void> = [];
-beforeEach(() => { rmSync(DATA_DIR, { recursive: true, force: true }); faults.saveImageAfter = -1; __resetMediaAssetsForTests(); });
+beforeEach(() => { removeTempDirSync(DATA_DIR); faults.saveImageAfter = -1; __resetMediaAssetsForTests(); });
 afterEach(() => { for (const cleanup of cleanups.splice(0)) { try { cleanup(); } catch { /* best effort */ } } });
 
 function fixture(): Fixture {
@@ -133,7 +135,7 @@ describe("resolve-image-reference: one exact-byte flow", () => {
     expect(disclosure.attachments?.map(item => item.path)).toEqual([join(f.attachments, c!.id), join(f.attachments, d!.id)]);
     expect(JSON.stringify(result)).not.toContain(f.root);
     // generate_image's allowlist accepts every id and reads back the exact bytes.
-    expect(imageReferences(f.store, f.threadId, result.references.map(ref => ref.id)).map(ref => sha256(ref.bytes))).toEqual([upload, made, work, saved].map(sha256));
+    expect((await imageReferences(f.store, f.threadId, result.references.map(ref => ref.id), () => {})).map(ref => sha256(ref.bytes))).toEqual([upload, made, work, saved].map(sha256));
   });
 
   it("answers the single-source form and pins a workspace file with or without a revision", async () => {
@@ -206,7 +208,7 @@ describe("resolve-image-reference: authority", () => {
     uploaded(f, f.threadId, "66666666-6666-4666-8666-666666666666.png", png(0x82), "bot");
     refusal(await internal(f, { source: { kind: "attachment", attachmentId: "55555555-5555-4555-8555-555555555555.png" } }), 404, "unavailable", 0);
     refusal(await internal(f, { source: { kind: "attachment", attachmentId: "66666666-6666-4666-8666-666666666666.png" } }), 404, "unavailable", 0);
-    expect(conversationImageAttachments(f.store, f.threadId, f.attachments).has("66666666-6666-4666-8666-666666666666.png")).toBe(false);
+    expect(conversationImageAttachments(f.store, f.threadId, attachmentsHomeOf(f.deps.dataDir)).has("66666666-6666-4666-8666-666666666666.png")).toBe(false);
     // A saved file of another conversation, or a changed version, is refused.
     writeFileSync(join(f.root, "..", f.otherBotId, "theirs.png"), foreign);
     const theirs = registerArtifact(f.db, f.storage, { botId: f.otherBotId, threadId: f.otherThreadId, relativePath: "theirs.png" }, { owner: true, scopes: f.deps.artifactScopes() });
@@ -224,7 +226,7 @@ describe("resolve-image-reference: authority", () => {
   it.skipIf(process.platform === "win32")("refuses links, private files, changed revisions and files that are not images", async () => {
     const f = fixture();
     writeFileSync(join(f.root, "real.png"), png(0x91));
-    const outside = mkdtempSync(join(tmpdir(), "murage-imgref-outside-")); cleanups.push(() => rmSync(outside, { recursive: true, force: true }));
+    const outside = mkdtempSync(join(tmpdir(), "murage-imgref-outside-")); cleanups.push(() => removeTempDirSync(outside));
     writeFileSync(join(outside, "x.png"), png(0x92));
     symlinkSync(join(outside, "x.png"), join(f.root, "linked.png"));
     symlinkSync(outside, join(f.root, "linked-dir"));

@@ -366,7 +366,7 @@ export function heartbeatMemoryJob(work: MemoryWork, worker: string, now=Date.no
  * Such a failure reschedules the job without spending one of its three attempts (PROPOSAL-v2 10.4). */
 export const TRANSIENT_JOB_REASONS: ReadonlySet<string> = new Set([
   "MEMORY_WORKER_STOPPED", "MEMORY_WORKER_TIMEOUT", "MEMORY_WORKER_BUSY", "MEMORY_DATABASE_BUSY", "MEMORY_WORKER_EXITED_RESTART",
-  "extractor-busy", "daily-allowance", "budget-exhausted",
+  "extractor-busy", "daily-allowance", "budget-exhausted", "spend-ceiling",
 ]);
 /** A job that keeps failing for a transient cause is not retried for free forever: after this many free reschedules it spends attempts. */
 export const TRANSIENT_FREE_LIMIT = 20;

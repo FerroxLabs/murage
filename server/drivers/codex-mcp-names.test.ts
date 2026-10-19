@@ -7,7 +7,9 @@ import { afterEach, describe, expect, it } from "vitest";
 import { removeTempDir } from "../testing/cleanup.ts";
 import {
   codexConfigMcpServerNames,
+  externalMcpRecords,
   mcpServerNamesInToml,
+  mcpServerTablesInToml,
   mountedMcpServerNames,
   TomlScanError,
   type DeclaredMcpServers,
@@ -269,5 +271,93 @@ describe("mountedMcpServerNames", () => {
       { kind: "unreadable", why: "EACCES" },
     );
     expect(new Set(blindWithSibling.values()).size).toBe(2);
+  });
+});
+
+describe("the assignments of each mcp_servers table (Rule 54 digest input)", () => {
+  const sorted = (toml: string, name: string): string[] =>
+    (mcpServerTablesInToml(toml).get(name) ?? []).map((a) => JSON.stringify([a.key, a.raw])).sort();
+
+  it("captures every key of a table, whichever spelling writes it", () => {
+    const header = sorted('[mcp_servers.x]\ncommand = "npx"\nargs = ["-y", "p"]\n[mcp_servers.x.env]\nA = "1"\n', "x");
+    const dotted = sorted('mcp_servers.x.command = "npx"\nmcp_servers.x.args = ["-y", "p"]\nmcp_servers.x.env.A = "1"\n', "x");
+    const inline = sorted('mcp_servers = { x = { command = "npx", args = ["-y", "p"], env = { A = "1" } } }\n', "x");
+    expect(header).toEqual([
+      JSON.stringify([["args"], '["-y", "p"]']),
+      JSON.stringify([["command"], '"npx"']),
+      JSON.stringify([["env", "A"], '"1"']),
+    ]);
+    expect(dotted).toEqual(header);
+    expect(inline).toEqual(header);
+  });
+
+  it("keeps a table with no assignments and ignores other tables", () => {
+    const tables = mcpServerTablesInToml('[mcp_servers.empty]\n[projects."/mcp_servers.y"]\ntrust = "yes"\n');
+    expect([...tables.keys()]).toEqual(["empty"]);
+    expect(tables.get("empty")).toEqual([]);
+  });
+
+  it("refuses a file it cannot parse", () => {
+    expect(() => mcpServerTablesInToml("[mcp_servers.x\ncommand = 1")).toThrow(TomlScanError);
+  });
+});
+
+describe("external mount records (T74)", () => {
+  const home = (config?: string): string => {
+    const dir = scratch();
+    if (config !== undefined) writeFileSync(join(dir, "config.toml"), config);
+    return dir;
+  };
+  const recordsOf = (dir: string, written: string[] = []) => {
+    const out = externalMcpRecords({ CODEX_HOME: dir }, new Set(written));
+    if (out.kind !== "records") throw new Error("expected records");
+    return out.records;
+  };
+  const digestOf = (config: string): string => {
+    const [record] = recordsOf(home(config));
+    expect(record).toMatchObject({ engineName: "ext", provenance: "external" });
+    expect(record!.mountId).toMatch(/^external:codex:[0-9a-f]{16}:ext$/);
+    return record!.mountId;
+  };
+
+  it("writes one external record per table Murage did not write", () => {
+    const dir = home('[mcp_servers.ext]\ncommand = "a"\n[mcp_servers.agents]\ncommand = "b"\n[mcp_servers.other]\nurl = "https://x"\n');
+    const records = recordsOf(dir, ["agents"]);
+    expect(records.map((r) => r.engineName).sort()).toEqual(["ext", "other"]);
+    expect(records.every((r) => r.provenance === "external")).toBe(true);
+  });
+
+  it("states no record for a name that cannot be told apart from its tools", () => {
+    expect(recordsOf(home('[mcp_servers.a__b]\ncommand = "a"\n'))).toEqual([]);
+  });
+
+  it("changes the digest when env, bearer_token_env_var, http_headers, cwd or any key changes", () => {
+    const base = digestOf('[mcp_servers.ext]\nurl = "https://x"\n');
+    const variants = [
+      '[mcp_servers.ext]\nurl = "https://x"\nenv = { A = "1" }\n',
+      '[mcp_servers.ext]\nurl = "https://x"\nbearer_token_env_var = "TOK"\n',
+      '[mcp_servers.ext]\nurl = "https://x"\nhttp_headers = { X = "1" }\n',
+      '[mcp_servers.ext]\nurl = "https://x"\ncwd = "/tmp"\n',
+      '[mcp_servers.ext]\nurl = "https://x"\nsome_future_key = true\n',
+      '[mcp_servers.ext]\nurl = "https://y"\n',
+    ].map(digestOf);
+    expect(new Set([base, ...variants]).size).toBe(variants.length + 1);
+  });
+
+  it("gives the same file the same identity on every read", () => {
+    const dirA = home('[mcp_servers.ext]\ncommand = "a"\nargs = ["x"]\n');
+    const [one] = recordsOf(dirA);
+    // the same file read twice is the same identity
+    expect(recordsOf(dirA)[0]!.mountId).toBe(one!.mountId);
+  });
+
+  it("gives the same table in two Codex homes two mount ids", () => {
+    const config = '[mcp_servers.ext]\ncommand = "a"\n';
+    expect(digestOf(config)).not.toBe(digestOf(config));
+  });
+
+  it("states nothing for a file it cannot read, and nothing is declared by an absent one", () => {
+    expect(externalMcpRecords({ CODEX_HOME: home("[mcp_servers.ext\n") }, new Set())).toMatchObject({ kind: "unreadable" });
+    expect(externalMcpRecords({ CODEX_HOME: home() }, new Set())).toEqual({ kind: "records", records: [] });
   });
 });

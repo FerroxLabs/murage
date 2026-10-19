@@ -1,4 +1,4 @@
-import { test, expect } from "@playwright/test";
+import { test, expect } from "./page-error-guard";
 import { createServer, type ViteDevServer } from "vite";
 import tailwindcss from "@tailwindcss/vite";
 import { fileURLToPath } from "node:url";
@@ -66,7 +66,9 @@ test("secure save, explicit pairing, lock, copy, retry and revoke are visible an
   fail = false; await page.getByRole("button", { name: "Retry connection" }).click(); await expect(page.getByText("Connected to Chief", { exact: true })).toBeVisible(); expect(retries).toBe(2);
   await page.getByRole("button", { name: "Revoke connection" }).click(); expect(revokes).toBe(1); await expect(page.getByLabel("Workspace ID", { exact: true })).toBeEnabled();
   // Audit enabled, visible controls. Disabled controls are intentionally not tab stops.
-  await page.locator("summary").click(); await page.locator("body").click({ position: { x: 1, y: 1 } });
+  // The app setup help is an open Advanced block since Settings 1.0.3 L1 (no disclosure to expand); its link is audited too.
+  await expect(page.getByRole("link", { name: "Open Slack app settings" })).toBeVisible();
+  await page.locator("body").click({ position: { x: 1, y: 1 } });
   const total = await page.evaluate(() => {
     const all = [...document.querySelectorAll<HTMLElement>('button:not(:disabled),input:not(:disabled),a[href],summary')].filter(el => el.getBoundingClientRect().height > 0);
     all.forEach((el, i) => el.dataset.tabAudit = String(i)); return all.length;

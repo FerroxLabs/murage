@@ -1,4 +1,4 @@
-import { expect, test } from '@playwright/test';
+import { expect, test } from "./page-error-guard";
 import { createServer, type ViteDevServer } from 'vite';
 import tailwindcss from '@tailwindcss/vite';
 import { fileURLToPath } from 'node:url';
@@ -56,6 +56,8 @@ test.beforeAll(async () => {
         else if (path === '/api/flux-connection') json(failStatus ? { error: 'Fixture unavailable' } : { configured: false, revision: 'fixture', conflict: false, choices: [] }, failStatus ? 503 : 200);
         else if (path === '/api/provider-connections' && req.method === 'GET') json({ connections: [], storage: 'local-config' });
         else if (path === '/api/provider-connections/mutate') { let body='';req.on('data',chunk=>body+=chunk);req.on('end',()=>{writes.push({path,body:JSON.parse(body)});json({connections:[],storage:'local-config'});}); }
+        // The live-events stream asks for a resource ticket; that is not a settings write.
+        else if (path === '/api/desktop/resource-ticket') json({ ticket: 'fixture-ticket', expiresInMs: 15000 });
         else if (path.startsWith('/api/') && !['GET','HEAD'].includes(req.method ?? 'GET')) { let body='';req.on('data',chunk=>body+=chunk);req.on('end',()=>{writes.push({path,body:body?JSON.parse(body):{}});json({error:'Unexpected fixture write'},409);}); }
         else if (path.startsWith('/api/')) json({ error: 'Unused fixture read' },404);
         else next();
@@ -80,10 +82,11 @@ async function openModels(page: import('@playwright/test').Page) {
 // tests is a Box token, which still saves through PUT /api/config.
 // 0.1.62: "Paste any keys" sits folded at the foot of Models (it was
 // Tools & Connections > Advanced), so a pasted Flux key sends the cursor up
-// to the Flux Router card on the same page.
+// to the Flux Router card on the same page. 1.0.3: it is the always-open "Add a key"
+// card on the Models page (no longer a folded disclosure), so there is nothing to open.
 test('Models Flux paste navigates without saving or carrying the pasted key',async({page},testInfo)=>{
   await openModels(page);
-  await page.getByText('Paste any keys',{exact:true}).click();
+  await expect(page.getByText('Add a key',{exact:true})).toBeVisible();
   expect(pageErrors).toEqual([]);
   const key='sk-flux-'+ 'F'.repeat(40);
   await page.getByLabel('Paste keys to look through').fill(`FLUX_API_KEY=${key}\nBOX_TOKEN=box_${'c'.repeat(32)}`);
@@ -106,10 +109,10 @@ test('Models Flux paste navigates without saving or carrying the pasted key',asy
 });
 test('advanced key review preserves canonical Add and Replace mutations',async({page},testInfo)=>{
   await openModels(page);
-  const disclosure=page.locator('summary').filter({hasText:'Paste any keys'});
+  // The paste box sits in the always-open "Add a key" card, with no disclosure to open first.
+  const disclosure=page.getByText('Add a key',{exact:true});
   const input=page.getByLabel('Paste keys to look through');
-  await expect(input).toBeHidden();
-  await disclosure.focus();await page.keyboard.press('Enter');await expect(input).toBeVisible();
+  await expect(disclosure).toBeVisible();await expect(input).toBeVisible();
   const first='box_'+ 'c'.repeat(32), second='box_'+ 'd'.repeat(32), model='xai-'+ '7'.repeat(32);
   await input.fill(`BOX_TOKEN=${first}\nXAI_API_KEY=${model}`);
   await page.getByRole('button',{name:'Look for keys',exact:true}).click();
@@ -132,8 +135,7 @@ test('advanced key review preserves canonical Add and Replace mutations',async({
   expect(writes).toHaveLength(2);expect(writes[1]).toEqual({path:'/api/config',body:{box:{token:second}}});
   await page.getByTestId('paste-key-row').filter({hasText:'XAI_API_KEY'}).getByRole('button',{name:'Add connection',exact:true}).click();
   await expect.poll(()=>writes.length).toBe(3);expect(writes[2]).toEqual({path:'/api/provider-connections/mutate',body:{action:'create',preset:'xai',key:model}});
-  await disclosure.focus();await page.keyboard.press('Enter');await expect(input).toBeHidden();
-  await page.keyboard.press('Enter');await expect(input).toHaveValue('');
+  await expect(input).toBeVisible();await expect(input).toHaveValue('');
 });
 test('ambiguous nonFlux keys retain provider choice; failure has no legacy Flux input',async({page})=>{
   await openModels(page);

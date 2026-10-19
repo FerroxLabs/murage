@@ -100,7 +100,7 @@ export class StreamUplink {
       // the header wait is raced, not cancelled: the desktop secret request is
       // shared with the rest of the page (Astra 3 I5)
       const headers = await untilAborted((this.opts.ticketHeaders ?? desktopHeaders)(), signal, stopped);
-      const res = await call(`/api/voice/stream/ticket${opts.replace ? "?replace=1" : ""}`, { method: "POST", headers, signal });
+      const res = await call(`/api/voice/stream/ticket${opts.replace ? "?replace=1" : ""}`, { method: "POST", headers, signal, redirect: "error" });
       const body = (await res.json().catch(() => null)) as { ticket?: string; path?: string; reason?: string; error?: string } | null;
       if (signal.aborted) throw stopped();
       if (!res.ok || !body?.ticket) {

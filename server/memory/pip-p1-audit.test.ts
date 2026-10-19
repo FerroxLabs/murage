@@ -6,7 +6,7 @@
 // generic archive/restore/forget controls, delete under a version fence and a
 // bounded tombstone, report coverage on delivery only, and leave room for
 // recall on a small window. Synthetic fixture text only.
-import { mkdirSync, rmSync } from "node:fs";
+import { mkdirSync } from "node:fs";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -37,6 +37,7 @@ import { captureWork } from "./chunks.ts";
 import { consolidateMemorySource } from "./consolidate.ts";
 import { prepareMemorySkillReview } from "../skills.ts";
 import { LineageAllowance } from "./lineage-allowance.ts";
+import { removeTempDirSync } from "../testing/cleanup.ts";
 
 const roster = {
   bots: [
@@ -52,7 +53,7 @@ const ACTION = "/api/memory/action";
 const emptyBridge = { search: async () => ({ hits: [] as IndexHit[], vectorRows: 0 }) };
 const opened: Array<{ close(): void }> = [];
 
-beforeEach(() => { closeDatabase(); rmSync(DATA_DIR, { recursive: true, force: true }); mkdirSync(DATA_DIR, { recursive: true }); reconcileMemoryRoster(roster); });
+beforeEach(() => { closeDatabase(); removeTempDirSync(DATA_DIR); mkdirSync(DATA_DIR, { recursive: true }); reconcileMemoryRoster(roster); });
 afterEach(() => { for (const handle of opened.splice(0)) try { handle.close(); } catch { /* already closed */ } vi.useRealTimers(); });
 
 function pip(kind: "commitment" | "self-trait" | "relation", key: string, text: string, patch: Partial<IdentityWrite> = {}): IdentityWrite {

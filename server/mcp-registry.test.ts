@@ -7,6 +7,8 @@ import {
   listAllMcpServers,
   listMcpServers,
   maskMcpUrl,
+  migrateMcpNameCollisions,
+  renameMcpServer,
   parseAnyMcpServerMutation,
   parseAnyStoredMcpServer,
   splitMcpUrl,
@@ -44,7 +46,58 @@ describe("custom MCP registry", () => {
     ]) {
       expect([reserved, mcpServerNameError(reserved)])
         .toEqual([reserved, "That name is reserved by Murage."]);
+      // ...and every name that could pass for one of its tools under an
+      // engine's joiner (Pi joins with one underscore)
+      expect(mcpServerNameError(`${reserved}_notes`)).toBe("That name begins with a name Murage uses.");
     }
+    // the MCP joiner itself never sits inside a name: `mcp__murage_connectors`
+    // would stamp as `mcp__murage_connectors__APPS_...` (1.0.3 app grant)
+    for (const joined of ["mcp__murage_connectors", "mcp__github", "a__b", "notes__"]) {
+      expect(mcpServerNameError(joined), joined).toMatch(/double underscore|reserved/);
+    }
+    // Rule 28 under nf (closes R4-H4): a spelling that folds to a reserved name
+    expect(mcpServerNameError("murage-connectors")).toBe("That name is reserved by Murage.");
+    expect(mcpServerNameError("murage-memory")).toBe("That name is reserved by Murage.");
+    expect(mcpServerNameError("murage")).toBe("That name is the start of a name Murage uses.");
+    expect(mcpServerNameError("notes_murage2")).toMatch(/_murage/);
+    expect(mcpServerNameError("browser2")).toBeNull();
+    // e: another stored server under nf or the Pi form (T36, at add)
+    expect(mcpServerNameError("my-notes", ["my_notes"])).toMatch(/cannot be told apart/);
+    expect(mcpServerNameError("my", ["my-notes"])).toMatch(/cannot be told apart/);
+    expect(mcpServerNameError("my-notes", ["my-notes"])).toBeNull();
+  });
+
+  // Gap (a) of steps 1..3: the rename action for a server turned off by a name clash
+  it("renames a clashed server in place, checked like a new name, and the clash is gone at the next load (Rule 57a)", () => {
+    const migrated = migrateMcpNameCollisions({ "my-notes": { command: "a" }, my_notes: { command: "c", enabled: true }, other: { command: "b" } })!;
+    for (const [to, error] of [["my-notes2", null], ["my", /cannot be told apart/], ["other", /already exists/], ["my_notes", /already/], ["Bad Name", /lowercase/]] as const) {
+      const out = renameMcpServer(migrated, "my_notes", to);
+      if (error === null) {
+        expect(out.ok).toBe(true);
+        const next = (out as { next: Record<string, unknown> }).next;
+        expect(Object.keys(next)).toEqual(["my-notes", "my-notes2", "other"]);
+        expect(next["my-notes2"]).toEqual({ command: "c", enabled: false });
+        expect(migrateMcpNameCollisions(next)).toBeNull();
+        expect(listAllMcpServers(next).find((server) => server.name === "my-notes2")).not.toHaveProperty("disabledReason");
+      } else {
+        expect(out).toMatchObject({ ok: false, error: expect.stringMatching(error) });
+      }
+    }
+    expect(renameMcpServer(migrated, "ghost", "x")).toMatchObject({ ok: false });
+  });
+
+  it("turns off the later of two stored servers whose names collide, at load, with the reason (T36, Rule 57a)", () => {
+    const stored = { "my-notes": { command: "a" }, other: { command: "b" }, my_notes: { command: "c", enabled: true }, "my-notes-x": { url: "https://x.example/mcp" } };
+    const migrated = migrateMcpNameCollisions(stored)!;
+    expect(Object.keys(migrated)).toEqual(Object.keys(stored));
+    expect(migrated["my-notes"]).toEqual({ command: "a" });
+    expect(migrated.my_notes).toEqual({ command: "c", enabled: false, disabledReason: "name-collision:my-notes" });
+    expect(migrated["my-notes-x"]).toEqual({ url: "https://x.example/mcp", enabled: false, disabledReason: "name-collision:my-notes" });
+    expect(migrateMcpNameCollisions(migrated)).toBeNull();
+    const listed = listAllMcpServers(migrated);
+    expect(listed.find((server) => server.name === "my_notes")).toMatchObject({ enabled: false, disabledReason: "name-collision:my-notes" });
+    expect(listed.find((server) => server.name === "my-notes-x")).toMatchObject({ enabled: false, disabledReason: "name-collision:my-notes" });
+    expect(parseStoredMcpServer("my_notes", migrated.my_notes)).toMatchObject({ ok: true, server: { enabled: false, disabledReason: "name-collision:my-notes" } });
   });
 
   it("never puts environment values in renderer listings", () => {

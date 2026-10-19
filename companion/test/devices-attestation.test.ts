@@ -1,11 +1,12 @@
 import { generateKeyPairSync } from "node:crypto";
-import { readFileSync, rmSync, writeFileSync } from "node:fs";
+import { readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { beforeEach, describe, expect, it } from "vitest";
 import { DATA_DIR } from "../src/state.ts";
 import { DeviceRegistry } from "../src/devices.ts";
 import { RELAY_STATEMENT_KEYS, pinnedStatementKeys, verifyApprovalStatement } from "../src/relay-statement.ts";
 import { FreshAuthGate } from "../../server/approval-fresh-auth.ts";
+import { removeTempDirSync } from "../../server/testing/cleanup.ts";
 import vector from "./fixtures/approval-statement-vector.json" with { type: "json" };
 import { KEYS, NOW, statement } from "./support-statement.ts";
 
@@ -27,7 +28,7 @@ const gateFor = (identity: { id: string; cls: "app" | "browser"; key?: string } 
   new FreshAuthGate({ now: () => NOW }).check({ ...HIGH, device: identity && { id: identity.id, cls: identity.cls, key: identity.key ?? null }, proof: undefined });
 const stored = () => JSON.parse(readFileSync(FILE, "utf8")).devices;
 
-beforeEach(() => rmSync(DATA_DIR, { recursive: true, force: true }));
+beforeEach(() => removeTempDirSync(DATA_DIR));
 
 describe("the relay statement (golden vector)", () => {
   it("the relay's own statement verifies", () => {

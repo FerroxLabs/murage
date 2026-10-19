@@ -10,7 +10,7 @@
 //   R9-04  a fixed reason the shared queue closes work with keeps its status key in the bot's receipt;
 //   R9-05  a stored correction reaches the project room only through the gate;
 //   F3     a cancelled queued hand-off's receipt never reads "The request finished.".
-import { readFileSync, rmSync } from "node:fs";
+import { readFileSync } from "node:fs";
 import { DatabaseSync } from "node:sqlite";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { boundaryStore } from "./boundary-ports.ts";
@@ -30,6 +30,7 @@ import { inheritedRequestLineage, roomRequestById } from "./project-records.ts";
 import { initializeProjectTables } from "./project-tables.ts";
 import { applyCardRunEffect, cardGenerationCurrent, leadNextStep, reviewWakeTarget } from "./project-turn-engine.ts";
 import { configureResultEgress, type EgressMessage } from "./result-egress.ts";
+import { removeTempDirSync } from "./testing/cleanup.ts";
 // evhand's note recorder is superseded by write-time lineage (project-notes.ts recordNoteLineage): inert here, so these scenarios run on the write-time rules
 // (preview2 merge: scenarios that assert evhand's holders/sources/ranges note design are it.skip: writetime wins, notes rest on write-time lineage)
 const configureNoteRecorder = (_recorder?: unknown): void => {};
@@ -245,7 +246,7 @@ describe("R9-02: a turn's transcript check costs its window, not the history", (
 
 describe("hand-off endings (R9-03, R9-04, R9-05, F3)", () => {
   const selection = (): ModelSelection => ({ instanceId: "claude", model: "fake-model" });
-  beforeEach(() => { closeMessageDb(); closeDatabase(); rmSync(DATA_DIR, { recursive: true, force: true }); });
+  beforeEach(() => { closeMessageDb(); closeDatabase(); removeTempDirSync(DATA_DIR); });
 
   function world() {
     const store = new Store(selection);

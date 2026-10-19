@@ -1,4 +1,4 @@
-import { mkdirSync,rmSync } from "node:fs";
+import { mkdirSync } from "node:fs";
 import { afterEach,beforeEach,expect,it,vi } from "vitest";
 import { DATA_DIR } from "../config.ts";
 import { database,closeDatabase } from "../database.ts";
@@ -14,9 +14,10 @@ import { installLearningDestination } from "./learning-destination.ts";
 import { setMemoryCaptureRoster } from "./capture-scope.ts";
 import { readMemoryLearning,updateMemoryLearning } from "./learning-policy.ts";
 import { memoryAgentRoute } from "./routes.ts";
+import { removeTempDirSync } from "../testing/cleanup.ts";
 
 afterEach(()=>setMemoryCaptureRoster(null));
-beforeEach(()=>{closeDatabase();rmSync(DATA_DIR,{recursive:true,force:true});mkdirSync(DATA_DIR,{recursive:true});});
+beforeEach(()=>{closeDatabase();removeTempDirSync(DATA_DIR);mkdirSync(DATA_DIR,{recursive:true});});
 function fixture(){
   const roster={bots:[{id:"bot",threadId:"thread"},{id:"other",threadId:"private"}],groups:[]};
   setMemoryCaptureRoster(()=>roster);reconcileMemoryRoster(roster);setMemoryMode("capture");

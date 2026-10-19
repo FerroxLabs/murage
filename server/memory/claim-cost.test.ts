@@ -1,5 +1,5 @@
 import type { SQLInputValue } from "node:sqlite";
-import { mkdirSync, rmSync } from "node:fs";
+import { mkdirSync } from "node:fs";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { DATA_DIR } from "../config.ts";
 import { closeDatabase, database } from "../database.ts";
@@ -8,12 +8,13 @@ import * as jobs from "./jobs.ts";
 import { memoryTickGapMs, resetBacklogTrace, traceBacklog, traceSlowStep } from "./claim-trace.ts";
 import { TOMBSTONED } from "./claim-settle.ts";
 import { DENIED_PLACE } from "./deny.ts";
+import { removeTempDirSync } from "../testing/cleanup.ts";
 
 const NOW = 1_000_000;
 // These tests commit thousands of rows one by one; the default synchronous=FULL makes that fsync-bound
 // (over 20 s on a Windows runner). Durability is not what they check.
 function noFsync() { database().exec("PRAGMA synchronous=OFF"); }
-beforeEach(() => { closeDatabase(); rmSync(DATA_DIR, { recursive: true, force: true }); mkdirSync(DATA_DIR, { recursive: true }); setMemoryMode("capture"); jobs.resetMemoryClaimCursor?.(); noFsync(); });
+beforeEach(() => { closeDatabase(); removeTempDirSync(DATA_DIR); mkdirSync(DATA_DIR, { recursive: true }); setMemoryMode("capture"); jobs.resetMemoryClaimCursor?.(); noFsync(); });
 afterEach(() => { delete process.env.MURAGE_TURN_TRACE; resetBacklogTrace(); vi.restoreAllMocks(); });
 
 /** Seed `count` capture jobs over `scopes` scopes with a few KB of text each. `mix` adds every

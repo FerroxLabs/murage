@@ -4,7 +4,7 @@
 // Review round 7, R7-02 and F7: while a delegation runs, the bot that is waiting on it is told the latest steps of the worker's turn. A step that
 // records a failure or a retry (its detail can be a provider's response, a file name, a key's name) is told as the kind of failure, one of five
 // codes, and never as the worker's own words. The detail stays in the worker's conversation, where the owner reads it.
-import { rmSync } from "node:fs";
+
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { boundaryStore } from "./boundary-ports.ts";
 import { configureBotEgress } from "./bot-egress.ts";
@@ -15,11 +15,12 @@ import { checkDelegationRoute, type CheckDelegationRouteContext } from "./handof
 import { closeMessageDb } from "./message-db.ts";
 import { configureResultEgress, type ResultEgressDeps } from "./result-egress.ts";
 import { Store } from "./store.ts";
+import { removeTempDirSync } from "./testing/cleanup.ts";
 
 const selection = (): ModelSelection => ({ instanceId: "claude", model: "fake-model" });
 const PATH = "/private/OWNER-PLAN.txt";
 let messageReads = 0;
-beforeEach(() => { closeMessageDb(); closeDatabase(); rmSync(DATA_DIR, { recursive: true, force: true }); messageReads = 0; });
+beforeEach(() => { closeMessageDb(); closeDatabase(); removeTempDirSync(DATA_DIR); messageReads = 0; });
 afterEach(() => { configureBotEgress(undefined); configureResultEgress(undefined); });
 
 async function poll(rows: Array<{ kind: "text" | "activity"; text?: string; tool?: Record<string, unknown> }>, receipt?: (workerThreadId: string, askerThreadId: string, workerId: string) => Record<string, unknown>) {

@@ -4,14 +4,15 @@
 // Owner-typed learning text (memory_feedback.correction, outcome reasons, a
 // feedback lesson's evidence) is swept when its conversation is deleted, even
 // when no memory source was ever captured for it, and when a source is forgotten.
-import { mkdirSync, rmSync } from "node:fs";
+import { mkdirSync } from "node:fs";
 import { beforeEach, expect, it } from "vitest";
 import { DATA_DIR } from "../config.ts";
 import { closeDatabase, database } from "../database.ts";
 import * as messages from "../message-db.ts";
 import { setMemoryMode } from "./repository.ts";
+import { removeTempDirSync } from "../testing/cleanup.ts";
 
-beforeEach(() => { closeDatabase(); rmSync(DATA_DIR, { recursive: true, force: true }); mkdirSync(DATA_DIR, { recursive: true }); setMemoryMode("capture"); });
+beforeEach(() => { closeDatabase(); removeTempDirSync(DATA_DIR); mkdirSync(DATA_DIR, { recursive: true }); setMemoryMode("capture"); });
 const msg = (id: string, text: string, role: "user" | "bot" = "user") => ({ id, text, parentId: null, at: 1, role, kind: "text" as const });
 
 function seedLearning(thread: string, messageId: string) {

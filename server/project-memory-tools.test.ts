@@ -6,7 +6,7 @@
 // request) is E1's routing, tested there; these are the effects, with the
 // privacy rules that belong to them: bring-in takes only the owner's own
 // material and its copy is forgotten with the original.
-import { mkdirSync, rmSync } from "node:fs";
+import { mkdirSync } from "node:fs";
 import { beforeEach, expect, it } from "vitest";
 import { DATA_DIR } from "./config.ts";
 import { closeDatabase, database } from "./database.ts";
@@ -28,12 +28,13 @@ import { channelToProjectRows } from "./project-settings.ts";
 import type { Message } from "./store.ts";
 import { writtenWithReceipts } from "./memory/testing/legacy-file-model.ts";
 import { LineageAllowance } from "./memory/lineage-allowance.ts";
+import { removeTempDirSync } from "./testing/cleanup.ts";
 
 const NOW = 1_790_000_000_000;
 type Roster = MemoryRoster & { bots: Array<MemoryRoster["bots"][number] & { name: string }> };
 let roster: Roster;
 beforeEach(() => {
-  closeDatabase(); rmSync(DATA_DIR, { recursive: true, force: true }); mkdirSync(DATA_DIR, { recursive: true });
+  closeDatabase(); removeTempDirSync(DATA_DIR); mkdirSync(DATA_DIR, { recursive: true });
   roster = {
     bots: [
       { id: "dax", name: "Dax", threadId: "dax-direct", section: "Sales", tasks: [{ threadId: "dax-task" }, { threadId: "dax-desk", channelProjectDesk: { groupId: "launch" } }] },
@@ -112,6 +113,21 @@ it("summary-update writes the next version with its sources, refuses foreign sou
   expect(projectSummaryLayer(database(), { groupId: "launch", botId: "dax", names: new Map([["finch", "Finch"]]) }, true)).toContain("Live on the 14th.");
   for (let index = 0; index < 25; index++) updateProjectSummary(database(), roster, ctx, { text: `v${index}`, sourceMessageIds: [source.id] });
   expect(database().prepare("SELECT count(*) n FROM project_summaries WHERE group_id='launch'").get()?.n).toBe(20);
+});
+
+it("summary-update masks a key before it is stored, so no member's prompt carries it", () => {
+  const source = say("launch-chat", "Use the staging account for the demo.");
+  const ctx = { groupId: "launch", botId: "finch", now: NOW };
+  // Assembled here so no scanner reads a key in this file.
+  const key = ["sk", "proj", "A1b2C3d4E5f6G7h8J9k0L1m2"].join("-");
+  expect(updateProjectSummary(database(), roster, ctx, { text: `Demo uses the staging key ${key} on Friday.`, sourceMessageIds: [source.id] }).status).toBe(200);
+  const stored = String(database().prepare("SELECT text FROM project_summaries WHERE group_id='launch' ORDER BY version DESC LIMIT 1").get()?.text);
+  expect(stored).not.toContain(key);
+  expect(stored).toContain("Demo uses the staging key");
+  expect(stored).toContain("on Friday.");
+  const layer = projectSummaryLayer(database(), { groupId: "launch", botId: "dax", names: new Map([["finch", "Finch"]]) }, true);
+  expect(layer).toContain("Demo uses the staging key");
+  expect(layer).not.toContain(key);
 });
 
 it("suggest leaves a line for the lead's next turn and never assigns", () => {

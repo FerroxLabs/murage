@@ -112,6 +112,13 @@ describe("the setup poll", () => {
     expect(setupPollWanted(view({ next: null }) as never, 0)).toBe(false);
     expect(setupPollWanted(view({ conversationLive: false }) as never, 0)).toBe(false);
   });
+
+  // Settings L5: setup ends verified, so every step done is not the end while
+  // the first backup is still owed.
+  it("keeps noticing the backup report while setup is not complete", () => {
+    expect(setupPollWanted(view({ next: null, complete: false, backup: "pending" }) as never, 0)).toBe(true);
+    expect(setupPollWanted(view({ next: null, complete: true, backup: "verified" }) as never, 0)).toBe(false);
+  });
 });
 
 describe("a setup read that failed", () => {

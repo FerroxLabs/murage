@@ -4,18 +4,19 @@
 // The ACP support cache is keyed by the engine build. A build that reports no
 // agentInfo is told apart by its executable (path, mtime, size), so an upgrade
 // or a switch does not inherit the old build's "does not notify" verdict.
-import { mkdtempSync, rmSync, utimesSync, writeFileSync } from "node:fs";
+import { mkdtempSync, utimesSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
 import { claudeExecutableIdentity } from "../claude-guards.ts";
 import { acpBuildKey } from "./core.ts";
+import { removeTempDirSync } from "../../testing/cleanup.ts";
 
 describe("acpBuildKey", () => {
   let dir: string;
   beforeEach(() => { dir = mkdtempSync(join(tmpdir(), "acp-build-key-")); });
-  afterEach(() => { rmSync(dir, { recursive: true, force: true }); });
+  afterEach(() => { removeTempDirSync(dir); });
 
   const identityOf = (cli: string) => () => claudeExecutableIdentity(cli, {});
 

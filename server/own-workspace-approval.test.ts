@@ -260,6 +260,8 @@ describe("segments compare exactly, never folded", () => {
 
   it("matches the exact spelling and nothing else", () => {
     const ghost = join(fixture, "ghost-data");
+    // Rule 63: placement is by real path, so the folders must exist to be placed
+    mkdirSync(join(ghost, "workspaces", "abc"), { recursive: true });
     expect(isOwnWorkspaceBookkeeping({ ...ghostScope(ghost), paths: [join(ghost, "workspaces", "abc", "MEMORY.md")] })).toBe(true);
     expect(isOwnWorkspaceBookkeeping({ ...ghostScope(ghost), paths: [join(ghost, "WORKSPACES", "abc", "MEMORY.md")] })).toBe(false);
     expect(isOwnWorkspaceBookkeeping({ ...ghostScope(ghost), paths: [join(ghost, "workspaces", "ABC", "MEMORY.md")] })).toBe(false);

@@ -15562,9 +15562,10 @@ var require_windowsExecutableCodeSignatureVerifier = __commonJS({
     var path2 = require("path");
     function preparePowerShellExec(command, timeout) {
       const executable = `set "PSModulePath=" & chcp 65001 >NUL & powershell.exe`;
-      const args = ["-NoProfile", "-NonInteractive", "-InputFormat", "None", "-Command", command];
+      const args = ["-NoProfile", "-NonInteractive", "-WindowStyle", "Hidden", "-InputFormat", "None", "-Command", command];
       const options = {
         shell: true,
+        windowsHide: true,
         timeout
       };
       return [executable, args, options];
@@ -15573,7 +15574,12 @@ var require_windowsExecutableCodeSignatureVerifier = __commonJS({
       return new Promise((resolve, reject) => {
         const tempUpdateFile = unescapedTempUpdateFile.replace(/'/g, "''");
         logger.info(`Verifying signature ${tempUpdateFile}`);
-        (0, child_process_1.execFile)(...preparePowerShellExec(`"Get-AuthenticodeSignature -LiteralPath '${tempUpdateFile}' | ConvertTo-Json -Compress"`, 20 * 1e3), (error, stdout, stderr) => {
+        const attempt = (left) => (0, child_process_1.execFile)(...preparePowerShellExec(`"Get-AuthenticodeSignature -LiteralPath '${tempUpdateFile}' | ConvertTo-Json -Compress"`, 90000), (error, stdout, stderr) => {
+          if (error != null && (error.killed === true || error.signal != null) && left > 1) {
+            logger.warn("Windows signature check timed out; checking once more");
+            attempt(left - 1);
+            return;
+          }
           try {
             if (error != null || stderr) {
               handleError(logger, error, stderr, reject);
@@ -15620,6 +15626,7 @@ var require_windowsExecutableCodeSignatureVerifier = __commonJS({
             return;
           }
         });
+        attempt(2);
       });
     }
     function parseOut(out) {
@@ -15638,8 +15645,10 @@ var require_windowsExecutableCodeSignatureVerifier = __commonJS({
       return data;
     }
     function handleError(logger, error, stderr, reject) {
+      const timedOut = error != null && typeof error === "object" && (error.killed === true || error.signal != null);
       const detail = error instanceof Error ? error.message : error || stderr || "Missing signature evidence";
-      const failure = (0, builder_util_runtime_1.newError)(`Windows signature verification unavailable: ${detail}`, "ERR_UPDATER_INVALID_SIGNATURE");
+      const failure = (0, builder_util_runtime_1.newError)(timedOut ? `Windows signature check timed out: ${detail}` : `Windows signature verification unavailable: ${detail}`, "ERR_UPDATER_INVALID_SIGNATURE");
+      failure.signatureCheck = timedOut ? "timeout" : "unavailable";
       logger.warn(failure.message);
       reject(failure);
     }

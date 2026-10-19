@@ -1,4 +1,5 @@
-import { mkdirSync, rmSync } from "node:fs";
+import { learningInputReserve } from "./learning-policy.ts";
+import { mkdirSync } from "node:fs";
 import { beforeEach, expect, it } from "vitest";
 import { DATA_DIR } from "../config.ts";
 import { closeDatabase, database } from "../database.ts";
@@ -8,8 +9,9 @@ import { captureWork } from "./chunks.ts";
 import { claimMemoryJob, deferStaleMemoryWork, heartbeatMemoryJob, publishMemoryWork, requeueStaleMemoryWork } from "./jobs.ts";
 import { extractCandidates, memoryExtractionMessages } from "./extract.ts";
 import { MemoryWorkerController } from "./worker-controller.ts";
+import { removeTempDirSync } from "../testing/cleanup.ts";
 
-beforeEach(()=>{closeDatabase();rmSync(DATA_DIR,{recursive:true,force:true});mkdirSync(DATA_DIR,{recursive:true});setMemoryMode("capture");});
+beforeEach(()=>{closeDatabase();removeTempDirSync(DATA_DIR);mkdirSync(DATA_DIR,{recursive:true});setMemoryMode("capture");});
 function source(text="Durable evidence") {appendMessage("thread",{id:"source",at:1,role:"user",kind:"text",text});}
 it("preserves all byte coverage over large Unicode chunks without duplicates",()=>{
   const text="ข้อมูลไทย ".repeat(8000);source(text);
@@ -122,14 +124,14 @@ it("distinguishes unavailable and malformed extraction from valid complete-empty
 });
 it("reserves tokens durably and does not reset budget on database reopen",async()=>{
   const signal=new AbortController().signal;
-  // V2 uses estimated tokens; exhaust an explicit daily allowance with two framed calls.
-  database().exec("UPDATE memory_learning_config SET settings=json_set(settings,'$.dailyInputTokens',28572)");
+  // 1.0.3: exhaust an explicit monthly ceiling with two framed calls (one token per byte plus the provider allowance each).
   const payload="x".repeat(50000-Buffer.byteLength(JSON.stringify(memoryExtractionMessages(""))));
+  database().prepare("UPDATE memory_learning_config SET settings=json_set(settings,'$.ceiling.input',?)").run(2*learningInputReserve(memoryExtractionMessages(payload)));
   expect((await extractCandidates(payload,async()=>"[]",signal)).status).toBe("complete");
   expect((await extractCandidates(payload,async()=>"[]",signal)).status).toBe("complete");
   closeDatabase();let called=false;
   const result=await extractCandidates("more",async()=>{called=true;return "[]";},signal);
-  expect(result).toMatchObject({status:"deferred",reason:"budget-exhausted"});expect(called).toBe(false);
+  expect(result).toMatchObject({status:"deferred",reason:"spend-ceiling"});expect(called).toBe(false);
 });
 it("runs and stops the real owned worker without exposing the database to its process",async()=>{
   source();const controller=new MemoryWorkerController();controller.start();

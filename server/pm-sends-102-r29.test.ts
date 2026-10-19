@@ -12,7 +12,7 @@
 //  8  Fable P2     an event for a team already decided in the current pass (its conversation freed) is not overwritten by the pass's decision
 //  9  Fable P3     parking a team's head while other work is runnable makes the team ready again
 // 10  Fable gap    the conversation-freed wake (sharedThreadFreed) alone brings a waiting team back, oldest request first
-import { mkdirSync, rmSync } from "node:fs";
+import { mkdirSync } from "node:fs";
 import type { DatabaseSync } from "node:sqlite";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { DATA_DIR } from "./config.ts";
@@ -27,10 +27,11 @@ import { completeRequest, insertRoomRequest, roomRequest } from "./room-requests
 import * as ready from "./shared-ready.ts";
 import { _resetDrainDiagnostics, _totalDrainDecisions, drainSharedWork, sharedThreadFreed } from "./shared-work.ts";
 import { LINEAGE, ownerWorld, sharedWorld, type SharedWorld } from "./testing/handoff-worlds.ts";
+import { removeTempDirSync } from "./testing/cleanup.ts";
 
 const tick = () => new Promise<void>((resolve) => setImmediate(resolve));
 const ticks = async (n: number) => { for (let i = 0; i < n; i++) await tick(); };
-const fresh = () => { closeDatabase(); rmSync(DATA_DIR, { recursive: true, force: true }); mkdirSync(DATA_DIR, { recursive: true }); _resetPending(); _resetOwnerMigration(); _resetDrainDiagnostics(); };
+const fresh = () => { closeDatabase(); removeTempDirSync(DATA_DIR); mkdirSync(DATA_DIR, { recursive: true }); _resetPending(); _resetOwnerMigration(); _resetDrainDiagnostics(); };
 const quietly = async <T>(run: () => T | Promise<T>): Promise<T> => { const error = console.error; console.error = () => {}; try { return await run(); } finally { console.error = error; } };
 
 beforeEach(fresh);

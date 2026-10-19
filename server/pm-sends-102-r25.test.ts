@@ -9,7 +9,7 @@
 //  7  a held line that could not be cleared is retried by the next pass; the sweep walks only the queue's own list
 //  8  an owner's drain does not start shared work ahead of the shared fair order
 //  9  the held reason keeps the failure category, in the owner's words
-import { existsSync, mkdirSync, readdirSync, rmSync } from "node:fs";
+import { existsSync, mkdirSync, readdirSync } from "node:fs";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { DATA_DIR } from "./config.ts";
 import { closeDatabase, database } from "./database.ts";
@@ -27,6 +27,7 @@ import { drainSharedWork, enqueueSharedWork } from "./shared-work.ts";
 import { fakeHost, rememberRun, writePrompt } from "./testing/handoff-turn.ts";
 import { ownerWorld, sharedWorld, type OwnerWorld } from "./testing/handoff-worlds.ts";
 import { engineReply } from "./testing/provider-reply.ts";
+import { removeTempDirSync } from "./testing/cleanup.ts";
 
 const tick = () => new Promise<void>((resolve) => setImmediate(resolve));
 async function until(done: () => boolean, ms = 120_000): Promise<void> {
@@ -38,7 +39,7 @@ const count = (sql: string, ...args: string[]) => Number((database().prepare(sql
 const rowOf = (id: string) => database().prepare("SELECT phase, origin, started_at, submitted_at, accepted_turn_id, start_attempts, target_thread_id, evidence_at, item FROM pending_delegations WHERE id=?").get(id) as Record<string, unknown> | undefined;
 const heldReasonOf = (id: string): unknown => { const row = rowOf(id); return row ? (JSON.parse(String(row.item)) as { heldReason?: unknown }).heldReason : undefined; };
 
-beforeEach(() => { closeDatabase(); rmSync(DATA_DIR, { recursive: true, force: true }); mkdirSync(DATA_DIR, { recursive: true }); _resetPending(); _resetOwnerMigration(); });
+beforeEach(() => { closeDatabase(); removeTempDirSync(DATA_DIR); mkdirSync(DATA_DIR, { recursive: true }); _resetPending(); _resetOwnerMigration(); });
 afterEach(() => { _resetOwnerMigration(); _resetPending(); closeDatabase(); });
 
 /** A server whose startTurn does what `steps` says, over an owner world: the prompt and the start commit together (writePrompt), then the test's own steps. */
@@ -358,7 +359,7 @@ describe("5. every recovery, release and drain loop does a bounded amount of wor
     expect(opened).toBe(1);
   }, 240_000);
 
-  it("a queue of 100,000 on ONE source conversation is drained a page per pass", async () => {
+  it("a queue of 100,000 on ONE source conversation is drained a page per pass", { tags: ["nightly"], timeout: 300_000 }, async () => {
     const w = ownerWorld("owner");
     w.knobs.capacity = false;                                                             // every dispatch waits (capacity): no write, no turn
     let asks = 0;
@@ -378,7 +379,7 @@ describe("5. every recovery, release and drain loop does a bounded amount of wor
     expect(watch.worst()).toBeLessThanOrEqual(DRAIN_PAGE);                               // and never more than a page between two turns of the event loop
     expect(watch.passes()).toBeGreaterThanOrEqual(100_000 / DRAIN_PAGE);
     expect(w.turns).toEqual([]);
-  }, 300_000);
+  });
 });
 
 // ── 7 ────────────────────────────────────────────────────────────────────────────────
@@ -397,7 +398,7 @@ describe("7. a held line that could not be cleared is tried again, and the sweep
     const line = database().prepare("SELECT json FROM messages WHERE thread_id=? AND id=?").get(w.from.threadId, heldLineId("ghost")) as { json: string };
     expect((JSON.parse(line.json) as { delegationHeld?: unknown }).delegationHeld).toBeUndefined();
   });
-  it("100,000 registered lines: a page of 100 per pass, and a control a held row still backs is left alone", async () => {
+  it("100,000 registered lines: a page of 100 per pass, and a control a held row still backs is left alone", { tags: ["nightly"], timeout: 240_000 }, async () => {
     const w = ownerWorld("owner");
     database().exec(`WITH RECURSIVE n(i) AS (SELECT 1 UNION ALL SELECT i+1 FROM n WHERE i<100000)
       INSERT INTO held_notice_lines(message_id, delegation_id, source_thread_id) SELECT 'held-g'||i, 'g'||i, 't'||(i%100) FROM n`);
@@ -412,5 +413,5 @@ describe("7. a held line that could not be cleared is tried again, and the sweep
     expect(worst).toBeLessThanOrEqual(SETTLE_PAGE);
     expect(count("SELECT COUNT(*) AS n FROM held_notice_lines")).toBe(0);
     void w;
-  }, 240_000);
+  });
 });

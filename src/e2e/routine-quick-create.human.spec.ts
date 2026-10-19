@@ -8,7 +8,7 @@
 // The real harness, the real `POST /api/routines`, and the real UI: nothing
 // here is stubbed, and the schedule is read back from the server rather than
 // from the screen that wrote it.
-import { test, expect } from "@playwright/test";
+import { test, expect } from "./page-error-guard";
 import { createServer, type ViteDevServer } from "vite";
 import react from "@vitejs/plugin-react";
 import tailwindcss from "@tailwindcss/vite";

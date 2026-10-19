@@ -24,6 +24,7 @@
 // for approval, which needs a real provider and a real turn. It is left
 // alone, and the run says so rather than quietly writing a worse version.
 import { spawn } from "node:child_process";
+import { randomBytes } from "node:crypto";
 import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
@@ -40,6 +41,9 @@ const CONTROL_PORT = base + 11;
 const HARNESS = `http://127.0.0.1:${HARNESS_PORT}`;
 const SIDECAR = `http://127.0.0.1:${COMPANION_PORT}`;
 const CONTROL = `http://127.0.0.1:${CONTROL_PORT}`;
+/** The control page's per-launch token, handed to the sidecar at start. */
+const CONTROL_TOKEN = randomBytes(32).toString("base64url");
+const asOwner = (init = {}) => ({ ...init, headers: { ...(init.headers ?? {}), "x-murage-control-token": CONTROL_TOKEN } });
 
 // A profile invented here rather than read from disk, so the fixtures name
 // nobody real and stay byte-stable between machines.
@@ -165,9 +169,10 @@ async function main() {
     MURAGE_WEBHOOK_PORT: String(base + 1),
     MURAGE_COMPANION_PORT: String(COMPANION_PORT),
     MURAGE_CONTROL_PORT: String(CONTROL_PORT),
+    MURAGE_COMPANION_CONTROL_TOKEN: CONTROL_TOKEN,
     MURAGE_COMPANION_DIR: join(home, "companion"),
   });
-  await waitFor(`${CONTROL}/state`, "companion", sidecar);
+  await waitFor(`${CONTROL}/`, "companion", sidecar);
 
   // ── what an unpaired phone sees, captured before there is a token ──────
   console.log("writing:");
@@ -179,7 +184,7 @@ async function main() {
   })).body);
 
   // ── pair, exactly as the phone does ────────────────────────────────────
-  const { code } = (await json(`${CONTROL}/pairing`, { method: "POST" })).body;
+  const { code } = (await json(`${CONTROL}/pairing`, asOwner({ method: "POST" }))).body;
   const paired = await json(`${SIDECAR}/api/pair`, {
     method: "POST",
     headers: { "content-type": "application/json" },

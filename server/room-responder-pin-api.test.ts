@@ -157,6 +157,9 @@ posixOnly("room responder pin", () => {
       const user = db.prepare("SELECT id FROM messages WHERE thread_id=? AND role='user' ORDER BY at DESC LIMIT 1").get(room.threadId) as { id: string };
       const root = db.prepare("SELECT id FROM room_requests WHERE verb='owner_send' AND result_message_id=?").get(user.id) as { id: string };
       db.prepare("DELETE FROM room_requests WHERE root_id=? AND id<>?").run(root.id, root.id);
+      // A real crash at this point keeps the root's 'fanout' debt: it is recorded when the owner send is done and only a child request
+      // clears it (room_request_owed_fanout_child). Deleting the children above does not bring it back, so put it back as the crash left it.
+      db.prepare("INSERT OR IGNORE INTO room_request_owed(kind, request_id) VALUES('fanout', ?)").run(root.id);
       db.prepare("DELETE FROM messages WHERE thread_id=? AND role='bot'").run(room.threadId);
       db.prepare("UPDATE thread_state SET active_leaf_id=? WHERE thread_id=?").run(user.id, room.threadId);
     } finally { db.close(); }

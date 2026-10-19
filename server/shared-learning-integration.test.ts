@@ -7,7 +7,7 @@
 // evidence lands only in that team's partition, through D's real learning
 // guard: never home, never another team. `#general` evidence goes to the
 // owner. And D's bot-initiated bring-in honours X's partition rule.
-import { mkdirSync, rmSync } from "node:fs";
+import { mkdirSync } from "node:fs";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { DATA_DIR } from "./config.ts";
 import { closeDatabase, database, transaction } from "./database.ts";
@@ -31,9 +31,10 @@ import type { RoomRequest } from "./room-requests.ts";
 import { setMemoryMode } from "./memory/repository.ts";
 import { pendingProcedureReviews, processProcedureReview, procedureCandidateHash, procedureSnapshotDigest, procedureTargetDigest,
   type ProcedureEvaluationReceipt, type ProcedureReviewHost, type ProcedureReviewSnapshot } from "./memory/procedure-review.ts";
+import { removeTempDirSync } from "./testing/cleanup.ts";
 
 const uninstall: Array<() => void> = [];
-beforeEach(() => { closeDatabase(); rmSync(DATA_DIR, { recursive: true, force: true }); mkdirSync(DATA_DIR, { recursive: true }); });
+beforeEach(() => { closeDatabase(); removeTempDirSync(DATA_DIR); mkdirSync(DATA_DIR, { recursive: true }); });
 afterEach(() => { while (uninstall.length) uninstall.pop()!(); setMemoryCaptureRoster(null); });
 
 function fixture() {

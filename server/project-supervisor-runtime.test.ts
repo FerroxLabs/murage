@@ -20,7 +20,8 @@ function usageFixture() {
   const owner = { botId: "lead", generation: "gen", notOwnerAudience: false };
   const pending = new Map(); const turns = new Map(); const bindings = new Map();
   const settle = vi.fn(); const complete = vi.fn(); const insert = vi.fn((_db: unknown, _input: unknown) => ({ request }));
-  const deps = { fluxFirstTokenProbe: { begin() {}, observe() {} }, internalTurnOwners: new Map([["thread", owner]]), turnRequestByGeneration: bindings, delegationWatch: new Map(), syncAskRequests: new Map(),
+  // Local role: index.ts declares the home execution gate undefined.
+  const deps = { homeExecutionGate: undefined, fluxFirstTokenProbe: { begin() {}, observe() {} }, internalTurnOwners: new Map([["thread", owner]]), turnRequestByGeneration: bindings, delegationWatch: new Map(), syncAskRequests: new Map(),
     dispatchProjectUsageTurn,
     // the fence is engine-input's own subject (engine-input tests); this seam is about accounting, so the built turn passes through unwrapped
     fencedTurnInput: (input: { prompt?: unknown }, _fence: unknown) => { const { prompt: _prompt, ...rest } = input; return { ...rest, text: "" }; },

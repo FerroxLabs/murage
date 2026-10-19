@@ -7,11 +7,12 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { createBrowserExtensionService, handoffContinueText } from "./browser-extension-service.ts";
 import type { BrowserExtensionCommand, BrowserExtensionHello, BrowserExtensionResponse } from "../shared/browser-extension-protocol.ts";
 import { privateTestDirectory, writePrivateTestFile } from "./testing/private-test-dir.ts";
+import { removeTempDir } from "./testing/cleanup.ts";
 
 const A = "https://fixture.test";
 const cleanup: string[] = [];
 const services: Awaited<ReturnType<typeof createBrowserExtensionService>>[] = [];
-afterEach(async () => { vi.restoreAllMocks(); for (const service of services.splice(0)) await service.close(); for (const directory of cleanup.splice(0)) await fs.rm(directory, { recursive: true, force: true }); });
+afterEach(async () => { vi.restoreAllMocks(); for (const service of services.splice(0)) await service.close(); for (const directory of cleanup.splice(0)) await removeTempDir(directory); });
 
 type RuntimeBinding = { generation: number; state: string; tabs: object[]; pausedReason?: string };
 async function world() {

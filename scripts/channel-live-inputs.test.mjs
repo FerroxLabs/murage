@@ -1,8 +1,9 @@
-import { chmodSync, existsSync, linkSync, mkdirSync, mkdtempSync, renameSync, rmSync, symlinkSync, unlinkSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, linkSync, mkdirSync, mkdtempSync, renameSync, symlinkSync, unlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, expect, it } from "vitest";
 import { loadEngine, loadSecrets, ManifestError, validateManifest } from "./channel-live-inputs.ts";
+import { removeTempDirSync } from "../server/testing/cleanup.ts";
 
 const TELEGRAM_TOKEN = "4242:qualification_secret_not_real_ABCDEFGH";
 const TELEGRAM_OTHER = "4242:qualification_secret_other_ABCDEFGHIJ";
@@ -11,12 +12,12 @@ const SLACK_BOT = "xoxb-1-QUALIFICATIONSECRET-notreal";
 const DISCORD_BOT_USER = "123456789012";
 const DISCORD_TOKEN = `${Buffer.from(DISCORD_BOT_USER).toString("base64url")}.QUALIF.qualification_secret_not_real_x`;
 const roots = [];
-afterEach(() => { for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true }); });
+afterEach(() => { for (const root of roots.splice(0)) removeTempDirSync(root); });
 
 // Case-insensitive volumes (default macOS/Windows) let a differently-cased path name the same file.
 const caseProbe = mkdtempSync(join(tmpdir(), "channel-live-CaseProbe-"));
 const caseInsensitive = existsSync(caseProbe.toLowerCase()) && existsSync(caseProbe.toUpperCase());
-rmSync(caseProbe, { recursive: true, force: true });
+removeTempDirSync(caseProbe);
 
 function fixture() {
   const root = mkdtempSync(join(tmpdir(), "channel-live-inputs-")); roots.push(root);

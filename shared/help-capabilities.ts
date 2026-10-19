@@ -384,12 +384,6 @@ export const HELP_CAPABILITIES: readonly Capability[] = [
   },
   {
     "kind": "settings-page",
-    "name": "computer",
-    "term": "Computer & browser",
-    "source": "src/lib/settings-sections.ts"
-  },
-  {
-    "kind": "settings-page",
     "name": "channels",
     "term": "Messaging apps",
     "source": "src/lib/settings-sections.ts"
@@ -402,8 +396,20 @@ export const HELP_CAPABILITIES: readonly Capability[] = [
   },
   {
     "kind": "settings-page",
+    "name": "computer",
+    "term": "Computer & browser",
+    "source": "src/lib/settings-sections.ts"
+  },
+  {
+    "kind": "settings-page",
     "name": "backups",
     "term": "Backups",
+    "source": "src/lib/settings-sections.ts"
+  },
+  {
+    "kind": "settings-page",
+    "name": "storage",
+    "term": "Storage",
     "source": "src/lib/settings-sections.ts"
   },
   {
@@ -415,7 +421,7 @@ export const HELP_CAPABILITIES: readonly Capability[] = [
   {
     "kind": "settings-page",
     "name": "about",
-    "term": "Help & updates",
+    "term": "About & updates",
     "source": "src/lib/settings-sections.ts"
   },
   {
@@ -606,6 +612,12 @@ export const HELP_CAPABILITIES: readonly Capability[] = [
   },
   {
     "kind": "route",
+    "name": "/api/cloud",
+    "term": "your own server",
+    "source": "server/index.ts"
+  },
+  {
+    "kind": "route",
     "name": "/api/connectors",
     "term": "connected apps",
     "source": "server/index.ts"
@@ -708,6 +720,12 @@ export const HELP_CAPABILITIES: readonly Capability[] = [
   },
   {
     "kind": "route",
+    "name": "/api/owner",
+    "term": "time zone",
+    "source": "server/index.ts"
+  },
+  {
+    "kind": "route",
     "name": "/api/packages",
     "term": "templates",
     "source": "server/index.ts"
@@ -776,6 +794,12 @@ export const HELP_CAPABILITIES: readonly Capability[] = [
     "kind": "route",
     "name": "/api/starter-profiles",
     "term": "templates",
+    "source": "server/index.ts"
+  },
+  {
+    "kind": "route",
+    "name": "/api/storage",
+    "term": "storage",
     "source": "server/index.ts"
   },
   {

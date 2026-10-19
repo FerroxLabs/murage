@@ -375,15 +375,15 @@ describe("names", () => {
   });
 
   it("de-duplicates with -2, -3 against the taken names and within one paste", () => {
-    const taken = new Set(["comfy", "comfy-2", "computer"]);
+    const taken = new Set(["comfy", "comfy2", "computer"]);
     const isNameTaken = (name: string) => taken.has(name);
-    expect(only(parsePaste("https://cloud.comfy.org/mcp", { isNameTaken })).name).toBe("comfy-3");
+    expect(only(parsePaste("https://cloud.comfy.org/mcp", { isNameTaken })).name).toBe("comfy3");
     const both = drafts(parsePaste('{"mcpServers":{"GitHub":{"command":"a"},"github":{"command":"b"},"GITHUB":{"command":"c"}}}'));
-    expect(both.map((d) => d.name)).toEqual(["github", "github-2", "github-3"]);
+    expect(both.map((d) => d.name)).toEqual(["github", "github2", "github3"]);
     // A name that is already spelled with a suffix still gets a free one.
     const spelled = drafts(parsePaste('{"mcpServers":{"a":{"command":"x"},"a-2":{"command":"y"},"A":{"command":"z"}}}'));
-    expect(spelled.map((d) => d.name)).toEqual(["a", "a-2", "a-3"]);
-    expect(only(parsePaste('{"mcpServers":{"computer":{"command":"a"}}}', { isNameTaken })).name).toBe("computer-2");
+    expect(spelled.map((d) => d.name)).toEqual(["a", "a2", "a3"]);
+    expect(only(parsePaste('{"mcpServers":{"computer":{"command":"a"}}}', { isNameTaken })).name).toBe("computer2");
   });
 });
 

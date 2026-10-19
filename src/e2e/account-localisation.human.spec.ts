@@ -1,4 +1,4 @@
-import { test, expect } from "@playwright/test";
+import { test, expect } from "./page-error-guard";
 import { createServer, type ViteDevServer } from "vite";
 import react from "@vitejs/plugin-react";
 import tailwindcss from "@tailwindcss/vite";
@@ -36,7 +36,7 @@ for (const width of [390, 1440]) for (const locale of ["zz", "de"]) test(`accoun
   await page.setViewportSize({ width, height: 1000 });
   const errors: string[] = []; page.on("pageerror", error => errors.push(error.message));
   await page.goto(`${origin}/__account?locale=${locale}`);
-  await expect(page.getByText(text("safety"), { exact: true })).toBeVisible();
+  await expect(page.getByText(text("keepsLogin"), { exact: true })).toBeVisible();
   await page.getByText(text("instructionsTitle"), { exact: true }).click();
   await expect(page.getByText(text("instructions"), { exact: true })).toBeVisible();
   const copy = page.getByRole("button", { name: text("copySignIn"), exact: true });

@@ -3,7 +3,7 @@
 // Every run, routine and the receipt list sit behind a write-tracking proxy (tracked-state.ts), so a path that
 // changes persisted state without naming it to save() is still written by the next save, journal-only or full.
 // And the "Prepare to reinstall Murage 1.0.1" step folds the journal-only state into the files 1.0.1 reads.
-import { existsSync, readFileSync, readdirSync, rmSync, mkdtempSync, statSync } from "node:fs";
+import { existsSync, readFileSync, readdirSync, mkdtempSync, statSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
@@ -11,9 +11,10 @@ import { RoutineManager, type RoutineManagerOptions } from "./routines.ts";
 import { readRoutinesWithRuns, routineRunsDir } from "./routine-runs-journal.ts";
 import { downgradeInstallationMemorySchema } from "./installation-memory-downgrade.ts";
 import { plainCopy, track, untracked } from "./tracked-state.ts";
+import { removeTempDirSync } from "./testing/cleanup.ts";
 
 const dirs: string[] = [];
-afterEach(() => { for (const dir of dirs.splice(0)) rmSync(dir, { recursive: true, force: true }); });
+afterEach(() => { for (const dir of dirs.splice(0)) removeTempDirSync(dir); });
 
 const START = new Date(2026, 9, 12, 8, 0, 0).getTime();
 const HOUR = 60 * 60_000, DAY = 24 * HOUR;
@@ -103,6 +104,10 @@ const DRIVERS: Record<string, (f: Fixture) => unknown> = {
   routineForConversation: f => f.m.routineForConversation(f.thread),
   grantAlwaysAllow: f => expect(f.m.grantAlwaysAllow(f.a.id, GRANT)?.alwaysAllow).toEqual([GRANT]),
   revokeAlwaysAllow: f => { f.m.grantAlwaysAllow(f.a.id, GRANT); expect(f.m.revokeAlwaysAllow(f.a.id, GRANT)?.alwaysAllow ?? []).toEqual([]); },
+  grantAlwaysAllowSet: f => expect(f.m.grantAlwaysAllowSet(f.a.id, [GRANT])?.alwaysAllow).toEqual([GRANT]),
+  rememberAlwaysAllowSet: f => expect(f.m.rememberAlwaysAllowSet(f.a.id, [GRANT])?.added).toEqual([GRANT]),
+  // plans only: nothing is written, and the plan names the key it would add
+  planAlwaysAllowSet: f => expect(f.m.planAlwaysAllowSet(f.a.id, [GRANT])?.added).toEqual([GRANT]),
   create: f => f.m.create({ name: "New", prompt: "New", botId: "bot-n", target: "bot", runOn: "ember", enabled: true, schedule: { type: "interval", everyMinutes: 30, anchorAt: START + DAY } }),
   update: f => f.m.update(f.a.id, { name: "Renamed", schedule: { type: "interval", everyMinutes: 90, anchorAt: START + 2 * HOUR } }),
   promoteInstructions: f => promote(f),
@@ -141,6 +146,8 @@ const DRIVERS: Record<string, (f: Fixture) => unknown> = {
   enforceRunLimits: async f => { f.clock.now += 3 * DAY; await f.m.enforceRunLimits(); },
   tick: async f => { f.clock.now = START + 3 * HOUR; await f.m.tick(); },
   schedulerStatus: f => f.m.schedulerStatus(),
+  unloadable: f => f.m.unloadable(),
+  noteRunLine: f => f.m.noteRunLine(f.thread, "Ran a write whose folder Murage could not read: x"),
   handleRuntimeEvent: f => f.m.handleRuntimeEvent({ eventId: "done-1", provider: "fake", threadId: f.thread, createdAt: new Date(START).toISOString(), type: "turn.completed", ok: true } as never),
   failThread: f => f.m.failThread(f.thread, "Stopped"),
   finishGoalRun: f => f.m.finishGoalRun(f.goal.id, "completed", "Done"),

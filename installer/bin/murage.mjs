@@ -30,7 +30,7 @@ import { fileURLToPath } from "node:url";
 import { BindRefused, resolveBindFromEnv } from "../lib/bind.mjs";
 import { feedLaunchSecretStdin, launchSecretVia } from "../lib/launch-secret.mjs";
 import { companionEnv, ownChild, resolveCompanionEntry, spawnCompanion, startupProbe, waitForDoor } from "../lib/companion.mjs";
-import { createDoorNonce, deploymentOwner, doorVersion, probeDoor, readDoorNonce, writeDoorNonce } from "../lib/door-identity.mjs";
+import { controlTokenFromDoorNonce, createDoorNonce, deploymentOwner, doorVersion, probeDoor, readDoorNonce, writeDoorNonce } from "../lib/door-identity.mjs";
 import { envFilePermissions, inspectEnvFile, readEnvFile, retainRecoveryCopy, writeEnvFile } from "../lib/env-file.mjs";
 import { tailnetAddresses } from "../lib/network-trust.mjs";
 import { closePairing, controlPort, controlRequest, expiryText, fullFleet, openPairing, removeDevice, setScriptAccess, watchPairing } from "../lib/pair.mjs";
@@ -1534,8 +1534,8 @@ function resetpass(argv = []) {
  * way the desktop's does; scrollback and a provisioning log do not.
  * @param {string[]} argv everything after `pair`
  */
-/** The companion's control port, once this deployment's door has proved it
- * is ours (see `pair`). Exits with the reason otherwise. */
+/** The companion's control port and its token, once this deployment's door
+ * has proved it is ours (see `pair`). Exits with the reason otherwise. */
 async function provenControlPort(args, command) {
   const { dataDir, envFile } = resolveStatusPaths(args, process.env.MURAGE_SERVICE_USER?.trim() || null, command);
   const env = { ...process.env, ...readEnvFile(envFile) };
@@ -1547,7 +1547,9 @@ async function provenControlPort(args, command) {
     console.log(c.dim(`  Start it with \`murage start\`, then run \`murage ${command}\` again.\n`));
     process.exit(EXIT.ENVIRONMENT);
   }
-  return controlPort(env);
+  // The door proved it holds the recorded nonce, so the control token derived
+  // from that nonce is the one its sidecar expects.
+  return { port: controlPort(env), token: controlTokenFromDoorNonce(recorded.nonce) };
 }
 
 /** The devices a full box offers to replace, least recently seen first, and

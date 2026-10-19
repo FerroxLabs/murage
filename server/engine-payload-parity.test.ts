@@ -9,7 +9,7 @@
 // walk); the lane's bounded ones (walkActivePath, promptQuoteTargets, the
 // floored wholeTurnText walk) are compared against them, with the thread both
 // held in memory and evicted.
-import { rmSync } from "node:fs";
+
 import { beforeEach, describe, expect, it } from "vitest";
 
 import { DATA_DIR } from "./config.ts";
@@ -22,6 +22,7 @@ import { promptQuoteTargets } from "./prompt-quotes.ts";
 import { authoredTurnPieces } from "./reply-action-guard.ts";
 import { transcriptText } from "./replies.ts";
 import { Store, type Message } from "./store.ts";
+import { removeTempDirSync } from "./testing/cleanup.ts";
 
 const selection = (): ModelSelection => ({ instanceId: "claude", model: "claude-sonnet-5" });
 const from = { botId: "b1", name: "Otter" };
@@ -66,7 +67,7 @@ function payload(store: Store, botId: string, threadId: string, oracle: boolean,
 }
 
 describe("engine payload parity with the base (lane E golden)", () => {
-  beforeEach(() => rmSync(DATA_DIR, { recursive: true, force: true }));
+  beforeEach(() => removeTempDirSync(DATA_DIR));
 
   function shapes(store: Store) {
     const bot = store.createBot();
