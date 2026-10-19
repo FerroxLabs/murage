@@ -26,6 +26,7 @@ import type {
 import type { RoutineWatchSource } from "../shared/routine-watch.ts";
 import { routineFileWatchProposalSchema, routineWatchInput, routineWatchInputSchema } from "./routine-watch-integration.ts";
 import { murageToolOnThisServer } from "./murage-tool-surface.ts";
+import { murageLine } from "./murage-line.ts";
 
 const WEEKDAY_NUMBER = {
   sunday: 0,
@@ -879,7 +880,7 @@ export class RoutineRequestService {
       throw new RoutineRequestError(persistence.error, persistence.status);
     }
     args.canCommit?.();
-    const message = this.store.appendMessage(threadId, messageInput);
+    const message = this.store.appendMessage(threadId, murageLine(messageInput));
     return {
       requestId,
       messageId: message.id,

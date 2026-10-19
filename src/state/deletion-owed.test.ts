@@ -82,7 +82,8 @@ describe("the window asks, and uses the answer", () => {
   for (const view of ["ChatView.tsx", "GroupView.tsx"]) {
     it(`${view}: "Try again now" applies the response it gets`, () => {
       const text = readFileSync(join(here, "..", "components", view), "utf8");
-      expect(text).toContain('api("/api/deletions/retry", { method: "POST" }).then((response) => dispatch({ type: "deletionOwed", notices: response?.notices, rev: response?.rev }))');
+      // awaited, so a refused retry reaches the banner's own failure line instead of being swallowed
+      expect(text).toContain('const response = await api("/api/deletions/retry", { method: "POST" }); dispatch({ type: "deletionOwed", notices: response?.notices, rev: response?.rev });');
     });
   }
 });

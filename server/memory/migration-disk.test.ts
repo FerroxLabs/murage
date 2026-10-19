@@ -8,19 +8,20 @@
 // messages.db at its old version with no partial file, a killed copy never
 // mistaken for a finished one, and the message a newer-schema file produces.
 import { randomUUID } from "node:crypto";
-import { existsSync, mkdtempSync, readdirSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdtempSync, readdirSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { afterEach, expect, it } from "vitest";
 import { MEMORY_PRE_V3_SNAPSHOT, MEMORY_PRE_V4_SNAPSHOT, MEMORY_SCHEMA, MEMORY_SCHEMA_V2, MemoryMigrationError, migrateMemorySchema, validateMemorySchema } from "./schema.ts";
 import { DEFAULT_MEMORY_LEARNING_V1 } from "./learning-policy.ts";
+import { removeTempDirSync } from "../testing/cleanup.ts";
 
 const databases: DatabaseSync[] = [];
 const roots: string[] = [];
 afterEach(() => {
   for (const db of databases.splice(0)) { try { db.close(); } catch { /* closed */ } }
-  for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true });
+  for (const root of roots.splice(0)) removeTempDirSync(root);
 });
 function v2Installation() {
   const root = mkdtempSync(join(tmpdir(), "murage-memmigrate-")); roots.push(root);
@@ -28,7 +29,7 @@ function v2Installation() {
   const db = new DatabaseSync(file); databases.push(db);
   db.exec("PRAGMA journal_mode=WAL; PRAGMA foreign_keys=ON;");
   db.exec("CREATE TABLE messages(thread_id TEXT NOT NULL,id TEXT NOT NULL,at INTEGER NOT NULL,role TEXT NOT NULL,kind TEXT NOT NULL,text TEXT,json TEXT NOT NULL,PRIMARY KEY(thread_id,id))");
-  db.exec("INSERT INTO messages VALUES('t','m1',1,'user','text','hello','{}')");
+  db.exec("INSERT INTO messages(thread_id,id,at,role,kind,text,json) VALUES('t','m1',1,'user','text','hello','{}')");
   db.exec(MEMORY_SCHEMA_V2);
   db.prepare("INSERT INTO memory_meta VALUES(1,2,?,4,5,6,'active')").run(randomUUID());
   db.prepare("INSERT INTO memory_learning_config VALUES(1,3,?)").run(JSON.stringify({ ...DEFAULT_MEMORY_LEARNING_V1, reviewMode: false }));
@@ -52,13 +53,13 @@ it("refuses to start the upgrade when the disk is too small, naming how much to 
   expect(readdirSync(f.root).filter(name => name.startsWith("messages.pre"))).toEqual([]);
   // the next launch with room just works
   migrateMemorySchema(f.db, "off", { snapshotV2Path: f.v3, snapshotV3Path: f.v4, freeBytes: () => 100 * GIB });
-  expect(version(f.db)).toBe(10);
+  expect(version(f.db)).toBe(12);
 });
 
 it("takes exactly one copy for a v2 file going to v4: the pre-v3 copy, no pre-v4 copy", () => {
   const f = v2Installation();
   migrateMemorySchema(f.db, "off", { snapshotV2Path: f.v3, snapshotV3Path: f.v4, freeBytes: () => 100 * GIB });
-  expect(version(f.db)).toBe(10);
+  expect(version(f.db)).toBe(12);
   expect(readdirSync(f.root).filter(name => name.startsWith("messages.pre"))).toEqual([MEMORY_PRE_V3_SNAPSHOT]);
   const copy = new DatabaseSync(f.v3); databases.push(copy);
   expect(version(copy)).toBe(2);
@@ -99,7 +100,7 @@ it("a full disk inside the upgrade transaction (SQLite already rolled back) repo
   expect(real.prepare("SELECT count(*) n FROM sqlite_schema WHERE name='memory_learning_events'").get()?.n).toBe(0);
   // retry once there is room
   migrateMemorySchema(real, "off", { snapshotV2Path: f.v3, freeBytes: () => 100 * GIB });
-  expect(version(real)).toBe(10);
+  expect(version(real)).toBe(12);
 });
 
 it("a copy left half-written by a killed start is discarded, not trusted", () => {
@@ -121,15 +122,15 @@ it("reports each step to the start-up screen with the expected copy size", () =>
 
 it("a file written by a newer Murage gets a plain message that names the fix", () => {
   const db = new DatabaseSync(":memory:"); databases.push(db);
-  db.exec(MEMORY_SCHEMA.replace("CHECK(schema_version=10)", "CHECK(schema_version=11)")); // what a future build would write
-  db.prepare("INSERT INTO memory_meta VALUES(1,11,?,0,0,0,'off')").run(randomUUID());
+  db.exec(MEMORY_SCHEMA.replace("CHECK(schema_version=12)", "CHECK(schema_version=13)")); // what a future build would write
+  db.prepare("INSERT INTO memory_meta VALUES(1,13,?,0,0,0,'off')").run(randomUUID());
   let caught: unknown;
   try { validateMemorySchema(db); } catch (error) { caught = error; }
   expect(caught).toBeInstanceOf(MemoryMigrationError);
   const error = caught as MemoryMigrationError;
   expect(error.code).toBe("MEMORY_SCHEMA_NEWER");
   expect(error.message).toMatch(/Install the latest version of Murage/);
-  expect(error.message).toContain("memory-downgrade --data-dir <your Murage data folder> --to 10");
+  expect(error.message).toContain("memory-downgrade --data-dir <your Murage data folder> --to 12");
   expect(error.message).not.toMatch(/safe|—|composio/i);
 });
 

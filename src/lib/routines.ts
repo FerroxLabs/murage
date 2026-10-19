@@ -108,6 +108,13 @@ export interface RoutineRun {
   attention?: string;
   cost?: number | null;
   denials?: string[];
+  /** Plain lines in this run's history: a command run without a card, when
+   * its write or delete target was held in a value. Each names only the tool
+   * and that target (`rm on "$TMP"`, `a redirect to "$OUT"`), never the
+   * command's other arguments. */
+  notes?: string[];
+  /** How many more such lines (repeats, or past the cap) this run had. */
+  notesMore?: number;
   createdAt: number;
   seenAt?: number;
 }

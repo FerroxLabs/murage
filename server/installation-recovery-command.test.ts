@@ -1,6 +1,6 @@
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -13,10 +13,11 @@ import { finishRevocationIndexAtStartup } from "./memory/revocation-index.ts";
 import { initializePendingDelegations } from "./pending-delegations-schema.ts";
 import { initializeOwnerDeletions } from "./owner-deletions.ts";
 import { haveV101, V101 } from "./testing/pm-sends-v101.ts";
+import { removeTempDirSync } from "./testing/cleanup.ts";
 const exec = promisify(execFile);
 const cli = fileURLToPath(new URL("../scripts/installation-recovery.ts", import.meta.url));
 const roots: string[] = [];
-afterEach(() => { for (const path of roots.splice(0)) rmSync(path, { recursive: true, force: true }); });
+afterEach(() => { for (const path of roots.splice(0)) removeTempDirSync(path); });
 function fixture() {
   const root = mkdtempSync(join(tmpdir(), "murage-backup-cli-"));
   roots.push(root);
@@ -107,7 +108,7 @@ it("downgrades a stopped installation's memory schema to v1 and refuses a runnin
   const db = new DatabaseSync(file);
   db.exec("PRAGMA journal_mode=WAL; CREATE TABLE messages(thread_id TEXT NOT NULL,id TEXT NOT NULL,at INTEGER NOT NULL,role TEXT NOT NULL,kind TEXT NOT NULL,text TEXT,json TEXT NOT NULL,PRIMARY KEY(thread_id,id));");
   db.exec(MEMORY_SCHEMA_V1); db.exec("INSERT INTO memory_meta VALUES(1,1,'00000000-0000-4000-8000-000000000000',0,0,0,'active');");
-  migrateMemorySchema(db); db.exec("INSERT INTO messages VALUES('t','m',1,'user','text','never-print-this-canary chat','{}');"); db.close();
+  migrateMemorySchema(db); db.exec("INSERT INTO messages(thread_id,id,at,role,kind,text,json) VALUES('t','m',1,'user','text','never-print-this-canary chat','{}');"); db.close();
   const missing = await run(["memory-downgrade", "--data-dir", join(f.root, "nowhere")]).catch(error => error);
   expect(missing.stderr).toContain("MEMORY_DATABASE_MISSING");
   const owner = acquireDataDirLease(f.data);
@@ -116,7 +117,7 @@ it("downgrades a stopped installation's memory schema to v1 and refuses a runnin
   expect(running.stderr).toContain("LEASE");
   const first = await run(["memory-downgrade", "--data-dir", f.data]);
   expect(first.stdout + first.stderr).not.toContain("never-print-this-canary");
-  expect(JSON.parse(first.stdout)).toEqual({ ok: true, operation: "memory-downgrade", status: "downgraded", from: 10, to: 1 });
+  expect(JSON.parse(first.stdout)).toEqual({ ok: true, operation: "memory-downgrade", status: "downgraded", from: MEMORY_SCHEMA_VERSION, to: 1 });
   expect(JSON.parse((await run(["memory-downgrade", "--data-dir", f.data])).stdout)).toMatchObject({ ok: true, status: "already-v1" });
   const check = new DatabaseSync(file);
   try {
@@ -127,10 +128,10 @@ it("downgrades a stopped installation's memory schema to v1 and refuses a runnin
   expect(() => acquireDataDirLease(f.data).release()).not.toThrow();
 });
 
-it.each([2,3,6,8,9])("supports a stopped-installation downgrade to v%s",async to=>{
+it.each([2,3,6,8,9,10])("supports a stopped-installation downgrade to v%s",async to=>{
  const f=fixture(),db=new DatabaseSync(join(f.data,"messages.db"));migrateMemorySchema(db);db.close();
  const result=await run(["memory-downgrade","--data-dir",f.data,"--to",String(to)]);
- expect(JSON.parse(result.stdout)).toMatchObject({status:"downgraded",from:10,to});
+ expect(JSON.parse(result.stdout)).toMatchObject({status:"downgraded",from:MEMORY_SCHEMA_VERSION,to});
 });
 
 // "Prepare to reinstall Murage 1.0.1" (electron/main.mjs) runs memory-downgrade --to 6, because the 1.0.1 tag (d950cbf67)
@@ -141,7 +142,7 @@ it("the reinstall-1.0.1 downgrade leaves a file at exactly the version 1.0.1 rea
   db.exec("PRAGMA journal_mode=WAL; PRAGMA foreign_keys=ON; CREATE TABLE messages(thread_id TEXT NOT NULL,id TEXT NOT NULL,at INTEGER NOT NULL,role TEXT NOT NULL,kind TEXT NOT NULL,text TEXT,json TEXT NOT NULL,PRIMARY KEY(thread_id,id));");
   migrateMemorySchema(db, "active");
   db.exec("INSERT INTO memory_scopes VALUES('w','workspace','owner','[]',0)");
-  db.exec("INSERT INTO messages VALUES('t','m',1,'user','text','kept chat','{}')");
+  db.exec("INSERT INTO messages(thread_id,id,at,role,kind,text,json) VALUES('t','m',1,'user','text','kept chat','{}')");
   // the 1.0.2 application objects 1.0.1 does not know (hand-off queue, deletion records) leave with the memory objects
   initializePendingDelegations(db); initializeOwnerDeletions(db);
   db.exec("INSERT INTO pending_delegations(id, source_thread_id, to_bot_id, from_bot_id, phase, retry_at, item) VALUES('h1','t','peer','sender','fresh',NULL,'{\"toBotId\":\"peer\",\"message\":\"m\",\"depth\":0,\"attempts\":0}')");
@@ -190,4 +191,12 @@ it("the reinstall-1.0.1 downgrade leaves a file at exactly the version 1.0.1 rea
     expect(again.prepare("SELECT schema_version FROM memory_meta").get()?.schema_version).toBe(MEMORY_SCHEMA_VERSION);
     expect(again.prepare("SELECT count(*) n FROM sqlite_schema WHERE name='memory_revocation_index_build'").get()?.n).toBe(1);
   } finally { again.close(); }
+});
+it("memory-downgrade --to 10 steps 1.0.3 back to 1.0.2 without the 1.0.1 application rewind, and refuses a target it does not know",async()=>{
+ const f=fixture(),db=new DatabaseSync(join(f.data,"messages.db"));migrateMemorySchema(db);db.close();
+ expect(JSON.parse((await run(["memory-downgrade","--data-dir",f.data,"--to","10"])).stdout)).toEqual({ok:true,operation:"memory-downgrade",status:"downgraded",from:MEMORY_SCHEMA_VERSION,to:10});
+ expect(JSON.parse((await run(["memory-downgrade","--data-dir",f.data,"--to","10"])).stdout)).toMatchObject({status:"already-v10",from:10,to:10});
+ // 11 (1.0.3 before the lineage door epoch) is a target since memory schema 12; 12, the current one, is not
+ const refused=await run(["memory-downgrade","--data-dir",f.data,"--to","12"]).catch(error=>error);
+ expect(refused.stderr).toContain("--to 1|2|3|4|5|6|7|8|9|10|11");
 });

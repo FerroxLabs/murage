@@ -154,7 +154,7 @@ export class TelegramService {
   /** Replace a token Telegram rejected with a token for the SAME bot, then resume the saved pairing.
    * `commit` persists the token and runs only after getMe proves the paired bot identity. Nothing is
    * saved, revoked or re-paired on any refusal; a paused (Chief-changed) connection is never eligible. */
-  async replaceToken(token: string, targetBotId: string, commit: () => void): Promise<boolean> {
+  async replaceToken(token: string, targetBotId: string, commit: () => void | Promise<void>): Promise<boolean> {
     const connection = this.connection;
     if (!connection || !this.status().canReplaceToken) throw new TelegramTokenRefusal(NOT_REPLACEABLE);
     if (connection.targetBotId !== targetBotId || this.options.isCurrentTarget?.(targetBotId) === false) {
@@ -178,7 +178,7 @@ export class TelegramService {
       if (!current()) throw new TelegramTokenRefusal(CHANGED);
       if (bot.id !== connection.botIdentityId) throw refuse(WRONG_BOT);
       if (this.options.isCurrentTarget?.(targetBotId) === false) { await this.revalidateTarget(); throw new TelegramTokenRefusal(CHANGED); }
-      try { commit(); } catch (error) { refuse(TOKEN_REJECTED); throw error; }
+      try { const committed = commit(); if (committed) await committed; } catch (error) { refuse(TOKEN_REJECTED); throw error; }
     } finally { if (generation === this.generation) { this.connecting = false; this.controller = undefined; } }
     this.channel?.stop(); // retire the channel instance bound to the rejected token; resume() re-verifies and reopens the same binding
     return this.resume(token, targetBotId);

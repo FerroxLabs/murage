@@ -1,6 +1,6 @@
 // Copyright 2026 Ferrox Labs
 // SPDX-License-Identifier: AGPL-3.0-or-later
-import { mkdirSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { beforeEach, expect, it } from "vitest";
 import { DATA_DIR } from "./config.ts";
@@ -25,8 +25,9 @@ import { createProjectGoal } from "./project-goals.ts";
 import { insertRoomRequest as projectInsertRoomRequest } from "./project-records.ts";
 import { roomRequest } from "./room-requests.ts";
 import { LineageAllowance } from "./memory/lineage-allowance.ts";
+import { removeTempDirSync } from "./testing/cleanup.ts";
 
-beforeEach(() => { closeDatabase(); rmSync(DATA_DIR, { recursive: true, force: true }); mkdirSync(DATA_DIR, { recursive: true }); });
+beforeEach(() => { closeDatabase(); removeTempDirSync(DATA_DIR); mkdirSync(DATA_DIR, { recursive: true }); });
 function fixture() {
   const store = new Store(() => ({ instanceId: "fixture", model: "fixture" }));
   const make = (name: string, section: string) => { const bot = store.createBot(); store.patchBot(bot.id, { name, section }); return bot; };
@@ -319,10 +320,10 @@ it("memory-off non-home turns still pin only their allowed skills",async()=>{
   expect(()=>preparePinnedProcedures(f.iris.id,f.work.threadId,pin,false)).not.toThrow();
 });
 it("room prompt consumption omits copied results from another partition",async()=>{
-  const f=fixture();const {partitionTranscriptMessages}=await import("./partition-sources.ts");
+  const f=fixture();const {botMessages,botViewer}=await import("./bot-read.ts");
   const source=f.store.appendMessage(f.iris.threadId,{role:"bot",kind:"text",text:"CANARY_DESIGN_RESULT"});
   f.store.appendMessage(f.salesRoom.threadId,{role:"bot",kind:"text",text:"CANARY_DESIGN_RESULT",copyOf:{threadId:f.iris.threadId,messageIds:[source.id]}});
-  const messages=partitionTranscriptMessages(database(),f.iris.id,f.salesRoom.threadId,f.store.messagesFor(f.salesRoom.threadId));
+  const messages=botMessages(database(),botViewer(f.iris.id),f.salesRoom.threadId,f.store.messagesFor(f.salesRoom.threadId));
   expect(JSON.stringify(messages)).not.toContain("CANARY_DESIGN_RESULT");
 });
 

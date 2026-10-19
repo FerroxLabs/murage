@@ -16,6 +16,7 @@ import { closeMemoryIndexReader } from "../index-reader.ts";
 import { claimMemoryJob, publishMemoryWork } from "../jobs.ts";
 import { memoryAccess, reconcileMemoryRoster, type MemoryAccess } from "../policy.ts";
 import { setMemoryMode } from "../repository.ts";
+import { storeAnchorMessage } from "./anchor-message.ts";
 
 export const THREAD = "thread";
 export const ROSTER = { bots: [{ id: "bot", threadId: THREAD }], groups: [] };
@@ -32,7 +33,9 @@ export function accessFor(roster = ROSTER, bot = "bot", thread = THREAD): { acce
 }
 /** Capture a message as a source and publish its chunks as records. Returns the source id and the job id. */
 export function captureAndPublish(text: string, id = `source:${randomUUID()}`, speaker = "owner") {
-  captureSource(database(), { id, threadId: THREAD, messageId: randomUUID(), kind: "text", speaker, outcome: "recorded", text });
+  const messageId = randomUUID();
+  storeAnchorMessage(database(), THREAD, messageId, text, speaker === "owner" ? "user" : "bot");
+  captureSource(database(), { id, threadId: THREAD, messageId, kind: "text", speaker, outcome: "recorded", text });
   const work = claimMemoryJob("fixture");
   if (!work) throw new Error("Expected a captured source to produce a memory job");
   publishMemoryWork(work, "fixture", captureWork(work));

@@ -4,6 +4,8 @@
 // bot's model mid-thread), and an update appended outside the provider's own
 // turn. The first two coincide today but are distinct markers on purpose:
 // rewound also invalidates OTHER instances' cursors, fresh does not.
+import type { BotRow } from "./bot-read.ts";
+
 /** Which engine wrote an assistant line: the provider instance id and the
  * name the model picker shows for it. Absent on user lines and on lines from
  * before rows were labelled (Message.engine). */
@@ -12,11 +14,14 @@ export interface TranscriptEngine {
   label: string;
 }
 
+/** One replayed line. `source` is the door's BotRow for the row it renders (S6 rule 18b, bot-read.ts botRowOf): only a row the door shows
+ * the reading bot becomes a line. */
 export interface TranscriptEntry {
   id?: string;
   role: "user" | "assistant";
   text: string;
   engine?: TranscriptEngine;
+  source: BotRow;
 }
 
 export interface TurnContextInput {

@@ -335,6 +335,36 @@ export function memoryAccessIsOwnerAudience(access: MemoryAccess): boolean {
   return Boolean(trusted) && trusted!.claim.notOwnerAudience !== true && isWorkspaceOwner(access.humanPrincipal);
 }
 
+/** The threads thread recall may read for this access (THREAD-RECALL-DESIGN r6 rules 1 and 2): the bot's own direct chat and tasks, minus
+ * another bot's or a room's threads, the owner's excluded threads and threads bound to a channel person, narrowed to the turn's partition.
+ * Empty unless the turn runs in one of the bot's own threads and is an owner audience (a room, a channel person, a non-owner or unproven
+ * turn, an isolated partition). Computed on every call from the live roster, never cached. */
+export function recallThreads(access: MemoryAccess): string[] {
+  const trusted = contexts.get(access);
+  if (!trusted || !memoryAccessIsOwnerAudience(access)) return [];
+  const roster = trusted.roster();
+  const bot = roster.bots.find(candidate => candidate.id === access.botId);
+  if (!bot) return [];
+  const own = [...new Set([bot.threadId, ...(bot.tasks ?? []).map(task => task.threadId)])];
+  if (!own.includes(access.threadId)) return [];
+  const foreign = new Set([
+    ...roster.bots.filter(other => other.id !== access.botId).flatMap(other => [other.threadId, ...(other.tasks ?? []).map(task => task.threadId)]),
+    ...roster.groups.flatMap(room => [room.threadId, ...(room.tasks ?? []).map(task => task.threadId)]),
+  ]);
+  if (foreign.has(access.threadId)) return [];
+  const db = database();
+  const excluded = new Set(db.prepare("SELECT e.value FROM memory_scope_bindings b,json_each(b.intent,'$.excludedThreadIds') e WHERE b.id='memory-owner-settings'").all().map(row => String(row.value)));
+  const persons = boundThreadPersons(db);
+  const principal = access.humanPrincipal;
+  let set = own.filter(thread => !foreign.has(thread) && !excluded.has(thread) && (persons.has(thread) ? persons.get(thread) : WORKSPACE_OWNER) === principal.personId);
+  const store = executionStore(), stored = store?.bot(access.botId);
+  if (stored && stored.partitionedAt !== undefined) {
+    if (threadPartition(stored, access.threadId).kind === "isolated") return [];
+    set = set.filter(thread => sameThreadPartition(stored, access.threadId, thread));
+  }
+  return set;
+}
+
 /** The turn's words were not proven to be the owner's (the claim flag). Its
  * verdicts are about this reader, never about the receipts themselves. */
 export function memoryAccessNotOwnerAudience(access: MemoryAccess): boolean {

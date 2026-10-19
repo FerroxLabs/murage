@@ -1,4 +1,5 @@
 import { cliSig, knownCliVersion, noteVersionProbe, rememberCliVersion, versionProbeAllowed } from "../isolation-cache.ts";
+import { cloudEngineHome, cloudTurnBot, cloudTurnEnvironment } from "../../cloud-home/turn-process.ts";
 import { renderDriverReplay } from "../../turn-context.ts";
 import { anyMountHoldsStandIn, anyMountIncomplete, clearMountsIncomplete, connectorMountRefOfEnv } from "../turn-credentials.ts";
 import { McpBackoff, MCP_REQUIRED_WAIT_MS, mcpReconnectWaitMs, mcpRecoveryMs, requiredMcpLabel, toolsMayBeLoadingNotice, toolsUnavailableNotice, unavailableLabels } from "../mcp-readiness.ts";
@@ -51,13 +52,14 @@ import { folderTrustKindNames } from "../../folder-trust.ts";
 import { createHash } from "node:crypto";
 import { existsSync, mkdtempSync, rmSync, unlinkSync } from "node:fs";
 import { homedir, tmpdir } from "node:os";
-import { join as joinPath } from "node:path";
+import { sep as pathSep } from "node:path";
 import { MCP_LISTED_FILE_ENV } from "../../mcp-listed.ts";
 import { stripVTControlCharacters } from "node:util";
 
 import { deleteEnvNames, PROVIDER_CREDENTIAL_ENV, stripRoutingEnv, WORKSPACE_CREDENTIAL_ENV } from "../../config.ts";
 import { decodeInjectId } from "../local-inject.ts";
 import { createFuigoFailureObservations, failureKind } from "./failure-diagnostics.ts";
+import { withCliMemoryLearning } from "../cli-memory-learning.ts";
 import { DIAGNOSTIC_RPC_METHODS, parseRuntimeErrorDiagnostic } from "../../../shared/error-diagnostic.ts";
 import { describeSpawnFailure, execCli, killCliTree, spawnCli } from "../../procs.ts";
 import { cachedCliVersion } from "../../cli-version-cache.ts";
@@ -100,6 +102,8 @@ import { classifyProviderError, ENGINE_ERROR_KIND_PREFIX, ERROR_MESSAGE_MAX } fr
 import { redactSecretsInText } from "../../redact.ts";
 
 import { toolFilePaths } from "../../own-workspace-approval.ts";
+import type { ExecEnv, McpMountRecord } from "../../../shared/mount-identity.ts";
+import { execEnvHanded, execEnvNow, handedEngineEnv, type HandedEnv } from "../../engine-env.ts";
 
 /** Built-in ACP tool kinds that name what they do. None of them is a call
  * into the computer MCP server, which reaches the engine as an MCP tool. */
@@ -131,8 +135,33 @@ export function acpAskControlsComputer(toolCall: unknown): boolean {
   // One of the engine's own tools.
   if (identity?.namespace === "fuigo_build" && identity.name !== "use_tool" && text(identity.name)) return false;
   if (ACP_BUILTIN_KINDS.has(text(call.kind))) return false;
-  // An MCP-shaped name for another server ("browser__open").
-  return !names.some(name => /^[\w.-]+__[\w.-]+$/.test(name));
+  // An MCP-shaped name for another server ("browser__open"), from the
+  // engine's structured input only: a model-written title can make an ask a
+  // computer action (above), never clear one.
+  return !/^[\w.-]+__[\w.-]+$/.test(text(input?.tool_name));
+}
+
+/** The identity an ACP engine stamped on a permission ask
+ * (`_meta["fuigo/tool"]`), as request.opened carries it. No `fuigo/tool` key
+ * at all is no stamp: the ask is judged by its kind and title, as an
+ * unstamped engine's is. The key PRESENT with anything this cannot read
+ * (null, a string, a list, a wrong version, a blank or missing name) is an
+ * identity it cannot prove, never "no stamp": it is passed on empty, which
+ * every reader holds as unproven (no grant, the stop line stops) rather than
+ * judging the ask by its model-written title (Astra r3). */
+export function acpStampedIdentity(toolCall: unknown): { namespace: string; name: string; kind?: string } | undefined {
+  const call = toolCall && typeof toolCall === "object" && !Array.isArray(toolCall) ? toolCall as { _meta?: unknown } : undefined;
+  const meta = call?._meta;
+  if (!meta || typeof meta !== "object" || Array.isArray(meta) || !("fuigo/tool" in meta)) return undefined;
+  const stamp = (meta as Record<string, unknown>)["fuigo/tool"];
+  const body = stamp && typeof stamp === "object" && !Array.isArray(stamp) ? stamp as Record<string, unknown> : undefined;
+  const text = (value: unknown) => typeof value === "string" && value.trim() ? value : undefined;
+  const namespace = text(body?.namespace);
+  const name = text(body?.name);
+  if (body?.version === 1 && namespace && name) {
+    return { namespace, name, ...(typeof body.kind === "string" ? { kind: body.kind } : {}) };
+  }
+  return { namespace: "", name: "" };
 }
 
 /** The files an ACP permission request names, for the own-workspace check.
@@ -151,6 +180,25 @@ export function acpAskControlsComputer(toolCall: unknown): boolean {
  * names an innocent path in one place and an escaping path in the other is
  * judged on both. `undefined` means "a shape this cannot read", and every
  * caller treats that as "ask" — never as "allow". */
+/** The shell form an ACP engine's commands are checked under (Rule 74d): the platform's own, like Codex's. */
+const acpShellForm: readonly string[] = process.platform === "win32" ? ["powershell.exe", "-NoProfile", "-Command"] : [process.env.SHELL || "/bin/sh", "-c"];
+
+const isPlainInput = (value: unknown): value is Record<string, unknown> => !!value && typeof value === "object" && !Array.isArray(value);
+
+/** Rules 2, 55: the first source of an ACP call that is present but malformed, by name: a `rawInput` that is not an object, or
+ *  `locations` that are not a list of `{path: string}`. Such a call is unread as a whole, never read on its other source. */
+export function acpMalformedSource(toolCall: { locations?: unknown; rawInput?: unknown }): string | undefined {
+  if (toolCall.rawInput !== undefined && !isPlainInput(toolCall.rawInput)) return "rawInput";
+  const { locations } = toolCall;
+  if (locations !== undefined) {
+    if (!Array.isArray(locations)) return "locations";
+    for (const entry of locations) {
+      if (!isPlainInput(entry) || typeof entry.path !== "string" || !entry.path) return "locations";
+    }
+  }
+  return undefined;
+}
+
 export function acpToolFilePaths(toolCall: { locations?: unknown; rawInput?: unknown }): string[] | undefined {
   const paths: string[] = [];
   const { locations } = toolCall;
@@ -394,6 +442,17 @@ function cutCodePoints(text: string, limit: number, keep: "head" | "tail" = "hea
   return text.slice(trail >= 0xdc00 && trail <= 0xdfff ? start + 1 : start);
 }
 
+/** Fuigo (1.0.30+) refuses session/load while another process holds the session: JSON-RPC -32603 (generic, so
+ * not keyed on) with data.error_kind "session_unavailable". Callers apply this to the Fuigo provider only; the
+ * text form is the narrow fallback for the message Fuigo shows. */
+function sessionOpenElsewhere(error: unknown): boolean {
+  const e = (error && typeof error === "object" ? error : {}) as { message?: unknown; data?: unknown };
+  const data = e.data && typeof e.data === "object" ? (e.data as { error_kind?: unknown; message?: unknown }) : {};
+  if (data.error_kind === "session_unavailable") return true;
+  return [e.message, data.message].some((text) => typeof text === "string" && /open in another Fuigo (window|process)/i.test(text));
+}
+/** How long the lock retry backs off when the first load after the old child's exit still finds the session held. */
+const SESSION_LOCK_BACKOFF_MS = 3_000;
 /** Whether a session/load rejection is a refusal to surface rather than a
  * missing session to replace. `classifyError` is the engine's own reading of
  * a sign-in failure; -32602 is JSON-RPC invalid params, except OpenCode's
@@ -1004,11 +1063,11 @@ const methodNotFound = (error: unknown): boolean => (error as { code?: unknown }
 let mcpListedRoot: string | null = null;
 const mcpListedFile = (threadId: string, server: string): string => {
   if (!mcpListedRoot) {
-    mcpListedRoot = mkdtempSync(joinPath(tmpdir(), "murage-mcp-listed-"));
+    mcpListedRoot = mkdtempSync(`${tmpdir()}${pathSep}murage-mcp-listed-`);
     const root = mcpListedRoot;
     process.once("exit", () => { try { rmSync(root, { recursive: true, force: true }); } catch { /* best effort */ } });
   }
-  return joinPath(mcpListedRoot, createHash("sha256").update(`${threadId}\0${server}`).digest("hex").slice(0, 32));
+  return [mcpListedRoot, createHash("sha256").update(`${threadId}\0${server}`).digest("hex").slice(0, 32)].join(pathSep);
 };
 const clearMcpListed = (paths: Iterable<string>): void => {
   for (const path of paths) try { unlinkSync(path); } catch { /* not there */ }
@@ -1291,8 +1350,7 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
       const { instanceId, config } = input;
       const childEnv = () => {
         const env: Record<string, string | undefined> = {
-          ...process.env,
-          ...input.environment,
+          ...cloudTurnEnvironment(support.driverKind, { ...process.env, ...input.environment }, support.credentialEnv),
           PATH: augmentedPath(),
         };
         const allowedCredentials = new Set(support.credentialEnv ?? []);
@@ -1446,9 +1504,30 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
           turn.integrations?.custom,
           (name) => name === "murage-memory" || name === memoryName || servers.some((existing) => existing.name === name),
         )) {
+          // Rule 11: a name holding `__` cannot be told apart from its tools.
+          if (mount.name.includes("__")) continue;
           servers.push({ name: mount.name, command: mount.command, args: mount.args, env: acpEnv(mount.env) });
         }
         return servers;
+      };
+
+      /** Rule 54: one record per server handed at session/new. */
+      const acpMountRecords = (turn: SendTurnInput, servers: ReadonlyArray<{ name: string }>, memoryName: string): McpMountRecord[] => {
+        const own = new Map<string, string>();
+        if (turn.integrations?.agents) own.set(turn.integrations.agents.serverName ?? "agents", "own:agents");
+        if (turn.integrations?.memory) own.set(memoryName, "own:memory");
+        if (turn.integrations?.composio) own.set(connectedAppsServerName(turn.integrations.composio.env), "own:connector");
+        if (turn.integrations?.browser) own.set("browser", "own:browser");
+        if (turn.integrations?.computer || turn.integrations?.localComputer) own.set("computer", "own:computer");
+        const records: McpMountRecord[] = [];
+        for (const server of servers) {
+          if (server.name.includes("__")) continue;
+          const mountId = own.get(server.name);
+          records.push(mountId
+            ? { engineName: server.name, mountId, provenance: "own" }
+            : { engineName: server.name, mountId: `custom:${server.name}`, provenance: "custom" });
+        }
+        return records;
       };
 
       // ── Engine process pool (upstream 4b0dabc6, #1575) ─────────────────
@@ -1584,6 +1663,8 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
       const retireThread = (threadId: string) => threadEpochs.set(threadId, epochOf(threadId) + 1);
       let processSeq = 0;
       let disposed = false;
+      /** Threads with a send still waiting on an earlier child before it spawns: Stop All must fence them too. */
+      const sendWaits = new Map<string, number>();
 
       const writeTo = (threadId: string, proc: AcpProcess, obj: unknown) => {
         const out = obj as { id?: unknown; method?: unknown; result?: unknown; error?: unknown } | null;
@@ -1980,8 +2061,20 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
         // and Murage answers every ask that is not one of the three at once.
         const turnConfig: AcpConfig = (turn.stopLine || turn.routeAsks) && config.fullAuto ? { ...config, fullAuto: false } : config;
         if (active.has(threadId)) throw new Error("a turn is already running on this thread");
-        if (support.driverKind === "grokAgent") {
-          const closed = await teardowns.wait(threadId, undefined, acpStopBudget());
+        if (support.driverKind === "grokAgent" || support.driverKind === "fuigoAgent") {
+          // Fuigo 1.0.30 lets one process hold a session (session_writer.lock), so its
+          // next turn must also wait for the previous child to exit before session/load.
+          const waitEpoch = epochOf(threadId);
+          sendWaits.set(threadId, (sendWaits.get(threadId) ?? 0) + 1);
+          let closed: Awaited<ReturnType<typeof teardowns.wait>>;
+          try {
+            closed = await teardowns.wait(threadId, undefined, acpStopBudget());
+          } finally {
+            const left = (sendWaits.get(threadId) ?? 1) - 1;
+            if (left > 0) sendWaits.set(threadId, left); else sendWaits.delete(threadId);
+          }
+          // A Stop or dispose during the wait ends the turn here: nothing spawns.
+          if (disposed || epochOf(threadId) !== waitEpoch) throw new Error("the turn was stopped before it started");
           if (!closed.closeConfirmed) throw new ProviderStopUnconfirmedError(DRIVER_KIND, closed);
           if (active.has(threadId)) throw new Error("a turn is already running on this thread");
         }
@@ -1995,8 +2088,12 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
          * event of the warm has been dropped (`forgetPrewarm`). */
         const endPrewarm = () => { if (turn.prewarm) { prewarmChildren.delete(threadId); prewarming.end(threadId); } };
         const forgetPrewarm = () => { if (turn.prewarm) prewarmTurnIds.delete(turnId); };
-        const cwd = turn.cwd ?? config.workspace ?? homedir();
+        const cwd = turn.cwd ?? config.workspace ?? (process.env.MURAGE_CLOUD_ROLE === "home" ? cloudEngineHome(support.driverKind) : homedir());
         const env = childEnv();
+        // The launcher scopes this turn's state by bot and refuses a non-probe turn without one.
+        cloudTurnBot(env, turn.warmIdentity?.botId);
+        // Rule 74a..d: set at the spawn, once the env is final
+        let handedEnv: HandedEnv | undefined;
         if (
           support.requireAuthenticationBeforeSpawn
           && !turn.providerRoute
@@ -2758,9 +2855,18 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
           timer?.unref?.();
           traceOpen("permission.wait", requestId);
           asks.set(requestId, finish);
+          // F12 (Rule 74): every permission request reports the map this engine was handed; a command's after the check of the
+          // generation its card opens in (Rule 74d), made now and never at spawn
+          const f12 = handedEnv;
+          if (!f12) openCard();
+          else if (kind === "execute") void execEnvNow(threadId, acpShellForm, f12, cwd).then(openCard, () => openCard(undefined));
+          else openCard(execEnvHanded(f12, cwd, acpShellForm));
+          function openCard(execEnv?: ExecEnv) {
+          if (!asks.has(requestId)) return;
           emit({
             ...base(threadId, turnId),
             type: "request.opened",
+            ...(execEnv ? { execEnv } : {}),
             requestId,
             requestType: "permission",
             tool,
@@ -2772,11 +2878,22 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
             // The engine's structured kind and stamped identity (the Chief's
             // proposal turn allows its one tool by these, never by a title).
             ...(kind ? { toolKind: kind } : {}),
-            ...(() => {
-              const stamp = toolCall._meta?.["fuigo/tool"];
-              return stamp && stamp.version === 1 && typeof stamp.namespace === "string" && typeof stamp.name === "string"
-                ? { toolIdentity: { namespace: stamp.namespace, name: stamp.name, ...(typeof stamp.kind === "string" ? { kind: stamp.kind } : {}) } } : {};
-            })(),
+            // A stamp this cannot read (null included) is an identity it
+            // cannot prove, never "no stamp": the ask is then judged
+            // unproven (no grant, the stop line stops), not by its title.
+            ...(() => { const toolIdentity = acpStampedIdentity(toolCall); return toolIdentity ? { toolIdentity } : {}; })(),
+            // The mounts this turn handed the engine: a stamped MCP identity
+            // is proven against these names and nothing else.
+            // Records, not bare names (Rule 54): the servers handed at
+            // session/new, no external records.
+            mcpMounts: acpMountRecords(turn, mcpServers, ownedMemoryAlias ?? "murage-memory"),
+            toolEngine: "acp" as const,
+            // F5: no kind on the wire means nothing to resolve the call by;
+            // the title is never a name.
+            ...(!questionTool && !kind ? { toolInputMissing: "kind" } : {}),
+            // Rules 2, 55: a source that is present but malformed (a rawInput that is not an object, locations that are not a list) makes
+            // the whole call unread; it is never dropped or replaced with an empty input.
+            ...(() => { const bad = !questionTool && kind ? acpMalformedSource(toolCall) : undefined; return bad ? { toolInputMissing: bad } : {}; })(),
             // Structured, off the wire — never parsed back out of `summary`,
             // which is composed from what the model wrote.
             ...(() => { const filePaths = acpToolFilePaths(toolCall); return filePaths ? { filePaths } : {}; })(),
@@ -2791,13 +2908,14 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
             })(),
             // The engine's own call, for the stop line: a command, a delete
             // with the places it names, or a tool by its title and arguments.
-            ...(questionTool ? {} : { toolCall: {
-              name: kind === "execute" ? "shell" : kind === "delete" ? "delete" : title || kind || "tool",
-              input: kind === "delete"
-                ? { ...(toolCall.rawInput && typeof toolCall.rawInput === "object" ? toolCall.rawInput : {}), ...(Array.isArray(toolCall.locations) ? { locations: toolCall.locations } : {}) }
+            ...(questionTool || !kind ? {} : { toolCall: {
+              name: kind === "execute" ? "shell" : kind === "delete" ? "delete" : kind,
+              input: kind === "delete" || kind === "edit" || kind === "read" || kind === "move"
+                ? { ...(isPlainInput(toolCall.rawInput) ? toolCall.rawInput : {}), ...(toolCall.locations !== undefined ? { locations: toolCall.locations } : {}) }
                 : toolCall.rawInput,
             } }),
           });
+          }
         };
 
         /** Settle a held turn once its helpers are done (and the reply they
@@ -3530,6 +3648,34 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
         /** sendTurn has handed the turn id back: a refused submission from here
          * on settles the turn itself (no caller is left to stop it by id). */
         let handedBack = false;
+        // Rule 74a..d: the engine is handed the finished F12 map as its explicit env: the owner's captured toolchain environment, the
+        // same credential, routing and guard strips this driver applies to its own, the driver's names, the pins last. A command's
+        // environment is checked when its card opens, once per (generation, shell, cwd, map), and every permission request reports it.
+        {
+          const processEnv: NodeJS.ProcessEnv = process.env;
+          const driverNames: Record<string, string> = {};
+          for (const [name, value] of Object.entries(env)) if (typeof value === "string" && name !== "PATH" && processEnv[name] !== value) driverNames[name] = value;
+          // a PATH the driver set itself (the bundled engine's folder first, a browser mount's own) is the driver's name, kept
+          if (typeof env.PATH === "string" && env.PATH !== augmentedPath()) driverNames.PATH = env.PATH;
+          const allowedCredentials = new Set(support.credentialEnv ?? []);
+          const handed = await handedEngineEnv({
+            cwd,
+            strip: (map) => {
+              const out: Record<string, string | undefined> = { ...map };
+              for (const name of Object.keys(processEnv)) if (!(name in env) || env[name] === undefined) delete out[name];
+              deleteEnvNames(out, [...PROVIDER_CREDENTIAL_ENV, ...WORKSPACE_CREDENTIAL_ENV].filter((key) => !allowedCredentials.has(key)));
+              stripRoutingEnv(out);
+              deleteEnvNames(out, [FUIGO_ALLOW_UPSTREAM_ENV]);
+              const kept: Record<string, string> = {};
+              for (const [name, value] of Object.entries(out)) if (typeof value === "string") kept[name] = value;
+              return kept;
+            },
+            extra: driverNames,
+          }, env); // a Cloud home hands the pins on top of this turn's cloudTurnEnvironment map (its bot marker included)
+          for (const name of Object.keys(env)) delete env[name];
+          Object.assign(env, handed.env);
+          handedEnv = handed;
+        }
         const start = () => {
           if (started) return;
           started = true;
@@ -3881,11 +4027,44 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
             const cursor = grokBinding ? grokBinding.cursor : resumeId;
             if (cursor) {
               try {
-                sessionResult = await request(
-                  "session/load",
-                  { sessionId: cursor, cwd, mcpServers, _meta: { noReplay: true } },
-                  LOAD_SESSION_TIMEOUT,
-                );
+                try {
+                  sessionResult = await request(
+                    "session/load",
+                    { sessionId: cursor, cwd, mcpServers, _meta: { noReplay: true } },
+                    LOAD_SESSION_TIMEOUT,
+                  );
+                } catch (firstError) {
+                  // Fuigo 1.0.30: a session is open in one process only. A load that lands while the
+                  // previous child still holds it is not a lost session: wait for that child's
+                  // teardown and load once more before any fresh-session fallback.
+                  if (support.driverKind !== "fuigoAgent" || !sessionOpenElsewhere(firstError)) throw firstError;
+                  // Only an earlier child can hold the lock: never wait on this turn's own live child.
+                  const [earlierTurns, earlierPooled] = await Promise.all([
+                    teardowns.waitOthers(threadId, turnId, acpStopBudget()),
+                    poolTeardowns.waitOthers(threadId, proc?.key ?? "", acpStopBudget()),
+                  ]);
+                  const earlier = earlierTurns.closeConfirmed ? earlierPooled : earlierTurns;
+                  if (state.settled || disposed) return;
+                  if (state.cancelRequested || epochOf(threadId) !== startEpoch) { settle(true, "cancelled"); return; }
+                  if (!earlier.closeConfirmed) throw firstError;
+                  // Fuigo can free the lock a moment after the process exits (about 2 s seen): load once after
+                  // the teardown, and once more after a short backoff if it still answers session_unavailable.
+                  for (let attempt = 0; ; attempt++) {
+                    try {
+                      sessionResult = await request(
+                        "session/load",
+                        { sessionId: cursor, cwd, mcpServers, _meta: { noReplay: true } },
+                        LOAD_SESSION_TIMEOUT,
+                      );
+                      break;
+                    } catch (retryError) {
+                      if (attempt >= 1 || !sessionOpenElsewhere(retryError)) throw retryError;
+                      await new Promise((resolve) => setTimeout(resolve, SESSION_LOCK_BACKOFF_MS));
+                      if (state.settled || disposed) return;
+                      if (state.cancelRequested || epochOf(threadId) !== startEpoch) { settle(true, "cancelled"); return; }
+                    }
+                  }
+                }
                 // An agent is allowed to ANSWER session/load with null when the
                 // session is gone. Taking the cursor on that answer pinned
                 // sessionId to a dead id, skipped the session/new below, and
@@ -3900,7 +4079,7 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
                 // session it no longer has as invalid params whose data is
                 // exactly the rejected id, and that one IS a missing session.
                 if (loadRefusal(error, cursor, support.classifyError)) throw error;
-                if ((error as { code?: unknown })?.code === -32602 && !namesMissingSession(error)) {
+                if ((support.driverKind === "fuigoAgent" && sessionOpenElsewhere(error)) || ((error as { code?: unknown })?.code === -32602 && !namesMissingSession(error))) {
                   // An opaque -32602 on a stored cursor (it names no model or setting): the engine no longer
                   // holds it. Recover in THIS turn, with one plain line for the owner; the engine's words stay in the log.
                   console.warn(`${ENGINE} refused a stored conversation cursor (${acpEngineErrorText((error as { data?: unknown })?.data) ?? acpEngineErrorText(String((error as { message?: unknown })?.message ?? "")) ?? "invalid params"}); starting a new session and replaying`);
@@ -4443,7 +4622,7 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
         return { state: "available", version: probe.version, authenticated: await support.isAuthenticated(env, config) };
       };
 
-      return {
+      return withCliMemoryLearning({
         instanceId,
         driverKind: DRIVER_KIND,
         displayName: input.displayName,
@@ -4553,7 +4732,7 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
             },
           } : {}),
           stopAll: async () => {
-            for (const threadId of [...active.keys(), ...pool.keys()]) retireThread(threadId);
+            for (const threadId of new Set([...active.keys(), ...pool.keys(), ...sendWaits.keys()])) retireThread(threadId);
             for (const { stop } of active.values()) stop("driver_dispose");
             for (const threadId of [...pool.keys()]) closeIdle(threadId, "stop_all");
             const result = await waitAllClosed();
@@ -4574,7 +4753,7 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
           if (!result.closeConfirmed) throw new ProviderStopUnconfirmedError(DRIVER_KIND, result);
           listeners.clear();
         },
-      };
+      });
     },
   };
 }

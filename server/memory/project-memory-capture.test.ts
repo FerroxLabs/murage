@@ -6,7 +6,7 @@
 // memory with its evidence intact, and "What this project remembers" (which
 // lists the room scope) is no longer empty. Direct chats and bot pair rooms
 // keep capturing into their own conversation scope.
-import { mkdirSync, rmSync } from "node:fs";
+import { mkdirSync } from "node:fs";
 import { afterEach, beforeEach, expect, it } from "vitest";
 import { DATA_DIR } from "../config.ts";
 import { closeDatabase, database } from "../database.ts";
@@ -26,6 +26,8 @@ import { checkReplyActions, toolAction } from "../reply-action-guard.ts";
 import { admissibleActionSources } from "./pip-admission.ts";
 import { setMemoryMode } from "./repository.ts";
 import { LineageAllowance } from "./lineage-allowance.ts";
+import { removeTempDirSync } from "../testing/cleanup.ts";
+import { storeAnchorMessage } from "./testing/anchor-message.ts";
 
 const roster: MemoryRoster = {
   bots: [
@@ -39,7 +41,7 @@ const roster: MemoryRoster = {
   ],
 };
 
-beforeEach(() => { closeDatabase(); rmSync(DATA_DIR, { recursive: true, force: true }); mkdirSync(DATA_DIR, { recursive: true }); setMemoryCaptureRoster(() => roster); });
+beforeEach(() => { closeDatabase(); removeTempDirSync(DATA_DIR); mkdirSync(DATA_DIR, { recursive: true }); setMemoryCaptureRoster(() => roster); });
 afterEach(() => setMemoryCaptureRoster(null));
 
 function access(botId: string, thread: string, notOwnerAudience = false) {
@@ -130,7 +132,7 @@ it("a save made in a project desk thread lands in project memory", () => {
 it("the room thread's own checkpoint, now kept in the room scope, still rides its turns", async () => {
   reconcileMemoryRoster(roster);
   setMemoryMode("capture");
-  captureSource(database(), { id: "src-cp", threadId: "closing-chat", messageId: "m-cp", kind: "text", speaker: "owner", outcome: "recorded", text: "Ship the pricing page by Friday." });
+  storeAnchorMessage(database(), "closing-chat", "m-cp", "Ship the pricing page by Friday."); captureSource(database(), { id: "src-cp", threadId: "closing-chat", messageId: "m-cp", kind: "text", speaker: "owner", outcome: "recorded", text: "Ship the pricing page by Friday." });
   const work = claimMemoryJob("m-worker")!;
   publishMemoryWork(work, "m-worker", captureWork(work));
   const result = refreshMemoryCheckpoint(work.id);

@@ -5,7 +5,7 @@
 // judged once and kept; a later turn judges only the receipts written since, UNLESS something that could take a receipt away was written
 // (the authority epoch), and then the whole session is judged again. A revoked, forgotten, tombstoned, archived, undone or policy-changed
 // record must never be treated as still allowed. Fail closed: a missing trigger makes one of these tests fail.
-import { mkdirSync, rmSync } from "node:fs";
+import { mkdirSync } from "node:fs";
 import { beforeEach, describe, expect, it } from "vitest";
 import { afterEach as thawAfterEach, beforeEach as thawBeforeEach } from "vitest";
 import { thawRootSetWritesForTest } from "./replay-lineage.ts";
@@ -23,13 +23,16 @@ import { setMemoryMode } from "./repository.ts";
 import { archiveMemoryRecord } from "./retention.ts";
 import { reviewKeep, reviewUndo } from "./review.ts";
 import { LineageAllowance } from "./lineage-allowance.ts";
+import { stampFreshSession } from "./testing/writetime-fixture.ts";
+import { removeTempDirSync } from "../testing/cleanup.ts";
+import { storeAnchorMessage } from "./testing/anchor-message.ts";
 // 1.0.2: this test models a 1.0.1 file (legacy root-set rows) for the read-time judge, which still decides legacy data until S6.
 thawBeforeEach(() => thawRootSetWritesForTest(true));
 thawAfterEach(() => thawRootSetWritesForTest(false));
 
 const roster: MemoryRoster = { bots: [{ id: "bot", threadId: "chat", tasks: [{ threadId: "older" }] }], groups: [] };
 beforeEach(() => {
-  closeDatabase(); rmSync(DATA_DIR, { recursive: true, force: true }); mkdirSync(DATA_DIR, { recursive: true });
+  closeDatabase(); removeTempDirSync(DATA_DIR); mkdirSync(DATA_DIR, { recursive: true });
   setMemoryMode("active"); reconcileMemoryRoster(roster); resetSessionHolds();
 });
 
@@ -40,7 +43,7 @@ function access() {
 let counter = 0;
 function newRecord(state: "active" | "candidate" = "active") {
   const text = `The alarm code is ${4800 + counter++}.`, sourceId = `message:older:m${counter}`;
-  captureSource(database(), { id: sourceId, threadId: "older", messageId: `m${counter}`, kind: "text", speaker: "owner", outcome: "recorded", text });
+  storeAnchorMessage(database(), "older", `m${counter}`, text); captureSource(database(), { id: sourceId, threadId: "older", messageId: `m${counter}`, kind: "text", speaker: "owner", outcome: "recorded", text });
   const record = saveMemoryCandidate(text, [{ sourceId, revision: 1, startByte: 0, endByte: Buffer.byteLength(text) }], `k${counter}`, access());
   database().prepare("UPDATE memory_records SET state=? WHERE id=?").run(state, record);
   return { record, sourceId };
@@ -48,7 +51,8 @@ function newRecord(state: "active" | "candidate" = "active") {
 const receipt = (id: string, records: Array<{ id: string; version: number }>, state = "delivered") =>
   database().prepare("INSERT INTO memory_disclosures(bundle_id,thread_id,driver_instance,native_session,record_versions,source_versions,output_message_ids,policy_revision,deletion_epoch,token_count,state,created_at) VALUES(?,'chat','engine','S',?,'[]','[]',(SELECT policy_revision FROM memory_meta),(SELECT deletion_epoch FROM memory_meta),0,?,?)")
     .run(id, JSON.stringify(records), state, Date.now());
-const sessionRow = () => recordSessionRoots("chat", "engine", "S", outputRootsFor(LineageAllowance.tool(1_000_000_000), []));
+// the session row as a 1.0.3 fresh start leaves it: stamped with the door epoch (S6 rule 26)
+const sessionRow = () => { recordSessionRoots("chat", "engine", "S", outputRootsFor(LineageAllowance.tool(1_000_000_000), [])); stampFreshSession(database(), "chat", "engine", "S"); };
 const check = (why?: { reason?: string }) => continuationMemoryRevoked(LineageAllowance.tool(), "chat", "engine", "S", access(), why);
 function countStatements(match: (text: string) => boolean) {
   const db = database(), real = db.prepare.bind(db);

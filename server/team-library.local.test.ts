@@ -4,7 +4,7 @@
 // pass means the path genuinely never touched the network, not that the network
 // happened to work. That is the whole point of P0: Murage runs headless,
 // air-gapped and behind local models, and the library must work anyway.
-import { mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync, existsSync, mkdirSync } from "node:fs";
+import { mkdtempSync, readFileSync, readdirSync, writeFileSync, existsSync, mkdirSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -23,6 +23,7 @@ import {
   refreshRemoteCatalog,
   type TeamCatalog,
 } from "./team-library.ts";
+import { removeTempDirSync } from "./testing/cleanup.ts";
 
 const repoRoot = dirname(dirname(fileURLToPath(import.meta.url)));
 const skillLibrary = join(repoRoot, "skills-library");
@@ -42,7 +43,7 @@ function noCache(): string {
 }
 
 afterEach(() => {
-  for (const directory of scratch.splice(0)) rmSync(directory, { recursive: true, force: true });
+  for (const directory of scratch.splice(0)) removeTempDirSync(directory);
 });
 
 /** How many entries the library actually ships, read once from the library.

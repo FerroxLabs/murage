@@ -5,7 +5,7 @@
 //   1 a restore holds EVERY retryable send (refused, failed), not only the waiting ones
 //   2 bot / channel removal records proof for each thread BEFORE the registry forgets them; purge honours group:<id>
 //   3 a confirmed channel deletion is honoured even when it left the roster empty
-import { mkdirSync, rmSync } from "node:fs";
+import { mkdirSync } from "node:fs";
 import { DatabaseSync } from "node:sqlite";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -18,6 +18,7 @@ import { insertRoomRequest, ownerSendsOwingWords, markOwnerWordsKept, OWNER_CANC
 import { sendFingerprint } from "./send-idempotency.ts";
 import { initializeOwnerSends, neutralizeRestoredSends, sendStore, SendStore } from "./send-store.ts";
 import { Store } from "./store.ts";
+import { removeTempDirSync } from "./testing/cleanup.ts";
 
 describe("1 a restore holds every retryable send", () => {
   const input = { kind: "bot" as const, ownerId: "b1", threadId: "t1", text: "do the thing", sendId: "s1", fingerprint: sendFingerprint("do the thing") };
@@ -70,7 +71,7 @@ describe("1 a restore holds every retryable send", () => {
 describe("2 and 3 deletion proof precedes the registry", () => {
   beforeEach(() => {
     closeMessageDb();
-    rmSync(DATA_DIR, { recursive: true, force: true });
+    removeTempDirSync(DATA_DIR);
     mkdirSync(DATA_DIR, { recursive: true });
     initializeProjectTables(database());
     sendStore.use(() => database());

@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { api, useStore } from "@/state/store";
 import { memoryButtonClass } from "./MemoryReview";
+import { t } from "@/lib/i18n";
 
 type Selection = { kind: "bot"; botId: string; topic?: string } | { kind: "section"; section: string };
 type Inventory = { selections: Selection[]; issues: Array<{ label: string; error: string }>; links: Array<{ id: string; selection: Selection; status: string }> };
@@ -15,19 +16,19 @@ export function MemoryNotebookPicker({ botId, onPreview }: { botId?: string; onP
   const visible = (selection: Selection) => !botId || selection.kind === "bot" && selection.botId === botId;
   const label = (selection: Selection) => selection.kind === "bot"
     ? `${state.bots.find(bot => bot.id === selection.botId)?.name ?? selection.botId} · ${selection.topic ?? "MEMORY.md"}`
-    : `Team brief · ${selection.section || "General"}`;
+    : t("memoryNotebook.teamBrief",{section:selection.section || t("memoryNotebook.general")});
   const run = async (work: () => Promise<void>) => {
     if (busy) return;
     setBusy(true); setError("");
-    try { await work(); } catch (cause) { setError(cause instanceof Error ? cause.message : "Notebook request failed."); }
+    try { await work(); } catch (cause) { setError(cause instanceof Error ? cause.message : t("memoryNotebook.requestFailed")); }
     finally { setBusy(false); }
   };
   const refresh = async () => { setInventory(await request({ action: "import-inventory" })); setSelected([]); };
-  return <section aria-label="Notebook selection" className="space-y-3">
-    <button type="button" className={memoryButtonClass} disabled={busy} onClick={() => void run(refresh)}>Find existing notebooks</button>
+  return <section aria-label={t("memoryNotebook.selection")} className="space-y-3">
+    <button type="button" className={memoryButtonClass} disabled={busy} onClick={() => void run(refresh)}>{t("memoryNotebook.find")}</button>
     {error && <p role="alert" className="text-[13px] text-danger">{error}</p>}
     {inventory && <>
-      <p className="text-[13px] text-ink-secondary">Choose up to 20 files per import. You will review their contents before importing; original files stay in place.</p>
+      <p className="text-[13px] text-ink-secondary">{t("memoryNotebook.choose")}</p>
       <div className="max-h-64 space-y-2 overflow-y-auto">
         {inventory.selections.filter(visible).map(selection => {
           const key = JSON.stringify(selection);
@@ -40,11 +41,11 @@ export function MemoryNotebookPicker({ botId, onPreview }: { botId?: string; onP
       </div>
       {inventory.issues.map((issue, index) => <p key={index} className="text-[13px] text-danger">{issue.label}: {issue.error}</p>)}
       <button type="button" className={memoryButtonClass} disabled={busy || !selected.length}
-        onClick={() => void run(async () => onPreview(await request({ action: "import-preview", selections: selected.map(item => JSON.parse(item)) })))}>Preview selected notebooks</button>
-      {inventory.links.filter(link => visible(link.selection)).map(link => <div key={link.id} role="group" aria-label={`Tracked notebook: ${label(link.selection)}`} className="rounded-lg border border-hairline/40 p-3 text-[13px]">
+        onClick={() => void run(async () => onPreview(await request({ action: "import-preview", selections: selected.map(item => JSON.parse(item)) })))}>{t("memoryNotebook.preview")}</button>
+      {inventory.links.filter(link => visible(link.selection)).map(link => <div key={link.id} role="group" aria-label={t("memoryNotebook.tracked",{label:label(link.selection)})} className="rounded-lg border border-hairline/40 p-3 text-[13px]">
         <p className="break-words">{label(link.selection)}</p>
-        <p>{link.status === "current" ? "Tracking file changes" : "Needs you: check the file and any pinned, edited, archived or forgotten memories before importing again."}</p>
-        <button type="button" className={memoryButtonClass} disabled={busy} onClick={() => void run(async () => { await request({ action: "import-stop-tracking", id: link.id }); await refresh(); })}>Stop tracking</button>
+        <p>{link.status === "current" ? t("memoryNotebook.tracking") : t("memoryNotebook.needsYou")}</p>
+        <button type="button" className={memoryButtonClass} disabled={busy} onClick={() => void run(async () => { await request({ action: "import-stop-tracking", id: link.id }); await refresh(); })}>{t("memoryNotebook.stopTracking")}</button>
       </div>)}
     </>}
   </section>;

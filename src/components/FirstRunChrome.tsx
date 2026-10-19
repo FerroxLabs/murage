@@ -164,7 +164,9 @@ let refused = false;
  *  be read and tested without a timer. */
 export function setupPollWanted(view: SetupView, idle: number): boolean {
   if (view.conversationLive !== true) return false;
-  if (view.next === null) return false;
+  // Every step done is not the end while the first backup is still owed:
+  // setup ends verified, so keep noticing the desktop's report land.
+  if (view.next === null && view.complete !== false) return false;
   return idle < SETUP_POLL_IDLE_LIMIT;
 }
 

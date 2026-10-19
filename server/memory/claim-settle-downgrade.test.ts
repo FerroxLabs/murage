@@ -2,7 +2,7 @@
 // T12 (CLAIM-DESIGN-FABLE.md 6, I8): 1.0.2 -> 1.0.1 -> 1.0.2 on the same app version. The downgrade deletes the settle sweep's and the
 // park reconciliation's done markers, 1.0.1's validator accepts the file, and the next v10 open runs both passes from the start over
 // what 1.0.1 wrote (blocked jobs left pending, a parked job whose source it re-activated).
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
@@ -12,11 +12,12 @@ import { initializeMessageTables } from "../message-tables.ts";
 import { downgradeMemorySchema, migrateMemorySchema, validateMemorySchema } from "./schema.ts";
 import { validateMemorySchema as validateMemorySchema101 } from "./testing/schema-1.0.1.ts";
 import { claimSettleSweepStep, parkReconcileStep, parkStuckJobsStep, resetClaimSettleSweep, resetParkReconcile, resetParkSweep } from "./park.ts";
+import { removeTempDirSync } from "../testing/cleanup.ts";
 
 const NOW = 1_000_000;
 const MARKERS = "('memory-claim-settle-sweep','memory-parked-reconcile')";
 let dir = "";
-afterEach(() => { delete process.env.MURAGE_APP_VERSION; if (dir) rmSync(dir, { recursive: true, force: true }); dir = ""; resetClaimSettleSweep(); resetParkReconcile(); resetParkSweep(); });
+afterEach(() => { delete process.env.MURAGE_APP_VERSION; if (dir) removeTempDirSync(dir); dir = ""; resetClaimSettleSweep(); resetParkReconcile(); resetParkSweep(); });
 
 /** A source with one version and one job (the columns every schema version has). */
 function write(db: DatabaseSync, id: string, opts: { outcome?: string; state?: string; status?: string; error?: string | null } = {}) {
@@ -49,7 +50,7 @@ it("T12: after a round trip through 1.0.1 on the same version, the settle sweep 
     expect(String(db.prepare("SELECT error FROM memory_jobs WHERE id='job-parked'").get()!.error)).toMatch(/^parked:v1:/);
 
     // the installer's "reinstall 1.0.1" step
-    expect(downgradeMemorySchema(db, 6)).toMatchObject({ status: "downgraded", from: 10, to: 6 });
+    expect(downgradeMemorySchema(db, 6)).toMatchObject({ status: "downgraded", from: 12, to: 6 });
     expect(() => validateMemorySchema101(db)).not.toThrow();
     expect(markers(db)).toEqual([]);
 
@@ -65,7 +66,7 @@ it("T12: after a round trip through 1.0.1 on the same version, the settle sweep 
     resetClaimSettleSweep(); resetParkReconcile(); resetParkSweep();
     migrateMemorySchema(db, "active");
     validateMemorySchema(db);
-    expect(Number(db.prepare("SELECT schema_version FROM memory_meta WHERE id=1").get()!.schema_version)).toBe(10);
+    expect(Number(db.prepare("SELECT schema_version FROM memory_meta WHERE id=1").get()!.schema_version)).toBe(12);
     const sweep = settleToEnd(db);
     expect(sweep.settled).toBe(320);
     expect(Number(db.prepare("SELECT count(*) AS n FROM memory_jobs WHERE status IN ('pending','partial','deferred','leased')").get()!.n)).toBe(0);

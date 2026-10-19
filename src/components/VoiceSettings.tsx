@@ -17,6 +17,7 @@ import { VoicePicker } from "./VoicePicker";
 import { isVoicePreview, previewMessageId, markAssigned, rowPreview, type PickerVoice } from "./voice-picker-model";
 import { useBotSettingsDraft } from "./bot-settings-drafts";
 import { systemVoiceOffer } from "../../shared/system-voices";
+import { opensPurchasePages } from "@/lib/native-shell";
 
 const SAMPLE = "Morning. Overnight the tests went green, and I left two notes for you in the thread.";
 
@@ -37,6 +38,9 @@ export function VoiceSettings({
   const [error, setError] = useState<string | null>(null);
   const [voices, setVoices] = useState<PickerVoice[]>([]);
   const [loadingVoices, setLoadingVoices] = useState(false);
+  // The list failing to load is said next to the picker, with a way to try again; an empty list would read as "no voices".
+  const [voicesFailed, setVoicesFailed] = useState(false);
+  const [voiceReload, setVoiceReload] = useState(0);
   useBotSettingsDraft("Voice settings", Boolean(key.trim()), saving || switching);
 
   const { capabilities } = useDesktopCapabilities();
@@ -75,18 +79,19 @@ export function VoiceSettings({
     }
     let alive = true;
     setLoadingVoices(true);
+    setVoicesFailed(false);
     api(`/api/tts/voices?provider=${provider}`)
       .then((r: { voices?: typeof voices; error?: string }) => {
         if (!alive) return;
         setVoices(r.voices ?? []);
         if (r.error) setError(r.error);
       })
-      .catch(() => alive && setVoices([]))
+      .catch(() => { if (alive) { setVoices([]); setVoicesFailed(true); } })
       .finally(() => alive && setLoadingVoices(false));
     return () => {
       alive = false;
     };
-  }, [configured, provider]);
+  }, [configured, provider, voiceReload]);
 
   const setProvider = (next: "flux" | "xai" | "elevenlabs" | "system") => {
     if (next === provider || switching || (next === "system" && !systemVoicesAvailable) || (next === "flux" && !fluxAvailable) || (next === "xai" && !xaiAvailable)) return;
@@ -228,7 +233,7 @@ export function VoiceSettings({
             {saving ? <Loader2 size={13} className="animate-spin" /> : <><Check size={13} />Save</>}
           </button>
         </div>
-        {!configured && (
+        {!configured && opensPurchasePages() && (
           <a
             href="https://elevenlabs.io/app/settings/api-keys"
             target="_blank"
@@ -257,6 +262,12 @@ export function VoiceSettings({
             preview={preview}
             onPreview={togglePreview}
           />
+          {voicesFailed && !loadingVoices && (
+            <div role="alert" className="mt-1.5 flex flex-wrap items-center gap-2 text-[12px] text-danger" data-testid="voices-load-failed">
+              <span>Couldn't load the voice list.</span>
+              <button type="button" className="underline hover:no-underline" onClick={() => setVoiceReload((n) => n + 1)}>Try again</button>
+            </div>
+          )}
           {voices.some((v) => v.gender) && (
             <div className="mt-1.5 text-[11.5px] text-ink-secondary">Every voice speaks every language.</div>
           )}

@@ -28,10 +28,11 @@ import {
 import { OUTPUT_NAMESPACE, WORKSPACE_SEARCH_MAX_DEPTH, WORKSPACE_SEARCH_MAX_ENTRIES } from "../shared/workspace-files.ts";
 import type { Artifact } from "../shared/artifacts.ts";
 import { ARTIFACT_PREVIEW_MAX_BYTES, ARTIFACT_TEXT_EXTENSIONS, ArtifactError, artifactWorkspaceIdentity, readArtifact, registerArtifact, verifiedArtifactSource, type ArtifactScope } from "./artifacts.ts";
-import { GENERATED_IMAGE_MAX_BYTES, IMAGE_MAX_BYTES, saveImage, type SavedAttachment } from "./attachments.ts";
+import { GENERATED_IMAGE_MAX_BYTES, IMAGE_MAX_BYTES, saveReceiptImage, writeNewReceiptImage, type SavedAttachment } from "./attachments.ts";
 import type { RuntimeEvent } from "./contracts.ts";
 import type { Store } from "./store.ts";
 import { turnSucceeded } from "./turn-outcome.ts";
+import { murageLine } from "./murage-line.ts";
 
 export type TerminalTurnEvent = Extract<RuntimeEvent, { type: "turn.completed" }>;
 
@@ -53,6 +54,9 @@ export interface OutputPublicationDeps {
   database: () => DatabaseSync;
   store: Store;
   artifactScopes: () => ArtifactScope[];
+  /** The provider turn a run (the dispatch claim id receipts record) belongs to, from the server's capability state, never a request; undefined
+   * when the capability is gone. The cards that name saved files carry it, so revoking that turn's inputs withholds them. */
+  turnOfRun?: (threadId: string, runId: string) => string | undefined;
 }
 
 /** A start's recovery in slices (index.ts): at most `limit` image receipts per call, none of `tried` again, and the shell cards only when asked. */
@@ -68,10 +72,10 @@ export interface OutputPublisher {
   publishTerminalOutputs(event: TerminalTurnEvent): Promise<void>;
   /** Startup reconciliation of pending assistant images and already registered
    * successful shell outputs. Shell recovery only repairs their missing cards. */
-  resumePending(options?: ResumePendingOptions): void;
+  resumePending(options?: ResumePendingOptions): Promise<void>;
   /** The owner released this held receipt: finish it directly (verify, save to Files, announce), whatever kind it is. Throws
    * an OutputPublicationError when it cannot finish, so the caller keeps the hold and the item stays listed for a retry. */
-  completeReleased(receiptId: string): void;
+  completeReleased(receiptId: string): Promise<void>;
 }
 
 /** Host facts only. Prose directs creation but never authorizes publication. */
@@ -91,7 +95,7 @@ export function outputDestinationInstructions(context: Pick<DispatchOutputContex
 
 interface ReceiptRow {
   id: string; producer: string; bot_id: string; thread_id: string; run_id: string; path_token: string; sha256: string; mime: string; bytes: number;
-  stage: string; artifact_id: string | null; attachment_id: string | null; message_id: string | null; error_category: string | null; created_at: number; updated_at: number;
+  stage: string; artifact_id: string | null; attachment_id: string | null; message_id: string | null; turn_id?: string | null; error_category: string | null; created_at: number; updated_at: number;
 }
 
 const ERROR_CATEGORIES = new Set<string>(["quota", "filesystem", "database", "attachment", "transcript", "scope", "verification", "limit"]);
@@ -104,6 +108,7 @@ function receiptFromRow(row: ReceiptRow): LocalOutputReceipt {
     ...(row.artifact_id ? { artifactId: row.artifact_id } : {}),
     ...(row.attachment_id ? { attachmentId: row.attachment_id } : {}),
     ...(row.message_id ? { messageId: row.message_id } : {}),
+    ...(row.turn_id ? { turnId: row.turn_id } : {}),
     ...(row.error_category && ERROR_CATEGORIES.has(row.error_category) ? { errorCategory: row.error_category as OutputPublicationErrorCategory } : {}),
     createdAt: Number(row.created_at), updatedAt: Number(row.updated_at),
   };
@@ -115,7 +120,9 @@ export class OutputPublicationError extends Error {
   constructor(category: OutputPublicationErrorCategory, message: string, status = 409) { super(message); this.category = category; this.status = status; }
 }
 
-export interface OutputReceiptInput { id?: string; producer: OutputProducer; botId: string; threadId: string; runId: string; pathToken: string; sha256: string; mime: string; bytes: number }
+export interface OutputReceiptInput { id?: string; producer: OutputProducer; botId: string; threadId: string; runId: string; pathToken: string; sha256: string; mime: string; bytes: number;
+  /** The producing provider turn, from the server's own turn state; kept with the receipt so recovery after a restart can name it. */
+  turnId?: string }
 
 /** Idempotent on (producer,bot,thread,run,path,sha256): a repeated sweep or
  * resume returns the existing receipt instead of creating a second one. */
@@ -128,6 +135,8 @@ export function recordOutputReceipt(db: DatabaseSync, input: OutputReceiptInput)
   const row = db.prepare("SELECT * FROM output_publications WHERE producer=? AND bot_id=? AND thread_id=? AND run_id=? AND path_token=? AND sha256=?")
     .get(input.producer, input.botId, input.threadId, input.runId, input.pathToken, input.sha256) as unknown as ReceiptRow | undefined;
   if (!row) throw new OutputPublicationError("database", "The output receipt could not be saved.");
+  // a receipt written before its turn was known gains it once; a turn already recorded is never replaced
+  if (input.turnId && !row.turn_id) { db.prepare("UPDATE output_publications SET turn_id=? WHERE id=? AND turn_id IS NULL").run(input.turnId, row.id); row.turn_id = input.turnId; }
   return receiptFromRow(row);
 }
 
@@ -291,6 +300,8 @@ export function createOutputPublisher(deps: OutputPublicationDeps): OutputPublis
     }
     const selected = eligible.slice(0, OUTPUT_PUBLICATION_LIMITS.maxFilesPerTurn); notSaved += eligible.length - selected.length;
     const db = deps.database();
+    // the producing turn, from the terminal event or the capability while it lives; persisted on each receipt so a later recovery names it
+    const turnId = event.turnId ?? deps.turnOfRun?.(snapshot.threadId, snapshot.runId);
     const scope = deps.artifactScopes().find(scope => scope.botId === snapshot.botId && scope.threadId === snapshot.threadId && scope.threadAvailable !== false && scope.managedOutput !== true);
     let scopeMatches = false;
     try { scopeMatches = Boolean(scope) && artifactWorkspaceIdentity(scope!.workspaceRoot) === snapshot.root; } catch { scopeMatches = false; }
@@ -301,7 +312,7 @@ export function createOutputPublisher(deps: OutputPublicationDeps): OutputPublis
       try { bytes = readStableFile(join(snapshot.root, ...path.split("/")), OUTPUT_PUBLICATION_LIMITS.maxFileBytes, stat); }
       catch { notSaved++; continue; }
       let receipt: LocalOutputReceipt;
-      try { receipt = recordOutputReceipt(db, { producer: "shell-output", botId: snapshot.botId, threadId: snapshot.threadId, runId: snapshot.runId, pathToken: path, sha256: sha256(bytes), mime: mimeFor(path, bytes), bytes: bytes.length }); }
+      try { receipt = recordOutputReceipt(db, { producer: "shell-output", botId: snapshot.botId, threadId: snapshot.threadId, runId: snapshot.runId, pathToken: path, sha256: sha256(bytes), mime: mimeFor(path, bytes), bytes: bytes.length, turnId }); }
       catch { notSaved++; continue; }
       // U-02: cancelled or failed turns keep verified receipts only. A stopped
       // turn settles ok:true with stopReason "cancelled", so `ok` is not enough.
@@ -332,8 +343,8 @@ export function createOutputPublisher(deps: OutputPublicationDeps): OutputPublis
     const fresh = registered.filter((item, index) => !referenced.has(item.artifact.id) && registered.findIndex(other => other.artifact.id === item.artifact.id) === index);
     if (!fresh.length && !notSaved) return;
     try {
-      const message = deps.store.appendMessage(snapshot.threadId, { role: "bot", kind: "text", text: outputCardText(fresh.map(item => item.artifact.name), notSaved),
-        ...(fresh.length ? { artifactIds: fresh.map(item => item.artifact.id) } : {}) });
+      const message = deps.store.appendMessage(snapshot.threadId, murageLine({ role: "bot", kind: "text", text: outputCardText(fresh.map(item => item.artifact.name), notSaved), turnId,
+        ...(fresh.length ? { artifactIds: fresh.map(item => item.artifact.id) } : {}) }));
       for (const item of fresh) { try { updateOutputReceipt(db, item.receipt.id, { messageId: message.id }); } catch {} }
     } catch {
       for (const item of fresh) { try { updateOutputReceipt(db, item.receipt.id, { errorCategory: "transcript" }); } catch {} }
@@ -341,8 +352,8 @@ export function createOutputPublisher(deps: OutputPublicationDeps): OutputPublis
     }
   };
 
-  const resumePending = (options: ResumePendingOptions = {}) => {
-    try { resumePendingAssistantImages({ db: deps.database(), dataDir: deps.dataDir, store: deps.store }, options.limit ?? 50, options.tried); }
+  const resumePending = async (options: ResumePendingOptions = {}) => {
+    try { await resumePendingAssistantImages({ db: deps.database(), dataDir: deps.dataDir, store: deps.store }, options.limit ?? 50, options.tried); }
     catch (error) { log(`pending image recovery stopped (${outputErrorCategory(error, "database")})`); }
     if (options.shellCards === false) return;
     try { resumeRegisteredShellCards(deps); }
@@ -378,17 +389,17 @@ export function createOutputPublisher(deps: OutputPublicationDeps): OutputPublis
       catch (error) { log(`automatic publication stopped (${outputErrorCategory(error, "database")})`); }
     },
     resumePending,
-    completeReleased: receiptId => completeReleasedReceipt(deps, receiptId),
+    completeReleased: async receiptId => { await completeReleasedReceipt(deps, receiptId); },
   };
 }
 
 /** Owner-authorized completion of ONE receipt a restore held, for every receipt kind (retained, failed or registered
  * shell outputs and generated images). It never depends on a recovery batch picking the receipt up. */
-function completeReleasedReceipt(deps: OutputPublicationDeps, receiptId: string): void {
+async function completeReleasedReceipt(deps: OutputPublicationDeps, receiptId: string): Promise<void> {
   const db = deps.database();
   const receipt = outputReceipt(db, receiptId);
   if (!receipt) throw new OutputPublicationError("scope", "This saved output is unavailable.", 404);
-  if (receipt.producer === "assistant-image" || receipt.producer === "image-operation") { finishImageReceipt({ db, dataDir: deps.dataDir, store: deps.store }, receipt.id); return; }
+  if (receipt.producer === "assistant-image" || receipt.producer === "image-operation") { await finishImageReceipt({ db, dataDir: deps.dataDir, store: deps.store }, receipt.id); return; }
   const scope = deps.artifactScopes().find(item => item.botId === receipt.botId && item.threadId === receipt.threadId && item.threadAvailable !== false && item.managedOutput !== true);
   const owner = deps.store.botByThread(receipt.threadId)?.id === receipt.botId || Boolean(deps.store.groupByThread(receipt.threadId)?.memberIds.includes(receipt.botId));
   if (!scope || !owner) throw new OutputPublicationError("scope", "The conversation this output belongs to is unavailable.", 404);
@@ -409,7 +420,9 @@ function completeReleasedReceipt(deps: OutputPublicationDeps, receiptId: string)
     if (current.messageId) return;
     const { artifact } = readArtifact(db, filesDir, current.artifactId!, { owner: true, scopes: [scope] });
     const existing = deps.store.messagesFor(current.threadId).find(message => message.artifactIds?.includes(artifact.id));
-    const message = existing ?? deps.store.appendMessage(current.threadId, { role: "bot", kind: "text", text: outputCardText([artifact.name], 0), artifactIds: [artifact.id] });
+    // the card names the turn recorded with the receipt; a receipt with none has its card withheld (the saved file stays in Files)
+    if (!existing && !current.turnId) return;
+    const message = existing ?? deps.store.appendMessage(current.threadId, murageLine({ role: "bot", kind: "text", text: outputCardText([artifact.name], 0), turnId: current.turnId, artifactIds: [artifact.id] }));
     updateOutputReceipt(db, current.id, { messageId: message.id, errorCategory: null });
   } catch (error) {
     if (error instanceof OutputPublicationError) throw error;
@@ -473,7 +486,10 @@ function resumeRegisteredShellCards(deps: OutputPublicationDeps): void {
       const messages = deps.store.artifactRows(run.thread_id);
       const missing = verified.filter(item => !messages.some(message => message.artifactIds?.includes(item.artifact.id)));
       const fresh = missing.filter((item, index) => missing.findIndex(other => other.artifact.id === item.artifact.id) === index);
-      const card = fresh.length ? deps.store.appendMessage(run.thread_id, { role: "bot", kind: "text", text: outputCardText(fresh.map(item => item.artifact.name), 0), artifactIds: fresh.map(item => item.artifact.id) }) : undefined;
+      // the card names the turn recorded with its receipts (kept across a restart); with none recorded it is withheld, never shown unattributed
+      const turnId = fresh.map(item => item.receipt.turnId).find(Boolean);
+      if (fresh.length && !turnId) continue;
+      const card = fresh.length ? deps.store.appendMessage(run.thread_id, murageLine({ role: "bot", kind: "text", text: outputCardText(fresh.map(item => item.artifact.name), 0), turnId, artifactIds: fresh.map(item => item.artifact.id) })) : undefined;
       for (const item of verified) {
         const message = messages.find(message => message.artifactIds?.includes(item.artifact.id)) ?? card;
         if (message) updateOutputReceipt(db, item.receipt.id, { messageId: message.id, errorCategory: null });
@@ -539,6 +555,18 @@ export interface CompleteImageOptions {
    * attaches the image to its own turn message (native assistant_image). */
   transcriptText?: string;
   artifactName: string;
+  /** The provider turn that produced the image (from the turn's capability or its receipt, never a request body); absent when no turn
+   * produced it. With it the transcript row is that turn's engine output, so revoking the turn's inputs withholds it like its text reply. */
+  turnId?: string;
+  /** Asked again after the awaited attachment step, before anything is
+   * attached or saved; throwing (a revoked caller) leaves the receipt as it was. */
+  recheck?: () => void;
+}
+
+/** An image row in the conversation: the producing turn's engine output when one is named (withheld with the turn's inputs), else a
+ * Murage line resting on no turn. */
+export function imageOutputRow<T extends { role: "bot" }>(row: T, turnId: string | undefined): T & { turnId?: string; murageLine?: true } {
+  return turnId ? { ...row, turnId } : murageLine(row);
 }
 
 function botName(store: Store, botId: string) {
@@ -549,36 +577,77 @@ function botName(store: Store, botId: string) {
 /** Idempotent completion from retained bytes: attachment (same upload id),
  * optional transcript entry (found again after a crash), then Files. An
  * attachment or transcript failure throws after recording `failed`; a Files
- * failure is reported in the result so a received image is never hidden. */
-export function completeImageOutput(deps: ImageOutputDeps, receiptId: string, options: CompleteImageOptions): ImageOutputCompletion {
+ * failure is reported in the result so a received image is never hidden.
+ * The attachment step awaits a byte-for-byte check of an existing entry
+ * (saveReceiptImage); everything after it is synchronous, and the receipt and
+ * its conversation are read again once that await returns. */
+export async function completeImageOutput(deps: ImageOutputDeps, receiptId: string, options: CompleteImageOptions): Promise<ImageOutputCompletion> {
+  const { receipt, root, bytes } = verifiedImageReceipt(deps, receiptId);
+  let saved: SavedAttachment;
+  try { saved = await saveReceiptImage(bytes, receipt.mime, receipt.id, imageOutputMaxBytes(receipt.producer)); }
+  catch (error) { throw attachmentFailure(deps, receipt.id, error); }
+  // Asked again after the await: the conversation may have gone, another
+  // completion may have advanced the receipt, the caller may have been revoked.
+  const current = outputReceipt(deps.db, receipt.id);
+  if (!current) throw new OutputPublicationError("scope", "This image result is unavailable.", 404);
+  if (!imageReceiptOwned(deps.store, current)) throw new OutputPublicationError("scope", "This image result belongs to a conversation that is no longer available.", 404);
+  options.recheck?.();
+  return finishImageCompletion(deps, current, root, saved, options);
+}
+
+/** completeImageOutput for a receipt retained earlier in the same synchronous
+ * step (publishAssistantImage, inside the runtime event fold, which stages the
+ * image for its turn before the turn's completion is folded). Its attachment
+ * id is new, so there is nothing to compare: write only, no await. */
+function completeNewImageOutput(deps: ImageOutputDeps, receiptId: string, options: CompleteImageOptions): ImageOutputCompletion {
+  const { receipt, root, bytes } = verifiedImageReceipt(deps, receiptId);
+  let saved: SavedAttachment;
+  try { saved = writeNewReceiptImage(bytes, receipt.mime, receipt.id, imageOutputMaxBytes(receipt.producer)); }
+  catch (error) { throw attachmentFailure(deps, receipt.id, error); }
+  return finishImageCompletion(deps, receipt, root, saved, options);
+}
+
+const imageReceiptOwned = (store: Store, receipt: LocalOutputReceipt) =>
+  store.botByThread(receipt.threadId)?.id === receipt.botId || Boolean(store.groupByThread(receipt.threadId)?.memberIds.includes(receipt.botId));
+
+/** Scope, ownership and the retained bytes against the receipt's sha256. */
+function verifiedImageReceipt(deps: ImageOutputDeps, receiptId: string): { receipt: LocalOutputReceipt; root: string; bytes: Buffer } {
   const { db, store } = deps;
-  let receipt = outputReceipt(db, receiptId);
+  const receipt = outputReceipt(db, receiptId);
   if (!receipt || (receipt.producer !== "image-operation" && receipt.producer !== "assistant-image")) throw new OutputPublicationError("scope", "This image result is unavailable.", 404);
-  const owner = store.botByThread(receipt.threadId)?.id === receipt.botId || Boolean(store.groupByThread(receipt.threadId)?.memberIds.includes(receipt.botId));
-  if (!owner) throw new OutputPublicationError("scope", "This image result belongs to a conversation that is no longer available.", 404);
-  let root: string, bytes: Buffer;
+  if (!imageReceiptOwned(store, receipt)) throw new OutputPublicationError("scope", "This image result belongs to a conversation that is no longer available.", 404);
   try {
-    root = managedImageOutputRoot(deps.dataDir, receipt.botId, receipt.threadId, false);
+    const root = managedImageOutputRoot(deps.dataDir, receipt.botId, receipt.threadId, false);
     if (!/^[a-f0-9-]{36}\.(png|jpg|gif|webp)$/.test(receipt.pathToken)) throw new OutputPublicationError("verification", "The retained image identity is invalid.");
-    bytes = readStableFile(join(root, receipt.pathToken), imageOutputMaxBytes(receipt.producer));
+    const bytes = readStableFile(join(root, receipt.pathToken), imageOutputMaxBytes(receipt.producer));
     if (bytes.length !== receipt.bytes || sha256(bytes) !== receipt.sha256) throw new OutputPublicationError("verification", "The retained image changed.");
+    return { receipt, root, bytes };
   } catch (error) {
     const category = outputErrorCategory(error, "verification");
     if (receipt.stage !== "registered") failReceipt(db, receipt.id, category);
     throw new OutputPublicationError(category, "The retained image could not be verified. It was not published.");
   }
-  let saved: SavedAttachment;
-  try { saved = saveImage(bytes, receipt.mime, receipt.id, imageOutputMaxBytes(receipt.producer)); }
-  catch (error) {
-    const category = outputErrorCategory(error, "attachment");
-    if (receipt.stage !== "registered") failReceipt(db, receipt.id, category);
-    throw new OutputPublicationError(category, "Image received and kept locally, but its conversation attachment could not finish.", 409);
-  }
+}
+
+/** The attachment step failed: record it (unless already registered) and
+ * answer with the attachment error. */
+function attachmentFailure(deps: ImageOutputDeps, receiptId: string, error: unknown): OutputPublicationError {
+  const category = outputErrorCategory(error, "attachment");
+  const current = outputReceipt(deps.db, receiptId);
+  if (current && current.stage !== "registered") failReceipt(deps.db, receiptId, category);
+  return new OutputPublicationError(category, "Image received and kept locally, but its conversation attachment could not finish.", 409);
+}
+
+/** Transcript entry and Files, synchronously after the attachment step. */
+function finishImageCompletion(deps: ImageOutputDeps, start: LocalOutputReceipt, root: string, saved: SavedAttachment, options: CompleteImageOptions): ImageOutputCompletion {
+  const { db, store } = deps;
+  let receipt = start;
   const attachmentId = basename(saved.path);
   if (options.transcriptText !== undefined && !receipt.messageId) {
     try {
       const existing = store.rowAttaching(receipt.threadId, saved.path);
-      const message = existing ?? store.appendMessage(receipt.threadId, { role: "bot", kind: "text", text: options.transcriptText, attachments: [{ kind: "image", path: saved.path, mime: saved.mime }] });
+      const row = { role: "bot" as const, kind: "text" as const, text: options.transcriptText, attachments: [{ kind: "image" as const, path: saved.path, mime: saved.mime }] };
+      const message = existing ?? store.appendMessage(receipt.threadId, imageOutputRow(row, options.turnId));
       receipt = updateOutputReceipt(db, receipt.id, { ...(receipt.stage === "registered" ? {} : { stage: "attached" as const }), attachmentId, messageId: message.id, errorCategory: null });
     } catch (error) {
       if (receipt.stage !== "registered") failReceipt(db, receipt.id, error instanceof OutputPublicationError ? error.category : "transcript");
@@ -608,12 +677,12 @@ export function completeImageOutput(deps: ImageOutputDeps, receiptId: string, op
  * attached for the caller's turn message, then saved to Files. */
 export function publishAssistantImage(deps: ImageOutputDeps, input: { botId: string; threadId: string; runId: string; bytes: Buffer; mime: string }): SavedAttachment {
   const receipt = retainImageOutput(deps, { producer: "assistant-image", ...input });
-  return completeImageOutput(deps, receipt.id, { artifactName: "Generated image" }).saved;
+  return completeNewImageOutput(deps, receipt.id, { artifactName: "Generated image" }).saved;
 }
 
 /** Startup reconciliation for assistant images whose attachment or Files
  * step did not finish. Only known receipts are read; no directory scan. */
-export function resumePendingAssistantImages(deps: ImageOutputDeps, limit = 50, tried?: Set<string>): number {
+export async function resumePendingAssistantImages(deps: ImageOutputDeps, limit = 50, tried?: Set<string>): Promise<number> {
   // Held rows are excluded in SQL, before the LIMIT: a restore's held images must never fill the batch and starve a released one.
   // `tried` (a start's recovery in slices): rows an earlier slice looked at are passed over, so one that stays failed never fills the next slice.
   const rows = (deps.db.prepare(`SELECT * FROM output_publications WHERE producer='assistant-image' AND stage IN ('retained','failed')${notRestoreHeldSql(deps.db, "output_receipt", "output_publications.id")} ORDER BY updated_at,id LIMIT ?`).all(limit + (tried?.size ?? 0)) as unknown as ReceiptRow[])
@@ -624,21 +693,24 @@ export function resumePendingAssistantImages(deps: ImageOutputDeps, limit = 50, 
     try {
       // belt: a restore keeps this image until the owner releases it
       if (sqlRowRestoreHeld(deps.db, "output_receipt", row.id)) continue;
-      if (finishImageReceipt(deps, row.id)) completed++;
+      if (await finishImageReceipt(deps, row.id)) completed++;
     } catch { /* stays failed with its category for the next startup */ }
   }
   return completed;
 }
 
 /** Completes one retained image receipt and attaches it once. True when a Files artifact was saved by this call. Throws on failure. */
-function finishImageReceipt(deps: ImageOutputDeps, receiptId: string): boolean {
+async function finishImageReceipt(deps: ImageOutputDeps, receiptId: string): Promise<boolean> {
   const receipt = outputReceipt(deps.db, receiptId);
   if (!receipt) throw new OutputPublicationError("scope", "This saved output is unavailable.", 404);
-  const done = completeImageOutput(deps, receipt.id, { artifactName: "Generated image" });
+  const done = await completeImageOutput(deps, receipt.id, { artifactName: "Generated image" });
   // The in-memory turn attachment was lost with the process: attach once.
   // A receipt that already names its message is attached: on a thread not yet filled after an upgrade rowAttaching answers from an empty index, and a second message would be added.
   if (!receipt.messageId && !done.receipt.messageId && !deps.store.rowAttaching(receipt.threadId, done.saved.path)) {
-    const message = deps.store.appendMessage(receipt.threadId, { role: "bot", kind: "text", text: "", attachments: [{ kind: "image", path: done.saved.path, mime: done.saved.mime }] });
+    // An assistant image's run id is the provider turn that sent it (index.ts publishAssistantImage gets event.turnId): the row is that
+    // turn's engine output, written from the receipt, never from a request.
+    const row = { role: "bot" as const, kind: "text" as const, text: "", attachments: [{ kind: "image" as const, path: done.saved.path, mime: done.saved.mime }] };
+    const message = deps.store.appendMessage(receipt.threadId, imageOutputRow(row, receipt.producer === "assistant-image" && receipt.runId ? receipt.runId : undefined));
     try { updateOutputReceipt(deps.db, receipt.id, { messageId: message.id }); } catch {}
   }
   // A Files copy that did not land is an incomplete publication: throw so a Release keeps its hold and answers 409.

@@ -6,11 +6,11 @@
 // itself) hands work to bot B; B's turn must be unattended. Observed the way the owner would: B is on Full access with "review peer
 // contact" on, and asks a third bot. An unattended turn still raises the owner's card ("Queued for review"); an attended one is waived
 // ("Delegation queued"). The control is the same hand-off from an ordinary owner conversation, which stays attended.
-import { readFileSync } from "node:fs";
+import { readFileSync, statSync } from "node:fs";
 import { writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
-import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
 import { queuedDelegationsByThread } from "./pending-delegations-schema.ts";
 import { launchVerificationServer, type VerificationServer } from "../scripts/control-murage.ts";
 import { withTurnSecrets } from "./testing/fixture-dump.ts";
@@ -27,9 +27,17 @@ const signIn = async () => {
 };
 const newBot = async (name: string) => (await post("/api/bots", { name })).body.bot as { id: string; threadId: string };
 type Turn = { pid: number; mcpConfig?: { mcpServers?: Record<string, { env?: Record<string, string> }> } };
+/** The latest dumped turn carrying `tag`, from the fixture's dump log: every bot's turns write the one latest-turn file, so a turn
+ * prepared alongside another (a policy bump from the next bot's creation redispatches it) is read from its own line, never lost. */
 const turnFor = async (tag: string, notPids: number[] = []): Promise<Turn> => {
   for (const started = Date.now(); Date.now() - started < 40000; await sleep(100)) {
-    try { const text = readFileSync(fixture.fixtureDumpPath, "utf8"); if (text.includes(tag)) { const turn = withTurnSecrets(JSON.parse(text) as Turn); if (!notPids.includes(turn.pid)) return turn; } } catch { /* not yet */ }
+    let lines: string[] = [];
+    try { lines = readFileSync(fixture.fixtureDumpLogPath, "utf8").split("\n"); } catch { /* not yet */ }
+    for (let i = lines.length - 1; i >= 0; i--) {
+      if (!lines[i].includes(tag)) continue;
+      const turn = withTurnSecrets(JSON.parse(lines[i]) as Turn);
+      if (!notPids.includes(turn.pid)) return turn;
+    }
   }
   throw new Error(`no turn for ${tag}`);
 };
@@ -38,8 +46,18 @@ const threadOf = (turn: Turn) => Object.values(turn.mcpConfig?.mcpServers ?? {})
 const finish = (turn: Turn) => writeFileSync(join(fixture.fixtureFinishGateDir, String(turn.pid)), "finish");
 const HOLD = "__fixture_hold_authority__";
 
-beforeAll(async () => { fixture = await launchVerificationServer(process.env); await signIn(); }, 90000);
+beforeAll(async () => { fixture = await launchVerificationServer(process.env, undefined, { dumpLog: true }); await signIn(); }, 90000);
 afterAll(async () => { await fixture?.close(); });
+// A hand-off a bot made from its own conversation wakes that bot once its result lands (r#4, server/asker-wake.ts). Those turns
+// write the one fixture dump too, so each case waits for the dump to stop changing before the next case reads it.
+afterEach(async () => {
+  const stamp = () => { try { return statSync(fixture.fixtureDumpPath).mtimeMs; } catch { return 0; } };
+  let last = stamp(), quietSince = Date.now();
+  for (const started = Date.now(); Date.now() - started < 15000 && Date.now() - quietSince < 2500; await sleep(250)) {
+    const now = stamp();
+    if (now !== last) { last = now; quietSince = Date.now(); }
+  }
+}, 20000);
 
 /** An asker, a peer on Full access that reviews its own peer contact, and a third bot for the peer's second hop. */
 async function trio(label: string) {

@@ -10,7 +10,9 @@ import { activeSavedFilters, type SavedFilters, type SavedVersionResult } from "
 import type { Artifact, ArtifactKind, ArtifactPage, ArtifactPreview } from "../../shared/artifacts";
 import type { WorkspaceScopeRef } from "../../shared/workspace-files";
 import { ArtifactImageMedia } from "./ImageMedia";
+import { trustedPreviewDocument, useSanitizerReady } from "@/lib/trusted-html";
 import { WorkspaceFiles, type WorkspaceOpenInPane } from "./WorkspaceFiles";
+import { SandboxedFrame } from "./SandboxedFrame";
 
 const button = "min-h-10 rounded-lg border border-hairline/50 bg-control px-3 py-2 text-[13px] text-ink hover:bg-raised-hover focus-visible:outline focus-visible:outline-2 focus-visible:outline-focus disabled:opacity-50";
 const field = "min-h-10 min-w-0 rounded-lg border border-hairline/50 bg-inset px-3 py-2 text-[13px] text-ink focus-visible:outline focus-visible:outline-2 focus-visible:outline-focus";
@@ -29,7 +31,7 @@ export async function downloadSavedArtifact(artifact: Artifact) {
   // own. So this never asks native to fetch or save it — only the browser's
   // own download anchor, same as before the phone app existed.
   await ensureDesktopSurfaceSecret();
-  const response = await fetch(`/api/artifacts/${artifact.id}/download`, { headers: { "x-murage-surface": "desktop", ...desktopSurfaceHeaders() } });
+  const response = await fetch(`/api/artifacts/${artifact.id}/download`, { redirect: "error", headers: { "x-murage-surface": "desktop", ...desktopSurfaceHeaders() } });
   if (!response.ok) { const body = await response.json().catch(() => ({})); throw new Error(body.error ?? "The saved copy could not be downloaded."); }
   const url = URL.createObjectURL(await response.blob());
   try {
@@ -39,19 +41,10 @@ export async function downloadSavedArtifact(artifact: Artifact) {
   }
 }
 
-/** This prelude precedes untrusted HTML. The iframe also has an opaque origin
- * and no sandbox allowances; scripts and remote resources stay disabled. */
+/** An untrusted page for a `sandbox=""` preview frame's srcDoc (src/lib/trusted-html.ts): sanitized, stripped of
+ * anything that navigates or loads, under a no-network CSP. The iframe also has an opaque origin and no sandbox allowances. */
 export function artifactPreviewHtml(content: string) {
-  // Template contents remain inert while parsing. Strip navigation as well as
-  // active elements; CSP alone does not reliably block a frame navigating itself.
-  const template = document.createElement("template"); template.innerHTML = content;
-  template.content.querySelectorAll("script,iframe,frame,object,embed,base,meta,link,template").forEach(node => node.remove());
-  for (const node of template.content.querySelectorAll("*")) for (const attribute of [...node.attributes]) {
-    const name = attribute.name.toLowerCase();
-    if (name.startsWith("on") || ["href", "xlink:href", "srcset", "ping", "action", "formaction", "srcdoc", "target", "background", "poster"].includes(name)
-      || (name === "src" && !(node.tagName === "IMG" && /^data:image\/(png|jpeg|gif|webp);base64,/i.test(attribute.value)))) node.removeAttribute(attribute.name);
-  }
-  return `<!doctype html><meta charset="utf-8"><meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'none'; style-src 'unsafe-inline'; img-src data:; font-src 'none'; connect-src 'none'; frame-src 'none'; object-src 'none'; form-action 'none'; base-uri 'none'"><meta name="referrer" content="no-referrer">${template.innerHTML}`;
+  return trustedPreviewDocument(content);
 }
 
 export function ArtifactCard({ artifact, busy, onPreview, onDownload, onSource, onNativeAction, onOpenHere, inline, inlineNote }: {
@@ -74,7 +67,8 @@ export function ArtifactCard({ artifact, busy, onPreview, onDownload, onSource, 
   const available = artifact.savedState === "available";
   const native = (action: "open" | "reveal") => {
     if (action === "open" && artifact.kind === "html" && !window.confirm("Open this HTML file outside the protected preview? It may run scripts or access the network.")) return;
-    void onNativeAction?.(artifact, action);
+    // The parent's handler owns busy, success and failure (Files.nativeAction).
+    onNativeAction?.(artifact, action);
   };
   return <article data-artifact-id={artifact.id} className="rounded-xl border border-hairline/50 bg-inset p-4">
     <p className="text-[12px] text-ink-secondary">{artifact.botName} · {artifact.kind === "other" ? "File" : artifact.kind.toUpperCase()} · {new Date(artifact.createdAt).toLocaleString()}</p>
@@ -122,6 +116,7 @@ export function Files({ bots, initialBotId = "", initialThreadId = "", initialAr
   /** Show the workspace pane for the browsed conversation without opening a file. */
   onShowPane?: (scope: WorkspaceScopeRef) => void;
 }) {
+  useSanitizerReady(); // markup made before the sanitizer loaded is empty: draw again when it arrives
   const [botId, setBotId] = useState(initialBotId), [threadId, setThreadId] = useState(initialThreadId);
   const [query, setQuery] = useState(""), [draft, setDraft] = useState(""), [kind, setKind] = useState<ArtifactKind | "">("");
   const [since, setSince] = useState(""), [until, setUntil] = useState("");
@@ -185,6 +180,12 @@ export function Files({ bots, initialBotId = "", initialThreadId = "", initialAr
     finally { gate.current = false; setBusy(false); }
   };
   const download = (artifact: Artifact) => act(() => downloadSavedArtifact(artifact));
+  // Open in app / Show in folder: busy while it runs, a plain line when it works, and the reason when it does not.
+  const nativeAction = (artifact: Artifact, action: "open" | "reveal") => act(async () => {
+    if (!onNativeAction) return;
+    await onNativeAction(artifact, action);
+    setNotice(action === "open" ? `Opened ${artifact.name}.` : `Showing ${artifact.name} in its folder.`);
+  });
   // One Refresh reloads both halves: the saved query re-runs and the bumped
   // token makes the workspace half re-read the folder from disk.
   const refresh = () => { setNotice(null); setRevision(value => value + 1); };
@@ -198,7 +199,7 @@ export function Files({ bots, initialBotId = "", initialThreadId = "", initialAr
     {focusedPreview && !preview && <div className="space-y-3"><p role="status" className="text-[13px]">{error ?? "Opening saved version…"}</p><button className={button} onClick={() => { rescopeOpened.current = false; setFocusedPreview(false); }}>{t("filesWorkspace.savedTitle")}</button></div>}
     {preview && <section ref={previewPanel} role="region" aria-label="File preview" className="mb-5 rounded-xl border border-hairline p-3"><div className="flex flex-wrap items-center justify-between gap-2"><h2 className="break-words text-[15px] font-medium">{preview.artifact.name}</h2><div className="flex flex-wrap gap-2"><button className={button} disabled={busy} onClick={() => void download(preview.artifact)}>Download saved copy</button><button className={button} onClick={() => { setPreview(null); setFocusedPreview(false); }}>Close preview</button></div></div>
       <p className="my-2 text-[12px] text-ink-secondary">{t("filesWorkspace.savedSubtitle")}</p>
-      {preview.mode === "html" && <><p className="my-2 text-[12px] text-ink-secondary">Protected preview: scripts, external resources and app access are blocked.</p><iframe title={`Preview ${preview.artifact.name}`} sandbox="" referrerPolicy="no-referrer" srcDoc={artifactPreviewHtml(preview.content ?? "")} className="h-[420px] w-full rounded-lg bg-white" /></>}
+      {preview.mode === "html" && <><p className="my-2 text-[12px] text-ink-secondary">Protected preview: scripts, external resources and app access are blocked.</p><SandboxedFrame title={`Preview ${preview.artifact.name}`} sandbox="" referrerPolicy="no-referrer" html={artifactPreviewHtml(preview.content ?? "")} className="h-[420px] w-full rounded-lg bg-white" /></>}
       {preview.mode === "text" && <pre className="mt-3 max-h-96 overflow-auto whitespace-pre-wrap break-words text-[12px]">{preview.content}</pre>}
       {preview.mode === "image" && <ArtifactImageMedia artifact={preview.artifact} content={preview.content} />}
       {preview.mode === "download" && <p className="mt-3 text-[13px] text-ink-secondary">Preview is unavailable for this format or size. Download the saved copy to review it.</p>}
@@ -229,7 +230,7 @@ export function Files({ bots, initialBotId = "", initialThreadId = "", initialAr
         <p className="min-w-0 break-words">{filterLabels.length ? t("filesWorkspace.activeFilters", { filters: filterLabels.join(" · ") }) : t("filesWorkspace.noFilters")}</p>
         {filterLabels.length > 0 && <button type="button" className={button} onClick={() => { rescopeOpened.current = false; setSavedEveryBot(true); setKind(""); setSince(""); setUntil(""); setQuery(""); setDraft(""); setPage(0); setNotice(null); }}>{t("filesWorkspace.allSavedFiles")}</button>}
       </div>
-      <details className="my-4 rounded-lg border border-hairline/50 p-3 text-[13px]"><summary className="cursor-pointer font-medium">Save an existing workspace file</summary><p className="mt-2 text-[12px] text-ink-secondary">For engines without automatic registration, enter the exact relative path. Murage verifies the file before saving a copy. Maximum 25 MiB per file and 512 MiB total; files are never automatically removed.</p>
+      <details className="my-4 rounded-lg border border-hairline/50 p-3 text-[13px]"><summary className="cursor-pointer font-medium">Save an existing workspace file</summary><p className="mt-2 text-[12px] text-ink-secondary">For engines without automatic registration, enter the exact relative path. Murage verifies the file before saving a copy. Maximum 25 MiB per file. Files are never automatically removed.</p>
         <form className="mt-3 flex flex-col gap-2" onSubmit={event => { event.preventDefault(); void act(async () => { await api("/api/artifacts/register", { method: "POST", body: JSON.stringify({ botId, threadId: targetThread, relativePath, ...(name.trim() ? { name: name.trim() } : {}) }) }); setRelativePath(""); setName(""); setPage(0); setRevision(value => value + 1); }); }}>
           <label>Relative file path<input className={`${field} mt-1 w-full`} value={relativePath} maxLength={2048} onChange={event => setRelativePath(event.target.value)} placeholder="reports/weekly.html" /></label>
           <label>Friendly name (optional)<input className={`${field} mt-1 w-full`} value={name} maxLength={200} onChange={event => setName(event.target.value)} /></label>
@@ -240,7 +241,7 @@ export function Files({ bots, initialBotId = "", initialThreadId = "", initialAr
       {error && <p role="alert" className="my-3 text-[13px] text-danger">{error}</p>}
       {busy && <p role="status" className="my-3 text-[12px] text-ink-secondary">Checking files…</p>}
       {result && !result.items.length && !busy && <p className="py-6 text-[13px] text-ink-secondary">No saved files match these filters.</p>}
-      <div className="space-y-3">{result?.items.map(artifact => <ArtifactCard key={artifact.id} artifact={artifact} busy={busy} onPreview={() => void act(async () => setPreview(await api(`/api/artifacts/${artifact.id}/preview`) as ArtifactPreview))} onDownload={() => void download(artifact)} onSource={onSource ? () => void act(async () => { await onSource(artifact); }) : undefined} onNativeAction={onNativeAction} onOpenHere={onOpenInPane ? () => onOpenInPane({ botId: artifact.botId, threadId: artifact.threadId }, artifact.relativePath, "preview") : undefined} />)}</div>
+      <div className="space-y-3">{result?.items.map(artifact => <ArtifactCard key={artifact.id} artifact={artifact} busy={busy} onPreview={() => void act(async () => setPreview(await api(`/api/artifacts/${artifact.id}/preview`) as ArtifactPreview))} onDownload={() => void download(artifact)} onSource={onSource ? () => void act(async () => { await onSource(artifact); }) : undefined} onNativeAction={onNativeAction ? nativeAction : undefined} onOpenHere={onOpenInPane ? () => onOpenInPane({ botId: artifact.botId, threadId: artifact.threadId }, artifact.relativePath, "preview") : undefined} />)}</div>
       {result && <footer className="mt-4 flex items-center justify-between gap-3"><button className={button} disabled={busy || !page} onClick={() => setPage(value => value - 1)}>Previous</button><span className="text-[12px]">Page {page + 1} · {result.total} files</span><button className={button} disabled={busy || (page + 1) * result.pageSize >= result.total} onClick={() => setPage(value => value + 1)}>Next</button></footer>}
     </section>
     </div>

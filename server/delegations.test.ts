@@ -4,7 +4,7 @@
 // assert what would have been dispatched to the harness. The harness itself
 // stays out of these — the integration happens in comms.test.ts (the full
 // e2e through the agents proxy + fake ACP CLI).
-import { existsSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -42,6 +42,7 @@ import {
   unknownTargetBackoffMs,
 } from "./delegations.ts";
 import { drainDelegations, heldNotices } from "./testing/handoff-turn.ts";
+import { removeTempDirSync } from "./testing/cleanup.ts";
 beforeEach(() => { heldNotices.length = 0; });
 import { cancelPeerApprovalsForThread, peerAllowKey, resolvePeerComms } from "./peer-approval.ts";
 import { Store, type BotRecord } from "./store.ts";
@@ -102,7 +103,7 @@ describe("queueDelegation", () => {
   let broadcasts: unknown[];
 
   beforeEach(() => {
-    rmSync(DATA_DIR, { recursive: true, force: true });
+    removeTempDirSync(DATA_DIR);
     store = new Store(selection);
     from = store.createBot();
     target = store.createBot();
@@ -231,7 +232,7 @@ describe("drainDelegations", () => {
   let runTargetCalls: Array<{ toBotId: string; message: string; commsDepth: number; sourceThreadId?: string }>;
 
   beforeEach(() => {
-    rmSync(DATA_DIR, { recursive: true, force: true });
+    removeTempDirSync(DATA_DIR);
     store = new Store(selection);
     from = store.createBot();
     target = store.createBot();
@@ -258,7 +259,7 @@ describe("drainDelegations", () => {
     // there before the open, so this test starts from a closed database
     closeDatabase();
     await stopWalMaintenance();
-    rmSync(DATA_DIR, { recursive: true, force: true });
+    removeTempDirSync(DATA_DIR);
     mkdirSync(DATA_DIR, { recursive: true });
     const legacy = { [from.threadId]: [{ id: "legacy-task-1", toBotId: target.id, message: "do this", depth: 0, attempts: 0, fromBotId: from.id }] };
     writeFileSync(join(DATA_DIR, "delegations.json"), JSON.stringify(legacy));
@@ -737,7 +738,7 @@ describe("delegations survive a restart", () => {
   const file = () => join(DATA_DIR, "delegations.json");
 
   beforeEach(() => {
-    rmSync(DATA_DIR, { recursive: true, force: true });
+    removeTempDirSync(DATA_DIR);
     _resetPending();
     store = new Store(selection);
     from = store.createBot();
@@ -858,7 +859,7 @@ describe("busy retries and receipts", () => {
   let approvalBus: { store: Store; broadcast: (payload: unknown) => void };
 
   beforeEach(() => {
-    rmSync(DATA_DIR, { recursive: true, force: true });
+    removeTempDirSync(DATA_DIR);
     store = new Store(selection);
     from = store.createBot();
     target = store.createBot();
@@ -1089,7 +1090,7 @@ describe("delegations queued from a room", () => {
   };
 
   beforeEach(() => {
-    rmSync(DATA_DIR, { recursive: true, force: true });
+    removeTempDirSync(DATA_DIR);
     _resetPending();
     store = new Store(selection);
     chief = store.patchBot(store.createBot({ name: "Ember" }).id, { chiefOfStaff: true })!;
@@ -1176,6 +1177,37 @@ describe("delegations queued from a room", () => {
     drainDelegations(buses.commsBus, buses.approvalBus, room.threadId, runTarget);
     await waitFor(() => runTargetCalls.length === 1);
     expect(runTargetCalls[0]!.fromBotId).toBe(chief.id);
+  });
+
+  // The room copy of a queued message names the turn that queued it, read from the server's turn state when it was queued: the hand-off starts
+  // after that turn ended (and here after a restart), when the turn running in the room is another or none.
+  it("records the queuing turn from the server's own state, never from the item, and the room copy names it after the turn ended and a restart", async () => {
+    let running: string | undefined = "prov-queue";
+    const bus = { ...buses.commsBus, turnOf: () => running } as CommsBus;
+    expect(queueDelegation(bus, chief, { toBotId: lead.id, message: "own the launch", depth: 0, senderTurnId: "prov-forged" } as never, 1, room.threadId).result).toBe("ok");
+    expect(queueFile()[room.threadId][0]).toMatchObject({ senderTurnId: "prov-queue" });
+    running = "prov-later";
+    _simulateRestart();
+    _loadPending();
+    expect(queueFile()[room.threadId][0]).toMatchObject({ senderTurnId: "prov-queue" });
+    drainDelegations(bus, buses.approvalBus, room.threadId, runTarget);
+    await waitFor(() => runTargetCalls.length === 1);
+    // the room copy names its source row by copyOf (LINEAGE-DESIGN-S6 rule 6): the Messaged row written when it was queued, as that turn's row
+    const copies = store.groups.flatMap((group) => store.messagesFor(group.threadId)).filter((message) => message.text === "own the launch");
+    expect(copies).toHaveLength(1);
+    const source = store.messagesFor(room.threadId).find((message) => message.id === copies[0]!.copyOf?.messageIds[0]);
+    expect(source).toMatchObject({ kind: "activity", turnId: "prov-queue", from: { botId: chief.id } });
+  });
+
+  it("a queue row written before its source row was kept loads without one: its room copy is withheld, the hand-off still runs", async () => {
+    queueDelegation(buses.commsBus, chief, { toBotId: lead.id, message: "own the launch", depth: 0 }, 1, room.threadId);
+    database().prepare("UPDATE pending_delegations SET item=json_remove(item,'$.senderTurnId','$.sourceMessageId') WHERE source_thread_id=?").run(room.threadId);
+    _simulateRestart();
+    _loadPending();
+    expect(queueFile()[room.threadId][0]).not.toHaveProperty("sourceMessageId");
+    drainDelegations(buses.commsBus, buses.approvalBus, room.threadId, runTarget);
+    await waitFor(() => runTargetCalls.length === 1);
+    expect(store.groups.flatMap((group) => store.messagesFor(group.threadId)).filter((message) => message.text === "own the launch")).toEqual([]);
   });
 
   it("writes a dropped receipt when the room-sourced sender left the room", async () => {
@@ -1366,7 +1398,7 @@ describe("a busy teammate with a free thread", () => {
   let broadcastOnly: CommsBus["broadcast"];
 
   beforeEach(() => {
-    rmSync(DATA_DIR, { recursive: true, force: true });
+    removeTempDirSync(DATA_DIR);
     store = new Store(selection);
     from = store.createBot();
     target = store.createBot();
@@ -1574,7 +1606,7 @@ describe("the harness answers that question the way it dispatches", () => {
 
 describe("dropUnreachableDelegations", () => {
   beforeEach(() => {
-    rmSync(DATA_DIR, { recursive: true, force: true });
+    removeTempDirSync(DATA_DIR);
     _resetPending();
   });
 
@@ -1619,7 +1651,7 @@ describe("a parked handoff whose wake-up already passed", () => {
   let bus: CommsBus;
 
   beforeEach(() => {
-    rmSync(DATA_DIR, { recursive: true, force: true });
+    removeTempDirSync(DATA_DIR);
     _resetPending();
     store = new Store(selection);
     from = store.createBot();

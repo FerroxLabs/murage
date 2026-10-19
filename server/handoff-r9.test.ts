@@ -10,7 +10,7 @@
 //   R9-04  a fixed reason the shared queue closes work with keeps its status key in the bot's receipt;
 //   R9-05  a stored correction reaches the project room only through the gate;
 //   F3     a cancelled queued hand-off's receipt never reads "The request finished.".
-import { readFileSync, rmSync } from "node:fs";
+import { readFileSync } from "node:fs";
 import { DatabaseSync } from "node:sqlite";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { boundaryStore } from "./boundary-ports.ts";
@@ -23,13 +23,15 @@ import { runDeliverCardResult, runDeliverSharedResult } from "./handoff-boundary
 import { REPLAY_BUDGET_CAP_BYTES } from "./memory/disclosures.ts";
 import { closeMessageDb } from "./message-db.ts";
 import { cancelledEnding, configureStatusRoster, outboundWords, status, statusFromStored, type Outbound } from "./murage-status.ts";
-import { DIRECT_TRANSCRIPT_WINDOW_ROWS, directTranscriptWindowFull, partitionTranscriptMessages, partitionTranscriptWindow } from "./partition-sources.ts";
+import { DIRECT_TRANSCRIPT_WINDOW_ROWS, directTranscriptWindowFull, TRANSCRIPT_EXAMINED_ROWS } from "./partition-sources.ts";
+import { botMessages, botViewer, botWindow } from "./bot-read.ts";
 import { applyCardRunDispatched, applyReviewVerdict, enqueueCardRun, redoContext, releasedRedoNotes, sendProjectCardBack } from "./project-cards.ts";
 import { cardAskText, continuationResultsPrompt } from "./project-prompt.ts";
 import { inheritedRequestLineage, roomRequestById } from "./project-records.ts";
 import { initializeProjectTables } from "./project-tables.ts";
 import { applyCardRunEffect, cardGenerationCurrent, leadNextStep, reviewWakeTarget } from "./project-turn-engine.ts";
 import { configureResultEgress, type EgressMessage } from "./result-egress.ts";
+import { removeTempDirSync } from "./testing/cleanup.ts";
 // evhand's note recorder is superseded by write-time lineage (project-notes.ts recordNoteLineage): inert here, so these scenarios run on the write-time rules
 // (preview2 merge: scenarios that assert evhand's holders/sources/ranges note design are it.skip: writetime wins, notes rest on write-time lineage)
 const configureNoteRecorder = (_recorder?: unknown): void => {};
@@ -70,7 +72,6 @@ describe("R9-01: a teammate's note on a card is released at each prompt that quo
       VALUES ('lead-turn','lead-turn','g','room_turn','owner','lead','desktop','room','owner',0,0,'turn:lead-turn','running',1)`).run();
     configureResultEgress({
       message: (threadId, id) => stored.get(`${threadId}\u0000${id}`),
-      threadMessages: threadId => [...stored].filter(([key]) => key.startsWith(`${threadId}\u0000`)).map(([, message]) => message),
       authorize: () => ({ ok: true }), copyOriginWithheld: () => false,
       capturedMessageWithheld: () => false, messageSourceForgotten: () => false, messageMadeWithMemory: () => false, partitionAllowed: () => true, ownUnsharedWork: () => true,
     });
@@ -153,26 +154,27 @@ describe("R9-01: a teammate's note on a card is released at each prompt that quo
 });
 
 describe("R9-02: a turn's transcript check costs its window, not the history", () => {
-  /** n originals and n copies of them stored, the copies as a lead's transcript; counts original reads and memo stamp reads. */
+  /** n originals and n copies of them stored, the copies as a lead's transcript; counts the copy chain check's original reads, the door's
+   * chain judge's source reads (nothing kept across operations, rule 19) and memo stamp reads. */
   function copiesWorld(n: number) {
     const real = new DatabaseSync(":memory:");
-    real.exec("CREATE TABLE messages (thread_id TEXT NOT NULL, id TEXT NOT NULL, json TEXT NOT NULL, PRIMARY KEY (thread_id, id))");
-    const insert = real.prepare("INSERT INTO messages (thread_id, id, json) VALUES (?,?,?)");
+    real.exec("CREATE TABLE messages (thread_id TEXT NOT NULL, id TEXT NOT NULL, role TEXT, json TEXT NOT NULL, PRIMARY KEY (thread_id, id))");
+    const insert = real.prepare("INSERT INTO messages (thread_id, id, role, json) VALUES (?,?,'bot',?)");
     const copies: Message[] = [];
     real.exec("BEGIN");
     for (let index = 0; index < n; index += 1) {
-      insert.run("worker", `o${index}`, JSON.stringify({ id: `o${index}`, text: "original answer" }));
+      insert.run("worker", `o${index}`, JSON.stringify({ id: `o${index}`, role: "bot", text: "original answer" }));
       const copy = { id: `c${index}`, at: index, role: "bot", kind: "text", text: `@Worker replied to the delegated task: answer ${index}`, copyOf: { threadId: "worker", messageIds: [`o${index}`] } } as Message;
       insert.run("lead", copy.id, JSON.stringify(copy));
       copies.push(copy);
     }
     real.exec("COMMIT");
-    const count = { reads: 0, stamps: 0 };
+    const count = { reads: 0, sources: 0, stamps: 0 };
     const db = new Proxy(real, {
       get(target, property) {
         if (property === "prepare") return (sql: string) => {
           const statement = target.prepare(sql);
-          const counter = /SELECT json FROM messages/.test(sql) ? "reads" : /copy_chain_epoch/.test(sql) && /^\s*SELECT/.test(sql) ? "stamps" : null;
+          const counter = /SELECT json FROM messages/.test(sql) ? "reads" : /SELECT role,json FROM messages/.test(sql) ? "sources" : /copy_chain_epoch/.test(sql) && /^\s*SELECT/.test(sql) ? "stamps" : null;
           if (!counter) return statement;
           return { get: (...args: never[]) => { count[counter] += 1; return statement.get(...args); } };
         };
@@ -185,8 +187,8 @@ describe("R9-02: a turn's transcript check costs its window, not the history", (
 
   it("the memo is stamped once per operation, not once per copy", () => {
     const { real, db, copies, count } = copiesWorld(1_000);
-    expect(partitionTranscriptMessages(db, "bot", "lead", copies)).toHaveLength(1_000);
-    expect(partitionTranscriptMessages(db, "bot", "lead", copies)).toHaveLength(1_000);
+    expect(botMessages(db, botViewer("bot"), "lead", copies)).toHaveLength(1_000);
+    expect(botMessages(db, botViewer("bot"), "lead", copies)).toHaveLength(1_000);
     expect(count.stamps).toBe(2);
     real.close();
   });
@@ -194,7 +196,7 @@ describe("R9-02: a turn's transcript check costs its window, not the history", (
   it("a lead conversation with 10,000 historical copies does the same work per turn as one with 1,000: its window's", () => {
     const run = (n: number) => {
       const world = copiesWorld(n);
-      const judged = partitionTranscriptWindow(world.db, "bot", "lead", world.copies, directTranscriptWindowFull(REPLAY_BUDGET_CAP_BYTES, DIRECT_TRANSCRIPT_WINDOW_ROWS));
+      const judged = botWindow(world.db, botViewer("bot"), "lead", world.copies, directTranscriptWindowFull(REPLAY_BUDGET_CAP_BYTES, DIRECT_TRANSCRIPT_WINDOW_ROWS), TRANSCRIPT_EXAMINED_ROWS);
       world.real.close();
       return { ...world.count, window: judged.window.map(row => row.id), older: judged.older.length };
     };
@@ -205,13 +207,15 @@ describe("R9-02: a turn's transcript check costs its window, not the history", (
     expect(large.older).toBe(10_000 - DIRECT_TRANSCRIPT_WINDOW_ROWS);
     expect(small.reads).toBe(DIRECT_TRANSCRIPT_WINDOW_ROWS);
     expect(large.reads).toBe(small.reads);
+    expect(small.sources).toBe(DIRECT_TRANSCRIPT_WINDOW_ROWS);
+    expect(large.sources).toBe(small.sources);
     expect(large.stamps).toBe(1);
   });
 
   it("a copy inside the window whose original was deleted is left out, and the window reaches one line further", () => {
     const { real, db, copies } = copiesWorld(1_000);
     real.exec("DELETE FROM messages WHERE thread_id='worker' AND id='o999'");
-    const judged = partitionTranscriptWindow(db, "bot", "lead", copies, directTranscriptWindowFull(REPLAY_BUDGET_CAP_BYTES, DIRECT_TRANSCRIPT_WINDOW_ROWS));
+    const judged = botWindow(db, botViewer("bot"), "lead", copies, directTranscriptWindowFull(REPLAY_BUDGET_CAP_BYTES, DIRECT_TRANSCRIPT_WINDOW_ROWS), TRANSCRIPT_EXAMINED_ROWS);
     expect(judged.window.map(row => row.id)).not.toContain("c999");
     expect(judged.window).toHaveLength(DIRECT_TRANSCRIPT_WINDOW_ROWS);
     expect(judged.window[0]!.id).toBe(`c${999 - DIRECT_TRANSCRIPT_WINDOW_ROWS}`);
@@ -220,32 +224,34 @@ describe("R9-02: a turn's transcript check costs its window, not the history", (
 
   it("linking a finished hand-off's copy (a reply link, a recipient) keeps every verdict; a withheld mark does not", () => {
     const { real, db, copies, count } = copiesWorld(1_000);
-    partitionTranscriptMessages(db, "bot", "lead", copies);
+    const read = () => botMessages(db, botViewer("bot"), "lead", copies);
+    read();
     const first = count.reads;
     real.exec(`UPDATE messages SET json=json_set(json,'$.replyToId','asker-msg','$.to',json('["Asker"]')) WHERE thread_id='lead'`);
-    expect(partitionTranscriptMessages(db, "bot", "lead", copies)).toHaveLength(1_000);
+    expect(read()).toHaveLength(1_000);
     expect(count.reads).toBe(first);
+    // the memo is read again; the owner's note itself is not the door's judge (rule 17), a deleted original is
     real.exec(`UPDATE messages SET json=json_set(json,'$.withheldFromBots',json('true')) WHERE thread_id='worker' AND id='o5'`);
-    expect(partitionTranscriptMessages(db, "bot", "lead", copies).map(row => row.id)).not.toContain("c5");
+    expect(read().map(row => row.id)).toContain("c5");
     expect(count.reads).toBeGreaterThan(first);
+    real.exec(`DELETE FROM messages WHERE thread_id='worker' AND id='o5'`);
+    expect(read().map(row => row.id)).not.toContain("c5");
     real.close();
   });
 
   it("the direct turn and the room render both judge their transcript through the window", () => {
     const index = readFileSync(new URL("./index.ts", import.meta.url), "utf8");
     // the direct turn judges only the newest text lines of the branch, read from the line index in a doubling window (turnctx), never the active path
-    expect(index).toMatch(/store\.activeTextLines\(threadId, window\)[^]*?partitionTranscriptMessages\(database\(\),bot\.id,threadId,branchTail\.messages\)/);
-    expect(index).not.toMatch(/partitionTranscriptMessages\(database\(\),\s*bot\.id,\s*threadId,\s*store\.activePath\(threadId\)\)/);
-    expect(index).not.toMatch(/partitionTranscriptMessages\(database\(\),\s*bot\.id,\s*threadId,\s*store\.activePath\(threadId\)\)/);
+    expect(index).toMatch(/store\.activeTextLines\(threadId, window\)[^]*?botMessages\(database\(\), botViewer\(bot\.id\), threadId, branchTail\.messages\)/);
+    expect(index).not.toMatch(/partitionTranscript(Messages|Window)\(/);
     const room = index.slice(index.indexOf("function renderRoomContext("), index.indexOf("// comms bus: passed into the visibility helpers"));
-    expect(room).toMatch(/partitionTranscriptWindow\(database\(\), botId, threadId, available,/);
-    expect(room).not.toMatch(/partitionTranscriptMessages\(database\(\),\s*botId,\s*threadId,\s*available\)/);
+    expect(room).toMatch(/botWindow\(database\(\), botViewer\(botId\), threadId, available,/);
   });
 });
 
 describe("hand-off endings (R9-03, R9-04, R9-05, F3)", () => {
   const selection = (): ModelSelection => ({ instanceId: "claude", model: "fake-model" });
-  beforeEach(() => { closeMessageDb(); closeDatabase(); rmSync(DATA_DIR, { recursive: true, force: true }); });
+  beforeEach(() => { closeMessageDb(); closeDatabase(); removeTempDirSync(DATA_DIR); });
 
   function world() {
     const store = new Store(selection);
@@ -299,11 +305,11 @@ describe("hand-off endings (R9-03, R9-04, R9-05, F3)", () => {
     expect(shared).toMatch(/case "cancel": \{ const ended = row\.toBotId \? queueClosedStatus\(verdict\.note, row\.toBotId\) : undefined;[^\n]*recordClosedSharedDelegation\(row, verdict\.line, database\(\), ended\); deps\?\.closed\(row, verdict\.line\);/);
   });
 
-  it("R9-05: a correction withheld from bots is not put in the project room, even though the result it answers is", () => {
+  it("R9-05: a correction reaches the project room only as its status; a legacy correction's stored words never do", () => {
     const { store, asker, worker, ask } = world();
     const request = ask("ask:card");
     const result = store.appendMessage(worker.threadId, { role: "bot", kind: "text", text: "the card's result" });
-    const correction = store.appendMessage(worker.threadId, { role: "bot", kind: "activity", actorKind: "murage", replyToId: result.id, tool: { name: "On record: PRIVATE CRITERION from the owner's plan", ok: true } } as never);
+    store.appendMessage(worker.threadId, { role: "bot", kind: "activity", actorKind: "murage", replyToId: result.id, tool: { name: "On record: PRIVATE CRITERION from the owner's plan", ok: true } } as never);
     const deliver = () => {
       const lines: string[] = [];
       const view = { ...boundaryStore(store), saveCardSummary: () => undefined, projectCard: () => null, cardTitle: () => "'Card'" as never, leadName: () => "Lead" as never };
@@ -312,11 +318,15 @@ describe("hand-off endings (R9-03, R9-04, R9-05, F3)", () => {
       { request, bot: worker as never, group: { id: "g", threadId: asker.threadId } as never, card: { id: "card-1" } as never, threadId: worker.threadId, resultId: result.id, reviewRun: null });
       return lines.join("\n");
     };
-    expect(deliver()).toContain("PRIVATE CRITERION");
-    store.patchMessage(worker.threadId, correction.id, { withheldFromBots: true });
+    const legacy = deliver();
+    expect(legacy).not.toContain("PRIVATE CRITERION");
+    expect(legacy).toContain("result for 'Card'");
+    // a status correction (rule 21) is copied as its status: the table's words for its counts, never the row's stored words
+    store.appendMessage(worker.threadId, { role: "bot", kind: "activity", actorKind: "murage", replyToId: result.id, tool: { name: "On record: PRIVATE stored words", ok: true },
+      murage: { kind: "status", status: { key: "criteria_claim_corrected", data: { met: 0, total: 1 } } } } as never);
     const room = deliver();
-    expect(room).not.toContain("PRIVATE CRITERION");
-    expect(room).toContain("result for 'Card'");
+    expect(room).toContain("On record: 0 of 1 done criteria met.");
+    expect(room).not.toContain("PRIVATE");
   });
 
   it("F3: a queued hand-off cancelled before it ran reads as cancelled, never as finished", () => {

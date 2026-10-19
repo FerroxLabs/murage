@@ -6,7 +6,7 @@
 // box-side shell runs for real at the end of this file (Linux, as the box
 // is) and through the whole proxy in computer-proxy-exec.test.ts.
 import { spawnSync } from "node:child_process";
-import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterAll, describe, expect, it } from "vitest";
@@ -23,6 +23,7 @@ import {
   type BoxExecOptions,
   type BoxRun,
 } from "./box-exec.ts";
+import { removeTempDirSync } from "./testing/cleanup.ts";
 
 const OPTS: BoxExecOptions = { firstWaitSec: 20, pollSec: 15, leaseSec: 600, outputCapBytes: 1 << 20 };
 const status = (state: string, bytes: number, cpu: number, extra = "") =>
@@ -243,7 +244,7 @@ describe.skipIf(process.platform !== "linux")("computer_exec's box-side records 
     }
   };
   const opts: BoxExecOptions = { firstWaitSec: 1, pollSec: 1, leaseSec: 600, outputCapBytes: 1 << 20 };
-  afterAll(() => rmSync(home, { recursive: true, force: true }));
+  afterAll(() => removeTempDirSync(home));
 
   it("a poll whose answer was lost can be asked again; cleanup removes the record", () => {
     const id = "aa00000000000001";

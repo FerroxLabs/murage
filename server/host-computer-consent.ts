@@ -22,6 +22,7 @@ import { newId } from "./contracts.ts";
 import { botUsesHostComputer } from "./local-routing.ts";
 import { dismissStaleToolCards, type ApprovalBus, type StaleCardKind } from "./peer-approval.ts";
 import type { BotRecord } from "./store.ts";
+import { murageLine } from "./murage-line.ts";
 
 /** The card's tool identity. Never a real tool: nothing can grant it. */
 export const HOST_CONSENT_TOOL = "local_computer_consent";
@@ -112,7 +113,7 @@ function finish(pending: Pending, outcome: HostConsentOutcome): void {
 
 function openCard(bus: ApprovalBus, bot: BotRecord, threadId: string): Pending {
   const requestId = newId();
-  const message = bus.store.appendMessage(threadId, {
+  const message = bus.store.appendMessage(threadId, murageLine({
     role: "bot",
     kind: "options",
     card: {
@@ -127,7 +128,7 @@ function openCard(bus: ApprovalBus, bot: BotRecord, threadId: string): Pending {
       approvalScope: "local-computer",
       held: "Asked once for each bot on Auto.",
     },
-  });
+  }));
   let held = false;
   try { held = bus.routineCard?.opened(threadId, requestId, `Let @${bot.name} use this computer?`) === true; } catch { /* delivery never changes authority */ }
   const pending: Pending = {

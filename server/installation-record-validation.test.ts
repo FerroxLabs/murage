@@ -1,4 +1,4 @@
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync, existsSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, writeFileSync, existsSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, expect, it } from "vitest";
@@ -8,13 +8,14 @@ import { prepareInstallationRestore } from "./installation-restore-preparation.t
 import { RoutineManager } from "./routines.ts";
 import { CalendarCallManager } from "./calendar-calls.ts";
 import { WebhookManager } from "./webhooks.ts";
+import { removeTempDirSync } from "./testing/cleanup.ts";
 
 const receipt = { requestId: "request", messageId: "message", botId: "deleted-bot", threadId: "old-thread", action: "delete", fingerprintVersion: 1, fingerprint: "b".repeat(64), resultId: "deleted-routine", appliedAt: 1 };
 const routines = { version: 1, routines: [], runs: [], routineRequestReceipts: [receipt] };
 const webhooks = { version: 1, webhooks: [], deliveries: [{ key: "old-endpoint:external-delivery", runId: "pruned-run", at: 1 }] };
 const delegations = [{ id: "ack", sourceThreadId: "old-thread", toBotId: "deleted-bot", toBotName: "Historical peer", status: "done", result: "Completed once", finishedAt: 1 }];
 const roots: string[] = [];
-afterEach(() => { for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true }); });
+afterEach(() => { for (const root of roots.splice(0)) removeTempDirSync(root); });
 
 it("preserves valid terminal evidence even when live definitions no longer exist", () => {
   for (const [path, value] of [["routines.json", routines], ["webhooks.json", webhooks], ["delegation-receipts.json", delegations]] as const) {

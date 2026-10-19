@@ -13,10 +13,11 @@
 //
 // Every path that turns a receipt 'revoked' (settings, restore, bookkeeping, the dispatch checks) goes through the v10 trigger
 // memory_receipt_flip into memory_receipt_flips; readers hold the receipt's lines "checking" from its first output (deny-read.ts) until
-// drainReceiptFlips commits it as a receipt root (run first in every marker slice).
+// drainReceiptFlips commits it as a root of that drain's one audience bulk revoke (run first in every marker slice).
 import type { DatabaseSync } from "node:sqlite";
 import { ensureThreadNo, threadIdOf } from "./thread-no.ts";
 import type { SessionKey } from "./lineage-types.ts";
+import { sessionKeyOf } from "./session-incarnation.ts";
 
 /** The session's interned number, taken now when it has none. */
 function ensureSessionNo(db: DatabaseSync, session: SessionKey): number {
@@ -28,7 +29,7 @@ function ensureSessionNo(db: DatabaseSync, session: SessionKey): number {
 
 /** A receipt's output at `lsn` in `threadId`: the receipt's range starts at its earliest output; its session is recorded when known. */
 export function noteReceiptOutput(db: DatabaseSync, bundleId: string, threadId: string, lsn: number, session?: { driverInstance: string; nativeSession: string | null }): void {
-  const sessionNo = session?.nativeSession ? ensureSessionNo(db, { threadId, driverInstance: session.driverInstance, nativeSession: session.nativeSession }) : null;
+  const sessionNo = session?.nativeSession ? ensureSessionNo(db, sessionKeyOf(threadId, session.driverInstance, session.nativeSession)) : null;
   db.prepare("INSERT INTO memory_receipt_lines(bundle_id,thread_no,first_lsn,session_no) VALUES(?,?,?,?) ON CONFLICT(bundle_id) DO UPDATE SET first_lsn=min(first_lsn,excluded.first_lsn),session_no=coalesce(excluded.session_no,session_no)")
     .run(bundleId, ensureThreadNo(db, threadId), lsn, sessionNo);
 }
@@ -45,14 +46,20 @@ export function receiptStart(db: DatabaseSync, bundleId: string): { threadId: st
   if (!row) return null;
   const threadId = threadIdOf(db, Number(row.thread_no));
   if (threadId === null) return null;
-  const session = typeof row.d === "string" && typeof row.n === "string" ? { threadId: String(row.st), driverInstance: row.d, nativeSession: row.n } : null;
+  const session = typeof row.d === "string" && typeof row.n === "string" ? sessionKeyOf(String(row.st), row.d, row.n) : null;
   return { threadId, firstLsn: Number(row.first_lsn), session };
 }
 
-/** Commits up to `limit` queued flips as receipt roots (the caller's transaction), oldest first. Returns how many it committed. */
-export function drainReceiptFlips(db: DatabaseSync, commit: (bundleId: string) => void, limit = 64): number {
+/** Most flips one drain commits: one drain is one audience bulk revoke (revoke-commit.ts drainFlipsIntoBulk), so 122 flips from one
+ * install-wide revoke are one walk, not 122 (1.0.3 revoke storm, M5). */
+export const FLIP_DRAIN_MAX = 1024;
+/** Commits up to `limit` queued flips as receipt roots (the caller's transaction), oldest first, stopping at the first flip `fits` says the
+ * slice's write budget has no room for (`first`: nothing was committed yet). Each flip row is deleted in the transaction that committed
+ * it, so a crash replays it. Returns how many it committed. */
+export function drainReceiptFlips(db: DatabaseSync, commit: (bundleId: string) => void, limit = 64, fits: (bundleId: string, first: boolean) => boolean = () => true): number {
   let done = 0;
   for (const row of db.prepare("SELECT thread_no,first_lsn,bundle_id FROM memory_receipt_flips LIMIT ?").all(limit)) {
+    if (!fits(String(row.bundle_id), done === 0)) break;
     commit(String(row.bundle_id));
     db.prepare("DELETE FROM memory_receipt_flips WHERE thread_no=? AND first_lsn=? AND bundle_id=?").run(Number(row.thread_no), Number(row.first_lsn), String(row.bundle_id));
     done++;

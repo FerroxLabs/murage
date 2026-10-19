@@ -471,6 +471,8 @@ describe("the exact command grant on a pending approval", () => {
     expect(alwaysAllowLabel(pending({ allowKey: "Bash:git" }))).toBe("Always allow any git command");
     expect(alwaysAllowLabel(pending({ allowKey: "stop:delete:/Users/ada/old" }))).toBe("Always allow");
     expect(alwaysAllowLabel({ ...pending({ allowKey: "mcp__box__read" }), tool: "mcp__box__read" })).toBe("Always allow");
+    // a connected-app grant covers the one action the card shows, and says so
+    expect(alwaysAllowLabel({ ...pending({ allowKey: "app-action:GMAIL_SEND_EMAIL" }), tool: "other" })).toBe("Always allow Gmail: send email");
   });
 });
 

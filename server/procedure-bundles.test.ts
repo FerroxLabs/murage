@@ -3,14 +3,18 @@ import { existsSync, mkdirSync, readFileSync, readdirSync, readlinkSync, rmSync,
 import { join } from "node:path";
 import { afterEach, expect, it } from "vitest";
 import { DATA_DIR } from "./config.ts";
-import { createProcedurePin, preparePinnedProcedures, readProcedureBundle } from "./procedure-bundles.ts";
+import { createProcedurePin, preparePinnedProcedures, readProcedureBundle, skillLinkNotice } from "./procedure-bundles.ts";
+import { emulateElectronWindowsRmSync } from "./testing/electron-windows-rmsync.ts";
+import fs from "node:fs";
+import { syncBuiltinESMExports } from "node:module";
 import { applyStagedSkillWrite, installSkill, migrateSkillDiscoveryToTasks, rollbackSkillRevision, setSkillEnabled, skillRevisionHistory, stageSkillWrite, syncSkillLinks, skillEvolutionDescriptor } from "./skills.ts";
 import { loadBundledSkills, renderSkillInstructions, selectBundledSkills, type BundledSkill } from "./skill-library.ts";
 import { installedPlaybookInstructions } from "./installed-playbooks.ts";
 import { taskWorkspacePath, workspaceDir } from "./workspace.ts";
+import { removeTempDirSync } from "./testing/cleanup.ts";
 const owned:string[]=[];
 const bot=()=>{const id=`procedure-test-${randomUUID()}`;owned.push(join(DATA_DIR,"workspaces",id),join(DATA_DIR,"skill-state",id));return id;};
-afterEach(()=>{for(const path of owned.splice(0))rmSync(path,{recursive:true,force:true});});
+afterEach(()=>{for(const path of owned.splice(0))removeTempDirSync(path);});
 const md=(body:string)=>`---\nname: checked-method\ndescription: Check a result\n---\n${body}\n`;
 function learned(id:string,body:string,action:"create"|"update"="create"){
   const staged=stageSkillWrite(id,{action,targetName:action==="update"?"checked-method":undefined,source:"learn:fixture",files:[{path:"SKILL.md",content:md(body)}]});
@@ -224,4 +228,75 @@ it("names the skills the pinned index leaves out instead of dropping them silent
   expect(omitted).toBeGreaterThan(0);
   expect(kept+omitted).toBe(total);
   expect(prompt).toContain("skills_list");
+});
+
+// murage#16 / #15 / #12 / releases#5: on Windows the app's runtime (Electron's
+// Node) throws "Path is a directory" for rmSync on a junction, and a recursive
+// rmSync deletes what the junction points to. Plain Node on CI did neither.
+// The emulation makes rmSync behave that way here (testing/electron-windows-rmsync.ts).
+it("a routine re-run relinks and drops earlier-pin links under the Windows runtime's rmSync",()=>{
+  const id=bot(),thread="routine-electron",routine={id:"routine-1",instructionRevision:"a".repeat(64)};learned(id,"Original");installEnabled(id,"second-method");
+  const first=createProcedurePin(id,thread,[catalogueSkill(id,"alpha")],[],routine);
+  preparePinnedProcedures(id,thread,first,true);
+  setSkillEnabled(id,"second-method",false);
+  const second=createProcedurePin(id,thread,[catalogueSkill(id,"alpha"),catalogueSkill(id,"image-generation")],[],routine);
+  const restore=emulateElectronWindowsRmSync();
+  let prepared:ReturnType<typeof preparePinnedProcedures>;
+  try{prepared=preparePinnedProcedures(id,thread,second,true);}finally{restore();}
+  expect(prepared.linkNotice).toBeUndefined();
+  for(const dir of NATIVE_DIRS){
+    expect(readlinkSync(nativeLink(id,thread,dir,"checked-method"))).toBe(pinTarget(id,thread,second.bundleId,"checked-method"));
+    expect(existsSync(nativeLink(id,thread,dir,"second-method"))).toBe(false);
+  }
+  // the earlier pin's projections keep every file
+  expect(readFileSync(join(pinTarget(id,thread,first.bundleId,"checked-method"),"SKILL.md"),"utf8")).toContain("Original");
+  expect(existsSync(join(pinTarget(id,thread,first.bundleId,"second-method"),"SKILL.md"))).toBe(true);
+});
+
+it("a relink that fails twice does not refuse the turn and names the skill for the chat",()=>{
+  const id=bot(),thread="routine-locked",routine={id:"routine-1",instructionRevision:"a".repeat(64)};learned(id,"Original");
+  const first=createProcedurePin(id,thread,[catalogueSkill(id,"alpha")],[],routine);preparePinnedProcedures(id,thread,first,true);
+  const second=createProcedurePin(id,thread,[catalogueSkill(id,"alpha"),catalogueSkill(id,"beta")],[],routine);
+  const locked=nativeLink(id,thread,".claude/skills","checked-method");
+  const original=fs.symlinkSync;let attempts=0;
+  const replace=(value:unknown)=>{Object.defineProperty(fs,"symlinkSync",{value,writable:true,configurable:true,enumerable:true});syncBuiltinESMExports();};
+  replace(function lockedSymlink(this:unknown,...args:Parameters<typeof original>){
+    if(String(args[1])===locked){attempts++;throw Object.assign(new Error("EBUSY: resource busy or locked"),{code:"EBUSY"});}
+    return original.apply(this,args);
+  });
+  let prepared:ReturnType<typeof preparePinnedProcedures>;
+  try{prepared=preparePinnedProcedures(id,thread,second,true);}finally{replace(original);}
+  expect(attempts).toBe(2);
+  expect(prepared.linkNotice).toBe(skillLinkNotice(["checked-method"]));
+  expect(prepared.linkNotice).toContain("\"checked-method\"");
+  // the bot still has the exact path of every pinned skill
+  expect(prepared.importedPrompt).toContain(join(pinTarget(id,thread,second.bundleId,"checked-method"),"SKILL.md"));
+  for(const dir of [".agents/skills",".grok/skills"])expect(readlinkSync(nativeLink(id,thread,dir,"checked-method"))).toBe(pinTarget(id,thread,second.bundleId,"checked-method"));
+  // the next turn links it again
+  expect(preparePinnedProcedures(id,thread,second,true).linkNotice).toBeUndefined();
+  expect(readlinkSync(locked)).toBe(pinTarget(id,thread,second.bundleId,"checked-method"));
+});
+
+it("the chat line for unlinked skills names each one",()=>{
+  expect(skillLinkNotice([])).toBeUndefined();
+  expect(skillLinkNotice(["a"])).toBe("The skill \"a\" could not be linked into the engine's skill folder on this turn, so the bot reads it from the pinned copy instead. The next turn links it again.");
+  expect(skillLinkNotice(["a","b"])).toContain("The skills \"a\", \"b\"");
+  expect(skillLinkNotice(["a","b"])).not.toMatch(/\u2014/);
+});
+
+it("an earlier pin's link that cannot be removed refuses the turn with a clear message",()=>{
+  const id=bot(),thread="routine-stuck",routine={id:"routine-1",instructionRevision:"a".repeat(64)};learned(id,"Original");
+  const first=createProcedurePin(id,thread,[catalogueSkill(id,"alpha")],[],routine);preparePinnedProcedures(id,thread,first,true);
+  const second=createProcedurePin(id,thread,[catalogueSkill(id,"alpha"),catalogueSkill(id,"beta")],[],routine);
+  const stuck=nativeLink(id,thread,".claude/skills","checked-method");
+  const original=fs.unlinkSync;let attempts=0;
+  const replace=(value:unknown)=>{Object.defineProperty(fs,"unlinkSync",{value,writable:true,configurable:true,enumerable:true});syncBuiltinESMExports();};
+  replace(function stuckUnlink(this:unknown,...args:Parameters<typeof original>){
+    if(String(args[0])===stuck){attempts++;throw Object.assign(new Error("EBUSY: resource busy or locked"),{code:"EBUSY"});}
+    return original.apply(this,args);
+  });
+  try{expect(()=>preparePinnedProcedures(id,thread,second,true)).toThrow("Murage could not move the link for the skill \"checked-method\"");}
+  finally{replace(original);}
+  expect(attempts).toBeGreaterThanOrEqual(2);
+  expect(readlinkSync(stuck)).toBe(pinTarget(id,thread,first.bundleId,"checked-method"));
 });

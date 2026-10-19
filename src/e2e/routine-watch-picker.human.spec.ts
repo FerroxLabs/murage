@@ -1,4 +1,4 @@
-import { expect, test, type Page } from "@playwright/test";
+import { expect, test, type Page } from "./page-error-guard";
 import { createServer, type ViteDevServer } from "vite";
 import tailwindcss from "@tailwindcss/vite";
 import { fileURLToPath } from "node:url";
@@ -14,7 +14,7 @@ test.beforeAll(async () => {
     server: { host: "127.0.0.1", watch: null, hmr: false }, plugins: [tailwindcss(), {
       name: "watch-picker-fixture", resolveId(id) { if (id === "/__watch.js") return "\0watch-fixture"; if (id === "/watch-fixture-store") return "\0watch-store"; },
       load(id) {
-        if (id === "\0watch-store") return "export async function api(path,init){const r=await fetch(path,init);const d=await r.json();if(!r.ok)throw new Error(d.error);return d}export function useStore(){return {dispatch:value=>(window.actions??=[]).push(value)}}";
+        if (id === "\0watch-store") return "export async function api(path,init){const r=await fetch(path,init);const d=await r.json();if(!r.ok)throw new Error(d.error);return d}export function useStoreIfAny(){return useStore();} export function useStore(){return {dispatch:value=>(window.actions??=[]).push(value)}}";
         if (id !== "\0watch-fixture") return;
         return "import React from 'react';import{createRoot}from'react-dom/client';import{RoutineWatchPicker}from'/src/components/RoutineWatchPicker.tsx';import'/src/styles.css';document.documentElement.dataset.skin=new URLSearchParams(location.search).get('skin')||'dark';createRoot(document.getElementById('root')).render(React.createElement(RoutineWatchPicker,{bots:[{id:'worker',name:'Worker',threadId:'worker-thread'}],onClose:()=>{window.watchPickerClosed=true}}));";
       }, configureServer(vite) { vite.middlewares.use((req, res, next) => { if (!req.url?.startsWith("/__watch")) return next(); if (req.url.startsWith("/__watch.js")) return next(); res.setHeader("content-type", "text/html"); res.end('<meta name="viewport" content="width=device-width,initial-scale=1"><title>File watch fixture</title><body style="background:var(--color-app);margin:0"><main id="root"></main><script type="module" src="/__watch.js"></script>'); }); },

@@ -33,7 +33,7 @@ export interface StripView {
 const PHASE_KEYS: Record<string, LocaleKey> = {
   "output-index": "memoryStrip.phase.output-index", references: "memoryStrip.phase.references", learning: "memoryStrip.phase.learning",
   lineage: "memoryStrip.phase.lineage", shapes: "memoryStrip.phase.shapes", storage: "memoryStrip.phase.storage",
-  "message-index": "memoryStrip.phase.message-index", "search-index": "memoryStrip.phase.search-index",
+  "message-index": "memoryStrip.phase.message-index", "search-index": "memoryStrip.phase.search-index", marker: "memoryStrip.phase.marker",
 };
 export function phaseLabel(id: string | undefined | null): string | null {
   return id && Object.hasOwn(PHASE_KEYS, id) ? t(PHASE_KEYS[id]!) : null;
@@ -46,10 +46,11 @@ export function holdText(_code?: string | null): string { return t("memoryStrip.
 
 const COUNTER_KEYS: Record<string, LocaleKey> = {
   messages: "memoryStrip.detail.counter", conversations: "memoryStrip.detail.counterConversations", sets: "memoryStrip.detail.counterSets",
+  open: "memoryStrip.detail.counterOpen",
 };
 function counterText(counter: StripSelection["counter"]): string | null {
   if (!counter || !Object.hasOwn(COUNTER_KEYS, counter.unit)) return null;
-  return t(COUNTER_KEYS[counter.unit]!, { done: formatDone(counter.done, localeCode()), total: formatTotal(counter.total, localeCode()) });
+  return t(COUNTER_KEYS[counter.unit]!, { done: formatDone(counter.done, localeCode()), total: counter.total === undefined ? "" : formatTotal(counter.total, localeCode()) });
 }
 
 function elapsedText(selection: StripSelection): string | null {
@@ -65,7 +66,10 @@ export function stripViewOf(selection: StripSelection | null): StripView | null 
   if (selection.kind === "done") return { kind: "done", role: "status", text: t("memoryStrip.done"), ...base, percent: 100 };
   const left = selection.left === null ? null : leftPhrase(selection.left);
   const percent = selection.percent;
-  let text = percent === null ? t("memoryStrip.workingNoPercent") : left ? t("memoryStrip.workingEta", { percent, left }) : t("memoryStrip.working", { percent });
+  // an open-ended step (its end moves as it goes) says what is done so far: no percent and no time left
+  const soFar = selection.counter?.unit === "open" ? counterText(selection.counter) : null;
+  const label = phaseLabel(selection.phaseId);
+  let text = soFar !== null && label ? t("memoryStrip.workingOpen", { label, done: soFar }) : percent === null ? t("memoryStrip.workingNoPercent") : left ? t("memoryStrip.workingEta", { percent, left }) : t("memoryStrip.working", { percent });
   if (selection.slow) text = `${text} ${t("memoryStrip.slow")}`;
   return { kind: "working", role: "status", text, percent, phaseLabel: phaseLabel(selection.phaseId), left, counter: counterText(selection.counter), elapsed: elapsedText(selection), slow: selection.slow };
 }

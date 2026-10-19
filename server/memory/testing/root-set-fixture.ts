@@ -20,6 +20,7 @@ import { LineageAllowance } from "../lineage-allowance.ts";
 import { MemoryDispatchReceipt } from "../dispatch.ts";
 import { setMemoryMode } from "../repository.ts";
 import { downgradeMemorySchema } from "../schema.ts";
+import { storeAnchorMessage } from "./anchor-message.ts";
 
 export const fixtureThread = (index: number) => `t${index}-direct`;
 export const fixtureReply = (index: number, reply: number) => `t${index}-r${reply}`;
@@ -42,7 +43,7 @@ export async function longThreadsV5(target: string, threads: number, replies: nu
   for (let index = 0; index < threads; index++) {
     const thread = fixtureThread(index), bot = `b${index}`, text = `The vault code for ${thread} is ${7000 + index}.`;
     message(thread, `${thread}-ask`, 10, "user", text);
-    captureSource(database(), { id: `src-${index}`, threadId: thread, messageId: `${thread}-ask`, kind: "text", speaker: "owner", outcome: "recorded", text });
+    storeAnchorMessage(database(), thread, `${thread}-ask`, text); captureSource(database(), { id: `src-${index}`, threadId: thread, messageId: `${thread}-ask`, kind: "text", speaker: "owner", outcome: "recorded", text });
     const registry = new InternalCapabilities(); registry.begin(bot, thread, "g");
     const access = () => memoryAccess(registry, registry.resolve(`Bearer ${registry.mint({ botId: bot, threadId: thread, generation: "g", depth: 0, kind: "memory", skillAuthoring: false })}`)!, () => roster);
     const id = saveMemoryCandidate(text, [{ sourceId: `src-${index}`, revision: 1, startByte: 0, endByte: Buffer.byteLength(text) }], `k-${index}`, access());

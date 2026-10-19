@@ -126,6 +126,9 @@ posixOnly("the turn engine in a project", () => {
       expect(correction?.replyToId).toBe(reply.id);
       expect(correction?.requestId).toBe(reply.requestId);
       expect(correction?.tool.name).toContain("0 of 1 done criteria met");
+      // a correction is a status (LINEAGE-DESIGN-S6 rule 21): its key and counts, never the criteria's words, in the desk and in its room copy
+      // (rule 16: the copy is read through the door's fixed copy)
+      expect(correction?.murage?.status).toEqual({ key: "criteria_claim_corrected", data: { met: 0, total: 1 } });
     }
   },45000);
 
@@ -228,7 +231,7 @@ posixOnly("the turn engine in a project", () => {
     await api("POST",`/api/groups/${room.id}/project/control/stop`,{});
   },45000);
 
-  it("three lead wakes without progress pause the goal with one line, and the paused goal holds the lead", async () => {
+  it("three lead wakes without progress pause the goal with one line, and the paused goal holds the lead", { tags: ["nightly"], timeout: 200000 }, async () => {
     for (const existing of (await api("GET", "/api/bots?messages=0")).body.bots) await api("PATCH", `/api/bots/${existing.id}`, { hidden: true });
     const lead = await bot("Finch", "looper");
     const worker = await bot("Jax", "verification");
@@ -268,7 +271,7 @@ posixOnly("the turn engine in a project", () => {
     const paused = await api("POST", `/api/groups/${room.id}/project/control/pause`, {});
     expect(paused.body).toMatchObject({ settings: { runState: "paused", runStateReason: "Paused by you" }, goal: { state: "paused" } });
     await api("POST", `/api/groups/${room.id}/project/control/stop`, {});
-  }, 200000);
+  });
 
   it("a routine in a project is queued by lane R and answered by the lead in the project's chat", async () => {
     const lead = await bot("Rowan", "verification"), worker = await bot("Ivy", "verification");

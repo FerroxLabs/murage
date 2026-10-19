@@ -17,6 +17,7 @@ import { outputRootsFor, recordSessionRoots, setTurnLineageNodesForTest } from "
 import { buildPerfFixture } from "./testing/perf-fixture.ts";
 import { accessFor, freshDataDir } from "./testing/recall-fixture.ts";
 import { LineageAllowance } from "./lineage-allowance.ts";
+import { stampFreshSession } from "./testing/writetime-fixture.ts";
 // 1.0.2: this test models a 1.0.1 file (legacy root-set rows) for the read-time judge, which still decides legacy data until S6.
 thawBeforeEach(() => thawRootSetWritesForTest(true));
 thawAfterEach(() => thawRootSetWritesForTest(false));
@@ -29,8 +30,11 @@ beforeEach(() => {
   setTurnLineageNodesForTest(1_000_000_000);
   freshDataDir("active"); resetSessionHolds();
   buildPerfFixture({ sources: RECORDS + 40, indexedRecords: RECORDS, active: 300, waiting: 0, extraWaiting: 0, deferredJobs: 0, pendingJobs: 0, disclosures: 80, disclosureEntries: 30 });
-  // sessions this build wrote carry a lineage row
-  for (const r of database().prepare("SELECT DISTINCT thread_id,driver_instance,native_session FROM memory_disclosures WHERE native_session IS NOT NULL").all()) recordSessionRoots(String(r.thread_id), String(r.driver_instance), String(r.native_session), outputRootsFor(LineageAllowance.tool(1_000_000_000), []));
+  // sessions this build wrote carry a lineage row, stamped as a 1.0.3 fresh start leaves it (S6 rule 26)
+  for (const r of database().prepare("SELECT DISTINCT thread_id,driver_instance,native_session FROM memory_disclosures WHERE native_session IS NOT NULL").all()) {
+    recordSessionRoots(String(r.thread_id), String(r.driver_instance), String(r.native_session), outputRootsFor(LineageAllowance.tool(1_000_000_000), []));
+    stampFreshSession(database(), String(r.thread_id), String(r.driver_instance), String(r.native_session));
+  }
 });
 afterEach(() => { closeMemoryIndexReader(); resetSessionHolds(); setTurnLineageNodesForTest(null); });
 
@@ -51,8 +55,9 @@ it("80 receipts citing 500 records: each record is hydrated once, the settings a
   expect(calls("SELECT total_changes()")).toBe(0);
   const total = [...statements().values()].reduce((sum, row) => sum + row.calls, 0);
   // 1.0.2: the write-time deny lookups add a few statements per record (still linear in the records cited, never in receipts or turns).
-  // (S6 adds the retire gate's two seeks and the session predicate's per call, a constant: 22,773 at 500 records measured)
-  expect(total).toBeLessThan(distinct * 48);
+  // (S6 adds the retire gate's two seeks and the session predicate's per call, a constant: 22,773 at 500 records measured; with int/1.0.3's
+  // own-generation check on top, 24,821 at 500 records measured: still about 50 per record cited)
+  expect(total).toBeLessThan(distinct * 52);
 });
 
 it("the same pass still refuses the session when a cited record was archived since, and when it was tombstoned", () => {

@@ -17,6 +17,7 @@ import type { AppConfig } from "../config.ts";
 import { registerArtifact } from "../artifacts.ts";
 import type { Store } from "../store.ts";
 import type { Audio } from "../tts/elevenlabs.ts";
+import { murageLine } from "../murage-line.ts";
 
 /** About a minute and a half of speech. Hosted voices are paid per
  *  character, and a voice note is a summary, not the whole report. */
@@ -114,7 +115,7 @@ export class VoiceNoteError extends Error {
  */
 export async function createVoiceNote(
   deps: VoiceNoteDeps,
-  input: { botId: string; threadId: string; runId: string; text: string; title?: string },
+  input: { botId: string; threadId: string; runId: string; text: string; title?: string; /** The provider turn that produced the words; absent for a replay no turn made. */ turnId?: string },
 ): Promise<VoiceNote> {
   const text = input.text.replace(/\s+/g, " ").trim();
   if (!text) throw new VoiceNoteError(400, "A voice note needs something to say.");
@@ -162,7 +163,10 @@ export async function createVoiceNote(
     { owner: true, scopes: [{ botId: input.botId, botName: bot.name, threadId: input.threadId, runId: input.runId, workspaceRoot: directory, managedOutput: true }] },
     { producer: "voice-note", allowManagedOutput: true },
   );
-  const message = deps.store.appendMessage(input.threadId, { role: "bot", kind: "text", text, artifactIds: [artifact.id] });
+  // The words are the bot's own: with a producing turn the row is that turn's engine output (revoking the turn's inputs withholds it like
+  // its text reply); with none (a manual replay) it stays a Murage line.
+  const row = { role: "bot" as const, kind: "text" as const, text, artifactIds: [artifact.id] };
+  const message = deps.store.appendMessage(input.threadId, input.turnId ? { ...row, turnId: input.turnId } : murageLine(row));
   return { artifact, messageId: message.id, mime, bytes };
 }
 

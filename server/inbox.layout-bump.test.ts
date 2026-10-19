@@ -36,7 +36,7 @@ function olderLayout() {
 const count = (db: DatabaseSync, table: string) => (db.prepare(`SELECT COUNT(*) AS n FROM ${table}`).get() as { n: number }).n;
 
 describe("a layout bump holds the start for the cost of the schema, not of the history", () => {
-  it("initializes in under 20 ms over 200k projected routine results and frees no old page before the server listens", async () => {
+  it("initializes in under 20 ms over 200k projected routine results and frees no old page before the server listens", { tags: ["perf-budget"], timeout: 280_000 }, async () => {
     const { db, expected } = olderLayout();
     expect(expected).toBeGreaterThan(0);
     const freelistBefore = (db.prepare("PRAGMA freelist_count").get() as { freelist_count: number }).freelist_count;
@@ -68,7 +68,7 @@ describe("a layout bump holds the start for the cost of the schema, not of the h
     expect(listInbox(db, { view: "all", pageSize: 20 }, access).items.length).toBeGreaterThan(0);
     expect(db.prepare("SELECT name FROM sqlite_schema WHERE type IN ('table','index') AND name LIKE '%retired%'").all()).toEqual([]);
     expect(fill.stats.maxSliceMs, "no slice held the loop").toBeLessThan(50);
-  }, 280_000);
+  });
 
   it("a start that finds the new layout ready and old tables left over frees them in slices without refilling", async () => {
     const { db } = olderLayout();

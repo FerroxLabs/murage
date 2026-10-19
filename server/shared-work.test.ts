@@ -20,11 +20,12 @@ import { roomRequest, insertRoomRequest, completeRequest, type RoomRequest } fro
 import { settleSharedWorkOwnerTurn, settleProjectUsage } from "./usage-ledger.ts";
 import { createSharedOwnerUsage, type SharedOwnerEvent } from "./shared-owner-usage.ts";
 import { requestPeerApproval, resolvePeerComms, type ApprovalBus } from "./peer-approval.ts";
+import { removeTempDirSync } from "./testing/cleanup.ts";
 // A "restart" re-imports database.ts after vi.resetModules(), so the open handle can live in a newer module
 // instance than the static import. Close both: Windows will not delete a database file that is still open (EPERM).
 async function closeAllDatabases() { closeDatabase(); (await import("./database.ts")).closeDatabase(); }
 async function restartModules() { await closeAllDatabases(); vi.resetModules(); }
-beforeEach(async () => { await closeAllDatabases(); rmSync(DATA_DIR, { recursive: true, force: true }); mkdirSync(DATA_DIR, { recursive: true }); });
+beforeEach(async () => { await closeAllDatabases(); removeTempDirSync(DATA_DIR); mkdirSync(DATA_DIR, { recursive: true }); });
 function fixture() {
  const store = new Store(() => ({instanceId:"fixture",model:"fixture"}));
  const iris = store.createBot(); store.patchBot(iris.id,{name:"Iris",section:"Design",sharedWith:{mode:"all",teams:[]}});

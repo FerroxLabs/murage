@@ -9,7 +9,7 @@
 //   where the last stopped, so the total follows the chain and no single call follows more than its allowance;
 // - the receipts of a retained session (retainedSessionInvalid): never more rows than the allowance can pay for, however long the session;
 // - the kept receipt groups of a thread are brought up to date without a scan of the thread's receipts.
-import { mkdirSync, rmSync } from "node:fs";
+import { mkdirSync } from "node:fs";
 import { DatabaseSync } from "node:sqlite";
 import { afterAll, afterEach, beforeAll, beforeEach, expect, it } from "vitest";
 import { DATA_DIR } from "../config.ts";
@@ -25,6 +25,8 @@ import {
 import { chainStore } from "./schema.ts";
 import { DENIED_SOURCE } from "./deny.ts";
 import { LineageAllowance } from "./lineage-allowance.ts";
+import { stampFreshSession } from "./testing/writetime-fixture.ts";
+import { removeTempDirSync } from "../testing/cleanup.ts";
 
 // 1.0.2 S6: each public read-time entry first asks whether the judge is retired on this file (read-time-retired.ts: one seek for a line row, one for
 // the reclaim flag); a constant, whatever the chain, so what is measured is still flat in the chain's length
@@ -32,7 +34,7 @@ const RETIRE_GATE_ROWS = 4;
 const thread = "reads-direct", driver = "drv", session = "sess";
 const key = (index: number) => `${thread}\u0000r${index}`;
 
-beforeEach(() => { closeDatabase(); rmSync(DATA_DIR, { recursive: true, force: true }); mkdirSync(DATA_DIR, { recursive: true }); });
+beforeEach(() => { closeDatabase(); removeTempDirSync(DATA_DIR); mkdirSync(DATA_DIR, { recursive: true }); });
 afterEach(() => { setTurnLineageNodesForTest(null); });
 
 const tally = { rows: 0, statements: 0, sql: [] as string[] };
@@ -69,7 +71,7 @@ function chain(n: number): void {
 it("a cold root chain read with no allowance left reads a constant number of rows, whether it holds 300, 1,500 or 12,000 sets, and is unproven", () => {
   const measuredRows: Record<number, { rows: number; chain: number }> = {};
   for (const n of [300, 1_500, 12_000]) {
-    closeDatabase(); rmSync(DATA_DIR, { recursive: true, force: true }); mkdirSync(DATA_DIR, { recursive: true });
+    closeDatabase(); removeTempDirSync(DATA_DIR); mkdirSync(DATA_DIR, { recursive: true });
     database();
     chain(n);
     resetRootSetWork();
@@ -123,6 +125,7 @@ for (const receipts of [1_000, 4_000]) it(`the receipts of a retained session of
   db.exec("BEGIN");
   const add = db.prepare("INSERT INTO memory_disclosures(bundle_id,thread_id,driver_instance,native_session,record_versions,source_versions,output_message_ids,policy_revision,deletion_epoch,token_count,state,created_at) VALUES(?,?,?,?,'[]','[]','[]',0,0,0,'delivered',9)");
   for (let index = 0; index < receipts; index++) add.run(`rc${index}`, thread, driver, session);
+  stampFreshSession(db, thread, driver, session); // a 1.0.3 fresh start (S6 rule 26): the warming is what this test reads
   db.exec("COMMIT");
   closeDatabase(); forgetKeptLineageForTest(); database();
   // none left: nothing is read at all, and the session is reset until the thread is warm
@@ -136,7 +139,8 @@ for (const receipts of [1_000, 4_000]) it(`the receipts of a retained session of
   const few = measured(() => retainedSessionInvalid(LineageAllowance.turn(10), thread, driver, session, some));
   expect(few.value).toBe(true);
   expect(some.reason).toBe("lineage-warming");
-  expect(few.rows).toBeLessThanOrEqual(10 * ROWS_PER_NODE + 4);
+  // (+1 since S6 rule 29: the door epoch check reads the session's own lineage row first, measured 165 at 10 nodes)
+  expect(few.rows).toBeLessThanOrEqual(10 * ROWS_PER_NODE + 5);
   console.log(`SESSION-RECEIPTS ${receipts}: no allowance ${zero.rows} rows, 10 nodes ${few.rows} rows`);
 }, 120_000);
 
@@ -191,6 +195,7 @@ it("3,000 receipts citing 16 sources each: the content check pays one node per l
   // the session is one lineage knows (a root set of its own), so the check goes on to the receipts' content
   const set = write(null, 0, [key(0)]);
   db.prepare("INSERT INTO memory_session_roots(thread_id,driver_instance,native_session,set_id) VALUES(?,?,?,?)").run(thread, driver, session, set);
+  stampFreshSession(db, thread, driver, session); // a 1.0.3 fresh start (S6 rule 26)
   db.exec("COMMIT");
   closeDatabase(); forgetKeptLineageForTest(); database();
   const why: { reason?: string } = {};

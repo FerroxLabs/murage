@@ -28,7 +28,7 @@ import { inspectEncryptedInstallationBackup } from "./installation-encrypted-bac
 import { installationRecoveryCommand } from "./installation-recovery-command.ts";
 import { restoreEncryptedInstallationNew } from "./installation-encrypted-backup.ts";
 import { backupFixture, testAgeKeys } from "./testing/backup-fixture.ts";
-import { safeWipeSync } from "./testing/safe-wipe.mjs";
+import { removeTempDirSync } from "./testing/cleanup.ts";
 
 const sha256 = (bytes: Buffer) => createHash("sha256").update(bytes).digest("hex");
 
@@ -167,7 +167,7 @@ describe("a scheduled backup can actually be restored", () => {
     const doomed = path.resolve(fixture.data);
     expect(doomed.startsWith(path.resolve(fixture.parent) + path.sep), `refusing to wipe ${doomed}`).toBe(true);
     expect(readdirSync(doomed).length).toBeGreaterThan(0);
-    safeWipeSync(doomed);
+    removeTempDirSync(doomed);
     expect(existsSync(doomed)).toBe(false);
 
     // ---- 4. Restore from the archive alone, with only the recovery key.
@@ -206,7 +206,7 @@ describe("a scheduled backup can actually be restored", () => {
       expect(rows.map(row => row.text)).toEqual(["WAL-visible transcript"]);
     } finally { db.close(); }
 
-    safeWipeSync(fixture.parent);
+    removeTempDirSync(fixture.parent);
   });
 
   // What restore does NOT give back. This is pinned deliberately: the setup
@@ -244,6 +244,6 @@ describe("a scheduled backup can actually be restored", () => {
     // The workspace files the owner actually works in do come back.
     expect(readFileSync(path.join(restored, "workspaces", "report.md"), "utf8")).toBe("# Saved output\n");
 
-    safeWipeSync(fixture.parent);
+    removeTempDirSync(fixture.parent);
   });
 });

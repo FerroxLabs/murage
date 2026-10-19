@@ -1,11 +1,12 @@
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, expect, it, vi } from "vitest";
 import { TelegramChannel } from "./telegram-channel.ts";
 import { TelegramTransportError } from "./telegram-transport.ts";
+import { removeTempDirSync } from "./testing/cleanup.ts";
 const roots: string[] = [];
-afterEach(() => { for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true }); });
+afterEach(() => { for (const root of roots.splice(0)) removeTempDirSync(root); });
 const message = (id: number, text: string, extra = {}) => ({ update_id: id, message: { message_id: id + 1, date: 1, from: { id: 7, is_bot: false }, chat: { id: 7, type: "private" }, text, ...extra } });
 function fixture() {
   const root = mkdtempSync(join(tmpdir(), "telegram-channel-")); roots.push(root);

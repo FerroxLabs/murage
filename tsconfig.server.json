@@ -26,6 +26,9 @@
     "tools/flux-stream-sim"
   ],
   "exclude": [
-    "server/drivers/pi-mcp-extension.ts"
+    "server/drivers/pi-mcp-extension.ts",
+    "server/cloud-home/mining-event-path.test.ts",
+    "server/cloud-home/app-health.test.ts",
+    "server/cloud-home/cp-add-device-disabled.test.ts"
   ]
 }

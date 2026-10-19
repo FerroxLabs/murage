@@ -136,13 +136,16 @@ it("a call leaves one note in the thread, and an empty call leaves nothing", asy
   });
   expect(note.body).toEqual({ ok: true, written: true });
   const messages = (await api("GET", `/api/threads/${bot.threadId}/messages`)).body.messages;
-  expect(messages.length).toBe(before + 1);
-  expect(messages.at(-1)).toMatchObject({ role: "bot", kind: "text" });
-  expect(messages.at(-1).text).toContain("**Call notes** (3 min)");
+  // the owner's words as an owner row, then Murage's status line (LINEAGE-DESIGN-S6 rule 21); the call's answers are in neither
+  expect(messages.length).toBe(before + 2);
+  expect(messages.at(-2)).toMatchObject({ role: "user", kind: "text", text: "What's on the board?", actorKind: "owner" });
+  expect(messages.at(-1).murage?.status).toEqual({ key: "call_ended", data: { minutes: 3 } });
+  expect(messages.at(-1).text ?? messages.at(-1).tool?.name).toBe("The voice call ended after 3 min.");
+  expect(JSON.stringify(messages.slice(-2))).not.toContain("Your board is ready");
 
   const remote = await api("POST", `/api/bots/${bot.id}/call-note`, { log: [{ said: "x", outcome: "answered" }] }, { "content-type": "application/json" });
   expect(remote.status).toBeGreaterThanOrEqual(400);
-  expect(await count()).toBe(before + 1);
+  expect(await count()).toBe(before + 2);
 }, 60_000);
 
 it("with Flux as the voice engine all 41 Flux voices (OpenAI and Grok) are listed without asking Flux", async () => {

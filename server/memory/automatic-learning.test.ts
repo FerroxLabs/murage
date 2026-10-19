@@ -1,4 +1,4 @@
-import { mkdirSync, rmSync } from "node:fs";
+import { mkdirSync } from "node:fs";
 import { beforeEach, expect, it, vi } from "vitest";
 import { DATA_DIR } from "../config.ts";
 import { closeDatabase, database } from "../database.ts";
@@ -9,9 +9,10 @@ import { consolidateMemorySource } from "./consolidate.ts";
 import { reconcileMemoryRoster } from "./policy.ts";
 import type { TextOnlyExtractor } from "./extract.ts";
 import { readMemoryLearning, updateMemoryLearning } from "./learning-policy.ts";
+import { removeTempDirSync } from "../testing/cleanup.ts";
 
 beforeEach(()=>{
-  closeDatabase();rmSync(DATA_DIR,{recursive:true,force:true});mkdirSync(DATA_DIR,{recursive:true});
+  closeDatabase();removeTempDirSync(DATA_DIR);mkdirSync(DATA_DIR,{recursive:true});
   reconcileMemoryRoster({bots:[{id:"bot",threadId:"thread"}],groups:[]});
 });
 function capture(text:string,speaker="owner",outcome="recorded",id="source"){
@@ -56,8 +57,8 @@ it("uses review and procedure switches at activation",async()=>{
 it("makes unavailable synthesis and configured token limits truthful without spending",async()=>{
   const text="I prefer concise answers.",job=capture(text);let calls=0;
   expect(await consolidateMemorySource(job,null,signal())).toMatchObject({status:"deferred",reason:"extractor-unavailable",cursor:0});
-  settings({dailyOutputTokens:0});
-  expect(await consolidateMemorySource(job,async()=>{calls++;return "[]";},signal())).toMatchObject({status:"deferred",reason:"budget-exhausted",cursor:0});
+  settings({ceiling:{input:0,output:0}});
+  expect(await consolidateMemorySource(job,async()=>{calls++;return "[]";},signal())).toMatchObject({status:"deferred",reason:"spend-ceiling",cursor:0});
   expect(calls).toBe(0);
 });
 it("rejects an in-flight result when source revision or learning configuration changes",async()=>{

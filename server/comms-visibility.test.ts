@@ -1,4 +1,4 @@
-import { rmSync } from "node:fs";
+
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
 import { DATA_DIR } from "./config.ts";
@@ -10,18 +10,19 @@ import { released } from "./testing/released.ts";
 import { closeMessageDb } from "./message-db.ts";
 import { Store } from "./store.ts";
 import { hostLine } from "./host-words.ts";
+import { removeTempDirSync } from "./testing/cleanup.ts";
 
 const selection = (): ModelSelection => ({ instanceId: "claude", model: "fake-model" });
 
 describe("bot-to-bot channel context", () => {
   beforeEach(() => {
     closeMessageDb();
-    rmSync(DATA_DIR, { recursive: true, force: true });
+    removeTempDirSync(DATA_DIR);
   });
 
   afterEach(() => {
     closeMessageDb();
-    rmSync(DATA_DIR, { recursive: true, force: true });
+    removeTempDirSync(DATA_DIR);
   });
 
   it("keeps a new DM in the sender's semantic section", () => {
@@ -37,7 +38,7 @@ describe("bot-to-bot channel context", () => {
 
   // B5: several bots share a room's thread, so the "Messaged @X" chip there
   // names who sent it. A direct chat's chip needs no sender.
-  it("a Messaged chip in a room names the sender, in a direct chat it does not", () => {
+  it("a Messaged row names the sender in a room and in a direct chat: it is the sender's own row (LINEAGE-DESIGN-S6 rule 6)", () => {
     const store = new Store(selection);
     const from = store.createBot({ name: "Forge" });
     const target = store.createBot({ name: "Quarry" });
@@ -53,7 +54,10 @@ describe("bot-to-bot channel context", () => {
     expect(roomChip?.from).toEqual({ botId: from.id, name: "Forge", color: from.color });
     expect(roomChip?.comm?.groupId).toBe(channel.id);
     expect(directChip).toBeDefined();
-    expect(directChip?.from).toBeUndefined();
+    expect(directChip?.from).toEqual({ botId: from.id, name: "Forge", color: from.color });
+    // each room copy names its source row
+    const copies = store.messagesFor(channel.threadId).filter((m) => m.text === "hello");
+    expect(copies.map((m) => m.copyOf?.messageIds[0])).toEqual([roomChip?.id, directChip?.id]);
   });
 
   it("F1 marks tool-needing teammate requests while preserving plain questions", () => {
@@ -109,8 +113,8 @@ describe("bot-to-bot channel context", () => {
 });
 
 describe("a reply copy in a channel", () => {
-  beforeEach(() => { closeMessageDb(); rmSync(DATA_DIR, { recursive: true, force: true }); });
-  afterEach(() => { closeMessageDb(); rmSync(DATA_DIR, { recursive: true, force: true }); });
+  beforeEach(() => { closeMessageDb(); removeTempDirSync(DATA_DIR); });
+  afterEach(() => { closeMessageDb(); removeTempDirSync(DATA_DIR); });
 
   it("is never written from a reply with no stored rows: the channel gets the withheld line, not the worker's words", () => {
     const store = new Store(selection);

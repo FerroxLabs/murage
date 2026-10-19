@@ -140,8 +140,8 @@ describe("PIP P1 re-verify fixes", () => {
   it("H: managed rows hide pin, review as skill, correction and share", () => {
     const review = read2("./MemoryReview.tsx");
     expect(review).toContain('!managedInContinuity(record.kind) && active && <button className={memoryButtonClass} onClick={() => void onAction({ action: "pin"');
-    expect(review).toMatch(/!managedInContinuity\(record\.kind\) && active && <>\s*<form[\s\S]*?Bot to review this skill/);
-    expect(review.indexOf("Managed in Continuity")).toBeGreaterThan(review.indexOf("Share memory"));
+    expect(review).toMatch(/!managedInContinuity\(record\.kind\) && active && <>\s*<form[\s\S]*?memoryReview.botToReview/);
+    expect(review.indexOf("memoryReview.managed")).toBeGreaterThan(review.indexOf("memoryReview.shareMemory"));
   });
 });
 
@@ -169,7 +169,7 @@ describe("continuity helpers", () => {
     expect(read("./ContinuityBlock.tsx")).toContain("expectedVersion: record.version");
     expect(continuityErrorSentence(new Error("MEMORY_VERSION_CONFLICT"))).toBe("This changed in another window. Here is the latest.");
     const review = read("./MemoryReview.tsx");
-    expect(review).toContain("Managed in Continuity");
+    expect(review).toContain("memoryReview.managed");
     expect(review).toContain("!managedInContinuity(record.kind) && active");
     expect(review).toContain('!managedInContinuity(record.kind) && record.state === "archived"');
     expect(review).toContain('!managedInContinuity(record.kind) && record.state !== "deleted"');

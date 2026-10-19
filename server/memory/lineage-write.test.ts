@@ -4,9 +4,10 @@
 // S1 writers (DESIGN-WRITETIME 2): every message writer records its lineage row and its cross-thread carries in the message's transaction;
 // a reply written after a mark is born marked (inheritance at write, through revoke-commit.ts inheritMarks); an unrecorded line has no
 // row (it reads "checking"); and the write's cost is flat in the thread's history (same statements, same rows read, index seeks only).
-import { mkdirSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { afterAll, beforeEach, describe, expect, it, vi } from "vitest";
+import { removeTempDirSync } from "../testing/cleanup.ts";
 
 // Inheritance at write is S3's body (revoke-commit.ts). Until it lands, this stand-in implements the contract's one rule the writer relies on:
 // a child whose carried parent line holds a deny_line mark gets one too, with the same revoke id, in the writer's transaction. The setup file
@@ -28,7 +29,7 @@ const { DATA_DIR } = await import("../config.ts");
 const { closeDatabase, database, transaction } = await import("../database.ts");
 const { appendMessage, closeMessageDb, deleteThread, insertMessage, lineAuthor, readThread, setActiveLeaf, updateMessage } = await import("../message-db.ts");
 const { commitRevoke, inheritMarks } = await import("./revoke-commit.ts");
-const { COPY_ORIGINS, FIRST_LSN, FOOTPRINT_STAR, decodeCarryChild, turnChildRef } = await import("./lineage-types.ts");
+const { COPY_ORIGINS, FIRST_LSN, FOOTPRINT_STAR, decodeCarryChild, lineChildRef, turnChildRef } = await import("./lineage-types.ts");
 const {
   LINEAGE_WRITE_SQL, UNKNOWN_PARENT_LSN, addTurnParents, closeTurnLineage, currentLsn, currentTurnLineage, internFootprint, lineageWriteStats,
   markThreadNotReady, memberTurnId, openTurnLineage, readyImportedThread, readyImportedThreads, reserveLsns, resetLineageWriteStats, runningTurnFor, supersedeMemberTurns, writeCaptureLineage, writeLineage,
@@ -53,7 +54,7 @@ const owner = (id: string, extra: Partial<Message> = {}): Message => msg(id, { r
 
 beforeEach(() => {
   closeMessageDb(); closeDatabase();
-  rmSync(DATA_DIR, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 });
+  removeTempDirSync(DATA_DIR);
   mkdirSync(DATA_DIR, { recursive: true });
   for (const thread of ["chat", "other", "room", "asker", "worker", "big"]) { let turn; while ((turn = currentTurnLineage(thread))) closeTurnLineage(turn); }
   vi.mocked(inheritMarks).mockClear();
@@ -142,7 +143,7 @@ describe("each writer records its lineage row in the message's transaction", () 
     expect(carries("chat")).toEqual([{ parent_thread: "other", from_lsn: x2, to_lsn: x2, child_kind: 1, child_ref: turnChildRef(turn.turnLsn) }]);
     expect(decodeCarryChild(1, String(carries("chat")[0]!.child_ref), "chat")).toEqual({ kind: "turn", threadId: "chat", turnLsn: turn.turnLsn });
     expect(flows("chat")).toEqual([{ from_thread: "other", first_lsn: Number(r1.lsn) }]);
-    expect(inheritMarks).toHaveBeenCalledWith(expect.anything(), { kind: "turn", threadId: "chat", lsn: turn.turnLsn }, [], [{ threadId: "other", from: x2, to: x2 }]);
+    expect(inheritMarks).toHaveBeenCalledWith(expect.anything(), { kind: "turn", threadId: "chat", lsn: turn.turnLsn, holdFrom: Number(r1.lsn) }, [], [{ threadId: "other", from: x2, to: x2 }]);
     // a second reply of the same turn writes no new carry row
     appendMessage("chat", msg("r1b", { parentId: "r1" }));
     expect(carries("chat")).toHaveLength(1);
@@ -162,20 +163,26 @@ describe("each writer records its lineage row in the message's transaction", () 
     expect(lineage("chat", "r1")).toBeUndefined();
   });
 
-  it("a room member's reply takes that member's turn; with no member match every open turn of the thread is merged", () => {
+  it("a room member's reply takes that member's turn; a line no member owns is attached to no turn (1.0.3 lifecycle card)", () => {
     appendMessage("other", msg("a")); appendMessage("asker", msg("b"));
     const ann = openTurnLineage(db(), { threadId: "room", turnId: memberTurnId("ann") });
     const bob = openTurnLineage(db(), { threadId: "room", turnId: memberTurnId("bob") });
     addTurnParents(ann, [{ kind: "line", threadId: "other", messageId: "a" }]);
     addTurnParents(bob, [{ kind: "line", threadId: "asker", messageId: "b" }]);
     expect(runningTurnFor("room", "ann")!.parents).toEqual([{ kind: "line", threadId: "other", messageId: "a" }]);
-    // (both turns opened at the same head: their turn children share a position; ann's line carries ann's parents only, a line no member
-    // owns carries every open turn's)
+    // (both turns opened at the same head: their turn children share a position; ann's line carries ann's parents only. A line no member
+    // owns is no one actor's turn output: Murage's own line carries nothing, and a bot line naming no member carries every open turn's
+    // parents as its own refs, so no write makes another member's turn its inherit child)
     const parentsOf = () => carries("room").filter(row => row.child_kind === 1 && row.child_ref === turnChildRef(ann.turnLsn)).map(row => row.parent_thread).sort();
+    const lineParents = (id: string) => carries("room").filter(row => row.child_kind === 0 && row.child_ref === lineChildRef(Number(lineage("room", id)!.lsn))).map(row => row.parent_thread).sort();
     appendMessage("room", msg("ra", { from: { botId: "ann", name: "Ann", color: "red" } }));
     expect(parentsOf()).toEqual(["other"]);
-    appendMessage("room", msg("rm", { actorKind: "murage" }));
-    expect(parentsOf()).toEqual(["asker", "other"]);
+    appendMessage("room", msg("rm", { actorKind: "murage", parentId: "ra" }));
+    expect(parentsOf()).toEqual(["other"]);
+    expect(lineParents("rm")).toEqual([]);
+    appendMessage("room", msg("ru", { parentId: "rm" }));
+    expect(parentsOf()).toEqual(["other"]);
+    expect(lineParents("ru")).toEqual(["asker", "other"]);
     // a new dispatch of ann replaces ann's earlier turn only
     const ann2 = openTurnLineage(db(), { threadId: "room", turnId: memberTurnId("ann") });
     supersedeMemberTurns(ann2);
@@ -204,6 +211,20 @@ describe("each writer records its lineage row in the message's transaction", () 
     const x1 = Number(lineage("other", "x1")!.lsn);
     expect(carries("worker").map(row => [row.parent_thread, row.from_lsn, row.to_lsn])).toEqual([
       ["asker", FIRST_LSN, Number(lineage("asker", "q1")!.lsn)], ["other", x1, x1]]);
+  });
+
+  it("rule 7: a hand-off prompt with handoffOf carries only the line that handed it over: no prefix, no asking turn's parents at drain", () => {
+    appendMessage("other", msg("x1"));
+    appendMessage("asker", owner("q1"));
+    appendMessage("asker", msg("sent", { kind: "activity" }));
+    appendMessage("asker", owner("q2"));
+    const turn = openTurnLineage(db(), { threadId: "asker", turnId: memberTurnId("bot") });
+    addTurnParents(turn, [{ kind: "line", threadId: "other", messageId: "x1" }]);
+    appendMessage("worker", owner("h2", { handoffFrom: "asker", handoffOf: { threadId: "asker", messageId: "sent" }, automation: { kind: "delegation" } }));
+    expect(lineAuthor(owner("h2", { handoffOf: { threadId: "asker", messageId: "sent" } }))).toBe("generated");
+    const sent = Number(lineage("asker", "sent")!.lsn);
+    expect(carries("worker").map(row => [row.parent_thread, row.from_lsn, row.to_lsn])).toEqual([["asker", sent, sent]]);
+    closeTurnLineage(turn);
   });
 
   it("receipts fold the oldest receipt lsn and the scopes; more than the cap interns to *; the running values flow to the next line", () => {
@@ -269,7 +290,7 @@ describe("a reply written after a mark is born marked", () => {
     appendMessage("chat", msg("r1"));
     // the turn child inherits at its position (the marker's range from there denies every line of the turn)
     expect(db().prepare("SELECT revoke_id FROM memory_deny_line WHERE thread_id='chat' AND lsn=?").all(turn.turnLsn)).toEqual([{ revoke_id: 42 }]);
-    expect(inheritMarks).toHaveBeenCalledWith(expect.anything(), { kind: "turn", threadId: "chat", lsn: turn.turnLsn }, [], [{ threadId: "other", from: x1, to: x1 }]);
+    expect(inheritMarks).toHaveBeenCalledWith(expect.anything(), { kind: "turn", threadId: "chat", lsn: turn.turnLsn, holdFrom: Number(lineage("chat", "r1")!.lsn) }, [], [{ threadId: "other", from: x1, to: x1 }]);
     // and a line written outside any turn, with no carried parent, inherits nothing
     closeTurnLineage(turn);
     appendMessage("chat", msg("r2"));
@@ -325,7 +346,7 @@ describe("write cost is flat in history", () => {
   }
   it("the same statements and rows read at 1k and 100k lines of history", () => {
     const small = measure(1_000);
-    closeMessageDb(); rmSync(DATA_DIR, { recursive: true, force: true }); mkdirSync(DATA_DIR, { recursive: true });
+    closeMessageDb(); removeTempDirSync(DATA_DIR); mkdirSync(DATA_DIR, { recursive: true });
     const large = measure(100_000);
     expect(large).toEqual(small);
     expect(small.statements).toBeGreaterThan(0);
@@ -355,7 +376,7 @@ describe("write cost is flat in history", () => {
   }
   it("a room turn shown 600 cross-thread lines writes a handful of range carries once, and lineage bytes per message stay flat (1k and 100k lines)", () => {
     const small = roomTurn(1_000);
-    closeMessageDb(); closeDatabase(); rmSync(DATA_DIR, { recursive: true, force: true }); mkdirSync(DATA_DIR, { recursive: true });
+    closeMessageDb(); closeDatabase(); removeTempDirSync(DATA_DIR); mkdirSync(DATA_DIR, { recursive: true });
     const large = roomTurn(100_000);
     console.log(`WRITETIME-STORAGE carries per turn ${small.carries}/${large.carries}; line_lineage+index bytes per message ${small.lineBytes?.toFixed(1)}/${large.lineBytes?.toFixed(1)}; carry bytes per reply ${small.carryBytesPerReply?.toFixed(1)}/${large.carryBytesPerReply?.toFixed(1)}`);
     // 1 run of 600 lines + 10 lines apart from each other = 11 rows, for 20 replies (point carries per line would be 20 x 610)

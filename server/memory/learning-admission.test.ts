@@ -1,7 +1,7 @@
 // Copyright 2026 Ferrox Labs
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import { beforeEach, describe, expect, it } from "vitest";
-import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { DATA_DIR } from "../config.ts";
 import { closeDatabase, database } from "../database.ts";
@@ -10,13 +10,14 @@ import { admitLessonText, isOutcomeEvidence, contextLineFor } from "./learnable.
 import { classifyPastedText, redactLearningText, repeatsProspectText, structuralLine } from "./prospect-text.ts";
 import { ensureLearningLocalDir, learningLocalPath } from "../bot-learning.ts";
 import { classifyDataDirEntry, DATA_DIR_RESTORABLE } from "../data-dir-inventory.ts";
+import { removeTempDirSync } from "../testing/cleanup.ts";
 
 const SECRET = "the Harborview contract needs a forty percent discount before Friday";
 const roster = { bots: [{ id: "dax", threadId: "t" }], groups: [] };
 const off = { id: "dax" };
 const on = { id: "dax", learning: { enabled: true, askFirst: false, prospectLearning: true, revision: 1 } };
 const scope = { threadIds: ["t"] };
-beforeEach(() => { closeDatabase(); rmSync(DATA_DIR, { recursive: true, force: true }); mkdirSync(DATA_DIR, { recursive: true }); });
+beforeEach(() => { closeDatabase(); removeTempDirSync(DATA_DIR); mkdirSync(DATA_DIR, { recursive: true }); });
 function add(id: string, speaker: string, text: string, thread = "t", kind = "attended") {
   const db = database(); db.exec("UPDATE memory_meta SET mode='active'");
   captureSource(db, { id, threadId: thread, kind: "text", speaker, outcome: "recorded", text, origin: { kind } });

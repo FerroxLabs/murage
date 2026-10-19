@@ -36,6 +36,7 @@ import {
 import { api, useStore, type Bot } from "@/state/store";
 import { BotAvatar } from "./Avatar";
 import { SHARING_COPY, sharedRowLabel } from "@/lib/shared-teams";
+import { fromAnswer } from "@/state/answer-tag";
 
 const CARD = "rounded-xl border border-hairline/40 bg-panel/60 p-3.5";
 const LABEL = "text-[13px] font-semibold text-ink";
@@ -422,7 +423,7 @@ export function TeamSettingsDialog({
     // rows carry the room's number, so a delayed answer never lands over a later change (I-H2). Nothing served ever rides over
     // admission.
     for (const { id } of patches.bots) dispatch({ type: "ensureBotDetail", botId: id, settled: TEAM_CHANGE_FIELDS });
-    for (const { id, patch } of patches.groups) dispatch({ type: "groupPatched", group: { id, ...patch } });
+    for (const entry of patches.groups) dispatch({ type: "groupPatched", origin: fromAnswer(entry), group: { id: entry.id, ...entry.patch } });
   };
 
   // A refusal because the team changed underneath: show what it is now.

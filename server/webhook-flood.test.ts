@@ -1,12 +1,13 @@
 // Copyright 2026 Ferrox Labs
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // Behaviour adapted from OpenMausBot #2394 (Apache-2.0).
-import { mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { mkdtempSync, readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterAll, beforeAll, expect, it } from "vitest";
 import { listenWebhookIngress, type WebhookIngress } from "./webhook-ingress.ts";
 import { WebhookManager } from "./webhooks.ts";
+import { removeTempDirSync } from "./testing/cleanup.ts";
 
 let dir: string;
 let ingress: WebhookIngress;
@@ -21,7 +22,7 @@ beforeAll(async () => {
 });
 afterAll(async () => {
   await new Promise<void>((resolve) => ingress.server.close(() => resolve()));
-  rmSync(dir, { recursive: true, force: true });
+  removeTempDirSync(dir);
 });
 
 it("folds wrong-secret requests into one rolling record and does not rewrite the file", async () => {

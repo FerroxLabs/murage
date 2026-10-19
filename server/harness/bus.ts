@@ -9,6 +9,7 @@ import { join } from "node:path";
 
 import { EVENTS_DIR } from "../config.ts";
 import { redactSecrets } from "../redact.ts";
+import { loggedRuntimeEvent } from "../runtime-event-out.ts";
 import { IntakeValve } from "./intake.ts";
 import { boundedRecord, markLogCovered, persistsEvent, flushSessionLines, markSessionsPending, recordSessionLine, rotateIfFull, sweepAfterWrite, threadLogClosed } from "./event-log.ts";
 import { newId, type ProviderInstance, type RuntimeEvent, type RuntimeEventListener } from "../contracts.ts";
@@ -107,7 +108,8 @@ export class EventBus {
     // (harness/event-log.ts says which and why).
     if (!persistsEvent(event) || threadLogClosed(event.threadId)) return this.deliver(event);
     const pendingWarning = this.pendingLogWarnings.get(event.threadId);
-    const loggable = redactSecrets(withoutImageBytes(event));
+    // the F12 record (the map handed to the engine process) is never written (runtime-event-out.ts)
+    const loggable = redactSecrets(withoutImageBytes(loggedRuntimeEvent(event)));
     const persistedEvents = pendingWarning ? [pendingWarning, loggable] : [loggable];
     try {
       // the canonical log is a file people paste into bug reports; scrub

@@ -8,7 +8,7 @@
 import { spawn, type ChildProcess } from "node:child_process";
 import { once } from "node:events";
 import { createServer, request, type Server } from "node:http";
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
@@ -43,6 +43,9 @@ export const DESKTOP_HEADERS = {
 export const COMMIT_TOKEN = "fedcba9876543210".repeat(4);
 /** The link routes have their own token (MCP-LINK M2). */
 export const MCP_COMMIT_TOKEN = "0123fedcba987654".repeat(4);
+/** The retired query form of the proof. It proves nothing now: the proof is
+ * read from its header only, and a URL-loaded resource carries a single-use
+ * ticket instead (`desktopTicketed`). Kept for the tests that show it fails. */
 export const DESKTOP_QUERY = `surface=desktop&surfaceSecret=${DESKTOP_SECRET}`;
 /** The per-launch credential the harness shares with its companion
  * (`companion-authority.ts`). The door adds it next to the marker; the marker
@@ -117,7 +120,7 @@ export const browserNativeEvents: Array<{ operation: string; session: string }> 
  * test that needs the mount cannot pass. The product behaviour is deliberate;
  * these tests run on a non-container Linux, macOS and Windows. */
 export const browserEngineRefusesHost = process.platform === "linux"
-  && (process.getuid?.() === 0 || ["/.dockerenv", "/run/.containerenv"].some((file) => existsSync(file)));
+  && (process.getuid?.() === 0 || ["/.dockerenv", "/run/.containerenv"].some((file) => { try { return lstatSync(file).isFile(); } catch { return false; } }));
 export const browserFixturePrelude = pathToFileURL(join(SERVER_DIR, "testing", "unified-browser-fixture.mjs")).href;
 export const browserSession = (botId: string, profile = "") => browserSessionId(botId, profile, "original-installation");
 export const browserRpc = (token: string, base = BASE) => fetch(`${base}/api/internal/unified-browser`, {
@@ -177,6 +180,20 @@ export const waitForIsolatedServer = async (
     await new Promise((resolve) => setTimeout(resolve, 100));
   }
 };
+
+/** A URL-loaded resource (the live stream, an image, a download) as the
+ * desktop window loads it: `path` with a single-use ticket minted for exactly
+ * that path and query, the proof in the minting POST's header only. */
+export async function desktopTicketed(path: string): Promise<string> {
+  const res = await fetch(`${BASE}/api/desktop/resource-ticket`, {
+    method: "POST",
+    headers: { ...DESKTOP_HEADERS, "content-type": "application/json" },
+    body: JSON.stringify({ resource: path }),
+  });
+  const body = (await res.json()) as { ticket?: string };
+  if (!res.ok || !body.ticket) throw new Error(`no resource ticket for ${path}: ${res.status}`);
+  return `${path}${path.includes("?") ? "&" : "?"}surfaceTicket=${body.ticket}`;
+}
 
 export const api = async (method: string, path: string, body?: unknown): Promise<{ status: number; body: any }> => {
   const res = await fetch(`${BASE}${path}`, {

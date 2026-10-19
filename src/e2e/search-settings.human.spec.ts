@@ -1,4 +1,4 @@
-import { test, expect } from "@playwright/test";
+import { test, expect } from "./page-error-guard";
 import { createServer, type ViteDevServer } from "vite";
 import tailwindcss from "@tailwindcss/vite";
 import { fileURLToPath } from "node:url";
@@ -18,7 +18,7 @@ test.beforeAll(async () => {
       name: "search-settings-fixture",
       resolveId(id) { if (id === "/__search.js") return "\0search-settings"; if (id === "/search-fixture-store") return "\0search-store"; },
       load(id) {
-        if (id === "\0search-store") return "import React from 'react';export async function api(path,init){const r=await fetch(path,init);const data=await r.json();if(!r.ok)throw new Error(data.error);return data;}export function useStore(){const [config,setConfig]=React.useState(window.fixtureConfig);return {state:{config},dispatch:action=>{window.fixtureConfig=action.config;setConfig(action.config)}}}";
+        if (id === "\0search-store") return "import React from 'react';export async function api(path,init){const r=await fetch(path,init);const data=await r.json();if(!r.ok)throw new Error(data.error);return data;}export function useStoreIfAny(){return useStore();} export function useStore(){const [config,setConfig]=React.useState(window.fixtureConfig);return {state:{config},dispatch:action=>{window.fixtureConfig=action.config;setConfig(action.config)}}}";
         if (id !== "\0search-settings") return;
         return "import React from 'react';import {createRoot} from 'react-dom/client';import {SearchSettings} from '/src/components/SearchSettings.tsx';import {setLocale} from '/src/lib/i18n.ts';import '/src/styles.css';const q=new URLSearchParams(location.search);await setLocale(q.get('lang')||'en');document.documentElement.dataset.skin=q.get('skin')||'dark';window.fixtureConfig??={webSearch:{provider:q.get('provider')||'engine',tavilyConfigured:false,exaConfigured:false}};createRoot(document.getElementById('root')).render(React.createElement(SearchSettings));";
       },
@@ -113,9 +113,9 @@ test("browser fallback saves provider separately and replaces or clears write-on
     return route.fulfill({ json: config });
   });
   await page.goto(origin + "/__search");
-  await expect(page.getByLabel("Search provider")).toHaveValue("engine");
+  await expect(page.getByLabel("Search provider", { exact: true })).toHaveValue("engine");
   await expect(page.getByText("Use the engine's own search first.", { exact: false })).toBeVisible();
-  await page.getByLabel("Search provider").selectOption("tavily");
+  await page.getByLabel("Search provider", { exact: true }).selectOption("tavily");
   await expect(page.getByRole("status")).toContainText("Search provider saved");
   const input = page.getByLabel("Tavily API key", { exact: true });
   await expect(input).toHaveAttribute("type", "password");
@@ -123,13 +123,13 @@ test("browser fallback saves provider separately and replaces or clears write-on
   holdNext = true;
   await page.getByRole("button", { name: "Save Tavily key" }).click();
   await expect(page.getByRole("button", { name: "Save Tavily key" })).toBeDisabled();
-  await expect(page.getByLabel("Search provider")).toBeDisabled();
+  await expect(page.getByLabel("Search provider", { exact: true })).toBeDisabled();
   await expect(page.getByRole("button", { name: "Save Tavily key" })).toHaveText("Saving…");
   await expect.poll(() => Boolean(release)).toBe(true); release!();
   await expect(input).toHaveValue("");
   await expect(page.getByRole("status")).toContainText("Tavily key saved. Search has not been tested.");
   expect(writes.at(-1)).toEqual({ webSearch: { tavilyApiKey: "fixture-tavily-first" } });
-  await expect(page.getByLabel("Search provider")).toHaveValue("tavily");
+  await expect(page.getByLabel("Search provider", { exact: true })).toHaveValue("tavily");
   await input.fill("fixture-tavily-replacement");
   await input.press("Enter");
   await expect(input).toHaveValue("");
@@ -143,8 +143,8 @@ test("browser fallback saves provider separately and replaces or clears write-on
   await expect(page.getByRole("status")).toContainText("Tavily key removed");
   await expect(page.getByRole("button", { name: "Clear Tavily key" })).toHaveCount(0);
   expect(writes.at(-1)).toEqual({ webSearch: { tavilyApiKey: "" } });
-  await expect(page.getByLabel("Search provider")).toHaveValue("tavily");
-  await page.getByLabel("Search provider").selectOption("off");
+  await expect(page.getByLabel("Search provider", { exact: true })).toHaveValue("tavily");
+  await page.getByLabel("Search provider", { exact: true }).selectOption("off");
   await expect(page.getByText(/Independent engine and MCP search tools may still be available/)).toBeVisible();
   await expect(page.getByText(/Connected|Ready/, { exact: true })).toHaveCount(0);
 });
@@ -188,7 +188,7 @@ test("desktop keys use secure credential IPC and preserve provider selection", a
   await expect(page.getByLabel("Exa API key", { exact: true })).toHaveValue("");
   await page.getByRole("button", { name: "Clear Tavily key" }).click();
   await expect(page.getByRole("status")).toContainText("Tavily key removed");
-  await expect(page.getByLabel("Search provider")).toHaveValue("exa");
+  await expect(page.getByLabel("Search provider", { exact: true })).toHaveValue("exa");
   expect(httpWrites).toBe(0);
   expect(await page.evaluate(() => (window as any).credentialCalls)).toEqual([
     { name: "tavilySearchApiKey", value: "fixture-desktop-tavily" },
@@ -202,7 +202,7 @@ for (const skin of ["light", "dark"]) test("mobile " + skin + " search settings 
   await page.goto(origin + "/__search?provider=tavily&skin=" + skin);
   await expect(page.getByRole("heading", { name: "Web search" })).toBeVisible();
   await expect(page.getByText(/There is no automatic fallback/)).toBeVisible();
-  await page.getByLabel("Search provider").focus();
+  await page.getByLabel("Search provider", { exact: true }).focus();
   await page.keyboard.press("Tab");
   await expect(page.getByLabel("Tavily API key", { exact: true })).toBeFocused();
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);

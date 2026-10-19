@@ -1,5 +1,5 @@
 import { afterEach, expect, it } from "vitest";
-import { mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { mkdtempSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { basename, join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -8,9 +8,10 @@ import { fuigoMemoryAllowOnce, newFuigoMemoryAlias } from "./fuigo-memory-permis
 import { recordEvents } from "../../testing/events.ts";
 import { NATIVE_DIR } from "../../config.ts";
 import type { ProviderInstance, SendTurnInput } from "../../contracts.ts";
+import { removeTempDirSync } from "../../testing/cleanup.ts";
 
 const roots: string[] = [], instances: ProviderInstance[] = [];
-afterEach(async () => { for (const instance of instances.splice(0)) await instance.dispose(); for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true }); });
+afterEach(async () => { for (const instance of instances.splice(0)) await instance.dispose(); for (const root of roots.splice(0)) removeTempDirSync(root); });
 const names = ["memory_search", "memory_get", "memory_save", "memory_propose_correction"];
 it("requires exact canonical identity and a unique one-time option", () => {
   const alias = newFuigoMemoryAlias(), call = { _meta: { "fuigo/tool": { version: 1, namespace: "mcp", name: `${alias}__memory_search` } } };
@@ -132,3 +133,19 @@ it.each(["after-result", "after-cancel"])(`${wrapped?"wrapped ":""}never automat
 });
 
 }
+
+it("allows the three thread tools once under the rotated alias and refuses a wrong alias or missing _meta", () => {
+  const alias = newFuigoMemoryAlias(), once = [{ optionId: "once", kind: "allow_once" }];
+  for (const tool of ["thread_search", "thread_list", "thread_read"]) {
+    const direct = { _meta: { "fuigo/tool": { version: 1, namespace: "mcp", name: `${alias}__${tool}` } } };
+    expect(fuigoMemoryAllowOnce(direct, once, alias)).toBe("once");
+    const wrapped = { _meta: { "fuigo/tool": { version: 1, namespace: "fuigo_build", name: "use_tool", kind: "use_tool", read_only: false } },
+      rawInput: { variant: "UseTool", tool_name: `${alias}__${tool}`, tool_input: {} } };
+    expect(fuigoMemoryAllowOnce(wrapped, once, alias)).toBe("once");
+    expect(fuigoMemoryAllowOnce({ ...direct, _meta: undefined }, once, alias)).toBeNull();
+    expect(fuigoMemoryAllowOnce({ title: `${alias}__${tool}` }, once, alias)).toBeNull();
+    expect(fuigoMemoryAllowOnce({ _meta: { "fuigo/tool": { version: 1, namespace: "mcp", name: `murage-memory-00000000000000000000__${tool}` } } }, once, alias)).toBeNull();
+    expect(fuigoMemoryAllowOnce({ _meta: { "fuigo/tool": { version: 1, namespace: "mcp", name: `${alias}__${tool}_extra` } } }, once, alias)).toBeNull();
+    expect(`${alias}__${tool}`.length).toBeLessThanOrEqual(61);
+  }
+});
