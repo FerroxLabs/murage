@@ -19,20 +19,30 @@ export const MAX_REAPER_FAILURES = 3;
 export const MAX_ATTEMPTS = 3;
 
 const sleep = (ms: number) => new Promise<void>((r) => setTimeout(r, ms));
+/** sleep, woken at once by `abort`. */
+const abortableSleep = (ms: number, abort?: AbortSignal) => !abort ? sleep(ms) : new Promise<void>((r) => {
+  if (abort.aborted) { r(); return; }
+  const done = () => { clearTimeout(timer); abort.removeEventListener("abort", done); r(); };
+  const timer = setTimeout(done, ms);
+  abort.addEventListener("abort", done, { once: true });
+});
 
 // ---------------------------------------------------------- start times ----
 
 interface RunResult { ok: boolean; code: number | string | null; out: string }
-const run = (cmd: string, args: string[]): Promise<RunResult> =>
-  new Promise((done) => execFile(cmd, args, { timeout: 10_000, encoding: "utf8", windowsHide: true }, (e, out) =>
-    done({ ok: !e, code: e ? ((e as NodeJS.ErrnoException & { code?: number | string }).code ?? null) : 0, out: String(out ?? "") })));
+/** One look by a helper process. `abort` ends it at once (execFile's own signal): an interrupted look is a failed one (ok false, code
+ *  "ABORT_ERR"), never an empty answer, so no caller reads it as absence. */
+const run = (cmd: string, args: string[], abort?: AbortSignal): Promise<RunResult> =>
+  abort?.aborted ? Promise.resolve({ ok: false, code: "ABORT_ERR", out: "" }) :
+  new Promise((done) => execFile(cmd, args, { timeout: 10_000, encoding: "utf8", windowsHide: true, ...(abort ? { signal: abort } : {}) }, (e, out) =>
+    done(abort?.aborted ? { ok: false, code: "ABORT_ERR", out: "" } : { ok: !e, code: e ? ((e as NodeJS.ErrnoException & { code?: number | string }).code ?? null) : 0, out: String(out ?? "") })));
 
 /** What one look at a process found. "unknown" is a failed look, never evidence the process is gone. */
 export type Observation = { state: "absent" } | { state: "present"; startTime: string } | { state: "unknown" };
 
 /** Linux /proc/<pid>/stat field 22; macOS `ps -o lstart= -p`; Windows Get-Process StartTime. Distinguishes absence from a failed read. */
-export async function observeProcess(pid: number, platform: NodeJS.Platform = process.platform): Promise<Observation> {
-  if (!Number.isInteger(pid) || pid <= 1) return { state: "unknown" };
+export async function observeProcess(pid: number, platform: NodeJS.Platform = process.platform, abort?: AbortSignal): Promise<Observation> {
+  if (!Number.isInteger(pid) || pid <= 1 || abort?.aborted) return { state: "unknown" };
   if (platform === "linux") {
     try {
       const stat = readFileSync(`/proc/${pid}/stat`, "utf8");
@@ -45,11 +55,11 @@ export async function observeProcess(pid: number, platform: NodeJS.Platform = pr
     }
   }
   if (platform === "win32") {
-    const r = await run("powershell.exe", ["-NoProfile", "-Command", `$p = Get-Process -Id ${pid} -ErrorAction SilentlyContinue; if ($p) { $p.StartTime.ToUniversalTime().ToString('o') }`]);
+    const r = await run("powershell.exe", ["-NoProfile", "-Command", `$p = Get-Process -Id ${pid} -ErrorAction SilentlyContinue; if ($p) { $p.StartTime.ToUniversalTime().ToString('o') }`], abort);
     if (!r.ok) return { state: "unknown" };
     return r.out.trim() ? { state: "present", startTime: r.out.trim() } : { state: "absent" };
   }
-  const r = await run("ps", ["-o", "lstart=", "-p", String(pid)]);
+  const r = await run("ps", ["-o", "lstart=", "-p", String(pid)], abort);
   if (r.ok) return r.out.trim() ? { state: "present", startTime: r.out.trim() } : { state: "unknown" };
   // ps exits 1 with no output when the pid does not exist; any other failure is a failed look.
   return r.code === 1 && !r.out.trim() ? { state: "absent" } : { state: "unknown" };
@@ -90,12 +100,15 @@ export interface ReaperDeps {
   jobRunner?: JobHelperRunner;
   termGraceMs?: number; forceWaitMs?: number;
   wait?: (ms: number) => Promise<void>;
+  /** A stop (maintenance cancelled): every helper look and every wait ends at once, and an interrupted step answers unknown / not
+   *  verified, never absent / gone (PIP-REDESIGN 2.5). Not `signal`: that name is the kill function above. */
+  abort?: AbortSignal;
 }
 const defaultSignal = (pid: number, sig: NodeJS.Signals | 0) => { process.kill(pid, sig); };
 const observer = (deps: ReaperDeps, platform: NodeJS.Platform) => deps.observe
   ?? (deps.startTime
     ? async (pid: number): Promise<Observation> => { const v = await deps.startTime!(pid); return v === null ? { state: "unknown" } : { state: "present", startTime: v }; }
-    : (pid: number) => observeProcess(pid, platform));
+    : (pid: number) => observeProcess(pid, platform, deps.abort));
 const gone = (signal: NonNullable<ReaperDeps["signal"]>, pid: number): boolean => {
   try { signal(-pid, 0); return false; } catch (e) { return (e as NodeJS.ErrnoException).code === "ESRCH"; }
 };
@@ -110,17 +123,20 @@ const groupState = (signal: NonNullable<ReaperDeps["signal"]>, pid: number): "al
 /** SIGTERM the group, wait the grace, SIGKILL, wait, then verify ESRCH. True only when the group is gone. Windows: terminate the named job and confirm zero members. */
 export async function killAndVerify(pid: number, deps: ReaperDeps = {}): Promise<boolean> {
   const platform = deps.platform ?? process.platform;
-  const signal = deps.signal ?? defaultSignal, wait = deps.wait ?? sleep;
+  const abort = deps.abort;
+  const signal = deps.signal ?? defaultSignal, wait = deps.wait ?? ((ms: number) => abortableSleep(ms, abort));
   const term = deps.termGraceMs ?? REAPER_TERM_GRACE_MS, force = deps.forceWaitMs ?? REAPER_FORCE_WAIT_MS;
-  if (platform === "win32") return deps.jobName ? stopWindowsJob(deps.jobName, term + force, deps.jobRunner) : false;
+  if (platform === "win32") return deps.jobName ? stopWindowsJob(deps.jobName, term + force, deps.jobRunner, abort) : false;
   if (!Number.isInteger(pid) || pid <= 1 || pid === process.pid) return false;
   const settled = () => gone(signal, pid) && goneProc(signal, pid);
+  // a stop ends the wait at the next 25 ms poll and answers false (not verified gone): the attempt keeps its record for the next pass
   const poll = async (ms: number) => {
     const end = Date.now() + ms;
-    while (Date.now() < end) { if (settled()) return true; await wait(Math.min(25, Math.max(1, end - Date.now()))); }
+    while (Date.now() < end) { if (settled()) return true; if (abort?.aborted) return false; await wait(Math.min(25, Math.max(1, end - Date.now()))); if (abort?.aborted) return false; }
     return settled();
   };
   if (settled()) return true;
+  if (abort?.aborted) return false;
   const send = (sig: NodeJS.Signals) => { try { signal(-pid, sig); } catch { try { signal(pid, sig); } catch { /* verify below */ } } };
   send("SIGTERM");
   if (await poll(term)) return true;
@@ -128,29 +144,41 @@ export async function killAndVerify(pid: number, deps: ReaperDeps = {}): Promise
   return poll(force);
 }
 
-/** Argv sweep: processes whose command line contains the temp root. Never matches the running process. Null when the process list could not be read. */
-export async function sweepByArgv(needle: string, platform: NodeJS.Platform = process.platform): Promise<number[] | null> {
+/** Linux: how many /proc entries the argv sweep reads between hand-backs of the event loop. */
+export const PROC_SWEEP_BATCH = 64;
+/** Argv sweep: processes whose command line contains the temp root. Never matches the running process. Null when the process list could not
+ *  be read, or when `abort` stopped the look. Linux reads /proc in batches of PROC_SWEEP_BATCH with the loop handed back between them, so a
+ *  stop (a timer, a controller) reaches it; `procRoot` is a test seam. */
+export async function sweepByArgv(needle: string, platform: NodeJS.Platform = process.platform, abort?: AbortSignal, procRoot = "/proc"): Promise<number[] | null> {
   if (!needle) return [];
+  if (abort?.aborted) return null;
   const self = process.pid;
   if (platform === "linux") {
     let names: string[];
-    try { names = readdirSync("/proc"); } catch { return null; }
+    try { names = readdirSync(procRoot); } catch { return null; }
     const pids: number[] = [];
+    let read = 0;
     for (const name of names) {
       if (!/^\d+$/.test(name)) continue;
       const pid = Number(name);
       if (pid === self) continue;
-      try { if (readFileSync(join("/proc", name, "cmdline"), "utf8").includes(needle)) pids.push(pid); }
+      // a stop ends the look between entries, and an interrupted look is a failed one (null): never an empty process list
+      if (read > 0 && read % PROC_SWEEP_BATCH === 0) {
+        await new Promise<void>(resolve => setImmediate(resolve));
+        if (abort?.aborted) return null;
+      }
+      read++;
+      try { if (readFileSync(join(procRoot, name, "cmdline"), "utf8").includes(needle)) pids.push(pid); }
       catch (e) { const code = (e as NodeJS.ErrnoException).code; if (code !== "ENOENT" && code !== "ESRCH") return null; /* a raced exit is fine; anything else is a failed look */ }
     }
-    return pids;
+    return abort?.aborted ? null : pids;
   }
   if (platform === "win32") {
-    const r = await run("powershell.exe", ["-NoProfile", "-Command", `Get-CimInstance Win32_Process | Where-Object { $_.CommandLine -like '*${needle.replace(/'/g, "''")}*' } | ForEach-Object { $_.ProcessId }`]);
+    const r = await run("powershell.exe", ["-NoProfile", "-Command", `Get-CimInstance Win32_Process | Where-Object { $_.CommandLine -like '*${needle.replace(/'/g, "''")}*' } | ForEach-Object { $_.ProcessId }`], abort);
     if (!r.ok) return null;
     return r.out.split(/\s+/).filter(Boolean).map(Number).filter((n) => Number.isInteger(n) && n !== self);
   }
-  const r = await run("ps", ["-axo", "pid=,command="]);
+  const r = await run("ps", ["-axo", "pid=,command="], abort);
   if (!r.ok) return null;
   const pids: number[] = [];
   for (const line of r.out.split("\n")) {
@@ -203,7 +231,7 @@ export async function reapAttemptProcess(t: AttemptTransport, deps: ReaperDeps =
     const ok = await killAndVerify(pid, deps);
     return { confirmed: ok, how: ok ? "child" : "unconfirmed" };
   }
-  const sweep = deps.sweep ?? ((needle: string) => sweepByArgv(needle, deps.platform));
+  const sweep = deps.sweep ?? ((needle: string) => sweepByArgv(needle, deps.platform, deps.abort));
   const pids = await sweep(t.intent.tempRoot);
   if (pids === null) return unconfirmed;
   if (!pids.length) return { confirmed: true, how: "gone" };
@@ -230,7 +258,10 @@ export async function reconcileAttempt(t: AttemptTransport, attempt: number, cur
   // An attempt of THIS process is active and untouched, unless the runner already settled it uncertain-transport:
   // that one awaits the idle-tick retry and is reconciled even in the same epoch.
   if (!opts.uncertain && sameBootEpoch(t.intent.bootEpoch, current)) return { action: "none" };
+  if (deps.abort?.aborted) return { action: "none" };
   const outcome = await reapAttemptProcess(t, deps);
+  // stopped mid-look: nothing was learned, so nothing is charged (no reaper failure) and nothing changes; the next pass owns the cleanup
+  if (deps.abort?.aborted) return { action: "none" };
   if (!outcome.confirmed) {
     const failures = (t.reaperFailures ?? 0) + 1;
     const next: AttemptTransport = { ...t, reaperFailures: failures };
@@ -247,11 +278,14 @@ export async function sweepOrphanTempDirs(base: string, known: ReadonlySet<strin
   const removed: string[] = [], kept: string[] = [];
   let names: string[] = [];
   try { names = readdirSync(base); } catch { return { removed, kept }; }
-  const sweep = deps.sweep ?? ((needle: string) => sweepByArgv(needle, deps.platform));
+  const sweep = deps.sweep ?? ((needle: string) => sweepByArgv(needle, deps.platform, deps.abort));
   for (const name of names) {
+    // a stop ends the sweep between entries: the rest is left for the next hourly pass
+    if (deps.abort?.aborted) break;
     const dir = join(base, name);
     if (known.has(dir)) continue;
     const found = await sweep(dir);
+    if (deps.abort?.aborted) { kept.push(dir); break; }
     // A failed process list is not an empty one: the directory stays.
     if ((deps.platform ?? process.platform) === "win32" || found === null || found.length) { kept.push(dir); continue; }
     removeTempRoot(base, dir); removed.push(dir);

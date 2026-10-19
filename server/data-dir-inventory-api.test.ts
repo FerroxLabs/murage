@@ -13,7 +13,7 @@
 // wrote about-me.md, and every backup after it stopped with
 // BACKUP_UNCLASSIFIED_COMPONENT (Mac customer re-test 2, 2026-09-26).
 // Synthetic fixture text only; loopback server, no network or credentials.
-import { mkdtempSync, readFileSync, readdirSync, rmSync } from "node:fs";
+import { mkdtempSync, readFileSync, readdirSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
@@ -23,6 +23,7 @@ import { dataDirWriteRecorder, unclassifiedDataDirNames } from "./testing/data-d
 import { withOfflineInstallation } from "./installation-database-snapshot.ts";
 import { inventoryFidelity } from "./installation-fidelity-snapshot.ts";
 import { stageInstallationStateWhileOwned } from "./installation-state-snapshot.ts";
+import { removeTempDirSync } from "./testing/cleanup.ts";
 
 const posixOnly = describe.skipIf(process.platform === "win32");
 /** What launchVerificationServer itself puts in the folder, not Murage. */
@@ -67,7 +68,7 @@ posixOnly("a real server's data folder stays backup-classified", () => {
   }, 60000);
   afterAll(async () => {
     await fixture?.close();
-    if (logDir) rmSync(logDir, { recursive: true, force: true });
+    if (logDir) removeTempDirSync(logDir);
   });
 
   it("classifies every name the owner's features create, and a backup of the folder succeeds", async () => {
@@ -107,7 +108,7 @@ posixOnly("a real server's data folder stays backup-classified", () => {
     expect(created).toEqual(expect.arrayContaining(["about-me.md", "house-rules.md", "whats-new.json", "bots.json", "skill-collection"]));
     expect(unclassifiedDataDirNames([...created, ...present].filter(name => !HARNESS.has(name)))).toEqual([]);
 
-    for (const name of HARNESS) rmSync(join(data, name), { recursive: true, force: true });
+    for (const name of HARNESS) removeTempDirSync(join(data, name));
     const parent = mkdtempSync(join(tmpdir(), "murage-data-dir-stage-"));
     try {
       await withOfflineInstallation(data, async installation => {
@@ -117,6 +118,6 @@ posixOnly("a real server's data folder stays backup-classified", () => {
         for (const name of ["about-me.md", "house-rules.md", "whats-new.json", "bots.json"]) expect(stage.manifest.files.map(file => file.path), name).toContain(name);
         expect(stage.manifest.files.some(file => file.path.split(/[\\/]/)[0] === "skill-collection")).toBe(true);
       });
-    } finally { rmSync(parent, { recursive: true, force: true }); }
+    } finally { removeTempDirSync(parent); }
   }, 180000);
 });

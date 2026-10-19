@@ -52,6 +52,9 @@ export const FLUX_CALLER_FILES: Readonly<Record<string, readonly string[]>> = {
   "server/composio.ts": ["composio.health", "composio.broker"],
   "server/decider/flux.ts": ["decide"],
   "server/drivers/acp/hermes.ts": ["chat.completions"],
+  // On a Cloud home these two hand the launcher a Flux route to render (cloudTurnRender): the engine then calls that base itself.
+  "server/drivers/acp/opencode-go.ts": ["chat.completions"],
+  "server/drivers/codex.ts": ["responses"],
   "server/flux-key-health.ts": ["key.info"],
   // Recognises a Flux host so callers attach the memory headers; no request of its own.
   "server/flux-memory-headers.ts": [],

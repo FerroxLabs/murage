@@ -7,7 +7,7 @@
 // through, and the harness's loopback gate rejecting a proxied request.
 import { spawn, type ChildProcess } from "node:child_process";
 import { createServer, request, type IncomingMessage, type Server } from "node:http";
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -16,6 +16,7 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { createProxyHandler } from "../src/proxy.ts";
 import { createConnectedDeviceTracker } from "../src/connected-devices.ts";
 import type { CompanionEndpoint } from "../src/endpoints.ts";
+import { removeTempDirSync } from "../../server/testing/cleanup.ts";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const ROOT = join(HERE, "..", "..");
@@ -103,6 +104,10 @@ const device = async (
   }
   return { status: res.status, body, headers: res.headers };
 };
+
+/** The control page's per-launch token, as the desktop app holds it. */
+const CONTROL_TOKEN = "t".repeat(43);
+const CTL = { "x-murage-control-token": CONTROL_TOKEN };
 
 /** raw request with a chosen Host header — fetch will not let us set one */
 const withHost = (port: number, host: string, path = "/api/health", headers: Record<string, string> = {}) =>
@@ -211,7 +216,7 @@ afterAll(async () => {
     // the suite instead
     setTimeout(resolve, 10_000).unref?.();
   });
-  rmSync(home, { recursive: true, force: true });
+  removeTempDirSync(home);
 });
 
 describe("the sidecar in front of an unmodified harness", () => {
@@ -787,6 +792,7 @@ describe("pairing, end to end", () => {
     await new Promise<void>((r) => paired.listen(0, "127.0.0.1", r));
     const port = (paired.address() as { port: number }).port;
     const control = createControlServer({
+      controlToken: () => CONTROL_TOKEN,
       devices: registry,
       companionPort: port,
       discovery: () => ({ advertising: false, name: "Murage" }),
@@ -807,7 +813,7 @@ describe("pairing, end to end", () => {
       // the person clicks "Start pairing" on the computer
       // SAFETY: POST /pairing is this sidecar's own API and always answers
       // with both credentials; the matches below fail if the shape drifts.
-      const opened = (await (await fetch(`${ctl}/pairing`, { method: "POST" })).json()) as {
+      const opened = (await (await fetch(`${ctl}/pairing`, { method: "POST", headers: CTL })).json()) as {
         code: string;
         token: string;
       };
@@ -885,7 +891,7 @@ describe("pairing, end to end", () => {
       // the computer can see the phone, and take it away again
       // SAFETY: /state's shape is this sidecar's own API, asserted by the
       // control-server tests above; a drifted shape fails the expects below.
-      const state = (await (await fetch(`${ctl}/state`)).json()) as {
+      const state = (await (await fetch(`${ctl}/state`, { headers: CTL })).json()) as {
         devices: Array<{ id: string; name: string }>;
         connectedDeviceIds: string[];
       };
@@ -895,7 +901,7 @@ describe("pairing, end to end", () => {
       // this test passing for the wrong reason.
       const ada = state.devices.find((d) => d.name === "Ada's iPhone")!;
       expect(state.connectedDeviceIds).toContain(ada.id);
-      const revoked = await fetch(`${ctl}/devices/${ada.id}`, { method: "DELETE" });
+      const revoked = await fetch(`${ctl}/devices/${ada.id}`, { method: "DELETE", headers: CTL });
       expect(revoked.status).toBe(200);
       expect((await revoked.json() as { connectedDeviceIds: string[] }).connectedDeviceIds).not.toContain(ada.id);
       await eventStreamClosed;
@@ -910,6 +916,7 @@ describe("pairing, end to end", () => {
     const { DeviceRegistry } = await import("../src/devices.ts");
     const { createControlServer } = await import("../src/control.ts");
     const control = createControlServer({
+      controlToken: () => CONTROL_TOKEN,
       devices: new DeviceRegistry(),
       companionPort: 8800,
       discovery: () => ({ advertising: false, name: "Murage" }),
@@ -920,8 +927,8 @@ describe("pairing, end to end", () => {
     const port = (control.address() as { port: number }).port;
     try {
       // pairing and revocation are exactly what a phone must never reach
-      expect(await withHost(port, "macbook.tail1234.ts.net:8801", "/state")).toBe(403);
-      expect(await withHost(port, `127.0.0.1:${port}`, "/state")).toBe(200);
+      expect(await withHost(port, "macbook.tail1234.ts.net:8801", "/state", CTL)).toBe(403);
+      expect(await withHost(port, `127.0.0.1:${port}`, "/state", CTL)).toBe(200);
     } finally {
       await new Promise<void>((r) => control.close(() => r()));
     }
@@ -941,6 +948,7 @@ describe("pairing, end to end", () => {
     expect(hostOf("[::1")).toBe("[::1");
 
     const control = createControlServer({
+      controlToken: () => CONTROL_TOKEN,
       devices: new DeviceRegistry(),
       companionPort: 8800,
       discovery: () => ({ advertising: false, name: "Murage" }),
@@ -950,17 +958,17 @@ describe("pairing, end to end", () => {
     // IP server that is listening, which the awaited listen guarantees.
     const port = (control.address() as { port: number }).port;
     try {
-      expect(await withHost(port, `[::1]:${port}`, "/state")).toBe(200);
+      expect(await withHost(port, `[::1]:${port}`, "/state", CTL)).toBe(200);
       // and the bracket parsing did not open a door: a real name is still out
-      expect(await withHost(port, "[::1].evil.example", "/state")).toBe(403);
+      expect(await withHost(port, "[::1].evil.example", "/state", CTL)).toBe(403);
 
       // An authority the parser cannot make sense of is refused, not waved
       // through. Both of these are malformed — an IPv6 literal has to be
       // bracketed, and a port needs a host in front of it — and both used to
       // parse to the empty string, which the check then skipped.
-      expect(await withHost(port, "::1", "/state")).toBe(403);
-      expect(await withHost(port, ":8811", "/state")).toBe(403);
-      expect(await withHost(port, "[]:8811", "/state")).toBe(403);
+      expect(await withHost(port, "::1", "/state", CTL)).toBe(403);
+      expect(await withHost(port, ":8811", "/state", CTL)).toBe(403);
+      expect(await withHost(port, "[]:8811", "/state", CTL)).toBe(403);
     } finally {
       await new Promise<void>((r) => control.close(() => r()));
     }
@@ -975,6 +983,7 @@ describe("pairing, end to end", () => {
     const { createControlServer } = await import("../src/control.ts");
     const registry = new DeviceRegistry();
     const control = createControlServer({
+      controlToken: () => CONTROL_TOKEN,
       devices: registry,
       companionPort: 8800,
       discovery: () => ({ advertising: false, name: "Murage" }),
@@ -987,7 +996,7 @@ describe("pairing, end to end", () => {
     try {
       const evil = await fetch(`${base}/pairing`, {
         method: "POST",
-        headers: { origin: "https://evil.example" },
+        headers: { ...CTL, origin: "https://evil.example" },
       });
       expect(evil.status).toBe(403);
       // and no window opened on the way to being refused
@@ -998,7 +1007,7 @@ describe("pairing, end to end", () => {
       // blanket refusal would break the one legitimate browser there is.
       const ours = await fetch(`${base}/pairing`, {
         method: "POST",
-        headers: { origin: base },
+        headers: { ...CTL, origin: base },
       });
       expect(ours.status).toBe(201);
       expect(registry.pairing()).not.toBe(null);
@@ -1006,7 +1015,7 @@ describe("pairing, end to end", () => {
       // Revocation is the other write worth stealing.
       const stolen = await fetch(`${base}/devices/whatever`, {
         method: "DELETE",
-        headers: { origin: "https://evil.example" },
+        headers: { ...CTL, origin: "https://evil.example" },
       });
       expect(stolen.status).toBe(403);
     } finally {
@@ -1024,6 +1033,7 @@ describe("pairing, end to end", () => {
     const { createControlServer } = await import("../src/control.ts");
     const registry = new DeviceRegistry();
     const control = createControlServer({
+      controlToken: () => CONTROL_TOKEN,
       devices: registry,
       companionPort: 8800,
       discovery: () => ({ advertising: false, name: "Murage" }),
@@ -1035,7 +1045,7 @@ describe("pairing, end to end", () => {
     const host = `127.0.0.1:${port}`;
     try {
       for (const origin of ["https://evil.example", "http://127.0.0.1.evil.example", "null"]) {
-        expect(await withHost(port, host, "/state", { origin })).toBe(403);
+        expect(await withHost(port, host, "/state", { ...CTL, origin })).toBe(403);
       }
       // no pairing window was opened by any of that
       expect(registry.pairing()).toBeNull();
@@ -1046,12 +1056,12 @@ describe("pairing, end to end", () => {
       // one this server serves. Only the exact authority the request was
       // addressed to passes, because the alternative is putting a name
       // resolver inside a CSRF check.
-      expect(await withHost(port, host, "/state", { origin: `http://localhost:${port}` })).toBe(403);
+      expect(await withHost(port, host, "/state", { ...CTL, origin: `http://localhost:${port}` })).toBe(403);
 
       // the control page itself is same-origin, and a native client sends
       // no Origin at all — both keep working
-      expect(await withHost(port, host, "/state", { origin: `http://${host}` })).toBe(200);
-      expect(await withHost(port, host, "/state")).toBe(200);
+      expect(await withHost(port, host, "/state", { ...CTL, origin: `http://${host}` })).toBe(200);
+      expect(await withHost(port, host, "/state", CTL)).toBe(200);
     } finally {
       await new Promise<void>((r) => control.close(() => r()));
     }

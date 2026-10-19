@@ -1,0 +1,70 @@
+# Ubuntu 24.04's bwrap-userns-restrict (apparmor 4.0.1,
+# /usr/share/apparmor/extra-profiles/bwrap-userns-restrict), installed as
+# /etc/apparmor.d/bwrap-userns-restrict. bwrap may create user namespaces;
+# everything it executes is stacked into unpriv_bwrap, which holds no
+# capabilities. Stacking (&) is required: bwrap sets no_new_privs, and a
+# plain child-profile transition is refused at exec ("no new privs") on a
+# real kernel. Turns are additionally denied new user namespaces by bwrap
+# --disable-userns and the murage-seccomp filter; Chromium inside the browser
+# sandbox keeps the user namespace its own sandbox needs.
+abi <abi/4.0>,
+include <tunables/global>
+
+profile bwrap /usr/bin/bwrap flags=(attach_disconnected) {
+  allow capability,
+  allow file rwlkm /{**,},
+  allow network,
+  allow unix,
+  allow ptrace,
+  allow signal,
+  allow mqueue,
+  allow io_uring,
+  allow userns,
+  allow mount,
+  allow umount,
+  allow pivot_root,
+  allow dbus,
+  allow px /** -> bwrap//&unpriv_bwrap,
+  include if exists <local/bwrap-userns-restrict>
+}
+
+profile unpriv_bwrap flags=(attach_disconnected) {
+  allow file rwlkm /{**,},
+  allow network,
+  allow unix,
+  allow ptrace,
+  allow signal,
+  allow mqueue,
+  allow io_uring,
+  allow userns,
+  allow mount,
+  allow umount,
+  allow pivot_root,
+  allow dbus,
+  allow pix /** -> &unpriv_bwrap,
+  # Defence in depth (audit GLM-1): deny always beats the allow-all above, so
+  # these hold even if a mount or group mode is ever wrong. Paths are matched
+  # as the payload sees them inside bwrap's own mount namespace (bwrap pivots
+  # onto a fresh tmpfs root; nothing is disconnected). Legitimate accesses that
+  # must stay open: the cwd bound at /data/home/workspaces/<id> or at the engine
+  # home /data/engine-homes/<engine>, /usr, /bin, /lib*, /opt/murage (read and
+  # exec), /etc/ssl, /etc/hosts, /etc/passwd, /etc/group, /etc/resolv.conf, the
+  # tmpfs /tmp. /data/home keeps /data/home/workspaces reachable: every
+  # top-level name except one starting "wo" is denied.
+  deny /data/home/[^w]** rwklmx,
+  deny /data/home/w[^o]** rwklmx,
+  deny /data/home/secrets{,/**} rwklmx,
+  deny /data/browser/{,**} rwklmx,
+  deny /data/proxy/{,**} rwklmx,
+  deny /etc/murage-home/{,**} rwklmx,
+  deny /run/murage-turn-requests/{,**} rwklmx,
+  deny /run/murage-digest-cache/{,**} rwklmx,
+  deny /root/{,**} rwklmx,
+  deny /etc/shadow* rwklmx,
+  deny /etc/sudoers rwklmx,
+  deny /etc/sudoers.d/{,**} rwklmx,
+  deny /usr/local/libexec/{,**} wl,
+  deny /opt/murage/{,**} wl,
+  audit deny capability,
+  include if exists <local/unpriv_bwrap>
+}

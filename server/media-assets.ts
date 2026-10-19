@@ -28,10 +28,12 @@ import { open, type FileHandle } from "node:fs/promises";
 import { homedir } from "node:os";
 import { basename, extname, join, parse, resolve, sep } from "node:path";
 import { Readable } from "node:stream";
+import { attachmentsHomeOf, readAttachmentFile, storedPathOf } from "./attachment-read.ts";
 import type { DatabaseSync } from "node:sqlite";
 import { ArtifactError, describeArtifact, readArtifact, type ArtifactAccess, type ArtifactScope } from "./artifacts.ts";
 import type { Store } from "./store.ts";
 import { companionMarked } from "./sse-visibility.ts";
+import { cloudIdentity } from "./cloud-request-identity.ts";
 import {
   IMAGE_REFERENCE_LIMITS, IMAGE_REFERENCE_MIMES, MEDIA_BYTES_RESPONSE_HEADERS, MEDIA_CAPABILITY_QUERY_PARAM, MEDIA_CAPABILITY_TTL_MS,
   MEDIA_CAPABILITY_VERSION, MEDIA_PLAYABLE_MIMES, MEDIA_ROUTE_PREFIX, MEDIA_ROUTES, isMediaCapabilityToken,
@@ -228,9 +230,10 @@ export function sniffMedia(head: Uint8Array, total: number): SniffedMedia {
 const capabilityKey = randomBytes(32);
 const mac = (label: string, value: string) => createHmac("sha256", capabilityKey).update(label).update("\0").update(value).digest();
 
-export function issueMediaCapability(assetId: string, revision: string, now = Date.now()): { token: string; expiresAt: number } {
+export function issueMediaCapability(assetId: string, revision: string, now = Date.now(), binding?: MediaCapabilityClaims["cloudSession"]): { token: string; expiresAt: number } {
   const expiresAt = now + MEDIA_CAPABILITY_TTL_MS;
   const claims: MediaCapabilityClaims = { v: 1, assetId, revision, surface: "desktop", exp: expiresAt };
+  if (process.env.MURAGE_CLOUD_ROLE === "home" && binding) claims.cloudSession = binding;
   const signed = `${MEDIA_CAPABILITY_VERSION}.${Buffer.from(JSON.stringify(claims), "utf8").toString("base64url")}`;
   return { token: `${signed}.${mac("media-capability", signed).toString("base64url")}`, expiresAt };
 }
@@ -245,7 +248,15 @@ export function verifyMediaCapability(token: unknown, assetId: string, now = Dat
   if (given.length !== expected.length || !timingSafeEqual(given, expected)) return invalid;
   let claims: Record<string, unknown>;
   try { claims = JSON.parse(Buffer.from(body, "base64url").toString("utf8")) as Record<string, unknown>; } catch { return invalid; }
-  if (!claims || typeof claims !== "object" || Array.isArray(claims) || Object.keys(claims).sort().join(",") !== "assetId,exp,revision,surface,v") return invalid;
+  if (!claims || typeof claims !== "object" || Array.isArray(claims)) return invalid;
+  const keys = Object.keys(claims).sort().join(",");
+  if (keys !== "assetId,exp,revision,surface,v") {
+    if (process.env.MURAGE_CLOUD_ROLE !== "home" || keys !== "assetId,cloudSession,exp,revision,surface,v") return invalid;
+    const binding = claims.cloudSession as Record<string, unknown> | null;
+    if (!binding || typeof binding !== "object" || Array.isArray(binding) || Object.keys(binding).sort().join(",") !== "accessHash,deviceId"
+      || typeof binding.deviceId !== "string" || !/^[a-f0-9-]{36}$/.test(binding.deviceId)
+      || typeof binding.accessHash !== "string" || !/^[a-f0-9]{64}$/.test(binding.accessHash)) return invalid;
+  }
   if (claims.v !== 1 || claims.surface !== "desktop" || claims.assetId !== assetId || typeof claims.revision !== "string" || !Number.isSafeInteger(claims.exp)) return invalid;
   const exp = claims.exp as number;
   if (exp > now + MEDIA_CAPABILITY_TTL_MS + CLOCK_SKEW_MS) return invalid;
@@ -341,10 +352,14 @@ function threadOwner(store: Store, threadId: string): { id: string; room: boolea
 /** An image attachment is reachable only through a message of the exact
  * conversation that holds it. The thread must already exist in the store, so
  * a guessed id never creates or loads an unrelated transcript. */
-function locateAttachment(ref: Extract<NormalizedRef, { source: "attachment" }>, deps: MediaAssetsDeps): Located {
+type AttachmentRef = Extract<NormalizedRef, { source: "attachment" }>;
+/** Membership only: synchronous and metadata-free, so it can be asked again
+ * after every await with nothing in between (Astra r3 item 4). Throws the
+ * route's 404 when the attachment is not shown in the conversation. */
+function attachmentMember(ref: AttachmentRef, deps: MediaAssetsDeps): Omit<Located, "outcome"> {
   const owner = threadOwner(deps.store, ref.threadId);
   if (!owner) fail(404, "unavailable", UNAVAILABLE);
-  const directory = join(deps.dataDir, "attachments"), path = join(directory, ref.attachmentId);
+  const path = storedPathOf(attachmentsHomeOf(deps.dataDir), ref.attachmentId);
   // by the message_image index: the row that attaches this file, however far back it is
   const message = deps.store.rowAttaching(ref.threadId, path);
   if (message && !(message.attachments ?? []).some(attachment => attachment.kind === "image" && resolve(attachment.path) === path)) fail(404, "unavailable", UNAVAILABLE);
@@ -352,7 +367,7 @@ function locateAttachment(ref: Extract<NormalizedRef, { source: "attachment" }>,
   // A room message names its speaking member; a person's upload to a room is
   // owned by the room itself.
   const botId = owner.room ? message.from?.botId ?? owner.id : owner.id;
-  return { name: ref.attachmentId, scope: { serverId: MEDIA_SERVER_ID, botId, threadId: ref.threadId, messageId: message.id }, outcome: directFile(directory, path) };
+  return { name: ref.attachmentId, scope: { serverId: MEDIA_SERVER_ID, botId, threadId: ref.threadId, messageId: message.id } };
 }
 
 const artifactAccess = (deps: MediaAssetsDeps): ArtifactAccess => ({ owner: true, scopes: deps.artifactScopes() });
@@ -456,8 +471,7 @@ export function locateWorkspaceMedia(scope: WorkspaceScopeRef, relativePath: str
   }
 }
 
-function locate(ref: NormalizedRef, deps: MediaAssetsDeps, verify: boolean): Located {
-  if (ref.source === "attachment") return locateAttachment(ref, deps);
+function locate(ref: Exclude<NormalizedRef, AttachmentRef>, deps: MediaAssetsDeps, verify: boolean): Located {
   if (ref.source === "artifact") return locateArtifact(ref, deps, verify);
   return locateWorkspace(ref, deps);
 }
@@ -502,16 +516,6 @@ async function readAt(handle: FileHandle, length: number, position: number): Pro
   return buffer.subarray(0, offset);
 }
 
-async function sha256Of(handle: FileHandle, size: number): Promise<string | undefined> {
-  const hash = createHash("sha256");
-  for (let position = 0; position < size;) {
-    const chunk = await readAt(handle, Math.min(1024 * 1024, size - position), position);
-    if (!chunk.length) return undefined;
-    hash.update(chunk); position += chunk.length;
-  }
-  return hash.digest("hex");
-}
-
 // ---------------------------------------------------------------------------
 // In-memory asset registry and stream accounting
 
@@ -530,7 +534,7 @@ function remember(assetId: string, entry: RegistryEntry, now: number): void {
 export function __resetMediaAssetsForTests(): void { registry.clear(); activeStreams = 0; }
 export function mediaActiveStreamCount(): number { return activeStreams; }
 
-function descriptor(assetId: string, ref: NormalizedRef, located: Located, availability: Unready | "ready", sniffed?: SniffedMedia, bytes?: number, revision?: string): MediaAsset {
+function descriptor(assetId: string, ref: NormalizedRef, located: Omit<Located, "outcome">, availability: Unready | "ready", sniffed?: SniffedMedia, bytes?: number, revision?: string): MediaAsset {
   const ready = availability === "ready", kind = sniffed?.kind ?? "file", mime = sniffed?.mime ?? "application/octet-stream";
   return {
     id: assetId, scope: located.scope, source: ref.source, kind, name: located.name, mime,
@@ -547,7 +551,31 @@ function descriptor(assetId: string, ref: NormalizedRef, located: Located, avail
   };
 }
 
-async function resolveMedia(ref: NormalizedRef, deps: MediaAssetsDeps, now: number): Promise<MediaResolveResponse> {
+/** An attachment is read once, bounded, through attachment-read.ts; the
+ * bytes it read are the bytes it sniffs and hashes into the revision. */
+async function resolveAttachmentMedia(ref: AttachmentRef, deps: MediaAssetsDeps, now: number, binding?: MediaCapabilityClaims["cloudSession"]): Promise<MediaResolveResponse> {
+  const assetId = mediaAssetIdFor(ref);
+  attachmentMember(ref, deps);
+  const read = await readAttachmentFile(attachmentsHomeOf(deps.dataDir), ref.attachmentId, MEDIA_STORED_MAX_BYTES);
+  // Membership is asked again after the read, before anything is issued.
+  const member = attachmentMember(ref, deps);
+  if (!read.ok) {
+    const linked = read.reason === "not-regular" && (read.code === "link" || read.code === "ELOOP");
+    const state = read.reason === "missing" ? "missing" : linked ? "denied" : read.reason === "not-regular" || read.reason === "too-large" ? "unsupported" : "changed";
+    return { asset: descriptor(assetId, ref, member, state) };
+  }
+  const bytes = read.bytes;
+  const sniffed = sniffMedia(bytes.subarray(0, MEDIA_SNIFF_BYTES), bytes.length);
+  if (!sniffed.supported) return { asset: descriptor(assetId, ref, member, "unsupported", sniffed, bytes.length) };
+  const revision = createHash("sha256").update(bytes).digest("hex");
+  const asset = descriptor(assetId, ref, member, "ready", sniffed, bytes.length, revision);
+  const { token, expiresAt } = issueMediaCapability(assetId, revision, now, binding);
+  remember(assetId, { ref, asset, revision, path: storedPathOf(attachmentsHomeOf(deps.dataDir), ref.attachmentId), fingerprint: "", expiresAt }, now);
+  return { asset, url: `${MEDIA_ROUTES.bytes}/${assetId}?${MEDIA_CAPABILITY_QUERY_PARAM}=${token}`, expiresAt };
+}
+
+async function resolveMedia(ref: NormalizedRef, deps: MediaAssetsDeps, now: number, binding?: MediaCapabilityClaims["cloudSession"]): Promise<MediaResolveResponse> {
+  if (ref.source === "attachment") return resolveAttachmentMedia(ref, deps, now, binding);
   const assetId = mediaAssetIdFor(ref), located = locate(ref, deps, true), outcome = located.outcome;
   // A non-ready answer never touches the registry: a stale revision from one
   // surface must not revoke a URL another surface holds, and the byte route
@@ -560,8 +588,6 @@ async function resolveMedia(ref: NormalizedRef, deps: MediaAssetsDeps, now: numb
   let sniffed: SniffedMedia, revision = outcome.revision;
   try {
     sniffed = sniffMedia(await readAt(handle, Math.min(outcome.stat.size, MEDIA_SNIFF_BYTES), 0), outcome.stat.size);
-    // Attachments have no stored digest: pin them by content now.
-    if (ref.source === "attachment" && sniffed.supported) revision = await sha256Of(handle, outcome.stat.size);
     const after = await handle.stat();
     if (fingerprint(after) !== expected || fingerprint(lstatSync(outcome.path)) !== expected || (sniffed.supported && !revision)) {
       return { asset: descriptor(assetId, ref, located, "changed", undefined, outcome.stat.size) };
@@ -569,7 +595,7 @@ async function resolveMedia(ref: NormalizedRef, deps: MediaAssetsDeps, now: numb
   } finally { await handle.close().catch(() => undefined); }
   if (!sniffed.supported) return { asset: descriptor(assetId, ref, located, "unsupported", sniffed, outcome.stat.size, revision) };
   const asset = descriptor(assetId, ref, located, "ready", sniffed, outcome.stat.size, revision);
-  const { token, expiresAt } = issueMediaCapability(assetId, revision!, now);
+  const { token, expiresAt } = issueMediaCapability(assetId, revision!, now, binding);
   remember(assetId, { ref, asset, revision: revision!, path: outcome.path, fingerprint: expected, expiresAt }, now);
   return { asset, url: `${MEDIA_ROUTES.bytes}/${assetId}?${MEDIA_CAPABILITY_QUERY_PARAM}=${token}`, expiresAt };
 }
@@ -651,6 +677,7 @@ async function serveBytes(request: DelegatedRequest, deps: MediaAssetsDeps, asse
   // Only a holder of the capability learns that the route exists at all.
   if (request.method !== "GET" && request.method !== "HEAD") return bytesError(405, "method-not-allowed", "Media bytes are read with GET or HEAD.", { allow: "GET, HEAD" });
   if (entry.revision !== check.claims.revision) return bytesError(409, "changed", "This media changed. Open it again.");
+  if (entry.ref.source === "attachment") return serveAttachmentBytes(request, deps, entry, entry.ref);
   let located: Located;
   try {
     const ref = entry.ref.source === "workspace" ? { ...entry.ref, revision: entry.revision } : entry.ref;
@@ -685,6 +712,72 @@ async function serveBytes(request: DelegatedRequest, deps: MediaAssetsDeps, asse
   return { status, headers, stream: new PinnedRangeStream(handle, start, end, entry.fingerprint) };
 }
 
+/** Serves a slice of bytes already read and hashed, in bounded chunks. It
+ * holds one of the `activeStreams` slots, reserved before the read, and
+ * gives it back exactly once when destroyed. */
+class SnapshotRangeStream extends Readable {
+  private position: number;
+  private released = false;
+  private readonly bytes: Buffer;
+  private readonly end: number;
+  constructor(bytes: Buffer, start: number, end: number) {
+    super({ highWaterMark: MEDIA_STREAM_CHUNK_BYTES });
+    this.bytes = bytes; this.position = start; this.end = end;
+  }
+  override _read(): void {
+    if (this.position > this.end) { this.push(null); return; }
+    const length = Math.min(MEDIA_STREAM_CHUNK_BYTES, this.end - this.position + 1);
+    const chunk = this.bytes.subarray(this.position, this.position + length);
+    this.position += length;
+    this.push(chunk);
+  }
+  override _destroy(error: Error | null, callback: (error?: Error | null) => void): void {
+    if (!this.released) { this.released = true; activeStreams--; }
+    callback(error);
+  }
+}
+
+/** An attachment's bytes: membership, then one bounded read whose digest
+ * must equal the authorized revision, then membership again with nothing
+ * awaited in between, then those very bytes are served. Bytes that changed
+ * after authorization are never sent, not even in part (Astra r3 item 2). */
+async function serveAttachmentBytes(request: DelegatedRequest, deps: MediaAssetsDeps, entry: RegistryEntry, ref: AttachmentRef): Promise<DelegatedResult> {
+  try { attachmentMember(ref, deps); } catch (error) { if (error instanceof MediaError) return hiddenBytes(); throw error; }
+  // A HEAD sends no body and holds no stream slot, as before; its read is
+  // bounded by the attachment pool.
+  const head = request.method === "HEAD";
+  if (!head && activeStreams >= MEDIA_MAX_ACTIVE_STREAMS) return bytesError(503, "busy", "Too many media streams are open. Try again.", { "retry-after": "1" });
+  // The slot is reserved before the read: it bounds the snapshots held in memory.
+  if (!head) activeStreams++;
+  let handedOver = head;
+  try {
+    const read = await readAttachmentFile(attachmentsHomeOf(deps.dataDir), ref.attachmentId, MEDIA_STORED_MAX_BYTES);
+    try { attachmentMember(ref, deps); } catch (error) { if (error instanceof MediaError) return hiddenBytes(); throw error; }
+    if (!read.ok) {
+      if (read.reason === "missing") return bytesError(410, "missing", "This media is no longer available.");
+      if (read.reason === "io" || read.reason === "busy") return bytesError(503, "busy", "This media could not be read just now. Try again.", { "retry-after": "1" });
+      return bytesError(409, "changed", "This media changed. Open it again.");
+    }
+    const bytes = read.bytes;
+    if (createHash("sha256").update(bytes).digest("hex") !== entry.revision) return bytesError(409, "changed", "This media changed. Open it again.");
+    const size = bytes.length, etag = `"${entry.revision}"`;
+    let range = parseByteRange(request.headers.range, size);
+    const ifRange = request.headers["if-range"];
+    if (request.headers.range !== undefined && ifRange !== undefined && ifRange !== etag) range = "full";
+    const base = { ...BYTES_HEADERS, "content-type": entry.asset.mime, "accept-ranges": "bytes", etag, "content-disposition": contentDisposition(entry.asset.name) };
+    if (range === "unsatisfiable") return bytesError(416, "range-not-satisfiable", "Request one byte range inside the file.", { "accept-ranges": "bytes", "content-range": `bytes */${size}` });
+    const { start, end } = range === "full" ? { start: 0, end: size - 1 } : range;
+    const partial = range !== "full", length = size === 0 ? 0 : end - start + 1;
+    const headers: Record<string, string> = { ...base, "content-length": String(length), ...(partial ? { "content-range": `bytes ${start}-${end}/${size}` } : {}) };
+    const status = partial ? 206 : 200;
+    if (head || length === 0) return { status, headers, bytes: new Uint8Array(0) };
+    handedOver = true;
+    return { status, headers, stream: new SnapshotRangeStream(bytes, start, end) };
+  } finally {
+    if (!handedOver) activeStreams--;
+  }
+}
+
 // ---------------------------------------------------------------------------
 // Routes
 
@@ -715,7 +808,9 @@ export async function mediaAssetsRoute(request: DelegatedRequest, deps: MediaAss
       if ((error as { status?: unknown } | null)?.status === 413) fail(413, "too-large", "That media reference is too large.");
       fail(400, "invalid-request", "Choose media from this conversation, Files or its workspace.");
     }
-    return { status: 200, headers: { ...RESOLVE_HEADERS }, body: await resolveMedia(parseRef(body), deps, now) };
+    const identity = process.env.MURAGE_CLOUD_ROLE === "home" ? cloudIdentity(request.headers) : undefined;
+    const binding = identity?.accessHash ? { deviceId: identity.id, accessHash: identity.accessHash } : undefined;
+    return { status: 200, headers: { ...RESOLVE_HEADERS }, body: await resolveMedia(parseRef(body), deps, now, binding) };
   } catch (error) {
     if (error instanceof MediaError) return { status: error.status, headers: { ...RESOLVE_HEADERS }, body: { error: error.message, code: error.code } };
     throw error;

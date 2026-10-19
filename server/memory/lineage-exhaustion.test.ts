@@ -10,7 +10,7 @@
 //   all 100: a session's receipts were judged at depth 0, which left nothing to bound the recursion down the conversation, so the walk overflowed
 //   the stack at about 250 replies and the receipt allowance counted every repeated visit of the unfinished groups). The test tells
 //   resource exhaustion (the counter of checks that ran out) from a withholding that is the answer.
-import { mkdirSync, rmSync } from "node:fs";
+import { mkdirSync } from "node:fs";
 import { afterEach, beforeEach, expect, it } from "vitest";
 import { DATA_DIR } from "../config.ts";
 import { closeDatabase, database } from "../database.ts";
@@ -21,12 +21,13 @@ import { LineageAllowance } from "./lineage-allowance.ts";
 import {
   forgetKeptLineageForTest, REPLAY_RECEIPT_BUDGET, replayExclusions, replayLimitWithheld, setReplayNodeBudgetForTest, setTurnLineageNodesForTest,
 } from "./replay-lineage.ts";
+import { removeTempDirSync } from "../testing/cleanup.ts";
 
 const thread = "exh-direct", driver = "drv", session = "sess";
 const key = (reply: number) => `${thread}\u0000r${reply}`;
 const source = (reply: number) => `message:${thread}:r${reply}`;
 
-beforeEach(() => { closeDatabase(); rmSync(DATA_DIR, { recursive: true, force: true }); mkdirSync(DATA_DIR, { recursive: true }); });
+beforeEach(() => { closeDatabase(); removeTempDirSync(DATA_DIR); mkdirSync(DATA_DIR, { recursive: true }); });
 afterEach(() => { setReplayNodeBudgetForTest(null); setTurnLineageNodesForTest(null); });
 
 /** `n` replies in one session, each receipt citing the reply before it; legacy output lists list every reply from the receipt's own on. */

@@ -28,7 +28,7 @@
 // ask how it is going or talk about something else; a soft pulse fills the
 // silence instead of narration. When the host is unavailable the call is
 // the engine-only call it always was.
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useReducer, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { Loader2, Mic, MicOff, PhoneOff, X } from "lucide-react";
 
@@ -65,7 +65,8 @@ import { callStatusText } from "@/lib/call-status";
 import { auraPhaseFor } from "@/lib/call-aura";
 import { useKeyboardHints } from "@/lib/use-keyboard-hints";
 import { CallCaption } from "./CallCaption";
-import { isHostConsentApproval, isRoutineApproval, isSkillApproval, openQuestions, pendingApprovals, spokenApprovalPrompt, spokenToolAction } from "./PendingApproval";
+import { isHostConsentApproval, isRoutineApproval, isSkillApproval, openQuestions, pendingApprovals, spokenApprovalPrompt, spokenQueueList, spokenToolAction, QUEUE_OFFER, QUEUE_ONE_AT_A_TIME, QUEUE_WHICH, type Pending } from "./PendingApproval";
+import { followingRequest, nextSelection, queueCommand, reachesPastOneRequest, requestsWaiting, selectRequest, type QueueSelection } from "@/lib/approval-queue";
 import { holdForPlainWords, usePlainApprovalSettled } from "@/lib/plain-approval";
 import { cn } from "@/lib/cn";
 import { useDesktopCapabilities } from "./DesktopCapabilities";
@@ -340,7 +341,28 @@ export function Call({
   messagesRef.current = messages;
   /** The last time anyone spoke on the call, for the "still on it" lines. */
   const lastSpeechAt = useRef(Date.now());
-  const approval = pendingApprovals(olderOpenCards(bot, messages))[0];
+  // Rule 83: every open request in the visible branch, and the one the call
+  // presents. The selection follows the request's own id, so new cards append
+  // without moving it and a card settled elsewhere hands over to the next.
+  const approvals = pendingApprovals(olderOpenCards(bot, messages));
+  const approvalsRef = useRef<Pending[]>(approvals);
+  approvalsRef.current = approvals;
+  const presented = useRef<QueueSelection>({ order: [] });
+  presented.current = nextSelection(presented.current, approvals);
+  const approval = approvals.find((pending) => pending.requestId === presented.current.id);
+  /** "next" or a number moved the call to another request: ask it. */
+  const [, presentAnother] = useReducer((n: number) => n + 1, 0);
+  /** The list was read and no single request is presented until one is picked. */
+  const choosingRequest = useRef(false);
+  /** The presented request settled elsewhere: the next ask says so with the new count. */
+  const announceCount = useRef(false);
+  const routinesRef = useRef(state.routines);
+  routinesRef.current = state.routines;
+  /** The routine whose run raised a request, by the card's own routine id. */
+  const queueRoutineName = useCallback((pending: Pending) => {
+    const routineId = pending.message.card?.routineId;
+    return routineId ? routinesRef.current.find((routine) => routine.id === routineId)?.name : undefined;
+  }, []);
   // the plain words an approval is spoken in (loaded after the first paint)
   const approvalWordsSettled = usePlainApprovalSettled();
   /** Kinds of request the owner said yes to for the rest of this call. Held
@@ -745,11 +767,18 @@ export function Call({
       // first when the host's turn ends.
       if (gated() || (hostOn.current && (phaseRef.current === "sending" || hostSpeaking.current))) return owe();
       // No microphone: said, and the call stays where it is (sayQuietly), never a listen() that would clear the note.
+      const startedAt = Date.now();
       if (micUnavailable.current) {
-        void say(text).then((said) => { if (said && alive.current && phaseRef.current === "speaking") move("listening"); });
+        // A prompt the call itself cut (another answer started) is owed again, as on the listening path below.
+        void say(text).then((said) => {
+          if (!said) {
+            if (alive.current && !heldRef.current && ownerCutInAt.current < startedAt) owe();
+            return;
+          }
+          if (alive.current && phaseRef.current === "speaking") move("listening");
+        });
         return;
       }
-      const startedAt = Date.now();
       // Cut by the call itself (the host's reply starting, another answer),
       // not by the owner talking over it or a hold (which owes it itself):
       // owed again, so it is asked in full before a yes can answer it.
@@ -1287,6 +1316,7 @@ export function Call({
       if (log.some((entry) => entry.outcome === "answered" || entry.outcome === "looked_up" || entry.outcome === "not_started")) {
         void fetch(`/api/bots/${bot.id}/call-note`, {
           method: "POST",
+          redirect: "error",
           headers: callRouteHeaders(),
           body: JSON.stringify({ threadId: threadRef.current, durationMs: Date.now() - callStartedAt.current, log }),
           // the overlay is closing; the request must outlive it
@@ -1531,7 +1561,48 @@ export function Call({
           hush();
           return;
         }
+        // Rule 83c: a line answers only the presented request while it is still pending.
+        const queue = approvalsRef.current;
+        if (!queue.some((pending) => pending.requestId === open.requestId)) {
+          askedApproval.current = null;
+          setHeard("");
+          void sayThenListen(`That request was already answered.${queue.length ? ` ${requestsWaiting(queue.length)}.` : ""}`);
+          return;
+        }
+        // With more than one waiting, the owner can move, list or pick; none of it answers a request.
+        const command = queue.length > 1 ? queueCommand(said) : null;
+        if (command) {
+          setHeard("");
+          if (command.kind === "read") {
+            choosingRequest.current = true;
+            void sayThenListen(spokenQueueList(queue, () => bot.name, queueRoutineName));
+            return;
+          }
+          const target = command.kind === "next" ? followingRequest(queue, open.requestId) : queue[command.index - 1]?.requestId;
+          if (!target) {
+            void sayThenListen(`There are ${requestsWaiting(queue.length)}. Say a number from 1 to ${queue.length}.`);
+            return;
+          }
+          choosingRequest.current = false;
+          presented.current = selectRequest(presented.current, queue, target);
+          askedApproval.current = null;
+          presentAnother();
+          return;
+        }
         const answer = approvalAnswer(said);
+        // After the list was read, a yes or no does not say which request it is for.
+        if (answer && choosingRequest.current && queue.length > 1) {
+          setHeard("");
+          void sayThenListen(QUEUE_WHICH);
+          return;
+        }
+        // No implicit approve-all: a yes for everything, or for the rest of the
+        // call, would reach the other waiting requests.
+        if (answer && queue.length > 1 && (answer === "allow-for-call" || reachesPastOneRequest(said))) {
+          setHeard("");
+          void sayThenListen(QUEUE_ONE_AT_A_TIME);
+          return;
+        }
         if (answer) {
           const allow = answer !== "deny";
           if (allow && open.skill) {
@@ -1544,7 +1615,8 @@ export function Call({
           // and submit the same approval again.
           open.submitted = true;
           callLog.current.push({ said, outcome: "decision" });
-          const pending = approvalRef.current;
+          // Rule 83b: the request this answer is for, by its own id, never the first in the list.
+          const pending = queue.find((candidate) => candidate.requestId === open.requestId);
           const forCall = answer === "allow-for-call" && pending && !open.routine && !open.skill && !isHostConsentApproval(pending);
           move("working");
           hush();
@@ -1911,7 +1983,13 @@ export function Call({
     let resumeAfterRoutine = false;
     if (askedApproval.current && approval?.requestId !== askedApproval.current.requestId) {
       resumeAfterRoutine = askedApproval.current.routine && askedApproval.current.submitted;
+      // Rule 83a: it settled somewhere else; the next one is asked with the new count.
+      if (!askedApproval.current.submitted) announceCount.current = true;
       askedApproval.current = null;
+    }
+    if (!approval) {
+      announceCount.current = false;
+      choosingRequest.current = false;
     }
     if (askedQuestion.current && question?.card?.requestId !== askedQuestion.current.requestId) {
       askedQuestion.current = null;
@@ -1980,16 +2058,24 @@ export function Call({
       const skillPrompt = approval.message.card?.skillRequest?.action === "update"
         ? `${bot.name} wants to update a learned skill. Open this chat to review the complete skill before replacing the current version. You can say no to deny it.`
         : `${bot.name} wants to enable a new learned skill. Open this chat to review the complete skill before enabling it. You can say no to deny it.`;
-      const offerForCall = !offeredForCall.current && !isRoutineApproval(approval) && !isHostConsentApproval(approval);
+      // Rule 83c: with more than one waiting the count leads and the owner is
+      // offered every request; a yes for the rest of the call is not offered then.
+      const waiting = approvalsRef.current.length;
+      const lead = announceCount.current
+        ? `That request was answered elsewhere. ${requestsWaiting(waiting)}. `
+        : waiting > 1 ? `${requestsWaiting(waiting)}. ` : "";
+      announceCount.current = false;
+      choosingRequest.current = false;
+      const offerForCall = waiting === 1 && !offeredForCall.current && !isRoutineApproval(approval) && !isHostConsentApproval(approval);
       if (offerForCall) offeredForCall.current = true;
       const ask = spokenApprovalPrompt(approval, bot.name, true);
       askPrompt(
         approval.requestId,
-        isSkillApproval(approval)
+        `${lead}${isSkillApproval(approval)
           ? skillPrompt
           : offerForCall
             ? `${ask.replace(/ Yes or no\.$/, "")} ${FOR_CALL_OFFER}`
-            : ask,
+            : ask}${waiting > 1 ? ` ${QUEUE_OFFER}` : ""}`,
       );
       return;
     }

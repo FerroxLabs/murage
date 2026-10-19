@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { isOwnedMainSender, mainRendererOrigin } from "./main-trust.mjs";
+import { cloudHomeSenderId, isOwnedMainSender, mainRendererOrigin } from "./main-trust.mjs";
 
 const ORIGIN = "http://127.0.0.1:8799";
 
@@ -90,4 +90,21 @@ test("Electron 43 marks the live main frame detached after a renderer restart: s
   webContents.getProcessId = () => 26;
   webContents.mainFrame.url = "data:text/html,Reconnecting";
   assert.equal(ok(webContents.mainFrame), false, "recovery page");
+});
+
+test("WP4: cloudHomeSenderId names the Cloud window an event came from, and nothing else", () => {
+  const a = fixture({ url: "murage-home://h-a/" }), b = fixture({ url: "murage-home://h-b/" }), main = fixture();
+  const windows = new Map([["h-a", a.window], ["h-b", b.window]]);
+  assert.equal(cloudHomeSenderId(a.event, windows), "h-a");
+  assert.equal(cloudHomeSenderId(b.event, windows), "h-b");
+  assert.equal(cloudHomeSenderId(main.event, windows), null, "the main window is never a cloud sender");
+  // A window navigated off its own home, a subframe, a destroyed window and another home's window all fail closed.
+  a.mainFrame.url = "murage-home://h-b/";
+  assert.equal(cloudHomeSenderId(a.event, windows), null, "window h-a now shows h-b");
+  a.mainFrame.url = "murage-home://h-a/";
+  assert.equal(cloudHomeSenderId({ sender: a.webContents, senderFrame: { url: "murage-home://h-a/", detached: false } }, windows), null, "a subframe");
+  assert.equal(cloudHomeSenderId(a.event, new Map([["h-a", fixture({ url: "murage-home://h-a/", destroyed: true }).window]])), null);
+  assert.equal(cloudHomeSenderId(a.event, new Map()), null);
+  assert.equal(cloudHomeSenderId(undefined, windows), null);
+  assert.equal(cloudHomeSenderId(a.event, undefined), null);
 });

@@ -1,0 +1,15 @@
+# SPDX-License-Identifier: AGPL-3.0-or-later
+# Every browser launch runs in its own transient scope under this slice
+# (murage-turn-launch.py enter_scope); namespace teardown kills those scopes so
+# no browser process survives (audit A1-03, A1-05). One Chromium measured about
+# 400 MB on a 4 GB home.
+[Unit]
+Description=Murage Cloud browsers
+
+[Slice]
+MemoryAccounting=yes
+TasksAccounting=yes
+CPUAccounting=yes
+MemoryMax=35%
+TasksMax=2048
+CPUWeight=50

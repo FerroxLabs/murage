@@ -1,4 +1,4 @@
-import { test, expect } from "@playwright/test";
+import { test, expect } from "./page-error-guard";
 import { createServer, type ViteDevServer } from "vite";
 import tailwindcss from "@tailwindcss/vite";
 import { fileURLToPath } from "node:url";
@@ -19,7 +19,7 @@ test.beforeAll(async () => {
         if (id.endsWith("/src/styles.css")) return readFileSync(id, "utf8").replace('@import "tailwindcss";', '@import "tailwindcss" source(none);\n@source "./components";');
         if (id === "\0fixture-store") return `
           export async function api(url, options = {}) { const response=await fetch(url,{...options,headers:{'content-type':'application/json'}}); const value=await response.json(); if(!response.ok)throw new Error(value.error||'Request failed'); return value; }
-          import {useSyncExternalStore} from 'react'; export function useStore(){return useSyncExternalStore(window.subscribeFixture,()=>window.fixtureStore);}
+          import {useSyncExternalStore} from 'react'; export function useStoreIfAny(){return useStore();} export function useStore(){return useSyncExternalStore(window.subscribeFixture,()=>window.fixtureStore);}
         `;
         if (id !== "\0fixture-models") return;
         return `

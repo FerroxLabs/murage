@@ -1,4 +1,4 @@
-import { test, expect, type Page } from "@playwright/test";
+import { test, expect, type Page } from "./page-error-guard";
 import { createServer, type ViteDevServer } from "vite";
 import tailwindcss from "@tailwindcss/vite";
 import { fileURLToPath } from "node:url";
@@ -21,7 +21,7 @@ test.beforeAll(async () => {
       name: "notification-settings-fixture",
       resolveId(id) { if (id === "/__notifications.js") return "\0notification-settings"; if (id === "/notification-fixture-store") return "\0notification-store"; },
       load(id) {
-        if (id === "\0notification-store") return "import React from 'react';export async function api(path,init){const r=await fetch(path,init);const value=await r.json();if(!r.ok)throw new Error(value.error);return value;}export function useStore(){const [config,setConfig]=React.useState(window.fixtureConfig);return {state:{config},dispatch:action=>setConfig(action.config)}}";
+        if (id === "\0notification-store") return "import React from 'react';export async function api(path,init){const r=await fetch(path,init);const value=await r.json();if(!r.ok)throw new Error(value.error);return value;}export function useStoreIfAny(){return useStore();} export function useStore(){const [config,setConfig]=React.useState(window.fixtureConfig);return {state:{config},dispatch:action=>setConfig(action.config)}}";
         if (id !== "\0notification-settings") return;
         return "import React from 'react';import {createRoot} from 'react-dom/client';import {NotificationSettings} from '/src/components/NotificationSettings.tsx';import {setLocale} from '/src/lib/i18n.ts';import '/src/styles.css';const query=new URLSearchParams(location.search);await setLocale(query.get('lang')||'en');document.documentElement.dataset.skin=query.get('skin')||'dark';window.fixtureConfig=await (await fetch('/api/config')).json();createRoot(document.getElementById('root')).render(React.createElement(NotificationSettings));";
       },

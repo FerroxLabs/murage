@@ -17,7 +17,7 @@
 // drained, whatever mark a range or a capture might have put on them (writetime-live-differential.test.ts covers the shapes the frozen
 // judge has no word for: objects, cards, prompts).
 // Scale: WRITETIME_DIFF_SCALE=extreme runs the design's shape (60 bots, a 200k-message thread); the default is small enough for every run.
-import { mkdirSync, readFileSync, rmSync } from "node:fs";
+import { mkdirSync, readFileSync } from "node:fs";
 import { Session } from "node:inspector";
 import { fileURLToPath } from "node:url";
 import { expect, it } from "vitest";
@@ -36,6 +36,7 @@ import { buildLegacyHistory, markUpgraded, messageSource, prng, type LegacyHisto
 import { LineageAllowance } from "./testing/legacy-lineage/lineage-allowance.ts";
 import { rangeProof } from "./testing/range-proof.ts";
 import { forgetKeptLineageForTest, messageSourceForgotten, replayExclusions, sessionLineageBad, setReplayNodeBudgetForTest, type ReplayAudience } from "./testing/legacy-lineage/replay-lineage.ts";
+import { removeTempDirSync } from "../testing/cleanup.ts";
 
 const EXTREME = process.env.WRITETIME_DIFF_SCALE === "extreme";
 /** WRITETIME_DIFF_SHAPE="threads,lines,longThread" overrides the shape (profiling a middle scale). */
@@ -196,7 +197,7 @@ function apply(action: Action, history: LegacyHistory, seed: number): string {
 // as index.ts sets it at start: every writer records its flow edges, so a revoke's flow phase closes its '*' window once the certificate is ready
 setScopeFlowEdgesRecorded(true);
 
-it(`${RUN_ACTIONS.length} owner actions x ${SEEDS} histories: the new lookup never shows what the RC judge withheld, and withholds more only in a listed class`, () => {
+it(`${RUN_ACTIONS.length} owner actions x ${SEEDS} histories: the new lookup never shows what the RC judge withheld, and withholds more only in a listed class`, { tags: ["nightly"], timeout: EXTREME ? 86_400_000 : 900_000 }, () => {
   const listed = listedClasses();
   expect(listed.has("positional")).toBe(true);
   const newSide = new Map<string, number>();
@@ -206,7 +207,7 @@ it(`${RUN_ACTIONS.length} owner actions x ${SEEDS} histories: the new lookup nev
   for (let seed = 1; seed <= SEEDS; seed++) {
     for (const action of RUN_ACTIONS) {
       closeMessageDb(); closeDatabase(); forgetKeptLineageForTest(); resetLineageBackfillForTest();
-      rmSync(DATA_DIR, { recursive: true, force: true }); mkdirSync(DATA_DIR, { recursive: true });
+      removeTempDirSync(DATA_DIR); mkdirSync(DATA_DIR, { recursive: true });
       const db = database();
       (globalThis as { __diffT0?: number }).__diffT0 = performance.now();
       const history = buildLegacyHistory(db, { seed, branches: 0.08, ...(SHAPES.has("records") ? { records: 0.3 } : {}), ...(SHAPES.has("hot") ? { hot: 3 } : {}), ...SHAPE });
@@ -407,4 +408,4 @@ it(`${RUN_ACTIONS.length} owner actions x ${SEEDS} histories: the new lookup nev
   // the histories exercise the judge: it withholds after the actions and shows a good part of the rest
   expect(tally.oldWithheld).toBeGreaterThan(0);
   expect(tally.oldShown).toBeGreaterThan(tally.oldWithheld);
-}, EXTREME ? 86_400_000 : 900_000);
+});

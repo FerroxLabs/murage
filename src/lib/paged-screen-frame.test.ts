@@ -24,7 +24,7 @@ afterEach(() => {
 
 it("asks for the message's image route with no `w`, unlike the phone-capped paged fetch", async () => {
   const pixels = await fetchOriginalScreenFrame("t1", "m1");
-  expect(fetchMock).toHaveBeenCalledWith("/api/threads/t1/messages/m1/image", { headers: { "x-murage-surface": "desktop", "x-murage-surface-secret": "synthetic-proof" } });
+  expect(fetchMock).toHaveBeenCalledWith("/api/threads/t1/messages/m1/image", { redirect: "error", headers: { "x-murage-surface": "desktop", "x-murage-surface-secret": "synthetic-proof" } });
   expect(pixels?.mime).toBe("image/png");
 });
 

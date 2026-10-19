@@ -1,4 +1,6 @@
 import type { HeldContinuation } from "./external-context-delivery.ts";
+import type { AskerWakeSnapshot } from "./asker-wake.ts";
+import type { ApprovalGrantRequest } from "../shared/approval-grant-request.ts";
 import { renderMurageTools, NEUTRAL_TOOL_SURFACE } from "./murage-tool-surface.ts";
 import { assignMissingVoices, pickDefaultVoice } from "./bot-voice.ts";
 import { captureBotDeletion } from "./memory/capture.ts";
@@ -8,6 +10,7 @@ import type { MessageEngine } from "../shared/engine-switch.ts";
 import type { MessageActorKind } from "../shared/message-actor.ts";
 import { BROWSER_CHECK_FAILED_REASON, browserUnavailableActivityName } from "../shared/browser-unavailable.ts";
 import { isErrorActivity } from "../shared/message-visibility.ts";
+import { bumpUsageMonth, type UsageMonth } from "../shared/usage-month.ts";
 import type { RoutineRunMarkerTrigger } from "../shared/routine-run-marker.ts";
 import type { ProcedurePin } from "./procedure-bundles.ts";
 import { threadHumanPrincipal, isWorkspaceOwner } from "./human-principals.ts";
@@ -30,6 +33,7 @@ import { readPersistedRecords } from "./persisted-state.ts";
 import { peerAllowKey, type PeerAction } from "./peer-approval-key.ts";
 import { DATA_DIR, loadBrowserProfileIdAliases } from "./config.ts";
 import * as mdb from "./message-db.ts";
+import { murageLine } from "./murage-line.ts";
 import { guardHandoffPrompt, isHandoffPromptId } from "./handoff-stamp.ts";
 import type { ProviderReply } from "./provider-reply.ts";
 import type { KeyedFamily } from "./transcript-backfill.ts";
@@ -65,9 +69,12 @@ import type { InstalledPackageMetadata } from "../shared/installed-package.ts";
 import { openingLine } from "../shared/bot-openers.ts";
 import { readPublishedSites } from "../shared/published-sites.ts";
 import { withoutQuestionGrants } from "./auto-approve.ts";
+import { withoutPreSchemaGrants, withoutStaleGrants } from "../shared/app-action-words.ts";
+import { parseAcpToolKey } from "../shared/mount-identity.ts";
 import { imageApprovalOf, imageAskAfterOf } from "../shared/image-approval-setting.ts";
 import { settledTurnHelpers, type TurnHelper } from "../shared/turn-helpers.ts";
 import { LruMap } from "./thread-cache.ts";
+import { onSeqNumbered } from "./transcript-seq.ts";
 import { sliceSizer } from "./slice-budget.ts";
 
 export type EmberColor =
@@ -131,6 +138,12 @@ export interface OptionCardData {
    * routine it is stored on. */
   routineAllowKey?: string;
   routineId?: string;
+  /** AMEND-13 Rule 78c: "Always allow" on a call of several distinct actions
+   * remembers this whole set (one exact key per action), never one key. */
+  allowKeys?: string[];
+  /** AMEND-13 Rules 78, 81, 82: every operation in call order and the
+   * routine offer, written once by the server when the request opened. */
+  grantRequest?: ApprovalGrantRequest;
   /** Local actions never share remembered grants with cloud/tool approvals. */
   approvalScope?: "local-computer";
   /** Advisory only, for the page: the engine path rated this permission card low when it raised it. A browser
@@ -256,6 +269,10 @@ export function isOwnerOrigin(origin: MessageOrigin | undefined): boolean {
 }
 
 export interface Message {
+  /** The row's number in its thread (messages.seq, transcript-seq.ts): 1..n in storage order, set from the column by the writer
+   * (message-db.ts replaceRow, updateMessage) and the one decoder (rowToMessage), never stored in the JSON. Absent while the
+   * thread is not numbered yet. The wire carries it only through wireThread (transcript-page.ts). */
+  seq?: number;
   /** Set by insertMessageBefore: the row this message was saved in front of.
    * Storage (and so paging) order puts it after that row; a client holding
    * a page whose older rows are not loaded reads this to place it ahead of
@@ -415,6 +432,9 @@ export interface Message {
   workItemId?: string;
   /** A line from Murage itself (no `from`): what it offers. */
   murage?: MessageMurage;
+  /** Server-written (murage-line.ts murageLine): Murage wrote this row into a bot's conversation in its own voice (an error, retry, stop,
+   * notice or status line), never the turn's engine. Write-time lineage only; presentation reads actorKind. */
+  murageLine?: true;
 }
 
 export type { MessageActorKind };
@@ -534,6 +554,8 @@ export interface GroupRecord {
  * session. Sharing resume cursors between tasks would resume the other
  * task's session and quietly undo the whole thing. */
 export interface TaskRecord {
+  /** Server-owned: what this conversation's hand-offs still owe it (asker-wake.ts), kept so a restart still continues the work. */
+  askerWakes?: AskerWakeSnapshot;
   sharedWork?: { teamId: string; createdAt: number; closedAt?: number; closedReason?: "revoked" | "team-deleted" | "restored"; finishing?: { requestId?: string; generation?: string; rootRequestId?: string }; quarantined?: true };
   procedurePin?: ProcedurePin;
   /** Host admission only; paths are always derived from current IDs. */
@@ -809,7 +831,7 @@ export type StoreChange =
   | { type: "bot"; botId: string }
   | { type: "bot.deleted"; botId: string }
   | { type: "group"; groupId: string }
-  | { type: "group.deleted"; groupId: string };
+  | { type: "group.deleted"; groupId: string; /** The record just removed: the listener needs it to say who could see the room. */ group: GroupRecord };
 
 /** What a task is called before its first message names it. */
 export const UNTITLED_TASK = "New task";
@@ -844,6 +866,8 @@ function firstLineTitle(text: string): string {
 export interface BotRecord {
   sharedWith?: { mode: "none" | "list" | "all"; teams: Array<{ id: string; name: string }> };
   partitionedAt?: number;
+  /** What this bot used per local calendar month (Settings, Usage). Upserted with each settled turn; bounded to a year. Months before 1.0.3 have no bucket. */
+  usageMonths?: Record<string, UsageMonth>;
   id: string;
   /** the ACTIVE task's thread — everything that runs a turn reads this */
   threadId: ThreadId;
@@ -938,6 +962,9 @@ export interface BotRecord {
   /** Tools this bot may always use without asking, even outside auto mode
    * (set by "Always allow" on an approval card). */
   alwaysAllow?: string[];
+  /** Rule 57b: 2 once the grant route has stored a key of the three app
+   * shapes for this bot; without it those keys are dropped at load. */
+  grantSchema?: 2;
   /** Speak this bot's replies aloud as they settle, without being asked.
    * Off by default: a hosted voice costs money per character, so speaking
    * is something you turn on, never something that happens to you. */
@@ -1323,6 +1350,14 @@ const intakeOpeningQuestion = (): OptionCardData => ({
 
 /** Messages form a tree (forks appear when a message is edited); the
  * visible conversation is the path from the root to activeLeafId. */
+/** A bot's task array by thread (Store.taskIndex). */
+interface TaskThreadIndex { length: number; byThread: Map<string, { task: TaskRecord; index: number }>; desks: Map<string, TaskRecord[]> }
+/** One place a thread has in a room: the room's own thread (pos -1, the room is the holder) or its task at `pos` (that task holds). */
+interface RoomThreadPlace { group: GroupRecord; groupIndex: number; pos: number; task?: GroupTaskRecord }
+/** The rooms by thread (Store.groupThreadIndex): `byThread` the first room holding the thread, as a walk of every room found it;
+ * `tasks` each room's first task per thread, as groupTaskByThread's walk found it; `places` every place of a thread, in walk order. */
+interface GroupThreadIndex { byThread: Map<string, GroupRecord>; tasks: Map<GroupRecord, Map<string, GroupTaskRecord>>; places: Map<string, RoomThreadPlace[]> }
+
 interface ThreadState {
   messages: Message[];
   activeLeafId: string | null;
@@ -1401,6 +1436,8 @@ const SCREEN_FRAMES_READ = 8;
 const TURN_TERMINAL_GAP = 64;
 /** Most open request cards one sweep of a thread reads (boot settles them). */
 const OPEN_CARD_SWEEP_LIMIT = 10_000;
+/** Threads or records a pending-work walk looks at before it hands the loop back (pendingThreadsForSliced, reconcilePendingWork). */
+const PENDING_SLICE = 256;
 /** How many of a thread's newest rows a duplicate-send check looks through for the line a retried send already made: a
  * send is retried within moments, so its line is among the newest rows; the same work for a thread of a thousand rows
  * as for one of two hundred thousand. (Not a bound on anything a bot sees.) */
@@ -1423,7 +1460,47 @@ function isOnboardingSuggestion(message: Message): boolean {
 export class Store {
   bots: BotRecord[] = [];
   groups: GroupRecord[] = [];
+  /** Threads whose holder has pending held work: held continuations, owed external updates, or a queue row still to settle. The
+   * 30 s held drain visits only these, so an idle installation costs nothing per thread. Every write that changes pending work
+   * updates it (notePendingHolder); it is rebuilt from the records at load and reconciled hourly (reconcilePendingWork). */
+  private pendingWork: Set<string> | null = null;
+  /** Per task array (an array is replaced on every add or remove; the length catches an in-place change): threadId -> first task with
+   * that thread and its position, and a project's desk tasks by project (channelProjectDesk is set only when a task is created). */
+  private taskThreadIndexes = new WeakMap<TaskRecord[], TaskThreadIndex>();
+  /** The rooms by thread, valid while the groups and their task arrays keep their shape (groupThreadIndex). */
+  private groupThreadCache: { groups: GroupRecord[]; shape: unknown[]; index: GroupThreadIndex } | null = null;
   /** Loaded threads, least recently used first out (THREAD_CACHE_*). */
+  /** Unsubscribes this store from the numbering walk (a test that builds many stores). */
+  readonly stopSeqStamps: () => void;
+  /** Where each id sits in a held thread's array, for the walk's stamps: rebuilt when a position no longer names the id. */
+  private seqPlaces = new WeakMap<ThreadState, Map<string, number>>();
+  private stampSeq(threadId: string, stamps: ReadonlyArray<readonly [string, number]>, flipped: () => boolean): void {
+    const t = this.threads.peek(threadId);
+    if (!t) return;
+    let places = this.seqPlaces.get(t);
+    for (const [id, seq] of stamps) {
+      let at = places?.get(id);
+      if (at === undefined || t.messages[at]?.id !== id) {
+        places = new Map(t.messages.map((message, index) => [message.id, index]));
+        this.seqPlaces.set(t, places);
+        at = places.get(id);
+      }
+      if (at !== undefined) t.messages[at]!.seq = seq;
+    }
+    if (flipped()) {
+      // never evicted: a turn in flight holds references to these objects; only their order changes, once
+      t.messages.sort((a, b) => (a.seq ?? Number.MAX_SAFE_INTEGER) - (b.seq ?? Number.MAX_SAFE_INTEGER));
+      this.seqPlaces.delete(t);
+    }
+  }
+
+  /** Whether the thread is numbered (every row carries `seq`): its deliveries are numbered ones (transcript-page.ts wireThread). */
+  threadNumbered(threadId: string): boolean { return mdb.threadIsNumbered(threadId); }
+  /** The thread's MAX(seq) at this moment (0 when empty), undefined while it is not numbered: what `newestSeq` on the wire says. */
+  newestSeq(threadId: string): number | undefined { return mdb.newestSeq(threadId); }
+  /** One row's number, or null (no such row, or not numbered yet). */
+  messageSeq(threadId: string, messageId: string): number | null { return mdb.messageSeq(threadId, messageId); }
+
   private threads = new LruMap<ThreadState>(THREAD_CACHE_ENTRIES, THREAD_CACHE_BYTES, threadStateBytes, (threadId) => this.threadInFlight(threadId));
   /** Threads with a write under way (Store.writing), by nesting depth. */
   private writes = new Map<string, number>();
@@ -1442,6 +1519,8 @@ export class Store {
     // A load reads the files: any deferred write from an earlier instance lands first.
     flushCoalesced();
     this.memoryReady = !deferMemoryReconcile;
+    // the numbering walk stamps the threads held in memory in place, and sorts one by number once when it flips (r7 R1)
+    this.stopSeqStamps = onSeqNumbered((threadId, stamps, flipped) => this.stampSeq(threadId, stamps, flipped));
     this.completeNewBotSelection = completeNewBotSelection;
     this.defaultSelection = defaultSelection;
     mkdirSync(DATA_DIR, { recursive: true, mode: 0o700 });
@@ -1734,7 +1813,10 @@ export class Store {
     for (const b of this.bots) {
       for (const holder of [b, ...(b.tasks ?? [])] as { alwaysAllow?: string[] }[]) {
         if (!holder.alwaysAllow?.length) continue;
-        const kept = withoutQuestionGrants(holder.alwaysAllow);
+        // ...and any connected-app grant not in a shape the current key
+        // builder writes: every action at once, every "other" tool, Pi's label
+        // (shared/app-action-grant.ts). The owner is asked again, per action.
+        const kept = withoutPreSchemaGrants(withoutStaleGrants(withoutQuestionGrants(holder.alwaysAllow)), b.grantSchema);
         if (kept.length === holder.alwaysAllow.length) continue;
         holder.alwaysAllow = kept;
         botsMigrated = true;
@@ -1770,6 +1852,8 @@ export class Store {
     setMemoryCaptureRoster(() => this);
     setExecutionStore(this);
     if (!teamChangeOpen() && markPartitions(this)) this.saveGroups();
+    // pending held work is found once from the records, so nothing saved before a restart waits on a write that never comes again
+    this.pendingWork = this.scanPendingWork();
   }
 
   /** Persist bots.json. Immediate by default: the write is durable when this
@@ -1785,6 +1869,7 @@ export class Store {
    * (banked in the same write, so they stay consistent). Messages live in
    * SQLite and are never in this file. */
   private saveBots(bots: BotRecord[] = this.bots, options: { defer?: boolean } = {}) {
+    this.recordRevision++;
     if (options.defer && bots === this.bots) { scheduleCoalesced(BOTS_FILE, () => this.saveBotsNow()); return; }
     this.saveBotsNow(bots);
     if (bots === this.bots) cancelCoalesced(BOTS_FILE);
@@ -1857,6 +1942,8 @@ export class Store {
       ]),
       publish: () => {
         this.bots = nextBots; this.groups = nextGroups;
+        // a package's records come with whatever they hold: the pending set looks at their threads once
+        this.refreshPendingThreads([...bots.flatMap(bot => [bot.threadId, ...(bot.tasks ?? []).map(task => task.threadId)]), ...groups.flatMap(group => [group.threadId, ...(group.tasks ?? []).map(task => task.threadId)])]);
         if (this.memoryReady && !teamChangeOpen()) reconcileMemoryRoster(this);
         for (const bot of bots) this.emit({ type: "bot", botId: bot.id });
         for (const group of groups) this.emit({ type: "group", groupId: group.id });
@@ -1868,6 +1955,7 @@ export class Store {
 
   /** Persist groups.json; same contract as saveBots (immediate unless `defer`). */
   private saveGroups(bots: BotRecord[] = this.bots, options: { defer?: boolean } = {}) {
+    this.recordRevision++; // a channel's tasks and members are records too (task-window.ts, shared-wire.ts)
     if (options.defer && bots === this.bots) { scheduleCoalesced(GROUPS_FILE, () => this.saveGroupsNow()); return; }
     this.saveGroupsNow(bots);
     if (bots === this.bots) cancelCoalesced(GROUPS_FILE);
@@ -1887,10 +1975,20 @@ export class Store {
     return () => this.listeners.delete(listener);
   }
 
+  private recordRevision = 0;
+  /** Changes on any bot, task, usage or grant write (every one saves the roster or announces a change), so something built from the
+   * records can be kept until it moves instead of rebuilt per broadcast (task-window.ts). */
+  get revision(): number { return this.recordRevision; }
+
   private emit(change: StoreChange) {
+    // A transcript message is not a record: it changes no bot, channel or task field (the unread count and activity those messages
+    // cause emit their own bot or group change), so it leaves the revision, and anything kept by it, alone.
+    if (change.type !== "message" && change.type !== "message.patch") this.recordRevision++;
     // Inside an open transaction nothing is announced until the outermost one commits; a rolled-back
     // write must never reach a listener or a client (see tx-scope.ts).
     if (inTxScope()) { afterCommit(() => this.emit(change)); return; }
+    // every message write passes here (append, insert before or after, resend): the thread's last activity moves with it
+    if (change.type === "message") { const was = this.lastActivity.get(change.threadId); if (was === undefined || was === null || change.message.at > was) this.lastActivity.set(change.threadId, change.message.at); }
     // A bot, task or room going idle releases its thread's pin (threadInFlight):
     // the cache is trimmed then, not at the next write, which may never come.
     if (change.type === "bot" || change.type === "group") this.threads.evict();
@@ -1917,9 +2015,56 @@ export class Store {
   }
 
   groupByThread(threadId: string): GroupRecord | undefined {
-    return this.groups.find(
-      (group) => group.threadId === threadId || group.tasks?.some((task) => task.threadId === threadId),
-    );
+    return this.groupThreadIndex().byThread.get(threadId);
+  }
+
+  /** The same answers as walks of every group and its tasks (first group wins), from maps rebuilt only when a group, its thread or its
+   * task array changes. The check is one look per room, never per task. */
+  private groupThreadIndex(): GroupThreadIndex {
+    const groups = this.groups, cached = this.groupThreadCache;
+    const shape = cached?.shape;
+    let same = Boolean(cached && cached.groups === groups && shape!.length === groups.length * 4);
+    for (let i = 0; same && i < groups.length; i++) {
+      const group = groups[i]!;
+      same = shape![i * 4] === group && shape![i * 4 + 1] === group.threadId && shape![i * 4 + 2] === group.tasks && shape![i * 4 + 3] === group.tasks?.length;
+    }
+    if (same) return cached!.index;
+    const index: GroupThreadIndex = { byThread: new Map(), tasks: new Map(), places: new Map() }, next: unknown[] = [];
+    const place = (threadId: string, entry: RoomThreadPlace) => {
+      const places = index.places.get(threadId);
+      if (places) places.push(entry); else index.places.set(threadId, [entry]);
+    };
+    groups.forEach((group, groupIndex) => {
+      next.push(group, group.threadId, group.tasks, group.tasks?.length);
+      if (!index.byThread.has(group.threadId)) index.byThread.set(group.threadId, group);
+      place(group.threadId, { group, groupIndex, pos: -1 });
+      const tasks = new Map<string, GroupTaskRecord>();
+      (group.tasks ?? []).forEach((task, pos) => {
+        if (!index.byThread.has(task.threadId)) index.byThread.set(task.threadId, group);
+        if (!tasks.has(task.threadId)) tasks.set(task.threadId, task);
+        place(task.threadId, { group, groupIndex, pos, task });
+      });
+      index.tasks.set(group, tasks);
+    });
+    this.groupThreadCache = { groups, shape: next, index };
+    return index;
+  }
+
+  /** A bot's task array by thread, built once per array (see taskThreadIndexes). */
+  private taskIndex(tasks: TaskRecord[] | undefined): TaskThreadIndex | undefined {
+    if (!tasks) return undefined;
+    let index = this.taskThreadIndexes.get(tasks);
+    if (!index || index.length !== tasks.length) {
+      const byThread = new Map<string, { task: TaskRecord; index: number }>(), desks = new Map<string, TaskRecord[]>();
+      tasks.forEach((task, i) => {
+        if (!byThread.has(task.threadId)) byThread.set(task.threadId, { task, index: i });
+        const desk = task.channelProjectDesk?.groupId;
+        if (desk) { const list = desks.get(desk); if (list) list.push(task); else desks.set(desk, [task]); }
+      });
+      index = { length: tasks.length, byThread, desks };
+      this.taskThreadIndexes.set(tasks, index);
+    }
+    return index;
   }
 
   /** Every thread a remote client may read or search.
@@ -2072,6 +2217,7 @@ export class Store {
   /** A thread's durable record: DB rows plus any legacy JSON leftovers. */
   private deleteThreadRecord(threadId: string) {
     this.threads.delete(threadId);
+    this.lastActivity.delete(threadId);
     mdb.deleteThread(threadId);
     for (const file of [messagesFile(threadId), `${messagesFile(threadId)}.imported`]) {
       try {
@@ -2094,6 +2240,7 @@ export class Store {
       for (const threadId of groupThreadIds) recordOwnerDeletion(db, threadId);
     });
     this.groups = this.groups.filter((g) => g.id !== id);
+    this.refreshPendingThreads(groupThreadIds);
     this.saveGroups();
     // Cross-store order (SPEC-P section 2): the JSON save above first, the
     // messages.db rows second, one transaction. A crash between them leaves
@@ -2104,7 +2251,7 @@ export class Store {
     for (const threadId of new Set([group.threadId, ...(group.tasks ?? []).map((task) => task.threadId)])) {
       this.deleteThreadRecord(threadId);
     }
-    this.emit({ type: "group.deleted", groupId: id });
+    this.emit({ type: "group.deleted", groupId: id, group });
     return true;
   }
 
@@ -2113,8 +2260,9 @@ export class Store {
    * project" clear it. The task record itself is never removed. */
   setChannelProjectDeskArchived(groupId: string, archivedAt?: number): void {
     let touched = false;
+    // the project's desks by the task index: a closed project's 30 s sync looks at its desks, never every task of every bot
     for (const bot of this.bots) {
-      for (const task of bot.tasks ?? []) {
+      for (const task of this.taskIndex(bot.tasks)?.desks.get(groupId) ?? []) {
         if (task.channelProjectDesk?.groupId !== groupId || task.channelProjectDesk.archivedAt === archivedAt) continue;
         if (archivedAt === undefined) delete task.channelProjectDesk.archivedAt;
         else task.channelProjectDesk = { ...task.channelProjectDesk, archivedAt };
@@ -2190,11 +2338,11 @@ export class Store {
     let recovered = 0;
     for (const hit of mdb.threadsEndingOnUserMessage()) {
       if (!ownedThreadIds.has(hit.threadId)) continue;
-      this.appendMessage(hit.threadId, {
+      this.appendMessage(hit.threadId, murageLine({
         role: "bot",
         kind: "activity",
         tool: { name: note, ok: false },
-      });
+      }));
       recovered += 1;
     }
     return recovered;
@@ -2218,7 +2366,7 @@ export class Store {
     const mark = (hit: { threadId: string; message: Message }) => {
       if (!ownedThreadIds.has(hit.threadId) || !(Number(hit.message.at) < bootAt) || options.hasLiveTurn?.(hit.threadId)) return;
       // the thread may have moved on since the row was read (a send made after the start): a point read of its branch head, never its transcript
-      if (this.appendAfterHead(hit.threadId, hit.message.id, { role: "bot", kind: "activity", tool: { name: note, ok: false } })) recovered += 1;
+      if (this.appendAfterHead(hit.threadId, hit.message.id, murageLine({ role: "bot", kind: "activity", tool: { name: note, ok: false } }))) recovered += 1;
     };
     // An ordinary start reads only the turns the writers kept as in flight (direct_turn_inflight), never the history.
     if (mdb.directTurnsWalked()) {
@@ -2290,7 +2438,7 @@ export class Store {
   groupTaskByThread(groupId: string, threadId: string): GroupTaskRecord | undefined {
     const group = this.group(groupId);
     if (!group || group.dm) return undefined;
-    return group.tasks?.find((task) => task.threadId === threadId);
+    return this.groupThreadIndex().tasks.get(group)?.get(threadId);
   }
 
   createGroupTask(groupId: string, title?: string, activate = true): GroupTaskRecord | null {
@@ -2349,6 +2497,7 @@ export class Store {
     // refused, silently in the channel view; it now leaves a fresh one.
     if (group.tasks.length < 2) this.createGroupTask(groupId, undefined, false);
     group.tasks = group.tasks.filter((task) => task.threadId !== threadId);
+    this.refreshPendingThreads([threadId]);
     this.deleteThreadRecord(threadId);
     if (group.threadId === threadId) {
       const next = group.tasks[0]!;
@@ -2454,6 +2603,8 @@ export class Store {
     limit: number,
     before?: string | null,
   ): { messages: Message[]; hasMore: boolean; activeLeafId: string | null } | null {
+    // `newestSeq` is not part of a page here: the delivery gate (transcript-page.ts wireThread) adds it in the same synchronous step
+    // as the read, so a page is wholly legacy or wholly numbered (r8 R8)
     if (!this.threads.has(threadId)) {
       const slice = before ? mdb.readThreadBefore(threadId, before, limit) : mdb.readThreadNewest(threadId, limit);
       if (slice && (before || slice.hasMore || limit === 0)) {
@@ -2630,10 +2781,17 @@ export class Store {
    * answers from memory; any other reads one indexed row, never the whole
    * transcript, because this runs for every task on every broadcast. */
   lastActivityAt(threadId: string): number | undefined {
+    const cached = this.lastActivity.get(threadId);
+    if (cached !== undefined) return cached ?? undefined;
     const loaded = this.threads.get(threadId);
-    if (loaded) return loaded.messages.at(-1)?.at;
-    return mdb.newestMessageAt(threadId) ?? undefined;
+    const at = loaded ? loaded.messages.at(-1)?.at : mdb.newestMessageAt(threadId) ?? undefined;
+    this.lastActivity.set(threadId, at ?? null);
+    return at;
   }
+  /** The newest message's time per thread, kept by every message write (emit) and read by every task row of every bot frame: the
+   * frame does no database read per task (1.0.3 engine-switch: a bot frame per task per event read the newest row of every task's
+   * thread, three million SELECTs a minute on a busy box). Null caches "no messages yet"; a thread not yet asked about is read once. */
+  private lastActivity = new Map<string, number | null>();
 
   /** Messages a thread holds, for a Delete confirmation. A loaded thread
    * answers from memory; any other counts through the thread index. */
@@ -2849,6 +3007,30 @@ export class Store {
     const orphaned = (loaded ? loaded.messages.filter((row) => row.card?.orphaned && row.card.requestId && !row.card.answered && !row.card.dismissed) : mdb.keyedCardRows(threadId, "orphaned").map(sanitizeMessageDiagnostic))
       .filter((row) => !seen.has(row.id));
     return orphaned.length ? [...orphaned, ...open].sort((a, b) => a.at - b.at) : open;
+  }
+
+  /** The threads that hold an open request card or an answerable orphaned card (mdb.threadsWithOpenCards), or null while the card
+   * lists are still being filled after an upgrade. */
+  threadsWithOpenCards(): string[] | null {
+    return mdb.threadsWithOpenCards();
+  }
+
+  /** Of `threadIds`, those of the project room `group` (its thread, its tasks, and every bot's desk task for it), in the order a walk
+   * of the room's thread, then its tasks, then each bot's desk tasks meets them. Each thread costs a map look per bot, never a walk of
+   * tasks: the reminder asks this of the threads with open cards only. */
+  projectThreadsAmong(group: GroupRecord, threadIds: Iterable<string>): string[] {
+    const rooms = this.groupThreadIndex(), keyed: Array<{ threadId: string; key: [number, number, number] }> = [];
+    const indexes = this.bots.map(bot => this.taskIndex(bot.tasks));
+    for (const threadId of new Set(threadIds)) {
+      const place = rooms.places.get(threadId)?.find(entry => entry.group === group);
+      if (place) { keyed.push({ threadId, key: [0, place.pos + 1, 0] }); continue; }
+      for (let i = 0; i < indexes.length; i++) {
+        const entry = indexes[i]?.byThread.get(threadId);
+        if (entry?.task.channelProjectDesk?.groupId === group.id) { keyed.push({ threadId, key: [1, i, entry.index] }); break; }
+      }
+    }
+    keyed.sort((a, b) => a.key[0] - b.key[0] || a.key[1] - b.key[1] || a.key[2] - b.key[2]);
+    return keyed.map(entry => entry.threadId);
   }
 
   /** The thread's open request cards that sit on its visible branch, oldest
@@ -3589,7 +3771,9 @@ export class Store {
   }
 
   botByThread(threadId: string) {
-    return this.bots.find((b) => b.threadId === threadId || b.tasks?.some((t) => t.threadId === threadId)) ?? null;
+    // one map look per bot, never a walk of its tasks
+    for (const bot of this.bots) if (bot.threadId === threadId || this.taskIndex(bot.tasks)?.byThread.has(threadId)) return bot;
+    return null;
   }
 
   createBot(
@@ -3608,8 +3792,12 @@ export class Store {
     // Control characters never reach a name (imports included; Kimi audit #1).
     const name = profile.name?.replace(/[\x00-\x1f\x7f]/g, "").trim() || pickBotName(this.bots.map((b) => b.name));
     const section = sectionKey(profile.section);
+    // A fresh id is checked before anything uses it: on a Cloud home a tombstoned id (a deleted
+    // bot's released state) must never come back, so the guard may throw and nothing is created.
+    const id = newId();
+    this.botIdGuard?.(id);
     const bot: BotRecord = {
-      id: newId(),
+      id,
       threadId: newId(),
       name,
       title: profile.title ?? "",
@@ -3660,6 +3848,30 @@ export class Store {
    * retried. Everything after the commit is cleanup of data nothing can
    * reach any more and is best-effort — a failure there is logged, never
    * thrown, so a half-finished cleanup can never resurrect a half-bot. */
+  /** Rules 57b..c, r3 "Rename": every grant on the mount `mountId` is deleted from every bot record and every task of
+   *  it, in one roster write that lands before any live record changes. A failed write throws with nothing changed.
+   *  Returns how many records lost a grant. */
+  dropMountGrants(mountId: string): number {
+    const onMount = (key: string) => parseAcpToolKey(key.replace(/^local-computer:/, ""))?.mountId === mountId;
+    const without = (keys: string[] | undefined) => keys?.some(onMount) ? keys.filter((key) => !onMount(key)) : undefined;
+    const changedIds = new Set<string>();
+    let records = 0;
+    const nextBots = this.bots.map((bot) => {
+      const own = without(bot.alwaysAllow);
+      const tasks = bot.tasks?.map((task) => { const kept = without(task.alwaysAllow); if (!kept) return task; records++; return { ...task, alwaysAllow: kept }; });
+      const tasksChanged = tasks?.some((task, index) => task !== bot.tasks![index]) ?? false;
+      if (!own && !tasksChanged) return bot;
+      if (own) records++;
+      changedIds.add(bot.id);
+      return { ...bot, ...(own ? { alwaysAllow: own } : {}), ...(tasksChanged ? { tasks } : {}) };
+    });
+    if (!changedIds.size) return 0;
+    this.saveBots(nextBots);
+    for (const bot of this.bots) if (changedIds.has(bot.id)) Object.assign(bot, nextBots.find((next) => next.id === bot.id));
+    for (const botId of changedIds) this.emit({ type: "bot", botId });
+    return records;
+  }
+
   /** A deleted bot leaves every other bot's Can talk to picks. */
   pruneMessageAllow(deletedId: string): void {
     let changed = false;
@@ -3676,9 +3888,17 @@ export class Store {
     if (changed) { try { this.saveBots(this.bots); } catch (error) { console.error("store: could not prune Can talk to picks", error); } }
   }
 
+  /** Cloud home hooks (server/cloud-home/bot-state.ts), unset on a desktop. `botIdGuard` throws for an
+   * id the launcher has tombstoned; `releaseBotState` throws unless the bot's launcher-side state has
+   * been released, and runs BEFORE the durable deletion so a refusal leaves the bot exactly as it was. */
+  botIdGuard?: (id: string) => void;
+  releaseBotState?: (id: string) => void;
+
   deleteBot(id: string): boolean {
     const bot = this.bot(id);
     if (!bot) return false;
+    // Before any change: if the launcher still holds this bot's state the error propagates and the bot stays.
+    this.releaseBotState?.(id);
     const nextBots = this.bots.filter((b) => b.id !== id);
     const seated = this.groups.filter((g) => g.memberIds.includes(id));
     const priorSeats = new Map(seated.map((g) => [g.id, { memberIds: g.memberIds, defaultResponder: g.defaultResponder }]));
@@ -3699,6 +3919,7 @@ export class Store {
       throw error;
     }
     this.bots = nextBots;
+    this.refreshPendingThreads(botThreadIds);
     this.pruneMessageAllow(id);
     transaction(db => captureBotDeletion(db, id));
     if (seated.length) {
@@ -3770,6 +3991,52 @@ export class Store {
     this.saveBots();
     this.emit({ type: "bot", botId: id });
     return bot;
+  }
+
+  /** A13-FIX-DESIGN C1 (Rule 81b): remember an approved set on the bot's
+   * defaults AND, when named, one task, in ONE durable write. The next bots
+   * file is staged and written before any live record changes, so a failed
+   * write leaves memory and disk exactly as they were. Keys already held are
+   * not added twice; past the cap nothing is saved. Returns the keys it
+   * added to each, so the caller can take back exactly those. Called only by
+   * the approval choke point (server/index.ts rememberAndAnswer). */
+  rememberBotGrants(botId: string, taskThreadId: string | undefined, keys: readonly string[], options: { grantSchema?: 2 } = {}): { bot: BotRecord; added: { bot: string[]; task: string[] } } {
+    const { bot, task, added } = this.planBotGrants(botId, taskThreadId, keys);
+    return this.stageBotGrants(bot, task, [...(bot.alwaysAllow ?? []), ...added.bot], task ? [...(task.alwaysAllow ?? []), ...added.task] : undefined, options.grantSchema, added);
+  }
+
+  /** What rememberBotGrants would add, and the records it would add to,
+   * without writing anything: the choke point validates a choice with this
+   * BEFORE its answer is delivered, and writes only after. Throws (with a
+   * status) for a missing bot or task and past the cap. */
+  planBotGrants(botId: string, taskThreadId: string | undefined, keys: readonly string[]): { bot: BotRecord; task: TaskRecord | undefined; added: { bot: string[]; task: string[] } } {
+    const bot = this.bot(botId);
+    if (!bot) throw Object.assign(new Error("no such bot"), { status: 404 });
+    const task = taskThreadId === undefined ? undefined : bot.tasks?.find((item) => item.threadId === taskThreadId);
+    if (taskThreadId !== undefined && !task) throw Object.assign(new Error("No such thread for this bot."), { status: 404 });
+    const unique = [...new Set(keys)];
+    const addBot = unique.filter((key) => !(bot.alwaysAllow ?? []).includes(key));
+    const addTask = task ? unique.filter((key) => !(task.alwaysAllow ?? []).includes(key)) : [];
+    if ((bot.alwaysAllow?.length ?? 0) + addBot.length > 200 || (task && (task.alwaysAllow?.length ?? 0) + addTask.length > 200)) {
+      throw Object.assign(new Error("This bot already remembers 200 approvals. Remove some in Settings, Permissions, then try again."), { status: 409 });
+    }
+    return { bot, task, added: { bot: addBot, task: addTask } };
+  }
+
+  private stageBotGrants<T>(bot: BotRecord, task: TaskRecord | undefined, botKeys: string[], taskKeys: string[] | undefined, grantSchema: 2 | undefined, result: T): { bot: BotRecord; added: T } {
+    const nextTask = task && taskKeys ? { ...task, alwaysAllow: taskKeys } : undefined;
+    const nextBot: BotRecord = {
+      ...bot,
+      alwaysAllow: botKeys,
+      ...(grantSchema ? { grantSchema } : {}),
+      ...(nextTask ? { tasks: bot.tasks!.map((item) => (item === task ? nextTask : item)) } : {}),
+    };
+    this.saveBots(this.bots.map((item) => (item === bot ? nextBot : item)));
+    bot.alwaysAllow = botKeys;
+    if (grantSchema) bot.grantSchema = grantSchema;
+    if (task && taskKeys) task.alwaysAllow = taskKeys;
+    this.emit({ type: "bot", botId: bot.id });
+    return { bot, added: result };
   }
 
   /** File visible bots into one sidebar section as a single durable write.
@@ -4082,6 +4349,7 @@ export class Store {
     const task = this.taskByThread(botId, threadId);
     if (!task) return;
     task.externalUpdates = queueExternalUpdate(task.externalUpdates, messageId);
+    this.notePendingHolder(threadId, task);
     this.saveBots();
   }
 
@@ -4096,12 +4364,136 @@ export class Store {
     if (remaining.length === task.externalUpdates.length) return;
     if (remaining.length) task.externalUpdates = remaining;
     else delete task.externalUpdates;
+    this.notePendingHolder(threadId, task);
     this.saveBots();
   }
 
   continuationHolder(botId: string, threadId: string): TaskRecord | GroupTaskRecord | GroupRecord | undefined {
+    const task = this.taskByThread(botId, threadId);
+    if (task) return task;
     const group = this.groupByThread(threadId);
-    return this.taskByThread(botId, threadId) ?? (group?.dm ? group : group ? this.groupTaskByThread(group.id, threadId) : undefined);
+    return group?.dm ? group : group ? this.groupTaskByThread(group.id, threadId) : undefined;
+  }
+
+  /** Whether a holder has work the held drain must look at: an item held, a message owed the engine, or a queue row still to settle. */
+  private static holdsPendingWork(holder: { heldContinuations?: unknown[]; heldQueueRowId?: string; externalUpdates?: string[] } | undefined): boolean {
+    return Boolean(holder && (holder.heldQueueRowId || holder.heldContinuations?.length || holder.externalUpdates?.length));
+  }
+
+  /** Every write that changes a holder's held work calls this with the holder it changed. */
+  private notePendingHolder(threadId: string, holder: Parameters<typeof Store.holdsPendingWork>[0]): void {
+    const pending = this.pendingWork ??= this.scanPendingWork();
+    if (Store.holdsPendingWork(holder)) pending.add(threadId);
+    else pending.delete(threadId);
+  }
+
+  /** The pending set as the records say it is: one walk of every bot task and every room holder. */
+  private scanPendingWork(): Set<string> {
+    const pending = new Set<string>();
+    for (const bot of this.bots) for (const task of bot.tasks ?? []) if (Store.holdsPendingWork(task)) pending.add(task.threadId);
+    for (const group of this.groups) {
+      if (Store.holdsPendingWork(group)) pending.add(group.threadId);
+      for (const task of group.tasks ?? []) if (Store.holdsPendingWork(task)) pending.add(task.threadId);
+    }
+    return pending;
+  }
+
+  /** Whether any thread has pending held work (the 30 s drain skips every bot when none does). */
+  hasPendingWork(): boolean {
+    return (this.pendingWork ??= this.scanPendingWork()).size > 0;
+  }
+
+  /** The threads the held drain of this bot must visit: the pending ones only, in the order the full walk visited them (its own task
+   * threads in task order, then each of its rooms in room order, the room's thread then its tasks). A thread of this bot that no
+   * longer holds anything leaves the set here. Each thread costs a few map looks, never a walk of tasks or rooms. */
+  pendingThreadsFor(botId: string): string[] {
+    const walk = this.selectPending(botId, Infinity);
+    for (let step = walk.next(); ; step = walk.next()) if (step.done) return step.value;
+  }
+
+  /** pendingThreadsFor, handing the loop back (`pause`) after every `every` threads: thousands of held threads never hold the loop. */
+  async pendingThreadsForSliced(botId: string, pause: () => Promise<unknown>, every = PENDING_SLICE): Promise<string[]> {
+    const walk = this.selectPending(botId, every);
+    for (let step = walk.next(); ; step = walk.next()) {
+      if (step.done) return step.value;
+      await pause();
+    }
+  }
+
+  private *selectPending(botId: string, every: number): Generator<void, string[], void> {
+    const pending = this.pendingWork ??= this.scanPendingWork();
+    let bot = this.bot(botId);
+    if (!pending.size || !bot) return [];
+    let own = this.taskIndex(bot.tasks), rooms = this.groupThreadIndex(), seen = 0;
+    const keyed: Array<{ threadId: string; key: [number, number, number] }> = [];
+    for (const threadId of [...pending]) {
+      if (++seen % every === 0) {
+        yield;
+        // the records may have changed while the loop was handed back: look again
+        bot = this.bot(botId);
+        if (!bot) return [];
+        own = this.taskIndex(bot.tasks); rooms = this.groupThreadIndex();
+      }
+      if (!pending.has(threadId)) continue;
+      const mine = own?.byThread.get(threadId);
+      if (mine) {
+        if (Store.holdsPendingWork(mine.task)) keyed.push({ threadId, key: [0, mine.index, 0] });
+        else pending.delete(threadId);
+        continue;
+      }
+      // the first place of the thread in a room of this bot, as the full walk met it; the holder is continuationHolder's
+      const place = rooms.places.get(threadId)?.find(entry => entry.group.memberIds.includes(botId));
+      if (!place) continue;
+      const group = rooms.byThread.get(threadId)!;
+      const holder = group.dm ? group : rooms.tasks.get(group)?.get(threadId);
+      if (Store.holdsPendingWork(holder)) keyed.push({ threadId, key: [1, place.groupIndex, place.pos + 1] });
+      else pending.delete(threadId);
+    }
+    keyed.sort((a, b) => a.key[0] - b.key[0] || a.key[1] - b.key[1] || a.key[2] - b.key[2]);
+    return keyed.map(entry => entry.threadId);
+  }
+
+  /** Whether any record holding this thread has pending work: a bot's task, a room's own thread or a room's task (scanPendingWork's
+   * holders), by map look. */
+  private threadHoldsPendingWork(threadId: string): boolean {
+    for (const bot of this.bots) if (Store.holdsPendingWork(this.taskIndex(bot.tasks)?.byThread.get(threadId)?.task)) return true;
+    return (this.groupThreadIndex().places.get(threadId) ?? []).some(place => Store.holdsPendingWork(place.pos < 0 ? place.group : place.task));
+  }
+
+  /** Threads whose records were removed or replaced (a deleted task, room or bot, an import): each leaves the set unless something
+   * still holding it has work, so a deletion leaves no stale entry for the drain to look at. */
+  private refreshPendingThreads(threadIds: Iterable<string>): void {
+    const pending = this.pendingWork;
+    if (!pending) return;
+    for (const threadId of threadIds) {
+      if (this.threadHoldsPendingWork(threadId)) pending.add(threadId);
+      else pending.delete(threadId);
+    }
+  }
+
+  /** Puts the pending set back to what the records say, and names what had drifted: `missed` holds threads whose pending work no
+   * write recorded (the drain would never have visited them), `stale` threads recorded as pending that hold nothing now. The walk of
+   * every record hands the loop back (`pause`) after every `every` records, so the hourly check never holds the server; a record a
+   * writer changes meanwhile is kept by that writer. Without `pause` it runs in one go. */
+  async reconcilePendingWork(pause?: () => Promise<unknown>, every = PENDING_SLICE): Promise<{ missed: string[]; stale: string[] }> {
+    const missed: string[] = [];
+    let seen = 0;
+    const due = () => pause !== undefined && ++seen % every === 0;
+    const check = (threadId: string, holder: Parameters<typeof Store.holdsPendingWork>[0]) => {
+      const pending = this.pendingWork ??= this.scanPendingWork();
+      if (Store.holdsPendingWork(holder) && !pending.has(threadId)) { pending.add(threadId); missed.push(threadId); }
+    };
+    // the arrays walked are the ones current when the walk reached them: a task added or removed meanwhile replaces its array, and its writer keeps the set
+    for (const bot of this.bots) for (const task of bot.tasks ?? []) { if (due()) await pause!(); check(task.threadId, task); }
+    for (const group of this.groups) {
+      if (due()) await pause!();
+      check(group.threadId, group);
+      for (const task of group.tasks ?? []) { if (due()) await pause!(); check(task.threadId, task); }
+    }
+    // the set itself is pending work, never history: each entry is checked by map look
+    const pending = this.pendingWork ??= this.scanPendingWork(), stale: string[] = [];
+    for (const threadId of [...pending]) if (!this.threadHoldsPendingWork(threadId)) { pending.delete(threadId); stale.push(threadId); }
+    return { missed, stale };
   }
 
   /** Stable identity deduplicates retries. Entries remain visible until accepted. */
@@ -4110,9 +4502,10 @@ export class Store {
     if (!task) throw new Error("The conversation for this card is unavailable.");
     const id = context.id ?? createHash("sha256").update(JSON.stringify([botId,threadId,context.cardId ?? text,context.runId])).digest("hex");
     const existing = task.heldContinuations?.find(item => item.id === id);
-    if (existing) { Object.assign(existing, context, { id, botId, text }); this.saveBots(); this.saveGroups(); return task.heldContinuations!.length; }
+    if (existing) { Object.assign(existing, context, { id, botId, text }); this.notePendingHolder(threadId, task); this.saveBots(); this.saveGroups(); return task.heldContinuations!.length; }
     // No silent overflow: the durable queue retains every accepted request.
     task.heldContinuations = [...(task.heldContinuations ?? []), { ...context, id, botId, text, at: Date.now() }];
+    this.notePendingHolder(threadId, task);
     this.saveBots(); this.saveGroups();
     const card = context.cardId ? this.messageById(threadId, context.cardId) : undefined;
     if (card?.card) this.patchMessage(threadId, card.id, { card: { ...card.card, held: "Waiting for an engine with tools." } });
@@ -4125,6 +4518,7 @@ export class Store {
     const carried = new Set(ids);
     const delivered = task.heldContinuations.filter(item => carried.has(item.id));
     task.heldContinuations = task.heldContinuations.filter(item => !carried.has(item.id));
+    this.notePendingHolder(threadId, task);
     for (const item of delivered) {
       const card = item.cardId ? this.messageById(threadId, item.cardId) : undefined;
       if (card?.card) this.patchMessage(threadId, card.id, { card: { ...card.card, held: undefined } });
@@ -4141,7 +4535,24 @@ export class Store {
     const task = this.continuationHolder(botId, threadId);
     if (!task || task.heldQueueRowId === rowId) return;
     task.heldQueueRowId = rowId;
+    this.notePendingHolder(threadId, task);
     this.saveBots(); this.saveGroups();
+  }
+
+  /** Keep (or clear) what a conversation's hand-offs owe it (asker-wake.ts). A conversation that is gone keeps nothing. */
+  setTaskAskerWakes(botId: string, threadId: string, snapshot: AskerWakeSnapshot | undefined): void {
+    const task = this.taskByThread(botId, threadId);
+    if (!task) return;
+    if (!snapshot && !task.askerWakes) return;
+    const previous = task.askerWakes;
+    if (snapshot) task.askerWakes = JSON.parse(JSON.stringify(snapshot)) as AskerWakeSnapshot; else delete task.askerWakes;
+    try { this.saveBots(); }
+    catch (error) {
+      // the disk refused: the record keeps saying what the disk says, so the caller's retry (asker-wake.ts retryWrites) finds something to
+      // write instead of returning early on a field already cleared in memory
+      if (previous === undefined) delete task.askerWakes; else task.askerWakes = previous;
+      throw error;
+    }
   }
 
   setTaskAutomationEvent(botId: string, threadId: string, eventId?: string): void {
@@ -4193,6 +4604,9 @@ export class Store {
       turns: prev.turns + 1,
     };
     if (turnKey) task.usageTurnKeys = [...(task.usageTurnKeys ?? []), turnKey].slice(-64);
+    // The month's bucket: one small upsert in the same deferred write, nothing that grows with history.
+    const owner = this.bots.find(candidate => candidate.id === botId);
+    if (owner) { owner.usageMonths ??= {}; bumpUsageMonth(owner.usageMonths, turn); }
     this.saveBots(this.bots, { defer: true });
     this.emit({ type: "bot", botId });
     return task.usage;
@@ -4291,7 +4705,7 @@ export class Store {
   }
 
   taskByThread(botId: string, threadId: string): TaskRecord | undefined {
-    return this.bot(botId)?.tasks?.find((t) => t.threadId === threadId);
+    return this.taskIndex(this.bot(botId)?.tasks)?.byThread.get(threadId)?.task;
   }
 
   projectBotForTask(botId:string,threadId:string):BotRecord|null {
@@ -4428,7 +4842,7 @@ export class Store {
   }
 
   ensureProjectDesk(botId: string, groupId: string, projectName: string, preparedThreadId?: string): TaskRecord | null {
-    const existing = this.bot(botId)?.tasks?.find(task => task.channelProjectDesk?.groupId === groupId);
+    const existing = this.taskIndex(this.bot(botId)?.tasks)?.desks.get(groupId)?.[0];
     return existing ?? this.createTask(botId, `${projectName.slice(0, 75)} work`, false, { groupId }, preparedThreadId);
   }
 
@@ -4471,6 +4885,8 @@ export class Store {
     if (!bot || !bot.tasks?.some((t) => t.threadId === threadId)) return null;
     if (bot.tasks.length < 2) this.createTask(botId, undefined, false);
     bot.tasks = bot.tasks!.filter((t) => t.threadId !== threadId);
+    // the deleted task's thread leaves the pending set now, not at the next hourly reconcile
+    this.refreshPendingThreads([threadId]);
     this.deleteThreadRecord(threadId);
     if (bot.threadId === threadId) {
       const next = bot.tasks[0]!;

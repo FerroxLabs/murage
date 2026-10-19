@@ -1,8 +1,9 @@
 import { createHash } from "node:crypto";
-import { chmodSync, existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { removeTempDirSync } from "./testing/cleanup.ts";
 const macAdmission = vi.hoisted(() => vi.fn());
 const macState = vi.hoisted(() => ({ checking: false, unfinished: false, keepChecking: false, settleTo: "ok" as "ok" | "failed" | "unfinished", waited: 0, starts: [] as unknown[], waitArgs: [] as unknown[], startsAtWait: 0 }));
 vi.mock("./browser-macos-identity.ts", () => ({ verifyPackagedMacBrowser: macAdmission, verifyPackagedMacBrowserAsync: async () => true, checkPackagedMacBrowserAsync: async (...args: unknown[]) => { macState.waited++; macState.waitArgs = args; macState.startsAtWait = macState.starts.length; if (!macState.keepChecking) macState.checking = false; if (macState.settleTo === "ok") macAdmission.mockReturnValue(true); else if (macState.settleTo === "unfinished") macState.unfinished = true; return macState.settleTo; }, packagedMacBrowserState: (...args: unknown[]) => (macState.starts.push(args[2]), macState.checking) ? "checking" : macState.unfinished ? "unfinished" : macAdmission(...args) ? "ok" : "failed" }));
@@ -12,7 +13,7 @@ import { BROWSER_CHECK_UNFINISHED_REASON, settledBrowserEngineStatus, ADMISSION_
 
 const scratch: string[] = [];
 function temporary() { const path = mkdtempSync(join(tmpdir(), "murage-browser-test-")); scratch.push(path); return path; }
-afterEach(() => { clearBrowserAdmissionCache(); for (const path of scratch.splice(0)) rmSync(path, { recursive: true, force: true }); });
+afterEach(() => { clearBrowserAdmissionCache(); for (const path of scratch.splice(0)) removeTempDirSync(path); });
 function fixtureAsset(body: Buffer) { return { target: "linux-x64", asset: "agent-browser-linux-x64", sha256: createHash("sha256").update(body).digest("hex"), bytes: body.length }; }
 
 describe("optional browser resolver and installation", () => {

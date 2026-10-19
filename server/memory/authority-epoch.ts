@@ -40,7 +40,7 @@ function writes(table: string, events: readonly string[] = ALL_EVENTS, when?: st
 const NOISY_SYSTEM_SUBJECTS = [
   "observability", "reveal-capture", "reveal-scan", "procedure-review", "procedure-review-pending", "pip-stance", "pip-render",
   "pip-reflect", "pip-coverage", "consolidation-pending", "consolidation", "parked-sweep", "parked-reconcile", "origin-backfill",
-  "memory-shape-check", "gepa-job", "continuity-budget", "extract-budget", "memory-status-snapshot", "notebook-migration",
+  "memory-shape-check", "gepa-job", "continuity-budget", "extract-budget", "learning-spend", "memory-status-snapshot", "notebook-migration",
 ];
 const NOISY = (row: "NEW" | "OLD") => `${row}.subject_type='system' AND ${row}.subject_id IN (${NOISY_SYSTEM_SUBJECTS.map(subject => `'${subject}'`).join(",")})`;
 // A thread's checkpoint rolls to a new version on every captured message and the old version is archived; a receipt that cites

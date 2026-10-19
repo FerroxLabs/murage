@@ -8,6 +8,7 @@
 import { botRole, type RoleBot } from "./bot-role";
 import { RESERVED_TEAM_NAMES, TEAM_NAME_MAX } from "./new-team";
 import { userSectionId } from "./sidebar-layout";
+import { carryAnswerTag } from "@/state/answer-tag";
 
 export interface TeamView {
   name: string;
@@ -46,10 +47,14 @@ export function teamChangePatches(changed: TeamChanges) {
       id,
       patch: { section: none(section), chiefOfStaff, chiefScope: none(chiefScope), individual: none(individual), hidden: none(hidden) },
     })),
-    groups: changed.groups.map(({ id, name, section, hidden, recordSeq, recordEpoch }) => ({
-      id,
-      patch: { name, section: none(section), hidden: none(hidden), ...(recordSeq !== undefined && recordEpoch !== undefined ? { recordSeq, recordEpoch } : {}) },
-    })),
+    // each patch keeps the answer tag of the row it was made from, so the dialog can name its origin (`fromAnswer(entry)`)
+    groups: changed.groups.map((row) => {
+      const { id, name, section, hidden, recordSeq, recordEpoch } = row;
+      return carryAnswerTag(row, {
+        id,
+        patch: { name, section: none(section), hidden: none(hidden), ...(recordSeq !== undefined && recordEpoch !== undefined ? { recordSeq, recordEpoch } : {}) },
+      });
+    }),
   };
 }
 

@@ -2,15 +2,16 @@
 // 1.0.2 bgwork: background work yields while routine runs and engines are starting, not only during owner
 // turns. RC1's routine burst was 26.6 s p50 late from each run's own slot: every cold engine handshake waited
 // behind a main loop busy with background slices (memory-idle, checkpoints, the run save).
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { OwnerFirstGate, OWNER_FIRST_START_HOLD_MAX_MS } from "./owner-first.ts";
 import { RoutineManager, type RoutineManagerOptions } from "./routines.ts";
+import { removeTempDirSync } from "./testing/cleanup.ts";
 
 const dirs: string[] = [];
-afterEach(() => { for (const dir of dirs.splice(0)) rmSync(dir, { recursive: true, force: true }); });
+afterEach(() => { for (const dir of dirs.splice(0)) removeTempDirSync(dir); });
 
 function gate() {
   let now = 5_000_000;
@@ -101,7 +102,7 @@ describe("a due routine holds background work until its engine start", () => {
     expect(g.admit("memory-idle").admitted).toBe(true);
   });
 
-  it("sixty routines due at once each start within the per-slot budget (fake engines answer at once)", async () => {
+  it("sixty routines due at once each start within the per-slot budget (fake engines answer at once)", { tags: ["perf-budget"] }, async () => {
     const { g } = gate();
     const slotOf = (id: string, scheduledFor: number) => scheduledFor + RoutineManager.staggerOffset(id, 60_000);
     let h!: ReturnType<typeof fleet>;

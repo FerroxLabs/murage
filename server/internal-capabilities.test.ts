@@ -70,6 +70,27 @@ describe("internal turn capabilities", () => {
     expect(registry.dispatchingGeneration("thread", "third-turn")).toBe("next");
   });
 
+  it("names the provider turn each generation dispatched, through revocation and completion, bounded", () => {
+    const registry = new InternalCapabilities({ tombstoneLimit: 2 });
+    registry.begin("bot", "thread", "gen-a");
+    expect(registry.providerTurnOf("thread", "gen-a")).toBeUndefined();
+    expect(registry.bindProviderTurn("thread", "gen-a", "turn-a")).toBe(true);
+    expect(registry.providerTurnOf("thread", "gen-a")).toBe("turn-a");
+    expect(registry.providerTurnOf("other-thread", "gen-a")).toBeUndefined();
+    expect(registry.providerTurnOf("thread", "")).toBeUndefined();
+    registry.revokeGeneration("thread", "gen-a");
+    expect(registry.providerTurnOf("thread", "gen-a")).toBe("turn-a");
+    registry.completeProviderTurn("thread", "turn-a");
+    expect(registry.providerTurnOf("thread", "gen-a")).toBe("turn-a");
+    registry.begin("bot", "thread", "gen-b");
+    registry.bindProviderTurn("thread", "gen-b", "turn-b");
+    registry.begin("bot", "thread", "gen-c");
+    registry.bindProviderTurn("thread", "gen-c", "turn-c");
+    expect(registry.providerTurnOf("thread", "gen-a")).toBeUndefined();
+    expect(registry.providerTurnOf("thread", "gen-b")).toBe("turn-b");
+    expect(registry.providerTurnOf("thread", "gen-c")).toBe("turn-c");
+  });
+
   it("old completion, binding and cleanup cannot revoke a replacement generation", () => {
     const registry = new InternalCapabilities();
     registry.begin("bot", "thread", "generation");

@@ -174,6 +174,10 @@ export function stepHeadingFor(variant: SetupCardVariant): string | null {
 }
 
 export const FIRST_RUN_COPY = {
+  /** Every setup step, on a phone or any screen that is not the computer.
+   *  The checklist and its answers live on the computer only, so a phone that
+   *  drew the step would draw controls that cannot work. */
+  elsewhere: "Setup finishes on your computer. Open Murage there to carry on.",
   hello: {
     /**
      * STEP ONE, AND IT IS ASKED BEFORE DETECTION IS REPORTED.
@@ -461,6 +465,9 @@ export const FIRST_RUN_COPY = {
       connectCaveat: "It goes into this computer's keychain. The server never hands it back, and no bot ever sees it.",
       connectAgain: "Open the page again",
       connectCancel: "Cancel",
+      /** The same screen inside the phone app, which opens no sign-up page. */
+      connectHeadingInApp: "Connect Flux Router on your computer.",
+      connectLeadInApp: "Open Murage on your computer to add your Flux Router key. This step finishes there.",
 
       // The three-sentence version of this card, `title`/`body`/`second`/
       // `third`, used to sit here, marked SUPERSEDED in the same commit that

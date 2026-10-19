@@ -6,10 +6,11 @@ import { join } from "node:path";
 import { browserBundlePaths, browserBundleSpec, CHROME_VERSION, SUPPORTED_BROWSER_TARGETS } from "../server/browser-bundle-release.ts";
 import { resolveAgentBrowserReleaseAsset } from "../server/browser-engine-release.ts";
 import { BROWSER_LICENSE_FILES, browserExtractionCommand, bundleInventory, parsePrepareBrowserArgs, releaseBytes, stageBrowserTarget, targetsForPreparation, verifyAssetBytes, verifyBrowserBundle, verifyBundleInventory } from "./prepare-browser.mjs";
+import { removeTempDirSync } from "../server/testing/cleanup.ts";
 
 const fixtures = [];
 function fixture() { const root = mkdtempSync(join(tmpdir(), "omb-browser-prepare-test-")); fixtures.push(root); return root; }
-afterEach(() => { vi.unstubAllGlobals(); for (const root of fixtures.splice(0)) rmSync(root, { recursive: true, force: true }); });
+afterEach(() => { vi.unstubAllGlobals(); for (const root of fixtures.splice(0)) removeTempDirSync(root); });
 
 describe("pinned desktop browser preparation", () => {
   it("pins the exact headless vendor archives for only shipped targets", () => {

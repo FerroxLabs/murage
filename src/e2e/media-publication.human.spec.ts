@@ -24,7 +24,7 @@
 //      saved version and one host card; a WAV among them plays in chat
 //      through the capability byte route, and the player, its Save a copy
 //      link and the saved copy's Download all hand out the same bytes.
-import { test, expect, type Page } from "@playwright/test";
+import { test, expect, type Page } from "./page-error-guard";
 import { createServer, type ViteDevServer } from "vite";
 import react from "@vitejs/plugin-react";
 import tailwindcss from "@tailwindcss/vite";
@@ -101,9 +101,9 @@ async function bytesOf(path: string, withProof = true): Promise<Buffer> {
   return Buffer.from(await response.arrayBuffer());
 }
 /** An attachment as the desktop window loads it: the same app-owned file,
- * with this launch's desktop proof in the query (desktopResourceUrl), since
- * an <img> or a download link cannot send the proof as a header. */
-const provenAttachment = (id: string) => `/api/attachments/${id}?surface=desktop&surfaceSecret=${headers["x-murage-surface-secret"]}`;
+ * through a single-use ticket (ticketedResourceUrl), since an <img> cannot
+ * send the proof as a header and the proof never rides in a URL. */
+const provenAttachment = (id: string) => new RegExp(`^/api/attachments/${id.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\?surfaceTicket=[\\w-]+$`);
 const messagesOf = async (bot: Bot) => (await api(`/api/threads/${bot.threadId}/messages?limit=200`)).messages as any[];
 const imageArtifactsOf = async (bot: Bot) => (await api(`/api/artifacts?botId=${bot.id}&kind=image`)).items as Artifact[];
 const busy = async (bot: Bot) => Boolean((await api("/api/bots?messages=0")).bots.find((item: Bot) => item.id === bot.id)?.busy);
@@ -348,7 +348,7 @@ test("one approved generation is one attachment, one receipt and one saved versi
 
   // Download, open, preview and the media byte route: the same bytes every way.
   // An attachment is a conversation route: the desktop window proves itself
-  // (desktopResourceUrl), and an unproven caller is told there is no such route.
+  // (ticketedResourceUrl), and an unproven caller is told there is no such route.
   expect((await fetch(`${fixture.info.url}/api/attachments/${referenceId}`, { signal: AbortSignal.timeout(10_000) })).status).toBe(404);
   expect(sha256(await bytesOf(`/api/attachments/${referenceId}`))).toBe(FIXTURE_SHA);
   expect(sha256(await bytesOf(`/api/artifacts/${artifactId}/download`))).toBe(FIXTURE_SHA);
@@ -401,7 +401,8 @@ test("one approved generation is one attachment, one receipt and one saved versi
   await expect.poll(() => lightboxImage(page).evaluate((img: HTMLImageElement) => img.complete && img.naturalWidth)).toBe(1);
   await expect(page.getByRole("button", { name: "Next image" })).toHaveCount(0);
   const downloadLink = lightbox(page).getByRole("link", { name: `Download ${referenceId}` });
-  await expect(downloadLink).toHaveAttribute("href", provenAttachment(referenceId));
+  // the download's ticket is minted at the click, so the href never holds an /api path
+  await expect(downloadLink).toHaveAttribute("href", "#");
   expect(await downloadedSha(page, () => downloadLink.click())).toBe(FIXTURE_SHA);
   await page.screenshot({ path: testInfo.outputPath("lightbox-generated-image.png") });
   await lightbox(page).getByRole("button", { name: `Use ${referenceId} as a reference image in your next message` }).click();

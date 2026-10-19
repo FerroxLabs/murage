@@ -1,4 +1,4 @@
-import {test,expect} from "@playwright/test";
+import {test,expect} from "./page-error-guard";
 import {createServer,type ViteDevServer} from "vite";
 import tailwindcss from "@tailwindcss/vite";
 import {readFileSync,mkdtempSync} from "node:fs";
@@ -16,7 +16,7 @@ test.beforeAll(async()=>{
    // Isolate the actual ErrorRow consumer from the rest of ChatView. Its body
    // and all rendered setup/error components are production source, unmodified.
    if(id.endsWith('/src/components/ChatView.tsx')){const source=readFileSync(id,'utf8'),start=source.indexOf('export function ErrorRow('),end=source.indexOf('\n}\n',start)+3;if(start<0||end<start)throw new Error('ErrorRow fixture anchor changed');return `import{useState}from'react';import{EngineSetup}from'./EngineSetup';import{ProviderErrorCard}from'./ProviderErrorCard';import{RuntimeErrorCard}from'./RuntimeErrorCard';`+source.slice(start,end);}
-   if(id==="\0auth-store")return `export const useStore=()=>({state:{config:{}},dispatch:action=>{if(action.type==='instances')window.setInstance(action.instances[0]);}});export async function api(url,options={}){const response=await fetch(url,{...options,headers:{'content-type':'application/json'}});const value=await response.json();if(!response.ok)throw new Error(value.error||'Request failed');return value;}`;
+   if(id==="\0auth-store")return `export function useStoreIfAny(){return useStore();} export const useStore=()=>({state:{config:{}},dispatch:action=>{if(action.type==='instances')window.setInstance(action.instances[0]);}});export async function api(url,options={}){const response=await fetch(url,{...options,headers:{'content-type':'application/json'}});const value=await response.json();if(!response.ok)throw new Error(value.error||'Request failed');return value;}`;
    if(id!=="\0auth-entry")return;
    return `import React,{useState}from'react';import{createRoot}from'react-dom/client';import{ErrorRow}from'/src/components/ChatView.tsx';import'/src/styles.css';
     window.terminalCalls=[];window.muragebox={platform:'darwin',openEngineSetupTerminal:async request=>{window.terminalCalls.push(request);return true;}};

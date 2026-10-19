@@ -1,6 +1,6 @@
 // Scope ids are looked up on every captured message and access build; the
 // statement that finds them must not be compiled and run per lookup.
-import { mkdirSync, rmSync } from "node:fs";
+import { mkdirSync } from "node:fs";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { beforeEach, expect, it } from "vitest";
@@ -9,8 +9,9 @@ import { closeDatabase, database, transaction } from "../database.ts";
 import { captureScopeId } from "./capture.ts";
 import { ensureScope } from "./policy.ts";
 import { scopeRow } from "./scope-id.ts";
+import { removeTempDirSync } from "../testing/cleanup.ts";
 
-beforeEach(() => { closeDatabase(); rmSync(DATA_DIR, { recursive: true, force: true }); mkdirSync(DATA_DIR, { recursive: true }); });
+beforeEach(() => { closeDatabase(); removeTempDirSync(DATA_DIR); mkdirSync(DATA_DIR, { recursive: true }); });
 /** Counts the RUNS (get, all, run) of statements whose SQL contains `needle`,
  * from the moment of the call on: a statement held and reused still counts. */
 function runCounter(db: ReturnType<typeof database>, needle: string): () => number {

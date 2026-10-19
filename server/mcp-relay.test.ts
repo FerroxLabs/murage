@@ -29,6 +29,7 @@ import { clearAllMcpServerSecrets, setMcpServerSecrets } from "./mcp-secrets.ts"
 import { RemoteSseSessions } from "./remote-mcp-sse-sessions.ts";
 import { LIMITS } from "../shared/remote-mcp-url.mjs";
 import { startFakeRemoteMcp, type FakeRemoteMcp } from "./testing/fake-remote-mcp.ts";
+import { removeTempDirSync } from "./testing/cleanup.ts";
 
 let fake: FakeRemoteMcp | undefined;
 const sessions = new RemoteSseSessions();
@@ -192,11 +193,11 @@ describe("the audience and channel gates, against real threads", () => {
     const { Store } = await import("./store.ts");
     const { DATA_DIR } = await import("./config.ts");
     const { closeDatabase } = await import("./database.ts");
-    const { mkdirSync, rmSync } = await import("node:fs");
+    const { mkdirSync } = await import("node:fs");
     const { ownerMemoryTicket } = await import("./memory/authority.ts");
     const { turnAudienceIsOwner } = await import("./owner-audience.ts");
     closeDatabase();
-    rmSync(DATA_DIR, { recursive: true, force: true });
+    removeTempDirSync(DATA_DIR);
     mkdirSync(DATA_DIR, { recursive: true });
     const store = new Store(() => ({ instanceId: "fixture", model: "fixture" }));
     const bot = store.createBot();

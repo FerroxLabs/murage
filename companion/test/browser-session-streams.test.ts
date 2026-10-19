@@ -7,7 +7,7 @@
 // drive the real registry through the real door against a fake harness that
 // can push a frame at any moment, so "no later frame arrives" is measured on
 // the wire rather than inferred from a flag.
-import { rmSync } from "node:fs";
+
 import { createServer, request, type IncomingMessage, type Server, type ServerResponse } from "node:http";
 import { AddressInfo } from "node:net";
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
@@ -16,6 +16,7 @@ import { cookieName, createBrowserHandler, type BoundIdentity } from "../src/bro
 import { createConnectedDeviceTracker } from "../src/connected-devices.ts";
 import { DeviceRegistry, SESSION_IDLE_MS } from "../src/devices.ts";
 import { DATA_DIR } from "../src/state.ts";
+import { removeTempDirSync } from "../../server/testing/cleanup.ts";
 
 const HOST = "macbook.tailexample.ts.net";
 const identity: BoundIdentity = { scheme: "http", hosts: new Set([HOST, "127.0.0.1"]) };
@@ -214,7 +215,7 @@ afterAll(async () => {
 });
 
 beforeEach(() => {
-  rmSync(DATA_DIR, { recursive: true, force: true });
+  removeTempDirSync(DATA_DIR);
   registry = new DeviceRegistry();
   tracker = createConnectedDeviceTracker();
   // Exactly the wiring `index.ts` installs.

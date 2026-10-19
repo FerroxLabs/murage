@@ -123,7 +123,11 @@ describe("the service worker, without which none of the above fires", () => {
     const entry = readFileSync(join(root, "src/main.tsx"), "utf8");
     expect(entry).toContain("registerServiceWorker()");
     const register = readFileSync(join(root, "src/lib/register-sw.ts"), "utf8");
-    expect(register).toContain('navigator.serviceWorker.register("/sw.js"');
+    // Registration goes through the Trusted Types wrapper: the real call must
+    // pass trustedScriptUrl("/sw.js") to serviceWorker.register, and the
+    // wrapper must be imported from the module that defines it.
+    expect(register).toMatch(/navigator\.serviceWorker\.register\(\s*trustedScriptUrl\("\/sw\.js"\)/);
+    expect(register).toMatch(/import\s*\{[^}]*\btrustedScriptUrl\b[^}]*\}\s*from\s*"\.\/trusted-html"/);
   });
 
   it("can be fetched through the browser door", () => {

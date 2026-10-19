@@ -130,6 +130,9 @@ export function canonicalConnectedAppToolName(name: string): string {
 
 /** Whether two tool grants name the same tool, whichever release wrote either. */
 export function sameToolGrant(a: string, b: string): boolean {
+  // A mount-identity key (Rule 43) matches only itself, decoded mount and
+  // tool exactly: a custom grant never answers an external server's tool.
+  if (a.startsWith("acp-tool:") || b.startsWith("acp-tool:")) return a === b;
   return a === b || canonicalConnectedAppToolName(a) === canonicalConnectedAppToolName(b);
 }
 

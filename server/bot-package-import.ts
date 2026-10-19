@@ -273,6 +273,9 @@ interface ImportOptions {
    * in `leadBotIds` for the caller to appoint once the import is committed. */
   starterLeads?: boolean;
   atomicCommit: BotPackageAtomicCommit; signal?: AbortSignal; scanId?: string;
+  /** Cloud home: refuses an id the launcher has tombstoned (a deleted bot's id is never used again).
+   * Runs for every fresh bot id after prepare and before anything is staged or committed. */
+  assertFreshBotId?: (id: string) => Promise<void>;
 }
 async function importIntake(options: ImportOptions, load: () => Promise<Intake>) {
   const selection = selectionSnapshot(options.selection);
@@ -286,6 +289,7 @@ async function importIntake(options: ImportOptions, load: () => Promise<Intake>)
   if (inspected.scan.blocked) fail("PACKAGE_CONTENT_BLOCKED");
   if (inspected.scan.reviewRequired && options.acknowledgeWarnings !== true) fail("PACKAGE_REVIEW_REQUIRED");
   const prepared = prepare(intake, inspected, { existingBots, modelSelection, existingSections: options.existingSections, starterLeads: options.starterLeads });
+  if (options.assertFreshBotId) for (const bot of prepared.bots) await options.assertFreshBotId(bot.id);
   const root = lstatSync(options.dataDir);
   if (!root.isDirectory() || root.isSymbolicLink()) fail("UNSAFE_IMPORT_DIRECTORY");
   const stagingDirectory = mkdtempSync(join(options.dataDir, ".package-import-"));
