@@ -1,18 +1,19 @@
 // The park reconciliation repairs a downgrade, and a downgrade followed by an upgrade changes the running
 // version: a launch whose version equals the one recorded at the end of the last finished pass runs no pass,
 // a changed version runs one, and a pass that was interrupted resumes from its recorded cursor.
-import { mkdirSync, rmSync } from "node:fs";
+import { mkdirSync } from "node:fs";
 import { afterEach, beforeEach, expect, it } from "vitest";
 import { DATA_DIR } from "../config.ts";
 import { closeDatabase, database } from "../database.ts";
 import * as park from "./park.ts";
 import { reconcileMemoryRoster } from "./policy.ts";
 import { setMemoryMode } from "./repository.ts";
+import { removeTempDirSync } from "../testing/cleanup.ts";
 
 const fix = park as unknown as Record<string, any>;
 const saved = process.env.MURAGE_APP_VERSION;
 beforeEach(() => {
-  closeDatabase(); rmSync(DATA_DIR, { recursive: true, force: true }); mkdirSync(DATA_DIR, { recursive: true });
+  closeDatabase(); removeTempDirSync(DATA_DIR); mkdirSync(DATA_DIR, { recursive: true });
   reconcileMemoryRoster({ bots: [], groups: [] }); setMemoryMode("capture"); park.resetParkSweep(); fix.resetParkReconcile(); process.env.MURAGE_APP_VERSION = "1.0.0";
 });
 afterEach(() => { if (saved === undefined) delete process.env.MURAGE_APP_VERSION; else process.env.MURAGE_APP_VERSION = saved; closeDatabase(); });

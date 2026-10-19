@@ -241,6 +241,13 @@ describe("transport", () => {
     expect((init.headers as Record<string, string>)["x-murage-surface"]).toBe("desktop");
   });
 
+  it("refuses redirects even when the caller asks to follow them", async () => {
+    const fetchImpl = vi.fn(async () => response(200, {}));
+    await workspaceApi("/api/workspace-files/read", { method: "POST", body: "{}", redirect: "follow" }, fetchImpl);
+    const [, init] = fetchImpl.mock.calls[0] as unknown as [string, RequestInit];
+    expect(init.redirect).toBe("error");
+  });
+
   it("answers a plain failure with the status and no invented code", async () => {
     const fetchImpl = vi.fn(async () => response(500, { error: "boom" }));
     const error = await workspaceApi("/x", undefined, fetchImpl).catch(e => e);

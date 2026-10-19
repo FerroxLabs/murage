@@ -1,4 +1,4 @@
-import { test, expect } from "@playwright/test";
+import { test, expect } from "./page-error-guard";
 import { safeWipeSync } from "../../server/testing/safe-wipe.mjs";
 import { createServer, type ViteDevServer } from "vite";
 import react from "@vitejs/plugin-react";
@@ -31,7 +31,7 @@ test.beforeAll(async () => {
           createRoot(document.getElementById('root')).render(React.createElement(React.Fragment,null,...[undefined,'allow','deny'].map(answered=>
             React.createElement('section',{'data-fixture-state':answered||'pending',style:{marginBottom:16}},React.createElement(ApprovalCard,{message:{id:answered||'pending',role:'bot',kind:'options',at:1,card:{title:'Approval',subtitle:'Synthetic web search',tool:'WebSearch',options:['Allow','Deny'],answered,held}}})))));`;
         if (id === "\0browser-display-store") return `
-          export const useStore=()=>({state:{config:{browserProfiles:[]}},dispatch:()=>{}});
+          export function useStoreIfAny(){return useStore();} export const useStore=()=>({state:{config:{browserProfiles:[]}},dispatch:()=>{}});
           export async function api(url,options){
             const f=window.browserFixture;
             if(options?.method==='POST'){if(f.actionError)throw Error(f.actionError);return f.status;}

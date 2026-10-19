@@ -1,10 +1,11 @@
-import { chmodSync, mkdtempSync, rmSync, utimesSync, writeFileSync } from "node:fs";
+import { chmodSync, mkdtempSync, utimesSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { cachedCliVersion, invalidateCliVersions } from "./cli-version-cache.ts";
 import { ProviderRegistry } from "./harness/registry.ts";
 import { makeFakeDriver } from "./testing/fake-driver.ts";
+import { removeTempDirSync } from "./testing/cleanup.ts";
 
 let dir = "";
 const script = (name: string, version: string) => {
@@ -20,7 +21,7 @@ const counting = (calls: RunCall[], real = false) => ((cli: string, args: string
 }) as never;
 
 beforeEach(() => { dir = mkdtempSync(join(tmpdir(), "clivc-")); invalidateCliVersions(); });
-afterEach(() => { rmSync(dir, { recursive: true, force: true }); invalidateCliVersions(); });
+afterEach(() => { removeTempDirSync(dir); invalidateCliVersions(); });
 
 describe("cachedCliVersion", () => {
   it("asks an unchanged binary once, however many callers", async () => {

@@ -6,7 +6,7 @@ import { createRoomDispatcher } from "./room-dispatcher.ts";
 import { channelToProjectRows } from "./project-settings.ts";
 import { createProjectGoal } from "./project-goals.ts";
 import { reopenProject, resumeGoalCloseSummaries, resumeProjectCloses, startGoalCloseSummary, startProjectClose } from "./project-close.ts";
-import { mkdirSync, rmSync } from "node:fs";
+import { mkdirSync } from "node:fs";
 import { beforeEach, expect, it } from "vitest";
 import { DATA_DIR, loadConfig, saveConfig } from "./config.ts";
 import { closeDatabase, database } from "./database.ts";
@@ -15,8 +15,9 @@ import { teamIdFor } from "./team-identities.ts";
 import { setAutomationProbe } from "./message-allow.ts";
 import { authorizeWork, sharedWithTeam } from "./execution-audience.ts";
 import { authorizeAdmission, sharedRowAudience } from "./shared-work.ts";
+import { removeTempDirSync } from "./testing/cleanup.ts";
 
-beforeEach(() => { closeDatabase(); rmSync(DATA_DIR, { recursive: true, force: true }); mkdirSync(DATA_DIR, { recursive: true }); });
+beforeEach(() => { closeDatabase(); removeTempDirSync(DATA_DIR); mkdirSync(DATA_DIR, { recursive: true }); });
 function fixture() {
   const store = new Store(() => ({ instanceId: "fixture", model: "fixture" }));
   const make = (name: string, section: string) => { const bot = store.createBot(); store.patchBot(bot.id, { name, section }); return bot; };

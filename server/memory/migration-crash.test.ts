@@ -22,12 +22,13 @@ import { afterEach, expect, it } from "vitest";
 import { MEMORY_PRE_V3_SNAPSHOT, MEMORY_SCHEMA_V2, MemoryMigrationError, migrateMemorySchema, validateMemorySchema } from "./schema.ts";
 import { DEFAULT_MEMORY_LEARNING_V1 } from "./learning-policy.ts";
 import { migrateMemorySchema as migrate0161 } from "./testdata/v0161-schema.ts";
+import { removeTempDirSync } from "../testing/cleanup.ts";
 
 const roots: string[] = [];
 const open: DatabaseSync[] = [];
 afterEach(() => {
   for (const db of open.splice(0)) { try { db.close(); } catch { /* closed */ } }
-  for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true });
+  for (const root of roots.splice(0)) removeTempDirSync(root);
 });
 
 function connect(file: string) {
@@ -64,7 +65,7 @@ function assertWhole(root: string, messages: number): number {
   expect(integrity(db)).toBe("ok");
   expect(count(db)).toBe(messages);
   const found = version(db);
-  expect([2, 10]).toContain(found);
+  expect([2, 11]).toContain(found);
   if (found === 2) {
     expect(() => validateMemorySchema(db)).not.toThrow();
     expect(() => migrate0161(db)).not.toThrow(); // 0.1.61's own open path: validate, already v2, return
@@ -85,7 +86,7 @@ function assertWhole(root: string, messages: number): number {
 function restart(root: string) {
   const db = connect(join(root, "messages.db"));
   migrateMemorySchema(db, "off", { snapshotV2Path: join(root, MEMORY_PRE_V3_SNAPSHOT), freeBytes: () => 1024 ** 4 });
-  expect(version(db)).toBe(10);
+  expect(version(db)).toBe(11);
   db.close(); open.splice(open.indexOf(db), 1);
   expect(readdirSync(root).filter(name => name.endsWith(".partial"))).toEqual([]);
   assertWhole(root, countOf(root));
@@ -197,7 +198,7 @@ tiny("real full disk: the preflight refuses before writing anything; a disk that
   unfill();
   const again = connect(file);
   migrateMemorySchema(again, "off", { snapshotV2Path: join(root, MEMORY_PRE_V3_SNAPSHOT), freeBytes: () => null });
-  expect(version(again)).toBe(10);
+  expect(version(again)).toBe(11);
   again.close(); open.splice(open.indexOf(again), 1);
   assertWhole(root, 3000);
 }, 120_000);
@@ -225,7 +226,7 @@ tiny("real full disk inside the upgrade transaction: rolled back to a whole v2 f
   unfill();
   const again = connect(file);
   migrateMemorySchema(again, "off", { snapshotV2Path: join(root, MEMORY_PRE_V3_SNAPSHOT), freeBytes: () => null });
-  expect(version(again)).toBe(10);
+  expect(version(again)).toBe(11);
   again.close(); open.splice(open.indexOf(again), 1);
   assertWhole(root, 500);
 }, 120_000);

@@ -21,6 +21,15 @@ function invokeShown(channel, ...args) {
   });
 }
 
+/** True only when main passed --murage-cloud=1 (installCloudHome ran, i.e. the Cloud flag is on). */
+function cloudFlagOn() {
+  try {
+    return (process.argv ?? []).includes("--murage-cloud=1");
+  } catch {
+    return false;
+  }
+}
+
 function bridgeOriginTrusted() {
   try {
     const argument = (process.argv ?? []).find(
@@ -90,6 +99,8 @@ const desktopSurfaceSecret = (() => {
 contextBridge.exposeInMainWorld("muragebox", {
   /** Host platform ("darwin" | "win32" | "linux") — for platform-aware UI. */
   platform: process.platform,
+  /** CPU architecture ("arm64" | "x64"), for the version line a support message carries. */
+  arch: process.arch,
   backup: {
     status: () => ipcRenderer.invoke("backup-mode:status"),
     restart: () => ipcRenderer.invoke("backup-mode:restart"),
@@ -106,6 +117,7 @@ contextBridge.exposeInMainWorld("muragebox", {
     configure: (revision, choices) => ipcRenderer.invoke("backup-schedule:configure", revision, choices),
     runNow: (revision) => ipcRenderer.invoke("backup-schedule:run-now", revision),
     clearReview: (revision) => ipcRenderer.invoke("backup-schedule:clear-review", revision),
+    finishFirstRun: (choice) => ipcRenderer.invoke("backup-schedule:finish-first-run", choice),
   },
   backupClosed: {
     status: () => ipcRenderer.invoke("backup-closed:status"),
@@ -146,6 +158,36 @@ contextBridge.exposeInMainWorld("muragebox", {
       return () => ipcRenderer.removeListener("approval-notification:open", handler);
     },
   },
+  /** B3 WP4: the pairing UI's bridge (local window only). Present ONLY when main started this window with the Cloud flag on
+   * (--murage-cloud=1); with the flag off the bridge has exactly the train's members. */
+  ...(cloudFlagOn() ? {
+  cloudHome: {
+    state: () => invokeShown("cloud-home:state"),
+    listHomes: () => invokeShown("cloud-home:list-homes"),
+    listBots: homeId => invokeShown("cloud-home:list-bots", homeId),
+    connectStart: () => invokeShown("cloud-home:connect-start"),
+    connectCancel: () => invokeShown("cloud-home:connect-cancel"),
+    /** "Use copied link": no arguments. Main reads the clipboard itself; the link never passes through this window. */
+    connectPaste: () => invokeShown("cloud-home:connect-paste"),
+    connectStatus: () => invokeShown("cloud-home:connect-status"),
+    disconnect: homeId => invokeShown("cloud-home:disconnect", homeId),
+    open: homeId => invokeShown("cloud-home:open", homeId),
+    /** Main tells the window when Cloud goes live (or stops being), so the entry appears without a restart. */
+    onLive: cb => { const handler = (_event, state) => cb(state?.live === true); ipcRenderer.on("cloud-home:live", handler); return () => ipcRenderer.removeListener("cloud-home:live", handler); },
+    /** main -> this window: this computer was disconnected from its Cloud home; show the Connect panel. */
+    onShowConnect: cb => {
+      const handler = () => cb();
+      ipcRenderer.on("cloud-home:show-connect", handler);
+      return () => ipcRenderer.removeListener("cloud-home:show-connect", handler);
+    },
+    /** main -> this window: main handled a Cloud link. The kind (and an open-cloud home id) only, never the link itself. */
+    onLinkEvent: cb => {
+      const handler = (_event, event) => cb({ kind: String(event?.kind ?? ""), ...(typeof event?.homeId === "string" ? { homeId: event.homeId } : {}) });
+      ipcRenderer.on("cloud-home:link-event", handler);
+      return () => ipcRenderer.removeListener("cloud-home:link-event", handler);
+    },
+  },
+  } : {}),
   startup: {
     status:()=>ipcRenderer.invoke("startup-background:status"),
     update:patch=>ipcRenderer.invoke("startup-background:update",patch),
@@ -381,6 +423,11 @@ contextBridge.exposeInMainWorld("muragebox", {
   /** Store a provider credential with OS-backed encryption. */
   mutateProviderConnection: (input) => ipcRenderer.invoke("model-provider:mutate", input),
   mutateFluxConnection: (input) => ipcRenderer.invoke("flux-connection:mutate", input),
+  /** One-click Flux sign-in (PKCE in the main process). Resolves { ok, status } or { ok:false, code, message }; never carries the key. */
+  fluxSignin: {
+    start: (input) => ipcRenderer.invoke("flux-signin:start", input),
+    cancel: () => ipcRenderer.invoke("flux-signin:cancel"),
+  },
   /** Plan sign-in (ChatGPT, Grok). Results and status never carry a token. */
   modelSignIn: {
     status: () => ipcRenderer.invoke("model-signin:status"),
@@ -390,6 +437,25 @@ contextBridge.exposeInMainWorld("muragebox", {
     submitCode: (provider, code) => ipcRenderer.invoke("model-signin:submit-code", provider, code),
     signOut: (provider) => ipcRenderer.invoke("model-signin:sign-out", provider),
   },
+  /** Cloud home engine sign-in terminal (B3 WP5). Main holds the token and step-up; this carries terminal bytes and the owner's pasted code only. */
+  ...(cloudFlagOn() ? {
+  cloudEngineLogin: {
+    start: (request) => ipcRenderer.invoke("cloud-home:engine-login:start", request),
+    input: (request) => ipcRenderer.invoke("cloud-home:engine-login:input", request),
+    stop: (request) => ipcRenderer.invoke("cloud-home:engine-login:stop", request),
+    openLink: (request) => ipcRenderer.invoke("cloud-home:engine-login:open-link", request),
+    onData: (listener) => {
+      const handler = (_event, payload) => { if (payload && typeof payload === "object") listener(payload); };
+      ipcRenderer.on("cloud-home:engine-login:data", handler);
+      return () => ipcRenderer.removeListener("cloud-home:engine-login:data", handler);
+    },
+    onClosed: (listener) => {
+      const handler = (_event, payload) => { if (payload && typeof payload === "object") listener(payload); };
+      ipcRenderer.on("cloud-home:engine-login:closed", handler);
+      return () => ipcRenderer.removeListener("cloud-home:engine-login:closed", handler);
+    },
+  },
+  } : {}),
   /** The owner's own MCP servers (MCP-LINK T11): keys, links, env values and
    * sign-in go to the main process, which keeps them encrypted. Nothing here
    * ever returns a value. */
@@ -417,6 +483,8 @@ contextBridge.exposeInMainWorld("muragebox", {
     download: () => ipcRenderer.invoke("update:download"),
     install: () => ipcRenderer.invoke("update:install"),
     retry: () => ipcRenderer.invoke("update:retry"),
+    /** Step back to the previous version; takes nothing, the app asks before it quits. */
+    preparePreviousVersion: () => ipcRenderer.invoke("update:prepare-previous-version"),
     onState: (cb) => {
       ipcRenderer
         .invoke("update:get-state")

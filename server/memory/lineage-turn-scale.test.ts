@@ -7,10 +7,11 @@
 // judge every root again, at every turn, up to the 50k ceiling. This file pins the work in rows
 // read through the SQL layer (no clock): flat from 5k to 20k replies, and the same answers the
 // whole-set reading gave.
-import { mkdirSync, rmSync } from "node:fs";
+import { mkdirSync } from "node:fs";
 import { DatabaseSync } from "node:sqlite";
 import { afterAll, afterEach, beforeAll, beforeEach, expect, it } from "vitest";
 import { thawRootSetWritesForTest } from "./replay-lineage.ts";
+import { removeTempDirSync } from "../testing/cleanup.ts";
 // 1.0.2: this file drives the read-time root-set machinery over rows a 1.0.1 file holds; thaw the frozen root-set writes to model them.
 beforeEach(() => thawRootSetWritesForTest(true));
 afterEach(() => thawRootSetWritesForTest(false));
@@ -26,7 +27,7 @@ import { LineageAllowance } from "./lineage-allowance.ts";
 
 const thread = "scale-direct", driver = "drv", session = "sess";
 const key = (reply: number | string) => `${thread}\u0000r${reply}`;
-beforeEach(() => { closeDatabase(); rmSync(DATA_DIR, { recursive: true, force: true }); mkdirSync(DATA_DIR, { recursive: true }); });
+beforeEach(() => { closeDatabase(); removeTempDirSync(DATA_DIR); mkdirSync(DATA_DIR, { recursive: true }); });
 afterEach(() => setRootSetCeilingForTest(null));
 
 /** Statements run and rows they hand back, counted at the SQL layer: every statement prepared on a connection is wrapped
@@ -76,7 +77,7 @@ function turn(index: number, audience: ReplayAudience | null = null): void {
   expect(replayExclusions(LineageAllowance.tool(1_000_000_000), thread, window, audience, { failClosed: true }).size).toBe(0);
 }
 function measure(size: number, audience: ReplayAudience | null = null): { rows: number; statements: number; members: number } {
-  closeDatabase(); rmSync(DATA_DIR, { recursive: true, force: true }); mkdirSync(DATA_DIR, { recursive: true });
+  closeDatabase(); removeTempDirSync(DATA_DIR); mkdirSync(DATA_DIR, { recursive: true });
   database();
   buildSession(size);
   // After a start a session set larger than LARGE_ROOT_SET is not walked by a turn: the recovery scheduler proves it in the background first (the turn

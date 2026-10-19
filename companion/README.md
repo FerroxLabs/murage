@@ -103,11 +103,21 @@ It prints where to point the phone, and where you pair:
 
 ```text
 companion  http://100.101.102.103:8810  →  harness 127.0.0.1:8799
-pair here  http://127.0.0.1:8811
+pair here  http://127.0.0.1:8811/#token=<this launch's control token>
 on your phone, enter  macbook.tail1234.ts.net:8810
 ```
 
-Open the pairing page, click **Start pairing**, and type the six digits into
+Every control route but the page itself needs that per-launch token in an
+`x-murage-control-token` header. Every process on this computer can reach
+loopback, a bot's shell and a bot's browser included, so loopback alone is not
+enough. The desktop app mints a new token for every start and hands it over the
+private parent port; a headless `murage start` derives it from the door
+identity it records, which is how `murage pair` presents it; a script can pass
+its own in `MURAGE_COMPANION_CONTROL_TOKEN`. Only when none of those apply does
+the sidecar make one up and print it after the `#`, which a browser never sends
+anywhere.
+
+Open the printed link, click **Start pairing**, and type the six digits into
 the phone. The normal desktop panel also turns that short-lived code and the
 dialable address into a QR handoff, so the mobile app can fill both in without
 putting the long-lived device token in the QR. Stopping the process is the off

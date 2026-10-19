@@ -4,7 +4,7 @@
 // Astra's cross-audit of the write-time lane (int102-gate/audit-astra/REPORT.md): seven P1s, each reproduced here first and fixed after.
 // 1-5 are leaks (a line, a note, a card or a prompt shown after the owner forgot what it rests on); 6-7 are over-withholds (a clean later
 // reply withheld by a revoke that never reached it). Each test is the report's reproduction in the form the production writers produce it.
-import { mkdirSync, rmSync } from "node:fs";
+import { mkdirSync } from "node:fs";
 import { beforeEach, describe, expect, it } from "vitest";
 import { DATA_DIR } from "../config.ts";
 import { closeDatabase, database } from "../database.ts";
@@ -18,7 +18,7 @@ import { drainRevokeMarker } from "./memory-revocation.ts";
 import { buildPrompt, promptPart, recordTurnObject, sendFence, turnToolText } from "./prompt-parts.ts";
 import { commitRevoke } from "./revoke-commit.ts";
 import { linkMemoryDisclosureOutput } from "./disclosures.ts";
-import { upgradeDevelopmentV10Carry, validateMemorySchema } from "./schema.ts";
+import { downgradeMemorySchema, upgradeDevelopmentV10Carry, validateMemorySchema } from "./schema.ts";
 import { buildLegacyHistory, markUpgraded } from "./testing/legacy-history-fixture.ts";
 import { LineageAllowance as LegacyAllowance } from "./testing/legacy-lineage/lineage-allowance.ts";
 import { forgetKeptLineageForTest, replayExclusions, setReplayNodeBudgetForTest } from "./testing/legacy-lineage/replay-lineage.ts";
@@ -26,6 +26,7 @@ import { LineageAllowance } from "./lineage-allowance.ts";
 import { channelToProjectRows } from "../project-settings.ts";
 import { createProjectCard } from "../project-cards.ts";
 import { workingContextBlock, type WorkingContextInput } from "../working-context.ts";
+import { removeTempDirSync } from "../testing/cleanup.ts";
 
 const CONTENT: LineageReader = { audience: null };
 const OWNER_READER: LineageReader = { audience: { owner: true, scopeIds: [] } };
@@ -40,7 +41,7 @@ const drain = () => expect(drainRevokeMarker(database()).pending).toBe(false);
 
 beforeEach(() => {
   closeMessageDb(); closeDatabase(); resetLineageBackfillForTest(); forgetKeptLineageForTest();
-  rmSync(DATA_DIR, { recursive: true, force: true }); mkdirSync(DATA_DIR, { recursive: true });
+  removeTempDirSync(DATA_DIR); mkdirSync(DATA_DIR, { recursive: true });
 });
 
 describe("Astra audit P1", () => {
@@ -170,7 +171,9 @@ describe("Astra audit P1", () => {
     expect(db.prepare("SELECT 1 AS x FROM memory_line_capture c JOIN memory_thread_no n ON n.no=c.thread_no WHERE n.thread_id='t' AND c.source_id='message:t:r2'").get()).toBeTruthy();
     const range = db.prepare("SELECT until_turn_lsn AS u FROM memory_deny_range WHERE thread_id='t' ORDER BY from_lsn LIMIT 1").get()!;
     const turnLsn = db.prepare("SELECT l.turn_lsn AS t FROM memory_line_lineage l JOIN memory_thread_no n ON n.no=l.thread_no WHERE n.thread_id='t' AND l.message_id='r2'").get()!;
-    expect(Number(turnLsn.t), "the answer's turn began at the range's excluded upper bound").toBe(Number(range.u));
+    // (the commit takes its own lsn, the range's excluded upper bound: a turn opened after it is at or above that bound, here one past it
+    // as o2 took the next slot; a turn opened right on the bound with no new line is memory-late-submission-api.test.ts "no new line")
+    expect(Number(turnLsn.t), "the answer's turn began at or after the range's excluded upper bound").toBeGreaterThanOrEqual(Number(range.u));
     drain();
     expect(verdict("t", "r1").state).toBe("withheld");
     expect(verdict("t", "r2").state).toBe("shown");
@@ -197,6 +200,7 @@ describe("Astra audit P1", () => {
 
   it("9. a v10 file the earlier lane wrote (the carry key without the child thread, NULL for a record child) is rebuilt with every row and validates", () => {
     const db = database();
+    downgradeMemorySchema(db, 10); // the current file is v11 (1.0.3): the carry rebuild is for a v10 file
     const rows = [[1, 5, 5, 1, "7", 2], [1, 5, 5, 3, "note:n1:0", null], [2, 9, 3, 0, "9", 4]] as const;
     db.exec("DROP TABLE memory_lineage_carry");
     db.exec("CREATE TABLE memory_lineage_carry (\n parent_thread_no INTEGER NOT NULL, to_lsn INTEGER NOT NULL, from_lsn INTEGER NOT NULL, child_kind INTEGER NOT NULL CHECK(child_kind BETWEEN 0 AND 3),\n child_ref TEXT NOT NULL, child_thread_no INTEGER,\n PRIMARY KEY(parent_thread_no,to_lsn,from_lsn,child_kind,child_ref)) WITHOUT ROWID");

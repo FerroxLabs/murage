@@ -26,7 +26,7 @@
 // across workers, and the engine dispatch ledger beside the root-owned
 // descriptor carries across workers, runs and evidence directories. A case that needs an earlier case's thread
 // fails as NOT RUN when that state is gone rather than guessing it.
-import { chromium, test, expect } from "@playwright/test";
+import { chromium, test, expect } from "./page-error-guard";
 import { createServer, type ViteDevServer } from "vite";
 import react from "@vitejs/plugin-react";
 import tailwindcss from "@tailwindcss/vite";

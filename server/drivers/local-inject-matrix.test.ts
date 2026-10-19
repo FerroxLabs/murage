@@ -2,7 +2,7 @@
 // model-id dialects those CLIs actually speak. Catches day-one failures
 // like Hermes auto-routing to OpenRouter (HTTP 401 Missing Authentication
 // header) before a user hits them.
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { fixtureCredentialFingerprint } from "../testing/fixture-dump.ts";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
@@ -30,12 +30,13 @@ import {
   localHost,
   mergeLocalInject,
 } from "./local-inject.ts";
+import { removeTempDirSync } from "../testing/cleanup.ts";
 
 const FAKE_ACP = join(dirname(fileURLToPath(import.meta.url)), "..", "testing", "fake-acp-cli.ts");
 
 const scratchDirs: string[] = [];
 afterEach(() => {
-  for (const dir of scratchDirs.splice(0)) rmSync(dir, { recursive: true, force: true });
+  for (const dir of scratchDirs.splice(0)) removeTempDirSync(dir);
 });
 
 function scratchHome(prefix: string): string {

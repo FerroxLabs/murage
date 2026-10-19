@@ -3,7 +3,7 @@
 //
 // SPEC-X 12.1 and 12.2: the owner's sharing routes, called through the one
 // entry point index.ts uses, over a real store and messages.db.
-import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { beforeEach, expect, it } from "vitest";
 import { DATA_DIR, loadConfig, saveConfig } from "./config.ts";
@@ -15,8 +15,9 @@ import { enqueueSharedWork } from "./shared-work.ts";
 import { sharingRoute, sharedLoadLine, teamSharing } from "./sharing-routes.ts";
 import { roomRequest } from "./room-requests.ts";
 import { ensureWorkspace } from "./workspace.ts";
+import { removeTempDirSync } from "./testing/cleanup.ts";
 
-beforeEach(() => { closeDatabase(); rmSync(DATA_DIR, { recursive: true, force: true }); mkdirSync(DATA_DIR, { recursive: true }); });
+beforeEach(() => { closeDatabase(); removeTempDirSync(DATA_DIR); mkdirSync(DATA_DIR, { recursive: true }); });
 function fixture() {
   const store = new Store(() => ({ instanceId: "fixture", model: "fixture" }));
   const make = (name: string, section: string, extra: Record<string, unknown> = {}) => { const bot = store.createBot(); store.patchBot(bot.id, { name, section, ...extra }); return bot; };

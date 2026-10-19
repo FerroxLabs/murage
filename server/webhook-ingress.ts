@@ -89,6 +89,8 @@ function eventName(req: IncomingMessage): string | undefined {
 }
 
 export function createWebhookIngressHandler(manager: WebhookManager) {
+  const home = process.env.MURAGE_CLOUD_ROLE === "home";
+  const buckets = new Map<string, { at: number; count: number }>();
   return async (req: IncomingMessage, res: ServerResponse) => {
     let url: URL;
     try {
@@ -118,6 +120,13 @@ export function createWebhookIngressHandler(manager: WebhookManager) {
           deliveryId: deliveryId(req),
         });
         return json(res, 401, { error: "Invalid webhook URL or secret" });
+      }
+      if (home) {
+        const now = Date.now();
+        for (const [id, bucket] of buckets) if (now - bucket.at >= 60_000) buckets.delete(id);
+        const bucket = buckets.get(match[1]) ?? { at: now, count: 0 };
+        if (bucket.count >= 60) { res.setHeader("retry-after", String(Math.ceil((60_000 - (now - bucket.at)) / 1000))); return json(res, 429, { error: "Webhook request limit reached. Try again in a minute." }); }
+        bucket.count += 1; buckets.set(match[1], bucket);
       }
       const raw = await readRawBody(req);
       const contentType = header(req, "content-type")?.split(";")[0]?.trim().toLowerCase() ?? "text/plain";

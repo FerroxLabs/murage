@@ -26,7 +26,7 @@ export type MachineEvent =
   | { type: "POLL_STARTED" };
 export function initialContext(family?: "window" | "app"): MachineContext;
 export function reduce(ctx: MachineContext, event: MachineEvent): MachineContext;
-export interface Counter { unit: "messages" | "conversations" | "bytes" | "sets"; done: number; total: number }
+export interface Counter { unit: "messages" | "conversations" | "bytes" | "sets" | "open"; done: number; total?: number }
 export interface WindowView { mode: "counting" | "blocking" | "slow" | "finishing"; percent: number | null; indeterminate: boolean; keepOpen: boolean; counts: { exact: true; messages: number; conversations: number; memoryRecords: number; firstMessageAt: number | null } | null; counter: Counter | null; phaseId: string; elapsedMs: number | null; etaMinutes: number | null; slow: boolean; late: boolean; longSlow: boolean; neutral: boolean }
 export interface StripSelection { kind: "working" | "done" | "hold"; role: "status" | "alert"; holdKey: string | null; percent: number | null; phaseId: string | null; left: number | null; counter: Counter | null; elapsedMs?: number | null; slow: boolean; neutral: boolean }
 export function selectPoll(ctx: MachineContext, options?: { hidden?: boolean }): { active: boolean; intervalMs: number; now: boolean };

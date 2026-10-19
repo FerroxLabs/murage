@@ -17,9 +17,12 @@
 import { useMemo, useState, type ReactNode } from "react";
 
 import { FIRST_RUN_COPY, foundAgentsLine, localModelLine, lookedAroundLine, signedOutAgentsLine, stepHeadingFor } from "@/lib/first-run-copy";
+import { inNativeShell } from "@/lib/native-shell";
+import { useDesktopSurface } from "@/lib/use-surface";
 import { firstRunDetection, type FirstRunEngineRow } from "@/lib/first-run-detect";
 import type { Bot, Message } from "@/state/store";
 import { renderBriefHtml } from "../../shared/brief-html";
+import { trustedPreviewDocument, useSanitizerReady } from "@/lib/trusted-html";
 import { sampleBrief } from "../../shared/brief-sample";
 import { readSetupCard, type SetupCardVariant } from "../../shared/setup-card";
 import { SETUP_DETECT_ANSWER } from "../../shared/setup";
@@ -42,11 +45,28 @@ import { FirstRunHelloCard } from "./FirstRunHelloCard";
 import { FirstRunDoItCard, FirstRunJobsCard } from "./FirstRunJobsCard";
 import { FirstRunNextCard } from "./FirstRunNextCard";
 import { FirstRunPhoneCard } from "./FirstRunPhoneCard";
+import { SandboxedFrame } from "./SandboxedFrame";
 
 export function FirstRunCard({ bot, message }: { bot: Bot; message: Message }) {
+  const desktop = useDesktopSurface();
   const card = readSetupCard(message.card);
   if (!card) return null;
   const settled = Boolean(card.settled);
+  // The first-run checklist is the computer's (server/route-policy.ts makes
+  // every /api/setup route desktop-only), so a phone can neither read a step
+  // nor skip one. A step drawn there sat on its waiting line for good. The
+  // phone says where the step finishes; a step already done is history the
+  // computer keeps.
+  if (inNativeShell() || desktop === false) {
+    return settled ? null : (
+      <FirstRunBubble>
+        <FirstRunLine quiet>{FIRST_RUN_COPY.elsewhere}</FirstRunLine>
+      </FirstRunBubble>
+    );
+  }
+  // Not known yet is not the computer: a phone browser would otherwise show
+  // the computer's controls for the moment the question takes.
+  if (desktop === undefined) return null;
   const heading = stepHeadingFor(card.variant);
   const body = firstRunCardBody(bot, message, card.variant, settled);
   if (!body) return null;
@@ -318,6 +338,7 @@ function FirstRunEngineRowView({ row }: { row: FirstRunEngineRow }) {
  * and the established gate is better than a second opinion about it.
  */
 function FirstRunSampleBriefCard() {
+  const sanitizer = useSanitizerReady(); // markup made before the sanitizer loaded is empty: draw again when it arrives
   const { view } = useSetupView();
   const [whole, setWhole] = useState(false);
   const copy = FIRST_RUN_COPY.flux["sample-brief"];
@@ -336,8 +357,8 @@ function FirstRunSampleBriefCard() {
   // frame is still `sandbox=""` with no allow-* at all, which is what
   // actually stops script rather than the scrubbing did.
   const html = useMemo(
-    () => renderBriefHtml(sampleBrief(view?.ownerName ?? "")),
-    [view?.ownerName],
+    () => trustedPreviewDocument(renderBriefHtml(sampleBrief(view?.ownerName ?? ""))),
+    [view?.ownerName, sanitizer],
   );
   if (!view) return null;
 
@@ -385,11 +406,11 @@ function FirstRunSampleBriefCard() {
             {whole ? copy.showLess : copy.showAll}
           </button>
         </figcaption>
-        <iframe
+        <SandboxedFrame
           title={copy.frameTitle}
           sandbox=""
           referrerPolicy="no-referrer"
-          srcDoc={html}
+          html={html}
           // Tall enough that the first decision is never cut in half, and an
           // expanded height that clears the whole example rather than a
           // guess at it.

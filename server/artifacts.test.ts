@@ -5,11 +5,12 @@ import { DatabaseSync } from "node:sqlite";
 import { createHash } from "node:crypto";
 import { afterEach, expect, it } from "vitest";
 import {
-  artifactOwner, retainedSourceRoots, artifactsRequest, ARTIFACT_MAX_BYTES, ARTIFACT_PREVIEW_MAX_BYTES, ARTIFACT_STORAGE_MAX_BYTES, ARTIFACT_TEXT_EXTENSIONS, describeArtifact, initializeArtifacts, listArtifacts, previewArtifact, readArtifact, registerArtifact, type ArtifactAccess,
+  artifactOwner, retainedSourceRoots, artifactsRequest, ARTIFACT_MAX_BYTES, ARTIFACT_PREVIEW_MAX_BYTES, ARTIFACT_TEXT_EXTENSIONS, describeArtifact, initializeArtifacts, listArtifacts, previewArtifact, readArtifact, registerArtifact, type ArtifactAccess,
   artifactRelativePathParts, artifactSourceFingerprint, authorizedArtifactRoot, isPrivateWorkspaceName, safeArtifactDirectory, verifiedArtifactSource, workspacePathWithin,
 } from "./artifacts.ts";
+import { removeTempDirSync } from "./testing/cleanup.ts";
 const roots: string[] = [], databases: DatabaseSync[] = [];
-afterEach(() => { for (const db of databases.splice(0)) { try { db.close(); } catch {} } for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true }); });
+afterEach(() => { for (const db of databases.splice(0)) { try { db.close(); } catch {} } for (const root of roots.splice(0)) removeTempDirSync(root); });
 function fixture() {
   const root = mkdtempSync(join(tmpdir(), "murage-artifact-")); roots.push(root);
   const workspace = join(root, "workspace"), storage = join(root, "artifact-files"), file = join(root, "messages.db"); mkdirSync(workspace);
@@ -63,7 +64,7 @@ it("preserves report history after overwrite, source deletion and database resta
   expect(listArtifacts(f.db, f.storage, {}, f.access).items[0].sourceState).toBe("changed");
   expect(readArtifact(f.db, f.storage, first.id, f.access).bytes.toString()).toBe(f.content);
   const second = registerArtifact(f.db, f.storage, f.input, f.access); expect(second.id).not.toBe(first.id);
-  rmSync(f.workspace, { recursive: true }); f.db.close();
+  removeTempDirSync(f.workspace); f.db.close();
   const reopened = new DatabaseSync(f.file); databases.push(reopened); initializeArtifacts(reopened);
   const retained = { owner: true, scopes: [{ ...f.access.scopes[0], threadId: undefined, threadAvailable: false }] };
   expect(listArtifacts(reopened, f.storage, {}, retained).items).toHaveLength(2);
@@ -101,13 +102,12 @@ it("detects missing or changed snapshots and never silently falls back to origin
   expect(() => previewArtifact(f.db, f.storage, saved.id, f.access)).toThrow("missing or unreadable");
   expect(readFileSync(join(f.workspace, "report.html"), "utf8")).toBe(f.content);
 });
-it("enforces file and storage limits without removing originals or saved history", () => {
+// 1.0.3: the per-file limit stays; the library total follows the disk (artifacts-disk.test.ts).
+it("enforces the file size limit without removing the original", () => {
   const f = fixture();
   const big = join(f.workspace, "large.bin"), fd = openSync(big, "w"); ftruncateSync(fd, ARTIFACT_MAX_BYTES + 1); closeSync(fd);
   expect(() => registerArtifact(f.db, f.storage, { ...f.input, relativePath: "large.bin" }, f.access)).toThrow("size limit");
-  mkdirSync(f.storage); const quota = join(f.storage, "quota-fixture"), quotaFd = openSync(quota, "w"); ftruncateSync(quotaFd, ARTIFACT_STORAGE_MAX_BYTES); closeSync(quotaFd);
-  expect(() => registerArtifact(f.db, f.storage, f.input, f.access)).toThrow("storage limit");
-  expect(existsSync(big)).toBe(true); expect(existsSync(quota)).toBe(true);
+  expect(existsSync(big)).toBe(true);
 });
 it("supports bounded stable search/page/type/date/bot/task filtering", () => {
   const f = fixture();

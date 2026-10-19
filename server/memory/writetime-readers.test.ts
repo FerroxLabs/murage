@@ -4,7 +4,7 @@
 // Write-time privacy, S4 wiring: the read-side files ask the deny tables as a stricter layer beside the read-time judge (which S6 removes).
 // readable.ts and consolidate.ts (memory marks), disclosures.ts (replay pages), dispatch.ts (session predicate, send fence),
 // result-egress.ts (result lines), lessons.ts (revbound r3 A1, A4, F2 read halves) and bundle.ts (recall's own budget, partial not empty).
-import { mkdirSync, rmSync } from "node:fs";
+import { mkdirSync } from "node:fs";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { DATA_DIR } from "../config.ts";
 import { closeDatabase, database } from "../database.ts";
@@ -22,8 +22,9 @@ import { catchUpRecentMemory } from "./recent.ts";
 import { buildPrompt, promptPart } from "./prompt-parts.ts";
 import { writetimeRecordRefusal } from "./readable.ts";
 import { WritetimeFixture } from "./testing/writetime-fixture.ts";
+import { removeTempDirSync } from "../testing/cleanup.ts";
 
-beforeEach(() => { vi.spyOn(console, "warn").mockImplementation(() => {}); closeDatabase(); rmSync(DATA_DIR, { recursive: true, force: true }); mkdirSync(DATA_DIR, { recursive: true }); });
+beforeEach(() => { vi.spyOn(console, "warn").mockImplementation(() => {}); closeDatabase(); removeTempDirSync(DATA_DIR); mkdirSync(DATA_DIR, { recursive: true }); });
 afterEach(() => { vi.restoreAllMocks(); closeDatabase(); });
 const app = () => new WritetimeFixture(database());
 

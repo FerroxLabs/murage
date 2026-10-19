@@ -3,7 +3,7 @@
 //
 // What the fast upgrade leaves for the background (S2, S5, S7 of lanes/upgrade-ux/CONVERGED.md): the readers of a derived index never trust it
 // before it is complete, the start-up note is up for every blocking step, and the conversion of root sets reads no set into memory.
-import { mkdirSync, rmSync } from "node:fs";
+import { mkdirSync } from "node:fs";
 import { DatabaseSync } from "node:sqlite";
 import { beforeEach, expect, it } from "vitest";
 import { DATA_DIR } from "./config.ts";
@@ -18,8 +18,9 @@ import { compactRootSetsStep, lineageStorageStatus } from "./memory/root-set-com
 import { rootSetMembers } from "./memory/schema.ts";
 import { buildSyntheticV6 } from "./memory/testing/upgrade-fast-fixture.ts";
 import { join } from "node:path";
+import { removeTempDirSync } from "./testing/cleanup.ts";
 
-beforeEach(() => { setUpgradeReporterForTest(null); closeDatabase(); rmSync(DATA_DIR, { recursive: true, force: true }); mkdirSync(DATA_DIR, { recursive: true }); });
+beforeEach(() => { setUpgradeReporterForTest(null); closeDatabase(); removeTempDirSync(DATA_DIR); mkdirSync(DATA_DIR, { recursive: true }); });
 const card = (id: string, at: number, extra: Record<string, unknown> = {}) => JSON.stringify({ id, at, role: "bot", kind: "options", text: "Allow?", parentId: null, card: { requestId: `req-${id}`, options: [] }, ...extra });
 const put = (db: DatabaseSync, thread: string, id: string, at: number, kind: string, json: string) => db.prepare("INSERT OR REPLACE INTO messages(thread_id,id,at,role,kind,text,json) VALUES(?,?,?,?,?,?,?)").run(thread, id, at, "bot", kind, "x", json);
 

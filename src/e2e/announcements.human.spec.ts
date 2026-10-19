@@ -10,7 +10,7 @@
 //
 // Screenshots (card, banner, and the gallery of every layout) land in
 // ANNOUNCEMENTS_SHOTS_DIR when it is set, else in the test's output directory.
-import { test, expect, type Page } from "@playwright/test";
+import { test, expect, type Page } from "./page-error-guard";
 import { createServer, type ViteDevServer } from "vite";
 import react from "@vitejs/plugin-react";
 import tailwindcss from "@tailwindcss/vite";
@@ -84,7 +84,7 @@ test.beforeAll(async () => {
       name: "announcements-fixture",
       resolveId(id) { if (id === "/announcements-fixture-store") return "\0announcements-store"; },
       load(id) {
-        if (id === "\0announcements-store") return "window.__dispatched=[];export function useStore(){return {state:{bots:[],groups:[],selectedId:null},dispatch(action){window.__dispatched.push(action);}};}export async function api(path,init){const r=await fetch(path,{...init,headers:{'content-type':'application/json'}});const d=await r.json().catch(()=>({}));if(!r.ok)throw new Error(d.error||r.statusText);return d;}";
+        if (id === "\0announcements-store") return "window.__dispatched=[];export function useStoreIfAny(){return useStore();} export function useStore(){return {state:{bots:[],groups:[],selectedId:null},dispatch(action){window.__dispatched.push(action);}};}export async function api(path,init){const r=await fetch(path,{...init,headers:{'content-type':'application/json'}});const d=await r.json().catch(()=>({}));if(!r.ok)throw new Error(d.error||r.statusText);return d;}";
       },
       configureServer(vite) { vite.middlewares.use((req, res, next) => {
         if (!(req.url === "/__announcements" || req.url?.startsWith("/__announcements?"))) return next();

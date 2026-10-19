@@ -10,7 +10,7 @@
 //
 // Headless only. Own data folder, own port; MURAGE_E2E_SHOTS names where the
 // pictures go.
-import { test, expect, type Page } from "@playwright/test";
+import { test, expect, type Page } from "./page-error-guard";
 import { createServer, type ViteDevServer } from "vite";
 import react from "@vitejs/plugin-react";
 import tailwindcss from "@tailwindcss/vite";

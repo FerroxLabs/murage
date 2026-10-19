@@ -14,13 +14,14 @@ import {
   resolveReferencePack, savePromptBlock, saveReferencePack, scheduledProbeDue,
 } from "./image-library.ts";
 import type { ImageReference } from "./image-generation.ts";
+import { removeTempDirSync } from "./testing/cleanup.ts";
 
 const PNG_A = Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=", "base64");
 const PNG_B = Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+aD1sAAAAASUVORK5CYII=", "base64");
 const ref = (bytes: Buffer): ImageReference => ({ bytes, mime: "image/png" });
 const sha = (bytes: Buffer) => createHash("sha256").update(bytes).digest("hex");
 let db: DatabaseSync;
-beforeEach(() => { db = new DatabaseSync(":memory:"); rmSync(DATA_DIR, { recursive: true, force: true }); mkdirSync(DATA_DIR, { recursive: true }); });
+beforeEach(() => { db = new DatabaseSync(":memory:"); removeTempDirSync(DATA_DIR); mkdirSync(DATA_DIR, { recursive: true }); });
 const bot = (botId: string) => ({ kind: "bot" as const, botId });
 
 describe("prompt blocks", () => {

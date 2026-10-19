@@ -162,8 +162,10 @@ describe.skipIf(process.platform === "win32")("an unanswered approval in a routi
   // Answering after the run ended (here: Murage restarted under it) used to
   // hit "Couldn't deliver that answer — the request is no longer open", a
   // dead end with an em dash. A routine's card now says the run ended and
-  // offers Run again, and an "Always allow for this routine" answer is kept.
-  it("a card answered after its run ended says so and offers Run again", async () => {
+  // offers Run again. Rule 81a (Astra a13 r1 item 4): a card no engine still
+  // holds saves no "Always allow for this routine"; the next run asks again,
+  // and the owner remembers it there, on a live card, in one decision.
+  it("a card answered after its run ended says so, saves nothing and offers Run again", async () => {
     const bot = await makeBot("Late");
     const created = await request("POST", "/api/routines", {
       name: "Late tick", prompt: "Log the time", botId: bot.id, enabled: false,
@@ -178,19 +180,25 @@ describe.skipIf(process.platform === "win32")("an unanswered approval in a routi
     await waitForExit(child, { signal: "SIGKILL" });
     await startServer();
     expect(await runState(runId)).toMatchObject({ status: "failed" });
-    // the owner picks "Always allow for this routine" on the old card
-    expect((await request("POST", `/api/routines/${routineId}/always-allow`, { allowKey: card.card.routineAllowKey, threadId })).status).toBe(200);
+    // the owner picks "Always allow for this routine" on the old card: nothing holds it any more
+    const orphan = await request("POST", `/api/routines/${routineId}/always-allow`, { answer: true, allowKey: card.card.routineAllowKey, threadId, requestId: card.card.requestId });
+    expect(orphan.status).toBe(409);
+    expect((await request("GET", "/api/routines")).body.routines.find((routine: any) => routine.id === routineId).alwaysAllow ?? []).toEqual([]);
     await request("POST", `/api/threads/${threadId}/respond`, { requestId: card.card.requestId, behavior: "allow" });
     const note = await poll(async () => (await threadMessages(threadId!)).find((m) => m.routineRunAgain) ?? null, 10_000);
     expect(note).toMatchObject({
       kind: "activity",
       routineRunAgain: { routineId },
-      tool: { name: "This run of Late tick ended before you answered, so nothing was run. Always allow for this routine is saved, so the next run will not ask about it." },
+      tool: { name: "This run of Late tick ended before you answered, so nothing was run." },
     });
     expect(JSON.stringify(await threadMessages(threadId!))).not.toContain("\u2014");
-    // Run again starts the routine now, and the saved answer covers it
+    // Run again starts the routine now; it asks again, and remembering it on that live card carries the run on
     const again = await request("POST", `/api/routines/${routineId}/run`);
     expect(again.status).toBe(201);
+    const fresh = await poll(async () => (await threadMessages(threadId!)).find((m) => m.kind === "options" && m.card?.requestId && m.card.requestId !== card.card.requestId && !m.card.answered) ?? null, 20_000);
+    expect(fresh, `no card on the next run. stderr: ${stderr.slice(-1500)}`).not.toBeNull();
+    const saved = await request("POST", `/api/routines/${routineId}/always-allow`, { threadId, requestId: fresh.card.requestId, answer: true });
+    expect(saved.status, JSON.stringify(saved.body)).toBe(200);
     const done = await poll(async () => {
       const run = await runState(again.body.run.id);
       return run && ["completed", "failed", "cancelled"].includes(run.status) ? run : null;

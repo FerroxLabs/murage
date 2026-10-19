@@ -8,10 +8,12 @@ const source = readFileSync(join(import.meta.dirname, "..", "index.ts"), "utf8")
 it("memoryWorker.start() for boot is inside the server.listen callback", () => {
   const listen = source.indexOf('server.listen(PORT, "127.0.0.1", () => {');
   expect(listen).toBeGreaterThan(0);
-  const starts = [...source.matchAll(/^\s*memoryWorker\.start\(\);/gm)].map(match => match.index!);
+  // A Cloud home starts it only while its execution gate is open, so the boot call may carry that one guard.
+  const starts = [...source.matchAll(/^[ \t]*(?:if \(!homeExecutionGate \|\| homeExecutionGate\.open\(\)\) )?memoryWorker\.start\(\);/gm)].map(match => match.index!);
   // one at boot (in the listen callback, within its first lines) and the settings route's restart after "configure"
   const before = starts.filter(at => at < listen);
   expect(before).toEqual([]);
   const first = starts.find(at => at > listen)!;
-  expect(first - listen).toBeLessThan(600);
+  expect(first).toBeGreaterThan(listen);
+  expect(source.slice(listen, first).split("\n").length, "within the listen callback's first lines").toBeLessThanOrEqual(12);
 });

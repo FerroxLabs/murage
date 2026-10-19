@@ -332,27 +332,37 @@ export function companionPairingOpenFailure(
  * The second ownership check runs after the state read and immediately before
  * the close call, so a newer generation can take ownership without an older
  * completion cancelling its QR. */
+export async function closePhonePairingOutcome<TClosed>(
+  opened: PhonePairingWindowSnapshot,
+  current: () => Promise<PhonePairingWindowSnapshot>,
+  close: () => Promise<TClosed>,
+  mayClose: () => boolean,
+): Promise<"closed" | "not-owned" | "failed"> {
+  const token = opened.pairing?.token;
+  if (!token || !mayClose()) return "not-owned";
+  let latest: PhonePairingWindowSnapshot;
+  try {
+    latest = await current();
+  } catch {
+    // Could not even read the window: it may still be open.
+    return "failed";
+  }
+  if (!mayClose() || latest.pairing?.token !== token) return "not-owned";
+  try {
+    await close();
+    return "closed";
+  } catch {
+    return "failed";
+  }
+}
+
 export async function closePhonePairingIfOwned<TClosed>(
   opened: PhonePairingWindowSnapshot,
   current: () => Promise<PhonePairingWindowSnapshot>,
   close: () => Promise<TClosed>,
   mayClose: () => boolean,
 ): Promise<boolean> {
-  const token = opened.pairing?.token;
-  if (!token || !mayClose()) return false;
-  let latest: PhonePairingWindowSnapshot;
-  try {
-    latest = await current();
-  } catch {
-    return false;
-  }
-  if (!mayClose() || latest.pairing?.token !== token) return false;
-  try {
-    await close();
-    return true;
-  } catch {
-    return false;
-  }
+  return (await closePhonePairingOutcome(opened, current, close, mayClose)) === "closed";
 }
 
 /** Resolve one pairing-open request, but close a window that completed after

@@ -4,6 +4,7 @@ import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import afterPack from "./after-pack.mjs";
 import { LICENSE_FILES } from "./cua-linux-release.mjs";
+import { removeTempDirSync } from "../server/testing/cleanup.ts";
 
 const temporaryDirectories = [];
 
@@ -28,7 +29,7 @@ function fixture() {
 
 afterEach(() => {
   for (const directory of temporaryDirectories.splice(0)) {
-    fs.rmSync(directory, { recursive: true, force: true });
+    removeTempDirSync(directory);
   }
 });
 
@@ -54,7 +55,7 @@ describe.skipIf(process.platform === "win32")("Linux afterPack permissions", () 
     const { appOutDir, cua } = fixture();
     const replacement = path.join(appOutDir, "replacement");
     fs.mkdirSync(replacement);
-    fs.rmSync(cua, { recursive: true });
+    removeTempDirSync(cua);
     fs.symlinkSync(replacement, cua, "dir");
     await expect(afterPack({ electronPlatformName: "linux", appOutDir })).rejects.toThrow(
       "must be a real directory",

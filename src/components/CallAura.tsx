@@ -4,7 +4,7 @@
 // outline) are built once per avatar and size; a frame is a few drawImage
 // calls with scale and alpha, whatever the shape. Levels come in as
 // getters read per frame, never as React state. See call-aura-design.md.
-import { desktopResourceUrl } from "@/lib/live-events";
+import { ticketedResourceUrl } from "@/lib/live-events";
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 
 import { EMBER_COLORS, type EmberColor } from "@/lib/mascot";
@@ -62,7 +62,10 @@ const samples = new Map<string, Promise<SampledImage | null>>();
 export function sampleImage(url: string): Promise<SampledImage | null> {
   let pending = samples.get(url);
   if (!pending) {
-    pending = new Promise<SampledImage | null>((resolve) => {
+    pending = (async () => {
+      // The desktop window loads an /api avatar through a single-use ticket.
+      const source = await ticketedResourceUrl(url);
+      return new Promise<SampledImage | null>((resolve) => {
       if (typeof Image !== "function" || typeof document === "undefined") return resolve(null);
       const image = new Image();
       image.decoding = "async";
@@ -81,8 +84,9 @@ export function sampleImage(url: string): Promise<SampledImage | null> {
         }
       };
       image.onerror = () => resolve(null);
-      image.src = desktopResourceUrl(url);
+      image.src = source;
     });
+    })();
     samples.set(url, pending);
   }
   return pending;

@@ -150,7 +150,13 @@ async function handle(msg: any) {
           : JSON.stringify({ behavior: "deny", message: answer.message || "The owner did not answer. Do not assume an answer." });
     } else if (!isQuestion) {
       if (answer.behavior === "allow") {
-        const result: AllowPermissionResult = { behavior: "allow", updatedInput: args.input ?? {} };
+        // Rule 69e: the allow carries the call as judged, or the narrowed call the broker sends.
+        // No input is never replaced by `{}` (F5): without one nothing was judged, so it is a deny.
+        const judged = answer.updatedInput && typeof answer.updatedInput === "object" && !Array.isArray(answer.updatedInput) ? answer.updatedInput : args.input;
+        if (!judged || typeof judged !== "object" || Array.isArray(judged)) {
+          return send({ jsonrpc: "2.0", id: msg.id, result: { content: [{ type: "text", text: JSON.stringify({ behavior: "deny", message: "Murage: the call carried no input to judge" }) }] } });
+        }
+        const result: AllowPermissionResult = { behavior: "allow", updatedInput: judged };
         if (answer.always && suggestions) result.updatedPermissions = suggestions;
         text = JSON.stringify(result);
       } else {

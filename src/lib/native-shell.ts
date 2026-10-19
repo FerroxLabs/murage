@@ -144,6 +144,13 @@ export function inNativeShell(): boolean {
   return bridge() !== null || hasNativeUserAgent();
 }
 
+/** The store apps open no page that sells or signs up for anything: no Flux
+ * Router sign-up, usage or billing page (App Store guideline 3.1.1). The
+ * phone web app in a browser and the desktop keep them. */
+export function opensPurchasePages(): boolean {
+  return !inNativeShell();
+}
+
 let greeting: NativeHello | null = null;
 let pendingHello: Promise<NativeHello | null> | null = null;
 

@@ -1,18 +1,20 @@
 import {
   CloudflareAPI,
   CloudflareAPIError,
+  MANAGED_CLOUD_HOME_ORIGIN_URL,
+  MANAGED_COMPANION_ORIGIN_URL,
   type CloudflareDNSRecord,
   type CloudflareFetch,
   type CloudflareTunnel,
 } from "./cloudflare-api";
-import type { ControlPlaneConfig } from "./config";
+import { CLOUD_HOME_DISABLED_CODE, CLOUD_HOME_MISCONFIGURED_CODE, cloudHomeCloudflare, type ControlPlaneConfig } from "./config";
 import { errorResponse, HTTPError, json } from "./http";
 import { requireInstallation } from "./installations";
 
 type EndpointStatus = "pending" | "provisioning" | "ready" | "deleting" | "deleted" | "error";
 
 interface EndpointRow {
-  installation_id: string;
+  owner_id: string;
   hostname: string;
   tunnel_name: string;
   tunnel_id: string | null;
@@ -26,21 +28,54 @@ interface EndpointRow {
   last_error_code: string | null;
   cleanup_attempts: number;
   last_cleanup_attempt_at: number | null;
+  token_roll_due: number;
   created_at: number;
   updated_at: number;
 }
 
+/** The two owners of a managed endpoint share one lifecycle (lease, generation
+ *  fencing, rollback, cleanup backoff). Only the table, the owner column, the
+ *  rate-limit table, the hostname prefix and the ingress target differ. The
+ *  values are constants, never request input, so they are safe in SQL text. */
+interface EndpointKind {
+  idColumn: "installation_id" | "machine_id";
+  originUrl: string;
+  prefix: "c" | "h";
+  rateTable: "installation_action_rate_limits" | "machine_action_rate_limits";
+  table: "installation_endpoints" | "machine_endpoints";
+}
+
+const DESKTOP_KIND: EndpointKind = {
+  idColumn: "installation_id",
+  originUrl: MANAGED_COMPANION_ORIGIN_URL,
+  prefix: "c",
+  rateTable: "installation_action_rate_limits",
+  table: "installation_endpoints",
+};
+
+const MACHINE_KIND: EndpointKind = {
+  idColumn: "machine_id",
+  originUrl: MANAGED_CLOUD_HOME_ORIGIN_URL,
+  prefix: "h",
+  rateTable: "machine_action_rate_limits",
+  table: "machine_endpoints",
+};
+
 interface ClaimedEndpoint {
+  kind: EndpointKind;
   leaseOwner: string;
   row: EndpointRow;
 }
 
-/** The exact installation credential that authorized a provisioning request.
+/** The exact credential that authorized a provisioning request.
  *  Provider work can take many awaited calls; the final connector-token
  *  issuance is fenced against this credential still being current. */
 interface IssuanceCredential {
-  lookupId: string;
-  secretHash: string;
+  /** A SQL boolean expression that is true only while the credential is
+   *  current, with a function giving its bound values at the
+   *  moment of the final fence. Desktop and machine kinds differ. */
+  sql: string;
+  values: (now: number) => unknown[];
 }
 
 // Revoked, rotated-away or expired credential, or a revoked installation,
@@ -93,49 +128,77 @@ function endpointJSON(row: EndpointRow) {
   };
 }
 
-async function endpointRow(env: Env, installationId: string): Promise<EndpointRow | null> {
+async function endpointRow(env: Env, kind: EndpointKind, ownerId: string): Promise<EndpointRow | null> {
   return env.DB.prepare(
-    `SELECT installation_id, hostname, tunnel_name, tunnel_id, dns_record_id,
+    `SELECT ${kind.idColumn} AS owner_id, hostname, tunnel_name, tunnel_id, dns_record_id,
             status, generation, lease_owner, lease_expires_at,
             last_reconciled_at, delete_requested_at, last_error_code,
-            cleanup_attempts, last_cleanup_attempt_at, created_at, updated_at
-       FROM installation_endpoints
-      WHERE installation_id = ?`,
-  ).bind(installationId).first<EndpointRow>();
+            cleanup_attempts, last_cleanup_attempt_at, token_roll_due, created_at, updated_at
+       FROM ${kind.table}
+      WHERE ${kind.idColumn} = ?`,
+  ).bind(ownerId).first<EndpointRow>();
 }
 
 async function ensureEndpointRow(
   env: Env,
-  installationId: string,
+  ownerId: string,
   hostSuffix: string,
+  kind: EndpointKind = DESKTOP_KIND,
 ): Promise<EndpointRow> {
   for (let attempt = 0; attempt < 3; attempt += 1) {
     const opaque = randomHex(16);
     const now = Date.now();
     await env.DB.prepare(
-      `INSERT OR IGNORE INTO installation_endpoints
-        (installation_id, hostname, tunnel_name, status, created_at, updated_at)
+      `INSERT OR IGNORE INTO ${kind.table}
+        (${kind.idColumn}, hostname, tunnel_name, status, created_at, updated_at)
        VALUES (?, ?, ?, 'pending', ?, ?)`,
-    ).bind(installationId, `c-${opaque}.${hostSuffix}`, `murage-c-${opaque}`, now, now).run();
-    const row = await endpointRow(env, installationId);
+    ).bind(ownerId, `${kind.prefix}-${opaque}.${hostSuffix}`, `murage-${kind.prefix}-${opaque}`, now, now).run();
+    const row = await endpointRow(env, kind, ownerId);
     if (row) return row;
   }
   throw new EndpointOperationError("endpoint_reservation_failed");
 }
 
+/** Allocates a machine's immutable endpoint hostname. Returns the INSERT for
+ *  the caller to include in the same D1 batch that creates the machine (or its
+ *  reservation), so the hostname exists exactly when the machine does. */
+export function allocateMachineEndpoint(
+  env: Env,
+  machineId: string,
+  hostSuffix: string,
+  now: number,
+  guardedByChanges = false,
+): { hostname: string; origin: string; statement: D1PreparedStatement } {
+  const opaque = randomHex(16);
+  const hostname = `${MACHINE_KIND.prefix}-${opaque}.${hostSuffix}`;
+  const columns = "(machine_id, hostname, tunnel_name, status, created_at, updated_at)";
+  const statement = guardedByChanges
+    ? env.DB.prepare(
+      `INSERT INTO machine_endpoints ${columns}
+       SELECT ?, ?, ?, 'pending', ?, ? WHERE changes() = 1`,
+    )
+    : env.DB.prepare(`INSERT INTO machine_endpoints ${columns} VALUES (?, ?, ?, 'pending', ?, ?)`);
+  return {
+    hostname,
+    origin: `https://${hostname}`,
+    statement: statement.bind(machineId, hostname, `murage-${MACHINE_KIND.prefix}-${opaque}`, now, now),
+  };
+}
+
 async function enforceEndpointRateLimit(
   env: Env,
-  installationId: string,
+  ownerId: string,
   action: "delete_endpoint" | "reconcile_endpoint",
+  kind: EndpointKind = DESKTOP_KIND,
 ): Promise<void> {
   const now = Date.now();
   const cutoff = now - ENDPOINT_ACTION_WINDOW_MS;
   const limit = action === "reconcile_endpoint" ? ENDPOINT_RECONCILE_LIMIT : ENDPOINT_DELETE_LIMIT;
   const result = await env.DB.prepare(
-    `INSERT INTO installation_action_rate_limits
-      (installation_id, action, window_started_at, attempts, updated_at)
+    `INSERT INTO ${kind.rateTable}
+      (${kind.idColumn}, action, window_started_at, attempts, updated_at)
      VALUES (?, ?, ?, 1, ?)
-     ON CONFLICT(installation_id, action) DO UPDATE SET
+     ON CONFLICT(${kind.idColumn}, action) DO UPDATE SET
        window_started_at = CASE
          WHEN window_started_at <= ? THEN excluded.window_started_at
          ELSE window_started_at
@@ -146,7 +209,7 @@ async function enforceEndpointRateLimit(
        END,
        updated_at = excluded.updated_at
      WHERE window_started_at <= ? OR attempts < ?`,
-  ).bind(installationId, action, now, now, cutoff, cutoff, cutoff, limit).run();
+  ).bind(ownerId, action, now, now, cutoff, cutoff, cutoff, limit).run();
   if (result.meta.changes === 0) throw new HTTPError(429, "rate_limited");
 }
 
@@ -154,19 +217,22 @@ async function claimEndpoint(
   env: Env,
   row: EndpointRow,
   nextStatus: "deleting" | "provisioning",
+  kind: EndpointKind = DESKTOP_KIND,
+  /** A further SQL condition the row must still meet in the claiming statement itself (no bound values). */
+  stillEligible = "",
 ): Promise<ClaimedEndpoint | null> {
   const now = Date.now();
   const leaseOwner = crypto.randomUUID();
-  const deletingGuard = nextStatus === "provisioning" ? "AND status != 'deleting'" : "";
+  const deletingGuard = `${nextStatus === "provisioning" ? "AND status != 'deleting'" : ""} ${stillEligible ? `AND (${stillEligible})` : ""}`;
   const result = await env.DB.prepare(
-    `UPDATE installation_endpoints
+    `UPDATE ${kind.table}
         SET status = ?, generation = generation + 1,
             lease_owner = ?, lease_expires_at = ?, updated_at = ?,
             delete_requested_at = CASE WHEN ? = 'deleting' THEN COALESCE(delete_requested_at, ?) ELSE NULL END,
             cleanup_attempts = CASE WHEN ? = 'deleting' THEN cleanup_attempts + 1 ELSE 0 END,
             last_cleanup_attempt_at = CASE WHEN ? = 'deleting' THEN ? ELSE NULL END,
             last_error_code = NULL
-      WHERE installation_id = ?
+      WHERE ${kind.idColumn} = ?
         AND (lease_expires_at IS NULL OR lease_expires_at <= ?)
         ${deletingGuard}`,
   ).bind(
@@ -179,15 +245,15 @@ async function claimEndpoint(
     nextStatus,
     nextStatus,
     now,
-    row.installation_id,
+    row.owner_id,
     now,
   ).run();
   if (result.meta.changes === 0) return null;
-  const claimed = await endpointRow(env, row.installation_id);
+  const claimed = await endpointRow(env, kind, row.owner_id);
   if (!claimed || claimed.lease_owner !== leaseOwner) {
     throw new EndpointOperationError("lease_lost");
   }
-  return { leaseOwner, row: claimed };
+  return { kind, leaseOwner, row: claimed };
 }
 
 async function updateClaimedResources(
@@ -197,14 +263,14 @@ async function updateClaimedResources(
   dnsRecordId: string | null,
 ): Promise<void> {
   const result = await env.DB.prepare(
-    `UPDATE installation_endpoints
+    `UPDATE ${claim.kind.table}
         SET tunnel_id = ?, dns_record_id = ?, updated_at = ?
-      WHERE installation_id = ? AND generation = ? AND lease_owner = ?`,
+      WHERE ${claim.kind.idColumn} = ? AND generation = ? AND lease_owner = ?`,
   ).bind(
     tunnelId,
     dnsRecordId,
     Date.now(),
-    claim.row.installation_id,
+    claim.row.owner_id,
     claim.row.generation,
     claim.leaseOwner,
   ).run();
@@ -217,14 +283,14 @@ async function renewClaim(env: Env, claim: ClaimedEndpoint): Promise<void> {
   const now = Date.now();
   const leaseExpiresAt = now + LEASE_MS;
   const result = await env.DB.prepare(
-    `UPDATE installation_endpoints
+    `UPDATE ${claim.kind.table}
         SET lease_expires_at = ?, updated_at = ?
-      WHERE installation_id = ? AND generation = ? AND lease_owner = ?
+      WHERE ${claim.kind.idColumn} = ? AND generation = ? AND lease_owner = ?
         AND lease_expires_at > ?`,
   ).bind(
     leaseExpiresAt,
     now,
-    claim.row.installation_id,
+    claim.row.owner_id,
     claim.row.generation,
     claim.leaseOwner,
     now,
@@ -276,13 +342,13 @@ function assertDNSIdentity(
 async function finishDeletedClaim(env: Env, claim: ClaimedEndpoint): Promise<EndpointRow> {
   const now = Date.now();
   const result = await env.DB.prepare(
-    `UPDATE installation_endpoints
+    `UPDATE ${claim.kind.table}
         SET status = 'deleted', lease_owner = NULL, lease_expires_at = NULL,
             last_reconciled_at = ?, last_error_code = NULL, updated_at = ?
-      WHERE installation_id = ? AND generation = ? AND lease_owner = ?`,
-  ).bind(now, now, claim.row.installation_id, claim.row.generation, claim.leaseOwner).run();
+      WHERE ${claim.kind.idColumn} = ? AND generation = ? AND lease_owner = ?`,
+  ).bind(now, now, claim.row.owner_id, claim.row.generation, claim.leaseOwner).run();
   if (result.meta.changes === 0) throw new EndpointOperationError("lease_lost");
-  const row = await endpointRow(env, claim.row.installation_id);
+  const row = await endpointRow(env, claim.kind, claim.row.owner_id);
   if (!row) throw new EndpointOperationError("endpoint_state_missing");
   return row;
 }
@@ -298,40 +364,27 @@ async function finishReadyClaim(
 ): Promise<EndpointRow> {
   const now = Date.now();
   const result = await env.DB.prepare(
-    `UPDATE installation_endpoints
+    `UPDATE ${claim.kind.table}
         SET status = 'ready', lease_owner = NULL, lease_expires_at = NULL,
-            last_reconciled_at = ?, last_error_code = NULL, updated_at = ?
-      WHERE installation_id = ? AND generation = ? AND lease_owner = ?
-        AND EXISTS (
-          SELECT 1
-            FROM installation_credentials c
-            JOIN installations i ON i.id = c.installation_id
-           WHERE c.installation_id = ?
-             AND c.lookup_id = ?
-             AND c.secret_hash = ?
-             AND c.revoked_at IS NULL
-             AND c.expires_at > ?
-             AND i.revoked_at IS NULL
-        )`,
+            last_reconciled_at = ?, last_error_code = NULL, token_roll_due = 0, updated_at = ?
+      WHERE ${claim.kind.idColumn} = ? AND generation = ? AND lease_owner = ?
+        AND ${credential.sql}`,
   ).bind(
     now,
     now,
-    claim.row.installation_id,
+    claim.row.owner_id,
     claim.row.generation,
     claim.leaseOwner,
-    claim.row.installation_id,
-    credential.lookupId,
-    credential.secretHash,
-    now,
+    ...credential.values(now),
   ).run();
   if (result.meta.changes === 0) {
-    const current = await endpointRow(env, claim.row.installation_id);
+    const current = await endpointRow(env, claim.kind, claim.row.owner_id);
     if (current?.generation === claim.row.generation && current.lease_owner === claim.leaseOwner) {
       throw new EndpointOperationError(CREDENTIAL_INACTIVE);
     }
     throw new EndpointOperationError("lease_lost");
   }
-  const row = await endpointRow(env, claim.row.installation_id);
+  const row = await endpointRow(env, claim.kind, claim.row.owner_id);
   if (!row) throw new EndpointOperationError("endpoint_state_missing");
   return row;
 }
@@ -343,15 +396,15 @@ async function failClaim(
   preserveDeleting: boolean,
 ): Promise<void> {
   await env.DB.prepare(
-    `UPDATE installation_endpoints
+    `UPDATE ${claim.kind.table}
         SET status = ?, lease_owner = NULL, lease_expires_at = NULL,
             last_error_code = ?, updated_at = ?
-      WHERE installation_id = ? AND generation = ? AND lease_owner = ?`,
+      WHERE ${claim.kind.idColumn} = ? AND generation = ? AND lease_owner = ?`,
   ).bind(
     preserveDeleting ? "deleting" : "error",
     code.slice(0, 64),
     Date.now(),
-    claim.row.installation_id,
+    claim.row.owner_id,
     claim.row.generation,
     claim.leaseOwner,
   ).run();
@@ -494,7 +547,7 @@ async function reconcileClaim(
   fetcher: CloudflareFetch,
   credential: IssuanceCredential,
 ): Promise<{ connectorToken: string; row: EndpointRow }> {
-  const api = new CloudflareAPI(config.cloudflare, fetcher);
+  const api = new CloudflareAPI(claim.kind === MACHINE_KIND ? cloudHomeCloudflare(config) : config.cloudflare, fetcher);
   let tunnelId = claim.row.tunnel_id;
   let dnsRecordId = claim.row.dns_record_id;
   let createdTunnel = false;
@@ -547,7 +600,7 @@ async function reconcileClaim(
     await withClaimLease(
       env,
       claim,
-      () => api.configureTunnel(activeTunnelId, claim.row.hostname),
+      () => api.configureTunnel(activeTunnelId, claim.row.hostname, claim.kind.originUrl),
     );
 
     const target = expectedTunnelTarget(activeTunnelId);
@@ -625,6 +678,13 @@ async function reconcileClaim(
     }
     await updateClaimedResources(env, claim, activeTunnelId, dnsRecordId);
 
+    // A credential rotation owes a new tunnel secret: the previously issued
+    // connector token must stop working before any token is handed out. The
+    // flag is cleared only together with the ready publish below, so a failed
+    // roll (or a lost response) is simply repeated on the next claim.
+    if (claim.row.token_roll_due) {
+      await withClaimLease(env, claim, () => api.rotateTunnelSecret(activeTunnelId));
+    }
     const connectorToken = await withClaimLease(
       env,
       claim,
@@ -680,7 +740,7 @@ async function deleteClaim(
   claim: ClaimedEndpoint,
   fetcher: CloudflareFetch,
 ): Promise<void> {
-  const api = new CloudflareAPI(config.cloudflare, fetcher);
+  const api = new CloudflareAPI(claim.kind === MACHINE_KIND ? cloudHomeCloudflare(config) : config.cloudflare, fetcher);
   let tunnelId = claim.row.tunnel_id;
   let dnsRecordId = claim.row.dns_record_id;
 
@@ -760,7 +820,7 @@ async function deleteClaim(
 
 export async function getManagedEndpoint(request: Request, env: Env): Promise<Response> {
   const installation = await requireInstallation(request, env);
-  const row = await endpointRow(env, installation.installation_id);
+  const row = await endpointRow(env, DESKTOP_KIND, installation.installation_id);
   if (!row || row.status === "deleted") return json({ endpoint: null });
   return json({ endpoint: endpointJSON(row) });
 }
@@ -784,8 +844,24 @@ export async function provisionManagedEndpoint(
 
   try {
     const result = await reconcileClaim(env, config, claim, fetcher, {
-      lookupId: installation.lookup_id,
-      secretHash: installation.secret_hash,
+      // Revoked, rotated-away or expired credential, or a revoked installation.
+      sql: `EXISTS (
+          SELECT 1
+            FROM installation_credentials c
+            JOIN installations i ON i.id = c.installation_id
+           WHERE c.installation_id = ?
+             AND c.lookup_id = ?
+             AND c.secret_hash = ?
+             AND c.revoked_at IS NULL
+             AND c.expires_at > ?
+             AND i.revoked_at IS NULL
+        )`,
+      values: (now) => [
+        installation.installation_id,
+        installation.lookup_id,
+        installation.secret_hash,
+        now,
+      ],
     });
     return json({ endpoint: endpointJSON(result.row), connectorToken: result.connectorToken });
   } catch (error) {
@@ -816,7 +892,7 @@ export async function deleteManagedEndpoint(
   requestId: string,
 ): Promise<Response> {
   const installation = await requireInstallation(request, env);
-  const row = await endpointRow(env, installation.installation_id);
+  const row = await endpointRow(env, DESKTOP_KIND, installation.installation_id);
   if (!row || row.status === "deleted") {
     return new Response(null, { status: 204, headers: { "cache-control": "no-store" } });
   }
@@ -844,7 +920,7 @@ export async function cleanupEndpointForInstallation(
   fetcher: CloudflareFetch,
   requestId: string,
 ): Promise<void> {
-  const row = await endpointRow(env, installationId);
+  const row = await endpointRow(env, DESKTOP_KIND, installationId);
   if (!row || row.status === "deleted") return;
   const claim = await claimEndpoint(env, row, "deleting");
   if (!claim) return;
@@ -939,5 +1015,286 @@ export async function sweepManagedEndpointCleanup(
       }));
     }
   }));
+  // Machine endpoints share the same per-run provider-call budget.
+  const machines = await sweepMachineEndpointCleanup(
+    env,
+    config,
+    fetcher,
+    requestId,
+    Math.max(1, CLEANUP_SWEEP_LIMIT - candidates.results.length),
+  );
+  return candidates.results.length + machines;
+}
+
+// ---------------------------------------------------------------------------
+// Cloud machine endpoints. Same lifecycle as the desktop endpoints above, keyed
+// by cloud_machines.id and authenticated by the machine credential (the route
+// and its credential, generation, state and bound-IP checks live in
+// machine-endpoints.ts). No account session and no installation credential can
+// reach any of this: the connector token only ever leaves in the response to
+// the machine's own authenticated request.
+// ---------------------------------------------------------------------------
+
+/** The exact machine credential, generation and source IP that authorized the
+ *  request, re-checked in the same statement that publishes the ready row, so a
+ *  rotation, revoke, fence or teardown that commits while provider calls are in
+ *  flight can never be followed by a connector token reaching the caller. */
+export function machineIssuanceFence(
+  machineId: string,
+  generation: number,
+  credentialHash: string,
+  sourceIp: string,
+): IssuanceCredential {
+  return {
+    sql: `EXISTS (
+          SELECT 1
+            FROM cloud_machines m
+           WHERE m.id = ?
+             AND m.generation = ?
+             AND m.state = 'active'
+             AND m.credential_hash = ?
+             AND EXISTS (SELECT 1 FROM json_each(m.bound_ips) WHERE value = ?)
+             AND (
+               NOT EXISTS (SELECT 1 FROM cloud_homes h WHERE h.id = m.id)
+               OR EXISTS (
+                 SELECT 1 FROM cloud_homes h
+                  WHERE h.id = m.id
+                    AND h.generation = m.generation
+                    AND h.desired_state IN ('provisioning', 'checking', 'ready', 'payment_problem')
+               )
+             )
+        )`,
+    values: () => [machineId, generation, credentialHash, sourceIp],
+  };
+}
+
+export async function getMachineEndpoint(env: Env, machineId: string): Promise<Response> {
+  const row = await endpointRow(env, MACHINE_KIND, machineId);
+  if (!row) throw new HTTPError(404, "not_found");
+  return json({ endpoint: endpointJSON(row) });
+}
+
+export async function provisionMachineEndpoint(
+  env: Env,
+  config: ControlPlaneConfig,
+  fetcher: CloudflareFetch,
+  requestId: string,
+  machineId: string,
+  fence: IssuanceCredential,
+): Promise<Response> {
+  // Fail closed (503) before any state change when homes have no usable domain.
+  cloudHomeCloudflare(config);
+  const row = await endpointRow(env, MACHINE_KIND, machineId);
+  // Only machines created with managed_endpoint have a row; the hostname was
+  // allocated then and is never re-allocated here.
+  if (!row) throw new HTTPError(404, "not_found");
+  await enforceEndpointRateLimit(env, machineId, "reconcile_endpoint", MACHINE_KIND);
+  const claim = await claimEndpoint(env, row, "provisioning", MACHINE_KIND);
+  if (!claim) return busyResponse();
+
+  try {
+    const result = await reconcileClaim(env, config, claim, fetcher, fence);
+    return json({ endpoint: endpointJSON(result.row), connectorToken: result.connectorToken });
+  } catch (error) {
+    if (errorCode(error) === CREDENTIAL_INACTIVE) {
+      console.error(JSON.stringify({
+        message: "managed machine endpoint issuance withheld: credential no longer current",
+        requestId,
+        errorCode: CREDENTIAL_INACTIVE,
+      }));
+      throw new HTTPError(401, "unauthorized");
+    }
+    console.error(JSON.stringify({
+      message: "managed machine endpoint reconcile failed",
+      requestId,
+      errorCode: errorCode(error),
+    }));
+    throw new HTTPError(502, "endpoint_unavailable");
+  }
+}
+
+async function cleanupEndpointForMachine(
+  env: Env,
+  config: ControlPlaneConfig,
+  machineId: string,
+  fetcher: CloudflareFetch,
+  requestId: string,
+): Promise<void> {
+  const row = await endpointRow(env, MACHINE_KIND, machineId);
+  if (!row || row.status === "deleted") return;
+  if (config.cloudHome.state !== "ready") {
+    // Cannot reach the homes zone: leave the endpoint untouched, never use the desktop zone.
+    console.error(JSON.stringify({
+      message: "machine endpoint cleanup pending",
+      requestId,
+      errorCode: config.cloudHome.state === "disabled" ? CLOUD_HOME_DISABLED_CODE : CLOUD_HOME_MISCONFIGURED_CODE,
+    }));
+    return;
+  }
+  // Re-proved in the claim itself: a row the sweep selected may since belong to a home set up again (round 8c: a reopened home's endpoint,
+  // back to 'pending' for its new resource generation); that row is never claimed for deletion by a stale selection.
+  const claim = await claimEndpoint(env, row, "deleting", MACHINE_KIND, MACHINE_CLEANUP_ELIGIBLE_SQL);
+  if (!claim) return;
+  try {
+    await deleteClaim(env, config, claim, fetcher);
+  } catch (error) {
+    console.error(JSON.stringify({
+      message: "machine endpoint cleanup pending",
+      requestId,
+      errorCode: errorCode(error),
+    }));
+  }
+}
+
+/** The cleanup sweep's selection rule for one machine_endpoints row (unqualified columns are the row's), shared by the sweep's SELECT and
+ *  the cleanup claim, so a row is claimed for deletion only while it still qualifies. */
+const MACHINE_CLEANUP_ELIGIBLE_SQL = `status != 'deleted'
+  AND (
+    (status = 'deleting' AND ${deleteRequestCurrentSql("machine_endpoints.delete_resource_generation", `(SELECT h.resource_generation FROM cloud_homes h
+      WHERE h.id = machine_endpoints.machine_id)`)})
+    OR EXISTS (SELECT 1 FROM cloud_homes h WHERE h.id = machine_endpoints.machine_id
+      AND h.desired_state IN ('stopped', 'suspended', 'deleting', 'deleted', 'failed', 'expired'))
+    OR EXISTS (SELECT 1 FROM cloud_machines m WHERE m.id = machine_endpoints.machine_id AND m.state NOT IN ('active', 'pending_binding'))
+    OR (NOT EXISTS (SELECT 1 FROM cloud_machines m WHERE m.id = machine_endpoints.machine_id)
+      AND NOT EXISTS (SELECT 1 FROM cloud_homes h WHERE h.id = machine_endpoints.machine_id))
+  )`;
+
+/** Tunnel and DNS cleanup for machines whose state forbids service: a home
+ *  that is stopped, suspended (includes quarantine), deleting, deleted or
+ *  failed, a fenced or otherwise non-active machine, or a machine row that no
+ *  longer exists. Same bounded exponential backoff as the desktop sweep. */
+export async function sweepMachineEndpointCleanup(
+  env: Env,
+  config: ControlPlaneConfig,
+  fetcher: CloudflareFetch,
+  requestId: string,
+  limit: number,
+): Promise<number> {
+  const now = Date.now();
+  const candidates = await env.DB.prepare(
+    `SELECT e.machine_id, e.cleanup_attempts, e.delete_requested_at, e.last_error_code
+       FROM machine_endpoints e
+       LEFT JOIN cloud_machines m ON m.id = e.machine_id
+       LEFT JOIN cloud_homes h ON h.id = e.machine_id
+      WHERE e.status != 'deleted'
+        AND (
+          (e.status = 'deleting' AND ${deleteRequestCurrentSql("e.delete_resource_generation", "h.resource_generation")})
+          OR (h.id IS NOT NULL
+              AND h.desired_state IN ('stopped', 'suspended', 'deleting', 'deleted', 'failed', 'expired'))
+          OR (m.id IS NOT NULL AND m.state NOT IN ('active', 'pending_binding'))
+          OR (m.id IS NULL AND h.id IS NULL)
+        )
+        AND (e.lease_expires_at IS NULL OR e.lease_expires_at <= ?)
+        AND (
+          e.cleanup_attempts = 0
+          OR e.last_cleanup_attempt_at IS NULL
+          OR e.last_cleanup_attempt_at <= CASE
+            WHEN e.cleanup_attempts = 1 THEN ?
+            WHEN e.cleanup_attempts = 2 THEN ?
+            WHEN e.cleanup_attempts = 3 THEN ?
+            WHEN e.cleanup_attempts = 4 THEN ?
+            ELSE ?
+          END
+        )
+      ORDER BY COALESCE(e.delete_requested_at, e.last_cleanup_attempt_at, e.updated_at) ASC,
+               e.machine_id ASC
+      LIMIT ?`,
+  ).bind(
+    now,
+    now - CLEANUP_BACKOFF_1_MS,
+    now - CLEANUP_BACKOFF_2_MS,
+    now - CLEANUP_BACKOFF_3_MS,
+    now - CLEANUP_BACKOFF_4_MS,
+    now - CLEANUP_BACKOFF_MAX_MS,
+    limit,
+  ).all<{ machine_id: string }>();
+
+  await Promise.all(candidates.results.map(async (candidate) => {
+    try {
+      await cleanupEndpointForMachine(env, config, candidate.machine_id, fetcher, requestId);
+    } catch {
+      console.error(JSON.stringify({
+        message: "machine endpoint cleanup candidate failed",
+        requestId,
+        errorCode: "endpoint_internal",
+      }));
+    }
+  }));
   return candidates.results.length;
+}
+
+// ---------------------------------------------------------------------------
+// Round 8c: a home given up on and set up again by a new payment (b3-control reopenGivenUp).
+// A home has ONE endpoint row for its whole life (machine_id is the key; the hostname, allocated at reserve, is the home's public origin
+// and never changes; the tunnel name is stable too). So a new resource generation never gets a second row: it reuses the home's row once
+// the old generation's tunnel and DNS record are gone. The rule: the reopen waits until the row is RELEASED (absent, never claimed
+// 'pending', or 'deleted' with no Cloudflare ids and no lease), and in the same batch that opens the new generation the row goes back to
+// 'pending'; the new machine's ordinary claim then creates a new tunnel and a new CNAME under the same name and hostname. The old tunnel
+// and record are deleted once, by the one cleanup sweep that owns them (deleteClaim), and the hostname is taken again only after that
+// deletion released it: no window in which two tunnels answer for it, and never the old tunnel serving the new generation.
+// ---------------------------------------------------------------------------
+
+/** True (SQL) when the home `?`'s endpoint row is NOT released: a reopen must wait for its cleanup. */
+export const MACHINE_ENDPOINT_HELD_SQL = `EXISTS (SELECT 1 FROM machine_endpoints e WHERE e.machine_id = ?
+  AND (e.status NOT IN ('pending', 'deleted') OR e.tunnel_id IS NOT NULL OR e.dns_record_id IS NOT NULL OR e.lease_owner IS NOT NULL))`;
+
+/** Give-up: a row never claimed ('pending', no Cloudflare ids) has nothing at Cloudflare to delete, so it is marked 'deleted' at once
+ *  (the row and its hostname stay: the home keeps its public origin should a new payment set it up again). */
+export function releaseUnclaimedMachineEndpoint(db: D1Database, machineId: string, now: number): D1PreparedStatement {
+  return db.prepare(`UPDATE machine_endpoints SET status='deleted',delete_requested_at=COALESCE(delete_requested_at,?),updated_at=?
+    WHERE machine_id=? AND status='pending' AND tunnel_id IS NULL AND dns_record_id IS NULL AND lease_owner IS NULL`).bind(now, now, machineId);
+}
+
+/** Reopen, inside its fenced batch: a released row goes back to 'pending' for the new generation (same hostname and tunnel name, cleanup
+ *  bookkeeping reset). A row that is not released is left as it is; the caller's guard (MACHINE_ENDPOINT_HELD_SQL) then aborts the batch. */
+export function reopenMachineEndpoint(db: D1Database, machineId: string, now: number): D1PreparedStatement {
+  return db.prepare(`UPDATE machine_endpoints SET status='pending',delete_requested_at=NULL,cleanup_attempts=0,last_cleanup_attempt_at=NULL,
+      last_error_code=NULL,token_roll_due=0,delete_resource_generation=NULL,updated_at=?
+    WHERE machine_id=? AND status='deleted' AND tunnel_id IS NULL AND dns_record_id IS NULL AND lease_owner IS NULL`).bind(now, machineId);
+}
+
+/** A row deleted outright by a give-up of an earlier build (it deleted never-claimed rows) is restored for the reopen from the home's
+ *  reserved origin, when that origin is a managed cloud-home hostname (h-<32 hex>.<the cloud-home suffix>): same hostname, the tunnel name
+ *  it was allocated with. Null for a home that never had a managed endpoint. */
+export function restoreMachineEndpoint(db: D1Database, machineId: string, publicOrigin: string, hostSuffix: string | null,
+  now: number): D1PreparedStatement | null {
+  if (!hostSuffix) return null;
+  let host: string;
+  try { host = new URL(publicOrigin).hostname; } catch { return null; }
+  const match = /^h-([0-9a-f]{32})\.(.+)$/.exec(host);
+  if (!match || match[2] !== hostSuffix) return null;
+  return db.prepare(`INSERT INTO machine_endpoints (machine_id,hostname,tunnel_name,status,created_at,updated_at)
+    VALUES (?,?,?,'pending',?,?) ON CONFLICT DO NOTHING`).bind(machineId, host, `murage-${MACHINE_KIND.prefix}-${match[1]}`, now, now);
+}
+
+/** The endpoint row exactly as a reopen observed it: the cleanup it asks for is a compare-and-set on all of it. */
+export interface ObservedMachineEndpoint { status: string; generation: number; tunnel_id: string | null; dns_record_id: string | null }
+
+/** A reopen waiting on the old endpoint's cleanup asks for it now: a row still serving or failed is marked 'deleting', and a cleanup
+ *  backed off for more than CLEANUP_BACKOFF_1_MS is due again at the next sweep (so a paying customer waits at most one backoff step, and
+ *  Cloudflare sees at most one attempt per that interval). A leased row (a cleanup in flight) is left alone.
+ *  Astra MAILRETRY-13 P1-2: the request is a compare-and-set on the row as the reopen observed it (status, lease generation, tunnel and DNS
+ *  ids) and on the home still being at the resource generation it asks the cleanup for (`resourceGeneration`), which it records on the row
+ *  (delete_resource_generation). A stale pass (the old endpoint was deleted since its read, another pass re-opened the home and the new
+ *  generation's machine claimed the row: a new lease generation, a new tunnel) writes nothing, so the new generation's endpoint is never
+ *  marked for deletion; and the sweep honours a 'deleting' row only while the home is still at the generation the request named. */
+export async function expediteMachineEndpointCleanup(env: Env, machineId: string, observed: ObservedMachineEndpoint, resourceGeneration: number,
+  now: number): Promise<void> {
+  await env.DB.prepare(`UPDATE machine_endpoints SET status='deleting',delete_requested_at=COALESCE(delete_requested_at,?),
+      last_cleanup_attempt_at=CASE WHEN last_cleanup_attempt_at<=? THEN NULL ELSE last_cleanup_attempt_at END,
+      delete_resource_generation=?,updated_at=?
+    WHERE machine_id=? AND (lease_expires_at IS NULL OR lease_expires_at<=?)
+      AND (status IN ('provisioning','ready','error','deleting')
+        OR (status='pending' AND (tunnel_id IS NOT NULL OR dns_record_id IS NOT NULL)))
+      AND status=? AND generation=? AND tunnel_id IS ? AND dns_record_id IS ?
+      AND (delete_resource_generation IS NULL OR delete_resource_generation=?)
+      AND EXISTS (SELECT 1 FROM cloud_homes h WHERE h.id=machine_endpoints.machine_id AND h.resource_generation=?)`)
+    .bind(now, now - CLEANUP_BACKOFF_1_MS, resourceGeneration, now, machineId, now,
+      observed.status, observed.generation, observed.tunnel_id, observed.dns_record_id, resourceGeneration, resourceGeneration).run();
+}
+
+/** Binds nothing. A deletion request (`requested`: the resource generation it was made for; NULL on every path that names none) is still
+ *  current while the home (`current`: its resource generation; NULL when the home row is gone) has not moved past that generation. */
+function deleteRequestCurrentSql(requested: string, current: string): string {
+  return `(${requested} IS NULL OR ${requested} >= COALESCE(${current}, 0))`;
 }

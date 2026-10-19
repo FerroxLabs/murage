@@ -131,7 +131,8 @@ function applyReading(before, event) {
   // the measured time left: believed only for a phase that has run long enough (awake) and, where it counts, is a tenth done
   if (WORKING.has(mode)) {
     const fraction = s.step.unit !== "none" && s.step.total > 0 ? s.step.done / s.step.total : null;
-    const believable = s.eta.stable && s.step.awakeElapsedMs >= ETA_MIN_PHASE_MS && (fraction === null || fraction >= ETA_MIN_FRACTION);
+    // a minutes figure needs a fixed total and a measured rate: an open-ended step (its end moves as it goes) has neither, so it never gets one
+    const believable = s.step.unit !== "open" && s.eta.stable && s.step.awakeElapsedMs >= ETA_MIN_PHASE_MS && (fraction === null || fraction >= ETA_MIN_FRACTION);
     const gated = gateStep(out.gate, { phase: s.phase, etaMs: believable ? s.eta.ms : null });
     out = { ...out, gate: gated.gate, etaMinutes: gated.minutes, slow: gated.slow };
     const signature = JSON.stringify([s.phase, s.step.done ?? null, s.step.total ?? null, s.overall, event.copy?.done ?? null]);
@@ -197,6 +198,7 @@ function percentOf(ctx) {
   return Math.floor(Math.min(0.99, ctx.overallHigh) * 100 + 1e-9);
 }
 function counterOf(ctx) {
+  if (ctx.step.unit === "open") return { unit: "open", done: ctx.step.done };
   if (ctx.step.unit !== "none") return { unit: ctx.step.unit, done: ctx.step.done, total: ctx.step.total };
   if (ctx.phase === "copying" && ctx.copy && ctx.copy.total > 0) return { unit: "bytes", done: Math.min(ctx.copy.done, ctx.copy.total), total: ctx.copy.total };
   return null;
@@ -221,7 +223,9 @@ export function selectWindow(ctx) {
     return { mode: "finishing", percent, indeterminate: percent === null, keepOpen: false, counts, counter: counterOf(ctx), phaseId: ctx.phase, elapsedMs: null, etaMinutes: null, slow: false, late: false, longSlow: false, neutral: false };
   }
   const counter = counterOf(ctx);
-  const indeterminate = !counter && ctx.phase !== "copying";
+  // an open-ended step has no percent: its total slides with its done, so any fraction of it is made up
+  const open = ctx.step.unit === "open";
+  const indeterminate = open || (!counter && ctx.phase !== "copying");
   const counting = (ctx.phase === "unknown" || ctx.phase === "none") && !counts;
   const neutral = ctx.lastGoodAt !== null && ctx.now - ctx.lastGoodAt > NEUTRAL_AFTER_MS;
   // The screen says the work is late only when it has really stalled: nothing advanced for ADVANCE_FRESH_MS (since the last advance, or since the run
@@ -230,10 +234,10 @@ export function selectWindow(ctx) {
   const stalled = !neutral && !advancing(ctx) && (ctx.advance.movedAt !== null || ctx.runAwakeMs > ADVANCE_FRESH_MS);
   const slow = false;
   const late = stalled;
-  const eta = neutral || stalled ? null : ctx.etaMinutes;
+  const eta = neutral || stalled || open ? null : ctx.etaMinutes;
   return {
     mode: counting ? "counting" : slow ? "slow" : "blocking",
-    percent: neutral ? null : percent, indeterminate: indeterminate || neutral || percent === null && !counter, keepOpen: ctx.keepOpen,
+    percent: neutral || open ? null : percent, indeterminate: indeterminate || neutral || percent === null && !counter, keepOpen: ctx.keepOpen,
     counts, counter, phaseId: ctx.phase, elapsedMs: indeterminate ? ctx.step.awakeElapsedMs : null,
     etaMinutes: eta, slow, late, longSlow: slow && ctx.runAwakeMs > 10 * 60_000, neutral,
   };
@@ -247,9 +251,9 @@ export function selectStrip(ctx) {
   if (!worked(ctx)) return (ctx.mode === "idle" || ctx.mode === "reclaim") && ctx.checking === true ? { kind: "working", role: "status", holdKey: null, percent: null, phaseId: null, left: null, counter: null, slow: false, neutral: false, elapsedMs: null } : null;
   const neutral = stale(ctx) && ctx.lastGoodAt !== null;
   return {
-    kind: "working", role: "status", holdKey: null, percent: neutral ? null : percentOf(ctx), phaseId: ctx.phase === "unknown" || ctx.phase === "none" ? null : ctx.phase,
+    kind: "working", role: "status", holdKey: null, percent: neutral || ctx.step.unit === "open" ? null : percentOf(ctx), phaseId: ctx.phase === "unknown" || ctx.phase === "none" ? null : ctx.phase,
     // the strip's "slow" line is for a real stall too (nothing advanced for ADVANCE_FRESH_MS), never for an estimate that grew while the work moves
-    left: neutral ? null : ctx.etaMinutes, counter: neutral ? null : counterOf(ctx), slow: neutral ? false : ctx.advance.movedAt !== null && !advancing(ctx), neutral,
+    left: neutral || ctx.step.unit === "open" ? null : ctx.etaMinutes, counter: neutral ? null : counterOf(ctx), slow: neutral ? false : ctx.advance.movedAt !== null && !advancing(ctx), neutral,
     // a step with nothing to count shows how long it has been going on (time awake): the activity is real, and so is the time
     elapsedMs: neutral || counterOf(ctx) || ctx.phase === "unknown" || ctx.phase === "none" ? null : ctx.step.awakeElapsedMs,
   };

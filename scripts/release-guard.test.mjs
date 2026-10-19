@@ -1,5 +1,5 @@
 import { spawnSync } from "node:child_process";
-import { copyFileSync, mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { copyFileSync, mkdtempSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -7,6 +7,7 @@ import { describe, expect, it } from "vitest";
 import { parse } from "yaml";
 import { createHash } from "node:crypto";
 import { apiGet, assertReleaseUpdateFeed, findRelease, inspectReleaseBranch, nextVersion, parseVersion, shouldRelease, uploadDraft } from "./release-guard.mjs";
+import { removeTempDirSync } from "../server/testing/cleanup.ts";
 
 const ROOT = dirname(dirname(fileURLToPath(import.meta.url)));
 const workflow = (name) => parse(readFileSync(join(ROOT, ".github/workflows", name), "utf8"));
@@ -76,7 +77,7 @@ process.exit(0);
     return { ...result, output: readFileSync(join(dir, "output"), "utf8"),
       calls: readFileSync(join(dir, "calls"), "utf8").trim().split("\n").filter(Boolean).map(JSON.parse) };
   } finally {
-    rmSync(dir, { recursive: true, force: true });
+    removeTempDirSync(dir);
   }
 }
 
@@ -184,7 +185,7 @@ describe("draft uploads against a changing remote", () => {
       expect(error.message).not.toContain(secret);
       expect(calls.filter(call => call[1] === "release")).toHaveLength(1);
       expect(calls.flat()).not.toContain("POST");
-    } finally { rmSync(dir, { recursive: true, force: true }); }
+    } finally { removeTempDirSync(dir); }
   });
   function uploadScenario({existing = [], states = [true], collision = false} = {}) {
     const dir = mkdtempSync(join(tmpdir(), "murage-draft-upload-"));
@@ -202,7 +203,7 @@ describe("draft uploads against a changing remote", () => {
     let error;
     let id;
     try { id = uploadDraft("1.2.3",dir,"unused-notes",run); } catch (caught) { error = caught; }
-    finally { rmSync(dir,{recursive:true,force:true}); }
+    finally { removeTempDirSync(dir); }
     return {calls,error,id};
   }
   it("re-reads an eventually consistent listing before declaring the created draft absent", () => {
@@ -227,7 +228,7 @@ describe("draft uploads against a changing remote", () => {
     };
     let error; let id;
     try { id = uploadDraft("1.2.3", dir, "unused-notes", run); } catch (caught) { error = caught; }
-    finally { rmSync(dir, { recursive: true, force: true }); }
+    finally { removeTempDirSync(dir); }
     expect(error).toBeUndefined();
     expect(id).toBe(7);
     expect(calls.filter(call => call[2] === "create")).toHaveLength(1);
@@ -246,7 +247,7 @@ describe("draft uploads against a changing remote", () => {
     };
     let error;
     try { uploadDraft("1.2.3", dir, "unused-notes", run); } catch (caught) { error = caught; }
-    finally { rmSync(dir, { recursive: true, force: true }); }
+    finally { removeTempDirSync(dir); }
     expect(error.message).toMatch(/could not be confirmed/);
     expect(calls.filter(call => call[2] === "create")).toHaveLength(1);
     expect(calls.flat()).not.toContain("POST");

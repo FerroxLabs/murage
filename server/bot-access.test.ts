@@ -1,4 +1,4 @@
-import { mkdirSync,readFileSync,rmSync } from "node:fs";
+import { mkdirSync,readFileSync } from "node:fs";
 import { beforeEach,expect,it,vi } from "vitest";
 import { DATA_DIR } from "./config.ts";
 import { closeDatabase } from "./database.ts";
@@ -7,7 +7,8 @@ import { accessOwnerView,assertConnectedAppCall,assertStoredConnectedAppAccess,r
 import { botAccessPolicy } from "./bot-access-role.ts";
 import { permissionStatus } from "./permission-status.ts";
 import { ACCESS_REQUEST_TTL_MS, accessRequestExpiresAt } from "../shared/bot-access.ts";
-beforeEach(()=>{closeDatabase();rmSync(DATA_DIR,{recursive:true,force:true});mkdirSync(DATA_DIR,{recursive:true});});
+import { removeTempDirSync } from "./testing/cleanup.ts";
+beforeEach(()=>{closeDatabase();removeTempDirSync(DATA_DIR);mkdirSync(DATA_DIR,{recursive:true});});
 const account={toolkit:"gmail",accountId:"ca_fixture_owned"};
 const grant={...account,tools:["GMAIL_SEND_EMAIL","GMAIL_FETCH_EMAILS"]};
 function setup(){const store=new Store(()=>({instanceId:"fixture",model:"fixture"}));const chief=store.createBot({name:"Chief",section:"Leadership"});const lead=store.createBot({name:"Lead",section:"Studio"});const bot=store.createBot({name:"Specialist",section:"Studio"});const other=store.createBot({name:"Other",section:"Elsewhere"});store.setChiefOfStaff(chief.id,undefined,"workspace");store.setChiefOfStaff(lead.id,undefined,"section");store.patchBot(bot.id,{composio:false});return{store,chief,lead,bot,other};}
@@ -114,7 +115,7 @@ it("a restricted bot is denied a stored result whose tools or accounts are unkno
  expect(()=>assertStoredConnectedAppAccess(f2.bot,{requirements:[{tool:"GMAIL_FETCH_EMAILS"}],complete:true})).toThrow("not been approved");
 });
 it("a migrated legacy journal row is incomplete, so a restricted CHECK / run_again is denied",async()=>{
- const {mkdtempSync,rmSync}=await import("node:fs");const {tmpdir}=await import("node:os");const {join}=await import("node:path");const {DatabaseSync}=await import("node:sqlite");
+ const {mkdtempSync}=await import("node:fs");const {tmpdir}=await import("node:os");const {join}=await import("node:path");const {DatabaseSync}=await import("node:sqlite");
  const {SqliteOperationJournal}=await import("./connected-app-journal.ts");const {ConnectedAppOperations}=await import("./connected-app-operations.ts");
  const dir=mkdtempSync(join(tmpdir(),"legacy-"));
  try{
@@ -126,7 +127,7 @@ it("a migrated legacy journal row is incomplete, so a restricted CHECK / run_aga
   expect(op.requirementsComplete).toBe(false);
   const f=setup();enable(f);
   expect(()=>assertStoredConnectedAppAccess(f.bot,{requirements:op.requirements,complete:op.requirementsComplete})).toThrow("cannot be matched");
- }finally{rmSync(dir,{recursive:true,force:true});}
+ }finally{removeTempDirSync(dir);}
 });
 it("the bridge's list scope: a restricted bot's initial list holds only approved accounts, and the revision moves with access",()=>{
  const f=setup();

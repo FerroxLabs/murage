@@ -1,3 +1,4 @@
+import { removeLink } from "./link-removal.ts";
 import { scanSkill } from "./skill-guard/scan.ts";
 import { skillContentHash } from "./skill-guard/content-hash.ts";
 import { SKILL_SCANNER_VERSION, type SkillScan } from "./skill-guard/types.ts";
@@ -697,7 +698,7 @@ function removeNativeLinksForUnsafeSkillsRoot(
       const link = join(linkDir, name);
       if (!nativeLinkDirectlyTargetsOwnedSkill(link, root, name, previouslyManaged.includes(name))) continue;
       try {
-        rmSync(link, { recursive: true, force: true });
+        removeLink(link); // the link only: never rmSync, which follows a junction under Electron
       } catch {
         retry.add(name);
       }
@@ -750,7 +751,7 @@ export function syncSkillLinks(botId: string): void {
         managed.add(name);
       } else if (nativeLinkDirectlyTargetsOwnedSkill(link, root, name, previouslyManaged.includes(name))) {
         try {
-          rmSync(link, { recursive: true, force: true });
+          removeLink(link); // the link only: never rmSync, which follows a junction under Electron
         } catch {
           // Leave an undeletable app link visible for a later repair attempt.
           managed.add(name);

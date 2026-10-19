@@ -1,0 +1,2 @@
+Defaults:murage env_reset, !setenv, closefrom_override
+murage ALL=(root) NOPASSWD: /usr/local/libexec/murage-turn-launch ""
