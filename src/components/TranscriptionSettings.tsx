@@ -3,6 +3,8 @@ import { useEffect, useState } from "react";
 
 import { cn } from "@/lib/cn";
 import { announceTranscriptionStatus } from "@/lib/transcription-status";
+import { t } from "@/lib/i18n";
+import { InAdvanced } from "./SettingsPrimitives";
 
 export function TranscriptionSettings() {
   const bridge = window.muragebox?.transcription;
@@ -46,6 +48,9 @@ export function TranscriptionSettings() {
       <p className="mb-2 text-[12px] leading-relaxed text-ink-secondary">
         Live narration for recorded skills. Audio is sent to AssemblyAI while recording; the API key is protected by your operating system.
       </p>
+      {!configured && <p className="mb-2 text-[12px] leading-relaxed text-ink-secondary">{t("settings.l4.voiceKey.where")}</p>}
+      <InAdvanced><div id="voice-key-heading" tabIndex={-1} className="rounded-xl bg-card p-4 outline-none">
+      <div className="mb-2 text-[15px] font-medium text-ink">{t("settings.l4.voiceKey.title")}</div>
       <div className="flex gap-2">
         <input
           type="password"
@@ -79,8 +84,9 @@ export function TranscriptionSettings() {
       >
         Open AssemblyAI dashboard <ExternalLink size={12} />
       </a>
-      {!bridge && <div className="mt-1 text-[12px] text-warning">Available in the installed desktop app.</div>}
       {error && <div role="alert" className="mt-1 text-[12px] text-danger">{error}</div>}
+      </div></InAdvanced>
+      {!bridge && <div className="mt-1 text-[12px] text-warning">Available in the installed desktop app.</div>}
     </div>
   );
 }

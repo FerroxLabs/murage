@@ -17,7 +17,7 @@ import { once } from "node:events";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
-import { mkdirSync, rmSync } from "node:fs";
+import { mkdirSync } from "node:fs";
 import readline from "node:readline";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { catalogApp, resetAppCatalogState } from "./app-catalog.ts";
@@ -30,6 +30,7 @@ import { bindHumanThread, humanTask, linkHumanBinding, observeVerifiedHuman, res
 import { internalRouteRefusal } from "./internal-route-authority.ts";
 import { ownerMemoryTicket } from "./memory/authority.ts";
 import { Store } from "./store.ts";
+import { removeTempDirSync } from "./testing/cleanup.ts";
 
 const APPS = fakeCatalogApps();
 const CONNECTED = new Set(["gmail", "slack", "github"]);
@@ -154,7 +155,7 @@ describe("an engine searching, then connecting a long-tail app (scripted engine 
 describe("a bot in a contact's thread cannot list the owner's accounts", () => {
   beforeEach(() => {
     closeDatabase();
-    rmSync(DATA_DIR, { recursive: true, force: true });
+    removeTempDirSync(DATA_DIR);
     mkdirSync(DATA_DIR, { recursive: true });
   });
 

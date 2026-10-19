@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { mkdirSync, rmSync } from "node:fs";
+import { mkdirSync } from "node:fs";
 import { beforeEach, expect, it } from "vitest";
 import { DATA_DIR } from "../config.ts";
 import { closeDatabase, database, transaction } from "../database.ts";
@@ -17,10 +17,11 @@ import { searchMemory } from "./search.ts";
 import { prepareMemorySkillReview, stageSkillWrite, applyStagedSkillWrite, listSkills } from "../skills.ts";
 import { memoryOwnerRoute } from "./settings.ts";
 import { LineageAllowance } from "./lineage-allowance.ts";
+import { removeTempDirSync } from "../testing/cleanup.ts";
 
 const threadId="7f00a32e-17a4-426b-bdc6-910220ba66c9";
 const roster={bots:[{id:"bot",threadId}],groups:[]};
-beforeEach(()=>{closeDatabase();rmSync(DATA_DIR,{recursive:true,force:true});mkdirSync(DATA_DIR,{recursive:true});reconcileMemoryRoster(roster);setMemoryMode("capture");});
+beforeEach(()=>{closeDatabase();removeTempDirSync(DATA_DIR);mkdirSync(DATA_DIR,{recursive:true});reconcileMemoryRoster(roster);setMemoryMode("capture");});
 function complete(text:string,options:{id?:string;speaker?:string;kind?:string;outcome?:string;turnId?:string}={}){
   const id=options.id??`message:${threadId}:${randomUUID()}`;
   captureSource(database(),{id,threadId,messageId:randomUUID(),origin:{kind:"attended"},kind:options.kind??"text",speaker:options.speaker??"owner",outcome:options.outcome??"recorded",turnId:options.turnId,text});

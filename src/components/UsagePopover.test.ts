@@ -152,12 +152,16 @@ describe("usage totals count the tokens actually bought", () => {
     for (const source of [usageSection, settingsPanel]) {
       expect(source).not.toMatch(/formatTokens\((?:usage|total)\.input \+ (?:usage|total)\.output\)/);
     }
-    expect(usageSection).toContain("formatTokens(freshTokens(usage))");
-    expect(usageSection).toContain("formatTokens(freshTokens(total))");
+    // 1.0.3 Settings L6: the page shows this month by bot (monthUsageRows); each row's and the total's `tokens` is the fresh figure
+    // (usageMonthTokens: input less cached, plus output; pinned in src/lib/usage.test.ts and shared/usage-month.test.ts)
+    expect(usageSection).toContain("{formatTokens(tokens)}");
+    expect(usageSection).toContain("{formatTokens(total.tokens)}");
+    expect(usageSection).toContain("const rows = monthUsageRows(");
     expect(settingsPanel).toContain("formatTokens(freshTokens(usage))");
+    expect(read("../../shared/usage-month.ts")).toContain("return Math.max(0, m.input - cached) + m.output;");
   });
 
   it("sorts bots by the same fresh figure it shows", () => {
-    expect(usageSection).toContain("freshTokens(b.usage) - freshTokens(a.usage)");
+    expect(read("../lib/usage.ts")).toContain("return rows.sort((a, b) => b.tokens - a.tokens || b.replies - a.replies);");
   });
 });

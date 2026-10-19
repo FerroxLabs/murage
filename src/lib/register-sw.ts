@@ -8,6 +8,7 @@
 // Android was silently offered nothing.
 
 import { hasNativeUserAgent } from "./native-shell";
+import { trustedScriptUrl } from "./trusted-html";
 
 /** Whether this surface should register the worker at all.
  *
@@ -68,7 +69,7 @@ export function registerServiceWorker(): void {
     return;
   }
   window.addEventListener("load", () => {
-    void navigator.serviceWorker.register("/sw.js", { scope: "/" }).catch(() => {
+    void navigator.serviceWorker.register(trustedScriptUrl("/sw.js"), { scope: "/" }).catch(() => {
       // A door that declines to serve /sw.js, a browser that refuses the
       // scope, a private window with storage disabled. None of these are worth
       // an error in front of a person: the cost is that this browser is not

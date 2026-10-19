@@ -242,3 +242,15 @@ it("keeps an unbound tag as a path after the budget runs out, and leaves only bo
   expect(collected).toMatchObject({ unbound: [paths[3]], tooLarge: [paths[2]] });
   expect(collected.images).toHaveLength(2);
 });
+it("an image whose binding is revoked while a later image is read is never returned", async () => {
+  const { __setAttachmentReadHookForTests } = await import("./attachment-read.ts");
+  const f = fixture(), a = f.file(), b = f.file();
+  const text = `${f.text(a.path)}\n${f.text(b.path)}`;
+  const row = { role: "user" as const, text, attachments: [{ kind: "image" as const, ...a }, { kind: "image" as const, ...b }] };
+  f.append("t", row);
+  const bName = b.path.slice(b.path.lastIndexOf("/") + 1);
+  __setAttachmentReadHookForTests((stage, name) => { if (stage === "after-read" && name === bName) row.attachments.splice(0, 1); });
+  try {
+    await expect(f.images.read("t", "a", text)).rejects.toThrow("Reattach");
+  } finally { __setAttachmentReadHookForTests(undefined); }
+});

@@ -5,7 +5,7 @@
 // database mid-fold leaves nothing, and the redelivery writes exactly one copy), the bus keeps per-thread order with the failed
 // listener and every listener after it, the queue is bounded with a release of the writer hold, and one stuck thread never
 // blocks the others.
-import { mkdirSync, rmSync } from "node:fs";
+import { mkdirSync } from "node:fs";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { DATA_DIR } from "./config.ts";
 import type { ModelSelection, RuntimeEvent } from "./contracts.ts";
@@ -15,11 +15,12 @@ import { outputRootsFor, recordOutputRoots, replayExclusions, thawRootSetWritesF
 import { reconcileMemoryRoster } from "./memory/policy.ts";
 import { setMemoryMode } from "./memory/repository.ts";
 import { Store } from "./store.ts";
+import { removeTempDirSync } from "./testing/cleanup.ts";
 
 const selection = (): ModelSelection => ({ instanceId: "claude", model: "claude-sonnet-5" });
 beforeEach(() => {
   vi.spyOn(console, "warn").mockImplementation(() => {}); vi.spyOn(console, "error").mockImplementation(() => {});
-  closeDatabase(); rmSync(DATA_DIR, { recursive: true, force: true }); mkdirSync(DATA_DIR, { recursive: true });
+  closeDatabase(); removeTempDirSync(DATA_DIR); mkdirSync(DATA_DIR, { recursive: true });
   thawRootSetWritesForTest(true); // the link here is a root-set row (a 1.0.1 file's rows); root sets are frozen on v10 otherwise
 });
 afterEach(() => { thawRootSetWritesForTest(false); vi.restoreAllMocks(); });

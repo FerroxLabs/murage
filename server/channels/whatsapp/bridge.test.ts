@@ -13,6 +13,7 @@ import { AuthStoreError } from "./core/auth-store.ts";
 import type { ChildMessage, HostMessage, QuoteRef } from "./core/protocol.ts";
 import { Bridge, extensionFor, IngressJournal, MediaStore, runBridgeProcess, type ProcessLike } from "./bridge.ts";
 import { FAKE_PN, makeFakeLib, textMessage, voiceNote, type FakeLib, type FakeSocket } from "./testing/fake-baileys.ts";
+import { removeTempDirSync } from "../../testing/cleanup.ts";
 
 const realSetTimeout = globalThis.setTimeout;
 const tick = (ms = 4): Promise<void> => new Promise((resolve) => { realSetTimeout(resolve, ms); });
@@ -119,7 +120,7 @@ afterEach(async () => {
   vi.useRealTimers();
   await Promise.all(rigs.map((r) => r.bridge.stop().catch(() => undefined)));
   rigs = [];
-  for (const root of roots) rmSync(root, { recursive: true, force: true });
+  for (const root of roots) removeTempDirSync(root);
   roots = [];
 });
 
@@ -364,7 +365,7 @@ describe("auth failures", () => {
   it("a failed credential write ends the socket and asks the process to exit, so keys never run ahead of disk", async () => {
     const r = rig();
     const socket = await linkAndOpen(r);
-    rmSync(join(r.root, "auth"), { recursive: true, force: true });
+    removeTempDirSync(join(r.root, "auth"));
     writeFileSync(join(r.root, "auth"), "not a directory");
     socket.ev.emit("creds.update", {});
     await until(() => r.fatal.length === 1);

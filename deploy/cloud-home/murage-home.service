@@ -1,0 +1,48 @@
+[Unit]
+Description=Murage Cloud home
+After=network-online.target murage-egress.service data.mount
+Requires=murage-egress.service data.mount
+Wants=network-online.target murage-control.service murage-egress-proxy.service
+RequiresMountsFor=/data
+# Never started (by boot, the recovery timer or anyone) while murage-commands holds a data transition (a reset, undo or update swap)
+# unresolved: it sets this file before stopping the writers and removes it only once the transition is durably resolved.
+ConditionPathExists=!/var/lib/murage-home/recovery-inhibit
+
+[Service]
+Type=simple
+User=root
+Group=root
+ExecStart=/usr/local/libexec/murage-home-start
+Restart=on-failure
+RestartSec=5
+RestartPreventExitStatus=78
+KillMode=control-group
+# Turn and browser slices may use 85% of RAM between them; keep the server alive.
+MemoryLow=512M
+OOMScoreAdjust=-900
+# Turns and browsers run in their own scopes under these slices (audit A1-03),
+# outside this unit's cgroup, and BindsTo= does not stop them on a restart (seen
+# on a real home). Stopping the slices ends every one whenever the home stops.
+ExecStopPost=-/usr/bin/systemctl stop --no-block murage-turns.slice murage-browsers.slice
+TimeoutStopSec=30
+UMask=0077
+LimitCORE=0
+# Filesystem hardening (audit GLM-8). Children, including the sudo-run root
+# launcher, share this mount namespace. Deliberately NOT set: NoNewPrivileges
+# (sudo is setuid), PrivateTmp, ProtectKernelTunables (the browser namespace
+# helper runs sysctl -w), ProtectControlGroups, RestrictAddressFamilies,
+# SystemCallFilter, RestrictNamespaces, ProtectClock/Hostname, ProtectSystem=strict.
+# ProtectKernelLogs is also NOT set: it masks /proc/kmsg, and with any part of
+# /proc masked the kernel refuses the fresh /proc mount pasta and bwrap make
+# for a turn ("Couldn't mount /proc: Operation not permitted", seen on a real
+# home), so every turn started by the server would fail.
+# /etc is read-only except /etc/murage-home, which murage-enroll rewrites.
+ProtectSystem=full
+ReadWritePaths=/etc/murage-home
+ProtectHome=yes
+ProtectKernelModules=yes
+# Privilege drop is performed by the supervisor after root-only volume binding.
+# Do not set NoNewPrivileges: the constrained turn launcher needs exec transitions.
+
+[Install]
+WantedBy=multi-user.target

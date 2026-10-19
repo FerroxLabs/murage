@@ -4,7 +4,7 @@
 // PIP P2 core, batch B3: the continuity ledger and second lease (group 5), the reflection state machine, its
 // restart rows and the reaper (group 8), lived proposals and confirm, counters and Keep, episodes, and lane 5.
 // Synthetic fixture text only; the engine is a stub function, no process and no network.
-import { existsSync, mkdirSync, readFileSync, rmSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -36,6 +36,7 @@ import { LIVED_SYSTEM, supportCopy } from "./pip-reflect.ts";
 import { EPISODE_BASIS } from "./pip-episodes.ts";
 import { HELD_PLUGIN_COPY, LOGIN_ROUTE_COPY } from "./pip-transport.ts";
 import { LineageAllowance } from "./lineage-allowance.ts";
+import { removeTempDirSync } from "../testing/cleanup.ts";
 
 const T0 = 1_760_000_000_000;
 const MIN = 60_000;
@@ -44,7 +45,7 @@ const ticket = ownerMemoryTicket();
 const emptyBridge = { search: async () => ({ hits: [], vectorRows: 0 }) };
 
 beforeEach(() => {
-  closeDatabase(); rmSync(DATA_DIR, { recursive: true, force: true }); mkdirSync(DATA_DIR, { recursive: true });
+  closeDatabase(); removeTempDirSync(DATA_DIR); mkdirSync(DATA_DIR, { recursive: true });
   reconcileMemoryRoster(roster); setMemoryMode("active"); setMemoryCaptureRoster(() => roster as never);
 });
 afterEach(() => { setMemoryCaptureRoster(null); vi.useRealTimers(); });
@@ -691,7 +692,7 @@ describe("episodes", () => {
     const h = handles(2); void h;
     const all = admissibleOwnerSources(db, "moss", { threadId: "private" });
     expect(all.length).toBeGreaterThan(0);
-    const byThread = [{ threadId: "private", title: "Harbour — log", turns: all }];
+    const byThread = [{ threadId: "private", title: "Harbour — log", count: all.length, lastHandles: all.slice(-12) }];
     expect(writeTraceEpisode(db, { botId: "moss", scopeId, day: T0, byThread }).written).toBe(true);
     expect(writeTraceEpisode(db, { botId: "moss", scopeId, day: T0, byThread })).toEqual({ written: false, reason: "day-has-episode" });
     const ep = listEpisodes(db, "moss")[0];
@@ -889,11 +890,12 @@ describe("Astra audit2 production regressions", () => {
     expect(listProposals(ticket, "moss", roster as never)).toHaveLength(1);
   });
 
-  it("15: settles an unreported output at its byte estimate", async () => {
+  // An unreported output keeps the lease's whole reservation (3000); an engine run without usage is not counted unmetered (Astra L3 r3).
+  it("15: settles an unreported output at its reservation, never below it", async () => {
     seedConversation(); const r = rig(); const body = { proposals: [], stance: [], episode: null };
     r.set(async () => result(body, { usage: undefined })); await run(r);
     const ledger = JSON.parse(String(database().prepare("SELECT intent FROM memory_scope_bindings WHERE id LIKE 'continuity-budget:moss:%'").get()!.intent));
-    expect(ledger.output).toBe(Math.ceil(Buffer.byteLength(JSON.stringify(body)) / 3.5));
+    expect(ledger.output).toBe(3000);
   });
 
   it("24: repeated owner edits keep incrementing the generation", async () => {
@@ -1013,7 +1015,8 @@ it("24: legacy support membership is subtracted by the owner exclusion action", 
 
 describe("AUDIT2 round 2", () => {
   it.each([false, true])("25: model episodes use their source day, including legacy rows (marker=%s)", async marker => {
-    const { maybeTraceEpisode } = await import("./pip-reflect.ts");
+    const { maybeTraceEpisodeSliced } = await import("./pip-reflect.ts");
+    const maybeTraceEpisode = (deps: Parameters<typeof maybeTraceEpisodeSliced>[0], bot: Parameters<typeof maybeTraceEpisodeSliced>[1]) => maybeTraceEpisodeSliced(deps, bot, async () => {});
     const monday = new Date(2026, 9, 5, 12).getTime(), tuesday = new Date(2026, 9, 6, 12).getTime();
     for (let i = 0; i < 3; i++) owner(`monday-${i}`, monday + i, BRIEF_SENTENCE);
     owner("tuesday", tuesday, BRIEF_SENTENCE);
@@ -1022,8 +1025,8 @@ describe("AUDIT2 round 2", () => {
     try {
       expect(writeEpisode(database(), { botId: "moss", scopeId: scopeOf("moss"), threadId: "private", closingMessageId: "monday-2", ...(marker ? { day: monday } : {}), text: "We planned the harbour log, the tide table, and the lantern checks.", handles }).written).toBe(true);
       const r = rig(); r.clock.now = new Date(2026, 9, 7, 12).getTime();
-      expect(maybeTraceEpisode(r.deps, r.bot)).toBe(false);
-      expect(maybeTraceEpisode(r.deps, r.bot)).toBe(true);
+      expect(await maybeTraceEpisode(r.deps, r.bot)).toBe(false);
+      expect(await maybeTraceEpisode(r.deps, r.bot)).toBe(true);
       expect(listEpisodes(database(), "moss")).toHaveLength(2);
     } finally { vi.restoreAllMocks(); }
   });
@@ -1041,15 +1044,16 @@ describe("AUDIT2 round 2", () => {
   });
 
   it("25: catch-up traces use represented days across midnight", async () => {
-    const { maybeTraceEpisode } = await import("./pip-reflect.ts");
+    const { maybeTraceEpisodeSliced } = await import("./pip-reflect.ts");
+    const maybeTraceEpisode = (deps: Parameters<typeof maybeTraceEpisodeSliced>[0], bot: Parameters<typeof maybeTraceEpisodeSliced>[1]) => maybeTraceEpisodeSliced(deps, bot, async () => {});
     const monday = new Date(2026, 9, 5, 12).getTime(), tuesday = new Date(2026, 9, 6, 12).getTime();
     owner("monday", monday, BRIEF_SENTENCE); owner("tuesday", tuesday, BRIEF_SENTENCE);
     const r = rig(); r.clock.now = tuesday;
     vi.spyOn(Date, "now").mockReturnValue(tuesday);
     try {
-      expect(maybeTraceEpisode(r.deps, r.bot)).toBe(true);
+      expect(await maybeTraceEpisode(r.deps, r.bot)).toBe(true);
       r.clock.now = new Date(2026, 9, 7, 12).getTime();
-      expect(maybeTraceEpisode(r.deps, r.bot)).toBe(true);
+      expect(await maybeTraceEpisode(r.deps, r.bot)).toBe(true);
       expect(listEpisodes(database(), "moss")).toHaveLength(2);
     } finally { vi.restoreAllMocks(); }
   });

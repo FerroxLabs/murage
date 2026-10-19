@@ -7,7 +7,7 @@
 //  - the owner's pins are read through the partial index once it exists;
 //  - the Inbox's waiting lessons are read by bot, through memory_lessons_bot_state;
 //  - a notebook's legacy source id scans the scope's legacy sources once per (scope, path) until the memory data changes.
-import { mkdirSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { DATA_DIR } from "../config.ts";
@@ -24,6 +24,7 @@ import { ensureOwnerPinIndex, ownerPinIndexPresent, validateMemorySchema } from 
 import { forgetTurnCaptureJob, turnCaptureJobId } from "./turn-capture-jobs.ts";
 import { resetParkSweep } from "./park.ts";
 import { resetWorkerLog } from "./worker-log.ts";
+import { removeTempDirSync } from "../testing/cleanup.ts";
 
 type Seen = { sql: string; rows: number };
 function record(action: () => void): Seen[] {
@@ -50,7 +51,7 @@ const shape = (seen: Seen[], only: RegExp) => seen.filter(item => only.test(item
 const plans = (sql: string) => (database().prepare(`EXPLAIN QUERY PLAN ${sql}`).all() as Array<{ detail: string }>).map(row => row.detail);
 
 beforeEach(() => {
-  closeDatabase(); rmSync(DATA_DIR, { recursive: true, force: true }); mkdirSync(DATA_DIR, { recursive: true });
+  closeDatabase(); removeTempDirSync(DATA_DIR); mkdirSync(DATA_DIR, { recursive: true });
   setMemoryMode("active"); resetParkSweep(); resetMemoryClaimCursor(); resetWorkerLog();
 });
 afterEach(() => { vi.restoreAllMocks(); });
@@ -91,7 +92,7 @@ function seedOtherJobs(others: number): void {
 it("the starting turn's capture is claimed by its job id: the same statements and rows with 10 and with 100,000 other pending jobs", () => {
   const shapes: string[][] = [];
   for (const others of [10, 100_000]) {
-    closeDatabase(); rmSync(DATA_DIR, { recursive: true, force: true }); mkdirSync(DATA_DIR, { recursive: true }); setMemoryMode("active"); resetMemoryClaimCursor();
+    closeDatabase(); removeTempDirSync(DATA_DIR); mkdirSync(DATA_DIR, { recursive: true }); setMemoryMode("active"); resetMemoryClaimCursor();
     appendMessage("turn-thread", { id: "p1", at: Date.now(), role: "user", kind: "text", text: "The owner's prompt that this turn sends" });
     const jobId = turnCaptureJobId("turn-thread");
     expect(jobId).toBeTruthy();
@@ -123,7 +124,7 @@ it("the owner's pins are read through the partial index once it exists, keyed by
   const sql = `SELECT id,version FROM memory_records r INDEXED BY memory_records_pinned WHERE state='active' AND owner_pinned=1 AND scope_id IN (SELECT value FROM json_each('["s-0"]'))`;
   const rowsRead: number[] = [];
   for (const others of [10, 100_000]) {
-    closeDatabase(); rmSync(DATA_DIR, { recursive: true, force: true }); mkdirSync(DATA_DIR, { recursive: true }); setMemoryMode("active");
+    closeDatabase(); removeTempDirSync(DATA_DIR); mkdirSync(DATA_DIR, { recursive: true }); setMemoryMode("active");
     const db = database();
     expect(ownerPinIndexPresent(db)).toBe(false);
     db.exec("PRAGMA foreign_keys=OFF"); db.exec("BEGIN");
@@ -161,7 +162,7 @@ it("a notebook moved from another data dir is found by its stored path once per 
   const walk = () => { let cursor: string | undefined; do { cursor = migrateDetectedMemoryNotebooks(roster, cursor).nextCursor; } while (cursor); };
   const scans: number[] = [];
   for (const others of [10, 20_000]) {
-    closeDatabase(); rmSync(DATA_DIR, { recursive: true, force: true }); mkdirSync(DATA_DIR, { recursive: true });
+    closeDatabase(); removeTempDirSync(DATA_DIR); mkdirSync(DATA_DIR, { recursive: true });
     reconcileMemoryRoster(roster); database().exec("UPDATE memory_meta SET mode='active'");
     writeFileSync(join(ensureWorkspace("a"), "MEMORY.md"), "Durable notebook text, longer than the seed.");
     walk();

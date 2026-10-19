@@ -1,11 +1,12 @@
-import { mkdirSync, rmSync } from "node:fs";
+import { mkdirSync } from "node:fs";
 import { beforeEach, expect, it, vi } from "vitest";
 import { DATA_DIR } from "../config.ts";
 import { closeDatabase, database } from "../database.ts";
 import { reconcileMemoryRoster } from "./policy.ts";
 import { updateMemoryLearning, readMemoryLearning } from "./learning-policy.ts";
 import { extractCandidates, groundMemoryClaim, parseMemoryExtractionCandidates, withMemoryInferenceLease, type MemoryInferenceLease } from "./extract.ts";
-beforeEach(()=>{closeDatabase();rmSync(DATA_DIR,{recursive:true,force:true});mkdirSync(DATA_DIR,{recursive:true});reconcileMemoryRoster({bots:[{id:"bot",threadId:"thread"}],groups:[]});});
+import { removeTempDirSync } from "../testing/cleanup.ts";
+beforeEach(()=>{closeDatabase();removeTempDirSync(DATA_DIR);mkdirSync(DATA_DIR,{recursive:true});reconcileMemoryRoster({bots:[{id:"bot",threadId:"thread"}],groups:[]});});
 const signal=()=>new AbortController().signal;
 const messages=()=>[{role:"system",content:"Classify source assertions"},{role:"user",content:"Source text"}];
 it("rolls back the shared reservation and never dispatches when durable attribution fails",async()=>{
@@ -64,8 +65,8 @@ it("reflection uses the same durable quota and frozen framed messages with its s
     supplied[0]!.content="Mutated after submission";return work;
   });
   expect(result).toMatchObject({status:"complete",value:{status:"complete",text:"reflection"}});expect(seen.maximum).toBe(8000);expect(seen.dispatch.purpose).toBe("reflection");expect(seen.dispatch.messages[0].content).toBe("Classify source assertions");expect(Object.isFrozen(seen.dispatch.messages)).toBe(true);
-  // V2 reserves estimated tokens for the exact frozen messages, not bytes.
-  const row=database().prepare("SELECT intent FROM memory_scope_bindings WHERE subject_id='extract-budget'").get()!;const budget=JSON.parse(String(row.intent));expect(budget.output).toBe(8000);expect(budget.input).toBe(Math.ceil(Buffer.byteLength(JSON.stringify(seen.dispatch.messages))/3.5));expect(budget.calls).toBe(1);
+  // 1.0.3 (r4.1) reserves one token per byte of the exact frozen messages plus the provider allowance.
+  const row=database().prepare("SELECT intent FROM memory_scope_bindings WHERE subject_id='extract-budget'").get()!;const budget=JSON.parse(String(row.intent));expect(budget.output).toBe(8000);expect(budget.input).toBe(Buffer.byteLength(JSON.stringify(seen.dispatch.messages))+2048);expect(budget.calls).toBe(1);
 });
 it("network failures remain thrown and a released lease cannot start another request",async()=>{
   let retained!:MemoryInferenceLease;

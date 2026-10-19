@@ -5,7 +5,7 @@
 // writer and deleter, the pre-rank projection, the identity slot (order, labels,
 // budget, omission count), pin refusal, no global reset from one bot's edits,
 // rooms and project desks, and restore. Synthetic fixture text only.
-import { mkdirSync, rmSync } from "node:fs";
+import { mkdirSync } from "node:fs";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { DATA_DIR } from "../config.ts";
@@ -25,6 +25,7 @@ import { setMemoryMode } from "./repository.ts";
 import { pauseRestoredMemory } from "./restore.ts";
 import type { IndexHit } from "./index.ts";
 import { LineageAllowance } from "./lineage-allowance.ts";
+import { removeTempDirSync } from "../testing/cleanup.ts";
 
 const roster = {
   bots: [
@@ -40,7 +41,7 @@ const ticket = ownerMemoryTicket();
 const emptyBridge = { search: async () => ({ hits: [] as IndexHit[], vectorRows: 0 }) };
 let eligibility: MemoryEligibility | undefined;
 
-beforeEach(() => { closeDatabase(); rmSync(DATA_DIR, { recursive: true, force: true }); mkdirSync(DATA_DIR, { recursive: true }); reconcileMemoryRoster(roster); });
+beforeEach(() => { closeDatabase(); removeTempDirSync(DATA_DIR); mkdirSync(DATA_DIR, { recursive: true }); reconcileMemoryRoster(roster); });
 afterEach(() => { eligibility?.close(); eligibility = undefined; });
 
 function pip(kind: "commitment" | "self-trait" | "relation", key: string, text: string, patch: Partial<IdentityWrite> = {}): IdentityWrite {

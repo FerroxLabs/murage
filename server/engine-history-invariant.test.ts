@@ -10,7 +10,7 @@
 //   * a crash after any step, or between saving the plan and running it, is finished by the replay: every canary gone from
 //     every byte (raw, decompressed zstd, .db and -wal), every bystander intact.
 //   * "done" means a fresh, complete plan has no content step left.
-import { mkdtempSync, rmSync, realpathSync } from "node:fs";
+import { mkdtempSync, realpathSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterAll, describe, expect, it } from "vitest";
@@ -20,12 +20,13 @@ import { applyFactsDelta, planEngineHistory, removeEngineHistoryFiles } from "./
 import { hasContentSteps, homeKey } from "./engine-plan-core.ts";
 import { ALL_KINDS, ERRNO_KINDS, instrument } from "./testing/engine-history-faults.ts";
 import { buildFixture, canaryHits, ENGINES, holdDatabasesOpen, idHits, treeDigest, type Fixture } from "./testing/engine-history-fixtures.ts";
+import { removeTempDirSync } from "./testing/cleanup.ts";
 
 const scratch = realpathSync.native(mkdtempSync(join(tmpdir(), "murage-invariant-")));
 const stats: Record<string, { reads: number; steps: number; faultsRun: number; faultsApplied: number; crashes: number }> = {};
 afterAll(() => {
   console.log("INVARIANT-STATS", JSON.stringify(stats));
-  rmSync(scratch, { recursive: true, force: true });
+  removeTempDirSync(scratch);
 });
 
 const job = (fx: Fixture, extra: Record<string, unknown> = {}) => ({ homes: fx.homes, folders: fx.folders, memoryFolders: fx.memoryFolders, sessions: fx.sessions, kind: "plan" as const, ...extra });
@@ -124,8 +125,23 @@ describe.each(ENGINES)("engine history deletion invariant: %s", (engine) => {
 
   it("the engine holding its databases open (their -wal stays) still ends with no canary in any byte, -wal included", () => {
     const fx = buildFixture(engine, scratch);
-    const release = holdDatabasesOpen(fx.root);
+    const releaseAll = holdDatabasesOpen(fx.root);
+    let released = false;
+    const release = () => { if (!released) { released = true; releaseAll(); } };
     try {
+      if (process.platform === "win32") {
+        // Windows cannot move or remove a file another handle has open: the engine's open database is left exactly as it was and
+        // the home stays pending (EngineOpenError "held", engine-exec.ts moveAside), so nothing is torn and no bystander is touched.
+        // The deletion finishes on the retry once the engine lets go.
+        runAll(fx);
+        expect(fx.checkBystanders()).toEqual([]);
+        release();
+        const retry = runAll(fx);
+        expect(retry.failed).toEqual([]);
+        expect(canaryHits(fx.root, fx.canaries)).toEqual([]);
+        expect(fx.checkBystanders()).toEqual([]);
+        return;
+      }
       const result = runAll(fx);
       expect(result.failed).toEqual([]);
       expect(canaryHits(fx.root, fx.canaries)).toEqual([]);

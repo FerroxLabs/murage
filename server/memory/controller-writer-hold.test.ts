@@ -4,12 +4,13 @@
 // and a helper message whose handling writes is queued, not dispatched. Once the hold is released, each runs within BUSY_RETRY_MS (one
 // listener on the writer gate, never a poll) and the queued message is dispatched once.
 import { fork } from "node:child_process";
-import { mkdirSync, rmSync } from "node:fs";
+import { mkdirSync } from "node:fs";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { DATA_DIR } from "../config.ts";
 import { closeDatabase, database, holdWritersForIndexBuild } from "../database.ts";
 import { setMemoryMode } from "./repository.ts";
 import { MemoryWorkerController } from "./worker-controller.ts";
+import { removeTempDirSync } from "../testing/cleanup.ts";
 
 const scans = vi.hoisted(() => ({ health: 0, retention: 0 }));
 vi.mock("node:child_process", async importOriginal => ({ ...await importOriginal<typeof import("node:child_process")>(), fork: vi.fn() }));
@@ -19,7 +20,7 @@ vi.mock("./retention.ts", async importOriginal => ({ ...await importOriginal<typ
 type Internals = { heldMessages: unknown[]; ready: boolean; onWorkerMessage(child: unknown, message: unknown): void };
 let controller: MemoryWorkerController;
 beforeEach(() => {
-  closeDatabase(); rmSync(DATA_DIR, { recursive: true, force: true }); mkdirSync(DATA_DIR, { recursive: true });
+  closeDatabase(); removeTempDirSync(DATA_DIR); mkdirSync(DATA_DIR, { recursive: true });
   vi.useFakeTimers(); vi.setSystemTime(new Date("2026-10-15T00:00:00Z"));
   setMemoryMode("capture"); database();
   scans.health = 0; scans.retention = 0;

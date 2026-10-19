@@ -9,7 +9,7 @@ import { assertMemoryDisclosureCurrent, bindMemoryDisclosureSession, continuatio
 import { heldStep } from "../observe.ts";
 import { lineageLive, sessionLookup } from "./deny-read.ts";
 import { setSendFenceDeps } from "./send-fence.ts";
-import type { LineageVerdict } from "./lineage-types.ts";
+import type { LineageReader, LineageVerdict } from "./lineage-types.ts";
 import { drainBranchChanges } from "./branch-change.ts";
 
 /** Whether a bundle differs from the session's latest delivered frame. This is
@@ -64,9 +64,9 @@ function resumedSessionInvalidUnheld(allowance:LineageAllowance,threadId:string,
  * revision), any record or source it cites changed or forgotten, or a reply
  * it cites withheld. Every session, receipts or not, is also judged on the
  * replies built on memory that its context carried (its session roots, v6). */
-function retainedSessionInvalidWork(allowance:LineageAllowance,threadId:string,instanceId:string,session:string,why?:{reason?:string}):boolean {
+function retainedSessionInvalidWork(allowance:LineageAllowance,threadId:string,instanceId:string,session:string,why?:{reason?:string},reader:LineageReader=AUDIENCE_SESSION_READER):boolean {
   // the write-time session predicate first (S4): O(1) seeks; anything but "shown" resets the session
-  {const verdict=writetimeSessionVerdict(threadId,instanceId,session);if(verdict.state!=="shown"){if(why)why.reason=verdict.state==="checking"?"checking":`writetime-${verdict.reason}`;return true;}}
+  {const verdict=writetimeSessionVerdict(threadId,instanceId,session,reader);if(verdict.state!=="shown"){if(why)why.reason=verdict.state==="checking"?"checking":`writetime-${verdict.reason}`;return true;}}
   try {
     // a session set at the ceiling resets rather than withholding its replies (v6)
     const held=sessionOutputRoots(allowance,threadId,instanceId,session);
@@ -89,13 +89,18 @@ function retainedSessionInvalidWork(allowance:LineageAllowance,threadId:string,i
   } catch (error) { if(why)why.reason=isLineageLimit(error)||allowance.hit?"lineage-warming":"check-failed"; return true; }
 }
 
+/** The reader a retained session is judged for when the caller does not say: every mark counts, audience-only ones included. */
+export const AUDIENCE_SESSION_READER:LineageReader={audience:{owner:false,scopeIds:[]}};
+/** The owner's own direct chat: judged by content (deny-read.ts sessionLookup), so an audience-only revoke never resets it. */
+export const CONTENT_SESSION_READER:LineageReader={audience:null};
 /** The write-time session predicate (DESIGN-WRITETIME 1, "Sessions"): deny_session, rs-forgotten, the session's receipts (memorySessionRevoked
- * in O(1)), and the pending window over its last lsn. Not shown means the session resets. Content reader: a retained session is judged in
- * every memory mode, with no reader access. Until write-time lineage is written on this file the read-time checks below decide alone. */
-export function writetimeSessionVerdict(threadId:string,instanceId:string,session:string):LineageVerdict {
+ * in O(1)), and the pending window over its last lsn. Not shown means the session resets. A retained session is judged in every memory mode,
+ * with no reader access: the caller names the thread's reader (CONTENT_SESSION_READER for the owner's own direct chat, which an audience-only
+ * revoke never resets; every mark counts otherwise). Until write-time lineage is written on this file the read-time checks below decide alone. */
+export function writetimeSessionVerdict(threadId:string,instanceId:string,session:string,reader:LineageReader=AUDIENCE_SESSION_READER):LineageVerdict {
   const db=database();
   if(!lineageLive(db))return {state:"shown"};
-  return sessionLookup(db,{threadId,driverInstance:instanceId,nativeSession:session},{audience:null});
+  return sessionLookup(db,{threadId,driverInstance:instanceId,nativeSession:session},reader);
 }
 
 // the send fence lives in send-fence.ts (drivers reach it without this module's imports); this module hands it the server database
@@ -242,6 +247,21 @@ export function pinnedMemoryFailure(error: unknown, subject: string): string | u
   if (message.startsWith("MEMORY_PIN_OVERFLOW")) return `${subject} pinned memories are too long for this model. Unpin some in Memory, or choose a model that takes more context.`;
   if (message.startsWith("MEMORY_PIN_UNAVAILABLE")) return `${subject} pinned memory rests on something that was deleted or changed. Unpin it or fix it in Memory.`;
   return undefined;
+}
+
+/** How a refused turn ended, for the person (noteTurnRefused in index.ts): its last rebuild ran with no remembered context, or nothing could
+ * start it at all. */
+export type TurnRefusedKind = "without-memory" | "not-started";
+/** The owner-facing line for a turn refused at its send (1.0.2 Keep all P0: a refusal is never silent). Plain words naming the engine, never
+ * the code: what happened and, when the reply did not run, what to do. */
+export function turnRefusedLine(engine: string, kind: TurnRefusedKind): string {
+  return kind === "without-memory" ? `Memory changed while ${engine} was starting, so this reply ran without remembered context.`
+    : `${engine} could not start this reply. Send it again.`;
+}
+/** The owner-facing line when a turn's memory context was revoked at every send, the last rebuild included (index.ts
+ * MEMORY_REDISPATCH_ATTEMPTS): what happened and what to do, naming the engine, never the code. */
+export function lateMemoryRefusalLine(engine: string): string {
+  return turnRefusedLine(engine, "not-started");
 }
 
 /** Murage's line when a turn went without an owner pin because the pin rests

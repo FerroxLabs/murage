@@ -117,27 +117,40 @@ posixOnly("numbered bot deletions", () => {
     expect(b.status).toBe(200); expect(b.body).toMatchObject({ ok: true, alreadyDeleted: true, tasksSeq: a.body.tasksSeq, tasksEpoch: a.body.tasksEpoch });
   }, 60_000);
 
-  it("P11: a restore during an archived delete's awaits is caught at the commit; a plain DELETE waiting behind it re-runs and deletes", async () => {
+  it("P11 / Astra r5 order 6: a restore sent during an archived delete's awaits waits for the delete; it never lands between its teardown and its commit", async () => {
     const bot = await newBot("Restored");
     expect((await call("PATCH", `/api/bots/${bot.id}`, { hidden: true })).status).toBe(200);
     flag("delete-hold");
     const archivedDelete = call("DELETE", `/api/bots/${bot.id}?ifArchived=1`);
     await until(() => existsSync(join(fixture.info.dataDir, "delete-held")));
-    const restored = await call("PATCH", `/api/bots/${bot.id}`, { hidden: false });
-    expect(restored.status).toBe(200);
-    expect(restored.body.bot.tasksSeq).toBeGreaterThan(0); // a bot answer carries its number
+    // the DELETE is inside its awaits, past its preconditions and mid-teardown
+    let restoreAnswered = false;
+    const restore = call("PATCH", `/api/bots/${bot.id}`, { hidden: false }).then((answer) => { restoreAnswered = true; return answer; });
+    await new Promise((r) => setTimeout(r, 500));
+    expect(restoreAnswered).toBe(false); // it waits: no 200 for a restore the commit would then refuse, with the teardown already done
     const plainDelete = call("DELETE", `/api/bots/${bot.id}`);
-    await new Promise((r) => setTimeout(r, 200));
     rmSync(join(fixture.info.dataDir, "delete-held"));
     flag("delete-gate");
-    const refused = await archivedDelete;
+    // what the person confirmed was an archived bot, and it still was when the delete committed
+    const deleted = await archivedDelete;
+    expect(deleted.status).toBe(200);
+    expect(deleted.body.alreadyDeleted).toBeUndefined();
+    // the restore met the deletion: there is no bot to restore, and no bot is left stripped of its facilities
+    expect((await restore).status).toBe(404);
+    // the plain DELETE waited behind it and ran its own checks: it meets alreadyDeleted
+    expect((await plainDelete).body).toMatchObject({ ok: true, alreadyDeleted: true });
+    expect((await roster()).bots.some((row: any) => row.id === bot.id)).toBe(false);
+  }, 60_000);
+
+  it("P11: a restore that comes first defeats a later archived delete before any teardown", async () => {
+    const bot = await newBot("RestoredFirst");
+    expect((await call("PATCH", `/api/bots/${bot.id}`, { hidden: true })).status).toBe(200);
+    expect((await call("PATCH", `/api/bots/${bot.id}`, { hidden: false })).status).toBe(200);
+    const refused = await call("DELETE", `/api/bots/${bot.id}?ifArchived=1`);
     expect(refused.status).toBe(409);
     expect(refused.body.error).toContain("no longer archived");
-    // the plain DELETE waited, then ran its own checks: it never inherits the archived refusal
-    const plain = await plainDelete;
-    expect(plain.status).toBe(200);
-    expect(plain.body.alreadyDeleted).toBeUndefined();
-    expect((await roster()).bots.some((row: any) => row.id === bot.id)).toBe(false);
+    expect((await roster()).bots.some((row: any) => row.id === bot.id)).toBe(true);
+    expect((await call("DELETE", `/api/bots/${bot.id}`)).status).toBe(200);
   }, 60_000);
 
   it("P13 (server half): a failure after the deletion committed answers 200 with a warning and the deletion's number", async () => {

@@ -44,13 +44,14 @@ export const B34_EVALUATOR_INSTRUMENTATION = [
 const JOURNEY_BUDGET_MS = 470_000;
 const HOLD_MARKER = "__fixture_hold_authority__";
 /** Set once, before any review snapshot (learning-policy.ts:4-10). Five calls per minute put the routine refusal on its first callback. */
-const LEARNING = Object.freeze({ automaticFacts: false, automaticProcedures: true, reviewMode: false, callsPerMinute: 5, dailyInputTokens: 10_000_000, dailyOutputTokens: 2_000_000 });
+const LEARNING = Object.freeze({ automaticFacts: false, automaticProcedures: true, reviewMode: false, callsPerMinute: 5, ceiling: { input: 10_000_000, output: 2_000_000 } });
 /** Per-callback reservations (procedure-evaluator.ts:103, extract.ts:82). */
 const EVALUATION_OUTPUT = 2000, REFLECTION_OUTPUT = 8000;
 const TOTAL_OUTPUT = 5 * EVALUATION_OUTPUT + 3 * REFLECTION_OUTPUT;
 const HEX64 = /^[a-f0-9]{64}$/;
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
-const BOTS_PATH = "/api/bots?messages=0", ROUTINES_PATH = "/api/routines";
+// A `?messages=` listing is the roster, which leaves out each task's procedurePin (index.ts wireTask); the bare listing carries it.
+const BOTS_PATH = "/api/bots?messages=0", PINS_PATH = "/api/bots", ROUTINES_PATH = "/api/routines";
 const LEDGER_SQL = "SELECT json_extract(intent,'$.output') AS output FROM memory_scope_bindings WHERE id=? AND subject_id=?";
 const FAMILIES: B34CallFamily[] = ["install", "models", "evaluation", "reflection", "unexpected-extract", "unexpected-ground", "refused"];
 /** Routine definition fields other than the instruction; routines carry no recipients or permissions fields (routines.ts:71-96). */
@@ -184,14 +185,31 @@ const turnSettlement = (ctx: B34AdapterContext, threadId: string) => {
   const row = one(ctx, "SELECT count(*) AS n,coalesce(sum(outcome='working'),0) AS working FROM memory_sources WHERE kind='turn' AND thread_id=?", threadId);
   return { turns: Number(row?.n ?? 0), working: Number(row?.working ?? 0) };
 };
+/** Error activity rows of a thread, trimmed: why a turn that settled never reached its provider. */
+async function threadErrors(ctx: B34AdapterContext, threadId: string): Promise<string> {
+  try {
+    const page = await get(ctx, `/api/threads/${threadId}/messages?limit=20`, "thread-errors");
+    return (Array.isArray(page?.messages) ? page.messages : []).map((m: Json) => String(m?.tool?.name ?? "")).filter((name: string) => name.startsWith("error:")).map((name: string) => name.slice(0, 120)).join(" | ") || "no-error-rows";
+  } catch { return "errors=?"; }
+}
 /** ctx.send to a task thread, then that thread's own settlement by evidence (b34-extractor-adapter.ts:236-248). */
+const lastDumpThread = new Map<string, boolean>();
 async function sendToTask(ctx: B34AdapterContext, bot: Bot, text: string, threadId: string, label: string, detail: () => Promise<string>): Promise<Dump> {
   const before = turnSettlement(ctx, threadId).turns;
-  const dump = await ctx.send(bot, text, false, threadId);
-  await stalled(ctx, label, () => {
+  let dump: Dump;
+  try { dump = await ctx.send(bot, text, false, threadId); } catch (error) {
+    throw new Error(`${error instanceof Error ? error.message : String(error)} {${await threadErrors(ctx, threadId)}; tr=${turnSettlement(ctx, threadId).turns}/${turnSettlement(ctx, threadId).working}}`);
+  }
+  await stalled(ctx, label, async () => {
     const now = turnSettlement(ctx, threadId);
-    return now.turns > before && now.working === 0 ? true : undefined;
+    if (!(now.turns > before && now.working === 0)) return undefined;
+    // A settled row is proof of dispatch only when the turn ran: a setup that failed or a stop before dispatch also settles
+    // the thread, and then no procedure pin was written. Name that outcome here instead of waiting on a pin that cannot come.
+    const refused = all(ctx, "SELECT outcome FROM memory_sources WHERE kind='turn' AND thread_id=? AND outcome IN ('setup-failed','cancelled','interrupted')", threadId);
+    if (refused.length) throw new Error(`task-turn-not-dispatched:${refused.map(row => code(row.outcome)).join(",")} {${await threadErrors(ctx, threadId)}}`);
+    return true;
   }, 30_000, async () => `tb=${before} ${await detail()}`);
+  lastDumpThread.set(threadId, JSON.stringify(dump).includes(threadId));
   return dump;
 }
 
@@ -241,10 +259,14 @@ function bundleAt(dataDir: string, botId: string, threadId: string, bundleId: st
 }
 const skillEntry = (bundle: Bundle | undefined, name: string) => Array.isArray(bundle?.imported) ? bundle.imported.find(item => item?.name === name) : undefined;
 async function waitPin(ctx: B34AdapterContext, botId: string, threadId: string, label: string, detail: () => Promise<string>): Promise<PinRef> {
-  return stalled(ctx, label, async () => pinOf(await get(ctx, BOTS_PATH, "bots"), botId, threadId), 15_000, detail);
+  const turnRows = () => (ctx.db().prepare("SELECT outcome,id FROM memory_sources WHERE kind='turn' AND thread_id=?").all(threadId) as Json[]).map(row => `${code(row.outcome)}:${String(row.id).slice(-8)}`).join(",");
+  return stalled(ctx, label, async () => pinOf(await get(ctx, PINS_PATH, "bots"), botId, threadId), 15_000, async () => {
+    const task = (await get(ctx, PINS_PATH, "bots")).bots?.find((bot: Json) => bot?.id === botId)?.tasks?.find((item: Json) => item?.threadId === threadId);
+    return `dumpIsThisThread=${lastDumpThread.get(threadId)} tr=${turnRows()} task=${task ? `${code(task.busy)}/${code(task.activity)}/pin${flag(task.procedurePin)}` : "none"} ${await detail()}`;
+  });
 }
 async function pinnedBundle(ctx: B34AdapterContext, botId: string, threadId: string): Promise<{ pin?: PinRef; bundle?: Bundle }> {
-  const pin = pinOf(await get(ctx, BOTS_PATH, "bots"), botId, threadId);
+  const pin = pinOf(await get(ctx, PINS_PATH, "bots"), botId, threadId);
   return { pin, bundle: bundleAt(ctx.dataDir, botId, threadId, pin?.bundleId) };
 }
 
@@ -334,8 +356,8 @@ async function runQ14(ctx: B34AdapterContext): Promise<AdapterArtifactsFor<"Q14"
   const configured = await named(ctx, "q14-owner-learning-configured-before-reviews", "POST", "/api/memory/action",
     { action: "configure", mode: "capture", learning: LEARNING, learningRevision: r0 }, body => ({
       ok: body?.mode === "capture" && body?.configuration?.extractorInstanceId == null && body?.learning?.revision === r0 + 1
-        && Object.entries(LEARNING).every(([key, value]) => body?.learning?.settings?.[key] === value),
-      note: `mode ${code(body?.mode)}; learning revision ${code(Number(body?.learning?.revision) - r0)} after; limits ${flag(Object.entries(LEARNING).every(([key, value]) => body?.learning?.settings?.[key] === value))}`,
+        && Object.entries(LEARNING).every(([key, value]) => JSON.stringify(body?.learning?.settings?.[key]) === JSON.stringify(value)),
+      note: `mode ${code(body?.mode)}; learning revision ${code(Number(body?.learning?.revision) - r0)} after; limits ${flag(Object.entries(LEARNING).every(([key, value]) => JSON.stringify(body?.learning?.settings?.[key]) === JSON.stringify(value)))}`,
     }));
   const L1 = Number(configured.learning.revision);
   const botA = await createBot(ctx, "Q14 Skill Owner", model), botB = await createBot(ctx, "Q14 Routine Owner", model);
@@ -704,7 +726,7 @@ async function runQ14(ctx: B34AdapterContext): Promise<AdapterArtifactsFor<"Q14"
   // ── Phase E: final readbacks (nothing mutates after this point) ────────
   phase("E");
   const skillPath = `/api/bots/${botA.id}/skills/${skillName}/history?threadId=${TN}`;
-  const routinesBody = await get(ctx, ROUTINES_PATH, "routines"), botsBody = await get(ctx, BOTS_PATH, "bots"), histBody = await get(ctx, skillPath, "skill-history-next-task");
+  const routinesBody = await get(ctx, ROUTINES_PATH, "routines"), botsBody = await get(ctx, PINS_PATH, "bots"), histBody = await get(ctx, skillPath, "skill-history-next-task");
   const ledgerDays = subjectRows(ctx, "extract-budget").map(row => ({ day: row.id.slice("extract-budget:".length), output: num(row.intent?.output) })).filter(item => item.output > 0);
   // The product keys the ledger by UTC day (extract.ts:75); a split day is an environment outcome, never forced.
   if (ledgerDays.length !== 1 || ledgerDays[0]!.output !== TOTAL_OUTPUT) gate(ctx, "q14-final-readbacks-asserted", false, ledgerDays.length > 1 ? `utc-day-split:${ledgerDays.length} ledger days` : `ledger output ${ledgerDays[0]?.output ?? 0}`);
@@ -741,9 +763,9 @@ async function runQ14(ctx: B34AdapterContext): Promise<AdapterArtifactsFor<"Q14"
       apiRead("current-revision", skillPath, "/currentRevision", String(pointed(histBody, "/currentRevision"))),
       apiRead("published-revision-in-history", skillPath, `/revisions/${N}/revision`, String(pointed(histBody, `/revisions/${N}/revision`))),
       apiRead("rollback-history-entry", skillPath, "/current/rollbackOf", String(pointed(histBody, "/current/rollbackOf"))),
-      apiRead("earlier-task-pin", BOTS_PATH, pinPointer(pinTE!), pinTE!.bundleId),
-      apiRead("next-task-pin", BOTS_PATH, pinPointer(pinTN!), pinTN!.bundleId),
-      apiRead("post-rollback-task-pin", BOTS_PATH, pinPointer(pinTR!), pinTR!.bundleId),
+      apiRead("earlier-task-pin", PINS_PATH, pinPointer(pinTE!), pinTE!.bundleId),
+      apiRead("next-task-pin", PINS_PATH, pinPointer(pinTN!), pinTN!.bundleId),
+      apiRead("post-rollback-task-pin", PINS_PATH, pinPointer(pinTR!), pinTR!.bundleId),
       ledgerRead(day, leaseCharge),
     ],
   };
@@ -766,13 +788,13 @@ async function runQ14(ctx: B34AdapterContext): Promise<AdapterArtifactsFor<"Q14"
       // latest run's pin; each run keeps the bundle it pinned.
       apiRead("earlier-task-pin", ROUTINES_PATH, runPinPointer(run1.id), String(pointed(routinesBody, runPinPointer(run1.id)))),
       apiRead("next-task-pin", ROUTINES_PATH, runPinPointer(run2.id), String(pointed(routinesBody, runPinPointer(run2.id)))),
-      apiRead("post-rollback-task-pin", BOTS_PATH, pinPointer(pinR3!), pinR3!.bundleId),
+      apiRead("post-rollback-task-pin", PINS_PATH, pinPointer(pinR3!), pinR3!.bundleId),
       ledgerRead(day, leaseCharge),
     ],
   };
 
   // E3. Every readback is re-read from fresh product bodies and bundle files and compared with values established earlier in the journey.
-  const bodies: Record<string, Json> = { [skillPath]: await get(ctx, skillPath, "skill-history-next-task"), [BOTS_PATH]: await get(ctx, BOTS_PATH, "bots"), [ROUTINES_PATH]: await get(ctx, ROUTINES_PATH, "routines") };
+  const bodies: Record<string, Json> = { [skillPath]: await get(ctx, skillPath, "skill-history-next-task"), [PINS_PATH]: await get(ctx, PINS_PATH, "bots"), [ROUTINES_PATH]: await get(ctx, ROUTINES_PATH, "routines") };
   const [sCurrent, sPublished, sRollback, sEarlier, sNext, sPost, sLedger] = skillVariant.readback as [Q14Readback, Q14Readback, Q14Readback, Q14Readback, Q14Readback, Q14Readback, Q14Readback];
   const [rCurrent, rPublished, rRollback, rEarlier, rNext, rPost, rLedger] = routineVariant.readback as [Q14Readback, Q14Readback, Q14Readback, Q14Readback, Q14Readback, Q14Readback, Q14Readback];
   const skillClaims: Claim[] = [

@@ -1,4 +1,4 @@
-import {test,expect,type Page,type TestInfo} from "@playwright/test";
+import {test,expect,type Page,type TestInfo} from "./page-error-guard";
 import {createServer,type ViteDevServer} from "vite";
 import react from "@vitejs/plugin-react";
 import tailwindcss from "@tailwindcss/vite";
@@ -33,10 +33,11 @@ async function inspect(page:Page,info:TestInfo,surface:string,width:number){
 }
 test("BackupSettings exposes truthful states and only zero-argument host actions",async({page},info)=>{
  await page.addInitScript(()=>{const w=window as any;w.calls=[];w.outcome="cancel";w.muragebox={backup:{status:async(...args:unknown[])=>{w.calls.push({action:"status",args});return{supported:new URLSearchParams(location.search).get("supported")!=="false",pending:false};},restart:async(...args:unknown[])=>{w.calls.push({action:"restart",args});if(w.outcome==="busy")throw Error("BACKUP_WORK_ACTIVE");if(w.outcome==="error")throw Error("PRIVATE_BACKUP_CANARY");if(w.outcome==="hold")return new Promise(resolve=>{w.finish=()=>resolve({restarting:false});});return{restarting:false};}}};});
- // Backup mode now lives in the Backups section's Restore card, opened from "Restore…".
- // Opened by keyboard so the focus-ring audit below keeps keyboard modality.
- const openRestore=async()=>{await page.getByRole("button",{name:"Restore…",exact:true}).focus();await page.keyboard.press("Enter");await expect(page.getByRole("button",{name:"Restore",exact:true})).toHaveAttribute("aria-expanded","true");};
- await page.goto(origin+"/__backup");await openRestore();const restart=page.getByRole("button",{name:"Restart into Backup mode",exact:true});await expect(restart).toBeEnabled();
+ // Backup mode is the Restore card's "Restore from an existing backup" button; the card is always open
+ // (no "Restore…" disclosure any more). Reached by keyboard so the focus-ring audit below keeps keyboard modality.
+ const restoreButtonName="Restore from an existing backup";
+ const openRestore=async()=>{await page.getByRole("heading",{name:"Restore",exact:true}).waitFor();await page.getByRole("button",{name:restoreButtonName,exact:true}).focus();};
+ await page.goto(origin+"/__backup");await openRestore();const restart=page.getByRole("button",{name:restoreButtonName,exact:true});await expect(restart).toBeEnabled();
  for(const width of [390,820,1440])await inspect(page,info,"settings",width);
  await restart.focus();await page.keyboard.press("Enter");await expect(restart).toBeEnabled();
  await page.evaluate(()=>{(window as any).outcome="busy";});await restart.click();await expect(page.getByRole("alert")).toContainText("Work is still active");

@@ -1,9 +1,10 @@
-import { mkdtempSync,rmSync } from "node:fs";
+import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { expect,it } from "vitest";
-import { MemoryIndex } from "./index.ts";
+import { MemoryIndex, walBytes } from "./index.ts";
+import { removeTempDirSync } from "../testing/cleanup.ts";
 
 it("replaces and deletes exact FTS keys without retaining stale text",()=>{
   const root=mkdtempSync(join(tmpdir(),"memory-index-keys-")),index=new MemoryIndex(join(root,"index.db"));
@@ -17,7 +18,7 @@ it("replaces and deletes exact FTS keys without retaining stale text",()=>{
     index.upsert([{...row,deleted:true}]);
     expect(index.search("replacementneedle",allowed,null,"unused").hits).toEqual([]);
     expect(index.search("preservedneedle",allowed,null,"unused").hits.map(h=>h.id)).toEqual(["other"]);
-  }finally{index.close();rmSync(root,{recursive:true,force:true});}
+  }finally{index.close();removeTempDirSync(root);}
 });
 it("backfills legacy FTS rowids independently of ordinary entry rowids",()=>{
   const root=mkdtempSync(join(tmpdir(),"memory-index-legacy-")),path=join(root,"index.db"),db=new DatabaseSync(path);
@@ -29,7 +30,7 @@ it("backfills legacy FTS rowids independently of ordinary entry rowids",()=>{
     index.upsert([{id:"legacy",version:1,scopeId:"scope",text:"newneedle",deleted:false}]);
     expect(index.search("oldneedle",[{id:"legacy",version:1}],null,"unused").hits).toEqual([]);
     expect(index.search("newneedle",[{id:"legacy",version:1}],null,"unused").hits.map(h=>h.id)).toEqual(["legacy"]);
-  }finally{index.close();rmSync(root,{recursive:true,force:true});}
+  }finally{index.close();removeTempDirSync(root);}
 });
 
 
@@ -44,7 +45,7 @@ it("bounds resident vectors by the authorized set despite unrelated retained vec
     expect(second.vectorRows).toBe(1);expect(second.hits.map(row=>row.id)).toEqual(["record-12000"]);
     // A genuinely over-limit authorized set still fails closed at the same cap.
     expect(()=>index.search("semantic",Array.from({length:12001},(_,i)=>({id:`record-${i}`,version:1})),[1,0],"model")).toThrow("MEMORY_SEMANTIC_CAPACITY");
-  }finally{db.close();index.close();rmSync(root,{recursive:true,force:true});}
+  }finally{db.close();index.close();removeTempDirSync(root);}
 });
 
 
@@ -58,14 +59,18 @@ it("does not cache authority from a mutable allowed-set argument",()=>{
     expect(index.search("sharedneedle",allowed,null,"none").hits.map(r=>r.id)).toEqual(["second"]);
     Object.freeze(allowed[0]);Object.freeze(allowed);
     expect(index.search("sharedneedle",allowed,null,"none").hits.map(r=>r.id)).toEqual(["second"]);
-  }finally{index.close();rmSync(root,{recursive:true,force:true});}
+  }finally{index.close();removeTempDirSync(root);}
 });
+
+/** The stepped maintenance the helper runs while idle (worker.ts purgeRolledCheckpoints), to the end of its pass. */
+const runMaintenance=(index:MemoryIndex)=>{for(let step=0;step<5000;step++)if(index.purgeRolledCheckpoints({maxExamined:40,maxMs:50,mergePages:8,mergeFraction:0}).done)return;throw new Error("maintenance did not finish");};
 
 // 0.1.60 low (Windows RE-TEST 4 L6): after a forget, the raw memory-index.db
 // still held copies of the deleted words. The content row was zeroed by
 // secure_delete, but FTS5 keeps a deleted document's terms in its index
-// segments until they are merged. The file must not contain them.
-it("leaves no copy of a deleted memory's words anywhere in the file",async()=>{
+// segments until they are merged. The file must not contain them once the
+// owed merge has run (1.0.3: the merge is the stepped maintenance's, below).
+it("leaves no copy of a deleted memory's words anywhere in the file once the owed merge has run",async()=>{
   const {readFileSync,existsSync}=await import("node:fs");
   const root=mkdtempSync(join(tmpdir(),"memory-index-scrub-")),path=join(root,"index.db");
   let index=new MemoryIndex(path);
@@ -75,11 +80,54 @@ it("leaves no copy of a deleted memory's words anywhere in the file",async()=>{
     // Several writes so the index has more than one segment to merge.
     for(let i=0;i<5;i++)index.upsert([{id:`filler-${i}`,version:1,scopeId:"scope",text:`filler text ${i}`,deleted:false}]);
     index.upsert([{...secret,deleted:true}]);
+    // The deletion owes a merge; the debt is written in the file, so a restart still owes it.
+    expect(index.maintenanceOwed()).toBe(true);
+    index.close();index=new MemoryIndex(path);
+    expect(index.maintenanceOwed()).toBe(true);
+    runMaintenance(index);
+    expect(index.maintenanceOwed()).toBe(false);
+    expect(index.checkpointNow()).toBe(true);
     index.close();
     const raw=()=>[path,`${path}-wal`].filter(existsSync).map(file=>readFileSync(file).toString("latin1")).join("");
     expect(raw()).not.toContain("zanzibarquokka");
     expect(raw()).toContain("keptwords");
     index=new MemoryIndex(path);
     expect(index.search("keptwords",[{id:"kept",version:1}],null,"unused").hits.map(h=>h.id)).toEqual(["kept"]);
-  }finally{index.close();rmSync(root,{recursive:true,force:true});}
+  }finally{index.close();removeTempDirSync(root);}
 });
+
+// 1.0.3 rehearsal 2 (REHEARSAL-2.md, memory worker write storm): every batch holding a forget merged the whole word index
+// ('optimize') and truncated the log, about 47 MB of writes per 16 deletions on the owner's index, 240 MB/min for as long as a
+// drain queued deletions. A forget now writes its own deletion and owes the merge to the stepped maintenance, which pays it in
+// bounded steps while the helper is idle, so the cost of forgetting one memory no longer grows with the size of the index.
+it("a batch with a forget writes its deletions only: the whole-index merge is owed to the stepped maintenance",()=>{
+  const root=mkdtempSync(join(tmpdir(),"memory-index-forget-cost-")),path=join(root,"index.db"),index=new MemoryIndex(path);
+  try{
+    const entry=(n:number)=>({id:`m-${n}`,version:1,scopeId:"scope",text:Array.from({length:40},(_,w)=>`word${(n*7+w*13)%997} term${n}x${w}`).join(" "),deleted:false});
+    for(let at=0;at<3000;at+=100)index.upsert(Array.from({length:100},(_,i)=>entry(at+i)));
+    const raw=(index as unknown as {db:{exec(sql:string):void;prepare(sql:string):{get():Record<string,unknown>|undefined}}}).db,exec=raw.exec.bind(raw);
+    // compact first, as the owner's index is after its last merge, so the forget is measured against a merged index
+    exec("INSERT INTO lexical(lexical) VALUES('optimize')");exec("PRAGMA wal_checkpoint(TRUNCATE)");
+    const lexicalBytes=Number(raw.prepare("SELECT sum(length(block)) AS n FROM lexical_data").get()!.n);
+    expect(lexicalBytes).toBeGreaterThan(1024*1024);
+    const statements:string[]=[];
+    raw.exec=(sql:string)=>{statements.push(sql);exec(sql);};
+    const before=walBytes(path);
+    index.upsert(Array.from({length:16},(_,i)=>({...entry(i),deleted:true})));
+    raw.exec=exec;
+    const forgetBytes=walBytes(path)-before;
+    // no whole-index merge and no log truncation in the batch; the writes are the deletions' own
+    expect(statements.filter(sql=>sql.includes("'optimize'")||sql.includes("wal_checkpoint"))).toEqual([]);
+    expect(index.maintenanceOwed()).toBe(true);
+    for(let i=0;i<16;i++)expect(index.search(`term${i}x3`,[{id:`m-${i}`,version:1}],null,"unused").hits).toEqual([]);
+    // what the whole-index merge the earlier build ran per batch costs on this index (the log then also copied into the file)
+    const merged=walBytes(path);exec("INSERT INTO lexical(lexical) VALUES('optimize')");
+    const optimizeBytes=walBytes(path)-merged;
+    expect(optimizeBytes).toBeGreaterThan(lexicalBytes/2);
+    expect(forgetBytes).toBeLessThan(optimizeBytes/2);
+    // the maintenance pays the debt in steps, and the forgotten words then leave the word index
+    runMaintenance(index);
+    expect(index.maintenanceOwed()).toBe(false);
+    expect(index.search("term20x3",[{id:"m-20",version:1}],null,"unused").hits.map(h=>h.id)).toEqual(["m-20"]);
+  }finally{index.close();removeTempDirSync(root);}
+},60_000);

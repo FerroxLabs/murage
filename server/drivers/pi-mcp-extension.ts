@@ -23,6 +23,11 @@ interface McpServerDef {
    * owner's own servers: every tool on such a server is gated behind a
    * permission card before it executes. */
   scope?: string;
+  /** Rule 14b: the Rule 54 mountId the driver stamped for this server. */
+  murageMountId?: string;
+  /** The permission gate is loaded for this turn and asks for every call, so
+   * the tool does not raise a second, unproven confirm of its own. */
+  murageGated?: boolean;
 }
 
 interface McpConfig {
@@ -573,6 +578,21 @@ function summarizeParams(params: unknown): string {
   }
 }
 
+/** Rule 14b: the process-global table the permission gate reads, keyed by the
+ * exact allocated piName. The gate trusts a mounted tool only by an entry
+ * here, so a failed write blocks the tool the same way (it registers
+ * nothing). */
+export const MCP_TABLE_KEY = "__murageMcpTools";
+interface McpTableEntry { piName: string; mount: string; mcpTool: string; mountId?: string }
+function mcpTable(): Map<string, McpTableEntry> {
+  const holder = globalThis as Record<string, unknown>;
+  const existing = holder[MCP_TABLE_KEY];
+  if (existing instanceof Map) return existing as Map<string, McpTableEntry>;
+  const created = new Map<string, McpTableEntry>();
+  holder[MCP_TABLE_KEY] = created;
+  return created;
+}
+
 export default async function (pi: PiExtensionApi): Promise<void> {
   const configPath = process.env.MURAGE_MCP_CONFIG;
   if (!configPath) return;
@@ -611,7 +631,7 @@ export default async function (pi: PiExtensionApi): Promise<void> {
   for (const mount of mounts) {
     if (!mount.client || !mount.def || !mount.tools) continue;
     const { serverName, def, client, tools } = mount;
-    const gated = def.scope === "local-computer" || def.scope === "custom";
+    const gated = (def.scope === "local-computer" || def.scope === "custom") && def.murageGated !== true;
     let registered = 0;
     // Every tool this mount has put in front of Pi, by the server's tool name:
     // the Pi name it holds and a signature of what it was registered with. A
@@ -671,6 +691,8 @@ export default async function (pi: PiExtensionApi): Promise<void> {
         if (known && !known.retired && known.signature === signature) continue;
         const piName = known ? known.piName : allocateToolName(serverName, toolName, used);
         try {
+          // Table first: a tool whose entry cannot be written is not registered.
+          mcpTable().set(piName, { piName, mount: serverName, mcpTool: toolName, ...(typeof def.murageMountId === "string" ? { mountId: def.murageMountId } : {}) });
           pi.registerTool(defineTool(piName, tool));
           used.add(piName);
           mounted.set(toolName, { piName, signature, retired: false });
@@ -679,6 +701,7 @@ export default async function (pi: PiExtensionApi): Promise<void> {
         } catch (err) {
           // One malformed tool must not dispose the client behind tools that
           // were already registered from the same server.
+          if (!known) mcpTable().delete(piName);
           const message = err instanceof Error ? err.message : String(err);
           process.stderr.write(`[murage-pi-mcp] ${serverName}:${toolName}: ${message}\n`);
         }
@@ -687,6 +710,7 @@ export default async function (pi: PiExtensionApi): Promise<void> {
       for (const [toolName, known] of mounted) {
         if (present.has(toolName) || known.retired) continue;
         known.retired = true;
+        mcpTable().delete(known.piName);
         // Out of the active set where Pi allows it; and whatever Pi does, the
         // registered tool now refuses with a plain message (the server enforces
         // access on every call regardless).

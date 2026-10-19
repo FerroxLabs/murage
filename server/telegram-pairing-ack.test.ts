@@ -1,12 +1,13 @@
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, expect, it, vi } from "vitest";
 import { TelegramChannel } from "./telegram-channel.ts";
 import { TelegramTransport, TelegramTransportError } from "./telegram-transport.ts";
+import { removeTempDirSync } from "./testing/cleanup.ts";
 
 const roots: string[] = [];
-afterEach(() => { for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true }); });
+afterEach(() => { for (const root of roots.splice(0)) removeTempDirSync(root); });
 const confirmation = "Telegram is paired with Murage. Before chatting, link this channel account in Murage Settings → Memory. Then send your message again.";
 function fixture() {
   const root = mkdtempSync(join(tmpdir(), "telegram-pairing-ack-")); roots.push(root);

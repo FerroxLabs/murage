@@ -1,10 +1,11 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import { describe, expect, it } from "vitest";
-import { chmodSync, mkdirSync, mkdtempSync, realpathSync, rmSync, statSync } from "node:fs";
+import { chmodSync, mkdirSync, mkdtempSync, realpathSync, statSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createHash } from "node:crypto";
 import { browserExtensionRuntimeDir } from "./browser-extension-paths.ts";
+import { removeTempDirSync } from "./testing/cleanup.ts";
 describe("Fable L4 and L5: registration and socket files live in the data folder", () => {
   it("uses the data folder on Mac and Linux when the socket path fits", () => {
     expect(browserExtensionRuntimeDir({ dataDir: "/home/ann/.murage", platform: "linux", env: {} })).toBe("/home/ann/.murage/bx-run");
@@ -39,7 +40,7 @@ describe.skipIf(process.platform === "win32")("L5: the fallback folder is the us
   // A short real folder: on macOS tmpdir() alone is about 48 bytes, so a fixture folder inside it leaves no room for a
   // runtime folder name and a socket name under the 104-byte limit (unlike the user's own TMPDIR, which is the base itself).
   const root = () => { const dir = realpathSync(mkdtempSync(join(process.platform === "win32" ? tmpdir() : "/tmp", "mbe-l5-"))); roots.push(dir); return dir; };
-  const cleanup = () => { for (const dir of roots.splice(0)) rmSync(dir, { recursive: true, force: true }); };
+  const cleanup = () => { for (const dir of roots.splice(0)) removeTempDirSync(dir); };
   it("on macOS uses the per-user TMPDIR, not /tmp", () => {
     const tmp = root();
     try { expect(browserExtensionRuntimeDir({ dataDir: deep, platform: "darwin", env: { TMPDIR: tmp }, uid })).toBe(join(tmp, `murage-mbe-${hash}-${uid}`)); } finally { cleanup(); }

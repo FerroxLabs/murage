@@ -4,7 +4,7 @@
 // Design 5.1 / 5.4: a group runs on its own guest principal. At the memory policy level the turn reaches the group's
 // conversation scope only: nothing of the owner's (bot, team, preferences, shares) and nothing of any participant,
 // even a participant the owner linked to a person for DMs.
-import { mkdirSync, rmSync } from "node:fs";
+import { mkdirSync } from "node:fs";
 import { beforeEach, expect, it } from "vitest";
 import { DATA_DIR } from "../../config.ts";
 import { closeDatabase } from "../../database.ts";
@@ -16,12 +16,13 @@ import { threadCaptureScope } from "../../memory/capture-scope.ts";
 import { WORKSPACE_OWNER, humanBindingStatus, humanTask, linkHumanBinding, observeVerifiedHuman, resolveHumanBinding, shareHumanScope, threadHumanPrincipal, type HumanPrincipal } from "../../human-principals.ts";
 import { ensureGroupGuest, whatsappOrigin } from "./people.ts";
 import type { WhatsAppBinding } from "./event.ts";
+import { removeTempDirSync } from "../../testing/cleanup.ts";
 
 const GROUP = "120363000000000000@g.us", OTHER_GROUP = "120363111111111111@g.us";
 const BOB = "15557654321@s.whatsapp.net";
 const binding: WhatsAppBinding = { connectionId: "conn", linkedPn: "15550001111@s.whatsapp.net", chiefBotId: "chief" } as WhatsAppBinding;
 
-beforeEach(() => { closeDatabase(); rmSync(DATA_DIR, { recursive: true, force: true }); mkdirSync(DATA_DIR, { recursive: true }); });
+beforeEach(() => { closeDatabase(); removeTempDirSync(DATA_DIR); mkdirSync(DATA_DIR, { recursive: true }); });
 const fresh = () => new Store(() => ({ instanceId: "fixture", model: "fixture" }));
 function groupPrincipal(jid = GROUP): HumanPrincipal { return resolveHumanBinding(ensureGroupGuest(binding, jid, "Team")); }
 function access(store: Store, botId: string, threadId: string, notOwnerAudience: boolean) {

@@ -10,7 +10,7 @@
 //  5  Astra P2-4   a fault on the request's terminal write in the normal finalizer leaves the row and the request as they were; the next pass settles both
 //  6  Fable P2     a receipt whose settling keeps failing does not keep the boot settling spinning
 //  7  Astra P2-6   a plain-key hand-back is still recognised after 100 later completions push its receipt out
-import { mkdirSync, rmSync } from "node:fs";
+import { mkdirSync } from "node:fs";
 import { PerformanceObserver, performance } from "node:perf_hooks";
 import type { DatabaseSync } from "node:sqlite";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
@@ -26,11 +26,12 @@ import { recordLeadWake } from "./project-turn-engine.ts";
 import { completeRequest, insertRoomRequest, roomRequest } from "./room-requests.ts";
 import { _lastDrainDecisions, _resetDrainDiagnostics, _totalDrainDecisions, drainSharedWork } from "./shared-work.ts";
 import { LINEAGE, ownerWorld, sharedWorld, type OwnerWorld, type SharedWorld } from "./testing/handoff-worlds.ts";
+import { removeTempDirSync } from "./testing/cleanup.ts";
 
 const tick = () => new Promise<void>((resolve) => setImmediate(resolve));
 const ticks = async (n: number) => { for (let i = 0; i < n; i++) await tick(); };
 const rowOf = (id: string) => database().prepare("SELECT phase, started_at FROM pending_delegations WHERE id=?").get(id) as { phase: string; started_at: number | null } | undefined;
-const fresh = () => { closeDatabase(); rmSync(DATA_DIR, { recursive: true, force: true }); mkdirSync(DATA_DIR, { recursive: true }); _resetPending(); _resetOwnerMigration(); _resetDrainDiagnostics(); };
+const fresh = () => { closeDatabase(); removeTempDirSync(DATA_DIR); mkdirSync(DATA_DIR, { recursive: true }); _resetPending(); _resetOwnerMigration(); _resetDrainDiagnostics(); };
 
 beforeEach(fresh);
 afterEach(() => { onDelegationReceipt(undefined); _resetOwnerMigration(); _resetPending(); closeDatabase(); });
@@ -68,7 +69,7 @@ describe("1. per-team FIFO: only a team's head is ever started", () => {
 
 // ── 2 ─────────────────────────────────────────────────────────────────────────────────
 describe("2. no starvation under sustained arrivals", () => {
-  it("five never-dispatched waiting teams are cancelled and refilled before every pass for 21 passes: the sixth team's older runnable request still starts", async () => {
+  it("five never-dispatched waiting teams are cancelled and refilled before every pass for 21 passes: the sixth team's older runnable request still starts", { tags: ["nightly"], timeout: 120_000 }, async () => {
     const w = sharedWorld();
     const s = senders(w, 6);
     // the sixth team started work before (the old order put the team that last started at the back)
@@ -100,7 +101,7 @@ describe("2. no starvation under sustained arrivals", () => {
     expect(w.turns.map((turn) => turn.id)).toContain("t6-run");
     expect(w.turns.filter((turn) => turn.id.startsWith("w"))).toEqual([]);
     expect(_totalDrainDecisions()).toBeLessThanOrEqual(6 + 21 * 6);                  // one decision per team per event, never the 2,100 rows
-  }, 120_000);
+  });
 });
 
 // ── 3 ─────────────────────────────────────────────────────────────────────────────────

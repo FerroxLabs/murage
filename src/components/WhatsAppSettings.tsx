@@ -3,6 +3,7 @@ import { useEffect, useRef, useState } from "react";
 import { QRCodeSVG } from "qrcode.react";
 import { t } from "@/lib/i18n";
 import { api } from "@/state/store";
+import { InAdvanced } from "./SettingsPrimitives";
 
 export type WhatsAppLinkState = "idle" | "linking" | "restarting" | "connected" | "retry" | "logged-out" | "conflict" | "blocked";
 export interface WhatsAppGroupEntry { jid: string; name?: string; activation: "mention" | "always" }
@@ -244,6 +245,7 @@ export function WhatsAppSettings() {
       <p className="text-[12px] text-ink-secondary">{t("whatsapp.mode.help")}</p>
 
       {settings.mode === "contacts" && <>
+        <InAdvanced><div id="whatsapp-allow-heading" tabIndex={-1} className="rounded-xl bg-card p-4">
         <h4 className="mt-5 text-[13px] font-medium text-ink">{t("whatsapp.allow.title")}</h4>
         {settings.allowFrom.length === 0 ? <p className="mt-1 text-[12px] text-ink-secondary">{t("whatsapp.allow.empty")}</p> :
           <ul className="mt-1 space-y-1">{settings.allowFrom.map(n => <li key={n} className="flex items-center justify-between gap-2 text-[12px] text-ink">
@@ -254,6 +256,7 @@ export function WhatsAppSettings() {
         {allowError && <p role="alert" className="mt-1 text-[12px] text-warning">{t("whatsapp.allow.invalid")}</p>}
         <button type="button" className={`${buttonClass} mt-2`} disabled={off || !allowInput.trim() || settings.allowFrom.length >= 200} onClick={addAllow}>{t("whatsapp.allow.add")}</button>
         {settings.allowFrom.length >= 200 && <p className="mt-1 text-[12px] text-warning">{t("whatsapp.allow.full")}</p>}
+        </div></InAdvanced>
 
         <h4 className="mt-5 text-[13px] font-medium text-ink">{t("whatsapp.pairing.title")}</h4>
         {status.pairing.length === 0 ? <p className="mt-1 text-[12px] text-ink-secondary">{t("whatsapp.pairing.none")}</p> : <>
@@ -278,6 +281,7 @@ export function WhatsAppSettings() {
             </div></li>)}</ul></>}
       </>}
 
+      <InAdvanced><div id="whatsapp-groups-heading" tabIndex={-1} className="rounded-xl bg-card p-4">
       <h4 className="mt-5 text-[13px] font-medium text-ink">{t("whatsapp.groups.title")}</h4>
       <p className="mt-1 text-[12px] text-ink-secondary">{t("whatsapp.groups.help")}</p>
       <label className={checkClass}><input type="checkbox" checked={settings.groups.policy === "allowlist"} disabled={off}
@@ -299,6 +303,7 @@ export function WhatsAppSettings() {
         </li>)}</ul>
         {settings.groups.allow.length >= 50 && <p className="mt-1 text-[12px] text-warning">{t("whatsapp.groups.full")}</p>}
       </>}
+      </div></InAdvanced>
 
       <h4 className="mt-5 text-[13px] font-medium text-ink">{t("whatsapp.options.title")}</h4>
       <label className={checkClass}><input type="checkbox" checked={settings.readReceipts} disabled={off} onChange={e => void saveSettings({ readReceipts: e.target.checked })} />{t("whatsapp.options.receipts")}</label>
