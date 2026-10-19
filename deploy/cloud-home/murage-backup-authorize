@@ -1,0 +1,32 @@
+#!/bin/sh
+# SPDX-License-Identifier: AGPL-3.0-or-later
+# First boot only: install this home's public key on its Storage Box sub-account using the one-time password
+# from /etc/murage-home/backup.bootstrap, then destroy the bootstrap file. Inert when the file is absent.
+set -u
+B=/etc/murage-home/backup.bootstrap
+[ -f "$B" ] || exit 0
+umask 077
+# /var/tmp, not /run: /run is mounted noexec here and ssh must exec the askpass helper (found on the first staging home).
+T=$(mktemp -d /var/tmp/murage-authorize.XXXXXX) || exit 1
+trap 'rm -rf "$T"' EXIT
+python3 -I - "$B" "$T" <<'PY' || exit 1
+import json, sys, os
+c = json.load(open(sys.argv[1])); t = sys.argv[2]
+open(t + "/pw", "w").write(c["password"])
+open(t + "/pub", "w").write(c["publicKey"])
+open(t + "/dest", "w").write(c["user"] + "@" + c["host"])
+os.chmod(t + "/pw", 0o600)
+PY
+printf '#!/bin/sh\ncat %s/pw\n' "$T" > "$T/askpass"; chmod 700 "$T/askpass"
+i=0
+while [ "$i" -lt 30 ]; do
+  if SSH_ASKPASS="$T/askpass" SSH_ASKPASS_REQUIRE=force DISPLAY=none setsid -w \
+     ssh -p 23 -o BatchMode=no -o NumberOfPasswordPrompts=1 -o PubkeyAuthentication=no \
+         -o StrictHostKeyChecking=yes -o UserKnownHostsFile=/etc/murage-home/backup.known_hosts \
+         "$(cat "$T/dest")" install-ssh-key < "$T/pub" >/dev/null 2>&1; then
+    shred -u "$B" 2>/dev/null || rm -f "$B"
+    exit 0
+  fi
+  i=$((i + 1)); sleep 10
+done
+exit 1

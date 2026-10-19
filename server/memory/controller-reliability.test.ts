@@ -4,7 +4,7 @@
 // PROPOSAL-v2 10.4 and 10.1 item 7, with the real MemoryWorkerController and a stand-in child:
 // errors clear per subsystem at the end of the next clean unit, a held write lock is neither an error nor an
 // attempt, quitting spends no attempt, and a turn between its slot and its send keeps the worker off the main thread.
-import { mkdirSync, rmSync } from "node:fs";
+import { mkdirSync } from "node:fs";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
@@ -18,6 +18,7 @@ import { MemoryWorkerController, TURN_HOLD_MAX_MS } from "./worker-controller.ts
 import { resetWorkerLog } from "./worker-log.ts";
 import { resetMemoryClaimCursor } from "./jobs.ts";
 import type { MemoryWork } from "./worker-protocol.ts";
+import { removeTempDirSync } from "../testing/cleanup.ts";
 
 const state = vi.hoisted(() => ({ claimThrows: null as Error | null, claims: 0 }));
 vi.mock("./jobs.ts", async importOriginal => {
@@ -34,7 +35,7 @@ type Internals = { child: unknown; ready: boolean; work: MemoryWork | null; inde
 let controller: MemoryWorkerController, internals: Internals, sent: Array<Record<string, any>>, lines: string[], other: DatabaseSync | null;
 
 beforeEach(() => {
-  closeDatabase(); rmSync(DATA_DIR, { recursive: true, force: true }); mkdirSync(DATA_DIR, { recursive: true }); setMemoryMode("capture"); resetParkSweep(); resetMemoryClaimCursor();
+  closeDatabase(); removeTempDirSync(DATA_DIR); mkdirSync(DATA_DIR, { recursive: true }); setMemoryMode("capture"); resetParkSweep(); resetMemoryClaimCursor();
   state.claimThrows = null; state.claims = 0; sent = []; lines = []; other = null; resetWorkerLog(); resetObserveWindows(); setObserveSink(line => lines.push(line));
   vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout", "setInterval", "clearInterval", "setImmediate", "clearImmediate", "Date"] });
   // the controller's pacing and the turn hold count on the monotonic clock: it follows the fake clock here

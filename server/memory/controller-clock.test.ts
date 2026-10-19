@@ -2,7 +2,7 @@
 // clock (performance.now), so setting the wall clock back cannot hold work off
 // beyond the pause a cycle earned (1 s at most). Persisted lease timestamps keep
 // wall-clock time and are not touched by this.
-import { mkdirSync, rmSync } from "node:fs";
+import { mkdirSync } from "node:fs";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { DATA_DIR } from "../config.ts";
 import { closeDatabase } from "../database.ts";
@@ -11,6 +11,7 @@ import { resetParkReconcile, resetParkSweep } from "./park.ts";
 import { setMemoryMode } from "./repository.ts";
 import { MemoryWorkerController } from "./worker-controller.ts";
 import type { MemoryWork } from "./worker-protocol.ts";
+import { removeTempDirSync } from "../testing/cleanup.ts";
 
 const state = vi.hoisted(() => ({ claimCost: 0, cost: 0, mono: 0, claims: 0 }));
 vi.mock("./jobs.ts", async importOriginal => {
@@ -26,7 +27,7 @@ type Internals = { child: unknown; ready: boolean; onWorkerMessage(child: unknow
 let controller: MemoryWorkerController, internals: Internals, sent: MemoryWork[];
 
 beforeEach(() => {
-  closeDatabase(); rmSync(DATA_DIR, { recursive: true, force: true }); mkdirSync(DATA_DIR, { recursive: true }); setMemoryMode("capture"); resetParkSweep(); resetParkReconcile();
+  closeDatabase(); removeTempDirSync(DATA_DIR); mkdirSync(DATA_DIR, { recursive: true }); setMemoryMode("capture"); resetParkSweep(); resetParkReconcile();
   state.claimCost = 0; state.cost = 0; state.mono = 0; state.claims = 0; sent = [];
   vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout", "setInterval", "clearInterval", "setImmediate", "clearImmediate", "Date"] });
   // Monotonic time: follows the fake wall clock while it advances, and is kept continuous when the wall clock is set back.

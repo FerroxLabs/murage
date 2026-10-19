@@ -6,7 +6,7 @@
 //   2. routine learning (a candidate becoming an active fact) dropped every stored root-set handle between turns;
 //   3. a reader who is not the owner paid for the whole ancestry every turn.
 // Work is pinned in rows read through the SQL layer (no clock), as lineage-turn-scale.test.ts does.
-import { mkdirSync, rmSync } from "node:fs";
+import { mkdirSync } from "node:fs";
 import { DatabaseSync } from "node:sqlite";
 import { afterAll, afterEach, beforeAll, beforeEach, expect, it } from "vitest";
 import { DATA_DIR } from "../config.ts";
@@ -17,10 +17,11 @@ import { setMemoryMode } from "./repository.ts";
 import { chainStore } from "./schema.ts";
 import { mergeOutputRoots, outputRootsBad, outputRootsFor, recordOutputRoots, keptVerdictCount, recordSessionRoots, replayExclusions, sessionOutputRoots, setVerdictLimitForTest, type ReplayAudience } from "./replay-lineage.ts";
 import { LineageAllowance } from "./lineage-allowance.ts";
+import { removeTempDirSync } from "../testing/cleanup.ts";
 
 const thread = "review-direct", driver = "drv", session = "sess";
 const key = (reply: number | string) => `${thread}\u0000r${reply}`;
-beforeEach(() => { closeDatabase(); rmSync(DATA_DIR, { recursive: true, force: true }); mkdirSync(DATA_DIR, { recursive: true }); });
+beforeEach(() => { closeDatabase(); removeTempDirSync(DATA_DIR); mkdirSync(DATA_DIR, { recursive: true }); });
 afterEach(() => setVerdictLimitForTest(null));
 
 const tally = { rows: 0, statements: 0 };
@@ -71,7 +72,7 @@ function activateFact(): void {
   db.prepare("UPDATE memory_records SET state='active',assertion=?,kind=? WHERE id=? AND version=1").run("owner-statement", "fact", id);
 }
 function measure(size: number, audience: ReplayAudience | null, between: () => void): number {
-  closeDatabase(); rmSync(DATA_DIR, { recursive: true, force: true }); mkdirSync(DATA_DIR, { recursive: true });
+  closeDatabase(); removeTempDirSync(DATA_DIR); mkdirSync(DATA_DIR, { recursive: true });
   database();
   buildSession(size);
   turn(size, audience); turn(size + 1, audience);

@@ -7,9 +7,10 @@ import { afterEach, expect, it } from "vitest";
 import { existsSync } from "node:fs";
 import { createHoistedStager } from "./stage-hoisted.mjs";
 import { checkStagedTree } from "./staged-tree-check.mjs";
+import { removeTempDirSync } from "../server/testing/cleanup.ts";
 
 const roots = [];
-afterEach(() => { for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true }); });
+afterEach(() => { for (const root of roots.splice(0)) removeTempDirSync(root); });
 const semver = { satisfies: () => true };
 
 /** Builds an installed package `p` (name "p") with the given manifest extras and files, stages it with the real

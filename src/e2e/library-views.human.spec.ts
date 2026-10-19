@@ -1,4 +1,4 @@
-import { test, expect } from "@playwright/test";
+import { test, expect } from "./page-error-guard";
 import { createServer, type ViteDevServer } from "vite";
 import tailwindcss from "@tailwindcss/vite";
 import { fileURLToPath } from "node:url";
@@ -19,7 +19,7 @@ test.beforeAll(async () => {
       name: "library-fixture",
       resolveId(id) { if (id === "/__library.js") return "\0library-ui"; if (id === "/library-fixture-store") return "\0library-store"; },
       load(id) {
-        if (id === "\0library-store") return "export async function api(path,init){const r=await fetch(path,init);if(!r.ok)throw new Error('Fixture request failed');return r.json()}export function useStore(){return {state:{bots:[]},dispatch:()=>{}}}";
+        if (id === "\0library-store") return "export async function api(path,init){const r=await fetch(path,init);if(!r.ok)throw new Error('Fixture request failed');return r.json()}export function useStoreIfAny(){return useStore();} export function useStore(){return {state:{bots:[]},dispatch:()=>{}}}";
         if (id !== "\0library-ui") return;
         return "import React from 'react';import {createRoot} from 'react-dom/client';import {TeamLibraryPanel} from '/src/components/TeamLibraryPanel.tsx';import '/src/styles.css';document.documentElement.dataset.skin=new URLSearchParams(location.search).get('skin')||'dark';createRoot(document.getElementById('root')).render(React.createElement(TeamLibraryPanel,{onClose:()=>{},onImported:()=>{},returnFocusRef:{current:null}}));";
       },

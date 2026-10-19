@@ -3,7 +3,7 @@
 //
 // Forget reaches the copies (bot-learning batch B11, design 14: lineage).
 import { beforeEach, expect, it } from "vitest";
-import { mkdirSync, rmSync } from "node:fs";
+import { mkdirSync } from "node:fs";
 import { DATA_DIR } from "../config.ts";
 import { closeDatabase, database, transaction } from "../database.ts";
 import { captureSource } from "./capture.ts";
@@ -14,9 +14,10 @@ import { forgetBotLearningData } from "./evolution-forgetting.ts";
 import { applyLessonShare, setLessonRoster, suggestLessonShare } from "./lesson-sharing.ts";
 import { addLesson, renderLearnedBlock } from "./lessons.ts";
 import { DEFAULT_BOT_LEARNING } from "../bot-learning.ts";
+import { removeTempDirSync } from "../testing/cleanup.ts";
 
 beforeEach(() => {
-  closeDatabase(); rmSync(DATA_DIR, { recursive: true, force: true }); mkdirSync(DATA_DIR, { recursive: true });
+  closeDatabase(); removeTempDirSync(DATA_DIR); mkdirSync(DATA_DIR, { recursive: true });
   reconcileMemoryRoster({ bots: [{ id: "chief", threadId: "thread" }, { id: "dax", threadId: "thread-dax" }], groups: [] });
   setLessonRoster(() => [{ id: "chief", chiefOfStaff: true }, { id: "dax" }]);
 });

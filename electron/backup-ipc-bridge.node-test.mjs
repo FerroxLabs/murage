@@ -59,7 +59,7 @@ function fixture() {
     settleRecoveryKeyRequest, setUpBackupsRequest,
     backupScheduleHost: { isPreparing: () => false, status: record("schedule.status", status), selectReferences: record("schedule.select", { cancelled: true }),
       setUpBackups: record("schedule.setUp", Promise.resolve({ cancelled: true })), configure: record("schedule.configure", status),
-      runNow: record("schedule.runNow", status), clearReview: record("schedule.clearReview", status) },
+      runNow: record("schedule.runNow", status), clearReview: record("schedule.clearReview", status), finishFirstRun: record("schedule.finishFirstRun", status) },
     closedBackupController: Object.fromEntries(["status", "stage", "install", "disable"].map(name => [name, record(`closed.${name}`, { supported: true, state: "unconfigured" })])),
     closedBackupRequested: false,
     backupRemoteHost: new Proxy({}, { get: (_target, name) => record(`remote.${String(name)}`, Promise.resolve({ ok: true })) }),
@@ -87,6 +87,8 @@ test("every backup preload method, called as the renderer calls it, passes main'
     ["schedule.configure", () => bridge.backupSchedule.configure(rev, { enabled: true, allowIdleRestart: true })],
     ["schedule.runNow", () => bridge.backupSchedule.runNow(rev)],
     ["schedule.clearReview", () => bridge.backupSchedule.clearReview(rev)],
+    ["schedule.finishFirstRun(verified)", () => bridge.backupSchedule.finishFirstRun("verified")],
+    ["schedule.finishFirstRun(off)", () => bridge.backupSchedule.finishFirstRun("off")],
     ...["status", "stage", "install", "disable"].map(name => [`closed.${name}`, () => bridge.backupClosed[name]()]),
     ["remote.status", () => bridge.backupRemote.status()],
     ["remote.save", () => bridge.backupRemote.save(0, { kind: "sftp", label: "x", host: "h", port: 22, user: "u", folder: "f" })],
@@ -113,6 +115,7 @@ test("every backup preload method, called as the renderer calls it, passes main'
   // Hosts saw exactly the renderer's values (no dropped or padded argument).
   assert.deepEqual(calls.filter(([name]) => name === "schedule.setUp").map(([, args]) => args), [[{ existingKey: false }], [{ existingKey: false }], [{ existingKey: true }]]);
   assert.deepEqual(calls.find(([name]) => name === "remote.applyRetention")[1], [ref, rev, policy, job]);
+  assert.deepEqual(calls.filter(([name]) => name === "schedule.finishFirstRun").map(([, args]) => args), [["verified"], ["off"]]);
 });
 
 // Renderer's own recovery-window argument choice (renderer.js action()).

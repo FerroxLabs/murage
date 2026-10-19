@@ -1,4 +1,4 @@
-import { mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { mkdtempSync, readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, expect, it } from "vitest";
@@ -9,9 +9,10 @@ import { readBotPackageArchive, writeBotPackageArchive } from "./bot-package-arc
 import { importBotPackageArchive, previewBotPackageImport } from "./bot-package-import.ts";
 import { commitPackageImportFiles } from "./package-import-transaction.ts";
 import type { BotRecord } from "./store.ts";
+import { removeTempDirSync } from "./testing/cleanup.ts";
 
 const roots: string[] = [];
-afterEach(() => { for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true }); });
+afterEach(() => { for (const root of roots.splice(0)) removeTempDirSync(root); });
 const bots: BotRecord[] = ["chief", "leader", "member", "individual"].map(role => ({
   id: role, threadId: `private-${role}`, name: role, title: role, description: `Instructions for ${role}`, color: "green",
   notifications: false, unread: false, createdAt: 1, modelSelection: { instanceId: "private-engine", model: "private-model" }, resumeCursors: {},

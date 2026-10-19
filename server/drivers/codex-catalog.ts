@@ -89,6 +89,9 @@ export function readCodexAppServerModelCatalog(
   // An environment that names one of Murage's Codex scopes launches on that scope's CURRENT login generation, never an older path.
   // A scope that cannot be resolved (contention is retried within the bound; anything else) gives NO catalog: the inherited path,
   // which may hold a login the owner has since replaced or signed out of, is never launched with.
+  // Cloud home: the ChatGPT catalog belongs to a bot's own sign-in and the launcher runs no engine for
+  // a request that names no bot, so the home keeps the official fallback list.
+  if (process.env.MURAGE_CLOUD_ROLE === "home") return Promise.resolve(null);
   const named = env.CODEX_HOME && env.CODEX_HOME.startsWith(scopedCliHomeRoot("codex")) ? env.CODEX_HOME : null;
   // A background run of the engine: a conversation deletion pauses these (engine-one-shots.ts); a stopped listing is simply empty.
   if (!named) return oneShots.run("codex", undefined, (signal) => spawnCatalog(cli, env, timeoutMs, signal));
@@ -106,7 +109,7 @@ function spawnCatalog(
 ): Promise<ModelCatalog | null> {
   return new Promise((resolve) => {
     const child = spawnCli(cli, ["app-server"], {
-      cwd: homedir(),
+      cwd: process.env.MURAGE_CLOUD_ROLE === "home" ? launchEnv.HOME : homedir(),
       env: launchEnv,
       stdio: ["pipe", "pipe", "pipe"],
     });

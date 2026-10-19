@@ -14,7 +14,7 @@
 // the purge walked every checkpoint entry in one step and merged the whole index at once. Every read now goes through
 // readableMemoryRecord (readable.ts); the property test below compares all five search paths with memory_get.
 import { randomUUID } from "node:crypto";
-import { existsSync, mkdirSync, rmSync } from "node:fs";
+import { existsSync, mkdirSync } from "node:fs";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
@@ -38,6 +38,7 @@ import { clearMemorySearchCache, searchMemory, type MemorySearchBridge } from ".
 import { CURRENT_MEMORY, MemoryEligibility } from "./eligibility.ts";
 import { MemoryWorkerController } from "./worker-controller.ts";
 import { LineageAllowance } from "./lineage-allowance.ts";
+import { removeTempDirSync } from "../testing/cleanup.ts";
 
 const ROOM_THREAD = "room-thread";
 const ROSTER: MemoryRoster = { bots: [{ id: "a", threadId: "thread-a", section: "crew" }, { id: "b", threadId: "thread-b", section: "crew" }], groups: [{ id: "room", threadId: ROOM_THREAD, memberIds: ["a", "b"] }] };
@@ -52,7 +53,7 @@ let roster: MemoryRoster = structuredClone(ROSTER);
 async function fresh() {
   closeMemoryIndexReader(); closeDatabase();
   expect(await stopWalMaintenance()).toBe(true);
-  rmSync(DATA_DIR, { recursive: true, force: true });
+  removeTempDirSync(DATA_DIR);
   expect(existsSync(DATA_DIR)).toBe(false);
   mkdirSync(DATA_DIR, { recursive: true });
   roster = structuredClone(ROSTER);
@@ -214,7 +215,7 @@ describe("search denies exactly what memory_get denies", () => {
     await refusedEverywhere(access, ["foreign-evidence"], "MEMORY_SCOPE_DENIED");
   });
 
-  it("property: over randomized grants and revocations, room membership, identity rows, derivations, archive and forget, sources, tombstones, spans, failed tools and pending records, every search path returns a record exactly when memory_get allows it", async () => {
+  it("property: over randomized grants and revocations, room membership, identity rows, derivations, archive and forget, sources, tombstones, spans, failed tools and pending records, every search path returns a record exactly when memory_get allows it", { tags: ["nightly"], timeout: 240_000 }, async () => {
     let seed = 0x5eed;
     const rand = () => { seed = (seed * 1103515245 + 12345) & 0x7fffffff; return seed / 0x7fffffff; };
     const pick = <T,>(items: readonly T[]) => items[Math.floor(rand() * items.length)];
@@ -367,7 +368,7 @@ describe("search denies exactly what memory_get denies", () => {
     expect(tally.comparedNonEmpty).toBeGreaterThan(TRIALS);
     // the generator reaches every refusal it is meant to compare
     for (const reason of ["forgotten", "state", "forgotten-ancestor", "ancestor-state", "identity", "no-evidence", "source-tombstone", "source-state", "failed-tool", "evidence-scope", "span"]) expect({ reason, n: tally.faults[reason] ?? 0 }).not.toEqual({ reason, n: 0 });
-  }, 240_000);
+  });
 });
 
 describe("bounded keyword fallback", () => {
@@ -504,7 +505,7 @@ describe("old checkpoint versions leave the word index", () => {
     return raw;
   }
 
-  it("P2: an index holding 500,000 versions of one checkpoint is purged in short steps, merged in short steps, then the word query is fast and current", () => {
+  it("P2: an index holding 500,000 versions of one checkpoint is purged in short steps, merged in short steps, then the word query is fast and current", { tags: ["perf-budget"], timeout: 600_000 }, () => {
     const scope = "s", path = join(DATA_DIR, "memory-index.db"), versions = 500_000;
     const raw = seedIndex(path, `WITH RECURSIVE n(i) AS (SELECT 1 UNION ALL SELECT i+1 FROM n WHERE i<${versions})
       INSERT INTO entries SELECT 'checkpoint:long',i,'${scope}','Working evidence: the launch review status, version '||i FROM n`);
@@ -529,7 +530,7 @@ describe("old checkpoint versions leave the word index", () => {
     expect(page.hits.map(hit => `${hit.id}:${hit.version}`).sort()).toEqual([`checkpoint:long:${versions}`, "fact-1:1"]);
     expect(query).toBeLessThan(50);
     console.log(`[msearch] 500k checkpoint versions: query before=${before.toFixed(1)}ms after=${query.toFixed(1)}ms`);
-  }, 600_000);
+  });
 
   it("round 2 P2: 500,000 sole checkpoints: every step examines a bounded number of entries and none is removed", () => {
     const path = join(DATA_DIR, "memory-index.db"), count = 500_000;

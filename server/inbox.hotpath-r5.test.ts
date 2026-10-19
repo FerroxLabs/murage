@@ -185,7 +185,7 @@ describe("r5 P1#3: no JSON work under the writer lock", () => {
     expect(hold, "the writer lock is held for a guarded small apply").toBeLessThan(50);
   }, 120_000);
 
-  it("while the worker projects a 128 MiB row, no main-thread message write waits more than 50 ms", async () => {
+  it("while the worker projects a 128 MiB row, no main-thread message write waits more than 50 ms", { tags: ["perf-budget"], timeout: 180_000 }, async () => {
     const { db } = fileDb();
     insertRow(db, "t", "big", 1_000, "activity", null, hugeRefusal("big", 1_000));
     filler(db, 0, 500, 100);
@@ -212,5 +212,5 @@ describe("r5 P1#3: no JSON work under the writer lock", () => {
     console.log(`[r5-writes] ${waits.length} main-thread writes during the worker projection: worst ${worst.toFixed(1)} ms`);
     expect(count(db, "SELECT COUNT(*) AS n FROM setup_marks WHERE thread_id='t'")).toBe(1);
     expect(worst).toBeLessThan(50);
-  }, 180_000);
+  });
 });

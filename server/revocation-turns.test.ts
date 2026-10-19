@@ -5,7 +5,7 @@
 // database.ts; the revocation index build no longer takes it): the real EventBus, the
 // real turn tracking (IndependentThreadRuns) and a fake provider driver emit a whole reply; the listener writes messages.db
 // like the fold and does NOT gate itself. Every event persists, in order, with its terminal state; the loop stays free.
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { monitorEventLoopDelay } from "node:perf_hooks";
@@ -17,6 +17,7 @@ import type { RuntimeEvent } from "./contracts.ts";
 import { IndependentThreadRuns } from "./independent-thread-runs.ts";
 import { downgradeMemorySchema, migrateMemorySchema } from "./memory/schema.ts";
 import { makeFakeDriver } from "./testing/fake-driver.ts";
+import { removeTempDirSync } from "./testing/cleanup.ts";
 
 let dir: string, db: DatabaseSync, lockHolder: DatabaseSync | undefined;
 beforeEach(() => {
@@ -32,7 +33,7 @@ afterEach(async () => {
   holdWritersForIndexBuild(false);
   if (lockHolder) { try { lockHolder.exec("ROLLBACK"); } catch { /* none open */ } lockHolder.close(); lockHolder = undefined; }
   try { db.close(); } catch { /* closed */ }
-  rmSync(dir, { recursive: true, force: true });
+  removeTempDirSync(dir);
   vi.restoreAllMocks();
 });
 

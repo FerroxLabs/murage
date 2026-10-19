@@ -1,0 +1,51 @@
+#!/bin/bash
+# Copyright 2026 Ferrox Labs
+# SPDX-License-Identifier: AGPL-3.0-or-later
+#
+# murage-exec: the Claude shell prefix (design Rule 69f / 74b). Claude runs
+# `murage-exec <command>`; this runs the command as
+#   env -i <the turn's environment> <shell> -c "$1"
+# from the turn's directory, so no variable, alias or function exists in it
+# that Murage's environment record does not list. The environment is read
+# from a NUL-separated name=value file Murage writes for the turn (its path
+# is MURAGE_EXEC_ENV_FILE). Its content is read as data: never sourced,
+# never evaluated. Two reserved entries carry the directory and the shell.
+f="$MURAGE_EXEC_ENV_FILE"
+if [ -z "$f" ] || [ ! -r "$f" ]; then
+  echo "murage-exec: the turn environment is not available" >&2
+  exit 126
+fi
+args=()
+cwd=""
+shell=""
+while IFS= read -r -d '' pair; do
+  case "$pair" in
+    MURAGE_EXEC_CWD=*) cwd="${pair#MURAGE_EXEC_CWD=}"; continue ;;
+    MURAGE_EXEC_SHELL=*) shell="${pair#MURAGE_EXEC_SHELL=}"; continue ;;
+  esac
+  if [[ ! "$pair" =~ ^[A-Za-z_][^=]*= ]]; then
+    echo "murage-exec: the turn environment could not be read" >&2
+    exit 126
+  fi
+  args+=("$pair")
+done < "$f"
+if [ -z "$cwd" ] || [ -z "$shell" ]; then
+  echo "murage-exec: the turn environment is incomplete" >&2
+  exit 126
+fi
+# Windows (Claude runs Bash through Git Bash): the file holds Windows spellings. The directory, the shell and the
+# search path are turned into the MSYS form here, and only here, so the command sees the same map either way.
+case "$(uname -s 2>/dev/null)" in
+  MINGW*|MSYS*|CYGWIN*)
+    command -v cygpath >/dev/null 2>&1 || { echo "murage-exec: cygpath is not available" >&2; exit 126; }
+    cwd="$(cygpath -u "$cwd")" || exit 126
+    shell="$(cygpath -u "$shell")" || exit 126
+    for i in "${!args[@]}"; do
+      case "${args[$i]}" in
+        [Pp][Aa][Tt][Hh]=*) args[$i]="PATH=$(cygpath -u -p "${args[$i]#*=}")" || exit 126 ;;
+      esac
+    done
+    ;;
+esac
+cd -- "$cwd" || exit 126
+exec env -i "${args[@]}" "$shell" -c "$1"

@@ -128,6 +128,11 @@ export const setupStateSchema = z.object({
    *  still checked against the live routine list on every read: a brief the
    *  person deleted puts the step back. */
   briefRoutineId: z.string().min(1).max(180).optional(),
+  /** Settings L5: this setup owes the first-run backup. A second copy of
+   *  setup-backup.json's "owed", kept only while the step is open
+   *  (server/setup-backup.ts), so losing either file never lets setup finish
+   *  without a checked backup or the person's choice to keep backups off. */
+  backupOwed: z.literal(true).optional(),
 }).strict();
 export type SetupState = z.infer<typeof setupStateSchema>;
 
@@ -325,7 +330,16 @@ export interface SetupLiveState {
   threadFactsUnknown?: boolean;
   /** Routines, and the morning brief's own state. */
   routines: SetupRoutineReading;
+  /**
+   * Where the first run's backup step stands, as the desktop last reported
+   * it (server/setup-backup.ts): "pending" until a checked backup exists or
+   * the person chose backups off. Absent where the desktop never reported
+   * one, such as an install that predates the first-run backup.
+   */
+  backupSetup?: SetupBackupReading | null;
 }
+
+export type SetupBackupReading = "pending" | "verified" | "off";
 
 /**
  * The third state, and why it exists.
@@ -891,6 +905,14 @@ export interface SetupView {
    * there is nothing left to do.
    */
   conversationLive?: boolean;
+  /** How the first run's backup step ended, or "pending" while it is owed. */
+  backup?: SetupBackupReading;
+  /**
+   * Setup is finished: every step is done or passed over AND the backup step
+   * ended with a checked backup or with the person's choice to keep backups
+   * off. Setup ends verified, because configured is not protected.
+   */
+  complete?: boolean;
 }
 
 export function setupView(state: SetupState, live: SetupLiveState): SetupView {
@@ -927,6 +949,8 @@ export function setupView(state: SetupState, live: SetupLiveState): SetupView {
     blocked: steps.filter((step) => step.status === "blocked").map((step) => step.id),
     next: nextSetupStep(state),
     steps,
+    ...(live.backupSetup ? { backup: live.backupSetup } : {}),
+    complete: nextSetupStep(state) === null && live.backupSetup !== "pending",
   };
 }
 

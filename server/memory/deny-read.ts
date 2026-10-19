@@ -372,13 +372,19 @@ function sessionRootSet(db: DatabaseSync, session: SessionKey): string | undefin
   catch (error) { if (error instanceof Error && /no such table/.test(error.message)) { statementCache.get(db)?.clear(); return undefined; } throw error; }
 }
 
-/** The verdict for a retained session (deny_session, rs-forgotten, memorySessionRevoked, pending). Not shown = the session resets. */
+/** The verdict for a retained session (deny_session, rs-forgotten, memorySessionRevoked, pending). Not shown = the session resets.
+ * A content reader (audience null: the owner's own direct chat) judges the session by content, as its replay does (disclosures.ts
+ * filterDirectReplay, 1.0.1.1): an audience-only revoke (a receipt flipped by a roster or settings change, memory_revoke_audience) changes
+ * what other audiences may be shown, never what the owner's own chat holds, so its deny_session marks, its pending window and its receipt
+ * flips do not reset the session, and the session's own receipts are judged on state, policy and epoch by the continuation check that runs
+ * next (fullContinuationCheck). Counted here, one install-wide revoke reset the owner's session on every turn and every fresh session was
+ * marked again (1.0.2 Keep all P0). An audience reader keeps every mark. */
 export function sessionLookup(db: DatabaseSync, session: SessionKey, reader: LineageReader): LineageVerdict {
-  void reader;
+  const content = reader.audience === null;
   try {
     const { threadId, driverInstance, nativeSession } = session;
     if (threadDenied(db, threadId)) return withheld("thread-deny");
-    if (one(db, "SELECT 1 AS x FROM memory_deny_session WHERE thread_id=? AND driver_instance=? AND native_session=? LIMIT 1", threadId, driverInstance, nativeSession)) return withheld("deny-session");
+    if (one(db, `SELECT 1 AS x FROM memory_deny_session WHERE thread_id=? AND driver_instance=? AND native_session=?${content ? ` AND ${NOT_AUDIENCE_ONLY}` : ""} LIMIT 1`, threadId, driverInstance, nativeSession)) return withheld("deny-session");
     // memory-revocation.ts FORGOTTEN_SESSION_SET: a forget ended a source of this thread while the session was retained
     // (a file whose root sets were handed back has no such table: deny_session holds what a forget marked since the backfill)
     if (sessionRootSet(db, session) === "rs-forgotten") return withheld("session-forgotten");
@@ -387,12 +393,13 @@ export function sessionLookup(db: DatabaseSync, session: SessionKey, reader: Lin
     const meta = one(db, "SELECT policy_revision,deletion_epoch FROM memory_meta WHERE id=1");
     const oldest = one(db, "SELECT policy_revision,deletion_epoch FROM memory_disclosures WHERE thread_id=? AND driver_instance=? AND native_session=? ORDER BY rowid LIMIT 1", threadId, driverInstance, nativeSession);
     if (oldest && (!meta || oldest.policy_revision !== meta.policy_revision || oldest.deletion_epoch !== meta.deletion_epoch)) return withheld("watermark");
-    if (all(db, "SELECT state FROM memory_disclosures WHERE thread_id=? AND driver_instance=? AND native_session=? ORDER BY rowid DESC LIMIT ?", threadId, driverInstance, nativeSession, SESSION_RECEIPT_PEEK)
+    if (!content && all(db, "SELECT state FROM memory_disclosures WHERE thread_id=? AND driver_instance=? AND native_session=? ORDER BY rowid DESC LIMIT ?", threadId, driverInstance, nativeSession, SESSION_RECEIPT_PEEK)
       .some(row => row.state === "revoked")) return withheld("deny-session");
     const row = one(db, "SELECT last_lsn FROM memory_session_lineage WHERE thread_id=? AND driver_instance=? AND native_session=?", threadId, driverInstance, nativeSession);
     if (!row) return checking("no-lineage");
     if (!threadReady(db, threadId)) return checking("thread-not-ready");
-    const since = pendingSince(db, threadId, false); // a session resets on any revoke it rests on, audience-only ones included (the RC reset it on a revoked receipt)
+    // an audience reader's session resets on any revoke it rests on, audience-only ones included (the RC reset it on a revoked receipt)
+    const since = pendingSince(db, threadId, content);
     if (since !== null && since <= Number(row.last_lsn)) return checking("pending");
     return SHOWN;
   } catch { return checking("lookup-error"); }
@@ -410,10 +417,12 @@ export function refsLookup(db: DatabaseSync, refs: readonly LineageRef[], reader
     const shownLines = new Map<string, Set<string>>();
     const memory: MemoryRef[] = [];
     for (const ref of refs) {
-      if (ref.kind === "line") { const list = lines.get(ref.threadId) ?? []; list.push(ref.messageId); lines.set(ref.threadId, list); }
+      // a replayed line of the prompt's own thread is judged by content, as a prefix's shown lines are (below); every other line for the reader
+      if (ref.kind === "line" && ref.replay) { const set = shownLines.get(ref.threadId) ?? new Set<string>(); set.add(ref.messageId); shownLines.set(ref.threadId, set); }
+      else if (ref.kind === "line") { const list = lines.get(ref.threadId) ?? []; list.push(ref.messageId); lines.set(ref.threadId, list); }
       else if (ref.kind === "memory") memory.push(ref.ref);
       else if (ref.kind === "prefix") {
-        worst = worstVerdict(worst, prefixVerdict(db, ref.threadId, ref.headLsn, reader.audience === null));
+        worst = worstVerdict(worst, prefixVerdict(db, ref.threadId, ref.headLsn, reader.audience === null || ref.content === true));
         if (ref.shown?.length) { const set = shownLines.get(ref.threadId) ?? new Set<string>(); for (const id of ref.shown) set.add(id); shownLines.set(ref.threadId, set); }
       }
       else if (ref.kind === "receipt") worst = worstVerdict(worst, receiptVerdict(db, ref, reader));
@@ -467,8 +476,20 @@ export function fenceVerdict(db: DatabaseSync, built: BuiltPrompt, reader: Linea
   if (built.parts.every(part => part.lineageOf.every(ref => ref.kind === "none"))) return SHOWN;
   const now = denyGeneration(db);
   if (now < 0) return checking("lookup-error");
-  if (built.denyGeneration >= 0 && built.denyGeneration === now) return fenceUnchanged(db, built);
+  if (generationUnchanged(db, built, now)) return fenceUnchanged(db, built);
   return refsLookup(db, built.parts.flatMap(part => part.lineageOf), reader);
+}
+/** Nothing was revoked since the prompt was built: deny_generation is where it was, or every value it moved through was produced by the
+ * building turn's own committed writes (its session row, its lines' carries: BuiltPrompt.ownGenerations). Those hold what the turn carried
+ * from now on, above its prompt's head, so they never refuse the turn's own prompt (1.0.2 Keep all P0). Each own value is recorded exactly,
+ * in the bump's transaction, so a rolled-back own bump leaves no record and the revoke that reuses its value is looked up (Astra 1.0.3). */
+export function generationUnchanged(db: DatabaseSync, built: BuiltPrompt, now: number): boolean {
+  if (built.denyGeneration < 0 || now < 0) return false;
+  if (built.denyGeneration === now) return true;
+  if (now < built.denyGeneration) return false;
+  let own = 0;
+  try { own = built.ownGenerations?.(db, built.denyGeneration, now) ?? 0; } catch { return false; }
+  return own === now - built.denyGeneration;
 }
 /** The send fence when deny_generation has not moved since the prompt was built. The generation moves at a revoke's commit and at its last
  * mark, not at each mark between: a memory object a running walk denied (a card, a note, a lesson the prompt names) is withheld at once, so

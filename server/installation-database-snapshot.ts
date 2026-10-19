@@ -56,7 +56,8 @@ function count(db: DatabaseSync, sql: string): number {
  * A Map, not a plain object: archive names such as "constructor" or
  * "__proto__" must never match a property every object inherits. */
 const APP_TABLES = new Map<string, { required: boolean; optional: string[] }>(Object.entries({
-  messages: { required: true, optional: [] },
+  // seq: the per-thread sequence (transcript-seq.ts), new in 1.0.3; an archive from before it lacks the column and its index
+  messages: { required: true, optional: ["seq"] },
   thread_state: { required: true, optional: [] },
   open_card: { required: false, optional: [] },
   turn_first: { required: false, optional: [] },

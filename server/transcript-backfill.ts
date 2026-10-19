@@ -12,7 +12,8 @@ import type { DatabaseSync } from "node:sqlite";
 import { currentBusy, ioBudget } from "./io-budget.ts";
 import { setBusy } from "./db-busy.ts";
 import { ownerFirst, type Admission } from "./owner-first.ts";
-import { dequeueFrontFill, fillOneSlice, nextQueuedFill, nextUnpreparedThread, noteSlice, recentUnpreparedThreads } from "./branch-fill.ts";
+import { noteSeqChunk, noteSeqWalkDone, notifySeqNumbered, rowToMessage, SEQ_INDEX, SEQ_STATE, seqIndexReady, threadNumberedProbe } from "./transcript-seq.ts";
+import { dequeueFrontFill, fillOneSlice, nextQueuedFill, onFrontFillQueued, nextUnpreparedThread, noteSlice, recentUnpreparedThreads } from "./branch-fill.ts";
 
 /** An open request card: an unanswered, undismissed options row that carries a
  * request id (Store.isOpenRequestCard), and not one the start already retired (`orphaned`: an approval left by an earlier run, which no longer counts
@@ -64,7 +65,7 @@ export function indexOpenCardsChunk(db: DatabaseSync, rows = BACKFILL_CHUNK_ROWS
     let skipped = state.skipped;
     for (const row of batch) {
       let open = false;
-      try { open = isOpenCardJson(JSON.parse(row.json)); } catch { skipped++; continue; }
+      try { open = isOpenCardJson(rowToMessage(row)); } catch { skipped++; continue; }
       if (open) add.run(row.thread_id, row.id);
     }
     const done = upper >= newest;
@@ -121,7 +122,7 @@ export function stepPriorityThreads(db: DatabaseSync, bounds: number | { rows?: 
       read++; last = row.position;
       if (row.json !== null) {
         let open = false;
-        try { open = isOpenCardJson(JSON.parse(row.json)); } catch { open = false; }
+        try { open = isOpenCardJson(rowToMessage({ json: row.json })); } catch { open = false; }
         if (open) add.run(thread, row.id);
       }
       if (read < rows && now() >= deadline) { cut = true; break; }
@@ -186,7 +187,7 @@ export function indexKeyedCardsChunk(db: DatabaseSync, rows = BACKFILL_CHUNK_ROW
     let skipped = state.skipped;
     for (const row of batch) {
       let keys: ReturnType<typeof keyedCardsOf>;
-      try { keys = keyedCardsOf(JSON.parse(row.json)); } catch { skipped++; continue; }
+      try { keys = keyedCardsOf(rowToMessage(row)); } catch { skipped++; continue; }
       for (const { family, key } of keys) add.run(row.thread_id, family, key, row.id);
     }
     const done = upper >= newest;
@@ -236,6 +237,72 @@ export function indexAttachmentNamesChunk(db: DatabaseSync, rows = BACKFILL_CHUN
   });
 }
 
+/** The numbering walk's bounds (r7 R1): at most this many rows scanned per chunk, and no row begun once the chunk's time so far plus
+ * its commit's predicted time reaches this (looked at every SEQ_DEADLINE_EVERY rows, so the cut is at that boundary and the cursor is the
+ * last row written). The COMMIT is most of a chunk on a large file (every numbered row rewrites its table cell and moves its index entry,
+ * and synchronous=FULL syncs them): measured on the 5.2M-row rig it was p50 25 ms of a 49 ms chunk, so the bound counts it. */
+export const SEQ_CHUNK_DEADLINE_MS = 20;
+export const SEQ_DEADLINE_EVERY = 25;
+/** The commit's tail over its typical cost: on the rig a commit's p99 was about four times its p50 at every chunk size (the sync scales
+ * with the pages written), so the bound reserves four typical commits and the slice's p99, not its median, stays near the bound. */
+export const SEQ_COMMIT_TAIL_FACTOR = 4;
+/** The commit's cost per numbered row, learned per handle from the chunks committed (a moving average weighted to the slow side, so a
+ * slow disk shrinks the chunks before it shows in the tail). */
+const seqCommitMsPerRow = new WeakMap<DatabaseSync, number>();
+function learnCommitCost(db: DatabaseSync, commitMs: number, numbered: number): void {
+  if (numbered < SEQ_DEADLINE_EVERY) return; // too few rows to say what a row costs
+  const sample = commitMs / numbered;
+  const prior = seqCommitMsPerRow.get(db);
+  seqCommitMsPerRow.set(db, prior === undefined ? sample : sample > prior ? 0.5 * prior + 0.5 * sample : 0.9 * prior + 0.1 * sample);
+}
+/** One chunk of the numbering walk: the next `rows` storage positions above the cursor, each row whose `seq` is NULL given its
+ * thread's next number (base = the thread's MAX(seq), one probe per thread per chunk), in rowid order, in one BEGIN IMMEDIATE with
+ * the cursor. A chunk that finds no row above the cursor marks the walk done (under the lock: every row is numbered, every later
+ * write allocates). After the commit the loaded-thread listeners are told what was numbered and which threads flipped, and the
+ * chunk's figures go to onSeqChunk. A number is never reassigned; a kill resumes from the cursor. Returns whether more remain. */
+export function numberSeqChunk(db: DatabaseSync, bounds: { rows?: number; deadlineMs?: number; now?: () => number; commitMsPerRow?: number } = {}): boolean {
+  const { rows = BACKFILL_CHUNK_ROWS, deadlineMs = SEQ_CHUNK_DEADLINE_MS, now = () => performance.now() } = bounds;
+  const commitMsPerRow = bounds.commitMsPerRow ?? seqCommitMsPerRow.get(db) ?? 0;
+  if (!seqIndexReady(db)) return false;
+  const state = readIndexState(db, SEQ_STATE);
+  if (state.done) { noteSeqWalkDone(db); return false; }
+  const began = now();
+  const stamps = new Map<string, Array<readonly [string, number]>>();
+  let scanned = 0, numbered = 0, cursor = state.cursor, done = false, cut = false, newest = 0, loopEnd = 0;
+  inTransaction(db, () => {
+    newest = newestRowid(db);
+    const batch = db.prepare("SELECT rowid AS position, thread_id, id, seq FROM messages WHERE rowid > ? ORDER BY rowid LIMIT ?").all(state.cursor, rows) as Array<{ position: number; thread_id: string; id: string; seq: number | null }>;
+    if (!batch.length) { done = true; writeIndexState(db, SEQ_STATE, { done: 1, cursor: state.cursor, skipped: state.skipped }); return; }
+    const base = db.prepare(`SELECT COALESCE(MAX(seq), 0) AS n FROM messages INDEXED BY ${SEQ_INDEX} WHERE thread_id = ?`);
+    const set = db.prepare("UPDATE messages SET seq = ? WHERE rowid = ?");
+    const next = new Map<string, number>();
+    for (const row of batch) {
+      scanned++; cursor = row.position;
+      if (row.seq === null) {
+        const n = (next.get(row.thread_id) ?? Number((base.get(row.thread_id) as { n: number }).n)) + 1;
+        set.run(n, row.position);
+        next.set(row.thread_id, n);
+        let list = stamps.get(row.thread_id);
+        if (!list) stamps.set(row.thread_id, list = []);
+        list.push([row.id, n]);
+        numbered++;
+      }
+      if (scanned % SEQ_DEADLINE_EVERY === 0 && scanned < batch.length && now() - began + numbered * commitMsPerRow * SEQ_COMMIT_TAIL_FACTOR >= deadlineMs) { cut = true; break; }
+    }
+    writeIndexState(db, SEQ_STATE, { done: 0, cursor, skipped: state.skipped });
+    loopEnd = now();
+  });
+  const commitEnd = now();
+  if (loopEnd) learnCommitCost(db, commitEnd - loopEnd, numbered);
+  if (done) noteSeqWalkDone(db);
+  // the flip probe runs only for a thread a listener asks about (the store: the threads it holds), prepared on the first ask
+  let numberedNow: ((threadId: string) => boolean) | undefined;
+  for (const [threadId, list] of stamps) notifySeqNumbered(threadId, list, () => (numberedNow ??= threadNumberedProbe(db))(threadId));
+  const end = now();
+  noteSeqChunk({ ms: end - began, scanned, numbered, cursor, newest, done, cut, loopMs: (loopEnd || commitEnd) - began, commitMs: loopEnd ? commitEnd - loopEnd : 0, checksMs: end - commitEnd, threads: stamps.size });
+  return !done;
+}
+
 /** A turn's first row as kept (turn_first: written with each row and filled with the thread, so for a prepared thread it
  * is exact), or null when the turn wrote nothing. */
 export function turnFirstRowid(db: DatabaseSync, threadId: string, turnId: string): number | null {
@@ -255,9 +322,9 @@ export interface Step { position: number; json: string; parent: string | null; r
  * before it, as Store.loadedMessages reads it. */
 export function stepUpRow(db: DatabaseSync, threadId: string, id: string): { position: number; json: string; message: Record<string, unknown>; parent: string | null } | null {
   walkStats.parentReads++;
-  const row = db.prepare("SELECT rowid AS position, json FROM messages WHERE thread_id = ? AND id = ?").get(threadId, id) as { position: number; json: string } | undefined;
+  const row = db.prepare("SELECT rowid AS position, seq, json FROM messages WHERE thread_id = ? AND id = ?").get(threadId, id) as { position: number; seq: number | null; json: string } | undefined;
   if (!row) return null;
-  const message = JSON.parse(row.json) as Record<string, unknown>;
+  const message = rowToMessage(row) as unknown as Record<string, unknown>;
   if (message.parentId === undefined) {
     walkStats.parentReads++;
     const before = db.prepare("SELECT id FROM messages WHERE thread_id = ? AND rowid < ? ORDER BY rowid DESC LIMIT 1").get(threadId, row.position) as { id: string } | undefined;
@@ -336,6 +403,7 @@ export const BACKFILL_OWNER_FIRST_KIND = "transcript-backfill";
  * needed to restart it. `stillOpen` ends it if the handle was closed. */
 export async function runTranscriptBackfill(db: DatabaseSync, stillOpen: () => boolean = () => true, tuning: BackfillTuning = {}): Promise<void> {
   const sleep = tuning.sleep ?? defaultSleep;
+  const waiting = waitingOn(db);
   const base = tuning.retryBaseMs ?? 250;
   const cap = tuning.retryMaxMs ?? 30_000;
   const failures = { prepare: 0 };
@@ -350,14 +418,14 @@ export async function runTranscriptBackfill(db: DatabaseSync, stillOpen: () => b
   const pause = async () => {
     // read at every chunk, so a hold set after the loop began still holds the next chunk
     const hold = tuning.ready === undefined ? startHold : tuning.ready;
-    if (hold) await hold;
+    if (hold) await waiting(hold);
     while (gate && stillOpen()) {
       const admission = gate.admit(BACKFILL_OWNER_FIRST_KIND);
       if (admission.admitted) break;
-      await sleep(Math.min(admission.retryInMs, cap));
+      await waiting(sleep(Math.min(admission.retryInMs, cap)));
     }
     for (let deferred = ioBudget.deferredForMs(BACKFILL_SOURCE); deferred > 0 && stillOpen(); deferred = ioBudget.deferredForMs(BACKFILL_SOURCE)) {
-      await sleep(Math.min(deferred, cap));
+      await waiting(sleep(Math.min(deferred, cap)));
     }
   };
   /** One slice of the thread a request asked for (the front of the fill), when one waits; whoever was answered "pending" is told when it is ready. */
@@ -381,9 +449,10 @@ export async function runTranscriptBackfill(db: DatabaseSync, stillOpen: () => b
       if (!running || !stillOpen()) { upgradeSince = null; return; }
       upgradeSince ??= clock();
       if (clock() - upgradeSince >= BACKFILL_UPGRADE_YIELD_MAX_MS) return;
-      let nudged: (() => void) | undefined;
-      try { await Promise.race([sleep(BACKFILL_UPGRADE_RECHECK_MS), new Promise<void>(resolve => { nudged = resolve; nudges.add(resolve); })]); }
-      finally { if (nudged) nudges.delete(nudged); }
+      let nudged: (() => void) | undefined, unlisten: (() => void) | undefined;
+      // a thread queued at the front by any reader (queueFrontFill), not only by startTranscriptBackfill, ends the wait at once
+      try { await waiting(Promise.race([sleep(BACKFILL_UPGRADE_RECHECK_MS), new Promise<void>(resolve => { nudged = resolve; nudges.add(resolve); unlisten = onFrontFillQueued(resolve); })])); }
+      finally { if (nudged) nudges.delete(nudged); unlisten?.(); }
       while (await serviceFront()) { /* a thread a request is waiting on */ }
     }
   };
@@ -405,6 +474,17 @@ export async function runTranscriptBackfill(db: DatabaseSync, stillOpen: () => b
       do {
         wake = false;
         while (await serviceFront()) { /* the threads a request is waiting on, first */ }
+        // the per-thread sequence numbers (r7 R1), once their index exists: bounded chunks, each its own BEGIN IMMEDIATE, resumable
+        while (seqIndexReady(db) && readIndexState(db, SEQ_STATE).done !== 1) {
+          if (!stillOpen()) return;
+          await serviceFront();
+          await yieldToUpgrade();
+          await pause();
+          const more = asBackground(db, () => numberSeqChunk(db));
+          failures.prepare = 0;
+          await yieldLoop();
+          if (!more) break;
+        }
         // the conversations with the newest messages first: they are the ones about to be used
         for (const threadId of asBackground(db, () => recentUnpreparedThreads(db))) {
           for (;;) {
@@ -443,7 +523,7 @@ export async function runTranscriptBackfill(db: DatabaseSync, stillOpen: () => b
       if (!stillOpen()) return;
       const count = ++failures.prepare;
       if (count === 1 || count % 10 === 0) console.warn(`[transcript] backfill: ${isBusy(error) ? "database busy" : error instanceof Error ? error.message : String(error)}; retrying from saved progress`);
-      await sleep(Math.min(isBusy(error) ? cap : cap * 10, base * 2 ** Math.min(count - 1, 16)));
+      await waiting(sleep(Math.min(isBusy(error) ? cap : cap * 10, base * 2 ** Math.min(count - 1, 16))));
     }
   }
 }
@@ -461,8 +541,24 @@ export function notifyAttachmentIndexComplete(): void {
 /** The one background pass of the process, and whether it has been asked to look again. */
 let running: { db: DatabaseSync; done: Promise<void> } | null = null;
 let wake = false;
-/** Whether the backfill loop of this process is running (it ends once every index and thread is prepared). Idle memory work yields to it. */
+/** Whether the backfill loop of this process is running (it ends once every index and thread is prepared). */
 export function transcriptBackfillRunning(): boolean { return running !== null; }
+/** Backfill loops of this process that are waiting, reading nothing: on the startup hold, the owner-first gate, the I/O budget's deferral, the
+ * upgrade, or a retry's backoff. */
+/** Kept per connection (1.0.3 Astra r1): a loop of an old connection still asleep must not make the current one read as waiting. */
+const waitingLoops = new WeakMap<DatabaseSync, number>();
+function waitingOn(db: DatabaseSync) {
+  return async <T>(wait: Promise<T>): Promise<T> => {
+    waitingLoops.set(db, (waitingLoops.get(db) ?? 0) + 1);
+    try { return await wait; } finally { waitingLoops.set(db, (waitingLoops.get(db) ?? 1) - 1); }
+  };
+}
+/** Whether the backfill is reading the history now: its current run is running and not waiting. Idle memory work, the claim index and the memory
+ * status yield to this, not to the loop merely existing (stall r2 L1: they stayed held back for as long as the backfill sat in a wait that reads
+ * nothing). */
+export function transcriptBackfillWorking(): boolean { return running !== null && !transcriptBackfillWaitingOn(running.db); }
+/** Whether a backfill loop on `db` is in one of those waits now (tests, and the trace). */
+export function transcriptBackfillWaitingOn(db: DatabaseSync): boolean { return (waitingLoops.get(db) ?? 0) > 0; }
 
 /** Start (or nudge) the background backfill. One loop per process; it retries
  * itself with backoff, so a lock or a failed chunk never waits for the next open. */

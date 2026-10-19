@@ -15,6 +15,8 @@ import { ensureRemoteCuaCommand, remoteComputerBootstrapCommand } from "./remote
 
 // overridable so tests can point at a stub instead of the live provider
 const BOX_API = process.env.MURAGE_BOX_API || "https://ascii.dev/api/box/v1";
+/** The provider base the home server (never a turn) calls; the box relay forwards to it. */
+export const BOX_API_BASE = BOX_API;
 const READY = new Set(["idle", "ready", "running"]);
 const DEFAULT_BOX_TTL_SECONDS = 8 * 60 * 60;
 const TRIAL_BOX_TTL_SECONDS = 2 * 60 * 60;

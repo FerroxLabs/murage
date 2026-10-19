@@ -41,6 +41,7 @@ import {
 } from "@/lib/flux-key-paste";
 import { SETUP_FLUX_PROVED_ANSWER, SETUP_FLUX_UNPROVED_ANSWER } from "../../shared/first-run-chief";
 import { useDesktopSurface } from "@/lib/use-surface";
+import { opensPurchasePages } from "@/lib/native-shell";
 import { api, useStore } from "@/state/store";
 import { FLUX_SIGNUP_URL } from "./FluxRouterConnection";
 import {
@@ -144,13 +145,21 @@ export function FirstRunFluxConnect({
   failure: string;
   onChange: (next: string) => void;
   onSubmit: () => void;
-  onAgain: () => void;
+  /** Absent inside the phone app, which opens no sign-up page. */
+  onAgain?: () => void;
   onCancel: () => void;
 }) {
   return (
     <FirstRunBubble>
-      <div className="text-[15px] font-semibold text-ink">{copy.connectHeading}</div>
-      <FirstRunLine>{copy.connectLead}</FirstRunLine>
+      <div className="text-[15px] font-semibold text-ink">{onAgain ? copy.connectHeading : copy.connectHeadingInApp}</div>
+      <FirstRunLine>{onAgain ? copy.connectLead : copy.connectLeadInApp}</FirstRunLine>
+      {!onAgain ? (
+        <div className="mt-2 flex flex-wrap items-center gap-3">
+          <button type="button" disabled={busy} onClick={onCancel} className={`${FIRST_RUN_QUIET} ${FIRST_RUN_FOCUS}`}>
+            {copy.connectCancel}
+          </button>
+        </div>
+      ) : (<>
       <div className="mt-3 flex flex-wrap items-end gap-2">
         <label className="min-w-0 flex-1 basis-56">
           {/* The heading above has already said what this box is, so a second
@@ -183,13 +192,14 @@ export function FirstRunFluxConnect({
       </div>
       <FirstRunLine quiet>{copy.connectCaveat}</FirstRunLine>
       <div className="mt-2 flex flex-wrap items-center gap-3">
-        <button type="button" disabled={busy} onClick={onAgain} className={`${FIRST_RUN_QUIET} ${FIRST_RUN_FOCUS}`}>
+        {onAgain && <button type="button" disabled={busy} onClick={onAgain} className={`${FIRST_RUN_QUIET} ${FIRST_RUN_FOCUS}`}>
           {copy.connectAgain}
-        </button>
+        </button>}
         <button type="button" disabled={busy} onClick={onCancel} className={`${FIRST_RUN_QUIET} ${FIRST_RUN_FOCUS}`}>
           {copy.connectCancel}
         </button>
       </div>
+      </>)}
       <FirstRunFailure message={failure} />
     </FirstRunBubble>
   );
@@ -311,7 +321,7 @@ export function FirstRunFluxCard({ settled }: { settled: boolean }) {
           if (failure === FLUX_KEY_NOT_A_KEY || failure === FLUX_KEY_REJECTED) setFailure("");
         }}
         onSubmit={() => void save()}
-        onAgain={() => void openOutside(FLUX_SIGNUP_URL)}
+        onAgain={opensPurchasePages() ? () => void openOutside(FLUX_SIGNUP_URL) : undefined}
         onCancel={() => setPasting(false)}
       />
     );
@@ -354,7 +364,7 @@ export function FirstRunFluxCard({ settled }: { settled: boolean }) {
               disabled={busy}
               onClick={() => {
                 // The browser first, because the next screen says it is open.
-                void openOutside(FLUX_SIGNUP_URL);
+                if (opensPurchasePages()) void openOutside(FLUX_SIGNUP_URL);
                 setPasting(true);
               }}
               className={`${FIRST_RUN_PRIMARY} ${FIRST_RUN_FOCUS}`}

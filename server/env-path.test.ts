@@ -2,7 +2,7 @@
 // well-known install dir — or an nvm bin dir — must be findable even
 // when the process itself started with a bare GUI PATH.
 import { execFile } from "node:child_process";
-import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, utimesSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, utimesSync, writeFileSync } from "node:fs";
 import { homedir, tmpdir } from "node:os";
 import { delimiter, join, sep } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -17,9 +17,11 @@ import {
   resolveFuigoCli,
   restrictInstallScanDirsForTests,
   splitCliString,
+  captureOwnerEnv,
 } from "./env-path.ts";
 import { resolveCli } from "./procs.ts";
 import { removeTempDir } from "./testing/cleanup.ts";
+import { removeTempDirSync } from "./testing/cleanup.ts";
 
 // Forward real filesystem behavior by default. The Fuigo resource tests below
 // restrict only existsSync's view of the machine, without replacing candidate
@@ -97,30 +99,17 @@ describe("augmentedPath", () => {
   });
 
   posixIt("keeps the last login-shell PATH available during a rescan", async () => {
+    // Rule 74a: the one probe is the owner's interactive login capture
     const shell = join(homedir(), "fake-login-shell");
     const rcOnlyBin = join(homedir(), "rc-only", "bin");
-    writeFileSync(shell, `#!/bin/sh\nprintf '__MURAGE_PATH__%s' '${rcOnlyBin}'\n`);
+    writeFileSync(shell, `#!/bin/sh\nprintf '%s' "$MURAGE_ENV_MARK"; printf 'PATH=%s\\0HOME=/h\\0' '${rcOnlyBin}'; printf '%s' "$MURAGE_ENV_MARK"\n`);
     chmodSync(shell, 0o755);
-
-    const previousShell = process.env.SHELL;
-    const previousVitest = process.env.VITEST;
-    try {
-      process.env.SHELL = shell;
-      delete process.env.VITEST;
-      resetPathCacheForTests();
-
-      augmentedPath();
-      await vi.waitFor(() => expect(augmentedPath().split(delimiter)).toContain(rcOnlyBin));
-
-      resetPathCache();
-      expect(augmentedPath().split(delimiter)).toContain(rcOnlyBin);
-    } finally {
-      if (previousShell === undefined) delete process.env.SHELL;
-      else process.env.SHELL = previousShell;
-      if (previousVitest === undefined) delete process.env.VITEST;
-      else process.env.VITEST = previousVitest;
-      resetPathCacheForTests();
-    }
+    resetPathCacheForTests();
+    const owner = await captureOwnerEnv({ shell });
+    expect(owner.capture).toBe("session");
+    expect(augmentedPath().split(delimiter)).toContain(rcOnlyBin);
+    resetPathCache();
+    expect(augmentedPath().split(delimiter)).toContain(rcOnlyBin);
   });
 
   it("skips known dirs that do not exist", () => {
@@ -143,7 +132,7 @@ describe("augmentedPath", () => {
       if (previous === undefined) delete process.env.LOCALAPPDATA;
       else process.env.LOCALAPPDATA = previous;
       resetPathCacheForTests();
-      rmSync(localAppData, { recursive: true, force: true });
+      removeTempDirSync(localAppData);
     }
   });
 });
@@ -155,6 +144,38 @@ describe("augmentedPath", () => {
 // installed via Homebrew still gets a hit. restrictInstallScanDirsForTests()
 // is the seam that gets a test there. These cases exist so the seam can never
 // quietly become the production scan.
+// Windows: the GUI launch's own environment IS the owner's registry environment, so every spawn reads it live, as
+// 1.0.2 did. A snapshot frozen at the first spawn handed later engines a stale map: a name set after it (a saved key,
+// a fixture's dump path) never reached the engine, and a removed one lingered. Stubbed platform, so every OS runs it.
+describe("captureOwnerEnv on Windows", () => {
+  const platform = Object.getOwnPropertyDescriptor(process, "platform")!;
+  beforeEach(() => {
+    Object.defineProperty(process, "platform", { ...platform, value: "win32" });
+    resetPathCacheForTests();
+  });
+  afterEach(() => {
+    Object.defineProperty(process, "platform", platform);
+    delete process.env.MURAGE_WIN_LIVE_PROBE;
+    resetPathCacheForTests();
+  });
+
+  it("hands the live process environment on every capture, never a snapshot from the first", async () => {
+    delete process.env.MURAGE_WIN_LIVE_PROBE;
+    const first = await captureOwnerEnv();
+    expect(first.capture).toBe("session");
+    expect(first.env.MURAGE_WIN_LIVE_PROBE).toBeUndefined();
+
+    process.env.MURAGE_WIN_LIVE_PROBE = "set-after-the-first-spawn";
+    const second = await captureOwnerEnv();
+    expect(second.capture).toBe("session");
+    expect(second.env.MURAGE_WIN_LIVE_PROBE).toBe("set-after-the-first-spawn");
+    expect(second.env.PATH).toBe(augmentedPath());
+
+    delete process.env.MURAGE_WIN_LIVE_PROBE;
+    expect((await captureOwnerEnv()).env.MURAGE_WIN_LIVE_PROBE).toBeUndefined();
+  });
+});
+
 describe("install-location scan seam", () => {
   afterEach(() => {
     restrictInstallScanDirsForTests(null);
@@ -579,10 +600,10 @@ describe("resolveFuigoCli", () => {
     vi.unstubAllEnvs();
     delete process.env.MURAGE_FUIGO_DIR;
     delete process.env.MURAGE_EXTRA_PATH;
-    rmSync(bundleDirectory, { recursive: true, force: true });
+    removeTempDirSync(bundleDirectory);
     // setup.ts points homedir at a temp dir shared by this file, so a
     // user-installed fuigo left behind would make every later case find one.
-    rmSync(join(homedir(), ".fuigo"), { recursive: true, force: true });
+    removeTempDirSync(join(homedir(), ".fuigo"));
     resetPathCacheForTests();
   });
 

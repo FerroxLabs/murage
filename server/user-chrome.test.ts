@@ -1,12 +1,13 @@
-import { mkdtempSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { mkdtempSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { isUserChromeEndpoint, readUserChromeEndpoint, userChromeDataDir, userChromeEndpointFromPortFile } from "./user-chrome.ts";
+import { removeTempDirSync } from "./testing/cleanup.ts";
 
 const scratch: string[] = [];
 const temporary = () => { const path = mkdtempSync(join(tmpdir(), "murage-user-chrome-")); scratch.push(path); return path; };
-afterEach(() => { for (const path of scratch.splice(0)) rmSync(path, { recursive: true, force: true }); });
+afterEach(() => { for (const path of scratch.splice(0)) removeTempDirSync(path); });
 const ID = "4c1b0f0e-9a2d-4e8f-b1c3-5d6e7f8a9b0c";
 
 describe("the owner's Chrome endpoint", () => {

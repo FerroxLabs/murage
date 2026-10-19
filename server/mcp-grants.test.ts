@@ -1,14 +1,15 @@
 // Copyright 2026 Ferrox Labs
 // SPDX-License-Identifier: AGPL-3.0-or-later
-import { mkdtempSync, readFileSync, rmSync, statSync } from "node:fs";
+import { mkdtempSync, readFileSync, statSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { MAX_MCP_GRANTS, MCP_GRANT_TTL_MS, McpGrants, mcpGrantAdmits } from "./mcp-grants.ts";
+import { removeTempDirSync } from "./testing/cleanup.ts";
 
 const dirs: string[] = [];
 const fresh = () => { const dir = mkdtempSync(join(tmpdir(), "murage-grants-")); dirs.push(dir); return dir; };
-afterEach(() => { for (const dir of dirs.splice(0)) rmSync(dir, { recursive: true, force: true }); });
+afterEach(() => { for (const dir of dirs.splice(0)) removeTempDirSync(dir); });
 const bearer = (token: string) => ({ authorization: `Bearer ${token}` });
 
 describe("McpGrants", () => {

@@ -4,14 +4,15 @@ import { randomUUID } from "node:crypto";
 import { DatabaseSync } from "node:sqlite";
 import { expect, it,vi } from "vitest";
 import { MEMORY_SCHEMA_V1,MEMORY_SCHEMA_V2,MEMORY_SCHEMA_V3,MEMORY_PRE_V4_SNAPSHOT,migrateMemorySchema, downgradeMemorySchema, validateMemorySchema } from "./schema.ts";
+import { removeTempDirSync } from "../testing/cleanup.ts";
 
 it("installs v4, validates ledger references, and round trips every supported downgrade", () => {
  const db=new DatabaseSync(":memory:");
  try {
   migrateMemorySchema(db);
-  expect(db.prepare("SELECT schema_version FROM memory_meta").get()?.schema_version).toBe(10);
+  expect(db.prepare("SELECT schema_version FROM memory_meta").get()?.schema_version).toBe(11);
   const settings=JSON.parse(String(db.prepare("SELECT settings FROM memory_learning_config").get()?.settings));
-  expect(settings).toMatchObject({version:2,dailyInputTokens:400000,dailyOutputTokens:60000});
+  expect(settings).toMatchObject({version:3,ceiling:{input:100_000_000,output:15_000_000}});
   db.exec("INSERT INTO memory_scopes VALUES('s','conversation','t','[]',0)");
   db.prepare("INSERT INTO memory_learning_events(id,scope_id,kind,record_id,record_version,created_at) VALUES(?,'s','activated','missing',1,0)").run(randomUUID());
   expect(()=>validateMemorySchema(db)).toThrow("INVALID_MEMORY_LEARNING_EVENT");
@@ -78,7 +79,7 @@ function validateAs0161(db: DatabaseSync, options: { references?: boolean | (() 
 }
 
 import {DEFAULT_MEMORY_LEARNING_V1,memoryLearningV1Schema,readMemoryLearning} from "./learning-policy.ts";
-import {mkdtempSync,existsSync,rmSync} from "node:fs";
+import { mkdtempSync, existsSync } from "node:fs";
 import {tmpdir} from "node:os";
 import {join} from "node:path";
 function oldDatabase(db:DatabaseSync,version:1|2|3){
@@ -96,7 +97,7 @@ it.each([1,2,3] as const)("upgrades v%s, refuses the previous validator, and pre
  const db=new DatabaseSync(":memory:");try{
  oldDatabase(db,version);validateAs0161(db);migrateMemorySchema(db);
  expect(()=>validateAs0161(db)).toThrow("MEMORY_SCHEMA_UNSUPPORTED");
- expect(readMemoryLearning(db)).toMatchObject({version:2,automaticFacts:true});
+ expect(readMemoryLearning(db)).toMatchObject({version:3,automaticFacts:true});
  expect(db.prepare("SELECT count(*) n FROM memory_learning_events WHERE kind='settings-migrated'").get()?.n).toBe(version===1?0:1);
  for(const to of [3,2,1] as const){downgradeMemorySchema(db,to);validateAs0161(db);validateMemorySchema(db);migrateMemorySchema(db);for(const table of ["memory_records","memory_sources","memory_disclosures"])expect(db.prepare(`SELECT count(*) n FROM ${table}`).get()?.n).toBe(1);}
  }finally{db.close();}
@@ -106,12 +107,12 @@ it("preserves a v3 snapshot and does not snapshot or rewrite a reopened v4 file"
  let db=new DatabaseSync(file);try{oldDatabase(db,3);migrateMemorySchema(db,"off",{snapshotV3Path:snapshot});expect(existsSync(snapshot)).toBe(true);
  const copy=new DatabaseSync(snapshot);try{validateAs0161(copy);expect(copy.prepare("SELECT schema_version FROM memory_meta").get()?.schema_version).toBe(3);}finally{copy.close();}
  db.close();db=new DatabaseSync(file);migrateMemorySchema(db,"off",{snapshotV3Path:join(root,"second.db")});expect(existsSync(join(root,"second.db"))).toBe(false);expect(db.prepare("SELECT count(*) n FROM memory_learning_events").get()?.n).toBe(1);
- }finally{db.close();rmSync(root,{recursive:true,force:true});}
+ }finally{db.close();removeTempDirSync(root);}
 });
 it("rolls an interrupted rewrite back to valid v3 and retries once",()=>{
  const root=mkdtempSync(join(tmpdir(),"memory-v4-interrupt-")),db=new DatabaseSync(join(root,"messages.db"));try{oldDatabase(db,3);const original=db.exec.bind(db);const spy=vi.spyOn(db,"exec").mockImplementation(sql=>{if(sql.includes("DROP TABLE memory_meta_previous"))throw Error("fixture interruption");original(sql);});
  expect(()=>migrateMemorySchema(db)).toThrow("fixture interruption");spy.mockRestore();validateMemorySchema(db);validateAs0161(db);migrateMemorySchema(db);validateMemorySchema(db);
- }finally{db.close();rmSync(root,{recursive:true,force:true});}
+ }finally{db.close();removeTempDirSync(root);}
 });
 
 it("preserves pauses and source switches through a previous-release-valid v3 binding",()=>{

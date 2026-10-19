@@ -1,3 +1,5 @@
+import { t } from "./i18n";
+import type { LocaleKey } from "@/locales";
 import type { Routine } from "./routines";
 export interface ProcedureVersion {
   revision:string|null; description:string; createdAt:string|number;
@@ -26,7 +28,8 @@ export function routineHistorySource(request:HistoryRequest,id:string,onRestored
     restore:async(history,target)=>{if(!history.currentRevision||!target.revision||history.expectedUpdatedAt===undefined)throw Error("Current instruction version is unavailable");const result=await request(`/api/routines/${encodeURIComponent(id)}/instructions/rollback`,{method:"POST",body:JSON.stringify({expectedRevision:history.currentRevision,expectedUpdatedAt:history.expectedUpdatedAt,targetRevision:target.revision})});onRestored(result.routine);}};
 }
 export function versionOrigin(origin?:string):string {
-  return ({owner:"Owner-authored",learned:"Learned",evaluated:"Evaluated improvement",rollback:"Restored version",imported:"Imported",unknown:"Origin not recorded"} as Record<string,string>)[origin??""]??"Origin not recorded";
+  const known=["owner","learned","evaluated","rollback","imported"];
+  return t(`procedureHistory.origin.${known.includes(origin??"")?origin:"unknown"}` as LocaleKey);
 }
 export interface HistoryState { phase:"idle"|"loading"|"ready"|"failed"; history:ProcedureHistory|null; busy:boolean; conflict:boolean; error:string; notice:string }
 export function createHistoryStore(source:HistorySource) {

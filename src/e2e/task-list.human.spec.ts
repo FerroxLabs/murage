@@ -2,7 +2,7 @@
 // handoffs from other bots readable, filters, the remembered sort, and a
 // keyboard path through all of it — at desktop and phone width, light and
 // dark, against a real harness and the real store.
-import { expect, test, type Page } from "@playwright/test";
+import { expect, test, type Page } from "./page-error-guard";
 import { createServer, type ViteDevServer } from "vite";
 import react from "@vitejs/plugin-react";
 import tailwindcss from "@tailwindcss/vite";

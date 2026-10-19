@@ -19,7 +19,7 @@
 // with no first-run screens; `surface: "desktop"` must produce exactly what
 // the desktop produced before this change, at the SAME viewport — so a narrow
 // window is proved not to be the test, and the desktop is proved untouched.
-import { expect, test } from "@playwright/test";
+import { expect, test } from "./page-error-guard";
 
 import { openSidebar } from "./fixtures";
 
@@ -103,8 +103,11 @@ test("a phone is never asked to introduce itself, or to set itself up", async ({
   const sidebar = await openSidebar(page);
   await sidebar.getByRole("button", { name: "App settings" }).first().click();
   await expect(page.getByRole("button", { name: "Phone and other devices", exact: true })).toHaveCount(0);
-  await expect(page.getByRole("button", { name: "Connections", exact: true })).toHaveCount(0);
-  await expect(page.getByRole("button", { name: "Engines", exact: true })).toHaveCount(0);
+  // The Settings pages a phone never gets (desktop only since 1.0.3 L1); the Places bar keeps its own Apps button.
+  const settingsNav = page.getByRole("navigation", { name: "Settings sections" });
+  await expect(settingsNav.getByRole("button", { name: "General", exact: true })).toBeVisible();
+  await expect(settingsNav.getByRole("button", { name: "Connected apps", exact: true })).toHaveCount(0);
+  await expect(settingsNav.getByRole("button", { name: "Models & engines", exact: true })).toHaveCount(0);
   for (const copy of [PHONE_WIZARD, ...DENIALS]) {
     await expect(page.getByText(copy)).toHaveCount(0);
   }

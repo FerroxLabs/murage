@@ -157,7 +157,11 @@ describe("control-plane migrations and health", () => {
       SENDLANE_LIST_ID: env.SENDLANE_LIST_ID,
       SENDLANE_API_KEY: env.SENDLANE_API_KEY,
       SENDLANE_HASH_KEY: env.SENDLANE_HASH_KEY,
+      CANCELLATION_MAIL_KEY: env.CANCELLATION_MAIL_KEY,
+      NOTICE_MAIL_KEY: env.NOTICE_MAIL_KEY,
+      IDENTITY_READER: env.IDENTITY_READER,
       BETTER_AUTH_SECRET: "too-short",
+      CHECKOUT_DISCLOSURE_TOKEN_SECRET: env.CHECKOUT_DISCLOSURE_TOKEN_SECRET,
     };
     const request = new Request(`${BASE_URL}/healthz`);
     const ctx = createExecutionContext();
@@ -238,6 +242,105 @@ describe("Better Auth email OTP and bearer boundary", () => {
       "SELECT attempts FROM otp_recipient_rate_limits",
     ).first<{ attempts: number }>();
     expect(rateLimit?.attempts).toBe(3);
+  });
+
+  const attemptsFor = async () => (await env.DB.prepare("SELECT attempts FROM otp_recipient_rate_limits")
+    .first<{ attempts: number }>())?.attempts ?? 0;
+
+  it("an invalid-type request does not consume the victim's recipient budget", async () => {
+    const email = "victim-invalid-type@example.com";
+    for (let index = 0; index < 5; index += 1) {
+      const response = await call("/api/auth/email-otp/send-verification-otp", {
+        method: "POST",
+        headers: { "cf-connecting-ip": `198.51.100.${index + 1}` },
+        body: { email, type: "not-a-real-type" },
+      });
+      expect(response.status).toBeGreaterThanOrEqual(400);
+    }
+    expect(await attemptsFor()).toBe(0);
+    const ok = await call("/api/auth/email-otp/send-verification-otp", {
+      method: "POST", headers: { "cf-connecting-ip": "203.0.113.9" }, body: { email, type: "sign-in" },
+    });
+    expect(ok.status).toBe(200);
+    const stored = await env.DB.prepare('SELECT value FROM "verification" WHERE identifier = ?')
+      .bind(`sign-in-otp-${email}`).first();
+    expect(stored).toBeTruthy();
+    expect(await attemptsFor()).toBe(1);
+  });
+
+  it("a caller over its IP limit does not consume the victim's recipient budget", async () => {
+    const caller = { "cf-connecting-ip": "198.51.100.200" };
+    for (let index = 0; index < 5; index += 1) {
+      expect((await call("/api/auth/email-otp/send-verification-otp", {
+        method: "POST", headers: caller, body: { email: `filler-${index}@example.com`, type: "sign-in" },
+      })).status).toBe(200);
+    }
+    const victim = "victim-ip-limited@example.com";
+    const limited = await call("/api/auth/email-otp/send-verification-otp", {
+      method: "POST", headers: caller, body: { email: victim, type: "sign-in" },
+    });
+    expect(limited.status).toBe(429);
+    const row = await env.DB.prepare("SELECT attempts FROM otp_recipient_rate_limits WHERE attempts > 0 ORDER BY updated_at DESC")
+      .all<{ attempts: number }>();
+    // Five fillers hold one send each; the throttled victim request left nothing behind.
+    expect(row.results.length).toBe(5);
+    expect(row.results.every((r) => r.attempts === 1)).toBe(true);
+  });
+
+  const OTP_PATHS: Array<[string, string]> = [
+    ["/api/auth/email-otp/send-verification-otp", "email"],
+    ["/api/auth/email-otp/request-password-reset", "email"],
+    ["/api/auth/forget-password/email-otp", "email"],
+  ];
+  const OTP_BODIES: Array<[string, string | null, string]> = [
+    ["application/x-www-form-urlencoded", "application/x-www-form-urlencoded", "email=victim@example.com&type=sign-in"],
+    ["multipart/form-data", "multipart/form-data; boundary=x",
+      '--x\r\nContent-Disposition: form-data; name="email"\r\n\r\nvictim@example.com\r\n--x--\r\n'],
+    ["text/plain", "text/plain", JSON.stringify({ email: "victim@example.com", type: "sign-in" })],
+    ["missing", null, JSON.stringify({ email: "victim@example.com", type: "sign-in" })],
+  ];
+
+  for (const [path] of OTP_PATHS) {
+    for (const [label, contentType, rawBody] of OTP_BODIES) {
+      it(`rejects ${label} bodies on ${path} with 415 before Better Auth sees them`, async () => {
+        const headers: Record<string, string> = {};
+        if (contentType) headers["content-type"] = contentType;
+        const response = await worker.fetch(new Request(`${BASE_URL}${path}`, { method: "POST", headers, body: rawBody }),
+          env, createExecutionContext());
+        expect(response.status).toBe(415);
+        await expect(response.json()).resolves.toEqual({ error: "unsupported_media_type" });
+        const stored = await env.DB.prepare('SELECT COUNT(*) AS count FROM "verification"').first<{ count: number }>();
+        expect(stored?.count).toBe(0);
+      });
+    }
+
+    it(`applies the recipient limit to JSON on ${path} and fails closed on unparseable JSON`, async () => {
+      const email = `limit-${path.replaceAll("/", "-")}@example.com`;
+      for (let index = 0; index < 4; index += 1) {
+        const response = await call(path, {
+          method: "POST",
+          headers: { "cf-connecting-ip": `198.51.100.${index + 1}` },
+          body: { email, type: "forget-password" },
+        });
+        expect(response.status).toBe(200);
+      }
+      const rateLimit = await env.DB.prepare("SELECT attempts FROM otp_recipient_rate_limits").first<{ attempts: number }>();
+      expect(rateLimit?.attempts).toBe(3);
+      expect((await call(path, { method: "POST", rawBody: "{not json" })).status).toBe(400);
+      expect((await call(path, { method: "POST", body: { type: "sign-in" } })).status).toBe(400);
+    });
+  }
+
+  it("accepts application/json with a charset parameter and bodyless POSTs without a content type", async () => {
+    const withCharset = await call("/api/auth/email-otp/send-verification-otp", {
+      method: "POST",
+      headers: { "content-type": "Application/JSON; charset=utf-8" },
+      rawBody: JSON.stringify({ email: "charset@example.com", type: "sign-in" }),
+    });
+    expect(withCharset.status).toBe(200);
+    const bodyless = await worker.fetch(new Request(`${BASE_URL}/api/auth/sign-out`, { method: "POST" }),
+      env, createExecutionContext());
+    expect(bodyless.status).not.toBe(415);
   });
 
   it("canonicalizes Better Auth's message-only rate limit response", async () => {

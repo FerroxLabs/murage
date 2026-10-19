@@ -1,4 +1,4 @@
-import {test,expect,type Page,type TestInfo} from "@playwright/test";
+import {test,expect,type Page,type TestInfo} from "./page-error-guard";
 import {createServer,type ViteDevServer} from "vite";
 import react from "@vitejs/plugin-react";
 import tailwindcss from "@tailwindcss/vite";
@@ -32,9 +32,15 @@ test.afterAll(async()=>{await vite?.close();safeWipeSync(cache);});
 // "Remote backup (optional)" → "Off-site copy (optional)"; "Refresh remote backup status" →
 // "Refresh off-site status"; limits, refresh buttons, the closed-app job controls and
 // removal clean-up now sit under "Advanced", remote recovery under "Restore".
+// Settings 1.0.3 L5: Restore and the off-site copy are open cards (regions) on the Backups page; only the page's
+// Advanced section folds, behind "Advanced · How often, how long to keep, size limits, backup folder".
 async function openPanel(page:Page,name:"Advanced"|"Restore"|"Off-site copy (optional)"){
- const toggle=page.getByRole("button",{name,exact:true});if(await toggle.getAttribute("aria-expanded")!=="true")await toggle.click();await expect(toggle).toHaveAttribute("aria-expanded","true");
- return page.getByRole("region",{name,exact:true});
+ if(name==="Restore")return page.getByRole("region",{name:"Restore",exact:true});
+ // The off-site form, test and automatic-upload controls live in the page's Advanced section, as "Off-site copy details".
+ // Its status and result lines stay on the always-open "Off-site copy" card, so the panel is both.
+ if(name!=="Advanced"){await openPanel(page,"Advanced");return page.getByRole("region",{name:"Off-site copy",exact:true}).or(page.getByRole("region",{name:"Off-site copy details",exact:true}));}
+ const toggle=page.getByRole("button",{name:/^Advanced · /});if(await toggle.getAttribute("aria-expanded")!=="true")await toggle.click();await expect(toggle).toHaveAttribute("aria-expanded","true");
+ return page.getByRole("region",{name:"Advanced",exact:true});
 }
 const refreshSchedule=async(page:Page)=>{await openPanel(page,"Advanced");await page.getByRole("button",{name:"Refresh schedule status",exact:true}).click();};
 const refreshRemote=async(page:Page)=>{await openPanel(page,"Advanced");await page.getByRole("button",{name:"Refresh off-site status",exact:true}).click();};
@@ -159,16 +165,15 @@ test("explicit setup, keyboard enable/disable and safe reference replacement at 
  // Turning on collapses setup into the Schedule card: the choose button and
  // time input leave the page, and the limits under Advanced lock.
  await enable.focus();await page.keyboard.press("Enter");const disable=page.getByRole("button",{name:"Turn off",exact:true});await expect(disable).toBeEnabled();await expect(choose).toHaveCount(0);await expect(page.getByLabel("Time each day",{exact:true})).toHaveCount(0);await expect(page.getByLabel("Late start allowed (hours)",{exact:true})).toBeDisabled();
- await expect(page.getByRole("region",{name:"Schedule",exact:true})).toContainText("Daily at 22:15 (Asia/Bangkok)");await expect(page.getByRole("region",{name:"Your backups",exact:true})).toContainText("On · daily at 22:15 (Asia/Bangkok)");
+ await expect(page.getByRole("region",{name:"Schedule",exact:true})).toContainText("Daily at 22:15 (Asia/Bangkok)");await expect(page.getByRole("region",{name:/^Backups (on|off)$/})).toContainText("Every day at 22:15, on this computer.");await expect(page.getByRole("region",{name:"Backups on",exact:true})).toContainText("To be sure a restore works, try one from Restore.");
  const first=await page.evaluate(()=>(window as any).calls.find((c:any)=>c.action==="configure"));expect(first).toEqual({action:"configure",revision:1,choices:{enabled:true,preUpgrade:false,installationRef:"fixture_install",destinationRef:"fixture_dest",recoveryRef:"fixture_key",time:"22:15",timezone:"Asia/Bangkok",catchupMs:7200000,maxBytes:1073741824,maxDurationMs:600000,selection:{scope:"application-data",credentialPolicy:"preserve-in-encrypted-fidelity"},allowIdleRestart:true}});
  for(const width of [360,390,820,1440])await inspect(page,info,"enabled",width);
  await disable.focus();await page.keyboard.press("Enter");// With a folder and key kept, setup offers to change them, not to choose from scratch.
  await expect(page.getByRole("button",{name:"Choose a different folder",exact:true})).toBeEnabled();await expect(page.getByText("An existing transfer is not cancelled.",{exact:false})).toBeVisible();
  const second=await page.evaluate(()=>(window as any).calls.filter((c:any)=>c.action==="configure")[1]);const{allowIdleRestart,...prior}=first.choices;expect(second).toEqual({action:"configure",revision:2,choices:{...prior,enabled:false}});
  await expect(consent).not.toBeChecked();
- // Backup mode moved to the Restore card, opened from "Restore…".
- await page.getByRole("button",{name:"Restore…",exact:true}).click();await expect(page.getByRole("button",{name:"Restore",exact:true})).toBeFocused();
- await page.getByRole("button",{name:"Restart into Backup mode",exact:true}).click();expect(await page.evaluate(()=>(window as any).calls.filter((c:any)=>c.action==="manual").length)).toBe(1);
+ // Backup mode is the always-open Restore card's "Restore from an existing backup" button (no "Restore…" disclosure).
+ await page.getByRole("button",{name:"Restore from an existing backup",exact:true}).click();expect(await page.evaluate(()=>(window as any).calls.filter((c:any)=>c.action==="manual").length)).toBe(1);
  expect(errors).toEqual([]);
 });
 test("pre-upgrade opt-in is capability gated, preserves schedule choices and renews consent",async({page},info)=>{
@@ -194,31 +199,31 @@ test("pending, conflicts, stale state, review and verified receipt remain truthf
  // Once a folder and key are chosen, setup offers to change them instead.
  const change=page.getByRole("button",{name:"Choose a different folder",exact:true});
  await page.evaluate(()=>{(window as any).mode="hold";});await choose.click();await expect(choose).toBeDisabled();await expect(refresh).toBeDisabled();await page.evaluate(()=>(window as any).release());await expect(change).toBeEnabled();
- // A settings error is said once, in the Your backups "Needs attention" list, not repeated on the card (3df44775).
- await fill(page);await page.getByRole("checkbox",{name:CONSENT,exact:true}).check();await page.evaluate(()=>{(window as any).mode="conflict";});await page.getByRole("button",{name:"Turn on daily backups",exact:true}).click();await expect(page.getByRole("region",{name:"Your backups",exact:true})).toContainText("Settings changed");await expect(page.getByRole("alert").filter({hasText:"Settings changed"})).toHaveCount(0);await expect(page.getByLabel("Time each day",{exact:true})).toHaveValue("22:15");expect(await page.evaluate(()=>(window as any).calls.filter((c:any)=>c.action==="configure").length)).toBe(1);
- await page.evaluate(()=>{(window as any).mode="error";});await page.getByRole("button",{name:"Turn on daily backups",exact:true}).click();await expect(page.getByRole("region",{name:"Your backups",exact:true})).toContainText("Your data is preserved");await expect(page.getByText("PRIVATE_KEY_CANARY",{exact:false})).toHaveCount(0);
+ // A settings error is said once, in the Backups summary "Needs attention" list, not repeated on the card (3df44775).
+ await fill(page);await page.getByRole("checkbox",{name:CONSENT,exact:true}).check();await page.evaluate(()=>{(window as any).mode="conflict";});await page.getByRole("button",{name:"Turn on daily backups",exact:true}).click();await expect(page.getByRole("region",{name:/^Backups (on|off)$/})).toContainText("Settings changed");await expect(page.getByRole("alert").filter({hasText:"Settings changed"})).toHaveCount(0);await expect(page.getByLabel("Time each day",{exact:true})).toHaveValue("22:15");expect(await page.evaluate(()=>(window as any).calls.filter((c:any)=>c.action==="configure").length)).toBe(1);
+ await page.evaluate(()=>{(window as any).mode="error";});await page.getByRole("button",{name:"Turn on daily backups",exact:true}).click();await expect(page.getByRole("region",{name:/^Backups (on|off)$/})).toContainText("Your data is preserved");await expect(page.getByText("PRIVATE_KEY_CANARY",{exact:false})).toHaveCount(0);
  await page.evaluate(()=>{const w=window as any;w.state.pending=true;w.state.phase="capturing";});await refresh.click();await expect(change).toBeDisabled();await expect(page.getByText("Backup work is pending.",{exact:false})).toBeVisible();
- await expect(page.getByRole("region",{name:"Your backups"})).toContainText("A backup is running. Settings are locked until it finishes.");
+ await expect(page.getByRole("region",{name:/^Backups (on|off)$/})).toContainText("A backup is running. Settings are locked until it finishes.");
  for(const width of [390,820,1440])await inspect(page,info,"pending",width);
  await page.evaluate(()=>{(window as any).statusFail=true;});await refresh.click();await expect(page.getByText("Status refresh failed.",{exact:false})).toBeVisible();await expect(change).toBeDisabled();
- await expect(page.getByRole("region",{name:"Your backups"})).toContainText("Schedule status couldn't be refreshed.");
+ await expect(page.getByRole("region",{name:/^Backups (on|off)$/})).toContainText("Schedule status couldn't be refreshed.");
  await page.evaluate(()=>{const w=window as any;w.statusFail=false;w.state.pending=false;w.state.enabled=true;w.state.schedule={enabled:true,preUpgrade:false,time:"22:15",timezone:"Asia/Bangkok",catchupMs:7200000,maxBytes:1073741824,maxDurationMs:600000,installationRef:"fixture_install",destinationRef:"fixture_dest",recoveryRef:"fixture_key",selection:{scope:"application-data",credentialPolicy:"preserve-in-encrypted-fidelity"}};w.state.phase="needs-review";w.mode="ok";});await refresh.click();
  // The review state shows on the Schedule card and in the summary's attention list.
- await expect(page.getByRole("region",{name:"Schedule",exact:true}).getByText("backups are paused until you clear it",{exact:false})).toBeVisible();await expect(page.getByRole("region",{name:"Your backups"})).toContainText("backups are paused until you clear it");await expect(choose).toHaveCount(0);await expect(page.getByRole("button",{name:"Turn off",exact:true})).toBeEnabled();
+ await expect(page.getByRole("region",{name:"Schedule",exact:true}).getByText("backups are paused until you clear it",{exact:false})).toBeVisible();await expect(page.getByRole("region",{name:/^Backups (on|off)$/})).toContainText("backups are paused until you clear it");await expect(choose).toHaveCount(0);await expect(page.getByRole("button",{name:"Turn off",exact:true})).toBeEnabled();
  for(const width of [390,820,1440])await inspect(page,info,"review",width);
  await page.getByRole("button",{name:"Turn off",exact:true}).click();await expect(page.getByRole("button",{name:"Choose a different folder",exact:true})).toBeDisabled();await expect(page.getByRole("button",{name:"Turn on daily backups",exact:true})).toBeDisabled();
  // Was: "Last locally verified backup: … 2,048 bytes. This is not a restore-drill result."
- await page.evaluate(()=>{const w=window as any;w.state.phase="returned";w.state.lastVerified={verifiedAt:1700000000000,bytes:2048};});await refresh.click();await expect(page.getByRole("region",{name:"Your backups"})).toContainText("2 KB");await expect(page.getByText("To be sure a restore works, try one from Restore.",{exact:false})).toBeVisible();await expect(page.getByText("restore-drill",{exact:false})).toHaveCount(0);
+ await page.evaluate(()=>{const w=window as any;w.state.phase="returned";w.state.lastVerified={verifiedAt:1700000000000,bytes:2048};});await refresh.click();await expect(page.getByRole("region",{name:/^Backups (on|off)$/})).toContainText("checked and complete");await expect(page.getByRole("region",{name:"Restore",exact:true})).toContainText("checked");await expect(page.getByText("restore-drill",{exact:false})).toHaveCount(0);
  // Pending status changes arrive through polling; unmount ends the timer.
  await page.evaluate(()=>{(window as any).state.pending=true;});await refresh.click();await page.evaluate(()=>{(window as any).state.pending=false;});await expect(page.getByText("Backup work is pending.",{exact:false})).toHaveCount(0);
  await page.evaluate(()=>{(window as any).state.pending=true;});await refresh.click();await page.evaluate(()=>(window as any).unmountFixture());const count=await page.evaluate(()=>(window as any).calls.length);await page.waitForTimeout(2200);expect(await page.evaluate(()=>(window as any).calls.length)).toBe(count);
 });
-test("a backup that stopped unconfirmed can be cleared from Your backups, and backing up works again",async({page},info)=>{
+test("a backup that stopped unconfirmed can be cleared from the Backups summary, and backing up works again",async({page},info)=>{
  await setup(page,false,true);
  await page.evaluate(()=>{const w=window as any;w.state={...w.state,refs:w.refs,enabled:true,phase:"needs-review",reviewReason:"capture-unconfirmed",schedule:{enabled:true,preUpgrade:false,time:"22:15",timezone:"Asia/Bangkok",catchupMs:7200000,maxBytes:1073741824,maxDurationMs:600000,installationRef:"fixture_install",destinationRef:"fixture_dest",recoveryRef:"fixture_key",selection:{scope:"application-data",credentialPolicy:"preserve-in-encrypted-fidelity"}}};
   w.muragebox.backupSchedule.clearReview=async(revision:number)=>{w.calls.push({action:"clear-review",revision});if(revision!==w.state.revision)throw Error("BACKUP_SCHEDULE_CHANGED");const{reviewReason,...rest}=w.state;w.state={...rest,phase:"idle"};return structuredClone(w.state);};});
  await refreshSchedule(page);
- const summary=page.getByRole("region",{name:"Your backups"});
+ const summary=page.getByRole("region",{name:/^Backups (on|off)$/});
  await expect(summary).toContainText("The last backup stopped before Murage could confirm it, so backups are paused.");
  await expect(summary.getByRole("button",{name:"Back up now",exact:true})).toBeDisabled();
  for(const width of [390,1440])await inspect(page,info,"clear-review",width);
@@ -265,7 +270,7 @@ test("closed-app checkbox sets up the job, keeps consent, stale status and disab
  await expect(permission).toBeEnabled();await expect(permission).not.toBeChecked();expect(await closedCalls()).toEqual([]);
  await page.evaluate(()=>{(window as any).closedMode="cancel";});await permission.click();await expect(page.getByText("Job registration cancelled. Scheduling settings are unchanged.")).toBeVisible();await expect(permission).not.toBeChecked();
  expect(await closedCalls()).toEqual(["closed-stage","closed-install"]);await expect(page.getByText("Job prepared, not registered",{exact:true})).toBeVisible();
- await page.evaluate(()=>{(window as any).closedMode="error";});await permission.click();await expect(page.getByRole("region",{name:"Your backups",exact:true})).toContainText("Your data is preserved");await expect(page.getByText("PRIVATE_CLOSED_CANARY",{exact:false})).toHaveCount(0);await expect(permission).not.toBeChecked();
+ await page.evaluate(()=>{(window as any).closedMode="error";});await permission.click();await expect(page.getByRole("region",{name:/^Backups (on|off)$/})).toContainText("Your data is preserved");await expect(page.getByText("PRIVATE_CLOSED_CANARY",{exact:false})).toHaveCount(0);await expect(permission).not.toBeChecked();
  expect(await closedCalls()).toEqual(["closed-stage","closed-install","closed-install"]);
  await page.evaluate(()=>{(window as any).closedMode="ok";});await permission.focus();await page.keyboard.press("Space");await expect(page.getByText("Job registration confirmed",{exact:true})).toBeVisible();await expect(permission).toBeChecked();
  expect(await closedCalls()).toEqual(["closed-stage","closed-install","closed-install","closed-install"]);
@@ -280,7 +285,7 @@ test("closed-app checkbox sets up the job, keeps consent, stale status and disab
  const call=await page.evaluate(()=>(window as any).calls.find((c:any)=>c.action==="configure"));expect(call.choices).toMatchObject({closedApp:true,allowClosedApp:true,allowIdleRestart:true});
  await page.evaluate(()=>{(window as any).state.lastClosedResult={status:"verified",at:1700000000000,revision:2};});await refreshSchedule(page);await expect(page.getByText("Last closed-app result:",{exact:false})).toContainText("Backup verified");
  await page.getByRole("button",{name:"Disable all scheduled backups and remove job",exact:true}).click();await expect(page.getByText("Daily backups are off.",{exact:false})).toBeVisible();await expect(page.getByText("All scheduled backups are disabled. Job removal is pending; any running backup is not cancelled.")).toBeVisible();await expect(permission).toBeChecked();await expect(enable).toBeDisabled();
- await expect(page.getByRole("region",{name:"Your backups"})).toContainText("Removing the background job still needs attention.");
+ await expect(page.getByRole("region",{name:/^Backups (on|off)$/})).toContainText("Removing the background job still needs attention.");
  for(const width of [390,820,1440])await inspect(page,info,"closed-removal-pending",width);
  expect(await page.evaluate(()=>(window as any).calls.filter((c:any)=>c.action.startsWith("closed-")).every((c:any)=>c.args.length===0))).toBe(true);expect(errors).toEqual([]);
 });
@@ -288,22 +293,23 @@ test("optional recovery-key and back-up-now methods: success, cancel and errors 
  const errors:string[]=[];page.on("pageerror",error=>errors.push(error.message));await setup(page,false,true);
  // One button starts setup; the key the desktop made is reported back so
  // the page can offer the one thing left to do with it.
- const start=page.getByRole("button",{name:"Turn on backups",exact:true}),now=page.getByRole("button",{name:"Back up now",exact:true}),status=page.getByRole("region",{name:"Your backups"});
+ const start=page.getByRole("button",{name:"Turn on backups",exact:true}),now=page.getByRole("button",{name:"Back up now",exact:true}),status=page.getByRole("region",{name:/^Backups (on|off)$/});
  await expect(now).toBeDisabled();
  await page.evaluate(()=>{(window as any).keyMode="cancel";});await start.click();await expect(page.getByText("Setup cancelled. Nothing was changed.")).toBeVisible();
- await page.evaluate(()=>{(window as any).keyMode="error";});await start.click();await expect(page.getByRole("region",{name:"Your backups",exact:true})).toContainText("Your data is preserved");await expect(page.getByText("PRIVATE_KEY_CANARY",{exact:false})).toHaveCount(0);
+ await page.evaluate(()=>{(window as any).keyMode="error";});await start.click();await expect(page.getByRole("region",{name:/^Backups (on|off)$/})).toContainText("Your data is preserved");await expect(page.getByText("PRIVATE_KEY_CANARY",{exact:false})).toHaveCount(0);
  await page.evaluate(()=>{(window as any).keyMode="ok";});await start.focus();await page.keyboard.press("Enter");
  await expect(page.getByText("Your recovery key is Murage recovery key.age, saved in Documents.")).toBeVisible();
  await expect(page.getByText("nobody, including you",{exact:false})).toBeVisible();
  // Setup ends protected, not merely configured: the schedule is on and the
  // first backup was requested in the same act.
- await expect(page.getByRole("region",{name:"Schedule",exact:true})).toBeVisible();
+ await expect(page.getByRole("region",{name:"Backups on",exact:true})).toBeVisible();await openPanel(page,"Advanced");await expect(page.getByRole("region",{name:"Schedule",exact:true})).toBeVisible();
  expect(await page.evaluate(()=>(window as any).calls.filter((c:any)=>c.action==="run-now").length)).toBe(1);
- await expect(page.getByText("age1"+"q".repeat(58))).toBeHidden();await page.getByText("Show public key",{exact:true}).click();await expect(page.getByText("age1"+"q".repeat(58))).toBeVisible();
+ // The public key is shown with the saved-key notice (no "Show public key" disclosure since Settings L5); the secret half never is.
+ await expect(page.getByText("age1"+"q".repeat(58))).toBeVisible();
  expect(await page.content()).not.toContain("AGE-SECRET-KEY");
  // Keeping a copy is one action, and a refusal never claims a copy was made.
  const copy=page.getByRole("button",{name:"Save a copy…",exact:true});
- await page.evaluate(()=>{(window as any).keyMode="inside";});await copy.click();await expect(page.getByRole("region",{name:"Your backups",exact:true})).toContainText("Save the recovery key outside your backup folder.");
+ await page.evaluate(()=>{(window as any).keyMode="inside";});await copy.click();await expect(page.getByRole("region",{name:/^Backups (on|off)$/})).toContainText("Save the recovery key outside your backup folder.");
  await expect(page.getByText("A copy was saved as",{exact:false})).toHaveCount(0);
  await page.evaluate(()=>{(window as any).keyMode="cancel";});await copy.click();await expect(page.getByText("No copy was saved. Your recovery key is unchanged.")).toBeVisible();
  await page.evaluate(()=>{(window as any).keyMode="ok";});await copy.click();await expect(page.getByText("A copy was saved as usb-key.txt.")).toBeVisible();
@@ -334,13 +340,13 @@ test("a refused key save clears the earlier saved line, and a refused background
  await copy.click();await expect(page.getByText("A copy was saved as usb-key.txt.")).toBeVisible();
  // The desktop app answers "that name exists" as a value, not a thrown error.
  await page.evaluate(()=>{(window as any).keyMode="exists";});await copy.click();
- await expect(page.getByRole("region",{name:"Your backups",exact:true})).toContainText("A file with that name already exists.");
- await page.evaluate(()=>{(window as any).keyMode="inside";});await copy.click();await expect(page.getByRole("region",{name:"Your backups",exact:true})).toContainText("outside your backup folder");
+ await expect(page.getByRole("region",{name:/^Backups (on|off)$/})).toContainText("A file with that name already exists.");
+ await page.evaluate(()=>{(window as any).keyMode="inside";});await copy.click();await expect(page.getByRole("region",{name:/^Backups (on|off)$/})).toContainText("outside your backup folder");
  // The key itself is unchanged by a refused copy: it is still named on the page.
  await expect(page.getByText("Your recovery key is Murage recovery key.age, saved in Documents.")).toBeVisible();
  // The closed-app choice is changed with daily backups off: the Schedule card
  // says "Turn off daily backups before changing" (4f5323e0).
- await page.getByRole("button",{name:"Turn off",exact:true}).click();
+ await openPanel(page,"Advanced");await page.getByRole("button",{name:"Turn off",exact:true}).click();
  // No systemd user session: registering fails, and afterwards the job cannot be read.
  await page.evaluate(()=>{
   const w=window as any;w.closedState={supported:true,state:"unconfigured",closedApp:false};
@@ -351,7 +357,8 @@ test("a refused key save clears the earlier saved line, and a refused background
    disable:async()=>structuredClone(w.closedState),
   };
  });
- await refreshSchedule(page);
+ // The closed-app job bridge appears after the page rendered; the second refresh runs with it in place.
+ await refreshSchedule(page);await refreshSchedule(page);
  const permission=page.getByRole("switch",{name:"Also back up when Murage is closed",exact:true});
  const reason="Your system didn't let Murage register a background job, so backups run only while Murage is open.";
  await expect(permission).toBeEnabled();await expect(page.getByText(reason)).toHaveCount(0);
@@ -383,13 +390,13 @@ test("remote backup explicit save connect upload and uncertainty",async({page},i
  await page.evaluate(()=>{(window as any).remoteMode="ok";});await password.click();await expect(connect).toBeEnabled();expect(await page.evaluate(()=>(window as any).calls.filter((c:any)=>c.action==="remote-connect").length)).toBe(0);
  // Was: status "Repository connection confirmed".
  await connect.focus();await page.keyboard.press("Enter");await expect(panel.getByText("Off-site storage connected",{exact:true})).toBeVisible();await expect(upload).toBeDisabled();await consent.focus();await page.keyboard.press("Space");await expect(upload).toBeEnabled();
- await page.evaluate(()=>{(window as any).remoteFail=true;});await refresh();await expect(upload).toBeDisabled();await expect(consent).not.toBeChecked();await expect(page.getByRole("region",{name:"Your backups"})).toContainText("Off-site status needs a refresh.");await page.evaluate(()=>{(window as any).remoteFail=false;});await refresh();await consent.check();
+ await page.evaluate(()=>{(window as any).remoteFail=true;});await refresh();await expect(upload).toBeDisabled();await expect(consent).not.toBeChecked();await expect(page.getByRole("region",{name:/^Backups (on|off)$/})).toContainText("Off-site status needs a refresh.");await page.evaluate(()=>{(window as any).remoteFail=false;});await refresh();await consent.check();
  for(const width of [390,820,1440])await inspect(page,info,"remote-ready",width);
  await page.evaluate(()=>{(window as any).remoteMode="hold";});await upload.click();await expect(panel.getByRole("button",{name:"Uploading and verifying…",exact:true})).toBeDisabled();await expect(password).toBeDisabled();
  await page.evaluate(()=>{const w=window as any;w.remoteMode="uncertain";w.remoteRelease();});await expect(panel.getByText("Upload needs review.",{exact:false})).toBeVisible();await expect(consent).not.toBeChecked();await expect(upload).toBeDisabled();
  expect(await page.evaluate(()=>(window as any).calls.filter((c:any)=>c.action==="remote-upload"))).toEqual([{action:"remote-upload",ref:"remote-one",revision:2,jobId:"a".repeat(64)}]);
  // Was: "Recorded remote result for the latest backup:". A configured off-site copy opens expanded.
- await page.reload();await page.waitForLoadState("networkidle");await expect(panel.getByText("Recorded off-site result for the latest backup:",{exact:false})).toContainText("needs review; no automatic retry");await expect(page.getByRole("region",{name:"Your backups"})).toContainText("The last off-site upload needs review.");expect(await page.evaluate(()=>(window as any).calls.filter((c:any)=>c.action==="remote-upload").length)).toBe(0);
+ await page.reload();await page.waitForLoadState("networkidle");await openPanel(page,"Advanced");await expect(panel.getByText("Recorded off-site result for the latest backup:",{exact:false})).toContainText("needs review; no automatic retry");await expect(page.getByRole("region",{name:/^Backups (on|off)$/})).toContainText("The last off-site upload needs review.");expect(await page.evaluate(()=>(window as any).calls.filter((c:any)=>c.action==="remote-upload").length)).toBe(0);
  for(const width of [390,820,1440])await inspect(page,info,"remote-review",width);
  // Was: "Check existing remote copy" / "Existing remote copy verified. Nothing was uploaded again."
  const reconcile=panel.getByRole("button",{name:"Check existing off-site copy",exact:true});await expect(reconcile).toBeEnabled();await reconcile.focus();await page.keyboard.press("Enter");await expect(panel.getByText("Existing off-site copy verified. Nothing was uploaded again.")).toBeVisible();await expect(panel.getByText("Recorded off-site result for the latest backup:",{exact:false})).toContainText("copy verified by readback");expect(await page.evaluate(()=>(window as any).calls.filter((c:any)=>c.action==="remote-upload").length)).toBe(0);
@@ -399,8 +406,8 @@ test("remote backup explicit save connect upload and uncertainty",async({page},i
 // The S3 / SFTP choice is one radio group (0a09731e): Tab reaches its checked
 // option and the arrow keys move within it, so an unchecked radio is not a Tab stop.
 test("remote destination form keyboard and narrow layout",async({page},info)=>{
- await setup(page,true);const panel=await openPanel(page,"Off-site copy (optional)");await panel.locator("summary").click();
- const total=await panel.evaluate(node=>{const elements=[...node.querySelectorAll<HTMLElement>("button:not(:disabled),input:not(:disabled),select:not(:disabled),summary")].filter(el=>el.getBoundingClientRect().height>0&&!(el instanceof HTMLInputElement&&el.type==="radio"&&!el.checked));elements.forEach((el,index)=>el.dataset.remoteTab=String(index));return elements.length;});
+ await setup(page,true);await openPanel(page,"Off-site copy (optional)");const panel=page.getByRole("region",{name:"Off-site copy details",exact:true});
+ const total=await panel.evaluate(node=>{const elements=[...node.querySelectorAll<HTMLElement>("button:not(:disabled),input:not(:disabled),select:not(:disabled)")].filter(el=>el.getBoundingClientRect().height>0&&!(el instanceof HTMLInputElement&&el.type==="radio"&&!el.checked));elements.forEach((el,index)=>el.dataset.remoteTab=String(index));return elements.length;});
  expect(total).toBeGreaterThan(8);await panel.locator('[data-remote-tab="0"]').focus();await page.keyboard.press("Shift+Tab");const seen=new Set<string>();
  for(let i=0;i<total;i++){
   await page.keyboard.press("Tab");const focus=await page.evaluate(()=>{const el=document.activeElement as HTMLElement,style=getComputedStyle(el);return{id:el.dataset.remoteTab,visible:style.outlineStyle!=="none"&&parseFloat(style.outlineWidth)>0||style.boxShadow!=="none"};});
@@ -429,7 +436,7 @@ test("remote recovery without local record requires explicit find download and b
 });
 test("automatic remote uploads require explicit consent and preserve review pause",async({page},info)=>{
  const errors:string[]=[];page.on("pageerror",error=>errors.push(error.message));await setup(page,true);
- const panel=page.getByRole("region",{name:"Off-site copy (optional)"}),refresh={click:()=>refreshRemote(page)};
+ const panel=await openPanel(page,"Off-site copy (optional)"),refresh={click:()=>refreshRemote(page)};
  await page.evaluate(()=>{const w=window as any;w.remoteState={supported:true,pending:false,configured:true,state:"disconnected",revision:2,remoteRef:"remote-one",label:"Fixture automatic backup",passwordSelected:true};
   w.muragebox.backupRemote.setAutomaticUpload=async(ref:string,revision:number,enabled:boolean)=>{w.calls.push({action:"remote-automatic",ref,revision,enabled});if(w.remoteMode==="hold")await new Promise(resolve=>w.remoteRelease=resolve);if(ref!==w.remoteState.remoteRef||revision!==w.remoteState.revision)throw Error("BACKUP_REMOTE_CHANGED");w.remoteState.automaticUpload={enabled,state:enabled?"enabled":"disabled"};return{saved:true};};
  });await refresh.click();
@@ -448,7 +455,7 @@ test("automatic remote uploads require explicit consent and preserve review paus
  await page.evaluate(()=>{const w=window as any;w.remoteState.automaticUpload={enabled:true,state:"needs-review"};w.remoteState.state="disconnected";});await refresh.click();
  await expect(panel.getByText("Automatic uploads paused for review.",{exact:true})).toBeVisible();await expect(disable).toBeEnabled();
  await expect(panel.getByText("Review the uncertain upload first.",{exact:false})).toContainText("This does not retry the same backup");
- for(const width of [390,820,1440]){await page.setViewportSize({width,height:900});expect(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth)).toBe(true);await page.evaluate(axe);const report=await page.evaluate(async()=>(window as any).axe.run(document));expect(report.violations).toEqual([]);writeFileSync(info.outputPath(`automatic-axe-${width}.json`),JSON.stringify(report));await panel.screenshot({path:info.outputPath(`automatic-${width}.png`)});}
+ for(const width of [390,820,1440]){await page.setViewportSize({width,height:900});expect(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth)).toBe(true);await page.evaluate(axe);const report=await page.evaluate(async()=>(window as any).axe.run(document));expect(report.violations).toEqual([]);writeFileSync(info.outputPath(`automatic-axe-${width}.json`),JSON.stringify(report));await page.getByRole("region",{name:"Off-site copy details",exact:true}).screenshot({path:info.outputPath(`automatic-${width}.png`)});}
  await disable.focus();await page.keyboard.press("Enter");await expect(enable).toBeDisabled();await expect(panel.getByText("Automatic uploads are off.",{exact:true})).toBeVisible();
  await page.evaluate(()=>{const w=window as any;w.remoteState.state="connected";delete w.muragebox.backupRemote.setAutomaticUpload;});await refresh.click();await expect(enable).toBeDisabled();await expect(panel.getByText("Automatic uploads require an updated desktop app.")).toBeVisible();
  expect(await page.evaluate(()=>(window as any).calls.filter((c:any)=>c.action==="remote-upload"))).toEqual([]);expect(errors).toEqual([]);

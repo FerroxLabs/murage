@@ -13,12 +13,14 @@ export type JSONValue = z.infer<typeof jsonValueSchema>;
 const MAX_API_BODY_BYTES = 16 * 1024;
 const BODYLESS_METHODS = new Set(["GET", "HEAD", "OPTIONS"]);
 const ALLOWED_CORS_METHODS = new Set(["GET", "POST", "DELETE"]);
-const ALLOWED_CORS_HEADERS = new Set(["authorization", "content-type"]);
+const ALLOWED_CORS_HEADERS = new Set(["authorization", "content-type", "x-d1-bookmark"]);
 
 export class HTTPError extends Error {
   constructor(
     public readonly status: number,
     public readonly code: string,
+    /** Extra fields beside `error` in the body (e.g. what a step-up needs). Never a secret or a token. */
+    public readonly extra?: { [key: string]: JSONValue },
   ) {
     super(code);
   }
@@ -28,8 +30,8 @@ export function json(value: JSONValue, status = 200): Response {
   return new Response(JSON.stringify(value), { status, headers: JSON_HEADERS });
 }
 
-export function errorResponse(status: number, code: string): Response {
-  return json({ error: code }, status);
+export function errorResponse(status: number, code: string, extra?: { [key: string]: JSONValue }): Response {
+  return json({ ...extra, error: code }, status);
 }
 
 function validateDeclaredBodyLength(request: Request) {
@@ -131,7 +133,7 @@ export function preflight(request: Request, config: ControlPlaneConfig): Respons
       "cache-control": "no-store",
       "access-control-allow-origin": origin,
       "access-control-allow-methods": "GET, POST, DELETE",
-      "access-control-allow-headers": "authorization, content-type",
+      "access-control-allow-headers": "authorization, content-type, x-d1-bookmark",
       "vary": "Origin",
     },
   });
@@ -147,6 +149,8 @@ export function secureResponse(
   headers.set("cache-control", "no-store");
   headers.set("x-content-type-options", "nosniff");
   headers.set("referrer-policy", "no-referrer");
+  headers.set("x-frame-options", "DENY");
+  if (new URL(request.url).protocol === "https:") headers.set("strict-transport-security", "max-age=31536000");
   headers.set("x-request-id", requestId);
   headers.delete("access-control-allow-origin");
 
@@ -154,6 +158,7 @@ export function secureResponse(
     const origin = requestOriginAllowed(request, config);
     if (origin) {
       headers.set("access-control-allow-origin", origin);
+      headers.set("access-control-expose-headers", "x-d1-bookmark, server-timing, x-step-up-consumed");
       appendVary(headers, "Origin");
     }
   }

@@ -1,4 +1,5 @@
 import { REQUIRED_MCP_SERVERS, startsWithNotDone, toolsUnavailableRunError } from "./drivers/mcp-readiness.ts";
+import { readOwnerTimeZone, nextOwnerDailyOccurrence } from "./cloud-home/timezone.ts";
 import { assertHumanPrincipal, type HumanPrincipal } from "./human-principals.ts";
 import { ROUTINE_INSTRUCTIONS_MAX, routineInstructionsTooLongMessage } from "../shared/routine-instructions.ts";
 import { createHash, randomUUID } from "node:crypto";
@@ -171,6 +172,9 @@ export interface Routine {
   updatedAt: number;
 }
 
+/** The most history lines one run keeps. */
+const RUN_NOTES_MAX = 20;
+
 export interface RoutineRun {
   watch?: RoutineWatchRun;
   event?: RoutineEvent;
@@ -246,6 +250,12 @@ export interface RoutineRun {
   error?: string;
   cost?: number | null;
   denials?: string[];
+  /** Plain lines for this run's history, such as a command the routine
+   * carve-out let through (server/routine-permissions.ts). */
+  notes?: string[];
+  /** How many more such lines this run had: a repeat of a line above, or
+   * one past RUN_NOTES_MAX. Every one is counted, none is dropped silently. */
+  notesMore?: number;
   /** Degraded availability, kept apart from the outcome: required tools
    * ("connected apps", "memory") that had not loaded when the run's turn
    * started. The run still completes when its task did not need them. */
@@ -404,6 +414,10 @@ export interface RoutineManagerOptions {
   readWatchSource?: (ownerBotId: string, botId: string, source: RoutineWatchSource, signal: AbortSignal) => Promise<RoutineWatchObservation>;
   /** Admission only: never interrupts active work or blocks manual/channel requests. */
   automaticPaused?: () => boolean;
+  /** Until this answers true a tick does nothing at all: the host is still creating the state a dispatch reads
+   * (server/index.ts opens it as its last step, right before start()). Work that arrives meanwhile is kept, queued,
+   * for the first tick after. Absent: always open. */
+  dispatchOpen?: () => boolean;
   /** Startup gate: true once the connected-apps inventory has loaded and the
    * MCP mounts have settled. Scheduled runs (including catch-up runs for
    * occurrences missed while the app was closed) wait for it, bounded by
@@ -657,6 +671,8 @@ function cloneRun(tracked: RoutineRun): RoutineRun {
     ...(run.channelOrigin ? { channelOrigin: plainCopy(run.channelOrigin) } : {}),
     attachments: cloneAttachments(run.attachments),
     denials: run.denials ? [...run.denials] : undefined,
+    ...(Array.isArray(run.notes) ? { notes: run.notes.filter((note): note is string => typeof note === "string").slice(0, RUN_NOTES_MAX) } : {}),
+    ...(typeof run.notesMore === "number" && Number.isSafeInteger(run.notesMore) && run.notesMore > 0 ? { notesMore: run.notesMore } : {}),
     ...(run.toolsUnavailable ? { toolsUnavailable: [...run.toolsUnavailable] } : {}),
   };
 }
@@ -729,6 +745,7 @@ export function nextOccurrence(schedule: RoutineSchedule, after: number): number
     const candidate = schedule.anchorAt + (intervalsElapsed + 1) * intervalMs;
     return Number.isSafeInteger(candidate) && candidate <= MAX_DATE_MS ? candidate : null;
   }
+  if (process.env.MURAGE_CLOUD_ROLE === "home") return nextOwnerDailyOccurrence(schedule.time, cleanDays(schedule.weekdays), after, readOwnerTimeZone(DATA_DIR));
   const [hour, minute] = schedule.time.split(":").map(Number);
   const weekdays = new Set(cleanDays(schedule.weekdays));
   for (let offset = 0; offset <= 8; offset++) {
@@ -836,6 +853,12 @@ export class RoutineManager {
   private readonly automaticHeldSince = new Map<string, { waitedMs: number; monotonic: number; wall: number }>();
   private readonly options: RoutineManagerOptions;
   private routinesRaw: Routine[] = [];
+  /** Stored routines this build could not load (a schedule or watch it cannot
+   * read), kept exactly as stored. They never run and never show as live, but
+   * every write of routines.json carries them back out, so an unrelated save
+   * cannot delete them. By id: why each one could not load. */
+  private unloadedRoutines: Routine[] = [];
+  private unloadedReasons = new Map<string, "schedule" | "watch">();
   private runsRaw: RoutineRun[] = [];
   private routinesView: Routine[] = this.routinesRaw;
   private runsView: RoutineRun[] = this.runsRaw;
@@ -922,7 +945,7 @@ export class RoutineManager {
       this.routines = diskRoutines
         ? diskRoutines.flatMap((routine) => {
             const schedule = loadSchedule(routine.schedule);
-            if (!schedule) return [];
+            if (!schedule) return this.keepUnloaded(routine, "schedule");
             const target = loadTarget(routine.target);
             const loaded: Routine = {
               ...routine,
@@ -946,7 +969,7 @@ export class RoutineManager {
             delete loaded.failureStreak;
             if (routine.watch !== undefined) {
               try { loaded.watch = readRoutineWatchBinding(routine.watch, routine.id); }
-              catch { return []; }
+              catch { return this.keepUnloaded(routine, "watch"); }
             }
             if (loaded.timeoutMinutes === undefined) delete loaded.timeoutMinutes;
             if (loaded.permissionMode !== routine.permissionMode) prePin = original;
@@ -1016,6 +1039,8 @@ export class RoutineManager {
       if (!(error instanceof MissingRoutinesFile)) throw new PersistedStateRecoveryError(this.file, "invalid-shape", error);
       prePin = undefined;
       this.routines = [];
+      this.unloadedRoutines = [];
+      this.unloadedReasons.clear();
       this.runs = [];
       this.routineRequestReceipts = [];
     }
@@ -1091,6 +1116,10 @@ export class RoutineManager {
       .sort((a, b) => b.scheduledFor - a.scheduledFor)
       .map(cloneRun);
   }
+
+  private runRevision = 0;
+  /** Changes on any write to a run (or the list of runs), so a caller holding something built from the live runs can keep it until they move. */
+  get runsRevision(): number { return this.runRevision; }
 
   /** The conversations of this bot's runs that are still going (queued,
    * running, waiting, or needing the owner). Their cards link to the task, so
@@ -1240,14 +1269,14 @@ export class RoutineManager {
   }
 
   /** The stored ceiling for scheduled and manual work, including room goals. */
-  routineRunForThread(threadId: string): { routineId: string; botId: string; permissionMode?: RoutinePermissionMode; alwaysAllow: string[] } | null {
+  routineRunForThread(threadId: string): { runId: string; routineId: string; botId: string; permissionMode?: RoutinePermissionMode; alwaysAllow: string[] } | null {
     const run = this.runs.find((candidate) => candidate.threadId === threadId && isLive(candidate.status));
     if (!run) return null;
     const trigger = run.triggerSource ?? (run.manual ? "manual" : "schedule");
     if (trigger !== "schedule" && trigger !== "manual") return null;
     const routine = this.routines.find((candidate) => candidate.id === run.routineId);
     if (!routine) return null;
-    return { routineId: routine.id, botId: run.botId, ...(routine.permissionMode ? { permissionMode: routine.permissionMode } : {}), alwaysAllow: [...(routine.alwaysAllow ?? [])] };
+    return { runId: run.id, routineId: routine.id, botId: run.botId, ...(routine.permissionMode ? { permissionMode: routine.permissionMode } : {}), alwaysAllow: [...(routine.alwaysAllow ?? [])] };
   }
 
   /** The routine whose own conversation this is (Routine.threadId), with
@@ -1262,17 +1291,44 @@ export class RoutineManager {
    * sits on a pending card this routine's run raised; this only refuses a
    * key that is not one of the two scoped kinds, and a full list. */
   grantAlwaysAllow(id: string, key: string): Routine | null {
-    const routine = this.routines.find((candidate) => candidate.id === id);
-    if (!routine) return null;
-    if (!isRoutineGrantKey(key)) throw Object.assign(new Error("Only an exact command or a scoped place can be always allowed for a routine"), { status: 400 });
-    const held = routine.alwaysAllow ?? [];
-    if (held.includes(key)) return this.routineWithHealth(routine);
-    if (held.length >= ROUTINE_GRANTS_MAX) throw Object.assign(new Error(`This routine already remembers ${ROUTINE_GRANTS_MAX} approvals. Remove some in the routine editor, then try again.`), { status: 409 });
+    return this.grantAlwaysAllowSet(id, [key]);
+  }
+
+  /** Rule 81b (AMEND-13): remember a WHOLE set at once. Every key is
+   * validated first; existing keys are deduplicated; a set that would pass
+   * the cap, or any invalid key, saves none of it (no slicing, no partial
+   * success). Saving keys already held is a no-op, so a retry is idempotent. */
+  grantAlwaysAllowSet(id: string, keys: readonly string[]): Routine | null {
+    return this.rememberAlwaysAllowSet(id, keys)?.routine ?? null;
+  }
+
+  /** As grantAlwaysAllowSet, and the keys it added, so the approval choke
+   * point (server/index.ts rememberAndAnswer) can take back exactly those
+   * when its answer does not land (A13-FIX-DESIGN C1). */
+  rememberAlwaysAllowSet(id: string, keys: readonly string[]): { routine: Routine; added: string[] } | null {
+    const plan = this.planAlwaysAllowSet(id, keys);
+    if (!plan) return null;
+    const { routine, added: fresh } = plan;
+    if (!fresh.length) return { routine: this.routineWithHealth(routine), added: [] };
     // A grant is not a definition edit: `updatedAt` stays, so a pending
     // routine confirmation card is not made stale by it.
-    this.commitMutation(() => { routine.alwaysAllow = [...held, key]; });
+    this.commitMutation(() => { routine.alwaysAllow = [...(routine.alwaysAllow ?? []), ...fresh]; });
     this.emitRoutine(routine);
-    return this.routineWithHealth(routine);
+    return { routine: this.routineWithHealth(routine), added: fresh };
+  }
+
+  /** What rememberAlwaysAllowSet would add, without writing: the choke point
+   * validates a choice with this BEFORE its answer is delivered, and writes
+   * only after. Null for no such routine; throws (with a status) for a key
+   * outside the scoped kinds and past the cap. */
+  planAlwaysAllowSet(id: string, keys: readonly string[]): { routine: Routine; added: string[] } | null {
+    const routine = this.routines.find((candidate) => candidate.id === id);
+    if (!routine) return null;
+    if (!keys.length || !keys.every(isRoutineGrantKey)) throw Object.assign(new Error("Only exact actions, an exact command or a scoped place can be always allowed for a routine"), { status: 400 });
+    const held = routine.alwaysAllow ?? [];
+    const fresh = [...new Set(keys)].filter((key) => !held.includes(key));
+    if (fresh.length && held.length + fresh.length > ROUTINE_GRANTS_MAX) throw Object.assign(new Error(`This routine already remembers ${ROUTINE_GRANTS_MAX} approvals. Remove some in the routine editor, then try again.`), { status: 409 });
+    return { routine, added: fresh };
   }
 
   revokeAlwaysAllow(id: string, key: string): Routine | null {
@@ -1462,6 +1518,50 @@ export class RoutineManager {
     return cloneRoutine(routine);
   }
 
+  /** Set aside a stored routine this build cannot load: kept as stored, never
+   * scheduled, written back on every save. The name and schedule stay out of
+   * the log; the id is enough to find it. */
+  private keepUnloaded(routine: Routine, reason: "schedule" | "watch"): [] {
+    if (!routine || typeof routine !== "object") return [];
+    const id = typeof routine.id === "string" ? routine.id : undefined;
+    // Every stored row is kept, even two that share an id: dropping one would
+    // be the very loss this exists to prevent.
+    this.unloadedRoutines.push(routine);
+    if (id !== undefined) this.unloadedReasons.set(id, reason);
+    console.warn(`routines: kept routine ${id ?? "(no id)"} without running it; its ${reason} could not be loaded`);
+    return [];
+  }
+
+  /** The stored routines this build could not load, and why. */
+  unloadable(): Array<{ id: string; name?: string; botId: string; reason: "schedule" | "watch" }> {
+    return this.unloadedRoutines
+      .filter((routine) => typeof routine.id === "string")
+      .map((routine) => ({
+        id: routine.id,
+        ...(typeof routine.name === "string" ? { name: routine.name } : {}),
+        botId: routine.botId,
+        reason: this.unloadedReasons.get(routine.id) ?? "schedule",
+      }));
+  }
+
+  /** Delete a kept routine this build could not load. It never ran, so there
+   * are no runs to cancel; routines.json is rewritten without it. */
+  private removeUnloaded(id: string): boolean {
+    const at = this.unloadedRoutines.findIndex((routine) => routine.id === id);
+    if (at === -1) return false;
+    const [taken] = this.unloadedRoutines.splice(at, 1);
+    const reason = this.unloadedReasons.get(id);
+    if (!this.unloadedRoutines.some((routine) => routine.id === id)) this.unloadedReasons.delete(id);
+    try {
+      this.commitMutation(() => {});
+    } catch (error) {
+      this.unloadedRoutines.splice(at, 0, taken);
+      if (reason) this.unloadedReasons.set(id, reason);
+      throw error;
+    }
+    return true;
+  }
+
   remove(id: string, request?: RoutineRequestCommitFor<"delete">): boolean {
     if (request) {
       const receipt = this.matchingRoutineRequestReceipt(request);
@@ -1470,7 +1570,7 @@ export class RoutineManager {
       }
     }
     const at = this.routines.findIndex((r) => r.id === id);
-    if (at === -1) return false;
+    if (at === -1) return this.removeUnloaded(id);
     this.watchReads.get(id)?.abort();
     const cancelledRuns: RoutineRun[] = [];
     this.commitMutation(() => {
@@ -1968,6 +2068,7 @@ export class RoutineManager {
   }
 
   private async tickBody(): Promise<void> {
+    if (this.options.dispatchOpen && !this.options.dispatchOpen()) return;
     // Before the guard, on purpose — see enforceRunLimits.
     await this.enforceRunLimits();
     if (this.ticking) return;
@@ -2664,6 +2765,20 @@ export class RoutineManager {
     if (run.watch?.outcome === "failed") this.options.onRunFailed?.(cloneRun(run));
   }
 
+  /** One line in the history of the live run working in this conversation:
+   * a new line up to RUN_NOTES_MAX, and every repeat or line past that
+   * counted in `notesMore`. False when no live run works there. */
+  noteRunLine(threadId: string, line: string): boolean {
+    const run = this.runs.find((item) => item.threadId === threadId && isLive(item.status));
+    if (!run) return false;
+    const notes = Array.isArray(run.notes) ? run.notes : [];
+    if (notes.includes(line) || notes.length >= RUN_NOTES_MAX) run.notesMore = (typeof run.notesMore === "number" ? run.notesMore : 0) + 1;
+    else run.notes = [...notes, line];
+    this.save({ runs: [run] });
+    this.emitRun(run);
+    return true;
+  }
+
   /** The live run working in this conversation pinned `bundleId` (first pin only). */
   notePinnedBundle(threadId: string, bundleId: string): void {
     const run = this.runs.find((item) => item.threadId === threadId && isLive(item.status));
@@ -2749,6 +2864,7 @@ export class RoutineManager {
    * uncommitted action for a durable one.
    */
   private commitMutation(mutate: () => void): void {
+    this.runRevision++;
     this.fleetDueAt = null;
     const before = {
       routines: this.routines.map(cloneRoutine),
@@ -2768,7 +2884,7 @@ export class RoutineManager {
 
   /** Inert additive batch; caller commits this file with the bot records. */
   preparePackageAddition(additions: Routine[]) {
-    const ids = new Set(this.routines.map(routine => routine.id));
+    const ids = new Set([...this.routines, ...this.unloadedRoutines].map(routine => routine.id));
     for (const routine of additions) {
       if (ids.has(routine.id) || routine.enabled || routine.nextRunAt !== null) throw new Error("A package routine must be new and switched off");
       ids.add(routine.id);
@@ -2781,7 +2897,7 @@ export class RoutineManager {
     return {
       // runsCommit stays as recorded: a file without it accepts every journal line, including
       // those of a save that was interrupted before its routines.json write (audit A-3).
-      bytes: Buffer.from(JSON.stringify({ version: 1, routines: next, routineRequestReceipts: this.routineRequestReceipts, ...(this.runsCommit === undefined ? {} : { runsCommit: this.runsCommit }), stateGeneration } satisfies RoutineFile, null, 2)),
+      bytes: Buffer.from(JSON.stringify({ version: 1, routines: [...next, ...this.unloadedRoutines], routineRequestReceipts: this.routineRequestReceipts, ...(this.runsCommit === undefined ? {} : { runsCommit: this.runsCommit }), stateGeneration } satisfies RoutineFile, null, 2)),
       publish: () => { this.routines = next.map((routine) => this.trackRoutine(routine)); this.fleetDueAt = null; this.fullSave = true; this.generation = stateGeneration; this.journal.setGeneration(stateGeneration); },
     };
   }
@@ -2796,6 +2912,7 @@ export class RoutineManager {
    * written by another path is left out. A save that passes neither rewrites
    * routines.json and compares everything, as before. */
   private save(options: { defer?: boolean; runs?: readonly RoutineRun[]; routines?: readonly Routine[] } = {}) {
+    this.runRevision++;
     const hinted = options.runs !== undefined || options.routines !== undefined;
     if (hinted) {
       for (const run of options.runs ?? []) this.dirtyRuns.add(run);
@@ -2849,7 +2966,7 @@ export class RoutineManager {
 
   private trackRun(run: RoutineRun): RoutineRun {
     if (isTracked(run)) return run;
-    const tracked: RoutineRun = track(run, () => { this.dirtyRuns.add(tracked); });
+    const tracked: RoutineRun = track(run, () => { this.dirtyRuns.add(tracked); this.runRevision++; });
     return tracked;
   }
 
@@ -2920,7 +3037,7 @@ export class RoutineManager {
     // action is applied exactly once on the next start.
     const textFor = (runsCommit: number | undefined, stateGeneration: string | undefined) => JSON.stringify({
       version: 1,
-      routines: this.routines.map(untracked),
+      routines: [...this.routines.map(untracked), ...this.unloadedRoutines],
       runs: [],
       routineRequestReceipts: untracked(this.routineRequestReceipts),
       ...(runsCommit === undefined ? {} : { runsCommit }),

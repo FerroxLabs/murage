@@ -1,0 +1,19 @@
+# SPDX-License-Identifier: AGPL-3.0-or-later
+[Unit]
+Description=Murage encrypted volume initialization and unlock
+DefaultDependencies=no
+Wants=network-online.target
+After=network-online.target cloud-config.service
+Before=data.mount
+
+[Service]
+Type=oneshot
+User=root
+Group=root
+UMask=0077
+LimitCORE=0
+ExecStart=/usr/local/libexec/murage-enroll --boot
+RemainAfterExit=yes
+
+[Install]
+RequiredBy=data.mount

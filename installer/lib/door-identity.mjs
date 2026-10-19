@@ -68,6 +68,17 @@ export function doorProof(nonce, challenge, version) {
  * @param {string} dataDir @param {string} nonce
  * @returns {string} the file's path
  */
+/**
+ * The companion control page's token on a headless box, derived from the door
+ * nonce so `murage pair` can present it without a second secret on disk.
+ * Kept in step with companion/src/control.ts `controlTokenFromDoorNonce`.
+ * @param {string} nonce
+ */
+export function controlTokenFromDoorNonce(nonce) {
+  if (!HEX64.test(nonce)) throw new Error("refusing to derive a control token from a malformed door nonce");
+  return createHmac("sha256", Buffer.from(nonce, "hex")).update("murage-companion-control/1").digest("base64url");
+}
+
 export function writeDoorNonce(dataDir, nonce) {
   if (!HEX64.test(nonce)) throw new Error("refusing to record a malformed door nonce");
   mkdirSync(dataDir, { recursive: true, mode: 0o700 });

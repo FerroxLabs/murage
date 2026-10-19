@@ -8,7 +8,7 @@
 // Electron health probe, and replaces a file in a short step; deletion reads a
 // log of any size; Windows renames are tolerated; the budget sweep runs off
 // the publish path.
-import { appendFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, realpathSync, renameSync, rmSync, statSync, truncateSync, utimesSync, writeFileSync } from "node:fs";
+import { appendFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, realpathSync, renameSync, statSync, truncateSync, utimesSync, writeFileSync } from "node:fs";
 import { open } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
@@ -21,12 +21,13 @@ import { ConversationDeletions } from "../conversation-deletion.ts";
 import { readThreadEvents } from "../thread-events.ts";
 import { EventBus } from "./bus.ts";
 import * as log from "./event-log.ts";
+import { removeTempDirSync } from "../testing/cleanup.ts";
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 const L = log as any;
 const scratch = realpathSync.native(mkdtempSync(join(tmpdir(), "murage-eventlog-jobs-")));
 const openDatabases: DatabaseSync[] = [];
-afterAll(() => { for (const db of openDatabases) db.close(); rmSync(scratch, { recursive: true, force: true }); });
+afterAll(() => { for (const db of openDatabases) db.close(); removeTempDirSync(scratch); });
 let counter = 0;
 const fresh = (name: string) => { const dir = join(scratch, `${name}-${++counter}`); mkdirSync(dir, { recursive: true }); return dir; };
 const defaults = { ...log.eventLogLimits };
@@ -106,7 +107,7 @@ describe("forgetting a message (P1-1)", () => {
     const before = size(path);
     expect(before).toBeGreaterThan(0x1fffffe8);
     const db = messagesDb(fresh("forget-big-db"));
-    db.prepare("INSERT INTO messages VALUES(?,?,?,?,?,?,?)").run(t, "m-gone", 1, "bot", "text", SECRET, JSON.stringify({ turnId: "gone-turn" }));
+    db.prepare("INSERT INTO messages(thread_id,id,at,role,kind,text,json) VALUES(?,?,?,?,?,?,?)").run(t, "m-gone", 1, "bot", "text", SECRET, JSON.stringify({ turnId: "gone-turn" }));
     const probe = loopProbe();
     forgetInTransaction(db, ["m-gone"]);
     await L.runEventLogForgets({ dir, database: () => db });
@@ -124,14 +125,14 @@ describe("forgetting a message (P1-1)", () => {
   }, 300_000);
 
   it("the Inspector serves none of the thread's lines until the rewrite has finished", async () => {
-    rmSync(EVENTS_DIR, { recursive: true, force: true }); ensureDirs();
+    removeTempDirSync(EVENTS_DIR); ensureDirs();
     const t = "inspect-forget";
     writeFileSync(join(EVENTS_DIR, `${t}.ndjson`), [
       ev(t, { type: "item.completed", itemType: "assistant_text", turnId: "keep-turn", text: "unrelated reply" }),
       ev(t, { type: "item.completed", itemType: "assistant_text", turnId: "gone-turn", text: SECRET }),
     ].map(line).join(""));
     const db = messagesDb(fresh("inspect-db"));
-    db.prepare("INSERT INTO messages VALUES(?,?,?,?,?,?,?)").run(t, "m-gone", 1, "bot", "text", SECRET, JSON.stringify({ turnId: "gone-turn" }));
+    db.prepare("INSERT INTO messages(thread_id,id,at,role,kind,text,json) VALUES(?,?,?,?,?,?,?)").run(t, "m-gone", 1, "bot", "text", SECRET, JSON.stringify({ turnId: "gone-turn" }));
     forgetInTransaction(db, ["m-gone"]);
     const read = () => readThreadEvents({ eventsDir: EVENTS_DIR, nativeDir: join(EVENTS_DIR, "no-native"), threadId: t });
     const during = read();
@@ -148,7 +149,7 @@ describe("forgetting a message (P1-1)", () => {
     writeFileSync(join(dir, `${t}.ndjson`), line(ev(t, { type: "item.completed", itemType: "assistant_text", turnId: "gone-turn", text: SECRET })) + line(ev(t, { type: "turn.completed", turnId: "kept", ok: true })));
     writeFileSync(join(dir, `${t}.previous.ndjson`), line(ev(t, { type: "runtime.error", message: `quoted: ${SECRET}` })));
     const db = messagesDb(fresh("crash-db"));
-    db.prepare("INSERT INTO messages VALUES(?,?,?,?,?,?,?)").run(t, "m-gone", 1, "bot", "text", SECRET, JSON.stringify({ turnId: "gone-turn" }));
+    db.prepare("INSERT INTO messages(thread_id,id,at,role,kind,text,json) VALUES(?,?,?,?,?,?,?)").run(t, "m-gone", 1, "bot", "text", SECRET, JSON.stringify({ turnId: "gone-turn" }));
     // the forget commits; the process dies before its background job ran
     forgetInTransaction(db, ["m-gone"]);
     L.resetEventLogJobsForTests();
@@ -173,7 +174,7 @@ describe("forgetting a message (P1-1)", () => {
 });
 
 describe("rotation (P1-2 and Windows)", () => {
-  beforeEach(() => { rmSync(EVENTS_DIR, { recursive: true, force: true }); ensureDirs(); });
+  beforeEach(() => { removeTempDirSync(EVENTS_DIR); ensureDirs(); });
 
   it("never discards a pre-upgrade file whose session lines were not copied (Fable's scenario)", async () => {
     eventLogLimits().threadBytes = 32 * 1024;
@@ -321,7 +322,7 @@ describe("the upgrade prune (P2)", () => {
 });
 
 describe("readers and the sweep (P2)", () => {
-  beforeEach(() => { rmSync(EVENTS_DIR, { recursive: true, force: true }); ensureDirs(); });
+  beforeEach(() => { removeTempDirSync(EVENTS_DIR); ensureDirs(); });
 
   it("conversation deletion finds the sessions in a log over the string limit", async () => {
     const data = fresh("delete-big");

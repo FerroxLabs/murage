@@ -20,8 +20,9 @@ export const IO_BUDGET_CPU_MINUTES = 3;
 export const IO_BUDGET_MAX_SCALE = 8;
 /** Calm minutes in a row before the poll scale is halved back. */
 export const IO_BUDGET_CALM_MINUTES = 10;
-/** resourceUsage().fsWrite counts block-output operations; 512 bytes each is the unit getrusage reports in. */
-const BLOCK_BYTES = 512;
+/** resourceUsage().fsWrite counts block-output operations; 512 bytes each is the unit getrusage reports in. (The memory helper
+ * reports its own fsWrite count to its controller, which charges it here in the same unit.) */
+export const BLOCK_BYTES = 512;
 
 /** What one reading of the process looks like. All values are cumulative. */
 export interface IoReading { at: number; fsWriteBlocks: number; cpuMicros: number }
@@ -93,6 +94,9 @@ export class IoBudget {
     if (!Number.isFinite(bytes) || bytes <= 0) return;
     this.bytes.set(source, (this.bytes.get(source) ?? 0) + bytes);
   }
+
+  /** Bytes charged to `source` in the current minute so far (tests and diagnostics; the tick reads and clears them). */
+  pendingBytes(source: string): number { return this.bytes.get(source) ?? 0; }
 
   /** Readers return cumulative bytes. Register once before the source starts. */
   registerByteSource(name: string, read: () => number): () => void {
@@ -451,6 +455,18 @@ const REUSE_LIMIT = 512;
 const writeCounts = new WeakMap<object, number>();
 export const writeStamp = (db: object): number | undefined => writeCounts.get(db);
 const wrote = (db: object) => writeCounts.set(db, (writeCounts.get(db) ?? 0) + 1);
+// A second counter that moves only when a write names the tables the shared-bot rows are built from (room requests, team identities).
+// Every statement on the handle goes through the instrumented prepare and exec below, so no writer can skip it, and a cascade from
+// a parent delete needs no hook because the rows that matter are deleted by a statement that names them. Cross-connection writers do
+// not exist for these tables (the only other connections to messages.db are read-only or touch other tables).
+const sharedRowCounts = new WeakMap<object, number>();
+export const sharedRowsStamp = (db: object): number | undefined => sharedRowCounts.get(db);
+const SHARED_ROW_TABLES = /\b(?:room_requests|team_identities)\b/i;
+const wroteSharedRows = (db: object) => sharedRowCounts.set(db, (sharedRowCounts.get(db) ?? 0) + 1);
+// Undoing writes (ROLLBACK, ROLLBACK TO, an aborted transaction) reports no changes but changes what a reader would see: it moves the
+// general stamp and the shared-rows stamp, so a memo built from rows read inside the rolled-back transaction is never reused.
+const UNDO_EXEC = /\bROLLBACK\b/i;
+const undid = (db: object) => { wrote(db); wroteSharedRows(db); };
 // Statements that really write (INSERT, UPDATE, DELETE, REPLACE, a write transaction's BEGIN), per handle: the start-up witness counts them
 // between listen and the first health answer (index.ts), where there should be none.
 const writeStatements = new WeakMap<object, number>();
@@ -496,27 +512,36 @@ export const inStatementReusePass = () => reuseDepth > 0;
 /** Identifies the open pass (0 when none), so a memo made inside one is never read in another. */
 export const statementReusePassId = () => reuseDepth > 0 ? reuseGeneration : 0;
 
-/** Time every statement run through this handle, so a trip can name the culprits. */
-export function instrumentDatabase(db: DatabaseSync, budget: IoBudget = ioBudget): () => void {
+/** Time every statement run through this handle, so a trip can name the culprits. `bytes: false` for a handle that never writes
+ * (the memory index reader): its file's log is another process's writing, charged by that process's own report, not read here twice. */
+export function instrumentDatabase(db: DatabaseSync, budget: IoBudget = ioBudget, options: { bytes?: boolean } = {}): () => void {
   const prepare = db.prepare.bind(db);
   const file = prepare("PRAGMA database_list").all().find(row => row.name === "main")?.file;
   const source = file ? `database:${file}` : "";
-  const unregister = source ? budget.registerByteSource(source, walFrameReader(String(file))) : () => {};
+  const unregister = source && options.bytes !== false ? budget.registerByteSource(source, walFrameReader(String(file))) : () => {};
   let transactionSource = source;
   const sample = (name: string) => { if (source) budget.sampleByteSource(source, name); };
   const exec = db.exec.bind(db);
   writeCounts.set(db, 0);
+  sharedRowCounts.set(db, 0);
   const instrumentedExec = (sql: string) => {
     const inTransaction = db.isTransaction;
     if (!inTransaction) sample(source);
-    wrote(db);
     const writing = WRITE_EXEC.test(sql);
+    // (an exec cannot report its changes: a statement that can write moves the stamps, a pragma or a read does not)
+    if (writing || /\b(?:CREATE|DROP|ALTER)\b/i.test(sql)) {
+      wrote(db);
+      if (SHARED_ROW_TABLES.test(sql)) wroteSharedRows(db);
+    }
     if (writing) countWrite(db);
     const lowered = writing && lowerForHold(db, exec);
     const started = performance.now();
     let failed: unknown;
     try { exec(sql); } catch (error) { failed = error; throw error; }
     finally {
+      // A rollback reports no changes yet undoes rows a memo may have read inside the transaction: it always moves every stamp (a
+      // ROLLBACK, a ROLLBACK TO, or SQLite aborting the transaction itself when a statement fails and the handle is no longer in one).
+      if (inTransaction && (UNDO_EXEC.test(sql) || (failed !== undefined && !db.isTransaction))) undid(db);
       const ms = performance.now() - started;
       if (lowered) restoreAfterHold(db, exec, sql, ms, failed);
       budget.note(EXEC_PREFIX + statementKey(sql), ms, true);
@@ -539,11 +564,13 @@ export function instrumentDatabase(db: DatabaseSync, budget: IoBudget = ioBudget
     const key = statementKey(sql);
     const tokens = sql.replace(/'(?:''|[^'])*'|--[^\n]*|\/\*[\s\S]*?\*\//g, " ");
     const writes = /\b(?:INSERT|UPDATE|REPLACE|DELETE)\b/i.test(tokens);
+    const sharedTable = writes && SHARED_ROW_TABLES.test(tokens);
     const memoryWork = /\b(?:INSERT\s+(?:OR\s+\w+\s+)?INTO|UPDATE\s+(?:OR\s+\w+\s+)?|REPLACE\s+INTO)\s*["`\[]?(?:main["`\]]?\s*\.\s*["`\[]?)?memory_(?:jobs|projection_receipts|scope_bindings)["`\]]?(?=\s|\(|$)/i.test(tokens);
     for (const method of ["get", "all", "run"] as const) {
       const original = statement[method].bind(statement) as (...args: unknown[]) => unknown;
       const instrumentedStatement = (...args: unknown[]) => {
         const lowered = writes && method === "run" && lowerForHold(db, exec);
+        const inTransactionBefore = db.isTransaction;
         const started = performance.now();
         let failed: unknown;
         try {
@@ -552,11 +579,18 @@ export function instrumentDatabase(db: DatabaseSync, budget: IoBudget = ioBudget
             transactionSource = budget.currentSource() ?? key;
             if (!db.isTransaction) sample(transactionSource);
           }
+          // the stamps move only when rows really changed: a DELETE that matched nothing (the idle push-notification prune) leaves them
+          if (writes) {
+            const changed = method === "run" ? Number((result as { changes: number | bigint }).changes) > 0 : true;
+            if (changed) { wrote(db); if (sharedTable) wroteSharedRows(db); }
+          }
           if (memoryWork && method === "run" && Number((result as {changes:number|bigint}).changes) > 0) budget.notifyMemoryWork();
           return result;
         } catch (error) { failed = error; throw error; }
         finally {
-          if (writes) { wrote(db); if (method === "run") countWrite(db); }
+          // a failed statement that made SQLite abort the whole transaction undid every write in it
+          if (failed !== undefined && inTransactionBefore && !db.isTransaction) undid(db);
+          if (writes && method === "run") countWrite(db);
           const ms = performance.now() - started;
           budget.note(key, ms, true);
           if (lowered) restoreAfterHold(db, exec, sql, ms, failed);

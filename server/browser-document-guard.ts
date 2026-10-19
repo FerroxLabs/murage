@@ -3,6 +3,7 @@
 // A guard is installed before every mediated action, including new tabs.
 import { NATIVE_DOM_SOURCE } from "./browser-native-dom.ts";
 import WebSocket from "ws";
+import type { Duplex } from "node:stream";
 
 import { closeSocketQuietly } from "./browser-socket-teardown.ts";
 import { protectedDocumentTargeted } from "./browser-floor-builtin.ts";
@@ -100,9 +101,11 @@ export class BrowserDocumentGuard {
   private opening?: Promise<void>;
   private command: (args: string[]) => Promise<unknown>;
   private connectTimeoutMs: number;
+  /** Cloud home only: opens the socket over the launcher relay instead of a TCP dial. */
+  private connection?: () => Duplex;
   /** `connectTimeoutMs`: an attached owner's Chrome asks them to Allow this
    * connection, which takes a person, not 5 seconds (0.1.60 Linux D12). */
-  constructor(command: (args: string[]) => Promise<unknown>, options: { connectTimeoutMs?: number } = {}) { this.command = command; this.connectTimeoutMs = options.connectTimeoutMs ?? 5000; }
+  constructor(command: (args: string[]) => Promise<unknown>, options: { connectTimeoutMs?: number; connection?: () => Duplex } = {}) { this.command = command; this.connection = options.connection; this.connectTimeoutMs = options.connectTimeoutMs ?? 5000; }
   private fail() {
     for(const p of this.pending.values()) {clearTimeout(p.timer);p.reject(new Error("Browser document guard disconnected"));}
     this.pending.clear();this.sessions.clear();this.socket=undefined;this.opening=undefined;
@@ -115,7 +118,7 @@ export class BrowserDocumentGuard {
       const endpoint=typeof value==="string"?value:value?.cdpUrl??value?.cdp_url??value?.url;
       const url=new URL(endpoint);
       if(url.protocol!=="ws:"||!["127.0.0.1","localhost","[::1]"].includes(url.hostname))throw new Error("Browser guard requires a local CDP endpoint");
-      const socket=new WebSocket(url,{maxPayload:2*1024*1024,handshakeTimeout:this.connectTimeoutMs});this.socket=socket;
+      const socket=new WebSocket(url,{maxPayload:2*1024*1024,handshakeTimeout:this.connectTimeoutMs,...(this.connection?{createConnection:this.connection as never}:{})});this.socket=socket;
       socket.on("message",raw=>{
         try {const message=JSON.parse(raw.toString());const p=this.pending.get(message.id);if(!p)return;this.pending.delete(message.id);clearTimeout(p.timer);if(message.error)p.reject(new Error("Browser document guard command refused"));else p.resolve(message.result);}
         catch{socket.terminate();}

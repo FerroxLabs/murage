@@ -12,7 +12,7 @@
 //   - non-owner turns, unproven room turns, prewarm, every background call:
 //       x-flux-memory-capture: off  +  x-flux-memory-inject: off
 //   - owner turns: no off headers (interim, Sean's accounts), unless the owner
-//     posture is "off" (after the Flux gates), the bot asks first, the kill
+//     posture is "off" (after the Flux gates), "Use Flux memory" is off, the bot asks first, the kill
 //     switch is on, or the latency breaker is open (inject only).
 //   - unknown purpose: off/off.
 //
@@ -65,6 +65,8 @@ export interface FluxMemorySettings {
   ownerMemory: "on" | "off";
   /** Send x-flux-memory-space / -read. Default OFF until Flux's spaces PR ships. */
   spaces: boolean;
+  /** "Use Flux memory" (lane 2.2), the owner's switch in Settings: off sends off/off on owner turns too. Absent = on. */
+  external?: boolean;
 }
 
 let override: Partial<FluxMemorySettings> = {};
@@ -82,6 +84,12 @@ export interface FluxMemoryConfig { enabled?: boolean; inject?: boolean; owner?:
 
 let configLayer: FluxMemoryConfig = {};
 
+let externalSaved: boolean | undefined;
+/** Config loader and Settings: flux.memory.external. Absent = the default (on when a key is present). */
+export function setFluxExternalMemory(value: boolean | undefined): void { externalSaved = value; }
+/** "Use Flux memory": the saved choice, else on. Nothing reaches Flux without a Flux key, so it only has effect with one. */
+export function fluxExternalMemoryOn(): boolean { return externalSaved !== false; }
+
 /** Config loader: the saved switches. Env still wins over them (an operator's override). */
 export function setFluxMemoryConfig(next: FluxMemoryConfig | undefined): void {
   configLayer = { ...next };
@@ -97,6 +105,7 @@ export function fluxMemorySettings(env: NodeJS.ProcessEnv = process.env): FluxMe
     inject: override.inject ?? (flag(env.MURAGE_FLUX_MEMORY_INJECT, configLayer.inject, true) ? "on" : "off"),
     ownerMemory: override.ownerMemory ?? (flag(env.MURAGE_FLUX_MEMORY_OWNER, configLayer.owner, true) ? "on" : "off"),
     spaces: override.spaces ?? flag(env.MURAGE_FLUX_MEMORY_SPACES, configLayer.spaces, false),
+    external: override.external ?? fluxExternalMemoryOn(),
   };
 }
 
@@ -241,7 +250,7 @@ export function fluxMemoryContextForTurn(
 // ---------------------------------------------------------------- decision --
 
 export type FluxMemoryReason =
-  | "owner" | "non-owner" | "background" | "prewarm" | "unknown" | "asks-first" | "kill-switch" | "owner-gated" | "breaker" | "inject-off";
+  | "owner" | "non-owner" | "background" | "prewarm" | "unknown" | "asks-first" | "kill-switch" | "owner-gated" | "external-off" | "breaker" | "inject-off";
 
 export interface FluxMemoryDecision {
   headers: Record<string, string>;
@@ -251,6 +260,9 @@ export interface FluxMemoryDecision {
   audience: FluxAudienceClass;
   /** Stable text for a warm-process key: a change forces a respawn. */
   signature: string;
+  /** Lane 2.2: the envelope this call carries as request metadata, and where the x-flux-memory answer goes. Never part of the signature. */
+  envelope?: import("./flux-memory-envelope.ts").FluxMemoryEnvelope;
+  onResponse?: (report: import("./flux-memory-envelope.ts").FluxMemoryReport) => void;
 }
 
 const signatureOf = (headers: Record<string, string>): string =>
@@ -269,6 +281,8 @@ export function fluxMemoryDecision(
   else if (context.audience !== "owner") reason = context.audience;
   else if (context.asksFirst) reason = "asks-first";
   else if (settings.ownerMemory === "off") reason = "owner-gated";
+  // "Use Flux memory" off: no Flux capture and no Flux inject; Murage's own recall carries memory.
+  else if (settings.external === false) reason = "external-off";
   else {
     capture = "on";
     inject = "on";
@@ -276,6 +290,10 @@ export function fluxMemoryDecision(
     if (settings.inject === "off") { inject = "off"; reason = "inject-off"; }
     else if (breaker.isOpen()) { inject = "off"; reason = "breaker"; }
   }
+  return decisionOf(context, settings, capture, inject, reason);
+}
+
+function decisionOf(context: FluxMemoryContext, settings: FluxMemorySettings, capture: "on" | "off", inject: "on" | "off", reason: FluxMemoryReason): FluxMemoryDecision {
   const headers: Record<string, string> = { [FLUX_MEMORY_APP_HEADER]: FLUX_MEMORY_APP };
   if (capture === "off") headers[FLUX_MEMORY_CAPTURE_HEADER] = "off";
   if (inject === "off") headers[FLUX_MEMORY_INJECT_HEADER] = "off";
@@ -285,6 +303,47 @@ export function fluxMemoryDecision(
   }
   assertNoForbiddenFluxHeaders(headers);
   return { headers, capture, inject, reason, audience: context.audience, signature: signatureOf(headers) };
+}
+
+// ------------------------------------------------------------- per send --
+
+/**
+ * What a driver that sends HTTP itself keeps for one turn so it can decide Flux memory at the moment each request leaves (Astra lane2-build
+ * r2 H1): the turn's context, the envelope the harness built at dispatch, and the dispatch decision as a ceiling. No header or envelope
+ * captured at dispatch is ever sent as is; `fluxMemoryAtSend` is called for every request, every redirect hop and every retry.
+ */
+export interface FluxMemorySend {
+  context: FluxMemoryContext;
+  /** The dispatch decision: a request never carries more than the turn was dispatched with (a switch turned on mid-turn waits for the next turn). */
+  dispatched: { capture: "on" | "off"; inject: "on" | "off" };
+  envelope?: import("./flux-memory-envelope.ts").FluxMemoryEnvelope;
+  onResponse?: (report: import("./flux-memory-envelope.ts").FluxMemoryReport) => void;
+}
+
+export function fluxMemorySend(
+  context: FluxMemoryContext = FLUX_MEMORY_UNKNOWN,
+  extra: Pick<FluxMemorySend, "envelope" | "onResponse"> = {},
+): FluxMemorySend {
+  const dispatched = fluxMemoryDecision(context);
+  return { context, dispatched: { capture: dispatched.capture, inject: dispatched.inject }, ...extra };
+}
+
+/**
+ * The Flux memory headers and envelope for ONE request, from the switch state as it stands now (call it synchronously right before the
+ * write). "Use Flux memory", the kill switch, the owner gate or inject turned off since dispatch reach this request: off headers, and no
+ * envelope unless capture and inject are both still on.
+ */
+export function fluxMemoryAtSend(
+  send: FluxMemorySend,
+  options: { settings?: FluxMemorySettings; breaker?: FluxMemoryBreaker } = {},
+): { decision: FluxMemoryDecision; headers: Record<string, string>; envelope?: import("./flux-memory-envelope.ts").FluxMemoryEnvelope } {
+  const settings = options.settings ?? fluxMemorySettings();
+  let decision = fluxMemoryDecision(send.context, { ...options, settings });
+  const capture = decision.capture === "on" && send.dispatched.capture === "on" ? "on" : "off";
+  const inject = decision.inject === "on" && send.dispatched.inject === "on" ? "on" : "off";
+  if (capture !== decision.capture || inject !== decision.inject) decision = decisionOf(send.context, settings, capture, inject, decision.reason);
+  const envelope = send.envelope && capture === "on" && inject === "on" && settings.external !== false ? send.envelope : undefined;
+  return { decision, headers: decision.headers, ...(envelope ? { envelope } : {}) };
 }
 
 /** Header names that carry no secret: safe to log. */

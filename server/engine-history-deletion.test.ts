@@ -11,12 +11,13 @@ import { ConversationDeletions, fuigoSessionKey, removeEngineHistoryFiles, runCo
 import { PlanError } from "./engine-plan-core.ts";
 import { fsOps, realEngineFs } from "./engine-fs.ts";
 import { cursorChatsKey, cursorProjectSlug, droidCwdKey, geminiNormalizedPath, geminiSlug, kimiWorkDirKey, qwenProjectHash, qwenProjectKey } from "./engine-history-deletion.ts";
+import { removeTempDirSync } from "./testing/cleanup.ts";
 
 const scratch = realpathSync.native(mkdtempSync(join(tmpdir(), "murage-engines-")));
 // Every messages.db a test opens is closed before the folder goes: Windows
 // refuses to remove a folder with an open file in it.
 const openDatabases: DatabaseSync[] = [];
-afterAll(() => { for (const db of openDatabases) db.close(); rmSync(scratch, { recursive: true, force: true }); });
+afterAll(() => { for (const db of openDatabases) db.close(); removeTempDirSync(scratch); });
 let n = 0;
 const fresh = (name: string) => { const dir = join(scratch, `${name}-${++n}`); mkdirSync(dir, { recursive: true }); return dir; };
 const touch = (file: string, text = "x") => { mkdirSync(path.dirname(file), { recursive: true }); writeFileSync(file, text); };
@@ -289,7 +290,7 @@ describe("removing one conversation's engine history", () => {
       }
     } finally { Object.assign(fsOps, real); }
     expect(fs.withDb(join(dir, "real.db"), () => "opened")).toBe("opened");
-    rmSync(dir, { recursive: true, force: true });
+    removeTempDirSync(dir);
   });
 
   it("r10 finding 1 (OpenCode): a database that cannot be read during discovery removes nothing and keeps the pending record; the next run removes parent and child", async () => {

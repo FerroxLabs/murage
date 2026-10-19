@@ -21,7 +21,7 @@ Choose how a conversation is approved from the permission chip beside the messag
 - **Ask** (Ask for approval): ask before actions that need your permission.
 - **Auto** (Auto mode): keep going automatically; destructive and sensitive actions still ask.
 - **Full access**: keeps going without asking, but stops before deleting outside its folder, paying, messaging someone new, or reading your keys.
-- **No limits**: does anything without asking, except reading your keys and passwords.
+- **No limits**: runs everything without asking, except reading your keys and passwords and commands Murage recognizes as able to wipe your computer, which ask first.
 
 The chip changes the level for this conversation. To set the level new conversations start at, open **Bot settings → Permissions → Approvals**. (Bot settings opens from the Bot settings button in the conversation header.)
 
@@ -40,7 +40,7 @@ Steps approved under Full access or No limits fold into one quiet line, "Approve
 
 ## No limits
 
-No limits lets deleting, paying and messaging go ahead without asking. It still asks before reading your keys and passwords. Choose it when you want the behaviour Full access had before 0.1.59.
+No limits lets deleting, paying and messaging go ahead without asking. It still asks before reading your keys and passwords, and before a command Murage recognizes as able to wipe your computer. Choose it when you want the behaviour Full access had before 0.1.59.
 
 Full access and No limits can be switched on only in the desktop app. The first time for each bot you confirm a one-time warning ("Give @bot full access?" or "Give @bot no limits?", with Turn on full access or Turn on no limits). Switch back to Auto or Ask at any time.
 

@@ -3,23 +3,24 @@
 //
 // Write-time privacy, S0 contract (DESIGN-WRITETIME 7): schema v10 opens on an empty file, on a v9 RC file and on a 1.0.1 (v6) file; the
 // validator refuses a tampered v10 index; no S0 stub is left live once S1 to S5 are merged.
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { afterEach, expect, it } from "vitest";
 import { downgradeMemorySchema, LINEAGE_META_KEYS, MEMORY_SCHEMA, MEMORY_SCHEMA_V9, MEMORY_SCHEMA_VERSION, migrateMemorySchema, validateMemorySchema, WRITETIME_TABLES } from "./schema.ts";
 import { migrateMemorySchema as migrateAs101, MEMORY_SCHEMA_VERSION as VERSION_101 } from "./testing/schema-1.0.1.ts";
-import { OPTIONAL_INDEXES, buildOptionalIndexOffThread, optionalIndexReady } from "./optional-index.ts";
+import { OPTIONAL_INDEXES as REGISTERED, buildOptionalIndexOffThread, optionalIndexReady } from "./optional-index.ts";
 import { denyGeneration, denyLookup, fenceVerdict, memoryLookup, refsLookup, sessionLookup } from "./deny-read.ts";
 import { addTurnParents, closeTurnLineage, currentLsn, currentTurnLineage, internFootprint, openTurnLineage, reserveLsns, writeCaptureLineage, writeLineage, writeRecordLineage, writeSessionLineage } from "./lineage-write.ts";
 import { inheritMarks } from "./revoke-commit.ts";
 import { lineageBackfillSlice, lineageCertProgress, promoteLineageThread } from "./lineage-backfill.ts";
 import { buildPrompt, promptPart, toolText } from "./prompt-parts.ts";
 import { decodeNode, encodeNode, FOOTPRINT_STAR, memoryRefKey, writetimeStubCalls, type FrontierNode, type LineageReader } from "./lineage-types.ts";
+import { removeTempDirSync } from "../testing/cleanup.ts";
 
 const dirs: string[] = [], dbs: DatabaseSync[] = [];
-afterEach(() => { for (const db of dbs.splice(0)) { try { db.close(); } catch { /* closed */ } } for (const dir of dirs.splice(0)) rmSync(dir, { recursive: true, force: true }); });
+afterEach(() => { for (const db of dbs.splice(0)) { try { db.close(); } catch { /* closed */ } } for (const dir of dirs.splice(0)) removeTempDirSync(dir); });
 function file(): DatabaseSync {
   const dir = mkdtempSync(join(tmpdir(), "murage-writetime-")); dirs.push(dir);
   const db = new DatabaseSync(join(dir, "messages.db")); dbs.push(db);
@@ -29,8 +30,8 @@ const version = (db: DatabaseSync) => Number(db.prepare("SELECT schema_version F
 const tables = (db: DatabaseSync) => new Set((db.prepare("SELECT name FROM sqlite_schema WHERE type='table'").all() as Array<{ name: string }>).map(row => row.name));
 const count = (db: DatabaseSync, table: string) => Number(db.prepare(`SELECT count(*) AS n FROM ${table}`).get()?.n);
 function expectV10(db: DatabaseSync, cert: { phase: string; ready: boolean }) {
-  expect(version(db)).toBe(10);
-  expect(MEMORY_SCHEMA_VERSION).toBe(10);
+  expect(version(db)).toBe(11);
+  expect(MEMORY_SCHEMA_VERSION).toBe(11);
   const names = tables(db);
   for (const table of Object.values(WRITETIME_TABLES)) expect(names.has(table), table).toBe(true);
   expect(currentLsn(db)).toBe(1);
@@ -59,7 +60,7 @@ it("v10 opens on an empty database: every table empty, lsn 1, certificate ready"
 it("v10 opens on a v9 RC database: rows kept, lineage tables empty, certificate not ready; v10 -> v9 inverts it while nothing is written", () => {
   const db = file();
   migrateMemorySchema(db, "active");
-  expect(downgradeMemorySchema(db, 9)).toMatchObject({ status: "downgraded", from: 10, to: 9 });
+  expect(downgradeMemorySchema(db, 9)).toMatchObject({ status: "downgraded", from: 11, to: 9 });
   expect(version(db)).toBe(9);
   for (const table of Object.values(WRITETIME_TABLES)) expect(tables(db).has(table), table).toBe(false);
   validateMemorySchema(db);
@@ -87,7 +88,7 @@ it("a v10 -> v9 downgrade with a lineage row or mark runs S5's marking first, th
   const db = file();
   migrateMemorySchema(db);
   db.exec("INSERT INTO memory_deny_line(thread_id,lsn,revoke_id,mark_lsn,reason) VALUES('t',1,1,1,'forget')");
-  expect(downgradeMemorySchema(db, 9)).toMatchObject({ status: "downgraded", from: 10, to: 9 });
+  expect(downgradeMemorySchema(db, 9)).toMatchObject({ status: "downgraded", from: 11, to: 9 });
   expect(version(db)).toBe(9);
   expect(db.prepare("SELECT 1 AS x FROM sqlite_schema WHERE name='memory_deny_line'").get()).toBeUndefined();
 });
@@ -164,11 +165,14 @@ it("frontier nodes round-trip and a malformed row decodes to null", () => {
 it("P3-11: v10 -> v9 leaves no optional index (the RC's known-object list does not name them); the idle sweep makes them again, never the open", async () => {
   const db = file();
   migrateMemorySchema(db);
+  // the memory schema's optional indexes: the registry also holds messages_thread_seq (transcript-seq.ts, ROOM-ORDER-DESIGN r8 "Column and
+  // index"), an index on the messages table this memory-only file does not have; its own downgrade is transcript-seq.server.test.ts
+  const OPTIONAL_INDEXES = REGISTERED.filter(item => item.table.startsWith("memory_"));
   const index = () => db.prepare("SELECT 1 FROM sqlite_schema WHERE name IN ('memory_disclosures_live','memory_records_pinned')").get();
   expect(index()).toBeUndefined(); // optional: open builds none of them
   for (const item of OPTIONAL_INDEXES) expect(await buildOptionalIndexOffThread(db, item, { inline: true })).toBe(true);
   expect(index()).toBeTruthy();
-  expect(downgradeMemorySchema(db, 9)).toMatchObject({ status: "downgraded", from: 10, to: 9 });
+  expect(downgradeMemorySchema(db, 9)).toMatchObject({ status: "downgraded", from: 11, to: 9 });
   for (const item of OPTIONAL_INDEXES) expect(optionalIndexReady(db, item.name)).toBe(false);
   expect(index()).toBeUndefined();
   expect(() => validateMemorySchema(db)).not.toThrow();
