@@ -3,7 +3,7 @@
 //
 // PIP P2 B2: transport pieces that need no process (parser, per-run gate, miss
 // map, schema subset, fingerprint, route binding over homeRoot, temp root).
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, symlinkSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, statSync, symlinkSync, writeFileSync } from "node:fs";
 import { execFile } from "node:child_process";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -14,6 +14,7 @@ import {
   parseHeadlessMessages, recordMiss, removeTempRoot, routeFingerprint, settleOutputTokens, validateAgainstSchema, type GateObservation,
 } from "./pip-transport.ts";
 import { applyProviderRoute, type ProviderTurnRoute } from "../provider-routing.ts";
+import { removeTempDirSync } from "../testing/cleanup.ts";
 
 vi.mock("node:child_process", async original => ({ ...await original<typeof import("node:child_process")>(), execFile: vi.fn((...args: unknown[]) => { (args.at(-1) as (error: null, stdout: string) => void)(null, "fixture-version"); return {}; }) }));
 
@@ -27,7 +28,7 @@ const obs = (stdout: string, over: Partial<GateObservation> = {}): GateObservati
 
 let base: string;
 beforeEach(() => { base = mkdtempSync(join(tmpdir(), "pip-b2-t-")); });
-afterEach(() => rmSync(base, { recursive: true, force: true }));
+afterEach(() => removeTempDirSync(base));
 
 describe("parseHeadlessMessages", () => {
   it("reads one init line and one result line", () => {

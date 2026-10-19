@@ -202,10 +202,12 @@ function reply(response: ServerResponse, status: number, body: unknown) {
   response.writeHead(status, { "content-type": "application/json", "content-length": String(Buffer.byteLength(text)) });
   response.end(text);
 }
-/** Exactly one choice, stop, no tool calls, under the transport cap (extract.ts:44-51). */
-function completion(response: ServerResponse, content: string) {
+/** Exactly one choice, stop, no tool calls, under the transport cap (extract.ts:44-51). The reply reports the max_tokens it was sent
+ * as its completion tokens and its input reserve (bytes + the 2,048 allowance) as its prompt tokens, as a provider reports usage, so the
+ * ledger holds exactly the reservations (TOTAL_OUTPUT); a reply without usage would count as unmetered (extract.ts UNSEEN_EXCESS_CALLS). */
+function completion(response: ServerResponse, content: string, maxTokens: number, inputBytes: number) {
   const body = { id: `b34-eval-${Date.now()}`, object: "chat.completion", model: B34_EVALUATOR_MODEL,
-    choices: [{ index: 0, finish_reason: "stop", message: { role: "assistant", content } }] };
+    choices: [{ index: 0, finish_reason: "stop", message: { role: "assistant", content } }], usage: { prompt_tokens: inputBytes + 2048, completion_tokens: maxTokens } };
   if (Buffer.byteLength(JSON.stringify(body)) >= MAX_RESPONSE_BYTES) return reply(response, 500, { error: "response-limit" });
   return reply(response, 200, body);
 }
@@ -239,7 +241,7 @@ async function handle(request: IncomingMessage, response: ServerResponse, record
     try { report = b34ScriptedReport(input.procedure, input.task); } catch { return refuse(400, "evaluation-task"); }
     hits.evaluation++;
     record({ family: "evaluation", inputBytes, maxTokens, procedureSha256: sha256(input.procedure) });
-    return completion(response, JSON.stringify(report));
+    return completion(response, JSON.stringify(report), maxTokens, inputBytes);
   }
   if (system.startsWith(B34_REFLECTION_PREFIX)) {
     if (maxTokens < 1 || maxTokens > 8000) return refuse(400, "reflection-output-cap");
@@ -250,15 +252,15 @@ async function handle(request: IncomingMessage, response: ServerResponse, record
     try { candidate = b34ScriptedCandidate(input.b34Plan, input.instruction); } catch { return refuse(400, "reflection-seed"); }
     hits.reflection++;
     record({ family: "reflection", inputBytes, maxTokens, plan: input.b34Plan, procedureSha256: sha256(input.instruction) });
-    return completion(response, `\`\`\`\n${candidate}\n\`\`\``);
+    return completion(response, `\`\`\`\n${candidate}\n\`\`\``, maxTokens, inputBytes);
   }
   if (system.startsWith(B34_EXTRACTION_PREFIX)) {
     record({ family: "unexpected-extract", inputBytes, maxTokens });
-    return completion(response, "[]");
+    return completion(response, "[]", maxTokens, inputBytes);
   }
   if (system.startsWith(B34_GROUNDING_PREFIX)) {
     record({ family: "unexpected-ground", inputBytes, maxTokens });
-    return completion(response, JSON.stringify({ supported: false }));
+    return completion(response, JSON.stringify({ supported: false }), maxTokens, inputBytes);
   }
   return refuse(400, "prompt-family");
 }

@@ -6,7 +6,7 @@
 // send would pay it again. The per-server list is read first and releases the
 // wait once it shows every server settled; a build that answers the list with
 // method-not-found is not asked for it again (core.ts acpMcpListUnsupported).
-import { mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { mkdtempSync, readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -18,6 +18,7 @@ import { toolsMayBeLoadingNotice, toolsUnavailableNotice } from "../mcp-readines
 import { SPAWNED_PROXIES } from "../../proxy-paths.ts";
 import { resetAcpMcpReadinessForTests } from "./core.ts";
 import { GrokAgentDriver } from "./grok.ts";
+import { removeTempDirSync } from "../../testing/cleanup.ts";
 
 const cli = fileURLToPath(new URL("../../testing/fake-acp-cli.ts", import.meta.url));
 const mounts = {
@@ -57,7 +58,7 @@ describe("Grok Build without MCP-ready notifications", () => {
     await instance?.dispose();
     resetAcpMcpReadinessForTests();
     vi.unstubAllEnvs();
-    rmSync(dir, { recursive: true, force: true });
+    removeTempDirSync(dir);
   });
 
   it("a build whose list is method-not-found is not asked for it again, and silence is never remembered: every cold turn keeps its wait", async () => {
@@ -162,7 +163,7 @@ describe("a cold turn starts on MCP readiness, of every kind", () => {
     await instance?.dispose();
     resetAcpMcpReadinessForTests();
     vi.unstubAllEnvs();
-    rmSync(dir, { recursive: true, force: true });
+    removeTempDirSync(dir);
   });
 
   const startsOnReadiness = (readyAt: number, prompt: Moment, sent: number) => {

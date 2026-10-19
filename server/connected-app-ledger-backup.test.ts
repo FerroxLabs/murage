@@ -6,7 +6,7 @@
 // unknown-outcome record must keep blocking an equivalent request after a
 // restore, and a restore over an existing installation keeps that
 // installation's unresolved records as well.
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, expect, it } from "vitest";
@@ -14,12 +14,13 @@ import { ConnectedAppOperations } from "./connected-app-operations.ts";
 import { SqliteOperationJournal, readJournalFile, type JournalRecord } from "./connected-app-journal.ts";
 import { writeInstallationArchive } from "./installation-archive.ts";
 import { restoreInstallation } from "./installation-restore.ts";
+import { removeTempDirSync } from "./testing/cleanup.ts";
 
 const roots: string[] = [];
 const open: SqliteOperationJournal[] = [];
 afterEach(() => {
   for (const journal of open.splice(0)) journal.close();
-  for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true });
+  for (const root of roots.splice(0)) removeTempDirSync(root);
 });
 
 const record = (handle: string, key: string, state: JournalRecord["state"], extra: Partial<JournalRecord> = {}): JournalRecord => ({

@@ -20,7 +20,7 @@
 // in this process. Every absent live input runs against the fake and is
 // recorded as "live proof pending" in the test annotations; nothing is
 // skipped.
-import { test, expect, type Locator, type Page } from "@playwright/test";
+import { test, expect, type Locator, type Page } from "./page-error-guard";
 import { createServer, type ViteDevServer } from "vite";
 import react from "@vitejs/plugin-react";
 import tailwindcss from "@tailwindcss/vite";

@@ -1,4 +1,4 @@
-import { mkdirSync, rmSync } from "node:fs";
+import { mkdirSync } from "node:fs";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { beforeEach, expect, it, vi } from "vitest";
@@ -16,10 +16,11 @@ import { forgetMemory } from "./forget.ts";
 import { readMemoryLearning, updateMemoryLearning } from "./learning-policy.ts";
 import { bindHumanThread, linkHumanBinding, observeVerifiedHuman, resolveHumanBinding } from "../human-principals.ts";
 import type { TextOnlyExtractor } from "./extract.ts";
+import { removeTempDirSync } from "../testing/cleanup.ts";
 
 const roster={bots:[{id:"moss",threadId:"private",tasks:[{threadId:"new-task"}]}],groups:[{id:"room",threadId:"room-thread",memberIds:["moss"]}]};
 const ticket=ownerMemoryTicket(),text="Moss once tended a fictional lighthouse.",signal=()=>new AbortController().signal;
-beforeEach(()=>{closeDatabase();rmSync(DATA_DIR,{recursive:true,force:true});mkdirSync(DATA_DIR,{recursive:true});reconcileMemoryRoster(roster);});
+beforeEach(()=>{closeDatabase();removeTempDirSync(DATA_DIR);mkdirSync(DATA_DIR,{recursive:true});reconcileMemoryRoster(roster);});
 function canon(){return writeBotIdentity(ticket,{action:"identity-write",botId:"moss",kind:"character-canon",key:"lighthouse",expectedVersion:0,text,basis:"fiction",audience:"owner-private"},roster);}
 function message(value=text,threadId="private",terminal=true){
   appendMessage(threadId,{id:"reply",at:1,role:"bot",kind:"text",text:value,turnId:"turn",turnTerminal:terminal});

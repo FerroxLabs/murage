@@ -31,6 +31,7 @@ export function requiredInternalKind(path: string): InternalCapabilityKind {
   if (path.startsWith("/api/internal/memory/")) return "memory";
   if (path.startsWith("/api/internal/connectors/")) return "connectors";
   if (path.startsWith("/api/internal/mcp-remote/")) return "mcp";
+  if (path.startsWith("/api/internal/box/v1/")) return "computer";
   if (["/api/internal/computer-control", "/api/internal/computer-activity", "/api/internal/headless-browser", "/api/internal/unified-browser", "/api/internal/host-computer"].includes(path)) return "computer";
   return "agents";
 }
@@ -48,6 +49,9 @@ export class InternalCapabilities {
    * outlives the generation's revocation, which a Stop performs at once while
    * the stopped turn's terminal event arrives only when its engine closes. */
   readonly #dispatchedBy = new Map<string, string>();
+  /** The reverse: which provider turn each generation dispatched, kept as long
+   * as #dispatchedBy and for the same reason (the reply check runs after a Stop). */
+  readonly #turnOf = new Map<string, string>();
 
   constructor(options: { now?: () => number; orphanMs?: number; tombstoneLimit?: number } = {}) {
     this.#now = options.now ?? Date.now;
@@ -113,6 +117,13 @@ export class InternalCapabilities {
       while (this.#dispatchedBy.size > this.#tombstoneLimit) {
         this.#dispatchedBy.delete(this.#dispatchedBy.keys().next().value!);
       }
+      const turnKey = JSON.stringify([threadId, generation]);
+      if (!this.#turnOf.has(turnKey)) {
+        this.#turnOf.set(turnKey, turnId);
+        while (this.#turnOf.size > this.#tombstoneLimit) {
+          this.#turnOf.delete(this.#turnOf.keys().next().value!);
+        }
+      }
     }
     if (!turnId || this.#completed.has(key)) {
       this.revokeGeneration(threadId, generation);
@@ -140,6 +151,11 @@ export class InternalCapabilities {
    * still active; undefined when the turn was never bound (or has aged out). */
   dispatchingGeneration(threadId: string, turnId: string): string | undefined {
     return turnId ? this.#dispatchedBy.get(this.#providerKey(threadId, turnId)) : undefined;
+  }
+
+  /** The provider turn this generation dispatched, whether or not it is still active; undefined before it was bound. */
+  providerTurnOf(threadId: string, generation: string): string | undefined {
+    return generation ? this.#turnOf.get(JSON.stringify([threadId, generation])) : undefined;
   }
 
   /** The generation that currently owns `threadId`, or undefined once it was

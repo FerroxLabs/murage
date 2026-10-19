@@ -5,6 +5,7 @@
 // can rebuild it from the scope's marker and refresh the generated config like the builder does (registerScopeReconstructor).
 import { join } from "node:path";
 
+import { stripOwnerHooks } from "./codex-hook.ts";
 import { pathExists, readText } from "./isolation-cache.ts";
 import { registerScopeReconstructor, type ScopedCliHomeSpec } from "./scoped-cli-home.ts";
 
@@ -24,10 +25,11 @@ export function codexScopeSpec(realHome: string, botId?: string): ScopedCliHomeS
     share: CODEX_SHARED_ENTRIES,
     loginWrites: "in-place",
     cache: CODEX_CACHE_FOLDERS,
-    // The owner's config (model, provider, trust) as a copy: Codex's own writes to it stay in the bot's scope.
+    // The owner's config (model, provider, trust) as a copy: Codex's own writes to it stay in the bot's scope. The owner's `hooks`
+    // table (definitions and `hooks.state`, their trust records) is dropped (Rule 68a): no owner hook is defined, trusted or runnable here.
     generated: (): Record<string, string> => {
       const path = join(realHome, "config.toml");
-      try { return { "config.toml": readText(path) }; } catch { pathExists(path); return {}; }
+      try { return { "config.toml": stripOwnerHooks(readText(path)) }; } catch { pathExists(path); return {}; }
     },
   };
 }

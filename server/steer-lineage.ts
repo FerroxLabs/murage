@@ -256,6 +256,8 @@ export function steerWithQuoteLineage(adapter: SteerAdapter, threadId: string, t
   reader?: LineageReader;
   /** The engine's answer when it arrives after the response deadline. */
   onLate?: (delivery: SteerDelivery) => void;
+  /** Run inside the write's fence, after every check passed and with no await before the write: the caller takes the receiving attempt here. */
+  onFence?: () => void;
 }): Promise<"steer" | "queue" | "uncertain"> {
   // the steer's own allowance: its quote is checked when it is rendered and again at the write boundary
   const allowance = LineageAllowance.steer();
@@ -281,5 +283,6 @@ export function steerWithQuoteLineage(adapter: SteerAdapter, threadId: string, t
     if (opts.quote) addSourcesToRunningTurn(opts.lineage, [opts.quote]);
     // a steer adds parents to the running turn (every later reply and its session carry them); it never moves the turn's turnLsn
     if (opts.turn && refs.length) addTurnParents(opts.turn, refs);
+    opts.onFence?.();
   }, opts.steerId, undefined, opts.onLate, { reader }).finally(() => allowance.close());
 }

@@ -83,6 +83,8 @@ export interface MediaCapabilityClaims {
   surface: "desktop";
   /** Expiry, epoch milliseconds. */
   exp: number;
+  /** Home-only issuer binding; never grants authority outside media bytes. */
+  cloudSession?: { deviceId: string; accessHash: string };
 }
 /** `mc1.<base64url claims>.<base64url HMAC-SHA256>` */
 export function isMediaCapabilityToken(value: unknown): value is string {

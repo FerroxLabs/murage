@@ -12,6 +12,7 @@ import { ReadLayer, type CdpSend } from "./browser-extension-snapshot.ts";
 import { createBrowserExtensionService } from "./browser-extension-service.ts";
 import { BrowserExtensionExecutor, type ExtensionDocument } from "./browser-extension-executor.ts";
 import { DESCRIBE_TARGET_SOURCE } from "./browser-extension-page-scripts.ts";
+import { removeTempDir } from "./testing/cleanup.ts";
 
 describe("R8-03 phone and handle syntax is no exemption", () => {
   it.each(["+4111111111111111", "(078)05-1120", "@123⁠456", "@123‮456", "123​456", "4111⁠1111⁠1111⁠1111"])("%j is a secret", value => {
@@ -138,7 +139,7 @@ describe("R8-01 a closed root on an ordinary element refuses the page", () => {
 // Service: R8-12 and R8-10.
 const A = "https://fixture.test";
 const cleanup: string[] = [];
-afterEach(async () => { for (const directory of cleanup.splice(0)) await fs.rm(directory, { recursive: true, force: true }); });
+afterEach(async () => { for (const directory of cleanup.splice(0)) await removeTempDir(directory); });
 async function service() {
   const { root: directoryRoot, directory } = await privateTestDirectory(path.resolve(".corefix9-")); cleanup.push(directoryRoot);
   const bindings = new Map<string, any>();

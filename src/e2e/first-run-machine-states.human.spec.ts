@@ -80,6 +80,7 @@ import { join } from "node:path";
 
 import type { Page } from "@playwright/test";
 
+import { chiefHasSpoken } from "./first-run-chief";
 import { expect, test } from "./fixtures";
 import { HARNESS_URL, REPO_ROOT, desktopHeaders } from "./rig";
 
@@ -171,21 +172,6 @@ async function screenIsUsable(app: Page, where: string): Promise<void> {
 
   const clipped = await clippedText(app);
   expect(clipped, `${where}: text runs past the right edge — ${JSON.stringify(clipped)}`).toEqual([]);
-}
-
-/**
- * THE CHIEF HAS TO EXIST BEFORE HE CAN BE DRIVEN.
- *
- * He is created by the RENDERER's first `GET /api/setup`. Posting answers in
- * the moment after `goto` returns beats that first poll, the checklist
- * advances against a workspace with no Chief in it, and the transcript stays
- * empty for ever.
- */
-async function chiefHasSpoken(app: Page): Promise<void> {
-  await expect(
-    app.getByText(/who am I working for/i),
-    "the Chief must have asked before the checklist is driven",
-  ).toBeVisible();
 }
 
 /** Is this sentence on screen at all? Used both ways round, and controlled

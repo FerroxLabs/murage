@@ -29,6 +29,12 @@
 //                                  owns. Every read, write, flush, lock, delete mark and close runs here on that HANDLE. JavaScript
 //                                  holds only an opaque external value and hands it back; no C runtime descriptor is ever passed
 //                                  between this module and Node (they would be different runtimes).
+//   authenticode(path)             Windows: a Promise of { status, publisher, code } for the file's Authenticode signature, from
+//                                  WinVerifyTrust (WINTRUST_ACTION_GENERIC_VERIFY_V2, no revocation check, as Get-AuthenticodeSignature
+//                                  does), on a worker thread. `status` uses Get-AuthenticodeSignature's names (Valid, NotSigned,
+//                                  HashMismatch, NotTrusted, UnknownError); `publisher` is the signer certificate's simple name when
+//                                  Valid, else ""; `code` is WinVerifyTrust's own result. Murage checks its own signed files with it,
+//                                  so opening Murage starts no PowerShell (murage-releases #1).
 // Nothing here reads or writes a file on POSIX: Node does that through its own descriptor (writers() on Linux opens a file read only,
 // only to ask for a lease, and reads nothing). Only a process that is confirmed gone
 // (ESRCH/ENOENT on that process) is left out of processes(). Built per platform by scripts/build-engine-exclusion.mjs (N-API 9).
@@ -1205,6 +1211,108 @@ static napi_value version(napi_env env, napi_callback_info info) {
   return make_int(env, ADDON_VERSION);
 }
 
+#ifdef _WIN32
+#include <wincrypt.h>
+#include <wintrust.h>
+#include <softpub.h>
+#pragma comment(lib, "wintrust.lib")
+#pragma comment(lib, "crypt32.lib")
+
+typedef struct {
+  napi_async_work work;
+  napi_deferred deferred;
+  wchar_t *path;
+  LONG result;
+  wchar_t publisher[512];
+} AuthenticodeWork;
+
+static const char *authenticode_status(LONG result) {
+  switch (result) {
+    case ERROR_SUCCESS: return "Valid";
+    case TRUST_E_NOSIGNATURE: return "NotSigned";
+    case TRUST_E_BAD_DIGEST: case CRYPT_E_HASH_VALUE: return "HashMismatch";
+    case CERT_E_UNTRUSTEDROOT: case CERT_E_CHAINING: case CERT_E_UNTRUSTEDTESTROOT: case TRUST_E_EXPLICIT_DISTRUST:
+    case TRUST_E_SUBJECT_NOT_TRUSTED: case CERT_E_REVOKED: case CERT_E_EXPIRED: return "NotTrusted";
+    default: return "UnknownError";
+  }
+}
+
+static void authenticode_execute(napi_env env, void *data) {
+  (void)env;
+  AuthenticodeWork *job = data;
+  job->publisher[0] = L'\0';
+  WINTRUST_FILE_INFO file;
+  memset(&file, 0, sizeof file);
+  file.cbStruct = sizeof file;
+  file.pcwszFilePath = job->path;
+  WINTRUST_DATA trust;
+  memset(&trust, 0, sizeof trust);
+  trust.cbStruct = sizeof trust;
+  trust.dwUIChoice = WTD_UI_NONE;
+  trust.fdwRevocationChecks = WTD_REVOKE_NONE;
+  trust.dwUnionChoice = WTD_CHOICE_FILE;
+  trust.pFile = &file;
+  trust.dwStateAction = WTD_STATEACTION_VERIFY;
+  GUID action = WINTRUST_ACTION_GENERIC_VERIFY_V2;
+  job->result = WinVerifyTrust((HWND)INVALID_HANDLE_VALUE, &action, &trust);
+  if (job->result == ERROR_SUCCESS) {
+    CRYPT_PROVIDER_DATA *provider = WTHelperProvDataFromStateData(trust.hWVTStateData);
+    CRYPT_PROVIDER_SGNR *signer = provider ? WTHelperGetProvSignerFromChain(provider, 0, FALSE, 0) : NULL;
+    CRYPT_PROVIDER_CERT *leaf = signer ? WTHelperGetProvCertFromChain(signer, 0) : NULL;
+    if (leaf && leaf->pCert) CertGetNameStringW(leaf->pCert, CERT_NAME_SIMPLE_DISPLAY_TYPE, 0, NULL, job->publisher, 512);
+    // A Valid answer whose signer cannot be named is not a Valid signature from anyone in particular.
+    if (job->publisher[0] == L'\0') job->result = TRUST_E_NO_SIGNER_CERT;
+  }
+  trust.dwStateAction = WTD_STATEACTION_CLOSE;
+  WinVerifyTrust((HWND)INVALID_HANDLE_VALUE, &action, &trust);
+}
+
+static void authenticode_complete(napi_env env, napi_status status, void *data) {
+  AuthenticodeWork *job = data;
+  napi_value result = NULL, value;
+  if (status == napi_ok && napi_create_object(env, &result) == napi_ok) {
+    napi_create_string_utf8(env, authenticode_status(job->result), NAPI_AUTO_LENGTH, &value);
+    napi_set_named_property(env, result, "status", value);
+    char *publisher = wide_to_utf8(job->publisher, (int)wcslen(job->publisher));
+    napi_create_string_utf8(env, publisher ? publisher : "", NAPI_AUTO_LENGTH, &value);
+    free(publisher);
+    napi_set_named_property(env, result, "publisher", value);
+    napi_create_int64(env, (int64_t)(uint32_t)job->result, &value);
+    napi_set_named_property(env, result, "code", value);
+    napi_resolve_deferred(env, job->deferred, result);
+  } else {
+    napi_value message, error;
+    napi_create_string_utf8(env, "authenticode check did not finish", NAPI_AUTO_LENGTH, &message);
+    napi_create_error(env, NULL, message, &error);
+    napi_reject_deferred(env, job->deferred, error);
+  }
+  napi_delete_async_work(env, job->work);
+  free(job->path);
+  free(job);
+}
+
+static napi_value authenticode(napi_env env, napi_callback_info info) {
+  size_t argc = 1, length = 0;
+  napi_value argv[1], promise, name;
+  napi_get_cb_info(env, info, &argc, argv, NULL, NULL);
+  if (argc < 1 || napi_get_value_string_utf16(env, argv[0], NULL, 0, &length) != napi_ok || length == 0 || length > 32767)
+    return fail(env, "authenticode needs a path");
+  AuthenticodeWork *job = calloc(1, sizeof(AuthenticodeWork));
+  if (!job) return fail(env, "out of memory");
+  job->path = malloc((length + 1) * sizeof(wchar_t));
+  if (!job->path) { free(job); return fail(env, "out of memory"); }
+  napi_get_value_string_utf16(env, argv[0], (char16_t *)job->path, length + 1, &length);
+  if (napi_create_promise(env, &job->deferred, &promise) != napi_ok
+      || napi_create_string_utf8(env, "authenticode", NAPI_AUTO_LENGTH, &name) != napi_ok
+      || napi_create_async_work(env, NULL, name, authenticode_execute, authenticode_complete, job, &job->work) != napi_ok
+      || napi_queue_async_work(env, job->work) != napi_ok) {
+    free(job->path); free(job);
+    return fail(env, "could not start the authenticode check");
+  }
+  return promise;
+}
+#endif
+
 static void add(napi_env env, napi_value exports, const char *name, napi_callback fn) {
   napi_value value;
   if (napi_create_function(env, name, NAPI_AUTO_LENGTH, fn, NULL, &value) == napi_ok) napi_set_named_property(env, exports, name, value);
@@ -1228,6 +1336,7 @@ NAPI_MODULE_INIT() {
   add(env, exports, "handleId", handle_id);
   add(env, exports, "handleSize", handle_size);
   add(env, exports, "handleClose", handle_close);
+  add(env, exports, "authenticode", authenticode);
 #endif
   add(env, exports, "bootId", boot_id);
   add(env, exports, "version", version);

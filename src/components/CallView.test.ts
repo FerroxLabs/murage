@@ -818,3 +818,23 @@ describe("a spoken yes goes through fresh authentication (SEC-006 Decision 7)", 
     expect(source.match(/type: "decideRequest"/g)?.length).toBe(2);
   });
 });
+
+describe("lane 5: plain-words gate and no-mic prompts (source pins)", () => {
+  const group = readFileSync(fileURLToPath(new URL("./GroupCallView.tsx", import.meta.url)), "utf8");
+  it("5.1: both call views hold a new approval for the plain words before anything is spoken", () => {
+    for (const text of [source, group]) {
+      expect(text).toMatch(/const approvalWordsSettled = usePlainApprovalSettled\(\);/);
+      expect(text).toMatch(/if \(holdForPlainWords\(approval\?\.requestId, askedApproval\.current\?\.requestId, approvalWordsSettled\)\) return;/);
+    }
+    // the gate sits before the approval is asked in CallView
+    expect(source.indexOf("holdForPlainWords(approval?.requestId")).toBeLessThan(source.indexOf("allowedForCall.current &&\n      coveredForCall(approval)"));
+  });
+
+  it("5.3: with no microphone, a prompt the call itself cut is owed again", () => {
+    const at = source.indexOf("if (micUnavailable.current) {\n        // A prompt the call itself cut");
+    expect(at).toBeGreaterThan(-1);
+    const block = source.slice(at, at + 700);
+    expect(block).toMatch(/if \(!said\) \{\s*if \(alive\.current && !heldRef\.current && ownerCutInAt\.current < startedAt\) owe\(\);/);
+    expect(block).toMatch(/move\("listening"\)/);
+  });
+});

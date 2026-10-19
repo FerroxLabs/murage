@@ -283,6 +283,16 @@ export function resolvePeerComms(
   return true;
 }
 
+/** The bus holds this request (a bot-to-bot contact card is waiting on
+ * it): where its card lives and which bot asked, so the approval choke
+ * point (server/grant-choke.ts, A13-FIX-DESIGN C1b) can prove the card's
+ * "Always allow" names the asking bot's own request before it saves and
+ * answers through resolvePeerComms. */
+export function peerApprovalHolder(requestId: string): { threadId: string; fromBotId: string; allowKey: string } | undefined {
+  const pending = pendingComms.get(requestId);
+  return pending ? { threadId: pending.threadId, fromBotId: pending.fromBotId, allowKey: pending.allowKey } : undefined;
+}
+
 /** Drop every approval waiting on a bot that no longer exists (or is being
  * deleted), cancelling it so the caller's turn doesn't wait out the timeout. */
 export function cancelPeerApprovalsFor(botId: string): void {

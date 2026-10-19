@@ -62,7 +62,7 @@ beforeAll(async () => {
 }, 60_000);
 afterAll(async () => { await fixture?.close(); });
 
-it("from the turn's acceptance to its prompt no background work runs, and the engine starts at its own pace", async () => {
+it("from the turn's acceptance to its prompt no background work runs, and the engine starts at its own pace", { tags: ["perf-budget"], timeout: 120_000 }, async () => {
   const instance = (await api("GET", "/api/instances")).body.instances.find((entry: any) => entry.instanceId === "grokfake");
   const bot = (await api("POST", "/api/bots", { name: "Held", modelSelection: { instanceId: "grokfake", model: instance.models.options[0]?.id ?? instance.models.default } })).body.bot;
   // the worker is doing background work before the send
@@ -88,4 +88,4 @@ it("from the turn's acceptance to its prompt no background work runs, and the en
   const initialize = [...trace.matchAll(/phase=rpc\.initialize .*?ms=(\d+)/g)].map((match) => Number(match[1]));
   expect(initialize.length).toBeGreaterThan(0);
   expect(Math.max(...initialize)).toBeLessThan(150);
-}, 120_000);
+});

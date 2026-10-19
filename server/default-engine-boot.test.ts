@@ -1,12 +1,13 @@
-import { mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { mkdtempSync, readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { bootEngineChoice, readRememberedEngine } from "./default-engine.ts";
+import { removeTempDirSync } from "./testing/cleanup.ts";
 
 const dirs: string[] = [];
 const file = () => { const d = mkdtempSync(join(tmpdir(), "eng-")); dirs.push(d); return join(d, "default-engine.json"); };
-afterEach(() => { for (const d of dirs.splice(0)) rmSync(d, { recursive: true, force: true }); });
+afterEach(() => { for (const d of dirs.splice(0)) removeTempDirSync(d); });
 const choice = { instanceId: "fuigo", model: "m1" };
 
 describe("bootEngineChoice", () => {

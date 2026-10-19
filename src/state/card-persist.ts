@@ -21,6 +21,7 @@ export async function persistCardPatch(
   try {
     response = await fetch(`/api/bots/${botId}/cards/${messageId}`, {
       method: "PATCH",
+      redirect: "error",
       headers: { "content-type": "application/json", "x-murage-surface": "desktop", ...surfaceHeaders },
       body: JSON.stringify(patch),
     });

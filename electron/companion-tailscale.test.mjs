@@ -65,6 +65,8 @@ const { companionRefreshTailscale, startCompanion } = await import("./companion.
 
 /** Every request the desktop made of the control server, in order. */
 const asked = [];
+/** The control token each of those requests carried. */
+const controlTokensSeen = [];
 /** How long `POST /tailscale/refresh` should take before answering. */
 let refreshDelayMs = 0;
 /** The MagicDNS name the stand-in sidecar reports after a refresh. */
@@ -84,6 +86,7 @@ const state = () => ({
 beforeAll(async () => {
   control = createServer((req, res) => {
     asked.push(`${req.method} ${req.url}`);
+    controlTokensSeen.push(req.headers["x-murage-control-token"]);
     const reply = () => {
       res.writeHead(200, { "content-type": "application/json" });
       res.end(JSON.stringify(state()));
@@ -119,6 +122,16 @@ beforeAll(async () => {
   expect(JSON.stringify(forkEnvironments.at(-1))).not.toContain(PRIVATE_TOKEN);
   expect(postedToChild).toContainEqual({ type: "murage:launch-secret", name: "MURAGE_COMPANION_TOKEN", value: PRIVATE_TOKEN });
   expect(JSON.stringify(started)).not.toContain(PRIVATE_TOKEN);
+  // The control token: new for this launch, over the same private port, and
+  // on every control request the desktop made.
+  const sent = postedToChild.find((m) => m.name === "MURAGE_COMPANION_CONTROL_TOKEN");
+  expect(sent?.type).toBe("murage:launch-secret");
+  expect(sent.value).toMatch(/^[A-Za-z0-9_-]{43}$/);
+  expect(forkEnvironments.at(-1).MURAGE_COMPANION_CONTROL_TOKEN_VIA).toBe("parent");
+  expect(JSON.stringify(forkEnvironments.at(-1))).not.toContain(sent.value);
+  expect(JSON.stringify(started)).not.toContain(sent.value);
+  expect(controlTokensSeen.length).toBeGreaterThan(0);
+  expect(new Set(controlTokensSeen)).toEqual(new Set([sent.value]));
 });
 
 afterAll(async () => {

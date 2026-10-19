@@ -87,26 +87,57 @@ export function delegationToolKind(tool: string, detail = ""): DelegationKind | 
   return typeof named === "string" ? kindOfName(named) : null;
 }
 
-const WHO_FIELDS = ["bot_name", "botName", "agent_name", "agentName", "bot_id", "botId", "bot", "agent", "agent_id", "agentId", "target", "to", "recipient"];
+/** Who a hand-off goes to: the fields a teammate selector arrives in, in the order the bridge reads them
+ * (server/drivers/agents-proxy.ts TEAMMATE_KEYS), then the other spellings models use. The bridge takes a bot id or an
+ * exact name in every one of them, so no field's name says which it holds: a value is shown as the name of the bot it
+ * selects when the roster is known, and otherwise only when it cannot be an id. */
+const SELECTOR_FIELDS = ["bot_id", "bot_name", "member", "recipient", "bot", "to", "botId", "botName", "agent_id", "agentId", "agent_name", "agentName", "agent", "target"];
+
+/** The bots a selector can name: id and display name. */
+export type DelegationRoster = ReadonlyArray<{ id: string; name: string }>;
+
+/** The bot a selector names in the roster, by id or by unique exact name, as the bridge resolves it. */
+function rosterBot(value: unknown, roster: DelegationRoster): { id: string; name: string } | null {
+  if (typeof value !== "string") return null;
+  const selector = value.trim().replace(/^@/, "");
+  if (!selector) return null;
+  const byId = roster.find(bot => bot.id === selector);
+  if (byId) return byId;
+  const byName = roster.filter(bot => bot.name === selector);
+  return byName.length === 1 ? byName[0]! : null;
+}
 const TASK_FIELDS = ["message", "task", "prompt", "instructions", "request", "goal", "text", "content"];
 
-/** A machine id is never shown; a name the bot used is. */
-function readableName(value: unknown): string | null {
+const UUID_IN_TEXT = /\b[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\b/i;
+/** The vendor behind connected apps is never shown. The copy rules on "safe"/"unsafe" govern Murage's own wording, so a
+ * name or task the person or bot wrote ("Safe Harbor") is shown as written. */
+const BARRED_WORDS = /composio/i;
+/** An em or en dash in a name or task reads as a comma between words, or a hyphen inside one ("Jean-Luc"). */
+const tidyDashes = (text: string) => text.replace(/\s+[\u2014\u2013]\s+/g, ", ").replace(/[\u2014\u2013]/g, "-");
+
+/** A machine id is never shown; a name is. A "name" is one Murage itself holds (a bot's display name, a peer card's
+ * title) and is shown as written; a value a bot put in a selector field is judged by its shape too. */
+function readableName(value: unknown, role: "name" | "selector"): string | null {
   if (typeof value !== "string") return null;
   const name = value.trim().replace(/^@/, "");
   if (!name || name.length > 40) return null;
-  if (/^[0-9a-f-]{16,}$/i.test(name)) return null;
-  if (/^(bot|agent)[_-]?[a-z0-9]{6,}$/i.test(name) && /\d/.test(name)) return null;
-  if (/^[a-z0-9]{12,}$/i.test(name) && /\d/.test(name)) return null;
+  if (UUID_IN_TEXT.test(name) || BARRED_WORDS.test(name)) return null;
   if (/[{}<>\n]/.test(name)) return null;
-  return name;
+  if (role === "selector") {
+    if (/^(bot|agent)[_-]?[a-z0-9]+$/i.test(name) && /\d/.test(name)) return null;
+    if (/^[0-9a-f-]{16,}$/i.test(name)) return null;
+    if (/^[a-z0-9]{12,}$/i.test(name) && /\d/.test(name)) return null;
+  }
+  return tidyDashes(name);
 }
 
 /** The task as a short phrase that follows "to": the first sentence, without
  * a polite lead-in, cut at a word near 60 characters. */
 function taskPhrase(value: unknown): string | null {
   if (typeof value !== "string") return null;
-  let text = value.replace(/\s+/g, " ").trim();
+  // a task that carries a machine id or a barred word is left out; the line then reads "hand work to Name"
+  if (UUID_IN_TEXT.test(value) || BARRED_WORDS.test(value)) return null;
+  let text = tidyDashes(value.replace(/\s+/g, " ")).trim();
   text = text.split(/(?<=[.!?])\s/)[0] ?? text;
   for (let i = 0; i < 3; i++) text = text.replace(/^(please|pls|hey|hi|ok|okay|can you|could you|would you|will you)\b[,!]?\s*/i, "");
   text = text.replace(/[.!?\s]+$/, "");
@@ -130,14 +161,22 @@ export interface DelegationRequest {
 
 /** The hand-off a tool call makes, or null when it is not one. A detail that
  * is not JSON is the message itself (a peer approval card's subtitle). */
-export function delegationRequest(tool: string, detail = "", hint?: { who?: string }): DelegationRequest | null {
+export function delegationRequest(tool: string, detail = "", hint?: { who?: string; roster?: DelegationRoster }): DelegationRequest | null {
   const kind = delegationToolKind(tool, detail);
   if (!kind) return null;
   const row = detailObject(detail);
-  let who: string | null = readableName(hint?.who);
+  const roster = hint?.roster;
+  let who: string | null = readableName(hint?.who, "name");
   let task: string | null = null;
   if (row) {
-    for (const field of WHO_FIELDS) { who ??= readableName(row[field]); if (who) break; }
+    // the bot the call selects, named as the roster names it
+    if (!who && roster) for (const field of SELECTOR_FIELDS) {
+      const bot = rosterBot(row[field], roster);
+      if (bot) { who = readableName(bot.name, "name"); break; }
+    }
+    // otherwise a selector is shown only when it cannot be an id: never a roster id, never an id's shape
+    const rosterId = (value: unknown) => typeof value === "string" && Boolean(roster?.some(bot => bot.id.toLowerCase() === value.trim().replace(/^@/, "").toLowerCase()));
+    for (const field of SELECTOR_FIELDS) { if (who) break; if (!rosterId(row[field])) who = readableName(row[field], "selector"); }
     for (const field of TASK_FIELDS) { task = taskPhrase(row[field]); if (task) break; }
   } else if (kindOfName(tool) && !/^\s*[A-Za-z][\w.:/-]*\s*$/.test(detail)) {
     task = taskPhrase(detail);
@@ -147,7 +186,7 @@ export function delegationRequest(tool: string, detail = "", hint?: { who?: stri
 
 /** The hand-off in plain words, as "Name wants to ..." or "Can I ...?" reads
  * it: "ask Draft Partner to draft the intro". */
-export function delegationAction(tool: string, detail = "", hint?: { who?: string }): string | null {
+export function delegationAction(tool: string, detail = "", hint?: { who?: string; roster?: DelegationRoster }): string | null {
   const request = delegationRequest(tool, detail, hint);
   if (!request) return null;
   const who = request.who ?? "a teammate";
@@ -158,9 +197,9 @@ export function delegationAction(tool: string, detail = "", hint?: { who?: strin
 
 /** The live working line while the hand-off runs: "Handing work to Draft
  * Partner". */
-export function delegationLiveLine(tool: string, input?: unknown): string | null {
+export function delegationLiveLine(tool: string, input?: unknown, roster?: DelegationRoster): string | null {
   const detail = input === undefined ? "" : typeof input === "string" ? input : (() => { try { return JSON.stringify(input); } catch { return ""; } })();
-  const request = delegationRequest(tool, detail);
+  const request = delegationRequest(tool, detail, roster ? { roster } : undefined);
   if (!request) return null;
   const who = request.who ?? "a teammate";
   if (request.kind === "ask") return `asking ${who}`;

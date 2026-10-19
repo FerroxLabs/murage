@@ -2,13 +2,13 @@
 // Red-first test (lane 0162-chromebatch1): the server's per-profile send queue must not hold a dialog answer behind
 // the very command the dialog blocked.
 import { afterEach, describe, expect, it } from "vitest";
-import fs from "node:fs/promises";
 import path from "node:path";
 import { createBrowserExtensionService } from "./browser-extension-service.ts";
 import type { BrowserExtensionCommand, BrowserExtensionResponse, BrowserExtensionHello } from "../shared/browser-extension-protocol.ts";
 import { privateTestDirectory } from "./testing/private-test-dir.ts";
+import { removeTempDir } from "./testing/cleanup.ts";
 const cleanup: string[] = [];
-afterEach(async () => { for (const directory of cleanup.splice(0)) await fs.rm(directory, { recursive: true, force: true }); });
+afterEach(async () => { for (const directory of cleanup.splice(0)) await removeTempDir(directory); });
 
 describe("a dialog answer is not queued behind the blocked command", () => {
   it("Page.handleJavaScriptDialog reaches the extension while an Input command is still pending", async () => {

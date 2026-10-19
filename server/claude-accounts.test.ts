@@ -1,5 +1,5 @@
 import { execFileSync } from "node:child_process";
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -7,10 +7,11 @@ import { accountDirectory, assertSeparateClaudeAccount, claudeAccountEnvironment
 import { persistableClaudeInstances, replaceClaudeAccountInstances, restoreClaudeAccountInstances } from "./claude-account-config.ts";
 import type { AppConfig } from "./config.ts";
 import * as processes from "./procs.ts";
+import { removeTempDirSync } from "./testing/cleanup.ts";
 
 let scratch:string;
 beforeEach(()=>{scratch=mkdtempSync(join(tmpdir(),"murage-accounts-"));vi.stubEnv("HOME",scratch);vi.stubEnv("USERPROFILE",scratch);vi.stubEnv("CLAUDE_CONFIG_DIR","");});
-afterEach(()=>{vi.unstubAllEnvs();rmSync(scratch,{recursive:true,force:true});});
+afterEach(()=>{vi.unstubAllEnvs();removeTempDirSync(scratch);});
 describe("native Claude account boundaries",()=>{
   it("leaves the default environment byte-for-byte and isolates explicit accounts",()=>{
     const source={HOME:scratch,CLAUDE_CONFIG_DIR:`${scratch}/default/`,CLAUDE_CODE_OAUTH_TOKEN:"synthetic-only",claude_code_oauth_future:"fake",CLAUDE_SECURESTORAGE_CONFIG_DIR:"wrong",ANTHROPIC_PROFILE:"other",KEEP:"yes"};

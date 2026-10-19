@@ -5,6 +5,7 @@
 // harness. Desktop automation itself is Cua Driver. Agents connect directly to
 // `cua-driver mcp` inside the container; this module never reimplements clicks,
 // typing, screenshots, accessibility, or window discovery.
+import { cloudBoxRelayEnv, isCloudHome } from "./box-relay.ts";
 import { execFile } from "node:child_process";
 import { createHash, randomBytes } from "node:crypto";
 import { chmod, mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
@@ -1132,7 +1133,19 @@ export function setupCommands(
  * containerComputerMcp(). */
 export function computerProxyEnv(
   computer: { boxId?: string; token?: string; control?: { url: string; token: string } },
+  env: NodeJS.ProcessEnv = process.env,
 ): NodeJS.ProcessEnv {
+  // A cloud home's turn never holds the account key nor reaches the provider:
+  // it calls the home server's box relay with its own per-turn control token.
+  if (isCloudHome(env)) {
+    return {
+      MURAGEBOX_BOX_ID: computer.boxId ?? "",
+      ...cloudBoxRelayEnv(computer.control),
+      ...(computer.control
+        ? { MURAGE_CONTROL_URL: computer.control.url, MURAGE_CONTROL_TOKEN: computer.control.token }
+        : {}),
+    };
+  }
   return {
     MURAGEBOX_BOX_ID: computer.boxId ?? "",
     MURAGEBOX_BOX_TOKEN: computer.token ?? "",

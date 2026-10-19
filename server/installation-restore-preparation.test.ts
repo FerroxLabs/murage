@@ -2,7 +2,7 @@ import { execFile } from "node:child_process";
 import { createHash, randomUUID } from "node:crypto";
 import { promisify } from "node:util";
 import { DatabaseSync } from "node:sqlite";
-import { createWriteStream, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
+import { createWriteStream, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, writeFileSync } from "node:fs";
 import { pipeline } from "node:stream/promises";
 import type { Readable } from "node:stream";
 import { ZipFile } from "yazl";
@@ -10,6 +10,9 @@ import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { afterEach, expect, it } from "vitest";
+import { z } from "zod";
+import { newId } from "./contracts.ts";
+import { isReservedBotId, CANARY_BROWSER_ID } from "../shared/bot-identity.ts";
 import { writeInstallationArchive } from "./installation-archive.ts";
 import { prepareInstallationRestore } from "./installation-restore-preparation.ts";
 import { initializeMessageTables } from "./message-tables.ts";
@@ -22,10 +25,11 @@ import { initializePendingDelegations } from "./pending-delegations-schema.ts";
 import { completeRequest, insertRoomRequest, markRequestDispatched } from "./room-requests.ts";
 import { assertRestoreReviewed, RESTORE_REVIEW_FILE } from "../electron/restore-review.mjs";
 import { restoredConnectionProfile } from "../electron/restored-connections.mjs";
+import { removeTempDirSync } from "./testing/cleanup.ts";
 
 const roots: string[] = [];
-afterEach(() => { for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true }); });
-async function fixture(customize?: { bot?: Record<string, unknown>; db?: (db: DatabaseSync) => void; withoutLegacyQueueFile?: boolean }) {
+afterEach(() => { for (const root of roots.splice(0)) removeTempDirSync(root); });
+async function fixture(customize?: { bot?: Record<string, unknown>; group?: Record<string, unknown>; db?: (db: DatabaseSync) => void; withoutLegacyQueueFile?: boolean }) {
   const root = mkdtempSync(join(tmpdir(), "murage-restore-preparation-"));
   roots.push(root);
   const data = join(root, "source");
@@ -33,7 +37,7 @@ async function fixture(customize?: { bot?: Record<string, unknown>; db?: (db: Da
   const put = (path: string, value: unknown) => { mkdirSync(dirname(join(data, path)), { recursive: true }); writeFileSync(join(data, path), JSON.stringify(value)); };
   put("config.json", { instances: { fake: { driver: "claudeAgent", enabled: true, config: { cli: "must-not-run" } } }, features: { browser: true, skillRecorder: true } });
   put("bots.json", [{ id: "bot", threadId: "thread", name: "Preserved bot", autoApprove: true, autoReview: "enforce", alwaysAllow: ["Bash:sh"], computer: "cloud", autoStartVps: true, browser: true, useMyChrome: true, browserTransport: "extension", browserExtensionProfileId: "profile_1", composio: true, busy: true, tasks: [{ threadId: "thread", title: "Keep me", autoApprove: true, alwaysAllow: ["Bash:sh"], resumeCursors: { old: "cursor" } }], ...customize?.bot }]);
-  put("groups.json", [{ id: "room", threadId: "room-thread", name: "Room", memberIds: ["bot"], working: true, busyBotId: "bot" }]);
+  put("groups.json", [{ id: "room", threadId: "room-thread", name: "Room", memberIds: ["bot"], working: true, busyBotId: "bot", ...customize?.group }]);
   const run = { routineId: "routine", routineName: "Routine", botId: "bot", target: "bot", runOn: "ember", scheduledFor: 1, manual: true, createdAt: 1 };
   put("routines.json", { version: 1, routines: [{ id: "routine", name: "Routine", prompt: "Task", botId: "bot", target: "bot", runOn: "ember", enabled: true, schedule: { type: "once", at: 1 }, durationMinutes: 30, nextRunAt: 1, createdAt: 1, updatedAt: 1 }], runs: [{ ...run, id: "done", status: "completed", result: "immutable receipt" }, { ...run, id: "queued", status: "queued" }], routineRequestReceipts: [{ requestId: "terminal-id", messageId: "terminal", botId: "bot", threadId: "thread", action: "create", fingerprintVersion: 1, fingerprint: "a".repeat(64), resultId: "routine", appliedAt: 1 }] });
   mkdirSync(join(data, "events", "routine-runs"), { recursive: true });
@@ -60,7 +64,7 @@ async function fixture(customize?: { bot?: Record<string, unknown>; db?: (db: Da
   try {
     initializeMessageTables(db);
     initializeImageOperations(db);
-    for (const message of messages) db.prepare("INSERT INTO messages VALUES(?,?,?,?,?,?,?)").run("thread", message.id, message.at, message.role, message.kind, null, JSON.stringify(message));
+    for (const message of messages) db.prepare("INSERT INTO messages(thread_id,id,at,role,kind,text,json) VALUES(?,?,?,?,?,?,?)").run("thread", message.id, message.at, message.role, message.kind, null, JSON.stringify(message));
     db.exec("INSERT INTO thread_state VALUES('thread','pending')");
     customize?.db?.(db);
   } finally { db.close(); }
@@ -318,7 +322,7 @@ it("carries the message search index through a prepared restore and keeps it mat
   // archive inspector over the database: neither may orphan or refuse the search index.
   const f = await fixture({
     db: (db) => {
-      const add = db.prepare("INSERT INTO messages VALUES(?,?,?,?,?,?,?)");
+      const add = db.prepare("INSERT INTO messages(thread_id,id,at,role,kind,text,json) VALUES(?,?,?,?,?,?,?)");
       const index = db.prepare("INSERT INTO messages_fts(rowid, t) VALUES(?, ?)");
       for (const [id, at, text] of [["s1", 10, "searchable Railway deploy note"], ["s2", 11, "日本語の検索"]] as const) {
         const row = add.run("thread", id, at, "user", "text", text, JSON.stringify({ id, at, role: "user", kind: "text", text, parentId: "browser-setup" }));
@@ -393,4 +397,20 @@ it("when the backup also carries a delegations.json, both are kept as evidence u
   const dir = join(prepared.stateDirectory, "recovery-quarantine", prepared.manifest.snapshotId);
   expect(JSON.parse(readFileSync(join(dir, "delegations.json"), "utf8")).thread[0].id).toBe("queued");
   expect(Object.values(JSON.parse(readFileSync(join(dir, "delegations-table.json"), "utf8"))).flat()).toHaveLength(3);
+});
+it("T17 a reserved id in bots.json or groups.json is refused; ui-canary stays a valid id", async () => {
+  for (const reserved of [CANARY_BROWSER_ID, "__murage-x"]) {
+    const asBot = await fixture({ bot: { id: reserved } });
+    await expect(prepareInstallationRestore(asBot.archive, asBot.root)).rejects.toMatchObject({ code: "RESERVED_RESTORE_ID" });
+    const asGroup = await fixture({ group: { id: reserved } });
+    await expect(prepareInstallationRestore(asGroup.archive, asGroup.root)).rejects.toMatchObject({ code: "RESERVED_RESTORE_ID" });
+  }
+  const plain = await fixture({ group: { id: "ui-canary" } });
+  await expect(prepareInstallationRestore(plain.archive, plain.root)).resolves.toBeTruthy();
+});
+it("T18 createBot's ids and package import's ids can never be reserved", () => {
+  for (let i = 0; i < 50; i++) expect(isReservedBotId(newId())).toBe(false);   // createBot: id: newId()
+  const uuid = z.string().uuid();                                              // package-import-transaction.ts
+  expect(uuid.safeParse(CANARY_BROWSER_ID).success).toBe(false);
+  expect(uuid.safeParse("__murage-00000000-0000-4000-8000-000000000000").success).toBe(false);
 });

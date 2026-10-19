@@ -6,8 +6,9 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, expect, it } from "vitest";
 import { generateInventory, verifyInventory } from "./whatsapp-inventory.mjs";
+import { removeTempDirSync } from "../server/testing/cleanup.ts";
 const roots = [];
-afterEach(() => { for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true }); });
+afterEach(() => { for (const root of roots.splice(0)) removeTempDirSync(root); });
 function fixture(extra) {
   const server = mkdtempSync(join(tmpdir(), "wa-inventory-")); roots.push(server);
   const packages = [["baileys", "7.0.0-rc14"], ["jimp", "1.6.1"], ...(extra ? [[extra, "1.0.0"]] : [])];
@@ -53,7 +54,7 @@ it("records a generated notice for a permissive package that publishes no licenc
   expect(readFileSync(join(f.server, jimp.licenseFiles[0].path), "utf8")).toContain("Licence declared in package.json: MIT");
 });
 it("requires staged artifacts rather than skipping the release gate", () => {
-  const f = fixture(); rmSync(join(f.server, "node_modules/jimp"), { recursive: true });
+  const f = fixture(); removeTempDirSync(join(f.server, "node_modules/jimp"));
   expect(() => generateInventory(f)).toThrow("Missing staged package");
   expect(readFileSync(new URL("../package.json", import.meta.url), "utf8")).toContain('"check:whatsapp-inventory"');
 });

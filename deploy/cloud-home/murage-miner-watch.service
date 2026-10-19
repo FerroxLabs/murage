@@ -1,0 +1,20 @@
+# SPDX-License-Identifier: AGPL-3.0-or-later
+[Unit]
+Description=Murage Cloud CPU-mining heuristic (drops an abuse event file, never kills)
+After=murage-home.service
+
+[Service]
+Type=simple
+User=root
+Group=root
+ExecStart=/usr/bin/python3 -I /usr/local/libexec/murage-miner-watch
+Restart=always
+RestartSec=10
+Nice=10
+ProtectSystem=strict
+ReadWritePaths=/var/lib/murage-home
+ProtectHome=yes
+NoNewPrivileges=yes
+
+[Install]
+WantedBy=multi-user.target

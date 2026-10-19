@@ -1,9 +1,10 @@
-import { mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { mkdtempSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { expect, it } from "vitest";
 import { listStarterProfiles, starterProfileContents, STARTER_PROFILE_IDS } from "./starter-profiles.ts";
 import { importBotPackageContents, previewBotPackageContents } from "./bot-package-import.ts";
+import { removeTempDirSync } from "./testing/cleanup.ts";
 
 it("offers exactly three local profiles with no connected-account prerequisite", () => {
   const profiles = listStarterProfiles();
@@ -31,7 +32,7 @@ it("refuses arbitrary paths, identity substitution and embedded credentials", ()
     profile.package.summary = "Bearer fake_credential_canary_1234567890";
     writeFileSync(path, JSON.stringify(profile));
     expect(() => starterProfileContents("starter-personal-home", root)).toThrow("content checks");
-  } finally { rmSync(root, { recursive: true, force: true }); }
+  } finally { removeTempDirSync(root); }
 });
 
 it("prepares each official starter through the common inert import path", async () => {
@@ -58,5 +59,5 @@ it("prepares each official starter through the common inert import path", async 
       expect(imported.bots.every(bot => bot.id !== "existing-chief")).toBe(true);
     }
     expect(existingBots).toEqual([{ id: "existing-chief", threadId: "existing-thread", name: "Current Chief" }]);
-  } finally { rmSync(root, { recursive: true, force: true }); }
+  } finally { removeTempDirSync(root); }
 });

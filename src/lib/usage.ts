@@ -1,6 +1,7 @@
 // Turning banked token/cost figures into something a header chip can show.
 // Pure, so the numbers can be tested without the components.
 import type { Bot, TaskUsage } from "@/state/store";
+import { usageMonthKey, usageMonthTokens, type UsageMonth } from "../../shared/usage-month";
 
 export const EMPTY_USAGE: TaskUsage = { input: 0, output: 0, costUsd: null, turns: 0 };
 
@@ -188,3 +189,32 @@ export function usageReport(u: TaskUsage, context: UsageReportContext = {}): Usa
   );
   return lines;
 }
+
+/** One row of "This month by bot". */
+export interface MonthUsageRow<B> { bot: B; replies: number; tokens: number; input: number; output: number; cachedInput?: number; since: number }
+
+/** The bots that used anything in `at`'s local month, busiest first. Bots with no bucket for the month are left out. */
+export function monthUsageRows<B extends { usageMonths?: Record<string, UsageMonth> }>(bots: readonly B[], at: number = Date.now()): MonthUsageRow<B>[] {
+  const key = usageMonthKey(at);
+  const rows: MonthUsageRow<B>[] = [];
+  for (const bot of bots) {
+    const m = bot.usageMonths?.[key];
+    if (!m || m.replies <= 0) continue;
+    rows.push({ bot, replies: m.replies, tokens: usageMonthTokens(m), input: m.input, output: m.output, ...(typeof m.cachedInput === "number" ? { cachedInput: m.cachedInput } : {}), since: m.since });
+  }
+  return rows.sort((a, b) => b.tokens - a.tokens || b.replies - a.replies);
+}
+
+/** The day this month's counting began when it was after the 1st (the data began mid-month), else null. */
+export function monthCountingStart(rows: ReadonlyArray<{ since: number }>): number | null {
+  if (rows.length === 0) return null;
+  const first = Math.min(...rows.map((r) => r.since));
+  return new Date(first).getDate() > 1 ? first : null;
+}
+
+/** What the Export file holds: one line per bot, the same numbers the table shows. */
+export function usageCsv(rows: Array<{ name: string; replies: number; tokens: number }>): string {
+  const cell = (value: string) => (/[",\n]/.test(value) ? `"${value.replace(/"/g, '""')}"` : value);
+  return ["Bot,Replies,Tokens", ...rows.map((row) => `${cell(row.name)},${row.replies},${row.tokens}`)].join("\n") + "\n";
+}
+

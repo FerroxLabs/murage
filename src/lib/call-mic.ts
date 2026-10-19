@@ -832,6 +832,7 @@ export class FluxMic extends Capture implements CallMic {
           const answer = await Promise.race([
             fetch("/api/voice/transcribe", {
               method: "POST",
+              redirect: "error",
               headers: { "content-type": "audio/wav", ...desktopCallerHeaders() },
               body: clip,
               signal: tries.signal,

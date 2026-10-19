@@ -18,7 +18,7 @@
 //   3. a message exactly at the limit (1 MB) sends, is shown in the
 //      transcript, and gets the engine's reply — the old 1,000,000-byte body
 //      bound would have refused it.
-import { test, expect, type Page } from "@playwright/test";
+import { test, expect, type Page } from "./page-error-guard";
 import { createServer, type ViteDevServer } from "vite";
 import react from "@vitejs/plugin-react";
 import tailwindcss from "@tailwindcss/vite";
