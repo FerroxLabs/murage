@@ -3,7 +3,7 @@
 //
 // "What I've been working on" (lane M, plan 3.8, BUILD-PLAN L1a): a
 // deterministic list of a bot's own recent work, owner-audience turns only.
-import { mkdirSync, rmSync } from "node:fs";
+import { mkdirSync } from "node:fs";
 import { beforeEach, expect, it } from "vitest";
 import { DATA_DIR } from "./config.ts";
 import { closeDatabase, database } from "./database.ts";
@@ -15,12 +15,13 @@ import { memoryOwnerRoute } from "./memory/settings.ts";
 import { titleFromMessage, type Message } from "./store.ts";
 import { WORKING_CONTEXT_MAX_BYTES, workingContext, workingContextForTurn, workingContextPrompt, withWorkingContext, type WorkingContextInput } from "./working-context.ts";
 import { LineageAllowance } from "./memory/lineage-allowance.ts";
+import { removeTempDirSync } from "./testing/cleanup.ts";
 
 const NOW = Date.UTC(2026, 8, 29, 12, 0, 0);
 const HOUR = 3_600_000;
 let input: WorkingContextInput;
 beforeEach(() => {
-  closeDatabase(); rmSync(DATA_DIR, { recursive: true, force: true }); mkdirSync(DATA_DIR, { recursive: true });
+  closeDatabase(); removeTempDirSync(DATA_DIR); mkdirSync(DATA_DIR, { recursive: true });
   input = {
     botId: "reed", currentThreadId: "reed-direct", now: NOW,
     bots: [

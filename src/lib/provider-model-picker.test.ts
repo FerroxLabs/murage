@@ -256,8 +256,8 @@ describe("the picker with nothing configured", () => {
     expect(pickerCountLine(false, 0)).toBe("Pick an engine above to see the models it can run");
     expect(pickerCountLine(false, 0)).not.toMatch(/^0 /);
     expect(pickerCountLine(true, 0)).toBe("No models to choose here yet");
-    expect(pickerCountLine(true, 1)).toBe("1 compatible chat model · prices per million tokens");
-    expect(pickerCountLine(true, 7)).toBe("7 compatible chat models · prices per million tokens");
+    expect(pickerCountLine(true, 1)).toBe("1 compatible chat model");
+    expect(pickerCountLine(true, 7)).toBe("7 compatible chat models");
   });
 
   it("offers the engine select a row that says what it wants", () => {

@@ -78,6 +78,7 @@ export function browserPresenceDeps(): PresenceDeps {
         method: "POST",
         signal: AbortSignal.timeout(PRESENCE_POST_TIMEOUT_MS),
         credentials: "same-origin",
+        redirect: "error",
         headers: { "content-type": "application/json", "x-murage-surface": "desktop", ...desktopSurfaceHeaders() },
         body: JSON.stringify(body),
       });

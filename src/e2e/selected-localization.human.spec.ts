@@ -1,4 +1,4 @@
-import {test,expect} from '@playwright/test';
+import {test,expect} from "./page-error-guard";
 import {build} from 'vite';
 import tailwindcss from '@tailwindcss/vite';
 import {createServer} from 'node:http';

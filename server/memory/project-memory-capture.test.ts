@@ -6,7 +6,7 @@
 // memory with its evidence intact, and "What this project remembers" (which
 // lists the room scope) is no longer empty. Direct chats and bot pair rooms
 // keep capturing into their own conversation scope.
-import { mkdirSync, rmSync } from "node:fs";
+import { mkdirSync } from "node:fs";
 import { afterEach, beforeEach, expect, it } from "vitest";
 import { DATA_DIR } from "../config.ts";
 import { closeDatabase, database } from "../database.ts";
@@ -26,6 +26,7 @@ import { checkReplyActions, toolAction } from "../reply-action-guard.ts";
 import { admissibleActionSources } from "./pip-admission.ts";
 import { setMemoryMode } from "./repository.ts";
 import { LineageAllowance } from "./lineage-allowance.ts";
+import { removeTempDirSync } from "../testing/cleanup.ts";
 
 const roster: MemoryRoster = {
   bots: [
@@ -39,7 +40,7 @@ const roster: MemoryRoster = {
   ],
 };
 
-beforeEach(() => { closeDatabase(); rmSync(DATA_DIR, { recursive: true, force: true }); mkdirSync(DATA_DIR, { recursive: true }); setMemoryCaptureRoster(() => roster); });
+beforeEach(() => { closeDatabase(); removeTempDirSync(DATA_DIR); mkdirSync(DATA_DIR, { recursive: true }); setMemoryCaptureRoster(() => roster); });
 afterEach(() => setMemoryCaptureRoster(null));
 
 function access(botId: string, thread: string, notOwnerAudience = false) {

@@ -14,7 +14,7 @@
 // the named refusal when the engine outlives its close budget.
 //
 // Nothing here touches a real app, data directory, engine or network.
-import { test, expect, type Page } from "@playwright/test";
+import { test, expect, type Page } from "./page-error-guard";
 import { createServer, type ViteDevServer } from "vite";
 import react from "@vitejs/plugin-react";
 import tailwindcss from "@tailwindcss/vite";
@@ -190,8 +190,8 @@ for (const width of [390, 820, 1440]) for (const skin of ["light", "dark"]) test
   // The joined panel is desktop-only; the harness says which surface asked
   // (src/lib/surface.ts), so the stub answers as it does for the desktop app.
   await page.route("**/api/config", route => route.fulfill({ json: { surface: "desktop", features: {}, box: { configured: false } } }));
-  // The server now returns v2 learning settings and a token allowance, with no cost block.
-  await page.route("**/api/memory/status", route => route.fulfill({ json: { mode, configuration: { excludedThreadIds: [], extractorInstanceId: null }, scopes: [{ id: "research", kind: "bot", ownerKey: "research", label: "Research bot" }, { id: "other", kind: "bot", ownerKey: "other", label: "Other bot" }], model: { state: "missing" }, records: { active: 2 }, backlog: { pending: 0, leased: 0, deferred: 0, failed: 0 }, learning: {revision:0,settings:{version:2,automaticFacts:true,automaticProcedures:true,reviewMode:false,perCallOutputTokens:{extraction:2000,grounding:64,reflection:8000},dailyInputTokens:400000,dailyOutputTokens:60000,callsPerMinute:6,learnFrom:{chats:true,channels:true},botsPaused:[]},connection:{instanceId:null,label:"No connection",source:"none"},allowance:{day:"2026-09-29",inputUsed:0,outputUsed:0,usedPercent:0},defaultOn:false}, deletion: {}, extractors: [], workerError: null } }));
+  // The server now returns v3 learning settings and a monthly ceiling, with no cost block.
+  await page.route("**/api/memory/status", route => route.fulfill({ json: { mode, configuration: { excludedThreadIds: [], extractorInstanceId: null }, scopes: [{ id: "research", kind: "bot", ownerKey: "research", label: "Research bot" }, { id: "other", kind: "bot", ownerKey: "other", label: "Other bot" }], model: { state: "missing" }, records: { active: 2 }, backlog: { pending: 0, leased: 0, deferred: 0, failed: 0 }, learning: {revision:0,settings:{version:3,automaticFacts:true,automaticProcedures:true,reviewMode:false,perCallOutputTokens:{extraction:2000,grounding:64,reflection:8000},ceiling:{input:100000000,output:15000000},callsPerMinute:6,learnFrom:{chats:true,channels:true},botsPaused:[]},connection:{instanceId:null,label:"No connection",source:"none"},ceiling:{month:"2026-10",input:100000000,output:15000000,inputUsed:0,outputUsed:0,paused:false},defaultOn:false}, deletion: {}, extractors: [], workerError: null } }));
   await page.route("**/api/memory/action", async route => {
     const body = route.request().postDataJSON(); actions.push(body);
     if (body.action === "list" && body.query === "delayed") await new Promise<void>(resolve => { releaseOld = resolve; });

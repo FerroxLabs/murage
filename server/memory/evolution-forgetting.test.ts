@@ -1,4 +1,4 @@
-import { mkdirSync, rmSync } from "node:fs";
+import { mkdirSync } from "node:fs";
 import { beforeEach, expect, it } from "vitest";
 import { DATA_DIR } from "../config.ts";
 import { closeDatabase, database, transaction } from "../database.ts";
@@ -8,8 +8,9 @@ import { ownerMemoryTicket } from "./authority.ts";
 import { forgetMemory } from "./forget.ts";
 import { pauseRestoredMemory } from "./restore.ts";
 import { createGepaCallLedger } from "./gepa-ledger.ts";
+import { removeTempDirSync } from "../testing/cleanup.ts";
 
-beforeEach(() => { closeDatabase(); rmSync(DATA_DIR, { recursive: true, force: true }); mkdirSync(DATA_DIR, { recursive: true }); reconcileMemoryRoster({ bots: [{ id: "bot", threadId: "thread" }], groups: [] }); });
+beforeEach(() => { closeDatabase(); removeTempDirSync(DATA_DIR); mkdirSync(DATA_DIR, { recursive: true }); reconcileMemoryRoster({ bots: [{ id: "bot", threadId: "thread" }], groups: [] }); });
 it("scrubs cached optimizer responses and snapshots on forgetting and again during offline restore", () => {
   const scopeId = ensureScope("bot", "bot"), jobId = "forget-job", callId = "forget-job:reflect:1", inputHash = "b".repeat(64);
   transaction(db => captureSource(db, { id: "source", threadId: "thread", kind: "text", speaker: "owner", outcome: "completed", text: "private clause" }));

@@ -1,6 +1,6 @@
 // The startup notebook migration remembers a finished walk with what it saw: the next launch with
 // the same bots and files reads no file and writes nothing; a new topic or an edited file walks again.
-import { mkdirSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { beforeEach, expect, it, vi } from "vitest";
 import { DATA_DIR } from "../config.ts";
@@ -8,6 +8,7 @@ import { closeDatabase, database } from "../database.ts";
 import { ensureWorkspace } from "../workspace.ts";
 import { reconcileMemoryRoster } from "./policy.ts";
 import { migrateDetectedMemoryNotebooks } from "./import.ts";
+import { removeTempDirSync } from "../testing/cleanup.ts";
 
 const reads = vi.hoisted(() => ({ count: 0 }));
 vi.mock("node:fs", async importOriginal => {
@@ -17,7 +18,7 @@ vi.mock("node:fs", async importOriginal => {
 
 const roster = { bots: [{ id: "a", threadId: "thread-a" }], groups: [] };
 beforeEach(() => {
-  closeDatabase(); rmSync(DATA_DIR, { recursive: true, force: true }); mkdirSync(DATA_DIR, { recursive: true });
+  closeDatabase(); removeTempDirSync(DATA_DIR); mkdirSync(DATA_DIR, { recursive: true });
   reconcileMemoryRoster(roster); database().exec("UPDATE memory_meta SET mode='active'");
 });
 const changes = () => Number(database().prepare("SELECT total_changes() AS n").get()!.n);

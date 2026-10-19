@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
-import { mkdirSync, rmSync } from "node:fs";
+import { mkdirSync } from "node:fs";
 import { beforeEach, describe, expect, it } from "vitest";
 import { DATA_DIR } from "./config.ts";
 import { closeDatabase, database } from "./database.ts";
@@ -8,12 +8,13 @@ import * as inboxVersion from "./inbox-version.ts";
 import { messagesVersion, onMessagesChanged } from "./inbox-version.ts";
 import { listInboxCached, type InboxAccess } from "./inbox.ts";
 import type { Message } from "./store.ts";
+import { removeTempDirSync } from "./testing/cleanup.ts";
 
 const msg = (id: string, extra: Record<string, unknown>): Message => ({ id, at: 1, role: "bot", kind: "text", text: "x", ...extra }) as Message;
 const access: InboxAccess = { owner: true, threads: [{ threadId: "t", label: "Bot" }] };
 
 describe("inbox version and database pragmas", () => {
-  beforeEach(() => { closeDatabase(); rmSync(DATA_DIR, { recursive: true, force: true }); mkdirSync(DATA_DIR, { recursive: true }); });
+  beforeEach(() => { closeDatabase(); removeTempDirSync(DATA_DIR); mkdirSync(DATA_DIR, { recursive: true }); });
 
   it("sorts and caches in memory, and has the inbox index", () => {
     const db = database();

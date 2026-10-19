@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 import { execFileSync } from "node:child_process";
-import { copyFileSync, existsSync, lstatSync, mkdirSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { copyFileSync, existsSync, lstatSync, mkdirSync, readFileSync, readdirSync, statSync, writeFileSync } from "node:fs";
 import { dirname, join, relative } from "node:path";
 import { expect, it, vi } from "vitest";
 import { acquireDataDirLease, dataDirLeasePaths } from "../electron/data-dir-lease.mjs";
@@ -9,6 +9,7 @@ import * as encryption from "./installation-backup-encryption.ts";
 import * as fidelity from "./installation-fidelity-snapshot.ts";
 import { inspectEncryptedInstallationBackup, restoreEncryptedInstallationNew, writeEncryptedInstallationBackup } from "./installation-encrypted-backup.ts";
 import { backupFixture, testAgeKeys,rawAgeHost } from "./testing/backup-fixture.ts";
+import { removeTempDirSync } from "./testing/cleanup.ts";
 
 // B20 recovery gaps on a genuinely closed synthetic installation with the real
 // pinned age tool: in-flight cancellation, a destination raced into existence,
@@ -72,7 +73,7 @@ it.skipIf(!rawAgeHost)("cancels an in-flight capture, stops the pinned age child
     const saved=await writeEncryptedInstallationBackup(f.data,archive,{...f.keys,selection});
     expect(saved.sha256).toBe(sha(readFileSync(archive)));expect(lstatSync(archive).nlink).toBe(1);
     expectOriginalPreserved(f.data,before);
-  }finally{hook.mockRestore();rmSync(f.parent,{recursive:true,force:true});}
+  }finally{hook.mockRestore();removeTempDirSync(f.parent);}
 },60000);
 
 it.skipIf(!rawAgeHost)("refuses a destination another writer creates during capture and keeps that writer's bytes",async()=>{
@@ -88,7 +89,7 @@ it.skipIf(!rawAgeHost)("refuses a destination another writer creates during capt
     expect(readFileSync(archive,"utf8")).toBe("other writer bytes");expect(lstatSync(archive).nlink).toBe(1);
     await expectNoOwnedAge(f.tool);expect(leftovers(f.parent)).toEqual([]);
     expectOriginalPreserved(f.data,before);
-  }finally{hook.mockRestore();rmSync(f.parent,{recursive:true,force:true});}
+  }finally{hook.mockRestore();removeTempDirSync(f.parent);}
 },60000);
 
 it.skipIf(!rawAgeHost)("refuses truncated ciphertext and an in-flight restore cancellation; the durable receipt then matches the archive",async()=>{
@@ -120,7 +121,7 @@ it.skipIf(!rawAgeHost)("refuses truncated ciphertext and an in-flight restore ca
     expect(restored).toMatchObject({status:"restored-review-required",snapshotId:saved.snapshotId,encryptedSha256:archiveSha,previousDataDir:null,activationAvailable:false,rawFidelityActivated:false});
     const inspected=await inspectEncryptedInstallationBackup(archive,f.parent,f.keys);
     try{expect(inspected.sha256).toBe(archiveSha);expect(inspected.manifest.snapshotId).toBe(saved.snapshotId);expect(inspected.manifest.coverage).toEqual(saved.coverage);}
-    finally{rmSync(inspected.directory,{recursive:true,force:true});}
+    finally{removeTempDirSync(inspected.directory);}
     // Durable on-disk records, not only the in-memory result, bind the same snapshot and verified projection.
     const receipt=JSON.parse(readFileSync(restored.receipt,"utf8"));
     expect(receipt).toMatchObject({version:1,snapshotId:saved.snapshotId,archiveSha256:restored.archiveSha256,hadOriginal:false,originalIdentity:null,phase:"candidate-installed"});
@@ -132,5 +133,5 @@ it.skipIf(!rawAgeHost)("refuses truncated ciphertext and an in-flight restore ca
     expect(leftovers(restores)).toEqual([]);expect(leftovers(f.parent)).toEqual([]);
     await expectNoOwnedAge(f.tool);
     expectOriginalPreserved(f.data,before);
-  }finally{rmSync(f.parent,{recursive:true,force:true});}
+  }finally{removeTempDirSync(f.parent);}
 },90000);

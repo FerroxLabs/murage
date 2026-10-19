@@ -19,7 +19,8 @@ import { freePortBlock } from "./testing/ports.ts";
 import { openSse } from "./testing/sse.ts";
 import { FILE_MAX_BYTES, IMAGE_MAX_BYTES } from "./attachments.ts";
 import { redactSecretsInText } from "./redact.ts";
-import { BASE, phoneApi, DESKTOP_HEADERS, DESKTOP_QUERY, DESKTOP_SECRET, FIXTURE_ENGINE_OVERRIDES, PORT, ROOT, SERVER_DIR, STATE_ONLY_SELECTION, api, deferredCheckpointDirectories, desktopApi, expectStoppedTestServerCleanly, fakeClaudeDump, home, readJsonFileWhenReady, startInternalFixtureTurn, statusWithHeaders, stderr, stopFixtureTurn, uploadAvatar, waitForIsolatedServer } from "./testing/index-harness.ts";
+import { BASE, phoneApi, DESKTOP_HEADERS, DESKTOP_SECRET, desktopTicketed, FIXTURE_ENGINE_OVERRIDES, PORT, ROOT, SERVER_DIR, STATE_ONLY_SELECTION, api, deferredCheckpointDirectories, desktopApi, expectStoppedTestServerCleanly, fakeClaudeDump, home, readJsonFileWhenReady, startInternalFixtureTurn, statusWithHeaders, stderr, stopFixtureTurn, uploadAvatar, waitForIsolatedServer } from "./testing/index-harness.ts";
+import { removeTempDirSync } from "./testing/cleanup.ts";
 
 
 describe("harness HTTP API", () => {
@@ -65,7 +66,7 @@ describe("harness HTTP API", () => {
       // The suite already removes this project's parent home after shutdown;
       // verify that deferred removal rather than racing it inside this test.
       if (process.platform === "win32") deferredCheckpointDirectories.push(project);
-      else rmSync(project, { recursive: true, force: true });
+      else removeTempDirSync(project);
     }
   }, 20000);
 
@@ -363,7 +364,7 @@ describe("harness HTTP API", () => {
     expect(attempted.body.error).toMatch(/direct-message.*members/i);
     // dm channels are withheld from a scoped roster by design, so this
     // assertion has to ask as the desktop
-    const state = await api("GET", `/api/bots?${DESKTOP_QUERY}`);
+    const state = await api("GET", await desktopTicketed("/api/bots"));
     const dm = state.body.groups.find((group: { id: string }) => group.id === "test-dm");
     expect(dm.memberIds).toEqual(["test-bot-a", "test-bot-b"]);
   });
@@ -1050,7 +1051,7 @@ describe("harness HTTP API", () => {
     expect(attempted.body.error).toMatch(/direct-message.*working folder/i);
     // dm channels are withheld from a scoped roster by design, so this
     // assertion has to ask as the desktop
-    const state = await api("GET", `/api/bots?${DESKTOP_QUERY}`);
+    const state = await api("GET", await desktopTicketed("/api/bots"));
     expect(state.body.groups.find((group: { id: string }) => group.id === "test-dm")).not.toHaveProperty("cwd");
     expect((await desktopApi("DELETE", "/api/groups/test-dm")).status).toBe(200);
   });
@@ -1061,7 +1062,7 @@ describe("harness HTTP API", () => {
     expect(attempted.body.error).toMatch(/fixed after its first turn/i);
     // dm channels are withheld from a scoped roster by design, so this
     // assertion has to ask as the desktop
-    const state = await api("GET", `/api/bots?${DESKTOP_QUERY}`);
+    const state = await api("GET", await desktopTicketed("/api/bots"));
     expect(state.body.groups.find((group: { id: string }) => group.id === "test-pinned-room")).not.toHaveProperty("cwd");
     expect((await desktopApi("DELETE", "/api/groups/test-pinned-room")).status).toBe(200);
   });

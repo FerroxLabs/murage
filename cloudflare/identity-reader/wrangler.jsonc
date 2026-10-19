@@ -1,0 +1,29 @@
+{
+  // The identity reader (support design 4.5). Config only: this lane never deploys it.
+  // NO public URL, by construction: workers_dev and preview_urls off, no routes, no custom domains, no triggers.
+  // It must live in the same Cloudflare account as the control plane it serves (service bindings do not cross accounts).
+  "name": "murage-identity-reader",
+  "main": "src/index.ts",
+  "account_id": "b83123326a4b9ad76831b9cb9365b33b",
+  "compatibility_date": "2026-08-25",
+  "compatibility_flags": ["nodejs_compat"],
+  "workers_dev": false,
+  "preview_urls": false,
+  // Fixed Supabase project origin (https://<ref>.supabase.co). Not a secret. Empty fails closed: every read is identity_unavailable.
+  "vars": { "SUPABASE_URL": "" },
+  // The Supabase secret key: set with `wrangler secret put`, only ever on this Worker.
+  "secrets": { "required": ["SUPABASE_SECRET_KEY"] },
+  "observability": { "enabled": false },
+  "env": {
+    "staging": {
+      "name": "murage-identity-reader-staging",
+      "account_id": "874fe1689a53e6f56ff74816a9f23b26",
+      "workers_dev": false,
+      "preview_urls": false,
+      // The members-area auth project ("murage-site", ref vkuixifpqawrptnbwxti; its custom domain is auth.murage.ai). Same project as the site preview.
+      "vars": { "SUPABASE_URL": "https://vkuixifpqawrptnbwxti.supabase.co" },
+      "secrets": { "required": ["SUPABASE_SECRET_KEY"] },
+      "observability": { "enabled": false }
+    }
+  }
+}

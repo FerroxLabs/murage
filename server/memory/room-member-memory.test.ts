@@ -4,7 +4,7 @@
 // — a linked channel person — keeps the room-only boundary. Owner-private
 // continuity never enters a room, and a notebook the prompt already carries
 // whole is not recalled a second time.
-import { mkdirSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { beforeEach, expect, it } from "vitest";
 import { DATA_DIR } from "../config.ts";
@@ -19,12 +19,13 @@ import { buildMemoryBundle } from "./bundle.ts";
 import { searchMemory, type MemorySearchBridge } from "./search.ts";
 import { commitMemoryImport, notebookSourceIds, previewMemoryImport } from "./import.ts";
 import { LineageAllowance } from "./lineage-allowance.ts";
+import { removeTempDirSync } from "../testing/cleanup.ts";
 
 const roster: MemoryRoster = {
   bots: [{ id: "a", threadId: "private-a", section: "alpha" }, { id: "b", threadId: "private-b", section: "beta" }],
   groups: [{ id: "room", threadId: "room-thread", memberIds: ["a", "b"] }],
 };
-beforeEach(() => { closeDatabase(); rmSync(DATA_DIR, { recursive: true, force: true }); mkdirSync(DATA_DIR, { recursive: true }); });
+beforeEach(() => { closeDatabase(); removeTempDirSync(DATA_DIR); mkdirSync(DATA_DIR, { recursive: true }); });
 
 function access(thread: string, humanPrincipal?: ReturnType<typeof resolveHumanBinding>) {
   reconcileMemoryRoster(roster);

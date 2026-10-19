@@ -1,13 +1,14 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // Copyright 2026 Ferrox Labs
-import { mkdtempSync, mkdirSync, realpathSync, renameSync, symlinkSync, rmSync } from "node:fs";
+import { mkdtempSync, mkdirSync, realpathSync, renameSync, symlinkSync } from "node:fs";
 import { tmpdir, homedir } from "node:os";
 import { join } from "node:path";
 import { afterEach, expect, it } from "vitest";
 import { canonicalProjectRoots, projectFileApproval, effectiveProjectProfile } from "./project-work-profile.ts";
+import { removeTempDirSync } from "./testing/cleanup.ts";
 const dirs: string[] = [];
 const fresh = () => { const dir = mkdtempSync(join(tmpdir(), "project-roots-")); dirs.push(dir); return dir; };
-afterEach(() => { for (const dir of dirs.splice(0)) rmSync(dir, { recursive: true, force: true }); });
+afterEach(() => { for (const dir of dirs.splice(0)) removeTempDirSync(dir); });
 it("allows only structured files in current roots for owner audience", () => {
   const dir = fresh(); const root = join(dir,"work"); mkdirSync(root);
   const roots = canonicalProjectRoots([{ path: root, label: "Work" }], { dataDir: join(dir,"data") });

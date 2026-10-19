@@ -4,7 +4,7 @@
 //  2  a hand-off's request is found by its id, its row is never deleted while its request is live, and a plain starter never starts a partnered request
 //  3  shared fairness is chosen by indexed seeks (never a sort of the queue), at most 100 decisions per pass, and no team starves
 //  4  the start is a runtime capability: one minter, live tickets, prompts written only in the transaction that starts their row
-import { mkdirSync, readFileSync, readdirSync, rmSync, statSync } from "node:fs";
+import { mkdirSync, readFileSync, readdirSync, statSync } from "node:fs";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import type { DatabaseSync } from "node:sqlite";
@@ -25,6 +25,7 @@ import { SHARED_DRAIN_DECISIONS, SHARED_FAIR_SQL, _lastDrainDecisions, drainShar
 import { fakeHost, rememberRun, runOf, writePrompt } from "./testing/handoff-turn.ts";
 import { ownerWorld, sharedWorld, type OwnerWorld } from "./testing/handoff-worlds.ts";
 import { engineReply, murageLineReply } from "./testing/provider-reply.ts";
+import { removeTempDirSync } from "./testing/cleanup.ts";
 
 const serverDir = fileURLToPath(new URL(".", import.meta.url));
 const tick = () => new Promise<void>((resolve) => setImmediate(resolve));
@@ -35,7 +36,7 @@ async function until(done: () => boolean, ms = 120_000): Promise<void> {
 const count = (sql: string, ...args: string[]) => Number((database().prepare(sql).get(...args) as { n: number }).n);
 const rowOf = (id: string) => database().prepare("SELECT phase, origin, started_at, submitted_at, accepted_turn_id, start_attempts, target_thread_id, evidence_at FROM pending_delegations WHERE id=?").get(id) as Record<string, unknown> | undefined;
 
-beforeEach(() => { closeDatabase(); rmSync(DATA_DIR, { recursive: true, force: true }); mkdirSync(DATA_DIR, { recursive: true }); _resetPending(); _resetOwnerMigration(); });
+beforeEach(() => { closeDatabase(); removeTempDirSync(DATA_DIR); mkdirSync(DATA_DIR, { recursive: true }); _resetPending(); _resetOwnerMigration(); });
 afterEach(() => { _resetOwnerMigration(); _resetPending(); closeDatabase(); });
 
 function attach(w: OwnerWorld, steps: (turn: HandoffTurnOptions, text: string) => void | Promise<void>): void {
@@ -118,7 +119,7 @@ describe("1. only an engine's own reply proves a hand-off ran", () => {
   });
   it("a genuine reply (text or a tool the engine started) that answers the prompt is evidence, for every driver's event shape", async () => {
     for (const provider of ["claudeAgent", "codex", "fuigo", "pi", "antigravity", "boxagent", "openai"] as const) {
-      closeDatabase(); rmSync(DATA_DIR, { recursive: true, force: true }); mkdirSync(DATA_DIR, { recursive: true }); _resetPending(); _resetOwnerMigration();
+      closeDatabase(); removeTempDirSync(DATA_DIR); mkdirSync(DATA_DIR, { recursive: true }); _resetPending(); _resetOwnerMigration();
       const w = ownerWorld("owner");
       attach(w, (turn) => {
         turn.delegationRun.submitted();
@@ -440,6 +441,6 @@ describe("4. the start is a runtime capability, so the static analysis only has 
   });
   it("the memory redispatch literals in index.ts carry the turn's own prompt by value (the lint's reading, checked here against the source)", () => {
     const index = readFileSync(join(serverDir, "index.ts"), "utf8");
-    expect(index.match(/\{ \.\.\.opts, threadId, userMessage, memoryRedispatch: true \}/g)).toHaveLength(2);
+    expect(index.match(/\{ \.\.\.opts, threadId, userMessage, memoryRedispatch: attempt \}/g)).toHaveLength(2);
   });
 });

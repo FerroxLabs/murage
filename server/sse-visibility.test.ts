@@ -13,8 +13,12 @@ import {
   DESKTOP_SURFACE,
   KNOWN_FRAME_KINDS,
   SURFACE_SECRET_HEADER,
-  SURFACE_SECRET_QUERY,
+  RESOURCE_TICKET_TTL_MS,
+  SURFACE_TICKET_PATH,
+  SURFACE_TICKET_QUERY,
+  adoptResourceTicket,
   desktopSurfaceSecret,
+  mintResourceTicket,
   devDesktopSecretOffered,
   frameAudience,
   frameSubject,
@@ -35,6 +39,8 @@ const desktopHeaders = () => ({
   "x-murage-surface": DESKTOP_SURFACE,
   [SURFACE_SECRET_HEADER]: SECRET,
 });
+/** The retired query form of the proof: it proves nothing now. */
+const SURFACE_SECRET_QUERY = "surfaceSecret";
 const desktopQuery = () =>
   new URLSearchParams(`surface=${DESKTOP_SURFACE}&${SURFACE_SECRET_QUERY}=${SECRET}`);
 
@@ -70,12 +76,11 @@ describe("requestSurface", () => {
     expect(requestSurface({ accept: "text/event-stream" }, new URLSearchParams("screens=off"))).toBe("remote");
   });
 
-  it("lets the desktop opt out by header or by query, once it has proved it is the desktop", () => {
-    // EventSource cannot set a request header, so the query form is the only
-    // one the renderer's live stream can use; fetch callers use either. Each
-    // form carries the marker AND this launch's secret.
+  it("lets the desktop opt out once it has proved it is the desktop, by the proof's header only", () => {
+    // The proof never rides in a URL: the query form proves nothing. A
+    // URL-loaded resource carries a single-use ticket instead (below).
     expect(requestSurface(desktopHeaders())).toBe("desktop");
-    expect(requestSurface({}, desktopQuery())).toBe("desktop");
+    expect(requestSurface({}, desktopQuery())).toBe("remote");
     // the two halves may arrive by different routes — the SSE URL carries
     // both in the query, a fetch carries both in headers, and a mixture is
     // still one request from one caller
@@ -120,7 +125,7 @@ describe("requestSurface", () => {
         `header secret ${JSON.stringify(candidate)}`,
       ).toBe("remote");
       expect(
-        requestSurface({}, new URLSearchParams({ surface: DESKTOP_SURFACE, [SURFACE_SECRET_QUERY]: candidate })),
+        requestSurface({}, new URLSearchParams({ surface: DESKTOP_SURFACE, ["surfaceSecret"]: candidate })),
         `query secret ${JSON.stringify(candidate)}`,
       ).toBe("remote");
     }
@@ -143,13 +148,13 @@ describe("requestSurface", () => {
   it("cannot be widened by sending the companion marker twice", () => {
     // Every case here carries a VALID secret. Anything less and the test
     // would pass for the wrong reason once the secret check landed.
-    expect(requestSurface({ "x-murage-companion": "1, 1" }, desktopQuery())).toBe("remote");
+    expect(requestSurface({ "x-murage-companion": "1, 1", ...desktopHeaders() })).toBe("remote");
     // the array shape some servers hand over, and the empty and odd values too
     expect(requestSurface({ "x-murage-companion": ["1", "1"] as unknown as string[], ...desktopHeaders() })).toBe("remote");
-    expect(requestSurface({ "x-murage-companion": "" }, desktopQuery())).toBe("remote");
-    expect(requestSurface({ "x-murage-companion": "yes" }, desktopQuery())).toBe("remote");
+    expect(requestSurface({ "x-murage-companion": "", ...desktopHeaders() })).toBe("remote");
+    expect(requestSurface({ "x-murage-companion": "yes", ...desktopHeaders() })).toBe("remote");
     // absent still means the desktop may announce itself
-    expect(requestSurface({}, desktopQuery())).toBe("desktop");
+    expect(requestSurface(desktopHeaders())).toBe("desktop");
   });
 
   it("keeps a companion scoped even when it forges the desktop marker", () => {
@@ -161,6 +166,60 @@ describe("requestSurface", () => {
     // door.
     expect(requestSurface({ "x-murage-companion": "1" }, desktopQuery())).toBe("remote");
     expect(requestSurface({ "x-murage-companion": "1", ...desktopHeaders() })).toBe("remote");
+  });
+
+  describe("URL-loaded resources: a single-use ticket, never the proof", () => {
+    const at = (path: string) => new URL(path, "http://127.0.0.1");
+    const ticketFor = (resource: string) => mintResourceTicket(resource)!.ticket;
+    const load = (path: string, method = "GET") => {
+      const url = at(path);
+      const headers: Record<string, string> = {};
+      const adopted = adoptResourceTicket(method, headers, url);
+      return { adopted, surface: requestSurface(headers, url.searchParams), url: `${url.pathname}${url.search}` };
+    };
+
+    it("redeems once, for that resource, and stands the desktop's proof on the request", () => {
+      const ticket = ticketFor("/api/attachments/a.png?w=480");
+      const first = load(`/api/attachments/a.png?w=480&${SURFACE_TICKET_QUERY}=${ticket}`);
+      expect(first).toEqual({ adopted: true, surface: "desktop", url: "/api/attachments/a.png?w=480" });
+      // single use
+      expect(load(`/api/attachments/a.png?w=480&${SURFACE_TICKET_QUERY}=${ticket}`)).toMatchObject({ adopted: false, surface: "remote" });
+    });
+
+    it("binds the ticket to the path and the query, in any order", () => {
+      const ticket = ticketFor("/api/events?surface=desktop&since=a%3A1");
+      expect(load(`/api/events?since=a%3A1&${SURFACE_TICKET_QUERY}=${ticket}&surface=desktop`).surface).toBe("desktop");
+      const other = ticketFor("/api/attachments/a.png");
+      expect(load(`/api/attachments/b.png?${SURFACE_TICKET_QUERY}=${other}`)).toMatchObject({ adopted: false, surface: "remote", url: "/api/attachments/b.png" });
+      const narrow = ticketFor("/api/events?surface=desktop");
+      expect(load(`/api/events?surface=desktop&screens=off&${SURFACE_TICKET_QUERY}=${narrow}`).surface).toBe("remote");
+    });
+
+    it("refuses a write, a doubled ticket, an unknown one, and strips every one it saw", () => {
+      const ticket = ticketFor("/api/presence");
+      expect(load(`/api/presence?${SURFACE_TICKET_QUERY}=${ticket}`, "POST")).toEqual({ adopted: false, surface: "remote", url: "/api/presence" });
+      const a = ticketFor("/api/x");
+      const b = ticketFor("/api/x");
+      expect(load(`/api/x?${SURFACE_TICKET_QUERY}=${a}&${SURFACE_TICKET_QUERY}=${b}`)).toEqual({ adopted: false, surface: "remote", url: "/api/x" });
+      // both were spent by the refusal
+      expect(load(`/api/x?${SURFACE_TICKET_QUERY}=${a}`).adopted).toBe(false);
+      expect(load(`/api/x?${SURFACE_TICKET_QUERY}=nope`)).toMatchObject({ adopted: false, surface: "remote" });
+    });
+
+    it("mints only for a same-origin /api resource, and lives seconds", () => {
+      expect(mintResourceTicket("https://evil.example/api/x")).toBeNull();
+      expect(mintResourceTicket("//evil.example/api/x")).toBeNull();
+      expect(mintResourceTicket("/session/device")).toBeNull();
+      expect(mintResourceTicket(SURFACE_TICKET_PATH)).toBeNull();
+      expect(mintResourceTicket(`/api/x?${SURFACE_TICKET_QUERY}=t`)).toBeNull();
+      expect(mintResourceTicket(42)).toBeNull();
+      expect(mintResourceTicket("/api/attachments/a.png")).toMatchObject({ expiresInMs: RESOURCE_TICKET_TTL_MS });
+      expect(RESOURCE_TICKET_TTL_MS).toBeLessThanOrEqual(30_000);
+    });
+
+    it("never treats the old query proof as a ticket or a proof", () => {
+      expect(load(`/api/events?surface=desktop&${SURFACE_SECRET_QUERY}=${SECRET}`).surface).toBe("remote");
+    });
   });
 
   it("reads a repeated header from its first value", () => {

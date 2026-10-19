@@ -14,6 +14,7 @@ import {
 import type { JournalRecord, OperationJournal } from "./connected-app-journal.ts";
 import { classifyConnectedAppCall } from "../shared/connected-app-readonly.ts";
 import { CONNECTED_APP_REPEAT_WINDOW_MS, CONNECTED_APP_RESULT_TTL_MS, connectedAppProvenance } from "../shared/connected-app-calls.ts";
+import { removeTempDirSync } from "./testing/cleanup.ts";
 
 let server: Server, base: string;
 const dispatched: Array<{ id: unknown; name: unknown; args: unknown }> = [];
@@ -869,7 +870,7 @@ describe("1.0.2 round 5: a failure before any request bytes could be written is 
 
 describe("1.0.2 round 4: the SQLite journal", () => {
   it("round-trips provenance, applies a batch atomically, and upgrades a ledger written without the column", async () => {
-    const { mkdtempSync, rmSync } = await import("node:fs");
+    const { mkdtempSync } = await import("node:fs");
     const { tmpdir } = await import("node:os");
     const { join } = await import("node:path");
     const { DatabaseSync } = await import("node:sqlite");
@@ -895,7 +896,7 @@ describe("1.0.2 round 4: the SQLite journal", () => {
       // A batch with a bad row changes nothing.
       expect(() => journal.apply({ put: [{ ...base, handle: "c", key: "c" }, { ...base, handle: "d", key: null as unknown as string }], remove: ["a"] })).toThrow();
       expect(journal.load().map((row) => row.handle).sort()).toEqual(["a", "b", "h-empty"]);
-    } finally { rmSync(dir, { recursive: true, force: true }); }
+    } finally { removeTempDirSync(dir); }
   });
 });
 

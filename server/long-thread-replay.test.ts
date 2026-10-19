@@ -9,10 +9,11 @@
 // form: the turn never fails on a long history, nothing made with memory that
 // fails its check is replayed, recent bot lines survive, it stays fast, and a
 // retained session holding a withheld line is not resumed.
-import { mkdirSync, rmSync } from "node:fs";
+import { mkdirSync } from "node:fs";
 import { beforeEach, expect, it } from "vitest";
 import { afterEach as thawAfterEach, beforeEach as thawBeforeEach } from "vitest";
 import { thawRootSetWritesForTest } from "./memory/replay-lineage.ts";
+import { removeTempDirSync } from "./testing/cleanup.ts";
 // 1.0.2: this test models a 1.0.1 file (legacy root-set rows) for the read-time judge, which still decides legacy data until S6.
 thawBeforeEach(() => thawRootSetWritesForTest(true));
 thawAfterEach(() => thawRootSetWritesForTest(false));
@@ -30,7 +31,7 @@ import { writtenWithReceipts } from "./memory/testing/legacy-file-model.ts";
 
 const roster: MemoryRoster = { bots: [{ id: "dax", threadId: "dax-direct", section: "Operations" }], groups: [] };
 const NONE: ReadonlySet<string> = new Set();
-beforeEach(() => { closeDatabase(); rmSync(DATA_DIR, { recursive: true, force: true }); mkdirSync(DATA_DIR, { recursive: true }); });
+beforeEach(() => { closeDatabase(); removeTempDirSync(DATA_DIR); mkdirSync(DATA_DIR, { recursive: true }); });
 function access() {
   reconcileMemoryRoster(roster);
   const registry = new InternalCapabilities(); registry.begin("dax", "dax-direct", "g");

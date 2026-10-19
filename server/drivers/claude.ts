@@ -1,4 +1,10 @@
+import type { ExecEnv } from "../../shared/mount-identity.ts";
 import { oneShots } from "../engine-one-shots.ts";
+import { engineFailure, withCliMemoryLearning, type MemorySessionRunner } from "./cli-memory-learning.ts";
+import { CLOUD_BROKER_DIR, CLOUD_RENDER_MCP, CLOUD_RENDER_SYSTEM_PROMPT, CLOUD_WORKSPACE_ROOT, cloudEngineHome, cloudTurnBot, cloudTurnEnvironment, cloudTurnRender, isCloudRenderPlaceholder } from "../cloud-home/turn-process.ts";
+import { cloudMcpStanza, cloudRenderMcp } from "../cloud-home/engine-render.ts";
+import { cloudHomeCopy } from "../cloud-home/copy.ts";
+import { cloudClaudeRenewalDue } from "../cloud-home/bot-state.ts";
 import { CLAUDE_TOOL_SURFACE, renderMurageTurn } from "../murage-tool-surface.ts";
 import { notePromptSent } from "../turn-hold.ts";
 // Claude driver — upstream ClaudeDriver skeleton over agentcal's
@@ -22,15 +28,16 @@ import { parseDocument as parseYamlDocument } from "yaml";
 import { createServer as createNetServer } from "node:net";
 import { CLAUDE_UPDATE_MESSAGE, claudeExecutableIdentity, claudeLaunchRefusal, claudeLaunchRefusalError, ClaudeUpdateRequired, claudeVersionVerdict, requireClaudeCliVersion, type ClaudeLaunchRefusal } from "./claude-guards.ts";
 import { homedir, tmpdir } from "node:os";
-import { isAbsolute, join, dirname, resolve } from "node:path";
+import { isAbsolute, join, dirname } from "node:path";
 import { backgroundCapNote, backgroundWaitCapMs, SubtaskTracker } from "../subtasks.ts";
 
-import { DATA_DIR, stripRoutingEnv, stripWorkspaceCredentialEnv } from "../config.ts";
+import { DATA_DIR, stripCapturedProviderEnv, stripRoutingEnv, stripWorkspaceCredentialEnv } from "../config.ts";
 import { writeFileAtomic } from "../atomic.ts";
-import { augmentedPath } from "../env-path.ts";
-import { claudeAccountEnvironment,resolveClaudeConfigDir } from "../claude-accounts.ts";
+import { augmentedPath, envGeneration } from "../env-path.ts";
+import { CLAUDE_ACCOUNT_ENV_KEYS, claudeAccountEnvironment,resolveClaudeConfigDir } from "../claude-accounts.ts";
 import { customMountEntries } from "../custom-mcp-mounts.ts";
 import { toolFilePaths } from "../own-workspace-approval.ts";
+import { engineToolFields } from "./contracts.ts";
 import { claudeToolResultDirs, sessionFolders } from "../own-tool-results.ts";
 import { fluxKey } from "../flux-config.ts";
 import { applyFluxSurface, isFluxModel } from "../flux-routing.ts";
@@ -96,6 +103,16 @@ import { engineCommandText } from "../../shared/engine-commands.ts";
 import { engineClosedLine } from "./stop-copy.ts";
 import { acpEngineExitStderrText } from "./acp/core.ts";
 import { connectedAppsServerName } from "../../shared/connected-app-names.ts";
+import type { McpMountRecord } from "../../shared/mount-identity.ts";
+import { OWN_BUILTINS, type OwnBuiltin } from "../../shared/own-servers.ts";
+import { inProjectCheck, realDir, realPathInOrder, walkRoot } from "../../shared/in-project.ts";
+import { SENSITIVE_TEXT, claudeSensitiveAskRules } from "../../shared/sensitive-paths.ts";
+import { execEnvHanded, execEnvNow, handedEngineEnv, ownedTurnNames, type HandedEnv } from "../engine-env.ts";
+import { gitBashPath } from "../tool-discovery.ts";
+import { TurnRefusal } from "./turn-refusal.ts";
+import { NarrowDenials } from "../narrow-denials.ts";
+import { appendDecision } from "../decision-log.ts";
+import { EXEC_ENV_FILE, murageExecPrefix, writeExecEnvFile } from "./murage-exec.ts";
 
 /** Whether `claude` has been signed in.
  *
@@ -171,7 +188,7 @@ export function claudeVersionTooOld(frame: { error?: unknown; is_api_error_messa
  * Keeping the probe and turn environments identical prevents setup from
  * claiming an API-key login that the turn itself would deliberately remove.
  */
-function claudeEnvironment(
+export function claudeEnvironment(
   model?: string | null,
   source: NodeJS.ProcessEnv = process.env,
   providerRoute?: ProviderTurnRoute,
@@ -179,7 +196,7 @@ function claudeEnvironment(
   // a catalog probe) gets the unknown-purpose default: off/off.
   fluxMemory: FluxMemoryDecision = fluxMemoryDecision(),
 ): NodeJS.ProcessEnv {
-  const env: NodeJS.ProcessEnv = { ...source, PATH: augmentedPath(), NPM_CONFIG_LOGLEVEL: "error" };
+  const env: NodeJS.ProcessEnv = { ...cloudTurnEnvironment("claudeAgent", source, process.env.MURAGE_CLOUD_ROLE === "home" ? [] : ["CLAUDE_CODE_OAUTH_TOKEN"]), PATH: augmentedPath(), NPM_CONFIG_LOGLEVEL: "error" };
   delete env.CLAUDECODE;
   delete env.CLAUDE_CODE_ENTRYPOINT;
   // Plugins loaded from this variable need no settings entry, so the isolation's per-id disable
@@ -208,6 +225,21 @@ function claudeEnvironment(
     env.ANTHROPIC_CUSTOM_HEADERS = claudeCustomHeadersValue(fluxMemory.headers);
   }
   return env;
+}
+
+/** Every name claudeEnvironment and the account environment decide for a turn, removed from the owner's CAPTURED shell
+ * map before the turn's own names are written back (in place). The capture can hold names this process never had (a
+ * Finder launch: a provider switcher's ANTHROPIC_BASE_URL and ANTHROPIC_AUTH_TOKEN exported only in the shell), and
+ * the strips above ran on this process's environment only, so without this they came back after sanitizing and a
+ * subscription conversation went to the shell's provider. With a named account its login names are the account's. */
+export function stripClaudeOwnedEnv(map: Record<string, string | undefined>, configDir?: string, platform: NodeJS.Platform = process.platform): void {
+  stripCapturedProviderEnv(map, platform);
+  for (const name of ["CLAUDECODE", "CLAUDE_CODE_ENTRYPOINT", "CLAUDE_CODE_PLUGIN_DIRS"]) delete map[name];
+  if (!configDir?.trim()) return;
+  for (const name of Object.keys(map)) {
+    const upper = name.toUpperCase();
+    if (upper === "CLAUDE_CONFIG_DIR" || (CLAUDE_ACCOUNT_ENV_KEYS as readonly string[]).includes(upper) || upper.startsWith("CLAUDE_CODE_OAUTH_")) delete map[name];
+  }
 }
 
 /** The MCP start-up settings for a turn's CLI. Murage waits for the servers
@@ -292,6 +324,7 @@ function claudeRouting(
   env: NodeJS.ProcessEnv,
   model: string | null | undefined,
 ): { model: string | null; injected: boolean; flux?: boolean } {
+  if (process.env.MURAGE_CLOUD_ROLE === "home" && isFluxModel(model)) throw new Error(cloudHomeCopy.claudeFluxOnHome);
   const flux = applyFluxSurface(DRIVER_KIND, env, model, fluxKey());
   if (flux.applied) return { model: flux.model, injected: true, flux: true };
   const applied = applyClaudeInject(env, model);
@@ -425,8 +458,18 @@ const DWEB_PROXY_PATH = SPAWNED_PROXIES.dweb;
 // makes it behave as plain node for the spawned MCP proxies (harmless in dev)
 const NODE_ENV_FLAG = { ELECTRON_RUN_AS_NODE: "1" };
 
+/** Remove the private directory of a --mcp-config file this process wrote. A Cloud
+ * turn's file is the launcher's (CLOUD_RENDER_MCP, inside the turn's own /tmp): there
+ * is nothing on the server's disk, and the placeholder is never a path to remove. */
+function removeMcpConfigDir(filePath: string): void {
+  if (isCloudRenderPlaceholder(filePath) || process.env.MURAGE_CLOUD_ROLE === "home") return;
+  rmSync(dirname(filePath), { recursive: true, force: true });
+}
+
 function removePrivateTempDir(filePath: string | null | undefined): boolean {
   if (!filePath) return true;
+  // Cloud home: the server never created this path (it lives in the turn's namespace).
+  if (process.env.MURAGE_CLOUD_ROLE === "home") return true;
   try {
     rmSync(dirname(filePath), { recursive: true, force: true, maxRetries: 3, retryDelay: 50 });
     return true;
@@ -446,14 +489,16 @@ function removePrivateTempDir(filePath: string | null | undefined): boolean {
 interface Ask {
   id: string;
   kind: "permission" | "question";
-  tool: string;
-  input: Record<string, unknown>;
+  /** Absent when the ask did not name a tool; never replaced by a stand-in (Rule 55). */
+  tool?: string;
+  /** Absent when the ask carried no input object; never replaced by `{}` (Rule 55). */
+  input?: Record<string, unknown>;
   at: number;
   /** question asks: what the card shows and what answers are checked against */
   questions?: QuestionSpec[];
 }
 type AskBehavior = "allow" | "deny" | "answer";
-type AskResolutionSource = "user" | "timeout" | "system";
+type AskResolutionSource = "user" | "timeout" | "system" | "auto";
 
 const DENY_TIMEOUT_NOTE =
   "Murage: nobody answered this permission request in time. Skip this action and finish what you can without it.";
@@ -475,15 +520,39 @@ function systemEndedReply(kind: Ask["kind"]): { behavior: AskBehavior; message: 
     : { behavior: "deny", message: "Murage: the turn ended" };
 }
 
+/**
+ * Rule 54, F4 for Claude: the records for exactly the `mcpServers` keys the
+ * driver wrote into this turn's `--mcp-config` file. The connector server
+ * (under either of its names) is `own:connector`, a built-in is `own:<builtin>`
+ * and a custom mount is `custom:<registry name>`. Nothing else is listed: the
+ * project `.mcp.json` and the owner's user config are never enumerated, because
+ * the CLI starts with `--strict-mcp-config`. A key holding `__` is never
+ * recorded (Rule 11); the mount site refuses it before it is written.
+ */
+export function claudeMountRecords(keys: readonly string[], connectorKey: string | undefined, customNames: ReadonlySet<string>): McpMountRecord[] {
+  const builtinByName = new Map<string, OwnBuiltin>(
+    (Object.keys(OWN_BUILTINS) as OwnBuiltin[]).filter((builtin) => builtin !== "connector").map((builtin) => [OWN_BUILTINS[builtin], builtin]),
+  );
+  const records: McpMountRecord[] = [];
+  for (const key of keys) {
+    if (key.includes("__")) continue;
+    if (customNames.has(key)) records.push({ engineName: key, mountId: `custom:${key}`, provenance: "custom" });
+    else if (key === connectorKey) records.push({ engineName: key, mountId: "own:connector", provenance: "own" });
+    else if (builtinByName.has(key)) records.push({ engineName: key, mountId: `own:${builtinByName.get(key)}`, provenance: "own" });
+  }
+  return records;
+}
+
 /** One human-readable line for an ask — what the card subtitle shows. */
 function askSummary(ask: Ask): string {
-  const input = ask.input ?? {};
+  const input = ask.input;
   if (ask.questions?.length) return ask.questions[0]!.question.slice(0, 300);
+  if (!input) return "";
   if (typeof input.question === "string") return input.question.slice(0, 300);
   if (typeof input.command === "string") return approvalSummary(input.command);
   if (typeof input.url === "string") return input.url.slice(0, 200);
   const text = JSON.stringify(input);
-  return text === "{}" ? (ask.tool ?? "tool") : text.slice(0, 200);
+  return text === "{}" ? (ask.tool ?? "") : text.slice(0, 200);
 }
 
 export function permissionSocketPath(threadId: string) {
@@ -498,7 +567,7 @@ export function permissionSocketPath(threadId: string) {
   // limit under deep tmp home dirs.
   const prefix = threadId.replace(/[^\w-]/g, "").slice(0, 4);
   const digest = createHash("sha256").update(threadId).digest("hex").slice(0, 4);
-  return brokerSocketPath(DATA_DIR, `${prefix}${digest}`);
+  return brokerSocketPath(process.env.MURAGE_CLOUD_ROLE === "home" ? CLOUD_BROKER_DIR : DATA_DIR, `${prefix}${digest}`);
 }
 
 /** Paths the broker may bind, tried in order. Windows named pipes are never
@@ -515,7 +584,7 @@ export function brokerSocketCandidates(threadId: string): string[] {
       .update(`${DATA_DIR}\0${process.pid}\0${threadId}`)
       .digest("hex")
       .slice(0, 16);
-    return [base, join(tmpdir(), `murage-perm-${scope}.sock`)];
+    return process.env.MURAGE_CLOUD_ROLE === "home" ? [base] : [base, join(tmpdir(), `murage-perm-${scope}.sock`)];
   }
   return [
     base,
@@ -550,6 +619,7 @@ export async function createPermissionBroker(opts: {
         message: string | undefined,
         source: AskResolutionSource,
         answers?: Record<string, string | string[]>,
+        updatedInput?: Record<string, unknown>,
       ) => void;
     }
   >();
@@ -619,7 +689,7 @@ export async function createPermissionBroker(opts: {
         } catch {}
         return;
       }
-      const ask: Ask = { id: askId, kind, tool: msg.tool ?? "tool", input: msg.input ?? {}, at: Date.now() };
+      const ask: Ask = { id: askId, kind, ...(typeof msg.tool === "string" && msg.tool ? { tool: msg.tool } : {}), ...(msg.input && typeof msg.input === "object" && !Array.isArray(msg.input) ? { input: msg.input as Record<string, unknown> } : {}), at: Date.now() };
       if (kind === "question") {
         // Engine-controlled input becomes a card only once it is bounded and
         // well formed. A question the owner cannot be shown is answered at
@@ -638,11 +708,12 @@ export async function createPermissionBroker(opts: {
         message: string | undefined,
         source: AskResolutionSource,
         answers?: Record<string, string | string[]>,
+        updatedInput?: Record<string, unknown>,
       ) => {
         if (!pending.delete(askId)) return;
         clearTimeout(timer);
         try {
-          conn.write(JSON.stringify({ t: "answer", id: askId, behavior, message, ...(answers ? { answers } : {}) }) + "\n");
+          conn.write(JSON.stringify({ t: "answer", id: askId, behavior, message, ...(answers ? { answers } : {}), ...(updatedInput ? { updatedInput } : {}) }) + "\n");
         } catch {}
         opts.onResolve({ ...ask, behavior, source });
       };
@@ -683,7 +754,7 @@ export async function createPermissionBroker(opts: {
     // same mode to every POSIX socket keeps the rule simple and fail-closed.
     if (outcome === "listening" && process.platform !== "win32") {
       try {
-        chmodSync(candidate, 0o600);
+        chmodSync(candidate, process.env.MURAGE_CLOUD_ROLE === "home" ? 0o660 : 0o600);
       } catch (error) {
         try {
           attempt.close();
@@ -728,7 +799,15 @@ export async function createPermissionBroker(opts: {
      * or `deny` — an explicit skip, delivered immediately. Before 0.1.52 a
      * deny on a question was refused, so closing a question card left
      * Claude waiting out the whole timeout. */
-    answer(askId: string, behavior: AskBehavior, message?: string, answers?: QuestionAnswer[]): boolean {
+    /** Rule 69e / 63: settle a permission ask Murage decided itself (an in-project call), with
+     * the call as judged or the narrowed call as `updatedInput`. */
+    settle(askId: string, behavior: "allow" | "deny", message: string | undefined, source: AskResolutionSource, updatedInput?: Record<string, unknown>): boolean {
+      const p = pending.get(askId);
+      if (!p || p.ask.kind !== "permission") return false;
+      p.finish(behavior, message, source, undefined, updatedInput);
+      return true;
+    },
+    answer(askId: string, behavior: AskBehavior, message?: string, answers?: QuestionAnswer[], updatedInput?: Record<string, unknown>): boolean {
       const p = pending.get(askId);
       if (!p) return false;
       if (p.ask.kind === "question") {
@@ -750,7 +829,7 @@ export async function createPermissionBroker(opts: {
         return true;
       }
       if (behavior === "answer") return false;
-      p.finish(behavior, message, "user");
+      p.finish(behavior, message, "user", undefined, behavior === "allow" ? updatedInput : undefined);
       return true;
     },
     pause() {
@@ -987,20 +1066,16 @@ export function claudeGitRoots(cwd: string): string[] {
   let roots: string[] = [];
   try {
     const [top, common] = execFileSync("git", ["rev-parse", "--show-toplevel", "--git-common-dir"], { cwd, encoding: "utf8", stdio: ["ignore", "pipe", "ignore"], timeout: 2000, windowsHide: true }).split(/\r?\n/).map((line) => line.trim());
-    // git prints forward slashes and long names on Windows while join() of a relative answer keeps
-    // the caller's separators and 8.3 names, so one root could appear twice in two spellings
-    const canonical = (path: string): string => {
-      try {
-        return realpathSync.native(path);
-      } catch {
-        return resolve(path);
-      }
-    };
-    if (top) roots.push(canonical(top));
+    // git prints forward slashes and long names on Windows, so each root is its real path, resolved in order
+    // (shared/in-project.ts), and one that does not resolve is dropped, never kept as written
+    if (top) {
+      const real = realDir(top);
+      if (real) roots.push(real);
+    }
     if (common) {
-      const commonDir = isAbsolute(common) ? common : join(cwd, common);
-      const main = canonical(dirname(commonDir));
-      if (/[\\/]\.git$|^\.git$/.test(commonDir) && !roots.includes(main)) roots.push(main);
+      const commonDir = realPathInOrder(common, cwd);
+      const main = "cannot" in commonDir ? null : realDir(dirname(commonDir.real));
+      if (main && /[\\/]\.git$|^\.git$/.test(common) && !roots.includes(main)) roots.push(main);
     }
   } catch {
     roots = [];
@@ -1255,8 +1330,114 @@ export function claudeIsolationSettings(env: NodeJS.ProcessEnv, cwd: string, pla
     outputStyle: "default",
     agent: "",
     ...(skills.size ? { skillOverrides: Object.fromEntries([...skills].sort().map((name) => [name, "off"])) } : {}),
-    ...(agents.size ? { permissions: { deny: [...agents].sort().map((name) => `Agent(${name})`) } } : {}),
+    // Rule 69a/c: the BARE ask rules put every file and command call in front of
+    // Murage's broker before any allowance, and the sensitive projection stays
+    // behind them as the second line. No `hooks` key is written (disableAllHooks).
+    permissions: {
+      ask: [...CLAUDE_BARE_ASK_TOOLS, ...(platform === "win32" ? ["PowerShell"] : []), ...claudeSensitiveAskRules()],
+      ...(agents.size ? { deny: [...agents].sort().map((name) => `Agent(${name})`) } : {}),
+    },
   };
+}
+
+/** Rule 74b: the shell the wrapper runs and CLAUDE_CODE_SHELL names (a bash or zsh that exists), from the HANDED environment.
+ * On Windows it is Git Bash, the bash.exe Claude Code itself runs its Bash tool through (server/tool-discovery.ts: the handed
+ * CLAUDE_CODE_GIT_BASH_PATH when it is a real bash.exe, else from `git --exec-path`), so the shell the model is told of is the
+ * shell that runs; null there refuses the turn (claudeShellRefusal). */
+export async function claudeExecShell(
+  platform: NodeJS.Platform,
+  handed: Readonly<Record<string, string>>,
+  generation: number,
+  deps: { exists?: (path: string) => boolean; gitBash?: (handed: Readonly<Record<string, string>>, generation: number) => Promise<string | null> } = {},
+): Promise<string | null> {
+  if (platform === "win32") return (deps.gitBash ?? gitBashPath)(handed, generation);
+  const exists = deps.exists ?? existsSync;
+  for (const path of ["/bin/bash", "/usr/bin/bash", "/bin/zsh"]) if (exists(path)) return path;
+  return null;
+}
+
+/** The line a Claude turn on Windows is refused with when no Git Bash is found: Claude Code's own Windows requirement. */
+export const CLAUDE_GIT_BASH_MISSING = "Claude's command wrapper could not be set up: Git Bash was not found";
+
+/** Section (a)'s one refusal state for a Claude turn whose wrapper cannot be set up (Windows with no Git Bash); null otherwise. */
+export function claudeShellRefusal(platform: NodeJS.Platform, shell: string | null): TurnRefusal | null {
+  if (platform !== "win32" || shell !== null) return null;
+  const refusal = new TurnRefusal();
+  refusal.refuse(CLAUDE_GIT_BASH_MISSING);
+  return refusal;
+}
+
+/** Thrown before launch when the turn is refused (claudeShellRefusal); the dispatch settles it as the turn's own failure. */
+class ClaudeTurnRefused extends Error {
+  readonly refusal: TurnRefusal;
+  constructor(refusal: TurnRefusal) {
+    super(refusal.cause);
+    this.refusal = refusal;
+  }
+}
+
+/** Rule 69a: the tools the CLI asks about on every call. Grep and Glob are asked about but
+ * never named in `--tools` or `--allowedTools`. */
+export const CLAUDE_BARE_ASK_TOOLS = ["Read", "Edit", "Write", "MultiEdit", "NotebookEdit", "Grep", "Glob", "Bash"] as const;
+
+const CLAUDE_SEARCH_TOOLS = new Set(["Grep", "Glob"]);
+
+/** Rule 63 / 69 for the broker: a Read, Edit, Write, MultiEdit, NotebookEdit, Grep or Glob ask
+ * whose every path passes the in-project check (placement by real path, the sensitive list, the
+ * template carve-out, the content read whole and free of secret shapes) runs with no card. Any
+ * other answer, a missing field included, returns false and the ask goes to the verdict as it
+ * does today. Bash is not here: the walker of build step 4 is not ready (see `bashTargetsOf`). */
+export function claudeInProjectAllow(tool: unknown, input: unknown, cwd: string, home: string = homedir(), platform: NodeJS.Platform = process.platform): boolean {
+  if (typeof tool !== "string" || !input || typeof input !== "object" || Array.isArray(input)) return false;
+  // Rules 55, 63.1: the contract first; a missing or malformed required field is never a quiet allow
+  if (!engineToolFields("claude", tool, input).ok) return false;
+  const call = input as Record<string, unknown>;
+  const opts = { home, platform };
+  const text = (value: unknown): string | null => (typeof value === "string" ? value : null);
+  const pathOk = (path: unknown, content?: unknown): boolean => typeof path === "string" && path !== "" && inProjectCheck(path, cwd, content, opts).ok;
+  const bodyOk = (body: string): boolean => !SENSITIVE_TEXT.some((row) => row.re.test(body));
+  switch (tool) {
+    case "Read":
+      return pathOk(call.file_path);
+    case "Write": {
+      const body = text(call.content);
+      return body !== null && pathOk(call.file_path, body) && bodyOk(body);
+    }
+    case "Edit": {
+      const body = text(call.new_string);
+      return body !== null && pathOk(call.file_path, body) && bodyOk(body);
+    }
+    case "MultiEdit": {
+      if (!Array.isArray(call.edits) || !call.edits.length) return false;
+      const bodies: string[] = [];
+      for (const edit of call.edits) {
+        const body = edit && typeof edit === "object" ? text((edit as Record<string, unknown>).new_string) : null;
+        if (body === null) return false;
+        bodies.push(body);
+      }
+      const joined = bodies.join("\n");
+      return pathOk(call.file_path, joined) && bodyOk(joined);
+    }
+    case "NotebookEdit": {
+      const body = text(call.new_source);
+      return body !== null && pathOk(call.notebook_path, body) && bodyOk(body);
+    }
+    case "Grep":
+    case "Glob": {
+      const root = call.path === undefined ? cwd : text(call.path);
+      if (!root || !pathOk(root)) return false;
+      const walked = walkRoot(root, cwd, opts);
+      return walked.ok && walked.hits.length === 0 && walked.unwalked.length === 0;
+    }
+    default:
+      return false;
+  }
+}
+
+/** SEAM (build step 4): the shell walker's targets of a Bash command. Today it is "not
+ * available" and a Bash ask goes to the verdict as it always has. */
+export function bashTargetsOf(_command: string): { available: false } {
+  return { available: false };
 }
 
 let isolationDir: string | null = null;
@@ -1311,7 +1492,10 @@ export const ClaudeDriver: ProviderDriver<ClaudeConfig> = {
     // The engine as Settings names this instance, for every line the chat shows.
     const ENGINE = input.displayName?.trim() || "Claude";
     const { instanceId, config } = input;
-    const accountEnvironment=()=>claudeAccountEnvironment({...process.env,...input.environment},config.configDir);
+    /** Rule 72: what each pending permission ask asked, and the one 3-strike counter of narrowing denials. */
+    const askCalls = new Map<string, { turn: string; tool: string; text: string }>();
+    const narrowDenials = new NarrowDenials();
+    const accountEnvironment=()=>claudeAccountEnvironment(cloudTurnEnvironment("claudeAgent", {...process.env,...input.environment}, process.env.MURAGE_CLOUD_ROLE === "home" ? [] : ["CLAUDE_CODE_OAUTH_TOKEN"]),process.env.MURAGE_CLOUD_ROLE === "home" ? undefined : config.configDir);
     const prepareTextOnlyTurn = (selection: string, providerRoute?: ProviderTurnRoute) => {
       const account = accountEnvironment();
       const env = claudeEnvironment(providerRoute?.model || selection, account, providerRoute);
@@ -2004,6 +2188,16 @@ export const ClaudeDriver: ProviderDriver<ClaudeConfig> = {
           emit({ ...base(threadId, turnId), type: "turn.completed", ok: false, stopReason: "update_required", cost: null });
           return { turnId };
         }
+        // A turn refused before launch (no Git Bash for the wrapper on Windows): the refusal is the turn's own failure, said in
+        // its cause, and no process is started.
+        if (error instanceof ClaudeTurnRefused && !turn.prewarm) {
+          if (active.get(threadId)?.turnId === turnId) forgetActive(threadId);
+          retryState.delete(threadId);
+          if (!relaunch) emit({ ...base(threadId, turnId), type: "turn.started" });
+          emit({ ...base(threadId, turnId), type: "runtime.error", message: error.refusal.cause ?? error.message, setup: true });
+          emit({ ...base(threadId, turnId), type: "turn.completed", ok: false, stopReason: "refused", cost: null });
+          return { turnId };
+        }
         // Any other failure before launch releases the reservation it made.
         if (reservation && active.get(threadId) === reservation) forgetActive(threadId);
         throw error;
@@ -2023,10 +2217,9 @@ export const ClaudeDriver: ProviderDriver<ClaudeConfig> = {
       // the CLI asks, so a bypass instance runs this turn in acceptEdits with
       // the broker: Murage answers everything else at once. File edits stay
       // the CLI's own (acceptEdits), which is fine: an edit is not a delete.
-      const permissionMode = (turn.stopLine || turn.routeAsks) && config.permissionMode === "bypassPermissions" ? "acceptEdits" : config.permissionMode;
-      if (controlsHost && permissionMode === "bypassPermissions") {
-        throw new Error("local computer control requires the interactive approval broker");
-      }
+      // Rule 69b: the CLI never runs in bypassPermissions. It is acceptEdits plus the broker on every
+      // turn; the speed No limits promises comes from the verdict answering at once.
+      const permissionMode = config.permissionMode === "bypassPermissions" ? "acceptEdits" : config.permissionMode;
       const turnId = ctl.turnId;
       // A command turn is the command alone: Claude Code runs "/name args"
       // sent as the prompt in stream-json mode (the Agent SDK's documented
@@ -2061,12 +2254,15 @@ export const ClaudeDriver: ProviderDriver<ClaudeConfig> = {
         for (const dir of turn.addDirs ?? []) {
           if (typeof dir !== "string" || !isAbsolute(dir)) continue;
           try {
-            if (statSync(dir).isDirectory()) granted.add(realpathSync(dir));
+            if (!statSync(dir).isDirectory()) continue;
+            const real = realpathSync(dir);
+            // A Cloud turn reaches only its workspaces; the launcher refuses any other --add-dir.
+            if (process.env.MURAGE_CLOUD_ROLE !== "home" || real.startsWith(`${CLOUD_WORKSPACE_ROOT}/`)) granted.add(real);
           } catch { /* a folder that is gone is not granted */ }
         }
         for (const dir of granted) args.push("--add-dir", dir);
       }
-      if (config.tools !== undefined) args.push("--tools", config.tools.join(","));
+      if (config.tools !== undefined) args.push("--tools", config.tools.filter((tool) => !CLAUDE_SEARCH_TOOLS.has(tool)).join(","));
       const disallowedTools = [...new Set([
         ...(config.disallowedTools ?? []),
         // These native tools address provider sessions, not Murage's roster.
@@ -2126,10 +2322,13 @@ export const ClaudeDriver: ProviderDriver<ClaudeConfig> = {
       // acceptEdits run silently denies anything unlisted)
       const mcpServers: Record<string, unknown> = {};
       const allowed: string[] = [];
+      let connectorKey: string | undefined;
+      const customMountNames = new Set<string>();
       if (turn.integrations?.composio) {
         // Mounted under its plain name: the model reads the server name in every tool id.
         // A session an earlier release started keeps the older name its history calls by.
         const connectedApps = connectedAppsServerName(turn.integrations.composio.env);
+        connectorKey = connectedApps;
         mcpServers[connectedApps] = { ...turn.integrations.composio };
         // Connected apps are where a bot pays, deletes mail and messages
         // people. Under the stop line their calls reach Murage's broker so
@@ -2201,14 +2400,17 @@ export const ClaudeDriver: ProviderDriver<ClaudeConfig> = {
       // into an Allow/Deny card. Reserved names were filtered upstream;
       // skip any residual collision instead of clobbering a built-in.
       for (const mount of customMountEntries(turn.integrations?.custom, (name) => name in mcpServers)) {
+        // Rule 11: a name holding `__` cannot be told apart from its tools, so it is not mounted.
+        if (mount.name.includes("__")) continue;
+        customMountNames.add(mount.name);
         mcpServers[mount.name] = { command: mount.command, args: mount.args, env: mount.env };
       }
       // permission broker: anything acceptEdits would silently deny becomes
-      // an Allow/Deny card in chat, and the agent gets ask_user. Skipped in
-      // bypassPermissions (fullAuto) — nothing would ever ask.
+      // an Allow/Deny card in chat, and the agent gets ask_user. It runs on
+      // every turn (Rule 69b): the CLI never runs in bypassPermissions.
       let broker: Awaited<ReturnType<typeof createPermissionBroker>> | undefined;
       let socketPath: string | null = null;
-      if (permissionMode !== "bypassPermissions") {
+      {
         socketPath = permissionSocketPath(threadId);
         args.push("--permission-prompt-tool", "mcp__muragebox__approve");
         mcpServers.muragebox = { command: process.execPath, args: [PERM_PROXY_PATH, socketPath], env: { ...NODE_ENV_FLAG } };
@@ -2220,11 +2422,21 @@ export const ClaudeDriver: ProviderDriver<ClaudeConfig> = {
       // through `ps` for the life of the turn, to any local process. The CLI
       // accepts a FILE for this flag, so the secrets go in a 0600 file that
       // is removed when the turn settles.
+      // Cloud home: only the launcher's own MCP proxies can be rendered (CLOUD-ENGINES-DESIGN.md
+      // 2.3); an owner's stdio command is offered there as a remote server instead.
+      if (process.env.MURAGE_CLOUD_ROLE === "home") {
+        for (const name of Object.keys(mcpServers)) {
+          if (cloudMcpStanza(mcpServers[name])) continue;
+          delete mcpServers[name];
+          const index = allowed.indexOf(`mcp__${name}`);
+          if (index >= 0) allowed.splice(index, 1);
+        }
+      }
       let mcpConfigPath: string | null = null;
       if (Object.keys(mcpServers).length) {
-        mcpConfigPath = join(mkdtempSync(join(tmpdir(), "murage-mcp-")), "mcp.json");
+        mcpConfigPath = process.env.MURAGE_CLOUD_ROLE === "home" ? CLOUD_RENDER_MCP : join(mkdtempSync(join(tmpdir(), "murage-mcp-")), "mcp.json");
         args.push("--mcp-config", mcpConfigPath);
-        args.push("--allowedTools", allowed.join(","));
+        args.push("--allowedTools", allowed.filter((tool) => !CLAUDE_SEARCH_TOOLS.has(tool)).join(","));
       }
 
       // Flux Memory headers are decided per thread audience and are part of the
@@ -2238,13 +2450,52 @@ export const ClaudeDriver: ProviderDriver<ClaudeConfig> = {
       // mcp-readiness.ts (claudeMcpStartupEnv).
       const cliIdentity = claudeExecutableIdentity(config.cli, env);
       Object.assign(env, claudeMcpStartupEnv(claudeMcpStatusSupport.get(cliIdentity) !== "unsupported"));
-      const cwd = turn.cwd ?? homedir();
+      // The launcher scopes this turn's state by bot and refuses a non-probe turn without one.
+      cloudTurnBot(env, turn.warmIdentity?.botId);
+      const cwd = turn.cwd ?? (process.env.MURAGE_CLOUD_ROLE === "home" ? cloudEngineHome("claudeAgent") : homedir());
       // The owner's own Claude setup stays out of the bot's turns (claudeIsolation); with no Murage
       // server mounted the strict flag still needs an (empty) config to mean "none". The isolation
       // settings file is named by its content hash and its path stays in the key's argv, so a change
       // to the owner's plugins, skills or agents ends reuse.
-      if (!mcpConfigPath) args.push("--mcp-config", '{"mcpServers":{}}');
-      args.push(...claudeIsolation(env, cwd));
+      // (A Cloud home renders its own settings and managed policy through the launcher, which refuses inline --mcp-config and --settings.)
+      if (process.env.MURAGE_CLOUD_ROLE !== "home") {
+        if (!mcpConfigPath) args.push("--mcp-config", '{"mcpServers":{}}');
+        args.push(...claudeIsolation(env, cwd));
+      }
+      // Rule 74a..b / 69f: the CLI is handed the finished F12 map as its explicit env, and every Bash
+      // command runs through murage-exec as `env -i <that map> <shell> -c "$1"` from the turn's cwd.
+      const baseline: NodeJS.ProcessEnv = process.env;
+      const claudeNames: Record<string, string> = {};
+      for (const [name, value] of Object.entries(env)) if (typeof value === "string" && name !== "PATH" && baseline[name] !== value) claudeNames[name] = value;
+      // The captured map loses every name this turn's settings own, and gets this turn's values of them back.
+      const stripOwned = (map: Record<string, string | undefined>) => stripClaudeOwnedEnv(map, process.env.MURAGE_CLOUD_ROLE === "home" ? undefined : config.configDir);
+      const handed = await handedEngineEnv({
+        cwd,
+        strip: (map) => {
+          for (const name of Object.keys(baseline)) if (!(name in env)) delete map[name];
+          stripOwned(map);
+          delete map.CLAUDE_ENV_FILE;
+          return map;
+        },
+        extra: { ...ownedTurnNames(env, stripOwned), ...claudeNames, CLAUDE_BASH_MAINTAIN_PROJECT_WORKING_DIR: "1" },
+      }, env); // a Cloud home hands the pins on top of this turn's cloudTurnEnvironment map
+      // The wrapper's shell is found from the handed map (no pin names it, so writing these after the pins undoes none)
+      const execShell = await claudeExecShell(process.platform, handed.env, envGeneration());
+      const shellRefusal = claudeShellRefusal(process.platform, execShell);
+      if (shellRefusal) throw new ClaudeTurnRefused(shellRefusal);
+      if (execShell) {
+        handed.env.CLAUDE_CODE_SHELL_PREFIX = murageExecPrefix();
+        handed.env.CLAUDE_CODE_SHELL = execShell;
+        handed.env[EXEC_ENV_FILE] = "";
+        if (process.platform === "win32") handed.env.CLAUDE_CODE_GIT_BASH_PATH = execShell;
+      }
+      assertSoleDispatch();
+      const shellForm = [execShell ?? "/bin/sh", "-c"];
+      const childEnv = Object.fromEntries(Object.entries(handed.env).filter(([name]) => name !== "CLAUDE_CODE_SHELL_PREFIX" && name !== "CLAUDE_CODE_SHELL" && name !== EXEC_ENV_FILE));
+      const childHanded: HandedEnv = { ...handed, env: childEnv };
+      if (execShell) handed.env[EXEC_ENV_FILE] = writeExecEnvFile(threadId, childEnv, cwd, execShell);
+      for (const name of Object.keys(env)) delete env[name];
+      Object.assign(env, handed.env);
       // Everything that shapes the process, minus session/turn-specific temp
       // paths. Their contents are represented directly in the key instead.
       const privateFileFlags = new Set(["--mcp-config"]);
@@ -2253,7 +2504,10 @@ export const ClaudeDriver: ProviderDriver<ClaudeConfig> = {
       // file, so the key sees only what is stable. Field order is the order
       // `diffWarmKey` reports: identity first, then the cheap named fields,
       // then the raw argv.
-      const { stableServers, secrets: mountSecrets } = splitTurnSecrets(mcpServers);
+      // Cloud home: the credential file lives in the server's /tmp, which the turn's
+      // namespace and uid cannot read, and a launch-time memfd config cannot be rewritten
+      // per turn. So secrets stay inline (a changed token is a changed key: a fresh process).
+      const { stableServers, secrets: mountSecrets } = process.env.MURAGE_CLOUD_ROLE === "home" ? { stableServers: mcpServers, secrets: {} as ReturnType<typeof splitTurnSecrets>["secrets"] } : splitTurnSecrets(mcpServers);
       // The agents server's credential file also names the provider turn (MURAGE_TURN_ID): per turn like its token, so it lives
       // only in the 0600 file, never in the stable servers, argv, env or the prompt.
       const secrets = mountSecrets.agents ? { ...mountSecrets, agents: { ...mountSecrets.agents, MURAGE_TURN_ID: turnId } } : mountSecrets;
@@ -2304,7 +2558,7 @@ export const ClaudeDriver: ProviderDriver<ClaudeConfig> = {
           assertSoleDispatch();
         } catch (error) {
           if (mcpConfigPath) {
-            try { rmSync(dirname(mcpConfigPath), { recursive: true, force: true }); } catch {}
+            try { removeMcpConfigDir(mcpConfigPath); } catch {}
           }
           throw error;
         }
@@ -2330,7 +2584,7 @@ export const ClaudeDriver: ProviderDriver<ClaudeConfig> = {
       if (turn.prewarm && live && !live.closing && live.child.exitCode === null) {
         // an engine is already live on this thread: nothing to warm
         if (mcpConfigPath) {
-          try { rmSync(dirname(mcpConfigPath), { recursive: true, force: true }); } catch {}
+          try { removeMcpConfigDir(mcpConfigPath); } catch {}
         }
         throw new Error("an engine is already live on this thread");
       }
@@ -2364,7 +2618,7 @@ export const ClaudeDriver: ProviderDriver<ClaudeConfig> = {
         } catch (error) {
           closeSession(threadId, "credential write failed");
           if (mcpConfigPath) {
-            try { rmSync(dirname(mcpConfigPath), { recursive: true, force: true }); } catch {}
+            try { removeMcpConfigDir(mcpConfigPath); } catch {}
           }
           throw error;
         }
@@ -2475,7 +2729,7 @@ export const ClaudeDriver: ProviderDriver<ClaudeConfig> = {
           retryState.delete(threadId);
           if (mcpConfigPath) {
             try {
-              rmSync(dirname(mcpConfigPath), { recursive: true, force: true });
+              removeMcpConfigDir(mcpConfigPath);
             } catch {}
           }
           throw new Error("claude session stdin is not writable");
@@ -2483,7 +2737,7 @@ export const ClaudeDriver: ProviderDriver<ClaudeConfig> = {
         // the MCP config was for the first spawn; nothing to clean here
         if (mcpConfigPath) {
           try {
-            rmSync(dirname(mcpConfigPath), { recursive: true, force: true });
+            removeMcpConfigDir(mcpConfigPath);
           } catch {}
         }
         return { turnId };
@@ -2501,7 +2755,7 @@ export const ClaudeDriver: ProviderDriver<ClaudeConfig> = {
         cred = null;
         if (mcpConfigPath) {
           try {
-            rmSync(dirname(mcpConfigPath), { recursive: true, force: true });
+            removeMcpConfigDir(mcpConfigPath);
           } catch {}
           mcpConfigPath = null;
         }
@@ -2516,8 +2770,14 @@ export const ClaudeDriver: ProviderDriver<ClaudeConfig> = {
         // Create the prompt file only for a new process. A compatible live
         // session has already consumed the same system prompt at launch.
         if (turn.system) {
-          systemPromptPath = join(mkdtempSync(join(tmpdir(), "murage-system-")), "prompt.txt");
-          writeFileSync(systemPromptPath, turn.system, { mode: 0o600 });
+          if (process.env.MURAGE_CLOUD_ROLE === "home") {
+            // Plain TEXT, bytes verbatim: the launcher writes it to the turn's private prompt.txt.
+            systemPromptPath = CLOUD_RENDER_SYSTEM_PROMPT;
+            cloudTurnRender(env, "systemPrompt", turn.system);
+          } else {
+            systemPromptPath = join(mkdtempSync(join(tmpdir(), "murage-system-")), "prompt.txt");
+            writeFileSync(systemPromptPath, turn.system, { mode: 0o600 });
+          }
           args.push("--append-system-prompt-file", systemPromptPath);
         }
         // Only create a broker for a new process. A compatible retained
@@ -2537,6 +2797,13 @@ export const ClaudeDriver: ProviderDriver<ClaudeConfig> = {
             onAsk: (ask) => {
               const eventTurnId = sessions.get(threadId)?.turn?.turnId ?? turnId;
               askTools.set(ask.id, typeof ask.tool === "string" ? ask.tool : undefined);
+              if (ask.kind === "permission") askCalls.set(`${threadId}\u0000${ask.id}`, { turn: eventTurnId, tool: ask.tool ?? "", text: JSON.stringify(ask.input ?? null) });
+              // Rule 63: an ordinary in-project file call runs with no card and no verdict round
+              // trip; the decision log records it. Anything else goes on to the verdict.
+              if (ask.kind === "permission" && claudeInProjectAllow(ask.tool, ask.input, cwd)) {
+                appendDecision(DATA_DIR, { threadId, requestId: ask.id, tool: ask.tool, summary: askSummary(ask), decision: "auto-approved", source: "own-workspace" });
+                if (broker?.settle(ask.id, "allow", undefined, "auto", ask.input)) return;
+              }
               // The file this call names, from the CLI's own tool input
               // rather than from `summary` (which is that input stringified
               // and cut at 200 characters, so it stops being readable as data
@@ -2547,12 +2814,12 @@ export const ClaudeDriver: ProviderDriver<ClaudeConfig> = {
               // this driver started the CLI with and the session it reported.
               const resultSession = sessions.get(threadId)?.sessionId ?? sessionId ?? newSessionId;
               const toolResultDirs = ask.kind === "permission" ? claudeToolResultDirs(claudeConfigDir(env), sessionFolders(cwd), resultSession) : [];
-              emit({
+              const open = (execEnv: ExecEnv | undefined) => emit({
                 ...base(threadId, eventTurnId),
                 type: "request.opened",
                 requestId: ask.id,
                 requestType: ask.kind,
-                tool: ask.tool,
+                tool: ask.tool ?? "",
                 summary: askSummary(ask),
                 approvalScope:
                   typeof ask.tool === "string" && controlsHost && ask.tool.startsWith("mcp__computer")
@@ -2568,8 +2835,23 @@ export const ClaudeDriver: ProviderDriver<ClaudeConfig> = {
                 // every argument, not just the command or url `summary` keeps
                 ...(ask.kind === "permission" && boundedToolInput(ask.input) ? { toolInput: boundedToolInput(ask.input) } : {}),
                 // the CLI's own tool name and input, for the stop line
-                ...(typeof ask.tool === "string" ? { toolCall: { name: ask.tool, input: ask.input } } : {}),
+                ...(typeof ask.tool === "string" && ask.input !== undefined ? { toolCall: { name: ask.tool, input: ask.input } } : {}),
+                ...(ask.kind === "permission"
+                  ? {
+                      toolEngine: "claude" as const,
+                      mcpMounts: claudeMountRecords(Object.keys(mcpServers), connectorKey, customMountNames),
+                      ...(ask.tool === undefined ? { toolInputMissing: "tool_name" } : ask.input === undefined ? { toolInputMissing: "input" } : {}),
+                    }
+                  : {}),
+                // F12: the environment the command would run in, after the pinned-form check
+                ...(execEnv ? { execEnv } : {}),
               });
+              // F12 when the card opens (Rule 74d): the check of the generation the card opens in, never one made at spawn
+              // only a command ask is checked (and so only a command card can carry U20); a file or MCP permission reports
+              // the map as handed, unchecked, as Codex and the ACP engines do
+              if (ask.kind === "permission" && (ask.tool === "Bash" || ask.tool === "PowerShell")) void execEnvNow(threadId, shellForm, childHanded, cwd).then(open, () => open(undefined));
+              else if (ask.kind === "permission") open(execEnvHanded(childHanded, cwd, shellForm));
+              else open(undefined);
             },
             onResolve: (resolved) => {
               const eventTurnId = sessions.get(threadId)?.turn?.turnId ?? turnId;
@@ -2627,8 +2909,11 @@ export const ClaudeDriver: ProviderDriver<ClaudeConfig> = {
         }
         // Write once, only after the broker has selected its real endpoint.
         if (mcpConfigPath) {
-          writeFileSync(mcpConfigPath, JSON.stringify({ mcpServers: cred ? bindCredentialPath(stableServers, cred.path) : stableServers }), { mode: 0o600 });
+          const mcpJson = JSON.stringify({ mcpServers: cred ? bindCredentialPath(stableServers, cred.path) : stableServers });
+          if (process.env.MURAGE_CLOUD_ROLE === "home") cloudTurnRender(env, "mcp", cloudRenderMcp(stableServers));
+          else writeFileSync(mcpConfigPath, mcpJson, { mode: 0o600 });
         }
+        if (process.env.MURAGE_CLOUD_ROLE === "home") args.push("--strict-mcp-config");
         if (sessionId) args.push("--resume", sessionId);
         else args.push("--session-id", newSessionId!);
       } catch (error) {
@@ -2672,6 +2957,8 @@ export const ClaudeDriver: ProviderDriver<ClaudeConfig> = {
           stdio: ["pipe", "pipe", "pipe"],
         });
       } catch (error) {
+        // The fence above released the prompt to a write that will not happen (turn-attribution.ts, I14).
+        turn.notWritten?.();
         cleanupUnownedLaunch();
         throw error;
       }
@@ -2712,7 +2999,7 @@ export const ClaudeDriver: ProviderDriver<ClaudeConfig> = {
        * nothing needs them once it is running, so none sits on disk while it is idle. */
       const dropStartFiles = () => {
         if (session.mcpConfigPath) {
-          try { rmSync(dirname(session.mcpConfigPath), { recursive: true, force: true }); } catch {}
+          try { removeMcpConfigDir(session.mcpConfigPath); } catch {}
           session.mcpConfigPath = null;
         }
         if (session.systemPromptPath && removePrivateTempDir(session.systemPromptPath)) session.systemPromptPath = null;
@@ -2755,7 +3042,7 @@ export const ClaudeDriver: ProviderDriver<ClaudeConfig> = {
         // it must not sit on disk for the life of the session
         if (session.mcpConfigPath) {
           try {
-            rmSync(dirname(session.mcpConfigPath), { recursive: true, force: true });
+            removeMcpConfigDir(session.mcpConfigPath);
           } catch {}
           session.mcpConfigPath = null;
         }
@@ -3040,7 +3327,8 @@ export const ClaudeDriver: ProviderDriver<ClaudeConfig> = {
             if (claudeAuthFailure(o, text)) {
               if (session.turn) session.turn.authFailed = true;
               emit({ ...base(threadId, currentTurnId()), type: "runtime.error",
-                message: injected.injected ? "The selected model provider could not authenticate. Review its saved connection in Settings." : text || "Claude needs you to sign in. Open engine setup to continue.",
+                message: injected.injected ? "The selected model provider could not authenticate. Review its saved connection in Settings."
+                  : process.env.MURAGE_CLOUD_ROLE === "home" ? `${cloudHomeCopy.cloudClaudeSigninRenew}.` : text || "Claude needs you to sign in. Open engine setup to continue.",
                 setup: !injected.injected, ...(!injected.injected ? { authRequired: true } : { details: text }),
               });
               break;
@@ -3298,7 +3586,7 @@ export const ClaudeDriver: ProviderDriver<ClaudeConfig> = {
             session.cred?.dispose();
             if (session.mcpConfigPath) {
               try {
-                rmSync(dirname(session.mcpConfigPath), { recursive: true, force: true });
+                removeMcpConfigDir(session.mcpConfigPath);
               } catch {}
               session.mcpConfigPath = null;
             }
@@ -3390,7 +3678,7 @@ export const ClaudeDriver: ProviderDriver<ClaudeConfig> = {
         session.cred?.dispose();
         if (session.mcpConfigPath) {
           try {
-            rmSync(dirname(session.mcpConfigPath), { recursive: true, force: true });
+            removeMcpConfigDir(session.mcpConfigPath);
           } catch {}
         }
         removePrivateTempDir(session.systemPromptPath);
@@ -3519,19 +3807,27 @@ export const ClaudeDriver: ProviderDriver<ClaudeConfig> = {
       if (cancelledBeforeWrite()) {
         // Stop already killed the child; its close settles the turn as cancelled.
         launchTurn.submission = Promise.resolve(false);
+        turn.notWritten?.();
         return { turnId };
       }
       // The new process connects its MCP servers in the background: wait
       // (bounded) for the ones this turn needs before the prompt goes in.
-      const gate = await gateMcpServers(session, threadId, Object.keys(mcpServers), () => turnId, cancelledBeforeWrite);
+      let gate: GateOutcome;
+      try {
+        gate = await gateMcpServers(session, threadId, Object.keys(mcpServers), () => turnId, cancelledBeforeWrite);
+      } catch (error) {
+        turn.notWritten?.();
+        throw error;
+      }
       // A Stop during the wait killed the child: its close settles the turn as
       // cancelled. A child that died during it is settled (or relaunched) by its
       // close as a prompt that never reached it: nothing is written either way.
       if (cancelledBeforeWrite()) {
         launchTurn.submission = Promise.resolve(false);
+        turn.notWritten?.();
         return { turnId };
       }
-      if (session.turn !== launchTurn || session.closing || session.child.exitCode !== null) return { turnId };
+      if (session.turn !== launchTurn || session.closing || session.child.exitCode !== null) { turn.notWritten?.(); return { turnId }; }
       // The wait was an await after the fence above: the fence runs again, with
       // none between it and the write. A refusal writes nothing and ends this
       // process; the turn is the harness's to re-run.
@@ -3550,6 +3846,7 @@ export const ClaudeDriver: ProviderDriver<ClaudeConfig> = {
       if (gate.readiness === "unknown" && gate.required.length) launchTurn.mcpReadiness = "unknown";
       launchTurn.submission = writeUser(session, threadId, withToolsNotice(turnPrompt, gate, Boolean(turn.engineCommand)), launchTurn.boundary, turn.images);
       if (!(await launchTurn.submission)) {
+        turn.notWritten?.();
         // The message never reached the CLI whole. End the session and let
         // its close decide: a transient pre-accept failure may relaunch
         // (U-17), anything else settles as stdin_write_failed. The fallback
@@ -3656,17 +3953,20 @@ export const ClaudeDriver: ProviderDriver<ClaudeConfig> = {
       // Below the qualified minimum a turn would be refused: offer the update, not a sign-in.
       if (claudeVersionVerdict(version) === "below") return { state: "unavailable", version, reason: CLAUDE_UPDATE_MESSAGE };
       // The probe runs with the flags a turn gets, so it judges the login a turn will have.
-      const auth = await claudeAuthStatus(config.cli, env, execCli, ["--mcp-config", '{"mcpServers":{}}', ...claudeIsolation(env, process.cwd())]);
+      // (A Cloud home's launcher refuses the inline isolation flags; its rendered settings carry the same policy.)
+      const auth = await claudeAuthStatus(config.cli, env, execCli, process.env.MURAGE_CLOUD_ROLE === "home" ? [] : ["--mcp-config", '{"mcpServers":{}}', ...claudeIsolation(env, process.cwd())]);
       // A CLI that refused those flags is not signed out: say what will fix it.
       if (auth.refusal) return { state: "unavailable", version, reason: auth.refusal.message };
       // A probe that gave no status at all (a spawn error, a crash, a launch the OS refused) is not
       // a lost login: the CLI's own words, and "not verified" rather than "sign in", so chat stays open.
       if (auth.error) return { state: "available", version, reason: auth.error, billing: "subscription" };
       const authenticated = auth.signedIn;
+      // Cloud home: the launcher holds a long-lived token; offer its renewal before it lapses.
+      const renewSignIn = await cloudClaudeRenewalDue(authenticated);
       // claudeEnvironment strips ANTHROPIC_API_KEY, so turns run on the
       // CLI's own login (Pro/Max): the cost it reports is what the call
       // WOULD bill, not a charge
-      return { state: "available", version, authenticated, billing: "subscription" };
+      return { state: "available", version, authenticated, billing: "subscription", ...(renewSignIn ? { renewSignIn: true } : {}) };
     };
 
     /** One-shot Claude call with the prompt on stdin, never argv. Approval
@@ -3674,15 +3974,44 @@ export const ClaudeDriver: ProviderDriver<ClaudeConfig> = {
      * `claude -p "prompt"` shape is not safe for review. No tools or MCP
      * servers are mounted in this isolated process. */
     // A background run of the engine: a conversation deletion pauses these, and one it stopped starts again afterwards (engine-one-shots.ts).
-    const generateReview = (prompt: string, signal?: AbortSignal, proposalModel?: string): Promise<string> =>
+    const generateReview = (prompt: string, signal?: AbortSignal, proposalModel?: string, botId?: string, memory?: { cwd: string }): Promise<string> =>
       oneShots.run("claude", signal, async (runSignal) => {
         // Below the qualified minimum the call is refused with code update_required, before any launch.
         await requireClaudeCliVersion(config.cli, claudeEnvironment(proposalModel ?? "claude-haiku-4-5", accountEnvironment()), runSignal);
-        return runReview(prompt, runSignal, proposalModel);
+        return runReview(prompt, runSignal, proposalModel, botId, memory);
       }, true);
-    const runReview = (prompt: string, signal?: AbortSignal, proposalModel?: string): Promise<string> =>
-      new Promise((resolve, reject) => {
-        const env = claudeEnvironment(proposalModel ?? "claude-haiku-4-5", accountEnvironment());
+    /** Learning on this login (cli-memory-learning.ts): the review call with every tool off, no session file, an empty working folder. */
+    const memorySession: MemorySessionRunner = async (prompt, signal) => {
+      const cwd = mkdtempSync(join(tmpdir(), "murage-learning-"));
+      try { return await generateReview(prompt, signal, "claude-haiku-4-5", undefined, { cwd }); }
+      catch (error) { throw error instanceof Error && !("status" in error) ? engineFailure(error.message) : error; }
+      finally { rmSync(cwd, { recursive: true, force: true }); }
+    };
+    const runReview = async (prompt: string, signal?: AbortSignal, proposalModel?: string, botId?: string, memory?: { cwd: string }): Promise<string> => {
+      const turnEnv = claudeEnvironment(proposalModel ?? "claude-haiku-4-5", accountEnvironment());
+      // The bot this review or proposal is for: the launcher refuses a Cloud run that names none.
+      cloudTurnBot(turnEnv, botId);
+      // Same isolation as a turn: no MCP server, hook, plugin or personal CLAUDE.md of the
+      // owner's, with the owner's login untouched. A proposal also gets no tools at all.
+      const isolation = process.env.MURAGE_CLOUD_ROLE === "home" ? [] : claudeIsolation(turnEnv, memory?.cwd ?? process.cwd());
+      // Rule 74: the review CLI is handed the pins like a turn, on the finished map (a Cloud home: on top of this call's
+      // cloudTurnEnvironment map, which handedEngineEnv refuses to be handed without).
+      const baseline: NodeJS.ProcessEnv = process.env;
+      const names: Record<string, string> = {};
+      for (const [name, value] of Object.entries(turnEnv)) if (typeof value === "string" && name !== "PATH" && baseline[name] !== value) names[name] = value;
+      const stripOwned = (map: Record<string, string | undefined>) => stripClaudeOwnedEnv(map, process.env.MURAGE_CLOUD_ROLE === "home" ? undefined : config.configDir);
+      const handed = await handedEngineEnv({
+        cwd: memory?.cwd ?? process.cwd(),
+        strip: (map) => {
+          for (const name of Object.keys(baseline)) if (!(name in turnEnv)) delete map[name];
+          stripOwned(map);
+          delete map.CLAUDE_ENV_FILE;
+          return map;
+        },
+        extra: { ...ownedTurnNames(turnEnv, stripOwned), ...names },
+      }, turnEnv);
+      const env = handed.env;
+      return new Promise((resolve, reject) => {
         // Same isolation as a turn: no MCP server, hook, plugin or personal CLAUDE.md of the
         // owner's, with the owner's login untouched. A proposal also gets no tools at all.
         const child = spawnCli(
@@ -3690,11 +4019,16 @@ export const ClaudeDriver: ProviderDriver<ClaudeConfig> = {
           // stream-json so the call knows when the CLI started work (`init`): only what it printed
           // before then is read as a refusal of Murage's own flags, the same rule as a turn.
           ["-p", "--model", proposalModel ?? "claude-haiku-4-5", "--output-format", "stream-json", "--verbose",
-            ...(proposalModel ? ["--tools", "", "--no-session-persistence"] : []),
-            "--mcp-config", '{"mcpServers":{}}', ...claudeIsolation(env, process.cwd())],
+            // Cloud home: the launcher's review grammar. --strict-mcp-config with no config file
+            // mounts no server, and the rendered settings and managed policy carry no hooks, so
+            // the inline --mcp-config and --settings (refused there) are not needed.
+            ...(process.env.MURAGE_CLOUD_ROLE === "home" ? ["--tools", "", "--strict-mcp-config", "--no-session-persistence"]
+              : [...(proposalModel ? ["--tools", "", "--no-session-persistence"] : []),
+                "--mcp-config", '{"mcpServers":{}}', ...isolation])],
           {
             stdio: ["pipe", "pipe", "pipe"],
             env,
+            ...(memory ? { cwd: memory.cwd } : {}),
           },
         );
         let stdout = "";
@@ -3762,8 +4096,9 @@ export const ClaudeDriver: ProviderDriver<ClaudeConfig> = {
           child.stdin.end(prompt);
         }
       });
+    };
 
-    return {
+    return withCliMemoryLearning({
       instanceId,
       driverKind: DRIVER_KIND,
       displayName: input.displayName,
@@ -3793,7 +4128,7 @@ export const ClaudeDriver: ProviderDriver<ClaudeConfig> = {
           imagesInline: true,
           effortLevels: ["low", "medium", "high", "xhigh", "max"],
           queueing: true,
-          localComputerMcp: config.permissionMode !== "bypassPermissions",
+          localComputerMcp: true,
           textOnlyTurn: true,
         },
         // PIP reflection: one tool-free structured call in a temp root with a reduced env.
@@ -3850,7 +4185,17 @@ export const ClaudeDriver: ProviderDriver<ClaudeConfig> = {
           const broker = sessions.get(threadId)?.broker ?? active.get(threadId)?.broker;
           if (!broker) return "unavailable";
           const behavior = decision.behavior === "answer" ? "answer" : decision.behavior;
-          if (!broker.answer(requestId, behavior, decision.message, decision.answers)) return "unavailable";
+          // Rule 69e / 72 / 73d: the verdict may hand back the narrowed call (`updatedInput`) or a
+          // narrowing denial (`source: "narrow"`). A narrowing denial is delivered as a plain deny
+          // with its reason and no card; the third identical one in a turn is NOT delivered: the
+          // ask stays pending, so the card the owner can answer is the one raised.
+          const extra = decision as { source?: unknown; updatedInput?: unknown };
+          const key = `${threadId}\u0000${requestId}`;
+          const call = askCalls.get(key);
+          if (extra.source === "narrow" && behavior === "deny" && call && narrowDenials.raiseCard(call.turn, call.tool, call.text)) return "card";
+          const updated = extra.updatedInput && typeof extra.updatedInput === "object" && !Array.isArray(extra.updatedInput) ? (extra.updatedInput as Record<string, unknown>) : undefined;
+          if (!broker.answer(requestId, behavior, decision.message, decision.answers, updated)) return "unavailable";
+          askCalls.delete(key);
           return behavior === "allow" ? "allowed-once" : behavior === "answer" ? "answered" : "rejected";
         },
         hasSession: (threadId) => active.has(threadId),
@@ -3864,15 +4209,15 @@ export const ClaudeDriver: ProviderDriver<ClaudeConfig> = {
           return () => listeners.delete(listener);
         },
       },
-      generateText: (prompt) => generateReview(prompt),
-      reviewPermission: generateReview,
-      proposeProject: (prompt, signal, model) => generateReview(prompt, signal, model),
+      generateText: (prompt, botId) => generateReview(prompt, undefined, undefined, botId),
+      reviewPermission: (prompt, signal, botId) => generateReview(prompt, signal, undefined, botId),
+      proposeProject: (prompt, signal, model, botId) => generateReview(prompt, signal, model, botId),
       dispose: async () => {
         for (const { stop } of active.values()) stop();
         for (const threadId of [...sessions.keys()]) closeSession(threadId, "dispose");
         listeners.clear();
         await requireRetiredStopped();
       },
-    };
+    }, { run: () => memorySession });
   },
 };

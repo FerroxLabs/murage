@@ -3,17 +3,18 @@
 //
 // Search reads candidates newest-first in chunks and stops at a full page. The cost is counted in statements and rows read, never in time, and it is the
 // same with 20,000 rows that say the word as with 200,000.
-import { mkdirSync, rmSync } from "node:fs";
+import { mkdirSync } from "node:fs";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import { DATA_DIR } from "./config.ts";
 import { database } from "./database.ts";
 import { CANDIDATE_WALK_ROWS, closeMessageDb, SCOPED_WINDOW_THREADS, SEARCH_CHUNK, searchMessagesWithMeta, SHORT_QUERY_WINDOW, TRIGRAM_CANDIDATE_CAP, WINDOW_CHUNK } from "./message-db.ts";
 import { rebuildMessageSearchIndex, trigramQuery } from "./message-search-index.ts";
+import { removeTempDirSync } from "./testing/cleanup.ts";
 
 beforeEach(() => {
   closeMessageDb();
-  rmSync(DATA_DIR, { recursive: true, force: true });
+  removeTempDirSync(DATA_DIR);
   mkdirSync(DATA_DIR, { recursive: true });
 });
 
@@ -402,7 +403,7 @@ it("a wide scope examines at most the cap of index matches, and says partial whe
   expect(walkStatements(statements)).toEqual([]);
   // the same scope with few enough matches to examine them all is complete
   closeMessageDb();
-  rmSync(DATA_DIR, { recursive: true, force: true });
+  removeTempDirSync(DATA_DIR);
   mkdirSync(DATA_DIR, { recursive: true });
   for (const id of scope) rows(id, `${id}-`, 1000, 1, "please send the email number ");
   rows("B", "b-", 100_000, 500, "another email number ");

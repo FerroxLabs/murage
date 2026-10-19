@@ -10,6 +10,7 @@ import {
   stageLinuxCua,
   validateStagedLayout,
 } from "./cua-linux-release.mjs";
+import { removeTempDirSync } from "../server/testing/cleanup.ts";
 
 const BLOCK = 512;
 const temporaryDirectories = [];
@@ -26,7 +27,7 @@ function temporaryProject() {
 
 afterEach(() => {
   for (const directory of temporaryDirectories.splice(0)) {
-    fs.rmSync(directory, { recursive: true, force: true });
+    removeTempDirSync(directory);
   }
 });
 

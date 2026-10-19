@@ -162,9 +162,23 @@ function DownloadAction({ asset, url, onClick }: { asset: MediaAsset; url: strin
   );
 }
 
+/** What "Save a copy" is doing while it renews an expired link, or why it could not. */
+export type MediaSaveLine = { kind: "working" | "error"; text: string } | null;
+export const MEDIA_SAVE_WORKING = "Getting a fresh link…";
+export const MEDIA_SAVE_FAILED = "Could not get a fresh link. The file may have moved or changed. Try Save a copy again.";
+
+function SaveLine({ line }: { line?: MediaSaveLine }) {
+  return (
+    <span aria-live="polite" data-media-save-line="">
+      {line?.kind === "working" && <span className="text-[11.5px] text-ink-secondary">{line.text}</span>}
+      {line?.kind === "error" && <span role="alert" className="text-[11.5px] text-danger">{line.text}</span>}
+    </span>
+  );
+}
+
 /** The card a person sees when the bytes exist but this computer will not
  * play them: no silent empty box, and the file is still reachable. */
-export function MediaUnplayableCard({ asset, url, reason, className, onDownload }: {
+export function MediaUnplayableCard({ asset, url, reason, className, onDownload, saveLine }: {
   asset: MediaAsset;
   url?: string;
   reason: string;
@@ -172,6 +186,7 @@ export function MediaUnplayableCard({ asset, url, reason, className, onDownload 
   /** The player's renew-on-click: a card shown after the capability stopped
    * working must not hand out the very link the harness now refuses. */
   onDownload?: (event: { preventDefault: () => void }) => void;
+  saveLine?: MediaSaveLine;
 }) {
   return (
     <span className={cn(CARD, className)} data-media-player={asset.kind} data-media-player-state="unplayable">
@@ -180,6 +195,7 @@ export function MediaUnplayableCard({ asset, url, reason, className, onDownload 
         <AlertTriangle size={12} className="shrink-0" aria-hidden="true" />
         <span className="min-w-0">{reason}</span>
         {url && <DownloadAction asset={asset} url={url} onClick={onDownload} />}
+        <SaveLine line={saveLine} />
       </span>
     </span>
   );
@@ -230,6 +246,7 @@ export function MediaPlayerCard({ asset, url, expiresAt, refresh, className, pro
   const elementRef = useRef<HTMLMediaElement | null>(null);
   const [support] = useState<MediaSupport>(() => canPlayMedia(asset.kind, asset.mime, probe ?? domProbe));
   const [failure, setFailure] = useState<string | null>(null);
+  const [saveLine, setSaveLine] = useState<MediaSaveLine>(null);
   const [duration, setDuration] = useState<number | undefined>(asset.durationSeconds);
   // The source in use. It starts as the props and moves on only when a
   // refresh succeeds; a parent that re-renders with the same URL changes
@@ -283,8 +300,10 @@ export function MediaPlayerCard({ asset, url, expiresAt, refresh, className, pro
     // The link in the page carries a capability the harness would refuse.
     // Fetch a fresh one and save through it; the person clicked once.
     event.preventDefault();
+    setSaveLine({ kind: "working", text: MEDIA_SAVE_WORKING });
     void askAgain().then(next => {
-      if (!next) return;
+      if (!next) { setSaveLine({ kind: "error", text: MEDIA_SAVE_FAILED }); return; }
+      setSaveLine(null);
       setSource(next);
       void saveUrl(next.url, asset.name).catch(reportSaveFailure);
     });
@@ -293,10 +312,10 @@ export function MediaPlayerCard({ asset, url, expiresAt, refresh, className, pro
   // Every "Save a copy" this card shows — beside the player, on the
   // cannot-play card, and after a failure — renews the same way.
   if (support === "no") {
-    return <MediaUnplayableCard asset={asset} url={source.url} reason={t("media.player.unsupportedHere")} className={className} onDownload={onDownload} />;
+    return <MediaUnplayableCard asset={asset} url={source.url} reason={t("media.player.unsupportedHere")} className={className} onDownload={onDownload} saveLine={saveLine} />;
   }
   if (failure) {
-    return <MediaUnplayableCard asset={asset} url={source.url} reason={failure} className={className} onDownload={onDownload} />;
+    return <MediaUnplayableCard asset={asset} url={source.url} reason={failure} className={className} onDownload={onDownload} saveLine={saveLine} />;
   }
 
   const shared = {
@@ -353,6 +372,7 @@ export function MediaPlayerCard({ asset, url, expiresAt, refresh, className, pro
         : <audio {...shared} className="block w-full" />}
       <span className="flex flex-wrap items-center gap-x-2 gap-y-1">
         <DownloadAction asset={asset} url={source.url} onClick={onDownload} />
+        <SaveLine line={saveLine} />
       </span>
     </span>
   );

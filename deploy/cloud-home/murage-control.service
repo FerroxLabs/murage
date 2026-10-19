@@ -1,0 +1,59 @@
+# SPDX-License-Identifier: AGPL-3.0-or-later
+[Unit]
+Description=Murage root machine control transport
+After=murage-home.service network-online.target
+BindsTo=murage-home.service
+PartOf=murage-home.service
+# First-boot ordering (Astra AUTOCANARY-3 P1): /data/.murage-health is made by the home supervisor right after it binds the volume
+# (server/cloud-home/supervisor.ts), and this unit's mount namespace is built when it starts. If it starts first, the ReadWritePaths=-
+# bind below is skipped and the volume stays read-only here. Ordering on the supervisor (Type=notify + READY=1 after the binding) was
+# not taken: murage-home.service is Type=simple and its main process is node, which has no sd_notify (no AF_UNIX datagram socket in
+# core) and no notify helper in this tree, so it would mean changing murage-home.service and the supervisor's start path. Instead
+# murage-control sees "probe directory on the volume, read-only in my namespace" (EROFS) and exits 75 ONCE per boot (a record holding
+# the kernel boot id in its runtime directory, kept across restarts by RuntimeDirectoryPreserve=restart); Restart=on-failure starts it
+# again 10 s later with a fresh namespace in which the bind exists. The start limit is systemd's default (5 starts in 10 s), stated
+# here: with RestartSec=10 a crash loop never trips it, so the transport keeps retrying as before (every 60 s once RestartSteps ramp).
+StartLimitIntervalSec=10s
+StartLimitBurst=5
+
+[Service]
+Type=simple
+User=root
+Group=root
+UMask=0077
+LimitCORE=0
+NoNewPrivileges=yes
+CapabilityBoundingSet=
+AmbientCapabilities=
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectControlGroups=yes
+RestrictSUIDSGID=yes
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+WorkingDirectory=/
+ExecStart=/usr/bin/python3 -I /usr/local/libexec/murage-control
+RuntimeDirectory=murage-control
+RuntimeDirectoryMode=0755
+RuntimeDirectoryPreserve=restart
+# This daemon's durable state (Astra AUTOCANARY-8 P1): /var/lib/murage-control, made by systemd root owned (User=root) and writable under
+# ProtectSystem=strict. It holds the clock_ahead render refusal; no other path is opened for it.
+StateDirectory=murage-control
+StateDirectoryMode=0700
+ReadWritePaths=/run/murage-control
+ReadWritePaths=-/var/lib/murage-home/events
+# The readiness check dataWritable writes a temp file in one root-owned probe directory, a top-level entry of the data volume that the
+# home supervisor makes (root:root 0700, every ancestor root owned, nothing the murage user can replace). That directory only; the rest
+# of /data stays read-only to this unit. Missing (-): the bind is skipped and the check reports false.
+ReadWritePaths=-/data/.murage-health
+ReadOnlyPaths=-/var/lib/murage-home/backup-last
+Restart=on-failure
+RestartSec=10
+RestartSteps=3
+RestartMaxDelaySec=60
+RestartPreventExitStatus=78
+
+[Install]
+WantedBy=murage-home.service

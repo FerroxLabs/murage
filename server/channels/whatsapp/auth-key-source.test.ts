@@ -9,11 +9,12 @@ import { join } from "node:path";
 import { afterEach, beforeEach, expect, it } from "vitest";
 import { AUTH_KEY_REPLY, AUTH_KEY_REQUEST, AuthKeyUnavailable, checkedProvider } from "./auth-key.ts";
 import { fileAuthKey, whatsappAuthKeySource } from "./auth-key-source.ts";
+import { removeTempDirSync } from "../../testing/cleanup.ts";
 
 const KEY = "0a".repeat(32);
 let data: string;
 beforeEach(() => { data = mkdtempSync(join(tmpdir(), "murage-wa-key-")); });
-afterEach(() => { rmSync(data, { recursive: true, force: true }); });
+afterEach(() => { removeTempDirSync(data); });
 
 function fakePort(answer: (request: { type: string }) => unknown | undefined) {
   const listeners: Array<(event: { data?: unknown }) => void> = [];

@@ -1,7 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // Lane C1: approvals and the action boundary (core). Each test below was written first and fails on the base (a205203dd + X1).
 // Chrome-dependent proofs live in scripts/browser-c1.node-test.mjs.
-import fs from "node:fs/promises";
 import path from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { BrowserExtensionExecutor, type ExtensionAction, type ExtensionDocument } from "./browser-extension-executor.ts";
@@ -11,6 +10,7 @@ import { classifyFloor } from "./browser-floor.ts";
 import { createBrowserExtensionService } from "./browser-extension-service.ts";
 import type { BrowserExtensionCommand, BrowserExtensionHello, BrowserExtensionResponse } from "../shared/browser-extension-protocol.ts";
 import { privateTestDirectory } from "./testing/private-test-dir.ts";
+import { removeTempDir } from "./testing/cleanup.ts";
 
 const DOC: ExtensionDocument = { profileId: "p", tabId: 1, frameId: "frame", navigationEpoch: 1, origin: "https://example.test", url: "https://example.test/" };
 const button = (values: string[] = ["x"], extra: object = {}) => ({ display: { tag: "BUTTON", text: "Send" }, bound: { tag: "BUTTON", hidden: [] }, values, editable: false, priv: { href: null, skip: [-1, -1] }, ...extra });
@@ -197,7 +197,7 @@ describe("C1 the real engine reports the node's real frame", () => {
 const A = "https://fixture.test";
 const cleanup: string[] = [];
 const services: Awaited<ReturnType<typeof createBrowserExtensionService>>[] = [];
-afterEach(async () => { for (const service of services.splice(0)) await service.close(); for (const directory of cleanup.splice(0)) await fs.rm(directory, { recursive: true, force: true }); });
+afterEach(async () => { for (const service of services.splice(0)) await service.close(); for (const directory of cleanup.splice(0)) await removeTempDir(directory); });
 async function serviceFixture(extra: Record<string, unknown> = {}) {
   const { root: directoryRoot, directory } = await privateTestDirectory(path.resolve(".c1-")); cleanup.push(directoryRoot);
   const bindings = new Map<string, { generation: number; state: string; tabs: object[] }>();

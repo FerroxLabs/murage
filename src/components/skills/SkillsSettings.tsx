@@ -10,7 +10,8 @@ import { SkillImportPanel } from "./SkillImportPanel";
 import { SkillReader } from "./SkillReader";
 import { topicLabel, TopicSelect } from "./TopicSelect";
 import { VerdictBadge } from "./VerdictBadge";
-import { listSkills, type SkillSummary, type SkillsPage } from "@/lib/skills-api";
+import { listSkills, verdictLabel, CLEAN_LINE, type SkillSummary, type SkillsPage } from "@/lib/skills-api";
+import { InAdvanced } from "../SettingsPrimitives";
 
 type View = { kind: "list" } | { kind: "read"; ref: string } | { kind: "import" };
 
@@ -39,6 +40,25 @@ function SkillRow({ skill, onOpen, browsing }: { skill: SkillSummary; onOpen(ref
         <ChevronRight size={14} className="shrink-0 text-ink-secondary" aria-hidden="true" />
       </button>
     </li>
+  );
+}
+
+/** What the check on every skill looks at (Skill Guard, server/skill-guard). Read-only: the rules are the app's, so this
+ *  says what they cover and what each verdict means. */
+export function SkillScanRules() {
+  return (
+    <div id="skill-scan-rules-heading" tabIndex={-1} className="rounded-xl bg-card p-4 outline-none">
+      <h3 className="text-[15px] font-medium text-ink">Scan rules</h3>
+      <p className="mt-0.5 text-[13px] leading-relaxed text-ink-secondary">Every skill is read before a bot can use it. The check looks for skills that:</p>
+      <ul className="mt-2 list-disc space-y-0.5 pl-5 text-[12.5px] text-ink-secondary">
+        <li>read passwords, keys or tokens</li>
+        <li>send data to an outside website</li>
+        <li>run commands or change files outside their own folder</li>
+        <li>tell a bot to ignore its instructions, or hide text where you cannot see it</li>
+        <li>have search words that do not match what they do</li>
+      </ul>
+      <p className="mt-2 text-[12.5px] text-ink-secondary">Results: {CLEAN_LINE}, {verdictLabel("review")} (you read it, then choose), or {verdictLabel("blocked")}.</p>
+    </div>
   );
 }
 
@@ -77,6 +97,7 @@ export function SkillsSettings() {
 
   const searching = Boolean(query.trim() || category);
   return (
+    <>
     <section aria-labelledby="skills-settings-title">
       <div className="flex items-center gap-3">
         <div className="min-w-0 flex-1">
@@ -135,5 +156,7 @@ export function SkillsSettings() {
         </>
       )}
     </section>
+    <InAdvanced><SkillScanRules /></InAdvanced>
+    </>
   );
 }

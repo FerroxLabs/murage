@@ -18,7 +18,7 @@
 // Nothing here touches a real app, data directory, engine or network: a Vite
 // fixture mounts the component against a fake store, and every /api call is
 // intercepted.
-import { test, expect, type Page } from "@playwright/test";
+import { test, expect, type Page } from "./page-error-guard";
 import { createServer, type ViteDevServer } from "vite";
 import react from "@vitejs/plugin-react";
 import tailwindcss from "@tailwindcss/vite";

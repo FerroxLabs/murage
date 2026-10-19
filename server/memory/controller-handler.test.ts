@@ -1,7 +1,7 @@
 // The worker's IPC handler returns quickly: the projection receipts of an index-result, and the publication
 // and checkpoint refresh of a finished job, are written on the next turn of the event loop, in the same
 // order and transactions as before, while the job stays held so nothing else is claimed in between.
-import { mkdirSync, rmSync } from "node:fs";
+import { mkdirSync } from "node:fs";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { DATA_DIR } from "../config.ts";
 import { closeDatabase, database } from "../database.ts";
@@ -10,6 +10,7 @@ import { resetParkReconcile, resetParkSweep } from "./park.ts";
 import { setMemoryMode } from "./repository.ts";
 import { MemoryWorkerController } from "./worker-controller.ts";
 import type { MemoryWork } from "./worker-protocol.ts";
+import { removeTempDirSync } from "../testing/cleanup.ts";
 
 const slow = vi.hoisted(() => ({ ms: 0 }));
 vi.mock("../database.ts", async importOriginal => {
@@ -21,7 +22,7 @@ type Internals = { child: unknown; ready: boolean; indexing: boolean; indexReque
 let controller: MemoryWorkerController, internals: Internals, sent: MemoryWork[];
 const settle = () => new Promise<void>(resolve => setImmediate(resolve));
 beforeEach(() => {
-  closeDatabase(); rmSync(DATA_DIR, { recursive: true, force: true }); mkdirSync(DATA_DIR, { recursive: true }); setMemoryMode("capture"); resetParkSweep(); resetParkReconcile();
+  closeDatabase(); removeTempDirSync(DATA_DIR); mkdirSync(DATA_DIR, { recursive: true }); setMemoryMode("capture"); resetParkSweep(); resetParkReconcile();
   slow.ms = 0; sent = [];
   controller = new MemoryWorkerController();
   internals = controller as unknown as Internals;

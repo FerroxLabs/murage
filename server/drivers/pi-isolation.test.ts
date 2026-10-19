@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // pi bot turns load Murage's own extensions and none of the owner's personal pi setup
 // (pi.ts PI_ISOLATION_FLAGS, piIsolationArgs). Synthetic owner home only.
-import { chmodSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -11,10 +11,11 @@ import { ensureDirs } from "../config.ts";
 import { recordEvents } from "../testing/events.ts";
 import { PiDriver, piIsolationArgs, piProjectContextFiles } from "./pi.ts";
 import { ScopeUnavailableError } from "./scoped-cli-home.ts";
+import { removeTempDirSync } from "../testing/cleanup.ts";
 
 const FAKE_CLI = join(dirname(fileURLToPath(import.meta.url)), "..", "testing", "fake-pi-cli.ts");
 const dirs: string[] = [];
-afterEach(() => { for (const dir of dirs.splice(0)) rmSync(dir, { recursive: true, force: true }); });
+afterEach(() => { for (const dir of dirs.splice(0)) removeTempDirSync(dir); });
 
 /** An owner home with a personal AGENTS.md at home level and a project two levels down. */
 function layout() {

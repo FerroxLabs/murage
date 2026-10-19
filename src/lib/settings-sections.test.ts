@@ -23,7 +23,7 @@ import { en } from "@/locales";
 
 /** Every id a 0.1.61 build could send: deep links, stored state, notices. */
 const OLD_IDS: AppSettingsSection[] = ["models", "general", "backups", "experimental", "connections", "engines", "channels", "companion", "computer", "skills", "houseRules", "aboutMe", "memory", "usage"];
-const NEW_IDS: AppSettingsSection[] = ["botDefaults", "images", "webSearch", "voice", "about"];
+const NEW_IDS: AppSettingsSection[] = ["botDefaults", "images", "webSearch", "voice", "about", "storage"];
 
 /** The 0.1.61 search words, section by section (SettingsModal.tsx at ac3ea1c9). */
 const OLD_KEYWORDS = [
@@ -43,28 +43,28 @@ const OLD_KEYWORDS = [
 ];
 
 describe("the grouped sections", () => {
-  it("are nineteen pages under six groups, in the approved order", () => {
-    expect(SETTINGS_GROUPS).toEqual(["you", "bots", "models", "tools", "channels", "app"]);
+  it("are twenty ids under five groups, in the approved order", () => {
+    expect(SETTINGS_GROUPS).toEqual(["you", "bots", "ai", "reach", "app"]);
     expect(SETTINGS_SECTIONS.map((entry) => `${entry.group}:${entry.id}`)).toEqual([
       "you:general", "you:aboutMe",
       "bots:botDefaults", "bots:houseRules", "bots:skills", "bots:memory",
-      "models:models", "models:engines",
-      "tools:images", "tools:webSearch", "tools:voice", "tools:connections", "tools:computer",
-      "channels:channels", "channels:companion",
-      "app:backups", "app:usage", "app:about", "app:experimental",
+      "ai:models", "ai:engines", "ai:images", "ai:webSearch", "ai:voice",
+      "reach:connections", "reach:channels", "reach:companion", "reach:computer",
+      "app:backups", "app:storage", "app:usage", "app:about", "app:experimental",
     ]);
     // a group's sections sit together, so a heading is drawn once
     const groups = SETTINGS_SECTIONS.map((entry) => entry.group);
     expect(groups.filter((group, index) => group !== groups[index - 1])).toEqual([...SETTINGS_GROUPS]);
   });
 
-  it("keeps every old id and adds five, with plain English labels", () => {
+  it("keeps every old id and adds six (storage in 1.0.3), with plain English labels", () => {
     const ids = SETTINGS_SECTIONS.map((entry) => entry.id);
     for (const id of [...OLD_IDS, ...NEW_IDS]) expect(ids, id).toContain(id);
     expect(ids).toHaveLength(OLD_IDS.length + NEW_IDS.length);
     expect(settingsSectionLabel("connections")).toBe("Connected apps");
     expect(settingsSectionLabel("computer")).toBe("Computer & browser");
-    expect(settingsSectionLabel("about")).toBe("Help & updates");
+    expect(settingsSectionLabel("about")).toBe("About & updates");
+    expect(settingsSectionLabel("storage")).toBe("Storage");
     for (const id of ids) expect(en[`settings.section.${id}` as keyof typeof en], id).toBeTruthy();
   });
 });
@@ -85,9 +85,14 @@ describe("settings search across the groups", () => {
   });
 
   it("finds a group by its name", () => {
-    const tools = settingsSearchResults("tools");
-    for (const id of ["images", "webSearch", "voice", "connections", "computer"] as const) expect(tools).toContain(id);
-    expect(settingsSearchResults("messaging & phone")).toEqual(["channels", "companion"]);
+    const ai = settingsSearchResults("ai");
+    for (const id of ["models", "engines", "images", "webSearch", "voice"] as const) expect(ai).toContain(id);
+    expect(settingsSearchResults("reach")).toEqual(["connections", "channels", "companion", "computer"]);
+  });
+
+  it("finds the Storage page by disk words (1.0.3)", () => {
+    for (const word of ["storage", "disk space", "free space"]) expect(settingsSearchResults(word), word).toContain("storage");
+    expect(normalizeSettingsSection("storage")).toBe("storage");
   });
 
   it("leaves no 0.1.61 search word stranded", () => {
@@ -96,7 +101,7 @@ describe("settings search across the groups", () => {
 });
 
 describe("which sections a surface sees", () => {
-  it("gives a paired phone General, Usage and Help & updates, and nothing with a key on it", () => {
+  it("gives a paired phone General, Usage and About & updates, and nothing with a key on it", () => {
     expect(sectionsForSurface(SETTINGS_SECTIONS, false).map((entry) => entry.id)).toEqual(["general", "usage", "about"]);
     expect(sectionsForSurface(SETTINGS_SECTIONS, undefined).map((entry) => entry.id)).toEqual(["general", "usage", "about"]);
     expect(sectionsForSurface(SETTINGS_SECTIONS, true)).toHaveLength(SETTINGS_SECTIONS.length);

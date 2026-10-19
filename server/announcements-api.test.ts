@@ -67,6 +67,8 @@ describe.skipIf(process.platform === "win32")("announcement routes", () => {
 
   it("fetches the stub at launch, filters locally, and serves the image from its cache", async () => {
     await expect.poll(async () => (await list()).items.map((item) => item.id), { timeout: 15000 }).toEqual(["flux-voice"]);
+    // The image is cached after the list first appears; wait for it rather than reading once.
+    await expect.poll(async () => (await list()).items[0]?.image, { timeout: 15000 }).toBeTruthy();
     const [item] = (await list()).items;
     expect(item).toMatchObject({ layout: "split", accent: "blue" });
     expect(item!.image).toMatch(/^\/api\/announcements\/image\/[0-9a-f]{64}$/);

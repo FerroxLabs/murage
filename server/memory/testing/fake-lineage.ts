@@ -55,6 +55,7 @@ function recordDenied(ref: MemoryRef, depth = 0): boolean {
 export const fakeWrite = {
   currentTurnLineage: (threadId: string): TurnLineage | undefined => fakeLineage.turns.get(threadId),
   runningTurnFor: (threadId: string, _botId?: string): TurnLineage | undefined => fakeLineage.turns.get(threadId),
+  writerTurnFor: (threadId: string, _botId?: string): TurnLineage | undefined => fakeLineage.turns.get(threadId),
   addTurnParents: (turn: TurnLineage, refs: readonly LineageRef[]): void => {
     const running = fakeLineage.turns.get(turn.threadId);
     if (running === turn) running.parents.push(...refs);

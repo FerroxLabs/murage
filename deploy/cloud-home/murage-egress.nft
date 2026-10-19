@@ -1,0 +1,198 @@
+# SPDX-License-Identifier: AGPL-3.0-or-later
+# Image sets are empty; the later root boot controller fills CP addresses.
+# Syntax: https://netfilter.org/projects/nftables/manpage.html
+table inet murage_home {
+    set cp_endpoints { type ipv4_addr; flags interval; }
+    set cp_endpoints_v6 { type ipv6_addr; flags interval; }
+    limit smtp_new_home { rate over 30/hour burst 1 packets }
+    limit browser_new_home { rate over 3000/minute burst 600 packets }
+    set browser_active { type ifname . ipv4_addr; }
+    set browser_outbound { type ifname; }
+    set browser_host_addresses { type ipv4_addr; }
+    set browser_resolvers { type ipv4_addr; elements = { 1.1.1.1, 9.9.9.9 }; }
+    set browser_non_global {
+        type ipv4_addr; flags interval;
+        elements = { 0.0.0.0/8, 10.0.0.0/8, 100.64.0.0/10, 127.0.0.0/8, 169.254.0.0/16, 172.16.0.0/12, 192.168.0.0/16, 192.0.0.0/24, 192.0.2.0/24, 198.18.0.0/15, 198.51.100.0/24, 203.0.113.0/24, 224.0.0.0/4, 240.0.0.0/4 };
+    }
+    set qual_ssh { type ipv4_addr; flags interval; }
+    set qual_ssh_v6 { type ipv6_addr; flags interval; }
+    set browser_new_bot { type ifname; flags dynamic,timeout; timeout 2m; }
+    set browser_connections { typeof meta skuid; flags dynamic,timeout; timeout 2m; }
+    # Per-engine meter on the turn -> proxy leg (keyed by the engine gid), and one
+    # overall meter for everything murage-egress opens to the internet.
+    set engine_connections { typeof meta skgid; flags dynamic,timeout; timeout 2m; }
+    set egress_connections { typeof meta skuid; flags dynamic,timeout; timeout 2m; }
+    set uid_connections { typeof meta skuid; flags dynamic,timeout; timeout 2m; }
+    # AI turns reach the internet only through murage-egress-proxy (SNI allowlist
+    # per engine). The launcher makes the engine group the turn's primary gid, so
+    # meta skgid names the engine. Ports: 8810 + index in the sorted engine list
+    # (kept equal to PORTS in murage-egress-proxy.py by egress-allowlist.test.ts).
+    # A turn socket whose gid matches no engine is not redirected and drops below.
+    chain turn_nat {
+        type nat hook output priority -100; policy accept;
+        meta skuid "murage-turn" meta skgid "murage-eng-antigravity" ip daddr != 127.0.0.0/8 tcp dport 443 counter redirect to :8810
+        meta skuid "murage-turn" meta skgid "murage-eng-claudeAgent" ip daddr != 127.0.0.0/8 tcp dport 443 counter redirect to :8811
+        meta skuid "murage-turn" meta skgid "murage-eng-codex" ip daddr != 127.0.0.0/8 tcp dport 443 counter redirect to :8812
+        meta skuid "murage-turn" meta skgid "murage-eng-cursorAgent" ip daddr != 127.0.0.0/8 tcp dport 443 counter redirect to :8813
+        meta skuid "murage-turn" meta skgid "murage-eng-customAcp" ip daddr != 127.0.0.0/8 tcp dport 443 counter redirect to :8814
+        meta skuid "murage-turn" meta skgid "murage-eng-droidAgent" ip daddr != 127.0.0.0/8 tcp dport 443 counter redirect to :8815
+        meta skuid "murage-turn" meta skgid "murage-eng-fuigoAgent" ip daddr != 127.0.0.0/8 tcp dport 443 counter redirect to :8816
+        meta skuid "murage-turn" meta skgid "murage-eng-geminiAgent" ip daddr != 127.0.0.0/8 tcp dport 443 counter redirect to :8817
+        meta skuid "murage-turn" meta skgid "murage-eng-grokAgent" ip daddr != 127.0.0.0/8 tcp dport 443 counter redirect to :8818
+        meta skuid "murage-turn" meta skgid "murage-eng-hermesAgent" ip daddr != 127.0.0.0/8 tcp dport 443 counter redirect to :8819
+        meta skuid "murage-turn" meta skgid "murage-eng-kimiAgent" ip daddr != 127.0.0.0/8 tcp dport 443 counter redirect to :8820
+        meta skuid "murage-turn" meta skgid "murage-eng-opencodeGo" ip daddr != 127.0.0.0/8 tcp dport 443 counter redirect to :8821
+        meta skuid "murage-turn" meta skgid "murage-eng-pi" ip daddr != 127.0.0.0/8 tcp dport 443 counter redirect to :8822
+        meta skuid "murage-turn" meta skgid "murage-eng-qwenAgent" ip daddr != 127.0.0.0/8 tcp dport 443 counter redirect to :8823
+    }
+    chain output {
+        type filter hook output priority filter; policy accept;
+        meta skuid != 0 ip daddr 169.254.169.254 counter drop
+        # Caddy's plain-HTTP hop (127.0.0.1:8830) is the Cloudflare Tunnel's origin and
+        # must never be spoken to as if it were the internet: only root and
+        # murage-tunnel may connect to it (loopback and the host's own addresses).
+        meta skuid != { 0, "murage-tunnel" } fib daddr type local tcp dport 8830 counter drop
+        # Only root and the server (uid murage) may reach private control-plane
+        # addresses, and only those in cp_endpoints. murage-turn, murage-browser,
+        # murage-proxy and every other uid always drop private/CGNAT/link-local.
+        meta skuid != { 0, "murage" } ip daddr { 10.0.0.0/8, 172.16.0.0/12, 192.168.0.0/16, 100.64.0.0/10, 169.254.0.0/16 } counter drop
+        meta skuid != { 0, "murage" } ip6 daddr { fc00::/7, fe80::/10 } counter drop
+        meta skuid "murage" ip daddr { 10.0.0.0/8, 172.16.0.0/12, 192.168.0.0/16, 100.64.0.0/10, 169.254.0.0/16 } ip daddr != @cp_endpoints counter drop
+        meta skuid "murage" ip6 daddr { fc00::/7, fe80::/10 } ip6 daddr != @cp_endpoints_v6 counter drop
+        # Outbound SMTP is blocked outright (abuse control, B5): 25, 465 and 587 never leave a home.
+        # The metered, logged rule stays first so excess attempts are counted and logged; the
+        # unconditional drop after it is what actually blocks the rest.
+        ct state new tcp dport 587 limit name "smtp_new_home" counter log prefix "murage smtp blocked " drop
+        tcp dport { 25, 465, 587 } counter drop
+        # Initial page loads and concurrent turns need burst headroom. These
+        # bounded assumptions require measurement with real workloads in B0.5.
+        oifname != "lo" meta skuid != { 0, "murage" } meta skuid "murage-browser" ct state new update @browser_connections { meta skuid timeout 2m limit rate over 600/minute burst 300 packets } counter drop
+        oifname != "lo" meta skuid != { 0, "murage" } meta skuid != { "murage-browser", "murage-egress" } ct state new update @uid_connections { meta skuid timeout 2m limit rate over 300/minute burst 180 packets } counter drop
+        # All engines' outbound connections leave as uid murage-egress, so the
+        # cap is sized for 14 engines together (14 x 120/min per engine = 1680).
+        oifname != "lo" meta skuid "murage-egress" ct state new update @egress_connections { meta skuid timeout 2m limit rate over 1200/minute burst 600 packets } counter drop
+        meta skuid "murage-turn" ip daddr 127.0.0.53 udp dport 53 counter accept
+        meta skuid "murage-turn" ip daddr 127.0.0.53 tcp dport 53 counter accept
+        meta skuid "murage-turn" ip daddr 127.0.0.0/8 tcp dport 8799 counter accept
+        meta skuid "murage-turn" ip6 daddr ::1 tcp dport 8799 counter accept
+        # New turn -> proxy connections on lo, metered per engine gid so one engine
+        # (or one runaway turn) cannot use up the others' budget.
+        oifname "lo" meta skuid "murage-turn" ct state new update @engine_connections { meta skgid timeout 2m limit rate over 120/minute burst 60 packets } counter drop
+        # Redirected tcp/443 arrives here with daddr 127.0.0.1:<engine port>; the
+        # gid must match the port, so one engine cannot use another one's allowlist.
+        meta skuid "murage-turn" meta skgid "murage-eng-antigravity" ip daddr 127.0.0.1 tcp dport 8810 counter accept
+        meta skuid "murage-turn" meta skgid "murage-eng-claudeAgent" ip daddr 127.0.0.1 tcp dport 8811 counter accept
+        meta skuid "murage-turn" meta skgid "murage-eng-codex" ip daddr 127.0.0.1 tcp dport 8812 counter accept
+        meta skuid "murage-turn" meta skgid "murage-eng-cursorAgent" ip daddr 127.0.0.1 tcp dport 8813 counter accept
+        meta skuid "murage-turn" meta skgid "murage-eng-customAcp" ip daddr 127.0.0.1 tcp dport 8814 counter accept
+        meta skuid "murage-turn" meta skgid "murage-eng-droidAgent" ip daddr 127.0.0.1 tcp dport 8815 counter accept
+        meta skuid "murage-turn" meta skgid "murage-eng-fuigoAgent" ip daddr 127.0.0.1 tcp dport 8816 counter accept
+        meta skuid "murage-turn" meta skgid "murage-eng-geminiAgent" ip daddr 127.0.0.1 tcp dport 8817 counter accept
+        meta skuid "murage-turn" meta skgid "murage-eng-grokAgent" ip daddr 127.0.0.1 tcp dport 8818 counter accept
+        meta skuid "murage-turn" meta skgid "murage-eng-hermesAgent" ip daddr 127.0.0.1 tcp dport 8819 counter accept
+        meta skuid "murage-turn" meta skgid "murage-eng-kimiAgent" ip daddr 127.0.0.1 tcp dport 8820 counter accept
+        meta skuid "murage-turn" meta skgid "murage-eng-opencodeGo" ip daddr 127.0.0.1 tcp dport 8821 counter accept
+        meta skuid "murage-turn" meta skgid "murage-eng-pi" ip daddr 127.0.0.1 tcp dport 8822 counter accept
+        meta skuid "murage-turn" meta skgid "murage-eng-qwenAgent" ip daddr 127.0.0.1 tcp dport 8823 counter accept
+        meta skuid "murage-turn" ip daddr 127.0.0.0/8 counter drop
+        meta skuid "murage-turn" ip6 daddr ::1 counter drop
+        # The host's own public addresses arrive on lo and would bypass the
+        # input policy (sshd, any 0.0.0.0 listener); turns reach the host only
+        # through the 127.0.0.0/8:8799 forward above.
+        meta skuid "murage-turn" fib daddr type local counter drop
+        # Everything else from a turn drops: tcp 80, QUIC/udp 443, other ports, all
+        # IPv6, and any socket whose gid matches no engine. Nothing above accepts a
+        # turn to a non-loopback address.
+        meta skuid "murage-turn" counter drop
+        meta skuid "murage-browser" ip daddr 127.0.0.0/8 counter drop
+        meta skuid "murage-browser" ip6 daddr ::1 counter drop
+        # cloudflared (uid murage-tunnel) dials out to Cloudflare's edge and forwards
+        # visitors to Caddy: stub DNS, tcp/udp 7844, tcp 443 to public addresses
+        # (private/CGNAT/link-local/metadata dropped earlier), and loopback
+        # 127.0.0.1:8830 only. Visitor traffic rides a few long-lived connections, so
+        # the generic new-connection meter above does not throttle it (loopback is
+        # exempt there and external flows are few). Everything else drops.
+        meta skuid "murage-tunnel" ip daddr 127.0.0.53 udp dport 53 counter accept
+        meta skuid "murage-tunnel" ip daddr 127.0.0.53 tcp dport 53 counter accept
+        meta skuid "murage-tunnel" ip daddr 127.0.0.1 tcp dport 8830 counter accept
+        meta skuid "murage-tunnel" ip daddr 127.0.0.0/8 counter drop
+        meta skuid "murage-tunnel" ip6 daddr ::1 counter drop
+        meta skuid "murage-tunnel" fib daddr type local counter drop
+        meta skuid "murage-tunnel" tcp dport { 443, 7844 } counter accept
+        meta skuid "murage-tunnel" udp dport 7844 counter accept
+        meta skuid "murage-tunnel" counter drop
+        # A redirected turn connection keeps the host's public source address, so the
+        # proxy's replies go to that address over lo: match the interface, not 127/8.
+        # murage-egress-proxy: stub DNS, replies to turns on loopback, then public
+        # tcp/443 only (private/CGNAT/link-local/metadata dropped earlier; the proxy
+        # also refuses every non-global address itself).
+        meta skuid "murage-egress" ip daddr 127.0.0.53 udp dport 53 counter accept
+        meta skuid "murage-egress" ip daddr 127.0.0.53 tcp dport 53 counter accept
+        meta skuid "murage-egress" oifname "lo" ct state established,related counter accept
+        meta skuid "murage-egress" ip daddr 127.0.0.0/8 counter drop
+        meta skuid "murage-egress" ip6 daddr ::1 counter drop
+        meta skuid "murage-egress" fib daddr type local counter drop
+        meta skuid "murage-egress" tcp dport 443 counter accept
+        meta skuid "murage-egress" counter drop
+    }
+    # Host input policy. Browser veth traffic (mbh*) is dropped by browser_input
+    # (priority -10) before this chain; browser egress/replies are forwarded and
+    # NATed, never delivered locally, so nothing browser-related is needed here.
+    # Turn netns traffic leaves via pasta host sockets and returns as
+    # established flows. No public service port is open: visitors arrive only
+    # through the outbound Cloudflare Tunnel. ssh is closed until qualification tooling adds its
+    # source address to qual_ssh / qual_ssh_v6.
+    chain input {
+        type filter hook input priority filter; policy drop;
+        iifname "lo" counter accept
+        ct state invalid counter drop
+        ct state established,related counter accept
+        udp sport 67 udp dport 68 counter accept
+        udp sport 547 udp dport 546 counter accept
+        ip protocol icmp icmp type { echo-request, destination-unreachable, time-exceeded, parameter-problem } counter accept
+        ip6 nexthdr icmpv6 icmpv6 type { destination-unreachable, packet-too-big, time-exceeded, parameter-problem, echo-request, nd-router-solicit, nd-router-advert, nd-neighbor-solicit, nd-neighbor-advert } counter accept
+        tcp dport 22 ip saddr @qual_ssh counter accept
+        tcp dport 22 ip6 saddr @qual_ssh_v6 counter accept
+    }
+    chain browser_input {
+        type filter hook input priority -10; policy accept;
+        iifname "mbh*" counter drop
+    }
+    chain browser_forward {
+        type filter hook forward priority -10; policy drop;
+        iifname "mbh*" meta nfproto ipv6 counter drop
+        oifname "mbh*" meta nfproto ipv6 counter drop
+        iifname "mbh*" oifname "mbh*" counter drop
+        iifname "mbh*" iifname . ip saddr != @browser_active counter drop
+        oifname "mbh*" oifname . ip daddr != @browser_active counter drop
+        iifname "mbh*" ip daddr @browser_non_global counter drop
+        iifname "mbh*" ip daddr @browser_host_addresses counter drop
+        oifname "mbh*" ip saddr @browser_non_global counter drop
+        oifname "mbh*" ip saddr @browser_host_addresses counter drop
+        iifname "mbh*" tcp dport { 25, 465 } counter drop
+        oifname "mbh*" tcp sport { 25, 465 } counter drop
+        iifname "mbh*" udp dport 53 ip daddr != @browser_resolvers counter drop
+        iifname "mbh*" tcp dport 53 ip daddr != @browser_resolvers counter drop
+        oifname "mbh*" udp sport 53 ip saddr != @browser_resolvers counter drop
+        oifname "mbh*" tcp sport 53 ip saddr != @browser_resolvers counter drop
+        iifname "mbh*" oifname @browser_outbound iifname . ip saddr @browser_active jump browser_public
+        iifname @browser_outbound oifname "mbh*" oifname . ip daddr @browser_active ct state established,related counter accept
+    }
+    chain browser_public {
+        ct state invalid counter drop
+        ct state new tcp dport 587 limit name "smtp_new_home" counter log prefix "murage smtp blocked " drop
+        ct state established,related counter accept
+        ct state new meta l4proto { tcp, udp } update @browser_new_bot { iifname timeout 2m limit rate over 600/minute burst 300 packets } counter drop
+        ct state new meta l4proto { tcp, udp } limit name "browser_new_home" counter drop
+        ct state new tcp flags & (fin | syn | rst | ack) == syn counter accept
+        ct state new meta l4proto udp counter accept
+    }
+}
+table ip murage_browser_nat {
+    set browser_active { type ifname . ipv4_addr; }
+    set browser_outbound { type ifname; }
+    chain postrouting {
+        type nat hook postrouting priority 100; policy accept;
+        iifname . ip saddr @browser_active oifname @browser_outbound counter masquerade
+    }
+}

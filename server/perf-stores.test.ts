@@ -2,10 +2,11 @@
 // Fix D of the disk-burn defect: the JSON stores must not rewrite a whole file
 // on every change. Counts are taken at writeFileAtomic, the one door every
 // whole-file save goes through.
-import { appendFileSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
+import { appendFileSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { removeTempDirSync } from "./testing/cleanup.ts";
 
 const writes: Array<{ path: string; bytes: number }> = [];
 vi.mock("./atomic.ts", async importOriginal => {
@@ -29,8 +30,8 @@ const writesTo = (name: string) => writes.filter(write => write.path.endsWith(na
 const dirs: string[] = [];
 const botsWrites = () => (atomic as { atomicWriteCount?: (path: string) => number }).atomicWriteCount?.(join(DATA_DIR, "bots.json")) ?? 0;
 
-beforeEach(() => { writes.length = 0; closeDatabase(); rmSync(DATA_DIR, { recursive: true, force: true }); mkdirSync(DATA_DIR, { recursive: true }); });
-afterEach(() => { flush(); for (const dir of dirs.splice(0)) rmSync(dir, { recursive: true, force: true }); });
+beforeEach(() => { writes.length = 0; closeDatabase(); removeTempDirSync(DATA_DIR); mkdirSync(DATA_DIR, { recursive: true }); });
+afterEach(() => { flush(); for (const dir of dirs.splice(0)) removeTempDirSync(dir); });
 
 describe("coalesced store writes", () => {
   const fresh = () => new Store(() => ({ instanceId: "engine-one", model: "one", effort: "medium", connectionId: "account-one" }));

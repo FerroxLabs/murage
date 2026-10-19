@@ -1,13 +1,14 @@
 // Copyright 2026 Ferrox Labs
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import { generateKeyPairSync } from "node:crypto";
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { createBotPackageEntry } from "./bot-package-manifest.ts";
 import { importBotPackageContents, previewBotPackageContents, type BotPackageAtomicCommitInput } from "./bot-package-import.ts";
 import { publicKeyOf, signPackage } from "./package-signature.ts";
+import { removeTempDirSync } from "./testing/cleanup.ts";
 
 const signingPem = generateKeyPairSync("ed25519").privateKey.export({ type: "pkcs8", format: "pem" }).toString();
 const trusted = publicKeyOf(signingPem);
@@ -19,7 +20,7 @@ vi.mock("./package-signature.ts", async (original) => {
 (globalThis as { __trusted?: unknown }).__trusted = trusted;
 
 const roots: string[] = [];
-afterEach(() => { for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true }); });
+afterEach(() => { for (const root of roots.splice(0)) removeTempDirSync(root); });
 
 function build(edit: (manifest: any, payloads: Map<string, string>) => void = () => {}) {
   const payloads = new Map([
