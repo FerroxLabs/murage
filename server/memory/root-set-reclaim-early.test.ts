@@ -3,9 +3,10 @@
 //
 // RC3: the root-set hand-back starts as soon as U1s is over (nothing reads root sets after it), and the storage status and the owner's button
 // point at that real reclaim, not at the v7 conversion row v10 never writes. Idle-aware and sliced as before.
-import { mkdirSync, rmSync } from "node:fs";
+import { mkdirSync } from "node:fs";
 import type { DatabaseSync } from "node:sqlite";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { removeTempDirSync } from "../testing/cleanup.ts";
 
 const { DATA_DIR } = await import("../config.ts");
 const { closeDatabase, database } = await import("../database.ts");
@@ -16,7 +17,7 @@ const { lineageStorageStatus } = await import("./root-set-compaction.ts");
 
 let seeds = 0;
 setLineageSeedCommitForTest(() => ++seeds);
-function reset(): void { closeDatabase(); resetLineageBackfillForTest(); rmSync(DATA_DIR, { recursive: true, force: true }); mkdirSync(DATA_DIR, { recursive: true }); seeds = 0; }
+function reset(): void { closeDatabase(); resetLineageBackfillForTest(); removeTempDirSync(DATA_DIR); mkdirSync(DATA_DIR, { recursive: true }); seeds = 0; }
 beforeEach(reset);
 afterEach(() => { setReadTimeJudgeRetired(false); });
 const open = { ownerIdleMs: () => 60 * 60_000, liveTurn: () => false, typingHeld: () => false, routineDueWithin: () => false, healthAnswered: () => true, integrityPending: () => false, revocationWaiting: () => false };

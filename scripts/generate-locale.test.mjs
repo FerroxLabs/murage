@@ -1,4 +1,4 @@
-import { mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
+import { mkdtempSync, readFileSync, readdirSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -18,6 +18,7 @@ import {
   validateTranslationHashes,
   writeTextAtomically,
 } from "./generate-locale.mjs";
+import { removeTempDirSync } from "../server/testing/cleanup.ts";
 
 const temporaryDirectories = [];
 
@@ -29,7 +30,7 @@ function temporaryDirectory() {
 
 afterEach(() => {
   for (const directory of temporaryDirectories.splice(0)) {
-    rmSync(directory, { force: true, recursive: true });
+    removeTempDirSync(directory);
   }
 });
 

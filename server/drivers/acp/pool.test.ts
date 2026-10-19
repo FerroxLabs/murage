@@ -22,6 +22,7 @@ import { fixtureCredentialFingerprint } from "../../testing/fixture-dump.ts";
 import { warmPool } from "../warm-pool.ts";
 import { cacheEnvFromProcess, markMountIncomplete, markMountReady } from "../../connector-cache.ts";
 import { acpPoolingEnabled, createAcpDriver, resetAcpMcpReadinessForTests, type AcpSupport } from "./core.ts";
+import { removeTempDirSync } from "../../testing/cleanup.ts";
 
 // A close that never reports the process gone, switched on by one test (everything else passes through).
 const stopHook = vi.hoisted(() => ({ hang: null as null | Promise<boolean> }));
@@ -607,7 +608,7 @@ describe.skipIf(process.platform === "win32")("ACP process pool (fake CLI)", () 
       expect((await turn({ text: "three", resumeCursor: SESSION, integrations: { composio } })).done).toMatchObject({ ok: true });
       expect(spawns()).toHaveLength(2);
     } finally {
-      rmSync(dir, { recursive: true, force: true });
+      removeTempDirSync(dir);
     }
   });
 

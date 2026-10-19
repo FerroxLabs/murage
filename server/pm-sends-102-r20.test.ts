@@ -8,7 +8,7 @@
 //  g. (the r14-r19 delegation repros stay in their own files and run with this one).
 // The scaling tests measure work that really happened: rows and bytes the production statements wrote and read, the bytes the process handed to
 // write() (Linux /proc/self/io), and the growth of the write-ahead log, at 1k and at 100k pending handoffs.
-import { existsSync, mkdirSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, readdirSync, statSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
@@ -25,6 +25,7 @@ import { pruneTerminalRoomRequests, reconcileRoomRequestsAtBoot, retireSettledRo
 import { RESTORE_HOLDS_DDL } from "./restore-fence.ts";
 import { Store } from "./store.ts";
 import { released } from "./testing/released.ts";
+import { removeTempDirSync } from "./testing/cleanup.ts";
 
 // ── measuring ─────────────────────────────────────────────────────────────────────
 interface Work { statements: number; rowsWritten: number; bytesWritten: number; rowsRead: number }
@@ -62,7 +63,7 @@ const processWriteBytes = (): number => {
 };
 const walBytes = (): number => { try { return statSync(join(DATA_DIR, "messages.db-wal")).size; } catch { return 0; } };
 
-beforeEach(() => { closeDatabase(); rmSync(DATA_DIR, { recursive: true, force: true }); mkdirSync(DATA_DIR, { recursive: true }); countQueueStatements(); counting = false; resetWork(); _resetPending(); });
+beforeEach(() => { closeDatabase(); removeTempDirSync(DATA_DIR); mkdirSync(DATA_DIR, { recursive: true }); countQueueStatements(); counting = false; resetWork(); _resetPending(); });
 afterEach(() => { counting = false; prototype.prepare = realPrepare; _resetPending(); closeDatabase(); });
 
 const tick = () => new Promise<void>((resolve) => setImmediate(resolve));
@@ -175,7 +176,7 @@ describe("a. one timer pass and its async drains do work that follows the due it
 
 // ── b ─────────────────────────────────────────────────────────────────────────────
 describe("b. a handoff that left the queue leaves the due structure with it", () => {
-  it("100k parked handoffs of deleted conversations: the next pass visits no rows and runs one due probe", () => {
+  it("100k parked handoffs of deleted conversations: the next pass visits no rows and runs one due probe", { tags: ["nightly"], timeout: 300_000 }, () => {
     const now = seedLegacy(100_000, 1, 100_000);
     expect(pendingRows()).toBe(100_000);
     const threads = Array.from({ length: 100_000 }, (_, i) => `src-${i}`);
@@ -190,7 +191,7 @@ describe("b. a handoff that left the queue leaves the due structure with it", ()
     const due = work.statements;
     expect(due).toBeLessThanOrEqual(3);                         // the due probe, and the (empty) walk over busy target bots
     expect(pendingDelegationInfo("d-5-0")).toBeNull();
-  }, 300_000);
+  });
   it("the due query is an index range scan on pd_due and the busy walk uses the partial index", () => {
     const db = database();
     const plan = (sql: string, ...args: unknown[]) => (db.prepare(`EXPLAIN QUERY PLAN ${sql}`).all(...(args as never[])) as Array<{ detail: string }>).map((row) => row.detail).join(" | ");

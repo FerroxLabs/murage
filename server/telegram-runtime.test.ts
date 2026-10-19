@@ -1,4 +1,4 @@
-import { mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { mkdtempSync, readFileSync } from "node:fs";
 import { readRoutinesWithRuns } from "./routine-runs-journal.ts";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -7,6 +7,7 @@ import { TelegramService } from "./telegram-service.ts";
 import { TelegramTransport } from "./telegram-transport.ts";
 import { RoutineManager } from "./routines.ts";
 import { automationPrompt } from "./bot-shapes.ts";
+import { removeTempDirSync } from "./testing/cleanup.ts";
 
 it("actual turn prompt distinguishes owner requests from approval authority", () => {
   // The direct turn's automation layer (bot-shapes.ts), the text a turn from
@@ -82,5 +83,5 @@ it("routes a paired private Telegram delivery through durable routines, event bu
     updates = [message(6, "after revoke")]; await poll();
     expect(calls).toHaveLength(1); expect(service.status()).toMatchObject({ enabled: false, paired: false });
     expect(readFileSync(join(root, "telegram", "123.json"), "utf8")).not.toContain(pairing.code);
-  } finally { service.stop(); manager.stop(); vi.restoreAllMocks(); vi.useRealTimers(); rmSync(root, { recursive: true, force: true }); }
+  } finally { service.stop(); manager.stop(); vi.restoreAllMocks(); vi.useRealTimers(); removeTempDirSync(root); }
 });

@@ -1,4 +1,4 @@
-import { mkdirSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { beforeEach, expect, it } from "vitest";
 import { DATA_DIR } from "../config.ts";
@@ -9,9 +9,10 @@ import { ensureScope, reconcileMemoryRoster } from "./policy.ts";
 import { memoryOwnerRoute, memoryOwnerStatus } from "./settings.ts";
 import { MemoryIndex } from "./index.ts";
 import type { MemoryRecord } from "../../shared/memory.ts";
+import { removeTempDirSync } from "../testing/cleanup.ts";
 
 const roster={bots:[{id:"a",threadId:"ta"},{id:"b",threadId:"tb"}],groups:[]};
-beforeEach(()=>{closeDatabase();rmSync(DATA_DIR,{recursive:true,force:true});mkdirSync(DATA_DIR,{recursive:true});reconcileMemoryRoster(roster);});
+beforeEach(()=>{closeDatabase();removeTempDirSync(DATA_DIR);mkdirSync(DATA_DIR,{recursive:true});reconcileMemoryRoster(roster);});
 const action=(body:unknown)=>memoryOwnerRoute("/api/memory/action",body,ownerMemoryTicket(),roster) as Promise<{records:MemoryRecord[];nextCursor?:string;searchMode:string}>;
 
 it("pages 3000 records with indexed keyword search, Important and Recent without crossing bot audiences",async()=>{

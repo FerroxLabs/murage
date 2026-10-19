@@ -1,13 +1,26 @@
 import { normalizeBackupAgeDiagnostic } from "./backup-age-attestation.mjs";
 import { createHash, randomUUID } from "node:crypto";
-import { constants, closeSync, fstatSync, lstatSync, openSync, readSync, realpathSync } from "node:fs";
+import { constants, closeSync, fstatSync, lstatSync, mkdirSync, openSync, readSync, realpathSync } from "node:fs";
 import path from "node:path";
 import { readBackupIdentity } from "./backup-mode.mjs";
 import { pathWithin, samePath } from "../shared/path-identity.mjs";
 import { parseUpdateCandidate, canonicalUpdateDescriptor } from "../shared/update-candidate.mjs";
 import { BACKUP_CAPTURE_CODES, BACKUP_CAPTURE_STAGES, captureFailurePath, normalizeCaptureCause } from "../shared/backup-capture-failure.mjs";
+import { readSetupBackupRecord } from "../shared/setup-backup-record.mjs";
 
 export const BACKUP_SCHEDULE_BINDINGS_KEY = "backupScheduleBindings";
+/** Settings L5: where the first run's backup step stands when the backup
+ * host itself could not start. Nothing can be verified without it, but a
+ * step the harness says is owed is still reported, so the card keeps its
+ * way out ("Keep backups off") instead of vanishing. Only "off" stands on
+ * its own: a saved "verified" holds only while a receipt of the current
+ * folder and key exists (server/setup-backup.ts deriveSetupBackup), and
+ * without a host no receipt can be checked, so that step is still owed. */
+export function firstRunWithoutHost(dataDir){
+  let server;try{server=readSetupBackupRecord(dataDir);}catch{server={kind:"unreadable"};}
+  const ending=server.kind==="record"?server.record.ending:null;
+  return {eligible:false,completed:ending==="off"?"off":null,owed:server.kind==="unreadable"||(server.kind==="record"&&server.record.owed&&ending!=="off")};
+}
 const hash=value=>createHash("sha256").update(JSON.stringify(value)).digest("hex");
 const fingerprint=file=>{const s=lstatSync(file);if(s.isSymbolicLink())throw Error("BACKUP_REFERENCE_CHANGED");return [s.dev,s.ino,s.size,s.mtimeMs];};
 const installationIdentity=root=>{const actual=realpathSync(root),s=lstatSync(actual);if(!s.isDirectory())throw Error("BACKUP_REFERENCE_CHANGED");return hash([actual,s.dev,s.ino]);};
@@ -47,6 +60,12 @@ export function setUpBackupsRequest(args){
   const options=args[0];
   if(options===undefined)return {existingKey:false};
   if(typeof options!=="object"||options===null||Array.isArray(options))return null;
+  // First run: the default folder, no picker, no confirmation dialog. It is
+  // the only option in that request; it never rides along with another.
+  if("firstRun" in options){
+    if(options.firstRun!==true||Object.keys(options).length!==1)return null;
+    return {existingKey:false,firstRun:true};
+  }
   if(Object.keys(options).some(key=>key!=="existingKey")||!["boolean","undefined"].includes(typeof options.existingKey))return null;
   return {existingKey:options.existingKey===true};
 }
@@ -92,6 +111,36 @@ export function createBackupScheduleHost(host) {
     if(!b||!b.allowIdleRestart||b.installationIdentity!==installationIdentity(host.installation())||s.schedule.installationRef!==b.installationRef||s.schedule.destinationRef!==b.destinationRef||s.schedule.recoveryRef!==b.recoveryRef||hash(fingerprint(b.keyFile))!==b.keyFingerprint||!lstatSync(b.destination).isDirectory()||realpathSync(b.destination)!==b.destination||installationIdentity(b.destination)!==b.destinationIdentity)throw Error("BACKUP_REFERENCE_CHANGED");
     return b;
   };
+  // Settings L5. ONE state, owned by this host and the harness together:
+  //  - this host owns the facts: the coordinator's schedule and receipt, the
+  //    saved folder and key, and its first-run record (backup-first-run.json);
+  //  - the harness owns setup-backup.json in the data folder: whether this
+  //    folder owes the first-run backup at all (written once, when setup
+  //    starts on a folder that has never had backups) and how it ended.
+  // Nothing the renderer sends is a claim: "verified" is derived here, every
+  // time, from a receipt that matches the folder and key in use NOW, and the
+  // harness derives it the same way from this host's files. The first run may
+  // set backups up without a dialog only when BOTH records say it is still
+  // owed and nothing was ever set up. An unreadable record counts as decided.
+  const firstRunRecord=()=>{try{return coordinator.firstRunRecord?.()??null;}catch{return {state:"unreadable"};}};
+  const setupRecord=()=>{try{return readSetupBackupRecord(host.installation());}catch{return {kind:"unreadable"};}};
+  /** The receipt was checked against the folder and key backups use now. */
+  const receiptCurrent=(s,b)=>Boolean(s.lastVerified&&b&&s.lastVerified.installationRef===b.installationRef&&s.lastVerified.destinationRef===b.destinationRef&&s.schedule.installationRef===b.installationRef&&s.schedule.destinationRef===b.destinationRef&&s.schedule.recoveryRef===b.recoveryRef);
+  async function firstRunState(){
+    const s=coordinator.status(),record=firstRunRecord(),server=setupRecord();
+    let b=null,bindingsKnown=true;try{b=await read();}catch{bindingsKnown=false;}
+    let keyKnown=false;try{keyKnown=Boolean(host.recoveryKeyKnown?.());}catch{keyKnown=true;}
+    const serverEnding=server.kind==="record"?server.record.ending:null;
+    // "verified" is only ever now; "off" stands wherever it was recorded.
+    const completed=s.enabled&&receiptCurrent(s,b)?"verified":record?.state==="off"||serverEnding==="off"?"off":null;
+    const owedByServer=server.kind==="unreadable"||(server.kind==="record"&&server.record.owed);
+    const eligible=server.kind==="record"&&server.record.owed&&server.record.ending===null&&!record&&bindingsKnown&&!b&&s.revision===0&&!s.lastVerified&&!s.job&&!keyKnown;
+    // Owed: setup still waits on this step, so the card keeps its way out.
+    return {eligible,completed,owed:completed===null&&owedByServer};
+  }
+  /** Asks the harness to re-derive the step from these files now. A request,
+   * never a claim: it carries no state. */
+  const firstRunChanged=async()=>{try{await host.firstRunChanged?.();}catch{/* the harness re-derives on its next read */}};
   const publicStatus=async()=>{
     const s=coordinator.status();let refs;try{const b=await read();if(b)refs={installationRef:b.installationRef,destinationRef:b.destinationRef,recoveryRef:b.recoveryRef,destinationLabel:path.basename(b.destination),recoveryLabel:path.basename(b.keyFile)};}catch{lastError="BACKUP_BINDINGS_UNAVAILABLE";}
     let preUpgradeSupported=false;try{await assertUpgradeAllowed();preUpgradeSupported=true;}catch{/* Static capability refusal is not a schedule failure. */}
@@ -108,7 +157,8 @@ export function createBackupScheduleHost(host) {
     // Said before setup starts, so daily backups are never switched on on a
     // computer where no backup could ever run.
     let restartBlocked=null;try{restartBlocked=captureBlocked();}catch{/* A probe failure is not a refusal. */}
-    return {supported,...(restartBlocked?{relaunchBlocked:restartBlocked}:{}),...(heldBy?{heldBy}:{}),...(checking?{checking:true}:{}),...(unavailable?{unavailable}:{}),preUpgradeSupported,closedAppSupported,pending:running,enabled:s.enabled,revision:s.revision,phase:s.phase,schedule:s.schedule,lastVerified:s.lastVerified,lastClosedResult:s.lastClosedResult,...(s.reviewReason?{reviewReason:s.reviewReason}:{}),...(s.captureFailure?{captureFailure:s.captureFailure}:{}),...(s.lastSkipped?{lastSkipped:s.lastSkipped}:{}),refs,error:lastError};
+    let firstRun;try{firstRun=await firstRunState();}catch{firstRun={eligible:false,completed:null,owed:false};}
+    return {supported,firstRun,...(restartBlocked?{relaunchBlocked:restartBlocked}:{}),...(heldBy?{heldBy}:{}),...(checking?{checking:true}:{}),...(unavailable?{unavailable}:{}),preUpgradeSupported,closedAppSupported,pending:running,enabled:s.enabled,revision:s.revision,phase:s.phase,schedule:s.schedule,lastVerified:s.lastVerified,lastClosedResult:s.lastClosedResult,...(s.reviewReason?{reviewReason:s.reviewReason}:{}),...(s.captureFailure?{captureFailure:s.captureFailure}:{}),...(s.lastSkipped?{lastSkipped:s.lastSkipped}:{}),refs,error:lastError};
   };
   const stopPolling=()=>{if(timer)clearInterval(timer);timer=null;};
   const start=()=>{stopPolling();if(!coordinator.status().enabled)return;timer=setInterval(()=>{void tick();},60000);timer.unref?.();void tick();};
@@ -327,6 +377,15 @@ export function createBackupScheduleHost(host) {
       return closedResult(stage==="owner"&&error?.code==="BACKUP_CLOSED_BUSY"?"busy":stage==="capture"?"needs-review":"unavailable",reason);
     }finally{running=false;}
   }
+  async function currentArtifact(){
+      const receipt=coordinator.status().lastVerified;if(!receipt)return null;
+      const binding=await read();
+      if(!binding||binding.installationIdentity!==installationIdentity(host.installation())||receipt.installationRef!==binding.installationRef||receipt.destinationRef!==binding.destinationRef||!/^[a-f0-9]{64}$/.test(receipt.jobId)||receipt.artifactRef!==receipt.jobId||installationIdentity(binding.destination)!==binding.destinationIdentity||realpathSync(binding.destination)!==binding.destination)throw Error("BACKUP_REFERENCE_CHANGED");
+      const archivePath=path.join(binding.destination,receipt.jobId+".age");
+      const actual=verifiedArtifact(archivePath,receipt.bytes);
+      if(actual.sha256!==receipt.sha256||actual.bytes!==receipt.bytes)throw Error("BACKUP_RECEIPT_MISMATCH");
+      return{archivePath,receipt};
+  }
   return {
     status:publicStatus,internalStatus:()=>coordinator.status(),isPreparing:()=>running,start,stopPolling,tick,runNow,clearReview,resumeOffline,runClosedDue,requestUpgrade,pendingUpgrade,verifyUpgrade,
     /** Folder the saved references back up into, for recovery-key placement checks. */
@@ -351,13 +410,38 @@ export function createBackupScheduleHost(host) {
     async destinationLabel(){const b=await read();return b?path.basename(b.destination):null;},
     async latestVerifiedArtifact(){
       if(running||activePhases.has(coordinator.status().phase))throw Error("BACKUP_BUSY");
-      const receipt=coordinator.status().lastVerified;if(!receipt)return null;
-      const binding=await read();
-      if(!binding||binding.installationIdentity!==installationIdentity(host.installation())||receipt.installationRef!==binding.installationRef||receipt.destinationRef!==binding.destinationRef||!/^[a-f0-9]{64}$/.test(receipt.jobId)||receipt.artifactRef!==receipt.jobId||installationIdentity(binding.destination)!==binding.destinationIdentity||realpathSync(binding.destination)!==binding.destination)throw Error("BACKUP_REFERENCE_CHANGED");
-      const archivePath=path.join(binding.destination,receipt.jobId+".age");
-      const actual=verifiedArtifact(archivePath,receipt.bytes);
-      if(actual.sha256!==receipt.sha256||actual.bytes!==receipt.bytes)throw Error("BACKUP_RECEIPT_MISMATCH");
-      return{archivePath,receipt};
+      return currentArtifact();
+    },
+    /** The person's request to end the first run's backup step. "verified"
+     * is honoured only when the current receipt matches the folder and key in
+     * use AND its archive re-reads to the same hash; it refreshes an earlier
+     * check made for another folder or key. "off" turns the schedule off and
+     * is recorded in the coordinator too (its revision moves), so losing the
+     * first-run record never makes this folder look new. A step already
+     * verified now stays verified. An unreadable record is replaced: the
+     * person's explicit choice is the way out of it. */
+    async finishFirstRun(choice){
+      if(choice!=="verified"&&choice!=="off")throw Error("INVALID_BACKUP_REQUEST");
+      if(running||activePhases.has(coordinator.status().phase))throw Error("BACKUP_BUSY");
+      running=true;try{
+        const record=firstRunRecord(),state=await firstRunState();
+        if(choice==="verified"){
+          const s=coordinator.status(),b=await read();
+          if(!s.enabled||!receiptCurrent(s,b))throw Error("BACKUP_FIRST_RUN_UNVERIFIED");
+          const artifact=await currentArtifact();if(!artifact)throw Error("BACKUP_FIRST_RUN_UNVERIFIED");
+          const r=artifact.receipt;
+          if(state.completed!=="off"){
+            const same=record?.state==="verified"&&record.jobId===r.jobId&&record.sha256===r.sha256&&record.installationRef===b.installationRef&&record.destinationRef===b.destinationRef&&record.recoveryRef===b.recoveryRef;
+            if(!same)coordinator.recordFirstRun({state:"verified",jobId:r.jobId,sha256:r.sha256,installationRef:b.installationRef,destinationRef:b.destinationRef,recoveryRef:b.recoveryRef},{replace:true});
+          }
+        }else if(state.completed!=="verified"){
+          const s=coordinator.status();
+          if(s.enabled||s.revision===0){coordinator.configure(s.revision,{...s.schedule,enabled:false});stopPolling();}
+          if(record?.state!=="off")coordinator.recordFirstRun({state:"off"},{replace:true});
+        }
+      }finally{running=false;}
+      await firstRunChanged();
+      return publicStatus();
     },
     async markUpgradeInstallRequested(candidate){const v=await verifyUpgrade(candidate);coordinator.requestUpgradeInstall(v.handoffId,v.candidate,v.bindingRevision,v.installationIdentity);return {status:"continue"};},
     async completeUpgrade(currentVersion){const p=pendingUpgrade();if(!p)throw Error("BACKUP_UPGRADE_REJECTED");const v=await verifyUpgrade(p.candidate);coordinator.completeUpgrade(v.handoffId,currentVersion,v.candidate,v.bindingRevision,v.installationIdentity);},
@@ -383,10 +467,21 @@ export function createBackupScheduleHost(host) {
       // folder is chosen or a key is written, not after daily backups are on.
       assertRelaunchPossible();
       const existingKey=options?.existingKey===true;
+      // First run uses the app's default backup folder: no folder picker and
+      // no confirmation dialog, because nobody has been asked anything yet and
+      // the first screen already explains backups and keeps the recovery key
+      // warning. Anything after this point is the same checked path.
+      const firstRun=options?.firstRun===true&&!existingKey;
+      if(firstRun&&typeof host.defaultDestination!=="function")throw Error("BACKUP_UNAVAILABLE");
       if(!existingKey&&typeof host.createRecoveryKey!=="function")throw Error("BACKUP_UNAVAILABLE");
       let setUpNote=null;
       running=true;try{
-      const destination=await host.chooseDestination();if(!destination)return {cancelled:true};
+      // The flag alone never skips the confirmation: only a data folder that
+      // has never had backups may (Settings L5). Anything else is refused
+      // before a folder is made or a key is written.
+      if(firstRun&&!(await firstRunState()).eligible)throw Error("BACKUP_FIRST_RUN_DONE");
+      const destination=firstRun?await host.defaultDestination():await host.chooseDestination();if(!destination)return {cancelled:true};
+      if(firstRun)mkdirSync(destination,{recursive:true,mode:0o700});
       const installation=realpathSync.native(host.installation()),target=realpathSync.native(destination);
       if(pathWithin(installation,target)||!lstatSync(target).isDirectory())throw Error("BACKUP_DESTINATION_INVALID");
       // A folder the backup can't use is refused now, before any key is made
@@ -418,7 +513,7 @@ export function createBackupScheduleHost(host) {
       // reopening its own window for a backup.
       const resolvedKey=realpathSync(keyFile);
       const keyNote=created?{label:path.basename(resolvedKey),publicKey:created.publicKey,folder:path.basename(path.dirname(resolvedKey))}:null;
-      if(!await host.confirmReferences({destination:path.basename(target),recoveryKey:path.basename(resolvedKey),recoveryKeyFolder:path.dirname(resolvedKey),createdKey:Boolean(created)})){const left=takeBack();settled=true;return {cancelled:true,...(left?{created:left}:{})};}
+      if(!firstRun&&!await host.confirmReferences({destination:path.basename(target),recoveryKey:path.basename(resolvedKey),recoveryKeyFolder:path.dirname(resolvedKey),createdKey:Boolean(created)})){const left=takeBack();settled=true;return {cancelled:true,...(left?{created:left}:{})};}
       const b={version:1,installationIdentity:installationIdentity(bound),installationRef:"installation-"+hash(bound).slice(0,24),destinationRef:randomUUID(),recoveryRef:randomUUID(),destination:target,destinationIdentity:installationIdentity(target),keyFile:resolvedKey,keyFingerprint:hash(fingerprint(keyFile)),recipient:key.recipient,allowIdleRestart:false,allowClosedApp:false};
       await host.writeProtected(BACKUP_SCHEDULE_BINDINGS_KEY,JSON.stringify(b));
       settled=true;
@@ -470,7 +565,12 @@ export function createBackupScheduleHost(host) {
       if(schedule.enabled&&schedule.preUpgrade)await assertUpgradeAllowed();
       if(schedule.enabled&&schedule.closedApp===true){await assertClosedAllowed();if(allowClosedApp!==true)throw Error("BACKUP_CLOSED_CONSENT_REQUIRED");}
       if(schedule.enabled){const b=await read();if(!b||allowIdleRestart!==true||schedule.installationRef!==b.installationRef||schedule.destinationRef!==b.destinationRef||schedule.recoveryRef!==b.recoveryRef)throw Error("BACKUP_SCHEDULE_CONSENT_REQUIRED");await host.writeProtected(BACKUP_SCHEDULE_BINDINGS_KEY,JSON.stringify({...b,allowIdleRestart:true,allowClosedApp:schedule.closedApp===true}));}
+      const wasEnabled=coordinator.status().enabled;
       coordinator.configure(expectedRevision,schedule);
+      // Turning daily backups off is the person's own choice: it also ends a
+      // first run that has no recorded ending yet, as "backups off".
+      if(wasEnabled&&!schedule.enabled&&!firstRunRecord()){try{coordinator.recordFirstRun?.({state:"off"});}catch{/* the harness re-derives from the schedule */}}
+      void firstRunChanged();
       }finally{running=false;}
       start();return publicStatus();
     },

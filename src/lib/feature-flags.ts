@@ -1,5 +1,6 @@
+import { fluxDesktopSigninOn } from "../../shared/flux-desktop-signin-default.mjs";
 export interface FeatureFlagConfig {
-  features?: { skillRecorder?: boolean; showToolCalls?: boolean; browser?: boolean };
+  features?: { skillRecorder?: boolean; fluxDesktopSignin?: boolean; showToolCalls?: boolean; browser?: boolean };
 }
 
 /** Experimental features are available only after an explicit opt-in. */
@@ -17,4 +18,9 @@ export function builtInBrowserEnabled(config: FeatureFlagConfig | null | undefin
  * shows that work is happening. */
 export function showToolCallsEnabled(config: FeatureFlagConfig | null | undefined): boolean {
   return config?.features?.showToolCalls === true;
+}
+
+/** The desktop "Sign in with Flux" button. Off by default; the paste-a-key path is unchanged either way. */
+export function fluxDesktopSigninEnabled(config: FeatureFlagConfig | null | undefined): boolean {
+  return fluxDesktopSigninOn(config?.features);
 }

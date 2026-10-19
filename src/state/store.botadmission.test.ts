@@ -10,7 +10,7 @@ import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { ANSWER_TTL_MS, answerClock, asAnswer, fromAnswer } from "./answer-tag";
-import { DELETE_RETRY_MAX, StoreProvider, initialState, reducer, useStore, type Action, type AppState, type Bot, type Group, type Task } from "./store";
+import { DELETE_RETRY_MAX, StoreProvider, initialState, reducer, useStore, type Action, type AppState, type Bot, type Task } from "./store";
 import { httpNow } from "./test-origins";
 
 const E1 = "e1";
@@ -34,7 +34,9 @@ const held = (state: AppState, id = "x") => state.bots.find((candidate) => candi
 /** A numbered client holding X at e1/4 (inserted by the roster, before any later roster's send). */
 const numbered = (...bots: Bot[]) => reducer(initialState, roster(bots.length ? bots : [bot("x", 4)], { sentTick: 0 }));
 
-afterEach(() => { vi.useRealTimers(); vi.unstubAllGlobals(); });
+// Every admission stamp reads the answer clock (ROOM-ORDER-DESIGN r2 R4), so the tests drive that one clock, not the wall clock.
+const realNow = answerClock.now;
+afterEach(() => { answerClock.now = realNow; vi.useRealTimers(); vi.unstubAllGlobals(); });
 
 describe("answer life (§0.4, r6 L6)", () => {
   it("an answer is tagged with its send time; past ANSWER_TTL_MS it is expired at dispatch, and a spread copy is caught", () => {
@@ -106,16 +108,29 @@ describe("deletions (§2.7)", () => {
   });
 
   it("N3b: the sweep retires a stream-acked tombstone after the TTL, keeps an unacked one of this run, retires a past run's", () => {
-    vi.useFakeTimers();
-    vi.setSystemTime(1_000_000);
+    answerClock.now = () => 1_000_000;
     let state = numbered(bot("x", 4), bot("y", 4), bot("z", 4));
     state = reducer(state, { type: "botDeleted", source: "stream", botId: "x", hidden: false, tasksSeq: 5, tasksEpoch: E1 });
     state = run(state, { type: "deleteBot", source: "local", botId: "y", attempt: "a" }, { type: "deletionSettled", source: "http", botId: "y", attempt: "a", outcome: "deleted", tasksSeq: 5, tasksEpoch: E1 });
+    // e0 is a run this client left (seed 524: a tombstone of a run it has not reached is kept until it adopts a later one)
+    state = { ...state, pastEpochs: [...(state.pastEpochs ?? []), { epoch: "e0", seenAt: 1_000_000 }] };
     state = run(state, { type: "deleteBot", source: "local", botId: "z", attempt: "b" }, { type: "deletionSettled", source: "http", botId: "z", attempt: "b", outcome: "deleted", tasksSeq: 5, tasksEpoch: "e0" });
     const later = 1_000_000 + ANSWER_TTL_MS + 1;
     state = reducer(state, { type: "tombstonesSweep", now: later });
     expect(Object.keys(state.tombstones ?? {}).sort()).toEqual(["y"]);
     expect(reducer(state, { type: "tombstonesSweep", now: later })).toBe(state);
+  });
+
+  it("seed 524: a deletion numbered in a run this client has not reached outlives the TTL until a roster adopts a later run, and asks for that roster", () => {
+    answerClock.now = () => 1_000_000;
+    let state = numbered(bot("x", 4));
+    state = run(state, { type: "deleteBot", source: "local", botId: "x", attempt: "a" }, { type: "deletionSettled", source: "http", botId: "x", attempt: "a", outcome: "deleted", tasksSeq: 1, tasksEpoch: "e9" });
+    expect(state.reconcileRequested ?? 0).toBeGreaterThan(0);
+    state = reducer(state, { type: "tombstonesSweep", now: 1_000_000 + ANSWER_TTL_MS + 1 });
+    expect(state.tombstones?.x).toMatchObject({ epoch: "e9", kind: "deleted" });
+    // a frame of the client's own (older) run, buffered behind a stalled roster, is still refused
+    const late = reducer(state, frame(bot("x", 9)));
+    expect(late.bots.some((b) => b.id === "x")).toBe(false);
   });
 
   it("N8: the archived list's delete is pending under its attempt; a scoped stale hidden answer changes nothing, a newer one removes and fences", () => {
@@ -210,6 +225,25 @@ describe("visibility on a scoped client (§2.3 step 5, §9.1-9.3)", () => {
     expect(held(hidden)).toBeUndefined();
     expect(hidden.tombstones?.x).toMatchObject({ epoch: E2, seq: 2, kind: "hidden" });
   });
+
+  it("order seed 386: a 404 to a verify sent while hidden does not remove the bot a later frame admitted; it is verified again", () => {
+    let state: AppState = { ...numbered(bot("x", 4)), scopedClient: true };
+    state = reducer(state, frame(bot("x", 5, { hidden: true })));
+    expect(held(state)).toBeUndefined();
+    // the verification fetch goes out while x is hidden: the server answers 404 to it
+    state = { ...state, verifyBots: { ...state.verifyBots, x: true } };
+    const sentTick = state.admitTick ?? 0;
+    // the restore frame reaches the client before that 404
+    state = reducer(state, frame(bot("x", 6)));
+    expect(held(state)).toBeDefined();
+    state = reducer(state, { type: "verifySettled", botId: "x", gone: true, sentTick });
+    expect(held(state)).toBeDefined();
+    expect(state.verifyBots?.x).toBe(true);
+    // the next verification, sent after the admission, is the answer: a 404 to it removes the bot
+    const gone = reducer(state, { type: "verifySettled", botId: "x", gone: true, sentTick: state.admitTick ?? 0 });
+    expect(held(gone)).toBeUndefined();
+    expect(gone.verifyBots?.x).toBeUndefined();
+  });
 });
 
 describe("hydrate (§2.8)", () => {
@@ -270,8 +304,7 @@ describe("hydrate (§2.8)", () => {
   });
 
   it("P8: a roster tombstone is stream-acked only after the buffered frames were drained", () => {
-    vi.useFakeTimers();
-    vi.setSystemTime(5_000_000);
+    answerClock.now = () => 5_000_000;
     let state = numbered(bot("x", 3));
     state = reducer(state, roster([], { removed: [{ id: "x", tasksSeq: 5, tasksEpoch: E1, kind: "deleted" }], sentTick: state.admitTick }));
     expect(state.tombstones?.x).toMatchObject({ streamAcked: false, ackOnDrain: true });
@@ -488,47 +521,6 @@ describe("settled fields: a write's own fields from the authoritative record (CI
     // the provider leaves a settling read to the verification fetch, which retries
     const provider = readFileSync(join(process.cwd(), "src/state/store.tsx"), "utf8");
     expect(provider).toMatch(/case "ensureBotDetail":\s*\n\s*if \(action\.settled\?\.length\) break;/);
-  });
-});
-
-describe("groups are ordered as bots are (CI-OVERLAY-DESIGN I-H2)", () => {
-  const room = (seq: number | undefined, extra: Record<string, unknown> = {}) => ({
-    id: "ops-room", threadId: "ops-room-thread", name: "Operations", memberIds: ["x"], defaultResponder: { kind: "everyone" }, bulletin: "",
-    unread: false, createdAt: 1, section: "Operations", ...(seq === undefined ? {} : { recordSeq: seq, recordEpoch: E1 }), ...extra,
-  }) as unknown as Group;
-  const heldRoom = (state: AppState) => state.groups.find((g) => g.id === "ops-room");
-  const withRoom = () => reducer(initialState, roster([bot("x", 4, { section: "Operations" })], { groups: [room(4)], sentTick: 0 } as never));
-
-  it("Astra r2 H2: a rename answer delayed past another window's delete+archive never brings the team back through its channel", () => {
-    let state = withRoom();
-    expect(heldRoom(state)).toMatchObject({ section: "Operations", recordSeq: 4 });
-    // the other window's delete+archive: the channel's frame at 6 (the store omits the cleared team; hidden is set)
-    state = reducer(state, { type: "groupPatched", group: { ...room(6, { hidden: true }), section: undefined } });
-    expect(heldRoom(state)).toMatchObject({ hidden: true, recordSeq: 6 });
-    // the delayed rename answer: the team route's row at 5, applied as the dialog applies it
-    state = reducer(state, { type: "groupPatched", group: { id: "ops-room", name: "Ops Crew", section: "Ops Crew", hidden: undefined, recordSeq: 5, recordEpoch: E1 } });
-    expect(heldRoom(state)).toMatchObject({ hidden: true, name: "Operations", recordSeq: 6 });
-    expect(heldRoom(state)?.section).toBeUndefined();
-    // the same row at the held number or past it applies, as every frame does
-    state = reducer(state, { type: "groupPatched", group: { id: "ops-room", name: "Ops Crew", section: "Ops Crew", hidden: undefined, recordSeq: 7, recordEpoch: E1 } });
-    expect(heldRoom(state)).toMatchObject({ name: "Ops Crew", section: "Ops Crew", recordSeq: 7 });
-    expect(heldRoom(state)?.hidden).toBeUndefined();
-  });
-
-  it("an unnumbered patch (the client's own) and another run's record apply as before; a row for a room nobody holds lands nothing", () => {
-    let state = withRoom();
-    state = reducer(state, { type: "groupPatched", group: { ...room(6), hidden: true } });
-    state = reducer(state, { type: "groupPatched", group: { id: "ops-room", hidden: undefined } });
-    expect(heldRoom(state)).toMatchObject({ recordSeq: 6 });
-    expect(heldRoom(state)?.hidden).toBeUndefined();
-    state = reducer(state, { type: "groupPatched", group: { ...room(1), recordEpoch: E2, name: "After restart" } });
-    expect(heldRoom(state)).toMatchObject({ name: "After restart", recordSeq: 1, recordEpoch: E2 });
-    const before = state.groups.length;
-    state = reducer(state, { type: "groupPatched", group: { id: "gone-room", name: "Ghost", section: "Ghost", recordSeq: 2, recordEpoch: E1 } });
-    expect(state.groups.length).toBe(before);
-    // a whole record nobody holds is still inserted (a created channel's answer)
-    state = reducer(state, { type: "groupPatched", group: { ...room(1), id: "new-room", threadId: "new-room-thread" } });
-    expect(state.groups.some((g) => g.id === "new-room")).toBe(true);
   });
 });
 

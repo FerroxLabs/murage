@@ -255,7 +255,8 @@ describe("ClaudeDriver warm process (fake CLI)", () => {
     });
   recycled("an audience change", "audience", () => ({ warmIdentity: identity("b1", "non-owner") }));
   recycled("a different bot", "bot", () => ({ warmIdentity: identity("b2") }));
-  recycled("a permission-mode change", "permissionMode", () => ({ stopLine: true }), { permissionMode: "bypassPermissions" });
+  // Rule 69b: bypassPermissions is acceptEdits plus the broker on every turn, so the stop line no longer changes the mode
+  recycled("a change of routed asks", "routeAsks", () => ({ routeAsks: true }), { permissionMode: "default" });
   recycled("a model change", "model", () => ({ model: "claude-other" }));
   const route = (revision: string) => ({ connectionId: "c1", revision, preset: "anthropic", protocol: "anthropic", baseUrl: "https://api.anthropic.com", apiKey: "fixture-only-not-real", model: "claude-fixture" }) as unknown as SendTurnInput["providerRoute"];
   recycled("a provider-route change", "providerRoute", () => ({ providerRoute: route("r2") }), {}, { ...base, model: "claude-fixture", providerRoute: route("r1") });

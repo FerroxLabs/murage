@@ -8,6 +8,7 @@ import type { GroupsPolicy } from "./core/access.ts";
 import type { InboundEnvelope } from "./core/protocol.ts";
 import { WhatsAppService, chatKeyOf, type ChatContext, type TransportContext, type WhatsAppSettings } from "./service.ts";
 import type { HealthEvent, LinkEvent, StatusNote, TransportHandlers, WhatsAppTransport } from "./transport.ts";
+import { removeTempDirSync } from "../../testing/cleanup.ts";
 
 const T = 1_700_000_000_000;
 const OWNER = "15550001111@s.whatsapp.net";
@@ -17,7 +18,7 @@ const CAROL = "15550003333@s.whatsapp.net";
 const GROUP = "120363000000000001@g.us";
 const KEY = "ef".repeat(32);
 const roots: string[] = [], services: WhatsAppService[] = [];
-afterEach(async () => { for (const s of services.splice(0)) await s.stop().catch(() => undefined); for (const r of roots.splice(0)) rmSync(r, { recursive: true, force: true }); vi.useRealTimers(); });
+afterEach(async () => { for (const s of services.splice(0)) await s.stop().catch(() => undefined); for (const r of roots.splice(0)) removeTempDirSync(r); vi.useRealTimers(); });
 const flush = async () => { for (let i = 0; i < 120; i++) await Promise.resolve(); };
 const noGroups: GroupsPolicy = { policy: "disabled", allow: [], senders: "members" };
 
@@ -411,7 +412,7 @@ it("a receipt that cannot be written is loud: no ack, no task, and an intact ret
   const ack = await f.deliver({ messageId: "W2", chatJid: OWNER, fromMe: true, upsertType: "append", text: "second" });
   expect(ack).not.toHaveBeenCalled(); expect(w.enqueued).toHaveLength(1);
   expect(f.service.status().error).toBe("ledger-write-failed");
-  rmSync(path, { recursive: true }); writeFileSync(path, original);
+  removeTempDirSync(path); writeFileSync(path, original);
   const retry = await f.deliver({ messageId: "W2", chatJid: OWNER, fromMe: true, upsertType: "append", text: "second" });
   expect(retry).toHaveBeenCalledTimes(1); expect(w.enqueued).toHaveLength(2);
 });

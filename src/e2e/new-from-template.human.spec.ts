@@ -1,7 +1,7 @@
 // New Bot / New Team in a real browser against the REAL harness: the page's
 // /api calls are proxied to a verification server, so the template search,
 // preview and create all run for real.
-import { test, expect } from "@playwright/test";
+import { test, expect } from "./page-error-guard";
 import { createServer, type ViteDevServer } from "vite";
 import tailwindcss from "@tailwindcss/vite";
 import { fileURLToPath } from "node:url";
@@ -33,7 +33,7 @@ test.beforeAll(async () => {
       resolveId(id) { if (id === "/__skills.js") return "\0skills-settings"; if (id === "/__botskills.js") return "\0bot-skills"; if (id === "/skills-fixture-store") return "\0skills-store"; },
       load(id) {
         // The real api() contract: JSON in and out, and a refusal carries its status and body.
-        if (id === "\0skills-store") return "import React from 'react';import {asAnswer} from '/src/state/answer-tag.ts';export async function api(path,init){const r=await fetch(path,{...init,headers:{'content-type':'application/json',...(init&&init.headers)}});const data=await r.json().catch(()=>({}));if(!r.ok)throw Object.assign(new Error(data.error||r.statusText),{status:r.status,body:data});return asAnswer(data);}export function useStore(){return {state:{bots:window.fixtureBots||[],instances:[]},dispatch(action){(window.dispatched=window.dispatched||[]).push(action.type)}};}";
+        if (id === "\0skills-store") return "import React from 'react';import {asAnswer} from '/src/state/answer-tag.ts';export async function api(path,init){const r=await fetch(path,{...init,headers:{'content-type':'application/json',...(init&&init.headers)}});const data=await r.json().catch(()=>({}));if(!r.ok)throw Object.assign(new Error(data.error||r.statusText),{status:r.status,body:data});return asAnswer(data);}export function useStoreIfAny(){return useStore();} export function useStore(){return {state:{bots:window.fixtureBots||[],instances:[]},dispatch(action){(window.dispatched=window.dispatched||[]).push(action.type)}};}";
         if (id !== "\0skills-settings") return;
         return "import React from 'react';import {createRoot} from 'react-dom/client';import {NewFromTemplateDialog} from '/src/components/NewFromTemplateDialog.tsx';import '/src/styles.css';const q=new URLSearchParams(location.search);document.documentElement.dataset.skin='dark';window.events=[];import {trackVisualViewport} from '/src/lib/visual-viewport.ts';if(q.get('inset'))document.documentElement.style.setProperty('--inset-top',q.get('inset')+'px');if(q.get('drawer')){trackVisualViewport();const aside=document.createElement('aside');aside.id='drawer';aside.style.cssText='position:absolute;top:0;left:0;bottom:0;width:300px;translate:0 0;background:#222;overflow:hidden';document.body.appendChild(aside);createRoot(aside).render(React.createElement(NewFromTemplateDialog,{kind:q.get('kind')||'bot',onClose(){window.events.push('close')},onBlank(){},onOpenFile(){},onCreated(){}}));}else createRoot(document.getElementById('root')).render(React.createElement(NewFromTemplateDialog,{kind:q.get('kind')||'bot',onClose(){window.events.push('close')},onBlank(){window.events.push('blank')},onOpenFile(){window.events.push('file')},onCreated(r){window.events.push('created:'+r.members)}}));";
       },
@@ -52,7 +52,6 @@ test.beforeAll(async () => {
 test.afterAll(async () => { await server?.close(); await harness?.close(); safeWipeSync(cache); });
 // A module that fails to load leaves an empty page; say why.
 test.beforeEach(({ page }) => {
-  page.on("pageerror", (error) => console.log("page error:", error.message));
   page.on("console", (message) => { if (message.type() === "error") console.log("console error:", message.text()); });
 });
 

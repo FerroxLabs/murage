@@ -8,10 +8,11 @@ import { ownerMemoryTicket, correctMemory } from "./authority.ts";
 import { reconcileMemoryRoster } from "./policy.ts";
 import { forgetMemory } from "./forget.ts";
 import { availableMemoryNotebooks, commitMemoryImport, memoryNotebookLinks, previewMemoryImport, stopTrackingMemoryNotebook, syncTrackedMemoryImports, migrateDetectedMemoryNotebooks } from "./import.ts";
+import { removeTempDirSync } from "../testing/cleanup.ts";
 
 const roster = { bots: [{ id: "a", threadId: "thread-a" }], groups: [] };
 beforeEach(() => {
-  closeDatabase(); rmSync(DATA_DIR, { recursive: true, force: true }); mkdirSync(DATA_DIR, { recursive: true });
+  closeDatabase(); removeTempDirSync(DATA_DIR); mkdirSync(DATA_DIR, { recursive: true });
   reconcileMemoryRoster(roster);
   database().exec("UPDATE memory_meta SET mode='active'");
 });

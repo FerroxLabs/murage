@@ -1,12 +1,13 @@
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdtempSync, writeFileSync } from "node:fs";
 import { homedir, tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { afterAll, describe, expect, it } from "vitest";
 
 import { validateBotCwd } from "./bot-cwd.ts";
+import { removeTempDirSync } from "./testing/cleanup.ts";
 
 const dir = mkdtempSync(join(tmpdir(), "murage-cwd-"));
-afterAll(() => rmSync(dir, { recursive: true, force: true }));
+afterAll(() => removeTempDirSync(dir));
 
 describe("validateBotCwd", () => {
   it("accepts an existing absolute directory", () => {

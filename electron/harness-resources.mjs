@@ -32,6 +32,12 @@ export const HARNESS_RESOURCE_DIRECTORIES = Object.freeze({
   MURAGE_FUIGO_DIR: "fuigo",
   // GEPA is an app-owned native worker; no system Python or PATH fallback.
   MURAGE_GEPA_DIR: "gepa-worker",
+  // The local semantic memory model (pinned in shared/memory-model-manifest.json).
+  // Bundled on every release target (Intel Macs run it on WebAssembly); absent in unpackaged qualification builds: the
+  // server verifies every file against the manifest and otherwise falls back to
+  // the optional download in the data directory, so an unset or empty tree reads
+  // as "not bundled", never as a ready model.
+  MURAGE_MEMORY_MODEL_DIR: "memory-model",
 });
 
 /** The static UI root when there is no Resources directory to read it out of.

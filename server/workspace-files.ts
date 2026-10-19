@@ -36,7 +36,7 @@ import { ProjectFolderLeaseError, type ProjectFolderLeases } from "./project-fol
 import { describeThrow, type ProjectTurnLeases } from "./project-turn-leases.ts";
 import type { Store } from "./store.ts";
 import { selectFileWorkspace } from "./workspace.ts";
-import { SURFACE_QUERY, SURFACE_SECRET_QUERY } from "./sse-visibility.ts";
+import { SURFACE_QUERY } from "./sse-visibility.ts";
 import {
   WORKSPACE_CURSOR_MAX_LENGTH, WORKSPACE_FILE_ERROR_STATUS, WORKSPACE_FILES_ROUTE_PREFIX, WORKSPACE_FILES_ROUTES, WORKSPACE_LIST_PAGE_SIZE,
   WORKSPACE_SEARCH_MAX_DEPTH, WORKSPACE_SEARCH_MAX_ENTRIES, WORKSPACE_SEARCH_QUERY_MAX_LENGTH, WORKSPACE_TEXT_MAX_BYTES,
@@ -934,7 +934,7 @@ export function saveWorkspaceVersion(deps: WorkspaceFilesDeps, body: WorkspaceSa
   return { artifact };
 }
 
-const SURFACE_PARAMS = [SURFACE_QUERY, SURFACE_SECRET_QUERY];
+const SURFACE_PARAMS = [SURFACE_QUERY];
 function queryParams(url: URL, extra: readonly string[]): { scope: WorkspaceScopeRef; values: Record<string, string> } {
   const allowed = new Set(["botId", "threadId", ...SURFACE_PARAMS, ...extra]), values: Record<string, string> = {};
   for (const key of new Set(url.searchParams.keys())) {

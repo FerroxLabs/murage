@@ -21,6 +21,7 @@
  */
 import React, { useEffect, useId, useMemo, useRef } from 'react'
 import { avatarTicker, prefersReducedMotion as osPrefersReducedMotion } from '../lib/avatar-ticker'
+import { trustedSvg, useSanitizerReady } from '../lib/trusted-html'
 
 /* ------------------------------------------------------------------- shape */
 
@@ -1091,7 +1092,7 @@ export function updateEffects(frame: EffectFrame) {
       const markup = spec.glyph.markup.replace(/\{\{GRADIENT\}\}/g, frame.paint)
       if (frame.glyph.getAttribute('data-glyph') !== markup) {
         frame.glyph.setAttribute('data-glyph', markup)
-        frame.glyph.innerHTML = markup
+        frame.glyph.innerHTML = trustedSvg(markup)
       }
       frame.glyph.style.opacity = String(amount)
       // Scale up as it arrives, so the swap reads as a transformation.
@@ -2214,6 +2215,7 @@ export const EmberAvatar = React.forwardRef<EmberAvatarHandle, EmberAvatarProps>
     },
     ref
   ) {
+    useSanitizerReady() // markup made before the sanitizer loaded is empty: draw again when it arrives
     const reactId = useId()
     const uid = useMemo(() => 'mascot' + reactId.replace(/[^a-zA-Z0-9]/g, ''), [reactId])
     const eye0 = useRef<SVGPathElement | null>(null)
@@ -2632,7 +2634,7 @@ export const EmberAvatar = React.forwardRef<EmberAvatarHandle, EmberAvatarProps>
           <clipPath
             id={`${uid}-clip`}
             transform={shape.fit || undefined}
-            dangerouslySetInnerHTML={{ __html: shape.clip }}
+            dangerouslySetInnerHTML={{ __html: trustedSvg(shape.clip) }}
           />
         </defs>
         <g transform={flip ? `translate(${FACE_BOX} 0) scale(-1 1)` : undefined}>
@@ -2647,7 +2649,7 @@ export const EmberAvatar = React.forwardRef<EmberAvatarHandle, EmberAvatarProps>
               same motion but is not faded with them, since it replaces them. */}
           <g ref={bodyGroup}>
           <g ref={bodyContent}>
-          <g transform={shape.fit || undefined} dangerouslySetInnerHTML={{ __html: body }} />
+          <g transform={shape.fit || undefined} dangerouslySetInnerHTML={{ __html: trustedSvg(body) }} />
           <g ref={faceLayer} clipPath={`url(#${uid}-clip)`}>
             <g transform={anchorTransform(shape.anchor)}>
               <path ref={eye0} fill={eyeColor} />

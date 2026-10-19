@@ -1,7 +1,7 @@
 // The `test` every human spec imports. It carries the two things a spec
 // should never have to remember: the app has an email gate in front of it,
 // and below `md` the sidebar is a drawer rather than a column.
-import { expect, test as base, type Locator, type Page } from "@playwright/test";
+import { expect, test as base, type Locator, type Page } from "./page-error-guard";
 
 export { expect };
 

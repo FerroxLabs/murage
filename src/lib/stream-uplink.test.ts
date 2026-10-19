@@ -56,6 +56,12 @@ async function connected(u = make(), query = {}, opts = {}) {
 }
 
 describe("StreamUplink", () => {
+  it("asks for the voice ticket with redirects refused, so the launch secret never follows one", async () => {
+    calls.length = 0;
+    await connected();
+    expect(calls[0]!.init?.redirect).toBe("error");
+  });
+
   it("gets a ticket with the surface headers and opens wss on the same origin with the subprotocol", async () => {
     calls.length = 0;
     await connected(make(), { eagerness: "medium", keyterms: ["Sable"] });

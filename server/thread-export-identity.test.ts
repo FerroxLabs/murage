@@ -8,7 +8,7 @@
 // conversation, whose abandoned rows must stay out), a row patched after it was written, attachments and artifact ids, a screen frame with
 // pixels, an answered card, tool rows and notices the route rewords, a line from another bot, and text with quotes, newlines and non-ASCII;
 // then the branch grows across the reader's row count pages (5,000 rows each: 4,999, 5,000, 5,001 and 10,001 rows in the thread).
-import { rmSync } from "node:fs";
+
 import { beforeEach, expect, it } from "vitest";
 import { browserUnavailableDisplayName } from "../shared/browser-unavailable.ts";
 import { folderTrustDisplayName } from "../shared/folder-trust.ts";
@@ -21,9 +21,10 @@ import type { ModelSelection } from "./contracts.ts";
 import * as mdb from "./message-db.ts";
 import { Store, type Message } from "./store.ts";
 import { exportSpeakers, streamThreadExport } from "./thread-export.ts";
+import { removeTempDirSync } from "./testing/cleanup.ts";
 
 const selection = (): ModelSelection => ({ instanceId: "claude", model: "claude-sonnet-5" });
-beforeEach(() => rmSync(DATA_DIR, { recursive: true, force: true }));
+beforeEach(() => removeTempDirSync(DATA_DIR));
 
 type Captured = { status: number; headers: Record<string, string>; body: string };
 function capture() {
@@ -100,7 +101,7 @@ function readerIds(threadId: string, pageRows: number): { ids: string[]; calls: 
   }
 }
 
-it("the paged export is byte for byte the one-shot route, across a forked branch, notices, patched rows, pixels, cards and the 5,000-row count pages", async () => {
+it("the paged export is byte for byte the one-shot route, across a forked branch, notices, patched rows, pixels, cards and the 5,000-row count pages", { tags: ["nightly"], timeout: 300_000 }, async () => {
   const seed = new Store(selection);
   const bot = seed.createBot();
   const t = bot.threadId;
@@ -176,4 +177,4 @@ it("the paged export is byte for byte the one-shot route, across a forked branch
   for (const format of ["json", "markdown"] as const) {
     expect(await streamed(new Store(selection), t, bot.name, format, 3), `original ${format}`).toEqual(oneShot(t, bot.name, format));
   }
-}, 300_000);
+});

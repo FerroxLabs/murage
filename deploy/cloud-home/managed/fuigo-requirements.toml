@@ -1,0 +1,6 @@
+[plugins]
+auto_discover = false
+[cli]
+use_leader = false
+[claude_compat]
+imported = true

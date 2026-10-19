@@ -15,12 +15,12 @@ let db: DatabaseSync;
 const NOW = 1_800_000_000_000;
 const learning = (enabled = true) => ({ id: "bot", learning: { enabled, askFirst: false, prospectLearning: false, revision: 0 } });
 function addMessage(id: string, role: "bot" | "user", text = "x", threadId = "t1", at = NOW) {
-  db.prepare("INSERT INTO messages VALUES(?,?,?,?,?,?,?)").run(threadId, id, at, role, "text", text, JSON.stringify({ id, role, kind: "text", text, at }));
+  db.prepare("INSERT INTO messages(thread_id,id,at,role,kind,text,json) VALUES(?,?,?,?,?,?,?)").run(threadId, id, at, role, "text", text, JSON.stringify({ id, role, kind: "text", text, at }));
 }
 beforeEach(() => {
   db = new DatabaseSync(":memory:");
   db.exec(MEMORY_SCHEMA);
-  db.prepare("INSERT INTO memory_meta(id,schema_version,installation_id,mode) VALUES(1,10,?,'active')").run(randomUUID());
+  db.prepare("INSERT INTO memory_meta(id,schema_version,installation_id,mode) VALUES(1,11,?,'active')").run(randomUUID());
   db.exec("CREATE TABLE messages(thread_id TEXT NOT NULL,id TEXT NOT NULL,at INTEGER NOT NULL,role TEXT NOT NULL,kind TEXT NOT NULL,text TEXT,json TEXT NOT NULL,PRIMARY KEY(thread_id,id))");
   addMessage("m1", "bot");
   addMessage("u1", "user", "how do we close the Acme deal", "t1", NOW - 10);

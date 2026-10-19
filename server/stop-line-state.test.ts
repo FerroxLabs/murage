@@ -1,6 +1,6 @@
 // Copyright 2026 Ferrox Labs
 // SPDX-License-Identifier: AGPL-3.0-or-later
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
@@ -8,6 +8,7 @@ import { afterEach, describe, expect, it } from "vitest";
 import { TASK_ALLOWANCE_TTL_MS, TaskAllowances, chatAllowance, githubRepoFromGitConfig, githubRepoOf, knownRecipients, recipientForms, rememberRecipients } from "./stop-line-state.ts";
 import { classifyStopLine, stopLineKey } from "./stop-line.ts";
 import { autoVerdict } from "./auto-approve.ts";
+import { removeTempDirSync } from "./testing/cleanup.ts";
 
 describe("task allowances", () => {
   const outside = { kind: "delete" as const, place: "/Users/ada/Projects/other/build", what: "x" };
@@ -33,7 +34,7 @@ describe("task allowances", () => {
   });
 
   it("keeps dates and quoted command bytes exact through task and routine grants", () => {
-    const place = { home: "/Users/ada", cwd: "/Users/ada/work", roots: ["/Users/ada/work"], knownRecipients: new Set<string>() };
+    const place = { home: "/Users/ada", cwd: "/Users/ada/work", roots: ["/Users/ada/work"], knownRecipients: new Set<string>(), realpath: (p: string) => p };
     const first = classifyStopLine("Bash", { command: 'rm -rf "$ARCHIVE/2026-09-01 09:30"' }, "", place)!;
     const key = stopLineKey(first)!;
     const allowances = new TaskAllowances();
@@ -52,7 +53,7 @@ describe("task allowances", () => {
 
 describe("recipient record", () => {
   let dir = "";
-  afterEach(() => { if (dir) rmSync(dir, { recursive: true, force: true }); dir = ""; });
+  afterEach(() => { if (dir) removeTempDirSync(dir); dir = ""; });
 
   it("remembers who a bot has written to, per bot, durably", () => {
     dir = mkdtempSync(join(tmpdir(), "murage-stop-line-"));
@@ -149,7 +150,7 @@ describe("the owner and the thread are known recipients", () => {
 
   it("so a message to the owner's account or DM never stops", () => {
     const known = new Set(recipientForms(["U0OWNER", "D0DM", "7777"]));
-    const place = { cwd: "/w", roots: ["/w"], home: "/Users/ada", knownRecipients: known };
+    const place = { cwd: "/w", roots: ["/w"], home: "/Users/ada", knownRecipients: known, realpath: (p: string) => p };
     expect(classifyStopLine("mcp__slack__send_message", { channel: "D0DM", text: "done" }, "", place)).toBeNull();
     expect(classifyStopLine("mcp__slack__send_message", { channel: "<@U0OWNER>", text: "done" }, "", place)).toBeNull();
     expect(classifyStopLine("mcp__telegram__send_message", { chat_id: 7777, text: "done" }, "", place)).toBeNull();
@@ -176,7 +177,7 @@ describe("the repository a gh post lands in", () => {
       writeFileSync(join(dir, "main", ".git", "worktrees", "w", "commondir"), "../..\n");
       expect(githubRepoOf(join(dir, "wt"))).toBe("ada/site");
     } finally {
-      rmSync(dir, { recursive: true, force: true });
+      removeTempDirSync(dir);
     }
   });
 });

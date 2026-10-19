@@ -14,7 +14,7 @@
 // and no sourceId/startByte/endByte/scopeId/"evidence" at all. The prompts
 // and replies are copied into the evidence directory. Absent live inputs are
 // recorded as "live proof pending"; nothing is skipped.
-import { test, expect, type Page } from "@playwright/test";
+import { test, expect, type Page } from "./page-error-guard";
 import { createServer, preview, type ViteDevServer } from "vite";
 import react from "@vitejs/plugin-react";
 import tailwindcss from "@tailwindcss/vite";
@@ -246,7 +246,7 @@ test("MEMJSON1: ten Fuigo (Flux Auto) turns answer normally and every prompt car
   if (!haveKey) pending("MURAGE_SMOKE_FLUX_KEY_FILE naming a FluxRouter key for the Fuigo turns");
   note(`renderer: ${VERIFY_BUILT_UI ? "built dist/ (vite preview)" : "Vite dev app"}; harness: server/index.ts from source; turns: ${TURNS}`);
   await openApp(page);
-  const settings = await openSettings(page, "Engines");
+  const settings = await openSettings(page, "Models & engines");
   const fuigo = settings.locator("section").filter({ hasText: /^Fuigo/ }).first();
   await fuigo.scrollIntoViewIfNeeded();
   // With no staged bundle the Engines line says so honestly; the version is

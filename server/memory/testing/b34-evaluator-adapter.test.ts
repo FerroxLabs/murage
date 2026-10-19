@@ -4,7 +4,7 @@
 // callback counting and receipt shape without a server. The journey runs the
 // adapter the way Claude 5's runner v3 does (b34-adapter-harness.ts) on the
 // isolated fake-engine server with the scripted loopback evaluator.
-import { mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { mkdtempSync, readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
@@ -20,6 +20,7 @@ import {
   B34_EVALUATION_PREFIX, B34_EXTRACTION_PREFIX, B34_GROUNDING_PREFIX, B34_Q14, B34_REFLECTION_PREFIX,
   b34ParseReflection, b34ReflectionPrompt, b34ScriptedCandidate, b34ScriptedEvaluate, b34ScriptedReport, readB34EvaluatorReviews, type B34Purpose,
 } from "./b34-evaluator-runtime.ts";
+import { removeTempDirSync } from "../../testing/cleanup.ts";
 
 type Kind = "skill" | "routine";
 const SEEDS: ReadonlyArray<readonly [Kind, string]> = [["skill", B34_Q14.skillOriginal], ["routine", B34_Q14.routineBase]];
@@ -154,7 +155,7 @@ describe("B34 Q14 scripted evaluator script", () => {
       expect(lines.filter(line => line.requestId === skillSnapshot.requestId && line.event === "callback").map(line => line.phase)).toEqual(["reflect-probe", "baseline", "candidate-probe", "reflect", "candidate"]);
       expect(lines.every(line => line.event !== "callback" || line.loopbackHit === true)).toBe(true);
     } finally {
-      rmSync(dataDir, { recursive: true, force: true });
+      removeTempDirSync(dataDir);
     }
   });
 
@@ -170,7 +171,7 @@ describe("B34 Q14 scripted evaluator script", () => {
       { fact: "current-revision", via: "api", method: "GET", path: skillPath, pointer: "/currentRevision", observed: `rollback:${UUID_B}` },
       { fact: "published-revision-in-history", via: "api", method: "GET", path: skillPath, pointer: "/revisions/1/revision", observed: evaluated },
       { fact: "rollback-history-entry", via: "api", method: "GET", path: skillPath, pointer: "/current/rollbackOf", observed: UUID_B.replace("7c", "8d") },
-      { fact: "earlier-task-pin", via: "api", method: "GET", path: "/api/bots?messages=0", pointer: "/bots/1/tasks/2/procedurePin/bundleId", observed: "e".repeat(64) },
+      { fact: "earlier-task-pin", via: "api", method: "GET", path: "/api/bots", pointer: "/bots/1/tasks/2/procedurePin/bundleId", observed: "e".repeat(64) },
       { fact: "current-revision", via: "api", method: "GET", path: "/api/routines", pointer: "/routines/0/instructionRevision", observed: UUID_B },
       { fact: "published-revision-in-history", via: "api", method: "GET", path: "/api/routines", pointer: "/routines/0/instructionHistory/1/id", observed: UUID_A },
       { fact: "rollback-history-entry", via: "api", method: "GET", path: "/api/routines", pointer: "/routines/0/instructionHistory/2/rollbackOf", observed: "d".repeat(64) },

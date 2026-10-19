@@ -1,11 +1,12 @@
 import { describe, it, expect } from "vitest";
 import { createServer } from "node:http";
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { UnifiedBrowserController } from "./browser-control.ts";
 import { browserOwnerRequest } from "./browser-owner-api.ts";
 import type { NativeBrowser } from "./browser-native-relay.ts";
+import { removeTempDirSync } from "./testing/cleanup.ts";
 describe("authenticated browser owner HTTP relay", () => {
   it("rejects anonymous, forged-owner and stale input while sharing the profile hold across bots", async () => {
     const directory = mkdtempSync(join(tmpdir(), "murage-browser-http-"));
@@ -34,7 +35,7 @@ describe("authenticated browser owner HTTP relay", () => {
       expect(inputs).toBe(0);
       expect((await call("Bearer fixture-owner-a", { action: "input", generation: taken.generation, event: { type: "input_keyboard", eventType: "char", text: "fake" } })).status).toBe(200);
       expect(inputs).toBe(1);
-    } finally { await controller.close(); await new Promise<void>(done => server.close(() => done())); rmSync(directory, { recursive: true, force: true }); }
+    } finally { await controller.close(); await new Promise<void>(done => server.close(() => done())); removeTempDirSync(directory); }
   });
 
   // Fix round 2: server/index.ts's own door-level 401 ("!desktop && !paired",
@@ -55,6 +56,6 @@ describe("authenticated browser owner HTTP relay", () => {
         status: 401,
         code: "browser_inactive",
       });
-    } finally { await controller.close(); rmSync(directory, { recursive: true, force: true }); }
+    } finally { await controller.close(); removeTempDirSync(directory); }
   });
 });

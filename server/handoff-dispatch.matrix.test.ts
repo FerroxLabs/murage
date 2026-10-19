@@ -2,7 +2,7 @@
 // Send again) are asked the same questions of the same hand-off under the same condition, and every one of them must give the same answer:
 //   a migration hold | each of the three tombstones | a pinned conversation busy while another is idle | a capacity refusal | a submitted turn that was never accepted
 // The owner and the shared origin each have the entry points that can reach them (the shared drain cannot reach an owner hand-off, Send again queues an owner one).
-import { mkdirSync, rmSync } from "node:fs";
+import { mkdirSync } from "node:fs";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { DATA_DIR } from "./config.ts";
 import { closeDatabase, database } from "./database.ts";
@@ -15,6 +15,7 @@ import { _resetOwnerMigration, runOwnerHandoffMigration } from "./pending-delega
 import { insertRoomRequest, roomRequest } from "./room-requests.ts";
 import { drainSharedWork, enqueueSharedWork } from "./shared-work.ts";
 import { LINEAGE, ownerWorld, sharedWorld, type OwnerWorld, type SharedWorld } from "./testing/handoff-worlds.ts";
+import { removeTempDirSync } from "./testing/cleanup.ts";
 
 type Kind = "owner" | "shared";
 type Entry = "owner drain" | "shared drain" | "boot redispatch" | "idle release" | "Send again";
@@ -32,7 +33,7 @@ async function until(done: () => boolean, ms = 30_000): Promise<void> {
 const settle = async (): Promise<void> => { await until(() => _drainingCount() === 0); await tick(); await tick(); };
 const rowOf = (id: string) => database().prepare("SELECT phase, started_at FROM pending_delegations WHERE id=?").get(id) as { phase: string; started_at: number | null } | undefined;
 
-beforeEach(() => { closeDatabase(); rmSync(DATA_DIR, { recursive: true, force: true }); mkdirSync(DATA_DIR, { recursive: true }); _resetPending(); _resetOwnerMigration(); });
+beforeEach(() => { closeDatabase(); removeTempDirSync(DATA_DIR); mkdirSync(DATA_DIR, { recursive: true }); _resetPending(); _resetOwnerMigration(); });
 afterEach(() => { _resetOwnerMigration(); _resetPending(); closeDatabase(); });
 
 const isShared = (w: World): w is SharedWorld => "iris" in w;

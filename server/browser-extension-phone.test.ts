@@ -1,12 +1,13 @@
 // Real companion cookie pairing and owner approval against isolated Murage.
 // Browser transport is explicitly fake; no physical phone/native browser claim.
 import { createServer, type Server } from "node:http";
-import { existsSync, readFileSync, mkdtempSync, rmSync } from "node:fs";
+import { existsSync, readFileSync, mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { randomBytes } from "node:crypto";
 import { afterAll, beforeAll, expect, it } from "vitest";
 import { launchVerificationServer, type VerificationServer } from "../scripts/control-murage.ts";
+import { removeTempDirSync } from "./testing/cleanup.ts";
 const launchProof = randomBytes(32).toString("hex");
 const instrumentation = `
 process.env.MURAGE_COMPANION_TOKEN=${JSON.stringify(launchProof)};
@@ -111,7 +112,7 @@ beforeAll(async()=>{
 afterAll(async()=>{
  if(door){door.closeAllConnections();await new Promise<void>(resolve=>door.close(()=>resolve()));}
  await fixture?.close();
- if(registryRoot)rmSync(registryRoot,{recursive:true,force:true});
+ if(registryRoot)removeTempDirSync(registryRoot);
 });
 it("a paired phone cannot register or remove the browser helper on the computer",async()=>{
  const botId=(await request("/api/bots")).body.bots[0].id;

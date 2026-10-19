@@ -29,3 +29,16 @@ it("a monthly spending limit names the limit and offers no way to buy past it",a
 it("the existing exact-credit Flux billing action remains unchanged",async()=>{
   await setLocale("en");const html=renderToStaticMarkup(createElement(ProviderErrorCard,{info:{kind:"credits",httpStatus:402,provider:"flux-router"},onOpenProviderSettings:()=>{}}));expect(html).toContain("Flux Router needs credits");expect(html).toContain('href="https://fluxrouter.ai/home/billing"');expect(html).toContain("Add Flux credits");
 });
+it("inside the phone app the Flux credits card keeps its words but offers no billing link", async () => {
+  await setLocale("en");
+  const nav = globalThis.navigator;
+  Object.defineProperty(globalThis, "navigator", { value: { userAgent: "Mozilla/5.0 (iPad; CPU OS 18_0 like Mac OS X) MurageApp/1.0.0 (ios)" }, configurable: true });
+  try {
+    const html = renderToStaticMarkup(createElement(ProviderErrorCard, { info: { kind: "credits", httpStatus: 402, provider: "flux-router" }, onOpenProviderSettings: () => {} }));
+    expect(html).toContain("Flux Router needs credits");
+    expect(html).not.toContain("fluxrouter.ai/home/billing");
+    expect(html).not.toContain("Add Flux credits");
+  } finally {
+    Object.defineProperty(globalThis, "navigator", { value: nav, configurable: true });
+  }
+});

@@ -60,6 +60,9 @@ async function seedTranscript(page: Page): Promise<void> {
         {
           id: ROOM_ID,
           threadId: `${ROOM_ID}-thread`,
+          // 1.0.2 numbers every room statement; the client drops an unnumbered one from a numbered run, so the
+          // synthesised room carries the roster's own run and a number past its clock.
+          ...(typeof body.tasksEpoch === "string" ? { recordEpoch: body.tasksEpoch, recordSeq: (typeof body.roomClock === "number" ? body.roomClock : 0) + 1 } : {}),
           name: ROOM_NAME,
           memberIds: [member.id],
           defaultResponder: { kind: "member", botId: member.id },

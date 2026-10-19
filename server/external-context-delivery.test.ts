@@ -1,7 +1,7 @@
 // W13: a delegated teammate's reply used to cost the delegating bot its
 // whole provider session. These tests pin the replacement — deliver the
 // message, keep the session — and the accounting that makes it safe.
-import { rmSync } from "node:fs";
+
 import { beforeEach, describe, expect, it } from "vitest";
 
 import { DATA_DIR } from "./config.ts";
@@ -13,6 +13,7 @@ import {
   withExternalDelivery,
 } from "./external-context-delivery.ts";
 import { Store } from "./store.ts";
+import { removeTempDirSync } from "./testing/cleanup.ts";
 
 const selection = (): ModelSelection => ({ instanceId: "claude", model: "fake-model" });
 
@@ -154,7 +155,7 @@ describe("task delivery accounting", () => {
   let store: Store;
 
   beforeEach(() => {
-    rmSync(DATA_DIR, { recursive: true, force: true });
+    removeTempDirSync(DATA_DIR);
     store = new Store(selection);
   });
 

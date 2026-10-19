@@ -19,6 +19,7 @@ import { scopedCodexHome } from "./codex-isolation.ts";
 import {
   ScopeUnavailableError, resetScopeBookkeeping, scopeLockPath, scopedCliHomeRoot, setScopeRetryBoundMs, withScopeRetry,
 } from "./scoped-cli-home.ts";
+import { removeTempDirSync } from "../testing/cleanup.ts";
 
 const FAKE_ACP = join(dirname(fileURLToPath(import.meta.url)), "..", "testing", "fake-acp-cli.ts");
 const FAKE_AGY = join(dirname(fileURLToPath(import.meta.url)), "..", "testing", "fake-agy-cli.ts");
@@ -31,7 +32,7 @@ const release = (root: string) => rmSync(scopeLockPath(root), { force: true });
 beforeEach(() => { ensureDirs(); resetScopeBookkeeping(); setScopeRetryBoundMs(250); });
 afterEach(() => {
   setScopeRetryBoundMs(10_000);
-  for (const d of dirs.splice(0)) rmSync(d, { recursive: true, force: true });
+  for (const d of dirs.splice(0)) removeTempDirSync(d);
 });
 
 describe("withScopeRetry", () => {
@@ -214,7 +215,7 @@ describe("Antigravity: a scope that cannot be built rejects the turn, never runs
     chmodSync(FAKE_AGY, 0o755);
     const scopeRoot = join(DATA_DIR, "native", "antigravity-scope");
     mkdirSync(dirname(scopeRoot), { recursive: true });
-    rmSync(scopeRoot, { recursive: true, force: true });
+    removeTempDirSync(scopeRoot);
     writeFileSync(scopeRoot, "not a folder"); // the scope root cannot be created
     const home = tmp("iso7-agy-");
     const instance = await AntigravityDriver.create({ instanceId: "agy-iso7", displayName: "Antigravity", enabled: true,

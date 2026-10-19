@@ -1,5 +1,5 @@
 // Real StoreProvider/reducer/Composer; fake SSE and API, no provider responses.
-import { test, expect } from "@playwright/test";
+import { test, expect } from "./page-error-guard";
 import { createServer, type ViteDevServer } from "vite";
 import react from "@vitejs/plugin-react";
 import tailwindcss from "@tailwindcss/vite";

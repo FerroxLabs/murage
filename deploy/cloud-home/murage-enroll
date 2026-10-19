@@ -1,0 +1,577 @@
+#!/usr/bin/python3 -I
+# SPDX-License-Identifier: AGPL-3.0-or-later
+"""Root-only machine enrollment. Unwrapped keys leave only via stdout pipe."""
+import base64
+import hashlib
+import http.client
+import json
+import os
+import pwd
+import random
+import re
+import shlex
+import stat
+import subprocess
+import sys
+import tempfile
+import time
+import urllib.error
+import urllib.parse
+import urllib.request
+
+class StaleGeneration(Exception):
+    pass
+
+class EnrollmentPending(Exception):
+    pass
+
+class EndpointRefused(Exception):
+    """The control plane answered the endpoint route with an HTTP error."""
+    def __init__(self, status, code, retry_after):
+        super().__init__(status)
+        self.status, self.code, self.retry_after = status, code, retry_after
+
+class EnrollmentNotConsumed(Exception):
+    """The control plane cannot have consumed the token; replaying is safe."""
+
+ENROLL_BUDGET_SECONDS = 30 * 60  # token TTL; fresh for every process start
+BACKOFF_FIRST_SECONDS = 1
+BACKOFF_MAX_SECONDS = 60
+
+class DeviceReadinessExpired(Exception):
+    pass
+
+def private_directory(path, expected_uid):
+    os.makedirs(path, mode=0o700, exist_ok=True)
+    info = os.lstat(path)
+    if os.path.realpath(path) != path or not stat.S_ISDIR(info.st_mode) or info.st_uid != expected_uid or stat.S_IMODE(info.st_mode) != 0o700:
+        raise ValueError("Invalid enrollment storage")
+
+def read_private(path, expected_uid):
+    fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW)
+    with os.fdopen(fd, "r", encoding="utf-8") as stream:
+        info = os.fstat(stream.fileno())
+        if not stat.S_ISREG(info.st_mode) or info.st_uid != expected_uid or info.st_mode & 0o077 or info.st_size > 65536:
+            raise ValueError("Invalid enrollment input")
+        return stream.read()
+
+def publish(path, text):
+    fd, temporary = tempfile.mkstemp(prefix=".enroll-", dir=os.path.dirname(path))
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as stream:
+            os.fchmod(stream.fileno(), 0o600)
+            stream.write(text); stream.flush(); os.fsync(stream.fileno())
+        os.replace(temporary, path)
+        directory = os.open(os.path.dirname(path), os.O_RDONLY | os.O_DIRECTORY)
+        try:
+            os.fsync(directory)
+        finally:
+            os.close(directory)
+    finally:
+        if os.path.exists(temporary):
+            os.unlink(temporary)
+
+def endpoint(value, allow_http=False, origin=False):
+    if not isinstance(value, str):
+        raise ValueError("Invalid enrollment endpoint")
+    url = urllib.parse.urlsplit(value)
+    if url.scheme not in ({"https", "http"} if allow_http else {"https"}) or not url.hostname or url.username or url.password or url.query or url.fragment or (origin and url.path not in {"", "/"}):
+        raise ValueError("Invalid enrollment endpoint")
+    if url.scheme == "http" and url.hostname not in {"127.0.0.1", "localhost", "::1"}:
+        raise ValueError("Invalid fixture endpoint")
+    return value.rstrip("/")
+
+class NoRedirect(urllib.request.HTTPRedirectHandler):
+    def redirect_request(self, *_args, **_kwargs):
+        raise ValueError("Enrollment redirect refused")
+
+def tracked(base, flag):
+    class Connection(base):
+        def connect(self):
+            super().connect()
+            flag.append(True)  # TCP (and TLS) established: bytes may now reach the server
+    return Connection
+
+def post(admin, home, operation, body, credential=None, timeout=15):
+    # Cloudflare's browser integrity check answers Python-urllib's default
+    # user agent with 403 (error 1010), so name the client explicitly.
+    headers = {"Content-Type": "application/json", "User-Agent": "murage-home/1"}
+    if credential is not None:
+        headers["Authorization"] = "Bearer " + credential
+    request = urllib.request.Request(admin + "/v1/machines/" + home + "/" + operation, data=json.dumps(body).encode(), headers=headers, method="POST")
+    connected = []
+    class Http(urllib.request.HTTPHandler):
+        def http_open(self, req):
+            return self.do_open(tracked(http.client.HTTPConnection, connected), req)
+    class Https(urllib.request.HTTPSHandler):
+        def https_open(self, req):
+            return self.do_open(tracked(http.client.HTTPSConnection, connected), req, context=self._context)
+    opener = urllib.request.build_opener(urllib.request.ProxyHandler({}), NoRedirect(), Http(), Https())
+    try:
+        with opener.open(request, timeout=timeout) as response:
+            raw = response.read(65537)
+            if response.status != 200 or len(raw) > 65536:
+                raise ValueError("Enrollment response refused")
+    except urllib.error.HTTPError as error:
+        if error.code == 409 and operation == "unwrap":
+            raise StaleGeneration() from None
+        if operation == "endpoint":
+            code = None
+            try:
+                parsed = json.loads(error.read(4097)[:4096])
+                code = parsed.get("error") if isinstance(parsed, dict) and isinstance(parsed.get("error"), str) else None
+            except (ValueError, OSError):
+                pass
+            retry_after = error.headers.get("retry-after", "") if error.headers else ""
+            raise EndpointRefused(error.code, code, int(retry_after) if retry_after.isdigit() and int(retry_after) <= 3600 else None) from None
+        if operation == "enroll":
+            # Failure classification (enroll only). A definite answer that
+            # cannot have consumed the token is retryable: 429 and 5xx (edge
+            # or control-plane unavailable) and the exact enrollment_pending
+            # 409. Every other 4xx is a definite refusal and every other
+            # outcome (request sent, no valid answer) is ambiguous; those
+            # keep the permanent marker and need admin rotation.
+            if error.code == 429 or 500 <= error.code <= 599:
+                raise EnrollmentNotConsumed() from None
+        if error.code == 409 and operation == "enroll":
+            raw = error.read(65537)
+            if len(raw) <= 65536:
+                try:
+                    # Only the exact nonconsumption response authorizes replay.
+                    value = json.loads(raw, object_pairs_hook=lambda pairs: dict(pairs) if len(dict(pairs)) == len(pairs) else None)
+                    if value == {"error": "enrollment_pending"}:
+                        raise EnrollmentPending() from None
+                except (json.JSONDecodeError, UnicodeDecodeError):
+                    pass
+        raise ValueError("Enrollment response refused") from None
+    except urllib.error.URLError:
+        # urllib raises URLError only for failures while connecting or
+        # sending the request; a failure reading the answer escapes as a raw
+        # OSError/HTTPException and stays ambiguous. If the connection was
+        # never established nothing reached the server, so replay is safe.
+        if operation == "enroll" and not connected:
+            raise EnrollmentNotConsumed() from None
+        raise
+    value = json.loads(raw)
+    if not isinstance(value, dict):
+        raise ValueError("Invalid enrollment response")
+    return value
+
+def user_fields(raw):
+    result = {}
+    for line in raw.splitlines():
+        match = re.fullmatch(r"(murage_enrollment_token|murage_home_id|murage_admin_url):\s*(.+)", line)
+        if match:
+            name, value = match.groups()
+            if name in result:
+                raise ValueError("Duplicate enrollment input")
+            words = shlex.split(value, comments=True)
+            if len(words) != 1 or not words[0] or len(words[0]) > 2048:
+                raise ValueError("Invalid enrollment input")
+            result[name] = words[0]
+    return result
+
+IDENTITY_FIELDS = ("murage_enrollment_token", "murage_home_id", "murage_admin_url")
+
+def read_claim(path, expected_uid):
+    # Warm-pool claim identity: written by the served cloud-config's write_files when a pooled server is claimed,
+    # because there user-data.txt holds only the #include line. Root-owned, exactly 0600, a regular file, never a
+    # symlink (O_NOFOLLOW refuses one with ELOOP); anything else is refused, not repaired.
+    # Served cloud-config contract (the control plane's claim payload must match it exactly, or enrollment refuses):
+    #   write_files:
+    #     - path: /etc/murage-home/claim-user-data
+    #       permissions: '0600'
+    #       owner: root:root
+    #       content: |
+    #         murage_home_id: <home id>
+    #         murage_enrollment_token: <one-time token>
+    #         murage_admin_url: <https admin origin>
+    # One "name: value" per line, the same lines user-data.txt carries on a direct create. murage-scrub-userdata
+    # shreds the file once the credential is committed.
+    try:
+        fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK | os.O_NOCTTY)
+    except FileNotFoundError:
+        return ""
+    except OSError:
+        raise ValueError("Invalid claim identity") from None
+    with os.fdopen(fd, "r", encoding="utf-8") as stream:
+        info = os.fstat(stream.fileno())
+        if not stat.S_ISREG(info.st_mode) or info.st_uid != expected_uid or stat.S_IMODE(info.st_mode) != 0o600 or info.st_size > 65536:
+            raise ValueError("Invalid claim identity")
+        text = stream.read(65537)  # the read itself is capped: the file can grow after fstat
+        if len(text) > 65536:
+            raise ValueError("Invalid claim identity")
+        return text
+
+def identity_fields(user_data, claim, expected_uid):
+    # Precedence: user-data.txt (a direct create puts the fields there), then the claim file. Whole-file, never mixed:
+    # a user-data.txt with any identity field is the only source, so a partial one still fails closed.
+    try:
+        raw = read_private(user_data, expected_uid)
+    except FileNotFoundError:
+        raw = ""
+    values = user_fields(raw)
+    # Presence is any "name:" line, even with a blank value (user_fields skips those): such a user-data.txt is the only
+    # source and then fails identity validation; it never falls back to the claim file.
+    if any(re.match(r"(murage_enrollment_token|murage_home_id|murage_admin_url)\s*:", line) for line in raw.splitlines()):
+        return values
+    return user_fields(read_claim(claim, expected_uid))
+
+def machine_credential(value):
+    if not isinstance(value, str):
+        raise ValueError("Invalid machine credential")
+    decoded = base64.b64decode(value, validate=True)
+    if len(decoded) != 32 or base64.b64encode(decoded).decode("ascii") != value:
+        raise ValueError("Invalid machine credential")
+    return value
+
+def home_fields(raw):
+    required = {"MURAGE_CLOUD_ROLE", "MURAGE_CLOUD_MACHINE_ID", "MURAGE_CLOUD_ADMIN_URL", "MURAGE_PUBLIC_ORIGIN"}
+    allowed = required | {"MURAGE_SITE_ORIGIN"}
+    result = {}
+    for line in raw.splitlines():
+        if not line.strip() or line.lstrip().startswith("#"):
+            continue
+        words = shlex.split(line, comments=True)
+        if len(words) != 1 or "=" not in words[0]:
+            raise ValueError("Invalid home metadata")
+        name, value = words[0].split("=", 1)
+        if name not in allowed or name in result or not value or len(value) > 2048:
+            raise ValueError("Invalid home metadata")
+        result[name] = value
+    if not required <= set(result) or result["MURAGE_CLOUD_ROLE"] != "home":
+        raise ValueError("Invalid home metadata")
+    return result
+
+def metadata(state, config, expected_uid, allow_http):
+    # The private credential is the final enrollment commit marker.
+    credential = machine_credential(read_private(state + "/credential", expected_uid).rstrip("\n"))
+    generation = int(read_private(state + "/generation", expected_uid))
+    values = home_fields(read_private(config + "/home.env", expected_uid))
+    home = values["MURAGE_CLOUD_MACHINE_ID"]
+    if not re.fullmatch(r"[A-Za-z0-9_-]{1,128}", home) or generation < 1:
+        raise ValueError("Invalid machine metadata")
+    admin = endpoint(values["MURAGE_CLOUD_ADMIN_URL"], allow_http)
+    endpoint(values["MURAGE_PUBLIC_ORIGIN"], allow_http, origin=True)
+    return credential, generation, home, admin
+
+def enroll(state="/var/lib/murage-home", config="/etc/murage-home", user_data="/var/lib/cloud/instance/user-data.txt", expected_uid=0, allow_http=False,
+           wall=time.time, monotonic=time.monotonic, sleep=time.sleep):
+    private_directory(state, expected_uid)
+    # Image config contains public files and may be 0755. Credential metadata
+    # itself stays root0600; the directory must never be service-writable.
+    os.makedirs(config, mode=0o700, exist_ok=True)
+    directory = os.lstat(config)
+    if os.path.realpath(config) != config or not stat.S_ISDIR(directory.st_mode) or directory.st_uid != expected_uid or directory.st_mode & 0o022:
+        raise ValueError("Invalid enrollment config")
+    # Enrolled: the committed credential decides, and no identity source is read. A later boot can find user-data
+    # re-fetched without the (single-use) payload and the claim file shredded; that is normal, not a failure.
+    if os.path.lexists(state + "/credential"):
+        metadata(state, config, expected_uid, allow_http)
+        return
+    values = identity_fields(user_data, config + "/claim-user-data", expected_uid)
+    home = values.get("murage_home_id", "")
+    token = values.get("murage_enrollment_token", "")
+    if not re.fullmatch(r"[A-Za-z0-9_-]{1,128}", home) or not token or len(token) > 512:
+        raise ValueError("Invalid enrollment identity")
+    admin = endpoint(values.get("murage_admin_url"), allow_http)
+    attempt = state + "/enrollment-attempt"
+    identity = hashlib.sha256((home + "\n" + token).encode()).hexdigest()
+    if os.path.lexists(attempt):
+        raise ValueError("Enrollment recovery requires admin rotation")
+    pending_path = state + "/enrollment-pending"
+    if os.path.lexists(pending_path):
+        # Legacy persisted wall budget: obsolete, every start has a fresh budget.
+        os.unlink(pending_path)
+    # The attempt marker precedes EVERY submission and survives any outcome
+    # that may have consumed the token. It is removed only after a definite
+    # nonconsumption answer, so a crash mid-request stays fail closed.
+    # Budget is per process (monotonic), not persisted: the control plane
+    # enforces the real token TTL, and a retried boot starts a new budget.
+    deadline = monotonic() + ENROLL_BUDGET_SECONDS
+    delay = BACKOFF_FIRST_SECONDS
+    while True:
+        remaining = deadline - monotonic()
+        if remaining <= 0:
+            raise ValueError("Enrollment budget exhausted")
+        publish(attempt, identity + "\n")
+        try:
+            result = post(admin, home, "enroll", {"token": token}, timeout=min(15, remaining))
+            break
+        except (EnrollmentPending, EnrollmentNotConsumed):
+            if read_private(attempt, expected_uid).strip() != identity:
+                raise ValueError("Enrollment attempt changed") from None
+            os.unlink(attempt)
+            directory_fd = os.open(state, os.O_RDONLY | os.O_DIRECTORY)
+            try:
+                os.fsync(directory_fd)
+            finally:
+                os.close(directory_fd)
+            sleep(min(delay, max(0, deadline - monotonic())))
+            delay = min(delay * 2, BACKOFF_MAX_SECONDS)
+    credential, generation = result.get("machineCredential"), result.get("generation")
+    if result.get("homeId") != home or not isinstance(credential, str) or type(generation) is not int or generation < 1:
+        raise ValueError("Invalid enrollment response")
+    credential = machine_credential(credential)
+    admin = endpoint(result.get("adminUrl"), allow_http)
+    public_origin = endpoint(result.get("publicOrigin"), allow_http, origin=True)
+    lines = {"MURAGE_CLOUD_ROLE": "home", "MURAGE_CLOUD_MACHINE_ID": home, "MURAGE_CLOUD_ADMIN_URL": admin, "MURAGE_PUBLIC_ORIGIN": public_origin}
+    # Optional: the murage.ai origin for the page's "Continue" button. Written only when it is a bare https origin; otherwise omitted.
+    site_origin = result.get("siteOrigin")
+    if site_origin is not None:
+        try:
+            lines["MURAGE_SITE_ORIGIN"] = endpoint(site_origin, False, origin=True)
+        except ValueError:
+            print("Enrollment siteOrigin ignored: not an https origin", file=sys.stderr)
+    publish(config + "/home.env", "".join(name + "=" + shlex.quote(value) + "\n" for name, value in lines.items()))
+    publish(state + "/generation", str(generation) + "\n")
+    publish(state + "/credential", credential + "\n")
+    # Credential is the final commit marker; the attempt marker remains permanent.
+
+TUNNEL_RUNTIME = "/run/murage-tunnel"
+TUNNEL_BUDGET_SECONDS = 30 * 60  # fresh for every process start, like enrollment
+# The control plane allows 20 reconciles per hour per machine: poll far below it
+# (5 s doubling to 240 s is about 14 calls in the 30 minute budget).
+TUNNEL_BACKOFF_FIRST_SECONDS = 5
+TUNNEL_BACKOFF_MAX_SECONDS = 240
+TUNNEL_RATE_LIMIT_SECONDS = 600
+
+class TunnelNotReady(Exception):
+    pass
+
+def tunnel_token(value):
+    # Cloudflare connector tokens are base64 text; refuse anything else so the
+    # value can never carry whitespace, quotes or option-like text.
+    if not isinstance(value, str) or not re.fullmatch(r"[A-Za-z0-9+/=_-]{16,4096}", value):
+        raise ValueError("Invalid connector token")
+    return value
+
+def fetch_tunnel_token(admin, home, credential, generation, public_host, allow_http=False, post=post):
+    result = post(admin, home, "endpoint", {"generation": generation}, credential)
+    info = result.get("endpoint")
+    if not isinstance(info, dict) or info.get("status") != "ready":
+        raise TunnelNotReady()
+    if info.get("hostname") != public_host:
+        # The endpoint must be the host this home serves; anything else is refused.
+        raise ValueError("Endpoint hostname mismatch")
+    return tunnel_token(result.get("connectorToken"))
+
+def write_tunnel_token(token, runtime=TUNNEL_RUNTIME, user="murage-tunnel", expected_uid=0):
+    account = pwd.getpwnam(user)
+    os.makedirs(runtime, mode=0o755, exist_ok=True)
+    info = os.lstat(runtime)
+    # The unit's UMask=0077 would leave this 0700 and lock out cloudflared's uid:
+    # the directory is root's and world-searchable; only the token file is private.
+    if stat.S_ISDIR(info.st_mode) and not stat.S_ISLNK(info.st_mode) and info.st_uid == expected_uid:
+        os.chmod(runtime, 0o755)
+        info = os.lstat(runtime)
+    if os.path.realpath(runtime) != runtime or not stat.S_ISDIR(info.st_mode) or info.st_uid != expected_uid or info.st_mode & 0o022:
+        raise ValueError("Invalid tunnel runtime directory")
+    fd, temporary = tempfile.mkstemp(prefix=".token-", dir=runtime)
+    try:
+        with os.fdopen(fd, "w", encoding="ascii") as stream:
+            os.fchmod(stream.fileno(), 0o400)
+            os.fchown(stream.fileno(), account.pw_uid, account.pw_gid)
+            stream.write(token + "\n"); stream.flush()
+        os.replace(temporary, runtime + "/token")
+    finally:
+        if os.path.exists(temporary):
+            os.unlink(temporary)
+
+def tunnel(state="/var/lib/murage-home", config="/etc/murage-home", expected_uid=0, allow_http=False, runtime=TUNNEL_RUNTIME, user="murage-tunnel",
+           monotonic=time.monotonic, sleep=time.sleep, post=post, start=None):
+    """Fetch the connector token of this home's managed endpoint and start the tunnel.
+
+    Runs only for an enrolled home (metadata needs the committed credential).
+    Retries with backoff while the endpoint is provisioning or unreachable; if
+    the budget runs out the home simply has no public endpoint (fail closed).
+    """
+    credential, generation, home, admin = metadata(state, config, expected_uid, allow_http)
+    public_host = urllib.parse.urlsplit(home_fields(read_private(config + "/home.env", expected_uid))["MURAGE_PUBLIC_ORIGIN"]).netloc
+    deadline = monotonic() + TUNNEL_BUDGET_SECONDS
+    delay = TUNNEL_BACKOFF_FIRST_SECONDS
+    while True:
+        pause = delay
+        try:
+            token = fetch_tunnel_token(admin, home, credential, generation, public_host, allow_http, post)
+            break
+        except EndpointRefused as refused:
+            # Retryable: 409 endpoint_busy, 502 endpoint_unavailable, 429 (slow down).
+            # Everything else (stale_generation, home_inactive, 401, 403, 404 no managed
+            # endpoint) is final: the home stays without a public endpoint.
+            if not (refused.status in (429, 502) or (refused.status == 409 and refused.code == "endpoint_busy")):
+                raise ValueError("Endpoint refused") from None
+            if refused.status == 429:
+                pause = max(pause, TUNNEL_RATE_LIMIT_SECONDS)
+            elif refused.retry_after:
+                pause = max(pause, refused.retry_after)
+        except (TunnelNotReady, ValueError, OSError, http.client.HTTPException):
+            pass
+        if deadline - monotonic() <= 0:
+            raise ValueError("Tunnel budget exhausted")
+        sleep(min(pause, max(0, deadline - monotonic())))
+        delay = min(delay * 2, TUNNEL_BACKOFF_MAX_SECONDS)
+    write_tunnel_token(token, runtime, user, expected_uid)
+    token = None
+    if start is None:
+        start = lambda: command(["/usr/bin/systemctl", "restart", "--no-block", "murage-tunnel.service"])
+    start()
+
+def wait_exact_device(device, exists=None, sleep=time.sleep, monotonic=time.monotonic):
+    if exists is None:
+        exists = os.path.exists
+    deadline = monotonic() + 120
+    while not exists(device):
+        if monotonic() >= deadline:
+            raise DeviceReadinessExpired()
+        sleep(1)
+
+def unwrap(state, config, expected_uid, allow_http):
+    credential, generation, home, admin = metadata(state, config, expected_uid, allow_http)
+    result = post(admin, home, "unwrap", {"generation": generation}, credential)
+    if type(result.get("generation")) is not int or result.get("generation") != generation or any(key in result for key in {"kek", "keyEncryptionKey", "wrappedDataKey"}):
+        raise ValueError("Invalid unwrap response")
+    for name in ["dataKey", "bootstrapSecret", "volumeKey"]:
+        value = result.get(name)
+        if not isinstance(value, str) or len(base64.b64decode(value, validate=True)) != 32 or base64.b64encode(base64.b64decode(value, validate=True)).decode() != value:
+            raise ValueError("Invalid unwrap response")
+    return result, home, generation
+
+def envelope(state="/var/lib/murage-home", config="/etc/murage-home", expected_uid=0, allow_http=False):
+    result, home, _ = unwrap(state, config, expected_uid, allow_http)
+    return {"version": 2, "machineId": home, "bootstrapSecret": result["bootstrapSecret"], "dataKey": result["dataKey"]}
+
+def command(args, key=None):
+    # Keys travel exclusively on stdin. Never surface stderr, which may contain
+    # device/transport-controlled text, into enrollment logs.
+    result = subprocess.run(args, input=key, stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=False)
+    if result.returncode:
+        raise ValueError("Volume operation refused")
+    return result.stdout.decode().strip()
+
+def luks_signatures(signatures):
+    # LUKS2 keeps a primary header at 0 and a secondary copy after it, so
+    # wipefs reports one or two crypto_LUKS entries of the same UUID. Anything
+    # else (another filesystem, a second LUKS UUID) is refused.
+    if not isinstance(signatures, list) or not 1 <= len(signatures) <= 2 or not all(isinstance(s, dict) for s in signatures):
+        return False
+    if any(s.get("type") != "crypto_LUKS" for s in signatures) or signatures[0].get("offset") != "0x0":
+        return False
+    uuids = {s.get("uuid") for s in signatures}
+    return len(uuids) == 1 and isinstance(next(iter(uuids)), str) and next(iter(uuids)) != ""
+
+SAMPLE_EDGE = 64 * 1024 * 1024
+SAMPLE_BLOCK = 4096
+SAMPLE_RANDOM_BLOCKS = 1000
+
+def volume_sample_zero(path, seed_text, edge=SAMPLE_EDGE, blocks=SAMPLE_RANDOM_BLOCKS):
+    """Fail closed unless the first and last `edge` bytes and `blocks` random
+    4 KiB blocks (offsets seeded by the home id, logged) are all zero."""
+    seed = int.from_bytes(hashlib.sha256(seed_text.encode()).digest()[:8], "big")
+    rng = random.Random(seed)
+    with open(path, "rb", buffering=0) as stream:
+        size = stream.seek(0, os.SEEK_END)
+        if size <= 0:
+            raise ValueError("Nonempty volume refused")
+        def scan(offset, length):
+            stream.seek(offset)
+            remaining = length
+            while remaining > 0:
+                chunk = stream.read(min(1024 * 1024, remaining))
+                if not chunk:
+                    raise ValueError("Volume read failed")
+                if any(chunk):
+                    print("murage-enroll: volume sample non-zero at offset %d" % offset, file=sys.stderr, flush=True)
+                    raise ValueError("Nonempty volume refused")
+                remaining -= len(chunk)
+                offset += len(chunk)
+        head = min(edge, size)
+        scan(0, head)
+        tail = min(edge, size - head)
+        if tail:
+            scan(size - tail, tail)
+        slots = size // SAMPLE_BLOCK
+        picks = sorted(rng.randrange(slots) for _ in range(blocks)) if slots else []
+        for slot in picks:
+            scan(slot * SAMPLE_BLOCK, min(SAMPLE_BLOCK, size - slot * SAMPLE_BLOCK))
+        print("murage-enroll: volume sample zero ok size=%d edge=%d random_blocks=%d seed=sha256(homeId)[:8]=%d first=%s" % (size, head, len(picks), seed, picks[:3]), file=sys.stderr, flush=True)
+
+def boot(state="/var/lib/murage-home", config="/etc/murage-home", user_data="/var/lib/cloud/instance/user-data.txt", expected_uid=0, allow_http=False):
+    enroll(state, config, user_data, expected_uid, allow_http)
+    result, home, generation = unwrap(state, config, expected_uid, allow_http)
+    volume = json.loads(read_private(config + "/volume.json", expected_uid))
+    if not isinstance(volume, dict) or set(volume) != {"provider", "id", "device", "new", "generation", "homeId"} or volume["homeId"] != home or type(volume["generation"]) is not int or volume["generation"] != generation or type(volume["new"]) is not bool:
+        raise ValueError("Invalid volume metadata")
+    if volume["provider"] not in {"hetzner", "vultr"} or not isinstance(volume["id"], str) or not re.fullmatch(r"[A-Za-z0-9-]{1,64}", volume["id"]):
+        raise ValueError("Invalid volume identity")
+    device = volume["device"]
+    prefix = "/dev/disk/by-id/scsi-0HC_Volume_" if volume["provider"] == "hetzner" else "/dev/disk/by-id/virtio-"
+    serial = volume["id"] if volume["provider"] == "hetzner" else device.removeprefix(prefix) if isinstance(device, str) else ""
+    if not isinstance(device, str) or not re.fullmatch(r"[A-Za-z0-9-]{1,64}", serial) or device != prefix + serial:
+        raise ValueError("Invalid volume identity")
+    wait_exact_device(device)
+    resolved = os.path.realpath(device)
+    if not stat.S_ISBLK(os.stat(resolved).st_mode):
+        raise ValueError("Volume is not a block device")
+    block = json.loads(command(["/usr/bin/lsblk", "--json", "--tree", "--bytes", "--output", "PATH,TYPE,SERIAL,MOUNTPOINTS", resolved]))["blockdevices"]
+    if len(block) != 1 or block[0].get("type") != "disk" or block[0].get("serial") != serial or any(block[0].get("mountpoints", [])):
+        raise ValueError("Volume identity refused")
+    mapper = "/dev/mapper/murage-data"
+    children = block[0].get("children", [])
+    if children and (len(children) != 1 or children[0].get("type") != "crypt" or os.path.realpath(children[0].get("path", "")) != os.path.realpath(mapper) or not os.path.exists(mapper)):
+        raise ValueError("Unexpected volume children")
+    key = base64.b64decode(result["volumeKey"], validate=True)
+    if os.path.exists(mapper):
+        status = command(["/usr/sbin/cryptsetup", "status", "murage-data"])
+        fields = dict(line.strip().split(":", 1) for line in status.splitlines() if ":" in line)
+        if os.path.realpath(fields.get("device", "").strip()) != resolved or fields.get("type", "").strip() != "LUKS2":
+            raise ValueError("Unexpected volume mapping")
+        if command(["/usr/sbin/blkid", "-s", "LABEL", "-o", "value", device]) != "murage-data-luks":
+            raise ValueError("Volume label mismatch")
+        command(["/usr/sbin/cryptsetup", "open", "--test-passphrase", "--key-file", "-", device], key)
+    else:
+        signatures = json.loads(command(["/usr/sbin/wipefs", "--json", "--no-act", device])).get("signatures")
+        if signatures == []:
+            if not volume["new"]:
+                raise ValueError("Existing volume has no LUKS header")
+            # A signature-free device can still contain data. Sample it before
+            # any irreversible format: any non-zero byte refuses. build host does not
+            # document new volumes as zeroed (see volume_sample_zero), so this is
+            # a tripwire, not a proof; a full scan took 9-20 minutes.
+            volume_sample_zero(resolved, home)
+            command(["/usr/sbin/cryptsetup", "luksFormat", "--type", "luks2", "--batch-mode", "--label", "murage-data-luks", "--key-file", "-", device], key)
+        elif not luks_signatures(signatures):
+            raise ValueError("Unknown volume signature")
+        header = json.loads(command(["/usr/sbin/cryptsetup", "luksDump", "--dump-json-metadata", device]))
+        if not isinstance(header.get("keyslots"), dict):
+            raise ValueError("Invalid LUKS2 header")
+        if command(["/usr/sbin/blkid", "-s", "LABEL", "-o", "value", device]) != "murage-data-luks":
+            raise ValueError("Volume label mismatch")
+        command(["/usr/sbin/cryptsetup", "open", "--type", "luks2", "--key-file", "-", device, "murage-data"], key)
+    # Format the filesystem only following our own new LUKS creation.
+    if 'signatures' in locals() and signatures == []:
+        command(["/usr/sbin/mkfs.ext4", "-L", "murage-data", mapper])
+    if command(["/usr/sbin/blkid", "-s", "TYPE", "-o", "value", mapper]) != "ext4" or command(["/usr/sbin/blkid", "-s", "LABEL", "-o", "value", mapper]) != "murage-data":
+        raise ValueError("Volume filesystem mismatch")
+
+def main():
+    if os.geteuid() != 0 or sys.argv[1:] not in [[], ["--envelope"], ["--boot"], ["--tunnel"]]:
+        raise ValueError("Root enrollment required")
+    os.umask(0o077)
+    if sys.argv[1:] == ["--boot"]:
+        boot()
+    elif sys.argv[1:] == ["--tunnel"]:
+        tunnel()
+    elif sys.argv[1:]:
+        print(json.dumps(envelope(), separators=(",", ":")))
+    else:
+        enroll()
+
+if __name__ == "__main__":
+    try:
+        main()
+    except (StaleGeneration, DeviceReadinessExpired):
+        sys.exit(78)
+    except Exception:
+        print("Cloud enrollment refused", file=sys.stderr)
+        sys.exit(1)

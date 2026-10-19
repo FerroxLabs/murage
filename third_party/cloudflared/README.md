@@ -13,6 +13,7 @@ executable can be staged:
 | macOS arm64 | `cloudflared-darwin-arm64.tgz` | `9042c2c5d8b2de78e60f313d5fb31b6c5c1cebde787a3caf1f2c9588084ac442` | `b61054d3d6326ea558cb49826eebf5676e0d0a36d51b546975096ca3e0e3c89d` |
 | macOS x64 | `cloudflared-darwin-amd64.tgz` | `f1727723c586500e2092368ae21871b3df7ddfd2cb097f22d81bee4a9c458bb4` | `b0f770e1e0b281399a57219b840fd8eef1cc25387a404124248157ea2073727a` |
 | Linux x64 | `cloudflared-linux-amd64` | `fcfb02b575a52ca1af2e3267af4e1517bcdeb30ac48c834c69abaed3c0576ad2` | same as release asset |
+| Linux arm64 (Cloud homes on the build host CAX) | `cloudflared-linux-arm64` | `7747d94570fb390cf47dcb4f9555c193c6355cda9793f0d878d9049e5d6a7790` | same as release asset |
 | Windows x64 | `cloudflared-windows-amd64.exe` | `c29eee2b121f5436a642eed69fd9767da7e7b8c510fa50aaa130337f931357b5` | same as release asset |
 
 The staged executables are generated build output and are intentionally not
