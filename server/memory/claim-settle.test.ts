@@ -2,7 +2,7 @@
 // Blocked jobs leave the open statuses (CLAIM-REDESIGN.md, CLAIM-DESIGN-FABLE.md): tests T1-T7, T9, T10 and T13. T8 is
 // claim-wake.test.ts, T11 claim-deny-restart.test.ts, T12 claim-settle-downgrade.test.ts. Rows examined per statement are
 // accounted by testing/claim-rows.ts (8.1); T7 asserts the plan each of its formulas rests on.
-import { mkdirSync, rmSync } from "node:fs";
+import { mkdirSync } from "node:fs";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { DATA_DIR } from "../config.ts";
 import { closeDatabase, database } from "../database.ts";
@@ -15,11 +15,12 @@ import { captureSource } from "./capture.ts";
 import { recordMemorySettlement } from "./settlement.ts";
 import { forgetTurnCaptureJob, turnCaptureJobId } from "./turn-capture-jobs.ts";
 import { claimSettleSweepFinished, claimSettleSweepStep, parkMaintenancePending, parkMaintenanceStep, parkReconcileStep, parkRetiredThreadJobs, reopenParkedThreadJobs, resetClaimSettleSweep, resetParkReconcile, resetParkSweep, SETTLE_SWEEP_SQL } from "./park.ts";
+import { removeTempDirSync } from "../testing/cleanup.ts";
 
 const NOW = 1_000_000;
 const OPEN = "('pending','partial','deferred','leased')";
 beforeEach(() => {
-  closeDatabase(); rmSync(DATA_DIR, { recursive: true, force: true }); mkdirSync(DATA_DIR, { recursive: true });
+  closeDatabase(); removeTempDirSync(DATA_DIR); mkdirSync(DATA_DIR, { recursive: true });
   setMemoryMode("capture"); jobs.resetMemoryClaimCursor(); resetParkSweep(); resetClaimSettleSweep();
   database().exec("PRAGMA synchronous=OFF");
 });
@@ -78,7 +79,7 @@ describe("T1: working turns never sit in the open statuses, and a claim costs th
   it("is flat", async () => {
     const perB: Array<{ b: number; execs: number[]; checks: number[]; examined: number[]; rows: number[] }> = [];
     for (const b of BOUNDS) {
-      closeDatabase(); rmSync(DATA_DIR, { recursive: true, force: true }); mkdirSync(DATA_DIR, { recursive: true });
+      closeDatabase(); removeTempDirSync(DATA_DIR); mkdirSync(DATA_DIR, { recursive: true });
       setMemoryMode("capture"); jobs.resetMemoryClaimCursor(); database().exec("PRAGMA synchronous=OFF");
       for (let i = 0; i < b; i++) recordMemorySettlement("thread", `turn-${i}`, "working");
       for (let i = 0; i < 3000; i++) captureSource(database(), { id: `text-${i}`, threadId: "thread", kind: "text", speaker: "owner", outcome: "recorded", text: `a note ${i}` });
@@ -411,6 +412,11 @@ describe("T7: query plans: the access path each row formula of testing/claim-row
     const check = plan(CLAIM_INDEX_SQL.check, 1);
     expect(check).toMatch(/SEARCH j USING INTEGER PRIMARY KEY \(rowid=\?\)/); expect(check).toMatch(/SEARCH s USING INDEX sqlite_autoindex_memory_sources_1 \(id=\?\)/);
     expect(check).toMatch(/SEARCH dn USING PRIMARY KEY/); expect(check).toMatch(/SEARCH t USING COVERING INDEX sqlite_autoindex_memory_tombstones_2/); noScan(check, "check");
+    // the open walk (first build, reconcile): memory_jobs_pending in its own order, then the source by its key
+    for (const [name, sql, params] of [["openFirst", CLAIM_INDEX_SQL.openFirst, ["pending", 8]], ["openTied", CLAIM_INDEX_SQL.openTied, ["pending", 0, 0, 8]], ["openLater", CLAIM_INDEX_SQL.openLater, ["pending", 0, 8]]] as const) {
+      const text = plan(sql, ...params);
+      expect(text, name).toMatch(/^SEARCH j USING INDEX memory_jobs_pending \(status=\?[^|]*\) \| SEARCH s USING INDEX sqlite_autoindex_memory_sources_1 \(id=\?\)( LEFT-JOIN)?$/); noScan(text, name);
+    }
     // settles: by rowid only, then the source probe and (denied) the seeks
     for (const [name, sql] of Object.entries(SETTLE_SQL)) {
       const text = plan(sql, '["1"]', NOW);

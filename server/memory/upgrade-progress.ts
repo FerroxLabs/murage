@@ -216,8 +216,10 @@ export class UpgradeProgressTracker {
     if (window.persist) {
       try { const saved = window.persist(this.overallHigh, this.overallHigh >= 1); this.savedHigh = Math.max(this.savedHigh, typeof saved === "number" ? saved : this.overallHigh); } catch { /* the mark is best effort: the last saved value stays the published one */ }
     } else this.savedHigh = this.overallHigh;
-    const stable = this.now() - this.progressAt > SLEEP_GAP_MS ? null : this.eta(), guess = stable === null ? this.guess() : null;
     const id = current?.id ?? "";
+    // an open-ended phase (its total slides with its done) has no real fraction, so it gets no time left either
+    const open = Object.hasOwn(COUNTED_UNITS, id) && COUNTED_UNITS[id] === "open";
+    const stable = open || this.now() - this.progressAt > SLEEP_GAP_MS ? null : this.eta(), guess = stable === null && !open ? this.guess() : null;
     this.touch(id);
     const exact = this.exactSource?.() ?? null;
     const progress = overlayCounts({
@@ -239,6 +241,7 @@ export class UpgradeProgressTracker {
     let step: Record<string, unknown> = { awakeElapsedMs: Math.round(this.awake.get(phaseId) ?? 0), unit: "none" };
     if (current && unit === "conversations" && current.total > 0) step = { ...step, unit, done: Math.floor(Math.min(current.done, current.total)), total: current.total };
     else if (current && unit === "sets" && current.total > 0) step = { ...step, unit, done: Math.min(current.done, current.total), total: current.total };
+    else if (current && unit === "open") step = { ...step, unit, done: Math.floor(current.done) };
     else if (current && unit === "messages" && current.counted !== null && exact && exact.messages > 0) step = { ...step, unit, done: current.counted, total: Math.max(exact.messages, current.counted) };
     const outside = { ...UNKNOWN_OUTSIDE, ...(this.stage === "starting" ? { complete: false as Tri } : {}), ...this.outside() };
     return buildUpgradeState({

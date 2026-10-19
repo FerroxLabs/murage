@@ -1,4 +1,4 @@
-import { mkdirSync, rmSync } from "node:fs";
+import { mkdirSync } from "node:fs";
 import { beforeEach, expect, it } from "vitest";
 import { DATA_DIR } from "../config.ts";
 import { closeDatabase, database } from "../database.ts";
@@ -11,8 +11,9 @@ import { prepareMemoryDisclosure, deliverMemoryDisclosure } from "./disclosures.
 import { requiresDesktopAuthority } from "../desktop-policy.ts";
 import { bindHumanThread, linkHumanBinding, observeVerifiedHuman, resolveHumanBinding } from "../human-principals.ts";
 import { LineageAllowance } from "./lineage-allowance.ts";
+import { removeTempDirSync } from "../testing/cleanup.ts";
 
-beforeEach(() => { closeDatabase(); rmSync(DATA_DIR,{recursive:true,force:true}); mkdirSync(DATA_DIR,{recursive:true}); });
+beforeEach(() => { closeDatabase(); removeTempDirSync(DATA_DIR); mkdirSync(DATA_DIR,{recursive:true}); });
 function fixture(thread = "private-a", humanPrincipal?: ReturnType<typeof resolveHumanBinding>) {
   const roster: MemoryRoster = {bots:[{id:"a",threadId:"private-a",section:"alpha"},{id:"b",threadId:"private-b",section:"beta"}],groups:[{id:"room",threadId:"room-thread",memberIds:["a","b"]}]};
   reconcileMemoryRoster(roster);

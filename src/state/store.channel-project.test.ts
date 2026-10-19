@@ -66,7 +66,7 @@ describe("giving a channel a purpose", () => {
 
   it("takes the whole block from the server frame the PATCH reply produces", () => {
     const next = reducer(withChannel(), {
-      type: "groupPatched",
+      type: "groupPatched", origin: { source: "stream" },
       group: {
         id: "room",
         channelProject: { goal: "Open the new site", status: "active", startedAt: 10, updatedAt: 10 },
@@ -90,7 +90,7 @@ describe("giving a channel a purpose", () => {
       channelProject: { goal: "Open the new site", status: "active" as const, startedAt: 10, updatedAt: 10 },
     } satisfies Group;
     const next = reducer(withChannel(project), {
-      type: "groupPatched",
+      type: "groupPatched", origin: { source: "stream" },
       group: { id: "room", channelProject: undefined },
     });
     expect(next.groups[0]?.channelProject).toBeUndefined();

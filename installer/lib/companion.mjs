@@ -132,6 +132,14 @@ export function companionEnv(opts) {
   delete base.MURAGE_COMPANION_INTERNAL_ORIGIN;
   delete base.MURAGE_COMPANION_HOSTED_URL;
   delete base.MURAGE_DOOR_NONCE;
+  // The control token here is the one derived from the door nonce, which is
+  // what `murage pair` presents. An inherited one would replace it and lock
+  // `murage pair` out.
+  delete base.MURAGE_COMPANION_CONTROL_TOKEN;
+  delete base.MURAGE_COMPANION_CONTROL_TOKEN_VIA;
+  // The desktop's crash-recovery secret has no meaning here.
+  delete base.MURAGE_COMPANION_RECOVERY_TOKEN;
+  delete base.MURAGE_COMPANION_RECOVERY_TOKEN_VIA;
   delete base.MURAGE_DOOR_VERSION;
 
   const origin = typeof opts.publicOrigin === "string" ? opts.publicOrigin.trim() : "";

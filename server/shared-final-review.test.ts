@@ -4,7 +4,7 @@
 // Lane X final review (review-final-findings.md at dd93eeb6): C5, C6, L2, L3,
 // L4 and the Chief roster's real "busy (shared work)" branch, each through the
 // code the server runs.
-import { mkdirSync, rmSync } from "node:fs";
+import { mkdirSync } from "node:fs";
 import { afterEach, beforeEach, expect, it } from "vitest";
 import { DATA_DIR } from "./config.ts";
 import { closeDatabase, database } from "./database.ts";
@@ -24,8 +24,9 @@ import { channelToProjectRows } from "./project-settings.ts";
 import { projectBotNowAnywhere, projectMemberNow, withProjectNow } from "./project-roster.ts";
 import { chiefOfStaffSystemPrompt } from "./chief-of-staff.ts";
 import { partitionToolRefusal } from "./shared-bots-roster.ts";
+import { removeTempDirSync } from "./testing/cleanup.ts";
 
-beforeEach(() => { closeDatabase(); rmSync(DATA_DIR, { recursive: true, force: true }); mkdirSync(DATA_DIR, { recursive: true }); _resetPending(); });
+beforeEach(() => { closeDatabase(); removeTempDirSync(DATA_DIR); mkdirSync(DATA_DIR, { recursive: true }); _resetPending(); });
 afterEach(() => _resetPending());
 
 function fixture() {

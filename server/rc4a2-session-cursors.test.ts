@@ -4,7 +4,7 @@
 // rc4: after the root-set reclaim ran (complete or partial), "Prepare to reinstall Murage 1.0.1" cannot leave a retained provider session resumable.
 // The case: a legacy native session with no receipts and an unprovable nonempty root-set id has no row after the reclaim; 1.0.1 reads "no row, no
 // receipts" as valid and would resume it with context 1.0.2 withheld. Every retained cursor is cleared, so 1.0.1 starts a fresh session.
-import { mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { beforeEach, expect, it } from "vitest";
@@ -12,8 +12,9 @@ import { DATA_DIR } from "./config.ts";
 import { closeDatabase, database } from "./database.ts";
 import { setMemoryMode } from "./memory/repository.ts";
 import { downgradeInstallationMemorySchema } from "./installation-memory-downgrade.ts";
+import { removeTempDirSync } from "./testing/cleanup.ts";
 
-beforeEach(() => { closeDatabase(); rmSync(DATA_DIR, { recursive: true, force: true }); mkdirSync(DATA_DIR, { recursive: true }); });
+beforeEach(() => { closeDatabase(); removeTempDirSync(DATA_DIR); mkdirSync(DATA_DIR, { recursive: true }); });
 
 /** Murage 1.0.1 (d950cbf67 server/memory/dispatch.ts retainedSessionInvalid): a session with a session-roots row on the unprovable set (or none provable) is
  * invalid; with NO row and no receipts it is valid and resumes. Reproduced over the file's own tables. */

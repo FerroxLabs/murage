@@ -110,7 +110,7 @@ describe("boot from view=sidebar", () => {
     t.fail();
     await t.scrollback.loadFirstPage("tg");
     await t.scrollback.loadFirstPage("tg");
-    t.dispatch({ type: "groupPatched", group: { id: "g1", name: "renamed" } });
+    t.dispatch({ type: "groupPatched", origin: { source: "stream" }, group: { id: "g1", name: "renamed" } });
     t.dispatch({ type: "taskSwitched", source: "local", bot: { ...t.bot("b2"), messages: b, hasMore: false } as Bot });
     t.dispatch(hydrate([rosterBot("b1", "ta", live[1]!), rosterBot("b2", "tb", b.at(-1)!)], [rosterRoom("g1", "tg", live[2]!, 9)]));
     assertNoCutRows(t.state);
@@ -250,7 +250,9 @@ describe("boot from view=sidebar", () => {
   it("test 15: a call starts only once the first page is held, so a page landing mid-call is not recited", () => {
     for (const [file, owner] of [["CallView.tsx", "bot"], ["GroupCallView.tsx", "group"]] as const) {
       const source = readFileSync(fileURLToPath(new URL(`../components/${file}`, import.meta.url)), "utf8");
-      expect(source).toContain(`if (!started.current && !${owner}.messagesUnloaded && !${owner}.pageStale && !${owner}.firstPageEvents) {`);
+      // a room has no stale state (ROOM-ORDER-DESIGN r6): its rows held across a hydrate are numbered and re-read by number
+      const stale = owner === "bot" ? ` && !${owner}.pageStale` : "";
+      expect(source).toContain(`if (!started.current && !${owner}.messagesUnloaded${stale} && !${owner}.firstPageEvents) {`);
       expect(source).toMatch(/if \(!started\.current\) return;\n\s+const fresh = unheardMessages\(/);
     }
   });

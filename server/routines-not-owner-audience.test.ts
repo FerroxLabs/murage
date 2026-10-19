@@ -3,7 +3,7 @@
 //
 // Design 5.4 / 7.4: a channel run enqueued with notOwnerAudience carries the flag on the run and into the startTurn
 // the manager actually calls, as defence beside the guest principal. A run without it carries nothing.
-import { mkdirSync, mkdtempSync, rmSync } from "node:fs";
+import { mkdirSync, mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
@@ -12,14 +12,15 @@ import { closeDatabase } from "./database.ts";
 import { linkHumanBinding, observeVerifiedHuman, resolveHumanBinding } from "./human-principals.ts";
 import { ownerMemoryTicket } from "./memory/authority.ts";
 import { RoutineManager } from "./routines.ts";
+import { removeTempDirSync } from "./testing/cleanup.ts";
 
 let dir: string;
 beforeEach(() => {
   cachedPrincipal = undefined;
-  closeDatabase(); rmSync(DATA_DIR, { recursive: true, force: true }); mkdirSync(DATA_DIR, { recursive: true });
+  closeDatabase(); removeTempDirSync(DATA_DIR); mkdirSync(DATA_DIR, { recursive: true });
   dir = mkdtempSync(join(tmpdir(), "murage-routines-audience-"));
 });
-afterEach(() => { rmSync(dir, { recursive: true, force: true }); });
+afterEach(() => { removeTempDirSync(dir); });
 
 let cachedPrincipal: ReturnType<typeof resolveHumanBinding> | undefined;
 function principal() {

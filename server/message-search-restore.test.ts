@@ -6,7 +6,7 @@
 // live, indexed installation is accepted and carries the index; the restored
 // copy answers search identically; an archive from before the index restores
 // and gets one; and a tampered index definition is still refused.
-import { copyFileSync, existsSync, mkdirSync, mkdtempSync, rmSync } from "node:fs";
+import { copyFileSync, existsSync, mkdirSync, mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
@@ -19,6 +19,7 @@ import { closeMessageDb, deleteThread, insertMessage, searchMessages, updateMess
 import { stopWalMaintenance } from "./wal-maintenance.ts";
 import { backfillMessageSearchIndex, messageSearchIndexReady, trigramQuery } from "./message-search-index.ts";
 import type { Message } from "./store.ts";
+import { removeTempDirSync } from "./testing/cleanup.ts";
 
 let clock = 0;
 const msg = (id: string, text: string): Message => ({ id, role: "user", kind: "text", text, at: ++clock });
@@ -43,13 +44,13 @@ function stage(): string { const root = mkdtempSync(join(tmpdir(), "murage-searc
 /** What the restore flow does with the snapshot: it becomes the new installation's messages.db. */
 function restoreInto(snapshot: string) {
   closeMessageDb();
-  rmSync(DATA_DIR, { recursive: true, force: true });
+  removeTempDirSync(DATA_DIR);
   mkdirSync(DATA_DIR, { recursive: true });
   copyFileSync(snapshot, join(DATA_DIR, "messages.db"));
 }
 
-beforeEach(() => { closeMessageDb(); rmSync(DATA_DIR, { recursive: true, force: true }); mkdirSync(DATA_DIR, { recursive: true }); });
-afterEach(() => { closeMessageDb(); for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true }); });
+beforeEach(() => { closeMessageDb(); removeTempDirSync(DATA_DIR); mkdirSync(DATA_DIR, { recursive: true }); });
+afterEach(() => { closeMessageDb(); for (const root of roots.splice(0)) removeTempDirSync(root); });
 
 it("snapshots an indexed installation, carries the index, and restored search answers identically", async () => {
   populate();

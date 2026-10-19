@@ -8,7 +8,7 @@
 // memory_propose_correction work on a remembered line without a memory_search
 // round trip and without any record id in the prompt; recall never hands the
 // engine the dispatching message's own just-captured chunk.
-import { mkdirSync, rmSync } from "node:fs";
+import { mkdirSync } from "node:fs";
 import { beforeEach, expect, it } from "vitest";
 import { DATA_DIR } from "../config.ts";
 import { closeDatabase, database } from "../database.ts";
@@ -25,8 +25,9 @@ import { decorateMemoryInstance } from "../harness/memory-adapter.ts";
 import { makeFakeDriver } from "../testing/fake-driver.ts";
 import { roomContextMessageIds, roomContextMessages } from "../room-context.ts";
 import { LineageAllowance } from "./lineage-allowance.ts";
+import { removeTempDirSync } from "../testing/cleanup.ts";
 
-beforeEach(() => { closeDatabase(); rmSync(DATA_DIR,{recursive:true,force:true}); mkdirSync(DATA_DIR,{recursive:true}); });
+beforeEach(() => { closeDatabase(); removeTempDirSync(DATA_DIR); mkdirSync(DATA_DIR,{recursive:true}); });
 const PROVENANCE = /sourceId|startByte|endByte|scopeId|"evidence"|"revision"|"version"/;
 /** The pinned line grammar: a turn-local handle, an attribution in parentheses,
  * one JSON string literal. Nothing else may appear on a remembered line. */

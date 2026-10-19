@@ -2,6 +2,7 @@ import { memoryExtractionMessages } from "./extract.ts";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { ProviderInstance } from "../contracts.ts";
 import { memoryExtractorConnections, resolveMemoryExtractor } from "./extractor-connections.ts";
+import { removeTempDirSync } from "../testing/cleanup.ts";
 
 afterEach(() => vi.unstubAllGlobals());
 
@@ -65,7 +66,7 @@ it("pauses a refused default until the key changes and never keeps a revoked key
 
 it("offers a single provider key without selecting it and resolves replacements at dispatch",async()=>{
  const {ProviderConnectionsService}=await import("../provider-connections.ts");const {resolveLearningConnection}=await import("./extractor-connections.ts");
- const {mkdtempSync,rmSync}=await import("node:fs"),{tmpdir}=await import("node:os"),{join}=await import("node:path");const root=mkdtempSync(join(tmpdir(),"learning-provider-"));
+ const {mkdtempSync}=await import("node:fs"),{tmpdir}=await import("node:os"),{join}=await import("node:path");const root=mkdtempSync(join(tmpdir(),"learning-provider-"));
  let row={id:"fixture",preset:"openai",label:"My key",enabled:true,key:"fixture-key-one",revision:"r1"};
  const service=new ProviderConnectionsService({readBank:()=>JSON.stringify([row]),cacheDir:root,fetch:async()=>new Response(JSON.stringify({data:[{id:"gpt-fixture",output_modalities:["text"]}]}))});
  try{
@@ -80,7 +81,7 @@ it("offers a single provider key without selecting it and resolves replacements 
  expect(JSON.parse(String((request.mock.calls.at(-1) as unknown as [URL,RequestInit])[1].body)).max_tokens).toBe(8);
  row={...row,enabled:false};expect(resolveLearningConnection({...input,selected:"provider:fixture",readKey:()=>"flux-fake"})).toMatchObject({source:"none",extractor:null});
  await expect(selected.extractor!("tea",2000,new AbortController().signal)).rejects.toThrow("MEMORY_EXTRACTOR_UNAVAILABLE");
- }finally{rmSync(root,{recursive:true,force:true});vi.unstubAllGlobals();}
+ }finally{removeTempDirSync(root);vi.unstubAllGlobals();}
 });
 
 it("returns none when credentials disappear during resolution",async()=>{
@@ -89,14 +90,14 @@ it("returns none when credentials disappear during resolution",async()=>{
 });
 it("excludes provider Flux and de-duplicates the legacy compatible engine",async()=>{
  const {ProviderConnectionsService}=await import("../provider-connections.ts");const {resolveLearningConnection}=await import("./extractor-connections.ts");
- const {mkdtempSync,rmSync}=await import("node:fs"),{tmpdir}=await import("node:os"),{join}=await import("node:path");const root=mkdtempSync(join(tmpdir(),"learning-choices-"));
+ const {mkdtempSync}=await import("node:fs"),{tmpdir}=await import("node:os"),{join}=await import("node:path");const root=mkdtempSync(join(tmpdir(),"learning-choices-"));
  const service=new ProviderConnectionsService({readBank:()=>JSON.stringify([{id:"bank-flux",preset:"flux",label:"Flux bank",enabled:true,key:"sk-flux-fixture-key",revision:"r"}]),cacheDir:root,legacyConnections:()=>[{id:"legacy-openai-compatible",preset:"openai",label:"Existing key",enabled:true,key:"fixture-key",revision:"r",legacy:true,managedIn:"engines"}],fetch:async()=>new Response(JSON.stringify({data:[{id:"gpt-4",output_modalities:["text"]}]}))});
  try{
  await service.refresh("bank-flux");await service.refresh("legacy-openai-compatible");
  const instance={instanceId:"compatible",driverKind:"openai-compat",displayName:"Existing key",enabled:true,extractMemory:async()=>"[]"} as unknown as ProviderInstance;
  const choices=memoryExtractorConnections([instance],null,service);expect(choices.some(c=>c.instanceId==="provider:bank-flux")).toBe(false);
  expect(choices.filter(c=>c.eligible)).toHaveLength(1);expect(resolveLearningConnection({selected:null,instances:[instance],providerConnections:service,readKey:()=>null,defaultOn:false}).suggestion?.instanceId).toBe("compatible");
- }finally{rmSync(root,{recursive:true,force:true});}
+ }finally{removeTempDirSync(root);}
 });
 
 it.each(["default","chosen","instance"])("forwards the reserved grounding maximum through %s",async kind=>{

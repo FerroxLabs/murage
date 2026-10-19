@@ -1,14 +1,15 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // F19, A21: sixty routines due at the top of the hour. Install-wide cap, a spread over the minute, owner first,
 // an indexed due time, and every run started exactly once.
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { automaticRunCap, RoutineManager, type RoutineManagerOptions } from "./routines.ts";
+import { removeTempDirSync } from "./testing/cleanup.ts";
 
 const dirs: string[] = [];
-afterEach(() => { for (const dir of dirs.splice(0)) rmSync(dir, { recursive: true, force: true }); });
+afterEach(() => { for (const dir of dirs.splice(0)) removeTempDirSync(dir); });
 
 const START = new Date(2026, 9, 10, 8, 59, 0).getTime();
 const TOP = START + 60_000; // 9:00
@@ -68,17 +69,30 @@ describe("routine bursts at the top of the hour", () => {
 
   it("spreads on-time runs over the minute: each routine at its own fixed offset, none twice, none missed", async () => {
     const h = fleet({ dispatchStaggerMs: 60_000 });
-    addRoutines(h.manager, 60);
+    const routines = addRoutines(h.manager, 60);
     const perTick: number[] = [];
+    // Routine ids are random, so how many land in each ten-second slice of the minute is chance (a binomial draw: more
+    // than 20 of 60 in one slice happens about once in 350 runs). The assertion is therefore on the exact spread the
+    // offsets give: every tick starts precisely the routines whose offset has come due since the tick before it.
+    const offsets = routines.map(routine => RoutineManager.staggerOffset(routine.id, 60_000));
+    const dueBy = (elapsed: number) => offsets.filter(offset => offset <= elapsed).length;
+    const expectedPerTick: number[] = [];
     for (let at = TOP; at <= TOP + 70_000; at += 10_000) {
+      expectedPerTick.push(dueBy(at - TOP) - (at === TOP ? 0 : dueBy(at - 10_000 - TOP)));
       h.setNow(at);
       const before = h.started.length;
       await h.manager.tick();
       perTick.push(h.started.length - before);
     }
     expect(h.started).toHaveLength(60);
-    expect(Math.max(...perTick)).toBeLessThanOrEqual(20);
-    expect(perTick.filter(count => count > 0).length).toBeGreaterThanOrEqual(5);
+    expect(perTick).toEqual(expectedPerTick);
+    // never the whole fleet at once
+    expect(Math.max(...perTick)).toBeLessThan(60);
+    // the hash itself spreads evenly (fixed ids, so this does not vary): 600 ids put 60 to 140 in each ten-second slice
+    const slices = new Array(6).fill(0);
+    for (let index = 0; index < 600; index++) slices[Math.floor(RoutineManager.staggerOffset(`routine-${index}`, 60_000) / 10_000)]++;
+    expect(Math.min(...slices)).toBeGreaterThanOrEqual(60);
+    expect(Math.max(...slices)).toBeLessThanOrEqual(140);
     expect([...runsPerRoutine(h.manager).values()].every(count => count === 1)).toBe(true);
     // the offset is a pure function of the routine id and the window
     expect(RoutineManager.staggerOffset("routine-a", 60_000)).toBe(RoutineManager.staggerOffset("routine-a", 60_000));
@@ -341,9 +355,10 @@ describe("routine bursts at the top of the hour", () => {
     const h = fleet({ dispatchStaggerMs: 60_000, botState: () => busy ? "busy" : "ready" });
     // 5 minutes is the shortest interval the manager accepts (routines.ts: 5 to 1440)
     h.manager.create({ name: "Every five minutes", prompt: "Check", botId: "bot-0", target: "bot", runOn: "ember", enabled: true, schedule: { type: "interval", everyMinutes: 5, anchorAt: TOP } });
-    for (let at = TOP; at <= TOP + 12 * 60_000; at += 10_000) { h.setNow(at); await h.manager.tick(); }
+    // busy past four occurrences (5, 10, 15 and 20 minutes), so the one queued run is carried across them and starts over 20 minutes late
+    for (let at = TOP; at <= TOP + 22 * 60_000; at += 10_000) { h.setNow(at); await h.manager.tick(); }
     busy = false;
-    for (let at = TOP + 12 * 60_000; at <= TOP + 19 * 60_000; at += 1_000) { h.setNow(at); await h.manager.tick(); if (h.started.length) break; }
+    for (let at = TOP + 22 * 60_000; at <= TOP + 25 * 60_000; at += 1_000) { h.setNow(at); await h.manager.tick(); if (h.started.length) break; }
     const run = h.manager.listRuns().find(entry => entry.startedAt !== undefined)!;
     expect(run).toBeDefined();
     // the origin is the first due time, recorded when the run was scheduled, though the run was moved on to a newer occurrence

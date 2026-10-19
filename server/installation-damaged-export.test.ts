@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import * as yauzl from "yauzl";
@@ -8,9 +8,10 @@ import { acquireDataDirLease } from "../electron/data-dir-lease.mjs";
 import { inspectInstallationArchive } from "./installation-archive.ts";
 import { prepareInstallationRestore } from "./installation-restore-preparation.ts";
 import { writeInstallationDamagedExport } from "./installation-damaged-export.ts";
+import { removeTempDirSync } from "./testing/cleanup.ts";
 
 const roots: string[] = [];
-afterEach(() => { for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true }); });
+afterEach(() => { for (const root of roots.splice(0)) removeTempDirSync(root); });
 function fixture() {
   const root = mkdtempSync(join(tmpdir(), "murage-damaged-export-test-")); roots.push(root);
   const data = join(root, "source"), target = join(root, "preservation.zip"); mkdirSync(data);

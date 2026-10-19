@@ -5,7 +5,7 @@
 //   S4 the 1.0.1 queued-messages.json import never loses a line and never doubles one
 //   S5 a restored backup never runs what was waiting when it was taken
 //   S6 a rolled-back outer transaction leaves no phantom message in the cache, the events or the parent chain
-import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
@@ -18,9 +18,10 @@ import { importLegacyQueueFile, recoverMirroredQueue, type SteerQueueEntries } f
 import { Store } from "./store.ts";
 import { sendFingerprint } from "./send-idempotency.ts";
 import { scopedTx } from "./tx-scope.ts";
+import { removeTempDirSync } from "./testing/cleanup.ts";
 
 const dirs: string[] = [];
-afterEach(() => { for (const d of dirs.splice(0)) rmSync(d, { recursive: true, force: true }); });
+afterEach(() => { for (const d of dirs.splice(0)) removeTempDirSync(d); });
 const tmp = () => { const d = mkdtempSync(join(tmpdir(), "pm-sends-")); dirs.push(d); return d; };
 
 /** A store whose lines survive a "restart" (the same instance is reused) and that honours stable ids. */
@@ -190,7 +191,7 @@ describe("S5b restore-held sends are not run by a retry of the same send id", ()
 });
 
 describe("S6 a rolled-back outer transaction publishes nothing", () => {
-  beforeEach(() => { closeDatabase(); rmSync(DATA_DIR, { recursive: true, force: true }); });
+  beforeEach(() => { closeDatabase(); removeTempDirSync(DATA_DIR); });
 
   const chain = (store: Store, threadId: string) => store.messagesFor(threadId).map((m) => m.id);
 

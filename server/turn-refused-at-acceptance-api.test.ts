@@ -244,7 +244,7 @@ posixOnly("a turn refused at acceptance releases the workspace writer lease", ()
       const chips = (thread: any[]) => thread.filter(message => typeof message.tool?.name === "string" && message.tool.name.startsWith("error:")).map(message => message.tool.name);
       expect(chips(await messages(room.threadId))).toEqual([]);
       await expect.poll(async () => (await replies()).length, { timeout: 15000 }).toBe(1);
-      expect(readFileSync(fixture.info.logPath, "utf8")).toContain(`[memory] context revoked during dispatch on thread ${room.threadId}; re-preparing once (room member Room member A)`);
+      expect(readFileSync(fixture.info.logPath, "utf8")).toContain(`[memory] context revoked during dispatch on thread ${room.threadId}; re-preparing (1 of 3, room member Room member A)`);
       const thread = await messages(room.threadId);
       expect(thread.filter(message => message.role === "user" && message.kind === "text").map(message => message.text)).toEqual(["room turn held in its dispatch window"]);
       const reply = (await replies())[0];

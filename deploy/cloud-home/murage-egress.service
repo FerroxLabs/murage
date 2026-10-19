@@ -1,0 +1,18 @@
+# SPDX-License-Identifier: AGPL-3.0-or-later
+[Unit]
+Description=Murage Cloud egress rules
+After=data.mount
+Requires=data.mount
+Before=murage-home.service murage-proxy.service
+
+[Service]
+Type=oneshot
+User=root
+Group=root
+ExecStart=/usr/bin/python3 -I /usr/local/libexec/murage-browser-network
+ExecReload=/usr/bin/python3 -I /usr/local/libexec/murage-browser-network
+ExecStartPost=/usr/sbin/sysctl -w net.ipv4.ip_forward=1
+RemainAfterExit=yes
+
+[Install]
+RequiredBy=murage-home.service murage-proxy.service

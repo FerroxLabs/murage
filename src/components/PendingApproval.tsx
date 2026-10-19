@@ -7,8 +7,8 @@
 // the detail in plain words with every argument visible (a command stays
 // whole, in monospace; Show details reveals the original text), and the buttons ordered least-destructive-last so
 // the primary action sits under your thumb.
-import { memo } from "react";
-import { useStore, type Bot, type Message } from "@/state/store";
+import { memo, useEffect, useState } from "react";
+import { useStore, useStoreIfAny, type Bot, type Message } from "@/state/store";
 import { cn } from "@/lib/cn";
 import { SkillRequestPreview } from "@/components/SkillRequestPreview";
 import { ApprovalDetailBody } from "@/components/ApprovalDetailBody";
@@ -17,12 +17,17 @@ import { reviewedSkillSha256 } from "../../shared/skill-request";
 import { plainApproval, plainApprovalReady, usePlainApprovalReady } from "@/lib/plain-approval";
 import { delegationAction } from "../../shared/delegation-tool";
 import { canonicalConnectedAppToolName } from "../../shared/connected-app-names";
+import { actionGrantWords } from "../../shared/app-action-words";
 import { useDesktopSurface } from "@/lib/use-surface";
 import { inNativeShell } from "@/lib/native-shell";
-import { allowNeedsComputer, approvalSurface, useComputerOnlyRefusal } from "@/lib/approval-surface";
+import { allowNeedsComputer, approvalSurface, useComputerOnlyRefusal, type ApprovalSurface } from "@/lib/approval-surface";
 import { ComputerOnlyNotice } from "@/components/ComputerOnlyNotice";
 import { useDecisionFeedback, type DecisionHooks } from "@/lib/approval-feedback";
 import { ApprovalBusyLabel, ApprovalConfirmLine, PRESSED, approvalButton } from "@/components/ApprovalFeedback";
+import { requestsWaiting, type QueueStatus } from "@/lib/approval-queue";
+import { GrantRequestRows, RoutineGrantChoice } from "@/components/RoutineGrantParts";
+import { noteRoutineSaved } from "@/lib/routine-grant-saved";
+import { routineChoiceElsewhereWords, spokenGrantRows } from "@/lib/routine-grant-words";
 
 interface ApprovalLabels {
   [tool: string]: string;
@@ -158,6 +163,10 @@ export function spokenApprovalPrompt(pending: Pending, requester: string, firstP
     return `${requester} wants to use this computer: your screen, mouse and keyboard. Should I allow it for this bot from now on?`;
   }
   if (!isRoutineRequest) {
+    // A13-FIX-DESIGN C5: a request whose card lists its operations is read
+    // from those same words, every operation and recipient in call order
+    const rows = spokenGrantRows(pending.message.card?.grantRequest?.rows ?? []);
+    if (rows) return firstPerson ? `Can I do this? ${rows} Yes or no.` : `${requester} would like to do this. ${rows} Yes or no?`;
     const action = spokenToolAction(pending.tool, pending.detail);
     return firstPerson ? `Can I ${action}? Yes or no.` : `${requester} would like to ${action}. Yes or no?`;
   }
@@ -165,7 +174,40 @@ export function spokenApprovalPrompt(pending: Pending, requester: string, firstP
   return `${requester} asks: ${title}${/[.!?]$/.test(title) ? "" : "."} Review the schedule and instructions on screen. Should I confirm it?`;
 }
 
-function label(pending: Pending): string {
+/** Said with a presented request while more than one waits (Rule 83c): the
+ * owner can hear every request, or pick one, before answering any. */
+export const QUEUE_OFFER = "Say next for the next request, read them to hear every request, or say a number to pick one.";
+/** Said for a yes or no that does not name ONE presented request. */
+export const QUEUE_WHICH = "Which request? Say its number, or say next.";
+/** Said for a yes that would reach past the presented request ("yes to all"). */
+export const QUEUE_ONE_AT_A_TIME = "I answer one request at a time. Say yes or no to this one, or say next.";
+
+/** One request as a call reads it in the list (Rule 83c): who asks, for which
+ * routine, and what. It asks nothing, so no yes can answer it. */
+export function spokenQueueItem(pending: Pending, requester: string, routine?: string): string {
+  const forRoutine = routine ? ` for the routine ${routine}` : "";
+  if (isSkillApproval(pending)) {
+    return `${requester} wants to ${pending.message.card?.skillRequest?.action === "update" ? "update" : "enable"} a learned skill`;
+  }
+  if (isHostConsentApproval(pending)) return `${requester} wants to use this computer`;
+  if (isRoutineApproval(pending)) {
+    const title = (pending.message.card?.title.trim() || "Confirm this routine").replace(/[.!?]+$/, "");
+    return `${requester} asks: ${title}`;
+  }
+  const rows = spokenGrantRows(pending.message.card?.grantRequest?.rows ?? []);
+  if (rows) return `${requester} would like to do this${forRoutine}. ${rows.replace(/[.]$/, "")}`;
+  return `${requester} would like to ${spokenToolAction(pending.tool, pending.detail)}${forRoutine}`;
+}
+
+/** Every waiting request read aloud, numbered in the listed order, ending by
+ * asking which one: reading the list answers none of them. */
+export function spokenQueueList(list: readonly Pending[], nameFor: (pending: Pending) => string, routineFor?: (pending: Pending) => string | undefined): string {
+  const items = list.map((pending, index) => `${index + 1}: ${spokenQueueItem(pending, nameFor(pending), routineFor?.(pending))}.`);
+  return `${requestsWaiting(list.length)}. ${items.join(" ")} ${QUEUE_WHICH}`;
+}
+
+/** What a card asks, in the panel's own words; the queue lists it by these. */
+export function approvalLabel(pending: Pending): string {
   if (isSkillApproval(pending)) {
     return pending.message.card?.skillRequest?.action === "update"
       ? "Update this learned skill"
@@ -214,7 +256,7 @@ export const PendingApprovalPanel = memo(function PendingApprovalPanel({
             {index + 1} of {count}
           </span>
         )}
-        <span className="text-[13px] text-ink">{label(pending)}</span>
+        <span className="text-[13px] text-ink">{approvalLabel(pending)}</span>
         {!(plainApproval(pending.tool, pending.detail) && !isSkillApproval(pending) && !isRoutineApproval(pending)) && <span className="font-mono text-[11px] text-ink-secondary">
           {isSkillApproval(pending)
             ? pending.message.card?.skillRequest?.action === "update" ? "update_skill" : "stage_skill"
@@ -235,25 +277,51 @@ export const PendingApprovalPanel = memo(function PendingApprovalPanel({
       {pending.message.card?.skillRequest && (
         <SkillRequestPreview request={pending.message.card.skillRequest} />
       )}
+      <PendingGrantRows pending={pending} />
       {pending.held && <CollapsibleText text={pending.held} className="mt-2 text-[12px] text-warning" />}
       {!pending.held && needsRoutineReview(pending) && <p className="mt-2 text-[12px] text-warning">This older routine request needs a fresh review. Cancel it and ask the bot to propose it again.</p>}
     </div>
   );
 });
 
+/** AMEND-13 Rule 82: every operation the card would run, in call order. The
+ * routine's (or bot's) remembered keys let a new recipient say why the
+ * remembered action did not cover them. */
+function PendingGrantRows({ pending }: { pending: Pending }) {
+  const store = useStoreIfAny();
+  const card = pending.message.card;
+  const rows = card?.grantRequest?.rows ?? [];
+  if (!rows.length) return null;
+  const routine = card?.routineId ? store?.state.routines.find((candidate) => candidate.id === card.routineId) : undefined;
+  const botId = pending.message.from?.botId;
+  const remembered = routine?.alwaysAllow ?? (botId ? store?.state.bots.find((candidate) => candidate.id === botId)?.alwaysAllow : undefined);
+  const routineName = card?.grantRequest?.routine?.routineName ?? routine?.name;
+  return <GrantRequestRows rows={rows} remembered={remembered} routineName={routineName} />;
+}
+
 /** Which grants a card offers besides Allow once and Deny, decided from what
  * the SERVER put on the card, so a client can never offer a wider grant than
  * the one it would record. A stop-line card (deleting outside its folder,
  * paying, messaging someone new) also offers "Allow for this task": the same
  * kind of action in the same place until the task ends. */
-export function approvalGrants(pending: Pending, opts: { desktop: boolean | undefined; hasBot: boolean }): { always: boolean; exact: boolean; forTask: boolean; forRoutine: boolean } {
+export function approvalGrants(pending: Pending, opts: { desktop: boolean | undefined; hasBot: boolean; surface?: ApprovalSurface }): { always: boolean; exact: boolean; forTask: boolean; forRoutine: boolean } {
   const durable = isRoutineApproval(pending) || isSkillApproval(pending);
   if (durable || isHostConsentApproval(pending)) return { always: false, exact: false, forTask: false, forRoutine: false };
   const card = pending.message.card;
+  // Rule 81d: the owner's computer or the paired phone app; the server runs
+  // the same checks for both, and a browser pairing writes no grant.
+  const owner = opts.desktop === true || opts.surface === "app";
+  const offer = card?.grantRequest?.routine;
+  if (offer) {
+    // Rule 82a: a routine card's choices are Allow once, Always allow for
+    // this routine (when the server offered it) and Deny
+    return { always: false, exact: false, forTask: false, forRoutine: owner && offer.eligible && Boolean(card?.routineId) };
+  }
   return {
     // a card raised in a routine's run: the same scoped key, kept on the routine
-    forRoutine: opts.desktop === true && Boolean(card?.routineAllowKey && card.routineId),
-    always: opts.desktop === true && opts.hasBot && Boolean(pending.allowKey),
+    forRoutine: owner && Boolean(card?.routineAllowKey && card.routineId),
+    // Rule 78c: a several-action card remembers its whole set
+    always: opts.desktop === true && opts.hasBot && Boolean(pending.allowKey || card?.allowKeys?.length),
     // the narrow grant: this command, in this folder, on this engine
     exact: opts.desktop === true && opts.hasBot && Boolean(pending.exactAllowKey),
     forTask: opts.hasBot && Boolean(pending.message.card?.taskAllowKey),
@@ -265,8 +333,14 @@ const PROGRAM_GRANT = /^(?:bash|shell|execute|exec_command|run_command|computer_
 /** The per-program grant's button, naming what it covers so it reads apart
  * from the exact one beside it. */
 export function alwaysAllowLabel(pending: Pending): string {
+  // Rule 82a: a several-action card's remembered choice means ALL displayed actions
+  const set = pending.message.card?.allowKeys;
+  if (set && set.length > 1) return `Always allow these ${set.length} actions: ${set.map((key) => actionGrantWords(key) ?? key).join(", ")}`;
   const program = pending.allowKey?.startsWith(`${pending.tool}:`) ? PROGRAM_GRANT.exec(pending.allowKey)?.[1] : undefined;
-  return program ? `Always allow any ${program} command` : "Always allow";
+  if (program) return `Always allow any ${program} command`;
+  // a connected-app grant covers the one action shown: say which
+  const action = pending.allowKey ? actionGrantWords(pending.allowKey) : undefined;
+  return action ? `Always allow ${action}` : "Always allow";
 }
 
 export function PendingApprovalActions({
@@ -274,12 +348,15 @@ export function PendingApprovalActions({
   threadId,
   bot,
   onCancelTurn,
+  onStatus,
 }: {
   pending: Pending;
   threadId: string;
   /** who asked — "always allow" is remembered against them */
   bot?: Bot;
   onCancelTurn: () => void;
+  /** Rule 83b: this card's own answer state, for the queue's list */
+  onStatus?: (status: QueueStatus) => void;
 }) {
   const { dispatch } = useStore();
   const desktop = useDesktopSurface();
@@ -291,20 +368,39 @@ export function PendingApprovalActions({
   const reviewedSha256 = pending.message.card?.skillRequest
     ? reviewedSkillSha256(pending.message.card.skillRequest)
     : undefined;
-  const grants = approvalGrants(pending, { desktop, hasBot: Boolean(bot) });
+  const surface = approvalSurface(desktop, inNativeShell());
+  const grants = approvalGrants(pending, { desktop, hasBot: Boolean(bot), surface });
   const refused = useComputerOnlyRefusal(threadId, pending.requestId);
-  const computerOnly = allowNeedsComputer(approvalSurface(desktop, inNativeShell()), pending.message.card, refused);
+  const computerOnly = allowNeedsComputer(surface, pending.message.card, refused);
+  const offer = pending.message.card?.grantRequest?.routine;
+  // Rule 81c: each recipient is its own choice, unticked until the owner ticks it
+  const [stopKeys, setStopKeys] = useState<string[]>([]);
   // The tapped button works and the rest are held until the answer settles.
   const feedback = useDecisionFeedback();
+  // Rule 83b: an answer that failed (not a cancelled device prompt) stays on
+  // this card with its retry; the next press clears it.
+  const [failed, setFailed] = useState(false);
+  const status: QueueStatus = feedback.busy !== null || feedback.sent ? "sending" : failed ? "failed" : "waiting";
+  useEffect(() => onStatus?.(status), [onStatus, status]);
   // A Deny and Cancel turn are never held by an Allow in flight: a Deny goes out at once and takes over the card.
   const btn = (choice: string, classes: string) => approvalButton(feedback, choice, classes, choice === "deny");
   const decide = (choice: "deny" | "program" | "task" | "routine" | "exact" | "allow", behavior: "allow" | "deny", always: false | "program" | "exact" | "routine" = false, forTask = false) =>
-    feedback.run(choice, (hooks) => send(behavior, always, forTask, hooks), choice === "deny" ? { preempt: true } : undefined);
+    feedback.run(choice, (hooks) => {
+      setFailed(false);
+      return send(behavior, always, forTask, hooks);
+    }, choice === "deny" ? { preempt: true } : undefined);
   const send = (behavior: "allow" | "deny", always: false | "program" | "exact" | "routine", forTask: boolean, hooks: DecisionHooks) => {
-    const key = always === "exact" ? pending.exactAllowKey : always === "program" ? pending.allowKey : undefined;
     const card = pending.message.card;
-    const routineGrant = always === "routine" && grants.forRoutine && card?.routineId && card.routineAllowKey
-      ? { routineId: card.routineId, key: card.routineAllowKey }
+    const set = always === "program" && card?.allowKeys && card.allowKeys.length > 1 ? card.allowKeys : undefined;
+    const key = always === "exact" ? pending.exactAllowKey : always === "program" ? pending.allowKey : undefined;
+    const routineGrant = always === "routine" && grants.forRoutine && card?.routineId
+      ? offer
+        ? {
+            routineId: card.routineId,
+            stopKeys: stopKeys.filter((chosen) => offer.stopKeys.some((stop) => stop.key === chosen)),
+            onSaved: (saved: string[]) => noteRoutineSaved(threadId, offer.routineName, saved),
+          }
+        : card.routineAllowKey ? { routineId: card.routineId, key: card.routineAllowKey } : undefined
       : undefined;
     dispatch({
       type: "decideRequest",
@@ -315,13 +411,16 @@ export function PendingApprovalActions({
       card: pending.message.card,
       botName: bot?.name,
       reviewedSha256: behavior === "allow" ? reviewedSha256 : undefined,
-      alwaysAllow: desktop === true && bot && key ? { botId: bot.id, key } : undefined,
+      alwaysAllow: desktop === true && bot && (set || key) ? (set ? { botId: bot.id, keys: set } : { botId: bot.id, key }) : undefined,
       ...(routineGrant ? { alwaysAllowRoutine: routineGrant } : {}),
       ...(behavior === "allow" && forTask && grants.forTask ? { allowForTask: true } : {}),
       // Success keeps the buttons held until the card goes; refusal, a cancelled device prompt or an error returns them.
       onDevicePrompt: hooks.devicePrompt,
       onSuccess: hooks.succeed,
-      onError: hooks.settle,
+      onError: (_error: string, code?: string) => {
+        if (hooks.live() && code !== "cancelled") setFailed(true);
+        hooks.settle();
+      },
     });
   };
 
@@ -333,6 +432,18 @@ export function PendingApprovalActions({
           Cancel turn
         </button>
       )}
+      {offer && !computerOnly && (grants.forRoutine || !offer.eligible) && (
+        <RoutineGrantChoice
+          offer={offer}
+          rows={pending.message.card?.grantRequest?.rows ?? []}
+          chosen={stopKeys}
+          onToggle={(stop, on) => setStopKeys((prev) => (on ? [...new Set([...prev, stop])] : prev.filter((held) => held !== stop)))}
+        />
+      )}
+      {/* Rule 82a: an eligible offer this pairing cannot choose says where it is chosen */}
+      {offer && offer.eligible && !grants.forRoutine && !computerOnly && routineChoiceElsewhereWords(surface) && (
+        <p data-routine-choice="elsewhere" className="w-full text-right text-[12.5px] text-ink-secondary">{routineChoiceElsewhereWords(surface)}</p>
+      )}
       {computerOnly && <ComputerOnlyNotice className="w-full text-right text-[13px] text-ink-secondary" />}
       <ApprovalConfirmLine prompting={feedback.prompting} className="w-full text-right text-[13px] text-ink-secondary" />
       <button
@@ -343,10 +454,10 @@ export function PendingApprovalActions({
       </button>
       {!computerOnly && (
         <>
-      {grants.always && bot && pending.allowKey && (
+      {grants.always && bot && (pending.allowKey || pending.message.card?.allowKeys?.length) && (
         <button
           onClick={() => decide("program", "allow", "program")}
-          title={`Stop asking ${bot.name} about ${pending.allowKey}`}
+          title={`Stop asking ${bot.name} about ${pending.message.card?.allowKeys && pending.message.card.allowKeys.length > 1 ? "all of these actions" : actionGrantWords(pending.allowKey ?? "") ?? pending.allowKey}`}
           {...btn("program", cn(base, "border border-hairline/50 text-ink hover:bg-control"))}
         >
           <ApprovalBusyLabel busy={feedback.busy === "program"}>{alwaysAllowLabel(pending)}</ApprovalBusyLabel>
@@ -364,7 +475,7 @@ export function PendingApprovalActions({
       {grants.forRoutine && (
         <button
           onClick={() => decide("routine", "allow", "routine")}
-          title="Stop asking about this in this routine's runs, only for this exact command in the same place."
+          title={offer ? `Remember this for ${offer.routineName} only` : "Stop asking about this in this routine's runs, only for this exact command in the same place."}
           {...btn("routine", cn(base, "border border-accent/60 text-ink hover:bg-accent/10"))}
         >
           <ApprovalBusyLabel busy={feedback.busy === "routine"}>Always allow for this routine</ApprovalBusyLabel>

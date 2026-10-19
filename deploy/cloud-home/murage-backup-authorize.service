@@ -1,0 +1,20 @@
+# SPDX-License-Identifier: AGPL-3.0-or-later
+[Unit]
+Description=Murage install this home's backup public key on its Storage Box (first boot only)
+# The bootstrap files come from cloud-init write_files (init stage), so cloud-config.service is late enough, as for
+# murage-volume. NEVER After=cloud-final.service: this unit is wanted by multi-user.target, cloud-final.service is
+# After=multi-user.target, so that is an ordering cycle and systemd deletes a job of it at boot (it once deleted
+# cloud-final, so runcmd never ran). qualify/unit-order-check.py fails the image build on any cycle.
+After=cloud-config.service network-online.target
+Wants=network-online.target
+ConditionPathExists=/etc/murage-home/backup.bootstrap
+
+[Service]
+Type=oneshot
+User=root
+UMask=0077
+ExecStart=/usr/local/libexec/murage-backup-authorize
+TimeoutStartSec=10min
+
+[Install]
+WantedBy=multi-user.target

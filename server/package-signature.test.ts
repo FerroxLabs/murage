@@ -1,7 +1,7 @@
 // Copyright 2026 Ferrox Labs
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import { generateKeyPairSync } from "node:crypto";
-import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
@@ -9,6 +9,7 @@ import { createBotPackageEntry } from "./bot-package-manifest.ts";
 import { readBotPackageArchive, writeBotPackageArchive } from "./bot-package-archive.ts";
 import { OFFICIAL_PACKAGE_KEYS, canonicalJson, packageDigest, publicKeyOf, signPackage, verifyOfficialPackage } from "./package-signature.ts";
 import { signPackageFile } from "./package-signing-cli.ts";
+import { removeTempDirSync } from "./testing/cleanup.ts";
 
 // Test keys only, made here for the test run and never written to the repo.
 const pem = (pair = generateKeyPairSync("ed25519")) => pair.privateKey.export({ type: "pkcs8", format: "pem" }).toString();
@@ -17,7 +18,7 @@ const officialKey = publicKeyOf(officialPem);
 const document = () => ({ format: "murage.team", version: 2, team: { name: "Launch Crew", members: [{ name: "Ada", description: "Calm and clear." }] } });
 
 const dirs: string[] = [];
-afterEach(() => { for (const dir of dirs.splice(0)) rmSync(dir, { recursive: true, force: true }); });
+afterEach(() => { for (const dir of dirs.splice(0)) removeTempDirSync(dir); });
 const temp = () => { const dir = mkdtempSync(join(tmpdir(), "murage-sign-")); dirs.push(dir); return dir; };
 
 describe("Official mark", () => {

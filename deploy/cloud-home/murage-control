@@ -1,0 +1,967 @@
+#!/usr/bin/python3 -I
+# SPDX-License-Identifier: AGPL-3.0-or-later
+"""Root machine transport. Fixed endpoints; public authority snapshot only."""
+import base64
+import errno
+import json
+import math
+import os
+import random
+import re
+import shlex
+import stat
+import subprocess
+import sys
+import tempfile
+import time
+import urllib.parse
+import urllib.error
+import urllib.request
+import uuid
+
+STATE = "/var/lib/murage-home"
+CONFIG = "/etc/murage-home"
+PUBLIC = "/run/murage-control"
+# This daemon's own durable state (Astra AUTOCANARY-8 P1): systemd's StateDirectory=murage-control (murage-control.service), root owned
+# and writable under ProtectSystem=strict. It holds the render refusal, nothing else.
+CONTROL_STATE = "/var/lib/murage-control"
+CLOCK = "/usr/local/libexec/murage-clock"
+MAX_SAFE = 9007199254740991
+# Health reported on the heartbeat. Numbers and one fixed event name only: no free text, no file
+# content, nothing that could carry an engine credential. Events are spool files dropped by the
+# abuse detector (lane 1) as {"type": "abuse.mining_suspected", "at": <ms>}.
+EVENTS = STATE + "/events"
+BACKUP_LAST = STATE + "/backup-last"
+DATA_MOUNT = "/data"
+EVENT_TYPES = ("abuse.mining_suspected",)
+
+# Control wire version. Any other value (or none) fences; there is no fake literal.
+WIRE = 1
+# The capability header of a daemon that echoes the control plane's evidence epoch (Astra AUTOCANARY-11 P1-3): on every heartbeat, so a
+# control plane that has epochs acks even our first (old-shaped) heartbeat with one; an older control plane ignores the header.
+EVIDENCE_HEADER = ("X-Murage-Evidence", "epoch")
+# Health fields only a control plane with evidence epochs accepts (its strict schema): sent only while we hold an epoch it acked. Without
+# one the health block has the oldest shape every control plane in the field accepts (56a15e901: appResponding, bootId, diskUsedPercent,
+# lastBackupAt, events).
+EPOCH_ONLY_FIELDS = ("checks", "clock")
+# A heartbeat answered 5xx (the control plane could not record it, Astra AUTOCANARY-11 P1-1) is resent soon, timed from the answer: after
+# its Retry-After (default and floor HEARTBEAT_RETRY_S, at most 30), doubling per consecutive 5xx, plus jitter of up to half the base; past
+# POLL_INTERVAL_S, POLL_INTERVAL_S +/- 25% (Astra AUTOCANARY-12 P2-1).
+HEARTBEAT_RETRY_S = 5
+POLL_INTERVAL_S = 60
+
+def strict_json(raw):
+    def pairs(items):
+        result = {}
+        for name, value in items:
+            if name in result:
+                raise ValueError("Duplicate control field")
+            result[name] = value
+        return result
+    return json.loads(raw, object_pairs_hook=pairs,
+                      parse_constant=lambda _value: (_ for _ in ()).throw(ValueError("Invalid number")))
+
+def secure_parents(path, expected_uid=0):
+    if not os.path.isabs(path) or os.path.normpath(path) != path:
+        raise ValueError("Invalid control path")
+    parent = os.path.dirname(path)
+    while True:
+        info = os.lstat(parent)
+        if not stat.S_ISDIR(info.st_mode) or info.st_uid not in (0, expected_uid) or info.st_mode & 0o022:
+            raise ValueError("Unsafe control parent")
+        if parent == "/":
+            break
+        parent = os.path.dirname(parent)
+
+def read_secure(path, private=False, expected_uid=0, limit=65536, binary=False):
+    if not os.path.isabs(path) or os.path.normpath(path) != path:
+        raise ValueError("Invalid control path")
+    directory = os.open("/", os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_CLOEXEC)
+    try:
+        for component in path.split("/")[1:-1]:
+            info = os.fstat(directory)
+            if info.st_uid not in (0, expected_uid) or info.st_mode & 0o022:
+                raise ValueError("Unsafe control parent")
+            child = os.open(component, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_CLOEXEC, dir_fd=directory)
+            os.close(directory)
+            directory = child
+        info = os.fstat(directory)
+        if info.st_uid not in (0, expected_uid) or info.st_mode & 0o022:
+            raise ValueError("Unsafe control parent")
+        fd = os.open(os.path.basename(path), os.O_RDONLY | os.O_NOFOLLOW | os.O_CLOEXEC, dir_fd=directory)
+    finally:
+        os.close(directory)
+    with os.fdopen(fd, "rb") as stream:
+        info = os.fstat(stream.fileno())
+        mode = stat.S_IMODE(info.st_mode)
+        if (not stat.S_ISREG(info.st_mode) or info.st_uid != expected_uid or
+            (mode != 0o600 if private else bool(mode & 0o022)) or info.st_size > limit):
+            raise ValueError("Unsafe control input")
+        raw = stream.read(limit + 1)
+        if len(raw) > limit:
+            raise ValueError("Oversize control input")
+        return raw if binary else raw.decode("utf-8")
+
+def number(value):
+    return type(value) in (int, float) and math.isfinite(value) and 0 <= value <= MAX_SAFE
+
+def integer(value, minimum=1):
+    return type(value) is int and minimum <= value <= MAX_SAFE
+
+def valid_clock(value):
+    if (not isinstance(value, dict) or set(value) != {"wallMs", "bootMs", "monoMs", "bootId", "ntpSynced"}
+        or not all(number(value[name]) for name in ("wallMs", "bootMs", "monoMs"))
+        or type(value["ntpSynced"]) is not bool or not isinstance(value["bootId"], str)
+        or not re.fullmatch(r"[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}", value["bootId"])):
+        raise ValueError("Invalid control clock")
+    return value
+
+def read_clock(expected_uid=0):
+    read_secure(CLOCK, expected_uid=expected_uid, limit=1024 * 1024, binary=True)
+    # No shell or inputs. Never execute a writable substitute.
+    process = subprocess.Popen([CLOCK], stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
+                               stderr=subprocess.DEVNULL, env={}, close_fds=True)
+    try:
+        # Small helper emits one bounded line. Read before wait to cap allocation.
+        import selectors
+        selector = selectors.DefaultSelector()
+        selector.register(process.stdout, selectors.EVENT_READ)
+        raw = bytearray()
+        # A slow helper start is not a clock fault: 0.1 s was exceeded many times an hour on
+        # an idle 2-vCPU home (qa14), each one a lost authority sample.
+        deadline = time.monotonic() + 1.0
+        while True:
+            remaining = deadline - time.monotonic()
+            if remaining <= 0 or not selector.select(remaining):
+                raise ValueError("Control clock timeout")
+            chunk = os.read(process.stdout.fileno(), 4097 - len(raw))
+            if not chunk:
+                break
+            raw.extend(chunk)
+            if len(raw) > 4096:
+                raise ValueError("Oversize control clock")
+        if process.wait(timeout=max(0.001, deadline - time.monotonic())):
+            raise ValueError("Control clock failed")
+        return valid_clock(strict_json(raw.decode()))
+    finally:
+        if process.poll() is None:
+            process.kill()
+        process.wait()
+        process.stdout.close()
+        if "selector" in locals():
+            selector.close()
+
+def clocks_match(before, after):
+    return (before["ntpSynced"] and after["ntpSynced"] and before["bootId"] == after["bootId"]
+            and after["bootMs"] >= before["bootMs"] and after["monoMs"] >= before["monoMs"]
+            and abs((after["bootMs"] - after["monoMs"]) - (before["bootMs"] - before["monoMs"])) <= 1
+            and abs((after["wallMs"] - before["wallMs"]) - (after["bootMs"] - before["bootMs"])) <= 5000)
+
+def https_origin(value):
+    if not isinstance(value, str) or len(value) > 2048:
+        raise ValueError("Invalid control origin")
+    parsed = urllib.parse.urlsplit(value)
+    if (parsed.scheme != "https" or not parsed.hostname or parsed.username or parsed.password
+        or parsed.query or parsed.fragment or parsed.path not in ("", "/")):
+        raise ValueError("Invalid control origin")
+    return value.rstrip("/")
+
+def public_key(raw):
+    key = strict_json(raw)
+    if (not isinstance(key, dict) or key.get("kty") != "EC" or key.get("crv") != "P-256"
+        or not set(key) <= {"kty", "crv", "x", "y", "kid", "use", "alg", "key_ops", "ext"}):
+        raise ValueError("Invalid public trust key")
+    for name in ("x", "y"):
+        value = key.get(name)
+        if not isinstance(value, str) or not re.fullmatch(r"[A-Za-z0-9_-]{43}", value):
+            raise ValueError("Invalid public trust key")
+        decoded = base64.urlsafe_b64decode(value + "=")
+        if len(decoded) != 32 or base64.urlsafe_b64encode(decoded).decode().rstrip("=") != value:
+            raise ValueError("Invalid public trust key")
+    return key
+
+def load_private_binding(state=STATE, config=CONFIG, expected_uid=0):
+    credential = read_secure(state + "/credential", True, expected_uid).rstrip("\n")
+    decoded = base64.b64decode(credential, validate=True)
+    if len(decoded) != 32 or base64.b64encode(decoded).decode() != credential:
+        raise ValueError("Invalid control binding")
+    raw_generation = read_secure(state + "/generation", True, expected_uid).strip()
+    if not re.fullmatch(r"[1-9][0-9]{0,15}", raw_generation) or not integer(int(raw_generation)):
+        raise ValueError("Invalid control generation")
+    fields = {}
+    for line in read_secure(config + "/home.env", True, expected_uid).splitlines():
+        if not line.strip() or line.lstrip().startswith("#"):
+            continue
+        words = shlex.split(line, comments=True)
+        if len(words) != 1 or "=" not in words[0]:
+            raise ValueError("Invalid control binding")
+        name, value = words[0].split("=", 1)
+        if name in fields:
+            raise ValueError("Invalid control binding")
+        fields[name] = value
+    if (not {"MURAGE_CLOUD_ROLE", "MURAGE_CLOUD_MACHINE_ID", "MURAGE_CLOUD_ADMIN_URL", "MURAGE_PUBLIC_ORIGIN"} <= set(fields) <= {"MURAGE_CLOUD_ROLE", "MURAGE_CLOUD_MACHINE_ID", "MURAGE_CLOUD_ADMIN_URL", "MURAGE_PUBLIC_ORIGIN", "MURAGE_SITE_ORIGIN"}
+        or fields["MURAGE_CLOUD_ROLE"] != "home"
+        or not re.fullmatch(r"[A-Za-z0-9_-]{1,128}", fields["MURAGE_CLOUD_MACHINE_ID"])):
+        raise ValueError("Invalid control binding")
+    public_key(read_secure(config + "/control-plane-public-key.json", False, expected_uid, 4096))
+    return {"homeId": fields["MURAGE_CLOUD_MACHINE_ID"], "generation": int(raw_generation),
+            "adminUrl": https_origin(fields["MURAGE_CLOUD_ADMIN_URL"]),
+            "publicOrigin": https_origin(fields["MURAGE_PUBLIC_ORIGIN"]), "credential": credential}
+
+class NoRedirect(urllib.request.HTTPRedirectHandler):
+    def redirect_request(self, *_args, **_kwargs):
+        raise ValueError("Control redirect refused")
+
+DOOR_HEADER = ("X-Murage-Door", "v2")
+
+def machine_request(binding, operation, body=None, door=False):
+    if operation not in ("lease", "heartbeat", "desired"):
+        raise ValueError("Invalid control operation")
+    url = binding["adminUrl"] + "/v1/machines/" + binding["homeId"] + "/" + operation
+    # Cloudflare's browser integrity check answers Python-urllib's default
+    # user agent with 403 (error 1010), so name the client explicitly.
+    headers = {"Authorization": "Bearer " + binding["credential"], "Content-Type": "application/json", "User-Agent": "murage-home/1"}
+    if operation == "heartbeat":
+        headers[EVIDENCE_HEADER[0]] = EVIDENCE_HEADER[1]
+        if door:
+            headers[DOOR_HEADER[0]] = DOOR_HEADER[1]
+    request = urllib.request.Request(url, headers=headers, method="GET" if body is None else "POST",
+                                     data=None if body is None else json.dumps(body).encode())
+    opener = urllib.request.build_opener(urllib.request.ProxyHandler({}), NoRedirect())
+    with opener.open(request, timeout=15) as response:
+        raw = response.read(65537)
+        if response.status != 200 or len(raw) > 65536:
+            raise ValueError("Control response refused")
+    return strict_json(raw.decode("utf-8"))
+
+def strict_fields(value, fields):
+    if not isinstance(value, dict) or set(value) != set(fields):
+        raise ValueError("Invalid control response")
+
+def validate_desired(value, binding, lease):
+    strict_fields(value, ("wire", "homeId", "generation", "desiredState", "engineSubscriptionGates",
+                          "lease", "executionAllowed", "heartbeatFresh", "heartbeatEveryMs", "homeKey"))
+    if (type(value["wire"]) is not int or value["wire"] != WIRE or value["homeId"] != binding["homeId"]
+        or not integer(value["generation"]) or value["generation"] != binding["generation"]
+        or value["desiredState"] not in ("payment_pending", "provisioning", "checking", "ready", "payment_problem",
+                                         "stopped", "suspended", "deleting", "deleted", "failed")
+        or type(value["executionAllowed"]) is not bool or type(value["heartbeatFresh"]) is not bool
+        or type(value["heartbeatEveryMs"]) is not int or value["heartbeatEveryMs"] != 60000):
+        raise ValueError("Control identity mismatch")
+    gates = value["engineSubscriptionGates"]
+    strict_fields(gates, ("claudeAgent", "codex", "grokAgent", "kimiAgent", "opencodeGo"))
+    if not all(type(gate) is bool for gate in gates.values()):
+        raise ValueError("Invalid control gates")
+    desired_lease = value["lease"]
+    strict_fields(desired_lease, ("holder", "generation", "expiresAt"))
+    if (desired_lease["holder"] != binding["homeId"] or not integer(desired_lease["generation"])
+        or desired_lease["generation"] != binding["generation"] or not integer(desired_lease["expiresAt"], 0)
+        or desired_lease["expiresAt"] != lease["expiresAt"]):
+        raise ValueError("Control lease mismatch")
+    signed = value["homeKey"]
+    strict_fields(signed, ("payload", "signature", "algorithm"))
+    if (signed["algorithm"] != "ES256" or not isinstance(signed["payload"], str)
+        or not 1 <= len(signed["payload"]) <= 4096 or not re.fullmatch(r"[A-Za-z0-9_-]+", signed["payload"])
+        or not isinstance(signed["signature"], str) or not re.fullmatch(r"[A-Za-z0-9_-]{86}", signed["signature"])):
+        raise ValueError("Invalid control identity envelope")
+    return value
+
+def atomic_public(path, value, expected_uid=0):
+    secure_parents(path, expected_uid)
+    raw = json.dumps(value, separators=(",", ":"), allow_nan=False).encode()
+    if len(raw) > 16384:
+        raise ValueError("Oversize public state")
+    if os.path.lexists(path):
+        read_secure(path, expected_uid=expected_uid, limit=16384)
+    fd, temporary = tempfile.mkstemp(prefix=".control-", dir=os.path.dirname(path))
+    try:
+        with os.fdopen(fd, "wb") as stream:
+            os.fchmod(stream.fileno(), 0o644)
+            stream.write(raw)
+            stream.flush()
+            os.fsync(stream.fileno())
+        os.replace(temporary, path)
+        directory = os.open(os.path.dirname(path), os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
+        try:
+            os.fsync(directory)
+        finally:
+            os.close(directory)
+    finally:
+        if os.path.exists(temporary):
+            os.unlink(temporary)
+
+def publish_snapshot(snapshot, binding, public=PUBLIC, expected_uid=0):
+    if snapshot["homeId"] != binding["homeId"] or snapshot["cpGeneration"] != binding["generation"]:
+        raise ValueError("Control pin mismatch")
+    # Never derive generation from desired: the private enrollment pin wins.
+    atomic_public(public + "/home-generation.json", {"homeId": binding["homeId"], "generation": binding["generation"]}, expected_uid)
+    atomic_public(public + "/home-identity.json", snapshot["desired"]["homeKey"], expected_uid)
+    atomic_public(public + "/state.json", snapshot, expected_uid)
+
+def fence(context, public=PUBLIC):
+    context["invalidated"] = True
+    context["snapshot"] = None
+    # Removal prevents an old successful file from surviving an observed anomaly.
+    if os.path.lexists(public + "/state.json"):
+        os.unlink(public + "/state.json")
+
+def sample_clock(context, clock, public):
+    try:
+        current = valid_clock(clock())
+        previous = context.get("lastClock")
+        renewal = context.get("renewalClock")
+        if (not current["ntpSynced"] or (previous is not None and not clocks_match(previous, current))
+            or (renewal is not None and not clocks_match(renewal, current))):
+            fence(context, public)
+            context["renewalClock"] = None
+            raise ValueError("Control clock authority invalidated")
+        return current
+    except Exception:
+        fence(context, public)
+        raise
+    finally:
+        if "current" in locals():
+            context["lastClock"] = current
+
+# The Murage app's own front door on this machine: Caddy's loopback listener (nft lets root reach it), which proxies the public host
+# to the server. Health is the app answering here, not this daemon being alive.
+APP_PROBE_URL = "http://127.0.0.1:8830/api/health"
+# "No uiAt in the app's answer" (absent or malformed), distinct from the app's own null (no render finished yet).
+MISSING = object()
+MAX_SAFE_INTEGER = 2 ** 53 - 1
+
+def app_report(public_origin, opener=None, timeout=5):
+    """The app's answer to GET /api/health through Caddy: {"ok": bool, "ui": True/False/None, "uiAt": int/None/MISSING,
+    "instance": str/None}. ok is True only when it answers 200 with its
+    own body. ui is the app's own UI render result (Astra AUTOCANARY-4 P1): the app renders its built UI in its own sandboxed browser
+    (once per boot, then every 10 minutes, cached; server/index.ts) and reports "ui": "ok" only when that render produced the mounted app:
+    the dumped DOM of GET / (never /enter, which spends tickets; User-Agent "murage-control-canary/1") holds html[data-murage-mounted="1"]
+    AND main[data-murage-door] of continue|other-device, an anonymous visitor's normal end states (working, unavailable and message
+    report "failed"; the marker contract the home sets after
+    React mounts). Root cannot do this render here: this unit has no capabilities to drop to the browser user, and nft drops every uid
+    but root and murage-tunnel on Caddy's 8830, so the browser user could not load it through Caddy either.
+    "ok" is True, any other value (a failed or pending render) False, and an app without the field (no self-render yet) None, which leaves
+    the check off the heartbeat (the control plane then never promotes automatically).
+    uiAt and instance (Astra AUTOCANARY-5 P1) come from the same answer: uiAt is when the app's last render finished (ms epoch, null while
+    none has finished: None), instance the opaque id the app minted at process start. A missing or malformed uiAt is MISSING and a missing
+    or malformed instance None: each is then left off the heartbeat, and the control plane never treats the render as evidence without
+    them (a cached "ok" is evidence only while young, and only for the process and boot that rendered it). Never raises."""
+    report = {"ok": False, "ui": None, "uiAt": MISSING, "instance": None, "door": None}
+    try:
+        host = urllib.parse.urlsplit(public_origin).hostname
+        if not host:
+            return report
+        request = urllib.request.Request(APP_PROBE_URL, headers={"Host": host, "User-Agent": "murage-home/1"}, method="GET")
+        opener = opener or urllib.request.build_opener(urllib.request.ProxyHandler({}), NoRedirect())
+        with opener.open(request, timeout=timeout) as response:
+            raw = response.read(65537)
+            if response.status != 200 or len(raw) > 65536:
+                return report
+        body = json.loads(raw.decode("utf-8"))
+        if not isinstance(body, dict) or body.get("app") != "murage":
+            return report
+        report["ok"] = True
+        # The entry protocol the app speaks (Door v2): "v2" only when the app says exactly that; anything else None.
+        if body.get("door") == "v2":
+            report["door"] = "v2"
+        if "ui" in body:
+            report["ui"] = body["ui"] == "ok"
+        ui_at = body.get("uiAt", MISSING)
+        if ui_at is None or (type(ui_at) is int and 0 <= ui_at <= MAX_SAFE_INTEGER):
+            report["uiAt"] = ui_at
+        instance = body.get("instance")
+        if isinstance(instance, str) and re.fullmatch(r"[A-Za-z0-9_-]{16,64}", instance):
+            report["instance"] = instance
+        return report
+    except Exception:
+        return {"ok": False, "ui": None, "uiAt": MISSING, "instance": None, "door": None}
+
+def app_responding(public_origin, opener=None, timeout=5):
+    """True only when the app answers GET /api/health through Caddy with its own body. Never raises; anything else is False."""
+    return app_report(public_origin, opener, timeout)["ok"]
+
+BOOT_ID = "/proc/sys/kernel/random/boot_id"
+
+def read_boot_id(path=BOOT_ID):
+    """The kernel's id for this boot: it changes on every boot, so the control plane can tell a power cycle really happened."""
+    try:
+        with open(path, "r") as handle:
+            value = handle.read(64).strip()
+    except OSError:
+        return None
+    return value if re.fullmatch(r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}", value) else None
+
+# The built web UI on the image: package.json "build" (vite build) writes dist/, and the image runs `pnpm build` in /opt/murage. vite.config.ts
+# sets build.manifest, so dist/.vite/manifest.json lists every file the build emitted for the UI (entries, chunks, CSS, assets).
+UI_DIST = "/opt/murage/dist"
+UI_INDEX = UI_DIST + "/index.html"
+UI_MANIFEST = ".vite/manifest.json"
+UI_MANIFEST_MAX_BYTES = 8 * 1024 * 1024
+UI_MANIFEST_MAX_FILES = 20000
+UI_RELATIVE = re.compile(r"[A-Za-z0-9_@.+~-]+(?:/[A-Za-z0-9_@.+~-]+)*")
+# The data-write probe's own directory: a top-level entry of the data volume, root:root 0700, made by the home supervisor right after it
+# binds the volume (server/cloud-home/supervisor.ts prepareHealthProbeDir, never before the binding marker exists) and classified as
+# excluded from backups (server/data-dir-inventory.ts). The only /data path murage-control.service may write (ReadWritePaths). Every
+# ancestor is root owned (Astra AUTOCANARY-3 P1/P2): this unit runs as root with no capabilities, so it cannot traverse the murage-owned
+# server-home, and nothing the murage user owns sits on the path, so it cannot swap the directory for a symlink that systemd would then
+# resolve and bind writable. /data is root:murage 1771: the sticky bit keeps the murage group from renaming or removing this entry.
+DATA_PROBE_DIR = DATA_MOUNT + "/.murage-health"
+# Exit status asking systemd for a fresh mount namespace (murage-control.service, Restart=on-failure): the probe directory exists on the
+# volume but was made after this service started, so its writable bind was skipped (ReadWritePaths=-) and the volume is read-only here.
+PROBE_NAMESPACE_EXIT = 75
+# The once-per-boot record of that exit, in the runtime directory systemd keeps across restarts (RuntimeDirectoryPreserve=restart).
+PROBE_REFRESH_MARK = PUBLIC + "/probe-namespace-refreshed"
+
+def ui_bundle_present(path=None):
+    """True when the web UI's index.html is a readable, non-empty regular file (a symlink is not followed). Never raises."""
+    try:
+        fd = os.open(path or UI_INDEX, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
+    except OSError:
+        return False
+    try:
+        info = os.fstat(fd)
+        return stat.S_ISREG(info.st_mode) and info.st_size > 0 and len(os.read(fd, 1)) == 1
+    except OSError:
+        return False
+    finally:
+        os.close(fd)
+
+def ui_manifest_files(raw):
+    """The dist-relative files a vite build manifest names: every entry's file, css and assets. None when the manifest is not one vite
+    writes (not a non-empty object of entries, no "index.html" entry, a name that is absolute, has a ".." segment or other characters,
+    or more than UI_MANIFEST_MAX_FILES files). Entries reached through imports/dynamicImports are manifest entries themselves."""
+    try:
+        manifest = json.loads(raw.decode("utf-8"))
+    except (UnicodeDecodeError, ValueError):
+        return None
+    if not isinstance(manifest, dict) or not manifest or not isinstance(manifest.get("index.html"), dict):
+        return None
+    files = set()
+    for entry in manifest.values():
+        if not isinstance(entry, dict) or not isinstance(entry.get("file"), str):
+            return None
+        names = [entry["file"]]
+        for key in ("css", "assets"):
+            value = entry.get(key, [])
+            if not isinstance(value, list) or not all(isinstance(name, str) for name in value):
+                return None
+            names += value
+        for name in names:
+            if not UI_RELATIVE.fullmatch(name) or any(part in (".", "..") for part in name.split("/")):
+                return None
+            files.add(name)
+    return sorted(files) if len(files) <= UI_MANIFEST_MAX_FILES else None
+
+def ui_bundle_complete(dist=None):
+    """Manifest completeness (Astra AUTOCANARY-4 P1): True when the build manifest (dist/.vite/manifest.json) is a valid vite manifest and
+    index.html plus EVERY file it names is a readable, non-empty regular file under dist (no symlink followed at the last component). A
+    missing, truncated or emptied chunk, stylesheet or asset is False, as is a missing or malformed manifest. Never raises."""
+    root = dist or UI_DIST
+    try:
+        fd = os.open(root + "/" + UI_MANIFEST, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
+    except OSError:
+        return False
+    try:
+        info = os.fstat(fd)
+        if not stat.S_ISREG(info.st_mode) or not 0 < info.st_size <= UI_MANIFEST_MAX_BYTES:
+            return False
+        raw = b""
+        while len(raw) <= UI_MANIFEST_MAX_BYTES:
+            chunk = os.read(fd, 1024 * 1024)
+            if not chunk:
+                break
+            raw += chunk
+    except OSError:
+        return False
+    finally:
+        os.close(fd)
+    if len(raw) > UI_MANIFEST_MAX_BYTES:
+        return False
+    files = ui_manifest_files(raw)
+    return files is not None and all(ui_bundle_present(root + "/" + name) for name in ["index.html", *files])
+
+def data_volume_device(data_mount):
+    """st_dev of the data volume when data_mount is a mount point (a missing volume leaves /data a plain directory of the root file
+    system), else None. Never raises."""
+    try:
+        if not os.path.ismount(data_mount):
+            return None
+        return os.stat(data_mount).st_dev
+    except (OSError, ValueError):
+        return None
+
+def root_controlled_ancestors(path, expected_uid=0):
+    """True when every ancestor of path, up to /, is a real directory (not a symlink) owned by expected_uid (root) that no one else can
+    rename entries in: not group/other writable, or writable only with the sticky bit (/data is root:murage 1771). Never raises."""
+    try:
+        current = os.path.dirname(os.path.abspath(path))
+        while True:
+            info = os.lstat(current)
+            if not stat.S_ISDIR(info.st_mode) or info.st_uid != expected_uid:
+                return False
+            if info.st_mode & 0o022 and not info.st_mode & stat.S_ISVTX:
+                return False
+            parent = os.path.dirname(current)
+            if parent == current:
+                return True
+            current = parent
+    except (OSError, ValueError):
+        return False
+
+def probe_dir_on_volume(data_mount, probe_dir=None, expected_uid=0):
+    """The probe directory's st_dev when it is a top-level entry of the mounted data volume (its parent is the mount point itself), a real
+    directory (not a symlink) owned by expected_uid (root) with mode exactly 0700, on the volume's device, below root-controlled ancestors
+    only (root_controlled_ancestors); else None. A probe directory on the root file system (the volume did not mount) or under a
+    directory the murage user owns is refused. Never raises."""
+    device = data_volume_device(data_mount)
+    if device is None:
+        return None
+    target = probe_dir or DATA_PROBE_DIR
+    try:
+        if os.path.dirname(os.path.abspath(target)) != os.path.abspath(data_mount):
+            return None
+        info = os.lstat(target)
+    except (OSError, ValueError):
+        return None
+    if (not stat.S_ISDIR(info.st_mode) or info.st_uid != expected_uid or stat.S_IMODE(info.st_mode) != 0o700
+            or info.st_dev != device or not root_controlled_ancestors(target, expected_uid)):
+        return None
+    return device
+
+def data_writable(data_mount, probe_dir=None, expected_uid=0):
+    """True when the data VOLUME is mounted and takes a write: the probe directory is on the volume (probe_dir_on_volume) and a temp file
+    can be created there, written, fsynced and removed, and the file itself is on the volume's device. The file never stays behind: it is
+    unlinked on every path, and a file that cannot be removed counts as not writable. False on any OSError."""
+    device = probe_dir_on_volume(data_mount, probe_dir, expected_uid)
+    if device is None:
+        return False
+    fd, path, ok = None, None, False
+    payload = b"murage-health\n"
+    try:
+        fd, path = tempfile.mkstemp(prefix=".murage-health-", dir=probe_dir or DATA_PROBE_DIR)
+        ok = os.write(fd, payload) == len(payload)
+        os.fsync(fd)
+        ok = ok and os.fstat(fd).st_dev == device
+    except (OSError, ValueError):
+        ok = False
+    finally:
+        if fd is not None:
+            try:
+                os.close(fd)
+            except OSError:
+                ok = False
+        if path is not None:
+            try:
+                os.unlink(path)
+            except OSError:
+                ok = False
+    return ok
+
+def probe_namespace_stale(data_mount=None, probe_dir=None, expected_uid=0):
+    """True when the probe directory is in place on the volume (probe_dir_on_volume) but this process cannot write in it because the
+    volume is read-only HERE (EROFS): the directory was made after this service's mount namespace was built (first boot: the supervisor
+    binds the volume after murage-control starts), so the ReadWritePaths=- bind was skipped. Any other outcome is False. Never raises."""
+    mount = data_mount or DATA_MOUNT
+    target = probe_dir or DATA_PROBE_DIR
+    if probe_dir_on_volume(mount, target, expected_uid) is None:
+        return False
+    try:
+        fd, path = tempfile.mkstemp(prefix=".murage-health-", dir=target)
+    except OSError as error:
+        return error.errno == errno.EROFS
+    except ValueError:
+        return False
+    try:
+        os.close(fd)
+    finally:
+        try:
+            os.unlink(path)
+        except OSError:
+            pass
+    return False
+
+def refresh_probe_namespace(boot_id, mark=None, data_mount=None, probe_dir=None, expected_uid=0):
+    """First-boot ordering fallback (murage-control.service): when the probe namespace is stale, record this boot in the runtime directory
+    and return True so the caller exits with PROBE_NAMESPACE_EXIT and systemd restarts it with a fresh namespace in which the bind exists.
+    At most once per boot: with the record already holding this boot's id (or no boot id to tell boots apart) it returns False and the
+    check just reports dataWritable false. Never raises."""
+    if not boot_id or not probe_namespace_stale(data_mount, probe_dir, expected_uid):
+        return False
+    path = mark or PROBE_REFRESH_MARK
+    try:
+        with open(path, "r") as handle:
+            if handle.read(64).strip() == boot_id:
+                return False
+    except OSError:
+        pass
+    try:
+        fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC | os.O_NOFOLLOW, 0o600)
+        try:
+            os.write(fd, (boot_id + "\n").encode("ascii"))
+        finally:
+            os.close(fd)
+    except OSError:
+        return False  # without the record a restart could repeat forever: report false instead
+    return True
+
+# How far ahead of this home's wall clock an app render time (uiAt) may be (Astra AUTOCANARY-6 P1; the control plane's
+# UI_AT_FUTURE_MAX_MS): a render "finished" further in the future is a clock fault, never evidence.
+UI_AT_FUTURE_MAX_MS = 120000
+# The render (app instance, uiAt) this home last refused as clock_ahead (Astra AUTOCANARY-7 P1), in this daemon's state directory (Astra
+# AUTOCANARY-8 P1: the one directory the service may write there): the refusal is durable at the source, so the same cached render stays
+# refused on every later poll and across restarts of this daemon however the wall clock moves; only a NEW uiAt from the app is judged again.
+UI_REJECTED = CONTROL_STATE + "/ui-render-rejected.json"
+def write_state(target, value):
+    """Writes one state file atomically (written, fsynced, renamed into place, directory fsynced). Raises OSError/ValueError on failure."""
+    raw = json.dumps(value, separators=(",", ":"), allow_nan=False).encode()
+    directory = os.path.dirname(target)
+    fd, temporary = tempfile.mkstemp(prefix=".state-", dir=directory)
+    try:
+        with os.fdopen(fd, "wb") as stream:
+            os.fchmod(stream.fileno(), 0o600)
+            stream.write(raw)
+            stream.flush()
+            os.fsync(stream.fileno())
+        os.replace(temporary, target)
+    finally:
+        if os.path.exists(temporary):
+            os.unlink(temporary)
+    dfd = os.open(directory, os.O_RDONLY | os.O_DIRECTORY | os.O_CLOEXEC)
+    try:
+        os.fsync(dfd)
+    finally:
+        os.close(dfd)
+
+def state_error(what, error):
+    """A state write failure is logged with its reason (the errno name, never a path's content), never swallowed silently."""
+    reason = errno.errorcode.get(getattr(error, "errno", None) or 0, type(error).__name__)
+    print("Cloud control could not record " + what + ": " + reason, file=sys.stderr)
+
+def load_ui_rejection(path=None):
+    """The persisted refused render {"instance", "uiAt"}, or None when there is none or it cannot be read."""
+    try:
+        fd = os.open(path or UI_REJECTED, os.O_RDONLY | os.O_NOFOLLOW | os.O_CLOEXEC)
+        with os.fdopen(fd, "rb") as stream:
+            if not stat.S_ISREG(os.fstat(stream.fileno()).st_mode):
+                return None
+            value = strict_json(stream.read(513).decode("utf-8"))
+        if (isinstance(value, dict) and set(value) == {"instance", "uiAt"} and type(value["uiAt"]) is int
+                and (value["instance"] is None or isinstance(value["instance"], str))):
+            return value
+    except (OSError, ValueError, UnicodeDecodeError):
+        pass
+    return None
+
+def save_ui_rejection(pair, path=None):
+    """Records the refused render atomically (write_state). False when it could not be recorded, with the reason logged (Astra
+    AUTOCANARY-8 P1): the caller still reports this poll's refusal."""
+    try:
+        write_state(path or UI_REJECTED, pair)
+        return True
+    except (OSError, ValueError) as error:
+        state_error("a refused render", error)
+        return False
+
+def readiness_checks(data_mount=None, ui_dist=None, ui_renders=None, ui_at=MISSING, ui_instance=None, now_ms=None, rejected_path=None):
+    """The home's own readiness checks for the control plane's automatic canary: {"uiBundle", "dataWritable"} and, when the app reported
+    its own UI render, "uiRenders"; None when they cannot be evaluated (the data mount directory is absent). /api/health answering is not
+    readiness: a home without its UI bundle still answers it. uiBundle is manifest completeness (ui_bundle_complete). There is no
+    scheduler check: this home has no scheduler heartbeat signal to read.
+    now_ms: this home's wall clock (ms) from the ONE clock sample of this poll, taken before the app was asked. A render whose uiAt is more
+    than UI_AT_FUTURE_MAX_MS ahead of it is reported as failed with uiReason "clock_ahead" (Astra AUTOCANARY-6 P1), whatever the app said,
+    and that (instance, uiAt) pair is recorded (rejected_path, default UI_REJECTED) and refused the same way on every later poll until the
+    app reports a new uiAt (Astra AUTOCANARY-7 P1). uiAgeMs = now_ms - uiAt, the render's age on this home's own clock (negative when
+    dated ahead of it): the control plane judges render age by it, never by its own receipt time."""
+    mount = data_mount or DATA_MOUNT
+    if not os.path.isdir(mount):
+        return None
+    checks = {"uiBundle": ui_bundle_complete(ui_dist), "dataWritable": data_writable(mount)}
+    if ui_renders is not None:
+        checks["uiRenders"] = ui_renders is True
+        if type(ui_at) is int:
+            pair = {"instance": ui_instance, "uiAt": ui_at}
+            refused = load_ui_rejection(rejected_path) == pair
+            if not refused and now_ms is not None and ui_at > now_ms + UI_AT_FUTURE_MAX_MS:
+                save_ui_rejection(pair, rejected_path)
+                refused = True
+            if refused:
+                checks["uiRenders"] = False
+                checks["uiReason"] = "clock_ahead"
+            if now_ms is not None and abs(now_ms - ui_at) <= MAX_SAFE:
+                checks["uiAgeMs"] = now_ms - ui_at
+        # The render's time and the app process that did it ride only with the render result itself.
+        if ui_at is not MISSING:
+            checks["uiAt"] = ui_at
+        if ui_instance is not None:
+            checks["uiInstance"] = ui_instance
+    return checks
+
+def collect_health(data_mount=None, backup_last=None, events=None, app=None, boot_id=None, ui_dist=None, ui_renders=None,
+                   ui_at=MISSING, ui_instance=None, clock=None, rejected_path=None):
+    """Best effort; any failure just omits that field. Returns (health_or_None, consumed_event_paths).
+    app: the probe's answer (True/False) or None when not probed. boot_id: this boot's kernel id, or None. ui_renders: the app's own
+    render result from the same answer (app_report "ui"), None when it reported none; ui_at and ui_instance its "uiAt" and "instance".
+    checks ride only with an app report (the control plane stores them with it) and only when they could be evaluated.
+    clock: this poll's clock sample taken just before the app was asked ({"wallMs", "bootMs", ...}), or None. It judges the render
+    time (readiness_checks now_ms) and rides as "clock" {"bootMs", "wallMs"} with the boot id: wallMs is the sample time the control
+    plane bounds the report's transit with. Nothing here orders reports: the control plane's evidence epoch does (Astra AUTOCANARY-10),
+    echoed by the caller as "evidenceEpoch"."""
+    health, consumed = {}, []
+    if app is not None:
+        health["appResponding"] = app is True
+        checks = readiness_checks(data_mount, ui_dist, ui_renders if app is True else None, ui_at, ui_instance,
+                                  int(clock["wallMs"]) if clock is not None else None, rejected_path)
+        if checks is not None:
+            health["checks"] = checks
+    if boot_id is not None:
+        health["bootId"] = boot_id
+        if clock is not None:
+            health["clock"] = {"bootMs": int(clock["bootMs"]), "wallMs": int(clock["wallMs"])}
+    try:
+        usage = os.statvfs(data_mount or DATA_MOUNT)
+        total = usage.f_blocks * usage.f_frsize
+        if total > 0:
+            health["diskUsedPercent"] = min(100, max(0, int(round(100 * (total - usage.f_bavail * usage.f_frsize) / total))))
+    except OSError:
+        pass
+    try:
+        with open(backup_last or BACKUP_LAST, "r") as handle:
+            value = int(handle.read(32).strip())
+        if 0 <= value <= MAX_SAFE:
+            health["lastBackupAt"] = value
+    except (OSError, ValueError):
+        pass
+    seen = []
+    try:
+        directory = events or EVENTS
+        for name in sorted(os.listdir(directory))[:5]:
+            path = directory + "/" + name
+            try:
+                info = os.lstat(path)
+                if not stat.S_ISREG(info.st_mode) or info.st_size > 4096:
+                    continue
+                with open(path, "rb") as handle:
+                    parsed = json.loads(handle.read(4096))
+                # Only the allowlisted name and a timestamp are copied; everything else in the file is dropped.
+                if (isinstance(parsed, dict) and parsed.get("type") in EVENT_TYPES and type(parsed.get("at")) is int
+                        and 0 <= parsed["at"] <= MAX_SAFE):
+                    seen.append({"type": parsed["type"], "at": parsed["at"]})
+                    consumed.append(path)
+            except (OSError, ValueError):
+                continue
+    except OSError:
+        pass
+    if seen:
+        health["events"] = seen
+    return (health or None), consumed
+
+def _poll_once(binding, context=None, request=machine_request, clock=read_clock,
+              public=PUBLIC, expected_uid=0, publish_fn=publish_snapshot):
+    if context is None:
+        context = {}
+    sent = sample_clock(context, clock, public)
+    request_id = str(uuid.uuid4())
+    lease = request(binding, "lease", {"generation": binding["generation"], "holder": binding["homeId"]})
+    strict_fields(lease, ("wire", "installationId", "holder", "generation", "expiresAt", "renewAfterMs", "ttlMs", "skewMs"))
+    if (type(lease["wire"]) is not int or lease["wire"] != WIRE or not isinstance(lease["installationId"], str)
+        or not re.fullmatch(r"[A-Za-z0-9_-]{1,128}", lease["installationId"])
+        or lease["holder"] != binding["homeId"] or not integer(lease["generation"])
+        or lease["generation"] != binding["generation"] or not integer(lease["expiresAt"], 0)
+        or any(type(lease[name]) is not int or lease[name] != expected for name, expected in
+               (("renewAfterMs", 60000), ("ttlMs", 3600000), ("skewMs", 120000)))):
+        raise ValueError("Invalid lease renewal")
+    after = sample_clock(context, clock, public)
+    if not clocks_match(sent, after):
+        fence(context, public)
+        raise ValueError("Renewal clock changed")
+    answer = context.get("appProbe", app_report)(binding.get("publicOrigin", ""))
+    # An injected probe may answer a bare bool or None (not probed) without a render field; the real one answers app_report's
+    # {"ok", "ui", "uiAt", "instance"}, all from one answer.
+    if isinstance(answer, dict):
+        app, ui, ui_at, ui_instance = answer.get("ok") is True, answer.get("ui"), answer.get("uiAt", MISSING), answer.get("instance")
+    else:
+        app, ui, ui_at, ui_instance = answer, None, MISSING, None
+    # Door v2 negotiation: the last SUCCESSFUL probe decides. A failed probe (ok False, or a non-dict answer) leaves the flag as it was, so
+    # a restart or a hiccup never flaps the home to v1; a successful probe without door (an image rolled back) clears it.
+    if isinstance(answer, dict) and answer.get("ok") is True:
+        context["doorV2"] = answer.get("door") == "v2"
+    door = context.get("doorV2") is True
+    boot_id = context.get("bootId", read_boot_id)()
+    health, consumed = collect_health(app=app, boot_id=boot_id, ui_renders=ui, ui_at=ui_at,
+                                      ui_instance=ui_instance, clock=after)
+    # The control plane's evidence epoch from the last heartbeat ack (Astra AUTOCANARY-10), echoed: it orders reports, nothing on this
+    # home does. None until an ack carried one (just started); the control plane never takes a report without the current epoch as
+    # evidence, so a restarted daemon's first report is never evidence; a heartbeat that failed or was refused forgets it.
+    # It rides with the health block (a heartbeat without health is never evidence and carries none). Mixed-version rollout (Astra
+    # AUTOCANARY-11 P1-3): holding no epoch, the health block has the oldest shape every control plane accepts (no evidenceEpoch, no
+    # EPOCH_ONLY_FIELDS) and the capability header asks for an epoch; only once an ack carried one does it send the full report with it.
+    # An older control plane never acks one, so it keeps getting the old shape it accepts. Never bootSeq (retired).
+    # Negotiation is per response, never sticky (Astra AUTOCANARY-12 P1): during a rollback or a version overlap the next heartbeat can
+    # reach an older control plane than the one that acked the epoch, and its strict schema answers the full report 400. That 400 is
+    # not a rejection of this home: the same poll resends at once the oldest shape (no evidenceEpoch, no EPOCH_ONLY_FIELDS; the header
+    # still rides), at most once per poll, and the full report comes back only when an ack carries an epoch again. A 400 to the oldest
+    # shape is a real rejection (poll_once fences).
+    epoch = context.pop("evidenceEpoch", None)
+    body = {"generation": binding["generation"]}
+    oldest = None
+    if health:
+        oldest = {name: value for name, value in health.items() if name not in EPOCH_ONLY_FIELDS}
+        if type(epoch) is int and 0 <= epoch <= MAX_SAFE:
+            health["evidenceEpoch"] = epoch
+            body["health"] = health
+        else:
+            if oldest:
+                body["health"] = oldest
+            oldest = None  # already the oldest shape: nothing to fall back to
+    try:
+        try:
+            heartbeat = request(binding, "heartbeat", body, door=True) if door else request(binding, "heartbeat", body)
+        except urllib.error.HTTPError as error:
+            if error.code != 400 or oldest is None:
+                raise
+            try:
+                error.close()
+            except Exception:
+                pass
+            body = {"generation": binding["generation"]}
+            if oldest:
+                body["health"] = oldest
+            heartbeat = request(binding, "heartbeat", body, door=True) if door else request(binding, "heartbeat", body)
+    except urllib.error.HTTPError as error:
+        if error.code >= 500:
+            context["heartbeatRetryS"] = retry_after(error)
+        raise
+    # A control plane without evidence epochs answers {"wire", "accepted"}; one with them adds the generation and the epoch to echo.
+    if isinstance(heartbeat, dict) and set(heartbeat) == {"wire", "accepted"}:
+        epoch_ack = None
+    else:
+        strict_fields(heartbeat, ("wire", "accepted", "generation", "evidenceEpoch"))
+        epoch_ack = heartbeat["evidenceEpoch"]
+        if (type(heartbeat["generation"]) is not int or heartbeat["generation"] != binding["generation"]
+                or type(epoch_ack) is not int or not 0 <= epoch_ack <= MAX_SAFE):
+            raise ValueError("Heartbeat refused")
+    if (type(heartbeat["wire"]) is not int or heartbeat["wire"] != WIRE or heartbeat["accepted"] is not True):
+        raise ValueError("Heartbeat refused")
+    if epoch_ack is not None:
+        context["evidenceEpoch"] = epoch_ack
+    for path in consumed:
+        try:
+            os.unlink(path)
+        except OSError:
+            pass
+    after = sample_clock(context, clock, public)
+    if not clocks_match(sent, after):
+        fence(context, public)
+        raise ValueError("Heartbeat clock changed")
+    desired = validate_desired(request(binding, "desired"), binding, lease)
+    received = sample_clock(context, clock, public)
+    deadline = min(sent["bootMs"] + 3480000, sent["bootMs"] + lease["expiresAt"] - sent["wallMs"])
+    if not clocks_match(sent, received) or deadline <= received["bootMs"] or lease["expiresAt"] <= received["wallMs"]:
+        fence(context, public)
+        raise ValueError("Expired renewal")
+    snapshot = {"version": 1, "homeId": binding["homeId"], "cpGeneration": binding["generation"],
+                "requestId": request_id, "bootId": sent["bootId"],
+                "requestSend": {name: sent[name] for name in ("wallMs", "bootMs", "monoMs")},
+                "conservativeDeadlineBootMs": deadline, "receivedAt": received["wallMs"], "desired": desired}
+    publish_fn(snapshot, binding, public, expected_uid)
+    context["snapshot"] = snapshot
+    context["renewalClock"] = sent
+    context["invalidated"] = False
+    return snapshot
+
+def retry_after(error):
+    """Seconds the control plane asked us to wait before resending a 5xx heartbeat: its Retry-After (whole seconds), clamped to
+    [HEARTBEAT_RETRY_S, 30]; HEARTBEAT_RETRY_S when absent or malformed."""
+    try:
+        value = (error.headers.get("Retry-After") or "").strip() if error.headers is not None else ""
+    except Exception:
+        value = ""
+    if re.fullmatch(r"[0-9]{1,4}", value):
+        return min(30, max(HEARTBEAT_RETRY_S, int(value)))
+    return HEARTBEAT_RETRY_S
+
+def next_poll_delay(context, rand=random.uniform):
+    """After a poll: POLL_INTERVAL_S, or, after a heartbeat answered 5xx, its retry base doubled per consecutive 5xx plus jitter of up to
+    half the base (Astra AUTOCANARY-11 P1-1). Past POLL_INTERVAL_S the delay is POLL_INTERVAL_S +/- 25% (Astra AUTOCANARY-12 P2-1): the cap
+    keeps its jitter, so a fleet that failed together never retries in lockstep, and it is never below the 30 s most a Retry-After asks."""
+    base = context.pop("heartbeatRetryS", None)
+    if base is None:
+        context["heartbeatFailures"] = 0
+        return POLL_INTERVAL_S
+    failures = context.get("heartbeatFailures", 0) + 1
+    context["heartbeatFailures"] = failures
+    delay = base * (2 ** min(failures - 1, 6)) + rand(0, base / 2)
+    if delay > POLL_INTERVAL_S:
+        delay = rand(POLL_INTERVAL_S * 0.75, POLL_INTERVAL_S * 1.25)
+    return delay
+
+def schedule_next_poll(context, started, answered, rand=random.uniform):
+    """The monotonic time of the next poll. A normal poll keeps the steady cadence from its start; a retry after a 5xx is timed from the
+    answer (Astra AUTOCANARY-12 P2-1: a 20 s poll answered 503 with Retry-After: 5 is resent 5 s and more after the 503, not 1 s): poll_once
+    re-raises the 5xx straight from the heartbeat request, so the poll's end is the answer's time."""
+    retrying = context.get("heartbeatRetryS") is not None
+    delay = next_poll_delay(context, rand)
+    return (answered if retrying else started) + delay
+
+def poll_once(binding, context=None, request=machine_request, clock=read_clock,
+              public=PUBLIC, expected_uid=0, publish_fn=publish_snapshot):
+    if context is None:
+        context = {}
+    try:
+        return _poll_once(binding, context, request, clock, public, expected_uid, publish_fn)
+    except (ValueError, KeyError, TypeError):
+        fence(context, public)
+        raise
+    except urllib.error.HTTPError as error:
+        if error.code < 500:
+            fence(context, public)
+        raise
+
+def run(load=load_private_binding, request=machine_request, clock=read_clock, sleep=time.sleep,
+        monotonic=time.monotonic, public=PUBLIC, expected_uid=0):
+    ready_deadline = monotonic() + 120
+    while True:
+        try:
+            binding = load()
+            break
+        except FileNotFoundError:
+            if monotonic() >= ready_deadline:
+                raise ValueError("Control binding readiness expired") from None
+            sleep(1)
+    os.makedirs(public, mode=0o755, exist_ok=True)
+    secure_parents(public + "/state.json", expected_uid)
+    # Runtime starts without authority; immutable trust key was already required.
+    for name in ("state.json", "home-generation.json", "home-identity.json"):
+        atomic_public(public + "/" + name, {}, expected_uid)
+    context = {}
+    next_poll = monotonic()
+    while True:
+        if monotonic() >= next_poll:
+            if refresh_probe_namespace(read_boot_id()):
+                print("Cloud control restarting for the data probe directory", file=sys.stderr)
+                sys.exit(PROBE_NAMESPACE_EXIT)
+            poll_started = monotonic()
+            try:
+                poll_once(binding, context, request, clock, public, expected_uid)
+            except Exception:
+                # Preserve last valid authority on ordinary transport outage only.
+                # All bytes from remote/local exceptions remain private.
+                print("Cloud control poll unavailable", file=sys.stderr)
+            next_poll = schedule_next_poll(context, poll_started, monotonic())
+        try:
+            sample_clock(context, clock, public)
+        except Exception:
+            print("Cloud control clock authority unavailable", file=sys.stderr)
+        sleep(1)
+
+if __name__ == "__main__":
+    try:
+        if os.geteuid() != 0:
+            raise ValueError("Root control required")
+        if sys.argv[1:]:
+            raise ValueError("Root control required")
+        os.umask(0o077)
+        run()
+    except Exception:
+        print("Cloud control readiness refused", file=sys.stderr)
+        sys.exit(78)

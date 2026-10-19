@@ -1,4 +1,4 @@
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, sep } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
@@ -10,10 +10,11 @@ import {
   readNativeJsonConfig,
   type NativeConfigProblem,
 } from "./native-config-file.ts";
+import { removeTempDirSync } from "../testing/cleanup.ts";
 
 const scratchDirs: string[] = [];
 afterEach(() => {
-  for (const dir of scratchDirs.splice(0)) rmSync(dir, { recursive: true, force: true });
+  for (const dir of scratchDirs.splice(0)) removeTempDirSync(dir);
 });
 
 function refusalFor(text: string): NativeConfigRefusal | null {

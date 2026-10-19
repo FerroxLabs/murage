@@ -5,7 +5,7 @@
 // phone (390) and desktop (1440) width: no sideways scroll, every control
 // reachable, the token field never shows its value. Static fixture, no harness.
 // Screenshots land in PUBLISH_CONNECT_SHOTS_DIR when set, else the output dir.
-import { test, expect } from "@playwright/test";
+import { test, expect } from "./page-error-guard";
 import { createServer, type ViteDevServer } from "vite";
 import react from "@vitejs/plugin-react";
 import tailwindcss from "@tailwindcss/vite";

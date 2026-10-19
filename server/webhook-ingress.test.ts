@@ -1,10 +1,11 @@
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
 import { listenWebhookIngress, MAX_WEBHOOK_BODY_BYTES, webhookCredential, type WebhookIngress } from "./webhook-ingress.ts";
 import { WebhookManager } from "./webhooks.ts";
+import { removeTempDirSync } from "./testing/cleanup.ts";
 
 let dir: string;
 let ingress: WebhookIngress;
@@ -31,7 +32,7 @@ beforeAll(async () => {
 
 afterAll(async () => {
   await new Promise<void>((resolve) => ingress.server.close(() => resolve()));
-  rmSync(dir, { recursive: true, force: true });
+  removeTempDirSync(dir);
 });
 
 describe("webhook-only ingress", () => {

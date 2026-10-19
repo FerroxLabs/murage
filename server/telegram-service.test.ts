@@ -6,6 +6,7 @@ import { TelegramService, TelegramTokenRefusal } from "./telegram-service.ts";
 import * as atomic from "./atomic.ts";
 import type { TelegramTransport } from "./telegram-transport.ts";
 import { TelegramTransportError } from "./telegram-transport.ts";
+import { removeTempDirSync } from "./testing/cleanup.ts";
 
 it("verifies identity before polling and stops admissions on revoke", async () => {
   vi.useFakeTimers();
@@ -34,11 +35,11 @@ it("verifies identity before polling and stops admissions on revoke", async () =
     updates = [update(3, "do not run")];
     await vi.advanceTimersByTimeAsync(3000);
     expect(enqueue).toHaveBeenCalledTimes(1);
-  } finally { service.stop(); vi.useRealTimers(); rmSync(dataDir, { recursive: true, force: true }); }
+  } finally { service.stop(); vi.useRealTimers(); removeTempDirSync(dataDir); }
 });
 
 const restartFixtures: Array<{ root: string; services: TelegramService[] }> = [];
-afterEach(() => { for (const fixture of restartFixtures.splice(0)) { fixture.services.forEach(service => service.stop()); rmSync(fixture.root, { recursive: true, force: true }); } vi.restoreAllMocks(); vi.useRealTimers(); });
+afterEach(() => { for (const fixture of restartFixtures.splice(0)) { fixture.services.forEach(service => service.stop()); removeTempDirSync(fixture.root); } vi.restoreAllMocks(); vi.useRealTimers(); });
 function restartFixture() {
  vi.useFakeTimers();
  const root=mkdtempSync(join(tmpdir(),"telegram-resume-")),services:TelegramService[]=[]; restartFixtures.push({root,services});

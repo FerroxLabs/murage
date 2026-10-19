@@ -7,7 +7,7 @@
 //   2 a restored ready direct continuation is held, never drained, and a dismissed card means never
 //   3 one fixture with a pending item of every kind: zero work starts at boot
 //   4 structural: every table with a state/status/stage column is fenced or declared not pending work
-import { mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
@@ -36,10 +36,11 @@ import {
   fenceRestoredContinuations, fenceRestoredSql, isRestoreHeld, releaseHeldContinuation, RESTORE_FENCED_STORES, RESTORE_NOT_PENDING_WORK,
   runnableContinuation, restoreHoldFor, sqlRowRestoreHeld, releaseHeldItem, releaseHeldSharedResults,
 } from "./restore-fence.ts";
+import { removeTempDirSync } from "./testing/cleanup.ts";
 
 const dbs: DatabaseSync[] = [];
 const roots: string[] = [];
-afterEach(() => { dbs.splice(0).forEach(db => db.close()); for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true }); });
+afterEach(() => { dbs.splice(0).forEach(db => db.close()); for (const root of roots.splice(0)) removeTempDirSync(root); });
 
 const lineage = { rootThreadId: "room", origin: "server" as const, audienceFingerprint: "owner", notOwnerAudience: false, unattended: false };
 function projectFixture() {
@@ -157,7 +158,7 @@ describe("2 a restored continuation is held, whatever its card", () => {
     const db = new DatabaseSync(join(data, "messages.db"));
     try {
       initializeMessageTables(db); initializeImageOperations(db);
-      db.prepare("INSERT INTO messages VALUES(?,?,?,?,?,?,?)").run("thread", "card1", 1, "bot", "options", null, JSON.stringify({ id: "card1", at: 1, role: "bot", kind: "options", card: { requestId: "r", title: "Approve", answered: "deny", dismissed: true, options: [] } }));
+      db.prepare("INSERT INTO messages(thread_id,id,at,role,kind,text,json) VALUES(?,?,?,?,?,?,?)").run("thread", "card1", 1, "bot", "options", null, JSON.stringify({ id: "card1", at: 1, role: "bot", kind: "options", card: { requestId: "r", title: "Approve", answered: "deny", dismissed: true, options: [] } }));
       db.exec("INSERT INTO thread_state VALUES('thread','card1')");
     } finally { db.close(); }
     const archive = join(root, "backup.zip");

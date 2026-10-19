@@ -37,7 +37,7 @@ export const FULL_ACCESS_ON_THIS_COMPUTER =
 
 /** Shown once per bot before No limits is switched on. */
 export const NO_LIMITS_WARNING =
-  "This bot will do anything without asking, except reading your keys and passwords. That includes deleting files anywhere, paying for things, and messaging anyone or posting in public.";
+  "This bot will do everything without asking, except reading your keys and passwords and commands Murage recognizes as able to wipe your computer, which ask first. That includes deleting files outside its folder, paying for things, and messaging anyone or posting in public.";
 
 export function FullAccessWarning({
   open,

@@ -5,7 +5,7 @@
 // a desktop window), keyboard-only use, initial focus, and the fail-closed
 // "couldn't check, retrying" state with Retry. The page runs the real
 // TermsGate; the only stand-in is the request function, scripted per test.
-import { test, expect, type Page } from "@playwright/test";
+import { test, expect, type Page } from "./page-error-guard";
 import { createServer, type ViteDevServer } from "vite";
 import react from "@vitejs/plugin-react";
 import tailwindcss from "@tailwindcss/vite";

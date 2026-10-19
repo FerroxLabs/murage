@@ -2,15 +2,16 @@
 // rowid per column): the next open reads only rows added since; a malformed new row is still refused; an app
 // version change alone does NOT re-read old rows, a schema or shapes-list change does; a file from outside this
 // installation is always read in full.
-import { mkdirSync, rmSync } from "node:fs";
+import { mkdirSync } from "node:fs";
 import { afterEach, beforeEach, expect, it } from "vitest";
 import { DATA_DIR } from "../config.ts";
 import { closeDatabase, database } from "../database.ts";
 import { ensureScope, reconcileMemoryRoster } from "./policy.ts";
 import { validateMemorySchema } from "./schema.ts";
+import { removeTempDirSync } from "../testing/cleanup.ts";
 
 const saved = process.env.MURAGE_APP_VERSION;
-beforeEach(() => { closeDatabase(); rmSync(DATA_DIR, { recursive: true, force: true }); mkdirSync(DATA_DIR, { recursive: true }); process.env.MURAGE_APP_VERSION = "1.0.0"; reconcileMemoryRoster({ bots: [{ id: "bot", threadId: "chat" }], groups: [] }); });
+beforeEach(() => { closeDatabase(); removeTempDirSync(DATA_DIR); mkdirSync(DATA_DIR, { recursive: true }); process.env.MURAGE_APP_VERSION = "1.0.0"; reconcileMemoryRoster({ bots: [{ id: "bot", threadId: "chat" }], groups: [] }); });
 afterEach(() => { if (saved === undefined) delete process.env.MURAGE_APP_VERSION; else process.env.MURAGE_APP_VERSION = saved; closeDatabase(); });
 
 function seed(from: number, count: number) {

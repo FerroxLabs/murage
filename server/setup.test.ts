@@ -1,4 +1,4 @@
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
@@ -32,6 +32,7 @@ import {
   setupSignedOutReading,
   threadAnswered,
 } from "./setup.ts";
+import { removeTempDirSync } from "./testing/cleanup.ts";
 
 // The same shape every Flux fixture in this suite uses. Not a credential:
 // `sk-flux-` plus filler, chosen so the shape check has something real to
@@ -73,7 +74,7 @@ beforeEach(() => {
   directory = mkdtempSync(join(tmpdir(), "murage-setup-state-"));
   file = join(directory, "setup.json");
 });
-afterEach(() => rmSync(directory, { recursive: true, force: true }));
+afterEach(() => removeTempDirSync(directory));
 
 describe("the setup checklist the server owns", () => {
   it("opens on the five steps in the order the person experiences them", () => {

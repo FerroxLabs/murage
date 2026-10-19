@@ -12,9 +12,10 @@
 // - one million messages with one early lineage pointer: every call of the warmer stays near its deadline, and yields to the owner between
 //   pages; the discovery of threads is paged too;
 // - successive sessions after a cold start: the first turn resets the old session for warming, the warmer finishes, the next session stays.
-import { mkdirSync, rmSync } from "node:fs";
+import { mkdirSync } from "node:fs";
 import { afterEach, beforeEach, expect, it } from "vitest";
 import { thawRootSetWritesForTest } from "./replay-lineage.ts";
+import { removeTempDirSync } from "../testing/cleanup.ts";
 // 1.0.2: this file drives the read-time root-set machinery over rows a 1.0.1 file holds; thaw the frozen root-set writes to model them.
 beforeEach(() => thawRootSetWritesForTest(true));
 afterEach(() => thawRootSetWritesForTest(false));
@@ -32,7 +33,7 @@ import {
 
 const thread = "conv-direct", driver = "drv", session = "sess";
 
-beforeEach(() => { resetLineageWarmForTest(); closeDatabase(); rmSync(DATA_DIR, { recursive: true, force: true }); mkdirSync(DATA_DIR, { recursive: true }); });
+beforeEach(() => { resetLineageWarmForTest(); closeDatabase(); removeTempDirSync(DATA_DIR); mkdirSync(DATA_DIR, { recursive: true }); });
 afterEach(() => { setReplayNodeBudgetForTest(null); setTurnLineageNodesForTest(null); setLineageWarmSlicesForTest(null, null); });
 
 /** An upgrade restart: the file stays, nothing kept in memory does. */

@@ -5,7 +5,7 @@
 // gate in database.ts; the revocation index build no longer takes it, it writes in short slices) waits asynchronously or
 // requeues without losing work: scheduler ticks, routine runs, the mutating GET /api/mobile/push/binding, background timers,
 // plus the HTTP turn. None of them crashes the server, none fails terminally, and the event loop stays free.
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { monitorEventLoopDelay } from "node:perf_hooks";
@@ -16,6 +16,7 @@ import { downgradeMemorySchema, migrateMemorySchema } from "./memory/schema.ts";
 import { initializeMobilePush, PushStore } from "./mobile-push-store.ts";
 import { mobilePushRoute, type PushRouteDeps } from "./mobile-push-routes.ts";
 import { RoutineManager } from "./routines.ts";
+import { removeTempDirSync } from "./testing/cleanup.ts";
 
 const B = "3f6c1a52-8d1e-4b7a-9c2e-5a0d7e41b9f3";
 let dir: string, db: DatabaseSync, lockHolder: DatabaseSync | undefined;
@@ -38,7 +39,7 @@ afterEach(async () => {
   holdWritersForIndexBuild(false);
   if (lockHolder) { try { lockHolder.exec("ROLLBACK"); } catch { /* none open */ } lockHolder.close(); lockHolder = undefined; }
   try { db.close(); } catch { /* closed */ }
-  rmSync(dir, { recursive: true, force: true });
+  removeTempDirSync(dir);
   vi.restoreAllMocks();
 });
 

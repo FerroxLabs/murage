@@ -5,7 +5,7 @@
 // of the background fill and answered a bounded way by: the project digest tick (a timer), a branch change (a write), and the newest-row /
 // branch-line readers (a request, a turn's late check). The synchronous fill is reachable only from the turn-path readers, which a turn
 // reaches after `await prepareThread` (index.ts startTurn / startCardContinuation / the member turn), and from the background fill itself.
-import { readFileSync, readdirSync, mkdirSync, rmSync, statSync } from "node:fs";
+import { readFileSync, readdirSync, mkdirSync, statSync } from "node:fs";
 import { join, relative } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { afterAll, beforeAll, expect, it } from "vitest";
@@ -24,6 +24,7 @@ import { channelToProjectRows } from "./project-settings.ts";
 import { createProjectCard } from "./project-cards.ts";
 import type { CommsBus } from "./comms-visibility.ts";
 import { expectSameReads, measureReads } from "./testing/bounded-reads.ts";
+import { removeTempDirSync } from "./testing/cleanup.ts";
 
 const SERVER = __dirname;
 // Other test files build and delete hidden fixture directories (`.e2a-fixtures-*`) under server/ while this scan walks it, so the walk skips
@@ -69,7 +70,7 @@ function chain(threadId: string, count: number) {
   COUNT.set(threadId, count);
 }
 beforeAll(() => {
-  rmSync(DATA_DIR, { recursive: true, force: true });
+  removeTempDirSync(DATA_DIR);
   mkdirSync(DATA_DIR, { recursive: true });
   store = new Store(selection);
   small = store.createBot({ name: "Thousand" }).threadId; large = store.createBot({ name: "Many" }).threadId;

@@ -154,6 +154,7 @@ it("the actual main createWindow and activate wiring retargets the process updat
     startBrowserSurface: vi.fn(), installWindowStatePersistence: vi.fn(), applyUnreadBadge: vi.fn(),
     app: { isPackaged: true }, serverReady: true, SERVER_PORT: 18888, desktopShutdownStarted: false, desktopRecoveryMode: false,
     backgroundLifecycle: null, loginLaunch: false, background: null,
+    cloudHome: null, // Cloud flag off: createWindow passes --murage-cloud=1 only when installCloudHome returned a controller
     // createWindow now closes the startup splash (4931ea16d); the fixture has none to close.
     closeStartupSplash: vi.fn(), startupSplash: null, desktopMark: vi.fn(), noteVersionStarted: vi.fn(),
     shell: { openExternal: vi.fn(), openPath: vi.fn() }, LOG_DIR: "/unused-log-dir", pathToFileURL: (value) => new URL(`file://${value}`),

@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { api } from "@/state/store";
+import { InAdvanced } from "./SettingsPrimitives";
 
 export interface SlackStatus {
   state: "idle" | "verifying" | "pairing" | "connected" | "retry" | "blocked";
@@ -132,11 +133,11 @@ export function SlackSettings() {
     <h3 id="slack-settings-title" className="text-[15px] font-semibold text-ink">Slack</h3>
     <p className="mt-1 text-[12px] leading-relaxed text-ink-secondary">Message your Chief from one approved Slack direct message. Keep Murage running to receive messages. Approvals stay in Murage.</p>
     <p role="status" className="mt-3 text-[12px] font-medium text-ink">{slackHealth(status, expired)}</p>
-    <details className="mt-3 text-[12px] text-ink-secondary">
-      <summary className="min-h-11 cursor-pointer py-3 text-ink">Private Slack app setup</summary>
+    <InAdvanced><div id="slack-app-setup-heading" className="rounded-xl bg-card p-4 text-[12px] text-ink-secondary">
+      <h4 className="text-[13px] font-medium text-ink">Private Slack app setup</h4>
       <p>Use a private app with Socket Mode enabled. The app-level token needs <code>connections:write</code>. The bot token needs <code>im:history</code> and <code>chat:write</code>, with the <code>message.im</code> event enabled. Add <code>files:write</code> too if you want voice notes sent here.</p>
       <a className="mt-2 inline-flex min-h-11 items-center text-accent-text underline hover:text-ink" href="https://api.slack.com/apps" target="_blank" rel="noreferrer">Open Slack app settings</a>
-    </details>
+    </div></InAdvanced>
     <h4 className="mt-4 text-[13px] font-medium text-ink">1. Save credentials securely</h4>
     <p className="mt-1 text-[12px] text-ink-secondary">Stored encrypted on this computer. Saved keys are never shown here; leave a saved key blank to keep it.</p>
     <label className="mt-3 block text-[12px] text-ink-secondary">App-level token {status?.appConfigured && <span>(saved)</span>}

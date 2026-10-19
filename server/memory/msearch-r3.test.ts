@@ -22,6 +22,7 @@ import { setMemoryMode } from "./repository.ts";
 import { searchMemory, type MemorySearchBridge } from "./search.ts";
 import type { MemorySearchInput } from "./worker-protocol.ts";
 import { LineageAllowance } from "./lineage-allowance.ts";
+import { removeTempDirSync } from "../testing/cleanup.ts";
 
 const ROSTER: MemoryRoster = { bots: [{ id: "a", threadId: "thread-a", section: "crew" }, { id: "b", threadId: "thread-b", section: "crew" }], groups: [] };
 const INDEX_PATH = () => join(DATA_DIR, "memory-index.db");
@@ -29,7 +30,7 @@ const QUERY = "harbour lantern";
 
 function fresh() {
   closeMemoryIndexReader(); closeDatabase();
-  rmSync(DATA_DIR, { recursive: true, force: true }); mkdirSync(DATA_DIR, { recursive: true });
+  removeTempDirSync(DATA_DIR); mkdirSync(DATA_DIR, { recursive: true });
   reconcileMemoryRoster(ROSTER); setMemoryMode("active");
 }
 beforeEach(fresh);

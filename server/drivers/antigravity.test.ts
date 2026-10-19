@@ -4,7 +4,7 @@
 //
 // The fake CLI is a shebang script Windows cannot exec directly;
 // spawnCli resolves it to `node <script>`, so these run everywhere.
-import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -28,6 +28,7 @@ import {
   readAntigravityModelCatalog,
   STATIC_ANTIGRAVITY_MODELS,
 } from "./antigravity.ts";
+import { removeTempDirSync } from "../testing/cleanup.ts";
 
 const FAKE_CLI = join(dirname(fileURLToPath(import.meta.url)), "..", "testing", "fake-agy-cli.ts");
 
@@ -69,7 +70,7 @@ describe("readAntigravityModelCatalog", () => {
       expect(catalog.options.slice(0, STATIC_ANTIGRAVITY_MODELS.options.length)).toEqual(STATIC_ANTIGRAVITY_MODELS.options);
       expect(catalog.options.at(-1)).toEqual({ id: "local-gemini", label: "Local Gemini", custom: true });
     } finally {
-      rmSync(home, { recursive: true, force: true });
+      removeTempDirSync(home);
     }
   });
 });
@@ -191,7 +192,7 @@ describe("Antigravity turns (fake CLI)", () => {
       expect(recorder.events.filter((e) => e.type === "runtime.error")).toEqual([]);
       expect(instance.adapter.hasSession("t-stop")).toBe(false);
     } finally {
-      rmSync(home, { recursive: true, force: true });
+      removeTempDirSync(home);
     }
   }, 10_000);
 
@@ -214,7 +215,7 @@ describe("Antigravity turns (fake CLI)", () => {
       expect(errors[0]).toMatch(/^Antigravity( Test)? closed \(exit code 3\) before it finished its reply/);
       expect(errors[0]).toContain("simulated crash");
     } finally {
-      rmSync(home, { recursive: true, force: true });
+      removeTempDirSync(home);
     }
   }, 10_000);
 
@@ -505,7 +506,7 @@ describe("Antigravity snapshot", () => {
         if (previous[name] === undefined) delete process.env[name];
         else process.env[name] = previous[name];
       }
-      rmSync(scratch, { recursive: true, force: true });
+      removeTempDirSync(scratch);
     }
   });
 
@@ -680,7 +681,7 @@ describe("Antigravity Murage MCP config", () => {
     } finally {
       recorder.stop();
       await instance.dispose();
-      rmSync(home, { recursive: true, force: true });
+      removeTempDirSync(home);
     }
   });
 
@@ -712,7 +713,7 @@ describe("Antigravity Murage MCP config", () => {
     } finally {
       recorder.stop();
       await instance.dispose();
-      rmSync(home, { recursive: true, force: true });
+      removeTempDirSync(home);
     }
   });
 });

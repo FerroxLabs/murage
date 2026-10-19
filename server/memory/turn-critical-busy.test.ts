@@ -4,7 +4,7 @@
 // 1.0.2 rc3f: the held-turn tick claims the starting turn's capture with no lock wait. A busy writer lock there is
 // "try again next tick": it must not throw out of the timer callback (that would take the server down), and the
 // capture is claimed on the next tick.
-import { mkdirSync, rmSync } from "node:fs";
+import { mkdirSync } from "node:fs";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { DATA_DIR } from "../config.ts";
 import { closeDatabase, DatabaseBusyError } from "../database.ts";
@@ -15,6 +15,7 @@ import { setMemoryMode } from "./repository.ts";
 import { MemoryWorkerController } from "./worker-controller.ts";
 import { resetWorkerLog } from "./worker-log.ts";
 import { resetMemoryClaimCursor } from "./jobs.ts";
+import { removeTempDirSync } from "../testing/cleanup.ts";
 
 const gate = vi.hoisted(() => ({ busy: 0, calls: 0 }));
 vi.mock("./jobs.ts", async importOriginal => {
@@ -32,7 +33,7 @@ const uncaught: unknown[] = [];
 const onUncaught = (error: unknown) => { uncaught.push(error); };
 
 beforeEach(() => {
-  closeDatabase(); rmSync(DATA_DIR, { recursive: true, force: true }); mkdirSync(DATA_DIR, { recursive: true }); setMemoryMode("active"); resetParkSweep(); resetMemoryClaimCursor(); resetWorkerLog();
+  closeDatabase(); removeTempDirSync(DATA_DIR); mkdirSync(DATA_DIR, { recursive: true }); setMemoryMode("active"); resetParkSweep(); resetMemoryClaimCursor(); resetWorkerLog();
   sent = []; releases = []; gate.busy = 0; gate.calls = 0; uncaught.length = 0;
   process.on("uncaughtException", onUncaught);
   vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout", "setInterval", "clearInterval", "setImmediate", "clearImmediate", "Date"] });

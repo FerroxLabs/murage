@@ -23,7 +23,7 @@
 // through the output index, judges each distinct thing a receipt cites
 // once, and a direct turn asks only about the lines it replays. What a
 // revoked or forgotten source produced is still never replayed.
-import { mkdirSync, rmSync } from "node:fs";
+import { mkdirSync } from "node:fs";
 import { afterEach, beforeEach, expect, it } from "vitest";
 import { DATA_DIR } from "../config.ts";
 import { closeDatabase, database } from "../database.ts";
@@ -39,6 +39,7 @@ import { replayExclusions, replayLimitWithheld, replayRowsRead, setReplayNodeBud
 import type { MemorySearchBridge } from "./search.ts";
 import type { Message } from "../store.ts";
 import { LineageAllowance } from "./lineage-allowance.ts";
+import { removeTempDirSync } from "../testing/cleanup.ts";
 
 const roster: MemoryRoster = {
   bots: [
@@ -51,7 +52,7 @@ const roster: MemoryRoster = {
 const directAllowed = (t: string, m: Message[], a: MemoryAccess, s: Set<string>) => filterDirectReplay(LineageAllowance.tool(), t, m, a, s).allowed;
 const empty: MemorySearchBridge = { search: async () => ({ hits: [], vectorRows: 0 }) };
 afterEach(() => setReplayNodeBudgetForTest(null));
-beforeEach(() => { closeDatabase(); rmSync(DATA_DIR, { recursive: true, force: true }); mkdirSync(DATA_DIR, { recursive: true }); });
+beforeEach(() => { closeDatabase(); removeTempDirSync(DATA_DIR); mkdirSync(DATA_DIR, { recursive: true }); });
 
 function access(botId: string, thread: string): MemoryAccess {
   reconcileMemoryRoster(roster);

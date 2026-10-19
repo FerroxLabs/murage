@@ -5,7 +5,10 @@
 set -euo pipefail
 HERE=$(cd "$(dirname "$0")" && pwd)
 source "$HERE/host.env"
-curl -s -w '\n%{http_code}' -X POST -H 'Origin: http://127.0.0.1:28811' -H 'Content-Type: application/json' http://127.0.0.1:28811/pairing |
+# Same derivation as door.sh, which handed this token to the sidecar.
+CONTROL_TOKEN=$(printf 'murage-e2e-control:%s' "$COMPANION_TOKEN" | shasum -a 256 | cut -c1-64)
+curl -s -w '\n%{http_code}' -X POST -H 'Origin: http://127.0.0.1:28811' -H 'Content-Type: application/json' \
+  -H "x-murage-control-token: $CONTROL_TOKEN" http://127.0.0.1:28811/pairing |
   python3 -c '
 import json, sys
 body, _, status = sys.stdin.read().rpartition("\n")
