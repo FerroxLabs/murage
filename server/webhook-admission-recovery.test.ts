@@ -1,9 +1,10 @@
-import { mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { mkdtempSync, readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { expect, it, vi } from "vitest";
 import { RoutineManager, type RoutineManagerOptions } from "./routines.ts";
 import { WebhookManager, type WebhookManagerOptions } from "./webhooks.ts";
+import { removeTempDirSync } from "./testing/cleanup.ts";
 
 const fault = vi.hoisted(() => ({ file: "" }));
 vi.mock("./atomic.ts", async importOriginal => {
@@ -61,6 +62,6 @@ it("reconciles a scheduler commit after webhook save failure and restart without
   } finally {
     fault.file = "";
     await Promise.resolve();
-    rmSync(root, { recursive: true, force: true });
+    removeTempDirSync(root);
   }
 });

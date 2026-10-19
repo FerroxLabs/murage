@@ -3,13 +3,14 @@
 //
 // B1: the owner's own messages and a rewind reach the weak and edit signals
 // through the Store, once, for the owner only, and only while the bot learns.
-import { mkdirSync, rmSync } from "node:fs";
+import { mkdirSync } from "node:fs";
 import { beforeEach, expect, it } from "vitest";
 import { DATA_DIR } from "./config.ts";
 import { closeDatabase, database } from "./database.ts";
 import { Store } from "./store.ts";
+import { removeTempDirSync } from "./testing/cleanup.ts";
 
-beforeEach(() => { closeDatabase(); rmSync(DATA_DIR, { recursive: true, force: true }); mkdirSync(DATA_DIR, { recursive: true }); database().exec("UPDATE memory_meta SET mode='active'"); });
+beforeEach(() => { closeDatabase(); removeTempDirSync(DATA_DIR); mkdirSync(DATA_DIR, { recursive: true }); database().exec("UPDATE memory_meta SET mode='active'"); });
 const actions = () => (database().prepare("SELECT target_action FROM memory_feedback ORDER BY target_action").all() as { target_action: string }[]).map(row => row.target_action);
 const draft = "Hi Dana, hope you are well. We would love to schedule a quick call this week to go over the proposal and next steps for your team.";
 

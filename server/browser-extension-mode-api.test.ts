@@ -2,7 +2,7 @@
 // F8: Full permissive is owner-only. Real isolated Murage HTTP server (no browser is launched), the
 // store's own sanitiser, and the restore preparation.
 import { randomBytes } from "node:crypto";
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
@@ -15,6 +15,7 @@ import { initializeImageOperations } from "./image-operations-schema.ts";
 import { DATA_DIR } from "./config.ts";
 import { Store } from "./store.ts";
 import { routeClass, conversationSubject } from "./route-policy.ts";
+import { removeTempDirSync } from "./testing/cleanup.ts";
 
 const launchProof = randomBytes(32).toString("hex");
 let fixture: VerificationServer;
@@ -220,14 +221,14 @@ describe("a restored backup", () => {
       writeFileSync(join(data, "bots.json"), JSON.stringify([{ id: "bot", threadId: "thread", name: "Restored bot", browserApproval: "full", browserActionCheck: "bot", useMyChrome: true, browserTransport: "extension", browserExtensionProfileId: "profile_1", tasks: [] }]));
       writeFileSync(join(data, "groups.json"), "[]");
       const db = new DatabaseSync(join(data, "messages.db"));
-      try { initializeMessageTables(db); initializeImageOperations(db); db.prepare("INSERT INTO messages VALUES(?,?,?,?,?,?,?)").run("thread", "m1", 1, "bot", "goal.run", null, JSON.stringify({ id: "m1", at: 1, role: "bot", kind: "goal.run", goalRun: { status: "completed", detail: "Done" } })); db.exec("INSERT INTO thread_state VALUES('thread','m1')"); } finally { db.close(); }
+      try { initializeMessageTables(db); initializeImageOperations(db); db.prepare("INSERT INTO messages(thread_id,id,at,role,kind,text,json) VALUES(?,?,?,?,?,?,?)").run("thread", "m1", 1, "bot", "goal.run", null, JSON.stringify({ id: "m1", at: 1, role: "bot", kind: "goal.run", goalRun: { status: "completed", detail: "Done" } })); db.exec("INSERT INTO thread_state VALUES('thread','m1')"); } finally { db.close(); }
       const archive = join(root, "backup.zip");
       await writeInstallationArchive(data, archive);
       const result = await prepareInstallationRestore(archive, root);
       const [restored] = JSON.parse(readFileSync(join(result.stateDirectory, "bots.json"), "utf8"));
       expect(restored).not.toHaveProperty("browserApproval");
       expect(restored.browserActionCheck).toBe("bot");
-    } finally { rmSync(root, { recursive: true, force: true }); }
+    } finally { removeTempDirSync(root); }
   }, 60000);
 });
 

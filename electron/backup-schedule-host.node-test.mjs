@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { safeWipeSync } from "../server/testing/safe-wipe.mjs";
 import test from "node:test";
 import { createHash, randomUUID } from "node:crypto";
-import { copyFileSync,mkdirSync,mkdtempSync,readFileSync,realpathSync,renameSync,rmSync,statSync,writeFileSync } from "node:fs";
+import { copyFileSync,mkdirSync,mkdtempSync,readFileSync,readdirSync,realpathSync,renameSync,rmSync,statSync,writeFileSync } from "node:fs";
 import { createRequire,syncBuiltinESMExports } from "node:module";
 import { EventEmitter } from "node:events";
 import { tmpdir } from "node:os";
@@ -11,7 +11,7 @@ import { pathToFileURL } from "node:url";
 import { Worker } from "node:worker_threads";
 import { BackupCoordinator } from "../server/backup-coordinator.ts";
 import { acquireDataDirLease } from "./data-dir-lease.mjs";
-import { createBackupScheduleHost, setUpBackupsRequest } from "./backup-schedule-host.mjs";
+import { createBackupScheduleHost, firstRunWithoutHost, setUpBackupsRequest } from "./backup-schedule-host.mjs";
 import { backupRefusal } from "./backup-waiting.mjs";
 import { backupFixture,testAgeKeys } from "../server/testing/backup-fixture.ts";
 import { canonicalUpdateDescriptor } from "../shared/update-candidate.mjs";
@@ -30,6 +30,9 @@ function fixture(overrides={}){
   const root=mkdtempSync(path.join(tmpdir(),"murage-schedule-host-")),installation=path.join(root,"installation"),destination=path.join(root,"archives"),keyFile=path.join(root,"independent-key.txt");
   mkdirSync(installation);mkdirSync(destination);writeFileSync(keyFile,fakeKey,{mode:0o600});
   if(typeof overrides==="function")overrides=overrides({root,installation,destination,keyFile});
+  // Settings L5: the harness marks a fresh data folder as owing the first-run
+  // backup when setup starts there. setupOwed:false is a folder it never marked.
+  if(overrides.setupOwed!==false)writeFileSync(path.join(installation,"setup-backup.json"),JSON.stringify({version:2,owed:true,ending:null,at:0}),{mode:0o600});
   let now=Date.parse("2026-09-13T08:00:00Z"),binding;
   const calls=[];const coordinator=()=>new BackupCoordinator({stateDirectory:path.join(root,"control"),now:()=>now});
   const host={coordinator:coordinator(),installation:()=>installation,now:()=>now,supported:()=>true,readProtected:async()=>binding,writeProtected:async(_key,value)=>{binding=value;},chooseDestination:async()=>destination,chooseKey:async()=>keyFile,confirmReferences:async()=>true,
@@ -728,4 +731,206 @@ test("the saved references follow a moved copy of the same recovery key, and ref
     assert.equal(f.coordinator().status().phase,"return-pending");
     assert.ok(f.calls.includes("capture"));
   }finally{f.cleanup();}
+});
+
+// ---- First run: the default folder, no picker, no confirmation dialog.
+test("first-run setup request: only {firstRun:true} alone is accepted; every other shape stays rejected", () => {
+  assert.deepEqual(setUpBackupsRequest([{ firstRun: true }]), { existingKey: false, firstRun: true });
+  for (const bad of [[{ firstRun: false }], [{ firstRun: "yes" }], [{ firstRun: 1 }], [{ firstRun: true, existingKey: true }], [{ firstRun: true, existingKey: false }], [{ firstRun: true, other: 1 }], [{ firstRun: true }, { firstRun: true }]]) assert.equal(setUpBackupsRequest(bad), null, JSON.stringify(bad));
+  // The existing shapes are unchanged.
+  assert.deepEqual(setUpBackupsRequest([{}]), { existingKey: false });
+  assert.deepEqual(setUpBackupsRequest([{ existingKey: true }]), { existingKey: true });
+});
+
+test("first-run setup uses the default folder and opens no dialog", async () => {
+  const dialogs = [];
+  const f = fixture(({ root, destination }) => ({
+    defaultDestination: async () => { dialogs.push("default"); return path.join(root, "default-backups"); },
+    chooseDestination: async () => { dialogs.push("folder-picker"); return destination; },
+    chooseKey: async () => { dialogs.push("key-picker"); return null; },
+    confirmReferences: async () => { dialogs.push("confirm"); return true; },
+    createRecoveryKey: async chosen => { dialogs.push("create-key"); assert.equal(chosen, realpathSync.native(path.join(root, "default-backups"))); return madeKey(root); },
+  }));
+  try {
+    const status = await f.controller.setUpBackups({ existingKey: false, firstRun: true });
+    assert.deepEqual(dialogs, ["default", "create-key"]);
+    assert.equal(status.refs.destinationLabel.length > 0, true);
+    assert.equal(status.created.label, "made-key.txt");
+  } finally { f.cleanup(); }
+});
+
+test("first-run setup without a default folder is unavailable and asks nothing", async () => {
+  const dialogs = [];
+  const f = fixture(({ destination }) => ({
+    chooseDestination: async () => { dialogs.push("folder-picker"); return destination; },
+    confirmReferences: async () => { dialogs.push("confirm"); return true; },
+  }));
+  try {
+    await assert.rejects(f.controller.setUpBackups({ existingKey: false, firstRun: true }), /BACKUP_UNAVAILABLE/);
+    assert.deepEqual(dialogs, []);
+  } finally { f.cleanup(); }
+});
+
+// Settings L5. The renderer's firstRun flag asks; the host decides. Only a
+// data folder that has never had backups may set them up without the one
+// confirmation, so a renderer can never use the flag to skip it.
+test("first-run setup is refused, before any folder or key, wherever backups were set up before", async () => {
+  const cases = [
+    ["configured, then turned off", async f => { await f.enable(); const s = f.coordinator().status(); await f.controller.configure(s.revision, { ...s.schedule, enabled: false }); }],
+    ["a key Murage already knows", async () => {}, { recoveryKeyKnown: () => true }],
+    ["the person chose backups off", async f => { await f.controller.finishFirstRun("off"); }],
+  ];
+  for (const [label, prepare, extra = {}] of cases) {
+    const dialogs = [];
+    const f = fixture(({ root }) => ({
+      ...extra,
+      defaultDestination: async () => { dialogs.push("default"); return path.join(root, "default-backups"); },
+      confirmReferences: async () => { dialogs.push("confirm"); return true; },
+      createRecoveryKey: async () => { dialogs.push("create-key"); return madeKey(root); },
+    }));
+    try {
+      await prepare(f);
+      const before = await f.controller.status();
+      assert.equal(before.firstRun.eligible, false, label);
+      await assert.rejects(f.controller.setUpBackups({ existingKey: false, firstRun: true }), /BACKUP_FIRST_RUN_DONE/, label);
+      assert.deepEqual(dialogs.filter(d => d !== "confirm"), [], label);
+      assert.deepEqual((await f.controller.status()).refs, before.refs, label);
+    } finally { f.cleanup(); }
+  }
+});
+
+test("the first run ends verified only on a re-checked receipt, or off by the person's choice, and the ending stands", async () => {
+  const asked = [];
+  const f = fixture({ firstRunChanged: async (...args) => { asked.push(args.length); } });
+  try {
+    assert.deepEqual((await f.controller.status()).firstRun, { eligible: true, completed: null, owed: true });
+    await f.enable();
+    // On, but no checked backup yet: not verified.
+    await assert.rejects(f.controller.finishFirstRun("verified"), /BACKUP_FIRST_RUN_UNVERIFIED/);
+    f.setNow(Date.parse("2026-09-13T09:01:00Z")); await f.controller.tick();
+    const resumed = f.create({ firstRunChanged: async (...args) => { asked.push(args.length); } }); await resumed.resumeOffline(); resumed.completeReturn();
+    const done = await resumed.finishFirstRun("verified");
+    assert.deepEqual(done.firstRun, { eligible: false, completed: "verified", owed: false });
+    // A later "off" changes nothing: a step verified now stays verified, backups stay on.
+    const again = await resumed.finishFirstRun("off");
+    assert.equal(again.firstRun.completed, "verified"); assert.equal(again.enabled, true);
+    // The harness is only ever asked to look again; it is told no state.
+    assert.ok(asked.length >= 2); assert.deepEqual(asked.filter(n => n !== 0), []);
+  } finally { f.cleanup(); }
+  const g = fixture();
+  try {
+    await g.enable();
+    const off = await g.controller.finishFirstRun("off");
+    assert.equal(off.enabled, false); assert.deepEqual(off.firstRun, { eligible: false, completed: "off", owed: false });
+  } finally { g.cleanup(); }
+});
+
+// Astra r2 R1-5: a permanent "verified" never answers for a folder or key
+// that changed after it. Verified is derived from the receipt of the folder
+// and key in use NOW, so a reconfigured schedule whose backup failed is not.
+test("a verified first run does not survive reconfiguration to another folder whose backup failed", async () => {
+  let dest;
+  const f = fixture(({ destination }) => { dest = destination; return { chooseDestination: async () => dest }; });
+  try {
+    await f.arm();
+    const first = f.create(); await first.resumeOffline(); first.completeReturn();
+    assert.equal((await first.finishFirstRun("verified")).firstRun.completed, "verified");
+    // Turn off, point at another folder, turn back on.
+    let s = f.coordinator().status();
+    await first.configure(s.revision, { ...s.schedule, enabled: false });
+    const other = path.join(f.root, "other-archives"); mkdirSync(other); dest = other;
+    const picked = await first.selectReferences();
+    s = f.coordinator().status();
+    await first.configure(s.revision, { ...choices, ...Object.fromEntries(["installationRef", "destinationRef", "recoveryRef"].map(key => [key, picked.refs[key]])), allowIdleRestart: true });
+    first.stopPolling();
+    for (let attempt = 0; attempt < 100 && first.isPreparing(); attempt++) await new Promise(resolve => setImmediate(resolve));
+    // And the new folder's backup fails.
+    f.setNow(Date.parse("2026-09-14T09:01:00Z")); await f.create().tick();
+    try { await f.create({ capture: async () => { throw Error("capture failed"); } }).resumeOffline(); } catch { /* the failed capture */ }
+    // Remounted: the old record no longer answers "verified".
+    const remount = f.create();
+    const status = await remount.status();
+    assert.notEqual(status.firstRun.completed, "verified");
+    assert.equal(status.firstRun.eligible, false);
+    await assert.rejects(remount.finishFirstRun("verified"), /BACKUP_FIRST_RUN_UNVERIFIED|BACKUP_BUSY/);
+  } finally { f.cleanup(); }
+});
+
+// Astra r2 High: losing backup-first-run.json after "keep backups off" must
+// never make this folder look new. The harness's own record and the
+// coordinator's moved revision each still say the step ended.
+test("a lost opt-out record never re-enables automatic setup", async () => {
+  const dialogs = [];
+  const f = fixture(({ root }) => ({
+    defaultDestination: async () => { dialogs.push("default"); return path.join(root, "default-backups"); },
+    createRecoveryKey: async () => { dialogs.push("create-key"); return madeKey(root); },
+  }));
+  try {
+    assert.equal((await f.controller.status()).firstRun.eligible, true);
+    await f.controller.finishFirstRun("off");
+    // The harness latches the ending it derived into its own record.
+    writeFileSync(path.join(f.installation, "setup-backup.json"), JSON.stringify({ version: 2, owed: true, ending: "off", at: 1 }));
+    rmSync(path.join(f.root, "control", "backup-first-run.json"));
+    let status = await f.controller.status();
+    assert.equal(status.firstRun.eligible, false); assert.equal(status.firstRun.completed, "off");
+    await assert.rejects(f.controller.setUpBackups({ existingKey: false, firstRun: true }), /BACKUP_FIRST_RUN_DONE/);
+    // Even with the harness's record lost too, the coordinator's revision moved.
+    rmSync(path.join(f.installation, "setup-backup.json"));
+    status = await f.controller.status();
+    assert.equal(status.firstRun.eligible, false);
+    await assert.rejects(f.controller.setUpBackups({ existingKey: false, firstRun: true }), /BACKUP_FIRST_RUN_DONE/);
+    assert.deepEqual(dialogs, []);
+  } finally { f.cleanup(); }
+  // A folder the harness never marked as owing the step is not eligible.
+  const g = fixture({ setupOwed: false });
+  try { assert.equal((await g.controller.status()).firstRun.eligible, false); } finally { g.cleanup(); }
+});
+
+// Astra r2 High: a corrupt first-run record while setup is pending must not
+// trap the step. The person's explicit choice replaces it, and the corrupt
+// file is kept aside.
+test("a corrupt first-run record is replaced by the person's explicit choice", async () => {
+  for (const choice of ["off", "verified"]) {
+    const f = fixture();
+    try {
+      if (choice === "verified") { await f.arm(); const resumed = f.create(); await resumed.resumeOffline(); resumed.completeReturn(); }
+      mkdirSync(path.join(f.root, "control"), { recursive: true });
+      writeFileSync(path.join(f.root, "control", "backup-first-run.json"), "not json");
+      const before = await f.controller.status();
+      assert.equal(before.firstRun.eligible, false, choice);
+      if (choice === "off") assert.equal(before.firstRun.owed, true, choice);
+      const after = await f.create().finishFirstRun(choice);
+      assert.equal(after.firstRun.completed, choice, choice);
+      assert.equal(f.coordinator().firstRunRecord().state, choice, choice);
+      assert.ok(readdirSync(path.join(f.root, "control")).some(name => name.startsWith("backup-first-run.unreadable-")), choice);
+    } finally { f.cleanup(); }
+  }
+});
+
+// Astra r2 High: a computer where backups cannot run yet still owes the
+// step, so status says so and "Keep backups off" works there.
+test("an unsupported computer keeps the way out: owed is reported and off can be chosen", async () => {
+  const f = fixture({ supported: () => false });
+  try {
+    const status = await f.controller.status();
+    assert.equal(status.supported, false); assert.equal(status.firstRun.owed, true);
+    const off = await f.controller.finishFirstRun("off");
+    assert.equal(off.firstRun.completed, "off"); assert.equal(off.firstRun.owed, false);
+  } finally { f.cleanup(); }
+  // A backup host that could not start at all still reports an owed step.
+  const root = mkdtempSync(path.join(tmpdir(), "murage-hostless-"));
+  try {
+    assert.deepEqual(firstRunWithoutHost(root), { eligible: false, completed: null, owed: false });
+    writeFileSync(path.join(root, "setup-backup.json"), JSON.stringify({ version: 2, owed: true, ending: null, at: 0 }));
+    assert.deepEqual(firstRunWithoutHost(root), { eligible: false, completed: null, owed: true });
+    writeFileSync(path.join(root, "setup-backup.json"), JSON.stringify({ version: 2, owed: true, ending: "off", at: 0 }));
+    assert.deepEqual(firstRunWithoutHost(root), { eligible: false, completed: "off", owed: false });
+    // Astra final2 Medium: a saved "verified" stands only while a receipt of the current folder and key exists (server/setup-backup.ts
+    // deriveSetupBackup). Without a host no receipt can be checked, so the step is still pending and keeps its way out.
+    writeFileSync(path.join(root, "setup-backup.json"), JSON.stringify({ version: 2, owed: true, ending: "verified", at: 0 }));
+    assert.deepEqual(firstRunWithoutHost(root), { eligible: false, completed: null, owed: true });
+    // A record that was never owed reports nothing to do, whatever its ending.
+    writeFileSync(path.join(root, "setup-backup.json"), JSON.stringify({ version: 2, owed: false, ending: "verified", at: 0 }));
+    assert.deepEqual(firstRunWithoutHost(root), { eligible: false, completed: null, owed: false });
+  } finally { safeWipeSync(root); }
 });

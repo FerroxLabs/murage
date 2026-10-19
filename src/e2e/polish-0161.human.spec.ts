@@ -5,7 +5,7 @@
 // G3, every Settings section reachable at 1280x720 with a visible scrollbar
 // when the list does not fit; G4, the archive note with Restore that stays;
 // G11, the picture-left-out note and the plain error sentence naming the bot.
-import { expect, test, type Page } from "@playwright/test";
+import { expect, test, type Page } from "./page-error-guard";
 import { createServer, type ViteDevServer } from "vite";
 import tailwindcss from "@tailwindcss/vite";
 import { fileURLToPath } from "node:url";
@@ -75,14 +75,13 @@ for (const [width, height] of [[1280, 720], [1280, 560], [390, 844], [820, 1180]
   const dialog = page.getByRole("dialog");
   await expect(dialog).toBeVisible();
   const usage = dialog.getByRole("button", { name: "Usage", exact: true });
-  await expect(dialog.getByRole("button", { name: "About me", exact: true })).toHaveCount(1);
+  await expect(dialog.getByRole("button", { name: "Memory", exact: true })).toHaveCount(1);
   const nav = dialog.locator("nav");
   const fits = await nav.evaluate((el) => el.scrollHeight <= el.clientHeight + 1 && el.scrollWidth <= el.clientWidth + 1);
   if (width >= 768) {
     // Either the whole list fits, or it scrolls with a scrollbar the eye can see.
     if (!fits) expect(await nav.evaluate((el) => getComputedStyle(el).overflowY)).toBe("auto");
-    // 0.1.62: six group headings over nineteen rows fit a 1440x900 window;
-    // a 1280x720 one scrolls the list a little (NAV-OVERHAUL.md 3.2).
+    // 1.0.3: five group headings over twelve pages fit a 1440x900 window.
     if (width === 1440 && height === 900) expect(fits).toBe(true);
   }
   await shot(page, `settings-${width}x${height}`, info);

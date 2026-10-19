@@ -1,6 +1,10 @@
 // Copyright 2026 Ferrox Labs
 // SPDX-License-Identifier: AGPL-3.0-or-later
-import { beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { setLocale } from "./i18n";
+import { en } from "@/locales";
+import { allLocalePacks } from "@/locales/testing";
+import { versionOrigin } from "./procedure-history";
 import {
   applyInboxWaiting, applyWaitingFrame, applyWaitingSummary, batchSentence, cardTitle, dayLabel, errorSentence, getWaiting, headline, keepAllTargets, keepTogetherLine, reasonSentence,
   resetWaiting, restoreItems, subjectCount, takeExpandRequest, requestExpand, withoutItems, type ReviewItem,
@@ -111,4 +115,32 @@ describe("the shared counts", () => {
 
 it("a notebook change that waits for memory to get ready says so in the given words", () => {
   expect(errorSentence(new Error("MEMORY_IMPORT_INDEX_BUILDING"))).toBe("Murage is still getting memory ready after the update. This notebook will update by itself in a few minutes.");
+});
+
+describe("the words follow the language in use", () => {
+  afterEach(async () => { await setLocale("en"); });
+  it("reads the review sentences in German, and never shows a raw key", async () => {
+    await setLocale("de");
+    expect(cardTitle("Sable", 1)).toBe("Sable möchte sich 1 Sache merken");
+    expect(headline(0)).toBe("Nichts wartet auf dich.");
+    expect(keepTogetherLine(8, 11)).toContain("alltägliche Dinge");
+    expect(reasonSentence({ reasons: ["sensitive-money"], origin: "owner-said", at: NOW }, "Sable", NOW)).toBe("Es geht um Geld, deshalb fragt Sable zuerst dich.");
+    expect(errorSentence(new Error("MEMORY_LATER_FULL"))).toContain("„Später“");
+    expect(batchSentence([{ id: "a", version: 1, status: "kept" }])).toBe("1 behalten.");
+    expect(versionOrigin("learned")).toBe("Gelernt");
+    expect(versionOrigin("nonsense")).toBe("Herkunft nicht erfasst");
+  });
+  it("has every key in every language, with the placeholders intact and none of the banned words", async () => {
+    const packs = await allLocalePacks();
+    const keys = Object.keys(en).filter(key => key.startsWith("memoryReview.") || key.startsWith("procedureHistory.origin.") || key === "memoryPage.event.retriedNote");
+    expect(keys.length).toBeGreaterThan(40);
+    for (const [code, pack] of Object.entries(packs)) {
+      for (const key of keys) {
+        const text = (pack as Record<string, string>)[key];
+        expect(text, `${code} ${key}`).toBeTruthy();
+        expect([...text.matchAll(/\{(\w+)\}/g)].map(m => m[1]).sort(), `${code} ${key}`).toEqual([...(en as Record<string, string>)[key].matchAll(/\{(\w+)\}/g)].map(m => m[1]).sort());
+        expect(text, `${code} ${key}`).not.toMatch(/—|\b(safe|unsafe|safety)\b/i);
+      }
+    }
+  });
 });

@@ -6,8 +6,8 @@
 // and left a module constant uninitialised in the memory worker). Its database and its marker drain are handed in by the modules that own
 // them (dispatch.ts, memory-revocation.ts) when they load.
 import type { DatabaseSync } from "node:sqlite";
-import { fenceVerdict } from "./deny-read.ts";
-import type { BuiltPrompt, LineageReader, LineageVerdict } from "./lineage-types.ts";
+import { fenceVerdict, refsLookup } from "./deny-read.ts";
+import type { BuiltPrompt, LineageReader, LineageRef, LineageVerdict } from "./lineage-types.ts";
 
 let fenceDb: (() => DatabaseSync) | null = null;
 let drainPending: ((db: DatabaseSync) => void) | null = null;
@@ -41,5 +41,45 @@ export function assertSendFence(built: BuiltPrompt, reader: LineageReader, db?: 
   if (file && drainPending && verdict.state === "checking" && verdict.reason === "pending") {
     try { drainPending(file); verdict = fenceVerdict(file, built, reader); } catch { verdict = { state: "checking", reason: "lookup-error" }; }
   }
-  if (verdict.state !== "shown") throw Object.assign(new Error("MEMORY_CONTEXT_REVOKED"), { fence: verdict });
+  if (verdict.state !== "shown") {
+    if (file) logFenceRefusal(file, built, reader, verdict);
+    throw Object.assign(new Error("MEMORY_CONTEXT_REVOKED"), { fence: verdict });
+  }
+}
+
+/** The most refs one refusal's diagnosis looks up again. */
+const FENCE_DIAGNOSIS_REFS = 256;
+const refLabel = (ref: LineageRef): string => ref.kind === "line" ? (ref.replay ? "own-replay-line" : "line")
+  : ref.kind === "prefix" ? (ref.content ? "own-prefix" : "prefix") : ref.kind;
+export type FenceRefusalCounts = { reader: "content" | "audience"; parts: number; refusedParts: number; refs: Record<string, number>; reasons: Record<string, number>; truncated: boolean };
+/** Which parts of a refused prompt the fence refused, as counts only (1.0.3 revoke drain: the re-prepare diagnosis): per refused part, each
+ * of its refs judged alone, counted by kind (own-prefix and own-replay-line are the prompt's own thread read by content; prefix and line
+ * another thread's, or the own thread for an audience reader) and by verdict. Never a thread, a message, an id or any text. */
+export function fenceRefusalCounts(db: DatabaseSync, built: BuiltPrompt, reader: LineageReader): FenceRefusalCounts {
+  const out: FenceRefusalCounts = { reader: reader.audience === null ? "content" : "audience", parts: built.parts.length, refusedParts: 0, refs: {}, reasons: {}, truncated: false };
+  let looked = 0;
+  const add = (map: Record<string, number>, key: string) => { map[key] = (map[key] ?? 0) + 1; };
+  for (const part of built.parts) {
+    if (!part.lineageOf.length) { out.refusedParts++; add(out.refs, "unaccounted"); add(out.reasons, "checking:no-lineage"); continue; }
+    const refs = part.lineageOf.filter(ref => ref.kind !== "none");
+    if (!refs.length) continue;
+    if (looked + refs.length > FENCE_DIAGNOSIS_REFS) { out.truncated = true; break; }
+    looked += refs.length;
+    if (refsLookup(db, refs, reader).state === "shown") continue;
+    out.refusedParts++;
+    for (const ref of refs) {
+      const verdict = refsLookup(db, [ref], reader);
+      if (verdict.state === "shown") continue;
+      add(out.refs, refLabel(ref));
+      add(out.reasons, `${verdict.state}:${verdict.reason}`);
+    }
+  }
+  return out;
+}
+function logFenceRefusal(db: DatabaseSync, built: BuiltPrompt, reader: LineageReader, verdict: LineageVerdict): void {
+  try {
+    const counts = fenceRefusalCounts(db, built, reader);
+    const list = (map: Record<string, number>) => Object.entries(map).map(([key, n]) => `${key} ${n}`).join(", ") || "none";
+    console.warn(`[memory] send fence refused (${verdict.state === "shown" ? "shown" : `${verdict.state}:${verdict.reason}`}, ${counts.reader} reader): ${counts.refusedParts} of ${counts.parts} parts; refused refs: ${list(counts.refs)}; verdicts: ${list(counts.reasons)}${counts.truncated ? "; more not looked up" : ""}`);
+  } catch { /* the diagnosis never changes the refusal */ }
 }

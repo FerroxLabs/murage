@@ -733,6 +733,22 @@ test("create, then the stale message the POST posts, then save: the key stays (L
   } finally { await fake.close(); }
 });
 
+test("a pure rename moves the encrypted doc to the new name in one write, and the old name holds nothing (r3 Rename)", async () => {
+  const fake = await startFakeRemoteMcp({ auth: "api-key" });
+  try {
+    const h = harness({ fake, entries: {} });
+    h.server.entries.keyed = { url: fake.mcpUrl, auth: "header", headerNames: ["x-api-key"], local: "this-computer" };
+    assert.deepEqual(await h.service.saveSecrets("keyed", { headers: { "x-api-key": "K1" } }), { ok: true });
+    assert.equal(await h.service.handleSecretsRenamed({ type: "murage:mcp-secrets-renamed", from: "keyed", to: "renamed", at: Date.now() }), true);
+    assert.equal(h.doc("keyed"), undefined);
+    assert.equal(h.doc("renamed").headers["x-api-key"], "K1");
+    // an invalid or same name is ignored and changes nothing
+    assert.equal(await h.service.handleSecretsRenamed({ type: "murage:mcp-secrets-renamed", from: "renamed", to: "../x" }), false);
+    assert.equal(await h.service.handleSecretsRenamed({ type: "murage:mcp-secrets-renamed", from: "renamed", to: "renamed" }), false);
+    assert.equal(h.doc("renamed").headers["x-api-key"], "K1");
+  } finally { await fake.close(); }
+});
+
 test("a failing drop writes one log line with the server name and nothing else", async () => {
   const lines = [];
   const updateDocument = async () => { throw new Error("keychain said SECRET-DETAIL"); };

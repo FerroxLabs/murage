@@ -23,6 +23,7 @@ import { fixtureReply, fixtureRoster, fixtureThread, longThreadsV5 } from "./tes
 import { forceReadTimeJudgeForTest } from "./read-time-retired.ts";
 import { LineageAllowance } from "./lineage-allowance.ts";
 import { legacyFile, v10Again } from "./testing/legacy-file-model.ts";
+import { removeTempDirSync } from "../testing/cleanup.ts";
 // 1.0.2: this test models a 1.0.1 file (legacy root-set rows) for the read-time judge, which still decides legacy data until S6.
 // 1.0.2 S6: the subject here is the retired root-set machinery (conversion, chains, proofs), which stays in the tree until its mechanical deletion, so
 // the judge is kept deciding on the file (read-time-retired.ts forceReadTimeJudgeForTest); the write-time behaviour is covered by the lookups' own tests
@@ -30,8 +31,8 @@ thawBeforeEach(() => { thawRootSetWritesForTest(true); forceReadTimeJudgeForTest
 thawAfterEach(() => { thawRootSetWritesForTest(false); forceReadTimeJudgeForTest(false); });
 
 let copyDir: string;
-beforeEach(() => { closeDatabase(); rmSync(DATA_DIR, { recursive: true, force: true }); mkdirSync(DATA_DIR, { recursive: true }); copyDir = mkdtempSync(join(tmpdir(), "murage-v7-")); });
-afterEach(() => { closeDatabase(); rmSync(copyDir, { recursive: true, force: true }); });
+beforeEach(() => { closeDatabase(); removeTempDirSync(DATA_DIR); mkdirSync(DATA_DIR, { recursive: true }); copyDir = mkdtempSync(join(tmpdir(), "murage-v7-")); });
+afterEach(() => { closeDatabase(); removeTempDirSync(copyDir); });
 
 const live = () => join(DATA_DIR, "messages.db");
 /** Puts a file in place as the app's messages.db. */
@@ -69,7 +70,7 @@ const replies = (index: number, count: number) => Array.from({ length: count }, 
 async function v6File(threads: number, count: number): Promise<string> {
   const file = await longThreadsV5(join(copyDir, "v5.db"), threads, count);
   const db = new DatabaseSync(file);
-  try { migrateMemorySchema(db); legacyFile(db); repairOutputRootBackfill(db); v10Again(db); expect(downgradeMemorySchema(db, 6)).toMatchObject({ status: "downgraded", from: 10, to: 6 }); validateMemorySchema(db); }
+  try { migrateMemorySchema(db); legacyFile(db); repairOutputRootBackfill(db); v10Again(db); expect(downgradeMemorySchema(db, 6)).toMatchObject({ status: "downgraded", from: 11, to: 6 }); validateMemorySchema(db); }
   finally { db.close(); }
   return file;
 }
@@ -251,7 +252,7 @@ it("opening a v6 file converts its sets before the app is handed the database, w
   } finally { raw.close(); }
   // and through the app's own open (database.ts): on v10 the open and the background job convert nothing (the upgrade writes no conversion row, and
   // the sets are reclaimed later by root-set-reclaim.ts), so the sets stay as the v6 file wrote them
-  closeDatabase(); rmSync(DATA_DIR, { recursive: true, force: true }); mkdirSync(DATA_DIR, { recursive: true });
+  closeDatabase(); removeTempDirSync(DATA_DIR); mkdirSync(DATA_DIR, { recursive: true });
   const second = await v6File(1, 80);
   install(second);
   expect(lineageStorageStatus(database()).state, "the open converts nothing").not.toBe("converting");
@@ -329,7 +330,7 @@ it("the v7 to v6 downgrade of a 1,200-set chain writes each set in turn, leaves 
   expect(before.get(broken)).toBe("UNPROVABLE");
   const started = Date.now();
   v10Again(db);
-  expect(downgradeMemorySchema(db, 6)).toMatchObject({ status: "downgraded", from: 10, to: 6 });
+  expect(downgradeMemorySchema(db, 6)).toMatchObject({ status: "downgraded", from: 11, to: 6 });
   expect(Date.now() - started).toBeLessThan(120_000);
   validateMemorySchema(db);
   // every set that was provable is now stored whole with exactly the same members

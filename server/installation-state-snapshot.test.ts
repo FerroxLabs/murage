@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
@@ -9,6 +9,7 @@ import { stageInstallationState } from "./installation-state-snapshot.ts";
 import { writeInstallationArchive } from "./installation-archive.ts";
 import { prepareInstallationRestore } from "./installation-restore-preparation.ts";
 import { initializeMessageTables } from "./message-tables.ts";
+import { removeTempDirSync } from "./testing/cleanup.ts";
 
 const roots: string[] = [];
 function fixture() {
@@ -32,7 +33,7 @@ function fixture() {
   writeFileSync(join(parent, "external", "untouched.txt"), "external-data-canary");
   return { parent, data };
 }
-afterEach(() => { for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true }); });
+afterEach(() => { for (const root of roots.splice(0)) removeTempDirSync(root); });
 
 it("stages private app content under one epoch, excluding credential fields and external folders", async () => {
   const f = fixture();
@@ -75,7 +76,7 @@ it("combines WAL-backed receipts and app files in the same owned stage", async (
   try {
     db.exec("PRAGMA journal_mode=WAL; PRAGMA wal_autocheckpoint=0;");
     initializeMessageTables(db);
-    db.prepare("INSERT INTO messages VALUES(?,?,?,?,?,?,?)").run("thread", "receipt", 1, "bot", "goal.run", null, JSON.stringify({ id: "receipt", at: 1, role: "bot", kind: "goal.run", goalRun: { status: "completed" } }));
+    db.prepare("INSERT INTO messages(thread_id,id,at,role,kind,text,json) VALUES(?,?,?,?,?,?,?)").run("thread", "receipt", 1, "bot", "goal.run", null, JSON.stringify({ id: "receipt", at: 1, role: "bot", kind: "goal.run", goalRun: { status: "completed" } }));
     db.exec("INSERT INTO thread_state VALUES('thread','receipt')");
     const stage = await stageInstallationState(f.data, f.parent);
     expect(stage.manifest.database).toMatchObject({ status: "copied", messages: 1, threads: 1 });

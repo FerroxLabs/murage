@@ -10,7 +10,7 @@ import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 import { parse } from "yaml";
 
-import { ciVerdict, parseWaiver, waiverVerdict } from "./release-ci-gate.mjs";
+import { ciVerdict, nightlyVerdict, parseWaiver, waiverVerdict } from "./release-ci-gate.mjs";
 
 const SHA = "a".repeat(40);
 const OTHER = "b".repeat(40);
@@ -131,5 +131,34 @@ describe("release.yml wiring", () => {
     expect(steps[headers].run).toContain("SHASUMS256.txt");
     expect(steps[headers].run).toContain("sha256sum -c");
     expect(steps[headers].run).toContain("NODE_HEADERS_DIR=");
+  });
+});
+
+describe("the latest nightly must be green", () => {
+  const sha = "a".repeat(40);
+  const older = "b".repeat(40);
+  const now = Date.parse("2026-10-16T12:00:00Z");
+  const run = (over) => ({ id: 1, status: "completed", conclusion: "success", head_sha: sha, created_at: "2026-10-16T03:17:00Z", ...over });
+  const ancestor = (runSha) => runSha === older;
+
+  it("passes on a green nightly of the pinned commit or an ancestor", () => {
+    expect(nightlyVerdict([run()], sha, { ancestor, now }).ok).toBe(true);
+    expect(nightlyVerdict([run({ head_sha: older })], sha, { ancestor, now }).ok).toBe(true);
+  });
+
+  it("judges the newest completed run, so an older green does not cover a newer red", () => {
+    const runs = [run({ id: 1 }), run({ id: 2, conclusion: "failure", created_at: "2026-10-16T09:00:00Z" })];
+    const verdict = nightlyVerdict(runs, sha, { ancestor, now });
+    expect(verdict.ok).toBe(false);
+    expect(verdict.reason).toContain("concluded failure");
+    // a run still in progress is not the latest verdict
+    expect(nightlyVerdict([run(), run({ id: 3, status: "in_progress", conclusion: null, created_at: "2026-10-16T11:00:00Z" })], sha, { ancestor, now }).ok).toBe(true);
+  });
+
+  it("refuses no run, a cancelled run, a run off this history and a stale run", () => {
+    expect(nightlyVerdict([], sha, { ancestor, now }).reason).toBe("no completed nightly run found");
+    expect(nightlyVerdict([run({ conclusion: "cancelled" })], sha, { ancestor, now }).ok).toBe(false);
+    expect(nightlyVerdict([run({ head_sha: "c".repeat(40) })], sha, { ancestor, now }).reason).toContain("not");
+    expect(nightlyVerdict([run({ created_at: "2026-10-10T03:17:00Z" })], sha, { ancestor, now }).reason).toContain("h old");
   });
 });

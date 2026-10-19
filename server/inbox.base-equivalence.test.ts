@@ -78,7 +78,7 @@ describe("Inbox projection against base", () => {
     }
   });
 
-  it("returns the same items, order and counts on every view, page, search, scope and clock", () => {
+  it("returns the same items, order and counts on every view, page, search, scope and clock", { tags: ["nightly"] }, () => {
     let compared = 0;
     for (const now of [NOW, NOW + 2 * 60_000, NOW + 2 * DAY]) for (const view of VIEWS) for (const query of ["", "provider", "bot 3", "sign in", "routine 4"])
       for (const includeSnoozed of [false, true]) for (const page of query === "" ? [0, 1, 3, 40] : [0, 1]) for (const scope of query === "" ? [access, narrow] : [access]) {

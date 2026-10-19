@@ -3,7 +3,7 @@
 // top of the transcript brings the page before it in without moving the rows
 // the reader is looking at, and a search hit far older than the page walks
 // back to it and lands on it.
-import { test, expect, type Page, type Request } from "@playwright/test";
+import { test, expect, type Page, type Request } from "./page-error-guard";
 import { createServer, type ViteDevServer } from "vite";
 import react from "@vitejs/plugin-react";
 import tailwindcss from "@tailwindcss/vite";

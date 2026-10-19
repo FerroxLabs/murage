@@ -35,10 +35,21 @@ let home: string;
 let stderr = "";
 let BASE = "";
 
-/** Marker plus proof. `?${DESKTOP_QUERY}` alone is a remote request now. */
+/** Marker plus proof, in the header: the proof never rides in a URL. */
 const DESKTOP_SECRET = "fedcba9876543210".repeat(4);
-const DESKTOP_QUERY = `surface=desktop&surfaceSecret=${DESKTOP_SECRET}`;
 const DESKTOP_HEADERS = { "x-murage-surface": "desktop", "x-murage-surface-secret": DESKTOP_SECRET };
+/** A URL-loaded resource as the desktop window loads it: a single-use ticket
+ * minted with the proof in the POST's header (the proof never rides in a URL). */
+const desktopTicketed = async (path: string): Promise<string> => {
+  const res = await fetch(`${BASE}/api/desktop/resource-ticket`, {
+    method: "POST",
+    headers: { ...DESKTOP_HEADERS, "content-type": "application/json" },
+    body: JSON.stringify({ resource: path }),
+  });
+  const body = (await res.json()) as { ticket?: string };
+  if (!res.ok || !body.ticket) throw new Error(`no resource ticket for ${path}: ${res.status}`);
+  return `${path}${path.includes("?") ? "&" : "?"}surfaceTicket=${body.ticket}`;
+};
 
 const api = async (
   method: string,
@@ -165,7 +176,7 @@ posixOnly("the events stream is scoped per client", () => {
       let desktop: SseRecorder | undefined;
       let phone: SseRecorder | undefined;
       try {
-        desktop = await openSse(`${BASE}/api/events?${DESKTOP_QUERY}`);
+        desktop = await openSse(`${BASE}${await desktopTicketed("/api/events")}`);
         phone = await openSse(`${BASE}/api/events`, { "x-murage-companion": "1" });
         await desktop.until((frame) => frame.kind === "hello");
         await phone.until((frame) => frame.kind === "hello");
@@ -211,7 +222,7 @@ posixOnly("the events stream is scoped per client", () => {
     async () => {
       // ?surface=desktop: /api/bots is scoped by default now, and a scoped
       // roster is exactly the one that does NOT list a hidden bot.
-      const listed = await api("GET", `/api/bots?${DESKTOP_QUERY}`);
+      const listed = await api("GET", await desktopTicketed("/api/bots"));
       const secret = listed.body.bots.find((bot: any) => bot.hidden);
       expect(secret, "the first test's hidden bot").toBeTruthy();
 
@@ -224,7 +235,7 @@ posixOnly("the events stream is scoped per client", () => {
         .toBe(202);
       // Wait on an unscoped stream so the hidden turn is known to be in the
       // replay buffer before the scoped client asks for the gap.
-      const witness = await openSse(`${BASE}/api/events?${DESKTOP_QUERY}`);
+      const witness = await openSse(`${BASE}${await desktopTicketed("/api/events")}`);
       try {
         await witness.until(
           (frame) => frame.kind === "message" && frame.threadId === secret.threadId && frame.message?.role === "bot",

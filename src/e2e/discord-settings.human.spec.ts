@@ -1,4 +1,4 @@
-import { test, expect } from "@playwright/test";
+import { test, expect } from "./page-error-guard";
 import { createServer, type ViteDevServer } from "vite";
 import tailwindcss from "@tailwindcss/vite";
 import { fileURLToPath } from "node:url";
@@ -78,7 +78,11 @@ test("secure save, explicit pairing, lock, copy, retry and revoke are visible an
   await page.getByRole("button", { name: "Refresh status" }).click(); await expect(page.getByText("A reply delivery is uncertain.", { exact: false })).toBeVisible();
   await page.getByRole("button", { name: "Revoke connection" }).click(); expect(revokes).toBe(1); await expect(page.getByLabel("Application ID", { exact: true })).toBeEnabled();
   // Audit enabled, visible controls. Disabled controls are intentionally not tab stops.
-  await page.locator("summary").click(); await page.locator("body").click({ position: { x: 1, y: 1 } });
+  // The private app setup help is no longer a collapsed <details>; it renders open (inline here, in Advanced in Settings),
+  // so the audit below covers its link as an ordinary tab stop.
+  await expect(page.getByRole("heading", { name: "Private Discord app setup", exact: true })).toBeVisible();
+  await expect(page.getByRole("link", { name: "Open Discord app settings", exact: true })).toBeVisible();
+  await page.locator("body").click({ position: { x: 1, y: 1 } });
   const total = await page.evaluate(() => {
     const all = [...document.querySelectorAll<HTMLElement>('button:not(:disabled),input:not(:disabled),a[href],summary')].filter(el => el.getBoundingClientRect().height > 0);
     all.forEach((el, i) => el.dataset.tabAudit = String(i)); return all.length;

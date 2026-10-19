@@ -1,4 +1,4 @@
-import { test, expect, type Page } from "@playwright/test";
+import { test, expect, type Page } from "./page-error-guard";
 import { createServer, type ViteDevServer } from "vite";
 import { fileURLToPath } from "node:url";
 import { freePortBlock } from "../../server/testing/ports";
@@ -30,7 +30,7 @@ test.beforeAll(async () => {
         if (id === "\0fixture-store") return `
           export * from '/src/state/store.tsx?original';
           import { useSyncExternalStore } from 'react';
-          export function useStore() { return useSyncExternalStore(window.subscribeFixture, () => window.fixtureStore); }
+          export function useStoreIfAny(){return useStore();} export function useStore() { return useSyncExternalStore(window.subscribeFixture, () => window.fixtureStore); }
         `;
         if (id !== "\0fixture-capabilities") return;
         return `
@@ -126,6 +126,8 @@ async function mount(page: Page, component: string, desktop = false, { claudeAcc
       ? route.fulfill({ json: claudeAccounts })
       : route.fulfill({ status: 404, json: { error: "no such route" } });
     if (path === "/api/config") return route.fulfill({ json: { surface: desktop ? "desktop" : "remote", profile: { name: "Fixture name", email: "fixture@example.com" } } });
+    // The Me page now also loads the About me card (desktop only).
+    if (path === "/api/about-me") return route.fulfill({ json: { text: "", saved: false, chars: 0, maxChars: 4000, suggestion: "" } });
     if (path === "/api/connectors/catalog") return route.fulfill({ json: { cards: [], configured: false, mode: "unavailable" } });
     if (path === "/api/connectors/connected") return route.fulfill({ json: { services: {} } });
     if (path === "/api/mcp/servers") return route.fulfill({ json: { servers: [] } });

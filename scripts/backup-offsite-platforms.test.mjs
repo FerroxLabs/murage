@@ -12,6 +12,7 @@ import path from "node:path";
 import { parse } from "yaml";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { ZipFile } from "yazl";
+import { removeTempDirSync } from "../server/testing/cleanup.ts";
 const overrides = vi.hoisted(() => new Map());
 vi.mock("../shared/backup-restic-pin.mjs", async original => {
   const actual = await original();
@@ -30,7 +31,7 @@ import { createResticToolCapability } from "../electron/backup-mode.mjs";
 const sha = bytes => createHash("sha256").update(bytes).digest("hex");
 const hex = /^[a-f0-9]{64}$/;
 const roots = [];
-afterEach(() => { for (const root of roots.splice(0)) fs.rmSync(root, { recursive: true, force: true }); vi.unstubAllGlobals(); });
+afterEach(() => { for (const root of roots.splice(0)) removeTempDirSync(root); vi.unstubAllGlobals(); });
 const scratch = () => { const root = fs.realpathSync.native(fs.mkdtempSync(path.join(os.tmpdir(), "murage-offsite-platforms-"))); roots.push(root); return root; };
 const withPlatform = async (platform, arch, work) => {
   const saved = [Object.getOwnPropertyDescriptor(process, "platform"), Object.getOwnPropertyDescriptor(process, "arch")];

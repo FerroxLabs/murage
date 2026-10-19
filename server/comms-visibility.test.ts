@@ -1,4 +1,4 @@
-import { rmSync } from "node:fs";
+
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
 import { DATA_DIR } from "./config.ts";
@@ -10,18 +10,19 @@ import { released } from "./testing/released.ts";
 import { closeMessageDb } from "./message-db.ts";
 import { Store } from "./store.ts";
 import { hostLine } from "./host-words.ts";
+import { removeTempDirSync } from "./testing/cleanup.ts";
 
 const selection = (): ModelSelection => ({ instanceId: "claude", model: "fake-model" });
 
 describe("bot-to-bot channel context", () => {
   beforeEach(() => {
     closeMessageDb();
-    rmSync(DATA_DIR, { recursive: true, force: true });
+    removeTempDirSync(DATA_DIR);
   });
 
   afterEach(() => {
     closeMessageDb();
-    rmSync(DATA_DIR, { recursive: true, force: true });
+    removeTempDirSync(DATA_DIR);
   });
 
   it("keeps a new DM in the sender's semantic section", () => {
@@ -109,8 +110,8 @@ describe("bot-to-bot channel context", () => {
 });
 
 describe("a reply copy in a channel", () => {
-  beforeEach(() => { closeMessageDb(); rmSync(DATA_DIR, { recursive: true, force: true }); });
-  afterEach(() => { closeMessageDb(); rmSync(DATA_DIR, { recursive: true, force: true }); });
+  beforeEach(() => { closeMessageDb(); removeTempDirSync(DATA_DIR); });
+  afterEach(() => { closeMessageDb(); removeTempDirSync(DATA_DIR); });
 
   it("is never written from a reply with no stored rows: the channel gets the withheld line, not the worker's words", () => {
     const store = new Store(selection);

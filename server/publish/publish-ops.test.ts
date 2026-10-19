@@ -9,16 +9,17 @@ import { DATA_DIR } from "../config.ts";
 import { closeDatabase } from "../database.ts";
 import { Store } from "../store.ts";
 import { PublishOperations, PUBLISH_APPROVAL_TIMEOUT_MS, expectedFingerprint, publishAnswerAllowed, siteSlug } from "./publish-ops.ts";
+import { removeTempDirSync } from "../testing/cleanup.ts";
 
 const TOKEN = "nfp_SECRET_TOKEN_123";
 let workspace = "";
 beforeEach(() => {
-  closeDatabase(); rmSync(DATA_DIR, { recursive: true, force: true }); mkdirSync(DATA_DIR, { recursive: true });
+  closeDatabase(); removeTempDirSync(DATA_DIR); mkdirSync(DATA_DIR, { recursive: true });
   workspace = realpathSync(mkdtempSync(join(tmpdir(), "publish-ops-"))); mkdirSync(join(workspace, "site"));
   writeFileSync(join(workspace, "site", "index.html"), "<html><title>My Shop</title></html>"); writeFileSync(join(workspace, "site", "style.css"), "b{}");
   writeFileSync(join(workspace, "site", ".env"), `KEY=${TOKEN}`);
 });
-afterEach(() => { closeDatabase(); rmSync(workspace, { recursive: true, force: true }); });
+afterEach(() => { closeDatabase(); removeTempDirSync(workspace); });
 
 const json = (status: number, body: unknown) => new Response(JSON.stringify(body), { status, headers: { "content-type": "application/json" } });
 /** A Netlify that records every call. */

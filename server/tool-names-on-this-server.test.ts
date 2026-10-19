@@ -5,7 +5,7 @@
 // the caller's engine says "MCP tool "x" on this server"; a skill riding a
 // turn carries the per-turn marker, rendered for that engine at dispatch. A
 // bare "Call generate_image again" is "Tool not found" on Fuigo and Grok.
-import { mkdirSync, rmSync } from "node:fs";
+import { mkdirSync } from "node:fs";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { beforeEach, expect, it, vi } from "vitest";
@@ -20,9 +20,10 @@ import { loadBundledSkills } from "./skill-library.ts";
 import { FUIGO_TOOL_SURFACE, CLAUDE_TOOL_SURFACE, CODEX_TOOL_SURFACE, PI_TOOL_SURFACE, NEUTRAL_TOOL_SURFACE, renderMurageTools } from "./murage-tool-surface.ts";
 import { unifiedBrowserSystemPrompt } from "./browser-engine.ts";
 import { AGENT_BROWSER_TOOLS, listHeadlessBrowserTools } from "./browser-engine-policy.ts";
+import { removeTempDirSync } from "./testing/cleanup.ts";
 
 const BARE_CALL = /(?:Call|call|use|Use|with|from|in) (?:generate_image|list_prompt_blocks|list_reference_packs|list_bots|tool_result_read)\b/;
-beforeEach(() => { rmSync(DATA_DIR, { recursive: true, force: true }); mkdirSync(DATA_DIR, { recursive: true }); });
+beforeEach(() => { removeTempDirSync(DATA_DIR); mkdirSync(DATA_DIR, { recursive: true }); });
 const refusal = (run: () => unknown) => { try { run(); } catch (error) { return (error as Error).message; } throw new Error("expected a refusal"); };
 
 it("image refusals and the image job's way back name their tool on this server", async () => {

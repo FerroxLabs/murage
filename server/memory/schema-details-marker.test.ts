@@ -1,14 +1,15 @@
 // The record-details anti-join (a record with no details row) was a full scan of memory_records on every open.
 // It now keeps its newest-rowid mark in the same marker as the JSON shapes and the assertion check: the first open
 // reads in full, later opens seek past the mark, and a record added without details is still refused.
-import { mkdirSync, rmSync } from "node:fs";
+import { mkdirSync } from "node:fs";
 import { afterEach, beforeEach, expect, it } from "vitest";
 import { DATA_DIR } from "../config.ts";
 import { closeDatabase, database } from "../database.ts";
 import { ensureScope, reconcileMemoryRoster } from "./policy.ts";
 import { validateMemorySchema } from "./schema.ts";
+import { removeTempDirSync } from "../testing/cleanup.ts";
 
-beforeEach(() => { closeDatabase(); rmSync(DATA_DIR, { recursive: true, force: true }); mkdirSync(DATA_DIR, { recursive: true }); reconcileMemoryRoster({ bots: [{ id: "bot", threadId: "chat" }], groups: [] } as any); });
+beforeEach(() => { closeDatabase(); removeTempDirSync(DATA_DIR); mkdirSync(DATA_DIR, { recursive: true }); reconcileMemoryRoster({ bots: [{ id: "bot", threadId: "chat" }], groups: [] } as any); });
 afterEach(() => closeDatabase());
 
 function records(from: number, count: number) {

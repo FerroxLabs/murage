@@ -2,7 +2,7 @@
 // T3 (STALLS-FINAL-DESIGN 3.1 and 3.4, database.ts invariants 1 and 4): every background source takes the background budget, and so do
 // beginBackground and withBusyBudget; with no source and no budget the handle still waits its owner budget (the owner path is unchanged),
 // and that unbudgeted wait is named on the log as `[sqlite] busy ... budget=none at=<caller>`.
-import { mkdirSync, rmSync } from "node:fs";
+import { mkdirSync } from "node:fs";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { afterEach, beforeEach, expect, it } from "vitest";
@@ -10,9 +10,10 @@ import { DATA_DIR } from "./config.ts";
 import { BACKGROUND_BUSY_MS, beginBackground, closeDatabase, database, DatabaseBusyError, DEFAULT_BUSY_MS, holdWritersForIndexBuild, isDatabaseBusy, transaction, withBusyBudget } from "./database.ts";
 import { ioBudget } from "./io-budget.ts";
 import { resetObserveWindows, setObserveSink } from "./observe.ts";
+import { removeTempDirSync } from "./testing/cleanup.ts";
 
 let lines: string[], other: DatabaseSync | null = null;
-beforeEach(() => { closeDatabase(); rmSync(DATA_DIR, { recursive: true, force: true }); mkdirSync(DATA_DIR, { recursive: true }); lines = []; resetObserveWindows(); setObserveSink(line => lines.push(line)); });
+beforeEach(() => { closeDatabase(); removeTempDirSync(DATA_DIR); mkdirSync(DATA_DIR, { recursive: true }); lines = []; resetObserveWindows(); setObserveSink(line => lines.push(line)); });
 afterEach(() => { holdWritersForIndexBuild(false); try { other?.exec("ROLLBACK"); } catch { /* none open */ } try { other?.close(); } catch { /* closed */ } other = null; closeDatabase(); setObserveSink(); });
 const holdWriteLock = () => { other = new DatabaseSync(join(DATA_DIR, "messages.db")); other.exec("PRAGMA busy_timeout=0; BEGIN IMMEDIATE"); };
 const timed = (run: () => unknown): { ms: number; error: unknown } => {
@@ -21,7 +22,7 @@ const timed = (run: () => unknown): { ms: number; error: unknown } => {
   return { ms: performance.now() - started, error: undefined };
 };
 
-it.each(["memory-worker", "memory-idle", "memory-notebook", "startup"])("under the %s source a held lock costs the background budget, never the owner's", source => {
+it.each(["memory-worker", "memory-idle", "memory-notebook", "startup"])("under the %s source a held lock costs the background budget, never the owner's", { tags: ["perf-budget"] }, source => {
   database();
   holdWriteLock();
   const tx = timed(() => ioBudget.withSource(source, () => transaction(() => 1, { op: "t3" })));
@@ -33,7 +34,7 @@ it.each(["memory-worker", "memory-idle", "memory-notebook", "startup"])("under t
   expect(sync.ms).toBeLessThan(150);
 });
 
-it("beginBackground and withBusyBudget give up at the background budget, and the usual wait is back after", () => {
+it("beginBackground and withBusyBudget give up at the background budget, and the usual wait is back after", { tags: ["perf-budget"] }, () => {
   const db = database();
   holdWriteLock();
   const begun = timed(() => beginBackground(db, "slice"));
@@ -62,7 +63,7 @@ it("with no source and no budget the owner path still waits its full budget, and
   expect(line, lines.join("\n")).toMatch(/^\[sqlite\] busy op=BEGIN IMMEDIATE waited=\d+ holder=other-connection budget=none at=database\.test\.ts:\d+/);
 });
 
-it("during the process's own writer hold no write on the serving thread waits more than the background budget, and the hold is named", () => {
+it("during the process's own writer hold no write on the serving thread waits more than the background budget, and the hold is named", { tags: ["perf-budget"] }, () => {
   const db = database();
   holdWriteLock();
   holdWritersForIndexBuild(true);
@@ -91,7 +92,7 @@ it("during the process's own writer hold no write on the serving thread waits mo
   expect(transaction(() => 2, { op: "owner" })).toBe(2);
 });
 
-it("under a background source an autocommit write and a bare BEGIN wait the background budget too, also in the source's later slices", async () => {
+it("under a background source an autocommit write and a bare BEGIN wait the background budget too, also in the source's later slices", { tags: ["perf-budget"] }, async () => {
   const db = database();
   holdWriteLock();
   const write = () => db.prepare("INSERT OR REPLACE INTO transcript_index_state(name, done, cursor, skipped) VALUES ('bg', 1, 0, 0)").run();

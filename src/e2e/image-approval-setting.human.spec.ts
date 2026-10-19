@@ -4,7 +4,7 @@
 // The Images setting in Bot settings, and the record an image made without
 // asking leaves in the conversation, at a desktop and a phone size. Real
 // harness, real UI, no model call: the record is a seeded message.
-import { test, expect, type Page } from "@playwright/test";
+import { test, expect, type Page } from "./page-error-guard";
 import { createServer, type ViteDevServer } from "vite";
 import react from "@vitejs/plugin-react";
 import tailwindcss from "@tailwindcss/vite";

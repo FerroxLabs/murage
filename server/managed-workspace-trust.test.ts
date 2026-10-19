@@ -5,7 +5,7 @@
 // grant would reach past the desk itself.
 import { execFileSync } from "node:child_process";
 import { randomUUID } from "node:crypto";
-import { mkdirSync, mkdtempSync, realpathSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, realpathSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
@@ -17,6 +17,7 @@ import { createProcedurePin, preparePinnedProcedures } from "./procedure-bundles
 import { installSkill, migrateSkillDiscoveryToTasks, setSkillEnabled } from "./skills.ts";
 import { removeTempDir } from "./testing/cleanup.ts";
 import { ensureTaskWorkspace } from "./workspace.ts";
+import { removeTempDirSync } from "./testing/cleanup.ts";
 
 const posixOnly = describe.skipIf(process.platform === "win32");
 const BOT = "bot_1";
@@ -229,8 +230,8 @@ posixOnly("managed thread desk auto-trust on a real pinned bundle", () => {
       expect(managedWorkspaceAutoTrust(deskPath, scan, { ...real, bundleIds: ["some-other-bundle"] })).toBe(false);
       expect(managedWorkspaceAutoTrust(deskPath, scan, { ...real, threadId: "task-two", bundleIds: [pin.bundleId] })).toBe(false);
     } finally {
-      rmSync(join(DATA_DIR, "workspaces", id), { recursive: true, force: true });
-      rmSync(join(DATA_DIR, "skill-state", id), { recursive: true, force: true });
+      removeTempDirSync(join(DATA_DIR, "workspaces", id));
+      removeTempDirSync(join(DATA_DIR, "skill-state", id));
     }
   });
 });

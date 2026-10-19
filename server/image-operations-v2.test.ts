@@ -4,13 +4,14 @@
 // resumable; a provider job kept on the operation row and resumed by the
 // same request_id without a second render or a second card.
 import { randomUUID } from "node:crypto";
-import { mkdirSync, rmSync } from "node:fs";
+import { mkdirSync } from "node:fs";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { DATA_DIR } from "./config.ts";
 import { closeDatabase, database } from "./database.ts";
 import { Store } from "./store.ts";
 import { ImageOperations } from "./image-operations.ts";
 import { ImageGenerationService, type ImageProvider } from "./image-generation.ts";
+import { removeTempDirSync } from "./testing/cleanup.ts";
 
 const faults = vi.hoisted(() => ({ saveImage: 0 }));
 vi.mock("./attachments.ts", async importOriginal => {
@@ -18,11 +19,17 @@ vi.mock("./attachments.ts", async importOriginal => {
   return { ...actual, saveImage: (...args: Parameters<typeof actual.saveImage>) => {
     if (faults.saveImage > 0) { faults.saveImage--; throw Object.assign(new Error("attachments storage is full"), { status: 507 }); }
     return actual.saveImage(...args);
+  }, saveReceiptImage: (...args: Parameters<typeof actual.saveReceiptImage>) => {
+    if (faults.saveImage > 0) { faults.saveImage--; throw Object.assign(new Error("attachments storage is full"), { status: 507 }); }
+    return actual.saveReceiptImage(...args);
+  }, writeNewReceiptImage: (...args: Parameters<typeof actual.writeNewReceiptImage>) => {
+    if (faults.saveImage > 0) { faults.saveImage--; throw Object.assign(new Error("attachments storage is full"), { status: 507 }); }
+    return actual.writeNewReceiptImage(...args);
   } };
 });
 const PNG = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=";
 const PNG_B = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+aD1sAAAAASUVORK5CYII=";
-beforeEach(() => { faults.saveImage = 0; closeDatabase(); rmSync(DATA_DIR, { recursive: true, force: true }); mkdirSync(DATA_DIR, { recursive: true }); });
+beforeEach(() => { faults.saveImage = 0; closeDatabase(); removeTempDirSync(DATA_DIR); mkdirSync(DATA_DIR, { recursive: true }); });
 afterEach(() => closeDatabase());
 
 const json = (value: unknown, init?: ResponseInit) => new Response(JSON.stringify(value), init);

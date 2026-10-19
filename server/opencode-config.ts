@@ -23,6 +23,7 @@ import {
   removeConnector,
 } from "./flux-connector.ts";
 import { FLUX_MODELS, FLUX_OPENAI_BASE } from "./flux-routing.ts";
+import { fluxConfigured } from "./flux-config.ts";
 
 /** The `provider.<id>` key this app owns inside opencode.json. */
 export const OPENCODE_FLUX_PROVIDER = "flux";
@@ -268,6 +269,7 @@ export function openCodeFluxStatus(env: Record<string, string | undefined> = pro
 /** True only in the one state that may offer Flux rows: our block is present
  *  and still ours. `absent`, `unconfigured` and `drifted` all fail closed. */
 export function openCodeFluxRouted(env: Record<string, string | undefined> = process.env): boolean {
+  if (process.env.MURAGE_CLOUD_ROLE === "home") return fluxConfigured(env);
   return openCodeFluxStatus(env).state === "routed";
 }
 

@@ -2,7 +2,7 @@
 // raised but never settled keeps matching the client's "unanswered" filter,
 // and the composer stays disabled behind it — so a gate that works
 // perfectly can still make a thread unusable. These tests pin the settle.
-import { rmSync } from "node:fs";
+
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { DATA_DIR } from "./config.ts";
@@ -22,6 +22,7 @@ import {
 import { closeMessageDb } from "./message-db.ts";
 import { stopWalMaintenance } from "./wal-maintenance.ts";
 import { Store, type BotRecord } from "./store.ts";
+import { removeTempDirSync } from "./testing/cleanup.ts";
 
 const selection = (): ModelSelection => ({ instanceId: "claude", model: "fake-model" });
 
@@ -48,7 +49,7 @@ describe("peer approval card lifecycle", () => {
   afterEach(async () => {
     closeMessageDb();
     await stopWalMaintenance();
-    rmSync(DATA_DIR, { recursive: true, force: true });
+    removeTempDirSync(DATA_DIR);
   });
 
   // Gap 1: an idle No-limits peer inherits the Full routine ceiling and routine origin.

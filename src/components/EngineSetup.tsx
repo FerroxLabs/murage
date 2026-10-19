@@ -10,6 +10,7 @@ import { EngineManagement } from "./EngineManagement";
 import { FluxKeyCard } from "./FluxKeyCard";
 import { LOCAL_MODELS_TITLE, OPEN_LOCAL_MODELS_EVENT } from "@/lib/local-models-view";
 import { localEngineSupport } from "../../shared/local-models";
+import { opensPurchasePages } from "@/lib/native-shell";
 
 type Platform = "darwin" | "win32" | "linux";
 
@@ -274,7 +275,7 @@ export function EngineSetup({
         </p>
       )}
 
-      {install.docsUrl && (
+      {install.docsUrl && opensPurchasePages() && (
         <a
           href={install.docsUrl}
           target="_blank"

@@ -10,7 +10,29 @@ import { PASTE_MESSAGES, PASTE_NOTE_TEMPLATES, parsePaste } from "../../shared/m
 import { inspectInput, pasteNoteText, type MergedDraft, type ProbeView } from "@/lib/mcp-add-flow";
 import { draftView, newCardState, pasteHoldsSecret, withProbe, type DraftCardState, type DraftView } from "@/lib/mcp-card-view";
 import { McpDraftCard, type McpDraftCardActions } from "./McpDraftCard";
-import { commandDetails, parseMcpArguments, parseMcpEnvironment, savedKeysAtRisk } from "./McpServersPanel";
+import { commandDetails, nameClashWith, parseMcpArguments, parseMcpEnvironment, savedKeysAtRisk } from "./McpServersPanel";
+
+// Gap (a) of steps 1..3 (Rule 57a): a server turned off by a name clash says which name, and every pack words the rename action
+describe("the rename action for a name clash", () => {
+  it("reads the survivor from the reason and nothing else", () => {
+    expect(nameClashWith({ disabledReason: "name-collision:my-notes" })).toBe("my-notes");
+    expect(nameClashWith({ disabledReason: "name-collision:" })).toBeNull();
+    expect(nameClashWith({ disabledReason: "something-else" })).toBeNull();
+    expect(nameClashWith({})).toBeNull();
+  });
+
+  it("every language pack carries the rename copy with its placeholders", async () => {
+    const packs = await allLocalePacks();
+    for (const [code, pack] of Object.entries(packs) as Array<[string, Record<string, string>]>) {
+      expect(pack["mcp.row.nameClash"], code).toContain("{other}");
+      expect(pack["mcp.notice.renamed"], code).toContain("{from}");
+      expect(pack["mcp.notice.renamed"], code).toContain("{to}");
+      expect(pack["mcp.rename.label"], code).toContain("{name}");
+      for (const key of ["mcp.row.rename", "mcp.rename.save", "mcp.rename.cancel"]) expect(pack[key], `${code} ${key}`).toBeTruthy();
+    }
+    expect((en as Record<string, string>)["mcp.row.rename"]).toBe("Rename");
+  });
+});
 
 describe("MCP server form", () => {
   it("uses one explicit argument per line", () => {

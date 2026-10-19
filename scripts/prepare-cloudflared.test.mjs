@@ -33,6 +33,12 @@ const PINNED_ASSETS = {
     binarySha256: "fcfb02b575a52ca1af2e3267af4e1517bcdeb30ac48c834c69abaed3c0576ad2",
     archive: false,
   },
+  "linux-arm64": {
+    name: "cloudflared-linux-arm64",
+    sha256: "7747d94570fb390cf47dcb4f9555c193c6355cda9793f0d878d9049e5d6a7790",
+    binarySha256: "7747d94570fb390cf47dcb4f9555c193c6355cda9793f0d878d9049e5d6a7790",
+    archive: false,
+  },
   "win32-x64": {
     name: "cloudflared-windows-amd64.exe",
     sha256: "c29eee2b121f5436a642eed69fd9767da7e7b8c510fa50aaa130337f931357b5",
@@ -51,6 +57,9 @@ function executableFixture(target) {
   } else if (target === "linux-x64") {
     Buffer.from([0x7f, 0x45, 0x4c, 0x46, 2, 1]).copy(bytes);
     bytes.writeUInt16LE(0x3e, 18);
+  } else if (target === "linux-arm64") {
+    Buffer.from([0x7f, 0x45, 0x4c, 0x46, 2, 1]).copy(bytes);
+    bytes.writeUInt16LE(0xb7, 18);
   } else if (target === "win32-x64") {
     bytes.write("MZ", 0, "ascii");
     bytes.writeUInt32LE(0x40, 0x3c);
@@ -80,7 +89,7 @@ describe("pinned cloudflared packaging", () => {
       "darwin-arm64",
       "darwin-x64",
     ]);
-    expect(() => targetForCurrentHost("linux", "arm64")).toThrow(/unsupported/);
+    expect(targetForCurrentHost("linux", "arm64")).toBe("linux-arm64");
   });
 
   it("accepts only the documented current-target CLI option", () => {

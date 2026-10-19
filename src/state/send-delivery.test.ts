@@ -1,3 +1,5 @@
+import { readFileSync } from "node:fs";
+import { fileURLToPath } from "node:url";
 import { describe, expect, it, vi } from "vitest";
 import { busyRetriesFor, busyRetryDelayMs, createOutbox, deliverEdit, EDIT_DEADLINE_MS, createSendDelivery, isBusyRefusal, isDatabaseBusyAnswer, isDefinitiveFailure, retryWhileBusy, MAX_OUTBOX_ENTRIES, OUTBOX_GIVE_UP_MS, type OutboxEntry } from "./send-delivery";
 
@@ -495,6 +497,17 @@ describe("a busy answer (DATABASE_BUSY, 503 with Retry-After) is retried with th
     expect(isDefinitiveFailure(busy(409))).toBe(false);
     // an ordinary conflict is still final
     expect(isDefinitiveFailure(Object.assign(new Error("conflict"), { status: 409, body: { error: "x" } }))).toBe(true);
+  });
+
+  it("matches the busy code or any 503, and the comment says so (lane 5.4)", () => {
+    expect(isBusyRefusal({ status: 503, body: {} })).toBe(true);
+    expect(isBusyRefusal({ status: 200, body: { code: "DATABASE_BUSY" } })).toBe(true);
+    expect(isBusyRefusal({ status: 500, body: { code: "OTHER" } })).toBe(false);
+    // only the strict check needs the code itself
+    expect(isDatabaseBusyAnswer({ status: 503, body: {} })).toBe(false);
+    const source = readFileSync(fileURLToPath(new URL("./send-delivery.ts", import.meta.url)), "utf8");
+    const at = source.indexOf("export function isBusyRefusal");
+    expect(source.slice(Math.max(0, at - 700), at)).toMatch(/OR any 503/);
   });
 
   it("keeps the outbox entry, retries after the Retry-After, and delivers once with the same sendId", async () => {

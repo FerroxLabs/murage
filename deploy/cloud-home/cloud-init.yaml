@@ -1,0 +1,9 @@
+#cloud-config
+# Image-builder input only, never a provider provisioning request.
+# Base: Ubuntu Server 24.04 LTS amd64 (Noble), Ubuntu serial 20260926.
+# Recipe pins: apt 20260930T000000Z, Node 24.21.0.
+# Supply a verified Ubuntu image digest in your image-builder manifest.
+# Supply this reviewed source at /build/murage and its full candidate commit at
+# /build/murage-revision. Neither file contains a credential.
+runcmd:
+  - [bash, -c, 'exec /build/murage/deploy/cloud-home/build-image.sh "$(cat /build/murage-revision)" /build/murage']

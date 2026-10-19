@@ -4,7 +4,7 @@
 // turnctx last gap (Astra r4c): "prepared" means every row of the thread has a branch entry, including a lone legacy row patched
 // before its first fill; and a file a delete had to keep (the attachment-name index was not complete) is decided as soon as the
 // index completes, not at the next start, and is reported as still pending until then.
-import { existsSync, mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, realpathSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
@@ -16,10 +16,11 @@ import * as messages from "./message-db.ts";
 import { ConversationDeletions } from "./conversation-deletion.ts";
 import * as backfill from "./transcript-backfill.ts";
 import type { Message } from "./store.ts";
+import { removeTempDirSync } from "./testing/cleanup.ts";
 
 const T = "t-r5";
 const msg = (id: string, parentId: string | null, extra: object = {}): Message => ({ id, text: `words of ${id}`, parentId, at: 1, role: "user", kind: "text", ...extra }) as Message;
-beforeEach(() => { closeDatabase(); rmSync(DATA_DIR, { recursive: true, force: true }); mkdirSync(DATA_DIR, { recursive: true }); });
+beforeEach(() => { closeDatabase(); removeTempDirSync(DATA_DIR); mkdirSync(DATA_DIR, { recursive: true }); });
 
 const entries = () => (database().prepare("SELECT count(*) AS n FROM msg_branch b JOIN messages m ON m.rowid = b.mrow WHERE m.thread_id = ?").get(T) as { n: number }).n;
 
@@ -38,7 +39,7 @@ it("r5 #1: a lone legacy row patched before its first fill is covered; appending
 });
 
 const scratch = realpathSync.native(mkdtempSync(join(tmpdir(), "murage-r5-")));
-afterAll(() => rmSync(scratch, { recursive: true, force: true }));
+afterAll(() => removeTempDirSync(scratch));
 const uuidName = (n: number) => `0b7c1f2e-2222-4333-8444-${String(n).padStart(12, "0")}.pdf`;
 
 it("r5 #2: a deferred attachment is decided when the index completes, with no restart; the shared file stays; the delete reports it pending", async () => {
@@ -49,7 +50,7 @@ it("r5 #2: a deferred attachment is decided when the index completes, with no re
     CREATE TABLE transcript_index_state(name TEXT PRIMARY KEY, done INTEGER NOT NULL, cursor INTEGER NOT NULL, skipped INTEGER NOT NULL) WITHOUT ROWID;
     CREATE TABLE attachment_name(name TEXT NOT NULL, thread_id TEXT NOT NULL, id TEXT NOT NULL, PRIMARY KEY(name, thread_id, id)) WITHOUT ROWID;`);
   const names = [uuidName(1), uuidName(2)];
-  const put = db.prepare("INSERT INTO messages VALUES(?,?,?,?,?,?,?)");
+  const put = db.prepare("INSERT INTO messages(thread_id,id,at,role,kind,text,json) VALUES(?,?,?,?,?,?,?)");
   put.run("doomed", "d0", 1, "bot", "text", "hi", JSON.stringify({ attachments: names.map((n) => ({ kind: "file", path: join(data, "attachments", n) })) }));
   put.run("th1", "ref", 2, "user", "text", "x", JSON.stringify({ text: `see ${names[1]}` })); // not indexed yet
   for (const n of names) writeFileSync(join(data, "attachments", n), "x");

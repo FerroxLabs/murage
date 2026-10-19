@@ -21,6 +21,6 @@ const state = {
   },
 };
 
-export function useStore() {
+export function useStoreIfAny(){return useStore();} export function useStore() {
   return { state, dispatch: () => {} };
 }

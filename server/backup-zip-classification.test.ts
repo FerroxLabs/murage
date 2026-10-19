@@ -9,12 +9,13 @@
 // encrypted backup refuses as possibly mid-transaction. The classification
 // gate now lives in the stage itself, so both kinds of backup refuse alike,
 // and name the item.
-import { existsSync, mkdirSync, readdirSync, readFileSync, readlinkSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readdirSync, readFileSync, readlinkSync, symlinkSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { expect, it } from "vitest";
 import { writeInstallationArchive } from "./installation-archive.ts";
 import { restoreInstallation } from "./installation-restore.ts";
 import { backupFixture } from "./testing/backup-fixture.ts";
+import { removeTempDirSync } from "./testing/cleanup.ts";
 
 it.each([
   ["an unknown top-level name", "a-new-feature.json", "BACKUP_UNCLASSIFIED_COMPONENT"],
@@ -28,7 +29,7 @@ it.each([
     const error = await writeInstallationArchive(f.data, join(out, "recovery.zip")).then(() => null, (caught: { code?: string; path?: string }) => caught);
     expect({ code: error?.code, path: error?.path }).toEqual({ code, path: name });
     expect(readdirSync(out)).toEqual([]);
-  } finally { f.db.close(); rmSync(f.parent, { recursive: true, force: true }); }
+  } finally { f.db.close(); removeTempDirSync(f.parent); }
 });
 
 it("the .zip recovery file keeps a bot's shortcuts and real names, and restores them", async () => {
@@ -51,7 +52,7 @@ it("the .zip recovery file keeps a bot's shortcuts and real names, and restores 
     expect(readlinkSync(join(target, "workspaces", "bot", "main.js")).replaceAll("\\", "/")).toBe("lib/index.js");
     if (colon) expect(readFileSync(join(target, "workspaces", "bot", "log 10:30.txt"), "utf8")).toBe("timestamped\n");
     expect(existsSync(join(target, "workspaces", "bot", "node_modules"))).toBe(false);
-  } finally { f.db.close(); rmSync(f.parent, { recursive: true, force: true }); }
+  } finally { f.db.close(); removeTempDirSync(f.parent); }
 });
 
 it("the .zip recovery file's list of left-out items names whose folder they were in", async () => {
@@ -62,5 +63,5 @@ it("the .zip recovery file's list of left-out items names whose folder they were
   try {
     const result = await installationRecoveryCommand(["backup", "--data-dir", f.data, "--output", join(f.parent, "recovery.zip")]);
     expect(result.skipped).toEqual({ count: 1, items: [{ path: "workspaces/bot/node_modules", reason: "rebuildable" }], bots: { bot: "Fixture" } });
-  } finally { f.db.close(); rmSync(f.parent, { recursive: true, force: true }); }
+  } finally { f.db.close(); removeTempDirSync(f.parent); }
 });

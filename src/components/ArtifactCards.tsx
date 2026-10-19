@@ -31,6 +31,8 @@ import { MediaPlayerCard, MediaUnplayableCard, unplayableMessage, type MediaSour
 import type { MediaUnplayableReason } from "@/lib/media-resolve";
 import { isMediaCapabilityToken, MEDIA_CAPABILITY_QUERY_PARAM, MEDIA_ROUTES, type MediaAsset, type MediaResolveResponse } from "../../shared/media-assets";
 import type { Artifact, ArtifactPreview } from "../../shared/artifacts";
+import { SandboxedFrame } from "./SandboxedFrame";
+import { useSanitizerReady } from "@/lib/trusted-html";
 
 // ── Pure rules (tested without a DOM) ────────────────────────────────────
 
@@ -144,11 +146,12 @@ function BoundedText({ artifact, content, kind }: { artifact: Artifact; content:
 }
 
 function HtmlFrame({ artifact, content }: { artifact: Artifact; content: string }) {
+  const sanitizer = useSanitizerReady(); // markup made before the sanitizer loaded is empty: draw again when it arrives
   const [large, setLarge] = useState(false);
-  const html = useMemo(() => artifactPreviewHtml(content), [content]);
+  const html = useMemo(() => artifactPreviewHtml(content), [content, sanitizer]);
   return (
     <div data-artifact-inline="html">
-      <iframe title={t("artifactCard.htmlFrame", { name: artifact.name })} sandbox="" referrerPolicy="no-referrer" srcDoc={html}
+      <SandboxedFrame title={t("artifactCard.htmlFrame", { name: artifact.name })} sandbox="" referrerPolicy="no-referrer" html={html}
         className={`w-full rounded-lg bg-white ${large ? "h-[560px]" : "h-72"}`} />
       <p className="mt-1.5 flex flex-wrap items-center gap-x-2 text-[12px] text-ink-secondary">
         <span>{t("artifactCard.htmlNote")}</span>
