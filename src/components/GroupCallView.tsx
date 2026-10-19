@@ -3,7 +3,7 @@
 // Capture stays half-duplex for the same reason as one-to-one calls: the
 // native recognizer has no acoustic echo cancellation. Bot replies are
 // explicitly queued so a fast second member never cuts off the first.
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useReducer, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { Loader2, PhoneOff, X } from "lucide-react";
 
@@ -37,7 +37,8 @@ import { ReadAlong } from "./ReadAlong";
 import { botVoice } from "@/lib/audio-level";
 import { auraPhaseFor } from "@/lib/call-aura";
 import { useKeyboardHints } from "@/lib/use-keyboard-hints";
-import { isRoutineApproval, isSkillApproval, openQuestions, pendingApprovals, spokenApprovalPrompt } from "./PendingApproval";
+import { isRoutineApproval, isSkillApproval, openQuestions, pendingApprovals, spokenApprovalPrompt, spokenQueueList, QUEUE_OFFER, QUEUE_ONE_AT_A_TIME, QUEUE_WHICH, type Pending } from "./PendingApproval";
+import { followingRequest, nextSelection, queueCommand, reachesPastOneRequest, requestsWaiting, selectRequest, type QueueSelection } from "@/lib/approval-queue";
 import { holdForPlainWords, usePlainApprovalSettled } from "@/lib/plain-approval";
 
 /** Pre-synthesized acknowledgement clips, kept across calls (see call-ack.ts). */
@@ -100,7 +101,22 @@ export function GroupCall({
   const messages = group.messages;
   const messagesRef = useRef(messages);
   messagesRef.current = messages;
-  const approval = pendingApprovals(olderOpenCards(group, messages))[0];
+  // Rule 83: every open request in the room, and the one the call presents, by
+  // its own id: new cards append without moving it, a settled one hands over.
+  const approvals = pendingApprovals(olderOpenCards(group, messages));
+  const approvalsRef = useRef<Pending[]>(approvals);
+  approvalsRef.current = approvals;
+  const presented = useRef<QueueSelection>({ order: [] });
+  presented.current = nextSelection(presented.current, approvals);
+  const approval = approvals.find((pending) => pending.requestId === presented.current.id);
+  /** "next" or a number moved the call to another request: ask it. */
+  const [, presentAnother] = useReducer((n: number) => n + 1, 0);
+  /** The list was read and no single request is presented until one is picked. */
+  const choosingRequest = useRef(false);
+  /** The presented request settled elsewhere: the next ask says so with the new count. */
+  const announceCount = useRef(false);
+  const routinesRef = useRef(state.routines);
+  routinesRef.current = state.routines;
   // the plain words an approval is spoken in (loaded after the first paint)
   const approvalWordsSettled = usePlainApprovalSettled();
   const question = questionIn(olderOpenCards(group, messages));
@@ -135,7 +151,7 @@ export function GroupCall({
   const spokenIds = useRef<Set<string>>(new Set());
   const started = useRef(false);
   // A room whose first page is not held yet starts once it is: the page landing after the call began is backlog, not news.
-  if (!started.current && !group.messagesUnloaded && !group.pageStale && !group.firstPageEvents) {
+  if (!started.current && !group.messagesUnloaded && !group.firstPageEvents) {
     started.current = true;
     for (const message of messages) spokenIds.current.add(message.id);
   }
@@ -588,7 +604,57 @@ export function GroupCall({
           hush();
           return;
         }
-        if (YES.test(said) || NO.test(said)) {
+        // Rule 83c: a line answers only the presented request while it is still pending.
+        const queue = approvalsRef.current;
+        if (!queue.some((pending) => pending.requestId === openApproval.requestId)) {
+          askedApproval.current = null;
+          setHeard("");
+          enqueueSpeech(`That request was already answered.${queue.length ? ` ${requestsWaiting(queue.length)}.` : ""}`, openApproval.member, true);
+          return;
+        }
+        const memberOf = (pending: Pending) => membersRef.current.find((candidate) => candidate.id === pending.message.from?.botId);
+        // With more than one waiting, the owner can move, list or pick; none of it answers a request.
+        const command = queue.length > 1 ? queueCommand(said) : null;
+        if (command) {
+          setHeard("");
+          if (command.kind === "read") {
+            choosingRequest.current = true;
+            enqueueSpeech(
+              spokenQueueList(
+                queue,
+                (pending) => memberOf(pending)?.name ?? pending.message.from?.name ?? "A channel member",
+                (pending) => routinesRef.current.find((routine) => routine.id === pending.message.card?.routineId)?.name,
+              ),
+              openApproval.member,
+              true,
+            );
+            return;
+          }
+          const target = command.kind === "next" ? followingRequest(queue, openApproval.requestId) : queue[command.index - 1]?.requestId;
+          if (!target) {
+            enqueueSpeech(`There are ${requestsWaiting(queue.length)}. Say a number from 1 to ${queue.length}.`, openApproval.member, true);
+            return;
+          }
+          choosingRequest.current = false;
+          presented.current = selectRequest(presented.current, queue, target);
+          askedApproval.current = null;
+          presentAnother();
+          return;
+        }
+        const decided = YES.test(said) || NO.test(said);
+        // After the list was read, a yes or no does not say which request it is for.
+        if (decided && choosingRequest.current && queue.length > 1) {
+          setHeard("");
+          enqueueSpeech(QUEUE_WHICH, openApproval.member, true);
+          return;
+        }
+        // No implicit approve-all: "yes to all" would reach the other waiting requests.
+        if (decided && queue.length > 1 && reachesPastOneRequest(said)) {
+          setHeard("");
+          enqueueSpeech(QUEUE_ONE_AT_A_TIME, openApproval.member, true);
+          return;
+        }
+        if (decided) {
           const allow = YES.test(said);
           if (allow && openApproval.skill) {
             setHeard("");
@@ -725,7 +791,13 @@ export function GroupCall({
     let resumeAfterRoutine = false;
     if (askedApproval.current && approval?.requestId !== askedApproval.current.requestId) {
       resumeAfterRoutine = askedApproval.current.routine && askedApproval.current.submitted;
+      // Rule 83a: it settled somewhere else; the next one is asked with the new count.
+      if (!askedApproval.current.submitted) announceCount.current = true;
       askedApproval.current = null;
+    }
+    if (!approval) {
+      announceCount.current = false;
+      choosingRequest.current = false;
     }
     if (askedQuestion.current && question?.card?.requestId !== askedQuestion.current.requestId) {
       askedQuestion.current = null;
@@ -759,7 +831,18 @@ export function GroupCall({
       const skillPrompt = approval.message.card?.skillRequest?.action === "update"
         ? `${name} wants to update a learned skill. Open the channel chat to review the complete skill before replacing the current version. You can say no to deny it.`
         : `${name} wants to enable a new learned skill. Open the channel chat to review the complete skill before enabling it. You can say no to deny it.`;
-      enqueueSpeech(isSkillApproval(approval) ? skillPrompt : spokenApprovalPrompt(approval, name), member, true);
+      // Rule 83c: with more than one waiting the count leads and every request is offered.
+      const waiting = approvalsRef.current.length;
+      const lead = announceCount.current
+        ? `That request was answered elsewhere. ${requestsWaiting(waiting)}. `
+        : waiting > 1 ? `${requestsWaiting(waiting)}. ` : "";
+      announceCount.current = false;
+      choosingRequest.current = false;
+      enqueueSpeech(
+        `${lead}${isSkillApproval(approval) ? skillPrompt : spokenApprovalPrompt(approval, name)}${waiting > 1 ? ` ${QUEUE_OFFER}` : ""}`,
+        member,
+        true,
+      );
     }
 
     if (question?.card?.requestId && askedQuestion.current?.requestId !== question.card.requestId) {

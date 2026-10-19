@@ -3,6 +3,8 @@ import { Check, Loader2, PlugZap, RefreshCw, X } from "lucide-react";
 
 import { api, type Message } from "@/state/store";
 import { openExternalPage } from "@/lib/open-external";
+import { useAction } from "@/lib/use-action";
+import { ActionStatus } from "./ActionButton";
 import { endConnectorWait, startConnectorPoll } from "@/lib/connector-card-poll";
 
 async function openConnectionPage(url: string) {
@@ -42,6 +44,10 @@ export function ConnectorCard({ botId, threadId, message }: { botId: string; thr
     if (connector.status === "authorizing") setTimedOut(false);
   }, [connector.status]);
 
+  const dismissAction = useAction(async () => {
+    await api(`${endpoint}/dismiss`, { method: "POST", body: JSON.stringify({ threadId }) });
+  }, { pending: "Dismissing…", success: null, failure: "Could not dismiss this card. Try again." });
+
   if (connector.dismissed) return null;
 
   const connect = async () => {
@@ -71,10 +77,6 @@ export function ConnectorCard({ botId, threadId, message }: { botId: string; thr
     } finally {
       setBusy(false);
     }
-  };
-
-  const dismiss = () => {
-    void api(`${endpoint}/dismiss`, { method: "POST", body: JSON.stringify({ threadId }) }).catch(() => {});
   };
 
   const connected = connector.status === "connected";
@@ -111,10 +113,11 @@ export function ConnectorCard({ botId, threadId, message }: { botId: string; thr
               </p>
             )}
             {error && <p className="mt-2 text-[12px] text-danger">{error}</p>}
+            <ActionStatus action={dismissAction} className="mt-2" />
           </div>
           {!connected && (
-            <button onClick={dismiss} aria-label="Not now" title="Not now" className="rounded-md p-1 text-ink-secondary hover:bg-control hover:text-ink">
-              <X size={15} />
+            <button onClick={() => void dismissAction.run()} disabled={dismissAction.pending} aria-busy={dismissAction.pending} aria-label={dismissAction.pending ? "Dismissing" : "Not now"} title="Not now" className="rounded-md p-1 text-ink-secondary hover:bg-control hover:text-ink disabled:opacity-50">
+              {dismissAction.pending ? <Loader2 size={15} className="animate-spin" /> : <X size={15} />}
             </button>
           )}
         </div>

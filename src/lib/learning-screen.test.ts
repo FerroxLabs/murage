@@ -135,8 +135,8 @@ describe("recent changes, counts and usage", () => {
   it("prints only the usage memory status reports", () => {
     expect(usageLine(null)).toBeNull();
     expect(usageLine({ mode: "active" })).toBeNull();
-    const learning = { allowance: { day: "d", inputUsed: 1, outputUsed: 1, usedPercent: 12.4 } } as any;
-    expect(usageLine({ mode: "active", learning })).toBe("Usage today: 12% of the learning allowance.");
+    const learning = { ceiling: { month: "2026-10", input: 100_000_000, output: 15_000_000, inputUsed: 2_100_000, outputUsed: 300_000, paused: false } } as any;
+    expect(usageLine({ mode: "active", learning })).toBe("Learning this month: 2.1M tokens read, 0.3M written.");
   });
   it("shows the harness's plain refusal and a fixed line for anything else", () => {
     expect(plainError(Object.assign(new Error("That is too long. Keep it under 280 characters."), { status: 422 }))).toBe("That is too long. Keep it under 280 characters.");

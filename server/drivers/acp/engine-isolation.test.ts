@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // OpenCode and Fuigo bot turns: Murage's own MCP servers present, the owner's personal
 // setup switched off (opencode-go.ts isolateOpenCodeFromPersonalSetup, fuigo.ts transformEnv).
-import { existsSync, lstatSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, readlinkSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, lstatSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, readlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -15,6 +15,7 @@ import { ScopeUnavailableError, scopedCliHomeRoot } from "../scoped-cli-home.ts"
 import { createOpenCodeDriver, isolateOpenCodeFromPersonalSetup, isolateOpenCodeGlobalInstructions, jsoncToJson, ownerOpenCodeMcpNames } from "./opencode-go.ts";
 import type { ProviderDriver } from "../../contracts.ts";
 import type { AcpConfig } from "./core.ts";
+import { removeTempDirSync } from "../../testing/cleanup.ts";
 
 const cli = fileURLToPath(new URL("../../testing/fake-acp-cli.ts", import.meta.url));
 const homes: string[] = [];
@@ -23,7 +24,7 @@ beforeEach(() => {
 });
 afterEach(() => {
   vi.unstubAllEnvs();
-  for (const home of homes.splice(0)) rmSync(home, { recursive: true, force: true });
+  for (const home of homes.splice(0)) removeTempDirSync(home);
 });
 
 function ownerHome(): string {
@@ -40,7 +41,10 @@ async function bootTurn(driver: ProviderDriver<AcpConfig>, home: string, extra: 
   const dump = join(home, "spawn.json");
   const instance = await driver.create({ instanceId: "iso", displayName: "iso", enabled: true,
     config: driver.decodeConfig({ cli, fullAuto: true }),
-    environment: { HOME: home, USERPROFILE: home, FAKE_ACP_MODE: "happy", FAKE_ACP_DUMP: dump, FAKE_ACP_MCP_READY: "1", FAKE_ACP_MODELS: "fixture-model", ...extra } });
+    environment: { HOME: home, USERPROFILE: home,
+      // The CLI's config folder is chosen by these two before ~/.config; pin them so a runner's own values cannot redirect the fixture.
+      OPENCODE_CONFIG_DIR: "", XDG_CONFIG_HOME: join(home, ".config"),
+      FAKE_ACP_MODE: "happy", FAKE_ACP_DUMP: dump, FAKE_ACP_MCP_READY: "1", FAKE_ACP_MODELS: "fixture-model", ...extra } });
   const recorder = recordEvents(instance.adapter);
   try {
     await instance.adapter.sendTurn({ threadId: "iso-1", text: "hello", cwd: home,

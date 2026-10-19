@@ -3,7 +3,7 @@
 import { nativeRealm } from './testing/native-dom-fixture.ts';
 import { describe, expect, it } from "vitest";
 import { runInNewContext } from "node:vm";
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdtempSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { classifyDataDirEntry } from "./data-dir-inventory.ts";
@@ -11,6 +11,7 @@ import { scanDataDirWrites } from "./testing/data-dir-guard.ts";
 import { BROWSER_DOCUMENT_GUARD_SOURCE } from "./browser-document-guard.ts";
 import { createBrowserExtensionService } from "./browser-extension-service.ts";
 import { makePrivateTestSubdirectory } from "./testing/private-test-dir.ts";
+import { removeTempDirSync } from "./testing/cleanup.ts";
 
 describe("OR-1 (High): the browser runtime folder never pauses a backup", () => {
   it("bx-run, written under the data folder, is classified and left out of every backup", () => {
@@ -41,7 +42,7 @@ describe("OR-2 (Medium): Stop is final in the service too: an owner resume never
       await service.handleMessage("profile_1", { version: 1, type: "event", bindingId: binding.bindingId, generation, event: "resumed", data: summary() } as never).catch(() => {});
       expect(service.status().bindings[0].state).toBe("stopped");
       await service.close?.();
-    } finally { rmSync(dir, { recursive: true, force: true }); }
+    } finally { removeTempDirSync(dir); }
   });
 });
 

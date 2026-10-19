@@ -9,7 +9,7 @@
 // These turns run the real pipeline (Store messages, settlement, capture jobs,
 // checkpoint refresh, frame receipts on one native session); every real
 // invalidation below still ends the session.
-import { mkdirSync, rmSync } from "node:fs";
+import { mkdirSync } from "node:fs";
 import { beforeEach, expect, it } from "vitest";
 import { afterEach as thawAfterEach, beforeEach as thawBeforeEach } from "vitest";
 import { thawRootSetWritesForTest } from "./replay-lineage.ts";
@@ -31,6 +31,7 @@ import { forgetMemory } from "./forget.ts";
 import type { MemoryBundle } from "../../shared/memory.ts";
 import { LineageAllowance } from "./lineage-allowance.ts";
 import { markSessionKnown } from "./testing/legacy-file-model.ts";
+import { removeTempDirSync } from "../testing/cleanup.ts";
 // 1.0.2: this test models a 1.0.1 file (legacy root-set rows) for the read-time judge, which still decides legacy data until S6.
 thawBeforeEach(() => thawRootSetWritesForTest(true));
 thawAfterEach(() => thawRootSetWritesForTest(false));
@@ -39,7 +40,7 @@ thawAfterEach(() => thawRootSetWritesForTest(false));
 // writetime-watermark, ...), where the read-time judge said memory-changed
 const WHY_RESET = /^(memory-changed|writetime-)/;
 const bridge = { search: async () => ({ hits: [], vectorRows: 0 }) };
-beforeEach(() => { closeDatabase(); rmSync(DATA_DIR, { recursive: true, force: true }); mkdirSync(DATA_DIR, { recursive: true }); });
+beforeEach(() => { closeDatabase(); removeTempDirSync(DATA_DIR); mkdirSync(DATA_DIR, { recursive: true }); });
 
 function drain() {
   for (let n = 0; n < 100; n++) {
@@ -120,7 +121,7 @@ it("(a) consecutive normal turns keep the session, with the settle-time screensh
     // nothing on the thread was retired or revoked by a screenshot splice
     expect(database().prepare("SELECT count(*) AS n FROM memory_disclosures WHERE state='revoked'").get()!.n).toBe(0);
     expect(database().prepare("SELECT count(*) AS n FROM memory_sources WHERE kind='text' AND state!='active'").get()!.n).toBe(0);
-    closeDatabase(); rmSync(DATA_DIR, { recursive: true, force: true }); mkdirSync(DATA_DIR, { recursive: true });
+    closeDatabase(); removeTempDirSync(DATA_DIR); mkdirSync(DATA_DIR, { recursive: true });
   }
 });
 
@@ -137,7 +138,7 @@ it("(c) the owner forgets a memory the session was shown, or a source it rests o
     const target = kind === "record" ? second.recordVersions.find(r => !r.id.startsWith("checkpoint:"))!.id : second.sourceVersions[0].id;
     forgetMemory(ownerMemoryTicket(), { kind, id: target });
     expect(w.revoked("S1")).toEqual({ result: true, why: expect.stringMatching(WHY_RESET) });
-    closeDatabase(); rmSync(DATA_DIR, { recursive: true, force: true }); mkdirSync(DATA_DIR, { recursive: true });
+    closeDatabase(); removeTempDirSync(DATA_DIR); mkdirSync(DATA_DIR, { recursive: true });
   }
 });
 
@@ -157,7 +158,7 @@ it("(d) a message the session was shown is edited, or withheld by a real branch 
     w.store.patchMessage(w.threadId, w.prompts[0], { text: "Never mind item 1." } as never);
     expect(w.revoked("S1")).toEqual({ result: true, why: expect.stringMatching(WHY_RESET) });
   }
-  closeDatabase(); rmSync(DATA_DIR, { recursive: true, force: true }); mkdirSync(DATA_DIR, { recursive: true });
+  closeDatabase(); removeTempDirSync(DATA_DIR); mkdirSync(DATA_DIR, { recursive: true });
   {
     const { w } = await twoTurns();
     // a real edit-and-resend: branchMessage forks the first prompt, so the later turns leave the active path
@@ -180,7 +181,7 @@ it("(e) a policy revision or deletion epoch move: reset", async () => {
     pinMemory(ownerMemoryTicket(), record.id, record.version, true);  // policy revision only
     expect(w.revoked("S1")).toEqual({ result: true, why: expect.stringMatching(WHY_RESET) });
   }
-  closeDatabase(); rmSync(DATA_DIR, { recursive: true, force: true }); mkdirSync(DATA_DIR, { recursive: true });
+  closeDatabase(); removeTempDirSync(DATA_DIR); mkdirSync(DATA_DIR, { recursive: true });
   {
     const { w } = await twoTurns();
     database().exec("UPDATE memory_meta SET deletion_epoch=deletion_epoch+1 WHERE id=1");

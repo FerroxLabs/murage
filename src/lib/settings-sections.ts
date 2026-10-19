@@ -12,11 +12,13 @@
 // Ids are a contract. They arrive from deep links all over the app, from the
 // What's new tiles and from server-sent announcements (lib/announcements.ts),
 // so an id is never removed or renamed: a label can change, the id stays.
-// 0.1.62 added botDefaults, images, webSearch, voice and about.
+// 0.1.62 added botDefaults, images, webSearch, voice and about; 1.0.3 added storage.
 import { t } from "@/lib/i18n";
 import type { LocaleKey } from "@/locales";
+import { SETTINGS_PAGE_GROUPS, type SettingsPage, type SettingsPageGroup } from "./settings-pages";
 
-export type AppSettingsGroup = "you" | "bots" | "models" | "tools" | "channels" | "app";
+/** 1.0.3: five groups (You, Bots, AI, Reach, App), the same ones the sidebar draws (lib/settings-pages.ts). */
+export type AppSettingsGroup = SettingsPageGroup;
 
 export type AppSettingsSection =
   | "general"
@@ -35,6 +37,7 @@ export type AppSettingsSection =
   | "channels"
   | "companion"
   | "backups"
+  | "storage"
   | "usage"
   | "about"
   | "experimental";
@@ -46,7 +49,7 @@ export interface SettingsSectionEntry {
   desktopOnly?: boolean;
 }
 
-export const SETTINGS_GROUPS: readonly AppSettingsGroup[] = ["you", "bots", "models", "tools", "channels", "app"];
+export const SETTINGS_GROUPS: readonly AppSettingsGroup[] = SETTINGS_PAGE_GROUPS;
 
 // `desktopOnly` is not a tidiness flag. Most of these are the credential and
 // execution surface of the app: API keys, the VPS connection, the engine CLI
@@ -64,16 +67,17 @@ export const SETTINGS_SECTIONS: readonly SettingsSectionEntry[] = [
   { id: "houseRules", group: "bots", desktopOnly: true },
   { id: "skills", group: "bots", desktopOnly: true },
   { id: "memory", group: "bots", desktopOnly: true },
-  { id: "models", group: "models", desktopOnly: true },
-  { id: "engines", group: "models", desktopOnly: true },
-  { id: "images", group: "tools", desktopOnly: true },
-  { id: "webSearch", group: "tools", desktopOnly: true },
-  { id: "voice", group: "tools", desktopOnly: true },
-  { id: "connections", group: "tools", desktopOnly: true },
-  { id: "computer", group: "tools", desktopOnly: true },
-  { id: "channels", group: "channels", desktopOnly: true },
-  { id: "companion", group: "channels", desktopOnly: true },
+  { id: "models", group: "ai", desktopOnly: true },
+  { id: "engines", group: "ai", desktopOnly: true },
+  { id: "images", group: "ai", desktopOnly: true },
+  { id: "webSearch", group: "ai", desktopOnly: true },
+  { id: "voice", group: "ai", desktopOnly: true },
+  { id: "connections", group: "reach", desktopOnly: true },
+  { id: "channels", group: "reach", desktopOnly: true },
+  { id: "companion", group: "reach", desktopOnly: true },
+  { id: "computer", group: "reach", desktopOnly: true },
   { id: "backups", group: "app", desktopOnly: true },
+  { id: "storage", group: "app", desktopOnly: true },
   { id: "usage", group: "app" },
   { id: "about", group: "app" },
   { id: "experimental", group: "app", desktopOnly: true },
@@ -91,6 +95,11 @@ export function normalizeSettingsSection(id: unknown): AppSettingsSection {
 
 export function settingsSectionLabel(id: AppSettingsSection): string {
   return t(`settings.section.${id}` as LocaleKey);
+}
+
+/** The sidebar's label for a page ("Tools" for webSearch, "Devices" for companion). */
+export function settingsPageLabel(id: SettingsPage): string {
+  return t(`settings.page.${id}` as LocaleKey);
 }
 
 export function settingsGroupLabel(group: AppSettingsGroup): string {

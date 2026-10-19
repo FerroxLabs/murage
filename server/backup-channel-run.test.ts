@@ -13,7 +13,7 @@
 // the real stage + fidelity path, and (with the age tools) encrypted,
 // restored into a new folder and checked.
 import { readRoutinesWithRuns } from "./routine-runs-journal.ts";
-import { rmSync, writeFileSync } from "node:fs";
+import { writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { expect, it } from "vitest";
 import { RoutineManager } from "./routines.ts";
@@ -25,6 +25,7 @@ import { reviewInstallation } from "./installation-activation.ts";
 import { backupFixture, testAgeKeys } from "./testing/backup-fixture.ts";
 import { ROUTINE_RUN_STATUSES, ROUTINE_RUN_TRIGGERS } from "../shared/record-values.ts";
 import { assertInstallationRecords } from "./installation-record-validation.ts";
+import { removeTempDirSync } from "./testing/cleanup.ts";
 
 const selection = { scope: "application-data", credentialPolicy: "preserve-in-encrypted-fidelity" } as const;
 const now = Date.UTC(2026, 8, 26);
@@ -58,9 +59,9 @@ it("backs up after messages from Telegram, Slack and Discord reached a bot", asy
     await withOfflineInstallation(f.data, async installation => {
       const stage = await stageInstallationStateWhileOwned(installation, f.parent);
       await inventoryFidelity(installation, stage, selection);
-      rmSync(stage.directory, { recursive: true, force: true });
+      removeTempDirSync(stage.directory);
     });
-  } finally { f.db.close(); rmSync(f.parent, { recursive: true, force: true }); }
+  } finally { f.db.close(); removeTempDirSync(f.parent); }
 });
 
 it("backs up while a routine run sits at needs-you (a closed-app backup reads the file as the app left it)", async () => {
@@ -72,9 +73,9 @@ it("backs up while a routine run sits at needs-you (a closed-app backup reads th
     await withOfflineInstallation(f.data, async installation => {
       const stage = await stageInstallationStateWhileOwned(installation, f.parent);
       await inventoryFidelity(installation, stage, selection);
-      rmSync(stage.directory, { recursive: true, force: true });
+      removeTempDirSync(stage.directory);
     });
-  } finally { f.db.close(); rmSync(f.parent, { recursive: true, force: true }); }
+  } finally { f.db.close(); removeTempDirSync(f.parent); }
 });
 
 // One source of truth: every value the runtime may write is one the backup accepts.
@@ -97,5 +98,5 @@ it.skipIf(!process.env.MURAGE_BACKUP_TEST_AGE_DIR)("a channel run survives an en
     const run = readRoutinesWithRuns(join(restored, "routines.json")).runs[0];
     expect({ trigger: run.triggerSource, routineId: run.routineId, status: run.status }).toEqual({ trigger: "channel", routineId: "telegram:paired-owner-telegram", status: "cancelled" });
     expect(reviewInstallation(restored).status).toBe("ready-for-review");
-  } finally { f.db.close(); rmSync(f.parent, { recursive: true, force: true }); }
+  } finally { f.db.close(); removeTempDirSync(f.parent); }
 }, 60_000);

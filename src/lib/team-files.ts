@@ -31,6 +31,7 @@ export async function downloadSelectedBotPackageZip(
   await ensureDesktopSurfaceSecret();
   const response = await fetch("/api/packages/export", {
     method: "POST",
+    redirect: "error",
     headers: { "content-type": "application/json", "x-murage-surface": "desktop", ...desktopSurfaceHeaders() },
     body: JSON.stringify({ action: "download", selection, previewHash, acknowledgeWarnings }),
   });

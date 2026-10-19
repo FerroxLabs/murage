@@ -9,7 +9,7 @@ import { released } from "./testing/released.ts";
 //                    teams the next team starts in the very next pass, with no wake page and no sweep
 //  4  Fable r28 P3   the ready row follows its team's CURRENT head: after the head changes it names the new head's conversation, and freeing that
 //                    conversation brings the team back
-import { mkdirSync, rmSync } from "node:fs";
+import { mkdirSync } from "node:fs";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { DATA_DIR } from "./config.ts";
 import { closeDatabase, database } from "./database.ts";
@@ -22,10 +22,11 @@ import { completeRequest, isTerminalRoomRequestState, roomRequest } from "./room
 import { _resetDrainDiagnostics, drainSharedWork, sharedThreadFreed } from "./shared-work.ts";
 import { Store } from "./store.ts";
 import { ownerWorld, sharedWorld, type SharedWorld } from "./testing/handoff-worlds.ts";
+import { removeTempDirSync } from "./testing/cleanup.ts";
 
 const tick = () => new Promise<void>((resolve) => setImmediate(resolve));
 const ticks = async (n: number) => { for (let i = 0; i < n; i++) await tick(); };
-const fresh = () => { closeDatabase(); rmSync(DATA_DIR, { recursive: true, force: true }); mkdirSync(DATA_DIR, { recursive: true }); _resetPending(); _resetOwnerMigration(); _resetDrainDiagnostics(); };
+const fresh = () => { closeDatabase(); removeTempDirSync(DATA_DIR); mkdirSync(DATA_DIR, { recursive: true }); _resetPending(); _resetOwnerMigration(); _resetDrainDiagnostics(); };
 const quietly = async <T>(run: () => T | Promise<T>): Promise<T> => { const error = console.error; console.error = () => {}; try { return await run(); } finally { console.error = error; } };
 
 beforeEach(fresh);

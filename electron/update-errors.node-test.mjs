@@ -23,3 +23,17 @@ test("update failures distinguish integrity, TLS, and recoverable environment ca
   ]) assert.match(updateErrorMessage(error), expected);
   assert.equal(updateErrorMessage(new Error("unknown diagnostic")), "unknown diagnostic");
 });
+
+test("Windows signature failures name the check that failed", async () => {
+  const { WINDOWS_SIGNATURE_MISMATCH_MESSAGE, WINDOWS_SIGNATURE_TIMEOUT_MESSAGE, WINDOWS_SIGNATURE_UNAVAILABLE_MESSAGE } = await import("./update-errors.mjs");
+  const code = "ERR_UPDATER_INVALID_SIGNATURE";
+  assert.equal(updateErrorMessage(Object.assign(new Error("Windows signature check timed out: Command failed"), { code, signatureCheck: "timeout" })), WINDOWS_SIGNATURE_TIMEOUT_MESSAGE);
+  assert.equal(updateErrorMessage(Object.assign(new Error("Windows signature check timed out: Command failed"), { code })), WINDOWS_SIGNATURE_TIMEOUT_MESSAGE);
+  assert.equal(updateErrorMessage(Object.assign(new Error("Windows signature verification unavailable: spawn failed"), { code })), WINDOWS_SIGNATURE_UNAVAILABLE_MESSAGE);
+  assert.equal(updateErrorMessage(Object.assign(new Error("New version 1.0.4 is not signed by the application owner: raw info"), { code })), WINDOWS_SIGNATURE_MISMATCH_MESSAGE);
+  for (const message of [WINDOWS_SIGNATURE_TIMEOUT_MESSAGE, WINDOWS_SIGNATURE_UNAVAILABLE_MESSAGE, WINDOWS_SIGNATURE_MISMATCH_MESSAGE]) assert.doesNotMatch(message, /—|\bsafe/i);
+  assert.match(WINDOWS_SIGNATURE_TIMEOUT_MESSAGE, /^Signature check timed out/);
+  assert.match(WINDOWS_SIGNATURE_MISMATCH_MESSAGE, /^Signature mismatch/);
+  // A checksum mismatch is still a bad download.
+  assert.match(updateErrorMessage(new Error("sha512 checksum mismatch")), /Download a fresh installer/);
+});

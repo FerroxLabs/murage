@@ -31,7 +31,7 @@ export const B34_EXTRACTOR_INSTRUMENTATION = [
 
 /** Room for every turn's extraction and grounding. The defaults are 6 calls per minute and a
  * 60000 daily output allowance; extraction reserves 2000 and grounding 64. */
-const OPEN_BUDGET = Object.freeze({ callsPerMinute: 60, dailyInputTokens: 10_000_000, dailyOutputTokens: 2_000_000 });
+const OPEN_BUDGET = Object.freeze({ callsPerMinute: 60, ceiling: { input: 10_000_000, output: 2_000_000 } });
 const OWNER_FACT_LINE = "(the owner said; fact)";
 const BUDGET_LIMITED_REASON = "A configured token or call limit prevents synthesis.";
 
@@ -137,7 +137,7 @@ async function personaOf(ctx: B34AdapterContext, botId: string): Promise<string 
 }
 
 /** Owner selection of the scripted extractor through the configure action (settings.ts:68,243-254), eligible only when listed (:245). */
-async function selectExtractor(ctx: B34AdapterContext, learning: Record<string, number>, checkName: string, expectedState: "configured" | "budget-limited") {
+async function selectExtractor(ctx: B34AdapterContext, learning: Record<string, unknown>, checkName: string, expectedState: "configured" | "budget-limited") {
   const listed = await ctx.setup("scripted-extractor-listed-eligible", "GET", "/api/memory/status", undefined, 200, response => {
     const entry = (response.body?.extractors as Array<{ instanceId?: unknown; eligible?: unknown }> | undefined)?.find(item => item.instanceId === B34_EXTRACTOR_INSTANCE_ID);
     return { ok: entry?.eligible === true && response.body?.mode === "active", note: `listed ${entry ? "yes" : "no"}; eligible ${String(entry?.eligible ?? false)}; mode ${String(response.body?.mode ?? "missing")}` };
@@ -147,7 +147,7 @@ async function selectExtractor(ctx: B34AdapterContext, learning: Record<string, 
   await ctx.setup(checkName, "POST", "/api/memory/action", { action: "configure", extractorInstanceId: B34_EXTRACTOR_INSTANCE_ID, learning, learningRevision }, 200, response => {
     const body = response.body;
     const ok = body?.configuration?.extractorInstanceId === B34_EXTRACTOR_INSTANCE_ID && body?.health?.synthesis?.state === expectedState
-      && Object.entries(learning).every(([key, value]) => body?.learning?.settings?.[key] === value);
+      && Object.entries(learning).every(([key, value]) => JSON.stringify(body?.learning?.settings?.[key]) === JSON.stringify(value));
     return { ok, note: `synthesis ${String(body?.health?.synthesis?.state ?? "missing")}` };
   });
 }
@@ -198,7 +198,6 @@ async function stallDetail(ctx: B34AdapterContext, botId: string, threadId: stri
       ["bl", () => `${code(status.backlog?.pending)}/${code(status.backlog?.leased)}/${code(status.backlog?.deferred)}/${code(status.backlog?.failed)}`],
       ["sy", () => code(status.health?.synthesis?.state)],
       ["x", () => flag(status.configuration?.extractorInstanceId === B34_EXTRACTOR_INSTANCE_ID)],
-      ["c", () => code(status.learning?.allowance?.callsThisMinute)],
       ["lr", () => code(status.learning?.revision)],
     ];
     for (const [key, read] of reads) await part(key, read);
@@ -375,7 +374,7 @@ async function runQ13(ctx: B34AdapterContext): Promise<AdapterArtifactsFor<"Q13"
   const text = sourceText(ctx, source);
   ctx.check("owner-statement-carries-no-canary", typeof text === "string" && !text.includes(B34_Q13.canary), "1 owner source");
   const exhaustedRequests = ledger(ctx).filter(entry => entry.family === "extract" || entry.family === "ground").length;
-  ctx.check("no-extractor-call-while-exhausted", exhaustedRequests === 0 && whileDeferred?.learning?.allowance?.callsThisMinute === 0, `${exhaustedRequests} extractor requests`);
+  ctx.check("no-extractor-call-while-exhausted", exhaustedRequests === 0, `${exhaustedRequests} extractor requests`);
   ctx.check("health-reports-budget-limited", whileDeferred?.health?.synthesis?.state === "budget-limited" && whileDeferred?.health?.synthesis?.reason === BUDGET_LIMITED_REASON
     && whileDeferred?.learning?.settings?.callsPerMinute === 0 && whileDeferred?.configuration?.extractorInstanceId === B34_EXTRACTOR_INSTANCE_ID,
   `synthesis ${String(whileDeferred?.health?.synthesis?.state ?? "missing")}`);
@@ -425,10 +424,10 @@ async function runQ13(ctx: B34AdapterContext): Promise<AdapterArtifactsFor<"Q13"
     `${extractions.length} extraction and ${groundings.length} grounding requests for the deferred source`);
   const status = await memoryStatus(ctx);
   // The product's daily reservation ledger is keyed by UTC day (extract.ts:75,82); compare only within one day.
-  if (utcDay() === day && status?.learning?.allowance?.day === day) {
+  if (utcDay() === day && status?.learning?.ceiling !== undefined) {
     const billable = final.filter(entry => entry.family === "extract" || entry.family === "ground");
-    const input = billable.reduce((sum, entry) => sum + Math.ceil(Number(entry.inputBytes ?? 0)/3.5), 0), output = billable.reduce((sum, entry) => sum + Number(entry.maxTokens ?? 0), 0);
-    ctx.check("reservations-match-extractor-requests", status.learning.allowance.inputUsed === input && status.learning.allowance.outputUsed === output, `${billable.length} billable requests`);
+    const input = billable.reduce((sum, entry) => sum + Number(entry.inputBytes ?? 0) + 2048, 0), output = billable.reduce((sum, entry) => sum + Number(entry.maxTokens ?? 0), 0);
+    ctx.check("reservations-match-extractor-requests", status.learning.ceiling.inputUsed === input && status.learning.ceiling.outputUsed === output, `${billable.length} billable requests`);
   }
   checkExtractorBounds(ctx);
 

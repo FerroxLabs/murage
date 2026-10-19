@@ -12,7 +12,8 @@ import { revocationIndexReady } from "./revocation.ts";
 import { lineageDowngradeMarked, lineageDowngradeSlice } from "./lineage-backfill.ts";
 import { OPTIONAL_INDEXES, buildOptionalIndexOffThread, dropOptionalIndexes, optionalIndexReady, optionalIndexText, registerOptionalIndex } from "./optional-index.ts";
 import { ROOT_SET_RECLAIM_TABLES } from "./root-set-reclaim.ts";
-import { DEFAULT_MEMORY_LEARNING, memoryLearningSchema, memoryLearningV1Schema, upgradeMemoryLearning, downgradeMemoryLearning } from "./learning-policy.ts";
+import { DEFAULT_MEMORY_LEARNING, DEFAULT_MEMORY_LEARNING_V2, memoryLearningSchema, memoryLearningV1Schema, memoryLearningV2Schema, upgradeMemoryLearning, downgradeMemoryLearning, upgradeMemoryLearningV3, downgradeMemoryLearningV3, learningSpendSeed, seedLearningSpend } from "./learning-policy.ts";
+import { CONSOLIDATION_V11_FIELDS, learningSpendMonth } from "../../shared/memory-learning-contract.ts";
 import { PIP_ALL_KINDS_SQL } from "./pip-kinds.ts";
 
 /** Ordinary authoritative tables only. Search indexes are rebuilt separately. */
@@ -573,7 +574,9 @@ export function ownerPinIndexPresent(db: DatabaseSync): boolean {
  *    sliced backfill (memory_late_build 'evidence'); replaces a CREATE INDEX on the main connection.
  *  - memory_source_origins: which bring-in copies were brought from a source, kept by a trigger on memory_source_versions and
  *    backfilled the same way (memory_late_build 'origins').
- *  - memory_late_build: each backfill's primary-key cursor and ready flag. */
+ *  - memory_late_build: each backfill's primary-key cursor and ready flag.
+ *  - memory_revoke_fold: the 1.0.3 revoke fold's map (revoke-fold.ts), one row per folded revoke id to the fold bulk that took it over,
+ *    permanent (old marks keep their ids); bulk_id is how a fold bulk is recognised after its job row is pruned or recreated. */
 export const REVOKE_LATE_SQL = `
 CREATE TABLE IF NOT EXISTS memory_deny (
  kind TEXT NOT NULL CHECK(kind IN ('thread','scope')), id TEXT NOT NULL, epoch INTEGER NOT NULL, created_at INTEGER NOT NULL,
@@ -596,10 +599,12 @@ CREATE TRIGGER IF NOT EXISTS memory_source_origins_insert AFTER INSERT ON memory
 END;
 CREATE TABLE IF NOT EXISTS memory_late_build (
  name TEXT NOT NULL PRIMARY KEY CHECK(name IN ('evidence','origins')), ready INTEGER NOT NULL CHECK(ready IN (0,1)), cursor TEXT) WITHOUT ROWID;
+CREATE TABLE IF NOT EXISTS memory_revoke_fold (old_id INTEGER PRIMARY KEY NOT NULL, bulk_id INTEGER NOT NULL);
+CREATE INDEX IF NOT EXISTS memory_revoke_fold_bulk ON memory_revoke_fold(bulk_id);
 `;
 const REVOKE_LATE_DROP = `DROP TRIGGER IF EXISTS memory_evidence_by_source_insert; DROP TRIGGER IF EXISTS memory_evidence_by_source_delete;
  DROP TRIGGER IF EXISTS memory_source_origins_insert; DROP TABLE IF EXISTS memory_evidence_by_source; DROP TABLE IF EXISTS memory_source_origins;
- DROP INDEX IF EXISTS memory_disclosures_live; DROP TABLE IF EXISTS memory_late_build; DROP TABLE IF EXISTS memory_revocation_targets; DROP TABLE IF EXISTS memory_deny;`;
+ DROP INDEX IF EXISTS memory_disclosures_live; DROP TABLE IF EXISTS memory_late_build; DROP TABLE IF EXISTS memory_revocation_targets; DROP TABLE IF EXISTS memory_deny; DROP TABLE IF EXISTS memory_revoke_fold;`;
 let revokeLateExpected: Map<string, { type: string; tbl_name: string; sql: string | null }> | null = null;
 /** The late objects as SQLite stores them (name -> row). */
 function revokeLateObjects() {
@@ -1379,7 +1384,7 @@ export function* repairOutputRootBackfillSteps(db: DatabaseSync, options: { onPr
   db.prepare("DELETE FROM transcript_index_state WHERE name LIKE ?").run(`${REPAIR_THREAD_PREFIX}%`);
   return done;
 }
-export const MEMORY_SCHEMA_VERSION = 10;
+export const MEMORY_SCHEMA_VERSION = 11;
 const SHAPE_MARKER = "memory-shape-check";
 /** The frozen v2 text (0.1.54 to 0.1.60), for validation and the v3 -> v2 inverse. */
 export const MEMORY_SCHEMA_V2 = MEMORY_SCHEMA_V1.replace("CHECK(schema_version=1)", "CHECK(schema_version=2)") + LEARNING_SCHEMA;
@@ -1396,11 +1401,15 @@ export const MEMORY_SCHEMA_V7 = MEMORY_SCHEMA_V1.replace("CHECK(schema_version=1
 export const MEMORY_SCHEMA_V8 = MEMORY_SCHEMA_V1.replace("CHECK(schema_version=1)", "CHECK(schema_version=8)") + LEARNING_SCHEMA + OUTPUT_INDEX_SCHEMA + LEDGER_SCHEMA + BOT_LEARNING_SCHEMA + LINEAGE_SCHEMA + REVOCATION_INDEX_SCHEMA;
 /** The frozen v9 text (the 1.0.2 RC before write-time lineage), for validation and the v10 -> v9 inverse. */
 export const MEMORY_SCHEMA_V9 = MEMORY_SCHEMA_V1.replace("CHECK(schema_version=1)", "CHECK(schema_version=9)") + LEARNING_SCHEMA + OUTPUT_INDEX_SCHEMA + LEDGER_SCHEMA + BOT_LEARNING_SCHEMA + LINEAGE_SCHEMA + REVOCATION_INDEX_SCHEMA + OPEN_TURNS_SCHEMA;
-export const MEMORY_SCHEMA = MEMORY_SCHEMA_V1.replace("CHECK(schema_version=1)", "CHECK(schema_version=10)") + LEARNING_SCHEMA + OUTPUT_INDEX_SCHEMA + LEDGER_SCHEMA + BOT_LEARNING_SCHEMA + LINEAGE_SCHEMA + REVOCATION_INDEX_SCHEMA + OPEN_TURNS_SCHEMA + WRITETIME_SCHEMA;
-const SCHEMA_TEXT: Record<number, string> = { 1: MEMORY_SCHEMA_V1, 2: MEMORY_SCHEMA_V2, 3: MEMORY_SCHEMA_V3, 4: MEMORY_SCHEMA_V4, 5: MEMORY_SCHEMA_V5, 6: MEMORY_SCHEMA_V6, 7: MEMORY_SCHEMA_V7, 8: MEMORY_SCHEMA_V8, 9: MEMORY_SCHEMA_V9, 10: MEMORY_SCHEMA };
+/** The frozen v10 text (1.0.2), for validation and the v11 -> v10 inverse. */
+export const MEMORY_SCHEMA_V10 = MEMORY_SCHEMA_V1.replace("CHECK(schema_version=1)", "CHECK(schema_version=10)") + LEARNING_SCHEMA + OUTPUT_INDEX_SCHEMA + LEDGER_SCHEMA + BOT_LEARNING_SCHEMA + LINEAGE_SCHEMA + REVOCATION_INDEX_SCHEMA + OPEN_TURNS_SCHEMA + WRITETIME_SCHEMA;
+/** v11 (1.0.3) changes no table: the learning settings move to v3 (one monthly ceiling) and the month ledger is a binding row. */
+export const MEMORY_SCHEMA = MEMORY_SCHEMA_V10.replace("CHECK(schema_version=10)", "CHECK(schema_version=11)");
+const SCHEMA_TEXT: Record<number, string> = { 1: MEMORY_SCHEMA_V1, 2: MEMORY_SCHEMA_V2, 3: MEMORY_SCHEMA_V3, 4: MEMORY_SCHEMA_V4, 5: MEMORY_SCHEMA_V5, 6: MEMORY_SCHEMA_V6, 7: MEMORY_SCHEMA_V7, 8: MEMORY_SCHEMA_V8, 9: MEMORY_SCHEMA_V9, 10: MEMORY_SCHEMA_V10, 11: MEMORY_SCHEMA };
 /** The kinds the search index never holds (the PIP kinds, pip-kinds.ts, frozen here because an index definition cannot follow a list
  * that changes: owner-tail.test.ts proves the two equal), and the checkpoint versions that are no longer the live one. */
-const ownerTailKinds = (row: string) => `(${row}kind IN ('continuity-brief','commitment','self-trait','relation','pip-proposal','pip-counter','concern','episode') OR (${row}kind='checkpoint' AND ${row}state!='active'))`;
+export const OWNER_TAIL_KIND_LIST = ["continuity-brief", "commitment", "self-trait", "relation", "pip-proposal", "pip-counter", "concern", "episode"] as const;
+const ownerTailKinds = (row: string) => `(${row}kind IN (${OWNER_TAIL_KIND_LIST.map(kind => `'${kind}'`).join(",")}) OR (${row}kind='checkpoint' AND ${row}state!='active'))`;
 export const OWNER_TAIL_KINDS_SQL = ownerTailKinds("");
 /** 1.0.2 msearch2: owner search reads the rows the search index never holds (the PIP kinds and the rolled checkpoint versions) through
  * this small derived table, newest first, however many ordinary records the memory holds, so whether it saw all of them is a bounded
@@ -1447,6 +1456,148 @@ function expectedOwnerTailRows(): Map<string, SchemaRow> {
     db.exec(MEMORY_SCHEMA); db.exec(OWNER_TAIL_SCHEMA); db.exec(LEGACY_OWNER_TAIL_INDEX_SQL);
     const rows = db.prepare("SELECT type,name,tbl_name,sql FROM sqlite_schema").all() as SchemaRow[];
     return ownerTailRows = new Map(rows.filter(row => OWNER_TAIL_NAMES.includes(row.name) || row.name === LEGACY_OWNER_TAIL_INDEX).map(row => [row.name, row]));
+  } finally { db.close(); }
+}
+
+/** 1.0.3 lane 2 (LANE2-MEMORY-DESIGN r3, 2.6): one integer age key per record, `created_at * 2048 + ordinal`, held by a derived
+ * table beside memory_records (whose SQL does not change: the 19 positional inserts stay as they are). Newest first is `age_key DESC`
+ * everywhere (browse, search, every view), and the search index stores each record's FTS row at `rowid = age_key`, so the index walks
+ * in age order natively. Made empty at open (a schema change of a few pages, no record read), kept by triggers from then on, filled
+ * for the records already there by a sliced background backfill (record-keys.ts) that records its place in `memory_record_keys_build`.
+ * Derived: accepted by the validator all-or-none with its exact text on a v10 file, never carried by a backup, dropped by the
+ * "prepare for an older version" step (downgradeMemorySchema to 10), rebuilt at the next open.
+ *
+ * Allocation (r3.1): base = created_at*2048, top = base+2047, span = base+131072. The first rule that applies:
+ *  1. the own window has room: max(age_key)+1 over [base, top] when that max is below top;
+ *  2. the own window is empty: base;
+ *  3. the own window is full: a free key above top inside the span: top+1 when free, else one above the span's highest key while
+ *     that is below the span's end (one probe: a flood of records in one millisecond is keyed in time proportional to its length, not
+ *     its square, and sorts after the records of the next 64 ms that were already there, the imprecision r2.2 states), else the
+ *     first gap, found by an ordered walk that stops at it; none free raises MEMORY_AGE_KEY_WINDOW (131,072 records inside one
+ *     64 ms span).
+ * The backfill uses rules 1 to 3 with rule 3 as the gap walk alone, unbounded above (never one above the highest key of the file,
+ * which would put an old record after the newest), so history always completes; record-keys.ts keys a same-millisecond run in a
+ * line by taking the next key up when it is free. Domain: created_at in
+ * [0, 4398046511040] ((created_at+64)*2048 <= 2^53, so every key of the span is a safe JS integer); outside it the insert raises
+ * MEMORY_CREATED_AT_RANGE. A record whose created_at changes (only tests backdate one) is keyed again at its new place. */
+export const RECORD_KEYS_TABLE = "memory_record_keys";
+export const RECORD_KEYS_BUILD = "memory_record_keys_build";
+export const AGE_KEY_WINDOW = 2048;
+export const AGE_KEY_SPAN = AGE_KEY_WINDOW * 64;
+export const CREATED_AT_MAX = 4398046511040;
+export const AGE_KEY_MAX = Number.MAX_SAFE_INTEGER;
+/** The SQL expression that allocates the age key of a record whose created_at is `at` (an expression), by the rules above. */
+export function ageKeyAllocationSql(at: string, bounded: boolean): string {
+  const base = `(CAST(${at} AS INTEGER)*${AGE_KEY_WINDOW})`, top = `(${base}+${AGE_KEY_WINDOW - 1})`, span = `(${base}+${AGE_KEY_SPAN})`;
+  const K = RECORD_KEYS_TABLE;
+  return `CASE WHEN NOT EXISTS(SELECT 1 FROM ${K} WHERE age_key BETWEEN ${base} AND ${top}) THEN ${base}
+ WHEN NOT EXISTS(SELECT 1 FROM ${K} WHERE age_key=${top}) THEN (SELECT max(age_key)+1 FROM ${K} WHERE age_key BETWEEN ${base} AND ${top})
+ WHEN NOT EXISTS(SELECT 1 FROM ${K} WHERE age_key=${top}+1) THEN ${top}+1${bounded ? `
+ WHEN (SELECT max(age_key) FROM ${K} WHERE age_key>${top} AND age_key<${span}) < ${span}-1 THEN (SELECT max(age_key)+1 FROM ${K} WHERE age_key>${top} AND age_key<${span})` : ""}
+ ELSE (SELECT a.age_key+1 FROM ${K} a WHERE a.age_key>${top}${bounded ? ` AND a.age_key<${span}-1` : ""} AND NOT EXISTS(SELECT 1 FROM ${K} b WHERE b.age_key=a.age_key+1) ORDER BY a.age_key LIMIT 1) END`;
+}
+const keyColumns = (row: string) => `${row}id,${row}version,${row}scope_id,${row}state,${row}owner_pinned,${row}kind`;
+export const RECORD_KEYS_SCHEMA = `CREATE TABLE IF NOT EXISTS ${RECORD_KEYS_TABLE} (record_id TEXT NOT NULL, record_version INTEGER NOT NULL, scope_id TEXT NOT NULL,
+ state TEXT NOT NULL, owner_pinned INTEGER NOT NULL, kind TEXT NOT NULL, age_key INTEGER NOT NULL CHECK(age_key BETWEEN 0 AND ${AGE_KEY_MAX}),
+ PRIMARY KEY(record_id,record_version)) WITHOUT ROWID;
+CREATE UNIQUE INDEX IF NOT EXISTS memory_record_keys_age ON ${RECORD_KEYS_TABLE}(age_key);
+CREATE INDEX IF NOT EXISTS memory_record_keys_scope ON ${RECORD_KEYS_TABLE}(scope_id,state,age_key);
+CREATE INDEX IF NOT EXISTS memory_record_keys_state ON ${RECORD_KEYS_TABLE}(state,age_key);
+CREATE INDEX IF NOT EXISTS memory_record_keys_kind ON ${RECORD_KEYS_TABLE}(kind,state,age_key);
+CREATE INDEX IF NOT EXISTS memory_record_keys_pinned ON ${RECORD_KEYS_TABLE}(owner_pinned,state,age_key);
+CREATE TABLE IF NOT EXISTS ${RECORD_KEYS_BUILD} (id INTEGER PRIMARY KEY CHECK(id=1), ready INTEGER NOT NULL CHECK(ready IN (0,1)), cursor_rowid INTEGER NOT NULL DEFAULT 0);
+CREATE TRIGGER IF NOT EXISTS memory_record_keys_insert AFTER INSERT ON memory_records BEGIN
+ SELECT RAISE(ABORT,'MEMORY_CREATED_AT_RANGE') WHERE NEW.created_at<0 OR NEW.created_at>${CREATED_AT_MAX};
+ INSERT INTO ${RECORD_KEYS_TABLE} VALUES(${keyColumns("NEW.")},COALESCE(${ageKeyAllocationSql("NEW.created_at", true)},(SELECT RAISE(ABORT,'MEMORY_AGE_KEY_WINDOW')))); END;
+CREATE TRIGGER IF NOT EXISTS memory_record_keys_update AFTER UPDATE ON memory_records WHEN NEW.created_at IS OLD.created_at BEGIN
+ UPDATE ${RECORD_KEYS_TABLE} SET scope_id=NEW.scope_id,state=NEW.state,owner_pinned=NEW.owner_pinned,kind=NEW.kind WHERE record_id=NEW.id AND record_version=NEW.version; END;
+CREATE TRIGGER IF NOT EXISTS memory_record_keys_rekey AFTER UPDATE OF created_at ON memory_records WHEN NEW.created_at IS NOT OLD.created_at BEGIN
+ SELECT RAISE(ABORT,'MEMORY_CREATED_AT_RANGE') WHERE NEW.created_at<0 OR NEW.created_at>${CREATED_AT_MAX};
+ DELETE FROM ${RECORD_KEYS_TABLE} WHERE record_id=OLD.id AND record_version=OLD.version;
+ INSERT INTO ${RECORD_KEYS_TABLE} VALUES(${keyColumns("NEW.")},COALESCE(${ageKeyAllocationSql("NEW.created_at", true)},(SELECT RAISE(ABORT,'MEMORY_AGE_KEY_WINDOW')))); END;
+CREATE TRIGGER IF NOT EXISTS memory_record_keys_delete AFTER DELETE ON memory_records BEGIN
+ DELETE FROM ${RECORD_KEYS_TABLE} WHERE record_id=OLD.id AND record_version=OLD.version; END;`;
+export const RECORD_KEYS_NAMES = [RECORD_KEYS_TABLE, RECORD_KEYS_BUILD, "memory_record_keys_age", "memory_record_keys_scope", "memory_record_keys_state", "memory_record_keys_kind", "memory_record_keys_pinned",
+  "memory_record_keys_insert", "memory_record_keys_update", "memory_record_keys_rekey", "memory_record_keys_delete"];
+/** The progress table of the past-chats build (2.1, M2): one row per thread listed, in the main database beside the key table. */
+export const BACKFILL_THREADS_TABLE = "memory_backfill_threads";
+export const BACKFILL_THREADS_SCHEMA = `CREATE TABLE IF NOT EXISTS ${BACKFILL_THREADS_TABLE} (thread_id TEXT PRIMARY KEY NOT NULL, last_message_id TEXT, listed INTEGER NOT NULL DEFAULT 0,
+ queued INTEGER NOT NULL DEFAULT 0, done INTEGER NOT NULL DEFAULT 0) WITHOUT ROWID;`;
+/** 1.0.3 lane 2, item 2.3 (LANE2-MEMORY-DESIGN r2.7): a durable mirror of the identity counter of provenance-stamp.ts. The temp counter there
+ * is per connection, so a fresh process (or another connection's commit) could not tell whether the identity set it last computed still
+ * holds, and every procedural skill was withheld (PROCEDURE_EVIDENCE_REVOKED) while the set was recomputed off thread with the identity
+ * indexes deferred at startup. These permanent triggers move `memory_identity_stamp.n` on exactly the writes the temp triggers count
+ * (an identity record, its details or its evidence: a primary-key probe each), from any connection; `memory_identity_allow` keeps the
+ * last computed set with the `n` it was computed under, so a start, or a check after an unrelated commit, serves it as long as `n`
+ * has not moved. Derived, with the key table: dropped by the downgrade step, made again at the next open (n starts at 0, no set). */
+export const IDENTITY_STAMP_TABLE = "memory_identity_stamp";
+export const IDENTITY_ALLOW_TABLE = "memory_identity_allow";
+const identityStampBump = `UPDATE ${IDENTITY_STAMP_TABLE} SET n=n+1`;
+const isIdentityRow = (id: string, version: string) => `(EXISTS(SELECT 1 FROM memory_records WHERE id=${id} AND version=${version} AND kind='character-canon') OR EXISTS(SELECT 1 FROM memory_record_details WHERE record_id=${id} AND record_version=${version} AND partition='identity'))`;
+export const IDENTITY_STAMP_SCHEMA = `CREATE TABLE IF NOT EXISTS ${IDENTITY_STAMP_TABLE} (id INTEGER PRIMARY KEY CHECK(id=1), n INTEGER NOT NULL);
+CREATE TABLE IF NOT EXISTS ${IDENTITY_ALLOW_TABLE} (id INTEGER PRIMARY KEY CHECK(id=1), stamp INTEGER NOT NULL, ids_json TEXT NOT NULL, computed_at INTEGER NOT NULL);
+CREATE TRIGGER IF NOT EXISTS memory_identity_stamp_records_i AFTER INSERT ON memory_records
+ WHEN NEW.kind='character-canon' OR ${isIdentityRow("NEW.id", "NEW.version")} BEGIN ${identityStampBump}; END;
+CREATE TRIGGER IF NOT EXISTS memory_identity_stamp_records_u AFTER UPDATE ON memory_records
+ WHEN OLD.kind='character-canon' OR NEW.kind='character-canon' OR ${isIdentityRow("OLD.id", "OLD.version")} OR ${isIdentityRow("NEW.id", "NEW.version")} BEGIN ${identityStampBump}; END;
+CREATE TRIGGER IF NOT EXISTS memory_identity_stamp_records_d AFTER DELETE ON memory_records
+ WHEN OLD.kind='character-canon' OR ${isIdentityRow("OLD.id", "OLD.version")} BEGIN ${identityStampBump}; END;
+CREATE TRIGGER IF NOT EXISTS memory_identity_stamp_details_i AFTER INSERT ON memory_record_details
+ WHEN NEW.partition='identity' BEGIN ${identityStampBump}; END;
+CREATE TRIGGER IF NOT EXISTS memory_identity_stamp_details_u AFTER UPDATE ON memory_record_details
+ WHEN OLD.partition='identity' OR NEW.partition='identity' OR OLD.record_id IS NOT NEW.record_id OR OLD.record_version IS NOT NEW.record_version BEGIN ${identityStampBump}; END;
+CREATE TRIGGER IF NOT EXISTS memory_identity_stamp_details_d AFTER DELETE ON memory_record_details
+ WHEN OLD.partition='identity' BEGIN ${identityStampBump}; END;
+CREATE TRIGGER IF NOT EXISTS memory_identity_stamp_evidence_i AFTER INSERT ON memory_evidence
+ WHEN ${isIdentityRow("NEW.record_id", "NEW.record_version")} BEGIN ${identityStampBump}; END;
+CREATE TRIGGER IF NOT EXISTS memory_identity_stamp_evidence_u AFTER UPDATE ON memory_evidence
+ WHEN ${isIdentityRow("OLD.record_id", "OLD.record_version")} OR ${isIdentityRow("NEW.record_id", "NEW.record_version")} BEGIN ${identityStampBump}; END;
+CREATE TRIGGER IF NOT EXISTS memory_identity_stamp_evidence_d AFTER DELETE ON memory_evidence
+ WHEN ${isIdentityRow("OLD.record_id", "OLD.record_version")} BEGIN ${identityStampBump}; END;`;
+export const IDENTITY_STAMP_NAMES = [IDENTITY_STAMP_TABLE, IDENTITY_ALLOW_TABLE, "memory_identity_stamp_records_i", "memory_identity_stamp_records_u", "memory_identity_stamp_records_d",
+  "memory_identity_stamp_details_i", "memory_identity_stamp_details_u", "memory_identity_stamp_details_d", "memory_identity_stamp_evidence_i", "memory_identity_stamp_evidence_u", "memory_identity_stamp_evidence_d"];
+/** Everything 1.0.3 derives beside the v10 text: dropped by the step that prepares the file for 1.0.2 (which refuses an object it does not know). */
+export const LANE2_DERIVED_NAMES = [...RECORD_KEYS_NAMES, BACKFILL_THREADS_TABLE, ...IDENTITY_STAMP_NAMES];
+const RECORD_KEYS_DROP = `DROP TRIGGER IF EXISTS memory_record_keys_insert; DROP TRIGGER IF EXISTS memory_record_keys_update; DROP TRIGGER IF EXISTS memory_record_keys_rekey;
+ DROP TRIGGER IF EXISTS memory_record_keys_delete; DROP TABLE IF EXISTS ${RECORD_KEYS_TABLE}; DROP TABLE IF EXISTS ${RECORD_KEYS_BUILD}; DROP TABLE IF EXISTS ${BACKFILL_THREADS_TABLE};
+ ${IDENTITY_STAMP_NAMES.slice(2).map(name => `DROP TRIGGER IF EXISTS ${name};`).join(" ")} DROP TABLE IF EXISTS ${IDENTITY_ALLOW_TABLE}; DROP TABLE IF EXISTS ${IDENTITY_STAMP_TABLE};`;
+/** Drops the key table, its build row, its triggers and the lane's other derived objects (the downgrade step; tests use it to stand for a file an older build left). */
+export function dropRecordKeys(db: DatabaseSync): void { db.exec(RECORD_KEYS_DROP); }
+/** Whether the key table and its triggers are there (built or still filling). */
+export function recordKeysPresent(db: DatabaseSync): boolean {
+  return db.prepare("SELECT 1 AS present FROM sqlite_schema WHERE type='table' AND name=?").get(RECORD_KEYS_BUILD) !== undefined;
+}
+/** Whether every record has its key (the backfill is done): owner search and browse read the key table only then. */
+export function recordKeysReady(db: DatabaseSync): boolean {
+  if (!recordKeysPresent(db)) return false;
+  return Number(db.prepare(`SELECT ready FROM ${RECORD_KEYS_BUILD} WHERE id=1`).get()?.ready ?? 0) === 1;
+}
+/** Makes the key table, its indexes and triggers, and the progress table, when they are not there (no record is read; one short
+ * transaction of schema pages), on a file at the current version. A file with no records is complete at once. */
+export function ensureRecordKeys(db: DatabaseSync): void {
+  if (Number(db.prepare("SELECT schema_version AS v FROM memory_meta WHERE id=1").get()?.v) !== MEMORY_SCHEMA_VERSION) return;
+  const table = db.prepare("SELECT 1 FROM sqlite_schema WHERE type='table' AND name=?");
+  if (recordKeysPresent(db) && table.get(BACKFILL_THREADS_TABLE) && table.get(IDENTITY_STAMP_TABLE)) return;
+  const own = !db.isTransaction;
+  if (own) db.exec("BEGIN IMMEDIATE");
+  try {
+    db.exec(RECORD_KEYS_SCHEMA);
+    db.exec(BACKFILL_THREADS_SCHEMA);
+    db.exec(IDENTITY_STAMP_SCHEMA);
+    db.prepare(`INSERT OR IGNORE INTO ${IDENTITY_STAMP_TABLE}(id,n) VALUES(1,0)`).run();
+    const empty = !db.prepare("SELECT 1 FROM memory_records LIMIT 1").get();
+    db.prepare(`INSERT OR IGNORE INTO ${RECORD_KEYS_BUILD}(id,ready,cursor_rowid) VALUES(1,?,0)`).run(empty ? 1 : 0);
+    if (own) db.exec("COMMIT");
+  } catch (error) { if (own && db.isTransaction) { try { db.exec("ROLLBACK"); } catch { /* rolled back */ } } throw error; }
+}
+let recordKeysRows: Map<string, SchemaRow> | undefined;
+function expectedRecordKeysRows(): Map<string, SchemaRow> {
+  if (recordKeysRows) return recordKeysRows;
+  const db = new DatabaseSync(":memory:");
+  try {
+    db.exec(MEMORY_SCHEMA); db.exec(RECORD_KEYS_SCHEMA); db.exec(BACKFILL_THREADS_SCHEMA); db.exec(IDENTITY_STAMP_SCHEMA);
+    const rows = db.prepare("SELECT type,name,tbl_name,sql FROM sqlite_schema").all() as SchemaRow[];
+    return recordKeysRows = new Map(rows.filter(row => LANE2_DERIVED_NAMES.includes(row.name)).map(row => [row.name, row]));
   } finally { db.close(); }
 }
 
@@ -1746,6 +1897,8 @@ export function openTurnsDiffer(db: DatabaseSync, lo: string | null, hi: string 
   const held = `SELECT source_id,thread_id,turn_id FROM memory_open_turns WHERE source_id${cmp}?1 AND source_id${end}?2`;
   return Boolean(db.prepare(`SELECT 1 FROM (${sources} EXCEPT ${held}) UNION ALL SELECT 1 FROM (${held} EXCEPT ${sources}) LIMIT 1`).get(from, upTo));
 }
+/** The learning settings shape each memory schema version stores: v3 from 11 (1.0.3), v2 from 4, v1 before. */
+const learningSettingsSchemaFor = (version: number) => version >= 11 ? memoryLearningSchema : version >= 4 ? memoryLearningV2Schema : memoryLearningV1Schema;
 export function validateMemorySchema(db: DatabaseSync, options: { references?: boolean | (() => boolean); structuralOnly?: boolean; incrementalShapes?: boolean; tailRows?: number; onFullRead?: () => void; onProgress?: () => void; hold?: <T>(run: () => T) => T } = {}): Set<string> {
   const rows = db.prepare("SELECT type,name,tbl_name,sql FROM sqlite_schema").all() as SchemaRow[];
   const allMemoryRows = rows.filter(row => row.name.startsWith("memory_") || row.tbl_name.startsWith("memory_"));
@@ -1757,7 +1910,7 @@ export function validateMemorySchema(db: DatabaseSync, options: { references?: b
   const memoryRows = allMemoryRows.filter(row => !late.includes(row) && !revokeLate.includes(row));
   // Recognize only an exact known meta table before reading its version field.
   const metaSchema = memoryRows.find(row => row.name === "memory_meta");
-  const version = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10].find(value => metaSchema?.sql === expectedSchema(value).get("memory_meta")?.sql);
+  const version = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11].find(value => metaSchema?.sql === expectedSchema(value).get("memory_meta")?.sql);
   if (!version) {
     // A newer Murage wrote this file: say so, and name the way out, instead of
     // the bare unsupported-schema code an older build prints.
@@ -1794,9 +1947,17 @@ export function validateMemorySchema(db: DatabaseSync, options: { references?: b
   }
   const tailObjects = [...tail].filter(row => row.name !== LEGACY_OWNER_TAIL_INDEX).length;
   if (tailObjects !== 0 && tailObjects !== OWNER_TAIL_NAMES.length) throw new Error("MEMORY_SCHEMA_UNSUPPORTED");
-  if (memoryRows.length - tail.size !== schema.size - (building ? 1 : 0) + (hasLegacy ? 1 : 0) - absentOptional - reclaimed) throw new Error("MEMORY_SCHEMA_UNSUPPORTED");
+  // 1.0.3: the record-key table and the lane's other derived objects, on a v10 file: all of them, exactly ours, or none of them.
+  const keysWanted = expectedRecordKeysRows();
+  const keys = new Set(memoryRows.filter(row => keysWanted.has(row.name)));
+  for (const row of keys) {
+    const wanted = keysWanted.get(row.name)!;
+    if (version < 10 || row.type !== wanted.type || row.tbl_name !== wanted.tbl_name || row.sql !== wanted.sql) throw new Error("MEMORY_SCHEMA_UNSUPPORTED");
+  }
+  if (keys.size !== 0 && keys.size !== LANE2_DERIVED_NAMES.length) throw new Error("MEMORY_SCHEMA_UNSUPPORTED");
+  if (memoryRows.length - tail.size - keys.size !== schema.size - (building ? 1 : 0) + (hasLegacy ? 1 : 0) - absentOptional - reclaimed) throw new Error("MEMORY_SCHEMA_UNSUPPORTED");
   for (const row of memoryRows) {
-    if (tail.has(row)) continue;
+    if (tail.has(row) || keys.has(row)) continue;
     const wanted = schema.get(row.name) ?? (hasLegacy && row.name === LEGACY_MEMBER_INDEX ? legacy : undefined);
     if (!wanted || row.type !== wanted.type || row.tbl_name !== wanted.tbl_name || row.sql !== wanted.sql) throw new Error("MEMORY_SCHEMA_UNSUPPORTED");
   }
@@ -1870,7 +2031,7 @@ export function validateMemorySchema(db: DatabaseSync, options: { references?: b
   if (structural) {
     if (version >= 2) {
       const settings = db.prepare("SELECT settings FROM memory_learning_config WHERE id=1").get();
-      if (!settings || !(version>=4?memoryLearningSchema:memoryLearningV1Schema).safeParse(JSON.parse(String(settings.settings))).success) throw new Error("INVALID_MEMORY_LEARNING_CONFIG");
+      if (!settings || !learningSettingsSchemaFor(version).safeParse(JSON.parse(String(settings.settings))).success) throw new Error("INVALID_MEMORY_LEARNING_CONFIG");
     }
     return new Set(memoryRows.map(row => row.name));
   }
@@ -1949,7 +2110,7 @@ export function validateMemorySchema(db: DatabaseSync, options: { references?: b
   next[key] = newest;
   if (version >= 2) {
     const settings = db.prepare("SELECT settings FROM memory_learning_config WHERE id=1").get();
-    if (!settings || !(version>=4?memoryLearningSchema:memoryLearningV1Schema).safeParse(JSON.parse(String(settings.settings))).success) throw new Error("INVALID_MEMORY_LEARNING_CONFIG");
+    if (!settings || !learningSettingsSchemaFor(version).safeParse(JSON.parse(String(settings.settings))).success) throw new Error("INVALID_MEMORY_LEARNING_CONFIG");
     // The record-details anti-join keeps its newest-rowid mark in the same marker, like the assertion check
     // above: a marker without the key, or a table whose newest rowid fell below the mark, reads in full once.
     const detailsKey = "memory_records.details", detailsMark = marks?.[detailsKey];
@@ -2241,7 +2402,7 @@ export function migrateMemorySchema(db: DatabaseSync, initialMode: "off" | "acti
   const from = exists ? Number(db.prepare("SELECT schema_version FROM memory_meta WHERE id=1").get()?.schema_version) : 0;
   const plan: { needBytes: number; probe: () => number | null } = { needBytes: 0, probe: () => null };
   if (exists) {
-    if (from === MEMORY_SCHEMA_VERSION) { ensureRevokeLateObjects(db); return; }
+    if (from === MEMORY_SCHEMA_VERSION) { ensureRevokeLateObjects(db); ensureRecordKeys(db); return; }
     // One copy per upgrade, chosen by the version being left: a 0.1.61 (v2)
     // file goes straight to v4 with a single pre-v3 copy. The pre-v4 copy
     // exists only for a development build that stopped at v3.
@@ -2284,6 +2445,9 @@ export function migrateMemorySchema(db: DatabaseSync, initialMode: "off" | "acti
       if (from === 4) db.exec("INSERT INTO memory_learning_events SELECT * FROM memory_learning_events_v4; DROP TABLE memory_learning_events_v4;");
       db.exec(`INSERT INTO memory_meta SELECT id,${MEMORY_SCHEMA_VERSION},installation_id,policy_revision,deletion_epoch,data_revision,mode FROM memory_meta_previous;
         DROP TABLE memory_meta_previous;`);
+      // A trigger ON memory_meta (v10 memory_watermark_bump) moved with the rename, so the CREATE ... IF NOT EXISTS above skipped it and the
+      // DROP just took it: made again here (only objects that are missing are created; from a v10 file on this is that trigger).
+      db.exec(MEMORY_SCHEMA.replace(DISCLOSURE_STATE_INDEX, "").replace(`${SCOPE_OWNER_INDEX_SQL};\n`, ""));
       if (from === 1) db.exec(`INSERT INTO memory_record_details(record_id,record_version,partition,attention,claim_status,observed_at)
         SELECT id,version,CASE kind WHEN 'source' THEN 'episodic' WHEN 'checkpoint' THEN 'working' WHEN 'procedure' THEN 'procedural' WHEN 'identity' THEN 'identity' ELSE 'semantic' END,
           CASE WHEN state IN ('archived','superseded','deleted') THEN 'historical' ELSE 'useful' END,
@@ -2322,6 +2486,8 @@ export function migrateMemorySchema(db: DatabaseSync, initialMode: "off" | "acti
       db.exec(OWNER_TAIL_SCHEMA);
       db.prepare(`INSERT INTO ${OWNER_TAIL_BUILD}(id,ready) VALUES(1,1)`).run();
       db.prepare("INSERT INTO memory_meta(id,schema_version,installation_id,mode) VALUES(1,?,?,?)").run(MEMORY_SCHEMA_VERSION,randomUUID(),initialMode);
+      // No records yet: every record gets its age key from its insert trigger (1.0.3 lane 2).
+      ensureRecordKeys(db);
       // No receipts yet: the triggers keep the index complete from the first one.
       db.prepare("INSERT INTO memory_revocation_index_build(id,ready,cursor,done,total,started_at,finished_at) VALUES(1,1,NULL,0,0,?1,?1)").run(Date.now());
       // No sources yet: the triggers keep the open turns complete from the first one.
@@ -2332,7 +2498,8 @@ export function migrateMemorySchema(db: DatabaseSync, initialMode: "off" | "acti
     // When output lineage began (v6).
     db.prepare("INSERT OR IGNORE INTO memory_lineage_meta(id,since) VALUES(1,?)").run(Date.now());
     if (from < 2) {
-      const learning = exists ? { ...DEFAULT_MEMORY_LEARNING, reviewMode: true } : DEFAULT_MEMORY_LEARNING;
+      // a fresh install starts on the current (v3) settings and has no ledger to seed; an older file starts on v2 in Review mode and is moved to v3 below
+      const learning = exists ? { ...DEFAULT_MEMORY_LEARNING_V2, reviewMode: true } : DEFAULT_MEMORY_LEARNING;
       db.prepare("INSERT INTO memory_learning_config VALUES(1,0,?)").run(JSON.stringify(learning));
     } else if (from < 4) {
       // Settings change shape only on the way to v4; a v4 file already holds the current shape.
@@ -2350,7 +2517,7 @@ export function migrateMemorySchema(db: DatabaseSync, initialMode: "off" | "acti
     if(preserved){
       const value=JSON.parse(String(preserved.intent));
       const current=JSON.parse(String(db.prepare("SELECT settings FROM memory_learning_config WHERE id=1").get()!.settings));
-      const restored=memoryLearningSchema.parse({...current,botsPaused:value.botsPaused,learnFrom:value.learnFrom});
+      const restored=memoryLearningV2Schema.parse({...current,botsPaused:value.botsPaused,learnFrom:value.learnFrom});
       db.prepare("UPDATE memory_learning_config SET settings=? WHERE id=1").run(JSON.stringify(restored));
       db.exec("DELETE FROM memory_scope_bindings WHERE id='memory-learning-v4-preserved'");
     }
@@ -2358,7 +2525,23 @@ export function migrateMemorySchema(db: DatabaseSync, initialMode: "off" | "acti
       const budget=JSON.parse(String(row.intent));if(typeof budget.input!=="number")continue;
       budget.input=Math.ceil(budget.input/3.5);db.prepare("UPDATE memory_scope_bindings SET intent=? WHERE id=?").run(JSON.stringify(budget),row.id);
     }
+    // v11 (1.0.3, SETTINGS-REDESIGN r3.3, r4.2): the v2 daily caps become one monthly ceiling (a zero cap stays a zero ceiling), and this
+    // server-local month's ledger starts from the day ledgers already charged in it, so an upgrade mid-month does not reset the spend.
+    // After every older settings step above, so it always reads v2.
+    if (exists && from < 11) {
+      const row=db.prepare("SELECT settings FROM memory_learning_config WHERE id=1").get()!;
+      db.prepare("UPDATE memory_learning_config SET settings=? WHERE id=1").run(JSON.stringify(upgradeMemoryLearningV3(JSON.parse(String(row.settings)))));
+      // the workspace scope is found, or made only when there is spend to seed (no day rows: nothing is written, the ledger reads 0)
+      const month=learningSpendMonth(),seed=learningSpendSeed(db,month);
+      if(seed.input>0||seed.output>0){
+        const meta=db.prepare("SELECT installation_id FROM memory_meta").get()!;
+        let scope=db.prepare("SELECT id FROM memory_scopes WHERE kind='workspace' AND owner_key=?").get(meta.installation_id)?.id;
+        if(!scope){scope=randomUUID();db.prepare("INSERT INTO memory_scopes VALUES(?,'workspace',?,'[]',0)").run(scope,meta.installation_id);}
+        seedLearningSpend(db,month,String(scope));
+      }
+    }
     ensureRevokeLateObjects(db);
+    ensureRecordKeys(db);
     stepTo("validating");
     // From v6 on the step wrote no row a proof reads: the structure of the result is checked here, the marks of the shape proof are
     // carried to the new version (the next open reads only rows added since), and the row proofs move to the background pass, which is
@@ -2407,12 +2590,23 @@ export function migrateMemorySchema(db: DatabaseSync, initialMode: "off" | "acti
 const TURNCTX_DERIVED_TABLES = ["thread_key", "seg", "msg_branch", "fill_pending", "line", "branch_change", "message_image", "attachment_name", "keyed_card"] as const;
 /** The tables of messages.db that only 1.0.2 writes, all derived from other rows or holding the place of derived work (so a downgrade loses nothing). */
 export const UPGRADE_DERIVED_TABLES = ["upgrade_integrity_pass", "browser_check_pending", "open_card", "turn_first", ...TURNCTX_DERIVED_TABLES, "transcript_index_state", ...UPGRADE_APP_TABLES, ...LEGACY_UPGRADE_TABLES.keys()] as const;
-export function downgradeMemorySchema(db: DatabaseSync, to: 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9 = 1): { status: "downgraded" | "already-v1" | "already-v2" | "already-v3" | "already-v4" | "already-v5" | "already-v6" | "already-v7" | "already-v8" | "already-v9"; from: number; to: 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9 } {
+export type MemoryDowngradeTarget = 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9 | 10;
+export function downgradeMemorySchema(db: DatabaseSync, to: MemoryDowngradeTarget = 1): { status: "downgraded" | "already-v1" | "already-v2" | "already-v3" | "already-v4" | "already-v5" | "already-v6" | "already-v7" | "already-v8" | "already-v9" | "already-v10"; from: number; to: MemoryDowngradeTarget } {
   if (!db.prepare("SELECT 1 FROM sqlite_schema WHERE name='memory_meta'").get()) throw new Error("MEMORY_SCHEMA_UNSUPPORTED");
   validateMemorySchema(db);
   const from = Number(db.prepare("SELECT schema_version FROM memory_meta WHERE id=1").get()?.schema_version);
-  if (from <= to) return { status: `already-v${to}` as "already-v1", from, to };
   if (from > MEMORY_SCHEMA_VERSION) throw new Error("MEMORY_SCHEMA_UNSUPPORTED");
+  // 1.0.3 -> 1.0.2 is v10 -> v10: the 1.0.2 validator refuses an object it does not know, so the lane-2 derived objects (the key table, its
+  // indexes, triggers and build row, the past-chats progress table) leave in one transaction; the next 1.0.3 open makes and fills them again.
+  // The same objects leave first on every deeper downgrade. (The search index file is prepared by its own step, age-index.ts.)
+  if (from === 10 && to === 10) {
+    const present = db.prepare("SELECT 1 FROM sqlite_schema WHERE name=?");
+    if (!recordKeysPresent(db) && !present.get(BACKFILL_THREADS_TABLE) && !present.get(IDENTITY_STAMP_TABLE)) return { status: "already-v10", from, to };
+    db.exec("BEGIN IMMEDIATE");
+    try { dropRecordKeys(db); db.exec("COMMIT"); } catch (error) { db.exec("ROLLBACK"); throw error; }
+    return { status: "downgraded", from, to };
+  }
+  if (from <= to) return { status: `already-v${to}` as "already-v1", from, to };
   // v10 -> v9 marks first, in slices of their own (lineage-backfill.ts): every generated line 1.0.2 wrote gets the unprovable root set and
   // every line a deny mark covers gets withheldFromBots, so 1.0.1 and the RC withhold all that 1.0.2 withheld. A stopped downgrade resumes
   // from its place in memory_lineage_cert; it never skips.
@@ -2432,6 +2626,7 @@ export function downgradeMemorySchema(db: DatabaseSync, to: 1 | 2 | 3 | 4 | 5 | 
     // branch walks, the pending browser checks and the places of the fills) exist only from 1.0.2 on. An older build's archive inspector accepts no object it
     // does not write itself, and an older writer would not keep them: they go, with their completion state, and the next newer start builds them again.
     dropOptionalIndexes(db); // every optional index leaves first: an older build's inspector accepts none of them
+    if (from >= 10) dropRecordKeys(db); // the 1.0.3 derived objects (above): no older build knows them
     // The claim's settle sweep and the park reconciliation key their done markers on the app version, and a round trip through
     // 1.0.1 can come back on the same version: the markers go, so the next newer start runs both passes from the start over
     // whatever 1.0.1 wrote (blocked jobs left pending, parked jobs whose source it re-activated). park.ts, claim-settle.ts.
@@ -2443,6 +2638,18 @@ export function downgradeMemorySchema(db: DatabaseSync, to: 1 | 2 | 3 | 4 | 5 | 
       // The open-turns table is derived from the sources; the next newer start finds the working turns again.
       // v10 -> v9: the write-time tables go, only once the marking above finished and nothing was written since it began (checked
       // inside this transaction); otherwise the downgrade refuses and the next run marks again.
+      // v11 -> v10: the settings go back to v2 (a zero ceiling to zero daily caps, any other ceiling to the v2 defaults); the month ledger goes
+      // (the next 1.0.3 start seeds it again from the day rows, which stay); the per-slice counters and the retry queue leave the consolidation intents, and a
+      // source waiting for next month's ceiling is due now (1.0.2 paces by the day ledgers).
+      if (version === 11) {
+        const settings=JSON.parse(String(db.prepare("SELECT settings FROM memory_learning_config WHERE id=1").get()!.settings));
+        db.prepare("UPDATE memory_learning_config SET settings=? WHERE id=1").run(JSON.stringify(downgradeMemoryLearningV3(settings)));
+        db.exec("DELETE FROM memory_scope_bindings WHERE subject_type='system' AND subject_id='learning-spend'");
+        const paths=CONSOLIDATION_V11_FIELDS.map(field=>`'$.${field}'`).join(","),present=CONSOLIDATION_V11_FIELDS.map(field=>`json_type(intent,'$.${field}') IS NOT NULL`).join(" OR ");
+        db.prepare(`UPDATE memory_scope_bindings SET intent=CASE WHEN json_extract(intent,'$.reason')='spend-ceiling' AND json_extract(intent,'$.status')='deferred'
+            THEN json_set(json_remove(intent,${paths}),'$.retryAfter',?) ELSE json_remove(intent,${paths}) END
+          WHERE subject_type='system' AND subject_id IN ('consolidation','consolidation-pending') AND (${present} OR json_extract(intent,'$.reason')='spend-ceiling')`).run(Date.now());
+      }
       if (version === 10) {
         if (!lineageDowngradeMarked(db)) throw new Error("MEMORY_DOWNGRADE_LINEAGE_UNMARKED");
         for (const trigger of WRITETIME_TRIGGERS) db.exec(`DROP TRIGGER IF EXISTS ${trigger};`);
@@ -2532,6 +2739,8 @@ export function downgradeMemorySchema(db: DatabaseSync, to: 1 | 2 | 3 | 4 | 5 | 
       db.exec(SCHEMA_TEXT[version - 1]!); // CREATE IF NOT EXISTS: only memory_meta (older text) is recreated
       db.exec(`INSERT INTO memory_meta SELECT id,${version - 1},installation_id,policy_revision,deletion_epoch,data_revision,mode FROM memory_meta_newer;
         DROP TABLE memory_meta_newer;`);
+      // a trigger ON memory_meta of the older text (v10 memory_watermark_bump) left with memory_meta_newer: made again (a no-op below v10)
+      db.exec(SCHEMA_TEXT[version - 1]!);
       if (db.prepare("SELECT schema_version FROM memory_meta WHERE id=1").get()?.schema_version !== version - 1) throw new Error("MEMORY_SCHEMA_UNSUPPORTED");
     }
     validateMemorySchema(db);

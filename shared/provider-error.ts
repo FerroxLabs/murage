@@ -226,6 +226,27 @@ export function isEndpointUnreachable(error: unknown): boolean {
   return false;
 }
 
+/** The codes a request never leaves the client on: the name did not resolve, the address refused or never answered the connection,
+ *  or the TLS handshake failed. The rest of CONNECT_FAILURE_CODES (a reset, a broken pipe, a dead socket, a timeout) is raised just
+ *  as readily once the request is on the wire and the server may have read it. */
+const NEVER_CONNECTED_CODES = new Set([
+  "ECONNREFUSED", "ENOTFOUND", "EAI_AGAIN", "EHOSTUNREACH", "ENETUNREACH", "ERR_SOCKET_CONNECTION_TIMEOUT", "UND_ERR_CONNECT_TIMEOUT",
+  "CERT_HAS_EXPIRED", "DEPTH_ZERO_SELF_SIGNED_CERT", "SELF_SIGNED_CERT_IN_CHAIN", "ERR_TLS_CERT_ALTNAME_INVALID",
+  "UNABLE_TO_VERIFY_LEAF_SIGNATURE", "UNABLE_TO_GET_ISSUER_CERT_LOCALLY", "ERR_INVALID_URL",
+]);
+
+/** True when this failure proves the request was never delivered: no connection to the address was ever made, so nothing of it
+ *  was written (turn-attribution.ts I14, Astra r5 order 2). Any other failure may have come after the server read the request
+ *  (a connection that broke, a server that went quiet) and proves nothing either way: the caller leaves what it stamped. */
+export function neverConnected(error: unknown): boolean {
+  for (let step: unknown = error, depth = 0; step instanceof Error && depth < 5; depth++) {
+    const code = (step as NodeJS.ErrnoException).code;
+    if (typeof code === "string" && NEVER_CONNECTED_CODES.has(code)) return true;
+    step = (step as { cause?: unknown }).cause;
+  }
+  return false;
+}
+
 /** `http://192.168.1.50:11434/v1` → `192.168.1.50:11434`. Never the path
  *  and never the query: a base URL can carry a key in either. Falls back to the
  *  raw string only when it will not parse, and never to an empty name. */

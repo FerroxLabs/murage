@@ -22,6 +22,7 @@ import { recentMemoryHits } from "./recent.ts";
 import { setMemoryMode } from "./repository.ts";
 import { clearMemorySearchCache, searchMemory, type MemorySearchBridge } from "./search.ts";
 import { LineageAllowance } from "./lineage-allowance.ts";
+import { removeTempDirSync } from "../testing/cleanup.ts";
 
 const ROSTER: MemoryRoster = { bots: [{ id: "a", threadId: "thread-a", section: "crew" }, { id: "b", threadId: "thread-b", section: "crew" }], groups: [] };
 const INDEX_PATH = () => join(DATA_DIR, "memory-index.db");
@@ -30,7 +31,7 @@ const TEXT = "harbour lantern notes for the Friday review of the long quiet quay
 
 beforeEach(() => {
   closeMemoryIndexReader(); closeDatabase(); clearMemorySearchCache();
-  rmSync(DATA_DIR, { recursive: true, force: true }); mkdirSync(DATA_DIR, { recursive: true });
+  removeTempDirSync(DATA_DIR); mkdirSync(DATA_DIR, { recursive: true });
   reconcileMemoryRoster(ROSTER); setMemoryMode("active");
 });
 afterEach(() => { closeMemoryIndexReader(); });
@@ -110,7 +111,7 @@ describe("P1: a population no reader can read decides nothing the reader sees", 
     world(records).close();
   }
 
-  it("99,990 records denied by state, forgetting, scope and a forgotten parent leave all ten readable hits, identical to the corpus without them, with the loop free", async () => {
+  it("99,990 records denied by state, forgetting, scope and a forgotten parent leave all ten readable hits, identical to the corpus without them, with the loop free", { tags: ["nightly"], timeout: 300_000 }, async () => {
     (() => fixture(true))();
     await new Promise(resolve => setTimeout(resolve, 500)); collectGarbage();
     const crowded = await measured(() => searchMemory(QUERY, accessOf(), emptyBridge, { allowance: LineageAllowance.tool(1_000_000_000), caller: "tool", limit: 20 }));
@@ -121,15 +122,15 @@ describe("P1: a population no reader can read decides nothing the reader sees", 
     expect(crowded.value).not.toHaveProperty("degradedReason");
     expect(JSON.stringify(crowded.value)).not.toContain("denied");
     closeMemoryIndexReader(); closeDatabase(); clearMemorySearchCache();
-    rmSync(DATA_DIR, { recursive: true, force: true }); mkdirSync(DATA_DIR, { recursive: true });
+    removeTempDirSync(DATA_DIR); mkdirSync(DATA_DIR, { recursive: true });
     reconcileMemoryRoster(ROSTER); setMemoryMode("active");
     fixture(false);
     const alone = await searchMemory(QUERY, accessOf(), emptyBridge, { allowance: LineageAllowance.tool(1_000_000_000), caller: "tool", limit: 20 });
     const plain = (answer: typeof alone) => JSON.parse(JSON.stringify(answer).replace(/"scopeId":"[^"]*"/g, '"scopeId":"S"'));
     expect(plain(crowded.value)).toEqual(plain(alone));
-  }, 300_000);
+  });
 
-  it("99,990 records only a two-step ancestry refuses (no query can spare them): the readable hits are all returned inside the limit, or the answer says it is partial", async () => {
+  it("99,990 records only a two-step ancestry refuses (no query can spare them): the readable hits are all returned inside the limit, or the answer says it is partial", { tags: ["nightly"], timeout: 300_000 }, async () => {
     const scope = ensureScope("bot", "a");
     (() => {
       const records: IndexedMemory[] = [];
@@ -148,7 +149,7 @@ describe("P1: a population no reader can read decides nothing the reader sees", 
     // Not all ten: the answer says it is incomplete, cut at its deadline (partial) or past the newest matches it may read (bounded; since the
     // scoped postings, msearch2 r2c, the walk reaches that bound well inside the deadline).
     else { expect(answer.partial === true || answer.note !== undefined).toBe(true); expect(answer.coverageComplete).toBe(false); }
-  }, 300_000);
+  });
 
   it("the index query never refuses a record readableMemoryRecord accepts (evidence, sources, tombstones, history), and refuses the ones nobody can read", async () => {
     const db = database(), scope = ensureScope("bot", "a");

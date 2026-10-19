@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { api } from "@/state/store";
+import { InAdvanced } from "./SettingsPrimitives";
 
 export interface DiscordStatus {
   state: "idle" | "verifying" | "pairing" | "connected" | "retry" | "blocked";
@@ -132,11 +133,11 @@ export function DiscordSettings() {
     <h3 id="discord-settings-title" className="text-[15px] font-semibold text-ink">Discord</h3>
     <p className="mt-1 text-[12px] leading-relaxed text-ink-secondary">Message your Chief from one approved Discord direct message. Keep Murage running to receive messages; messages missed while it is stopped may not be recovered. Long replies are previews with the full result in Murage. Approvals stay in Murage.</p>
     <p role="status" className="mt-3 text-[12px] font-medium text-ink">{discordHealth(status, expired)}</p>
-    <details className="mt-3 text-[12px] text-ink-secondary">
-      <summary className="min-h-11 cursor-pointer py-3 text-ink">Private Discord app setup</summary>
+    <InAdvanced><div id="discord-app-setup-heading" className="rounded-xl bg-card p-4 text-[12px] text-ink-secondary">
+      <h4 className="text-[13px] font-medium text-ink">Private Discord app setup</h4>
       <p>Use your own Discord application bot. Choose an installation you control and open a direct message with the bot. Murage reads only direct messages from the owner below; guild messages and Discord approval buttons are not supported.</p>
       <a className="mt-2 inline-flex min-h-11 items-center text-accent-text underline hover:text-ink" href="https://discord.com/developers/applications" target="_blank" rel="noreferrer">Open Discord app settings</a>
-    </details>
+    </div></InAdvanced>
     <h4 className="mt-4 text-[13px] font-medium text-ink">1. Save credentials securely</h4>
     <p className="mt-1 text-[12px] text-ink-secondary">Stored encrypted on this computer. Saved keys are never shown here; leave a saved key blank to keep it.</p>
     <label className="mt-3 block text-[12px] text-ink-secondary">Bot token {status?.botConfigured && <span>(saved)</span>}

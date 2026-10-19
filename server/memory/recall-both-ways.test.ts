@@ -8,7 +8,7 @@
 // tasks, and a direct turn recalls the rooms it is a member of whose every
 // thread is the owner's. Never for a channel person, never for words nobody
 // proved are the owner's, never another member's chats, never a pair room.
-import { mkdirSync, rmSync } from "node:fs";
+import { mkdirSync } from "node:fs";
 import { beforeEach, expect, it } from "vitest";
 import { DATA_DIR } from "../config.ts";
 import { closeDatabase, database } from "../database.ts";
@@ -21,10 +21,11 @@ import { setMemoryCaptureRoster } from "./capture-scope.ts";
 import { buildMemoryBundle } from "./bundle.ts";
 import { memoryOwnerRoute } from "./settings.ts";
 import { LineageAllowance } from "./lineage-allowance.ts";
+import { removeTempDirSync } from "../testing/cleanup.ts";
 
 let roster: MemoryRoster;
 beforeEach(() => {
-  closeDatabase(); rmSync(DATA_DIR, { recursive: true, force: true }); mkdirSync(DATA_DIR, { recursive: true });
+  closeDatabase(); removeTempDirSync(DATA_DIR); mkdirSync(DATA_DIR, { recursive: true });
   roster = {
     bots: [
       { id: "reed", threadId: "reed-direct", section: "Sales", tasks: [{ threadId: "reed-task" }, { threadId: "reed-desk", channelProjectDesk: { groupId: "launch" } }, { threadId: "reed-other-desk", channelProjectDesk: { groupId: "ops" } }] },

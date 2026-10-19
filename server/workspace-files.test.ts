@@ -9,9 +9,10 @@ import {
   type WorkspaceFilesDeps,
 } from "./workspace-files.ts";
 import { WORKSPACE_LIST_PAGE_SIZE, WORKSPACE_SEARCH_MAX_ENTRIES, isFileRevision, type WorkspaceEntry } from "../shared/workspace-files.ts";
+import { removeTempDirSync } from "./testing/cleanup.ts";
 
 const roots: string[] = [];
-afterEach(() => { for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true }); });
+afterEach(() => { for (const root of roots.splice(0)) removeTempDirSync(root); });
 
 type FakeTask = { threadId: string; cwd?: string | null; resumeCursors: Record<string, unknown> };
 type FakeBot = { id: string; name: string; threadId: string; cwd?: string; resumeCursors: Record<string, unknown>; tasks?: FakeTask[] };
@@ -333,7 +334,7 @@ describe("workspace-files route", () => {
       expect(await call(f.deps, path, { desktop: false }), path).toEqual(hiddenRoute());
     }
     expect(await call(f.deps, `/api/workspace-files/search?${q}&query=result`)).toMatchObject({ status: 200, body: { entries: [{ relativePath: "reports/result.html" }] } });
-    expect(await call(f.deps, `/api/workspace-files/list?${q}&directory=reports&surface=desktop&surfaceSecret=proof`)).toMatchObject({ status: 200, body: { entries: [{ name: "result.html" }] } });
+    expect(await call(f.deps, `/api/workspace-files/list?${q}&directory=reports&surface=desktop`)).toMatchObject({ status: 200, body: { entries: [{ name: "result.html" }] } });
     const invalid = [
       [`/api/workspace-files/list?${q}`, "POST"], [`/api/workspace-files/list?${q}&extra=1`, "GET"], [`/api/workspace-files/list?${q}&botId=bot`, "GET"],
       ["/api/workspace-files/list?botId=bot", "GET"], ["/api/workspace-files/root?botId=../bot&threadId=thread", "GET"], [`/api/workspace-files/search?${q}`, "GET"],

@@ -1,13 +1,14 @@
 import { createServer, type Server, type IncomingMessage, type ServerResponse } from "node:http";
-import { mkdirSync, rmSync } from "node:fs";
+import { mkdirSync } from "node:fs";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { DATA_DIR } from "../config.ts";
 import { database, closeDatabase } from "../database.ts";
 import { OpenAICompatDriver } from "../drivers/openai-compat.ts";
 import { extractCandidates, requestMemoryExtraction } from "./extract.ts";
+import { removeTempDirSync } from "../testing/cleanup.ts";
 
 let server:Server|undefined;
-beforeEach(()=>{closeDatabase();rmSync(DATA_DIR,{recursive:true,force:true});mkdirSync(DATA_DIR,{recursive:true});vi.stubEnv("OPENAI_COMPAT_API_KEY","");});
+beforeEach(()=>{closeDatabase();removeTempDirSync(DATA_DIR);mkdirSync(DATA_DIR,{recursive:true});vi.stubEnv("OPENAI_COMPAT_API_KEY","");});
 afterEach(async()=>{vi.unstubAllEnvs();if(server){server.closeAllConnections();await new Promise<void>(resolve=>server!.close(()=>resolve()));server=undefined;}});
 async function local(handler:(request:IncomingMessage,response:ServerResponse)=>void){
   server=createServer(handler);await new Promise<void>(resolve=>server!.listen(0,"127.0.0.1",resolve));const address=server.address();

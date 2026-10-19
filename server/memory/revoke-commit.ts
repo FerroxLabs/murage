@@ -9,13 +9,15 @@
 // the root nodes in memory_revoke_frontier, the pending window (deny_pending('*', root_lsn), deny_pending_scope('*', since)) with the flow
 // seeds, and deny_generation += 1. The marker (revoke-marker.ts) starts in a microtask after the caller commits.
 import type { DatabaseSync } from "node:sqlite";
-import { currentLsn } from "./lineage-write.ts";
+import { currentLsn, takeCommitLsn } from "./lineage-write.ts";
 import { CONSUMED_REF_KINDS, FIRST_LSN, lineChildRef, OBJECT_EDGE_LSN, objectCarryThread, objectFlowNode, PENDING_ALL_THREADS, scopeFlowNode, UNKNOWN_LSN, type FrontierNode, type LineageRef, type MemoryRef, type RevokeRoot, type SessionKey } from "./lineage-types.ts";
 import { ensureThreadNo, threadNo } from "./thread-no.ts";
-import { receiptStart } from "./receipt-outputs.ts";
+import { drainReceiptFlips, receiptStart } from "./receipt-outputs.ts";
 import { AUDIENCE_COALESCED } from "./lineage-types.ts";
-import { BOUNDED_RANGE, bumpDenyGeneration, enqueueNode, hasWritetime, lineOf, markerSlice, markerWorkPending, markPending, PENDING_ALL_SCOPES, seedFlow, setFlipCommit, softVersion, st, writeLine, writeMemory, writeRange, writeSession } from "./revoke-marker.ts";
+import { BOUNDED_RANGE, bumpDenyGeneration, enqueueNode, foldRefusesUndo, hasWritetime, lineOf, markerWorkPending, markPending, PENDING_ALL_SCOPES, resolveRevoke, seedFlow, setFlipDrain, softVersion, st, writeLine, writeMemory, writeRange, writeSession } from "./revoke-marker.ts";
 import { INLINE_REVOCATION, wakeIfStarted } from "./memory-revocation.ts";
+import { budgetedMarkerSlice, revokeMinuteChanges } from "./revoke-budget.ts";
+import "./revoke-fold.ts"; // the revoke fold registers with the marker (revoke-marker.ts setFoldHooks), as the flip drain does below
 
 /** Memory roots that remove the object itself (deny_memory); the others (archive, correct, revise) withdraw what was shown from it, and
  * leave the record's own visibility to its state. */
@@ -61,7 +63,7 @@ export interface RevokeOptions {
  * million (each with its own flow closure and '*' window). `audience`: its marks bind audience readers only (memory_revoke_audience). */
 export function openBulkRevoke(tx: DatabaseSync, cause: string, audience: boolean): number {
   if (!hasWritetime(tx)) return 0;
-  const now = currentLsn(tx);
+  const now = takeCommitLsn(tx); // the bulk revoke's own slot: its cap (commitRevoke)
   const R = Number(st(tx, "SELECT coalesce(max(revoke_id),0)+1 AS r FROM memory_revoke_jobs").get()!.r);
   st(tx, "INSERT INTO memory_revoke_jobs(revoke_id,kind,root,root_lsn,started_lsn,phase,cursor,state) VALUES(?,'bulk',?,?,?,'flow','','seeding')").run(R, JSON.stringify({ kind: "bulk", cause }), now, now);
   if (audience) st(tx, "INSERT OR IGNORE INTO memory_revoke_audience(revoke_id) VALUES(?)").run(R);
@@ -88,7 +90,12 @@ function compactRoot(root: RevokeRoot, until?: number): string {
  * memory object, one receipt or session. Returns the revoke id (0 on a file without the v10 tables). */
 export function commitRevoke(tx: DatabaseSync, root: RevokeRoot, options: RevokeOptions = {}): number {
   if (!hasWritetime(tx)) return 0;
-  const now = currentLsn(tx);
+  // the commit's own lsn: the cap of its ranges and of the walk's session stage is this slot, so a prompt built after the commit (head =
+  // currentLsn - 1) is at or above it even when no line was written in between (a routine, a room member's turn, a late redispatch). A
+  // policy or epoch watermark keeps the head it was always compared with. A root added to an open bulk revoke takes its own slot too: its
+  // range's cap is that slot, not the bulk's open slot (a session begun on the root's line after the bulk opened held it; the walk keeps the
+  // root's cap, revoke-marker.ts rangeNode).
+  const now = root.kind === "policy" || root.kind === "epoch" ? currentLsn(tx) : takeCommitLsn(tx);
   const until = root.kind === "line" && options.until !== undefined && Number.isSafeInteger(options.until) ? Math.min(options.until, now) : undefined;
   const bulk = options.into !== undefined && options.into > 0 ? options.into : undefined;
   const R = bulk ?? Number(st(tx, "SELECT coalesce(max(revoke_id),0)+1 AS r FROM memory_revoke_jobs").get()!.r);
@@ -231,7 +238,7 @@ export function commitRevoke(tx: DatabaseSync, root: RevokeRoot, options: Revoke
   for (const [node, since] of seeds) seedFlow(tx, R, node, since ?? rootLsn);
   bumpDenyGeneration(tx);
   if (bulk) return R; // held 'seeding' until activateBulkRevoke
-  if (options.inline !== false) markInline(tx);
+  if (options.inline !== false) markInline(tx, R);
   wakeIfStarted();
   return R;
 }
@@ -241,29 +248,60 @@ const RECEIPT_HOLD_CAP = 2048;
  * it, and a content reader (the owner's direct chat, rooms: a state flip binds audience readers only) would be shown its outputs again. The
  * receipt is held instead as a consumer of each record and source it cites: a carry from that item's interned node (lineage-write.ts
  * carryOnto does the same for objects) to the receipt's first output line, which the marker walks when the item is denied (revoke-marker.ts
- * objectNode: a denied source or record walks its consumers). A receipt citing more than RECEIPT_HOLD_CAP items, or one whose lists do not
- * parse, hangs on the kind's wildcard (every denial of the kind walks it: withholds more, never less). Astra audit, differential shape
- * "records + hot pool". */
+ * objectNode: a denied source or record walks its consumers). A receipt citing more than RECEIPT_HOLD_CAP items, one whose lists do not
+ * parse, or one whose per-item commit could cost more than a whole minute of the marker's write budget (revoke-budget.ts), hangs on the
+ * kind's wildcard (every denial of the kind walks it: withholds more, never less). Astra audit, differential shape "records + hot pool". */
 function holdRevokedReceipt(tx: DatabaseSync, bundleId: string, start: ReturnType<typeof receiptStart>): void {
   if (!start) return; // it produced nothing
-  const row = st(tx, "SELECT record_versions,source_versions FROM memory_disclosures WHERE bundle_id=?").get(bundleId);
-  if (!row) return;
+  const plan = receiptHoldPlan(tx, bundleId, start.threadId);
+  if (!plan) return;
   const childNo = ensureThreadNo(tx, start.threadId), ref = lineChildRef(start.firstLsn);
-  const edge = (kind: "record" | "source", id: string) => st(tx, "INSERT OR IGNORE INTO memory_lineage_carry(parent_thread_no,to_lsn,from_lsn,child_kind,child_ref,child_thread_no) VALUES(?,?,?,0,?,?)")
-    .run(ensureThreadNo(tx, objectCarryThread({ kind, id })), OBJECT_EDGE_LSN, OBJECT_EDGE_LSN, ref, childNo);
-  const wild = () => { edge("record", "*"); edge("source", "*"); };
-  let records: unknown, sources: unknown;
-  try { records = JSON.parse(String(row.record_versions)); sources = JSON.parse(String(row.source_versions)); } catch { wild(); return; }
-  if (!Array.isArray(records) || !Array.isArray(sources) || records.length + sources.length > RECEIPT_HOLD_CAP) { wild(); return; }
-  for (const record of records) { const id = (record as { id?: unknown } | null)?.id; if (typeof id === "string") edge("record", id); else { wild(); return; } }
-  for (const source of sources) { const id = (source as { id?: unknown } | null)?.id; if (typeof id === "string") edge("source", id); else { wild(); return; } }
+  for (const item of plan) st(tx, "INSERT OR IGNORE INTO memory_lineage_carry(parent_thread_no,to_lsn,from_lsn,child_kind,child_ref,child_thread_no) VALUES(?,?,?,0,?,?)")
+    .run(ensureThreadNo(tx, objectCarryThread(item)), OBJECT_EDGE_LSN, OBJECT_EDGE_LSN, ref, childNo);
 }
-/** The marker inline, in the committing transaction, for at most INLINE_REVOCATION.ms (memory-revocation.ts). */
-function markInline(tx: DatabaseSync): void {
+type HoldItem = { kind: "record" | "source"; id: string };
+const HOLD_WILD: readonly HoldItem[] = [{ kind: "record", id: "*" }, { kind: "source", id: "*" }];
+/** The items a revoked receipt hangs a consumer edge on, in order (null: no receipt row). Lists that do not parse, or cite more than
+ * RECEIPT_HOLD_CAP items, hang on the wildcard pair; an entry with no string id ends the list there and adds the wildcard pair. A plan
+ * whose commit could cost more than a whole minute of the write budget hangs on the wildcard pair too (1.0.3 revoke storm, M3: the budget's
+ * ceiling holds for every minute and the flip still commits, at the pair's few rows; see receiptPlanTooBig). */
+function receiptHoldPlan(tx: DatabaseSync, bundleId: string, threadId: string): HoldItem[] | null {
+  const plan = itemHoldPlan(tx, bundleId);
+  return plan && receiptPlanTooBig(tx, plan, threadId) ? [...HOLD_WILD] : plan;
+}
+/** The most rows a receipt's commit with `plan` writes, whatever is interned already (each carry thread and the receipt's own thread taking
+ * a number), with its bulk's opening. Over a whole minute's budget (revokeMinuteChanges) it could never be committed inside one minute.
+ * Interns are counted at their most so the answer does not move between the drain's admission and the commit itself. */
+function receiptPlanTooBig(db: DatabaseSync, plan: readonly HoldItem[], threadId: string): boolean {
+  const threads = new Set<string>([threadId]);
+  for (const item of plan) threads.add(objectCarryThread(item));
+  return RECEIPT_ROOT_COST + (threads.size - 1) + threads.size + BULK_OPEN_COST > revokeMinuteChanges(db);
+}
+function itemHoldPlan(tx: DatabaseSync, bundleId: string): HoldItem[] | null {
+  const row = st(tx, "SELECT record_versions,source_versions FROM memory_disclosures WHERE bundle_id=?").get(bundleId);
+  if (!row) return null;
+  let records: unknown, sources: unknown;
+  try { records = JSON.parse(String(row.record_versions)); sources = JSON.parse(String(row.source_versions)); } catch { return [...HOLD_WILD]; }
+  if (!Array.isArray(records) || !Array.isArray(sources) || records.length + sources.length > RECEIPT_HOLD_CAP) return [...HOLD_WILD];
+  const plan: HoldItem[] = [];
+  for (const [kind, list] of [["record", records], ["source", sources]] as const) {
+    for (const item of list) {
+      const id = (item as { id?: unknown } | null)?.id;
+      if (typeof id !== "string") return [...plan, ...HOLD_WILD];
+      plan.push({ kind, id });
+    }
+  }
+  return plan;
+}
+/** The marker inline, in the committing transaction (1.0.3 revoke storm, M3): the owner's own revoke only, under the marker's write budget
+ * and within INLINE_REVOCATION.ms from here. It never drains the queued receipt flips or walks another revoke (the runner carries that
+ * backlog), and while a flip waits it walks nothing (revoke-marker.ts runMarkerSlice); what it leaves is the runner's. */
+function markInline(tx: DatabaseSync, revokeId: number): void {
   if (!(INLINE_REVOCATION.ms > 0)) return;
   const deadline = performance.now() + INLINE_REVOCATION.ms;
   while (performance.now() < deadline && markerWorkPending(tx)) {
-    if (!markerSlice(tx, INLINE_REVOCATION.rows, Math.max(0, deadline - performance.now()))) break;
+    const moved = budgetedMarkerSlice(tx, INLINE_REVOCATION.rows, Math.max(0, deadline - performance.now()), null, { only: revokeId });
+    if (!moved || moved === "budget") break;
   }
 }
 
@@ -271,6 +309,9 @@ function markInline(tx: DatabaseSync): void {
  * a job of the same cost. A coalesced range (revoke -1) is not undone: it withholds more, never less. */
 export function undoRevoke(tx: DatabaseSync, revokeId: number): void {
   if (!(revokeId > 0) || !hasWritetime(tx)) return;
+  // a folded id, a fold bulk (also once its job row was pruned or recreated) or a member of a seeding fold: the fold bulk's marks are shared
+  // by every root it took over and cannot be withdrawn for one (1.0.3 REVOKE-FOLD-DESIGN F1.7, r4 A2): withholds more, never less
+  if (foldRefusesUndo(tx, revokeId)) throw new Error("MEMORY_REVOKE_UNDO_BULK");
   const held = st(tx, "SELECT state FROM memory_revoke_jobs WHERE revoke_id=?").get(revokeId);
   if (held) st(tx, "UPDATE memory_revoke_jobs SET phase='undo',cursor='',state='undoing' WHERE revoke_id=?").run(revokeId);
   else { const now = currentLsn(tx); st(tx, "INSERT INTO memory_revoke_jobs(revoke_id,kind,root,root_lsn,started_lsn,phase,cursor,state) VALUES(?,'undo','{}',?,?,'undo','','undoing')").run(revokeId, now, now); }
@@ -282,8 +323,12 @@ export function undoRevoke(tx: DatabaseSync, revokeId: number): void {
 export interface CarryRange { readonly threadId: string; readonly from: number; readonly to: number }
 /** What inherits: a line (its own refs), a turn (every line of the thread from its turn_lsn on: a range node), an object, a session. */
 export type InheritChild =
-  | { readonly kind: "line"; readonly threadId: string; readonly lsn: number }
-  | { readonly kind: "turn"; readonly threadId: string; readonly lsn: number }
+  /** fromNow: refs added to a line already written (lineage-write.ts lineageRow): the hold and the walk start at a slot taken now, the mark
+   * is the line's own. */
+  | { readonly kind: "line"; readonly threadId: string; readonly lsn: number; readonly fromNow?: boolean }
+  /** holdFrom: the generated line whose write carried the turn (its own lsn, above the turn's head); unset for a row patched in place, whose
+   * hold takes the inherit slot. */
+  | { readonly kind: "turn"; readonly threadId: string; readonly lsn: number; readonly holdFrom?: number }
   | { readonly kind: "record"; readonly ref: MemoryRef; readonly lsn: number }
   | { readonly kind: "session"; readonly session: SessionKey; readonly lsn: number };
 
@@ -350,8 +395,27 @@ export function inheritMarks(tx: DatabaseSync, child: InheritChild, refs: readon
   for (const range of ranges) rangeRevokes(tx, range, found);
   for (const ref of refs) refRevokes(tx, ref, found);
   if (!found.size) return;
-  const now = currentLsn(tx);
-  const node = childNode(child), hold = childPending(child);
+  // a revoke folded into a fold bulk is that bulk now (1.0.3 REVOKE-FOLD-DESIGN F1.6): every found id is resolved, one seek each, and the
+  // map merged by destination (denied = OR), so a child under marks of several folded ids is enqueued and held once
+  const byDest: Found = new Map();
+  for (const [R, denied] of found) { const to = R > 0 ? resolveRevoke(tx, R) : R; byDest.set(to, denied || (byDest.get(to) ?? false)); }
+  // a fresh inherit job's started_lsn (the cap of its walk) is a slot of its own, taken here after the child's lsn: a prompt built after
+  // this write has a head at or above it, so it is not taken for one that held the child (the same-head shape commitRevoke closes)
+  let started: number | undefined;
+  const startedLsn = () => started ??= takeCommitLsn(tx);
+  // a line given refs after it was written: its hold and walk start at the inherit slot (a prompt built before this write held none of
+  // them), so a routine card or notice patched now never holds an earlier prompt's prefix (1.0.3 lifecycle card)
+  const from = child.kind === "line" && child.fromNow ? startedLsn() : undefined;
+  const node: FrontierNode | null = from !== undefined && child.kind === "line" ? { kind: "line", threadId: child.threadId, lsn: child.lsn, from } : childNode(child);
+  const pendingAt = childPending(child);
+  // a session or turn child is written at the head its prompt was built on (writeSessionLineage at session.started, a turn's carry at its
+  // turn lsn): held there, the hold sat at the prompt's own head and the send fence refused the turn's own prompt (the late-handback engines,
+  // 1.0.2 Keep all P0). Its hold takes the inherit slot instead, above every prompt already built: those read it shown (they could not hold
+  // what was carried after them) and any prompt built later reads it checking. The walk still starts at the child (node), so nothing the
+  // child holds is left unmarked. A turn carried by a newly written line holds from that line (above the head, and the line itself is held);
+  // a line keeps its own lsn (fresh at write) unless it was patched (fromNow).
+  const fresh = child.kind === "session" ? startedLsn() : child.kind === "turn" ? (child.holdFrom !== undefined && child.holdFrom > child.lsn ? child.holdFrom : startedLsn()) : from;
+  const hold: [string, number] | null = fresh !== undefined && pendingAt ? [pendingAt[0], fresh] : pendingAt;
   const mark = (R: number) => {
     if (node) enqueueNode(tx, R, node);
     else if (child.kind === "record") {
@@ -359,10 +423,10 @@ export function inheritMarks(tx: DatabaseSync, child: InheritChild, refs: readon
       if (CONSUMED_REF_KINDS.has(child.ref.kind)) enqueueNode(tx, R, { kind: "object", objectKind: child.ref.kind, id: child.ref.id }); // and its readers
     }
   };
-  for (const [R, denied] of found) {
+  for (const [R, denied] of byDest) {
     if (R === -1 || R === AUDIENCE_COALESCED) {
       const fresh = Number(st(tx, "SELECT coalesce(max(revoke_id),0)+1 AS r FROM memory_revoke_jobs").get()!.r);
-      st(tx, "INSERT INTO memory_revoke_jobs(revoke_id,kind,root,root_lsn,started_lsn,phase,cursor,state) VALUES(?,'inherit',?,?,?,'mark','','active')").run(fresh, JSON.stringify({ kind: "inherit", cause: "inherit" }), child.lsn, now);
+      st(tx, "INSERT INTO memory_revoke_jobs(revoke_id,kind,root,root_lsn,started_lsn,phase,cursor,state) VALUES(?,'inherit',?,?,?,'mark','','active')").run(fresh, JSON.stringify({ kind: "inherit", cause: "inherit" }), child.lsn, startedLsn());
       if (R === AUDIENCE_COALESCED) st(tx, "INSERT OR IGNORE INTO memory_revoke_audience(revoke_id) VALUES(?)").run(fresh);
       mark(fresh);
       if (hold) markPending(tx, fresh, hold[0], hold[1]);
@@ -371,7 +435,7 @@ export function inheritMarks(tx: DatabaseSync, child: InheritChild, refs: readon
     const job = st(tx, "SELECT state,phase FROM memory_revoke_jobs WHERE revoke_id=?").get(R);
     if (job && (job.state === "undoing" || job.state === "undone")) continue;
     if (denied) {
-      if (!job) st(tx, "INSERT INTO memory_revoke_jobs(revoke_id,kind,root,root_lsn,started_lsn,phase,cursor,state) VALUES(?,'inherit',?,?,?,'mark','','active')").run(R, JSON.stringify({ kind: "inherit", cause: "inherit" }), child.lsn, now);
+      if (!job) st(tx, "INSERT INTO memory_revoke_jobs(revoke_id,kind,root,root_lsn,started_lsn,phase,cursor,state) VALUES(?,'inherit',?,?,?,'mark','','active')").run(R, JSON.stringify({ kind: "inherit", cause: "inherit" }), child.lsn, startedLsn());
       else if (job.state === "done" || job.phase === "hold" || job.phase === "tidy") st(tx, "UPDATE memory_revoke_jobs SET phase='mark',cursor='',state='active' WHERE revoke_id=?").run(R);
       mark(R);
     } else if (!job || job.state === "done") continue; // pending rows of a finished revoke are already gone: nothing holds the parent
@@ -381,5 +445,45 @@ export function inheritMarks(tx: DatabaseSync, child: InheritChild, refs: readon
   wakeIfStarted();
 }
 
-// receipts turned 'revoked' by any path are committed as receipt roots by the marker (receipt-outputs.ts, the v10 flip trigger)
-setFlipCommit((db, bundleId) => { commitRevoke(db, { kind: "receipt", bundleId, cause: "receipt-revoked" }, { inline: false }); });
+/** Rows opening and activating a bulk writes (its job and audience rows, the generation). */
+const BULK_OPEN_COST = 8;
+/** Rows committing a receipt root writes before its hold: the commit slot, the job's root, the frontier node, pending and seed rows, the
+ * generation and the flip row's delete. */
+const RECEIPT_ROOT_COST = 16;
+/** The rows committing one receipt root writes (revoke-marker.ts write budget, M3), never fewer: RECEIPT_ROOT_COST, one consumer edge per
+ * distinct item it hangs on (receiptHoldPlan), and one intern row per thread holdRevokedReceipt takes a number for that has none yet (the
+ * receipt's own thread, and each item's carry thread). */
+export function receiptCommitCost(db: DatabaseSync, bundleId: string): number {
+  const start = receiptStart(db, bundleId);
+  const plan = start ? receiptHoldPlan(db, bundleId, start.threadId) : null;
+  if (!start || !plan) return RECEIPT_ROOT_COST;
+  const threads = new Set<string>([start.threadId]);
+  for (const item of plan) threads.add(objectCarryThread(item));
+  let interns = 0;
+  for (const thread of threads) if (threadNo(db, thread) === null) interns++;
+  return RECEIPT_ROOT_COST + (threads.size - 1) + interns;
+}
+/** The cost of the oldest queued flip with its bulk's opening (0: none waits): revoke-budget.ts admits a slice only with room for it. */
+function headFlipCommitCost(db: DatabaseSync): number {
+  // the same query as drainReceiptFlips (receipt-outputs.ts), so the head is the flip a drain commits first
+  const head = st(db, "SELECT thread_no,first_lsn,bundle_id FROM memory_receipt_flips LIMIT 1").get();
+  return head ? receiptCommitCost(db, String(head.bundle_id)) + BULK_OPEN_COST : 0;
+}
+/** One drain of the receipt flips (1.0.3 revoke storm, M5): ONE NEW audience bulk revoke for the flips it drains, every flip a root of it
+ * with its own window and seeds (commitRevoke({ into }): each root keeps its own since and its own cap slot, never a minimum of the others),
+ * activated with all of its roots in this transaction, before any marking starts. Nothing is admitted into a bulk that is already marking: a
+ * later drain opens its own. A receipt flipped again while a drain's bulk walks is a root of a later bulk, whose marks are its own (dedupe
+ * is within one revoke id only, revoke-marker.ts). The policy watermark is not this drain's: the action that flipped the receipts wrote it
+ * at its own scope (revocation.ts revokeAllDisclosures), and the consumer edges are written per receipt as before (holdRevokedReceipt).
+ * Returns how many flips it committed. */
+export function drainFlipsIntoBulk(db: DatabaseSync, limit: number, fits: (cost: number, first: boolean) => boolean = () => true): number {
+  let bulk = 0;
+  const done = drainReceiptFlips(db, bundleId => {
+    if (!bulk) bulk = openBulkRevoke(db, "receipt-revoked", true);
+    commitRevoke(db, { kind: "receipt", bundleId, cause: "receipt-revoked" }, { inline: false, ...(bulk > 0 ? { into: bulk } : {}) });
+  }, limit, (bundleId, first) => fits(receiptCommitCost(db, bundleId) + (first ? BULK_OPEN_COST : 0), first));
+  if (bulk > 0) activateBulkRevoke(db, bulk);
+  return done;
+}
+// receipts turned 'revoked' by any path are committed as roots of one audience bulk per drain by the marker (receipt-outputs.ts, the v10 flip trigger)
+setFlipDrain(drainFlipsIntoBulk, headFlipCommitCost);

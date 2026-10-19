@@ -63,6 +63,22 @@ describe("GrokDriver turns (fake fetch)", () => {
     await instance?.dispose();
   });
 
+  it("a redirect from the Grok endpoint into Flux is never followed: the turn fails and Flux receives nothing", async () => {
+    const hosts: string[] = [];
+    globalThis.fetch = (async (input: string | URL | Request) => {
+      hosts.push(new URL(String(input)).host);
+      if (hosts.at(-1)!.endsWith("fluxrouter.ai")) throw new Error("the conversation must never reach Flux from a redirect");
+      return new Response(null, { status: 307, headers: { location: "https://api.fluxrouter.ai/v1/chat/completions" } });
+    }) as typeof fetch;
+    await create();
+    await instance.adapter.sendTurn({ threadId: "t-redirect", text: "a private sentence" });
+    const done = await recorder.until((e) => e.type === "turn.completed");
+    expect(done).toMatchObject({ type: "turn.completed" });
+    expect(JSON.stringify(recorder.events)).toMatch(/different address/);
+    expect(hosts.length).toBeGreaterThan(0);
+    expect(hosts.every(h => h === "fake.xai.invalid")).toBe(true);
+  });
+
   it("normalizes a full turn into the canonical event sequence", async () => {
     script = [];
     await create();

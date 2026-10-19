@@ -11,12 +11,13 @@
 // Size: UPGFAST_THREADS x UPGFAST_PER_THREAD messages of UPGFAST_PAYLOAD bytes (defaults make a file of a few MB; the qualification run
 // uses several GB). The timings are printed as one JSON line, UPGFAST_RESULT.
 import { spawn } from "node:child_process";
-import { readFileSync, mkdtempSync, rmSync, statSync } from "node:fs";
+import { readFileSync, mkdtempSync, statSync } from "node:fs";
 import { createServer } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { expect, it } from "vitest";
 import { buildSyntheticV6 } from "./testing/upgrade-fast-fixture.ts";
+import { removeTempDirSync } from "../testing/cleanup.ts";
 
 const env = (name: string, fallback: number) => Number(process.env[name] ?? fallback);
 const freePort = () => new Promise<number>(resolve => { const s = createServer(); s.listen(0, "127.0.0.1", () => { const port = (s.address() as { port: number }).port; s.close(() => resolve(port)); }); });
@@ -149,5 +150,5 @@ it("a heavy v6 history is usable within the budget, with a health answer from th
     expect(secondAnswer!.memoryIntegrity.pending, "nothing is left to do on the second start").toBe(false);
     expect(secondOpenMs!, "the second start opens the database in seconds, reading no shaped column in full").toBeLessThan(5_000);
     if (lastPending) expect(lastPending.progress).toMatchObject({ stage: "background" });
-  } finally { rmSync(dir, { recursive: true, force: true }); }
+  } finally { removeTempDirSync(dir); }
 });

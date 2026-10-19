@@ -14,6 +14,7 @@ import { outputRootsFor, recordOutputRoots, replayExclusions } from "./replay-li
 import { downgradeMemorySchema, migrateMemorySchema, MEMORY_SCHEMA_VERSION } from "./schema.ts";
 import { fixtureReply, fixtureThread, longThreadsV5 } from "./testing/root-set-fixture.ts";
 import { LineageAllowance } from "./lineage-allowance.ts";
+import { removeTempDirSync } from "../testing/cleanup.ts";
 
 const enabled = Boolean(process.env.RS_BENCH);
 const THREADS = Number(process.env.RS_THREADS ?? 20);
@@ -33,7 +34,7 @@ function lineageMb(db: DatabaseSync): number | null {
 
 it.skipIf(!enabled)("root-set storage benchmark", async () => {
   for (const replies of SIZES) {
-    closeDatabase(); rmSync(DATA_DIR, { recursive: true, force: true }); mkdirSync(DATA_DIR, { recursive: true });
+    closeDatabase(); removeTempDirSync(DATA_DIR); mkdirSync(DATA_DIR, { recursive: true });
     const dir = mkdtempSync(join(tmpdir(), "murage-rsbench-"));
     try {
       const fixture = await longThreadsV5(join(dir, "v5.db"), THREADS, replies);
@@ -84,6 +85,6 @@ it.skipIf(!enabled)("root-set storage benchmark", async () => {
         } finally { raw.close(); }
       }
       console.log(`BENCH ${JSON.stringify(out)}`);
-    } finally { closeDatabase(); rmSync(dir, { recursive: true, force: true }); }
+    } finally { closeDatabase(); removeTempDirSync(dir); }
   }
 }, 4 * 3600_000);

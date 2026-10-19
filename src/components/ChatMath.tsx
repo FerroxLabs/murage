@@ -11,6 +11,7 @@
 // before. No DOMPurify, no KaTeX: the source shows instead.
 import { useEffect, useState } from "react";
 import type { MathSpan } from "@/lib/chat-math";
+import { trustedHtml, useSanitizerReady } from "@/lib/trusted-html";
 
 interface KatexApi {
   renderToString(tex: string, options: Record<string, unknown>): string;
@@ -76,6 +77,7 @@ function draw({ katex, purify }: MathRenderer, span: MathSpan): string | null {
 }
 
 export function ChatMath({ span }: { span: MathSpan }) {
+  useSanitizerReady(); // markup made before the sanitizer loaded is empty: draw again when it arrives
   const [html, setHtml] = useState<string | null>(() => (renderer ? draw(renderer, span) : null));
   useEffect(() => {
     let alive = true;
@@ -91,6 +93,6 @@ export function ChatMath({ span }: { span: MathSpan }) {
       : <code className="rounded bg-inset px-1 py-px text-[13px] [overflow-wrap:anywhere]">{span.raw}</code>;
   }
   return span.display
-    ? <span className="chat-math-display my-1 block max-w-full overflow-x-auto overflow-y-hidden" dangerouslySetInnerHTML={{ __html: html }} />
-    : <span className="chat-math-inline" dangerouslySetInnerHTML={{ __html: html }} />;
+    ? <span className="chat-math-display my-1 block max-w-full overflow-x-auto overflow-y-hidden" dangerouslySetInnerHTML={{ __html: trustedHtml(html) }} />
+    : <span className="chat-math-inline" dangerouslySetInnerHTML={{ __html: trustedHtml(html) }} />;
 }

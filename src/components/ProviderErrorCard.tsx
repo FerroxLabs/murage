@@ -5,6 +5,7 @@ import { t } from "@/lib/i18n";
 import { providerErrorCategory, providerErrorTitle } from "@/lib/error-preview";
 import { DiagnosticDetails,type IncidentMessageSelection } from "./DiagnosticDetails";
 import { parseRuntimeErrorDiagnostic } from "../../shared/error-diagnostic";
+import { opensPurchasePages } from "@/lib/native-shell";
 
 /** Structured provider errors use reviewed copy, never backend HTML/JSON or
  * a URL supplied in an error message. Retry remains an explicit user action. */
@@ -38,7 +39,7 @@ export function ProviderErrorCard({ info, details, diagnostic, turnId, incident,
         <p className="mt-1 text-[13px] leading-relaxed text-ink-secondary">{t(`providerError.${category}.resolution`)}</p>
       </div>
       <div className="mt-4 flex flex-wrap items-center gap-2">
-        {presentation.billingUrl && <a href={presentation.billingUrl} target="_blank" rel="noopener noreferrer"
+        {presentation.billingUrl && opensPurchasePages() && <a href={presentation.billingUrl} target="_blank" rel="noopener noreferrer"
           className={"inline-flex min-h-11 items-center justify-center gap-1.5 rounded-lg bg-accent px-3.5 py-2 text-[13px] font-medium text-accent-ink " + focus}>
           {t("providerError.addCredits")} <ArrowUpRight size={15} aria-hidden="true" />
         </a>}

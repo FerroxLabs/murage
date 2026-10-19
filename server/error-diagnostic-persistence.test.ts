@@ -1,10 +1,11 @@
 import { beforeEach, expect, it } from "vitest";
-import { rmSync } from "node:fs";
+
 import { join } from "node:path";
 import { DATA_DIR } from "./config.ts";
 import { Store, type Message } from "./store.ts";
 import * as mdb from "./message-db.ts";
 import type { RuntimeErrorDiagnostic } from "../shared/error-diagnostic.ts";
+import { removeTempDirSync } from "./testing/cleanup.ts";
 
 const selection = () => ({ instanceId: "fixture", model: "fixture-model" });
 const stored = (threadId: string) => mdb.readThread(threadId, join(DATA_DIR, `messages-${threadId}.json`));
@@ -16,7 +17,7 @@ const diagnostic: RuntimeErrorDiagnostic = {
   rpcId: 4, method: "session/prompt", rpcCode: -32603, httpStatus: 500,
   terminalKind: "api", observedKind: "idle_timeout",
 };
-beforeEach(() => rmSync(DATA_DIR, { recursive: true, force: true }));
+beforeEach(() => removeTempDirSync(DATA_DIR));
 function fixture() {
   const store = new Store(selection);
   const bot = store.createBot({}, { seedMessages: false });

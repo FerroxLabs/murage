@@ -338,4 +338,16 @@ posixOnly("deny by default on a running server", () => {
     // The desktop itself is never refused.
     expect((await call("GET", "/api/decisions", desktop)).status).toBe(200);
   });
+
+  // 1.0.3 R1.10 (L7): the Storage attachment list answers the desktop only.
+  it("the Storage attachment list refuses the phone, the door, a bot and nobody; the desktop gets the list", async () => {
+    const route = "/api/storage/attachments";
+    expect(await call("GET", route, { "x-murage-companion": "1", "x-murage-companion-token": COMPANION_TOKEN })).toEqual({ status: 403, body: { error: DESKTOP_ONLY_SENTENCE } });
+    expect(await call("GET", route, { "x-murage-companion": "1", ...door })).toEqual({ status: 404, body: { error: "no such route" } });
+    expect(await call("GET", route, { ...bare, authorization: `Bearer ${botToken}` })).toEqual({ status: 403, body: { error: DESKTOP_ONLY_SENTENCE } });
+    expect(await call("GET", route)).toEqual({ status: 404, body: { error: "no such route" } });
+    const mine = await call("GET", route, desktop);
+    expect(mine.status).toBe(200);
+    expect((mine.body as { state: string }).state).toBe("ok");
+  });
 });

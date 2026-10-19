@@ -1,15 +1,16 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // rc13 round 2 (a): while the history upgrade runs, the claim index reads at most one range per turn, and the range follows time (PagedScan's rule).
-import { mkdirSync, rmSync } from "node:fs";
+import { mkdirSync } from "node:fs";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { DATA_DIR } from "../config.ts";
 import { closeDatabase, database } from "../database.ts";
 import { setMemoryMode } from "./repository.ts";
 import * as jobs from "./jobs.ts";
 import { CLAIM_SCAN_MIN_ROWS, memoryClaimIndex, SCAN_CHUNK } from "./claim-index.ts";
+import { removeTempDirSync } from "../testing/cleanup.ts";
 
 const NOW = 1_000_000;
-beforeEach(() => { closeDatabase(); rmSync(DATA_DIR, { recursive: true, force: true }); mkdirSync(DATA_DIR, { recursive: true }); setMemoryMode("capture"); jobs.resetMemoryClaimCursor(); database().exec("PRAGMA synchronous=OFF"); memoryClaimIndex.invalidate(); });
+beforeEach(() => { closeDatabase(); removeTempDirSync(DATA_DIR); mkdirSync(DATA_DIR, { recursive: true }); setMemoryMode("capture"); jobs.resetMemoryClaimCursor(); database().exec("PRAGMA synchronous=OFF"); memoryClaimIndex.invalidate(); });
 afterEach(() => { vi.restoreAllMocks(); memoryClaimIndex.setUpgradeRunning(null); });
 
 function seed(count: number, scopes: number) {
@@ -25,13 +26,14 @@ function seed(count: number, scopes: number) {
   }
   db.exec("COMMIT");
 }
-/** The ranges the index reads while `work` runs. */
+/** The reads of the table the index makes while `work` runs: rowid ranges of new rows and pages of the open walk. */
 function walksDuring<T>(work: () => T): { result: T; walks: number } {
-  const index = memoryClaimIndex as unknown as { walk: (...args: unknown[]) => void };
-  const real = index.walk.bind(memoryClaimIndex);
+  const index = memoryClaimIndex as unknown as { walk: (...args: unknown[]) => unknown; page: (...args: unknown[]) => unknown };
+  const walk = index.walk.bind(memoryClaimIndex), page = index.page.bind(memoryClaimIndex);
   let walks = 0;
-  index.walk = (...args: unknown[]) => { walks++; return real(...args); };
-  try { return { result: work(), walks }; } finally { delete (index as { walk?: unknown }).walk; }
+  index.walk = (...args: unknown[]) => { walks++; return walk(...args); };
+  index.page = (...args: unknown[]) => { walks++; return page(...args); };
+  try { return { result: work(), walks }; } finally { delete (index as { walk?: unknown }).walk; delete (index as { page?: unknown }).page; }
 }
 /** Let the background steps finish (paced by timers while the upgrade runs). */
 async function settled() { for (let n = 0; n < 2_000 && memoryClaimIndex.warming; n++) await new Promise(resolve => setTimeout(resolve, 5)); }
@@ -47,6 +49,30 @@ describe("claim index under the history upgrade (rc13 round 2)", () => {
     expect(memoryClaimIndex.warming).toBe(false);
     // six claimed, the rest filed: nothing was skipped by the smaller ranges
     expect(memoryClaimIndex.size().ready + memoryClaimIndex.size().waiting).toBeGreaterThanOrEqual(3 * SCAN_CHUNK + 100 - 6);
+  });
+
+  it("a job due after the build is claimed within a few turns while a job arrives every turn under the upgrade (Astra build3 H2)", async () => {
+    seed(20, 4);
+    const db = database();
+    db.exec(`UPDATE memory_jobs SET status='deferred', retry_at=${NOW + 5_000} WHERE id='job-000003'`);
+    expect(jobs.claimMemoryJob("w", NOW)).not.toBeNull();
+    await settled();
+    while (jobs.claimMemoryJob("w", NOW)) { /* the backlog the build filed, so a turn chooses between the arrival and the due job */ }
+    memoryClaimIndex.setUpgradeRunning(() => true);
+    const claimed: string[] = [];
+    // one new pending job before every claim: its rowid range would take the turn's one read every time
+    for (let n = 0; n < 12 && !claimed.includes("job-000003"); n++) {
+      const i = 1_000 + n;
+      db.prepare("INSERT INTO memory_sources VALUES(?,?,?,?,?,1,?,'text','owner','recorded',NULL,'active')").run(`src-${i}`, "scope-000", "thread-x", `m${i}`, null, `h${i}`);
+      db.prepare("INSERT INTO memory_source_versions VALUES(?,1,?,?,?)").run(`src-${i}`, `h${i}`, JSON.stringify({ text: `job ${i}` }), 1);
+      db.prepare("INSERT INTO memory_jobs(id,source_id,source_revision,stage,stage_version,status,retry_at,attempts,lease_until,policy_revision,deletion_epoch) VALUES(?,?,1,'capture','1','pending',0,0,0,0,0)").run(`job-${String(i).padStart(6, "0")}`, `src-${i}`);
+      const { result, walks } = walksDuring(() => jobs.claimMemoryJob("w", NOW + 5_000 + n));
+      expect(walks).toBeLessThanOrEqual(1);
+      if (result) claimed.push(result.id);
+    }
+    // the frontier had its turn at the read: the job due at NOW + 5,000 was filed and claimed, with arrivals every turn
+    expect(claimed).toContain("job-000003");
+    expect(claimed.indexOf("job-000003")).toBeLessThanOrEqual(3);
   });
 
   it("without the upgrade a claim reads as before (more than one range when a large append waits)", async () => {

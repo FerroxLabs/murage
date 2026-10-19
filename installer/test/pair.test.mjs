@@ -7,7 +7,8 @@ import assert from "node:assert/strict";
 import { createServer } from "node:http";
 import { test } from "node:test";
 
-import { closePairing, controlPort, expiryText, openPairing, pairingLink, watchPairing } from "../lib/pair.mjs";
+import { controlTokenFromDoorNonce } from "../lib/door-identity.mjs";
+import { CONTROL_TOKEN_HEADER, closePairing, controlPort, expiryText, openPairing, pairingLink, watchPairing } from "../lib/pair.mjs";
 
 const TOKEN = `murage_pair_${"A".repeat(43)}`;
 const DOOR = { scheme: "https", host: "box.tail1234.ts.net", port: 443 };
@@ -17,7 +18,7 @@ const DOOR = { scheme: "https", host: "box.tail1234.ts.net", port: 443 };
 async function fakeControl(handler) {
   const seen = [];
   const server = createServer((req, res) => {
-    seen.push({ method: req.method, url: req.url, origin: req.headers.origin, host: req.headers.host });
+    seen.push({ method: req.method, url: req.url, origin: req.headers.origin, host: req.headers.host, controlToken: req.headers[CONTROL_TOKEN_HEADER] });
     const [status, body] = handler(req);
     res.writeHead(status, { "content-type": "application/json" });
     res.end(JSON.stringify(body));
@@ -61,6 +62,23 @@ test("opens the window with a loopback POST that carries no Origin", async () =>
     // must send none at all.
     assert.equal(control.seen[0].origin, undefined);
     assert.equal(control.seen[0].host, `127.0.0.1:${control.port}`);
+  } finally { await control.close(); }
+});
+
+test("carries the control token the headless sidecar derives from the door identity", async () => {
+  // The same vector is pinned in companion/test/control.test.ts, so the two
+  // derivations cannot drift apart.
+  const controlToken = controlTokenFromDoorNonce("ab".repeat(32));
+  assert.equal(controlToken, "fIS-z4SGqT2Wu9xViVgNn9RPkx4_GdkHk2vocb06_kg");
+  assert.throws(() => controlTokenFromDoorNonce("not a nonce"));
+  const expiresAt = Date.now() + 600_000;
+  const control = await fakeControl(() => [201, { browser: DOOR, devices: [], pairing: { code: "123456", token: TOKEN, expiresAt }, code: "123456", token: TOKEN }]);
+  try {
+    const opened = await openPairing({ port: { port: control.port, token: controlToken } });
+    assert.equal(opened.ok, true);
+    assert.equal(control.seen[0].controlToken, controlToken);
+    await closePairing({ port: { port: control.port, token: controlToken }, token: TOKEN });
+    assert.equal(control.seen[1].controlToken, controlToken);
   } finally { await control.close(); }
 });
 

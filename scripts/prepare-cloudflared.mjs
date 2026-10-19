@@ -43,6 +43,14 @@ export const CLOUDFLARED_ASSETS = Object.freeze({
     binarySha256: "fcfb02b575a52ca1af2e3267af4e1517bcdeb30ac48c834c69abaed3c0576ad2",
     archive: false,
   }),
+  // Cloud homes on the build host CAX (arm64). Release asset digest equals both the
+  // GitHub asset `digest` and the sha256 in the 2026.8.2 release notes.
+  "linux-arm64": Object.freeze({
+    name: "cloudflared-linux-arm64",
+    sha256: "7747d94570fb390cf47dcb4f9555c193c6355cda9793f0d878d9049e5d6a7790",
+    binarySha256: "7747d94570fb390cf47dcb4f9555c193c6355cda9793f0d878d9049e5d6a7790",
+    archive: false,
+  }),
   "win32-x64": Object.freeze({
     name: "cloudflared-windows-amd64.exe",
     sha256: "c29eee2b121f5436a642eed69fd9767da7e7b8c510fa50aaa130337f931357b5",
@@ -119,6 +127,17 @@ export function executableTarget(value) {
     bytes.readUInt16LE(18) === 0x3e
   ) {
     return "linux-x64";
+  }
+
+  // ELF64, little-endian, AArch64 (e_machine 0xb7).
+  if (
+    bytes.length >= 20 &&
+    bytes.subarray(0, 4).equals(Buffer.from([0x7f, 0x45, 0x4c, 0x46])) &&
+    bytes[4] === 2 &&
+    bytes[5] === 1 &&
+    bytes.readUInt16LE(18) === 0xb7
+  ) {
+    return "linux-arm64";
   }
 
   // PE32+ AMD64. e_lfanew points from the DOS header to PE\0\0.

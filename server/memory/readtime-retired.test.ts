@@ -4,7 +4,7 @@
 // Write-time privacy, 1.0.2 S6: the read-time lineage judge is retired on a file where lineage is written (read-time-retired.ts). Every entry
 // point it had answers from the write-time lookups, and none reads a root-set table: the tables are handed back by the idle reclaim, so they are
 // dropped from the file in these tests before the readers are asked.
-import { mkdirSync, rmSync } from "node:fs";
+import { mkdirSync } from "node:fs";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { DATA_DIR } from "../config.ts";
 import { closeDatabase, database } from "../database.ts";
@@ -21,10 +21,11 @@ import { readTimeRetired } from "./read-time-retired.ts";
 import { capturedMessageVerdict, lineageTriggersInstalled, messageMadeWithMemory, outputRootsBad, outputRootsFor, replayExclusions, sessionLineageBad, sessionOutputRoots, setTurnLineageNodesForTest, threadHoldsMemoryLines } from "./replay-lineage.ts";
 import { commitRevoke } from "./revoke-commit.ts";
 import { ROOT_SET_RECLAIM_TABLES, runReclaimStep } from "./root-set-reclaim.ts";
+import { removeTempDirSync } from "../testing/cleanup.ts";
 
 const msg = (id: string, extra: Partial<Message> = {}): Message => ({ id, role: "bot", kind: "text", text: id, at: Date.now(), ...extra });
 const owner = (id: string) => msg(id, { role: "user" });
-function reset(): void { closeMessageDb(); closeDatabase(); rmSync(DATA_DIR, { recursive: true, force: true }); mkdirSync(DATA_DIR, { recursive: true }); }
+function reset(): void { closeMessageDb(); closeDatabase(); removeTempDirSync(DATA_DIR); mkdirSync(DATA_DIR, { recursive: true }); }
 const allowance = () => LineageAllowance.tool(Number.MAX_SAFE_INTEGER);
 
 /** The root sets handed back, as the idle reclaim does it. */

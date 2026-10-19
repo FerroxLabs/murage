@@ -46,6 +46,7 @@ files:
   - shared/backup-restic-pin.mjs
   - shared/update-candidate.mjs
   - shared/backup-capture-failure.mjs
+  - shared/setup-backup-record.mjs
   - shared/upgrade-wait.mjs
   - shared/upgrade-contract.mjs
   - shared/boot-proof.mjs
@@ -55,6 +56,7 @@ files:
   - shared/mcp-secret-url.mjs
   - shared/remote-mcp-url.mjs
   - shared/guarded-http.mjs
+  - shared/flux-desktop-signin-default.mjs
   - installer/lib/systemd.mjs
   - installer/lib/private-files.mjs
   - installer/lib/service-account.mjs
@@ -102,6 +104,10 @@ extraResources:
     to: licenses/silero-vad
   - from: third_party/instrument-serif
     to: licenses/instrument-serif
+  # xterm.js (MIT, @xterm/xterm, bundled in the renderer): the Cloud-home engine
+  # sign-in terminal. Its licence text travels with the distribution.
+  - from: third_party/xterm
+    to: licenses/xterm
   # WhatsApp channel: Baileys (MIT), its libsignal dependency (GPL-3.0, full
   # text must travel), and the MIT Hermes Agent / OpenClaw code it adapts.
   - from: dist-server/licenses/whatsapp
@@ -203,6 +209,13 @@ mac:
       to: engine-exclusion.node
     - from: dist-native/gepa/darwin-${arch}
       to: gepa-worker
+    # The local semantic memory model, verified against the pinned manifest by
+    # scripts/stage-memory-model.mjs. Both arches bundle the same files; Intel
+    # runs them on ONNX Runtime WebAssembly (server/memory/embedding-runtime.ts),
+    # whose files ship with the server resources below (memory/ort-wasm, outside
+    # the ASAR archive, so they load as plain files).
+    - from: dist-native/memory-model/darwin-${arch}
+      to: memory-model
     - from: dist-native/backup-age
       to: backup-tools
       filter:
@@ -269,6 +282,8 @@ win:
         - "!gepa-worker.exe"
     - from: dist-native/gepa/win32-x64/gepa-worker.exe
       to: gepa-worker/gepa-worker.exe
+    - from: dist-native/memory-model/win32-x64
+      to: memory-model
     - from: dist-native/recovery/win32-x64/murage-recovery.exe
       to: murage-recovery.exe
     # Individual copies bypass the directory signing transformer. afterPack
@@ -367,6 +382,8 @@ linux:
   extraResources:
     - from: dist-native/gepa/linux-x64
       to: gepa-worker
+    - from: dist-native/memory-model/linux-x64
+      to: memory-model
     - from: dist-native/cua-linux-x64
       to: cua-linux-x64
     - from: dist-native/backup-age-linux

@@ -1,7 +1,7 @@
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { expect,it } from "vitest";
-import { BackupSettingsView, RecoveryKeyCloudNotice, type ScheduleController } from "./BackupSettings";
+import { BackupSettingsView, LocalRestore, RecoveryKeyCloudNotice, type ScheduleController } from "./BackupSettings";
 import { cloudKeyMoved, cloudKeyNotice } from "./backups-section-ui";
 it("distinguishes encrypted app data and projected recovery without claiming native coverage",()=>{
   const html=renderToStaticMarkup(createElement(BackupSettingsView,{supported:true,busy:false,onRestart:()=>{}}));
@@ -31,4 +31,16 @@ it("says where the key went and that the cloud may still hold the old file",()=>
   expect(cloudKeyMoved({moved:true,provider:"OneDrive",label:"k.txt",folder:"sam",oldRemoved:false})).toContain("The old file in OneDrive could not be removed: delete it there yourself.");
   expect(()=>cloudKeyMoved({refused:"BACKUP_BUSY"})).toThrow("BACKUP_BUSY");
   expect(()=>cloudKeyMoved({moved:true,provider:"OneDrive"})).toThrow();
+});
+
+// Settings L5: a fresh install, or one replacing a lost computer, has no
+// receipt here and is exactly who needs to restore. The way in never hides.
+it("always offers Restore from an existing backup, with or without a checked one",()=>{
+  for(const lastChecked of [undefined,{verifiedAt:0}]){
+    const html=renderToStaticMarkup(createElement(LocalRestore,{lastChecked,supported:true,busy:false,onRestart:()=>{}}));
+    expect(html).toContain("Restore from an existing backup");
+    expect(html).not.toMatch(/—|\bsafe|\bunsafe|\bsafety/i);
+  }
+  const fresh=renderToStaticMarkup(createElement(LocalRestore,{supported:true,busy:false,onRestart:()=>{}}));
+  expect(fresh).not.toContain('disabled=""');
 });

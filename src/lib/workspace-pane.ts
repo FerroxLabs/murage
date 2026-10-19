@@ -296,6 +296,7 @@ export async function workspaceApi(path: string, init?: RequestInit, fetchImpl: 
   const response = await fetchImpl(path, {
     ...init,
     headers: { "content-type": "application/json", "x-murage-surface": "desktop", ...desktopSurfaceHeaders(), ...init?.headers },
+    redirect: "error",
   });
   const body = (await response.json().catch(() => ({}))) as { error?: unknown; code?: unknown; currentRevision?: unknown };
   if (response.ok) return body;

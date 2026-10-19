@@ -1,0 +1,9 @@
+murage-seccomp.bpf sha256, Ubuntu 24.04, libseccomp 2.5.5-1ubuntu3.1, cc -O2 -Wall -Wextra -Werror
+x86_64   93f6dc1957bfa072862f220644164b8324732fa9e22761b4282cf4f89eacd366
+aarch64  b90881d11a3e8b3a810afbaf2da3330dab92aa2419376d51ff56737fa45a8d1b
+Both are byte-identical (cmp) to the BPF built from the pre-tidy source (9064b8b2a) on the same arch:
+the tidy-up (mount_setattr and quotactl_fd mandatory, nr<0 rejected, umount documented absent) changes
+no emitted rule. Probe qualify/seccomp-probe.py under bwrap --seccomp: 46/46 PASS on x86_64 (build host
+build-host) and on aarch64 (mcq-arm2): 35 denies, 7 clone NEW* flags, all-bits clone, clone3 ENOSYS,
+fork+exec and personality allowed. The probe must only run inside the filter: unfiltered it executes the
+denied calls for real (it hung a shared box once).

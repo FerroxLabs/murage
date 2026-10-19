@@ -4,7 +4,7 @@
 // Fix round for the RC1 chat diagnosis (perfdiag/RC1-CHAT.md row 3b) and the two upgui items that went with it: the message walker keeps to its
 // slice's time and carries its cursor across slices, every background job slice is a named holder for the stall line, the status reading says
 // whether earlier memory is being checked in the background, and an output index found broken is rewritten in slices, never in one transaction.
-import { mkdirSync, rmSync } from "node:fs";
+import { mkdirSync } from "node:fs";
 import type { DatabaseSync } from "node:sqlite";
 import { afterEach, beforeEach, expect, it } from "vitest";
 import { DATA_DIR } from "../config.ts";
@@ -20,8 +20,9 @@ import { setMemoryCheckingSource } from "./integrity-flags.ts";
 import { rootSetProofsPending } from "./replay-lineage.ts";
 import { outputIndexDiffers, rebuildOutputIndexSlice } from "./schema.ts";
 import { CONTRACT_KEYS, UPGRADE_CONTRACT_SOURCE, buildUpgradeState, parseUpgradeState, sampleState, unknownUpgradeState } from "../../shared/upgrade-contract.mjs";
+import { removeTempDirSync } from "../testing/cleanup.ts";
 
-const fresh = () => { closeDatabase(); rmSync(DATA_DIR, { recursive: true, force: true }); mkdirSync(DATA_DIR, { recursive: true }); };
+const fresh = () => { closeDatabase(); removeTempDirSync(DATA_DIR); mkdirSync(DATA_DIR, { recursive: true }); };
 beforeEach(fresh);
 afterEach(() => { setMemoryCheckingSource(() => rootSetProofsPending()); });
 

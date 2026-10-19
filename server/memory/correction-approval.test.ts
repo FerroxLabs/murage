@@ -4,7 +4,7 @@
 // is superseded, the replacement becomes the one current fact, and a pinned
 // target needs an explicit transfer/unpin choice. Stale, forgotten, archived,
 // ambiguous and repeated cases fail without partial mutation.
-import { mkdirSync, rmSync } from "node:fs";
+import { mkdirSync } from "node:fs";
 import { beforeEach, describe, expect, it } from "vitest";
 import { DATA_DIR } from "../config.ts";
 import { closeDatabase, database } from "../database.ts";
@@ -22,8 +22,9 @@ import { archiveMemoryRecord } from "./retention.ts";
 import { buildMemoryBundle } from "./bundle.ts";
 import { CURRENT_MEMORY, HISTORICAL_MEMORY } from "./eligibility.ts";
 import { LineageAllowance } from "./lineage-allowance.ts";
+import { removeTempDirSync } from "../testing/cleanup.ts";
 
-beforeEach(() => { closeDatabase(); rmSync(DATA_DIR, { recursive: true, force: true }); mkdirSync(DATA_DIR, { recursive: true }); });
+beforeEach(() => { closeDatabase(); removeTempDirSync(DATA_DIR); mkdirSync(DATA_DIR, { recursive: true }); });
 
 function fixture() {
   const roster = { bots: [{ id: "bot", threadId: "thread" }, { id: "other", threadId: "private" }], groups: [] } as unknown as MemoryRoster;

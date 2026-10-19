@@ -18,13 +18,15 @@
 import { spawn, type ChildProcess } from "node:child_process";
 import { chmodSync, mkdirSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
-import { fileURLToPath } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { makeTestHome, removeTempDir, waitForExit } from "./testing/cleanup.ts";
 import { assertSafeToWipe } from "./testing/safe-wipe.mjs";
 import { freePortBlock } from "./testing/ports.ts";
 
 const SERVER_DIR = dirname(fileURLToPath(import.meta.url));
+// The server is a child process, so its load probe is answered from a preload: see the file for why.
+const IDLE_LOAD_PRELOAD = pathToFileURL(join(SERVER_DIR, "testing", "idle-load-preload.mjs")).href;
 const FAKE_CLI = join(SERVER_DIR, "testing", "fake-acp-cli.ts");
 /** A shell profile (an Auto "sensitive" stop) and a personal folder. */
 const PROTECTED_READ = "cat ~/.zshrc ~/Documents/notes.txt";
@@ -129,7 +131,7 @@ describe.skipIf(process.platform === "win32")("Full access", () => {
         },
       }),
     );
-    child = spawn(process.execPath, [join(SERVER_DIR, "index.ts")], {
+    child = spawn(process.execPath, ["--import", IDLE_LOAD_PRELOAD, join(SERVER_DIR, "index.ts")], {
       cwd: join(SERVER_DIR, ".."),
       env: {
         ...(process.env.PATH ? { PATH: process.env.PATH } : {}),

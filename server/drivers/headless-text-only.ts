@@ -16,11 +16,12 @@ import { join } from "node:path";
 import { reportMemoryUsage } from "../memory/extract.ts";
 import { augmentedPath } from "../env-path.ts";
 import { awaitCliTreeStopped, spawnCli } from "../procs.ts";
+import { cloudTurnBot } from "../cloud-home/turn-process.ts";
 import { registerChild } from "../memory/pip-reaper.ts";
 import {
   DEFAULT_ALLOWED_ROOT_NEW, FIRST_BYTE_MS, MAX_OUTPUT_BYTES, RUN_BOUND_MS, assertSupportedSchema, bindReflectionRoute, buildIsolationReport, buildReflectionEnv, createTempRoot,
-  gateRun, isReportedOverLimit, listFiles, newFiles, parseHeadlessMessages, preflightRoute, removeTempRoot,
-  type BootEpoch, type JsonSchema, type MissHistory, type PipEngine, type PreflightOptions, type TempRoot, type TextOnlyTurnInput,
+  gateRun, isReportedOverLimit, listFiles, newFiles, parseHeadlessMessages, preflightRoute, removeTempRoot, runAdmissionFence,
+  type AdmissionFenceAnswer, type BootEpoch, type JsonSchema, type MissHistory, type PipEngine, type PreflightOptions, type TempRoot, type TextOnlyTurnInput,
   type TextOnlyTurnResult, type TransportHooks, type Verdict,
 } from "../memory/pip-transport.ts";
 
@@ -39,8 +40,10 @@ export interface HeadlessRunOptions {
   /** Which engine answers: decides the result fallback the gate may use (A.1). */
   engine: PipEngine;
   maxOutputBytes?: number; maxOutputTokens?: number; firstByteMs?: number; deadlineAt?: number;
-  context: { runId: string; family: string; attempt: number };
+  context: { runId: string; family: string; attempt: number; botId?: string };
   bootEpoch?: BootEpoch; history?: MissHistory; hooks?: TransportHooks; binaryIdentity?: string | null;
+  /** The admission fence (TextOnlyTurnInput.transport.fence): called after the intent is written, immediately before the spawn. */
+  fence?: () => AdmissionFenceAnswer;
   /** Written to stdin then closed (Claude); otherwise stdin is closed at once. */
   stdinText?: string;
   cleanup?: () => void; allowedHomeNew?: RegExp[]; allowedRootNew?: RegExp[];
@@ -84,10 +87,15 @@ async function runHeadlessCliNow(o: HeadlessRunOptions): Promise<TextOnlyTurnRes
     });
     // The intent write is awaited: cancellation can arrive during it, and the abort listener does not exist yet.
     if (o.signal.aborted) throw cancelled();
+    // the last await before the spawn: a read that moved meanwhile throws here, the root is removed and no process ever exists
+    runAdmissionFence(o.fence);
   } catch (error) { finish(true); throw error; }
 
   let child: ReturnType<typeof spawnCli>;
-  try { child = spawnCli(o.cli, o.args, { cwd: o.cwd, env: o.env, stdio: ["pipe", "pipe", "pipe"] }, job); }
+  // The bot this reflection runs for: the launcher refuses a Cloud run that names none.
+  const env: Record<string, string | undefined> = { ...o.env };
+  cloudTurnBot(env, o.context?.botId);
+  try { child = spawnCli(o.cli, o.args, { cwd: o.cwd, env, stdio: ["pipe", "pipe", "pipe"] }, job); }
   catch (error) { finish(true); throw error; }
 
   let exitCode: number | null = null;
@@ -120,7 +128,9 @@ async function runHeadlessCliNow(o: HeadlessRunOptions): Promise<TextOnlyTurnRes
   const accountUsage = () => {
     const reported = reportedUsage ?? parseHeadlessMessages(Buffer.concat(chunks)).result?.usage;
     const value = { inputTokens: reported?.inputTokens, outputTokens: reported?.outputTokens ?? Math.ceil(bytes / 3.5) };
-    reportMemoryUsage({ prompt_tokens: value.inputTokens, completion_tokens: value.outputTokens });
+    // the ledger takes only what the CLI reported; an unreported side keeps its reservation (an engine run is never counted unmetered). A CLI that
+    // wrote nothing at all never produced a reply: it is left to the caller's finish (reservation kept, not unmetered)
+    if (reported || bytes > 0) reportMemoryUsage({ prompt_tokens: reported?.inputTokens, completion_tokens: reported?.outputTokens, replyBytes: bytes, engineRun: true });
     o.hooks?.onUsage?.(value);
     return value;
   };
@@ -186,6 +196,9 @@ async function runHeadlessCliNow(o: HeadlessRunOptions): Promise<TextOnlyTurnRes
     finish(exited);
     const usage = parsed.result?.usage ?? reportedUsage;
     const reported = { inputTokens: usage?.inputTokens, outputTokens: usage?.outputTokens ?? Math.ceil(bytes / 3.5) };
+    // settled here, at the transport, before any caller frees its slot: the ledger takes only what the CLI reported, and an unreported
+    // side keeps its reservation, never counted unmetered (the bytes/3.5 figure above is the run's trace, never the charge)
+    reportMemoryUsage({ prompt_tokens: usage?.inputTokens, completion_tokens: usage?.outputTokens, replyBytes: bytes, engineRun: true });
     const text = verdict.state === "validated" ? JSON.stringify(verdict.structured) : "";
     return {
       text, verdict, isolation,
@@ -257,7 +270,7 @@ export async function headlessTextOnlyTurn(input: TextOnlyTurnInput, cfg: Headle
     temp, tmpBase: cfg.tmpBase, outputSchema: input.outputSchema, signal: input.signal, engine: cfg.engine,
     maxOutputBytes: input.maxOutputBytes, maxOutputTokens: input.maxOutputTokens, firstByteMs: cfg.firstByteMs,
     deadlineAt: input.transport?.deadlineAt, context: input.context, bootEpoch: input.transport?.bootEpoch,
-    history: input.transport?.history, hooks: input.transport?.hooks, binaryIdentity: cfg.binaryIdentity,
+    history: input.transport?.history, hooks: input.transport?.hooks, fence: input.transport?.fence, binaryIdentity: cfg.binaryIdentity,
     cleanup, allowedHomeNew: cfg.allowedHomeNew, postResultGraceMs: cfg.postResultGraceMs,
   });
 }
@@ -326,7 +339,7 @@ export async function claudeTextOnlyTurn(input: TextOnlyTurnInput, cfg: ClaudeTe
     env: claudeAllowlistEnv(cfg.env, temp, input.maxOutputTokens), temp, tmpBase: cfg.tmpBase, engine: "claude",
     outputSchema: input.outputSchema, signal: input.signal, maxOutputBytes: input.maxOutputBytes, maxOutputTokens: input.maxOutputTokens,
     firstByteMs: cfg.firstByteMs, deadlineAt: input.transport?.deadlineAt, context: input.context, bootEpoch: input.transport?.bootEpoch,
-    history: input.transport?.history, hooks: input.transport?.hooks, binaryIdentity: cfg.binaryIdentity,
+    history: input.transport?.history, hooks: input.transport?.hooks, fence: input.transport?.fence, binaryIdentity: cfg.binaryIdentity,
     stdinText: input.text, allowedHomeNew: cfg.allowedHomeNew ?? CLAUDE_ALLOWED_HOME_NEW, postResultGraceMs: cfg.postResultGraceMs,
   });
 }

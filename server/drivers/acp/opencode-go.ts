@@ -12,9 +12,12 @@ import { readNativeJsonConfig } from "../native-config-file.ts";
 import { createAcpDriver, type AcpSupport } from "./core.ts";
 import type { ModelCatalog, ProviderErrorCode } from "../../contracts.ts";
 import { writeFileAtomic } from "../../atomic.ts";
+import { cloudTurnRender } from "../../cloud-home/turn-process.ts";
+import { cloudRouteUrl } from "../../cloud-home/engine-render.ts";
+import { fluxKey } from "../../flux-config.ts";
 import { DATA_DIR } from "../../config.ts";
 import { execCli } from "../../procs.ts";
-import { fluxModelId } from "../../flux-routing.ts";
+import { FLUX_MODELS, FLUX_OPENAI_BASE, fluxModelId } from "../../flux-routing.ts";
 import { opencodeConfigOverlay } from "../../flux-memory-headers.ts";
 import { mergeFluxCatalog } from "../../flux-surface.ts";
 import {
@@ -193,7 +196,7 @@ export function resetOpenCodeModelCache() {
  * from the Go-only name. */
 export const resetOpenCodeGoModelCache = resetOpenCodeModelCache;
 
-const stripForeignProviderKeys = (env: Record<string, string | undefined>) => {
+export const stripForeignProviderKeys = (env: Record<string, string | undefined>) => {
   for (const key of [
     "OPENAI_API_KEY",
     "ANTHROPIC_API_KEY",
@@ -203,6 +206,13 @@ const stripForeignProviderKeys = (env: Record<string, string | undefined>) => {
     "KIMI_API_KEY",
     "MOONSHOT_API_KEY",
   ]) delete env[key];
+  if (process.env.MURAGE_CLOUD_ROLE === "home") {
+    // The launcher renders the Flux provider table into opencode.json and hands the key to
+    // OpenCode only in OPENCODE_AUTH_CONTENT, never in a file (CLOUD-ENGINES-DESIGN.md r2 H1).
+    const key = fluxKey();
+    if (key) cloudTurnRender(env, "route", { provider: OPENCODE_FLUX_PROVIDER, baseUrl: FLUX_OPENAI_BASE, model: FLUX_MODELS[0].id,
+      models: FLUX_MODELS.map(tier => tier.id), apiKey: key, label: "Flux Router" });
+  }
 };
 
 /** Upsert an openai-compatible provider so OpenCode can select host/model.
@@ -231,6 +241,11 @@ export function ensureOpenCodeInjectModel(
   if (!host) return modelId;
 
   const native = `${inject.host}/${inject.model}`;
+  if (process.env.MURAGE_CLOUD_ROLE === "home") {
+    // One typed route: the launcher renders provider.<host> and the key rides OPENCODE_AUTH_CONTENT.
+    cloudTurnRender(env, "route", { provider: inject.host, baseUrl: cloudRouteUrl(host.baseUrl), model: inject.model, apiKey: hostApiKey(host, env) });
+    return native;
+  }
   const path = opencodeConfigPath(env);
   const existing = readNativeJsonConfig(path, env.HOME || env.USERPROFILE || homedir());
   const config: Record<string, unknown> = existing?.value ?? { $schema: "https://opencode.ai/config.json" };

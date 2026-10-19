@@ -2,13 +2,14 @@
 // file drop that creates them. A long paste collapses into a card of its
 // first lines instead of flooding the composer; a file dropped anywhere
 // on the window attaches by path.
-import { desktopResourceUrl } from "@/lib/live-events";
+import { DesktopImg } from "./DesktopImg";
 import { useEffect, useRef, useState } from "react";
 import { ClipboardPaste, File as FileIcon, Image as ImageIcon, MessageSquareText, X } from "lucide-react";
 import { cn } from "@/lib/cn";
 import {
   attachmentImageUrl,
   formatSize,
+  noticeOffersStorage,
   pasteSummary,
   type Attachment,
   type PasteAttachment,
@@ -32,6 +33,7 @@ export function ComposerAttachments({
   allowImages = true,
   notice,
   onNotice,
+  onManageStorage,
   onAudioFile,
   threadId,
   frozen = false,
@@ -43,6 +45,8 @@ export function ComposerAttachments({
   allowImages?: boolean;
   notice: string | null;
   onNotice: (notice: string | null) => void;
+  /** Opens Settings on the Storage page; offered when the disk is the reason. */
+  onManageStorage?: () => void;
   onAudioFile?: (file: File) => void;
   threadId?: string;
   /** A send is out: the chips are read-only and a dropped file is not taken until it is settled. */
@@ -133,6 +137,15 @@ export function ComposerAttachments({
       {notice && (
         <div className="mb-2 flex items-start gap-2 rounded-lg border border-warning/30 bg-warning/10 px-3 py-2 text-[12px] text-warning">
           <span className="min-w-0 flex-1">{notice}</span>
+          {onManageStorage && noticeOffersStorage(notice) && (
+            <button
+              type="button"
+              onClick={() => { onNotice(null); onManageStorage(); }}
+              className="shrink-0 rounded px-1.5 py-0.5 font-medium underline underline-offset-2"
+            >
+              Manage storage
+            </button>
+          )}
           <button
             onClick={() => onNotice(null)}
             aria-label="Dismiss"
@@ -182,8 +195,8 @@ export function ComposerAttachments({
                   className="flex h-[76px] w-full items-center justify-center overflow-hidden rounded-lg bg-inset focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/50"
                   aria-label={`Preview ${a.name}`}
                 >
-                  <img
-                    src={desktopResourceUrl(attachmentImageUrl(a.path)) ?? undefined}
+                  <DesktopImg
+                    src={attachmentImageUrl(a.path)}
                     alt={a.name}
                     loading="lazy"
                     className="max-h-[76px] max-w-full object-contain"
