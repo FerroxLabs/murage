@@ -3,7 +3,7 @@
 // UI-only filter is not a gate, so each of the three is exercised here — and
 // so is the specific shape that made finding D dangerous, a bare `flux-auto`
 // on codex, which decodeCodexSelection maps onto api.openai.com.
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -31,6 +31,7 @@ import {
 } from "./flux-surface.ts";
 import { ProviderRegistry } from "./harness/registry.ts";
 import { makeFakeDriver } from "./testing/fake-driver.ts";
+import { removeTempDirSync } from "./testing/cleanup.ts";
 
 const SERVER_DIR = dirname(fileURLToPath(import.meta.url));
 
@@ -51,7 +52,7 @@ beforeEach(() => {
 afterEach(() => {
   if (savedKey === undefined) delete process.env.FLUX_API_KEY;
   else process.env.FLUX_API_KEY = savedKey;
-  for (const dir of scratchDirs.splice(0)) rmSync(dir, { recursive: true, force: true });
+  for (const dir of scratchDirs.splice(0)) removeTempDirSync(dir);
 });
 
 function scratch(prefix: string): string {

@@ -5,16 +5,17 @@
 // release, a real dashboard identity passes and reaches the packaged build.
 import { generateKeyPairSync } from "node:crypto";
 import { spawnSync } from "node:child_process";
-import { mkdtempSync, mkdirSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
+import { mkdtempSync, mkdirSync, readFileSync, realpathSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { afterEach, expect, it } from "vitest";
 import { BROWSER_EXTENSION_RELEASE_CONFIG, checkBrowserExtensionBuild, extensionIdFromPublicKey, readBrowserExtensionReleaseConfig } from "./browser-extension-release-config.mjs";
+import { removeTempDirSync } from "../server/testing/cleanup.ts";
 
 const root = fileURLToPath(new URL("../", import.meta.url));
 const roots = [];
-afterEach(() => { for (const dir of roots.splice(0)) rmSync(dir, { recursive: true, force: true }); });
+afterEach(() => { for (const dir of roots.splice(0)) removeTempDirSync(dir); });
 const scratch = () => { const dir = realpathSync.native(mkdtempSync(join(tmpdir(), "bx-release-"))); roots.push(dir); return dir; };
 function realIdentity() {
   const publicKey = generateKeyPairSync("rsa", { modulusLength: 2048 }).publicKey.export({ type: "spki", format: "der" }).toString("base64");

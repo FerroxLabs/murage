@@ -1,0 +1,2858 @@
+[
+ {
+  "file": "server/about-me.ts",
+  "function": "readSaved",
+  "callee": "readFileSync",
+  "root": "data-dir",
+  "count": 1
+ },
+ {
+  "file": "server/announcements.ts",
+  "function": "image",
+  "callee": "readFileSync",
+  "root": "data-dir",
+  "count": 1
+ },
+ {
+  "file": "server/announcements.ts",
+  "function": "readCache",
+  "callee": "readFileSync",
+  "root": "data-dir",
+  "count": 2
+ },
+ {
+  "file": "server/announcements.ts",
+  "function": "readRecord",
+  "callee": "readFileSync",
+  "root": "data-dir",
+  "count": 1
+ },
+ {
+  "file": "server/app-catalog.ts",
+  "function": "parseDisk",
+  "callee": "readFileSync",
+  "root": "data-dir",
+  "count": 1
+ },
+ {
+  "file": "server/artifacts.ts",
+  "function": "readVerified",
+  "callee": "openSync",
+  "root": "artifact-files",
+  "count": 1
+ },
+ {
+  "file": "server/artifacts.ts",
+  "function": "readVerified",
+  "callee": "readSync",
+  "root": "artifact-files",
+  "count": 2
+ },
+ {
+  "file": "server/artifacts.ts",
+  "function": "registerArtifact",
+  "callee": "openSync",
+  "root": "artifact-files",
+  "count": 1
+ },
+ {
+  "file": "server/atomic.ts",
+  "function": "writeFileAtomicInner",
+  "callee": "openSync",
+  "root": "data-dir",
+  "count": 1
+ },
+ {
+  "file": "server/attachment-read.ts",
+  "function": "open",
+  "callee": "open",
+  "root": "attachments",
+  "count": 1
+ },
+ {
+  "file": "server/attachment-read.ts",
+  "function": "read",
+  "callee": "FileHandle.read",
+  "root": "attachments",
+  "count": 1
+ },
+ {
+  "file": "server/attachments.ts",
+  "function": "saveFile",
+  "callee": "open",
+  "root": "attachments-writer",
+  "count": 1
+ },
+ {
+  "file": "server/backup-coordinator.ts",
+  "function": "captureFailure",
+  "callee": "readFileSync",
+  "root": "data-dir",
+  "count": 1
+ },
+ {
+  "file": "server/backup-coordinator.ts",
+  "function": "firstRunRecord",
+  "callee": "readFileSync",
+  "root": "data-dir",
+  "count": 1
+ },
+ {
+  "file": "server/backup-coordinator.ts",
+  "function": "lastSkipped",
+  "callee": "readFileSync",
+  "root": "data-dir",
+  "count": 1
+ },
+ {
+  "file": "server/backup-coordinator.ts",
+  "function": "read",
+  "callee": "readFileSync",
+  "root": "data-dir",
+  "count": 1
+ },
+ {
+  "file": "server/backup-restic.ts",
+  "function": "readRetention",
+  "callee": "readFileSync",
+  "root": "data-dir",
+  "count": 1
+ },
+ {
+  "file": "server/backup-restic.ts",
+  "function": "readServerCheck",
+  "callee": "readFileSync",
+  "root": "data-dir",
+  "count": 1
+ },
+ {
+  "file": "server/backup-restic.ts",
+  "function": "readStoredJournal",
+  "callee": "openSync",
+  "root": "data-dir",
+  "count": 1
+ },
+ {
+  "file": "server/backup-restic.ts",
+  "function": "readStoredJournal",
+  "callee": "readSync",
+  "root": "data-dir",
+  "count": 1
+ },
+ {
+  "file": "server/backup-restic.ts",
+  "function": "readTarget",
+  "callee": "readFileSync",
+  "root": "data-dir",
+  "count": 1
+ },
+ {
+  "file": "server/backup-restic.ts",
+  "function": "restoredArchiveDigest",
+  "callee": "openSync",
+  "root": "data-dir",
+  "count": 1
+ },
+ {
+  "file": "server/backup-restic.ts",
+  "function": "restoredArchiveDigest",
+  "callee": "readSync",
+  "root": "data-dir",
+  "count": 1
+ },
+ {
+  "file": "server/backup-restic.ts",
+  "function": "settledUploads",
+  "callee": "readFileSync",
+  "root": "data-dir",
+  "count": 1
+ },
+ {
+  "file": "server/backup-restic.ts",
+  "function": "store",
+  "callee": "openSync",
+  "root": "data-dir",
+  "count": 2
+ },
+ {
+  "file": "server/backup-restic.ts",
+  "function": "store",
+  "callee": "readFileSync",
+  "root": "data-dir",
+  "count": 1
+ },
+ {
+  "file": "server/backup-restic.ts",
+  "function": "store",
+  "callee": "readSync",
+  "root": "data-dir",
+  "count": 1
+ },
+ {
+  "file": "server/backup-restic.ts",
+  "function": "verifySnapshot",
+  "callee": "readFileSync",
+  "root": "data-dir",
+  "count": 1
+ },
+ {
+  "file": "server/backup-sftp.ts",
+  "function": "readHostKeyWithSsh",
+  "callee": "readFileSync",
+  "root": "data-dir",
+  "count": 1
+ },
+ {
+  "file": "server/backup-skipped-summary.ts",
+  "function": "botNames",
+  "callee": "readFileSync",
+  "root": "data-dir",
+  "count": 1
+ },
+ {
+  "file": "server/bot-package-archive.ts",
+  "function": "readBotPackageArchive",
+  "callee": "openSync",
+  "root": "data-dir",
+  "count": 1
+ },
+ {
+  "file": "server/bot-package-archive.ts",
+  "function": "readBotPackageArchive",
+  "callee": "readSync",
+  "root": "data-dir",
+  "count": 1
+ },
+ {
+  "file": "server/bot-package-archive.ts",
+  "function": "writeBotPackageArchive",
+  "callee": "openSync",
+  "root": "data-dir",
+  "count": 1
+ },
+ {
+  "file": "server/browser-connection.ts",
+  "function": "readBrowserConnection",
+  "callee": "readFileSync",
+  "root": "browser",
+  "count": 1
+ },
+ {
+  "file": "server/browser-control.ts",
+  "function": "UnifiedBrowserController",
+  "callee": "readFileSync",
+  "root": "browser",
+  "count": 1
+ },
+ {
+  "file": "server/browser-engine.ts",
+  "function": "agentBrowserIntegration",
+  "callee": "readFileSync",
+  "root": "browser",
+  "count": 2
+ },
+ {
+  "file": "server/browser-engine.ts",
+  "function": "browserEngineEncryptionKey",
+  "callee": "openSync",
+  "root": "browser",
+  "count": 2
+ },
+ {
+  "file": "server/browser-engine.ts",
+  "function": "browserEngineEncryptionKey",
+  "callee": "readFileSync",
+  "root": "browser",
+  "count": 1
+ },
+ {
+  "file": "server/browser-engine.ts",
+  "function": "matchesPin",
+  "callee": "readFileSync",
+  "root": "browser",
+  "count": 1
+ },
+ {
+  "file": "server/browser-engine.ts",
+  "function": "names",
+  "callee": "readSync",
+  "root": "browser",
+  "count": 2
+ },
+ {
+  "file": "server/browser-engine.ts",
+  "function": "resolveAgentBrowserBinary",
+  "callee": "readFileSync",
+  "root": "browser",
+  "count": 1
+ },
+ {
+  "file": "server/browser-extension-activity.ts",
+  "function": "read",
+  "callee": "readFileSync",
+  "root": "browser",
+  "count": 1
+ },
+ {
+  "file": "server/browser-extension-approvals.ts",
+  "function": "load",
+  "callee": "readFileSync",
+  "root": "browser",
+  "count": 1
+ },
+ {
+  "file": "server/browser-extension-broker.ts",
+  "function": "recoverAlias",
+  "callee": "FileHandle.readFile",
+  "root": "browser",
+  "count": 1
+ },
+ {
+  "file": "server/browser-extension-broker.ts",
+  "function": "recoverAlias",
+  "callee": "open",
+  "root": "browser",
+  "count": 1
+ },
+ {
+  "file": "server/browser-extension-clients.ts",
+  "function": "readPrivateBrowserClientJson",
+  "callee": "openSync",
+  "root": "browser",
+  "count": 1
+ },
+ {
+  "file": "server/browser-extension-clients.ts",
+  "function": "readPrivateBrowserClientJson",
+  "callee": "readFileSync",
+  "root": "browser",
+  "count": 1
+ },
+ {
+  "file": "server/browser-extension-engine.ts",
+  "function": "call",
+  "callee": "readFileSync",
+  "root": "browser",
+  "count": 1
+ },
+ {
+  "file": "server/browser-extension-listing.ts",
+  "function": "readBrowserExtensionBuild",
+  "callee": "readFileSync",
+  "root": "browser",
+  "count": 1
+ },
+ {
+  "file": "server/browser-extension-service.ts",
+  "function": "createBrowserExtensionService",
+  "callee": "readFile",
+  "root": "browser",
+  "count": 1
+ },
+ {
+  "file": "server/browser-extension-sites.ts",
+  "function": "load",
+  "callee": "readFileSync",
+  "root": "browser",
+  "count": 1
+ },
+ {
+  "file": "server/browser-lifecycle-cleanup.ts",
+  "function": "#load",
+  "callee": "readFileSync",
+  "root": "browser",
+  "count": 1
+ },
+ {
+  "file": "server/browser-macos-identity.ts",
+  "function": "open",
+  "callee": "openSync",
+  "root": "browser",
+  "count": 1
+ },
+ {
+  "file": "server/browser-macos-identity.ts",
+  "function": "read",
+  "callee": "readFileSync",
+  "root": "browser",
+  "count": 1
+ },
+ {
+  "file": "server/browser-native-relay.ts",
+  "function": "close",
+  "callee": "readFileSync",
+  "root": "browser",
+  "count": 2
+ },
+ {
+  "file": "server/browser-native-relay.ts",
+  "function": "command",
+  "callee": "readFileSync",
+  "root": "browser",
+  "count": 1
+ },
+ {
+  "file": "server/browser-sandbox.ts",
+  "function": "ensureBrowserSandboxAccess",
+  "callee": "readFileSync",
+  "root": "browser",
+  "count": 2
+ },
+ {
+  "file": "server/calendar-calls.ts",
+  "function": "CalendarCallManager",
+  "callee": "readFileSync",
+  "root": "data-dir",
+  "count": 1
+ },
+ {
+  "file": "server/channels/discord/service.ts",
+  "function": "read",
+  "callee": "readFileSync",
+  "root": "channel-state",
+  "count": 1
+ },
+ {
+  "file": "server/channels/durable-delivery.ts",
+  "function": "readPage",
+  "callee": "readFileSync",
+  "root": "channel-state",
+  "count": 1
+ },
+ {
+  "file": "server/channels/slack/service.ts",
+  "function": "read",
+  "callee": "readFileSync",
+  "root": "channel-state",
+  "count": 1
+ },
+ {
+  "file": "server/channels/whatsapp/auth-key-source.ts",
+  "function": "fileAuthKey",
+  "callee": "openSync",
+  "root": "channel-state",
+  "count": 2
+ },
+ {
+  "file": "server/channels/whatsapp/auth-key-source.ts",
+  "function": "fileAuthKey",
+  "callee": "readFileSync",
+  "root": "channel-state",
+  "count": 1
+ },
+ {
+  "file": "server/channels/whatsapp/bridge.ts",
+  "function": "compact",
+  "callee": "openSync",
+  "root": "channel-state",
+  "count": 2
+ },
+ {
+  "file": "server/channels/whatsapp/bridge.ts",
+  "function": "openLedger",
+  "callee": "readFileSync",
+  "root": "channel-state",
+  "count": 1
+ },
+ {
+  "file": "server/channels/whatsapp/bridge.ts",
+  "function": "open",
+  "callee": "openSync",
+  "root": "channel-state",
+  "count": 1
+ },
+ {
+  "file": "server/channels/whatsapp/bridge.ts",
+  "function": "open",
+  "callee": "readFileSync",
+  "root": "channel-state",
+  "count": 1
+ },
+ {
+  "file": "server/channels/whatsapp/bridge.ts",
+  "function": "qualify",
+  "callee": "readFileSync",
+  "root": "channel-state",
+  "count": 2
+ },
+ {
+  "file": "server/channels/whatsapp/bridge.ts",
+  "function": "save",
+  "callee": "openSync",
+  "root": "channel-state",
+  "count": 1
+ },
+ {
+  "file": "server/channels/whatsapp/bridge.ts",
+  "function": "writeLine",
+  "callee": "openSync",
+  "root": "channel-state",
+  "count": 1
+ },
+ {
+  "file": "server/channels/whatsapp/core/auth-store.ts",
+  "function": "readAuthKeyFile",
+  "callee": "openSync",
+  "root": "channel-state",
+  "count": 1
+ },
+ {
+  "file": "server/channels/whatsapp/core/auth-store.ts",
+  "function": "readAuthKeyFile",
+  "callee": "readSync",
+  "root": "channel-state",
+  "count": 1
+ },
+ {
+  "file": "server/channels/whatsapp/core/auth-store.ts",
+  "function": "readRecordFile",
+  "callee": "readFile",
+  "root": "channel-state",
+  "count": 1
+ },
+ {
+  "file": "server/channels/whatsapp/core/auth-store.ts",
+  "function": "writeFileAtomic",
+  "callee": "open",
+  "root": "channel-state",
+  "count": 1
+ },
+ {
+  "file": "server/channels/whatsapp/media.ts",
+  "function": "containedMediaFile",
+  "callee": "openSync",
+  "root": "channel-state",
+  "count": 1
+ },
+ {
+  "file": "server/channels/whatsapp/service.ts",
+  "function": "loadChats",
+  "callee": "readFileSync",
+  "root": "channel-state",
+  "count": 1
+ },
+ {
+  "file": "server/channels/whatsapp/service.ts",
+  "function": "prepareMedia",
+  "callee": "readFileSync",
+  "root": "channel-state",
+  "count": 1
+ },
+ {
+  "file": "server/channels/whatsapp/service.ts",
+  "function": "read",
+  "callee": "readFileSync",
+  "root": "channel-state",
+  "count": 1
+ },
+ {
+  "file": "server/channels/whatsapp/service.ts",
+  "function": "receive",
+  "callee": "readFileSync",
+  "root": "channel-state",
+  "count": 1
+ },
+ {
+  "file": "server/claude-account-config.ts",
+  "function": "replaceClaudeAccountInstances",
+  "callee": "readFileSync",
+  "root": "config",
+  "count": 1
+ },
+ {
+  "file": "server/claude-account-config.ts",
+  "function": "restoreClaudeAccountInstances",
+  "callee": "readFileSync",
+  "root": "config",
+  "count": 2
+ },
+ {
+  "file": "server/cloud-home/b1b-identity.ts",
+  "function": "openProtectedRootFile",
+  "callee": "openSync",
+  "root": "cloud-home",
+  "count": 2
+ },
+ {
+  "file": "server/cloud-home/b1b-identity.ts",
+  "function": "readHomePublicMetadata",
+  "callee": "readSync",
+  "root": "cloud-home",
+  "count": 1
+ },
+ {
+  "file": "server/cloud-home/boot.ts",
+  "function": "readBootFile",
+  "callee": "openSync",
+  "root": "cloud-home",
+  "count": 1
+ },
+ {
+  "file": "server/cloud-home/boot.ts",
+  "function": "readBootFile",
+  "callee": "readFileSync",
+  "root": "cloud-home",
+  "count": 1
+ },
+ {
+  "file": "server/cloud-home/browser-profile-usage.ts",
+  "function": "CloudBrowserProfileUsage",
+  "callee": "readFileSync",
+  "root": "cloud-home",
+  "count": 1
+ },
+ {
+  "file": "server/cloud-home/cloud-process-hooks.ts",
+  "function": "readText",
+  "callee": "readFile",
+  "root": "cloud-home",
+  "count": 1
+ },
+ {
+  "file": "server/cloud-home/engine-launch-fixture.ts",
+  "function": "launcherRig",
+  "callee": "readFileSync",
+  "root": "cloud-home",
+  "count": 1
+ },
+ {
+  "file": "server/cloud-home/health.ts",
+  "function": "cloudHealthVersion",
+  "callee": "readFileSync",
+  "root": "cloud-home",
+  "count": 2
+ },
+ {
+  "file": "server/cloud-home/own-server.ts",
+  "function": "ensureKey",
+  "callee": "readFileSync",
+  "root": "cloud-home",
+  "count": 1
+ },
+ {
+  "file": "server/cloud-home/own-server.ts",
+  "function": "hostKeyConfirmed",
+  "callee": "readFileSync",
+  "root": "cloud-home",
+  "count": 1
+ },
+ {
+  "file": "server/cloud-home/own-server.ts",
+  "function": "readConnection",
+  "callee": "readFileSync",
+  "root": "cloud-home",
+  "count": 1
+ },
+ {
+  "file": "server/cloud-home/secrets.ts",
+  "function": "SealedSecretStore",
+  "callee": "readFileSync",
+  "root": "cloud-home",
+  "count": 1
+ },
+ {
+  "file": "server/cloud-home/server-secrets.ts",
+  "function": "readSecretPipe",
+  "callee": "readSync",
+  "root": "cloud-home",
+  "count": 1
+ },
+ {
+  "file": "server/cloud-home/supervisor.ts",
+  "function": "bindHomeVolume",
+  "callee": "openSync",
+  "root": "cloud-home",
+  "count": 2
+ },
+ {
+  "file": "server/cloud-home/supervisor.ts",
+  "function": "bindHomeVolume",
+  "callee": "readFileSync",
+  "root": "cloud-home",
+  "count": 1
+ },
+ {
+  "file": "server/cloud-home/supervisor.ts",
+  "function": "prepareHealthProbeDir",
+  "callee": "openSync",
+  "root": "cloud-home",
+  "count": 1
+ },
+ {
+  "file": "server/cloud-home/timezone.ts",
+  "function": "readOwnerTimeZone",
+  "callee": "readFileSync",
+  "root": "cloud-home",
+  "count": 1
+ },
+ {
+  "file": "server/codex-managed-windows.ts",
+  "function": "verifiedWindowsCodexPath",
+  "callee": "FileHandle.read",
+  "root": "data-dir",
+  "count": 2
+ },
+ {
+  "file": "server/codex-managed-windows.ts",
+  "function": "verifiedWindowsCodexPath",
+  "callee": "open",
+  "root": "data-dir",
+  "count": 1
+ },
+ {
+  "file": "server/codex-managed-windows.ts",
+  "function": "verifiedWindowsCodexPath",
+  "callee": "readFile",
+  "root": "data-dir",
+  "count": 2
+ },
+ {
+  "file": "server/config.ts",
+  "function": "loadBrowserProfileIdAliases",
+  "callee": "readFileSync",
+  "root": "config",
+  "count": 1
+ },
+ {
+  "file": "server/config.ts",
+  "function": "loadConfig",
+  "callee": "readFileSync",
+  "root": "config",
+  "count": 1
+ },
+ {
+  "file": "server/config.ts",
+  "function": "saveConfig",
+  "callee": "readFileSync",
+  "root": "config",
+  "count": 1
+ },
+ {
+  "file": "server/connected-app-journal.ts",
+  "function": "open",
+  "callee": "openSync",
+  "root": "data-dir",
+  "count": 1
+ },
+ {
+  "file": "server/connected-app-journal.ts",
+  "function": "run",
+  "callee": "openSync",
+  "root": "data-dir",
+  "count": 1
+ },
+ {
+  "file": "server/connected-inventory.ts",
+  "function": "loadFromDisk",
+  "callee": "readFileSync",
+  "root": "data-dir",
+  "count": 1
+ },
+ {
+  "file": "server/connector-cache.ts",
+  "function": "bumpGeneration",
+  "callee": "openSync",
+  "root": "config",
+  "count": 1
+ },
+ {
+  "file": "server/connector-cache.ts",
+  "function": "readCacheEntry",
+  "callee": "openSync",
+  "root": "config",
+  "count": 1
+ },
+ {
+  "file": "server/connector-cache.ts",
+  "function": "readCacheEntry",
+  "callee": "readFileSync",
+  "root": "config",
+  "count": 1
+ },
+ {
+  "file": "server/connector-cache.ts",
+  "function": "readGeneration",
+  "callee": "openSync",
+  "root": "config",
+  "count": 1
+ },
+ {
+  "file": "server/connector-cache.ts",
+  "function": "readGeneration",
+  "callee": "readFileSync",
+  "root": "config",
+  "count": 1
+ },
+ {
+  "file": "server/connector-cache.ts",
+  "function": "writeCacheEntry",
+  "callee": "openSync",
+  "root": "config",
+  "count": 1
+ },
+ {
+  "file": "server/conversation-deletion.ts",
+  "function": "pending",
+  "callee": "readFileSync",
+  "root": "data-dir",
+  "count": 1
+ },
+ {
+  "file": "server/coordination-budget.ts",
+  "function": "CoordinationBudget",
+  "callee": "readFileSync",
+  "root": "data-dir",
+  "count": 1
+ },
+ {
+  "file": "server/database.ts",
+  "function": "database",
+  "callee": "openSync",
+  "root": "data-dir",
+  "count": 1
+ },
+ {
+  "file": "server/decision-log.ts",
+  "function": "readDecisions",
+  "callee": "readFileSync",
+  "root": "data-dir",
+  "count": 1
+ },
+ {
+  "file": "server/decision-log.ts",
+  "function": "redactDecisionsForThreads",
+  "callee": "readFileSync",
+  "root": "data-dir",
+  "count": 1
+ },
+ {
+  "file": "server/default-engine.ts",
+  "function": "readRememberedEngine",
+  "callee": "readFileSync",
+  "root": "data-dir",
+  "count": 1
+ },
+ {
+  "file": "server/delegations.ts",
+  "function": "_loadPending",
+  "callee": "readFileSync",
+  "root": "data-dir",
+  "count": 1
+ },
+ {
+  "file": "server/drivers/acp/droid.ts",
+  "function": "ensureDroidInjectModel",
+  "callee": "readFileSync",
+  "root": "engine-home",
+  "count": 1
+ },
+ {
+  "file": "server/drivers/acp/droid.ts",
+  "function": "readSettings",
+  "callee": "readFileSync",
+  "root": "engine-home",
+  "count": 1
+ },
+ {
+  "file": "server/drivers/acp/gemini.ts",
+  "function": "liveOauthCredential",
+  "callee": "readFileSync",
+  "root": "engine-home",
+  "count": 1
+ },
+ {
+  "file": "server/drivers/acp/grok.ts",
+  "function": "ensureGrokInjectSlug",
+  "callee": "readFileSync",
+  "root": "engine-home",
+  "count": 1
+ },
+ {
+  "file": "server/drivers/acp/grok.ts",
+  "function": "readGrokModelCatalog",
+  "callee": "readFileSync",
+  "root": "engine-home",
+  "count": 1
+ },
+ {
+  "file": "server/drivers/acp/hermes.ts",
+  "function": "adminManagedConfig",
+  "callee": "readFileSync",
+  "root": "engine-home",
+  "count": 1
+ },
+ {
+  "file": "server/drivers/acp/hermes.ts",
+  "function": "applyHermesFluxMemory",
+  "callee": "readFileSync",
+  "root": "engine-home",
+  "count": 2
+ },
+ {
+  "file": "server/drivers/acp/hermes.ts",
+  "function": "ensureHermesInjectProvider",
+  "callee": "readFileSync",
+  "root": "engine-home",
+  "count": 1
+ },
+ {
+  "file": "server/drivers/acp/hermes.ts",
+  "function": "hermesConfiguredModel",
+  "callee": "readFileSync",
+  "root": "engine-home",
+  "count": 2
+ },
+ {
+  "file": "server/drivers/acp/hermes.ts",
+  "function": "removeHermesLocalHost",
+  "callee": "readFileSync",
+  "root": "engine-home",
+  "count": 1
+ },
+ {
+  "file": "server/drivers/acp/kimi.ts",
+  "function": "ensureKimiInjectAlias",
+  "callee": "readFileSync",
+  "root": "engine-home",
+  "count": 1
+ },
+ {
+  "file": "server/drivers/acp/kimi.ts",
+  "function": "readKimiModelCatalog",
+  "callee": "readFileSync",
+  "root": "engine-home",
+  "count": 1
+ },
+ {
+  "file": "server/drivers/acp/kimi.ts",
+  "function": "readTomlConfigForEdit",
+  "callee": "readFileSync",
+  "root": "engine-home",
+  "count": 1
+ },
+ {
+  "file": "server/drivers/acp/opencode-go.ts",
+  "function": "hasStoredOpenCodeAuth",
+  "callee": "readFileSync",
+  "root": "engine-home",
+  "count": 1
+ },
+ {
+  "file": "server/drivers/antigravity-scope.ts",
+  "function": "fileLocked",
+  "callee": "readFileSync",
+  "root": "engine-home",
+  "count": 3
+ },
+ {
+  "file": "server/drivers/antigravity-scope.ts",
+  "function": "hashFile",
+  "callee": "readFileSync",
+  "root": "engine-home",
+  "count": 1
+ },
+ {
+  "file": "server/drivers/antigravity-scope.ts",
+  "function": "recoverScopedHome",
+  "callee": "readFileSync",
+  "root": "engine-home",
+  "count": 1
+ },
+ {
+  "file": "server/drivers/antigravity-scope.ts",
+  "function": "removeAntigravityLegacyMcpEntries",
+  "callee": "readFileSync",
+  "root": "engine-home",
+  "count": 1
+ },
+ {
+  "file": "server/drivers/antigravity-scope.ts",
+  "function": "withRealFileLock",
+  "callee": "readFileSync",
+  "root": "engine-home",
+  "count": 1
+ },
+ {
+  "file": "server/drivers/antigravity.ts",
+  "function": "readAntigravityModelCatalog",
+  "callee": "readFileSync",
+  "root": "engine-home",
+  "count": 1
+ },
+ {
+  "file": "server/drivers/claude.ts",
+  "function": "claudeIsolationSettings",
+  "callee": "readFileSync",
+  "root": "engine-home",
+  "count": 1
+ },
+ {
+  "file": "server/drivers/claude.ts",
+  "function": "declaredName",
+  "callee": "openSync",
+  "root": "engine-home",
+  "count": 1
+ },
+ {
+  "file": "server/drivers/claude.ts",
+  "function": "declaredName",
+  "callee": "readSync",
+  "root": "engine-home",
+  "count": 1
+ },
+ {
+  "file": "server/drivers/claude.ts",
+  "function": "readClaudeModelCatalog",
+  "callee": "readFileSync",
+  "root": "engine-home",
+  "count": 1
+ },
+ {
+  "file": "server/drivers/claude.ts",
+  "function": "readCostHistory",
+  "callee": "readFileSync",
+  "root": "engine-home",
+  "count": 1
+ },
+ {
+  "file": "server/drivers/claude.ts",
+  "function": "skillsDirPluginName",
+  "callee": "readFileSync",
+  "root": "engine-home",
+  "count": 1
+ },
+ {
+  "file": "server/drivers/codex-catalog.ts",
+  "function": "readText",
+  "callee": "readFileSync",
+  "root": "engine-home",
+  "count": 1
+ },
+ {
+  "file": "server/drivers/codex-hook.ts",
+  "function": "writeIfChanged",
+  "callee": "readFileSync",
+  "root": "engine-home",
+  "count": 1
+ },
+ {
+  "file": "server/drivers/headless-text-only.ts",
+  "function": "runHeadlessCliNow",
+  "callee": "readFileSync",
+  "root": "engine-home",
+  "count": 1
+ },
+ {
+  "file": "server/drivers/isolation-cache.ts",
+  "function": "readText",
+  "callee": "readFileSync",
+  "root": "engine-home",
+  "count": 1
+ },
+ {
+  "file": "server/drivers/local-inject.ts",
+  "function": "readUnslothKey",
+  "callee": "readFileSync",
+  "root": "engine-home",
+  "count": 1
+ },
+ {
+  "file": "server/drivers/minimax.ts",
+  "function": "loadLocalMiniMaxConfig",
+  "callee": "readFileSync",
+  "root": "engine-home",
+  "count": 1
+ },
+ {
+  "file": "server/drivers/murage-exec.ts",
+  "function": "readWrapperSource",
+  "callee": "readFileSync",
+  "root": "app-bundle",
+  "count": 1
+ },
+ {
+  "file": "server/drivers/native-config-file.ts",
+  "function": "readNativeJsonConfig",
+  "callee": "readFileSync",
+  "root": "engine-home",
+  "count": 1
+ },
+ {
+  "file": "server/drivers/native.ts",
+  "function": "capExisting",
+  "callee": "openSync",
+  "root": "engine-home",
+  "count": 1
+ },
+ {
+  "file": "server/drivers/native.ts",
+  "function": "capExisting",
+  "callee": "readSync",
+  "root": "engine-home",
+  "count": 1
+ },
+ {
+  "file": "server/drivers/pi.ts",
+  "function": "ensurePiInjectModel",
+  "callee": "readFileSync",
+  "root": "engine-home",
+  "count": 1
+ },
+ {
+  "file": "server/drivers/pi.ts",
+  "function": "readPiDefaultModel",
+  "callee": "readFileSync",
+  "root": "engine-home",
+  "count": 1
+ },
+ {
+  "file": "server/drivers/process-identity.ts",
+  "function": "processIdentity",
+  "callee": "readFileSync",
+  "root": "engine-home",
+  "count": 1
+ },
+ {
+  "file": "server/drivers/process-tree.ts",
+  "function": "procStartTicks",
+  "callee": "readFile",
+  "root": "engine-home",
+  "count": 1
+ },
+ {
+  "file": "server/drivers/scoped-cli-home.ts",
+  "function": "acquireLease",
+  "callee": "readFileSync",
+  "root": "engine-home",
+  "count": 1
+ },
+ {
+  "file": "server/drivers/scoped-cli-home.ts",
+  "function": "adoptLogins",
+  "callee": "readFileSync",
+  "root": "engine-home",
+  "count": 1
+ },
+ {
+  "file": "server/drivers/scoped-cli-home.ts",
+  "function": "adoptOneLogin",
+  "callee": "readFileSync",
+  "root": "engine-home",
+  "count": 2
+ },
+ {
+  "file": "server/drivers/scoped-cli-home.ts",
+  "function": "enforceQuarantineBounds",
+  "callee": "readFileSync",
+  "root": "engine-home",
+  "count": 1
+ },
+ {
+  "file": "server/drivers/scoped-cli-home.ts",
+  "function": "leaseHeldByOther",
+  "callee": "readFileSync",
+  "root": "engine-home",
+  "count": 1
+ },
+ {
+  "file": "server/drivers/scoped-cli-home.ts",
+  "function": "migrateAsideLogins",
+  "callee": "readFileSync",
+  "root": "engine-home",
+  "count": 1
+ },
+ {
+  "file": "server/drivers/scoped-cli-home.ts",
+  "function": "readMarkerState",
+  "callee": "readFileSync",
+  "root": "engine-home",
+  "count": 1
+ },
+ {
+  "file": "server/drivers/shared-login-link.ts",
+  "function": "readFileSync",
+  "callee": "readFileSync",
+  "root": "engine-home",
+  "count": 1
+ },
+ {
+  "file": "server/engine-commands.ts",
+  "function": "load",
+  "callee": "readFileSync",
+  "root": "data-dir",
+  "count": 1
+ },
+ {
+  "file": "server/engine-fs.ts",
+  "function": "bootId",
+  "callee": "readFileSync",
+  "root": "workspace",
+  "count": 1
+ },
+ {
+  "file": "server/engine-fs.ts",
+  "function": "fsyncDir",
+  "callee": "openSync",
+  "root": "workspace",
+  "count": 1
+ },
+ {
+  "file": "server/engine-fs.ts",
+  "function": "fsyncFile",
+  "callee": "openSync",
+  "root": "workspace",
+  "count": 1
+ },
+ {
+  "file": "server/engine-fs.ts",
+  "function": "openAppend",
+  "callee": "openSync",
+  "root": "workspace",
+  "count": 1
+ },
+ {
+  "file": "server/engine-fs.ts",
+  "function": "openRead",
+  "callee": "openSync",
+  "root": "workspace",
+  "count": 2
+ },
+ {
+  "file": "server/engine-fs.ts",
+  "function": "openReadWrite",
+  "callee": "openSync",
+  "root": "workspace",
+  "count": 1
+ },
+ {
+  "file": "server/engine-fs.ts",
+  "function": "preadRaw",
+  "callee": "readSync",
+  "root": "workspace",
+  "count": 1
+ },
+ {
+  "file": "server/engine-fs.ts",
+  "function": "readAtRaw",
+  "callee": "readSync",
+  "root": "workspace",
+  "count": 1
+ },
+ {
+  "file": "server/engine-fs.ts",
+  "function": "readHeadRaw",
+  "callee": "openSync",
+  "root": "workspace",
+  "count": 1
+ },
+ {
+  "file": "server/engine-fs.ts",
+  "function": "readHeadRaw",
+  "callee": "readSync",
+  "root": "workspace",
+  "count": 1
+ },
+ {
+  "file": "server/engine-fs.ts",
+  "function": "textOf",
+  "callee": "readFileSync",
+  "root": "workspace",
+  "count": 1
+ },
+ {
+  "file": "server/engine-fs.ts",
+  "function": "text",
+  "callee": "readFileSync",
+  "root": "workspace",
+  "count": 1
+ },
+ {
+  "file": "server/engine-fs.ts",
+  "function": "writeDurable",
+  "callee": "openSync",
+  "root": "workspace",
+  "count": 1
+ },
+ {
+  "file": "server/engine-management.ts",
+  "function": "useBundled",
+  "callee": "readFile",
+  "root": "data-dir",
+  "count": 1
+ },
+ {
+  "file": "server/env-path.ts",
+  "function": "parseCmdShim",
+  "callee": "readFileSync",
+  "root": "config",
+  "count": 1
+ },
+ {
+  "file": "server/env-path.ts",
+  "function": "parseNodeShebang",
+  "callee": "openSync",
+  "root": "config",
+  "count": 1
+ },
+ {
+  "file": "server/env-path.ts",
+  "function": "parseNodeShebang",
+  "callee": "readSync",
+  "root": "config",
+  "count": 1
+ },
+ {
+  "file": "server/env-path.ts",
+  "function": "readKept",
+  "callee": "readFileSync",
+  "root": "data-dir",
+  "count": 1
+ },
+ {
+  "file": "server/flux-composio-dev-token.ts",
+  "function": "readDevFluxTokenDocument",
+  "callee": "readFileSync",
+  "root": "data-dir",
+  "count": 1
+ },
+ {
+  "file": "server/flux-connector.ts",
+  "function": "readConnectorManifest",
+  "callee": "readFileSync",
+  "root": "config",
+  "count": 1
+ },
+ {
+  "file": "server/flux-connector.ts",
+  "function": "readOrNull",
+  "callee": "readFileSync",
+  "root": "config",
+  "count": 1
+ },
+ {
+  "file": "server/flux-connector.ts",
+  "function": "restore",
+  "callee": "readFileSync",
+  "root": "config",
+  "count": 1
+ },
+ {
+  "file": "server/folder-trust.ts",
+  "function": "gitCoreConfig",
+  "callee": "readFileSync",
+  "root": "config",
+  "count": 1
+ },
+ {
+  "file": "server/folder-trust.ts",
+  "function": "linkedWorktreeMainRoot",
+  "callee": "readFileSync",
+  "root": "config",
+  "count": 2
+ },
+ {
+  "file": "server/folder-trust.ts",
+  "function": "readUpstreamTrustedFolders",
+  "callee": "readFileSync",
+  "root": "config",
+  "count": 1
+ },
+ {
+  "file": "server/fuigo-native-update.ts",
+  "function": "managedFuigoReceipt",
+  "callee": "readFile",
+  "root": "data-dir",
+  "count": 1
+ },
+ {
+  "file": "server/fuigo-native-update.ts",
+  "function": "verifyManagedFuigo",
+  "callee": "readFile",
+  "root": "data-dir",
+  "count": 1
+ },
+ {
+  "file": "server/fuigo-probe-isolation.ts",
+  "function": "createFuigoIsolation",
+  "callee": "readFile",
+  "root": "data-dir",
+  "count": 2
+ },
+ {
+  "file": "server/fuigo-probe-isolation.ts",
+  "function": "nativeHelper",
+  "callee": "readFile",
+  "root": "data-dir",
+  "count": 2
+ },
+ {
+  "file": "server/gepa-resource.ts",
+  "function": "observedFile",
+  "callee": "openSync",
+  "root": "data-dir",
+  "count": 1
+ },
+ {
+  "file": "server/gepa-resource.ts",
+  "function": "observedFile",
+  "callee": "readSync",
+  "root": "data-dir",
+  "count": 1
+ },
+ {
+  "file": "server/grant-choke.ts",
+  "function": "PendingGrants",
+  "callee": "readFileSync",
+  "root": "data-dir",
+  "count": 1
+ },
+ {
+  "file": "server/harness/event-log.ts",
+  "function": "forEachLineSync",
+  "callee": "openSync",
+  "root": "data-dir",
+  "count": 1
+ },
+ {
+  "file": "server/harness/event-log.ts",
+  "function": "forEachLineSync",
+  "callee": "readSync",
+  "root": "data-dir",
+  "count": 1
+ },
+ {
+  "file": "server/harness/event-log.ts",
+  "function": "progressFor",
+  "callee": "readFileSync",
+  "root": "data-dir",
+  "count": 1
+ },
+ {
+  "file": "server/harness/event-log.ts",
+  "function": "queueSessionCopy",
+  "callee": "open",
+  "root": "data-dir",
+  "count": 1
+ },
+ {
+  "file": "server/harness/event-log.ts",
+  "function": "readTo",
+  "callee": "FileHandle.read",
+  "root": "data-dir",
+  "count": 1
+ },
+ {
+  "file": "server/harness/event-log.ts",
+  "function": "rewriteStreamed",
+  "callee": "open",
+  "root": "data-dir",
+  "count": 2
+ },
+ {
+  "file": "server/harness/event-log.ts",
+  "function": "rewriteStreamed",
+  "callee": "openSync",
+  "root": "data-dir",
+  "count": 2
+ },
+ {
+  "file": "server/harness/event-log.ts",
+  "function": "rewriteStreamed",
+  "callee": "readSync",
+  "root": "data-dir",
+  "count": 1
+ },
+ {
+  "file": "server/harness/event-log.ts",
+  "function": "threadSessionLines",
+  "callee": "open",
+  "root": "data-dir",
+  "count": 2
+ },
+ {
+  "file": "server/hermes-profiles.ts",
+  "function": "readSmall",
+  "callee": "readFileSync",
+  "root": "data-dir",
+  "count": 1
+ },
+ {
+  "file": "server/hermes-profiles.ts",
+  "function": "stickyHermesProfile",
+  "callee": "readFileSync",
+  "root": "data-dir",
+  "count": 1
+ },
+ {
+  "file": "server/house-rules.ts",
+  "function": "readEnabled",
+  "callee": "readFileSync",
+  "root": "skills",
+  "count": 1
+ },
+ {
+  "file": "server/house-rules.ts",
+  "function": "readSaved",
+  "callee": "readFileSync",
+  "root": "skills",
+  "count": 1
+ },
+ {
+  "file": "server/image-library.ts",
+  "function": "resolveReferencePack",
+  "callee": "readFileSync",
+  "root": "library",
+  "count": 1
+ },
+ {
+  "file": "server/image-library.ts",
+  "function": "storePackImage",
+  "callee": "openSync",
+  "root": "library",
+  "count": 1
+ },
+ {
+  "file": "server/image-library.ts",
+  "function": "storePackImage",
+  "callee": "readFileSync",
+  "root": "library",
+  "count": 1
+ },
+ {
+  "file": "server/inbox-learning-paused.ts",
+  "function": "storedLeftMonths",
+  "callee": "readFileSync",
+  "root": "data-dir",
+  "count": 1
+ },
+ {
+  "file": "server/incident-diagnostics.ts",
+  "function": "readSegment",
+  "callee": "openSync",
+  "root": "data-dir",
+  "count": 1
+ },
+ {
+  "file": "server/incident-diagnostics.ts",
+  "function": "readSegment",
+  "callee": "readSync",
+  "root": "data-dir",
+  "count": 1
+ },
+ {
+  "file": "server/index.ts",
+  "function": "atomicCommit",
+  "callee": "readFileSync",
+  "root": "data-dir",
+  "count": 1
+ },
+ {
+  "file": "server/index.ts",
+  "function": "handleRequest",
+  "callee": "readFileSync",
+  "root": "data-dir",
+  "count": 3
+ },
+ {
+  "file": "server/index.ts",
+  "function": "readFluxConnectionState",
+  "callee": "readFileSync",
+  "root": "data-dir",
+  "count": 1
+ },
+ {
+  "file": "server/index.ts",
+  "function": "readLibrarySkillSummary",
+  "callee": "readFileSync",
+  "root": "data-dir",
+  "count": 1
+ },
+ {
+  "file": "server/installation-activation.ts",
+  "function": "activateInstallation",
+  "callee": "openSync",
+  "root": "data-dir",
+  "count": 1
+ },
+ {
+  "file": "server/installation-activation.ts",
+  "function": "json",
+  "callee": "readFileSync",
+  "root": "data-dir",
+  "count": 1
+ },
+ {
+  "file": "server/installation-activation.ts",
+  "function": "visit",
+  "callee": "openSync",
+  "root": "data-dir",
+  "count": 1
+ },
+ {
+  "file": "server/installation-activation.ts",
+  "function": "visit",
+  "callee": "readSync",
+  "root": "data-dir",
+  "count": 1
+ },
+ {
+  "file": "server/installation-app-schema-downgrade.ts",
+  "function": "owedHandoffReplies",
+  "callee": "readFileSync",
+  "root": "data-dir",
+  "count": 1
+ },
+ {
+  "file": "server/installation-app-schema-downgrade.ts",
+  "function": "readJsonFile",
+  "callee": "readFileSync",
+  "root": "data-dir",
+  "count": 1
+ },
+ {
+  "file": "server/installation-archive.ts",
+  "function": "fileHash",
+  "callee": "createReadStream",
+  "root": "data-dir",
+  "count": 1
+ },
+ {
+  "file": "server/installation-archive.ts",
+  "function": "flushExtracted",
+  "callee": "openSync",
+  "root": "data-dir",
+  "count": 1
+ },
+ {
+  "file": "server/installation-archive.ts",
+  "function": "inspectArchiveEntries",
+  "callee": "openSync",
+  "root": "data-dir",
+  "count": 1
+ },
+ {
+  "file": "server/installation-archive.ts",
+  "function": "writeInstallationStageArchive",
+  "callee": "createReadStream",
+  "root": "data-dir",
+  "count": 1
+ },
+ {
+  "file": "server/installation-archive.ts",
+  "function": "writeInstallationStageArchive",
+  "callee": "openSync",
+  "root": "data-dir",
+  "count": 2
+ },
+ {
+  "file": "server/installation-backup-encryption.ts",
+  "function": "decryptBackupFile",
+  "callee": "openSync",
+  "root": "data-dir",
+  "count": 1
+ },
+ {
+  "file": "server/installation-backup-encryption.ts",
+  "function": "runAge",
+  "callee": "openSync",
+  "root": "data-dir",
+  "count": 1
+ },
+ {
+  "file": "server/installation-damaged-export.ts",
+  "function": "copy",
+  "callee": "openSync",
+  "root": "data-dir",
+  "count": 2
+ },
+ {
+  "file": "server/installation-damaged-export.ts",
+  "function": "copy",
+  "callee": "readSync",
+  "root": "data-dir",
+  "count": 1
+ },
+ {
+  "file": "server/installation-damaged-export.ts",
+  "function": "writeInstallationDamagedExport",
+  "callee": "createReadStream",
+  "root": "data-dir",
+  "count": 1
+ },
+ {
+  "file": "server/installation-damaged-export.ts",
+  "function": "writeInstallationDamagedExport",
+  "callee": "openSync",
+  "root": "data-dir",
+  "count": 1
+ },
+ {
+  "file": "server/installation-database-snapshot.ts",
+  "function": "digestDescriptor",
+  "callee": "readSync",
+  "root": "data-dir",
+  "count": 1
+ },
+ {
+  "file": "server/installation-database-snapshot.ts",
+  "function": "digestFile",
+  "callee": "openSync",
+  "root": "data-dir",
+  "count": 1
+ },
+ {
+  "file": "server/installation-database-snapshot.ts",
+  "function": "digestFile",
+  "callee": "readSync",
+  "root": "data-dir",
+  "count": 1
+ },
+ {
+  "file": "server/installation-database-snapshot.ts",
+  "function": "snapshotSqliteWhileOwned",
+  "callee": "openSync",
+  "root": "data-dir",
+  "count": 4
+ },
+ {
+  "file": "server/installation-database-snapshot.ts",
+  "function": "snapshotSqliteWhileOwned",
+  "callee": "readSync",
+  "root": "data-dir",
+  "count": 1
+ },
+ {
+  "file": "server/installation-encrypted-backup.ts",
+  "function": "execute",
+  "callee": "openSync",
+  "root": "data-dir",
+  "count": 1
+ },
+ {
+  "file": "server/installation-encrypted-backup.ts",
+  "function": "hashFile",
+  "callee": "createReadStream",
+  "root": "data-dir",
+  "count": 1
+ },
+ {
+  "file": "server/installation-fidelity-snapshot.ts",
+  "function": "inventoryFidelity",
+  "callee": "createReadStream",
+  "root": "data-dir",
+  "count": 1
+ },
+ {
+  "file": "server/installation-fidelity-snapshot.ts",
+  "function": "inventoryFidelity",
+  "callee": "openSync",
+  "root": "data-dir",
+  "count": 1
+ },
+ {
+  "file": "server/installation-fidelity-snapshot.ts",
+  "function": "inventoryFidelity",
+  "callee": "readFileSync",
+  "root": "data-dir",
+  "count": 1
+ },
+ {
+  "file": "server/installation-fidelity-snapshot.ts",
+  "function": "openFidelitySource",
+  "callee": "createReadStream",
+  "root": "data-dir",
+  "count": 1
+ },
+ {
+  "file": "server/installation-fidelity-snapshot.ts",
+  "function": "openFidelitySource",
+  "callee": "openSync",
+  "root": "data-dir",
+  "count": 1
+ },
+ {
+  "file": "server/installation-memory-downgrade.ts",
+  "function": "resetRetainedSessionCursors",
+  "callee": "readFileSync",
+  "root": "data-dir",
+  "count": 1
+ },
+ {
+  "file": "server/installation-restore-preparation.ts",
+  "function": "read",
+  "callee": "readFileSync",
+  "root": "data-dir",
+  "count": 1
+ },
+ {
+  "file": "server/installation-restore.ts",
+  "function": "assertCandidate",
+  "callee": "readFileSync",
+  "root": "data-dir",
+  "count": 1
+ },
+ {
+  "file": "server/installation-restore.ts",
+  "function": "readJournal",
+  "callee": "readFileSync",
+  "root": "data-dir",
+  "count": 1
+ },
+ {
+  "file": "server/installation-restore.ts",
+  "function": "restoreInstallation",
+  "callee": "readFileSync",
+  "root": "data-dir",
+  "count": 1
+ },
+ {
+  "file": "server/installation-restore.ts",
+  "function": "rollbackInstallationRestore",
+  "callee": "readFileSync",
+  "root": "data-dir",
+  "count": 1
+ },
+ {
+  "file": "server/installation-restore.ts",
+  "function": "syncParent",
+  "callee": "openSync",
+  "root": "data-dir",
+  "count": 1
+ },
+ {
+  "file": "server/installation-state-snapshot.ts",
+  "function": "copy",
+  "callee": "openSync",
+  "root": "data-dir",
+  "count": 2
+ },
+ {
+  "file": "server/installation-state-snapshot.ts",
+  "function": "copy",
+  "callee": "readFileSync",
+  "root": "data-dir",
+  "count": 1
+ },
+ {
+  "file": "server/installation-state-snapshot.ts",
+  "function": "copy",
+  "callee": "readSync",
+  "root": "data-dir",
+  "count": 1
+ },
+ {
+  "file": "server/installation-state-snapshot.ts",
+  "function": "openFile",
+  "callee": "createReadStream",
+  "root": "data-dir",
+  "count": 2
+ },
+ {
+  "file": "server/installation-state-snapshot.ts",
+  "function": "openFile",
+  "callee": "openSync",
+  "root": "data-dir",
+  "count": 2
+ },
+ {
+  "file": "server/installation-windows-backup-transport.ts",
+  "function": "runWindowsBackupTransport",
+  "callee": "openSync",
+  "root": "data-dir",
+  "count": 1
+ },
+ {
+  "file": "server/io-budget.ts",
+  "function": "header",
+  "callee": "openSync",
+  "root": "data-dir",
+  "count": 1
+ },
+ {
+  "file": "server/io-budget.ts",
+  "function": "header",
+  "callee": "readSync",
+  "root": "data-dir",
+  "count": 1
+ },
+ {
+  "file": "server/local-computer.ts",
+  "function": "readCuaConnection",
+  "callee": "readFileSync",
+  "root": "data-dir",
+  "count": 1
+ },
+ {
+  "file": "server/local-servers.ts",
+  "function": "readJson",
+  "callee": "readFileSync",
+  "root": "data-dir",
+  "count": 1
+ },
+ {
+  "file": "server/mcp-access.ts",
+  "function": "readMcpAccessKey",
+  "callee": "readFileSync",
+  "root": "config",
+  "count": 1
+ },
+ {
+  "file": "server/mcp-access.ts",
+  "function": "readOrCreateMcpAccessKey",
+  "callee": "readFileSync",
+  "root": "config",
+  "count": 1
+ },
+ {
+  "file": "server/mcp-grants.ts",
+  "function": "McpGrants",
+  "callee": "readFileSync",
+  "root": "data-dir",
+  "count": 1
+ },
+ {
+  "file": "server/media-assets.ts",
+  "function": "openPinned",
+  "callee": "open",
+  "root": "workspace",
+  "count": 1
+ },
+ {
+  "file": "server/media-assets.ts",
+  "function": "readAt",
+  "callee": "FileHandle.read",
+  "root": "workspace",
+  "count": 1
+ },
+ {
+  "file": "server/memory/app-version.ts",
+  "function": "runningAppVersion",
+  "callee": "readFileSync",
+  "root": "memory",
+  "count": 1
+ },
+ {
+  "file": "server/memory/embedding-runtime.ts",
+  "function": "loadWasmTransformers",
+  "callee": "readFileSync",
+  "root": "memory",
+  "count": 1
+ },
+ {
+  "file": "server/memory/embedding-runtime.ts",
+  "function": "wasmRuntimeDirectory",
+  "callee": "readFileSync",
+  "root": "memory",
+  "count": 1
+ },
+ {
+  "file": "server/memory/embeddings.ts",
+  "function": "loadFrom",
+  "callee": "createReadStream",
+  "root": "memory",
+  "count": 1
+ },
+ {
+  "file": "server/memory/embeddings.ts",
+  "function": "readModelManifest",
+  "callee": "readFileSync",
+  "root": "memory",
+  "count": 1
+ },
+ {
+  "file": "server/memory/evolution-forgetting.ts",
+  "function": "purgeLearningLocalBot",
+  "callee": "readFileSync",
+  "root": "memory",
+  "count": 1
+ },
+ {
+  "file": "server/memory/import.ts",
+  "function": "readSelected",
+  "callee": "openSync",
+  "root": "memory",
+  "count": 1
+ },
+ {
+  "file": "server/memory/import.ts",
+  "function": "readSelected",
+  "callee": "readFileSync",
+  "root": "memory",
+  "count": 1
+ },
+ {
+  "file": "server/memory/keepall-unwedge.ts",
+  "function": "readRepairs",
+  "callee": "readFileSync",
+  "root": "memory",
+  "count": 1
+ },
+ {
+  "file": "server/memory/lessons-local.ts",
+  "function": "listLearningLocalLessons",
+  "callee": "readFileSync",
+  "root": "memory",
+  "count": 1
+ },
+ {
+  "file": "server/memory/model-adoption.ts",
+  "function": "readMarker",
+  "callee": "readFileSync",
+  "root": "memory",
+  "count": 1
+ },
+ {
+  "file": "server/memory/pip-reaper.ts",
+  "function": "observeProcess",
+  "callee": "readFileSync",
+  "root": "memory",
+  "count": 1
+ },
+ {
+  "file": "server/memory/pip-reaper.ts",
+  "function": "sweepByArgv",
+  "callee": "readFileSync",
+  "root": "memory",
+  "count": 1
+ },
+ {
+  "file": "server/memory/pip-transport.ts",
+  "function": "binaryIdentity",
+  "callee": "readFileSync",
+  "root": "memory",
+  "count": 1
+ },
+ {
+  "file": "server/memory/revoke-budget.ts",
+  "function": "walIndexMark",
+  "callee": "openSync",
+  "root": "memory",
+  "count": 1
+ },
+ {
+  "file": "server/memory/revoke-budget.ts",
+  "function": "walIndexMark",
+  "callee": "readSync",
+  "root": "memory",
+  "count": 1
+ },
+ {
+  "file": "server/memory/schema.ts",
+  "function": "flushFile",
+  "callee": "openSync",
+  "root": "memory",
+  "count": 1
+ },
+ {
+  "file": "server/memory/schema.ts",
+  "function": "flushFolder",
+  "callee": "openSync",
+  "root": "memory",
+  "count": 1
+ },
+ {
+  "file": "server/memory/settings.ts",
+  "function": "downloadModel",
+  "callee": "open",
+  "root": "memory",
+  "count": 1
+ },
+ {
+  "file": "server/memory/settings.ts",
+  "function": "fileHash",
+  "callee": "createReadStream",
+  "root": "memory",
+  "count": 1
+ },
+ {
+  "file": "server/memory/settings.ts",
+  "function": "manifest",
+  "callee": "readFileSync",
+  "root": "memory",
+  "count": 1
+ },
+ {
+  "file": "server/memory/testing/b34-adapter-harness.ts",
+  "function": "dispatched",
+  "callee": "readFileSync",
+  "root": "test-harness",
+  "count": 1
+ },
+ {
+  "file": "server/memory/testing/b34-adapter-harness.ts",
+  "function": "resolveTaskPinRevision",
+  "callee": "readFileSync",
+  "root": "test-harness",
+  "count": 1
+ },
+ {
+  "file": "server/memory/testing/b34-adapter-harness.ts",
+  "function": "send",
+  "callee": "readFileSync",
+  "root": "test-harness",
+  "count": 1
+ },
+ {
+  "file": "server/memory/testing/b34-evaluator-adapter.ts",
+  "function": "bundleAt",
+  "callee": "readFileSync",
+  "root": "test-harness",
+  "count": 1
+ },
+ {
+  "file": "server/memory/testing/b34-evaluator-runtime.ts",
+  "function": "install",
+  "callee": "readFileSync",
+  "root": "test-harness",
+  "count": 2
+ },
+ {
+  "file": "server/memory/testing/b34-evaluator-runtime.ts",
+  "function": "readJsonLines",
+  "callee": "readFileSync",
+  "root": "test-harness",
+  "count": 1
+ },
+ {
+  "file": "server/memory/testing/b34-scripted-extractor.ts",
+  "function": "install",
+  "callee": "readFileSync",
+  "root": "test-harness",
+  "count": 1
+ },
+ {
+  "file": "server/memory/testing/b34-scripted-extractor.ts",
+  "function": "readB34ExtractorLedger",
+  "callee": "readFileSync",
+  "root": "test-harness",
+  "count": 1
+ },
+ {
+  "file": "server/memory/testing/root-set-fixture.ts",
+  "function": "longThreadsV5",
+  "callee": "openSync",
+  "root": "test-harness",
+  "count": 1
+ },
+ {
+  "file": "server/memory/testing/schema-1.0.1.ts",
+  "function": "flushFile",
+  "callee": "openSync",
+  "root": "test-harness",
+  "count": 1
+ },
+ {
+  "file": "server/memory/testing/schema-1.0.1.ts",
+  "function": "flushFolder",
+  "callee": "openSync",
+  "root": "test-harness",
+  "count": 1
+ },
+ {
+  "file": "server/memory/upgrade-overall.ts",
+  "function": "readOverallFloor",
+  "callee": "readFileSync",
+  "root": "memory",
+  "count": 1
+ },
+ {
+  "file": "server/memory/worker-controller.ts",
+  "function": "onWorkerMessage",
+  "callee": "readFileSync",
+  "root": "memory",
+  "count": 1
+ },
+ {
+  "file": "server/message-db.ts",
+  "function": "importLegacy",
+  "callee": "readFileSync",
+  "root": "data-dir",
+  "count": 1
+ },
+ {
+  "file": "server/output-publication.ts",
+  "function": "readStableFile",
+  "callee": "openSync",
+  "root": "artifact-files",
+  "count": 1
+ },
+ {
+  "file": "server/output-publication.ts",
+  "function": "readStableFile",
+  "callee": "readSync",
+  "root": "artifact-files",
+  "count": 2
+ },
+ {
+  "file": "server/package-export-files.ts",
+  "function": "copy",
+  "callee": "openSync",
+  "root": "data-dir",
+  "count": 1
+ },
+ {
+  "file": "server/package-export-files.ts",
+  "function": "copy",
+  "callee": "readSync",
+  "root": "data-dir",
+  "count": 2
+ },
+ {
+  "file": "server/package-import-transaction.ts",
+  "function": "read",
+  "callee": "readFileSync",
+  "root": "data-dir",
+  "count": 1
+ },
+ {
+  "file": "server/package-import-transaction.ts",
+  "function": "syncDirectory",
+  "callee": "openSync",
+  "root": "data-dir",
+  "count": 1
+ },
+ {
+  "file": "server/package-signing-cli.ts",
+  "function": "signPackageFile",
+  "callee": "readFileSync",
+  "root": "data-dir",
+  "count": 2
+ },
+ {
+  "file": "server/pending-delegations-schema.ts",
+  "function": "importLegacyDelegations",
+  "callee": "readFileSync",
+  "root": "data-dir",
+  "count": 1
+ },
+ {
+  "file": "server/pending-delegations-schema.ts",
+  "function": "syncDirectory",
+  "callee": "openSync",
+  "root": "data-dir",
+  "count": 1
+ },
+ {
+  "file": "server/persisted-state.ts",
+  "function": "readPersistedJson",
+  "callee": "readFileSync",
+  "root": "data-dir",
+  "count": 1
+ },
+ {
+  "file": "server/pid1-reaper-check.ts",
+  "function": "readPid1Comm",
+  "callee": "readFileSync",
+  "root": "data-dir",
+  "count": 1
+ },
+ {
+  "file": "server/procedure-bundles.ts",
+  "function": "regularBytes",
+  "callee": "openSync",
+  "root": "data-dir",
+  "count": 1
+ },
+ {
+  "file": "server/procedure-bundles.ts",
+  "function": "regularBytes",
+  "callee": "readFileSync",
+  "root": "data-dir",
+  "count": 1
+ },
+ {
+  "file": "server/project-export.ts",
+  "function": "exportProjectBrief",
+  "callee": "openSync",
+  "root": "data-dir",
+  "count": 1
+ },
+ {
+  "file": "server/project-scout.ts",
+  "function": "readText",
+  "callee": "readFileSync",
+  "root": "data-dir",
+  "count": 1
+ },
+ {
+  "file": "server/project-work-profile.ts",
+  "function": "canonicalProjectRoots",
+  "callee": "readFileSync",
+  "root": "data-dir",
+  "count": 1
+ },
+ {
+  "file": "server/protected-folders.ts",
+  "function": "xdgUserDirs",
+  "callee": "readFileSync",
+  "root": "data-dir",
+  "count": 1
+ },
+ {
+  "file": "server/provider-connections.ts",
+  "function": "readCache",
+  "callee": "readFileSync",
+  "root": "data-dir",
+  "count": 1
+ },
+ {
+  "file": "server/provider-routing.ts",
+  "function": "privateText",
+  "callee": "openSync",
+  "root": "data-dir",
+  "count": 1
+ },
+ {
+  "file": "server/provider-routing.ts",
+  "function": "privateText",
+  "callee": "readFileSync",
+  "root": "data-dir",
+  "count": 1
+ },
+ {
+  "file": "server/publish-file.ts",
+  "function": "publishNoReplace",
+  "callee": "openSync",
+  "root": "data-dir",
+  "count": 1
+ },
+ {
+  "file": "server/publish/site-files.ts",
+  "function": "snapshot",
+  "callee": "openSync",
+  "root": "data-dir",
+  "count": 1
+ },
+ {
+  "file": "server/publish/site-files.ts",
+  "function": "snapshot",
+  "callee": "readFileSync",
+  "root": "data-dir",
+  "count": 1
+ },
+ {
+  "file": "server/routine-runs-journal.ts",
+  "function": "append",
+  "callee": "openSync",
+  "root": "data-dir",
+  "count": 1
+ },
+ {
+  "file": "server/routine-runs-journal.ts",
+  "function": "foldRoutineStateForDowngrade",
+  "callee": "readFileSync",
+  "root": "data-dir",
+  "count": 1
+ },
+ {
+  "file": "server/routine-runs-journal.ts",
+  "function": "load",
+  "callee": "readFileSync",
+  "root": "data-dir",
+  "count": 1
+ },
+ {
+  "file": "server/routine-runs-journal.ts",
+  "function": "mapRoutineRuns",
+  "callee": "readFileSync",
+  "root": "data-dir",
+  "count": 1
+ },
+ {
+  "file": "server/routine-runs-journal.ts",
+  "function": "readRoutineRuns",
+  "callee": "readFileSync",
+  "root": "data-dir",
+  "count": 1
+ },
+ {
+  "file": "server/routine-runs-journal.ts",
+  "function": "readRoutineStates",
+  "callee": "readFileSync",
+  "root": "data-dir",
+  "count": 1
+ },
+ {
+  "file": "server/routine-runs-journal.ts",
+  "function": "readRoutinesWithRuns",
+  "callee": "readFileSync",
+  "root": "data-dir",
+  "count": 1
+ },
+ {
+  "file": "server/routine-runs-journal.ts",
+  "function": "sync",
+  "callee": "openSync",
+  "root": "data-dir",
+  "count": 1
+ },
+ {
+  "file": "server/routine-watch-file.ts",
+  "function": "read",
+  "callee": "openSync",
+  "root": "data-dir",
+  "count": 1
+ },
+ {
+  "file": "server/routine-watch-file.ts",
+  "function": "read",
+  "callee": "readSync",
+  "root": "data-dir",
+  "count": 2
+ },
+ {
+  "file": "server/routine-watch-integration.ts",
+  "function": "listRoutineWatchFiles",
+  "callee": "readSync",
+  "root": "data-dir",
+  "count": 1
+ },
+ {
+  "file": "server/routines.ts",
+  "function": "RoutineManager",
+  "callee": "readFileSync",
+  "root": "data-dir",
+  "count": 1
+ },
+ {
+  "file": "server/section-context.ts",
+  "function": "loadFile",
+  "callee": "readFileSync",
+  "root": "data-dir",
+  "count": 1
+ },
+ {
+  "file": "server/setup-backup.ts",
+  "function": "readChecklist",
+  "callee": "readFileSync",
+  "root": "data-dir",
+  "count": 1
+ },
+ {
+  "file": "server/setup.ts",
+  "function": "loadState",
+  "callee": "readFileSync",
+  "root": "data-dir",
+  "count": 1
+ },
+ {
+  "file": "server/shared-work.ts",
+  "function": "ceilings",
+  "callee": "readFileSync",
+  "root": "data-dir",
+  "count": 1
+ },
+ {
+  "file": "server/sidebar-order.ts",
+  "function": "read",
+  "callee": "readFileSync",
+  "root": "data-dir",
+  "count": 1
+ },
+ {
+  "file": "server/skill-collection.ts",
+  "function": "getCollectionSkill",
+  "callee": "readFileSync",
+  "root": "data-dir",
+  "count": 1
+ },
+ {
+  "file": "server/skill-collection.ts",
+  "function": "readRecords",
+  "callee": "readFileSync",
+  "root": "data-dir",
+  "count": 1
+ },
+ {
+  "file": "server/skill-library.ts",
+  "function": "loadSkillDirectory",
+  "callee": "readFileSync",
+  "root": "data-dir",
+  "count": 2
+ },
+ {
+  "file": "server/skill-search.ts",
+  "function": "readManifest",
+  "callee": "readFileSync",
+  "root": "data-dir",
+  "count": 1
+ },
+ {
+  "file": "server/skills-api.ts",
+  "function": "libraryName",
+  "callee": "readFileSync",
+  "root": "data-dir",
+  "count": 1
+ },
+ {
+  "file": "server/skills-api.ts",
+  "function": "shippedVerdict",
+  "callee": "readFileSync",
+  "root": "data-dir",
+  "count": 1
+ },
+ {
+  "file": "server/skills.ts",
+  "function": "checkLibrarySkill",
+  "callee": "readFileSync",
+  "root": "skills",
+  "count": 2
+ },
+ {
+  "file": "server/skills.ts",
+  "function": "learnedSkillDirectoryMatches",
+  "callee": "readFileSync",
+  "root": "skills",
+  "count": 1
+ },
+ {
+  "file": "server/skills.ts",
+  "function": "manifestFromFile",
+  "callee": "readFileSync",
+  "root": "skills",
+  "count": 1
+ },
+ {
+  "file": "server/skills.ts",
+  "function": "publishEvaluatedScopedSkill",
+  "callee": "readFileSync",
+  "root": "skills",
+  "count": 1
+ },
+ {
+  "file": "server/skills.ts",
+  "function": "readManagedLinks",
+  "callee": "readFileSync",
+  "root": "skills",
+  "count": 1
+ },
+ {
+  "file": "server/skills.ts",
+  "function": "readSkillFile",
+  "callee": "openSync",
+  "root": "skills",
+  "count": 1
+ },
+ {
+  "file": "server/skills.ts",
+  "function": "readSkillFile",
+  "callee": "readFileSync",
+  "root": "skills",
+  "count": 1
+ },
+ {
+  "file": "server/skills.ts",
+  "function": "readStaged",
+  "callee": "readFileSync",
+  "root": "skills",
+  "count": 1
+ },
+ {
+  "file": "server/skills.ts",
+  "function": "removeReviewedRevisionsNamed",
+  "callee": "readFileSync",
+  "root": "skills",
+  "count": 1
+ },
+ {
+  "file": "server/skills.ts",
+  "function": "rollbackScopedSkillRevision",
+  "callee": "readFileSync",
+  "root": "skills",
+  "count": 2
+ },
+ {
+  "file": "server/skills.ts",
+  "function": "rollbackSkillRevision",
+  "callee": "readFileSync",
+  "root": "skills",
+  "count": 2
+ },
+ {
+  "file": "server/skills.ts",
+  "function": "scopedSkillRevisionHistory",
+  "callee": "readFileSync",
+  "root": "skills",
+  "count": 1
+ },
+ {
+  "file": "server/skills.ts",
+  "function": "skillContentMatches",
+  "callee": "readFileSync",
+  "root": "skills",
+  "count": 1
+ },
+ {
+  "file": "server/skills.ts",
+  "function": "skillRevisionHistory",
+  "callee": "readFileSync",
+  "root": "skills",
+  "count": 1
+ },
+ {
+  "file": "server/skills.ts",
+  "function": "snapshotProceduralSkill",
+  "callee": "readFileSync",
+  "root": "skills",
+  "count": 1
+ },
+ {
+  "file": "server/skills.ts",
+  "function": "walk",
+  "callee": "readFileSync",
+  "root": "skills",
+  "count": 1
+ },
+ {
+  "file": "server/starter-profiles.ts",
+  "function": "starterProfileContents",
+  "callee": "openSync",
+  "root": "data-dir",
+  "count": 1
+ },
+ {
+  "file": "server/starter-profiles.ts",
+  "function": "starterProfileContents",
+  "callee": "readSync",
+  "root": "data-dir",
+  "count": 1
+ },
+ {
+  "file": "server/steer-queue.ts",
+  "function": "importLegacyQueueFile",
+  "callee": "readFileSync",
+  "root": "data-dir",
+  "count": 1
+ },
+ {
+  "file": "server/stop-line-state.ts",
+  "function": "githubRepoOf",
+  "callee": "readFileSync",
+  "root": "data-dir",
+  "count": 3
+ },
+ {
+  "file": "server/stop-line-state.ts",
+  "function": "knownRecipients",
+  "callee": "readFileSync",
+  "root": "data-dir",
+  "count": 1
+ },
+ {
+  "file": "server/storage-attachments.ts",
+  "function": "opendir",
+  "callee": "opendir",
+  "root": "attachments-listing-metadata",
+  "count": 1
+ },
+ {
+  "file": "server/team-library.ts",
+  "function": "loadLocalCatalog",
+  "callee": "readFileSync",
+  "root": "library",
+  "count": 1
+ },
+ {
+  "file": "server/team-library.ts",
+  "function": "loadLocalTeam",
+  "callee": "readFileSync",
+  "root": "library",
+  "count": 1
+ },
+ {
+  "file": "server/team-library.ts",
+  "function": "readCachedCatalog",
+  "callee": "readFileSync",
+  "root": "library",
+  "count": 1
+ },
+ {
+  "file": "server/team-lifecycle.ts",
+  "function": "contexts",
+  "callee": "readFileSync",
+  "root": "data-dir",
+  "count": 1
+ },
+ {
+  "file": "server/telegram-channel.ts",
+  "function": "TelegramChannel",
+  "callee": "readFileSync",
+  "root": "data-dir",
+  "count": 1
+ },
+ {
+  "file": "server/telegram-service.ts",
+  "function": "readConnection",
+  "callee": "readFileSync",
+  "root": "data-dir",
+  "count": 1
+ },
+ {
+  "file": "server/terms.ts",
+  "function": "readTermsRecords",
+  "callee": "readFileSync",
+  "root": "data-dir",
+  "count": 1
+ },
+ {
+  "file": "server/thread-events.ts",
+  "function": "countLines",
+  "callee": "readSync",
+  "root": "data-dir",
+  "count": 1
+ },
+ {
+  "file": "server/thread-events.ts",
+  "function": "readRecentLines",
+  "callee": "openSync",
+  "root": "data-dir",
+  "count": 1
+ },
+ {
+  "file": "server/thread-events.ts",
+  "function": "readRecentLines",
+  "callee": "readSync",
+  "root": "data-dir",
+  "count": 1
+ },
+ {
+  "file": "server/tts/system-voices.ts",
+  "function": "synthesizeSystem",
+  "callee": "readFile",
+  "root": "data-dir",
+  "count": 1
+ },
+ {
+  "file": "server/tts/windows-voices.ts",
+  "function": "synthesizeWindows",
+  "callee": "readFile",
+  "root": "data-dir",
+  "count": 1
+ },
+ {
+  "file": "server/turn-credential.ts",
+  "function": "turnSecret",
+  "callee": "readFileSync",
+  "root": "data-dir",
+  "count": 1
+ },
+ {
+  "file": "server/user-chrome.ts",
+  "function": "readUserChromeEndpoint",
+  "callee": "openSync",
+  "root": "data-dir",
+  "count": 1
+ },
+ {
+  "file": "server/user-chrome.ts",
+  "function": "readUserChromeEndpoint",
+  "callee": "readSync",
+  "root": "data-dir",
+  "count": 1
+ },
+ {
+  "file": "server/wal-maintenance.ts",
+  "function": "readWalHeader",
+  "callee": "openSync",
+  "root": "data-dir",
+  "count": 1
+ },
+ {
+  "file": "server/wal-maintenance.ts",
+  "function": "readWalHeader",
+  "callee": "readSync",
+  "root": "data-dir",
+  "count": 2
+ },
+ {
+  "file": "server/whats-new.ts",
+  "function": "readWhatsNew",
+  "callee": "readFileSync",
+  "root": "data-dir",
+  "count": 1
+ },
+ {
+  "file": "server/windows-backup-resources.ts",
+  "function": "hashDescriptor",
+  "callee": "readSync",
+  "root": "data-dir",
+  "count": 1
+ },
+ {
+  "file": "server/windows-backup-resources.ts",
+  "function": "observeWindowsBackupFile",
+  "callee": "openSync",
+  "root": "data-dir",
+  "count": 1
+ },
+ {
+  "file": "server/workspace-files.ts",
+  "function": "cloudRunRecorded",
+  "callee": "readFileSync",
+  "root": "workspace",
+  "count": 1
+ },
+ {
+  "file": "server/workspace-files.ts",
+  "function": "readChildren",
+  "callee": "readSync",
+  "root": "workspace",
+  "count": 2
+ },
+ {
+  "file": "server/workspace-files.ts",
+  "function": "readStable",
+  "callee": "openSync",
+  "root": "workspace",
+  "count": 1
+ },
+ {
+  "file": "server/workspace-files.ts",
+  "function": "readStable",
+  "callee": "readSync",
+  "root": "workspace",
+  "count": 2
+ },
+ {
+  "file": "server/workspace-files.ts",
+  "function": "stageBytes",
+  "callee": "openSync",
+  "root": "workspace",
+  "count": 1
+ },
+ {
+  "file": "server/workspace-files.ts",
+  "function": "syncDirectory",
+  "callee": "openSync",
+  "root": "workspace",
+  "count": 1
+ },
+ {
+  "file": "server/workspace-revision.ts",
+  "function": "digestOf",
+  "callee": "openSync",
+  "root": "workspace",
+  "count": 1
+ },
+ {
+  "file": "server/workspace-revision.ts",
+  "function": "digestOf",
+  "callee": "readSync",
+  "root": "workspace",
+  "count": 2
+ },
+ {
+  "file": "server/workspace-revision.ts",
+  "function": "probeVolumeClock",
+  "callee": "openSync",
+  "root": "workspace",
+  "count": 1
+ },
+ {
+  "file": "server/workspace.ts",
+  "function": "readNotebookText",
+  "callee": "readFileSync",
+  "root": "data-dir",
+  "count": 1
+ }
+]

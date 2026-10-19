@@ -14,11 +14,25 @@
  * case the page already admits for clients that are not browsers. `fetch` is
  * not used for the write: whether it adds an Origin is the runtime's
  * business, and a runtime that sent `Origin: null` would be refused.
+ *
+ * Every call but the page also carries the control token. A headless sidecar
+ * derives it from this deployment's door identity (see door-identity.mjs
+ * `controlTokenFromDoorNonce`), so the target passed around here is
+ * `{ port, token }` once `murage pair` has proved the door is ours. A bare port
+ * still works for a caller that has no token, and is refused by the sidecar.
  */
 
 import { request } from "node:http";
 
 export const DEFAULT_CONTROL_PORT = 8811;
+/** Kept in step with companion/src/control.ts `CONTROL_TOKEN_HEADER`. */
+export const CONTROL_TOKEN_HEADER = "x-murage-control-token";
+
+/** The port of a control target, for requests and for messages.
+ * @param {number | { port: number, token?: string | null }} target */
+export function portOf(target) {
+  return typeof target === "number" ? target : target.port;
+}
 const TOKEN = /^murage_pair_[A-Za-z0-9_-]{43}$/;
 const CODE = /^\d{6}$/;
 const DEFAULT_PORT = { http: 80, https: 443 };
@@ -61,12 +75,15 @@ function doorOrigin(door) {
 /**
  * One request to the control page, JSON back. Bounded in time and size: a
  * squatter on the port must not be able to hang or flood the CLI.
- * @param {number} port @param {string} method @param {string} path @param {number} timeoutMs
+ * @param {number | { port: number, token?: string | null }} target @param {string} method @param {string} path @param {number} timeoutMs
  * @returns {Promise<{ status: number, body: any }>}
  */
-export function controlRequest(port, method, path, timeoutMs = 5_000) {
+export function controlRequest(target, method, path, timeoutMs = 5_000) {
+  const port = portOf(target);
+  const token = typeof target === "number" ? null : target.token;
+  const headers = { accept: "application/json", ...(token ? { [CONTROL_TOKEN_HEADER]: token } : {}) };
   return new Promise((resolve, reject) => {
-    const req = request({ host: "127.0.0.1", port, method, path, timeout: timeoutMs, headers: { accept: "application/json" } }, (res) => {
+    const req = request({ host: "127.0.0.1", port, method, path, timeout: timeoutMs, headers }, (res) => {
       const chunks = [];
       let size = 0;
       res.on("data", (chunk) => {
@@ -97,7 +114,7 @@ export async function openPairing({ port, send = controlRequest }) {
   try {
     answer = await send(port, "POST", "/pairing", 5_000);
   } catch {
-    return { ok: false, reason: `nothing answered on the companion's control page, 127.0.0.1:${port}. Is \`murage start\` running?` };
+    return { ok: false, reason: `nothing answered on the companion's control page, 127.0.0.1:${portOf(port)}. Is \`murage start\` running?` };
   }
   const body = answer.body ?? {};
   if (answer.status !== 201) {
@@ -166,7 +183,7 @@ export async function removeDevice({ port, id, send = controlRequest }) {
   try {
     answer = await send(port, "DELETE", `/devices/${id}`, 5_000);
   } catch {
-    return { ok: false, reason: `nothing answered on the companion's control page, 127.0.0.1:${port}. Is \`murage start\` running?` };
+    return { ok: false, reason: `nothing answered on the companion's control page, 127.0.0.1:${portOf(port)}. Is \`murage start\` running?` };
   }
   if (answer.status === 200) return { ok: true };
   if (answer.status === 404) return { ok: false, reason: "no paired device has that id. Run `murage devices` to list them." };
@@ -185,7 +202,7 @@ export async function setScriptAccess({ port, id, allowed, send = controlRequest
   try {
     answer = await send(port, allowed ? "POST" : "DELETE", `/devices/${id}/script-access`, 5_000);
   } catch {
-    return { ok: false, reason: `nothing answered on the companion's control page, 127.0.0.1:${port}. Is \`murage start\` running?` };
+    return { ok: false, reason: `nothing answered on the companion's control page, 127.0.0.1:${portOf(port)}. Is \`murage start\` running?` };
   }
   if (answer.status === 200) return { ok: true };
   if (answer.status === 404) return { ok: false, reason: "no paired device has that id. Run `murage devices` to list them." };

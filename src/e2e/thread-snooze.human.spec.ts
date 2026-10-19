@@ -6,7 +6,7 @@
 // conversation's unread from the sidebar and brings it back at its time; a
 // question arriving wakes it at once, and the question badge appears on the
 // row and in the conversation list, then clears when it is answered.
-import { test, expect, type Page } from "@playwright/test";
+import { test, expect, type Page } from "./page-error-guard";
 import { createServer, type ViteDevServer } from "vite";
 import react from "@vitejs/plugin-react";
 import tailwindcss from "@tailwindcss/vite";

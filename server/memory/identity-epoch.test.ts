@@ -2,16 +2,17 @@
 // evidence constantly. The identity set must survive those writes (the live
 // store paid 158 s in three minutes rescanning it), and must still be rebuilt
 // by any write that can change which sources an identity record cites.
-import { mkdirSync, rmSync } from "node:fs";
+import { mkdirSync } from "node:fs";
 import { beforeEach, expect, it } from "vitest";
 import { DATA_DIR } from "../config.ts";
 import { closeDatabase, database, transaction } from "../database.ts";
 import { captureSource } from "./capture.ts";
 import { setMemoryMode } from "./repository.ts";
 import { identityScanCount, identitySourceSet } from "./provenance-stamp.ts";
+import { removeTempDirSync } from "../testing/cleanup.ts";
 
 beforeEach(() => {
-  closeDatabase(); rmSync(DATA_DIR, { recursive: true, force: true }); mkdirSync(DATA_DIR, { recursive: true }); setMemoryMode("capture"); scopeId = ""; captured.clear();
+  closeDatabase(); removeTempDirSync(DATA_DIR); mkdirSync(DATA_DIR, { recursive: true }); setMemoryMode("capture"); scopeId = ""; captured.clear();
 });
 let scopeId = "";
 function scope(): string {

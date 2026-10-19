@@ -2,13 +2,14 @@
 // `relayPrecompressed`). What matters: every hashed text file gets both, the
 // shell and anything else whose name outlives its content gets neither, and a
 // second run changes nothing.
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { brotliDecompressSync, gunzipSync } from "node:zlib";
 import { afterEach, describe, expect, it } from "vitest";
 
 import { compressDist, precompressPlugin } from "./compress-dist.mjs";
+import { removeTempDirSync } from "../server/testing/cleanup.ts";
 
 const FRAME = "mermaid-frame-0123456789abcdef.html";
 let dist = "";
@@ -28,7 +29,7 @@ const build = () => {
 };
 
 afterEach(() => {
-  if (dist) rmSync(dist, { recursive: true, force: true });
+  if (dist) removeTempDirSync(dist);
   dist = "";
 });
 

@@ -4,7 +4,7 @@
 // a 5 s poll spilled SQLite temp files continuously. These tests pin: scans
 // per call, the cache answering repeat polls, the rewritten SQL returning
 // exactly what the old SQL did, and the temp-file bound.
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
@@ -14,12 +14,13 @@ import { initializeInbox, listInbox, owedThreads, type InboxAccess } from "./inb
 import * as legacy from "./inbox.legacy-reference.ts";
 import { bumpMessagesVersion } from "./inbox-version.ts";
 import type { InboxPage } from "../shared/inbox.ts";
+import { removeTempDirSync } from "./testing/cleanup.ts";
 
 /** The answer without the cursor the old code never had. */
 const plain = (page: InboxPage) => ({ ...page, next: undefined });
 
 const roots: string[] = [], databases: DatabaseSync[] = [];
-afterEach(() => { for (const db of databases.splice(0)) { try { db.close(); } catch {} } for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true }); });
+afterEach(() => { for (const db of databases.splice(0)) { try { db.close(); } catch {} } for (const root of roots.splice(0)) removeTempDirSync(root); });
 
 const THREADS = 20, ROWS = 5000;
 const access: InboxAccess = { owner: true, threads: Array.from({ length: THREADS }, (_, i) => ({ threadId: `t${i}`, label: `Bot ${i}`, botId: `b${i}` })) };
@@ -193,7 +194,7 @@ function seedRich() {
   return { db, marks };
 }
 
-it("the rewritten queries match the old ones on every row shape, mark and search", () => {
+it("the rewritten queries match the old ones on every row shape, mark and search", { tags: ["nightly"], timeout: 600_000 }, () => {
   const { db, marks } = seedRich();
   expect(marks.length).toBeGreaterThan(30);
   const views = ["decisions", "approvals", "questions", "connections", "routines", "to-read", "results", "all"] as const;
@@ -214,7 +215,7 @@ it("the rewritten queries match the old ones on every row shape, mark and search
   const sample = listInbox(db, { view: "all", pageSize: 100 }, access, 9_000_000);
   expect(sample.decisions).toBeGreaterThan(0); expect(sample.toRead).toBeGreaterThan(0); expect(sample.unread).toBeLessThan(sample.items.length);
   expect(compared).toBe(160);
-}, 600_000);
+});
 
 it("the routine rows are read once per audience, not once per view, page and search", () => {
   const db = seed(), counts = counting(db);

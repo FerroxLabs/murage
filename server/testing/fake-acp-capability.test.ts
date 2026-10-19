@@ -4,11 +4,12 @@
 // Round 9 (S6): the fake ACP engine's agents capability file is created new,
 // owner-only, and never written through a link left at its path.
 import { spawn } from "node:child_process";
-import { lstatSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { lstatSync, mkdtempSync, readFileSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { expect, it } from "vitest";
+import { removeTempDirSync } from "./cleanup.ts";
 
 it.skipIf(process.platform === "win32")("replaces a stale link or file at the capability path with a new 0600 file", async () => {
   const root = mkdtempSync(join(tmpdir(), "murage-fake-acp-capability-"));
@@ -38,6 +39,6 @@ it.skipIf(process.platform === "win32")("replaces a stale link or file at the ca
     expect(JSON.parse(readFileSync(capability, "utf8"))).toEqual([{ name: "TOKEN", value: "fixture" }]);
   } finally {
     child.kill();
-    rmSync(root, { recursive: true, force: true });
+    removeTempDirSync(root);
   }
 });

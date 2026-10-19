@@ -12,7 +12,7 @@
 // waiting and cancel states. The real browser sign-in runs once against a
 // harness with a desktop shell and main's own sign-in code behind the bridge
 // (server/testing/desktop-shell.ts).
-import { test, expect, type Page } from "@playwright/test";
+import { test, expect, type Page } from "./page-error-guard";
 import { createServer, type ViteDevServer } from "vite";
 import tailwindcss from "@tailwindcss/vite";
 import { fileURLToPath } from "node:url";
@@ -89,7 +89,6 @@ createInterface({ input: process.stdin }).on("line", (line) => {
 });
 test.afterAll(async () => { await server?.close(); await fake?.close(); await harness?.close(); safeWipeSync(cache); safeWipeSync(scratch); });
 test.beforeEach(({ page }) => {
-  page.on("pageerror", (error) => console.log("page error:", error.message));
   page.on("console", (message) => { if (message.type() === "error") console.log("console error:", message.text()); });
   page.on("dialog", (dialog) => { throw new Error(`a native ${dialog.type()} dialog opened`); });
 });

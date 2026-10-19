@@ -19,14 +19,14 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import type { InstanceInfo } from "@/state/store";
 
 const { store, sections } = vi.hoisted(() => ({
-  store: { instances: [] as unknown[], refreshInstances: async () => {}, dispatch: () => {} },
+  store: { instances: [] as unknown[], shellEnvironment: null as unknown, refreshInstances: async () => {}, dispatch: () => {} },
   sections: [] as Array<{ onChanged?: () => Promise<void> }>,
 }));
 vi.mock("@/state/store", async (importOriginal) => {
   const original = await importOriginal<typeof import("@/state/store")>();
   return {
     ...original,
-    useStore: () => ({ state: { ...original.initialState, instances: store.instances }, dispatch: store.dispatch, refreshInstances: store.refreshInstances, flushBotPatches: async () => {} }),
+    useStore: () => ({ state: { ...original.initialState, instances: store.instances, shellEnvironment: store.shellEnvironment as never }, dispatch: store.dispatch, refreshInstances: store.refreshInstances, flushBotPatches: async () => {} }),
     api: async () => { throw new Error("no network in this test"); },
   };
 });
@@ -37,7 +37,8 @@ vi.mock("./ClaudeAccountsSettings", async (importOriginal) => {
     ClaudeAccountsSettings: (props: { onChanged?: () => Promise<void> }) => { sections.push(props); return createElement("section", { "aria-label": "Claude accounts" }); },
   };
 });
-import { EnginesSettings } from "./EnginesSettings";
+import { EnginesSettings, shellEnvironmentLine } from "./EnginesSettings";
+import { AdvancedHost } from "./SettingsPrimitives";
 import { claudeAccountChanger } from "./ClaudeAccountsSettings";
 
 const instance = (instanceId: string, driverKind: string, displayName: string): InstanceInfo => ({
@@ -46,7 +47,36 @@ const instance = (instanceId: string, driverKind: string, displayName: string): 
   models: { default: "m", options: [{ id: "m", label: "Model" }] },
 } as InstanceInfo);
 
-afterEach(() => { sections.length = 0; store.instances = []; });
+afterEach(() => { sections.length = 0; store.instances = []; store.shellEnvironment = null; });
+
+// Gap (b) of steps 1..3 (Rule 74a): the server sends a kept or fallback capture, and the panel says so
+describe("the shell environment line", () => {
+  it("says nothing for this session's capture and names a kept or fallback one with its cause", () => {
+    expect(shellEnvironmentLine(null)).toBeNull();
+    expect(shellEnvironmentLine({ capture: "session" })).toBeNull();
+    const kept = shellEnvironmentLine({ capture: "kept", capturedAt: Date.UTC(2026, 9, 1, 12, 0), cause: "the shell exited 3" }, "en-US")!;
+    expect(kept).toMatch(/^Using your shell environment from .*2026.*; Murage could not re-read it: the shell exited 3$/);
+    expect(shellEnvironmentLine({ capture: "fallback", cause: "timed out" })).toBe("Murage could not read your shell startup; commands run with the app's own environment: timed out");
+    for (const line of [kept, shellEnvironmentLine({ capture: "fallback" })!]) expect(line).not.toMatch(/—|\bsafe|unsafe|safety/i);
+  });
+
+  it("shows the line at the top of the Engines panel", () => {
+    store.instances = [instance("codex", "codex", "Codex")];
+    store.shellEnvironment = { capture: "fallback", cause: "no HOME" };
+    const markup = renderToStaticMarkup(createElement(EnginesSettings));
+    expect(markup).toContain("commands run with the app&#x27;s own environment: no HOME");
+    store.shellEnvironment = { capture: "session" };
+    expect(renderToStaticMarkup(createElement(EnginesSettings))).not.toContain("shell startup");
+  });
+
+  // APP-GRANT-FIXPLAN-r6 (e)+(h) displaced-settings rule: one line per replaced owner ssh setting
+  it("shows each ssh line the server sends, on a session capture too", () => {
+    store.instances = [instance("codex", "codex", "Codex")];
+    store.shellEnvironment = { capture: "session", sshNotes: ["Engines use plain ssh for git instead of your GIT_SSH_COMMAND (ssh; id), because it runs more than one command and Murage could not stop it asking for a password. Your own git is unchanged."] };
+    const markup = renderToStaticMarkup(createElement(EnginesSettings));
+    expect(markup).toContain("instead of your GIT_SSH_COMMAND (ssh; id)");
+  });
+});
 
 describe("EnginesSettings", () => {
   it("renders one Claude accounts section under the Claude family, with the store's refreshInstances as its fleet", () => {
@@ -72,7 +102,8 @@ describe("EnginesSettings", () => {
   // boundary, so nothing is left unanchored by dropping it.
   it("gives a family of one no eyebrow, so the card does not print the engine's name twice", () => {
     store.instances = [instance("droid", "droidAgent", "Droid"), instance("codex", "codex", "Codex")];
-    const markup = renderToStaticMarkup(createElement(EnginesSettings));
+    // Inside the page's Advanced host: the command lines wait in Advanced and are not drawn on the first screen.
+    const markup = renderToStaticMarkup(createElement(AdvancedHost, null, createElement(EnginesSettings)));
     // Drawn text only (tags stripped): the truncation `title` on the row is
     // not something a person reads off the screen.
     const drawn = markup.replace(/<[^>]*>/g, "|");
@@ -217,5 +248,18 @@ describe("claudeAccountChanger over the wire (EnginesSettings wiring)", () => {
       "→ GET /api/instances", "← GET /api/instances",
       "error Saved, but the engine list could not refresh. Switch to another window and back to probe the engines again.",
     ]);
+  });
+});
+
+describe("the engine command lines", () => {
+  it("draw inline without a page host, with Set CLI and Reset out of the engine rows", () => {
+    store.instances = [{ ...instance("codex", "codex", "Codex"), cli: "/opt/codex" } as InstanceInfo];
+    const markup = renderToStaticMarkup(createElement(EnginesSettings));
+    expect(markup).toContain('id="engine-command-lines-heading"');
+    expect(markup).toContain("Engine command lines");
+    expect(markup.match(/Set CLI…/g)).toHaveLength(1);
+    const hosted = renderToStaticMarkup(createElement(AdvancedHost, null, createElement(EnginesSettings)));
+    expect(hosted).not.toContain("Set CLI…");
+    expect(hosted).not.toContain("Engine command lines");
   });
 });

@@ -1,5 +1,5 @@
 import { createHash, randomUUID } from "node:crypto";
-import { existsSync, linkSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, truncateSync, writeFileSync } from "node:fs";
+import { existsSync, linkSync, mkdirSync, mkdtempSync, readFileSync, symlinkSync, truncateSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { afterEach, expect, it } from "vitest";
@@ -7,9 +7,10 @@ import { collectPackageExportSkills, listPackageExportSkillCandidates } from "./
 import { snapshotInstalledSkill } from "./skills.ts";
 import { DATA_DIR } from "./config.ts";
 import { workspaceDir } from "./workspace.ts";
+import { removeTempDirSync } from "./testing/cleanup.ts";
 
 const roots: string[] = [];
-afterEach(() => { for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true }); });
+afterEach(() => { for (const root of roots.splice(0)) removeTempDirSync(root); });
 const markdown = (name: string) => `---\nname: ${name}\ndescription: Check facts\nlicense: MIT\ndependencies:\n  - must-be-reviewed\n---\nRead references and use scripts only after review.\n`;
 function fixture() {
   const workspace = mkdtempSync(join(tmpdir(), "murage-export-skills-")); roots.push(workspace);

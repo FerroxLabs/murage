@@ -5,7 +5,7 @@
 // deletion pauses them first: new starts wait, running ones are stopped, and a stopped one starts again afterwards. An owner's turn is
 // never stopped by this: while one is live the deletion stays pending, as before.
 import { EventEmitter } from "node:events";
-import { mkdtempSync, realpathSync, rmSync } from "node:fs";
+import { mkdtempSync, realpathSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
@@ -18,10 +18,11 @@ import { runEngineHistoryJob } from "./engine-history-run.ts";
 import { OneShotGate } from "./engine-one-shots.ts";
 import { useFakeExclusion, type FakeExclusion } from "./testing/engine-exclusion-fake.ts";
 import { buildFixture, canaryHits, THREAD, type Fixture } from "./testing/engine-history-fixtures.ts";
+import { removeTempDirSync } from "./testing/cleanup.ts";
 
 const scratch = realpathSync.native(mkdtempSync(join(tmpdir(), "murage-oneshots-")));
 const openDatabases: DatabaseSync[] = [];
-afterAll(() => { for (const db of openDatabases) db.close(); rmSync(scratch, { recursive: true, force: true }); });
+afterAll(() => { for (const db of openDatabases) db.close(); removeTempDirSync(scratch); });
 let fake: FakeExclusion;
 beforeEach(() => { fake = useFakeExclusion(); });
 afterEach(() => { fake.restore(); for (const name of Object.keys(engineHistoryTestHooks)) delete (engineHistoryTestHooks as Record<string, unknown>)[name]; });

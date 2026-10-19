@@ -133,12 +133,12 @@ export function ClaudeAccountsSettings({ onChanged }: { onChanged?: () => Promis
     try { await navigator.clipboard.writeText(account.signInCommand); setNotice(t("claudeAccounts.copied", { name: account.displayName })); }
     catch { setError(t("claudeAccounts.copyError")); }
   };
-  return <section aria-label="Claude accounts" className="mt-4 space-y-3 border-t border-hairline/40 pt-4">
-    <div className="flex flex-wrap items-center justify-between gap-2"><h3 className="text-sm font-medium text-ink">Claude accounts</h3><div className="flex gap-2">
+  return <section aria-label="Claude accounts" className="space-y-3 rounded-xl bg-card p-4">
+    <div className="flex flex-wrap items-center justify-between gap-2"><h3 id="claude-accounts-heading" tabIndex={-1} className="text-[15px] font-medium text-ink outline-none">Claude accounts</h3><div className="flex gap-2">
       <button type="button" className={button} disabled={busy} onClick={() => { setError(""); void load().catch(cause => setError(cause.message)); }}>{t("claudeAccounts.refresh")}</button>
       <button type="button" className={button} disabled={busy} onClick={() => edit()}>{t("claudeAccounts.add")}</button>
     </div></div>
-    <p className="text-xs leading-relaxed text-ink-secondary">{t("claudeAccounts.safety")}</p>
+    <p className="text-xs leading-relaxed text-ink-secondary">{t("claudeAccounts.keepsLogin")}</p>
     {error && <p role="alert" className="text-xs text-danger">{error}</p>}
     {notice && <p role="status" className="text-xs text-ink">{notice}</p>}
     {!loaded && !error && <p role="status" className="text-xs text-ink-secondary">Loading accounts...</p>}
@@ -148,11 +148,11 @@ export function ClaudeAccountsSettings({ onChanged }: { onChanged?: () => Promis
         <div className="flex gap-2"><button type="button" className={button} disabled={busy} aria-label={`Edit ${account.displayName} account`} onClick={() => edit(account)}>Edit</button>
           {!account.isDefault && <button type="button" className={button} disabled={busy} aria-label={`Remove ${account.displayName} account`} onClick={() => { setRemoving(account.instanceId); setEditing(null); }}>Remove</button>}</div></div>
       <p className="break-all text-xs text-ink-secondary">{account.managed ? account.configDir : "Existing default or inherited Claude configuration (unchanged)"}</p>
-      {account.signInCommand && <details><summary className="cursor-pointer text-xs text-ink">{t("claudeAccounts.instructionsTitle", { name: account.displayName })}</summary>
+      {account.signInCommand && <div><p className="text-xs text-ink">{t("claudeAccounts.instructionsTitle", { name: account.displayName })}</p>
         <p className="mt-2 text-xs leading-relaxed text-ink-secondary">{t("claudeAccounts.instructions", { shell: account.signInShell === "powershell" ? "PowerShell" : t("claudeAccounts.terminal") })}</p>
         <pre className="mt-2 max-h-40 overflow-auto whitespace-pre-wrap break-all rounded bg-inset p-2 text-xs text-ink">{account.signInCommand}</pre>
         <button type="button" className={`${button} mt-2`} onClick={() => void copy(account)}>{t("claudeAccounts.copySignIn", { name: account.displayName })}</button>
-      </details>}
+      </div>}
       {removing === account.instanceId && <div className="space-y-2 rounded bg-inset p-3 text-xs text-ink"><p>{t("claudeAccounts.removeConfirm", { name: account.displayName })}</p><div className="flex flex-wrap gap-2"><button type="button" className={button} disabled={busy} onClick={() => void change("DELETE", account.instanceId)}>{t("claudeAccounts.confirmRemoval", { name: account.displayName })}</button><button type="button" className={button} disabled={busy} onClick={() => setRemoving(null)}>{t("claudeAccounts.cancelRemoval")}</button></div></div>}
     </div>)}
     {editing !== null && <form aria-label={editing === "new" ? "Add Claude account" : "Edit Claude account"} className="space-y-3 rounded-lg bg-inset p-3" onSubmit={event => { event.preventDefault(); if (!displayName.trim()) return; void change(editing === "new" ? "POST" : "PATCH", editing === "new" ? undefined : editing, { displayName: displayName.trim(), ...(editing === "new" || (current?.managed && configDir.trim() !== current.configDir) ? { configDir: configDir.trim() } : {}) }); }}>

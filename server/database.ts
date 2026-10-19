@@ -33,13 +33,13 @@ import { initializeInbox } from "./inbox.ts";
 import { verifyDerivedRows } from "./branch-index.ts";
 import { pendingBranchChanges } from "./memory/branch-change-flag.ts";
 import { bumpMessagesVersion } from "./inbox-version.ts";
-import { inStatementReusePass, instrumentDatabase, ioBudget, noteBusyTimeout } from "./io-budget.ts";
+import { inStatementReusePass, instrumentDatabase, sharedRowsStamp, ioBudget, noteBusyTimeout } from "./io-budget.ts";
 import { BACKGROUND_BUSY_MS, DEFAULT_BUSY_MS, DatabaseBusyError, awaitWriterGate, backgroundSourceNow, isDatabaseBusy, noteBusy, setBusy, writersHeldForIndexBuild } from "./db-busy.ts";
 import { noteIdentityEpoch } from "./memory/provenance-stamp.ts";
 import { initializeThreadSnooze } from "./thread-snooze.ts";
 import { initializeArtifacts } from "./artifacts.ts";
 import { initializeMessageTables } from "./message-tables.ts";
-import { startTranscriptBackfill, yieldTranscriptBackfillTo } from "./transcript-backfill.ts";
+import { startTranscriptBackfill, transcriptBackfillWorking, yieldTranscriptBackfillTo } from "./transcript-backfill.ts";
 import { txScopeBegin, txScopeEnd } from "./tx-scope.ts";
 import { initializeOwnerSends } from "./send-store.ts";
 import { prepareMessageSearchBackfill } from "./message-search-index.ts";
@@ -55,6 +55,7 @@ import { clearOverall, overallWriter, readOverallFloor, STARTING_SHARE } from ".
 import { backfillTurnSourceCopies, initializeTurnSourceHolds, turnSourceCopiesBackfilled } from "./turn-source-holds.ts";
 import { observeLine } from "./observe.ts";
 import { startWalMaintenance, stopWalMaintenance } from "./wal-maintenance.ts";
+import { pathIsWithin, registerTestHandle } from "./test-handle-registry.ts";
 
 /** A random id per opened connection: every stamp, hold and verdict cache that rests on what a connection saw carries it, so nothing judged on one
  * connection is ever reused on its replacement (two fresh connections can show identical change counters). */
@@ -163,6 +164,12 @@ function trackBackground(started: BackgroundHandle): BackgroundHandle {
  * this process now. Idle memory work yields to it (memory/worker-controller.ts upgradeYield; rc13 real-data run: idle scans beside the upgrade
  * were 25 of the 44 stalls over 250 ms). */
 export function backgroundUpgradeRunning(): boolean { return runningBackground !== null; }
+/** The one reading every caller that yields to the upgrade uses: the background upgrade runs, or the transcript backfill is reading (not merely
+ * waiting: stall r2 L1). The idle lanes, the claim index and the memory status all key on it, so a status reading never goes live while the
+ * lanes still hold back (rc13 M2: the status keyed on the upgrade alone and read its tables live beside a running backfill). */
+export function historyUpgradeRunning(deps: { upgrade?: () => boolean; backfill?: () => boolean } = {}): boolean {
+  return (deps.upgrade ?? backgroundUpgradeRunning)() || (deps.backfill ?? transcriptBackfillWorking)();
+}
 /** The block the exact-count thread of this launch publishes into (upgrade-counts.ts). */
 let launchCounts: SharedArrayBuffer | null = null;
 /** The hooks that connect the background work (upgrade-background.ts) to this connection's flags. */
@@ -239,6 +246,17 @@ let handlePath: string | null = null;
 let releaseIoBudget: (() => void) | null = null;
 let savepointId = 0;
 let startupMarked = false; // cold-start marks fire for the first open only
+let generation = 0;
+
+/** Changes whenever a connection opens or closes, so a reader holding something built from one connection can tell it is still the
+ * current one without touching the filesystem or the database. */
+export function databaseGeneration(): number { return generation; }
+
+/** Moves when a write that changed rows names the room request or team identity tables, or undefined with no connection open. The
+ * shared-bot rows are built from those tables, so a reader keeps them until this moves. The counter lives where every statement on the
+ * handle is already counted (io-budget.ts), so no writer announces itself and none can be missed; unrelated writes (messages, push
+ * pruning that matched nothing) leave it alone. It never opens the connection or touches the filesystem. */
+export function databaseSharedRowsStamp(): number | undefined { return handle ? sharedRowsStamp(handle) : undefined; }
 
 export function database(): DatabaseSync {
   const file = join(DATA_DIR, "messages.db");
@@ -362,7 +380,7 @@ export function database(): DatabaseSync {
     installWriteRevisionTriggers(db);
   } catch (error) { try { db.close(); } finally { release(); } throw error; }
   connectionId(db);
-  handle = db; handlePath = file; releaseIoBudget = release;
+  handle = db; handlePath = file; releaseIoBudget = release; generation++;
   // After migration and before traffic: one TRUNCATE gives back a high-water WAL, then the sizes are logged.
   startupStorage(db, file, firstOpen);
   // From here the checkpoints run in a worker thread (PASSIVE only; it never takes the writer lock). The connection keeps
@@ -505,5 +523,7 @@ export function closeDatabase() {
   void stopWalMaintenance();
   // After the handle closes, so dropping the shm descriptor cannot release a lock SQLite still holds.
   try { releaseIoBudget?.(); } catch { /* idempotent shutdown */ }
-  handle = null; handlePath = null; releaseIoBudget = null;
+  handle = null; handlePath = null; releaseIoBudget = null; generation++;
 }
+// Under vitest only: lets test cleanup close this copy of the module even after vi.resetModules() made it a stranger.
+registerTestHandle("close", dir => { if (dir === undefined || (handlePath && pathIsWithin(handlePath, dir))) closeDatabase(); });

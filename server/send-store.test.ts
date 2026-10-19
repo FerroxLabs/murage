@@ -1,6 +1,6 @@
 // The send record is the one source of truth for an acknowledged message: these
 // pin the round-3 review findings (steer-visible) against it.
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
@@ -13,6 +13,7 @@ import { cancelChannelMessage, channelQueueThreads, drainChannelMessages, queueC
 import { reconcileLateSteer } from "./steer-late.ts";
 import { sendFingerprint } from "./send-idempotency.ts";
 import type { BotRecord, Message } from "./store.ts";
+import { removeTempDirSync } from "./testing/cleanup.ts";
 
 const dirs: string[] = [];
 const handles: DatabaseSync[] = [];
@@ -23,7 +24,7 @@ function fileDb(): { file: string; open: () => () => DatabaseSync } {
   const file = join(dir, "messages.db");
   return { file, open: () => { const db = new DatabaseSync(file); handles.push(db); return () => db; } };
 }
-afterEach(() => { for (const h of handles.splice(0)) { try { h.close(); } catch { /* closed */ } } for (const d of dirs.splice(0)) rmSync(d, { recursive: true, force: true }); sendStore.reset(); });
+afterEach(() => { for (const h of handles.splice(0)) { try { h.close(); } catch { /* closed */ } } for (const d of dirs.splice(0)) removeTempDirSync(d); sendStore.reset(); });
 beforeEach(() => sendStore.reset());
 
 const fp = (text: string) => sendFingerprint(text);
@@ -488,6 +489,6 @@ describe("round 5: a transition and its visible effect are committed together", 
     const row = accept(sendStore, "late", "send-r5g-aaaaaaaaaaaa").row;
     sendStore.settle(row.seq, "failed", undefined, "lateRefused");
     expect(sendStore.bySeq(row.seq)!.notice).toBe("lateRefused");
-    expect(sendNoticeLine("lateRefused")).toEqual({ role: "bot", kind: "activity", tool: { name: "send-notice:lateRefused", ok: false, notice: true } });
+    expect(sendNoticeLine("lateRefused")).toEqual({ role: "bot", kind: "activity", tool: { name: "send-notice:lateRefused", ok: false, notice: true }, murageLine: true });
   });
 });

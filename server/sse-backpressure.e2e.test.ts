@@ -139,7 +139,8 @@ describe.skipIf(process.platform === "win32")("bounded SSE at the actual TCP bou
     sockets.push(slow);
     slow.on("error", () => {});
     await new Promise<void>((resolve, reject) => { slow.once("connect", resolve); slow.once("error", reject); });
-    slow.write(`GET /api/events?surface=desktop&surfaceSecret=${secret} HTTP/1.1\r\nHost: 127.0.0.1:${port}\r\nAccept: text/event-stream\r\n\r\n`);
+    const minted = await (await fetch(`${base}/api/desktop/resource-ticket`, { method: "POST", headers: { ...desktop, "content-type": "application/json" }, body: JSON.stringify({ resource: "/api/events" }) })).json() as { ticket: string };
+    slow.write(`GET /api/events?surfaceTicket=${minted.ticket} HTTP/1.1\r\nHost: 127.0.0.1:${port}\r\nAccept: text/event-stream\r\n\r\n`);
     // Do not attach a data listener or resume this socket: its receive window
     // fills for real, unlike a mocked response.write(false).
     await expect.poll(async () => (await metrics()).clients).toBe(2);

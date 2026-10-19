@@ -4,7 +4,7 @@
 // Settings → About me in a real browser against the REAL harness: the
 // page's /api calls are proxied to a verification server with the desktop
 // proof, so the starting text, the stored file and the cap run for real.
-import { test, expect } from "@playwright/test";
+import { test, expect } from "./page-error-guard";
 import { createServer, type ViteDevServer } from "vite";
 import tailwindcss from "@tailwindcss/vite";
 import { fileURLToPath } from "node:url";

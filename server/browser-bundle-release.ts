@@ -2,6 +2,7 @@
 // pins together and run each platform's packaged, offline browser smoke test.
 // This is Chromium's headless shell, not full Chrome (which includes Widevine).
 import { join } from "node:path";
+import { CLOUD_BROWSER_PINS } from "./cloud-home/browser-pins.ts";
 import {
   agentBrowserReleaseUrl,
   agentBrowserReleaseVersion,
@@ -20,8 +21,17 @@ const CHROME_ASSETS = {
 } as const;
 
 export function browserBundleSpec(target: string) {
-  if (!Object.hasOwn(CHROME_ASSETS, target)) throw new Error(`Unsupported desktop browser target: ${target}`);
-  const pinned = CHROME_ASSETS[target as BrowserBundleTarget];
+  // linux-arm64 exists only for Cloud homes (MURAGE_CLOUD_ROLE=home); there is
+  // no desktop arm64 Linux browser, so the desktop table stays unchanged.
+  const cloudRole = process.env.MURAGE_CLOUD_ROLE === "home";
+  const homeArm = cloudRole && target === "linux-arm64";
+  if (!Object.hasOwn(CHROME_ASSETS, target) && !homeArm) throw new Error(`Unsupported desktop browser target: ${target}`);
+  const home = cloudRole && (target === "linux-x64" || homeArm);
+  const version = home ? CLOUD_BROWSER_PINS.chromeVersion : CHROME_VERSION;
+  const arm = CLOUD_BROWSER_PINS.arm64;
+  const pinned = homeArm
+    ? { platform: "linux-arm64", bytes: arm.chromeBytes, sha256: arm.chromeSha256, executableSha256: arm.chromeExecutableSha256 }
+    : home ? { platform: "linux64", bytes: CLOUD_BROWSER_PINS.chromeBytes, sha256: CLOUD_BROWSER_PINS.chromeSha256, executableSha256: CLOUD_BROWSER_PINS.chromeExecutableSha256 } : CHROME_ASSETS[target as BrowserBundleTarget];
   const [platform, arch] = target.split("-");
   const engine = resolveAgentBrowserReleaseAsset(platform as NodeJS.Platform, arch)!;
   const suffix = platform === "win32" ? ".exe" : "";
@@ -38,9 +48,9 @@ export function browserBundleSpec(target: string) {
       executable: `agent-browser${suffix}`,
     },
     chrome: {
-      version: CHROME_VERSION,
+      version,
       asset: `${directory}.zip`,
-      url: `https://storage.googleapis.com/chrome-for-testing-public/${CHROME_VERSION}/${pinned.platform}/${directory}.zip`,
+      url: `https://storage.googleapis.com/chrome-for-testing-public/${version}/${pinned.platform}/${directory}.zip`,
       bytes: pinned.bytes,
       sha256: pinned.sha256,
       executableSha256: pinned.executableSha256,

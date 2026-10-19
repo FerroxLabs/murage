@@ -11,6 +11,7 @@ import { DATA_DIR } from "../config.ts";
 import { closeDatabase } from "../database.ts";
 import { MemoryIndex, walBytes, type IndexedMemory } from "./index.ts";
 import { closeMemoryIndexReader, lexicalPageSliced, resetScanAdmission, setWalCheckpointRequester, setWalDrainThreshold } from "./index-reader.ts";
+import { removeTempDirSync } from "../testing/cleanup.ts";
 
 const INDEX_PATH = () => join(DATA_DIR, "memory-index.db");
 const entry = (id: string): IndexedMemory => ({ id, version: 1, scopeId: "s", text: "harbour lantern notes for the Friday review", deleted: false });
@@ -22,7 +23,7 @@ function world() {
   index.upsert(Array.from({ length: 6000 }, (_, n) => entry(`d-${String(n).padStart(4, "0")}`)));
   return index;
 }
-beforeEach(() => { resetScanAdmission(); closeMemoryIndexReader(); closeDatabase(); rmSync(DATA_DIR, { recursive: true, force: true }); mkdirSync(DATA_DIR, { recursive: true }); });
+beforeEach(() => { resetScanAdmission(); closeMemoryIndexReader(); closeDatabase(); removeTempDirSync(DATA_DIR); mkdirSync(DATA_DIR, { recursive: true }); });
 afterEach(() => { vi.useRealTimers(); resetScanAdmission(); closeMemoryIndexReader(); setWalCheckpointRequester(null); setWalDrainThreshold(64 * 1024 * 1024); });
 
 /** A scan that stays open until its deadline: each yield sleeps (fake time) to the deadline. */

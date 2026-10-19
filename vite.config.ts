@@ -40,6 +40,14 @@ export default defineConfig({
     // longer than a developer machine); a passing test never waits on it.
     testTimeout: 45_000,
     hookTimeout: 30_000,
+    // Where a test runs when it cannot run on every pull request. Neither tag
+    // skips a test: CI's Vitest shards leave both out (ci.yml), nightly.yml
+    // runs them, and a release needs the latest nightly green
+    // (scripts/release-ci-gate.mjs). The rule is in .github/workflows/nightly.yml.
+    tags: [
+      { name: "nightly", description: "Over 60 s on a hosted runner: runs in nightly.yml on all three OSes, not in the per-push shards (memory-timing-nightly.yml also runs the WebAssembly parity test with the pinned model prepared)." },
+      { name: "perf-budget", description: "Asserts a wall-clock budget measured on dedicated hardware: runs on the build host perf job in nightly.yml, not on hosted runners." },
+    ],
   },
   resolve: {
     alias: {

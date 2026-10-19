@@ -6,7 +6,7 @@
 // and stayed shown after the owner forgot what it used. Lookups now go on a
 // companion receipt of the dispatch; the frame's own receipt is untouched, so
 // a session still continues when nothing changed.
-import { mkdirSync, rmSync } from "node:fs";
+import { mkdirSync } from "node:fs";
 import { beforeEach, expect, it } from "vitest";
 import { DATA_DIR } from "../config.ts";
 import { closeDatabase, database } from "../database.ts";
@@ -25,10 +25,11 @@ import type { Message } from "../store.ts";
 import { workingContextBlock, workingContextSources } from "../working-context.ts";
 import { addTurnParents, closeTurnLineage, memberTurnId, openTurnLineage } from "./lineage-write.ts";
 import { LineageAllowance } from "./lineage-allowance.ts";
+import { removeTempDirSync } from "../testing/cleanup.ts";
 
 const roster: MemoryRoster = { bots: [{ id: "bot", threadId: "chat", tasks: [{ threadId: "older" }] }], groups: [] };
 const empty = { async search() { return { hits: [], vectorRows: 0, coverageComplete: false }; } };
-beforeEach(() => { closeDatabase(); rmSync(DATA_DIR, { recursive: true, force: true }); mkdirSync(DATA_DIR, { recursive: true }); setMemoryMode("active"); reconcileMemoryRoster(roster); });
+beforeEach(() => { closeDatabase(); removeTempDirSync(DATA_DIR); mkdirSync(DATA_DIR, { recursive: true }); setMemoryMode("active"); reconcileMemoryRoster(roster); });
 
 function access() {
   const registry = new InternalCapabilities(); registry.begin("bot", "chat", "g");

@@ -1,6 +1,6 @@
 import { spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
-import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -8,6 +8,7 @@ import ts from "typescript";
 import { expect, it } from "vitest";
 import { acquireDataDirLease } from "../electron/data-dir-lease.mjs";
 import { commitPackageImportFiles } from "./package-import-transaction.ts";
+import { removeTempDirSync } from "./testing/cleanup.ts";
 
 it("the actual import callback exits before queued writers when recovery finds an unknown hash", () => {
   const index = readFileSync(new URL("./index.ts", import.meta.url), "utf8");
@@ -75,6 +76,6 @@ it("the actual import callback exits before queued writers when recovery finds a
     // our fixture ownership before deleting the temporary installation.
     const cleanupLease = acquireDataDirLease(root);
     cleanupLease.release();
-    rmSync(root, { recursive: true, force: true });
+    removeTempDirSync(root);
   }
 });

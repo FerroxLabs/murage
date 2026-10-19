@@ -1,0 +1,18 @@
+# Ubuntu 24.04's passt package confines /usr/bin/passt only and leaves
+# /usr/bin/pasta unconfined, so the image installs this profile for pasta.
+# murage-turn-launch runs `pasta ... -- murage-turn-launch --pasta-child <dir>`:
+# pasta creates the turn's user+net namespaces (spawn mode; attaching to an
+# existing pid is EPERM on a real home) and its own isolation step unshares a
+# user namespace.
+abi <abi/3.0>,
+include <tunables/global>
+
+profile murage-pasta /usr/bin/pasta{,.avx2} flags=(attach_disconnected) {
+  include <abstractions/pasta>
+  userns,
+  ptrace (read, trace),
+  # pasta logs to the journal; the first real home showed the denial.
+  /run/systemd/journal/dev-log w,
+
+  include if exists <local/murage-pasta>
+}

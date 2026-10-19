@@ -29,6 +29,8 @@ import type { AutoVerdictSource } from "./auto-approve.ts";
 import { redactSecrets } from "./redact.ts";
 
 export type DecisionKind =
+  /** Rule 72: a narrowing denial delivered to the engine with its reason */
+  | "auto-denied"
   | "auto-approved"
   | "card-shown"
   | "user-approved"
@@ -53,6 +55,8 @@ export type DecisionKind =
  * `user` the human's answer, and auto-review sources the isolated model reviewer. */
 export type DecisionSource =
   | AutoVerdictSource
+  /** Rule 67: Codex started a call no hook decision allowed (the tripwire) */
+  | "observed"
   | "question"
   | "auto-fallback"
   /** An image made with no card because of the bot's Images setting

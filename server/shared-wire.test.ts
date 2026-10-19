@@ -4,15 +4,16 @@
 // SPEC-X 12.3: the desktop wire bot carries `sharedWith` and `partitionedAt`;
 // every other projection (responses, live `bot` frames and replay) strips
 // both and carries `shared` and, for the owner's phone, `sharedRows`.
-import { mkdirSync, rmSync } from "node:fs";
+import { mkdirSync } from "node:fs";
 import { beforeEach, describe, expect, it } from "vitest";
 import { DATA_DIR } from "./config.ts";
 import { closeDatabase, database } from "./database.ts";
 import { Store } from "./store.ts";
 import { teamIdFor } from "./team-identities.ts";
 import { foreignBody, remoteBody, remoteWireBot, scopedBotFrame, sharedRowsFor, sharingTeams, sharingWire, wireSharedWork } from "./shared-wire.ts";
+import { removeTempDirSync } from "./testing/cleanup.ts";
 
-beforeEach(() => { closeDatabase(); rmSync(DATA_DIR, { recursive: true, force: true }); mkdirSync(DATA_DIR, { recursive: true }); });
+beforeEach(() => { closeDatabase(); removeTempDirSync(DATA_DIR); mkdirSync(DATA_DIR, { recursive: true }); });
 function fixture() {
   const store = new Store(() => ({ instanceId: "fixture", model: "fixture" }));
   const make = (name: string, section: string) => { const bot = store.createBot(); store.patchBot(bot.id, { name, section }); return bot; };
@@ -89,6 +90,33 @@ it("live and replayed bot frames are projected; every other frame is untouched",
   expect(scopedBotFrame(other, store, true)).toBe(other);
 });
 
+it("a foreign stream's record frames lose the owner's numbering, as its answers do; the owner's scoped stream keeps it (ROOM-ORDER-DESIGN, foreign cut)", () => {
+  const { store, iris } = fixture();
+  const group = { id: "g1", threadId: "t3", name: "Room", memberIds: [], messages: [{ id: "m1", role: "user", content: "hi", turnId: "turn-1" }], recordSeq: 4, recordEpoch: "e1" };
+  const groupFrame = `id: s:9\ndata: ${JSON.stringify({ kind: "group", group, seq: 9 })}\n\n`;
+  const foreign = scopedBotFrame(groupFrame, store, false, true);
+  const payload = JSON.parse(foreign.slice(foreign.indexOf("data: ") + 6));
+  expect(foreign.startsWith("id: s:9\ndata: ")).toBe(true);
+  expect(payload.seq).toBe(9);
+  expect(payload.group).toEqual({ id: "g1", threadId: "t3", name: "Room", memberIds: [], messages: [{ id: "m1", role: "user", content: "hi" }] });
+  expect(JSON.stringify(payload)).not.toMatch(/"(recordSeq|recordEpoch|turnId)"/);
+  // the owner's phone (scoped, not foreign) keeps the numbers: it orders frames as the desktop does
+  expect(scopedBotFrame(groupFrame, store, true)).toBe(groupFrame);
+  expect(scopedBotFrame(groupFrame, store, true, false)).toBe(groupFrame);
+  // removals and bot frames are cut the same way; a frame that names no record is untouched
+  const removed = `data: ${JSON.stringify({ kind: "group.deleted", groupId: "g1", recordSeq: 4, recordEpoch: "e1", seq: 10 })}\n\n`;
+  expect(JSON.parse(scopedBotFrame(removed, store, false, true).slice(6))).toEqual({ kind: "group.deleted", groupId: "g1", seq: 10 });
+  const botGone = `data: ${JSON.stringify({ kind: "bot.deleted", botId: "b1", tasksSeq: 4, tasksEpoch: "e1", seq: 11 })}\n\n`;
+  expect(JSON.parse(scopedBotFrame(botGone, store, false, true).slice(6))).toEqual({ kind: "bot.deleted", botId: "b1", seq: 11 });
+  const botFrame = `data: ${JSON.stringify({ kind: "bot", bot: { ...wire(iris), tasksSeq: 3, tasksEpoch: "e1" }, seq: 12 })}\n\n`;
+  const foreignBot = JSON.parse(scopedBotFrame(botFrame, store, false, true).slice(6));
+  expect(foreignBot.bot).not.toHaveProperty("tasksSeq");
+  expect(foreignBot.bot).not.toHaveProperty("sharedWith");
+  expect(foreignBot.bot.shared).toBe(true);
+  const other = `data: ${JSON.stringify({ kind: "message", threadId: "t", message: { recordSeq: 1 } })}\n\n`;
+  expect(scopedBotFrame(other, store, false, true)).toBe(other);
+});
+
 it("a legacy team label longer than 60 characters never breaks a read, and no read or frame mints", () => {
   const { store, iris } = fixture();
   const long = "L".repeat(61);
@@ -113,6 +141,8 @@ describe("foreignBody (astra-botint H1: owner-only metadata at the response boun
     const body = {
       tasksEpoch: "e1",
       removed: [{ id: "gone", kind: "deleted", tasksSeq: 3 }],
+      roomClock: 12,
+      removedGroups: [{ id: "g-gone", recordSeq: 11, recordEpoch: "e1", kind: "deleted" }],
       bots: [{
         id: "b1", threadId: "t1", name: "Bot", modelSelection: {}, tasksSeq: 7, tasksEpoch: "e1",
         messages: [row("m1", { dispatchedIn: "turn-1" }), { ...row("m2", { turnId: "turn-1", turnTerminal: true }), role: "assistant" }],
@@ -124,7 +154,9 @@ describe("foreignBody (astra-botint H1: owner-only metadata at the response boun
       changed: { groups: [{ id: "g1", name: "Room", section: null, hidden: null, recordSeq: 4, recordEpoch: "e1" }] },
     };
     const out = foreignBody(body) as any;
-    expect(JSON.stringify(out)).not.toMatch(/"(tasksEpoch|tasksSeq|recordEpoch|recordSeq|turnId|dispatchedIn|removed)"/);
+    expect(JSON.stringify(out)).not.toMatch(/"(tasksEpoch|tasksSeq|recordEpoch|recordSeq|turnId|dispatchedIn|removed|removedGroups|roomClock)"/);
+    expect(out).not.toHaveProperty("roomClock");
+    expect(out).not.toHaveProperty("removedGroups");
     expect(out.group).toEqual({ id: "g1", threadId: "t3", name: "Room", memberIds: [] });
     expect(out.changed.groups[0]).toEqual({ id: "g1", name: "Room", section: null, hidden: null });
     expect(out.bots[0]).toMatchObject({ id: "b1", threadId: "t1", name: "Bot" });

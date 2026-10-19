@@ -20,10 +20,22 @@ import { DATA_DIR, ensureDirs } from "../config.ts";
 import type { ProviderInstance, RuntimeEvent } from "../contracts.ts";
 import { recordEvents, type EventRecorder } from "../testing/events.ts";
 import { brokerSocketCandidates, ClaudeDriver, CLAUDE_BUILT_IN_AGENTS, CLAUDE_ISOLATION_CONTRACT, claudeCostSnapshot, claudeIsolation, claudeIsolationSettings, createPermissionBroker, permissionSocketPath, restoredCostBase, turnCostFromRunningTotal, type ClaudeConfig } from "./claude.ts";
+import { resolveCall } from "../../shared/app-action-grant.ts";
+import { autoVerdict } from "../auto-approve.ts";
+import { bashTargetsOf, claudeExecShell, claudeInProjectAllow, claudeMountRecords, claudeShellRefusal } from "./claude.ts";
+import { installMurageExec, murageExecPrefix, WRAPPER_SOURCE, writeExecEnvFile } from "./murage-exec.ts";
+import { inProjectCheck } from "../../shared/in-project.ts";
+import { claudeSensitiveAskRules } from "../../shared/sensitive-paths.ts";
+import { spawnSync } from "node:child_process";
 import { removeTempDir } from "../testing/cleanup.ts";
 import { invalidateCliVersions } from "../cli-version-cache.ts";
 import { CLAUDE_MANAGED_MCP_CONFLICT, CLAUDE_MIN_VERSION, CLAUDE_UPDATE_MESSAGE, claudeExecutableIdentity, claudeLaunchRefusal, claudeLaunchRefusalError, ClaudeUpdateRequired, claudeVersionBelow, claudeVersionVerdict, requireClaudeCliVersion, resetClaudeVersionGate, VERSION_FAILURE_BACKOFF_MS } from "./claude-guards.ts";
 import * as localInject from "./local-inject.ts";
+import { execChecks, resetExecChecks } from "../testing/exec-check-spy.ts";
+import { approveStartupWrite } from "../testing/startup-write.ts";
+
+vi.mock("node:child_process", async (original) => (await import("../testing/exec-check-spy.ts")).withExecCheckSpy(await original()));
+import { removeTempDirSync } from "../testing/cleanup.ts";
 
 const FAKE_CLI = join(dirname(fileURLToPath(import.meta.url)), "..", "testing", "fake-claude-cli.ts");
 
@@ -192,7 +204,7 @@ describe("ClaudeDriver.decodeConfig", () => {
     expect(permissionSocketPath("t-perm-dup-1")).not.toBe(permissionSocketPath("t-perm-dup-2"));
   });
 
-  it("does not advertise or accept local CUA in bypassPermissions mode", async () => {
+  it("advertises local CUA in bypassPermissions mode: the broker runs on every turn (Rule 69b)", async () => {
     const bypass = await ClaudeDriver.create({
       instanceId: "claude-bypass",
       displayName: "Claude Bypass",
@@ -200,22 +212,7 @@ describe("ClaudeDriver.decodeConfig", () => {
       enabled: true,
       config: { cli: FAKE_CLI, permissionMode: "bypassPermissions" },
     });
-    expect(bypass.adapter.capabilities.localComputerMcp).toBe(false);
-    await expect(
-      bypass.adapter.sendTurn({
-        threadId: "t-bypass-local",
-        text: "click",
-        integrations: {
-          localComputer: {
-            command: "/cua-driver",
-            args: ["mcp"],
-            env: {},
-            platform: "linux",
-            scope: "local-computer",
-          },
-        },
-      }),
-    ).rejects.toThrow(/interactive approval broker/);
+    expect(bypass.adapter.capabilities.localComputerMcp).toBe(true);
     await bypass.dispose();
   });
 
@@ -280,7 +277,7 @@ describe("ClaudeDriver.decodeConfig", () => {
         conn.end();
       } finally {
         broker.close();
-        rmSync(dir, { recursive: true, force: true });
+        removeTempDirSync(dir);
       }
     },
   );
@@ -298,7 +295,7 @@ describe("ClaudeDriver.decodeConfig", () => {
       expect(resolved).toEqual([]);
       expect(broker.answer("question", "deny")).toBe(true);
       conn.end();
-    } finally { broker.close(); rmSync(dir, { recursive: true, force: true }); }
+    } finally { broker.close(); removeTempDirSync(dir); }
   });
 
   it.skipIf(process.platform === "win32")(
@@ -329,7 +326,7 @@ describe("ClaudeDriver.decodeConfig", () => {
         conn.end();
       } finally {
         broker.close();
-        rmSync(dir, { recursive: true, force: true });
+        removeTempDirSync(dir);
       }
     },
   );
@@ -351,7 +348,7 @@ describe("ClaudeDriver.decodeConfig", () => {
           }),
         ).rejects.toThrow(/could not bind a local socket/);
       } finally {
-        rmSync(dir, { recursive: true, force: true });
+        removeTempDirSync(dir);
       }
     },
   );
@@ -698,7 +695,7 @@ describe("ClaudeDriver turns (fake CLI)", () => {
       enabledPlugins: { "p@m": false, "q@m": false },
       claudeMdExcludes: expect.arrayContaining([join(account, "CLAUDE.md"), join(account, "rules", "**")]),
       skillOverrides: { mine: "off", "my-skill": "off", "sub:deploy": "off" },
-      permissions: { deny: ["Agent(personal-helper)"] },
+      permissions: { ask: expect.arrayContaining(["Read", "Edit", "Write", "MultiEdit", "NotebookEdit", "Grep", "Glob", "Bash"]), deny: ["Agent(personal-helper)"] },
       outputStyle: "default",
       agent: "",
       env: { CLAUDE_CODE_PLUGIN_DIRS: "" },
@@ -1725,6 +1722,100 @@ describe("ClaudeDriver turns (fake CLI)", () => {
     } finally { unsubscribe(); conn.destroy(); }
   });
 
+  // Step 2, Claude rows: the ask carries F4 (the keys of the written --mcp-config) and
+  // the driver never stands in for a field it did not receive (Rules 54, 55, 11).
+  const openClaudeAsks = async (threadId: string, turn: Record<string, unknown>, asks: Array<Record<string, unknown>>) => {
+    const gate = join(scratch, `${threadId}-gate`);
+    const dump = join(scratch, `${threadId}.json`);
+    process.env.FAKE_CLAUDE_DUMP = dump;
+    await create("background-result", { FAKE_CLAUDE_REPLY_GATE: gate });
+    await instance.adapter.sendTurn({ threadId, text: "work", ...turn } as never);
+    await recorder.until(event => event.type === "item.completed" && event.itemType === "assistant_text");
+    const conn = await connectSocket(permissionSocketPath(threadId));
+    const nextAnswer = answerQueue(conn);
+    const unsubscribe = instance.adapter.onEvent(event => {
+      if (event.type === "request.opened" && typeof event.requestId === "string") void instance.adapter.respondToRequest(threadId, event.requestId, { behavior: "allow" });
+    });
+    const opened: any[] = [];
+    try {
+      for (const ask of asks) {
+        const answer = nextAnswer();
+        conn.write(JSON.stringify({ t: "ask", ...ask }) + "\n");
+        await answer;
+        opened.push(recorder.events.find(event => event.type === "request.opened" && event.requestId === ask.id));
+      }
+    } finally { unsubscribe(); conn.destroy(); writeFileSync(gate, "finish"); }
+    return { opened, config: JSON.parse(readFileSync(dump, "utf8")).mcpConfig as { mcpServers: Record<string, unknown> } };
+  };
+  const stubServer = { command: process.execPath, args: ["fixture-server"], env: {} };
+  const harnessEnv = { MURAGE_HARNESS_URL: "http://127.0.0.1:1", MURAGE_BOT_ID: "b1", MURAGE_COMMS_TOKEN: "tok", MURAGE_TURN_DEPTH: "0" };
+
+  it("T63 T74: every ask carries toolEngine claude and records for exactly the written mcp-config keys", async () => {
+    const project = join(scratch, "project");
+    mkdirSync(project, { recursive: true });
+    writeFileSync(join(project, ".mcp.json"), JSON.stringify({ mcpServers: { projserver: stubServer } }));
+    const { opened, config } = await openClaudeAsks("t-f4-records", {
+      cwd: project,
+      integrations: {
+        memory: { ...stubServer, env: { MURAGE_HARNESS_URL: "http://127.0.0.1:1", MURAGE_MEMORY_TOKEN: "m" } },
+        agents: { command: process.execPath, args: ["/fake/agents-proxy.js"], env: harnessEnv },
+        custom: { notes: stubServer, "bad__name": stubServer },
+      },
+    }, [{ id: "f4-1", tool: "Read", input: { file_path: "/tmp/x" } }, { id: "f4-2", tool: "mcp__notes__search", input: {} }]);
+    const keys = Object.keys(config.mcpServers).sort();
+    expect(keys).toEqual(["agents", "murage-memory", "muragebox", "notes"]);
+    for (const event of opened) {
+      expect(event.toolEngine).toBe("claude");
+      expect(event.mcpMounts.map((record: { engineName: string }) => record.engineName).sort()).toEqual(keys);
+      const byName = Object.fromEntries(event.mcpMounts.map((record: any) => [record.engineName, record]));
+      expect(byName.agents).toEqual({ engineName: "agents", mountId: "own:agents", provenance: "own" });
+      expect(byName["murage-memory"]).toEqual({ engineName: "murage-memory", mountId: "own:memory", provenance: "own" });
+      expect(byName.muragebox).toEqual({ engineName: "muragebox", mountId: "own:muragebox", provenance: "own" });
+      expect(byName.notes).toEqual({ engineName: "notes", mountId: "custom:notes", provenance: "custom" });
+      expect(JSON.stringify(event.mcpMounts)).not.toContain("projserver");
+      expect(JSON.stringify(event.mcpMounts)).not.toContain("bad__name");
+    }
+    expect(config.mcpServers).not.toHaveProperty("bad__name");
+    expect(config.mcpServers).not.toHaveProperty("projserver");
+  });
+
+  it("T3: an mcp tool that fits no record resolves unproven", async () => {
+    const { opened } = await openClaudeAsks("t-f4-unproven", { integrations: { custom: { notes: stubServer } } }, [
+      { id: "u-1", tool: "mcp__ghost__tool", input: {} },
+      { id: "u-2", tool: "mcp__notes__tool", input: {} },
+    ]);
+    const call = (event: any) => ({ engine: event.toolEngine, toolCall: event.toolCall, mcpMounts: event.mcpMounts });
+    expect(resolveCall(call(opened[0])).kind).toBe("unproven");
+    expect(resolveCall(call(opened[1]))).toMatchObject({ kind: "mcp", server: "notes", tool: "tool", mountId: "custom:notes" });
+  });
+
+  it("Rule 55: a missing tool name or input is reported, never replaced", async () => {
+    const { opened } = await openClaudeAsks("t-f5-missing", {}, [
+      { id: "m-1", tool: "Read" },
+      { id: "m-2", input: { file_path: "/tmp/x" } },
+      { id: "m-3", tool: "mcp__notes__tool", input: {} },
+    ]);
+    expect(opened[0]).toMatchObject({ toolInputMissing: "input", tool: "Read" });
+    expect(opened[0]).not.toHaveProperty("toolCall");
+    expect(opened[0].summary).toBe("");
+    expect(opened[1]).toMatchObject({ toolInputMissing: "tool_name", tool: "" });
+    expect(opened[1]).not.toHaveProperty("toolCall");
+    expect(opened[2]).not.toHaveProperty("toolInputMissing");
+    expect(opened[2].toolCall).toEqual({ name: "mcp__notes__tool", input: {} });
+  });
+
+  it("T64 Claude rows: a built-in call missing its required field is unread", () => {
+    const mounts = [{ engineName: "srv", mountId: "custom:srv", provenance: "custom" as const }];
+    const verdict = (tool: string, input: unknown, inputMissing?: string) =>
+      autoVerdict({ autoApprove: true }, tool, "", { call: { engine: "claude", toolCall: { name: tool, input }, mcpMounts: mounts, ...(inputMissing ? { inputMissing } : {}) } });
+    expect(verdict("Read", {}).source).toBe("unread-call");
+    expect(verdict("Bash", {}).source).toBe("unread-call");
+    expect(verdict("MultiEdit", { file_path: "/tmp/a", edits: [] }).source).toBe("unread-call");
+    expect(verdict("Read", undefined, "input").source).toBe("unread-call");
+    expect(verdict("mcp__srv__tool", {}).source).not.toBe("unread-call");
+    expect(verdict("Read", { file_path: "/tmp/a" }).source).not.toBe("unread-call");
+  });
+
   it("keeps real broker authority across retained turns and rotated process closure", async () => {
     const threadId = "t-multi-authority";
     const dump = join(scratch, "multi-authority.json");
@@ -2437,6 +2528,63 @@ describe("ClaudeDriver turns (fake CLI)", () => {
     conn.end();
   });
 
+  // Section (d) of APP-GRANT-FIXPLAN-r6 (Rules 74a, 74d): the environment is checked when each card opens, in the
+  // generation it opens in, never once at spawn for the whole turn
+  it("checks each permission ask's environment in the generation its card opens in", async () => {
+    await create("hang");
+    resetExecChecks();
+    await instance.adapter.sendTurn({ threadId: "t-gen-claude", text: "go" });
+    await recorder.until((e) => e.type === "session.started");
+    const conn = await connectSocket(permissionSocketPath("t-gen-claude"));
+    const nextAnswer = answerQueue(conn);
+    conn.write(JSON.stringify({ t: "ask", id: "gen-1", tool: "Bash", input: { command: "echo one" } }) + "\n");
+    const first = await recorder.until((e) => e.type === "request.opened" && e.requestId === "gen-1") as any;
+    expect(execChecks.runs).toBe(1);
+    expect(first.execEnv).toMatchObject({ shell: expect.any(Array) });
+    await instance.adapter.respondToRequest("t-gen-claude", "gen-1", { behavior: "allow" });
+    await nextAnswer();
+    expect(approveStartupWrite()).toBe(true);
+    conn.write(JSON.stringify({ t: "ask", id: "gen-2", tool: "Bash", input: { command: "echo two" } }) + "\n");
+    const second = await recorder.until((e) => e.type === "request.opened" && e.requestId === "gen-2") as any;
+    expect(execChecks.runs).toBe(2);
+    expect(second.execEnv).toMatchObject({ shell: expect.any(Array) });
+    await instance.adapter.respondToRequest("t-gen-claude", "gen-2", { behavior: "deny" });
+    await nextAnswer();
+    conn.end();
+    await instance.adapter.interruptTurn("t-gen-claude");
+    await recorder.until((e) => e.type === "turn.completed");
+  });
+
+  // Astra r6 item 8: U20 belongs to the command card; a file or MCP permission is not checked and never carries it
+  it("checks only a command ask's environment; a file ask carries the handed map, unchecked", async () => {
+    await create("hang");
+    resetExecChecks();
+    await instance.adapter.sendTurn({ threadId: "t-u20-scope", text: "go" });
+    await recorder.until((e) => e.type === "session.started");
+    const conn = await connectSocket(permissionSocketPath("t-u20-scope"));
+    const nextAnswer = answerQueue(conn);
+    conn.write(JSON.stringify({ t: "ask", id: "file-1", tool: "Write", input: { file_path: "/tmp/murage-u20-scope", content: "x" } }) + "\n");
+    const file = await recorder.until((e) => e.type === "request.opened" && e.requestId === "file-1") as any;
+    expect(execChecks.runs).toBe(0);
+    expect(file.execEnv).toMatchObject({ shell: expect.any(Array) });
+    expect(file.execEnv.unread).toBeUndefined();
+    await instance.adapter.respondToRequest("t-u20-scope", "file-1", { behavior: "deny" });
+    await nextAnswer();
+    conn.write(JSON.stringify({ t: "ask", id: "read-1", tool: "Read", input: { file_path: "/tmp/murage-u20-scope" } }) + "\n");
+    await recorder.until((e) => e.type === "request.opened" && e.requestId === "read-1");
+    expect(execChecks.runs).toBe(0);
+    await instance.adapter.respondToRequest("t-u20-scope", "read-1", { behavior: "deny" });
+    await nextAnswer();
+    conn.write(JSON.stringify({ t: "ask", id: "cmd-1", tool: "Bash", input: { command: "echo one" } }) + "\n");
+    await recorder.until((e) => e.type === "request.opened" && e.requestId === "cmd-1");
+    expect(execChecks.runs).toBe(1);
+    await instance.adapter.respondToRequest("t-u20-scope", "cmd-1", { behavior: "deny" });
+    await nextAnswer();
+    conn.end();
+    await instance.adapter.interruptTurn("t-u20-scope");
+    await recorder.until((e) => e.type === "turn.completed");
+  });
+
   it("denies a colliding ask id on the same connection without orphaning the original", async () => {
     await create("hang");
     await instance.adapter.sendTurn({ threadId: COLLISION_THREAD_IDS[0], text: "go" });
@@ -2950,10 +3098,11 @@ describe("ClaudeDriver turns (fake CLI)", () => {
         });
         await recorder.until((event) => event.type === "turn.completed" && event.turnId === sent.turnId);
         const { argv } = JSON.parse(readFileSync(dump, "utf8")) as { argv: string[] };
-        const expected = permissionMode === "bypassPermissions" && enforced ? "acceptEdits"
-          : permissionMode === "auto" ? "acceptEdits" : permissionMode;
+        // Rule 69b: bypassPermissions is acceptEdits plus the broker on every turn, enforced or not
+        const expected = permissionMode === "bypassPermissions" || permissionMode === "auto" ? "acceptEdits" : permissionMode;
         expect(argv[argv.indexOf("--permission-mode") + 1]).toBe(expected);
-        expect(argv.includes("--permission-prompt-tool")).toBe(expected !== "bypassPermissions");
+        expect(argv).not.toContain("bypassPermissions");
+        expect(argv.includes("--permission-prompt-tool")).toBe(true);
       }
     }
   });
@@ -2994,17 +3143,103 @@ describe("ClaudeDriver turns (fake CLI)", () => {
     delete process.env.FAKE_CLAUDE_PERM_INPUT;
   });
 
-  it("leaves a bypassPermissions instance as it was without the stop line", async () => {
+  it("never passes bypassPermissions: the broker is on without the stop line too (T104)", async () => {
     await create(undefined, {}, { permissionMode: "bypassPermissions" });
     const dump = join(scratch, "dump-bypass.json");
     process.env.FAKE_CLAUDE_DUMP = dump;
+    process.env.FAKE_CLAUDE_PERM_INPUT = JSON.stringify({ command: "echo hi" });
     await instance.adapter.sendTurn({ threadId: "t-bypass", text: "__fixture_permission_tool__" });
-    await recorder.until((e) => e.type === "item.completed" && e.itemType === "assistant_text" && /ran without asking/.test(e.text));
-    await recorder.until((e) => e.type === "turn.completed");
+    const opened = await recorder.until((e) => e.type === "request.opened" && e.tool === "Bash");
     const seen = JSON.parse(readFileSync(dump, "utf8"));
-    expect(seen.argv.join(" ")).toContain("--permission-mode bypassPermissions");
-    expect(seen.argv).not.toContain("--permission-prompt-tool");
-    expect(recorder.events.some((e) => e.type === "request.opened")).toBe(false);
+    expect(seen.argv.join(" ")).toContain("--permission-mode acceptEdits");
+    expect(seen.argv).not.toContain("bypassPermissions");
+    expect(seen.argv).toContain("--permission-prompt-tool");
+    const tools = [seen.argv[seen.argv.indexOf("--allowedTools") + 1] ?? "", seen.argv.includes("--tools") ? seen.argv[seen.argv.indexOf("--tools") + 1] : ""].join(",");
+    expect(tools).not.toMatch(/\b(Grep|Glob)\b/);
+    await instance.adapter.respondToRequest("t-bypass", opened.requestId!, { behavior: "deny" });
+    await recorder.until((e) => e.type === "turn.completed");
+    delete process.env.FAKE_CLAUDE_PERM_INPUT;
+  });
+
+  // T104 / T86 (Claude half) / T103: the broker answers an ordinary in-project file call itself and
+  // puts a sensitive, outside or unplaceable one in front of the owner.
+  it("answers in-project file calls with no card and cards the sensitive ones (T104, T86)", async () => {
+    await create(undefined, {}, { permissionMode: "acceptEdits" });
+    // under scratch: the warm fake CLIs keep their cwd here until dispose, and afterEach removes scratch after it (Windows: EBUSY before)
+    const proj = realpathSync.native(mkdtempSync(join(scratch, "proj-")));
+    writeFileSync(join(proj, "a.txt"), "a");
+    const cases: Array<[string, string, Record<string, unknown>, "allow" | "card"]> = [
+      ["Read", "read", { file_path: join(proj, "a.txt") }, "allow"],
+      ["Write", "write", { file_path: join(proj, "b.txt"), content: "hello" }, "allow"],
+      ["Edit", "edit", { file_path: join(proj, "a.txt"), old_string: "a", new_string: "b" }, "allow"],
+      ["MultiEdit", "multi", { file_path: join(proj, "a.txt"), edits: [{ old_string: "a", new_string: "b" }] }, "allow"],
+      ["NotebookEdit", "nb", { notebook_path: join(proj, "n.ipynb"), new_source: "x = 1" }, "allow"],
+      ["Write", "example", { file_path: join(proj, ".env.example"), content: "PORT=3000\n" }, "allow"],
+      ["Read", "env-read", { file_path: join(proj, ".env") }, "card"],
+      ["Write", "env", { file_path: join(proj, ".env"), content: "x" }, "card"],
+      ["Edit", "gitconfig", { file_path: join(proj, ".git", "config"), old_string: "a", new_string: "b" }, "card"],
+      ["NotebookEdit", "ssh", { notebook_path: "~/.ssh/x.ipynb", new_source: "x" }, "card"],
+      // an absolute path outside the project on every platform (`/etc/...` on Windows is a current-drive path, refused unplaced)
+      ["Write", "outside", { file_path: join(dirname(proj), "murage-test-outside"), content: "x" }, "card"],
+    ];
+    try {
+      for (const [tool, name, input, want] of cases) {
+        process.env.FAKE_CLAUDE_PERM_TOOL = tool;
+        process.env.FAKE_CLAUDE_PERM_INPUT = JSON.stringify(input);
+        const threadId = `t-gate-${name}`;
+        await instance.adapter.sendTurn({ threadId, text: "__fixture_permission_tool__", cwd: proj });
+        if (want === "card") {
+          const opened = await recorder.until((e) => e.type === "request.opened" && e.threadId === threadId);
+          expect(opened).toMatchObject({ toolEngine: "claude" });
+          await instance.adapter.respondToRequest(threadId, opened.requestId!, { behavior: "deny" });
+          await recorder.until((e) => e.type === "item.completed" && e.threadId === threadId && e.itemType === "assistant_text" && /permission: denied/.test(e.text));
+        } else {
+          await recorder.until((e) => e.type === "item.completed" && e.threadId === threadId && e.itemType === "assistant_text" && /permission: allowed/.test(e.text));
+          expect(recorder.events.some((e) => e.type === "request.opened" && e.threadId === threadId)).toBe(false);
+        }
+        await recorder.until((e) => e.type === "turn.completed" && e.threadId === threadId);
+      }
+    } finally {
+      delete process.env.FAKE_CLAUDE_PERM_TOOL;
+      delete process.env.FAKE_CLAUDE_PERM_INPUT;
+    }
+  });
+
+  it("hands the CLI the finished environment and the Bash wrapper (Rules 69f, 74a)", async () => {
+    await create();
+    const dump = join(scratch, "dump-env.json");
+    process.env.FAKE_CLAUDE_DUMP = dump;
+    process.env.CLAUDE_ENV_FILE = "/tmp/murage-must-not-reach-the-cli";
+    try {
+      await instance.adapter.sendTurn({ threadId: "t-handed-env", text: "hi", cwd: scratch });
+      await recorder.until((e) => e.type === "turn.completed");
+    } finally {
+      delete process.env.CLAUDE_ENV_FILE;
+    }
+    const { env } = JSON.parse(readFileSync(dump, "utf8")) as { env: Record<string, string | undefined> };
+    expect(env.CLAUDE_BASH_MAINTAIN_PROJECT_WORKING_DIR).toBe("1");
+    expect(env.CLAUDE_ENV_FILE).toBeUndefined();
+    expect(env.PAGER).toBe("cat");
+    if (process.platform !== "win32") {
+      expect(env.CLAUDE_CODE_SHELL_PREFIX).toMatch(/murage-exec-[0-9a-f]+$/);
+      expect(env.CLAUDE_CODE_SHELL).toMatch(/(bash|zsh)$/);
+      expect(statSync(env.CLAUDE_CODE_SHELL_PREFIX!).mode & 0o777).toBe(0o755);
+      expect(statSync(env.MURAGE_EXEC_ENV_FILE!).mode & 0o777).toBe(0o600);
+    }
+  });
+
+  it("delivers a narrowing denial as a plain deny with its reason (Rule 72)", async () => {
+    await create(undefined, {}, { permissionMode: "acceptEdits" });
+    process.env.FAKE_CLAUDE_PERM_INPUT = JSON.stringify({ command: "grep -r KEY ." });
+    try {
+      await instance.adapter.sendTurn({ threadId: "t-narrow", text: "__fixture_permission_tool__" });
+      const opened = await recorder.until((e) => e.type === "request.opened" && e.threadId === "t-narrow");
+      const decision = { behavior: "deny", message: "add --exclude=.env", source: "narrow" } as const;
+      await expect(instance.adapter.respondToRequest("t-narrow", opened.requestId!, decision as never)).resolves.toBe("rejected");
+      await recorder.until((e) => e.type === "item.completed" && e.threadId === "t-narrow" && e.itemType === "assistant_text" && /permission: denied/.test(e.text));
+    } finally {
+      delete process.env.FAKE_CLAUDE_PERM_INPUT;
+    }
   });
 
   it("runs a whole AskUserQuestion turn through the real permission host", async () => {
@@ -3502,7 +3737,7 @@ describe("claudeIsolation", () => {
     write(join(dir, "settings.json"), { apiKeyHelper: "/bin/SECRET-helper", env: { CLAUDE_CODE_OAUTH_TOKEN: "SECRET-token", ANTHROPIC_BASE_URL: "https://SECRET-gw" }, hooks: { Stop: [] }, mcpServers: { s: {} } });
     const args = claudeIsolation({ CLAUDE_CONFIG_DIR: dir }, join(h, "w"));
     expect(JSON.stringify(args)).not.toContain("SECRET");
-    expect(Object.keys(settingsOf(args)).sort()).toEqual(["agent", "claudeMdExcludes", "disableAllHooks", "enabledPlugins", "env", "outputStyle"]);
+    expect(Object.keys(settingsOf(args)).sort()).toEqual(["agent", "claudeMdExcludes", "disableAllHooks", "enabledPlugins", "env", "outputStyle", "permissions"]);
     expect(settingsOf(args).env).toEqual({ CLAUDE_CODE_PLUGIN_DIRS: "" });
   });
 
@@ -3536,12 +3771,12 @@ describe("claudeIsolation", () => {
     write(join(dir, "agents", "reviewer.md"), "---\nname: code-reviewer\ndescription: x\n---\nprompt");
     write(join(dir, "agents", "team", "planner.md"), "no front matter");
     const settings = settingsOf(claudeIsolation({ CLAUDE_CONFIG_DIR: dir }, join(h, "w")));
-    expect(settings.permissions).toEqual({ deny: ["Agent(code-reviewer)", "Agent(planner)"] });
+    expect(settings.permissions).toEqual({ ask: expect.arrayContaining(["Bash"]), deny: ["Agent(code-reviewer)", "Agent(planner)"] });
     expect(settings.outputStyle).toBe("default");
     // rig, 2.1.281 and 2.1.295: a user `"agent": "uagent"` selects that main agent unless the flag settings say ""
     expect(settings.agent).toBe("");
     // no personal agent: no permissions key at all, so the owner's own rules are untouched
-    expect(settingsOf(claudeIsolation({ CLAUDE_CONFIG_DIR: join(temp(), ".claude") }, h)).permissions).toBeUndefined();
+    expect(settingsOf(claudeIsolation({ CLAUDE_CONFIG_DIR: join(temp(), ".claude") }, h)).permissions).toEqual({ ask: expect.arrayContaining(["Bash"]) });
   });
 
   it("reads agent names as YAML, the way the CLI does", () => {
@@ -3567,7 +3802,7 @@ describe("claudeIsolation", () => {
       write(join(dir, "agents", "odd.md"), "---\nname: \"bad) name\"\n---\n");
       write(join(dir, "agents", "ok.md"), "---\nname: fine\n---\n");
       const settings = settingsOf(claudeIsolation({ CLAUDE_CONFIG_DIR: dir }, join(h, "w")));
-      expect(settings.permissions).toEqual({ deny: ["Agent(fine)"] });
+      expect(settings.permissions).toEqual({ ask: expect.arrayContaining(["Bash"]), deny: ["Agent(fine)"] });
       expect(CLAUDE_BUILT_IN_AGENTS.has("Explore")).toBe(true);
       expect(warn.mock.calls.map((c) => String(c[0])).filter((m) => m.includes("built-in agent"))).toHaveLength(2);
       expect(warn.mock.calls.some((c) => String(c[0]).includes("permission rule"))).toBe(true);
@@ -3737,5 +3972,109 @@ describe("requireClaudeCliVersion", () => {
     expect(before).toContain(realpathSync(cli));
     utimesSync(cli, new Date(), new Date(Date.now() + 9_000));
     expect(claudeExecutableIdentity("claude", { PATH: dirname(cli) })).not.toBe(before);
+  });
+});
+
+describe("claudeMountRecords and the double underscore rule (T75)", () => {
+  const record = (engineName: string) => ({ engineName, mountId: `custom:${engineName}`, provenance: "custom" as const });
+  it("splits mcp__a__b__c at the first joiner against exact record names", () => {
+    const call = (mcpMounts: ReturnType<typeof record>[]) => ({ engine: "claude" as const, toolCall: { name: "mcp__a__b__c", input: {} }, mcpMounts });
+    expect(resolveCall(call([record("a")]))).toMatchObject({ kind: "mcp", server: "a", tool: "b__c" });
+    expect(resolveCall(call([record("a"), record("a__b")])).kind).toBe("unproven");
+  });
+  it("never records a name holding a double underscore", () => {
+    const records = claudeMountRecords(["notes", "a__b"], undefined, new Set(["notes", "a__b"]));
+    expect(records.map((r) => r.engineName)).toEqual(["notes"]);
+  });
+  it("maps the connector under either name and the built-ins to their own ids", () => {
+    const ids = (key: string) => claudeMountRecords([key], key, new Set()).map((r) => r.mountId);
+    expect(ids("murage_connectors")).toEqual(["own:connector"]);
+    expect(ids("composio")).toEqual(["own:connector"]);
+    expect(claudeMountRecords(["computer", "browser", "phone", "dweb"], undefined, new Set()).map((r) => r.mountId)).toEqual(["own:computer", "own:browser", "own:phone", "own:dweb"]);
+  });
+});
+
+describe("Claude gate: overlay, in-project check, wrapper (Rules 63, 69, 74b)", () => {
+  it("T90 a/e: the overlay asks about every bare tool, then the sensitive projection, and writes no hooks", () => {
+    const settings = claudeIsolationSettings({}, tmpdir(), "linux") as { disableAllHooks?: boolean; hooks?: unknown; permissions?: { ask?: string[] } };
+    const ask = settings.permissions?.ask ?? [];
+    expect(ask.slice(0, 8)).toEqual(["Read", "Edit", "Write", "MultiEdit", "NotebookEdit", "Grep", "Glob", "Bash"]);
+    expect(ask.slice(8)).toEqual(claudeSensitiveAskRules());
+    expect(ask.some((rule) => rule.startsWith("Read(") && rule.includes(".env"))).toBe(true);
+    expect(ask.some((rule) => rule.startsWith("Bash("))).toBe(true);
+    expect(settings.disableAllHooks).toBe(true);
+    expect("hooks" in settings).toBe(false);
+    expect((claudeIsolationSettings({}, tmpdir(), "win32") as { permissions: { ask: string[] } }).permissions.ask).toContain("PowerShell");
+  });
+
+  it("T47 Claude half: Windows spellings of the sensitive paths do not pass the in-project check", () => {
+    for (const path of ["C:\\Users\\sean\\.ssh\\id_rsa", ".\\.env", "src\\..\\.git\\config"]) {
+      expect(inProjectCheck(path, tmpdir(), undefined, { platform: "win32", home: "C:\\Users\\sean" }).ok).toBe(false);
+    }
+    expect(claudeInProjectAllow("Read", { file_path: "C:\\Users\\sean\\.ssh\\id_rsa" }, tmpdir(), tmpdir(), "win32")).toBe(false);
+  });
+
+  it("answers no for a missing field, a secret in the body and a Bash call (the walker seam)", () => {
+    const proj = realpathSync.native(mkdtempSync(join(tmpdir(), "murage-claude-allow-")));
+    try {
+      expect(claudeInProjectAllow("Read", {}, proj)).toBe(false);
+      expect(claudeInProjectAllow("Write", { file_path: join(proj, "x") }, proj)).toBe(false);
+      expect(claudeInProjectAllow("Write", { file_path: join(proj, "x"), content: "OPENAI_API_KEY=abc" }, proj)).toBe(false);
+      expect(claudeInProjectAllow("Write", { file_path: join(proj, ".env.example"), content: "PORT=1" }, proj)).toBe(true);
+      // Astra BLOCK 6 (Rules 55, 63.1): a quiet allow never skips a required field
+      expect(claudeInProjectAllow("Edit", { file_path: join(proj, "a.ts"), new_string: "x" }, proj)).toBe(false);
+      expect(claudeInProjectAllow("Edit", { file_path: join(proj, "a.ts"), old_string: "y", new_string: "x" }, proj)).toBe(true);
+      expect(claudeInProjectAllow("NotebookEdit", { notebook_path: join(proj, "n.ipynb") }, proj)).toBe(false);
+      expect(claudeInProjectAllow("Read", { file_path: join(proj, "a.ts"), offset: "1" }, proj)).toBe(false);
+      expect(claudeInProjectAllow("Bash", { command: "ls" }, proj)).toBe(false);
+      expect(bashTargetsOf("ls")).toEqual({ available: false });
+      writeFileSync(join(proj, ".env"), "K=1");
+      expect(claudeInProjectAllow("Grep", { pattern: "K" }, proj)).toBe(false);
+      expect(claudeInProjectAllow("Grep", { pattern: "K", path: "/" }, proj)).toBe(false);
+      rmSync(join(proj, ".env"));
+      expect(claudeInProjectAllow("Glob", { pattern: "*.ts" }, proj)).toBe(true);
+    } finally {
+      rmSync(proj, { recursive: true, force: true });
+    }
+  });
+
+  // Gap (e) of steps 1..3: the Windows Claude wrapper runs through Git Bash, named the way Claude finds it
+  it("on Windows the wrapper's shell is the discovered Git Bash, and no Git Bash refuses the turn", async () => {
+    const found = { gitBash: async (env: Record<string, string>) => env.CLAUDE_CODE_GIT_BASH_PATH ?? null };
+    expect(await claudeExecShell("win32", { CLAUDE_CODE_GIT_BASH_PATH: "D:\\Tools\\Git\\bin\\bash.exe" }, 1, found)).toBe("D:\\Tools\\Git\\bin\\bash.exe");
+    expect(await claudeExecShell("win32", {}, 1, found)).toBeNull();
+    expect(await claudeExecShell("linux", {}, 1, { exists: (path) => path === "/usr/bin/bash" })).toBe("/usr/bin/bash");
+    const refusal = claudeShellRefusal("win32", null);
+    expect(refusal?.refused).toBe(true);
+    expect(refusal?.cause).toBe("Claude's command wrapper could not be set up: Git Bash was not found");
+    expect(refusal?.allow({ behavior: "allow" as const })).toEqual({ behavior: "deny", message: refusal?.cause });
+    expect(claudeShellRefusal("win32", "C:\\Program Files\\Git\\bin\\bash.exe")).toBeNull();
+    expect(claudeShellRefusal("linux", null)).toBeNull();
+    expect(murageExecPrefix("win32")).not.toContain("\\");
+    expect(murageExecPrefix("linux")).toBe(installMurageExec());
+    // the one wrapper turns the Windows spellings into MSYS ones under Git Bash, and nowhere else
+    expect(WRAPPER_SOURCE).toMatch(/MINGW\*\|MSYS\*\|CYGWIN\*\)/);
+    expect(WRAPPER_SOURCE).toContain('cygpath -u -p');
+  });
+
+  it.skipIf(process.platform === "win32")("murage-exec: env file round trip, no shell evaluation, the turn's cwd, env -i", () => {
+    const proj = realpathSync(mkdtempSync(join(tmpdir(), "murage-exec-proj-")));
+    try {
+      const wrapper = installMurageExec();
+      expect(statSync(wrapper).mode & 0o777).toBe(0o755);
+      expect(readFileSync(wrapper, "utf8")).toBe(WRAPPER_SOURCE);
+      const marker = join(proj, "evaluated");
+      const hostile = `$(touch ${marker}) \`touch ${marker}\` 'q' "d"\nnext line`;
+      const file = writeExecEnvFile("t-exec", { PATH: process.env.PATH ?? "/usr/bin:/bin", HOSTILE: hostile, EMPTY: "" }, proj, "/bin/bash");
+      expect(statSync(file).mode & 0o777).toBe(0o600);
+      const run = (command: string, envFile = file) => spawnSync(wrapper, [command], { env: { MURAGE_EXEC_ENV_FILE: envFile, LEAK: "leaked" }, encoding: "utf8" });
+      const out = run('printf "%s|%s|%s|%s" "$HOSTILE" "${EMPTY-unset}" "${LEAK-gone}" "$(pwd)"');
+      expect(out.status).toBe(0);
+      expect(out.stdout).toBe(`${hostile}||gone|${proj}`);
+      expect(existsSync(marker)).toBe(false);
+      expect(run("true", join(proj, "missing")).status).toBe(126);
+    } finally {
+      rmSync(proj, { recursive: true, force: true });
+    }
   });
 });

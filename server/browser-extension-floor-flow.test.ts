@@ -1,7 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // T03: the hard floor wired into the executor and the service, the hand-off, the loaderId fence, unbind and activity.
 import { afterEach, describe, expect, it } from "vitest";
-import fs from "node:fs/promises";
 import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
@@ -13,6 +12,7 @@ import type { FloorFacts } from "./browser-floor.ts";
 import { BROWSER_APP_PROTOCOL } from "../shared/browser-extension-protocol.ts";
 import type { BrowserExtensionCommand, BrowserExtensionResponse, BrowserExtensionHello } from "../shared/browser-extension-protocol.ts";
 import { privateTestDirectory } from "./testing/private-test-dir.ts";
+import { removeTempDir } from "./testing/cleanup.ts";
 
 const agreeBox: FloorFacts = { operation: "click", tag: "input", type: "checkbox", role: "checkbox", name: "I agree to the terms and conditions" };
 const benign: FloorFacts = { operation: "click", tag: "button", role: "button", name: "Save draft" };
@@ -184,7 +184,7 @@ const cleanup: string[] = [];
 // Close every service before its folder goes: a save still in flight would recreate state.json mid-removal (ENOTEMPTY on macOS).
 const services: { close(): Promise<void> }[] = [];
 const track = <T extends { close(): Promise<void> }>(service: T): T => { services.push(service); return service; };
-afterEach(async () => { for (const service of services.splice(0)) await service.close().catch(() => {}); configureBrowserActivity(undefined); for (const directory of cleanup.splice(0)) await fs.rm(directory, { recursive: true, force: true, maxRetries: 5 }); });
+afterEach(async () => { for (const service of services.splice(0)) await service.close().catch(() => {}); configureBrowserActivity(undefined); for (const directory of cleanup.splice(0)) await removeTempDir(directory); });
 async function serviceFixture(initialFacts: FloorFacts) {
   const { root: directoryRoot, directory } = await privateTestDirectory(path.resolve(".floor-service-")); cleanup.push(directoryRoot);
   const activityDir = mkdtempSync(path.join(tmpdir(), "floor-activity-")); cleanup.push(activityDir);

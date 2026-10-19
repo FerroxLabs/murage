@@ -17,9 +17,9 @@ Start with the conversations and audiences you want to retain. Excluding a conve
 
 ## Choose local retrieval
 
-Keyword retrieval searches the local index. On Apple Silicon, Windows x64 and Linux x64, you can also download the pinned local embedding model from **Local model** to enable semantic retrieval. Murage checks its size and hashes before use; inference does not silently download model files.
+Keyword retrieval searches the local index. On Apple Silicon and Intel Macs, Windows x64 and Linux x64, you can also download the pinned local embedding model from **Local model** to enable semantic retrieval. Murage checks its size and hashes before use; inference does not silently download model files.
 
-Intel Macs use keyword retrieval in this release. The pinned semantic runtime does not ship an Intel Mac binding, so unsupported downloads are refused. Review, corrections, sharing, pins, forgetting and source recovery remain available.
+Intel Macs run the same pinned model on ONNX Runtime WebAssembly, because the pinned native runtime ships no Intel Mac binding. The model files, their size and hash checks, pooling and normalisation are the same; only the executor differs. The same WebAssembly runtime takes over on any machine where the native binding fails to load. It is slower, so indexing a large memory takes longer, but indexing runs in the background one record at a time and a search during a turn never waits behind it.
 
 Missing or unusable embeddings are reported as degraded keyword recall. An invalid or oversized required pin can block dispatch rather than silently lose an important owner constraint.
 

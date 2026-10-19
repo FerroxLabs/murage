@@ -17,7 +17,8 @@ beforeAll(async()=>{
     "const fs=await import('node:fs');const path=await import('node:path');const {registerHooks}=await import('node:module');",
     "registerHooks({load(url,ctx,next){if(!url.endsWith('/fake-late-terminal-driver.ts'))return next(url,ctx);let source=fs.readFileSync(new URL(url),'utf8');",
     "const old='emit({ type: \"item.completed\", itemType: \"assistant_text\", origin: \"engine\", text: \"Hello from late\", threadId: turn.threadId, turnId });';if(!source.includes(old))throw Error('fixture anchor changed');",
-    "source=source.replaceAll(old,'emit({ type: \"request.opened\", requestType: \"permission\", tool: \"Read\", summary: \"Read fixture notes\", requestId: turnId + \"-approval\", threadId: turn.threadId, turnId }); return;');return{format:'module-typescript',shortCircuit:true,source};}});",
+    // split/join, not replace(): fake-late-terminal-driver gained a second emit site (FAKE_LATE_HANDBACK) ahead of the original, and replace(string) hits only the first
+    "source=source.split(old).join('emit({ type: \"request.opened\", requestType: \"permission\", tool: \"Read\", summary: \"Read fixture notes\", requestId: turnId + \"-approval\", threadId: turn.threadId, turnId }); return;');return{format:'module-typescript',shortCircuit:true,source};}});",
     "const {BUILT_IN_DRIVERS}=await import("+JSON.stringify(new URL("./drivers/builtIn.ts",import.meta.url).href)+");",
     "const {makeLateTerminalDriver}=await import("+JSON.stringify(new URL("./testing/fake-late-terminal-driver.ts",import.meta.url).href)+");BUILT_IN_DRIVERS.push(makeLateTerminalDriver());",
     "const file=path.join(process.env.MURAGE_DATA_DIR,'config.json');const cfg=JSON.parse(fs.readFileSync(file,'utf8'));cfg.instances.alert={driver:'fakeLateTerminal'};fs.writeFileSync(file,JSON.stringify(cfg));",

@@ -1,17 +1,18 @@
 import { randomUUID } from "node:crypto";
-import { existsSync, mkdtempSync, rmSync, statSync } from "node:fs";
+import { existsSync, mkdtempSync, statSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { afterEach, describe, expect, it } from "vitest";
 import { MEMORY_PRE_V2_SNAPSHOT, MEMORY_SCHEMA_V1, MEMORY_SCHEMA_VERSION, downgradeMemorySchema, migrateMemorySchema, validateMemorySchema } from "./schema.ts";
 import { readMemoryLearning } from "./learning-policy.ts";
+import { removeTempDirSync } from "../testing/cleanup.ts";
 
 const roots: string[] = [];
 const databases: DatabaseSync[] = [];
 afterEach(() => {
   for (const db of databases.splice(0)) { try { db.close(); } catch { /* already closed */ } }
-  for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true });
+  for (const root of roots.splice(0)) removeTempDirSync(root);
 });
 function dataDir() { const root = mkdtempSync(join(tmpdir(), "murage-memory-upgrade-")); roots.push(root); return root; }
 function open(file: string) {
@@ -23,7 +24,7 @@ function open(file: string) {
 function legacyInstallation(mode = "active") {
   const root = dataDir(), file = join(root, "messages.db"), db = open(file);
   db.exec("CREATE TABLE IF NOT EXISTS messages(thread_id TEXT NOT NULL,id TEXT NOT NULL,at INTEGER NOT NULL,role TEXT NOT NULL,kind TEXT NOT NULL,text TEXT,json TEXT NOT NULL,PRIMARY KEY(thread_id,id));");
-  db.exec("INSERT INTO messages VALUES('thread','m1',1,'user','text','before upgrade','{}');");
+  db.exec("INSERT INTO messages(thread_id,id,at,role,kind,text,json) VALUES('thread','m1',1,'user','text','before upgrade','{}');");
   db.exec(MEMORY_SCHEMA_V1);
   db.prepare("INSERT INTO memory_meta VALUES(1,1,?,7,8,9,?)").run(randomUUID(), mode);
   db.exec("INSERT INTO memory_scopes VALUES('scope','bot','bot','[]',3);");
@@ -93,7 +94,7 @@ describe("H2 downgrade", () => {
   it("v1 -> upgrade -> new rows -> downgrade is accepted by the 0.1.53 validator with every row intact", () => {
     const f = legacyInstallation("active");
     migrateMemorySchema(f.db, "off", { snapshotPath: f.snapshot });
-    f.db.exec("INSERT INTO messages VALUES('thread','m2',2,'user','text','after upgrade','{}');");
+    f.db.exec("INSERT INTO messages(thread_id,id,at,role,kind,text,json) VALUES('thread','m2',2,'user','text','after upgrade','{}');");
     f.db.exec("INSERT INTO memory_records VALUES('later',1,'scope','fact','Learned after upgrade','owner-statement','active',0,2,NULL,NULL,2);");
     expect(f.db.prepare("SELECT count(*) n FROM memory_record_details").get()?.n).toBe(2);
     expect(downgradeMemorySchema(f.db)).toEqual({ status: "downgraded", from: MEMORY_SCHEMA_VERSION, to: 1 });
@@ -128,11 +129,11 @@ describe("H3 review mode for migrated installs", () => {
   it("seeds reviewMode:true when upgrading an existing v1 install, keeping the cost switch untouched", () => {
     const f = legacyInstallation("off");
     migrateMemorySchema(f.db, "active", { snapshotPath: f.snapshot });
-    expect(readMemoryLearning(f.db)).toMatchObject({ revision: 0, automaticFacts: true, automaticProcedures: true, reviewMode: true, version: 2, dailyInputTokens: 400000, dailyOutputTokens: 60000, callsPerMinute: 6 });
+    expect(readMemoryLearning(f.db)).toMatchObject({ revision: 0, automaticFacts: true, automaticProcedures: true, reviewMode: true, version: 3, ceiling: { input: 100_000_000, output: 15_000_000 }, callsPerMinute: 6 });
   });
   it("keeps the shipped default for a fresh install", () => {
     const db = open(join(dataDir(), "messages.db"));
     migrateMemorySchema(db, "active", { snapshotPath: join(roots[roots.length - 1], MEMORY_PRE_V2_SNAPSHOT) });
-    expect(readMemoryLearning(db)).toMatchObject({ revision: 0, reviewMode: false, version: 2 });
+    expect(readMemoryLearning(db)).toMatchObject({ revision: 0, reviewMode: false, version: 3 });
   });
 });

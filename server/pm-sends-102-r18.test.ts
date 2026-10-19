@@ -4,7 +4,7 @@
 //  - the queue questions Q1-Q4 are served by named partial indexes, so a sweep costs the same at 1k and 100k terminal rows (c);
 //  - `deadline_at` is the only upper lifetime, and a backlog of overdue parked rows clears a batch per tick (d);
 //  - asks follow the same retention as wakes (e); the older release's data is reclassified once (f); new objects pass snapshot inspection (g).
-import { mkdirSync, rmSync } from "node:fs";
+import { mkdirSync } from "node:fs";
 import type { DatabaseSync } from "node:sqlite";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { DATA_DIR } from "./config.ts";
@@ -24,8 +24,9 @@ import {
 import { configureSharedDrain, drainSharedWork, sharedByProvenance, sharedDispatchOrder, sharedResolution } from "./shared-work.ts";
 import { requestSourceThread } from "./execution-audience.ts";
 import { createWorkAdmission } from "./work-admission.ts";
+import { removeTempDirSync } from "./testing/cleanup.ts";
 
-beforeEach(() => { closeDatabase(); rmSync(DATA_DIR, { recursive: true, force: true }); mkdirSync(DATA_DIR, { recursive: true }); setExecutionStore(undefined as never); });
+beforeEach(() => { closeDatabase(); removeTempDirSync(DATA_DIR); mkdirSync(DATA_DIR, { recursive: true }); setExecutionStore(undefined as never); });
 afterEach(() => closeDatabase());
 
 const DAY = 86_400_000;
@@ -305,7 +306,7 @@ describe("(c) the queue questions are served by named indexes: flat from 1k to 1
   };
   type Run = { plans: Record<string, string[]>; programs: Record<string, string>; passPlans: string[]; phases: Record<string, number>; rows: number; runnable: number; parked: number };
   function scenario(history: number, parked: number): Run {
-    closeDatabase(); rmSync(DATA_DIR, { recursive: true, force: true }); mkdirSync(DATA_DIR, { recursive: true });
+    closeDatabase(); removeTempDirSync(DATA_DIR); mkdirSync(DATA_DIR, { recursive: true });
     const clock = { t: 10 * DAY };
     const { db, dispatcher } = harness(clock, { roomUsable: () => true, roomBusy: () => true });
     const insert = inserter(db);
@@ -329,7 +330,7 @@ describe("(c) the queue questions are served by named indexes: flat from 1k to 1
   const results: Array<{ history: number; parked: number; run: Run }> = [];
   for (const history of [1_000, 100_000]) {
     for (const parked of [0, 10_000]) {
-      it(`${history} terminal rows, ${parked} parked, 10 bots: Q1 to Q4 use their indexes and a full pass reads at most runnable + 100 rows`, () => {
+      it(`${history} terminal rows, ${parked} parked, 10 bots: Q1 to Q4 use their indexes and a full pass reads at most runnable + 100 rows`, { tags: ["nightly"], timeout: 300_000 }, () => {
         const run = scenario(history, parked);
         results.push({ history, parked, run });
         expect(run.plans.Q1!.join(" | ")).toMatch(/USING (COVERING )?INDEX room_requests_runnable/);
@@ -341,10 +342,11 @@ describe("(c) the queue questions are served by named indexes: flat from 1k to 1
         for (const plan of run.passPlans) expect(scansTable(plan.split(" | "), "room_requests", "r"), plan).toBe(false);
         for (const [phase, requests] of Object.entries(run.phases)) expect(requests, phase).toBeLessThanOrEqual(run.runnable + RETAINED_SWEEP_BATCH);
         expect(run.runnable).toBe(20);
-      }, 300_000);
+      });
     }
   }
-  it("the plans, the compiled programs and the rows materialized per pass are the same at every history size and parked count", () => {
+  // Reads what the four sized runs above recorded, so it runs where they run.
+  it("the plans, the compiled programs and the rows materialized per pass are the same at every history size and parked count", { tags: ["nightly"] }, () => {
     expect(results).toHaveLength(4);
     const first = results[0]!.run;
     for (const { run } of results) {
@@ -361,7 +363,7 @@ describe("(c) the queue questions are served by named indexes: flat from 1k to 1
 });
 
 describe("(d) deadline_at is the only upper lifetime: an overdue parked backlog clears a batch per tick, then costs nothing", () => {
-  it("10k overdue parked shared asks clear within ceil(10k/100) ticks, each with a receipt line, then a tick reads nothing", () => {
+  it("10k overdue parked shared asks clear within ceil(10k/100) ticks, each with a receipt line, then a tick reads nothing", { tags: ["nightly"], timeout: 300_000 }, () => {
     const clock = { t: 5 * DAY };
     const { db, dispatcher, sharedClosed } = harness(clock);
     const insert = inserter(db);
@@ -376,7 +378,7 @@ describe("(d) deadline_at is the only upper lifetime: an overdue parked backlog 
     expect(count(db, "SELECT COUNT(*) AS n FROM room_request_retry")).toBe(0);
     expect(sharedClosed).toHaveLength(10_000);
     expect(record(db, () => dispatcher.tick()).rows).toBe(0);
-  }, 300_000);
+  });
   it("an owner send that expires keeps its words as a chip inside the same transaction as the closure", () => {
     const clock = { t: 5 * DAY };
     const { db, dispatcher, words, closed } = harness(clock, { roomUsable: () => true, roomBusy: () => true });
@@ -390,7 +392,7 @@ describe("(d) deadline_at is the only upper lifetime: an overdue parked backlog 
 });
 
 describe("(e) shared asks follow the same retention as wakes", () => {
-  it("40k unresolved shared asks are parked, and are not read again inside their backoff window", () => {
+  it("40k unresolved shared asks are parked, and are not read again inside their backoff window", { tags: ["nightly"], timeout: 300_000 }, () => {
     const clock = { t: 1_000_000 };
     const { db, dispatcher } = harness(clock);
     const insert = inserter(db);
@@ -406,7 +408,7 @@ describe("(e) shared asks follow the same retention as wakes", () => {
     const due = record(db, () => dispatcher.pump());
     expect(due.requests).toBeLessThanOrEqual(RETAINED_SWEEP_BATCH);
     expect(db.prepare("SELECT attempts FROM room_request_retry WHERE request_id='a-0'").get()).toEqual({ attempts: 2 });
-  }, 300_000);
+  });
 });
 
 describe("(g) the new objects are accepted by snapshot inspection, and an older archive still passes", () => {

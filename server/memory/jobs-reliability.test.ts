@@ -4,7 +4,7 @@
 // PROPOSAL-v2 10.4: one unreadable job never blocks its scope, attempts are spent only on permanent
 // causes, jobs failed for transient causes are given their attempts back once, and the daily allowance
 // is traced to a place that spends no capture attempt.
-import { mkdirSync, rmSync } from "node:fs";
+import { mkdirSync } from "node:fs";
 import { afterEach, beforeEach, expect, it } from "vitest";
 import { DATA_DIR } from "../config.ts";
 import { closeDatabase, database } from "../database.ts";
@@ -17,10 +17,11 @@ import { readMemoryLearning, updateMemoryLearning } from "./learning-policy.ts";
 import { reconcileMemoryRoster } from "./policy.ts";
 import { setMemoryMode } from "./repository.ts";
 import { resetWorkerLog } from "./worker-log.ts";
+import { removeTempDirSync } from "../testing/cleanup.ts";
 
 let lines: string[];
 beforeEach(() => {
-  closeDatabase(); rmSync(DATA_DIR, { recursive: true, force: true }); mkdirSync(DATA_DIR, { recursive: true });
+  closeDatabase(); removeTempDirSync(DATA_DIR); mkdirSync(DATA_DIR, { recursive: true });
   reconcileMemoryRoster({ bots: [{ id: "bot", threadId: "thread" }], groups: [] }); setMemoryMode("capture"); resetMemoryClaimCursor();
   lines = []; resetWorkerLog(); resetObserveWindows(); setObserveSink(line => lines.push(line));
 });
@@ -106,9 +107,10 @@ it("traced: the daily allowance is held in the learning pass and spends no attem
   const id = source("allowance", "I prefer concise answers.");
   const work = claimMemoryJob("w", NOW)!;
   publishMemoryWork(work, "w", captureWork(work), NOW);
-  updateMemoryLearning(database(), { dailyOutputTokens: 0 }, readMemoryLearning(database()).revision);
+  // zero-cap-upgrade (1.0.3): a zero daily cap became a zero monthly ceiling, refused before any charge
+  updateMemoryLearning(database(), { ceiling: { input: 0, output: 0 } }, readMemoryLearning(database()).revision);
   const result = await consolidateMemorySource(work.id, async () => "[]", new AbortController().signal);
-  expect(result).toMatchObject({ status: "deferred", reason: "budget-exhausted" });
+  expect(result).toMatchObject({ status: "deferred", reason: "spend-ceiling" });
   expect(job(id)).toMatchObject({ status: "complete", attempts: 0 });
   expect(database().prepare("SELECT DISTINCT stage FROM memory_jobs").all()).toEqual([{ stage: "capture" }]);
 });

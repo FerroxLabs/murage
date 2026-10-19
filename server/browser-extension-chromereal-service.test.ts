@@ -6,9 +6,10 @@ import path from "node:path";
 import { createBrowserExtensionService } from "./browser-extension-service.ts";
 import type { BrowserExtensionCommand, BrowserExtensionResponse, BrowserExtensionHello } from "../shared/browser-extension-protocol.ts";
 import { privateTestDirectory } from "./testing/private-test-dir.ts";
+import { removeTempDir } from "./testing/cleanup.ts";
 const cleanup: string[] = [];
 const services: Awaited<ReturnType<typeof createBrowserExtensionService>>[] = [];
-afterEach(async () => { vi.unstubAllGlobals(); for (const service of services.splice(0)) await service.close(); for (const directory of cleanup.splice(0)) await fs.rm(directory, { recursive: true, force: true }); });
+afterEach(async () => { vi.unstubAllGlobals(); for (const service of services.splice(0)) await service.close(); for (const directory of cleanup.splice(0)) await removeTempDir(directory); });
 type Tab = { tabId: number; navigationEpoch: number; origin: string; url: string };
 type Runtime = { generation: number; state: string; tabs: Tab[] };
 async function fixture(overrides: Record<string, unknown> = {}) {

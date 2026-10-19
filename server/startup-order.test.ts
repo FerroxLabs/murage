@@ -26,7 +26,9 @@ describe("cold start ordering in server/index.ts", () => {
     expect(skills).toMatch(/function skillsIndex\(botId: string\): \{ text: string; listed: SkillListing\[\] \} \{(?:\s*\/\/[^\n]*)*\s*sweepBotSkills\(botId\)/);
     expect(skills).toMatch(/export function syncSkillLinks\(botId: string\): void \{\s*sweepBotSkills\(botId\)/);
     // Nothing that starts turns may run before the port: the room queue and memory worker start in the callback.
-    expect(at("roomEngine.ready = true;", listen)).toBeGreaterThan(listen);
+    // (the Cloud line: a Cloud home sets it from its execution gate, `roomEngine.ready = !homeExecutionGate || homeExecutionGate.open();`)
+    expect(at("roomEngine.ready =", listen)).toBeGreaterThan(listen);
+    expect(at("roomEngine.ready =", listen)).toBeLessThan(callbackEnd);
   });
 
   it("does not hold startup on the engine probe when bots exist", () => {
@@ -35,7 +37,7 @@ describe("cold start ordering in server/index.ts", () => {
   });
 
   it("starts the jobs that do not gate correctness after listen, not before", () => {
-    for (const call of ["startModelCatalogRefresh(async", "calendarCalls.start();", "cleanupStaleAttachmentPartials();", "void trackBootJob(resumePendingPublicationsInSlices())", "sweepBackupWork(DATA_DIR)"]) {
+    for (const call of ["startModelCatalogRefresh(async", "calendarCalls.start();", "cleanupStaleAttachmentPartials(Date.now(), { startup: true });", "sweepArtifactCandidates(join(DATA_DIR, \"artifact-files\"));", "void trackBootJob(resumePendingPublicationsInSlices())", "sweepBackupWork(DATA_DIR)"]) {
       const first = at(call, index.indexOf("const store = new Store("));
       expect(first, call).toBeGreaterThan(listen);
       expect(first, call).toBeLessThan(callbackEnd);

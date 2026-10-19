@@ -2,7 +2,7 @@
 // speaker module runs in a real browser; the voice route is a local stand-in
 // that sends a real mp3 slowly (a third, a pause, the rest), the way a voice
 // service sends audio as it makes it. Nothing here touches a key.
-import { test, expect, type Page } from "@playwright/test";
+import { test, expect, type Page } from "./page-error-guard";
 import { createServer, type ViteDevServer } from "vite";
 import { fileURLToPath } from "node:url";
 import { mkdtempSync, readFileSync } from "node:fs";

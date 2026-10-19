@@ -6,7 +6,7 @@
 // optional, a value and a reason, and Undo. And the card for an outcome the
 // bot proposed: "Looks like this closed. Won?" with Won, Lost and Not yet.
 // Nothing here is a dialog or a required step.
-import { createContext, useContext, useState, type ReactNode } from "react";
+import { createContext, useContext, useState, useSyncExternalStore, type ReactNode } from "react";
 import { CircleX, ThumbsDown, ThumbsUp, Trophy } from "lucide-react";
 import { cn } from "@/lib/cn";
 import { t } from "@/lib/i18n";
@@ -18,6 +18,33 @@ const oKey = (name: string) => `outcome.${name}` as LocaleKey;
 const markLabel = (kind: OutcomeKind) => t(oKey(`mark.${kind}`));
 const wordOf = (kind: OutcomeKind) => t(oKey(`word.${kind}`));
 const failedText = (error: unknown) => (error instanceof Error && error.message ? error.message : t(oKey("failed")));
+
+// A failed mark is shown under the reply it was for, wherever it was pressed
+// (the phone sheet closes at once, the desktop rail is a row of icons), so the
+// failure goes through one small store keyed by message and MessageOutcome
+// reads it. It clears itself after a while and when the next mark is tried.
+const markFailures = new Map<string, string>();
+const markFailureListeners = new Set<() => void>();
+const markFailureTimers = new Map<string, ReturnType<typeof setTimeout>>();
+export const MARK_FAILURE_MS = 10_000;
+const emitMarkFailures = () => markFailureListeners.forEach(listener => listener());
+export function setMarkFailure(messageId: string, text: string | null): void {
+  clearTimeout(markFailureTimers.get(messageId));
+  markFailureTimers.delete(messageId);
+  if (text) {
+    markFailures.set(messageId, text);
+    markFailureTimers.set(messageId, setTimeout(() => setMarkFailure(messageId, null), MARK_FAILURE_MS));
+  } else markFailures.delete(messageId);
+  emitMarkFailures();
+}
+export const markFailureFor = (messageId: string): string | undefined => markFailures.get(messageId);
+const subscribeMarkFailures = (listener: () => void) => { markFailureListeners.add(listener); return () => { markFailureListeners.delete(listener); }; };
+/** Records a mark; a failure is put where the person can see it, and the promise still settles quietly. */
+export async function markVisibly(outcomes: ThreadOutcomes, messageId: string, kind: OutcomeKind, botId?: string): Promise<boolean> {
+  setMarkFailure(messageId, null);
+  try { await outcomes.mark(messageId, kind, botId); return true; }
+  catch (error) { setMarkFailure(messageId, failedText(error)); return false; }
+}
 const OutcomesContext = createContext<ThreadOutcomes | null>(null);
 export function OutcomesProvider({ value, children }: { value: ThreadOutcomes; children: ReactNode }) {
   return <OutcomesContext.Provider value={value}>{children}</OutcomesContext.Provider>;
@@ -45,14 +72,15 @@ export function outcomeSheetActions(
   if (!outcomes || !isMarkableReply(message)) return [];
   return outcomeChoices(bot).map(choice => {
     const Icon = ICONS[choice.kind];
-    return { id: `outcome-${choice.kind}`, label: markLabel(choice.kind), icon: <Icon size={18} />, onSelect: () => { outcomes.mark(message.id, choice.kind, botId).catch(() => undefined); } };
+    return { id: `outcome-${choice.kind}`, label: markLabel(choice.kind), icon: <Icon size={18} />, onSelect: () => { void markVisibly(outcomes, message.id, choice.kind, botId); } };
   });
 }
 
 /** The two choices as hover-rail buttons (desktop). Returns null when this message cannot be marked. */
 export function OutcomeRailButtons({ bot, messageId, message, botId }: { bot: BotLike; messageId: string; message: Parameters<typeof isMarkableReply>[0]; botId?: string }) {
   const outcomes = useOutcomes();
-  const [failed, setFailed] = useState<string | null>(null);
+  const [pending, setPending] = useState<OutcomeKind | null>(null);
+  const failed = useSyncExternalStore(subscribeMarkFailures, () => markFailures.get(messageId), () => undefined);
   if (!outcomes || !isMarkableReply(message)) return null;
   const current = outcomes.marks.get(messageId)?.kind;
   return (
@@ -66,8 +94,10 @@ export function OutcomeRailButtons({ bot, messageId, message, botId }: { bot: Bo
             aria-label={markLabel(choice.kind)}
             aria-pressed={current === choice.kind}
             title={failed ?? markLabel(choice.kind)}
-            onClick={() => { setFailed(null); outcomes.mark(messageId, choice.kind, botId).catch(error => setFailed(failedText(error))); }}
-            className={cn(RAIL_BUTTON, current === choice.kind && "text-ink opacity-100")}
+            disabled={pending !== null}
+            aria-busy={pending === choice.kind}
+            onClick={() => { setPending(choice.kind); void markVisibly(outcomes, messageId, choice.kind, botId).finally(() => setPending(null)); }}
+            className={cn(RAIL_BUTTON, "disabled:opacity-60", (current === choice.kind || pending === choice.kind) && "text-ink opacity-100")}
           >
             <Icon size={14} />
           </button>
@@ -130,7 +160,12 @@ export function OutcomeStrip({ outcome }: { outcome: OutcomeView }) {
 /** Under a bot reply: its mark, when it has one. */
 export function MessageOutcome({ messageId }: { messageId: string }) {
   const outcome = useOutcomes()?.marks.get(messageId);
-  return outcome ? <OutcomeStrip outcome={outcome} /> : null;
+  const failure = useSyncExternalStore(subscribeMarkFailures, () => markFailures.get(messageId), () => undefined);
+  if (!outcome && !failure) return null;
+  return <>
+    {outcome && <OutcomeStrip outcome={outcome} />}
+    {failure && <p role="alert" className="mt-1 text-[12.5px] text-danger" data-testid="outcome-mark-failed">{failure}</p>}
+  </>;
 }
 
 /** "Looks like this closed. Won?" The bot may only ask; the tap is the answer. */

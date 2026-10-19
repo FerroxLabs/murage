@@ -12,7 +12,7 @@
 //          check costs the same at 1k and 100k lines.
 // The tests use only what the server uses, and look the new entry points up by name: run against 62045d0b0 (which has none of them) each one
 // fails, which is the gap.
-import { mkdirSync, rmSync } from "node:fs";
+import { mkdirSync } from "node:fs";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import * as egressApi from "./bot-egress.ts";
 import { botBody, configureBotEgress } from "./bot-egress.ts";
@@ -29,6 +29,7 @@ import { inheritedRequestLineage, roomRequestById } from "./project-records.ts";
 import { initializeProjectTables } from "./project-tables.ts";
 import { projectToolHandlers } from "./project-tool-routing.ts";
 import { applyCardRunEffect, cardGenerationCurrent, leadNextStep, reviewWakeTarget } from "./project-turn-engine.ts";
+import { removeTempDirSync } from "./testing/cleanup.ts";
 // evhand's note recorder is superseded by write-time lineage (project-notes.ts recordNoteLineage): inert here, so these scenarios run on the write-time rules
 // (preview2 merge: scenarios that assert evhand's holders/sources/ranges note design are it.skip: writetime wins, notes rest on write-time lineage)
 const configureNoteRecorder = (_recorder?: unknown): void => {};
@@ -42,7 +43,7 @@ import { Store, type Message } from "./store.ts";
 void insertRoomRequest;
 const selection = (): ModelSelection => ({ instanceId: "claude", model: "fake-model" });
 afterEach(() => { configureNoteRecorder(undefined); configureResultEgress(undefined); configureBotEgress(undefined); configureStatusRoster(undefined); });
-beforeEach(() => { closeMessageDb(); closeDatabase(); rmSync(DATA_DIR, { recursive: true, force: true }); mkdirSync(DATA_DIR, { recursive: true }); });
+beforeEach(() => { closeMessageDb(); closeDatabase(); removeTempDirSync(DATA_DIR); mkdirSync(DATA_DIR, { recursive: true }); });
 
 /** The new entry points, looked up by name (absent before this round). */
 type Lineage = typeof lineageApi & {
@@ -299,7 +300,7 @@ describe("R12 GAP 2: the hold check is one indexed question, the same at 1k and 
     }) as never);
     try { return { value: body(), count }; } finally { spy.mockRestore(); }
   }
-  const cold = () => { closeMessageDb(); closeDatabase(); rmSync(DATA_DIR, { recursive: true, force: true }); mkdirSync(DATA_DIR, { recursive: true }); database(); };
+  const cold = () => { closeMessageDb(); closeDatabase(); removeTempDirSync(DATA_DIR); mkdirSync(DATA_DIR, { recursive: true }); database(); };
   /** `count` lines in `thread`, written in one transaction. */
   const seed = (thread: string, count: number) => {
     const row = database().prepare("INSERT INTO messages (thread_id, id, at, role, kind, text, json) VALUES (?, ?, ?, 'bot', 'text', ?, ?)");

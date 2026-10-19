@@ -5,7 +5,7 @@
 // from the Routines calendar. Deleting one past run removes only that run's
 // record, keeps the routine and every other run, holds across a restart, and
 // leaves a run that is still going to Cancel.
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
@@ -13,9 +13,10 @@ import { afterEach, describe, expect, it } from "vitest";
 import { RoutineManager } from "./routines.ts";
 import { routineRunsDir, routineRunsFileName } from "./routine-runs-journal.ts";
 import { frameChangesInbox } from "./inbox-version.ts";
+import { removeTempDirSync } from "./testing/cleanup.ts";
 
 const dirs: string[] = [];
-afterEach(() => { for (const dir of dirs.splice(0)) rmSync(dir, { recursive: true, force: true }); });
+afterEach(() => { for (const dir of dirs.splice(0)) removeTempDirSync(dir); });
 const tempDir = () => { const dir = mkdtempSync(join(tmpdir(), "murage-rundelete-")); dirs.push(dir); return dir; };
 
 const START = new Date(2026, 9, 12, 8, 0, 0).getTime();

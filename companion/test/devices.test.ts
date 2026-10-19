@@ -1,7 +1,7 @@
 // Companion device registry contract. The three properties that matter:
 // a token is never recoverable from disk, pairing credentials are one-time,
 // a manual code cannot be ground down by guessing, and revocation works.
-import { mkdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { mkdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -18,6 +18,7 @@ import {
   PAIRING_TTL_MS,
   REGISTRY_RETRY_MS,
 } from "../src/devices.ts";
+import { removeTempDirSync } from "../../server/testing/cleanup.ts";
 
 const pair = (registry: DeviceRegistry, name = "iPhone") => {
   const { code } = registry.openPairing();
@@ -28,7 +29,7 @@ const pair = (registry: DeviceRegistry, name = "iPhone") => {
 
 describe("DeviceRegistry", () => {
   beforeEach(() => {
-    rmSync(DATA_DIR, { recursive: true, force: true });
+    removeTempDirSync(DATA_DIR);
   });
 
   it("issues a token that authenticates, and never stores it", () => {
@@ -527,7 +528,7 @@ describe("DeviceRegistry", () => {
 
 describe("a paired-device list that cannot be read", () => {
   beforeEach(() => {
-    rmSync(DATA_DIR, { recursive: true, force: true });
+    removeTempDirSync(DATA_DIR);
     vi.useRealTimers();
   });
 
@@ -621,7 +622,7 @@ describe("a paired-device list that cannot be read", () => {
 
 describe("revocation that cannot be saved", () => {
   beforeEach(() => {
-    rmSync(DATA_DIR, { recursive: true, force: true });
+    removeTempDirSync(DATA_DIR);
   });
 
   /** A full disk for this one registry. Returns the repair. */
@@ -712,7 +713,7 @@ describe("a pairing that cannot be saved", () => {
   // Same throwaway state as the suite above — a registry built on a leftover
   // devices.json would start with a device already in it.
   beforeEach(() => {
-    rmSync(DATA_DIR, { recursive: true, force: true });
+    removeTempDirSync(DATA_DIR);
   });
 
   it("is not left live in memory", () => {
@@ -827,7 +828,7 @@ describe("the pairing TTL is stated once", () => {
 
 describe("session records written before derived renewal", () => {
   beforeEach(() => {
-    rmSync(DATA_DIR, { recursive: true, force: true });
+    removeTempDirSync(DATA_DIR);
   });
 
   const file = () => join(DATA_DIR, "devices.json");
@@ -889,7 +890,7 @@ describe("session records written before derived renewal", () => {
 
 describe("hand-edited or damaged session records", () => {
   beforeEach(() => {
-    rmSync(DATA_DIR, { recursive: true, force: true });
+    removeTempDirSync(DATA_DIR);
   });
 
   const file = () => join(DATA_DIR, "devices.json");
@@ -1026,7 +1027,7 @@ describe("cleanInstallId", () => {
 
 describe("pairing again from the same app install", () => {
   beforeEach(() => {
-    rmSync(DATA_DIR, { recursive: true, force: true });
+    removeTempDirSync(DATA_DIR);
   });
 
   const INSTALL = "ios-install-0123456789abcdef";
@@ -1135,7 +1136,7 @@ describe("pairing again from the same app install", () => {
 
 describe("a full fleet", () => {
   beforeEach(() => {
-    rmSync(DATA_DIR, { recursive: true, force: true });
+    removeTempDirSync(DATA_DIR);
   });
 
   /** Twenty devices paired a minute apart; returns their tokens in order. */
@@ -1216,7 +1217,7 @@ describe("a full fleet", () => {
 
 describe("signing a device out from the device itself", () => {
   beforeEach(() => {
-    rmSync(DATA_DIR, { recursive: true, force: true });
+    removeTempDirSync(DATA_DIR);
   });
 
   it("revokes the device behind the session, not just the session", () => {

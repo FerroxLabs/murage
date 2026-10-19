@@ -6,7 +6,7 @@
 //  - an automatic retry of its id (its acknowledgement was lost) gets the held row back and never runs it: zero runs until Send again, then exactly one;
 //  - Stop then a steer inside the same session still runs, as before.
 // Each test fails on 7f28cf52b.
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
@@ -16,6 +16,7 @@ import { sendFingerprint } from "./send-idempotency.ts";
 import { sendStore } from "./send-store.ts";
 import { drainSteeredMessages, type SteerStore } from "./steer-queue.ts";
 import type { BotRecord, Message } from "./store.ts";
+import { removeTempDirSync } from "./testing/cleanup.ts";
 
 const dirs: string[] = [];
 const handles: DatabaseSync[] = [];
@@ -23,7 +24,7 @@ let file = "";
 /** One process's connection to the conversation database (a new one is a restart). */
 const start = () => { const db = new DatabaseSync(file); handles.push(db); sendStore.reset(); sendStore.use(() => db); };
 beforeEach(() => { const dir = mkdtempSync(join(tmpdir(), "r30-stop-")); dirs.push(dir); file = join(dir, "messages.db"); start(); });
-afterEach(() => { sendStore.reset(); for (const h of handles.splice(0)) { try { h.close(); } catch { /* closed */ } } for (const d of dirs.splice(0)) rmSync(d, { recursive: true, force: true }); });
+afterEach(() => { sendStore.reset(); for (const h of handles.splice(0)) { try { h.close(); } catch { /* closed */ } } for (const d of dirs.splice(0)) removeTempDirSync(d); });
 
 /** The two queues, driven the way the server drives them: accept (the HTTP send and its retries), run what may start, Dismiss. */
 interface Queue { name: string; thread: string; send(text: string, sendId: string, resend?: boolean): void; drain(): void; runs: string[]; dismiss(): void }

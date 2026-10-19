@@ -219,13 +219,13 @@ function ModelCard({ server, model, onTested, onRefresh }: {
     <p className="mt-1 text-[11px] leading-relaxed text-ink-secondary">{action.help}</p>
     {notice && <p role="status" className="mt-1 text-[12px] text-success">{notice}</p>}
     {error && <p role="alert" className="mt-1 text-[12px] text-danger">{error}</p>}
-    {test && <details className="mt-2"><summary className={`min-h-11 cursor-pointer py-3 text-[12px] text-ink-secondary ${focus}`}>What the test checked</summary>
+    {test && <div className="mt-2"><p className={`py-2 text-[12px] text-ink-secondary`}>What the test checked</p>
       <div className="space-y-1 pb-2">
         <p className="text-[11px] text-ink-secondary">{surfacesLine(test)}</p>
         {test.checks.map(check => <p key={check.name} className="break-words text-[11px] text-ink-secondary">{checkLine(check)}</p>)}
         <p className="text-[11px] text-ink-secondary">Tested {new Date(test.testedAt).toLocaleString()} · {Math.round(test.durationMs / 100) / 10}s</p>
       </div>
-    </details>}
+    </div>}
   </div>;
 }
 
@@ -286,6 +286,11 @@ function ServerCard({ server, now, onChanged, onTested }: {
   </section>;
 }
 
+// The Engines rows and the model picker open this section by event; when Advanced was closed the section was not
+// mounted to hear it, so the page leaves a note here and the section acts on it as it mounts.
+let focusOnMount = false;
+export function requestLocalModelsFocus() { focusOnMount = true; }
+
 export function LocalModelsSettings() {
   const [snapshot, setSnapshot] = useState<LocalModelsListResponse | null>(null);
   const [loading, setLoading] = useState(true);
@@ -321,6 +326,7 @@ export function LocalModelsSettings() {
       addButton.current?.focus();
     };
     window.addEventListener(OPEN_LOCAL_MODELS_EVENT, open);
+    if (focusOnMount) { focusOnMount = false; open(); }
     return () => { mounted.current = false; window.removeEventListener(OPEN_LOCAL_MODELS_EVENT, open); };
   }, [reload]);
 

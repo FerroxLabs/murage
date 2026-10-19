@@ -2,15 +2,16 @@
 // hot statement of an idle server: the review host re-asks it for every
 // deferred review on every idle visit. Work is counted by the statements run,
 // which do not depend on the machine.
-import { mkdirSync, rmSync } from "node:fs";
+import { mkdirSync } from "node:fs";
 import { beforeEach, expect, it } from "vitest";
 import { DATA_DIR } from "../config.ts";
 import { closeDatabase, database, transaction } from "../database.ts";
 import { captureSource } from "./capture.ts";
 import { setMemoryMode } from "./repository.ts";
 import { assertSkillProcedureEvidence, type SkillProcedureContext } from "../skills.ts";
+import { removeTempDirSync } from "../testing/cleanup.ts";
 
-beforeEach(() => { closeDatabase(); rmSync(DATA_DIR, { recursive: true, force: true }); mkdirSync(DATA_DIR, { recursive: true }); setMemoryMode("capture"); });
+beforeEach(() => { closeDatabase(); removeTempDirSync(DATA_DIR); mkdirSync(DATA_DIR, { recursive: true }); setMemoryMode("capture"); });
 
 function source(threadId: string, text: string) {
   const id = `source:${threadId}`;

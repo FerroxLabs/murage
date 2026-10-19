@@ -5,7 +5,7 @@
 // phone (390) and desktop (1440) width: no sideways scroll, every control
 // reachable, the token field never shows its value. Static fixture, no harness.
 // Screenshots land in PUBLISH_CONNECT_SHOTS_DIR when set, else the output dir.
-import { test, expect } from "@playwright/test";
+import { test, expect } from "./page-error-guard";
 import { createServer, type ViteDevServer } from "vite";
 import react from "@vitejs/plugin-react";
 import tailwindcss from "@tailwindcss/vite";
@@ -28,7 +28,7 @@ test.beforeAll(async () => {
       name: "publish-connect-fixture",
       resolveId(id) { if (id === "/publish-connect-store") return "\0publish-connect-store"; },
       load(id) {
-        if (id === "\0publish-connect-store") return "export function useStore(){return {state:{bots:[],groups:[],selectedId:null},dispatch(){}};}export async function api(){return {};}";
+        if (id === "\0publish-connect-store") return "export function useStoreIfAny(){return useStore();} export function useStore(){return {state:{bots:[],groups:[],selectedId:null},dispatch(){}};}export async function api(){return {};}";
       },
       configureServer(vite) { vite.middlewares.use((req, res, next) => {
         if (!(req.url === "/__publish" || req.url?.startsWith("/__publish?"))) return next();

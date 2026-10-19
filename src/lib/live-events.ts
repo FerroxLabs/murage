@@ -93,7 +93,10 @@ export interface LiveEventsHandlers {
 //     a compile-time constant: a production `vite build` deletes the branch,
 //     so a shipped bundle has no code that could ask.
 export const SURFACE_SECRET_HEADER = "x-murage-surface-secret";
-export const SURFACE_SECRET_QUERY = "surfaceSecret";
+/** What a URL-loaded resource carries instead of the proof: a single-use
+ * ticket bound to that one resource (server/sse-visibility.ts). */
+export const SURFACE_TICKET_QUERY = "surfaceTicket";
+export const SURFACE_TICKET_PATH = "/api/desktop/resource-ticket";
 const MEDIA_BYTES_PATH = /^\/api\/media\/bytes(?:[/?#]|$)/;
 /** Same path the harness serves it on; dev only, at both ends. */
 export const DEV_SECRET_PATH = "/api/desktop-secret";
@@ -140,21 +143,53 @@ export function desktopCallerHeaders(): Record<string, string> {
   return { "x-murage-surface": "desktop", ...desktopSurfaceHeaders() };
 }
 
-/** A same-origin /api URL that a browser loads on its own (<img src>, an
- * audio or download link) cannot send headers, so the proof rides in the
- * query, the way the live stream's does. Anything that is not a local /api
- * path, and every renderer that holds no secret (a phone, a paired browser),
- * gets the URL back unchanged. A signed media byte URL already carries its
- * own short-lived capability (the "media" class in server/route-policy.ts),
- * so it stays exactly as issued and the launch secret never sits in a link
- * that can be saved or shared. */
-export function desktopResourceUrl<T extends string | null | undefined>(url: T): T | string {
-  if (typeof url !== "string" || !url.startsWith("/api/") || !desktopSecret) return url;
-  if (MEDIA_BYTES_PATH.test(url)) return url;
+/** Whether a URL the browser loads on its own (<img src>, a download link,
+ * the live stream) needs a ticket to be loaded as the desktop: a same-origin
+ * /api path, in the window that holds this launch's proof. A signed media byte
+ * URL already carries its own short-lived capability (the "media" class in
+ * server/route-policy.ts), and a renderer with no proof (a phone, a paired
+ * browser, a Cloud window) loads every URL exactly as given. */
+export function resourceNeedsTicket(url: string | null | undefined): url is string {
+  return typeof url === "string" && url.startsWith("/api/") && !MEDIA_BYTES_PATH.test(url) && Boolean(desktopSecret);
+}
+
+/** The URL with a fresh single-use ticket for exactly this resource.
+ *
+ * The launch proof never rides in a URL: a URL is logged, kept in history,
+ * handed to a redirect target and copied. The proof goes in the header of one
+ * POST to the harness that ships in this same build, which answers with a
+ * ticket that redeems once, for this path and query only, within seconds.
+ *
+ * When no ticket is needed the URL comes back unchanged. When the harness
+ * gives none (it refused, or it is not answering), the URL also comes back
+ * unchanged, so the resource loads as an unproven caller would; it is never
+ * retried with the proof in the query. Never rejects. */
+export async function ticketedResourceUrl<T extends string | null | undefined>(url: T): Promise<T | string> {
+  if (!resourceNeedsTicket(url)) return url;
+  return (await mintTicketUrl(url)) ?? url;
+}
+
+/** The URL with a fresh ticket for exactly this resource, or null when the harness gave none. */
+async function mintTicketUrl(url: string): Promise<string | null> {
   const hash = url.indexOf("#");
   const base = hash < 0 ? url : url.slice(0, hash);
-  const params = new URLSearchParams({ surface: "desktop", [SURFACE_SECRET_QUERY]: desktopSecret });
-  return `${base}${base.includes("?") ? "&" : "?"}${params}${hash < 0 ? "" : url.slice(hash)}`;
+  const fragment = hash < 0 ? "" : url.slice(hash);
+  try {
+    const res = await globalThis.fetch(SURFACE_TICKET_PATH, {
+      method: "POST",
+      headers: { "content-type": "application/json", ...desktopCallerHeaders() },
+      body: JSON.stringify({ resource: base }),
+      redirect: "error",
+    });
+    if (!res.ok) return null;
+    const body = (await res.json()) as { ticket?: unknown } | null;
+    const ticket = typeof body?.ticket === "string" ? body.ticket : "";
+    if (!ticket) return null;
+    const param = new URLSearchParams({ [SURFACE_TICKET_QUERY]: ticket });
+    return `${base}${base.includes("?") ? "&" : "?"}${param}${fragment}`;
+  } catch {
+    return null;
+  }
 }
 
 /** Resolve the secret and remember it; refresh before a replacement stream.
@@ -251,10 +286,9 @@ export function liveEventsUrl(options?: { since?: string | null; screens?: boole
   if (options?.taskDelta) params.set("tasks", "delta");
   // This renderer holds open request cards beside a page (server/task-delta.ts).
   if (options?.cardsBeside) params.set("cards", "beside");
-  // …and the marker alone is not believed. Appended LAST so that every other
-  // parameter keeps the position it had before this existed, and omitted
-  // entirely when unknown — an empty value would only be a wrong one.
-  if (desktopSecret) params.set(SURFACE_SECRET_QUERY, desktopSecret);
+  // …and the marker alone is not believed. The proof is not added here: the
+  // browser adapter below asks for a single-use ticket for this exact URL
+  // when this window holds the proof (ticketedResourceUrl).
   const query = params.toString();
   return query ? `${LIVE_EVENTS_PATH}?${query}` : LIVE_EVENTS_PATH;
 }
@@ -305,16 +339,34 @@ function browserPlatform(overrides: Partial<LiveEventsPlatform>): LiveEventsPlat
     (!NativeEventSource
       ? undefined
       : (url: string) => {
-          const native = new NativeEventSource(url);
+          let native: EventSource | null = null;
+          let closed = false;
           const adapter: LiveEventSourceLike = {
             onopen: null,
             onerror: null,
             onmessage: null,
-            close: () => native.close(),
+            close: () => {
+              closed = true;
+              native?.close();
+            },
           };
-          native.onopen = () => adapter.onopen?.();
-          native.onerror = () => adapter.onerror?.();
-          native.onmessage = (event) => adapter.onmessage?.(event);
+          const open = (target: string) => {
+            if (closed) return;
+            native = new NativeEventSource(target);
+            native.onopen = () => adapter.onopen?.();
+            native.onerror = () => adapter.onerror?.();
+            native.onmessage = (event) => adapter.onmessage?.(event);
+          };
+          // The desktop window's stream proves itself with a single-use ticket
+          // minted for this exact URL; every other renderer opens it as given.
+          // No ticket is a dropped connection, retried like any other: the
+          // desktop never opens its stream unproven (it would be scoped).
+          if (resourceNeedsTicket(url)) {
+            void mintTicketUrl(url).then((ticketed) => {
+              if (ticketed) open(ticketed);
+              else if (!closed) adapter.onerror?.();
+            });
+          } else open(url);
           return adapter;
         });
   if (!createEventSource) return null;

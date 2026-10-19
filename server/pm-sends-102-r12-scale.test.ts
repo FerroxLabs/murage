@@ -3,7 +3,7 @@
 // (a) the query plan uses the partial index and never scans the base table, (b) the plan is the same at both sizes, and
 // (c) the partial index holds only the pending rows, so the rows a recovery can touch do not grow with history.
 import { randomUUID } from "node:crypto";
-import { mkdirSync, rmSync } from "node:fs";
+import { mkdirSync } from "node:fs";
 import type { DatabaseSync } from "node:sqlite";
 import { afterEach, beforeEach, expect, it } from "vitest";
 import { DATA_DIR } from "./config.ts";
@@ -16,8 +16,9 @@ import { RESTORE_HOLDS_DDL } from "./restore-fence.ts";
 import { ownerSendsOwingWords } from "./room-requests.ts";
 import { holdFencedFanouts } from "./restore-fanout.ts";
 import { OWED_SHARED_SQL } from "./room-request-owed.ts";
+import { removeTempDirSync } from "./testing/cleanup.ts";
 
-beforeEach(() => { closeDatabase(); rmSync(DATA_DIR, { recursive: true, force: true }); mkdirSync(DATA_DIR, { recursive: true }); });
+beforeEach(() => { closeDatabase(); removeTempDirSync(DATA_DIR); mkdirSync(DATA_DIR, { recursive: true }); });
 afterEach(() => closeDatabase());
 
 type Recorded = { sql: string; args: unknown[] };
@@ -35,6 +36,23 @@ function record(db: DatabaseSync, run: () => void): Recorded[] {
     return statement;
   };
   try { run(); } finally { delete (db as { prepare?: unknown }).prepare; }
+  return seen;
+}
+/** record() for code that awaits: every statement until the promise settles. */
+async function recordAsync(db: DatabaseSync, run: () => Promise<unknown>): Promise<Recorded[]> {
+  let pending!: Promise<unknown>;
+  const seen = record(db, () => { pending = run(); });
+  const original = db.prepare.bind(db);
+  (db as { prepare: unknown }).prepare = (sql: string) => {
+    const statement = original(sql);
+    const wrap = <K extends "all" | "get" | "run">(key: K) => {
+      const fn = (statement[key] as (...a: unknown[]) => unknown).bind(statement);
+      (statement as unknown as Record<string, unknown>)[key] = (...args: unknown[]) => { seen.push({ sql, args }); return fn(...args); };
+    };
+    wrap("all"); wrap("get"); wrap("run");
+    return statement;
+  };
+  try { await pending; } finally { delete (db as { prepare?: unknown }).prepare; }
   return seen;
 }
 const planOf = (db: DatabaseSync, item: Recorded) => (db.prepare(`EXPLAIN QUERY PLAN ${item.sql}`).all(...(item.args as never[])) as Array<{ detail: string }>).map(row => row.detail);
@@ -62,10 +80,10 @@ function fill(db: DatabaseSync, total: number, rows: (i: number) => void): void 
   try { for (let i = 0; i < total; i++) rows(i); db.exec("COMMIT"); } catch (error) { db.exec("ROLLBACK"); throw error; }
 }
 
-it("image operations: startup recovery and request lookup stay flat from 1k to 100k completed rows", () => {
+it("image operations: startup recovery and request lookup stay flat from 1k to 100k completed rows", async () => {
   const results: Array<{ plans: string[][]; pending: number; pendingHash: number; inflight: number; awaiting: number }> = [];
   for (const total of SIZES) {
-    closeDatabase(); rmSync(DATA_DIR, { recursive: true, force: true }); mkdirSync(DATA_DIR, { recursive: true });
+    closeDatabase(); removeTempDirSync(DATA_DIR); mkdirSync(DATA_DIR, { recursive: true });
     const store = new Store(() => ({ instanceId: "fixture", model: "fixture" }));
     const db = database();
     initializeImageOperations(db); db.exec(RESTORE_HOLDS_DDL);
@@ -77,8 +95,8 @@ it("image operations: startup recovery and request lookup stay flat from 1k to 1
     const operations = new ImageOperations({ store, waiting: () => {} });
     const ops = operations as unknown as { heldCandidates(resumeKey: string, hash: string): unknown[] };
     const actor = { botId: "b", threadId: "t", generation: randomUUID() };
-    const issued = record(db, () => {
-      operations.resumePendingPublications();
+    const issued = await recordAsync(db, async () => {
+      await operations.resumePendingPublications();
       operations.resumable(actor, "req-1", { prompt: "x" });
       ops.heldCandidates("k1", "hash-1");
       (operations as unknown as { turnOperations(a: { generation: string }): unknown }).turnOperations(actor);
@@ -96,10 +114,10 @@ it("image operations: startup recovery and request lookup stay flat from 1k to 1
   expect(results[0]).toMatchObject({ pending: 2, pendingHash: 2, inflight: 1, awaiting: 0 }); // the abandoned awaiting row was released by startup recovery
 });
 
-it("shell card recovery: producer index follows runs still owing a card, flat from 1k to 100k published outputs", () => {
+it("shell card recovery: producer index follows runs still owing a card, flat from 1k to 100k published outputs", async () => {
   const results: Array<{ plans: string[][]; unannounced: number }> = [];
   for (const total of SIZES) {
-    closeDatabase(); rmSync(DATA_DIR, { recursive: true, force: true }); mkdirSync(DATA_DIR, { recursive: true });
+    closeDatabase(); removeTempDirSync(DATA_DIR); mkdirSync(DATA_DIR, { recursive: true });
     const store = new Store(() => ({ instanceId: "fixture", model: "fixture" }));
     const db = database();
     db.exec(RESTORE_HOLDS_DDL);
@@ -107,7 +125,7 @@ it("shell card recovery: producer index follows runs still owing a card, flat fr
     fill(db, total, i => insert.run(`done-${i}`, i % 5 ? "shell-output" : "assistant-image", "b", `t${i % 20}`, `run-${i}`, `outputs/${i}.txt`, "a".repeat(64), "art", `m-${i}`, i, i));
     insert.run("pend-1", "shell-output", "b", "t1", "run-pending", "outputs/p.txt", "b".repeat(64), "art-p", null, total + 1, total + 1);
     const publisher = createOutputPublisher({ dataDir: DATA_DIR, database, store, artifactScopes: () => [] });
-    const issued = record(db, () => publisher.resumePending());
+    const issued = await recordAsync(db, async () => { await publisher.resumePending(); });
     const plans = plansFor(db, issued, "output_publications");
     expect(plans.length).toBeGreaterThan(0);
     for (const plan of plans) expect(scansBaseTable(plan, "output_publications", "q"), plan.join(" | ")).toBe(false);
@@ -123,7 +141,7 @@ it("shell card recovery: producer index follows runs still owing a card, flat fr
 it("room requests: owed owner words, fenced fan-out holds and owed shared results read only pending rows, flat from 1k to 100k", () => {
   const results: Array<{ plans: string[][]; words: number; fanout: number; shared: number }> = [];
   for (const total of SIZES) {
-    closeDatabase(); rmSync(DATA_DIR, { recursive: true, force: true }); mkdirSync(DATA_DIR, { recursive: true });
+    closeDatabase(); removeTempDirSync(DATA_DIR); mkdirSync(DATA_DIR, { recursive: true });
     const db = database();
     const stmt = db.prepare(`INSERT INTO room_requests(id,root_id,group_id,verb,from_kind,to_bot_id,target_thread_id,state,payload_text,refusal,outcome_note,created_at,finished_at,root_thread_id,origin,audience_fingerprint,not_owner_audience,unattended,admission_key)
       VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,'desktop','fp',0,0,?)`);

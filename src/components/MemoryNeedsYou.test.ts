@@ -48,6 +48,11 @@ describe("Needs you, desktop", () => {
     expect(keep).toBeGreaterThan(-1);
     expect(keep).toBeLessThan(later); expect(later).toBeLessThan(edit); expect(edit).toBeLessThan(words); expect(words).toBeLessThan(why);
   });
+  it("folds Why this? with a button, not a details element", () => {
+    const out = html();
+    expect(out).not.toContain("<details");
+    expect(out).toMatch(/aria-expanded="false"[^>]*>[\s\S]*Why this\?/);
+  });
 
   it("offers Keep all only when something is everyday, and says so when nothing is", () => {
     const none = html({ counts: { waiting: 3, later: 0, everyday: 0 }, items: asks });

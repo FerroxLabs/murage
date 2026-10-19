@@ -6,7 +6,7 @@
 // capped, a deleted conversation leaves no file, forgotten text leaves the
 // log, the upgrade prune brings old folders to the same rules and resumes,
 // and every reader of events/ still finds what it needs.
-import { appendFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, realpathSync, rmSync, statSync, utimesSync, writeFileSync } from "node:fs";
+import { appendFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, realpathSync, statSync, utimesSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
@@ -21,10 +21,11 @@ import {
   enforceEventLogBudget, eventLogIo, eventLogJobsSettled, eventLogLimits, eventLogPruneDone, forgottenTextsAll, forgottenTextsFor, pruneEventLogs, recordEventLogForget, resetEventLogJobsForTests,
   runEventLogForgets, setEventLogBudgetReady, threadSessionLines,
 } from "./event-log.ts";
+import { removeTempDirSync } from "../testing/cleanup.ts";
 
 const scratch = realpathSync.native(mkdtempSync(join(tmpdir(), "murage-eventlog-")));
 const openDatabases: DatabaseSync[] = [];
-afterAll(() => { for (const db of openDatabases) db.close(); rmSync(scratch, { recursive: true, force: true }); });
+afterAll(() => { for (const db of openDatabases) db.close(); removeTempDirSync(scratch); });
 let counter = 0;
 const fresh = (name: string) => { const dir = join(scratch, `${name}-${++counter}`); mkdirSync(dir, { recursive: true }); return dir; };
 const defaults = { ...eventLogLimits };
@@ -50,7 +51,7 @@ function streamReply(bus: EventBus, threadId: string, text: string, chunks: numb
 }
 
 describe("event log writes", () => {
-  beforeEach(() => { rmSync(EVENTS_DIR, { recursive: true, force: true }); ensureDirs(); });
+  beforeEach(() => { removeTempDirSync(EVENTS_DIR); ensureDirs(); });
 
   it("writes a streamed reply in flat, small bytes, however many chunks it streamed in", () => {
     const bus = new EventBus();
@@ -160,7 +161,7 @@ describe("deleting a conversation", () => {
       writeFileSync(join(events, name), line(ev(THREAD, { type: "session.started", sessionId: "sess-from-log", providerInstanceId: "inst-claude" })));
     }
     const db = messagesDb(data);
-    db.prepare("INSERT INTO messages VALUES(?,?,?,?,?,?,?)").run(THREAD, "m1", 1, "bot", "text", "hi", "{}");
+    db.prepare("INSERT INTO messages(thread_id,id,at,role,kind,text,json) VALUES(?,?,?,?,?,?,?)").run(THREAD, "m1", 1, "bot", "text", "hi", "{}");
     const deletions = new ConversationDeletions({ dataDir: data, database: () => db });
     // the deletion reader still finds the engine session through the sessions file
     const planning = { threadIds: [THREAD], instanceKind: () => "claudeAgent" };
@@ -171,7 +172,7 @@ describe("deleting a conversation", () => {
     expect(readdirSync(events).filter(n => n.startsWith(THREAD))).toEqual([]);
     expect(existsSync(join(events, `${OTHER}.ndjson`))).toBe(true);
     // a turn winding down after the delete: delivered, never written
-    rmSync(EVENTS_DIR, { recursive: true, force: true }); ensureDirs();
+    removeTempDirSync(EVENTS_DIR); ensureDirs();
     const bus = new EventBus();
     const seen: RuntimeEvent[] = [];
     bus.subscribe(e => seen.push(e), { durable: false });
@@ -197,7 +198,7 @@ describe("forgetting a message", () => {
     writeFileSync(join(dir, `${t}.ndjson`), body);
     writeFileSync(join(dir, `${t}.previous.ndjson`), line(ev(t, { type: "item.completed", itemType: "assistant_text", turnId: "older", text: secret })));
     const db = messagesDb(fresh("forget-db"));
-    db.prepare("INSERT INTO messages VALUES(?,?,?,?,?,?,?)").run(t, "m-gone", 1, "bot", "text", secret, JSON.stringify({ turnId: "gone-turn" }));
+    db.prepare("INSERT INTO messages(thread_id,id,at,role,kind,text,json) VALUES(?,?,?,?,?,?,?)").run(t, "m-gone", 1, "bot", "text", secret, JSON.stringify({ turnId: "gone-turn" }));
     const items = forgottenTextsFor(db, ["m-gone"]);
     expect(items).toEqual([{ threadId: t, turnId: "gone-turn", text: secret }]);
     db.exec("BEGIN IMMEDIATE");
@@ -300,8 +301,8 @@ describe("the upgrade prune", () => {
   it("finds messages forgotten before the upgrade", () => {
     const db = messagesDb(fresh("tomb"));
     db.exec("CREATE TABLE memory_sources(id TEXT, message_id TEXT); CREATE TABLE memory_tombstones(target_type TEXT, target_id TEXT)");
-    db.prepare("INSERT INTO messages VALUES(?,?,?,?,?,?,?)").run("t1", "m1", 1, "user", "text", "forget me please", JSON.stringify({ turnId: "u1" }));
-    db.prepare("INSERT INTO messages VALUES(?,?,?,?,?,?,?)").run("t1", "m2", 1, "user", "text", "keep me", "{}");
+    db.prepare("INSERT INTO messages(thread_id,id,at,role,kind,text,json) VALUES(?,?,?,?,?,?,?)").run("t1", "m1", 1, "user", "text", "forget me please", JSON.stringify({ turnId: "u1" }));
+    db.prepare("INSERT INTO messages(thread_id,id,at,role,kind,text,json) VALUES(?,?,?,?,?,?,?)").run("t1", "m2", 1, "user", "text", "keep me", "{}");
     db.exec("INSERT INTO memory_sources VALUES('s1','m1'),('s2','m2'); INSERT INTO memory_tombstones VALUES('source','s1'),('import','s2')");
     expect(forgottenTextsAll(db)).toEqual([{ threadId: "t1", turnId: "u1", text: "forget me please" }]);
   });
@@ -324,7 +325,7 @@ describe("the upgrade prune", () => {
 });
 
 describe("a session line that missed the sessions file", () => {
-  beforeEach(() => { rmSync(EVENTS_DIR, { recursive: true, force: true }); ensureDirs(); });
+  beforeEach(() => { removeTempDirSync(EVENTS_DIR); ensureDirs(); });
   const realAppend = eventLogIo.appendSession;
   afterEach(() => { eventLogIo.appendSession = realAppend; });
   const started = (threadId: string) => ev(threadId, { type: "session.started", sessionId: `sess-${threadId}` });
