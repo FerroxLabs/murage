@@ -1,5 +1,7 @@
 import { useState } from "react";
 import { memoryButtonClass, memoryInputClass } from "./MemoryReview";
+import { t } from "@/lib/i18n";
+import type { LocaleKey } from "@/locales";
 
 export interface VerifiedHumanOrigin {
   platform: "slack" | "discord" | "telegram" | "whatsapp";
@@ -28,7 +30,7 @@ export interface HumanShareIntent { personId: string; scopeId: string; granted: 
 export interface ShareableAudience { id: string; kind: string; label: string }
 
 export function verifiedAccountLabel(origin: VerifiedHumanOrigin) {
-  return `${origin.platform[0].toUpperCase()}${origin.platform.slice(1)} account · user ID ${origin.userId} · authority ${origin.authorityId}`;
+  return t("memoryPeople.accountLabel", { platform: `${origin.platform[0].toUpperCase()}${origin.platform.slice(1)}`, userId: origin.userId, authorityId: origin.authorityId });
 }
 const isGroup = (binding: HumanBinding) => binding.origin.platform === "whatsapp" && binding.origin.userId.endsWith("@g.us");
 export function linkedPersonChoices(bindings: HumanBinding[], ownerPersonId: string, currentBindingId: string) {
@@ -38,9 +40,9 @@ export function linkedPersonChoices(bindings: HumanBinding[], ownerPersonId: str
 }
 
 // Bot, conversation and preference audiences stay private to their owner; only group audiences can be offered to a person.
-const SHAREABLE_KINDS: Record<string, string> = { room: "Channel", project: "Project", team: "Team", workspace: "Workspace" };
+const SHAREABLE_KINDS: Record<string, LocaleKey> = { room: "memoryPeople.kindChannel", project: "memoryPeople.kindProject", team: "memoryPeople.kindTeam", workspace: "memoryPeople.kindWorkspace" };
 export function shareAudienceLabel(audience: ShareableAudience) {
-  return `${SHAREABLE_KINDS[audience.kind] ?? "Audience"}: ${audience.label}`;
+  return t("memoryPeople.audienceLabel", { kind: t(SHAREABLE_KINDS[audience.kind] ?? "memoryPeople.kindAudience"), label: audience.label });
 }
 /** One row per separate person with a current verified account. Granted audiences come only from server read-back. */
 export function personShareRows(people: HumanBindingsStatus, audiences: ShareableAudience[]) {
@@ -51,7 +53,7 @@ export function personShareRows(people: HumanBindingsStatus, audiences: Shareabl
     const granted = new Set((people.shares ?? []).filter(share => share.personId === personId && share.granted).map(share => share.scopeId));
     return {
       personId, label: labels.join(" and "),
-      granted: [...granted].map(scopeId => audiences.find(audience => audience.id === scopeId) ?? { id: scopeId, kind: "unavailable", label: "Unavailable audience" }),
+      granted: [...granted].map(scopeId => audiences.find(audience => audience.id === scopeId) ?? { id: scopeId, kind: "unavailable", label: t("memoryPeople.unavailableAudience") }),
       available: audiences.filter(audience => audience.kind in SHAREABLE_KINDS && !granted.has(audience.id)),
     };
   });
@@ -74,62 +76,62 @@ export function MemoryPeople({ people, audiences, disabled, onLink, onShare, onR
     setBusy(intent.bindingId); setError(undefined); setConflict(false);
     try { await onLink(intent); }
     catch (cause) {
-      const detail = cause instanceof Error ? cause.message : "Could not update this account. Try again.";
+      const detail = cause instanceof Error ? cause.message : t("memoryPeople.errUpdate");
       const stale = detail.includes("MEMORY_VERSION_CONFLICT");
-      setConflict(stale); setError(stale ? "This account changed elsewhere. Refresh verified accounts, review the latest assignment, then try again." : detail);
+      setConflict(stale); setError(stale ? t("memoryPeople.errStale") : detail);
     } finally { setBusy(undefined); }
   };
   const share = async (intent: HumanShareIntent) => {
     if (!onShare) return;
     setBusy(`share:${intent.personId}`); setError(undefined); setConflict(false);
     try { await onShare(intent); if (intent.granted) setShareChoices(previous => ({ ...previous, [intent.personId]: "" })); }
-    catch (cause) { setError(cause instanceof Error ? cause.message : "Could not change this shared audience. Refresh verified accounts, then try again."); }
+    catch (cause) { setError(cause instanceof Error ? cause.message : t("memoryPeople.errShare")); }
     finally { setBusy(undefined); }
   };
   const refresh = async () => {
     setBusy("refresh");
     try { await onRefresh(); setError(undefined); setConflict(false); }
-    catch (cause) { setError(cause instanceof Error ? cause.message : "Could not refresh verified accounts. Try again."); }
+    catch (cause) { setError(cause instanceof Error ? cause.message : t("memoryPeople.errRefresh")); }
     finally { setBusy(undefined); }
   };
   const pending = people.bindings.filter(binding => binding.active && binding.state === "link-required");
   const shareRows = people.shares && audiences && onShare ? personShareRows(people, audiences) : null;
-  return <section aria-label="Verified people and accounts" className="space-y-3 rounded-lg border border-hairline/40 p-3">
-    <div><h3 className="text-[14px] font-medium">People and verified accounts</h3><p className="mt-1 text-[12px] text-ink-secondary">Connect verified platform accounts only when you choose their relationship. Marking an account as yours allows it to use the workspace owner&apos;s context. A separate person stays isolated. Linking accounts joins their person context; it never uses a display name as proof.</p></div>
+  return <section aria-label={t("memoryPeople.sectionLabel")} className="space-y-3 rounded-lg border border-hairline/40 p-3">
+    <div><h3 className="text-[14px] font-medium">{t("memoryPeople.title")}</h3><p className="mt-1 text-[12px] text-ink-secondary">{t("memoryPeople.intro")}</p></div>
     {error && <p role="alert" className="break-words text-[13px] text-danger">{error}</p>}
-    {conflict && <button type="button" className={memoryButtonClass} disabled={disabled || Boolean(busy)} onClick={() => void refresh()}>Refresh verified accounts</button>}
-    {!people.bindings.length && <p role="status" className="text-[13px] text-ink-secondary">No verified platform accounts need an assignment yet.</p>}
-    {pending.length > 0 && <p className="text-[12px] text-ink-secondary">{pending.length} verified platform account{pending.length === 1 ? " is" : "s are"} waiting for an owner decision.</p>}
+    {conflict && <button type="button" className={memoryButtonClass} disabled={disabled || Boolean(busy)} onClick={() => void refresh()}>{t("memoryPeople.refresh")}</button>}
+    {!people.bindings.length && <p role="status" className="text-[13px] text-ink-secondary">{t("memoryPeople.none")}</p>}
+    {pending.length > 0 && <p className="text-[12px] text-ink-secondary">{pending.length === 1 ? t("memoryPeople.pendingOne") : t("memoryPeople.pendingMany", { count: pending.length })}</p>}
     <div className="space-y-3">
       {people.bindings.map(binding => {
         const choicesForBinding = linkedPersonChoices(people.bindings, people.ownerPersonId, binding.id);
         const selectedPersonId = choices[binding.id] ?? "";
         const isBusy = Boolean(busy) || disabled || !binding.active;
-        const state = isGroup(binding) ? "Group conversation memory" : !binding.active ? "Inactive connection" : binding.personId === people.ownerPersonId ? "Workspace owner" : binding.personId ? "Separate person" : "Needs an owner decision";
+        const state = isGroup(binding) ? t("memoryPeople.stateGroup") : !binding.active ? t("memoryPeople.stateInactive") : binding.personId === people.ownerPersonId ? t("memoryPeople.stateOwner") : binding.personId ? t("memoryPeople.stateSeparate") : t("memoryPeople.stateNeedsDecision");
         return <div key={`${binding.id}:${binding.revision}`} className="space-y-2 rounded-lg border border-hairline/40 p-3" role="group" aria-label={verifiedAccountLabel(binding.origin)}>
           <p className="break-words text-[13px]">{verifiedAccountLabel(binding.origin)}</p>
           <p className="text-[12px] text-ink-secondary">{state}</p>
           {binding.active && !isGroup(binding) && <div className="flex flex-wrap gap-2">
-            {!(binding.origin.platform === "whatsapp" && binding.origin.userId !== binding.origin.authorityId) && <button type="button" className={memoryButtonClass} disabled={isBusy} onClick={() => void change({ bindingId: binding.id, expectedRevision: binding.revision, as: "owner" })}>This is my account</button>}
-            <button type="button" className={memoryButtonClass} disabled={isBusy} onClick={() => void change({ bindingId: binding.id, expectedRevision: binding.revision, as: "person" })}>Separate person</button>
-            {choicesForBinding.length > 0 && <div className="flex min-h-10 items-center gap-2 text-[13px]"><label>Same person as<select aria-label={`Existing account for ${verifiedAccountLabel(binding.origin)}`} className="ml-2 min-h-10 rounded-md border border-hairline bg-inset px-2 text-[13px]" value={selectedPersonId} disabled={isBusy} onChange={event => setChoices(previous => ({ ...previous, [binding.id]: event.target.value }))}><option value="">Choose verified account</option>{choicesForBinding.map(choice => <option key={choice.personId} value={choice.personId}>{choice.label}</option>)}</select></label><button type="button" className={memoryButtonClass} disabled={isBusy || !selectedPersonId} onClick={() => void change({ bindingId: binding.id, expectedRevision: binding.revision, as: "person", personId: selectedPersonId })}>Link accounts</button></div>}
-            {binding.personId && <button type="button" className={memoryButtonClass} disabled={isBusy} onClick={() => void change({ bindingId: binding.id, expectedRevision: binding.revision, as: "unlink" })}>Unlink</button>}
+            {!(binding.origin.platform === "whatsapp" && binding.origin.userId !== binding.origin.authorityId) && <button type="button" className={memoryButtonClass} disabled={isBusy} onClick={() => void change({ bindingId: binding.id, expectedRevision: binding.revision, as: "owner" })}>{t("memoryPeople.myAccount")}</button>}
+            <button type="button" className={memoryButtonClass} disabled={isBusy} onClick={() => void change({ bindingId: binding.id, expectedRevision: binding.revision, as: "person" })}>{t("memoryPeople.separatePerson")}</button>
+            {choicesForBinding.length > 0 && <div className="flex min-h-10 items-center gap-2 text-[13px]"><label>{t("memoryPeople.samePersonAs")}<select aria-label={t("memoryPeople.existingAccountFor", { account: verifiedAccountLabel(binding.origin) })} className="ml-2 min-h-10 rounded-md border border-hairline bg-inset px-2 text-[13px]" value={selectedPersonId} disabled={isBusy} onChange={event => setChoices(previous => ({ ...previous, [binding.id]: event.target.value }))}><option value="">{t("memoryPeople.chooseAccount")}</option>{choicesForBinding.map(choice => <option key={choice.personId} value={choice.personId}>{choice.label}</option>)}</select></label><button type="button" className={memoryButtonClass} disabled={isBusy || !selectedPersonId} onClick={() => void change({ bindingId: binding.id, expectedRevision: binding.revision, as: "person", personId: selectedPersonId })}>{t("memoryPeople.link")}</button></div>}
+            {binding.personId && <button type="button" className={memoryButtonClass} disabled={isBusy} onClick={() => void change({ bindingId: binding.id, expectedRevision: binding.revision, as: "unlink" })}>{t("memoryPeople.unlink")}</button>}
           </div>}
         </div>;
       })}
     </div>
     {shareRows && shareRows.length > 0 && <div className="space-y-3 border-t border-hairline/40 pt-3">
-      <div><h4 className="text-[13px] font-medium">Shared audiences</h4><p className="mt-1 text-[12px] text-ink-secondary">Sharing lets a separate person&apos;s conversations recall memories saved for that channel, project, team or workspace. Only those audiences are offered here; the workspace owner&apos;s private conversations are not shared by this choice. Stopping applies to future recall; text already sent to a provider cannot be withdrawn.</p></div>
+      <div><h4 className="text-[13px] font-medium">{t("memoryPeople.sharedTitle")}</h4><p className="mt-1 text-[12px] text-ink-secondary">{t("memoryPeople.sharedIntro")}</p></div>
       {shareRows.map(row => {
         const selectedScopeId = shareChoices[row.personId] ?? "";
         const isBusy = Boolean(busy) || disabled;
-        return <div key={row.personId} role="group" aria-label={`Shared audiences for ${row.label}`} className="space-y-2 rounded-lg border border-hairline/40 p-3">
+        return <div key={row.personId} role="group" aria-label={t("memoryPeople.sharedFor", { label: row.label })} className="space-y-2 rounded-lg border border-hairline/40 p-3">
           <p className="break-words text-[13px]">{row.label}</p>
-          {row.granted.length ? <ul className="space-y-2">{row.granted.map(audience => <li key={audience.id} className="flex flex-wrap items-center gap-2 text-[13px]"><span className="break-words">{shareAudienceLabel(audience)}</span><button type="button" className={memoryButtonClass} disabled={isBusy} aria-label={`Stop sharing ${shareAudienceLabel(audience)} with ${row.label}`} onClick={() => void share({ personId: row.personId, scopeId: audience.id, granted: false })}>Stop sharing</button></li>)}</ul>
-            : <p className="text-[12px] text-ink-secondary">No shared audiences. This person recalls only their own conversations and preferences.</p>}
+          {row.granted.length ? <ul className="space-y-2">{row.granted.map(audience => <li key={audience.id} className="flex flex-wrap items-center gap-2 text-[13px]"><span className="break-words">{shareAudienceLabel(audience)}</span><button type="button" className={memoryButtonClass} disabled={isBusy} aria-label={t("memoryPeople.stopSharingAria", { audience: shareAudienceLabel(audience), label: row.label })} onClick={() => void share({ personId: row.personId, scopeId: audience.id, granted: false })}>{t("memoryPeople.stopSharing")}</button></li>)}</ul>
+            : <p className="text-[12px] text-ink-secondary">{t("memoryPeople.noShared")}</p>}
           {row.available.length > 0 && <form className="space-y-2" onSubmit={event => { event.preventDefault(); if (selectedScopeId) void share({ personId: row.personId, scopeId: selectedScopeId, granted: true }); }}>
-            <label className="block space-y-1 text-[13px]">Share an audience<select className={memoryInputClass} value={selectedScopeId} disabled={isBusy} onChange={event => setShareChoices(previous => ({ ...previous, [row.personId]: event.target.value }))}><option value="">Choose an audience</option>{row.available.map(audience => <option key={audience.id} value={audience.id}>{shareAudienceLabel(audience)}</option>)}</select></label>
-            <button className={memoryButtonClass} disabled={isBusy || !selectedScopeId}>Share audience</button>
+            <label className="block space-y-1 text-[13px]">{t("memoryPeople.shareAnAudience")}<select className={memoryInputClass} value={selectedScopeId} disabled={isBusy} onChange={event => setShareChoices(previous => ({ ...previous, [row.personId]: event.target.value }))}><option value="">{t("memoryPeople.chooseAudience")}</option>{row.available.map(audience => <option key={audience.id} value={audience.id}>{shareAudienceLabel(audience)}</option>)}</select></label>
+            <button className={memoryButtonClass} disabled={isBusy || !selectedScopeId}>{t("memoryPeople.shareAudience")}</button>
           </form>}
         </div>;
       })}

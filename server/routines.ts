@@ -1,4 +1,5 @@
 import { REQUIRED_MCP_SERVERS, startsWithNotDone, toolsUnavailableRunError } from "./drivers/mcp-readiness.ts";
+import { readOwnerTimeZone, nextOwnerDailyOccurrence } from "./cloud-home/timezone.ts";
 import { assertHumanPrincipal, type HumanPrincipal } from "./human-principals.ts";
 import { ROUTINE_INSTRUCTIONS_MAX, routineInstructionsTooLongMessage } from "../shared/routine-instructions.ts";
 import { createHash, randomUUID } from "node:crypto";
@@ -729,6 +730,7 @@ export function nextOccurrence(schedule: RoutineSchedule, after: number): number
     const candidate = schedule.anchorAt + (intervalsElapsed + 1) * intervalMs;
     return Number.isSafeInteger(candidate) && candidate <= MAX_DATE_MS ? candidate : null;
   }
+  if (process.env.MURAGE_CLOUD_ROLE === "home") return nextOwnerDailyOccurrence(schedule.time, cleanDays(schedule.weekdays), after, readOwnerTimeZone(DATA_DIR));
   const [hour, minute] = schedule.time.split(":").map(Number);
   const weekdays = new Set(cleanDays(schedule.weekdays));
   for (let offset = 0; offset <= 8; offset++) {
@@ -1092,6 +1094,10 @@ export class RoutineManager {
       .map(cloneRun);
   }
 
+  private runRevision = 0;
+  /** Changes on any write to a run (or the list of runs), so a caller holding something built from the live runs can keep it until they move. */
+  get runsRevision(): number { return this.runRevision; }
+
   /** The conversations of this bot's runs that are still going (queued,
    * running, waiting, or needing the owner). Their cards link to the task, so
    * the roster keeps those tasks whatever their age. */
@@ -1240,14 +1246,14 @@ export class RoutineManager {
   }
 
   /** The stored ceiling for scheduled and manual work, including room goals. */
-  routineRunForThread(threadId: string): { routineId: string; botId: string; permissionMode?: RoutinePermissionMode; alwaysAllow: string[] } | null {
+  routineRunForThread(threadId: string): { runId: string; routineId: string; botId: string; permissionMode?: RoutinePermissionMode; alwaysAllow: string[] } | null {
     const run = this.runs.find((candidate) => candidate.threadId === threadId && isLive(candidate.status));
     if (!run) return null;
     const trigger = run.triggerSource ?? (run.manual ? "manual" : "schedule");
     if (trigger !== "schedule" && trigger !== "manual") return null;
     const routine = this.routines.find((candidate) => candidate.id === run.routineId);
     if (!routine) return null;
-    return { routineId: routine.id, botId: run.botId, ...(routine.permissionMode ? { permissionMode: routine.permissionMode } : {}), alwaysAllow: [...(routine.alwaysAllow ?? [])] };
+    return { runId: run.id, routineId: routine.id, botId: run.botId, ...(routine.permissionMode ? { permissionMode: routine.permissionMode } : {}), alwaysAllow: [...(routine.alwaysAllow ?? [])] };
   }
 
   /** The routine whose own conversation this is (Routine.threadId), with
@@ -1262,17 +1268,44 @@ export class RoutineManager {
    * sits on a pending card this routine's run raised; this only refuses a
    * key that is not one of the two scoped kinds, and a full list. */
   grantAlwaysAllow(id: string, key: string): Routine | null {
-    const routine = this.routines.find((candidate) => candidate.id === id);
-    if (!routine) return null;
-    if (!isRoutineGrantKey(key)) throw Object.assign(new Error("Only an exact command or a scoped place can be always allowed for a routine"), { status: 400 });
-    const held = routine.alwaysAllow ?? [];
-    if (held.includes(key)) return this.routineWithHealth(routine);
-    if (held.length >= ROUTINE_GRANTS_MAX) throw Object.assign(new Error(`This routine already remembers ${ROUTINE_GRANTS_MAX} approvals. Remove some in the routine editor, then try again.`), { status: 409 });
+    return this.grantAlwaysAllowSet(id, [key]);
+  }
+
+  /** Rule 81b (AMEND-13): remember a WHOLE set at once. Every key is
+   * validated first; existing keys are deduplicated; a set that would pass
+   * the cap, or any invalid key, saves none of it (no slicing, no partial
+   * success). Saving keys already held is a no-op, so a retry is idempotent. */
+  grantAlwaysAllowSet(id: string, keys: readonly string[]): Routine | null {
+    return this.rememberAlwaysAllowSet(id, keys)?.routine ?? null;
+  }
+
+  /** As grantAlwaysAllowSet, and the keys it added, so the approval choke
+   * point (server/index.ts rememberAndAnswer) can take back exactly those
+   * when its answer does not land (A13-FIX-DESIGN C1). */
+  rememberAlwaysAllowSet(id: string, keys: readonly string[]): { routine: Routine; added: string[] } | null {
+    const plan = this.planAlwaysAllowSet(id, keys);
+    if (!plan) return null;
+    const { routine, added: fresh } = plan;
+    if (!fresh.length) return { routine: this.routineWithHealth(routine), added: [] };
     // A grant is not a definition edit: `updatedAt` stays, so a pending
     // routine confirmation card is not made stale by it.
-    this.commitMutation(() => { routine.alwaysAllow = [...held, key]; });
+    this.commitMutation(() => { routine.alwaysAllow = [...(routine.alwaysAllow ?? []), ...fresh]; });
     this.emitRoutine(routine);
-    return this.routineWithHealth(routine);
+    return { routine: this.routineWithHealth(routine), added: fresh };
+  }
+
+  /** What rememberAlwaysAllowSet would add, without writing: the choke point
+   * validates a choice with this BEFORE its answer is delivered, and writes
+   * only after. Null for no such routine; throws (with a status) for a key
+   * outside the scoped kinds and past the cap. */
+  planAlwaysAllowSet(id: string, keys: readonly string[]): { routine: Routine; added: string[] } | null {
+    const routine = this.routines.find((candidate) => candidate.id === id);
+    if (!routine) return null;
+    if (!keys.length || !keys.every(isRoutineGrantKey)) throw Object.assign(new Error("Only exact actions, an exact command or a scoped place can be always allowed for a routine"), { status: 400 });
+    const held = routine.alwaysAllow ?? [];
+    const fresh = [...new Set(keys)].filter((key) => !held.includes(key));
+    if (fresh.length && held.length + fresh.length > ROUTINE_GRANTS_MAX) throw Object.assign(new Error(`This routine already remembers ${ROUTINE_GRANTS_MAX} approvals. Remove some in the routine editor, then try again.`), { status: 409 });
+    return { routine, added: fresh };
   }
 
   revokeAlwaysAllow(id: string, key: string): Routine | null {
@@ -2749,6 +2782,7 @@ export class RoutineManager {
    * uncommitted action for a durable one.
    */
   private commitMutation(mutate: () => void): void {
+    this.runRevision++;
     this.fleetDueAt = null;
     const before = {
       routines: this.routines.map(cloneRoutine),
@@ -2796,6 +2830,7 @@ export class RoutineManager {
    * written by another path is left out. A save that passes neither rewrites
    * routines.json and compares everything, as before. */
   private save(options: { defer?: boolean; runs?: readonly RoutineRun[]; routines?: readonly Routine[] } = {}) {
+    this.runRevision++;
     const hinted = options.runs !== undefined || options.routines !== undefined;
     if (hinted) {
       for (const run of options.runs ?? []) this.dirtyRuns.add(run);
@@ -2849,7 +2884,7 @@ export class RoutineManager {
 
   private trackRun(run: RoutineRun): RoutineRun {
     if (isTracked(run)) return run;
-    const tracked: RoutineRun = track(run, () => { this.dirtyRuns.add(tracked); });
+    const tracked: RoutineRun = track(run, () => { this.dirtyRuns.add(tracked); this.runRevision++; });
     return tracked;
   }
 

@@ -157,7 +157,7 @@ describe.skipIf(process.platform === "win32")("routine approval levels", () => {
     expect(card, `no stop-line card at No limits. stderr: ${stderr.slice(-1500)}`).not.toBeNull();
     expect(card.card).toMatchObject({ routineId: routine.id });
     expect(card.card.routineAllowKey).toMatch(/^stop:delete:\/.*\/Documents\/old$/);
-    expect((await desktopApi("POST", `/api/routines/${routine.id}/always-allow`, { allowKey: card.card.routineAllowKey, threadId })).status).toBe(200);
+    expect((await desktopApi("POST", `/api/routines/${routine.id}/always-allow`, { answer: true, allowKey: card.card.routineAllowKey, threadId, requestId: card.card.requestId })).status).toBe(200);
     expect((await desktopApi("POST", `/api/threads/${threadId}/respond`, { requestId: card.card.requestId, behavior: "allow" })).body).toMatchObject({ ok: true });
     const first = await settled(runId);
     expect(first, `run never settled. stderr: ${stderr.slice(-1500)}`).toMatchObject({ status: "completed" });
@@ -191,9 +191,9 @@ describe.skipIf(process.platform === "win32")("routine approval levels", () => {
     expect(card.card).toMatchObject({ routineId: routine.id });
     expect(card.card.routineAllowKey).toMatch(/^stop:delete:\/.*\/Documents\/old$/);
     // a forged key is refused; the card's own is kept on the routine
-    expect((await desktopApi("POST", `/api/routines/${routine.id}/always-allow`, { allowKey: "stop:delete:/", threadId })).status).toBe(409);
-    expect((await api("POST", `/api/routines/${routine.id}/always-allow`, { allowKey: card.card.routineAllowKey, threadId })).status).toBe(404);
-    expect((await desktopApi("POST", `/api/routines/${routine.id}/always-allow`, { allowKey: card.card.routineAllowKey, threadId })).status).toBe(200);
+    expect((await desktopApi("POST", `/api/routines/${routine.id}/always-allow`, { answer: true, allowKey: "stop:delete:/", threadId, requestId: card.card.requestId })).status).toBe(409);
+    expect((await api("POST", `/api/routines/${routine.id}/always-allow`, { answer: true, allowKey: card.card.routineAllowKey, threadId, requestId: card.card.requestId })).status).toBe(404);
+    expect((await desktopApi("POST", `/api/routines/${routine.id}/always-allow`, { answer: true, allowKey: card.card.routineAllowKey, threadId, requestId: card.card.requestId })).status).toBe(200);
     expect((await desktopApi("POST", `/api/threads/${threadId}/respond`, { requestId: card.card.requestId, behavior: "allow" })).body).toMatchObject({ ok: true });
     expect(await settled(runId)).toMatchObject({ status: "completed" });
     expect((await routineState(routine.id)).alwaysAllow).toEqual([card.card.routineAllowKey]);
@@ -227,7 +227,7 @@ describe.skipIf(process.platform === "win32")("routine approval levels", () => {
     expect(card.card.held).toContain("cannot place");
     expect(card.card.taskAllowKey).toMatch(/^stop:delete:unplaced:/);
     expect(card.card.routineAllowKey).toBe(card.card.taskAllowKey);
-    expect((await desktopApi("POST", `/api/routines/${routine.id}/always-allow`, { allowKey: card.card.routineAllowKey, threadId })).status).toBe(200);
+    expect((await desktopApi("POST", `/api/routines/${routine.id}/always-allow`, { answer: true, allowKey: card.card.routineAllowKey, threadId, requestId: card.card.requestId })).status).toBe(200);
     await desktopApi("POST", `/api/threads/${threadId}/respond`, { requestId: card.card.requestId, behavior: "allow" });
     expect(await settled(runId)).toMatchObject({ status: "completed" });
     // the next run of the same command is covered

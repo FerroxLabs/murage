@@ -1,4 +1,4 @@
-import { mkdirSync, rmSync } from "node:fs";
+import { mkdirSync } from "node:fs";
 import { beforeEach, expect, it } from "vitest";
 import { DATA_DIR } from "../config.ts";
 import { closeDatabase, database } from "../database.ts";
@@ -12,8 +12,9 @@ import { memoryRequestPrefix } from "../../shared/memory.ts";
 import { makeFakeDriver } from "../testing/fake-driver.ts";
 import { LineageAllowance } from "./lineage-allowance.ts";
 import { markSessionKnown } from "./testing/legacy-file-model.ts";
+import { removeTempDirSync } from "../testing/cleanup.ts";
 
-beforeEach(() => { closeDatabase(); rmSync(DATA_DIR,{recursive:true,force:true}); mkdirSync(DATA_DIR,{recursive:true}); });
+beforeEach(() => { closeDatabase(); removeTempDirSync(DATA_DIR); mkdirSync(DATA_DIR,{recursive:true}); });
 const empty: MemorySearchBridge = {search:async()=>({hits:[],vectorRows:0})};
 function fixture(threadId="private") {
   const roster: MemoryRoster = {bots:[{id:"bot",threadId:"private",section:"secret-team"}],groups:[{id:"room",threadId:"room-thread",memberIds:["bot"]}]};

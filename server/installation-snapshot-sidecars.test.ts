@@ -1,4 +1,4 @@
-import { existsSync,mkdirSync,mkdtempSync,readFileSync,realpathSync,rmSync,writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
@@ -6,6 +6,7 @@ import { afterEach,expect,it,vi } from "vitest";
 import { initializeMessageTables } from "./message-tables.ts";
 import { snapshotInstallationDatabase,withOfflineInstallation } from "./installation-database-snapshot.ts";
 import { stageInstallationState,stageInstallationStateWhileOwned } from "./installation-state-snapshot.ts";
+import { removeTempDirSync } from "./testing/cleanup.ts";
 const replacement=vi.hoisted(()=>({target:"",sentinel:"",kind:"",seen:0}));
 vi.mock("node:fs",async original=>{const fs=await original<typeof import("node:fs")>();return{...fs,lstatSync:(...args:Parameters<typeof fs.lstatSync>)=>{
  // Windows: the product case-folds canonical paths, so the same file may be named in another case.
@@ -14,8 +15,8 @@ vi.mock("node:fs",async original=>{const fs=await original<typeof import("node:f
  return fs.lstatSync(...args);
 }};});
 const roots:string[]=[];
-afterEach(()=>{replacement.target="";replacement.seen=0;for(const root of roots.splice(0))rmSync(root,{recursive:true,force:true});});
-function fixture(){const parent=mkdtempSync(join(tmpdir(),"murage-closed-wal-"));roots.push(parent);const data=join(parent,"installation");mkdirSync(data);writeFileSync(join(data,"config.json"),"{}\n");const db=new DatabaseSync(join(data,"messages.db"));db.exec("PRAGMA journal_mode=WAL");initializeMessageTables(db);db.prepare("INSERT INTO messages VALUES(?,?,?,?,?,?,?)").run("thread","message",1,"user","text","fixture",JSON.stringify({id:"message",at:1,role:"user",kind:"text",text:"fixture"}));db.exec("INSERT INTO thread_state VALUES('thread','message')");db.close();return{parent,data,target:join(parent,"snapshot.db")};}
+afterEach(()=>{replacement.target="";replacement.seen=0;for(const root of roots.splice(0))removeTempDirSync(root);});
+function fixture(){const parent=mkdtempSync(join(tmpdir(),"murage-closed-wal-"));roots.push(parent);const data=join(parent,"installation");mkdirSync(data);writeFileSync(join(data,"config.json"),"{}\n");const db=new DatabaseSync(join(data,"messages.db"));db.exec("PRAGMA journal_mode=WAL");initializeMessageTables(db);db.prepare("INSERT INTO messages(thread_id,id,at,role,kind,text,json) VALUES(?,?,?,?,?,?,?)").run("thread","message",1,"user","text","fixture",JSON.stringify({id:"message",at:1,role:"user",kind:"text",text:"fixture"}));db.exec("INSERT INTO thread_state VALUES('thread','message')");db.close();return{parent,data,target:join(parent,"snapshot.db")};}
 it("captures a genuinely closed WAL database without creating or changing source sidecars",async()=>{
  const f=fixture();expect(existsSync(join(f.data,"messages.db-wal"))).toBe(false);const before=readFileSync(join(f.data,"messages.db"));const stage=await stageInstallationState(f.data,f.parent);expect(stage.manifest.database).toMatchObject({status:"copied",messages:1,threads:1});expect(readFileSync(join(f.data,"messages.db"))).toEqual(before);expect(stage.manifest.files.some(file=>file.path.endsWith("-wal")||file.path.endsWith("-shm"))).toBe(false);expect(existsSync(join(f.data,"messages.db-wal"))).toBe(false);expect(existsSync(join(f.data,"messages.db-shm"))).toBe(false);
 });

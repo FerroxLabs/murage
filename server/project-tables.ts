@@ -15,6 +15,7 @@
 // purge for derived rows (15.3). Restore preparation and paused validation
 // live here too (15.1), because they are table business and nothing else.
 import { sweepAddedOrphans } from "./added-table-lifecycle.ts";
+import { noteProjectCloseRecords } from "./project-records.ts";
 import { z } from "zod";
 import { createHash, randomUUID } from "node:crypto";
 import type { DatabaseSync } from "node:sqlite";
@@ -84,6 +85,7 @@ export function pruneProjectActivity(db: DatabaseSync, now: number): void {
     AND EXISTS (SELECT 1 FROM (${LIVE_PROJECT_CLOSES_SQL}) live
       WHERE live.group_id=project_activity.group_id AND live.close_seq=json_extract(project_activity.detail,'$.closeSeq')))`)
     .run(now - PROJECT_ACTIVITY_RETENTION_MS);
+  noteProjectCloseRecords(db);
 }
 
 export function projectTableExists(db: DatabaseSync, name: ProjectTableName): boolean {
@@ -730,6 +732,7 @@ export function deleteProjectRows(db: DatabaseSync, groupId: string, now: number
     if (table === "room_requests") db.prepare("DELETE FROM room_requests WHERE group_id=?").run(groupId);
     else db.prepare(`DELETE FROM ${table} WHERE group_id=?`).run(groupId);
   }
+  noteProjectCloseRecords(db);
   sweepAddedOrphans(db);
 }
 

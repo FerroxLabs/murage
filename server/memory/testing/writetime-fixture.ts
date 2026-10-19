@@ -3,10 +3,11 @@
 //
 // Write-time privacy, S4 tests: a v10 messages.db with the rows the S1 writers and the S3 marker would leave, written directly, so the read
 // side (deny-read.ts) is tested on exactly the marks it reads. Test tree only.
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
+import { safeWipeSync } from "../../testing/safe-wipe.mjs";
 import { ensureRevokeLateObjects, migrateMemorySchema } from "../schema.ts";
 import { BRANCH_TABLES_SQL } from "../../branch-index.ts";
 import type { LineageReader, MemoryRefKind } from "../lineage-types.ts";
@@ -36,7 +37,7 @@ export class WritetimeFixture {
     this.db.exec(BRANCH_TABLES_SQL); // the read gate (deny.ts BRANCH_CHANGE_PENDING) seeks branch_change
     for (const scope of ["s-room", "s-bot", "s-other", "s-project"]) this.scope(scope);
   }
-  close(): void { if (!this.dir) return; try { this.db.close(); } catch { /* closed */ } rmSync(this.dir, { recursive: true, force: true }); }
+  close(): void { if (!this.dir) return; try { this.db.close(); } catch { /* closed */ } safeWipeSync(this.dir); }
   scope(id: string): this { this.db.prepare("INSERT OR IGNORE INTO memory_scopes(id,kind,owner_key,audience,revision) VALUES(?,'room',?,'{}',0)").run(id, id); return this; }
   message(thread: string, id: string, role: "user" | "bot", extra: Record<string, unknown> = {}): this {
     this.db.prepare("INSERT OR REPLACE INTO messages(thread_id,id,at,role,kind,text,json) VALUES(?,?,?,?,'text','',?)").run(thread, id, Date.now(), role, JSON.stringify({ id, role, ...extra }));

@@ -1,4 +1,4 @@
-import { test, expect } from "@playwright/test";
+import { test, expect } from "./page-error-guard";
 import { createServer, type ViteDevServer } from "vite";
 import tailwindcss from "@tailwindcss/vite";
 import { fileURLToPath } from "node:url";
@@ -29,7 +29,7 @@ test.beforeAll(async () => {
             const value = await response.json(); if (!response.ok) throw new Error(value.error || 'Request failed'); return value;
           }
           import {useSyncExternalStore} from 'react';
-          export function useStore(){return useSyncExternalStore(window.subscribeFixture,()=>window.fixtureStore);}
+          export function useStoreIfAny(){return useStore();} export function useStore(){return useSyncExternalStore(window.subscribeFixture,()=>window.fixtureStore);}
         `;
         if (id !== "\0fixture-engine") return;
         return `

@@ -686,6 +686,16 @@ export const HELP_INDEX: readonly HelpEntry[] = [
     "text": "- A wide set of everyday improvements. Up to eight per-bot desktops, MCP tools that start from Windows command shims, remote MCP servers that get 30 seconds to list their tools, phone pairing that picks your real Wi-Fi or Ethernet address, chats that follow the newest message after you switch threads, routines that keep their detailed error, and settings files saved with a byte order mark all work as you would expect.\n- Every release is checked on Intel Macs. Each build now starts on a real Intel Mac and checks its WhatsApp connection before it is published."
   },
   {
+    "id": "changelog/v1-0-3#engines-in-1-0-3",
+    "title": "What changed in Murage 1.0.3",
+    "description": "Murage 1.0.3 comes with the latest Fuigo engine bundled.",
+    "heading": "Engines in 1.0.3",
+    "breadcrumb": "Murage docs → Changelog → What changed in Murage 1.0.3",
+    "where": "Murage docs → Changelog → What changed in Murage 1.0.3",
+    "url": "https://murage.app/docs/changelog/v1-0-3#engines-in-1-0-3",
+    "text": "- Fuigo 1.0.30. Murage 1.0.3 comes with Fuigo 1.0.30 bundled."
+  },
+  {
     "id": "computers/cloud-and-vps#box-cloud-computer",
     "title": "Cloud computer and your own VPS",
     "description": "Choose a managed Box desktop or a hardened container on a Linux server you own.",
@@ -2423,7 +2433,7 @@ export const HELP_INDEX: readonly HelpEntry[] = [
     "breadcrumb": "Murage docs → Features → Where to find things in Settings",
     "where": "Murage docs → Features → Where to find things in Settings",
     "url": "https://murage.app/docs/features/settings-guide#app-settings-messaging-and-app",
-    "text": "Messaging & phone: Messaging apps (Telegram, Slack and Discord, see Telegram, Slack and Discord) and Phone and other devices (see The Murage phone app). App: Backups, Usage (how much each bot has used), Help & updates, and Experimental (early features you can try, which may change)."
+    "text": "Messaging & phone: Messaging apps (Telegram, Slack and Discord, see Telegram, Slack and Discord) and Phone and other devices (see The Murage phone app). App: Backups, Usage (how much each bot has used), About & updates, and Experimental (early features you can try, which may change)."
   },
   {
     "id": "features/settings-guide#bot-settings",
@@ -2652,7 +2662,7 @@ export const HELP_INDEX: readonly HelpEntry[] = [
     "breadcrumb": "Murage docs → Features → What's new and the tray",
     "where": "Murage docs → Features → What's new and the tray",
     "url": "https://murage.app/docs/features/whats-new-and-tray#what-s-new",
-    "text": "After an update, Murage shows What's new once: a few cards about what changed. Click any card to try that feature right away. Next moves through the cards, and Read the full release notes opens the notes for the release.\n\nTo see it again later, open the menu under your name at the bottom of the sidebar and choose What's new, or open Settings > Help & updates. It is there in the desktop app whenever the current version has a What's new page."
+    "text": "After an update, Murage shows What's new once: a few cards about what changed. Click any card to try that feature right away. Next moves through the cards, and Read the full release notes opens the notes for the release.\n\nTo see it again later, open the menu under your name at the bottom of the sidebar and choose What's new, or open Settings > About & updates. It is there in the desktop app whenever the current version has a What's new page."
   },
   {
     "id": "features/whats-new-and-tray#announcements",
@@ -2660,9 +2670,9 @@ export const HELP_INDEX: readonly HelpEntry[] = [
     "description": "See what changed after an update, reopen What's new, and use the menu-bar or tray icon to answer approvals and message a bot.",
     "heading": "Announcements",
     "breadcrumb": "Murage docs → Features → What's new and the tray",
-    "where": "Settings → Help & updates → Announcements",
+    "where": "Settings → About & updates → Announcements",
     "url": "https://murage.app/docs/features/whats-new-and-tray#announcements",
-    "text": "Settings → Help & updates → Announcements shows short notes from the Murage team: new features, a service problem, a fix to install. Switch off Show announcements to hide them. Security notices always show, even when this is off."
+    "text": "Settings → About & updates → Announcements shows short notes from the Murage team: new features, a service problem, a fix to install. Switch off Show announcements to hide them. Security notices always show, even when this is off."
   },
   {
     "id": "features/whats-new-and-tray#tray-and-menu-bar",

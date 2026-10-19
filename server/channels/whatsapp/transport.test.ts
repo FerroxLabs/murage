@@ -1,6 +1,6 @@
 import type { ChildProcess } from "node:child_process";
 import { EventEmitter } from "node:events";
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -10,6 +10,7 @@ import type { ForkFn } from "./bridge-host.ts";
 import { BridgeRequestError } from "./bridge-host.ts";
 import type { InboundEnvelope } from "./core/protocol.ts";
 import { BridgeTransport, toChannelSendError, type HealthEvent, type LinkEvent, type StatusNote } from "./transport.ts";
+import { removeTempDirSync } from "../../testing/cleanup.ts";
 
 const KEY = "cd".repeat(32);
 const here = dirname(fileURLToPath(import.meta.url));
@@ -34,7 +35,7 @@ class FakeChild extends EventEmitter {
 }
 
 const roots: string[] = [], transports: BridgeTransport[] = [];
-afterEach(async () => { await Promise.all(transports.splice(0).map(t => t.stop().catch(() => undefined))); for (const r of roots.splice(0)) rmSync(r, { recursive: true, force: true }); });
+afterEach(async () => { await Promise.all(transports.splice(0).map(t => t.stop().catch(() => undefined))); for (const r of roots.splice(0)) removeTempDirSync(r); });
 
 function scripted() {
   const dir = mkdtempSync(join(tmpdir(), "murage-wa-transport-")); roots.push(dir);

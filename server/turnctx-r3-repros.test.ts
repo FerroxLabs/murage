@@ -7,7 +7,7 @@
 // (d270432f3, where it fails) and on the one that closes it. A thread that is
 // not prepared yet is prepared the way a turn does (`prepareThread`, absent on
 // d270432f3) before it is read.
-import { mkdirSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { afterAll, beforeAll, expect, it } from "vitest";
@@ -25,6 +25,7 @@ import { renderLearnedBlock } from "./memory/lessons.ts";
 import { setMemoryMode } from "./memory/repository.ts";
 import * as messages from "./message-db.ts";
 import { measureReads } from "./testing/bounded-reads.ts";
+import { removeTempDirSync } from "./testing/cleanup.ts";
 
 const selection = (): ModelSelection => ({ instanceId: "claude", model: "claude-sonnet-5" });
 const messagesDb = () => join(DATA_DIR, "messages.db");
@@ -68,7 +69,7 @@ function plain(threadId: string, count: number, shape: { role: string; kind: str
 }
 
 beforeAll(async () => {
-  rmSync(DATA_DIR, { recursive: true, force: true });
+  removeTempDirSync(DATA_DIR);
   mkdirSync(ATTACHMENTS_DIR, { recursive: true });
   store = new Store(selection);
   side = new DatabaseSync(messagesDb());
@@ -86,7 +87,9 @@ step("R1: onboarding dismissal and artifact lookup never scan the thread or the 
   put(T.plans, { role: "bot", kind: "text", text: "saved", artifactIds: ["a1"], parentId: "p-3999" });
   side.exec("ANALYZE");
   const run = await measureReads(T.plans, messagesDb(), () => { messages.openOnboardingCards(T.plans); messages.artifactRows(T.plans); });
-  const wanted = run.reads.plans.filter(({ sql }) => /FROM messages/i.test(sql) && /kind = 'options'|artifactIds/.test(sql));
+  // the plan keys are the first 160 characters of a statement: with `seq` selected beside `json` (ROOM-ORDER-DESIGN r8, transcript-seq.ts rowToMessage)
+  // the artifact statement's key ends at `'$.artifact`, so it is matched by that and by its index name
+  const wanted = run.reads.plans.filter(({ sql }) => /FROM messages/i.test(sql) && /kind = 'options'|\$\.artifact|INDEXED BY messages_inbox_text_artifact\b/.test(sql));
   expect(wanted.length).toBeGreaterThanOrEqual(2);
   const bad: string[] = [];
   for (const { sql, plan } of wanted) for (const detail of plan) if (/\bmessages\b.*\bINDEX (messages_thread|messages_inbox)\b(?!_)|SCAN messages/.test(detail)) bad.push(`${sql.slice(0, 60)} => ${detail}`);

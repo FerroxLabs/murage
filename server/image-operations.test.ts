@@ -18,6 +18,7 @@ import { writeInstallationArchive } from "./installation-archive.ts";
 import { prepareInstallationRestore } from "./installation-restore-preparation.ts";
 import { inspectInstallationDatabase } from "./installation-database-snapshot.ts";
 import { assertRestoreReviewed } from "../electron/restore-review.mjs";
+import { removeTempDirSync } from "./testing/cleanup.ts";
 // C2 fault injection: attachment storage refuses the next N image commits.
 const faults = vi.hoisted(() => ({ saveImage: 0, register: 0 }));
 // Files quota fault: the next N saves to Files (registerArtifact) are refused with the quota status.
@@ -38,7 +39,7 @@ vi.mock("./attachments.ts", async importOriginal => {
 beforeEach(() => { faults.saveImage = 0; faults.register = 0; });
 const png = Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+aD1sAAAAASUVORK5CYII=", "base64");
 const detail = { connectionId: "openai", provider: "openai" as const, model: "gpt-image-2", operation: "generate" as const, count: 1 as const, referenceCount: 0 };
-beforeEach(async () => { closeDatabase(); await stopWalMaintenance(); rmSync(DATA_DIR, {recursive:true,force:true}); mkdirSync(DATA_DIR,{recursive:true}); });
+beforeEach(async () => { closeDatabase(); await stopWalMaintenance(); removeTempDirSync(DATA_DIR); mkdirSync(DATA_DIR,{recursive:true}); });
 afterEach(() => closeDatabase());
 function fixture() {
   const store = new Store(() => ({instanceId:"fixture",model:"fixture"})); const bot = store.createBot();

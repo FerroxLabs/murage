@@ -5,7 +5,7 @@
 // the member that raised the card is the one resumed, and only once, however
 // many times the owner presses Connect.
 import { randomUUID } from "node:crypto";
-import { mkdirSync, rmSync } from "node:fs";
+import { mkdirSync } from "node:fs";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { DATA_DIR } from "../config.ts";
 import { closeDatabase } from "../database.ts";
@@ -14,8 +14,9 @@ import { Store } from "../store.ts";
 import { checkNetlifyConnection, NETLIFY_CONNECTED_PROMPT, settleNetlifyConnect, type ConnectResume } from "./connect.ts";
 import { PublishOperations } from "./publish-ops.ts";
 import { NETLIFY_PAT_SERVER } from "./token.ts";
+import { removeTempDirSync } from "../testing/cleanup.ts";
 
-beforeEach(() => { closeDatabase(); rmSync(DATA_DIR, { recursive: true, force: true }); mkdirSync(DATA_DIR, { recursive: true }); });
+beforeEach(() => { closeDatabase(); removeTempDirSync(DATA_DIR); mkdirSync(DATA_DIR, { recursive: true }); });
 afterEach(() => { closeDatabase(); clearAllMcpServerSecrets(); });
 
 function groupChat() {

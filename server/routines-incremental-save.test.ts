@@ -2,10 +2,11 @@
 // 1.0.2 bgwork: a routine run start persists only what changed. The RC1 routine burst spent its main loop
 // in RoutineManager.saveNow, which stringified every run and rewrote routines.json (every routine) on each
 // scheduler tick. The bytes a run start writes must not grow with the number of routines or runs.
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { removeTempDirSync } from "./testing/cleanup.ts";
 
 const io = vi.hoisted(() => ({ bytes: 0, fsyncs: 0, on: false }));
 vi.mock("node:fs", async (importOriginal) => {
@@ -24,7 +25,7 @@ const { RoutineManager } = await import("./routines.ts");
 const { routineRunsDir, routineRunsFileName, readRoutinesWithRuns } = await import("./routine-runs-journal.ts");
 
 const dirs: string[] = [];
-afterEach(() => { io.on = false; for (const dir of dirs.splice(0)) rmSync(dir, { recursive: true, force: true }); });
+afterEach(() => { io.on = false; for (const dir of dirs.splice(0)) removeTempDirSync(dir); });
 const tempDir = () => { const dir = mkdtempSync(join(tmpdir(), "murage-incsave-")); dirs.push(dir); return dir; };
 
 const START = new Date(2026, 9, 12, 8, 0, 0).getTime();

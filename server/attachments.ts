@@ -20,6 +20,8 @@ import {
 import { link, open, unlink } from "node:fs/promises";
 import { join, extname, dirname, resolve } from "node:path";
 import { DATA_DIR } from "./config.ts";
+import { addOutstandingBytes, availableForNewBytes, diskSpaceError, isNoSpaceError, outstandingBytes } from "./disk-space.ts";
+import { DISK_FULL_MESSAGE } from "../shared/attachment-storage.ts";
 
 export const ATTACHMENTS_DIR = join(DATA_DIR, "attachments");
 
@@ -40,9 +42,8 @@ export const GENERATED_IMAGE_RECEIVE_MAX_BYTES = 40 * 1024 * 1024;
 export const FILE_MAX_BYTES = 25 * 1024 * 1024;
 
 /** Attachments are durable because prompts refer to their paths. Never
- * silently evict them: once this ceiling is reached, a new upload gets an
- * explicit 507 and the person can decide what to remove. */
-export const ATTACHMENTS_MAX_BYTES = 512 * 1024 * 1024;
+ * silently evict them. There is no fixed total: room follows the disk
+ * (disk-space.ts), and only a nearly full disk gets an explicit 507. */
 
 /** A byte count as a person reads it: 512 MB, 25 MB, 1.5 GB. */
 export function humanBytes(bytes: number): string {
@@ -52,7 +53,7 @@ export function humanBytes(bytes: number): string {
 }
 /** The sentences a composer shows for attachment limits (0.1.60 audit C4:
  * "attachments storage is full (limit 536870912 bytes)" reached it). */
-export const ATTACHMENTS_FULL_MESSAGE = `There's no more room for attachments: Murage keeps up to ${humanBytes(ATTACHMENTS_MAX_BYTES)} of them. Delete conversations you no longer need to make room, then try again.`;
+export const ATTACHMENTS_FULL_MESSAGE = DISK_FULL_MESSAGE;
 export const FILE_TOO_LARGE_MESSAGE = `That file is too large. Files can be up to ${humanBytes(FILE_MAX_BYTES)}.`;
 export const IMAGE_TOO_LARGE_MESSAGE = `That image is too large. Images can be up to ${humanBytes(IMAGE_MAX_BYTES)}.`;
 
@@ -65,10 +66,9 @@ const PARTIAL_NAME = /^\.murage-upload-[0-9a-f-]+-[0-9a-f-]+\.partial$/i;
 const UPLOAD_ID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const activePartials = new Set<string>();
 const uploadLocks = new Map<string, Promise<void>>();
-let reservedAttachmentBytes = 0;
 const STREAM_RESERVATION_INCREMENT_BYTES = 1024 * 1024;
 
-/** Cached total of on-disk bytes that count against the quota: committed
+/** Cached total of on-disk bytes Murage keeps as attachments: committed
  * attachments plus any partial file this process did not itself write (a
  * crash leftover, until it is cleaned up). `null` means a fresh scan is needed
  * after cold start or a cleanup failure. Every normal commit
@@ -130,7 +130,11 @@ export function extensionForMime(mime: string | undefined): string | null {
 }
 
 export function ensureAttachmentsDir(): void {
-  mkdirSync(ATTACHMENTS_DIR, { recursive: true, mode: 0o700 });
+  try {
+    mkdirSync(ATTACHMENTS_DIR, { recursive: true, mode: 0o700 });
+  } catch (error) {
+    throw isNoSpaceError(error) ? diskSpaceError("disk-full") : error;
+  }
 }
 
 export function validateAttachmentUploadId(value: string | undefined): string | undefined {
@@ -146,6 +150,7 @@ export function validateAttachmentUploadId(value: string | undefined): string | 
  * or from an explicit cleanup sweep — never
  * from the per-reservation hot path, which is what made PERF-03 quadratic. */
 function scanAttachmentUsageAndCleanup(now = Date.now()): { bytes: number; removed: number } {
+  // now = +Infinity (start-up) makes every inactive partial stale.
   ensureAttachmentsDir();
   let bytes = 0;
   let removed = 0;
@@ -202,11 +207,21 @@ function addCommittedBytes(delta: number, version = attachmentAccountingVersion)
  * only full directory walk after start-up; nothing on the upload path calls it
  * per byte or per chunk anymore, so callers that want stale partials
  * reclaimed promptly should invoke it on their own schedule. */
-export function cleanupStaleAttachmentPartials(now = Date.now()): number {
-  const { bytes, removed } = scanAttachmentUsageAndCleanup(now);
+export function cleanupStaleAttachmentPartials(now = Date.now(), options: { startup?: boolean } = {}): number {
+  // At start-up no earlier process can still be writing (one server per data
+  // dir), so every partial this process is not writing is a leftover, whatever
+  // its age. A live upload's partial is in activePartials before it is opened.
+  const { bytes, removed } = scanAttachmentUsageAndCleanup(options.startup ? Number.POSITIVE_INFINITY : now);
   committedAttachmentBytes = bytes;
   attachmentAccountingVersion += 1;
   return removed;
+}
+
+/** What attachments hold now, for storage settings: committed bytes on disk
+ * (from the cache, scanning once when cold) and bytes held by uploads still
+ * streaming. Reporting only; neither decides whether an upload fits. */
+export function attachmentStorageUsage(): { attachmentBytes: number; reservedBytes: number } {
+  return { attachmentBytes: committedBytes(), reservedBytes: outstandingBytes() };
 }
 
 /** Delete a committed attachment (e.g. a generated image whose owning
@@ -275,21 +290,21 @@ class AttachmentReservation {
   }
 
   private reserveAtLeast(required: number, preferred: number): void {
-    let available = ATTACHMENTS_MAX_BYTES - committedBytes() - reservedAttachmentBytes;
+    ensureAttachmentsDir();
+    let available = availableForNewBytes(ATTACHMENTS_DIR);
     if (available < required) {
-      // Retain cleanup-on-quota-pressure for old crash leftovers. Successful
-      // growth remains O(1); only a would-be rejection needs reconciliation.
+      // Old crash leftovers still take disk: reclaim them before refusing.
       cleanupStaleAttachmentPartials();
-      available = ATTACHMENTS_MAX_BYTES - committedBytes() - reservedAttachmentBytes;
+      available = availableForNewBytes(ATTACHMENTS_DIR);
     }
     if (available < required) {
-      throw statusError(507, ATTACHMENTS_FULL_MESSAGE);
+      throw diskSpaceError("disk-full");
     }
     // Unknown-length HTTP bodies reserve in bounded chunks. Taking whatever
     // remains below the preferred increment avoids falsely rejecting a small
     // final upload near the quota while still bounding directory scans.
     const granted = Math.min(preferred, available);
-    reservedAttachmentBytes += granted;
+    addOutstandingBytes(granted);
     this.held += granted;
   }
 
@@ -307,7 +322,7 @@ class AttachmentReservation {
   release(): void {
     if (this.released) return;
     this.released = true;
-    reservedAttachmentBytes -= this.held;
+    addOutstandingBytes(-this.held);
     this.held = 0;
   }
 }
@@ -531,7 +546,7 @@ export async function saveFile(
     } catch (error) {
       if (file && !closed) await file.close().catch(() => undefined);
       await unlink(partialPath).catch(() => { partialCleanupFailed = true; });
-      throw error;
+      throw isNoSpaceError(error) ? diskSpaceError("disk-full") : error;
     } finally {
       activePartials.delete(partialPath);
       // A leftover partial was excluded from the cache while active. Rescan
@@ -595,7 +610,7 @@ export function saveImage(bytes: Buffer, mime: string, requestedUploadId?: strin
     } catch {
       partialCleanupFailed = true;
     }
-    throw error;
+    throw isNoSpaceError(error) ? diskSpaceError("disk-full") : error;
   } finally {
     activePartials.delete(partialPath);
     if (partialCleanupFailed) invalidateAttachmentAccounting();

@@ -10,7 +10,7 @@
 //   to the budget, so a frame citing many replies of a long session is fast.
 // - L1: a line quoted from far back never takes a newer line's place.
 // - L3: the receipt budget withholds a direct line instead of failing.
-import { mkdirSync, rmSync } from "node:fs";
+import { mkdirSync } from "node:fs";
 import { beforeEach, expect, it } from "vitest";
 import { afterEach as thawAfterEach, beforeEach as thawBeforeEach } from "vitest";
 import { thawRootSetWritesForTest } from "./replay-lineage.ts";
@@ -21,11 +21,12 @@ import { ensureScope, memoryAccess, reconcileMemoryRoster, type MemoryRoster } f
 import { continuationMemoryRevoked, filterDirectReplay, filterMemoryReplay } from "./disclosures.ts";
 import { recordSessionRoots, REPLAY_RECEIPT_BUDGET, replayRowsRead, resetReplayRowsRead } from "./replay-lineage.ts";
 import { LineageAllowance } from "./lineage-allowance.ts";
+import { removeTempDirSync } from "../testing/cleanup.ts";
 // 1.0.2: this test models a 1.0.1 file (legacy root-set rows) for the read-time judge, which still decides legacy data until S6.
 thawBeforeEach(() => thawRootSetWritesForTest(true));
 thawAfterEach(() => thawRootSetWritesForTest(false));
 
-beforeEach(() => { closeDatabase(); rmSync(DATA_DIR, { recursive: true, force: true }); mkdirSync(DATA_DIR, { recursive: true }); });
+beforeEach(() => { closeDatabase(); removeTempDirSync(DATA_DIR); mkdirSync(DATA_DIR, { recursive: true }); });
 function fixture(threadId = "private", notOwnerAudience = false) {
   const roster: MemoryRoster = { bots: [{ id: "bot", threadId: "private", section: "secret-team" }], groups: [] };
   reconcileMemoryRoster(roster);
@@ -76,7 +77,7 @@ it("M1: a resumed session whose receipt cites a withheld reply is reset, though 
 
 it("M1 (1.0.1.1): a cited reply whose receipt was revoked on state alone ends the session for a reader not proven the owner, never the owner's own chat", () => {
   for (const notOwner of [false, true]) {
-    closeDatabase(); rmSync(DATA_DIR, { recursive: true, force: true }); mkdirSync(DATA_DIR, { recursive: true });
+    closeDatabase(); removeTempDirSync(DATA_DIR); mkdirSync(DATA_DIR, { recursive: true });
     const a = fixture("private", notOwner); const scope = ensureScope("bot", "bot");
     // x-old: its receipt revoked by an install-wide change; its content intact
     botSource(scope, "x-old");

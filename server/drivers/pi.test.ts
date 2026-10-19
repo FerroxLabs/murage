@@ -15,8 +15,13 @@ import { approvalKey, autoVerdict } from "../auto-approve.ts";
 import { shouldReview } from "../auto-review.ts";
 import { ensureDirs, NATIVE_DIR } from "../config.ts";
 import { newId, type ProviderInstance } from "../contracts.ts";
+import { isMountRecord } from "../../shared/mount-identity.ts";
 import { recordEvents, type EventRecorder } from "../testing/events.ts";
 import { encodeInjectId, localHost } from "./local-inject.ts";
+import { execChecks, resetExecChecks } from "../testing/exec-check-spy.ts";
+import { approveStartupWrite } from "../testing/startup-write.ts";
+
+vi.mock("node:child_process", async (original) => (await import("../testing/exec-check-spy.ts")).withExecCheckSpy(await original()));
 import {
   piGateAsk,
   applyPiLocalCatalog,
@@ -29,6 +34,7 @@ import {
   preferPiInjectRows,
   splitPiModel,
 } from "./pi.ts";
+import { removeTempDirSync } from "../testing/cleanup.ts";
 
 const FAKE_CLI = join(dirname(fileURLToPath(import.meta.url)), "..", "testing", "fake-pi-cli.ts");
 const MODELS_LINE =
@@ -398,7 +404,7 @@ describe("PiDriver turns (fake CLI)", () => {
       expect(turnEventTypes(turnId)).not.toContain("turn.completed");
       expect(await instance.adapter.interruptTurn(threadId)).toMatchObject({ closeConfirmed: true });
       expect(dumpRows(dump).filter(row => row.prompt)).toEqual([]);
-    } finally { rmSync(dir, { recursive:true, force:true }); }
+    } finally { removeTempDirSync(dir); }
   });
 
   it("fails before the prompt when set_model never answers", async () => {
@@ -651,7 +657,11 @@ describe("PiDriver turns (fake CLI)", () => {
     expect(mcpRow!.argv[extIndex + 1]).toContain("pi-mcp-extension");
 
     const servers = mcpRow!.mcpConfig!.mcpServers!;
-    expect(servers["murage-memory"]).toEqual({ command: "node", args: ["memory-proxy.js"], env: { MURAGE_MEMORY_TOKEN: "fixture-memory" } });
+    expect(servers["murage-memory"]).toMatchObject({ command: "node", args: ["memory-proxy.js"], env: { MURAGE_MEMORY_TOKEN: "fixture-memory" } });
+    // Rule 14b: each server carries its mountId for the gate's table
+    expect(servers["murage-memory"].murageMountId).toBe("own:memory");
+    expect(servers.murage_connectors.murageMountId).toBe("own:connector");
+    expect(servers.computer.murageMountId).toBe("own:computer");
     expect(JSON.stringify(mcpRow!.argv)).not.toContain("fixture-memory");
     // connected apps pass through verbatim as a stdio server, under the plain name
     expect(servers.murage_connectors).toMatchObject({ command: "node", args: ["connector-proxy.js"], env: { COMPOSIO_KEY: "ck" } });
@@ -782,6 +792,28 @@ describe("PiDriver turns (fake CLI)", () => {
       approvalScope: "local-computer",
     });
     expect(await recorder.until((e) => e.type === "turn.completed" && e.turnId === turnId)).toMatchObject({ ok: true });
+  });
+
+  it("T63: the ask carries its engine and a record per server in the mcp.json it wrote", async () => {
+    await create("host-confirm");
+    const threadId = `t-63-${newId()}`;
+    const { turnId } = await instance.adapter.sendTurn({
+      threadId, text: "go",
+      integrations: {
+        ...hostControl,
+        agents: { command: "node", args: ["a"], env: {} },
+        custom: { notes: { command: "npx", args: ["-y", "@x/notes-mcp"], env: {} }, "a__b": { command: "npx", args: ["-y", "@x/ab-mcp"], env: {} } },
+      },
+    });
+    const opened = (await recorder.until((e) => e.type === "request.opened" && e.turnId === turnId)) as any;
+    expect(opened.toolEngine).toBe("pi");
+    expect(opened.mcpMounts).toEqual([
+      { engineName: "computer", mountId: "own:computer", provenance: "own" },
+      { engineName: "agents", mountId: "own:agents", provenance: "own" },
+      { engineName: "notes", mountId: "custom:notes", provenance: "custom" },
+    ]);
+    expect(opened.mcpMounts.every(isMountRecord)).toBe(true);
+    await instance.adapter.respondToRequest(threadId, "ask-host", { behavior: "deny" });
   });
 
   it("keeps remembered grants from auto-approving a Pi host action and keeps it out of AI review", async () => {
@@ -1002,7 +1034,7 @@ describe("PiDriver turns (fake CLI)", () => {
       ]);
       await expect(instance.adapter.awaitTurnTeardown!(threadId, turnId)).resolves.toEqual({ closeConfirmed: true });
     } finally {
-      rmSync(scratch, { recursive: true, force: true });
+      removeTempDirSync(scratch);
     }
   });
 
@@ -1318,6 +1350,40 @@ describe("PiDriver approvals gate (fake CLI)", () => {
     for (const dump of dumps.splice(0)) rmSync(dump, { force: true });
   });
 
+  // Section (d) of APP-GRANT-FIXPLAN-r6 (Rules 74a, 74d): F12 is computed per ask when its card opens, in the generation
+  // it opens in; the turn keeps no record of its own
+  it("checks each ask's environment in the generation its card opens in", async () => {
+    await create(false, { FAKE_PI_GATE_TWICE: "1" });
+    resetExecChecks();
+    const threadId = `t-gen-pi-${newId()}`;
+    const { turnId } = await instance!.adapter.sendTurn({ threadId, text: "tidy up" });
+    const first = await recorder!.until((e) => e.type === "request.opened" && e.turnId === turnId && e.requestId === "ask-host") as any;
+    expect(execChecks.runs).toBe(1);
+    expect(first.execEnv?.shell.at(-1)).toBe("-c");
+    expect(approveStartupWrite()).toBe(true);
+    await instance!.adapter.respondToRequest(threadId, "ask-host", { behavior: "deny", message: "not this one" });
+    const second = await recorder!.until((e) => e.type === "request.opened" && e.turnId === turnId && e.requestId === "ask-host-2") as any;
+    expect(execChecks.runs).toBe(2);
+    expect(second.execEnv?.shell.at(-1)).toBe("-c");
+    await instance!.adapter.respondToRequest(threadId, "ask-host-2", { behavior: "deny", message: "no" });
+    await recorder!.until((e) => e.type === "turn.completed" && e.turnId === turnId);
+  });
+
+  // Astra r6 item 8: only the gate's command ask is checked, so only a command card can carry U20
+  it("checks only a command ask's environment; a write ask carries the handed map, unchecked", async () => {
+    await create(false, { FAKE_PI_GATE_CALL: JSON.stringify({ tool: "write", input: { path: "/tmp/murage-u20-scope", content: "x" } }) });
+    resetExecChecks();
+    const threadId = `t-u20-pi-${newId()}`;
+    const { turnId } = await instance!.adapter.sendTurn({ threadId, text: "write it" });
+    const ask = await recorder!.until((e) => e.type === "request.opened" && e.turnId === turnId && e.requestId === "ask-host") as any;
+    expect(ask.tool).toBe("Write");
+    expect(execChecks.runs).toBe(0);
+    expect(ask.execEnv?.shell.at(-1)).toBe("-c");
+    expect(ask.execEnv?.unread).toBeUndefined();
+    await instance!.adapter.respondToRequest(threadId, "ask-host", { behavior: "deny", message: "no" });
+    await recorder!.until((e) => e.type === "turn.completed" && e.turnId === turnId);
+  });
+
   it("loads the gate and carries the real command to the stop line", async () => {
     const dump = await create(false);
     const threadId = `t-gate-${newId()}`;
@@ -1332,19 +1398,34 @@ describe("PiDriver approvals gate (fake CLI)", () => {
     const row = argvOf(dump);
     expect(row.argv.join(" ")).toMatch(/-e \S*pi-permission-gate\.(ts|js)/);
     expect(row.gate?.secretLength).toBe(48);
-    await instance!.adapter.respondToRequest(threadId, "ask-host", { behavior: "deny" });
+    // an own tool carries no mcp identity; F12 rides on the ask (Rule 74)
+    expect(ask).not.toHaveProperty("toolIdentity");
+    expect((ask as { execEnv?: { shell: string[] } }).execEnv?.shell.at(-1)).toBe("-c");
+    await instance!.adapter.respondToRequest(threadId, "ask-host", { behavior: "deny", message: "this would read .env; exclude it" });
     await recorder!.until((e) => e.type === "turn.completed" && e.turnId === turnId);
     const replies = readFileSync(dump, "utf8").split("\n").filter(Boolean).map((line) => JSON.parse(line)).filter((r) => r.uiResponse);
-    expect(replies).toEqual([{ uiResponse: { type: "extension_ui_response", id: "ask-host", cancelled: true } }]);
+    // Rule 73d: the answer is a value the gate parses, never a bare cancel
+    expect(replies).toEqual([{ uiResponse: { type: "extension_ui_response", id: "ask-host", value: JSON.stringify({ deny: true, reason: "this would read .env; exclude it" }) } }]);
   });
 
-  it("gives a forged gate title nothing for the stop line to clear", async () => {
+  it("Allow answers the editor with the input the gate sent, unchanged", async () => {
+    const dump = await create(false);
+    const threadId = `t-gate-allow-${newId()}`;
+    const { turnId } = await instance!.adapter.sendTurn({ threadId, text: "tidy up" });
+    await recorder!.until((e) => e.type === "request.opened" && e.turnId === turnId);
+    await instance!.adapter.respondToRequest(threadId, "ask-host", { behavior: "allow" });
+    await recorder!.until((e) => e.type === "turn.completed" && e.turnId === turnId);
+    const replies = readFileSync(dump, "utf8").split("\n").filter(Boolean).map((line) => JSON.parse(line)).filter((r) => r.uiResponse);
+    expect(JSON.parse(replies[0].uiResponse.value)).toEqual({ allow: true, input: { command: "rm -rf ~/Documents/old" } });
+  });
+
+  it("T14: a confirm from any other extension is unproven (empty identity), whatever its title says", async () => {
     await create(false, { FAKE_PI_GATE_FORGE: "1" });
     const threadId = `t-gate-forge-${newId()}`;
     const { turnId } = await instance!.adapter.sendTurn({ threadId, text: "tidy up" });
     const ask = await recorder!.until((e) => e.type === "request.opened" && e.turnId === turnId);
     expect(ask).not.toHaveProperty("toolCall");
-    expect(ask).toMatchObject({ tool: "murage-gate:not-the-secret" });
+    expect(ask).toMatchObject({ tool: "murage-gate:not-the-secret", toolIdentity: { namespace: "", name: "" } });
     await instance!.adapter.respondToRequest(threadId, "ask-host", { behavior: "deny" });
     await recorder!.until((e) => e.type === "turn.completed" && e.turnId === turnId);
   });
@@ -1392,9 +1473,8 @@ describe("PiDriver approvals gate (fake CLI)", () => {
   });
 });
 
-describe("pi gate prefixes below Full", () => {
-  // S3b: a connected-app call from an Ask or Auto bot reaches the gate.
-  it("gates connected apps when the turn routes asks", async () => {
+describe("the gate table, not a prefix list, decides (Rule 14)", () => {
+  it("stamps every written server with its mountId and the gate flag, and hands no prefix list", async () => {
     const dump = join(tmpdir(), `murage-pi-prefix-${newId()}.jsonl`);
     const instance = await PiDriver.create({ instanceId: "pi-prefix", displayName: "pi", environment: { FAKE_PI_MODE: "happy", FAKE_PI_DUMP: dump }, enabled: true, config: { cli: FAKE_CLI, fullAuto: true } });
     const recorder = recordEvents(instance.adapter);
@@ -1402,29 +1482,10 @@ describe("pi gate prefixes below Full", () => {
     for (const [name, flags] of [["plain", {}], ["routeAsks", { routeAsks: true as const }]] as const) {
       const sent = await instance.adapter.sendTurn({ threadId: `t-prefix-${name}-${newId()}`, text: "hi", ...flags, integrations: { composio } });
       await recorder.until((e) => e.type === "turn.completed" && e.turnId === sent.turnId);
-      const row = (readFileSync(dump, "utf8").split("\n").filter(Boolean).map((l) => JSON.parse(l)).filter((r) => r.argv).at(-1)) as { gate: { prefixes: string } | null };
-      if (name === "plain") expect(row.gate).toBeNull();
-      else expect(JSON.parse(row.gate!.prefixes)).toContain("murage_connectors_");
-    }
-    recorder.stop();
-    await instance.dispose();
-    rmSync(dump, { force: true });
-  });
-});
-
-describe("pi gate prefixes below Full", () => {
-  // S3b: a connected-app call from an Ask or Auto bot reaches the gate.
-  it("gates connected apps when the turn routes asks", async () => {
-    const dump = join(tmpdir(), `murage-pi-prefix-${newId()}.jsonl`);
-    const instance = await PiDriver.create({ instanceId: "pi-prefix", displayName: "pi", environment: { FAKE_PI_MODE: "happy", FAKE_PI_DUMP: dump }, enabled: true, config: { cli: FAKE_CLI, fullAuto: true } });
-    const recorder = recordEvents(instance.adapter);
-    const composio = { command: "node", args: ["connector-proxy.js"], env: {} };
-    for (const [name, flags] of [["plain", {}], ["routeAsks", { routeAsks: true as const }]] as const) {
-      const sent = await instance.adapter.sendTurn({ threadId: `t-prefix-${name}-${newId()}`, text: "hi", ...flags, integrations: { composio } });
-      await recorder.until((e) => e.type === "turn.completed" && e.turnId === sent.turnId);
-      const row = (readFileSync(dump, "utf8").split("\n").filter(Boolean).map((l) => JSON.parse(l)).filter((r) => r.argv).at(-1)) as { gate: { prefixes: string } | null };
-      if (name === "plain") expect(row.gate).toBeNull();
-      else expect(JSON.parse(row.gate!.prefixes)).toContain("murage_connectors_");
+      const row = (readFileSync(dump, "utf8").split("\n").filter(Boolean).map((l) => JSON.parse(l)).filter((r) => r.argv).at(-1)) as { gate: Record<string, unknown> | null; mcpConfig?: { mcpServers: Record<string, any> } };
+      expect(row.mcpConfig?.mcpServers.murage_connectors.murageMountId).toBe("own:connector");
+      if (name === "plain") { expect(row.gate).toBeNull(); expect(row.mcpConfig?.mcpServers.murage_connectors.murageGated).toBeUndefined(); }
+      else { expect(row.gate).not.toHaveProperty("prefixes"); expect(row.mcpConfig?.mcpServers.murage_connectors.murageGated).toBe(true); }
     }
     recorder.stop();
     await instance.dispose();
@@ -1433,29 +1494,66 @@ describe("pi gate prefixes below Full", () => {
 });
 
 describe("piGateAsk", () => {
-  it("reads a file edit as a file the stop line can place", () => {
-    expect(piGateAsk(JSON.stringify({ tool: "write", input: { path: "/Users/owner/notes.md" } }))).toEqual({
-      tool: "Write", summary: "Write /Users/owner/notes.md", toolCall: { name: "Write", input: { file_path: "/Users/owner/notes.md" } }, filePaths: ["/Users/owner/notes.md"],
+  const records = [
+    { engineName: "murage_connectors", mountId: "own:connector", provenance: "own" as const },
+    { engineName: "composio", mountId: "own:connector", provenance: "own" as const },
+    { engineName: "ghost", mountId: "custom:ghost", provenance: "custom" as const },
+  ];
+  const mcp = (tool: string, mount: string, mcpTool: string, extra: object) => JSON.stringify({ tool, mount, mcpTool, ...extra });
+  it("reads a file edit with its whole input, as a file the stop line can place", () => {
+    const input = { path: "/Users/owner/notes.md", content: "BODY" };
+    expect(piGateAsk(JSON.stringify({ tool: "write", input }))).toEqual({
+      tool: "Write", summary: "Write /Users/owner/notes.md", toolCall: { name: "write", input }, gateInput: input, filePaths: ["/Users/owner/notes.md"],
     });
   });
-  it("names a connected-app call the way the stop line reads it", () => {
+  it("T12: a mounted tool is an mcp identity resolved by exact engineName, whatever its suffixed piName", () => {
     const tools = [{ tool_slug: "GMAIL_SEND_EMAIL", arguments: { recipient_email: "new@example.com" } }];
-    expect(piGateAsk(JSON.stringify({ tool: "murage_connectors_apps_multi_execute_tool", input: { tools } })).toolCall).toEqual({
-      name: "mcp__murage_connectors__APPS_MULTI_EXECUTE_TOOL", input: { tools },
-    });
-    // a session an earlier release started is mounted under the older name, and its call is read as that mount's
-    expect(piGateAsk(JSON.stringify({ tool: "composio_composio_multi_execute_tool", input: { tools } })).toolCall?.name).toBe("mcp__composio__COMPOSIO_MULTI_EXECUTE_TOOL");
+    const ask = piGateAsk(mcp("murage_connectors_apps_multi_execute_tool_2", "murage_connectors", "APPS_MULTI_EXECUTE_TOOL", { input: { tools } }), records);
+    expect(ask.toolCall).toEqual({ name: "mcp__murage_connectors__APPS_MULTI_EXECUTE_TOOL", input: { tools } });
+    expect(ask.toolIdentity).toEqual({ namespace: "mcp", name: "murage_connectors__APPS_MULTI_EXECUTE_TOOL" });
+    expect(JSON.parse(ask.toolInput!)).toEqual({ tools });
+    // a session an earlier release started is mounted under the older name
+    expect(piGateAsk(mcp("composio_x", "composio", "COMPOSIO_MULTI_EXECUTE_TOOL", { input: { tools } }), records).toolCall?.name).toBe("mcp__composio__COMPOSIO_MULTI_EXECUTE_TOOL");
   });
-  it("shows a connected-app call's arguments and marks a cut bash command", () => {
-    const tools = [{ tool_slug: "GMAIL_SEND_EMAIL", arguments: { recipient_email: "new@example.com" } }];
-    const composio = piGateAsk(JSON.stringify({ tool: "murage_connectors_apps_multi_execute_tool", input: { tools } }));
-    expect(JSON.parse((composio as any).toolInput)).toEqual({ tools });
+  it("a mount that matches no record, or a name holding __, is unproven", () => {
+    for (const mount of ["nobody", "a__b", ""]) {
+      expect(piGateAsk(mcp("t", mount, "tool", { input: {} }), records)).toMatchObject({ truncated: true, toolIdentity: { namespace: "", name: "" } });
+    }
+    expect(piGateAsk(mcp("t", "ghost", "tool", { input: {} }), [...records, { engineName: "ghost", mountId: "custom:ghost2", provenance: "custom" }]).toolIdentity).toEqual({ namespace: "", name: "" });
+  });
+  it("shows a mounted call's arguments and marks a cut bash command", () => {
     const long = `echo ${"x".repeat(5_000)} && rm -rf ~`;
     const bash = piGateAsk(JSON.stringify({ tool: "bash", input: { command: long } }));
     expect(bash.summary).toMatch(/…\[truncated, \d+ characters more\]$/);
   });
-  it("still raises a card, with nothing to clear it, for a message it cannot read", () => {
-    expect(piGateAsk("{not json")).toEqual({ tool: "pi", summary: "pi wants to run a tool" });
+  it("marks a message it cannot read, or one the gate cut, as a cut call that never carries the engine's name as its tool", () => {
+    expect(piGateAsk("{not json")).toEqual({ tool: "pi", summary: "pi wants to run a tool (the call was cut)", truncated: true });
+    const cut = piGateAsk(JSON.stringify({ tool: "bash", truncated: true }));
+    expect(cut).toEqual({ tool: "Bash", summary: "pi wants to use bash (the call was cut)", truncated: true });
+    expect(piGateAsk(mcp("x", "murage_connectors", "T", { truncated: true }), records)).toMatchObject({ tool: "mcp__murage_connectors__T", truncated: true });
+    expect(piGateAsk(JSON.stringify({ tool: "github_create_issue", truncated: true }))).toEqual({ tool: "github_create_issue", summary: "pi wants to use github_create_issue (the call was cut)", truncated: true });
+  });
+  it("files any other gated tool under pi's own name for it, with its input, never under the engine's name", () => {
+    const ask = piGateAsk(JSON.stringify({ tool: "grep", input: { pattern: "x" } }));
+    expect(ask).toMatchObject({ tool: "grep", toolCall: { name: "grep", input: { pattern: "x" } } });
+    expect(ask.truncated).toBeUndefined();
+  });
+});
+
+describe("Pi calls the contract cannot read (T64)", () => {
+  const verdictOf = (message: string) => {
+    const ask = piGateAsk(message);
+    return autoVerdict({ autoApprove: true }, ask.tool, ask.summary, {
+      call: { toolCall: ask.toolCall, truncated: ask.truncated, inputMissing: ask.toolInputMissing, engine: "pi" },
+    });
+  };
+  it("holds a read with no path and a bash with no command as unread", () => {
+    expect(verdictOf(JSON.stringify({ tool: "read", input: {} }))).toMatchObject({ approve: null, source: "unread-call" });
+    expect(verdictOf(JSON.stringify({ tool: "bash", input: {} }))).toMatchObject({ approve: null, source: "unread-call" });
+    expect(piGateAsk(JSON.stringify({ tool: "bash", input: {} })).toolInputMissing).toBe("command");
+    expect(piGateAsk(JSON.stringify({ tool: "bash", input: { command: ["rm", "-rf", "/"] } }))).toMatchObject({ tool: "Bash", truncated: true, toolInputMissing: "command" });
+    expect(piGateAsk(JSON.stringify({ tool: "write", input: {} }))).toMatchObject({ tool: "Write", truncated: true, toolInputMissing: "path" });
+    expect(piGateAsk(JSON.stringify({ tool: "github_create_issue" })).toolInputMissing).toBe("input");
   });
 });
 

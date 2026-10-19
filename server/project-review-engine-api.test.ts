@@ -11,13 +11,14 @@
 // The Grok fakes connect to the servers they are handed, as a real engine
 // does, so a cold turn starts once Murage's own servers have listed their
 // tools (mcp-listed.ts) rather than at the end of the MCP-ready bound.
-import { chmodSync, mkdtempSync, readFileSync, realpathSync, rmSync } from "node:fs";
+import { chmodSync, mkdtempSync, readFileSync, realpathSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { DatabaseSync } from "node:sqlite";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import { launchVerificationServer, type VerificationServer } from "../scripts/control-murage.ts";
+import { removeTempDirSync } from "./testing/cleanup.ts";
 
 const TESTING = join(dirname(fileURLToPath(import.meta.url)), "testing");
 const FAKE_ACP = join(TESTING, "fake-acp-cli.ts"), FAKE_CODEX = join(TESTING, "fake-codex-app-server.ts"), FAKE_PI = join(TESTING, "fake-pi-cli.ts"), FAKE_AGY = join(TESTING, "fake-agy-cli.ts");
@@ -64,7 +65,7 @@ beforeAll(async () => {
   ` });
   proof = (await (await fetch(`${fixture.info.url}/api/desktop-secret`)).json() as { secret: string }).secret;
 }, 60000);
-afterAll(async () => { await fixture?.close(); if (fixtureRoot) rmSync(fixtureRoot, { recursive: true, force: true }); vi.unstubAllEnvs(); });
+afterAll(async () => { await fixture?.close(); if (fixtureRoot) removeTempDirSync(fixtureRoot); vi.unstubAllEnvs(); });
 
 let made = 0;
 async function makeBot(name: string, instanceId: string) {

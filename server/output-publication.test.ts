@@ -11,6 +11,7 @@ import { ensureTaskWorkspace } from "./workspace.ts";
 import {
   completeImageOutput, createOutputPublisher, managedImageOutputPath, outputReceiptsForRun, publishAssistantImage, resumePendingAssistantImages, retainImageOutput,
 } from "./output-publication.ts";
+import { removeTempDirSync } from "./testing/cleanup.ts";
 
 const faults = vi.hoisted(() => ({ saveImage: 0, register: 0 }));
 // Files quota fault: the next N saves to Files (registerArtifact) are refused with the quota status.
@@ -33,7 +34,7 @@ const png = Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR
 const sha = (value: Buffer | string) => createHash("sha256").update(value).digest("hex");
 const storage = () => join(DATA_DIR, "artifact-files");
 
-beforeEach(() => { faults.saveImage = 0; faults.register = 0; closeDatabase(); rmSync(DATA_DIR, { recursive: true, force: true }); mkdirSync(DATA_DIR, { recursive: true }); });
+beforeEach(() => { faults.saveImage = 0; faults.register = 0; closeDatabase(); removeTempDirSync(DATA_DIR); mkdirSync(DATA_DIR, { recursive: true }); });
 afterEach(() => closeDatabase());
 
 function fixture() {

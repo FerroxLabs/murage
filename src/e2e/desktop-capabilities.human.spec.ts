@@ -1,4 +1,4 @@
-import { test, expect, type Page } from "@playwright/test";
+import { test, expect, type Page } from "./page-error-guard";
 import { createServer, type ViteDevServer } from "vite";
 import { fileURLToPath } from "node:url";
 import { freePortBlock } from "../../server/testing/ports";
@@ -30,7 +30,7 @@ test.beforeAll(async () => {
         if (id === "\0fixture-store") return `
           export * from '/src/state/store.tsx?original';
           import { useSyncExternalStore } from 'react';
-          export function useStore() { return useSyncExternalStore(window.subscribeFixture, () => window.fixtureStore); }
+          export function useStoreIfAny(){return useStore();} export function useStore() { return useSyncExternalStore(window.subscribeFixture, () => window.fixtureStore); }
         `;
         if (id !== "\0fixture-capabilities") return;
         return `

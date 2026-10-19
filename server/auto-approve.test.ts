@@ -103,9 +103,11 @@ describe("approvalKey", () => {
     expect(approvalKey("shell", "/usr/local/bin/pnpm test")).toBe("shell:pnpm");
   });
 
-  it("looks past env assignments and sudo to the real program", () => {
+  it("looks past env assignments and sudo -n to the real program", () => {
     expect(approvalKey("Bash", "NODE_ENV=test npm run build")).toBe("Bash:npm");
-    expect(approvalKey("Bash", "sudo apt-get install ripgrep")).toBe("Bash:apt-get");
+    expect(approvalKey("Bash", "sudo -n apt-get install ripgrep")).toBe("Bash:apt-get");
+    // a bare sudo can ask for the owner's password (Rule 68f): no program grant answers it
+    expect(approvalKey("Bash", "sudo apt-get install ripgrep")).toBeUndefined();
   });
 
   it("leaves ordinary tools alone", () => {
@@ -144,13 +146,9 @@ describe("approvalKey", () => {
     "git status $ARGS",
     "git status # hidden suffix",
     "git status \\\necho continued",
-    "git status 'unterminated",
-    'git status "unterminated',
     "git status {a,b}",
     "git status *.ts",
-    "git status\u0000echo hidden",
     "GIT_OPTION=$(echo injected) git status",
-    "sudo -u other git status",
     "env MODE=test git status",
     "sh -c 'git status; echo injected'",
     "bash -lc 'git status'",
@@ -163,7 +161,6 @@ describe("approvalKey", () => {
     "'MODE=test' git status",
     "",
     "MODE=test",
-    "sudo",
   ])("does not offer or inherit a program grant for %j", (command) => {
     expect(approvalKey("Bash", command)).toBeUndefined();
     expect(approvalKey("Bash", command, "local-computer")).toBeUndefined();
@@ -173,13 +170,27 @@ describe("approvalKey", () => {
     });
   });
 
+  // Rule 68f: text the prompt-capable reader cannot split, and a bare sudo,
+  // hold their card under the prompt guard, with no program grant either
+  it.each([
+    "git status 'unterminated",
+    'git status "unterminated',
+    "git status\u0000echo hidden",
+    "sudo -u other make test",
+    "sudo",
+  ])("does not offer a program grant for %j, and holds it as prompt-capable", (command) => {
+    expect(approvalKey("Bash", command)).toBeUndefined();
+    expect(approvalKey("Bash", command, "local-computer")).toBeUndefined();
+    expect(autoVerdict({ alwaysAllow: ["Bash:git", "Bash:sudo", "Bash", ""] }, "Bash", command).source).toBe("prompt-guard");
+  });
+
   it.each([
     ["git status", "git"],
     ["git\tstatus", "git"],
     ["'git' status", "git"],
     ['"/usr/bin/git" status', "git"],
     ["MODE='two words' git status", "git"],
-    ["mode=test sudo git status", "git"],
+    ["mode=test sudo -n make test", "make"],
     ["git log --format='hello; world | && > $(literal) `literal`'", "git"],
     ['git log --format="hello; world | && >"', "git"],
   ])("keeps literal simple command grants: %j", (command, program) => {

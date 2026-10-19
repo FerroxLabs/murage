@@ -4,11 +4,12 @@
 // PIP P2 code audit finding 5: a stop that cannot be confirmed must return uncertain-transport, retain the temp root
 // and its credentials, and never hang the adapter. The stop result is forced to "not confirmed" while a real stub
 // child is running; the test then kills that child itself.
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { removeTempDirSync } from "../testing/cleanup.ts";
 
 vi.mock("../procs.ts", async (original) => ({
   ...(await original<typeof import("../procs.ts")>()),
@@ -25,7 +26,7 @@ let base: string, out: string, pids: number[];
 beforeEach(() => { base = mkdtempSync(join(tmpdir(), "pip-stop-")); out = join(base, "rec.jsonl"); pids = []; mkdirSync(join(base, "etc")); mkdirSync(join(base, "home")); });
 afterEach(() => {
   for (const pid of pids) { try { process.kill(-pid, "SIGKILL"); } catch { /* gone */ } try { process.kill(pid, "SIGKILL"); } catch { /* gone */ } }
-  rmSync(base, { recursive: true, force: true });
+  removeTempDirSync(base);
 });
 const records = (): Array<{ pid: number; env: Record<string, string> }> =>
   existsSync(out) ? readFileSync(out, "utf8").trim().split("\n").map((l) => JSON.parse(l)).filter((r) => r.argv && r.stdin === undefined) : [];

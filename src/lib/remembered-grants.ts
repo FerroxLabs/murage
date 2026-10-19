@@ -5,6 +5,7 @@
 // server is the one that decides what a key covers (server/auto-approve.ts,
 // server/stop-line.ts, shared/exact-command.ts); this only puts it in words.
 import { parseExactCommandKey } from "../../shared/exact-command";
+import { actionGrantWords } from "../../shared/app-action-words";
 import { taskGrantKeys } from "@/lib/task-window";
 
 export type GrantDescription =
@@ -40,6 +41,9 @@ export function describeGrant(key: string, engines: readonly { instanceId: strin
 
 function grantWords(key: string): string {
   if (key.startsWith("local-computer:")) return `${grantWords(key.slice("local-computer:".length))} on this computer`;
+  // one connected-app action, "Gmail: send email"
+  const action = actionGrantWords(key);
+  if (action) return action;
   const program = PROGRAM_GRANT.exec(key)?.[1];
   if (program) return `Any ${program} command`;
   const stop = /^stop:(delete|pay|message|public):(.+)$/.exec(key);

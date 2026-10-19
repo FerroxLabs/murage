@@ -1,4 +1,4 @@
-import {test,expect,type Page,type TestInfo} from "@playwright/test";
+import {test,expect,type Page,type TestInfo} from "./page-error-guard";
 import {createServer,type ViteDevServer} from "vite";
 import react from "@vitejs/plugin-react";
 import tailwindcss from "@tailwindcss/vite";
@@ -32,9 +32,12 @@ test.afterAll(async()=>{await vite?.close();safeWipeSync(cache);});
 // "Remote backup (optional)" → "Off-site copy (optional)"; "Refresh remote backup status" →
 // "Refresh off-site status"; limits, refresh buttons, the closed-app job controls and
 // removal clean-up now sit under "Advanced", remote recovery under "Restore".
+// Settings 1.0.3 L5: Restore and the off-site copy are open cards (regions) on the Backups page; only the page's
+// Advanced section folds, behind "Advanced · How often, how long to keep, size limits, backup folder".
 async function openPanel(page:Page,name:"Advanced"|"Restore"|"Off-site copy (optional)"){
- const toggle=page.getByRole("button",{name,exact:true});if(await toggle.getAttribute("aria-expanded")!=="true")await toggle.click();await expect(toggle).toHaveAttribute("aria-expanded","true");
- return page.getByRole("region",{name,exact:true});
+ if(name!=="Advanced")return page.getByRole("region",{name:name==="Restore"?"Restore":"Off-site copy",exact:true});
+ const toggle=page.getByRole("button",{name:/^Advanced · /});if(await toggle.getAttribute("aria-expanded")!=="true")await toggle.click();await expect(toggle).toHaveAttribute("aria-expanded","true");
+ return page.getByRole("region",{name:"Advanced",exact:true});
 }
 const refreshSchedule=async(page:Page)=>{await openPanel(page,"Advanced");await page.getByRole("button",{name:"Refresh schedule status",exact:true}).click();};
 const refreshRemote=async(page:Page)=>{await openPanel(page,"Advanced");await page.getByRole("button",{name:"Refresh off-site status",exact:true}).click();};

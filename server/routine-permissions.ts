@@ -13,6 +13,8 @@ import { autoVerdict, type AutoApprover, type AutoContext, type AutoVerdict, typ
 import type { SendTurnInput } from "./contracts.ts";
 import { isStopLineKey } from "./stop-line.ts";
 import { parseExactCommandKey } from "../shared/exact-command.ts";
+import { APP_ACTION_PREFIX, APP_LOOKUPS, isCurrentAppGrant } from "../shared/app-action-words.ts";
+import { CONNECTED_APPS_SERVER, exposedToolName } from "../shared/connected-app-names.ts";
 
 /** How many "Always allow for this routine" grants one routine keeps, the
  * same cap a bot's own list has. */
@@ -84,6 +86,20 @@ export function turnPermissionEnforcement(bot: AutoApprover): Pick<SendTurnInput
   return mode === "ask" || mode === "auto" ? { routeAsks: true } : { stopLine: true };
 }
 
+/** AMEND-13 Rule 76b: a routine's remembered keys reach only the bot the
+ * server proves is executing that same active run (the run's own bot, the
+ * lead coordinator for a room goal). Another member speaking in the same
+ * room shares the run's thread and ceiling, never its keys. The asker is
+ * the server's own record of who raised the request, never a client claim.
+ * Astra a13 r1 item 2: the CURRENT turn must be that run's own turn, by the
+ * run id the server bound to the turn where it started it (`turnRunId`). A
+ * waiting run outlives its turn, so an ordinary turn on the same thread, a
+ * webhook or peer turn, or another run's turn, gets none of its keys. */
+export function routineRunGrants(run: { runId: string; botId: string; alwaysAllow: readonly string[] }, askerId: string, turnRunId: string | undefined): { executing: boolean; alwaysAllow: string[] } {
+  const executing = askerId !== "" && askerId === run.botId && turnRunId !== undefined && turnRunId === run.runId;
+  return { executing, alwaysAllow: executing ? [...run.alwaysAllow] : [] };
+}
+
 /** Direct tasks and room speakers use the same routine permission decision. */
 export function routineTurnApproval(input: {
   bot?: AutoApprover;
@@ -116,17 +132,50 @@ export function routinePermissionModeInput(value: unknown): RoutinePermissionMod
   throw new Error("Choose an approval level for this routine");
 }
 
-/** Is this a grant "Always allow for this routine" may hold? Only the two
- * scoped kinds: an exact command in one folder on one engine
- * (shared/exact-command.ts), or a stop-line place (server/stop-line.ts).
- * Never a bare tool name or a per-program key: a routine runs with nobody
- * watching, so what it is allowed must name exactly what the owner saw. */
+/** Rule 76a (AMEND-13): the four connector lookups, each by its own
+ * canonical key. Finding or describing a tool never permits running it. */
+const ROUTINE_LOOKUP_KEYS: ReadonlySet<string> = new Set(Object.keys(APP_LOOKUPS).map((app) => `mcp__${CONNECTED_APPS_SERVER}__${exposedToolName(app)}`));
+
+/** Is this a grant "Always allow for this routine" may hold? Rule 45 as
+ * AMEND-13 Rule 76 reads it: an exact command in one folder on one engine
+ * (shared/exact-command.ts), a permitted stop-line place (server/stop-line.ts,
+ * never `stop:browser:`), one exact connected-app action
+ * (`app-action:SLUG`), or one of the four connector lookups. Never a bare
+ * tool or execute tool, an app-wide grant, a wildcard, a generic kind, a
+ * per-program key or a custom/external tool: a routine runs with nobody
+ * watching, so what it is allowed must name exactly what the owner saw.
+ * Load, the grant route and the manager share this one validator. */
 export function isRoutineGrantKey(key: unknown): key is string {
-  return typeof key === "string" && key.length <= 6_000 && (isStopLineKey(key) || parseExactCommandKey(key) !== undefined);
+  if (typeof key !== "string" || key.length > 6_000) return false;
+  if (key.startsWith("stop:browser:")) return false;
+  if (isStopLineKey(key) || parseExactCommandKey(key) !== undefined) return true;
+  if (key.startsWith(APP_ACTION_PREFIX)) return isCurrentAppGrant(key);
+  return ROUTINE_LOOKUP_KEYS.has(key);
 }
 
-/** A routine's stored grants, cleaned: scoped keys only, no repeats, capped. */
+/** A routine's stored grants, cleaned: scoped keys only, no repeats, capped.
+ * Invalid stored entries are discarded, never translated (Rule 76d). */
 export function routineGrantKeys(value: unknown): string[] {
   if (!Array.isArray(value)) return [];
   return [...new Set(value.filter(isRoutineGrantKey))].slice(0, ROUTINE_GRANTS_MAX);
+}
+
+/** A13-FIX-DESIGN C4 (Rules 76, 81, 83): whether a thread is one this
+ * routine's cards are raised on. A bot routine's are on that bot's own task
+ * threads; a room goal's are on its own room's threads, resolved through the
+ * room's real members (the routine's bot must be one of them), never through
+ * a bot's task list, where a room's threads never are. */
+export function routineCardThreadOf(
+  routine: { botId: string; target?: string; groupId?: string | null },
+  threadId: string,
+  lookup: {
+    taskByThread: (botId: string, threadId: string) => unknown;
+    groupByThread: (threadId: string) => { id: string; memberIds: readonly string[] } | undefined;
+  },
+): boolean {
+  if (routine.target === "room-goal") {
+    const group = lookup.groupByThread(threadId);
+    return Boolean(group && routine.groupId && group.id === routine.groupId && group.memberIds.includes(routine.botId));
+  }
+  return Boolean(lookup.taskByThread(routine.botId, threadId));
 }

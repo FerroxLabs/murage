@@ -19,6 +19,7 @@ import { conversationImageAttachments } from "./image-reference-resolver.ts";
 import { recordRenderPrompt } from "./image-library.ts";
 import { murageToolOnThisServer } from "./murage-tool-surface.ts";
 import { redactSecretsInText } from "./redact.ts";
+import { murageLine } from "./murage-line.ts";
 
 export interface ImageActor { botId: string; threadId: string; generation: string; assertActive: () => void; signal: AbortSignal }
 interface Pending { threadId: string; botId: string; messageId: string; settle: (allow: boolean, source?: "user" | "system") => void; active: () => void;
@@ -504,10 +505,10 @@ export class ImageOperations {
       if (actor.signal.aborted) return Promise.resolve("gone");
       // logged only now: a Stop before this point must not log an image that was never made
       try { this.autoApprovalLogged?.(actor, details, auto); } catch { /* the log never changes the render */ }
-      this.store.appendMessage(actor.threadId, { role: "bot", kind: "activity", ...(from ? { from } : {}), tool: {
+      this.store.appendMessage(actor.threadId, murageLine({ role: "bot", kind: "activity", ...(from ? { from } : {}), tool: {
         name: `Making an image without asking (${auto.basis})`, ok: true,
         imageRecord: { summary: imageApprovalSubtitle(details), prompt: redactSecretsInText(prompt) },
-      } });
+      } }));
       return Promise.resolve("allow");
     }
     const card = this.store.appendMessage(actor.threadId, { role: "bot", kind: "options", ...(from ? { from } : {}), card: {

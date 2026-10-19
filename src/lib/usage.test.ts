@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { botUsage, freshTokens, cachedInput, costCaption, formatTaskTokens, formatTokens, formatUsd, isMidTurn, sumUsage, usageChip, usageDetail, usageReport } from "./usage";
+import { monthCountingStart, monthUsageRows, usageCsv, botUsage, freshTokens, cachedInput, costCaption, formatTaskTokens, formatTokens, formatUsd, isMidTurn, sumUsage, usageChip, usageDetail, usageReport } from "./usage";
 
 describe("usage formatting", () => {
   it("formats token counts compactly", () => {
@@ -210,5 +210,36 @@ describe("the usage report says what is missing instead of rendering less", () =
 
   it("adds no caveat to a settled bot", () => {
     expect(usageReport(cached, { billing: "metered", busy: false, activity: "idle" })[0].id).toBe("turns");
+  });
+});
+
+describe("this month by bot", () => {
+  const day = (y: number, m: number, d: number) => new Date(y, m - 1, d, 12).getTime();
+  const bots: Array<{ id: string; name: string; usageMonths?: Record<string, { replies: number; input: number; output: number; cachedInput?: number; since: number }> }> = [
+    { id: "a", name: "Ada", usageMonths: { "2026-10": { replies: 3, input: 1000, output: 100, cachedInput: 600, since: day(2026, 10, 1) }, "2026-09": { replies: 9, input: 9, output: 9, since: day(2026, 9, 1) } } },
+    { id: "b", name: "Bo, the \"second\"", usageMonths: { "2026-10": { replies: 5, input: 5000, output: 500, since: day(2026, 10, 14) } } },
+    { id: "c", name: "Cy" },
+  ];
+
+  it("lists the bots that used anything this month, busiest first, with fresh tokens", () => {
+    const rows = monthUsageRows(bots, day(2026, 10, 20));
+    expect(rows.map((r) => [r.bot.id, r.replies, r.tokens])).toEqual([["b", 5, 5500], ["a", 3, 500]]);
+  });
+
+  it("rolls over: the next month starts empty and last month's bucket is not shown", () => {
+    expect(monthUsageRows(bots, day(2026, 11, 2))).toEqual([]);
+    expect(monthUsageRows(bots, day(2026, 9, 10)).map((r) => r.bot.id)).toEqual(["a"]);
+  });
+
+  it("says when counting began mid-month, and stays quiet when it began on the 1st", () => {
+    const rows = monthUsageRows(bots, day(2026, 10, 20));
+    expect(monthCountingStart(rows)).toBeNull();
+    expect(monthCountingStart(monthUsageRows([bots[1]!], day(2026, 10, 20)))).toBe(day(2026, 10, 14));
+    expect(monthCountingStart([])).toBeNull();
+  });
+
+  it("exports the same rows the table shows", () => {
+    const rows = monthUsageRows(bots, day(2026, 10, 20));
+    expect(usageCsv(rows.map((r) => ({ name: r.bot.name, replies: r.replies, tokens: r.tokens })))).toBe('Bot,Replies,Tokens\n"Bo, the ""second""",5,5500\nAda,3,500\n');
   });
 });

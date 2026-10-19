@@ -1,7 +1,7 @@
 // Settings → Skills in a real browser against the REAL harness: the page's
 // /api calls are proxied to a verification server with the desktop proof,
 // so Skill Guard, the collection store and the bot gate all run for real.
-import { test, expect } from "@playwright/test";
+import { test, expect } from "./page-error-guard";
 import { createServer, type ViteDevServer } from "vite";
 import tailwindcss from "@tailwindcss/vite";
 import { fileURLToPath } from "node:url";
@@ -37,7 +37,7 @@ test.beforeAll(async () => {
       resolveId(id) { if (id === "/__skills.js") return "\0skills-settings"; if (id === "/__botskills.js") return "\0bot-skills"; if (id === "/skills-fixture-store") return "\0skills-store"; },
       load(id) {
         // The real api() contract: JSON in and out, and a refusal carries its status and body.
-        if (id === "\0skills-store") return "export async function api(path,init){const r=await fetch(path,{...init,headers:{'content-type':'application/json',...(init&&init.headers)}});const data=await r.json().catch(()=>({}));if(!r.ok)throw Object.assign(new Error(data.error||r.statusText),{status:r.status,body:data});return data;}export function useStore(){return {state:{config:{},botSettingsIntent:null},dispatch(){}};}";
+        if (id === "\0skills-store") return "export async function api(path,init){const r=await fetch(path,{...init,headers:{'content-type':'application/json',...(init&&init.headers)}});const data=await r.json().catch(()=>({}));if(!r.ok)throw Object.assign(new Error(data.error||r.statusText),{status:r.status,body:data});return data;}export function useStoreIfAny(){return useStore();} export function useStore(){return {state:{config:{},botSettingsIntent:null},dispatch(){}};}";
         if (id === "\0bot-skills") return "import React from 'react';import {createRoot} from 'react-dom/client';import {BotSkillsPanel} from '/src/components/BotSkillsPanel.tsx';import '/src/styles.css';const q=new URLSearchParams(location.search);document.documentElement.dataset.skin='dark';createRoot(document.getElementById('root')).render(React.createElement(BotSkillsPanel,{bot:{id:q.get('id'),name:q.get('name'),threadId:q.get('thread'),...(q.get('chief')==='1'?{chiefOfStaff:true,chiefScope:'workspace'}:{})}}));";
         if (id !== "\0skills-settings") return;
         return "import React from 'react';import {createRoot} from 'react-dom/client';import {SkillsSettings} from '/src/components/skills/SkillsSettings.tsx';import '/src/styles.css';const q=new URLSearchParams(location.search);document.documentElement.dataset.skin=q.get('skin')||'dark';createRoot(document.getElementById('root')).render(React.createElement(SkillsSettings));";
@@ -57,7 +57,6 @@ test.beforeAll(async () => {
 test.afterAll(async () => { await server?.close(); await harness?.close(); safeWipeSync(cache); });
 // A module that fails to load leaves an empty page; say why.
 test.beforeEach(({ page }) => {
-  page.on("pageerror", (error) => console.log("page error:", error.message));
   page.on("console", (message) => { if (message.type() === "error") console.log("console error:", message.text()); });
 });
 
@@ -78,7 +77,7 @@ test("a library skill can be found and read, and says what it tells the bot", as
   await page.getByLabel("Search skills").fill("invoice");
   // wait for the search, not the lists it replaces
   await expect(page.getByRole("heading", { name: "Built-in" })).toHaveCount(0);
-  const first = page.getByRole("list").last().getByRole("button").first();
+  const first = page.getByRole("list").filter({ has: page.getByRole("button") }).last().getByRole("button").first();
   await expect(first).toBeVisible();
   await first.click();
   await expect(page.getByText("What it tells the bot")).toBeVisible();
@@ -146,7 +145,7 @@ test("one Topic dropdown lists a topic, and it and the search clear each other",
   await page.getByLabel("Search skills").fill("invoice");
   await topic.selectOption(second!);
   await expect(page.getByLabel("Search skills")).toHaveValue("");
-  await expect(page.getByRole("list").last().getByRole("button").first()).toBeVisible();
+  await expect(page.getByRole("list").filter({ has: page.getByRole("button") }).last().getByRole("button").first()).toBeVisible();
   await page.screenshot({ path: info.outputPath("topic.png"), fullPage: true });
   await page.getByLabel("Search skills").fill("invoice");
   await expect(topic).toHaveValue("");

@@ -52,6 +52,12 @@ function bootstrapWiring({ menu = [], selectionActive = false } = {}) {
   return {
     createServerConnections, openServerPrompt, dialog: { showErrorBox() {} }, BrowserWindow: null, session: null, Menu, mainWindow: null, desktopSelectionActive: selectionActive,
     createStartupSplash: () => ({ close() {} }), desktopMark: () => {}, firstStartOfVersion: () => false, FIRST_AFTER_UPDATE_NOTE: "", noteVersionStarted: () => {},  nativeTheme: { shouldUseDarkColors: false }, closedBackupRequested: false, initializeBackupScheduleHost: async () => {}, backupScheduleHost: null, desktopRecoveryMode: false, desktopShutdownStarted: false,
+    // The live gate is a top-level const in main.mjs, declared before app.whenReady; the startup block only schedules its probe.
+    cloudLive: { start() {}, probeOnFocus() {} },
+    // A cold-start Cloud link handoff (cloud-link-handoff.mjs) runs first at ready; an ordinary launch has none.
+    takeLaunchCloudLink: async () => false,
+    // The Linux murage:// handler (linux-url-handler.mjs) is registered at ready; it touches no data.
+    ensureLinuxUrlHandler: async () => ({ registered: false, reason: "already" }),
     BACKUP_MODE_ARGUMENT, desktopStartup: Promise.resolve(), ensureDesktopUpdater: inert, resumeBackedUpInstall: inert, showDesktopRecovery: inert, finishClosedBackup: inert, cleanupDesktopForExit: inert,
   };
 }
@@ -72,6 +78,13 @@ const deferred = () => {
   const promise = new Promise((done) => { resolve = done; });
   return { promise, resolve };
 };
+
+test("the Cloud live gate is declared at top level before any startup path can reference it", () => {
+  const declared = source.indexOf("const cloudLive = createCloudLiveGate(");
+  assert.ok(declared >= 0);
+  for (const use of ["cloudLive.start()", "cloudLive.probeOnFocus()"]) assert.ok(source.indexOf(use) > declared, use);
+  assert.ok(declared < source.indexOf("const desktopStartup = app.whenReady()"));
+});
 
 test("packaged bootstrap claims canonical ownership before credential reads or migrations", async () => {
   const events = [], menu = [];

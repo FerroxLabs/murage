@@ -3,7 +3,7 @@
 // (a) the query plan uses the partial index and never scans the base table, (b) the plan is the same at both sizes, and
 // (c) the partial index holds only the pending rows, so the rows a recovery can touch do not grow with history.
 import { randomUUID } from "node:crypto";
-import { mkdirSync, rmSync } from "node:fs";
+import { mkdirSync } from "node:fs";
 import type { DatabaseSync } from "node:sqlite";
 import { afterEach, beforeEach, expect, it } from "vitest";
 import { DATA_DIR } from "./config.ts";
@@ -16,8 +16,9 @@ import { RESTORE_HOLDS_DDL } from "./restore-fence.ts";
 import { ownerSendsOwingWords } from "./room-requests.ts";
 import { holdFencedFanouts } from "./restore-fanout.ts";
 import { OWED_SHARED_SQL } from "./room-request-owed.ts";
+import { removeTempDirSync } from "./testing/cleanup.ts";
 
-beforeEach(() => { closeDatabase(); rmSync(DATA_DIR, { recursive: true, force: true }); mkdirSync(DATA_DIR, { recursive: true }); });
+beforeEach(() => { closeDatabase(); removeTempDirSync(DATA_DIR); mkdirSync(DATA_DIR, { recursive: true }); });
 afterEach(() => closeDatabase());
 
 type Recorded = { sql: string; args: unknown[] };
@@ -65,7 +66,7 @@ function fill(db: DatabaseSync, total: number, rows: (i: number) => void): void 
 it("image operations: startup recovery and request lookup stay flat from 1k to 100k completed rows", () => {
   const results: Array<{ plans: string[][]; pending: number; pendingHash: number; inflight: number; awaiting: number }> = [];
   for (const total of SIZES) {
-    closeDatabase(); rmSync(DATA_DIR, { recursive: true, force: true }); mkdirSync(DATA_DIR, { recursive: true });
+    closeDatabase(); removeTempDirSync(DATA_DIR); mkdirSync(DATA_DIR, { recursive: true });
     const store = new Store(() => ({ instanceId: "fixture", model: "fixture" }));
     const db = database();
     initializeImageOperations(db); db.exec(RESTORE_HOLDS_DDL);
@@ -99,7 +100,7 @@ it("image operations: startup recovery and request lookup stay flat from 1k to 1
 it("shell card recovery: producer index follows runs still owing a card, flat from 1k to 100k published outputs", () => {
   const results: Array<{ plans: string[][]; unannounced: number }> = [];
   for (const total of SIZES) {
-    closeDatabase(); rmSync(DATA_DIR, { recursive: true, force: true }); mkdirSync(DATA_DIR, { recursive: true });
+    closeDatabase(); removeTempDirSync(DATA_DIR); mkdirSync(DATA_DIR, { recursive: true });
     const store = new Store(() => ({ instanceId: "fixture", model: "fixture" }));
     const db = database();
     db.exec(RESTORE_HOLDS_DDL);
@@ -123,7 +124,7 @@ it("shell card recovery: producer index follows runs still owing a card, flat fr
 it("room requests: owed owner words, fenced fan-out holds and owed shared results read only pending rows, flat from 1k to 100k", () => {
   const results: Array<{ plans: string[][]; words: number; fanout: number; shared: number }> = [];
   for (const total of SIZES) {
-    closeDatabase(); rmSync(DATA_DIR, { recursive: true, force: true }); mkdirSync(DATA_DIR, { recursive: true });
+    closeDatabase(); removeTempDirSync(DATA_DIR); mkdirSync(DATA_DIR, { recursive: true });
     const db = database();
     const stmt = db.prepare(`INSERT INTO room_requests(id,root_id,group_id,verb,from_kind,to_bot_id,target_thread_id,state,payload_text,refusal,outcome_note,created_at,finished_at,root_thread_id,origin,audience_fingerprint,not_owner_audience,unattended,admission_key)
       VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,'desktop','fp',0,0,?)`);

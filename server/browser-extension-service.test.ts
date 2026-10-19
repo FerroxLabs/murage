@@ -5,10 +5,11 @@ import path from 'node:path';
 import { createBrowserExtensionService } from './browser-extension-service.ts';
 import type { BrowserExtensionCommand, BrowserExtensionResponse, BrowserExtensionHello } from '../shared/browser-extension-protocol.ts';
 import { privateTestDirectory } from "./testing/private-test-dir.ts";
+import { removeTempDir } from "./testing/cleanup.ts";
 const cleanup: string[] = [];
 // A service saves its state in the background; stop each one (and wait for its last save) before its folder is removed.
 const services: { close(): Promise<void> }[] = [];
-afterEach(async () => { for (const service of services.splice(0)) await service.close().catch(() => {}); for (const directory of cleanup.splice(0)) await fs.rm(directory, { recursive: true, force: true }); });
+afterEach(async () => { for (const service of services.splice(0)) await service.close().catch(() => {}); for (const directory of cleanup.splice(0)) await removeTempDir(directory); });
 async function fixture(extraOptions: Record<string, unknown> = {}) {
   const { root: directoryRoot, directory } = await privateTestDirectory(path.resolve('.service-')); cleanup.push(directoryRoot);
   const stateFile = path.join(directory, 'state.json');

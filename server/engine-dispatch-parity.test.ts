@@ -16,7 +16,7 @@
 // Regenerate on a base checkout with ENGINE_DISPATCH_WRITE=<file>.
 import { spawn, type ChildProcess } from "node:child_process";
 import { randomBytes } from "node:crypto";
-import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -45,7 +45,10 @@ function normalizer(home: string, port: number) {
     if (!seen.has(key)) seen.set(key, `<${kind}${seen.size}>`);
     return seen.get(key)!;
   };
+  // The server resolves its home to the real path (macOS: /var is /private/var), so the run names the folder either way.
+  const real = realpathSync(home);
   return (text: string) => text
+    .split(real).join("<home>")
     .split(home).join("<home>")
     .replace(/\b[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\b/g, (value) => token("id", value))
     .replace(/\b[0-9a-f]{32,64}\b/g, (value) => token("hash", value))

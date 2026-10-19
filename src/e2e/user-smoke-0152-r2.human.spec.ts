@@ -20,7 +20,7 @@
 // in this process. Every absent live input runs against the fake and is
 // recorded as "live proof pending" in the test annotations; nothing is
 // skipped.
-import { test, expect, type Locator, type Page } from "@playwright/test";
+import { test, expect, type Locator, type Page } from "./page-error-guard";
 import { createServer, type ViteDevServer } from "vite";
 import react from "@vitejs/plugin-react";
 import tailwindcss from "@tailwindcss/vite";
@@ -502,7 +502,7 @@ test("07 regression sweep: create bot, fake turn, Claude question card, pane Mar
   await expect(lightbox(page)).toHaveCount(0);
 
   // Settings → Models: Local models.
-  const models = await openSettings(page, "Models");
+  const models = await openSettings(page, "Models & engines");
   const local = models.locator("#local-models");
   await local.scrollIntoViewIfNeeded();
   await expect(local.getByRole("heading", { name: "Local models", exact: true })).toBeVisible();
@@ -812,7 +812,7 @@ test("02 LFU2: Settings → Engines shows the pinned Fuigo; a Fuigo bot complete
   const haveKey = Boolean(FLUX_KEY_FILE && existsSync(FLUX_KEY_FILE));
   if (!haveKey) pending("MURAGE_SMOKE_FLUX_KEY_FILE naming a FluxRouter key");
   await openApp(page);
-  const settings = await openSettings(page, "Engines");
+  const settings = await openSettings(page, "Models & engines");
   const fuigo = settings.locator("section").filter({ hasText: /^Fuigo/ }).first();
   await fuigo.scrollIntoViewIfNeeded();
   await expect(fuigo).toContainText(/Selected source: \w+ · Installed: [\d.]+/, { timeout: 120_000 });

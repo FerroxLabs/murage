@@ -8,9 +8,10 @@ import { applyStagedSkillWrite, installSkill, migrateSkillDiscoveryToTasks, roll
 import { loadBundledSkills, renderSkillInstructions, selectBundledSkills, type BundledSkill } from "./skill-library.ts";
 import { installedPlaybookInstructions } from "./installed-playbooks.ts";
 import { taskWorkspacePath, workspaceDir } from "./workspace.ts";
+import { removeTempDirSync } from "./testing/cleanup.ts";
 const owned:string[]=[];
 const bot=()=>{const id=`procedure-test-${randomUUID()}`;owned.push(join(DATA_DIR,"workspaces",id),join(DATA_DIR,"skill-state",id));return id;};
-afterEach(()=>{for(const path of owned.splice(0))rmSync(path,{recursive:true,force:true});});
+afterEach(()=>{for(const path of owned.splice(0))removeTempDirSync(path);});
 const md=(body:string)=>`---\nname: checked-method\ndescription: Check a result\n---\n${body}\n`;
 function learned(id:string,body:string,action:"create"|"update"="create"){
   const staged=stageSkillWrite(id,{action,targetName:action==="update"?"checked-method":undefined,source:"learn:fixture",files:[{path:"SKILL.md",content:md(body)}]});

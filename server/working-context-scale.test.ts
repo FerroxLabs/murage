@@ -4,13 +4,14 @@
 // "What I've been working on" pays for what changed and for the lines it shows, never for the history (1.0.2
 // turnctx): the same statements at 1,000 and at 100,000 threads per bot, on a turn where none of the bot's threads
 // changed only the shown lines are read (each judged again), and no work at all on a scheduled or webhook run.
-import { mkdirSync, rmSync } from "node:fs";
+import { mkdirSync } from "node:fs";
 import { beforeEach, expect, it } from "vitest";
 import { DATA_DIR } from "./config.ts";
 import { closeDatabase, database, transaction } from "./database.ts";
 import { appendMessage } from "./message-db.ts";
 import { workingContextBlock, type WorkingContextInput } from "./working-context.ts";
 import { LineageAllowance } from "./memory/lineage-allowance.ts";
+import { removeTempDirSync } from "./testing/cleanup.ts";
 
 const NOW = Date.UTC(2026, 9, 12, 12, 0, 0);
 
@@ -48,7 +49,7 @@ function seed(threads: number): WorkingContextInput {
 
 type Round = { first: { all: number; messages: number }; again: { all: number; messages: number }; afterChange: { all: number; messages: number }; routine: { all: number; messages: number }; againMs: number; text: string; textAgain: string; textAfter: string };
 function rounds(threads: number): Round {
-  closeDatabase(); rmSync(DATA_DIR, { recursive: true, force: true }); mkdirSync(DATA_DIR, { recursive: true });
+  closeDatabase(); removeTempDirSync(DATA_DIR); mkdirSync(DATA_DIR, { recursive: true });
   const input = seed(threads);
   const db = database();
   const count = counter(db);

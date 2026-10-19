@@ -3,16 +3,17 @@
 //
 // rc3f: an optional index is built off the main thread (a worker on its own connection), open makes none, readers see readiness as
 // "the index exists", validation accepts the file with or without it, and the downgrade for 1.0.1 drops every registered one.
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { afterEach, expect, it } from "vitest";
 import { DISCLOSURES_LIVE_INDEX, downgradeMemorySchema, ensureDisclosuresLiveIndex, migrateMemorySchema, validateMemorySchema } from "./schema.ts";
 import { OPTIONAL_INDEXES, optionalIndexReady, registerOptionalIndex } from "./optional-index.ts";
+import { removeTempDirSync } from "../testing/cleanup.ts";
 
 const dirs: string[] = [], dbs: DatabaseSync[] = [];
-afterEach(() => { for (const db of dbs.splice(0)) try { db.close(); } catch { /* closed */ } for (const dir of dirs.splice(0)) rmSync(dir, { recursive: true, force: true }); });
+afterEach(() => { for (const db of dbs.splice(0)) try { db.close(); } catch { /* closed */ } for (const dir of dirs.splice(0)) removeTempDirSync(dir); });
 
 it("open makes no optional index; the worker builds it on its own connection; downgrade drops all of them", async () => {
   const dir = mkdtempSync(join(tmpdir(), "optidx-")); dirs.push(dir);
@@ -40,7 +41,8 @@ it("an optional index is built only while the reclaim gate allows it, and one pe
     db.exec("PRAGMA journal_mode=WAL; PRAGMA foreign_keys=ON");
     migrateMemorySchema(db, "active");
     const idle = { ownerIdleMs: () => 3_600_000, liveTurn: () => false, typingHeld: () => false, routineDueWithin: () => false, healthAnswered: () => true, integrityPending: () => false, revocationWaiting: () => false };
-    const first = OPTIONAL_INDEXES[0].name; // registration order: the first not-yet-built index is the one an idle window builds
+    const indexes = OPTIONAL_INDEXES.filter(item => item.table.startsWith("memory_")); // this file holds only the memory tables
+    const first = indexes[0].name; // registration order: the first not-yet-built index is the one an idle window builds
     const ready = () => optionalIndexReady(db, first);
     resetOptionalIndexWindow();
     for (const busy of [{ ownerIdleMs: () => 9 * 60_000 }, { ownerIdleMs: () => 1_000 }, { liveTurn: () => true }, { typingHeld: () => true }, { routineDueWithin: () => true }, { healthAnswered: () => false }, { integrityPending: () => true }, { revocationWaiting: () => true }]) {
@@ -50,17 +52,17 @@ it("an optional index is built only while the reclaim gate allows it, and one pe
     expect(await buildOptionalIndexesWhenIdle(db, idle)).toBe(first); // idle: it builds
     expect(ready()).toBe(true);
     // one per window: the next registered index waits for the next window
-    const next = OPTIONAL_INDEXES[1].name;
+    const next = indexes[1].name;
     expect(optionalIndexReady(db, next)).toBe(false);
     expect(await buildOptionalIndexesWhenIdle(db, idle)).toBeNull();
     expect(await buildOptionalIndexesWhenIdle(db, { ...idle, liveTurn: () => true })).toBeNull(); // the window closes
     expect(await buildOptionalIndexesWhenIdle(db, idle)).toBe(next);
-    for (let window = 0; window < OPTIONAL_INDEXES.length && !OPTIONAL_INDEXES.every(item => optionalIndexReady(db, item.name)); window++) {
+    for (let window = 0; window < indexes.length && !indexes.every(item => optionalIndexReady(db, item.name)); window++) {
       expect(await buildOptionalIndexesWhenIdle(db, { ...idle, liveTurn: () => true })).toBeNull(); // each window closes before the next
       expect(await buildOptionalIndexesWhenIdle(db, idle)).not.toBeNull();
     }
     expect(await buildOptionalIndexesWhenIdle(db, { ...idle, liveTurn: () => true })).toBeNull();
-    expect(OPTIONAL_INDEXES.every(item => optionalIndexReady(db, item.name))).toBe(true);
+    expect(indexes.every(item => optionalIndexReady(db, item.name))).toBe(true);
     // and an index registered later waits for the window after that
     const second = registerOptionalIndex({ name: "optidx_test_second", table: "memory_disclosures", minSchemaVersion: 9, sql: "CREATE INDEX IF NOT EXISTS optidx_test_second ON memory_disclosures(thread_id)" });
     try {

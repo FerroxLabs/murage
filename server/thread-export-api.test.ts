@@ -14,7 +14,7 @@
 //     on the first start after an upgrade; a fill piece that read every text
 //     row past its cursor once held the loop ~150-250 ms here on its own
 //     (message-search-fill-scale.test.ts).
-import { writeFileSync } from "node:fs";
+import { readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { afterAll, beforeAll, expect, it } from "vitest";
@@ -27,20 +27,33 @@ const json = async (method: string, path: string, body?: unknown) => {
   const response = await fetch(fixture.info.url + path, { method, headers: { ...headers, "content-type": "application/json" }, body: body === undefined ? undefined : JSON.stringify(body) });
   return { status: response.status, body: await response.json().catch(() => null) as any };
 };
-const signal = (command: object) => { writeFileSync(file("lag-control.json"), JSON.stringify(command)); process.kill(fixture.info.pid, "SIGUSR2"); };
-const lag = async (): Promise<number> => {
-  signal({ dump: true });
-  for (let i = 0; i < 200; i++) {
-    try { const value = JSON.parse((await import("node:fs")).readFileSync(file("lag.json"), "utf8")); (await import("node:fs")).rmSync(file("lag.json")); return value.max; } catch { await new Promise((r) => setTimeout(r, 25)); }
+// The server is told what to do through a control file it polls (no POSIX signal: Windows has no SIGUSR2). Each command carries a
+// sequence number and is acknowledged once applied, so a reset has taken effect before the request it precedes is sent.
+let seq = 0;
+const signal = async (command: object) => {
+  const mine = ++seq;
+  writeFileSync(file("lag-control.json"), JSON.stringify({ ...command, seq: mine }));
+  for (let i = 0; i < 400; i++) {
+    try { if (JSON.parse(readFileSync(file("lag-ack.json"), "utf8")).seq === mine) return; } catch { /* not written yet */ }
+    await new Promise((r) => setTimeout(r, 25));
   }
-  throw new Error("no lag reading");
+  throw new Error(`the server never acknowledged command ${mine}`);
+};
+const lag = async (): Promise<number> => {
+  await signal({ dump: true });
+  const value = JSON.parse(readFileSync(file("lag.json"), "utf8"));
+  rmSync(file("lag.json"));
+  return value.max;
 };
 
 const instrumentation = `
   const fs=await import('node:fs');const path=await import('node:path');const {monitorEventLoopDelay}=await import('node:perf_hooks');
   const h=monitorEventLoopDelay({resolution:2});h.enable();
-  process.on('SIGUSR2',()=>{const c=JSON.parse(fs.readFileSync(path.join(process.env.MURAGE_DATA_DIR,'lag-control.json'),'utf8'));
-    if(c.reset){h.reset();return;}fs.writeFileSync(path.join(process.env.MURAGE_DATA_DIR,'lag.json'),JSON.stringify({max:h.max/1e6}));});
+  const control=path.join(process.env.MURAGE_DATA_DIR,'lag-control.json'),ack=path.join(process.env.MURAGE_DATA_DIR,'lag-ack.json');let done=0;
+  setInterval(()=>{let c;try{c=JSON.parse(fs.readFileSync(control,'utf8'));}catch{return;}
+    if(!c||c.seq===done)return;done=c.seq;
+    if(c.reset)h.reset();else fs.writeFileSync(path.join(process.env.MURAGE_DATA_DIR,'lag.json'),JSON.stringify({max:h.max/1e6}));
+    fs.writeFileSync(ack,JSON.stringify({seq:c.seq}));},10).unref();
 `;
 
 const COUNT = 200_000;
@@ -60,7 +73,7 @@ beforeAll(async () => {
 }, 60_000);
 afterAll(async () => { await fixture?.close(); });
 
-it("exports a 200,000-message thread in both formats unchanged, without holding the event loop", async () => {
+it("exports a 200,000-message thread in both formats unchanged, without holding the event loop", { tags: ["perf-budget"], timeout: 600_000 }, async () => {
   const bot = (await json("POST", "/api/bots", { name: "Exporter", modelSelection: { instanceId: "verification", model } })).body.bot as { id: string; threadId: string };
   await fixture.stop();
   const db = new DatabaseSync(file("messages.db"));
@@ -75,12 +88,12 @@ it("exports a 200,000-message thread in both formats unchanged, without holding 
   await fixture.restart();
   headers = { "x-murage-surface": "desktop", "x-murage-surface-secret": (await json("GET", "/api/desktop-secret")).body.secret };
 
-  signal({ reset: true });
+  await signal({ reset: true });
   const asJson = await raw(`/api/threads/${bot.threadId}/export?format=json`);
   expect(asJson.status).toBe(200);
   const jsonBody = await asJson.text();
   const jsonLag = await lag();
-  signal({ reset: true });
+  await signal({ reset: true });
   const asMarkdown = await raw(`/api/threads/${bot.threadId}/export?format=markdown`);
   expect(asMarkdown.status).toBe(200);
   const markdownBody = await asMarkdown.text();
@@ -105,4 +118,4 @@ it("exports a 200,000-message thread in both formats unchanged, without holding 
   // one synchronous load of this thread holds the loop for seconds; slices of 20 ms do not
   expect(jsonLag).toBeLessThan(200);
   expect(markdownLag).toBeLessThan(200);
-}, 600_000);
+});

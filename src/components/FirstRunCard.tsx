@@ -20,6 +20,7 @@ import { FIRST_RUN_COPY, foundAgentsLine, localModelLine, lookedAroundLine, sign
 import { firstRunDetection, type FirstRunEngineRow } from "@/lib/first-run-detect";
 import type { Bot, Message } from "@/state/store";
 import { renderBriefHtml } from "../../shared/brief-html";
+import { trustedPreviewDocument, useSanitizerReady } from "@/lib/trusted-html";
 import { sampleBrief } from "../../shared/brief-sample";
 import { readSetupCard, type SetupCardVariant } from "../../shared/setup-card";
 import { SETUP_DETECT_ANSWER } from "../../shared/setup";
@@ -42,6 +43,7 @@ import { FirstRunHelloCard } from "./FirstRunHelloCard";
 import { FirstRunDoItCard, FirstRunJobsCard } from "./FirstRunJobsCard";
 import { FirstRunNextCard } from "./FirstRunNextCard";
 import { FirstRunPhoneCard } from "./FirstRunPhoneCard";
+import { SandboxedFrame } from "./SandboxedFrame";
 
 export function FirstRunCard({ bot, message }: { bot: Bot; message: Message }) {
   const card = readSetupCard(message.card);
@@ -318,6 +320,7 @@ function FirstRunEngineRowView({ row }: { row: FirstRunEngineRow }) {
  * and the established gate is better than a second opinion about it.
  */
 function FirstRunSampleBriefCard() {
+  const sanitizer = useSanitizerReady(); // markup made before the sanitizer loaded is empty: draw again when it arrives
   const { view } = useSetupView();
   const [whole, setWhole] = useState(false);
   const copy = FIRST_RUN_COPY.flux["sample-brief"];
@@ -336,8 +339,8 @@ function FirstRunSampleBriefCard() {
   // frame is still `sandbox=""` with no allow-* at all, which is what
   // actually stops script rather than the scrubbing did.
   const html = useMemo(
-    () => renderBriefHtml(sampleBrief(view?.ownerName ?? "")),
-    [view?.ownerName],
+    () => trustedPreviewDocument(renderBriefHtml(sampleBrief(view?.ownerName ?? ""))),
+    [view?.ownerName, sanitizer],
   );
   if (!view) return null;
 
@@ -385,11 +388,11 @@ function FirstRunSampleBriefCard() {
             {whole ? copy.showLess : copy.showAll}
           </button>
         </figcaption>
-        <iframe
+        <SandboxedFrame
           title={copy.frameTitle}
           sandbox=""
           referrerPolicy="no-referrer"
-          srcDoc={html}
+          html={html}
           // Tall enough that the first decision is never cut in half, and an
           // expanded height that clears the whole example rather than a
           // guess at it.

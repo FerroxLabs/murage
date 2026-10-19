@@ -1,7 +1,7 @@
 import { murageToolList } from "../testing/murage-tool-list.ts";
 // Copyright 2026 Ferrox Labs
 // SPDX-License-Identifier: AGPL-3.0-or-later
-import { mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { mkdtempSync, readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -17,6 +17,7 @@ import { ROOM_TOOLS_LINE, goalWakePrompt, projectCardPrompt } from "../project-p
 import { chiefOfStaffSystemPrompt } from "../chief-of-staff.ts";
 import { TURN_PROMPTS } from "../bot-shapes.ts";
 import { murageTool } from "../murage-tool-surface.ts";
+import { removeTempDirSync } from "../testing/cleanup.ts";
 
 beforeEach(() => {
   for (const key of Object.keys(process.env)) if (/KEY|TOKEN|SECRET|PASSWORD|AUTH|CREDENTIAL/i.test(key)) vi.stubEnv(key, "");
@@ -64,7 +65,7 @@ it.each(cases)("$driver.driverKind renders the mounted MCP names in lead/member/
       }
       expect(shown).not.toContain("{{murage-tool:");
     }
-  } finally { recorder.stop(); await instance.dispose(); rmSync(dir, { recursive: true, force: true }); }
+  } finally { recorder.stop(); await instance.dispose(); removeTempDirSync(dir); }
 }, 60000);
 
 it.each([OpenAICompatDriver, BoxAgentDriver])("$driverKind declares no mounted MCP tools", async driver => {
@@ -76,7 +77,7 @@ it.each([OpenAICompatDriver, BoxAgentDriver])("$driverKind declares no mounted M
     expect(instance.adapter.mcpToolSurface).toEqual({ kind: "none" });
     expect(instance.adapter.capabilities.agentsMcp).not.toBe(true);
     expect(instance.adapter.capabilities.memoryMcp).not.toBe(true);
-  } finally { await instance.dispose(); rmSync(dir, { recursive: true, force: true }); }
+  } finally { await instance.dispose(); removeTempDirSync(dir); }
 });
 
 // The phone and the browser are their own servers: a reference to one of
@@ -103,5 +104,5 @@ it.each([
     expect(shown).toContain(phone);
     if (browser) expect(shown).toContain(browser);
     expect(shown).not.toContain("{{murage-tool:");
-  } finally { recorder.stop(); await instance.dispose(); rmSync(dir, { recursive: true, force: true }); }
+  } finally { recorder.stop(); await instance.dispose(); removeTempDirSync(dir); }
 }, 60000);

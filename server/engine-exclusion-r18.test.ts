@@ -24,11 +24,12 @@ import { planEngineHistory, removeEngineHistoryFiles as removeRaw, runEngineHist
 import { homeKey } from "./engine-plan-core.ts";
 import { useFakeExclusion, type FakeExclusion } from "./testing/engine-exclusion-fake.ts";
 import { legacyRejoin, asExclusive, buildFixture, canaryHits, ENGINES, walDatabase, type Fixture } from "./testing/engine-history-fixtures.ts";
+import { removeTempDirSync } from "./testing/cleanup.ts";
 
 const removeEngineHistoryFiles = legacyRejoin(removeRaw);
 const scratch = realpathSync.native(mkdtempSync(join(tmpdir(), "murage-r18-")));
 const openDatabases: DatabaseSync[] = [];
-afterAll(() => { for (const db of openDatabases) db.close(); rmSync(scratch, { recursive: true, force: true }); });
+afterAll(() => { for (const db of openDatabases) db.close(); removeTempDirSync(scratch); });
 
 let fake: FakeExclusion;
 beforeEach(() => { fake = useFakeExclusion(); });
@@ -468,7 +469,7 @@ describe("real-engine (a): Claude Code's history is cleared under its directory 
     expect(readFileSync(history).equals(before)).toBe(true);
     expect(readFileSync(join(lock, "engine-marker"), "utf8")).toBe("engine"); // its folder, untouched
     expect(existsSync(pasteOf(fx))).toBe(true);
-    rmSync(lock, { recursive: true });
+    removeTempDirSync(lock);
     expect(run(fx, planned).failed).toEqual([]);
     expect(readFileSync(history, "utf8")).not.toContain(C("claude"));
     expect(existsSync(lock)).toBe(false);

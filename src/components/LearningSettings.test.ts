@@ -154,7 +154,8 @@ describe("Results", () => {
 describe("More", () => {
   it("is a closed fold by default and holds the options", () => {
     const html = render(loaded());
-    expect(html).toMatch(/<details(?![^>]*\sopen)[^>]*>/);
+    expect(html).toMatch(/aria-expanded="false"/);
+    expect(html).not.toContain("<details");
     for (const words of ["Ask me before it changes anything", "Learn from customer and audience messages", "Coming later.", "Recent changes", "Undo does not change what was already sent", "Restore original behavior", "Changes already applied to skills are not touched."]) expect(text(html), words).toContain(words);
   });
   it("customer-message learning is shown as coming later, with no switch and no chat picker (T1-17)", () => {
@@ -181,8 +182,8 @@ describe("More", () => {
   });
   it("prints usage only from what memory status reports", () => {
     expect(text(render(loaded()))).not.toContain("Usage");
-    const learning = { allowance: { day: "d", inputUsed: 1, outputUsed: 1, usedPercent: 12 } } as any;
-    expect(text(render(loaded({ memory: { mode: "active", learning } })))).toContain("Usage today: 12% of the learning allowance.");
+    const learning = { ceiling: { month: "2026-10", input: 100_000_000, output: 15_000_000, inputUsed: 2_100_000, outputUsed: 300_000, paused: false } } as any;
+    expect(text(render(loaded({ memory: { mode: "active", learning } })))).toContain("Learning this month: 2.1M tokens read, 0.3M written.");
   });
   it("Restore turns into an inline confirmation, not a dialog", () => {
     const html = render(loaded(), { defaultConfirmRestore: true });

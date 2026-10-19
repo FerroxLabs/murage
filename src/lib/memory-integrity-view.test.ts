@@ -20,6 +20,16 @@ const feed = (events: MachineEvent[], ctx: MachineContext = initialContext("app"
 const reading = (at: number, state: UpgradeState): MachineEvent => ({ type: "READING", at, state: { ...state, seq: ++seq } });
 
 describe("the strip in the app (words for the reducer's selection)", () => {
+  it("an open-ended step says what is done so far, with no percent and no time left", () => {
+    const open = (done: number, awake: number) => working({ phase: "marker", overall: 0.94, eta: { stable: true, ms: 3_300_000 }, step: { awakeElapsedMs: awake, unit: "open", done } });
+    const ctx = feed([reading(0, open(4000, 9000)), reading(2000, open(6000, 11_000))]);
+    const view = stripView(ctx)!;
+    expect(view.text).toBe("You can chat as usual. Settling earlier memory, 6,000 so far. Bots pick up their earlier replies again when this is done.");
+    expect(view.percent).toBeNull();
+    expect(view.left).toBeNull();
+    expect(view.text).not.toMatch(/minute|%/);
+    expect(BANNED.test(view.text)).toBe(false);
+  });
   it("says chat works, the percent and about how long, once the estimate is steady", () => {
     const eta = { eta: { stable: true as const, ms: 360_000 }, step: { awakeElapsedMs: 9000, unit: "none" as const } };
     let ctx = feed([reading(0, working(eta))]);

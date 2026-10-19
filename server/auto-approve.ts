@@ -11,9 +11,13 @@
 // sandbox and the bot's own computer, not a regex.
 
 import { sameToolGrant } from "../shared/connected-app-names.ts";
-import { isStopLineKey, stopLineKey, stopLineKeyCovers, type StopHit } from "./stop-line.ts";
+import { actionGrantKey, actionGrantRead, actionGrantSet, commandArgument, placeArgumentScan, resolveCall, type GrantCall } from "../shared/app-action-grant.ts";
+import { isStopLineKey, stopFindings, stopLineKey, stopLineKeyCovers, type StopHit } from "./stop-line.ts";
 import { redactSecretsInText } from "./redact.ts";
+import { SENSITIVE_RULES } from "../shared/sensitive-paths.ts";
+import { requiredFields } from "./drivers/contracts.ts";
 import { commandCwdFromToolInput, commandFromToolInput, exactCommandKey, isExactCommandKey, routineExactGrantCovers, type ExactCommand } from "../shared/exact-command.ts";
+import { pinOverrideIn, promptVerdict, type PromptFacts } from "../shared/prompt-capable.ts";
 
 /** The plain `rm` rule, the one a delete placed inside the bot's own roots
  * is excused from (see `deletesInside` below). */
@@ -33,25 +37,9 @@ const DESTRUCTIVE = [
 ];
 
 // Not destructive, but exactly what you don't hand over unattended: a
-// bot reading your keys is quiet, permanent, and unrecoverable.
-const SENSITIVE = [
-  /(^|[\s/"'])\.env(\.|$|["'\s])/i,
-  /\.ssh\/|id_rsa|id_ed25519|authorized_keys/i,
-  /\.aws\/credentials|\.netrc|\.npmrc|\.pypirc|\.docker\/config\.json/i,
-  /security\s+find-(generic|internet)-password|\bkeychain\b/i,
-  /\bcredentials?\.json\b|\bserviceaccount\b/i,
-  // 2026-09-17 (thread e4454625): an auto-mode bot lifted a personal OpenAI
-  // key by reading the shell profile, exporting it and calling the vendor.
-  // Shell rc files are where people keep keys; a provider key name, a bearer
-  // header or a `sk-` literal in a command is a key being moved, whatever
-  // the program; and the harness's own key stores are never a bot's to read.
-  /(^|[\s"'=])~?[\w./-]*\.(zshrc|zshenv|zprofile|bashrc|bash_profile|profile)\b/i,
-  /\b[A-Z][A-Z0-9_]*_(API_KEY|SECRET_KEY|ACCESS_TOKEN|AUTH_TOKEN)\b/,
-  /\bBearer\s+\$\{?[A-Za-z_]/i,
-  /\bsk-(proj|ant|or)?[-_]?[A-Za-z0-9]/,
-  /\benv\b[^|;&]*\|\s*grep\b/i,
-  /\.codex\/auth\.json|\.claude\/\.credentials|provider-keys|\.murage\/config\.json/i,
-];
+// bot reading your keys is quiet, permanent, and unrecoverable. The list is
+// shared/sensitive-paths.ts (Rule 35), the one list every gate imports.
+const SENSITIVE = SENSITIVE_RULES;
 
 // Tools that ASK THE OWNER something. These are never permissions, however
 // an engine happens to file them: the entire point of the call is that a
@@ -114,7 +102,7 @@ export function withoutQuestionGrants(keys: string[]): string[] {
  * made it — the decision log's whole value is "which rule", and deriving
  * the match a second time at the call site is how the log and the verdict
  * drift apart. */
-function matchFirst(rules: RegExp[], text: string): string | null {
+function matchFirst(rules: readonly RegExp[], text: string): string | null {
   for (const re of rules) if (re.test(text)) return re.source;
   return null;
 }
@@ -188,9 +176,18 @@ function simpleProgram(summary: string): string | undefined {
     words.push({ value, assignment });
   }
   let next = 0;
-  // Preserve existing literal assignment / bare sudo grants, but sudo
-  // options (which take arguments) are unsupported rather than guessed at.
-  while (next < words.length && (words[next].assignment || words[next].value === "sudo")) next += 1;
+  // Literal assignments are looked past. `sudo` only in its non-interactive
+  // form (`sudo -n <program>`): a bare `sudo` can ask for the owner's
+  // password (Rule 68f, prompt-capable), so a `Bash:<program>` grant never
+  // answers it; any other sudo option is unsupported rather than guessed at.
+  for (;;) {
+    while (next < words.length && words[next].assignment) next += 1;
+    if (words[next]?.value !== "sudo") break;
+    let after = next + 1;
+    while (after < words.length && (words[after].value === "-n" || words[after].value === "--non-interactive")) after += 1;
+    if (after === next + 1) return undefined;
+    next = after;
+  }
   const executable = words[next]?.value;
   if (!executable || !/^[A-Za-z0-9_./][A-Za-z0-9_./-]*$/.test(executable)) return undefined;
   const program = executable.split("/").pop();
@@ -207,12 +204,19 @@ export function isCommandTool(tool: string): boolean {
   return COMMAND_TOOLS.has(tool.toLowerCase().replace(/^mcp__.+__/, "").split(".").pop()!);
 }
 
-export function approvalKey(tool: string, summary: string, scope?: "local-computer"): string | undefined {
+export function approvalKey(tool: string, summary: string, scope?: "local-computer", call?: GrantCall): string | undefined {
   // No "Always allow" for a question: undefined hides the action entirely.
   if (isQuestionTool(tool)) return undefined;
+  // Nor for a call the driver could not report whole: a key read off a cut
+  // call names something other than what runs.
+  if (call?.truncated) return undefined;
   // A tool whose NAME reads as an exact-command key must not be able to
   // match one by its bare name.
   if (isExactCommandKey(tool)) return undefined;
+  // A connected-app call, or a tool named only "other", is remembered by the
+  // one action it runs, or not at all (shared/app-action-grant.ts).
+  const action = actionGrantKey(tool, call);
+  if (action !== undefined) return action === null ? undefined : scope ? `${scope}:${action}` : action;
   if (!isCommandTool(tool)) return scope ? `${scope}:${tool}` : tool;
   const program = simpleProgram(summary);
   if (!program) return undefined;
@@ -226,10 +230,12 @@ export function approvalKey(tool: string, summary: string, scope?: "local-comput
  * a command the destructive or key guard would card anyway: such a grant
  * could never apply, and a key guard hit may carry a secret that has no
  * business being written into the bot's settings. */
-export function exactAllowKeyFor(tool: string, summary: string, exact: ExactCommand | undefined): string | undefined {
+export function exactAllowKeyFor(tool: string, summary: string, exact: ExactCommand | undefined, promptFacts?: PromptFacts): string | undefined {
   if (!exact || isQuestionTool(tool) || !isCommandTool(tool)) return undefined;
   const text = `${summary}\n${exact.command}`;
   if (looksDestructive(text) || looksSensitive(text) || redactSecretsInText(text) !== text) return undefined;
+  // nor for a prompt-capable command (Rule 68f): the grant could never apply
+  if (promptVerdict(exact.command, promptFacts)) return undefined;
   return exactCommandKey(exact);
 }
 
@@ -300,6 +306,11 @@ export function fullAccessCovers(bot: AutoApprover | null | undefined, origin: F
  * contrast: a grant WOULD have fired, and the only thing that stopped it
  * was that nobody started this turn — the most audit-worthy card of all. */
 export type AutoVerdictSource =
+  /** Rule 72: a narrowing denial. Nothing runs and no card is raised; the
+   * driver hands the engine `note` as the reason so it can rewrite the call.
+   * The same (tool, text) denied NARROW_DENIALS_BEFORE_CARD times in one turn
+   * raises the card instead (server/narrow-denials.ts). */
+  | "narrow"
   | "always-allow"
   /** "Always allow this exact command here": the same command text, folder
    * and engine the owner allowed (shared/exact-command.ts). */
@@ -330,6 +341,15 @@ export type AutoVerdictSource =
   | "local-computer-block"
   | "destructive-guard"
   | "sensitive-guard"
+  /** The call could not be read whole (the driver cut the input, a scan
+   * ran past its budget, the tool it runs cannot be proven): held at every
+   * level, No limits included, like a key-file read. */
+  | "unread-call"
+  /** Rule 68f, row kind "prompt-capable": a command that can ask for input
+   * (a password, a passphrase, a terminal, a new window) and does not carry
+   * its non-interactive form. `rule` names the row, `note` its reason.
+   * Ahead of every standing answer; Full access and No limits keep theirs. */
+  | "prompt-guard"
   | "question-tool"
   | "no-grant";
 
@@ -348,6 +368,13 @@ export interface AutoVerdict {
   note?: string;
 }
 
+/** U20 (Rule 74d) in plain words; the cause follows. */
+const U20_WORDS = "Murage could not check the shell environment";
+/** No hand known: every per-command value of a pinned name differs from it. */
+const NO_PINS: ReadonlyMap<string, string> = new Map();
+/** U19 (Rule 68f case 1) in plain words; pinOverride's reason follows. */
+const U19_WORDS = "This command changes a setting Murage fixes so engines never ask for input";
+
 /** Presentation only. A held card names the actual guard, never changes it. */
 export function approvalHoldNote(verdict: AutoVerdict | null | undefined): string | undefined {
   if (!verdict || verdict.approve) return undefined;
@@ -355,6 +382,8 @@ export function approvalHoldNote(verdict: AutoVerdict | null | undefined): strin
     case "stop-line": return verdict.note ?? "This action deletes, pays or messages someone new. Review it before allowing it.";
     case "destructive-guard": return "This action may be destructive. Review it before allowing it.";
     case "sensitive-guard": return "This action may access sensitive data. Review it before allowing it.";
+    case "unread-call": return verdict.rule?.startsWith(U20_WORDS) || verdict.rule?.startsWith(U19_WORDS) ? `${verdict.rule}. Review it before allowing it.` : "Murage could not read this action whole. Review it before allowing it.";
+    case "prompt-guard": return verdict.note ?? "This command can ask for input that nobody would see. Review it before allowing it.";
     case "unattended-block": return "This task started outside the desktop. Your approval is required before this action can continue.";
     case "local-computer-block": return "This action controls your computer. Your approval is required.";
     case "question-tool": return "Your bot is asking you a question. Only you can answer it.";
@@ -367,6 +396,9 @@ export function approvalHoldNote(verdict: AutoVerdict | null | undefined): strin
  * rule decided without the call site re-deriving (and eventually
  * mis-deriving) the match. */
 export interface AutoContext {
+  /** U20 (Rule 74d): the F12 record says the environment check failed, with this cause. The command is unread: held
+   *  with the cause at every level, as any call that could not be read whole. */
+  envUnread?: string;
   /** the turn was started by an outside event, with nobody at the keyboard */
   unattended?: boolean;
   /** the request controls the user's active desktop */
@@ -387,10 +419,20 @@ export interface AutoContext {
    * it exactly as they cover a turn the owner started. Never set for a
    * webhook or channel turn, and an `unattended` mark outranks it. */
   routineLevel?: boolean;
-  /** The routine's own "Always allow for this routine" grants: exact-command
-   * and stop-line keys only. Honoured only with `routineLevel`, never on an
-   * unattended turn or for host control, and never over a guard. */
+  /** The routine's own "Always allow for this routine" grants: exact-command,
+   * stop-line, exact connected-app action and lookup keys (AMEND-13 Rule 76).
+   * Honoured only with `routineLevel`, never on an unattended turn or for
+   * host control, and never over a guard. */
   routineAllow?: readonly string[];
+  /** AMEND-13 Rule 79b: the stop findings each row of an own-connector
+   * execute call produced, in call order (server/stop-line.ts
+   * classifyAskRows). Read only for a call of two or more rows whose
+   * findings agree with `stopLine`; a one-row call keeps r10's outcome. */
+  stopRows?: ReadonlyArray<readonly StopHit[]>;
+  /** Every task allowance the owner gave this task, so each row's findings
+   * are covered one by one (Rule 79b ii). Honoured only on a turn the owner
+   * is at, never for host control. */
+  taskAllowanceKeys?: readonly string[];
   /** The caller established with the stop line's own reader
    * (server/stop-line.ts deletesPlacedInside) that every delete this command
    * names lands strictly inside the bot's own roots: its workspace and thread
@@ -434,6 +476,16 @@ export interface AutoContext {
    * the owner pressed "Allow for this task" or said so in chat. Honoured
    * only on a turn the owner is at. */
   stopAllowedForTask?: string;
+  /** The engine's own call, kind and identity, so a remembered grant is
+   * matched by the one action it names (shared/app-action-grant.ts). */
+  call?: GrantCall;
+  /** What the prompt-capable git rows read (Rule 68f): the folder the
+   * command runs in (the exact-command cwd, else the turn's) and the HOME
+   * handed to the engine. Missing, only the git rows hold. */
+  promptFacts?: PromptFacts;
+  /** The requesting engine's handed pin map (Rule 74c): a per-command value other than its pin is U19 (Rule 68f case 1).
+   *  Missing, no pin is known, so a command that sets any pinned name is U19. */
+  handedPins?: ReadonlyMap<string, string>;
 }
 
 /** Is the only destructive thing here an `rm` the caller placed inside the
@@ -441,6 +493,102 @@ export interface AutoContext {
 function excusedDelete(text: string, context: AutoContext | undefined): boolean {
   if (context?.deletesInside !== true || KILLS.test(text)) return false;
   return DESTRUCTIVE.every((rule) => rule === RM_RULE || !rule.test(text));
+}
+
+/** The standing answer a grant or Auto mode would give, before any block:
+ * a routine's exact grant, the exact-command grant, the program grant, Auto
+ * mode, or null. */
+function standingGrant(
+  bot: AutoApprover,
+  tool: string,
+  summary: string,
+  context: AutoContext | undefined,
+  routineGrants: readonly string[],
+  coveredRows: ReadonlySet<number> = new Set(),
+): { approve: string; source: "routine-allow" | "exact-command" | "always-allow" | "auto-mode"; rule: string | undefined } | null {
+  // AMEND-13 Rules 78, 79a: a connected-app call is answered by standing
+  // grants only when EVERY action key matches an applicable grant (a row whose
+  // own stop findings were all covered is already authorized, Rule 79b ii).
+  // One match, a prefix or `some(...)` is never enough. Auto mode below still
+  // authorizes the whole call on its own terms.
+  const set = context?.call?.truncated ? null : actionGrantSet(tool, context?.call);
+  if (set !== undefined) {
+    const appGrant = set ? appSetGrant(bot, set, context?.scope, routineGrants, coveredRows) : null;
+    if (appGrant) return appGrant;
+    return bot.autoApprove ? { approve: `auto-approved ${tool}`, source: "auto-mode", rule: undefined } : null;
+  }
+  const key = approvalKey(tool, summary, context?.scope, context?.call);
+  // The exact grant is the narrower one, so it names itself first. It is
+  // never computed for a host-control request or a non-command tool.
+  const exactKey = context?.exactCommand && !context.scope && isCommandTool(tool) && !isQuestionTool(tool)
+    ? exactCommandKey(context.exactCommand)
+    : undefined;
+  // A routine's grant requires the same normalized command, including dates
+  // and times, on the same engine in the same folder.
+  const routineExact = exactKey !== undefined && context?.exactCommand
+    ? routineGrants.find((granted) => routineExactGrantCovers(granted, context.exactCommand!))
+    : undefined;
+  return routineExact !== undefined
+    ? { approve: `auto-approved this command (always allowed for this routine)`, source: "routine-allow", rule: routineExact }
+    : exactKey !== undefined && bot.alwaysAllow?.includes(exactKey)
+      ? { approve: `auto-approved this exact command (always allowed here)`, source: "exact-command", rule: exactKey }
+    // a connected-app grant saved under an earlier release's tool name still covers the tool (shared/connected-app-names.ts)
+    : key !== undefined && bot.alwaysAllow?.some((held) => sameToolGrant(held, key))
+      ? { approve: `auto-approved ${key} (always allowed)`, source: "always-allow", rule: key }
+      : bot.autoApprove
+        ? { approve: `auto-approved ${tool}`, source: "auto-mode", rule: undefined }
+        : null;
+}
+
+/** Rules 78, 79a: the standing answer for a connected-app grant set. Each
+ * row (or, for a lookup or custom tool, the one key) must match a routine
+ * grant (already limited to an attended routine run off host scope) or one
+ * of the bot's own keys. Records the complete matching set and its sources. */
+function appSetGrant(
+  bot: AutoApprover,
+  set: { keys: readonly string[]; rows: ReadonlyArray<{ key: string }> },
+  scope: "local-computer" | undefined,
+  routineGrants: readonly string[],
+  coveredRows: ReadonlySet<number>,
+): { approve: string; source: "routine-allow" | "always-allow"; rule: string } | null {
+  const scoped = (key: string) => (scope ? `${scope}:${key}` : key);
+  const needed = set.rows.length ? set.rows.filter((_, index) => !coveredRows.has(index)).map((row) => row.key) : [...set.keys];
+  if (!needed.length) return null;
+  const sources: string[] = [];
+  let routine = false;
+  let own = false;
+  for (const key of new Set(needed)) {
+    // Rule 80c: no routine grant ever answers a host-scoped ask
+    if (!scope && routineGrants.includes(key)) { routine = true; sources.push(`${key} (routine)`); continue; }
+    const held = scoped(key);
+    if (bot.alwaysAllow?.some((granted) => sameToolGrant(granted, held))) { own = true; sources.push(held); continue; }
+    return null;
+  }
+  const rule = sources.join(" ");
+  return routine && !own
+    ? { approve: `auto-approved ${needed.length > 1 ? "these actions" : "this action"} (always allowed for this routine)`, source: "routine-allow", rule }
+    : { approve: `auto-approved ${rule} (always allowed)`, source: "always-allow", rule };
+}
+
+/** Rule 79b: how one stop finding is covered, if it is: the owner's task
+ * allowance, the routine's stop key or the bot's always-allow stop key,
+ * each under Rule 19's attended and host conditions. A finding with no
+ * place is never covered. */
+function findingCover(
+  bot: AutoApprover,
+  hit: StopHit,
+  context: AutoContext | undefined,
+  routineGrants: readonly string[],
+): { source: "task-allowance" | "routine-allow" | "always-allow" | "unattended-block"; key: string } | null {
+  if (stopLineKey(hit) === undefined || context?.scope === "local-computer") return null;
+  const attended = !context?.unattended && !context?.automated;
+  const task = attended ? context?.taskAllowanceKeys?.find((key) => stopLineKeyCovers(key, hit)) : undefined;
+  if (task) return { source: "task-allowance", key: task };
+  const routine = routineGrants.find((key) => isStopLineKey(key) && stopLineKeyCovers(key, hit));
+  if (routine) return { source: "routine-allow", key: routine };
+  const granted = bot.alwaysAllow?.find((key) => isStopLineKey(key) && stopLineKeyCovers(key, hit));
+  if (granted) return { source: context?.unattended ? "unattended-block" : "always-allow", key: granted };
+  return null;
 }
 
 export function autoVerdict(
@@ -464,11 +612,43 @@ export function autoVerdict(
     ? context.channelOwner === true ? "owner-channel"
       : context.routineLevel === true && !context.unattended ? "routine" : "other"
     : "owner";
-  // the guards outrank the grants, so an "always allow" can never widen
-  // into them
-  const guarded = context?.exactCommand ? `${summary}\n${context.exactCommand.command}` : summary;
+  // The guards outrank the grants, so an "always allow" can never widen
+  // into them. They read the card text, the engine's own command, and the
+  // shell line the call's arguments carry under any tool name: a terminal
+  // command inside a wrapper or an MCP tool is judged like the engine's own
+  // shell tool asking (Astra r3).
+  const resolved = resolveCall(context?.call);
+  const innerCommand = commandArgument(resolved.kind === "engine" || resolved.kind === "mcp" ? resolved.input : context?.call?.toolCall?.input);
+  const guarded = [summary, context?.exactCommand?.command, innerCommand].filter((part): part is string => part !== undefined).join("\n");
   const destructive = excusedDelete(guarded, context) ? null : matchFirst(DESTRUCTIVE, guarded) ?? matchFirst(DESTRUCTIVE, tool);
-  const sensitive = destructive ? null : matchFirst(SENSITIVE, guarded);
+  // The key guard also reads every string the engine's structured arguments
+  // carry, wherever it sits: a card title can be neutral. A call it could not
+  // read whole (the driver cut the input, or the scan ran past its budget) is
+  // held as if it named a key file: the guard never passes what it did not see.
+  const scan = placeArgumentScan(context?.call?.toolCall?.input);
+  // Rule 55: the driver's contract for this tool, read after resolution and
+  // before any guard; a missing or wrong-typed field is unread.
+  const contract = requiredFields(context?.call?.engine, resolved, context?.call);
+  // A13-FIX-DESIGN C3: the one grant reader; an own-connector call it could
+  // not read whole is unread, never a call with "no grant" that a mode answers.
+  const grantRead = context?.call?.truncated ? undefined : actionGrantRead(tool, context?.call);
+  // Rule 68f case 1 (U19): the command the engine reported, or the shell line its arguments carry, sets a pinned name to
+  // anything but the hand's pin, or carries an option that overrides one. Read before every standing answer.
+  const commandParts = [context?.exactCommand?.command, innerCommand].filter((part): part is string => part !== undefined);
+  const promptText = commandParts.length ? commandParts.join("\n") : isCommandTool(tool) ? summary : undefined;
+  const pinUnknown = promptText === undefined ? null : pinOverrideIn(promptText, context?.handedPins ?? NO_PINS);
+  const unread = context?.envUnread ? `${U20_WORDS}: ${context.envUnread}`
+    : pinUnknown ? `${U19_WORDS}: ${pinUnknown}`
+    : context?.call?.truncated ? "the call was cut before it could be checked"
+    : scan.cut ? "the call's arguments run past what the key guard reads"
+    : resolved.kind === "unproven" ? `the tool this runs cannot be proven: ${resolved.why}`
+    : grantRead?.unread ? `Murage could not read every action in this call: ${grantRead.unread}`
+    : contract.ok ? null
+    : `the call does not carry what this tool needs (${contract.field})`;
+  const keyText = `${guarded}\n${scan.text}`;
+  const keyHit = (): string | null => unread ?? matchFirst(SENSITIVE, keyText);
+  const sensitive = destructive ? null : keyHit();
+  const sensitiveSource: AutoVerdictSource = unread ? "unread-call" : "sensitive-guard";
   // The stop line outranks every mode, Full access included: deleting
   // outside its folder, paying, and messaging someone new wait for the
   // owner. Only a grant scoped to the same place answers it — the owner's
@@ -482,19 +662,58 @@ export function autoVerdict(
   const routineGrants = context?.routineLevel === true && !context.unattended && context.scope !== "local-computer"
     ? context.routineAllow ?? []
     : [];
-  if (stop) {
+  // Rule 68f, row kind "prompt-capable": a command that can ask for input
+  // nobody would see, without its non-interactive form, holds its card with
+  // its reason ahead of every standing answer (a stop-line place grant, the
+  // task allowance, own-workspace, project-work-roots, a routine grant, the
+  // exact and program grants, Auto mode). Full access and No limits keep
+  // their standing: the owner chose no cards there.
+  // It reads the command the engine reported and the shell line the call's
+  // arguments carry; the card text only for a command tool that reported
+  // neither, since a card title is not shell text.
+  const prompt = fullAccessCovers(bot, origin) || promptText === undefined ? null : promptVerdict(promptText, context?.promptFacts);
+  const promptHeld: AutoVerdict | null = prompt ? { approve: null, source: "prompt-guard", rule: prompt.rule, note: prompt.note } : null;
+  // AMEND-13 Rule 79b: a connector batch of two or more rows is judged row by
+  // row. Every finding must be covered by a cover that applies to it, and a
+  // row's own covered findings authorize that row only; the remaining rows
+  // need their action grant or a mode below. Used only when the rows agree
+  // with the call's stop line (a finding only the title added keeps the
+  // call-level hold).
+  // A13-FIX-DESIGN C2: a one-row call (or any tool) whose finding names several
+  // recipients is judged per recipient too, through the one splitter; a
+  // combined key never stands in for them.
+  const split = stop ? stopFindings(stop) : [];
+  const rows = stop && context?.stopRows && context.stopRows.length > 1 && context.stopRows.some((row) => row.length) ? context.stopRows
+    : split.length > 1 ? [split] : undefined;
+  let coveredRows: ReadonlySet<number> = new Set();
+  if (rows) {
+    const keyGuard = keyHit();
+    if (keyGuard) return { approve: null, source: sensitiveSource, rule: keyGuard };
+    const covers: Array<{ source: string; key: string }> = [];
+    for (const row of rows) for (const hit of row) {
+      const cover = findingCover(bot, hit, context, routineGrants);
+      if (!cover) return { approve: null, source: "stop-line", rule: hit.kind, note: hit.what };
+      if (cover.source === "unattended-block") return { approve: null, source: "unattended-block", rule: cover.key };
+      covers.push(cover);
+    }
+    const rule = [...new Set(covers.map((cover) => cover.key))].join(" ");
+    const source = covers.every((cover) => cover.source === covers[0]!.source) ? covers[0]!.source as AutoVerdictSource : "always-allow";
+    if (rows.every((row) => row.length)) return promptHeld ?? { approve: `auto-approved ${tool} (every step allowed)`, source, rule };
+    coveredRows = new Set(rows.flatMap((row, index) => (row.length ? [index] : [])));
+  }
+  if (stop && !rows) {
     const attended = !context?.unattended && !context?.automated;
-    const keyGuard = matchFirst(SENSITIVE, guarded);
-    if (keyGuard) return { approve: null, source: "sensitive-guard", rule: keyGuard };
+    const keyGuard = keyHit();
+    if (keyGuard) return { approve: null, source: sensitiveSource, rule: keyGuard };
     if (context?.stopAllowedForTask && attended && context.scope !== "local-computer" && stopLineKeyCovers(context.stopAllowedForTask, stop)) {
-      return { approve: `auto-approved ${tool} (allowed for this task)`, source: "task-allowance", rule: context.stopAllowedForTask };
+      return promptHeld ?? { approve: `auto-approved ${tool} (allowed for this task)`, source: "task-allowance", rule: context.stopAllowedForTask };
     }
     const routineGrant = stopLineKey(stop) === undefined ? undefined : routineGrants.find((key) => isStopLineKey(key) && stopLineKeyCovers(key, stop));
-    if (routineGrant) return { approve: `auto-approved ${tool} (always allowed for this routine)`, source: "routine-allow", rule: routineGrant };
+    if (routineGrant) return promptHeld ?? { approve: `auto-approved ${tool} (always allowed for this routine)`, source: "routine-allow", rule: routineGrant };
     const granted = stopLineKey(stop) === undefined ? undefined : bot.alwaysAllow?.find((key) => isStopLineKey(key) && stopLineKeyCovers(key, stop));
     if (granted && context?.scope !== "local-computer") {
       if (context?.unattended) return { approve: null, source: "unattended-block", rule: granted };
-      return { approve: `auto-approved ${granted} (always allowed)`, source: "always-allow", rule: granted };
+      return promptHeld ?? { approve: `auto-approved ${granted} (always allowed)`, source: "always-allow", rule: granted };
     }
     return { approve: null, source: "stop-line", rule: stop.kind, note: stop.what };
   }
@@ -503,10 +722,21 @@ export function autoVerdict(
   // permanent and unrecoverable, whichever level it is on.
   if (fullAccessCovers(bot, origin)) {
     // the key guard is the one stop No limits keeps too
-    const keyGuard = sensitive ?? (destructive ? matchFirst(SENSITIVE, guarded) : null);
-    if (keyGuard) return { approve: null, source: "sensitive-guard", rule: keyGuard };
+    const keyGuard = sensitive ?? (destructive ? keyHit() : null);
+    if (keyGuard) return { approve: null, source: sensitiveSource, rule: keyGuard };
     if (hasNoLimits(bot)) return { approve: `auto-approved ${tool} (no limits)`, source: "no-limits" };
     return { approve: `auto-approved ${tool} (full access)`, source: "full-access" };
+  }
+  // The prompt-capable hold (above). The guards keep their names, and so
+  // does the unattended block when a grant would have answered.
+  if (promptHeld) {
+    if (destructive) return { approve: null, source: "destructive-guard", rule: destructive };
+    if (sensitive) return { approve: null, source: sensitiveSource, rule: sensitive };
+    if (context?.unattended) {
+      const would = standingGrant(bot, tool, summary, context, routineGrants, coveredRows);
+      if (would) return { approve: null, source: "unattended-block", rule: would.rule };
+    }
+    return promptHeld;
   }
   // The bot's own bookkeeping, ahead of the unattended and host blocks
   // because those exist to stop a MODE or a GRANT standing in for a person,
@@ -530,30 +760,7 @@ export function autoVerdict(
   // worth auditing is "this WOULD have auto-approved, and only the block
   // stood in the way", which cannot be told apart from an ordinary
   // "nobody granted this" card without knowing both halves.
-  const key = approvalKey(tool, summary, context?.scope);
-  // The exact grant is the narrower one, so it names itself first. It is
-  // never computed for a host-control request or a non-command tool.
-  const exactKey = context?.exactCommand && !context.scope && isCommandTool(tool) && !isQuestionTool(tool)
-    ? exactCommandKey(context.exactCommand)
-    : undefined;
-  // A routine's grant requires the same normalized command, including dates
-  // and times, on the same engine in the same folder.
-  const routineExact = exactKey !== undefined && context?.exactCommand
-    ? routineGrants.find((granted) => routineExactGrantCovers(granted, context.exactCommand!))
-    : undefined;
-  const grant =
-    destructive || sensitive
-      ? null
-      : routineExact !== undefined
-        ? { approve: `auto-approved this command (always allowed for this routine)`, source: "routine-allow" as const, rule: routineExact }
-      : exactKey !== undefined && bot.alwaysAllow?.includes(exactKey)
-        ? { approve: `auto-approved this exact command (always allowed here)`, source: "exact-command" as const, rule: exactKey }
-      // a connected-app grant saved under an earlier release's tool name still covers the tool (shared/connected-app-names.ts)
-      : key !== undefined && bot.alwaysAllow?.some((held) => sameToolGrant(held, key))
-        ? { approve: `auto-approved ${key} (always allowed)`, source: "always-allow" as const, rule: key }
-        : bot.autoApprove
-          ? { approve: `auto-approved ${tool}`, source: "auto-mode" as const, rule: undefined }
-          : null;
+  const grant = destructive || sensitive ? null : standingGrant(bot, tool, summary, context, routineGrants, coveredRows);
   if (context?.unattended) {
     // Auto mode is something a person switched on for turns they are present
     // for. A webhook turn begins with nobody watching, on a payload someone
@@ -564,7 +771,7 @@ export function autoVerdict(
     // thing that changed the outcome.
     if (grant) return { approve: null, source: "unattended-block", rule: grant.rule };
     if (destructive) return { approve: null, source: "destructive-guard", rule: destructive };
-    if (sensitive) return { approve: null, source: "sensitive-guard", rule: sensitive };
+    if (sensitive) return { approve: null, source: sensitiveSource, rule: sensitive };
     return { approve: null, source: "no-grant" };
   }
   if (context?.scope === "local-computer" && !bot.autoApprove) {
@@ -573,11 +780,11 @@ export function autoVerdict(
     // (click/type) may auto-approve; destructive/sensitive still card.
     if (grant) return { approve: null, source: "local-computer-block", rule: grant.rule };
     if (destructive) return { approve: null, source: "destructive-guard", rule: destructive };
-    if (sensitive) return { approve: null, source: "sensitive-guard", rule: sensitive };
+    if (sensitive) return { approve: null, source: sensitiveSource, rule: sensitive };
     return { approve: null, source: "no-grant" };
   }
   if (destructive) return { approve: null, source: "destructive-guard", rule: destructive };
-  if (sensitive) return { approve: null, source: "sensitive-guard", rule: sensitive };
+  if (sensitive) return { approve: null, source: sensitiveSource, rule: sensitive };
   if (grant) return { approve: grant.approve, source: grant.source, rule: grant.rule };
   return { approve: null, source: "no-grant" };
 }

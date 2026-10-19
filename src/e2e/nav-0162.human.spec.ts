@@ -11,7 +11,7 @@
 // phone gets a full-bleed sheet with a grouped strip and nothing clipped
 // sideways, and Settings search still finds pages across the groups.
 // Screenshots land in NAV_SHOTS_DIR when set, else the test's output dir.
-import { test, expect, type Page } from "@playwright/test";
+import { test, expect, type Page } from "./page-error-guard";
 import { createServer, type ViteDevServer } from "vite";
 import react from "@vitejs/plugin-react";
 import tailwindcss from "@tailwindcss/vite";
@@ -142,7 +142,7 @@ for (const [width, height] of [[1440, 900], [1280, 720], [1280, 560]] as const) 
   await page.screenshot({ path: join(dir, `settings-bottom-${width}x${height}.png`) });
 
   // Images: two levels deep, Setup and Library tabs; its page scrolls alone
-  await nav.getByRole("button", { name: "Images", exact: true }).click();
+  await nav.getByRole("button", { name: "Tools", exact: true }).click();
   await expect(settings(page).getByRole("tab", { name: "Setup" })).toHaveAttribute("aria-selected", "true");
   await expect(settings(page).locator('section[aria-labelledby="image-settings-heading"]')).toBeVisible();
   await page.screenshot({ path: join(dir, `settings-images-${width}x${height}.png`) });
@@ -237,7 +237,7 @@ for (const skin of ["dark", "light"]) test(`phone: drawer, strip and Settings sh
   expect(chip.height).toBeGreaterThanOrEqual(44);
   expect(await noSideScroll(page)).toBe(true);
   await page.screenshot({ path: join(dir, `settings-usage-390x844-${skin}.png`) });
-  await nav.getByRole("button", { name: "Images", exact: true }).click();
+  await nav.getByRole("button", { name: "Tools", exact: true }).click();
   await page.screenshot({ path: join(dir, `settings-images-390x844-${skin}.png`) });
   expect(await noSideScroll(page)).toBe(true);
 });

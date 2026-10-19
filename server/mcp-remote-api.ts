@@ -194,7 +194,7 @@ export async function inspectMcpInput(body: unknown, deps: InspectDeps): Promise
     const refused = parsePaste("x".repeat(MAX_INSPECT_INPUT_BYTES + 1));
     return refused.ok ? { status: 400, body: { error: "Too large." } } : { status: 200, body: { ok: false, reason: refused.reason, message: refused.message } };
   }
-  const parsed = parsePaste(body.input, { isNameTaken: (name) => deps.existingNames.has(name) || mcpServerNameError(name) !== null });
+  const parsed = parsePaste(body.input, { isNameTaken: (name) => deps.existingNames.has(name) || mcpServerNameError(name, [...deps.existingNames]) !== null });
   if (!parsed.ok) return { status: 200, body: { ok: false, reason: parsed.reason, message: parsed.message } };
   const probe = deps.probe ?? probeRemoteMcp;
   let probed = 0;

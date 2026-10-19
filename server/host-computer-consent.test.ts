@@ -1,6 +1,6 @@
 // The one-time confirmation before a bot on Auto first acts on this computer:
 // who is asked, who is grandfathered, and what is (and is not) remembered.
-import { readFileSync, rmSync, writeFileSync } from "node:fs";
+import { readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { DATA_DIR } from "./config.ts";
@@ -16,6 +16,7 @@ import {
 } from "./host-computer-consent.ts";
 import type { ApprovalBus } from "./peer-approval.ts";
 import { Store, type BotRecord } from "./store.ts";
+import { removeTempDirSync } from "./testing/cleanup.ts";
 
 const selection = (): ModelSelection => ({ instanceId: "claude", model: "claude-sonnet-5" });
 const bus = (store: Store): ApprovalBus => ({ store, broadcast: () => {} });
@@ -53,7 +54,7 @@ describe("who is asked", () => {
 });
 
 describe("the card", () => {
-  beforeEach(() => { rmSync(DATA_DIR, { recursive: true, force: true }); });
+  beforeEach(() => { removeTempDirSync(DATA_DIR); });
 
   it("shows one card for concurrent actions and remembers the owner's Allow", async () => {
     const store = new Store(selection);
@@ -122,7 +123,7 @@ describe("the card", () => {
 });
 
 describe("grandfathering on load", () => {
-  beforeEach(() => { rmSync(DATA_DIR, { recursive: true, force: true }); });
+  beforeEach(() => { removeTempDirSync(DATA_DIR); });
 
   it("starts a new bot at ask", () => {
     const store = new Store(selection);
@@ -168,7 +169,7 @@ describe("grandfathering on load", () => {
 // permission card (no 15-minute close), and the run hears when it opens and
 // is answered, so a turn that ended meanwhile carries on once it is.
 describe("the card in a routine run", () => {
-  beforeEach(() => { rmSync(DATA_DIR, { recursive: true, force: true }); });
+  beforeEach(() => { removeTempDirSync(DATA_DIR); });
 
   it("is never closed for waiting, and reports its answer to the run", async () => {
     vi.useFakeTimers();

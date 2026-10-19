@@ -1,4 +1,4 @@
-import { expect, test as base } from "@playwright/test";
+import { expect, test as base } from "./page-error-guard";
 import { createServer, type ViteDevServer } from "vite";
 import react from "@vitejs/plugin-react";
 import tailwindcss from "@tailwindcss/vite";
@@ -29,7 +29,7 @@ async function launch() {
       name: "accounts-fixture", enforce: "pre",
       resolveId(id) { if (id === "/__accounts.js") return "\0accounts-fixture"; if (id === "@/state/store" || id.endsWith("/src/state/store")) return "\0accounts-store"; },
       load(id) {
-        if (id === "\0accounts-store") return `export * from '/src/state/store.tsx?original';import {useSyncExternalStore} from 'react';export function useStore(){return useSyncExternalStore(window.subscribeFixture,()=>window.fixtureStore)}`;
+        if (id === "\0accounts-store") return `export * from '/src/state/store.tsx?original';import {useSyncExternalStore} from 'react';export function useStoreIfAny(){return useStore();} export function useStore(){return useSyncExternalStore(window.subscribeFixture,()=>window.fixtureStore)}`;
         if (id !== "\0accounts-fixture") return;
         return `import React from 'react';import {createRoot} from 'react-dom/client';import {api} from '/src/state/store.tsx?original';import {ClaudeAccountsSettings} from '/src/components/ClaudeAccountsSettings.tsx';import '/src/styles.css';
 document.documentElement.dataset.skin=new URLSearchParams(location.search).get('skin')||'light';window.copied=[];Object.defineProperty(navigator,'clipboard',{value:{writeText:async value=>window.copied.push(value)},configurable:true});

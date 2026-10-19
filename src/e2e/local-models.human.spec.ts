@@ -15,7 +15,7 @@
 // something true to mark. The live proof against SeanBeast's real llama.cpp is
 // docs/plans/0152-LOCAL-MODELS-PROOF.md; this spec is what keeps the screens
 // honest after that machine is switched off.
-import { test, expect, type Page } from "@playwright/test";
+import { test, expect, type Page } from "./page-error-guard";
 import { createServer, type ViteDevServer } from "vite";
 import react from "@vitejs/plugin-react";
 import tailwindcss from "@tailwindcss/vite";
@@ -146,7 +146,7 @@ const focusedText = (page: Page) => page.evaluate(() => { const el = document.ac
 /** Open Settings on a section the way a person does: the modal first, then
  *  its own navigation. Models and Engines are desktop-only, so they are not
  *  there to jump to until the surface has been confirmed — the nav is. */
-async function openSettings(page: Page, section: "Models" | "Engines") {
+async function openSettings(page: Page, section: "Models & engines") {
   await page.getByRole("button", { name: "Open settings", exact: true }).click();
   const dialog = page.getByRole("dialog", { name: "Settings", exact: true }); await expect(dialog).toBeVisible();
   const entry = dialog.getByRole("navigation").getByRole("button", { name: section, exact: true });
@@ -169,7 +169,7 @@ async function removeEveryServer(page: Page) {
 
 for (const skin of skins) for (const width of widths) test(`Local models: found nothing → add by keyboard → test → use, at ${width}px ${skin}`, async ({ page }, testInfo) => {
   await open(page, skin, width);
-  const dialog = await openSettings(page, "Models");
+  const dialog = await openSettings(page, "Models & engines");
   const section = dialog.locator("#local-models");
   await expect(section.getByRole("heading", { name: "Local models", exact: true })).toBeVisible();
 
@@ -256,7 +256,7 @@ for (const skin of skins) for (const width of widths) test(`Picker: the Local ra
   // once the surface has been confirmed; that is one round trip after load.
   // Wait for it the way the app itself would show it: the Models entry exists.
   {
-    const dialog = await openSettings(page, "Models");
+    const dialog = await openSettings(page, "Models & engines");
     await dialog.getByRole("button", { name: "Close settings", exact: true }).click();
     await expect(dialog).toHaveCount(0);
   }
@@ -318,7 +318,7 @@ for (const skin of skins) for (const width of widths) test(`Picker: the Local ra
   // Take the server away with the pick still on it: the chip must say the
   // model and the fact, not a raw `srv_…::` id — the removal copy promised
   // the bot "will need another model", and this is how it says so.
-  await openSettings(page, "Models");
+  await openSettings(page, "Models & engines");
   await removeEveryServer(page);
   await page.getByRole("dialog", { name: "Settings", exact: true }).getByRole("button", { name: "Close settings", exact: true }).click();
   await trigger.click();
@@ -340,7 +340,7 @@ for (const skin of skins) for (const width of widths) test(`Picker: the Local ra
 
 for (const skin of skins) test(`Engines: each engine says where it stands on local models, at 1440px ${skin}`, async ({ page }, testInfo) => {
   await open(page, skin, 1440);
-  const dialog = await openSettings(page, "Engines");
+  const dialog = await openSettings(page, "Models & engines");
   // V4 — the fixture's engine is a Claude-driver instance, a tools engine.
   const line = dialog.getByText("Works with local models. Manage them under Models → Local models", { exact: false }).first();
   await expect(line).toBeVisible();

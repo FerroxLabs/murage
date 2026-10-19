@@ -32,6 +32,7 @@ import type { DatabaseSync } from "node:sqlite";
 import { ArtifactError, describeArtifact, readArtifact, type ArtifactAccess, type ArtifactScope } from "./artifacts.ts";
 import type { Store } from "./store.ts";
 import { companionMarked } from "./sse-visibility.ts";
+import { cloudIdentity } from "./cloud-request-identity.ts";
 import {
   IMAGE_REFERENCE_LIMITS, IMAGE_REFERENCE_MIMES, MEDIA_BYTES_RESPONSE_HEADERS, MEDIA_CAPABILITY_QUERY_PARAM, MEDIA_CAPABILITY_TTL_MS,
   MEDIA_CAPABILITY_VERSION, MEDIA_PLAYABLE_MIMES, MEDIA_ROUTE_PREFIX, MEDIA_ROUTES, isMediaCapabilityToken,
@@ -228,9 +229,10 @@ export function sniffMedia(head: Uint8Array, total: number): SniffedMedia {
 const capabilityKey = randomBytes(32);
 const mac = (label: string, value: string) => createHmac("sha256", capabilityKey).update(label).update("\0").update(value).digest();
 
-export function issueMediaCapability(assetId: string, revision: string, now = Date.now()): { token: string; expiresAt: number } {
+export function issueMediaCapability(assetId: string, revision: string, now = Date.now(), binding?: MediaCapabilityClaims["cloudSession"]): { token: string; expiresAt: number } {
   const expiresAt = now + MEDIA_CAPABILITY_TTL_MS;
   const claims: MediaCapabilityClaims = { v: 1, assetId, revision, surface: "desktop", exp: expiresAt };
+  if (process.env.MURAGE_CLOUD_ROLE === "home" && binding) claims.cloudSession = binding;
   const signed = `${MEDIA_CAPABILITY_VERSION}.${Buffer.from(JSON.stringify(claims), "utf8").toString("base64url")}`;
   return { token: `${signed}.${mac("media-capability", signed).toString("base64url")}`, expiresAt };
 }
@@ -245,7 +247,15 @@ export function verifyMediaCapability(token: unknown, assetId: string, now = Dat
   if (given.length !== expected.length || !timingSafeEqual(given, expected)) return invalid;
   let claims: Record<string, unknown>;
   try { claims = JSON.parse(Buffer.from(body, "base64url").toString("utf8")) as Record<string, unknown>; } catch { return invalid; }
-  if (!claims || typeof claims !== "object" || Array.isArray(claims) || Object.keys(claims).sort().join(",") !== "assetId,exp,revision,surface,v") return invalid;
+  if (!claims || typeof claims !== "object" || Array.isArray(claims)) return invalid;
+  const keys = Object.keys(claims).sort().join(",");
+  if (keys !== "assetId,exp,revision,surface,v") {
+    if (process.env.MURAGE_CLOUD_ROLE !== "home" || keys !== "assetId,cloudSession,exp,revision,surface,v") return invalid;
+    const binding = claims.cloudSession as Record<string, unknown> | null;
+    if (!binding || typeof binding !== "object" || Array.isArray(binding) || Object.keys(binding).sort().join(",") !== "accessHash,deviceId"
+      || typeof binding.deviceId !== "string" || !/^[a-f0-9-]{36}$/.test(binding.deviceId)
+      || typeof binding.accessHash !== "string" || !/^[a-f0-9]{64}$/.test(binding.accessHash)) return invalid;
+  }
   if (claims.v !== 1 || claims.surface !== "desktop" || claims.assetId !== assetId || typeof claims.revision !== "string" || !Number.isSafeInteger(claims.exp)) return invalid;
   const exp = claims.exp as number;
   if (exp > now + MEDIA_CAPABILITY_TTL_MS + CLOCK_SKEW_MS) return invalid;
@@ -547,7 +557,7 @@ function descriptor(assetId: string, ref: NormalizedRef, located: Located, avail
   };
 }
 
-async function resolveMedia(ref: NormalizedRef, deps: MediaAssetsDeps, now: number): Promise<MediaResolveResponse> {
+async function resolveMedia(ref: NormalizedRef, deps: MediaAssetsDeps, now: number, binding?: MediaCapabilityClaims["cloudSession"]): Promise<MediaResolveResponse> {
   const assetId = mediaAssetIdFor(ref), located = locate(ref, deps, true), outcome = located.outcome;
   // A non-ready answer never touches the registry: a stale revision from one
   // surface must not revoke a URL another surface holds, and the byte route
@@ -569,7 +579,7 @@ async function resolveMedia(ref: NormalizedRef, deps: MediaAssetsDeps, now: numb
   } finally { await handle.close().catch(() => undefined); }
   if (!sniffed.supported) return { asset: descriptor(assetId, ref, located, "unsupported", sniffed, outcome.stat.size, revision) };
   const asset = descriptor(assetId, ref, located, "ready", sniffed, outcome.stat.size, revision);
-  const { token, expiresAt } = issueMediaCapability(assetId, revision!, now);
+  const { token, expiresAt } = issueMediaCapability(assetId, revision!, now, binding);
   remember(assetId, { ref, asset, revision: revision!, path: outcome.path, fingerprint: expected, expiresAt }, now);
   return { asset, url: `${MEDIA_ROUTES.bytes}/${assetId}?${MEDIA_CAPABILITY_QUERY_PARAM}=${token}`, expiresAt };
 }
@@ -715,7 +725,9 @@ export async function mediaAssetsRoute(request: DelegatedRequest, deps: MediaAss
       if ((error as { status?: unknown } | null)?.status === 413) fail(413, "too-large", "That media reference is too large.");
       fail(400, "invalid-request", "Choose media from this conversation, Files or its workspace.");
     }
-    return { status: 200, headers: { ...RESOLVE_HEADERS }, body: await resolveMedia(parseRef(body), deps, now) };
+    const identity = process.env.MURAGE_CLOUD_ROLE === "home" ? cloudIdentity(request.headers) : undefined;
+    const binding = identity?.accessHash ? { deviceId: identity.id, accessHash: identity.accessHash } : undefined;
+    return { status: 200, headers: { ...RESOLVE_HEADERS }, body: await resolveMedia(parseRef(body), deps, now, binding) };
   } catch (error) {
     if (error instanceof MediaError) return { status: error.status, headers: { ...RESOLVE_HEADERS }, body: { error: error.message, code: error.code } };
     throw error;

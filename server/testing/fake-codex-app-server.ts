@@ -52,7 +52,10 @@
 //
 // Keep this file dependency-free — it runs as a bare `node` subprocess.
 import { fixtureDumpEnvironment } from "./fixture-dump.ts";
+import { spawn } from "node:child_process";
+import { createHash } from "node:crypto";
 import { appendFileSync, existsSync, readFileSync, writeFileSync } from "node:fs";
+import { join } from "node:path";
 import { writeFileAtomic } from "../atomic.ts";
 import { logProposalTurn, proposalFrom, proposalReply, proposeThroughMcp } from "./fake-mcp-propose.ts";
 import { fakeReviewReply } from "./fake-review.ts";
@@ -180,6 +183,9 @@ let turnSeq = 0;
 const accumulated = { inputTokens: 0, cachedInputTokens: 0, outputTokens: 0 };
 const calls: Array<{ method: string; params: unknown }> = [];
 let decision: unknown = null;
+/** What each PreToolUse hook run answered, for the tests (id, tool name, input, verdict, reason), and whether the turn was interrupted. */
+const hookLog: Array<{ id: string; name: string; input: unknown; verdict: string; reason?: string }> = [];
+let interrupted = false;
 
 // FAKE_CODEX_SKILLS_BATCHED holds every line from the skills/list answer
 // through turn/completed and writes them in ONE chunk, the way a busy pipe
@@ -242,7 +248,7 @@ const dump = () => {
   if (process.env.FAKE_CODEX_DUMP) {
     writeFileAtomic(
       process.env.FAKE_CODEX_DUMP,
-      JSON.stringify({ pid: process.pid, argv: process.argv.slice(2), env: fixtureDumpEnvironment(), calls, decision, ...(warmMode ? { credFile: readMountedCredFile() } : {}) }, null, 2),
+      JSON.stringify({ pid: process.pid, argv: process.argv.slice(2), env: fixtureDumpEnvironment(), calls, decision, hookLog, interrupted, ...(warmMode ? { credFile: readMountedCredFile() } : {}) }, null, 2),
     );
   }
 };
@@ -306,6 +312,136 @@ const finishTurn = () => {
   } else notify("turn/completed", { turn: { status: "completed" } });
 };
 
+// ---- Approval policy and hooks, the way the real app-server honours them (Rules 67, 68) ----------------------------------------
+//   FAKE_CODEX_HOOKS       normal (default) | none (hooks/list is not a method: an old build) | dead (the handlers never run: no
+//                          SessionStart, no PreToolUse) | dead-runs (the same, but the turn still runs its calls and completes, as a
+//                          Codex that carries on past a hook that never ran would) | untrusted-stays (config/batchWrite answers ok and trusts nothing)
+//   FAKE_CODEX_TOOLS       JSON array of tool calls the turn makes: {kind: shell|apply_patch|mcp|update_plan|view_image|other, id,
+//                          command?, cwd?, patch?, server?, tool?, input?, name?, hook?: false (Codex skips the hook, as when it
+//                          fails open), escalate?: true (a sandbox escalation: asked about whatever the hook said)}
+//   FAKE_CODEX_ESCALATION  "0": the scripted approval modes (approval, windows-command) are NOT sandbox escalations, so `on-request` asks
+//                          nothing for them, as the real one does; by default they stand for an escalation and still ask.
+// Under `on-request` a command or file call runs without an approval request; the PreToolUse hook (when hooks.json is trusted and
+// features.hooks is on) runs before it. Under `untrusted` and the other policies the approvals are emitted as before.
+const escalationAsks = () => process.env.FAKE_CODEX_ESCALATION !== "0";
+let policyNow = "";
+const noteExecutionPolicy = (params: any) => { if (typeof params?.approvalPolicy === "string") policyNow = params.approvalPolicy; };
+const onRequestPolicy = () => policyNow === "on-request" || policyNow === "onRequest";
+const hooksOn = () => process.argv.includes("features.hooks=true") && process.env.FAKE_CODEX_HOOKS !== "none" && Boolean(process.env.CODEX_HOME);
+const snakeEvent = (event: string) => event.replace(/[A-Z]/g, (c, i) => (i ? "_" : "") + c.toLowerCase());
+type FakeHook = { event: string; key: string; command: string; timeout: number; hash: string; path: string };
+const readFakeHooks = (): FakeHook[] => {
+  if (!hooksOn()) return [];
+  const path = join(process.env.CODEX_HOME!, "hooks.json");
+  let doc: any;
+  try { doc = JSON.parse(readFileSync(path, "utf8")); } catch { return []; }
+  const found: FakeHook[] = [];
+  for (const [event, groups] of Object.entries(doc?.hooks ?? {})) {
+    (Array.isArray(groups) ? groups : []).forEach((group: any, gi: number) => (Array.isArray(group?.hooks) ? group.hooks : []).forEach((handler: any, hi: number) => {
+      if (handler?.type !== "command" || typeof handler.command !== "string") return;
+      found.push({ event, key: `${path}:${snakeEvent(event)}:${gi}:${hi}`, command: handler.command, timeout: Number(handler.timeout) || 600, path,
+        hash: "sha256:" + createHash("sha256").update(JSON.stringify([event, handler.command, handler.timeout ?? null])).digest("hex") });
+    }));
+  }
+  return found;
+};
+const hookStatePath = () => join(process.env.CODEX_HOME ?? "", "fake-hooks-state.json");
+const readHookState = (): Record<string, { trusted_hash?: string }> => { try { return JSON.parse(readFileSync(hookStatePath(), "utf8")); } catch { return {}; } };
+const trustOf = (hook: FakeHook, state = readHookState()) => (state[hook.key]?.trusted_hash === hook.hash ? "trusted" : state[hook.key] ? "modified" : "untrusted");
+type HookResult = { kind: "allow" | "deny" | "block" | "none"; reason?: string };
+/** Runs every trusted handler of an event, the way Codex does: the payload on stdin, exit 2 blocks, a clean exit allows (or denies when it prints a
+ *  deny), anything else is a failed run that Codex continues past. */
+const runFakeHooks = async (event: string, payload: Record<string, unknown>): Promise<HookResult> => {
+  if (process.env.FAKE_CODEX_HOOKS === "dead" || process.env.FAKE_CODEX_HOOKS === "dead-runs") return { kind: "none" };
+  const state = readHookState();
+  let result: HookResult = { kind: "none" };
+  for (const hook of readFakeHooks().filter((h) => h.event === event && trustOf(h, state) === "trusted")) {
+    const outcome = await new Promise<HookResult>((resolve) => {
+      const child = spawn(process.platform === "win32" ? "cmd" : "sh", [process.platform === "win32" ? "/c" : "-c", hook.command], { env: process.env, stdio: ["pipe", "pipe", "pipe"] });
+      let stdout = "", stderr = "";
+      child.stdout.on("data", (d) => { stdout += d; });
+      child.stderr.on("data", (d) => { stderr += d; });
+      child.on("error", () => resolve({ kind: "none" }));
+      child.on("close", (code) => {
+        if (code === 2) return resolve({ kind: "block", reason: stderr.trim() });
+        if (code !== 0) return resolve({ kind: "none" });
+        try {
+          const out = JSON.parse(stdout)?.hookSpecificOutput;
+          if (out?.permissionDecision === "deny") return resolve({ kind: "deny", reason: String(out.permissionDecisionReason ?? "") });
+        } catch { /* nothing printed */ }
+        // a clean exit is a completed run and the call proceeds (rig, Codex 0.129.0 and 0.163.0: a printed allow is "unsupported", a silent exit is not)
+        resolve({ kind: "allow" });
+      });
+      child.stdin.on("error", () => {});
+      child.stdin.end(JSON.stringify({ session_id: nativeThreadId, transcript_path: null, cwd: process.cwd(), hook_event_name: event, model: "fake-codex-model", permission_mode: "default", ...payload }));
+    });
+    if (outcome.kind === "block" || outcome.kind === "deny") return outcome;
+    if (outcome.kind === "allow") result = outcome;
+  }
+  return result;
+};
+let sessionStartedFor = "";
+/** The SessionStart handlers run when the first turn of a session begins, after the turn/start answer (rig: Codex 0.129.0, 0.163.0). */
+//   FAKE_CODEX_SESSION_DELAY_MS  the SessionStart handlers run this long after the turn begins (a late proof)
+//   FAKE_CODEX_SESSION_LOG       a line is appended each time the SessionStart handlers run (counted across processes)
+//   FAKE_CODEX_INTERRUPT_DELAY_MS  turn/interrupt is answered this long after it arrives (the interrupt stays pending)
+//   FAKE_CODEX_EARLY_ITEM        a reasoning item starts before the SessionStart handlers run
+const fakeSessionStart = async () => {
+  if (!hooksOn() || sessionStartedFor === nativeThreadId) return;
+  sessionStartedFor = nativeThreadId;
+  if (process.env.FAKE_CODEX_EARLY_ITEM) notify("item/started", { item: { id: "r0", type: "reasoning" } });
+  const delay = Number(process.env.FAKE_CODEX_SESSION_DELAY_MS) || 0;
+  if (delay > 0) await new Promise((resolve) => setTimeout(resolve, delay));
+  if (process.env.FAKE_CODEX_SESSION_LOG) appendFileSync(process.env.FAKE_CODEX_SESSION_LOG, `${process.pid} SessionStart\n`);
+  await runFakeHooks("SessionStart", { source: "startup" });
+};
+type FakeCall = { concurrent?: boolean; delayMs?: number; runAnyway?: boolean; kind: string; id: string; command?: string; cwd?: string; patch?: string; server?: string; tool?: string; input?: unknown; name?: string; hook?: boolean; escalate?: boolean };
+const hookNameOf = (call: FakeCall) => call.kind === "shell" ? "Bash" : call.kind === "mcp" ? `mcp__${call.server}__${call.tool}` : call.kind === "other" ? String(call.name) : call.kind;
+const hookInputOf = (call: FakeCall): unknown => call.kind === "shell" ? { command: call.command } : call.kind === "apply_patch" ? { command: call.patch } : call.kind === "mcp" ? (call.input ?? {}) : (call.input ?? {});
+/** One tool call: the hook first (when it is live and the call is not marked to skip it), then item/started and item/completed.
+ *  A denied or blocked call never starts. Returns whether it ran. */
+const playFakeCall = async (call: FakeCall): Promise<boolean> => {
+  if (hooksOn() && call.hook !== false && onRequestPolicy()) {
+    const verdict = await runFakeHooks("PreToolUse", { turn_id: nativeTurnId, tool_name: hookNameOf(call), tool_input: hookInputOf(call), tool_use_id: call.id, cwd: call.cwd ?? process.cwd() });
+    hookLog.push({ id: call.id, name: hookNameOf(call), input: hookInputOf(call), verdict: verdict.kind, ...(verdict.reason !== undefined ? { reason: verdict.reason } : {}) });
+    if ((verdict.kind === "deny" || verdict.kind === "block") && !call.runAnyway) {
+      notify("item/completed", { item: { id: call.id, type: call.kind === "shell" ? "commandExecution" : "fileChange", status: "declined", aggregatedOutput: verdict.reason ?? "" } });
+      return false;
+    }
+  }
+  const started = call.kind === "shell" ? { id: call.id, type: "commandExecution", command: call.command, cwd: call.cwd ?? process.cwd() }
+    : call.kind === "apply_patch" ? { id: call.id, type: "fileChange", changes: [{ path: (/\*\*\* (?:Add|Update|Delete) File: (.+)/.exec(call.patch ?? "")?.[1]) ?? "file", kind: "update" }] }
+    : call.kind === "mcp" ? { id: call.id, type: "mcpToolCall", server: call.server, tool: call.tool }
+    : null;
+  if (started) notify("item/started", { item: started });
+  if (call.escalate && started) {
+    const answer = await new Promise<any>((resolve) => {
+      proposalAsks.set(7000, resolve);
+      out({ jsonrpc: "2.0", id: 7000, method: call.kind === "apply_patch" ? "item/fileChange/requestApproval" : "item/commandExecution/requestApproval",
+        params: { threadId: nativeThreadId, turnId: nativeTurnId, itemId: call.id, ...(call.command ? { command: call.command } : {}), cwd: call.cwd ?? process.cwd(), reason: "needs to leave the sandbox" } });
+    });
+    decision = answer;
+    if (answer?.decision !== "accept") { notify("item/completed", { item: { id: call.id, type: started.type, status: "declined" } }); return false; }
+  }
+  if (started) notify("item/completed", { item: { id: call.id, type: started.type, status: "completed", exitCode: 0, aggregatedOutput: "" } });
+  return true;
+};
+const playScriptedTurn = async () => {
+  await fakeSessionStart();
+  // handlers that never ran mean no model request is ever made: the turn just waits for the driver to give up on it
+  if (process.env.FAKE_CODEX_HOOKS === "dead" && hooksOn()) return;
+  for (const call of JSON.parse(process.env.FAKE_CODEX_TOOLS ?? "[]") as FakeCall[]) {
+    if (call.delayMs) await new Promise((resolve) => setTimeout(resolve, call.delayMs));
+    // a concurrent call is not waited for: the next one starts while its hook (and any card) is still open
+    if (call.concurrent) void playFakeCall(call).then(() => dump());
+    else await playFakeCall(call);
+  }
+  dump();
+  notify("item/completed", { item: { id: "m1", type: "agentMessage", text: "done from fake codex" } });
+  dump();
+  notify("turn/completed", { turn: { status: "completed" } });
+};
+
 let buf = "";
 process.stdin.on("data", (chunk) => {
   buf += chunk;
@@ -345,6 +481,34 @@ process.stdin.on("data", (chunk) => {
         }
         out({ jsonrpc: "2.0", id: msg.id, result: { ok: true } });
         break;
+      case "hooks/list": {
+        if (process.env.FAKE_CODEX_HOOKS === "none") { out({ jsonrpc: "2.0", id: msg.id, error: { code: -32601, message: "method not found" } }); break; }
+        const cwd = msg.params?.cwds?.[0] ?? process.cwd();
+        const state = readHookState();
+        out({ jsonrpc: "2.0", id: msg.id, result: { data: [{ cwd, errors: [], warnings: [], hooks: readFakeHooks().map((h, i) => ({
+          key: h.key, eventName: h.event.replace(/^./, (c) => c.toLowerCase()), handlerType: "command", command: h.command, async: false, matcher: null, timeoutSec: h.timeout,
+          statusMessage: null, additionalContextLimit: null, sourcePath: h.path, source: "user", pluginId: null, displayOrder: i, enabled: true, isManaged: false,
+          currentHash: h.hash, trustStatus: trustOf(h, state) })) }] } });
+        break;
+      }
+      case "config/batchWrite": {
+        if (process.env.FAKE_CODEX_HOOKS !== "untrusted-stays") {
+          const next = readHookState();
+          for (const edit of msg.params?.edits ?? []) if (edit?.keyPath === "hooks.state" && edit.value && typeof edit.value === "object") Object.assign(next, edit.value);
+          writeFileSync(hookStatePath(), JSON.stringify(next));
+        }
+        out({ jsonrpc: "2.0", id: msg.id, result: { status: "ok", version: "sha256:fake", filePath: join(process.env.CODEX_HOME ?? "", "config.toml"), overriddenMetadata: null } });
+        break;
+      }
+      case "turn/interrupt": {
+        interrupted = true;
+        const interruptId = msg.id;
+        const answerInterrupt = () => { dump(); out({ jsonrpc: "2.0", id: interruptId, result: {} }); };
+        const interruptDelay = Number(process.env.FAKE_CODEX_INTERRUPT_DELAY_MS) || 0;
+        if (interruptDelay > 0) setTimeout(answerInterrupt, interruptDelay);
+        else answerInterrupt();
+        break;
+      }
       case "model/list":
         if (msg.params?.cursor === "page-2") {
           out({
@@ -372,6 +536,7 @@ process.stdin.on("data", (chunk) => {
         }
         break;
       case "thread/resume":
+        noteExecutionPolicy(msg.params);
         if (process.env.FAKE_CODEX_RESUME_GATE && !existsSync(process.env.FAKE_CODEX_RESUME_GATE)) {
           // a slow start: answer only once the gate file exists
           const resumeId = msg.id, resumeThread = msg.params?.threadId;
@@ -385,6 +550,7 @@ process.stdin.on("data", (chunk) => {
         }
         break;
       case "thread/start":
+        noteExecutionPolicy(msg.params);
         if (process.env.FAKE_CODEX_LAUNCH_CRASHES || process.env.FAKE_CODEX_LAUNCH_KILLS || process.env.FAKE_CODEX_LAUNCH_SILENT) {
           const launched = countLaunch();
           if (launched < (Number(process.env.FAKE_CODEX_LAUNCH_CRASHES) || 0)) {
@@ -403,6 +569,7 @@ process.stdin.on("data", (chunk) => {
         break;
       case "turn/start": {
         nativeThreadId = msg.params.threadId;
+        noteExecutionPolicy(msg.params);
         if (warmMode) nativeTurnId = `turn-${++turnSeq}`;
         if (process.env.FAKE_CODEX_STOP_RACE) {
           const heldId = msg.id;
@@ -539,6 +706,9 @@ process.stdin.on("data", (chunk) => {
           }
         }
         out({ jsonrpc: "2.0", id: msg.id, result: turnResult() });
+        if (process.env.FAKE_CODEX_TOOLS) { void playScriptedTurn(); break; }
+        // the SessionStart handlers run as the first turn of a session begins, on every turn shape (once per session)
+        void fakeSessionStart();
         // Bounded-ingress fixtures (A4), keyed on the prompt text.
         const promptText = String(msg.params?.input?.[0]?.text ?? "");
         // lane review: a review run answers with its verdict (fake-review.ts)
@@ -639,6 +809,17 @@ process.stdin.on("data", (chunk) => {
               `\"Get-Content -Raw -LiteralPath 'C:\\Users\\Ada\\workspaces\\${"very-long-folder\\".repeat(8)}NOTES.md'\"`,
             ].join(" ")
           : mode === "action-guard" ? "printf hello > notes.txt" : "ls -la";
+        // Gated: the call goes through the hook first, as Codex runs it; a command Codex would ask about is a sandbox escalation only.
+        if (onRequestPolicy() && hooksOn() && !["mcp-elicitation", "form-elicitation", "user-input"].includes(mode)) {
+          const approvalMode = mode === "approval" || mode === "windows-command";
+          void (async () => {
+            await fakeSessionStart();
+            await playFakeCall({ kind: "shell", id: "i1", command: approvalMode && mode !== "windows-command" ? "rm -rf scratch" : command, escalate: approvalMode && escalationAsks() });
+            notify("item/started", { item: { id: "w1", type: "webSearch", query: "Murage" } });
+            finishTurn();
+          })();
+          break;
+        }
         notify("item/started", { item: { id: "i1", type: "commandExecution", command } });
         notify("item/started", { item: { id: "w1", type: "webSearch", query: "Murage" } });
         if (mode === "mcp-elicitation") {
@@ -717,7 +898,7 @@ process.stdin.on("data", (chunk) => {
               ],
             },
           });
-        } else if (mode === "approval" || mode === "windows-command") {
+        } else if ((mode === "approval" || mode === "windows-command") && (!onRequestPolicy() || escalationAsks())) {
           const approvalCommand = mode === "windows-command" ? command : "rm -rf scratch";
           // FAKE_CODEX_APPROVAL = {method, params} replaces the default legacy shell ask
           const custom = process.env.FAKE_CODEX_APPROVAL ? JSON.parse(process.env.FAKE_CODEX_APPROVAL) : null;

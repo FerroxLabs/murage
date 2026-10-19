@@ -3,10 +3,14 @@
 //
 // The stop line: the three kinds of action Full access still stops before.
 // Decided by what the action TOUCHES, never by which command spelled it.
+import { posix, win32 } from "node:path";
 import { describe, expect, it } from "vitest";
 
 import { autoVerdict } from "./auto-approve.ts";
 import { classifyStopLine, stopLineKey, stopLineKeyCovers, type StopLinePlace } from "./stop-line.ts";
+
+// these paths are made up and hold no link, so resolving them in order is collapsing them
+const madeUpRealpath = (p: string) => (/^[A-Za-z]:\\|^\\\\/.test(p) ? win32.normalize(p) : posix.normalize(p));
 
 const HOME = "/Users/ada";
 const CWD = "/Users/ada/Projects/site";
@@ -15,6 +19,7 @@ const place = (extra: Partial<StopLinePlace> = {}): StopLinePlace => ({
   roots: [CWD, "/Users/ada/.murage/workspaces/bot-1", "/tmp"],
   home: HOME,
   knownRecipients: new Set(["#general", "c0123", "boss@example.com", "github:ada/known"]),
+  realpath: madeUpRealpath,
   ...extra,
 });
 
@@ -134,11 +139,19 @@ const rows: Row[] = [
   ["slack send to existing channel", "mcp__slack__send_message", { channel: "#general", text: "hi" }, "pass"],
   ["slack send to known channel id", "mcp__slack__chat_post_message", { channel: "C0123", text: "hi" }, "pass"],
   ["slack send to new user", "mcp__slack__send_message", { channel: "@newperson", text: "hi" }, "message"],
-  ["slack reply in thread", "mcp__slack__send_message", { channel: "C999", thread_ts: "123.4", text: "done" }, "pass"],
+  ["slack reply in a thread of a known channel", "mcp__slack__send_message", { channel: "C0123", thread_ts: "123.4", text: "done" }, "pass"],
+  // a reply may only go to people already in its conversation: a thread id proves nothing about an unknown channel or address (Astra r3)
+  ["slack reply in a thread of an unknown channel", "mcp__slack__send_message", { channel: "C999", thread_ts: "123.4", text: "done" }, "message"],
+  ["email reply in a thread to a stranger under recipient_email", "mcp__gmail__send_email", { thread_id: "t1", recipient_email: "stranger@example.com", body: "ok" }, "message"],
+  ["email reply in a thread to the known boss under recipient_email", "mcp__gmail__send_email", { thread_id: "t1", recipient_email: "boss@example.com", body: "ok" }, "pass"],
   ["email to the known boss", "mcp__gmail__send_email", { to: "Boss <boss@example.com>", subject: "x" }, "pass"],
   ["email to a new person", "mcp__gmail__send_email", { to: "stranger@example.com", subject: "x" }, "message"],
   ["email with a new cc", "mcp__gmail__send_email", { to: "boss@example.com", cc: ["new@example.com"] }, "message"],
-  ["email reply in a thread", "mcp__gmail__reply_to_thread", { thread_id: "t1", body: "ok" }, "pass"],
+  // a plain thread reply names no address: it goes to the thread's own participants, never a new recipient
+  ["email reply in a thread naming no recipient", "mcp__gmail__reply_to_thread", { thread_id: "t1", body: "ok" }, "pass"],
+  ["email reply in a thread with an added stranger", "mcp__gmail__reply_to_thread", { thread_id: "t1", body: "ok", cc: ["stranger@example.com"] }, "message"],
+  ["email reply with an address that cannot be read", "mcp__gmail__reply_to_thread", { thread_id: "t1", body: "ok", to: { weird: 1 } }, "message"],
+  ["reply with neither thread nor address", "mcp__gmail__reply_to_thread", { body: "ok" }, "message"],
   ["message with no recipient", "mcp__telegram__send_message", { text: "hello" }, "message"],
   ["draft is not a send", "mcp__gmail__create_draft", { to: "stranger@example.com" }, "pass"],
   ["tweet", "mcp__twitter__create_tweet", { text: "hello world" }, "message"],
@@ -280,6 +293,7 @@ describe("PowerShell and cmd on Windows", () => {
     roots: [WIN_CWD, "C:\\app\\data\\workspaces\\ws-1", "C:\\Users\\owner\\AppData\\Local\\Temp"],
     home: WIN_HOME,
     knownRecipients: new Set(),
+    realpath: madeUpRealpath,
     ...extra,
   });
   const run = (command: string, extra?: Partial<StopLinePlace>) => classifyStopLine("shell", { command }, command, win(extra));
@@ -487,6 +501,8 @@ it("holds a Composio send for the owner at Ask and Auto, and lets a read through
   }
   const readStop = classifyStopLine(tool, read, "Gmail fetch", place());
   expect(readStop).toBeNull();
-  expect(autoVerdict({ autoApprove: true }, tool, "Gmail fetch", { stopLine: readStop }).approve).toEqual(expect.any(String));
+  // the call it runs is read whole (A13-FIX-DESIGN C3: a connector call with no readable list is unread)
+  expect(autoVerdict({ autoApprove: true }, tool, "Gmail fetch", { stopLine: readStop, call: { toolCall: { name: tool, input: read } } }).approve).toEqual(expect.any(String));
+  expect(autoVerdict({ autoApprove: true }, tool, "Gmail fetch", { stopLine: readStop }).source).toBe("unread-call");
   expect(autoVerdict({ autoApprove: false }, tool, "Gmail fetch", { stopLine: readStop }).approve).toBeNull();
 });

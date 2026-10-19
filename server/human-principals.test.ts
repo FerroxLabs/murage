@@ -1,4 +1,4 @@
-import { mkdirSync, rmSync } from "node:fs";
+import { mkdirSync } from "node:fs";
 import { beforeEach, expect, it } from "vitest";
 import { DATA_DIR } from "./config.ts";
 import { closeDatabase, database } from "./database.ts";
@@ -12,8 +12,9 @@ import { searchMemory } from "./memory/search.ts";
 import { getOrCreateChannel, mirrorExchange } from "./comms-visibility.ts";
 import { knownHumanNames, observeVerifiedHuman, ownerChannelUserIds, threadHumanChannelUserId, linkHumanBinding, resolveHumanBinding, humanTask, threadHumanPrincipal, revokeHumanConnection, shareHumanScope, assertHumanPrincipal, bindHumanThread, resolveHumanDelivery, humanBindingStatus } from "./human-principals.ts";
 import { LineageAllowance } from "./memory/lineage-allowance.ts";
+import { removeTempDirSync } from "./testing/cleanup.ts";
 
-beforeEach(()=>{closeDatabase();rmSync(DATA_DIR,{recursive:true,force:true});mkdirSync(DATA_DIR,{recursive:true});});
+beforeEach(()=>{closeDatabase();removeTempDirSync(DATA_DIR);mkdirSync(DATA_DIR,{recursive:true});});
 const fresh=()=>new Store(()=>({instanceId:"fixture",model:"fixture"}));
 function person(userId="UOTHER"){
   const id=observeVerifiedHuman({platform:"slack",authorityId:"TEAM",connectionId:"connection-"+userId,userId});

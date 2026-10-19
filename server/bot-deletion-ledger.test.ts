@@ -132,4 +132,69 @@ describe("the DELETE route answers a refusal thrown inside the serialiser", () =
     expect(source).toMatch(/return await botDeleteSerial\.run\(deleteBotId, /);
     expect(source).not.toMatch(/return botDeleteSerial\.run\(/);
   });
+
+  it("server/index.ts awaits the per-room DELETE run, and both ledgers run on the monotonic clock (R4)", () => {
+    const source = readFileSync(fileURLToPath(new URL("./index.ts", import.meta.url)), "utf8");
+    expect(source).toMatch(/return await roomDeleteSerial\.run\(deleteGroupId, /);
+    expect(source).not.toMatch(/return roomDeleteSerial\.run\(/);
+    expect(source).toMatch(/const roomRemovals = createBotDeletionLedger\(\{ now: \(\) => performance\.now\(\) \}\)/);
+    expect(source).toMatch(/const botRemovals = createBotDeletionLedger\(\{ now: \(\) => performance\.now\(\) \}\)/);
+  });
+
+  it("a deletion recorded with its visibility needs no later marking; the bot caller's two-call shape is unchanged", () => {
+    const ledger = createBotDeletionLedger();
+    ledger.deleted("room-seen", 9, "e1", true);
+    ledger.deleted("room-unseen", 10, "e1", false);
+    ledger.deleted("bot", 11, "e1");
+    expect(ledger.removedFor("owner-scoped")!.map((entry) => entry.id)).toEqual(["room-seen"]);
+    ledger.markCompanionVisible("bot", true);
+    expect(ledger.removedFor("owner-scoped")!.map((entry) => entry.id)).toEqual(["room-seen", "bot"]);
+  });
+});
+
+describe("Astra r7: the hide a phone missed, and the turn an archive takes", () => {
+  it("order 7b: a bot archived within the window and then deleted stays listed for the scoped roster, which may have missed the hide", () => {
+    let now = 1_000;
+    const ledger = createBotDeletionLedger({ now: () => now });
+    ledger.hidden("x", 3, "e1");
+    ledger.deleted("x", 3, "e1");
+    ledger.markCompanionVisible("x", false); // at the commit the phone could not see the archived bot
+    expect(ledger.removedFor("owner-scoped")).toEqual([{ id: "x", tasksSeq: 3, tasksEpoch: "e1", kind: "deleted" }]);
+    // the rooms' one-call shape is unchanged: a room the phone could not see is fenced on it by the roster's horizon, not listed
+    ledger.hidden("room", 3, "e1");
+    ledger.deleted("room", 4, "e1", false);
+    expect(ledger.removedFor("owner-scoped")!.map((entry) => entry.id)).toEqual(["x"]);
+    // a bot the phone could not see within the window is not listed, as before
+    ledger.deleted("y", 5, "e1");
+    ledger.markCompanionVisible("y", false);
+    expect(ledger.removedFor("owner-scoped")!.map((entry) => entry.id)).toEqual(["x"]);
+    // a hide older than an answer's life proves nothing: no answer from before it can still land
+    ledger.hidden("z", 5, "e1");
+    now += ANSWER_TTL_MS + 1;
+    ledger.deleted("z", 5, "e1");
+    ledger.markCompanionVisible("z", false);
+    expect(ledger.removedFor("owner-scoped")).toEqual([]);
+  });
+
+  it("H2: an archive or restore runs its whole handler inside the bot's turn; a handler that throws (its client gone) releases it", async () => {
+    const serial = createPerKeySerialiser();
+    let finishDelete!: () => void;
+    const deleting = new Promise<void>((resolve) => { finishDelete = resolve; });
+    const del = serial.run("b", async () => { await deleting; });
+    // the PATCH waits its turn; its client leaves meanwhile, and writing the answer throws
+    const patch = serial.run("b", async () => { throw new Error("socket hang up"); });
+    expect(serial.busy("b")).toBe(true);
+    finishDelete();
+    await del;
+    await expect(patch).rejects.toThrow("socket hang up");
+    expect(serial.busy("b")).toBe(false);
+    await expect(serial.run("b", async () => "the next DELETE ran")).resolves.toBe("the next DELETE ran");
+  });
+
+  it("H2: server/index.ts runs the archive/restore PATCH inside the bot's turn and hands out no release that a closed response could lose", () => {
+    const source = readFileSync(fileURLToPath(new URL("./index.ts", import.meta.url)), "utf8");
+    expect(source).toMatch(/if \(body\.hidden !== undefined\) return await botDeleteSerial\.run\(patchBotId, patchBot\);/);
+    expect(source).not.toMatch(/botDeleteSerial\.hold\(/);
+    expect(source).not.toMatch(/res\.once\("close", await/);
+  });
 });

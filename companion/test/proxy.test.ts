@@ -7,7 +7,7 @@
 // through, and the harness's loopback gate rejecting a proxied request.
 import { spawn, type ChildProcess } from "node:child_process";
 import { createServer, request, type IncomingMessage, type Server } from "node:http";
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -16,6 +16,7 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { createProxyHandler } from "../src/proxy.ts";
 import { createConnectedDeviceTracker } from "../src/connected-devices.ts";
 import type { CompanionEndpoint } from "../src/endpoints.ts";
+import { removeTempDirSync } from "../../server/testing/cleanup.ts";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const ROOT = join(HERE, "..", "..");
@@ -211,7 +212,7 @@ afterAll(async () => {
     // the suite instead
     setTimeout(resolve, 10_000).unref?.();
   });
-  rmSync(home, { recursive: true, force: true });
+  removeTempDirSync(home);
 });
 
 describe("the sidecar in front of an unmodified harness", () => {

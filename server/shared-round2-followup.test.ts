@@ -1,6 +1,6 @@
 // Copyright 2026 Ferrox Labs
 // SPDX-License-Identifier: AGPL-3.0-or-later
-import { existsSync, mkdirSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, realpathSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import ts from "typescript";
 import { beforeEach, expect, it, vi } from "vitest";
@@ -25,6 +25,8 @@ import { ownerMemoryTicket } from "./memory/authority.ts";
 import { standingContextParts } from "./standing-context.ts";
 import { partitionFileRefusal } from "./partition-files.ts";
 import { autoVerdict } from "./auto-approve.ts";
+import { noteStartupFileEvent } from "./engine-env.ts";
+import { removeTempDirSync } from "./testing/cleanup.ts";
 
 const source = readFileSync(new URL("./index.ts", import.meta.url), "utf8");
 const ast = ts.createSourceFile("index.ts", source, ts.ScriptTarget.Latest, true);
@@ -45,7 +47,7 @@ function seam(name: string, deps: Record<string, unknown>) {
   return evaluate(`${ts.isVariableDeclaration(node) ? "const " : ""}${node.getText(ast)}; return ${name};`, deps);
 }
 function value(name: string, deps: Record<string, unknown>) { return seam(name, deps); }
-beforeEach(() => { closeDatabase(); rmSync(DATA_DIR, { recursive: true, force: true }); mkdirSync(DATA_DIR, { recursive: true }); });
+beforeEach(() => { closeDatabase(); removeTempDirSync(DATA_DIR); mkdirSync(DATA_DIR, { recursive: true }); });
 function fixture() {
   const store = new Store(() => ({ instanceId: "fixture", model: "fixture" }));
   const make = (name: string, section: string) => { const bot = store.createBot(); store.patchBot(bot.id, { name, section }); return bot; };
@@ -155,6 +157,8 @@ it("R2.7 real permission event denies cross-partition writes before Full access 
   const f = fixture(); Object.assign(f.iris, { autoApprove: true, fullAccess: true, noLimits: true });
   const respondToRequest = vi.fn(), judged = vi.fn(autoVerdict);
   const fold = seam("foldRuntimeEvent", { fluxFirstTokenProbe: { begin() {}, observe() {} }, providerReplyOf: () => undefined, accountProjectEvent: vi.fn(), shouldIgnoreProviderEvent: () => false, accountPresentedProjectEvent: () => true, presentedRequests: { publish: vi.fn() }, localVmThreadTargets: new Map(), groupGoalCoordinatorTurns: new Map(), groupGoalCoordinatorTurnForEvent: () => undefined, broadcast: vi.fn(), routines: null, store: f.store, botForDirectThread: () => f.iris, partitionFileRefusal, turnCwdByThread: new Map(), turnEngineByThread: new Map(), registry: { get: () => ({ adapter: { respondToRequest } }) }, autoVerdict: judged,
+    // index.ts imports it from engine-env.ts and calls it for every permission event (Rule 74a): the real one, as in production
+    noteStartupFileEvent,
     // lane PF's reply speaker guard: not a project room here, so it guards nothing
     replyGuardContext: () => null, replySpeakerTurns: { started: vi.fn(), completed: vi.fn(), delta: vi.fn(), item: vi.fn(), removalRow: vi.fn() } });
   fold({ type: "request.opened", eventId: "event", threadId: f.work.threadId, requestId: "ask", requestType: "permission", tool: "write_file", filePaths: [join(DATA_DIR, "workspaces", f.iris.id, "MEMORY.md")] });

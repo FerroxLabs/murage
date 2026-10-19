@@ -9,7 +9,7 @@
 // - every history read is paid for BEFORE it is made: a session's expansion in the receipt listing, the evidence of a record, and a
 //   structural rule that a reader on the turn path spends what it is given (Astra P1-2);
 // - a receipt group appended to thousands of times is read from `judgedUpTo` without walking the chunks before it (Astra P1-3).
-import { mkdirSync, readdirSync, readFileSync, rmSync } from "node:fs";
+import { mkdirSync, readdirSync, readFileSync } from "node:fs";
 import { DatabaseSync } from "node:sqlite";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -17,6 +17,7 @@ import ts from "typescript";
 import { afterAll, beforeAll, beforeEach, expect, it } from "vitest";
 import { afterEach as thawAfterEach, beforeEach as thawBeforeEach } from "vitest";
 import { thawRootSetWritesForTest } from "./memory/replay-lineage.ts";
+import { removeTempDirSync } from "./testing/cleanup.ts";
 // 1.0.2: this test models a 1.0.1 file (legacy root-set rows) for the read-time judge, which still decides legacy data until S6.
 thawBeforeEach(() => thawRootSetWritesForTest(true));
 thawAfterEach(() => thawRootSetWritesForTest(false));
@@ -55,7 +56,7 @@ function access() {
 
 beforeEach(() => {
   closeDatabase();
-  rmSync(DATA_DIR, { recursive: true, force: true });
+  removeTempDirSync(DATA_DIR);
   mkdirSync(DATA_DIR, { recursive: true });
   ensureDirs();
   setMemoryMode("active");

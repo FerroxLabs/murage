@@ -1,6 +1,9 @@
-import { useEffect, useRef, useState, type ComponentProps } from "react";
-import { Check, Copy } from "lucide-react";
+import { createContext, useContext, useEffect, useMemo, useRef, useState, type ComponentProps, type ReactNode } from "react";
+import { createPortal } from "react-dom";
+import { Check, ChevronDown, Copy } from "lucide-react";
 import { cn } from "@/lib/cn";
+import { t } from "@/lib/i18n";
+import { advancedRegionId, type AdvancedSectionProps } from "@/lib/settings-cards";
 
 export function Switch({
   checked,
@@ -86,4 +89,51 @@ export function CommandLine({ command }: { command: string }) {
       </button>
     </div>
   );
+}
+
+/** The one Advanced level of a Settings page (1.0.3 I0, SETTINGS-LANES.md): at the bottom of the page, one toggle,
+ *  always labelled "Advanced", with a line naming what is inside. Controlled, so an opener can open it before it
+ *  scrolls to an advanced anchor. A page renders at most one, and no <details> anywhere else in its body. */
+export function AdvancedSection({ section, summary, open, onOpenChange, children }: AdvancedSectionProps) {
+  const region = advancedRegionId(section);
+  return (
+    <section className="space-y-4" data-settings-advanced={section}>
+      <button
+        type="button"
+        aria-expanded={open}
+        aria-controls={region}
+        onClick={() => onOpenChange(!open)}
+        className="flex min-h-[52px] w-full items-center justify-between gap-3 rounded-xl border border-dashed border-hairline px-4 py-3 text-left text-[14px] text-ink-secondary hover:text-ink focus-visible:outline focus-visible:outline-2 focus-visible:outline-focus"
+      >
+        <span><span className="font-medium text-ink">{t("settings.l1.advancedPath")}</span> · {summary}</span>
+        <ChevronDown size={16} aria-hidden className={cn("shrink-0 transition-transform", open && "rotate-180")} />
+      </button>
+      <div id={region} role="region" aria-label={t("settings.l1.advancedPath")} hidden={!open} className="space-y-4">
+        {open && children}
+      </div>
+    </section>
+  );
+}
+
+// A page whose cards live in components that also hold an Advanced part (the messaging apps, Skills) hosts one slot:
+// the page wraps its body in <AdvancedHost>, puts <AdvancedSlotTarget/> inside its AdvancedSection, and a card sends
+// its Advanced part through <InAdvanced>. Closed Advanced mounts no target, so the part is not rendered; a card used
+// outside a host renders its part inline.
+const AdvancedSlotContext = createContext<{ slot: HTMLElement | null; setSlot: (element: HTMLElement | null) => void } | null>(null);
+
+export function AdvancedHost({ children }: { children: ReactNode }) {
+  const [slot, setSlot] = useState<HTMLElement | null>(null);
+  const value = useMemo(() => ({ slot, setSlot }), [slot]);
+  return <AdvancedSlotContext.Provider value={value}>{children}</AdvancedSlotContext.Provider>;
+}
+
+export function AdvancedSlotTarget() {
+  const host = useContext(AdvancedSlotContext);
+  return <div ref={host?.setSlot} className="space-y-4" />;
+}
+
+export function InAdvanced({ children }: { children: ReactNode }) {
+  const host = useContext(AdvancedSlotContext);
+  if (!host) return <>{children}</>;
+  return host.slot ? createPortal(children, host.slot) : null;
 }

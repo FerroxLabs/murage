@@ -3,10 +3,11 @@
 //
 // Astra mem-review round 6 P2: a procedure evidence verdict reached while the lineage repair had failed (replay of unrepaired threads is
 // withheld) must not be served after the repair succeeds, and lineage writes must move the stamp the verdict rests on.
-import { mkdirSync, rmSync } from "node:fs";
+import { mkdirSync } from "node:fs";
 import { beforeEach, expect, it, afterEach } from "vitest";
 import { legacyFile } from "./testing/legacy-file-model.ts";
 import { thawRootSetWritesForTest } from "./replay-lineage.ts";
+import { removeTempDirSync } from "../testing/cleanup.ts";
 // legacyFile (below) thaws the root-set writes for the test that models a 1.0.1-shaped file; every test starts frozen again
 afterEach(() => thawRootSetWritesForTest(false));
 import { DATA_DIR } from "../config.ts";
@@ -18,7 +19,7 @@ import { assertSkillProcedureEvidence, type SkillProcedureContext } from "../ski
 
 beforeEach(() => {
   setRepairRunnerForTest(null); setRepairRetryBaseMs(1_000_000_000);
-  closeDatabase(); rmSync(DATA_DIR, { recursive: true, force: true }); mkdirSync(DATA_DIR, { recursive: true });
+  closeDatabase(); removeTempDirSync(DATA_DIR); mkdirSync(DATA_DIR, { recursive: true });
   setMemoryMode("capture");
 });
 const put = (id: string, at: number, extra: Record<string, unknown> = {}, role = "bot") =>

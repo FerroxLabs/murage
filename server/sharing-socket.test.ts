@@ -133,7 +133,9 @@ it("SOCKET 16.1 #12: a cold-start phone in all mode sees rows, never sharedWith,
   expect(replayed.length).toBeGreaterThan(0);
   for (const frame of replayed) { expect(frame.raw).not.toContain("sharedWith"); expect(frame.raw).not.toContain("partitionedAt"); }
   // the desktop's own stream still carries the owner-only field
-  const deskReplay = await frames(`/api/events?since=${encodeURIComponent(cursor)}&surface=desktop&surfaceSecret=${desktop["x-murage-surface-secret"]}`, {}, seen => seen.some(frame => frame.kind === "bot" && frame.bot?.id === iris.id && frame.bot.name === "Iris R"));
+  const deskPath = `/api/events?since=${encodeURIComponent(cursor)}`;
+  const deskTicket = await (await fetch(`${fixture.info.url}/api/desktop/resource-ticket`, { method: "POST", headers: { ...desktop, "content-type": "application/json" }, body: JSON.stringify({ resource: deskPath }) })).json() as { ticket: string };
+  const deskReplay = await frames(`${deskPath}&surfaceTicket=${deskTicket.ticket}`, {}, seen => seen.some(frame => frame.kind === "bot" && frame.bot?.id === iris.id && frame.bot.name === "Iris R"));
   expect(deskReplay.find(frame => frame.kind === "bot" && frame.bot?.id === iris.id).bot.sharedWith).toEqual({ mode: "all", teams: [] });
 
   // the phone opens the Sales work thread and its row now names it

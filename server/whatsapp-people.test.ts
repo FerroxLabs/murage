@@ -3,7 +3,7 @@
 //
 // WhatsApp owner rule (design 5.1, 5.3, 7.4): the linked number is the only possible owner, and the server enforces it
 // inside linkHumanBinding, so a contact can never become the owner whatever the caller asks for.
-import { mkdirSync, rmSync } from "node:fs";
+import { mkdirSync } from "node:fs";
 import { beforeEach, expect, it } from "vitest";
 import { DATA_DIR } from "./config.ts";
 import { closeDatabase } from "./database.ts";
@@ -11,8 +11,9 @@ import { WORKSPACE_OWNER, humanBindingStatus, linkHumanBinding, observeVerifiedH
 import { ownerMemoryTicket } from "./memory/authority.ts";
 import { createWhatsAppPeople, ensureOwnerLinked, whatsappOrigin } from "./channels/whatsapp/people.ts";
 import type { WhatsAppBinding } from "./channels/whatsapp/event.ts";
+import { removeTempDirSync } from "./testing/cleanup.ts";
 
-beforeEach(() => { closeDatabase(); rmSync(DATA_DIR, { recursive: true, force: true }); mkdirSync(DATA_DIR, { recursive: true }); });
+beforeEach(() => { closeDatabase(); removeTempDirSync(DATA_DIR); mkdirSync(DATA_DIR, { recursive: true }); });
 
 const binding: WhatsAppBinding = { connectionId: "conn-1", linkedPn: "15551230000@s.whatsapp.net", linkedLid: "99887766@lid", chiefBotId: "chief" };
 const CONTACT = "15557654321@s.whatsapp.net";

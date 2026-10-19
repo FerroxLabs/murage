@@ -1,15 +1,16 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // rc13 round 2 (a): while the history upgrade runs, the claim index reads at most one range per turn, and the range follows time (PagedScan's rule).
-import { mkdirSync, rmSync } from "node:fs";
+import { mkdirSync } from "node:fs";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { DATA_DIR } from "../config.ts";
 import { closeDatabase, database } from "../database.ts";
 import { setMemoryMode } from "./repository.ts";
 import * as jobs from "./jobs.ts";
 import { CLAIM_SCAN_MIN_ROWS, memoryClaimIndex, SCAN_CHUNK } from "./claim-index.ts";
+import { removeTempDirSync } from "../testing/cleanup.ts";
 
 const NOW = 1_000_000;
-beforeEach(() => { closeDatabase(); rmSync(DATA_DIR, { recursive: true, force: true }); mkdirSync(DATA_DIR, { recursive: true }); setMemoryMode("capture"); jobs.resetMemoryClaimCursor(); database().exec("PRAGMA synchronous=OFF"); memoryClaimIndex.invalidate(); });
+beforeEach(() => { closeDatabase(); removeTempDirSync(DATA_DIR); mkdirSync(DATA_DIR, { recursive: true }); setMemoryMode("capture"); jobs.resetMemoryClaimCursor(); database().exec("PRAGMA synchronous=OFF"); memoryClaimIndex.invalidate(); });
 afterEach(() => { vi.restoreAllMocks(); memoryClaimIndex.setUpgradeRunning(null); });
 
 function seed(count: number, scopes: number) {
