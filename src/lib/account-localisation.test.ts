@@ -9,7 +9,7 @@ const keys = Object.keys(en).filter(key => key.startsWith("claudeAccounts.")) as
 // A new account string must be translated in all seven packs and listed here.
 const expectedKeys = [
   // 655c1d42 fix(i18n): translate account safety actions
-  "added", "removed", "saved", "refreshError", "changeError", "copied", "copyError", "refresh", "add", "safety",
+  "added", "removed", "saved", "refreshError", "changeError", "copied", "copyError", "refresh", "add", "keepsLogin",
   "instructionsTitle", "instructions", "terminal", "copySignIn", "removeConfirm", "confirmRemoval", "cancelRemoval",
   "saving", "create", "save", "cancel",
   // b5e28ce8 fix(engines): keep Engines settings mounted on an unreadable Claude account list (RED2F)

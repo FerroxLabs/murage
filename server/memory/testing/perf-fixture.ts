@@ -97,6 +97,7 @@ export function buildPerfFixture(shape: PerfShape, target?: PerfTarget) {
   // after the store's lineage began (receipts older than that are judged 'pre-lineage' and the session would be reset)
   const now = Date.now();
   const insertSource = db.prepare("INSERT INTO memory_sources(id,scope_id,thread_id,message_id,revision,content_hash,kind,speaker,outcome,state) VALUES(?,?,?,?,1,?,'text',?,'recorded','active')");
+  const insertAnchor = db.prepare("INSERT OR IGNORE INTO messages(thread_id,id,at,role,kind,text,json) VALUES(?,?,?,?,'text',?,?)");
   const insertVersion = db.prepare("INSERT INTO memory_source_versions(source_id,revision,content_hash,payload,created_at) VALUES(?,1,?,?,?)");
   const insertRecord = db.prepare("INSERT INTO memory_records(id,version,scope_id,kind,text,assertion,state,owner_pinned,valid_from,created_at) VALUES(?,1,?,?,?,?,?,0,?,?)");
   const insertEvidence = db.prepare("INSERT INTO memory_evidence(record_id,record_version,source_id,source_revision,start_byte,end_byte) VALUES(?,1,?,1,0,?)");
@@ -107,6 +108,8 @@ export function buildPerfFixture(shape: PerfShape, target?: PerfTarget) {
   const add = (id: string, text: string, speaker: string, at: number, sourceScope = scope) => {
     const payload = JSON.stringify({ text, kind: "text", speaker, outcome: "recorded" });
     insertSource.run(id, sourceScope, threadId, `message-${id}`, `h-${id}`, speaker);
+    // the message the source cites is stored: an anchor the check cannot read is withheld (S6 rule 23)
+    insertAnchor.run(threadId, `message-${id}`, at, speaker === "owner" ? "user" : "bot", text, JSON.stringify({ id: `message-${id}`, role: speaker === "owner" ? "user" : "bot", kind: "text", text, at }));
     insertVersion.run(id, `h-${id}`, payload, at);
     return Buffer.byteLength(text);
   };

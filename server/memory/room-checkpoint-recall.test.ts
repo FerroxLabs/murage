@@ -15,7 +15,7 @@
 // room context serializes is excluded from recall (the notes' own source
 // chunks included), so the checkpoint is what carries them.
 import { randomUUID } from "node:crypto";
-import { mkdirSync, rmSync } from "node:fs";
+import { mkdirSync } from "node:fs";
 import { beforeEach, expect, it } from "vitest";
 import { DATA_DIR } from "../config.ts";
 import { closeDatabase, database } from "../database.ts";
@@ -32,11 +32,13 @@ import { forgetMemory } from "./forget.ts";
 import { ownerMemoryTicket } from "./authority.ts";
 import { readerWithheldMessage } from "./disclosures.ts";
 import { LineageAllowance } from "./lineage-allowance.ts";
+import { removeTempDirSync } from "../testing/cleanup.ts";
+import { storeAnchorMessage } from "./testing/anchor-message.ts";
 
 const botThread = "0b1c2d3e-4f50-4617-8a9b-0c1d2e3f4a5b", otherThread = "1c2d3e4f-5061-4728-9bac-1d2e3f4a5b6c";
 const roomThread = "2d3e4f50-6172-4839-acbd-2e3f4a5b6c7d";
 const roster = { bots: [{ id: "bot", threadId: botThread }, { id: "other", threadId: otherThread }], groups: [{ id: "room", threadId: roomThread, memberIds: ["bot", "other"] }] };
-beforeEach(() => { closeDatabase(); rmSync(DATA_DIR, { recursive: true, force: true }); mkdirSync(DATA_DIR, { recursive: true }); reconcileMemoryRoster(roster); setMemoryMode("capture"); });
+beforeEach(() => { closeDatabase(); removeTempDirSync(DATA_DIR); mkdirSync(DATA_DIR, { recursive: true }); reconcileMemoryRoster(roster); setMemoryMode("capture"); });
 
 function member(botId = "bot") {
   const registry = new InternalCapabilities(), generation = registry.begin(botId, roomThread);
@@ -46,7 +48,7 @@ function member(botId = "bot") {
 /** A room message captured into the memory queue; the worker holds it. */
 function inFlight(text: string, speaker = "owner") {
   const messageId = randomUUID();
-  captureSource(database(), { id: `message:${roomThread}:${messageId}`, threadId: roomThread, messageId, kind: "text", speaker, outcome: "recorded", text });
+  storeAnchorMessage(database(), roomThread, messageId, text); captureSource(database(), { id: `message:${roomThread}:${messageId}`, threadId: roomThread, messageId, kind: "text", speaker, outcome: "recorded", text });
   const work = claimMemoryJob("room-recall-fixture");
   if (!work) throw Error("No actual capture job");
   return { messageId, sourceId: `message:${roomThread}:${messageId}`, work };

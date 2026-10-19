@@ -5,19 +5,20 @@
 // conversation, not from memory, and a card is settled only by a sign-in that
 // happened AFTER it was posted. A token main pushes again at start-up is the
 // same token that was refused, so it must never resume the task.
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { afterEach, describe, expect, it } from "vitest";
 
 import { MAX_SCOPE_CHARS, MAX_SCOPE_COUNT, mcpSignInFresh, mcpStepUpScope, unionScopeText, waitingMcpSignInCards } from "./mcp-signin-card.ts";
+import { removeTempDirSync } from "./testing/cleanup.ts";
 
 const roots: string[] = [];
 const databases: DatabaseSync[] = [];
 afterEach(() => {
   for (const db of databases.splice(0)) { try { db.close(); } catch { /* closed */ } }
-  for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true });
+  for (const root of roots.splice(0)) removeTempDirSync(root);
 });
 
 function fixture() {

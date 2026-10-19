@@ -14,8 +14,8 @@
 //    outside Murage's sight: Murage never sees those bytes, so it cannot carry them. What Murage can see is the turn itself: a file a
 //    bot writes with its own tools rests on the turn that wrote it, and the turn's reply already carries every part it was shown.
 import type { DatabaseSync } from "node:sqlite";
-import { addTurnParents, currentTurnLineage, runningTurnFor, writeRecordLineage } from "./lineage-write.ts";
-import { denyGeneration, fenceUnchanged, fenceVerdict } from "./deny-read.ts";
+import { addTurnParents, currentTurnLineage, runningTurnFor, turnOwnGenerations, writeRecordLineage } from "./lineage-write.ts";
+import { denyGeneration, fenceUnchanged, fenceVerdict, generationUnchanged } from "./deny-read.ts";
 import type { BuiltPrompt, LineageReader, LineageRef, LineageVerdict, MemoryRef, MemoryRefKind, NoneReason, PromptPart, ToolText, TurnLineage } from "./lineage-types.ts";
 
 /** One part of engine input and what it rests on (line keys, prefixes, memory refs, receipts, or none(reason)). */
@@ -31,7 +31,7 @@ export function toolText(text: string, lineageOf: readonly LineageRef[]): ToolTe
 /** The engine input of a send or steer: the parts joined in order; every part's refs join the running turn (none outside a turn). */
 export function buildPrompt(turn: TurnLineage | undefined, parts: readonly PromptPart[], separator = "\n\n"): BuiltPrompt {
   if (turn) addTurnParents(turn, parts.flatMap(part => part.lineageOf));
-  return Object.freeze({ text: parts.map(part => part.text).join(separator), parts: Object.freeze([...parts]), denyGeneration: turn?.denyGeneration ?? -1 }) as BuiltPrompt;
+  return Object.freeze({ text: parts.map(part => part.text).join(separator), parts: Object.freeze([...parts]), denyGeneration: turn?.denyGeneration ?? -1, ...(turn ? { ownGenerations: (db: DatabaseSync, above: number, upTo: number) => turnOwnGenerations(db, turn, above, upTo) } : {}) }) as BuiltPrompt;
 }
 
 // ── refs ─────────────────────────────────────────────────────────────────────
@@ -48,6 +48,13 @@ export function ownShownLineIds(threadId: string, inWords: Iterable<string>, sho
 export function lineRefs(threadId: string, messageIds: Iterable<string>): LineageRef[] {
   const refs: LineageRef[] = [];
   for (const messageId of new Set(messageIds)) refs.push({ kind: "line", threadId, messageId });
+  return refs;
+}
+/** The lines of the prompt's own thread its replay shows in words, named one by one (the last rebuild, which reads no prefix): judged by content
+ * at the send fence, as a prefix's shown lines are (deny-read.ts refsLookup). Only for the prompt's own thread. */
+export function ownReplayRefs(threadId: string, messageIds: Iterable<string>): LineageRef[] {
+  const refs: LineageRef[] = [];
+  for (const messageId of new Set(messageIds)) refs.push({ kind: "line", threadId, messageId, replay: true });
   return refs;
 }
 /** Text that stands on nothing stored (Murage's own words, fixed copy). */
@@ -106,7 +113,7 @@ export function turnRefs(turn: TurnLineage | undefined): LineageRef[] {
 export function sendFence(db: DatabaseSync, built: BuiltPrompt, reader: LineageReader): LineageVerdict {
   try {
     const now = denyGeneration(db);
-    if (built.denyGeneration >= 0 && now === built.denyGeneration) return fenceUnchanged(db, built);
+    if (generationUnchanged(db, built, now)) return fenceUnchanged(db, built, reader);
     return fenceVerdict(db, built, reader);
   } catch { return { state: "checking", reason: "lookup-error" }; }
 }

@@ -19,10 +19,11 @@ import { homeKey, Known, Planner, type HomePlanData } from "./engine-plan-core.t
 import { redoDirectory } from "./engine-redo.ts";
 import { builtAddonPath, useFakeExclusion, useRealExclusion, type FakeExclusion } from "./testing/engine-exclusion-fake.ts";
 import { legacyRejoin, buildFixture, canaryHits, type Fixture } from "./testing/engine-history-fixtures.ts";
+import { removeTempDirSync } from "./testing/cleanup.ts";
 
 const removeEngineHistoryFiles = legacyRejoin(removeRaw);
 const scratch = realpathSync.native(mkdtempSync(join(tmpdir(), "murage-r23-")));
-afterAll(() => rmSync(scratch, { recursive: true, force: true }));
+afterAll(() => removeTempDirSync(scratch));
 
 let fake: FakeExclusion;
 beforeEach(() => { fake = useFakeExclusion(); clearJournals(); });

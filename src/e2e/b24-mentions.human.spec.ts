@@ -1,6 +1,6 @@
 // B24 visual confirmation uses only the task-owned verification server and
 // its fake engine. It never reads a normal profile or calls a provider.
-import { test, expect, type Page, type TestInfo } from "@playwright/test";
+import { test, expect, type Page, type TestInfo } from "./page-error-guard";
 import { createServer, type ViteDevServer } from "vite";
 import react from "@vitejs/plugin-react";
 import tailwindcss from "@tailwindcss/vite";

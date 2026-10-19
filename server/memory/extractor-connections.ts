@@ -3,6 +3,7 @@ import type { ProviderConnectionsService } from "../provider-connections.ts";
 import type { ProviderInstance } from "../contracts.ts";
 import { fluxKey } from "../flux-config.ts";
 import { FLUX_OPENAI_BASE } from "../flux-routing.ts";
+import { isCliLearningInstance } from "../drivers/cli-memory-learning.ts";
 import { requestMemoryExtraction, requestMemoryInference, requestMemoryGrounding, type TextOnlyExtractor } from "./extract.ts";
 
 const FLUX_EXTRACTORS = [
@@ -12,6 +13,7 @@ const FLUX_EXTRACTORS = [
 ] as const;
 
 /** Discover callable, tool-free connections; native CLI authentication is not enough. */
+const instanceRow=(instance:ProviderInstance)=>({instanceId:instance.instanceId,label:instance.displayName??instance.driverKind,eligible:instance.enabled&&typeof instance.extractMemory==="function",...(!instance.enabled||!instance.extractMemory?{reason:"This connection does not provide text-only learning."}:{})});
 export function memoryExtractorConnections(instances: ProviderInstance[], key: string | null = fluxKey(), providerConnections?: Pick<ProviderConnectionsService,"list"|"resolve"|"getCatalog">) {
   const providers=(providerConnections?.list()??[]).filter(connection=>connection.preset!=="flux"&&!(connection.legacy&&connection.managedIn==="engines"&&instances.some(instance=>connection.id==="legacy-openai-compatible"&&instance.driverKind==="openai-compat"||connection.id==="legacy-xai"&&instance.driverKind==="grokAgent"&&Boolean(instance.extractMemory))));
   return [
@@ -19,10 +21,12 @@ export function memoryExtractorConnections(instances: ProviderInstance[], key: s
       instanceId, label, eligible: Boolean(key),
       ...(!key ? { reason: "Add your Flux Router key in app settings." } : {}),
     })),
-    ...instances.map(instance => ({instanceId:instance.instanceId,label:instance.displayName??instance.driverKind,eligible:instance.enabled&&typeof instance.extractMemory==="function",...(!instance.enabled||!instance.extractMemory?{reason:"This connection does not provide text-only learning."}:{})})),
+    ...instances.filter(instance=>!isCliLearningInstance(instance)).map(instanceRow),
     ...providers.map(connection=>({instanceId:`provider:${connection.id}`,label:connection.label,
       eligible:connection.enabled&&connection.protocol==="openai"&&Boolean(providerModel(providerConnections!,connection.id)),
       ...(!connection.enabled?{reason:"Enable this connection in Settings."}:connection.protocol!=="openai"?{reason:"This connection does not provide text-only learning."}:!providerModel(providerConnections!,connection.id)?{reason:"Refresh this connection's chat models in Settings."}:{})})),
+    // Signed-in CLI and ACP engines come last: they spend the person's own subscription limit (design r2.10).
+    ...instances.filter(isCliLearningInstance).map(instanceRow),
   ];
 }
 
@@ -61,13 +65,21 @@ function providerModel(service:Connections,id:string){try{return service.getCata
 const refused=new Map<string,string>();
 const refusedInstances=new WeakSet<ProviderInstance>();
 const attention="Learning is paused: the connection was refused. Check your key in Settings.";
+const engineAttention="Learning is paused: the engine asked you to sign in again.";
+/** A signed-in engine at its limit: learning waits, then tries again (the engine's own limit resets on its own). */
+export const ENGINE_LIMIT_PAUSE_MS=15*60_000;
+const limitedUntil=new WeakMap<ProviderInstance,number>();
+let clock=()=>Date.now();
+export function setLearningClockForTests(now:(()=>number)|null){clock=now??(()=>Date.now());}
+const limitLine=(label:string)=>`Learning waits while ${label} is at its limit.`;
+const atLimit=(instance:ProviderInstance)=>(limitedUntil.get(instance)??0)>clock();
 const keyRevision=(key:string)=>createHash("sha256").update(key).digest("hex");
 export interface LearningConnection {extractor:TextOnlyExtractor|null;instanceId:string|null;source:"chosen"|"default"|"none";label:string;reason?:string;suggestion?:{instanceId:string;label:string};reviewOnly?:boolean}
 export function resolveLearningConnection(input:{selected:string|null;instances:ProviderInstance[];readInstances?:()=>ProviderInstance[];providerConnections?:Connections;readKey?:()=>string|null;defaultOn:boolean}):LearningConnection {
  const readKey=input.readKey??fluxKey,key=readKey(),items=memoryExtractorConnections(input.instances,key,input.providerConnections);
  const selected=input.selected??(key?"@murage/flux-fast":null),item=items.find(row=>row.instanceId===selected);
  const own=items.filter(row=>row.eligible&&!row.instanceId.startsWith("@murage/"));
- const none=(reason:string):LearningConnection=>({extractor:null,instanceId:selected,source:"none",label:item?.label??selected??"No connection",reason,...(!input.selected&&own.length===1?{suggestion:{instanceId:own[0].instanceId,label:own[0].label}}:{})});
+ const none=(reason:string):LearningConnection=>({extractor:null,instanceId:selected,source:"none",label:item?.label??selected??"No connection",reason,...(!input.selected&&own.length>0&&(own.length===1||!key)?{suggestion:{instanceId:own[0].instanceId,label:own[0].label}}:{})});
  if(!selected)return none("Add your Flux key or choose a connection.");
  if(!item?.eligible)return none(`${item?.label??selected}: ${item?.reason??"This connection is unavailable."}`);
  const providerId=selected.startsWith("provider:")?selected.slice(9):null;
@@ -88,8 +100,9 @@ export function resolveLearningConnection(input:{selected:string|null;instances:
   extractor.ground=(value,maximum,signal)=>call(config=>requestMemoryGrounding(config,value,Math.min(64,maximum),signal));
  }else{
   const current=()=> (input.readInstances?.()??input.instances).find(item=>item.instanceId===selected&&item.enabled&&item.extractMemory);
-  const initial=current();if(!initial||refusedInstances.has(initial))return none(initial?attention:`${item.label}: This connection is unavailable.`);
-  const call=async<T>(invoke:(instance:ProviderInstance)=>Promise<T>)=>{const instance=current();if(!instance||refusedInstances.has(instance))throw Error("MEMORY_EXTRACTOR_UNAVAILABLE");try{return await invoke(instance);}catch(error){if([401,403].includes(Number((error as {status?:number}).status)))refusedInstances.add(instance);throw error;}};
+  const initial=current();if(!initial||refusedInstances.has(initial))return none(initial?(isCliLearningInstance(initial)?engineAttention:attention):`${item.label}: This connection is unavailable.`);
+  if(atLimit(initial))return none(limitLine(item.label));
+  const call=async<T>(invoke:(instance:ProviderInstance)=>Promise<T>)=>{const instance=current();if(!instance||refusedInstances.has(instance)||atLimit(instance))throw Error("MEMORY_EXTRACTOR_UNAVAILABLE");try{return await invoke(instance);}catch(error){const failed=error as {status?:number;limit?:boolean};if([401,403].includes(Number(failed.status)))refusedInstances.add(instance);else if(isCliLearningInstance(instance)&&(failed.limit===true||Number(failed.status)===429))limitedUntil.set(instance,clock()+ENGINE_LIMIT_PAUSE_MS);throw error;}};
   extractor=(text,max,signal,dispatch)=>call(instance=>instance.extractMemory!(text,max,signal,dispatch));
   if(initial.groundMemory)extractor.ground=(value,maximum,signal)=>call(instance=>{if(!instance.groundMemory)throw Error("MEMORY_EXTRACTOR_UNAVAILABLE");return instance.groundMemory(value,Math.min(64,maximum),signal);});
  }
@@ -97,3 +110,5 @@ export function resolveLearningConnection(input:{selected:string|null;instances:
  extractor.learningConnection=selected;extractor.reviewOnly=!input.selected&&!input.defaultOn;
  return {extractor,instanceId:selected,source:input.selected?"chosen":"default",label:item.label,reviewOnly:!input.selected&&!input.defaultOn};
 }
+/** The learning default (SETTINGS-REDESIGN r3.3): on when a Flux key is present; an explicit `learningDefaultOn`, true or false, wins (`??`). */
+export function learningDefaultOnFor(features:{learningDefaultOn?:boolean}|undefined,fluxKeyPresent:boolean):boolean{return features?.learningDefaultOn??fluxKeyPresent;}

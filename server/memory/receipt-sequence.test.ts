@@ -6,7 +6,7 @@
 // back, or a lookup companion dated a millisecond before its frame, must not
 // decide which receipt is the session's newest. These use the real linking
 // functions and the real replay.
-import { mkdirSync, rmSync } from "node:fs";
+import { mkdirSync } from "node:fs";
 import { beforeEach, expect, it } from "vitest";
 import { DATA_DIR } from "../config.ts";
 import { closeDatabase, database } from "../database.ts";
@@ -20,10 +20,11 @@ import { forgetMemory } from "./forget.ts";
 import { memoryAccess, reconcileMemoryRoster, type MemoryRoster } from "./policy.ts";
 import { capturedMessageWithheld } from "./replay-lineage.ts";
 import { setMemoryMode } from "./repository.ts";
+import { removeTempDirSync } from "../testing/cleanup.ts";
 
 const roster: MemoryRoster = { bots: [{ id: "bot", threadId: "chat", tasks: [{ threadId: "older" }] }], groups: [] };
 const empty = { async search() { return { hits: [], vectorRows: 0, coverageComplete: false }; } };
-beforeEach(() => { closeDatabase(); rmSync(DATA_DIR, { recursive: true, force: true }); mkdirSync(DATA_DIR, { recursive: true }); setMemoryMode("active"); reconcileMemoryRoster(roster); });
+beforeEach(() => { closeDatabase(); removeTempDirSync(DATA_DIR); mkdirSync(DATA_DIR, { recursive: true }); setMemoryMode("active"); reconcileMemoryRoster(roster); });
 
 function access() {
   const registry = new InternalCapabilities(); registry.begin("bot", "chat", "g");
@@ -112,7 +113,8 @@ it("R3-P1: a legacy session (receipts, no lineage row) resets whatever the clock
     database().prepare("UPDATE memory_lineage_meta SET since=? WHERE id=1").run(since);
     const why: { reason?: string } = {};
     expect(retainedSessionInvalid(LineageAllowance.tool(), "chat", "engine", "S", why), `since ${since}`).toBe(true);
-    expect(why.reason).toBe("pre-lineage");
+    // S6: the door epoch is judged first (a legacy session has no stamped row), and the session still resets
+    expect(why.reason).toBe("writetime-door-epoch");
   }
 });
 

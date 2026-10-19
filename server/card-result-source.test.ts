@@ -80,8 +80,10 @@ it("a receipt replay re-asks the delivery authorization: sharing removed after d
   expect(denied).toEqual({ kind: "refused", line: "Helper is no longer shared with this team.", code: "sharing_removed" });
   expect(JSON.stringify(denied)).not.toContain("plaintext");
   // lineage withholding still applies to an authorized replay, and an unbound receipt keeps only that rule
-  expect(gate(world(new Map()), { requestId: "req-1", lineageUnknown: true }, "stored plaintext")).toEqual({ kind: "withheld", line: "[withheld]" });
-  expect(gate(world(new Map(), { ownUnsharedWork: () => true, authorize: () => { throw new Error("not asked"); } }), {}, "plain")).toEqual({ kind: "withheld", line: "[withheld]" });
+  // (an unknown lineage, or text with no original, is checking: no words leave, and it never reads as deleted or changed, C1)
+  expect(gate(world(new Map()), { requestId: "req-1", lineageUnknown: true }, "stored plaintext")).toMatchObject({ kind: "checking" });
+  expect(gate(world(new Map()), { requestId: "req-1", lineageUnknown: true }, "stored plaintext")).not.toHaveProperty("text");
+  expect(gate(world(new Map(), { ownUnsharedWork: () => true, authorize: () => { throw new Error("not asked"); } }), {}, "plain")).toMatchObject({ kind: "checking" });
 });
 const legacy = { id: "req-9", sourceThreadId: "t-src", toBotId: "b-peer" };
 const rows: Record<string, { id: string; toBotId: string | null; rootThreadId: string }> = { "req-9": { id: "req-9", toBotId: "b-peer", rootThreadId: "t-src" } };
@@ -111,8 +113,12 @@ it("an unbound receipt returns text only when its work is positively the owner's
   const unknown = gate(world(new Map(), { ownUnsharedWork: () => false }), {}, "stored plaintext");
   expect(unknown).toMatchObject({ kind: "refused", code: "origin_unconfirmed" });
   expect(JSON.stringify(unknown)).not.toContain("plaintext");
-  // worker text that names no stored message has had no message-level rule applied: withheld even for the owner's own work
-  expect(gate(world(new Map(), { ownUnsharedWork: () => true }), {}, "stored plaintext")).toEqual({ kind: "withheld", line: "[withheld]" });
+  // worker text that names no stored message has had no message-level rule applied: no words leave even for the owner's own work, and with no
+  // mark known it reads checking, never deleted or changed (C1)
+  const noOrigin = gate(world(new Map(), { ownUnsharedWork: () => true }), {}, "stored plaintext");
+  expect(noOrigin).toMatchObject({ kind: "checking" });
+  expect(noOrigin).not.toHaveProperty("text");
+  expect(noOrigin).not.toHaveProperty("held");
   // never for words a non-owner audience asked for
   expect(gate(world(new Map(), { ownUnsharedWork: () => true }), {}, "stored plaintext", true)).toMatchObject({ kind: "refused" });
 });

@@ -7,39 +7,85 @@ import type { DatabaseSync } from "node:sqlite";
 import { copyFieldsChanged } from "./message-copy-fields.ts";
 import { authorizeWork, executionStore, requestSourceThread, sameThreadPartition } from "./execution-audience.ts";
 
-/** A citation and all copied ancestors must belong to the consuming turn. */
-export function partitionSourcesAllowed(db: DatabaseSync, botId: string, threadId: string, messageIds: readonly string[]): boolean {
+/** The most sources one partition check follows (citations and copied ancestors together); past it nothing is established. */
+export const PARTITION_SOURCES_MAX = 500;
+/** The most primary-key seeks one partition check spends finding bare citations in the threads it knows of. */
+export const PARTITION_SEEKS_MAX = 8_192;
+type SourceRow = { thread_id: string; id: string; json: string };
+// every read is by the messages primary key (thread_id, id), a whole batch per statement: bare ids in the threads named, then each copy level
+const SEEK_IN_THREADS = "SELECT m.thread_id AS thread_id, m.id AS id, m.json AS json FROM json_each(?) t CROSS JOIN json_each(?) i CROSS JOIN messages m ON m.thread_id = t.value AND m.id = i.value";
+const SEEK_PAIRS = "SELECT m.thread_id AS thread_id, m.id AS id, m.json AS json FROM json_each(?) k CROSS JOIN messages m ON m.thread_id = json_extract(k.value, '$[0]') AND m.id = json_extract(k.value, '$[1]')";
+// a bare id found in none of the threads the check knows of (a card or request source in another of the bot's threads): one statement for all
+// of them. Without an index leading on id this reads the table; LINEAGE-COMBINED.md asks the schema lane for messages(id).
+const SEEK_ANYWHERE = "SELECT m.thread_id AS thread_id, m.id AS id, m.json AS json FROM messages m WHERE m.id IN (SELECT value FROM json_each(?))";
+
+/** A citation and all copied ancestors must belong to the consuming turn. Bare ids are sought by primary key in the consuming thread and in
+ * `within.threads` (the threads the caller knows the sources lie in); with `within.only`, an id in none of them is not established. Copied ancestors
+ * name their thread, so each is one primary-key seek, a whole chain level per statement. The work is bounded by PARTITION_SOURCES_MAX sources
+ * and PARTITION_SEEKS_MAX seeks, whatever the history; past either bound the answer is no. */
+export function partitionSourcesAllowed(db: DatabaseSync, botId: string, threadId: string, messageIds: readonly string[], within?: { readonly threads: Iterable<string>; readonly only?: boolean }): boolean {
+  return partitionSourcesVerdict(db, botId, threadId, messageIds, within) === "shown";
+}
+/** The same check in three states (REPLY-WITHHELD-CONTRACT R1): "withheld" for a source outside the partition or one that is not stored, "checking" for a
+ * check past its bounds or one that threw (nothing is established either way, and nothing is withdrawn for it). */
+export function partitionSourcesVerdict(db: DatabaseSync, botId: string, threadId: string, messageIds: readonly string[], within?: { readonly threads: Iterable<string>; readonly only?: boolean }): "shown" | "withheld" | "checking" {
   const bot = executionStore()?.bot(botId);
-  if (!bot || bot.partitionedAt === undefined) return true;
-  const seen = new Set<string>();
-  const visit = (id: string): boolean => {
-    if (seen.has(id)) return true;
-    if (seen.size >= 500) return false;
-    seen.add(id);
-    const row = db.prepare("SELECT thread_id,json FROM messages WHERE id=?").get(id);
-    if (!row || !sameThreadPartition(bot, threadId, String(row.thread_id))) return false;
-    try {
-      const copy = JSON.parse(String(row.json)).copyOf;
-      return !copy || typeof copy.threadId === "string" && sameThreadPartition(bot, threadId, copy.threadId) && Array.isArray(copy.messageIds) && copy.messageIds.every((id: unknown) => typeof id === "string" && visit(id));
-    } catch { return false; }
-  };
-  return messageIds.every(visit);
+  if (!bot || bot.partitionedAt === undefined) return "shown";
+  const bare = [...new Set(messageIds)];
+  if (!bare.length) return "shown";
+  if (bare.length > PARTITION_SOURCES_MAX) return "checking";
+  const threads = [...new Set([threadId, ...(within?.threads ?? [])])];
+  if (bare.length * threads.length > PARTITION_SEEKS_MAX) return "checking";
+  try {
+    let rows = db.prepare(SEEK_IN_THREADS).all(JSON.stringify(threads), JSON.stringify(bare)) as SourceRow[];
+    const located = new Set(rows.map(row => String(row.id)));
+    const missing = bare.filter(id => !located.has(id));
+    if (missing.length) {
+      if (within?.only) return "withheld";
+      const elsewhere = db.prepare(SEEK_ANYWHERE).all(JSON.stringify(missing)) as SourceRow[];
+      for (const row of elsewhere) located.add(String(row.id));
+      if (missing.some(id => !located.has(id))) return "withheld";
+      rows = [...rows, ...elsewhere];
+    }
+    const seen = new Set<string>();
+    while (rows.length) {
+      const next: Array<[string, string]> = [];
+      for (const row of rows) {
+        const key = `${row.thread_id}\u0000${row.id}`;
+        if (seen.has(key)) continue;
+        if (seen.size >= PARTITION_SOURCES_MAX) return "checking";
+        seen.add(key);
+        if (!sameThreadPartition(bot, threadId, String(row.thread_id))) return "withheld";
+        const copy = JSON.parse(String(row.json)).copyOf;
+        if (!copy) continue;
+        if (typeof copy.threadId !== "string" || !sameThreadPartition(bot, threadId, copy.threadId) || !Array.isArray(copy.messageIds)) return "withheld";
+        for (const id of copy.messageIds as unknown[]) {
+          if (typeof id !== "string") return "withheld";
+          if (!seen.has(`${copy.threadId}\u0000${id}`)) next.push([copy.threadId, id]);
+        }
+      }
+      if (!next.length) break;
+      if (seen.size + next.length > PARTITION_SOURCES_MAX) return "checking";
+      const level = db.prepare(SEEK_PAIRS).all(JSON.stringify(next)) as SourceRow[];
+      const got = new Set(level.map(row => `${row.thread_id}\u0000${row.id}`));
+      if (next.some(([thread, id]) => !got.has(`${thread}\u0000${id}`))) return "withheld";
+      rows = level;
+    }
+    return "shown";
+  } catch { return "checking"; }
 }
 
 export function requestReturnsTo(db: DatabaseSync, requestId: string, threadId: string): boolean {
   return requestSourceThread(requestId, db) === threadId;
 }
 
-/** Every original a copy stands on, and every original those were copied from, is still stored and not withheld from bots. A copy whose original
- * was deleted is not shown to any bot, in any memory mode, partitioned or not. A chain past the limits is not established.
+/** Every original a copy stands on, and every original those were copied from, is still stored and parses; a chain past the limits is not
+ * established. This is the copy chain's only judge (LINEAGE-DESIGN-S6 15a): the reader door (bot-read.ts) judges each source by its lineage
+ * verdicts (denyLookup), so the owner's note, a mirror of committed verdicts, is never the judge.
  * The verdict is kept until a stored message is deleted, or has its copy link or its withheld mark changed (a counter only those writes move,
  * and the database's own version for another connection's commits), so a turn reads only the copies it has not judged since the last such
- * change, never the whole history again. Inside a transaction nothing is kept: what it reads may roll back. */
-export function copyChainPresent(db: DatabaseSync, copy: { threadId: string; messageIds: readonly string[] }): boolean {
-  return copyChainCheck(db)(copy);
-}
-
-/** The same check for many copies in one operation: the memo's stamp is read once, when the check is made, not once per copy. */
+ * change, never the whole history again. Inside a transaction nothing is kept: what it reads may roll back.
+ * The same check for many copies in one operation: the memo's stamp is read once, when the check is made, not once per copy. */
 export function copyChainCheck(db: DatabaseSync): (copy: { threadId: string; messageIds: readonly string[] }) => boolean {
   const memo = chainMemo(db);
   return copy => {
@@ -101,7 +147,6 @@ function readChain(db: DatabaseSync, copy: { threadId: string; messageIds: reado
       if (!row) return false;
       try {
         const stored = JSON.parse(String(row.json));
-        if (stored.withheldFromBots !== undefined && stored.withheldFromBots !== false) return false;
         const further = stored.copyOf;
         if (further) {
           if (typeof further.threadId !== "string" || !Array.isArray(further.messageIds) || !further.messageIds.every((m: unknown) => typeof m === "string")) return false;
@@ -114,38 +159,19 @@ function readChain(db: DatabaseSync, copy: { threadId: string; messageIds: reado
   return true;
 }
 
-/** The rule every transcript row a bot reads passes, for one operation (the copy memo's stamp is read once, here). */
-function transcriptRowCheck(db: DatabaseSync, botId: string, threadId: string): (message: Message) => boolean {
-  const present = copyChainCheck(db);
+/** The rule every transcript row a bot reads passes, for one operation (the copy memo's stamp is read once, here). Its caller is the reader
+ * door (bot-read.ts), which reads every transcript a bot is given and passes the one chain check its operation uses. */
+export function transcriptRowCheck(db: DatabaseSync, botId: string, threadId: string, present = copyChainCheck(db)): (message: Message) => boolean {
+  // one operation: a request's sources are judged once however many of its activity rows the window holds
+  const requests = new Map<string, boolean>();
   return message => {
     if (message.copyOf && !present(message.copyOf)) return false;
     if (message.copyOf && !partitionSourcesAllowed(db, botId, threadId, [message.id])) return false;
-    return message.kind !== "activity" || !message.requestId || partitionSourcesAllowed(db, botId, threadId, projectRequestSourceMessages(db, message.requestId));
+    if (message.kind !== "activity" || !message.requestId) return true;
+    let allowed = requests.get(message.requestId);
+    if (allowed === undefined) requests.set(message.requestId, allowed = partitionSourcesAllowed(db, botId, threadId, projectRequestSourceMessages(db, message.requestId)));
+    return allowed;
   };
-}
-
-export function partitionTranscriptMessages(db: DatabaseSync, botId: string, threadId: string, messages: readonly Message[]): Message[] {
-  return messages.filter(transcriptRowCheck(db, botId, threadId));
-}
-
-/** The newest rows of a transcript a bot may read, judged from the newest back and only until `full` says the prompt has what it can carry:
- * a turn's work grows with its window, never with the conversation's history. `full` is told of each row kept, newest first. `older`: the
- * rows before the window, not judged (a prompt never shows them; it may count them). */
-export function partitionTranscriptWindow(db: DatabaseSync, botId: string, threadId: string, messages: readonly Message[], full: (kept: Message) => boolean, examinedCap = TRANSCRIPT_EXAMINED_ROWS): { window: Message[]; olderRows: number; readonly older: Message[] } {
-  const allowed = transcriptRowCheck(db, botId, threadId);
-  const kept: Message[] = [];
-  let index = messages.length - 1, examined = 0;
-  // Every row looked at counts toward the cap, kept or refused: a history of rows the bot may not read is not walked to its start.
-  for (; index >= 0 && examined < examinedCap; index -= 1) {
-    const message = messages[index]!;
-    examined += 1;
-    if (!allowed(message)) continue;
-    kept.push(message);
-    if (full(message)) { index -= 1; break; }
-  }
-  const end = index + 1;
-  // the rows before the window are not copied or walked unless a caller asks for them
-  return { window: kept.reverse(), olderRows: end, get older() { return messages.slice(0, end); } };
 }
 
 /** The most rows one transcript window looks at, kept or refused. */

@@ -2,7 +2,7 @@
 // T10 (STALLS-FINAL-DESIGN section 4, the 34.6 s stall): the maintenance pass's "is there anything to reflect" check scans each continuity
 // bot's threads once while nothing it reads moved (memory data revision, the bot's reflect state and settings, the minute), so a pass
 // costs one map read per bot instead of a scan of every thread.
-import { mkdirSync, rmSync } from "node:fs";
+import { mkdirSync } from "node:fs";
 import { beforeEach, expect, it } from "vitest";
 import { DATA_DIR } from "../config.ts";
 import { closeDatabase, database } from "../database.ts";
@@ -10,6 +10,7 @@ import { appendMessage } from "../message-db.ts";
 import { reconcileMemoryRoster } from "./policy.ts";
 import { setMemoryMode } from "./repository.ts";
 import { pipPendingScanStats, pipReflectPending, pipReflectPendingSliced, resetPipPendingScans, type ReflectDeps } from "./pip-reflect.ts";
+import { removeTempDirSync } from "../testing/cleanup.ts";
 
 const T0 = 1_760_000_000_000;
 let clock = T0;
@@ -19,7 +20,7 @@ const deps = {
   resolveRoute: async () => { throw new Error("not used"); }, memoryMode: () => "active",
 } as unknown as ReflectDeps;
 beforeEach(() => {
-  closeDatabase(); rmSync(DATA_DIR, { recursive: true, force: true }); mkdirSync(DATA_DIR, { recursive: true });
+  closeDatabase(); removeTempDirSync(DATA_DIR); mkdirSync(DATA_DIR, { recursive: true });
   reconcileMemoryRoster({ bots: [{ id: "moss", threadId: "private", tasks: [] }], groups: [] } as never); setMemoryMode("active");
   resetPipPendingScans(); clock = T0;
 });

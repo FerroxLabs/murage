@@ -105,8 +105,8 @@ export function ImageLibraryView({ snapshot, open, draft, busy, error, notice, o
         </div>}
       </li>)}
     </ul>
-    <details className="mt-3">
-      <summary className="min-h-11 cursor-pointer py-2 text-[12px] text-ink">{t("imageLibrary.block.new")}</summary>
+    <div className="mt-3">
+      <p className="py-2 text-[12px] font-medium text-ink">{t("imageLibrary.block.new")}</p>
       <label className="mt-2 block text-[12px] text-ink">{t("imageLibrary.block.name")}
         <input value={draft.name} onChange={event => onDraft({ ...draft, name: event.target.value })} className={field} placeholder="brand-lock" />
       </label>
@@ -114,7 +114,7 @@ export function ImageLibraryView({ snapshot, open, draft, busy, error, notice, o
         <textarea value={draft.text} onChange={event => onDraft({ ...draft, text: event.target.value })} rows={6} className={field} />
       </label>
       <button type="button" className={`mt-2 ${button}`} disabled={busy || !draft.name.trim() || !draft.text.trim()} onClick={onAdd}>{t("imageLibrary.block.add")}</button>
-    </details>
+    </div>
     <h4 className="mt-4 text-[13px] font-medium text-ink">{t("imageLibrary.packs.title")}</h4>
     <p className="mt-1 text-[12px] leading-relaxed text-ink-secondary">{t("imageLibrary.packs.intro")}</p>
     {snapshot && !snapshot.packs.length && <p className="mt-2 text-[12px] text-ink-secondary">{t("imageLibrary.packs.empty")}</p>}

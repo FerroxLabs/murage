@@ -1,13 +1,14 @@
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { existsSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdtempSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { CoordinationBudget, MAX_HANDOFFS_PER_ROOT } from "./coordination-budget.ts";
 import { resolveCoordinationTarget } from "./coordination-target.ts";
+import { removeTempDirSync } from "./testing/cleanup.ts";
 
 let directory: string;
 beforeEach(() => { directory = mkdtempSync(join(tmpdir(), "murage-coordination-")); });
-afterEach(() => { rmSync(directory, { recursive: true, force: true }); });
+afterEach(() => { removeTempDirSync(directory); });
 
 describe("bounded Chief coordination", () => {
   it("admits a lead's eight specialists under one owner chain", () => {
@@ -87,5 +88,28 @@ describe("Murage target identity", () => {
     expect(() => resolveCoordinationTarget(lead, [lead, rook, { ...rook, id: "second", name: "Rook (Design)" }], "Rook")).toThrow("AMBIGUOUS");
     expect(() => resolveCoordinationTarget(lead, [lead, outsider], outsider.id)).toThrow(/isn't in .* team/);
     expect(() => resolveCoordinationTarget(lead, [lead, { ...rook, hidden: true }], "rook")).toThrow("BOT_NOT_ON_ROSTER");
+  });
+  // lane 0163-delegate-wake: a lead woken by a late reply keeps its asking
+  // turn's trace, so waking is not a way to a fresh allowance.
+  it("caps a runaway ask-and-wake chain at the root allowance, across restarts", () => {
+    const file = join(directory, "budget.json");
+    let budget = new CoordinationBudget(file);
+    const asker = budget.begin("lead");
+    let woken = asker;
+    let spent = 0;
+    for (;;) {
+      try { budget.advance(woken, "lead", `mate-${spent}`); spent += 1; } catch (error) {
+        expect(String((error as Error).message)).toContain("BUDGET_EXHAUSTED");
+        break;
+      }
+      // every wake resumes from a freshly restarted server with the same trace
+      woken = { rootId: asker.rootId, path: [...asker.path] };
+      if (spent % 8 === 0) budget = new CoordinationBudget(file);
+    }
+    expect(spent).toBe(MAX_HANDOFFS_PER_ROOT);
+  });
+  it("never lets a wake start from a root that was not the asker's", () => {
+    const budget = new CoordinationBudget(join(directory, "budget.json"));
+    expect(() => budget.advance({ rootId: "made-up-root", path: ["lead"] }, "lead", "mate")).toThrow("ALLOWANCE_UNAVAILABLE");
   });
 });

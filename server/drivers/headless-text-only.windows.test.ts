@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import { EventEmitter } from "node:events";
 import { PassThrough } from "node:stream";
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdtempSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
@@ -11,6 +11,7 @@ import { spawnCli, awaitCliTreeStopped } from "../procs.ts";
 import { createTempRoot, type TransportIntent } from "../memory/pip-transport.ts";
 import { registerChild } from "../memory/pip-reaper.ts";
 import { PIP_JOB_REFUSAL } from "../memory/pip-job.ts";
+import { removeTempDirSync } from "../testing/cleanup.ts";
 vi.mock("../procs.ts", () => ({ spawnCli: vi.fn(), awaitCliTreeStopped: vi.fn(async () => true) }));
 vi.mock("../memory/pip-reaper.ts", () => ({ registerChild: vi.fn(async () => ({ pid: 12345, startTime: "fixture", registeredAt: 1 })) }));
 const platform = Object.getOwnPropertyDescriptor(process, "platform")!;
@@ -20,7 +21,7 @@ beforeEach(() => {
   Object.defineProperty(process, "platform", { ...platform, value: "win32" });
   vi.clearAllMocks();
 });
-afterEach(() => { Object.defineProperty(process, "platform", platform); rmSync(base, { recursive: true, force: true }); });
+afterEach(() => { Object.defineProperty(process, "platform", platform); removeTempDirSync(base); });
 it.each([true, false])("job name is durable before spawn and assignment failure refuses without a CLI (registered=%s)", async registered => {
   const temp = createTempRoot(base, "run", 1, "fixture");
   let persisted: TransportIntent | undefined;

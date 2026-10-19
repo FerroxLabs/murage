@@ -22,6 +22,7 @@ import { fixtureCredentialFingerprint } from "../../testing/fixture-dump.ts";
 import { warmPool } from "../warm-pool.ts";
 import { cacheEnvFromProcess, markMountIncomplete, markMountReady } from "../../connector-cache.ts";
 import { acpPoolingEnabled, createAcpDriver, resetAcpMcpReadinessForTests, type AcpSupport } from "./core.ts";
+import { removeTempDirSync } from "../../testing/cleanup.ts";
 
 // A close that never reports the process gone, switched on by one test (everything else passes through).
 const stopHook = vi.hoisted(() => ({ hang: null as null | Promise<boolean> }));
@@ -247,6 +248,21 @@ describe.skipIf(process.platform === "win32")("ACP process pool (fake CLI)", () 
       await turn({ text: "two" });
       expect(spawns()).toHaveLength(2);
       await until(() => !alive(firstPid!), "the dropped process to exit");
+    });
+
+    // Thread recall, design S5: a sealed thread dispatches sessionReset true with no cursor, turn after turn.
+    it("a sealed thread's consecutive turns (sessionReset, no cursor) each close the pooled child and open a brand-new session", async () => {
+      await create();
+      await turn({ text: "before the seal" });
+      for (const text of ["sealed one", "sealed two", "sealed three"]) {
+        expect((await turn({ text, sessionReset: true })).done).toMatchObject({ ok: true });
+      }
+      const pids = spawns();
+      expect(pids).toHaveLength(4);
+      expect(new Set(pids).size).toBe(4);
+      for (const pid of pids.slice(0, 3)) await until(() => !alive(pid), "the replaced pooled child to exit");
+      expect(calls("session/new")).toHaveLength(4);
+      expect(calls("session/load")).toHaveLength(0);
     });
 
     it("a cursor for another session", async () => {
@@ -607,7 +623,7 @@ describe.skipIf(process.platform === "win32")("ACP process pool (fake CLI)", () 
       expect((await turn({ text: "three", resumeCursor: SESSION, integrations: { composio } })).done).toMatchObject({ ok: true });
       expect(spawns()).toHaveLength(2);
     } finally {
-      rmSync(dir, { recursive: true, force: true });
+      removeTempDirSync(dir);
     }
   });
 

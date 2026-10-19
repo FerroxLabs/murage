@@ -3,7 +3,7 @@
 import type { DatabaseSync } from "node:sqlite";
 
 import { promptRows } from "./external-context-delivery.ts";
-import { partitionTranscriptMessages } from "./partition-sources.ts";
+import { botMessages, botViewer } from "./bot-read.ts";
 import type { Message } from "./store.ts";
 
 /** Just the read side of a message map: quote targets are looked up one id at a time. */
@@ -27,7 +27,7 @@ export function promptQuoteTargets(
     get(id: string) {
       if (memo.has(id)) return memo.get(id);
       const stored = store.messageById(threadId, id);
-      const visible = stored ? promptRows(partitionTranscriptMessages(db, botId, threadId, [stored]), hasTools, pending)[0] : undefined;
+      const visible = stored ? promptRows(botMessages(db, botViewer(botId), threadId, [stored]), hasTools, pending)[0] : undefined;
       memo.set(id, visible);
       return visible;
     },

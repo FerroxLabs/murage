@@ -10,6 +10,8 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 
+import { VITEST_INCLUDE } from "./test-file-scope.ts";
+
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), "..", "..");
 
 const SCANNED = /\.(?:ts|tsx|mjs|cjs|js|sh|yml|yaml|ps1|nsh|nsi|py)$/;
@@ -28,6 +30,9 @@ const NOT_A_DELETE = /\b(?:mkdirSync|mkdir|readdirSync|readdir|cpSync|cp|copySyn
 const ALLOWLIST: Record<string, string> = {
   "server/testing/safe-wipe.mjs": "the helper itself: rmSync/rm run only after assertSafeToWipe admits the path",
   "server/testing/cleanup.ts": "removeTempDir calls assertSafeToWipe before its rmSync retry loop",
+  "server/testing/link-removal.fixture.cjs": "run only by link-removal.electron.test.ts on paths inside the mkdtemp folder it is given (argv[3]): it records what the runtime's own rmSync does to a junction there",
+  "server/testing/link-removal-native.fixture.cjs": "run only by link-removal.native.test.ts on paths inside the mkdtemp folder it is given (argv[4]): its rmSync calls go through the installed handle-based remove, on a tree it made there",
+  "scripts/scale/hz-vitest.sh": "cleanup() runs `rm -rf -- \"${dir:?}\"` on the build host rig over ssh (never on this machine): dir is $H/vitest-<label> under the rig's own scratch root, set non-empty by ${dir:?}, and holds only the git-archive copy the same script just made",
   "scripts/safe-wipe.sh": "the shell helper itself: rm -rf runs only after the same checks pass",
   "server/testing/index-harness.ts": "'rm -rf /tmp/…' are card subtitles in fixture messages the index suites seed; nothing executes them, and teardown uses removeTempDir",
   "server/testing/fake-codex-app-server.ts": "'rm -rf scratch' is a string the fake engine sends as an approval request; nothing executes it",
@@ -85,6 +90,7 @@ const ALLOWLIST: Record<string, string> = {
   "server/installation-archive.ts": "removes the mkdtemp write scratch and inspection stage of a backup archive",
   "server/installation-damaged-export.ts": "removes the mkdtemp scratch of a damaged-installation export",
   "server/installation-database-snapshot.ts": "removes the mkdtemp scratch beside the snapshot target",
+  "server/installation-memory-downgrade.ts": "removeDataDirNamesAfter102 removes only the env/ folder named in DATA_DIR_NAMES_AFTER_102 (the kept login-shell environment) directly inside the data folder Prepare to reinstall was given, after lstatSync shows it is a real directory (a link is unlinked, never followed); never the data folder itself; production code does not import the wipe helper of the test tree",
   "server/backup-local-work.ts": "removes only run-<pid>-XXXXXX folders it made under its own .murage-backup-work/<hash> root (sweep matches the run-name pattern; removeBackupWork refuses any other path); never the data folder",
   "server/installation-encrypted-backup.ts": "removes its own mkdtemp .murage-encrypted-write-*/.murage-encrypted-inspection-* scratch, stage and .recovery-* directories (retained when a tool close is unconfirmed); never the installation root",
   "server/installation-recovery-command.ts": "removes the mkdtemp scratch of backup inspect / restore plan commands",
@@ -107,6 +113,10 @@ const ALLOWLIST: Record<string, string> = {
   "scripts/scale/hz-scale.sh": "the rm -rf is inside the ssh command string and runs on build-host, never on this machine: it empties the children of $H/scale-$label/src, where $H is the fixed /root/mb-0161-hz and $label passed ^[a-z0-9-]+$ above; the tree is exported again straight after",
   "scripts/scale/run-container.sh": "runs inside the scale-rig container only: every rm is `rm -rf -- \"${VAR:?}\"` on the container's own /scale/data/murage mount or its /scale/cache/<key> cache folder, rebuilt from the fixed /scale/cache root and a key made of the run's shape, seed and tree names plus a short hash of the generator, so some of its parts come from the run's environment; the root is fixed and the name is a single path segment",
   "server/connector-cache-harness.ts": "usableToolsCacheDir removes once the connector tools-cache folder (CONNECTOR_TOOLS_CACHE_DIR, a folder Murage made for itself) when Windows privacy checks refuse it; everything in it can be fetched again, and it is made again at once",
+  "server/drivers/acp/core.ts": "the process-exit handler removes the murage-mcp-listed- mkdtemp folder (one private marker directory per Murage process) opened a few lines above; `root` is a const copy of it, production code does not import the test-only safe-wipe",
+  "server/drivers/murage-exec.ts": "privateDir's process-exit handler removes the murage-exec- mkdtemp folder (0700, one per Murage process) made on the line above; `dir` is a const copy of it, never a data directory; production code does not import the test-only safe-wipe, and on Windows the process-wide rmSync from link-removal.ts takes the remove",
+  "server/always-ask.ts": "the Always ask command classifier: line 518 is the regex /^rimraf(@\\S*)?$/ that spots a rimraf runner, and the `rm -rf` hits are /** doc comments describing commands it classifies; nothing here deletes",
+  "server/shell/walk.ts": "the shell command walker the Always ask classifier reads: the `rm -rf` hits are /** doc comments describing commands it parses; nothing here deletes",
   "server/drivers/acp/grok.ts": "the process-exit handler removes the murage-grok-isolation- mkdtemp folder opened a few lines above; `dir` is a const copy of it",
   "server/drivers/antigravity-scope.ts": "every delete is inside a scoped Antigravity home Murage built itself (its own links and reconciled copies, never followed), a lock folder it made, or a moveInto source it just copied; none can be DATA_DIR or the owner's real engine home",
   "server/drivers/scoped-cli-home.ts": "every delete is inside a per-engine scoped home Murage made (a cache folder the marker names as one segment and lstat shows is a real directory, its own temporary generation, a retired scope after its logins were set aside, or a pruned cache entry); the owner's real engine home is only ever linked into it and never removed",
@@ -114,13 +124,18 @@ const ALLOWLIST: Record<string, string> = {
   "server/memory/testing/perf-fixture.ts": "fixture helper imported only by vitest suites: DATA_DIR resolves under the temporary HOME server/testing/setup.ts makes (setup deletes any MURAGE_DATA_DIR override before anything loads) and installSafeWipeGuard protects it (it refuses the real ~/.murage); the cache folder is the MEMORY_PERF_CACHE the run set",
   "server/memory/testing/recall-fixture.ts": "fixture helper imported only by vitest suites: DATA_DIR resolves under the temporary HOME server/testing/setup.ts makes (setup deletes any MURAGE_DATA_DIR override), behind the same runtime guard",
   "server/tts/system-voices.ts": "removes the mkdtemp directory a voice probe created",
+  // Cloud home image and its qualification. These run as root on a disposable
+  // image builder or test host (never a Mac, never a customer home with data).
+  "deploy/cloud-home/build-image.sh": "runs only as root on the Ubuntu image builder (refuses any other host at the top): removes snapd's own directories after its purge, the builder's logs before the snapshot, and its /tmp/murage-image.* stage in an EXIT trap that re-checks that prefix first",
+  "deploy/cloud-home/qualify/negative-tests.sh": "runs as root on the Cloud home VM under qualification (refuses a non-root run at the top): qm_clean removes only the qualification bot's own workspace, after a fixed-prefix check (/data/home/workspaces/qualbot-NNNN, the literal QUAL_BOT set in the file), a symlink refusal and `rm -rf -- \"${WS:?}\"`",
+  "deploy/cloud-home/qualify/backup-restore-test.sh": "the disposable-host guard at its entry point (server/cloud-home/backup-restore-guard.test.ts) exits before any delete unless /etc/mcq-disposable-test-host, which only backup-restore-test-hcloud.sh writes on the VM it just created, is present, and refuses any host with /etc/murage-home/enrolled, /etc/murage-home/identity.json or /data/home; only then does it reset its own fixed fixture paths /root/bk-test, /data, /srv/bk-repo and /restore and empty its own restic repository for the retention check",
+  "deploy/cloud-home/qualify/hz-live.py": "the rm -rf is inside a command string sent over ssh to the image builder VM before its snapshot (fixed builder paths: /build, root's dotfiles, host keys, journal), never run on this machine",
+  "server/cloud-home/home-commands.fixture.py": "'customer; rm -rf /' is a reason string the fixture submits to prove the home command queue refuses it; nothing executes it",
+  "server/cloud-home/own-server.ts": "removeConnection deletes only <data dir>/own-server/bin, the fixed wrapper folder writeWrapper made; the path is rebuilt from the data dir, never from a caller or request, and never the data dir itself",
 };
 
-/** vitest files run under server/testing/setup.ts: HOME is a mkdtemp under
- *  os.tmpdir(), MURAGE_DATA_DIR is deleted before any import, and
- *  installSafeWipeGuard() makes every recursive fs delete refuse the
- *  account's real ~/.murage, any home, the checkout and live leases. */
-const VITEST_INCLUDE = [/^server\/.*\.test\.ts$/, /^electron\/.*\.test\.mjs$/, /^src\/.*\.test\.ts$/, /^shared\/.*\.test\.ts$/, /^companion\/.*\.test\.ts$/, /^scripts\/.*\.test\.mjs$/, /^tools\/.*\.test\.ts$/];
+// VITEST_INCLUDE (the files that run under server/testing/setup.ts and its installSafeWipeGuard) lives in test-file-scope.ts,
+// where temp-cleanup-guard.test.ts reads the same list.
 
 /** The tracked files. With no .git (a copy made for a container run) the listing saved beside this test is read instead:
  * `git ls-files -z > server/testing/.git-ls-files.fixture` in a checkout makes it. It is never committed. */

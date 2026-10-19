@@ -1,6 +1,6 @@
 // While demo redemption is refused (budget spent, unsaved or invalid), the
 // demo code must be indistinguishable from any wrong guess on both doors.
-import { mkdirSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, writeFileSync } from "node:fs";
 import { createServer, request, type Server } from "node:http";
 import type { AddressInfo } from "node:net";
 import { join } from "node:path";
@@ -10,6 +10,7 @@ import { createBrowserHandler, type BoundIdentity, type BrowserDeviceStore } fro
 import { DEMO_BUDGET_FILE, DEMO_HOST_MARKER, DEMO_HOUR_FAILURES, DeviceRegistry } from "../src/devices.ts";
 import { createProxyHandler } from "../src/proxy.ts";
 import { DATA_DIR } from "../src/state.ts";
+import { removeTempDirSync } from "../../server/testing/cleanup.ts";
 
 const CODE = "483920";
 const WRONG = "271828";
@@ -19,7 +20,7 @@ type Mode = "exhausted" | "invalid-state" | "persist-failure";
 
 /** A registry on a demo host whose demo redemption is refused. */
 function refusedRegistry(mode: Mode): DeviceRegistry {
-  rmSync(DATA_DIR, { recursive: true, force: true });
+  removeTempDirSync(DATA_DIR);
   mkdirSync(DATA_DIR, { recursive: true });
   writeFileSync(join(DATA_DIR, DEMO_HOST_MARKER), "demo\n", { mode: 0o600 });
   vi.stubEnv("MURAGE_DEMO_HOST", "1");

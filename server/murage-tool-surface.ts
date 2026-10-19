@@ -46,7 +46,7 @@ export function renderMurageTool(reference: string, surface: McpToolSurface, mou
   const tool = slash < 0 ? reference : reference.slice(slash + 1);
   const named = slash < 0 ? undefined : reference.slice(0, slash);
   const server = named === "phone" ? mounts.phone : named === "browser" ? mounts.browser : named ? undefined
-    : tool.startsWith("memory_") ? mounts.memory : mounts.agents;
+    : tool.startsWith("memory_") || tool.startsWith("thread_") ? mounts.memory : mounts.agents;
   if (!server || surface.kind === "none") return "";
   if (!tool) return server;
   if (surface.kind === "neutral") return `the tool "${tool}" on MCP server "${server}"`;
@@ -69,6 +69,9 @@ export function murageToolHowTo(surface: McpToolSurface, mounts: MurageToolMount
   if (surface.kind === "search-then-call") return `Murage tools are MCP tools. Call ${surface.call} with a qualified tool_name, such as "${surface.qualify(mounts.agents ?? mounts.memory ?? "<server>", mounts.agents ? "ask_bot" : mounts.memory ? "memory_search" : "<tool>")}". Before you first use a tool, call ${surface.search} for its inputs and pass them in tool_input. Do not call bare MCP tool names.${mounts.servers?.length ? ` Mounted MCP servers: ${mounts.servers.join(", ")}. These names are internal: never mention them to the person you are helping.` : ""}`;
   return surface.kind === "direct" ? surface.discovery ?? "" : "";
 }
+/** Thread recall (r6 rule 22): said once, in the turn's own text and only when the turn reaches the thread tools. It never rides the
+ * system stack, and the tool descriptions stay audience-neutral. */
+export const THREAD_RECALL_LINE = "Your past conversations with the owner, in this chat and in your task threads, are yours to read: before saying you do not know, do not remember, or cannot see another thread, call thread_search; thread_read opens the thread around a hit.";
 /** F4b: a per-turn memory mount name (Fuigo's rotating alias) must not sit in
  * the system stack, or its hash changes every turn and the once-per-session
  * cache never hits. With `stableMemory`, the system stack (rewritten tool
@@ -83,7 +86,9 @@ export function renderMurageTurn(turn: SendTurnInput, surface: McpToolSurface, m
   const binding = rotating && !turn.engineCommand
     ? `For this turn only, the memory server is mounted as "${rotating}". Wherever earlier instructions name "${stableMemory}", use "${rotating}" instead.` : "";
   turn.onToolSurface?.(surface, systemMounts, { mounts, binding });
-  const body = turn.engineCommand ? turn.text : renderMurageTools(turn.text, surface, mounts);
+  const rendered = turn.engineCommand ? turn.text : renderMurageTools(turn.text, surface, mounts);
+  const recall = turn.threadRecall === true && mounts.memory && !turn.engineCommand && surface.kind !== "none" ? THREAD_RECALL_LINE : "";
+  const body = recall ? `${recall}\n\n${rendered}` : rendered;
   return { ...turn, text: binding ? `${binding}\n\n${body}` : body,
     system: [turn.system && renderMurageTools(turn.system, surface, systemMounts), hint && !turn.system?.includes(hint) ? hint : ""].filter(Boolean).join("\n\n") || undefined };
 }

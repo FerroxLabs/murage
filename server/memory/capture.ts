@@ -6,6 +6,7 @@ import { memoryCaptures } from "./capture-gate.ts";
 import { memoryGate } from "./memory-gate.ts";
 import { turnFirstRowid } from "../transcript-backfill.ts";
 import type { Message } from "../store.ts";
+import { isMurageVoice } from "../murage-voice.ts";
 import { redactSecretsInText } from "../redact.ts";
 import { reconcilePipStances } from "./pip-stance.ts";
 import { applyForgetTombstones } from "./restore.ts";
@@ -146,6 +147,8 @@ function boundedBranchPath(db: DatabaseSync, threadId: string, message: Message)
 /** Only folded message fields are accepted; raw provider envelopes never enter here. */
 export function captureMessage(db: DatabaseSync, threadId: string, message: Message) {
   if (!enabled(db)) return;
+  // A Murage-voice row (murage-voice.ts) is never a source: no Murage line reaches memory from 1.0.3 on (LINEAGE-DESIGN-S6 rule 22).
+  if (isMurageVoice(message)) return;
   const userText = message.kind === "text" && message.role === "user" && !message.queued;
   const finalText = message.kind === "text" && message.role === "bot" && (message.turnTerminal || !message.turnId);
   // Engine notices and Murage's own status rows (the held queue) are not tool outcomes.

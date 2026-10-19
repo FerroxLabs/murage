@@ -12,7 +12,7 @@
 //     the interesting failures are ordering ones: the credential strip runs
 //     between the driver and the spawn (core.ts:204-212), and `applyTurnEnv`
 //     (core.ts:323) is the only hook that lands after it.
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { fixtureCredentialFingerprint } from "../../testing/fixture-dump.ts";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
@@ -24,6 +24,7 @@ import { newId, type ProviderInstance } from "../../contracts.ts";
 import { recordEvents, type EventRecorder } from "../../testing/events.ts";
 import { removeTempDir } from "../../testing/cleanup.ts";
 import { QwenAgentDriver } from "./qwen.ts";
+import { removeTempDirSync } from "../../testing/cleanup.ts";
 
 const FAKE_ACP = join(dirname(fileURLToPath(import.meta.url)), "..", "..", "testing", "fake-acp-cli.ts");
 
@@ -216,7 +217,7 @@ describe("qwen Flux routing — the gate", () => {
 describe("qwen sign-in is reported, not assumed", () => {
   const scratchHomes: string[] = [];
   afterEach(() => {
-    for (const dir of scratchHomes.splice(0)) rmSync(dir, { recursive: true, force: true });
+    for (const dir of scratchHomes.splice(0)) removeTempDirSync(dir);
   });
   const emptyHome = () => {
     const dir = mkdtempSync(join(tmpdir(), "murage-qwen-auth-"));

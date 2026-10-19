@@ -1,4 +1,7 @@
-import { createHash } from "node:crypto";
+import { cloudEngineHome, cloudTurnRender, cloudTurnScratch } from "./cloud-home/turn-process.ts";
+import { cloudRouteUrl } from "./cloud-home/engine-render.ts";
+import { cloudHomeCopy } from "./cloud-home/copy.ts";
+import { createHash, randomBytes } from "node:crypto";
 import { closeSync, constants, fstatSync, lstatSync, mkdirSync, mkdtempSync, openSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { DATA_DIR, deleteEnvNames } from "./config.ts";
@@ -17,7 +20,7 @@ const grokThread = z.string().min(1).max(200).regex(/^[^\x00-\x1f\x7f]+$/);
 function directory(path: string, privateMode = true) {
   try { mkdirSync(path, { mode: 0o700 }); } catch (e) { if ((e as NodeJS.ErrnoException).code !== "EEXIST") throw e; }
   const s = lstatSync(path);
-  if (!s.isDirectory() || s.isSymbolicLink() || (privateMode && process.platform !== "win32" && (s.mode & 0o077) !== 0)) throw new Error("Grok provider directory ownership needs review");
+  if (!s.isDirectory() || s.isSymbolicLink() || (privateMode && process.platform !== "win32" && (s.mode & (process.env.MURAGE_CLOUD_ROLE === "home" ? 0o007 : 0o077)) !== 0)) throw new Error("Grok provider directory ownership needs review");
 }
 function privateText(path: string): string | null {
   let fd: number;
@@ -25,7 +28,7 @@ function privateText(path: string): string | null {
   catch (e) { if ((e as NodeJS.ErrnoException).code === "ENOENT") return null; throw new Error("Grok provider state is unreadable; original data preserved"); }
   try {
     const stat = fstatSync(fd), link = lstatSync(path);
-    if (!stat.isFile() || link.isSymbolicLink() || stat.nlink !== 1 || stat.size > 128 * 1024 || (process.platform !== "win32" && (stat.mode & 0o077) !== 0)) throw new Error("Grok provider state ownership needs review");
+    if (!stat.isFile() || link.isSymbolicLink() || stat.nlink !== 1 || stat.size > 128 * 1024 || (process.platform !== "win32" && (stat.mode & (process.env.MURAGE_CLOUD_ROLE === "home" ? 0o007 : 0o077)) !== 0)) throw new Error("Grok provider state ownership needs review");
     return readFileSync(fd, "utf8");
   } finally { closeSync(fd); }
 }
@@ -38,9 +41,13 @@ function ownedDirectory(path: string, owner: object) {
   if (privateText(marker) !== expected) throw new Error("Grok provider ownership marker mismatch; original data preserved");
 }
 function grokThreadRoot(threadId: string): string {
+  // Grok keeps its native session home beside server receipts; until those
+  // are split, a home must not create either inside the engine home.
+  if (process.env.MURAGE_CLOUD_ROLE === "home") throw new Error(cloudHomeCopy.grokRouteOnHome);
   grokThread.parse(threadId);
-  directory(DATA_DIR, false); directory(join(DATA_DIR, "native"), false);
-  const root = join(DATA_DIR, "native", "grok-provider-context");
+  const base = process.env.MURAGE_CLOUD_ROLE === "home" ? cloudEngineHome("grokAgent") : DATA_DIR;
+  directory(base, false); directory(join(base, "native"), false);
+  const root = join(base, "native", "grok-provider-context");
   ownedDirectory(root, { version: 1, kind: "murage-grok-provider-context" });
   const thread = join(root, hash(threadId));
   ownedDirectory(thread, { version: 1, kind: "murage-grok-thread", threadId });
@@ -95,6 +102,7 @@ export function routeEndpoint(driver: string, route: ProviderTurnRoute): string 
   return driver === "claudeAgent" ? route.preset === "flux" ? `${base.replace(/\/v1$/, "")}/anthropic` : base.replace(/\/v1$/, "") : base;
 }
 export function validateProviderTurnRoute(driver: string, route: ProviderTurnRoute): void {
+  if (process.env.MURAGE_CLOUD_ROLE === "home" && driver === "claudeAgent") throw new Error(cloudHomeCopy.claudeFluxOnHome);
   if (!route.apiKey || !route.connectionId || !route.revision || !route.model || route.model.length > 512 || !/^[A-Za-z0-9][A-Za-z0-9_./:@+-]*$/.test(route.model)) throw new Error("Selected provider connection is incomplete");
   if (!providerEngineProtocol(driver, route.preset, route.protocol)) throw new Error("This engine does not support the selected provider protocol");
   const url = new URL(route.baseUrl);
@@ -110,14 +118,18 @@ export function applyProviderRoute(driver: string, env: NodeJS.ProcessEnv, route
     if (!context) throw new Error("Grok provider routing requires an exact thread");
     const identity = grokProviderIdentity(route, grokThread.parse(context.threadId));
     const model = `murage_${identity.slice(0, 24)}`;
+    const cloudGrok = process.env.MURAGE_CLOUD_ROLE === "home";
     let home: string;
-    if (context.homeRoot) { home = resolve(context.homeRoot); directory(home); }
+    if (context.homeRoot && !cloudGrok) { home = resolve(context.homeRoot); directory(home); }
     else {
       home = join(grokThreadRoot(context.threadId), identity);
       ownedDirectory(home, { version: 1, kind: "murage-grok-provider-home", threadId: context.threadId, identity });
     }
-    const file = join(home, "config.toml"); privateText(file);
-    writeFileAtomic(file, `[models]\ndefault = "${model}"\nweb_search = "${model}"\nsession_summary = "${model}"\nallowed_models = ["${model}"]\n[model.${model}]\nmodel = ${JSON.stringify(route.model)}\nbase_url = ${JSON.stringify(routeEndpoint(driver, route))}\nenv_key = "MURAGE_GROK_PROVIDER_API_KEY"\napi_backend = "chat_completions"\n`, { mode: 0o600 });
+    const file = join(home, "config.toml");
+    const text = `[models]\ndefault = "${model}"\nweb_search = "${model}"\nsession_summary = "${model}"\nallowed_models = ["${model}"]\n[model.${model}]\nmodel = ${JSON.stringify(route.model)}\nbase_url = ${JSON.stringify(routeEndpoint(driver, route))}\nenv_key = "MURAGE_GROK_PROVIDER_API_KEY"\napi_backend = "chat_completions"\n`;
+    // Unreachable on a home (grokThreadRoot refuses there); the launcher renders no Grok route.
+    if (cloudGrok) throw new Error(cloudHomeCopy.grokRouteOnHome);
+    privateText(file); writeFileAtomic(file, text, { mode: 0o600 });
     for (const key of ["GROK_CODE_XAI_API_KEY", "GROK_API_KEY", "GROK_API_BASE_URL", "GROK_MODELS_LIST_URL", "GROK_WEB_SEARCH_MODEL"]) delete env[key];
     // The selected endpoint also owns discovery. The documented discovery
     // credential is XAI_API_KEY, populated only with this authorised route key.
@@ -132,15 +144,31 @@ export function applyProviderRoute(driver: string, env: NodeJS.ProcessEnv, route
   }
   if (driver === "codex") {
     const provider = routedProviderId(route); env.MURAGE_PROVIDER_API_KEY = route.apiKey;
+    // Cloud home: the launcher renders this provider table into config.toml from the typed
+    // route and refuses `-c model_providers.*` on argv (CLOUD-ENGINES-DESIGN.md 2.2, 4.1).
+    if (process.env.MURAGE_CLOUD_ROLE === "home") {
+      cloudTurnRender(env, "route", { provider, baseUrl: cloudRouteUrl(route.baseUrl), model: route.model, apiKey: route.apiKey, label: "Selected provider" });
+      return { ...result, modelProvider: provider };
+    }
     return { ...result, modelProvider: provider, args: ["-c", `model_providers.${provider}.name=${JSON.stringify("Selected provider")}`, "-c", `model_providers.${provider}.base_url=${JSON.stringify(route.baseUrl)}`, "-c", `model_providers.${provider}.wire_api="responses"`, "-c", `model_providers.${provider}.env_key="MURAGE_PROVIDER_API_KEY"`] };
   }
   if (driver === "hermesAgent" || driver === "fuigoAgent") {
     // A pinned Hermes profile keeps its persona, skills and sign-ins in its
     // own home, which this route replaces. HERMES_PROFILE was the old key
     // here, but Hermes never reads it to pick a home (hermes-profiles.ts).
+    if (driver === "hermesAgent" && process.env.MURAGE_CLOUD_ROLE === "home") throw new Error(cloudHomeCopy.hermesOnHome);
     if (driver === "hermesAgent" && context?.nativeProfile) throw new Error(`This bot runs the Hermes profile "${context.nativeProfile}", which uses its own models. Choose one of that profile's models instead of a model connection.`);
+    const cloud = process.env.MURAGE_CLOUD_ROLE === "home";
     let home: string;
-    if (context?.homeRoot && driver === "fuigoAgent") { home = resolve(context.homeRoot); mkdirSync(home, { recursive: true, mode: 0o700 }); }
+    if (cloud) {
+      // The server uid may not touch the engine home: the launcher mounts a
+      // fresh tmpfs here inside the turn namespace, so nothing is created or
+      // cleaned up on disk. (A caller-owned homeRoot is a server-side path the
+      // turn namespace cannot see, so it is not used here.)
+      const relative = `native/provider-turns/${driver}-${randomBytes(12).toString("hex")}`;
+      home = join(cloudEngineHome(driver), relative);
+      cloudTurnScratch(env, relative);
+    } else if (context?.homeRoot && driver === "fuigoAgent") { home = resolve(context.homeRoot); mkdirSync(home, { recursive: true, mode: 0o700 }); }
     else {
       const parent = join(DATA_DIR, "native", "provider-turns"); mkdirSync(parent, { recursive: true, mode: 0o700 });
       home = mkdtempSync(join(parent, `${driver}-`));
@@ -161,7 +189,8 @@ export function applyProviderRoute(driver: string, env: NodeJS.ProcessEnv, route
       env.HERMES_HOME = home;
       // explicit, so the driver passes `-p default` for this home only
       env.MURAGE_HERMES_ROUTED_HOME = resolve(home);
-      writeFileSync(join(home, "config.yaml"), `model:\n  default: ${JSON.stringify(route.model)}\n  provider: custom\n  base_url: ${JSON.stringify(route.baseUrl)}\n  api_mode: chat_completions\n  api_key: ${JSON.stringify(route.apiKey)}\nproviders: {}\n`, { mode: 0o600 });
+      const config = `model:\n  default: ${JSON.stringify(route.model)}\n  provider: custom\n  base_url: ${JSON.stringify(route.baseUrl)}\n  api_mode: chat_completions\n  api_key: ${JSON.stringify(route.apiKey)}\nproviders: {}\n`;
+      writeFileSync(join(home, "config.yaml"), config, { mode: 0o600 });
     } else {
       const name = routedProviderId(route), protocol = { openai: "chat_completions", anthropic: "messages", responses: "responses" }[route.protocol];
       env.FUIGO_HOME = home; env.MURAGE_PROVIDER_API_KEY = route.apiKey;
@@ -178,14 +207,22 @@ export function applyProviderRoute(driver: string, env: NodeJS.ProcessEnv, route
       // upstream vendor host" before any request leaves. Murage never writes a
       // subscription model here, so no subscription turn ever gets the lift.
       if (fuigoBlocksHost(routeEndpoint(driver, route))) env[FUIGO_ALLOW_UPSTREAM_ENV] = "1";
-      writeFileSync(join(home, "config.toml"), `[cli]\nuse_leader = false\n[models]\ndefault = "murage_selected"\nsession_summary = "murage_selected"\nprompt_suggestion = "murage_selected"\nweb_search = "murage_selected"\nimage_description = "murage_selected"\nallowed_models = ["murage_selected"]\n[model_providers.${name}]\nbase_url = ${JSON.stringify(routeEndpoint(driver, route))}\nenv_key = "MURAGE_PROVIDER_API_KEY"\napi_backend = "${protocol}"\nauth_scheme = "${route.protocol === "anthropic" ? "x_api_key" : "bearer"}"\n[model.murage_selected]\nmodel = ${JSON.stringify(route.model)}\nmodel_provider = "${name}"\n`, { mode: 0o600 });
+      const fuigoConfig = `[cli]\nuse_leader = false\n[models]\ndefault = "murage_selected"\nsession_summary = "murage_selected"\nprompt_suggestion = "murage_selected"\nweb_search = "murage_selected"\nimage_description = "murage_selected"\nallowed_models = ["murage_selected"]\n[model_providers.${name}]\nbase_url = ${JSON.stringify(routeEndpoint(driver, route))}\nenv_key = "MURAGE_PROVIDER_API_KEY"\napi_backend = "${protocol}"\nauth_scheme = "${route.protocol === "anthropic" ? "x_api_key" : "bearer"}"\n[model.murage_selected]\nmodel = ${JSON.stringify(route.model)}\nmodel_provider = "${name}"\n`;
+      if (!cloud) writeFileSync(join(home, "config.toml"), fuigoConfig, { mode: 0o600 });
       result.model = "murage_selected";
       if (context?.memoryTools) {
         // This config belongs solely to the task-created routed FUIGO_HOME.
         // Native policy matches actual registered MCP IDs, never display titles.
-        const rules = ["memory_search","memory_get","memory_save","memory_propose_correction"]
+        const rules = ["memory_search","memory_get","memory_save","memory_propose_correction","thread_search","thread_list","thread_read"]
           .map(tool => `{ action = "allow", tool = "mcp", pattern = "murage-memory__${tool}" }`).join(",\n");
-        writeFileSync(join(home,"config.toml"),`\n[permission]\nrules = [\n${rules}\n]\n`,{flag:"a",mode:0o600});
+        const permission = `\n[permission]\nrules = [\n${rules}\n]\n`;
+        if (!cloud) writeFileSync(join(home,"config.toml"),permission,{flag:"a",mode:0o600});
+      }
+      // Cloud home: the launcher renders $FUIGO_HOME/config.toml (this text plus its pins)
+      // from the typed route; the server never sends the file (CLOUD-ENGINES-DESIGN.md 2.2).
+      if (cloud) {
+        cloudTurnRender(env, "route", { provider: name, baseUrl: cloudRouteUrl(routeEndpoint(driver, route)), model: route.model, apiKey: route.apiKey, protocol: route.protocol });
+        if (context?.memoryTools) cloudTurnRender(env, "memoryTools", true);
       }
     }
     return result;

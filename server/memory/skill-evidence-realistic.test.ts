@@ -2,7 +2,7 @@
 // 735 MB store (one scan of memory_records), and the memo that should have
 // absorbed it was emptied by every database write. Sized like the real store:
 // tens of thousands of records, a few hundred sources.
-import { mkdirSync, rmSync } from "node:fs";
+import { mkdirSync } from "node:fs";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { beforeEach, expect, it } from "vitest";
@@ -12,12 +12,13 @@ import { captureSource } from "./capture.ts";
 import { setMemoryMode } from "./repository.ts";
 import { ensureIdentityIndexes, IDENTITY_SQL, identityRefreshCount, identityScanCount } from "./provenance-stamp.ts";
 import { assertSkillProcedureEvidence, type SkillProcedureContext } from "../skills.ts";
+import { removeTempDirSync } from "../testing/cleanup.ts";
 
 // reads of the identity set, indexed or not
 const identityReads = () => identityScanCount() + identityRefreshCount();
 const SOURCES = 300, RECORDS = 30000;
 beforeEach(() => {
-  closeDatabase(); rmSync(DATA_DIR, { recursive: true, force: true }); mkdirSync(DATA_DIR, { recursive: true }); setMemoryMode("capture");
+  closeDatabase(); removeTempDirSync(DATA_DIR); mkdirSync(DATA_DIR, { recursive: true }); setMemoryMode("capture");
 });
 function seed() {
   const items = [];

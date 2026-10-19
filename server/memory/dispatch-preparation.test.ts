@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { mkdirSync, readFileSync, rmSync } from "node:fs";
+import { mkdirSync, readFileSync } from "node:fs";
 import { beforeEach, expect, it } from "vitest";
 import { afterEach as thawAfterEach, beforeEach as thawBeforeEach } from "vitest";
 import { thawRootSetWritesForTest } from "./replay-lineage.ts";
@@ -21,6 +21,9 @@ import { archiveMemoryRecord } from "./retention.ts";
 import { continuationMemoryRevoked, filterMemoryReplay } from "./disclosures.ts";
 import { ownerMemoryTicket } from "./authority.ts";
 import { LineageAllowance } from "./lineage-allowance.ts";
+import { stampFreshSession } from "./testing/writetime-fixture.ts";
+import { removeTempDirSync } from "../testing/cleanup.ts";
+import { storeAnchorMessage } from "./testing/anchor-message.ts";
 // 1.0.2: the receipt binds its session through the legacy session-root row here (no index.ts turn writes the write-time session row), which the read-time judge reads.
 thawBeforeEach(() => thawRootSetWritesForTest(true));
 thawAfterEach(() => thawRootSetWritesForTest(false));
@@ -28,7 +31,7 @@ thawAfterEach(() => thawRootSetWritesForTest(false));
 const threadId="7f00a32e-17a4-426b-bdc6-910220ba66c9";
 const roster={bots:[{id:"bot",threadId}],groups:[]};
 const bridge={search:async()=>({hits:[],vectorRows:0})};
-beforeEach(()=>{closeDatabase();rmSync(DATA_DIR,{recursive:true,force:true});mkdirSync(DATA_DIR,{recursive:true});reconcileMemoryRoster(roster);setMemoryMode("capture");});
+beforeEach(()=>{closeDatabase();removeTempDirSync(DATA_DIR);mkdirSync(DATA_DIR,{recursive:true});reconcileMemoryRoster(roster);setMemoryMode("capture");});
 function fixture(){
   const registry=new InternalCapabilities(),generation=registry.begin("bot",threadId);
   const token=registry.mint({botId:"bot",threadId,generation,depth:0,kind:"memory",skillAuthoring:false});
@@ -36,7 +39,7 @@ function fixture(){
 }
 function checkpoint(text:string){
   const sourceId=`message:${threadId}:${randomUUID()}`;
-  captureSource(database(),{id:sourceId,threadId,messageId:randomUUID(),kind:"text",speaker:"owner",outcome:"recorded",text});
+  { const anchorId = randomUUID(); storeAnchorMessage(database(), threadId, anchorId, text); captureSource(database(),{id:sourceId,threadId,messageId:anchorId,kind:"text",speaker:"owner",outcome:"recorded",text}); }
   const work=claimMemoryJob("dispatch-reset-fixture");
   if(!work)throw Error("No actual capture job");
   publishMemoryWork(work,"dispatch-reset-fixture",captureWork(work));
@@ -97,6 +100,8 @@ it("treats the thread's own checkpoint superseded inside the dispatch window as 
   expect(stopped).toBe(false);
   expect(database().prepare("SELECT state FROM memory_disclosures WHERE bundle_id=?").get(bundle.bundleId)?.state).toBe("delivered");
   receipt.sessionStarted("native");receipt.output("reply-1");receipt.completed(true);
+  // index.ts stamps the session a fresh start opens (S6 rule 26); no index.ts turn runs here
+  stampFreshSession(database(),threadId,"fixture","native");
   // The reply's own capture rolls the checkpoint again; the next turn still
   // replays this reply and may resume the native session.
   expect(checkpoint("The reply, captured.")).toMatchObject({id:first.id,version:first.version+2});
@@ -153,7 +158,7 @@ it("discloses only the dispatched thread's own checkpoint, so a busy sibling rol
   reconcileMemoryRoster(wider);
   const own=checkpoint("Verified result in this thread.");
   const siblingCheckpoint=(text:string)=>{
-    captureSource(database(),{id:`message:${sibling}:${randomUUID()}`,threadId:sibling,messageId:randomUUID(),kind:"text",speaker:"owner",outcome:"recorded",text});
+    { const anchorId = randomUUID(); storeAnchorMessage(database(), sibling, anchorId, text); captureSource(database(),{id:`message:${sibling}:${randomUUID()}`,threadId:sibling,messageId:anchorId,kind:"text",speaker:"owner",outcome:"recorded",text}); }
     const work=claimMemoryJob("dispatch-sibling-fixture");if(!work)throw Error("No actual capture job");
     publishMemoryWork(work,"dispatch-sibling-fixture",captureWork(work));
     const result=refreshMemoryCheckpoint(work.id);if(result.status!=="updated")throw Error("Expected actual checkpoint publication");
@@ -182,7 +187,7 @@ it("keeps a sibling thread's checkpoint out of recall too, even when it matches 
   reconcileMemoryRoster(wider);
   const own=checkpoint("Verified result in this thread.");
   const siblingCheckpoint=(text:string)=>{
-    captureSource(database(),{id:`message:${sibling}:${randomUUID()}`,threadId:sibling,messageId:randomUUID(),kind:"text",speaker:"owner",outcome:"recorded",text});
+    { const anchorId = randomUUID(); storeAnchorMessage(database(), sibling, anchorId, text); captureSource(database(),{id:`message:${sibling}:${randomUUID()}`,threadId:sibling,messageId:anchorId,kind:"text",speaker:"owner",outcome:"recorded",text}); }
     const work=claimMemoryJob("dispatch-sibling-recall-fixture");if(!work)throw Error("No actual capture job");
     publishMemoryWork(work,"dispatch-sibling-recall-fixture",captureWork(work));
     const result=refreshMemoryCheckpoint(work.id);if(result.status!=="updated")throw Error("Expected actual checkpoint publication");
@@ -229,7 +234,7 @@ function roomFixture(botId:string,thread:string){
 }
 function roomCheckpoint(thread:string,text:string,speaker="owner"){
   const sourceId=`message:${thread}:${randomUUID()}`;
-  captureSource(database(),{id:sourceId,threadId:thread,messageId:randomUUID(),kind:"text",speaker,outcome:"recorded",text});
+  { const anchorId = randomUUID(); storeAnchorMessage(database(), thread, anchorId, text); captureSource(database(),{id:sourceId,threadId:thread,messageId:anchorId,kind:"text",speaker,outcome:"recorded",text}); }
   const work=claimMemoryJob("dispatch-reset-fixture");
   if(!work)throw Error("No actual capture job");
   publishMemoryWork(work,"dispatch-reset-fixture",captureWork(work));
@@ -257,6 +262,8 @@ it("treats the room checkpoint superseded inside a member's dispatch window as s
   expect(stopped).toBe(false);
   expect(database().prepare("SELECT state FROM memory_disclosures WHERE bundle_id=?").get(bundle.bundleId)?.state).toBe("delivered");
   receipt.sessionStarted("native");receipt.output("member-reply");receipt.completed(true);
+  // index.ts stamps the session a fresh start opens (S6 rule 26); no index.ts turn runs here
+  stampFreshSession(database(),roomThread,"fixture","native");
   // The reply's capture rolls the room checkpoint again; the next turn in the
   // room — by this member or by the other one — still replays that reply.
   expect(roomCheckpoint(roomThread,"The member's reply, captured.","bot")).toMatchObject({id:first.id,version:first.version+2});
@@ -389,7 +396,7 @@ it("filters the transcript of a resumed direct turn before dispatch, not only a 
   expect(resumed).toBeLessThan(bundle);
   const branch=direct.slice(resumed,bundle);
   expect(branch).toContain("filterDirectReplay(allowance,threadId,activeMessages,access,skipTranscript,replayOptions)");
-  expect(branch).toMatch(/transcript=replayed\b/);
+  expect(branch).toMatch(/transcript=replayLines\(botViewer\(bot\.id\),activeMessages,replayed,/);
 });
 
 it("retires an accepted provider and awaits interruption when true forgetting invalidates its memory receipt",async()=>{

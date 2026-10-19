@@ -9,6 +9,7 @@ import { denyGeneration, denyLookup, fenceVerdict, lineageLive, memoryLookup, re
 import { buildPrompt, promptPart } from "./prompt-parts.ts";
 import { FOOTPRINT_STAR, memoryRefKey, type LineageReader, type LineageVerdict, type PageLine, type TurnLineage } from "./lineage-types.ts";
 import { CONTENT, MEMBER, OWNER, WritetimeFixture } from "./testing/writetime-fixture.ts";
+import { activateRevokesAtUpgrade } from "./schema.ts";
 
 const fixtures: WritetimeFixture[] = [];
 afterEach(() => { for (const fixture of fixtures.splice(0)) fixture.close(); });
@@ -101,6 +102,62 @@ describe("lines (denyLookup)", () => {
     f.pending("*", 6);
     expect(page(f, "U", gen("u1")).u1).toEqual(C("pending"));
     expect(page(f, "T", gen("g1")).g1).toEqual(SHOWN);
+  });
+
+  describe("the pending window is capped at the revoke's commit (1.0.3 rw-cap): a line of a turn begun after it is outside the window", () => {
+    it("a '*' row holds a line whose turn began before the commit, never one begun at or after it", () => {
+      // revoke 4 committed at slot 20, its window from 10: g1's turn began before (19), g2's at the commit (20), g3's after (25)
+      const f = make().job(4, 20).pending("*", 10, 4).reply("T", "g1", 21, { turnLsn: 19 }).reply("T", "g2", 22, { turnLsn: 20 }).reply("T", "g3", 26, { turnLsn: 25 });
+      expect(page(f, "T", gen("g1", "g2", "g3"))).toEqual({ g1: C("pending"), g2: SHOWN, g3: SHOWN });
+      expect(page(f, "T", gen("g1", "g2", "g3"), MEMBER)).toEqual({ g1: C("pending"), g2: SHOWN, g3: SHOWN });
+    });
+    it("a line older than the window is shown whatever its turn", () => {
+      const f = make().job(4, 20).pending("*", 10, 4).reply("T", "old", 9, { turnLsn: 3 });
+      expect(page(f, "T", gen("old")).old).toEqual(SHOWN);
+    });
+    it("a line with no turn lsn (a pre-v10 line) counts its turn from 0 and stays held", () => {
+      const f = make().job(4, 20).pending("*", 10, 4).reply("T", "legacy", 30, { turnLsn: null });
+      expect(page(f, "T", gen("legacy")).legacy).toEqual(C("pending"));
+    });
+    it("a bulk still seeding has no cap: every line in its window is held", () => {
+      const f = make().job(4, 20, "seeding").pending("*", 10, 4).reply("T", "late", 40, { turnLsn: 39 });
+      expect(page(f, "T", gen("late")).late).toEqual(C("pending"));
+    });
+    it("a pending row with no job row has no cap (fail closed)", () => {
+      const f = make().pending("*", 10, 4).reply("T", "late", 40, { turnLsn: 39 });
+      expect(page(f, "T", gen("late")).late).toEqual(C("pending"));
+    });
+    it("a thread-specific flow or inherit row of a revoke takes the same cap", () => {
+      const f = make().job(4, 20).pending("T", 10, 4).reply("T", "before", 21, { turnLsn: 15 }).reply("T", "after", 31, { turnLsn: 30 });
+      expect(page(f, "T", gen("before", "after"))).toEqual({ before: C("pending"), after: SHOWN });
+    });
+    it("a hold written after the commit (an inherit hold for a derived post-commit line, since past the cap) has no cap", () => {
+      // revoke 4 committed at 20; the line at 31 (turn 30) carried a parent it holds: inheritMarks held T from 31 under revoke 4
+      const f = make().job(4, 20).pending("*", 10, 4).pending("T", 31, 4).reply("T", "derived", 31, { turnLsn: 30 }).reply("T", "clean", 28, { turnLsn: 27 });
+      expect(page(f, "T", gen("derived", "clean"))).toEqual({ derived: C("pending"), clean: SHOWN });
+    });
+    it("a line written over a merged turn carries the lowest turn lsn (lineage-write.ts): held when the earliest merged turn began before the commit", () => {
+      // turns began at 15 and 25 around revoke 4's commit at 20: the merged line stores 15 and is held; a line of the later turn alone is shown
+      const f = make().job(4, 20).pending("*", 10, 4).reply("T", "merged", 27, { turnLsn: Math.min(15, 25) }).reply("T", "later", 28, { turnLsn: 25 });
+      expect(page(f, "T", gen("merged", "later"))).toEqual({ merged: C("pending"), later: SHOWN });
+    });
+    it("a revoke active when a 1.0.2 file is upgraded moves to the upgrade's slot: a reply 1.0.2 wrote after its old cap reads checking (Revision 3b)", () => {
+      // bulk 4 was activated by 1.0.2 at slot 20; 1.0.2 then wrote a reply in T whose turn began at 25, which the walk can still mark
+      const f = make().pending("*", 10, 4).denyRange("U", 5, 30, 4).reply("T", "mid", 27, { turnLsn: 25 });
+      f.db.prepare(`INSERT INTO memory_revoke_jobs(revoke_id,kind,root,root_lsn,started_lsn,phase,cursor,state) VALUES(4,'bulk','{"kind":"bulk","cause":"u2"}',5,20,'flow','','active'),(6,'bulk','{"kind":"bulk","cause":"u2"}',20,20,'flow','','seeding')`).run();
+      const generation = denyGeneration(f.db), slot = Number(f.db.prepare("SELECT next FROM memory_lsn WHERE id=1").get()!.next);
+      // the v10 to v12 step of migrateMemorySchema (revoke-upgrade-activation.test.ts runs it through the real upgrade)
+      activateRevokesAtUpgrade(f.db);
+      expect(f.db.prepare("SELECT revoke_id,started_lsn FROM memory_revoke_jobs ORDER BY revoke_id").all().map(row => [Number(row.revoke_id), Number(row.started_lsn)])).toEqual([[4, slot], [6, 20]]);
+      expect(denyGeneration(f.db)).toBe(generation + 1);
+      f.reply("T", "late", slot + 2, { turnLsn: slot + 1 });
+      expect(page(f, "T", gen("mid", "late"))).toEqual({ mid: C("pending"), late: SHOWN });
+    });
+    it("each window keeps its own cap: an older revoke's later commit does not lift a newer one's hold", () => {
+      // revoke 4 (since 10, cap 20) and revoke 5 (since 12, cap 35): a line of turn 25 is outside 4's window but inside 5's
+      const f = make().job(4, 20).job(5, 35).pending("*", 10, 4).pending("*", 12, 5).reply("T", "mid", 26, { turnLsn: 25 }).reply("T", "late", 37, { turnLsn: 36 });
+      expect(page(f, "T", gen("mid", "late"))).toEqual({ mid: C("pending"), late: SHOWN });
+    });
   });
 
   it("a withheld mark outranks checking", () => {
@@ -274,6 +331,48 @@ describe("sessions (sessionLookup)", () => {
     expect(sessionLookup(f.db, key, MEMBER)).toEqual(W("deny-session"));
     f.deny("thread", "T");
     expect(sessionLookup(f.db, key, MEMBER)).toEqual(W("thread-deny"));
+  });
+});
+
+// 1.0.2 Keep all P0 (F1): a roster or settings change flips every receipt (an audience-only revoke, memory_revoke_audience). The owner's own
+// direct chat is a content reader: those marks change what other audiences may be shown, never what the owner's chat holds, so its session
+// is not reset by them. 1.0.2 counted them for every reader and reset the owner's session on every turn after Keep all.
+describe("sessions: the owner's content reader and audience-only revokes", () => {
+  const key = { threadId: "T", driverInstance: "d", nativeSession: "n" };
+  const audienceOnly = (f: WritetimeFixture, revoke: number) => f.db.prepare("INSERT OR IGNORE INTO memory_revoke_audience(revoke_id) VALUES(?)").run(revoke);
+  it("audience-only deny_session, pending and receipt flips: shown for the content reader, withheld or checking for an audience reader", () => {
+    const f = make().owner("T", "o1", 1).reply("T", "g1", 2, { turnLsn: 1 }).sessionLineage("T", "d", "n", 1, 10);
+    audienceOnly(f, 7);
+    f.denySession("T", "d", "n", 7);
+    expect(sessionLookup(f.db, key, CONTENT)).toEqual(SHOWN);
+    expect(sessionLookup(f.db, key, MEMBER)).toEqual(W("deny-session"));
+    expect(sessionLookup(f.db, key, OWNER)).toEqual(W("deny-session"));
+    f.db.exec("DELETE FROM memory_deny_session");
+    f.pending("T", 5, 7).pending("*", 3, 7);
+    expect(sessionLookup(f.db, key, CONTENT)).toEqual(SHOWN);
+    expect(sessionLookup(f.db, key, MEMBER)).toEqual(C("pending"));
+    f.db.exec("DELETE FROM memory_deny_pending");
+    // a receipt flipped and not yet committed by the marker (memory_receipt_flips): audience-only too
+    const no = Number(f.db.prepare("SELECT no FROM memory_thread_no WHERE thread_id='T'").get()!.no);
+    f.db.prepare("INSERT INTO memory_receipt_flips(thread_no,first_lsn,bundle_id) VALUES(?,?,?)").run(no, 2, "flipped");
+    expect(sessionLookup(f.db, key, CONTENT)).toEqual(SHOWN);
+    expect(sessionLookup(f.db, key, MEMBER)).toEqual(C("pending"));
+    f.db.exec("DELETE FROM memory_receipt_flips");
+    // the session's own revoked receipt: the content reader leaves it to the continuation check (state, policy, epoch), an audience reader withholds
+    f.receipt("b1", "T", "d", "n", { state: "revoked" });
+    expect(sessionLookup(f.db, key, CONTENT)).toEqual(SHOWN);
+    expect(sessionLookup(f.db, key, MEMBER)).toEqual(W("deny-session"));
+  });
+  it("a revoke that is not audience-only still resets the owner's session", () => {
+    const f = make().owner("T", "o1", 1).sessionLineage("T", "d", "n", 1, 10);
+    f.denySession("T", "d", "n", 9);
+    expect(sessionLookup(f.db, key, CONTENT)).toEqual(W("deny-session"));
+    f.db.exec("DELETE FROM memory_deny_session");
+    f.pending("T", 5, 9);
+    expect(sessionLookup(f.db, key, CONTENT)).toEqual(C("pending"));
+    f.db.exec("DELETE FROM memory_deny_pending");
+    f.deny("thread", "T");
+    expect(sessionLookup(f.db, key, CONTENT)).toEqual(W("thread-deny"));
   });
 });
 

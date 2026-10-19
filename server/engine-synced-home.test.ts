@@ -5,7 +5,7 @@
 // in place: no aside and no private working name is ever made there. A local folder that is only NAMED like a sync folder is not
 // synced and is deleted as always. An aside an earlier build stranded in a synced home heals by the ordinary rejoin. The owner is told
 // once, after the deletion, that the cloud provider may still hold older copies.
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, realpathSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, realpathSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
@@ -17,10 +17,11 @@ import { mutOps } from "./engine-fs.ts";
 import { homeKey } from "./engine-plan-core.ts";
 import { useFakeExclusion, type FakeExclusion } from "./testing/engine-exclusion-fake.ts";
 import { buildFixture, canaryHits, THREAD, type Fixture } from "./testing/engine-history-fixtures.ts";
+import { removeTempDirSync } from "./testing/cleanup.ts";
 
 const scratch = realpathSync.native(mkdtempSync(join(tmpdir(), "murage-synced-")));
 const openDatabases: DatabaseSync[] = [];
-afterAll(() => { for (const db of openDatabases) db.close(); rmSync(scratch, { recursive: true, force: true }); });
+afterAll(() => { for (const db of openDatabases) db.close(); removeTempDirSync(scratch); });
 let fake: FakeExclusion;
 beforeEach(() => { fake = useFakeExclusion(); });
 afterEach(() => { fake.restore(); });

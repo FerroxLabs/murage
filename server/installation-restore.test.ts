@@ -1,5 +1,5 @@
 import { execFileSync } from "node:child_process";
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync, existsSync, renameSync, symlinkSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, writeFileSync, existsSync, renameSync, symlinkSync } from "node:fs";
 import { homedir, tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -8,9 +8,10 @@ import { writeInstallationArchive } from "./installation-archive.ts";
 import { restoreInstallation, rollbackInstallationRestore } from "./installation-restore.ts";
 import { acquireDataDirLease, dataDirLeasePaths } from "../electron/data-dir-lease.mjs";
 import { assertRestoreReviewed } from "../electron/restore-review.mjs";
+import { removeTempDirSync } from "./testing/cleanup.ts";
 
 const roots: string[] = [];
-afterEach(() => { for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true }); });
+afterEach(() => { for (const root of roots.splice(0)) removeTempDirSync(root); });
 async function fixture() {
   const root = mkdtempSync(join(tmpdir(), "murage-restore-transaction-")); roots.push(root);
   const source = join(root, "source"), target = join(root, "target"), archive = join(root, "backup.zip");

@@ -3,7 +3,7 @@
 // them (one every ten seconds, each waiting up to 120 s) kept the idle learning lanes from ever asking the gate.
 // Also: a forget does not wait for the owner (it is a synchronous write, not an engine call) and its derived
 // cleanup is not gated either, so it completes under sustained owner pressure.
-import { mkdirSync, rmSync } from "node:fs";
+import { mkdirSync } from "node:fs";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { DATA_DIR } from "../config.ts";
 import { closeDatabase, database } from "../database.ts";
@@ -15,12 +15,13 @@ import { forgetMemory, memoryDeletionStatus } from "./forget.ts";
 import { memoryAccess, reconcileMemoryRoster, type MemoryRoster } from "./policy.ts";
 import { setMemoryMode } from "./repository.ts";
 import { MemoryWorkerController } from "./worker-controller.ts";
+import { removeTempDirSync } from "../testing/cleanup.ts";
 
 type Internals = { child: unknown; ready: boolean; onWorkerMessage(child: unknown, message: unknown): void };
 let controller: MemoryWorkerController | undefined;
 let release: (() => void) | undefined;
 beforeEach(() => {
-  closeDatabase(); rmSync(DATA_DIR, { recursive: true, force: true }); mkdirSync(DATA_DIR, { recursive: true });
+  closeDatabase(); removeTempDirSync(DATA_DIR); mkdirSync(DATA_DIR, { recursive: true });
   vi.useFakeTimers(); vi.setSystemTime(new Date("2026-10-10T00:00:00Z"));
   vi.spyOn(console, "log").mockImplementation(() => {});
 });

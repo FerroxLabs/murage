@@ -527,10 +527,18 @@ function delegatedModules(root: ts.Node, sf: ts.SourceFile): string[] {
     if (ts.isObjectLiteralExpression(arg)) return arg.properties.some(p => p.name && ["path", "url"].includes(p.name.getText(sf)));
     return false;
   };
-  const callees = (expr: ts.Expression): ts.Identifier[] => {
+  const callees = (expr: ts.Expression, depth = 0): ts.Identifier[] => {
+    if (depth > 6) return [];
     expr = unwrap(expr);
-    if (ts.isIdentifier(expr)) return [expr];
-    if (ts.isConditionalExpression(expr)) return [...callees(expr.whenTrue), ...callees(expr.whenFalse)];
+    if (ts.isIdentifier(expr)) {
+      // `const handle = enabled ? createHandler(options) : undefined`:
+      // the request reaches the imported factory's returned handler. Follow
+      // its actual initializer, not a second list of handler modules/routes.
+      const declaration = declarationOf(expr.text, sf);
+      return [expr, ...(declaration?.sf === sf ? callees(declaration.init, depth + 1) : [])];
+    }
+    if (ts.isCallExpression(expr)) return callees(expr.expression, depth + 1);
+    if (ts.isConditionalExpression(expr)) return [...callees(expr.whenTrue, depth + 1), ...callees(expr.whenFalse, depth + 1)];
     return [];
   };
   const visit = (node: ts.Node) => {

@@ -15,10 +15,11 @@ import { reconcileMemoryRoster, type MemoryRoster } from "./policy.ts";
 import { setMemoryMode } from "./repository.ts";
 import { chainStore, downgradeMemorySchema, migrateMemorySchema, referencesBroken, repairOutputRootBackfill, rootSetMembers, validateMemorySchema, REFERENCE_SLICE } from "./schema.ts";
 import { startBlockingHeartbeat } from "./blocking-heartbeat.ts";
+import { removeTempDirSync } from "../testing/cleanup.ts";
 
 const roster: MemoryRoster = { bots: [{ id: "bot", threadId: "chat", tasks: [] }], groups: [] };
 beforeEach(() => {
-  closeDatabase(); rmSync(DATA_DIR, { recursive: true, force: true }); mkdirSync(DATA_DIR, { recursive: true });
+  closeDatabase(); removeTempDirSync(DATA_DIR); mkdirSync(DATA_DIR, { recursive: true });
   setMemoryMode("active"); reconcileMemoryRoster(roster);
 });
 afterEach(() => closeDatabase());
@@ -80,7 +81,7 @@ function seedOlderSets(db: DatabaseSync, ids: string[], shape: "chain" | "full")
   db.exec("COMMIT");
 }
 function lookups(n: number, shape: "chain" | "full") {
-  closeDatabase(); rmSync(DATA_DIR, { recursive: true, force: true }); mkdirSync(DATA_DIR, { recursive: true });
+  closeDatabase(); removeTempDirSync(DATA_DIR); mkdirSync(DATA_DIR, { recursive: true });
   setMemoryMode("active"); reconcileMemoryRoster(roster);
   const ids = chainThread("chat", n, "B1");
   const db = database();
@@ -188,7 +189,7 @@ it("P1 r2: the heartbeat keeps the note moving while the server thread is blocke
     rmSync(file, { force: true });
     await sleep(250);
     expect(existsSync(file), "no beat lands after end()").toBe(false);
-  } finally { rmSync(dir, { recursive: true, force: true }); }
+  } finally { removeTempDirSync(dir); }
 });
 
 it("P1 r2: the upgrade's blocking stretch is covered by a heartbeat that always ends", () => {
@@ -199,7 +200,7 @@ it("P1 r2: the upgrade's blocking stretch is covered by a heartbeat that always 
   migrateMemorySchema(db, "off", { onBlocking: first => { steps.push(first); return { step: step => { steps.push(step); }, end: () => { ended++; } }; } });
   expect(steps).toEqual(["tables", "indexes", "validating", "committing"]);
   expect(ended).toBe(1);
-  expect(db.prepare("SELECT schema_version FROM memory_meta").get()?.schema_version).toBe(10);
+  expect(db.prepare("SELECT schema_version FROM memory_meta").get()?.schema_version).toBe(12);
   // a failed upgrade ends the heartbeat too
   downgradeMemorySchema(db, 7);
   db.exec("CREATE TEMP TRIGGER boom BEFORE INSERT ON main.memory_lineage_meta BEGIN SELECT RAISE(ABORT,'boom'); END");

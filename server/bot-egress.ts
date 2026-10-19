@@ -9,9 +9,10 @@
 // failure is closed, not open.
 import type { ServerResponse } from "node:http";
 import { EgressViolation, WorkerText, collectRendered, type EgressOrigin, type SourceRange } from "./released-text.ts";
-import { MurageStatus, isOutbound, outboundCopy, outboundWords, status, type BotName, type Outbound } from "./murage-status.ts";
+import { MurageStatus, isOutbound, outboundCopy, outboundWords, status, statusRecordOf, type BotName, type Outbound } from "./murage-status.ts";
 import { reviewReplyShown } from "./project-review.ts";
 import type { Message } from "./store.ts";
+import { murageLine } from "./murage-line.ts";
 
 declare const bodyBrand: unique symbol;
 /** A reply body that `botBody` built and froze. */
@@ -131,12 +132,26 @@ export class RowSink {
 
 /** A bot's text row (a worker's reply, or Murage's line quoting it). `reviewNonce`: the reply is a reviewer's, shown with its verdict block as one line. */
 export function writeBotRow(sink: RowSink, threadId: string, extra: RowExtras, text: Outbound, reviewNonce?: string, id?: string): Message {
+  // A copy is the producing bot's row (rule 5): one whose bot is not named keeps none of its words and is Murage's withheld line instead.
+  if (outboundCopy(text)?.messageIds.length && !extra.from?.botId && !extra.handoffFrom) text = status("withheld");
   const copy = outboundCopy(text);
   const words = outboundWords(text);
-  return appendRow(sink, threadId, { ...extra, role: "bot", kind: "text", text: reviewNonce ? reviewReplyShown(words, reviewNonce) : words, ...(copy?.messageIds.length ? { copyOf: copy } : {}) } as Omit<Message, "id" | "at">, id);
+  const bare = { ...extra, role: "bot", kind: "text", text: reviewNonce ? reviewReplyShown(words, reviewNonce) : words, ...(copy?.messageIds.length ? { copyOf: copy } : {}) } as Omit<Message, "id" | "at">;
+  // A copy of a bot's words is that bot's row (LINEAGE-DESIGN-S6 rule 5): role bot, `from` the producing bot, `copyOf` naming the source, no
+  // stamp; the door validates the source on every read (rule 9). Words with no source to name stay Murage's line, never engine output.
+  const copyOfBot = Boolean(copy?.messageIds.length) && Boolean(extra.from?.botId);
+  const row = extra.handoffFrom || copyOfBot ? bare : { ...bare, ...keptStatus(bare.murage, text, "status") };
+  return appendRow(sink, threadId, extra.handoffFrom || copyOfBot ? row : murageLine(row), id);
+}
+
+/** A Murage row written from a status keeps its key and parameters beside the words (LINEAGE-DESIGN-S6 rule 11), so a bot reads it only as
+ * those rendered fresh: the `murage` field to spread into the row, or nothing for a line no row keeps. */
+function keptStatus(murage: Message["murage"], line: Outbound, kind: "status" | "failure"): Pick<Message, "murage"> {
+  const kept = statusRecordOf(line);
+  return kept ? { murage: { kind, ...murage, status: kept } } : {};
 }
 
 /** An activity row whose name is Murage's own line. */
 export function writeActivityRow(sink: RowSink, threadId: string, extra: RowExtras, name: Outbound, ok?: boolean, id?: string): Message {
-  return appendRow(sink, threadId, { ...extra, role: "bot", kind: "activity", tool: { name: outboundWords(name), ...(ok === undefined ? {} : { ok }) } } as Omit<Message, "id" | "at">, id);
+  return appendRow(sink, threadId, murageLine({ ...extra, role: "bot", kind: "activity", tool: { name: outboundWords(name), ...(ok === undefined ? {} : { ok }) }, ...keptStatus(extra.murage, name, ok === false ? "failure" : "status") } as Omit<Message, "id" | "at">), id);
 }

@@ -67,6 +67,8 @@ export class BrowserExtensionIntegration {
     taskEnded?: (info: { context: BindingContext; bot: BotRecord; taskId: string; reason: string }) => void;
     /** T20/T37: this conversation is an unattended routine run. A routine never asks, so it never mints a grant. */
     routine?: (threadId: string) => boolean;
+    /** The provider turn running in a conversation now, from the server's turn state: the approval card (its summary quotes the model) names it. */
+    turnOf?: (threadId: string) => string | undefined;
     /** The owner's saved rule for a site on this bot and browser profile (the approved-sites list). */
     siteSetting?: (botId: string, profileId: string, origin: string) => { rule: "allow" | "ask" | "never"; lowered?: boolean } | undefined };
   constructor(options: BrowserExtensionIntegration["options"]) {
@@ -74,6 +76,7 @@ export class BrowserExtensionIntegration {
     // Continuation records sit inside browser-extension/, which a backup never takes. A restart within 24 hours keeps a card answerable.
     this.approvals = new BrowserExtensionApprovals(options.approvalBus, {
       file: join(this.options.dataDir, "browser-extension", "approvals.json"),
+      ...(options.turnOf ? { turnOf: options.turnOf } : {}),
       // Before anything runs from a late answer the binding is looked at again: the same generation, and the task still going.
       valid: record => { const binding = this.service?.status().bindings.find(item => item.bindingId === record.bindingId); return !!binding && binding.generation === record.generation && binding.state !== "stopped" && binding.taskEnded !== true; },
       onContinue: info => { const bot = this.options.bot(info.botId); return bot ? this.options.continueCard?.({ ...info, bot }) : true; },
@@ -119,7 +122,7 @@ export class BrowserExtensionIntegration {
         // Flux by default, the bot's own engine on the owner's switch. Not available (no key, or Flux has not shipped no-retain) means none.
         checker: context => {
           const bot = this.options.bot(context.botId); const check = bot?.browserActionCheck ?? "flux";
-          const connection = resolveCheckerConnection({ switch: check, instances: this.options.checkerInstances?.() ?? [], ...(bot?.modelSelection?.instanceId ? { botInstanceId: bot.modelSelection.instanceId } : {}) });
+          const connection = resolveCheckerConnection({ switch: check, instances: this.options.checkerInstances?.() ?? [], ...(bot?.modelSelection?.instanceId ? { botInstanceId: bot.modelSelection.instanceId } : {}), ...(bot?.id ? { botId: bot.id } : {}) });
           return connection ? { deps: { transport: connection.transport, models: connection.models }, key: JSON.stringify([connection.source, connection.fallback === true, bot?.modelSelection?.instanceId ?? null, connection.models]) } : undefined;
         },
         routine: context => this.isRoutineThread(context.threadId),

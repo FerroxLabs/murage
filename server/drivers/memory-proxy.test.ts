@@ -82,14 +82,18 @@ afterAll(async () => {
   if (stub) await new Promise<void>((resolve, reject) => stub.close(error => error ? reject(error) : resolve()));
 });
 
-it("negotiates MCP and exposes only four bounded memory tools", async () => {
+it("negotiates MCP and exposes only the bounded memory and thread tools", async () => {
   const initialized = await rpc("initialize", { protocolVersion: "2024-11-05" });
   expect(initialized.result.protocolVersion).toBe("2024-11-05");
   expect(initialized.result.serverInfo.name).toBe("murage-memory");
   child.stdin!.write(JSON.stringify({ jsonrpc: "2.0", method: "notifications/initialized" }) + "\n");
   const listed = await rpc("tools/list");
-  expect(listed.result.tools.map((tool: Json) => tool.name)).toEqual(["memory_search", "memory_get", "memory_save", "memory_propose_correction"]);
+  expect(listed.result.tools.map((tool: Json) => tool.name)).toEqual(["memory_search", "memory_get", "memory_save", "memory_propose_correction", "thread_search", "thread_list", "thread_read"]);
   expect(listed.result.tools.every((tool: Json) => tool.inputSchema.additionalProperties === false)).toBe(true);
+  // L2: the schema states the runtime's UTF-8 byte bound, never a character minimum that would refuse 東京
+  const search = listed.result.tools.find((tool: Json) => tool.name === "thread_search");
+  expect(search.inputSchema.properties.query.minLength ?? 0).toBeLessThanOrEqual(1);
+  expect(search.inputSchema.properties.query.description).toContain("3 to 512 UTF-8 bytes");
   // MEMJSON2: both record-addressing tools advertise the turn-local handle next to id/version.
   const get = listed.result.tools.find((tool: Json) => tool.name === "memory_get");
   expect(Object.keys(get.inputSchema.properties.handles.items.properties).sort()).toEqual(["handle", "id", "version"]);
@@ -189,4 +193,59 @@ it("refuses oversized response frames and never executes tool notifications", as
   child.stdin!.write(JSON.stringify({ jsonrpc: "2.0", method: "tools/call", params: { name: "memory_save", arguments: { text: "candidate", evidence, idempotencyKey: "k" } } }) + "\n");
   await rpc("ping");
   expect(requests).toHaveLength(count);
+});
+
+it("forwards the thread tools to their fixed routes and rejects bad arguments before any request", async () => {
+  const cases = [
+    ["thread_search", "thread-search", { query: "vault code", before: "2026-01-01" }],
+    ["thread_search", "thread-search", { query: "vault", before: "2026-01-01T10:00:00.123Z" }],
+    // L2: two characters, six UTF-8 bytes: inside the 3 to 512 byte bound
+    ["thread_search", "thread-search", { query: "東京" }],
+    ["thread_list", "thread-list", {}],
+    ["thread_list", "thread-list", { before: "2026-01-01" }],
+    ["thread_read", "thread-read", { message_id: "m-1", direction: "around", limit: 40 }],
+  ] as const;
+  for (const [name, route, args] of cases) {
+    requests = []; response = JSON.stringify({ rows: [] });
+    const reply = await call(name, args);
+    expect(reply.result.isError).toBe(false);
+    expect(requests).toHaveLength(1);
+    expect(requests[0].path).toBe(`/api/internal/memory/${route}`);
+    expect(requests[0].auth).toBe(`Bearer ${TOKEN}`);
+    expect(requests[0].body).toEqual(args);
+  }
+  requests = [];
+  const bad: Array<[string, unknown]> = [
+    ["thread_search", { query: "ab" }], ["thread_search", { query: "é" }], ["thread_search", { query: "あ".repeat(171) }], ["thread_search", { query: "x".repeat(513) }], ["thread_search", { query: "vault", before: "yesterday" }],
+    ["thread_search", { query: "vault", before: "m-1" }], ["thread_search", { query: "vault", extra: 1 }], ["thread_list", { before: 12 }],
+    ["thread_read", { message_id: "m", direction: "sideways" }], ["thread_read", { message_id: "m", direction: "before", limit: 41 }],
+    ["thread_read", { message_id: "m", direction: "before", limit: 0 }], ["thread_read", { message_id: "x".repeat(257), direction: "before" }],
+    ["thread_read", { direction: "before" }],
+  ];
+  for (const [name, args] of bad) {
+    const reply = await call(name, args);
+    expect(reply.result.isError).toBe(true);
+    expect(String(reply.result.content[0].text)).toContain("Memory request rejected");
+  }
+  expect(requests).toEqual([]);
+});
+
+it("a request id over 256 bytes, or neither a string nor a finite number, runs no tool", async () => {
+  const invalid = (id: unknown) => new Promise<Json>((resolve, reject) => {
+    const timer = setTimeout(() => { pending.delete(null as never); reject(new Error("no reply")); }, 5000);
+    pending.set(null as never, value => { clearTimeout(timer); resolve(value); });
+    child.stdin!.write(JSON.stringify({ jsonrpc: "2.0", id, method: "tools/call", params: { name: "thread_list", arguments: {} } }) + "\n");
+  });
+  requests = [];
+  for (const id of ["x".repeat(300), "é".repeat(129), true, { a: 1 }, [1], null]) {
+    const reply = await invalid(id);
+    expect(reply.error).toEqual({ code: -32600, message: "Invalid request" });
+  }
+  expect(requests).toEqual([]);
+  // an id of exactly 256 bytes and a number still run
+  response = JSON.stringify({ rows: [] });
+  const ok = new Promise<Json>(resolve => { pending.set(1.5 as never, resolve); });
+  child.stdin!.write(JSON.stringify({ jsonrpc: "2.0", id: 1.5, method: "tools/call", params: { name: "thread_list", arguments: {} } }) + "\n");
+  expect((await ok).result.isError).toBe(false);
+  expect(requests).toHaveLength(1);
 });

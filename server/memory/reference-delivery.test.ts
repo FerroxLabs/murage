@@ -8,7 +8,7 @@
 // memory_propose_correction work on a remembered line without a memory_search
 // round trip and without any record id in the prompt; recall never hands the
 // engine the dispatching message's own just-captured chunk.
-import { mkdirSync, rmSync } from "node:fs";
+import { mkdirSync } from "node:fs";
 import { beforeEach, expect, it } from "vitest";
 import { DATA_DIR } from "../config.ts";
 import { closeDatabase, database } from "../database.ts";
@@ -25,8 +25,10 @@ import { decorateMemoryInstance } from "../harness/memory-adapter.ts";
 import { makeFakeDriver } from "../testing/fake-driver.ts";
 import { roomContextMessageIds, roomContextMessages } from "../room-context.ts";
 import { LineageAllowance } from "./lineage-allowance.ts";
+import { removeTempDirSync } from "../testing/cleanup.ts";
+import { storeAnchorMessage } from "./testing/anchor-message.ts";
 
-beforeEach(() => { closeDatabase(); rmSync(DATA_DIR,{recursive:true,force:true}); mkdirSync(DATA_DIR,{recursive:true}); });
+beforeEach(() => { closeDatabase(); removeTempDirSync(DATA_DIR); mkdirSync(DATA_DIR,{recursive:true}); });
 const PROVENANCE = /sourceId|startByte|endByte|scopeId|"evidence"|"revision"|"version"/;
 /** The pinned line grammar: a turn-local handle, an attribution in parentheses,
  * one JSON string literal. Nothing else may appear on a remembered line. */
@@ -44,6 +46,7 @@ function record(id:string,scopeId:string,text:string,{pinned=true,kind="fact",as
   const db = database();
   db.prepare("INSERT INTO memory_records VALUES(?,1,?,?,?,?,'active',?,1,NULL,NULL,1)").run(id,scopeId,kind,text,assertion,pinned?1:0);
   db.prepare("INSERT INTO memory_sources VALUES(?,?,'private',?,NULL,1,'hash','text','assistant','settled',NULL,'active')").run(`source-${id}`,scopeId,messageId);
+  storeAnchorMessage(db,"private",messageId,text,"bot");
   db.prepare("INSERT INTO memory_source_versions VALUES(?,1,'hash',?,1)").run(`source-${id}`,JSON.stringify({text}));
   // These direct inserts represent captured sources; agent corrections require
   // the completed capture job that the real capture pipeline always records.

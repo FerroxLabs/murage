@@ -3,14 +3,15 @@
 //
 // reconcilePipStances reads the stance bindings through an index (never a scan of every binding): the same statements and rows with 10 and with
 // 100,000 other bindings (a file of 90,000 bindings stalled the main thread for 5-33 s per call).
-import { mkdirSync, rmSync } from "node:fs";
+import { mkdirSync } from "node:fs";
 import { beforeEach, expect, it } from "vitest";
+import { removeTempDirSync } from "../testing/cleanup.ts";
 
 const { DATA_DIR } = await import("../config.ts");
 const { closeDatabase, database } = await import("../database.ts");
 const { reconcilePipStances } = await import("./pip-stance.ts");
 
-beforeEach(() => { closeDatabase(); rmSync(DATA_DIR, { recursive: true, force: true }); mkdirSync(DATA_DIR, { recursive: true }); });
+beforeEach(() => { closeDatabase(); removeTempDirSync(DATA_DIR); mkdirSync(DATA_DIR, { recursive: true }); });
 
 function fill(others: number): void {
   const db = database();

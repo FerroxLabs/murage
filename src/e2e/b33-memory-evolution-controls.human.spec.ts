@@ -1,4 +1,4 @@
-import { test, expect } from "@playwright/test";
+import { test, expect } from "./page-error-guard";
 import { createServer, type ViteDevServer } from "vite";
 import react from "@vitejs/plugin-react";
 import tailwindcss from "@tailwindcss/vite";
@@ -36,7 +36,7 @@ test("owner enable and explicit interrupted-job retry remain truthful and access
   await expect(controls.getByText("Authorized for shipped synthetic examples",{exact:true})).toBeVisible();
   await expect.poll(async()=>(await api("/api/memory/status")).evolution.job.status,{timeout:20000}).toBe("waiting");
   // Null remains the stored preference; connection resolution is reported separately.
-  const initial=await api("/api/memory/status");expect(initial.learning.settings.version).toBe(2);expect(initial.configuration.extractorInstanceId).toBeNull();expect(initial.evolution.job.started).toBe(false);
+  const initial=await api("/api/memory/status");expect(initial.learning.settings.version).toBe(3);expect(initial.configuration.extractorInstanceId).toBeNull();expect(initial.evolution.job.started).toBe(false);
   // Seed only an interrupted receipt in this fixture's private database. No
   // model/worker is configured; retry proves the actual owner action route.
   const db=new DatabaseSync(join(fixture.info.dataDir,"messages.db"));

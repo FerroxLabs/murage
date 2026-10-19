@@ -1,4 +1,5 @@
 import { renderMurageTools, CODEX_TOOL_SURFACE } from "./murage-tool-surface.ts";
+import { removeTempDirSync } from "./testing/cleanup.ts";
 const rendered = (text: string) => renderMurageTools(text, CODEX_TOOL_SURFACE, {agents:"agents",memory:"murage-memory"});
 // Copyright 2026 Ferrox Labs
 // SPDX-License-Identifier: AGPL-3.0-or-later
@@ -6,7 +7,7 @@ const rendered = (text: string) => renderMurageTools(text, CODEX_TOOL_SURFACE, {
 // Lane M, plan 3.8 prompt contract: the project layers a member's turn
 // carries (brief, board digest, summary, joining brief), their owner-audience
 // gate, stale rows left out, and the engine-aware budget.
-import { mkdirSync, rmSync } from "node:fs";
+import { mkdirSync } from "node:fs";
 import { beforeEach, expect, it } from "vitest";
 import { DATA_DIR } from "./config.ts";
 import { closeDatabase, database } from "./database.ts";
@@ -19,11 +20,11 @@ import {
 
 const NOW = 1_790_000_000_000;
 const names = new Map([["finch", "Finch"], ["dax", "Dax"], ["cole", "Cole"]]);
-const lead: ProjectMemberView = { groupId: "p1", botId: "finch", names };
-const member: ProjectMemberView = { groupId: "p1", botId: "dax", names };
+const lead: ProjectMemberView = { groupId: "p1", botId: "finch", names, threads: new Set(["p1-room"]) };
+const member: ProjectMemberView = { groupId: "p1", botId: "dax", names, threads: new Set(["p1-room"]) };
 
 beforeEach(() => {
-  closeDatabase(); rmSync(DATA_DIR, { recursive: true, force: true }); mkdirSync(DATA_DIR, { recursive: true });
+  closeDatabase(); removeTempDirSync(DATA_DIR); mkdirSync(DATA_DIR, { recursive: true });
   channelToProjectRows(database(), { groupId: "p1", bulletin: "Always write in plain English.", leadBotId: "finch", now: NOW });
   number = 0;
 });
@@ -168,6 +169,8 @@ it("Astra r2 #16: the layers report the project messages they rest on, for the t
   insertProjectBriefVersion(database(), { groupId: "p1", summary: "", doneMeans: "", rules: "R", whereWorkIs: [], decisions: [{ id: "d1", text: "Annual first", by: "finch", at: NOW, sourceMessageIds: ["m-dec"] }], updatedBy: "finch", change: "lead_decision", now: NOW });
   database().prepare(`INSERT INTO project_work_items(id, group_id, number, title, assignee_bot_id, state, position, source_message_ids, created_by, created_at, updated_at) VALUES('cx','p1',1,'Card','dax','doing',1,'["m-card"]','finch',?,?)`).run(NOW, NOW);
   database().prepare("INSERT INTO project_summaries(group_id, version, text, source_message_ids, made_by, at) VALUES('p1',1,'S','[\"m-sum\"]','finch',?)").run(NOW);
+  // a summary is shown only when each message it cites is found in a project thread (rule 23, fail closed)
+  database().prepare("INSERT INTO messages(thread_id, id, at, role, kind, text, json) VALUES('p1-room','m-sum',?,'user','text','the owner','{\"id\":\"m-sum\",\"role\":\"user\",\"kind\":\"text\",\"text\":\"the owner\"}')").run(NOW);
   const cited = new Set<string>();
   projectBriefLayer(database(), member, true, undefined, cited);
   projectBoardLayer(database(), member, true, undefined, cited);

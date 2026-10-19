@@ -161,7 +161,7 @@ describe("persona is spoken to the bot and read by nothing that routes", () => {
 
   it("is appended to the ROOM turn's persona string", () => {
     expect(shapes).toContain(ROOM_TURN_PERSONA);
-    expect(index).toContain("roomPersonaLines(bot, group.name)");
+    expect(index).toContain("roomPersonaLines(bot, dmTitle(store, group))");
   });
 
   it("appears on those two lines of the harness and no others", () => {

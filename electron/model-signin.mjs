@@ -289,11 +289,25 @@ export function createModelSignIn(deps) {
   async function start(provider) {
     if (!isProvider(provider)) return { ok: false, error: "unknown" };
     if (!signInProviderEnabled(provider, env)) return { ok: false, error: "disabled" };
-    if (isHeadlessEnvironment(platform, env)) return { ok: false, error: "headless" };
+    if (!deps.acquireTokens && isHeadlessEnvironment(platform, env)) return { ok: false, error: "headless" };
     const gen = nextGeneration(provider);
     flows.get(provider)?.finish({ error: "cancelled" });
     try {
       const clientId = resolveClientId(provider, env);
+      if (deps.acquireTokens) {
+        // Cloud home: an injected acquirer (the engine-login relay) replaces the local browser flow.
+        const tokenUrl = provider === "chatgpt" ? CHATGPT_TOKEN_URL : XAI_TOKEN_URL_FALLBACK;
+        const controller = new AbortController();
+        const flow = { finish: () => controller.abort() };
+        flows.set(provider, flow);
+        let acquired;
+        try { acquired = await deps.acquireTokens({ provider, clientId, signal: controller.signal, epoch: gen, isCurrent: () => !disposed && isCurrent(provider, gen) }); }
+        finally { if (flows.get(provider) === flow) flows.delete(provider); }
+        if (controller.signal.aborted || disposed || !isCurrent(provider, gen)) return { ok: false, error: "cancelled" };
+        if (acquired?.kind !== "tokens") return { ok: false, error: acquired?.error ?? "unknown" };
+        if (acquired.provider !== provider || acquired.clientId !== clientId || acquired.tokenUrl !== tokenUrl || acquired.epoch !== gen || !text(acquired.tokens?.accessToken)) return { ok: false, error: "unauthorized" };
+        return await completeSignIn(provider, gen, clientId, tokenUrl, acquired.tokens);
+      }
       const pkce = createPkce(provider);
       let tokenUrl = CHATGPT_TOKEN_URL, outcome;
       if (provider === "chatgpt") {
@@ -490,13 +504,16 @@ export function createModelSignIn(deps) {
       if (now() - last < REACTIVE_COOLDOWN_MS) return Promise.resolve(false);
       lastReactive.set(provider, now());
     }
+    // A start, cancel or sign-out that lands meanwhile supersedes this refresh (cloud: sign-out never waits on it).
+    const refreshGen = generations.get(provider) ?? 0;
+    const stillCurrent = () => !disposed && (generations.get(provider) ?? 0) === refreshGen;
     const work = (async () => {
       const row = refreshRecord(provider);
       if (!row || row.state !== "connected") return false;
       const markDead = async () => {
         const fromUnsaved = unsaved.get(provider)?.refreshToken === row.refreshToken;
         unsaved.delete(provider);
-        await persist(provider, current => current?.revision === row.revision && (current.refreshToken === row.refreshToken || fromUnsaved)
+        await persist(provider, current => stillCurrent() && current?.revision === row.revision && (current.refreshToken === row.refreshToken || fromUnsaved)
           ? { state: "needs-sign-in", revision: current.revision, savedAt: now(), ...(current.email ? { email: current.email } : {}), ...(current.plan ? { plan: current.plan } : {}), ...(current.clientId ? { clientId: current.clientId } : {}) }
           : undefined);
         publish();
@@ -506,6 +523,7 @@ export function createModelSignIn(deps) {
       const clientId = text(row.clientId, 200) ? row.clientId : resolveClientId(provider, env);
       const tokenUrl = provider === "chatgpt" ? CHATGPT_TOKEN_URL : isPinnedXaiTokenUrl(row.tokenUrl) ? row.tokenUrl : XAI_TOKEN_URL_FALLBACK;
       const result = await postToken(provider, tokenUrl, new URLSearchParams({ grant_type: "refresh_token", client_id: clientId, refresh_token: row.refreshToken, scope: provider === "chatgpt" ? CHATGPT_SCOPES : XAI_SCOPES }));
+      if (!stillCurrent()) return false;
       if (!result.tokens) {
         if (result.failure === "dead") return markDead();
         retryLater(provider, result.retryAfterMs);
@@ -524,19 +542,19 @@ export function createModelSignIn(deps) {
       const wasUnsaved = unsaved.get(provider)?.refreshToken === row.refreshToken;
       let saved;
       try {
-        saved = await persist(provider, current => current?.revision === row.revision && (current.refreshToken === row.refreshToken || wasUnsaved) ? next : undefined);
+        saved = await persist(provider, current => stillCurrent() && current?.revision === row.revision && (current.refreshToken === row.refreshToken || wasUnsaved) ? next : undefined);
         if (saved) unsaved.delete(provider);
       } catch {
         // The vendor already rotated, so keep the new pair privately and retry
         // the save. It is NOT published until it is committed: a restart before
         // then must find the disk and the server agreeing on the same pair.
-        if (refreshRecord(provider)?.revision !== row.revision) return false;
+        if (!stillCurrent() || refreshRecord(provider)?.revision !== row.revision) return false;
         unsavedFrom.set(next, records()[provider]?.refreshToken);
         unsaved.set(provider, next);
         saveUnsavedLater(provider);
         return false;
       }
-      if (!saved) return false;
+      if (!saved || !stillCurrent()) return false;
       failures.delete(provider); backoffUntil.delete(provider);
       publish();
       schedule(provider);
@@ -575,7 +593,6 @@ export function createModelSignIn(deps) {
       const timer = timers.get(provider);
       if (timer) clearTimer(timer);
       timers.delete(provider);
-      await refreshing.get(provider)?.catch(() => false);
       unsaved.delete(provider);
       await persist(provider, () => null);
       publish();
@@ -609,6 +626,7 @@ export function createModelSignIn(deps) {
     },
     dispose() {
       disposed = true;
+      unsaved.clear();
       for (const flow of [...flows.values()]) flow.finish({ error: "cancelled" });
       for (const timer of [...timers.values(), ...saveTimers.values()]) clearTimer(timer);
       timers.clear(); saveTimers.clear();

@@ -2,7 +2,7 @@
 // change can retire a source thread A's session was shown on an earlier turn in
 // that window; B revokes only B's receipts, so the receipt-state probe misses it.
 // The whole session is rechecked after the await, before the prompt goes out.
-import { mkdirSync, readFileSync, rmSync } from "node:fs";
+import { mkdirSync, readFileSync } from "node:fs";
 import { beforeEach, expect, it } from "vitest";
 import { afterEach as thawAfterEach, beforeEach as thawBeforeEach } from "vitest";
 import { thawRootSetWritesForTest } from "./replay-lineage.ts";
@@ -18,12 +18,15 @@ import { memoryAccess, reconcileMemoryRoster, type MemoryRoster } from "./policy
 import { databaseStamp } from "./replay-lineage.ts";
 import { setMemoryMode } from "./repository.ts";
 import { LineageAllowance } from "./lineage-allowance.ts";
+import { stampFreshSession } from "./testing/writetime-fixture.ts";
+import { removeTempDirSync } from "../testing/cleanup.ts";
+import { storeAnchorMessage } from "./testing/anchor-message.ts";
 // 1.0.2: this test models a 1.0.1 file (legacy root-set rows) for the read-time judge, which still decides legacy data until S6.
 thawBeforeEach(() => thawRootSetWritesForTest(true));
 thawAfterEach(() => thawRootSetWritesForTest(false));
 
 const roster: MemoryRoster = { bots: [{ id: "bot", threadId: "chat", tasks: [{ threadId: "older" }] }], groups: [] };
-beforeEach(() => { closeDatabase(); rmSync(DATA_DIR, { recursive: true, force: true }); mkdirSync(DATA_DIR, { recursive: true }); setMemoryMode("active"); reconcileMemoryRoster(roster); });
+beforeEach(() => { closeDatabase(); removeTempDirSync(DATA_DIR); mkdirSync(DATA_DIR, { recursive: true }); setMemoryMode("active"); reconcileMemoryRoster(roster); });
 const registry = new InternalCapabilities();
 function access() {
   registry.begin("bot", "chat", "g");
@@ -34,12 +37,13 @@ const empty = { async search() { return { hits: [], vectorRows: 0, coverageCompl
 /** Thread A's session s1 was shown a record resting on thread B's ("older") message m1. */
 async function shownSession() {
   const text = "The alarm code is 4812.";
-  captureSource(database(), { id: "message:older:m1", threadId: "older", messageId: "m1", kind: "text", speaker: "owner", outcome: "recorded", text });
+  storeAnchorMessage(database(), "older", "m1", text); captureSource(database(), { id: "message:older:m1", threadId: "older", messageId: "m1", kind: "text", speaker: "owner", outcome: "recorded", text });
   const turn = access();
   const record = saveMemoryCandidate(text, [{ sourceId: "message:older:m1", revision: 1, startByte: 0, endByte: Buffer.byteLength(text) }], "k", turn);
   database().prepare("UPDATE memory_records SET state='active' WHERE id=?").run(record);
   const receipt = new MemoryDispatchReceipt(await buildMemoryBundle("", turn, empty, {allowance: LineageAllowance.tool()}), turn, "engine");
   receipt.sessionStarted("s1");
+  stampFreshSession(database(), "chat", "engine", "s1"); // a 1.0.3 fresh start leaves its lineage row stamped (S6 rule 26)
   receipt.noteLookup([{ id: record, version: 1, evidence: [{ sourceId: "message:older:m1", revision: 1 }] }], turn);
   receipt.accepted();
   receipt.output("reply-1");
@@ -84,7 +88,7 @@ it("an unmoved database skips the recheck, and a session that still holds resume
 it("the dispatch path rechecks after the recall await and before the receipt is made", () => {
   const source = readFileSync(new URL("../index.ts", import.meta.url), "utf8");
   const awaitAt = source.indexOf("bundle=await buildMemoryBundle(query,access,memoryWorker,memoryOptions)");
-  const recheckAt = source.indexOf("resumedSessionInvalidAfterRecall(allowance,threadId,instanceId,String(resumeCursor),access,checkedStamp");
+  const recheckAt = source.indexOf("resumedSessionInvalidAfterRecall(allowance,threadId,instanceId,resumeKey().nativeSession,access,checkedStamp");
   const resetAt = source.indexOf("bundle=await buildMemoryBundleAfterReset(");
   const receiptAt = source.indexOf("memoryReceipt=new MemoryDispatchReceipt(bundle,access,instanceId)");
   expect(awaitAt).toBeGreaterThan(0);

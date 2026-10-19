@@ -30,14 +30,22 @@
 // that hold no persistent resume cursor, where every turn replays. So the
 // caller states exactly which ids its replay carries, and anything owed
 // outside that list is still handed over in the prompt.
+import type { BotRow } from "./bot-read.ts";
 
-/** One message this thread owes the engine, already resolved from storage. */
-export interface ExternalUpdateMessage {
+/** One message this thread owes the engine, already resolved from storage. Words reach the engine only with the door's BotRow for the row
+ * (S6 rule 18b, bot-read.ts botRowOf); a message the door does not show the reading bot is owed with no words. */
+export type ExternalUpdateMessage = {
   id: string;
   needsTools?: boolean;
   /** what the engine should be told arrived; empty when nothing survives */
+  text: "";
+  source?: undefined;
+} | {
+  id: string;
+  needsTools?: boolean;
   text: string;
-}
+  source: BotRow;
+};
 
 export interface ExternalDeliveryPlan {
   /** the branch must be replayed: there is no session to deliver into */
@@ -64,8 +72,11 @@ const DELIVERY_HEADER =
 export const heldLine = (count: number): string =>
   `[${count} item(s) that need tools are waiting for an engine with tools. You cannot act on them here; say so if asked.]`;
 
-/** The owner-facing line for the one queue row in the thread. */
-export const heldQueueText = (count: number): string => `Waiting for a tool-capable engine: ${count} item(s). Open now`;
+/** The owner-facing line for the one queue row in the thread. With an engine that has tools, what waits is
+ * not waiting on the engine (a retry, or an item that needs its original authority), so the line says only that it waits. */
+export const heldQueueText = (count: number, routeHasTools = false): string => routeHasTools
+  ? `Waiting to continue: ${count} item(s). Open now`
+  : `Waiting for a tool-capable engine: ${count} item(s). Open now`;
 
 /** How many items really wait for an engine with tools. Answered cards held
  * for one always do. A delegated result that arrived outside the session only

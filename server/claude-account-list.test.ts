@@ -2,7 +2,7 @@
 // every live model catalog and snapshots every engine. Under load the Claude
 // accounts section kept every button disabled for seconds after each change.
 // These tests run the real ProviderRegistry with counting drivers.
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
@@ -11,6 +11,7 @@ import { newClaudeAccount } from "./claude-accounts.ts";
 import type { InstanceConfigMap } from "./contracts.ts";
 import { ProviderRegistry } from "./harness/registry.ts";
 import { makeFakeDriver } from "./testing/fake-driver.ts";
+import { removeTempDirSync } from "./testing/cleanup.ts";
 
 type Call = { instanceId: string; call: "snapshot" | "refreshModels" };
 function countedFleet() {
@@ -30,7 +31,7 @@ function countedFleet() {
 }
 
 const dirs: string[] = [];
-afterEach(() => { for (const dir of dirs.splice(0)) rmSync(dir, { recursive: true, force: true }); });
+afterEach(() => { for (const dir of dirs.splice(0)) removeTempDirSync(dir); });
 const instances: InstanceConfigMap = { codex: { driver: "codex" }, claude: { driver: "claudeAgent", config: { cli: "claude" } } };
 
 describe("listClaudeAccounts", () => {

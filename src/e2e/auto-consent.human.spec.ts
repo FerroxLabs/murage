@@ -10,7 +10,7 @@
 // the warning follows the harness's announcement (`/api/config` `harness`),
 // on either host: a Linux tab on this Mac harness still gets the dialog; a
 // Mac tab on a Linux harness gets none and the PATCH lands.
-import { test, expect } from "@playwright/test";
+import { test, expect } from "./page-error-guard";
 import { createServer, type ViteDevServer } from "vite";
 import react from "@vitejs/plugin-react";
 import tailwindcss from "@tailwindcss/vite";

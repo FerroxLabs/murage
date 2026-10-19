@@ -34,12 +34,8 @@ const name = (id: string) => names.get(id) ?? "a member";
 /** The lead acting from its own turn (a note it writes keeps that turn as its origin). */
 let leadActor: { kind: "lead"; botId: string; lineage?: ReturnType<typeof inheritedRequestLineage> } = { kind: "lead", botId: "lead" };
 /** The gate, open: these tests are about what the notes say, the gate's own rules are tested in project-notes-r9.test.ts. */
-// every word these tests write down as a note is in this file; stand it in as the one stored message that holds them
-const HELD_WORDS = readFileSync(new URL(import.meta.url), "utf8");
-// A note is released against the stored messages that hold its words (R10-01). Here one stored message holds every note the tests write.
 const openGate = () => configureResultEgress({
   message: (_thread, id) => ({ id }),
-  threadMessages: () => [{ id: "m-held", text: HELD_WORDS }],
   authorize: () => ({ ok: true }), copyOriginWithheld: () => false, capturedMessageWithheld: () => false,
   messageSourceForgotten: () => false, messageMadeWithMemory: () => false, partitionAllowed: () => true, ownUnsharedWork: () => true,
 });

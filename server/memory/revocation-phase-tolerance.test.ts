@@ -3,15 +3,16 @@
 //
 // rc4: a revocation job an earlier RC persisted (phase "supersede", removed since) completes instead of throwing forever, and a job with a phase no
 // build here knows is parked as failed (needs attention) so it never blocks the jobs behind it.
-import { mkdirSync, rmSync } from "node:fs";
+import { mkdirSync } from "node:fs";
 import { beforeEach, expect, it, vi } from "vitest";
 import { DATA_DIR } from "../config.ts";
 import { closeDatabase, database } from "../database.ts";
 import { setMemoryMode } from "./repository.ts";
 import { ensureScope } from "./policy.ts";
 import { createRevocationJob, revocationWorkPending, runRevocationJobsNow, type RevocationJob } from "./memory-revocation.ts";
+import { removeTempDirSync } from "../testing/cleanup.ts";
 
-beforeEach(() => { closeDatabase(); rmSync(DATA_DIR, { recursive: true, force: true }); mkdirSync(DATA_DIR, { recursive: true }); setMemoryMode("capture"); ensureScope("workspace", "rc4-test"); });
+beforeEach(() => { closeDatabase(); removeTempDirSync(DATA_DIR); mkdirSync(DATA_DIR, { recursive: true }); setMemoryMode("capture"); ensureScope("workspace", "rc4-test"); });
 const queue = (id: string, phases: string[], extra: object = {}) => createRevocationJob(database(), { v: 2, id, phases, c: null, ...extra } as unknown as RevocationJob);
 
 it("a persisted supersede phase completes by marking the notebook links for a fresh look, and the job leaves the queue", () => {

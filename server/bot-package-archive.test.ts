@@ -1,4 +1,4 @@
-import { createWriteStream, existsSync, lstatSync, mkdtempSync, readFileSync, readdirSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { createWriteStream, existsSync, lstatSync, mkdtempSync, readFileSync, readdirSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { pipeline } from "node:stream/promises";
@@ -6,10 +6,11 @@ import type { Readable } from "node:stream";
 import { ZipFile } from "yazl";
 import { afterEach, expect, it } from "vitest";
 import { createBotPackageEntry, MAX_BOT_PACKAGE_ENTRIES, MAX_BOT_PACKAGE_EXPANDED_BYTES } from "./bot-package-manifest.ts";
-import { readBotPackageArchive, writeBotPackageArchive } from "./bot-package-archive.ts";
+import { readBotPackageArchive, writeBotPackageArchive, BotPackageManifestAdmissionError } from "./bot-package-archive.ts";
+import { removeTempDirSync } from "./testing/cleanup.ts";
 
 const roots: string[] = [];
-afterEach(() => { for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true }); });
+afterEach(() => { for (const root of roots.splice(0)) removeTempDirSync(root); });
 function fixture(content = "Check cited sources.") {
   const root = mkdtempSync(join(tmpdir(), "murage-package-archive-")); roots.push(root);
   const path = "skills/research/SKILL.md";
@@ -133,4 +134,12 @@ it.skipIf(process.platform === "win32")("never follows input or output symlinks"
   const alias = join(f.root, "alias.zip"); symlinkSync(f.target, alias);
   await expect(readBotPackageArchive(alias)).rejects.toMatchObject({ code: "UNSAFE_PACKAGE_ARCHIVE" });
   await expect(writeBotPackageArchive(alias, f)).rejects.toMatchObject({ code: "PACKAGE_DESTINATION_EXISTS" });
+});
+
+it("admits a bounded raw manifest before schema parsing and retains an authority refusal", async()=>{
+  const f=fixture(),manifest={...f.manifest,definition:{...f.manifest.definition,package:{...f.manifest.definition.package,agents:[{...f.manifest.definition.package.agents[0],alwaysAllow:["Bash(*)"]}]}}};
+  await crafted(f,[{name:f.path,content:f.payloads.get(f.path)!}],manifest);
+  let seen:unknown;
+  await expect(readBotPackageArchive(f.target,{admitManifest:raw=>{seen=raw;throw new BotPackageManifestAdmissionError("fixture forbidden grant");}})).rejects.toMatchObject({status:403,message:"fixture forbidden grant"});
+  expect(seen).toEqual(manifest);expect(readdirSync(f.root)).toEqual(["bundle.zip"]);
 });

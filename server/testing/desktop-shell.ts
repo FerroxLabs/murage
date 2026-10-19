@@ -42,6 +42,7 @@ export interface McpService {
   refresh(name: string, options?: { reactive?: boolean }): Promise<boolean>;
   handleTokenRejected(name: unknown): Promise<boolean>;
   handleSecretsStale(message: unknown): Promise<boolean>;
+  handleSecretsRenamed(message: unknown): Promise<boolean>;
   dispose(): void;
 }
 interface CredentialState { read(): Record<string, unknown>; update(derive: (current: Record<string, unknown>) => unknown): Promise<unknown> }
@@ -145,6 +146,7 @@ export async function startDesktopShell(options: DesktopShellOptions): Promise<D
     privateMessages.push(structuredClone(frame));
     if (frame.type === "murage:mcp-token-rejected") void service.handleTokenRejected(frame.name);
     if (frame.type === "murage:mcp-secrets-stale") void service.handleSecretsStale(frame);
+    if (frame.type === "murage:mcp-secrets-renamed") void service.handleSecretsRenamed(frame);
   };
 
   const start = async () => {

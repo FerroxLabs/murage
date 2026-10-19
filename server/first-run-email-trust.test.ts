@@ -6,44 +6,38 @@ import { FIRST_RUN_COPY } from "../src/lib/first-run-copy.ts";
 /**
  * THE EMAIL PROMISE, CHECKED AGAINST THE THING THAT WOULD HAVE TO KEEP IT.
  *
- * The first run used to tell people: "Once you trust me with a kind of
- * email, I can send those myself." It shipped for as long as it did because
- * two tests REQUIRED that exact sentence, so the only way to correct it was
- * to break them. Nobody checked whether anything could deliver it.
+ * The first run once told people: "Once you trust me with a kind of email, I
+ * can send those myself." Nothing could deliver it: a remembered grant was the
+ * bare tool name, and every connected-app call runs through one execute tool,
+ * so one grant covered reading mail, sending it and posting to Slack alike.
  *
- * Nothing can. A remembered grant is keyed by `approvalKey`, and for
- * anything that is not a command tool that key IS the tool name. Every
- * connected-app call the assistant makes, reading mail or sending it, Gmail
- * or Slack, arrives as one wrapper tool. So one grant covers all of it and
- * no grant covers less than all of it. "A kind of email" is not a thing the
- * permission system has a name for.
- *
- * This test is the reason the copy tests can now assert a property instead
- * of a sentence: the fact the property is about is checked here, against the
- * real function, rather than asserted in prose. If somebody ever makes
- * approvals per-slug, the first assertion fails, and that is the day the
- * copy is allowed to promise something narrower.
+ * Since 1.0.3 a grant names the one app action the card showed
+ * (shared/app-action-grant.ts): "Gmail: send email" and nothing else. That
+ * is one action, still not "a kind of email": sending to one person and to
+ * another are the same action. So the copy below still promises no kind.
  *
  * It calls one pure function and reads one data module. It starts nothing.
  */
-const WRAPPER = "COMPOSIO_MULTI_EXECUTE_TOOL";
-const READ_MAIL = '{"tools":[{"tool_slug":"GMAIL_FETCH_EMAILS","arguments":{"query":"newer_than:1d"}}]}';
-const SEND_MAIL = '{"tools":[{"tool_slug":"GMAIL_SEND_EMAIL","arguments":{"to":"someone@example.invalid"}}]}';
-const SEND_OTHER_MAIL = '{"tools":[{"tool_slug":"GMAIL_SEND_EMAIL","arguments":{"to":"accountant@example.invalid"}}]}';
-const POST_SLACK = '{"tools":[{"tool_slug":"SLACK_SENDS_A_MESSAGE_TO_A_SLACK_CHANNEL","arguments":{"channel":"C0"}}]}';
+const WRAPPER = "mcp__murage_connectors__APPS_MULTI_EXECUTE_TOOL";
+const READ_MAIL = { tools: [{ tool_slug: "GMAIL_FETCH_EMAILS", arguments: { query: "newer_than:1d" } }] };
+const SEND_MAIL = { tools: [{ tool_slug: "GMAIL_SEND_EMAIL", arguments: { to: "someone@example.invalid" } }] };
+const SEND_OTHER_MAIL = { tools: [{ tool_slug: "GMAIL_SEND_EMAIL", arguments: { to: "accountant@example.invalid" } }] };
+const POST_SLACK = { tools: [{ tool_slug: "SLACK_SENDS_A_MESSAGE_TO_A_SLACK_CHANNEL", arguments: { channel: "C0" } }] };
+const keyFor = (input: unknown) => approvalKey(WRAPPER, JSON.stringify(input), undefined, { toolCall: { name: WRAPPER, input } });
 
 describe("what a remembered approval can actually be narrowed to", () => {
-  it("cannot tell reading mail from sending it", () => {
-    expect(approvalKey(WRAPPER, READ_MAIL)).toBe(approvalKey(WRAPPER, SEND_MAIL));
+  it("tells reading mail from sending it, and Gmail from Slack", () => {
+    expect(keyFor(READ_MAIL)).not.toBe(keyFor(SEND_MAIL));
+    expect(new Set([SEND_MAIL, POST_SLACK, READ_MAIL].map(keyFor)).size).toBe(3);
   });
 
-  it("cannot tell one kind of email from another, or Gmail from Slack", () => {
-    const keys = [SEND_MAIL, SEND_OTHER_MAIL, POST_SLACK].map((summary) => approvalKey(WRAPPER, summary));
-    expect(new Set(keys).size, "connected-app calls no longer share one grant").toBe(1);
+  it("cannot tell one kind of email from another: one action is one grant", () => {
+    expect(keyFor(SEND_MAIL)).toBe(keyFor(SEND_OTHER_MAIL));
   });
 
-  it("keys on the whole tool name, which is the grant a person is offered", () => {
-    expect(approvalKey(WRAPPER, SEND_MAIL)).toBe(WRAPPER);
+  it("never offers the wrapper tool itself, the grant that covered every app", () => {
+    expect(keyFor(SEND_MAIL)).toBe("app-action:GMAIL_SEND_EMAIL");
+    expect(approvalKey(WRAPPER, JSON.stringify(SEND_MAIL))).toBeUndefined();
   });
 });
 
@@ -57,7 +51,7 @@ describe("what the first run is therefore allowed to promise about email", () =>
     for (const line of promises) expect.soft(line, line).toMatch(/\byou approve\b/i);
   });
 
-  it("promises no grant finer than the one key that exists", () => {
+  it("promises no grant finer than one action, the narrowest key that exists", () => {
     for (const line of promises) {
       expect.soft(line, line).not.toMatch(
         /\b(?:a|an|any|each|one|this|that|these|those|some|certain|particular)\s+(?:kind|kinds|type|types|sort|sorts|category|categories)\s+of\b/i,

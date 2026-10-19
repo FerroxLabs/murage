@@ -1,4 +1,4 @@
-import { mkdirSync, rmSync } from "node:fs";
+import { mkdirSync } from "node:fs";
 import { beforeEach, expect, it } from "vitest";
 import { DATA_DIR } from "../config.ts";
 import { closeDatabase, database } from "../database.ts";
@@ -12,8 +12,10 @@ import { memoryRequestPrefix } from "../../shared/memory.ts";
 import { makeFakeDriver } from "../testing/fake-driver.ts";
 import { LineageAllowance } from "./lineage-allowance.ts";
 import { markSessionKnown } from "./testing/legacy-file-model.ts";
+import { removeTempDirSync } from "../testing/cleanup.ts";
+import { storeAnchorMessage } from "./testing/anchor-message.ts";
 
-beforeEach(() => { closeDatabase(); rmSync(DATA_DIR,{recursive:true,force:true}); mkdirSync(DATA_DIR,{recursive:true}); });
+beforeEach(() => { closeDatabase(); removeTempDirSync(DATA_DIR); mkdirSync(DATA_DIR,{recursive:true}); });
 const empty: MemorySearchBridge = {search:async()=>({hits:[],vectorRows:0})};
 function fixture(threadId="private") {
   const roster: MemoryRoster = {bots:[{id:"bot",threadId:"private",section:"secret-team"}],groups:[{id:"room",threadId:"room-thread",memberIds:["bot"]}]};
@@ -31,6 +33,7 @@ function record(id:string,scopeId:string,text:string,pinned=true,sourceMessageId
   db.prepare("INSERT INTO memory_records VALUES(?,1,?,'fact',?,'owner-statement','active',?,1,NULL,NULL,1)").run(id,scopeId,text,pinned?1:0);
   if (sourceMessageId) {
     db.prepare("INSERT INTO memory_sources VALUES(?,?,'private',?,NULL,1,'hash','text','assistant','settled',NULL,'active')").run(`source-${id}`,scopeId,sourceMessageId);
+    storeAnchorMessage(db,"private",sourceMessageId,text,"bot");
     db.prepare("INSERT INTO memory_source_versions VALUES(?,1,'hash',?,1)").run(`source-${id}`,JSON.stringify({text}));
     db.prepare("INSERT INTO memory_evidence VALUES(?,1,?,1,0,?)").run(id,`source-${id}`,Buffer.byteLength(text));
   }
@@ -241,6 +244,7 @@ function roomRecord(id:string,kind:string,text:string,pinned:boolean){
   const scope=ensureScope("conversation","room-thread"),db=database();
   db.prepare("INSERT INTO memory_records VALUES(?,1,?,?,?,'assistant-inference','active',?,1,NULL,NULL,1)").run(id,scope,kind,text,pinned?1:0);
   db.prepare("INSERT INTO memory_sources VALUES(?,?,'room-thread',?,NULL,1,'hash','text','assistant','settled',NULL,'active')").run(`source-${id}`,scope,`message-${id}`);
+  storeAnchorMessage(db,"room-thread",`message-${id}`,text,"bot");
   db.prepare("INSERT INTO memory_source_versions VALUES(?,1,'hash',?,1)").run(`source-${id}`,JSON.stringify({text}));
   db.prepare("INSERT INTO memory_evidence VALUES(?,1,?,1,0,?)").run(id,`source-${id}`,Buffer.byteLength(text));
 }

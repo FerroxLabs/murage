@@ -3,7 +3,7 @@
 //
 // Places a screen can ask to open when it does not own them. What's new and
 // the Keyboard shortcuts dialog live in the Sidebar and the command palette
-// owns its own open state, but Settings > Help & updates and the sidebar's
+// owns its own open state, but Settings > About & updates and the sidebar's
 // search field open them too. A window event keeps those screens from
 // importing each other (Settings is its own lazy chunk).
 export const OPEN_WHATS_NEW_EVENT = "murage:open-whats-new";

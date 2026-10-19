@@ -155,11 +155,23 @@ describe("conversation routes by caller", () => {
     });
   });
 
-  it("takes the desktop proof in the query form the event stream needs", async () => {
-    const query = `surface=desktop&surfaceSecret=${desktopSecret}`;
-    expect((await call("GET", `/api/events?${query}`, BARE)).status).toBe(200);
+  it("opens the event stream to a single-use ticket, never to the proof in the query", async () => {
+    const mint = await call("POST", "/api/desktop/resource-ticket", callers().desktop, { resource: "/api/events?surface=desktop" });
+    expect(mint.status).toBe(200);
+    const ticket = String(mint.body?.ticket);
+    expect((await call("GET", `/api/events?surface=desktop&surfaceTicket=${ticket}`, BARE)).status).toBe(200);
+    // single use
+    expect((await call("GET", `/api/events?surface=desktop&surfaceTicket=${ticket}`, BARE)).status).toBe(404);
+    // the proof itself in the query proves nothing now, right or wrong
+    expect((await call("GET", `/api/events?surface=desktop&surfaceSecret=${desktopSecret}`, BARE)).status).toBe(404);
     expect((await call("GET", `/api/events?surface=desktop&surfaceSecret=${"f".repeat(64)}`, BARE)).status).toBe(404);
     expect((await call("GET", "/api/events?surface=desktop", BARE)).status).toBe(404);
+    // and only the desktop can mint one
+    for (const caller of [...UNPROVEN, "companion", "door"] as Caller[]) {
+      const refused = await call("POST", "/api/desktop/resource-ticket", callers()[caller], { resource: "/api/events" });
+      expect([403, 404], caller).toContain(refused.status);
+      expect(refused.body?.ticket, caller).toBeUndefined();
+    }
   });
 
   it("does not let a bot's capability token read or steer a conversation, and still serves the bot its own routes", async () => {

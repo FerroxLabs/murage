@@ -38,7 +38,8 @@ describe("who may make a status from a string, read worker words, or mint releas
     expect(using(/new MurageStatus\(/)).toEqual(["murage-status.ts"]);
   });
   it("worker text is sealed only where a stored row or a reply enters", () => {
-    expect(using(/new WorkerText\(/)).toEqual(["boundary-ports.ts", "card-summary.ts", "handoff-boundary.ts", "index.ts", "project-notes.ts"]);
+    // frozen-replies.ts: the boot recovery seals a worker turn's stored rows before the gate judges them (REPLY-WITHHELD-CONTRACT C5, R7)
+    expect(using(/new WorkerText\(/)).toEqual(["boundary-ports.ts", "card-summary.ts", "frozen-replies.ts", "handoff-boundary.ts", "index.ts", "project-notes.ts"]);
   });
   it("a row's store is held by the row sink and nobody else in the egress modules", () => {
     expect(using(/\bRowSink\.append\b/)).toEqual([]);

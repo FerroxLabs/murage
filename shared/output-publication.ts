@@ -56,6 +56,9 @@ export interface LocalOutputReceipt {
   artifactId?: string;
   attachmentId?: string;
   messageId?: string;
+  /** The provider turn that produced this output, recorded with the receipt from the server's own turn state (never a request); absent on
+   * receipts from before it was kept, whose recovered card is withheld. */
+  turnId?: string;
   errorCategory?: OutputPublicationErrorCategory;
   createdAt: number;
   updatedAt: number;

@@ -40,17 +40,18 @@ describe("call note", () => {
   }
   const bot = { id: "b1", threadId: "t1", tasks: [{ threadId: "t1" }, { threadId: "t2" }] };
 
-  it("appends the note to the bot's own task and ignores junk entries", async () => {
-    const appended: Array<[string, string]> = [];
-    const deps: CallNoteDeps = { bot: (id) => (id === "b1" ? bot : null), append: (t, x) => appended.push([t, x]), readBody: async (r: any) => r.body };
+  it("records the call's length and the owner's own words in the bot's own task, and ignores junk entries (LINEAGE-DESIGN-S6 rule 21)", async () => {
+    const recorded: Array<[string, { minutes: number; ownerWords: string }]> = [];
+    const deps: CallNoteDeps = { bot: (id) => (id === "b1" ? bot : null), record: (t, note) => recorded.push([t, note]), readBody: async (r: any) => r.body };
     const r = fakeRes();
-    await handleCallNoteRoute("POST", "/api/bots/b1/call-note", { body: { threadId: "t2", durationMs: 60_000, log: [{ said: "hi", outcome: "answered" }, { said: "x", outcome: "evil" }, "junk"] } } as any, r.res, deps);
+    await handleCallNoteRoute("POST", "/api/bots/b1/call-note", { body: { threadId: "t2", durationMs: 60_000, log: [{ said: "hi", outcome: "answered", detail: "the bot's answer" }, { said: "x", outcome: "evil" }, "junk", { said: "book it", outcome: "decision" }] } } as any, r.res, deps);
     expect(r.status()).toBe(200);
-    expect(appended).toEqual([["t2", '**Call notes** (1 min)\n\n- You said "hi". Answered on the call.']]);
+    // only what the owner said: never the call's answers (a model's words) and never Murage's lines about them
+    expect(recorded).toEqual([["t2", { minutes: 1, ownerWords: "hi\nbook it" }]]);
   });
 
   it("refuses another bot's task and an unknown bot", async () => {
-    const deps: CallNoteDeps = { bot: (id) => (id === "b1" ? bot : null), append: () => { throw new Error("must not write"); }, readBody: async (r: any) => r.body };
+    const deps: CallNoteDeps = { bot: (id) => (id === "b1" ? bot : null), record: () => { throw new Error("must not write"); }, readBody: async (r: any) => r.body };
     for (const [url, body, status] of [
       ["/api/bots/b1/call-note", { threadId: "other", log: [{ said: "hi", outcome: "answered" }] }, 409],
       ["/api/bots/nope/call-note", { log: [] }, 404],

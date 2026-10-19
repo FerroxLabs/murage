@@ -8,12 +8,12 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 
-import { safeWipeSync } from "../server/testing/safe-wipe.mjs";
 import { BROWSER_STATIC } from "../companion/src/routes.ts";
 import { DOOR_ASSET, FIRST_PAINT_BROTLI_BUDGET, brotliSize, checkBudget, firstPaintFiles } from "./check-bundle-budget.mjs";
+import { removeTempDirSync } from "../server/testing/cleanup.ts";
 
 const roots = [];
-afterEach(() => { for (const root of roots.splice(0)) safeWipeSync(root); });
+afterEach(() => { for (const root of roots.splice(0)) removeTempDirSync(root); });
 
 /** A dist/ with random (incompressible) bytes, so brotli sizes are predictable. */
 function fixture({ lazyName = "assets/CallView-Cc3.js" } = {}) {

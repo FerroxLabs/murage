@@ -1,11 +1,12 @@
 // Copyright 2026 Ferrox Labs
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import { execFileSync, spawnSync } from "node:child_process";
-import { mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { mkdtempSync, readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { afterEach, expect, it, vi } from "vitest";
+import { removeTempDirSync } from "./cleanup.ts";
 it.each(["fake-claude-cli.ts", "fake-codex-app-server.ts", "fake-agy-cli.ts", "../drivers/acp/fuigo.test.ts"])("%s never dumps the inherited environment", file => {
   const source = readFileSync(new URL(file, import.meta.url), "utf8");
   expect(/env:\s*process\.env/.test(source)).toBe(false);
@@ -31,7 +32,7 @@ it("the ACP fake fingerprints credentials and keeps unlisted fields out of its d
   expect(env.OPENAI_API_KEY===fixtureCredentialFingerprint("synthetic-openai-secret")).toBe(true);
   expect(env.MY_AGENT_TOKEN===fixtureCredentialFingerprint("synthetic-agent-secret")).toBe(true);
   expect(env.HOME).toBe(dir);
- }finally{rmSync(dir,{recursive:true,force:true});}
+ }finally{removeTempDirSync(dir);}
 });
 it("the ACP fake fingerprints credential-named MCP env in its dump, its mcp file and its RPC log",()=>{
  const dir=mkdtempSync(join(tmpdir(),"murage-acp-mcp-dump-")),dump=join(dir,"dump.json"),log=join(dir,"rpc.jsonl");
@@ -52,7 +53,7 @@ it("the ACP fake fingerprints credential-named MCP env in its dump, its mcp file
   expect(env(JSON.parse(texts[1]),"agents").MURAGE_COMMS_TOKEN===fixtureCredentialFingerprint("synthetic-comms-two")).toBe(true);
   const load=texts[2].split("\n").filter(Boolean).map(line=>JSON.parse(line)).find(entry=>entry.method==="session/load");
   expect(load.agentsToken===fixtureCredentialFingerprint("synthetic-comms-two")).toBe(true);
- }finally{rmSync(dir,{recursive:true,force:true});}
+ }finally{removeTempDirSync(dir);}
 });
 it("the 0152 candidate script keeps an allowlist of the server environment, never all of it",()=>{
  const source=readFileSync(new URL("../../scripts/qualify-0152-candidate.ts",import.meta.url),"utf8");

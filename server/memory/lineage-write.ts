@@ -92,7 +92,14 @@ const SQL = {
   certReady: "SELECT ready FROM memory_lineage_cert WHERE id=1",
   setNotReady: "INSERT INTO memory_lineage_thread_ready(thread_id,ready) VALUES(?,0) ON CONFLICT(thread_id) DO UPDATE SET ready=0",
   capture: "INSERT OR IGNORE INTO memory_line_capture(thread_no,lsn,source_id) VALUES(?,?,?)",
-  session: "INSERT INTO memory_session_lineage(thread_id,driver_instance,native_session,first_lsn,last_lsn) VALUES(?,?,?,?,?) ON CONFLICT(thread_id,driver_instance,native_session) DO UPDATE SET last_lsn=MAX(last_lsn,excluded.last_lsn)",
+  // S6 rule 26: door_epoch is written on INSERT only (the fresh session.started stamp, else NULL); ON CONFLICT never touches it
+  session: "INSERT INTO memory_session_lineage(thread_id,driver_instance,native_session,first_lsn,last_lsn,door_epoch) VALUES(?,?,?,?,?,CASE WHEN ?=1 THEN (SELECT value FROM memory_lineage_lsn_meta WHERE key='reader_door_epoch') END) ON CONFLICT(thread_id,driver_instance,native_session) DO UPDATE SET last_lsn=MAX(last_lsn,excluded.last_lsn)",
+  // a line the turn's engine generated: its session ran to that line (it holds its own words), so the walk's session stage reaches it
+  sessionAdvance: "UPDATE memory_session_lineage SET last_lsn=MAX(last_lsn,?) WHERE thread_id=? AND driver_instance=? AND native_session=?",
+  // the marker's session rule (revoke-marker.ts rangeNode, sess stage) over the thread's deny ranges, for a session row written after the
+  // walk passed the thread: begun before the range's cap and run to or past its line. Ranges per thread are bounded (DENY_RANGE_COALESCE),
+  // and only ranges capped after this turn's head match: one index range on the primary key.
+  sessionMarks: "INSERT OR IGNORE INTO memory_deny_session(thread_id,driver_instance,native_session,revoke_id) SELECT ?1,?2,?3,d.revoke_id FROM memory_deny_range d WHERE d.thread_id=?1 AND d.from_lsn<=?4 AND d.until_turn_lsn>?5 AND NOT EXISTS (SELECT 1 FROM memory_revoke_jobs j WHERE j.revoke_id=d.revoke_id AND j.state IN ('undoing','undone'))",
 } as const;
 /** The writer's statements, for the plan test (every one an index seek). */
 export const LINEAGE_WRITE_SQL: Readonly<Record<string, string>> = SQL;
@@ -174,6 +181,11 @@ function takeLsn(tx: DatabaseSync): number {
   if (!row) throw new Error("INVALID_MEMORY_LINEAGE_META: memory_lsn has no counter");
   return Number(row.lsn);
 }
+/** A revoke commit's own lsn (revoke-commit.ts commitRevoke, openBulkRevoke): the commit takes a slot of its own, in `tx`, so the cap it
+ * records is that slot and every prompt built after it has a head (currentLsn - 1, openTurnLineage) at or above the cap. Without its own
+ * slot, a turn opened after the commit with no new line in the thread had the same head as one opened before it, and the walk marked its
+ * fresh session as one that held the revoked line (1.0.3 engine-switch). */
+export function takeCommitLsn(tx: DatabaseSync): number { return takeLsn(tx); }
 
 /** The thread's lineage is complete (deny-read.ts lineageThreadReady: the certificate is ready and no import marked the thread not ready). */
 function threadReady(tx: DatabaseSync, threadId: string): boolean {
@@ -320,20 +332,36 @@ function lineageRow(tx: DatabaseSync, line: LineInput, parents: LineageParents, 
     if (existing) { foldMem(fold, existing.mem_lsn); foldSet(tx, fold, existing.footprint); }
     else { const head = get(tx, SQL.head, no); if (head) { foldMem(fold, head.mem_lsn); foldSet(tx, fold, head.footprint); } }
     const before = { mem: fold.memLsn, star: fold.star, size: fold.scopes.size };
-    const turn = generated ? parents.turn : undefined;
+    // the turn a line is attached to is the one turn whose engine produced it (DESIGN-WRITETIME 2.3, 1.0.3 lifecycle card): a line already
+    // written before the turn opened (a routine card, a notice patched now) is not that turn's output, and a merge over several open turns
+    // (several members', or one member's earlier and newer turn) is no one turn. Neither makes a turn an inherit child or advances its
+    // sessions; a merge's parents stay on the line as its own refs.
+    const offered = generated ? parents.turn : undefined;
+    const merged = offered !== undefined && openTurnsOf(offered).length > 1;
+    const turn = offered && !merged && (!existing || Number(existing.lsn) > offered.turnLsn) ? offered : undefined;
+    // a merge is no one turn, but its line began no later than the earliest of them: it takes the merged turn's turnLsn (the lowest,
+    // runningTurnFor) or the caller's `began` (message-db.ts unattributedBegan), so a revoke committed between the merged turns still holds
+    // it (deny-read.ts pendingWindows) and its ranges reach it
+    const began = turn ? turn.turnLsn : merged ? offered!.turnLsn : parents.began;
     const turnLsn = existing ? (existing.turn_lsn === null || existing.turn_lsn === undefined ? null : Number(existing.turn_lsn))
-      : generated ? (turn && turn.turnLsn > 0 ? Math.min(turn.turnLsn, lsn - 1) : lsn - 1) : null;
+      : generated ? (began !== undefined && began >= 0 ? Math.min(began, lsn - 1) : lsn - 1) : null;
+    // the turn's sessions ran to this line: a revoke of the line itself (a forget of the reply as a source) reaches them at the walk's
+    // session stage (last_lsn >= a). Without it a session row written before the reply (session.started, a resume) ended below the reply,
+    // and the engine that generated the revoked line resumed holding it (1.0.3 engine-switch).
+    if (generated && turn) for (const session of turnSessions(turn)) if (session.threadId === line.threadId) run(tx, SQL.sessionAdvance, lsn, session.threadId, session.driverInstance, session.nativeSession);
     if (generated && turn && turn.parents.length) {
       // the turn's carries: resolved once per turn, written idempotently by each of its lines (no new rows after the first)
       const resolved = turnResolved(tx, turn);
       const key = turnLsn ?? turn.turnLsn;
-      carryOnto(tx, { kind: "turn", ref: turnChildRef(key), thread: line.threadId, flowTo: line.threadId, flowLsn: lsn, inherit: { kind: "turn", threadId: line.threadId, lsn: key } }, resolved);
+      ownCarry(tx, turn, () => carryOnto(tx, { kind: "turn", ref: turnChildRef(key), thread: line.threadId, flowTo: line.threadId, flowLsn: lsn, inherit: { kind: "turn", threadId: line.threadId, lsn: key, ...(existing ? {} : { holdFrom: lsn }) } }, resolved));
       mergeInto(fold, resolved.fold);
     }
-    const own = generated ? dedupe(parents.refs ?? []) : [];
+    const own = generated ? dedupe([...(parents.refs ?? []), ...(merged ? offered!.parents : [])]) : [];
     if (own.length) {
       const resolved = resolveRefs(tx, line.threadId, own);
-      carryOnto(tx, { kind: "line", ref: lineChildRef(lsn), thread: line.threadId, flowTo: line.threadId, flowLsn: lsn, inherit: { kind: "line", threadId: line.threadId, lsn } }, resolved);
+      // what a written row quotes from now on (quotedNow) is new content at this write: a revoke it rests on holds and walks the thread from
+      // now, never from the row's old position (a prompt built before now could not hold it), while the row itself is marked at its own lsn
+      ownCarry(tx, generated ? turn : undefined, () => carryOnto(tx, { kind: "line", ref: lineChildRef(lsn), thread: line.threadId, flowTo: line.threadId, flowLsn: lsn, inherit: { kind: "line", threadId: line.threadId, lsn, ...(existing && parents.quotedNow ? { fromNow: true } : {}) } }, resolved));
       mergeInto(fold, resolved.fold);
     }
     if (existing) {
@@ -374,10 +402,66 @@ export function readyImportedThreads(tx: DatabaseSync): number {
 }
 
 // ---- the running turns ----
-interface OpenTurn extends TurnLineage { parents: LineageRef[]; keys: Set<string>; resolved?: { count: number; value: Resolved } }
+interface OpenTurn extends TurnLineage { parents: LineageRef[]; ownKey: string; keys: Set<string>; resolved?: { count: number; value: Resolved }; sessions?: SessionKey[]; providers?: Set<string> }
+/** The deny_generation values the running turns' own writes produced (ownCarry), one row per value, in a TEMP table on the writing
+ * connection. Written in the same transaction as the bump, so a rollback (an atomically() savepoint, or the caller's transaction) takes the
+ * row with it: a value a rolled-back write held and a later revoke reuses is never the turn's own (Astra 1.0.3 rollback High). Values are
+ * exact, never a count, so nothing can drift. */
+const OWN_GENERATIONS_DDL = "CREATE TEMP TABLE IF NOT EXISTS memory_own_generation(turn_key TEXT NOT NULL, generation INTEGER NOT NULL, PRIMARY KEY(turn_key, generation)) WITHOUT ROWID";
+/** A write the turn makes itself (its session row, its lines' carries): the deny_generation values its inheritance produced are recorded as
+ * the turn's own, so the send fence does not take them for a revoke committed since its prompt was built (1.0.2 Keep all P0). */
+function ownCarry(tx: DatabaseSync, turn: TurnLineage | undefined, work: () => void): void {
+  if (!turn) { work(); return; }
+  const before = denyGeneration(tx);
+  work();
+  const after = denyGeneration(tx);
+  if (before < 0 || after <= before) return;
+  const owners = openTurnsOf(turn);
+  if (!owners.length) return;
+  tx.exec(OWN_GENERATIONS_DDL);
+  const insert = tx.prepare("INSERT OR IGNORE INTO temp.memory_own_generation(turn_key, generation) VALUES(?, ?)");
+  for (const open of owners) for (let generation = before + 1; generation <= after; generation++) insert.run(open.ownKey, generation);
+}
+/** How many deny_generation values in (above, upTo] the turn's own committed writes produced (ownCarry). 0 outside one open turn, or when
+ * nothing was recorded on this connection: the fence then looks the parts up again. */
+export function turnOwnGenerations(db: DatabaseSync, turn: TurnLineage, above: number, upTo: number): number {
+  const open = openTurnsOf(turn);
+  if (open.length !== 1 || upTo <= above) return 0;
+  try {
+    return Number(db.prepare("SELECT count(*) AS n FROM temp.memory_own_generation WHERE turn_key=? AND generation>? AND generation<=?").get(open[0]!.ownKey, above, upTo)?.n ?? 0);
+  } catch { return 0; }
+}
+/** Drops the recorded values of turns no longer open (a closed turn's values are never read again). */
+function pruneOwnGenerations(db: DatabaseSync): void {
+  const live = [...openTurns.values()].flatMap(byTurn => [...byTurn.values()].map(open => open.ownKey));
+  try {
+    if (!live.length) db.exec("DELETE FROM temp.memory_own_generation");
+    else db.prepare(`DELETE FROM temp.memory_own_generation WHERE turn_key NOT IN (${live.map(() => "?").join(",")})`).run(...live);
+  } catch { /* no table yet: nothing recorded */ }
+}
 /** Open turns by thread, then by turn id. A room thread can hold one per member. */
 const openTurns = new Map<string, Map<string, OpenTurn>>();
 const isOpenTurn = (turn: TurnLineage): turn is OpenTurn => Array.isArray(turn.parents) && (turn as OpenTurn).keys instanceof Set;
+/** The turn positions (turnLsn) of every open turn of this process, distinct and sorted. Turns run concurrently (one entry per turn per
+ * thread above), so the revoke fold (revoke-fold.ts) tests each of them against a cohort's interval, never only the least
+ * (REVOKE-FOLD-DESIGN r4 A1). */
+export function openTurnPositions(): number[] {
+  const out = new Set<number>();
+  for (const byTurn of openTurns.values()) for (const open of byTurn.values()) out.add(open.turnLsn);
+  return [...out].sort((a, b) => a - b);
+}
+/** The member turns a merged turn (runningTurnFor over several open turns) was made of. */
+const mergedTurns = new WeakMap<TurnLineage, readonly OpenTurn[]>();
+/** The open turns `turn` stands for: itself, or every member of a merged turn. */
+function openTurnsOf(turn: TurnLineage): readonly OpenTurn[] {
+  const open = openTurns.get(turn.threadId)?.get(turn.turnId) ?? (isOpenTurn(turn) ? turn : undefined);
+  return open ? [open] : mergedTurns.get(turn) ?? [];
+}
+/** The engine sessions the turn ran in (writeSessionLineage records them): every line it generates advances their last_lsn. A merged turn
+ * advances every member's (an over-attribution only ever resets more). */
+function turnSessions(turn: TurnLineage): SessionKey[] {
+  return openTurnsOf(turn).flatMap(open => open.sessions ?? []);
+}
 
 /** The turn's parents resolved into ranges, kept on the open turn until it gains parents. */
 function turnResolved(tx: DatabaseSync, turn: TurnLineage): Resolved {
@@ -396,10 +480,11 @@ const memberOf = (turnId: string): string => turnId.split("\u0000", 1)[0]!;
  * or below it), denyGeneration = deny-read.ts denyGeneration. The turn is registered for its thread until closeTurnLineage. */
 export function openTurnLineage(db: DatabaseSync, turn: { threadId: string; turnId: string }): TurnLineage {
   const next = currentLsn(db);
-  const open: OpenTurn = { threadId: turn.threadId, turnId: turn.turnId, turnLsn: Math.max(0, next - 1), parents: [], keys: new Set(), denyGeneration: denyGeneration(db) };
+  const open: OpenTurn = { threadId: turn.threadId, turnId: turn.turnId, turnLsn: Math.max(0, next - 1), parents: [], ownKey: randomUUID(), keys: new Set(), denyGeneration: denyGeneration(db) };
   let byTurn = openTurns.get(turn.threadId);
   if (!byTurn) openTurns.set(turn.threadId, byTurn = new Map());
   byTurn.set(turn.turnId, open);
+  pruneOwnGenerations(db);
   return open;
 }
 
@@ -420,7 +505,65 @@ export function runningTurnFor(threadId: string, memberBotId?: string): TurnLine
   const chosen = member.length ? member : turns;
   if (chosen.length === 1) return chosen[0];
   const parents = dedupe(chosen.flatMap(turn => turn.parents));
-  return { threadId, turnId: chosen.map(turn => turn.turnId).join(","), turnLsn: Math.min(...chosen.map(turn => turn.turnLsn)), parents, denyGeneration: Math.min(...chosen.map(turn => turn.denyGeneration)) };
+  const merged: TurnLineage = { threadId, turnId: chosen.map(turn => turn.turnId).join(","), turnLsn: Math.min(...chosen.map(turn => turn.turnLsn)), parents, denyGeneration: Math.min(...chosen.map(turn => turn.denyGeneration)) };
+  mergedTurns.set(merged, chosen);
+  return merged;
+}
+
+/** The lineage turn each provider turn ran as, by thread then provider turn id (bindProviderTurn). Kept past a supersede, so a late line of
+ * an earlier turn still finds the turn that produced it and never the member's newer one; the newest PROVIDER_TURNS_KEPT per thread. */
+const providerTurns = new Map<string, Map<string, OpenTurn>>();
+const PROVIDER_TURNS_KEPT = 16;
+/** Names the provider turn a dispatch was accepted as (index.ts, at acceptance): its lines are attached to `turn` by that id. */
+export function bindProviderTurn(turn: TurnLineage, providerTurnId: string | undefined): void {
+  const open = openTurns.get(turn.threadId)?.get(turn.turnId) ?? (isOpenTurn(turn) ? turn : undefined);
+  if (!open || !providerTurnId) return;
+  let byProvider = providerTurns.get(turn.threadId);
+  if (!byProvider) providerTurns.set(turn.threadId, byProvider = new Map());
+  byProvider.delete(providerTurnId);
+  byProvider.set(providerTurnId, open);
+  (open.providers ??= new Set()).add(providerTurnId);
+  while (byProvider.size > PROVIDER_TURNS_KEPT) byProvider.delete(byProvider.keys().next().value!);
+}
+/** The parents of every open turn a line names no one turn of: the member's (memberBotId), or with no member named the thread's; empty
+ * when that member has none open. What such a line rests on as its own refs (message-db.ts unattributedRefs), never a turn it is attached to. */
+export function openTurnsParents(threadId: string, memberBotId?: string): LineageRef[] {
+  const turns = [...(openTurns.get(threadId)?.values() ?? [])].filter(turn => !memberBotId || memberOf(turn.turnId) === memberBotId);
+  return dedupe(turns.flatMap(turn => turn.parents));
+}
+/** The lowest turn lsn of the turns open in `threadId` (of `memberBotId` when given), or undefined when none is open. */
+export function openTurnsBegan(threadId: string, memberBotId?: string): number | undefined {
+  const turns = [...(openTurns.get(threadId)?.values() ?? [])].filter(turn => !memberBotId || memberOf(turn.turnId) === memberBotId);
+  return turns.length ? Math.min(...turns.map(turn => turn.turnLsn)) : undefined;
+}
+/** The lineage turn a provider turn was bound to (bindProviderTurn), or undefined. */
+export function turnOfProvider(threadId: string, providerTurnId: string | undefined): TurnLineage | undefined {
+  return providerTurnId ? providerTurns.get(threadId)?.get(providerTurnId) : undefined;
+}
+
+/** Every turn a provider turn id was bound to, in any conversation. A line Murage mirrors into another conversation (a room copy of a bot's
+ * message) names the turn that wrote its words, which runs in the sender's conversation. Provider turn ids are unique, so this is one turn; if
+ * an id ever repeats the line rests on all of them (an over-attribution only withholds more). */
+export function turnsOfProviderAnywhere(providerTurnId: string | undefined): TurnLineage[] {
+  if (!providerTurnId) return [];
+  const found: TurnLineage[] = [];
+  for (const byId of providerTurns.values()) { const turn = byId.get(providerTurnId); if (turn && !found.includes(turn)) found.push(turn); }
+  return found;
+}
+
+/** The one turn a line written now in `threadId` is the engine output of, by turn id: the lineage turn its provider turn (providerTurnId, the
+ * row's turnId) was bound to, when it is that member's (memberBotId). With no binding, the member's only open turn (with no member named, the
+ * thread's only open turn) unless that turn is bound to other provider turns only. Undefined when no one turn is named: the member (or the
+ * thread) holds several open turns, an earlier one and the newer that superseded it included. Never a merge of open turns: a line is
+ * attached to no turn but its producer (message-db.ts lineTurnOf; lineageRow refuses any merge). */
+export function writerTurnFor(threadId: string, memberBotId?: string, providerTurnId?: string): TurnLineage | undefined {
+  const bound = turnOfProvider(threadId, providerTurnId);
+  if (bound) return !memberBotId || memberOf(bound.turnId) === memberBotId ? bound : undefined;
+  const byTurn = openTurns.get(threadId);
+  if (!byTurn?.size) return undefined;
+  const candidates = [...byTurn.values()].filter(turn => !memberBotId || memberOf(turn.turnId) === memberBotId);
+  const only = candidates.length === 1 ? candidates[0] : undefined;
+  return only && (!providerTurnId || !only.providers?.size) ? only : undefined;
 }
 
 /** Ends the running turn (its replies and session are written). */
@@ -440,7 +583,7 @@ export function supersedeMemberTurns(turn: TurnLineage): void {
 }
 
 /** Every open turn of a thread ends (the conversation was deleted). */
-export function closeThreadTurns(threadId: string): void { openTurns.delete(threadId); }
+export function closeThreadTurns(threadId: string): void { openTurns.delete(threadId); providerTurns.delete(threadId); }
 
 /** Adds what the engine was shown during the turn: prompt parts (buildPrompt calls it), tool results, steer quotes (a steer adds parents,
  * never moves turnLsn), receipts. Any role, owner lines included. */
@@ -493,13 +636,53 @@ export function writeCaptureLineage(tx: DatabaseSync, line: { threadId: string; 
   });
 }
 
-/** The turn's session: memory_session_lineage.last_lsn moves (first_lsn is set once); the turn's cross-thread ranges also carry onto the
- * session, and a denied or pending parent marks or holds it now. */
-export function writeSessionLineage(tx: DatabaseSync, session: SessionKey, turn: TurnLineage): void {
-  atomically(tx, "session lineage", undefined, () => {
+/** The turn's session: memory_session_lineage.last_lsn moves (first_lsn is set once: the head its first prompt was built on, turnLsn, so
+ * [first_lsn, last_lsn] is the span of lines the session ran across; the marker's session stage reads it so); the turn's cross-thread
+ * ranges also carry onto the session, and a denied or pending parent marks or holds it now. True once the row is written; false when a
+ * statement failed and nothing stayed, so the caller withholds the session's resume cursor (a COMMIT failure throws from the transaction). */
+/** `fresh`: the session.started of a turn started with no cursor (S6 rule 26) stamps the door epoch on the row it inserts; a resumed turn never does. */
+export function writeSessionLineage(tx: DatabaseSync, session: SessionKey, turn: TurnLineage, fresh = false): boolean {
+  // the turn runs in this session from now on: each line it generates advances the session's last_lsn (lineageRow)
+  for (const open of openTurnsOf(turn)) {
+    const known = open.sessions ??= [];
+    if (!known.some(s => s.threadId === session.threadId && s.driverInstance === session.driverInstance && s.nativeSession === session.nativeSession)) known.push({ ...session });
+  }
+  return atomically(tx, "session lineage", false, () => {
     const now = Math.max(turn.turnLsn, currentLsn(tx) - 1);
-    run(tx, SQL.session, session.threadId, session.driverInstance, session.nativeSession, now, now);
-    carryOnto(tx, { kind: "session", ref: sessionChildRef(session.driverInstance, session.nativeSession), thread: session.threadId, flowTo: session.threadId, flowLsn: Math.max(1, now), inherit: { kind: "session", session, lsn: now } },
-      turnResolved(tx, turn));
+    run(tx, SQL.session, session.threadId, session.driverInstance, session.nativeSession, turn.turnLsn, now, fresh ? 1 : 0);
+    // a session row written after the walk's session stage for its thread (a late-handback engine writes it at session.started, after the
+    // prompt was delivered): a revoke or edit committed since this turn's head whose range in the thread the session ran across marks it
+    // now, in this transaction, as the walk would have. One the walk has not reached yet is marked by the walk too (INSERT OR IGNORE).
+    run(tx, SQL.sessionMarks, session.threadId, session.driverInstance, session.nativeSession, now, turn.turnLsn);
+    ownCarry(tx, turn, () => carryOnto(tx, { kind: "session", ref: sessionChildRef(session.driverInstance, session.nativeSession), thread: session.threadId, flowTo: session.threadId, flowLsn: Math.max(1, now), inherit: { kind: "session", session, lsn: now } },
+      turnResolved(tx, turn)));
+    return true;
   });
+}
+
+/** True only while `turn` itself (this object, not another with the same ids) is still the open turn of its thread (thread tools bind to the
+ * dispatch's turn; a superseded or closed turn is not open). */
+export function isTurnOpen(turn: TurnLineage): boolean {
+  return openTurns.get(turn.threadId)?.get(turn.turnId) === turn;
+}
+
+const READS_FAILED = Symbol("recordTurnReads failed");
+/** Persists what a running turn read (thread tools): for every session the turn ran in, writes what writeSessionLineage writes for `refs`
+ * (the session row with the turn's turnLsn and the head now, its deny marks, the refs' carries onto the session child, inherited marks), all
+ * INSERT OR IGNORE or MAX() upserts, so a repeat is additive. Never adds the refs to the turn (addTurnParents is the caller's, after commit).
+ * False when a statement failed and nothing stayed (the caller throws inside its transaction); true when there is no session to persist. */
+export function recordTurnReads(tx: DatabaseSync, turn: TurnLineage, refs: readonly LineageRef[]): boolean {
+  const sessions = turnSessions(turn);
+  if (!sessions.length) return true;
+  const out = atomically<true | typeof READS_FAILED>(tx, "turn reads", READS_FAILED, () => {
+    const resolved = resolveRefs(tx, turn.threadId, dedupe(refs));
+    const now = Math.max(turn.turnLsn, currentLsn(tx) - 1);
+    for (const session of sessions) {
+      run(tx, SQL.session, session.threadId, session.driverInstance, session.nativeSession, turn.turnLsn, now);
+      run(tx, SQL.sessionMarks, session.threadId, session.driverInstance, session.nativeSession, now, turn.turnLsn);
+      carryOnto(tx, { kind: "session", ref: sessionChildRef(session.driverInstance, session.nativeSession), thread: session.threadId, flowTo: session.threadId, flowLsn: Math.max(1, now), inherit: { kind: "session", session, lsn: now } }, resolved);
+    }
+    return true;
+  });
+  return out !== READS_FAILED;
 }

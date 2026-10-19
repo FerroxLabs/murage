@@ -1,7 +1,7 @@
 // Lane E (1.0.2 scale): bounded transcript work. The loaded-thread cache is an
 // LRU, turn prep and terminal capture stop early instead of materialising the
 // whole thread, and quote targets resolve one id at a time.
-import { rmSync, statSync } from "node:fs";
+import { statSync } from "node:fs";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -10,11 +10,12 @@ import { DATA_DIR } from "./config.ts";
 import type { ModelSelection } from "./contracts.ts";
 import { database } from "./database.ts";
 import { promptRows } from "./external-context-delivery.ts";
-import { partitionTranscriptMessages } from "./partition-sources.ts";
+import { botMessages, botViewer } from "./bot-read.ts";
 import { promptQuoteTargets } from "./prompt-quotes.ts";
 import { Store, type Message } from "./store.ts";
 import { LruMap } from "./thread-cache.ts";
 import { wholeTurnText } from "./memory/capture.ts";
+import { removeTempDirSync } from "./testing/cleanup.ts";
 
 const selection = (): ModelSelection => ({ instanceId: "claude", model: "claude-sonnet-5" });
 
@@ -40,7 +41,7 @@ describe("LruMap", () => {
 });
 
 describe("Store transcript scale", () => {
-  beforeEach(() => rmSync(DATA_DIR, { recursive: true, force: true }));
+  beforeEach(() => removeTempDirSync(DATA_DIR));
 
   function thread(store: Store, count: number): { threadId: string; ids: string[] } {
     const bot = store.createBot();
@@ -99,7 +100,7 @@ describe("Store transcript scale", () => {
     expect(store.cachedThreadIds()).not.toContain(threadId);
     for (const hasTools of [true, false]) {
       const lazy = promptQuoteTargets(store, database(), "no-bot", threadId, hasTools, []);
-      const eager = new Map(promptRows(partitionTranscriptMessages(database(), "no-bot", threadId, store.messagesFor(threadId)), hasTools, []).map((m) => [m.id, m]));
+      const eager = new Map(promptRows(botMessages(database(), botViewer("no-bot"), threadId, store.messagesFor(threadId)), hasTools, []).map((m) => [m.id, m]));
       for (const id of [...ids, action.id, "missing"]) expect(lazy.get(id)?.id).toBe(eager.get(id)?.id);
     }
   });
@@ -147,7 +148,7 @@ describe("Store transcript scale", () => {
 import { createTaskDelta, FULL_TASK_LIST_EVERY_MS } from "./task-delta.ts";
 
 describe("roster bookkeeping and run anchors", () => {
-  beforeEach(() => rmSync(DATA_DIR, { recursive: true, force: true }));
+  beforeEach(() => removeTempDirSync(DATA_DIR));
   const pause = () => Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 25);
 
   it("a roster save that changes nothing on disk writes nothing; a real change still does", () => {
@@ -241,7 +242,7 @@ describe("bot frames carry changed tasks only", () => {
 });
 
 describe("lane E review findings (ui-review/REPORT.md)", () => {
-  beforeEach(() => rmSync(DATA_DIR, { recursive: true, force: true }));
+  beforeEach(() => removeTempDirSync(DATA_DIR));
   const ask = (requestId: string) => ({ role: "bot", kind: "options", text: "May I?", card: { title: "May I?", options: [], requestId, tool: "Bash" } }) as never;
   const lines = (store: Store, threadId: string, count: number, tag: string) => {
     const ids: string[] = [];
@@ -325,7 +326,7 @@ describe("lane E review findings (ui-review/REPORT.md)", () => {
 });
 
 describe("lane E round 2 findings (ui-review-r2/REPORT.md)", () => {
-  beforeEach(() => rmSync(DATA_DIR, { recursive: true, force: true }));
+  beforeEach(() => removeTempDirSync(DATA_DIR));
   afterEach(() => vi.restoreAllMocks());
   const ask = (requestId: string) => ({ role: "bot", kind: "options", text: "May I?", card: { title: "May I?", options: [], requestId, tool: "Bash" } }) as never;
   const lines = (store: Store, threadId: string, count: number, tag: string) => {

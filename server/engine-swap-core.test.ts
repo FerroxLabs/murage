@@ -6,7 +6,7 @@
 // run of replies, states what it leaves out, scales its window to the engine
 // and captures a whole turn, not its last piece. Engine A and engine B are
 // stand-ins; nothing here names a product.
-import { mkdirSync, readFileSync, readdirSync, rmSync } from "node:fs";
+import { mkdirSync, readFileSync, readdirSync } from "node:fs";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { DatabaseSync } from "node:sqlite";
@@ -24,7 +24,9 @@ import { ROUTE_POLICY } from "./route-policy.ts";
 import { transcriptText } from "./replies.ts";
 import { Store, type Message } from "./store.ts";
 import { buildTurnContext, engineIsFresh, runHeaders, transcriptForDriver, type TranscriptEntry } from "./turn-context.ts";
+import { lineSource } from "./testing/bot-row.ts";
 import { LineageAllowance } from "./memory/lineage-allowance.ts";
+import { removeTempDirSync } from "./testing/cleanup.ts";
 
 const here = fileURLToPath(new URL(".", import.meta.url));
 const source = (file: string) => readFileSync(join(here, file), "utf8");
@@ -98,8 +100,8 @@ describe("CF-1 engine profile", () => {
 
 const engineA = { instanceId: "inst-a", label: "Engine A" };
 const engineB = { instanceId: "inst-b", label: "Engine B" };
-const u = (text: string): TranscriptEntry => ({ role: "user", text });
-const a = (text: string, engine?: { instanceId: string; label: string }): TranscriptEntry => ({ role: "assistant", text, ...(engine ? { engine } : {}) });
+const u = (text: string): TranscriptEntry => ({ role: "user", text, source: lineSource(text) });
+const a = (text: string, engine?: { instanceId: string; label: string }): TranscriptEntry => ({ role: "assistant", text, ...(engine ? { engine } : {}), source: lineSource(text) });
 const base = { rewound: false, fresh: true, externallyUpdated: false, replaysNatively: false } as const;
 
 describe("CF-2 run headers and the seam", () => {
@@ -234,7 +236,7 @@ describe("CF-2 replay budget and window", () => {
 });
 
 describe("CF-2 filterDirectReplay counts what it leaves out", () => {
-  beforeEach(() => { closeDatabase(); rmSync(DATA_DIR, { recursive: true, force: true }); mkdirSync(DATA_DIR, { recursive: true }); });
+  beforeEach(() => { closeDatabase(); removeTempDirSync(DATA_DIR); mkdirSync(DATA_DIR, { recursive: true }); });
   function access() {
     const roster: MemoryRoster = { bots: [{ id: "bot", threadId: "private", section: "secret-team" }], groups: [] };
     reconcileMemoryRoster(roster);
@@ -265,7 +267,7 @@ describe("CF-2 filterDirectReplay counts what it leaves out", () => {
 });
 
 describe("CF-1 and CF-2 on stored rows", () => {
-  beforeEach(() => { closeDatabase(); rmSync(DATA_DIR, { recursive: true, force: true }); });
+  beforeEach(() => { closeDatabase(); removeTempDirSync(DATA_DIR); });
   const selection = () => ({ instanceId: "inst-a", model: "m1" });
   const stampA = { instanceId: "inst-a", driverKind: "stubAgent", model: "m1", capabilityHash: "h".repeat(64) };
   const stampB = { instanceId: "inst-b", driverKind: "stubChat", model: "m9", connectionId: "c1", capabilityHash: "g".repeat(64) };
@@ -361,9 +363,8 @@ describe("CF-1 stamping census (I-20)", () => {
     expect(index).toContain("transcript: transcriptForDriver(transcript, instanceId),");
     // Three builders since the mobile lane's ecd33144e: a resumed turn keeps its session over a
     // changed memory frame, so the post-bundle memoryContinuationChanged rebuild is gone; the
-    // revoked rebuild, the reset rebuild and the turn-context header remain labelled.
-    // b8f231378 adds a fourth: with memory off, a retained session that was shown memory is reset
-    // and its replay rebuilt; that rebuild must carry the engine label like the other three.
+    // revoked rebuild, the reset rebuild and the turn-context header remain labelled. b8f231378 (memory
+    // validation on every write) added a fourth: the memory-refreshed rebuild of a retained session.
     expect(index.match(/currentInstanceId:\s?instanceId/g)?.length).toBe(4);
   });
 });
@@ -392,7 +393,11 @@ describe("CF-5 history is fixed (I-24)", () => {
       "boundary-ports.ts",
       "browser-extension-approvals.ts",
       "browser-extension-setup.ts",
+      // a queued hand-off's Messaged row gains its room link when the room exists (S6 rule 6); never its words
+      "comms-visibility.ts",
       "delegations.ts",
+      // a held reply's own dres- row: the settle sets or clears its withheldFromBots flag (REPLY-WITHHELD-CONTRACT C4); never its words
+      "held-replies.ts",
       "host-computer-consent.ts",
       "image-operations.ts",
       "index.ts",

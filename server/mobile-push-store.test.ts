@@ -1,9 +1,10 @@
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { PushStore, initializeMobilePush, type PushEventRow } from "./mobile-push-store.ts";
+import { removeTempDirSync } from "./testing/cleanup.ts";
 
 const dirs: string[] = [];
 const opened: DatabaseSync[] = [];
@@ -11,7 +12,7 @@ afterEach(() => {
   // Close every handle before removing its folder: Windows refuses to delete a
   // database file another handle still holds open (EPERM).
   for (const db of opened.splice(0)) if (db.isOpen) db.close();
-  for (const d of dirs.splice(0)) rmSync(d, { recursive: true, force: true });
+  for (const d of dirs.splice(0)) removeTempDirSync(d);
 });
 function open(file = ":memory:") {
   const db = new DatabaseSync(file);

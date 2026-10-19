@@ -6,7 +6,7 @@
 // the file, for progress and for each reason an upgrade can be blocked, and
 // that a normal finish leaves no note behind.
 import { randomUUID } from "node:crypto";
-import { existsSync, mkdtempSync, rmSync } from "node:fs";
+import { existsSync, mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { basename, join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
@@ -15,9 +15,10 @@ import { memoryUpgradeBlockedSentence, readMemoryUpgradeStatus, MEMORY_UPGRADE_S
 import { MEMORY_SCHEMA, MEMORY_SCHEMA_V2, migrateMemorySchema } from "./schema.ts";
 import { DEFAULT_MEMORY_LEARNING_V1 } from "./learning-policy.ts";
 import { MEMORY_UPGRADE_STATUS_FILE, memoryUpgradeReporter } from "./upgrade-status.ts";
+import { removeTempDirSync } from "../testing/cleanup.ts";
 
 const roots: string[] = []; const dbs: DatabaseSync[] = [];
-afterEach(() => { for (const db of dbs.splice(0)) { try { db.close(); } catch { /* closed */ } } for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true }); });
+afterEach(() => { for (const db of dbs.splice(0)) { try { db.close(); } catch { /* closed */ } } for (const root of roots.splice(0)) removeTempDirSync(root); });
 function v2() {
   const root = mkdtempSync(join(tmpdir(), "murage-upgrade-status-")); roots.push(root);
   const db = new DatabaseSync(join(root, "messages.db")); dbs.push(db);
@@ -53,11 +54,11 @@ it("a disk that is too small leaves a blocked note whose sentence names the shor
 it("a newer data format leaves a blocked note that says to install the latest version", () => {
   const root = mkdtempSync(join(tmpdir(), "murage-upgrade-status-")); roots.push(root);
   const db = new DatabaseSync(":memory:"); dbs.push(db);
-  db.exec(MEMORY_SCHEMA.replace("CHECK(schema_version=10)", "CHECK(schema_version=11)"));
-  db.prepare("INSERT INTO memory_meta VALUES(1,11,?,0,0,0,'off')").run(randomUUID());
+  db.exec(MEMORY_SCHEMA.replace("CHECK(schema_version=12)", "CHECK(schema_version=13)"));
+  db.prepare("INSERT INTO memory_meta VALUES(1,13,?,0,0,0,'off')").run(randomUUID());
   const report = memoryUpgradeReporter(root, basename);
   try { migrateMemorySchema(db, "off"); } catch (error) { report.blocked(error); }
   const note = readMemoryUpgradeStatus(root, { pid: process.pid });
-  expect(note).toMatchObject({ state: "blocked", code: "MEMORY_SCHEMA_NEWER", newerVersion: 11 });
+  expect(note).toMatchObject({ state: "blocked", code: "MEMORY_SCHEMA_NEWER", newerVersion: 13 });
   expect(memoryUpgradeBlockedSentence(note, "en")).toMatch(/Install the latest version of Murage/);
 });
