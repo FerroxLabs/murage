@@ -4,11 +4,12 @@
 // turnctx final round (Astra r3c): a thread is prepared only when its fill covered it; a rolled-back write leaves no line
 // memory behind; a filtered room transcript's quotation extras never count toward the thirty-line window; and deleting a
 // conversation asks an index, not every message, whether an attachment is used elsewhere.
-import { existsSync, mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, realpathSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { afterAll, beforeEach, expect, it, vi } from "vitest";
+import { removeTempDirSync } from "./testing/cleanup.ts";
 
 vi.mock("./memory/disclosures.ts", async (original) => ({
   ...(await original<typeof import("./memory/disclosures.ts")>()),
@@ -31,7 +32,7 @@ import type { Message } from "./store.ts";
 
 const T = "t-r4";
 const msg = (id: string, parentId: string | null, extra: object = {}): Message => ({ id, text: `words of ${id}`, parentId, at: 1, role: "user", kind: "text", ...extra }) as Message;
-beforeEach(() => { closeDatabase(); rmSync(DATA_DIR, { recursive: true, force: true }); mkdirSync(DATA_DIR, { recursive: true }); });
+beforeEach(() => { closeDatabase(); removeTempDirSync(DATA_DIR); mkdirSync(DATA_DIR, { recursive: true }); });
 
 const textLines = (threadId: string) => {
   const db = database();
@@ -80,7 +81,7 @@ it("r4 #3: quoted lines do not count toward the thirty-line window of a filtered
 
 // ---- #7 --------------------------------------------------------------------
 const scratch = realpathSync.native(mkdtempSync(join(tmpdir(), "murage-r4-")));
-afterAll(() => rmSync(scratch, { recursive: true, force: true }));
+afterAll(() => removeTempDirSync(scratch));
 let counter = 0;
 function deletionRig(threads: number, perThread: number, names: string[]) {
   const data = join(scratch, `data-${++counter}`);
@@ -89,7 +90,7 @@ function deletionRig(threads: number, perThread: number, names: string[]) {
   db.exec(`CREATE TABLE messages(thread_id TEXT NOT NULL,id TEXT NOT NULL,at INTEGER NOT NULL,role TEXT NOT NULL,kind TEXT NOT NULL,text TEXT,json TEXT NOT NULL,PRIMARY KEY(thread_id,id));
     CREATE TABLE transcript_index_state(name TEXT PRIMARY KEY, done INTEGER NOT NULL, cursor INTEGER NOT NULL, skipped INTEGER NOT NULL) WITHOUT ROWID;
     CREATE TABLE attachment_name(name TEXT NOT NULL, thread_id TEXT NOT NULL, id TEXT NOT NULL, PRIMARY KEY(name, thread_id, id)) WITHOUT ROWID;`);
-  const put = db.prepare("INSERT INTO messages VALUES(?,?,?,?,?,?,?)");
+  const put = db.prepare("INSERT INTO messages(thread_id,id,at,role,kind,text,json) VALUES(?,?,?,?,?,?,?)");
   const filler = "x".repeat(520);
   db.exec("BEGIN");
   put.run("doomed", "d0", 1, "bot", "text", "hi", JSON.stringify({ attachments: names.map((n) => ({ kind: "file", path: join(data, "attachments", n) })) }));
@@ -105,7 +106,7 @@ it("r4 #7: ten attachments over 103k messages in 648 threads are decided by an i
   const { db, deletions, data } = deletionRig(648, 159, names); // 103,032 messages
   while ((backfill as { indexAttachmentNamesChunk?: (db: DatabaseSync) => boolean }).indexAttachmentNamesChunk?.(db)) { /* the background pass, to its end */ }
   // one other conversation names the last file
-  db.prepare("INSERT INTO messages VALUES(?,?,?,?,?,?,?)").run("th3", "ref", 9, "user", "text", "x", JSON.stringify({ text: `see ${names[9]}` }));
+  db.prepare("INSERT INTO messages(thread_id,id,at,role,kind,text,json) VALUES(?,?,?,?,?,?,?)").run("th3", "ref", 9, "user", "text", "x", JSON.stringify({ text: `see ${names[9]}` }));
   db.prepare("INSERT INTO attachment_name(name, thread_id, id) VALUES(?,?,?)").run(names[9], "th3", "ref");
   const began = performance.now();
   const entry = deletions.begin({ threadIds: ["doomed"] });
@@ -120,7 +121,7 @@ it("r4 #7: ten attachments over 103k messages in 648 threads are decided by an i
 it("r4 #7: while the attachment-name index is not complete, a file is kept and decided on a later pass", async () => {
   const names = [uuidName(1), uuidName(2)];
   const { db, deletions, data } = deletionRig(3, 5, names);
-  db.prepare("INSERT INTO messages VALUES(?,?,?,?,?,?,?)").run("th1", "ref", 9, "user", "text", "x", JSON.stringify({ text: `see ${names[1]}` })); // not indexed yet
+  db.prepare("INSERT INTO messages(thread_id,id,at,role,kind,text,json) VALUES(?,?,?,?,?,?,?)").run("th1", "ref", 9, "user", "text", "x", JSON.stringify({ text: `see ${names[1]}` })); // not indexed yet
   const entry = deletions.begin({ threadIds: ["doomed"] });
   expect(entry.attachments).toEqual([]);
   expect(entry.deferredAttachments?.slice().sort()).toEqual(names);

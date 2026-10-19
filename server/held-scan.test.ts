@@ -45,7 +45,9 @@ it("the production walk over a bot's threads (drainHeldContinuations) hands the 
   const threads = Array.from({ length: 120 }, (_, i) => `t${i}`);
   const bot = { id: "b", busy: false, modelSelection: { instanceId: "i", model: "m" } };
   const store = {
-    bot: () => bot, tasks: () => threads.map(threadId => ({ threadId })), groups: [], continuationHolder: () => undefined,
+    // every thread holds work, so the drain visits all of them (store.pendingThreadsForSliced)
+    bot: () => bot, tasks: () => threads.map(threadId => ({ threadId })), groups: [], continuationHolder: () => undefined, pendingThreadsFor: () => threads,
+    pendingThreadsForSliced: async () => threads,
     projectBotForTask: () => null, taskByThread: () => undefined, groupByThread: () => undefined,
   };
   let noted = 0;
@@ -56,4 +58,39 @@ it("the production walk over a bot's threads (drainHeldContinuations) hands the 
   const worst = await longestHold(() => drain(bot.id));
   expect(noted).toBe(threads.length);
   expect(worst).toBeLessThan(50);
+});
+
+// 1.0.3 lane 3 (stall r1): after the walk hands the loop back it routes by the bot as it is now (not the walk-start snapshot), and a group the
+// bot joined while the walk was paused is walked before it ends, not left for the next trigger.
+it("the production walk routes by the current bot after a yield, and walks a group joined mid-walk", async () => {
+  const source = readFileSync(new URL("./index.ts", import.meta.url), "utf8");
+  const start = source.indexOf("const heldDispatches =");
+  const end = source.indexOf("\nstore.onChange(change =>", start);
+  const threads = Array.from({ length: 60 }, (_, i) => `t${i}`);
+  let bot = { id: "b", busy: false, modelSelection: { instanceId: "old", model: "m" } };
+  const groups: Array<{ id: string; threadId: string; memberIds: string[] }> = [];
+  const held = [{ id: "h1", botId: "b", text: "go on", dispatcher: "direct" }];
+  const pending = (): string[] => [...threads, ...groups.filter(group => group.memberIds.includes("b")).map(group => group.threadId)];
+  const store = {
+    bot: () => bot, tasks: () => threads.map(threadId => ({ threadId })), groups,
+    continuationHolder: (_bot: string, threadId: string) => (threadId === "g-thread" ? { heldContinuations: held } : undefined),
+    projectBotForTask: () => null, taskByThread: () => undefined, groupByThread: () => undefined,
+    // 1.0.3 idle-scan: the walk visits only the threads with held work (every task thread here, then the room once the bot joins it)
+    pendingThreadsFor: () => pending(),
+    pendingThreadsForSliced: async () => pending(),
+  };
+  const noted: string[] = [], routed: string[] = [];
+  let changed = false;
+  const noteHeldQueue = (_bot: string, threadId: string) => {
+    noted.push(threadId); busy(2);
+    // part-way through (after the walk has handed the loop back at least once): a new engine, and a group joined
+    if (!changed && noted.length === 30) { changed = true; bot = { ...bot, modelSelection: { instanceId: "new", model: "m" } }; groups.push({ id: "g", threadId: "g-thread", memberIds: ["b"] }); }
+  };
+  const drain = runInNewContext(stripTypeScriptTypes(source.slice(start, end)) + "\ndrainHeldContinuations;", {
+    store, roomEngine: { ready: true }, registry: { get: (id: string) => { routed.push(id); return undefined; } }, routeHasTools: () => true, noteHeldQueue, heldScanYield, runnableContinuation,
+  });
+  await drain(bot.id);
+  expect(noted).toContain("g-thread");
+  expect(noted.filter(t => t === "g-thread")).toHaveLength(1);
+  expect(routed).toEqual(["new"]);
 });

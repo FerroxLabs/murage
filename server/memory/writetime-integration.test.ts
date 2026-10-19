@@ -4,7 +4,7 @@
 // Write-time integration (Murage 1.0.2): the cross-slice pieces that only connect once S1 to S5 are merged, and the storage items of
 // STORAGE-AUDIT folded into the integration: receipt flips and the receipt range seam, the v10 flow-edge and watermark triggers, root sets
 // frozen across a 1.0.1 (v6) upgrade, and the root-set reclaim (drop, VACUUM, idle gate, kill and resume, downgrade after it).
-import { copyFileSync, mkdirSync, mkdtempSync, rmSync, statSync } from "node:fs";
+import { copyFileSync, mkdirSync, mkdtempSync, statSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
@@ -24,13 +24,14 @@ import { fileAndLiveBytes, lastReclaimStats, reclaimShortOfDisk, reclaimWorkerSo
 import { downgradeMemorySchema, migrateMemorySchema, validateMemorySchema } from "./schema.ts";
 import { migrateMemorySchema as migrateAs101, storeRootSet } from "./testing/schema-1.0.1.ts";
 import { runBackgroundUpgradeWorkToEnd } from "./upgrade-background.ts";
+import { removeTempDirSync } from "../testing/cleanup.ts";
 
 const msg = (id: string, extra: Partial<Message> = {}): Message => ({ id, role: "bot", kind: "text", text: id, at: Date.now(), ...extra });
 const owner = (id: string) => msg(id, { role: "user" });
 const CONTENT = { audience: null } as const;
 const verdict = (thread: string, id: string, author: "owner" | "generated" = "generated") => denyLookup(database(), { threadId: thread, lines: [{ messageId: id, author }] }, CONTENT).get(id)!;
 
-function reset(): void { closeMessageDb(); closeDatabase(); rmSync(DATA_DIR, { recursive: true, force: true }); mkdirSync(DATA_DIR, { recursive: true }); }
+function reset(): void { closeMessageDb(); closeDatabase(); removeTempDirSync(DATA_DIR); mkdirSync(DATA_DIR, { recursive: true }); }
 
 describe("receipts: every path that revokes one reaches the lines it produced (flip trigger, receipt range)", () => {
   beforeEach(reset);
@@ -168,7 +169,7 @@ describe("v10 triggers: every memory writer leaves its flow edge, every policy o
 
 // ---- standalone files: the v6 upgrade and the reclaim
 const dirs: string[] = [], dbs: DatabaseSync[] = [];
-afterEach(() => { for (const db of dbs.splice(0)) { try { db.close(); } catch { /* closed */ } } for (const dir of dirs.splice(0)) rmSync(dir, { recursive: true, force: true }); setReadTimeJudgeRetired(false); });
+afterEach(() => { for (const db of dbs.splice(0)) { try { db.close(); } catch { /* closed */ } } for (const dir of dirs.splice(0)) removeTempDirSync(dir); setReadTimeJudgeRetired(false); });
 function file(name = "messages.db"): { db: DatabaseSync; path: string } {
   const dir = mkdtempSync(join(tmpdir(), "murage-writetime-int-")); dirs.push(dir);
   const path = join(dir, name);
@@ -244,7 +245,7 @@ describe("the root-set reclaim (1.0.2): drop, then one VACUUM to incremental, on
     expect(Math.max(...sliced.map(([, ms]) => ms))).toBeLessThan(250);
   }, 300_000);
 
-  it("a large table is emptied in batches: the owner's connection, writing all through the run, never waits 250 ms for the write lock (the file was made incremental)", async () => {
+  it("a large table is emptied in batches: the owner's connection, writing all through the run, never waits 250 ms for the write lock (the file was made incremental)", { tags: ["perf-budget"], timeout: 600_000 }, async () => {
     const { db, path } = bloated({ members: 2_500_000, wal: true, incremental: true });
     const owner = new DatabaseSync(path); dbs.push(owner);
     owner.exec("PRAGMA busy_timeout=5000; CREATE TABLE IF NOT EXISTS owner_beat(n INTEGER)");
@@ -275,7 +276,7 @@ describe("the root-set reclaim (1.0.2): drop, then one VACUUM to incremental, on
     for (const table of ROOT_SET_RECLAIM_TABLES) expect(db.prepare("SELECT 1 FROM sqlite_schema WHERE name=?").get(table), table).toBeUndefined();
     expect(Number(db.prepare("PRAGMA freelist_count").get()!.freelist_count)).toBe(0);
     expect(Number(db.prepare("SELECT count(*) AS n FROM owner_beat").get()!.n)).toBe(waits.length);
-  }, 600_000);
+  });
 
   it("the reclaim worker's connection: no checkpoint inside a batch, journal_size_limit=0 as on the other connections (P3-9)", () => {
     const source = reclaimWorkerSourceForTest();
@@ -313,7 +314,7 @@ describe("the root-set reclaim (1.0.2): drop, then one VACUUM to incremental, on
     } finally { registerRetiredObjects("msearch2", {}); registerRetiredObjects("hotpath", {}); }
   }, 300_000);
 
-  it("never runs during a live turn or typing, before health answered, or before the read-time judge is retired; resumes after a kill", async () => {
+  it("never runs during a live turn or typing, before health answered, or before the read-time judge is retired; resumes after a kill", { tags: ["nightly"], timeout: 300_000 }, async () => {
     const { db } = bloated();
     const tables = () => ROOT_SET_RECLAIM_TABLES.filter(table => db.prepare("SELECT 1 FROM sqlite_schema WHERE name=?").get(table)).length;
     const all = tables();
@@ -332,9 +333,9 @@ describe("the root-set reclaim (1.0.2): drop, then one VACUUM to incremental, on
     expect(tables()).toBe(all);
     expect(await reclaimRootSetsWhenIdle(db, idle, { freeDiskBytes: () => null })).toBe("done");
     expect(tables()).toBe(0);
-  }, 300_000);
+  });
 
-  it("with the owner at the Mac the tables are emptied beside them and no writer is held; the one VACUUM (the button path too) waits for idle, then runs", async () => {
+  it("with the owner at the Mac the tables are emptied beside them and no writer is held; the one VACUUM (the button path too) waits for idle, then runs", { tags: ["nightly"], timeout: 300_000 }, async () => {
     const { db } = bloated();
     setReadTimeJudgeRetired(true);
     const holds: boolean[] = [];
@@ -355,7 +356,7 @@ describe("the root-set reclaim (1.0.2): drop, then one VACUUM to incremental, on
     expect(holds).toEqual([true, false]);
     expect(Number(db.prepare("PRAGMA auto_vacuum").get()!.auto_vacuum)).toBe(2);
     expect(reclaimVacuumWaiting()).toBe(false);
-  }, 300_000);
+  });
 
   it("a downgrade after the hand-back makes the v9 tables again, empty, and marks every generated line unprovable for the older build", () => {
     const { db, path } = bloated();

@@ -47,6 +47,7 @@ import {
   type Message,
 } from "@/state/store";
 import { newDeleteAttempt } from "@/state/page-intent";
+import { hasOlder } from "@/state/transcript-seq";
 import { BotAvatar } from "./Avatar";
 import { roomAuthor } from "@/lib/room-author";
 import { startsBotTurn } from "@/lib/room-speakers";
@@ -146,6 +147,7 @@ import { useProjectVisit } from "@/lib/use-project-visit";
 import { useMessageById } from "@/lib/held-message";
 import { findTask, isTruncated } from "@/lib/task-window";
 import { loadProjectTab, projectViewTab, saveProjectTab, type ProjectTab } from "@/lib/project-tab";
+import { fromAnswer } from "@/state/answer-tag";
 
 function dayLabel(at: number): string {
   const d = new Date(at);
@@ -896,13 +898,15 @@ function RoomSetup({ group, members }: { group: Group; members: Bot[] }) {
         body: JSON.stringify(payload),
       });
       const now = Date.now();
+      // The answer's room is the server's statement (numbered); the annotation is this client's own. `setupPending` is a local key:
+      // no statement writes it, only the edit below.
       const nextGroup = {
         ...(result.group ?? group),
         id: group.id,
-        setupPending: false,
         ...(action === "skip" ? { setupSkippedAt: now } : { setupCompletedAt: now }),
       };
-      dispatch({ type: "groupPatched", group: nextGroup });
+      dispatch({ type: "groupPatched", origin: fromAnswer(result.group ?? result), group: nextGroup });
+      dispatch({ type: "groupEdited", group: { id: group.id, setupPending: false } });
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : String(cause));
     } finally {
@@ -1648,7 +1652,7 @@ export function GroupView({ group }: { group: Group }) {
     const el = scrollRef.current;
     if (!el || followRef.current || el.scrollTop > SCROLLBACK_TRIGGER_PX) return;
     if (hiddenCount > 0) showEarlier();
-    else if (group.hasMore) loadOlder();
+    else if (hasOlder(group)) loadOlder();
   };
 
   const showLater = () => {
@@ -1889,7 +1893,7 @@ export function GroupView({ group }: { group: Group }) {
       {/* A channel never showed an error: a refused delete or rename in the
           conversation picker just did nothing. Same banner as a bot chat. */}
       {state.error && <ErrorBanner message={state.error} onDismiss={() => dispatch({ type: "error", message: null })} />}
-      {state.deletionNote && <DeletionNoteBanner note={state.deletionNote} onDismiss={() => dispatch({ type: "deletionNote", note: null })} onRetry={() => { const again = state.deletionNote?.retryBotId; if (again) { dispatch({ type: "deletionNote", note: null }); dispatch({ type: "deleteBot", source: "local", botId: again, attempt: newDeleteAttempt() }); return; } void api("/api/deletions/retry", { method: "POST" }).then((response) => dispatch({ type: "deletionOwed", notices: response?.notices, rev: response?.rev })).catch(() => {}); }} />}
+      {state.deletionNote && <DeletionNoteBanner note={state.deletionNote} onDismiss={() => dispatch({ type: "deletionNote", note: null })} onRetry={async () => { const again = state.deletionNote?.retryBotId; if (again) { dispatch({ type: "deletionNote", note: null }); dispatch({ type: "deleteBot", source: "local", botId: again, attempt: newDeleteAttempt() }); return; } const response = await api("/api/deletions/retry", { method: "POST" }); dispatch({ type: "deletionOwed", notices: response?.notices, rev: response?.rev }); }} />}
 
       {/* Instructions: one pinned line; click to edit */}
       {!setupPending && showChat && <div className="w-full px-5">
@@ -2067,7 +2071,7 @@ export function GroupView({ group }: { group: Group }) {
             </div>
           ) : group.messagesUnloaded ? (
             <div className="flex justify-center pt-2 text-[12.5px] text-ink-secondary" data-testid="first-page-loading" role="status">Loading messages…</div>
-          ) : group.hasMore ? (
+          ) : hasOlder(group) ? (
             <div className="flex justify-center pt-2">
               <button
                 onClick={loadOlder}

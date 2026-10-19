@@ -81,11 +81,11 @@ describe.skipIf(process.platform === "win32")("B34 Q03/Q13 adapters through the 
       "correction-supersedes-with-history", "failure-outcomes-not-current-facts", "correction-reused-in-another-task", "superseded-fact-withheld"]));
   }, 240_000);
 
-  it("Q13: exhausted processing budget defers learning, withholds it, then learns the source once", async () => {
+  it("Q13: exhausted processing budget defers learning, withholds it, then learns the source once", { tags: ["nightly"], timeout: 300_000 }, async () => {
     const result = await runAdapterLikeRunner(b34Q13Adapter);
     expectAllPass(result);
     expect(result.artifacts?.row).toBe("Q13");
     expect(result.checks.map(check => check.name)).toEqual(expect.arrayContaining(["deterministic-extractor-selected", "no-runner-pinned-memory", "distillation-provenance",
       "exhausted-budget-withheld-learning", "recovered-source-extracted-once"]));
-  }, 300_000);
+  });
 });

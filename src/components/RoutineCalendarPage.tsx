@@ -1,4 +1,5 @@
 import { RoutineSchedulerNotice, useRoutineSchedulerLate } from "./RoutineSchedulerNotice";
+import { UnloadableRoutines } from "./UnloadableRoutines";
 import { RoutineVersionHistory } from "./ProcedureVersionHistory";
 import {
   useCallback,
@@ -90,6 +91,7 @@ import type {
 import { api, useStore, type Bot, type Group } from "@/state/store";
 import { permissionModeOf } from "@/lib/permission-mode";
 import { RoutineApprovalLevel, RoutineGrants, type RoutineLevelChoice } from "./RoutineApprovals";
+import { fromAnswer } from "@/state/answer-tag";
 
 const HOUR_HEIGHT = 64;
 const DAY_NAMES = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
@@ -1313,7 +1315,7 @@ function EventDetails({
     setError("");
     try {
       const { group: created } = await api(`/api/calendar-calls/${call.id}/room`, { method: "POST" });
-      dispatch({ type: "groupPatched", group: created });
+      dispatch({ type: "groupPatched", origin: fromAnswer(created), group: created });
       onOpenRoom(created.id);
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : String(cause));
@@ -1405,7 +1407,7 @@ function EventDetails({
           {attachments.length > 0 && <div className="flex items-start gap-3"><Paperclip size={17} className="mt-1 shrink-0 text-ink-secondary" /><div className="min-w-0 flex-1 space-y-2"><AttachmentChips attachments={attachments} />{call && <div className="text-[11px] leading-relaxed text-ink-secondary">{call.botIds.length > 1 ? "These references will be shared in the channel when the event starts." : "These references stay with the event and are available when you join the channel."}</div>}</div></div>}
           {!isCall && <div className="flex items-start gap-3"><Clock3 size={17} className="mt-1 shrink-0 text-ink-secondary" /><div><div className="text-[11px] font-medium uppercase tracking-wider text-ink-secondary">Run limit</div><div className="mt-1 text-[12.5px] text-ink">{safetyLimit == null ? "No time limit" : `Stops if still running after ${durationLabel(safetyLimit)}`}</div></div></div>}
           {routine && routineHealthNotes(routine).map((note) => <div key={note.text} className={cn("flex items-start gap-2 text-[11.5px] leading-relaxed", note.tone === "danger" ? "text-danger" : "text-ink-secondary")}><CircleAlert size={13} className="mt-0.5 shrink-0" />{note.text}</div>)}
-          {run && <div className="rounded-xl border border-hairline/40 bg-inset p-3"><div className="flex items-center gap-2 text-[12px] font-medium capitalize text-ink">{run.status === "running" && <Loader2 size={13} className="animate-spin text-accent" />}{run.goalStatus ? goalStatusLabel(run.goalStatus) : run.status.replace("waiting", "needs you").replace("needs-you", "waiting on you")}</div>{run.output && <div className="mt-2 whitespace-pre-wrap text-[11.5px] leading-relaxed text-ink-secondary">{run.output}</div>}{run.error && <div className="mt-2 text-[11.5px] text-danger">{run.error}</div>}</div>}
+          {run && <div className="rounded-xl border border-hairline/40 bg-inset p-3"><div className="flex items-center gap-2 text-[12px] font-medium capitalize text-ink">{run.status === "running" && <Loader2 size={13} className="animate-spin text-accent" />}{run.goalStatus ? goalStatusLabel(run.goalStatus) : run.status.replace("waiting", "needs you").replace("needs-you", "waiting on you")}</div>{run.output && <div className="mt-2 whitespace-pre-wrap text-[11.5px] leading-relaxed text-ink-secondary">{run.output}</div>}{run.error && <div className="mt-2 text-[11.5px] text-danger">{run.error}</div>}{run.notes?.map((note) => <div key={note} className="mt-2 break-words text-[11.5px] leading-relaxed text-ink-secondary">{note}</div>)}{run.notesMore ? <div className="mt-2 text-[11.5px] text-ink-secondary">{run.notesMore === 1 ? "1 more command like these ran." : `${run.notesMore} more commands like these ran.`}</div> : null}</div>}
           {run?.attention && <div className="flex items-start gap-2 rounded-xl border border-warning/30 bg-warning/10 px-3 py-2.5 text-warning"><CircleAlert size={15} className="mt-0.5 shrink-0" /><div className="min-w-0"><div className="text-[11.5px] font-semibold">Needs your attention</div><div className="mt-1 whitespace-pre-wrap text-[11.5px] leading-relaxed">{run.attention}</div></div></div>}
           {run?.status === "needs-you" && <div className="rounded-xl border border-warning/30 bg-warning/10 px-3 py-2.5 text-[11.5px] text-warning">This run reached its time limit while waiting on you{run.attention ? `: ${run.attention}` : ""}. Answer it in the routine's conversation and the run carries on.</div>}
           {run?.status === "waiting" && !run.attention && <div className="rounded-xl border border-warning/30 bg-warning/10 px-3 py-2.5 text-[11.5px] text-warning">{isRoomGoal ? "This team goal needs your answer. Open its channel task to continue the run." : "This bot needs your answer. Open its task to continue the run."}</div>}
@@ -1707,6 +1709,7 @@ export function RoutinesPage({ onBack, onOpenRoom }: { onBack: () => void; onOpe
             <button type="button" onClick={() => setSaved(null)} aria-label="Dismiss" className="shrink-0 rounded p-0.5 hover:bg-success/15"><X size={11} /></button>
           </p>
         )}
+        {section === "calendar" && <UnloadableRoutines canEdit={canEdit} />}
       </header>
 
       {canEdit && section === "webhooks" ? <WebhooksPanel bots={visibleBots} /> : (

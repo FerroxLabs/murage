@@ -6,6 +6,9 @@ import { isSegmentLimitError } from "./segment-limit.ts";
 import { answerQuery } from "./worker-query.ts";
 import { MemoryEmbeddings,type ModelManifest } from "./embeddings.ts";
 import { MAINTENANCE_POLL_MS,maintenanceMayRun,maintenanceRetryDelayMs,type MaintenanceClock } from "./maintenance-schedule.ts";
+import { DatabaseSync } from "node:sqlite";
+import { statfsSync } from "node:fs";
+import { dirname } from "node:path";
 
 let index:MemoryIndex|null=null, embeddings:MemoryEmbeddings|null=null, eligibility:MemoryEligibility|null=null, busy=false;
 const queries:Array<{requestId:string;input:MemorySearchInput;enqueuedAt:number}>=[];
@@ -16,8 +19,12 @@ const captures:Array<ReturnType<typeof workSchema.parse>>=[];
 const describe=(error:unknown)=>error instanceof Error?`${error.name}: ${error.message.slice(0,160)}`:"unknown";
 const yieldToMessages=()=>new Promise<void>(resolve=>setImmediate(resolve));
 const cancelled=new Set<string>();
-/** Index records embedded per model call: a waiting query is served between slices. */
+/** Index records embedded per model call: a waiting query is served between slices. On ONNX Runtime WebAssembly
+ * (Intel macOS, or a native binding that failed to load) each call is several times slower, so a slice is one record:
+ * a turn's search then waits behind at most one record's model work, never the batch. */
 const INDEX_SLICE=4;
+const WASM_INDEX_SLICE=1;
+const indexSlice=()=>embeddings?.backend==="wasm"?WASM_INDEX_SLICE:INDEX_SLICE;
 /** A query whose deadline has passed has no one waiting: the parent already degraded the turn. */
 const expired=(q:{input:MemorySearchInput})=>q.input.deadlineAt!==undefined&&Date.now()>=q.input.deadlineAt;
 async function serveQueries(){
@@ -64,11 +71,11 @@ async function drain(){
         if(index.maintenanceOwed()&&!purgeFailures)void purgeRolledCheckpoints();
         const alive=batch.records.filter(r=>!r.deleted&&!r.archived);let embeddingStatus="indexed";
         try {
-          for(let at=0;at<alive.length;at+=INDEX_SLICE){
-            const slice=alive.slice(at,at+INDEX_SLICE);
+          for(let at=0,step=indexSlice();at<alive.length;at+=step,step=indexSlice()){
+            const slice=alive.slice(at,at+step);
             const vectors=await embeddings.embed(slice.map(r=>r.text));slice.forEach((record,i)=>index!.vector(record,embeddings!.identity,0,vectors[i]));
             // a turn's search jumps ahead of the rest of this batch
-            while(queries.length&&at+INDEX_SLICE<alive.length)await serveQueries();
+            while(queries.length&&at+step<alive.length)await serveQueries();
           }
         }
         catch {embeddingStatus="unavailable";}
@@ -78,7 +85,7 @@ async function drain(){
       }
     }
   }catch(error){console.error(`index drain failed: ${describe(error)}`);process.send?.({type:"index-error",reason:"MEMORY_INDEX_FAILED"});}
-  finally{busy=false;}
+  finally{busy=false;lastActivity=Date.now();}
 }
 /** Entries one purge step examines, at most; each step also stops at ROLLED_CHECKPOINT_STEP_MS. */
 const ROLLED_CHECKPOINT_EXAMINED=2048;
@@ -148,12 +155,86 @@ async function fillPostings(){
     }
   }finally{filling=false;}
 }
+/** The word table in age order (age-index.ts, 1.0.3 lane 2): once every record has its key (the main database's build row), the helper
+ * copies the index newest first into the second word table in steps of at most AGE_FILL_STEP_MS, only while it has nothing else to do,
+ * and cuts over by rename when the walk ends; afterwards one sweep per start puts any row an older binary wrote at its key. The main
+ * database is read through a handle of its own, read-only (never attached to the index connection: BEGIN IMMEDIATE would take its
+ * write lock for every index write). Below the space it needs plus the reserve the fill waits and says so. */
+const AGE_FILL_STEP_MS=10;
+const AGE_FILL_BUSY_RETRY_MS=1000;
+const AGE_FILL_KEYS_POLL_MS=5000;
+const AGE_FILL_DISK_POLL_MS=30_000;
+let authority:DatabaseSync|null=null,authorityPath="",agingIndex=false,ageNote="";
+function openAuthority():DatabaseSync|null{
+  if(authority)return authority;
+  try{authority=new DatabaseSync(authorityPath,{readOnly:true});authority.exec("PRAGMA busy_timeout=250");return authority;}
+  catch{authority=null;return null;}
+}
+const recordKeysReady=(db:DatabaseSync)=>{try{return Number(db.prepare("SELECT ready FROM memory_record_keys_build WHERE id=1").get()?.ready??0)===1;}catch{return false;}};
+function indexFreeBytes():number|null{try{const stat=statfsSync(dirname(indexPath));return Number(stat.bavail)*Number(stat.bsize);}catch{return null;}}
+let indexPath="";
+async function fillAgeIndex(){
+  // (optional methods: tests stand a stub index in for the real one)
+  if(agingIndex||typeof (index as Partial<MemoryIndex>|null)?.fillAgeIndex!=="function"||typeof (index as Partial<MemoryIndex>|null)?.sweepAgeRowids!=="function")return;
+  agingIndex=true;
+  const clock:MaintenanceClock={deferredSince:null};
+  try{
+    let sweeping=false;
+    for(;;){
+      const working=()=>busy||queries.length>0||batches.length>0||captures.length>0;
+      await new Promise<void>(resolve=>setTimeout(resolve,working()?MAINTENANCE_POLL_MS:0));
+      if(!index)return;
+      if(!maintenanceMayRun(clock,working(),Date.now()))continue;
+      const main=openAuthority();
+      if(!main){await new Promise<void>(resolve=>setTimeout(resolve,AGE_FILL_KEYS_POLL_MS));continue;}
+      try{
+        if(index.ageFillOwed()&&!sweeping){
+          // every record keyed first: the fill walks the key table
+          if(!recordKeysReady(main)){await new Promise<void>(resolve=>setTimeout(resolve,AGE_FILL_KEYS_POLL_MS));continue;}
+          const step=index.fillAgeIndex(main,{maxMs:AGE_FILL_STEP_MS,freeBytes:indexFreeBytes});
+          if(step.waiting==="disk"){if(ageNote!=="disk"){ageNote="disk";console.error("age fill waiting for disk space");process.send?.({type:"index-note",note:"waiting for disk space"});}await new Promise<void>(resolve=>setTimeout(resolve,AGE_FILL_DISK_POLL_MS));continue;}
+          if(ageNote){ageNote="";process.send?.({type:"index-note",note:""});}
+          if(step.busy){await new Promise<void>(resolve=>setTimeout(resolve,AGE_FILL_BUSY_RETRY_MS));continue;}
+          if(step.done){sweeping=true;process.send?.({type:"index-aged"});}
+          continue;
+        }
+        // in age order: the sweep of the copied-binary case, once per start
+        const swept=index.sweepAgeRowids(main,{});
+        if(swept.busy){await new Promise<void>(resolve=>setTimeout(resolve,AGE_FILL_BUSY_RETRY_MS));continue;}
+        if(swept.done)break;
+      }
+      catch(error){console.error(`age fill failed: ${describe(error)}`);break;}
+    }
+  }finally{agingIndex=false;}
+}
+/** ONNX Runtime WebAssembly keeps about a gigabyte of linear memory for as long as the process lives, and that memory
+ * cannot be handed back to the system. After this long without work the helper asks its parent for leave to exit; the
+ * parent starts a new one when the next search or record arrives. Native ONNX Runtime is not affected. */
+const DEFAULT_WASM_IDLE_EXIT_MS=5*60_000;
+let warming=false, wasmIdleExitMs=DEFAULT_WASM_IDLE_EXIT_MS, lastActivity=Date.now(), exitRequested=false;
+let idleTimer:NodeJS.Timeout|undefined;
+const idleCheck=()=>{
+  idleTimer=setTimeout(idleCheck,Math.min(15_000,Math.max(20,Math.floor(wasmIdleExitMs/4))));idleTimer.unref();
+  if(exitRequested||!embeddings?.wasmResident||warming||busy||purging||filling||queries.length||batches.length||captures.length)return;
+  if(Date.now()-lastActivity<wasmIdleExitMs)return;
+  exitRequested=true;process.send?.({type:"idle-exit-request"});
+};
+const startIdleCheck=()=>{if(idleTimer)clearTimeout(idleTimer);idleTimer=setTimeout(idleCheck,Math.min(15_000,Math.max(20,Math.floor(wasmIdleExitMs/4))));idleTimer.unref();};
 process.on("message",input=>{
+  lastActivity=Date.now();
+  if((input as {type?:string}|null)?.type!=="idle-exit")exitRequested=false;
   try {
-    const message=input as {type?:string;requestId?:string;input?:unknown;records?:unknown;indexPath?:string;modelDirectory?:string;manifest?:ModelManifest;authorityPath?:string};
+    const message=input as {type?:string;requestId?:string;input?:unknown;records?:unknown;indexPath?:string;modelDirectory?:string;fallbackModelDirectory?:string;strictModelRoot?:boolean;manifest?:ModelManifest;authorityPath?:string;wasmIdleExitMs?:number};
+    if(message.type==="idle-exit"){
+      if(busy||queries.length||batches.length||captures.length){exitRequested=false;return;}
+      index?.close();eligibility?.close();process.exit(0);return;
+    }
     if(message.type==="init"){
+      if(typeof message.wasmIdleExitMs==="number"&&message.wasmIdleExitMs>=50)wasmIdleExitMs=message.wasmIdleExitMs;
+      startIdleCheck();
       if(index||typeof message.indexPath!=="string"||typeof message.modelDirectory!=="string"||(!message.manifest||typeof message.authorityPath!=="string"))throw new Error("invalid initialization");
       eligibility=new MemoryEligibility(message.authorityPath!);index=new MemoryIndex(message.indexPath);
+      authorityPath=message.authorityPath!;indexPath=message.indexPath;
       // An index an earlier build left at FTS5's segment limit takes no writes at all: compact it before anything else writes.
       try{index.recoverSegments?.();}catch(error){console.error(`index compaction failed: ${describe(error)}`);}
       // Owner-authored continuity is never part of the shared index: drop any an earlier build wrote.
@@ -161,9 +242,20 @@ process.on("message",input=>{
       void purgeRolledCheckpoints();
       // (optional call: tests stand a stub index in for the real one)
       if(index.postingsOwed?.())void fillPostings();
-      embeddings=new MemoryEmbeddings(message.modelDirectory,message.manifest);
+      // (optional call, as above) the age order of the word table, and the sweep that follows it
+      void fillAgeIndex();
+      embeddings=new MemoryEmbeddings(message.modelDirectory,message.manifest,{fallbackDirectory:typeof message.fallbackModelDirectory==="string"?message.fallbackModelDirectory:undefined,strictRoot:message.strictModelRoot===true});
       try{index.prepareModel(embeddings.identity);}catch{/* capacity remains an explicit lexical degradation */}
-      process.send?.({type:"initialised",reset:index.rebuilt});return;
+      process.send?.({type:"initialised",reset:index.rebuilt,wasm:embeddings.backend==="wasm"});return;
+    }
+    // WebAssembly only: load the model and run one small inference, then say so. Until "model-ready" a search still gets its
+    // words (the parent's cutoffs); nothing waits on this. Native helpers ignore it.
+    if(message.type==="warm"){
+      if(embeddings&&embeddings.backend==="wasm"&&!warming){
+        warming=true;
+        void embeddings.warm().then(()=>{lastActivity=Date.now();process.send?.({type:"model-ready"});},error=>{console.error(`model warm-up failed: ${describe(error)}`);}).finally(()=>{warming=false;});
+      }
+      return;
     }
     // The reader asks for a checkpoint when the log is over its threshold and no scan snapshot is open (index-reader.ts).
     if(message.type==="checkpoint"&&message.requestId){
@@ -177,5 +269,5 @@ process.on("message",input=>{
     captures.push(workSchema.parse(input));void drain();
   } catch(error) {console.error(`message rejected: ${describe(error)}`);process.send?.({type:"error",reason:"INVALID_MEMORY_WORK"});}
 });
-process.on("disconnect",()=>{index?.close();eligibility?.close();process.exit(0);});
+process.on("disconnect",()=>{index?.close();eligibility?.close();try{authority?.close();}catch{/* already closed */}process.exit(0);});
 process.send?.({type:"ready"});

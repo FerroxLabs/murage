@@ -7,7 +7,7 @@
 // to it, and put the real decision function in front of real paths. The last
 // one goes further and runs the actual overflow path — the agents proxy's
 // bounded result, the real cache, the real gate — for a channel person.
-import { mkdirSync, rmSync } from "node:fs";
+import { mkdirSync } from "node:fs";
 import { beforeEach, describe, expect, it } from "vitest";
 
 import { DATA_DIR } from "./config.ts";
@@ -27,10 +27,11 @@ import {
 import { ownerMemoryTicket } from "./memory/authority.ts";
 import { Store } from "./store.ts";
 import { TOOL_RESULT_PREVIEW_CHARS, ToolResults } from "./tool-results.ts";
+import { removeTempDirSync } from "./testing/cleanup.ts";
 
 beforeEach(() => {
   closeDatabase();
-  rmSync(DATA_DIR, { recursive: true, force: true });
+  removeTempDirSync(DATA_DIR);
   mkdirSync(DATA_DIR, { recursive: true });
 });
 

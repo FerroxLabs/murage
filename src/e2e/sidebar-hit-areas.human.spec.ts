@@ -3,7 +3,7 @@
 // 2eb4c7c5d32c85d8e0ae3e43d7f7861e81c2977f, Apache-2.0). A static markup
 // assertion cannot prove which element owns a pixel, so every claim below
 // clicks or taps the actual coordinates in Chromium.
-import { test, expect, chromium, type Locator, type Page } from "@playwright/test";
+import { test, expect, chromium, type Locator, type Page } from "./page-error-guard";
 import { createServer, type ViteDevServer } from "vite";
 import tailwindcss from "@tailwindcss/vite";
 import { fileURLToPath } from "node:url";

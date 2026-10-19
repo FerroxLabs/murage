@@ -18,6 +18,12 @@
 // only when the file is committed in the pinned commit, names that commit and
 // the exact CI run that failed for it, states "Critical: 0", lists the reviewed
 // failure classes and carries an approval line. Anything else stays strict.
+//
+// The latest nightly (nightly.yml: the tests over 60 s on all three OSes and
+// the wall-clock budget tests on the build host perf job, tagged out of CI's
+// shards in vite.config.ts) must be green too: its newest completed run must
+// have concluded success, on the pinned commit or one of its ancestors, and be
+// no older than NIGHTLY_MAX_AGE_HOURS (72). No waiver covers it.
 import { createHash } from "node:crypto";
 import { appendFileSync } from "node:fs";
 import { spawnSync } from "node:child_process";
@@ -35,6 +41,22 @@ export function ciVerdict(runs, sha) {
   if (newest.status !== "completed") return { state: "wait", reason: `CI is ${newest.status ?? "not finished"} for ${sha}` };
   if (newest.conclusion === "success") return { state: "pass", reason: `CI concluded success for ${sha}` };
   return { state: "fail", run: newest, reason: `CI concluded ${newest.conclusion ?? "without a result"} for ${sha}` };
+}
+
+/**
+ * What the newest completed nightly run says about releasing `sha`.
+ * `ancestor(runSha)` answers whether that run's commit is `sha` or one of its ancestors.
+ */
+export function nightlyVerdict(runs, sha, { ancestor, now = Date.now(), maxAgeHours = 72 } = {}) {
+  const done = (Array.isArray(runs) ? runs : []).filter(run => run?.status === "completed");
+  const newest = [...done].sort((a, b) => Date.parse(b.created_at ?? 0) - Date.parse(a.created_at ?? 0))[0];
+  if (!newest) return { ok: false, reason: "no completed nightly run found" };
+  const where = `nightly run ${newest.id ?? "?"} on ${newest.head_sha ?? "?"}`;
+  if (newest.conclusion !== "success") return { ok: false, run: newest, reason: `the latest ${where} concluded ${newest.conclusion ?? "without a result"}` };
+  if (newest.head_sha !== sha && !(ancestor && ancestor(newest.head_sha))) return { ok: false, run: newest, reason: `the latest ${where} is not ${sha} or one of its ancestors` };
+  const ageHours = (now - Date.parse(newest.created_at ?? 0)) / 3_600_000;
+  if (!(ageHours <= maxAgeHours)) return { ok: false, run: newest, reason: `the latest ${where} is ${Math.round(ageHours)} h old (limit ${maxAgeHours} h)` };
+  return { ok: true, run: newest, reason: `the latest ${where} concluded success` };
 }
 
 // Who may sign a waiver. Sean approves every release exception.
@@ -109,6 +131,12 @@ function listRuns({ repository, workflow, sha }) {
   return JSON.parse(result.stdout || "[]");
 }
 
+function listCompletedRuns({ repository, workflow }) {
+  const result = spawnSync("gh", ["api", `repos/${repository}/actions/workflows/${workflow}/runs?status=completed&per_page=20`, "--jq", ".workflow_runs"], { encoding: "utf8" });
+  if (result.status !== 0) throw new Error(`gh api failed: ${(result.stderr || result.stdout).trim()}`);
+  return JSON.parse(result.stdout || "[]");
+}
+
 /** The waiver as committed in `ref` (not the working tree), or null when it is not there. */
 function readCommitted(ref, file) {
   const result = spawnSync("git", ["show", `${ref}:${file}`], { encoding: "utf8" });
@@ -122,7 +150,7 @@ function isAncestor(sha, ref) {
 
 function record(lines, outputs) {
   if (process.env.GITHUB_STEP_SUMMARY) appendFileSync(process.env.GITHUB_STEP_SUMMARY, lines.join("\n") + "\n");
-  if (process.env.GITHUB_OUTPUT) appendFileSync(process.env.GITHUB_OUTPUT, Object.entries(outputs).map(([key, value]) => `${key}=${value}`).join("\n") + "\n");
+  if (process.env.GITHUB_OUTPUT && Object.keys(outputs).length) appendFileSync(process.env.GITHUB_OUTPUT, Object.entries(outputs).map(([key, value]) => `${key}=${value}`).join("\n") + "\n");
 }
 
 async function main() {
@@ -139,6 +167,17 @@ async function main() {
     console.error(`::error::a ${eventName || "non-dispatch"} run can never waive CI; refusing`);
     process.exit(1);
   }
+  const nightlyWorkflow = process.env.NIGHTLY_WORKFLOW || "nightly.yml";
+  const nightly = nightlyVerdict(listCompletedRuns({ repository, workflow: nightlyWorkflow }), sha, {
+    ancestor: runSha => /^[0-9a-f]{40}$/.test(String(runSha)) && isAncestor(runSha, sha),
+    maxAgeHours: Number(process.env.NIGHTLY_MAX_AGE_HOURS ?? 72),
+  });
+  if (!nightly.ok) {
+    console.error(`::error::${nightly.reason}; a release needs the latest ${nightlyWorkflow} green (run it on this commit with workflow_dispatch)`);
+    process.exit(1);
+  }
+  console.log(`ok: ${nightly.reason}`);
+  record([`Nightly gate: ${nightly.reason}`], {});
   const waitMs = Number(process.env.CI_WAIT_MINUTES ?? 75) * 60_000;
   const graceMs = Number(process.env.CI_GRACE_MINUTES ?? 10) * 60_000;
   const started = Date.now();

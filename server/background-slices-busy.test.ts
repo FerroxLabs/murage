@@ -2,7 +2,7 @@
 // T4 (STALLS-FINAL-DESIGN 3.1, database.ts invariant 1): every background slice runner that ran after listen takes the write lock through
 // beginBackground. With the lock held by another connection, one slice gives up within the background budget with a "try later" error
 // (never the handle's 1 s wait), leaves its cursor where it was, and makes progress once the lock is released.
-import { mkdirSync, rmSync } from "node:fs";
+import { mkdirSync } from "node:fs";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
@@ -22,10 +22,11 @@ import { openTurnsStep } from "./memory/open-turns.ts";
 import { parkStuckJobsStep, parkSweepFinished, resetParkReconcile, resetParkSweep } from "./memory/park.ts";
 import { setMemoryMode } from "./memory/repository.ts";
 import { buildRevocationIndexStep } from "./memory/revocation-index.ts";
+import { removeTempDirSync } from "./testing/cleanup.ts";
 
 let other: DatabaseSync | null = null;
 beforeEach(() => {
-  closeDatabase(); rmSync(DATA_DIR, { recursive: true, force: true }); mkdirSync(DATA_DIR, { recursive: true });
+  closeDatabase(); removeTempDirSync(DATA_DIR); mkdirSync(DATA_DIR, { recursive: true });
   setMemoryMode("capture"); resetParkSweep(); resetParkReconcile(); delete branchChangeTuning.sync; delete branchChangeTuning.slice;
   vi.spyOn(console, "warn").mockImplementation(() => {});
 });
@@ -44,7 +45,7 @@ function busyAttempt(run: () => unknown): void {
 }
 const text = (id: string, parentId: string | null = null) => ({ id, text: `words of ${id}`, parentId, at: 1, role: "user" as const, kind: "text" as const });
 
-it("the revocation index backfill", () => {
+it("the revocation index backfill", { tags: ["perf-budget"] }, () => {
   const db = database();
   db.exec("UPDATE memory_revocation_index_build SET ready=0,cursor=NULL,done=0,finished_at=NULL WHERE id=1");
   const before = db.prepare("SELECT ready,cursor,done FROM memory_revocation_index_build").get();
@@ -55,7 +56,7 @@ it("the revocation index backfill", () => {
   expect(buildRevocationIndexStep(db, 32, { budgetMs: 5 }).ready).toBe(true);
 });
 
-it("the open-turns reconcile", () => {
+it("the open-turns reconcile", { tags: ["perf-budget"] }, () => {
   const db = database();
   db.exec("UPDATE memory_open_turns_build SET ready=0,cursor=NULL,done=0,finished_at=NULL WHERE id=1");
   const before = db.prepare("SELECT ready,cursor,done FROM memory_open_turns_build").get();
@@ -79,7 +80,7 @@ it("the revocation job runner retries a held lock as a lock, never as a failure"
   expect(memoryRevocationStats.errorRetries).toBe(0);
 });
 
-it("the integrity pass", () => {
+it("the integrity pass", { tags: ["perf-budget"] }, () => {
   const db = database();
   beginIntegrityPass(db);
   const before = readIntegrityPass(db);
@@ -92,7 +93,7 @@ it("the integrity pass", () => {
   expect([after?.done !== before?.done, after?.phase !== before?.phase, after?.finishedAt !== before?.finishedAt].some(Boolean)).toBe(true);
 });
 
-it("the lineage write-time backfill", () => {
+it("the lineage write-time backfill", { tags: ["perf-budget"] }, () => {
   const db = database();
   db.exec("UPDATE memory_lineage_cert SET ready=0,phase='u1',cursor='',done=0 WHERE id=1");
   const before = db.prepare("SELECT phase,cursor,done,ready FROM memory_lineage_cert WHERE id=1").get();
@@ -104,7 +105,7 @@ it("the lineage write-time backfill", () => {
   expect(db.prepare("SELECT phase,cursor,done,ready FROM memory_lineage_cert WHERE id=1").get()).not.toEqual(before);
 });
 
-it("the search index fill", () => {
+it("the search index fill", { tags: ["perf-budget"] }, () => {
   const db = database();
   messages.appendMessage("t", text("m1"));
   writeIndexState(db, "search_fts", { done: 0, cursor: 0, skipped: 0 });
@@ -116,7 +117,7 @@ it("the search index fill", () => {
   expect(readIndexState(db, "search_fts").done).toBe(1);
 });
 
-it("the message walker", () => {
+it("the message walker", { tags: ["perf-budget"] }, () => {
   const db = database();
   messages.appendMessage("t", text("m1"));
   writeIndexState(db, "open_card", { done: 0, cursor: 0, skipped: 0 });
@@ -128,7 +129,7 @@ it("the message walker", () => {
   expect(readIndexState(db, "open_card").done).toBe(1);
 });
 
-it("parking maintenance", () => {
+it("parking maintenance", { tags: ["perf-budget"] }, () => {
   const db = database();
   const marker = () => db.prepare("SELECT intent FROM memory_scope_bindings WHERE id='memory-parked-sweep'").get();
   const before = marker();
@@ -141,7 +142,7 @@ it("parking maintenance", () => {
   expect(parkSweepFinished()).toBe(true);
 });
 
-it("the branch-change drain and its thread fill (an unprepared thread)", () => {
+it("the branch-change drain and its thread fill (an unprepared thread)", { tags: ["perf-budget"] }, () => {
   const db = database();
   let previous: string | null = null;
   for (let i = 1; i <= 6; i++) { messages.appendMessage("t", text(`m${i}`, previous)); previous = `m${i}`; }

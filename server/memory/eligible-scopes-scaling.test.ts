@@ -2,14 +2,15 @@
 // assert). The audience walk read each task thread's human binding one by one: about 900k
 // `SELECT intent FROM memory_scope_bindings WHERE id=? AND subject_type='human-thread'` a minute in the
 // RC1 routine burst. The statements it runs must not grow with the number of tasks a bot has.
-import { mkdirSync, rmSync } from "node:fs";
+import { mkdirSync } from "node:fs";
 import { beforeEach, expect, it } from "vitest";
 import { DATA_DIR } from "../config.ts";
 import { closeDatabase, database } from "../database.ts";
 import { backgroundMemoryScopes, reconcileMemoryRoster, type MemoryRoster } from "./policy.ts";
 import { setMemoryMode } from "./repository.ts";
+import { removeTempDirSync } from "../testing/cleanup.ts";
 
-beforeEach(() => { closeDatabase(); rmSync(DATA_DIR, { recursive: true, force: true }); mkdirSync(DATA_DIR, { recursive: true }); });
+beforeEach(() => { closeDatabase(); removeTempDirSync(DATA_DIR); mkdirSync(DATA_DIR, { recursive: true }); });
 
 /** Counts statement runs (get, all, run, iterate) of statements prepared from now on, all of them and the binding reads. */
 function counters(db: ReturnType<typeof database>) {
@@ -29,7 +30,7 @@ function counters(db: ReturnType<typeof database>) {
 }
 
 function statementsPerAsk(tasks: number) {
-  closeDatabase(); rmSync(DATA_DIR, { recursive: true, force: true }); mkdirSync(DATA_DIR, { recursive: true });
+  closeDatabase(); removeTempDirSync(DATA_DIR); mkdirSync(DATA_DIR, { recursive: true });
   const bot = { id: "bot0", threadId: "bot0-main", section: "Ops", tasks: Array.from({ length: tasks }, (_, i) => ({ threadId: `bot0-task-${i}` })) };
   const roster: MemoryRoster = { bots: [bot], groups: [] };
   const db = database();

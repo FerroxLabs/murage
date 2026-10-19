@@ -1,12 +1,13 @@
-import { mkdirSync, rmSync } from "node:fs";
+import { mkdirSync } from "node:fs";
 import { beforeEach, expect, it, vi } from "vitest";
 import { DATA_DIR } from "./config.ts";
 import { closeDatabase, database } from "./database.ts";
 import { Store, canReach } from "./store.ts";
 import { MASCOT_BODY_IDS } from "../shared/mascot-bodies.ts";
 import { managedBotProfile, manageBot, mayInspectBot, organizationRevision } from "./bot-management.ts";
+import { removeTempDirSync } from "./testing/cleanup.ts";
 
-beforeEach(() => { closeDatabase(); rmSync(DATA_DIR, { recursive: true, force: true }); mkdirSync(DATA_DIR, { recursive: true }); });
+beforeEach(() => { closeDatabase(); removeTempDirSync(DATA_DIR); mkdirSync(DATA_DIR, { recursive: true }); });
 function setup() {
   const store = new Store(() => ({ instanceId: "fixture", model: "model" }));
   const chief = store.createBot({ name: "Chief", section: "Leadership" });

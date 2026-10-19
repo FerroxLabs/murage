@@ -1,0 +1,32 @@
+# SPDX-License-Identifier: AGPL-3.0-or-later
+[Unit]
+Description=Murage Cloud tunnel connector token
+After=network-online.target murage-volume.service murage-egress.service
+Wants=network-online.target
+# Only an enrolled home (credential and generation on disk, volume unlocked) asks.
+Requires=murage-volume.service murage-egress.service
+
+[Service]
+Type=oneshot
+User=root
+Group=root
+UMask=0077
+LimitCORE=0
+NoNewPrivileges=yes
+PrivateTmp=yes
+ProtectHome=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectControlGroups=yes
+RestrictSUIDSGID=yes
+# Retries with backoff inside the process (fresh 30 minute budget per start); a
+# failed run is started again a minute later. Meanwhile the home has no public
+# endpoint and nothing else is opened.
+ExecStart=/usr/bin/python3 -I /usr/local/libexec/murage-enroll --tunnel
+Restart=on-failure
+RestartSec=60
+RestartPreventExitStatus=78
+RemainAfterExit=yes
+
+[Install]
+WantedBy=multi-user.target

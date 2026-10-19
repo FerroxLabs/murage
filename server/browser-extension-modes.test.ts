@@ -1,18 +1,18 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // T21: modes and categories in admission. Spec 2.2, 2.3, 2.7, 9.7 (D3). The mode is read per action, never reaches the floor, and nothing a bot can send sets it.
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import fs from 'node:fs/promises';
 import path from 'node:path';
 import { createBrowserExtensionService } from './browser-extension-service.ts';
 import type { BrowserExtensionCommand, BrowserExtensionResponse, BrowserExtensionHello } from '../shared/browser-extension-protocol.ts';
 import { privateTestDirectory } from "./testing/private-test-dir.ts";
+import { removeTempDir } from "./testing/cleanup.ts";
 
 const A = 'https://fixture.test';
 const cleanup: string[] = [];
 // Close every service before its folder goes: a save still in flight would recreate state.json mid-removal (ENOTEMPTY on macOS).
 const services: { close(): Promise<void> }[] = [];
 const track = <T extends { close(): Promise<void> }>(service: T): T => { services.push(service); return service; };
-afterEach(async () => { for (const service of services.splice(0)) await service.close().catch(() => {}); for (const directory of cleanup.splice(0)) await fs.rm(directory, { recursive: true, force: true, maxRetries: 5 }); });
+afterEach(async () => { for (const service of services.splice(0)) await service.close().catch(() => {}); for (const directory of cleanup.splice(0)) await removeTempDir(directory); });
 
 type Tab = { tabId: number; navigationEpoch: number; origin: string; url: string };
 async function fixture(extra: Record<string, unknown> = {}) {

@@ -22,6 +22,8 @@ export interface Removal {
   /** A deletion only: whether the paired phone could see the bot when it was deleted (captured by the DELETE route in its
    * commit callback). Any other deletion path leaves it false. */
   companionVisible: boolean;
+  /** A deletion only: it replaced a hide still in the window, so a scoped client may hold the record from before the hide (order 7b). */
+  hiddenInWindow?: true;
 }
 
 /** Who asks for the roster: the owner's desktop (unscoped), the owner's phone or door (scoped), or anyone else. */
@@ -38,10 +40,13 @@ export function createBotDeletionLedger(options: { now?: () => number; ttlMs?: n
     for (const [id, entry] of entries) if (entry.at < cut) entries.delete(id);
   };
   return {
-    /** A real deletion: it replaces any hide entry for the id. */
-    deleted(id: string, tasksSeq: number, tasksEpoch: string): void {
+    /** A real deletion: it replaces any hide entry for the id, remembering that it did. `companionVisible` is the paired phone's view
+     * of the record when it was deleted, for a caller that has it at hand (the rooms' listener; rooms the phone could not see are
+     * fenced on it by the roster's horizon); the bot caller leaves it and marks it afterwards. */
+    deleted(id: string, tasksSeq: number, tasksEpoch: string, companionVisible = false): void {
       prune();
-      entries.set(id, { tasksSeq, tasksEpoch, kind: "deleted", at: now(), companionVisible: false });
+      const hiddenInWindow = entries.get(id)?.kind === "hidden";
+      entries.set(id, { tasksSeq, tasksEpoch, kind: "deleted", at: now(), companionVisible, ...(hiddenInWindow ? { hiddenInWindow: true as const } : {}) });
     },
     /** A hide frame was sent for a bot. Only the transition is recorded: a later change to a still-hidden bot keeps the first
      * hide's number (its own frame is newer and the client orders it on its own). */
@@ -54,10 +59,12 @@ export function createBotDeletionLedger(options: { now?: () => number; ttlMs?: n
     shown(id: string): void {
       if (entries.get(id)?.kind === "hidden") entries.delete(id);
     },
-    /** The DELETE route captured, in its commit callback, whether the phone could see the bot. */
+    /** The DELETE route captured, in its commit callback, whether the phone could see the bot. A bot archived within the window is
+     * listed for the phone all the same: it could see the bot within an answer's life and may have missed the hide, so a pre-hide
+     * answer must meet the deletion's fence, not nothing (order 7b; bots have no roster horizon, rooms do). */
     markCompanionVisible(id: string, visible: boolean): void {
       const entry = entries.get(id);
-      if (entry?.kind === "deleted") entry.companionVisible = visible;
+      if (entry?.kind === "deleted") entry.companionVisible = visible || entry.hiddenInWindow === true;
     },
     /** This run's deletion of the id, if still within the window. */
     deletion(id: string): Removal | undefined {
@@ -84,18 +91,22 @@ export function createBotDeletionLedger(options: { now?: () => number; ttlMs?: n
 }
 export type BotDeletionLedger = ReturnType<typeof createBotDeletionLedger>;
 
-/** DELETEs of one bot run one at a time: a second DELETE for an id waits for the one in flight and then runs its own route from
- * the top (its own preconditions, so a plain DELETE never inherits an `ifArchived` refusal). Only DELETEs are serialised; the
- * archived and running checks are re-made at the commit. */
+/** Changes to one bot that must not interleave run one at a time: a second DELETE for an id waits for the one in flight and then
+ * runs its own route from the top (its own preconditions, so a plain DELETE never inherits an `ifArchived` refusal); an archive or
+ * restore (PATCH `hidden`) takes the same turn for the whole of its handler, so a restore never lands inside a DELETE's awaits (r5
+ * order 6). The turn is released in `run`'s own `finally`, whatever the body does and whether or not its client is still there:
+ * there is no release handed out to be lost (Astra r7 H2 lost one to a response that closed while the turn was being waited for).
+ * The archived and running checks are re-made at the commit. */
 export function createPerKeySerialiser() {
   const running = new Map<string, Promise<unknown>>();
+  async function run<T>(key: string, body: () => Promise<T>): Promise<T> {
+    for (let held = running.get(key); held; held = running.get(key)) await held.catch(() => {});
+    const mine = body();
+    running.set(key, mine);
+    try { return await mine; } finally { if (running.get(key) === mine) running.delete(key); }
+  }
   return {
-    async run<T>(key: string, body: () => Promise<T>): Promise<T> {
-      for (let held = running.get(key); held; held = running.get(key)) await held.catch(() => {});
-      const mine = body();
-      running.set(key, mine);
-      try { return await mine; } finally { if (running.get(key) === mine) running.delete(key); }
-    },
+    run,
     busy(key: string): boolean { return running.has(key); },
   };
 }

@@ -54,6 +54,7 @@ import { codexScopeSpec } from "./codex-scope-spec.ts";
 import { listDir, memoDeps, pathExists } from "./isolation-cache.ts";
 import { currentScopeHome, engineUpdateRequired, scopedCliHome, scopedCliHomeRoot } from "./scoped-cli-home.ts";
 import type { DeclaredMcpServers } from "./codex-mcp-names.ts";
+import { codexGatePlan, currentCodexFloors, versionAtLeast, type CodexFloors } from "./codex-hook.ts";
 
 const BARE_KEY = /^[A-Za-z0-9_-]+$/;
 const MAX_SKILLS = 512;
@@ -105,11 +106,43 @@ export { CODEX_SHARED_ENTRIES, CODEX_CACHE_FOLDERS } from "./codex-scope-spec.ts
  *  alphas with no stable CODEX_HOME proof, so 0.2.0 is the earliest provable. */
 export const CODEX_SCOPED_HOME_MIN = [0, 2, 0] as const;
 
-function versionAtLeast(version: string | undefined, min: readonly number[]): boolean {
-  const m = /(\d+)\.(\d+)\.(\d+)/.exec(version ?? "");
-  if (!m) return false;
-  const v = [Number(m[1]), Number(m[2]), Number(m[3])];
-  return v[0]! !== min[0]! ? v[0]! > min[0]! : v[1]! !== min[1]! ? v[1]! > min[1]! : v[2]! >= min[2]!;
+
+/** First Codex whose app-server takes the kebab-case approval and sandbox names (`on-request`, `workspace-write`) on
+ *  thread/start, thread/resume and turn/start. Probed offline against the npm builds, no login, no network (lane 103-codex-pin,
+ *  2026-10-18): 0.56.0 (the first with thread/start) through 0.66.0 accept only `onRequest` / `workspaceWrite` /
+ *  `dangerFullAccess` / `readOnly`; 0.69.0, 0.75.0, 0.80.0, 0.100.0, 0.129.0 and 0.163.0 accept only the kebab names. There is
+ *  no stable 0.67 or 0.68. Below 0.56 the app-server has no thread/start (0.2.0 has no app-server at all), so no spelling applies. */
+export const CODEX_KEBAB_POLICY_MIN = [0, 69, 0] as const;
+
+/** The approval policy of a gated turn: Codex 0.149.0 and later refuse to start with the retired ask-for-everything value in their
+ *  config ("is no longer supported; remove this setting"), so from there Murage sends `on-request` and its own answer path (the
+ *  PreToolUse gate of codex-hook.ts, Rule 68) decides. Below CODEX_UNTRUSTED_RETIRED_MIN the driver keeps what it sent before. */
+export const CODEX_APPROVAL_POLICY = "on-request";
+
+/** Spawn pin, gated turns only: the scoped home carries a copy of the owner's config.toml, and a retired `approval_policy` there stops
+ *  a current Codex before it answers `initialize`. A `-c` override wins over the file (probed: 0.163.0 with the retired value in
+ *  config.toml starts under this pin), and the TOML spelling is kebab on every version. */
+export const CODEX_APPROVAL_PIN_ARGS: readonly string[] = ["-c", `approval_policy="${CODEX_APPROVAL_POLICY}"`];
+
+export type CodexSandboxMode = "read-only" | "workspace-write" | "danger-full-access";
+
+/** The approval policy and sandbox a Codex thread and every turn on it run under, spelled for the installed version.
+ *  Below CODEX_UNTRUSTED_RETIRED_MIN (legacy): exactly what the driver sent before the pin, `untrusted` when the stop line or the
+ *  routed asks must reach Murage's card, `never` under the owner's No limits, otherwise `on-request`. From there (gated) the policy is
+ *  `on-request` and the PreToolUse gate stands in front of every call. The sandbox is read-only for a proposal, full access only under
+ *  the owner's No limits (`fullAuto`), otherwise workspace-write. An unknown version gets the gated policy and the current spelling. */
+export function codexTurnPolicy(
+  cliVersion: string | undefined,
+  turn: { proposalOnly: boolean; fullAuto: boolean; enforceApproval?: boolean },
+  floors: CodexFloors = currentCodexFloors(),
+): { approvalPolicy: string; sandbox: string } {
+  const sandbox: CodexSandboxMode = turn.proposalOnly ? "read-only" : turn.fullAuto ? "danger-full-access" : "workspace-write";
+  const known = /(\d+)\.(\d+)\.(\d+)/.test(cliVersion ?? "");
+  const legacy = codexGatePlan(cliVersion, floors).mode === "legacy";
+  const policy: string = legacy ? (turn.enforceApproval ? "untrusted" : turn.fullAuto ? "never" : "on-request") : CODEX_APPROVAL_POLICY;
+  if (!known || versionAtLeast(cliVersion, CODEX_KEBAB_POLICY_MIN)) return { approvalPolicy: policy, sandbox };
+  const camel = (name: string) => name.replace(/-([a-z])/g, (_, c: string) => c.toUpperCase());
+  return { approvalPolicy: camel(policy), sandbox: camel(sandbox) };
 }
 
 /** The scoped CODEX_HOME for this env on a proven Codex. Fails closed: a Codex whose version is unknown (the probe failed twice) or older than

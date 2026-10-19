@@ -1,10 +1,11 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // 1.0.2 bgwork (Fable r1 P1-1): incremental saves compact their own journal, so scheduled work alone
 // never makes a file grow with uptime.
-import { mkdtempSync, readFileSync, readdirSync, rmSync } from "node:fs";
+import { mkdtempSync, readFileSync, readdirSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { removeTempDirSync } from "./testing/cleanup.ts";
 
 const fault = vi.hoisted(() => ({ failRename: false }));
 vi.mock("./atomic.ts", async (importOriginal) => {
@@ -15,7 +16,7 @@ vi.mock("./atomic.ts", async (importOriginal) => {
 const { RoutineRunsJournal, routineRunsDir, routineRunsFileName } = await import("./routine-runs-journal.ts");
 
 const dirs: string[] = [];
-afterEach(() => { fault.failRename = false; for (const dir of dirs.splice(0)) rmSync(dir, { recursive: true, force: true }); });
+afterEach(() => { fault.failRename = false; for (const dir of dirs.splice(0)) removeTempDirSync(dir); });
 const tempDir = () => { const dir = mkdtempSync(join(tmpdir(), "murage-compact-")); dirs.push(dir); return dir; };
 const lines = (dir: string, routineId: string) => readFileSync(join(routineRunsDir(dir), routineRunsFileName(routineId)), "utf8").split("\n").filter(Boolean);
 const run = (n: number, routineId = "r1") => ({ id: `run-${n}`, routineId, status: "completed", output: "x".repeat(200), scheduledFor: n });

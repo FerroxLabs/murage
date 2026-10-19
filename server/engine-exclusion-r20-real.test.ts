@@ -5,7 +5,7 @@
 // an engine that starts right after Murage's last look at the process list, running the engine's own file protocol, must lose nothing and
 // must never be written over; and the addon lists every process, with the fields the check needs.
 import { spawn, spawnSync, type ChildProcess } from "node:child_process";
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
@@ -18,11 +18,12 @@ import { planEngineHistory, removeEngineHistoryFiles } from "./engine-history-ru
 import { homeKey, type Step } from "./engine-plan-core.ts";
 import { builtAddonPath, useRealExclusion } from "./testing/engine-exclusion-fake.ts";
 import { asExclusive, buildFixture, canaryHits, type Fixture } from "./testing/engine-history-fixtures.ts";
+import { removeTempDirSync } from "./testing/cleanup.ts";
 
 const built = builtAddonPath();
 const posix = process.platform !== "win32";
 const scratch = realpathSync.native(mkdtempSync(join(tmpdir(), "murage-r20r-")));
-afterAll(() => rmSync(scratch, { recursive: true, force: true }));
+afterAll(() => removeTempDirSync(scratch));
 
 const children: ChildProcess[] = [];
 afterEach(() => { for (const child of children.splice(0)) { try { process.kill(child.pid!, "SIGKILL"); } catch { /* already gone */ } } });
@@ -359,7 +360,7 @@ describe.skipIf(!built || !posix)("T8: the addon lists every process, with the f
     try {
       const verdict = engineState("kimi", home);
       expect(verdict, JSON.stringify(verdict.unknownBy ?? [])).toEqual({ state: "closed", via: "process" });
-    } finally { rmSync(home, { recursive: true, force: true }); }
+    } finally { removeTempDirSync(home); }
   });
 });
 

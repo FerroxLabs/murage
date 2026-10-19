@@ -1,4 +1,4 @@
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -6,9 +6,10 @@ import { DeviceRegistry } from "../src/devices.ts";
 import type { HarnessCall } from "../src/push-door.ts";
 import { createPushRevocations, revokeDeviceSender, watchDeviceRemovals } from "../src/push-revocations.ts";
 import { DATA_DIR } from "../src/state.ts";
+import { removeTempDirSync } from "../../server/testing/cleanup.ts";
 
 const dirs: string[] = [];
-afterEach(() => { for (const d of dirs.splice(0)) rmSync(d, { recursive: true, force: true }); });
+afterEach(() => { for (const d of dirs.splice(0)) removeTempDirSync(d); });
 const file = () => { const d = mkdtempSync(join(tmpdir(), "push-rev-")); dirs.push(d); return join(d, "push-revocations.json"); };
 
 describe("push revocation queue", () => {
@@ -127,7 +128,7 @@ describe("telling the harness", () => {
   });
 
   it("queues a device the moment the registry removes it", () => {
-    rmSync(DATA_DIR, { recursive: true, force: true });
+    removeTempDirSync(DATA_DIR);
     const registry = new DeviceRegistry();
     const { code } = registry.openPairing();
     const result = registry.redeem(code, "iPhone");

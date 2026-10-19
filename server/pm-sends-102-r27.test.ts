@@ -7,7 +7,7 @@
 //  3  a finished hand-off's request ending and its row's removal are one transaction; a failure leaves both for the next pass
 //  5  a hand-back is recognised by the hand-off's durable identity (a row of its id, or its receipt), not by how its key is spelled
 //  6  the start guard checks the CURRENT row and its stored destination
-import { mkdirSync, readFileSync, rmSync } from "node:fs";
+import { mkdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import type { DatabaseSync } from "node:sqlite";
@@ -25,6 +25,7 @@ import { fakeHost, rememberRun, runOf, writePrompt } from "./testing/handoff-tur
 import { LINEAGE, ownerWorld, sharedWorld, type OwnerWorld } from "./testing/handoff-worlds.ts";
 import { queueDelegation } from "./delegations.ts";
 import { MurageStatus, botName } from "./murage-status.ts";
+import { removeTempDirSync } from "./testing/cleanup.ts";
 
 const serverDir = fileURLToPath(new URL(".", import.meta.url));
 const tick = () => new Promise<void>((resolve) => setImmediate(resolve));
@@ -34,7 +35,7 @@ async function until(done: () => boolean, ms = 60_000): Promise<void> {
 }
 const rowOf = (id: string) => database().prepare("SELECT phase FROM pending_delegations WHERE id=?").get(id) as { phase: string } | undefined;
 
-beforeEach(() => { closeDatabase(); rmSync(DATA_DIR, { recursive: true, force: true }); mkdirSync(DATA_DIR, { recursive: true }); _resetPending(); _resetOwnerMigration(); _resetDrainDiagnostics(); });
+beforeEach(() => { closeDatabase(); removeTempDirSync(DATA_DIR); mkdirSync(DATA_DIR, { recursive: true }); _resetPending(); _resetOwnerMigration(); _resetDrainDiagnostics(); });
 afterEach(() => { onDelegationReceipt(undefined); _resetOwnerMigration(); _resetPending(); closeDatabase(); });
 
 function attach(w: OwnerWorld): void {

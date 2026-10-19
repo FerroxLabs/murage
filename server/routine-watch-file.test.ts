@@ -3,11 +3,12 @@ import * as fs from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createRoutineWatchFileAdapter, ROUTINE_WATCH_FILE_MAX_BYTES } from "./routine-watch-file.ts";
+import { removeTempDirSync } from "./testing/cleanup.ts";
 
 vi.mock("node:fs", async importOriginal => ({ ...await importOriginal<typeof import("node:fs")>() }));
 
 const roots: string[] = [];
-afterEach(() => { vi.restoreAllMocks(); for (const root of roots.splice(0)) fs.rmSync(root, { recursive: true, force: true }); });
+afterEach(() => { vi.restoreAllMocks(); for (const root of roots.splice(0)) removeTempDirSync(root); });
 function fixture() {
   const root = fs.realpathSync.native(fs.mkdtempSync(join(tmpdir(), "murage-watch-file-"))); roots.push(root);
   fs.writeFileSync(join(root, "report.txt"), "one");

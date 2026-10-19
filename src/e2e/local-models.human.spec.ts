@@ -15,7 +15,7 @@
 // something true to mark. The live proof against SeanBeast's real llama.cpp is
 // docs/plans/0152-LOCAL-MODELS-PROOF.md; this spec is what keeps the screens
 // honest after that machine is switched off.
-import { test, expect, type Page } from "@playwright/test";
+import { test, expect, type Page } from "./page-error-guard";
 import { createServer, type ViteDevServer } from "vite";
 import react from "@vitejs/plugin-react";
 import tailwindcss from "@tailwindcss/vite";

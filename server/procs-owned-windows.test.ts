@@ -1,10 +1,11 @@
 import { EventEmitter } from "node:events";
 import type { ChildProcess } from "node:child_process";
-import { mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { mkdtempSync, readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { PassThrough } from "node:stream";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { removeTempDirSync } from "./testing/cleanup.ts";
 
 const native = vi.hoisted(() => ({ spawn: vi.fn(), execFile: vi.fn() }));
 vi.mock("node:child_process", () => native);
@@ -37,7 +38,7 @@ afterEach(() => {
   child.emit("close", child.exitCode, child.signalCode);
   Object.defineProperty(process, "platform", platformDescriptor);
   vi.useRealTimers();
-  rmSync(base, { recursive: true, force: true });
+  removeTempDirSync(base);
 });
 
 describe("owned Windows close confirmation (simulated)", () => {

@@ -2,7 +2,7 @@
 // Backup and persistence-failure rules follow OpenClaw extensions/whatsapp session.ts and auth-store.test.ts
 // (MIT, OpenClaw Foundation); record naming follows Baileys use-multi-file-auth-state (MIT).
 // SPDX-License-Identifier: AGPL-3.0-or-later
-import { chmodSync, existsSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync, symlinkSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdtempSync, readdirSync, readFileSync, statSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
@@ -10,10 +10,11 @@ import {
   AuthStoreError, bufferJSON, CREDENTIAL_RECORD_TYPES, isAuthFileName, wipeAuthDir, decodeRecord, encodeRecord, newAuthKey, parseAuthKey, readAuthKeyFile, recordName, useEncryptedAuthState, writeFileAtomic,
   type AuthCreds, type AuthStateOptions,
 } from "./auth-store.ts";
+import { removeTempDirSync } from "../../../testing/cleanup.ts";
 
 let root: string;
 beforeEach(() => { root = mkdtempSync(path.join(tmpdir(), "murage-wa-auth-")); });
-afterEach(() => { rmSync(root, { recursive: true, force: true }); });
+afterEach(() => { removeTempDirSync(root); });
 
 const initCreds = (): AuthCreds => ({ noiseKey: Buffer.from([1, 2, 3]), registered: false, me: undefined });
 const open = (dir: string, key: Buffer, extra: Partial<AuthStateOptions> = {}) => useEncryptedAuthState(dir, key, { initCreds, ...extra });
@@ -207,7 +208,7 @@ describe("useEncryptedAuthState", () => {
     const dir = path.join(root, "auth");
     const failures: unknown[] = [];
     const store = await open(dir, newAuthKey(), { onPersistenceFailure: (e: unknown) => failures.push(e) });
-    rmSync(dir, { recursive: true, force: true });
+    removeTempDirSync(dir);
     writeFileSync(dir, "now a file, not a directory");
     await expect(store.saveCreds()).rejects.toMatchObject({ code: "persist-failed" });
     await expect(store.state.keys.set({ session: { a: { v: 1 } } })).rejects.toMatchObject({ code: "persist-failed" });

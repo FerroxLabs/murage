@@ -4,7 +4,7 @@
 // SQLite budgets (PROPOSAL-v2 10.3): a lock held by another connection never holds the server's one
 // thread for 5 s. Background memory work waits 50 ms and tries later; everything else waits 1 s and is
 // told "try again" (503 DATABASE_BUSY with Retry-After), never a 500 or a 409. The journal is capped, and a high-water WAL is given back at start.
-import { mkdirSync, readFileSync, rmSync, statSync } from "node:fs";
+import { mkdirSync, readFileSync, statSync } from "node:fs";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { afterEach, beforeEach, expect, it } from "vitest";
@@ -15,9 +15,10 @@ import { ioBudget } from "./io-budget.ts";
 import { resetObserveWindows, setObserveSink } from "./observe.ts";
 import { checkpointTruncate, CHECKPOINT_BUSY_MS } from "./sqlite-checkpoint.ts";
 import { walMaintenanceReady } from "./wal-maintenance.ts";
+import { removeTempDirSync } from "./testing/cleanup.ts";
 
 let lines: string[], other: DatabaseSync | null = null;
-beforeEach(() => { closeDatabase(); rmSync(DATA_DIR, { recursive: true, force: true }); mkdirSync(DATA_DIR, { recursive: true }); lines = []; resetObserveWindows(); setObserveSink(line => lines.push(line)); });
+beforeEach(() => { closeDatabase(); removeTempDirSync(DATA_DIR); mkdirSync(DATA_DIR, { recursive: true }); lines = []; resetObserveWindows(); setObserveSink(line => lines.push(line)); });
 afterEach(() => { try { other?.close(); } catch { /* closed */ } other = null; closeDatabase(); setObserveSink(); });
 const holdWriteLock = () => { other = new DatabaseSync(join(DATA_DIR, "messages.db")); other.exec("PRAGMA busy_timeout=0; BEGIN IMMEDIATE"); };
 const release = () => { other!.exec("ROLLBACK"); };

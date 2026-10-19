@@ -182,6 +182,7 @@ describe.skipIf(process.platform === "win32")("answering a card needs the owner'
 
   it(
     "a turn an unproven caller starts is judged like a webhook turn: Full access does not apply and the card holds",
+    { tags: ["nightly"], timeout: 180_000 },
     async () => {
       const made = async (name: string) => {
         const created = await desktopApi("POST", "/api/bots", { name, modelSelection: { instanceId: "cleaner", model: "fake-model" } });
@@ -211,9 +212,7 @@ describe.skipIf(process.platform === "win32")("answering a card needs the owner'
         expect(await request("POST", `/api/threads/${bot.threadId}/respond`, { requestId: card.card.requestId, behavior: "deny" })).toMatchObject({ status: 200 });
         expect(await waitIdle(bot.id, bot.threadId)).not.toBeNull();
       }
-    },
-    180_000,
-  );
+    });
 
   it(
     "a room send from an unproven caller runs unattended too",
@@ -265,6 +264,7 @@ describe.skipIf(process.platform === "win32")("answering a card needs the owner'
 
   it(
     "records who sent each chat message from what the request proved, never from its body",
+    { tags: ["nightly"], timeout: 120_000 },
     async () => {
       const created = await desktopApi("POST", "/api/bots", { name: "Origin recorder", modelSelection: { instanceId: "asker", model: "fake-model" } });
       expect(created.status).toBe(201);
@@ -285,9 +285,7 @@ describe.skipIf(process.platform === "win32")("answering a card needs the owner'
       }
       const users = (await threadMessages(bot.threadId)).filter((m) => m.role === "user");
       expect(users.map((m) => [m.text, m.origin])).toEqual(senders.map(([text, , origin]) => [text, origin]));
-    },
-    120_000,
-  );
+    });
 
   it(
     "only the owner's surfaces answer a question; anyone may skip it",

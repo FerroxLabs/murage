@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { mkdirSync, readFileSync, rmSync } from "node:fs";
+import { mkdirSync, readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { beforeEach, expect, it } from "vitest";
 import { DATA_DIR } from "../config.ts";
@@ -14,10 +14,11 @@ import { memoryRecallCorpus, recallPolicyEvaluator } from "./gepa-recall-corpus.
 import { classificationPolicyEvaluator, memoryClassificationCorpus } from "./gepa-classification-corpus.ts";
 import { procedureOutcomeCorpus, procedureOutcomeEvaluator } from "./gepa-procedure-corpus.ts";
 import type { ProcedureReviewSnapshot } from "./procedure-review.ts";
+import { removeTempDirSync } from "../testing/cleanup.ts";
 
 const hash = (value: unknown) => createHash("sha256").update(JSON.stringify(value)).digest("hex");
 const worker = fileURLToPath(new URL("../../native/gepa/gepa-worker.py", import.meta.url));
-beforeEach(() => { closeDatabase(); rmSync(DATA_DIR, { recursive: true, force: true }); mkdirSync(DATA_DIR, { recursive: true }); setMemoryMode("capture"); });
+beforeEach(() => { closeDatabase(); removeTempDirSync(DATA_DIR); mkdirSync(DATA_DIR, { recursive: true }); setMemoryMode("capture"); });
 function setup() {
   const policy = readMemoryEvolutionPolicy(), corpus = memoryRecallCorpus(), ticket = ownerMemoryTicket();
   const admission = admitMemoryEvolutionCorpus(ticket, { kind: "synthetic", corpusDigest: hash(corpus), holdoutDigest: hash([corpus.id, corpus.version, corpus.groupBy, corpus.holdout]) });

@@ -5,7 +5,7 @@
 // package and forget to regenerate and this fails in the same commit — without
 // it the shipped catalog quietly stops describing the shipped packages, which
 // is how a "the library says eleven skills, six landed" bug gets made.
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -13,6 +13,7 @@ import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 
 import { LOCAL_CATALOG_FILE, buildLocalCatalog, localCatalogSources, renderLocalCatalog } from "./build-local-catalog.mjs";
+import { removeTempDirSync } from "../server/testing/cleanup.ts";
 
 const repoRoot = dirname(dirname(fileURLToPath(import.meta.url)));
 
@@ -42,7 +43,7 @@ describe("build-local-catalog", () => {
       );
       expect(() => buildLocalCatalog(fixture)).toThrow(/does not match its filename/);
     } finally {
-      rmSync(fixture, { recursive: true, force: true });
+      removeTempDirSync(fixture);
     }
   });
 });

@@ -11,6 +11,7 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { ToolResults, TOOL_RESULT_PREVIEW_CHARS } from "../tool-results.ts";
 import type { HandoffOutcome } from "../event-limit.ts";
 import { formatHandoff } from "../handoff-outcome.ts";
+import { OWN_ALWAYS_ASK, OWN_UNASKED } from "../../shared/own-servers.ts";
 import { released } from "../testing/released.ts";
 import type { BotName } from "../murage-status.ts";
 
@@ -371,6 +372,18 @@ describe("agents-proxy MCP surface", () => {
     expect(delegate.description).toContain("DEFAULT FOR ASSIGNING WORK");
     expect(delegate.description).toContain("delivered automatically");
     expect(wait.description).toContain("Never call it in the same turn as MCP tool \"delegate_bot\" on this server");
+  });
+
+  it("T98: every live agents tool is in exactly one Rule 51 row, unasked or asking (shared/own-servers.ts)", async () => {
+    const list = await rpc("tools/list");
+    const names: string[] = list.result.tools.map((t: { name: string }) => t.name);
+    for (const name of names) {
+      const unasked = OWN_UNASKED.filter((row) => row.mount === "own:agents" && row.tools.includes(name)).length;
+      const asks = OWN_ALWAYS_ASK.filter((row) => row.mount === "own:agents" && row.tool === name).length;
+      expect([name, unasked + asks]).toEqual([name, 1]);
+    }
+    // the rows that ask by design are live tools, so none of them is dead text
+    for (const row of OWN_ALWAYS_ASK.filter((entry) => entry.mount === "own:agents")) expect(names).toContain(row.tool);
   });
 
   it("tells bots that managed outputs/ files are saved automatically and other files need register_artifact", async () => {

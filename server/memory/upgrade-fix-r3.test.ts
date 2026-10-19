@@ -10,6 +10,7 @@ import { join } from "node:path";
 import { beforeEach, expect, it, afterEach } from "vitest";
 import { thawRootSetWritesForTest } from "./replay-lineage.ts";
 import { legacyFile } from "./testing/legacy-file-model.ts";
+import { removeTempDirSync } from "../testing/cleanup.ts";
 // 1.0.2: this file drives the read-time root-set machinery over rows a 1.0.1 file holds; thaw the frozen root-set writes to model them.
 beforeEach(() => thawRootSetWritesForTest(true));
 afterEach(() => thawRootSetWritesForTest(false));
@@ -22,7 +23,7 @@ import { buildSyntheticV6 } from "./testing/upgrade-fast-fixture.ts";
 import { captureSource } from "./capture.ts";
 import { transaction } from "../database.ts";
 
-beforeEach(() => { closeDatabase(); rmSync(DATA_DIR, { recursive: true, force: true }); mkdirSync(DATA_DIR, { recursive: true }); });
+beforeEach(() => { closeDatabase(); removeTempDirSync(DATA_DIR); mkdirSync(DATA_DIR, { recursive: true }); });
 const FILE = () => join(DATA_DIR, "messages.db");
 const SHAPE = { threads: 30, perThread: 40, payloadBytes: 200, receiptsPerThread: 3, setThreads: 3, repliesPerSetThread: 10 };
 function v6(edit: (db: DatabaseSync) => void = () => {}) {
@@ -412,11 +413,13 @@ it("R2-06: every connection that opens messages.db for writing installs the revi
   };
   // memory/provenance-stamp.ts: its worker connection only reads (one BEGIN, one SELECT, COMMIT: the identity snapshot)
   // memory/optional-index.ts: its worker connection runs one CREATE INDEX (schema only, no row is written, so no revision moves)
-  const otherFiles = new Set(["engine-fs.ts", "engine-structure-check.ts", "memory/cold-index-build.ts", "memory/optional-index.ts", "memory/provenance-stamp.ts", "wal-maintenance.ts", "memory/postings.ts", "inbox-fill-worker.ts", "send-store.ts", "skill-search.ts", "memory/schema.ts", "memory/testdata/v0161-schema.ts", "memory/index.ts", "installation-database-snapshot.ts", "connected-app-journal.ts", "conversation-deletion.ts", "engine-history-deletion.ts", "memory/root-set-compaction.ts", "memory/root-set-reclaim.ts", "memory/upgrade-counts.ts", "memory/eligibility.ts", "memory/index-reader.ts", "memory/owner-list.ts", "installation-activation.ts", "folder-trust.ts", "memory/revocation-index.bench.mjs"]);
+  // memory/age-index.ts: opens memory-index.db only (the downgrade step's index-file half), never messages.db
+  const otherFiles = new Set(["memory/age-index.ts", "engine-fs.ts", "engine-structure-check.ts", "memory/cold-index-build.ts", "memory/optional-index.ts", "memory/provenance-stamp.ts", "wal-maintenance.ts", "memory/postings.ts", "inbox-fill-worker.ts", "send-store.ts", "skill-search.ts", "memory/schema.ts", "memory/testdata/v0161-schema.ts", "memory/index.ts", "installation-database-snapshot.ts", "connected-app-journal.ts", "conversation-deletion.ts", "engine-history-deletion.ts", "memory/root-set-compaction.ts", "memory/root-set-reclaim.ts", "memory/upgrade-counts.ts", "memory/eligibility.ts", "memory/index-reader.ts", "memory/owner-list.ts", "installation-activation.ts", "folder-trust.ts", "memory/revocation-index.bench.mjs"]);
   const found = files.map(path => ({ file: path.slice(root.length + 1).split("\\").join("/"), text: readFileSync(path, "utf8") })).filter(item => /new DatabaseSync\(/.test(item.text));
   // Proven read-only, not exempted: every connection the file opens passes `readOnly: true`, so SQLite refuses any write on it and no
   // revision can move. transcript-read-worker.ts (rc11-prune, 2c42e8927) is the event-log prune's forgotten-message lookup off the main thread.
-  const readOnlyOpeners = new Set(["transcript-read-worker.ts"]);
+  // memory/worker.ts (1.0.3 lane 2): the memory helper's handle on the key table for the age fill of the search index.
+  const readOnlyOpeners = new Set(["transcript-read-worker.ts", "memory/worker.ts"]);
   for (const { file, text } of found) {
     if (otherFiles.has(file)) continue;
     if (readOnlyOpeners.has(file)) {

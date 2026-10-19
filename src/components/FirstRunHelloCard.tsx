@@ -31,6 +31,8 @@ import {
 } from "./FirstRunChrome";
 
 const copy = FIRST_RUN_COPY.hello.welcome;
+/** Said when the card was answered but the updates-list signup was refused. The person is in either way. */
+export const SIGNUP_FAILED_NOTE = "You are all set. We could not add your email to the updates list just now.";
 const EMAIL = /^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/;
 
 /**
@@ -93,7 +95,7 @@ const LIVE: HelloAnswerDeps = {
 export async function saveHelloAnswer(
   typed: { name: string; email: string },
   deps: HelloAnswerDeps = LIVE,
-): Promise<{ profile: { name: string; email: string }; greeting: string }> {
+): Promise<{ profile: { name: string; email: string }; greeting: string; signup: Promise<"ok" | "failed" | "none"> }> {
   const profile = { name: typed.name.trim(), email: typed.email.trim().toLowerCase() };
   if (!profile.email) {
     // A name and no email (O16): the name is saved and confirmed, the step is
@@ -103,7 +105,7 @@ export async function saveHelloAnswer(
     if (saved?.profile?.name !== profile.name) throw new Error(copy.failure);
     try { deps.markGate("skipped"); } catch { /* a blocked store is not a failed save */ }
     await deps.answer("hello", profile.name);
-    return { profile, greeting: greetingLine(profile.name) };
+    return { profile, greeting: greetingLine(profile.name), signup: Promise.resolve("none") };
   }
   const result = await deps.api("/api/config", { method: "PUT", body: JSON.stringify({ profile }) });
   // The same confirmation Onboarding makes: a PUT that answered is not a PUT
@@ -112,12 +114,14 @@ export async function saveHelloAnswer(
     throw new Error(copy.failure);
   }
   deps.identify(profile.email);
-  void deps.api("/api/subscribe", { method: "POST", body: JSON.stringify(profile) }).catch(() => {});
+  // Not awaited: entry never waits on the list. The outcome is returned so the
+  // card can tell the person if the signup did not go through. It never rejects.
+  const signup: Promise<"ok" | "failed"> = deps.api("/api/subscribe", { method: "POST", body: JSON.stringify(profile) }).then(() => "ok" as const, () => "failed" as const);
   try { deps.markGate("submitted"); } catch { /* a blocked store is not a failed signup */ }
   // Both halves, because both are what they just told the Chief and the
   // transcript is where a person checks what an assistant heard.
   await deps.answer("hello", [profile.name, profile.email].filter(Boolean).join(", "));
-  return { profile, greeting: greetingLine(profile.name) };
+  return { profile, greeting: greetingLine(profile.name), signup };
 }
 
 /**
@@ -148,6 +152,7 @@ export function FirstRunHelloCard({ settled }: { settled: boolean }) {
   const [busy, setBusy] = useState(false);
   const [saved, setSaved] = useState("");
   const [failure, setFailure] = useState("");
+  const [signupNote, setSignupNote] = useState("");
   // A CARD SETTLES FROM THE SERVER, NOT ONLY FROM THIS COMPONENT.
   //
   // This was `useState(settled)`, which reads the prop ONCE. `settled` is set
@@ -171,8 +176,10 @@ export function FirstRunHelloCard({ settled }: { settled: boolean }) {
     setBusy(true);
     setFailure("");
     try {
-      setSaved((await saveHelloAnswer({ name, email })).greeting);
+      const answer = await saveHelloAnswer({ name, email });
+      setSaved(answer.greeting);
       setActed(true);
+      void answer.signup.then((outcome) => { if (outcome === "failed") setSignupNote(SIGNUP_FAILED_NOTE); });
     } catch (cause) {
       setFailure(failureText(cause, copy.failure));
     } finally {
@@ -255,6 +262,7 @@ export function FirstRunHelloCard({ settled }: { settled: boolean }) {
 
       {saved && <FirstRunNote>{saved}</FirstRunNote>}
       <FirstRunFailure message={failure} />
+      {signupNote && <p role="status" className="mt-2 text-[13px] text-ink-secondary" data-testid="hello-signup-note">{signupNote}</p>}
 
       {/* Detection is already running while they type, and saying so is the
           difference between a wait and a pause. One line, and quiet. */}

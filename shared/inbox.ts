@@ -122,6 +122,14 @@ export interface InboxMemoryWaiting {
   kind: "bot" | "room" | "other"; id: string; name: string; waiting: number; everyday: number;
 }
 
+/** Learning stopped for the rest of the month because it reached the monthly learning limit (L6). Derived on every read from the
+ *  memory ledger against the stored ceiling, never stored: it is gone after a raise or at the next month. Tokens only. */
+export interface InboxLearningPaused {
+  month: string; input: number; output: number; inputUsed: number; outputUsed: number;
+  /** the learning settings revision the "Double the limit and resume" request must carry */
+  learningRevision: number;
+}
+
 /** One suggestion owed in the Inbox: a lesson, an offer to share a lesson (scope "bots" or "team"), or a
  *  change to a skill or routine (`lessonId` starts "psug-"). Suggestions only; nothing applies by itself. */
 export interface InboxLearningSuggestion {
@@ -182,6 +190,9 @@ export interface InboxPage {
   /** Memories the bots would like to keep, one entry per bot or room, counted per item in `decisions`.
    *  Desktop only. Counts and names, never memory text. See server/inbox-memory-waiting.ts. */
   memoryWaiting?: InboxMemoryWaiting[];
+  /** Learning paused because the month's learning limit was reached. Desktop only, counted once in `decisions`,
+   *  and gone after a raise, "Leave paused" or the next month. See server/inbox-learning-paused.ts. */
+  learningPaused?: InboxLearningPaused;
   /** ONE ROW PER ROUTINE, NOT PER RUN. Present only on `view=routines`.
    *  This is the promise the routines tab makes in words, kept in data:
    *  the owner's thirty six rows were twelve of one routine, three of

@@ -50,19 +50,29 @@ function isCurrentTopFrame(frame, sender) {
 }
 
 /**
+ * The shared front half of both sender predicates: the event came from the CURRENT top frame of `window`'s own
+ * webContents. Returns that frame, or null (fail closed on every missing or unexpected shape).
+ */
+function currentTopFrameOf(event, window) {
+  if (!event || !window || typeof window.isDestroyed !== "function" || window.isDestroyed()) return null;
+  const contents = window.webContents;
+  const sender = event.sender;
+  if (!contents || !sender || sender !== contents) return null;
+  if (typeof sender.isDestroyed === "function" && sender.isDestroyed()) return null;
+  const frame = event.senderFrame;
+  if (!frame || !isCurrentTopFrame(frame, sender)) return null;
+  return frame;
+}
+
+/**
  * @param {{ sender?: any, senderFrame?: any } | null | undefined} event IPC event
  * @param {{ window: any, origin: string | null | undefined }} expected
  * @returns {boolean}
  */
 export function isOwnedMainSender(event, { window, origin } = {}) {
   try {
-    if (!event || !window || typeof window.isDestroyed !== "function" || window.isDestroyed()) return false;
-    const contents = window.webContents;
-    const sender = event.sender;
-    if (!contents || !sender || sender !== contents) return false;
-    if (typeof sender.isDestroyed === "function" && sender.isDestroyed()) return false;
-    const frame = event.senderFrame;
-    if (!frame || !isCurrentTopFrame(frame, sender)) return false;
+    const frame = currentTopFrameOf(event, window);
+    if (!frame) return false;
     if (typeof origin !== "string" || !origin) return false;
     const expected = new URL(origin).origin;
     if (expected === "null" || typeof frame.url !== "string" || !frame.url) return false;
@@ -70,6 +80,39 @@ export function isOwnedMainSender(event, { window, origin } = {}) {
   } catch {
     return false;
   }
+}
+
+/**
+ * B3 WP3: did this IPC come from the top frame of the Cloud-home window for `homeId`, still showing a
+ * murage-home://<homeId>/ document? (A privileged custom scheme has an opaque URL origin, so the scheme and host
+ * are compared directly.) Same fail-closed frame rules as isOwnedMainSender.
+ *
+ * @param {{ sender?: any, senderFrame?: any } | null | undefined} event
+ * @param {{ window: any, homeId: string }} expected
+ */
+export function isCloudHomeSender(event, { window, homeId } = {}) {
+  try {
+    const frame = currentTopFrameOf(event, window);
+    if (!frame || typeof homeId !== "string" || !homeId) return false;
+    if (typeof frame.url !== "string" || !frame.url) return false;
+    const url = new URL(frame.url);
+    return url.protocol === "murage-home:" && url.hostname === homeId && !url.username && !url.password && !url.port;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * B3 WP4: which Cloud-home window an IPC event came from. `windows` is homeId -> BrowserWindow. Returns the homeId, or
+ * null for anything that is not the CURRENT top frame of one of those windows showing its own murage-home://<homeId>/
+ * document. The cloud-safe handlers (unread badge, approval notification) use this, so a cloud sender is never judged
+ * by the main window's rules and the main window is never mistaken for a cloud one.
+ */
+export function cloudHomeSenderId(event, windows) {
+  try {
+    for (const [homeId, window] of windows) if (isCloudHomeSender(event, { window, homeId })) return homeId;
+  } catch {}
+  return null;
 }
 
 /** Why isOwnedMainSender refused, for the refusal log line only: booleans,
