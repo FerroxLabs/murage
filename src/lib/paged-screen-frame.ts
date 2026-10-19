@@ -14,7 +14,7 @@ export interface ScreenFramePixels {
 
 async function fetchScreenFramePixels(path: string): Promise<ScreenFramePixels | null> {
   await ensureDesktopSurfaceSecret();
-  const res = await fetch(path, { headers: desktopCallerHeaders() });
+  const res = await fetch(path, { redirect: "error", headers: desktopCallerHeaders() });
   if (!res.ok) return null;
   const blob = await res.blob();
   const bytes = new Uint8Array(await blob.arrayBuffer());

@@ -1,6 +1,7 @@
 import { lazy, Suspense, useEffect, useRef, useState, type ReactNode } from "react";
 import { RefreshCw } from "lucide-react";
 import { api } from "@/state/store";
+import { LearningPausedCard } from "./LearningPausedCard";
 import type { OptionCardData } from "@/state/store";
 import type { InboxItem, InboxLink, InboxPage, InboxStateUpdate, InboxView, RoutineRollup } from "../../shared/inbox";
 import { InboxRequestAnswer, inlineAnswerKind, requestHeadline } from "./InboxRequest";
@@ -365,7 +366,9 @@ export function Inbox({ onOpen, onClose, onOpenBackups, onOpenLearning, onOpenMe
   const suggestionRows = view === "decisions" || view === "all" ? result?.learningSuggestions ?? [] : [];
   // Memories the bots would like to keep: one card per bot, counted per item in `decisions` (server/inbox-memory-waiting.ts).
   const memoryRows = view === "decisions" || view === "all" ? result?.memoryWaiting ?? [] : [];
-  const ownRows = [...projectRows,...restoreRows, ...signedOut, ...(backupWaiting ? [backupWaiting] : []), ...(backupFailed ? [backupFailed] : []), ...suggestionRows, ...memoryRows];
+  // Learning stopped at this month's limit: derived by the server on every read, counted once in `decisions` (server/inbox-learning-paused.ts).
+  const learningPaused = view === "decisions" || view === "all" ? result?.learningPaused ?? null : null;
+  const ownRows = [...projectRows,...restoreRows, ...signedOut, ...(backupWaiting ? [backupWaiting] : []), ...(backupFailed ? [backupFailed] : []), ...(learningPaused ? [learningPaused] : []), ...suggestionRows, ...memoryRows];
   const dismissible = list.filter(item => item.dismissible);
   const clearable = list.filter(item => item.clearable);
   // The live card for each waiting request on this page, keyed by message id.
@@ -393,7 +396,7 @@ export function Inbox({ onOpen, onClose, onOpenBackups, onOpenLearning, onOpenMe
   }, [waitingKey]);
   const owed = INBOX_OWED_VIEWS.includes(view);
   const tally = result ? inboxTally(result.total - result.items.filter(item => gone.has(item.id)).length, result.unread) : "";
-  const sections = signedOut.length + restoreRows.length + (backupWaiting ? 1 : 0) + (backupFailed ? 1 : 0) + suggestionRows.length + memoryRows.length + (view === "routines" ? routineRows.length : 0) > 0;
+  const sections = signedOut.length + restoreRows.length + (backupWaiting ? 1 : 0) + (backupFailed ? 1 : 0) + (learningPaused ? 1 : 0) + suggestionRows.length + memoryRows.length + (view === "routines" ? routineRows.length : 0) > 0;
   return <section aria-labelledby="inbox-title" aria-busy={loading} className="mx-auto flex h-full w-full max-w-4xl flex-col overflow-y-auto bg-panel p-4 text-ink sm:p-6">
     <header className="flex items-center justify-between gap-3"><h1 id="inbox-title" className="text-[22px] font-semibold">Inbox</h1>
       <div className="flex gap-2">
@@ -442,6 +445,11 @@ export function Inbox({ onOpen, onClose, onOpenBackups, onOpenLearning, onOpenMe
           <p className="mt-1 text-ink-secondary">{backupFailed.sentence}</p>
           {onOpenBackups && <div className="mt-3 flex flex-wrap gap-2"><button className={button} onClick={onOpenBackups}>Open Backups</button></div>}
         </div>
+      </InboxSection>
+    )}
+    {learningPaused && (
+      <InboxSection label={t("settings.l6.paused.section")}>
+        <LearningPausedCard row={learningPaused} onSettled={() => setRevision(current => current + 1)} />
       </InboxSection>
     )}
     {memoryRows.length > 0 && (

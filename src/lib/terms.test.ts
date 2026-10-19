@@ -7,7 +7,7 @@
 // and a newer terms version asks once more. The vitest suite runs under
 // `environment: "node"` with no DOM, so the screen's own wiring is proven as a
 // source contract at the bottom.
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -16,10 +16,11 @@ import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { BrandFrame } from "../components/BrandFrame";
 import { canAccept, createTermsChecker, isTermsRefusal, watchDelayMs, watchTermsAcceptance, fetchTermsStatus, termsDeadlineMs, retryDelayMs, sendTermsAcceptance, termsPhase, TERMS_VERSION } from "./terms";
+import { removeTempDirSync } from "../../server/testing/cleanup.ts";
 
 let dir: string;
 beforeEach(() => { dir = mkdtempSync(join(tmpdir(), "murage-terms-ui-")); });
-afterEach(() => { rmSync(dir, { recursive: true, force: true }); });
+afterEach(() => { removeTempDirSync(dir); });
 
 /** What a renderer session talks to: the real route handler over one data folder. */
 const server = (env: NodeJS.ProcessEnv = {}) => async (path: string, init?: RequestInit): Promise<unknown> => {

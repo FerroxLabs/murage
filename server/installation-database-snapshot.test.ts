@@ -1,6 +1,6 @@
 import { DEFAULT_MEMORY_LEARNING_V1 } from "./memory/learning-policy.ts";
 import { DatabaseSync } from "node:sqlite";
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, expect, it } from "vitest";
@@ -17,6 +17,7 @@ import { inspectInstallationDatabase, snapshotInstallationDatabase, withOfflineI
 import { MEMORY_SCHEMA_VERSION,MEMORY_SCHEMA_V2,MEMORY_SCHEMA_V3,migrateMemorySchema } from "./memory/schema.ts";
 import { pauseRestoredMemory } from "./memory/restore.ts";
 import { readMemoryLearning, updateMemoryLearning } from "./memory/learning-policy.ts";
+import { removeTempDirSync } from "./testing/cleanup.ts";
 
 const roots: string[] = [];
 const databases: DatabaseSync[] = [];
@@ -31,13 +32,13 @@ function fixture(transcriptDdl?: string) {
   databases.push(db);
   db.exec("PRAGMA journal_mode=WAL; PRAGMA wal_autocheckpoint=0;");
   if (transcriptDdl) db.exec(transcriptDdl); else initializeMessageTables(db);
-  db.prepare("INSERT INTO messages VALUES (?,?,?,?,?,?,?)").run("t", "m", 1, "bot", "goal.run", null, JSON.stringify({ id: "m", at: 1, role: "bot", kind: "goal.run", goalRun: { status: "completed", detail: "Receipt canary" } }));
+  db.prepare("INSERT INTO messages(thread_id,id,at,role,kind,text,json) VALUES (?,?,?,?,?,?,?)").run("t", "m", 1, "bot", "goal.run", null, JSON.stringify({ id: "m", at: 1, role: "bot", kind: "goal.run", goalRun: { status: "completed", detail: "Receipt canary" } }));
   db.exec("INSERT INTO thread_state VALUES ('t','m')");
   return { scratch, data, db, target: join(scratch, "snapshot.db") };
 }
 afterEach(() => {
   for (const db of databases.splice(0)) db.close();
-  for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true });
+  for (const root of roots.splice(0)) removeTempDirSync(root);
 });
 
 it("copies v2 memory classification and learning controls into a separate paused database", async () => {
@@ -45,7 +46,7 @@ it("copies v2 memory classification and learning controls into a separate paused
   f.db.exec("INSERT INTO memory_scopes VALUES('bot-scope','bot','bot','[]',0);");
   f.db.exec("INSERT INTO memory_records VALUES('fact',1,'bot-scope','fact','A preserved fact','owner-statement','active',1,1,NULL,NULL,1);");
   f.db.exec("UPDATE memory_record_details SET entities='[\"project\"]',confidence=.9,confidence_basis='owner confirmed',observed_at=42;");
-  updateMemoryLearning(f.db,{reviewMode:true,dailyOutputTokens:200},0);
+  updateMemoryLearning(f.db,{reviewMode:true,ceiling:{input:200,output:200}},0);
   f.db.exec("INSERT INTO memory_learning_events(id,scope_id,kind,record_id,record_version,created_at) VALUES('event','bot-scope','activated','fact',1,1)");
   const original=f.db.prepare("SELECT * FROM memory_record_details").all(),settings=readMemoryLearning(f.db);
   expect(await snapshotInstallationDatabase(f.data,f.target)).toMatchObject({status:"copied"});
@@ -77,7 +78,7 @@ it.each([
 it("preserves valid forks whose parent was inserted after an existing child", async () => {
   const f = fixture();
   f.db.prepare("UPDATE messages SET json=json_set(json,'$.parentId','later')").run();
-  f.db.prepare("INSERT INTO messages VALUES (?,?,?,?,?,?,?)").run("t", "later", 2, "bot", "text", "parent", JSON.stringify({ id: "later", at: 2, role: "bot", kind: "text", text: "parent", parentId: null }));
+  f.db.prepare("INSERT INTO messages(thread_id,id,at,role,kind,text,json) VALUES (?,?,?,?,?,?,?)").run("t", "later", 2, "bot", "text", "parent", JSON.stringify({ id: "later", at: 2, role: "bot", kind: "text", text: "parent", parentId: null }));
   expect(await snapshotInstallationDatabase(f.data, f.target)).toMatchObject({ status: "copied", messages: 2 });
 });
 
@@ -410,7 +411,7 @@ it.each([2,3])("inspects and restores a v%s memory archive into v4",async versio
  expect(await snapshotInstallationDatabase(f.data,f.target)).toMatchObject({status:"copied"});
  const restored=new DatabaseSync(f.target);try{
  migrateMemorySchema(restored);restored.exec("BEGIN IMMEDIATE");pauseRestoredMemory(restored);restored.exec("COMMIT");
- expect(restored.prepare("SELECT schema_version,mode FROM memory_meta").get()).toEqual({schema_version:MEMORY_SCHEMA_VERSION,mode:"paused"});expect(readMemoryLearning(restored)).toMatchObject({version:2,dailyInputTokens:400000});
+ expect(restored.prepare("SELECT schema_version,mode FROM memory_meta").get()).toEqual({schema_version:MEMORY_SCHEMA_VERSION,mode:"paused"});expect(readMemoryLearning(restored)).toMatchObject({version:3,ceiling:{input:100_000_000,output:15_000_000}});
  }finally{restored.close();}
 });
 

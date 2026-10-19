@@ -4,7 +4,7 @@
 // one deduplicated root set: a long conversation stays visible however many
 // roots it gathers, and is withheld as a whole when a root's source is
 // revoked. A retained session whose set nears the one hard ceiling resets.
-import { mkdirSync, rmSync } from "node:fs";
+import { mkdirSync } from "node:fs";
 import { afterEach, beforeEach, expect, it } from "vitest";
 import { afterEach as thawAfterEach, beforeEach as thawBeforeEach } from "vitest";
 import { thawRootSetWritesForTest } from "./replay-lineage.ts";
@@ -22,6 +22,7 @@ import { roomTranscriptWithoutMemory } from "../room-transcript.ts";
 import type { Message } from "../store.ts";
 import { setMemoryMode } from "./repository.ts";
 import { LineageAllowance } from "./lineage-allowance.ts";
+import { removeTempDirSync } from "../testing/cleanup.ts";
 // 1.0.2: this test models a 1.0.1 file (legacy root-set rows) for the read-time judge, which still decides legacy data until S6.
 thawBeforeEach(() => thawRootSetWritesForTest(true));
 thawAfterEach(() => thawRootSetWritesForTest(false));
@@ -31,7 +32,7 @@ const thread = "dax-direct";
 // These tests commit thousands of rows one by one; the default synchronous=FULL makes that fsync-bound
 // (over 20 s on a Windows runner). Durability is not what they check.
 function noFsync() { database().exec("PRAGMA synchronous=OFF"); }
-beforeEach(() => { closeDatabase(); rmSync(DATA_DIR, { recursive: true, force: true }); mkdirSync(DATA_DIR, { recursive: true }); setMemoryMode("active"); reconcileMemoryRoster(roster); noFsync(); });
+beforeEach(() => { closeDatabase(); removeTempDirSync(DATA_DIR); mkdirSync(DATA_DIR, { recursive: true }); setMemoryMode("active"); reconcileMemoryRoster(roster); noFsync(); });
 function access(): MemoryAccess {
   const registry = new InternalCapabilities(); registry.begin("dax", thread, "g");
   return memoryAccess(registry, registry.resolve(`Bearer ${registry.mint({ botId: "dax", threadId: thread, generation: "g", depth: 0, kind: "memory", skillAuthoring: false })}`)!, () => roster);

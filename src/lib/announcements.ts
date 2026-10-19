@@ -31,6 +31,9 @@ export const ANNOUNCEMENTS_CHANGED_EVENT = "murage:announcements-changed";
 
 type Request = (path: string, init?: RequestInit) => Promise<unknown>;
 
+/** Shown beside a restored card when the dismiss did not save. */
+export const DISMISS_FAILED = "Could not dismiss this. Try again.";
+
 const ASK_EVERY_MS = 30 * 60 * 1000;
 
 function views(answer: unknown): AnnouncementView[] {
@@ -43,6 +46,7 @@ function views(answer: unknown): AnnouncementView[] {
  *  with nothing, since a notice is never worth an error. */
 export function useAnnouncements(desktop: boolean | undefined, request: Request, version: string = APP_VERSION) {
   const [items, setItems] = useState<AnnouncementView[]>([]);
+  const [dismissFailed, setDismissFailed] = useState<string | null>(null);
   const generation = useRef(0);
   const ask = useCallback(async () => {
     if (desktop !== true) return;
@@ -70,13 +74,26 @@ export function useAnnouncements(desktop: boolean | undefined, request: Request,
   }, [desktop, ask]);
 
   const dismiss = useCallback((id: string) => {
-    // Gone from the screen at once; the harness remembers it for good.
+    // Gone from the screen at once; the harness remembers it for good. If it
+    // could not remember, the card comes back with a line saying so, rather
+    // than being gone now and back at the next launch.
     generation.current++;
-    setItems((current) => current.filter((item) => item.id !== id));
-    void request("/api/announcements/dismiss", { method: "POST", body: JSON.stringify({ id }) }).catch(() => {});
+    setDismissFailed(null);
+    let removed: { item: AnnouncementView; index: number } | null = null;
+    setItems((current) => {
+      const index = current.findIndex((item) => item.id === id);
+      if (index >= 0) removed = { item: current[index]!, index };
+      return current.filter((item) => item.id !== id);
+    });
+    request("/api/announcements/dismiss", { method: "POST", body: JSON.stringify({ id }) }).catch(() => {
+      generation.current++;
+      setDismissFailed(DISMISS_FAILED);
+      const gone = removed as { item: AnnouncementView; index: number } | null;
+      if (gone) setItems((current) => current.some((item) => item.id === id) ? current : [...current.slice(0, gone.index), gone.item, ...current.slice(gone.index)]);
+    });
   }, [request]);
 
-  return { current: items[0] ?? null, queued: Math.max(0, items.length - 1), dismiss };
+  return { current: items[0] ?? null, queued: Math.max(0, items.length - 1), dismiss, dismissFailed };
 }
 
 /** Load a cached notice image as an object URL. The route is desktop-gated,

@@ -21,7 +21,7 @@ function fixture(): DatabaseSync {
   const lines: Array<[string, string, string | null, number | null]> = [["o0", "user", null, null], ["b1", "bot", "o0", 0], ["o2", "user", "b1", null], ["b3", "bot", "o2", 2], ["o4", "user", "b3", null], ["b5", "bot", "o4", 4], ["b9", "bot", "o0", 0]];
   lines.forEach(([id, role, parent, turn], index) => {
     const at = id === "b9" ? 60 : index * 10;
-    const info = db.prepare("INSERT INTO messages VALUES('t',?,?,?,'text','',?)").run(id, at, role, JSON.stringify({ ...(parent ? { parentId: parent } : {}), ...(turn !== null ? { turnId: `turn${turn}` } : {}) }));
+    const info = db.prepare("INSERT INTO messages(thread_id,id,at,role,kind,text,json) VALUES('t',?,?,?,'text','',?)").run(id, at, role, JSON.stringify({ ...(parent ? { parentId: parent } : {}), ...(turn !== null ? { turnId: `turn${turn}` } : {}) }));
     if (role === "user") db.prepare("INSERT INTO turn_first VALUES('t',?,?)").run(`turn${index}`, Number(info.lastInsertRowid));
     db.prepare("INSERT INTO memory_line_lineage VALUES(1,?,?,?)").run(index, id, turn);
   });
@@ -58,7 +58,7 @@ describe("rangeProof", () => {
     const other = fixture();
     range(other, -9007199254740991, 99);
     expect(rangeProof(other).proveRange("t", "b5")).toBeNull(); // every line has its row: nothing explains a range with no origin
-    other.prepare("INSERT INTO messages VALUES('t','ghost',70,'bot','text','','{}')").run();
+    other.prepare("INSERT INTO messages(thread_id,id,at,role,kind,text,json) VALUES('t','ghost',70,'bot','text','','{}')").run();
     expect(rangeProof(other).proveRange("t", "b5")).toBe("range-unplaced");
   });
 

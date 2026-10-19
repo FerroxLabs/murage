@@ -3,13 +3,14 @@ import {
   normalizeAccountEmail,
   normalizeControlPlaneURL,
 } from "./control-plane-client.mjs";
+import { DEFAULT_CONTROL_PLANE_URL, configuredControlPlaneOrigin } from "./cloud-control-plane.mjs";
 import {
   managedCompanionTunnelAccess,
   withManagedCompanionTunnelAccess,
   withoutManagedCompanionTunnelAccess,
 } from "./managed-companion-tunnel.mjs";
 
-export const DEFAULT_COMPANION_CONTROL_PLANE_URL = "https://accounts.murage.ai";
+export const DEFAULT_COMPANION_CONTROL_PLANE_URL = DEFAULT_CONTROL_PLANE_URL;
 
 export const COMPANION_CLIENT_INSTANCE_FIELD = "companionClientInstanceId";
 export const COMPANION_ACCOUNT_TOKEN_FIELD = "companionAccountToken";
@@ -37,7 +38,7 @@ export function resolveCompanionControlPlaneURL({
   environment = process.env,
 } = {}) {
   if (Object.hasOwn(environment, "MURAGE_CONTROL_PLANE_URL")) {
-    return normalizeControlPlaneURL(environment.MURAGE_CONTROL_PLANE_URL);
+    return configuredControlPlaneOrigin(environment) ?? "";
   }
   return isPackaged ? DEFAULT_COMPANION_CONTROL_PLANE_URL : "";
 }

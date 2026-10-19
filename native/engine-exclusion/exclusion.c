@@ -29,6 +29,19 @@
 //                                  owns. Every read, write, flush, lock, delete mark and close runs here on that HANDLE. JavaScript
 //                                  holds only an opaque external value and hands it back; no C runtime descriptor is ever passed
 //                                  between this module and Node (they would be different runtimes).
+//   removeTree(path, beforeFolder?) Windows: removes `path` and everything under it by handle, never by path: only the top is opened
+//                                  by name, as itself; each folder is listed through its own handle, each entry opened relative to
+//                                  it with FILE_OPEN_REPARSE_POINT, judged on that handle, and deleted through it (POSIX semantics,
+//                                  read-only ignored). A symlink or junction (any name-surrogate reparse point) is deleted as a link,
+//                                  never followed, so a folder swapped for a junction mid-walk cannot send the walk anywhere. true
+//                                  removed, false nothing there; a failure throws with a Node errno name as `code`. beforeFolder(rel)
+//                                  (tests) runs after each folder is opened and before it is listed.
+//   authenticode(path)             Windows: a Promise of { status, publisher, code } for the file's Authenticode signature, from
+//                                  WinVerifyTrust (WINTRUST_ACTION_GENERIC_VERIFY_V2, no revocation check, as Get-AuthenticodeSignature
+//                                  does), on a worker thread. `status` uses Get-AuthenticodeSignature's names (Valid, NotSigned,
+//                                  HashMismatch, NotTrusted, UnknownError); `publisher` is the signer certificate's simple name when
+//                                  Valid, else ""; `code` is WinVerifyTrust's own result. Murage checks its own signed files with it,
+//                                  so opening Murage starts no PowerShell (murage-releases #1).
 // Nothing here reads or writes a file on POSIX: Node does that through its own descriptor (writers() on Linux opens a file read only,
 // only to ask for a lease, and reads nothing). Only a process that is confirmed gone
 // (ESRCH/ENOENT on that process) is left out of processes(). Built per platform by scripts/build-engine-exclusion.mjs (N-API 9).
@@ -1180,6 +1193,284 @@ static napi_value handle_close(napi_env env, napi_callback_info info) {
   }
   return make_null(env);
 }
+
+// ── Windows: remove a tree by handle, never by path ─────────────────────
+//
+// Only the top is ever opened by name, as itself (FILE_FLAG_OPEN_REPARSE_POINT). Every folder is listed through its own handle;
+// every entry in it is opened relative to that handle (NtCreateFile with RootDirectory and FILE_OPEN_REPARSE_POINT), what it is
+// (a link, a folder, a file) is read from the opened handle, and it is deleted through that same handle. A name surrogate (a
+// symlink, a junction, any reparse point that stands for another name) is deleted as the entry it is and never opened through.
+// A folder renamed, or replaced by a junction, while the walk runs is still the folder the walk holds open: the walk keeps
+// removing what it opened, wherever it now is, and a junction put in its place is a new entry, removed as a link.
+#define TREE_FILE_OPEN 0x00000001
+#define TREE_SYNCHRONOUS_IO_NONALERT 0x00000020
+#define TREE_OPEN_FOR_BACKUP_INTENT 0x00004000
+#define TREE_OPEN_REPARSE_POINT 0x00200000
+#define TREE_STATUS_ACCESS_DENIED ((LONG)0xC0000022)
+#define TREE_STATUS_OBJECT_NAME_NOT_FOUND ((LONG)0xC0000034)
+#define TREE_STATUS_OBJECT_PATH_NOT_FOUND ((LONG)0xC000003A)
+#define TREE_STATUS_DELETE_PENDING ((LONG)0xC0000056)
+#define TREE_DISPOSITION_INFO_EX ((FILE_INFO_BY_HANDLE_CLASS)21)  /* FileDispositionInfoEx, Windows 10 1607 and later */
+#define TREE_DISPOSE_DELETE 0x00000001
+#define TREE_DISPOSE_POSIX 0x00000002
+#define TREE_DISPOSE_IGNORE_READONLY 0x00000010
+#define TREE_SETTABLE (FILE_ATTRIBUTE_READONLY | FILE_ATTRIBUTE_HIDDEN | FILE_ATTRIBUTE_SYSTEM | FILE_ATTRIBUTE_ARCHIVE | FILE_ATTRIBUTE_TEMPORARY | FILE_ATTRIBUTE_OFFLINE | FILE_ATTRIBUTE_NOT_CONTENT_INDEXED)
+#define TREE_MAX_DEPTH 1024
+#define TREE_LIST_BYTES (64 * 1024)
+#define TREE_ACCESS_FULL (DELETE | SYNCHRONIZE | FILE_READ_ATTRIBUTES | FILE_WRITE_ATTRIBUTES | FILE_LIST_DIRECTORY)
+#define TREE_ACCESS_LEAST (DELETE | SYNCHRONIZE | FILE_READ_ATTRIBUTES)
+typedef LONG (NTAPI *NtCreateFileFn)(PHANDLE, ACCESS_MASK, POBJECT_ATTRIBUTES, PIO_STATUS_BLOCK, PLARGE_INTEGER, ULONG, ULONG, ULONG, ULONG, PVOID, ULONG);
+typedef ULONG (NTAPI *RtlNtStatusToDosErrorFn)(LONG);
+
+typedef struct {
+  napi_env env;
+  napi_value hook;                    /* beforeFolder, or NULL */
+  NtCreateFileFn create;
+  RtlNtStatusToDosErrorFn to_dos;
+  DWORD error;                        /* the Windows error that stopped the walk */
+  const char *step;                   /* what it was doing then */
+  int thrown;                         /* beforeFolder threw: its exception is pending */
+  wchar_t *where;                     /* the entry's path relative to the top, for beforeFolder and the error text only: never opened */
+  size_t where_length, where_size;
+} TreeWalk;
+
+static int tree_fail(TreeWalk *walk, DWORD error, const char *step) {
+  walk->error = error;
+  walk->step = step;
+  return -1;
+}
+
+static int tree_push(TreeWalk *walk, const WCHAR *name, size_t chars, size_t *saved) {
+  *saved = walk->where_length;
+  size_t need = walk->where_length + 1 + chars + 1;
+  if (need > walk->where_size) {
+    size_t size = need * 2;
+    wchar_t *grown = realloc(walk->where, size * sizeof(wchar_t));
+    if (!grown) return tree_fail(walk, ERROR_NOT_ENOUGH_MEMORY, "remember the path");
+    walk->where = grown;
+    walk->where_size = size;
+  }
+  if (walk->where_length) walk->where[walk->where_length++] = L'\\';
+  memcpy(walk->where + walk->where_length, name, chars * sizeof(wchar_t));
+  walk->where_length += chars;
+  walk->where[walk->where_length] = L'\0';
+  return 0;
+}
+
+static void tree_pop(TreeWalk *walk, size_t saved) {
+  walk->where_length = saved;
+  walk->where[saved] = L'\0';
+}
+
+/** Deletes the entry `handle` is open on: POSIX semantics (the name goes at once) ignoring the read-only attribute; where the file
+ * system has no POSIX delete (FAT, Windows before 10 1607), the classic one after clearing the read-only attribute on the handle. */
+static int tree_delete(TreeWalk *walk, HANDLE handle, DWORD attributes) {
+  struct { DWORD Flags; } posix = { TREE_DISPOSE_DELETE | TREE_DISPOSE_POSIX | TREE_DISPOSE_IGNORE_READONLY };
+  if (SetFileInformationByHandle(handle, TREE_DISPOSITION_INFO_EX, &posix, sizeof posix)) return 0;
+  DWORD error = GetLastError();
+  if (error != ERROR_INVALID_PARAMETER && error != ERROR_NOT_SUPPORTED && error != ERROR_INVALID_FUNCTION) return tree_fail(walk, error, "delete");
+  if (attributes & FILE_ATTRIBUTE_READONLY) {
+    FILE_BASIC_INFO basic;
+    memset(&basic, 0, sizeof basic);
+    DWORD kept = attributes & TREE_SETTABLE & ~(DWORD)FILE_ATTRIBUTE_READONLY;
+    basic.FileAttributes = kept ? kept : FILE_ATTRIBUTE_NORMAL;
+    if (!SetFileInformationByHandle(handle, FileBasicInfo, &basic, sizeof basic)) return tree_fail(walk, GetLastError(), "clear read-only");
+  }
+  FILE_DISPOSITION_INFO classic = {TRUE};
+  if (!SetFileInformationByHandle(handle, FileDispositionInfo, &classic, sizeof classic)) return tree_fail(walk, GetLastError(), "delete");
+  return 0;
+}
+
+/** Opens `name` in the folder `folder` is open on, as itself (a link is opened, never followed). 1 opened, 0 not there, -1 error. */
+static int tree_open(TreeWalk *walk, HANDLE folder, const WCHAR *name, ULONG bytes, HANDLE *out) {
+  UNICODE_STRING text;
+  text.Buffer = (PWSTR)name;
+  text.Length = (USHORT)bytes;
+  text.MaximumLength = (USHORT)bytes;
+  OBJECT_ATTRIBUTES object;
+  InitializeObjectAttributes(&object, &text, OBJ_CASE_INSENSITIVE, folder, NULL);
+  const ACCESS_MASK tries[2] = { TREE_ACCESS_FULL, TREE_ACCESS_LEAST };
+  for (int i = 0; i < 2; i++) {
+    IO_STATUS_BLOCK io;
+    memset(&io, 0, sizeof io);
+    LONG status = walk->create(out, tries[i], &object, &io, NULL, 0, FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE, TREE_FILE_OPEN,
+                               TREE_OPEN_REPARSE_POINT | TREE_SYNCHRONOUS_IO_NONALERT | TREE_OPEN_FOR_BACKUP_INTENT, NULL, 0);
+    if (status >= 0) return 1;
+    if (status == TREE_STATUS_OBJECT_NAME_NOT_FOUND || status == TREE_STATUS_OBJECT_PATH_NOT_FOUND || status == TREE_STATUS_DELETE_PENDING) return 0;
+    // without the right to list or to change attributes (a file the owner may delete but not read): delete is all it needs
+    if (status == TREE_STATUS_ACCESS_DENIED && i == 0) continue;
+    return tree_fail(walk, walk->to_dos(status), "open");
+  }
+  return tree_fail(walk, ERROR_ACCESS_DENIED, "open");
+}
+
+static int tree_remove(TreeWalk *walk, HANDLE handle, int depth);
+
+/** Removes every entry of the folder `folder` is open on, listed through that handle. */
+static int tree_empty(TreeWalk *walk, HANDLE folder, int depth) {
+  char *list = malloc(TREE_LIST_BYTES);
+  if (!list) return tree_fail(walk, ERROR_NOT_ENOUGH_MEMORY, "list");
+  FILE_INFO_BY_HANDLE_CLASS kind = FileFullDirectoryRestartInfo;
+  int result = 0;
+  while (!result) {
+    if (!GetFileInformationByHandleEx(folder, kind, list, TREE_LIST_BYTES)) {
+      DWORD error = GetLastError();
+      if (error != ERROR_NO_MORE_FILES) result = tree_fail(walk, error, "list");
+      break;
+    }
+    kind = FileFullDirectoryInfo;
+    for (FILE_FULL_DIR_INFO *entry = (FILE_FULL_DIR_INFO *)list; ; entry = (FILE_FULL_DIR_INFO *)((char *)entry + entry->NextEntryOffset)) {
+      size_t chars = entry->FileNameLength / sizeof(WCHAR);
+      int dots = (chars == 1 && entry->FileName[0] == L'.') || (chars == 2 && entry->FileName[0] == L'.' && entry->FileName[1] == L'.');
+      if (!dots) {
+        size_t saved;
+        if (tree_push(walk, entry->FileName, chars, &saved)) { result = -1; break; }
+        HANDLE child = INVALID_HANDLE_VALUE;
+        int opened = tree_open(walk, folder, entry->FileName, entry->FileNameLength, &child);
+        int done = opened == 1 ? tree_remove(walk, child, depth + 1) : opened;
+        if (opened == 1) CloseHandle(child);
+        if (done < 0) { result = -1; break; }  /* `where` stays on the entry that failed */
+        tree_pop(walk, saved);
+      }
+      if (!entry->NextEntryOffset) break;
+    }
+  }
+  free(list);
+  return result;
+}
+
+/** Removes the entry `handle` is open on (opened as itself): a link or a file is deleted, a folder is emptied through its handle
+ * and then deleted. */
+static int tree_remove(TreeWalk *walk, HANDLE handle, int depth) {
+  FILE_ATTRIBUTE_TAG_INFO info;
+  if (!GetFileInformationByHandleEx(handle, FileAttributeTagInfo, &info, sizeof info)) return tree_fail(walk, GetLastError(), "read what it is");
+  int link = (info.FileAttributes & FILE_ATTRIBUTE_REPARSE_POINT) && IsReparseTagNameSurrogate(info.ReparseTag);
+  if (link || !(info.FileAttributes & FILE_ATTRIBUTE_DIRECTORY)) return tree_delete(walk, handle, info.FileAttributes);
+  if (depth > TREE_MAX_DEPTH) return tree_fail(walk, ERROR_FILENAME_EXCED_RANGE, "go deeper");
+  if (walk->hook) {
+    napi_value global, text, ignored;
+    if (napi_get_global(walk->env, &global) != napi_ok || napi_create_string_utf16(walk->env, (const char16_t *)walk->where, walk->where_length, &text) != napi_ok ||
+        napi_call_function(walk->env, global, walk->hook, 1, &text, &ignored) != napi_ok) {
+      walk->thrown = 1;
+      return -1;
+    }
+  }
+  for (int pass = 0; ; pass++) {
+    if (tree_empty(walk, handle, depth)) return -1;
+    if (tree_delete(walk, handle, info.FileAttributes) == 0) return 0;
+    // an entry made in a place the listing had already passed: list once more
+    if (walk->error != ERROR_DIR_NOT_EMPTY || pass >= 2) return -1;
+  }
+}
+
+static const char *tree_code(DWORD error) {
+  switch (error) {
+    case ERROR_FILE_NOT_FOUND: case ERROR_PATH_NOT_FOUND: return "ENOENT";
+    case ERROR_ACCESS_DENIED: case ERROR_PRIVILEGE_NOT_HELD: return "EPERM";
+    case ERROR_SHARING_VIOLATION: case ERROR_LOCK_VIOLATION: return "EBUSY";
+    case ERROR_DIR_NOT_EMPTY: return "ENOTEMPTY";
+    case ERROR_TOO_MANY_OPEN_FILES: return "EMFILE";
+    case ERROR_WRITE_PROTECT: return "EROFS";
+    case ERROR_NOT_ENOUGH_MEMORY: case ERROR_OUTOFMEMORY: return "ENOMEM";
+    case ERROR_FILENAME_EXCED_RANGE: return "ENAMETOOLONG";
+    default: return "EIO";
+  }
+}
+
+/** The full form of `given` with the \\?\ prefix (\\?\UNC\ for a share), so MAX_PATH does not apply; NULL when it cannot be made. */
+static wchar_t *tree_long_path(const wchar_t *given) {
+  DWORD need = GetFullPathNameW(given, 0, NULL, NULL);
+  if (!need) return NULL;
+  wchar_t *full = malloc(((size_t)need + 1) * sizeof(wchar_t));
+  if (!full) return NULL;
+  DWORD got = GetFullPathNameW(given, need + 1, full, NULL);
+  if (!got || got > need) { free(full); return NULL; }
+  if (wcsncmp(full, L"\\\\?\\", 4) == 0 || wcsncmp(full, L"\\\\.\\", 4) == 0) return full;
+  int share = wcsncmp(full, L"\\\\", 2) == 0;
+  const wchar_t *prefix = share ? L"\\\\?\\UNC\\" : L"\\\\?\\";
+  const wchar_t *rest = share ? full + 2 : full;
+  size_t length = wcslen(prefix) + wcslen(rest) + 1;
+  wchar_t *out = malloc(length * sizeof(wchar_t));
+  if (out) { wcscpy_s(out, length, prefix); wcscat_s(out, length, rest); }
+  free(full);
+  return out;
+}
+
+/** True when GetFullPathNameW leaves `given` exactly as it is, so the folder opened is the one the caller named and checked. */
+static int tree_path_is_full(const wchar_t *given) {
+  DWORD need = GetFullPathNameW(given, 0, NULL, NULL);
+  if (!need) return 0;
+  wchar_t *full = malloc(((size_t)need + 1) * sizeof(wchar_t));
+  if (!full) return 0;
+  DWORD got = GetFullPathNameW(given, need + 1, full, NULL);
+  int same = got && got <= need && wcscmp(full, given) == 0;
+  free(full);
+  return same;
+}
+
+static napi_value remove_tree(napi_env env, napi_callback_info info) {
+  size_t argc = 2, length = 0;
+  napi_value argv[2];
+  napi_get_cb_info(env, info, &argc, argv, NULL, NULL);
+  napi_valuetype hook_type = napi_undefined;
+  if (argc >= 2) napi_typeof(env, argv[1], &hook_type);
+  if (argc < 1 || napi_get_value_string_utf16(env, argv[0], NULL, 0, &length) != napi_ok || length == 0 ||
+      (hook_type != napi_undefined && hook_type != napi_null && hook_type != napi_function))
+    return fail(env, "removeTree needs a path");
+  TreeWalk walk;
+  memset(&walk, 0, sizeof walk);
+  walk.env = env;
+  walk.hook = hook_type == napi_function ? argv[1] : NULL;
+  HMODULE ntdll = GetModuleHandleW(L"ntdll.dll");
+  walk.create = ntdll ? (NtCreateFileFn)(void *)GetProcAddress(ntdll, "NtCreateFile") : NULL;
+  walk.to_dos = ntdll ? (RtlNtStatusToDosErrorFn)(void *)GetProcAddress(ntdll, "RtlNtStatusToDosError") : NULL;
+  if (!walk.create || !walk.to_dos) return fail(env, "removeTree: ntdll.dll has no NtCreateFile");
+  char16_t *given = malloc((length + 1) * sizeof(char16_t));
+  if (!given) return fail(env, "out of memory");
+  napi_get_value_string_utf16(env, argv[0], given, length + 1, &length);
+  // a NUL inside the string would end the path early (the folder before it would be removed): refused, never shortened
+  if (wcslen((const wchar_t *)given) != length) { free(given); return fail_code(env, "ERR_INVALID_ARG_VALUE", "removeTree: the path holds a NUL"); }
+  // Windows reads some paths as another (a trailing dot or space dropped, `..` applied): the caller's checks compared the path as
+  // written, so one Windows would rewrite is refused, never shortened. The JS wrapper hands its resolved form, which is already full.
+  if (!tree_path_is_full((const wchar_t *)given)) { free(given); return fail_code(env, "EINVAL", "removeTree: Windows would read this path as a different one"); }
+  wchar_t *name = tree_long_path((const wchar_t *)given);
+  free(given);
+  if (!name) return fail_code(env, "EINVAL", "removeTree: not a usable path");
+  HANDLE top = INVALID_HANDLE_VALUE;
+  DWORD error = 0;
+  const DWORD tries[2] = { TREE_ACCESS_FULL, TREE_ACCESS_LEAST };
+  for (int i = 0; i < 2; i++) {
+    top = CreateFileW(name, tries[i], FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE, NULL, OPEN_EXISTING, FILE_FLAG_BACKUP_SEMANTICS | FILE_FLAG_OPEN_REPARSE_POINT, NULL);
+    if (top != INVALID_HANDLE_VALUE) break;
+    error = GetLastError();
+    if (error != ERROR_ACCESS_DENIED) break;
+  }
+  free(name);
+  if (top == INVALID_HANDLE_VALUE) {
+    if (error == ERROR_FILE_NOT_FOUND || error == ERROR_PATH_NOT_FOUND) return make_bool(env, 0);
+    char text[96];
+    snprintf(text, sizeof text, "removeTree: could not open (%lu)", (unsigned long)error);
+    return fail_code(env, tree_code(error), text);
+  }
+  walk.where_size = 64;
+  walk.where = malloc(walk.where_size * sizeof(wchar_t));
+  if (!walk.where) { CloseHandle(top); return fail(env, "out of memory"); }
+  walk.where[0] = L'\0';
+  int result = tree_remove(&walk, top, 0);
+  CloseHandle(top);
+  if (result == 0) { free(walk.where); return make_bool(env, 1); }
+  if (walk.thrown) { free(walk.where); return NULL; }  /* beforeFolder's own exception */
+  char *where = wide_to_utf8(walk.where, (int)walk.where_length);
+  free(walk.where);
+  size_t size = 128 + (where ? strlen(where) : 0);
+  char *text = malloc(size);
+  if (!text) { free(where); return fail_code(env, tree_code(walk.error), "removeTree failed"); }
+  snprintf(text, size, "removeTree: could not %s (%lu) at '%s'", walk.step ? walk.step : "remove", (unsigned long)walk.error, where ? where : "?");
+  napi_value thrown = fail_code(env, tree_code(walk.error), text);
+  free(text);
+  free(where);
+  return thrown;
+}
 #endif
 
 /** macOS: this boot's own id (kern.bootsessionuuid), a new one at every start of the system; null where it cannot be read. Elsewhere
@@ -1205,6 +1496,108 @@ static napi_value version(napi_env env, napi_callback_info info) {
   return make_int(env, ADDON_VERSION);
 }
 
+#ifdef _WIN32
+#include <wincrypt.h>
+#include <wintrust.h>
+#include <softpub.h>
+#pragma comment(lib, "wintrust.lib")
+#pragma comment(lib, "crypt32.lib")
+
+typedef struct {
+  napi_async_work work;
+  napi_deferred deferred;
+  wchar_t *path;
+  LONG result;
+  wchar_t publisher[512];
+} AuthenticodeWork;
+
+static const char *authenticode_status(LONG result) {
+  switch (result) {
+    case ERROR_SUCCESS: return "Valid";
+    case TRUST_E_NOSIGNATURE: return "NotSigned";
+    case TRUST_E_BAD_DIGEST: case CRYPT_E_HASH_VALUE: return "HashMismatch";
+    case CERT_E_UNTRUSTEDROOT: case CERT_E_CHAINING: case CERT_E_UNTRUSTEDTESTROOT: case TRUST_E_EXPLICIT_DISTRUST:
+    case TRUST_E_SUBJECT_NOT_TRUSTED: case CERT_E_REVOKED: case CERT_E_EXPIRED: return "NotTrusted";
+    default: return "UnknownError";
+  }
+}
+
+static void authenticode_execute(napi_env env, void *data) {
+  (void)env;
+  AuthenticodeWork *job = data;
+  job->publisher[0] = L'\0';
+  WINTRUST_FILE_INFO file;
+  memset(&file, 0, sizeof file);
+  file.cbStruct = sizeof file;
+  file.pcwszFilePath = job->path;
+  WINTRUST_DATA trust;
+  memset(&trust, 0, sizeof trust);
+  trust.cbStruct = sizeof trust;
+  trust.dwUIChoice = WTD_UI_NONE;
+  trust.fdwRevocationChecks = WTD_REVOKE_NONE;
+  trust.dwUnionChoice = WTD_CHOICE_FILE;
+  trust.pFile = &file;
+  trust.dwStateAction = WTD_STATEACTION_VERIFY;
+  GUID action = WINTRUST_ACTION_GENERIC_VERIFY_V2;
+  job->result = WinVerifyTrust((HWND)INVALID_HANDLE_VALUE, &action, &trust);
+  if (job->result == ERROR_SUCCESS) {
+    CRYPT_PROVIDER_DATA *provider = WTHelperProvDataFromStateData(trust.hWVTStateData);
+    CRYPT_PROVIDER_SGNR *signer = provider ? WTHelperGetProvSignerFromChain(provider, 0, FALSE, 0) : NULL;
+    CRYPT_PROVIDER_CERT *leaf = signer ? WTHelperGetProvCertFromChain(signer, 0) : NULL;
+    if (leaf && leaf->pCert) CertGetNameStringW(leaf->pCert, CERT_NAME_SIMPLE_DISPLAY_TYPE, 0, NULL, job->publisher, 512);
+    // A Valid answer whose signer cannot be named is not a Valid signature from anyone in particular.
+    if (job->publisher[0] == L'\0') job->result = TRUST_E_NO_SIGNER_CERT;
+  }
+  trust.dwStateAction = WTD_STATEACTION_CLOSE;
+  WinVerifyTrust((HWND)INVALID_HANDLE_VALUE, &action, &trust);
+}
+
+static void authenticode_complete(napi_env env, napi_status status, void *data) {
+  AuthenticodeWork *job = data;
+  napi_value result = NULL, value;
+  if (status == napi_ok && napi_create_object(env, &result) == napi_ok) {
+    napi_create_string_utf8(env, authenticode_status(job->result), NAPI_AUTO_LENGTH, &value);
+    napi_set_named_property(env, result, "status", value);
+    char *publisher = wide_to_utf8(job->publisher, (int)wcslen(job->publisher));
+    napi_create_string_utf8(env, publisher ? publisher : "", NAPI_AUTO_LENGTH, &value);
+    free(publisher);
+    napi_set_named_property(env, result, "publisher", value);
+    napi_create_int64(env, (int64_t)(uint32_t)job->result, &value);
+    napi_set_named_property(env, result, "code", value);
+    napi_resolve_deferred(env, job->deferred, result);
+  } else {
+    napi_value message, error;
+    napi_create_string_utf8(env, "authenticode check did not finish", NAPI_AUTO_LENGTH, &message);
+    napi_create_error(env, NULL, message, &error);
+    napi_reject_deferred(env, job->deferred, error);
+  }
+  napi_delete_async_work(env, job->work);
+  free(job->path);
+  free(job);
+}
+
+static napi_value authenticode(napi_env env, napi_callback_info info) {
+  size_t argc = 1, length = 0;
+  napi_value argv[1], promise, name;
+  napi_get_cb_info(env, info, &argc, argv, NULL, NULL);
+  if (argc < 1 || napi_get_value_string_utf16(env, argv[0], NULL, 0, &length) != napi_ok || length == 0 || length > 32767)
+    return fail(env, "authenticode needs a path");
+  AuthenticodeWork *job = calloc(1, sizeof(AuthenticodeWork));
+  if (!job) return fail(env, "out of memory");
+  job->path = malloc((length + 1) * sizeof(wchar_t));
+  if (!job->path) { free(job); return fail(env, "out of memory"); }
+  napi_get_value_string_utf16(env, argv[0], (char16_t *)job->path, length + 1, &length);
+  if (napi_create_promise(env, &job->deferred, &promise) != napi_ok
+      || napi_create_string_utf8(env, "authenticode", NAPI_AUTO_LENGTH, &name) != napi_ok
+      || napi_create_async_work(env, NULL, name, authenticode_execute, authenticode_complete, job, &job->work) != napi_ok
+      || napi_queue_async_work(env, job->work) != napi_ok) {
+    free(job->path); free(job);
+    return fail(env, "could not start the authenticode check");
+  }
+  return promise;
+}
+#endif
+
 static void add(napi_env env, napi_value exports, const char *name, napi_callback fn) {
   napi_value value;
   if (napi_create_function(env, name, NAPI_AUTO_LENGTH, fn, NULL, &value) == napi_ok) napi_set_named_property(env, exports, name, value);
@@ -1228,6 +1621,8 @@ NAPI_MODULE_INIT() {
   add(env, exports, "handleId", handle_id);
   add(env, exports, "handleSize", handle_size);
   add(env, exports, "handleClose", handle_close);
+  add(env, exports, "authenticode", authenticode);
+  add(env, exports, "removeTree", remove_tree);
 #endif
   add(env, exports, "bootId", boot_id);
   add(env, exports, "version", version);

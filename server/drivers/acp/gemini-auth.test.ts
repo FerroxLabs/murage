@@ -2,12 +2,13 @@
 // consumer OAuth shutdown. The shared setup already points HOME at a
 // throwaway directory, so these tests write ~/.gemini/oauth_creds.json
 // there and assert what the exported check reports for each shape.
-import { mkdirSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 
 import { geminiIsAuthenticated } from "./gemini.ts";
+import { removeTempDirSync } from "../../testing/cleanup.ts";
 
 const geminiDir = join(homedir(), ".gemini");
 const credsPath = join(geminiDir, "oauth_creds.json");
@@ -19,7 +20,7 @@ const writeCreds = (creds: unknown) => {
 
 describe("gemini auth detection (#28)", () => {
   afterEach(() => {
-    rmSync(geminiDir, { recursive: true, force: true });
+    removeTempDirSync(geminiDir);
   });
 
   it("counts an API key with no oauth file present", () => {

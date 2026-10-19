@@ -1,8 +1,11 @@
 // First: no schema may be built before Zod is told not to probe for eval.
 import "./lib/zod-config";
-import { StrictMode } from "react";
+// Second: the Cloud home requires Trusted Types, so the "murage" policy exists before anything writes markup.
+import { installTrustedTypes, sanitizerReady } from "./lib/trusted-html";
+import { StrictMode, Suspense, lazy, type ReactNode } from "react";
 import { createRoot } from "react-dom/client";
 import App from "./App";
+import { homeMeta } from "./lib/cloud-home-meta";
 import { RootErrorBoundary } from "./components/RootErrorBoundary";
 import { browserChunkReloadDeps, installChunkReload } from "./lib/chunk-reload";
 import { bootLocaleReady } from "./lib/i18n";
@@ -12,6 +15,8 @@ import { routeNativeClicks } from "./lib/open-external";
 import { registerServiceWorker } from "./lib/register-sw";
 import { applySkin, readPreference, resolveSkin, watchSystemSkin } from "./lib/skins";
 import "./styles.css";
+
+installTrustedTypes();
 
 // index.html has already stamped the palette before the stylesheet resolved;
 // this repeats it because that inline copy cannot run the migration's storage
@@ -42,16 +47,24 @@ if (inNativeShell()) routeNativeClicks();
 // A lazy screen whose chunk vanished in a host update reloads once.
 installChunkReload(browserChunkReloadDeps());
 
+// The Cloud home's door (src/components/cloud/Door.tsx) is only for a page a Cloud home served, so it is its own chunk,
+// fetched at once on that page and never on the desktop or a phone. The app renders only inside it, as before.
+const doorModule = homeMeta(document).homeId ? import("./components/cloud/Door") : null;
+const LazyDoor = doorModule ? lazy(() => doorModule.then((module) => ({ default: module.CloudDoor }))) : null;
+const CloudDoor = LazyDoor ? ({ children }: { children: ReactNode }) => <Suspense fallback={null}><LazyDoor>{children}</LazyDoor></Suspense> : null;
+
 // A language other than English is its own chunk (src/locales/index.ts).
 // Wait for the one this device starts in (the owner's last choice, else the
 // system's) before the first render, but never long: past the cap the app
 // paints in English and switches when the pack arrives.
 const LOCALE_WAIT_MS = 1500;
-void Promise.race([bootLocaleReady, new Promise((done) => setTimeout(done, LOCALE_WAIT_MS))]).finally(() => {
+// The markup sanitizer (src/lib/trusted-html.ts) loads alongside it, under the same cap, so the first paint can
+// already draw mascots and other sanitized markup.
+void Promise.race([Promise.all([bootLocaleReady, sanitizerReady()]), new Promise((done) => setTimeout(done, LOCALE_WAIT_MS))]).finally(() => {
   createRoot(document.getElementById("root")!).render(
     <StrictMode>
       <RootErrorBoundary>
-        <App />
+        {CloudDoor ? <CloudDoor><App /></CloudDoor> : <App />}
       </RootErrorBoundary>
     </StrictMode>,
   );

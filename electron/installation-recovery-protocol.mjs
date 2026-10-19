@@ -43,7 +43,7 @@ export function recoveryDesktopSummary(result) {
   if (["inspect", "plan-restore", "restore"].includes(result.operation) && result.activationAvailable !== false) invalid();
   if (result.operation === "restore" && (result.status !== "restored-review-required" || !file(result.receipt) || !(result.previousDataDir === null || file(result.previousDataDir)))) invalid();
   if (result.operation === "rollback" && (result.status !== "rolled-back" || !file(result.receipt) || !(result.retainedCandidate === null || file(result.retainedCandidate)))) invalid();
-  if (result.operation === "memory-downgrade" && (!["downgraded", "already-v6"].includes(result.status) || result.to !== 6 || !Number.isSafeInteger(result.from) || result.from < 1 || result.from > 64 || (result.status === "downgraded" ? result.from <= 6 : result.from > 6))) invalid();
+  if (result.operation === "memory-downgrade" && (!["downgraded", "already-v10"].includes(result.status) || result.to !== 10 || !Number.isSafeInteger(result.from) || result.from < 1 || result.from > 64 || (result.status === "downgraded" ? result.from <= 10 : result.from > 10))) invalid();
   const summary = { ok: true, operation: result.operation };
   if(result.operation.includes("encrypted")){
     const coverage=result.coverage;

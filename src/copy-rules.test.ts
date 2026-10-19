@@ -17,9 +17,9 @@ import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, statSync
 import { tmpdir } from "node:os";
 import { join, sep } from "node:path";
 import ts from "typescript";
-import { safeWipeSync } from "../server/testing/safe-wipe.mjs";
 import { describe, expect, it } from "vitest";
 import { fileURLToPath } from "node:url";
+import { removeTempDirSync } from "../server/testing/cleanup.ts";
 
 const ROOT = fileURLToPath(new URL("..", import.meta.url));
 /** A file's repository path with "/" on every OS, as the allowlists spell it. */
@@ -186,6 +186,7 @@ const MODEL_FACING: Record<string, string> = {
   "server/computer-proxy.ts": "computer tool descriptions a model reads",
   "server/drivers/agents-proxy.ts": "bot tool descriptions a model reads",
   "server/desktop-policy.ts": "route purposes for the audit log",
+  "server/memory/wasm-parity-corpus.ts": "fixed inputs the local model embeds for the WebAssembly parity check, pinned by stored native vectors (testdata/wasm-native-reference.json); never shown",
 };
 
 // Single strings a model reads, in files that also hold copy.
@@ -202,6 +203,7 @@ const DESKTOP_NOT_COPY: Record<string, string> = {
   "electron/flux-composio-token.mjs": "credential storage key names",
   "electron/managed-composio.mjs": "credential storage key names and broker wiring",
   "electron/capabilities.cjs": "capability reason codes; the window words them",
+  "electron/ipc-channel-classes.mjs": "IPC channel class names (cloud-safe), never shown to a person",
 };
 
 // Companion files whose strings never reach a person. Each needs its reason.
@@ -255,12 +257,8 @@ const RAW_ERROR: Rule = { name: "a raw error code", pattern: /\bstatus [45]\d\d\
 // the owner's word (listed in the 0.1.60 fix2-ui report). A new or changed
 // string is caught.
 const PRICE_KNOWN: Array<{ file: string; text: string; why: string }> = [
-  { file: "src/components/ModelsSettings.tsx", text: "Price not listed", why: "model catalogue pricing column" },
-  { file: "src/components/ModelsSettings.tsx", text: "Input price not listed", why: "model catalogue pricing column" },
-  { file: "src/components/ModelsSettings.tsx", text: "output price not listed", why: "model catalogue pricing column" },
   { file: "src/lib/model-metadata.ts", text: "Price varies by route", why: "model catalogue pricing column" },
   { file: "src/lib/provider-model-picker.ts", text: "Price unavailable", why: "model catalogue pricing column" },
-  { file: "src/lib/provider-model-picker.ts", text: "compatible chat model  · prices per million tokens", why: "model catalogue pricing column" },
   { file: "src/lib/usage.ts", text: "equivalent: on your subscription, not billed", why: "Usage page cost column caption, left for the owner in 0.1.60 fix3" },
   { file: "src/lib/usage.ts", text: "billed to your API key", why: "Usage page cost column caption, left for the owner in 0.1.60 fix3" },
   { file: "src/components/BrowserActivityLog.tsx", text: "free", why: "the activity log's internal decision key `free` means no approval was needed; the owner sees \"no approval needed\", never a price" },
@@ -359,7 +357,7 @@ describe("product copy rules", () => {
       expect(found.join("\n")).toMatch(/en\/messages\.json: cost: price talk/);
       expect(found.join("\n")).toMatch(/de\/messages\.json: dash: an em dash/);
     } finally {
-      safeWipeSync(root);
+      removeTempDirSync(root);
     }
   });
 

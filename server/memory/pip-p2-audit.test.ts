@@ -4,7 +4,7 @@
 // PIP P2 code audit of B1+B2 (Astra): bundle and authority findings. Finding 10 (a previously pinned brief is not lost
 // and can be unpinned), finding 11 (the second bundle pass never moves the advertised prefix; standing reaches the
 // ordering) and the sentence split that finding 8 shares with the reflection windows. Synthetic fixture text only.
-import { mkdirSync, rmSync } from "node:fs";
+import { mkdirSync } from "node:fs";
 import { beforeEach, describe, expect, it } from "vitest";
 import { DATA_DIR } from "../config.ts";
 import { closeDatabase, database } from "../database.ts";
@@ -19,12 +19,13 @@ import { setMemoryMode } from "./repository.ts";
 import { pipCounterId } from "./pip-kinds.ts";
 import { sentenceRanges } from "./pip-reflect.ts";
 import { LineageAllowance } from "./lineage-allowance.ts";
+import { removeTempDirSync } from "../testing/cleanup.ts";
 
 const roster = { bots: [{ id: "moss", threadId: "private" }], groups: [] };
 const ticket = ownerMemoryTicket();
 const emptyBridge = { search: async () => ({ hits: [] as IndexHit[], vectorRows: 0 }) };
 
-beforeEach(() => { closeDatabase(); rmSync(DATA_DIR, { recursive: true, force: true }); mkdirSync(DATA_DIR, { recursive: true }); reconcileMemoryRoster(roster); setMemoryMode("active"); });
+beforeEach(() => { closeDatabase(); removeTempDirSync(DATA_DIR); mkdirSync(DATA_DIR, { recursive: true }); reconcileMemoryRoster(roster); setMemoryMode("active"); });
 
 function pip(kind: "commitment" | "self-trait" | "relation", key: string, text: string): IdentityWrite {
   return { action: "identity-write", botId: "moss", kind, key, expectedVersion: 0, text, basis: "owner-fact", audience: "owner-private" };

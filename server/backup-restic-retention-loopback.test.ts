@@ -4,10 +4,10 @@ import { mkdirSync,mkdtempSync,readFileSync,realpathSync,writeFileSync } from "n
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach,describe,expect,it } from "vitest";
-import { safeWipeSync } from "./testing/safe-wipe.mjs";
 import { BackupRestic,resticRunner,type ResticRun } from "./backup-restic.ts";
 import type { ResticS3Target } from "./backup-restic-target.ts";
 import { startLoopbackS3 } from "./backup-restic-loopback-s3.fixture.ts";
+import { removeTempDirSync } from "./testing/cleanup.ts";
 
 // Retention/maintenance with actual pinned restic 0.19.1 against the scripted
 // loopback S3 service. The fixture lets the writer key delete only lock objects,
@@ -21,7 +21,7 @@ afterEach(async()=>{for(const cleanup of cleanups.splice(0).reverse())await clea
 
 async function fixture(options:{timeoutMs?:number;maintenance?:"separate"|"shared"|"missing"}={}){
   const s3=await startLoopbackS3();cleanups.push(()=>s3.close());
-  const root=realpathSync.native(mkdtempSync(join(tmpdir(),"murage-restic-retention-")));cleanups.push(()=>safeWipeSync(root));
+  const root=realpathSync.native(mkdtempSync(join(tmpdir(),"murage-restic-retention-")));cleanups.push(()=>removeTempDirSync(root));
   const password=randomBytes(24).toString("hex"),prefix="murage/installation",calls:string[][]=[],real=resticRunner(tool!);
   const runner=(request:ResticRun)=>{calls.push(request.args);return real({...request,args:["--cacert",s3.caFile,...request.args]});};
   const target:ResticS3Target={kind:"s3",remoteRef:"loopback",revision:1,credentialRef:"loopback-credential",endpoint:s3.endpoint,bucket:s3.bucket,prefix,region:s3.region,bucketLookup:"path"};

@@ -8,6 +8,7 @@ import { lazy, Suspense, useCallback, useEffect, useRef, useState } from "react"
 import { ArrowLeft, Check, Loader2, RefreshCw, Search, TriangleAlert, X } from "lucide-react";
 import { api, useStore } from "@/state/store";
 import { cn } from "@/lib/cn";
+import { opensPurchasePages } from "@/lib/native-shell";
 import { readCachedInventory, writeCachedInventory } from "@/lib/connected-apps-cache";
 // The MCP servers tab is desktop-only and heavy (the paste parser rides with it),
 // so it loads when the tab is opened, not with the first paint.
@@ -200,7 +201,10 @@ export function formatLegacyCutoff(value: string | null | undefined): string | n
 function tokenErrorNotice(code: string | undefined): ConnectedAppsNotice | null {
   if (!code) return null;
   if (code === "flux_key_budget_exhausted") {
-    return { kind: "line", tone: "warning", text: t("connectedApps.flux.tokenBudget"), action: { id: "billing", label: t("connectedApps.flux.tokenBudgetButton") } };
+    const text = t("connectedApps.flux.tokenBudget");
+    return opensPurchasePages()
+      ? { kind: "line", tone: "warning", text, action: { id: "billing", label: t("connectedApps.flux.tokenBudgetButton") } }
+      : { kind: "line", tone: "warning", text };
   }
   if (code === "token_taken_over") {
     return { kind: "line", tone: "warning", text: t("connectedApps.flux.takenOver"), action: { id: "reconnect", label: t("connectedApps.flux.reconnect") } };

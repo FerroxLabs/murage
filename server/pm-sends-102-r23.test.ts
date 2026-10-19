@@ -9,7 +9,7 @@
 //  F8  a grown 1.0.1 table is rebuilt from the executable original definition
 //  F9  the single re-dispatch goes into the conversation that holds the prompt
 //  F10 a deleted sender that no longer resolves still gets the cancelled receipt
-import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
@@ -35,6 +35,7 @@ import { Store } from "./store.ts";
 import { haveV101, realV101 } from "./testing/pm-sends-v101.ts";
 import { engineReply } from "./testing/provider-reply.ts";
 import { released } from "./testing/released.ts";
+import { removeTempDirSync } from "./testing/cleanup.ts";
 
 const tick = () => new Promise<void>((resolve) => setImmediate(resolve));
 async function until(done: () => boolean, ms = 30_000): Promise<void> {
@@ -46,7 +47,7 @@ const count = (sql: string, ...args: string[]) => Number((database().prepare(sql
 const pendingRows = () => count("SELECT COUNT(*) AS n FROM pending_delegations");
 const rowOf = (id: string) => database().prepare("SELECT phase, origin, started_at, submitted_at, accepted_turn_id, start_attempts, target_thread_id FROM pending_delegations WHERE id=?").get(id) as Record<string, unknown> | undefined;
 
-beforeEach(() => { closeDatabase(); rmSync(DATA_DIR, { recursive: true, force: true }); mkdirSync(DATA_DIR, { recursive: true }); _resetPending(); _resetOwnerMigration(); });
+beforeEach(() => { closeDatabase(); removeTempDirSync(DATA_DIR); mkdirSync(DATA_DIR, { recursive: true }); _resetPending(); _resetOwnerMigration(); });
 afterEach(() => { _resetOwnerMigration(); _resetPending(); closeDatabase(); });
 
 type Origin = "owner" | "room";
@@ -398,7 +399,7 @@ describe("F4. the owner's deletion of a shared hand-off's source covers its requ
     }
     // 2. in the start itself: the deletion lands after the dispatch's last look, so the stamp refuses and writes nothing; the hand-off is then settled as deleted
     {
-      closeDatabase(); rmSync(DATA_DIR, { recursive: true, force: true }); mkdirSync(DATA_DIR, { recursive: true }); _resetPending();
+      closeDatabase(); removeTempDirSync(DATA_DIR); mkdirSync(DATA_DIR, { recursive: true }); _resetPending();
       const w = sharedWorld();
       const request = w.handoff(`start-${key}`);
       w.gate.beforeStamp = () => { tombstone(w); };

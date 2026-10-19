@@ -12,6 +12,7 @@ import { EgressViolation, WorkerText, collectRendered, type EgressOrigin, type S
 import { MurageStatus, isOutbound, outboundCopy, outboundWords, status, type BotName, type Outbound } from "./murage-status.ts";
 import { reviewReplyShown } from "./project-review.ts";
 import type { Message } from "./store.ts";
+import { murageLine } from "./murage-line.ts";
 
 declare const bodyBrand: unique symbol;
 /** A reply body that `botBody` built and froze. */
@@ -138,5 +139,5 @@ export function writeBotRow(sink: RowSink, threadId: string, extra: RowExtras, t
 
 /** An activity row whose name is Murage's own line. */
 export function writeActivityRow(sink: RowSink, threadId: string, extra: RowExtras, name: Outbound, ok?: boolean, id?: string): Message {
-  return appendRow(sink, threadId, { ...extra, role: "bot", kind: "activity", tool: { name: outboundWords(name), ...(ok === undefined ? {} : { ok }) } } as Omit<Message, "id" | "at">, id);
+  return appendRow(sink, threadId, murageLine({ ...extra, role: "bot", kind: "activity", tool: { name: outboundWords(name), ...(ok === undefined ? {} : { ok }) } } as Omit<Message, "id" | "at">), id);
 }

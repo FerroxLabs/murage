@@ -5,7 +5,7 @@
 // every row below it; 1.0.2 keeps the fill's own place (transcript_index_state 'search_fts'), because a live write of an unfinished run
 // indexes its row beyond the rows not yet filled. The downgrade drops that place, so it must leave an index that 1.0.1's own resume
 // completes. The resume run here is 1.0.1's shipped code (server/testing/message-search-index-1.0.1.ts, from the 1.0.1 release commit).
-import { mkdirSync, rmSync } from "node:fs";
+import { mkdirSync } from "node:fs";
 import type { DatabaseSync } from "node:sqlite";
 import { beforeEach, expect, it } from "vitest";
 import { DATA_DIR } from "./config.ts";
@@ -13,8 +13,9 @@ import { closeDatabase, database } from "./database.ts";
 import { downgradeApplicationSchemaTo101 } from "./installation-app-schema-downgrade.ts";
 import { prepareMessageSearchBackfill, stepMessageSearchBackfill } from "./message-search-index.ts";
 import { backfillMessageSearchIndex as resumeAs101 } from "./testing/message-search-index-1.0.1.ts";
+import { removeTempDirSync } from "./testing/cleanup.ts";
 
-beforeEach(() => { closeDatabase(); rmSync(DATA_DIR, { recursive: true, force: true }); mkdirSync(DATA_DIR, { recursive: true }); });
+beforeEach(() => { closeDatabase(); removeTempDirSync(DATA_DIR); mkdirSync(DATA_DIR, { recursive: true }); });
 
 const indexed = (db: DatabaseSync) => db.prepare("SELECT id FROM messages_fts_docsize ORDER BY id").all().map((row) => Number(row.id));
 const searchableRows = (db: DatabaseSync) => db.prepare("SELECT rowid AS r FROM messages WHERE kind IN ('text','activity') ORDER BY rowid").all().map((row) => Number(row.r));

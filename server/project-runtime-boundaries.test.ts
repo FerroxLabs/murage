@@ -6,6 +6,7 @@ import { expect, it, vi } from "vitest";
 import { projectThreads } from "./project-memory-tools.ts";
 import { ProjectLateWrites } from "./project-run-events.ts";
 import { accountPresentedProjectEvent } from "./project-usage-dispatch.ts";
+import { noteStartupFileEvent } from "./engine-env.ts";
 const source = readFileSync(new URL("./index.ts", import.meta.url), "utf8");
 const ast = ts.createSourceFile("index.ts", source, ts.ScriptTarget.Latest, true);
 function nodes(test: (node: ts.Node) => boolean) {
@@ -43,7 +44,8 @@ it("the watchdog waits only after folder-held approval presentation, including r
   let held = true;
   const account = vi.fn();
   const fold = evaluate(`${source.slice(begin, end)} }; return foldRuntimeEvent;`, { ...deps, fluxFirstTokenProbe: { observe() {}, begin() {} }, replyGuardContext: () => null, accountProjectEvent: account,
-    accountPresentedProjectEvent, holdProjectWriteApproval: () => held });
+    // the real Rule 74a hook index.ts imports from engine-env.ts and calls for every permission event
+    accountPresentedProjectEvent, holdProjectWriteApproval: () => held, noteStartupFileEvent });
   const approval = { type: "request.opened", threadId: "room", turnId: "turn", requestId: "approval" };
   raw.forEach(fn => fn(approval)); fold(approval);
   expect(watchdog.setWaitingOnHuman).not.toHaveBeenCalled();

@@ -120,6 +120,8 @@ export interface B34LedgerEntry {
   rules: string[];
   sourceSha256?: string; supported?: boolean; previousClaim?: boolean;
   inputBytes?: number; maxTokens?: number; reason?: string;
+  /** The reply's body size (diagnostic). The reply reports its reservation as usage, so the product settles exactly the reservation. */
+  replyBytes?: number;
 }
 export const b34Sha256 = (text: string) => createHash("sha256").update(text).digest("hex");
 
@@ -191,9 +193,14 @@ function reply(response: ServerResponse, status: number, body: unknown) {
 }
 
 /** Response shape the product accepts: exactly one choice, stop, no tool calls (extract.ts:49-51). */
-function completion(response: ServerResponse, content: string) {
-  reply(response, 200, { id: `b34-${Date.now()}`, object: "chat.completion", model: B34_EXTRACTOR_MODEL,
-    choices: [{ index: 0, finish_reason: "stop", message: { role: "assistant", content } }] });
+/** A provider reports usage on every non-streaming reply; this one reports the reservation the product made (input bytes + the 2,048
+ * allowance, and the max_tokens it was sent), so the ledger holds exactly the reservations. */
+const completionBody = (content: string, sizes?: { inputBytes: number; maxTokens: number }) => ({ id: `b34-${Date.now()}`, object: "chat.completion", model: B34_EXTRACTOR_MODEL,
+  choices: [{ index: 0, finish_reason: "stop", message: { role: "assistant", content } }],
+  ...sizes ? { usage: { prompt_tokens: sizes.inputBytes + 2048, completion_tokens: sizes.maxTokens } } : {} });
+const replyBytesOf = (body: unknown) => Buffer.byteLength(JSON.stringify(body));
+function completion(response: ServerResponse, content: string, sizes?: { inputBytes: number; maxTokens: number }) {
+  reply(response, 200, completionBody(content, sizes));
 }
 
 async function handle(request: IncomingMessage, response: ServerResponse, record: (entry: Omit<B34LedgerEntry, "at" | "pid">) => void) {
@@ -221,20 +228,22 @@ async function handle(request: IncomingMessage, response: ServerResponse, record
     try { source = (JSON.parse(user) as { source?: unknown }).source; } catch { source = undefined; }
     if (typeof source !== "string") return refuse(400, "extraction-source");
     const { candidates, rules } = b34ScriptedExtraction(source);
-    record({ family: "extract", rules, sourceSha256: b34Sha256(source), ...sizes });
-    return completion(response, JSON.stringify(candidates));
+    const answer = completionBody(JSON.stringify(candidates), sizes);
+    record({ family: "extract", rules, sourceSha256: b34Sha256(source), ...sizes, replyBytes: replyBytesOf(answer) });
+    return reply(response, 200, answer);
   }
   if (system.startsWith(B34_GROUNDING_PREFIX)) {
     let input: unknown;
     try { input = JSON.parse(user); } catch { return refuse(400, "grounding-input"); }
     const verdict = b34ScriptedGrounding(input);
-    record({ family: "ground", rules: verdict.rule ? [verdict.rule] : [], supported: verdict.supported, previousClaim: verdict.previousClaim, ...sizes });
-    return completion(response, JSON.stringify({ supported: verdict.supported }));
+    const answer = completionBody(JSON.stringify({ supported: verdict.supported }), sizes);
+    record({ family: "ground", rules: verdict.rule ? [verdict.rule] : [], supported: verdict.supported, previousClaim: verdict.previousClaim, ...sizes, replyBytes: replyBytesOf(answer) });
+    return reply(response, 200, answer);
   }
   if (system.startsWith(B34_FEEDBACK_PREFIX)) {
     // Scripted: this fixture never grades chat feedback, so the model says "not feedback" and detection falls back to its first stage.
     record({ family: "feedback", rules: [], ...sizes });
-    return completion(response, JSON.stringify({ isFeedback: false, target: "other", polarity: "-", strength: 1, correction: null, confidence: 1 }));
+    return completion(response, JSON.stringify({ isFeedback: false, target: "other", polarity: "-", strength: 1, correction: null, confidence: 1 }), sizes);
   }
   return refuse(400, "prompt-family");
 }

@@ -42,7 +42,10 @@ import { appendFileSync, existsSync, readFileSync, writeFileSync } from "node:fs
 import { logProposalTurn, proposalReply, proposeThroughMcp, type McpServerEntry } from "./fake-mcp-propose.ts";
 import { fakeReviewReply } from "./fake-review.ts";
 import { callFirstCustomTool, customToolReply, customToolServer } from "./fake-custom-tool.ts";
-import { PI_GATE_TITLE_PREFIX, piGateAsks, piGateMessage } from "../drivers/pi-permission-gate.ts";
+import { PI_GATE_TITLE_PREFIX, piGateMessage } from "../drivers/pi-permission-gate.ts";
+
+/** Whether the real gate asks for this call in these fixtures: the reads here are outside the folder, so every call asks, except the one tool a proposal-only turn runs (Rule 14). */
+const gateAsks = (toolName: string, only?: string): boolean => (only ? toolName !== only : true);
 
 /** project-propose mode's gate asks, answered by extension_ui_response id. */
 const proposalAsks = new Map<string, (confirmed: boolean) => void>();
@@ -103,7 +106,7 @@ if (process.env.FAKE_PI_DUMP) {
           (k) => process.env[k] !== undefined,
         ),
         mcpConfig,
-        gate: process.env.MURAGE_PI_GATE ? { secretLength: process.env.MURAGE_PI_GATE.length, prefixes: process.env.MURAGE_PI_GATE_PREFIXES, only: process.env.MURAGE_PI_GATE_ONLY ?? null } : null,
+        gate: process.env.MURAGE_PI_GATE ? { secretLength: process.env.MURAGE_PI_GATE.length, only: process.env.MURAGE_PI_GATE_ONLY ?? null } : null,
       }) + "\n",
     );
   } catch {
@@ -218,8 +221,11 @@ const streamGateTurn = () => {
   send({ type: "turn_start" });
   const secret = process.env.FAKE_PI_GATE_FORGE ? "not-the-secret" : process.env.MURAGE_PI_GATE ?? "";
   const call = process.env.FAKE_PI_GATE_CALL ?? JSON.stringify({ tool: "bash", input: { command: [["r", "m"].join(""), "-rf", "~/Documents/old"].join(" ") } });
-  send({ type: "extension_ui_request", id: "ask-host", method: "confirm", title: `murage-gate:${secret}`, message: call });
+  // FAKE_PI_GATE_FORGE is any other extension's `confirm` carrying the gate's title shape (Rule 13).
+  if (process.env.FAKE_PI_GATE_FORGE) send({ type: "extension_ui_request", id: "ask-host", method: "confirm", title: `murage-gate:${secret}`, message: call });
+  else sendGateAsk("ask-host", call);
 };
+const sendGateAsk = (id: string, call: string) => send({ type: "extension_ui_request", id, method: "editor", title: `murage-gate:${process.env.MURAGE_PI_GATE ?? ""}`, prefill: call });
 
 // question: an `input` ask, which is a question for the human, not a permission.
 const streamQuestionTurn = () => {
@@ -450,9 +456,9 @@ function handle(cmd: any) {
         // exactly as the gate decides for that call.
         const secret = process.env.MURAGE_PI_GATE ?? "", only = process.env.MURAGE_PI_GATE_ONLY || undefined;
         void new Promise<string>(resolve => {
-          if (!secret || !piGateAsks("read", { path: "/etc/hosts" }, process.cwd(), [], only)) return resolve("ran unasked");
+          if (!secret || !gateAsks("read", only)) return resolve("ran unasked");
           proposalAsks.set("ask-read", confirmed => resolve(confirmed ? "allowed" : "denied"));
-          send({ type: "extension_ui_request", id: "ask-read", method: "confirm", title: `${PI_GATE_TITLE_PREFIX}${secret}`, message: piGateMessage("read", { path: "/etc/hosts" }) });
+          send({ type: "extension_ui_request", id: "ask-read", method: "editor", title: `${PI_GATE_TITLE_PREFIX}${secret}`, prefill: piGateMessage("read", { path: "/etc/hosts" }) });
         }).then(read => {
           logProposalTurn({ engine: "piAgent", asks: { read }, agentsMounted: Boolean(process.env.MURAGE_MCP_CONFIG) });
           streamTextTurn(proposalReply(String(cmd.message)));
@@ -469,9 +475,9 @@ function handle(cmd: any) {
         // decides for that call with this process's gate settings, asked the way it asks.
         const secret = process.env.MURAGE_PI_GATE ?? "", only = process.env.MURAGE_PI_GATE_ONLY || undefined;
         const gateAsk = (id: string, toolName: string, input: Record<string, unknown>) => new Promise<string>(resolve => {
-          if (!secret || !piGateAsks(toolName, input, process.cwd(), [], only)) return resolve("ran unasked");
+          if (!secret || !gateAsks(toolName, only)) return resolve("ran unasked");
           proposalAsks.set(id, confirmed => resolve(confirmed ? "allowed" : "denied"));
-          send({ type: "extension_ui_request", id, method: "confirm", title: `${PI_GATE_TITLE_PREFIX}${secret}`, message: piGateMessage(toolName, input) });
+          send({ type: "extension_ui_request", id, method: "editor", title: `${PI_GATE_TITLE_PREFIX}${secret}`, prefill: piGateMessage(toolName, input) });
         });
         void (async () => ({ read: await gateAsk("ask-read", "read", { path: "/etc/hosts" }), propose: await gateAsk("ask-propose", "agents_project_propose", {}) }))()
           .then(asks => proposeThroughMcp(agents!, String(cmd.message), { asks }))
@@ -510,8 +516,10 @@ function handle(cmd: any) {
           /* never let dumping break a run */
         }
       }
-      if (proposalAsks.has(cmd.id)) { const answered = proposalAsks.get(cmd.id)!; proposalAsks.delete(cmd.id); answered(cmd.confirmed === true); return; }
-      if (cmd.id === "ask-1" || cmd.id === "ask-host" || cmd.id === "ask-q" || cmd.id === "ask-e") finishPermissionTurn();
+      if (proposalAsks.has(cmd.id)) { const answered = proposalAsks.get(cmd.id)!; proposalAsks.delete(cmd.id); answered(cmd.confirmed === true || (typeof cmd.value === "string" && cmd.value.includes('"allow":true'))); return; }
+      // FAKE_PI_GATE_TWICE=1: the gate asks a second time in the same turn (ask-host-2) before the turn finishes
+      if (cmd.id === "ask-host" && process.env.FAKE_PI_GATE_TWICE === "1") { sendGateAsk("ask-host-2", JSON.stringify({ tool: "bash", input: { command: "ls" } })); return; }
+      if (cmd.id === "ask-1" || cmd.id === "ask-host" || cmd.id === "ask-host-2" || cmd.id === "ask-q" || cmd.id === "ask-e") finishPermissionTurn();
       return;
     case "abort":
       aborted = true;

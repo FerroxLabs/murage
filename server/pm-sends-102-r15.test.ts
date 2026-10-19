@@ -2,7 +2,7 @@
 // inside a slow batch; (2) the two-column owed table of an older build is accepted by snapshot inspection and rebuilt in restore
 // preparation; (3) shared-work status is a tri-state and "unknown" keeps a held result; (4) delivery debt is never pruned and Resume
 // keeps a hold until the result is published.
-import { mkdirSync, readFileSync, rmSync } from "node:fs";
+import { mkdirSync, readFileSync } from "node:fs";
 import { DatabaseSync } from "node:sqlite";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { DATA_DIR } from "./config.ts";
@@ -15,8 +15,9 @@ import { pruneTerminalRoomRequests, roomRequest } from "./room-requests.ts";
 import { BACKFILL_NAME, LEGACY_OWED_TABLE_DDL, upgradeRoomRequestOwed } from "./room-request-owed.ts";
 import { sharedResolution } from "./shared-work.ts";
 import { recordOwnerDeletion } from "./owner-deletions.ts";
+import { removeTempDirSync } from "./testing/cleanup.ts";
 
-beforeEach(() => { closeDatabase(); rmSync(DATA_DIR, { recursive: true, force: true }); mkdirSync(DATA_DIR, { recursive: true }); });
+beforeEach(() => { closeDatabase(); removeTempDirSync(DATA_DIR); mkdirSync(DATA_DIR, { recursive: true }); });
 afterEach(() => closeDatabase());
 
 const COLUMNS = "id,root_id,parent_id,group_id,verb,from_kind,to_bot_id,target_thread_id,state,payload_text,refusal,outcome_note,result_message_id,created_at,finished_at,root_thread_id,origin,audience_fingerprint,not_owner_audience,unattended,admission_key";

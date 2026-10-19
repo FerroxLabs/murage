@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import { spawn } from "node:child_process";
 import { monitorEventLoopDelay } from "node:perf_hooks";
-import { chmodSync, existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, statSync, symlinkSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, statSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path, { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
@@ -26,12 +26,13 @@ import {
   runConversationDeletion,
   rustUrlEncode,
 } from "./conversation-deletion.ts";
+import { removeTempDirSync } from "./testing/cleanup.ts";
 
 const scratch = realpathSync.native(mkdtempSync(join(tmpdir(), "murage-delete-")));
 // Every messages.db a test opens is closed before the folder goes: Windows
 // refuses to remove a folder with an open file in it.
 const openDatabases: DatabaseSync[] = [];
-afterAll(() => { for (const db of openDatabases) db.close(); rmSync(scratch, { recursive: true, force: true }); });
+afterAll(() => { for (const db of openDatabases) db.close(); removeTempDirSync(scratch); });
 let counter = 0;
 const fresh = (name: string) => {
   const dir = join(scratch, `${name}-${++counter}`);
@@ -200,8 +201,8 @@ function seed(data: string, fuigoHome: string, claudeHome: string, codexHome: st
   const shared = "0b7c1f2e-1111-4222-8333-777788889999.png";
   touch(join(data, "attachments", image));
   touch(join(data, "attachments", shared));
-  db.prepare("INSERT INTO messages VALUES(?,?,?,?,?,?,?)").run(THREAD, "m1", 1, "bot", "text", "hi", JSON.stringify({ attachments: [{ kind: "image", path: join(data, "attachments", image) }, { kind: "image", path: join(data, "attachments", shared) }] }));
-  db.prepare("INSERT INTO messages VALUES(?,?,?,?,?,?,?)").run(OTHER, "m2", 1, "bot", "text", "hi", JSON.stringify({ attachments: [{ kind: "image", path: join(data, "attachments", shared) }] }));
+  db.prepare("INSERT INTO messages(thread_id,id,at,role,kind,text,json) VALUES(?,?,?,?,?,?,?)").run(THREAD, "m1", 1, "bot", "text", "hi", JSON.stringify({ attachments: [{ kind: "image", path: join(data, "attachments", image) }, { kind: "image", path: join(data, "attachments", shared) }] }));
+  db.prepare("INSERT INTO messages(thread_id,id,at,role,kind,text,json) VALUES(?,?,?,?,?,?,?)").run(OTHER, "m2", 1, "bot", "text", "hi", JSON.stringify({ attachments: [{ kind: "image", path: join(data, "attachments", shared) }] }));
   const fuigoSession = join(fuigoHome, "sessions", rustUrlEncode(desk), "01a0d905", "chat_history.jsonl");
   touch(fuigoSession);
   touch(join(fuigoHome, "sessions", rustUrlEncode(join(data, "workspaces", BOT)), "s", "chat_history.jsonl"));

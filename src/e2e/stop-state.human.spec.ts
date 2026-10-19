@@ -8,7 +8,7 @@
 // connection changed) says why, as a neutral stopped row a 1:1 thread shows
 // with Settings → Tool calls off — before, the notice was a plain activity
 // chip that setting hides, so the turn just ended with no reason on screen.
-import { test, expect, type Page, type TestInfo } from "@playwright/test";
+import { test, expect, type Page, type TestInfo } from "./page-error-guard";
 import { createServer, type ViteDevServer } from "vite";
 import react from "@vitejs/plugin-react";
 import tailwindcss from "@tailwindcss/vite";

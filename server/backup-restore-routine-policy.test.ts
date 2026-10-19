@@ -9,16 +9,17 @@
 // follow the same policy: back to following their bot (whose level is reset
 // to Ask), with no routine grants, and the review before activation refuses
 // a copy where any routine still has either.
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, expect, it } from "vitest";
 import { writeInstallationArchive } from "./installation-archive.ts";
 import { restoreInstallation } from "./installation-restore.ts";
 import { reviewInstallation } from "./installation-activation.ts";
+import { removeTempDirSync } from "./testing/cleanup.ts";
 
 const roots: string[] = [];
-afterEach(() => { for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true }); });
+afterEach(() => { for (const root of roots.splice(0)) removeTempDirSync(root); });
 const routine = (id: string, extra: Record<string, unknown>) => ({ id, name: id, prompt: "Sweep the inbox", botId: "bot", target: "bot", runOn: "ember", enabled: true, schedule: { type: "daily", time: "09:00", weekdays: [1, 2, 3, 4, 5] }, durationMinutes: 30, nextRunAt: 1, createdAt: 1, updatedAt: 1, ...extra });
 
 async function restored() {

@@ -1,7 +1,7 @@
 // R2: the parking maintenance decision sits on a path every dispatch reaches,
 // projection batches included, so a projection queue that never empties cannot
 // starve it. The real MemoryWorkerController runs with a stand-in worker.
-import { mkdirSync, rmSync } from "node:fs";
+import { mkdirSync } from "node:fs";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { DATA_DIR } from "../config.ts";
 import { closeDatabase, database } from "../database.ts";
@@ -9,6 +9,7 @@ import { appendMessage } from "../message-db.ts";
 import { claimSettleSweepStep, resetParkReconcile, resetParkSweep } from "./park.ts";
 import { setMemoryMode } from "./repository.ts";
 import { MemoryWorkerController } from "./worker-controller.ts";
+import { removeTempDirSync } from "../testing/cleanup.ts";
 
 const calls = vi.hoisted(() => ({ maintenance: 0 }));
 vi.mock("./park.ts", async importOriginal => {
@@ -23,7 +24,7 @@ type Internals = { child: unknown; ready: boolean; onWorkerMessage(child: unknow
 let controller: MemoryWorkerController, internals: Internals, batches: number;
 
 beforeEach(() => {
-  closeDatabase(); rmSync(DATA_DIR, { recursive: true, force: true }); mkdirSync(DATA_DIR, { recursive: true }); setMemoryMode("capture"); resetParkSweep(); resetParkReconcile();
+  closeDatabase(); removeTempDirSync(DATA_DIR); mkdirSync(DATA_DIR, { recursive: true }); setMemoryMode("capture"); resetParkSweep(); resetParkReconcile();
   calls.maintenance = 0; batches = 0;
   controller = new MemoryWorkerController();
   internals = controller as unknown as Internals;

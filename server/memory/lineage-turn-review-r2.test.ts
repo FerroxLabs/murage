@@ -6,7 +6,7 @@
 //       source-revision change a warm replay showed the second output where a cold replay withheld it;
 //   P2. the per-turn capability generation was part of the reader's cache key, so every turn judged the ancestry again.
 // Plus the class: a kept answer must always equal a cold one, over random sequences of the changes that matter.
-import { mkdirSync, rmSync } from "node:fs";
+import { mkdirSync } from "node:fs";
 import { DatabaseSync } from "node:sqlite";
 import { afterAll, beforeAll, beforeEach, expect, it } from "vitest";
 import { DATA_DIR } from "../config.ts";
@@ -19,12 +19,13 @@ import { chainStore } from "./schema.ts";
 import { keptVerdictCount, recordRestsOnWithheldMessage, replayExclusions, type ReplayAudience, setTurnLineageNodesForTest } from "./replay-lineage.ts";
 import { LineageAllowance } from "./lineage-allowance.ts";
 import { stopWalMaintenance } from "../wal-maintenance.ts";
+import { removeTempDirSync } from "../testing/cleanup.ts";
 
 const thread = "r2-direct";
 const key = (message: string) => `${thread}\u0000${message}`;
 // closeDatabase stops the WAL checkpointer without waiting; one still alive when the data dir is rebuilt removes the NEW file's -wal/-shm by path,
 // so rows of the previous run resurface (UNIQUE memory_sources.id). The checkpointer is awaited after every close.
-beforeEach(async () => { setTurnLineageNodesForTest(null); closeDatabase(); await stopWalMaintenance(); rmSync(DATA_DIR, { recursive: true, force: true }); mkdirSync(DATA_DIR, { recursive: true }); });
+beforeEach(async () => { setTurnLineageNodesForTest(null); closeDatabase(); await stopWalMaintenance(); removeTempDirSync(DATA_DIR); mkdirSync(DATA_DIR, { recursive: true }); });
 
 const tally = { rows: 0 };
 const realPrepare = DatabaseSync.prototype.prepare;
@@ -111,7 +112,7 @@ function activateFact(): void {
 it("a kept answer always equals a cold one over random sequences of activation, revision, forget, deny and permission changes", async () => {
   const seedBase = Number(process.env.R2_SEED_BASE ?? 0); // a different 30 seeds on request, to hunt
   for (let seed = 1 + seedBase; seed <= 30 + seedBase; seed++) {
-    closeDatabase(); await stopWalMaintenance(); rmSync(DATA_DIR, { recursive: true, force: true }); mkdirSync(DATA_DIR, { recursive: true });
+    closeDatabase(); await stopWalMaintenance(); removeTempDirSync(DATA_DIR); mkdirSync(DATA_DIR, { recursive: true });
     const random = prng(seed), pick = (n: number) => Math.floor(random() * n);
     begin();
     const sources = Array.from({ length: 4 }, (_, at) => `doc:s${at}`);

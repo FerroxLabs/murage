@@ -65,12 +65,21 @@ export type NoneReason = "murage" | "static" | "owner-turn" | "engine-meta";
 /** What a piece of engine input, a tool result or a written line rests on (DESIGN-WRITETIME 2.2). */
 export type LineageRef =
   /** One stored line, by message id (a copy, a quote, a replayed or owed line, a tool result naming a line): a `point` carry. */
-  | { readonly kind: "line"; readonly threadId: string; readonly messageId: string }
+  | { readonly kind: "line"; readonly threadId: string; readonly messageId: string;
+      /** A line of the prompt's own thread its replay shows in words (the last rebuild names them one by one instead of a prefix: prompt-parts.ts
+       * ownReplayRefs). The send fence judges it by content, as it judges a prefix's shown lines, whatever the reader: an audience-only mark
+       * (a receipt flipped by an install-wide revoke) never refuses the owner's own replay (Astra 1.0.3 room High). Lines of other threads
+       * never carry it and stay judged for the reader's audience. */
+      readonly replay?: true }
   /** A thread read wholesale up to headLsn (taken at write when absent): a `prefix` carry (project read_messages, conversation reads). */
   | { readonly kind: "prefix"; readonly threadId: string; readonly headLsn?: number;
       /** The lines of the thread a prompt showed in words (a replay): the send fence asks the marks of these again, so a line the owner
        * forgot after the prompt was built is caught (they were judged when it was built; a thread read wholesale lists none). */
-      readonly shown?: readonly string[] }
+      readonly shown?: readonly string[];
+      /** The prompt's own thread read by content at the send fence, whatever the fence's reader: a room turn whose whole audience is the owner
+       * (roomOwnerAudience), as the owner's direct chat is read (1.0.3 revoke storm, M1). An audience-only revoke (a receipt flip) then never
+       * holds the room's own transcript; a content revoke still does. Every other ref of the prompt keeps the fence's reader. */
+      readonly content?: true }
   /** A memory object shown or read. */
   | { readonly kind: "memory"; readonly ref: MemoryRef }
   /** A receipt (memory_disclosures bundle) the turn used: folds into mem_lsn (lsn = currentLsn when taken) and the footprint. */
@@ -128,7 +137,8 @@ export function decodeCarryChild(childKind: number, childRef: string, childThrea
 
 /** A node of a revoke's work queue (memory_revoke_frontier.node, text via encodeNode). DESIGN-WRITETIME 3 and Opus section 4. */
 export type FrontierNode =
-  | { readonly kind: "line"; readonly threadId: string; readonly lsn: number }
+  /** from: where the walk of what rests on the line starts when not at the line itself (refs added to a written line, revoke-commit.ts). */
+  | { readonly kind: "line"; readonly threadId: string; readonly lsn: number; readonly from?: number }
   | { readonly kind: "range"; readonly threadId: string; readonly fromLsn: number }
   | { readonly kind: "record"; readonly id: string; readonly version: number }
   | { readonly kind: "source"; readonly id: string }
@@ -147,7 +157,7 @@ export function decodeNode(text: string): FrontierNode | null {
     const str = (value: unknown) => typeof value === "string";
     const int = (value: unknown) => Number.isSafeInteger(value);
     switch (node?.kind) {
-      case "line": return str(node.threadId) && int(node.lsn) ? node : null;
+      case "line": return str(node.threadId) && int(node.lsn) && (node.from === undefined || int(node.from)) ? node : null;
       case "range": return str(node.threadId) && int(node.fromLsn) ? node : null;
       case "record": return str(node.id) && int(node.version) ? node : null;
       case "source": return str(node.id) ? node : null;
@@ -213,7 +223,9 @@ export interface LinePage { readonly threadId: string; readonly lines: readonly 
 export interface LineInput { readonly threadId: string; readonly messageId: string; readonly author: LineAuthor }
 /** What a written line rests on: the running turn (bot and room-member replies), extra refs (copies, hand-off results, event replays,
  * room card results), or nothing (owner and person lines). */
-export interface LineageParents { readonly turn?: TurnLineage; readonly refs?: readonly LineageRef[] }
+/** quotedNow: the refs are what a line already written (a row Murage wrote, message-db.ts isEngineOutput) quotes from this write on, not what
+ * it rested on when written: a revoke they rest on holds and walks its thread from now (lineage-write.ts lineageRow). */
+export interface LineageParents { readonly turn?: TurnLineage; readonly refs?: readonly LineageRef[]; readonly quotedNow?: boolean }
 
 /** The running turn's lineage (replaces RunningTurnLineage's roots; DESIGN-WRITETIME 2.2). turnLsn is the lsn at prompt build and is
  * never moved by a steer. parents grows through addTurnParents only. */
@@ -238,6 +250,10 @@ export type BuiltPrompt = {
   readonly text: string;
   readonly parts: readonly PromptPart[];
   readonly denyGeneration: number;
+  /** How many deny_generation values in (above, upTo] the building turn's own committed writes produced (its session row at session.started,
+   * its lines' carries; lineage-write.ts ownCarry records each exact value in the bump's own transaction): a moved generation made only of
+   * these is not a revoke committed since the prompt was built. */
+  readonly ownGenerations?: (db: import("node:sqlite").DatabaseSync, above: number, upTo: number) => number;
 } & { readonly [builtPromptBrand]: true };
 /** A tool handler's result text with what it rests on. Every tool handler returns this. Only prompt-parts.ts makes one (toolText). */
 export type ToolText = { readonly text: string; readonly lineageOf: readonly LineageRef[] } & { readonly [toolTextBrand]: true };

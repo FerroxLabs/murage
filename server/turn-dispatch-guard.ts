@@ -6,6 +6,7 @@ export class TurnSubmissionBoundary {
   private accepted = false;
   private onLateRefusal?: (refusal: unknown) => void;
   private passed?: () => void;
+  private notWrittenListener?: () => void;
   started() { this.state = "unknown"; }
   /** A further check run on every submission, after the caller's own. */
   alsoCheck(check: () => void) { this.checks.push(check); }
@@ -15,6 +16,10 @@ export class TurnSubmissionBoundary {
   acceptedBy(onLateRefusal?: (refusal: unknown) => void) { this.accepted = true; this.onLateRefusal = onLateRefusal; }
   /** Heard after every submission whose checks all passed: the prompt is released to the adapter's write. */
   onPassed(passed: () => void) { this.passed = passed; }
+  /** Heard when the write a passed submission released did not happen (an adapter's `notWritten`, or a later check refusing). */
+  onNotWritten(listener: () => void) { this.notWrittenListener = listener; }
+  /** The adapter says the write its last passed `beforeSubmit` released did not happen. */
+  notWritten() { try { this.notWrittenListener?.(); } catch { /* a listener never decides the submission */ } }
   /** Every adapter write calls this, every time: validation is never skipped
    * because an earlier write or acceptance passed. */
   beforeSubmit(validate: () => void) {
@@ -22,6 +27,7 @@ export class TurnSubmissionBoundary {
     catch (error) {
       this.state = "refused"; this.refusal = error;
       if (this.accepted) { try { this.onLateRefusal?.(error); } catch { /* the refusal itself still stands */ } }
+      this.notWritten();
       throw error;
     }
     try { this.passed?.(); } catch { /* a listener never decides the submission */ }

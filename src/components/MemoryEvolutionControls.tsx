@@ -1,45 +1,46 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { api } from "@/state/store";
+import { useAction } from "@/lib/use-action";
+import { ActionButton } from "./ActionButton";
 import { memoryButtonClass } from "./MemoryReview";
+import { t } from "@/lib/i18n";
 import { ProcedureVersionHistory } from "./ProcedureVersionHistory";
-import { canRetryMemoryEvolution, memoryEvolutionHistorySource, memoryEvolutionReason, runMemoryEvolutionAction, type MemoryEvolutionAction, type MemoryEvolutionStatus, type MemoryEvolutionKind } from "@/lib/memory-evolution-controls";
+import { canRetryMemoryEvolution, memoryEvolutionHistorySource, memoryEvolutionKindWord, memoryEvolutionReason, runMemoryEvolutionAction, type MemoryEvolutionAction, type MemoryEvolutionStatus, type MemoryEvolutionKind } from "@/lib/memory-evolution-controls";
 const evolutionButtonClass=memoryButtonClass+" min-h-11";
 export function MemoryEvolutionControls({status,disabled=false,onRefresh,kind="recall"}:{status:MemoryEvolutionStatus|null;disabled?:boolean;onRefresh:()=>Promise<void>;kind?:MemoryEvolutionKind}) {
-  const classification=kind==="classification",title=classification?"Tested classification improvements":"Tested recall improvements";
-  const [busy,setBusy]=useState(false),[error,setError]=useState<string|null>(null),[notice,setNotice]=useState<string|null>(null),mounted=useRef(true),refresh=useRef(onRefresh);refresh.current=onRefresh;
+  const classification=kind==="classification",title=classification?t("memoryEvolution.titleClassification"):t("memoryEvolution.titleRecall"),word=memoryEvolutionKindWord(kind);
+  const [pollError,setPollError]=useState<string|null>(null),mounted=useRef(true),refresh=useRef(onRefresh);refresh.current=onRefresh;
   useEffect(()=>{mounted.current=true;return()=>{mounted.current=false;};},[]);
   const history=useMemo(()=>memoryEvolutionHistorySource(api,()=>refresh.current()),[]);
   // Poll only while a finite check is queued/running, and only while this
   // owner surface is mounted. Waiting/deferred jobs require a real state change.
   useEffect(()=>{
     if(status?.job?.status!=="pending"&&status?.job?.status!=="running")return;
-    let refreshing=false;const timer=setInterval(()=>{if(refreshing)return;refreshing=true;void refresh.current().catch(()=>{if(mounted.current)setError(`Could not refresh ${kind} check status.`);}).finally(()=>{refreshing=false;});},3000);
+    let refreshing=false;const timer=setInterval(()=>{if(refreshing)return;refreshing=true;setPollError(null);void refresh.current().catch(()=>{if(mounted.current)setPollError(t("memoryEvolution.refreshFailed",{kind:word}));}).finally(()=>{refreshing=false;});},3000);
     return()=>clearInterval(timer);
   },[status?.job?.status,kind]);
-  const run=async(action:MemoryEvolutionAction)=>{
-    if(!status||busy||disabled)return;setBusy(true);setError(null);setNotice(null);
-    try{await runMemoryEvolutionAction(api,status,action);await onRefresh();if(mounted.current)setNotice(action.action!=="evolution-retry"?`The shipped synthetic ${kind} check is authorized.`:"Retry requested for this check.");}
-    catch(cause){if(mounted.current)setError(cause instanceof Error?cause.message:`Could not update ${kind} improvements.`);}
-    finally{if(mounted.current)setBusy(false);}
-  };
+  const apply=async(action:MemoryEvolutionAction)=>{if(!status)return;await runMemoryEvolutionAction(api,status,action);await onRefresh();};
+  const authorize=useAction(async()=>apply({action:classification?"evolution-authorize-classification":"evolution-authorize"}),{idle:t("memoryEvolution.enable",{kind:word}),pending:t("memoryEvolution.enabling"),success:t("memoryEvolution.enabled",{kind:word}),failure:t("memoryEvolution.updateFailed",{kind:word})});
+  const retry=useAction(async()=>apply({action:"evolution-retry",jobId:status!.job!.id}),{idle:t("memoryEvolution.retry"),pending:t("memoryEvolution.retrying"),success:t("memoryEvolution.retryRequested"),failure:t("memoryEvolution.updateFailed",{kind:word})});
+  const reread=useAction(async()=>onRefresh(),{idle:t("memoryEvolution.refreshStatus",{kind:word}),pending:t("memoryEvolution.refreshing"),success:t("memoryEvolution.upToDate"),failure:t("memoryEvolution.refreshFailed",{kind:word})});
+  const blocked=disabled||authorize.pending||retry.pending||reread.pending;
   const heldout=status?.job?.heldout;
   return <section aria-label={title} className="rounded-lg border border-hairline/40 p-3">
     <h3 className="text-[14px] font-medium">{title}</h3>
-    <p className="mt-2 text-[12px] leading-relaxed text-ink-secondary">Let Murage test {kind} changes using shipped synthetic examples. It applies a change only when held-out checks improve without regressions. Your private conversations are not used as this check’s training examples.</p>
-    <p className="mt-2 text-[12px] leading-relaxed text-ink-secondary">{classification?"These checks cover classification of synthetic source statements.":"These checks cover recall selection."} Existing automatic-learning choices and processing limits still apply.</p>
-    {!status?<p role="status" className="mt-2 text-[13px] text-ink-secondary">{classification?"Classification improvement status is unavailable.":"Recall improvement status is unavailable."}</p>:<>
-      <p className="mt-3 text-[13px] font-medium">{status.authorized?"Authorized for shipped synthetic examples":"Not enabled"}</p>
+    <p className="mt-2 text-[12px] leading-relaxed text-ink-secondary">{t("memoryEvolution.intro",{kind:word})}</p>
+    <p className="mt-2 text-[12px] leading-relaxed text-ink-secondary">{classification?t("memoryEvolution.scopeClassification"):t("memoryEvolution.scopeRecall")}</p>
+    {!status?<p role="status" className="mt-2 text-[13px] text-ink-secondary">{classification?t("memoryEvolution.statusUnavailableClassification"):t("memoryEvolution.statusUnavailableRecall")}</p>:<>
+      <p className="mt-3 text-[13px] font-medium">{status.authorized?t("memoryEvolution.authorized"):t("memoryEvolution.notEnabled")}</p>
       <p role="status" className="mt-1 break-words text-[13px] text-ink-secondary">{memoryEvolutionReason(status,kind)}</p>
       <div className="mt-2 flex flex-wrap gap-2">
-        {!status.authorized&&<button type="button" className={evolutionButtonClass} disabled={disabled||busy} onClick={()=>void run({action:classification?"evolution-authorize-classification":"evolution-authorize"})}>{`Enable tested ${kind} improvements`}</button>}
-        {canRetryMemoryEvolution(status)&&<button type="button" className={evolutionButtonClass} disabled={disabled||busy} onClick={()=>void run({action:"evolution-retry",jobId:status.job!.id})}>Retry interrupted check</button>}
-        <button type="button" className={evolutionButtonClass} disabled={disabled||busy} onClick={()=>{setBusy(true);setError(null);void onRefresh().catch(()=>{if(mounted.current)setError(`Could not refresh ${kind} check status.`);}).finally(()=>{if(mounted.current)setBusy(false);});}}>{`Refresh ${kind} status`}</button>
+        {!status.authorized&&<ActionButton action={authorize} className={evolutionButtonClass} blocked={blocked}>{t("memoryEvolution.enable",{kind:word})}</ActionButton>}
+        {canRetryMemoryEvolution(status)&&<ActionButton action={retry} className={evolutionButtonClass} blocked={blocked}>{t("memoryEvolution.retry")}</ActionButton>}
+        <ActionButton action={reread} className={evolutionButtonClass} blocked={blocked}>{t("memoryEvolution.refreshStatus",{kind:word})}</ActionButton>
       </div>
-      {heldout&&<div className="mt-3 space-y-1 text-[12px] text-ink-secondary"><p className="font-medium text-ink">Last held-out result</p><p>{heldout.cases} synthetic examples. {classification?"Classification":"Recall"} score: {heldout.baseline.toFixed(3)} before, {heldout.candidate.toFixed(3)} for the candidate.</p><p>Regressions: {heldout.regressions}. Scores describe the synthetic examples used in this check.</p></div>}
-      {status.job?.reason&&<details className="mt-2 text-[12px] text-ink-secondary"><summary className={`${evolutionButtonClass} cursor-pointer`}>Check details</summary><p className="mt-1 break-all font-mono">{status.job.reason}</p></details>}
-      <ProcedureVersionHistory source={history} label="Memory policy history" scopeLabel="Workspace memory policy" disabledReason={disabled||busy?"Wait for the current settings action to finish.":undefined}/>
+      {heldout&&<div className="mt-3 space-y-1 text-[12px] text-ink-secondary"><p className="font-medium text-ink">{t("memoryEvolution.lastHeldout")}</p><p>{t(classification?"memoryEvolution.heldoutScoreClassification":"memoryEvolution.heldoutScoreRecall",{cases:heldout.cases,baseline:heldout.baseline.toFixed(3),candidate:heldout.candidate.toFixed(3)})}</p><p>{t("memoryEvolution.regressions",{regressions:heldout.regressions})}</p></div>}
+      {status.job?.reason&&<div className="mt-2 text-[12px] text-ink-secondary"><p className="font-medium text-ink">{t("memoryEvolution.checkDetails")}</p><p className="mt-1 break-all font-mono">{status.job.reason}</p></div>}
+      <ProcedureVersionHistory source={history} label={t("memoryEvolution.historyLabel")} scopeLabel={t("memoryEvolution.historyScope")} disabledReason={blocked?t("memoryEvolution.waitSettings"):undefined}/>
     </>}
-    {error&&<p role="alert" className="mt-2 break-words text-[13px] text-danger">{error}</p>}
-    {notice&&<p role="status" className="mt-2 text-[13px] text-ink-secondary">{notice}</p>}
+    {pollError&&<p role="alert" className="mt-2 break-words text-[13px] text-danger">{pollError}</p>}
   </section>;
 }

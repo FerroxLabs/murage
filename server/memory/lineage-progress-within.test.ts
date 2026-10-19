@@ -3,8 +3,9 @@
 //
 // The upgrade strip moves INSIDE one huge message (a reply whose root-set chain takes hundreds of slices) and inside one frontier node of the
 // marker, never backwards and never past its total (RC4-SPEED-DIAG item 6).
-import { mkdirSync, rmSync } from "node:fs";
+import { mkdirSync } from "node:fs";
 import { beforeEach, expect, it } from "vitest";
+import { removeTempDirSync } from "../testing/cleanup.ts";
 
 const { DATA_DIR } = await import("../config.ts");
 const { closeDatabase, database } = await import("../database.ts");
@@ -13,7 +14,7 @@ const { lineageBackfillSlice, lineageCertProgress, resetLineageBackfillForTest, 
 const { buildLegacyHistory, markUpgraded } = await import("./testing/legacy-history-fixture.ts");
 setLineageSeedCommitForTest(() => 1);
 
-beforeEach(() => { closeDatabase(); resetLineageBackfillForTest(); rmSync(DATA_DIR, { recursive: true, force: true }); mkdirSync(DATA_DIR, { recursive: true }); });
+beforeEach(() => { closeDatabase(); resetLineageBackfillForTest(); removeTempDirSync(DATA_DIR); mkdirSync(DATA_DIR, { recursive: true }); });
 const ticking = (step = 1) => { let t = 0; return () => (t += step); };
 
 it("one message with thousands of root-set members moves done/total within the message, monotone and below total", () => {
