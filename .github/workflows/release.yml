@@ -1,3 +1,5 @@
+# ARM-FIRST FALLBACK for 1.0.2: macOS arm64 only (x64 follows); see the mac
+# and assemble jobs. Otherwise:
 # One-button releases: builds macOS (arm64 + x64, signed, notarized, stapled),
 # Windows, and Ubuntu from ONE commit, assembles a complete draft on
 # murage-releases with verified feeds, and publishes after a human
@@ -183,8 +185,15 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: gh run cancel "$GITHUB_RUN_ID" --repo "$GITHUB_REPOSITORY"
 
+  # ARM-FIRST FALLBACK (1.0.2): this branch ships macOS arm64, Windows x64
+  # and Ubuntu x64 only, for use only if the x64 mac package keeps failing.
+  # The mac job packages, signs, notarizes and staples arm64 alone; every
+  # other gate in it is unchanged but runs on the arm64 app only. macOS x64
+  # follows in a later release. Intel Macs: latest-mac.yml lists only the
+  # arm64 files, and electron-updater on x64 drops arm64 files, so it never
+  # downloads the arm64 build (see the assemble job comment).
   mac:
-    name: macOS arm64 + x64 (sign, notarize, staple)
+    name: macOS arm64 only (arm-first fallback; sign, notarize, staple)
     needs: prepare
     if: needs.prepare.outputs.should_release == 'true'
     runs-on: macos-14
@@ -246,7 +255,39 @@ jobs:
           mkdir -p qualification-evidence
           python3 native/gepa/build-mac.py "$RUNNER_TEMP/gepa-mac-build" "$RUNNER_TEMP/release.keychain-db"
 
-      - name: Package both architectures
+      - name: Rosetta for the x64 package checks
+        if: ${{ false }} # arm-first fallback: no x64 package to check
+        # after-pack loads the engine-exclusion addon inside each packaged app;
+        # the x64 app on this arm64 runner runs through arch -x86_64, which needs Rosetta.
+        run: |
+          set -euo pipefail
+          if ! /usr/bin/arch -x86_64 /usr/bin/true 2>/dev/null; then
+            sudo softwareupdate --install-rosetta --agree-to-license
+          fi
+          /usr/bin/arch -x86_64 /usr/bin/true && echo "Rosetta ready"
+      - name: Make the engine-exclusion load check print why it fails
+        # Logging only: the check still refuses exactly as before; it now prints the child's
+        # exit, signal, stderr and stdout, so a refusal names its cause.
+        run: |
+          set -euo pipefail
+          python3 - <<'EOF'
+          p = "scripts/engine-exclusion-resource.mjs"
+          s = open(p).read()
+          a = 'try { out = run(command, args, { ELECTRON_RUN_AS_NODE: "1" }); } catch { throw new Error("ENGINE_EXCLUSION_RESOURCE_UNLOADABLE"); }'
+          b = 'try { answer = JSON.parse(String(out)); } catch { throw new Error("ENGINE_EXCLUSION_RESOURCE_UNLOADABLE"); }'
+          assert s.count(a) == 1 and s.count(b) == 1
+          s = s.replace(a, 'try { out = run(command, args, { ELECTRON_RUN_AS_NODE: "1" }); } catch (e) { console.error("engine-exclusion load failed:", JSON.stringify({ command, args, status: e?.status, signal: e?.signal, code: e?.code, stderr: String(e?.stderr ?? "").slice(0, 4000), stdout: String(e?.stdout ?? "").slice(0, 2000), message: String(e?.message ?? "").slice(0, 2000) })); throw new Error("ENGINE_EXCLUSION_RESOURCE_UNLOADABLE"); }')
+          s = s.replace(b, 'try { answer = JSON.parse(String(out)); } catch { console.error("engine-exclusion answer unreadable:", JSON.stringify(String(out).slice(0, 4000))); throw new Error("ENGINE_EXCLUSION_RESOURCE_UNLOADABLE"); }')
+          open(p, "w").write(s)
+          EOF
+          grep -c "engine-exclusion load failed" scripts/engine-exclusion-resource.mjs
+      - name: Package arm64 only (arm-first fallback)
+        # package.json's package:mac ends in `electron-builder --mac`, and
+        # electron-builder.yml's mac targets name arch [arm64, x64]; with no
+        # target names on the CLI the config arch wins, so `--arm64` alone
+        # would still build x64. Run package:mac's own build steps, then
+        # name the targets with an explicit arch. Refuse if package:mac has
+        # changed, so this copy cannot drift from the pinned sources.
         run: |
           set -euo pipefail
           # Signing opens every file in the bundle; the runner's open-file limits ran out (EMFILE) on 1.0.0.
@@ -256,10 +297,48 @@ jobs:
           ulimit -n 262144 || ulimit -n "$(ulimit -Hn)"
           echo "after: kern.maxfiles=$(sysctl -n kern.maxfiles) kern.maxfilesperproc=$(sysctl -n kern.maxfilesperproc) ulimit=$(ulimit -n)"
           gepa_hash="$(node -e 'const fs=require("node:fs"); const m=JSON.parse(fs.readFileSync("qualification-evidence/gepa-package-metadata.json","utf8")); const h=m.extraMetadata.murageGepaManifests["darwin-arm64"]; if(!/^[a-f0-9]{64}$/.test(h))process.exit(1); process.stdout.write(h)')"
-          pnpm package:mac \
-            "--config.extraMetadata.murageGepaManifests.darwin-arm64=$gepa_hash" \
-            "--config.extraMetadata.murageGepaManifests.darwin-x64=unavailable"
+          # The x64 package check loads the addon through Rosetta; its first translation of the x64
+          # Electron on a fresh arm64 runner can outlast the check's 30 s. Translations are cached,
+          # so one retry on exactly that error passes (the load itself takes 1-3 s once cached).
+          expected_script='pnpm package:prepare && pnpm build:speech && pnpm build:recorder && pnpm build:notification-authorization && pnpm build:engine-exclusion && pnpm build:cua && electron-builder --mac --publish never'
+          test "$(node -p 'require("./package.json").scripts["package:mac"]')" = "$expected_script" \
+            || { echo "::error::package:mac changed; update the arm-first packaging step"; exit 1; }
+          for attempt in 1 2; do
+            set +e
+            { pnpm package:prepare && pnpm build:speech && pnpm build:recorder && pnpm build:notification-authorization && pnpm build:engine-exclusion && pnpm build:cua \
+              && pnpm exec electron-builder --mac dmg:arm64 zip:arm64 --publish never \
+              "--config.extraMetadata.murageGepaManifests.darwin-arm64=$gepa_hash" \
+              "--config.extraMetadata.murageGepaManifests.darwin-x64=unavailable"; } 2>&1 | tee "$RUNNER_TEMP/package-$attempt.log"
+            rc=${PIPESTATUS[0]}
+            set -e
+            [ "$rc" = 0 ] && break
+            if [ "$attempt" = 1 ] && grep -q ENGINE_EXCLUSION_RESOURCE_UNLOADABLE "$RUNNER_TEMP/package-1.log"; then
+              echo "x64 addon load timed out on the cold Rosetta translation; packaging once more"
+              continue
+            fi
+            exit "$rc"
+          done
+          # arm-first fallback: no x64 app or installer may exist.
+          test ! -e release/mac || { echo "::error::an x64 app was packaged"; exit 1; }
+          if ls release/*-x64.* >/dev/null 2>&1; then echo "::error::x64 artifacts were packaged"; ls release/*-x64.*; exit 1; fi
+          test -d release/mac-arm64/Murage.app
 
+      - name: Explain an x64 engine-exclusion load failure
+        if: ${{ false }} # arm-first fallback: no x64 app
+        run: |
+          set +e
+          app="$PWD/release/mac/Murage.app"
+          node="$app/Contents/Resources/engine-exclusion.node"
+          ls -la "$node"; lipo -info "$node"; file "$app/Contents/MacOS/Murage"
+          code='const a=require(process.argv[1]);const l=a.processes();process.stdout.write(JSON.stringify([a.version(),typeof a.processes,typeof a.lock,typeof a.renameNoReplace,Array.isArray(l)&&l.some(p=>p&&p.pid===process.pid)]))'
+          for n in 1 2; do
+            start=$(date +%s)
+            ELECTRON_RUN_AS_NODE=1 /usr/bin/arch -x86_64 "$app/Contents/MacOS/Murage" -e "$code" "$node" > "$RUNNER_TEMP/out.txt" 2> "$RUNNER_TEMP/err.txt"; rc=$?
+            echo "attempt $n: exit $rc after $(( $(date +%s) - start )) s"
+            echo "--- stdout:"; head -c 2000 "$RUNNER_TEMP/out.txt"; echo
+            echo "--- stderr:"; head -c 4000 "$RUNNER_TEMP/err.txt"; echo
+          done
+          exit 0
       - name: Qualify packaged WhatsApp (darwin-arm64)
         shell: bash
         run: |
@@ -271,11 +350,13 @@ jobs:
           node scripts/smoke-whatsapp-packaged.mjs --server-directory "release/mac-arm64/Murage.app/Contents/Resources/server" --runtime "release/mac-arm64/Murage.app/Contents/MacOS/Murage" --platform darwin --arch arm64 --electron-version "$(node -p 'require("electron/package.json").version')" > qualification-evidence/whatsapp-darwin-arm64.json 2> qualification-evidence/whatsapp-darwin-arm64-probe.log
 
       - name: Hand the packaged x64 app to the native Intel smoke job
+        if: ${{ false }} # arm-first fallback: no x64 app
         # The x64 WhatsApp smoke runs natively on an Intel runner (job mac-x64),
         # not under Rosetta on this arm64 runner. tar keeps modes, symlinks and
         # the signature; the app is the one packaged above, before notarization.
         run: tar -cf "$RUNNER_TEMP/mac-x64-app.tar" -C release/mac Murage.app
-      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+      - if: ${{ false }} # arm-first fallback: no x64 app
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           # Not "*-release": assemble must never see this.
           name: mac-x64-app-smoke
@@ -292,9 +373,6 @@ jobs:
           test -f "release/mac-arm64/Murage.app/Contents/Resources/browser-extension/build.json"
           test -f "release/mac-arm64/Murage.app/Contents/Resources/browser-extension/native-host.mjs"
           node scripts/release-guard.mjs browser-extension-build "release/mac-arm64/Murage.app/Contents/Resources/browser-extension/build.json" "$MURAGE_BROWSER_EXTENSION_RELEASE_CONFIG"
-          test -f "release/mac/Murage.app/Contents/Resources/browser-extension/build.json"
-          test -f "release/mac/Murage.app/Contents/Resources/browser-extension/native-host.mjs"
-          node scripts/release-guard.mjs browser-extension-build "release/mac/Murage.app/Contents/Resources/browser-extension/build.json" "$MURAGE_BROWSER_EXTENSION_RELEASE_CONFIG"
       - name: "Gate: arm64 carries the pinned GEPA worker, x64 carries none"
         run: |
           set -euo pipefail
@@ -307,23 +385,23 @@ jobs:
           test "$actual" = "$expected" || { echo "::error::packaged GEPA manifest hash $actual != receipt $expected"; exit 1; }
           echo "ok: darwin-arm64 manifest $expected; darwin-x64 opted out"
 
-      - name: "Gate: both packaged apps use the Murage updater feed"
+      - name: "Gate: the packaged arm64 app uses the Murage updater feed"
         # app-update.yml is what an installed app reads forever. Anchored on
         # both halves: a substring match on the repo alone would pass a feed
         # pointing at some other account's murage-releases.
         run: |
-          for app in release/mac-arm64/Murage.app release/mac/Murage.app; do
+          for app in release/mac-arm64/Murage.app; do
             update="$app/Contents/Resources/app-update.yml"
             test -f "$update" || { echo "::error::missing $update"; exit 1; }
             grep -Eq '^owner: FerroxLabs$' "$update" || { echo "::error::wrong update owner in $update"; exit 1; }
             grep -Eq '^repo: murage-releases$' "$update" || { echo "::error::wrong update repo in $update"; exit 1; }
           done
           # Exactly the public feed: a qualification build's feed never ships.
-          node scripts/release-guard.mjs update-feed release/mac-arm64/Murage.app/Contents/Resources/app-update.yml release/mac/Murage.app/Contents/Resources/app-update.yml
+          node scripts/release-guard.mjs update-feed release/mac-arm64/Murage.app/Contents/Resources/app-update.yml
 
       - name: "Gate: the signature must verify BEFORE notarization"
         run: |
-          for app in release/mac-arm64/Murage.app release/mac/Murage.app; do
+          for app in release/mac-arm64/Murage.app; do
             codesign --verify --deep --strict "$app"
             bin="$app/Contents/Resources/cloudflared/cloudflared"
             test -x "$bin" || { echo "::error::missing executable $bin"; exit 1; }
@@ -345,9 +423,9 @@ jobs:
             echo "ok: $app"
           done
 
-      - name: "Gate: both packaged servers start and every helper path resolves"
+      - name: "Gate: the packaged arm64 server starts and every helper path resolves"
         run: |
-          for app in release/mac-arm64/Murage.app release/mac/Murage.app; do
+          for app in release/mac-arm64/Murage.app; do
             res="$app/Contents/Resources"
             # the server tree is plain JS — runnable on the runner's node
             # regardless of the app binary's arch
@@ -380,7 +458,7 @@ jobs:
             fi
           done
 
-      - name: Notarize all four artifacts
+      - name: Notarize the two arm64 artifacts (arm-first fallback)
         # A stalled Apple queue used to hold the runner until the JOB timeout;
         # bound each submission and the step so the failure names this step.
         # 1.0.0's bundle took Apple over 20 minutes per file, so all four files
@@ -412,26 +490,26 @@ jobs:
 
       - name: Staple, re-zip, regenerate blockmaps and the feed
         run: |
+          set -euo pipefail
           xcrun stapler staple release/Murage-*-arm64.dmg
-          xcrun stapler staple release/Murage-*-x64.dmg
           xcrun stapler staple release/mac-arm64/Murage.app
-          xcrun stapler staple release/mac/Murage.app
           v=$(node -p "require('./package.json').version")
-          rm -f "release/Murage-$v-arm64.zip" "release/Murage-$v-x64.zip"
+          rm -f "release/Murage-$v-arm64.zip"
           ditto -c -k --sequesterRsrc --keepParent release/mac-arm64/Murage.app "release/Murage-$v-arm64.zip"
-          ditto -c -k --sequesterRsrc --keepParent release/mac/Murage.app "release/Murage-$v-x64.zip"
           node scripts/regenerate-blockmaps.mjs \
-            "release/Murage-$v-arm64.zip" "release/Murage-$v-x64.zip" \
-            "release/Murage-$v-arm64.dmg" "release/Murage-$v-x64.dmg"
+            "release/Murage-$v-arm64.zip" "release/Murage-$v-arm64.dmg"
           # refreshes every hash from the post-staple bytes and refuses to
           # finish unless the feed matches the files on disk
           node scripts/regenerate-mac-feed.mjs
+          # arm-first fallback: the one mac feed must list ONLY arm64-marked
+          # files, so no Intel Mac can be pointed at a build for another arch.
+          node -e 'const t=require("node:fs").readFileSync("release/latest-mac.yml","utf8");const u=[...t.matchAll(/^\s*-\s+url:\s+(\S+)/gm)].map(m=>m[1]).sort();const p=(t.match(/^path:\s+(\S+)/m)||[])[1];const want=[`Murage-${process.argv[1]}-arm64.dmg`,`Murage-${process.argv[1]}-arm64.zip`];if(JSON.stringify(u)!==JSON.stringify(want)||!/-arm64\.zip$/.test(p||"")){console.error("::error::latest-mac.yml is not arm64-only:",u,p);process.exit(1)}console.log("ok: latest-mac.yml lists only",u.join(", "))' "$v"
 
       - name: Stable-named copies for the README's /latest/download links
         run: |
           v=$(node -p "require('./package.json').version")
           cp "release/Murage-$v-arm64.dmg" release/Murage.dmg
-          cp "release/Murage-$v-x64.dmg" release/Murage-intel.dmg
+          # arm-first fallback: no Murage-intel.dmg in this release.
 
       - name: Bind WhatsApp reports to final artifacts
         shell: bash
@@ -468,13 +546,14 @@ jobs:
           if-no-files-found: warn
           retention-days: 7
 
+  # ARM-FIRST FALLBACK (1.0.2): skipped; there is no x64 app to smoke.
   mac-x64:
     name: macOS x64 WhatsApp smoke (native Intel)
     # The packaged x64 app run natively: no Rosetta warm-up, no emulation
     # timing, and a flaky smoke reruns this job alone, not the 90-minute Mac
     # build. Binds its report to the final x64 bytes from the mac job.
     needs: [prepare, mac]
-    if: needs.prepare.outputs.should_release == 'true'
+    if: ${{ false }}
     runs-on: macos-15-intel
     timeout-minutes: 30
     steps:
@@ -997,9 +1076,18 @@ jobs:
           if-no-files-found: warn
           retention-days: 7
 
+  # ARM-FIRST FALLBACK (1.0.2): mac-x64 is out of `needs` (a skipped need
+  # would skip this job), and the asset list and feed check carry no x64 mac
+  # files and no Murage-intel.dmg. Intel Macs: latest-mac.yml is one feed
+  # for both arches and lists only the arm64 dmg and zip. electron-updater
+  # 6.8.9 (MacUpdater.filterFilesForArch) drops arm64-marked files on an
+  # x64 Mac, so an Intel 1.0.1 never downloads the arm64 build; it does see
+  # version 1.0.2 as available, and the download then fails with "No files
+  # provided" (shown as "The update files are missing or invalid"). Intel
+  # users stay on 1.0.1 until a release carries x64 files again.
   assemble:
     name: Assemble the draft and verify every feed
-    needs: [prepare, ci-gate, mac, mac-x64, windows, linux]
+    needs: [prepare, ci-gate, mac, windows, linux]
     # Builds run beside CI; nothing below this point (draft, upload, publish)
     # starts unless ci-gate passed, so a red CI leaves no draft behind.
     if: needs.prepare.outputs.should_release == 'true'
@@ -1046,12 +1134,8 @@ jobs:
             "Murage-$VERSION-arm64.zip.blockmap"
             "Murage-$VERSION-setup.exe"
             "Murage-$VERSION-setup.exe.blockmap"
-            "Murage-$VERSION-x64.dmg"
-            "Murage-$VERSION-x64.dmg.blockmap"
-            "Murage-$VERSION-x64.zip"
-            "Murage-$VERSION-x64.zip.blockmap"
             "Murage-$VERSION-x86_64.AppImage"
-            Murage-amd64.deb Murage-intel.dmg Murage-setup.exe
+            Murage-amd64.deb Murage-setup.exe
             Murage.AppImage Murage.dmg SHA256SUMS-ubuntu-x64.txt
           )
           # The Linux checksum signature (audit C8): required whenever the
@@ -1078,9 +1162,7 @@ jobs:
           // failures. The old loop skipped a missing feed entirely.
           const expected = new Map([
             ["latest-mac.yml", [
-              `Murage-${version}-x64.zip`,
               `Murage-${version}-arm64.zip`,
-              `Murage-${version}-x64.dmg`,
               `Murage-${version}-arm64.dmg`,
             ]],
             ["latest.yml", [`Murage-${version}-setup.exe`]],
