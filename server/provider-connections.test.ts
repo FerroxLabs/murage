@@ -1,4 +1,4 @@
-import { mkdtempSync, readFileSync, rmSync, writeFileSync, mkdirSync } from "node:fs";
+import { mkdtempSync, readFileSync, writeFileSync, mkdirSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { afterEach, expect, it, vi } from "vitest";
@@ -6,7 +6,8 @@ import { PROVIDER_PRESETS, mutateProviderBank, parseProviderBank } from "../elec
 import { normalizeProviderModels, ProviderConnectionsService } from "./provider-connections.ts";
 import { parseConfigPatch, stripWorkspaceCredentialEnv } from "./config.ts";
 import type { ProviderPreset } from "../shared/provider-connections.ts";
-const roots:string[]=[];afterEach(()=>{roots.splice(0).forEach(root=>rmSync(root,{recursive:true,force:true}));});
+import { removeTempDirSync } from "./testing/cleanup.ts";
+const roots:string[]=[];afterEach(()=>{roots.splice(0).forEach(root=>removeTempDirSync(root));});
 function fixture(preset:ProviderPreset="openai",now?:()=>number) {
  const cacheDir=mkdtempSync(join(tmpdir(),"provider-catalog-"));roots.push(cacheDir);let sequence=0;
  let bank=JSON.stringify(mutateProviderBank("[]",{action:"create",preset,key:preset==="flux"?"sk-flux-fixture-key-private":"fixture-key-private"},()=>`record-${++sequence}`));

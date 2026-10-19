@@ -1,14 +1,15 @@
-import { chmodSync, existsSync, mkdtempSync, readdirSync, rmSync, statSync, symlinkSync, utimesSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdtempSync, readdirSync, statSync, symlinkSync, utimesSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 
 import { bumpGeneration, clearMountIncomplete, markMountIncomplete, markMountReady, mountIncomplete, readGeneration, CACHE_MAX_AGE_MS, CACHE_MAX_FILES, privateCacheDir, pruneCacheDir, purgeCacheDir, readCacheEntry, writeCacheEntry } from "./connector-cache.ts";
 import { forgetWindowsCacheChecks, handOverInitialTools, purgeToolsCache, usableToolsCacheDir } from "./connector-cache-harness.ts";
+import { removeTempDirSync } from "./testing/cleanup.ts";
 
 const dirs: string[] = [];
 const temp = () => { const dir = mkdtempSync(join(tmpdir(), "murage-cache-unit-")); dirs.push(dir); return dir; };
-afterEach(() => { for (const dir of dirs.splice(0)) rmSync(dir, { recursive: true, force: true }); forgetWindowsCacheChecks(); });
+afterEach(() => { for (const dir of dirs.splice(0)) removeTempDirSync(dir); forgetWindowsCacheChecks(); });
 
 describe("connector tool-list cache", () => {
   it("Windows never trusts a folder the harness did not verify (nothing is cached), and trusts one it did", () => {
@@ -100,7 +101,11 @@ describe("connector tool-list cache", () => {
     const tools = Array.from({ length: 40 }, (_, i) => ({ name: `T${i}`, description: "d".repeat(1_000) }));
     const scope = { identity: "a".repeat(32), revision: "rev-1" };
     expect(JSON.stringify(tools).length).toBeGreaterThan(24_000);
-    expect(handOverInitialTools({ dir, windowsPrivate: false }, scope, tools)).toBe("@file");
+    // Windows only caches a folder whose ACL the harness verified (windowsPrivate); an unverified one hands nothing over, by design.
+    // Everywhere else the flag means nothing and the folder is checked by its owner and mode.
+    const windows = process.platform === "win32";
+    if (windows) expect(handOverInitialTools({ dir, windowsPrivate: false }, scope, tools)).toBeNull();
+    expect(handOverInitialTools({ dir, windowsPrivate: windows }, scope, tools)).toBe("@file");
     expect(readCacheEntry(dir, `initial-${scope.identity}-${scope.revision}.json`)).toEqual({ revision: "rev-1", tools });
     expect(handOverInitialTools(null, scope, tools)).toBeNull();
   });

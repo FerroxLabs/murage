@@ -240,7 +240,8 @@ function handle(): Open | null {
     const authIno = authorityIno();
     const eligible = authIno >= 0 && attachAuthority(db);
     // Timed like every other connection (slow statements, the I/O budget), so its work is named instead of showing as an unnamed stall.
-    const release = instrumentDatabase(db);
+    // Its bytes are not read here: this handle never writes, and the index's log is the helper's writing, which the helper reports itself.
+    const release = instrumentDatabase(db, undefined, { bytes: false });
     readerOpens++;
     open = { path, ino: stat.ino, dev: stat.dev, authIno, eligible, db, statement: db.prepare(RECALL_SEARCH_SQL), release };
     lastState = "ready";

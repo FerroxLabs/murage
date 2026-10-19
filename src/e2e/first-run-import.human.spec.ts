@@ -1,4 +1,4 @@
-import { test, expect } from "@playwright/test";
+import { test, expect } from "./page-error-guard";
 import { existsSync } from "node:fs";
 import { launchVerificationServer, type VerificationServer } from "../../scripts/control-murage.ts";
 

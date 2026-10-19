@@ -1,12 +1,13 @@
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { afterEach, expect, it, vi } from "vitest";
 import { gepaCallNotStarted, isGepaCallNotStarted, runGepaWorker, type GepaCallLedger, type GepaWorkerOptions, type GepaEvaluateFrame } from "./gepa-worker.ts";
 import type { GepaEvaluation, GepaJson, GepaStart } from "./gepa-protocol.ts";
+import { removeTempDirSync } from "./testing/cleanup.ts";
 
 const directories:string[]=[];
-afterEach(()=>{for(const directory of directories.splice(0))rmSync(directory,{recursive:true,force:true});vi.unstubAllEnvs();});
+afterEach(()=>{for(const directory of directories.splice(0))removeTempDirSync(directory);vi.unstubAllEnvs();});
 function ledger():GepaCallLedger {
   const records=new Map<string,{hash:string;value?:GepaJson}>();
   return {lookupOrReserve(id,inputHash){const row=records.get(id);if(row){if(row.hash!==inputHash)throw Error("GEPA_CALL_CONFLICT");if(row.value===undefined)throw Error("GEPA_CALL_UNCERTAIN");return {state:"complete",value:row.value};}records.set(id,{hash:inputHash});return {state:"new"};},complete(id,inputHash,value){const row=records.get(id);if(!row||row.hash!==inputHash)throw Error("GEPA_CALL_CONFLICT");row.value=structuredClone(value);},releaseNotStarted(id,inputHash){const row=records.get(id);if(!row||row.hash!==inputHash||row.value!==undefined)throw Error("GEPA_CALL_CONFLICT");records.delete(id);}};

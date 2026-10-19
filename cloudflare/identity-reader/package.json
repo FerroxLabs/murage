@@ -1,0 +1,7 @@
+{
+  "name": "@murage/identity-reader",
+  "private": true,
+  "version": "0.0.0",
+  "type": "module",
+  "description": "Isolated Supabase identity reader for the Murage control plane. Config only until deployed; its logic is tested from cloudflare/control-plane/test/identity-reader.test.ts."
+}

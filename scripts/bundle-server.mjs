@@ -18,9 +18,9 @@
 // drivers/ nested; import.meta.url still resolves to the same location, so
 // that lookup is unaffected.
 import { build } from "esbuild";
-import { copyFileSync, existsSync, mkdirSync } from "node:fs";
+import { chmodSync, copyFileSync, existsSync, mkdirSync, statSync } from "node:fs";
 import { fileURLToPath } from "node:url";
-import { dirname, join } from "node:path";
+import { dirname, join, relative } from "node:path";
 
 const root = join(dirname(fileURLToPath(import.meta.url)), "..");
 const server = join(root, "server");
@@ -65,6 +65,7 @@ const ENTRY_POINTS = [
   "computer-proxy.ts",
   "container-mcp.ts",
   "vps-container-mcp.ts",
+  "cloud-home/vps-relay-mcp.ts",
   "permission-proxy.ts",
   "connector-proxy.ts",
   "drivers/agents-proxy.ts",
@@ -77,7 +78,17 @@ const ENTRY_POINTS = [
   "drivers/host-computer-proxy.ts",
 ];
 
-await build({
+// Files a bundled module reads at run time from beside itself (`join(dirname(fileURLToPath(import.meta.url)), name)`),
+// which esbuild cannot see. Once a module is inlined, import.meta.url is the OUTPUT file it landed in (index.ts's copy
+// is dist-server/index.js), so each file is copied next to every output that inlines its reader, mode kept. The
+// guard test scripts/bundle-server-runtime-files.test.mjs keeps this list in step with the readers in server/.
+const RUNTIME_SIBLINGS = [
+  // server/drivers/murage-exec.ts reads the shell wrapper at module load: missing, the packaged server dies at boot.
+  { reader: "drivers/murage-exec.ts", file: "drivers/murage-exec", mode: 0o755 },
+];
+
+const main = await build({
+  metafile: true,
   entryPoints: ENTRY_POINTS.map((entry) => join(server, entry)),
   bundle: true,
   platform: "node",
@@ -93,6 +104,19 @@ await build({
   plugins: [yamlEsmPlugin],
   external: ["@huggingface/transformers"],
 });
+
+for (const { reader, file, mode } of RUNTIME_SIBLINGS) {
+  const readerPath = relative(process.cwd(), join(server, reader)).split("\\").join("/");
+  const source = join(server, file);
+  const outputs = Object.entries(main.metafile.outputs).filter(([out, meta]) => out.endsWith(".js") && meta.inputs[readerPath]);
+  if (!outputs.length) throw new Error(`bundle-server: no bundle inlines ${readerPath}; update RUNTIME_SIBLINGS`);
+  for (const [out] of outputs) {
+    const target = join(process.cwd(), dirname(out), file.split("/").at(-1));
+    copyFileSync(source, target);
+    chmodSync(target, mode);
+    if (!existsSync(target) || (process.platform !== "win32" && (statSync(target).mode & 0o777) !== mode)) throw new Error(`bundle-server: ${target} was not written with mode ${mode.toString(8)}`);
+  }
+}
 
 // The WhatsApp bridge runs as its own forked process and imports Baileys, which is an ESM package
 // ("type":"module") with a wasm dependency and must not be inlined. It gets its own ESM build with `baileys`

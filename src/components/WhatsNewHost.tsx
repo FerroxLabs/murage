@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 //
 // Where each What's new shortcut goes. Mounted by Sidebar.tsx, which owns the
-// You menu entry that reopens the page (Settings > Help & updates asks it to,
+// You menu entry that reopens the page (Settings > About & updates asks it to,
 // through lib/app-events.ts). The dialog itself, art included,
 // loads the first time the page opens, so it stays out of the first paint.
 import { Suspense } from "react";
@@ -56,9 +56,9 @@ export function runWhatsNewAction(action: WhatsNewAction, dispatch: (action: Act
       dispatch({ type: "toggleAppSettings", open: true, section: "models" });
       return true;
     // 1.0.2. Settings > Bot defaults, at the switch for who answers in channels.
+    // It lives under the page's Advanced, so the anchor opens that first.
     case "routing":
-      dispatch({ type: "toggleAppSettings", open: true, section: "botDefaults" });
-      whenRendered(() => document.getElementById("room-routing-label"), showSetting);
+      dispatch({ type: "toggleAppSettings", open: true, section: "botDefaults", anchor: "room-routing-label" });
       return true;
     // Settings > Engines, where each engine is set up.
     case "engines":
@@ -85,8 +85,7 @@ export function runWhatsNewAction(action: WhatsNewAction, dispatch: (action: Act
     // Settings > Bot defaults > Channel turns: the no activity limit, the one
     // clock left, which counts silence rather than working time.
     case "longwork":
-      dispatch({ type: "toggleAppSettings", open: true, section: "botDefaults" });
-      whenRendered(() => document.getElementById("room-turn-timeout"), showSetting);
+      dispatch({ type: "toggleAppSettings", open: true, section: "botDefaults", anchor: "room-turn-timeout" });
       return true;
   }
 }

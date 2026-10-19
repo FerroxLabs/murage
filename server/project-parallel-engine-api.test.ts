@@ -6,6 +6,7 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { afterAll, beforeAll, expect, it, vi } from "vitest";
 import { launchVerificationServer, type VerificationServer } from "../scripts/control-murage.ts";
+import { removeTempDirSync } from "./testing/cleanup.ts";
 let fixture: VerificationServer;
 let proof: string;
 let fixtureRoot: string;
@@ -32,7 +33,7 @@ beforeAll(async () => {
   ` });
   proof = (await (await fetch(`${fixture.info.url}/api/desktop-secret`)).json() as { secret: string }).secret;
 }, 30000);
-afterAll(async () => { await fixture?.close(); if (fixtureRoot) rmSync(fixtureRoot, { recursive: true, force: true }); vi.unstubAllEnvs(); });
+afterAll(async () => { await fixture?.close(); if (fixtureRoot) removeTempDirSync(fixtureRoot); vi.unstubAllEnvs(); });
 
 it("three card desks overlap, then each delivers once and wakes the lead", async () => {
   const instances = (await api("GET", "/api/instances")).body.instances;

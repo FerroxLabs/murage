@@ -1,4 +1,4 @@
-import { test, expect, type Page } from "@playwright/test";
+import { test, expect, type Page } from "./page-error-guard";
 import { createServer, type ViteDevServer } from "vite";
 import tailwindcss from "@tailwindcss/vite";
 import { fileURLToPath } from "node:url";
@@ -18,7 +18,7 @@ test.beforeAll(async () => {
       name: "starter-profiles-fixture",
       resolveId(id) { if (id === "/__starters.js") return "\0starter-profiles"; if (id === "/starter-fixture-store") return "\0starter-store"; },
       load(id) {
-        if (id === "\0starter-store") return "import {useSyncExternalStore} from 'react';import {asAnswer} from '/src/state/answer-tag.ts';let state={instances:[]};const listeners=new Set();export async function api(path,init){const r=await fetch(path,init);const data=await r.json();if(!r.ok)throw Object.assign(new Error(data.error),{status:r.status});return asAnswer(data);}function dispatch(action){(window.fixtureActions??=[]).push(action);if(action.type==='instances'){state={...state,instances:action.instances};listeners.forEach(fn=>fn())}}export function useStore(){return {state:useSyncExternalStore(fn=>{listeners.add(fn);return ()=>listeners.delete(fn)},()=>state),dispatch}}";
+        if (id === "\0starter-store") return "import {useSyncExternalStore} from 'react';import {asAnswer} from '/src/state/answer-tag.ts';let state={instances:[]};const listeners=new Set();export async function api(path,init){const r=await fetch(path,init);const data=await r.json();if(!r.ok)throw Object.assign(new Error(data.error),{status:r.status});return asAnswer(data);}function dispatch(action){(window.fixtureActions??=[]).push(action);if(action.type==='instances'){state={...state,instances:action.instances};listeners.forEach(fn=>fn())}}export function useStoreIfAny(){return useStore();} export function useStore(){return {state:useSyncExternalStore(fn=>{listeners.add(fn);return ()=>listeners.delete(fn)},()=>state),dispatch}}";
         if (id !== "\0starter-profiles") return;
         return "import React from 'react';import {createRoot} from 'react-dom/client';import {StarterProfiles} from '/src/components/StarterProfiles.tsx';import '/src/styles.css';document.documentElement.dataset.skin=new URLSearchParams(location.search).get('skin')||'dark';window.fixtureActions=[];createRoot(document.getElementById('root')).render(React.createElement(StarterProfiles));";
       },

@@ -2,7 +2,7 @@
 // T8: a wake that arrives while a tick runs is replayed when the tick ends (CLAIM-REDESIGN.md section 5).
 import { EventEmitter } from "node:events";
 import { fork } from "node:child_process";
-import { mkdirSync, rmSync } from "node:fs";
+import { mkdirSync } from "node:fs";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { DATA_DIR } from "../config.ts";
 import { closeDatabase, database } from "../database.ts";
@@ -10,6 +10,7 @@ import { captureSource } from "./capture.ts";
 import * as jobs from "./jobs.ts";
 import { setMemoryMode } from "./repository.ts";
 import { MEMORY_IDLE_SWEEP_MS, MemoryWorkerController } from "./worker-controller.ts";
+import { removeTempDirSync } from "../testing/cleanup.ts";
 
 vi.mock("node:child_process", async importOriginal => ({ ...await importOriginal<typeof import("node:child_process")>(), fork: vi.fn() }));
 vi.mock("./jobs.ts", async importOriginal => {
@@ -24,7 +25,7 @@ class Helper extends EventEmitter {
 let helper: Helper;
 let controller: MemoryWorkerController;
 beforeEach(() => {
-  closeDatabase(); rmSync(DATA_DIR, { recursive: true, force: true }); mkdirSync(DATA_DIR, { recursive: true });
+  closeDatabase(); removeTempDirSync(DATA_DIR); mkdirSync(DATA_DIR, { recursive: true });
   vi.useFakeTimers(); vi.setSystemTime(new Date("2026-10-03T00:00:00Z"));
   setMemoryMode("capture");
   helper = new Helper();

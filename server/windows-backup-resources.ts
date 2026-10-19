@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto";
 import { constants, closeSync, fstatSync, lstatSync, openSync, readSync, realpathSync, type BigIntStats } from "node:fs";
 import { win32 } from "node:path";
-import { verifyWindowsBrowserSignatures } from "./browser-windows-identity.ts";
+import { nativeAuthenticodeIn, verifyWindowsBrowserSignatures, type NativeAuthenticode } from "./browser-windows-identity.ts";
 import { InstallationSnapshotError } from "./installation-database-snapshot.ts";
 import { WINDOWS_BACKUP_RAW_SHA256 } from "../shared/windows-backup-tools.mjs";
 
@@ -53,7 +53,9 @@ export interface WindowsBackupResourceDependencies {
   lstat(path: string): BigIntStats;
   realpath(path: string): string;
   observeFile(path: string, maxBytes: number): WindowsBackupFileObservation;
-  verifySignatures(files: string[]): Promise<void>;
+  /** `native`: the app's own WinVerifyTrust check, so no PowerShell starts (murage-releases #1); null: the hidden PowerShell check. */
+  verifySignatures(files: string[], native: NativeAuthenticode | null): Promise<void>;
+  nativeAuthenticode(resourcesPath: string): NativeAuthenticode | null;
 }
 const defaults: WindowsBackupResourceDependencies = {
   platform: process.platform, arch: process.arch,
@@ -63,7 +65,8 @@ const defaults: WindowsBackupResourceDependencies = {
   // passed the "already canonical, no junction on the way" check below.
   lstat: path => lstatSync(path, { bigint: true }), realpath: realpathSync.native,
   observeFile: observeWindowsBackupFile,
-  verifySignatures: files => verifyWindowsBrowserSignatures(files, process.env.SystemRoot),
+  verifySignatures: (files, native) => verifyWindowsBrowserSignatures(files, process.env.SystemRoot, native),
+  nativeAuthenticode: nativeAuthenticodeIn,
 };
 const equalPath = (a: string, b: string) => a.toLowerCase() === b.toLowerCase();
 function canonicalDosPath(path: string) {
@@ -133,7 +136,7 @@ export function createWindowsBackupResourceResolver(
       // Signature verifier is generic; its separate browser PE normalizer is not used.
       // Raw upstream age/keygen bytes must remain untouched by Windows signing.
       step = "signatures";
-      await io.verifySignatures([app, executable]);
+      await io.verifySignatures([app, executable], io.nativeAuthenticode(resources));
       step = "files-changed";
       for (const observed of opened) observed.assertUnchanged();
       step = "folders-changed";

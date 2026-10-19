@@ -421,6 +421,7 @@ export async function answerCallQuestion(
     await ensureDesktopSurfaceSecret();
     const res = await (fetchImpl ?? fetch)(`/api/threads/${threadId}/respond`, {
       method: "POST",
+      redirect: "error",
       headers: callRouteHeaders(),
       body: JSON.stringify({ requestId, behavior: "answer", message: said }),
     });

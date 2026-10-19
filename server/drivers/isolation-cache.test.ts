@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // Per-turn isolation setup is cached on its inputs: 50 turns with nothing changed rebuild nothing,
 // and an owner-file change (or a CLI update) rebuilds exactly once.
-import { chmodSync, mkdirSync, mkdtempSync, rmSync, utimesSync, writeFileSync } from "node:fs";
+import { chmodSync, mkdirSync, mkdtempSync, utimesSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
@@ -15,11 +15,12 @@ import { codexIsolationArgs, codexPersonalSkillFiles } from "./codex-isolation.t
 import { codexConfigMcpServerNames } from "./codex-mcp-names.ts";
 import { cliSig, isolationStats, knownCliVersion, rememberCliVersion, noteVersionProbe, resetIsolationCache, VERSION_PROBE_BACKOFF_MAX_MS, VERSION_PROBE_BACKOFF_MIN_MS, versionProbeAllowed } from "./isolation-cache.ts";
 import { piIsolationArgs } from "./pi.ts";
+import { removeTempDirSync } from "../testing/cleanup.ts";
 
 const dirs: string[] = [];
 const tmp = (prefix: string) => { const d = mkdtempSync(join(tmpdir(), prefix)); dirs.push(d); return d; };
 beforeEach(() => { ensureDirs(); resetIsolationCache(); });
-afterEach(() => { for (const d of dirs.splice(0)) rmSync(d, { recursive: true, force: true }); });
+afterEach(() => { for (const d of dirs.splice(0)) removeTempDirSync(d); });
 /** Make a rewrite visible to an mtime check even inside one filesystem-timestamp tick. */
 const bump = (path: string) => { const t = new Date(Date.now() + 5000 + Math.floor(Math.random() * 1000)); utimesSync(path, t, t); };
 const turns = (n: number, fn: () => void) => { for (let i = 0; i < n; i++) fn(); };

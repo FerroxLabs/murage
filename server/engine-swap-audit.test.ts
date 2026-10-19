@@ -1,4 +1,4 @@
-import { readFileSync, rmSync } from "node:fs";
+import { readFileSync } from "node:fs";
 import { beforeEach, describe, expect, it } from "vitest";
 import { DATA_DIR } from "./config.ts";
 import { closeDatabase, database } from "./database.ts";
@@ -12,6 +12,7 @@ import { replayWindow } from "./memory/disclosures.ts";
 import { captureSource, wholeTurnText } from "./memory/capture.ts";
 import { claimExcerpts } from "../shared/chat-engine-notes.ts";
 import { released } from "./testing/released.ts";
+import { removeTempDirSync } from "./testing/cleanup.ts";
 
 const row = (id: string, extra: Partial<Message> = {}): Message => ({ id, at: 1, role: "bot", kind: "text", turnId: "t", ...extra });
 const check = (text: string, rows: Message[]) => { const reply = row("reply", { text }); return checkReplyActions({ reply, path: [...rows, reply] }); };
@@ -84,7 +85,7 @@ it("F12 keeps coordinated first-person actions distinct from reported speech", (
 });
 
 describe("durable queue and capture", () => {
-  beforeEach(() => { closeDatabase(); rmSync(DATA_DIR, { recursive: true, force: true }); });
+  beforeEach(() => { closeDatabase(); removeTempDirSync(DATA_DIR); });
   const make = () => { const store = new Store(() => ({ instanceId: "a", model: "one" })); return { store, bot: store.createBot({}, { seedMessages: false }) }; };
   it("F1 classifies mirrored teammate questions separately from delegation results", () => {
     const { store, bot } = make();

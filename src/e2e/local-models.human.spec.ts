@@ -15,7 +15,7 @@
 // something true to mark. The live proof against SeanBeast's real llama.cpp is
 // docs/plans/0152-LOCAL-MODELS-PROOF.md; this spec is what keeps the screens
 // honest after that machine is switched off.
-import { test, expect, type Page } from "@playwright/test";
+import { test, expect, type Page } from "./page-error-guard";
 import { createServer, type ViteDevServer } from "vite";
 import react from "@vitejs/plugin-react";
 import tailwindcss from "@tailwindcss/vite";
@@ -146,7 +146,7 @@ const focusedText = (page: Page) => page.evaluate(() => { const el = document.ac
 /** Open Settings on a section the way a person does: the modal first, then
  *  its own navigation. Models and Engines are desktop-only, so they are not
  *  there to jump to until the surface has been confirmed — the nav is. */
-async function openSettings(page: Page, section: "Models" | "Engines") {
+async function openSettings(page: Page, section: "Models & engines") {
   await page.getByRole("button", { name: "Open settings", exact: true }).click();
   const dialog = page.getByRole("dialog", { name: "Settings", exact: true }); await expect(dialog).toBeVisible();
   const entry = dialog.getByRole("navigation").getByRole("button", { name: section, exact: true });
@@ -155,10 +155,19 @@ async function openSettings(page: Page, section: "Models" | "Engines") {
   return dialog;
 }
 
+/** Local models lives under Models & engines → Advanced (1.0.3 Settings layout): open that part first. */
+async function openAdvanced(dialog: ReturnType<Page["getByRole"]>) {
+  const toggle = dialog.getByRole("button", { name: /^Advanced · / });
+  if ((await toggle.getAttribute("aria-expanded")) !== "true") await toggle.click();
+  await expect(toggle).toHaveAttribute("aria-expanded", "true");
+}
+
 async function removeEveryServer(page: Page) {
   const dialog = page.getByRole("dialog", { name: "Settings", exact: true });
   const section = dialog.locator("#local-models");
   for (;;) {
+    // The section mounts when Advanced opens and loads its servers after that: wait for it to settle before counting.
+    await expect(section.getByRole("button", { name: /^Remove / }).first().or(section.getByText("No model server is running on this computer.", { exact: true }))).toBeVisible();
     const remove = section.getByRole("button", { name: /^Remove / }).first();
     if (!(await remove.count())) break;
     await remove.click();
@@ -169,7 +178,8 @@ async function removeEveryServer(page: Page) {
 
 for (const skin of skins) for (const width of widths) test(`Local models: found nothing → add by keyboard → test → use, at ${width}px ${skin}`, async ({ page }, testInfo) => {
   await open(page, skin, width);
-  const dialog = await openSettings(page, "Models");
+  const dialog = await openSettings(page, "Models & engines");
+  await openAdvanced(dialog);
   const section = dialog.locator("#local-models");
   await expect(section.getByRole("heading", { name: "Local models", exact: true })).toBeVisible();
 
@@ -229,9 +239,8 @@ for (const skin of skins) for (const width of widths) test(`Local models: found 
   await page.keyboard.press("Enter");
   await expect(card.getByText("This model answers but can't use tools (it came back as text)", { exact: true })).toBeVisible();
   await expect(card.getByRole("button", { name: "Try another model", exact: true })).toBeVisible();
-  // the disclosure, opened by keyboard, holds the diagnostics — not the card
-  const summary = card.locator("summary", { hasText: "What the test checked" }).first();
-  await summary.focus(); await page.keyboard.press("Enter");
+  // 1.0.3: no folds on the page, so the diagnostics sit under their own "What the test checked" line on the card
+  await expect(card.getByText("What the test checked", { exact: true }).first()).toBeVisible();
   await expect(card.getByText("Calls a tool when it should: Pass, passed", { exact: true })).toBeVisible();
   await expect(card.getByText("Handles a full tool set: Pass, passed", { exact: true })).toBeVisible();
   await expect(card.getByText(/^Proven: chat tools, Codex \(responses\), Claude \(messages\)$/)).toBeVisible();
@@ -256,7 +265,7 @@ for (const skin of skins) for (const width of widths) test(`Picker: the Local ra
   // once the surface has been confirmed; that is one round trip after load.
   // Wait for it the way the app itself would show it: the Models entry exists.
   {
-    const dialog = await openSettings(page, "Models");
+    const dialog = await openSettings(page, "Models & engines");
     await dialog.getByRole("button", { name: "Close settings", exact: true }).click();
     await expect(dialog).toHaveCount(0);
   }
@@ -272,7 +281,10 @@ for (const skin of skins) for (const width of widths) test(`Picker: the Local ra
   await shoot(page, picker, testInfo.outputPath(`picker-1-no-local-server-${width}-${skin}.png`));
   await emptyRow.focus(); await page.keyboard.press("Enter");
   const dialog = page.getByRole("dialog", { name: "Settings", exact: true }); await expect(dialog).toBeVisible();
+  // The door opens Models & engines → Advanced itself and lands on the section, visible and in view.
+  await expect(dialog.getByRole("button", { name: /^Advanced · / })).toHaveAttribute("aria-expanded", "true");
   await expect(dialog.locator("#local-models").getByRole("heading", { name: "Local models", exact: true })).toBeVisible();
+  await expect(dialog.locator("#local-models")).toBeInViewport();
   await expect.poll(() => focusedText(page)).toBe("Add a server");
 
   // Add the fake server through the same route the form uses, test both
@@ -318,7 +330,7 @@ for (const skin of skins) for (const width of widths) test(`Picker: the Local ra
   // Take the server away with the pick still on it: the chip must say the
   // model and the fact, not a raw `srv_…::` id — the removal copy promised
   // the bot "will need another model", and this is how it says so.
-  await openSettings(page, "Models");
+  await openAdvanced(await openSettings(page, "Models & engines"));
   await removeEveryServer(page);
   await page.getByRole("dialog", { name: "Settings", exact: true }).getByRole("button", { name: "Close settings", exact: true }).click();
   await trigger.click();
@@ -340,13 +352,16 @@ for (const skin of skins) for (const width of widths) test(`Picker: the Local ra
 
 for (const skin of skins) test(`Engines: each engine says where it stands on local models, at 1440px ${skin}`, async ({ page }, testInfo) => {
   await open(page, skin, 1440);
-  const dialog = await openSettings(page, "Engines");
+  const dialog = await openSettings(page, "Models & engines");
   // V4 — the fixture's engine is a Claude-driver instance, a tools engine.
   const line = dialog.getByText("Works with local models. Manage them under Models → Local models", { exact: false }).first();
   await expect(line).toBeVisible();
   await shoot(page, dialog, testInfo.outputPath(`engines-local-line-1440-${skin}.png`));
   // and the link on it is the same door the picker's empty row uses
   await line.getByRole("button", { name: "Open Local models", exact: true }).click();
+  // The door opens Models & engines → Advanced itself and lands on the section, visible and in view.
+  await expect(dialog.getByRole("button", { name: /^Advanced · / })).toHaveAttribute("aria-expanded", "true");
   await expect(dialog.locator("#local-models").getByRole("heading", { name: "Local models", exact: true })).toBeVisible();
+  await expect(dialog.locator("#local-models")).toBeInViewport();
   await expect.poll(() => focusedText(page)).toBe("Add a server");
 });

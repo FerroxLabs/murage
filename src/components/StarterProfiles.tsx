@@ -57,7 +57,7 @@ export function StarterProfiles({ initialProfileId, modelSelection, onFirstTask 
         ...(initialProfileId ? { firstRun: true } : {}),
       }) }) as { bots: Bot[]; groups?: Group[]; routines?: Routine[] };
       for (const bot of result.bots) dispatch({ type: "botAdded", ...fromAnswer(bot), bot });
-      for (const group of result.groups ?? []) dispatch({ type: "groupPatched", group });
+      for (const group of result.groups ?? []) dispatch({ type: "groupPatched", origin: fromAnswer(group), group });
       for (const routine of result.routines ?? []) dispatch({ type: "routinePatched", routine });
       setImported({ profileId: selected.id, bots: result.bots, groups: result.groups ?? [], routines: result.routines ?? [] });
       setPreview(null);

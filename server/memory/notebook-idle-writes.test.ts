@@ -9,10 +9,11 @@ import { ensureWorkspace } from "../workspace.ts";
 import { ownerMemoryTicket } from "./authority.ts";
 import { reconcileMemoryRoster } from "./policy.ts";
 import { commitMemoryImport, memoryNotebookLinks, previewMemoryImport, stopTrackingMemoryNotebook, syncTrackedMemoryImports } from "./import.ts";
+import { removeTempDirSync } from "../testing/cleanup.ts";
 
 const roster={bots:[{id:"a",threadId:"thread-a"}],groups:[]};
 beforeEach(()=>{
-  closeDatabase();rmSync(DATA_DIR,{recursive:true,force:true});mkdirSync(DATA_DIR,{recursive:true});
+  closeDatabase();removeTempDirSync(DATA_DIR);mkdirSync(DATA_DIR,{recursive:true});
   vi.useFakeTimers();vi.setSystemTime(new Date("2026-10-03T00:00:00Z"));
   reconcileMemoryRoster(roster);database().exec("UPDATE memory_meta SET mode='active'");
 });

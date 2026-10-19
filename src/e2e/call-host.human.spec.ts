@@ -2,7 +2,7 @@
 // dictation helper and the store faked, and the REAL speaker and voice-host
 // client. The harness routes are page routes, so nothing here touches a
 // server, a key or a data directory.
-import { test, expect, type Page, type Route } from "@playwright/test";
+import { test, expect, type Page, type Route } from "./page-error-guard";
 import { createServer, type ViteDevServer } from "vite";
 import tailwindcss from "@tailwindcss/vite";
 import { fileURLToPath } from "node:url";
@@ -69,7 +69,7 @@ const dispatch = (a) => {
   // drives directly.
   if (a.type === "select") window.__select?.(a.id);
 };
-export const useStore = () => ({ state: { config: window.__config }, dispatch });
+export function useStoreIfAny(){return useStore();} export const useStore = () => ({ state: { config: window.__config }, dispatch });
 export const api = async () => ({});
 export const useFixtureBot = () => useSyncExternalStore(subscribe, () => window.__bot);
 `;
@@ -1863,7 +1863,7 @@ window.__select = (id) => dispatch({ type: "select", id });
 export const viewedTaskBot = (bot) => bot;
 export const visibleMessages = (bot) => bot.messages;
 export const olderOpenCards = (owner, visible) => visible;
-export const useStore = () => ({ state: useSyncExternalStore(subscribe, getSnapshot, getSnapshot), dispatch });
+export function useStoreIfAny(){return useStore();} export const useStore = () => ({ state: useSyncExternalStore(subscribe, getSnapshot, getSnapshot), dispatch });
 export const api = async () => ({});
 `;
           if (id !== "\0wiring-entry") return;
@@ -2082,7 +2082,7 @@ const dispatch = (a) => {
   if (a.type === "sendGroup" && window.__refuseSends) setTimeout(() => a.onError?.(new Error(window.__refuseSends)), 20);
   else if (a.type === "sendGroup") setTimeout(() => a.onReceipt?.({ sendId: a.sendId, queued: Boolean(window.__queueSends), requestId: "req-" + a.sendId }), 20);
 };
-export const useStore = () => ({ state: { config: window.__config }, dispatch });
+export function useStoreIfAny(){return useStore();} export const useStore = () => ({ state: { config: window.__config }, dispatch });
 export const useStreaming = () => ({ streaming: useSyncExternalStore(subscribe, () => window.__streaming) });
 export const api = async () => ({});
 export const visibleMessages = (bot) => bot.messages;

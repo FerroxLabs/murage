@@ -3,7 +3,7 @@
 // These pin the policy half of team incidents: who hears about a broken run,
 // how often, and what the report says. The harness half (creating the
 // incidents thread, starting the Chief's turn) is in server/index.ts.
-import { readFileSync, rmSync } from "node:fs";
+import { readFileSync } from "node:fs";
 import { beforeEach, describe, expect, it } from "vitest";
 
 import { DATA_DIR } from "./config.ts";
@@ -27,6 +27,7 @@ import {
   type TeamIncident,
   type TeamIncidentBot,
 } from "./team-incidents.ts";
+import { removeTempDirSync } from "./testing/cleanup.ts";
 
 const bot = (id: string, extra: Partial<TeamIncidentBot> = {}): TeamIncidentBot => ({ id, name: id, ...extra });
 
@@ -77,7 +78,7 @@ describe("who hears about a broken run", () => {
     let store: Store;
 
     beforeEach(() => {
-      rmSync(DATA_DIR, { recursive: true, force: true });
+      removeTempDirSync(DATA_DIR);
       store = new Store(selection);
     });
 

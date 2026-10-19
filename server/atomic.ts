@@ -6,6 +6,7 @@
 // that fails to parse on next boot and is silently treated as empty state.
 import { randomUUID } from "node:crypto";
 import { chmodSync, closeSync, fsyncSync, lstatSync, openSync, renameSync, unlinkSync, writeFileSync } from "node:fs";
+import { registerTestHandle } from "./test-handle-registry.ts";
 
 // Windows refuses a rename onto an existing path while anything else holds a
 // handle to either file, and a virus scanner or the search indexer opening a
@@ -211,6 +212,9 @@ export function flushCoalesced(key?: string): void {
   }
   if (failed) throw failure;
 }
+
+// Under vitest only: lets test cleanup flush this copy's deferred writes even after vi.resetModules() made it a stranger.
+registerTestHandle("flush", () => { try { flushCoalesced(); } catch { /* a test that removed its own data dir has nothing left to write */ } });
 
 /** writeFileAtomic, deferred and coalesced per path. `produce` runs at flush
  * time, so the bytes always reflect the newest state and are built once. */

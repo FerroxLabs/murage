@@ -368,6 +368,7 @@ export async function postClip(
       : "";
     response = await fetch(`/api/voice/transcribe${query}`, {
       method: "POST",
+      redirect: "error",
       headers: { "content-type": clip.type || "application/octet-stream", ...desktopCallerHeaders() },
       body: clip,
       signal: controller.signal,

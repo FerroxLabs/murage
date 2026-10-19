@@ -1,4 +1,5 @@
 import { lstatSync } from "node:fs";
+import { createHash } from "node:crypto";
 import { chmod, lstat, open, readFile, readdir, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { execFileSync } from "node:child_process";
@@ -10,6 +11,7 @@ import {
   executableTarget,
   verifyCloudflaredExecutable,
 } from "./prepare-cloudflared.mjs";
+import { validatePackagedMemoryModel } from "./stage-memory-model.mjs";
 import { FUIGO_EXECUTABLE_NAMES, HARNESS_RESOURCE_DIRECTORIES } from "../electron/harness-resources.mjs";
 import { FUIGO_VERSION, verifyFuigoExecutable } from "./prepare-fuigo.mjs";
 import { validateFuigoProbeResources, stampSignedFuigoProbe } from "./fuigo-probe-resources.mjs";
@@ -234,9 +236,41 @@ async function checkPackagedSharp(server, manifest, platform, arch) {
   return { package: "sharp", version: pkg.version, files };
 }
 
+/** The ONNX Runtime WebAssembly files the memory worker loads (server/memory/embedding-runtime.ts), exactly as
+ * scripts/stage-memory-runtime.mjs recorded them: regular files, the recorded size and SHA-256, inside the server
+ * resources, from the onnxruntime-web release that matches the native one, and the onnxruntime-common they import
+ * present at the recorded place and version. Server resources ship outside the ASAR archive (Resources/server), so
+ * these are plain files on disk that ONNX Runtime reads directly. */
+export const MEMORY_WASM_FILES = Object.freeze(["memory/ort-wasm/ort.node.min.mjs", "memory/ort-wasm/ort-wasm-simd-threaded.mjs", "memory/ort-wasm/ort-wasm-simd-threaded.wasm"]);
+export async function validatePackagedWasmBackend(server, manifest) {
+  const backend = manifest.wasmBackend;
+  if (!backend || backend.package !== "onnxruntime-web" || !Array.isArray(backend.files)) throw new Error("Packaged memory runtime manifest has no WebAssembly backend");
+  const native = manifest.packages?.find(entry => entry.name === "onnxruntime-node");
+  if (backend.version !== native?.version) throw new Error(`Packaged WebAssembly backend ${backend.version} differs from the native ONNX Runtime ${native?.version}`);
+  const inside = (relativePath) => {
+    if (typeof relativePath !== "string" || path.isAbsolute(relativePath)) throw new Error("Invalid packaged WebAssembly backend path");
+    const resolved = path.resolve(server, relativePath), relative = path.relative(server, resolved);
+    if (relative === ".." || relative.startsWith(`..${path.sep}`) || path.isAbsolute(relative)) throw new Error("Packaged WebAssembly backend path escapes server resources");
+    return resolved;
+  };
+  for (const required of MEMORY_WASM_FILES) if (!backend.files.some(file => file.path === required)) throw new Error(`Packaged WebAssembly backend is missing ${required}`);
+  for (const file of backend.files) {
+    const resolved = inside(file.path);
+    try { await requireRegularFile(resolved); }
+    catch (error) { if (error?.code === "ENOENT") throw new Error(`Packaged WebAssembly backend is missing ${file.path}`); throw error; }
+    const bytes = await readFile(resolved);
+    if (bytes.length !== file.bytes || createHash("sha256").update(bytes).digest("hex") !== file.sha256) throw new Error(`Packaged WebAssembly backend file differs from its staging record: ${file.path}`);
+  }
+  const commonRoot = inside(backend.common?.path);
+  const common = JSON.parse(await readFile(path.join(commonRoot, "package.json"), "utf8"));
+  if (common.name !== "onnxruntime-common" || common.version !== backend.common.version) throw new Error("Packaged WebAssembly backend cannot resolve its recorded onnxruntime-common");
+  return backend;
+}
+
 /** Target identity is established from packaged bytes, never the staging host.
- * Intel absence is explicit metadata only; this does not implement a fallback or
- * approve publishing an artifact without that native capability.
+ * Intel macOS has no native binding in the pinned onnxruntime-node; there the
+ * native files are recorded as missing and the WebAssembly executor, required on
+ * every target, is what runs the model.
  */
 export async function validatePackagedMemoryRuntime(resources, platform, archValue, required = true) {
   const server = path.join(resources, "server");
@@ -279,11 +313,13 @@ export async function validatePackagedMemoryRuntime(resources, platform, archVal
   }
   const nativeBackendAvailable = missingFiles.length === 0;
   if (!nativeBackendAvailable && !MEMORY_NATIVE_OPTIONAL_TARGETS.has(target)) throw new Error(`Packaged memory native runtime is missing for ${target}: ${missingFiles.join(", ")}`);
+  // Every target ships the WebAssembly executor: it is the only one on Intel macOS and the fallback everywhere else.
+  const wasmBackend = await validatePackagedWasmBackend(server, manifest);
   const stagingHost = manifest.stagingHost ?? { platform: manifest.platform, arch: manifest.arch };
   if (typeof stagingHost.platform !== "string" || typeof stagingHost.arch !== "string") throw new Error("Packaged memory staging identity is missing");
   const thumbnailBackend = await validatePackagedThumbnailRuntime(server, manifest, platform, arch, !MEMORY_NATIVE_OPTIONAL_TARGETS.has(target));
   const verified = { ...manifest, platform, arch, stagingHost, nativeBackendAvailable,
-    nativeBackend: { package: pkg.name, version: pkg.version, files, missingFiles }, thumbnailBackend };
+    nativeBackend: { package: pkg.name, version: pkg.version, files, missingFiles }, wasmBackendAvailable: true, wasmBackend, thumbnailBackend };
   await writeFile(manifestFile, JSON.stringify(verified, null, 2) + "\n");
   return verified;
 }
@@ -314,12 +350,18 @@ export default async function afterPack(context) {
     const exclusionFile = validateEngineExclusionResource(resources, context.electronPlatformName, exclusionArch);
     await requireRegularFile(exclusionFile, context.electronPlatformName === "win32" ? undefined : 0o755);
     // Loads it for real with the TARGET package's own Electron binary (run as Node); a package this machine cannot run is refused.
-    console.log(`engine-exclusion addon: ${loadEngineExclusionResource(exclusionFile, context.electronPlatformName, exclusionArch, ENGINE_EXCLUSION_ADDON_VERSION, (command, args, env) => execFileSync(command, args, { timeout: 30000, env: { ...process.env, ...env } }), packagedElectronBinary(context))}`);
+    console.log(`engine-exclusion addon: ${loadEngineExclusionResource(exclusionFile, context.electronPlatformName, exclusionArch, ENGINE_EXCLUSION_ADDON_VERSION, (command, args, env) => execFileSync(command, args, { timeout: 240000, env: { ...process.env, ...env } }), packagedElectronBinary(context))}`);
   }
   await validateCloudflared(resources, context.electronPlatformName, Boolean(context.packager));
   await validateFuigo(resources, context.electronPlatformName, Boolean(context.packager));
   const fuigoProbe = await validateFuigoProbeResources(resources, context.electronPlatformName, Boolean(context.packager));
   await validatePackagedMemoryRuntime(resources, context.electronPlatformName, context.arch, Boolean(context.packager));
+  // The bundled local model: exact manifest bytes on every target, Intel macOS included. A release build must carry it.
+  if (context.packager) {
+    const modelArch = typeof context.arch === "string" ? context.arch : ({ 1: "x64", 3: "arm64" })[context.arch];
+    const modelManifest = JSON.parse(await readFile(path.join(resources, "server", "memory-model-manifest.json"), "utf8"));
+    console.log("memory model:", JSON.stringify(await validatePackagedMemoryModel(resources, context.electronPlatformName, modelArch, modelManifest, process.env.MURAGE_REQUIRE_BUNDLED_MODEL === "1")));
+  }
   // Resource copying only warns about missing sources. Validate the exact target
   // and complete pinned inventory before signing can change executable bytes.
   if (context.packager) {

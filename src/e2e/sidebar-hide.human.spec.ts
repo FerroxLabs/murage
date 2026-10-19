@@ -1,4 +1,4 @@
-import { test, expect } from "@playwright/test";
+import { test, expect } from "./page-error-guard";
 import { createServer, type ViteDevServer } from "vite";
 import tailwindcss from "@tailwindcss/vite";
 import { fileURLToPath } from "node:url";
@@ -13,7 +13,7 @@ test.beforeAll(async()=>{
   const root=fileURLToPath(new URL('../../',import.meta.url));cache=mkdtempSync(join(tmpdir(),'murage-sidebar-hide-'));
   server=await createServer({configFile:false,root,cacheDir:cache,envFile:false,resolve:{alias:{'@':`${root}/src`}},server:{host:'127.0.0.1',watch:null,hmr:false},plugins:[tailwindcss(),{
     name:'sidebar-hide-fixture',enforce:'pre',resolveId(id){if(id.endsWith('/src/state/store')||id==='@/state/store')return '\0fixture-store';if(id==='/__hide.js')return '\0fixture-hide';},
-    load(id){if(id==='\0fixture-store')return `export * from '/src/state/store.tsx?original';import {useSyncExternalStore} from 'react';export function useStore(){return useSyncExternalStore(window.subscribeFixture,()=>window.fixtureStore);}export function useStoreActions(){return window.fixtureStore;}`;
+    load(id){if(id==='\0fixture-store')return `export * from '/src/state/store.tsx?original';import {useSyncExternalStore} from 'react';export function useStoreIfAny(){return useStore();} export function useStore(){return useSyncExternalStore(window.subscribeFixture,()=>window.fixtureStore);}export function useStoreActions(){return window.fixtureStore;}`;
       if(id!=='\0fixture-hide')return;return `import React from 'react';import {createRoot} from 'react-dom/client';import {initialState} from '/src/state/store.tsx?original';import {Sidebar} from '/src/components/Sidebar.tsx';import '/src/styles.css';
         const listeners=new Set();window.subscribeFixture=fn=>{listeners.add(fn);return()=>listeners.delete(fn);};
         window.fixtureBot={id:'chief',name:'Fixture Chief',chiefOfStaff:true,chiefScope:'workspace',color:'blue',threadId:'thread-chief',tasks:[],messages:[],modelSelection:{instanceId:'fixture',model:'test'},description:'',autoApprove:false};

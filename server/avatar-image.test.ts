@@ -244,3 +244,10 @@ describe("the mime is read off the bytes", () => {
     await expect(generate("sk-image", fetchMock, null)).rejects.toThrow("cannot store");
   });
 });
+
+it("B1b HIGH cancellation after Flux denial prevents OpenAI fallback",async()=>{
+ const controller=new AbortController();
+ const fetcher=vi.fn<typeof fetch>(async()=>{controller.abort();return new Response(JSON.stringify({error:{message:"fixture capability denial"}}),{status:402});});
+ await expect(generateAvatarImage("FAKE_OPENAI",BOT,"fixture",fetcher,1000,"FAKE_FLUX",{signal:controller.signal})).rejects.toMatchObject({status:403});
+ expect(fetcher).toHaveBeenCalledTimes(1);
+});

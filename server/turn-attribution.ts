@@ -24,6 +24,8 @@ export interface Attempt {
 export interface TurnAttributionDeps {
   /** Writes `dispatchedIn = turnId` on one row (persisted, announced). Only `role:"user"` rows are stamped; the callee checks. */
   stamp(threadId: string, messageId: string, turnId: string): void;
+  /** Withdraws a stamp this attempt made (only when the row still names `turnId`): the write it was released to never happened. */
+  unstamp?(threadId: string, messageId: string, turnId: string): void;
   /** Most entries kept at once; the oldest goes first. A dispatch that never reaches a terminal outcome cannot grow it forever. */
   limit?: number;
 }
@@ -59,6 +61,21 @@ export function createTurnAttribution(deps: TurnAttributionDeps) {
       attempt.fencePassed = true;
       settle(attempt);
     },
+    /** The write the fence released did not happen (a pre-write failure: the process never started, the connection failed before any
+     * answer, the MCP wait failed, a later fence refused): I14 means "released to the engine's write", so a stamp made on the strength
+     * of that fence is withdrawn and the attempt waits for a fence that precedes a real write. A relaunch passes the fence again. */
+    notWritten(attemptId: string): void {
+      const attempt = attempts.get(attemptId);
+      if (!attempt) return;
+      attempt.fencePassed = false;
+      if (!attempt.stamped) return;
+      attempt.stamped = false;
+      if (attempt.turnId === undefined) return;
+      for (const id of attempt.rows) {
+        if (id.startsWith("card-")) continue;
+        try { deps.unstamp?.(attempt.threadId, id, attempt.turnId); } catch (error) { console.error(`turn attribution: could not unstamp ${id}`, error); }
+      }
+    },
     /** Acceptance named the provider turn. */
     accepted(attemptId: string, turnId: string): void {
       const attempt = attempts.get(attemptId);
@@ -72,6 +89,11 @@ export function createTurnAttribution(deps: TurnAttributionDeps) {
     completed(turnId: string): void {
       for (const [id, attempt] of attempts) if (attempt.turnId === turnId) attempts.delete(id);
     },
+    /** Wires one attempt to the server's submission boundary: its passed fence releases the prompt, a pre-write failure takes it back. */
+    bind(attemptId: string, boundary: { onPassed(listener: () => void): void; onNotWritten(listener: () => void): void }): void {
+      boundary.onPassed(() => this.fencePassed(attemptId));
+      boundary.onNotWritten(() => this.notWritten(attemptId));
+    },
     /** The running attempt's entry, held by reference: a steer captures it before its awaited write, so the turn ending meanwhile
      * (the entry leaves the map) or a newer attempt starting cannot change which turn the steer is attributed to. */
     attempt(attemptId: string | undefined): Attempt | undefined {
@@ -82,7 +104,28 @@ export function createTurnAttribution(deps: TurnAttributionDeps) {
       attempt.rows.push(messageId);
       if (attempt.stamped) stampAll(attempt, [messageId]);
     },
+    /** The engine confirmed a steer it had left uncertain (`steer.confirmed`, or a late "delivered"): the turn it went into when that
+     * is known (the caller stamps it with the confirmation), else the row joins the attempt and is stamped when acceptance names it. */
+    confirmed(attempt: Attempt | undefined, messageId: string | undefined): string | undefined {
+      if (!attempt || !messageId) return undefined;
+      if (attempt.turnId !== undefined) return attempt.turnId;
+      attempt.rows.push(messageId);
+      return undefined;
+    },
     size(): number { return attempts.size; },
   };
 }
 export type TurnAttribution = ReturnType<typeof createTurnAttribution>;
+
+/** Which attempt a steer's words reach. The steer waits for the engine to be ready (up to its bound) before its write, and the turn
+ * can end, or the next one begin, in that wait; the receiving attempt is therefore taken at the write's fence (the call right
+ * before the write, no await between) and held by reference, never read again after the awaited acknowledgement. */
+export function createSteerReceiver(lookup: () => Attempt | undefined) {
+  let held: Attempt | undefined;
+  return {
+    /** Run by the steer's submission fence once every check passed. */
+    atFence(): void { held = lookup(); },
+    /** The attempt the fence found; undefined when the write never passed its fence (nothing reached the engine). */
+    attempt(): Attempt | undefined { return held; },
+  };
+}

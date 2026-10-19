@@ -12,6 +12,7 @@ import { closeDatabase } from "../database.ts";
 import { MemoryIndex, walBytes, type IndexedMemory } from "./index.ts";
 import { closeMemoryIndexReader, lexicalPageSliced, resetScanAdmission, setWalCheckpointRequester, setWalDrainThreshold } from "./index-reader.ts";
 import { MemoryWorkerController } from "./worker-controller.ts";
+import { removeTempDirSync } from "../testing/cleanup.ts";
 
 const INDEX_PATH = () => join(DATA_DIR, "memory-index.db");
 const QUERY = "harbour lantern";
@@ -28,7 +29,7 @@ function world(rows = ids) {
   index.upsert(rows.map(entry));
   return index;
 }
-beforeEach(() => { resetScanAdmission(); closeMemoryIndexReader(); closeDatabase(); rmSync(DATA_DIR, { recursive: true, force: true }); mkdirSync(DATA_DIR, { recursive: true }); });
+beforeEach(() => { resetScanAdmission(); closeMemoryIndexReader(); closeDatabase(); removeTempDirSync(DATA_DIR); mkdirSync(DATA_DIR, { recursive: true }); });
 afterEach(() => { resetScanAdmission(); closeMemoryIndexReader(); setWalCheckpointRequester(null); setWalDrainThreshold(64 * 1024 * 1024); });
 
 describe("P2: overlapping scans run side by side while the log is small", () => {

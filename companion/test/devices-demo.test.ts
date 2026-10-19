@@ -17,6 +17,7 @@ import {
   MAX_PAIRING_ATTEMPTS,
   demoCodeProblem,
 } from "../src/devices.ts";
+import { removeTempDirSync } from "../../server/testing/cleanup.ts";
 
 const CODE = "483920";
 
@@ -47,7 +48,7 @@ const redeem = (r: DeviceRegistry, code: string, ip = "10.0.0.1", name = "Review
 
 describe("demo pairing", () => {
   beforeEach(() => {
-    rmSync(DATA_DIR, { recursive: true, force: true });
+    removeTempDirSync(DATA_DIR);
   });
   afterEach(() => {
     vi.unstubAllEnvs();

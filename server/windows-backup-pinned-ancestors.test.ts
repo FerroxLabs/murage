@@ -15,11 +15,12 @@
 import { randomUUID } from "node:crypto";
 import fs from "node:fs";
 import { syncBuiltinESMExports } from "node:module";
-import { existsSync, mkdirSync, mkdtempSync, realpathSync, renameSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, realpathSync, renameSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join, parse } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
+import { removeTempDirSync } from "./testing/cleanup.ts";
 
 const mocks = vi.hoisted(() => ({ transport: vi.fn(), resources: vi.fn(), verify: vi.fn(), pinned: new Set<string>(), linkCalls: [] as string[] }));
 // electron/*.mjs is loaded outside vitest's module graph, so vi.mock("node:fs")
@@ -59,7 +60,7 @@ const events: string[] = [];
 const caseFoldingScratch = (() => {
   const probe = mkdtempSync(join(tmpdir(), "murage-win-casefold-"));
   try { writeFileSync(join(probe, "Probe"), ""); return existsSync(join(probe, "probe")); }
-  finally { rmSync(probe, { recursive: true, force: true }); }
+  finally { removeTempDirSync(probe); }
 })();
 const staged = it.skipIf(!caseFoldingScratch);
 
@@ -109,7 +110,7 @@ beforeEach(() => {
 });
 afterEach(() => {
   unpinNtfs(); vi.restoreAllMocks(); for (const [key, descriptor] of Object.entries(descriptors)) Object.defineProperty(process, key, descriptor);
-  for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true });
+  for (const root of roots.splice(0)) removeTempDirSync(root);
 });
 
 staged("takes the data-folder lease before the helper pins the folders above the backup folder (W-D1)", async () => {

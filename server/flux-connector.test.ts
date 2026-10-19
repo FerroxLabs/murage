@@ -6,7 +6,7 @@
 // a test rig that reads or writes the real one has already violated the thing
 // it is checking. `MURAGE_DATA_DIR` redirects the receipts and snapshots the
 // same way, so a run leaves nothing behind outside its tmpdir.
-import { chmodSync, existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, symlinkSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, statSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -20,6 +20,7 @@ import {
   opencodeConnectorPaths,
   openCodeFluxStatus,
 } from "./opencode-config.ts";
+import { removeTempDirSync } from "./testing/cleanup.ts";
 
 const KEY = "sk-flux-Aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
 const KEY_2 = "sk-flux-Bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb";
@@ -52,7 +53,7 @@ function rig(): Rig {
 }
 
 afterEach(() => {
-  while (rigs.length) rmSync(rigs.pop()!, { recursive: true, force: true });
+  while (rigs.length) removeTempDirSync(rigs.pop()!);
 });
 
 /** A believable user config: four-space indent (not the two we would emit),

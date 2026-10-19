@@ -2,7 +2,10 @@
 
 The levels are Ask, Auto, Full access and No limits. No limits (the field
 `noLimits`, on top of `fullAccess`) is Full access without the stop line: it
-does anything without asking except reading your keys and passwords. It is
+runs everything without asking, except reading your keys and passwords and
+commands Murage recognizes as able to wipe your computer
+(`server/always-ask.ts`), which ask first, at every level. Recognition is
+not complete. It is
 desktop-only, has its own one-time warning per bot
 (`acknowledgeNoLimits`, recorded as `noLimitsAcknowledgedAt`), covers the same
 turns as Full access, and a bot that had Full access before it existed stays
@@ -36,6 +39,9 @@ Trash, `rsync --delete`, `bash -c '…'`, and code deletes (`shutil.rmtree`,
 | Full access, routine, webhook, channel | Judged as Auto on an unattended turn | Card (never a grant) |
 | No limits, owner at the desktop | Auto-approved unless a key | Auto-approved |
 | No limits, routine, webhook, channel | As Full access | Card |
+
+At every level, a command Murage recognizes as able to wipe the computer
+(`server/always-ask.ts`) shows its card first, ahead of every grant and level.
 
 Full access approvals fold into one quiet line per run of steps,
 "Approved 12 steps (Full access)", which counts up and opens to list the

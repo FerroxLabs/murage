@@ -1,0 +1,31 @@
+# SPDX-License-Identifier: AGPL-3.0-or-later
+[Unit]
+Description=Murage Cloud proxy
+After=network-online.target murage-egress.service data.mount
+Wants=network-online.target
+Requires=murage-egress.service data.mount
+RequiresMountsFor=/data
+
+[Service]
+Type=simple
+User=murage-proxy
+Group=murage-proxy
+EnvironmentFile=/etc/murage-home/home.env
+Environment=HOME=/data/caddy
+Environment=XDG_DATA_HOME=/data/caddy
+Environment=XDG_CONFIG_HOME=/data/caddy
+Environment=WEBHOOK_PORT=8800
+# The public host is MURAGE_PUBLIC_ORIGIN without its scheme ($$ is a literal $ for systemd).
+ExecStart=/bin/sh -c 'MURAGE_PUBLIC_HOST="$${MURAGE_PUBLIC_ORIGIN#https://}"; export MURAGE_PUBLIC_HOST; exec /usr/local/bin/caddy run --config /etc/murage-home/Caddyfile --adapter caddyfile'
+# Caddy listens only on 127.0.0.1:8830: no capability is needed.
+AmbientCapabilities=
+CapabilityBoundingSet=
+NoNewPrivileges=yes
+Restart=always
+RestartSec=5
+KillMode=control-group
+UMask=0077
+LimitCORE=0
+
+[Install]
+WantedBy=multi-user.target

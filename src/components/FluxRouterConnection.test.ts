@@ -140,4 +140,16 @@ describe("the outbound Flux Router link", () => {
     expect(html).toContain("Loading connection…");
     expect(html).not.toContain("Check your Flux Router usage");
   });
+  it("hides the sign-in button and its copy when no sign-in handler is given, keeping paste and signup", () => {
+    const html = render();
+    expect(html).not.toContain("Sign in with Flux Router");
+    expect(html).not.toContain("Opens your browser");
+    expect(html).toContain('name="flux-router-key"');
+    expect(html).toContain(`href="${FLUX_SIGNUP_URL}"`);
+  });
+  it("shows the sign-in button when the handler is given", () => {
+    const html = render({ onSignin: async () => {} });
+    expect(html).toContain("Sign in with Flux Router");
+    expect(html).toContain('name="flux-router-key"');
+  });
 });

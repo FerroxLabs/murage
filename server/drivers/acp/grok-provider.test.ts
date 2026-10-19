@@ -1,6 +1,6 @@
 import { createServer } from "node:http";
 import { createHash, randomUUID } from "node:crypto";
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, symlinkSync, unlinkSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, statSync, symlinkSync, unlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { expect, it } from "vitest";
@@ -10,6 +10,7 @@ import { recordEvents } from "../../testing/events.ts";
 import { scopedCliHomeRoot } from "../scoped-cli-home.ts";
 import { GrokAgentDriver } from "./grok.ts";
 import type { ProviderInstance, SendTurnInput } from "../../contracts.ts";
+import { removeTempDirSync } from "../../testing/cleanup.ts";
 const fake = join(import.meta.dirname, "../../testing/fake-grok-provider-cli.ts");
 const baseRoute: ProviderTurnRoute = { connectionId: "fixture-flux", revision: "revision-one", preset: "flux", protocol: "openai", baseUrl: "http://127.0.0.1:49999/v1", apiKey: "fake-selected-key", model: "vendor/pinned-model-v2" };
 const threadPath = (threadId: string) => join(DATA_DIR, "native/grok-provider-context", createHash("sha256").update(threadId).digest("hex"));
@@ -38,7 +39,7 @@ async function fixture() {
   };
   return { home, native, threadId, route, received, create, dump: () => JSON.parse(readFileSync(dump, "utf8")),
     dispose: async () => { await instance?.dispose(); instance = undefined; },
-    cleanup: async () => { await instance?.dispose(); await new Promise<void>(done => server.close(() => done())); rmSync(home, { recursive: true, force: true }); rmSync(threadPath(threadId), { recursive: true, force: true }); } };
+    cleanup: async () => { await instance?.dispose(); await new Promise<void>(done => server.close(() => done())); removeTempDirSync(home); removeTempDirSync(threadPath(threadId)); } };
 }
 it("creates a retained owned config with exact remote ID and no plaintext credentials or native config changes", () => {
   const thread = "grok-routing-" + randomUUID(), native = mkdtempSync(join(tmpdir(), "grok-native-canary-"));
@@ -57,7 +58,7 @@ it("creates a retained owned config with exact remote ID and no plaintext creden
     expect(readFileSync(join(native, "config.toml"), "utf8")).toBe("keep native");
     expect(() => removeGrokProviderHome(thread, first.identity!, false)).toThrow();
     removeGrokProviderHome(thread, first.identity!, true); expect(existsSync(retained!)).toBe(false);
-  } finally { rmSync(native, { recursive: true, force: true }); rmSync(threadPath(thread), { recursive: true, force: true }); }
+  } finally { removeTempDirSync(native); removeTempDirSync(threadPath(thread)); }
 });
 it("binds native cursor IDs to exact routing identity and refuses linked or malformed state", () => {
   const thread = "grok-routing-" + randomUUID(), env: NodeJS.ProcessEnv = {};
@@ -73,7 +74,7 @@ it("binds native cursor IDs to exact routing identity and refuses linked or malf
     unlinkSync(file); writeFileSync(file, original, { mode: 0o600 });
     writeFileSync(join(threadPath(thread), "resume-binding.json"), "invalid", { mode: 0o600 });
     expect(() => grokResumeBinding(thread, b.identity!, "native-session-id")).toThrow();
-  } finally { rmSync(threadPath(thread), { recursive: true, force: true }); }
+  } finally { removeTempDirSync(threadPath(thread)); }
 });
 it("uses arbitrary selected catalog models through actual fake ACP and loopback, including resumed and restarted turns", async () => {
   const f = await fixture();

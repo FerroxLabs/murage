@@ -5,11 +5,11 @@ import { existsSync,mkdtempSync,mkdirSync,readFileSync,readdirSync,realpathSync,
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach,describe,expect,it } from "vitest";
-import { safeWipeSync } from "./testing/safe-wipe.mjs";
 import { resticSftpRepository,resticSftpTargetSchema,sftpFolderSchema,sftpHostSchema,sftpUserSchema,type ResticSftpTarget } from "./backup-restic-target.ts";
 import { checkedHostKey,chooseScannedHostKey,classifySshFailure,createSshKeyPair,knownHostsLine,resolveSshTools,resticSftpCommandOption,sftpSshArguments,sshFingerprint,sweepSshMaterial,writeSshMaterial } from "./backup-sftp.ts";
+import { removeTempDirSync } from "./testing/cleanup.ts";
 
-const roots:string[]=[];afterEach(()=>{for(const root of roots.splice(0))safeWipeSync(root);});
+const roots:string[]=[];afterEach(()=>{for(const root of roots.splice(0))removeTempDirSync(root);});
 const scratch=()=>{const root=realpathSync.native(mkdtempSync(join(tmpdir(),"murage-sftp-unit-")));roots.push(root);return root;};
 // A real ed25519 host key blob (type string + 32 bytes), so type checks pass.
 const blob=(type:string,body=Buffer.alloc(32,7))=>{const name=Buffer.from(type),length=Buffer.alloc(4);length.writeUInt32BE(name.length);const bodyLength=Buffer.alloc(4);bodyLength.writeUInt32BE(body.length);return Buffer.concat([length,name,bodyLength,body]).toString("base64");};

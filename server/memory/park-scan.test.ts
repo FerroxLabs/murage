@@ -2,18 +2,19 @@
 // the tombstone cleanup of a restore) seeks the jobs of the affected sources by
 // source id. It never walks the cancelled range of the status index, so its
 // cost does not grow with the number of unrelated cancelled jobs.
-import { mkdirSync, rmSync } from "node:fs";
+import { mkdirSync } from "node:fs";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { DATA_DIR } from "../config.ts";
 import { closeDatabase, database } from "../database.ts";
 import * as park from "./park.ts";
 import { reconcileMemoryRoster } from "./policy.ts";
 import { setMemoryMode } from "./repository.ts";
+import { removeTempDirSync } from "../testing/cleanup.ts";
 
 const fix = park as unknown as Record<string, any>;
 const UNRELATED = 20_000;
 beforeEach(() => {
-  closeDatabase(); rmSync(DATA_DIR, { recursive: true, force: true }); mkdirSync(DATA_DIR, { recursive: true });
+  closeDatabase(); removeTempDirSync(DATA_DIR); mkdirSync(DATA_DIR, { recursive: true });
   reconcileMemoryRoster({ bots: [], groups: [] }); setMemoryMode("capture");
 });
 afterEach(() => { closeDatabase(); });
