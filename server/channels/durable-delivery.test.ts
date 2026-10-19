@@ -4,8 +4,9 @@ import { join } from "node:path";
 import { afterEach, expect, it, vi } from "vitest";
 import * as atomic from "../atomic.ts";
 import { ChannelSendError, DurableDelivery } from "./durable-delivery.ts";
+import { removeTempDirSync } from "../testing/cleanup.ts";
 const roots: string[] = [];
-afterEach(() => { for (const p of roots.splice(0)) rmSync(p, { recursive: true, force: true }); });
+afterEach(() => { for (const p of roots.splice(0)) removeTempDirSync(p); });
 function fixture() {
   const root = mkdtempSync(join(tmpdir(), "murage-slack-ledger-")); roots.push(root);
   let now = 1000000000, current = true;

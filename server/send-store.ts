@@ -90,6 +90,7 @@
 // line's id, and the startup reconciliation (completeUnresolved) finishes any
 // "dispatched" or "unconfirmed" row that has no line yet.
 
+import { murageLine } from "./murage-line.ts";
 import { DatabaseSync } from "node:sqlite";
 import { createHash, randomUUID } from "node:crypto";
 import { afterCommit, txScopeBegin, txScopeEnd } from "./tx-scope.ts";
@@ -188,8 +189,8 @@ export function sendNoticeError(code: SendNoticeCode, status: number): Error & {
 }
 
 /** The transcript line that tells the person what happened to a send. */
-export function sendNoticeLine(code: SendNoticeCode): { role: "bot"; kind: "activity"; tool: { name: string; ok: false; notice: true } } {
-  return { role: "bot", kind: "activity", tool: { name: sendNoticeActivityName(code), ok: false, notice: true } };
+export function sendNoticeLine(code: SendNoticeCode): { role: "bot"; kind: "activity"; tool: { name: string; ok: false; notice: true }; murageLine: true } {
+  return murageLine({ role: "bot", kind: "activity", tool: { name: sendNoticeActivityName(code), ok: false, notice: true } });
 }
 
 /** Terminal rows are kept this long (and at most this many), then dropped. */

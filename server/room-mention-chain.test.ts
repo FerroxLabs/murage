@@ -3,16 +3,17 @@
 //
 // SPEC-P 4 [AMB-8]: rooms made by this release do not follow @mentions in
 // bot replies; channels from before it keep the one-hop chain.
-import { readFileSync, rmSync, writeFileSync } from "node:fs";
+import { readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { beforeEach, describe, expect, it } from "vitest";
 import { DATA_DIR } from "./config.ts";
 import { Store } from "./store.ts";
+import { removeTempDirSync } from "./testing/cleanup.ts";
 
 const selection = () => ({ instanceId: "claude", model: "claude-sonnet-5" });
 
 describe("the mentionChain marker", () => {
-  beforeEach(() => { rmSync(DATA_DIR, { recursive: true, force: true }); });
+  beforeEach(() => { removeTempDirSync(DATA_DIR); });
 
   it("new rooms are created without the chain; pair rooms carry no marker", () => {
     const store = new Store(selection);

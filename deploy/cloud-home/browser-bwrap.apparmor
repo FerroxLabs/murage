@@ -1,0 +1,55 @@
+# Browsers only. The turn sandbox stays on Ubuntu's bwrap-userns-restrict,
+# whose unpriv_bwrap denies every capability. Chromium's own namespace
+# sandbox needs capabilities inside the user namespace it creates, which a
+# stack under no_new_privs can never regain, so browsers start through this
+# separate copy of bwrap with its own profile pair. Only murage-browser-sandbox
+# (murage-browser alone) may execute it; turns keep /usr/bin/bwrap.
+abi <abi/4.0>,
+include <tunables/global>
+
+profile murage-browser-bwrap /usr/local/libexec/murage-browser-bwrap flags=(attach_disconnected) {
+  allow capability,
+  allow file rwlkm /{**,},
+  allow network,
+  allow unix,
+  allow ptrace,
+  allow signal,
+  allow mqueue,
+  allow io_uring,
+  allow userns,
+  allow mount,
+  allow umount,
+  allow pivot_root,
+  allow px /** -> murage-browser-bwrap//&murage-browser,
+}
+
+profile murage-browser flags=(attach_disconnected) {
+  allow file rwlkm /{**,},
+  allow network,
+  allow unix,
+  allow ptrace,
+  allow signal,
+  allow mqueue,
+  allow io_uring,
+  allow userns,
+  # Effective only inside a user namespace Chromium itself creates: the
+  # sandboxed processes hold no capabilities in the host namespace.
+  allow capability sys_admin,
+  allow capability sys_chroot,
+  allow pix /** -> &murage-browser,
+  # Defence in depth (audit GLM-1): deny always beats the allow-all above, so
+  # these hold even if a mount is ever wrong. Paths are matched as the browser
+  # sees them inside bwrap's own mount namespace. The browser only needs its own
+  # /data/browser/<bot> home, /usr, /opt/murage and the /etc files bound by
+  # browser_mount_args, none of which is denied here.
+  deny /data/home/{,**} rwklmx,
+  deny /data/engine-homes/{,**} rwklmx,
+  deny /data/proxy/{,**} rwklmx,
+  deny /etc/murage-home/{,**} rwklmx,
+  deny /run/murage-turn-requests/{,**} rwklmx,
+  deny /run/murage-digest-cache/{,**} rwklmx,
+  deny /root/{,**} rwklmx,
+  deny /etc/shadow* rwklmx,
+  deny /etc/sudoers* rwklmx,
+  deny /etc/sudoers.d/{,**} rwklmx,
+}

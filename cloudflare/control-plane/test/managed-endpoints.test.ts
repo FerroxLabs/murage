@@ -442,6 +442,29 @@ describe("managed companion endpoints", () => {
     expect(getText).not.toContain(CONNECTOR_TOKEN);
   });
 
+  it("keeps desktop endpoints on the desktop zone, account, token and suffix when cloud-home vars are set", async () => {
+    const cloudflare = new FakeCloudflare();
+    const worker = createWorker(cloudflare.fetch);
+    const owner = await signIn(worker, "desktop-with-homes@example.com");
+    const installation = await createInstallation(worker, owner.token, "desktop-with-homes");
+    const homeEnv = { ...env, CLOUD_HOME_HOST_SUFFIX: "homes.example.test", CLOUD_HOME_ZONE_ID: "b".repeat(32),
+      CLOUD_HOME_ACCOUNT_ID: "a".repeat(32), CLOUD_HOME_API_TOKEN: "test-only-cloud-home-api-token-no-real-access" } as unknown as Env;
+    const ctx = createExecutionContext();
+    const response = await worker.fetch(new Request(`${BASE_URL}/v1/installations/self/endpoint`, {
+      method: "POST", headers: { authorization: `Bearer ${installation.credential}` },
+    }), homeEnv, ctx);
+    await waitOnExecutionContext(ctx);
+    expect(response.status).toBe(200);
+    const { endpoint } = await response.json<{ endpoint: { hostname: string } }>();
+    expect(endpoint.hostname.endsWith(`.${readConfig(env).cloudflare.companionHostSuffix}`)).toBe(true);
+    expect(cloudflare.calls.length).toBeGreaterThan(0);
+    for (const entry of cloudflare.calls) {
+      expect(entry.authorization).toBe(`Bearer ${env.CLOUDFLARE_API_TOKEN}`);
+      expect(entry.url).not.toContain("a".repeat(32));
+      expect(entry.url).not.toContain("b".repeat(32));
+    }
+  });
+
   it("keeps account and installation bearer boundaries separate and isolates installations", async () => {
     const cloudflare = new FakeCloudflare();
     const worker = createWorker(cloudflare.fetch);

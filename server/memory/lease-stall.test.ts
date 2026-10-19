@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // A11: a lease must survive the server's loop stalling past it, while a takeover still fences the old holder.
-import { mkdirSync, rmSync } from "node:fs";
+import { mkdirSync } from "node:fs";
 import { beforeEach, expect, it } from "vitest";
 import { DATA_DIR } from "../config.ts";
 import { closeDatabase, database } from "../database.ts";
@@ -8,8 +8,9 @@ import { appendMessage } from "../message-db.ts";
 import { setMemoryMode } from "./repository.ts";
 import { captureWork } from "./chunks.ts";
 import { claimMemoryJob, heartbeatMemoryJob, publishMemoryWork, resetMemoryClaimCursor } from "./jobs.ts";
+import { removeTempDirSync } from "../testing/cleanup.ts";
 
-beforeEach(() => { closeDatabase(); rmSync(DATA_DIR, { recursive: true, force: true }); mkdirSync(DATA_DIR, { recursive: true }); setMemoryMode("capture"); resetMemoryClaimCursor(); });
+beforeEach(() => { closeDatabase(); removeTempDirSync(DATA_DIR); mkdirSync(DATA_DIR, { recursive: true }); setMemoryMode("capture"); resetMemoryClaimCursor(); });
 const source = (text = "Durable evidence") => appendMessage("thread", { id: "source", at: 1, role: "user", kind: "text", text });
 const lease = () => database().prepare("SELECT status,lease_owner,lease_until,lease_generation FROM memory_jobs").get()!;
 

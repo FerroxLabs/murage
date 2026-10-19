@@ -2,13 +2,14 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import { readFileSync } from "node:fs";
 import { describe, expect, test } from "vitest";
-import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
+import { mkdtempSync, mkdirSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { rcReceiptOutputs, SHAPES } from "./shapes.mjs";
 import { dirBytes, groupBytes, liveBytes, measureStorage, slopeBytes } from "./storage.mjs";
 import { acpPool, parseTrace, progressClock, turnClocks, upgradeChatResult, upgradeStatus, indexState, matchTurnEvent, openTraces, parseTurnLog, recallSuccess, resetLines, resumedShare, rigServerEnv, sentRecall, termsVersionFrom, trulyResumed, turnFromLog, waterfallRows } from "./rig-config.mjs";
+import { removeTempDirSync } from "../../server/testing/cleanup.ts";
 
 const fixtures = JSON.parse(readFileSync(new URL("./fixtures/health-upgrade.json", import.meta.url), "utf8"));
 
@@ -339,7 +340,7 @@ describe("storage measurement (storage.mjs)", () => {
       expect(groupBytes(m.tables, ["memory_disclosure"])).toBe(outputs);
       expect(groupBytes(m.tables, ["nothing_"])).toBe(0);
       db.close();
-    } finally { rmSync(dir, { recursive: true, force: true }); }
+    } finally { removeTempDirSync(dir); }
   });
 
   test("dbstat unavailable comes back as an error the gate fails on, never as numbers", () => {

@@ -2,12 +2,13 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // Behaviour adapted from OpenMausBot #2387 (Apache-2.0).
 import { spawn } from "node:child_process";
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdtempSync } from "node:fs";
 import { createServer, type Socket } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { expect, it } from "vitest";
+import { removeTempDirSync } from "./testing/cleanup.ts";
 
 const proxy = fileURLToPath(new URL("./permission-proxy.ts", import.meta.url));
 const wait = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
@@ -61,6 +62,6 @@ it.skipIf(process.platform === "win32")("keeps non-ASCII text intact when a read
     expect(JSON.parse(response.result.content[0].text).message).toBe(reply);
   } finally {
     child.kill();
-    rmSync(dir, { recursive: true, force: true });
+    removeTempDirSync(dir);
   }
 }, 30_000);

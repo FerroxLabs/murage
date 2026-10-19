@@ -8,7 +8,7 @@
 // Windows same-boot PID reuse concept adapted from upstream PR #1324 at
 // 7c82592ff8b1; Murage binds an exact creation identity instead of wall time.
 // This helper never creates, migrates, renames or replaces the installation.
-import { execFile, execFileSync } from "node:child_process";
+import { execFileSync } from "node:child_process";
 import { createHash, randomUUID } from "node:crypto";
 import {
   closeSync, constants, fstatSync, fsyncSync, linkSync, lstatSync, mkdirSync,
@@ -68,25 +68,47 @@ function ownerIsAlive(owner, recordPath) {
 }
 
 // Windows reuses PIDs within one boot, so a live PID alone cannot prove a
-// crashed owner alive. The kernel creation FILETIME of a process never
-// changes, so the exact value its owner published is clock- and DST-free
-// evidence. Only a successful, well-formed, different answer proves death;
-// every unavailable, slow, denied or malformed probe keeps PID exclusion.
+// crashed owner alive. An owner now holds a file of its own open share-none
+// (UV_FS_O_EXLOCK) for as long as it holds the lease (identity version 2).
+// The kernel closes that handle when the process ends, however it ends, and
+// nothing else closes it while the owner lives. So a checker that can open
+// the file has exact evidence that the owner is gone, found with one native
+// open and no PowerShell (murage-releases #1: an antivirus notice on every
+// launch). Version 1 identities (an exact kernel creation FILETIME, from
+// 1.0.2) are still checked the old way, which only runs when a lease is
+// contested. Only a successful, well-formed, different answer proves death;
+// every unavailable, slow, denied, busy or missing probe keeps PID exclusion.
 const WINDOWS_START = /^[1-9][0-9]{0,19}$/;
 const MAX_FILETIME = 0x7fffffffffffffffn;
 const IDENTITY_KEYS = ["version", "pid", "token", "start"];
+const HELD_IDENTITY_KEYS = ["version", "pid", "token"];
 const IDENTITY_OUTPUT_BYTES = 64;
 const CHECK_PROBE_TIMEOUT_MS = 5_000;
-const SELF_PROBE_TIMEOUT_MS = 10_000;
 const MAX_DISPROVED = 64;
 const disproved = new Set();
 const validStart = (value) => typeof value === "string" && WINDOWS_START.test(value) && BigInt(value) <= MAX_FILETIME;
 const identityPath = (recordPath, owner) => `${recordPath}.identity-${owner.token}`;
 function isIdentity(value) {
-  return Boolean(value) && typeof value === "object" && !Array.isArray(value)
-    && Object.keys(value).length === IDENTITY_KEYS.length && IDENTITY_KEYS.every((key) => Object.hasOwn(value, key))
-    && value.version === 1 && isPid(value.pid) && typeof value.token === "string" && UUID.test(value.token) && validStart(value.start);
+  if (!value || typeof value !== "object" || Array.isArray(value) || !isPid(value.pid) || typeof value.token !== "string" || !UUID.test(value.token)) return false;
+  const keys = value.version === 1 ? IDENTITY_KEYS : value.version === 2 ? HELD_IDENTITY_KEYS : null;
+  return Boolean(keys) && Object.keys(value).length === keys.length && keys.every((key) => Object.hasOwn(value, key))
+    && (value.version === 2 || validStart(value.start));
 }
+// libuv's share-none open flag (Windows only; the documented value where a
+// build does not name it).
+const EXLOCK = constants.UV_FS_O_EXLOCK ?? 0x10000000;
+const heldPath = (recordPath, owner) => `${recordPath}.alive-${owner.token}`;
+/** true: the owner still holds its file; false: the file opened, so no
+ * process holds it and the owner is gone; null: anything else (missing,
+ * busy, denied, unexpected), which keeps exclusion. */
+function ownerStillHolds(recordPath, owner) {
+  let fd;
+  try { fd = openSync(heldPath(recordPath, owner), constants.O_RDONLY); }
+  catch (error) { return error?.code === "EBUSY" ? true : null; }
+  try { closeSync(fd); } catch { /* opened is the answer */ }
+  return false;
+}
+const ownHeld = new Map();
 
 function windowsProcessStartQuery(pid) {
   const root = process.env.SystemRoot;
@@ -96,7 +118,7 @@ function windowsProcessStartQuery(pid) {
     + `$p=[System.Diagnostics.Process]::GetProcessById(${pid}); [Console]::Out.Write(([string]$p.Id)+':'+([string]($p.StartTime.ToFileTimeUtc())))`;
   return {
     command: win32.join(root, "System32", "WindowsPowerShell", "v1.0", "powershell.exe"),
-    args: ["-NoProfile", "-NonInteractive", "-EncodedCommand", Buffer.from(script, "utf16le").toString("base64")],
+    args: ["-NoProfile", "-NonInteractive", "-WindowStyle", "Hidden", "-EncodedCommand", Buffer.from(script, "utf16le").toString("base64")],
   };
 }
 
@@ -116,23 +138,6 @@ function probeProcessStartSync(pid) {
   } catch { return null; }
 }
 
-let selfStart;
-function probeOwnStart() {
-  selfStart ??= new Promise((settle) => {
-    const query = windowsProcessStartQuery(process.pid);
-    if (!query) return settle(null);
-    try {
-      const child = execFile(query.command, query.args, {
-        encoding: "utf8", timeout: SELF_PROBE_TIMEOUT_MS, maxBuffer: IDENTITY_OUTPUT_BYTES, windowsHide: true,
-      }, (error, stdout) => settle(error ? null : parseProcessStart(process.pid, stdout)));
-      // Identity is an optimization for later recovery; never hold exit.
-      child?.unref?.();
-      child?.stdout?.unref?.();
-      child?.stderr?.unref?.();
-    } catch { settle(null); }
-  });
-  return selfStart;
-}
 
 function readIdentity(recordPath, owner) {
   try {
@@ -145,32 +150,44 @@ function creationIdentityDisproves(owner, recordPath) {
   if (process.platform !== "win32") return false;
   const identity = readIdentity(recordPath, owner);
   if (!identity) return false;
-  const key = `${identity.pid}:${identity.token}:${identity.start}`;
+  const key = `${identity.pid}:${identity.token}:${identity.start ?? "held"}`;
   if (disproved.has(key)) return true;
-  const current = probeProcessStartSync(owner.pid);
-  if (current === null || current === identity.start) return false;
+  if (identity.version === 2) {
+    if (ownerStillHolds(recordPath, owner) !== false) return false;
+  } else {
+    const current = probeProcessStartSync(owner.pid);
+    if (current === null || current === identity.start) return false;
+  }
   if (disproved.size >= MAX_DISPROVED) disproved.clear();
   disproved.add(key);
   return true;
 }
 
-/** Publish this process's creation identity for its exact, still-held record
- * without blocking startup. Absence is safe: checkers keep PID exclusion. */
+/** Hold this owner's file share-none and publish its identity for the exact,
+ * still-held record. No PowerShell runs and nothing waits. Without an
+ * identity, checkers keep PID exclusion. */
 function recordOwnIdentity(recordPath, owner, isReleased) {
   if (process.platform !== "win32" || owner.pid !== process.pid) return;
-  void probeOwnStart().then((start) => {
-    try {
-      if (start === null || isReleased() || !sameOwner(readRecord(recordPath)?.owner, owner)) return;
-      publishRecord(identityPath(recordPath, owner), { version: 1, pid: owner.pid, token: owner.token, start });
-      // A release that raced the publication must not leave a live-looking identity.
-      if (isReleased()) removeIdentity(recordPath, owner);
-    } catch { /* Missing identity keeps the PID-only protocol. */ }
-  }, () => {});
+  let fd;
+  try {
+    fd = openSync(heldPath(recordPath, owner), constants.O_RDWR | constants.O_CREAT | constants.O_EXCL | EXLOCK, 0o600);
+  } catch { return; }
+  ownHeld.set(owner.token, { fd, path: heldPath(recordPath, owner) });
+  try {
+    if (isReleased() || !sameOwner(readRecord(recordPath)?.owner, owner)) { removeIdentity(recordPath, owner); return; }
+    publishRecord(identityPath(recordPath, owner), { version: 2, pid: owner.pid, token: owner.token });
+  } catch { /* Missing identity keeps the PID-only protocol. */ }
 }
 
 function removeIdentity(recordPath, owner) {
-  if (!readIdentity(recordPath, owner)) return;
-  try { unlinkSync(identityPath(recordPath, owner)); } catch { /* inert, token-scoped leftover */ }
+  if (readIdentity(recordPath, owner)) {
+    try { unlinkSync(identityPath(recordPath, owner)); } catch { /* inert, token-scoped leftover */ }
+  }
+  // The identity goes first, then the held file, so no checker sees an
+  // identity whose file nobody holds while its owner lives.
+  const held = owner.pid === process.pid ? ownHeld.get(owner.token) : undefined;
+  if (held) { ownHeld.delete(owner.token); try { closeSync(held.fd); } catch { /* already closed */ } }
+  try { unlinkSync(heldPath(recordPath, owner)); } catch { /* absent, or another process still holds it */ }
 }
 
 const MESSAGES = {

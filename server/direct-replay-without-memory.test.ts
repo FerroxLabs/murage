@@ -6,7 +6,7 @@
 // since forgotten, because no receipt was read at all. The direct replay now
 // follows the same content rule as a room: the withheld line for the owner's
 // turn, left out for a turn that is not the owner's.
-import { mkdirSync, readFileSync, rmSync } from "node:fs";
+import { mkdirSync, readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { beforeEach, expect, it } from "vitest";
 import { DATA_DIR } from "./config.ts";
@@ -21,9 +21,10 @@ import { roomTranscriptWithoutMemory } from "./room-transcript.ts";
 import type { Message } from "./store.ts";
 import { transcriptText } from "./replies.ts";
 import { LineageAllowance } from "./memory/lineage-allowance.ts";
+import { removeTempDirSync } from "./testing/cleanup.ts";
 
 const roster: MemoryRoster = { bots: [{ id: "dax", threadId: "dax-direct", tasks: [{ threadId: "dax-older" }] }], groups: [] };
-beforeEach(() => { closeDatabase(); rmSync(DATA_DIR, { recursive: true, force: true }); mkdirSync(DATA_DIR, { recursive: true }); setMemoryMode("active"); reconcileMemoryRoster(roster); });
+beforeEach(() => { closeDatabase(); removeTempDirSync(DATA_DIR); mkdirSync(DATA_DIR, { recursive: true }); setMemoryMode("active"); reconcileMemoryRoster(roster); });
 
 it("a direct reply made with memory the owner then forgot is withheld from the replay while memory is off", () => {
   const text = "The vault code is 7788.";

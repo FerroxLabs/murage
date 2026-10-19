@@ -20,6 +20,7 @@ import {
   ensureDeadline, killAndVerify, reapAttemptProcess, reconcileAttempt, registerChild, remainingMs, sweepByArgv, sweepOrphanTempDirs,
 } from "../memory/pip-reaper.ts";
 import type { ProviderTurnRoute } from "../provider-routing.ts";
+import { removeTempDirSync } from "../testing/cleanup.ts";
 
 const posix = describe.skipIf(process.platform === "win32");
 const STUB = fileURLToPath(new URL("../testing/pip-stub-cli.mjs", import.meta.url));
@@ -35,7 +36,7 @@ beforeEach(() => {
   mkdirSync(etc); mkdirSync(home);
 });
 // Windows: a child still exiting can hold the folder for a moment (EPERM/EBUSY); rm retries those.
-afterEach(() => rmSync(base, { recursive: true, force: true, maxRetries: 20, retryDelay: 100 }));
+afterEach(() => removeTempDirSync(base));
 // The 1.0.0 Windows job supervisor compiles its C# (Add-Type) on every launch and every stop, a
 // second or more each on a loaded runner; Windows gets the room that costs (the native job helper removes it).
 const WIN_SLOW = process.platform === "win32";
@@ -165,6 +166,16 @@ posix("headless text-only: stub binary (group 1)", () => {
     const b = await headlessTextOnlyTurn(input(), cfg("bad-schema"));
     expect(b.verdict).toMatchObject({ state: "refused", reason: "bad-output" });
     expect(records()).toHaveLength(2); // one spawn per call, no replay
+  });
+
+  // Astra L3 r2 High 2: an overflowing reply was settled at bytes/3.5, below its reservation; it now keeps the whole reservation.
+  it("stdout over the cap settles at least its reservation on the production lease", async () => {
+    const { withContinuityInferenceLease, continuityDay, continuityLedgerId } = await import("../memory/extract.ts");
+    const { database } = await import("../database.ts");
+    const { DATA_DIR } = await import("../config.ts"); mkdirSync(DATA_DIR, { recursive: true });
+    await withContinuityInferenceLease(lease => lease.request(async () => { const r = await headlessTextOnlyTurn(input(), cfg("big")); expect(r.verdict).toMatchObject({ detail: "over-byte-cap" }); return r.text; }, "system", 2000, new AbortController().signal, [{ role: "user", content: "fixture" }], "continuity", { botId: "usage-big", family: "lived" }).catch(() => null));
+    const ledger = JSON.parse(String(database().prepare("SELECT intent FROM memory_scope_bindings WHERE id=?").get(continuityLedgerId("usage-big", continuityDay()))!.intent));
+    expect(ledger.output).toBeGreaterThanOrEqual(2000);
   });
 
   it("stdout over 12 KB kills the tree and refuses", async () => {

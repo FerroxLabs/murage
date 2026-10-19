@@ -1,13 +1,14 @@
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { existsSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdtempSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { CoordinationBudget, MAX_HANDOFFS_PER_ROOT } from "./coordination-budget.ts";
 import { resolveCoordinationTarget } from "./coordination-target.ts";
+import { removeTempDirSync } from "./testing/cleanup.ts";
 
 let directory: string;
 beforeEach(() => { directory = mkdtempSync(join(tmpdir(), "murage-coordination-")); });
-afterEach(() => { rmSync(directory, { recursive: true, force: true }); });
+afterEach(() => { removeTempDirSync(directory); });
 
 describe("bounded Chief coordination", () => {
   it("admits a lead's eight specialists under one owner chain", () => {

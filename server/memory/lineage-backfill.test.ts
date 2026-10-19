@@ -4,11 +4,12 @@
 // S5 (DESIGN-WRITETIME 4): the lineage backfill of an upgraded history, killed and resumed; its per-slice cost at 1k and 100k messages;
 // the promoted thread first; U2 blocked on the S0 revoke stub (nothing ready, nothing shown) and finished with a working commit; the
 // sliced v10 -> v9 downgrade marking every post-upgrade generated line unprovable for the older build; and the upgrade screen's progress.
-import { mkdirSync, rmSync } from "node:fs";
+import { mkdirSync } from "node:fs";
 import type { DatabaseSync, StatementSync } from "node:sqlite";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { stopWalMaintenance } from "../wal-maintenance.ts";
 import type { RevokeRoot } from "./lineage-types.ts";
+import { removeTempDirSync } from "../testing/cleanup.ts";
 
 // the S0 stub answers 0; a test that needs U2 to finish switches in a commit that records its roots
 const mock = { works: false };
@@ -26,7 +27,7 @@ const { backgroundJobsPending, backgroundStatus, startBackgroundUpgradeWork } = 
 // closeDatabase stops the WAL checkpointer without waiting: a checkpointer still alive when the data dir is deleted and rebuilt closes its
 // connection to the deleted file later and removes the NEW file's -wal and -shm by path, so the fresh connection loses everything it wrote
 // (it reads an empty history). The checkpointer is awaited after every close.
-async function reset(): Promise<void> { closeDatabase(); await stopWalMaintenance(); resetLineageBackfillForTest(); rmSync(DATA_DIR, { recursive: true, force: true }); mkdirSync(DATA_DIR, { recursive: true }); commits.length = 0; mock.works = false; }
+async function reset(): Promise<void> { closeDatabase(); await stopWalMaintenance(); resetLineageBackfillForTest(); removeTempDirSync(DATA_DIR); mkdirSync(DATA_DIR, { recursive: true }); commits.length = 0; mock.works = false; }
 beforeEach(async () => { await reset(); });
 afterEach(() => { mock.works = false; });
 

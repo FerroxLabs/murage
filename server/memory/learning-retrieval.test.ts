@@ -3,7 +3,7 @@
 // Ordinary grounded learning is recallable without approval. Failed, cancelled,
 // interrupted, refused, review-only and repeated claims do not become current
 // facts. Corrections supersede without erasing history. Restart completes once.
-import { mkdirSync, rmSync } from "node:fs";
+import { mkdirSync } from "node:fs";
 import { beforeEach, expect, it } from "vitest";
 import { DATA_DIR } from "../config.ts";
 import { closeDatabase, database } from "../database.ts";
@@ -19,10 +19,11 @@ import { recordMemorySettlement, reconcileInterruptedMemoryTurns } from "./settl
 import type { TextOnlyExtractor } from "./extract.ts";
 import { readMemoryLearning, updateMemoryLearning } from "./learning-policy.ts";
 import { LineageAllowance } from "./lineage-allowance.ts";
+import { removeTempDirSync } from "../testing/cleanup.ts";
 
 const roster = { bots: [{ id: "bot", threadId: "thread" }], groups: [] };
 const keywordOnly: MemorySearchBridge = { search: async () => ({ hits: [], vectorRows: 0, degradedReason: "keyword-only" }) };
-beforeEach(() => { closeDatabase(); rmSync(DATA_DIR, { recursive: true, force: true }); mkdirSync(DATA_DIR, { recursive: true }); reconcileMemoryRoster(roster); });
+beforeEach(() => { closeDatabase(); removeTempDirSync(DATA_DIR); mkdirSync(DATA_DIR, { recursive: true }); reconcileMemoryRoster(roster); });
 
 function access() {
   reconcileMemoryRoster(roster);

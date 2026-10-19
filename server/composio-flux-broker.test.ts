@@ -39,6 +39,7 @@ import {
 import { brokerTokenFingerprint } from "../electron/flux-composio-token.mjs";
 import { DATA_DIR, type AppConfig } from "./config.ts";
 import { DEV_FLUX_TOKEN_FILE, DEV_FLUX_TOKEN_LABEL, resetDevFluxTokenState } from "./flux-composio-dev-token.ts";
+import { removeTempDirSync } from "./testing/cleanup.ts";
 
 const LEGACY_TOKEN = "a".repeat(64);
 const FLUX_TOKEN = "b".repeat(64);
@@ -449,7 +450,14 @@ describe("the FluxRouter readiness probe", () => {
       const folder = mkdtempSync(join(tmpdir(), "murage-initial-"));
       try {
         const bigTools = [{ name: "COMPOSIO_MULTI_EXECUTE_TOOL", description: "x".repeat(40_000) }];
-        const huge = await mcpIntegration(cfg(), { ...ctx, listScope: { revision: "rev-3", generation: "initial", initialTools: bigTools }, toolsCacheDir: folder });
+        // Windows uses a folder only when its ACL was verified (toolsCachePrivate); an unverified one is declined by design, and the
+        // whole list goes in the environment instead. Elsewhere the flag is not needed.
+        const windowsHost = process.platform === "win32";
+        if (windowsHost) {
+          const unverified = await mcpIntegration(cfg(), { ...ctx, listScope: { revision: "rev-3", generation: "initial", initialTools: bigTools }, toolsCacheDir: folder });
+          expect(JSON.parse(unverified?.env.MURAGE_CONNECTOR_INITIAL_TOOLS ?? "null")).toEqual(bigTools);
+        }
+        const huge = await mcpIntegration(cfg(), { ...ctx, listScope: { revision: "rev-3", generation: "initial", initialTools: bigTools }, toolsCacheDir: folder, ...(windowsHost ? { toolsCachePrivate: true } : {}) });
         expect(huge?.env.MURAGE_CONNECTOR_INITIAL_TOOLS).toBe("@file");
         expect(readCacheEntry(folder, `initial-${huge!.env.MURAGE_CONNECTOR_IDENTITY}-rev-3.json`)).toEqual({ revision: "rev-3", tools: bigTools });
         // No private folder to use: the whole list still goes in the environment, not "[]".
@@ -460,7 +468,7 @@ describe("the FluxRouter readiness probe", () => {
         expect(beyond?.env.MURAGE_CONNECTOR_INITIAL_TOOLS).toBe("@harness");
         const windows = await mcpIntegration(cfg(), { ...ctx, listScope: { revision: "rev-5", generation: "initial" }, toolsCacheDir: folder, toolsCachePrivate: true });
         expect(windows?.env.MURAGE_CONNECTOR_TOOLS_CACHE_PRIVATE).toBe("1");
-      } finally { rmSync(folder, { recursive: true, force: true }); }
+      } finally { removeTempDirSync(folder); }
     });
 
     it("is bounded by the cap when the probe never answers in time", async () => {

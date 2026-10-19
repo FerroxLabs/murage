@@ -5,7 +5,7 @@
 // writes are deferred and compact, no client's page stretches to an old card,
 // a many-thread first screen shares one budget of long-way card reads, and an
 // export holds one page at a time.
-import { readFileSync, rmSync } from "node:fs";
+import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { beforeEach, describe, expect, it } from "vitest";
 
@@ -17,13 +17,14 @@ import { openRequestCardsStatus, withLongWayBudget } from "./message-db.ts";
 import { Store } from "./store.ts";
 import { jsonDocument, jsonElementFor, streamThreadExport } from "./thread-export.ts";
 import { transcriptPage } from "./transcript-page.ts";
+import { removeTempDirSync } from "./testing/cleanup.ts";
 
 const selection = (): ModelSelection => ({ instanceId: "claude", model: "claude-sonnet-5" });
 const BOTS = () => join(DATA_DIR, "bots.json");
 const card = (requestId: string) => ({ role: "bot", kind: "options", text: "May I?", card: { title: "May I?", options: [], requestId, tool: "Bash" } }) as never;
 
 describe("P3-7: per-turn roster writes", () => {
-  beforeEach(() => rmSync(DATA_DIR, { recursive: true, force: true }));
+  beforeEach(() => removeTempDirSync(DATA_DIR));
 
   it("a turn's cursor, dispatch marker and usage cost no immediate bots.json write; they coalesce into one and survive a restart", () => {
     const store = new Store(selection);
@@ -59,7 +60,7 @@ describe("P3-7: per-turn roster writes", () => {
 });
 
 describe("P3-10: no client's page stretches to an old card", () => {
-  beforeEach(() => rmSync(DATA_DIR, { recursive: true, force: true }));
+  beforeEach(() => removeTempDirSync(DATA_DIR));
 
   it("a phone page stays at the cap with a stale card 1,200 rows back, and paging back reaches the card", () => {
     const seed = new Store(selection);
@@ -83,7 +84,7 @@ describe("P3-10: no client's page stretches to an old card", () => {
   it("the page is flat: a card 3,000 rows back costs the same page as one 600 back", () => {
     const sizes: number[] = [];
     for (const rows of [600, 3000]) {
-      rmSync(DATA_DIR, { recursive: true, force: true });
+      removeTempDirSync(DATA_DIR);
       const seed = new Store(selection);
       const bot = seed.createBot();
       seed.appendMessage(bot.threadId, card("req-old"));
@@ -105,7 +106,7 @@ describe("P3-10: no client's page stretches to an old card", () => {
 });
 
 describe("P3-11: long-way card reads share one budget", () => {
-  beforeEach(() => rmSync(DATA_DIR, { recursive: true, force: true }));
+  beforeEach(() => removeTempDirSync(DATA_DIR));
 
   it("threads past the budget are reported incomplete and unread; read on their own they find their card", () => {
     const store = new Store(selection);
@@ -127,7 +128,7 @@ describe("P3-11: long-way card reads share one budget", () => {
 });
 
 describe("P3-15: export reads one page at a time", () => {
-  beforeEach(() => rmSync(DATA_DIR, { recursive: true, force: true }));
+  beforeEach(() => removeTempDirSync(DATA_DIR));
 
   function seeded(rows: number) {
     const seed = new Store(selection);
@@ -155,7 +156,7 @@ describe("P3-15: export reads one page at a time", () => {
 
   it("the streamed JSON is byte for byte the one-shot document, for an empty, a one-page and a many-page thread", async () => {
     for (const rows of [0, 7, 450]) {
-      rmSync(DATA_DIR, { recursive: true, force: true });
+      removeTempDirSync(DATA_DIR);
       const { bot, ids } = seeded(rows);
       const store = new Store(selection);
       const writes: string[] = [];

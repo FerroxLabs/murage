@@ -5,7 +5,7 @@
 // accepts), and each has a lifecycle entry. The list is checked against the real 1.0.1 (git archive d950cbf67 in the gitignored .v101-ref
 // directory), in both directions; the real 1.0.1 inspector accepts a downgraded file with rows in every registered table; rows of a child table never
 // outlive their request.
-import { mkdirSync, readFileSync, readdirSync, rmSync } from "node:fs";
+import { mkdirSync, readFileSync, readdirSync } from "node:fs";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -21,8 +21,9 @@ import { initializeProjectCardDelivery } from "./project-card-delivery-schema.ts
 import { insertRoomRequest, pruneTerminalRoomRequests, ROOM_REQUEST_RETENTION_MS } from "./room-requests.ts";
 import { initializeSharedRequestProvenance } from "./shared-provenance-schema.ts";
 import { haveV101, realV101 } from "./testing/pm-sends-v101.ts";
+import { removeTempDirSync } from "./testing/cleanup.ts";
 
-beforeEach(() => { closeDatabase(); rmSync(DATA_DIR, { recursive: true, force: true }); mkdirSync(DATA_DIR, { recursive: true }); });
+beforeEach(() => { closeDatabase(); removeTempDirSync(DATA_DIR); mkdirSync(DATA_DIR, { recursive: true }); });
 afterEach(() => { vi.restoreAllMocks(); closeDatabase(); });
 
 const CHILDREN = Object.entries(ADDED_TABLE_LIFECYCLE).filter(([, entry]) => entry.kind === "child").map(([name]) => name);

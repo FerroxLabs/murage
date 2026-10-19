@@ -4,7 +4,7 @@
 // rows and kept current by triggers on every writer; each probe runs against 1k and 100k historical rows and asserts the plan,
 // the rows visited and that the one-time backfill does not run again. (3) image-operations: see the last test.
 import { randomUUID } from "node:crypto";
-import { mkdirSync, rmSync } from "node:fs";
+import { mkdirSync } from "node:fs";
 import type { DatabaseSync } from "node:sqlite";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { DATA_DIR } from "./config.ts";
@@ -16,6 +16,7 @@ import { fenceRestoredSql, sqlRowRestoreHeld } from "./restore-fence.ts";
 import { roomRequest } from "./room-requests.ts";
 import { BACKFILL_NAME, OWED_FANOUT_SQL, OWED_SHARED_SQL, backfillRoomRequestOwed, initializeRoomRequestOwed, settleOwedFanouts, settleOwedSharedResults } from "./room-request-owed.ts";
 import { initializeProjectTables } from "./project-tables.ts";
+import { removeTempDirSync } from "./testing/cleanup.ts";
 
 const faults = vi.hoisted(() => ({ saveImage: 0 }));
 vi.mock("./attachments.ts", async importOriginal => {
@@ -23,10 +24,16 @@ vi.mock("./attachments.ts", async importOriginal => {
   return { ...actual, saveImage: (...args: Parameters<typeof actual.saveImage>) => {
     if (faults.saveImage > 0) { faults.saveImage--; throw Object.assign(new Error("attachments storage is full"), { status: 507 }); }
     return actual.saveImage(...args);
+  }, saveReceiptImage: (...args: Parameters<typeof actual.saveReceiptImage>) => {
+    if (faults.saveImage > 0) { faults.saveImage--; throw Object.assign(new Error("attachments storage is full"), { status: 507 }); }
+    return actual.saveReceiptImage(...args);
+  }, writeNewReceiptImage: (...args: Parameters<typeof actual.writeNewReceiptImage>) => {
+    if (faults.saveImage > 0) { faults.saveImage--; throw Object.assign(new Error("attachments storage is full"), { status: 507 }); }
+    return actual.writeNewReceiptImage(...args);
   } };
 });
 
-beforeEach(() => { faults.saveImage = 0; closeDatabase(); rmSync(DATA_DIR, { recursive: true, force: true }); mkdirSync(DATA_DIR, { recursive: true }); });
+beforeEach(() => { faults.saveImage = 0; closeDatabase(); removeTempDirSync(DATA_DIR); mkdirSync(DATA_DIR, { recursive: true }); });
 afterEach(() => closeDatabase());
 
 const SIZES = [1_000, 100_000];
