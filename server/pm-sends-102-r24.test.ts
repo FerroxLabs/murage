@@ -5,7 +5,7 @@
 //  r23#4  a held line and its row change together (Send again, Dismiss, expiry, late acceptance), and a leftover line is swept
 //  r23#6  recovery reads one page of 100 per event-loop pass
 //  Send again asks whether the original ran; a teammate that stayed busy is held for the owner, never dropped
-import { mkdirSync, rmSync } from "node:fs";
+import { mkdirSync } from "node:fs";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { DATA_DIR } from "./config.ts";
 import { closeDatabase, database } from "./database.ts";
@@ -20,6 +20,7 @@ import { drainSharedWork } from "./shared-work.ts";
 import { runOf, startLikeIndex } from "./testing/handoff-turn.ts";
 import { LINEAGE, ownerWorld, sharedWorld, type OwnerWorld } from "./testing/handoff-worlds.ts";
 import { engineReply } from "./testing/provider-reply.ts";
+import { removeTempDirSync } from "./testing/cleanup.ts";
 
 const tick = () => new Promise<void>((resolve) => setImmediate(resolve));
 async function until(done: () => boolean, ms = 30_000): Promise<void> {
@@ -32,7 +33,7 @@ const rowOf = (id: string) => database().prepare("SELECT phase, origin, started_
 const promptsIn = (thread: string) => count("SELECT COUNT(*) AS n FROM messages WHERE thread_id=? AND id LIKE 'dlg-%'", thread);
 const pendingRows = () => count("SELECT COUNT(*) AS n FROM pending_delegations");
 
-beforeEach(() => { closeDatabase(); rmSync(DATA_DIR, { recursive: true, force: true }); mkdirSync(DATA_DIR, { recursive: true }); _resetPending(); _resetOwnerMigration(); });
+beforeEach(() => { closeDatabase(); removeTempDirSync(DATA_DIR); mkdirSync(DATA_DIR, { recursive: true }); _resetPending(); _resetOwnerMigration(); });
 afterEach(() => { _resetOwnerMigration(); _resetPending(); closeDatabase(); });
 
 /** Queues a hand-off in an owner world, runs its first attempt to "prompt written, handed to the provider, not accepted" and restarts: it is held. */
@@ -139,7 +140,7 @@ describe("r23#3. an earlier reply never proves a hand-off ran: output is a desce
   });
   it("a reply that follows the prompt in the same conversation is evidence (interrupted), and so does a reply after a line Murage wrote about the exchange", async () => {
     for (const interleaved of [false, true]) {
-      closeDatabase(); rmSync(DATA_DIR, { recursive: true, force: true }); mkdirSync(DATA_DIR, { recursive: true }); _resetPending();
+      closeDatabase(); removeTempDirSync(DATA_DIR); mkdirSync(DATA_DIR, { recursive: true }); _resetPending();
       const w = ownerWorld("owner");
       const id = queueDelegation(w.bus, w.from, { toBotId: w.target.id, message: "it ran", depth: 0 }, 2).id!;
       await startLikeIndex(w.bus, w.approvalBus, id, { submit: true });
@@ -258,7 +259,7 @@ describe("r23#4. a held line and its row change in ONE commit", () => {
 
 // ── r23#6 ─────────────────────────────────────────────────────────────────────────────
 describe("r23#6. recovery reads one page per event-loop pass", () => {
-  it("100,000 held rows: at most one page of 100 per pass, with the event loop yielding between pages", async () => {
+  it("100,000 held rows: at most one page of 100 per pass, with the event loop yielding between pages", { tags: ["perf-budget"], timeout: 120_000 }, async () => {
     const db = database();
     const w = ownerWorld("owner");
     db.exec(`WITH RECURSIVE n(i) AS (SELECT 1 UNION ALL SELECT i+1 FROM n WHERE i<100000)
@@ -276,7 +277,7 @@ describe("r23#6. recovery reads one page per event-loop pass", () => {
     expect(ticks).toBeGreaterThanOrEqual(100_000 / SETTLE_PAGE);                       // and the loop did turn, page after page
     expect(count("SELECT COUNT(*) AS n FROM pending_delegations")).toBe(0);
     expect(w.turns).toEqual([]);
-  }, 120_000);
+  });
   it("the gate stays closed until the last page of the boot settling is done, so settling still comes before any drain", async () => {
     const w = ownerWorld("owner");
     const id = queueDelegation(w.bus, w.from, { toBotId: w.target.id, message: "waits for the settling", depth: 0 }, 2).id!;

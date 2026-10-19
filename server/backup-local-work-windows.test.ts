@@ -3,14 +3,15 @@
 // folder. It now uses .murage-backup-work beside the data folder like Mac and
 // Linux; on Windows that folder is made owner-only by ACL and checked on
 // every backup.
-import { mkdirSync, mkdtempSync, realpathSync, rmSync } from "node:fs";
+import { mkdirSync, mkdtempSync, realpathSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { afterEach, expect, it } from "vitest";
 import { backupWorkRoot, createBackupWork, removeBackupWork } from "./backup-local-work.ts";
+import { removeTempDirSync } from "./testing/cleanup.ts";
 
 const roots: string[] = [];
-afterEach(() => { for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true }); });
+afterEach(() => { for (const root of roots.splice(0)) removeTempDirSync(root); });
 function fixture() { const root = realpathSync.native(mkdtempSync(join(tmpdir(), "murage-work-win-"))); roots.push(root); const data = join(root, ".murage"); mkdirSync(data); return { root, data }; }
 
 it("Windows: the work folder is restricted to the owner when it isn't already, then reused as is", () => {

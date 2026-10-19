@@ -19,6 +19,7 @@ import { createBrowserExtensionService } from "./browser-extension-service.ts";
 // @ts-ignore -- a plain .mjs module with no declaration file
 import { SENSITIVE_RECTS } from "../extensions/murage-browser/runtime.mjs";
 import type { BrowserExtensionCommand, BrowserExtensionHello, BrowserExtensionResponse } from "../shared/browser-extension-protocol.ts";
+import { removeTempDir } from "./testing/cleanup.ts";
 
 // ---------------------------------------------------------------------------------------------------------------------------------
 // SEC-01: incomplete facts on any activating action go to the owner, whatever name the page gave the control.
@@ -249,7 +250,7 @@ describe("screenshot masks use the shared classifier and cover what the guard ca
 const A = "https://fixture.test";
 const cleanup: string[] = [];
 const services: Awaited<ReturnType<typeof createBrowserExtensionService>>[] = [];
-afterEach(async () => { for (const service of services.splice(0)) await service.close(); for (const directory of cleanup.splice(0)) await fs.rm(directory, { recursive: true, force: true }); });
+afterEach(async () => { for (const service of services.splice(0)) await service.close(); for (const directory of cleanup.splice(0)) await removeTempDir(directory); });
 type Tab = { tabId: number; navigationEpoch: number; origin: string; url: string };
 async function serviceFixture(extra: Record<string, unknown> = {}) {
   const { root: directoryRoot, directory } = await privateTestDirectory(path.resolve(".corefix8-")); cleanup.push(directoryRoot);

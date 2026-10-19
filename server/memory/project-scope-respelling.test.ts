@@ -7,7 +7,7 @@
 // scope, and memories that silently stopped surfacing. These cover the
 // migration that re-keys the row a user already has, and the line it must not
 // cross — a canonical scope that already exists is not merged into.
-import { existsSync, mkdirSync, realpathSync, rmSync } from "node:fs";
+import { existsSync, mkdirSync, realpathSync } from "node:fs";
 import { homedir } from "node:os";
 import { basename, dirname, join } from "node:path";
 import { beforeEach, expect, it } from "vitest";
@@ -17,9 +17,10 @@ import { ownerMemoryTicket } from "./authority.ts";
 import { ensureScope, reconcileMemoryRoster } from "./policy.ts";
 import { memoryOwnerRoute } from "./settings.ts";
 import type { MemoryRecord } from "../../shared/memory.ts";
+import { removeTempDirSync } from "../testing/cleanup.ts";
 
 const roster = {bots:[{id:"a",threadId:"ta"},{id:"b",threadId:"tb"}],groups:[]};
-beforeEach(()=>{closeDatabase();rmSync(DATA_DIR,{recursive:true,force:true});mkdirSync(DATA_DIR,{recursive:true});reconcileMemoryRoster(roster);});
+beforeEach(()=>{closeDatabase();removeTempDirSync(DATA_DIR);mkdirSync(DATA_DIR,{recursive:true});reconcileMemoryRoster(roster);});
 
 const route=(body:unknown)=>memoryOwnerRoute("/api/memory/action",body,ownerMemoryTicket(),roster);
 const bind=(path:string)=>route({action:"project",path,subjectType:"bot",subjectId:"a"}) as Promise<{scopeId:string;path:string}>;

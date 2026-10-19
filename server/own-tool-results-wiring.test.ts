@@ -7,7 +7,7 @@
 // fed into exactly the calls server/index.ts makes. The boundary itself is in
 // own-tool-results.test.ts; this proves the session's folder reaches policy,
 // and that a read of anything else still raises the card.
-import { chmodSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import { chmodSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -50,6 +50,13 @@ afterEach(async () => {
   instance = undefined;
   await removeTempDir(scratch);
 });
+
+/** The folders the product names for the session: the thread's folder as given and as its real path (macOS: /var is /private/var),
+ * deduplicated, as sessionFolders does (own-tool-results.ts), so one folder where the two are the same. */
+function sessionDirs(childHome: string): string[] {
+  const keys = [...new Set([cwd, realpathSync.native(cwd)].map((folder) => fuigoSessionKey(folder)))];
+  return keys.map((key) => join(childHome, "sessions", key, "fake-acp-session", "mcp"));
+}
 
 /** Raise one shell ask through the real driver and judge it as index.ts does. */
 async function askFor(command: string, threadId: string) {
@@ -95,7 +102,7 @@ describe("an ACP engine reading its own saved MCP result", () => {
     writeFileSync(saved, JSON.stringify({ messages: [{ subject: "Invoice" }] }));
     const { opened, verdict } = await askFor(
       `cat ${saved} | python3 -c "import json,sys; d=json.load(sys.stdin); print(d['messages'][0]['subject'])"`, "t-own-read");
-    expect(opened.toolResultDirs).toEqual([dir]);
+    expect(opened.toolResultDirs).toEqual(sessionDirs(childHome));
     expect(verdict).toMatchObject({ source: "own-tool-results" });
     expect(verdict.approve).toBeTruthy();
   });
@@ -118,7 +125,7 @@ describe("an ACP engine reading its own saved MCP result", () => {
     const saved = join(dir, "call_00_x.json");
     writeFileSync(saved, "{}");
     const { opened, verdict } = await askFor(`cat ${saved} > ${join(scratch, "copy.json")}`, "t-own-write");
-    expect(opened.toolResultDirs).toEqual([dir]);
+    expect(opened.toolResultDirs).toEqual(sessionDirs(childHome));
     expect(verdict.approve).toBeNull();
   });
 });

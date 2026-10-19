@@ -268,7 +268,7 @@ describe("wiring", () => {
   });
 
   it("renders untrusted HTML only inside the protected preview", () => {
-    expect(surface).toMatch(/<iframe[^>]*sandbox=""[^>]*srcDoc=\{artifactPreviewHtml\(load\.read\.content\)\}/);
+    expect(surface).toMatch(/<SandboxedFrame[^>]*sandbox=""[^>]*html=\{artifactPreviewHtml\(load\.read\.content\)\}/);
     expect(surface).not.toContain("dangerouslySetInnerHTML");
   });
 });

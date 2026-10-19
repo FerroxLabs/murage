@@ -13,6 +13,9 @@ import { enterSends } from "@/lib/composer-enter";
 import { COARSE_POINTER_QUERY, useCoarsePointer, useNarrowViewport } from "@/lib/media-query";
 import { newSendId } from "@/lib/send-id";
 import { openIntakeCard, replyToIntake } from "@/lib/onboarding-intake";
+
+/** Shown when a sent message could not also be recorded as the answer to the open setup question. */
+export const INTAKE_NOT_RECORDED = "Your message was sent. It could not be added as your answer to the setup question. Answer it on the setup card if you want it counted.";
 import {
   draftRevision,
   appendComposerDraftAttachments,
@@ -62,6 +65,7 @@ import {
   composerTakesFocusOnOpen,
   replyTargetTakesFocus,
   isLongPaste,
+  noticeOffersStorage,
   pasteAttachment,
   type Attachment,
   type PasteAttachment,
@@ -73,7 +77,8 @@ import { composerUploadsPending, subscribeComposerUploads } from "@/lib/composer
 import { composerSendGate } from "@/lib/composer-send-gate";
 import { normalizeState } from "@/lib/mascot";
 import { goalCoordinatorForComposer, groupComposerHint, roomRespondersForComposer } from "@/lib/group-routing";
-import { PendingApprovalActions, PendingApprovalPanel, pendingApprovals } from "./PendingApproval";
+import { pendingApprovals, type Pending } from "./PendingApproval";
+import { PendingApprovalQueue } from "./PendingApprovalQueue";
 import { useDesktopCapabilities } from "./DesktopCapabilities";
 import { autoNeedsLocalComputerWarning, localAutoHostPlatform } from "@/lib/local-computer";
 import { ReplyQuote } from "./ReplyQuote";
@@ -93,6 +98,8 @@ import { AudioAttachmentIntake } from "./AudioAttachmentIntake";
 import { ComposerSendNotice, type ComposerSendNoticeState } from "./ComposerSendNotice";
 import { fluxBridge, readFluxStatus, saveFluxKey } from "@/lib/flux-key-paste";
 import { isMessageSizeRefusal, messageIsTooLarge, messageTextBytes } from "../../shared/message-limits";
+import { RoutineSavedNotice } from "./RoutineGrantParts";
+import { clearRoutineSaved, useRoutineSaved } from "@/lib/routine-grant-saved";
 
 /** The active @mention query at the caret: the text between an `@` that
  * starts a word and the caret. null = no mention being typed. */
@@ -261,15 +268,23 @@ export function Composer({
     !group && Boolean(bot) && state.instances.find((i) => i.instanceId === bot!.modelSelection.instanceId)?.capabilities?.queueing === true;
   // a pending approval blocks the prompt until it is answered
   const threadId = group?.threadId ?? bot?.threadId ?? "";
+  // AMEND-13 Rule 82d: "Saved for [Routine name]" after the server saved it
+  const routineSaved = useRoutineSaved(threadId);
   // the VISIBLE branch only — an approval left on a branch you edited away
   // from must not keep blocking the composer. Cards older than the held page
   // ride beside it (openCards) and count while that branch reaches them.
   const approvals = pendingApprovals(group ? olderOpenCards(group, group.messages) : bot ? olderOpenCards(bot, visibleMessages(bot)) : []);
+  // Rule 83: every one of them is listed and answerable, not only the oldest.
   const approval = approvals[0];
-  const approvalBot = group
-    ? members?.find((member) => member.id === approval?.message.from?.botId) ??
-      members?.find((member) => member.id === group.busyBotId)
-    : bot;
+  // Rule 83b: who asked comes from the card's own sender, never the member that happens to be busy.
+  const approvalBotFor = (pending: Pending): Bot | undefined =>
+    group ? members?.find((member) => member.id === pending.message.from?.botId) : bot;
+  const approvalWhoFor = (pending: Pending): string =>
+    approvalBotFor(pending)?.name ?? pending.message.from?.name ?? (group ? "A channel member" : "The bot");
+  const approvalRoutineFor = (pending: Pending): string | undefined => {
+    const routineId = pending.message.card?.routineId;
+    return routineId ? state.routines.find((routine) => routine.id === routineId)?.name : undefined;
+  };
   const busyName = group
     ? (members?.find((b) => b.id === group.busyBotId)?.name ?? (group.working ? "The team" : "A bot"))
     : (bot?.name ?? "The bot");
@@ -375,6 +390,13 @@ export function Composer({
   );
   const [recording, setRecording] = useState(false);
   const [speechError, setSpeechError] = useState<string | null>(null);
+  // The send went through but the setup question did not hear it. Said quietly beside the composer, never as a failed send.
+  const [intakeNotice, setIntakeNotice] = useState<string | null>(null);
+  useEffect(() => {
+    if (!intakeNotice) return;
+    const timer = window.setTimeout(() => setIntakeNotice(null), 10_000);
+    return () => window.clearTimeout(timer);
+  }, [intakeNotice]);
   const [caret, setCaret] = useState(0);
   const [highlight, setHighlight] = useState(0);
   const [dismissedAt, setDismissedAt] = useState<number | null>(null); // Esc'd this @
@@ -959,7 +981,7 @@ export function Composer({
         onSent: acknowledged,
         onError: failedSend,
       });
-      if (question) void replyToIntake(bot.id, question.id, t, api, { alongside: true }).catch(() => {});
+      if (question) replyToIntake(bot.id, question.id, t, api, { alongside: true }).then(() => setIntakeNotice(null), () => setIntakeNotice(INTAKE_NOT_RECORDED));
       track("message_sent", { driver: bot.modelSelection?.instanceId, queued: busy && !canSteer });
     }
   };
@@ -1074,6 +1096,11 @@ export function Composer({
           >
             Undo clean-up
           </button>
+        </div>
+      )}
+      {intakeNotice && (
+        <div role="status" data-testid="intake-reply-notice" className="pointer-events-auto mb-2 w-full rounded-lg border border-warning/30 bg-warning/10 px-3 py-2 text-[12px] text-warning">
+          {intakeNotice}
         </div>
       )}
       {speechError && (
@@ -1208,19 +1235,21 @@ export function Composer({
             ))}
           </div>
         )}
+        {routineSaved && (
+          <RoutineSavedNotice title={routineSaved.title} items={routineSaved.items} onDismiss={() => clearRoutineSaved(threadId)} />
+        )}
         {/* An approval takes over the composer: you answer it before you
             can type again, so a waiting bot is impossible to miss. */}
         {approval && (
-          <div className="mb-2 flex max-h-[70dvh] flex-col overflow-hidden rounded-2xl border border-accent/40 bg-card">
-            <PendingApprovalPanel pending={approval} count={approvals.length} index={0} />
-            <PendingApprovalActions
-              key={approval.requestId}
-              pending={approval}
-              threadId={threadId}
-              bot={approvalBot}
-              onCancelTurn={interruptTurn}
-            />
-          </div>
+          <PendingApprovalQueue
+            key={threadId}
+            approvals={approvals}
+            threadId={threadId}
+            botFor={approvalBotFor}
+            whoFor={approvalWhoFor}
+            routineFor={approvalRoutineFor}
+            onCancelTurn={interruptTurn}
+          />
         )}
         {replyTo && (
           <div className="mb-2 px-1">
@@ -1240,6 +1269,7 @@ export function Composer({
           allowImages={engineSupportsImages}
           notice={attachmentNotice}
           onNotice={setAttachmentNotice}
+          onManageStorage={() => dispatch({ type: "toggleAppSettings", open: true, section: "storage" })}
           onAudioFile={queueAudioFile}
           frozen={sendPending}
         />
@@ -1330,7 +1360,8 @@ export function Composer({
                 files: imageFiles,
                 uploadImage: file => imageAttachmentFromFile(file, threadId),
                 onAdd: addUploadedAttachments,
-                onError: (message) => dispatch({ type: "error", message }),
+                // A full disk goes to the attachment notice, which offers Manage storage.
+                onError: (message) => noticeOffersStorage(message) ? setAttachmentNotice(message) : dispatch({ type: "error", message }),
               });
               return;
             }
@@ -1414,7 +1445,7 @@ export function Composer({
               : setupLocked
               ? { lead: "Finish channel setup to start chatting" }
               : approval
-              ? { lead: "Answer the approval above to continue" }
+              ? { lead: approvals.length > 1 ? "Answer the requests above to continue" : "Answer the approval above to continue" }
               : recording
               ? { lead: "Listening…" }
               : canInject

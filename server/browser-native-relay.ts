@@ -6,6 +6,9 @@ import { readFileSync } from "node:fs";
 import { connect as connectSocket } from "node:net";
 import { join } from "node:path";
 import { spawn } from "node:child_process";
+import { spawnCloudBrowser } from "./cloud-home/browser-process.ts";
+import { cloudRelayConnection } from "./cloud-home/browser-relay.ts";
+import { closeAgentBrowserSession } from "./browser-engine.ts";
 import WebSocket from "ws";
 import { ensureBrowserSandboxAccess } from "./browser-sandbox.ts";
 import { BrowserDocumentGuard } from "./browser-document-guard.ts";
@@ -39,8 +42,31 @@ export function createNativeBrowser(spec: AgentBrowserSpec): NativeBrowser {
   const pidFile = join(spec.env.AGENT_BROWSER_SOCKET_DIR!, `${spec.env.AGENT_BROWSER_SESSION}.pid`);
   // The owner's own Chrome: its first connections wait on the owner's Allow.
   const attached = Boolean(spec.env.AGENT_BROWSER_CDP);
-  const command = async (args: string[]): Promise<unknown> => { await ensureBrowserSandboxAccess(spec); return new Promise((resolve, reject) => {
-    const child = spawn(spec.command, ["--json", ...args], { env: spec.env, cwd: spec.env.HOME, windowsHide: true, stdio: ["ignore", "pipe", "pipe"] });
+  // Cloud home: every launcher request runs in its own scope, and a scope takes its
+  // children with it when it ends. A one-shot command (`get cdp-url`, `stream status`)
+  // that had to start the browser itself would therefore start one that dies with the
+  // command, and the next request would meet a different browser. So the long-lived
+  // engine starts the browser first, once, and every command after that finds it.
+  const cloud = process.env.MURAGE_CLOUD_ROLE === "home";
+  let warmed: Promise<void> | undefined;
+  const startEngine = async () => {
+    await ensureBrowserSandboxAccess(spec);
+    if (!initialized) {
+      client = startHeadlessEngine(spec);
+      initialized = client.request("initialize", { protocolVersion: "2024-11-05", capabilities: {}, clientInfo: { name: "murage-browser", version: "1" } }).then(() => {});
+    }
+    await initialized;
+  };
+  const warm = (): Promise<void> => {
+    if (!cloud) return Promise.resolve();
+    warmed ??= (async () => {
+      await startEngine();
+      await client!.request("tools/call", { name: "agent_browser_open", arguments: { url: "about:blank" } });
+    })().catch((error) => { warmed = undefined; throw error; });
+    return warmed;
+  };
+  const command = async (args: string[]): Promise<unknown> => { await warm(); await ensureBrowserSandboxAccess(spec); return new Promise((resolve, reject) => {
+    const child = spawnCloudBrowser(["--json", ...args], spec.env) ?? spawn(spec.command, ["--json", ...args], { env: spec.env, cwd: spec.env.HOME, windowsHide: true, stdio: ["ignore", "pipe", "pipe"] });
     let output = "";
     let overflow = false;
     const timer = setTimeout(() => { overflow = true; child.kill("SIGKILL"); }, attached ? USER_CHROME_ALLOW_WAIT_MS : 20_000);
@@ -53,22 +79,18 @@ export function createNativeBrowser(spec: AgentBrowserSpec): NativeBrowser {
     child.once("close", (code) => {
       clearTimeout(timer);
       if (code !== 0 || overflow) return reject(new Error("Browser command failed or exceeded its bound"));
-      try { const value = JSON.parse(output); if (value.success === false) throw new Error(); try { daemonPid = Number(readFileSync(pidFile, "utf8")); } catch {} resolve(value.data ?? value); }
+      try { const value = JSON.parse(output); if (value.success === false) throw new Error(); if (process.env.MURAGE_CLOUD_ROLE !== "home") { try { daemonPid = Number(readFileSync(pidFile, "utf8")); } catch {} } resolve(value.data ?? value); }
       catch { reject(new Error("Browser returned an invalid command result")); }
     });
   });
   };
-  const guard = new BrowserDocumentGuard(command, attached ? { connectTimeoutMs: USER_CHROME_ALLOW_WAIT_MS } : {});
+  const guard = new BrowserDocumentGuard(command, { ...(attached ? { connectTimeoutMs: USER_CHROME_ALLOW_WAIT_MS } : {}), connection: cloudRelayConnection("cdp", spec.env) });
   return {
     command,
     protected: (armed = true) => guard.protected(armed),
     async request(method, params) {
-      await ensureBrowserSandboxAccess(spec);
-      if (!initialized) {
-        client = startHeadlessEngine(spec);
-        initialized = client.request("initialize", { protocolVersion: "2024-11-05", capabilities: {}, clientInfo: { name: "murage-browser", version: "1" } }).then(() => {});
-      }
-      await initialized;
+      await warm();
+      await startEngine();
       return client!.request(method, params);
     },
     async connect(onFrame, onUrl, onDisconnect) {
@@ -78,8 +100,9 @@ export function createNativeBrowser(spec: AgentBrowserSpec): NativeBrowser {
       const port = result.port ?? result.streamPort;
       if (!Number.isInteger(port) || port! < 1 || port! > 65535) throw new Error("Browser returned an invalid stream port");
       streamId = String(port);
+      const streamConnection = cloudRelayConnection("stream", spec.env);
       await new Promise<void>((resolve, reject) => {
-        const ws = new WebSocket(`ws://127.0.0.1:${port}/?pacing=ack&maxFps=10`, { maxPayload: 4 * 1024 * 1024, handshakeTimeout: 5000 });
+        const ws = new WebSocket(`ws://127.0.0.1:${port}/?pacing=ack&maxFps=10`, { maxPayload: 4 * 1024 * 1024, handshakeTimeout: 5000, ...(streamConnection ? { createConnection: streamConnection as never } : {}) });
         socket = ws;
         ws.once("open", resolve);
         ws.on("error", () => reject(new Error("Browser stream unavailable")));
@@ -109,6 +132,10 @@ export function createNativeBrowser(spec: AgentBrowserSpec): NativeBrowser {
       guard.close();
       socket?.close(); socket = undefined;
       await client?.close();
+      if (process.env.MURAGE_CLOUD_ROLE === "home") {
+        await closeAgentBrowserSession(spec);
+        client = undefined; initialized = undefined; warmed = undefined; return;
+      }
       const pid = daemonPid;
       let currentPid: number | undefined;
       try { currentPid = Number(readFileSync(pidFile, "utf8")); } catch {}

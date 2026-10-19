@@ -1,4 +1,4 @@
-import { mkdirSync, rmSync } from "node:fs";
+import { mkdirSync } from "node:fs";
 import { beforeEach, expect, it } from "vitest";
 import { isMemoryOverviewQuery, selectMemoryEvidence } from "./relevance.ts";
 import { DATA_DIR } from "../config.ts";
@@ -8,8 +8,9 @@ import { InternalCapabilities } from "../internal-capabilities.ts";
 import { searchMemory } from "./search.ts";
 import { buildMemoryBundle, hydrateMemoryRecord } from "./bundle.ts";
 import { LineageAllowance } from "./lineage-allowance.ts";
+import { removeTempDirSync } from "../testing/cleanup.ts";
 
-beforeEach(()=>{closeDatabase();rmSync(DATA_DIR,{recursive:true,force:true});mkdirSync(DATA_DIR,{recursive:true});});
+beforeEach(()=>{closeDatabase();removeTempDirSync(DATA_DIR);mkdirSync(DATA_DIR,{recursive:true});});
 
 it("requires an exact opaque reference rather than a nearby topic or identifier prefix",()=>{
   const rows=[{text:"Incident retention_bucket_20 has a recovery note.",similarity:0.99},{text:"The retention policy is thirty days.",similarity:0.9}];

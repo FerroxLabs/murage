@@ -31,7 +31,7 @@ export async function landOnSearchHit(
   }
   if (group && group.threadId !== hit.threadId) {
     const result = await api(`/api/groups/${group.id}/tasks/${hit.threadId}?messages=${MESSAGE_PAGE_SIZE}`, { method: "POST" });
-    if (result?.group) dispatch({ type: "groupPatched", group: result.group });
+    if (result?.group) dispatch({ type: "groupPatched", origin: fromAnswer(result.group), group: result.group });
   }
   if (bot && !hit.onActivePath) {
     const branch = await api(`/api/bots/${bot.id}/active-branch`, {

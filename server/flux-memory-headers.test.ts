@@ -36,6 +36,7 @@ import {
   isFluxUrl,
   opencodeConfigOverlay,
   qwenSettingsJson,
+  setFluxExternalMemory,
   setFluxMemoryConfig,
   setFluxMemorySettings,
   withFluxCallHeaders,
@@ -95,26 +96,33 @@ describe("who gets which headers", () => {
   });
 
   it("settings come from the environment and from the override", () => {
-    expect(fluxMemorySettings({})).toEqual(BASE);
+    expect(fluxMemorySettings({})).toEqual({ ...BASE, external: true });
     expect(fluxMemorySettings({ MURAGE_FLUX_MEMORY: "off" }).killSwitch).toBe(true);
     expect(fluxMemorySettings({ MURAGE_FLUX_MEMORY_INJECT: "false" }).inject).toBe("off");
     expect(fluxMemorySettings({ MURAGE_FLUX_MEMORY_OWNER: "0" }).ownerMemory).toBe("off");
     expect(fluxMemorySettings({ MURAGE_FLUX_MEMORY_SPACES: "1" }).spaces).toBe(true);
     setFluxMemorySettings({ killSwitch: true });
     expect(fluxMemorySettings({}).killSwitch).toBe(true);
+    // "Use Flux memory" (lane 2.2): the saved switch, and the override above it
+    try {
+      setFluxExternalMemory(false);
+      expect(fluxMemorySettings({}).external).toBe(false);
+      setFluxMemorySettings({ external: true });
+      expect(fluxMemorySettings({}).external).toBe(true);
+    } finally { setFluxExternalMemory(undefined); }
   });
 
   it("saved config sets the switches, env overrides config, the test override beats both, defaults unchanged", () => {
     try {
-      expect(fluxMemorySettings({})).toEqual(BASE);
+      expect(fluxMemorySettings({})).toEqual({ ...BASE, external: true });
       setFluxMemoryConfig({ enabled: false, inject: false, owner: false, spaces: true });
-      expect(fluxMemorySettings({})).toEqual({ killSwitch: true, inject: "off", ownerMemory: "off", spaces: true });
+      expect(fluxMemorySettings({})).toEqual({ killSwitch: true, inject: "off", ownerMemory: "off", spaces: true, external: true });
       // env wins over config, key by key
       expect(fluxMemorySettings({ MURAGE_FLUX_MEMORY: "on", MURAGE_FLUX_MEMORY_SPACES: "0" })).toMatchObject({ killSwitch: false, spaces: false, inject: "off" });
       // an unrecognised env value falls back to config, not to a surprise
       expect(fluxMemorySettings({ MURAGE_FLUX_MEMORY_INJECT: "maybe" }).inject).toBe("off");
       setFluxMemoryConfig({ spaces: false });
-      expect(fluxMemorySettings({})).toEqual(BASE);
+      expect(fluxMemorySettings({})).toEqual({ ...BASE, external: true });
       setFluxMemoryConfig({ inject: true });
       setFluxMemorySettings({ inject: "off" });
       expect(fluxMemorySettings({}).inject).toBe("off");

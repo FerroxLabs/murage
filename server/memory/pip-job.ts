@@ -8,17 +8,28 @@ export const PIP_JOB_REFUSAL = 220;
 export const PIP_JOB_SUPERVISOR = join(SERVER_ROOT, "memory", "pip-job-supervisor.ps1");
 export const powershellArgs = ["-NoLogo", "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-File", PIP_JOB_SUPERVISOR];
 export interface JobHelperResult { ok: boolean; out: string }
-export type JobHelperRunner = (command: string, args: string[], timeoutMs: number) => Promise<JobHelperResult>;
-const runHelper: JobHelperRunner = (command, args, timeout) => new Promise(resolve => {
-  execFile(command, args, { timeout, encoding: "utf8", windowsHide: true }, (error, out) => resolve({ ok: !error, out: String(out ?? "") }));
+/** `signal` (when given) ends the helper at once: the PowerShell child is killed and the answer is `ok: false`. */
+export type JobHelperRunner = (command: string, args: string[], timeoutMs: number, signal?: AbortSignal) => Promise<JobHelperResult>;
+const runHelper: JobHelperRunner = (command, args, timeout, signal) => new Promise(resolve => {
+  if (signal?.aborted) { resolve({ ok: false, out: "" }); return; }
+  execFile(command, args, { timeout, encoding: "utf8", windowsHide: true, ...(signal ? { signal } : {}) }, (error, out) => resolve({ ok: !error, out: String(out ?? "") }));
 });
 
-/** The helper holds the opened job while terminating and polling its member count. */
-export async function stopWindowsJob(jobName: string, waitMs = 4_000, runner: JobHelperRunner = runHelper): Promise<boolean> {
+/** The helper holds the opened job while terminating and polling its member count. A stop (`signal`) ends the wait at once and answers
+ *  false: an interrupted look never says the job is gone, so the attempt keeps its transport record and the next pass owns the cleanup.
+ *  The helper's own timeout (waitMs + 10 s) bounds it either way, and a runner that ignores the signal is raced against it. */
+export async function stopWindowsJob(jobName: string, waitMs = 4_000, runner: JobHelperRunner = runHelper, signal?: AbortSignal): Promise<boolean> {
   if (!/^Local\\murage-pip-[a-zA-Z0-9-]+$/.test(jobName)) return false;
+  if (signal?.aborted) return false;
   try {
-    const result = await runner("powershell.exe", [...powershellArgs, "-JobName", jobName, "-Stop", "-WaitMs", String(waitMs)], waitMs + 10_000);
-    if (!result.ok) return false;
+    const args = [...powershellArgs, "-JobName", jobName, "-Stop", "-WaitMs", String(waitMs)];
+    const helper = signal ? runner("powershell.exe", args, waitMs + 10_000, signal) : runner("powershell.exe", args, waitMs + 10_000);
+    let onAbort: (() => void) | undefined;
+    const stopped = signal ? new Promise<JobHelperResult>(resolve => { onAbort = () => resolve({ ok: false, out: "" }); signal.addEventListener("abort", onAbort, { once: true }); }) : undefined;
+    let result: JobHelperResult;
+    try { result = stopped ? await Promise.race([helper, stopped]) : await helper; }
+    finally { if (onAbort) signal!.removeEventListener("abort", onAbort); }
+    if (!result.ok || signal?.aborted) return false;
     const observation = JSON.parse(result.out.trim());
     return observation.state === "absent" || (observation.state === "present" && observation.activeProcesses === 0);
   } catch { return false; }

@@ -18,8 +18,10 @@ import {
   type FeedbackRow, type LessonList, type LearningState, type LocalUndo, type MemoryEntry, type MemoryStatusView, type OutcomeCounts, type Suggestion, type Lesson, type SettingsPatch,
 } from "@/lib/learning-screen";
 import { fetchLearningCounts, monthLine, type LearningCountsAnswer } from "@/lib/learning-counts";
-import { learningEventLabel, type LearningPage } from "@/lib/memory-learning";
+import type { LearningPage } from "@/lib/memory-learning";
+import { learningEventLabel } from "@/lib/memory-learning-text";
 import { Switch } from "./SettingsPrimitives";
+import { Disclosure } from "./MemoryLearningControls";
 import { allHeldTasks } from "@/lib/task-window";
 
 const FOCUS = "focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent";
@@ -332,9 +334,8 @@ export function LearningView({ botName, data, handlers, now: fixedNow, defaultMo
         </section>
       )}
 
-      <details open={defaultMoreOpen ? true : undefined} className="rounded-xl border border-hairline/50 px-3">
-        <summary className={`min-h-11 cursor-pointer list-none py-3 text-[14px] font-medium text-ink ${FOCUS}`}>{s("more.summary")}</summary>
-        <div className="space-y-5 pb-3">
+      <Disclosure defaultOpen={defaultMoreOpen} label={s("more.summary")} className="rounded-xl border-hairline/50 px-3 py-0">
+        <div className="space-y-5 pb-3 pt-2">
           <div className="flex items-center justify-between gap-3">
             <span id="learning-ask-label" className="min-w-0 text-[13.5px] text-ink">{s("askFirst.label")}</span>
             <Switch checked={settings.askFirst} disabled={busy} aria-labelledby="learning-ask-label" className={FOCUS} onClick={() => void run(() => handlers.setAskFirst(!settings.askFirst), "askFirst")} data-learning-focus="askFirst" />
@@ -393,7 +394,7 @@ export function LearningView({ botName, data, handlers, now: fixedNow, defaultMo
             <p className={MUTED}>{s("forgetData.note")}</p>
           </div>
         </div>
-      </details>
+      </Disclosure>
     </div>
   );
 }

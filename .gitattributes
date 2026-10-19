@@ -19,3 +19,41 @@
 # Gradle's Windows wrapper is a cmd.exe batch file, generated and kept with
 # CRLF byte for byte (cmd.exe misreads labels in an LF batch file).
 /apps/mobile/android/gradlew.bat -text
+
+# The Cloud home image unpacks `git archive <revision>` into /opt/murage
+# (deploy/cloud-home/build-image.sh), so every path below stays out of each
+# customer's home. None of them is read by the install, the build or the
+# running home: they are maintainer notes, agent records, audit logs, the
+# mobile app, store-submission assets and dev-only proofs and tests that carry
+# maintainer machine paths. build-image.sh then fails the build if any
+# check-repository-custody pattern still matches under /opt/murage.
+# Removed from the public tree by the publish scrub as well:
+**/.planning export-ignore
+/lanes export-ignore
+/.superpowers export-ignore
+/.audit3 export-ignore
+/.modes-* export-ignore
+/docs/mobile export-ignore
+/docs/superpowers export-ignore
+/UPSTREAM-AGENT-BROWSER-BUG.md export-ignore
+/.github/workflows/scale-budget.yml export-ignore
+/.github/workflows/nightly-perf.yml export-ignore
+# Private records check-repository-custody never allows to be tracked:
+**/.ijfw export-ignore
+/ijfw/memory export-ignore
+/ijfw/sessions export-ignore
+/docs/plans export-ignore
+**/HANDOFF*.md export-ignore
+**/*-EXECUTION.md export-ignore
+# Internal notes and handoffs:
+/docs/**/handoff export-ignore
+/INTEGRATOR-PATCHES export-ignore
+/.claude export-ignore
+# Not part of the home (the mobile app; store-submission assets; dev proofs and
+# the tests that read maintainer-machine fixtures):
+/apps/mobile export-ignore
+/extensions/murage-browser/store-assets export-ignore
+/scripts/prove-browser-*.mjs export-ignore
+/companion/test/push-door.test.ts export-ignore
+/server/browser-extension-paths.test.ts export-ignore
+/server/decider/room-routing.integration.test.ts export-ignore

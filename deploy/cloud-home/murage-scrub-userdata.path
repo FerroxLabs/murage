@@ -1,0 +1,10 @@
+# SPDX-License-Identifier: AGPL-3.0-or-later
+[Unit]
+Description=Murage scrub cloud-init user-data once enrollment has written the machine credential
+
+[Path]
+PathExists=/var/lib/murage-home/credential
+Unit=murage-scrub-userdata.service
+
+[Install]
+WantedBy=multi-user.target

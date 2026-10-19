@@ -317,7 +317,7 @@ type Dispatch = ReturnType<typeof useStore>["dispatch"];
 export function runAnnouncementAction(target: AnnouncementActionTarget, dispatch: Dispatch): void {
   if (target === "check-for-updates") {
     void window.muragebox?.updater?.check();
-    // Updates moved from General to Help & updates in 0.1.62.
+    // Updates moved from General to About & updates in 0.1.62.
     dispatch({ type: "toggleAppSettings", open: true, section: "about" });
     return;
   }
@@ -327,7 +327,7 @@ export function runAnnouncementAction(target: AnnouncementActionTarget, dispatch
 async function loadWithRequest(path: string): Promise<Blob> {
   const { ensureDesktopSurfaceSecret, desktopSurfaceHeaders } = await import("@/lib/live-events");
   await ensureDesktopSurfaceSecret();
-  const response = await fetch(path, { headers: { "x-murage-surface": "desktop", ...desktopSurfaceHeaders() } });
+  const response = await fetch(path, { redirect: "error", headers: { "x-murage-surface": "desktop", ...desktopSurfaceHeaders() } });
   if (!response.ok) throw new Error(String(response.status));
   return response.blob();
 }
@@ -355,7 +355,7 @@ export function AnnouncementsHost({
   onNavigate?: () => void;
 }) {
   const { dispatch } = useStore();
-  const { current, dismiss } = useAnnouncements(desktop, request);
+  const { current, dismiss, dismissFailed } = useAnnouncements(desktop, request);
   const image = useAnnouncementImage(current?.image, loadImage);
   const act = useCallback(() => {
     if (!current) return;
@@ -369,11 +369,13 @@ export function AnnouncementsHost({
   const surface = current ? announcementSurface(current) : null;
   const dismissCurrent = useCallback(() => { if (current) dismiss(current.id); }, [current, dismiss]);
   if (!current || !pictureSettled) return null;
-  if (surface === "card") return suspended ? null : <AnnouncementDialog item={current} imageUrl={image.url} onAct={act} onDismiss={dismissCurrent} />;
+  const failed = dismissFailed ? <p role="alert" className="mt-1 text-[12px] text-danger" data-testid="announcement-dismiss-failed">{dismissFailed}</p> : null;
+  if (surface === "card") return suspended ? null : <><AnnouncementDialog item={current} imageUrl={image.url} onAct={act} onDismiss={dismissCurrent} />{failed && <div className="fixed inset-x-0 bottom-4 z-[60] flex justify-center">{failed}</div>}</>;
   if (!showBanner) return null;
   return (
     <div className="mb-2">
       <AnnouncementBanner item={current} imageUrl={image.url} onAct={act} onDismiss={dismissCurrent} />
+      {failed}
     </div>
   );
 }

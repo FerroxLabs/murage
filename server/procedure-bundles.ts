@@ -1,9 +1,10 @@
 import { executionStore, isHomePartition, threadPartition, partitionScopeKey } from "./execution-audience.ts";
 import { createHash, randomUUID } from "node:crypto";
-import { closeSync, constants, existsSync, fstatSync, lstatSync, mkdirSync, openSync, readFileSync, readdirSync, readlinkSync, renameSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { closeSync, constants, existsSync, fstatSync, lstatSync, mkdirSync, openSync, readFileSync, readdirSync, readlinkSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { DATA_DIR } from "./config.ts";
 import { taskWorkspacePath } from "./workspace.ts";
+import { relinkDirectory, removeLinkWithRetry } from "./link-removal.ts";
 import { skillAvailableForAudience, listSkills, snapshotProceduralSkill, assertSkillProcedureEvidence, type SkillProcedureContext, type SkillProcedureEvidence, fitSkillIndex, skillIndexOmissionNotice, nativeLinkPointsToSkill } from "./skills.ts";
 import { skillFileText, type BundledSkill } from "./skill-library.ts";
 import type { InstalledPlaybook } from "./store.ts";
@@ -158,6 +159,13 @@ export function preparePinnedProcedures(botId:string,threadId:string,pin:Procedu
   // so this task's links may still name an earlier pin's projection. Those are
   // ours to move to this pin, or to remove when the skill is no longer pinned;
   // any other same-name entry still refuses the turn.
+  // Every link change goes through link-removal.ts: rmSync on a Windows
+  // junction throws under the app's Electron runtime (murage#16) and must
+  // never be used on a link. A relink that still fails after its one retry
+  // does not refuse the turn when no link is left behind: the index below
+  // names each pinned SKILL.md by its exact path, and the caller tells the
+  // user which skills it affected. A link it could not remove refuses it.
+  const unlinked:string[]=[];
   if(native){
     const procedures=join(desk,".murage-procedures"),pinned=new Set(bundle.imported.map(skill=>skill.name));
     for(const dir of [".claude/skills",".agents/skills",".grok/skills"]){
@@ -167,18 +175,27 @@ export function preparePinnedProcedures(botId:string,threadId:string,pin:Procedu
       if(!bundle.imported.length){if(!existsSync(directory))continue;try{ownedDirectory(directory);}catch{continue;}}
       else ownedDirectory(directory);
       for(const name of readdirSync(directory)){
-        if(!pinned.has(name)&&earlierPinLink(join(directory,name),procedures,name))rmSync(join(directory,name));
+        if(pinned.has(name)||!earlierPinLink(join(directory,name),procedures,name))continue;
+        // A skill this pin no longer carries must not stay discoverable.
+        try{removeLinkWithRetry(join(directory,name));}
+        catch{throw new Error(`Murage could not remove the link for the skill "${name}", which this task no longer uses, so the turn did not start. Try again.`);}
       }
       for(const skill of bundle.imported){
         const link=join(directory,skill.name),target=join(root,"skills",skill.name);
-        try{
-          const stat=lstatSync(link);if(!stat.isSymbolicLink())fail();
-          if(!nativeLinkPointsToSkill(link,target)){
-            if(!earlierPinLink(link,procedures,skill.name))fail();
-            rmSync(link);symlinkSync(target,link,process.platform==="win32"?"junction":"dir");
-          }
+        let stat:ReturnType<typeof lstatSync>|undefined;
+        try{stat=lstatSync(link);}catch(error){if((error as NodeJS.ErrnoException).code!=="ENOENT")throw error;}
+        if(stat){
+          if(!stat.isSymbolicLink())fail();
+          if(nativeLinkPointsToSkill(link,target))continue;
+          if(!earlierPinLink(link,procedures,skill.name))fail();
         }
-        catch(error){if((error as NodeJS.ErrnoException).code!=="ENOENT")throw error;symlinkSync(target,link,process.platform==="win32"?"junction":"dir");}
+        try{relinkDirectory(link,target);}
+        catch{
+          // The earlier pin's link still standing would keep that copy
+          // discoverable under this pin: refuse the turn rather than run on it.
+          if(lstatSync(link,{throwIfNoEntry:false}))throw new Error(`Murage could not move the link for the skill "${skill.name}" to this task's pinned copy, so the turn did not start. Try again.`);
+          if(!unlinked.includes(skill.name))unlinked.push(skill.name);
+        }
       }
     }
   }
@@ -187,7 +204,15 @@ export function preparePinnedProcedures(botId:string,threadId:string,pin:Procedu
   const candidates=bundle.imported.map(skill=>`- ${skill.name}: ${skill.description} Read ${JSON.stringify(join(root,"skills",skill.name,"SKILL.md"))}.`);
   const lines=fitSkillIndex(candidates,(kept,omitted)=>importedSkillsPrompt(kept,omitted));
   return {catalogue:bundle.catalogue.map(skill=>({...skill,directory:join(root,skill.directory)})),playbooks:bundle.playbooks,
-    importedPrompt:importedSkillsPrompt(lines,candidates.length-lines.length)};
+    importedPrompt:importedSkillsPrompt(lines,candidates.length-lines.length),linkNotice:skillLinkNotice(unlinked)};
+}
+
+/** The in-chat line for pinned skills whose native link could not be made
+ * after one retry, or undefined when every link is in place. */
+export function skillLinkNotice(names:readonly string[]):string|undefined{
+  if(!names.length)return undefined;
+  const list=names.map(name=>`"${name}"`).join(", ");
+  return `${names.length===1?"The skill":"The skills"} ${list} could not be linked into the engine's skill folder on this turn, so the bot reads ${names.length===1?"it":"them"} from the pinned copy instead. The next turn links ${names.length===1?"it":"them"} again.`;
 }
 
 /** The "Its list of skills" layer: one line per imported skill, then a notice
@@ -206,7 +231,7 @@ function revokePinnedMaterialization(botId:string,threadId:string,pin:ProcedureP
   for(const skill of bundle.imported){
     for(const dir of [".claude/skills",".agents/skills",".grok/skills"]){
       const directory=join(desk,dir),link=join(directory,skill.name);
-      try{ownedDirectory(directory);if(nativeLinkPointsToSkill(link,join(root,"skills",skill.name)))rmSync(link);}catch{/* Never follow an unknown replacement. */}
+      try{ownedDirectory(directory);if(nativeLinkPointsToSkill(link,join(root,"skills",skill.name)))removeLinkWithRetry(link);}catch{/* Never follow an unknown replacement. */}
     }
   }
   for(const file of bundle.files){

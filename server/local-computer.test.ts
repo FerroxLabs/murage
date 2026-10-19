@@ -1,14 +1,4 @@
-import {
-  appendFileSync,
-  chmodSync,
-  mkdirSync,
-  mkdtempSync,
-  realpathSync,
-  rmSync,
-  statSync,
-  symlinkSync,
-  writeFileSync,
-} from "node:fs";
+import { appendFileSync, chmodSync, mkdirSync, mkdtempSync, realpathSync, statSync, symlinkSync, writeFileSync } from "node:fs";
 import { createServer } from "node:net";
 import { createRequire } from "node:module";
 import { tmpdir } from "node:os";
@@ -23,6 +13,7 @@ import {
   validateLegacyDescriptorRuntime,
   validateLinuxDescriptorRuntime,
 } from "./local-computer.ts";
+import { removeTempDirSync } from "./testing/cleanup.ts";
 
 const require = createRequire(import.meta.url);
 const { DRIVER_FILE_IDENTITY_KEYS: ELECTRON_DRIVER_FILE_IDENTITY_KEYS } = require(
@@ -107,7 +98,7 @@ function privateUserData(name: string) {
 
 afterEach(() => {
   for (const directory of temporaryDirectories.splice(0)) {
-    rmSync(directory, { recursive: true, force: true });
+    removeTempDirSync(directory);
   }
 });
 

@@ -6,6 +6,7 @@ import { withOfflineInstallation } from "./installation-database-snapshot.ts";
 import { stageInstallationStateWhileOwned } from "./installation-state-snapshot.ts";
 import { inventoryFidelity } from "./installation-fidelity-snapshot.ts";
 import { backupFixture } from "./testing/backup-fixture.ts";
+import { removeTempDirSync } from "./testing/cleanup.ts";
 const selection={scope:"application-data",credentialPolicy:"preserve-in-encrypted-fidelity"} as const;
 it("keeps fidelity metadata under the same lease and detects later component changes",async()=>{
   const f=backupFixture();try{await withOfflineInstallation(f.data,async installation=>{
@@ -19,13 +20,13 @@ it("keeps fidelity metadata under the same lease and detects later component cha
     // Records keep a raw copy too; both notice those.
     writeFileSync(join(f.data,"config.json"),JSON.stringify({profile:{name:"Changed"}}));
     expect(inventory.assertUnchanged).toThrow();
-  });}finally{f.db.close();rmSync(f.parent,{recursive:true,force:true});}
+  });}finally{f.db.close();removeTempDirSync(f.parent);}
 });
 it("refuses incomplete selected coverage: an unknown top-level name, and names it",async()=>{
   const f=backupFixture();try{
     writeFileSync(join(f.data,"new-state.json"),"private unknown component");
     await expect(withOfflineInstallation(f.data,async installation=>{const stage=await stageInstallationStateWhileOwned(installation,f.parent);return inventoryFidelity(installation,stage,selection);})).rejects.toMatchObject({code:"BACKUP_UNCLASSIFIED_COMPONENT",path:"new-state.json"});
-  }finally{f.db.close();rmSync(f.parent,{recursive:true,force:true});}
+  }finally{f.db.close();removeTempDirSync(f.parent);}
 });
 // 0.1.60 audit A-01: a shortcut in a bot's folder is stored as a shortcut,
 // never followed; one to a folder outside the data folder is also listed, so
@@ -40,7 +41,7 @@ it("stores a shortcut to a folder outside the data folder without following it, 
       expect(stage.manifest.files.some(file=>file.path.startsWith("workspaces/linked/"))).toBe(false);
       expect(stage.manifest.skipped).toContainEqual({path:"workspaces/linked",reason:"linked-folder"});
     });
-  }finally{f.db.close();rmSync(f.parent,{recursive:true,force:true});}
+  }finally{f.db.close();removeTempDirSync(f.parent);}
 });
 
 it("accepts unsaved headless config and consistently snapshots memory projection without restoring authority files",async()=>{
@@ -60,7 +61,7 @@ it("accepts unsaved headless config and consistently snapshots memory projection
     const copied=new DatabaseSync(memory.source,{readOnly:true});try{expect(copied.prepare("SELECT text FROM entries").get()?.text).toBe("committed WAL memory");}finally{copied.close();}
     for(const [name,bytes]of before)expect(readFileSync(join(f.data,name))).toEqual(bytes);
     index.exec("INSERT INTO entries VALUES('unexpected concurrent edit')");expect(inventory.assertUnchanged).toThrow();
-  });}finally{index.close();f.db.close();rmSync(f.parent,{recursive:true,force:true});}
+  });}finally{index.close();f.db.close();removeTempDirSync(f.parent);}
 });
 it.each(["symlink","hardlink","corrupt","orphan-wal"])("refuses unsafe memory projection: %s",async kind=>{
   const f=backupFixture(),target=join(f.data,"memory-index.db"),outside=join(f.parent,"outside.db");writeFileSync(outside,"outside preserved");
@@ -68,7 +69,7 @@ it.each(["symlink","hardlink","corrupt","orphan-wal"])("refuses unsafe memory pr
     if(kind==="symlink")symlinkSync(outside,target);else if(kind==="hardlink")linkSync(outside,target);else if(kind==="corrupt")writeFileSync(target,"not sqlite");else writeFileSync(target+"-wal","orphan");
     await expect(withOfflineInstallation(f.data,async installation=>{const stage=await stageInstallationStateWhileOwned(installation,f.parent);return inventoryFidelity(installation,stage,selection);})).rejects.toThrow();
     expect(readFileSync(outside,"utf8")).toBe("outside preserved");
-  }finally{f.db.close();rmSync(f.parent,{recursive:true,force:true});}
+  }finally{f.db.close();removeTempDirSync(f.parent);}
 });
 it("keeps the pre-memory-v2 snapshot out of state and fidelity backups without failing the sweep",async()=>{
   const f=backupFixture();writeFileSync(join(f.data,"messages.pre-memory-v2.db"),"pre-upgrade copy fixture");
@@ -80,7 +81,7 @@ it("keeps the pre-memory-v2 snapshot out of state and fidelity backups without f
     expect(inventory.coverage.components).toContainEqual(expect.objectContaining({path:"messages.pre-memory-v2.db",status:"excluded"}));
     expect(inventory.sources.some(file=>file.path==="messages.pre-memory-v2.db")).toBe(false);
     expect(existsSync(join(f.data,"messages.pre-memory-v2.db"))).toBe(true);
-  });}finally{f.db.close();rmSync(f.parent,{recursive:true,force:true});}
+  });}finally{f.db.close();removeTempDirSync(f.parent);}
 });
 // Every name Murage itself writes at the data-folder root must be classified.
 // setup.json (first run), queued-messages.json (F7), team-library/ and the
@@ -106,7 +107,7 @@ it("classifies every root name Murage writes, keeping owner state and leaving ca
     }
     // Present only when Murage closed with a message still waiting: never "missing".
     expect(stage.manifest.missing).not.toContain("queued-messages.json");expect(stage.manifest.missing).not.toContain("setup.json");
-  });}finally{f.db.close();rmSync(f.parent,{recursive:true,force:true});}
+  });}finally{f.db.close();removeTempDirSync(f.parent);}
 });
 // What a bot learned from prospects stays on this computer (bot learning, B0).
 it("leaves learning-local out of the backup stage and the fidelity inventory, without failing the sweep",async()=>{
@@ -119,14 +120,14 @@ it("leaves learning-local out of the backup stage and the fidelity inventory, wi
     expect(inventory.coverage.components).toContainEqual(expect.objectContaining({path:"learning-local",status:"excluded"}));
     expect(inventory.sources.some(file=>file.path==="learning-local"||file.path.startsWith("learning-local/"))).toBe(false);
     expect(existsSync(join(f.data,"learning-local","bot-1","guide.json"))).toBe(true);
-  });}finally{f.db.close();rmSync(f.parent,{recursive:true,force:true});}
+  });}finally{f.db.close();removeTempDirSync(f.parent);}
 });
 // An interrupted bot-package import is recovered at the next start. Until
 // then bots.json may be half-way between two rosters, so it stays refused.
 it("still refuses an unrecovered package-import transaction",async()=>{
   const f=backupFixture();mkdirSync(join(f.data,".package-import-transaction"));writeFileSync(join(f.data,".package-import-transaction","journal.json"),"{}");
   try{await expect(withOfflineInstallation(f.data,async installation=>{const stage=await stageInstallationStateWhileOwned(installation,f.parent);return inventoryFidelity(installation,stage,selection);})).rejects.toThrow("BACKUP_UNCLASSIFIED_COMPONENT");
-  }finally{f.db.close();rmSync(f.parent,{recursive:true,force:true});}
+  }finally{f.db.close();removeTempDirSync(f.parent);}
 });
 // 0.1.60 added four writers at the data-folder root and none was classified,
 // so on a packaged 0.1.60 app EVERY backup refused with
@@ -154,7 +155,7 @@ it("backs up a 0.1.60 data folder: What's New, announcements and House Rules kep
       expect(inventory.coverage.components).toContainEqual(expect.objectContaining({path:name,status:"excluded"}));
       expect(inventory.sources.some(file=>file.path===name||file.path.startsWith(`${name}/`))).toBe(false);
     }
-  });}finally{f.db.close();rmSync(f.parent,{recursive:true,force:true});}
+  });}finally{f.db.close();removeTempDirSync(f.parent);}
 });
 // skills.ts syncSkillLinks links every enabled skill into the bot workspace's
 // .claude/.agents/.grok skills folders. Those links made EVERY backup of a bot
@@ -182,7 +183,7 @@ it.each(["murage-skill-link","outside-link"])("backs up a bot with skills: %s",a
     const {stage}=await run();
     expect(stage.manifest.files.some(file=>file.path.replaceAll("\\","/")==="workspaces/bot-1/skills/brand-voice/SKILL.md")).toBe(true);
     expect(stage.manifest.omitted.filter(item=>item.path.replaceAll("\\","/").endsWith("/skills/brand-voice")).length).toBe(3);
-  }finally{f.db.close();rmSync(f.parent,{recursive:true,force:true});}
+  }finally{f.db.close();removeTempDirSync(f.parent);}
 });
 it("leaves the retired own connected-apps key out of the raw config copy and keeps the source",async()=>{
   const f=backupFixture();try{
@@ -198,5 +199,5 @@ it("leaves the retired own connected-apps key out of the raw config copy and kee
       expect(readFileSync(join(f.data,"config.json"),"utf8")).toBe(config);
       stage.assertSourceUnchanged();inventory.assertUnchanged();
     });
-  }finally{f.db.close();rmSync(f.parent,{recursive:true,force:true});}
+  }finally{f.db.close();removeTempDirSync(f.parent);}
 });

@@ -1,0 +1,7 @@
+# SPDX-License-Identifier: AGPL-3.0-or-later
+# xai-org/grok-build: config_requirements.rs, CliRequirements.
+# Cap matches reviewed source 2bdd1d6a, pager Cargo.toml (1.0.45).
+# No Grok artifact is installed here; B2b verifies its artifact against this cap.
+[cli]
+auto_update = false
+maximum_version = "1.0.45"

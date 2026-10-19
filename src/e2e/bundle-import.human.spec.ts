@@ -1,4 +1,4 @@
-import { test, expect } from "@playwright/test";
+import { test, expect } from "./page-error-guard";
 import { createServer, type ViteDevServer } from "vite";
 import tailwindcss from "@tailwindcss/vite";
 import { fileURLToPath } from "node:url";
@@ -18,7 +18,7 @@ test.beforeAll(async () => {
       name: "bundle-import-fixture",
       resolveId(id) { if (id === "/__bundle.js") return "\0bundle-fixture"; if (id === "/fixture-store") return "\0bundle-store"; },
       load(id) {
-        if (id === "\0bundle-store") return "import {asAnswer} from '/src/state/answer-tag.ts';export async function api(path,init){const r=await fetch(path,init);const body=await r.json();if(!r.ok)throw Object.assign(new Error(body.error),{status:r.status});return asAnswer(body);}export function useStore(){return {state:{bots:[]},dispatch:action=>(window.fixtureActions??=[]).push(action)}}";
+        if (id === "\0bundle-store") return "import {asAnswer} from '/src/state/answer-tag.ts';export async function api(path,init){const r=await fetch(path,init);const body=await r.json();if(!r.ok)throw Object.assign(new Error(body.error),{status:r.status});return asAnswer(body);}export function useStoreIfAny(){return useStore();} export function useStore(){return {state:{bots:[]},dispatch:action=>(window.fixtureActions??=[]).push(action)}}";
         if (id !== "\0bundle-fixture") return;
         return "import React from 'react';import {createRoot} from 'react-dom/client';import {TeamLibraryPanel} from '/src/components/TeamLibraryPanel.tsx';import {BundleImportDialog} from '/src/components/BundleImportDialog.tsx';import '/src/styles.css';const direct=new URLSearchParams(location.search).has('direct');createRoot(document.getElementById('root')).render(React.createElement(direct?BundleImportDialog:TeamLibraryPanel,{archivePath:'/fixture/selected.zip',fileName:'selected.zip',returnFocusRef:{current:null},onClose:()=>window.fixtureClosed=true,onImported:r=>window.fixtureImported=r}));";
       },

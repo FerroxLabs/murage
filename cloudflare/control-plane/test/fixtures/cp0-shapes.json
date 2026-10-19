@@ -1,0 +1,11 @@
+{
+  "_license": "SPDX-License-Identifier: AGPL-3.0-or-later",
+  "createRequest": {"homeId":"home-test","publicOrigin":"https://home.murage.test","adminUrl":"https://admin.murage.test"},
+  "createResponse": {"machineId":"home-test","homeId":"home-test","enrollmentToken":"test-only-enrollment-token","generation":1},
+  "enrollRequest": {"token":"test-only-enrollment-token"},
+  "enrollResponse": {"machineCredential":"+//7//v/+//7//v/+//7//v/+//7//v/+//7//v/+/8=","homeId":"home-test","adminUrl":"https://admin.murage.test","publicOrigin":"https://home.murage.test","generation":1},
+  "unwrapRequest": {"generation":1},
+  "unwrapResponse": {"dataKey":"AQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQE=","bootstrapSecret":"AgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgI=","volumeKey":"AwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwM=","generation":1},
+  "b3EnrollmentPendingResponse": {"error":"enrollment_pending"},
+  "staleResponse": {"error":"stale_generation"}
+}

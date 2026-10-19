@@ -335,7 +335,7 @@ export function LocalComputerSection() {
             {status?.daemonUp && (
               <ActionButton action="pull" pending={pending} onClick={() => void act("pull")}>Prepare Cua desktop</ActionButton>
             )}
-            {c?.pull && <details className="text-[12px] text-ink-secondary"><summary className="cursor-pointer">Show base-image download</summary><div className="mt-2"><CommandLine command={c.pull} /></div></details>}
+            {c?.pull && <div className="text-[12px] text-ink-secondary"><p>Base-image download command</p><div className="mt-2"><CommandLine command={c.pull} /></div></div>}
           </Step>
 
           <Step
@@ -372,7 +372,7 @@ export function LocalComputerSection() {
             ) : status?.image ? (
               <ActionButton action="run" pending={pending} onClick={() => void act("run")}>Create Local VM</ActionButton>
             ) : null}
-            {c?.run && <details className="text-[12px] text-ink-secondary"><summary className="cursor-pointer">Show command</summary><div className="mt-2"><CommandLine command={c.run} /></div></details>}
+            {c?.run && <div className="text-[12px] text-ink-secondary"><p>Command to create it yourself</p><div className="mt-2"><CommandLine command={c.run} /></div></div>}
           </Step>
         </div>
       </Card>

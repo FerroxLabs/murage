@@ -3,7 +3,7 @@
 //
 // Review round 7, R7-01: a copy of a worker's answer, mirrored into the pair room, is shown to a bot's next turn only while the original it was
 // copied from is still stored and still shareable. The check is the same one the result gate makes, and it holds when memory is off.
-import { rmSync } from "node:fs";
+
 import { beforeEach, describe, expect, it } from "vitest";
 import { DATA_DIR } from "./config.ts";
 import type { ModelSelection } from "./contracts.ts";
@@ -15,9 +15,10 @@ import { roomTranscriptWithoutMemory } from "./room-transcript.ts";
 import { Store } from "./store.ts";
 import { released } from "./testing/released.ts";
 import { LineageAllowance } from "./memory/lineage-allowance.ts";
+import { removeTempDirSync } from "./testing/cleanup.ts";
 
 const selection = (): ModelSelection => ({ instanceId: "claude", model: "fake-model" });
-beforeEach(() => { closeMessageDb(); closeDatabase(); rmSync(DATA_DIR, { recursive: true, force: true }); });
+beforeEach(() => { closeMessageDb(); closeDatabase(); removeTempDirSync(DATA_DIR); });
 
 function mirrored() {
   const store = new Store(selection);

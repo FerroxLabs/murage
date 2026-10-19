@@ -6,12 +6,13 @@
 // before a restart is trusted after it. Then: a start reconciles an unchanged roster with no search by owner and reads one page of open cards before
 // listen; a list completed during the rowid sweep is handed over explicitly; the sweep marks are durable insertion cursors; and the restart marker of an
 // interrupted direct turn is a point check and a point append.
-import { mkdirSync, rmSync } from "node:fs";
+import { mkdirSync } from "node:fs";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { afterAll, afterEach, beforeAll, beforeEach, expect, it } from "vitest";
 import { thawRootSetWritesForTest } from "./replay-lineage.ts";
 import { markSessionKnown } from "./testing/legacy-file-model.ts";
+import { removeTempDirSync } from "../testing/cleanup.ts";
 // 1.0.2: this file drives the read-time root-set machinery over rows a 1.0.1 file holds; thaw the frozen root-set writes to model them.
 // 1.0.2 S6: and the judge is kept deciding on the file (read-time-retired.ts forceReadTimeJudgeForTest): the subject is the retired root-set machinery,
 // which stays in the tree until its mechanical deletion; the write-time behaviour is covered by the lookups' own tests.
@@ -39,7 +40,7 @@ import { beginIntegrityPass, integrityHoldOf, readIntegrityPass } from "./integr
 import { forceReadTimeJudgeForTest } from "./read-time-retired.ts";
 import { LineageAllowance, ROWS_PER_NODE, TURN_LINEAGE_NODES } from "./lineage-allowance.ts";
 
-const fresh = () => { closeDatabase(); forgetKeptLineageForTest(); rmSync(DATA_DIR, { recursive: true, force: true }); mkdirSync(DATA_DIR, { recursive: true }); };
+const fresh = () => { closeDatabase(); forgetKeptLineageForTest(); removeTempDirSync(DATA_DIR); mkdirSync(DATA_DIR, { recursive: true }); };
 beforeEach(fresh);
 afterEach(() => { setRootSetCeilingForTest(null); setVerdictLimitForTest(null); });
 

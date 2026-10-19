@@ -404,6 +404,10 @@ export function ensureKimiInjectAlias(
   const host = localHost(inject.host);
   if (!host) return modelId;
 
+  // Cloud home: the launcher renders config.toml without provider or model tables
+  // (CLOUD-ENGINES-DESIGN.md r2 H1); the KIMI_MODEL_* overlay (applyKimiLocalModelEnv)
+  // carries the route and session/new runs on it, so the turn passes no -m (spawnArgs).
+  if (process.env.MURAGE_CLOUD_ROLE === "home") return modelId;
   const alias = `${inject.host}/${inject.model.replace(/\//g, "-")}`;
   const dataRoot = kimiDataRoot(env);
   mkdirSync(dataRoot, { recursive: true });
@@ -453,11 +457,20 @@ export function ensureKimiInjectAlias(
   }
   if (blocks.length) {
     const prefix = text && !text.endsWith("\n") ? `${text}\n\n` : text ? `${text}\n` : "";
-    writeFileSync(path, `${prefix}${blocks.join("\n")}`);
+    const contents = `${prefix}${blocks.join("\n")}`;
+    writeFileSync(path, contents);
   } else if (text !== original) {
     writeFileSync(path, text);
   }
   return alias;
+}
+
+/** Kimi's argv. r3 M2: on a Cloud home a routed (local inject) turn passes no -m; the
+ *  KIMI_MODEL_* variables name the model and session/new uses it (the launcher renders
+ *  no [models] table there). An ordinary model keeps -m. */
+export function kimiSpawnArgs(model: string | undefined): string[] {
+  if (model && process.env.MURAGE_CLOUD_ROLE === "home" && decodeInjectId(model)) return ["acp"];
+  return [...(model ? ["-m", model] : []), "acp"];
 }
 
 /** Env keys Kimi 0.36+ reads to synthesize an in-memory default model.
@@ -570,10 +583,7 @@ const support: AcpSupport = {
   // -m is a global commander option and must precede the `acp` subcommand
   // (verified against 0.29.1).
   resolveTurnModel: (model, env) => (model ? ensureKimiInjectAlias(model, env) : model),
-  spawnArgs: (_config, turn) => {
-    const model = turn.model;
-    return [...(model ? ["-m", model] : []), "acp"];
-  },
+  spawnArgs: (_config, turn) => kimiSpawnArgs(turn.model),
 
   // Subscription CLI: a leaked Moonshot/Kimi API key must not flip billing
   // to pay-as-you-go inside the spawned agent (mirrors claude/grok).

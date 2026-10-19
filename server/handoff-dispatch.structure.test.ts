@@ -7,7 +7,7 @@
 // THIS TEST IS A LINT. The proof is at run time (handoff-capability.ts: a ticket only the dispatcher can mint; index.ts assertHandoffStartable: a ticket must be live and an
 // already-started one may only run again with its own stored prompt; store.ts: a hand-off prompt id is written only in the transaction that starts its row).
 // pm-sends-102-r26.test.ts forges each of those and shows the runtime refuses it whatever this analysis says.
-import { mkdirSync, readFileSync, readdirSync, rmSync, statSync } from "node:fs";
+import { mkdirSync, readFileSync, readdirSync, statSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { join, relative, resolve } from "node:path";
 import ts from "typescript";
@@ -19,6 +19,7 @@ import * as dispatch from "./handoff-dispatch.ts";
 import { _resetOwnerMigration } from "./pending-delegations-schema.ts";
 import { runOf } from "./testing/handoff-turn.ts";
 import { ownerWorld } from "./testing/handoff-worlds.ts";
+import { removeTempDirSync } from "./testing/cleanup.ts";
 
 const serverDir = fileURLToPath(new URL(".", import.meta.url));
 const rootDir = resolve(serverDir, "..");
@@ -141,7 +142,7 @@ function analyse(program: ts.Program, only?: string): Analysis {
   /** The functions of index.ts that own the start of a hand-off's turn; the rest of the file is held to the same rules as any other source. */
   const INDEX_CONSUMERS = new Set(["startTurn", "startTurnAdmitting", "recordHandoffAccepted"]);
   /** A memory re-dispatch hands the SAME options on again, with the turn's own prompt: the spread comes first, `userMessage` is the turn's `userMessage` variable (the one
-   * startTurnAdmitting declares, never undefined or a literal) and comes after it, `memoryRedispatch: true` too, and no later property puts a run or another prompt back. */
+   * startTurnAdmitting declares, never undefined or a literal) and comes after it, `memoryRedispatch: attempt` too, and no later property puts a run or another prompt back. */
   const redispatchOf = (literal: ts.ObjectLiteralExpression, spread: ts.SpreadAssignment): boolean => {
     const at = literal.properties.indexOf(spread);
     const after = literal.properties.slice(at + 1);
@@ -318,7 +319,7 @@ describe("the dispatch is the only place a hand-off starts (symbols resolved wit
       if (!guarded) outside.push(`${enclosingName(node)}:${index.getLineAndCharacterOfPosition(node.getStart()).line + 1}`);
     });
     expect(outside).toEqual([]);
-    // and the re-dispatches themselves are exactly the two spreads the analysis allows, each with `userMessage` and `memoryRedispatch: true`
+    // and the re-dispatches themselves are exactly the two spreads the analysis allows, each with `userMessage` and `memoryRedispatch: attempt`
     let redispatches = 0;
     walk(index, (node) => {
       if (!ts.isObjectLiteralExpression(node) || !node.properties.some((p) => ts.isSpreadAssignment(p) && p.expression.getText() === "opts")) return;
@@ -440,25 +441,25 @@ export const probe = () => relay(host[key]);
 `);
     expect(forwarded.join("\n")).toMatch(/R5 reference/);
   }, 300_000);
-  it("an option-forwarding startTurn helper added to index.ts, and a re-dispatch that clears the prompt (userMessage: undefined)", () => {
+  it("an option-forwarding startTurn helper added to index.ts, and a re-dispatch that clears the prompt (userMessage: undefined)", { tags: ["nightly"], timeout: 600_000 }, () => {
     const indexPath = join(serverDir, "index.ts");
     const real = readFileSync(indexPath, "utf8");
     const analyseIndex = (text: string): string[] => analyse(buildProgram({ [indexPath]: text }, base), "index.ts").violations;
     expect(analyseIndex(real)).toEqual([]);                                                   // (the real file is clean)
     const helper = analyseIndex(`${real}\nexport function relayStart(botId: string, options: Parameters<typeof startTurn>[2]) { return startTurn(botId, "x", options); }\n`);
     expect(helper.join("\n")).toMatch(/R8 forward/);
-    const redispatch = "{ ...opts, threadId, userMessage, memoryRedispatch: true }";
+    const redispatch = "{ ...opts, threadId, userMessage, memoryRedispatch: attempt }";
     expect(real).toContain(redispatch);
-    const cleared = analyseIndex(real.replace(redispatch, "{ ...opts, threadId, userMessage: undefined, memoryRedispatch: true }"));
+    const cleared = analyseIndex(real.replace(redispatch, "{ ...opts, threadId, userMessage: undefined, memoryRedispatch: attempt }"));
     expect(cleared.join("\n")).toMatch(/R2 spread/);
-    const reordered = analyseIndex(real.replace(redispatch, "{ userMessage, memoryRedispatch: true, threadId, ...opts }"));
+    const reordered = analyseIndex(real.replace(redispatch, "{ userMessage, memoryRedispatch: attempt, threadId, ...opts }"));
     expect(reordered.join("\n")).toMatch(/R2 spread/);
     // r26b #6: a redispatch whose destination is another conversation (a literal, or any variable that is not the turn's own threadId) is reported too
-    const elsewhere = analyseIndex(real.replace(redispatch, '{ ...opts, threadId: "another-existing-task", userMessage, memoryRedispatch: true }'));
+    const elsewhere = analyseIndex(real.replace(redispatch, '{ ...opts, threadId: "another-existing-task", userMessage, memoryRedispatch: attempt }'));
     expect(elsewhere.join("\n")).toMatch(/R2 spread/);
-    const otherVariable = analyseIndex(real.replace(redispatch, "{ ...opts, threadId: botId, userMessage, memoryRedispatch: true }"));
+    const otherVariable = analyseIndex(real.replace(redispatch, "{ ...opts, threadId: botId, userMessage, memoryRedispatch: attempt }"));
     expect(otherVariable.join("\n")).toMatch(/R2 spread/);
-  }, 600_000);
+  });
   it("an options object spread that carries the run, and a callback that forwards it", () => {
     const spread = probe(`import type { HandoffTurnOptions } from "./handoff-dispatch.ts";
 export const probe = (options: HandoffTurnOptions) => ({ ...options, threadId: "y" });
@@ -485,7 +486,7 @@ export const probe = (options: Record<string, unknown>) => options[key];
 });
 
 describe("the transcript refuses a hand-off's prompt that the dispatch did not stamp", () => {
-  beforeEach(() => { closeDatabase(); rmSync(DATA_DIR, { recursive: true, force: true }); mkdirSync(DATA_DIR, { recursive: true }); _resetPending(); _resetOwnerMigration(); });
+  beforeEach(() => { closeDatabase(); removeTempDirSync(DATA_DIR); mkdirSync(DATA_DIR, { recursive: true }); _resetPending(); _resetOwnerMigration(); });
   afterEach(() => { _resetOwnerMigration(); _resetPending(); closeDatabase(); });
 
   it("appendMessage with a dlg- id and no stamp throws and writes nothing; so does any function that is not the dispatch's", () => {

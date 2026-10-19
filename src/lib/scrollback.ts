@@ -12,6 +12,7 @@
 // prepend); this module owns the requests, so the store and its tests share
 // one implementation of "which page next, and is the answer still wanted".
 import type { AppState, Message } from "@/state/store";
+import { applyTranscriptInput, legacyTranscriptInput, nextPage, wantsNewest, type SeqTranscript } from "@/state/transcript-seq";
 
 /** Messages per thread in a snapshot and a thread switch, and per scrollback
  * page. Larger than one transcript window's worth of new rows would ever
@@ -19,11 +20,20 @@ import type { AppState, Message } from "@/state/store";
  * the switch reply hold the same rows. */
 export const MESSAGE_PAGE_SIZE = 100;
 
-/** A conversation the boot roster sent without rows (`view=sidebar`), or whose rows predate a rehydrate, and whose first page is not on the wire
- * yet. The conversation on screen fetches it (store top-up effect, `loadFirstPage`). Desktop and phone boot the same way. */
-export function needsFirstPage(owner: { messagesUnloaded?: true; pageStale?: true; firstPageEvents?: unknown[] }): boolean {
-  return (owner.messagesUnloaded === true || owner.pageStale === true) && !owner.firstPageEvents;
+/** A conversation the boot roster sent without rows (`view=sidebar`), a bot whose rows predate a rehydrate, or a numbered room whose next page
+ * is the newest one (ROOM-ORDER-DESIGN r8 R9 step 1: its tail unknown, its newest held row below the tail or unvouched), and whose first page
+ * is not on the wire yet. The conversation on screen fetches it (store top-up effect, `loadFirstPage`). Desktop and phone boot the same way. */
+export function needsFirstPage(owner: { messagesUnloaded?: true; pageStale?: true; firstPageEvents?: unknown[]; numbered?: true; tail?: number; messages?: Message[] }): boolean {
+  if (owner.firstPageEvents) return false;
+  if (owner.messagesUnloaded === true || owner.pageStale === true) return true;
+  return owner.numbered === true && wantsNewest({ messages: owner.messages ?? [], numbered: true, tail: owner.tail });
 }
+
+/** The transcript keys transcript-seq.ts reads, of a bot or a room. */
+const transcriptOf = (owner: { messages: Message[]; hasMore?: boolean; olderFrom?: string; messagesUnloaded?: true; numbered?: true; tail?: number; legacyGaps?: string[] }): SeqTranscript => ({
+  messages: owner.messages, hasMore: owner.hasMore, olderFrom: owner.olderFrom, messagesUnloaded: owner.messagesUnloaded, numbered: owner.numbered, tail: owner.tail,
+  legacyGaps: owner.legacyGaps,
+});
 
 /** The largest page the server hands out; a jump walks back in these. */
 export const MESSAGE_PAGE_MAX = 200;
@@ -47,11 +57,13 @@ export interface FirstPageAnswer {
   openCardsPending?: boolean;
   activeLeafId?: string | null;
   version?: string;
+  /** r8 wire contract: the thread's newest number, on a numbered thread's page. */
+  newestSeq?: number;
 }
 
 type OlderMessagesAction =
   | { type: "loadOlderMessages"; threadId: string }
-  | { type: "olderMessages"; threadId: string; generation: number; messages: Message[]; hasMore: boolean; olderFrom?: string | null }
+  | { type: "olderMessages"; threadId: string; generation: number; messages: Message[]; hasMore: boolean; olderFrom?: string | null; before?: string; newestSeq?: number }
   | { type: "firstPageStarted"; threadId: string }
   | { type: "firstPage"; threadId: string; generation: number; page: FirstPageAnswer }
   | { type: "firstPageFailed"; threadId: string };
@@ -61,6 +73,7 @@ export interface ScrollbackPage {
   hasMore?: boolean;
   /** The next ancestor to page back to, when the page is a branch page. */
   olderFrom?: string | null;
+  newestSeq?: number;
 }
 
 export interface ScrollbackDeps {
@@ -117,27 +130,29 @@ export function createScrollback(deps: ScrollbackDeps) {
       return undefined;
     }
     deps.dispatch({ type: "loadOlderMessages", threadId });
-    const before = owner?.messages[0]?.id;
-    if (!owner?.hasMore || !before) {
-      // Nothing to page back from: clear the flag rather than wait for a
+    // r6 Q4 / r8 R9: the next page by number (the newest page, the newest gap, an unvouched run, the front); a legacy one before the oldest row.
+    const ask = owner ? nextPage(transcriptOf(owner)) : undefined;
+    if (!ask || "newest" in ask) {
+      // Nothing to page back from, or the newest page comes first (the first-page path asks it): clear the flag rather than wait for a
       // response that is not coming.
-      deps.dispatch({ type: "olderMessages", threadId, generation, messages: [], hasMore: false });
-      return undefined;
+      deps.dispatch({ type: "olderMessages", threadId, generation, messages: [], hasMore: Boolean(ask && owner?.hasMore) });
+      return ask ? loadFirstPage(threadId) : undefined;
     }
+    const anchor = ask;
     paging.add(threadId);
     return exclusive(threadId, async () => {
       try {
         // A branch page is paged back along the branch's own parent links
         // (`branchFrom`); storage order says nothing about ancestry once a
         // thread has forked. Any other page is paged back by storage order.
-        const cursor = owner.olderFrom && !owner.messages.some((m) => m.id === owner.olderFrom) ? owner.olderFrom : undefined;
+        const cursor = anchor.olderFrom;
         const page = await deps.request(pagePath(threadId, cursor
           ? `limit=${MESSAGE_PAGE_SIZE}&branchFrom=${encodeURIComponent(cursor)}`
-          : `limit=${MESSAGE_PAGE_SIZE}&before=${encodeURIComponent(before)}`));
-        deps.dispatch({ type: "olderMessages", threadId, generation, messages: page.messages ?? [], hasMore: Boolean(page.hasMore), ...(cursor ? { olderFrom: page.olderFrom ?? null } : {}) });
+          : `limit=${MESSAGE_PAGE_SIZE}&before=${encodeURIComponent(anchor.before)}`));
+        deps.dispatch({ type: "olderMessages", threadId, generation, messages: page.messages ?? [], hasMore: Boolean(page.hasMore), before: anchor.before, ...(cursor ? { olderFrom: page.olderFrom ?? null } : {}), ...(typeof page.newestSeq === "number" ? { newestSeq: page.newestSeq } : {}) });
       } catch (error) {
-        // Clear the flag on the way out, or scrolling up never asks again.
-        deps.dispatch({ type: "olderMessages", threadId, generation, messages: [], hasMore: true });
+        // Clear the flag on the way out, or scrolling up never asks again. An empty page leaves a gap as it was.
+        deps.dispatch({ type: "olderMessages", threadId, generation, messages: [], hasMore: true, before: anchor.before });
         deps.onError(error);
       } finally {
         paging.delete(threadId);
@@ -196,8 +211,12 @@ export function createScrollback(deps: ScrollbackDeps) {
     }
     if (!owner || owner.messagesUnloaded) return "missing";
     if (owner.messages.some((message) => message.id === messageId)) return "held";
-    if (!owner.hasMore || !owner.messages[0]) return "missing";
-    const start = owner.messages[0].id;
+    // The walk's own copy of the transcript, laid over page by page exactly as the reducer lays them (transcript-seq.ts), so the next page is
+    // known without waiting for a render: by number for a numbered room (r6 Q4), before the oldest held row for a legacy transcript.
+    const room = Array.isArray((owner as { memberIds?: unknown }).memberIds);
+    let edges: SeqTranscript = transcriptOf(owner as Parameters<typeof transcriptOf>[0]);
+    const anchorOf = (t: SeqTranscript) => { const ask = nextPage(t); return ask && "before" in ask ? ask : undefined; };
+    if (!anchorOf(edges)) return "missing";
     return exclusive(threadId, async (): Promise<JumpOutcome> => {
       // One row first: an id from another thread (or a deleted message) must
       // not walk the whole transcript down to find out.
@@ -207,36 +226,80 @@ export function createScrollback(deps: ScrollbackDeps) {
         return "missing";
       }
       const generation = generationOf(threadId);
-      let before = start;
-      // The same cursor loadOlder pages with: a branch page is walked back
-      // along the branch's own parent links, so a late-stored ancestor spliced
-      // in earlier in the branch is reached, and the cursor stays right.
-      let cursor: string | undefined = owner.olderFrom && !owner.messages.some((m) => m.id === owner.olderFrom) ? owner.olderFrom : undefined;
       for (let pages = 0; pages < maxPages; pages++) {
         if (generationOf(threadId) !== generation) return "missing";
+        // The same cursor loadOlder pages with: a branch page is walked back
+        // along the branch's own parent links, so a late-stored ancestor spliced
+        // in earlier in the branch is reached, and the cursor stays right.
+        const anchor = anchorOf(edges);
+        if (!anchor) return "missing";
+        const cursor = anchor.olderFrom;
         deps.dispatch({ type: "loadOlderMessages", threadId });
         let page: ScrollbackPage;
         try {
           page = await deps.request(pagePath(threadId, cursor
             ? `limit=${MESSAGE_PAGE_MAX}&branchFrom=${encodeURIComponent(cursor)}`
-            : `limit=${MESSAGE_PAGE_MAX}&before=${encodeURIComponent(before)}`));
+            : `limit=${MESSAGE_PAGE_MAX}&before=${encodeURIComponent(anchor.before)}`));
         } catch (error) {
-          deps.dispatch({ type: "olderMessages", threadId, generation, messages: [], hasMore: true });
+          deps.dispatch({ type: "olderMessages", threadId, generation, messages: [], hasMore: true, before: anchor.before });
           deps.onError(error);
           return "missing";
         }
         const messages = page.messages ?? [];
-        deps.dispatch({ type: "olderMessages", threadId, generation, messages, hasMore: Boolean(page.hasMore), ...(cursor ? { olderFrom: page.olderFrom ?? null } : {}) });
+        const olderFrom = cursor ? page.olderFrom ?? null : undefined;
+        const newestSeq = typeof page.newestSeq === "number" ? page.newestSeq : undefined;
+        deps.dispatch({ type: "olderMessages", threadId, generation, messages, hasMore: Boolean(page.hasMore), before: anchor.before, ...(cursor ? { olderFrom } : {}), ...(newestSeq !== undefined ? { newestSeq } : {}) });
         if (messages.some((message) => message.id === messageId)) return "fetched";
-        if (!page.hasMore || !messages[0]) return "missing";
-        before = messages[0].id;
-        if (cursor) cursor = page.olderFrom ?? undefined;
+        if (!messages[0]) return "missing";
+        const input = { kind: "older" as const, rows: messages, newestSeq, vouched: true, hasMore: Boolean(page.hasMore), olderFrom, before: anchor.before };
+        edges = room ? applyTranscriptInput(edges, input) : legacyTranscriptInput(edges, input);
       }
       return "missing";
     });
   };
 
   return { loadOlder, loadFirstPage, loadThrough };
+}
+
+/** How long the store waits before asking for a conversation's first page again after a failed GET: 1 s, 2 s, 4 s ... at most 30 s. */
+export const firstPageRetryDelayMs = (failures: number): number => Math.min(1000 * 2 ** Math.max(0, failures - 1), 30_000);
+
+/**
+ * The store's first-page top-up (StoreProvider): the conversation on screen that holds no rows yet (`needsFirstPage`) is asked for its
+ * first page once per (thread, transcript generation), so a dead link does not loop. A page that comes back failed leaves the
+ * conversation unloaded; it is then asked for again after a growing wait (`firstPageRetryDelayMs`), never at once, and never while a
+ * page is on the wire, so "Loading messages" is always a page being fetched and not a request that was given up on. Opening the
+ * thread again, or the window coming back into view or online (`forget`), asks at once.
+ */
+export function createFirstPageTopUp(deps: { ask: (threadId: string) => void; later: (run: () => void, ms: number) => () => void }) {
+  let asked = "";
+  let cancelRetry: (() => void) | undefined;
+  const failures = new Map<string, number>();
+  const forget = () => {
+    asked = "";
+    cancelRetry?.();
+    cancelRetry = undefined;
+  };
+  return {
+    forget,
+    /** One review per render of the top-up effect: `threadId` null when nothing on screen needs its first page, `busy` while one is on
+     * the wire. `wake` re-runs the review once the wait is over. */
+    review(threadId: string | null, generation: number, busy: boolean, wake: () => void): void {
+      if (!threadId) { failures.clear(); return; }
+      if (busy) return;
+      const key = `${threadId}:${generation}`;
+      if (asked !== key) {
+        asked = key;
+        deps.ask(threadId);
+        return;
+      }
+      if (cancelRetry) return;
+      const count = (failures.get(key) ?? 0) + 1;
+      failures.set(key, count);
+      const cancel = deps.later(() => { cancelRetry = undefined; asked = ""; wake(); }, firstPageRetryDelayMs(count));
+      cancelRetry = () => cancel();
+    },
+  };
 }
 
 /** What a call should still read out: every message it has not heard that

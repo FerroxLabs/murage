@@ -1,0 +1,46 @@
+# SPDX-License-Identifier: AGPL-3.0-or-later
+[Unit]
+Description=Murage Cloud turn egress allowlist proxy
+After=network-online.target murage-egress.service
+Requires=murage-egress.service
+Wants=network-online.target
+Before=murage-home.service
+
+[Service]
+Type=simple
+User=murage-egress
+Group=murage-egress
+# Fail closed: a missing or malformed /etc/murage/egress-allow.json exits 78 and
+# turns then have no outbound path at all (nft drops them).
+ExecStart=/usr/bin/python3 -I /usr/local/libexec/murage-egress-proxy
+RestartPreventExitStatus=78
+Restart=always
+RestartSec=2
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+PrivateDevices=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectControlGroups=yes
+ProtectClock=yes
+ProtectHostname=yes
+RestrictNamespaces=yes
+RestrictRealtime=yes
+RestrictSUIDSGID=yes
+LockPersonality=yes
+MemoryDenyWriteExecute=yes
+CapabilityBoundingSet=
+AmbientCapabilities=
+RestrictAddressFamilies=AF_INET AF_INET6
+SystemCallFilter=@system-service
+SystemCallArchitectures=native
+MemoryMax=192M
+TasksMax=64
+LimitNOFILE=4096
+UMask=0077
+LimitCORE=0
+
+[Install]
+WantedBy=multi-user.target

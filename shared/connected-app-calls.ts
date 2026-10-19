@@ -25,6 +25,7 @@ export const CONNECTED_APP_ACTION_TIMEOUT_MS = 120_000;
 export const CONNECTED_APP_RELAY_GRACE_MS = 15_000;
 
 import { canonicalConnectedAppToolName } from "./connected-app-names.ts";
+import { appAction } from "./app-action-words.ts";
 
 type Json = Record<string, unknown>;
 const object = (value: unknown): Json | undefined =>
@@ -51,22 +52,6 @@ export function connectedAppCallTimeoutMs(message: unknown, limits: { lookupMs?:
   if (msg?.method !== "tools/call") return lookup;
   const name = String(object(msg.params)?.name ?? "");
   return isConnectedAppLookup(name) || isConnectedAppStatusTool(name) ? lookup : action;
-}
-
-const APP_WORDS: Record<string, string> = {
-  GMAIL: "Gmail", GOOGLECALENDAR: "Google Calendar", GOOGLEDRIVE: "Google Drive", GOOGLEDOCS: "Google Docs",
-  GOOGLESHEETS: "Google Sheets", GOOGLESUPER: "Google", OUTLOOK: "Outlook", SLACK: "Slack", NOTION: "Notion",
-  GITHUB: "GitHub", LINEAR: "Linear", HUBSPOT: "HubSpot", SALESFORCE: "Salesforce", DISCORD: "Discord",
-  TWITTER: "X", LINKEDIN: "LinkedIn", DROPBOX: "Dropbox", ASANA: "Asana", TRELLO: "Trello", JIRA: "Jira",
-};
-
-/** "GMAIL_FETCH_EMAILS" said as an app and an action. */
-function appAction(slug: string): { app: string; action: string } | null {
-  const parts = slug.trim().toUpperCase().split("_").filter(Boolean);
-  if (parts.length < 2 || !/^[A-Z0-9_]+$/.test(slug.trim().toUpperCase())) return null;
-  const head = parts[0]!;
-  const app = APP_WORDS[head] ?? `${head.charAt(0)}${head.slice(1).toLowerCase()}`;
-  return { app, action: parts.slice(1).join(" ").toLowerCase() };
 }
 
 /** The app actions one call runs, from its arguments: the slugs a multi-run
@@ -162,7 +147,7 @@ const WRAPPER_KEYS = new Set([...WRAPPER_NAME_KEYS, ...WRAPPER_INPUT_KEYS]);
 const MULTI_EXECUTE_KEYS = new Set([...COMMENTARY_FIELDS, "tools", "sync_response_to_workbench", "memory"]);
 const SLUG_KEYS = ["tool_slug", "toolSlug", "slug"];
 
-function slugOf(row: unknown): string | undefined {
+export function slugOf(row: unknown): string | undefined {
   const item = object(row);
   if (!item) return undefined;
   const present = SLUG_KEYS.filter((key) => item[key] !== undefined);

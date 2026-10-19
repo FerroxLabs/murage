@@ -11,7 +11,7 @@
 // The data is the rig's shape: each reply's receipt cites the previous reply as a source and the replies' root sets are a chain. The output
 // lists are the legacy ones (every receipt of the session lists every reply written after it) in the cost test, and the current ones (a
 // reply is listed on its own receipt) where answers are compared with the unbounded check.
-import { mkdirSync, rmSync } from "node:fs";
+import { mkdirSync } from "node:fs";
 import { DatabaseSync } from "node:sqlite";
 import { afterAll, afterEach, beforeAll, beforeEach, expect, it } from "vitest";
 import { DATA_DIR } from "../config.ts";
@@ -26,6 +26,7 @@ import {
   capturedMessageWithheld, forgetKeptLineageForTest, keptVerdictCount, outputRootsBad, replayExclusions, replayLimitWithheld, resetReplayRowsRead, sessionLineageBad,
   sessionOutputRoots, setReplayNodeBudgetForTest, setTurnLineageNodesForTest,
 } from "./replay-lineage.ts";
+import { removeTempDirSync } from "../testing/cleanup.ts";
 
 const thread = "cold-direct", driver = "drv", session = "sess";
 const key = (reply: number) => `${thread}\u0000r${reply}`;
@@ -34,7 +35,7 @@ const source = (reply: number) => `message:${thread}:r${reply}`;
  * turn, the turn after the warmer, and a turn that judges again what a forget dropped (its three entry points each spend their own allowance). */
 const TURN_STATEMENT_CAP = 600, WARM_STATEMENT_CAP = 100, FORGET_STATEMENT_CAP = 1_800;
 
-beforeEach(() => { resetLineageWarmForTest(); closeDatabase(); rmSync(DATA_DIR, { recursive: true, force: true }); mkdirSync(DATA_DIR, { recursive: true }); });
+beforeEach(() => { resetLineageWarmForTest(); closeDatabase(); removeTempDirSync(DATA_DIR); mkdirSync(DATA_DIR, { recursive: true }); });
 afterEach(() => { setReplayNodeBudgetForTest(null); setTurnLineageNodesForTest(null); });
 
 const tally = { rows: 0, statements: 0 };
@@ -107,7 +108,7 @@ function warmToCompletion(limit = 20_000): number {
 for (const legacy of [true, false]) it(`a cold first turn costs the same statements on 300 and on 1,500 replies, below the cap, and shows no line it did not prove (${legacy ? "legacy" : "current"} output lists)`, () => {
   const measured: Record<number, { statements: number; excluded: number }> = {};
   for (const n of [300, 1_500]) {
-    closeDatabase(); rmSync(DATA_DIR, { recursive: true, force: true }); mkdirSync(DATA_DIR, { recursive: true });
+    closeDatabase(); removeTempDirSync(DATA_DIR); mkdirSync(DATA_DIR, { recursive: true });
     database();
     build(n, legacy);
     // a deep root is forgotten: the unbounded check withholds every reply built on it, so a turn that cannot finish must withhold them too

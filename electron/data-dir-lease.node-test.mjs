@@ -70,7 +70,7 @@ const WORKER = `
     const answer = (mode, path, args, options) => {
       const script = Buffer.from(String(args.at(-1)), 'base64').toString('utf16le');
       const pid = Number(/GetProcessById\\((\\d+)\\)/.exec(script)?.[1]);
-      probes.push({ mode, path, flags: args.slice(0, 3), pid, timeout: options?.timeout, maxBuffer: options?.maxBuffer, windowsHide: options?.windowsHide });
+      probes.push({ mode, path, flags: args.slice(0, -1), pid, timeout: options?.timeout, maxBuffer: options?.maxBuffer, windowsHide: options?.windowsHide });
       const entry = pid === process.pid && table.self !== undefined ? table.self.replace('SELF_PID', String(process.pid)) : table[String(pid)];
       if (entry === undefined || entry === 'throw') throw Object.assign(new Error('probe failed'), { code: 'ETIMEDOUT' });
       return entry;
@@ -91,6 +91,39 @@ const WORKER = `
       const wait = () => !hold || fs.existsSync(hold) ? run() : setTimeout(wait, 5);
       setImmediate(wait);
       return { unref() {}, stdout: { unref() {} }, stderr: { unref() {} } };
+    };
+  }
+  // Windows share-none seam (simulated win32 only): a share-none open leaves a
+  // marker naming this process; any other open of that file is refused with
+  // EBUSY while the marker's process lives, as Windows refuses it. Paths
+  // are split on either separator, so the seam reads the same on a real
+  // Windows host.
+  if (process.env.LEASE_TEST_WIN32) {
+    const EX = 0x10000000;
+    const open = fs.openSync, close = fs.closeSync;
+    const markers = new Map();
+    const alive = (pid) => { try { process.kill(pid, 0); return true; } catch { return false; } };
+    fs.openSync = (path, flags, ...rest) => {
+      const name = String(path);
+      if (typeof flags === 'number' && (flags & EX)) {
+        const fd = open(name, flags & ~EX, ...rest);
+        fs.writeFileSync(name + '.held-' + process.pid, '');
+        markers.set(fd, name + '.held-' + process.pid);
+        probes.push({ mode: 'held-open' });
+        return fd;
+      }
+      if (/[.]alive-[0-9a-f-]{36}$/.test(name)) {
+        probes.push({ mode: 'held-check' });
+        const slash = Math.max(name.lastIndexOf('/'), name.lastIndexOf(String.fromCharCode(92))), dir = name.slice(0, slash), base = name.slice(slash + 1);
+        const busy = fs.existsSync(name + '.busy') || fs.readdirSync(dir).some((entry) => entry.startsWith(base + '.held-') && alive(Number(entry.slice(base.length + 6))));
+        if (busy) throw Object.assign(new Error('sharing violation'), { code: 'EBUSY' });
+      }
+      return open(path, flags, ...rest);
+    };
+    fs.closeSync = (fd) => {
+      const marker = markers.get(fd);
+      if (marker) { markers.delete(fd); try { fs.unlinkSync(marker); } catch {} }
+      return close(fd);
     };
   }
   let pause;
@@ -201,6 +234,9 @@ async function deadPid() {
   return pid;
 }
 
+// A live process on this machine that is not this one (the test runner that started this file): a record
+// naming this process's own PID counts as live only while this process holds its token.
+const LIVE_OTHER_PID = process.ppid;
 const record = (pid, extra = {}) => ({ version: 1, pid, host: hostname(), token: randomUUID(), createdAt: Date.now() - 1000, ...extra });
 const writeRecord = (path, value) => writeFileSync(path, `${JSON.stringify(value)}\n`, { mode: 0o600 });
 const errorCode = (code) => (error) => error.name === "DataDirLeaseError" && error.code === code;
@@ -544,7 +580,7 @@ test("invalid, unreadable, symlink and special lease records remain untouched", 
     assert.equal(readFileSync(f.leasePath, "utf8"), raw);
     rmSync(f.leasePath);
   }
-  writeRecord(f.leasePath, record(process.pid));
+  writeRecord(f.leasePath, record(LIVE_OTHER_PID));
   if (process.platform === "win32") {
     // chmod's POSIX read bits cannot make a Windows file unreadable; the
     // current owner's readable record must still exclude another claimant.
@@ -627,8 +663,9 @@ test("a live owner under an old hostname on this boot is busy, not foreign", { s
   const f = fixture("renamed-live");
   const mine = currentRecord(f);
   assert.notEqual(mine.boot, null);
-  writeRecord(f.leasePath, record(process.pid, { host: OLD_NAME, boot: mine.boot, uptime: mine.uptime }));
+  writeRecord(f.leasePath, record(LIVE_OTHER_PID, { host: OLD_NAME, boot: mine.boot, uptime: mine.uptime }));
   assert.throws(() => acquireDataDirLease(f.dataDir), errorCode("LEASE_BUSY"));
+  rmSync(f.leasePath); // the fixture cleanup refuses a folder whose lease names another live process
 });
 
 test("another hostname on another boot still fails closed", async () => {
@@ -708,12 +745,13 @@ test("inspection follows acquisition order and immutable reaper successors", asy
   const successor = `${path}-${createHash("sha256").update(oldReaper.token).digest("hex").slice(0, 32)}`;
   writeRecord(successor, record(dead, { host: "foreign-successor.invalid", targetToken: primary.token }));
   assert.equal(inspectDataDirLease(f.dataDir).recordedHost, "foreign-successor.invalid");
-  writeRecord(f.childLeasePath, record(process.pid));
+  writeRecord(f.childLeasePath, record(LIVE_OTHER_PID));
   assert.equal(inspectDataDirLease(f.dataDir).code, "LEASE_CHILD_BUSY");
   rmSync(f.childLeasePath);
-  writeRecord(f.leasePath, record(process.pid));
+  writeRecord(f.leasePath, record(LIVE_OTHER_PID));
   assert.equal(inspectDataDirLease(f.dataDir).code, "LEASE_BUSY");
   assert.equal(readFileSync(path, "utf8"), `${JSON.stringify(oldReaper)}\n`);
+  rmSync(f.leasePath); // the fixture cleanup refuses a folder whose lease names another live process
 });
 
 test("interrupted stale reapers are succeeded, with a bounded immutable chain", async () => {
@@ -745,7 +783,7 @@ test("a live reaper and malformed recovery claim are never replaced", async () =
   const stale = record(await deadPid());
   writeRecord(f.leasePath, stale);
   const path = `${f.leasePath}.reap-${stale.token}`;
-  const active = record(process.pid, { targetToken: stale.token });
+  const active = record(LIVE_OTHER_PID, { targetToken: stale.token });
   writeRecord(path, active);
   assert.throws(() => acquireDataDirLease(f.dataDir), errorCode("LEASE_RECOVERY_BUSY"));
   assert.deepEqual(JSON.parse(readFileSync(path, "utf8")), active);
@@ -787,12 +825,14 @@ test("new records carry boot metadata while legacy live owners remain excluded",
   assert.deepEqual(Object.keys(owner).sort(), ["boot", "createdAt", "host", "pid", "token", "uptime", "version"]);
   assert.ok(owner.boot === null || /^[0-9A-Za-z:_.-]{1,128}$/.test(owner.boot));
   assert.ok(Number.isSafeInteger(owner.uptime) && owner.uptime >= 0);
-  writeRecord(f.leasePath, owner);
+  // (another live process's record: one naming this process is live only while it holds that token)
+  writeRecord(f.leasePath, { ...owner, pid: LIVE_OTHER_PID });
   assert.throws(() => acquireDataDirLease(f.dataDir), errorCode("LEASE_BUSY"));
-  const legacy = record(process.pid);
+  const legacy = record(LIVE_OTHER_PID);
   writeRecord(f.leasePath, legacy);
   assert.throws(() => acquireDataDirLease(f.dataDir), errorCode("LEASE_BUSY"));
   assert.deepEqual(JSON.parse(readFileSync(f.leasePath, "utf8")), legacy);
+  rmSync(f.leasePath); // the fixture cleanup refuses a folder whose lease names another live process
 });
 
 test("prior-boot primary and reaper with live reused PIDs recover via immutable successor", { skip: process.platform === "win32" }, () => {
@@ -866,9 +906,10 @@ test("invalid boot metadata is rejected without changing the record", () => {
 test("unknown optional identity cannot evict a live owner", () => {
   const f = fixture();
   for (const extra of [{ boot: null, uptime: null }, { boot: null }, { uptime: null }]) {
-    writeRecord(f.leasePath, record(process.pid, extra));
+    writeRecord(f.leasePath, record(LIVE_OTHER_PID, extra));
     assert.throws(() => acquireDataDirLease(f.dataDir), errorCode("LEASE_BUSY"));
   }
+  rmSync(f.leasePath); // the fixture cleanup refuses a folder whose lease names another live process
 });
 
 test("changed boot metadata invalidates an old release handle", () => {
@@ -899,6 +940,15 @@ function windowsFixture(name = "data") {
   return { root, dataDir, ...dataDirLeasePaths(dataDir) };
 }
 const windows = (f, answers, extra = {}) => worker(f, { LEASE_TEST_WIN32: "1", SystemRoot: SYSTEM_ROOT, LEASE_TEST_PS: JSON.stringify(answers), ...extra });
+const heldOf = (recordPath, owner) => `${recordPath}.alive-${owner.token}`;
+// A held identity whose file no live process holds: the owner is gone.
+const writeHeldIdentity = (recordPath, owner) => {
+  const value = { version: 2, pid: owner.pid, token: owner.token };
+  writeFileSync(heldOf(recordPath, owner), "", { mode: 0o600 });
+  writeFileSync(identityOf(recordPath, owner), `${JSON.stringify(value)}\n`, { mode: 0o600 });
+  return value;
+};
+const heldProbes = (outcome, mode) => outcome.probes.filter((probe) => probe.mode === mode);
 const identityOf = (recordPath, owner) => `${recordPath}.identity-${owner.token}`;
 const writeIdentity = (recordPath, owner, start, extra = {}) => {
   const value = { version: 1, pid: owner.pid, token: owner.token, start, ...extra };
@@ -931,7 +981,7 @@ test("Windows identity: a live true owner with matching creation identity stays 
   for (const probe of probes) {
     assert.equal(probe.pid, holder.pid);
     assert.equal(probe.path, "C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe");
-    assert.deepEqual(probe.flags, ["-NoProfile", "-NonInteractive", "-EncodedCommand"]);
+    assert.deepEqual(probe.flags, ["-NoProfile", "-NonInteractive", "-WindowStyle", "Hidden", "-EncodedCommand"]);
     assert.equal(probe.timeout, 5000);
     assert.equal(probe.maxBuffer, 64);
     assert.equal(probe.windowsHide, true);
@@ -1058,43 +1108,86 @@ test("Windows identity: FILETIME values are compared exactly beyond double preci
   assert.equal(stillRunning(holder), true);
 });
 
-test("Windows identity: owners publish their exact identity asynchronously and remove it on release", async () => {
+test("Windows identity: owners hold a share-none file and publish its identity without PowerShell, and remove both on release", async () => {
   const f = windowsFixture();
-  const start = "133711112222333344";
-  const holder = windows(f, { self: `SELF_PID:${start}` });
+  const holder = windows(f, {});
   const ready = await holder.event("ready");
   const acquired = await holder.command("acquire");
   assert.equal(acquired.event, "acquired");
   assert.equal(syncProbes(acquired).length, 0);
+  assert.equal(heldProbes(acquired, "held-open").length, 1);
   const owner = JSON.parse(readFileSync(f.leasePath, "utf8"));
   // The primary record format is unchanged, so older readers stay compatible.
   assert.deepEqual(Object.keys(owner).sort(), ["boot", "createdAt", "host", "pid", "token", "uptime", "version"]);
   assert.equal(owner.pid, ready.pid);
-  await until(() => existsSync(identityOf(f.leasePath, owner)), "published identity");
-  assert.deepEqual(JSON.parse(readFileSync(identityOf(f.leasePath, owner), "utf8")), { version: 1, pid: ready.pid, token: owner.token, start });
-  // The published identity matches the live owner, so a contender stays out.
-  const contender = windows(f, { [ready.pid]: `${ready.pid}:${start}` });
+  // Published before acquisition returns: nothing is left to race.
+  assert.deepEqual(JSON.parse(readFileSync(identityOf(f.leasePath, owner), "utf8")), { version: 2, pid: ready.pid, token: owner.token });
+  assert.equal(existsSync(heldOf(f.leasePath, owner)), true);
+  // The owner still holds its file, so a contender stays out, with no PowerShell at all.
+  const contender = windows(f, {});
   const refused = await contender.command("acquire");
   assert.equal(refused.code, "LEASE_BUSY");
-  assert.equal(syncProbes(refused).length >= 1, true);
+  assert.equal(syncProbes(refused).length, 0);
+  assert.ok(heldProbes(refused, "held-check").length >= 1);
   const released = await holder.command("release");
   assert.equal(released.released, true);
   assert.equal(existsSync(f.leasePath), false);
   assert.equal(existsSync(identityOf(f.leasePath, owner)), false);
-  assert.equal(released.probes.filter((probe) => probe.mode === "async").length, 1);
+  assert.equal(existsSync(heldOf(f.leasePath, owner)), false);
+  // murage-releases #1: holding a lease never starts PowerShell.
+  assert.equal(released.probes.filter((probe) => probe.mode === "async" || probe.mode === "sync").length, 0);
 });
 
-test("Windows identity: a release that wins the race with the identity probe leaves no identity", async () => {
+test("Windows identity: a hard-killed owner is reclaimed even though its PID was reused, without PowerShell", async () => {
   const f = windowsFixture();
-  const gate = join(f.root, "identity-probe.gate");
-  const holder = windows(f, { self: "SELF_PID:133711112222333344" }, { LEASE_TEST_PS_HOLD: gate });
-  assert.equal((await holder.command("acquire")).event, "acquired");
+  const killed = windows(f, {});
+  assert.equal((await killed.command("acquire")).event, "acquired");
   const owner = JSON.parse(readFileSync(f.leasePath, "utf8"));
-  assert.equal((await holder.command("release")).released, true);
-  writeFileSync(gate, "continue");
-  await until(() => existsSync(`${gate}.done`), "identity probe settled");
-  assert.equal(existsSync(identityOf(f.leasePath, owner)), false);
-  assert.deepEqual(readdirSync(f.root).filter((name) => name.includes(".identity-")), []);
+  await stop(killed);
+  // A live unrelated process now has the dead owner's PID.
+  const unrelated = await sleeper();
+  const reused = { ...owner, pid: unrelated.pid };
+  writeRecord(f.leasePath, reused);
+  writeFileSync(identityOf(f.leasePath, reused), `${JSON.stringify({ version: 2, pid: unrelated.pid, token: owner.token })}\n`, { mode: 0o600 });
+  const contender = windows(f, {});
+  const outcome = await contender.command("acquire");
+  assert.equal(outcome.event, "acquired");
+  assert.equal(syncProbes(outcome).length, 0);
+  assert.equal(existsSync(identityOf(f.leasePath, reused)), false);
+  assert.equal(existsSync(heldOf(f.leasePath, reused)), false);
+  assert.equal((await contender.command("release")).released, true);
+  assert.equal(stillRunning(unrelated), true);
+});
+
+for (const [name, prepare] of [
+  ["file is busy for any other reason", (f, owner) => { writeFileSync(heldOf(f.leasePath, owner), ""); writeFileSync(`${heldOf(f.leasePath, owner)}.busy`, ""); }],
+  ["file is missing", () => {}],
+]) {
+  test(`Windows identity: a held identity keeps exclusion when its ${name}`, async () => {
+    const f = windowsFixture();
+    const holder = await sleeper();
+    const owner = record(holder.pid);
+    writeRecord(f.leasePath, owner);
+    const identity = { version: 2, pid: owner.pid, token: owner.token };
+    writeFileSync(identityOf(f.leasePath, owner), `${JSON.stringify(identity)}\n`, { mode: 0o600 });
+    prepare(f, owner);
+    const outcome = await windows(f, {}).command("acquire");
+    assert.equal(outcome.code, "LEASE_BUSY");
+    assert.deepEqual(JSON.parse(readFileSync(identityOf(f.leasePath, owner), "utf8")), identity);
+    assert.equal(stillRunning(holder), true);
+  });
+}
+
+test("Windows identity: a dead held identity on a reused PID is disproved by the open alone", async () => {
+  const f = windowsFixture();
+  const unrelated = await sleeper();
+  const stale = record(unrelated.pid);
+  writeRecord(f.leasePath, stale);
+  writeHeldIdentity(f.leasePath, stale);
+  const outcome = await windows(f, {}).command("inspect");
+  assert.equal(outcome.result.status, "available");
+  assert.equal(syncProbes(outcome).length, 0);
+  assert.equal(stillRunning(unrelated), true);
 });
 
 test("Windows identity: non-Windows owners neither probe nor publish identities", { skip: process.platform === "win32" }, async () => {
@@ -1189,4 +1282,120 @@ test("parent release clears the record of a child it watched exit cleanly, and s
   assert.equal(parent.release({ exitedChildren: [{ pid: process.pid, code: 0 }] }), true);
   assert.equal(existsSync(f.childLeasePath), false);
   assert.equal(existsSync(f.leasePath), false);
+});
+
+// Rehearsal 2 (1.0.3, Cloud): a container starts its server as the same PID on
+// every restart and shares the host's boot id, so the lease the previous start
+// left behind named a live PID (this one) on the current boot, and every
+// restart refused with LEASE_BUSY. A record naming this process is its own
+// only while it holds that record's token.
+test("a stale record naming this process's own PID on this boot is taken over (a restarted container)", { skip: process.platform === "win32" }, () => {
+  const f = fixture("same-pid-restart");
+  const mine = currentRecord(f);
+  const left = record(process.pid, { boot: mine.boot, uptime: mine.uptime });
+  writeRecord(f.leasePath, left);
+  const lease = acquireDataDirLease(f.dataDir);
+  const now = JSON.parse(readFileSync(f.leasePath, "utf8"));
+  assert.equal(now.pid, process.pid);
+  assert.notEqual(now.token, left.token);
+  assert.equal(inspectDataDirLease(f.dataDir).code, "LEASE_BUSY");
+  assert.equal(lease.release(), true);
+  // the same with no boot identity recorded (older records)
+  writeRecord(f.leasePath, record(process.pid));
+  acquireDataDirLease(f.dataDir).release();
+});
+
+test("a stale child record naming this process's own PID is taken over by the delegated server", async () => {
+  const f = fixture("same-pid-child");
+  const parent = await sleeper();
+  const parentRecord = record(parent.pid);
+  writeRecord(f.leasePath, parentRecord);
+  writeRecord(f.childLeasePath, record(process.pid));
+  const env = { MURAGE_INTERNAL_DATA_DIR_LEASE: `v1:${parent.pid}:${parentRecord.token}` };
+  const child = acquireDataDirLeaseForProcess(f.dataDir, env);
+  assert.equal(child.delegated, true);
+  assert.equal(JSON.parse(readFileSync(f.childLeasePath, "utf8")).pid, process.pid);
+  assert.equal(child.release(), true);
+  rmSync(f.leasePath); // the planted parent's record
+});
+
+test("the lease stays strict: a held lease refuses this process again, and a live second process is refused", async () => {
+  const f = fixture("same-pid-strict");
+  const held = acquireDataDirLease(f.dataDir);
+  assert.throws(() => acquireDataDirLease(f.dataDir), errorCode("LEASE_BUSY"));
+  const second = worker(f);
+  await second.event("ready");
+  assert.equal((await second.command("acquire")).code, "LEASE_BUSY");
+  assert.equal(held.release(), true);
+  // and the other way round: a live other server holds it, this one is refused
+  assert.equal((await second.command("acquire")).event, "acquired");
+  assert.throws(() => acquireDataDirLease(f.dataDir), errorCode("LEASE_BUSY"));
+  assert.equal((await second.command("release")).released, true);
+  // a token this process released no longer counts as live
+  const again = acquireDataDirLease(f.dataDir);
+  const released = JSON.parse(readFileSync(f.leasePath, "utf8"));
+  assert.equal(again.release(), true);
+  writeRecord(f.leasePath, released);
+  acquireDataDirLease(f.dataDir).release();
+});
+
+// A thread of this process (the backup host's worker, the B21 test's isolated worker) cannot see the tokens the main thread holds: each
+// thread has its own module copy. A record naming this PID is this running process there, so delegation from the main thread's live lease
+// holds; only the thread that claims can tell its own stale record from a live one (the Cloud restart case above, on the main thread).
+test("a worker thread of this process takes a delegated child lease from the lease its main thread holds", async () => {
+  const { Worker } = await import("node:worker_threads");
+  const f = fixture();
+  const parent = acquireDataDirLease(f.dataDir);
+  try {
+    const environment = parent.utilityServerLeaseEnvironment();
+    const moduleUrl = new URL("./data-dir-lease.mjs", import.meta.url).href;
+    const code = `const { parentPort, workerData } = require("node:worker_threads");
+      import(workerData.moduleUrl).then(({ acquireDataDirLeaseForProcess }) => {
+        try { const lease = acquireDataDirLeaseForProcess(workerData.dataDir, { ...workerData.environment }); lease.release(); parentPort.postMessage({ ok: true }); }
+        catch (error) { parentPort.postMessage({ ok: false, code: error?.code ?? String(error) }); }
+      });`;
+    const worker = new Worker(code, { eval: true, workerData: { moduleUrl, dataDir: f.dataDir, environment } });
+    const message = await new Promise((resolve, reject) => { worker.once("message", resolve); worker.once("error", reject); });
+    await worker.terminate();
+    assert.deepEqual(message, { ok: true });
+  } finally { parent.release(); }
+});
+
+// A handle that finds its record taken over refuses to release it, and still lets go of what is its own: on Windows the share-none
+// file it holds open (and that file's identity). Kept open, the handle pinned the file for the life of the process, so its folder
+// could never be removed (EPERM) and the identity kept claiming an owner that no longer was one.
+test("Windows identity: a stale handle refused its release still lets go of its own held file and identity", async () => {
+  const f = windowsFixture();
+  const holder = windows(f, {});
+  assert.equal((await holder.command("acquire")).event, "acquired");
+  const owner = JSON.parse(readFileSync(f.leasePath, "utf8"));
+  assert.equal(existsSync(identityOf(f.leasePath, owner)), true);
+  const foreign = record(LIVE_OTHER_PID);
+  writeRecord(f.leasePath, foreign);
+  const refused = await holder.command("release");
+  assert.equal(refused.code, "LEASE_NOT_OWNED");
+  assert.equal(existsSync(heldOf(f.leasePath, owner)), false);
+  assert.equal(existsSync(identityOf(f.leasePath, owner)), false);
+  assert.deepEqual(JSON.parse(readFileSync(f.leasePath, "utf8")), foreign);
+  rmSync(f.leasePath); // the foreign record names a live process; the fixture folder is wiped after
+});
+
+// A parent that clears the record of a child it watched exit cleanly clears that child's identity and held file with it (the
+// child's process is gone; its leftovers are its own, token-scoped).
+test("parent release that clears an exited child's record also clears the child's identity and held file", () => {
+  const f = fixture();
+  const parent = acquireDataDirLease(f.dataDir);
+  const child = acquireDataDirLeaseForProcess(f.dataDir, { ...parent.utilityServerLeaseEnvironment() });
+  const childOwner = JSON.parse(readFileSync(f.childLeasePath, "utf8"));
+  if (process.platform !== "win32") {
+    writeFileSync(heldOf(f.childLeasePath, childOwner), "", { mode: 0o600 });
+    writeFileSync(identityOf(f.childLeasePath, childOwner), `${JSON.stringify({ version: 2, pid: childOwner.pid, token: childOwner.token })}\n`, { mode: 0o600 });
+  }
+  assert.equal(existsSync(identityOf(f.childLeasePath, childOwner)), true);
+  assert.equal(parent.release({ exitedChildren: [{ pid: process.pid, code: 0 }] }), true);
+  assert.equal(existsSync(f.childLeasePath), false);
+  assert.equal(existsSync(identityOf(f.childLeasePath, childOwner)), false);
+  assert.equal(existsSync(heldOf(f.childLeasePath, childOwner)), false);
+  // the in-process child handle finds its record cleared by the parent
+  assert.throws(() => child.release(), errorCode("LEASE_NOT_OWNED"));
 });
