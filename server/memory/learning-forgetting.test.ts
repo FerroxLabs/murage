@@ -1,7 +1,7 @@
 // Copyright 2026 Ferrox Labs
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import { beforeEach, expect, it } from "vitest";
-import { existsSync, mkdirSync, rmSync, utimesSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, utimesSync, writeFileSync } from "node:fs";
 import { DATA_DIR } from "../config.ts";
 import { closeDatabase, database, transaction } from "../database.ts";
 import { captureSource } from "./capture.ts";
@@ -11,8 +11,9 @@ import { forgetMemory } from "./forget.ts";
 import { pauseRestoredMemory } from "./restore.ts";
 import { forgetBotLearningData, purgeForgottenLearning, sweepLearningRetention } from "./evolution-forgetting.ts";
 import { ensureLearningLocalDir, learningLocalPath } from "../bot-learning.ts";
+import { removeTempDirSync } from "../testing/cleanup.ts";
 
-beforeEach(() => { closeDatabase(); rmSync(DATA_DIR, { recursive: true, force: true }); mkdirSync(DATA_DIR, { recursive: true }); reconcileMemoryRoster({ bots: [{ id: "bot", threadId: "thread" }], groups: [] }); });
+beforeEach(() => { closeDatabase(); removeTempDirSync(DATA_DIR); mkdirSync(DATA_DIR, { recursive: true }); reconcileMemoryRoster({ bots: [{ id: "bot", threadId: "thread" }], groups: [] }); });
 const DAY = 86_400_000;
 function seed() {
   transaction(db => { for (const id of ["a", "b"]) captureSource(db, { id, threadId: "thread", messageId: `m-${id}`, kind: "text", speaker: "owner", outcome: "recorded", text: `words ${id}` }); });

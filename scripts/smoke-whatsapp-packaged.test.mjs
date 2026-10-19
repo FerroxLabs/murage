@@ -1,6 +1,6 @@
 // Copyright 2026 Ferrox Labs
 // SPDX-License-Identifier: AGPL-3.0-or-later
-import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
+import { mkdtempSync, mkdirSync, writeFileSync } from "node:fs";
 import { join, dirname } from "node:path";
 import { spawnSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
@@ -8,6 +8,7 @@ import { tmpdir } from "node:os";
 import { BridgeHost } from "../server/channels/whatsapp/bridge-host.ts";
 import { expect, it } from "vitest";
 import { probeWhatsApp, describeFailure } from "./smoke-whatsapp-packaged.mjs";
+import { removeTempDirSync } from "../server/testing/cleanup.ts";
 it("requires the packaged handshake and an isolated dry-run supervisor", async () => {
   let options, stopped = false;
   class Host {
@@ -65,7 +66,7 @@ it("rejects an ordinary Node executable through the real supervisor", async () =
       });
     `);
     await expect(probeWhatsApp({ server, runtime: process.execPath, platform: process.platform, arch: process.arch, electronVersion: "43.4.0", Host: BridgeHost })).rejects.toThrow("runtime mismatch");
-  } finally { rmSync(server, { recursive: true, force: true }); }
+  } finally { removeTempDirSync(server); }
 });
 it("rejects a nonexistent executable through the real supervisor", async () => {
   await expect(probeWhatsApp({ server: tmpdir(), runtime: join(tmpdir(), "missing-electron"), platform: process.platform, arch: process.arch, electronVersion: "43.4.0", Host: BridgeHost, timeoutMs: 100, cleanupMs: 20 })).rejects.toThrow("could not spawn");
@@ -93,7 +94,7 @@ it("captures the child's stderr tail from the real supervisor", async () => {
     expect(error.message).toContain("exited before qualification");
     expect(error.diagnostics.stderrTail).toContain("boom-from-bridge");
     expect(describeFailure(error)).toContain("boom-from-bridge");
-  } finally { rmSync(server, { recursive: true, force: true }); }
+  } finally { removeTempDirSync(server); }
 }, 10000);
 it("the command line never fails silently", () => {
   const script = join(dirname(fileURLToPath(import.meta.url)), "smoke-whatsapp-packaged.mjs");

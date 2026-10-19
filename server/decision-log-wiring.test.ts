@@ -244,7 +244,7 @@ posixOnly("authorization decisions are logged", () => {
       // the per-program grant is still offered beside it
       expect(card.card.allowKey).toBe("shell:echo");
 
-      const grant = await desktopApi("POST", `/api/bots/${bot.id}/always-allow`, { allowKey: exactKey });
+      const grant = await desktopApi("POST", `/api/bots/${bot.id}/always-allow`, { answer: true, allowKey: exactKey, requestId: card.card.requestId });
       expect(grant.status, JSON.stringify(grant.body)).toBe(200);
       expect((await desktopApi("POST", `/api/bots/${bot.id}/respond`, { requestId: card.card.requestId, behavior: "allow" })).status).toBe(200);
       await waitForDecision((r) => r.decision === "user-approved" && r.requestId === card.card.requestId);
@@ -349,7 +349,7 @@ posixOnly("authorization decisions are logged", () => {
       expect(shown!.botId).toBe(bot.id);
 
       // a key an older build rendered on the card cannot be granted either
-      const grant = await desktopApi("POST", `/api/bots/${bot.id}/always-allow`, { allowKey: "AskUserQuestion" });
+      const grant = await desktopApi("POST", `/api/bots/${bot.id}/always-allow`, { answer: true, allowKey: "AskUserQuestion" });
       expect(grant.status).toBe(400);
       expect(grant.body.error).toMatch(/questions cannot be always allowed/);
 

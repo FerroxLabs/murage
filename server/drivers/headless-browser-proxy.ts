@@ -1,6 +1,7 @@
 // Scoped MCP adapter: the agent never receives engine credentials or a raw
 // CLI escape hatch. Harness authority is checked before and after every call.
 import { spawn } from "node:child_process";
+import { spawnCloudBrowser } from "../cloud-home/browser-process.ts";
 import type { Readable, Writable } from "node:stream";
 import { existsSync } from "node:fs";
 import type { AgentBrowserSpec } from "../browser-engine.ts";
@@ -96,7 +97,7 @@ const WITHDRAW_GRACE_MS = 10_000;
 const CLOSE_BOUND_MS = 5_000;
 
 export function startHeadlessEngine(spec: AgentBrowserSpec): EngineClient {
-  const child = spawn(spec.command, spec.args, { env: spec.env, shell: false, stdio: ["pipe", "pipe", "pipe"], windowsHide: true });
+  const child = spawnCloudBrowser(spec.args, spec.env) ?? spawn(spec.command, spec.args, { env: spec.env, shell: false, stdio: ["pipe", "pipe", "pipe"], windowsHide: true });
   let serial = 0;
   let stopped = false;
   let closePromise: Promise<void> | undefined;

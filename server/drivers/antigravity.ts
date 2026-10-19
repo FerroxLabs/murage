@@ -1,4 +1,5 @@
 import { oneShots } from "../engine-one-shots.ts";
+import { cloudTurnBot, cloudTurnEnvironment } from "../cloud-home/turn-process.ts";
 import { NEUTRAL_TOOL_SURFACE, renderMurageTurn } from "../murage-tool-surface.ts";
 // Antigravity driver — Google's `agy` CLI in headless stream-JSON mode,
 // modeled on claude.ts but fully self-contained. Per-turn CLI process; the conversation continues across
@@ -107,7 +108,7 @@ export const STATIC_ANTIGRAVITY_MODELS: ModelCatalog = {
 };
 
 function antigravityEnvironment(overrides: NodeJS.ProcessEnv = {}): NodeJS.ProcessEnv {
-  const env: NodeJS.ProcessEnv = { ...process.env, PATH: augmentedPath(), ...overrides };
+  const env: NodeJS.ProcessEnv = { ...cloudTurnEnvironment("antigravity", { ...process.env, ...overrides }), PATH: augmentedPath() };
   // The harness process may hold workspace credentials injected by the
   // desktop shell. Antigravity uses its own login, so none belong in any of
   // its turn, snapshot, or helper children.
@@ -220,6 +221,7 @@ export function antigravityComputerMcpServer(
         ELECTRON_RUN_AS_NODE: "1",
         MURAGEBOX_BOX_ID: proxyEnv.MURAGEBOX_BOX_ID ?? "",
         MURAGEBOX_BOX_TOKEN: proxyEnv.MURAGEBOX_BOX_TOKEN ?? "",
+        ...(proxyEnv.MURAGEBOX_BOX_API ? { MURAGEBOX_BOX_API: proxyEnv.MURAGEBOX_BOX_API } : {}),
         // who-is-driving endpoint, so a person taking the wheel in the
         // panel pauses this bot's hands mid-turn
         MURAGE_CONTROL_URL: proxyEnv.MURAGE_CONTROL_URL ?? "",
@@ -545,11 +547,14 @@ export const AntigravityDriver: ProviderDriver<AntigravityConfig> = {
 
       // spawnCli resolves npm .cmd shims / shebang scripts on Windows and
       // owns the process-group vs windowsHide difference (see procs.ts)
+      // The instance environment is shared by every turn; this turn's copy names its bot.
+      const turnEnv: NodeJS.ProcessEnv = { ...childEnv };
+      cloudTurnBot(turnEnv, turn.warmIdentity?.botId);
       let child: ReturnType<typeof spawnCli>;
       try {
         child = spawnCli(config.cli, args, {
           cwd,
-          env: childEnv,
+          env: turnEnv,
           stdio: ["pipe", "pipe", "pipe"],
         });
       } catch (error) {
@@ -798,8 +803,8 @@ export const AntigravityDriver: ProviderDriver<AntigravityConfig> = {
     };
 
     // A background run of the engine: a conversation deletion pauses these, and one it stopped starts again afterwards (engine-one-shots.ts).
-    const generateText = (prompt: string): Promise<string> => oneShots.run("antigravity", undefined, (signal) => generateTextNow(prompt, signal), true);
-    const generateTextNow = async (prompt: string, signal: AbortSignal): Promise<string> => {
+    const generateText = (prompt: string, botId?: string): Promise<string> => oneShots.run("antigravity", undefined, (signal) => generateTextNow(prompt, signal, botId), true);
+    const generateTextNow = async (prompt: string, signal: AbortSignal, botId?: string): Promise<string> => {
       const version = await versionForTurn();
       if (!supportsAntigravityStreamInput(version)) {
         throw new Error(
@@ -830,7 +835,8 @@ export const AntigravityDriver: ProviderDriver<AntigravityConfig> = {
               "--output-format", "stream-json",
               "--model", "gemini-3.6-flash-low",
             ],
-            { env: textEnv, stdio: ["pipe", "pipe", "pipe"] },
+            // This call's copy of the scoped text environment names the bot it is made for.
+            { env: (() => { const callEnv: NodeJS.ProcessEnv = { ...textEnv }; cloudTurnBot(callEnv, botId); return callEnv; })(), stdio: ["pipe", "pipe", "pipe"] },
           );
         } catch (error) {
           textScope?.dispose();

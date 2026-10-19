@@ -7,7 +7,7 @@
 import { useEffect, useRef, useState } from "react";
 import { Check, ChevronDown, Loader2, TriangleAlert } from "lucide-react";
 
-import { api, useStore, type InstanceInfo } from "@/state/store";
+import { api, useStore, type InstanceInfo, type ShellEnvironment } from "@/state/store";
 import { EngineManagement } from "./EngineManagement";
 import { ClaudeAccountsSettings } from "./ClaudeAccountsSettings";
 import { EngineGroupLabel } from "./EngineGroupLabel";
@@ -17,6 +17,11 @@ import { engineFamilies, engineFamilyHeader } from "@/lib/provider-model-picker"
 import { engineLocalLine, LOCAL_MODELS_TITLE, OPEN_LOCAL_MODELS_EVENT } from "@/lib/local-models-view";
 import { localEngineSupport } from "../../shared/local-models";
 import { cn } from "@/lib/cn";
+import { Card, InAdvanced } from "./SettingsPrimitives";
+
+/** What a Cloud home's engine card says when Claude's sign-in is due (the desktop app's Cloud home page signs it in again).
+ * Starts with server/cloud-home/copy.ts cloudClaudeSigninRenew (EngineLoginTerminal's CLAUDE_CLOUD_RENEW_COPY; a test compares). */
+export const ENGINE_RENEW_COPY = "Renew your Claude sign-in: open Murage on your computer, go to your Cloud home and choose Sign in to Claude.";
 
 interface ProbeResult {
   ok: boolean;
@@ -219,18 +224,14 @@ function EngineRow({ instance }: { instance: InstanceInfo }) {
     dispatch({ type: "toggleAppSettings", open: true, section: "models" });
     setTimeout(() => window.dispatchEvent(new Event(OPEN_LOCAL_MODELS_EVENT)), 0);
   };
-  const cliConfigurable = !["grok", "openai-compat", "boxAgent"].includes(instance.driverKind);
-  const [open, setOpen] = useState(false);
   const [switching, setSwitching] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const wasOpenFor = useRef<string | null>(null);
-  const changeGate = useRef(false);
   const [confirmationOpen, setConfirmationOpen] = useState(false);
   const [saved, setSaved] = useState<string | null>(null);
 
   const setEnabled = async () => {
-    if (changeGate.current || switching) return;
-    changeGate.current = true; setSwitching(true); setError(null); setSaved(null);
+    if (engineChangeGate.has(instance.instanceId) || switching) return;
+    engineChangeGate.add(instance.instanceId); setSwitching(true); setError(null); setSaved(null);
     try {
       await api(`/api/instances/${encodeURIComponent(instance.instanceId)}`, {
         method: "PATCH", body: JSON.stringify({ enabled: instance.enabled === false }),
@@ -239,34 +240,7 @@ function EngineRow({ instance }: { instance: InstanceInfo }) {
       setSaved(instance.enabled === false ? "Engine enabled." : "Engine disabled.");
       await Promise.resolve(refreshInstances()).catch(() => { setSaved("Change saved. Refresh the engine list to see its current status."); });
     } catch (error) { setError(error instanceof Error ? error.message : "Could not update engine"); }
-    finally { changeGate.current = false; setSwitching(false); }
-  };
-
-  // Close the picker when this instance's override changes to anything else
-  // — a save from this row, another tab, or the 5-min refresh. The picker
-  // initialized its fields from the OLD value and never re-syncs, so staying
-  // open would show stale state.
-  useEffect(() => {
-    if (wasOpenFor.current !== null && wasOpenFor.current !== instance.cli) {
-      setOpen(false);
-    }
-    wasOpenFor.current = instance.cli ?? null;
-  }, [instance.cli]);
-
-  const reset = () => {
-    if (switching || changeGate.current) return;
-    changeGate.current = true;
-    setSwitching(true);
-    setError(null);
-    api(`/api/instances/${encodeURIComponent(instance.instanceId)}`, {
-      method: "PATCH",
-      body: JSON.stringify({ cli: "" }),
-    })
-      // The reset already succeeded once PATCH returns 200. A follow-up list
-      // refresh failure should not tell the user the reset itself failed.
-      .then(() => Promise.resolve(refreshInstances()).catch(() => {}))
-      .catch((e) => setError(e.message))
-      .finally(() => { changeGate.current = false; setSwitching(false); });
+    finally { engineChangeGate.delete(instance.instanceId); setSwitching(false); }
   };
 
   return (
@@ -287,32 +261,12 @@ function EngineRow({ instance }: { instance: InstanceInfo }) {
         <span className="flex-1" />
         <button
           onClick={() => { setConfirmationOpen(value => !value); setSaved(null); }}
-          disabled={switching || open}
+          disabled={switching}
           aria-expanded={confirmationOpen}
           className="shrink-0 rounded-lg border border-hairline/40 px-3 py-1 text-[12px] text-ink disabled:opacity-50"
         >
           {instance.enabled === false ? "Enable" : "Disable"}
         </button>
-        {instance.cli && (
-          <button
-            onClick={reset}
-            disabled={switching || open || confirmationOpen}
-            className="shrink-0 text-[11.5px] text-ink-secondary hover:text-ink disabled:opacity-50"
-          >
-            {switching ? "Resetting…" : "Reset"}
-          </button>
-        )}
-        {cliConfigurable && <button
-          onClick={() => setOpen((v) => !v)}
-          disabled={switching || confirmationOpen}
-          aria-expanded={open}
-          className={cn(
-            "shrink-0 rounded-lg border border-hairline/40 px-3 py-1 text-[12px]",
-            open ? "bg-accent/15 text-accent" : "text-ink-secondary hover:bg-raised/50 hover:text-ink",
-          )}
-        >
-          Set CLI…
-        </button>}
       </div>
       {error && <div role="alert" className="mt-1 text-[12px] text-danger">{error}</div>}
       {saved && <div role="status" className="mt-1 text-[12px] text-success">{saved}</div>}
@@ -324,6 +278,11 @@ function EngineRow({ instance }: { instance: InstanceInfo }) {
           : needsSignIn(instance) ? "Detected · sign-in required"
             : instance.snapshot.authenticated === true ? "Detected · signed in" : "Detected · sign-in not verified"}
       </p>
+      {/* Cloud home (CLOUD-ENGINES-DESIGN.md r8 R3.1): Claude's long-lived token is due for renewal. The sign-in
+          runs from the desktop app, which holds the home's pairing. */}
+      {instance.snapshot.renewSignIn === true && (
+        <p role="status" className="mt-1 text-[12px] text-ink">{ENGINE_RENEW_COPY}</p>
+      )}
       {/* Spec V4: every engine says where it stands on local models, in one
           line, with the one place to manage them. An engine that cannot use a
           local server at all gets no line rather than a denial. */}
@@ -351,16 +310,105 @@ function EngineRow({ instance }: { instance: InstanceInfo }) {
           </div>
         </div>
       )}
-      {open && (
-        <CustomPicker
-          instance={instance}
-          cliDefault={instance.cliDefault}
-          onClose={() => setOpen(false)}
-          onSaved={refreshInstances}
-        />
-      )}
     </div>
   );
+}
+
+/** One engine's command line, on the engines' Advanced: where its CLI comes from, with Reset and Set CLI. A row
+ *  and its command line share one gate per engine, so an enable and a reset never cross. */
+const engineChangeGate = new Set<string>();
+function EngineCommandLine({ instance }: { instance: InstanceInfo }) {
+  const { refreshInstances } = useStore();
+  const cliConfigurable = !["grok", "openai-compat", "boxAgent"].includes(instance.driverKind);
+  const [open, setOpen] = useState(false);
+  const [switching, setSwitching] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const wasOpenFor = useRef<string | null>(null);
+  // Close the picker when this instance's override changes to anything else: a save from this row, another tab, or
+  // the 5-min refresh. The picker initialized its fields from the OLD value and never re-syncs.
+  useEffect(() => {
+    if (wasOpenFor.current !== null && wasOpenFor.current !== instance.cli) setOpen(false);
+    wasOpenFor.current = instance.cli ?? null;
+  }, [instance.cli]);
+  const reset = () => {
+    if (switching || engineChangeGate.has(instance.instanceId)) return;
+    engineChangeGate.add(instance.instanceId);
+    setSwitching(true);
+    setError(null);
+    api(`/api/instances/${encodeURIComponent(instance.instanceId)}`, { method: "PATCH", body: JSON.stringify({ cli: "" }) })
+      // The reset already succeeded once PATCH returns 200. A follow-up list refresh failure should not tell the
+      // user the reset itself failed.
+      .then(() => Promise.resolve(refreshInstances()).catch(() => {}))
+      .catch((e) => setError(e.message))
+      .finally(() => { engineChangeGate.delete(instance.instanceId); setSwitching(false); });
+  };
+  return (
+    <div>
+      <div className="flex flex-wrap items-center gap-2 text-[13px]">
+        <ProviderMark driverKind={instance.driverKind} size={14} />
+        <span className="min-w-0 max-w-full truncate text-ink" title={instance.displayName}>{instance.displayName}</span>
+        {instance.cli ? (
+          <span className="truncate font-mono text-[11.5px] text-accent" title={instance.cli}>{instance.cli}</span>
+        ) : (
+          instance.cliDefault && <span className="truncate text-[11px] text-ink-secondary">{instance.cliDefault} · default</span>
+        )}
+        <span className="flex-1" />
+        {instance.cli && (
+          <button
+            onClick={reset}
+            disabled={switching || open}
+            className="shrink-0 text-[11.5px] text-ink-secondary hover:text-ink disabled:opacity-50"
+          >
+            {switching ? "Resetting…" : "Reset"}
+          </button>
+        )}
+        {cliConfigurable && <button
+          onClick={() => setOpen((v) => !v)}
+          disabled={switching}
+          aria-expanded={open}
+          className={cn(
+            "shrink-0 rounded-lg border border-hairline/40 px-3 py-1 text-[12px]",
+            open ? "bg-accent/15 text-accent" : "text-ink-secondary hover:bg-raised/50 hover:text-ink",
+          )}
+        >
+          Set CLI…
+        </button>}
+      </div>
+      {error && <div role="alert" className="mt-1 text-[12px] text-danger">{error}</div>}
+      {open && <CustomPicker instance={instance} cliDefault={instance.cliDefault} onClose={() => setOpen(false)} onSaved={refreshInstances} />}
+    </div>
+  );
+}
+
+/** Engine command lines: the Advanced of Models and engines. */
+function EngineCommandLines({ rows }: { rows: InstanceInfo[] }) {
+  return (
+    <div id="engine-command-lines-heading" tabIndex={-1} className="outline-none">
+      <Card
+        title="Engine command lines"
+        subtitle="Set CLI points an engine at a specific binary: a versioned build, a wrapper script, or an absolute path. Saving reloads providers and interrupts any running turns."
+      >
+        <div className="flex flex-col gap-4">
+          {rows.length === 0 && <div className="text-[13px] text-ink-secondary">No CLI engines detected yet.</div>}
+          {rows.map((instance) => <EngineCommandLine key={instance.instanceId} instance={instance} />)}
+        </div>
+      </Card>
+    </div>
+  );
+}
+
+/** Rule 74a: the Engines panel's one line when engines do not run with the owner's shell environment read this session. A kept
+ *  map says from when and why it could not be re-read; the app's own environment is never handed silently. */
+export function shellEnvironmentLine(env: ShellEnvironment | null | undefined, locale?: string): string | null {
+  if (!env || env.capture === "session") return null;
+  const cause = env.cause ? `: ${env.cause}` : "";
+  if (env.capture === "kept") {
+    const when = typeof env.capturedAt === "number" && env.capturedAt > 0
+      ? new Date(env.capturedAt).toLocaleString(locale, { dateStyle: "medium", timeStyle: "short" })
+      : "an earlier session";
+    return `Using your shell environment from ${when}; Murage could not re-read it${cause}`;
+  }
+  return `Murage could not read your shell startup; commands run with the app's own environment${cause}`;
 }
 
 export function EnginesSettings() {
@@ -369,9 +417,22 @@ export function EnginesSettings() {
   // neither unless an override was set. Including them keeps a Reset-able row
   // (and a Set CLI… path) for engines the running build doesn't recognize.
   const rows = state.instances.filter((i) => i.enabled !== undefined || i.cli !== undefined || i.cliDefault !== undefined || i.snapshot.state === "unavailable");
+  const shellLine = shellEnvironmentLine(state.shellEnvironment);
 
   return (
     <div className="flex flex-col gap-5">
+      {shellLine && (
+        <div role="status" className="flex items-start gap-2 rounded-xl border border-warning/30 bg-warning/5 p-3 text-[12px] leading-relaxed text-ink">
+          <TriangleAlert size={14} className="mt-0.5 shrink-0 text-warning" aria-hidden="true" />
+          <span>{shellLine}</span>
+        </div>
+      )}
+      {(state.shellEnvironment?.sshNotes ?? []).map((note) => (
+        <div key={note} role="status" className="flex items-start gap-2 rounded-xl border border-hairline/40 bg-card p-3 text-[12px] leading-relaxed text-ink">
+          <TriangleAlert size={14} className="mt-0.5 shrink-0 text-ink-secondary" aria-hidden="true" />
+          <span>{note}</span>
+        </div>
+      ))}
       {rows.length === 0 && (
         <div className="text-[13px] text-ink-secondary">No CLI engines detected yet.</div>
       )}
@@ -383,14 +444,11 @@ export function EnginesSettings() {
             (engineFamilyHeader, the one rule both surfaces use). */}
         {engineFamilyHeader(primary,members)&&<EngineGroupLabel className="mb-3">{primary.displayName}</EngineGroupLabel>}
         <EngineRow instance={primary}/>
-        {members.length>1&&<details className="mt-3 border-t border-hairline/30 pt-2"><summary className="cursor-pointer text-xs text-ink-secondary">Other accounts and installations · {members.length-1}</summary><div className="mt-3 space-y-4">{members.filter(i=>i.instanceId!==primary.instanceId).map(i=><div key={i.instanceId}><EngineRow instance={i}/>{i.cli&&i.cli===primary.cli&&<p className="mt-1 text-[11px] text-ink-secondary">Uses the same executable; this configured account is preserved separately.</p>}</div>)}</div></details>}
-        {primary.driverKind === "claudeAgent" && <ClaudeAccountsSettings onChanged={refreshInstances} />}
+        {members.length>1&&<div className="mt-3 border-t border-hairline/30 pt-2"><p className="text-xs text-ink-secondary">Other accounts and installations · {members.length-1}</p><div className="mt-3 space-y-4">{members.filter(i=>i.instanceId!==primary.instanceId).map(i=><div key={i.instanceId}><EngineRow instance={i}/>{i.cli&&i.cli===primary.cli&&<p className="mt-1 text-[11px] text-ink-secondary">Uses the same executable; this configured account is preserved separately.</p>}</div>)}</div></div>}
+        {primary.driverKind === "claudeAgent" && <InAdvanced><ClaudeAccountsSettings onChanged={refreshInstances} /></InAdvanced>}
       </section>)}
-      {!rows.some(instance => instance.driverKind === "claudeAgent") && <ClaudeAccountsSettings onChanged={refreshInstances} />}
-      <div className="text-[12px] leading-relaxed text-ink-secondary">
-        Set CLI points an engine at a specific binary: a versioned build, a wrapper script, or an
-        absolute path. Saving reloads providers and interrupts any running turns.
-      </div>
+      {!rows.some(instance => instance.driverKind === "claudeAgent") && <InAdvanced><ClaudeAccountsSettings onChanged={refreshInstances} /></InAdvanced>}
+      <InAdvanced><EngineCommandLines rows={rows} /></InAdvanced>
     </div>
   );
 }

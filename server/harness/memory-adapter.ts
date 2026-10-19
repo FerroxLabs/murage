@@ -1,5 +1,7 @@
 import { createHash } from "node:crypto";
 import { memoryRequestPrefix } from "../../shared/memory.ts";
+import { buildFluxMemoryEnvelope, fluxEnvelopeApplies, recordFluxMemoryReport } from "../flux-memory-envelope.ts";
+import { fluxMemoryContextForTurn, fluxMemoryDecision } from "../flux-memory-headers.ts";
 import type { ProviderAdapter, ProviderInstance, SendTurnInput } from "../contracts.ts";
 
 /** One delivery contract for every registered adapter. This is a user-message
@@ -27,7 +29,22 @@ export function decorateMemoryInstance(live: ProviderInstance): ProviderInstance
     // An engine command reaches the engine as the command alone, so it
     // carries no reference, and counts as an unbundled turn below: the next
     // ordinary turn delivers the bundle again.
-    const memoryContext = input.engineCommand ? undefined : bundled;
+    // Flux memory envelope (lane 2.2): on a Flux turn with the switch on, Murage sends its recall as the
+    // fallback and injects nothing locally, so exactly one memory block reaches the model. The turn must also be one the
+    // 1.0.2 Flux memory headers inject on (the owner's own turn, no kill switch, no breaker, flux-memory-headers.ts): a
+    // non-owner audience, a background or prewarm turn keeps local injection, as its headers already say inject off.
+    const envelope = original.capabilities.fluxEnvelope === true && fluxEnvelopeApplies(input, { driverCarries: true })
+      && fluxMemoryDecision(fluxMemoryContextForTurn(input)).inject === "on"
+      ? buildFluxMemoryEnvelope(bundled?.text ?? "") : undefined;
+    if (envelope) {
+      turn.fluxMemory = envelope;
+      const bundleId = bundled?.bundleId;
+      turn.onFluxMemory = report => {
+        recordFluxMemoryReport(input.threadId, report, bundleId);
+        input.onFluxMemory?.(report);
+      };
+    }
+    const memoryContext = input.engineCommand || envelope ? undefined : bundled;
     if (input.integrations?.memory) {
       const { memory, ...integrations } = input.integrations;
       if (Object.hasOwn(integrations.custom ?? {}, "murage-memory")) throw new Error("MEMORY_MCP_NAME_COLLISION");

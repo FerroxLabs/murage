@@ -451,7 +451,9 @@ test("every IPC channel main.mjs registers refuses a foreign sender before its l
 
   // Every channel the preload can reach is registered by main.mjs through the
   // gate, or by a registrar main.mjs hands the gate.
-  const registrarChannels = new Set(Object.values(REGISTRAR_CHANNELS).flat());
+  // The engine sign-in relay (B3 WP5) registers through the same gate, but only with the Cloud flag on, so this flag-off
+  // load never sees it; ipc-channel-classes.node-test.mjs proves the flag-on load registers exactly these.
+  const registrarChannels = new Set([...Object.values(REGISTRAR_CHANNELS).flat(), "cloud-home:engine-login:start", "cloud-home:engine-login:input", "cloud-home:engine-login:stop", "cloud-home:engine-login:open-link"]);
   for (const { method, channel } of preloadChannels) {
     if (registrarChannels.has(channel)) continue;
     const table = method === "invoke" ? report.handles : report.ons;
@@ -476,7 +478,7 @@ test("main.mjs routes its registrars and the main window through the B6 policy",
 
   const start = source.indexOf("function createWindow(");
   const createWindow = source.slice(start, source.indexOf("\n}\n", start));
-  assert.match(createWindow, /preload: path\.join\(__dirname, "preload\.cjs"\),\s*\/\/[^\n]*\n\s*additionalArguments: rendererOriginArguments\(trustedRendererOrigin\(\)\),/);
+  assert.match(createWindow, /preload: path\.join\(__dirname, "preload\.cjs"\),\s*\/\/[^\n]*\n\s*additionalArguments: \[\.\.\.rendererOriginArguments\(trustedRendererOrigin\(\)\), \.\.\.\(cloudHome \? \["--murage-cloud=1"\] : \[\]\)\],/);
   assert.match(createWindow, /win\.webContents\.on\("will-navigate", navigationGuard\.willNavigate\);/);
   assert.match(createWindow, /win\.webContents\.on\("will-redirect", navigationGuard\.willRedirect\);/);
   assert.match(createWindow, /createMainNavigationGuard\(\{\s*origin: trustedRendererOrigin,/);

@@ -4,10 +4,10 @@ import { mkdtempSync,readFileSync,readdirSync,realpathSync,writeFileSync } from 
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach,describe,expect,it,vi } from "vitest";
-import { safeWipeSync } from "./testing/safe-wipe.mjs";
 import { BackupRestic,resticRunner,type ResticRun } from "./backup-restic.ts";
 import type { ResticS3Target } from "./backup-restic-target.ts";
 import { startLoopbackS3 } from "./backup-restic-loopback-s3.fixture.ts";
+import { removeTempDirSync } from "./testing/cleanup.ts";
 
 // Actual pinned restic 0.19.1 against a scripted loopback S3 service, through the
 // product adapter and runner. The only test difference is a prepended --cacert
@@ -21,7 +21,7 @@ afterEach(async()=>{for(const cleanup of cleanups.splice(0).reverse())await clea
 
 async function fixture(timeoutMs=60000){
   const s3=await startLoopbackS3();cleanups.push(()=>s3.close());
-  const root=realpathSync.native(mkdtempSync(join(tmpdir(),"murage-restic-loopback-")));cleanups.push(()=>safeWipeSync(root));
+  const root=realpathSync.native(mkdtempSync(join(tmpdir(),"murage-restic-loopback-")));cleanups.push(()=>removeTempDirSync(root));
   const bytes=Buffer.concat([Buffer.from("age-encryption.org/v1\n"),randomBytes(256*1024)]);
   const input=join(root,"synthetic.age");writeFileSync(input,bytes,{mode:0o600});
   const password=randomBytes(24).toString("hex"),prefix="murage/installation";

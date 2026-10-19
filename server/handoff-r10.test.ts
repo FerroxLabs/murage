@@ -10,7 +10,7 @@
 //   R10-03  a room turn's memory check costs its window, not the room's history (memory on and off);
 //   R10-04  a finished ask settles the moment its reply row is stored;
 //   P3      the direct window follows the byte budget; a saved card summary is released again; an unlisted admission refusal has its own line.
-import { mkdirSync, readFileSync, rmSync } from "node:fs";
+import { mkdirSync, readFileSync } from "node:fs";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { releasedCardSummary } from "./card-summary.ts";
 import { configureBotEgress } from "./bot-egress.ts";
@@ -27,6 +27,7 @@ import { cardAskText, continuationResultsPrompt } from "./project-prompt.ts";
 import { inheritedRequestLineage, roomRequestById } from "./project-records.ts";
 import { initializeProjectTables } from "./project-tables.ts";
 import { applyCardRunEffect, cardGenerationCurrent, leadNextStep, reviewWakeTarget } from "./project-turn-engine.ts";
+import { removeTempDirSync } from "./testing/cleanup.ts";
 // evhand's note recorder is superseded by write-time lineage (project-notes.ts recordNoteLineage): inert here, so these scenarios run on the write-time rules
 // (preview2 merge: scenarios that assert evhand's holders/sources/ranges note design are it.skip: writetime wins, notes rest on write-time lineage)
 const configureNoteRecorder = (_recorder?: unknown): void => {};
@@ -41,7 +42,7 @@ import { Store, type Message } from "./store.ts";
 
 const selection = (): ModelSelection => ({ instanceId: "claude", model: "fake-model" });
 afterEach(() => { configureNoteRecorder(undefined); configureResultEgress(undefined); configureBotEgress(undefined); configureStatusRoster(undefined); });
-beforeEach(() => { closeMessageDb(); closeDatabase(); rmSync(DATA_DIR, { recursive: true, force: true }); mkdirSync(DATA_DIR, { recursive: true }); });
+beforeEach(() => { closeMessageDb(); closeDatabase(); removeTempDirSync(DATA_DIR); mkdirSync(DATA_DIR, { recursive: true }); });
 
 describe("R10-01: a card note is released against the messages that hold its own words, through the real deliver edge", () => {
   const SECRET = "LEAD PRIVATE BUDGET 12345";
@@ -393,7 +394,7 @@ describe("R10-02 / R10-03: a transcript check costs its window, not the history"
   const reply = (index: number): Message => ({ id: `r${index}`, role: "bot", kind: "text", text: `reply ${index}`, at: index, from: { botId: "dax", name: "Dax", color: "#000" } } as Message);
   const roomOf = (rows: number): Message[] => Array.from({ length: rows }, (_, index) => reply(index));
   /** A cold database each time: a memo warmed by an earlier run would hide the cost. */
-  const cold = () => { closeMessageDb(); closeDatabase(); rmSync(DATA_DIR, { recursive: true, force: true }); mkdirSync(DATA_DIR, { recursive: true }); database(); };
+  const cold = () => { closeMessageDb(); closeDatabase(); removeTempDirSync(DATA_DIR); mkdirSync(DATA_DIR, { recursive: true }); database(); };
   const seedReceipt = () => database().prepare("INSERT INTO memory_disclosures(bundle_id,thread_id,driver_instance,record_versions,source_versions,output_message_ids,policy_revision,deletion_epoch,token_count,state,created_at) VALUES('b1','busy','driver','[]','[]','[\"r5\"]',1,1,0,'delivered',1)").run();
 
   it("memory off: 1k and 50k room rows run the same statements", () => {

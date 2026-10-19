@@ -11,7 +11,7 @@ it("uses server task counts and leaves legacy records at zero", () => {
   expect(state.groups[0].messages).toEqual([]);
   state = reducer(state, { type: "messageAdded", threadId: "t2", message });
   expect(state.groups[0].tasks?.[1].unreadCount ?? 0).toBe(0);
-  state = reducer(state, { type: "groupPatched", group: { ...group, threadId: "t2", messages: [message] } });
+  state = reducer(state, { type: "groupPatched", origin: { source: "stream" }, group: { ...group, threadId: "t2", messages: [message] } });
   expect(state.groups[0].tasks?.[1].unreadCount).toBe(0);
 });
 it("does not count the active visible task or tool-only work", () => {
@@ -25,6 +25,6 @@ it("does not add local counts after a durable server snapshot", () => {
   let state: typeof initialState = { ...initialState, groups: [durable], selectedId: "g" };
   state = reducer(state, { type: "messageAdded", threadId: "t2", message });
   expect(state.groups[0].tasks?.[1].unreadCount).toBe(3);
-  state = reducer(state, { type: "groupPatched", group: { ...durable, tasks: durable.tasks.map(task => ({ ...task, unreadCount: 0 })) } });
+  state = reducer(state, { type: "groupPatched", origin: { source: "stream" }, group: { ...durable, tasks: durable.tasks.map(task => ({ ...task, unreadCount: 0 })) } });
   expect(state.groups[0].tasks?.[1].unreadCount).toBe(0);
 });

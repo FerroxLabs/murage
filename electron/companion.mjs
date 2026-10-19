@@ -11,6 +11,7 @@
 // narrow list of things the renderer may ask for is written down in one
 // place rather than implied by whatever the control server happens to serve.
 import { app, utilityProcess } from "electron";
+import { randomBytes } from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
 import { compileCacheEnvironment } from "./compile-cache.mjs";
@@ -18,6 +19,7 @@ import { resolveCompanionEntry } from "./companion-entry.mjs";
 import { lanBindEnvironment } from "./companion-lan-pairing.mjs";
 import { launchSecretVia, sendLaunchSecretParent } from "./launch-secret.mjs";
 import { createServerChildLifecycle } from "./server-child-lifecycle.mjs";
+import { forgetSidecar, recordSidecar, stopStaleSidecar } from "./companion-stale.mjs";
 import {
   cleanupCompanionOriginEndpoint,
   companionOriginHealth,
@@ -74,6 +76,14 @@ export const BROWSER_LOOPBACK_TARGET = `http://127.0.0.1:${BROWSER_PORT}`;
 const BROWSER_DOOR_OFF = null;
 
 let proc = null;
+/** This launch's control-port token. Minted fresh for every sidecar start and
+ * held only here and in the sidecar, so nothing else on this computer, a bot's
+ * shell or browser included, can open pairing or read a pairing code. */
+let controlToken = "";
+/** This launch's recovery secret: lets the NEXT launch, after a crash, ask
+ * this sidecar for its pid and to stop, and nothing more. Only its encrypted
+ * copy is written down (electron/companion-stale.mjs). */
+let recoveryToken = "";
 let procLifecycle = null;
 let lastError = null;
 let advertisedHostedUrl = null;
@@ -222,13 +232,18 @@ async function control(method, urlPath, body, { timeoutMs = 4000 } = {}) {
   const options = {
     method,
     signal: AbortSignal.timeout(timeoutMs),
+    headers: { "x-murage-control-token": controlToken },
   };
   if (body !== undefined) {
     options.body = JSON.stringify(body);
-    options.headers = { "content-type": "application/json" };
+    options.headers["content-type"] = "application/json";
   }
   const res = await fetch(`http://127.0.0.1:${CONTROL_PORT}${urlPath}`, options);
-  if (!res.ok && res.status !== 404) throw new Error(`companion control ${res.status}`);
+  if (!res.ok && res.status !== 404) {
+    const error = new Error(`companion control ${res.status}`);
+    error.status = res.status;
+    throw error;
+  }
   return res.json();
 }
 
@@ -299,7 +314,7 @@ export function stopCompanion() {
 }
 
 /** startCompanion's body, run inside the transition queue. */
-async function start({ resourcesPath, harnessPort, companionToken, hostedUrl = null, remoteAccess = null, log }) {
+async function start({ resourcesPath, harnessPort, companionToken, hostedUrl = null, remoteAccess = null, sidecarSeal = null, log }) {
   if (proc) return companionState();
   lastError = null;
   const resolved = entryPoint(resourcesPath);
@@ -313,6 +328,11 @@ async function start({ resourcesPath, harnessPort, companionToken, hostedUrl = n
     return companionState();
   }
   log?.(`companion fork ${resolved.entry}`);
+  // A sidecar a crashed launch of this desktop left behind holds the port and
+  // answers only that launch's token. Stop it, so the person never has to.
+  // Only with the credential store: the record holds that token, encrypted.
+  const sidecarDir = app.getPath("userData");
+  await stopStaleSidecar({ dir: sidecarDir, controlPort: CONTROL_PORT, seal: sidecarSeal, log }).catch(() => "none");
 
   let allocatedOrigin;
   try {
@@ -332,6 +352,8 @@ async function start({ resourcesPath, harnessPort, companionToken, hostedUrl = n
   // passes this value only after it has verified the managed connector, and
   // an inherited value would bypass that gate and make Settings claim a dead
   // or attacker-selected route is ready.
+  controlToken = randomBytes(32).toString("base64url");
+  recoveryToken = randomBytes(32).toString("base64url");
   const childEnvironment = { ...process.env };
   if (connectionStorage) childEnvironment.MURAGE_COMPANION_DIR = connectionStorage.stateDirectory;
   delete childEnvironment.MURAGE_COMPANION_HOSTED_URL;
@@ -345,6 +367,11 @@ async function start({ resourcesPath, harnessPort, companionToken, hostedUrl = n
   // or a file: an environment copy stays readable at /proc/<pid>/environ on
   // Linux and a file can be raced (audit P1, S1b R8).
   if (companionToken) Object.assign(childEnvironment, launchSecretVia("MURAGE_COMPANION_TOKEN", "parent"));
+  // The control token goes the same private way, and is new for every start.
+  delete childEnvironment.MURAGE_COMPANION_CONTROL_TOKEN;
+  Object.assign(childEnvironment, launchSecretVia("MURAGE_COMPANION_CONTROL_TOKEN", "parent"));
+  delete childEnvironment.MURAGE_COMPANION_RECOVERY_TOKEN;
+  Object.assign(childEnvironment, launchSecretVia("MURAGE_COMPANION_RECOVERY_TOKEN", "parent"));
   // Same reasoning: the door's public origin is decided here, per start, from
   // what `tailscale serve` was actually observed to be doing. An inherited
   // one would survive turning remote access off.
@@ -397,7 +424,10 @@ async function start({ resourcesPath, harnessPort, companionToken, hostedUrl = n
   child.stdout?.on("data", (d) => log?.(`[companion] ${String(d).trimEnd()}`));
   child.stderr?.on("data", (d) => log?.(`[companion err] ${String(d).trimEnd()}`));
 
+  void recordSidecar(sidecarDir, { pid: child.pid, recoveryToken }, sidecarSeal).catch(() => {});
   if (companionToken) sendLaunchSecretParent(child, "MURAGE_COMPANION_TOKEN", companionToken);
+  sendLaunchSecretParent(child, "MURAGE_COMPANION_CONTROL_TOKEN", controlToken);
+  sendLaunchSecretParent(child, "MURAGE_COMPANION_RECOVERY_TOKEN", recoveryToken);
   let exited = false;
   child.once("exit", (code) => {
     exited = true;
@@ -417,6 +447,7 @@ async function start({ resourcesPath, harnessPort, companionToken, hostedUrl = n
       });
     }
     cleanupOrigin();
+    void forgetSidecar(sidecarDir, child.pid, sidecarSeal).catch(() => {});
     log?.(`companion exited code=${code}`);
   });
 
@@ -453,7 +484,16 @@ async function start({ resourcesPath, harnessPort, companionToken, hostedUrl = n
       remoteAccessOrigin = remoteAccess?.origin ?? null;
       originTarget = Object.freeze(target);
       return companionState();
-    } catch {
+    } catch (error) {
+      // A refusal of this launch's token means the port belongs to a sidecar
+      // this process did not start: ours only listens once it holds the token.
+      // One a crashed launch of this desktop left was already stopped above,
+      // so this is someone else's.
+      if (error?.status === 403) {
+        await stop().catch(() => {});
+        lastError = `port ${CONTROL_PORT} is already serving another companion. Stop it and try again`;
+        return companionState();
+      }
       await new Promise((r) => setTimeout(r, 150));
     }
   }

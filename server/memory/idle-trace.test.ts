@@ -1,7 +1,7 @@
 // The memory idle pass and the memory turn lines are traceable (MURAGE_TURN_TRACE=1):
 // a slow synchronous step is logged by its fixed name, and a turn can report
 // the search hits, lineage rows and lineage cache counts it caused.
-import { mkdirSync, rmSync } from "node:fs";
+import { mkdirSync } from "node:fs";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { DATA_DIR } from "../config.ts";
 import { closeDatabase, database } from "../database.ts";
@@ -9,8 +9,9 @@ import { timedStep } from "./claim-trace.ts";
 import { capturedMessageWithheld } from "./replay-lineage.ts";
 import { memoryStatsSince, memoryStatsSnapshot, noteMemorySearch } from "./turn-stats.ts";
 import { LineageAllowance } from "./lineage-allowance.ts";
+import { removeTempDirSync } from "../testing/cleanup.ts";
 
-beforeEach(() => { closeDatabase(); rmSync(DATA_DIR, { recursive: true, force: true }); mkdirSync(DATA_DIR, { recursive: true }); process.env.MURAGE_TURN_TRACE = "1"; });
+beforeEach(() => { closeDatabase(); removeTempDirSync(DATA_DIR); mkdirSync(DATA_DIR, { recursive: true }); process.env.MURAGE_TURN_TRACE = "1"; });
 afterEach(() => { delete process.env.MURAGE_TURN_TRACE; vi.restoreAllMocks(); });
 
 it("a step over 50 ms is logged by name, a fast one and an untraced one are not", () => {

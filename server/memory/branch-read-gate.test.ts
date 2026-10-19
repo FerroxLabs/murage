@@ -4,7 +4,7 @@
 // rc3f: while a branch change of a conversation is pending (a switch away from a branch longer than the write's share), every memory
 // read withholds that conversation's sources, so a record resting on an abandoned-branch message is not readable from a sibling
 // conversation before the slices have retired it. Once the slices finish, the selected branch's records read again.
-import { mkdirSync, rmSync } from "node:fs";
+import { mkdirSync } from "node:fs";
 import { afterEach, beforeEach, expect, it } from "vitest";
 import { DATA_DIR } from "../config.ts";
 import { closeDatabase, database } from "../database.ts";
@@ -19,9 +19,10 @@ import { memoryAgentRoute } from "./routes.ts";
 import { plausiblyReadable } from "./readable.ts";
 import { BRANCH_CHANGE_PENDING } from "./deny.ts";
 import { drainBranchChanges, pendingBranchChanges } from "./branch-change.ts";
+import { removeTempDirSync } from "../testing/cleanup.ts";
 
 afterEach(() => setMemoryCaptureRoster(null));
-beforeEach(() => { closeDatabase(); rmSync(DATA_DIR, { recursive: true, force: true }); mkdirSync(DATA_DIR, { recursive: true }); });
+beforeEach(() => { closeDatabase(); removeTempDirSync(DATA_DIR); mkdirSync(DATA_DIR, { recursive: true }); });
 
 const TEXT = "Verified source note about the lighthouse";
 function fixture() {
@@ -73,7 +74,7 @@ it("withholds an abandoned-branch record from a sibling's get, search and candid
 it("the read gate is a keyed seek whose plan is the same at 10 and at 100,000 sources", () => {
   const plans: string[] = [];
   for (const n of [10, 100_000]) {
-    closeDatabase(); rmSync(DATA_DIR, { recursive: true, force: true }); mkdirSync(DATA_DIR, { recursive: true });
+    closeDatabase(); removeTempDirSync(DATA_DIR); mkdirSync(DATA_DIR, { recursive: true });
     const db = database();
     db.exec("PRAGMA foreign_keys=OFF"); db.exec("BEGIN");
     db.prepare(`WITH RECURSIVE c(i) AS (SELECT 1 UNION ALL SELECT i+1 FROM c WHERE i<?1)

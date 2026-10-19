@@ -26,6 +26,8 @@ it.each([
   expect(step.run).toContain(`> qualification-evidence/whatsapp-${platform}-${arch}.json`);
   expect(step.run).not.toMatch(/\|\|\s*true/);
   const evidence = steps.find(step => step.with?.name === `${job}-whatsapp-gepa-evidence`);
-  expect(evidence.with.path).toBe("qualification-evidence/whatsapp-*");
+  // mac-x64 also keeps the Intel smart search packaged smoke report (memory-darwin-x64.json) in the same artifact.
+  const paths = evidence.with.path.split("\n").map(line => line.trim()).filter(Boolean);
+  expect(paths).toEqual(job === "mac-x64" ? ["qualification-evidence/whatsapp-*", "qualification-evidence/memory-*"] : ["qualification-evidence/whatsapp-*"]);
   expect(evidence.with["if-no-files-found"]).toBe("error");
 });

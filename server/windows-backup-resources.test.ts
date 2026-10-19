@@ -1,13 +1,14 @@
 import { createHash } from "node:crypto";
-import { linkSync, mkdtempSync, renameSync, rmSync, symlinkSync, writeFileSync, type BigIntStats } from "node:fs";
+import { linkSync, mkdtempSync, renameSync, symlinkSync, writeFileSync, type BigIntStats } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, win32 } from "node:path";
 import { afterEach, expect, it, vi } from "vitest";
-vi.mock("./browser-windows-identity.ts", () => ({ verifyWindowsBrowserSignatures: vi.fn(async () => { throw new Error("Native signature calls are forbidden in this source fixture"); }) }));
+import { removeTempDirSync } from "./testing/cleanup.ts";
+vi.mock("./browser-windows-identity.ts", () => ({ verifyWindowsBrowserSignatures: vi.fn(async () => { throw new Error("Native signature calls are forbidden in this source fixture"); }), nativeAuthenticodeIn: vi.fn(() => null) }));
 import { createWindowsBackupResourceResolver, observeWindowsBackupFile, WINDOWS_BACKUP_RAW_SHA256, type WindowsBackupResourceDependencies } from "./windows-backup-resources.ts";
 
 const roots: string[] = [];
-afterEach(() => { for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true }); });
+afterEach(() => { for (const root of roots.splice(0)) removeTempDirSync(root); });
 function localFile(bytes = "fixture-content") {
   const directory = mkdtempSync(join(tmpdir(), "murage-windows-resource-test-")); roots.push(directory);
   const path = join(directory, "resource"); writeFileSync(path, bytes); return { directory, path };
@@ -31,13 +32,14 @@ function fixture() {
     return { sha256: entry.digest, assertUnchanged: () => { if (entry.dirty) throw new Error("resource changed"); },
       close: () => { entry.closed = true; if (path === closeFailure) throw new Error("close failure"); } };
   });
-  const verifySignatures = vi.fn(async (_paths: string[]) => {});
+  const verifySignatures = vi.fn(async (_paths: string[], _native: unknown) => {});
+  const nativeAuthenticode = vi.fn((_resources: string) => null as never);
   const io: WindowsBackupResourceDependencies = {
-    platform: "win32", arch: "x64", observeFile, verifySignatures,
+    platform: "win32", arch: "x64", observeFile, verifySignatures, nativeAuthenticode,
     realpath: path => redirects.get(path) ?? path,
     lstat: path => { if (!ids.has(path)) ids.set(path, BigInt(ids.size + 1)); return directoryStat(ids.get(path)! + (path === replacedDirectory ? 100n : 0n), path === symbolicDirectory); },
   };
-  return { entries, redirects, io, observeFile, verifySignatures,
+  return { entries, redirects, io, observeFile, verifySignatures, nativeAuthenticode,
     set symbolicDirectory(path: string) { symbolicDirectory = path; },
     set replacedDirectory(path: string) { replacedDirectory = path; },
     set closeFailure(path: string) { closeFailure = path; },
@@ -47,7 +49,7 @@ function fixture() {
 
 it("returns only the fixed helper after app/helper signatures and all raw pins", async () => {
   const f = fixture(); await expect(f.resolve()).resolves.toEqual({ executable: helper });
-  expect(f.verifySignatures).toHaveBeenCalledExactlyOnceWith([app, helper]);
+  expect(f.verifySignatures).toHaveBeenCalledExactlyOnceWith([app, helper], null);
   expect(f.observeFile.mock.calls.map(call => call[0])).toEqual([...f.entries.keys()]);
   expect([...f.entries.values()].every(entry => entry.closed)).toBe(true);
 });
@@ -141,4 +143,14 @@ it("default reader rejects same-size byte edits after observation", () => {
 it("default reader rejects named-path replacement despite its still-held original fd", () => {
   const f = localFile(); const held = observeWindowsBackupFile(f.path, 1024);
   try { renameSync(f.path, join(f.directory, "original")); writeFileSync(f.path, "fixture-content"); expect(() => held.assertUnchanged()).toThrow(); } finally { held.close(); }
+});
+
+// murage-releases #1: the packaged app checks its signatures with its own native
+// WinVerifyTrust addon from its own resources folder, so no PowerShell starts.
+it("hands the app's own native check from its resources folder to the signature step", async () => {
+  const f = fixture(); const native = { authenticode: vi.fn() };
+  f.nativeAuthenticode.mockReturnValue(native as never);
+  await expect(f.resolve()).resolves.toEqual({ executable: helper });
+  expect(f.nativeAuthenticode).toHaveBeenCalledExactlyOnceWith(resources);
+  expect(f.verifySignatures).toHaveBeenCalledExactlyOnceWith([app, helper], native);
 });

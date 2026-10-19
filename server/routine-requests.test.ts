@@ -1,4 +1,4 @@
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -16,6 +16,7 @@ import {
 } from "./routine-requests.ts";
 import { RoutineManager } from "./routines.ts";
 import type { JsonValue } from "./schema.ts";
+import { removeTempDirSync } from "./testing/cleanup.ts";
 
 class MemoryStore implements RoutineRequestStore {
   readonly threads = new Map<string, RoutineRequestMessage[]>();
@@ -50,7 +51,7 @@ class MemoryStore implements RoutineRequestStore {
 
 const tempDirs: string[] = [];
 afterEach(() => {
-  for (const dir of tempDirs.splice(0)) rmSync(dir, { recursive: true, force: true });
+  for (const dir of tempDirs.splice(0)) removeTempDirSync(dir);
 });
 
 function harness(

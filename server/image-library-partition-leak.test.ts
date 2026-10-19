@@ -4,7 +4,7 @@
 // one partition's library never reaches another, in either direction; the
 // owner's workspace items ride every partition; an unpartitioned bot keeps
 // today's single library.
-import { mkdirSync, rmSync } from "node:fs";
+import { mkdirSync } from "node:fs";
 import { beforeEach, expect, it } from "vitest";
 import { DATA_DIR } from "./config.ts";
 import { closeDatabase, database } from "./database.ts";
@@ -16,11 +16,12 @@ import { fileURLToPath } from "node:url";
 import {
   deletePromptBlock, deleteReferencePack, getPromptBlock, imageLibraryBotId, promptBlockById, imageLibraryKeyInUse, listPromptBlocksForBot, listReferencePacksForBot, resolvePromptBlocks, resolveReferencePack, savePromptBlock, saveReferencePack,
 } from "./image-library.ts";
+import { removeTempDirSync } from "./testing/cleanup.ts";
 
 const PNG_HOME = { bytes: Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=", "base64"), mime: "image/png" as const };
 const PNG_SALES = { bytes: Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+aD1sAAAAASUVORK5CYII=", "base64"), mime: "image/png" as const };
 
-beforeEach(() => { closeDatabase(); rmSync(DATA_DIR, { recursive: true, force: true }); mkdirSync(DATA_DIR, { recursive: true }); });
+beforeEach(() => { closeDatabase(); removeTempDirSync(DATA_DIR); mkdirSync(DATA_DIR, { recursive: true }); });
 function fixture() {
   const store = new Store(() => ({ instanceId: "fixture", model: "fixture" }));
   const make = (name: string, section: string) => { const bot = store.createBot(); store.patchBot(bot.id, { name, section }); return bot; };

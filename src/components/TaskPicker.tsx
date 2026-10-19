@@ -8,7 +8,7 @@ import { unreadTaskLabel } from "@/lib/project-presentation";
 import { allHeldTasks, taskCount } from "@/lib/task-window";
 import { useOlderTasks } from "@/lib/use-ensure-task";
 import { useEffect, useId, useMemo, useRef, useState, type KeyboardEvent as ReactKeyboardEvent } from "react";
-import { BellOff, Check, ChevronDown, ChevronRight, Clock, Download, Pencil, Pin, Plus, Search, Trash2 } from "lucide-react";
+import { BellOff, Check, ChevronDown, ChevronRight, Clock, Download, Loader2, Pencil, Pin, Plus, Search, Trash2 } from "lucide-react";
 import { api, useStore, type Bot, type Group, type Task } from "@/state/store";
 import { deletionConsequenceLines } from "@/lib/deletion-notes";
 import { useDeletionCounts } from "./ConfirmDelete";
@@ -236,6 +236,14 @@ export function ConversationTaskPicker({
 }) {
   const [open, setOpen] = useState(initialOpen);
   const [snoozing, setSnoozing] = useState<string | null>(null);
+  // Unsnooze runs from a row, and rows are not components, so its pending and failure live here.
+  const [unsnoozing, setUnsnoozing] = useState<string | null>(null);
+  const [unsnoozeFailed, setUnsnoozeFailed] = useState<string | null>(null);
+  const unsnooze = (threadId: string) => {
+    if (unsnoozing) return;
+    setUnsnoozing(threadId); setUnsnoozeFailed(null);
+    changeThreadSnooze(api, threadId, null).then(() => setUnsnoozing(null), () => { setUnsnoozing(null); setUnsnoozeFailed(threadId); });
+  };
   const [confirmingDelete, setConfirmingDelete] = useState<string | null>(null);
   const [filter, setFilter] = useState<TaskFilter>("all");
   const [sort, setSort] = useState<TaskSort>(readTaskSort);
@@ -583,12 +591,14 @@ export function ConversationTaskPicker({
         {canSnooze && renaming !== task.threadId && (snoozedUntil !== undefined ? (
           <button
             type="button"
-            onClick={() => { clearDismiss(); void changeThreadSnooze(api, task.threadId, null).catch(() => setSnoozing(task.threadId)); }}
-            aria-label={`Unsnooze ${name}`}
+            onClick={() => { clearDismiss(); unsnooze(task.threadId); }}
+            disabled={unsnoozing !== null}
+            aria-busy={unsnoozing === task.threadId}
+            aria-label={unsnoozing === task.threadId ? `Unsnoozing ${name}` : `Unsnooze ${name}`}
             title={`${snoozedText}. Unsnooze`}
-            className="rounded p-1 text-accent hover:bg-raised hover:text-ink focus-visible:opacity-100"
+            className="rounded p-1 text-accent hover:bg-raised hover:text-ink focus-visible:opacity-100 disabled:opacity-50"
           >
-            <BellOff size={13} />
+            {unsnoozing === task.threadId ? <Loader2 size={13} className="animate-spin" aria-hidden="true" /> : <BellOff size={13} />}
           </button>
         ) : !owed && (
           <button
@@ -621,6 +631,11 @@ export function ConversationTaskPicker({
           onCancel={() => setConfirmingDelete(null)}
           onConfirm={() => { setConfirmingDelete(null); onDelete(task.threadId); }}
         />
+      )}
+      {unsnoozeFailed === task.threadId && (
+        <p role="alert" className="px-2 py-1 text-[12px] text-danger" data-testid="unsnooze-failed">
+          Could not unsnooze this task. <button type="button" className="underline hover:no-underline" onClick={() => unsnooze(task.threadId)}>Try again</button>
+        </p>
       )}
       {canSnooze && snoozing === task.threadId && (
         <div className="border-y border-hairline/40 bg-inset/40 px-1 py-1">

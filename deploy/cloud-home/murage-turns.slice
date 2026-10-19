@@ -1,0 +1,16 @@
+# SPDX-License-Identifier: AGPL-3.0-or-later
+# Every sandboxed engine turn runs in its own transient scope under this slice
+# (murage-turn-launch.py enter_scope). The slice caps all turns together so one
+# runaway or hostile turn cannot starve the home server (audit A1-03). Measured
+# on a 4 GB home: two parallel turns fit well inside 50%.
+[Unit]
+Description=Murage Cloud engine turns
+
+[Slice]
+MemoryAccounting=yes
+TasksAccounting=yes
+CPUAccounting=yes
+MemoryMax=50%
+TasksMax=1024
+# The server keeps the default weight of 100; turns and browsers yield to it.
+CPUWeight=50

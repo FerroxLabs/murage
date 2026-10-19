@@ -4,7 +4,7 @@
 // The post-commit observer in message-db.ts, installed by wireBotLearning: an
 // owner message written to a bot's thread reaches feedback detection after the
 // transaction commits, and a failing observer never fails the write.
-import { mkdirSync, rmSync } from "node:fs";
+import { mkdirSync } from "node:fs";
 import { afterEach, beforeEach, expect, it } from "vitest";
 import { DATA_DIR } from "../config.ts";
 import { closeDatabase, database } from "../database.ts";
@@ -12,8 +12,9 @@ import * as messages from "../message-db.ts";
 import { wireBotLearning } from "./learning-wiring.ts";
 import { setFeedbackLessonFormer, setKeptMomentUndoHook, setLearningLocalLessonSink, setLessonAdmitter } from "./lessons.ts";
 import { setMemoryMode } from "./repository.ts";
+import { removeTempDirSync } from "../testing/cleanup.ts";
 
-beforeEach(() => { closeDatabase(); rmSync(DATA_DIR, { recursive: true, force: true }); mkdirSync(DATA_DIR, { recursive: true }); setMemoryMode("capture"); });
+beforeEach(() => { closeDatabase(); removeTempDirSync(DATA_DIR); mkdirSync(DATA_DIR, { recursive: true }); setMemoryMode("capture"); });
 afterEach(() => { messages.setFeedbackObserver(null); setFeedbackLessonFormer(null); setKeptMomentUndoHook(null); setLessonAdmitter(null); setLearningLocalLessonSink(null); });
 
 const bot = { id: "bot-a", name: "Sable", threadId: "th" };

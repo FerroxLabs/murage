@@ -512,15 +512,15 @@ describe("groupPatched task pins", () => {
   } satisfies Group;
 
   it("drops the previous task's folder lock and pin when the server switches to a task without them", () => {
-    const next = reducer({ ...initialState, groups: [group] }, { type: "groupPatched", group: { id: "room", threadId: "task-2" } });
+    const next = reducer({ ...initialState, groups: [group] }, { type: "groupPatched", origin: { source: "stream" }, group: { id: "room", threadId: "task-2" } });
     expect(next.groups[0]?.pinnedCwd).toBeUndefined();
     expect(next.groups[0]?.pinnedMessageId).toBeUndefined();
   });
 
   it("keeps pins the switch carries, and keeps them on a same-task partial update", () => {
-    const switched = reducer({ ...initialState, groups: [group] }, { type: "groupPatched", group: { id: "room", threadId: "task-2", pinnedCwd: null } });
+    const switched = reducer({ ...initialState, groups: [group] }, { type: "groupPatched", origin: { source: "stream" }, group: { id: "room", threadId: "task-2", pinnedCwd: null } });
     expect(switched.groups[0]?.pinnedCwd).toBeNull();
-    const renamed = reducer({ ...initialState, groups: [group] }, { type: "groupPatched", group: { id: "room", name: "Launch 2" } });
+    const renamed = reducer({ ...initialState, groups: [group] }, { type: "groupPatched", origin: { source: "stream" }, group: { id: "room", name: "Launch 2" } });
     expect(renamed.groups[0]?.pinnedCwd).toBe("/work/launch");
     expect(renamed.groups[0]?.pinnedMessageId).toBe("m1");
   });
@@ -1508,12 +1508,12 @@ describe("scrollback pages", () => {
     } as never as Group;
     const withRoom = { ...initialState, groups: [group] };
     const complete = reducer(withRoom, {
-      type: "groupPatched",
+      type: "groupPatched", origin: { source: "stream" },
       group: { id: "room", threadId: "room-thread", messages: [message("m8", 8), message("m9", 9)] },
     });
     expect(complete.groups[0].hasMore).toBe(false);
     expect(complete.transcriptGeneration["room-thread"]).toBe(1);
-    const renamed = reducer(withRoom, { type: "groupPatched", group: { id: "room", name: "Renamed" } });
+    const renamed = reducer(withRoom, { type: "groupPatched", origin: { source: "stream" }, group: { id: "room", name: "Renamed" } });
     expect(renamed.groups[0].hasMore).toBe(true);
     expect(renamed.transcriptGeneration["room-thread"]).toBeUndefined();
     const older = reducer(withRoom, { type: "olderMessages", threadId: "room-thread", generation: 0, messages: [message("m7", 7)], hasMore: false });
@@ -2044,6 +2044,24 @@ describe("signed out", () => {
       const body = block.slice(0, block.indexOf("break;"));
       expect(body, kind).toContain("showError(new Error(deletionErrorSentence(e)))");
       expect(body, kind).not.toMatch(/\.catch\(showError\)/);
+    }
+  });
+});
+
+describe("api() and the desktop proof", () => {
+  it("refuses redirects even when the caller passes redirect: follow", async () => {
+    const seen: Array<{ url: string; init?: RequestInit }> = [];
+    vi.stubGlobal("fetch", vi.fn(async (url: string, init?: RequestInit) => {
+      seen.push({ url: String(url), init });
+      return new Response("{}", { status: 200 });
+    }));
+    try {
+      const { api } = await import("./store");
+      await api("/api/redirect-probe", { redirect: "follow" });
+      const call = seen.find((entry) => entry.url === "/api/redirect-probe");
+      expect(call?.init?.redirect).toBe("error");
+    } finally {
+      vi.unstubAllGlobals();
     }
   });
 });

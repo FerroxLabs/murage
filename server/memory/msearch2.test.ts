@@ -22,12 +22,13 @@ import { setMemoryMode } from "./repository.ts";
 import { clearMemorySearchCache, searchMemory, type MemorySearchBridge } from "./search.ts";
 import { ensureScope, reconcileMemoryRoster } from "./policy.ts";
 import { dropOwnerTail } from "./schema.ts";
+import { removeTempDirSync } from "../testing/cleanup.ts";
 
 const INDEX_PATH = () => join(DATA_DIR, "memory-index.db");
 const roster = { bots: [{ id: "a", threadId: "ta" }], groups: [] };
 const COMMON = "pipeline renewals hiring weekly client report";
 
-beforeEach(() => { closeMemoryIndexReader(); closeDatabase(); rmSync(DATA_DIR, { recursive: true, force: true }); mkdirSync(DATA_DIR, { recursive: true }); });
+beforeEach(() => { closeMemoryIndexReader(); closeDatabase(); removeTempDirSync(DATA_DIR); mkdirSync(DATA_DIR, { recursive: true }); });
 afterEach(() => { closeMemoryIndexReader(); });
 
 /** An index of `count` records that all say the common words, a few of which also say a rare one. */
@@ -61,7 +62,7 @@ describe("recall: per-recall cost follows the query, not the size of the memory"
     expect(recallTerms("what did we do")).toEqual(["what", "did", "we", "do"]);
   });
 
-  it("an ordinary question costs the same at 10k and at 500k records, and never hits the scan limit", { timeout: 600_000 }, async () => {
+  it("an ordinary question costs the same at 10k and at 500k records, and never hits the scan limit", { tags: ["nightly"], timeout: 600_000 }, async () => {
     const query = "What did we decide about pipeline? Turn 7000 zephyrine and the weekly client report";
     const small = [], large = [];
     bigIndex(10_000, 5);
@@ -220,11 +221,12 @@ describe("owner search says so when a limit may have kept a match out", () => {
     expect(found.coverageComplete).toBe(true);
     expect(found.searchNotice).toBeUndefined();
   });
-  it("before the owner-tail index is built, records older than the newest 20,000 are not looked at for the unprojected kinds, and the owner is told", { timeout: 300_000 }, async () => {
+  it("without the owner-tail table, records older than the newest 20,000 of the unprojected kinds are still reached (1.0.3: the key table's kind index), complete, no notice", { timeout: 300_000 }, async () => {
     seed(0, 20_500, "the zephyrine plan");
     dropOwnerTail(database());
     const found = await ownerMemoryList({ botId: "a", query: "zephyrine" }, roster);
-    expect(found).toMatchObject({ coverageComplete: false, searchNotice: expect.stringContaining("newest matches") });
+    expect(found.coverageComplete).toBe(true);
+    expect(found.searchNotice).toBeUndefined();
   });
   it("a small backlog read in full is found and claims nothing is missing", async () => {
     seed(10, 0, "the zephyrine plan, not yet indexed");

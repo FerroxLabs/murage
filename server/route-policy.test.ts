@@ -7,18 +7,31 @@
 // a fixture built on the real routing pattern and the real gate.
 // route-policy-api.test.ts is (c), the sweep against a running server.
 import { once } from "node:events";
-import { mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import { createServer, type IncomingMessage } from "node:http";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import ts from "typescript";
 import { afterAll, describe, expect, it } from "vitest";
-import { conversationSubject, DESKTOP_ONLY_SENTENCE, ROUTE_POLICY, routeAdmits, routeClass, routeRefusal, type RoutePolicyEntry } from "./route-policy.ts";
+import { cloudRouteDecision, conversationSubject, DESKTOP_ONLY_SENTENCE, ROUTE_POLICY, routeAdmits, routeClass, routePolicy, routeRefusal, type RoutePolicyEntry } from "./route-policy.ts";
 import { describeRoute, discoverRoutes, type DiscoveredRoute } from "./testing/route-discovery.ts";
+import { removeTempDirSync } from "./testing/cleanup.ts";
 
 const ALL_METHODS = ["GET", "POST", "PUT", "PATCH", "DELETE"];
+describe("Cloud write classifications", () => {
+  it("every real write entry carries an explicit reviewed policy", () => {
+    const writes = ROUTE_POLICY.filter(entry => entry.methods === "*" || entry.methods.some(method => !["GET","HEAD","OPTIONS"].includes(method)));
+    expect(writes.length).toBeGreaterThan(90);
+    expect(writes.filter(entry => !entry.cloudWrite).map(entry => `${entry.methods} ${entry.path}`)).toEqual([]);
+    expect(cloudRouteDecision("POST", "/api/unreviewed-permission-writer", "owner-desktop", {})).toBe("step-up required");
+  });
+  it("ordinary task and routine deletion and non-elevating bot edits remain ordinary", () => {
+    for (const path of ["/api/bots/b1/tasks/t1", "/api/routines/r1"]) expect(cloudRouteDecision("DELETE",path,"owner-desktop",{})).toBe("allow");
+    expect(cloudRouteDecision("PATCH","/api/bots/b1","owner-desktop",{autoApprove:false})).toBe("allow");
+  });
+});
 const scratch = mkdtempSync(join(tmpdir(), "murage-route-policy-"));
-afterAll(() => rmSync(scratch, { recursive: true, force: true }));
+afterAll(() => removeTempDirSync(scratch));
 
 const matches = (entry: RoutePolicyEntry, method: string, path: string) =>
   (entry.methods === "*" || entry.methods.includes(method)) && (typeof entry.path === "string" ? entry.path === path : entry.path.test(path));
@@ -66,6 +79,20 @@ describe("route policy (strict)", () => {
       expect(routeRefusal({ ...nobody, bot: true }, klass), `bot ${item.method} ${item.sample}`).toEqual({ status: 404, body: { error: "no such route" } });
     }
     expect(open, "conversation routes a caller with no proof reaches").toEqual([]);
+  });
+
+  // 1.0.3 R1.10: Settings > Storage's attachment list has its own desktop entry, and every caller but the desktop is refused.
+  it("the Storage attachment list is desktop class by an explicit entry; phone, door, bot and nobody are refused", () => {
+    const entry = routePolicy("GET", "/api/storage/attachments");
+    expect(entry?.class).toBe("desktop");
+    expect(entry?.path).toBe("/api/storage/attachments");
+    const nobody = { desktop: false, companion: false, door: false, bot: false };
+    expect(routeAdmits("desktop", { ...nobody, desktop: true })).toBe(true);
+    for (const who of ["companion", "door", "bot"] as const) expect(routeAdmits(routeClass("GET", "/api/storage/attachments"), { ...nobody, [who]: true }), who).toBe(false);
+    expect(routeAdmits(routeClass("GET", "/api/storage/attachments"), nobody)).toBe(false);
+    expect(routeAdmits(routeClass("GET", "/api/storage/attachments"), { ...nobody, companion: true, door: true })).toBe(false);
+    expect(routeRefusal({ ...nobody, companion: true }, "desktop")).toEqual({ status: 403, body: { error: DESKTOP_ONLY_SENTENCE } });
+    expect(routeRefusal(nobody, "desktop")).toEqual({ status: 404, body: { error: "no such route" } });
   });
 
   it("an unclassified route is desktop-only; the named holes are closed", () => {

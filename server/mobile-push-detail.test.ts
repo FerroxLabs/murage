@@ -1,10 +1,11 @@
 import { describe, expect, it } from "vitest";
 import { parseStoredConfig } from "./config.ts";
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { pushDetail, type DetailWorld } from "./mobile-push-detail.ts";
 import type { PushEventRow } from "./mobile-push-store.ts";
+import { removeTempDirSync } from "./testing/cleanup.ts";
 
 const event = (over: Partial<PushEventRow> = {}): PushEventRow => ({
   eventRef: "a".repeat(64), bindingId: "b", kind: "approval", category: "approval", botId: "lena", threadId: "t1", requestId: "req-1",
@@ -35,7 +36,7 @@ describe("pushDetail", () => {
       const config = parseStoredConfig(JSON.parse(readFileSync(file, "utf8")));
       expect(pushDetail(event(), world({ prefs: config.notifications, previewContent: undefined }), noon))
         .toEqual({ title: "Murage", body: "Your attention is needed." });
-    } finally { rmSync(dir, { recursive: true, force: true }); }
+    } finally { removeTempDirSync(dir); }
   });
   it("rebuilds an approval with the notify.ts builder", () => {
     expect(pushDetail(event(), world(), noon)).toEqual({ title: "Lena needs approval", body: "Lena wants to delete 3 files" });

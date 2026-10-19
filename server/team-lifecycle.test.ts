@@ -2,7 +2,7 @@ import { manageBot } from "./bot-management.ts";
 import { DatabaseSync } from "node:sqlite";
 // Copyright 2026 Ferrox Labs
 // SPDX-License-Identifier: AGPL-3.0-or-later
-import { mkdirSync, rmSync, readFileSync, copyFileSync } from "node:fs";
+import { mkdirSync, readFileSync, copyFileSync } from "node:fs";
 import { join } from "node:path";
 import { beforeEach, expect, it } from "vitest";
 import { DATA_DIR } from "./config.ts";
@@ -16,9 +16,10 @@ import { renameTeam, deleteTeam, teamRevision, changeTeamMembers } from "./team-
 import { readSectionContext, writeSectionContext } from "./section-context.ts";
 import { sharingRoute } from "./sharing-routes.ts";
 import { reconcileTeamIdentities, reconcileTeamJournalFiles, setTeamJournalCheckpoint } from "./team-lifecycle.ts";
+import { removeTempDirSync } from "./testing/cleanup.ts";
 const fresh = () => new Store(() => ({instanceId:"fixture",model:"fixture"}));
 const deps = {memoryTicket:ownerMemoryTicket(),leadershipError:()=>null,groupWorking:()=>false,channelArchived:()=>{},reachabilityChanged:()=>{}};
-beforeEach(()=>{setTeamJournalCheckpoint(undefined);closeDatabase();rmSync(DATA_DIR,{recursive:true,force:true});mkdirSync(DATA_DIR,{recursive:true});});
+beforeEach(()=>{setTeamJournalCheckpoint(undefined);closeDatabase();removeTempDirSync(DATA_DIR);mkdirSync(DATA_DIR,{recursive:true});});
 function fixture(){const store=fresh(),bot=store.createBot();store.patchBot(bot.id,{name:"Iris",section:"Sales",sharedWith:{mode:"all",teams:[]}});const group=store.createGroup("Sales",[bot.id],false,"Sales"),id=teamIdFor("Sales");ensureScope("team","Sales");return {store,bot,group,id};}
 it.each(["rename:1","rename:2","rename:bots","rename:3","rename:4","rename:5","rename:6"])("rename recovery after hard stop at %s uses disk only",phase=>{
  const f=fixture();setTeamJournalCheckpoint(at=>{if(at===phase)throw Error("HARD_STOP");});

@@ -36,6 +36,9 @@ const child = Object.assign(new EventEmitter(), {
   pid: FAKE_PID,
   stdout: null,
   stderr: null,
+  // A utility process always has its private parent port; the launch
+  // secrets go over it.
+  postMessage() {},
   kill() {
     this.emit("exit", 0);
     return true;

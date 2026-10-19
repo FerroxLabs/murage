@@ -1,15 +1,16 @@
 import { EventEmitter } from "node:events";
-import { closeSync, existsSync, mkdirSync, mkdtempSync, openSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { closeSync, existsSync, mkdirSync, mkdtempSync, openSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, win32 } from "node:path";
 import { PassThrough, Writable } from "node:stream";
 import { afterEach, expect, it } from "vitest";
 import { runWindowsBackupTransport, type WindowsBackupChild, type WindowsBackupRequest } from "./installation-windows-backup-transport.ts";
+import { removeTempDirSync } from "./testing/cleanup.ts";
 
 const identity = `AGE-SECRET-KEY-1${"A".repeat(58)}\n`, digest = "c".repeat(64);
 const helper = "C:\\Installed\\resources\\backup-tools\\x64\\murage-backup-age.exe";
 const roots: string[] = [];
-afterEach(() => { for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true }); });
+afterEach(() => { for (const root of roots.splice(0)) removeTempDirSync(root); });
 interface Mode {
   unknownClose?: boolean; neverOutput?: boolean; earlyClose?: boolean; wrongNonce?: boolean; wrongDigest?: boolean;
   overflow?: boolean; malformed?: boolean; beforePrepared?: boolean; duplicate?: boolean;
