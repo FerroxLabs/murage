@@ -1,4 +1,5 @@
 import { renderMurageTools, CODEX_TOOL_SURFACE } from "./murage-tool-surface.ts";
+import { removeTempDirSync } from "./testing/cleanup.ts";
 const rendered = (text: string) => renderMurageTools(text, CODEX_TOOL_SURFACE, {agents:"agents",memory:"murage-memory"});
 // Copyright 2026 Ferrox Labs
 // SPDX-License-Identifier: AGPL-3.0-or-later
@@ -6,7 +7,7 @@ const rendered = (text: string) => renderMurageTools(text, CODEX_TOOL_SURFACE, {
 // Lane M, plan 3.8 prompt contract: the project layers a member's turn
 // carries (brief, board digest, summary, joining brief), their owner-audience
 // gate, stale rows left out, and the engine-aware budget.
-import { mkdirSync, rmSync } from "node:fs";
+import { mkdirSync } from "node:fs";
 import { beforeEach, expect, it } from "vitest";
 import { DATA_DIR } from "./config.ts";
 import { closeDatabase, database } from "./database.ts";
@@ -23,7 +24,7 @@ const lead: ProjectMemberView = { groupId: "p1", botId: "finch", names };
 const member: ProjectMemberView = { groupId: "p1", botId: "dax", names };
 
 beforeEach(() => {
-  closeDatabase(); rmSync(DATA_DIR, { recursive: true, force: true }); mkdirSync(DATA_DIR, { recursive: true });
+  closeDatabase(); removeTempDirSync(DATA_DIR); mkdirSync(DATA_DIR, { recursive: true });
   channelToProjectRows(database(), { groupId: "p1", bulletin: "Always write in plain English.", leadBotId: "finch", now: NOW });
   number = 0;
 });

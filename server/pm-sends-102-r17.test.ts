@@ -1,7 +1,7 @@
 // Astra r16 P2 (retained unknown requests): a queued request kept because its bot or room is not known yet gets a persisted next-look
 // time with backoff (30 s doubling to 1 hour); a sweep reads only the due ones, in a bounded batch, once per sweep and not once per bot;
 // the owner can still dismiss one with the room's cancel; it is retried when due and when the harness finishes booting.
-import { mkdirSync, rmSync } from "node:fs";
+import { mkdirSync } from "node:fs";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { DATA_DIR } from "./config.ts";
 import { closeDatabase, database } from "./database.ts";
@@ -16,8 +16,9 @@ import { createWorkAdmission } from "./work-admission.ts";
 import { setExecutionStore } from "./execution-audience.ts";
 import { botDeletionKey, groupDeletionKey, recordOwnerDeletion } from "./owner-deletions.ts";
 import type { DatabaseSync } from "node:sqlite";
+import { removeTempDirSync } from "./testing/cleanup.ts";
 
-beforeEach(() => { closeDatabase(); rmSync(DATA_DIR, { recursive: true, force: true }); mkdirSync(DATA_DIR, { recursive: true }); setExecutionStore(undefined as never); });
+beforeEach(() => { closeDatabase(); removeTempDirSync(DATA_DIR); mkdirSync(DATA_DIR, { recursive: true }); setExecutionStore(undefined as never); });
 afterEach(() => closeDatabase());
 
 
@@ -68,7 +69,7 @@ describe("a sweep reads only what is due", () => {
   it("10k retained requests x 10 bots: the first sweep retains them, later sweeps read at most one batch, flat from 1k to 10k", () => {
     const perScale: number[] = [];
     for (const n of [1_000, 10_000]) {
-      closeDatabase(); rmSync(DATA_DIR, { recursive: true, force: true }); mkdirSync(DATA_DIR, { recursive: true });
+      closeDatabase(); removeTempDirSync(DATA_DIR); mkdirSync(DATA_DIR, { recursive: true });
       const clock = { t: 1_000_000 };
       const { db, dispatcher } = harness(clock);
       seed(db, n);

@@ -1,4 +1,4 @@
-import { mkdirSync, rmSync } from "node:fs";
+import { mkdirSync } from "node:fs";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { DATA_DIR } from "../config.ts";
 import { closeDatabase, database } from "../database.ts";
@@ -8,15 +8,16 @@ import { captureSource, captureBranchChange } from "./capture.ts";
 import { claimMemoryJob, MEMORY_CLAIM_SQL, resetMemoryClaimCursor } from "./jobs.ts";
 import { PARK_SWEEP_WINDOW, parkStuckJobsStep, parkSweepFinished, resetParkSweep } from "./park.ts";
 import { pauseRestoredMemory } from "./restore.ts";
+import { removeTempDirSync } from "../testing/cleanup.ts";
 
 const NOW = 5_000_000;
-beforeEach(() => { closeDatabase(); rmSync(DATA_DIR, { recursive: true, force: true }); mkdirSync(DATA_DIR, { recursive: true }); setMemoryMode("capture"); resetMemoryClaimCursor(); resetParkSweep(); });
+beforeEach(() => { closeDatabase(); removeTempDirSync(DATA_DIR); mkdirSync(DATA_DIR, { recursive: true }); setMemoryMode("capture"); resetMemoryClaimCursor(); resetParkSweep(); });
 afterEach(() => { delete process.env.MURAGE_TURN_TRACE; });
 
 /** Thread "t": m1 is the root, m2 and m3 are sibling replies (two branches). */
 function thread() {
   const db = database();
-  const row = (id: string, parent: string | null) => db.prepare("INSERT INTO messages VALUES('t',?,1,'user','text',?,?)").run(id, id, JSON.stringify({ parentId: parent }));
+  const row = (id: string, parent: string | null) => db.prepare("INSERT INTO messages(thread_id,id,at,role,kind,text,json) VALUES('t',?,1,'user','text',?,?)").run(id, id, JSON.stringify({ parentId: parent }));
   row("m1", null); row("m2", "m1"); row("m3", "m1");
   prepareSyncOn(db, "t"); // filled as a first turn leaves it; on an unfilled thread the drain does the branch change
   for (const id of ["m1", "m2", "m3"]) captureSource(db, { id: `message:t:${id}`, threadId: "t", messageId: id, kind: "text", speaker: "owner", outcome: "recorded", text: `text ${id}` });

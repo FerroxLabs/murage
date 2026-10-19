@@ -17,7 +17,7 @@ import { resetNativeShellForTest } from "@/lib/native-shell";
 import type { Artifact } from "../../shared/artifacts";
 
 const auth = vi.hoisted(() => ({ ensure: vi.fn(), headers: vi.fn(() => ({ "x-murage-surface-secret": "synthetic-proof" })) }));
-vi.mock("@/lib/live-events", () => ({ ensureDesktopSurfaceSecret: auth.ensure, desktopSurfaceHeaders: auth.headers, desktopResourceUrl: (url: unknown) => url }));
+vi.mock("@/lib/live-events", () => ({ ensureDesktopSurfaceSecret: auth.ensure, desktopSurfaceHeaders: auth.headers, ticketedResourceUrl: async (url: unknown) => url }));
 
 const source = readFileSync(fileURLToPath(new URL("./Files.tsx", import.meta.url)), "utf8");
 const bots: FilesBot[] = [
@@ -123,7 +123,7 @@ describe("downloadSavedArtifact stays on the desktop-proof fetch", () => {
     expect(auth.ensure).toHaveBeenCalledOnce();
     expect(globalThis.fetch).toHaveBeenCalledWith(
       "/api/artifacts/artifact-1/download",
-      { headers: { "x-murage-surface": "desktop", "x-murage-surface-secret": "synthetic-proof" } },
+      { redirect: "error", headers: { "x-murage-surface": "desktop", "x-murage-surface-secret": "synthetic-proof" } },
     );
   });
 });

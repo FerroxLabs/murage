@@ -1,0 +1,12 @@
+# SPDX-License-Identifier: AGPL-3.0-or-later
+[Unit]
+Description=Murage nightly backup
+
+[Timer]
+# 02:00-03:00 UTC, spread per home so the fleet does not hit the storage box at once.
+OnCalendar=*-*-* 02:00:00
+RandomizedDelaySec=1h
+Persistent=true
+
+[Install]
+WantedBy=timers.target

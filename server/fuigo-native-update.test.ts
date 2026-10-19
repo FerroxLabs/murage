@@ -1,11 +1,12 @@
 import { afterEach, expect, it, vi } from "vitest";
-import { chmod, mkdtemp, readdir, readFile, rm, writeFile } from "node:fs/promises";
+import { chmod, mkdtemp, readdir, readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { managedFuigoReceipt, nativeFuigoPackage, nativeFuigoTarget, nativeFuigoVersion, probeNativeFuigo, stageNativeFuigo, supportedFuigoVersion, verifyManagedFuigo } from "./fuigo-native-update.ts";
 import { nativeFixtureAsset, nativeFixtureBinary } from "./testing/fuigo-native-fixture.ts";
+import { removeTempDir } from "./testing/cleanup.ts";
 const roots: string[] = [];
-afterEach(async () => { vi.unstubAllEnvs(); await Promise.all(roots.splice(0).map(root => rm(root, { recursive: true, force: true }))); });
+afterEach(async () => { vi.unstubAllEnvs(); await Promise.all(roots.splice(0).map(root => removeTempDir(root))); });
 const root = async () => { const path = await mkdtemp(join(tmpdir(), "murage-fuigo-native-")); roots.push(path); return path; };
 const proof = (version = "1.0.9") => ({ version, protocolVersion: 1 as const, loadSession: true as const, sessionCreated: true as const });
 it("classifies native targets and refuses unqualified release ranges", () => {

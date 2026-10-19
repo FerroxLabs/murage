@@ -1,12 +1,13 @@
-import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, symlinkSync, utimesSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, symlinkSync, utimesSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { keepFuigoTurnLogs } from "./fuigo-turn-logs.ts";
+import { removeTempDirSync } from "./testing/cleanup.ts";
 
 const roots: string[] = [];
 const scratch = () => { const dir = mkdtempSync(join(tmpdir(), "fuigo-logs-")); roots.push(dir); return dir; };
-afterEach(() => { for (const dir of roots.splice(0)) rmSync(dir, { recursive: true, force: true }); });
+afterEach(() => { for (const dir of roots.splice(0)) removeTempDirSync(dir); });
 
 const home = (name: string) => {
   const dir = scratch();

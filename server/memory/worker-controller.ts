@@ -1,3 +1,5 @@
+import { bundledModelDirectory, resolveMemoryModelDirectory } from "./model-location.ts";
+import "./model-adoption.ts";
 import { refreshMemoryCheckpoint } from "./consolidate.ts";
 import { fork, type ChildProcess } from "node:child_process";
 import { randomUUID } from "node:crypto";
@@ -49,7 +51,7 @@ export const WORKER_SLICE_MS=10;
 /** How soon a step that met a held write lock tries again. */
 const BUSY_RETRY_MS=250;
 /** Helper messages whose handling writes nothing to messages.db: never held back by a writer hold. */
-const HOLD_EXEMPT_MESSAGES:ReadonlySet<string>=new Set(["ready","checkpoint-result","query-result","index-error"]);
+const HOLD_EXEMPT_MESSAGES:ReadonlySet<string>=new Set(["ready","model-ready","checkpoint-result","query-result","index-error"]);
 /** A checkpoint roll whose evidence was still being checked is tried again this often, this many times (about a minute). */
 const CHECKPOINT_CHECK_RETRY_MS=500, CHECKPOINT_CHECK_RETRIES=120;
 
@@ -73,6 +75,10 @@ export class MemoryWorkerController {
   private initDeadline=0;
   private initFailures=0;
   private respawnAt=0;
+  /** The helper that was allowed to exit because it held a WebAssembly model and had been idle (worker.ts). */
+  private idleExit:ChildProcess|null=null;
+  /** True from a planned idle exit until the next helper starts: the only state in which a turn's start warms the helper (native helpers never idle-exit, so nothing changes for them). */
+  private idleExited=false;
   private stopping=false;
   private indexing=false;
   private indexDeadline=0;
@@ -111,9 +117,36 @@ export class MemoryWorkerController {
   /** Held from the turn's acceptance until the engine has the prompt; call the returned function then (or when the turn is gone). */
   holdForTurn():()=>void{
     if(this.turnHolds++===0)this.turnHoldSince=performance.now();
+    this.warmAfterIdleExit();
     let released=false;
     return ()=>{if(released)return;released=true;if(--this.turnHolds<=0){this.turnHolds=0;this.flushHeldCompletions();this.wake();}};
   }
+  /** True from the moment a WebAssembly helper reports its model loaded and warmed (one small inference run) until that helper ends.
+   * Before it, a search is answered from words alone once its cutoff passes. Always false for a native helper, which has no such step. */
+  private modelReady=false;
+  /** The helper running now is on WebAssembly (it said so when it initialised). */
+  private wasmHelper=false;
+  /** The warm-up request has been sent to this helper, or is owed to the next one when it initialises. */
+  private warmSent=false;
+  private warmOwed=false;
+  get modelWarm():boolean{return this.modelReady;}
+  /** Asks a WebAssembly helper to load its model and warm it, in the background: nothing waits for the answer ("model-ready"). */
+  private requestWarm(child:ChildProcess){
+    if(this.warmSent||this.modelReady||!this.wasmHelper||child.connected===false)return;
+    this.warmSent=true;
+    try{child.send({type:"warm"});}catch{this.warmSent=false;}
+  }
+  /** The owner is about to use the bot (the window took focus, the first key of a draft) or a turn is starting: have the helper's model
+   * loaded and warm before recall asks. A helper that left for being idle (WebAssembly only) is started first; a live WebAssembly
+   * helper whose model is not loaded yet is asked to load it. Does nothing for a native helper, or when the model is already warm. */
+  warmForIntent(){
+    if(this.stopping||!this.started)return;
+    if(this.child){if(this.ready)this.requestWarm(this.child);else if(this.wasmHelper||this.idleExited)this.warmOwed=true;return;}
+    if(!this.idleExited||Date.now()<this.respawnAt)return;
+    this.warmOwed=true;
+    try{this.spawn();}catch(error){logSwallowed("recall",error);}
+  }
+  private warmAfterIdleExit(){this.warmForIntent();}
   /** Sources whose capture was published while a turn held the worker: their derived work (extraction, consolidation) starts once the hold ends,
    * so the main thread does not begin it in the turn's setup window. The capture and its checkpoint are not delayed. */
   private heldCompletions:string[]=[];
@@ -152,8 +185,8 @@ export class MemoryWorkerController {
    * entry point asks (a wake on arrival, a scheduled sweep, a worker message). Timeouts do not wait for it. */
   private nextEligibleWorkAt=0;
   private workCyclesSinceMaintenance=0;
-  private options:{onMaintenance?:(startup:boolean)=>Promise<unknown>;continuityEligible?:()=>boolean;onContinuity?:(signal:AbortSignal)=>Promise<unknown>;modelDirectory?:string;manifest?:ModelManifest;onCompletedSource?:(jobId:string,signal:AbortSignal)=>Promise<unknown>;onIdleConsolidation?:(signal:AbortSignal)=>Promise<unknown>;onLineageWarm?:(yieldNow:()=>boolean)=>boolean;upgradeRunning?:()=>boolean};
-  constructor(options:{onMaintenance?:(startup:boolean)=>Promise<unknown>;continuityEligible?:()=>boolean;onContinuity?:(signal:AbortSignal)=>Promise<unknown>;modelDirectory?:string;manifest?:ModelManifest;onCompletedSource?:(jobId:string,signal:AbortSignal)=>Promise<unknown>;onIdleConsolidation?:(signal:AbortSignal)=>Promise<unknown>;onLineageWarm?:(yieldNow:()=>boolean)=>boolean;upgradeRunning?:()=>boolean}={}){this.options=options;}
+  private options:{onMaintenance?:(startup:boolean,signal?:AbortSignal)=>Promise<unknown>;continuityEligible?:()=>boolean;onContinuity?:(signal:AbortSignal)=>Promise<unknown>;modelDirectory?:string;wasmIdleExitMs?:number;manifest?:ModelManifest;onCompletedSource?:(jobId:string,signal:AbortSignal)=>Promise<unknown>;onIdleConsolidation?:(signal:AbortSignal)=>Promise<unknown>;onLineageWarm?:(yieldNow:()=>boolean)=>boolean;upgradeRunning?:()=>boolean};
+  constructor(options:{onMaintenance?:(startup:boolean,signal?:AbortSignal)=>Promise<unknown>;continuityEligible?:()=>boolean;onContinuity?:(signal:AbortSignal)=>Promise<unknown>;modelDirectory?:string;wasmIdleExitMs?:number;manifest?:ModelManifest;onCompletedSource?:(jobId:string,signal:AbortSignal)=>Promise<unknown>;onIdleConsolidation?:(signal:AbortSignal)=>Promise<unknown>;onLineageWarm?:(yieldNow:()=>boolean)=>boolean;upgradeRunning?:()=>boolean}={}){this.options=options;}
   get wakeCount(){return this.wakes;}
   /** While a writer hold is in force (the root-set VACUUM, an index build: database.ts holdWritersForIndexBuild) no background writer of this
    * controller starts on the serving thread (database.ts invariant 2): each deferred piece of work is resumed once the hold is released, by
@@ -178,8 +211,10 @@ export class MemoryWorkerController {
   /** Worker messages that arrived during a writer hold, in arrival order: dispatched once it is released (bounded: the in-flight messages of one helper). */
   private heldMessages:Array<{child:ChildProcess;message:unknown}>=[];
 
+  /** What the helper last said about the age order of the word table (1.0.3 lane 2, worker.ts fillAgeIndex): "" when nothing is in the way. */
+  private indexNote="";
   status() {
-    return {running:this.child!==null,ready:this.ready,indexing:this.indexing,queryCount:this.queries.size,error:this.error,errors:Object.fromEntries(this.errors)};
+    return {running:this.child!==null,ready:this.ready,indexing:this.indexing,queryCount:this.queries.size,error:this.error,errors:Object.fromEntries(this.errors),indexNote:this.indexNote};
   }
 
   /** Notify the same derived-work hook after either capture publication path. */
@@ -225,7 +260,7 @@ export class MemoryWorkerController {
     this.scheduleStatusScan(startup?5_000:0);
     // Maintenance and continuity (PIP reflection) yield to the owner (owner-first.ts); a deferred pass comes back with the next sweep.
     if(this.options.onMaintenance&&!this.maintenanceTask&&(startup||ownerFirst.admit("memory-maintenance").admitted)){
-      this.maintenanceTask=Promise.resolve().then(()=>this.options.onMaintenance!(startup))
+      this.maintenanceTask=Promise.resolve().then(()=>this.options.onMaintenance!(startup,this.consolidationAbort.signal))
         .then(()=>{this.clearError("maintenance");}).catch(error=>this.swallowed("capture","maintenance","MEMORY_MAINTENANCE_FAILED",error))
         .finally(()=>{this.maintenanceTask=null;});
     }
@@ -375,7 +410,7 @@ export class MemoryWorkerController {
         this.indexRequestId=randomUUID();
         // What each record was projected as, so its acknowledgement can be fenced against what it is when the ack lands.
         this.indexSent=new Map(records.map(r=>[`${String(r.id)}\u0000${Number(r.version)}`,String(r.state)]));
-        this.child.send({type:"index",requestId:this.indexRequestId,records:records.map(r=>({id:String(r.id),version:Number(r.version),scopeId:String(r.scopeId),text:r.state==="deleted"?"":String(r.text),deleted:r.state==="deleted",archived:r.state!=="active",...Number(r.rolled)===1?{rolled:true}:{}}))});
+        this.child.send({type:"index",requestId:this.indexRequestId,records:records.map(r=>({id:String(r.id),version:Number(r.version),scopeId:String(r.scopeId),text:r.state==="deleted"?"":String(r.text),deleted:r.state==="deleted",archived:r.state!=="active",...Number(r.rolled)===1?{rolled:true}:{},ageKey:r.ageKey===null||r.ageKey===undefined?null:Number(r.ageKey)}))});
         this.maintain(true);return;
       }
       const work=job?claimMemoryJob(this.owner):null;
@@ -607,11 +642,11 @@ export class MemoryWorkerController {
   private clearHeartbeat(){if(this.heartbeat)clearTimeout(this.heartbeat);this.heartbeat=null;}
   private spawn() {
     if(!this.unregisterBytes){const index=join(DATA_DIR,"memory-index.db"),file=fileGrowthReader([index]),wal=walFrameReader(index);this.unregisterBytes=ioBudget.registerByteSource("memory-worker",()=>file()+wal());}
-    this.initDeadline=Date.now()+MEMORY_WORKER_INIT_MS;
+    this.initDeadline=Date.now()+MEMORY_WORKER_INIT_MS;this.idleExited=false;this.modelReady=false;this.wasmHelper=false;this.warmSent=false;
     // The helper may rebuild or rename a damaged index while it starts: the main process holds no handle until it says it is ready.
     blockMemoryIndexReader();
     const child=fork(SPAWNED_PROXIES.memoryWorker,[],{execArgv:["--experimental-strip-types"],stdio:["ignore","ignore","pipe","ipc"],
-      env:{ELECTRON_RUN_AS_NODE:"1",...(process.env.SystemRoot?{SystemRoot:process.env.SystemRoot}:{}),...(process.env.TMPDIR?{TMPDIR:process.env.TMPDIR}:{})}});
+      env:{ELECTRON_RUN_AS_NODE:"1",...(process.env.MURAGE_MEMORY_BACKEND==="wasm"?{MURAGE_MEMORY_BACKEND:"wasm"}:{}),...(process.env.SystemRoot?{SystemRoot:process.env.SystemRoot}:{}),...(process.env.TMPDIR?{TMPDIR:process.env.TMPDIR}:{})}});
     this.child=child;
     // What the helper prints when it swallows a failure reaches the log (rate limited), not the void.
     const forward=makeStderrForwarder();
@@ -621,10 +656,15 @@ export class MemoryWorkerController {
     child.on("exit",()=>{if(this.child===child){
       unblockMemoryIndexReader();setWalCheckpointRequester(null);this.settleCheckpoints(false);
       // A helper that goes away because Murage is quitting says nothing about the job it held: it reschedules without spending an attempt.
+      this.modelReady=false;const planned=this.idleExit===child;this.idleExit=null;if(planned&&!this.stopping)this.idleExited=true;
       this.clearHeartbeat();this.failWork(this.stopping?"MEMORY_WORKER_STOPPED":"MEMORY_WORKER_EXITED");this.child=null;this.ready=false;this.indexing=false;
-      for(const pending of this.queries.values()){pending.cleanup();pending.reject(new Error("MEMORY_WORKER_EXITED"));}this.queries.clear();
+      // A planned idle exit loses nothing: a search that arrived meanwhile waits for the next helper.
+      if(planned&&!this.stopping&&this.queries.size)this.spawn();
+      else{for(const pending of this.queries.values()){pending.cleanup();pending.reject(new Error("MEMORY_WORKER_EXITED"));}this.queries.clear();}
       let delay=MEMORY_IDLE_SWEEP_MS;
       if(!this.stopping)try{delay=Math.min(delay,nextMemoryJobDelay()??delay);}catch{/* the lease remains recoverable by the fallback */}
+      // A record that arrived while the helper was leaving was seen by a tick that found no ready helper and did nothing: look again now.
+      if(planned&&!this.stopping)delay=0;
       this.schedule(delay);
     }});
   }
@@ -663,11 +703,17 @@ export class MemoryWorkerController {
       if(!message||typeof message!=="object")return;
       const event=message as {type?:string;result?:unknown;requestId?:string;reset?:boolean;records?:Array<{id:string;version:number;deleted:boolean}>;embeddingStatus?:string};
       if(event.type==="ready"){
-        const manifest=join(SERVER_ROOT,"memory-model-manifest.json");
-        child.send({type:"init",authorityPath:join(DATA_DIR,"messages.db"),indexPath:join(DATA_DIR,"memory-index.db"),modelDirectory:this.options.modelDirectory??join(DATA_DIR,"memory-model"),
-          manifest:this.options.manifest??JSON.parse(readFileSync(existsSync(manifest)?manifest:join(SERVER_ROOT,"..","shared","memory-model-manifest.json"),"utf8"))});return;
+        const manifestFile=join(SERVER_ROOT,"memory-model-manifest.json");
+        const manifest=this.options.manifest??JSON.parse(readFileSync(existsSync(manifestFile)?manifestFile:join(SERVER_ROOT,"..","shared","memory-model-manifest.json"),"utf8"));
+        const init=(modelDirectory:string,extra:{fallbackModelDirectory?:string;strictModelRoot?:boolean}={})=>{if(child.connected===false)return;child.send({type:"init",authorityPath:join(DATA_DIR,"messages.db"),indexPath:join(DATA_DIR,"memory-index.db"),modelDirectory,manifest,...this.options.wasmIdleExitMs!==undefined?{wasmIdleExitMs:this.options.wasmIdleExitMs}:{},...extra});};
+        // The app's own verified copy wins; otherwise the user's downloaded copy path (never modified here).
+        if(this.options.modelDirectory||!bundledModelDirectory()){init(this.options.modelDirectory??join(DATA_DIR,"memory-model"));return;}
+        void resolveMemoryModelDirectory(manifest,{dataDir:DATA_DIR}).then(resolved=>init(resolved.directory,resolved.source==="bundled"?{fallbackModelDirectory:resolved.fallback,strictModelRoot:true}:{}),()=>init(join(DATA_DIR,"memory-model")));
+        return;
       }
+      if(event.type==="model-ready"){if(this.child===child)this.modelReady=true;return;}
       if(event.type==="initialised"){
+        this.wasmHelper=(event as {wasm?:boolean}).wasm===true;
         // The index was rebuilt: every record is owed to it again. If the database is locked just now the owing is kept and applied by the next tick
         // (before any indexing starts), not lost and not thrown into the message handler.
         if(event.reset)this.resetPending=true;
@@ -675,7 +721,16 @@ export class MemoryWorkerController {
         if(!this.turnHeld())this.applyIndexReset();
         this.ready=true;this.initFailures=0;this.clearError("helper");unblockMemoryIndexReader();setWalCheckpointRequester(()=>this.requestCheckpoint());
         for(const [requestId,pending] of this.queries)if(!pending.sent){pending.sent=true;child.send({type:"query",requestId,input:pending.input});}
+        if(this.warmOwed){this.warmOwed=false;this.requestWarm(child);}
         this.scheduleTick(handlerStart);return;
+      }
+      if(event.type==="idle-exit-request"){
+        // Granted only when nothing is owed to or by this helper; from then on the controller treats it as gone (searches wait, nothing is sent).
+        if(this.child===child&&this.ready&&!this.queries.size&&!this.indexing&&!this.work&&!this.checkpoints.size){
+          this.idleExit=child;this.ready=false;this.modelReady=false;this.initDeadline=Date.now()+MEMORY_WORKER_INIT_MS;
+          try{child.send({type:"idle-exit"});}catch{child.kill("SIGKILL");}
+        }
+        return;
       }
       if(event.type==="checkpoint-result"&&event.requestId){const done=this.checkpoints.get(event.requestId);if(done){this.checkpoints.delete(event.requestId);done((event as {ok?:boolean}).ok===true);}return;}
       if(event.type==="query-result"&&event.requestId){const pending=this.queries.get(event.requestId);if(pending){this.queries.delete(event.requestId);pending.cleanup();pending.resolve(event.result as MemorySearchResult);}return;}
@@ -717,6 +772,9 @@ export class MemoryWorkerController {
         this.later(writeReceipts);
         return;
       }
+      // The helper's word-table age fill (worker.ts fillAgeIndex, 1.0.3 lane 2): a note for the status line, and the cutover. Neither is a work result.
+      if(event.type==="index-note"){const note=(event as {note?:unknown}).note;this.indexNote=typeof note==="string"?note.slice(0,120):"";return;}
+      if(event.type==="index-aged"){this.indexNote="";console.log("[memory] search index is in age order");return;}
       if(event.type==="index-error"){this.setError("index","MEMORY_INDEX_FAILED");logSwallowed("index","MEMORY_INDEX_FAILED",MEMORY_IDLE_SWEEP_MS);this.indexing=false;this.indexRequestId=null;this.schedule(MEMORY_IDLE_SWEEP_MS);return;}
       // Work is only sent once the helper is ready, so an error before then is its initialisation failing.
       if(event.type==="error"&&!this.ready){this.failInit("MEMORY_WORKER_START_FAILED");return;}

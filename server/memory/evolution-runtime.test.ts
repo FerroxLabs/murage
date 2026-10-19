@@ -1,4 +1,4 @@
-import { mkdirSync, rmSync } from "node:fs";
+import { mkdirSync } from "node:fs";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { DATA_DIR } from "../config.ts";
 import { closeDatabase, database } from "../database.ts";
@@ -9,9 +9,10 @@ import { readMemoryEvolutionPolicy } from "./evolution-policy.ts";
 import { procedureCandidateHash, procedureSnapshotDigest, procedureTargetDigest, type ProcedureEvaluationReceipt } from "./procedure-review.ts";
 import type { MemoryExtractionDispatch, TextOnlyExtractor } from "./extract.ts";
 import { memoryOwnerRoute } from "./settings.ts";
+import { removeTempDirSync } from "../testing/cleanup.ts";
 
 const hash=(value:unknown)=>procedureCandidateHash(JSON.stringify(value));
-beforeEach(()=>{vi.useFakeTimers({toFake:["Date"]});vi.setSystemTime(new Date("2026-09-15T12:00:00Z"));closeDatabase();rmSync(DATA_DIR,{recursive:true,force:true});mkdirSync(DATA_DIR,{recursive:true});setMemoryMode("capture");});
+beforeEach(()=>{vi.useFakeTimers({toFake:["Date"]});vi.setSystemTime(new Date("2026-09-15T12:00:00Z"));closeDatabase();removeTempDirSync(DATA_DIR);mkdirSync(DATA_DIR,{recursive:true});setMemoryMode("capture");});
 afterEach(()=>vi.useRealTimers());
 const scriptedEvaluation:NonNullable<EvolutionRuntimeOptions["evaluate"]>=async(snapshot,options,signal)=>{
   // Controller fixture only: real objective selector and lease, scripted

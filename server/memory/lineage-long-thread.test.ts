@@ -4,7 +4,7 @@
 // (24,880 rows to read 24 lines on 2,500 receipts, against 22,831 before the
 // whole-thread shortcut and 6,900 now), and one owner turn read 31,469 rows.
 // Pinned by rows read, which do not depend on the machine.
-import { mkdirSync, rmSync } from "node:fs";
+import { mkdirSync } from "node:fs";
 import { afterEach, beforeEach, expect, it } from "vitest";
 import { DATA_DIR } from "../config.ts";
 import { closeDatabase, database } from "../database.ts";
@@ -20,6 +20,7 @@ import { replayRowsRead, setReplayNodeBudgetForTest } from "./replay-lineage.ts"
 import type { MemorySearchBridge } from "./search.ts";
 import type { Message } from "../store.ts";
 import { LineageAllowance } from "./lineage-allowance.ts";
+import { removeTempDirSync } from "../testing/cleanup.ts";
 
 const roster: MemoryRoster = {
   bots: [
@@ -32,7 +33,7 @@ const roster: MemoryRoster = {
 const directAllowed = (t: string, m: Message[], a: MemoryAccess, s: Set<string>) => filterDirectReplay(LineageAllowance.tool(), t, m, a, s).allowed;
 const empty: MemorySearchBridge = { search: async () => ({ hits: [], vectorRows: 0 }) };
 afterEach(() => setReplayNodeBudgetForTest(null));
-beforeEach(() => { closeDatabase(); rmSync(DATA_DIR, { recursive: true, force: true }); mkdirSync(DATA_DIR, { recursive: true }); });
+beforeEach(() => { closeDatabase(); removeTempDirSync(DATA_DIR); mkdirSync(DATA_DIR, { recursive: true }); });
 
 function access(botId: string, thread: string): MemoryAccess {
   reconcileMemoryRoster(roster);

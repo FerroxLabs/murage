@@ -7,7 +7,7 @@
 // scripts/build-engine-exclusion.mjs (Linux, gcc, in the build host container); where it is not built these tests are skipped, and the
 // executor is covered against a model of the same behaviour (engine-exclusion-r17.test.ts).
 import { spawn, spawnSync, type ChildProcess } from "node:child_process";
-import { chmodSync, copyFileSync, existsSync, lstatSync, mkdirSync, mkdtempSync, openSync, closeSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, copyFileSync, existsSync, lstatSync, mkdirSync, mkdtempSync, openSync, closeSync, readFileSync, realpathSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
@@ -20,11 +20,12 @@ import { planEngineHistory } from "./engine-history-run.ts";
 import { homeKey } from "./engine-plan-core.ts";
 import { builtAddonPath, useRealExclusion } from "./testing/engine-exclusion-fake.ts";
 import { asExclusive, buildFixture, type Fixture } from "./testing/engine-history-fixtures.ts";
+import { removeTempDirSync } from "./testing/cleanup.ts";
 
 const built = builtAddonPath();
 const posix = process.platform !== "win32";
 const scratch = realpathSync.native(mkdtempSync(join(tmpdir(), "murage-excl-")));
-afterAll(() => rmSync(scratch, { recursive: true, force: true }));
+afterAll(() => removeTempDirSync(scratch));
 
 const children: ChildProcess[] = [];
 /** Ends the holder and every process it started (a sleep inherits the descriptor, so killing only the shell would not let go). */
@@ -215,7 +216,7 @@ const python = process.platform === "linux" && spawnSync("python3", ["-V"]).stat
     expect(refused.homeReasons[key(fx)]).toBe("engine-open");
     expect(readFileSync(history).equals(before)).toBe(true);
     expect(existsSync(`${history}.lock`)).toBe(true);
-    rmSync(`${history}.lock`, { recursive: true });
+    removeTempDirSync(`${history}.lock`);
     const done = executeEnginePlans(structuredClone(plan));
     expect(done.failed).toEqual([]);
     expect(readFileSync(history, "utf8")).not.toContain("canary-claude-5521");

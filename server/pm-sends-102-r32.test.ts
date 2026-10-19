@@ -4,7 +4,7 @@
 // Round 32: Astra r31c P1. A row stopped by a build before the stop token existed (dev builds like 98e34e2de) has stop_gen NULL after the migration; its held
 // chip then carried no token and every fresh Send again was refused, for good. Now every stopped row gets a token minted on open, so ONE fresh press runs it
 // exactly once and a stale automatic resend runs nothing. Fails on cf0af59d9.
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
@@ -14,6 +14,7 @@ import { sendFingerprint } from "./send-idempotency.ts";
 import { pendingItem, sendStore } from "./send-store.ts";
 import { drainSteeredMessages, type SteerStore } from "./steer-queue.ts";
 import type { BotRecord, Message } from "./store.ts";
+import { removeTempDirSync } from "./testing/cleanup.ts";
 
 const TEXT = "summarize the report";
 
@@ -23,7 +24,7 @@ describe("a stopped row from a build without the stop token is not stuck", () =>
   let file = "";
   const start = () => { const db = new DatabaseSync(file); handles.push(db); sendStore.reset(); sendStore.use(() => db); };
   beforeEach(() => { const dir = mkdtempSync(join(tmpdir(), "r32-")); dirs.push(dir); file = join(dir, "messages.db"); });
-  afterEach(() => { sendStore.reset(); for (const h of handles.splice(0)) { try { h.close(); } catch { /* closed */ } } for (const d of dirs.splice(0)) rmSync(d, { recursive: true, force: true }); });
+  afterEach(() => { sendStore.reset(); for (const h of handles.splice(0)) { try { h.close(); } catch { /* closed */ } } for (const d of dirs.splice(0)) removeTempDirSync(d); });
 
   /** Build the row through the real store, Stop it, then take the table back to the 98e34e2de schema: stopped, but no stop_gen and no action_id. */
   const seed = (q: Queue, status: string) => {

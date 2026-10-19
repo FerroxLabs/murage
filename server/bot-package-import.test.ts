@@ -1,4 +1,4 @@
-import { createWriteStream, existsSync, mkdtempSync, readFileSync, readdirSync, rmSync } from "node:fs";
+import { createWriteStream, existsSync, mkdtempSync, readFileSync, readdirSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { pipeline } from "node:stream/promises";
@@ -7,9 +7,10 @@ import { ZipFile } from "yazl";
 import { afterEach, expect, it, vi } from "vitest";
 import { createBotPackageEntry } from "./bot-package-manifest.ts";
 import { importBotPackageArchive, importBotPackageContents, previewBotPackageContents, previewBotPackageImport, type BotPackageAtomicCommitInput } from "./bot-package-import.ts";
+import { removeTempDirSync } from "./testing/cleanup.ts";
 
 const roots: string[] = [];
-afterEach(() => { for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true }); });
+afterEach(() => { for (const root of roots.splice(0)) removeTempDirSync(root); });
 async function fixture(instructions = "Use evidence and report uncertainty.") {
   const root = mkdtempSync(join(tmpdir(), "murage-package-import-")); roots.push(root);
   const payloads = new Map([

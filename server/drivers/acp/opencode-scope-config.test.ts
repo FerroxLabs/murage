@@ -10,11 +10,12 @@ import { ensureDirs } from "../../config.ts";
 import { resetIsolationCache } from "../isolation-cache.ts";
 import { ScopeUnavailableError, resetScopeBookkeeping, scopeLocalFailureOf } from "../scoped-cli-home.ts";
 import { filterOpenCodeConfigFile, isolateOpenCodeGlobalInstructions, rebaseOpenCodeFileRefs } from "./opencode-go.ts";
+import { removeTempDirSync } from "../../testing/cleanup.ts";
 
 const dirs: string[] = [];
 const tmp = () => { const d = mkdtempSync(join(tmpdir(), "oc-scope-")); dirs.push(d); return d; };
 beforeEach(() => { ensureDirs(); resetScopeBookkeeping(); resetIsolationCache(); });
-afterEach(() => { for (const d of dirs.splice(0)) rmSync(d, { recursive: true, force: true }); });
+afterEach(() => { for (const d of dirs.splice(0)) removeTempDirSync(d); });
 
 const scopeOf = (owner: string, bot: string): string => {
   const env: Record<string, string | undefined> = { OPENCODE_CONFIG_DIR: owner };

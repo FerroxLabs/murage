@@ -8,6 +8,7 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { afterAll, afterEach } from "vitest";
 
+import { settleTestHandles } from "../test-handle-registry.ts";
 import { removeTempDir } from "./cleanup.ts";
 import { scrubAmbientMurageEnv } from "./murage-env.mjs";
 import { installSafeWipeGuard } from "./safe-wipe.mjs";
@@ -126,17 +127,18 @@ if (!process.env.MURAGE_CONTROL_PORT_OVERRIDE) {
 // the per-test handle before the next test resets its throwaway data dir.
 // The log checkpointer (wal-maintenance.ts) closes its own connection a moment after the server's, and that last close
 // copies and removes the log: wait for it, so the next test's reset of the data dir never meets a file still being deleted.
-const { closeMessageDb } = await import("../message-db.ts");
-const { stopWalMaintenance } = await import("../wal-maintenance.ts");
-const { flushCoalesced } = await import("../atomic.ts");
 // A deferred write (bots.json after a turn's cursor or usage) lands in the test that made it, while its data dir and database still exist, so it can
 // never fire into the next test's wiped directory: the same flush the server does on exit.
-afterEach(async () => { try { flushCoalesced(); } catch { /* a test that removed its own data dir has nothing left to write */ } closeMessageDb(); await stopWalMaintenance(); });
+// settleTestHandles reaches EVERY copy of those modules, including the ones a test's vi.resetModules() made: importing
+// closeMessageDb here would only close the first copy and leave the test's own connection (and its checkpointer) open.
+await import("../message-db.ts");
+await import("../wal-maintenance.ts");
+await import("../atomic.ts");
+afterEach(async () => { await settleTestHandles(); });
 
 // Windows holds a directory that is a live process's cwd, and a just-killed
 // CLI lets go a beat after the kill call returns — see removeTempDir.
 afterAll(async () => {
-  closeMessageDb();
-  await stopWalMaintenance();
+  await settleTestHandles();
   await removeTempDir(home);
 });

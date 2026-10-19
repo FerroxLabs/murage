@@ -18,6 +18,7 @@ import { writeInstallationArchive } from "./installation-archive.ts";
 import { prepareInstallationRestore } from "./installation-restore-preparation.ts";
 import { inspectInstallationDatabase } from "./installation-database-snapshot.ts";
 import { assertRestoreReviewed } from "../electron/restore-review.mjs";
+import { removeTempDirSync } from "./testing/cleanup.ts";
 // C2 fault injection: attachment storage refuses the next N image commits.
 const faults = vi.hoisted(() => ({ saveImage: 0, register: 0 }));
 // Files quota fault: the next N saves to Files (registerArtifact) are refused with the quota status.
@@ -33,12 +34,18 @@ vi.mock("./attachments.ts", async importOriginal => {
   return { ...actual, saveImage: (...args: Parameters<typeof actual.saveImage>) => {
     if (faults.saveImage > 0) { faults.saveImage--; throw Object.assign(new Error("attachments storage is full"), { status: 507 }); }
     return actual.saveImage(...args);
+  }, saveReceiptImage: (...args: Parameters<typeof actual.saveReceiptImage>) => {
+    if (faults.saveImage > 0) { faults.saveImage--; throw Object.assign(new Error("attachments storage is full"), { status: 507 }); }
+    return actual.saveReceiptImage(...args);
+  }, writeNewReceiptImage: (...args: Parameters<typeof actual.writeNewReceiptImage>) => {
+    if (faults.saveImage > 0) { faults.saveImage--; throw Object.assign(new Error("attachments storage is full"), { status: 507 }); }
+    return actual.writeNewReceiptImage(...args);
   } };
 });
 beforeEach(() => { faults.saveImage = 0; faults.register = 0; });
 const png = Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+aD1sAAAAASUVORK5CYII=", "base64");
 const detail = { connectionId: "openai", provider: "openai" as const, model: "gpt-image-2", operation: "generate" as const, count: 1 as const, referenceCount: 0 };
-beforeEach(async () => { closeDatabase(); await stopWalMaintenance(); rmSync(DATA_DIR, {recursive:true,force:true}); mkdirSync(DATA_DIR,{recursive:true}); });
+beforeEach(async () => { closeDatabase(); await stopWalMaintenance(); removeTempDirSync(DATA_DIR); mkdirSync(DATA_DIR,{recursive:true}); });
 afterEach(() => closeDatabase());
 function fixture() {
   const store = new Store(() => ({instanceId:"fixture",model:"fixture"})); const bot = store.createBot();
@@ -103,26 +110,26 @@ it("lets the same turn try again after an image request that never reached a pro
  expect(fetcher).toHaveBeenCalledOnce();
 });
 it("clears an image request abandoned at its approval card when the app restarts",async()=>{
- const f=generationFixture();f.operations.resumePendingPublications();
+ const f=generationFixture();await f.operations.resumePendingPublications();
  const id=createHash("sha256").update(`${f.actor.botId}:${f.actor.threadId}:${f.actor.generation}:abandoned`).digest("hex");
  const requestHash=createHash("sha256").update(JSON.stringify(f.request)).digest("hex");
  database().prepare("INSERT INTO image_operations VALUES(?,?,?,'awaiting',NULL,?)").run(id,f.actor.generation,requestHash,Date.now());
  closeDatabase();
  const restarted=new ImageOperations({store:f.store,waiting:f.waiting});
- restarted.resumePendingPublications();
+ await restarted.resumePendingPublications();
  expect(database().prepare("SELECT id FROM image_operations WHERE id=?").all(id)).toHaveLength(0);
  const job=restarted.execute(f.actor,"abandoned",f.request,(reserve,publish)=>new ImageGenerationService({resolveConnection:()=>({id:"flux",provider:"flux",apiKey:"FAKE_B15",revision:"1"}),connectionIds:()=>["flux"],fetch:f.fetcher}).generate(f.request,{reserve,publish,assertActive:f.actor.assertActive,signal:f.actor.signal}));
  const card=await f.card();restarted.resolve(f.actor.threadId,card.card!.requestId!,"allow");await job;
  expect(f.fetcher).toHaveBeenCalledOnce();
 });
 it("preserves a newly admitted approval while deferred startup recovery clears abandoned operations",async()=>{
- const f=generationFixture();f.operations.resumePendingPublications();
+ const f=generationFixture();await f.operations.resumePendingPublications();
  database().prepare("INSERT INTO image_operations VALUES(?,?,?,'awaiting',NULL,?)").run("abandoned","old-generation","old-request",0);
  const operations=new ImageOperations({store:f.store,waiting:f.waiting});
  const job=operations.execute(f.actor,"new-request",f.request,async reserve=>{await reserve(detail);return {ok:true};});
  const settled=job.then(value=>value,error=>({error:error.message}));
  const card=await f.card();
- operations.resumePendingPublications();
+ await operations.resumePendingPublications();
  const active=database().prepare("SELECT state FROM image_operations WHERE generation=?").get(f.actor.generation);
  expect(database().prepare("SELECT id FROM image_operations WHERE id='abandoned'").get()).toBeUndefined();
  operations.resolve(f.actor.threadId,card.card!.requestId!,"deny");
@@ -131,19 +138,19 @@ it("preserves a newly admitted approval while deferred startup recovery clears a
  expect(database().prepare("SELECT state FROM image_operations WHERE generation=?").get(f.actor.generation)).toMatchObject({state:"not-dispatched"});
 });
 it("leaves a dispatched image request fenced after a restart",async()=>{
- const f=generationFixture();f.operations.resumePendingPublications();
+ const f=generationFixture();await f.operations.resumePendingPublications();
  const id=createHash("sha256").update(`${f.actor.botId}:${f.actor.threadId}:${f.actor.generation}:dispatched`).digest("hex");
  const requestHash=createHash("sha256").update(JSON.stringify(f.request)).digest("hex");
  database().prepare("INSERT INTO image_operations VALUES(?,?,?,'running',NULL,?)").run(id,f.actor.generation,requestHash,Date.now());
  closeDatabase();
  const restarted=new ImageOperations({store:f.store,waiting:f.waiting});
- restarted.resumePendingPublications();
+ await restarted.resumePendingPublications();
  // the provider may already have been asked, and billed: that row stays
  expect(database().prepare("SELECT id FROM image_operations WHERE id=?").all(id)).toHaveLength(1);
 });
 it("B15 retains crash boundaries before and after approval and allows a genuinely new turn",async()=>{
  for(const state of ["awaiting","running"]){
-  const f=generationFixture();f.operations.resumePendingPublications();
+  const f=generationFixture();await f.operations.resumePendingPublications();
   const id=createHash("sha256").update(`${f.actor.botId}:${f.actor.threadId}:${f.actor.generation}:crashed`).digest("hex");
   const requestHash=createHash("sha256").update(JSON.stringify(f.request)).digest("hex");
   database().prepare("INSERT INTO image_operations VALUES(?,?,?,?,NULL,?)").run(id,f.actor.generation,requestHash,state,Date.now());
@@ -153,13 +160,13 @@ it("B15 retains crash boundaries before and after approval and allows a genuinel
 });
 it("requires an exact owner count approval before work and persists a real artifact",async()=>{
  const f=fixture(), provider=vi.fn();
- const job=f.operations.execute(f.actor,"first",{prompt:"draw fixture"},async reserve=>{const ticket=await reserve(detail);provider();const artifact=publishImage(f.store,f.actor,{bytes:png,mime:"image/png"},detail);ticket.finish("published");return artifact;});
+ const job=f.operations.execute(f.actor,"first",{prompt:"draw fixture"},async reserve=>{const ticket=await reserve(detail);provider();const artifact=await publishImage(f.store,f.actor,{bytes:png,mime:"image/png"},detail);ticket.finish("published");return artifact;});
  const card=await f.card();expect(provider).not.toHaveBeenCalled();expect(card.card?.subtitle).toContain("One image");expect(card.card?.allowKey).toBeUndefined();
  expect(f.operations.resolve("different-thread",card.card!.requestId!,"allow")).toBe("unavailable");expect(provider).not.toHaveBeenCalled();
  expect(f.operations.resolve(f.actor.threadId,card.card!.requestId!,"allow")).toBe("allowed-once");
  const result=await job;expect(provider).toHaveBeenCalledOnce();expect(readFileSync(result.path)).toEqual(png);expect(result.url).toMatch(/^\/api\/attachments\//);
  expect(f.store.messagesFor(f.actor.threadId).at(-1)?.attachments?.[0].kind).toBe("image");
- expect(imageReferences(f.store,f.actor.threadId,[result.referenceId])[0].bytes).toEqual(png);
+ expect((await imageReferences(f.store,f.actor.threadId,[result.referenceId], () => {}))[0].bytes).toEqual(png);
  expect(f.waiting.mock.calls.map(c=>c[1])).toEqual([true,false]);
 });
 it("still asks before it spends when the bot is on Full access",async()=>{
@@ -197,23 +204,23 @@ it("does not repeat an uncertain provider attempt",async()=>{
  const f=fixture();const work=async(reserve:any)=>{const ticket=await reserve(detail);ticket.finish("uncertain");throw Error("uncertain");};const job=f.operations.execute(f.actor,"unknown",{prompt:"fixture"},work);const refusal=expect(job).rejects.toThrow("uncertain");const card=await f.card();f.operations.resolve(f.actor.threadId,card.card!.requestId!,"allow");await refusal;
  expect(()=>f.operations.execute(f.actor,"unknown",{prompt:"fixture"},work)).toThrow("will not be retried");
 });
-it("rejects foreign conversation references and arbitrary file or URL inputs",()=>{
+it("rejects foreign conversation references and arbitrary file or URL inputs",async()=>{
  const f=fixture(),saved=saveImage(png,"image/png"),name=saved.path.split(/[\\/]/).at(-1)!;
- expect(()=>imageReferences(f.store,f.actor.threadId,[name])).toThrow("unavailable");
- for(const input of [["../secret.png"],["https://example.test/image.png"],["/tmp/image.png"],Array(5).fill(name)])expect(()=>imageReferences(f.store,f.actor.threadId,input)).toThrow();
- f.store.appendMessage(f.actor.threadId,{role:"user",kind:"text",text:"reference",attachments:[{kind:"image",path:saved.path,mime:saved.mime}]});expect(imageReferences(f.store,f.actor.threadId,[name])).toHaveLength(1);
+ await expect(imageReferences(f.store,f.actor.threadId,[name], () => {})).rejects.toThrow("unavailable");
+ for(const input of [["../secret.png"],["https://example.test/image.png"],["/tmp/image.png"],Array(5).fill(name)])await expect(imageReferences(f.store,f.actor.threadId,input, () => {})).rejects.toThrow();
+ f.store.appendMessage(f.actor.threadId,{role:"user",kind:"text",text:"reference",attachments:[{kind:"image",path:saved.path,mime:saved.mime}]});expect((await imageReferences(f.store,f.actor.threadId,[name], () => {}))).toHaveLength(1);
 });
 // F5-T4 (IMG-SEED): an image the person uploaded with a message rides in its
 // text as an <attached-image> tag, not in message.attachments. It is a
 // reference of that conversation; the same tag in a bot's text is not.
-it("accepts an image the person uploaded to this conversation and nothing a bot merely names",()=>{
+it("accepts an image the person uploaded to this conversation and nothing a bot merely names",async()=>{
  const f=fixture(),mine=saveImage(Buffer.concat([png,Buffer.from([1])]),"image/png"),named=saveImage(Buffer.concat([png,Buffer.from([2])]),"image/png");
  const id=(path:string)=>path.split(/[\\/]/).at(-1)!;
  f.store.appendMessage(f.actor.threadId,{role:"user",kind:"text",text:composeMessage("edit this",[{kind:"image",id:"chip",path:mine.path,name:"mine.png",size:mine.bytes,mime:"image/png"}])});
  f.store.appendMessage(f.actor.threadId,{role:"bot",kind:"text",text:`<attached-image path="${named.path}" />`});
- expect(imageReferences(f.store,f.actor.threadId,[id(mine.path)])[0].bytes).toEqual(readFileSync(mine.path));
- expect(()=>imageReferences(f.store,f.actor.threadId,[id(named.path)])).toThrow("unavailable");
- const other=fixture();expect(()=>imageReferences(other.store,other.actor.threadId,[id(mine.path)])).toThrow("unavailable");
+ expect((await imageReferences(f.store,f.actor.threadId,[id(mine.path)], () => {}))[0].bytes).toEqual(readFileSync(mine.path));
+ await expect(imageReferences(f.store,f.actor.threadId,[id(named.path)], () => {})).rejects.toThrow("unavailable");
+ const other=fixture();await expect(imageReferences(other.store,other.actor.threadId,[id(mine.path)], () => {})).rejects.toThrow("unavailable");
 });
 it("names the reference count in the owner's paid approval",async()=>{
  const f=fixture(),provider=vi.fn();
@@ -235,12 +242,12 @@ it("names the pinned upstream endpoint in an OpenRouter approval and nothing for
  expect(plainCard.card?.subtitle).toContain("One image · openai · gpt-image-2.");expect(plainCard.card?.subtitle).not.toContain("pinned");
  g.operations.resolve(g.actor.threadId,plainCard.card!.requestId!,"deny");await plainRefusal;expect(provider).not.toHaveBeenCalled();
 });
-it.skipIf(process.platform==="win32")("refuses symlinked image workspaces without writing outside the bot",()=>{
+it.skipIf(process.platform==="win32")("refuses symlinked image workspaces without writing outside the bot",async ()=>{
  const f=fixture(),parent=join(DATA_DIR,"workspaces"),target=join(DATA_DIR,"other-private-workspace");mkdirSync(parent,{recursive:true});mkdirSync(target);symlinkSync(target,join(parent,f.bot.id));
- expect(()=>publishImage(f.store,f.actor,{bytes:png,mime:"image/png"},detail)).toThrow("private directory");expect(existsSync(join(target,"generated-images"))).toBe(false);
+ await expect(publishImage(f.store,f.actor,{bytes:png,mime:"image/png"},detail)).rejects.toThrow("private directory");expect(existsSync(join(target,"generated-images"))).toBe(false);
 });
-it("refuses publication after authority is revoked",()=>{
- const f=fixture();f.revoke();expect(()=>publishImage(f.store,f.actor,{bytes:png,mime:"image/png"},detail)).toThrow("revoked");expect(existsSync(join(DATA_DIR,"workspaces",f.bot.id,"generated-images"))).toBe(false);
+it("refuses publication after authority is revoked",async ()=>{
+ const f=fixture();f.revoke();await expect(publishImage(f.store,f.actor,{bytes:png,mime:"image/png"},detail)).rejects.toThrow("revoked");expect(existsSync(join(DATA_DIR,"workspaces",f.bot.id,"generated-images"))).toBe(false);
 });
 
 // R3-T4 / C2: local output receipts and provider-free resume.
@@ -263,7 +270,7 @@ async function approveNext(f: ReturnType<typeof fixture>) {
 
 it("backs up production startup schema and WAL data with image receipts into an inactive restore", async () => {
   const f = fixture(), provider = vi.fn(), work = operationWork(provider);
-  expect(f.operations.resumePendingPublications()).toBe(0);
+  expect(await f.operations.resumePendingPublications()).toBe(0);
   const publishedJob = f.operations.execute(f.actor, "published", { prompt: "fixture" }, work);
   await approveNext(f);
   const published = await publishedJob;
@@ -326,7 +333,7 @@ it("retains received image bytes when attachment storage fails and resumes publi
   expect(provider).toHaveBeenCalledOnce();
   expect(resumed.artifact).toMatchObject({ id: receipt!.id, artifactId: expect.any(String) });
   expect(imageMessages(f)).toHaveLength(1);
-  expect(imageReferences(f.store, f.actor.threadId, [resumed.artifact.referenceId])[0]!.bytes).toEqual(png);
+  expect((await imageReferences(f.store, f.actor.threadId, [resumed.artifact.referenceId], () => {}))[0]!.bytes).toEqual(png);
   expect(describeArtifact(database(), join(DATA_DIR, "artifact-files"), resumed.artifact.artifactId, imageAccess(f))).toMatchObject({ kind: "image", producer: "image-operation", sha256: sha(png), threadId: f.bot.threadId });
   expect(imageReceipts()).toEqual([expect.objectContaining({ id: receipt!.id, stage: "registered", artifact_id: resumed.artifact.artifactId, message_id: imageMessages(f)[0]!.id })]);
   expect(await f.operations.execute(f.actor, "quota", { prompt: "fixture" }, work)).toEqual(resumed);
@@ -360,8 +367,8 @@ it("completes a retained image after a restart without provider work and keeps t
   await approveNext(f); await refusal;
   closeDatabase();
   const restarted = new ImageOperations({ store: f.store, waiting: () => {} });
-  expect(restarted.resumePendingPublications()).toBe(1);
-  expect(restarted.resumePendingPublications()).toBe(0);
+  expect(await restarted.resumePendingPublications()).toBe(1);
+  expect(await restarted.resumePendingPublications()).toBe(0);
   expect(provider).toHaveBeenCalledOnce();
   expect(imageMessages(f)).toHaveLength(1);
   const again = await restarted.execute(f.actor, "restart", { prompt: "fixture" }, work);
@@ -451,7 +458,7 @@ it("a restore holds a received image: startup publishes nothing, the owner's sam
   fenceRestoredSql(database(), "gen-1");
   const held = database().prepare("SELECT id FROM image_operations WHERE generation=?").get(f.actor.generation) as { id: string };
   expect(sqlRowRestoreHeld(database(), "image_operation", held.id)).toBe(true);
-  expect(f.operations.resumePendingPublications()).toBe(0);
+  expect(await f.operations.resumePendingPublications()).toBe(0);
   expect(operationState(f.actor.generation)).toBe("publish-pending");
   expect(imageMessages(f)).toHaveLength(0);
   // The owner asks again in a NEW turn (new generation): the held operation is found by bot, thread, request id and hash.
@@ -498,7 +505,7 @@ it("a held received image made before resumeKey existed is still found by a re-a
   expect(database().prepare("SELECT json_extract(result,'$.resumeKey') AS k FROM image_operations").get()).toEqual({ k: null });
   fenceRestoredSql(database(), "gen-1");
   const held = database().prepare("SELECT id FROM image_operations WHERE generation=?").get(f.actor.generation) as { id: string };
-  expect(f.operations.resumePendingPublications()).toBe(0);
+  expect(await f.operations.resumePendingPublications()).toBe(0);
   const nextTurn = { ...f.actor, generation: randomUUID() };
   const service = new ImageGenerationService({ resolveConnection: () => ({ id: "flux", provider: "flux", apiKey: "FAKE_B15", revision: "1" }), connectionIds: () => ["flux"], fetch: f.fetcher });
   const resumed = await f.operations.execute(nextTurn, "legacy-held", fluxEdit, (reserve, publish) => service.generate(fluxEdit, { reserve, publish, assertActive: nextTurn.assertActive, signal: nextTurn.signal }, pngReference()));
@@ -541,9 +548,9 @@ it("the startup resume of image operations skips held rows before its limit: 55 
   database().prepare("UPDATE image_operations SET updated_at=1000000 WHERE id=?").run(real.id);
   for (let i = 0; i < 55; i++) database().prepare("INSERT INTO image_operations VALUES(?,?,?,'publish-pending','{}',?)").run(`older-${i}`, `older-gen-${i}`, `h-${i}`, i + 1);
   fenceRestoredSql(database(), "gen-1");
-  expect(f.operations.resumePendingPublications()).toBe(0);
+  expect(await f.operations.resumePendingPublications()).toBe(0);
   expect(releaseHeldImageOperation(database(), real.id)).toBe(true);
-  expect(f.operations.resumePendingPublications()).toBe(1);
+  expect(await f.operations.resumePendingPublications()).toBe(1);
   expect(operationState(f.actor.generation)).toBe("published");
 });
 
@@ -579,17 +586,17 @@ it("B16 releases an ungranted Flux alias edit before approval, while a refused O
   expect(fetcher).toHaveBeenCalledOnce();
 });
 
-it("B16 resolves six exactly 10 MiB conversation PNG attachments as 60 MiB of references, refuses past 64 MiB and past sixteen", () => {
+it("B16 resolves six exactly 10 MiB conversation PNG attachments as 60 MiB of references, refuses past 64 MiB and past sixteen", async () => {
   const f = fixture(), MiB = 1024 * 1024, name = (path: string) => path.split(/[\\/]/).at(-1)!;
   const exact = [1, 2, 3, 4, 5, 6].map(fill => { const bytes = Buffer.alloc(10 * MiB, fill); png.copy(bytes, 0, 0, 8); return saveImage(bytes, "image/png"); });
   const extra = (() => { const bytes = Buffer.alloc(10 * MiB, 7); png.copy(bytes, 0, 0, 8); return saveImage(bytes, "image/png"); })();
   f.store.appendMessage(f.actor.threadId, { role: "user", kind: "text", text: "references", attachments: [...exact, extra].map(item => ({ kind: "image", path: item.path, mime: item.mime })) });
-  const refs = imageReferences(f.store, f.actor.threadId, exact.map(item => name(item.path)));
+  const refs = (await imageReferences(f.store, f.actor.threadId, exact.map(item => name(item.path)), () => {}));
   expect(refs).toHaveLength(6);
   expect(refs.reduce((sum, item) => sum + item.bytes.length, 0)).toBe(60 * MiB);
   for (const [index, item] of refs.entries()) { expect(item.mime).toBe("image/png"); expect(item.bytes.length).toBe(10 * MiB); expect(item.bytes.equals(readFileSync(exact[index]!.path))).toBe(true); }
-  expect(() => imageReferences(f.store, f.actor.threadId, [...exact, extra].map(item => name(item.path)))).toThrow("total at most 64 MB");
-  expect(() => imageReferences(f.store, f.actor.threadId, Array(17).fill(name(exact[0]!.path)))).toThrow("17 reference images; Murage takes at most 16. Nothing was sent.");
+  await expect(imageReferences(f.store, f.actor.threadId, [...exact, extra].map(item => name(item.path)), () => {})).rejects.toThrow("total at most 64 MB");
+  await expect(imageReferences(f.store, f.actor.threadId, Array(17).fill(name(exact[0]!.path)), () => {})).rejects.toThrow("17 reference images; Murage takes at most 16. Nothing was sent.");
 });
 // 0.1.54: an image approval is an approval like any other. It used to deny
 // itself after 60 s, so an owner who was not staring at the screen found a

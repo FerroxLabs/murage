@@ -1,4 +1,4 @@
-import { mkdirSync, mkdtempSync, readFileSync, readdirSync, renameSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, readdirSync, renameSync, writeFileSync } from "node:fs";
 import { readRoutinesWithRuns } from "./routine-runs-journal.ts";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -9,9 +9,10 @@ import { RoutineRequestService, type RoutineRequestMessage, type RoutineRequestO
 import { createRoutineWatchFileAdapter } from "./routine-watch-file.ts";
 import { listRoutineWatchFiles, routineWatchFileScope, selectRoutineWatchFile } from "./routine-watch-integration.ts";
 import type { RoutineWatchSource } from "../shared/routine-watch.ts";
+import { removeTempDirSync } from "./testing/cleanup.ts";
 
 const roots: string[] = [];
-afterEach(() => { for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true }); });
+afterEach(() => { for (const root of roots.splice(0)) removeTempDirSync(root); });
 function fixture() {
   const root = mkdtempSync(join(tmpdir(), "murage-watch-flow-")); roots.push(root);
   const folder = join(root, "work"); mkdirSync(folder); writeFileSync(join(folder, "status.txt"), "first");
@@ -162,7 +163,7 @@ it("a tick that keeps failing logs once a minute and reports the scheduler as st
     expect(f.manager.schedulerStatus()).toEqual({ stalled: true, consecutiveFailures: 5 });
     expect(lines.filter(line => line.startsWith("routine: tick failed"))).toHaveLength(1);
   } finally { setObserveSink(); }
-  rmSync(file, { recursive: true }); renameSync(preserved, file);
+  removeTempDirSync(file); renameSync(preserved, file);
   f.restart(); await f.manager.tick();
   expect(f.manager.schedulerStatus()).toEqual({ stalled: false, consecutiveFailures: 0 });
 });
@@ -171,13 +172,13 @@ it("never reads before a failed atomic reservation save and never publishes a fa
   const file = join(f.root, "routines.json"), preserved = join(f.root, "preserved-routines.json");
   f.advance(); renameSync(file, preserved); mkdirSync(file);
   await tickFailing(f.manager); expect(f.read).not.toHaveBeenCalled();
-  rmSync(file, { recursive: true }); renameSync(preserved, file);
+  removeTempDirSync(file); renameSync(preserved, file);
   f.restart(); await f.manager.tick(); writeFileSync(join(f.folder, "status.txt"), "changed");
   const normalRead = f.read.getMockImplementation()!;
   f.read.mockImplementationOnce(async (...args) => { const result = await normalRead(...args); renameSync(file, preserved); mkdirSync(file); return result; });
   f.advance(); await tickFailing(f.manager);
   expect(f.projections.some(run => run.watch?.outcome === "changed")).toBe(false);
-  rmSync(file, { recursive: true }); renameSync(preserved, file);
+  removeTempDirSync(file); renameSync(preserved, file);
 });
 
 it("lists only bounded safe sources and refuses missing working folders or absolute paths", () => {

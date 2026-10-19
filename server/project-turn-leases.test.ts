@@ -1,12 +1,13 @@
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdtempSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { afterEach, expect, it, vi } from "vitest";
 import { acquireProjectWriteRoots } from "./project-run-events.ts";
 import { ProjectTurnLeases, PROJECT_TURN_TOMBSTONE_LIMIT } from "./project-turn-leases.ts";
+import { removeTempDirSync } from "./testing/cleanup.ts";
 
 const roots: string[] = [];
-afterEach(() => { for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true }); });
+afterEach(() => { for (const root of roots.splice(0)) removeTempDirSync(root); });
 function fixture() {
   const cwd = mkdtempSync(join(tmpdir(), "murage-project-turn-"));
   roots.push(cwd);

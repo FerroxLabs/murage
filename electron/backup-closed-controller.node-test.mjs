@@ -181,7 +181,7 @@ test("actual startup fences closed invocation before normal writers and selected
   const declaration=parsed.statements.find(node=>ts.isVariableStatement(node)&&node.declarationList.declarations.some(value=>value.name.getText(parsed)==="desktopStartup"));assert.ok(declaration);
   const calls=[];
   const traced=[];
-  const context=vm.createContext({closedTrace:stage=>traced.push(stage),desktopMark:()=>{},app:{whenReady:()=>Promise.resolve()},assertDesktopStartupActive:()=>{},closedBackupRequested:true,desktopRecoveryMode:false,
+  const context=vm.createContext({cloudLive:{start(){},probeOnFocus(){}},takeLaunchCloudLink:async()=>false,closedTrace:stage=>traced.push(stage),desktopMark:()=>{},app:{whenReady:()=>Promise.resolve()},assertDesktopStartupActive:()=>{},closedBackupRequested:true,desktopRecoveryMode:false,
     acquireDesktopDataOwner:()=>calls.push("owner"),initializeBackupScheduleHost:async()=>calls.push("host"),
     // A slow first tool check must not turn the closed-app run into "unavailable".
     desktopBackupTool:{waitReady:async()=>{calls.push("tool");}},

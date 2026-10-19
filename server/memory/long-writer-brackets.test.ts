@@ -2,11 +2,12 @@
 // T7 (STALLS-FINAL-DESIGN 3.4, database.ts invariant 5): a long writer declares itself and brackets itself in the log. The root-set VACUUM
 // logs a start line before its worker starts and its end line after; the writer hold is in force in between and released after. The same
 // for an optional index built off the main thread.
-import { mkdirSync, mkdtempSync, rmSync } from "node:fs";
+import { mkdirSync, mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
+import { removeTempDirSync } from "../testing/cleanup.ts";
 
 const { DATA_DIR } = await import("../config.ts");
 const { closeDatabase, holdWritersForIndexBuild, writersHeldForIndexBuild } = await import("../database.ts");
@@ -18,14 +19,14 @@ const open = { ownerIdleMs: () => 60 * 60_000, liveTurn: () => false, typingHeld
 let events: string[] = [];
 const dirs: string[] = [], dbs: DatabaseSync[] = [];
 beforeEach(() => {
-  closeDatabase(); rmSync(DATA_DIR, { recursive: true, force: true }); mkdirSync(DATA_DIR, { recursive: true });
+  closeDatabase(); removeTempDirSync(DATA_DIR); mkdirSync(DATA_DIR, { recursive: true });
   events = [];
   vi.spyOn(console, "log").mockImplementation((...args: unknown[]) => { events.push(`log ${String(args[0])} held=${writersHeldForIndexBuild()}`); });
 });
 afterEach(() => {
   vi.restoreAllMocks(); setReadTimeJudgeRetired(false); holdWritersForIndexBuild(false);
   for (const db of dbs.splice(0)) try { db.close(); } catch { /* closed */ }
-  for (const dir of dirs.splice(0)) rmSync(dir, { recursive: true, force: true });
+  for (const dir of dirs.splice(0)) removeTempDirSync(dir);
 });
 const hold = (on: boolean) => { holdWritersForIndexBuild(on); events.push(`hold ${on}`); };
 const at = (pattern: RegExp) => events.findIndex(event => pattern.test(event));

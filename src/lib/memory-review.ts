@@ -26,7 +26,9 @@ export type PinChoice = "transfer" | "unpin";
 
 /** The window event the live stream's `memory.waiting` frame becomes (src/state/store.tsx). */
 import { MEMORY_WAITING_EVENT } from "./memory-waiting-event";
-import { INDEX_BUILDING_SENTENCE } from "./memory-words";
+import { indexBuildingSentence } from "./memory-words";
+import { localeCode, t } from "./i18n";
+import type { LocaleKey } from "@/locales";
 export { MEMORY_WAITING_EVENT };
 
 export type Request = (path: string, init?: RequestInit) => Promise<any>;
@@ -39,19 +41,21 @@ export function newActionId(): string {
 }
 
 // ── Words ────────────────────────────────────────────────────────────────
-const plural = (n: number, one: string, many: string) => (n === 1 ? one : many);
+// Every sentence is a catalogue key (memoryReview.*), so the person reads their own language.
+const w = (name: string, params?: Record<string, string | number>) => t(`memoryReview.${name}` as LocaleKey, params);
+const plural = (n: number, name: string, params?: Record<string, string | number>) => w(`${name}.${n === 1 ? "one" : "other"}`, { count: n, ...params });
 
-export const cardTitle = (name: string, waiting: number) => `${name} would like to remember ${waiting} ${plural(waiting, "thing", "things")}`;
-export const headline = (waiting: number) => (waiting > 0 ? `${waiting} waiting for you` : "Nothing waiting for you.");
+export const cardTitle = (name: string, waiting: number) => plural(waiting, "cardTitle", { name });
+export const headline = (waiting: number) => (waiting > 0 ? w("headline.waiting", { count: waiting }) : w("headline.none"));
 export function keepTogetherLine(everyday: number, waiting: number): string {
   if (waiting <= 0) return "";
   const oneByOne = Math.max(0, waiting - everyday);
-  if (everyday > 0 && oneByOne > 0) return `${everyday} everyday ${plural(everyday, "thing", "things")} can be kept together. ${oneByOne} ${plural(oneByOne, "needs", "need")} you one by one.`;
-  if (everyday > 0) return `${everyday} everyday ${plural(everyday, "thing", "things")} can be kept together.`;
-  return "Each of these needs you one by one.";
+  if (everyday > 0 && oneByOne > 0) return `${plural(everyday, "everyday")} ${plural(oneByOne, "needs")}`;
+  if (everyday > 0) return plural(everyday, "everyday");
+  return w("eachNeeds");
 }
-export const keepAllLabel = (everyday: number) => `Keep all ${everyday}`;
-export const newArrivals = (n: number) => `${n} new`;
+export const keepAllLabel = (everyday: number) => w("keepAll", { count: everyday });
+export const newArrivals = (n: number) => w("newArrivals", { count: n });
 
 /** What a Keep all press said, in plain words. */
 export function batchSentence(results: ReadonlyArray<ItemResult>): string {
@@ -59,58 +63,58 @@ export function batchSentence(results: ReadonlyArray<ItemResult>): string {
   const changed = results.filter(item => item.status === "changed" || item.status === "gone").length;
   const needs = results.filter(item => item.status === "needs-you").length;
   const parts: string[] = [];
-  if (kept) parts.push(`${kept} kept.`);
-  if (changed) parts.push(`${changed} changed while you were looking, so ${plural(changed, "it is", "they are")} still here.`);
-  if (needs && kept) parts.push(`${needs} ${plural(needs, "needs", "need")} you one by one.`);
-  if (!kept && needs && !changed) return "Each of these needs you one by one.";
-  if (!parts.length) return "Nothing changed.";
+  if (kept) parts.push(w("batch.kept", { count: kept }));
+  if (changed) parts.push(plural(changed, "batch.changed"));
+  if (needs && kept) parts.push(plural(needs, "needs"));
+  if (!kept && needs && !changed) return w("eachNeeds");
+  if (!parts.length) return w("batch.nothing");
   return parts.join(" ");
 }
 
-/** The day a memory was noted: a weekday for the last week, a date after that. */
+/** The day a memory was noted: a weekday for the last week, a date after that, in the language in use. */
 export function dayLabel(at: number, now = Date.now()): string {
-  const date = new Date(at);
-  if (now - at < 6 * 86_400_000 && now - at > -86_400_000) return date.toLocaleDateString(undefined, { weekday: "long" });
-  return date.toLocaleDateString(undefined, { month: "short", day: "numeric" });
+  const date = new Date(at), locale = localeCode();
+  if (now - at < 6 * 86_400_000 && now - at > -86_400_000) return date.toLocaleDateString(locale, { weekday: "long" });
+  return date.toLocaleDateString(locale, { month: "short", day: "numeric" });
 }
 
 /** The plain reason shown under a memory. Asks come first; otherwise where it came from. */
 export function reasonSentence(item: Pick<ReviewItem, "reasons" | "origin" | "at" | "correction">, botName: string, now = Date.now()): string {
-  const reasons = item.reasons;
-  if (reasons.includes("source-gone")) return "No longer available: the message it came from was deleted.";
-  if (reasons.includes("replaces-pinned")) return item.correction ? `Would replace something you pinned: "${item.correction.targetText}".` : "Would replace something you pinned.";
-  if (reasons.includes("correction")) return `${botName} would like to update an earlier memory.`;
-  if (reasons.includes("edited")) return "You changed the words, so it waits for your final yes.";
-  if (reasons.includes("identity")) return `About ${botName} itself, so it asks you first.`;
-  if (reasons.includes("sensitive-money")) return `About money, so ${botName} asks you first.`;
-  if (reasons.includes("sensitive-health")) return `About health, so ${botName} asks you first.`;
-  if (reasons.includes("sensitive-secret")) return `Could include a password or key, so ${botName} asks you first.`;
-  if (reasons.includes("sensitive-person")) return `About another person, so ${botName} asks you first.`;
-  if (reasons.includes("shared-space")) return "Several bots or people could use this, so it asks you first.";
+  const reasons = item.reasons, name = botName;
+  if (reasons.includes("source-gone")) return w("reason.sourceGone");
+  if (reasons.includes("replaces-pinned")) return item.correction ? w("reason.replacesPinnedText", { text: item.correction.targetText }) : w("reason.replacesPinned");
+  if (reasons.includes("correction")) return w("reason.correction", { name });
+  if (reasons.includes("edited")) return w("reason.edited");
+  if (reasons.includes("identity")) return w("reason.identity", { name });
+  if (reasons.includes("sensitive-money")) return w("reason.money", { name });
+  if (reasons.includes("sensitive-health")) return w("reason.health", { name });
+  if (reasons.includes("sensitive-secret")) return w("reason.secret", { name });
+  if (reasons.includes("sensitive-person")) return w("reason.person", { name });
+  if (reasons.includes("shared-space")) return w("reason.shared");
   const day = dayLabel(item.at, now);
-  if (item.origin === "owner-said") return `You said this on ${day}.`;
-  if (item.origin === "tool-result") return `From a finished action on ${day}.`;
-  if (item.origin === "imported") return "From notes you imported.";
-  return `${botName} worked this out from ${day}'s chat.`;
+  if (item.origin === "owner-said") return w("reason.ownerSaid", { day });
+  if (item.origin === "tool-result") return w("reason.toolResult", { day });
+  if (item.origin === "imported") return w("reason.imported");
+  return w("reason.workedOut", { name, day });
 }
 
 /** A failed call, in words. The server's codes and messages never reach the screen. */
 export function errorSentence(error: unknown): string {
   const text = error instanceof Error ? error.message : typeof error === "string" ? error : "";
   const status = (error as { status?: number } | null)?.status;
-  if (error instanceof TypeError || /failed to fetch|network|load failed/i.test(text)) return "Reconnect to keep this. Nothing has been changed.";
-  if (/MEMORY_IMPORT_INDEX_BUILDING/.test(text)) return INDEX_BUILDING_SENTENCE;
-  if (/MEMORY_VERSION_CONFLICT|MEMORY_NOT_FOUND/.test(text)) return "This changed while you were looking. Here is the latest.";
-  if (/MEMORY_ACTION_REUSED/.test(text)) return "That did not go through. Try again.";
-  if (/MEMORY_LATER_FULL/.test(text)) return "Later is full. Decide on a few of those first.";
-  if (/MEMORY_UNDO_UNAVAILABLE/.test(text)) return "This can no longer be undone here.";
-  if (/MEMORY_(EVIDENCE|SOURCE)_UNAVAILABLE/.test(text)) return "The message this came from is no longer available.";
-  if (/MEMORY_CORRECTION_PIN/.test(text)) return "This would replace something you pinned. Choose what happens to the pin.";
-  if (/MEMORY_CORRECTION/.test(text)) return "The memory this updates has changed. Review it again.";
-  if (/MEMORY_PIN_MUST_BE_UNPINNED/.test(text)) return "Unpin it first.";
-  if (/INVALID_MEMORY_TEXT/.test(text)) return "Write a few words to keep.";
-  if (status === 403) return "Memory can only be reviewed in the desktop app.";
-  return "That did not go through. Nothing was changed.";
+  if (error instanceof TypeError || /failed to fetch|network|load failed/i.test(text)) return w("error.reconnect");
+  if (/MEMORY_IMPORT_INDEX_BUILDING/.test(text)) return indexBuildingSentence();
+  if (/MEMORY_VERSION_CONFLICT|MEMORY_NOT_FOUND/.test(text)) return w("error.conflict");
+  if (/MEMORY_ACTION_REUSED/.test(text)) return w("error.reused");
+  if (/MEMORY_LATER_FULL/.test(text)) return w("error.laterFull");
+  if (/MEMORY_UNDO_UNAVAILABLE/.test(text)) return w("error.undoUnavailable");
+  if (/MEMORY_(EVIDENCE|SOURCE)_UNAVAILABLE/.test(text)) return w("error.sourceUnavailable");
+  if (/MEMORY_CORRECTION_PIN/.test(text)) return w("error.correctionPin");
+  if (/MEMORY_CORRECTION/.test(text)) return w("error.correction");
+  if (/MEMORY_PIN_MUST_BE_UNPINNED/.test(text)) return w("error.unpin");
+  if (/INVALID_MEMORY_TEXT/.test(text)) return w("error.writeWords");
+  if (status === 403) return w("error.desktopOnly");
+  return w("error.generic");
 }
 
 // ── What a press does to the list on screen (pure) ───────────────────────

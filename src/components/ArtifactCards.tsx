@@ -31,6 +31,7 @@ import { MediaPlayerCard, MediaUnplayableCard, unplayableMessage, type MediaSour
 import type { MediaUnplayableReason } from "@/lib/media-resolve";
 import { isMediaCapabilityToken, MEDIA_CAPABILITY_QUERY_PARAM, MEDIA_ROUTES, type MediaAsset, type MediaResolveResponse } from "../../shared/media-assets";
 import type { Artifact, ArtifactPreview } from "../../shared/artifacts";
+import { SandboxedFrame } from "./SandboxedFrame";
 
 // ── Pure rules (tested without a DOM) ────────────────────────────────────
 
@@ -148,7 +149,7 @@ function HtmlFrame({ artifact, content }: { artifact: Artifact; content: string 
   const html = useMemo(() => artifactPreviewHtml(content), [content]);
   return (
     <div data-artifact-inline="html">
-      <iframe title={t("artifactCard.htmlFrame", { name: artifact.name })} sandbox="" referrerPolicy="no-referrer" srcDoc={html}
+      <SandboxedFrame title={t("artifactCard.htmlFrame", { name: artifact.name })} sandbox="" referrerPolicy="no-referrer" html={html}
         className={`w-full rounded-lg bg-white ${large ? "h-[560px]" : "h-72"}`} />
       <p className="mt-1.5 flex flex-wrap items-center gap-x-2 text-[12px] text-ink-secondary">
         <span>{t("artifactCard.htmlNote")}</span>

@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // Grok bot turns load Murage's own MCP servers and none of the owner's personal setup
 // (grok.ts GROK_EXTERNAL_COMPAT_GATES, grokIsolationArgs). Synthetic owner home only.
-import { existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, readlinkSync, renameSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, readlinkSync, renameSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -13,10 +13,11 @@ import { isolationStats, resetIsolationCache } from "../isolation-cache.ts";
 import { ScopeUnavailableError } from "../scoped-cli-home.ts";
 import { filterGrokConfigToml, scopeGrokHome } from "./grok-scope.ts";
 import { GROK_EXTERNAL_COMPAT_GATES, GrokAgentDriver, grokIsolationArgs, grokPersonalPluginNames, isolateGrokFromPersonalSetup } from "./grok.ts";
+import { removeTempDirSync } from "../../testing/cleanup.ts";
 
 const cli = fileURLToPath(new URL("../../testing/fake-acp-cli.ts", import.meta.url));
 const homes: string[] = [];
-afterEach(() => { for (const home of homes.splice(0)) rmSync(home, { recursive: true, force: true }); });
+afterEach(() => { for (const home of homes.splice(0)) removeTempDirSync(home); });
 
 /** An owner home with personal plugins in every place grok looks, plus noise it must skip. */
 function ownerHome(): string {

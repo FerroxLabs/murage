@@ -6,7 +6,7 @@
 // desktop's diagnostic and the durable failure note, into the sentence the
 // Backups page and the Inbox show. What a verified backup left out is kept
 // beside it and listed.
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { expect, it } from "vitest";
@@ -14,6 +14,7 @@ import { BackupCoordinator } from "./backup-coordinator.ts";
 import { captureFailureSentence } from "../shared/backup-capture-failure.mjs";
 import { captureFailureDiagnostic } from "../electron/backup-schedule-host.mjs";
 import { InstallationSnapshotError } from "./installation-database-snapshot.ts";
+import { removeTempDirSync } from "./testing/cleanup.ts";
 
 it("a refusal about one item names it, all the way to the sentence", () => {
   const directory = mkdtempSync(join(tmpdir(), "murage-failure-naming-"));
@@ -27,7 +28,7 @@ it("a refusal about one item names it, all the way to the sentence", () => {
     const sentence = captureFailureSentence(note);
     expect(sentence).toContain("The item is routines.json in Murage's data folder.");
     expect(sentence).not.toContain("couldn't say why");
-  } finally { rmSync(directory, { recursive: true, force: true }); }
+  } finally { removeTempDirSync(directory); }
 });
 
 it("a path outside the data folder is never kept or shown", () => {
@@ -58,5 +59,5 @@ it("what a verified backup left out is kept for that backup only", () => {
     coordinator.recordSkipped(job, { count: 1, items: [{ path: "workspaces/mira/x", reason: "because" }], bots: {} });
     expect(() => readFileSync(join(directory, "backup-last-skipped.json"))).toThrow();
     writeFileSync(join(directory, "unrelated"), "");
-  } finally { rmSync(directory, { recursive: true, force: true }); }
+  } finally { removeTempDirSync(directory); }
 });

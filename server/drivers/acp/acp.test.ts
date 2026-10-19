@@ -34,6 +34,13 @@ import { DroidAgentDriver } from "./droid.ts";
 import { CursorAgentDriver } from "./cursor.ts";
 import { removeTempDir } from "../../testing/cleanup.ts";
 import { QUESTION_TIMEOUT_MS } from "../../../shared/questions.ts";
+import { resolveCall, type GrantCall } from "../../../shared/app-action-grant.ts";
+import { isMountRecord } from "../../../shared/mount-identity.ts";
+import { autoVerdict } from "../../auto-approve.ts";
+import { execChecks, resetExecChecks } from "../../testing/exec-check-spy.ts";
+import { approveStartupWrite } from "../../testing/startup-write.ts";
+
+vi.mock("node:child_process", async (original) => (await import("../../testing/exec-check-spy.ts")).withExecCheckSpy(await original()));
 
 const FAKE_CLI = join(dirname(fileURLToPath(import.meta.url)), "..", "..", "testing", "fake-acp-cli.ts");
 
@@ -818,6 +825,126 @@ describe("ACP turns (fake CLI)", () => {
       await instance.adapter.respondToRequest(id, (opened as any).requestId, { behavior: "deny" });
       await recorder.until((e) => e.type === "turn.completed");
     }
+  });
+
+  // Rules 8, 9, 11, 54, 55 (lane 103-app-grant): the ask carries the engine's
+  // kind as its name, records for the mounts it handed over, and its engine.
+  const askedWith = async (id: string, toolCall: object, integrations?: object) => {
+    process.env.FAKE_ACP_PERMISSION_TOOLCALL = JSON.stringify(toolCall);
+    await create(GrokAgentDriver, "permission");
+    await instance.adapter.sendTurn({ threadId: id, text: "go", ...(integrations ? { integrations } : {}) } as any);
+    const opened = (await recorder.until((e) => e.type === "request.opened")) as any;
+    await instance.adapter.respondToRequest(id, opened.requestId, { behavior: "deny" });
+    await recorder.until((e) => e.type === "turn.completed");
+    return opened;
+  };
+  const callOf = (opened: any): GrantCall => ({
+    toolCall: opened.toolCall, toolIdentity: opened.toolIdentity, toolKind: opened.toolKind,
+    mcpMounts: opened.mcpMounts, engine: opened.toolEngine, inputMissing: opened.toolInputMissing,
+  });
+
+  it("T61: an unstamped specific kind is named by its kind, never its title", async () => {
+    const opened = await askedWith("t-61", { toolCallId: "k1", kind: "read", title: "Totally harmless lookup", locations: [{ path: "/w/src/a.ts" }] });
+    expect(opened.toolEngine).toBe("acp");
+    expect(opened.toolCall.name).toBe("read");
+    expect(JSON.stringify(opened.toolCall)).not.toContain("harmless");
+    expect(resolveCall(callOf(opened))).toMatchObject({ kind: "engine", name: "read", byKind: true });
+    const verdict = autoVerdict({ autoApprove: true }, opened.tool, opened.summary, { call: callOf(opened) });
+    expect(verdict.source).not.toBe("unread-call");
+  });
+
+  it("T62: an unstamped other kind, or no kind, is unproven and never filed under its title", async () => {
+    const other = await askedWith("t-62a", { toolCallId: "k2", kind: "other", title: "mcp__notes__send", rawInput: {} });
+    expect(other.toolCall.name).toBe("other");
+    expect(resolveCall(callOf(other)).kind).toBe("unproven");
+    expect(autoVerdict({ autoApprove: true }, other.tool, other.summary, { call: callOf(other) }).approve).toBeNull();
+    const none = await askedWith("t-62b", { toolCallId: "k3", title: "Run the thing", rawInput: { command: "ls" } });
+    expect(none.toolInputMissing).toBe("kind");
+    expect(none.toolCall).toBeUndefined();
+    expect(resolveCall(callOf(none)).kind).toBe("unproven");
+    expect(autoVerdict({ autoApprove: true }, none.tool, none.summary, { call: callOf(none) }).approve).toBeNull();
+  });
+
+  // Section (d) of APP-GRANT-FIXPLAN-r6 (Rules 74a, 74d): a command's environment is checked when its card opens, in the
+  // generation it opens in, never once at spawn for the whole turn
+  it("checks each command ask's environment in the generation its card opens in", async () => {
+    process.env.FAKE_ACP_PERMISSION_TWICE = "1";
+    try {
+      await create(GrokAgentDriver, "permission");
+      resetExecChecks();
+      await instance.adapter.sendTurn({ threadId: "t-gen-acp", text: "go" });
+      const first = (await recorder.until((e) => e.type === "request.opened")) as any;
+      expect(execChecks.runs).toBe(1);
+      expect(first.execEnv).toMatchObject({ shell: expect.any(Array) });
+      expect(approveStartupWrite()).toBe(true);
+      await instance.adapter.respondToRequest("t-gen-acp", first.requestId, { behavior: "allow" });
+      const second = (await recorder.until((e) => e.type === "request.opened" && (e as any).requestId !== first.requestId)) as any;
+      expect(execChecks.runs).toBe(2);
+      expect(second.execEnv).toMatchObject({ shell: expect.any(Array) });
+      await instance.adapter.respondToRequest("t-gen-acp", second.requestId, { behavior: "deny" });
+      await recorder.until((e) => e.type === "turn.completed");
+    } finally { delete process.env.FAKE_ACP_PERMISSION_TWICE; }
+  });
+
+  // Astra BLOCK 9 (Rule 74a..d): ACP hands the F12 map and reports it on every permission request, a command's after its check
+  it("reports the handed environment on a permission request", async () => {
+    process.env.MURAGE_ACP_F12_PROBE = "seen";
+    try {
+      for (const [id, toolCall] of [["t-f12-a", { toolCallId: "e1", kind: "execute", title: "x", rawInput: { command: "ls" } }], ["t-f12-b", { toolCallId: "e2", kind: "read", title: "x", locations: [{ path: "/w/a" }] }]] as const) {
+        const opened = await askedWith(id, toolCall);
+        expect(opened.execEnv).toMatchObject({ capture: expect.any(String), shell: expect.any(Array) });
+        expect(typeof opened.execEnv.cwd).toBe("string");
+      }
+    } finally { delete process.env.MURAGE_ACP_F12_PROBE; }
+  });
+
+  // Astra BLOCK 5 (Rules 2, 55): a malformed source is never dropped or replaced with {}; the whole call is unread
+  it("a malformed locations or rawInput makes the call unread, whatever the other source says", async () => {
+    for (const [id, toolCall, field] of [
+      ["t-mal-a", { toolCallId: "m1", kind: "edit", title: "x", locations: null, rawInput: { path: "/w/src/a.ts" } }, "locations"],
+      ["t-mal-b", { toolCallId: "m2", kind: "edit", title: "x", locations: [{ path: "/w/src/a.ts" }], rawInput: "path=/etc/passwd" }, "rawInput"],
+      ["t-mal-c", { toolCallId: "m3", kind: "read", title: "x", locations: [{ path: "/w/a" }, { file: "/etc/shadow" }] }, "locations"],
+      ["t-mal-d", { toolCallId: "m4", kind: "edit", title: "x", locations: [{ path: "/w/src/a.ts" }], rawInput: null }, "rawInput"],
+    ] as const) {
+      const opened = await askedWith(id, toolCall);
+      expect(opened.toolInputMissing).toBe(field);
+      const verdict = autoVerdict({ autoApprove: true }, opened.tool, opened.summary, { call: callOf(opened) });
+      expect(verdict.approve).not.toBe(true);
+    }
+  });
+
+  it("T63: the ask carries a record per mounted server, own and custom, and refuses a name holding __", async () => {
+    const opened = await askedWith("t-63", { toolCallId: "k4", kind: "execute", title: "x", rawInput: { command: "ls" } }, {
+      agents: { command: process.execPath, args: ["/fake/agents-proxy.js"], env: { MURAGE_HARNESS_URL: "http://127.0.0.1:1", MURAGE_COMMS_TOKEN: "t" } },
+      custom: {
+        notes: { command: "npx", args: ["-y", "@x/notes-mcp"], env: {} },
+        "a__b": { command: "npx", args: ["-y", "@x/ab-mcp"], env: {} },
+      },
+    });
+    expect(opened.toolEngine).toBe("acp");
+    expect(opened.mcpMounts).toEqual([
+      { engineName: "agents", mountId: "own:agents", provenance: "own" },
+      { engineName: "notes", mountId: "custom:notes", provenance: "custom" },
+    ]);
+    expect(opened.mcpMounts.every(isMountRecord)).toBe(true);
+  });
+
+  it("T75: a stamp a__b__c splits at the first __; a mount a__b makes it unproven", async () => {
+    const stamp = { "fuigo/tool": { version: 1, name: "a__b__c", namespace: "mcp" } };
+    const opened = await askedWith("t-75", { toolCallId: "k5", kind: "other", title: "c", rawInput: {}, _meta: stamp },
+      { custom: { a: { command: "npx", args: ["-y", "@x/a-mcp"], env: {} } } });
+    expect(resolveCall(callOf(opened))).toMatchObject({ kind: "mcp", server: "a", tool: "b__c", mountId: "custom:a" });
+    const both = [
+      { engineName: "a", mountId: "custom:a", provenance: "custom" as const },
+      { engineName: "a__b", mountId: "custom:a__b", provenance: "custom" as const },
+    ];
+    expect(resolveCall({ ...callOf(opened), mcpMounts: both }).kind).toBe("unproven");
+  });
+
+  it("T64: locations valid but rawInput.path malformed is unread", async () => {
+    const opened = await askedWith("t-64", { toolCallId: "k6", kind: "edit", title: "Edit", locations: [{ path: "/w/src/a.ts" }], rawInput: { path: ["/w/src/b.ts", 3] } });
+    const verdict = autoVerdict({ autoApprove: true }, opened.tool, opened.summary, { call: callOf(opened) });
+    expect(verdict).toMatchObject({ approve: null, source: "unread-call" });
   });
 
   it("scopes only computer tools as local-computer when the host computer is attached", async () => {
@@ -3880,12 +4007,10 @@ describe("ACP folder trust (fake CLI in folder-trust mode)", () => {
   // (6) the late-request path when the turn completes before anyone answers
   it("late request, turn finishes first: the card closes as finished-untrusted and the withheld chip names what the engine asked about", async () => {
     process.env.FAKE_ACP_TRUST_PROMPT_FIRST = "1";
-    // The turn's end answers the engine and then stops it (this fixture
-    // process is not pooled). The real engine reads its stdin before it exits;
-    // the fake's default exit on SIGTERM is immediate and often came before
-    // it read the answer, so the dump never saw it.
-    process.env.FAKE_ACP_TERM = "linger";
-    process.env.FAKE_ACP_TERM_MS = "2000";
+    const exitGate = join(scratch, "late-finished-exit.gate");
+    // Observe the settle-time reply with the existing cooperative fixture.
+    process.env.FAKE_ACP_TERM = "gate";
+    process.env.FAKE_ACP_EXIT_GATE = exitGate;
     try {
       await create();
       const { turnId } = await instance.adapter.sendTurn({
@@ -3907,12 +4032,15 @@ describe("ACP folder trust (fake CLI in folder-trust mode)", () => {
       const doneAt = recorder.events.findIndex((e) => e.type === "turn.completed");
       expect(chipAt).toBeGreaterThan(-1);
       expect(chipAt).toBeLessThan(doneAt);
-      // the "reject" is sent as the turn settles; the engine reads it just after turn.completed
-      await expect.poll(dumpDecision, { timeout: 10000 }).toEqual({ outcome: "reject" });
+      await expect.poll(dumpDecision, { timeout: 3000 }).toEqual({ outcome: "reject" });
     } finally {
-      delete process.env.FAKE_ACP_TRUST_PROMPT_FIRST;
-      delete process.env.FAKE_ACP_TERM;
-      delete process.env.FAKE_ACP_TERM_MS;
+      try {
+        writeFileSync(exitGate, "");
+      } finally {
+        delete process.env.FAKE_ACP_TERM;
+        delete process.env.FAKE_ACP_EXIT_GATE;
+        delete process.env.FAKE_ACP_TRUST_PROMPT_FIRST;
+      }
     }
   });
 
@@ -3935,11 +4063,10 @@ describe("ACP folder trust (fake CLI in folder-trust mode)", () => {
   // as failed, never "stopped before anyone answered"
   it("late request, the turn fails before anyone answers: the card closes as failed-untrusted with the withheld chip", async () => {
     process.env.FAKE_ACP_TRUST_FAIL_PROMPT = "1";
-    // A failed turn stops the engine right after answering it. The real engine
-    // reads its stdin before it exits; the fake's default exit on SIGTERM is
-    // immediate and, under load, came before it read the answer.
-    process.env.FAKE_ACP_TERM = "linger";
-    process.env.FAKE_ACP_TERM_MS = "2000";
+    const exitGate = join(scratch, "late-failed-exit.gate");
+    // Observe the settle-time reply with the existing cooperative fixture.
+    process.env.FAKE_ACP_TERM = "gate";
+    process.env.FAKE_ACP_EXIT_GATE = exitGate;
     try {
       await create();
       const { turnId } = await instance.adapter.sendTurn({
@@ -3958,11 +4085,15 @@ describe("ACP folder trust (fake CLI in folder-trust mode)", () => {
       const doneAt = recorder.events.findIndex((e) => e.type === "turn.completed");
       expect(chipAt).toBeGreaterThan(-1);
       expect(chipAt).toBeLessThan(doneAt);
-      await expect.poll(dumpDecision, { timeout: 10000 }).toEqual({ outcome: "reject" });
+      await expect.poll(dumpDecision, { timeout: 3000 }).toEqual({ outcome: "reject" });
     } finally {
-      delete process.env.FAKE_ACP_TRUST_FAIL_PROMPT;
-      delete process.env.FAKE_ACP_TERM;
-      delete process.env.FAKE_ACP_TERM_MS;
+      try {
+        writeFileSync(exitGate, "");
+      } finally {
+        delete process.env.FAKE_ACP_TERM;
+        delete process.env.FAKE_ACP_EXIT_GATE;
+        delete process.env.FAKE_ACP_TRUST_FAIL_PROMPT;
+      }
     }
   });
 

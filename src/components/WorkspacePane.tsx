@@ -61,6 +61,7 @@ import {
   type WorkspaceEntry, type WorkspaceListResponse, type WorkspaceReadResult, type WorkspaceRootInfo, type WorkspaceScopeRef, type WorkspaceSearchResponse,
 } from "../../shared/workspace-files";
 import { openInboxLink } from "@/lib/open-inbox-link";
+import { SandboxedFrame } from "./SandboxedFrame";
 
 // The editor, its Tiptap kit and the fidelity checker are one chunk, loaded
 // the first time a file is opened for editing (spec §6). Previewing never
@@ -842,7 +843,7 @@ function WorkspaceDocument({ tab, api, dispatch, editorFor, editors, nativeActio
       {load.status === "ready" && kind === "html" && (
         <>
           <p className="text-[12px] text-ink-secondary">{t("workspacePane.htmlNote")}</p>
-          <iframe title={t("workspacePane.htmlFrame", { name })} sandbox="" referrerPolicy="no-referrer" srcDoc={artifactPreviewHtml(load.read.content)} className="h-[420px] w-full rounded-lg bg-white" />
+          <SandboxedFrame title={t("workspacePane.htmlFrame", { name })} sandbox="" referrerPolicy="no-referrer" html={artifactPreviewHtml(load.read.content)} className="h-[420px] w-full rounded-lg bg-white" />
         </>
       )}
       {load.status === "ready" && kind === "text" && (

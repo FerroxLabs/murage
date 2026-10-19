@@ -1,12 +1,14 @@
 // Config + data dirs. One file, ~/.murage/config.json, env fallbacks:
 //   { "xai": {"key":"xai-…"}, "composio": {"apiKey":"ak_…"}, "box": {"token":"…"},
 //     "instances": { "<instanceId>": {"driver":"grok", …} } }
+import { fluxDesktopSigninOn } from "../shared/flux-desktop-signin-default.mjs";
 import { readFileSync, mkdirSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { z } from "zod";
 
 import { writeFileAtomic } from "./atomic.ts";
+import { assertNoCloudPlaintext, withCloudCredentials, syncCloudCredentialMemory } from "./cloud-home/credentials.ts";
 import { DEFAULT_INSTANCES } from "./default-instances.ts";
 import { EFFORT_LEVELS, type EffortLevel, type InstanceConfig, type InstanceConfigMap } from "./contracts.ts";
 import { isRemoteMcpServer, parseAnyStoredMcpServer, parseStoredMcpServer } from "./mcp-registry.ts";
@@ -21,6 +23,7 @@ import { readPersistedJson, PersistedStateRecoveryError } from "./persisted-stat
 import { notificationPreferencesSchema, type NotificationPreferences } from "../shared/notification-preferences.ts";
 import { isNetlifyMcpUrl, NETLIFY_TOKEN_ENTRY } from "../shared/published-sites.ts";
 import { setFluxMemoryConfig } from "./flux-memory-headers.ts";
+import { setFluxExternalMemory } from "./flux-memory-envelope.ts";
 
 const optionalText = z.string().optional();
 const SSH_ALIAS = /^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$/;
@@ -242,6 +245,7 @@ const browserProfilesSchema = z.array(browserProfileSchema).max(20).superRefine(
 });
 const featureConfigSchema = z.object({
   botsSharedAcrossTeams: z.boolean().optional(),
+  /** Unset: on when a Flux key is present (index.ts learningDefaultOn); an explicit false keeps the activation hold. */
   learningDefaultOn: z.boolean().optional(),
   projectsLead: z.boolean().optional(),
   projectsGoals: z.boolean().optional(),
@@ -251,8 +255,13 @@ const featureConfigSchema = z.object({
   projectsDigest: z.boolean().optional(),
   /** Experimental desktop workflow recorder. Hidden unless explicitly enabled. */
   skillRecorder: z.boolean().optional(),
+  /** Desktop "Sign in with Flux" button. Off until Flux's server side is live. */
+  fluxDesktopSignin: z.boolean().optional(),
   /** Show each tool run in the transcript. Off unless explicitly enabled. */
   showToolCalls: z.boolean().optional(),
+  /** Cloud home only: let bots use a hosted computer (box). Off unless the
+   * owner turns it on; turns reach it only through the home's box relay. */
+  cloudBoxComputers: z.boolean().optional(),
   /** Experimental built-in browser. Off until explicitly enabled; each bot
    * also has its own switch. */
   browser: z.boolean().optional(),
@@ -331,7 +340,7 @@ const appConfigSchema = z.object({
    *  WORKSPACE_CREDENTIAL_ENV, so no spawned engine CLI ever inherits it and
    *  every route that needs it injects a copy under a harness-owned name
    *  AFTER the strip. Absent = Flux routing is simply unavailable. */
-  flux: z.object({ apiKey: optionalText, memory: z.object({ enabled: z.boolean().optional(), inject: z.boolean().optional(), owner: z.boolean().optional(), spaces: z.boolean().optional() }).strict().optional(), connectionAliases: z.array(z.object({ id: z.string().regex(/^[A-Za-z0-9_-]{1,100}$/), label: z.string().min(1).max(80), enabled: z.boolean(), revision: z.string().regex(/^[A-Za-z0-9_-]{1,100}$/) }).strict()).max(1024).optional() }).optional(),
+  flux: z.object({ apiKey: optionalText, memory: z.object({ enabled: z.boolean().optional(), inject: z.boolean().optional(), owner: z.boolean().optional(), spaces: z.boolean().optional(), external: z.boolean().optional() }).strict().optional(), connectionAliases: z.array(z.object({ id: z.string().regex(/^[A-Za-z0-9_-]{1,100}$/), label: z.string().min(1).max(80), enabled: z.boolean(), revision: z.string().regex(/^[A-Za-z0-9_-]{1,100}$/) }).strict()).max(1024).optional() }).optional(),
   /** Which control plane the onboarding signup is posted to. NOT a Sendlane
    *  credential and deliberately incapable of holding one: an ASAR is an
    *  archive, so anything a desktop build carries is public. The keys and the
@@ -418,7 +427,7 @@ export interface AppConfig {
     /** Check the default image model once a day with one small render (off by default). */
     dailyProbe?: boolean };
   webSearch?: { provider?: "engine" | "auto" | "flux" | "tavily" | "exa" | "firecrawl" | "off"; tavilyApiKey?: string; exaApiKey?: string; firecrawlApiKey?: string };
-  flux?: { apiKey?: string; memory?: { enabled?: boolean; inject?: boolean; owner?: boolean; spaces?: boolean }; connectionAliases?: import("../electron/flux-credential-policy.mjs").FluxAlias[] };
+  flux?: { apiKey?: string; memory?: { enabled?: boolean; inject?: boolean; owner?: boolean; spaces?: boolean; external?: boolean }; connectionAliases?: import("../electron/flux-credential-policy.mjs").FluxAlias[] };
   sendlane?: { baseUrl?: string };
   decider?: { enabled?: boolean; provider?: "flux"; jobs?: { roomRouting?: boolean }; byoKey?: string; baseUrl?: string };
   profile?: { name?: string; email?: string };
@@ -430,7 +439,7 @@ export interface AppConfig {
   features?: {
     botsSharedAcrossTeams?: boolean;
     learningDefaultOn?: boolean;
-    projectsLead?: boolean; projectsGoals?: boolean; projectsBudgets?: boolean; projectsWorkProfile?: boolean; projectsBoard?: boolean; projectsDigest?: boolean; skillRecorder?: boolean; showToolCalls?: boolean; browser?: boolean; catalogFeaturedOnly?: boolean;
+    projectsLead?: boolean; projectsGoals?: boolean; projectsBudgets?: boolean; projectsWorkProfile?: boolean; projectsBoard?: boolean; projectsDigest?: boolean; skillRecorder?: boolean; fluxDesktopSignin?: boolean; showToolCalls?: boolean; cloudBoxComputers?: boolean; browser?: boolean; catalogFeaturedOnly?: boolean;
     roomsThreadAdmission?: boolean; roomsQueue?: boolean; roomsMentionChain?: boolean; projectsAutonomy?: boolean; projectsAutoWake?: boolean; projectsParallelCards?: boolean;
   };
   /** Named browser sessions any bot can be pointed at. */
@@ -586,6 +595,10 @@ export function skillRecorderEnabled(cfg: AppConfig): boolean {
   return cfg.features?.skillRecorder === true;
 }
 
+export function fluxDesktopSigninEnabled(cfg: AppConfig): boolean {
+  return fluxDesktopSigninOn(cfg.features);
+}
+
 export function showToolCallsEnabled(cfg: AppConfig): boolean {
   return cfg.features?.showToolCalls === true;
 }
@@ -633,6 +646,10 @@ export function loadConfig(): AppConfig {
   if (saved !== undefined) {
     try { cfg = parseStoredConfig(saved as JsonValue); }
     catch { throw new PersistedStateRecoveryError(file, "invalid-shape"); }
+  }
+  if (process.env.MURAGE_CLOUD_ROLE === "home") {
+    assertNoCloudPlaintext(cfg);
+    return withCloudCredentials(cfg);
   }
   // Env wins over the file for every credential. The desktop shell keeps
   // these secrets OS-encrypted and hands them to this process as env at
@@ -682,6 +699,7 @@ export function loadConfig(): AppConfig {
   if (process.env.MURAGE_FLUX_CONNECTION_ALIASES !== undefined) cfg.flux.connectionAliases = appConfigSchema.shape.flux.unwrap().shape.connectionAliases.parse(JSON.parse(process.env.MURAGE_FLUX_CONNECTION_ALIASES));
   // Flux Memory switches: the saved ones; MURAGE_FLUX_MEMORY* env still overrides them.
   setFluxMemoryConfig(cfg.flux.memory);
+  setFluxExternalMemory(cfg.flux.memory?.external);
   return cfg;
 }
 
@@ -693,6 +711,7 @@ export function loadConfig(): AppConfig {
  * file value is authoritative again. Fields absent from the patch are
  * untouched. */
 export function syncCredentialEnv(patch: ConfigWritePatch): void {
+  if (process.env.MURAGE_CLOUD_ROLE === "home") { syncCloudCredentialMemory(patch); return; }
   const secrets: Array<[value: string | undefined, name: string]> = [
     [patch.modelProviders?.bank, "MURAGE_MODEL_PROVIDER_CONNECTIONS"],
     [patch.xai?.key, "XAI_API_KEY"],
@@ -873,9 +892,29 @@ export function stripRoutingEnv(env: Record<string, string | undefined>, platfor
   deleteEnvNames(env, ROUTING_ENV, platform);
 }
 
+/** Name prefixes of the provider namespaces a turn's settings own: every
+ * Anthropic and OpenAI routing, model and credential switch. */
+export const PROVIDER_ENV_PREFIXES = ["ANTHROPIC_", "OPENAI_"] as const;
+
+/** The strip a driver applies to the owner's CAPTURED shell map before its
+ * own names are layered on (in place). The capture can hold names Murage's
+ * own process never had (a Finder launch), so the strip the driver applied
+ * to `process.env` cannot have seen them: every workspace credential, every
+ * vendor key, every routing switch and every ANTHROPIC_* and OPENAI_* name
+ * goes, and the driver writes back the values its turn settings decided. */
+export function stripCapturedProviderEnv(env: Record<string, string | undefined>, platform: NodeJS.Platform = process.platform): void {
+  stripCliProbeCredentialEnv(env, platform);
+  stripRoutingEnv(env, platform);
+  for (const name of Object.keys(env)) {
+    const folded = platform === "win32" ? name.toUpperCase() : name;
+    if (PROVIDER_ENV_PREFIXES.some((prefix) => folded.startsWith(prefix))) delete env[name];
+  }
+}
+
 /** Merge a partial config into ~/.murage/config.json (secrets never
  * echoed back — callers report configured-or-not booleans only). */
 export function saveConfig(patch: ConfigWritePatch): void {
+  if (process.env.MURAGE_CLOUD_ROLE === "home") assertNoCloudPlaintext(patch);
   const p = join(DATA_DIR, "config.json");
   let disk: JsonObject = {};
   // Only a genuinely missing file is a first write. A file that exists but
@@ -954,6 +993,7 @@ export function saveConfig(patch: ConfigWritePatch): void {
     const repaired = withoutFrozenWorkspaceUrl(instances.success ? instances.data.openaiCompat : undefined);
     if (instances.success && repaired) disk.instances = { ...instances.data, openaiCompat: repaired };
   }
+  if (process.env.MURAGE_CLOUD_ROLE === "home") assertNoCloudPlaintext(disk);
   mkdirSync(DATA_DIR, { recursive: true, mode: 0o700 });
   writeFileAtomic(p, JSON.stringify(disk, null, 2), { mode: 0o600 });
 }
@@ -1115,7 +1155,9 @@ function injectedEnvironment(cfg: AppConfig, driver: string): Map<string, string
     environment.set("OPENAI_COMPAT_API_KEY", cfg.openaiCompat.key);
   if (driver === "openai-compat" && cfg.openaiCompat?.url)
     environment.set("OPENAI_COMPAT_URL", cfg.openaiCompat.url);
-  if (driver === "boxAgent" && cfg.box?.token) environment.set("BOX_TOKEN", cfg.box.token);
+  // The Computer engine talks to the provider itself, so on a cloud home it
+  // never gets the account key (hosted computers there go through the relay).
+  if (driver === "boxAgent" && cfg.box?.token && process.env.MURAGE_CLOUD_ROLE !== "home") environment.set("BOX_TOKEN", cfg.box.token);
   if (driver === "opencodeGo" && cfg.opencodeGo?.apiKey) environment.set("OPENCODE_API_KEY", cfg.opencodeGo.apiKey);
   return environment;
 }

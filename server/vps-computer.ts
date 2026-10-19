@@ -25,6 +25,7 @@ import {
 } from "./container-computer.ts";
 import { isValidSshAlias, vpsSshAlias, type AppConfig } from "./config.ts";
 import { augmentedPath } from "./env-path.ts";
+import { ownServerChildEnv } from "./cloud-home/own-server.ts";
 import { awaitCliTreeStopped, spawnCli } from "./procs.ts";
 import { SPAWNED_PROXIES } from "./proxy-paths.ts";
 
@@ -235,9 +236,9 @@ export function defaultRunner(args: string[], options: VpsCommandOptions = {}): 
     // stop docker AND the ssh it launched, not only docker (upstream #1772).
     const child = spawnCli("docker", args, {
       shell: false,
-      env: { ...process.env, PATH: augmentedPath() },
+      env: ownServerChildEnv({ ...process.env, PATH: augmentedPath() }),
       stdio: ["pipe", "pipe", "pipe"],
-    });
+    }, undefined, { serverTool: "docker" });
     const stdout = tailCollector();
     const stderr = tailCollector();
     let settled = false;
@@ -929,7 +930,7 @@ export async function vpsComputerJoin(
   const localPort = await unusedLoopbackPort();
   const child = spawn("ssh", vpsSshTunnelArgs(alias, localPort, connection.privateIp), {
     shell: false,
-    env: { ...process.env, PATH: augmentedPath() },
+    env: ownServerChildEnv({ ...process.env, PATH: augmentedPath() }),
     stdio: ["ignore", "ignore", "pipe"],
     windowsHide: true,
   });

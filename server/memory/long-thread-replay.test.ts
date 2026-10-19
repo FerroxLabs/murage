@@ -19,9 +19,10 @@
 // through the output index, judges each distinct thing a receipt cites
 // once, and a direct turn asks only about the lines it replays. What a
 // revoked or forgotten source produced is still never replayed.
-import { mkdirSync, rmSync } from "node:fs";
+import { mkdirSync } from "node:fs";
 import { beforeEach, expect, it, afterEach } from "vitest";
 import { thawRootSetWritesForTest } from "./replay-lineage.ts";
+import { removeTempDirSync } from "../testing/cleanup.ts";
 // 1.0.2: this file drives the read-time root-set machinery over rows a 1.0.1 file holds; thaw the frozen root-set writes to model them.
 beforeEach(() => thawRootSetWritesForTest(true));
 afterEach(() => thawRootSetWritesForTest(false));
@@ -52,7 +53,7 @@ const roster: MemoryRoster = {
 /** What a direct turn may replay or quote (filterDirectReplay). */
 const directAllowed = (t: string, m: Message[], a: MemoryAccess, s: Set<string>) => filterDirectReplay(LineageAllowance.tool(), t, m, a, s).allowed;
 const empty: MemorySearchBridge = { search: async () => ({ hits: [], vectorRows: 0 }) };
-beforeEach(() => { closeDatabase(); rmSync(DATA_DIR, { recursive: true, force: true }); mkdirSync(DATA_DIR, { recursive: true }); });
+beforeEach(() => { closeDatabase(); removeTempDirSync(DATA_DIR); mkdirSync(DATA_DIR, { recursive: true }); });
 
 function access(botId: string, thread: string): MemoryAccess {
   reconcileMemoryRoster(roster);
@@ -135,7 +136,7 @@ it("a recalled memory the owner forgets is still withheld across the whole long 
   void a;
 }, 240_000);
 
-it("a source forgotten mid-session withholds the replies made from it on, and keeps the ones before", async () => {
+it("a source forgotten mid-session withholds the replies made from it on, and keeps the ones before", { tags: ["nightly"], timeout: 240_000 }, async () => {
   const side = teamMemory("side", "Kessler owns the webinar funnel.");
   const { messages } = await longConversation(110, { 90: handle(side, "side") });
   forgetMemory(ownerMemoryTicket(), { kind: "source", id: "src-side", revision: 1 });
@@ -149,9 +150,9 @@ it("a source forgotten mid-session withholds the replies made from it on, and ke
   const kept = directAllowed("dax-direct", messages, access("dax", "dax-direct"), new Set()).map(m => m.id);
   for (let turn = 90; turn <= 110; turn++) expect(kept).not.toContain(`reply-${turn}`);
   expect(kept).toContain("ask-110");
-}, 240_000);
+});
 
-it("a thread past 2048 receipts replays its recent lines, and one receipt among them whose memory is gone still withholds its reply", async () => {
+it("a thread past 2048 receipts replays its recent lines, and one receipt among them whose memory is gone still withholds its reply", { tags: ["nightly"], timeout: 240_000 }, async () => {
   const { a, messages } = await longConversation(4);
   // 2,400 more turns of a transcript-replay engine (no native session), each
   // a frame and a lookup receipt citing the same memories: 4,800 receipts
@@ -175,7 +176,7 @@ it("a thread past 2048 receipts replays its recent lines, and one receipt among 
   expect(kept.map(m => m.id)).not.toContain("reply-2400");
   expect(kept.map(m => m.id)).toContain("reply-2401");
   expect(kept.map(m => m.id)).toContain("ask-2400");
-}, 240_000);
+});
 
 it("a delegated reply copied in from Kessler follows its original in a long chat", async () => {
   // a team memory both bots may read (a copy is held to its reader's access)

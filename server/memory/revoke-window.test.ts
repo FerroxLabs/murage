@@ -7,7 +7,7 @@
 // every slice stay flat from small to large files (revisions, versions, sources, records, receipts, evidence rows), and nothing
 // blocks the main loop for more than 50 ms. Then the smaller promises: stances parsed once, copies found by their origin, the
 // start-up VACUUM waits for a job, a restore merge carries the deny rows. Every test runs on the build host (hz-test.sh), never on a Mac.
-import { mkdirSync, rmSync } from "node:fs";
+import { mkdirSync } from "node:fs";
 import { join } from "node:path";
 import { monitorEventLoopDelay } from "node:perf_hooks";
 import { DatabaseSync } from "node:sqlite";
@@ -34,6 +34,7 @@ import { applyForgetTombstones, applyMemoryTombstones, mergeDestinationMemoryDel
 import { revokeRecordDisclosures } from "./revocation.ts";
 import { finishLineageStorageAtStartup } from "./root-set-compaction.ts";
 import { migrateMemorySchema } from "./schema.ts";
+import { removeTempDirSync } from "../testing/cleanup.ts";
 // 1.0.2: this test models a 1.0.1 file (legacy root-set rows) for the read-time judge, which still decides legacy data until S6.
 thawBeforeEach(() => thawRootSetWritesForTest(true));
 thawAfterEach(() => thawRootSetWritesForTest(false));
@@ -41,7 +42,7 @@ thawAfterEach(() => thawRootSetWritesForTest(false));
 const inline = { ...INLINE_REVOCATION };
 beforeEach(() => {
   vi.spyOn(console, "warn").mockImplementation(() => {}); vi.spyOn(console, "log").mockImplementation(() => {});
-  closeDatabase(); rmSync(DATA_DIR, { recursive: true, force: true }); mkdirSync(DATA_DIR, { recursive: true });
+  closeDatabase(); removeTempDirSync(DATA_DIR); mkdirSync(DATA_DIR, { recursive: true });
   resetMemoryRevocationStats(); resetPipStanceParses();
 });
 afterEach(() => { stopMemoryRevocation(); Object.assign(INLINE_REVOCATION, inline); vi.restoreAllMocks(); });
@@ -206,7 +207,7 @@ it("T2: a reply written after the forget, by a turn that began after it, is not 
 
 // ---- T4: the commit is flat (statements and time do not follow revisions, versions, sources or records) ----
 function timed(run: () => void): number { const t0 = performance.now(); run(); return performance.now() - t0; }
-it("T4: forgetting a source with 1 or 100k revisions, and a record with 1 or 50k versions, writes the same few rows in its commit", () => {
+it("T4: forgetting a source with 1 or 100k revisions, and a record with 1 or 50k versions, writes the same few rows in its commit", { tags: ["nightly"], timeout: 600_000 }, () => {
   const { scope } = live();
   const db = database();
   const make = (id: string, revisions: number) => {
@@ -241,7 +242,7 @@ it("T4: forgetting a source with 1 or 100k revisions, and a record with 1 or 50k
   expect(drained.maxMs, drained.slowest).toBeLessThan(30); expect(drained.maxBytes).toBeLessThanOrEqual(1024);
   expect(Number(db.prepare("SELECT count(*) AS n FROM memory_tombstones WHERE target_type='import'").get()!.n)).toBe(1 + 100_000 + 1 + 50_000);
   expect(Number(db.prepare("SELECT count(*) AS n FROM memory_tombstones WHERE reason='forgotten-supporting-source' AND target_id='src-large-r'").get()!.n)).toBe(50_000);
-}, 600_000);
+});
 
 it("T4: deleting a conversation of 1k or 100k sources, or a bot of 1k or 50k records, is one deny row in a flat commit", () => {
   // an in-memory database (as T6): the commit and the slices measured are this lane's work, not the disk's

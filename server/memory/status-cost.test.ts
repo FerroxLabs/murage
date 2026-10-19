@@ -3,7 +3,7 @@
 //
 // GET /api/memory/status costs the same at any history size: one capped count per state (not per scope), a body that does not grow with the number of
 // conversations. Pinned by plan, rows visited and bytes, never by time.
-import { mkdirSync, rmSync } from "node:fs";
+import { mkdirSync } from "node:fs";
 import { beforeEach, describe, expect, it } from "vitest";
 import { DATA_DIR } from "../config.ts";
 import { closeDatabase, database } from "../database.ts";
@@ -11,16 +11,17 @@ import { MEMORY_COUNT_CAP } from "./forget.ts";
 import { ownerMemoryTicket } from "./authority.ts";
 import { reconcileMemoryRoster } from "./policy.ts";
 import { MEMORY_SCOPE_LABELS_MAX, MEMORY_STATE_COUNT_SQL, MEMORY_STATUS_SCOPE_LIMIT, memoryOwnerRoute, memoryOwnerStatus } from "./settings.ts";
+import { removeTempDirSync } from "../testing/cleanup.ts";
 
 const roster = { bots: [{ id: "a", threadId: "thread-a" }], groups: [] };
-beforeEach(() => { closeDatabase(); rmSync(DATA_DIR, { recursive: true, force: true }); mkdirSync(DATA_DIR, { recursive: true }); reconcileMemoryRoster(roster); });
+beforeEach(() => { closeDatabase(); removeTempDirSync(DATA_DIR); mkdirSync(DATA_DIR, { recursive: true }); reconcileMemoryRoster(roster); });
 
 function fill(scopes: number, perScope: number, state = "active") {
   const db = database();
   db.exec("BEGIN");
   db.prepare(`WITH RECURSIVE c(v) AS (VALUES(1) UNION ALL SELECT v+1 FROM c WHERE v<?) INSERT INTO memory_scopes SELECT 'fx-'||v,'conversation','fx-thread-'||v,'[]',0 FROM c`).run(scopes);
   db.prepare(`WITH RECURSIVE s(a) AS (VALUES(1) UNION ALL SELECT a+1 FROM s WHERE a<?), r(b) AS (VALUES(1) UNION ALL SELECT b+1 FROM r WHERE b<?)
-    INSERT INTO memory_records SELECT 'rec-'||a||'-'||b,1,'fx-'||a,'fact','text','owner',?,0,1,NULL,NULL,1 FROM s, r`).run(scopes, perScope, state);
+    INSERT INTO memory_records SELECT 'rec-'||a||'-'||b,1,'fx-'||a,'fact','text','owner',?,0,1,NULL,NULL,a*100000+b FROM s, r`).run(scopes, perScope, state);
   db.exec("COMMIT");
 }
 const status = () => memoryOwnerStatus(ownerMemoryTicket(), roster) as unknown as Record<string, unknown> & { records: Record<string, number>; recordsMore: Record<string, boolean>; scopes: unknown[]; scopesOmitted: number };
@@ -49,7 +50,7 @@ describe("the capped count per state", () => {
     fill(3, 1);
     const db = database();
     db.prepare("INSERT INTO memory_scopes VALUES('one','bot','one','[]',0)").run();
-    const add = (from: number, to: number) => db.prepare(`WITH RECURSIVE c(v) AS (VALUES(?) UNION ALL SELECT v+1 FROM c WHERE v<?) INSERT INTO memory_records SELECT 'b-'||v,1,'one','fact','t','owner','archived',0,1,NULL,NULL,1 FROM c`).run(from, to);
+    const add = (from: number, to: number) => db.prepare(`WITH RECURSIVE c(v) AS (VALUES(?) UNION ALL SELECT v+1 FROM c WHERE v<?) INSERT INTO memory_records SELECT 'b-'||v,1,'one','fact','t','owner','archived',0,1,NULL,NULL,v FROM c`).run(from, to);
     add(1, MEMORY_COUNT_CAP);
     expect(status().records.archived).toBe(MEMORY_COUNT_CAP);
     expect(status().recordsMore.archived).toBeUndefined();
@@ -74,7 +75,7 @@ describe("the body", () => {
   it("the body is the same size with 10x the conversations", () => {
     fill(MEMORY_STATUS_SCOPE_LIMIT + 50, 1);
     const small = JSON.stringify(status()).length;
-    closeDatabase(); rmSync(DATA_DIR, { recursive: true, force: true }); mkdirSync(DATA_DIR, { recursive: true }); reconcileMemoryRoster(roster);
+    closeDatabase(); removeTempDirSync(DATA_DIR); mkdirSync(DATA_DIR, { recursive: true }); reconcileMemoryRoster(roster);
     fill((MEMORY_STATUS_SCOPE_LIMIT + 50) * 10, 1);
     const big = JSON.stringify(status()).length;
     expect(Math.abs(big - small)).toBeLessThan(64);

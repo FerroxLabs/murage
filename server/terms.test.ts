@@ -4,16 +4,17 @@
 // Terms acceptance record: the version, time and app version are written to
 // the data folder, survive a restart (a fresh read of the same folder), and a
 // newer TERMS_VERSION asks again. Pure file work in a temp folder.
-import { mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { mkdtempSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { TERMS_VERSION } from "../shared/terms.ts";
 import { handleTermsApi, readTermsRecords, recordTermsAcceptance, termsStatus } from "./terms.ts";
+import { removeTempDirSync } from "./testing/cleanup.ts";
 
 let dir: string;
 beforeEach(() => { dir = mkdtempSync(join(tmpdir(), "murage-terms-")); });
-afterEach(() => { rmSync(dir, { recursive: true, force: true }); });
+afterEach(() => { removeTempDirSync(dir); });
 
 const post = (body: unknown, env: NodeJS.ProcessEnv = {}) => handleTermsApi({ method: "POST", path: "/api/terms/accept", readBody: async () => body }, dir, env);
 const get = (env: NodeJS.ProcessEnv = {}) => handleTermsApi({ method: "GET", path: "/api/terms", readBody: async () => ({}) }, dir, env);

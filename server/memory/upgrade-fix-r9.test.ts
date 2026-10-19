@@ -6,7 +6,7 @@
 // chained set; a proof in progress is never evicted for room; a proof slice counts nested work, hands back within its time and runs only when no owner
 // turn waits; no background slice reads a history-sized list in one go; the background upgrade waits while the I/O budget holds it back; and a file a
 // preview wrote with the proof table restores, upgrades and downgrades.
-import { mkdirSync, mkdtempSync, rmSync } from "node:fs";
+import { mkdirSync, mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
@@ -25,8 +25,9 @@ import { UPGRADE_DERIVED_TABLES, legacyReplyRootsSteps, rebuildOutputIndexSlice 
 import { stepIntegrityPass } from "./integrity-pass.ts";
 import { beginIntegrityPass, integrityHoldOf, readIntegrityPass } from "./integrity-state.ts";
 import { startBackgroundUpgradeWork } from "./upgrade-background.ts";
+import { removeTempDirSync } from "../testing/cleanup.ts";
 
-const fresh = () => { closeDatabase(); forgetKeptLineageForTest(); rmSync(DATA_DIR, { recursive: true, force: true }); mkdirSync(DATA_DIR, { recursive: true }); };
+const fresh = () => { closeDatabase(); forgetKeptLineageForTest(); removeTempDirSync(DATA_DIR); mkdirSync(DATA_DIR, { recursive: true }); };
 beforeEach(fresh);
 afterEach(() => { setRootSetCeilingForTest(null); setVerdictLimitForTest(null); });
 
@@ -288,7 +289,7 @@ it("r9 (Astra r8 #5): an archive of a preview file with the proof table (either 
     for (const shape of ["early", "late"] as const) {
       const db = new DatabaseSync(join(scratch, `${shape}.db`));
       initializeMessageTables(db);
-      db.prepare("INSERT INTO messages VALUES (?,?,?,?,?,?,?)").run("t", "m", 1, "user", "text", "hi", JSON.stringify({ id: "m", at: 1, role: "user", kind: "text", text: "hi" }));
+      db.prepare("INSERT INTO messages(thread_id,id,at,role,kind,text,json) VALUES (?,?,?,?,?,?,?)").run("t", "m", 1, "user", "text", "hi", JSON.stringify({ id: "m", at: 1, role: "user", kind: "text", text: "hi" }));
       db.exec("INSERT INTO thread_state VALUES ('t','m')");
       if (shape === "early") {
         db.exec(`CREATE TABLE ${LEGACY_ROOT_SET_PROOFS_TABLE}(\n  set_id TEXT PRIMARY KEY NOT NULL, size INTEGER NOT NULL, lineage_stamp TEXT NOT NULL, cursor INTEGER NOT NULL) WITHOUT ROWID`);
@@ -301,6 +302,6 @@ it("r9 (Astra r8 #5): an archive of a preview file with the proof table (either 
       expect(inspectInstallationDatabase(db)).toMatchObject({ messages: 1, threads: 1 });
       db.close();
     }
-  } finally { rmSync(scratch, { recursive: true, force: true }); }
+  } finally { removeTempDirSync(scratch); }
   expect(UPGRADE_DERIVED_TABLES as readonly string[]).toContain(LEGACY_ROOT_SET_PROOFS_TABLE);
 });

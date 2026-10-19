@@ -1,20 +1,23 @@
 // The computer's half of a full fleet. A phone told "too many devices" can
 // do nothing about it; the pairing screen on the computer has to offer the
 // fix, in the order that makes the right choice obvious.
-import { rmSync } from "node:fs";
+
 import type { Server } from "node:http";
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { createControlServer } from "../src/control.ts";
 import { DeviceRegistry, MAX_DEVICES } from "../src/devices.ts";
 import { DATA_DIR } from "../src/state.ts";
+import { removeTempDirSync } from "../../server/testing/cleanup.ts";
 
+/** The control page's per-launch token, as the desktop app holds it. */
+const CONTROL_TOKEN = "t".repeat(43);
 let control: Server;
 let port = 0;
 let devices: DeviceRegistry;
 
 const ask = async (method: string, path: string): Promise<{ status: number; body: any }> => {
-  const res = await fetch(`http://127.0.0.1:${port}${path}`, { method });
+  const res = await fetch(`http://127.0.0.1:${port}${path}`, { method, headers: { "x-murage-control-token": CONTROL_TOKEN } });
   const text = await res.text();
   try {
     return { status: res.status, body: JSON.parse(text) };
@@ -28,6 +31,7 @@ beforeAll(async () => {
     get devices() {
       return devices;
     },
+    controlToken: () => CONTROL_TOKEN,
     companionPort: 8810,
     discovery: () => ({ advertising: false, name: "Test computer" }),
   } as Parameters<typeof createControlServer>[0]);
@@ -41,7 +45,7 @@ afterAll(async () => {
 });
 
 beforeEach(() => {
-  rmSync(DATA_DIR, { recursive: true, force: true });
+  removeTempDirSync(DATA_DIR);
   devices = new DeviceRegistry();
 });
 

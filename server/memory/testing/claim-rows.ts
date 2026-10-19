@@ -45,6 +45,9 @@ const FORMULAS = new Map<string, Formula>([
   // a chunk of the index build or of new rows: every rowid of the range and a source probe for each (the index's own reading,
   // also counted by memoryClaimIndex.stats.examined)
   [CLAIM_INDEX_SQL.scan, (_db, p) => Number(BigInt(p[1] as bigint) - BigInt(p[0] as bigint)) * 2],
+  // a page of the open walk (the first build, a reconcile step): per index row returned, the job row and the source probe, +1 to see the end
+  [CLAIM_INDEX_SQL.openFirst, (_db, _p, r) => returned(r) * 3 + 1], [CLAIM_INDEX_SQL.openTied, (_db, _p, r) => returned(r) * 3 + 1],
+  [CLAIM_INDEX_SQL.openLater, (_db, _p, r) => returned(r) * 3 + 1],
   // the settle sweep's two seeks: rows returned, +1
   [SETTLE_SWEEP_SQL.tied, (_db, _p, r) => returned(r) + 1], [SETTLE_SWEEP_SQL.later, (_db, _p, r) => returned(r) + 1],
   // settles: per listed rowid, the rowid probe and the source probe (3 is a ceiling for the one-term categories); `denied` adds
@@ -52,8 +55,8 @@ const FORMULAS = new Map<string, Formula>([
   ...Object.entries(SETTLE_SQL).map(([category, sql]) => [`${sql} RETURNING rowid AS rid`, (db: DatabaseSync, p: unknown[]) => ridCount(db, p[0]) * (category === "denied" ? 5 : 3) + 1] as [string, Formula]),
 ]);
 
-/** The two whose count is the rows they returned. */
-const USES_RESULT = new Set<string>([SETTLE_SWEEP_SQL.tied, SETTLE_SWEEP_SQL.later]);
+/** The ones whose count follows the rows they returned. */
+const USES_RESULT = new Set<string>([SETTLE_SWEEP_SQL.tied, SETTLE_SWEEP_SQL.later, CLAIM_INDEX_SQL.openFirst, CLAIM_INDEX_SQL.openTied, CLAIM_INDEX_SQL.openLater]);
 
 export interface Measured<T> { result: T; sqls: string[]; params: unknown[][]; rows: number[]; returned: number[]; total: number; unknown: string[]; checks: number }
 

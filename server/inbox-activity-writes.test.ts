@@ -2,7 +2,7 @@
 // one used to empty the Inbox memo, so the polls that follow rescanned every
 // bot message of every thread (196 ms per scan on the real store, 76 a
 // minute). Only a line the Inbox projection can read may move its version.
-import { mkdirSync, rmSync } from "node:fs";
+import { mkdirSync } from "node:fs";
 import { beforeEach, expect, it } from "vitest";
 import { DATA_DIR } from "./config.ts";
 import { closeDatabase, database } from "./database.ts";
@@ -10,10 +10,11 @@ import { insertMessage } from "./message-db.ts";
 import { messagesVersion } from "./inbox-version.ts";
 import { listInboxCached, owedThreadsCached, type InboxAccess } from "./inbox.ts";
 import type { Message } from "./store.ts";
+import { removeTempDirSync } from "./testing/cleanup.ts";
 
 const access: InboxAccess = { owner: true, threads: [{ threadId: "t", label: "Bot" }] };
 const msg = (id: string, extra: Record<string, unknown>): Message => ({ id, at: 1, role: "bot", kind: "text", text: "x", ...extra }) as Message;
-beforeEach(() => { closeDatabase(); rmSync(DATA_DIR, { recursive: true, force: true }); mkdirSync(DATA_DIR, { recursive: true }); });
+beforeEach(() => { closeDatabase(); removeTempDirSync(DATA_DIR); mkdirSync(DATA_DIR, { recursive: true }); });
 
 /** Counts the RUNS (get, all, run) of statements whose SQL contains `needle`,
  * from the moment of the call on: a statement held and reused still counts. */

@@ -1,8 +1,9 @@
-import { existsSync, mkdtempSync, mkdirSync, readFileSync, rmSync, symlinkSync } from "node:fs";
+import { existsSync, mkdtempSync, mkdirSync, readFileSync, symlinkSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { expect, it } from "vitest";
 import { admissionComputerClaims, TurnResources, unusedComputerClaims, workspaceResource } from "./turn-resources.ts";
+import { removeTempDirSync } from "./testing/cleanup.ts";
 
 const a = { threadId: "a", generation: "1" }, b = { threadId: "b", generation: "2" };
 it("holds shared resources for one generation and admits independent resources", () => {
@@ -38,7 +39,7 @@ it("serializes ancestor and symlink workspaces while allowing siblings", () => {
     expect(leases.claim(workspaceResource(root), b)).toBe(false);
     expect(leases.claim(workspaceResource(join(root, "sibling")), b)).toBe(true);
     if (existsSync(join(root, "project"))) expect(workspaceResource(join(root, "project"))).toBe(workspaceResource(join(root, "Project")));
-  } finally { rmSync(root, { recursive: true, force: true }); }
+  } finally { removeTempDirSync(root); }
 });
 it("reports what a generation holds and who blocks a request, for release-then-wait", () => {
   const leases = new TurnResources();

@@ -11,10 +11,11 @@ import { afterEach, describe, expect, it } from "vitest";
 
 import { buildEngineExclusion, msvcCommand } from "./build-engine-exclusion.mjs";
 import { validateEngineExclusionResource } from "./engine-exclusion-resource.mjs";
+import { removeTempDirSync } from "../server/testing/cleanup.ts";
 
 const directories = [];
 const scratch = () => { const dir = fs.mkdtempSync(path.join(os.tmpdir(), "murage-excl-build-")); directories.push(dir); return dir; };
-afterEach(() => { for (const dir of directories.splice(0)) fs.rmSync(dir, { recursive: true, force: true }); });
+afterEach(() => { for (const dir of directories.splice(0)) removeTempDirSync(dir); });
 
 function headers() {
   const dir = scratch();

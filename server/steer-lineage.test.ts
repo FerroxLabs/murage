@@ -5,13 +5,14 @@
 // roots must still be on the running turn and its engine session, so the next
 // write's session check resets the session. Through the real Fuigo driver and
 // the fake ACP CLI, whose interjection echo (the acknowledgement) is delayed.
-import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { afterEach as thawAfterEach, beforeEach as thawBeforeEach } from "vitest";
 import { thawRootSetWritesForTest } from "./memory/replay-lineage.ts";
+import { removeTempDirSync } from "./testing/cleanup.ts";
 // 1.0.2: this test models a 1.0.1 file (legacy root-set rows) for the read-time judge, which still decides legacy data until S6.
 thawBeforeEach(() => thawRootSetWritesForTest(true));
 thawAfterEach(() => thawRootSetWritesForTest(false));
@@ -98,7 +99,7 @@ const savedAck = process.env.MURAGE_FUIGO_INTERJECT_ACK_MS;
 
 beforeEach(() => {
   closeDatabase();
-  rmSync(DATA_DIR, { recursive: true, force: true });
+  removeTempDirSync(DATA_DIR);
   mkdirSync(DATA_DIR, { recursive: true });
   ensureDirs();
   setMemoryMode("active");

@@ -5,7 +5,7 @@
 // Heading and Task list come from it, the bubble menu bolds a selection, a
 // link goes in through the inline field (no browser prompt), and Save hands
 // over the Markdown the editor wrote. Dark and light screenshots.
-import { test, expect, type Page } from "@playwright/test";
+import { test, expect, type Page } from "./page-error-guard";
 import { createServer, type ViteDevServer } from "vite";
 import tailwindcss from "@tailwindcss/vite";
 import { fileURLToPath } from "node:url";
