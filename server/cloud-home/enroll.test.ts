@@ -2,7 +2,7 @@
 import { randomBytes } from "node:crypto";
 import { spawn } from "node:child_process";
 import { createServer, type Server } from "node:http";
-import { chmodSync, existsSync, mkdtempSync, mkdirSync, readFileSync, rmSync, statSync, symlinkSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdtempSync, mkdirSync, readFileSync, rmSync, statSync, symlinkSync, writeFileSync, realpathSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -43,7 +43,7 @@ let unwrapOverride: Record<string, unknown>, enrollExtra: Record<string, unknown
 let pendingCount: number, enrolled: boolean, enrollFailure: "401" | "403" | "unknown409" | "lost" | "duplicate409" | undefined;
 let transient: { status: number; count: number } | undefined;
 beforeEach(async () => {
-  root = mkdtempSync(join(tmpdir(), "murage-enroll-")); state = join(root, "state"); config = join(root, "config"); userData = join(root, "user-data.txt");
+  root = realpathSync(mkdtempSync(join(tmpdir(), "murage-enroll-"))); state = join(root, "state"); config = join(root, "config"); userData = join(root, "user-data.txt");
   credential = randomBytes(32).toString("base64");
   mkdirSync(config, { mode: 0o700 }); requests = []; stale = false; hostile = false; unwrapOverride = {}; enrollExtra = {};
   pendingCount = 0; enrolled = false; enrollFailure = undefined; transient = undefined;

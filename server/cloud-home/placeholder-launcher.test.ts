@@ -60,7 +60,8 @@ describe("fixture 1: MASK_NAMES is the union and every engine masks it", () => {
   });
 });
 
-describe("fixture 2: ensure_placeholder", () => {
+// ensure_placeholder sets the immutable flag with the Linux FS_IOC_SETFLAGS ioctl (ENOTTY elsewhere)
+describe.skipIf(process.platform !== "linux")("fixture 2: ensure_placeholder", () => {
   it("makes an absent name a 0555 directory of the launcher's uid with the flag requested once", () => {
     const out = ensure(`${rig.workspaces}/ws`, ".claude");
     expect(out.error).toBeUndefined();

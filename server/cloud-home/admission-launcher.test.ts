@@ -248,7 +248,11 @@ describe("bot-state-release erases (r5 fixture 9) and bot-state-query reports na
     mkdirSync(join(rig.root, "engines", "codex", "bots", "beta"), { recursive: true });
     expect(result(`
 cleared=[]
-def clear(fd): cleared.append(os.readlink("/proc/self/fd/%d"%fd)[len(root):])
+def fdpath(fd):
+    # /proc/self/fd on Linux; macOS has no procfs and names an open file with fcntl F_GETPATH
+    if os.path.isdir("/proc/self/fd"): return os.readlink("/proc/self/fd/%d"%fd)
+    import fcntl; return fcntl.fcntl(fd, fcntl.F_GETPATH, bytes(1024)).split(b"\\0", 1)[0].decode()
+def clear(fd): cleared.append(fdpath(fd)[len(root):])
 out.append(release("alpha", clear=clear))
 out.append(sorted(cleared))
 out.append(sorted(os.listdir(m.WORKSPACE_ROOT)))
