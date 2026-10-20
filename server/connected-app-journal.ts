@@ -103,6 +103,12 @@ export class SqliteOperationJournal implements OperationJournal {
     return db;
   }
 
+  /** Lets go of the file (the next call opens it again). */
+  close(): void {
+    try { this.db?.close(); } catch { /* already closed */ }
+    this.db = null;
+  }
+
   load(): JournalRecord[] {
     const rows = this.run((db) => db.prepare("SELECT * FROM connected_app_ops ORDER BY started_at").all()) as unknown as Row[];
     return rows.map(recordOfRow);
