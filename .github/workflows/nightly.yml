@@ -52,6 +52,17 @@ jobs:
         run: pnpm exec vitest run --shard=${{ matrix.shard }}/3 --tags-filter=nightly
         env:
           MURAGE_SKIP_REAL_ELECTRON_BROWSER_FIXTURE: ${{ matrix.os == 'windows-latest' && '1' || '0' }}
+      - name: Run the whole-file scale tests
+        # Files the tier review moved to nightly whole (ci/extended-tests.txt, note "nightly"); ci.yml runs none of
+        # them. Shard 1 of each OS carries them.
+        if: ${{ !cancelled() && matrix.shard == 1 }}
+        shell: bash
+        run: |
+          node scripts/ci-test-tiers.mjs list --tier nightly > "$RUNNER_TEMP/nightly-files.txt"
+          args=(); while IFS= read -r arg; do args+=("${arg%$'\r'}"); done < "$RUNNER_TEMP/nightly-files.txt"
+          if [ "${#args[@]}" -gt 0 ]; then node node_modules/vitest/vitest.mjs run "${args[@]}"; fi
+        env:
+          MURAGE_SKIP_REAL_ELECTRON_BROWSER_FIXTURE: ${{ matrix.os == 'windows-latest' && '1' || '0' }}
 
   nightly:
     # One result for the release gate and for branch rules: success only if every job passed.
