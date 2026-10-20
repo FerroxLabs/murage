@@ -86,7 +86,9 @@ it("through a held writer lock a direct turn's whole reply and terminal state pe
   expect(rows.map(r => r.text)).toEqual(["part 0", ...Array.from({ length: 8 }, (_, i) => `part ${i + 1}`), "done"]);
   expect(rows.at(-1)).toMatchObject({ kind: "terminal" });
   expect(t.directRuns.any()).toBe(false); // terminal cleanup ran
-  expect(Number(histogram.max) / 1e6).toBeLessThan(50);
+  // the loop never sat in a lock wait: one would cost the 1 s owner busy budget. 50 ms was below a loaded
+  // macOS runner's scheduling noise (193 ms seen there); 500 ms still catches a budgeted owner wait.
+  expect(Number(histogram.max) / 1e6).toBeLessThan(500);
 }, 40_000);
 
 it("a delivery that meets a locked database (another process, no gate) is retried and delivered once, in order, never dropped", async () => {

@@ -14,6 +14,7 @@ import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { afterEach, beforeEach, expect, it } from "vitest";
 import { removeTempDirSync } from "../testing/cleanup.ts";
+import { fixtureEngineBytes } from "./engine-launch-fixture.ts";
 
 const launcher = fileURLToPath(new URL("../../deploy/cloud-home/murage-turn-launch.py", import.meta.url));
 const buildImage = fileURLToPath(new URL("../../deploy/cloud-home/build-image.sh", import.meta.url));
@@ -38,7 +39,7 @@ let root: string, engineRoot: string, home: string, command: string, manifest: s
 beforeEach(() => {
   root = mkdtempSync(join(process.cwd(), ".murage-opencode-npm-")); engineRoot = join(root, "engine-homes"); home = join(engineRoot, "opencodeGo");
   mkdirSync(home, { recursive: true }); mkdirSync(join(root, "bin"));
-  command = join(root, "bin", "fixture-opencode"); const bytes = readFileSync("/usr/bin/true");
+  command = join(root, "bin", "fixture-opencode"); const bytes = fixtureEngineBytes();
   writeFileSync(command, bytes, { mode: 0o755 });
   manifest = join(root, "engine-manifest.json");
   writeFileSync(manifest, JSON.stringify({ opencodeGo: [{ path: command, sha256: createHash("sha256").update(bytes).digest("hex") }] }), { mode: 0o644 });

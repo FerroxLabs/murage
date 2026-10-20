@@ -19,22 +19,29 @@ export function eventActionId(kind: "create" | "handoff", identity: readonly unk
 
 /** What a hand-off came to, whichever route wrote it (ask, delegate, shared ask) and whichever route reads it: one type, one decoder.
  * `answer:<channel>:<message>[:<request>]` (the request is absent on a receipt written before it was bound), `delegation:<task>` (waiting in line),
- * `timeout:<task>` (a synchronous ask that ran past its wait) and `ended:<stopped|failed|error|interrupted>` (it ended without an answer).
+ * `timeout:<task>` (a synchronous ask that ran past its wait), `ended:<stopped|failed|error|interrupted>` (it ended without an answer) and
+ * `noanswer:<checking|withheld>` (the asking bot's final answer was that line: replayed as the line, the originals never read again).
  * Anything else is not a hand-off outcome. */
 export type HandoffEndReason = "stopped" | "failed" | "error" | "interrupted";
 export type HandoffOutcome =
   | { kind: "queued"; taskId: string }
   | { kind: "timeout"; taskId: string }
   | { kind: "answer"; threadId: string; messageId: string; requestId?: string }
+  | { kind: "no_answer"; why: "checking" | "withheld" }
   | { kind: "ended"; reason: HandoffEndReason };
 export function decodeHandoffReceipt(receipt: string): HandoffOutcome | undefined {
   if (receipt.startsWith("delegation:") && receipt.length > "delegation:".length) return { kind: "queued", taskId: receipt.slice("delegation:".length) };
   if (receipt.startsWith("timeout:") && receipt.length > "timeout:".length) return { kind: "timeout", taskId: receipt.slice("timeout:".length) };
   const ended = /^ended:(stopped|failed|error|interrupted)$/.exec(receipt);
   if (ended) return { kind: "ended", reason: ended[1] as HandoffEndReason };
+  const none = /^noanswer:(checking|withheld)$/.exec(receipt);
+  if (none) return { kind: "no_answer", why: none[1] as "checking" | "withheld" };
   const answer = /^answer:([^:]+):([^:]+)(?::([^:]+))?$/.exec(receipt);
   return answer ? { kind: "answer", threadId: answer[1], messageId: answer[2], ...(answer[3] ? { requestId: answer[3] } : {}) } : undefined;
 }
+
+/** The event receipt of a hand-off whose answer to the asking bot was the no-answer (checking) or withheld line (NOHOLD-DELEGATION.md). */
+export function noAnswerReceipt(why: "checking" | "withheld"): string { return `noanswer:${why}`; }
 
 export interface EventLimitContext {
   routines: Pick<RoutineManager, "admitEventActionDetailed" | "raiseEventLimit" | "extendEventBudget" | "declineEventKind" | "eventKindDeclined">;

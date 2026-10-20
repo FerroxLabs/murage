@@ -37,6 +37,11 @@ export function formatHandoff(outcome: HandoffOutcome, via: HandoffVia, who: Han
       const line = status("ended_in_run", { name: targetName, reason: outcome.reason });
       return via === "ask" ? reply({ botName: targetName, text: line }) : reply({ message: line });
     }
+    case "no_answer": {
+      // final for the request: the same line again, whatever the originals read now (NOHOLD-DELEGATION.md)
+      const line = status("answered_in_run", { name: targetName, answer: status(outcome.why === "checking" ? "no_answer_checking" : "withheld") });
+      return via === "ask" ? reply({ botName: targetName, text: line }) : reply({ message: line });
+    }
     case "answer": {
       const answer = who.answerText(outcome);
       if (answer === undefined) return undefined;

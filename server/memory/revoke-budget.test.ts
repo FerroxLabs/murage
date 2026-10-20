@@ -15,6 +15,7 @@ import { beginRevokeMeasure, budgetedMarkerSlice, bytesPerChange, endRevokeMeasu
 import { instrumentDatabase } from "../io-budget.ts";
 import { headFlipCost, MARKER_STEP_RESERVE } from "./revoke-marker.ts";
 import { changes, flipAll, num, storm } from "./testing/revoke-storm-fixture.ts";
+import { windowsNightly } from "../testing/windows-hosted.ts";
 
 type Fx = ReturnType<typeof storm>;
 /** Receipt `bundle` cites `n` records none of which was ever interned (as revoke-storm-holes.test.ts does). */
@@ -27,7 +28,7 @@ const MB20 = 20 * 1024 * 1024;
 afterEach(() => { setRevokeBudgetClock(); resetRevokeWriteBudget(); REVOKE_WRITE_BUDGET.bytesPerMinute = MB20; stopMemoryRevocation(); resetMemoryRevocationStats(); });
 
 describe("M3: the marker stays inside its write budget and yields to foreground turns", () => {
-  it("never writes more than the budget in a minute; the rest waits for the next minute and finishes", () => {
+  it("never writes more than the budget in a minute; the rest waits for the next minute and finishes", windowsNightly(), () => {
     const fx = storm(122);
     let now = 1_000_000;
     setRevokeBudgetClock(() => now);
@@ -210,7 +211,7 @@ describe("S2: C is measured only on the runner's own commits, seeded at the ceil
     } finally { fx.close(); }
   });
 
-  it("S6: reads the WAL index through one descriptor kept for the connection: no close ever touches the -shm file during a drain", () => {
+  it("S6: reads the WAL index through one descriptor kept for the connection: no close ever touches the -shm file during a drain", windowsNightly(), () => {
     // closing ANY descriptor on the -shm drops every POSIX lock this process holds on it, SQLite's included: the memory worker could then
     // reset the shm under SQLite's live mapping (SIGBUS, 1.0.3 rehearsal). A per-slice open, read and close fails this test.
     const fx = storm(400);
@@ -285,7 +286,7 @@ function windows(charges: Charge[]): Array<{ bytes: number; excess: number }> {
 }
 
 describe("S3, S4: a slice is admitted and sized at C, charged whole at its call, and no window of charges exceeds the budget by more than one slice's excess", () => {
-  it("every 60 s window of charges is at or under the budget plus its most recent slice's excess, at the seed and with C measured; the measured drain needs fewer minutes", () => {
+  it("every 60 s window of charges is at or under the budget plus its most recent slice's excess, at the seed and with C measured; the measured drain needs fewer minutes", windowsNightly(), () => {
     const results: Record<string, { minutes: number; peak: number; slices: number }> = {};
     for (const wal of [false, true]) {
       const run = drainCharges(400, wal, 1800 * 4096);
@@ -303,7 +304,7 @@ describe("S3, S4: a slice is admitted and sized at C, charged whole at its call,
     console.log(`S4 seed: ${results.seed!.slices} slices in ${results.seed!.minutes.toFixed(1)} min, peak ${(results.seed!.peak / 1048576).toFixed(2)} MB; measured: ${results.measured!.slices} slices in ${results.measured!.minutes.toFixed(1)} min, peak ${(results.measured!.peak / 1048576).toFixed(2)} MB`);
   });
 
-  it("S3: a slice is admitted only with room for its least rows at C, and never changes more rows than the room holds at C", () => {
+  it("S3: a slice is admitted only with room for its least rows at C, and never changes more rows than the room holds at C", windowsNightly(), () => {
     const fx = walStorm(400);
     setRevokeBudgetClock(() => 4_000_000);
     resetRevokeWriteBudget();
@@ -389,7 +390,7 @@ describe("S3, S4: a slice is admitted and sized at C, charged whole at its call,
 });
 
 describe("S1: every charge is dated at its marker call and ages out in 60 s; nothing settles, re-dates, releases or infers", () => {
-  it("an inline walk inside an owner transaction held open past the minute is charged rows x C at its call, in the ledger at 59 s and gone at 61 s; later calls, the commit, a checkpoint and an unrelated commit move nothing", () => {
+  it("an inline walk inside an owner transaction held open past the minute is charged rows x C at its call, in the ledger at 59 s and gone at 61 s; later calls, the commit, a checkpoint and an unrelated commit move nothing", windowsNightly(), () => {
     const fx = walStorm(400);
     // the handle as database.ts opens it: instrumented, and the budget watches none of it
     const release = instrumentDatabase(fx.db);
@@ -439,7 +440,7 @@ describe("S1: every charge is dated at its marker call and ages out in 60 s; not
     } finally { release(); fx.close(); }
   });
 
-  it("a bounded drain whose slice rolls back is charged rows x C once, at its call; later marker calls neither re-date nor grow it, and the window has room a minute later", () => {
+  it("a bounded drain whose slice rolls back is charged rows x C once, at its call; later marker calls neither re-date nor grow it, and the window has room a minute later", windowsNightly(), () => {
     const fx = walStorm(400);
     let now = 8_000_000;
     setRevokeBudgetClock(() => now);
@@ -466,7 +467,7 @@ describe("S1: every charge is dated at its marker call and ages out in 60 s; not
     } finally { fx.close(); }
   });
 
-  it("the owner's inline walk is charged the runner's estimate: rows x C, and after the runner measures a cheaper C the next walk is charged at that", () => {
+  it("the owner's inline walk is charged the runner's estimate: rows x C, and after the runner measures a cheaper C the next walk is charged at that", windowsNightly(), () => {
     const fx = walStorm(400);
     let now = 9_000_000;
     setRevokeBudgetClock(() => now);

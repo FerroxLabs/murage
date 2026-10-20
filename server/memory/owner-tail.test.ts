@@ -18,6 +18,7 @@ import { PIP_ALL_KINDS } from "./pip-kinds.ts";
 import { ensureScope, reconcileMemoryRoster } from "./policy.ts";
 import { downgradeMemorySchema, dropOwnerTail, LEGACY_OWNER_TAIL_INDEX, LEGACY_OWNER_TAIL_INDEX_SQL, OWNER_TAIL_KINDS_SQL, OWNER_TAIL_TABLE, ownerTailPresent, ownerTailReady, validateMemorySchema } from "./schema.ts";
 import { removeTempDirSync } from "../testing/cleanup.ts";
+import { windowsPerfBudget } from "../testing/windows-hosted.ts";
 
 const INDEX_PATH = () => join(DATA_DIR, "memory-index.db");
 const roster = { bots: [{ id: "a", threadId: "ta" }], groups: [] };
@@ -335,7 +336,7 @@ describe("the owner-tail backfill", () => {
     expect(reference.flat().length).toBeGreaterThan(100);
   });
 
-  it("a slice that meets a write lock held by another connection returns within 50 ms with no progress, restores the busy wait, and the build completes once the lock is gone", { timeout: 30_000 }, async () => {
+  it("a slice that meets a write lock held by another connection returns within 50 ms with no progress, restores the busy wait, and the build completes once the lock is gone", { timeout: 30_000, ...windowsPerfBudget() }, async () => {
     seedTail(2_000);
     const db = database();
     dropOwnerTail(db);

@@ -31,6 +31,7 @@ import { MEMORY_REFERENCE_OPEN } from "../../shared/memory.ts";
 import type { ProviderInstance, RuntimeEvent, SendTurnInput } from "../contracts.ts";
 import { setMemoryMode } from "./repository.ts";
 import { ownerMemoryList } from "./owner-list.ts";
+import { closeMemoryIndexReader } from "./index-reader.ts";
 import { captureSource } from "./capture.ts";
 import { claimMemoryJob, publishMemoryWork } from "./jobs.ts";
 import { captureWork } from "./chunks.ts";
@@ -55,7 +56,8 @@ const emptyBridge = { search: async () => ({ hits: [] as IndexHit[], vectorRows:
 const opened: Array<{ close(): void }> = [];
 
 beforeEach(() => { closeDatabase(); removeTempDirSync(DATA_DIR); mkdirSync(DATA_DIR, { recursive: true }); reconcileMemoryRoster(roster); });
-afterEach(() => { for (const handle of opened.splice(0)) try { handle.close(); } catch { /* already closed */ } vi.useRealTimers(); });
+// ownerMemoryList keeps a cached index reader open; Windows will not remove an open file, so the next beforeEach wipe needs it closed.
+afterEach(() => { for (const handle of opened.splice(0)) try { handle.close(); } catch { /* already closed */ } closeMemoryIndexReader(); vi.useRealTimers(); });
 
 function pip(kind: "commitment" | "self-trait" | "relation", key: string, text: string, patch: Partial<IdentityWrite> = {}): IdentityWrite {
   return { action: "identity-write", botId: "moss", kind, key, expectedVersion: 0, text, basis: "owner-fact", audience: "owner-private", ...patch };

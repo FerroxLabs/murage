@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import { randomBytes } from "node:crypto";
-import { spawn } from "node:child_process";
+import { spawn, spawnSync } from "node:child_process";
 import { createServer, type Server } from "node:http";
-import { chmodSync, existsSync, mkdtempSync, mkdirSync, readFileSync, rmSync, statSync, symlinkSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdtempSync, mkdirSync, readFileSync, rmSync, statSync, symlinkSync, writeFileSync, realpathSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -43,7 +43,7 @@ let unwrapOverride: Record<string, unknown>, enrollExtra: Record<string, unknown
 let pendingCount: number, enrolled: boolean, enrollFailure: "401" | "403" | "unknown409" | "lost" | "duplicate409" | undefined;
 let transient: { status: number; count: number } | undefined;
 beforeEach(async () => {
-  root = mkdtempSync(join(tmpdir(), "murage-enroll-")); state = join(root, "state"); config = join(root, "config"); userData = join(root, "user-data.txt");
+  root = realpathSync(mkdtempSync(join(tmpdir(), "murage-enroll-"))); state = join(root, "state"); config = join(root, "config"); userData = join(root, "user-data.txt");
   credential = randomBytes(32).toString("base64");
   mkdirSync(config, { mode: 0o700 }); requests = []; stale = false; hostile = false; unwrapOverride = {}; enrollExtra = {};
   pendingCount = 0; enrolled = false; enrollFailure = undefined; transient = undefined;
@@ -74,6 +74,14 @@ beforeEach(async () => {
   writeFileSync(userData, `#cloud-config\nmurage_home_id: ${shapes.createResponse.homeId}\nmurage_enrollment_token: ${shapes.createResponse.enrollmentToken}\nmurage_admin_url: ${admin}\n`, { mode: 0o600 });
 });
 afterEach(async () => { server.closeAllConnections(); await new Promise<void>(resolve => server.close(() => resolve())); removeTempDirSync(root); });
+// start-home.sh runs under the image's bash 5 and waits on its process substitution, which bash
+// before 4.4 cannot do (`wait` answers 127, "not a child"). macOS ships bash 3.2 as /bin/bash, so
+// the boot run uses a bash 4.4+ from the host (Homebrew's on the macOS runners) and is skipped when there is none.
+const modernBash = ["bash", "/opt/homebrew/bin/bash", "/usr/local/bin/bash"].find(candidate => {
+  const probe = spawnSync(candidate, ["-c", 'echo "${BASH_VERSINFO[0]} ${BASH_VERSINFO[1]}"'], { encoding: "utf8" });
+  const [major, minor] = (probe.stdout ?? "").trim().split(" ").map(Number);
+  return probe.status === 0 && (major > 4 || (major === 4 && minor >= 4));
+});
 function run(mode: "enroll" | "envelope" | "boot" | "pending-stop" | "pending-fast" | "refused-once") {
   const helper = join(root, "helper"), node = join(root, "node");
   if (mode === "boot") {
@@ -87,7 +95,7 @@ ${wrapper}
   const script = readFileSync(new URL("../../deploy/cloud-home/start-home.sh", import.meta.url), "utf8").replaceAll("/usr/local/libexec/murage-enroll", helper).replaceAll("/etc/murage-home/home.env", join(config, "home.env")).replaceAll("/usr/local/bin/node", node);
 
   return new Promise<{ code: number | null; stdout: string; stderr: string }>((resolve, reject) => {
-    const child = mode === "boot" ? spawn("bash", ["-c", script], { stdio: ["ignore", "pipe", "pipe"] }) : spawn("python3", ["-I", "-c", wrapper, program, state, config, userData, mode], { stdio: ["ignore", "pipe", "pipe"] });
+    const child = mode === "boot" ? spawn(modernBash!, ["-c", script], { stdio: ["ignore", "pipe", "pipe"] }) : spawn("python3", ["-I", "-c", wrapper, program, state, config, userData, mode], { stdio: ["ignore", "pipe", "pipe"] });
     let stdout = "", stderr = ""; child.stdout.on("data", data => stdout += data); child.stderr.on("data", data => stderr += data);
     const timer = setTimeout(() => child.kill("SIGKILL"), 20_000);
     child.once("error", error => { clearTimeout(timer); reject(error); });
@@ -141,7 +149,7 @@ it("accepts quoted trusted metadata values without replacement inside values", a
   expect((await run("envelope")).code).toBe(0);
 });
 
-it("actual CP unwrap409 survives the shell and stops before supervisor exec", async () => {
+it.skipIf(!modernBash)("actual CP unwrap409 survives the shell and stops before supervisor exec", async () => {
   expect((await run("enroll")).code).toBe(0); stale = true;
   const result = await run("boot"); expect(result.code).toBe(78); expect(result.stdout).toBe("");
   expect(result.stderr).toBe("Cloud home stopped: stale generation; operator recovery required\n");

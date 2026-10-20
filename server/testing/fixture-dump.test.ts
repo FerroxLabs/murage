@@ -8,7 +8,10 @@ import { fileURLToPath } from "node:url";
 import { afterEach, expect, it, vi } from "vitest";
 import { removeTempDirSync } from "./cleanup.ts";
 it.each(["fake-claude-cli.ts", "fake-codex-app-server.ts", "fake-agy-cli.ts", "../drivers/acp/fuigo.test.ts"])("%s never dumps the inherited environment", file => {
-  const source = readFileSync(new URL(file, import.meta.url), "utf8");
+  // A child the fake starts the way the real engine does (Codex runs a hook with its own environment) is not a dump;
+  // anything else that hands over process.env whole, a written dump above all, is.
+  const source = readFileSync(new URL(file, import.meta.url), "utf8")
+    .replace(/\b(?:spawn|spawnSync|execFile|execFileSync)\([^\n]*?\{\s*env:\s*process\.env\s*,/g, "");
   expect(/env:\s*process\.env/.test(source)).toBe(false);
 });
 

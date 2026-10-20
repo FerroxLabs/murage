@@ -418,6 +418,9 @@ export const HELD_MAX_AGE_MS = 24 * 60 * 60 * 1000;
 /** A receipt whose reply is still held: kept until its hold settles, whatever its age or the count. */
 const holds = (receipt: DelegationReceipt): boolean => receipt.held !== undefined;
 /** The owed line is in the source conversation (its commit landed): the receipt no longer owes it, on disk as well, and may now age out like any other. */
+/** A direct hand-off's owed reply is kept past its final commit until its asker's wake is on disk (finishHandoff `keepOwed`), so a crash in between
+ * is delivered again by the boot (deliverOwedReplies), whose wake AskerWakes dedupes (NOHOLD-DELEGATION.md, the asker's one wake). */
+export function releaseOwedReply(id: string): void { replyDelivered(id); }
 function replyDelivered(id: string): void {
   const kept = receipts.find((receipt) => receipt.id === id);
   if (!kept || !owes(kept)) return;
@@ -484,7 +487,7 @@ export function recordDelegationReceipt(receipt: Omit<DelegationReceipt, "finish
  * nested) and `work` (the result in the source conversation, the request's terminal write) commit in ONE transaction. If the row's removal did not commit, or
  * `work` throws, nothing in the database changed: the row and the request are as they were, and the next pass that finds the row (the dispatch, the boot sweep)
  * settles both through the kept receipt. The caller runs its follow-ups after this returns. */
-export function finishHandoff<T>(receipt: Parameters<typeof recordDelegationReceipt>[0] | undefined, work: () => T): T {
+export function finishHandoff<T>(receipt: Parameters<typeof recordDelegationReceipt>[0] | undefined, work: () => T, options: { keepOwed?: boolean } = {}): T {
   try {
     const done = transaction(() => {
       if (receipt) {
@@ -495,7 +498,7 @@ export function finishHandoff<T>(receipt: Parameters<typeof recordDelegationRece
     }, { op: "delegation-finalize" });
     // the final commit landed (the line is written): the receipt no longer owes it, and the next write of the receipts file leaves it out
     // (after the OUTERMOST commit: inside a caller's transaction that later rolls back, the line is still owed)
-    if (receipt) afterCommit(() => replyDelivered(receipt.id));
+    if (receipt && !options.keepOwed) afterCommit(() => replyDelivered(receipt.id));
     return done;
   } catch (error) {
     // nothing committed: the row and the request are as they were and the receipt is kept. This process settles it again (resettleStranded, on the parked-
@@ -537,9 +540,9 @@ export function heldReceipts(): DelegationReceipt[] {
   });
 }
 
-/** One hold's settle on its receipt (server/held-replies.ts), saved at once: `judgedAt` records a judgement that left it held; `held: null` ends the hold;
- * `result` (a withheld, refused or checking line) replaces the words the receipt kept; `copyOf` replaces the originals. */
-export function settleHeldReceipt(id: string, patch: { judgedAt?: number; held?: null; reply?: null; result?: Outbound; copyOf?: EgressOrigin }): void {
+/** One hold's end on its receipt (server/held-replies.ts retires an earlier build's holds; frozen-replies.ts restores), saved at once: `held: null`
+ * ends the hold; `result` replaces the words the receipt kept; `copyOf` replaces the originals and `copyOf: null` removes them. */
+export function settleHeldReceipt(id: string, patch: { judgedAt?: number; held?: null; reply?: null; result?: Outbound; copyOf?: EgressOrigin | null }): void {
   const kept = receipts.find((receipt) => receipt.id === id);
   if (!kept) return;
   if (patch.judgedAt !== undefined && kept.held) kept.held = { ...kept.held, judgedAt: patch.judgedAt };
@@ -550,7 +553,8 @@ export function settleHeldReceipt(id: string, patch: { judgedAt?: number; held?:
     if (MurageStatus.is(patch.result) && !ReleasedText.is(patch.result)) kept.resultStatus = { key: patch.result.key, ...(patch.result.data ? { data: { ...patch.result.data } } : {}) };
     else delete kept.resultStatus;
   }
-  if (patch.copyOf) kept.copyOf = { threadId: patch.copyOf.threadId, messageIds: patch.copyOf.messageIds.slice(0, 65) };
+  if (patch.copyOf === null) delete kept.copyOf;
+  else if (patch.copyOf) kept.copyOf = { threadId: patch.copyOf.threadId, messageIds: patch.copyOf.messageIds.slice(0, 65) };
   saveReceipts();
 }
 /** Finished hand-offs whose final commit failed in this process: their row and receipt are still there, waiting to be settled together. */

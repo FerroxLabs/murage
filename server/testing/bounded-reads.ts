@@ -4,10 +4,26 @@
 // Shared by the bounded-reads API tests (turn-full-bounded-api, turn-room-bounded-api,
 // bounded-routes-api): the in-server counter of statements and rows bound to a
 // watched thread, and the checks that two thread sizes read the same.
+import { writeFileSync } from "node:fs";
+import { join } from "node:path";
 import { DatabaseSync, StatementSync } from "node:sqlite";
 import { expect } from "vitest";
 import { dropThread } from "../branch-index.ts";
 import { prepareSyncOn } from "../branch-fill.ts";
+
+// The test tells the server what to do through count-control.json, which the server polls: not a POSIX signal, since Windows has
+// no SIGUSR2. Each command carries its own sequence, so the server runs it exactly once; a half-written file does not parse and is
+// read again on the next tick. The caller waits for the file the command writes (count-started, counts.json), as before.
+/** In the server process (needs `fs` and `path` in scope): runs `handler`, a JS function source taking the command, once per command. */
+export const countControlSource = (handler: string): string =>
+  `{const control=path.join(process.env.MURAGE_DATA_DIR,'count-control.json');let seen=null;const handle=${handler};
+  setInterval(()=>{let command;try{command=JSON.parse(fs.readFileSync(control,'utf8'));}catch{return;}if(!command||command.seq===seen)return;seen=command.seq;handle(command);},10).unref();}`;
+
+let countSeq = 0;
+/** In the test: hands the server one command (see countControlSource). */
+export function sendCountCommand(dataDir: string, command: object): void {
+  writeFileSync(join(dataDir, "count-control.json"), JSON.stringify({ ...command, seq: `${process.pid}.${Date.now()}.${++countSeq}` }));
+}
 
 // In the server process: every statement bound to the watched thread id, the
 // rows it returned, its query plan, and any whole-thread load (with where it
@@ -37,9 +53,9 @@ export const countingInstrumentation = (STORE: string): string => `
     if(watchedBot!==null&&botId===watchedBot&&state==='idle')fs.writeFileSync(path.join(dir,'settled'),'1');return out;};
   const activity=Store.prototype.setTaskActivity;Store.prototype.setTaskActivity=function(botId,threadId,state){lastStore=this;const out=activity.call(this,botId,threadId,state);
     if(threadId===watched&&state==='idle')fs.writeFileSync(path.join(dir,'settled'),'1');return out;};
-  process.on('SIGUSR2',()=>{const command=JSON.parse(fs.readFileSync(path.join(dir,'count-control.json'),'utf8'));
+  ${countControlSource(`(command)=>{
     if(command.start){watched=command.start;watchedBot=command.bot??null;reset();counts.loadedAtStart=lastStore?lastStore.threads.has(watched):null;counts.loadedBefore=everLoaded[watched]??[];fs.writeFileSync(path.join(dir,'count-started'),command.start);}
-    else{fs.writeFileSync(path.join(dir,'counts.json'),JSON.stringify(counts));watched=null;watchedBot=null;}});
+    else{fs.writeFileSync(path.join(dir,'counts.json'),JSON.stringify(counts));watched=null;watchedBot=null;}}`)}
 `;
 
 
@@ -83,9 +99,15 @@ export const split = (counts: Counts, keyedReads = false) => {
  * stops at the first row, and the table holds one row per conversation mid branch move (a handful, cleared in slices), never one per message; the per-source check
  * after it is a primary-key seek.
  * `learningScans`: scans of the small tables that hold learning (one row per feedback signal or lesson, not per message) are allowed.
+ * A reverse primary-key walk with a LIMIT (`... NOT INDEXED ORDER BY rowid DESC LIMIT ?`, memory/jobs.ts recentNewest) is allowed: SQLite names it a
+ * SCAN, but it reads the newest LIMIT rows by rowid and stops, whatever the table holds.
  * `keyedReads`: reads of one message by its id are held to a bound, not an equality (their number follows what recall named). */
+const boundedRowidWalk = (sql: string, scan: string): boolean => {
+  const table = /^SCAN (\w+)$/.exec(scan)?.[1];
+  return table !== undefined && new RegExp(`\\bFROM ${table} NOT INDEXED ORDER BY rowid DESC LIMIT \\?\\d*\\)`).test(sql);
+};
 export const expectBounded = (a: Counts, b: Counts, learningScans = false, keyedReads = false) => {
-  const unindexed = (counts: Counts) => Object.entries(counts.plans).map(([sql, scans]) => [sql, scans.filter((scan) => !(learningScans && /^SCAN memory_(feedback|lessons)\b/.test(scan)) && !/^SCAN (memory_deny|branch_change)\b/.test(scan))] as const).filter(([, scans]) => scans.length);
+  const unindexed = (counts: Counts) => Object.entries(counts.plans).map(([sql, scans]) => [sql, scans.filter((scan) => !(learningScans && /^SCAN memory_(feedback|lessons)\b/.test(scan)) && !/^SCAN (memory_deny|branch_change)\b/.test(scan) && !boundedRowidWalk(sql, scan))] as const).filter(([, scans]) => scans.length);
   // no whole-thread load or whole-thread read, named by where it came from
   expect((a as any).whole).toEqual([]);
   expect((b as any).whole).toEqual([]);

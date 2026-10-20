@@ -1,5 +1,5 @@
 import { mkdirSync, mkdtempSync, writeFileSync, symlinkSync, truncateSync } from "node:fs";
-import { join } from "node:path";
+import { basename, join } from "node:path";
 import { tmpdir } from "node:os";
 import { randomUUID } from "node:crypto";
 import { afterEach, expect, it, vi } from "vitest";
@@ -248,7 +248,7 @@ it("an image whose binding is revoked while a later image is read is never retur
   const text = `${f.text(a.path)}\n${f.text(b.path)}`;
   const row = { role: "user" as const, text, attachments: [{ kind: "image" as const, ...a }, { kind: "image" as const, ...b }] };
   f.append("t", row);
-  const bName = b.path.slice(b.path.lastIndexOf("/") + 1);
+  const bName = basename(b.path); // either separator: a Windows path holds backslashes
   __setAttachmentReadHookForTests((stage, name) => { if (stage === "after-read" && name === bName) row.attachments.splice(0, 1); });
   try {
     await expect(f.images.read("t", "a", text)).rejects.toThrow("Reattach");

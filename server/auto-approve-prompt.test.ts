@@ -6,12 +6,13 @@
 // form is on the line. Each case is a line of the plan's test list.
 
 import { execFileSync } from "node:child_process";
-import { appendFileSync, mkdirSync, mkdtempSync, realpathSync, rmSync } from "node:fs";
+import { appendFileSync, mkdirSync, mkdtempSync, realpathSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { approvalKey, autoVerdict, exactAllowKeyFor, type AutoContext } from "./auto-approve.ts";
 import { exactCommandKey } from "../shared/exact-command.ts";
+import { removeTempDirSync } from "./testing/cleanup.ts";
 
 let base: string;
 let home: string;
@@ -31,7 +32,7 @@ beforeEach(() => {
   git(repo, "init", "-q");
 });
 
-afterEach(() => rmSync(base, { recursive: true, force: true }));
+afterEach(() => removeTempDirSync(base));
 
 const facts = (extra: Partial<NonNullable<AutoContext["promptFacts"]>> = {}): AutoContext => ({
   promptFacts: { cwd: repo, home, systemConfig: join(base, "no-system-config"), ...extra },

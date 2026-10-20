@@ -8,7 +8,7 @@
 // and the human viewer (the door's human viewer, the owner's page) the row as stored. The real writers, the real message database, the real
 // lineage write, revoke commit and walk. A control engine reply of the same turn proves the revoke reached the turn; the owner's message
 // in the room proves the door still shows what it should.
-import { mkdirSync, realpathSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, realpathSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { randomUUID } from "node:crypto";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
@@ -40,6 +40,7 @@ import { channelToProjectRows } from "./project-settings.ts";
 import { ROOM_REPLY_CHECKING, ROOM_REPLY_FORGOTTEN, ROOM_REPLY_WITHHELD } from "./room-context.ts";
 import { Store, type BotRecord, type Message } from "./store.ts";
 import { ensureTaskWorkspace } from "./workspace.ts";
+import { removeTempDirSync } from "./testing/cleanup.ts";
 
 const CANARY = "Biscuit";
 const P = "matrix-input", L = "launch-chat", PROV = "prov-matrix";
@@ -126,7 +127,7 @@ const windowOf = (viewer: Viewer, rows: Message[]) => botWindow(database(), view
 const projectPage = (reader: typeof DAX | typeof OWNER_PAGE) => (readProjectPage(database(), roster, "launch", { limit: 50 }, reader).result.body as { messages?: Array<{ id: string; text: string }> }).messages ?? [];
 
 beforeAll(() => {
-  closeMessageDb(); closeDatabase(); rmSync(DATA_DIR, { recursive: true, force: true }); mkdirSync(DATA_DIR, { recursive: true });
+  closeMessageDb(); closeDatabase(); removeTempDirSync(DATA_DIR); mkdirSync(DATA_DIR, { recursive: true });
   setExecutionStore({ bot: (id: string) => roster.bots.find(bot => bot.id === id) } as unknown as Store);
   setMemoryCaptureRoster(() => roster);
   setMemoryMode("active");
