@@ -5,6 +5,7 @@ import tailwindcss from "@tailwindcss/vite";
 import { murageRenderPlugins } from "./scripts/vite-render-plugin";
 import { precompressPlugin } from "./scripts/compress-dist.mjs";
 import { resolveBuildCommit } from "./scripts/build-commit.mjs";
+import { LINUX_HOME_TESTS } from "./server/testing/linux-home-tests";
 
 export default defineConfig({
   // The commit behind this build, for the About source link (null without git).
@@ -31,7 +32,9 @@ export default defineConfig({
       "scripts/**/*.test.mjs",
     ],
     // electron/signed-fetch.test.mjs is test support (imported by the node:test files), not a test: vitest finds no suite in it.
-    exclude: [...configDefaults.exclude, "electron/signed-fetch.test.mjs"],
+    // On Windows the Cloud home tests that drive its Linux-only pieces are left out (the reason and the list are in
+    // server/testing/linux-home-tests.ts); every other OS runs them.
+    exclude: [...configDefaults.exclude, "electron/signed-fetch.test.mjs", ...(process.platform === "win32" ? LINUX_HOME_TESTS : [])],
     setupFiles: ["server/testing/setup.ts"],
     // the suite spawns fake provider CLIs and a real harness server;
     // parallel files introduce load-sensitive flakes for no win

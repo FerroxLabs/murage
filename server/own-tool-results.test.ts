@@ -44,6 +44,9 @@ beforeAll(() => {
 
 afterAll(async () => { await removeTempDir(fixture); });
 
+/** A path as a model writes it in a shell command: on Windows it is single-quoted, since an unquoted backslash is an escape to the
+ *  POSIX shell the engine runs (Git Bash), so the bare word would name another file. */
+const word = (path: string) => (process.platform === "win32" ? `'${path}'` : path);
 const shell = (command: string, over: Partial<{ dirs: string[] }> = {}) =>
   isOwnToolResultRead({ tool: "shell", command, dirs: over.dirs ?? dirs });
 
@@ -65,12 +68,12 @@ describe("the engine's own result folder", () => {
 
 describe("reading its own saved tool result asks nobody", () => {
   it("allows the read the engine told the model to run (1.0.1 on camera)", () => {
-    expect(shell(`cat ${own} | python3 -c "import json,sys; d=json.load(sys.stdin); print(d['data']['items'][0]['subject'])"`)).toBe(true);
+    expect(shell(`cat ${word(own)} | python3 -c "import json,sys; d=json.load(sys.stdin); print(d['data']['items'][0]['subject'])"`)).toBe(true);
     expect(shell(`jq -r '.data.items[].subject' '${own}'`)).toBe(true);
-    expect(shell(`jq -r '.content[0].text' ${own} | head -300`)).toBe(true);
-    expect(shell(`head -c 4000 ${own}`)).toBe(true);
-    expect(shell(`grep -o '"subject":"[^"]*"' ${own} | head -50`)).toBe(true);
-    expect(shell(`wc -c ${own}`)).toBe(true);
+    expect(shell(`jq -r '.content[0].text' ${word(own)} | head -300`)).toBe(true);
+    expect(shell(`head -c 4000 ${word(own)}`)).toBe(true);
+    expect(shell(`grep -o '"subject":"[^"]*"' ${word(own)} | head -50`)).toBe(true);
+    expect(shell(`wc -c ${word(own)}`)).toBe(true);
   });
   it("allows the engine's own read tool on that file", () => {
     expect(isOwnToolResultRead({ tool: "read", filePaths: [own], dirs })).toBe(true);
@@ -120,10 +123,10 @@ describe("everything else still asks", () => {
     expect(shell(`jq -r '.a | @sh' ${own}`)).toBe(false);
   });
   it("the same shapes, said the safe way, are answered", () => {
-    expect(shell(`cat ${own} | python3 -c "import sys; print(sys.stdin.read()[:200])"`)).toBe(true);
-    expect(shell(`jq -r '.data.items[] | .subject' ${own}`)).toBe(true);
-    expect(shell(`jq --arg k data -r '.[$k].items | length' ${own}`)).toBe(true);
-    expect(shell(`jq -c '.data.items | map({subject: .subject})' ${own}`)).toBe(true);
+    expect(shell(`cat ${word(own)} | python3 -c "import sys; print(sys.stdin.read()[:200])"`)).toBe(true);
+    expect(shell(`jq -r '.data.items[] | .subject' ${word(own)}`)).toBe(true);
+    expect(shell(`jq --arg k data -r '.[$k].items | length' ${word(own)}`)).toBe(true);
+    expect(shell(`jq -c '.data.items | map({subject: .subject})' ${word(own)}`)).toBe(true);
   });
   it("a path that climbs out with ..", () => {
     expect(shell(`cat ${dirs[0]}/../../${OTHER_SESSION}/mcp/call_00_other.json`)).toBe(false);
@@ -182,7 +185,7 @@ describe("policy: an own-result read is answered in every mode", () => {
 // saved result is answered without any grant, run after run.
 describe("a routine's runs reading their own saved results", () => {
   const RUN_2 = "01a13b2e-7c41-7d0a-9e3f-2a6b8c4d1e7f";
-  const read = (dir: string, id: string) => `jq -r '.content[0].text' ${join(dir, `use_tool_${id}.json`)} | head -300`;
+  const read = (dir: string, id: string) => `jq -r '.content[0].text' ${word(join(dir, `use_tool_${id}.json`))} | head -300`;
   const verdictFor = (runDirs: string[], command: string, run: { permissionMode: "ask"; alwaysAllow: string[] }, unattended = false) =>
     routineTurnApproval({
       bot: { autoApprove: false }, tool: "shell", summary: command, run: unattended ? undefined : run,
