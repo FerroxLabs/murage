@@ -4,7 +4,7 @@
 // A pin for someone outside the room is refused. Real server, fake Claude CLI;
 // the lead runs on a held instance so a wrongly routed send would leave the
 // room busy.
-import { existsSync, readFileSync, writeFileSync } from "node:fs";
+import { readFileSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { DatabaseSync } from "node:sqlite";
@@ -17,6 +17,20 @@ let fixture: VerificationServer, headers: Record<string, string>;
 const api = async (method: string, path: string, body?: unknown) => {
   const response = await fetch(`${fixture.info.url}${path}`, { method, headers: { "content-type": "application/json", ...headers }, body: body === undefined ? undefined : JSON.stringify(body) });
   return { status: response.status, body: await response.json() as any };
+};
+/** The pid of the held (hang-mode) fake CLI whose turn carried `needle`. Read from the dump history (one line per dumped turn), never from the single
+ * latest-turn file: another member's turn, or a late one under load, replaces that file and the needle would never be seen again. */
+const heldPid = (needle: string): number | undefined => {
+  let lines: string[] = [];
+  try { lines = readFileSync(fixture.fixtureDumpLogPath, "utf8").split("\n"); } catch { return undefined; }
+  let found: number | undefined;
+  for (const line of lines) {
+    if (!line) continue;
+    let dump: { pid: number; prompt: unknown; env: Record<string, string> };
+    try { dump = JSON.parse(line); } catch { continue; } // a line still being appended is "not yet"
+    if (dump.env.FAKE_CLAUDE_MODE === "hang" && JSON.stringify(dump.prompt).includes(needle)) found = dump.pid; // the newest turn wins: a redispatch after a restart is a new process
+  }
+  return found;
 };
 const groupState = async (id: string) => (await api("GET", "/api/bots?messages=0")).body.groups.find((group: any) => group.id === id);
 const messages = async (threadId: string) => (await api("GET", `/api/threads/${threadId}/messages?limit=100`)).body.messages as any[];
@@ -33,7 +47,7 @@ const createBot = async (name: string, instanceId: string) => {
 posixOnly("room responder pin", () => {
   beforeAll(async () => {
     fixture = await launchVerificationServer(process.env, undefined, {
-      portRange: { from: 44_000, span: 900 },
+      portRange: { from: 44_000, span: 900 }, dumpLog: true,
       instrumentationSource: `
       const fs=await import('node:fs');const path=await import('node:path');
       const file=path.join(process.env.MURAGE_DATA_DIR,'config.json');const cfg=JSON.parse(fs.readFileSync(file,'utf8'));
@@ -68,12 +82,7 @@ posixOnly("room responder pin", () => {
   it("a pinned send that waits in the queue keeps its pin", async () => {
     const { lead, pinned, room } = await makeRoom();
     const idle = async () => { const state = await groupState(room.id); return !state.working && !state.busyBotId; };
-    const dumpFile = join(fixture.info.dataDir, "fake-claude-dump.json");
-    const leadPrompt = (needle: string): number | undefined => {
-      if (!existsSync(dumpFile)) return undefined;
-      const dump = JSON.parse(readFileSync(dumpFile, "utf8")) as { pid: number; prompt: unknown; env: Record<string, string> };
-      return dump.env.FAKE_CLAUDE_MODE === "hang" && JSON.stringify(dump.prompt).includes(needle) ? dump.pid : undefined;
-    };
+    const leadPrompt = heldPid;
     expect((await api("POST", `/api/groups/${room.id}/messages`, { text: "lead holds this" })).status).toBe(202);
     await expect.poll(() => leadPrompt("lead holds this"), { timeout: 20000 }).toEqual(expect.any(Number));
     const queued = await api("POST", `/api/groups/${room.id}/messages`, { text: "@Pinlead @everyone and the queue", responderId: pinned.id, sendId: "pin_queued_123456" });
@@ -92,12 +101,7 @@ posixOnly("room responder pin", () => {
     const proof = await (await fetch(`${fixture.info.url}/api/desktop-secret`)).json() as { secret: string };
     headers = { "x-murage-surface": "desktop", "x-murage-surface-secret": proof.secret };
   };
-  const heldLead = (needle: string): number | undefined => {
-    const dumpFile = join(fixture.info.dataDir, "fake-claude-dump.json");
-    if (!existsSync(dumpFile)) return undefined;
-    const dump = JSON.parse(readFileSync(dumpFile, "utf8")) as { pid: number; prompt: unknown; env: Record<string, string> };
-    return dump.env.FAKE_CLAUDE_MODE === "hang" && JSON.stringify(dump.prompt).includes(needle) ? dump.pid : undefined;
-  };
+  const heldLead = heldPid;
   const releaseLead = (needle: string) => writeFileSync(join(fixture.info.dataDir, "finish-fake", String(heldLead(needle))), "");
 
   it("a pinned @everyone send queued behind a busy room reaches only the pinned member after a restart", async () => {

@@ -1593,10 +1593,10 @@ export function searchMessagesWithMeta(
   // bot ran that migration" is a tool-name question. The chip's name lives
   // in the row's json; a JSON1 extract keeps this one query.
   const scope = threadIds ? "m.thread_id IN (SELECT value FROM json_each(?)) AND " : "";
-  // Not the owner: a row withheld from bots (true, "forgotten" or "checking") is not a hit. Checked inside the verify so LIMIT counts rows this reader
-  // may get, and after the LIKE so only a matching row's JSON is read.
+  // Not the owner: a row withheld from bots (true or "forgotten") is not a hit. Checked inside the verify so LIMIT counts rows this reader
+  // may get, and after the LIKE so only a matching row's JSON is read. A "checking" left on disk is no note (never a stored verdict).
   // Not the owner: a Murage-voice row is never a hit either (the reader door, bot-read.ts: a bot never reads Murage's own words).
-  const withheld = audience.owner || audience.judge === "door" ? "" : ` AND COALESCE(json_extract(m.json, '$.withheldFromBots'), 0) = 0 AND NOT ${murageVoiceSql("m")}`;
+  const withheld = audience.owner || audience.judge === "door" ? "" : ` AND COALESCE(NULLIF(json_extract(m.json, '$.withheldFromBots'), 'checking'), 0) = 0 AND NOT ${murageVoiceSql("m")}`;
   const doorOnly = audience.judge === "door";
   const verify = doorOnly
     ? "(m.kind = 'text' AND m.text IS NOT NULL AND m.text LIKE ? ESCAPE '\\')"

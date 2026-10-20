@@ -8,7 +8,7 @@
 // owner's behalf, the same rule MEMORY.md follows), and the per-bot switch
 // takes it out. Channel people are proven in about-me-channels.test.ts.
 // Synthetic fixture text only; loopback server, no network or credentials.
-import { existsSync, readFileSync, statSync } from "node:fs";
+import { readFileSync, statSync } from "node:fs";
 import { join } from "node:path";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { launchVerificationServer, type VerificationServer } from "../scripts/control-murage.ts";
@@ -29,15 +29,27 @@ const api = async (method: string, path: string, body?: unknown) => {
   expect(answer.status, `${method} ${path}: ${JSON.stringify(answer.body)}`).toBeLessThan(300);
   return answer.body;
 };
-const readJson = (path: string) => { try { return existsSync(path) ? JSON.parse(readFileSync(path, "utf8")) : null; } catch { return null; } };
 const idle = async () => { const state = await api("GET", "/api/bots?messages=0"); return !state.bots.some((bot: any) => bot.busy) && !state.groups.some((group: any) => group.busyBotId || group.working); };
 const marker = () => `ABOUT_TURN_${++sequence}`;
 
+/** The system prompt of the first engine turn whose prompt carries `tag`, read from the dump history (one line per dumped turn). The single
+ * latest-turn file is replaced by whatever turn dumps next, so a poll that lands after that never sees the turn it waits for. A routine or webhook
+ * run starts late on a loaded machine (the owner-first gate backs automatic starts off), so the wait is for the turn itself, with room for that. */
 async function captured(tag: string): Promise<string> {
-  let dump: any;
-  await expect.poll(() => { dump = readJson(fixture.fixtureDumpPath); return JSON.stringify(dump?.prompt ?? null).includes(tag); }, { timeout: 20000 }).toBe(true);
-  await expect.poll(idle, { timeout: 20000 }).toBe(true);
-  return String(dump.systemPrompt ?? "");
+  let found: any;
+  await expect.poll(() => {
+    let lines: string[] = [];
+    try { lines = readFileSync(fixture.fixtureDumpLogPath, "utf8").split("\n"); } catch { return false; }
+    for (const line of lines) {
+      if (!line) continue;
+      let dump: any;
+      try { dump = JSON.parse(line); } catch { continue; } // a line still being appended is "not yet"
+      if (JSON.stringify(dump.prompt ?? null).includes(tag)) { found = dump; return true; }
+    }
+    return false;
+  }, { timeout: 45000 }).toBe(true);
+  await expect.poll(idle, { timeout: 30000 }).toBe(true);
+  return String(found.systemPrompt ?? "");
 }
 const directTurn = async () => {
   const tag = marker();
@@ -48,7 +60,7 @@ const shapesRow = async (id: string) => (await api("GET", `/api/bots/${moss.id}/
 
 posixOnly("About me", () => {
   beforeAll(async () => {
-    fixture = await launchVerificationServer(process.env, undefined, { instrumentationSource: "process.env.FAKE_CLAUDE_DUMP_EACH_TURN='1';" });
+    fixture = await launchVerificationServer(process.env, undefined, { dumpLog: true, instrumentationSource: "process.env.FAKE_CLAUDE_DUMP_EACH_TURN='1';" });
     headers = { "x-murage-surface": "desktop", "x-murage-surface-secret": (await (await fetch(`${fixture.info.url}/api/desktop-secret`)).json() as { secret: string }).secret };
     const model = (await api("GET", "/api/instances")).instances.find((engine: any) => engine.instanceId === "verification").models.options[0].id;
     moss = (await api("POST", "/api/bots", { name: "Moss", modelSelection: { instanceId: "verification", model } })).bot;
@@ -104,7 +116,7 @@ posixOnly("About me", () => {
     expect(hooked).toContain("authenticated external webhook");
     // a webhook's payload came from outside and its reply may go back out
     expect(hooked).not.toContain(ABOUT);
-  }, 90000);
+  }, 180000);
 
   it("switches off for this bot only, and back on", async () => {
     expect((await call("PATCH", `/api/bots/${moss.id}`, { aboutMe: "no" })).status).toBe(400);

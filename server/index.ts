@@ -57,7 +57,7 @@ import { boundaryComms, boundaryStore } from "./boundary-ports.ts";
 import { botNameOf, cancelledEnding, configureStatusRoster, outboundWords, status, statusFromStored, statusRecordOf, failureCodeFrom, type FailureCode, type MurageStatus, type Outbound } from "./murage-status.ts";
 import { requestDiagnostic } from "./room-request-status.ts";
 import { recordRefusedStart } from "./refused-start.ts";
-import { WorkerText, type EgressOrigin } from "./released-text.ts";
+import { WorkerText } from "./released-text.ts";
 import { releasedCardSummary } from "./card-summary.ts";
 import { RowSink, configureBotEgress, writeBotRow } from "./bot-egress.ts";
 import { type EventReply, type AskBotOutcome, type CardResultDelivery, runFinalizeDelegationWatch, runDeliverSharedResult, runDeliverCardResult, runReviewedCardResult, continuationOutcome, askBotRoute, checkDelegationRoute, delegateBotRoute } from "./handoff-boundary.ts";
@@ -157,8 +157,8 @@ import { Announcements, announcementSource, handleAnnouncementsApi } from "./ann
 import { EngineCommandCache, engineCommandsView, engineReportsCommands } from "./engine-commands.ts";
 import { engineCommandInText } from "../shared/engine-commands.ts";
 import { manageBot, organizationRevision } from "./bot-management.ts";
-import { dropQueuedDelegation, resettleStranded, hasPendingBotDelegations, onDelegationReceipt, heldReceipts, settleHeldReceipt, type DelegationReceipt } from "./delegations.ts";
-import { configureHeldReplies, kickHeldReplies } from "./held-replies.ts";
+import { dropQueuedDelegation, resettleStranded, hasPendingBotDelegations, onDelegationReceipt, heldReceipts, settleHeldReceipt } from "./delegations.ts";
+import { retireHeldReplies, retireHeldRow, type HeldRetirePorts } from "./held-replies.ts";
 import { owedReplyOf, replayOwedReply } from "./handoff-reply.ts";
 import { pruneToolsCache, purgeToolsCache, usableToolsCacheDir } from "./connector-cache-harness.ts";
 import { generationLabel, readGeneration } from "./connector-cache.ts";
@@ -1525,7 +1525,7 @@ import { IMAGE_LIBRARY_ENV } from "../shared/image-library-audience.ts";
 import { CoordinationBudget, MAX_COORDINATION_DEPTH, coordinationRefusalText, MAX_CONCURRENT_HANDOFFS, type CoordinationTrace } from "./coordination-budget.ts";
 const coordinationBudget = new CoordinationBudget(join(DATA_DIR, "coordination-roots.json"));
 import { AskerWakes, askerWakeHeldIds, askerWakePrompt, askerWakeTurnOptions, heldWakeId, type AskerWakeResult, type AskerWakeIntent } from "./asker-wake.ts";
-import { wakeAfterHeldSettle, wakeAfterRecoveredReceipt, type AskerWakePort } from "./handoff-boundary.ts";
+import { sharedResultReturned as sharedResultReturnedAt, wakeAfterRecoveredReceipt, type AskerWakePort } from "./handoff-boundary.ts";
 // Owed wakes are kept on the asker's own task record (beside its held continuations), so a restart still continues the work.
 const askerWakes = new AskerWakes((botId, threadId, snapshot) => store.setTaskAskerWakes(botId, threadId, snapshot));
 const internalCapabilities = new InternalCapabilities();
@@ -8605,7 +8605,8 @@ const askerWakePort: AskerWakePort = {
     askingMode: botPermissionMode(directRuns.get(asker.threadId)?.snapshot ?? store.projectBotForTask(asker.botId, asker.threadId) ?? store.bot(asker.botId)),
     ...(routines?.activeBotRunForThread(asker.botId, asker.threadId) ? { routineRun: true } : {}) } satisfies AskerWakeIntent),
   consume: (taskId) => askerWakes.consume(taskId),
-  returned: (taskId, threadId, result) => { if (askerWakes.deliver(taskId, result)) queueMicrotask(() => wakeAsker(threadId)); },
+  // true once what the result owes this thread is on disk: the caller keeps its recovery state (an owed reply, an owed delivery) until then
+  returned: (taskId, threadId, result) => { if (askerWakes.deliver(taskId, result)) queueMicrotask(() => wakeAsker(threadId)); return askerWakes.durable(threadId); },
 };
 
 /** Consume one delegated-turn watch and mirror exactly one terminal state.
@@ -8724,8 +8725,6 @@ function retryParkedDelegations(): void {
   if (coordinationAdmissionClosed()) return;
   // a finished hand-off whose final commit failed is settled from its kept receipt now, not at the next start (delegations.ts finishHandoff)
   try { resettleStranded(); } catch (error) { console.error("[delegations] could not settle a finished hand-off again", error); }
-  // a held delegated reply is judged again on this sweep while any hold exists (REPLY-WITHHELD-CONTRACT C4; held-replies.ts bounds each pass)
-  if (heldReceipts().length) kickHeldReplies();
   retryCheckingCards();
   // The pass reads only the rows that are due and writes one row per change (delegations.ts), whatever the size of the queue.
   askerWakes.retryWrites(); // a wake change (a Stop's cancellation above all) whose write the disk refused is written again here
@@ -12091,9 +12090,8 @@ function settleCheckingNotes(threadId: string): void {
 }
 onLineageThreadWarmed((threadId) => {
   settleCheckingNotes(threadId);
-  // a thread whose lineage just warmed may be what a held delegated reply was waiting on
-  if (heldReceipts().length) kickHeldReplies();
   retryCheckingCards();
+  resumeFrozenRepliesRecovery();
 });
 
 /** The owner's "bots no longer see this reply" note follows what the member
@@ -12103,12 +12101,15 @@ onLineageThreadWarmed((threadId) => {
 function syncOwnerWithheldNotes(threadId: string, transcript: { withheld: ReadonlySet<string>; forgotten: ReadonlySet<string>; checking: ReadonlySet<string>; checked: ReadonlySet<string> }) {
   for (const shown of roomTurnRows(threadId).rows) {
     if (!transcript.checked.has(shown.id)) continue;
-    // "checking": left out only because earlier context is still being checked, nothing was withdrawn (cleared once a later check finishes)
-    const withheld = transcript.withheld.has(shown.id) ? (transcript.forgotten.has(shown.id) ? "forgotten" as const : transcript.checking.has(shown.id) ? "checking" as const : true) : undefined;
+    // "checking" (left out only because earlier context is still being checked) is never stored: the note holds final verdicts only, and
+    // "checking" is read live from the open windows (deny-read.ts). A note written inside a revoke's pending window outlived the window
+    // for good on real data (1.0.3 rehearsal 4), so the row keeps whatever note it has until a check finishes.
+    if (transcript.withheld.has(shown.id) && transcript.checking.has(shown.id) && !transcript.forgotten.has(shown.id)) continue;
+    const withheld = transcript.withheld.has(shown.id) ? (transcript.forgotten.has(shown.id) ? "forgotten" as const : true) : undefined;
     if (withheld !== shown.withheldFromBots) {
       store.patchMessage(threadId, shown.id, { withheldFromBots: withheld });
       // derived project text citing a reply bots no longer see goes stale (SPEC-P 15.3)
-      if (withheld && withheld !== "checking") markProjectDerivedStale(database(), [shown.id], withheld === "forgotten" ? projectMessagePlaced(database(), [shown.id], threadId) : undefined);
+      if (withheld) markProjectDerivedStale(database(), [shown.id], withheld === "forgotten" ? projectMessagePlaced(database(), [shown.id], threadId) : undefined);
     }
   }
 }
@@ -12995,6 +12996,13 @@ function beginRoomAsk(fromBotId: string, toBotId: string, fromThreadId: string, 
   return request.id;
 }
 
+/** One of the owner's own direct conversations with a bot: a bot's chat or task, not a channel's, whose human is the workspace owner (the
+ * same test the session reader uses: an owner's direct chat reads by content). Anything unknown is not one. */
+function ownerOwnConversation(threadId: string): boolean {
+  try { return Boolean(store.botByThread(threadId)) && !store.groupByThread(threadId) && isWorkspaceOwner(threadHumanPrincipal(threadId)); }
+  catch { return false; }
+}
+
 /** The questions the one result gate asks (server/result-egress.ts), answered from the live records. Every path that moves a stored result's text
  * somewhere else goes through `releaseStoredResult`; the source scan in server/result-egress.test.ts keeps it that way. */
 const resultEgressDeps: StoredAnswerDeps = {
@@ -13016,9 +13024,10 @@ const resultEgressDeps: StoredAnswerDeps = {
   // the checking line stays the status table's own (status("checking"), the same words): a row or receipt keeps its key, so a bot reads it as the
   // checking line through the door and a receipt replays it (REPLY-WITHHELD-CONTRACT R10)
   // write-time (S4): every line on the result's walk is looked up too; both must show it
-  linesShown: writetimeLinesShown(database),
+  // a line of the owner's own direct conversation, released to the owner's audience, is judged as that conversation reads it (LEE-PHANTOM.md)
+  linesShown: writetimeLinesShown(database, ownerOwnConversation),
   // the reader door (LINEAGE-DESIGN-S6 rule 16): every line of the walk reads as stored to the bot the result is released to
-  doorShown: doorEgress(database),
+  doorShown: doorEgress(database, ownerOwnConversation),
 };
 configureResultEgress(resultEgressDeps);
 // a kept status line names a bot only when that name is a bot on the roster now
@@ -13032,26 +13041,35 @@ configureBotEgress((res, statusCode, body, shown) => {
 });
 const rows = new RowSink(store);
 // REPLY-WITHHELD-CONTRACT C5: the boot recovery of delegated replies an earlier build froze as withheld while the gate was only checking
-// (server/frozen-replies.ts). Judged again for the owner's audience through the same gate; a row that reads checking is held (C3).
+// (server/frozen-replies.ts). Judged again for the owner's audience through the same gate; a row that reads checking is left (nothing is held).
 const frozenReplyPorts: FrozenReplyPorts = {
   store, db: database, rows,
   ownerThread: threadId => isWorkspaceOwner(threadHumanPrincipal(threadId)),
   // judged for the request the frozen row answered (a room hand-off's authorization needs it), with the turn's words assembled as the finalizer had them
   release: (origin, worker, sourceThreadId, fromBotId, requestId, text) => releaseStoredResult({ origin, ...(requestId ? { requestId } : {}) }, worker, sourceThreadId, { fromBotId }, false, text),
-  // the hold's receipt keeps the words (when known) and the copy link under the hand-off's id (C3, R3); the hold settle judges it at the originals
-  hold: input => recordDelegationReceipt({ id: input.handoffId, sourceThreadId: input.sourceThreadId, toBotId: input.toBotId, toBotName: input.toBotName, status: "done",
-    copyOf: input.copyOf, lineage: true, ...(input.text ? { result: input.text } : {}), ...(input.requestId ? { requestId: input.requestId } : {}), held: { messageId: input.messageId, since: Date.now() } }),
+  // an earlier build's held row with no receipt: rewritten as the no-answer row, then its request completes or its asker is woken once
+  retire: (hold, messageId) => { const rowId = retireHeldRow(heldRetirePorts, hold, messageId); heldRetirePorts.complete(hold, rowId); },
   // a restored reply's receipt, when it still exists, carries the words and the copy link again (C5)
   restored: (handoffId, patch) => settleHeldReceipt(handoffId, patch),
 };
 /** The recovery's slices, one per event-loop turn behind the writer gate; a worker conversation whose line index is not filled is prepared
  * (off the serving path) before the slice that needs it. Resumable: the cursor file in DATA_DIR keeps how far it reached. */
+let frozenRecoveryRunning = false;
+/** Runs the recovery again (once at a time) when a frozen row was waiting on a check: called when the revocation runner goes idle. */
+function resumeFrozenRepliesRecovery(): void {
+  if (frozenRecoveryRunning || !frozenRecoveryWaiting) return;
+  frozenRecoveryWaiting = false;
+  frozenRecoveryRunning = true;
+  void recoverFrozenRepliesInBackground().catch(error => console.warn("[delegations] frozen replies recovery", error)).finally(() => { frozenRecoveryRunning = false; });
+}
+let frozenRecoveryWaiting = false;
 async function recoverFrozenRepliesInBackground(): Promise<void> {
   for (;;) {
     await awaitWriterGate();
     const step = recoverFrozenRepliesSlice(frozenReplyPorts, { rowsPerSlice: 200 });
-    if (step.restored || step.held) console.log(`[delegations] restored ${step.restored} and held ${step.held} earlier delegated replies`);
-    if (step.halted) { console.warn("[delegations] a held reply's receipt could not be written; the recovery carries on at the next start"); return; }
+    if (step.restored || step.retired) console.log(`[delegations] restored ${step.restored} and retired ${step.retired} earlier delegated replies`);
+    // a frozen row still being checked: judged again when the revocation runner is idle (resumeFrozenRepliesRecovery), never left frozen
+    if (step.waiting) { frozenRecoveryWaiting = true; return; }
     if (step.prepare) {
       await store.prepareThread(step.prepare);
       if (!isThreadPrepared(step.prepare)) return; // the next start carries on from the cursor
@@ -13065,8 +13083,8 @@ const boundaryStoreView = boundaryStore(store);
 const boundaryCommsPort = boundaryComms(commsBus);
 /** The line a finished hand-off owes its source conversation, as plain words kept on its receipt until the final commit lands (server/handoff-reply.ts). The words are
  * the ones the gated row carries (outboundWords of Murage's line or the released reply), so a recovery writes exactly what the finalizer would have. */
-const boundaryOwedReply = (input: { ok: boolean; reply: Outbound | undefined; targetName: string; failureName: Outbound; stopped: boolean; held?: EgressOrigin }) =>
-  owedReplyOf({ ok: input.ok, reply: input.reply ? outboundWords(input.reply) : "", targetName: input.targetName, failureName: outboundWords(input.failureName), stopped: input.stopped, ...(input.held ? { held: input.held } : {}) });
+const boundaryOwedReply = (input: { ok: boolean; reply: Outbound | undefined; targetName: string; failureName: Outbound; stopped: boolean }) =>
+  owedReplyOf({ ok: input.ok, reply: input.reply ? outboundWords(input.reply) : "", targetName: input.targetName, failureName: outboundWords(input.failureName), stopped: input.stopped });
 const roomAskRefusedStatus = (fromBotId: string, toBotId: string, fromThreadId: string): MurageStatus | null => { const line = roomAskRefused(fromBotId, toBotId, fromThreadId); return line === null ? null : hostLine(line); };
 const roomStatusLine = (threadId: string, text: Outbound, murage: MessageMurage, lineage: { requestId?: string; replyToId?: string; to?: string[]; workItemId?: string } = {}, stableId?: string): Message | null => roomMurageLine(threadId, text, murage, lineage, stableId);
 
@@ -13126,31 +13144,26 @@ onDelegationReceipt((receipt, delivered) => {
   return () => { try { marked?.(); } catch (error) { console.error("delegations: could not mark the source conversation updated", error); } afterRoomCompletion(result); };
 });
 
-// The hold settle (REPLY-WITHHELD-CONTRACT C4, R4, R5): a held delegated reply is judged again at its originals, for the owner's audience of its
-// recorded request; shown, it reaches the delegating side as a reply arrival does; the request it answers completes then (held-replies.ts).
-configureHeldReplies({
+// No holds on hand-offs (NOHOLD-DELEGATION.md): a hold an earlier 1.0.3 build left is retired at start as the no-answer result. Its request
+// completes at the rewritten row in its own transaction (the wakes follow the commit); a direct hand-off's asker is woken once there.
+const heldRetirePorts: HeldRetirePorts = {
   store,
-  release: (receipt: DelegationReceipt) => releaseStoredResult({ origin: receipt.copyOf ?? { threadId: receipt.sourceThreadId, messageIds: [] }, ...(receipt.requestId ? { requestId: receipt.requestId } : {}) },
-    receipt.toBotId, receipt.sourceThreadId, { fromBotId: store.botByThread(receipt.sourceThreadId)?.id ?? "" }, receipt.notOwnerAudience === true),
-  delivered: (receipt, messageId) => {
-    const source = delegationSource(receipt.sourceThreadId);
-    if (source?.kind === "bot") markTaskContextExternallyUpdated(source.bot, receipt.sourceThreadId, messageId);
-    else if (source) store.patchGroup(source.group.id, { unread: true });
-  },
-  replay: receipt => replayOwedReply(store, receipt),
-  complete: (receipt, outcome) => {
-    // a direct hand-off's asker was not woken while its reply was held: it is woken now, at the held row (rooms wake through the request below)
-    if (!receipt.requestId) { wakeAfterHeldSettle(askerWakePort, receipt); return; }
-    const request = roomRequest(database(), receipt.requestId);
+  complete: (hold, messageId) => {
+    if (!hold.requestId) {
+      // the rewritten row is an external update of the asker's conversation first (what a wake may point at), then the wake, once
+      const source = messageId ? delegationSource(hold.sourceThreadId) : null;
+      if (source?.kind === "bot") markTaskContextExternallyUpdated(source.bot, hold.sourceThreadId, messageId!);
+      wakeAfterRecoveredReceipt(askerWakePort, { ...hold, status: "done" }, messageId);
+      return;
+    }
+    const request = roomRequest(database(), hold.requestId);
     if (!request || isTerminalRoomRequestState(request.state)) return;
-    const resultMessageId = receipt.held?.messageId;
     let completion: ReturnType<typeof completeRoomAsk> | undefined;
-    // the request's terminal write in its own transaction; the wakes follow the commit
-    transaction(() => { completion = completeRoomAsk(request.id, { state: "done", ...(resultMessageId && store.messageById(receipt.sourceThreadId, resultMessageId) ? { resultMessageId } : {}), ...(outcome === "shown" ? {} : { diagnostic: `held reply ${outcome}` }) }); }, { op: "held-reply-complete" });
+    transaction(() => { completion = completeRoomAsk(request.id, { state: "done", ...(messageId && store.messageById(hold.sourceThreadId, messageId) ? { resultMessageId: messageId } : {}), diagnostic: "held reply retired" }); }, { op: "held-reply-retire" });
     if (completion) afterRoomCompletion(completion);
   },
-});
-onRevocationIdle(() => { if (heldReceipts().length) kickHeldReplies(); retryCheckingCards(); });
+};
+onRevocationIdle(() => { retryCheckingCards(); resumeFrozenRepliesRecovery(); });
 
 /** Why a queued request waits, in the words the queue shows (SPEC-P 7.2). */
 function roomRequestRefusalLine(request: RoomRequest): string | null {
@@ -14053,7 +14066,11 @@ function requestTerminalWritten(threadId: string, request: RoomRequest): boolean
   return store.scanSince(threadId, sinceRequest(request), m => m.requestId === request.id && Boolean(m.turnTerminal));
 }
 function deliverSharedResult(request: RoomRequest): void {
-  runDeliverSharedResult({ rows, comms: boundaryCommsPort, store: boundaryStoreView }, request);
+  runDeliverSharedResult({ rows, comms: boundaryCommsPort, store: boundaryStoreView, returned: sharedResultReturned }, request);
+}
+/** A parentless shared request asked from a direct chat wakes its asker at the delivered row, once (handoff-boundary.ts sharedResultReturned). */
+function sharedResultReturned(request: RoomRequest, messageId: string): boolean {
+  return sharedResultReturnedAt({ askerWake: askerWakePort, wakes: askerWakes, delegationSource, markTaskContextExternallyUpdated, store: boundaryStoreView }, request, messageId);
 }
 /** Finished shared results still owed to their requester. A restore keeps each one on hold (nothing is posted at boot or
  * by the sweep); only the owner's explicit release of that result, or Resume of its project, lets it through. */
@@ -20536,7 +20553,7 @@ const handleRequest = async (req: IncomingMessage, res: ServerResponse): Promise
       // turn.completed. Returns immediately (the caller does not wait).
       const delegationMatch = method === "GET" ? path.match(/^\/api\/internal\/delegations\/([\w-]{4,64})$/) : null;
       if (delegationMatch) return await checkDelegationRoute({ askerWake: askerWakePort, connectorThread, delegationMatch, internalClaim, requireActiveInternal, res, resultEgressDeps, store: boundaryStoreView, taskResolutionDeps, url });
-      if (method === "POST" && path === "/api/internal/delegate-bot") return await delegateBotRoute({ askerWake: askerWakePort, MAX_COMMS_DEPTH, beginRoomAsk, comms: boundaryCommsPort, connectorThread, coordinationBudget, eventAction, fullAccessSkipsPeerCard, internalCapabilities, internalClaim, internalEventId, internalOwner, isUnattended, ownerSurfacesByThread, readInternalBody, res, resultEgressDeps, roomAskDuplicate, roomAskParent, roomAskRefused: roomAskRefusedStatus, routinePeerSource, sourceExecutionAudience, store: boundaryStoreView, taskResolutionDeps });
+      if (method === "POST" && path === "/api/internal/delegate-bot") return await delegateBotRoute({ askerWake: askerWakePort, MAX_COMMS_DEPTH, beginRoomAsk, comms: boundaryCommsPort, connectorThread, coordinationBudget, eventAction, fullAccessSkipsPeerCard, internalCapabilities, internalClaim, internalEventId, internalOwner, isUnattended, ownerSurfacesByThread, readInternalBody, res, resultEgressDeps, roomAskDuplicate, roomAskParent, roomAskRefused: roomAskRefusedStatus, routinePeerSource, settleRoomAsk, sourceExecutionAudience, store: boundaryStoreView, taskResolutionDeps });
       if (method === "POST" && path === "/api/internal/create-bot") {
         const body = await readInternalBody();
         const fromBotId = String(body.fromBotId ?? "");
@@ -28356,8 +28373,7 @@ void releasePreListenHealth().catch(() => undefined).then(() => { startLoopLagMo
         busy: () => workAdmission.liveTurns({}).some(t => t.kind === "owner_direct"),
         // the boot recovery of "Checking the browser" notes waits for the table of pending notes; when the walker completes it, the notes of earlier launches are settled
         onBrowserChecksIndexed: () => { store.reconcileAbandonedBrowserChecks(TURN_INTERRUPTED_NOTE, bootAt); },
-        // the lineage certificate becoming ready (the writetime job) may settle a held delegated reply: each progress report asks for a pass while any hold exists
-        onProgress: () => { if (heldReceipts().length) kickHeldReplies(); retryCheckingCards(); },
+        onProgress: () => { retryCheckingCards(); resumeFrozenRepliesRecovery(); },
       });
       }
       catch (error) { console.warn(`[memory] upgrade work: ${error instanceof Error ? error.message : String(error)}; the next start carries on`); }
@@ -28417,8 +28433,8 @@ void releasePreListenHealth().catch(() => undefined).then(() => { startLoopLagMo
     try { wakeMemoryRevocation(database, { admit: awaitWriterGate, busy: () => workAdmission.liveTurns({}).length > 0 }); }
     catch (error) { console.warn(`[memory] revocation jobs: ${error instanceof Error ? error.message : String(error)}; the next start carries on`); }
     } },
-    // the holds a previous run left are judged again at start (REPLY-WITHHELD-CONTRACT S8); the sweep keeps judging them while any is left
-    { name: "heldReplies", run: () => { if (heldReceipts().length) kickHeldReplies(); } },
+    // the holds an earlier 1.0.3 build left are retired once, fail-closed, as no-answer results (held-replies.ts, NOHOLD-DELEGATION.md)
+    { name: "heldReplies", run: () => { if (heldReceipts().length) retireHeldReplies(heldRetirePorts); } },
     // Memory on for an install upgraded from 1.0.1 that never configured it, once, and the past-chats build that follows (past-chats-build.ts, 1.0.3 lane 2).
     { name: "pastChats", run: () => {
     try {

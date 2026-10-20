@@ -215,7 +215,8 @@ function ownReply(row: MessageRow, botId: string): { text: string; withheld: boo
   if (message.from?.botId && message.from.botId !== botId) return null;
   const text = typeof row.text === "string" ? row.text : "";
   if (!text.trim()) return null;
-  return { text, withheld: Boolean(message.withheldFromBots), copy: Boolean(message.copyOf) };
+  // (a "checking" left on disk is no note: the row is judged live on every build)
+  return { text, withheld: Boolean(message.withheldFromBots) && message.withheldFromBots !== "checking", copy: Boolean(message.copyOf) };
 }
 
 /** DISCOVERY: which message is the bot's own last reply with words in the thread (or null: none). Not a verdict:

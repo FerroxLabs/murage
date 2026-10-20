@@ -481,26 +481,47 @@ describe("resumable event stream", () => {
     const { body } = await api("GET", "/api/bots");
     const botId = body.bots[0].id;
 
-    const first = await openSse(`${BASE}/api/events`);
-    const hello = await first.until((frame) => frame.kind === "hello");
-    await nudge(botId);
-    const seen = await first.until((frame) => frame.kind === "bot" && frame.bot?.id === botId);
-    first.close();
-    await nudge(botId);
-
-    // Native EventSource reconnects reuse their original URL, including its
-    // old query, but add Last-Event-ID for the newest numbered frame seen.
-    const resumed = await openSse(
-      `${BASE}/api/events?since=${encodeURIComponent(hello.cursor)}`,
-      { "last-event-id": `${hello.cursor.split(":")[0]}:${seen.seq}` },
-    );
+    // Sequence numbers are shared by every frame kind, so on a busy runner an
+    // unrelated broadcast can take the number after seen.seq (CI 39389616168,
+    // Windows: [106] for an expected [105]). A witness that never disconnects
+    // is the ground truth for what was broadcast while the client was away.
+    const witness = await openSse(`${BASE}/api/events`);
     try {
-      expect((await resumed.until((frame) => frame.kind === "hello")).resumed).toBe(true);
-      await resumed.until((frame) => frame.kind === "bot" && frame.bot?.id === botId);
-      const replayed = resumed.frames.filter((frame) => frame.kind === "bot" && frame.bot?.id === botId);
-      expect(replayed.map((frame) => frame.seq)).toEqual([seen.seq + 1]);
+      await witness.until((frame) => frame.kind === "hello");
+      const first = await openSse(`${BASE}/api/events`);
+      const hello = await first.until((frame) => frame.kind === "hello");
+      await nudge(botId);
+      const seen = await first.until((frame) => frame.kind === "bot" && frame.bot?.id === botId);
+      first.close();
+      const mine = () => witness.frames.filter((frame) => frame.kind === "bot" && frame.bot?.id === botId && frame.seq > seen.seq);
+      await nudge(botId);
+      await witness.until(() => mine().length >= 1);
+      const cutoff = mine()[0].seq;
+
+      // Native EventSource reconnects reuse their original URL, including its
+      // old query, but add Last-Event-ID for the newest numbered frame seen.
+      const resumed = await openSse(
+        `${BASE}/api/events?since=${encodeURIComponent(hello.cursor)}`,
+        { "last-event-id": `${hello.cursor.split(":")[0]}:${seen.seq}` },
+      );
+      try {
+        expect((await resumed.until((frame) => frame.kind === "hello")).resumed).toBe(true);
+        await resumed.until(() => resumed.frames.some((frame) => typeof frame.seq === "number" && frame.seq >= cutoff));
+        const upTo = (frames: any[], from: number) =>
+          frames.filter((frame) => typeof frame.seq === "number" && frame.seq > from && frame.seq <= cutoff).map((frame) => frame.seq);
+        // The replay starts after Last-Event-ID, never at the URL's stale
+        // cursor: nothing at or before seen.seq comes back...
+        expect(upTo(resumed.frames, -1).every((seq) => seq > seen.seq)).toBe(true);
+        // ...only the second nudge's frame for this bot, not the first one seen...
+        expect(resumed.frames.filter((frame) => frame.kind === "bot" && frame.bot?.id === botId && frame.seq <= cutoff)
+          .map((frame) => frame.seq)).toEqual([cutoff]);
+        // ...and exactly what the live witness saw after the same cursor.
+        expect(upTo(resumed.frames, seen.seq)).toEqual(upTo(witness.frames, seen.seq));
+      } finally {
+        resumed.close();
+      }
     } finally {
-      resumed.close();
+      witness.close();
     }
   });
 
@@ -2029,28 +2050,37 @@ describe("internal capability authority", () => {
       let received = "";
       permissionClient.on("data", chunk => { received += chunk.toString(); });
       const requestId = `n6-recipient-${recipient.id}`;
+      // The Read must sit OUTSIDE the recipient's own folder: a path inside it is allowed by the own-folder rule (decision source
+      // own-workspace, "Rule 63") before any Auto or manual verdict, so it would never reach an approval card.
       permissionClient.write(JSON.stringify({ t: "ask", id: requestId, tool: "Read",
-        input: { file_path: "N6_SYNTHETIC_PERMISSION_ONLY.txt" } }) + "\n");
+        input: { file_path: join(home, "n6-outside-recipient-folder", "N6_SYNTHETIC_PERMISSION_ONLY.txt") } }) + "\n");
       stage("permission sent; await recipient decision");
       const messages = async (id: string) => (await api("GET", "/api/bots?messages=100")).body.bots
         .find((bot: { id: string }) => bot.id === id).messages as Array<{
           card?: { requestId?: string; tool?: string; title?: string }; tool?: { name?: string };
         }>;
+      // The decision is made once; these polls only wait for it to be
+      // written down. The default 1 s poll budget is shorter than one
+      // transcript write on a loaded Windows or macOS runner (every other
+      // stage here takes 1-4 s there), so it read a slow write as a wrong
+      // answer. A wrong answer still fails: the held case asserts nothing
+      // came back on the broker, and the allowed case asserts an allow.
+      const settle = { timeout: 15_000, interval: 100 };
       if (recipientAuto) {
-        await expect.poll(() => received).toContain("\n");
+        await expect.poll(() => received, settle).toContain("\n");
         expect(JSON.parse(received.trim())).toMatchObject({ t: "answer", id: requestId, behavior: "allow" });
         await expect.poll(async () => (await messages(recipient.id))
-          .some(message => message.tool?.name?.includes("auto-approved Read"))).toBe(true);
+          .some(message => message.tool?.name?.includes("auto-approved Read")), settle).toBe(true);
         expect((await messages(recipient.id)).some(message => message.card?.requestId === requestId)).toBe(false);
       } else {
         await expect.poll(async () => (await messages(recipient.id))
-          .find(message => message.card?.requestId === requestId)?.card)
+          .find(message => message.card?.requestId === requestId)?.card, settle)
           .toMatchObject({ requestId, tool: "Read", title: "Approval needed" });
         expect(received).toBe("");
         stage("recipient card held with no answer; send owner deny");
         expect((await desktopApi("POST", `/api/threads/${recipient.threadId}/respond`, { requestId, behavior: "deny" })).status).toBe(200);
         stage("owner deny accepted; await broker reply");
-        await expect.poll(() => received).toContain("\n");
+        await expect.poll(() => received, settle).toContain("\n");
         expect(JSON.parse(received.trim())).toMatchObject({ t: "answer", id: requestId, behavior: "deny" });
       }
       stage("verify sender has no recipient approval");

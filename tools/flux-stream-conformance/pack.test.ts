@@ -28,7 +28,8 @@ beforeAll(async () => {
   await run("node", ["--experimental-strip-types", join(root, "tools/flux-stream-conformance/pack.ts"), "--out", dist], { cwd: root });
   tgz = readdirSync(dist).find((f) => f.endsWith(".tgz")) ?? "";
   await run("mkdir", ["-p", extracted]);
-  await run("tar", ["xzf", join(dist, tgz), "-C", extracted]);
+  // relative names: GNU tar on Windows reads a "C:\\..." archive name as a remote host
+  await run("tar", ["xzf", tgz, "-C", "../extracted"], { cwd: dist });
   manifest = JSON.parse(readFileSync(join(extracted, "flux-stream-conformance", "manifest.json"), "utf8"));
 }, 120_000);
 afterAll(async () => {

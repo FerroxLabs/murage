@@ -33,6 +33,11 @@ const VERSION = JSON.parse(readFileSync(new URL("../../package.json", import.met
 // A version with no page (WHATS_NEW_BY_VERSION says "none") shows nothing:
 // the page tests run for the newest version that has one.
 const HAS_PAGE = new RegExp(`"${VERSION.replace(/\./g, "\\.")}": \\{ kind: "page"`).test(readFileSync(new URL("../lib/whats-new.ts", import.meta.url), "utf8"));
+// The newest page on this version's major line that is not newer than it (whatsNewTarget's rule), read from the same table.
+const PAGE_VERSIONS = [...readFileSync(new URL("../lib/whats-new.ts", import.meta.url), "utf8").matchAll(/"(\d+(?:\.\d+)*)": \{ kind: "page"/g)].map((m) => m[1]);
+const numeric = (v: string) => v.split(".").map(Number);
+const notNewer = (a: string, b: string) => { const x = numeric(a), y = numeric(b); for (let i = 0; i < Math.max(x.length, y.length); i++) { if ((x[i] ?? 0) !== (y[i] ?? 0)) return (x[i] ?? 0) < (y[i] ?? 0); } return true; };
+const NEAREST_PAGE = PAGE_VERSIONS.some((v) => numeric(v)[0] === numeric(VERSION)[0] && notNewer(v, VERSION));
 const seen = async () => (await (await fetch(`${harness.info.url}/api/whats-new?version=${VERSION}`, { headers })).json()) as { show: boolean };
 
 test.beforeAll(async () => {
@@ -266,7 +271,7 @@ test("a brand-new install is never shown the page, and it stays shut", async () 
   }
 });
 
-test("a version with no page opens nothing and hides the menu entry", async ({ page }) => {
+test("a version with no page opens nothing by itself, and its menu entry opens the nearest page or the release notes", async ({ page }) => {
   test.skip(HAS_PAGE, `${VERSION} has a What's new page`);
   await page.goto(origin + "/__whats-new?skin=dark");
   await expect(page.getByText("The app behind the page.")).toBeVisible();
@@ -274,5 +279,12 @@ test("a version with no page opens nothing and hides the menu entry", async ({ p
   await expect(dialog(page)).toHaveCount(0);
   await accountMenuTrigger(page).click();
   await expect(page.getByRole("menuitem", { name: "Keyboard shortcuts" })).toBeVisible();
-  await expect(page.getByRole("menuitem", { name: "What's new" })).toHaveCount(0);
+  // On the desktop the entry is always in the menu (useWhatsNew: available is desktop only): with no page of its own it opens the
+  // newest page on the same major line, else the release notes on the docs changelog, which the browser opens outside the app.
+  const entry = page.getByRole("menuitem", { name: "What's new" });
+  await expect(entry).toHaveCount(1);
+  if (NEAREST_PAGE) {
+    await entry.click();
+    await expect(dialog(page)).toBeVisible();
+  }
 });

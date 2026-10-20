@@ -127,7 +127,9 @@ it("the owner copy is exact and free of the words the owner should never read", 
   }
   // the server writes the note and the app reads it
   const index = readFileSync(join(here, "..", "index.ts"), "utf8");
-  expect(index).toContain('transcript.checking.has(shown.id) ? "checking" as const : true');
+  // "checking" is never stored: the owner's note holds final verdicts only (80e0b65ee)
+  expect(index).toContain("if (transcript.withheld.has(shown.id) && transcript.checking.has(shown.id) && !transcript.forgotten.has(shown.id)) continue;");
+  expect(index).not.toContain('"checking" as const');
   expect(readFileSync(join(here, "..", "store.ts"), "utf8")).toContain('withheldFromBots?: boolean | "forgotten" | "checking";');
   expect(readFileSync(join(here, "..", "..", "src", "state", "store.tsx"), "utf8")).toContain('withheldFromBots?: boolean | "forgotten" | "checking";');
 });

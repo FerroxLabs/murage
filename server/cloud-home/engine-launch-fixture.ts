@@ -5,7 +5,7 @@
 // manifest and fixture MCP proxy scripts.
 import { execFileSync, spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
-import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import { chmodSync, lstatSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { safeWipeSync } from "../testing/safe-wipe.mjs";
@@ -120,6 +120,14 @@ export interface Rig {
   dispose(): void;
 }
 
+/** Bytes for a fixture engine binary. The launcher admits only native Linux (ELF) engines and only
+ * reads the header; it never runs the file. /usr/bin/true is ELF on Linux; on macOS it is Mach-O, so a
+ * minimal ELF header stands in there and the launcher's own checks run unchanged on every POSIX host. */
+export function fixtureEngineBytes(): Buffer {
+  const hostTrue = readFileSync("/usr/bin/true");
+  return hostTrue.subarray(0, 4).equals(Buffer.from([0x7f, 0x45, 0x4c, 0x46])) ? hostTrue : Buffer.concat([Buffer.from([0x7f, 0x45, 0x4c, 0x46, 2, 1, 1]), Buffer.alloc(57)]);
+}
+
 /** A throwaway engine root, workspace root, manifest (every engine plus every proxy
  * script) and proxy tree under the test's working directory. */
 export function launcherRig(prefix: string): Rig {
@@ -131,7 +139,7 @@ export function launcherRig(prefix: string): Rig {
   mkdirSync(join(root, "bin"));
   // The section and admission locks (LIVE_DIR) of this rig's turns.
   const live = join(root, "live"); mkdirSync(live, { mode: 0o700 });
-  const command = join(root, "bin", "fixture-engine"), bytes = readFileSync("/usr/bin/true");
+  const command = join(root, "bin", "fixture-engine"), bytes = fixtureEngineBytes();
   writeFileSync(command, bytes, { mode: 0o755 });
   const sha256 = createHash("sha256").update(bytes).digest("hex");
   const proxies = PROXY_SCRIPTS.map(relative => {
@@ -142,6 +150,15 @@ export function launcherRig(prefix: string): Rig {
   const manifest = join(root, "engine-manifest.json");
   writeFileSync(manifest, JSON.stringify({ ...Object.fromEntries(CLOUD_TURN_ENGINES.map(engine => [engine, [{ path: command, sha256 }]])), mcpProxies: proxies }), { mode: 0o644 });
   const cfgPath = join(root, "cfg.json");
+  // A Cloud home has no path another user can write into, and the launcher refuses an engine or manifest under one: the rig's own
+  // tree loses the group and other write bits a umask of 002 (a hosted CI runner's) leaves on what was made above without a mode.
+  const tighten = (path: string): void => {
+    const info = lstatSync(path);
+    if (info.isSymbolicLink()) return;
+    if (info.mode & 0o022) chmodSync(path, info.mode & 0o7755);
+    if (info.isDirectory()) for (const name of readdirSync(path)) tighten(join(path, name));
+  };
+  tighten(root);
   const home = (engine: string) => join(engineRoot, engine);
   return {
     root, engineRoot, workspaces, proxyRoot, command, manifest, home,

@@ -42,10 +42,14 @@ describe("customMountEntries", () => {
     expect(mount!.env).toEqual({ A: "1", MURAGE_OK: "v" });
   });
   it("leaves out a name the driver already mounts itself", () => {
-    const custom = { "murage-memory": { command: "a", args: [], env: {} }, other: { command: "b", args: [], env: {} } };
-    expect(customMountEntries(custom, (name) => name === "murage-memory").map((mount) => mount.name)).toEqual(["other"]);
-    expect(customMountEntries(custom).map((mount) => mount.name)).toEqual(["murage-memory", "other"]);
+    const custom = { "team-notes": { command: "a", args: [], env: {} }, other: { command: "b", args: [], env: {} } };
+    expect(customMountEntries(custom, (name) => name === "team-notes").map((mount) => mount.name)).toEqual(["other"]);
+    expect(customMountEntries(custom).map((mount) => mount.name)).toEqual(["team-notes", "other"]);
     expect(customMountEntries(undefined)).toEqual([]);
+  });
+  it("never mounts an owner server under a name some driver uses for its own (Rule 29)", () => {
+    const custom = { "murage-memory": { command: "a", args: [], env: {} }, "Murage-Memory": { command: "a", args: [], env: {} }, other: { command: "b", args: [], env: {} } };
+    expect(customMountEntries(custom).map((mount) => mount.name)).toEqual(["other"]);
   });
   it("does not change its inputs", () => {
     const custom = { svc: { command: "node", args: ["a"], env: { A: "1" }, harnessEnv: { MURAGE_MCP_TOKEN: "t" } } };

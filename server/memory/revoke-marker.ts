@@ -244,6 +244,17 @@ function flowStep(db: DatabaseSync, job: JobRow, c: Cursor, budget: Budget): boo
 type Handler = (db: DatabaseSync, job: JobRow, node: any, c: Cursor, budget: Budget) => boolean | "late";
 const reasonOf = (job: JobRow) => { try { return String(JSON.parse(job.root)?.cause ?? job.kind); } catch { return job.kind; } };
 function rootOf(job: JobRow): Record<string, any> { try { return JSON.parse(job.root) ?? {}; } catch { return {}; } }
+/** The cap of the walk's permanent marks (rangeNode's ranges, the session stage): the job's started_lsn. A fold bulk (revoke-fold.ts) caps
+ * them at its cohort's hi instead, the largest of its members' own caps (1.0.3 FOLD-MEMBER-CAP): no turn position lies in [lo, hi) (F1.1),
+ * so for every turn hi is each member's own cap, and a clean turn begun after the members' commits is not denied by the slot the fold
+ * activated at. Its pending windows keep started_lsn (read "checking" as before). A fold bulk back from 1.0.2 (root.reupgraded, set by
+ * schema.ts activateRevokesAtUpgrade) caps at started_lsn again: 1.0.2 ran turns above hi. */
+function walkCap(job: JobRow): number {
+  const started = Number(job.started_lsn);
+  if (job.kind !== "bulk") return started;
+  const root = rootOf(job), hi = Number(root.cohort?.hi);
+  return root.cause === "fold" && !root.reupgraded && Number.isSafeInteger(hi) ? Math.min(started, hi) : started;
+}
 
 function lineNode(db: DatabaseSync, job: JobRow, node: { threadId: string; lsn: number; from?: number }): boolean {
   writeLine(db, job.revoke_id, node.threadId, node.lsn, reasonOf(job));
@@ -305,8 +316,9 @@ function rangeNode(db: DatabaseSync, job: JobRow, node: { threadId: string; from
     // action reached; a line of such a turn that rests on a denied parent is written into the frontier at write time, DESIGN-WRITETIME 2.3)
     // a root's own range row, written at its commit with its own slot as the cap (revoke-commit.ts commitRevoke), keeps that cap: a root
     // added to a bulk revoke after it opened commits later than the job's started_lsn
-    const rootCap = bound ? Number(bound.u) : Number(job.started_lsn);
-    const until = bounded ? Math.min(Number(root.until), currentLsn(db)) : Math.min(currentLsn(db), Math.max(Number(job.started_lsn), rootCap));
+    const cap = walkCap(job);
+    const rootCap = bound ? Number(bound.u) : cap;
+    const until = bounded ? Math.min(Number(root.until), currentLsn(db)) : Math.min(currentLsn(db), Math.max(cap, rootCap));
     writeRange(db, R, T, a, until, reasonOf(job));
     c.stage = "carry"; c.hi = held === undefined || held === null ? null : Number(held); c.at = null;
     // what rests on a line of a later turn is not reached through this range (rangeReached): an ordinary revoke's range ends at its commit
@@ -362,7 +374,7 @@ function rangeNode(db: DatabaseSync, job: JobRow, node: { threadId: string; from
   const rows = (c.at
     ? st(db, "SELECT driver_instance,native_session,first_lsn,last_lsn FROM memory_session_lineage WHERE thread_id=? AND (driver_instance,native_session)>(?,?) ORDER BY driver_instance,native_session LIMIT ?").all(T, c.at[0], c.at[1], n)
     : st(db, "SELECT driver_instance,native_session,first_lsn,last_lsn FROM memory_session_lineage WHERE thread_id=? ORDER BY driver_instance,native_session LIMIT ?").all(T, n)) as Array<{ driver_instance: string; native_session: string; first_lsn: number; last_lsn: number }>;
-  const cap = Number(c.until ?? Math.min(currentLsn(db), Number(job.started_lsn)));
+  const cap = Number(c.until ?? Math.min(currentLsn(db), walkCap(job)));
   for (const row of rows) if (Number(row.first_lsn) < cap && Number(row.last_lsn) >= a) writeSession(db, R, T, String(row.driver_instance), String(row.native_session));
   spend(budget, rows.length);
   if (rows.length === n) { const last = rows[rows.length - 1]!; c.at = [String(last.driver_instance), String(last.native_session)]; return false; }

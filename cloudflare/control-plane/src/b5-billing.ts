@@ -6207,7 +6207,9 @@ export async function sweepCustomerWaiting(env: Env, deps: BillingDependencies =
   const eventsStopAt = Math.min(wall, clock() + SWEEP_LOOP_BUDGET_MS);
   for (const e of pending.results) {
     const t = clock();
-    if (t + stepMaxMs > eventsStopAt) break;
+    // Strictly before the stop: workerd's clock does not move between reads without I/O, and a timer fires on its exact due time, so a hung
+    // attempt cut at its cap can leave exactly one cap to the stop. That tie admits nothing: one hung start per budget, deterministically.
+    if (t + stepMaxMs >= eventsStopAt) break;
     // The claim (A1): scheduling metadata only, written before the attempt, on a still-pending event still due. A failure or a completion
     // overwrites it; an attempt that records nothing leaves it. Claimed meanwhile by another sweep, or completed: skipped. Astra MAILRETRY-11
     // P3: the claim is the attempt's first write, inside its timeout, so the loop's admission bound (start + budget) covers it too.
@@ -6256,7 +6258,7 @@ export async function sweepCustomerWaiting(env: Env, deps: BillingDependencies =
     // hard wall), and a hung sender is waited for at most stepMaxMs.
     const noticesStopAt = Math.min(wall, clock() + SWEEP_LOOP_BUDGET_MS);
     for (const n of unsent.results) {
-      if (clock() + stepMaxMs > noticesStopAt) break;
+      if (clock() + stepMaxMs >= noticesStopAt) break; // strictly before the stop, as the event loop above
       let claimedTo: number | null = null;
       try {
         await attemptWithin(withHomeLease(env, n.home_id, async (lease) => {

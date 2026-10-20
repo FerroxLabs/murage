@@ -18,7 +18,8 @@ const fixture = fileURLToPath(new URL("./browser-session-host.fixture.py", impor
 afterEach(() => vi.unstubAllEnvs());
 
 for (const scenario of ["three-invocations", "old-path-and-expiry", "ensure-host", "spawn-host", "contract", "idle-and-cap", "host-exits", "single-start", "rogue", "sandbox-cgroup", "mcp-idle", "mcp-gate", "pump-death", "close-deadline", "relay"]) {
-  it(`session host: ${scenario}`, () => {
+  // the real launcher's session host: O_PATH, /proc and Linux AF_UNIX path lengths (Python has no os.O_PATH elsewhere)
+  it.skipIf(process.platform !== "linux")(`session host: ${scenario}`, () => {
     expect(execFileSync("python3", ["-I", fixture, launcher, scenario], { encoding: "utf8", timeout: 90_000, stdio: ["ignore", "pipe", "pipe"] })).toBe(`OK ${scenario}\n`);
   }, 100_000);
 }

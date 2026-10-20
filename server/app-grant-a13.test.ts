@@ -103,7 +103,7 @@ describe("Rules 77, 78: identity and parsing", () => {
 
 // ── Rule 76: what a routine may remember, and where it applies ───────────
 
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach } from "vitest";
@@ -185,7 +185,7 @@ describe("Rule 76: routine alwaysAllow grammar", () => {
 
 describe("Rule 76: persistence, reload and revocation", () => {
   const dirs: string[] = [];
-  afterEach(() => { for (const dir of dirs.splice(0)) rmSync(dir, { recursive: true, force: true }); });
+  afterEach(() => { for (const dir of dirs.splice(0)) removeTempDirSync(dir); });
   const manager = () => {
     const dir = mkdtempSync(join(tmpdir(), "murage-a13-"));
     dirs.push(dir);
@@ -373,6 +373,7 @@ describe("the pending request carries every row and the routine offer", () => {
 // ── Rule 84a/b: a top-level scheduled run stays attended for routine authority ──
 
 import { peerTurnAuthority } from "./routine-permissions.ts";
+import { removeTempDirSync } from "./testing/cleanup.ts";
 
 describe("Rule 84: scheduled routine status", () => {
   it("keeps a scheduled run eligible for its own keys, with its ceiling and every guard", () => {

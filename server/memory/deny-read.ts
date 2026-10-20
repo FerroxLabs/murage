@@ -162,7 +162,7 @@ function footprintVerdict(db: DatabaseSync, footprint: number | null, reader: Li
 
 // ---- lines ----
 
-interface StoredLine { role: string; flagged: boolean | "checking" }
+interface StoredLine { role: string; flagged: boolean }
 interface LineageRow { lsn: number; generated: boolean; turnLsn: number | null; memLsn: number | null; footprint: number | null }
 
 /** The verdict for every line of one page of one thread, by message id, for this reader. Every message id of the page has an entry.
@@ -188,8 +188,9 @@ function lookupPage(db: DatabaseSync, threadId: string, lines: readonly PageLine
     const slice = ids.slice(at, at + BATCH), json = JSON.stringify(slice), sourceIds = JSON.stringify(slice.map(id => `${prefix}${id}`));
     for (const row of all(db, "SELECT id,role,json_extract(json,'$.withheldFromBots') AS w FROM messages WHERE thread_id=? AND id IN (SELECT value FROM json_each(?))", threadId, json)) {
       const flag = row.w;
-      // a row held "checking" (a result still being judged, result-egress.ts) is an unknown, not the owner's mark (REPLY-WITHHELD-CONTRACT R2)
-      stored.set(String(row.id), { role: String(row.role), flagged: flag === "checking" ? "checking" : flag !== null && flag !== undefined && flag !== 0 && flag !== "false" });
+      // "checking" is never a stored verdict: a row left flagged "checking" on disk (1.0.2, an earlier 1.0.3 process) is read as no note and
+      // judged live on its marks and windows below (REPLY-WITHHELD-CONTRACT R2). It once read itself back as "checking" for good (rehearsal 4).
+      stored.set(String(row.id), { role: String(row.role), flagged: flag === "checking" ? false : flag !== null && flag !== undefined && flag !== 0 && flag !== "false" });
     }
     // the owner forgot the line (its captured source is deleted, denied or tombstoned at any revision)
     for (const row of all(db, `SELECT s.id FROM memory_sources s WHERE s.id IN (SELECT value FROM json_each(?)) AND (s.state='deleted' OR ${DENIED_SOURCE("s")})`, sourceIds)) forgotten.add(String(row.id).slice(prefix.length));
@@ -209,9 +210,6 @@ function lookupPage(db: DatabaseSync, threadId: string, lines: readonly PageLine
   for (const id of ids) {
     const row = stored.get(id), lin = lineage.get(id);
     if (!row) { out.set(id, withheld("tombstone")); continue; }            // gone: its conversation or the line was deleted
-    // a row held "checking" is held for every reader, the door included (ownFlag false skips only the owner's note): its words reach no bot
-    // until the hold settles (REPLY-WITHHELD-CONTRACT R2, C2)
-    if (row.flagged === "checking" && !callerFlag.get(id)) { out.set(id, checking("pending")); continue; }
     if (reader.ownFlag !== false && (row.flagged || callerFlag.get(id))) { out.set(id, withheld("own-flag")); continue; }
     if (forgotten.has(id)) { out.set(id, withheld("tombstone")); continue; }
     // owner and person lines: only the direct facts above. A line is judged as generated when anything says so (fail closed).

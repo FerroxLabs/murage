@@ -268,7 +268,10 @@ describe("T5 positions and cohorts", () => {
         const folds = foldJob(fx.db);
         expect(folds).toHaveLength(1);
         const B = folds[0]!;
-        expect(B.started_lsn).toBe(hi);
+        // B's walk caps at its cohort's hi, its members' own cap (FOLD-MEMBER-CAP); its started_lsn (the pending windows' cap) is its
+        // activation slot, above hi
+        expect(JSON.parse(B.root).cohort.hi).toBe(hi);
+        expect(B.started_lsn).toBeGreaterThan(hi);
         // the walk order is the commit order: B's cohort ids are the jobs in revoke_id order, so b{order[0]}'s root is re-committed first
         expect(JSON.parse(B.root).cohort.ids).toEqual(jobs);
         const ranges = fx.db.prepare("SELECT from_lsn AS f,until_turn_lsn AS u FROM memory_deny_range WHERE thread_id=? AND revoke_id=? ORDER BY from_lsn").all(THREADS[0]!, B.r) as Array<{ f: number; u: number }>;
@@ -304,9 +307,9 @@ describe("T5 positions and cohorts", () => {
     try {
       fx.reply(THREADS[0]!, "after-hi", 3200, { turnLsn: 3199 });
       drainAll(fx.db);
-      const B = foldJob(fx.db)[0]!;
-      expect(n(fx.db, "SELECT count(*) AS n FROM memory_deny_range WHERE revoke_id=? AND until_turn_lsn=?", B.r, B.started_lsn)).toBeGreaterThan(0);
-      expect(n(fx.db, "SELECT count(*) AS n FROM memory_deny_range WHERE revoke_id=? AND until_turn_lsn>?", B.r, B.started_lsn)).toBe(0);
+      const B = foldJob(fx.db)[0]!, hi = Number(JSON.parse(B.root).cohort.hi);
+      expect(n(fx.db, "SELECT count(*) AS n FROM memory_deny_range WHERE revoke_id=? AND until_turn_lsn=?", B.r, hi)).toBeGreaterThan(0);
+      expect(n(fx.db, "SELECT count(*) AS n FROM memory_deny_range WHERE revoke_id=? AND until_turn_lsn>?", B.r, hi)).toBe(0);
       const seen = denyLookup(fx.db, { threadId: THREADS[0]!, lines: [{ messageId: "after-hi", author: "bot" as never }, { messageId: "r4", author: "bot" as never }] }, MEMBER);
       expect(seen.get("r4")!.state).toBe("withheld");
       expect(seen.get("after-hi")!.state).toBe("shown");

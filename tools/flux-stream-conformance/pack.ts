@@ -6,7 +6,7 @@
 import { execFileSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import { cpSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
-import { dirname, join, resolve } from "node:path";
+import { basename, dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
 import { safeWipeSync } from "../../server/testing/safe-wipe.mjs";
@@ -47,6 +47,7 @@ writeFileSync(join(dir, "manifest.json"), json);
 writeFileSync(join(out, "manifest.json"), json);
 
 const tgz = join(out, `flux-stream-conformance-${version}.tgz`);
-execFileSync("tar", ["czf", tgz, "-C", stage, "flux-stream-conformance"], { env: { ...process.env, COPYFILE_DISABLE: "1" } });
+// Names relative to `out`: GNU tar (Git for Windows) reads "C:\\..." as host "C", file "\\...", and bsdtar has no --force-local.
+execFileSync("tar", ["czf", basename(tgz), "-C", ".stage", "flux-stream-conformance"], { cwd: out, env: { ...process.env, COPYFILE_DISABLE: "1" } });
 safeWipeSync(stage, { within: out });
 process.stdout.write(`${tgz}\n${join(out, "manifest.json")}\n`);

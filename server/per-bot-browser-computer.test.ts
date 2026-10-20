@@ -27,6 +27,7 @@ import { shouldMountLocalComputer } from "./local-routing.ts";
 import { fakeHostDescriptorSource } from "./testing/fake-host-descriptor.ts";
 // The warm engine carries per-turn tokens in a credential file; put them back inline as a proxy reads them.
 import { withTurnSecrets } from "./testing/fixture-dump.ts";
+import { browserEngineRefusesHost } from "./testing/browser-host.ts";
 
 /** Auto ("no computer chosen") only reaches this Mac on darwin — see
  * server/local-routing.ts:14. Everywhere else the auto-fallback assertions
@@ -318,7 +319,7 @@ it("gives an explicitly-off bot no computer, and hands an unassigned bot this Ma
   }
 }, 60_000);
 
-it("gives a browser-off bot no browser and an unassigned bot its own private one", async () => {
+it.skipIf(browserEngineRefusesHost)("gives a browser-off bot no browser and an unassigned bot its own private one", async () => {
   const off = await makeBot("Browser off", "verification", { browser: false });
   const on = await makeBot("Browser default", "second", {});
   let other: any;
@@ -389,7 +390,7 @@ it.runIf(AUTO_REACHES_HOST)("revokes only the stopped bot's computer, never its 
   }
 }, 60_000);
 
-it("keeps two bots on named profiles in separate browser sessions, and neither can name the other's", async () => {
+it.skipIf(browserEngineRefusesHost)("keeps two bots on named profiles in separate browser sessions, and neither can name the other's", async () => {
   expect((await patchBrowserProfiles([{ id: "work", name: "Work" }, { id: "client", name: "Client" }])).status).toBe(200);
   const first = await makeBot("Browser work", "verification", { browserProfile: "work" });
   const second = await makeBot("Browser client", "second", { browserProfile: "client" });
@@ -556,7 +557,7 @@ it.runIf(LOCAL_MOUNTS)("the stop-my-computer sweep cancels every routine sharing
 // 5. Capability honesty — does the block match what the bot actually has?
 // ---------------------------------------------------------------------------
 
-it("tells a bot the truth about its browser, and says nothing at all about a computer it lacks", async () => {
+it.skipIf(browserEngineRefusesHost)("tells a bot the truth about its browser, and says nothing at all about a computer it lacks", async () => {
   const without = await makeBot("Primer without", "verification", { browser: false, computer: "off" });
   const with_ = await makeBot("Primer with", "second", { computer: "off" });
   try {
@@ -859,7 +860,7 @@ it.runIf(LOCAL_MOUNTS)("the emergency stop stops a routine's thread that is on t
 // which also left the admission key (`unifiedBrowserKey`, which never
 // consults the memo) disagreeing with the key actually dispatched. The memo
 // now tags its slot the same way, so the collision cannot be spelled.
-it("keeps two bots apart even when a browser profile is named after a bot's id", async () => {
+it.skipIf(browserEngineRefusesHost)("keeps two bots apart even when a browser profile is named after a bot's id", async () => {
   const owner = await makeBot("Collision owner", "verification", { computer: "off" });
   expect(owner.id).toMatch(/^[a-z0-9_-]{1,40}$/u);
   // The ordinary, validated config route accepts it.
@@ -906,7 +907,7 @@ it("keeps two bots apart even when a browser profile is named after a bot's id",
 // NEXT turn, so that turn's browser answered 403 "browser turn is no longer
 // authorized" for its whole life (19 of 20 runs). The release is now scoped
 // to the generation the completing provider turn was bound to.
-it("keeps the browser working on the turn after a Stop, every time", { tags: ["nightly"], timeout: 240_000 }, async () => {
+it.skipIf(browserEngineRefusesHost)("keeps the browser working on the turn after a Stop, every time", { tags: ["nightly"], timeout: 240_000 }, async () => {
   const bot = await makeBot("Browser after stop", "slowclose", { computer: "off" });
   const statuses: number[] = [];
   const late: number[] = [];
@@ -943,7 +944,7 @@ it("keeps the browser working on the turn after a Stop, every time", { tags: ["n
   }
 });
 
-it("drops every browser and computer grant when the app restarts, leaving nothing dispatchable", async () => {
+it.skipIf(browserEngineRefusesHost)("drops every browser and computer grant when the app restarts, leaving nothing dispatchable", async () => {
   expect((await patchBrowserProfiles([{ id: "restart", name: "Restart" }])).status).toBe(200);
   const bot = await makeBot("Restart", "verification", { browserProfile: "restart", ...(AUTO_REACHES_HOST ? {} : { computer: "off" }) });
   const captured = await startTurn(bot, "restart-1", false);

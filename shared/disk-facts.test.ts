@@ -5,29 +5,33 @@
 // checked against what git itself prints on a fixture git created.
 
 import { execFileSync } from "node:child_process";
-import { mkdirSync, mkdtempSync, realpathSync, rmSync, symlinkSync, writeFileSync, appendFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, realpathSync, symlinkSync, writeFileSync, appendFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { diskFacts, readGitConfigText, repoConfigValues, type EnvStateLike } from "./disk-facts.ts";
+import { removeTempDirSync } from "../server/testing/cleanup.ts";
 
 let base: string;
 let home: string;
 let gitEnv: NodeJS.ProcessEnv;
 
+/** What git prints for a folder, in the platform's own spelling: Git for Windows writes C:/x/y, which names the same folder as C:\x\y. */
+const gitPath = (printed: string) => (process.platform === "win32" ? printed.replace(/\//g, "\\") : printed);
 const git = (cwd: string, ...args: string[]) =>
   execFileSync("git", ["-c", "user.name=t", "-c", "user.email=t@example.invalid", "-c", "init.defaultBranch=main", ...args], { cwd, env: gitEnv, encoding: "utf8" }).trim();
 
 const plainEnv = (): EnvStateLike => new Map([["HOME", { kind: "inherited" as const }]]);
 
 beforeEach(() => {
-  base = realpathSync(mkdtempSync(join(tmpdir(), "disk-facts-")));
+  // the native real path: on Windows an 8.3 short name (RUNNER~1) reads as its long name, as the disk facts place it
+  base = realpathSync.native(mkdtempSync(join(tmpdir(), "disk-facts-")));
   home = join(base, "home");
   mkdirSync(home);
   gitEnv = { PATH: process.env.PATH, HOME: home, GIT_CONFIG_NOSYSTEM: "1" };
 });
 
-afterEach(() => rmSync(base, { recursive: true, force: true }));
+afterEach(() => removeTempDirSync(base));
 
 const facts = () => diskFacts(new Map([["HOME", home]]), { systemConfig: join(base, "no-system-config") });
 const toplevel = (cwd: string, env: EnvStateLike = plainEnv()) => facts().substitution({ name: "git", args: ["rev-parse", "--show-toplevel"] }, cwd, env);
@@ -37,8 +41,8 @@ describe("git rev-parse --show-toplevel in the plain state", () => {
     const repo = join(base, "repo");
     mkdirSync(join(repo, "src", "deep"), { recursive: true });
     git(repo, "init", "-q");
-    expect(toplevel(repo)).toBe(git(repo, "rev-parse", "--show-toplevel"));
-    expect(toplevel(join(repo, "src", "deep"))).toBe(git(join(repo, "src", "deep"), "rev-parse", "--show-toplevel"));
+    expect(toplevel(repo)).toBe(gitPath(git(repo, "rev-parse", "--show-toplevel")));
+    expect(toplevel(join(repo, "src", "deep"))).toBe(gitPath(git(join(repo, "src", "deep"), "rev-parse", "--show-toplevel")));
   });
 
   it("a clone and a linked worktree of it", () => {
@@ -50,10 +54,10 @@ describe("git rev-parse --show-toplevel in the plain state", () => {
     git(origin, "commit", "-qm", "a");
     git(base, "clone", "-q", origin, "clone");
     const clone = join(base, "clone");
-    expect(toplevel(clone)).toBe(git(clone, "rev-parse", "--show-toplevel"));
+    expect(toplevel(clone)).toBe(gitPath(git(clone, "rev-parse", "--show-toplevel")));
     git(clone, "worktree", "add", "-q", join(base, "wt"));
     const wt = join(base, "wt");
-    expect(toplevel(wt)).toBe(git(wt, "rev-parse", "--show-toplevel"));
+    expect(toplevel(wt)).toBe(gitPath(git(wt, "rev-parse", "--show-toplevel")));
     expect(toplevel(wt)).toBe(wt);
   });
 

@@ -19,7 +19,8 @@ it("keeps root and marker refusal and admits an ordinary VM", () => {
 it("never forwards CI to the browser child", () => {
   // Environment assembly is platform-independent. Use a supported non-container
   // platform in this unit fixture; the separate host cases retain Linux refusal.
-  Object.defineProperty(process, "platform", { ...platform, value: "darwin" });
+  // A real Windows host keeps win32 (the owner-only mode check does not apply there); spoofing darwin on Windows would demand POSIX modes.
+  Object.defineProperty(process, "platform", { ...platform, value: platform.value === "win32" ? "win32" : "darwin" });
   const dataDir = mkdtempSync(join(tmpdir(), "cloud-browser-")); dirs.push(dataDir);
   const spec = agentBrowserIntegration({ binaryPath: "/fixture/browser", session: "fixture", encryptionKey: "a".repeat(64), realmId: "fixture", dataDir, env: { CI: "1", PATH: "/usr/bin", AGENT_BROWSER_NO_SANDBOX: "1" } });
   expect(spec.env).not.toHaveProperty("CI");

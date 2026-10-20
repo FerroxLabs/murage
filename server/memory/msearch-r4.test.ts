@@ -16,6 +16,7 @@
 import { mkdirSync, mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import type { DatabaseSync } from "node:sqlite";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { DATA_DIR } from "../config.ts";
 import { closeDatabase, database } from "../database.ts";
@@ -112,7 +113,12 @@ describe("P1: equal scores order by (score, record id, version), never by cache 
     const big = new MemoryIndex(INDEX_PATH());
     big.prepareModel("model");
     big.upsert(records);
+    // one commit for the 12,003 writes: the cache sees them one after another all the same, and the run does not
+    // measure the disk's flush (each autocommit was a full fsync: past the 60 s limit on a hosted Windows runner, 4 s on macOS)
+    const file = (big as unknown as { db: DatabaseSync }).db;
+    file.exec("BEGIN");
     for (const record of records) big.vector(record, "model", 0, ids.includes(record.id) ? [1, 0] : [0, 1]);
+    file.exec("COMMIT");
     const crossed = big.search("alpha", ids.map(id => ({ id, version: 1 })), [1, 0], "model", 20).hits.map(hit => hit.id);
     big.close();
     expect(resident).toEqual(["tie-b", "tie-m", "tie-z"]);

@@ -244,8 +244,10 @@ posixOnly("local access: archived rooms, saved images and script grants", () => 
     const sendToken = (sender.body as { token: string; id: string }).token;
     const sendId = (sender.body as { id: string }).id;
     expect((await call("POST", `/api/bots/${mine.id}/messages`, as(sendToken), { text: "from a script" })).status).toBeLessThan(300);
-    const after = await call("GET", `/api/threads/${mine.threadId}/messages`, desktop);
-    expect(after.text).toContain("from a script");
+    // An unproven send never steers a running turn: while the GRANTED_TRANSCRIPT_MARK turn is still going (a loaded macOS
+    // runner) it waits in the queue and lands in the transcript when its own turn starts, so wait for the line, not for luck.
+    await expect.poll(async () => (await call("GET", `/api/threads/${mine.threadId}/messages`, desktop)).text, { timeout: 30_000, interval: 100 })
+      .toContain("from a script");
     expect((await call("POST", `/api/bots/${other.id}/messages`, as(sendToken), { text: "nope" })).status).toBe(404);
     expect((await call("GET", `/api/threads/${other.threadId}/messages`, desktop)).text).not.toContain("nope");
 

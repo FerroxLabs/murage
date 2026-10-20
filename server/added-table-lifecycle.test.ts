@@ -22,6 +22,7 @@ import { insertRoomRequest, pruneTerminalRoomRequests, ROOM_REQUEST_RETENTION_MS
 import { initializeSharedRequestProvenance } from "./shared-provenance-schema.ts";
 import { haveV101, realV101 } from "./testing/pm-sends-v101.ts";
 import { removeTempDirSync } from "./testing/cleanup.ts";
+import { settleTestHandles } from "./test-handle-registry.ts";
 
 beforeEach(() => { closeDatabase(); removeTempDirSync(DATA_DIR); mkdirSync(DATA_DIR, { recursive: true }); });
 afterEach(() => { vi.restoreAllMocks(); closeDatabase(); });
@@ -103,9 +104,10 @@ describe("rows that belong to a request leave with it", () => {
     expect(database().prepare("SELECT request_id FROM shared_request_events").get()).toEqual({ request_id: "elsewhere" });
   });
 
-  it("a restored file with orphan rows (made with foreign keys off) is cleaned by the next prune", () => {
+  it("a restored file with orphan rows (made with foreign keys off) is cleaned by the next prune", async () => {
     request("old", "g", 1); mapping("old");
-    closeDatabase();
+    // the server connection, then the WAL checkpointer's (it leaves after closeDatabase returns): a raw writer waits for both
+    await settleTestHandles(DATA_DIR);
     const raw = new DatabaseSync(join(DATA_DIR, "messages.db"));
     raw.exec("PRAGMA foreign_keys=OFF; DELETE FROM room_requests WHERE id='old'");
     expect(Number((raw.prepare("SELECT COUNT(*) AS n FROM shared_request_events").get() as { n: number }).n)).toBe(1);

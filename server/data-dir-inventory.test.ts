@@ -127,6 +127,16 @@ describe("every top-level name Murage writes is classified for backup", () => {
     expect(classifyDataDirEntry("messages.db")).toMatchObject({ backup: "database" });
   });
 
+  it("the scan sees a folder joined under a fallback to the data folder (deps.dataDir ?? DATA_DIR), and a name held in an exported constant", () => {
+    // own-server (a Cloud home's ssh connection to the owner's server) was joined as `join(deps.dataDir ?? DATA_DIR, "own-server")`, which the
+    // scan did not read; the frozen-replies cursor is joined through FROZEN_REPLIES_CURSOR and stopped every 1.0.3 backup once written.
+    expect(scanDataDirWrites([join(ROOT, "server", "cloud-home", "own-server.ts")])).toContainEqual({ file: "server/cloud-home/own-server.ts", name: "own-server" });
+    expect(scanDataDirWrites([join(ROOT, "server", "frozen-replies.ts")])).toContainEqual({ file: "server/frozen-replies.ts", name: "frozen-replies-recovery.json" });
+    expect(classifyDataDirEntry("own-server")).toMatchObject({ backup: "excluded" });
+    expect(classifyDataDirEntry("frozen-replies-recovery.json")).toMatchObject({ backup: "excluded" });
+    expect(DATA_DIR_RESTORABLE).not.toContain("own-server");
+  });
+
   it("the scan sees a name held in a constant under a DATA_DIR default parameter", () => {
     const hits = scanDataDirWrites([join(ROOT, "server", "about-me.ts")]);
     expect(hits).toContainEqual({ file: "server/about-me.ts", name: "about-me.md" });
