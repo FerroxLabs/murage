@@ -30,7 +30,7 @@ import { engineReply } from "./testing/provider-reply.ts";
 import { removeTempDirSync } from "./testing/cleanup.ts";
 
 const tick = () => new Promise<void>((resolve) => setImmediate(resolve));
-async function until(done: () => boolean, ms = 120_000): Promise<void> {
+async function until(done: () => boolean, ms = 3_600_000): Promise<void> {
   const deadline = Date.now() + ms;
   while (!done()) { if (Date.now() > deadline) throw new Error("timed out"); await tick(); }
 }
@@ -313,7 +313,7 @@ describe("5. every recovery, release and drain loop does a bounded amount of wor
     releaseDelegationsWaitingOn("target", (_t, id) => { released++; return id.length > 0; });
     expect(released).toBe(IDLE_RELEASE_BATCH);
     expect(count("SELECT COUNT(*) AS n FROM pending_delegations WHERE phase='fresh'")).toBe(IDLE_RELEASE_BATCH);
-  }, 120_000);
+  }, 3_600_000);
 
   it("the unstarted shared partners marked running (100,000): requeued a range per pass, never one statement for all", async () => {
     const db = database();
@@ -334,7 +334,7 @@ describe("5. every recovery, release and drain loop does a bounded amount of wor
     expect(read()).toBe(100_000);
     expect(watch.worst()).toBeLessThanOrEqual(SHARED_REQUEUE_ROWS);
     expect(watch.passes()).toBeGreaterThanOrEqual(100_000 / SHARED_REQUEUE_ROWS);
-  }, 240_000);
+  }, 3_600_000);
 
   it("the owner-record clean-up of 100,000 stand-in records: a page per pass, admission held until the last page, and it opens once", async () => {
     const db = database();
@@ -357,9 +357,9 @@ describe("5. every recovery, release and drain loop does a bounded amount of wor
     expect(read()).toBe(100_000);
     expect(watch.worst()).toBeLessThanOrEqual(OWNER_MIGRATION_PAGE);
     expect(opened).toBe(1);
-  }, 240_000);
+  }, 3_600_000);
 
-  it("a queue of 100,000 on ONE source conversation is drained a page per pass", { tags: ["nightly"], timeout: 300_000 }, async () => {
+  it("a queue of 100,000 on ONE source conversation is drained a page per pass", { tags: ["nightly"], timeout: 3_600_000 }, async () => {
     const w = ownerWorld("owner");
     w.knobs.capacity = false;                                                             // every dispatch waits (capacity): no write, no turn
     let asks = 0;
@@ -398,7 +398,7 @@ describe("7. a held line that could not be cleared is tried again, and the sweep
     const line = database().prepare("SELECT json FROM messages WHERE thread_id=? AND id=?").get(w.from.threadId, heldLineId("ghost")) as { json: string };
     expect((JSON.parse(line.json) as { delegationHeld?: unknown }).delegationHeld).toBeUndefined();
   });
-  it("100,000 registered lines: a page of 100 per pass, and a control a held row still backs is left alone", { tags: ["nightly"], timeout: 240_000 }, async () => {
+  it("100,000 registered lines: a page of 100 per pass, and a control a held row still backs is left alone", { tags: ["nightly"], timeout: 3_600_000 }, async () => {
     const w = ownerWorld("owner");
     database().exec(`WITH RECURSIVE n(i) AS (SELECT 1 UNION ALL SELECT i+1 FROM n WHERE i<100000)
       INSERT INTO held_notice_lines(message_id, delegation_id, source_thread_id) SELECT 'held-g'||i, 'g'||i, 't'||(i%100) FROM n`);

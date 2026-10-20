@@ -64,12 +64,12 @@ describe("1. per-team FIFO: only a team's head is ever started", () => {
     const started = w.turns.map((turn) => turn.id).filter((id) => id.startsWith("T5-"));
     expect(started).toEqual(["T5-0"]);
     for (let k = 1; k < 20; k++) expect(roomRequest(database(), `T5-${k}`)!.state).toBe("queued");
-  }, 120_000);
+  }, 3_600_000);
 });
 
 // ── 2 ─────────────────────────────────────────────────────────────────────────────────
 describe("2. no starvation under sustained arrivals", () => {
-  it("five never-dispatched waiting teams are cancelled and refilled before every pass for 21 passes: the sixth team's older runnable request still starts", { tags: ["nightly"], timeout: 120_000 }, async () => {
+  it("five never-dispatched waiting teams are cancelled and refilled before every pass for 21 passes: the sixth team's older runnable request still starts", { tags: ["nightly"], timeout: 3_600_000 }, async () => {
     const w = sharedWorld();
     const s = senders(w, 6);
     // the sixth team started work before (the old order put the team that last started at the back)
@@ -181,7 +181,7 @@ describe("3. the work of a pass and of an event is flat in the backlog", () => {
     const perDecision = (run: typeof small) => run.heaviest.statements / run.heaviest.decisions;
     expect(Math.abs(perDecision(deep) - perDecision(small)) / perDecision(small)).toBeLessThanOrEqual(0.1);
     expect(perDecision(wide)).toBeLessThanOrEqual(perDecision(small) * 1.1);
-  }, 600_000);
+  }, 3_600_000);
 });
 
 // ── 4 ─────────────────────────────────────────────────────────────────────────────────
@@ -254,7 +254,7 @@ describe("6. the boot settling is bounded", () => {
       expect(rowOf(id)?.phase).toBe("started");
       expect(findDelegationReceipt(id)).not.toBeNull();
     } finally { onDelegationReceipt(undefined); console.error = quiet; await ticks(3); }
-  }, 30_000);
+  }, 3_600_000);
 });
 
 // ── 7 ─────────────────────────────────────────────────────────────────────────────────

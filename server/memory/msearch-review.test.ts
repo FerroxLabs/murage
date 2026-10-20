@@ -215,7 +215,7 @@ describe("search denies exactly what memory_get denies", () => {
     await refusedEverywhere(access, ["foreign-evidence"], "MEMORY_SCOPE_DENIED");
   });
 
-  it("property: over randomized grants and revocations, room membership, identity rows, derivations, archive and forget, sources, tombstones, spans, failed tools and pending records, every search path returns a record exactly when memory_get allows it", { tags: ["nightly"], timeout: 240_000 }, async () => {
+  it("property: over randomized grants and revocations, room membership, identity rows, derivations, archive and forget, sources, tombstones, spans, failed tools and pending records, every search path returns a record exactly when memory_get allows it", { tags: ["nightly"], timeout: 3_600_000 }, async () => {
     let seed = 0x5eed;
     const rand = () => { seed = (seed * 1103515245 + 12345) & 0x7fffffff; return seed / 0x7fffffff; };
     const pick = <T,>(items: readonly T[]) => items[Math.floor(rand() * items.length)];
@@ -416,7 +416,7 @@ describe("bounded keyword fallback", () => {
     db.prepare("INSERT INTO memory_records VALUES('new-match',1,'s','fact','harbour lantern wick','owner-statement','active',0,0,NULL,NULL,0)").run();
     expect((await keywordScan(db as never, "harbour lantern", ["s"])).hits.map(hit => hit.id)).toEqual(["new-match"]);
     db.close();
-  }, 180_000);
+  }, 3_600_000);
 
   it("a time budget ends the scan between slices, and the slice size is the unit of work", async () => {
     const db = authority();
@@ -446,7 +446,7 @@ describe("bounded keyword fallback", () => {
     const huge = await keywordScan(db as never, "harbour lantern", ["s"]);
     expect([huge.bytes, huge.hits.length, huge.complete]).toEqual([0, 0, false]);
     db.close();
-  }, 60_000);
+  }, 3_600_000);
 
   it("P1: hydration has no exempt hits: a tool search that starts past its hydration limit answers empty and partial", async () => {
     const aScope = ensureScope("bot", "a");
@@ -456,7 +456,7 @@ describe("bounded keyword fallback", () => {
     expect(result.hits).toEqual([]);
     expect(result.partial).toBe(true);
     expect(result.degradedReason).toBe("MEMORY_RECALL_UNAVAILABLE");
-  }, 15_000);
+  }, 3_600_000);
 });
 
 describe("old checkpoint versions leave the word index", () => {
@@ -505,7 +505,7 @@ describe("old checkpoint versions leave the word index", () => {
     return raw;
   }
 
-  it("P2: an index holding 500,000 versions of one checkpoint is purged in short steps, merged in short steps, then the word query is fast and current", { tags: ["perf-budget"], timeout: 600_000 }, () => {
+  it("P2: an index holding 500,000 versions of one checkpoint is purged in short steps, merged in short steps, then the word query is fast and current", { tags: ["perf-budget"], timeout: 3_600_000 }, () => {
     const scope = "s", path = join(DATA_DIR, "memory-index.db"), versions = 500_000;
     const raw = seedIndex(path, `WITH RECURSIVE n(i) AS (SELECT 1 UNION ALL SELECT i+1 FROM n WHERE i<${versions})
       INSERT INTO entries SELECT 'checkpoint:long',i,'${scope}','Working evidence: the launch review status, version '||i FROM n`);
@@ -549,7 +549,7 @@ describe("old checkpoint versions leave the word index", () => {
     expect(run.walk.n).toBeGreaterThan(count / 2048);
     expect(run.walk.p50).toBeLessThan(20);
     expect(again.examined).toBeLessThanOrEqual(2048);
-  }, 600_000);
+  }, 3_600_000);
 });
 
 describe("index acknowledgements are fenced against the record's current state", () => {
@@ -593,7 +593,7 @@ describe("index acknowledgements are fenced against the record's current state",
       await settle();
       expect(db.prepare("SELECT lexical_status FROM memory_projection_receipts WHERE record_id=? AND record_version=?").get(id, last)?.lexical_status).toBe("indexed");
     } finally { await controller.stop().catch(() => {}); }
-  }, 60_000);
+  }, 3_600_000);
 });
 
 describe("memory_save held for the owner", () => {

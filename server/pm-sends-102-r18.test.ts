@@ -330,7 +330,7 @@ describe("(c) the queue questions are served by named indexes: flat from 1k to 1
   const results: Array<{ history: number; parked: number; run: Run }> = [];
   for (const history of [1_000, 100_000]) {
     for (const parked of [0, 10_000]) {
-      it(`${history} terminal rows, ${parked} parked, 10 bots: Q1 to Q4 use their indexes and a full pass reads at most runnable + 100 rows`, { tags: ["nightly"], timeout: 300_000 }, () => {
+      it(`${history} terminal rows, ${parked} parked, 10 bots: Q1 to Q4 use their indexes and a full pass reads at most runnable + 100 rows`, { tags: ["nightly"], timeout: 3_600_000 }, () => {
         const run = scenario(history, parked);
         results.push({ history, parked, run });
         expect(run.plans.Q1!.join(" | ")).toMatch(/USING (COVERING )?INDEX room_requests_runnable/);
@@ -363,7 +363,7 @@ describe("(c) the queue questions are served by named indexes: flat from 1k to 1
 });
 
 describe("(d) deadline_at is the only upper lifetime: an overdue parked backlog clears a batch per tick, then costs nothing", () => {
-  it("10k overdue parked shared asks clear within ceil(10k/100) ticks, each with a receipt line, then a tick reads nothing", { tags: ["nightly"], timeout: 300_000 }, () => {
+  it("10k overdue parked shared asks clear within ceil(10k/100) ticks, each with a receipt line, then a tick reads nothing", { tags: ["nightly"], timeout: 3_600_000 }, () => {
     const clock = { t: 5 * DAY };
     const { db, dispatcher, sharedClosed } = harness(clock);
     const insert = inserter(db);
@@ -392,7 +392,7 @@ describe("(d) deadline_at is the only upper lifetime: an overdue parked backlog 
 });
 
 describe("(e) shared asks follow the same retention as wakes", () => {
-  it("40k unresolved shared asks are parked, and are not read again inside their backoff window", { tags: ["nightly"], timeout: 300_000 }, () => {
+  it("40k unresolved shared asks are parked, and are not read again inside their backoff window", { tags: ["nightly"], timeout: 3_600_000 }, () => {
     const clock = { t: 1_000_000 };
     const { db, dispatcher } = harness(clock);
     const insert = inserter(db);

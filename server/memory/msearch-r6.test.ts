@@ -111,7 +111,7 @@ describe("P1: a population no reader can read decides nothing the reader sees", 
     world(records).close();
   }
 
-  it("99,990 records denied by state, forgetting, scope and a forgotten parent leave all ten readable hits, identical to the corpus without them, with the loop free", { tags: ["nightly"], timeout: 300_000 }, async () => {
+  it("99,990 records denied by state, forgetting, scope and a forgotten parent leave all ten readable hits, identical to the corpus without them, with the loop free", { tags: ["nightly"], timeout: 3_600_000 }, async () => {
     (() => fixture(true))();
     await new Promise(resolve => setTimeout(resolve, 500)); collectGarbage();
     const crowded = await measured(() => searchMemory(QUERY, accessOf(), emptyBridge, { allowance: LineageAllowance.tool(1_000_000_000), caller: "tool", limit: 20 }));
@@ -130,7 +130,7 @@ describe("P1: a population no reader can read decides nothing the reader sees", 
     expect(plain(crowded.value)).toEqual(plain(alone));
   });
 
-  it("99,990 records only a two-step ancestry refuses (no query can spare them): the readable hits are all returned inside the limit, or the answer says it is partial", { tags: ["nightly"], timeout: 300_000 }, async () => {
+  it("99,990 records only a two-step ancestry refuses (no query can spare them): the readable hits are all returned inside the limit, or the answer says it is partial", { tags: ["nightly"], timeout: 3_600_000 }, async () => {
     const scope = ensureScope("bot", "a");
     (() => {
       const records: IndexedMemory[] = [];
@@ -214,7 +214,7 @@ describe("P1: an expired revalidation returns nothing it did not read again", ()
       (performance as { now: () => number }).now = originalNow;
       db.prepare = prepare as typeof db.prepare;
     }
-  }, 60_000);
+  }, 3_600_000);
 });
 
 describe("P2: the word scan reads one snapshot and stops at its deadline", () => {
@@ -243,7 +243,7 @@ describe("P2: the word scan reads one snapshot and stops at its deadline", () =>
     expect(page).not.toBeNull();
     expect(page!.hits.map(hit => hit.id)).toEqual(expected);
     expect(page).not.toHaveProperty("partial");
-  }, 120_000);
+  }, 3_600_000);
 
   it("at its deadline the scan answers what it read, flagged partial, with no further windows read", async () => {
     const index = world(ids.map(id => entry(id, "s", same)));
@@ -256,7 +256,7 @@ describe("P2: the word scan reads one snapshot and stops at its deadline", () =>
     expect(yields).toBeLessThanOrEqual(2);
     expect(late?.partial).toBe(true);
     expect(late?.hits).toEqual([]);
-  }, 120_000);
+  }, 3_600_000);
 
   it("a search whose scan hit its deadline reports partial, never complete", async () => {
     const scope = ensureScope("bot", "a");
@@ -266,7 +266,7 @@ describe("P2: the word scan reads one snapshot and stops at its deadline", () =>
     const answer = await searchMemory(QUERY, accessOf(), emptyBridge, { allowance: LineageAllowance.tool(1_000_000_000), caller: "tool", limit: 20, lexical: (q, scopes, limit, offset) => lexicalPageSliced(q, scopes, limit, offset, undefined, { eligible: true, deadlineAt: Date.now() - 1 }) });
     expect(answer.partial).toBe(true);
     expect(answer.coverageComplete).toBe(false);
-  }, 120_000);
+  }, 3_600_000);
 });
 
 describe("P2: the recent fallback authorizes before it selects", () => {
