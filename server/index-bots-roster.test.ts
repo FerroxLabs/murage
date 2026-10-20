@@ -5,13 +5,13 @@
 // and the statements behind it cost the same with 1,000 messages in a thread
 // as with 200,000, no thread is loaded whole, and no bot carries the
 // server-only package import receipt.
-import { existsSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, readFileSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { fileURLToPath } from "node:url";
 import { expect, it } from "vitest";
 import { launchVerificationServer, type VerificationServer } from "../scripts/control-murage.ts";
-import { countingInstrumentation, expectBounded, refillThread, type Counts } from "./testing/bounded-reads.ts";
+import { countingInstrumentation, expectBounded, refillThread, type Counts, sendCountCommand } from "./testing/bounded-reads.ts";
 
 const STORE = fileURLToPath(new URL("./store.ts", import.meta.url));
 let fixture: VerificationServer, headers: Record<string, string> = {}, model: string;
@@ -22,7 +22,7 @@ const api = async (method: string, path: string, body?: unknown) => {
   return { status: response.status, body: parsed, text };
 };
 const file = (name: string) => join(fixture.info.dataDir, name);
-const signal = (command: object) => { writeFileSync(file("count-control.json"), JSON.stringify(command)); process.kill(fixture.info.pid, "SIGUSR2"); };
+const signal = (command: object) => sendCountCommand(fixture.info.dataDir, command);
 const until = async (check: () => boolean, ms: number) => { const end = Date.now() + ms; while (!check()) { if (Date.now() > end) throw new Error("timed out"); await new Promise((r) => setTimeout(r, 25)); } };
 const authHeaders = async () => { headers = { "x-murage-surface": "desktop", "x-murage-surface-secret": (await api("GET", "/api/desktop-secret")).body.secret }; };
 const createBot = async (name: string) => (await api("POST", "/api/bots", { name, modelSelection: { instanceId: "verification", model } })).body.bot as { id: string; threadId: string };

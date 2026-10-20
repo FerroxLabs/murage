@@ -5,11 +5,12 @@
 // path a bot's context is built from; no index is ever added to the messages
 // table (a history-sized build under the writers); and the only callers that still
 // load or walk a whole thread are the ones that show or export it.
+import { fileURLToPath } from "node:url";
 import { readdirSync, readFileSync } from "node:fs";
 import { join, relative } from "node:path";
 import { expect, it } from "vitest";
 
-const root = new URL(".", import.meta.url).pathname;
+const root = fileURLToPath(new URL(".", import.meta.url));
 function sources(dir = root): string[] {
   return readdirSync(dir, { withFileTypes: true }).flatMap((entry) => {
     const path = join(dir, entry.name);

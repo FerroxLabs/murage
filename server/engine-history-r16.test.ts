@@ -6,6 +6,7 @@
 // replaced or cut; a current ownership conflict wins over saved names; discovery inputs are compared by what they name and a
 // folder is removed entry by entry from its re-listing; a hold is atomic with the running count and needs a confirmed teardown;
 // a thrown retry arms the next one.
+import { fileURLToPath } from "node:url";
 import { appendFileSync, closeSync, existsSync, lstatSync, mkdirSync, mkdtempSync, openSync, readFileSync, readdirSync, realpathSync, writeFileSync, writeSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -209,7 +210,7 @@ describe("A: a dropped row keeps its shape, and nothing about the file's handle 
   });
 });
 
-function __dirname_(): string { return new URL(".", import.meta.url).pathname; }
+function __dirname_(): string { return fileURLToPath(new URL(".", import.meta.url)); }
 
 // ── B: a current ownership conflict wins over a saved name ────────────────────────────────────────────────────────────
 

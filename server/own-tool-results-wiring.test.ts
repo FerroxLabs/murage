@@ -101,7 +101,7 @@ describe("an ACP engine reading its own saved MCP result", () => {
     const saved = join(dir, "call_00_Ugx02hBzWG21yy4QOx9K5297.json");
     writeFileSync(saved, JSON.stringify({ messages: [{ subject: "Invoice" }] }));
     const { opened, verdict } = await askFor(
-      `cat ${saved} | python3 -c "import json,sys; d=json.load(sys.stdin); print(d['messages'][0]['subject'])"`, "t-own-read");
+      `cat ${process.platform === "win32" ? `'${saved}'` : saved} | python3 -c "import json,sys; d=json.load(sys.stdin); print(d['messages'][0]['subject'])"`, "t-own-read");
     expect(opened.toolResultDirs).toEqual(sessionDirs(childHome));
     expect(verdict).toMatchObject({ source: "own-tool-results" });
     expect(verdict.approve).toBeTruthy();

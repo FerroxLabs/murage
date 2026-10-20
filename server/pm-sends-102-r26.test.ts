@@ -164,7 +164,7 @@ describe("1. only an engine's own reply proves a hand-off ran", () => {
     const callers: string[] = [];
     const namers: string[] = [];
     for (const file of sources()) {
-      const rel = file.slice(serverDir.length);
+      const rel = file.slice(serverDir.length).replace(/\\/g, "/"); // "/" on every platform, as the filters are written
       const text = readFileSync(file, "utf8");
       const code = text.replace(/\/\*[\s\S]*?\*\//g, "").replace(/(^|[^:])\/\/.*$/gm, "$1");
       if (/\bprovidera?ReplyOf\s*\(/.test(code.replace(/export function providerReplyOf/, ""))) callers.push(rel);
@@ -211,7 +211,7 @@ describe("2. a hand-off's request is found by its id, and the pair is never spli
   it("no production code finds a request by slicing or rebuilding the key of a hand-off (the key is spelled once, where the request is created)", () => {
     const offenders: string[] = [];
     for (const file of sources()) {
-      const rel = file.slice(serverDir.length);
+      const rel = file.slice(serverDir.length).replace(/\\/g, "/"); // "/" on every platform, as the filters are written
       if (rel.startsWith("testing/")) continue;
       const text = readFileSync(file, "utf8");
       text.split("\n").forEach((line, index) => {
@@ -332,7 +332,7 @@ describe("3. shared fairness is chosen by indexed seeks, bounded per pass, and n
   it("no production code sorts the whole queue any more: sharedDispatchOrder (kept for the diagnostics and the older tests) is called by no module", () => {
     const callers: string[] = [];
     for (const file of sources()) {
-      const rel = file.slice(serverDir.length);
+      const rel = file.slice(serverDir.length).replace(/\\/g, "/"); // "/" on every platform, as the filters are written
       if (rel.startsWith("testing/") || rel === "shared-work.ts") continue;
       if (/\bsharedDispatchOrder\s*\(/.test(readFileSync(file, "utf8"))) callers.push(rel);
     }

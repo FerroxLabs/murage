@@ -9,6 +9,7 @@ import { CLAIM_INDEX_SQL, compareScope, memoryClaimIndex, RECONCILE_INTERVAL_MS,
 import { reopenParkedThreadJobs } from "./park.ts";
 import { RID_BLOCK, RidList } from "./rid-list.ts";
 import { removeTempDirSync } from "../testing/cleanup.ts";
+import { windowsPerfBudget } from "../testing/windows-hosted.ts";
 
 const NOW = 1_000_000;
 beforeEach(() => { closeDatabase(); removeTempDirSync(DATA_DIR); mkdirSync(DATA_DIR, { recursive: true }); setMemoryMode("capture"); jobs.resetMemoryClaimCursor(); database().exec("PRAGMA synchronous=OFF"); });
@@ -140,7 +141,7 @@ describe("memory claim index (A10)", () => {
     expect(memoryClaimIndex.stats.examined).toBe(examined);
   });
 
-  it("at 100,000 jobs: the first build is chunked (no step over 50 ms) and a claim costs under 1 ms", async () => {
+  it("at 100,000 jobs: the first build is chunked (no step over 50 ms) and a claim costs under 1 ms", { timeout: 120_000, ...windowsPerfBudget() }, async () => {
     seed(100_000, 40);
     const steps: number[] = [];
     const real = (memoryClaimIndex as unknown as { buildStep: (db: unknown) => boolean });
@@ -167,7 +168,7 @@ describe("memory claim index (A10)", () => {
     console.log(`[claim-index 100k] build steps=${steps.length} maxStepMs=${Math.max(...steps).toFixed(1)} sumStepMs=${steps.reduce((a, b) => a + b, 0).toFixed(1)} buildWallMs=${buildWall.toFixed(1)} perSelectionMs=${(selectMs / claims).toFixed(3)} perWholeClaimMs=${perClaim.toFixed(3)}`);
     expect(Math.max(...steps)).toBeLessThan(50);
     expect(selectMs / claims).toBeLessThan(1);
-  }, 120_000);
+  });
 
   // Review finding 5: a job reopened behind the index (no hint) was found only when the index ran dry, so a
   // continuously fed scope kept another scope's reopened job waiting indefinitely.
