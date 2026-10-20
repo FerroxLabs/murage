@@ -24,6 +24,7 @@ import { reconcileMemoryRoster, type MemoryRoster } from "./policy.ts";
 import { setMemoryMode } from "./repository.ts";
 import { memoryUpgradeReporter } from "./upgrade-status.ts";
 import { ancestryThreadRepaired, legacyReplyRoots, lineageRepairPending, repairOutputRootBackfill, rootSetMembers, validateMemorySchema } from "./schema.ts";
+import { windowsNightly } from "../testing/windows-hosted.ts";
 
 // every method the database's reporter is asked to run, in order, with the open-card cursor an independent reader saw at that moment
 const calls: Array<{ method: string; arg: unknown; cursor: number | null; indexed: number }> = [];
@@ -115,7 +116,7 @@ it("S1: a fresh or fully indexed file writes no index note at all", () => {
   expect(calls.map(c => c.method)).toEqual(["done"]);
 });
 
-it("S1: lineage repair keeps its working memory linear: no set copy per output (N and 2N peaks differ by about 2x, not 4x)", () => {
+it("S1: lineage repair keeps its working memory linear: no set copy per output (N and 2N peaks differ by about 2x, not 4x)", windowsNightly(), () => {
   const peakFor = (n: number) => {
     closeDatabase(); removeTempDirSync(DATA_DIR); mkdirSync(DATA_DIR, { recursive: true });
     setMemoryMode("active"); reconcileMemoryRoster(roster);

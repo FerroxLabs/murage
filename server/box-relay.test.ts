@@ -1,5 +1,6 @@
 import { readFileSync, readdirSync } from "node:fs";
 import { join } from "node:path";
+import { fileURLToPath } from "node:url";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   BOX_RELAY_FRAME_PATH, BOX_RELAY_MAX_FRAME_BYTES, BOX_RELAY_MAX_JSON_BYTES, BOX_RELAY_MAX_REQUEST_BYTES,
@@ -207,7 +208,7 @@ describe("cloud-home turn env", () => {
   });
 
   it("no driver builds MURAGEBOX_BOX_TOKEN from anything but computerProxyEnv", () => {
-    const dir = new URL("./drivers/", import.meta.url).pathname;
+    const dir = fileURLToPath(new URL("./drivers/", import.meta.url));
     const files = (d: string): string[] => readdirSync(d, { withFileTypes: true }).flatMap((e) =>
       e.isDirectory() ? files(join(d, e.name)) : e.name.endsWith(".ts") && !e.name.endsWith(".test.ts") ? [join(d, e.name)] : []);
     const offenders: string[] = [];

@@ -114,7 +114,10 @@ describe("the strict one-command grammar (delta 5)", () => {
   });
 });
 
-describe("resolvePins: the owner's ssh setting is kept with BatchMode second, or replaced for engines only", () => {
+// These rows model a POSIX host on the real disk: a ':'-separated PATH, '/' paths and extensionless #! programs, resolved with
+// platform "linux". A Windows drive path splits on that ':' and its programs need an extension, so they cannot run there; the
+// win32 hand has its own rows in server/engine-env-pins.test.ts.
+describe.skipIf(process.platform === "win32")("resolvePins: the owner's ssh setting is kept with BatchMode second, or replaced for engines only", () => {
   it("keeps a setting that parses and whose program is OpenSSH, every word quoted and -o BatchMode=yes second", async () => {
     const kept: [string, string][] = [
       ["ssh", IDENT()],
