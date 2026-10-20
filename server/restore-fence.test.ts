@@ -7,6 +7,7 @@
 //   2 a restored ready direct continuation is held, never drained, and a dismissed card means never
 //   3 one fixture with a pending item of every kind: zero work starts at boot
 //   4 structural: every table with a state/status/stage column is fenced or declared not pending work
+import { fileURLToPath } from "node:url";
 import { mkdirSync, mkdtempSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
@@ -257,7 +258,7 @@ describe("2 a saved relay removal is held, not run, until the owner removes the 
 });
 
 type Located = { file: string; name: string; body: string };
-const SERVER_DIR = new URL(".", import.meta.url).pathname;
+const SERVER_DIR = fileURLToPath(new URL(".", import.meta.url));
 /** Bodies of every function or method whose name starts like a startup or sweep consumer and whose signature ends the line with `{`. */
 function bootConsumers(): Located[] {
   const found: Located[] = [];

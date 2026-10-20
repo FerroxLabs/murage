@@ -44,6 +44,8 @@ async function allPages(input: OwnerListInput, limit = 200): Promise<string[][]>
 }
 /** The index as the helper writes it in age order: every FTS row at the record's age key. */
 function keyedIndex(db: DatabaseSync, rows: Array<{ id: string; version?: number; scopeId: string; text: string }>): MemoryIndex {
+  // the reader a previous page opened lets go first: Windows will not remove a file another handle holds open
+  closeMemoryIndexReader();
   for (const suffix of ["", "-wal", "-shm"]) rmSync(`${INDEX_PATH()}${suffix}`, { force: true });
   const index = new MemoryIndex(INDEX_PATH());
   index.upsert(rows.map(row => ({ id: row.id, version: row.version ?? 1, scopeId: row.scopeId, text: row.text, deleted: false, ageKey: keyOf(db, row.id, row.version ?? 1) })));
@@ -51,6 +53,7 @@ function keyedIndex(db: DatabaseSync, rows: Array<{ id: string; version?: number
 }
 /** An index an earlier build wrote: automatic rowids in projection order, not in age order. */
 function legacyIndex(rows: Array<{ id: string; scopeId: string; text: string }>): void {
+  closeMemoryIndexReader();
   for (const suffix of ["", "-wal", "-shm"]) rmSync(`${INDEX_PATH()}${suffix}`, { force: true });
   const index = new MemoryIndex(INDEX_PATH());
   index.upsert(rows.map(row => ({ id: row.id, version: 1, scopeId: row.scopeId, text: row.text, deleted: false })));

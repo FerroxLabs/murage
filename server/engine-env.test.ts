@@ -32,8 +32,12 @@ function fakeShell(body: string): string {
   return file;
 }
 
+// The account-shell capture and the pinned /bin/sh check are POSIX only: on Windows Murage never runs a login shell (the launch
+// environment is read live; env-check-again.test.ts has the Windows row), so the #!/bin/sh stand-ins cannot run there.
+const posixShell = process.platform !== "win32";
+
 describe("the capture (Rule 74a)", () => {
-  it("reads the whole exported map between the markers, past startup noise", async () => {
+  it.skipIf(!posixShell)("reads the whole exported map between the markers, past startup noise", async () => {
     const shell = fakeShell(`echo "welcome to zsh"; export PROJECT_DOCS=./docs; export PATH=/opt/nvm/bin:/usr/bin; export HOME=${dir}; shift 3; exec /bin/sh -c "$1"`);
     setOwnerEnvStore(join(dir, "env"));
     const owner = await captureOwnerEnv({ shell });
@@ -47,7 +51,7 @@ describe("the capture (Rule 74a)", () => {
     expect(parseEnvBlock(readFileSync(stored, "utf8"))?.PROJECT_DOCS).toBe("./docs");
   });
 
-  it("an incomplete capture is never handed: the last validated map is kept, then the told fallback", async () => {
+  it.skipIf(!posixShell)("an incomplete capture is never handed: the last validated map is kept, then the told fallback", async () => {
     const shell = fakeShell(`export PATH=/good/bin:/usr/bin:/bin; export HOME=${dir}; shift 3; exec /bin/sh -c "$1"`);
     setOwnerEnvStore(join(dir, "env"));
     expect((await captureOwnerEnv({ shell })).capture).toBe("session");
@@ -118,7 +122,7 @@ describe("the consistency check (Rule 74d)", () => {
     expect(failed).toMatchObject({ env: {}, absent: [], cwd: "/nonexistent-dir" });
   });
 
-  it("runs the pinned form for real and keeps an untouched map", async () => {
+  it.skipIf(!posixShell)("runs the pinned form for real and keeps an untouched map", async () => {
     const real = { env: { PATH: "/usr/bin:/bin", HOME: dir, PAGER: "cat" }, absent: ["POSIXLY_CORRECT"], capture: "session" as const, ownerStartup: {}, pins: new Map() };
     const result = await execEnvNow("s2", ["/bin/sh", "-c"], real, dir);
     expect(result).toMatchObject({ cwd: dir, absent: ["POSIXLY_CORRECT"] });
@@ -128,7 +132,7 @@ describe("the consistency check (Rule 74d)", () => {
 
 // Gap (c) of steps 1..3 (Rule 74a): an APPROVED write to a startup-file row re-captures before the next spawn
 describe("re-capture after an approved startup-file write", () => {
-  it("re-captures only when an ask naming a startup file is answered allow", async () => {
+  it.skipIf(!posixShell)("re-captures only when an ask naming a startup file is answered allow", async () => {
     const shell = fakeShell(`export PATH=/usr/bin:/bin; export HOME=${dir}; shift 3; exec /bin/sh -c "$1"`);
     setOwnerEnvStore(join(dir, "env"));
     expect((await captureOwnerEnv({ shell })).capture).toBe("session");

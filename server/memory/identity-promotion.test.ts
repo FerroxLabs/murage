@@ -105,7 +105,7 @@ it("a read through the indexes costs the same rows with 10 and with 100,000 reco
 // This lists the files that do it today, so adding another fails here and prompts a look at the identity checks.
 it("the files that write partition or kind on memory records are the known ones", () => {
   const root = fileURLToPath(new URL("..", import.meta.url)), found = new Set<string>();
-  const walk = (dir: string) => { for (const name of readdirSync(dir)) { const path = join(dir, name); const s = statSync(path); if (s.isDirectory()) { if (name !== "node_modules" && name !== "testdata" && name !== "testing") walk(path); } else if (/\.ts$/.test(name) && !/\.test\.ts$/.test(name)) { const text = readFileSync(path, "utf8"); if (/UPDATE\s+memory_records\s+SET[^;`"]*\b(kind|partition)\s*=/i.test(text) || /UPDATE\s+memory_record_details\s+SET[^;`"]*\bpartition\s*=/i.test(text)) found.add(relative(root, path)); } } };
+  const walk = (dir: string) => { for (const name of readdirSync(dir)) { const path = join(dir, name); const s = statSync(path); if (s.isDirectory()) { if (name !== "node_modules" && name !== "testdata" && name !== "testing") walk(path); } else if (/\.ts$/.test(name) && !/\.test\.ts$/.test(name)) { const text = readFileSync(path, "utf8"); if (/UPDATE\s+memory_records\s+SET[^;`"]*\b(kind|partition)\s*=/i.test(text) || /UPDATE\s+memory_record_details\s+SET[^;`"]*\bpartition\s*=/i.test(text)) found.add(relative(root, path).replace(/\\/g, "/")); } } };
   walk(root);
   expect([...found].sort()).toEqual(["memory/automatic-learning.ts", "memory/identity.ts", "memory/pip-episodes.ts", "memory/pip-lived.ts", "memory/pip-stance.ts", "memory/reveal-capture.ts"]);
 });

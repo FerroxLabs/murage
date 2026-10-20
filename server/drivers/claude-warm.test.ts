@@ -760,7 +760,8 @@ describe("ClaudeDriver warm process (fake CLI)", () => {
     // queue the steer while the launch is pre-init (a settled-false answer means it was not queued yet)
     const pending = Symbol("pending");
     let steered: Promise<boolean | SteerDelivery> | null = null;
-    for (let i = 0; i < 2000 && !steered; i++) {
+    // bounded by time, not by a count of ticks: a slower spawn (Windows) opens the pre-init window after more ticks than a fast one
+    for (const deadline = Date.now() + 10_000; !steered && Date.now() < deadline;) {
       const attempt = instance.adapter.steer!("t-steer-retry", "STEER-STRANDED");
       if ((await Promise.race([attempt, Promise.resolve(pending)])) === pending) steered = attempt;
       else await new Promise((resolve) => setImmediate(resolve));

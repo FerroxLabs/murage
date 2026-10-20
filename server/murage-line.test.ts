@@ -8,6 +8,7 @@
 // (an owner row, actorKind murage, a run card, a copy) or engine output naming its producing turn, or is a reviewed forward below. A
 // murageLine row is Murage's own only when it carries none of the model's words: one that quotes them (a prompt, an image) names the
 // producing turn, so it rests on that turn's inputs and is withheld with them.
+import { fileURLToPath } from "node:url";
 import { readdirSync, readFileSync, statSync } from "node:fs";
 import { join, relative } from "node:path";
 import { describe, expect, it } from "vitest";
@@ -19,7 +20,7 @@ import { RowSink, writeActivityRow, writeBotRow } from "./bot-egress.ts";
 import { status } from "./murage-status.ts";
 import type { Message } from "./store.ts";
 
-const ROOT = new URL(".", import.meta.url).pathname;
+const ROOT = fileURLToPath(new URL(".", import.meta.url));
 
 function sources(dir: string): string[] {
   return readdirSync(dir).flatMap(name => {

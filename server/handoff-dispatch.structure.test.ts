@@ -52,7 +52,8 @@ function buildProgram(virtual: Record<string, string> = {}, old?: ts.Program): t
 }
 
 /** The file a node is in, relative to server/ ("" outside it); the program also holds what the sources import (shared/, node_modules). */
-const rel = (file: ts.SourceFile): string => { const path = relative(serverDir, file.fileName); return path.startsWith("..") ? "" : path; };
+// relative names with '/' on every platform (Windows paths use '\\'), as the lists below are written
+const rel = (file: ts.SourceFile): string => { const path = relative(serverDir, file.fileName).replace(/\\/g, "/"); return path.startsWith("..") ? "" : path; };
 const isSource = (file: ts.SourceFile): boolean => { const r = rel(file); return r !== "" && !r.endsWith(".test.ts") && !r.endsWith(".d.ts") && !r.includes("node_modules"); };
 const inTesting = (name: string): boolean => name.startsWith("testing/");
 

@@ -58,7 +58,9 @@ function expectNeverFollows(report: { installed: boolean; cases: Record<string, 
   expect(cases.swapTop).toEqual({ returned: true, movedRemoved: true, victimIntact: true });
   // the path walk, given the same swap after its last check, does follow it: the race this replaces was real
   expect(cases.swapByPath).toMatchObject({ swapped: true, victimIntact: false });
-  // a racing thread: every swap it made was met by handle, nothing reached the victim
+  // a racing thread: every swap it made was met by handle, nothing reached the victim. A remove that gives up while the folder
+  // is renamed under it is allowed (it refuses rather than follows; how often depends on the race); once the race ends, every
+  // tree goes.
   expect(cases.race.victimIntact).toBe(true);
   expect(cases.race.failures).toBe(0);
   expect(cases.race.swaps).toBeGreaterThan(0);
