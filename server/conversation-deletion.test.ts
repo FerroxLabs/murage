@@ -27,6 +27,7 @@ import {
   rustUrlEncode,
 } from "./conversation-deletion.ts";
 import { removeTempDirSync } from "./testing/cleanup.ts";
+import { windowsPerfBudget } from "./testing/windows-hosted.ts";
 
 const scratch = realpathSync.native(mkdtempSync(join(tmpdir(), "murage-delete-")));
 // Every messages.db a test opens is closed before the folder goes: Windows
@@ -618,7 +619,7 @@ describe("engine history off the main thread", () => {
     expect(existsSync(project)).toBe(true);
   });
 
-  it("rewrites a 100 MB Fuigo search index in a worker thread while the main loop stays free", async () => {
+  it("rewrites a 100 MB Fuigo search index in a worker thread while the main loop stays free", windowsPerfBudget(), async () => {
     const data = fresh("data"), fuigoHome = fresh("fuigo"), db = messagesDb(data);
     const desk = join(data, "workspaces", BOT, "threads", THREAD);
     touch(join(desk, "a.md"));

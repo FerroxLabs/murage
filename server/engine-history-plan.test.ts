@@ -14,6 +14,7 @@ import { afterAll, afterEach, describe, expect, it } from "vitest";
 
 import { ConversationDeletions, runConversationDeletion } from "./conversation-deletion.ts";
 import { executeEnginePlans } from "./engine-exec.ts";
+import { geminiNormalizedPath, qwenProjectKey } from "./engine-history-deletion.ts";
 import { exclOps, fsOps } from "./engine-fs.ts";
 import { engineHistoryTestHooks, type EngineHistoryJob } from "./engine-history-offthread.ts";
 import { planEngineHistory, removeEngineHistoryFiles, runEngineHistoryJob } from "./engine-history-run.ts";
@@ -33,6 +34,8 @@ const key = (fx: Fixture) => homeKey(fx.homes[0]!.engine, fx.homes[0]!.home);
 const C = (engine: string) => `canary-${engine}-5521`;
 const B = (engine: string) => `bystander-${engine}-9917`;
 const raw = (file: string, text: string) => { mkdirSync(path.dirname(file), { recursive: true }); writeFileSync(file, text); };
+/** A folder as an engine writes it inside a JSON string: a Windows backslash is escaped. */
+const esc = (folder: string) => JSON.stringify(folder).slice(1, -1);
 const gone = (file: string) => { try { lstatSync(file); return false; } catch { return true; } };
 
 /** The whole deletion is refused for this fixture: nothing planned, nothing touched, the file named as the failure. */
@@ -67,12 +70,12 @@ describe("content that cannot be read is a failed read, never an empty one", () 
   });
 
   const tornCases: Array<[DeletionEngine, string, (fx: Fixture) => string, (fx: Fixture) => string]> = [
-    ["claude", "history.jsonl", (fx) => join(fx.homes[0]!.home, "history.jsonl"), (fx) => `{"sessionId":"sess-claude-1","project":"${fx.folders[0]}","display":"cut here`],
+    ["claude", "history.jsonl", (fx) => join(fx.homes[0]!.home, "history.jsonl"), (fx) => `{"sessionId":"sess-claude-1","project":"${esc(fx.folders[0]!)}","display":"cut here`],
     ["codex", "history.jsonl", (fx) => join(fx.homes[0]!.home, "history.jsonl"), () => `{"session_id":"019a0000-aaaa-7bbb-8ccc-000000000001","text":"cut here`],
-    ["kimi", "session_index.jsonl", (fx) => join(fx.homes[0]!.home, "session_index.jsonl"), (fx) => `{"sessionId":"s1","workDir":"${fx.folders[0]}","title":"cut here`],
+    ["kimi", "session_index.jsonl", (fx) => join(fx.homes[0]!.home, "session_index.jsonl"), (fx) => `{"sessionId":"s1","workDir":"${esc(fx.folders[0]!)}","title":"cut here`],
     ["grok", "logs/unified.jsonl", (fx) => join(fx.homes[0]!.home, "logs", "unified.jsonl"), () => `{"sid":"s-1","text":"cut here`],
-    ["qwen", "a chat in the project", (fx) => join(fx.homes[0]!.home, "projects", fx.folders[0]!.replace(/[^a-zA-Z0-9]/g, "-"), "chats", "b2c6d1a0-1111-4222-8333-444455556666.jsonl"), (fx) => `{"cwd":"${fx.folders[0]}","message":"cut here`],
-    ["gemini", "projects.json", (fx) => join(fx.homes[0]!.home, "projects.json"), (fx) => `{"projects":{"${fx.folders[0]}":"slug"`],
+    ["qwen", "a chat in the project", (fx) => join(fx.homes[0]!.home, "projects", qwenProjectKey(fx.folders[0]!), "chats", "b2c6d1a0-1111-4222-8333-444455556666.jsonl"), (fx) => `{"cwd":"${esc(fx.folders[0]!)}","message":"cut here`],
+    ["gemini", "projects.json", (fx) => join(fx.homes[0]!.home, "projects.json"), (fx) => `{"projects":{"${esc(geminiNormalizedPath(fx.folders[0]!))}":"slug"`],
   ];
   for (const [engine, name, file, torn] of tornCases) {
     it(`${engine}: a torn line in ${name} that names the conversation`, () => {

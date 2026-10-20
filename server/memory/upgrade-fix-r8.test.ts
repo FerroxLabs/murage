@@ -39,6 +39,7 @@ import { COMPACTION_MAX_CUT_ROWS, collectCursorWriteCount, collectRootSetsSlice 
 import { beginIntegrityPass, integrityHoldOf, readIntegrityPass } from "./integrity-state.ts";
 import { forceReadTimeJudgeForTest } from "./read-time-retired.ts";
 import { LineageAllowance, ROWS_PER_NODE, TURN_LINEAGE_NODES } from "./lineage-allowance.ts";
+import { windowsPerfBudget } from "../testing/windows-hosted.ts";
 
 const fresh = () => { closeDatabase(); forgetKeptLineageForTest(); removeTempDirSync(DATA_DIR); mkdirSync(DATA_DIR, { recursive: true }); };
 beforeEach(fresh);
@@ -365,7 +366,7 @@ it("r8 (preview-live): no background slice starts while an owner turn is live, a
 });
 
 // ── preview-live: the root-set collector writes its cursor once per slice, and each slice is short ───────────────────────────────
-it("r8 (preview-live): one collect cursor write per slice and every slice under 50 ms, at 10,000 and 300,000 unused sets", { timeout: 300_000 }, () => {
+it("r8 (preview-live): one collect cursor write per slice and every slice under 50 ms, at 10,000 and 300,000 unused sets", { timeout: 300_000, ...windowsPerfBudget() }, () => {
   const seen: Array<{ sets: number; slices: number; writesPerSlice: number; maxMs: number; removed: number }> = [];
   for (const n of [10_000, 300_000]) {
     fresh();

@@ -18,6 +18,7 @@ import { Store } from "./store.ts";
 import { jsonDocument, jsonElementFor, streamThreadExport } from "./thread-export.ts";
 import { transcriptPage } from "./transcript-page.ts";
 import { removeTempDirSync } from "./testing/cleanup.ts";
+import { windowsNightly } from "./testing/windows-hosted.ts";
 
 const selection = (): ModelSelection => ({ instanceId: "claude", model: "claude-sonnet-5" });
 const BOTS = () => join(DATA_DIR, "bots.json");
@@ -81,7 +82,7 @@ describe("P3-10: no client's page stretches to an old card", () => {
     expect(found).toBe(true);
   });
 
-  it("the page is flat: a card 3,000 rows back costs the same page as one 600 back", () => {
+  it("the page is flat: a card 3,000 rows back costs the same page as one 600 back", windowsNightly(), () => {
     const sizes: number[] = [];
     for (const rows of [600, 3000]) {
       removeTempDirSync(DATA_DIR);

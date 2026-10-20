@@ -4,10 +4,26 @@
 // Shared by the bounded-reads API tests (turn-full-bounded-api, turn-room-bounded-api,
 // bounded-routes-api): the in-server counter of statements and rows bound to a
 // watched thread, and the checks that two thread sizes read the same.
+import { writeFileSync } from "node:fs";
+import { join } from "node:path";
 import { DatabaseSync, StatementSync } from "node:sqlite";
 import { expect } from "vitest";
 import { dropThread } from "../branch-index.ts";
 import { prepareSyncOn } from "../branch-fill.ts";
+
+// The test tells the server what to do through count-control.json, which the server polls: not a POSIX signal, since Windows has
+// no SIGUSR2. Each command carries its own sequence, so the server runs it exactly once; a half-written file does not parse and is
+// read again on the next tick. The caller waits for the file the command writes (count-started, counts.json), as before.
+/** In the server process (needs `fs` and `path` in scope): runs `handler`, a JS function source taking the command, once per command. */
+export const countControlSource = (handler: string): string =>
+  `{const control=path.join(process.env.MURAGE_DATA_DIR,'count-control.json');let seen=null;const handle=${handler};
+  setInterval(()=>{let command;try{command=JSON.parse(fs.readFileSync(control,'utf8'));}catch{return;}if(!command||command.seq===seen)return;seen=command.seq;handle(command);},10).unref();}`;
+
+let countSeq = 0;
+/** In the test: hands the server one command (see countControlSource). */
+export function sendCountCommand(dataDir: string, command: object): void {
+  writeFileSync(join(dataDir, "count-control.json"), JSON.stringify({ ...command, seq: `${process.pid}.${Date.now()}.${++countSeq}` }));
+}
 
 // In the server process: every statement bound to the watched thread id, the
 // rows it returned, its query plan, and any whole-thread load (with where it
@@ -37,9 +53,9 @@ export const countingInstrumentation = (STORE: string): string => `
     if(watchedBot!==null&&botId===watchedBot&&state==='idle')fs.writeFileSync(path.join(dir,'settled'),'1');return out;};
   const activity=Store.prototype.setTaskActivity;Store.prototype.setTaskActivity=function(botId,threadId,state){lastStore=this;const out=activity.call(this,botId,threadId,state);
     if(threadId===watched&&state==='idle')fs.writeFileSync(path.join(dir,'settled'),'1');return out;};
-  process.on('SIGUSR2',()=>{const command=JSON.parse(fs.readFileSync(path.join(dir,'count-control.json'),'utf8'));
+  ${countControlSource(`(command)=>{
     if(command.start){watched=command.start;watchedBot=command.bot??null;reset();counts.loadedAtStart=lastStore?lastStore.threads.has(watched):null;counts.loadedBefore=everLoaded[watched]??[];fs.writeFileSync(path.join(dir,'count-started'),command.start);}
-    else{fs.writeFileSync(path.join(dir,'counts.json'),JSON.stringify(counts));watched=null;watchedBot=null;}});
+    else{fs.writeFileSync(path.join(dir,'counts.json'),JSON.stringify(counts));watched=null;watchedBot=null;}}`)}
 `;
 
 
