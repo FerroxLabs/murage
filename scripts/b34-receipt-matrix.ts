@@ -628,6 +628,8 @@ export function setupOutcome(name: string | null, method: string, path: string, 
 /** What a join adapter receives: the runner's isolated server, without direct memory seeding or receipt access. */
 export interface B34AdapterContext {
   row: AdapterRow; url: string; dataDir: string; fixtureDumpPath: string; fixtureFinishGateDir: string;
+  /** Diagnostics only: the current server log's path, when the runner has one. */
+  serverLog?(): string;
   api(method: string, path: string, body?: unknown): Promise<Api>;
   action(body: Record<string, unknown>): Promise<Api>;
   setup(name: string | null, method: string, path: string, body: unknown, expected: number, verify?: SetupVerify): Promise<Api>;

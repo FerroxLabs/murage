@@ -203,6 +203,7 @@ async function runAdapter(row: AdapterRow, adapter: B34Adapter, ctx: HarnessCtx,
       }, timeout), null);
     },
     async restart() { closeView(); await ctx.restart(); },
+    serverLog() { return fixture.info.logPath; },
     db() { if (!view) { view = new DatabaseSync(join(ctx.dataDir, "messages.db"), { readOnly: true }); view.exec("PRAGMA busy_timeout=5000"); } return view; },
   };
   // Q14 lease evidence is snapshotted by the runner itself, immediately around adapter.run.

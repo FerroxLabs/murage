@@ -8,11 +8,11 @@
 // files regardless of OPENCODE_PURE. These tests drive the real Python.
 import { execFileSync, spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
-import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { MINIMAL_ARGV } from "./engine-launch-fixture.ts";
+import { MINIMAL_ARGV, fixtureEngineBytes } from "./engine-launch-fixture.ts";
 import { removeTempDirSync } from "../testing/cleanup.ts";
 
 const launcher = fileURLToPath(new URL("../../deploy/cloud-home/murage-turn-launch.py", import.meta.url));
@@ -56,7 +56,7 @@ const home = (engine: string) => join(engineRoot, engine);
 beforeEach(() => {
   root = mkdtempSync(join(process.cwd(), ".murage-env-allowlist-")); engineRoot = join(root, "engine-homes");
   for (const engine of [...ENGINES, "fuigoAgent"]) mkdirSync(home(engine), { recursive: true });
-  mkdirSync(join(root, "bin")); command = join(root, "bin", "fixture-engine"); const bytes = readFileSync("/usr/bin/true");
+  mkdirSync(join(root, "bin")); command = join(root, "bin", "fixture-engine"); const bytes = fixtureEngineBytes();
   writeFileSync(command, bytes, { mode: 0o755 }); const sha256 = createHash("sha256").update(bytes).digest("hex");
   manifest = join(root, "engine-manifest.json");
   writeFileSync(manifest, JSON.stringify(Object.fromEntries([...ENGINES, "fuigoAgent"].map(engine => [engine, [{ path: command, sha256 }]]))), { mode: 0o644 });
