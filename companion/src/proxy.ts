@@ -378,51 +378,78 @@ export function createProxyHandler(options: ProxyOptions) {
       }
       readJson(req).then(
         (body) => {
-          // New clients redeem the high-entropy credential carried by the QR.
-          // `code` remains accepted for manual entry and older mobile builds.
-          const result = options.redeem(
-            String(body.credential ?? body.code ?? ""),
-            body.deviceName,
-            body.pairRequestId,
-            client,
-          );
-          if ("error" in result) {
-            // `full` and `save-failed` mean the credential was RIGHT and this
-            // machine could not finish; charging those would lock out the one
-            // person holding the real code. `countsAgainstSignIn` owns that
-            // judgement for both doors, and it counts an unclassified reason
-            // as a guess — the fail-closed direction.
-            const payload: Record<string, unknown> = { error: result.error };
-            if (countsAgainstSignIn(result.reason)) {
+          try {
+            // New clients redeem the high-entropy credential carried by the QR.
+            // `code` remains accepted for manual entry and older mobile builds.
+            // A string (or a number, as a typed code may arrive): coercing
+            // anything else (`String()` of an object whose toString is not
+            // callable throws) is never a guess, and on an unauthenticated
+            // route it must never reach the process. Charged like a wrong
+            // guess, the fail-closed direction.
+            const raw = body.credential ?? body.code ?? "";
+            const presented = typeof raw === "number" && Number.isFinite(raw) ? String(raw) : raw;
+            // The device name is checked here too, before redeem: with the
+            // right credential, a name `cleanDeviceName` cannot coerce would
+            // otherwise throw after the window was spent, burning the code.
+            const name = body.deviceName;
+            if (typeof presented !== "string" || (name != null && typeof name !== "string" && !(typeof name === "number" && Number.isFinite(name)))) {
+              const payload: Record<string, unknown> = { error: "That pairing request is not valid." };
               const locked = signIn.fail(client);
               if (locked) {
                 const seconds = Math.max(1, Math.ceil(locked.retryAfterMs / 1000));
                 res.setHeader("retry-after", String(seconds));
                 payload.retryAfter = seconds;
               }
+              return sendJson(res, 400, payload);
             }
-            return sendJson(res, 401, payload);
+            const result = options.redeem(
+              presented,
+              name == null ? name : String(name),
+              body.pairRequestId,
+              client,
+            );
+            if ("error" in result) {
+              // `full` and `save-failed` mean the credential was RIGHT and this
+              // machine could not finish; charging those would lock out the one
+              // person holding the real code. `countsAgainstSignIn` owns that
+              // judgement for both doors, and it counts an unclassified reason
+              // as a guess — the fail-closed direction.
+              const payload: Record<string, unknown> = { error: result.error };
+              if (countsAgainstSignIn(result.reason)) {
+                const locked = signIn.fail(client);
+                if (locked) {
+                  const seconds = Math.max(1, Math.ceil(locked.retryAfterMs / 1000));
+                  res.setHeader("retry-after", String(seconds));
+                  payload.retryAfter = seconds;
+                }
+              }
+              return sendJson(res, 401, payload);
+            }
+            // In, and the next attempt from this address starts clean.
+            signIn.succeed(client);
+            // `hosts` rides along whichever way the phone paired — QR, typed
+            // address, or discovery — so every paired device learns the full
+            // fallback list, not just the ones that scanned a QR. Absent, not
+            // empty, when there is nothing to offer: absent is what a sidecar
+            // predating the field sends, and one decode path beats two.
+            const hosts = options.hosts?.() ?? [];
+            const endpoints = options.endpoints?.() ?? [];
+            const response: typeof result & {
+              serverName: string;
+              hosts?: string[];
+              endpoints?: CompanionEndpoint[];
+            } = {
+              ...result,
+              serverName: options.serverName(),
+            };
+            if (hosts.length) response.hosts = hosts;
+            if (endpoints.length) response.endpoints = endpoints;
+            return sendJson(res, 201, response);
+          } catch {
+            // Whatever a request body makes pairing throw, the answer is a
+            // refusal, never an unhandled rejection that ends the companion.
+            sendJson(res, 500, { error: "Pairing could not be completed. Try again." });
           }
-          // In, and the next attempt from this address starts clean.
-          signIn.succeed(client);
-          // `hosts` rides along whichever way the phone paired — QR, typed
-          // address, or discovery — so every paired device learns the full
-          // fallback list, not just the ones that scanned a QR. Absent, not
-          // empty, when there is nothing to offer: absent is what a sidecar
-          // predating the field sends, and one decode path beats two.
-          const hosts = options.hosts?.() ?? [];
-          const endpoints = options.endpoints?.() ?? [];
-          const response: typeof result & {
-            serverName: string;
-            hosts?: string[];
-            endpoints?: CompanionEndpoint[];
-          } = {
-            ...result,
-            serverName: options.serverName(),
-          };
-          if (hosts.length) response.hosts = hosts;
-          if (endpoints.length) response.endpoints = endpoints;
-          return sendJson(res, 201, response);
         },
         (error: Error) => sendJson(res, 400, { error: error.message }),
       );

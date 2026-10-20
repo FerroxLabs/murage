@@ -159,7 +159,8 @@ early = m.supervise_scope("murage-turn-gggg.scope", lambda: os._exit(0), fake, l
 print(json.dumps({"late": late, "early": early, "err": err.getvalue()}))`.replace("import io,", "import time, io,"));
   expect(r.late).toBe(124); expect(r.early).toBe(0); expect(r.err).toBe("Cloud turn stopped: it ran past its time limit\n");
 });
-it("turns and logins are supervised, browser launches keep the plain exec", () => {
+// main() lowers its own OOM score through /proc/self/oom_score_adj before it dispatches: Linux only.
+it.skipIf(process.platform !== "linux")("turns and logins are supervised, browser launches keep the plain exec", () => {
   const src = text("murage-turn-launch.py");
   expect(src).toContain('plan[0].startswith("murage-turn-")');
   const r = py(`
@@ -191,7 +192,7 @@ it("launch() execs pasta only after dropping privileges, and the browser launch 
 });
 it("refuses a turn plan whose tmpfs has no size cap", () => {
   const r = py(`
-root = tempfile.mkdtemp(); os.getuid = lambda: 424242
+root = os.path.realpath(tempfile.mkdtemp()); os.getuid = lambda: 424242
 def attempt(argv, name):
     d = m.write_turn_dir(argv, {"seccomp": b"12345678"}, None, root, name)
     try: m.load_turn_plan(d, root); return "ok"
@@ -208,7 +209,7 @@ it("the pasta child accepts a per-turn /tmp temp file bound from data, and still
   // turn_mount_args admitted these files, but load_turn_plan re-checked the grant without them, so every
   // Claude turn (its mcp.json lives in the render directory /tmp/murage-render-<unit hex>/) died on a real home.
   const r = py(`
-root = tempfile.mkdtemp(); os.getuid = lambda: 424242
+root = os.path.realpath(tempfile.mkdtemp()); os.getuid = lambda: 424242
 def attempt(path, name):
     argv = ["/usr/bin/bwrap", "--seccomp", "@fd:seccomp", "--size", "1024", "--tmpfs", "/tmp", "--ro-bind-data", "@fd:mcp", path, "--", "x"]
     d = m.write_turn_dir(argv, {"seccomp": b"12345678", "mcp": b"{}"}, None, root, name)

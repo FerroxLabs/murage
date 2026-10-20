@@ -79,12 +79,27 @@ function world(records: IndexedMemory[]) {
 const emptyBridge: MemorySearchBridge = { search: async () => ({ hits: [], vectorRows: 0, coverageComplete: true }) };
 function collectGarbage() { v8.setFlagsFromString("--expose-gc"); (vm.runInNewContext("gc") as () => void)(); }
 const bulk = (work: () => void) => { database().exec("BEGIN"); try { work(); } finally { database().exec("COMMIT"); } };
+/** The event loop while `work` runs: every gap between two 1 ms ticks. */
 async function measured<T>(work: () => Promise<T>) {
-  let longest = 0, last = performance.now();
-  const ticker = setInterval(() => { const now = performance.now(); longest = Math.max(longest, now - last); last = now; }, 1);
+  const gaps: number[] = [];
+  let last = performance.now();
+  const ticker = setInterval(() => { const now = performance.now(); gaps.push(now - last); last = now; }, 1);
   last = performance.now();
   const started = performance.now();
-  try { const value = await work(); return { value, longest, ms: performance.now() - started }; } finally { clearInterval(ticker); }
+  try {
+    const value = await work();
+    const sorted = [...gaps].sort((a, b) => a - b);
+    return { value, longest: sorted.at(-1) ?? 0, p99: sorted[Math.floor(0.99 * (sorted.length - 1))] ?? 0, ms: performance.now() - started };
+  } finally { clearInterval(ticker); }
+}
+/** The loop stays free: the slices are short (p99 under 30 ms on every OS) and no single stall passes the OS's ceiling. Measured on
+ * hosted runners (CI 39361520531, 1 ms ticks over the whole search): p99 15.6-16.2 ms Linux, 16.1-21.7 ms macOS, 17.9-22.0 ms
+ * Windows; the longest gap 26.6-35.0 ms Linux, 27.0-37.5 ms Windows, and 44-63 ms on the 3-core macOS VM, where one tick in a few
+ * hundred lands on a scheduler pause (nightly 39345477364, CI 39357825825) while its p99 matches Linux. */
+const LONGEST_STALL_MS = process.platform === "darwin" ? 100 : 50;
+function expectLoopFree(run: { longest: number; p99: number }): void {
+  expect(run.p99).toBeLessThan(30);
+  expect(run.longest).toBeLessThan(LONGEST_STALL_MS);
 }
 
 describe("P1: a population no reader can read decides nothing the reader sees", () => {
@@ -115,8 +130,8 @@ describe("P1: a population no reader can read decides nothing the reader sees", 
     (() => fixture(true))();
     await new Promise(resolve => setTimeout(resolve, 500)); collectGarbage();
     const crowded = await measured(() => searchMemory(QUERY, accessOf(), emptyBridge, { allowance: LineageAllowance.tool(1_000_000_000), caller: "tool", limit: 20 }));
-    console.log(`R6-100K-STATE max event-loop stall ${Math.round(crowded.longest * 10) / 10} ms, ${Math.round(crowded.ms)} ms, hits ${crowded.value.hits.length}, partial ${String(crowded.value.partial ?? false)}`);
-    expect(crowded.longest).toBeLessThan(50);
+    console.log(`R6-100K-STATE max event-loop stall ${Math.round(crowded.longest * 10) / 10} ms (p99 ${Math.round(crowded.p99 * 10) / 10}), ${Math.round(crowded.ms)} ms, hits ${crowded.value.hits.length}, partial ${String(crowded.value.partial ?? false)}`);
+    expectLoopFree(crowded);
     expect(crowded.value.hits.map(hit => hit.id).sort()).toEqual(Array.from({ length: 10 }, (_, n) => `z-kept-${n}`));
     expect(crowded.value).not.toHaveProperty("partial");
     expect(crowded.value).not.toHaveProperty("degradedReason");
@@ -141,8 +156,8 @@ describe("P1: a population no reader can read decides nothing the reader sees", 
     await new Promise(resolve => setTimeout(resolve, 500)); collectGarbage();
     const run = await measured(() => searchMemory(QUERY, accessOf(), emptyBridge, { allowance: LineageAllowance.tool(1_000_000_000), caller: "tool", limit: 20 }));
     const answer = run.value;
-    console.log(`R6-100K-ANCESTRY max event-loop stall ${Math.round(run.longest * 10) / 10} ms, ${Math.round(run.ms)} ms, hits ${answer.hits.length}, partial ${String(answer.partial ?? false)}`);
-    expect(run.longest).toBeLessThan(50);
+    console.log(`R6-100K-ANCESTRY max event-loop stall ${Math.round(run.longest * 10) / 10} ms (p99 ${Math.round(run.p99 * 10) / 10}), ${Math.round(run.ms)} ms, hits ${answer.hits.length}, partial ${String(answer.partial ?? false)}`);
+    expectLoopFree(run);
     expect(run.ms).toBeLessThan(6000);
     expect(JSON.stringify(answer)).not.toContain("denied");
     if (answer.hits.length === 10) expect(answer.hits.map(hit => hit.id).sort()).toEqual(Array.from({ length: 10 }, (_, n) => `z-kept-${n}`));

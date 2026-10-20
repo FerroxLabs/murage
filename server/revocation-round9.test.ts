@@ -7,6 +7,7 @@
 import { existsSync, readdirSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { PassThrough } from "node:stream";
+import { fileURLToPath } from "node:url";
 import { DatabaseSync } from "node:sqlite";
 import { afterEach, expect, it, vi } from "vitest";
 import { EVENTS_DIR } from "./config.ts";
@@ -254,7 +255,7 @@ it("a marker left by another turn is not this turn's, and a turn that really ans
 
 it("startup removal of a leftover spill directory is wired", async () => {
   const { readFileSync } = await import("node:fs");
-  const here = dirname(new URL(import.meta.url).pathname);
+  const here = dirname(fileURLToPath(import.meta.url));
   const source = readFileSync(join(here, "index.ts"), "utf8");
   expect(source).toMatch(/rmSync\(join\(DATA_DIR, "bus-spill"\), \{ recursive: true, force: true \}\)/);
   expect(readdirSync(join(here, "harness")).filter(f => f === "bus.ts")).toHaveLength(1);
@@ -264,7 +265,7 @@ it("startup removal of a leftover spill directory is wired", async () => {
 it("the lane's server modules load under Node's strip-only TypeScript mode (no parameter properties or enums)", async () => {
   const { readFileSync } = await import("node:fs");
   const { stripTypeScriptTypes } = await import("node:module");
-  const here = dirname(new URL(import.meta.url).pathname);
+  const here = dirname(fileURLToPath(import.meta.url));
   for (const file of ["fold-steps.ts", "guarded-completion.ts", "project-card-executor.ts", "project-card-delivery-schema.ts", "harness/bus.ts", "harness/intake.ts"]) {
     expect(() => stripTypeScriptTypes(readFileSync(join(here, file), "utf8")), file).not.toThrow();
   }

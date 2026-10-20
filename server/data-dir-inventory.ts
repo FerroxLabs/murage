@@ -143,6 +143,10 @@ export const DATA_DIR_ENTRIES: Readonly<Record<string, DataDirEntry>> = Object.f
   "pending-grants.json": excluded("Remembered approvals still waiting for their answer to land (pending-grants.ts); no reader treats a row as a grant, and an unanswered one is simply asked again, so it is not restored"),
   "setup-backup.json": excluded("The harness's record of the first-run backup step (setup-backup.ts); a missing record means the step is not owed, and a restored folder already has backups, so it is not restored"),
   "memory-upgrade-counts.json": excluded("Cache of the exact message counts the upgrade screen shows, keyed on messages.db's write revision; recounted when absent or stale"),
+  // How far the start-up recovery of delegated replies an earlier build froze as withheld has read messages.db (frozen-replies.ts). Written
+  // on every start. The recovery is idempotent (a restored reply is found by its id and left alone), so a missing note reads the file again
+  // from the start and changes nothing a second time; it is keyed on rowids a restored copy need not keep, so it never travels.
+  "frozen-replies-recovery.json": excluded("Start-up note saying how far the recovery of earlier withheld delegated replies has read; read again from the start when absent, changing nothing a second time"),
   "memory-upgrade-status.json": excluded("Start-up note written while the memory upgrade runs (progress, or why it could not run); removed when the upgrade finishes"),
   "native": excluded(RUNTIME), "decider-log": excluded("Decision-model call log (no message text); regenerates and expires after 180 days"), "pending-deletions.json": excluded(RUNTIME), "memory-index": excluded(RUNTIME),
   "models": excluded(RUNTIME), "logs": excluded(RUNTIME), "tmp": excluded(RUNTIME), "connector-tools-cache": excluded(DOWNLOADED), "browser-profiles": excluded(RUNTIME),
@@ -220,6 +224,9 @@ export const DATA_DIR_ENTRIES: Readonly<Record<string, DataDirEntry>> = Object.f
   // (cloud-home/supervisor.ts prepareHealthProbeDir). Empty between checks; made again on every home start.
   ".murage-health": excluded("Readiness check scratch directory, made again on every home start; not restored"),
   "secrets": excluded(CREDENTIAL), "server-home": excluded(CREDENTIAL), "proxy": excluded(RUNTIME),
+  // A Cloud home's connection to the owner's own server (cloud-home/own-server.ts): its ssh key, ssh config, known hosts and the
+  // connection record. Connected again on the restored home.
+  "own-server": excluded(CREDENTIAL),
   // Murage for Chrome's runtime folder (browser-extension-paths.ts): the broker socket, its token
   // file and the launcher config the browser's helper reads. Made again on every start.
   "bx-run": excluded(CREDENTIAL),
@@ -258,6 +265,10 @@ const UUID = "[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}";
 export const DATA_DIR_PATTERNS: ReadonlyArray<{ pattern: RegExp; entry: DataDirEntry; example: string }> = Object.freeze([
   // Legacy per-thread transcripts, projected like the other records.
   { pattern: /^messages-[\w-]+\.json$/, entry: record(), example: "messages-thread-1.json" },
+  // The same transcript once message-db.ts has imported it into messages.db: renamed, never deleted, as the owner's one-time
+  // copy of what was imported, and so the import never runs again. It is the legacy record it was, so it is projected,
+  // checked and expired like one and comes back under the same name (a restore that dropped the suffix would import it twice).
+  { pattern: /^messages-[\w-]+\.json\.imported$/, entry: record(), example: "messages-thread-1.json.imported" },
   // mkdtemp scratch for a memory evolution run (index.ts) and a package
   // import's staging (bot-package-import.ts), and a stale permission socket
   // (procs.ts brokerSocketPath).

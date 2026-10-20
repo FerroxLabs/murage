@@ -14,9 +14,15 @@ const root=dirname(dirname(fileURLToPath(import.meta.url)));
 it("admits two human principals through authenticated-origin routing without owner transcript/native memory reuse",async()=>{
   const home=mkdtempSync(join(tmpdir(),"murage-human-principals-api-")),data=join(home,"data"),staticDir=join(home,"static"),dump=join(home,"turn.json");
   const claimsFile=join(home,"capability-audiences.jsonl"),claimProbe=join(home,"capability-probe.mjs");
-  // Observe the actual minted audience without recording credentials or changing the decision.
+  // Observe the actual minted audience without recording credentials or changing the decision. The child server runs without
+  // VITEST, so it would keep the real 50 ms lineage time budget per turn (lineage-allowance.ts TURN_LINEAGE_MS): on a loaded runner
+  // that budget runs out, the turn's memory is withheld as "checking" by design, and the owner's own continuity brief is missing
+  // from its first turn (1.0.3 CI 39418988743, macOS). The probe turns the time budget off as every in-process suite has it
+  // (setLineageTimeBudgetForTest), so what this test proves is who reads what, not how fast the runner is.
   writeFileSync(claimProbe, `
     import {appendFileSync} from 'node:fs';
+    import {setLineageTimeBudgetForTest} from ${JSON.stringify(pathToFileURL(join(root,"server/memory/lineage-allowance.ts")).href)};
+    setLineageTimeBudgetForTest(null);
     import {InternalCapabilities} from ${JSON.stringify(pathToFileURL(join(root,"server/internal-capabilities.ts")).href)};
     const mint=InternalCapabilities.prototype.mint;
     InternalCapabilities.prototype.mint=function(input){

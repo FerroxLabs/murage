@@ -263,20 +263,21 @@ describe("segments compare exactly, never folded", () => {
     // Rule 63: placement is by real path, so the folders must exist to be placed
     mkdirSync(join(ghost, "workspaces", "abc"), { recursive: true });
     expect(isOwnWorkspaceBookkeeping({ ...ghostScope(ghost), paths: [join(ghost, "workspaces", "abc", "MEMORY.md")] })).toBe(true);
-    expect(isOwnWorkspaceBookkeeping({ ...ghostScope(ghost), paths: [join(ghost, "WORKSPACES", "abc", "MEMORY.md")] })).toBe(false);
-    expect(isOwnWorkspaceBookkeeping({ ...ghostScope(ghost), paths: [join(ghost, "workspaces", "ABC", "MEMORY.md")] })).toBe(false);
+    // Windows places every existing part by its real spelling (NTFS names one folder whatever the case), so there another case IS the
+    // bot's own folder; elsewhere the parts are compared as written
+    const folded = process.platform === "win32";
+    expect(isOwnWorkspaceBookkeeping({ ...ghostScope(ghost), paths: [join(ghost, "WORKSPACES", "abc", "MEMORY.md")] })).toBe(folded);
+    expect(isOwnWorkspaceBookkeeping({ ...ghostScope(ghost), paths: [join(ghost, "workspaces", "ABC", "MEMORY.md")] })).toBe(folded);
   });
 
-  it("agrees with the filesystem about a case-variant of a folder that exists", () => {
-    // On a case-insensitive volume this path IS the bot's own MEMORY.md and
-    // the kernel says so; on a case-sensitive one it is a different folder
-    // and is refused. Either way the answer comes from the filesystem, not
-    // from this module lowercasing anything. `realpathSync.native` is the
-    // authority here — and the one the boundary itself resolves with —
-    // because only the libc call reports the on-disk casing of a component.
+  it("reads a case-variant of a folder that exists by the spelling the path was given, except where the volume names one folder by its real spelling", () => {
+    // Only Windows places every existing part by its real spelling (shared/in-project.ts walk), so there another case IS the bot's own
+    // MEMORY.md. On macOS the volume may be case-insensitive and name the same file, but the boundary compares the spelling it was
+    // given and asks, as the exact-spelling test above states: an extra card, never a widened one. On a case-sensitive volume it is
+    // a different folder and is refused too. `realpathSync.native` is the authority for whether the variant IS the same file.
     const variant = join(dataDir, "WORKSPACES", BOT, "MEMORY.md");
     let sameFile = false;
     try { sameFile = realpathSync.native(variant) === realpathSync.native(join(botDir, "MEMORY.md")); } catch { sameFile = false; }
-    expect(asks([variant])).toBe(sameFile);
+    expect(asks([variant])).toBe(process.platform === "win32" && sameFile);
   });
 });

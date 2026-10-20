@@ -75,6 +75,7 @@ function validatePaused(root: string) {
     const skills = json(join(skillRoot, bot, "skills.json"));
     if (skills !== undefined && (!object(skills) || Object.values(skills).some(value => !object(value) || value.enabled !== false))) fail("RESTORE_WORK_NOT_PAUSED");
   }
+  // messages-<thread>.json.imported is an inert record of an import already in messages.db (installation-restore-preparation.ts): never read, so never reviewed as a transcript
   for (const name of readdirSync(root)) if (/^messages-[a-zA-Z0-9_-]+[.]json$/.test(name)) {
     const value = json(join(root, name)), rows = Array.isArray(value) ? value : object(value) ? value.messages : undefined;
     if (!Array.isArray(rows)) fail("INVALID_REVIEW_MESSAGE");

@@ -9,7 +9,7 @@
 //                  status), never a string of a worker's.
 // This is the one module that turns a stored row into sealed words, and it never forwards them: the boundary hands them to the result gate.
 import { getOrCreateChannel, mirrorActivity, mirrorExchange, mirrorMurageLine, mirrorReply, type CommsBus } from "./comms-visibility.ts";
-import { queueDelegation, type DelegationItem, type DelegationReceipt, type QueuedDelegation } from "./delegations.ts";
+import { dropQueuedDelegation, queueDelegation, type DelegationItem, type DelegationReceipt, type QueuedDelegation } from "./delegations.ts";
 import { audienceTask } from "./execution-audience.ts";
 import { refusalStatus } from "./host-words.ts";
 import { WorkerText } from "./released-text.ts";
@@ -69,6 +69,9 @@ export interface BoundaryStore {
   /** Has the turn that answered this request already written its closing row here? Looked for among the rows written since the request was
    * made (a keyed range), never the conversation. */
   hasTerminalFor(threadId: string, request: Pick<RoomRequest, "id" | "createdAt">): boolean;
+  /** The request's closing row in `threadId`, when it is there: its id (the shared delivery wakes its asker at it, again after a crash) and whether
+   * it is the no-answer line (that answer is final: a delivery asked again keeps it, NOHOLD-DELEGATION.md). */
+  terminalFor(threadId: string, request: Pick<RoomRequest, "id" | "createdAt">): { id: string; noAnswer: boolean } | undefined;
   /** A conversation's rows written at or after `sinceMs`, newest first, each sealed only when it is reached. Rows are kept in time order, so the
    * walk stops at the first older row: what it touches follows the work since then, never the conversation's length. */
   rowsSince(threadId: string, sinceMs: number): Iterable<WorkerMessage>;
@@ -114,6 +117,15 @@ export function boundaryStore(store: Store): BoundaryStore {
     hasMessage: (threadId, messageId) => store.messageById(threadId, messageId) !== undefined,
     // a row of a request is written after the request was made: looked for among the rows since then (a minute of slack for clocks)
     hasTerminalFor: (threadId, request) => store.scanSince(threadId, Math.max(0, request.createdAt - 60_000), message => message.requestId === request.id && Boolean(message.turnTerminal)),
+    terminalFor: (threadId, request) => {
+      let found: { id: string; noAnswer: boolean } | undefined;
+      store.scanSince(threadId, Math.max(0, request.createdAt - 60_000), message => {
+        if (message.requestId !== request.id || !message.turnTerminal) return false;
+        found = { id: message.id, noAnswer: (message.murage?.status as { key?: string } | undefined)?.key === "no_answer_checking" };
+        return true;
+      });
+      return found;
+    },
     rowsSince: (threadId, sinceMs) => rowsSince(store, threadId, sinceMs),
     // a bot whose record is gone is named by a fixed word, never by the string that was asked about
     nameOf: botId => { const bot = store.bot(botId); return bot ? botName(bot) : botNameOf({ name: "a bot no longer on the roster" }, ""); },
@@ -153,6 +165,8 @@ export interface BoundaryComms {
   murageLine(channel: GroupRecord | undefined, text: Outbound, murage: MessageMurage, lineage?: { requestId?: string; replyToId?: string }): void;
   activity(from: BotRecord, channel: GroupRecord | undefined, name: Outbound, ok: boolean): void;
   queueDelegation(from: BotRecord, item: DelegationItem, maxDepth: number, sourceThreadId: string): QueuedDelegation;
+  /** Drops a direct hand-off just queued whose asker wake could not be kept on disk (NOHOLD-DELEGATION.md); false once it is draining or gone. */
+  dropQueuedDelegation(id: string, reason: Outbound): boolean;
   enqueueShared(input: SharedEnqueueInput): SharedEnqueueResult;
   clearFinishing(botId: string, identity: { requestId?: string; generation?: string }): void;
   audienceTask(botId: string, principal: HumanPrincipal, tag: ExecutionAudience | null): { threadId: string } | null;
@@ -167,6 +181,7 @@ export function boundaryComms(bus: CommsBus): BoundaryComms {
     murageLine: (channel, text, murage, lineage) => mirrorMurageLine(bus, channel, text, murage, lineage),
     activity: (from, channel, name, ok) => mirrorActivity(bus, from, channel, name, ok),
     queueDelegation: (from, item, maxDepth, sourceThreadId) => queueDelegation(bus, from, item, maxDepth, sourceThreadId),
+    dropQueuedDelegation: (id, reason) => dropQueuedDelegation(bus, id, reason),
     enqueueShared: input => {
       const queued = enqueueSharedWork(store, input);
       if (queued.ok) return { ok: true, request: queued.request };

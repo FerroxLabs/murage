@@ -10,6 +10,7 @@
 // window.
 import { existsSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
+import { countControlSource, sendCountCommand } from "./testing/bounded-reads.ts";
 import { afterEach, describe, expect, it } from "vitest";
 import { launchVerificationServer, type VerificationServer } from "../scripts/control-murage.ts";
 import { ROSTER_TASK_WINDOW, TASK_WINDOW } from "./task-window.ts";
@@ -19,9 +20,9 @@ const instrumentation = `
   const dir=process.env.MURAGE_DATA_DIR;let on=false;let n=0;let by={};
   const proto=sqlite.StatementSync.prototype;
   for(const name of ['all','get','iterate','run']){const original=proto[name];proto[name]=function(...args){if(on){n++;const key=String(this.sourceSQL).replace(/\\s+/g,' ').slice(0,140);by[key]=(by[key]??0)+1;}return original.apply(this,args);};}
-  process.on('SIGUSR2',()=>{const c=JSON.parse(fs.readFileSync(path.join(dir,'count-control.json'),'utf8'));
+  ${countControlSource(`(c)=>{
     if(c.start){n=0;by={};on=true;fs.writeFileSync(path.join(dir,'count-started'),'1');}
-    else{on=false;fs.writeFileSync(path.join(dir,'counts.json'),JSON.stringify({statements:n,by}));}});
+    else{on=false;fs.writeFileSync(path.join(dir,'counts.json'),JSON.stringify({statements:n,by}));}}`)}
 `;
 
 let fixture: VerificationServer | undefined;
@@ -35,7 +36,7 @@ const call = async (method: string, path: string, body?: unknown) => {
   return { status: response.status, body: parsed, text };
 };
 const file = (name: string) => join(fixture!.info.dataDir, name);
-const signal = (command: object) => { writeFileSync(file("count-control.json"), JSON.stringify(command)); process.kill(fixture!.info.pid, "SIGUSR2"); };
+const signal = (command: object) => sendCountCommand(fixture!.info.dataDir, command);
 const until = async (check: () => boolean) => { const end = Date.now() + 5_000; while (!check()) { if (Date.now() > end) throw new Error("timed out"); await new Promise((r) => setTimeout(r, 25)); } };
 const authHeaders = async () => { headers = { "x-murage-surface": "desktop", "x-murage-surface-secret": (await call("GET", "/api/desktop-secret")).body.secret }; };
 

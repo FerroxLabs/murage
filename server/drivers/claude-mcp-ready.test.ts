@@ -17,6 +17,7 @@ import { removeTempDir } from "../testing/cleanup.ts";
 import { ClaudeDriver, claudeMcpStartupEnv, resetClaudeMcpReadinessForTests } from "./claude.ts";
 import { resetClaudeVersionGate } from "./claude-guards.ts";
 import { MCP_OPTIONAL_WAIT_MS, toolsMayBeLoadingNotice, toolsUnavailableNotice } from "./mcp-readiness.ts";
+import { windowsPerfBudget } from "../testing/windows-hosted.ts";
 
 const FAKE_CLI = join(dirname(fileURLToPath(import.meta.url)), "..", "testing", "fake-claude-cli.ts");
 const ENV_KEYS = ["FAKE_CLAUDE_DUMP", "FAKE_CLAUDE_CONTROL_LOG", "FAKE_CLAUDE_MCP_READY_MS", "FAKE_CLAUDE_MCP_RECONNECT_MS",
@@ -239,7 +240,7 @@ describe("Claude turns wait for their required MCP servers", () => {
     expect((seen() as unknown as { pid: number }).pid).toBe(secondDump.pid);
   }, 60_000);
 
-  it("adds near-zero latency to a kept process's turn when everything is ready", async () => {
+  it("adds near-zero latency to a kept process's turn when everything is ready", { timeout: 120_000, ...windowsPerfBudget() }, async () => {
     process.env.FAKE_CLAUDE_MCP_READY_MS = JSON.stringify({ murage_connectors: 0, "murage-memory": 0, agents: 0 });
     process.env.FAKE_CLAUDE_DUMP_EACH_TURN = "1";
     const mounts = { composio, "murage-memory": { ...composio, args: ["/fake/memory.js"] }, agents: { ...composio, args: ["/fake/agents.js"] } };
@@ -262,5 +263,5 @@ describe("Claude turns wait for their required MCP servers", () => {
     console.info(`MCP-GATE-LATENCY warm send-to-prompt median: no MCP gate ${without} ms, all-ready gate ${withGate} ms, added ${withGate - without} ms (status asks ${statusAsks})`);
     expect(controls().some((c) => c.request.subtype === "mcp_reconnect")).toBe(false);
     expect(withGate - without).toBeLessThan(50);
-  }, 120_000);
+  });
 });

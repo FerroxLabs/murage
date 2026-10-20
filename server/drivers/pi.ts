@@ -754,6 +754,12 @@ export const PiDriver: ProviderDriver<PiConfig> = {
       /** Asks opened as host-control permission requests (local-computer scope). */
       scopedRequests: Set<string>;
     }>();
+    // A turn between sendTurn's start and its child's registration has no
+    // entry in `active`, so a Stop then found nothing to stop and the turn went
+    // on to prompt the engine (1.0.3 CI 39418988743: a bot-level Stop right
+    // after a room claimed the bot). Such a Stop is kept and honoured as soon
+    // as the turn has started, before its handshake and prompt.
+    const starting = new Set<string>(), earlyStops = new Set<string>();
     // settle() emits the terminal event and then requests termination; the
     // child is owned until its close is observed (A2).
     const teardowns = new TurnTeardowns();
@@ -778,6 +784,7 @@ export const PiDriver: ProviderDriver<PiConfig> = {
     const sendTurn = async (turn: SendTurnInput) => {
       const { threadId } = turn;
       if (active.has(threadId)) throw new Error("a turn is already running on this thread");
+      earlyStops.delete(threadId); starting.add(threadId);
       // Host control always routes through the permission card; full-auto must
       // never get unapproved hands on the user's machine (same guard as the
       // Claude and ACP drivers).
@@ -805,6 +812,7 @@ export const PiDriver: ProviderDriver<PiConfig> = {
           message: `${ENGINE} could not select model "${requestedModel.slice(0, 200)}": it needs a provider/model id. Choose a model from its list.`,
         });
         emit({ ...base(threadId, turnId), type: "turn.completed", ok: false, stopReason: "failed" });
+        starting.delete(threadId);
         return { turnId };
       }
 
@@ -1019,6 +1027,7 @@ export const PiDriver: ProviderDriver<PiConfig> = {
         settle(true, "cancelled");
       };
       active.set(threadId, { stop, turnId, pending, child, scopedRequests });
+      starting.delete(threadId);
 
       const onEvent = (evt: PiEvent) => {
         appendNative(threadId, { dir: "in", source: "pi.rpc", msg: evt });
@@ -1261,6 +1270,10 @@ export const PiDriver: ProviderDriver<PiConfig> = {
       });
 
       emit({ ...base(threadId, turnId), type: "turn.started" });
+      if (earlyStops.delete(threadId)) {
+        stop();
+        return { turnId };
+      }
 
       /** Fail the turn before the prompt is dispatched: surface why, settle
        * ok:false and stop the child (settle kills it). A no-op once the turn
@@ -1430,7 +1443,9 @@ export const PiDriver: ProviderDriver<PiConfig> = {
         // Close-confirmed stop (A2): stop() settles and requests termination;
         // resolve only after the child closed, reject at the deadline.
         interruptTurn: async (threadId, turnId) => {
-          active.get(threadId)?.stop();
+          const entry = active.get(threadId);
+          if (entry) entry.stop();
+          else if (starting.has(threadId)) earlyStops.add(threadId);
           const result = await teardowns.wait(threadId, turnId, piStopBudget());
           if (!result.closeConfirmed) throw new ProviderStopUnconfirmedError(DRIVER_KIND, result);
           return result;

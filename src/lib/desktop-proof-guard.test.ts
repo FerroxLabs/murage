@@ -483,9 +483,12 @@ const repoPath = (path: string) => relative(ROOT, path).split(sep).join("/");
 
 const kindFor = (file: string) => (file.endsWith(".tsx") ? ts.ScriptKind.TSX : file.endsWith(".ts") ? ts.ScriptKind.TS : ts.ScriptKind.JS);
 
+/** TypeScript names every file with "/" on every OS (C:\a\b.ts is C:/a/b.ts to the compiler host), so the files are keyed that way. */
+const tsName = (path: string): string => path.replaceAll("\\", "/");
 /** One program over the given files, imports left unresolved: the checker is
  * used only to bind each identifier to the declaration in scope. */
-function buildProgram(sources: ReadonlyMap<string, string>): ts.Program {
+function buildProgram(named: ReadonlyMap<string, string>): ts.Program {
+  const sources = new Map([...named].map(([path, text]) => [tsName(path), text] as const));
   const options: ts.CompilerOptions = { allowJs: true, noResolve: true, noLib: true, types: [], jsx: ts.JsxEmit.Preserve, target: ts.ScriptTarget.Latest, module: ts.ModuleKind.ESNext };
   const host = ts.createCompilerHost(options, true);
   host.getSourceFile = (name, version) => {
@@ -619,12 +622,18 @@ function isWritten(index: FileIndex, id: ts.Identifier): boolean {
   return Boolean(sym && index.written.has(sym));
 }
 
+/** The program's source file for a path as this OS names it. */
+function sourceFileOf(program: ts.Program, path: string): ts.SourceFile {
+  const sf = program.getSourceFile(tsName(path));
+  if (!sf) throw new Error(`the AST index has no source file for ${path}`);
+  return sf;
+}
 /** Index real files: one program, one checker. */
 function indexFiles(paths: readonly string[]): FileIndex[] {
   const sources = new Map(paths.map((path) => [path, readFileSync(path, "utf8")] as const));
   const program = buildProgram(sources);
   const checker = program.getTypeChecker();
-  return paths.map((path) => indexFile(program.getSourceFile(path)!, checker, repoPath(path)));
+  return paths.map((path) => indexFile(sourceFileOf(program, path), checker, repoPath(path)));
 }
 /** Index one snippet (the scanner tests). */
 function indexSnippet(source: string, file = "x.ts"): FileIndex {
@@ -1160,5 +1169,14 @@ describe("the proof never rides in a URL (AST, src/ and electron/)", () => {
       expect(urls('const h = { "x-murage-surface-secret": desktopSurfaceSecret };')).toEqual([]);
       expect(urls("const u = `${base}?${new URLSearchParams({ surfaceTicket: ticket })}`;")).toEqual([]);
     });
+  });
+});
+
+describe("the AST index on every OS", () => {
+  it("finds a file named with Windows separators (TypeScript names every file with /)", () => {
+    const name = "C:\\repo\\src\\lib\\proof-probe.ts";
+    const program = buildProgram(new Map([[name, "export const probe = (proof: string) => proof;"]]));
+    expect(sourceFileOf(program, name).text).toContain("export const probe");
+    expect(indexFile(sourceFileOf(program, name), program.getTypeChecker(), "lib/proof-probe.ts").params.size).toBe(1);
   });
 });

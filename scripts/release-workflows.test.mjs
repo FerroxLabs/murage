@@ -24,6 +24,7 @@ import { dirname, join } from "node:path";
 import { beforeAll, describe, expect, it } from "vitest";
 import { parse } from "yaml";
 import { removeTempDirSync } from "../server/testing/cleanup.ts";
+import { check, deriveOses, readLists, select } from "./ci-test-tiers.mjs";
 
 describe("WhatsApp final release evidence", () => {
   const jobs = parse(readFileSync(new URL("../.github/workflows/release.yml", import.meta.url), "utf8")).jobs;
@@ -320,14 +321,28 @@ describe("scoped CI confirmation", () => {
     const vitest = workflow.jobs.vitest;
     expect(vitest.needs).toBe("quality");
     expect(vitest.name).toContain("Scoped Vitest confirmation");
-    expect(vitest.strategy.matrix.vitest_shard).toBe("${{ fromJSON(inputs.vitest_file && '[1]' || '[1,2,3,4,5,6,7,8,9,10]') }}");
+    expect(vitest.strategy.matrix.vitest_shard).toBe("${{ fromJSON(inputs.vitest_file && '[1]' || '[1,2,3,4,5,6,7,8,9,10,11,12]') }}");
+    // Windows runs twelve shards; macOS and ubuntu keep ten, so their 11 and 12 are excluded.
+    expect(vitest.strategy.matrix.exclude).toEqual([
+      { os: "macos-latest", vitest_shard: 11 }, { os: "macos-latest", vitest_shard: 12 },
+      { os: "ubuntu-latest", vitest_shard: 11 }, { os: "ubuntu-latest", vitest_shard: 12 },
+    ]);
     const full = vitest.steps.find(step => step.name === "Run Vitest shard");
     expect(full.if).toBe("inputs.vitest_file == ''");
-    expect(full.run).toBe("pnpm exec vitest run --shard=${{ matrix.vitest_shard }}/10 --tags-filter='!nightly && !perf-budget' --exclude server/cloud-home/app-health.test.ts");
+    // The blocking shards run only GATE files, each on the OSes ci/gate-tests.txt names for it.
+    expect(full.run).toContain('node scripts/ci-test-tiers.mjs list --tier gate --os "$os" --shard "$SHARD"');
+    expect(full.run).toContain("node node_modules/vitest/vitest.mjs run --tags-filter='!nightly && !perf-budget' \"${args[@]}\"");
+    expect(full.env.SHARD).toBe("${{ matrix.vitest_shard }}/${{ matrix.os == 'windows-latest' && 12 || 10 }}");
     expect(full.env.MURAGE_SKIP_REAL_ELECTRON_BROWSER_FIXTURE).toBe("${{ matrix.os == 'windows-latest' && '1' || '0' }}");
-    // The one file the shards exclude runs as root on one Linux shard of the full run, so nothing is skipped.
-    const root = vitest.steps.find(step => step.name === "Run the root-only app-health test as root");
-    expect(root.if).toBe("inputs.vitest_file == '' && matrix.os == 'ubuntu-latest' && matrix.vitest_shard == 1");
+    // EXTENDED files run on Linux in a job that never fails the run, and `required` does not wait on it.
+    const extended = workflow.jobs.extended;
+    expect(extended["continue-on-error"]).toBe(true);
+    expect(extended["runs-on"]).toBe("ubuntu-latest");
+    expect(workflow.jobs.required.needs).not.toContain("extended");
+    expect(extended.steps.find(step => step.name === "Run extended shard").run).toContain("--tier extended");
+    // The one file the extended shards leave out runs as root on one of them, so nothing is skipped.
+    const root = extended.steps.find(step => step.name === "Run the root-only app-health test as root");
+    expect(root.if).toBe("${{ !cancelled() && matrix.extended_shard == 1 }}");
     expect(root.run).toContain("node_modules/vitest/vitest.mjs run server/cloud-home/app-health.test.ts");
     expect(root.run.startsWith("sudo -E ")).toBe(true);
     const scoped = vitest.steps.find(step => step.name === "Scoped Vitest confirmation");
@@ -415,7 +430,7 @@ describe("scoped Windows confirmation", () => {
     const ci = load("ci.yml");
     expect(triggers(ci).workflow_dispatch.inputs.windows_only.default).toBe(false);
     for (const job of ["quality", "vitest"]) expect(ci.jobs[job].strategy.matrix.os, job).toBe('${{ fromJSON(inputs.windows_only && \'["windows-latest"]\' || \'["macos-latest","ubuntu-latest","windows-latest"]\') }}');
-    expect(ci.jobs.vitest.steps.find(step => step.name === "Run Vitest shard").run).toBe("pnpm exec vitest run --shard=${{ matrix.vitest_shard }}/10 --tags-filter='!nightly && !perf-budget' --exclude server/cloud-home/app-health.test.ts");
+    expect(ci.jobs.vitest.steps.find(step => step.name === "Run Vitest shard").run).toContain("--tier gate");
     expect(ci.jobs.quality.steps.some(step => step.run === "pnpm test:electron")).toBe(true);
     expect(ci.jobs['control-plane'].if).toBe('${{ !inputs.windows_only && !inputs.human_files }}');
     expect(ci.jobs['package-linux'].if).toBe('${{ !inputs.windows_only && !inputs.human_files }}');
@@ -614,12 +629,14 @@ describe("tests CI's shards leave out still run (nightly.yml)", () => {
 
   it("CI's shards leave out exactly the two tags vite.config.ts defines, and nightly runs each of them", () => {
     for (const tag of ["nightly", "perf-budget"]) expect(viteConfig).toContain(`name: "${tag}"`);
-    const shard = ci.jobs.vitest.steps.find(step => step.name === "Run Vitest shard");
-    expect(shard.run).toContain("--tags-filter='!nightly && !perf-budget'");
+    for (const [job, name] of [["vitest", "Run Vitest shard"], ["extended", "Run extended shard"]]) {
+      expect(ci.jobs[job].steps.find(step => step.name === name).run, job).toContain("--tags-filter='!nightly && !perf-budget'");
+    }
     const slow = nightly.jobs.slow;
     expect(slow.strategy.matrix.os).toEqual(["macos-latest", "ubuntu-latest", "windows-latest"]);
     expect(slow.steps.some(step => step.uses === "./.github/actions/vitest-runtime")).toBe(true);
     expect(slow.steps.find(step => step.name === "Run the nightly tests").run).toContain("--tags-filter=nightly");
+    expect(slow.steps.find(step => step.name === "Run the whole-file scale tests").run).toContain("ci-test-tiers.mjs list --tier nightly");
     // The perf-budget job needs host and SSH secrets, so it lives in a private-only workflow that the public
     // scrub removes (scrub.sh). Public nightly.yml must never hold it; when the private file exists, check it.
     expect(nightly.jobs).not.toHaveProperty("perf-budget");
@@ -646,8 +663,36 @@ describe("tests CI's shards leave out still run (nightly.yml)", () => {
   });
 
   it("shard caps sit above the slowest expected shard, and a cancelled shard is never the plan", () => {
-    expect(ci.jobs.vitest.strategy.matrix.vitest_shard).toContain("[1,2,3,4,5,6,7,8,9,10]");
+    expect(ci.jobs.vitest.strategy.matrix.vitest_shard).toContain("[1,2,3,4,5,6,7,8,9,10,11,12]");
     expect(ci.jobs.vitest["timeout-minutes"]).toBe("${{ matrix.os == 'windows-latest' && 60 || matrix.os == 'macos-latest' && 45 || 40 }}");
     expect(nightly.jobs.slow["timeout-minutes"]).toBeGreaterThanOrEqual(120);
+  });
+});
+
+describe("only GATE tests block CI (ci/gate-tests.txt)", () => {
+  it("classifies every Vitest file exactly once, each gate file with its OSes and the failure it prevents", () => {
+    expect(check().problems).toEqual([]);
+  });
+
+  it("runs Cloud home GATE tests on Linux only, and every GATE file on at least one OS", () => {
+    const { gate } = readLists();
+    for (const [path, entry] of gate) {
+      expect(entry.oses.length, path).toBeGreaterThan(0);
+      if (path.startsWith("server/cloud-home/")) expect(entry.oses, path).toEqual(["linux"]);
+    }
+    const count = os => (os === "windows" ? 12 : 10);
+    const shards = os => Array.from({ length: count(os) }, (_, i) => select({ tier: "gate", os, shard: `${i + 1}/${count(os)}` }).files).flat();
+    const all = new Set(["linux", "mac", "windows"].flatMap(shards));
+    expect(all).toEqual(new Set(gate.keys()));
+    const linux = shards("linux");
+    expect(new Set(linux).size).toBe(linux.length);
+  });
+
+  it("derives a file's OSes from its own top-level platform guards, and is unsure means all", () => {
+    expect(deriveOses("server/cloud-home/x.test.ts", "describe('x', () => {});")).toBe("linux");
+    expect(deriveOses("server/a.test.ts", 'describe.skipIf(process.platform === "win32")("a", () => {});')).toBe("linux+mac");
+    expect(deriveOses("server/a.test.ts", 'describe.runIf(process.platform === "darwin")("a", () => {});')).toBe("mac");
+    expect(deriveOses("server/a.test.ts", 'describe.skipIf(process.platform !== "linux")("a", () => {});\ndescribe("b", () => {});')).toBe("all");
+    expect(deriveOses("server/a.test.ts", "const x = 1;")).toBe("all");
   });
 });

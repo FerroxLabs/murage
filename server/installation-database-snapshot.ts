@@ -106,7 +106,8 @@ const APP_TABLES = new Map<string, { required: boolean; optional: string[] }>(Ob
   setup_marks: { required: false, optional: [] },
   inbox_fill_deferred: { required: false, optional: [] },
   artifacts: { required: false, optional: ["producer", "publication_id"] },
-  output_publications: { required: false, optional: [] },
+  // turn_id (the producing provider turn, server/artifacts.ts) is appended by ALTER in 1.0.3: a 1.0.2 archive holds the table without it
+  output_publications: { required: false, optional: ["turn_id"] },
   image_operations: { required: false, optional: [] },
   // saved prompt blocks, reference packs, render prompts and model checks
   // (image-operations-schema.ts initializeImageLibrary), new in 0.1.61

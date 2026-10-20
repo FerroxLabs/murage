@@ -24,8 +24,28 @@ import { LineageAllowance } from "./memory/lineage-allowance.ts";
 import { allocateIncarnation, latestIncarnation, sessionKeyOf, startFreshSession } from "./memory/session-incarnation.ts";
 import { handedPinsOf, noteStartupFileEvent, promptFactsOf } from "./engine-env.ts";
 import { windowRuntimeEvent } from "./runtime-event-out.ts";
+import { isCommandTool } from "./auto-approve.ts";
 import { commandCwdFromToolInput, commandFromToolInput } from "../shared/exact-command.ts";
 import { grantRequestFor, routineCardFields } from "./approval-grant-request.ts";
+
+/** Every name index.ts imports (a value, not a type) that the fold reads, bound to the module index.ts imports it from: the fold runs
+ * with the same helpers production hands it, so a new import in index.ts needs no edit here. The fixture's own scope entries below
+ * (inert outside services, isolated storage) win over these. */
+const INDEX_SOURCE = readFileSync(new URL("./index.ts", import.meta.url), "utf8");
+const productionImports: Record<string, unknown> = await (async () => {
+  const start = INDEX_SOURCE.indexOf("const foldRuntimeEvent =");
+  const fold = INDEX_SOURCE.slice(start, INDEX_SOURCE.indexOf("\nbus.subscribe(foldRuntimeEvent)", start));
+  const out: Record<string, unknown> = {};
+  for (const match of INDEX_SOURCE.matchAll(/^import\s+\{([^}]*)\}\s+from\s+"(\.{1,2}\/[^"]+)";/gm)) {
+    const names = match[1]!.split(",").map((part) => part.trim()).filter((part) => part && !part.startsWith("type "))
+      .map((part) => { const [imported, local = imported] = part.split(/\s+as\s+/).map((name) => name.trim()); return { imported: imported!, local: local! }; })
+      .filter(({ local }) => new RegExp(`(?<![\\w$])${local.replace(/\$/g, "\\$")}\\b`).test(fold));
+    if (!names.length) continue;
+    const module = await import(new URL(match[2]!, new URL("./index.ts", import.meta.url)).href) as Record<string, unknown>;
+    for (const { imported, local } of names) if (imported in module) out[local] = module[imported];
+  }
+  return out;
+})();
 
 /** Execute the production event fold with isolated storage and inert outside
  * services. This is a behavior test, not a census of source substrings. */
@@ -37,11 +57,14 @@ function foldFixture() {
   const stamps = new Map([[bot.threadId, stamp]]);
   const noop = () => undefined;
   const scope: Record<string, unknown> = {
+    ...productionImports,
     store, toolAction, startedToolAction, completedToolAction, engineStamp, plainConnectedAppMessage: (row: unknown) => row,
     // what index.ts imports for every permission event (engine-env.ts Rule 74a, shared/exact-command.ts): the real ones, as in production
     noteStartupFileEvent, handedPinsOf, promptFactsOf, commandCwdFromToolInput, commandFromToolInput, turnCwdByThread: new Map(), routineCardFields, grantRequestFor,
     // the window's copy of every runtime event (runtime-event-out.ts), the real one, as in production
     windowRuntimeEvent,
+    // which tools are shell commands (auto-approve.ts), the real one, as in production
+    isCommandTool,
     fluxFirstTokenProbe: { observe: noop, begin: noop },
     accountProjectEvent: noop, shouldIgnoreProviderEvent: () => false, replyGuardContext: () => null,
     accountPresentedProjectEvent: () => true, presentedRequests: { publish: noop },
@@ -57,7 +80,7 @@ function foldFixture() {
     createHash, retainSession, adoptStagedImages, memoryEchoDecision, generatedImagesByTurn: new Map(), memoryEchoReplies: new Map(),
     performance, providerReplyOf, murageLine, database, sessionKeyOf, latestIncarnation, allocateIncarnation, startFreshSession, threadSealed, appendDecision: noop, turnIsBackground, addSourcesToRunningTurn: noop, DATA_DIR: "fixture", workAdmission: { liveTurns: () => [] }, notify: noop, buildNotification: noop,
   };
-  const source = readFileSync(new URL("./index.ts", import.meta.url), "utf8");
+  const source = INDEX_SOURCE;
   const plainStart = source.indexOf("function plainConnectedAppMessage");
   scope.plainConnectedAppMessage = runInNewContext(stripTypeScriptTypes(source.slice(plainStart, source.indexOf('const SETUP_TASK_TITLE', plainStart))) + "\nplainConnectedAppMessage;", { plainConnectedAppText });
   // the memory session a session.started names (S6 rule 27), compiled in the same context so it reads the fixture's maps
@@ -89,7 +112,7 @@ it("F3 production fold stamps tool start, completion and options rows for the gu
   expect(started.turnId).toBe("turn"); expect(started.tool?.action?.outcome).toBe("pending");
   fold({ ...base, type: "item.completed", itemType: "tool", itemId: "tool", ok: true });
   expect(store.activePath(bot.threadId).at(-1)).toMatchObject({ turnId: "turn", tool: { ok: true, action: { classes: ["send"], outcome: "completed" } } });
-  fold({ ...base, type: "request.opened", requestType: "question", requestId: "question", summary: "Which format?", choices: ["Short", "Long"] });
+  fold({ ...base, type: "request.opened", requestType: "question", requestId: "question", tool: "AskUserQuestion", summary: "Which format?", choices: ["Short", "Long"] });
   expect(store.activePath(bot.threadId).at(-1)).toMatchObject({ kind: "options", turnId: "turn" });
   fold({ ...base, type: "item.completed", itemType: "assistant_text", text: "I sent it." });
   fold({ ...base, type: "item.started", itemType: "tool", itemId: "ask", title: "mcp__team__ask_bot" });

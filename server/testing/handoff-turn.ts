@@ -13,7 +13,9 @@ import { audienceTask } from "../execution-audience.ts";
 import { threadHumanPrincipal } from "../human-principals.ts";
 import { storedMessage } from "../message-db.ts";
 import { getOrCreateChannel } from "../comms-visibility.ts";
-import { drainDelegations as drainReal, handoffRow } from "../delegations.ts";
+import { drainDelegations as drainReal, handoffRow, onOwedHandoffReply } from "../delegations.ts";
+import { replayOwedReply } from "../handoff-reply.ts";
+import type { Store } from "../store.ts";
 import type { DatabaseSync } from "node:sqlite";
 import { database } from "../database.ts";
 import { configureHandoffDispatch, dispatchHandoff, type HandoffHost, type HandoffRun, type HandoffTurnOptions } from "../handoff-dispatch.ts";
@@ -39,9 +41,15 @@ export function writePrompt(bus: CommsBus, run: HandoffRun, threadId: string, te
   bus.store.appendMessage(threadId, { role: "user", kind: "text", text }, run.turnKey, run.within(threadId, () => { /* the start is recorded by the stamp */ }));
 }
 
+/** The server's writer of the line a receipt owes its source conversation (index.ts onOwedHandoffReply), registered with every fake host as the server
+ * registers it at every start: a boot receipt that owes a line (a restart's "interrupted") settles here as it does there, never through a bare status. */
+function useOwedReplyWriter(bus: CommsBus): void {
+  onOwedHandoffReply((receipt) => replayOwedReply(bus.store as unknown as Store, receipt));
+}
 export const heldNotices: HeldDelegation[] = [];
 export interface FakeHostOptions { stamp?: boolean; refuse?: (botId: string) => Error | undefined }
 export function fakeHost(bus: CommsBus, runTarget: TestRunTarget, options: FakeHostOptions = {}): HandoffHost {
+  useOwedReplyWriter(bus);
   const stamp = options.stamp ?? true;
   return {
     startTurn: async (botId: string, text: string, turn: HandoffTurnOptions) => {

@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import { describe, expect, it } from "vitest";
 import { AskerWakes, askerWakeHeldIds, askerWakePrompt, askerWakeTurnOptions, heldWakeId, MAX_ASKER_RESULTS, MAX_ASKER_WAKES, MAX_ASKER_WAKE_ATTEMPTS, type AskerWakeIntent, type AskerWakeSnapshot } from "./asker-wake.ts";
-import { askerWakeIntent, wakeAfterHeldSettle, wakeAfterRecoveredReceipt, type AskerWakePort } from "./handoff-boundary.ts";
+import { askerWakeIntent, wakeAfterRecoveredReceipt, type AskerWakePort } from "./handoff-boundary.ts";
 
 const intent = (threadId = "t1"): AskerWakeIntent => ({
   botId: "lead", threadId, depth: 0, coordination: { rootId: "r", path: ["lead"] }, notOwnerAudience: false, unattended: false,
@@ -467,7 +467,7 @@ describe("asker wakes", () => {
   // Astra r1 item 5: a result recovered from its receipt after the final commit failed wakes the asker too.
   it("wakes the asker for a direct hand-off's result recovered from its receipt", () => {
     const calls: unknown[] = [];
-    const port: AskerWakePort = { register: () => {}, consume: (taskId) => calls.push(["consume", taskId]), returned: (...args) => calls.push(["returned", ...args]) };
+    const port: AskerWakePort = { register: () => {}, consume: (taskId) => { calls.push(["consume", taskId]); }, returned: (...args) => { calls.push(["returned", ...args]); } };
     const receipt = { id: "task-1", sourceThreadId: "t1", toBotId: "mate", toBotName: "Mate" };
     wakeAfterRecoveredReceipt(port, { ...receipt, status: "done" }, "line-1");
     wakeAfterRecoveredReceipt(port, { ...receipt, id: "task-2", status: "failed" }, "line-2");
@@ -480,20 +480,6 @@ describe("asker wakes", () => {
       ["returned", "task-2", "t1", { toBotId: "mate", toBotName: "Mate", ok: false, messageId: "line-2" }],
       ["consume", "task-3"],
     ]);
-  });
-
-  it("wakes a direct hand-off's asker when its held reply settles, never at the hold, and leaves a room's to the request tree", () => {
-    const calls: unknown[] = [];
-    const port: AskerWakePort = { register: () => {}, consume: (taskId) => calls.push(["consume", taskId]), returned: (...args) => calls.push(["returned", ...args]) };
-    const receipt = { id: "task-1", sourceThreadId: "t1", toBotId: "mate", toBotName: "Mate", status: "done", held: { messageId: "held-1", since: 1 } };
-    // every way a hold ends (shown, withheld, stale) owes the asker its wake once, at the held row
-    wakeAfterHeldSettle(port, receipt);
-    // a room hand-off's asker wakes through its request (completeRoomAsk), not here
-    wakeAfterHeldSettle(port, { ...receipt, id: "task-2", requestId: "req-2" });
-    // no held row, nothing to point the wake at
-    wakeAfterHeldSettle(port, { ...receipt, id: "task-3", held: undefined });
-    wakeAfterHeldSettle(undefined, { ...receipt, id: "task-4" });
-    expect(calls).toEqual([["returned", "task-1", "t1", { toBotId: "mate", toBotName: "Mate", ok: true, messageId: "held-1" }]]);
   });
 
   // ── what is kept, and what a restart makes of it (design sections 2 and 4) ──

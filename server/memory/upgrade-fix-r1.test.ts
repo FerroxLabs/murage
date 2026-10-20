@@ -290,7 +290,8 @@ it("F7 (r3): a set whose predecessor is past the cutting bound stays full, decid
   let tempRows = 0;
   for (let guard = 0; guard < 1_000; guard++) {
     const step = compactRootSetsStep(db, { maxMs: 5, chunkRows: 2_000 });
-    tempRows = Math.max(tempRows, Number(db.prepare("SELECT count(*) AS n FROM temp.memory_root_set_below").get()?.n ?? 0));
+    // the table exists once a step has reached the conversion; on a slow runner the first steps end in the enumeration, before it is made (absent reads as no rows)
+    if (db.prepare("SELECT 1 FROM sqlite_temp_master WHERE type='table' AND name='memory_root_set_below'").get()) tempRows = Math.max(tempRows, Number(db.prepare("SELECT count(*) AS n FROM temp.memory_root_set_below").get()?.n ?? 0));
     if (!step.remaining) break;
   }
   expect(tempRows).toBe(0);

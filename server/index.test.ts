@@ -19,7 +19,7 @@ import { freePortBlock } from "./testing/ports.ts";
 import { openSse } from "./testing/sse.ts";
 import { FILE_MAX_BYTES, IMAGE_MAX_BYTES } from "./attachments.ts";
 import { redactSecretsInText } from "./redact.ts";
-import { BASE, phoneApi, DESKTOP_HEADERS, DESKTOP_SECRET, desktopTicketed, FIXTURE_ENGINE_OVERRIDES, PORT, ROOT, SERVER_DIR, STATE_ONLY_SELECTION, api, deferredCheckpointDirectories, desktopApi, expectStoppedTestServerCleanly, fakeClaudeDump, home, readJsonFileWhenReady, startInternalFixtureTurn, statusWithHeaders, stderr, stopFixtureTurn, uploadAvatar, waitForIsolatedServer } from "./testing/index-harness.ts";
+import { BASE, phoneApi, DESKTOP_HEADERS, DESKTOP_SECRET, desktopTicketed, FIXTURE_ENGINE_OVERRIDES, PORT, ROOT, SERVER_DIR, STATE_ONLY_SELECTION, api, deferredCheckpointDirectories, desktopApi, expectStoppedTestServerCleanly, fakeClaudeDump, home, readJsonFileWhenReady, RUN_START_WAIT_MS, startInternalFixtureTurn, statusWithHeaders, stderr, stopFixtureTurn, uploadAvatar, waitForIsolatedServer } from "./testing/index-harness.ts";
 import { removeTempDirSync } from "./testing/cleanup.ts";
 
 
@@ -895,7 +895,7 @@ describe("harness HTTP API", () => {
         body: JSON.stringify({ event: "build the team" }),
       });
       expect(delivered.status).toBe(202);
-      const dump = await readJsonFileWhenReady<{ pid: number; mcpConfig: { mcpServers: { agents: { env: Record<string, string> } } } }>(fakeClaudeDump, 20_000);
+      const dump = await readJsonFileWhenReady<{ pid: number; mcpConfig: { mcpServers: { agents: { env: Record<string, string> } } } }>(fakeClaudeDump, RUN_START_WAIT_MS);
       const env = dump.mcpConfig.mcpServers.agents.env;
       expect(env.MURAGE_BOT_ID).toBe(chief.id);
       expect(env.MURAGE_THREAD_ID).not.toBe(chief.threadId);
@@ -916,7 +916,7 @@ describe("harness HTTP API", () => {
       for (const botId of createdIds) await desktopApi("DELETE", `/api/bots/${botId}`);
       await desktopApi("DELETE", `/api/bots/${chief.id}`);
     }
-  }, 60_000);
+  }, RUN_START_WAIT_MS + 60_000);
 
   it("create_bot reads the Auto of the task that calls it, not the Chief's profile bit (AUTOOP2 finding 2)", async () => {
     // AUTOOP1's scenario had one task, so the profile bit and the task bit

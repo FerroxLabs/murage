@@ -295,6 +295,14 @@ export async function prepareInstallationRestore(archive: string, outputParent: 
       if (message.queued === true) message.queued = false;
       return message;
     };
+    // messages-<thread>.json.imported is message-db.ts's record of a transcript already imported into messages.db: nothing reads
+    // it again, so it is copied through as written (path and size checked like any component, never parsed, expired or imported).
+    // Re-validating it refused whole restores: 1.0.2's lenient import accepted transcripts with duplicate ids.
+    for (const path of files) if (/^messages-[\w-]+\.json\.imported$/.test(path)) {
+      const stat = lstatSync(join(state, ...path.split("/")));
+      if (!stat.isFile()) fail("INVALID_RESTORE_COMPONENT");
+      if (stat.size > MAX_JSON_BYTES) fail("RESTORE_COMPONENT_TOO_LARGE");
+    }
     for (const path of files) if (/^messages-[\w-]+\.json$/.test(path)) {
       const value = read(path);
       const graph = new InstallationTranscriptGraph(fail);

@@ -1025,6 +1025,19 @@ describe("PiDriver turns (fake CLI)", () => {
     expect(recorder.events.filter((e) => e.type === "runtime.error")).toEqual([]);
   });
 
+  it("a Stop that lands while the turn is still starting (no pi child yet) ends it as cancelled before its prompt", async () => {
+    await create();
+    // sendTurn awaits its setup (version probe, engine environment) before it spawns and registers the child: the Stop lands there
+    const sent = instance.adapter.sendTurn({ threadId: "t-early-stop", text: "go" });
+    void instance.adapter.interruptTurn("t-early-stop").catch(() => {});
+    const { turnId } = await sent;
+    const done = await recorder.until((e) => e.type === "turn.completed" && e.turnId === turnId);
+    expect(done).toMatchObject({ ok: true, stopReason: "cancelled" });
+    // no prompt reached the engine: nothing was answered
+    expect(recorder.events.filter((e) => e.turnId === turnId && (e.type === "content.delta" || e.type === "item.completed"))).toEqual([]);
+    expect(recorder.events.filter((e) => e.type === "runtime.error")).toEqual([]);
+  });
+
   it("close-confirmed stop: interruptTurn resolves only after the pi child has exited", async () => {
     const scratch = mkdtempSync(join(tmpdir(), "murage-pi-close-"));
     const alive = (pid: number) => {

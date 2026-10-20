@@ -8,13 +8,13 @@
 // messages and on one of 200,000 read the same statements and rows, each an
 // index search, and never load the room. Run with memory on and with it off
 // (the two transcripts a room reads).
-import { existsSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, readFileSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { fileURLToPath } from "node:url";
 import { afterAll, beforeAll, expect, it } from "vitest";
 import { launchVerificationServer, type VerificationServer } from "../scripts/control-murage.ts";
-import { countingInstrumentation, expectBounded, report, type Counts } from "./testing/bounded-reads.ts";
+import { countingInstrumentation, expectBounded, report, type Counts, sendCountCommand } from "./testing/bounded-reads.ts";
 import { refillThread, waitForMessageWalk } from "./testing/bounded-reads.ts";
 
 const STORE = fileURLToPath(new URL("./store.ts", import.meta.url));
@@ -24,7 +24,7 @@ const api = async (method: string, path: string, body?: unknown) => {
   return { status: response.status, body: await response.json().catch(() => null) as any };
 };
 const file = (name: string) => join(fixture.info.dataDir, name);
-const signal = (command: object) => { writeFileSync(file("count-control.json"), JSON.stringify(command)); process.kill(fixture.info.pid, "SIGUSR2"); };
+const signal = (command: object) => sendCountCommand(fixture.info.dataDir, command);
 const until = async (check: () => boolean, ms: number) => { const end = Date.now() + ms; while (!check()) { if (Date.now() > end) throw new Error("timed out"); await new Promise((r) => setTimeout(r, 25)); } };
 const authHeaders = async () => { headers = { "x-murage-surface": "desktop", "x-murage-surface-secret": (await api("GET", "/api/desktop-secret")).body.secret }; };
 
@@ -55,6 +55,7 @@ function seed(threadId: string, count: number) {
 /** The owner's message to the room and the member's turn, until it has settled. */
 async function measuredRoomTurn(room: Room, text: string) {
   for (const name of ["counts.json", "settled", "count-started"]) rmSync(file(name), { force: true });
+  const since = Date.now();
   signal({ start: room.group.threadId, bot: room.bot.id });
   await until(() => existsSync(file("count-started")), 5_000);
   const posted = await api("POST", `/api/groups/${room.group.id}/messages`, { text });
@@ -64,7 +65,9 @@ async function measuredRoomTurn(room: Room, text: string) {
   signal({ dump: true });
   await until(() => existsSync(file("counts.json")), 5_000);
   const replied = (() => { const db = new DatabaseSync(file("messages.db"), { readOnly: true }); try { return Number((db.prepare("SELECT count(*) AS n FROM messages WHERE thread_id=? AND role='bot' AND kind='text' AND id NOT LIKE 'seed-%'").get(room.group.threadId) as { n: number }).n); } finally { db.close(); } })();
-  return { counts: JSON.parse(readFileSync(file("counts.json"), "utf8")) as Counts, replied };
+  // what the turn wrote, so a statement-count difference names the message behind it
+  const written = (() => { const db = new DatabaseSync(file("messages.db"), { readOnly: true }); try { return (db.prepare("SELECT role,kind,substr(text,1,60) AS text FROM messages WHERE thread_id=? AND at>=? ORDER BY rowid").all(room.group.threadId, since) as Array<{ role: string; kind: string; text: string }>).map(m => `${m.role}/${m.kind}: ${m.text}`); } finally { db.close(); } })();
+  return { counts: JSON.parse(readFileSync(file("counts.json"), "utf8")) as Counts, replied, written };
 }
 
 beforeAll(async () => {
@@ -94,6 +97,7 @@ it("a room member's whole turn reads the same statements and rows at 1,000 and a
     expect(b.replied).toBeGreaterThan(0);
     expect(a.counts.statements).toBeGreaterThan(0);
     report(`room ${mode}`, a.counts, b.counts);
+    console.log(`[room ${mode}] written`, JSON.stringify({ small: a.written, large: b.written }, null, 1));
     // background capture of one more message of the turn is timing, not history: keyed reads are bounded, not equal
     expectBounded(a.counts, b.counts, false, true);
   }

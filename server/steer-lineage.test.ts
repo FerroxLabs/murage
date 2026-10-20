@@ -185,6 +185,9 @@ posixOnly("a steer's quoted reply is recorded at the write, not after the acknow
     // the engine may have the text: the quote stays on the turn and its session resets
     expect(turn.parents).toContainEqual({ kind: "line", threadId: "chat", messageId: "reply-1" });
     writeSessionLineage(database(), FUIGO_SESSION, turn);
+    // The session carries the revoked quote from this write on. Its hold sits at the write's own slot, above every prompt already built
+    // (revoke-commit.ts inheritMarks, 1.0.3 F2), so a read of the bare session row is "shown" until the walk marks it: the walk is what resets it.
+    drainRevokeMarker(database());
     expect(sessionLookup(database(), FUIGO_SESSION, CONTENT).state).not.toBe("shown");
   }, 30_000);
 
