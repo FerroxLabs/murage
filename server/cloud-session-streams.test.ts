@@ -20,7 +20,8 @@ import { sendDelegated } from "./route-delegation.ts";
 import { removeTempDirSync } from "./testing/cleanup.ts";
 const origin = "https://home.example", clients: ClientRequest[] = [], databases: DatabaseSync[] = [], dirs: string[] = [], servers: Server[] = [];
 beforeEach(() => {
-  if (!DATA_DIR.startsWith(tmpdir() + sep)) throw new Error("The media fixture requires a temporary data directory");
+  // DATA_DIR is canonical (realpath), and on macOS os.tmpdir() is reached through /var -> /private/var
+  if (![tmpdir(), realpathSync(tmpdir())].some(root => DATA_DIR.startsWith(root + sep))) throw new Error("The media fixture requires a temporary data directory");
   removeTempDirSync(DATA_DIR); __resetMediaAssetsForTests(); vi.stubEnv("MURAGE_CLOUD_ROLE", "home");
 });
 afterEach(async () => {

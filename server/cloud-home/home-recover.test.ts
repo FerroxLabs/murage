@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import { execFileSync } from "node:child_process";
-import { existsSync, mkdtempSync, readFileSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, realpathSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -50,7 +50,8 @@ it("home pulls in the turn egress proxy itself (after enrollment nothing else st
 // function against hostile leftovers: it must neither block, follow, nor recurse.
 const launcher = fileURLToPath(new URL("../../deploy/cloud-home/murage-turn-launch.py", import.meta.url));
 function wipeFixture(setup: string): string {
-  const root = mkdtempSync(join(tmpdir(), "home-recover-"));
+  // Resolved: the launcher walks the home path with O_NOFOLLOW, and macOS os.tmpdir() sits behind the /var -> /private/var link.
+  const root = realpathSync(mkdtempSync(join(tmpdir(), "home-recover-")));
   try {
     return execFileSync("python3", ["-I", "-c", `
 import os, runpy, sys

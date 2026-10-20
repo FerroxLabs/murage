@@ -7,6 +7,15 @@ import { expect, it } from "vitest";
 import { removeTempDirSync } from "../testing/cleanup.ts";
 const source = (name: string) => readFileSync(new URL(`../../deploy/cloud-home/${name}`, import.meta.url), "utf8");
 const envelope = JSON.stringify({ version: 2, machineId: "home-test", dataKey: Buffer.alloc(32, 1).toString("base64"), bootstrapSecret: Buffer.alloc(32, 2).toString("base64") });
+// start-home.sh runs under the image's bash 5 and waits on its process substitution, which bash
+// before 4.4 cannot do (`wait` answers 127, "not a child"). macOS ships bash 3.2 as /bin/bash, so
+// use a bash 4.4+ from the host (Homebrew's on the macOS runners) and say so when there is none.
+const modernBash = ["bash", "/opt/homebrew/bin/bash", "/usr/local/bin/bash"].find(candidate => {
+  const probe = spawnSync(candidate, ["-c", 'echo "${BASH_VERSINFO[0]} ${BASH_VERSINFO[1]}"'], { encoding: "utf8" });
+  const [major, minor] = (probe.stdout ?? "").trim().split(" ").map(Number);
+  return probe.status === 0 && (major > 4 || (major === 4 && minor >= 4));
+});
+const runsBoot = modernBash ? it : it.skip;
 // Replace only immutable deployment paths. The actual bash control flow runs;
 // the fake supervisor reads FD3, verifies non-export and returns no key bytes.
 function boot(output: string, status: number) {
@@ -17,12 +26,12 @@ function boot(output: string, status: number) {
     writeFileSync(config, "MURAGE_CLOUD_MACHINE_ID=home-test\n");
     writeFileSync(node, `#!/usr/bin/python3\nimport os,json\nprint('supervisor entered',flush=True)\nv=json.load(os.fdopen(3))\nassert v['version']==2\nassert v['dataKey'] not in repr(dict(os.environ))\nassert v['bootstrapSecret'] not in repr(dict(os.environ))\nprint('supervisor started')\n`, { mode: 0o700 });
     const script = source("start-home.sh").replaceAll("/usr/local/libexec/murage-enroll", helper).replaceAll("/etc/murage-home/home.env", config).replaceAll("/usr/local/bin/node", node);
-    return spawnSync("bash", ["-c", script], { encoding: "utf8", timeout: 5000 });
+    return spawnSync(modernBash!, ["-c", script], { encoding: "utf8", timeout: 5000 });
   } finally { removeTempDirSync(root); }
 }
-it("launches with envelope only on FD3", () => { const result = boot(envelope, 0); expect(result.status).toBe(0); expect(result.stdout).toBe("supervisor entered\nsupervisor started\n"); expect(result.stderr).toBe(""); });
-it.each([78, 1, 127])("preserves helper status %i and never execs with partial key", status => { const result = boot(envelope, status); expect(result.status).toBe(status); expect(result.stdout).toBe(""); expect(result.stderr).not.toContain("AQEB"); if (status === 78) expect(result.stderr).toContain("stale generation"); });
-it.each(["", "broken", "{}", envelope.replace('"version":2', '"version":1')])("refuses missing or malformed envelope before exec", value => { const result = boot(value, 0); expect(result.status).not.toBe(0); expect(result.stdout).toBe(""); expect(result.stderr).not.toContain("AQEB"); });
+runsBoot("launches with envelope only on FD3 (needs bash 4.4+)", () => { const result = boot(envelope, 0); expect(result.status).toBe(0); expect(result.stdout).toBe("supervisor entered\nsupervisor started\n"); expect(result.stderr).toBe(""); });
+runsBoot.each([78, 1, 127])("preserves helper status %i and never execs with partial key (needs bash 4.4+)", status => { const result = boot(envelope, status); expect(result.status).toBe(status); expect(result.stdout).toBe(""); expect(result.stderr).not.toContain("AQEB"); if (status === 78) expect(result.stderr).toContain("stale generation"); });
+runsBoot.each(["", "broken", "{}", envelope.replace('"version":2', '"version":1')])("refuses missing or malformed envelope before exec (needs bash 4.4+)", value => { const result = boot(value, 0); expect(result.status).not.toBe(0); expect(result.stdout).toBe(""); expect(result.stderr).not.toContain("AQEB"); });
 it("systemd stops stale-generation restart", () => { expect(source("murage-home.service")).toContain("RestartPreventExitStatus=78"); });
 it("permits only turn stub DNS before loopback drop", () => {
  const nft = source("murage-egress.nft");
