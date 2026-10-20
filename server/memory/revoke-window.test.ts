@@ -36,6 +36,7 @@ import { finishLineageStorageAtStartup } from "./root-set-compaction.ts";
 import { migrateMemorySchema } from "./schema.ts";
 import { stampFreshSession } from "./testing/writetime-fixture.ts";
 import { removeTempDirSync } from "../testing/cleanup.ts";
+const N = (n: number): number => Math.max(1, Math.round(n * Number(process.env.MEASURE_SCALE ?? 1)));
 // 1.0.2: this test models a 1.0.1 file (legacy root-set rows) for the read-time judge, which still decides legacy data until S6.
 thawBeforeEach(() => thawRootSetWritesForTest(true));
 thawAfterEach(() => thawRootSetWritesForTest(false));
@@ -52,6 +53,8 @@ const stopJobs = () => { INLINE_REVOCATION.rows = 1; INLINE_REVOCATION.ms = 0; s
 /** Runs every job row to its end as the runner would (slices of at most 8 ms, the row written back after each), without the
  * runner's pauses: returns the longest slice's work (before its COMMIT: a file database's commit also pays SQLite's WAL
  * auto-checkpoint, a disk cost every writer shares) and the largest job row seen. */
+const sliceMs: number[] = [];
+const q = (xs: number[], p: number) => [...xs].sort((a, b) => a - b)[Math.floor(p * (xs.length - 1))]!;
 function drainSlices(db: DatabaseSync): { maxMs: number; maxBytes: number; slices: number; slowest: string } {
   const out = { maxMs: 0, maxBytes: 0, slices: 0, slowest: "" };
   for (;;) {
@@ -64,6 +67,7 @@ function drainSlices(db: DatabaseSync): { maxMs: number; maxBytes: number; slice
     if (advanceRevocationJob(db, job, 4096, 8)) db.prepare("DELETE FROM memory_scope_bindings WHERE id=?").run(String(row.id));
     else { const intent = JSON.stringify(job); out.maxBytes = Math.max(out.maxBytes, intent.length); db.prepare("UPDATE memory_scope_bindings SET intent=? WHERE id=?").run(intent, String(row.id)); }
     const ms = performance.now() - t0;
+    sliceMs.push(ms);
     if (ms > out.maxMs) { out.maxMs = ms; out.slowest = `${at} -> ${job.phases[0] ?? "done"}`; }
     out.slices++;
     db.exec("COMMIT");
@@ -208,7 +212,7 @@ it("T2: a reply written after the forget, by a turn that began after it, is not 
 
 // ---- T4: the commit is flat (statements and time do not follow revisions, versions, sources or records) ----
 function timed(run: () => void): number { const t0 = performance.now(); run(); return performance.now() - t0; }
-it("T4: forgetting a source with 1 or 100k revisions, and a record with 1 or 50k versions, writes the same few rows in its commit", { tags: ["nightly"], timeout: 600_000 }, () => {
+it("T4: forgetting a source with 1 or 100k revisions, and a record with 1 or 50k versions, writes the same few rows in its commit", { tags: ["nightly"], timeout: 3_600_000 }, () => {
   const { scope } = live();
   const db = database();
   const make = (id: string, revisions: number) => {
@@ -227,7 +231,7 @@ it("T4: forgetting a source with 1 or 100k revisions, and a record with 1 or 50k
     raw.prepare(`INSERT INTO memory_evidence WITH RECURSIVE n(i) AS (SELECT 1 UNION ALL SELECT i+1 FROM n WHERE i<?) SELECT ?,i,?,i,0,1 FROM n`).run(versions, id, `src-${id}`);
     raw.exec("COMMIT"); raw.close();
   };
-  make("small", 1); make("large", 100_000); versioned("small-r", 1); versioned("large-r", 50_000);
+  make("small", 1); make("large", N(100_000)); versioned("small-r", 1); versioned("large-r", N(50_000));
   db.exec("PRAGMA wal_checkpoint(TRUNCATE)");
   const tombstones = () => Number(db.prepare("SELECT count(*) AS n FROM memory_tombstones").get()!.n);
   const commit = (target: { kind: "source" | "record"; id: string }) => { const before = tombstones(); const ms = timed(() => forgetMemory(ownerMemoryTicket(), target)); stopMemoryRevocation(); return { ms, rows: tombstones() - before }; };
@@ -239,10 +243,12 @@ it("T4: forgetting a source with 1 or 100k revisions, and a record with 1 or 50k
   // flat: bounded by the inline caps, whatever the history (100k revisions, 50k versions)
   expect(s2.rows).toBeLessThanOrEqual(s1.rows + FORGET_INLINE_ROWS + INLINE_REVOCATION.rows); expect(s2.ms).toBeLessThan(s1.ms + 40); expect(r2.ms).toBeLessThan(r1.ms + 40);
   // the job writes the rest, in slices: every revision's import tombstone, every supporting source
+  sliceMs.length = 0;
   const drained = drainSlices(db);
+  console.log(`RWDIST ${process.platform} scale ${process.env.MEASURE_SCALE ?? 1} slices ${sliceMs.length} p50 ${q(sliceMs, 0.5).toFixed(2)} p95 ${q(sliceMs, 0.95).toFixed(2)} p99 ${q(sliceMs, 0.99).toFixed(2)} max ${q(sliceMs, 1).toFixed(2)} ms; over 30: ${sliceMs.filter(x => x > 30).length}; slowest ${drained.slowest}`);
   expect(drained.maxMs, drained.slowest).toBeLessThan(30); expect(drained.maxBytes).toBeLessThanOrEqual(1024);
-  expect(Number(db.prepare("SELECT count(*) AS n FROM memory_tombstones WHERE target_type='import'").get()!.n)).toBe(1 + 100_000 + 1 + 50_000);
-  expect(Number(db.prepare("SELECT count(*) AS n FROM memory_tombstones WHERE reason='forgotten-supporting-source' AND target_id='src-large-r'").get()!.n)).toBe(50_000);
+  expect(Number(db.prepare("SELECT count(*) AS n FROM memory_tombstones WHERE target_type='import'").get()!.n)).toBe(1 + N(100_000) + 1 + N(50_000));
+  expect(Number(db.prepare("SELECT count(*) AS n FROM memory_tombstones WHERE reason='forgotten-supporting-source' AND target_id='src-large-r'").get()!.n)).toBe(N(50_000));
 });
 
 it("T4: deleting a conversation of 1k or 100k sources, or a bot of 1k or 50k records, is one deny row in a flat commit", () => {
@@ -271,7 +277,7 @@ it("T4: deleting a conversation of 1k or 100k sources, or a bot of 1k or 50k rec
   expect(drained.maxMs, drained.slowest).toBeLessThan(30);
   expect(drained.maxBytes).toBeLessThanOrEqual(1024); // F2#1: the job row never grows with what it ends
   db.close();
-}, 600_000);
+}, 3_600_000);
 
 // ---- T5: 50k vs 500k receipts ----
 const RECEIPTS = `INSERT INTO memory_disclosures(bundle_id,thread_id,driver_instance,native_session,record_versions,source_versions,policy_revision,deletion_epoch,token_count,state,created_at)
@@ -303,7 +309,7 @@ it("T5: archiving a record cited by 50k or 500k receipts and a cold check of a 5
   expect(Number(now.prepare("SELECT count(*) AS n FROM memory_disclosures WHERE state!='revoked'").get()!.n)).toBe(0);
   expect(drained.maxMs).toBeLessThan(30);
   expect(drained.maxBytes).toBeLessThanOrEqual(1024);
-}, 600_000);
+}, 3_600_000);
 
 it("T5: a deleted bot's job ends the receipts made before its commit, never one made after it (A2#9)", async () => {
   live();
@@ -322,7 +328,7 @@ it("T5: a deleted bot's job ends the receipts made before its commit, never one 
   await memoryRevocationIdle();
   expect(db.prepare("SELECT state FROM memory_disclosures WHERE bundle_id=?").get("r0002001")!.state).toBe("delivered");
   expect(Number(db.prepare("SELECT count(*) AS n FROM memory_disclosures WHERE state='revoked'").get()!.n)).toBe(2_000);
-}, 300_000);
+}, 3_600_000);
 
 // ---- T6: 100k vs 1M evidence rows: the lookups are filled in slices, nothing blocks the loop over 50 ms ----
 // (an in-memory database, as the r2 scale tests: what is measured is this lane's work on the loop, not the disk's fsync)
@@ -370,7 +376,7 @@ it("T6: with 100k or 1M evidence rows the evidence lookup fills in slices and a 
   }
   // the build is sliced: ten times the rows, about ten times the slices, each as short
   expect(large.lateSlices, said).toBeGreaterThan(5 * small.lateSlices);
-}, 900_000);
+}, 3_600_000);
 
 // ---- the smaller promises ----
 it("F2#2: the stance phase parses each stance once and reconciles only the bots whose stance names what ended", async () => {

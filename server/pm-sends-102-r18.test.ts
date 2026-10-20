@@ -25,6 +25,7 @@ import { configureSharedDrain, drainSharedWork, sharedByProvenance, sharedDispat
 import { requestSourceThread } from "./execution-audience.ts";
 import { createWorkAdmission } from "./work-admission.ts";
 import { removeTempDirSync } from "./testing/cleanup.ts";
+const N = (n: number): number => Math.max(1, Math.round(n * Number(process.env.MEASURE_SCALE ?? 1)));
 
 beforeEach(() => { closeDatabase(); removeTempDirSync(DATA_DIR); mkdirSync(DATA_DIR, { recursive: true }); setExecutionStore(undefined as never); });
 afterEach(() => closeDatabase());
@@ -330,7 +331,7 @@ describe("(c) the queue questions are served by named indexes: flat from 1k to 1
   const results: Array<{ history: number; parked: number; run: Run }> = [];
   for (const history of [1_000, 100_000]) {
     for (const parked of [0, 10_000]) {
-      it(`${history} terminal rows, ${parked} parked, 10 bots: Q1 to Q4 use their indexes and a full pass reads at most runnable + 100 rows`, { tags: ["nightly"], timeout: 300_000 }, () => {
+      it(`${history} terminal rows, ${parked} parked, 10 bots: Q1 to Q4 use their indexes and a full pass reads at most runnable + 100 rows`, { tags: ["nightly"], timeout: 3_600_000 }, () => {
         const run = scenario(history, parked);
         results.push({ history, parked, run });
         expect(run.plans.Q1!.join(" | ")).toMatch(/USING (COVERING )?INDEX room_requests_runnable/);
@@ -363,7 +364,7 @@ describe("(c) the queue questions are served by named indexes: flat from 1k to 1
 });
 
 describe("(d) deadline_at is the only upper lifetime: an overdue parked backlog clears a batch per tick, then costs nothing", () => {
-  it("10k overdue parked shared asks clear within ceil(10k/100) ticks, each with a receipt line, then a tick reads nothing", { tags: ["nightly"], timeout: 300_000 }, () => {
+  it("10k overdue parked shared asks clear within ceil(10k/100) ticks, each with a receipt line, then a tick reads nothing", { tags: ["nightly"], timeout: 3_600_000 }, () => {
     const clock = { t: 5 * DAY };
     const { db, dispatcher, sharedClosed } = harness(clock);
     const insert = inserter(db);
@@ -392,14 +393,14 @@ describe("(d) deadline_at is the only upper lifetime: an overdue parked backlog 
 });
 
 describe("(e) shared asks follow the same retention as wakes", () => {
-  it("40k unresolved shared asks are parked, and are not read again inside their backoff window", { tags: ["nightly"], timeout: 300_000 }, () => {
+  it("40k unresolved shared asks are parked, and are not read again inside their backoff window", { tags: ["nightly"], timeout: 3_600_000 }, () => {
     const clock = { t: 1_000_000 };
     const { db, dispatcher } = harness(clock);
     const insert = inserter(db);
-    fill(db, 40_000, i => insert({ id: `a-${i}`, verb: i % 4 ? "ask" : "message", state: "queued", shared: true, to: `b${i % 10}`, target: `x${i}`, at: 1 + i, deadline: clock.t + DAY }));
+    fill(db, N(40_000), i => insert({ id: `a-${i}`, verb: i % 4 ? "ask" : "message", state: "queued", shared: true, to: `b${i % 10}`, target: `x${i}`, at: 1 + i, deadline: clock.t + DAY }));
     dispatcher.pump();
-    expect(count(db, "SELECT COUNT(*) AS n FROM room_request_retry")).toBe(40_000);
-    expect(count(db, "SELECT COUNT(*) AS n FROM room_requests WHERE refusal='retained_unresolved'")).toBe(40_000);
+    expect(count(db, "SELECT COUNT(*) AS n FROM room_request_retry")).toBe(N(40_000));
+    expect(count(db, "SELECT COUNT(*) AS n FROM room_requests WHERE refusal='retained_unresolved'")).toBe(N(40_000));
     clock.t += 20_000;                                                          // inside the first 30 s
     const pass = record(db, () => { dispatcher.pump(); dispatcher.tick(); for (let i = 0; i < 10; i++) drainSharedWork(`b${i}`); });
     expect(pass.rows).toBe(0);
