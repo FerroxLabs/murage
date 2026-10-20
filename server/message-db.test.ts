@@ -19,6 +19,7 @@ import {
 import { Store, type Message } from "./store.ts";
 import type { ModelSelection } from "./contracts.ts";
 import { removeTempDirSync } from "./testing/cleanup.ts";
+import { settleTestHandles } from "./test-handle-registry.ts";
 
 const selection = (): ModelSelection => ({ instanceId: "claude", model: "claude-sonnet-5" });
 const legacy = (threadId: string) => join(DATA_DIR, `messages-${threadId}.json`);
@@ -73,10 +74,11 @@ describe("message-db", () => {
     expect(imported.activeLeafId).toBeNull(); // Store derives the tail
   });
 
-  it("migrates known legacy transcripts at Store startup so search sees unopened tasks", () => {
+  it("migrates known legacy transcripts at Store startup so search sees unopened tasks", async () => {
     const initial = new Store(selection);
     const bot = initial.createBot({}, { seedMessages: false });
-    closeMessageDb();
+    // every handle on messages.db, the log checkpointer's included, is closed and gone before the file is removed (Windows refuses an open one)
+    await settleTestHandles(DATA_DIR);
     for (const suffix of ["", "-wal", "-shm"]) rmSync(join(DATA_DIR, `messages.db${suffix}`), { force: true });
     writeFileSync(legacy(bot.threadId), JSON.stringify([msg("old", "find this unopened legacy conversation")]));
 

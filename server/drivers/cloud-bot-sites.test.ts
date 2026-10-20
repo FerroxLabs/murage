@@ -71,7 +71,8 @@ describe("one-shot Cloud spawns name their bot", () => {
       expect(cloud).toHaveLength(1);
       expect(cloud[0].env[TURN_BOT]).toBe("bot-atlas");
       expect(cloud[0].env[TURN_MARKER]).toBe("claudeAgent");
-      for (const [name, value] of valuePins("linux")) if (name !== "GIT_SSH_COMMAND" && name !== "RSYNC_RSH") expect(cloud[0].env[name], name).toBe(value);
+      // the pins are the host platform's (this fixture runs the Cloud spawn on every runner): PSQLRC is NUL on Windows, /dev/null elsewhere
+      for (const [name, value] of valuePins(process.platform === "win32" ? "win32" : "linux")) if (name !== "GIT_SSH_COMMAND" && name !== "RSYNC_RSH") expect(cloud[0].env[name], name).toBe(value);
       for (const name of ABSENT_PINS) expect(cloud[0].env, name).not.toHaveProperty(name);
     } finally {
       vi.unstubAllEnvs();

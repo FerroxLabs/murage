@@ -1,12 +1,13 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import { readdirSync, readFileSync, statSync } from "node:fs";
 import { join } from "node:path";
+import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 import { cloudRouteDecision } from "../route-policy.ts";
 
 /** Every `/api/...` call the web app makes, with the method written near it (GET when none). Template holes become a placeholder id. */
 function webAppCalls(): Map<string, Set<string>> {
-  const calls = new Map<string, Set<string>>(), root = new URL("../../src/", import.meta.url).pathname;
+  const calls = new Map<string, Set<string>>(), root = fileURLToPath(new URL("../../src/", import.meta.url));
   const walk = (dir: string) => {
     for (const name of readdirSync(dir)) {
       const file = join(dir, name);

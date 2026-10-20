@@ -270,7 +270,8 @@ it("a relink that fails twice does not refuse the turn and names the skill for t
   expect(prepared.linkNotice).toBe(skillLinkNotice(["checked-method"]));
   expect(prepared.linkNotice).toContain("\"checked-method\"");
   // the bot still has the exact path of every pinned skill
-  expect(prepared.importedPrompt).toContain(join(pinTarget(id,thread,second.bundleId,"checked-method"),"SKILL.md"));
+  // the path is quoted as a JSON string in the prompt (a Windows backslash is written escaped)
+  expect(prepared.importedPrompt).toContain(JSON.stringify(join(pinTarget(id,thread,second.bundleId,"checked-method"),"SKILL.md")));
   for(const dir of [".agents/skills",".grok/skills"])expect(readlinkSync(nativeLink(id,thread,dir,"checked-method"))).toBe(pinTarget(id,thread,second.bundleId,"checked-method"));
   // the next turn links it again
   expect(preparePinnedProcedures(id,thread,second,true).linkNotice).toBeUndefined();
@@ -289,14 +290,18 @@ it("an earlier pin's link that cannot be removed refuses the turn with a clear m
   const first=createProcedurePin(id,thread,[catalogueSkill(id,"alpha")],[],routine);preparePinnedProcedures(id,thread,first,true);
   const second=createProcedurePin(id,thread,[catalogueSkill(id,"alpha"),catalogueSkill(id,"beta")],[],routine);
   const stuck=nativeLink(id,thread,".claude/skills","checked-method");
-  const original=fs.unlinkSync;let attempts=0;
-  const replace=(value:unknown)=>{Object.defineProperty(fs,"unlinkSync",{value,writable:true,configurable:true,enumerable:true});syncBuiltinESMExports();};
-  replace(function stuckUnlink(this:unknown,...args:Parameters<typeof original>){
-    if(String(args[0])===stuck){attempts++;throw Object.assign(new Error("EBUSY: resource busy or locked"),{code:"EBUSY"});}
-    return original.apply(this,args);
-  });
+  // A lock holds the link: on Windows a junction unlink refuses is removed by rmdir, so the lock refuses both.
+  const originals={unlinkSync:fs.unlinkSync,rmdirSync:fs.rmdirSync};let attempts=0;
+  const replace=(name:"unlinkSync"|"rmdirSync",value:unknown)=>{Object.defineProperty(fs,name,{value,writable:true,configurable:true,enumerable:true});syncBuiltinESMExports();};
+  for(const name of ["unlinkSync","rmdirSync"] as const){
+    const original=originals[name] as (...args:unknown[])=>unknown;
+    replace(name,function locked(this:unknown,...args:unknown[]){
+      if(String(args[0])===stuck){if(name==="unlinkSync")attempts++;throw Object.assign(new Error("EBUSY: resource busy or locked"),{code:"EBUSY"});}
+      return original.apply(this,args);
+    });
+  }
   try{expect(()=>preparePinnedProcedures(id,thread,second,true)).toThrow("Murage could not move the link for the skill \"checked-method\"");}
-  finally{replace(original);}
+  finally{replace("unlinkSync",originals.unlinkSync);replace("rmdirSync",originals.rmdirSync);}
   expect(attempts).toBeGreaterThanOrEqual(2);
   expect(readlinkSync(stuck)).toBe(pinTarget(id,thread,first.bundleId,"checked-method"));
 });

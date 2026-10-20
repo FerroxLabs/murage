@@ -1,13 +1,15 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import { readFileSync } from "node:fs";
+import { resolve } from "node:path";
 import { describe, expect, it } from "vitest";
 import { resolveStaticFile } from "./static-files.ts";
 
 describe("static file resolution", () => {
   const root = "/opt/murage/dist";
   it("maps the root and ordinary assets inside the directory", () => {
-    expect(resolveStaticFile(root, "/")).toEqual({ kind: "file", file: "/opt/murage/dist/index.html", rel: "/index.html" });
-    expect(resolveStaticFile(root, "/assets/app-1a2b.js")).toMatchObject({ kind: "file", file: "/opt/murage/dist/assets/app-1a2b.js" });
+    // the file is the platform's absolute path under the root (D:\opt\murage\dist\index.html on Windows)
+    expect(resolveStaticFile(root, "/")).toEqual({ kind: "file", file: resolve(root, "index.html"), rel: "/index.html" });
+    expect(resolveStaticFile(root, "/assets/app-1a2b.js")).toMatchObject({ kind: "file", file: resolve(root, "assets", "app-1a2b.js") });
     expect(resolveStaticFile(root, "/enter")).toMatchObject({ kind: "file" });
   });
   it("refuses traversal in every encoding", () => {
