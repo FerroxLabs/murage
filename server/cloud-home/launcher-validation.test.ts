@@ -5,7 +5,7 @@ import { chmodSync, copyFileSync, mkdirSync, mkdtempSync, readFileSync, statSync
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { afterEach, beforeEach, expect, it } from "vitest";
-import { MINIMAL_ARGV } from "./engine-launch-fixture.ts";
+import { MINIMAL_ARGV, fixtureEngineBytes } from "./engine-launch-fixture.ts";
 import { removeTempDirSync } from "../testing/cleanup.ts";
 
 const launcher = fileURLToPath(new URL("../../deploy/cloud-home/murage-turn-launch.py", import.meta.url));
@@ -19,7 +19,7 @@ let root: string, engineRoot: string, home: string, command: string, manifest: s
 beforeEach(() => {
   root = mkdtempSync(join(process.cwd(), ".murage-manifest-")); engineRoot = join(root, "engine-homes"); home = join(engineRoot, "claudeAgent");
   mkdirSync(home, { recursive: true }); mkdirSync(join(root, "bin"));
-  command = join(root, "bin", "fixture-cli"); const bytes = readFileSync("/usr/bin/true");
+  command = join(root, "bin", "fixture-cli"); const bytes = fixtureEngineBytes();
   writeFileSync(command, bytes, { mode: 0o755 }); digest = createHash("sha256").update(bytes).digest("hex");
   manifest = join(root, "engine-manifest.json"); writeFileSync(manifest, JSON.stringify({ claudeAgent: [{ path: command, sha256: digest }] }), { mode: 0o644 });
 });

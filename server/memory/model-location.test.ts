@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { mkdirSync, mkdtempSync, readFileSync, renameSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, realpathSync, renameSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
@@ -17,7 +17,7 @@ function write(directory: string, overrides: Record<string, string> = {}) {
     writeFileSync(join(directory, path), text);
   }
 }
-beforeEach(() => { resetBundledModelVerdicts(); setBundledModelVerifiedHook(null); root = mkdtempSync(join(tmpdir(), "murage-model-loc-")); });
+beforeEach(() => { resetBundledModelVerdicts(); setBundledModelVerifiedHook(null); root = realpathSync(mkdtempSync(join(tmpdir(), "murage-model-loc-"))); }); // resolved: a bundled path with a linked part never verifies, and macOS os.tmpdir() sits behind /var -> /private/var
 afterEach(() => { setBundledModelVerifiedHook(null); removeTempDirSync(root); });
 
 it("uses the bundled directory when every file verifies", async () => {

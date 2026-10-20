@@ -33,6 +33,9 @@ const open = (engine = "codex", query = engine === "claudeAgent" ? "" : "?bot=at
 });
 const closed = (ws: WebSocket) => new Promise<number>(resolve => ws.once("close", code => resolve(code)));
 const message = (ws: WebSocket) => new Promise<string>(resolve => ws.once("message", data => resolve(String(data))));
+/** Sessions the relay has finished: it frees the engine's slot, then logs the end line. */
+const ended = () => logs.filter(line => line.startsWith("engine-login end")).length;
+const settled = (before: number) => vi.waitFor(() => expect(ended()).toBe(before + 1), { timeout: 5_000 });
 const gone = async (pid: number) => { for (let i = 0; i < 40; i++) { try { process.kill(pid, 0); } catch { return true; } await new Promise(r => setTimeout(r, 50)); } return false; };
 
 describe("engine login relay", () => {
@@ -132,7 +135,8 @@ describe("engine login relay", () => {
     await start();
     for (const engine of ["grokAgent", "kimiAgent"]) {
       for (const action of ["login", "logout"]) {
-        const ws = await open(engine, `?action=${action}&bot=atlas`); const done = closed(ws); ws.close(); await done;
+        const before = ended(); const ws = await open(engine, `?action=${action}&bot=atlas`); const done = closed(ws); ws.close(); await done;
+        await settled(before); // the engine's one slot frees when its launcher has exited, not when the socket closes
       }
     }
     await expect(open("kimiAgent", "?action=status&bot=atlas")).rejects.toMatchObject({ status: 400 });
@@ -159,7 +163,8 @@ describe("engine login relay", () => {
   it("takes opencodeGo sign-in with a bot and logout with or without one", async () => {
     await start();
     for (const query of ["?action=login&bot=atlas", "?action=logout&bot=atlas", "?action=logout"]) {
-      const ws = await open("opencodeGo", query); const done = closed(ws); ws.close(); await done;
+      const before = ended(); const ws = await open("opencodeGo", query); const done = closed(ws); ws.close(); await done;
+      await settled(before); // the slot frees when the launcher has exited
     }
     expect(launches.map(item => `${item.engine}:${item.action}:${item.extra.bot ?? ""}`)).toEqual(["opencodeGo:login:atlas", "opencodeGo:logout:atlas", "opencodeGo:logout:"]);
   });

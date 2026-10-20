@@ -16,6 +16,9 @@ const fixture = fileURLToPath(new URL("./home-commands.fixture.py", import.meta.
 const contract = fileURLToPath(new URL("../../shared/self-service-contract.json", import.meta.url));
 const has = (tool: string) => spawnSync("sh", ["-c", `command -v ${tool}`]).status === 0;
 const root = process.getuid?.() === 0;
+// Release signatures are Ed25519 over raw bytes (openssl pkeyutl -rawin): OpenSSL 3 has it, the LibreSSL that macOS ships
+// as /usr/bin/openssl does not, so the update scenario needs an OpenSSL 3 on the PATH.
+const opensslEd25519 = /^OpenSSL [3-9]\./.test(spawnSync("openssl", ["version"], { encoding: "utf8" }).stdout ?? "");
 
 function scenario(name: string): Record<string, unknown> {
   const result = spawnSync("python3", ["-I", fixture, deploy("murage-commands"), deploy("murage-backup"), deploy("backup-excludes.txt"), name, contract],
@@ -38,7 +41,7 @@ describe("self-service command runner (home side)", () => {
   it("an interrupted command is reported failed and never re-run; a lost ack is re-sent without re-running", () => {
     expect(scenario("interrupted").ok).toBe(true);
   });
-  it.skipIf(!has("openssl"))("update: verifies the signed release, swaps code only, refuses downgrade/tamper/escape, commits only after bounded app health, recovers an interrupted swap at start (Astra SELFSERVICE2 #5)", () => {
+  it.skipIf(!opensslEd25519)("update: verifies the signed release, swaps code only, refuses downgrade/tamper/escape, commits only after bounded app health, recovers an interrupted swap at start (Astra SELFSERVICE2 #5)", () => {
     expect(scenario("update").ok).toBe(true);
   });
   it("collect_logs: allowed diagnostic events only (free text, short private lines included, become a count), allow-listed units, chunked, sign-in directories never read (Astra SELFSERVICE2 #6)", () => {

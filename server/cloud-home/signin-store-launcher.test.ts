@@ -33,7 +33,11 @@ trace=[]; real_fsync=os.fsync; real_erase=m.erase_tree
 def label(path):
     path=path[len(ER)+1:] if path.startswith(ER+"/") else path
     return re.sub(r"\\.(tmp|current)-[0-9a-f]{16}", r".\\1-T", path)
-def seam(fd): trace.append(label(os.readlink("/proc/self/fd/%d"%fd))); real_fsync(fd)
+def fdpath(fd):
+    # /proc/self/fd on Linux; macOS has no procfs and names an open file with fcntl F_GETPATH
+    if os.path.isdir("/proc/self/fd"): return os.readlink("/proc/self/fd/%d"%fd)
+    import fcntl; return fcntl.fcntl(fd, fcntl.F_GETPATH, bytes(1024)).split(b"\\0", 1)[0].decode()
+def seam(fd): trace.append(label(fdpath(fd))); real_fsync(fd)
 def erase(parent, name, clear=None, depth=0, budget=None):
     if depth==0: trace.append("erase "+label(name))
     return real_erase(parent, name, clear, depth, budget)

@@ -64,6 +64,13 @@ describe("assertSafeToWipe admits", () => {
     }
   });
 
+  // POSIX paths only: on Windows "/private/tmp" resolves onto the current drive.
+  it.skipIf(process.platform === "win32")("macOS's system /tmp, where Murage keeps short socket folders, on macOS only", () => {
+    expect(assertSafeToWipe("/private/tmp/mb-0123456789abcdef", { ...opts, platform: "darwin" }).admitted).toBe("tmpdir");
+    refuses("/private/tmp/mb-0123456789abcdef", /not under the OS temp directory/, { ...opts, platform: "linux", tmpdir: "/nonexistent-tmp" });
+    refuses("/private/tmp", /not under the OS temp directory/, { ...opts, platform: "darwin" });
+  });
+
   it("a build output strictly inside a caller-named root, and nothing else there", () => {
     const repo = join(scratch, "repo"); mkdirSync(join(repo, "dist"), { recursive: true });
     expect(assertSafeToWipe(join(repo, "dist"), { ...opts, within: repo, tmpdir: "/nonexistent-tmp" }).admitted).toBe("within");

@@ -167,7 +167,9 @@ it("an ineligible job's receipt meets a held lock within the background budget u
     const ms = performance.now() - started;
     expect(caught).toBeInstanceOf(DatabaseBusyError);
     expect(isDatabaseBusy(caught)).toBe(true);
-    expect(ms).toBeLessThan(200);
+    // the background budget (50 ms) gave up, not the 1 s owner budget: 200 ms sat inside a loaded macOS
+    // runner's noise (334 ms seen there), 600 ms still tells the two budgets apart
+    expect(ms).toBeLessThan(600);
   } finally { other.exec("ROLLBACK"); other.close(); }
   // the lock gone, the same visit writes its receipt
   await ioBudget.withSource("memory-idle", () => captureBotReveals(job, () => roster, null, signal()));
@@ -183,6 +185,6 @@ it("a dirty scan mark meets a held lock within the background budget under the i
     let caught: unknown;
     try { ioBudget.withSource("memory-idle", () => pendingBotRevealJobs()); } catch (error) { caught = error; }
     expect(caught).toBeInstanceOf(DatabaseBusyError);
-    expect(performance.now() - started).toBeLessThan(200);
+    expect(performance.now() - started).toBeLessThan(600); // background budget, not the 1 s owner budget (see above)
   } finally { other.exec("ROLLBACK"); other.close(); }
 });

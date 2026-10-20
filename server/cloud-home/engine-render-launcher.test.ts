@@ -3,7 +3,8 @@
 // r3 over r2 over sections 1 to 8). A request carries typed `render` parameters, never file
 // bytes or a config path; every config file an engine reads at startup is a launcher-rendered,
 // read-only file or a read-only empty shadow. These tests drive the real launcher Python.
-import { linkSync, mkdirSync, readFileSync, symlinkSync, writeFileSync } from "node:fs";
+import { existsSync, linkSync, mkdirSync, readFileSync, symlinkSync, writeFileSync } from "node:fs";
+import { fileURLToPath } from "node:url";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -323,10 +324,15 @@ describe("path inputs are canonical by construction (test 10)", () => {
     [".", (ws: string) => `${ws}/ws/./proj`],
     ["a trailing slash", (ws: string) => `${ws}/ws/proj/`],
     ["a doubled slash", (ws: string) => `${ws}/ws//proj`],
-    ["a case variant", (ws: string) => `${ws}/ws/PROJ`],
     ["outside the grant", () => "/etc"],
   ])("refuses a cwd with %s", (_name, path) => {
     expect(rig.plan(rig.request("codex", { cwd: path(rig.workspaces) })).error).toBeDefined();
+  });
+  // A Cloud home's volume is case-sensitive (ext4), where a case variant is another path. On a case-insensitive
+  // filesystem (macOS APFS by default) the variant opens the same directory, so the case means nothing there.
+  const caseInsensitive = existsSync(fileURLToPath(import.meta.url).toUpperCase());
+  it.skipIf(caseInsensitive)("refuses a cwd with a case variant (case-sensitive filesystems)", () => {
+    expect(rig.plan(rig.request("codex", { cwd: `${rig.workspaces}/ws/PROJ` })).error).toBeDefined();
   });
   it("refuses a symlinked cwd component and an --add-dir outside the workspaces", () => {
     symlinkSync(`${rig.workspaces}/ws/proj`, `${rig.workspaces}/ws/link`);
