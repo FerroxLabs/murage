@@ -46,9 +46,6 @@ function plain(text) {
     // section's real subject under key names a user never asks about, and a
     // bot must not paste a config file into chat as a "quote from the docs".
     .replace(/```[\s\S]*?```/g, "")
-    // HTML comments (release-prep markers) are not prose either.
-    .replace(/<!--[\s\S]*?-->/g, "")
-    .replace(/\{\/\*[\s\S]*?\*\/\}/g, "")
     .replace(/<[A-Za-z/][^>]*>/g, "")
     .replace(/\[([^\]]+)\]\([^)]*\)/g, "$1")
     // Emphasis markers go, but an underscore inside a word stays: it is part of

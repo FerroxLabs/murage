@@ -3,14 +3,15 @@
 //
 // LINEAGE-DESIGN-S6 rule 22: no Murage-voice row ever becomes a memory source again, and a turn's authored text never includes one.
 import { beforeEach, expect, it } from "vitest";
-import { mkdirSync, rmSync } from "node:fs";
+import { mkdirSync } from "node:fs";
 import { database, closeDatabase } from "../database.ts";
 import { DATA_DIR } from "../config.ts";
 import { captureMessage } from "./capture.ts";
 import { authoredTurnPieces } from "../reply-action-guard.ts";
 import type { Message } from "../store.ts";
+import { removeTempDirSync } from "../testing/cleanup.ts";
 
-beforeEach(() => { closeDatabase(); rmSync(DATA_DIR, { recursive: true, force: true }); mkdirSync(DATA_DIR, { recursive: true }); });
+beforeEach(() => { closeDatabase(); removeTempDirSync(DATA_DIR); mkdirSync(DATA_DIR, { recursive: true }); });
 
 const murageShapes: Array<[string, Partial<Message>]> = [
   ["murageLine", { murageLine: true } as Partial<Message>],

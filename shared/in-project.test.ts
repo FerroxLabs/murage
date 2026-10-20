@@ -11,6 +11,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { inProjectCheck, joinReal, placePath, realDir, realPathInOrder, WalkCache, walkRoot } from "./in-project.ts";
+import { removeTempDirSync } from "../server/testing/cleanup.ts";
 
 let base: string;
 let project: string;
@@ -30,7 +31,7 @@ beforeEach(() => {
   writeFileSync(join(project, ".env.example"), "SECRET=");
 });
 
-afterEach(() => rmSync(base, { recursive: true, force: true }));
+afterEach(() => removeTempDirSync(base));
 
 describe("placePath: real path, segment by segment (Rule 63 step 2)", () => {
   // Windows CI hands out an 8.3 temp folder (C:\Users\RUNNER~1\...): the root is read by its long real name, so every part of the

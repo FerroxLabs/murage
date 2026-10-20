@@ -6,7 +6,7 @@
 // reader reads the pending file, so whatever fails (the answer, the drop of
 // the row, the active write), a grant that was never answered is never
 // active. C1b: a bot-to-bot contact card is answered through the peer bus.
-import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -18,6 +18,7 @@ import { closeMessageDb } from "./message-db.ts";
 import { peerAllowKey, peerApprovalHolder, requestPeerApproval, resolvePeerComms, type ApprovalBus } from "./peer-approval.ts";
 import { Store, type BotRecord } from "./store.ts";
 import { stopWalMaintenance } from "./wal-maintenance.ts";
+import { removeTempDirSync } from "./testing/cleanup.ts";
 
 const BOB = "stop:message:bob@example.com";
 
@@ -196,7 +197,7 @@ describe("C1b: a bot-to-bot contact card's Always allow saves through the choke 
   let target: BotRecord;
 
   beforeEach(() => {
-    rmSync(DATA_DIR, { recursive: true, force: true });
+    removeTempDirSync(DATA_DIR);
     store = new Store(selection);
     from = store.patchBot(store.createBot().id, { name: "Asker", approvePeerComms: true })!;
     target = store.patchBot(store.createBot().id, { name: "Helper" })!;
@@ -205,7 +206,7 @@ describe("C1b: a bot-to-bot contact card's Always allow saves through the choke 
   afterEach(async () => {
     closeMessageDb();
     await stopWalMaintenance();
-    rmSync(DATA_DIR, { recursive: true, force: true });
+    removeTempDirSync(DATA_DIR);
   });
 
   const openCard = () => store.openRequestCardRows(from.threadId).find((m) => m.card?.requestId && !m.card.answered && !m.card.dismissed);

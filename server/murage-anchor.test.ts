@@ -2,15 +2,16 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 //
 // LINEAGE-DESIGN-S6 rule 23 (the anchor seek): one primary-key read, positive verdicts memoized, nothing written.
-import { mkdirSync, rmSync } from "node:fs";
+import { mkdirSync } from "node:fs";
 import { beforeEach, expect, it } from "vitest";
 import { DATA_DIR } from "./config.ts";
 import { closeDatabase, database } from "./database.ts";
 import { appendMessage, closeMessageDb } from "./message-db.ts";
 import type { Message } from "./store.ts";
 import { anyMurageAnchor, murageAnchor } from "./bot-read.ts";
+import { removeTempDirSync } from "./testing/cleanup.ts";
 
-beforeEach(() => { closeMessageDb(); closeDatabase(); rmSync(DATA_DIR, { recursive: true, force: true }); mkdirSync(DATA_DIR, { recursive: true }); });
+beforeEach(() => { closeMessageDb(); closeDatabase(); removeTempDirSync(DATA_DIR); mkdirSync(DATA_DIR, { recursive: true }); });
 
 const row = (id: string, extra: Partial<Message> = {}): Message => ({ id, role: "bot", kind: "text", text: `words ${id}`, at: Date.now(), from: { botId: "b", name: "B", color: "#000" }, ...extra });
 

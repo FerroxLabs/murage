@@ -6,7 +6,7 @@
 //  2. a non-owner search hit passes the door (copy ancestry, classification of what a copy stands on) before any snippet is cut;
 //  3. an anchor the check cannot read, or a summary citation in none of the project's threads, is not admissible (fail closed);
 //  4. the partition check and the summary anchor check seek by the messages primary key, in batches, whatever the history.
-import { mkdirSync, rmSync } from "node:fs";
+import { mkdirSync } from "node:fs";
 import type { DatabaseSync } from "node:sqlite";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { DATA_DIR } from "./config.ts";
@@ -25,6 +25,7 @@ import { projectSummaryLayer } from "./project-layers.ts";
 import { readProjectMessages } from "./project-memory-tools.ts";
 import { channelToProjectRows } from "./project-settings.ts";
 import type { Message, Store } from "./store.ts";
+import { removeTempDirSync } from "./testing/cleanup.ts";
 
 const NOW = 1_790_000_000_000;
 type Roster = MemoryRoster & { bots: Array<MemoryRoster["bots"][number] & { name: string }> };
@@ -33,7 +34,7 @@ let n = 0;
 const heads = new Map<string, string>();
 
 beforeEach(() => {
-  closeMessageDb(); closeDatabase(); rmSync(DATA_DIR, { recursive: true, force: true }); mkdirSync(DATA_DIR, { recursive: true });
+  closeMessageDb(); closeDatabase(); removeTempDirSync(DATA_DIR); mkdirSync(DATA_DIR, { recursive: true });
   heads.clear();
   roster = {
     bots: [

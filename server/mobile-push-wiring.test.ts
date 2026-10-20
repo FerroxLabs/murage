@@ -27,7 +27,10 @@ describe("push wiring in the harness", () => {
   });
   it("rates every engine permission it could push, from the stop line and the credential check", () => {
     // the engine's own tool input and the workspace go in too (device finding 2026-09-27)
-    expect(source).toContain("pushStore.rateRisk(event.threadId, event.requestId, pushRiskFor(stopHit, event.tool, event.summary, { input: event.toolCall?.input, name: event.toolCall?.name, filePaths: event.filePaths, inside: pushWriteInside(asker.id, event.threadId, event), truncated: inputCut, ...(event.approvalScope ? { scope: event.approvalScope } : {}) }), Date.now())");
+    // (input and name come through pushRiskCall, which reads a wrapped or stamped call's inner tool)
+    const rate = source.match(/pushStore\.rateRisk\(event\.threadId, event\.requestId, pushRiskFor\(stopHit, event\.tool, event\.summary, \{([^\n]*?)\}\), Date\.now\(\)\)/)?.[1] ?? "";
+    for (const part of ["...pushRiskCall({ ...event, engine: event.toolEngine })", "filePaths: event.filePaths", "inside: pushWriteInside(asker.id, event.threadId, event)", "truncated: inputCut"]) expect(rate).toContain(part);
+    expect(source).toMatch(/function pushRiskCall\(event: GrantCall\)[^\n]*\n[^\n]*stampedToolCall\(event\)/);
     expect(source.indexOf("pushStore.rateRisk(")).toBeGreaterThan(source.indexOf("const stopHit = permission && asker"));
     expect(source).toMatch(/try \{ pushStore\.rateRisk\(event\.threadId[^\n]*\} catch \(error\) \{ pushWarn\("rate-permission", error\); \}/);
   });

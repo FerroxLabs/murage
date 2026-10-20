@@ -11,7 +11,7 @@
 //
 // Pure tests over the real readers, the real store and routine manager on
 // isolated temp data, and the server source; nothing reaches ~/.murage.
-import { mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { mkdtempSync, readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -28,6 +28,7 @@ import { RoutineManager, type RoutineManagerOptions } from "./routines.ts";
 import { chatAllowance } from "./stop-line-state.ts";
 import { classifyAsk, classifyAskRows, stopFindings, stopLineKey, stopLineKeyCovers, stopLineKeys, type StopHit, type StopLinePlace } from "./stop-line.ts";
 import { Store } from "./store.ts";
+import { removeTempDirSync } from "./testing/cleanup.ts";
 
 type Ask = GrantCall & { tool: string; summary: string };
 const OWN: McpMountRecord = { engineName: "murage_connectors", mountId: "own:connector", provenance: "own" };
@@ -199,7 +200,7 @@ describe("C1 (r2 #1, #2; r3 amendment): one choke point writes every durable gra
 
 describe("C1 (r2 #2): bot and task are saved in one write, or not at all", () => {
   const selection = (): ModelSelection => ({ instanceId: "claude", model: "claude-sonnet-5" });
-  beforeEach(() => { rmSync(DATA_DIR, { recursive: true, force: true }); });
+  beforeEach(() => { removeTempDirSync(DATA_DIR); });
 
   it("writes the bot default and the task together and survives a reload", () => {
     const store = new Store(selection);
@@ -249,7 +250,7 @@ describe("C1 (r2 #2): bot and task are saved in one write, or not at all", () =>
 
 describe("C1: a routine's set is planned before its answer and written only after", () => {
   const dirs: string[] = [];
-  afterEach(() => { for (const dir of dirs.splice(0)) rmSync(dir, { recursive: true, force: true }); });
+  afterEach(() => { for (const dir of dirs.splice(0)) removeTempDirSync(dir); });
   it("the plan names only what the write would add, and writes nothing", () => {
     const dir = mkdtempSync(join(tmpdir(), "murage-a13r2-"));
     dirs.push(dir);

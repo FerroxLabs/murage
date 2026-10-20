@@ -4,12 +4,13 @@
 // Rule 68f, row kind "prompt-capable": the one reader over PROMPT_ROWS (APP-GRANT-FIXPLAN-r6 (e)+(h) (c)).
 
 import { execFileSync } from "node:child_process";
-import { mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, symlinkSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, realpathSync, symlinkSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { DIRECT_SSH_REASON, PROMPT_ROWS, WRAPPER_PREFIXES } from "./arg-vocabulary.ts";
 import { pinOverrideIn, promptVerdict, type PromptFacts } from "./prompt-capable.ts";
+import { removeTempDirSync } from "../server/testing/cleanup.ts";
 
 let base: string;
 let home: string;
@@ -29,7 +30,7 @@ beforeEach(() => {
   git(repo, "init", "-q");
 });
 
-afterEach(() => rmSync(base, { recursive: true, force: true }));
+afterEach(() => removeTempDirSync(base));
 
 const facts = (): PromptFacts => ({ cwd: repo, home, systemConfig: join(base, "no-system-config") });
 const rule = (text: string, f: PromptFacts = facts()) => promptVerdict(text, f)?.rule ?? null;

@@ -4,7 +4,7 @@
 // Section (c) of APP-GRANT-FIXPLAN-r6 (Rules 35, 74a, 74d): an approved write to a startup file is recognized by the
 // file's RESOLVED identity, never by its spelling, and moves the environment generation (server/env-path.ts).
 
-import { linkSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { linkSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
@@ -14,6 +14,7 @@ import { handEnv, noteStartupFileEvent } from "./engine-env.ts";
 /** The pin probes answered as on a machine with no ssh and no git config. */
 const noRun: PinRun = async () => ({ ok: false, stdout: "", stderr: "" });
 import { envGeneration } from "./env-path.ts";
+import { removeTempDirSync } from "./testing/cleanup.ts";
 
 let dir: string;
 let home: string;
@@ -24,7 +25,7 @@ beforeEach(() => {
   home = join(dir, "h");
   mkdirSync(home, { recursive: true });
 });
-afterEach(() => rmSync(dir, { recursive: true, force: true }));
+afterEach(() => removeTempDirSync(dir));
 
 /** The owner map as captured, before the pins; the hand pins ZDOTDIR and removes BASH_ENV, ENV and CLAUDE_ENV_FILE. */
 async function hand(extraOwner: Record<string, string> = {}) {

@@ -3,7 +3,7 @@
 //
 // LINEAGE-DESIGN-S6 rule 6: a queued hand-off's source row is written at queue time, in the queue transaction, as the sender turn's engine row,
 // and the room copy names it by `copyOf` (test 32: the legacy queue item yields the withheld line).
-import { mkdirSync, rmSync } from "node:fs";
+import { mkdirSync } from "node:fs";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { DATA_DIR } from "./config.ts";
 import { closeDatabase, database } from "./database.ts";
@@ -14,8 +14,9 @@ import { _resetDrainDiagnostics } from "./shared-work.ts";
 import { ownerWorld } from "./testing/handoff-worlds.ts";
 import { isMurageVoice } from "./murage-voice.ts";
 import type { Message } from "./store.ts";
+import { removeTempDirSync } from "./testing/cleanup.ts";
 
-const fresh = () => { closeDatabase(); rmSync(DATA_DIR, { recursive: true, force: true }); mkdirSync(DATA_DIR, { recursive: true }); _resetPending(); _resetOwnerMigration(); _resetDrainDiagnostics(); };
+const fresh = () => { closeDatabase(); removeTempDirSync(DATA_DIR); mkdirSync(DATA_DIR, { recursive: true }); _resetPending(); _resetOwnerMigration(); _resetDrainDiagnostics(); };
 beforeEach(fresh);
 afterEach(() => { _resetOwnerMigration(); _resetPending(); closeDatabase(); });
 

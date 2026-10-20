@@ -4,7 +4,7 @@
 // LINEAGE-DESIGN-S6 rule 18b for project tool answers: a project page a bot reads is built from the door's BotRows (a Murage-voice row shows
 // only its fixed-copy projection, never its stored words), a reading bot whose record is gone reads nothing (fail closed), and the owner's
 // view goes through the door as the human viewer by an explicit owner route, the one human literal project-memory-tools.ts may hold.
-import { mkdirSync, readFileSync, rmSync } from "node:fs";
+import { mkdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { fixedCopy } from "./bot-read.ts";
@@ -18,13 +18,14 @@ import { setMemoryMode } from "./memory/repository.ts";
 import { OWNER_PAGE, readProjectMessages, readProjectPage } from "./project-memory-tools.ts";
 import { channelToProjectRows } from "./project-settings.ts";
 import type { Message, Store } from "./store.ts";
+import { removeTempDirSync } from "./testing/cleanup.ts";
 
 const NOW = 1_790_000_000_000;
 type Roster = MemoryRoster & { bots: Array<MemoryRoster["bots"][number] & { name: string }> };
 let roster: Roster;
 let present: Set<string>;
 beforeEach(() => {
-  closeDatabase(); rmSync(DATA_DIR, { recursive: true, force: true }); mkdirSync(DATA_DIR, { recursive: true });
+  closeDatabase(); removeTempDirSync(DATA_DIR); mkdirSync(DATA_DIR, { recursive: true });
   roster = {
     bots: [
       { id: "dax", name: "Dax", threadId: "dax-direct", section: "Sales", tasks: [{ threadId: "dax-desk", channelProjectDesk: { groupId: "launch" } }] },

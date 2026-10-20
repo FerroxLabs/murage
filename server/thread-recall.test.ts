@@ -3,7 +3,7 @@
 //
 // Thread recall handler (THREAD-RECALL-DESIGN r6 rules 1 to 9, 11 to 17, 21, 23a and 23a's tests; seal S1). The handler is driven through its
 // host interface with a real database, real message store, real lineage-write and a real memory policy; only the turn registry is a stand-in.
-import { mkdirSync, readFileSync, rmSync } from "node:fs";
+import { mkdirSync, readFileSync } from "node:fs";
 import { afterAll, beforeEach, describe, expect, it } from "vitest";
 import { DATA_DIR } from "./config.ts";
 import { closeDatabase, database, transaction } from "./database.ts";
@@ -27,6 +27,7 @@ import {
   UNRECORDED_LINE, envelopeBytes, judgeRows, threadRecallRoute, type ThreadRecallHost, type ThreadRecallState, type ThreadRecallTool,
 } from "./thread-recall.ts";
 import type { Message, Store } from "./store.ts";
+import { removeTempDirSync } from "./testing/cleanup.ts";
 
 afterAll(() => closeMessageDb());
 
@@ -60,7 +61,7 @@ const exclude = (...threads: string[]) => db().prepare("INSERT OR REPLACE INTO m
 beforeEach(() => {
   lastRow.clear();
   closeMessageDb(); closeDatabase();
-  rmSync(DATA_DIR, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 });
+  removeTempDirSync(DATA_DIR);
   mkdirSync(DATA_DIR, { recursive: true });
   for (const thread of ["t-main", "t-task", "room-chat"]) { let turn; while ((turn = currentTurnLineage(thread))) closeTurnLineage(turn); }
   reconcileMemoryRoster(roster); setMemoryMode("active");

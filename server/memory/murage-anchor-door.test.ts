@@ -4,7 +4,7 @@
 // LINEAGE-DESIGN-S6 rules 23 and 24, test 36 (aggregate part): a legacy memory source anchored at a Murage-voice message is withheld from a
 // bot reader at every revision, and so is every aggregate citing it (evidence records, derived records, receipt lines, a project summary).
 // The read writes nothing. The anchor check lives in its own leaf module, so the door (deny-read.ts) reaches it without importing bot-read.ts.
-import { mkdirSync, readFileSync, rmSync } from "node:fs";
+import { mkdirSync, readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { beforeEach, expect, it } from "vitest";
@@ -18,10 +18,11 @@ import { memoryLookup, refsLookup } from "./deny-read.ts";
 import { memoryRefKey, type MemoryRef } from "./lineage-types.ts";
 import { ensureScope, reconcileMemoryRoster } from "./policy.ts";
 import { setMemoryMode } from "./repository.ts";
+import { removeTempDirSync } from "../testing/cleanup.ts";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const thread = "anchor-t", NOW = 1_700_000_000_000;
-beforeEach(() => { closeMessageDb(); closeDatabase(); rmSync(DATA_DIR, { recursive: true, force: true }); mkdirSync(DATA_DIR, { recursive: true }); });
+beforeEach(() => { closeMessageDb(); closeDatabase(); removeTempDirSync(DATA_DIR); mkdirSync(DATA_DIR, { recursive: true }); });
 
 const message = (id: string, extra: Partial<Message> = {}): Message => ({ id, role: "bot", kind: "text", text: `words ${id}`, at: NOW, from: { botId: "b", name: "B", color: "#000" }, ...extra });
 

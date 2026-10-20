@@ -6,7 +6,7 @@
 // written between them, and a restart between them, get distinct keys and fresh stamps, while the old key's deny marks, disclosures and
 // session number stay; a pre-1.0.3 id (a lineage row, no allocator row) counts as n = 1; a resume forms the same key from the stored
 // incarnation; and one helper forms every SessionKey (no `nativeSession:` literal outside it).
-import { mkdirSync, readdirSync, readFileSync, rmSync, statSync } from "node:fs";
+import { mkdirSync, readdirSync, readFileSync, statSync } from "node:fs";
 import { join } from "node:path";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { DATA_DIR } from "../config.ts";
@@ -17,8 +17,9 @@ import type { TurnLineage } from "./lineage-types.ts";
 import { noteReceiptOutput, noteReceiptSession, receiptStart } from "./receipt-outputs.ts";
 import { latestIncarnation, sessionKeyOf, startFreshSession } from "./session-incarnation.ts";
 import { WritetimeFixture } from "./testing/writetime-fixture.ts";
+import { removeTempDirSync } from "../testing/cleanup.ts";
 
-beforeEach(() => { vi.spyOn(console, "warn").mockImplementation(() => {}); closeDatabase(); rmSync(DATA_DIR, { recursive: true, force: true }); mkdirSync(DATA_DIR, { recursive: true }); });
+beforeEach(() => { vi.spyOn(console, "warn").mockImplementation(() => {}); closeDatabase(); removeTempDirSync(DATA_DIR); mkdirSync(DATA_DIR, { recursive: true }); });
 afterEach(() => { vi.restoreAllMocks(); closeDatabase(); });
 const app = () => new WritetimeFixture(database());
 const turn = (turnLsn: number): TurnLineage => ({ threadId: "T", turnId: `turn-${turnLsn}`, turnLsn, parents: [], denyGeneration: 0 });

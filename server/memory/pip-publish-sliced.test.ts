@@ -55,15 +55,19 @@ function rig(): { deps: ReflectDeps; bot: ReflectBot; calls: TextOnlyTurnInput[]
   } as unknown as ReflectDeps;
   return { deps, bot, calls, mode };
 }
+/** This thread's own CPU time in ms (user + system). */
+const threadCpuMs = () => { const usage = process.threadCpuUsage(); return (usage.user + usage.system) / 1000; };
 /** Runs `body` while a ticker counts loop turns and calls `onTurn` on each; returns the longest stretch the loop went without a turn, less the
- *  garbage collector's pauses in it (observe.ts gcPauseMs, the same subtraction the stall line makes): the budget is the work's own hold. */
+ *  garbage collector's pauses in it (observe.ts gcPauseMs, the same subtraction the stall line makes), and never more than the CPU this
+ *  thread itself spent in it: a shared CI host that takes the CPU away from the process is not the work holding the loop (the same
+ *  measure as memory/msearch-r5.test.ts). The budget is the work's own hold. */
 async function ticking<T>(body: () => Promise<T>, onTurn: () => void = () => {}): Promise<{ value: T; longest: number }> {
   startLoopStallWatch(60_000);
-  let last = performance.now(), longest = 0, on = true;
-  const held = (t: number) => t - last - gcPauseMs(last, t);
-  const tick = () => { if (!on) return; const t = performance.now(); longest = Math.max(longest, held(t)); last = t; onTurn(); setImmediate(tick); };
+  let last = performance.now(), lastCpu = threadCpuMs(), longest = 0, on = true;
+  const held = (t: number, cpu: number) => Math.min(t - last - gcPauseMs(last, t), cpu - lastCpu);
+  const tick = () => { if (!on) return; const t = performance.now(), cpu = threadCpuMs(); longest = Math.max(longest, held(t, cpu)); last = t; lastCpu = cpu; onTurn(); setImmediate(tick); };
   setImmediate(tick);
-  try { const value = await body(); return { value, longest: Math.max(longest, held(performance.now())) }; } finally { on = false; stopLoopStallWatch(); }
+  try { const value = await body(); return { value, longest: Math.max(longest, held(performance.now(), threadCpuMs())) }; } finally { on = false; stopLoopStallWatch(); }
 }
 
 it("a thread is judged by its own captures: a capture in another thread does not move its stamp, one in it does", () => {
@@ -80,14 +84,15 @@ it("a thread is judged by its own captures: a capture in another thread does not
   expect(stampMoved(db, deps, "moss", stamp)).toBe("moved");
 });
 
-it("on a thread of 100,000 sources the whole run, publication included, never holds the loop 50 ms", async () => {
+// A 50 ms budget over a 100,000-source run (130 s on a hosted runner) is measured on the dedicated perf host (vite.config.ts perf-budget).
+it("on a thread of 100,000 sources the whole run, publication included, never holds the loop 50 ms", { tags: ["perf-budget"], timeout: 600_000 }, async () => {
   seed(50_000);
   const { deps, calls } = rig();
   const { value, longest } = await ticking(() => runPipReflect(deps, "moss", new AbortController().signal));
   expect(calls.length).toBe(1);
   expect(value.status).toBe("applied");
   expect(longest).toBeLessThan(50);
-}, 600_000);
+});
 
 it("a capture in the thread while the publication read yields is read again, and the family is published from the new read", async () => {
   seed(8000);

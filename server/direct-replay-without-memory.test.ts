@@ -44,7 +44,8 @@ it("a direct reply made with memory the owner then forgot is withheld from the r
   expect(roomTranscriptWithoutMemory(LineageAllowance.tool(1_000_000_000), "dax-direct", lines, false)!.messages.map(m => m.id)).toEqual(["m-ask"]);
   // and the direct turn replays through it when memory is not active
   const index = readFileSync(fileURLToPath(new URL("./index.ts", import.meta.url)), "utf8");
-  expect(index).toContain(`replayFloor = memoryState().mode === "active" ? undefined`);
+  // (memory active is the only case that skips the floor; a further condition may only narrow that skip, e.g. memory's last resort)
+  expect(index).toMatch(/replayFloor = memoryState\(\)\.mode === "active"(?: && [^?\n]+)? \? undefined/);
   const replayDeclaration = index.split("\n").find(line => line.includes("replayableMessages = (opts?.projectCardRun"));
   expect(replayDeclaration).toContain("(replayFloor?.messages ?? activeMessages)");
   expect(replayDeclaration).toContain("opts?.projectCardRun ? [] : (replayFloor?.messages ?? activeMessages)");

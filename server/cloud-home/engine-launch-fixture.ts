@@ -5,7 +5,7 @@
 // manifest and fixture MCP proxy scripts.
 import { execFileSync, spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
-import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import { chmodSync, lstatSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { safeWipeSync } from "../testing/safe-wipe.mjs";
@@ -142,6 +142,15 @@ export function launcherRig(prefix: string): Rig {
   const manifest = join(root, "engine-manifest.json");
   writeFileSync(manifest, JSON.stringify({ ...Object.fromEntries(CLOUD_TURN_ENGINES.map(engine => [engine, [{ path: command, sha256 }]])), mcpProxies: proxies }), { mode: 0o644 });
   const cfgPath = join(root, "cfg.json");
+  // A Cloud home has no path another user can write into, and the launcher refuses an engine or manifest under one: the rig's own
+  // tree loses the group and other write bits a umask of 002 (a hosted CI runner's) leaves on what was made above without a mode.
+  const tighten = (path: string): void => {
+    const info = lstatSync(path);
+    if (info.isSymbolicLink()) return;
+    if (info.mode & 0o022) chmodSync(path, info.mode & 0o7755);
+    if (info.isDirectory()) for (const name of readdirSync(path)) tighten(join(path, name));
+  };
+  tighten(root);
   const home = (engine: string) => join(engineRoot, engine);
   return {
     root, engineRoot, workspaces, proxyRoot, command, manifest, home,

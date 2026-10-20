@@ -9,7 +9,7 @@
 // The outer test runs this same file again under python3's pty.fork (a new session whose controlling terminal is the
 // PTY); the inner run does the checks.
 import { execFileSync, spawn, spawnSync } from "node:child_process";
-import { chmodSync, closeSync, mkdtempSync, openSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, closeSync, mkdtempSync, openSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -18,6 +18,7 @@ import { afterAll, describe, expect, it } from "vitest";
 import { fetchHermesAcpModels } from "./drivers/acp/hermes.ts";
 import { execCli, spawnCli } from "./procs.ts";
 import { resetPathCache, resolveFuigoCli } from "./env-path.ts";
+import { removeTempDirSync } from "./testing/cleanup.ts";
 
 const here = fileURLToPath(import.meta.url);
 const root = join(dirname(here), "..");
@@ -69,7 +70,7 @@ describe.skipIf(!posix || INNER)("engine processes have no controlling terminal 
 
 describe.skipIf(!posix || !INNER)("engine processes have no controlling terminal (inner, under the PTY)", () => {
   const dir = mkdtempSync(join(tmpdir(), "launch-no-tty-"));
-  afterAll(() => rmSync(dir, { recursive: true, force: true }));
+  afterAll(() => removeTempDirSync(dir));
   const engine = join(dir, "fake-engine");
   writeFileSync(engine, [
     "#!/bin/sh",
