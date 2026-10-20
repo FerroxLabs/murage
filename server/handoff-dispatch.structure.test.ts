@@ -39,14 +39,17 @@ function sourcePaths(dir: string): string[] {
   return out;
 }
 const PROBE = join(serverDir, "__structure_probe__.ts");
-function buildProgram(virtual: Record<string, string> = {}, old?: ts.Program): ts.Program {
+/** TypeScript names every file with "/" on every OS (C:\a\b.ts is C:/a/b.ts to the compiler host), so virtual files are keyed that way. */
+const tsName = (path: string): string => path.replaceAll("\\", "/");
+function buildProgram(named: Record<string, string> = {}, old?: ts.Program): ts.Program {
+  const virtual = Object.fromEntries(Object.entries(named).map(([path, text]) => [tsName(path), text]));
   const config = ts.readConfigFile(join(rootDir, "tsconfig.server.json"), ts.sys.readFile);
   const options = ts.parseJsonConfigFileContent(config.config, ts.sys, rootDir).options;
   const host = ts.createCompilerHost(options, true);
   const getSourceFile = host.getSourceFile.bind(host), fileExists = host.fileExists.bind(host), readFile = host.readFile.bind(host);
-  host.fileExists = (file) => file in virtual || fileExists(file);
-  host.readFile = (file) => virtual[file] ?? readFile(file);
-  host.getSourceFile = (file, language, onError, shouldCreate) => (file in virtual ? ts.createSourceFile(file, virtual[file]!, language, true) : getSourceFile(file, language, onError, shouldCreate));
+  host.fileExists = (file) => tsName(file) in virtual || fileExists(file);
+  host.readFile = (file) => virtual[tsName(file)] ?? readFile(file);
+  host.getSourceFile = (file, language, onError, shouldCreate) => (tsName(file) in virtual ? ts.createSourceFile(file, virtual[tsName(file)]!, language, true) : getSourceFile(file, language, onError, shouldCreate));
   const roots = sourcePaths(serverDir).filter((path) => !path.endsWith("pi-mcp-extension.ts"));
   return ts.createProgram([...roots, ...Object.keys(virtual)], options, host, old);
 }
@@ -399,6 +402,15 @@ describe("the dispatch is the only place a hand-off starts (symbols resolved wit
 
 describe("the structural analysis catches what the reviewer's mutation probes slip in (negative tests)", () => {
   const probe = (text: string): string[] => analyse(buildProgram({ [PROBE]: text }, base), "__structure_probe__.ts").violations;
+  it("a probe named with Windows separators is analysed from its text, not looked up on disk", () => {
+    // on Windows PROBE is already this name; elsewhere it shows the same lookup
+    const windowsName = PROBE.replaceAll("/", "\\");
+    const found = analyse(buildProgram({ [windowsName]: `import type { HandoffHost } from "./handoff-dispatch.ts";
+declare const host: HandoffHost;
+export const probe = () => host.startTurn("bot", "text", { threadId: "x" } as never);
+` }, base), "__structure_probe__.ts").violations;
+    expect(found.join("\n")).toMatch(/R5 startTurn/);
+  }, 300_000);
   it("an aliased startTurn (the host seam held in a const and called under another name)", () => {
     const found = probe(`import type { HandoffHost } from "./handoff-dispatch.ts";
 declare const host: HandoffHost;
