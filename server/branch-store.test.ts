@@ -14,6 +14,7 @@ import { branchTester, withBranchWalkBudget, isPrepared, prepareStats, prepareTh
 import * as messages from "./message-db.ts";
 import { Store, type Message } from "./store.ts";
 import { removeTempDirSync } from "./testing/cleanup.ts";
+import { windowsNightly } from "./testing/windows-hosted.ts";
 
 const T = "th";
 beforeEach(() => { closeDatabase(); removeTempDirSync(DATA_DIR); mkdirSync(DATA_DIR, { recursive: true }); prepareStats.syncPrepares = 0; });
@@ -164,7 +165,7 @@ it("an edit forked in a thread stored behind the writers' back keeps the rows ab
   expect(prepareStats.syncPrepares).toBe(sync);
 });
 
-it("a search over many unfilled threads walks a flat number of rows, however many threads it meets", () => {
+it("a search over many unfilled threads walks a flat number of rows, however many threads it meets", windowsNightly(), () => {
   const db = database();
   const threads = Array.from({ length: 12 }, (_, i) => `u${i}`);
   for (const t of threads) {

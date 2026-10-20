@@ -126,14 +126,16 @@ cases.missing = addon.removeTree(path.join(base, "never-there"));
       Atomics.notify(s, 1);
     });`, { eval: true, workerData: { shared } });
   const rounds = 150;
-  let failures = 0;
+  // raced: a removeTree that gave up while the other thread was renaming under it (safe: it refuses, never follows);
+  // failures: the tree could not be removed once nothing was racing it, which must never happen.
+  let raced = 0, failures = 0;
   for (let i = 0; i < rounds; i++) {
     const { top, d } = tree(`race-${i}`), moved = path.join(base, `race-${i}-moved`);
     Atomics.store(shared, 1, 0);
     Atomics.store(shared, 2, 0);
     worker.postMessage({ d, moved, target: v });
     while (Atomics.load(shared, 1) === 0) Atomics.wait(shared, 1, 0, 5);
-    try { addon.removeTree(top); } catch { failures++; }
+    try { addon.removeTree(top); } catch { raced++; }
     Atomics.store(shared, 2, 1);
     Atomics.notify(shared, 2);
     while (Atomics.load(shared, 1) !== 2) Atomics.wait(shared, 1, 1, 5);
@@ -141,7 +143,7 @@ cases.missing = addon.removeTree(path.join(base, "never-there"));
     try { addon.removeTree(top); addon.removeTree(moved); } catch { failures++; }
   }
   worker.terminate();
-  cases.race = { rounds, swaps: Atomics.load(shared, 0), failures, victimIntact: intact(v) };
+  cases.race = { rounds, swaps: Atomics.load(shared, 0), raced, failures, victimIntact: intact(v) };
 }
 // fs.rmSync once installed: recursive removes go through removeTree.
 {

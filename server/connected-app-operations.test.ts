@@ -876,6 +876,7 @@ describe("1.0.2 round 4: the SQLite journal", () => {
     const { DatabaseSync } = await import("node:sqlite");
     const { SqliteOperationJournal } = await import("./connected-app-journal.ts");
     const dir = mkdtempSync(join(tmpdir(), "ledger-"));
+    let opened: { close(): void } | undefined;
     try {
       const file = join(dir, "ledger.db");
       const old = new DatabaseSync(file);
@@ -885,6 +886,7 @@ describe("1.0.2 round 4: the SQLite journal", () => {
       old.prepare("INSERT INTO connected_app_ops VALUES ('h-empty','s','k2',NULL,2,'unknown','no-answer',NULL,'[]')").run();
       old.close();
       const journal = new SqliteOperationJournal(file);
+      opened = journal;
       const loaded = journal.load();
       // A migrated row never certifies its provenance: the old extractor silently dropped unnamed rows.
       expect(loaded.find((row) => row.handle === "h-old")?.requirementsComplete).toBe(false);
@@ -896,7 +898,11 @@ describe("1.0.2 round 4: the SQLite journal", () => {
       // A batch with a bad row changes nothing.
       expect(() => journal.apply({ put: [{ ...base, handle: "c", key: "c" }, { ...base, handle: "d", key: null as unknown as string }], remove: ["a"] })).toThrow();
       expect(journal.load().map((row) => row.handle).sort()).toEqual(["a", "b", "h-empty"]);
-    } finally { removeTempDirSync(dir); }
+    } finally {
+      // the journal lets go of ledger.db first: Windows will not remove a file another handle holds open
+      opened?.close();
+      removeTempDirSync(dir);
+    }
   });
 });
 

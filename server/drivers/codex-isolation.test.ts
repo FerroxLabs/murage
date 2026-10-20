@@ -83,7 +83,8 @@ describe("codex personal setup isolation", () => {
       expect(argv).toContain('mcp_servers."my.server".enabled=false');
       expect(argv).not.toContain("mcp_servers.agents.enabled=false");
       expect(argv.join(" ")).toContain("mcp_servers.agents.command");
-      expect(argv.find((arg) => arg.startsWith("skills.config="))).toContain(join(codex, "skills", "personal", "SKILL.md"));
+      // the path is a TOML string in the argument: a Windows backslash is written escaped
+      expect(argv.find((arg) => arg.startsWith("skills.config="))).toContain(JSON.stringify(join(codex, "skills", "personal", "SKILL.md")).slice(1, -1));
       // the fake reports codex-cli 0.147.0: the global instructions are out through a scoped CODEX_HOME
       const childHome = JSON.parse(readFileSync(dump, "utf8")).env.CODEX_HOME as string;
       expect(childHome).not.toBe(codex);
