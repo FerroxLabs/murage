@@ -17,6 +17,7 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { removeTempDir, waitForExit } from "./testing/cleanup.ts";
+import { OWNER_FIRST_MAX_DEFER_MS } from "./owner-first.ts";
 import { freePortBlock } from "./testing/ports.ts";
 import { openSse } from "./testing/sse.ts";
 
@@ -30,6 +31,7 @@ const posixOnly = describe.skipIf(process.platform === "win32");
 let child: ChildProcess;
 let home: string;
 let stderr = "";
+let stdout = "";
 
 const request = async (method: string, path: string, body?: unknown, headers: Record<string, string> = {}): Promise<{ status: number; body: any }> => {
   const res = await fetch(`${base}${path}`, {
@@ -74,8 +76,15 @@ async function deleteBotWhenIdle(botId: string, ms = 10_000) {
   }
 }
 
+/** Automatic routine starts (webhooks included) wait while the whole computer is overloaded, and are admitted anyway once they have
+ * waited OWNER_FIRST_MAX_DEFER_MS (owner-first.ts). A loaded CI runner (macOS, 3 cores, a second server and engines running beside this
+ * file) can sit in that wait for most of the two minutes, so every wait for a run to start outlasts it. */
+const RUN_START_WAIT_MS = OWNER_FIRST_MAX_DEFER_MS + 30_000;
+/** The server's own account of why a run has not started: its owner-first deferral lines. */
+const deferralLog = () => `${stdout}\n${stderr}`.split("\n").filter(line => line.includes("[owner-first]")).slice(-5).join("\n") || "(no owner-first deferral logged)";
+
 /** The detached task a webhook delivery created. */
-async function waitForRunThread(runId: string, ms = 20_000) {
+async function waitForRunThread(runId: string, ms = RUN_START_WAIT_MS) {
   const deadline = Date.now() + ms;
   while (Date.now() < deadline) {
     const { body } = await api("GET", "/api/routines");
@@ -134,6 +143,7 @@ posixOnly("unattended turns keep asking", () => {
       stdio: ["ignore", "pipe", "pipe"],
     });
     child.stderr!.on("data", (c) => (stderr += c));
+    child.stdout!.on("data", (c) => (stdout += c)); // the owner-first deferral lines go here
     const deadline = Date.now() + 20_000;
     for (;;) {
       try {
@@ -171,7 +181,7 @@ posixOnly("unattended turns keep asking", () => {
         expect(delivered.status).toBe(202);
         const result = await delivered.json() as { runId: string };
         const threadId = await waitForRunThread(result.runId);
-        expect(threadId).toBeTruthy();
+        expect(threadId, `the webhook never started a task. ${deferralLog()}`).toBeTruthy();
         const card = await waitForCard(threadId!);
         expect(card?.card?.answered).toBeUndefined();
         expect(card?.card?.requestId).toBeTruthy();
@@ -215,13 +225,19 @@ posixOnly("unattended turns keep asking", () => {
     }
     // Reached only when the body passed: a leaked busy bot would break the next test.
     expect(cleanupFailures).toEqual([]);
-  }, 60_000);
+    // The budget covers the waits inside it: two webhook runs, each up to
+    // RUN_START_WAIT_MS for its task and 30 s for its card, plus the
+    // notification frame and the cleanup. A budget shorter than its own waits
+    // times the body out while they are still in bounds, and the bots it had
+    // not yet cleaned up leak into the tests after it.
+  }, 2 * (RUN_START_WAIT_MS + 30_000) + 60_000);
 
   it(
     "still asks a human when a webhook starts the turn, even with auto mode on",
     async () => {
-      const bots = await api("GET", "/api/bots");
-      const bot = bots.body.bots[0];
+      // Its own bot: borrowing bots[0] inherits whatever an earlier test
+      // left running, and a busy bot answers a settings edit with 409.
+      const bot = await makeBot("grok");
       // auto mode ON: an attended turn would sail straight through
       expect(
         (
@@ -252,7 +268,7 @@ posixOnly("unattended turns keep asking", () => {
       const { runId } = (await delivered.json()) as { runId: string };
 
       const threadId = await waitForRunThread(runId);
-      expect(threadId, "the webhook never started a task").toBeTruthy();
+      expect(threadId, `the webhook never started a task. ${deferralLog()}`).toBeTruthy();
 
       // the request must reach a person: a card with a live requestId
       const card = await waitForCard(threadId!);
@@ -261,7 +277,7 @@ posixOnly("unattended turns keep asking", () => {
       // and it must not already be answered
       expect(card.card.answered).toBeUndefined();
     },
-    60_000,
+    RUN_START_WAIT_MS + 30_000 + 30_000,
   );
 
   it(
@@ -270,6 +286,12 @@ posixOnly("unattended turns keep asking", () => {
       // A runs the webhook and delegates; B does the acting. Without the
       // mark crossing the hop, the gate protects the bot that READ the
       // payload and releases the bot that ACTS on it.
+      // The fake delegates to whichever peer list_bots returns first, so
+      // everything else is hidden to make the Teammate the target: without
+      // this an earlier test's bot can take the hand-off and the Teammate
+      // never gets a turn, which reads exactly like the gate failing.
+      const existing = await api("GET", "/api/bots");
+      for (const b of existing.body.bots) expect((await desktopApi("PATCH", `/api/bots/${b.id}`, { hidden: true })).status).toBe(200);
       const teammate = await makeBot("grok");
       expect((await desktopApi("PATCH", `/api/bots/${teammate.id}`, { name: "Teammate", autoApprove: true, acknowledgeLocalAuto: true })).status).toBe(200);
 
@@ -278,6 +300,7 @@ posixOnly("unattended turns keep asking", () => {
         name: "Delegator",
         autoApprove: true,
         acknowledgeLocalAuto: true,
+        hidden: true, // keep it out of its own peer list's way
         modelSelection: { instanceId: "delegator", model: "fake-model" },
       })).status).toBe(200);
 
@@ -297,7 +320,7 @@ posixOnly("unattended turns keep asking", () => {
       expect(delivered.status).toBe(202);
 
       // the teammate's turn runs on ITS own thread, unattended by inheritance
-      const deadline = Date.now() + 40_000;
+      const deadline = Date.now() + RUN_START_WAIT_MS + 30_000;
       let card: { card?: { requestId?: string; answered?: string } } | null = null;
       while (Date.now() < deadline && !card) {
         const { body } = await api("GET", "/api/bots");
@@ -308,10 +331,10 @@ posixOnly("unattended turns keep asking", () => {
           ) ?? null;
         if (!card) await new Promise((r) => setTimeout(r, 300));
       }
-      expect(card, "the delegated turn auto-approved — the gate did not cross the hop").not.toBeNull();
+      expect(card, `the delegated turn auto-approved — the gate did not cross the hop. ${deferralLog()}`).not.toBeNull();
       expect(card!.card!.answered).toBeUndefined();
     },
-    90_000,
+    RUN_START_WAIT_MS + 30_000 + 60_000,
   );
 
   it(
@@ -355,7 +378,7 @@ posixOnly("unattended turns keep asking", () => {
       });
       expect(delivered.status).toBe(202);
 
-      const deadline = Date.now() + 40_000;
+      const deadline = Date.now() + RUN_START_WAIT_MS + 30_000;
       let card: { card?: { requestId?: string; answered?: string } } | null = null;
       while (Date.now() < deadline && !card) {
         const { body } = await api("GET", "/api/bots");
@@ -366,9 +389,9 @@ posixOnly("unattended turns keep asking", () => {
           ) ?? null;
         if (!card) await new Promise((r) => setTimeout(r, 300));
       }
-      expect(card, "the asked teammate auto-approved — ask_bot did not carry the gate").not.toBeNull();
+      expect(card, `the asked teammate auto-approved — ask_bot did not carry the gate. ${deferralLog()}`).not.toBeNull();
       expect(card!.card!.answered).toBeUndefined();
     },
-    90_000,
+    RUN_START_WAIT_MS + 30_000 + 60_000,
   );
 });

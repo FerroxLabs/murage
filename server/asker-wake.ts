@@ -259,7 +259,14 @@ export class AskerWakes {
   }
 
   /** An ask handed over to a delegation, by task id. Bounded; the oldest goes first. */
-  register(taskId: string, intent: AskerWakeIntent): void {
+  /** Whether this task still owes its asker a wake it has not delivered (its intent is registered). */
+  intends(taskId: string): boolean { return this.intents.has(taskId); }
+
+  /** Whether a thread's kept state is on disk (its last write landed, or it has nothing to write). */
+  durable(threadId: string): boolean { return !this.unwritten.has(threadId); }
+
+  /** True once the intent is on disk (one retry): a hand-off is acknowledged only then (NOHOLD-DELEGATION.md, the asker's one wake). */
+  register(taskId: string, intent: AskerWakeIntent): boolean {
     const previous = this.intents.get(taskId);
     this.intents.delete(taskId);
     this.intents.set(taskId, intent);
@@ -269,8 +276,9 @@ export class AskerWakes {
       evicted.push(this.intents.get(oldest)!);
       this.intents.delete(oldest);
     }
-    this.flush(intent.threadId, intent.botId);
+    const kept = this.flush(intent.threadId, intent.botId) || this.flush(intent.threadId, intent.botId);
     for (const gone of [previous, ...evicted]) if (gone && gone.threadId !== intent.threadId) this.flush(gone.threadId, gone.botId);
+    return kept;
   }
 
   /** The teammate's turn ended. True when this task owes its asker a wake. The reply joins the thread's newest owed record asked

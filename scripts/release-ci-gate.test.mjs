@@ -10,7 +10,7 @@ import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 import { parse } from "yaml";
 
-import { ciVerdict, nightlyVerdict, parseWaiver, waiverVerdict } from "./release-ci-gate.mjs";
+import { ciVerdict, nightlyPending, nightlyRetryable, nightlyVerdict, parseWaiver, waiverVerdict } from "./release-ci-gate.mjs";
 
 const SHA = "a".repeat(40);
 const OTHER = "b".repeat(40);
@@ -160,5 +160,62 @@ describe("the latest nightly must be green", () => {
     expect(nightlyVerdict([run({ conclusion: "cancelled" })], sha, { ancestor, now }).ok).toBe(false);
     expect(nightlyVerdict([run({ head_sha: "c".repeat(40) })], sha, { ancestor, now }).reason).toContain("not");
     expect(nightlyVerdict([run({ created_at: "2026-10-10T03:17:00Z" })], sha, { ancestor, now }).reason).toContain("h old");
+  });
+});
+
+describe("the gate waits for a running nightly", () => {
+  const sha = "a".repeat(40);
+  const now = Date.parse("2026-10-16T12:00:00Z");
+  const run = (over) => ({ id: 1, status: "completed", conclusion: "success", head_sha: sha, created_at: "2026-10-16T03:17:00Z", ...over });
+  const running = run({ id: 9, status: "in_progress", conclusion: null, created_at: "2026-10-16T11:00:00Z" });
+
+  it("is pending while a nightly for the pinned commit has not completed", () => {
+    expect(nightlyPending([run(), running], sha)).toBe(true);
+    expect(nightlyPending([run(), { ...running, status: "queued" }], sha)).toBe(true);
+    expect(nightlyPending([run()], sha)).toBe(false);
+    expect(nightlyPending([{ ...running, head_sha: "b".repeat(40) }], sha)).toBe(false);
+    expect(nightlyPending(undefined, sha)).toBe(false);
+  });
+
+  it("retries a missing, stale or off-history nightly but never a completed red one", () => {
+    const ancestor = () => false;
+    expect(nightlyRetryable(nightlyVerdict([], sha, { ancestor, now }))).toBe(true);
+    expect(nightlyRetryable(nightlyVerdict([run({ created_at: "2026-10-10T03:17:00Z" })], sha, { ancestor, now }))).toBe(true);
+    expect(nightlyRetryable(nightlyVerdict([run({ head_sha: "c".repeat(40) })], sha, { ancestor, now }))).toBe(true);
+    expect(nightlyRetryable(nightlyVerdict([run({ conclusion: "failure" })], sha, { ancestor, now }))).toBe(false);
+    expect(nightlyRetryable(nightlyVerdict([run({ conclusion: "cancelled" })], sha, { ancestor, now }))).toBe(false);
+    expect(nightlyRetryable(nightlyVerdict([run()], sha, { ancestor, now }))).toBe(false);
+  });
+});
+
+describe("release.yml: builds run beside CI, the draft waits for the gate", () => {
+  const release = parse(readFileSync(join(dirname(fileURLToPath(import.meta.url)), "..", ".github", "workflows", "release.yml"), "utf8"));
+  const needs = job => [release.jobs[job].needs].flat();
+  it("builds need only prepare (mac-x64 also mac) and never ci-gate", () => {
+    expect(needs("mac")).toEqual(["prepare"]);
+    expect(needs("windows")).toEqual(["prepare"]);
+    expect(needs("linux")).toEqual(["prepare"]);
+    expect(needs("mac-x64")).toEqual(["prepare", "mac"]);
+  });
+  it("only prepare's deleted preflight probe and assemble hold the release token, and assemble needs the gate and every build", () => {
+    expect(needs("assemble")).toEqual(expect.arrayContaining(["prepare", "ci-gate", "mac", "mac-x64", "windows", "linux"]));
+    const writers = Object.entries(release.jobs).filter(([, job]) => JSON.stringify(job).includes("RELEASES_PAT")).map(([name]) => name);
+    // prepare only reads plus creates and at once deletes a throwaway draft (a token probe, no tag);
+    // every real draft, upload and publish step lives in assemble, behind ci-gate.
+    expect(writers).toEqual(["prepare", "assemble"]);
+    expect(release.jobs.assemble.if).not.toMatch(/always\(\)/);
+  });
+  it("the gate can wait out a 4 h CI", () => {
+    expect(release.jobs["ci-gate"]["timeout-minutes"]).toBeGreaterThanOrEqual(260);
+  });
+});
+
+describe("the nightly is rechecked after the CI wait", () => {
+  const source = readFileSync(join(dirname(fileURLToPath(import.meta.url)), "release-ci-gate.mjs"), "utf8");
+  it("runs before the pass branch and before a waiver is honoured", () => {
+    const pass = source.indexOf('if (verdict.state === "pass") {');
+    expect(source.slice(pass, pass + 120)).toContain("recheckNightly();");
+    const waived = source.indexOf("const result = waiverVerdict(");
+    expect(source.slice(waived, waived + 400)).toContain("recheckNightly();");
   });
 });

@@ -16,7 +16,7 @@ import { DATA_DIR } from "./config.ts";
 import type { CommsBus } from "./comms-visibility.ts";
 import { closeDatabase, database, transaction } from "./database.ts";
 import {
-  reconcileStartedDelegations, recordDelegationReceipt, DELEGATION_STOP_FAILED, _drainingCount, _loadPending, _pendingCount, _resetPending, _simulateRestart, discardDelegations, dropQueuedDelegation, findDelegationReceipt,
+  reconcileStartedDelegations, recordDelegationReceipt, onOwedHandoffReply, DELEGATION_STOP_FAILED, _drainingCount, _loadPending, _pendingCount, _resetPending, _simulateRestart, discardDelegations, dropQueuedDelegation, findDelegationReceipt,
   pendingDelegationInfo, queueDelegation, stopWaitingDelegation,
 } from "./delegations.ts";
 import { drainDelegations, drainDelegationsRaw, runOf, startLikeIndex, writePrompt } from "./testing/handoff-turn.ts";
@@ -29,6 +29,7 @@ import { downgradeApplicationSchemaTo101 } from "./installation-app-schema-downg
 import { listRoomRequests, reconcileRoomRequestsAtBoot, roomRequestByKey } from "./room-requests.ts";
 import { Store } from "./store.ts";
 import { status } from "./murage-status.ts";
+import { handoffReplyId, replayOwedReply } from "./handoff-reply.ts";
 import { released } from "./testing/released.ts";
 import { removeTempDirSync } from "./testing/cleanup.ts";
 
@@ -44,7 +45,7 @@ const pendingRows = () => Number((database().prepare("SELECT COUNT(*) AS n FROM 
 const requestRows = () => Number((database().prepare("SELECT COUNT(*) AS n FROM room_requests").get() as { n: number }).n);
 
 beforeEach(() => { closeDatabase(); removeTempDirSync(DATA_DIR); mkdirSync(DATA_DIR, { recursive: true }); _resetPending(); });
-afterEach(() => { _resetPending(); closeDatabase(); });
+afterEach(() => { onOwedHandoffReply(undefined); _resetPending(); closeDatabase(); });
 
 const exportForDowngrade = (db: DatabaseSync, dataDir = DATA_DIR) => { const r = downgradeApplicationSchemaTo101(db, dataDir); return { exported: r.exported, started: r.interrupted }; };
 function setup(extra: Partial<CommsBus> = {}) {
@@ -52,6 +53,9 @@ function setup(extra: Partial<CommsBus> = {}) {
   const from = store.createBot(), target = store.createBot();
   store.patchBot(target.id, { name: "Helper" });
   const b = { store, broadcast: () => {}, ...extra } as unknown as CommsBus;
+  // the server's writer of the line a receipt owes its source conversation (index.ts onOwedHandoffReply), registered at every start before any
+  // settle: a boot receipt that owes a line (a restart's "interrupted") settles only through it
+  onOwedHandoffReply((receipt) => replayOwedReply(store, receipt));
   return { store, from, target, b, approvalBus: { store, broadcast: () => {} } as never };
 }
 const refuseDeletes = () => database().exec("CREATE TRIGGER pd_nodelete BEFORE DELETE ON pending_delegations BEGIN SELECT RAISE(ABORT, 'refused'); END");
@@ -228,6 +232,25 @@ describe("c. the queue row owns its handoff: none starts twice, and an owner-con
     expect(again).toEqual([]);
     expect(started).toHaveLength(1);
     expect(findDelegationReceipt(queued.id!)).toMatchObject({ status: "failed", result: "interrupted by a restart" });
+    expect(pendingRows()).toBe(0);
+    expect(requestRows()).toBe(0);
+  });
+  it("owner-conversation handoff, crash after the provider took the turn, restart: the owner reads 'interrupted by a restart' where the reply would have been", async () => {
+    const s = setup();
+    const queued = queueDelegation(s.b, s.from, { toBotId: s.target.id, message: "do it exactly once", depth: 0 }, 2);
+    const started: string[] = [];
+    drainDelegationsRaw(s.b, s.approvalBus, s.from.threadId, (_to, message, _d, _s, _c, taskId) => {
+      started.push(message);
+      writePrompt(s.b, runOf(taskId), s.target.threadId);
+      runOf(taskId).accepted("turn-1");
+      return new Promise<void>(() => { /* never returns: the kill */ });
+    });
+    await until(() => started.length === 1);
+    _simulateRestart();
+    expect(reconcileStartedDelegations({ botName: (botId) => s.store.bot(botId)?.name })).toMatchObject({ interrupted: 1 });
+    // the receipt owes the line until it is written; the settle wrote it under the hand-off's stable id, so the lead is not left blank
+    const line = s.store.messageById(s.from.threadId, handoffReplyId(queued.id!)) as { tool?: { name?: string; ok?: boolean } } | undefined;
+    expect(line?.tool).toEqual({ name: "Delegation to @Helper failed: interrupted by a restart", ok: false });
     expect(pendingRows()).toBe(0);
     expect(requestRows()).toBe(0);
   });

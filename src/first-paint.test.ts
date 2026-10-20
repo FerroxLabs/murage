@@ -205,6 +205,13 @@ describe("the first paint", () => {
     }
   });
 
+  it("loads the analytics client when analytics start, never with the first paint (1.0.3)", () => {
+    const reached = staticallyReached(graph);
+    expect(reached).toContain("src/lib/analytics.ts");
+    expect(reached).not.toContain("posthog-js");
+    expect(importsOf("src/lib/analytics.ts").filter((edge) => edge.path === "posthog-js").map((edge) => edge.kind)).toEqual(["dynamic-import"]);
+  });
+
   it("leaves both Markdown editors and Tiptap to the first edit", () => {
     const reached = staticallyReached(graph);
     for (const file of ["src/components/MarkdownEditor.tsx", "src/components/editor/RichMarkdownEditor.tsx", "src/lib/markdown-fidelity.ts"]) {

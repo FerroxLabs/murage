@@ -67,15 +67,21 @@ export interface ResultEgressDeps {
 
 /** The write-time lookup on a result's lines, for ResultEgressDeps.linesShown: one page lookup per thread. A not-owner audience is judged
  * with no scopes of its own, so any memory footprint withholds (as messageMadeWithMemory does today); the owner audience skips the footprint.
- * Until write-time lineage is written on this file the read-time rules decide alone. */
-export function writetimeLinesShown(db: () => DatabaseSync): (threadId: string, messageIds: readonly string[], notOwnerAudience: boolean) => LineVerdictState {
+ * Until write-time lineage is written on this file the read-time rules decide alone.
+ * `ownerConversation` (index.ts): the thread is one of the owner's own direct conversations. Lines there, released to the owner's own
+ * audience, are judged as that conversation itself reads them (the content reader, audience null): every content mark, content pending window
+ * and unknown still binds, while the audience-only marks a permission, roster or settings change leaves (receipt flips and what they inherit)
+ * do not, since such a change takes nothing away from the owner (Lee_J / Phantom, lanes/release103/LEE-PHANTOM.md). Lines in a person's or a
+ * room's conversation keep the owner audience, so every receipt revocation still binds them (result-egress-privacy.test.ts). */
+export function writetimeLinesShown(db: () => DatabaseSync, ownerConversation?: (threadId: string) => boolean): (threadId: string, messageIds: readonly string[], notOwnerAudience: boolean) => LineVerdictState {
   return (threadId, messageIds, notOwnerAudience) => {
     const file = db();
     if (!messageIds.length || !lineageLive(file)) return "shown";
+    const page = { threadId, lines: messageIds.map(messageId => ({ messageId, author: "generated" as const })) };
     // Only policy/epoch age is exempt for the owner's own chat: a roster change alone must not hide a Chief's delegated reply.
     // Keep the owner audience explicit so receipt revocations, content marks and pending checks still bind the result.
-    const verdicts = denyLookup(file, { threadId, lines: messageIds.map(messageId => ({ messageId, author: "generated" as const })) },
-      { audience: { owner: !notOwnerAudience, scopeIds: [] } }, { ownerOwnChat: !notOwnerAudience });
+    const verdicts = !notOwnerAudience && ownerConversation?.(threadId) === true ? denyLookup(file, page, { audience: null })
+      : denyLookup(file, page, { audience: { owner: !notOwnerAudience, scopeIds: [] } }, { ownerOwnChat: !notOwnerAudience });
     // the worst state over the lines: a mark anywhere withholds; otherwise an unknown anywhere is checking
     let worst: LineVerdictState = "shown";
     for (const id of messageIds) {
@@ -239,9 +245,8 @@ export function releaseStoredResult(
   try {
     if (origin && walk?.ok) {
       for (const { threadId, message } of walk.nodes) {
-        // a row flagged "checking" is held, not withdrawn (REPLY-WITHHELD-CONTRACT R2); any other flag is a mark
-        if (message.withheldFromBots === "checking") flags.checking = true;
-        else if (message.withheldFromBots !== undefined && message.withheldFromBots !== false) flags.withheld = true;
+        // a stored "checking" is no note (never a stored verdict, REPLY-WITHHELD-CONTRACT R2): the live checks below judge the row; any other flag is a mark
+        if (message.withheldFromBots !== undefined && message.withheldFromBots !== false && message.withheldFromBots !== "checking") flags.withheld = true;
         if (message.copyOf) fold(deps.copyOriginWithheld(message.copyOf), flags, "withheld-when-true");
         fold(deps.capturedMessageWithheld(threadId, message.id), flags, "withheld-when-true");
         if (deps.messageSourceForgotten(threadId, message.id) || (notOwnerAudience && deps.messageMadeWithMemory(threadId, message.id))) flags.withheld = true;

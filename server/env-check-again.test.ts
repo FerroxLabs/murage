@@ -4,12 +4,13 @@
 // Section (f) of APP-GRANT-FIXPLAN-r3 (R2-6, Rule 74a): the Engines panel's "Check again" (GET /api/instances?fresh=1)
 // invalidates the capture, awaits a new capture, awaits discovery, and only THEN reads the capture state. "kept" is
 // written only by a capture that failed, never by the invalidation itself.
-import { chmodSync, existsSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdtempSync, readFileSync, realpathSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { captureOwnerEnv, invalidateEnvCapture, ownerEnvAfterDiscovery, ownerEnvState, resetPathCacheForTests, setOwnerEnvStore } from "./env-path.ts";
+import { removeTempDirSync } from "./testing/cleanup.ts";
 
 let dir: string;
 beforeEach(() => {
@@ -18,7 +19,7 @@ beforeEach(() => {
   invalidateEnvCapture("test start");
   setOwnerEnvStore(join(dir, "env"));
 });
-afterEach(() => rmSync(dir, { recursive: true, force: true }));
+afterEach(() => removeTempDirSync(dir));
 
 /** A stand-in account shell that leaves a mark each time it runs a capture. */
 function markingShell(): { shell: string; mark: string } {
@@ -29,15 +30,28 @@ function markingShell(): { shell: string; mark: string } {
   return { shell, mark };
 }
 
+// The account-shell capture is POSIX only: on Windows Murage never runs a login shell (the launch environment already
+// carries the registry environment), so the #!/bin/sh stand-in cannot run there. Windows has its own row below.
+const posixShell = process.platform !== "win32";
+
 describe("Engines status after discovery (r3 (f))", () => {
-  it("the invalidation alone never marks the capture kept", async () => {
+  it.runIf(!posixShell)("on Windows, Check again reports the live session environment, never kept or fallback", async () => {
+    const answer = await ownerEnvAfterDiscovery(true, async () => ["claude"]);
+    expect(answer.discovered).toEqual(["claude"]);
+    expect(answer.owner?.capture).toBe("session");
+    expect(answer.owner?.cause).toBeUndefined();
+    expect(answer.owner?.env.PATH).toBeTruthy();
+    expect(existsSync(join(dir, "env"))).toBe(false);
+  });
+
+  it.skipIf(!posixShell)("the invalidation alone never marks the capture kept", async () => {
     const { shell } = markingShell();
     expect((await captureOwnerEnv({ shell })).capture).toBe("session");
     invalidateEnvCapture("the owner asked to check again");
     expect(ownerEnvState()?.capture).not.toBe("kept");
   });
 
-  it("fresh=1 with a capture that succeeds reports session, captured before discovery runs", async () => {
+  it.skipIf(!posixShell)("fresh=1 with a capture that succeeds reports session, captured before discovery runs", async () => {
     const { shell, mark } = markingShell();
     expect((await captureOwnerEnv({ shell })).capture).toBe("session");
     let runsSeenByDiscovery = -1;
@@ -52,7 +66,7 @@ describe("Engines status after discovery (r3 (f))", () => {
     expect(answer.owner?.cause).toBeUndefined();
   });
 
-  it("fresh=1 with a capture that fails reports kept with the time of the kept map and the cause", async () => {
+  it.skipIf(!posixShell)("fresh=1 with a capture that fails reports kept with the time of the kept map and the cause", async () => {
     const { shell } = markingShell();
     expect((await captureOwnerEnv({ shell })).capture).toBe("session");
     writeFileSync(shell, "#!/bin/sh\nexit 3\n");
@@ -62,7 +76,7 @@ describe("Engines status after discovery (r3 (f))", () => {
     expect(answer.owner?.cause).toBeTruthy();
   });
 
-  it("fresh=1 with no validated map reports fallback with the cause", async () => {
+  it.skipIf(!posixShell)("fresh=1 with no validated map reports fallback with the cause", async () => {
     const shell = join(dir, "broken-shell");
     writeFileSync(shell, "#!/bin/sh\necho PATH=/x\n");
     chmodSync(shell, 0o755);

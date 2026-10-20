@@ -19,6 +19,7 @@ import { appendMessage } from "../message-db.ts";
 import { indexBrowserCheckChunk } from "../message-tables.ts";
 import { indexOpenCardsChunk } from "../transcript-backfill.ts";
 import { removeTempDirSync } from "../testing/cleanup.ts";
+import { settleTestHandles } from "../test-handle-registry.ts";
 
 const FILE = () => join(DATA_DIR, "messages.db");
 const SHAPE = { threads: 30, perThread: 40, payloadBytes: 200, receiptsPerThread: 3, setThreads: 3, repliesPerSetThread: 10 };
@@ -30,7 +31,12 @@ function v6(edit: (db: DatabaseSync) => void = () => {}) {
   try { raw.exec("PRAGMA foreign_keys=OFF"); edit(raw); } finally { raw.close(); }
   return built;
 }
-const mark = () => JSON.parse(String(new DatabaseSync(FILE()).prepare("SELECT intent FROM memory_scope_bindings WHERE id='memory-shape-check'").get()?.intent ?? "null"));
+// closed after each read: a connection left to the GC still holds its file handles, and Windows reports the next writer "database is locked"
+const mark = () => {
+  const raw = new DatabaseSync(FILE());
+  try { return JSON.parse(String(raw.prepare("SELECT intent FROM memory_scope_bindings WHERE id='memory-shape-check'").get()?.intent ?? "null")); }
+  finally { raw.close(); }
+};
 /** Everything that must come out the same whichever way the background work was run. */
 function signature(db: DatabaseSync) {
   const rows = (sql: string) => JSON.stringify(db.prepare(sql).all());
@@ -147,7 +153,7 @@ it("a kill in the middle of each derived fill resumes from its place: open cards
   expect(signature(fresh)).toEqual(resumed);
 });
 
-it("the second launch after the upgrade reads no row of a shaped column again: the marks were carried to the new version", () => {
+it("the second launch after the upgrade reads no row of a shaped column again: the marks were carried to the new version", async () => {
   v6();
   const before = mark();
   expect(before.schema).toBe(6);
@@ -158,13 +164,14 @@ it("the second launch after the upgrade reads no row of a shaped column again: t
   // (the marker names itself in the one table it lives in, so that entry may have moved up by its own row)
   expect({ ...carried.marks, "memory_scope_bindings.intent": 0 }).toEqual({ ...before.marks, "memory_scope_bindings.intent": 0 });
   finishBackgroundUpgradeWorkNow();
-  closeDatabase();
+  // closeDatabase, then the WAL checkpointer's own connection leaves the file (wal-maintenance.ts): a raw writer waits for both
+  await settleTestHandles(DATA_DIR);
   // A row below the mark that is no longer the right shape is invisible to an incremental read; a full read would stop on it.
   const raw = new DatabaseSync(FILE());
   raw.exec("PRAGMA foreign_keys=OFF; UPDATE memory_disclosures SET record_versions='{}' WHERE rowid=1");
   raw.close();
   expect(() => database()).not.toThrow(); // incremental: not read
-  closeDatabase();
+  await settleTestHandles(DATA_DIR);
   const stripped = new DatabaseSync(FILE());
   stripped.exec("DELETE FROM memory_scope_bindings WHERE id='memory-shape-check'");
   stripped.close();

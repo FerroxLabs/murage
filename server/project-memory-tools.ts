@@ -242,10 +242,12 @@ function readProjectPageWork(db: DatabaseSync, roster: NamedRoster, groupId: str
     const speaker = line.role === "user" ? "Owner" : line.speaker?.name ?? (line.speaker ? names.get(line.speaker.id) : undefined) ?? "a member";
     // for a bot every role: an owner line the owner forgot reads as its withheld line too, never its words; the owner's own page keeps
     // showing the owner's lines as written
-    const hidden = (bot !== undefined || line.role !== "user") && (withheld.has(row.id) || Boolean(message.withheldFromBots));
+    // (a "checking" left on disk is no note: the live verdicts above decide, never a stored "checking")
+    const noted = Boolean(message.withheldFromBots) && message.withheldFromBots !== "checking";
+    const hidden = (bot !== undefined || line.role !== "user") && (withheld.has(row.id) || noted);
     const forgotten = hidden && (message.withheldFromBots === "forgotten" || messageSourceForgotten(threadId, row.id));
     // a hidden line reads as Murage's fixed withheld copy (it is a stand-in); any other line reads as the BotRow's words
-    const raw = hidden ? (forgotten ? ROOM_REPLY_FORGOTTEN : checking.has(row.id) || message.withheldFromBots === "checking" ? ROOM_REPLY_CHECKING : ROOM_REPLY_WITHHELD) : line.text;
+    const raw = hidden ? (forgotten ? ROOM_REPLY_FORGOTTEN : checking.has(row.id) ? ROOM_REPLY_CHECKING : ROOM_REPLY_WITHHELD) : line.text;
     const text = raw.length > MESSAGE_CHARS ? `${raw.slice(0, MESSAGE_CHARS)} [cut]` : raw;
     bytes += Buffer.byteLength(text) + 200;
     if (bytes > PAGE_BYTES && messages.length) break;
@@ -279,7 +281,7 @@ export function updateProjectSummary(db: DatabaseSync, roster: MemoryRoster, con
   const allowance = LineageAllowance.tool();
   const hidden = [...found].filter(([id, thread]) => {
     const row = db.prepare("SELECT role, json_extract(json,'$.withheldFromBots') AS withheld FROM messages WHERE id=? AND thread_id=?").get(id, thread) as { role: string; withheld: unknown } | undefined;
-    return messageSourceForgotten(thread, id) || Boolean(row?.withheld) || (row?.role !== "user" && capturedMessageWithheld(allowance, thread, id));
+    return messageSourceForgotten(thread, id) || (Boolean(row?.withheld) && row?.withheld !== "checking") || (row?.role !== "user" && capturedMessageWithheld(allowance, thread, id));
   }).map(([id]) => id);
   if (hidden.length) return { status: 409, body: { error: "not_allowed", reason: `These messages were forgotten or are withheld from bots: ${hidden.slice(0, 5).join(", ")}` } };
   // only the owner's own material, through every copy hop (Astra r2 #14)

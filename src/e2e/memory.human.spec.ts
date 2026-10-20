@@ -15,6 +15,7 @@ import { DatabaseSync } from "node:sqlite";
 import { launchVerificationServer, runControlMurage, type VerificationServer } from "../../scripts/control-murage.ts";
 import { openSidebar } from "./fixtures.ts";
 import { openSidebarPlace } from "./sidebar-nav";
+import { storeAnchorMessage } from "../../server/memory/testing/anchor-message.ts";
 
 const ORIGINAL = "ORCHIDREVIEW Original launch date is Tuesday.";
 const CORRECTED = "ORCHIDREVIEW Corrected launch date is Thursday.";
@@ -48,6 +49,9 @@ const scope=(kind:string,owner:string)=>{
 function seed(id:string,scopeId:string,text:string,threadId:string) {
   const payload=JSON.stringify({text,kind:"text",speaker:"owner",outcome:"recorded"});
   const hash=createHash("sha256").update(payload).digest("hex");
+  // The owner's message the source cites, stored: 1.0.3 reads a source whose anchor message it cannot
+  // read as withheld (murage-anchor.ts, LINEAGE-DESIGN-S6 rules 23 and 24), and a pin on it never reaches a turn.
+  storeAnchorMessage(database,threadId,`message-${id}`,text);
   database.prepare("INSERT INTO memory_sources(id,scope_id,thread_id,message_id,revision,content_hash,kind,speaker,outcome,state) VALUES(?,?,?,?,1,?,'text','owner','recorded','active')")
     .run(`source-${id}`,scopeId,threadId,`message-${id}`,hash);
   database.prepare("INSERT INTO memory_source_versions(source_id,revision,content_hash,payload,created_at) VALUES(?,1,?,?,1)").run(`source-${id}`,hash,payload);

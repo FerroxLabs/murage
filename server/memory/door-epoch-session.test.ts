@@ -4,7 +4,7 @@
 // Lineage S6 rules 26 and 29 (test 35, the stamp and bypass parts): the door epoch stamp is written only on INSERT by a fresh session.started,
 // never by a resumed turn and never by ON CONFLICT; doorEpochVerdict reads withheld("door-epoch") for no row, a NULL stamp or one below
 // the key, and runs before the lineageLive bypass at both sites, so a file with no line rows still resets every retained session once.
-import { mkdirSync, rmSync } from "node:fs";
+import { mkdirSync } from "node:fs";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { DATA_DIR } from "../config.ts";
 import { closeDatabase, database, transaction } from "../database.ts";
@@ -13,8 +13,9 @@ import { writetimeSessionVerdict } from "./dispatch.ts";
 import { writeSessionLineage } from "./lineage-write.ts";
 import type { TurnLineage } from "./lineage-types.ts";
 import { WritetimeFixture } from "./testing/writetime-fixture.ts";
+import { removeTempDirSync } from "../testing/cleanup.ts";
 
-beforeEach(() => { vi.spyOn(console, "warn").mockImplementation(() => {}); closeDatabase(); rmSync(DATA_DIR, { recursive: true, force: true }); mkdirSync(DATA_DIR, { recursive: true }); });
+beforeEach(() => { vi.spyOn(console, "warn").mockImplementation(() => {}); closeDatabase(); removeTempDirSync(DATA_DIR); mkdirSync(DATA_DIR, { recursive: true }); });
 afterEach(() => { vi.restoreAllMocks(); closeDatabase(); });
 const app = () => new WritetimeFixture(database());
 const key = (nativeSession: string) => ({ threadId: "T", driverInstance: "d", nativeSession });

@@ -1,5 +1,5 @@
 import { beginIntegrityPass } from "./integrity-state.ts";
-import { LEGACY_UPGRADE_TABLES, UPGRADE_APP_TABLES } from "./upgrade-app-tables.ts";
+import { APP_WRITE_REVISION_TABLE, DIRECT_TURN_INFLIGHT_TABLE, LEGACY_UPGRADE_TABLES, UPGRADE_APP_TABLES } from "./upgrade-app-tables.ts";
 import { dropWriteRevisionTriggers } from "../app-write-revision.ts";
 import { createHash, randomUUID } from "node:crypto";
 import { chmodSync, closeSync, existsSync, fsyncSync, openSync, renameSync, rmSync, statfsSync } from "node:fs";
@@ -696,6 +696,9 @@ function revokeLateObjects() {
  * nothing is written. The job table has no index on state: one scan of it, once per v10 to v12 open. */
 export function activateRevokesAtUpgrade(db: DatabaseSync): void {
   if (!db.prepare("SELECT 1 AS x FROM sqlite_schema WHERE type='table' AND name='memory_revoke_jobs'").get()) return;
+  // a fold bulk back from 1.0.2 (1.0.3 FOLD-MEMBER-CAP), whatever its state: 1.0.2 ran turns above its cohort's hi, so its walk caps at its
+  // started_lsn again (revoke-marker.ts walkCap), as before the member cap
+  db.prepare("UPDATE memory_revoke_jobs SET root=json_set(root,'$.reupgraded',1) WHERE kind='bulk' AND json_valid(root) AND json_extract(root,'$.cause')='fold'").run();
   if (!db.prepare("SELECT 1 AS x FROM memory_revoke_jobs WHERE state='active' LIMIT 1").get()) return;
   // the commit slot, as takeCommitLsn takes it (lineage-write.ts; not imported here: lineage-write.ts depends on this module)
   const slot = Number(db.prepare("UPDATE memory_lsn SET next=next+1 WHERE id=1 RETURNING next-1 AS lsn").get()!.lsn);
@@ -2685,6 +2688,16 @@ export function migrateMemorySchema(db: DatabaseSync, initialMode: "off" | "acti
 const TURNCTX_DERIVED_TABLES = ["thread_key", "seg", "msg_branch", "fill_pending", "line", "branch_change", "message_image", "attachment_name", "keyed_card"] as const;
 /** The tables of messages.db that only 1.0.2 writes, all derived from other rows or holding the place of derived work (so a downgrade loses nothing). */
 export const UPGRADE_DERIVED_TABLES = ["upgrade_integrity_pass", "browser_check_pending", "open_card", "turn_first", ...TURNCTX_DERIVED_TABLES, "transcript_index_state", ...UPGRADE_APP_TABLES, ...LEGACY_UPGRADE_TABLES.keys()] as const;
+/** What a file going back to 1.0.2 or later (to >= 10) keeps of the above: the tables 1.0.2 itself makes on every open (message-tables.ts
+ * initializeMessageTables, branch-index.ts, upgrade-app-tables.ts), with their rows, their indexes and their fill places in
+ * transcript_index_state (1.0.3 keeps them with the same code; its one own place, the seq walk's row, leaves with the seq column:
+ * transcript-seq.ts). Dropped, 1.0.2 made them again empty and read every thread of the history again to fill them, the search index's
+ * fill included, while its readers took their slower paths. The integrity pass's place, the root-set worklist and the legacy tables
+ * still leave: a fresh 1.0.2 has none of them, and 1.0.2 starts each again when it has work for it. */
+const DERIVED_TABLES_KEPT_FOR_102: ReadonlySet<string> = new Set(["browser_check_pending", "open_card", "turn_first", ...TURNCTX_DERIVED_TABLES, "transcript_index_state", APP_WRITE_REVISION_TABLE, DIRECT_TURN_INFLIGHT_TABLE]);
+/** The optional indexes 1.0.2 registers with this exact text (its schema.ts), kept by a downgrade to 10 or later. 1.0.3's own two
+ * (messages_thread_seq, messages_id) leave first, in downgradeInstallationMemorySchema, and again below. */
+const OPTIONAL_INDEXES_KEPT_FOR_102: ReadonlySet<string> = new Set([DISCLOSURES_LIVE_INDEX, OWNER_PIN_INDEX, IDENTITY_CANON_INDEX, IDENTITY_PARTITION_INDEX, WAITING_REVIEW_INDEX]);
 export type MemoryDowngradeTarget = 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9 | 10 | 11;
 export function downgradeMemorySchema(db: DatabaseSync, to: MemoryDowngradeTarget = 1): { status: "downgraded" | "already-v1" | "already-v2" | "already-v3" | "already-v4" | "already-v5" | "already-v6" | "already-v7" | "already-v8" | "already-v9" | "already-v10" | "already-v11"; from: number; to: MemoryDowngradeTarget } {
   if (!db.prepare("SELECT 1 FROM sqlite_schema WHERE name='memory_meta'").get()) throw new Error("MEMORY_SCHEMA_UNSUPPORTED");
@@ -2721,14 +2734,16 @@ export function downgradeMemorySchema(db: DatabaseSync, to: MemoryDowngradeTarge
     // The derived tables and the markers of unfinished or finished background work (the integrity pass, the open-card index, the first rows of turns, the
     // branch walks, the pending browser checks and the places of the fills) exist only from 1.0.2 on. An older build's archive inspector accepts no object it
     // does not write itself, and an older writer would not keep them: they go, with their completion state, and the next newer start builds them again.
-    dropOptionalIndexes(db); // every optional index leaves first: an older build's inspector accepts none of them
+    // every optional index leaves first: an older build's inspector accepts none of them (1.0.2 and later make and keep their own)
+    if (to >= 10) { for (const index of OPTIONAL_INDEXES) if (!OPTIONAL_INDEXES_KEPT_FOR_102.has(index.name)) db.exec(`DROP INDEX IF EXISTS ${index.name}`); }
+    else dropOptionalIndexes(db);
     if (from >= 10) dropRecordKeys(db); // the 1.0.3 derived objects (above): no older build knows them
     // The claim's settle sweep and the park reconciliation key their done markers on the app version, and a round trip through
     // 1.0.1 can come back on the same version: the markers go, so the next newer start runs both passes from the start over
     // whatever 1.0.1 wrote (blocked jobs left pending, parked jobs whose source it re-activated). park.ts, claim-settle.ts.
     db.exec("DELETE FROM memory_scope_bindings WHERE id IN ('memory-claim-settle-sweep','memory-parked-reconcile')");
     dropWriteRevisionTriggers(db); // this connection's counter triggers write to a table that is about to go
-    for (const table of UPGRADE_DERIVED_TABLES) db.exec(`DROP TABLE IF EXISTS ${table};`);
+    for (const table of UPGRADE_DERIVED_TABLES) if (to < 10 || !DERIVED_TABLES_KEPT_FOR_102.has(table)) db.exec(`DROP TABLE IF EXISTS ${table};`);
     for (let version = from; version > to; version--) {
       // v12 -> v11: the door epoch leaves (the key, the column, the allocator); every session row and its lsns stay (rule 25)
       if (version === 12) db.exec(DOOR_EPOCH_DOWN_PRE);

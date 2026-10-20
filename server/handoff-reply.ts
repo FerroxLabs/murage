@@ -10,21 +10,18 @@ import type { DelegationReceipt } from "./delegations.ts";
 import type { EgressOrigin } from "./released-text.ts";
 import type { Message, Store } from "./store.ts";
 import { murageLine } from "./murage-line.ts";
+import { outboundWords, status, statusRecordOf } from "./murage-status.ts";
 
-/** What the source conversation is owed, kept on the receipt until the final commit has landed (delegations.ts finishHandoff). A held reply
- * (REPLY-WITHHELD-CONTRACT C3, R3) carries the originals its words rest on: it is written as the worker's row flagged "checking", so the owner
- * reads the words and bots read the checking line until the hold settles (server/held-replies.ts). */
+/** What the source conversation is owed, kept on the receipt until the final commit has landed (delegations.ts finishHandoff). The `held` shape
+ * is only read from receipts an earlier 1.0.3 build wrote: it is written as the no-answer line, never its words (NOHOLD-DELEGATION.md). */
 export type OwedReply = { text: string } | { text: string; held: { copyOf: EgressOrigin } } | { line: string; ok: boolean };
 
 export const HANDOFF_REPLY_PREFIX = "dres-";
 export function handoffReplyId(handoffId: string): string { return `${HANDOFF_REPLY_PREFIX}${handoffId}`; }
 
 /** The line a finished hand-off owes: the target's words when it replied, else its activity line. */
-export function owedReplyOf(input: { ok: boolean; reply: string; targetName: string; failureName: string; stopped: boolean; held?: EgressOrigin }): OwedReply {
-  if (input.ok && input.reply.trim()) {
-    const held = input.held?.messageIds.length ? { copyOf: { threadId: input.held.threadId, messageIds: [...input.held.messageIds] } } : undefined;
-    return held ? { text: input.reply.trim(), held } : { text: input.reply.trim() };
-  }
+export function owedReplyOf(input: { ok: boolean; reply: string; targetName: string; failureName: string; stopped: boolean }): OwedReply {
+  if (input.ok && input.reply.trim()) return { text: input.reply.trim() };
   const line = input.ok
     ? `Delegation to @${input.targetName} completed without a text reply`
     : input.stopped
@@ -37,11 +34,19 @@ type ReplyStore = Pick<Store, "appendMessage" | "bot">;
 /** Writes the owed line into the source conversation under its stable id (a second write returns the first). */
 export function appendHandoffReply(store: ReplyStore, input: { handoffId?: string; sourceThreadId: string; owed: OwedReply; targetBotId: string; targetName: string; askRequestId?: string; copyOf?: Message["copyOf"] }): Message {
   const id = input.handoffId ? handoffReplyId(input.handoffId) : undefined;
+  if ("text" in input.owed && "held" in input.owed) {
+    // an earlier build's held reply: the asker's final answer is the no-answer line (its own kept status, so a bot reads it); the words are not written
+    const target = store.bot(input.targetBotId);
+    const line = status("no_answer_checking");
+    return store.appendMessage(input.sourceThreadId, murageLine({
+      role: "bot", kind: "text", inboundKind: "action", text: outboundWords(line), murage: { kind: "status", status: statusRecordOf(line)! },
+      ...(input.askRequestId ? { requestId: input.askRequestId, actorKind: "bot" as const } : {}),
+      from: target ? { botId: target.id, name: target.name, color: target.color } : { botId: input.targetBotId, name: input.targetName, color: "" },
+    } as Omit<Message, "id" | "at">), id);
+  }
   if ("text" in input.owed) {
     const target = store.bot(input.targetBotId);
-    // a held reply rests on its own originals and is flagged "checking": bots read the checking line until the hold settles
-    const held = "held" in input.owed ? input.owed.held : undefined;
-    const copyOf = held ? held.copyOf : input.copyOf;
+    const copyOf = input.copyOf;
     const message: Omit<Message, "id" | "at"> = {
       role: "bot",
       kind: "text",
@@ -50,7 +55,6 @@ export function appendHandoffReply(store: ReplyStore, input: { handoffId?: strin
       // the result carries its request from the moment it is written, so a restart before the request completes can still find it (SPEC-P 6.3)
       ...(input.askRequestId ? { requestId: input.askRequestId, actorKind: "bot" as const } : {}),
       ...(copyOf ? { copyOf } : {}),
-      ...(held ? { withheldFromBots: "checking" as const } : {}),
     };
     if (target) message.from = { botId: target.id, name: target.name, color: target.color };
     // a reply with its original is the worker's own row (LINEAGE-DESIGN-S6 rule 5): role bot, `from` the producing bot, `copyOf`, no stamp;

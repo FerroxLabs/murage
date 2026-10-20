@@ -208,9 +208,8 @@ export function copyOriginUnavailable(threadId: string, messageId: string): bool
   if (lineageLive(db)) return false;
   const row = stmt(db, "SELECT json_extract(json,'$.withheldFromBots') AS withheld FROM messages WHERE thread_id=? AND id=?").get(threadId, messageId);
   if (!row) return true;
-  // a held original (flagged "checking") is a check that has not finished, not a mark: counted so the copy reads checking (contract C1)
-  if (row.withheld === "checking") { unfinished++; return true; }
-  return row.withheld !== null && row.withheld !== undefined && row.withheld !== 0 && row.withheld !== "false";
+  // "checking" is never a stored verdict: an original left flagged so on disk is read as no note and judged by the chain above (contract R2)
+  return row.withheld !== null && row.withheld !== undefined && row.withheld !== 0 && row.withheld !== "false" && row.withheld !== "checking";
 }
 
 /** The owner forgot the message itself (its captured source is deleted or tombstoned). */

@@ -17,7 +17,7 @@
 // No network, install scripts, global environment or user profile mutations.
 import { cpSync, existsSync, readFileSync, readdirSync, realpathSync, statSync, writeFileSync } from "node:fs";
 import { createRequire } from "node:module";
-import { basename, dirname, join, relative } from "node:path";
+import { basename, dirname, join, relative, sep } from "node:path";
 import { safeWipeSync } from "../server/testing/safe-wipe.mjs";
 
 export const STAGE_MARKER_FILE = ".murage-runtime-stage";
@@ -127,7 +127,7 @@ export function createHoistedStager({ distRoot, excluded = () => false, licenseF
   const records = new Map();
   function record(dest, pkg) {
     if (records.has(dest)) return;
-    records.set(dest, { name: pkg.name, version: pkg.version, license: licenseFor(pkg, `${pkg.name}@${pkg.version}`), path: relative(distRoot, dest) });
+    records.set(dest, { name: pkg.name, version: pkg.version, license: licenseFor(pkg, `${pkg.name}@${pkg.version}`), path: relative(distRoot, dest).split(sep).join("/") });
   }
   /** Stage `name` as resolved from the installed tree at `from`, for the staged package at `requesterDest`
    * (null for a top-level runtime). Returns the staged directory Node will resolve for that requester. */

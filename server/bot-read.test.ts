@@ -34,6 +34,8 @@ import { ROOM_REPLY_CHECKING, ROOM_REPLY_WITHHELD } from "./room-context.ts";
 import type { TranscriptEntry } from "./turn-context.ts";
 import type { ExternalUpdateMessage } from "./external-context-delivery.ts";
 import { humanRow } from "./testing/bot-row.ts";
+import { removeTempDirSync } from "./testing/cleanup.ts";
+import { settleTestHandles } from "./test-handle-registry.ts";
 
 const SERVER = import.meta.dirname;
 function sources(dir = SERVER): string[] {
@@ -54,19 +56,20 @@ const owner = (id: string, extra: Partial<Message> = {}): Message => ({ id, role
 const BOT: Viewer = { kind: "bot", botId: "bot-a" };
 const HUMAN: Viewer = { kind: "human" };
 
-function reset(): void { closeMessageDb(); closeDatabase(); rmSync(DATA_DIR, { recursive: true, force: true }); mkdirSync(DATA_DIR, { recursive: true }); }
+// the WAL checkpointer's own connection leaves the file after closeDatabase returns (wal-maintenance.ts); Windows will not remove a file still open
+async function reset(): Promise<void> { closeMessageDb(); closeDatabase(); await settleTestHandles(DATA_DIR); removeTempDirSync(DATA_DIR); mkdirSync(DATA_DIR, { recursive: true }); }
 const TEMPLATE = `${DATA_DIR}.bot-read.db`;
-beforeAll(() => {
-  reset();
+beforeAll(async () => {
+  await reset();
   new WritetimeFixture(database()).cert(true);
   appendMessage("warm-up", owner("w1"));
   database().exec("UPDATE memory_scopes SET audience='[]' WHERE json_type(audience)<>'array'");
   rmSync(TEMPLATE, { force: true });
   database().prepare("VACUUM INTO ?").run(TEMPLATE);
-  reset();
+  await reset();
 });
-afterAll(() => { reset(); rmSync(TEMPLATE, { force: true }); });
-beforeEach(() => { reset(); copyFileSync(TEMPLATE, join(DATA_DIR, "messages.db")); });
+afterAll(async () => { await reset(); rmSync(TEMPLATE, { force: true }); });
+beforeEach(async () => { await reset(); copyFileSync(TEMPLATE, join(DATA_DIR, "messages.db")); });
 
 /** Every Murage-voice shape rule 1 names. */
 const CLASSIFIED: Record<string, Message> = {
@@ -120,13 +123,27 @@ describe("18c: the door returns nothing or a projection for every classified sha
 });
 
 describe("15b and 17: the door reads lineage verdicts, never the owner's note", () => {
-  it("a row held \"checking\" (a held reply) is held at the door too: no bot reads its words until the hold settles (REPLY-WITHHELD-CONTRACT R2)", () => {
-    const thread = "door-held";
-    const row: Message = { id: "h1", role: "bot", kind: "text", text: "HELD_WORDS", at: Date.now(), withheldFromBots: "checking" };
+  it("a stored \"checking\" (left on disk by an earlier process) is no note: a plain row and a copy read their live lineage verdict at the door (R2, rehearsal 4)", () => {
+    // "checking" is never stored; one found on disk (1.0.2, a 1.0.3 process restarted before the drain) must not hold the row for good
+    const thread = "door-noted";
+    const row = { id: "n1", role: "bot", kind: "text", text: "NOTED_WORDS", at: Date.now(), parentId: "n-origin" } as Message;
+    appendMessage(thread, owner("n-origin"));
+    const copy = { id: "n2", role: "bot", kind: "text", text: "NOTED_COPY", at: Date.now(), parentId: "n1", copyOf: { threadId: thread, messageIds: ["n-origin"] } } as Message;
     appendMessage(thread, row);
-    const page = { threadId: thread, lines: [{ messageId: row.id, author: "generated" as const }] };
-    expect(denyLookup(database(), page, doorReader()).get(row.id)).toEqual({ state: "checking", reason: "pending" });
-    expect(botRows(database(), BOT, thread, [row]).map(r => r.id)).toEqual([]);
+    appendMessage(thread, copy);
+    // the flag landed later, as a note does (a row appended already flagged is marked at write, which is the owner's own hide)
+    database().prepare("UPDATE messages SET json=json_set(json,'$.withheldFromBots','checking') WHERE thread_id=? AND id IN ('n1','n2')").run(thread);
+    row.withheldFromBots = "checking"; copy.withheldFromBots = "checking";
+    const page = { threadId: thread, lines: [{ messageId: row.id, author: "generated" as const }, { messageId: copy.id, author: "generated" as const }] };
+    expect(denyLookup(database(), page, doorReader()).get(row.id)).toEqual({ state: "shown" });
+    expect(denyLookup(database(), page, doorReader()).get(copy.id)).toEqual({ state: "shown" });
+    expect(botRows(database(), BOT, thread, [row, copy]).map(r => r.id)).toEqual([row.id, copy.id]);
+  });
+  it("the server never stores \"checking\" as a note: the write side keeps final verdicts only, and \"checking\" is read live (R2)", () => {
+    const files = readdirSync(SERVER, { recursive: true }).map(String).filter(f => f.endsWith(".ts") && !f.endsWith(".test.ts") && !f.startsWith("testing/") && !f.includes("/testing/"));
+    const hits = files.flatMap(file => codeLines(readFileSync(join(SERVER, file), "utf8"))
+      .filter(({ code }) => /withheldFromBots\s*:\s*["']checking["']|["']checking["'] as const/.test(code)).map(h => `${file}:${h.line}`));
+    expect(hits).toEqual([]);
   });
   it("ownFlag false skips the own-flag branch; the default reader keeps it", () => {
     const thread = "door-flag";
@@ -149,7 +166,7 @@ describe("15b and 17: the door reads lineage verdicts, never the owner's note", 
     expect(botRows(database(), BOT, thread, [copy]).map(r => r.id)).toEqual(["n-copy"]);
     expect(botMessages(database(), BOT, thread, [copy]).map(r => r.id)).toEqual(["n-copy"]);
   });
-  it("a copy of a held row (flagged \"checking\") reads checking at the door and its chain judge, never withheld (Astra re-check item 6)", () => {
+  it("a copy of a row left flagged \"checking\" on disk reads shown at the door, its chain judge and the gate, never withheld or checking on that flag (Astra re-check item 6, R2)", () => {
     const thread = "door-held-copy";
     const source: Message = { id: "hc-src", role: "bot", kind: "text", text: "HELD_SOURCE_WORDS", at: Date.now(), withheldFromBots: "checking" };
     appendMessage(thread, source);
@@ -158,18 +175,18 @@ describe("15b and 17: the door reads lineage verdicts, never the owner's note", 
     const owner = { audience: { owner: true, scopeIds: [] }, ownerOwnChat: true };
     const states = new Map<string, LineVerdictState>();
     const rows = botRows(database(), BOT, thread, [copy], { ...owner, states });
-    expect(states.get("hc-copy")).toBe("checking");
-    expect(rows.map(r => r.text).join("\n")).toContain(ROOM_REPLY_CHECKING);
-    expect(rows.map(r => r.text).join("\n")).not.toContain("HELD_SOURCE_WORDS");
-    // the gate's door answer and the copy-origin chain probe say checking too (not a mark)
-    expect(doorEgress(database)("bot-a", thread, ["hc-copy"], false)).toBe("checking");
-    expect(copyOriginUnavailable(thread, "hc-src")).toBe(true);
+    expect(states.get("hc-copy")).toBe("shown");
+    expect(rows.map(r => r.text).join("\n")).toContain("HELD_SOURCE_WORDS");
+    expect(rows.map(r => r.text).join("\n")).not.toContain(ROOM_REPLY_CHECKING);
+    // the gate's door answer and the copy-origin chain probe judge live too: the stale flag is no note
+    expect(doorEgress(database)("bot-a", thread, ["hc-copy"], false)).toBe("shown");
+    expect(copyOriginUnavailable(thread, "hc-src")).toBe(false);
   });
-  it("before any line lineage exists, a copy whose original carries only the checking flag reads unproven, never a mark (Astra final item 2)", () => {
+  it("before any line lineage exists, a copy whose original carries only a stale checking flag reads as no note, never a mark (Astra final item 2, R2)", () => {
     const thread = "door-held-nolineage";
     appendMessage(thread, { id: "nl-src", role: "bot", kind: "text", text: "NL_WORDS", at: Date.now(), withheldFromBots: "checking" } as Message);
     database().exec("DELETE FROM memory_line_lineage"); // a file no lineage row was written on yet: the chain judge skips the verdicts (rule 29)
-    expect(copyOriginVerdict(LineageAllowance.tool(), { threadId: thread, messageIds: ["nl-src"] })).toEqual({ withheld: true, unproven: true });
+    expect(copyOriginVerdict(LineageAllowance.tool(), { threadId: thread, messageIds: ["nl-src"] })).toEqual({ withheld: false, unproven: false });
     // a real flag on the original is a mark: withheld and proven
     database().prepare("UPDATE messages SET json=json_set(json,'$.withheldFromBots',json('true')) WHERE thread_id=? AND id='nl-src'").run(thread);
     expect(copyOriginVerdict(LineageAllowance.tool(), { threadId: thread, messageIds: ["nl-src"] })).toEqual({ withheld: true, unproven: false });
@@ -242,7 +259,7 @@ describe("18e: viewer and judge literals", () => {
     expect(statSync(join(SERVER, "bot-read.ts")).isFile()).toBe(true);
     const found: string[] = [];
     for (const file of sources()) {
-      const rel = relative(SERVER, file);
+      const rel = relative(SERVER, file).replace(/\\/g, "/"); // the allow list is written with "/"
       if (HUMAN_ALLOW.get(rel) === null) continue;
       const only = HUMAN_ALLOW.get(rel);
       for (const { line, code } of codeLines(readFileSync(file, "utf8"))) if (/kind:\s*["']human["']/.test(code) && !only?.test(code)) found.push(`${rel}:${line}`);
@@ -304,7 +321,7 @@ describe("16: every bot-facing read goes through the door", () => {
     expect(readFileSync(join(SERVER, "project-memory-tools.ts"), "utf8")).not.toMatch(/json_extract\(json,'\$\.actorKind'\)='murage'/);
     const found: string[] = [];
     for (const file of sources()) {
-      const rel = relative(SERVER, file);
+      const rel = relative(SERVER, file).replace(/\\/g, "/"); // "/" on every platform
       if (rel === "bot-read.ts") continue;
       for (const { line, code } of codeLines(readFileSync(file, "utf8"))) if (/partitionTranscript(Messages|Window)\b/.test(code)) found.push(`${rel}:${line}`);
     }
@@ -322,12 +339,12 @@ describe("16: every bot-facing read goes through the door", () => {
  *   reads (seq and rowid keys) and the branch walk's next-row read. They are the store's own loaders under Store.messagesFor and the page
  *   reads; every bot-facing caller reads their rows through botRows. */
 const RAW_READS: Record<string, number> = {
-  "backup-waiting.ts": 1, "bot-egress.expect-errors.ts": 2, "boundary-ports.ts": 8, "branch-fill.ts": 5, "branch-index.ts": 7, "branch-store.ts": 4,
+  "backup-waiting.ts": 1, "bot-egress.expect-errors.ts": 2, "boundary-ports.ts": 9, "branch-fill.ts": 5, "branch-index.ts": 7, "branch-store.ts": 4,
   "browser-extension-approvals.ts": 3, "browser-extension-setup.ts": 1, "card-summary.ts": 3, "conversation-deletion.ts": 3,
-  // frozen-replies.ts (the boot recovery's scan and the rows it judges), handoff-reply.ts and held-replies.ts (a held row's existence for the settle),
-  // index.ts (the held completion's result row): server-side reads of REPLY-WITHHELD-CONTRACT C4 and C5, never handed to a bot before the gate
+  // frozen-replies.ts (the boot recovery's scan and the rows it judges), handoff-reply.ts and held-replies.ts (an earlier build's held row, retired),
+  // index.ts (the retired hold's result row), boundary-ports.ts (a shared request's closing row, terminalFor): server-side reads, never handed to a bot
   "frozen-replies.ts": 5,
-  "handoff-boundary.ts": 1, "handoff-dispatch.ts": 1, "handoff-evidence.ts": 1, "handoff-reply.ts": 1, "harness/event-log.ts": 5, "held-replies.ts": 2, "host-computer-consent.ts": 1,
+  "handoff-boundary.ts": 1, "handoff-dispatch.ts": 1, "handoff-evidence.ts": 1, "handoff-reply.ts": 1, "harness/event-log.ts": 5, "held-replies.ts": 1, "host-computer-consent.ts": 1,
   "human-principals.ts": 1, "image-operations.ts": 2, "inbox-fill-worker.ts": 1, "inbox.base-reference.ts": 4, "inbox.legacy-reference.ts": 1,
   "inbox.ts": 6, "index.ts": 69, "installation-activation.ts": 1, "installation-database-snapshot.ts": 6, "installation-restore-preparation.ts": 1,
   "mcp-signin-card.ts": 1, "memory/branch-change.ts": 3, "murage-anchor.ts": 1, "memory/bring-in.ts": 1, "memory/capture.ts": 3, "memory/deny-read.ts": 1,
@@ -344,7 +361,7 @@ describe("18a: raw reads of stored rows only in the allowlist", () => {
   it("every FROM messages, messageById, scanSince and rowsSince outside the door is counted in RAW_READS", () => {
     const counts: Record<string, number> = {};
     for (const file of sources()) {
-      const rel = relative(SERVER, file);
+      const rel = relative(SERVER, file).replace(/\\/g, "/"); // '/' on every platform, as RAW_READS is written
       if (rel === "bot-read.ts") continue;
       let n = 0;
       for (const { code } of codeLines(readFileSync(file, "utf8"))) n += (code.match(/FROM messages\b|messageById\(|scanSince\(|rowsSince\(/g) ?? []).length;
@@ -358,10 +375,10 @@ describe("18a: raw reads of stored rows only in the allowlist", () => {
 const statusRow = (id: string, murage: unknown, at = 1): Message => ({ id, role: "bot", kind: "activity", tool: { name: `stored secret words ${id}`, ok: true }, actorKind: "murage", murage, at } as Message);
 
 describe("rule 14: BOT_VISIBLE_STATUS", () => {
-  it("is exactly the eight keys, and a row can keep every one of them", () => {
-    expect([...BOT_VISIBLE_STATUS].sort()).toEqual(["call_ended", "card_result_line", "checking", "criteria_claim_corrected", "request_finished", "result_unavailable", "setup_confirmed", "withheld"]);
+  it("is exactly the nine keys, and a row can keep every one of them", () => {
+    expect([...BOT_VISIBLE_STATUS].sort()).toEqual(["call_ended", "card_result_line", "checking", "criteria_claim_corrected", "no_answer_checking", "request_finished", "result_unavailable", "setup_confirmed", "withheld"]);
     const made: Record<string, ReturnType<typeof status>> = {
-      withheld: status("withheld"), checking: status("checking"), request_finished: status("request_finished"), result_unavailable: status("result_unavailable"),
+      withheld: status("withheld"), checking: status("checking"), no_answer_checking: status("no_answer_checking"), request_finished: status("request_finished"), result_unavailable: status("result_unavailable"),
       card_result_line: status("card_result_line", { desk: botName({ name: "Desk" }), lead: botName({ name: "Lead" }), card: cardTitle({ title: "Card" }) }),
       criteria_claim_corrected: status("criteria_claim_corrected", { met: 2, total: 3 }), call_ended: status("call_ended", { minutes: 4 }), setup_confirmed: status("setup_confirmed"),
     };
@@ -694,7 +711,7 @@ describe("16: the result gate and a hand-off replay read every line of their wal
     expect(withheld && outboundWords(withheld)).not.toContain("worker words");
   });
   it("the server's gate asks the door, and the gate keeps no reader of its own outside it", () => {
-    expect(readFileSync(join(SERVER, "index.ts"), "utf8")).toMatch(/doorShown: doorEgress\(database\)/);
+    expect(readFileSync(join(SERVER, "index.ts"), "utf8")).toMatch(/doorShown: doorEgress\(database, ownerOwnConversation\)/);
     const egress = readFileSync(join(SERVER, "result-egress.ts"), "utf8");
     expect(egress).not.toMatch(/export function (turnSourcesHold|textHolders)\b/);
     expect(egress).not.toMatch(/threadMessages\??:/);

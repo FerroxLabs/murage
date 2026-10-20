@@ -78,7 +78,9 @@ describe("Inbox projection against base", () => {
     }
   });
 
-  it("returns the same items, order and counts on every view, page, search, scope and clock", { tags: ["nightly"] }, () => {
+  // Over 500 comparisons, read-only and CPU-bound: Linux 20-39 s, macOS 29-38 s, Windows 46-47 s on hosted runners (nightly
+  // 39345477364, CI 39357825825 and 39358028036), so the suite's 45 s default does not fit Windows.
+  it("returns the same items, order and counts on every view, page, search, scope and clock", { tags: ["nightly"], timeout: 150_000 }, () => {
     let compared = 0;
     for (const now of [NOW, NOW + 2 * 60_000, NOW + 2 * DAY]) for (const view of VIEWS) for (const query of ["", "provider", "bot 3", "sign in", "routine 4"])
       for (const includeSnoozed of [false, true]) for (const page of query === "" ? [0, 1, 3, 40] : [0, 1]) for (const scope of query === "" ? [access, narrow] : [access]) {

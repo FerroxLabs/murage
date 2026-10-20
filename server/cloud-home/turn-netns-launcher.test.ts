@@ -42,7 +42,7 @@ print(json.dumps({"argv": out, "blobs": blobs}))`);
 });
 const child = (body: string) => py(`
 import tempfile
-root = tempfile.mkdtemp()
+root = os.path.realpath(tempfile.mkdtemp())  # the plan directory must be its real path; macOS temp sits behind /var -> /private/var
 os.getuid = lambda: 424242; os.geteuid = lambda: 424242
 route_ok = os.path.join(root, "route"); open(route_ok, "w").write("Iface\\tDestination\\tGateway\\tFlags\\tRefCnt\\tUse\\tMetric\\tMask\\nnet0\\t00000000\\t0100000A\\t0003\\t0\\t0\\t0\\t00000000\\n")
 route_none = os.path.join(root, "none"); open(route_none, "w").write("Iface\\tDestination\\tGateway\\tFlags\\tRefCnt\\tUse\\tMetric\\tMask\\nlo\\t0000007F\\t00000000\\t0001\\t0\\t0\\t0\\t000000FF\\n")

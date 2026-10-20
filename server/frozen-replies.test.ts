@@ -5,7 +5,7 @@
 // as "Reply withheld: it used something you deleted or changed" are found at boot, their worker's words proven through the hand-off's own
 // prompt row and turn, judged again through the gate, and restored beside the frozen row (the frozen Murage row stays classified). Bounded
 // slices with a cursor, idempotent, never into a conversation that is not the owner's. Cases S10, S11, S20, S21, S24.
-import { existsSync, mkdirSync } from "node:fs";
+import { existsSync, mkdirSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { RowSink, configureBotEgress } from "./bot-egress.ts";
@@ -14,6 +14,7 @@ import { DATA_DIR } from "./config.ts";
 import { closeDatabase, database } from "./database.ts";
 import { _loadPending, findDelegationReceipt, heldReceipts } from "./delegations.ts";
 import { recoverFrozenRepliesSlice, restoredReplyId, type FrozenReplyPorts } from "./frozen-replies.ts";
+import { retireHeldRow, type HeldRetirePorts, type RetiredHold } from "./held-replies.ts";
 import { handoffReplyId } from "./handoff-reply.ts";
 import { humanTask, linkHumanBinding, observeVerifiedHuman, resolveHumanBinding, threadHumanPrincipal, isWorkspaceOwner } from "./human-principals.ts";
 import { closeMessageDb } from "./message-db.ts";
@@ -33,6 +34,7 @@ import { removeTempDirSync } from "./testing/cleanup.ts";
 
 const WORDS = "RBA cash rate 3.60 percent, last changed 2026-02-18 (FROZEN_WORKER_WORDS)";
 const FROZEN = `[${ROOM_REPLY_WITHHELD}]`;
+const NO_ANSWER = "(no answer: that memory is still being checked, try again later)";
 let inlineMs: number;
 
 beforeEach(() => {
@@ -61,19 +63,22 @@ function world() {
   };
   configureResultEgress(deps);
   configureStatusRoster(name => store.bots.some(bot => bot.name === name));
-  const hold = vi.fn(() => true);
   const restored = vi.fn();
+  /** The retirement as index.ts wires it: the row rewritten as the no-answer row, then the completion (recorded here). */
+  const completed: Array<[string, string | undefined]> = [];
+  const retirePorts: HeldRetirePorts = { store, complete: (hold, messageId) => { completed.push([hold.id, messageId]); } };
+  const retire = vi.fn((hold: RetiredHold, messageId: string) => { retirePorts.complete(hold, retireHeldRow(retirePorts, hold, messageId)); });
   const ports: FrozenReplyPorts = {
-    store, db: database, rows: new RowSink(store), hold, restored,
+    store, db: database, rows: new RowSink(store), retire, restored,
     ownerThread: threadId => isWorkspaceOwner(threadHumanPrincipal(threadId)),
     release: (origin, worker, sourceThreadId, fromBotId, requestId, text) => releaseStoredResult({ origin, ...(requestId ? { requestId } : {}) }, worker, sourceThreadId, { fromBotId }, false, text),
   };
   const cursorFile = join(DATA_DIR, "frozen-replies-recovery.json");
   const recoverAll = (rowsPerSlice = 100) => {
-    const totals = { slices: 0, scanned: 0, restored: 0, held: 0, left: 0 };
+    const totals = { slices: 0, scanned: 0, restored: 0, retired: 0, left: 0 };
     for (let i = 0; i < 10_000; i++) {
       const step = recoverFrozenRepliesSlice(ports, { rowsPerSlice, cursorFile });
-      totals.slices++; totals.scanned += step.scanned; totals.restored += step.restored; totals.held += step.held; totals.left += step.left;
+      totals.slices++; totals.scanned += step.scanned; totals.restored += step.restored; totals.retired += step.retired; totals.left += step.left;
       if (!step.more) break;
     }
     return totals;
@@ -106,7 +111,7 @@ function world() {
     const row = shape === "status" ? murageLine({ ...base, murage: { kind: "status", status: { key: "replied_to_task", data: { name: bot.name, reply: FROZEN } } } } as never) : base;
     return store.appendMessage(threadId, row, handoffReplyId(handoffId));
   };
-  return { store, leader, a, deps, ports, hold, restored, recoverAll, promptRow, workerTurn, frozenRow, cursorFile };
+  return { store, leader, a, deps, ports, retire, completed, restored, recoverAll, promptRow, workerTurn, frozenRow, cursorFile };
 }
 
 it("S10: a frozen reply whose worker turn is still stored comes back beside the frozen row, with its words and copy link, in both row shapes", () => {
@@ -116,7 +121,7 @@ it("S10: a frozen reply whose worker turn is still stored comes back beside the 
     w.frozenRow(w.leader.threadId, w.a, handoffId, shape);
   }
   const totals = w.recoverAll();
-  expect(totals).toMatchObject({ restored: 2, held: 0, left: 0 });
+  expect(totals).toMatchObject({ restored: 2, retired: 0, left: 0 });
   for (const handoffId of ["h-status", "h-plain"]) {
     const frozen = w.store.messageById(w.leader.threadId, handoffReplyId(handoffId))!;
     expect(frozen.text).toContain(FROZEN); // the frozen row stays as it was (classification is sticky)
@@ -133,7 +138,7 @@ it("S10: a frozen reply whose worker turn is still stored comes back beside the 
   }
   expect(w.store.bot(w.leader.id)!.unread).toBe(true);
   // run again: nothing restored twice
-  expect(w.recoverAll()).toMatchObject({ restored: 0, held: 0 });
+  expect(w.recoverAll()).toMatchObject({ restored: 0, retired: 0 });
   expect(w.store.messagesFor(w.leader.threadId).filter(m => m.id === restoredReplyId("h-status"))).toHaveLength(1);
 });
 
@@ -145,13 +150,13 @@ it("S11: a frozen reply whose worker conversation is gone, or whose provenance c
   w.promptRow(w.a, "h-noturn", w.leader.threadId, "task");
   w.store.appendMessage(w.a.threadId, { role: "bot", kind: "text", text: "unrelated later output" });
   w.frozenRow(w.leader.threadId, w.a, "h-noturn", "plain");
-  expect(w.recoverAll()).toMatchObject({ restored: 0, held: 0, left: 2 });
+  expect(w.recoverAll()).toMatchObject({ restored: 0, retired: 0, left: 2 });
   expect(w.store.messageById(w.leader.threadId, restoredReplyId("h-gone"))).toBeUndefined();
   expect(w.store.messageById(w.leader.threadId, restoredReplyId("h-noturn"))).toBeUndefined();
   expect(w.store.messagesFor(w.leader.threadId).some(m => m.text?.includes("unrelated later output"))).toBe(false);
 });
 
-it("S10b: a frozen reply whose originals now read withheld stays frozen; one that reads checking is restored held and registered", () => {
+it("S10b: a frozen reply whose originals now read withheld stays frozen; one that reads checking waits (nothing held, no words written) and is restored once the check finishes", () => {
   const w = world();
   const plan = w.store.appendMessage(w.leader.threadId, { role: "user", kind: "text", text: "private plan" });
   const turn = openTurnLineage(database(), { threadId: w.a.threadId, turnId: "turn-h-withheld" });
@@ -168,12 +173,25 @@ it("S10b: a frozen reply whose originals now read withheld stays frozen; one tha
   const elsewhere = w.store.appendMessage(other.threadId, { role: "bot", kind: "text", text: "an earlier answer the owner regenerated" });
   w.workerTurn(w.a, "h-pending", w.leader.threadId, WORDS, () => { commitRevoke(database(), { kind: "line", threadId: other.threadId, messageIds: [elsewhere.id], cause: "regenerate" }); });
   w.frozenRow(w.leader.threadId, w.a, "h-pending", "status");
-  expect(w.recoverAll()).toMatchObject({ restored: 0, held: 1, left: 1 });
+  // the withheld one is judged (left as the proper withheld line); the checking one stops the scan before it: nothing held, no words written
+  const first = w.recoverAll();
+  expect(first).toMatchObject({ restored: 0, retired: 0, left: 1 });
+  expect(recoverFrozenRepliesSlice(w.ports, { cursorFile: w.cursorFile }).waiting).toBe(true);
   expect(w.store.messageById(w.leader.threadId, restoredReplyId("h-withheld"))).toBeUndefined();
-  const held = w.store.messageById(w.leader.threadId, restoredReplyId("h-pending"))!;
-  expect(held.withheldFromBots).toBe("checking");
-  expect(held.text).toContain(WORDS);
-  expect(w.hold).toHaveBeenCalledWith(expect.objectContaining({ handoffId: "h-pending", sourceThreadId: w.leader.threadId, messageId: held.id, toBotId: w.a.id }));
+  expect(w.store.messageById(w.leader.threadId, restoredReplyId("h-pending"))).toBeUndefined();
+  expect(findDelegationReceipt("h-pending")).toBeNull();
+  expect(heldReceipts()).toEqual([]);
+  expect(w.store.messagesFor(w.leader.threadId).some(m => (m.text ?? "").includes("FROZEN_WORKER_WORDS"))).toBe(false);
+  // frozen retry: once the check finishes, the next run restores the owner's reply with its words; it never stays stuck as the frozen line
+  expect(drainRevokeMarker(database()).pending).toBe(false);
+  expect(w.recoverAll()).toMatchObject({ restored: 1, retired: 0 });
+  const restored = w.store.messageById(w.leader.threadId, restoredReplyId("h-pending"))!;
+  expect(restored.text).toContain(WORDS);
+  expect(restored.withheldFromBots).toBeUndefined();
+  expect(w.store.messageById(w.leader.threadId, restoredReplyId("h-withheld"))).toBeUndefined();
+  // a run after that finds nothing more to do
+  rmSync(w.cursorFile, { force: true });
+  expect(w.recoverAll()).toMatchObject({ restored: 0, retired: 0 });
 });
 
 it("S20: recovery over many frozen rows runs in bounded slices behind a cursor, and a second full run touches nothing", () => {
@@ -190,7 +208,7 @@ it("S20: recovery over many frozen rows runs in bounded slices behind a cursor, 
   const totals = w.recoverAll(25);
   expect(totals.restored + first.restored).toBe(total);
   expect(totals.slices).toBeGreaterThan(1);
-  expect(w.recoverAll(25)).toMatchObject({ restored: 0, held: 0, left: 0 });
+  expect(w.recoverAll(25)).toMatchObject({ restored: 0, retired: 0, left: 0 });
   expect(w.store.messagesFor(w.leader.threadId).filter(m => m.id.endsWith("-restored"))).toHaveLength(total);
 });
 
@@ -203,28 +221,33 @@ it("S21: a frozen reply in a conversation that is not the owner's is never resto
   expect(isWorkspaceOwner(threadHumanPrincipal(personThread))).toBe(false);
   w.workerTurn(w.a, "h-person", personThread);
   w.frozenRow(personThread, w.a, "h-person", "status");
-  expect(w.recoverAll()).toMatchObject({ restored: 0, held: 0, left: 1 });
+  expect(w.recoverAll()).toMatchObject({ restored: 0, retired: 0, left: 1 });
   expect(w.store.messageById(personThread, restoredReplyId("h-person"))).toBeUndefined();
   expect(w.store.messagesFor(personThread).some(m => m.text?.includes("FROZEN_WORKER_WORDS"))).toBe(false);
 });
 
-it("S24: a held row with no receipt (the receipts file write was lost) is registered again by the boot recovery", () => {
+it("S24: an earlier build's held row with no receipt is retired by the boot recovery: rewritten as the no-answer row, its asker completed once", () => {
   const w = world();
   const { reply } = w.workerTurn(w.a, "h-held", w.leader.threadId);
   const copyOf = { threadId: w.a.threadId, messageIds: [reply.id] };
   const row = w.store.appendMessage(w.leader.threadId, { role: "bot", kind: "text", text: `@${w.a.name} replied to the delegated task:\n\n${WORDS}`, inboundKind: "action",
     from: { botId: w.a.id, name: w.a.name, color: w.a.color }, copyOf, withheldFromBots: "checking" }, handoffReplyId("h-held"));
   expect(findDelegationReceipt("h-held")).toBeNull();
-  expect(w.recoverAll()).toMatchObject({ restored: 0, held: 1 });
-  expect(w.hold).toHaveBeenCalledWith(expect.objectContaining({ handoffId: "h-held", sourceThreadId: w.leader.threadId, messageId: row.id, toBotId: w.a.id, copyOf }));
-  expect(w.store.messageById(w.leader.threadId, row.id)!.withheldFromBots).toBe("checking");
-  expect(heldReceipts()).toEqual([]); // the registration is the port's (index.ts writes the receipt); nothing else changed
-  // a reply an earlier recovery restored held, whose receipt was lost since: registered again under the restored row
+  expect(w.recoverAll()).toMatchObject({ restored: 0, retired: 1 });
+  const retired = w.store.messageById(w.leader.threadId, row.id)!;
+  expect(retired.text).toBe(NO_ANSWER);
+  expect(retired.copyOf).toBeUndefined();
+  expect(retired.withheldFromBots).toBeUndefined();
+  expect(w.completed).toEqual([["h-held", row.id]]);
+  expect(heldReceipts()).toEqual([]);
+  // a reply an earlier recovery restored held, whose receipt was lost since: retired the same way under the restored row
   w.frozenRow(w.leader.threadId, w.a, "h-lost-receipt", "status");
   const { reply: reply2 } = w.workerTurn(w.a, "h-lost-receipt", w.leader.threadId);
   const copyOf2 = { threadId: w.a.threadId, messageIds: [reply2.id] };
   const restoredRow = w.store.appendMessage(w.leader.threadId, { role: "bot", kind: "text", text: `@${w.a.name} replied to the delegated task:\n\n${WORDS}`, inboundKind: "action",
     from: { botId: w.a.id, name: w.a.name, color: w.a.color }, copyOf: copyOf2, withheldFromBots: "checking" }, restoredReplyId("h-lost-receipt"));
-  expect(w.recoverAll()).toMatchObject({ restored: 0, held: 1 });
-  expect(w.hold).toHaveBeenLastCalledWith(expect.objectContaining({ handoffId: "h-lost-receipt", messageId: restoredRow.id, copyOf: copyOf2 }));
+  expect(w.recoverAll()).toMatchObject({ restored: 0, retired: 1 });
+  expect(w.store.messageById(w.leader.threadId, restoredRow.id)!.text).toBe(NO_ANSWER);
+  expect(w.completed).toEqual([["h-held", row.id], ["h-lost-receipt", restoredRow.id]]);
+  expect(w.store.messagesFor(w.leader.threadId).some(m => (m.text ?? "").includes("FROZEN_WORKER_WORDS"))).toBe(false);
 });

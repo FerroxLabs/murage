@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { removeTempDirSync } from "./testing/cleanup.ts";
+import { browserEngineRefusesHost } from "./testing/browser-host.ts";
 const macAdmission = vi.hoisted(() => vi.fn());
 const macState = vi.hoisted(() => ({ checking: false, unfinished: false, keepChecking: false, settleTo: "ok" as "ok" | "failed" | "unfinished", waited: 0, starts: [] as unknown[], waitArgs: [] as unknown[], startsAtWait: 0 }));
 vi.mock("./browser-macos-identity.ts", () => ({ verifyPackagedMacBrowser: macAdmission, verifyPackagedMacBrowserAsync: async () => true, checkPackagedMacBrowserAsync: async (...args: unknown[]) => { macState.waited++; macState.waitArgs = args; macState.startsAtWait = macState.starts.length; if (!macState.keepChecking) macState.checking = false; if (macState.settleTo === "ok") macAdmission.mockReturnValue(true); else if (macState.settleTo === "unfinished") macState.unfinished = true; return macState.settleTo; }, packagedMacBrowserState: (...args: unknown[]) => (macState.starts.push(args[2]), macState.checking) ? "checking" : macState.unfinished ? "unfinished" : macAdmission(...args) ? "ok" : "failed" }));
@@ -447,7 +448,7 @@ describe("protected browser state", () => {
       expect(stopped).toBe(true);
     });
   });
-  it("isolates engine storage, disables guest persistence, and does not copy ambient auth/browser overrides", () => {
+  it.skipIf(browserEngineRefusesHost)("isolates engine storage, disables guest persistence, and does not copy ambient auth/browser overrides", () => {
     const dataDir = temporary();
     const input = { dataDir, realmId: "realm", binaryPath: "/fixture/agent-browser", encryptionKey: "a".repeat(64), session: browserSessionId("a", "profile", "realm"), env: { PATH: "/bin", AGENT_BROWSER_PROFILE: "/real/profile", TOKEN: "secret" } };
     const spec = agentBrowserIntegration(input);
@@ -466,7 +467,7 @@ describe("protected browser state", () => {
     expect(guest.env.AGENT_BROWSER_RESTORE_SAVE).toBe("never");
     expect(guest.env.AGENT_BROWSER_RESTORE).toBeUndefined();
   });
-  it("attaches to the owner's Chrome only when asked, in its own tab, without saving its cookies", () => {
+  it.skipIf(browserEngineRefusesHost)("attaches to the owner's Chrome only when asked, in its own tab, without saving its cookies", () => {
     const dataDir = temporary();
     const endpoint = "ws://127.0.0.1:9222/devtools/browser/4c1b0f0e-9a2d-4e8f-b1c3-5d6e7f8a9b0c";
     const input = { dataDir, realmId: "realm", binaryPath: "/fixture/agent-browser", encryptionKey: "a".repeat(64), session: userChromeSessionId("a", "realm"), env: { PATH: "/bin", AGENT_BROWSER_CDP: "http://ambient.invalid:9222" } };

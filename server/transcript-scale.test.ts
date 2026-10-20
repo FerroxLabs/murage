@@ -146,6 +146,7 @@ describe("Store transcript scale", () => {
 });
 
 import { createTaskDelta, FULL_TASK_LIST_EVERY_MS } from "./task-delta.ts";
+import { windowsNightly } from "./testing/windows-hosted.ts";
 
 describe("roster bookkeeping and run anchors", () => {
   beforeEach(() => removeTempDirSync(DATA_DIR));
@@ -393,7 +394,7 @@ describe("lane E round 2 findings (ui-review-r2/REPORT.md)", () => {
     }
   });
 
-  it("P2 the card-on-branch check reads the branch's parent links, not the rows stored since the card", () => {
+  it("P2 the card-on-branch check reads the branch's parent links, not the rows stored since the card", windowsNightly(), () => {
     const store = new Store(selection);
     const { threadId } = store.createBot();
     const [root] = lines(store, threadId, 1, "start");

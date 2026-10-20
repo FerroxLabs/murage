@@ -20,6 +20,12 @@ import { personalityImprint } from "../../../shared/bot-identity.ts";
 import { MEMORY_REFERENCE_CLOSE, MEMORY_REFERENCE_OPEN, MEMORY_REFERENCE_PREAMBLE } from "../../../shared/memory.ts";
 import type { AdapterArtifactsFor, AdapterRecordRef, B34Adapter, B34AdapterContext, Bot, Dump } from "./b34-adapter-types.ts";
 import { B34_EXTRACTOR_INSTANCE_ID, B34_Q03, B34_Q13, b34Sha256, readB34ExtractorLedger, type B34LedgerEntry, type B34RuleId } from "./b34-scripted-extractor.ts";
+import { OWNER_FIRST_MAX_DEFER_MS } from "../../owner-first.ts";
+
+/** A captured source's extraction asks the owner-first gate first (worker-controller.ts completedSource): on an overloaded computer,
+ * a loaded CI runner included, it waits up to OWNER_FIRST_MAX_DEFER_MS before its consolidation intent exists, and the idle
+ * retry after a restore waits the same way. A wait for either outlasts that bound. */
+const OWNER_FIRST_WAIT_MS = OWNER_FIRST_MAX_DEFER_MS + 30_000;
 
 const EXTRACTOR_MODULE_URL = new URL("./b34-scripted-extractor.ts", import.meta.url).href;
 /** Preload source: dump every fake Claude turn, then install the scripted extractor. */
@@ -365,7 +371,7 @@ async function runQ13(ctx: B34AdapterContext): Promise<AdapterArtifactsFor<"Q13"
     if (!captureComplete(ctx, source)) return undefined;
     const intent = intentFor(ctx, source.id);
     return intent && intent.status !== "running" && intent.status !== "partial" ? intent : undefined;
-  }, 20_000, stall);
+  }, OWNER_FIRST_WAIT_MS, stall);
   const whileDeferred = await memoryStatus(ctx);
   const retryAfter = Number(deferred.retryAfter), updatedAt = Number(deferred.updatedAt);
   ctx.check("budget-deferral-recorded", deferred.status === "deferred" && deferred.reason === "budget-exhausted"
@@ -398,11 +404,11 @@ async function runQ13(ctx: B34AdapterContext): Promise<AdapterArtifactsFor<"Q13"
     note: `synthesis ${String(response.body?.health?.synthesis?.state ?? "missing")}`,
   }));
   // Deferred budget work retries at the next minute boundary (consolidate.ts:118) through the idle poll
-  // (worker-controller.ts:57-63); the bound also covers one revoked 65 s lease (consolidate.ts:146).
+  // (worker-controller.ts:57-63), which asks the owner-first gate; the bound also covers one revoked 65 s lease (consolidate.ts:146).
   const recovered = await stalled(ctx, "Q13 deferred source learned after restore", () => {
     if (intentFor(ctx, source.id)?.status !== "complete") return undefined;
     return recordsCiting(ctx, source.id).filter(record => record.kind === "fact");
-  }, 125_000, stall);
+  }, 125_000 + OWNER_FIRST_MAX_DEFER_MS, stall);
   const fact = recovered.find(record => record.state === "active");
   ctx.check("recovered-learning-cites-source", recovered.length === 1 && Boolean(fact) && fact!.assertion === "owner-statement" && fact!.ownerPinned === 0
     && fact!.text.includes(B34_Q13.canary) && String(fact!.basis ?? "").startsWith("Source-entailed owner statement") && sameSet(evidenceSources(ctx, fact!), [source.id]),
