@@ -39,7 +39,7 @@ jobs:
         # The harness and pure desktop capabilities stay portable across all
         # supported host platforms. POSIX-only process tests self-skip.
         os: ${{ fromJSON(inputs.windows_only && '["windows-latest"]' || '["macos-latest","ubuntu-latest","windows-latest"]') }}
-    runs-on: ${{ matrix.os }}
+    runs-on: ${{ matrix.os == 'ubuntu-latest' && (github.event_name == 'push' || github.event_name == 'workflow_dispatch') && fromJSON(vars.MURAGE_LINUX_RUNNER || '"ubuntu-latest"') || matrix.os }}
     # Ubuntu also runs the complete desktop/mobile human suite after runtime
     # checks; the recorded 16-minute prelude left too little of the old 20m cap.
     timeout-minutes: ${{ matrix.os == 'windows-latest' && 40 || matrix.os == 'ubuntu-latest' && 30 || 20 }}
@@ -173,7 +173,7 @@ jobs:
         # 205 on macOS and ubuntu). Tests over 60 s and wall-clock budget
         # tests are tagged out of these shards and run in nightly.yml.
         vitest_shard: ${{ fromJSON(inputs.vitest_file && '[1]' || '[1,2,3,4,5,6,7,8,9,10]') }}
-    runs-on: ${{ matrix.os }}
+    runs-on: ${{ matrix.os == 'ubuntu-latest' && (github.event_name == 'push' || github.event_name == 'workflow_dispatch') && fromJSON(vars.MURAGE_LINUX_RUNNER || '"ubuntu-latest"') || matrix.os }}
     # Windows runners are the slowest per shard: a 20-minute cap cancelled
     # shard 3 mid-run (CI 36317693740) before any failure text was printed.
     # 1.0.2 outgrew 30/45 too (CI 38718877034 and its base 38682984430: 16 of
@@ -240,7 +240,7 @@ jobs:
       fail-fast: false
       matrix:
         human_shard: [1, 2, 3, 4, 5, 6]
-    runs-on: ubuntu-latest
+    runs-on: ${{ (github.event_name == 'push' || github.event_name == 'workflow_dispatch') && fromJSON(vars.MURAGE_LINUX_RUNNER || '"ubuntu-latest"') || 'ubuntu-latest' }}
     timeout-minutes: 60
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -294,7 +294,7 @@ jobs:
     if: ${{ always() && !inputs.windows_only && !inputs.vitest_file && !inputs.human_files }}
     name: required CI completion
     needs: [quality, vitest, human, control-plane, mobile, package-linux]
-    runs-on: ubuntu-latest
+    runs-on: ${{ (github.event_name == 'push' || github.event_name == 'workflow_dispatch') && fromJSON(vars.MURAGE_LINUX_RUNNER || '"ubuntu-latest"') || 'ubuntu-latest' }}
     timeout-minutes: 5
     steps:
       - name: Require every ordinary CI job to succeed
@@ -317,7 +317,7 @@ jobs:
   human-confirmation:
     if: ${{ github.event_name == 'workflow_dispatch' && inputs.human_files != '' }}
     name: Scoped Ubuntu human confirmation
-    runs-on: ubuntu-latest
+    runs-on: ${{ (github.event_name == 'push' || github.event_name == 'workflow_dispatch') && fromJSON(vars.MURAGE_LINUX_RUNNER || '"ubuntu-latest"') || 'ubuntu-latest' }}
     timeout-minutes: 20
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -387,7 +387,7 @@ jobs:
   control-plane:
     if: ${{ !inputs.windows_only && !inputs.human_files }}
     name: control-plane check + workerd tests + dry run
-    runs-on: ubuntu-latest
+    runs-on: ${{ (github.event_name == 'push' || github.event_name == 'workflow_dispatch') && fromJSON(vars.MURAGE_LINUX_RUNNER || '"ubuntu-latest"') || 'ubuntu-latest' }}
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -411,7 +411,7 @@ jobs:
     # on (the shared fixtures, the channel scripts, the source guards) and the
     # launcher; nothing else runs it. No native builds: Xcode and Gradle stay
     # off CI, and the fixture oracles also run in the root suite.
-    runs-on: ubuntu-latest
+    runs-on: ${{ (github.event_name == 'push' || github.event_name == 'workflow_dispatch') && fromJSON(vars.MURAGE_LINUX_RUNNER || '"ubuntu-latest"') || 'ubuntu-latest' }}
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -434,7 +434,7 @@ jobs:
   package-linux:
     if: ${{ !inputs.windows_only && !inputs.human_files }}
     name: package + smoke (Ubuntu 24.04 x64)
-    runs-on: ubuntu-24.04
+    runs-on: ${{ (github.event_name == 'push' || github.event_name == 'workflow_dispatch') && fromJSON(vars.MURAGE_LINUX_RUNNER || '"ubuntu-24.04"') || 'ubuntu-24.04' }}
     # The GEPA runtime build adds about 3 minutes (CPython from source can take
     # longer on a cold runner); package-linux.yml runs the same sequence in ~16.
     timeout-minutes: 45

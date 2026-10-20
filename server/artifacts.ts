@@ -189,6 +189,16 @@ export function initializeArtifacts(db: DatabaseSync) {
   const receiptColumns = new Set((db.prepare("PRAGMA table_info(output_publications)").all() as Array<{ name: string }>).map(column => column.name));
   if (!receiptColumns.has("turn_id")) db.exec("ALTER TABLE output_publications ADD COLUMN turn_id TEXT");
 }
+/** "Prepare to reinstall" (installation-memory-downgrade.ts): 1.0.2 holds output_publications to the exact text it creates, so its backup refuses
+ * the table with the 1.0.3 turn_id column (DATABASE_SCHEMA_UNSUPPORTED). The column leaves; the receipts stay, and a later 1.0.3 adds it back
+ * empty, as on a 1.0.2 file (a card written after that names no turn, as before 1.0.3). Idempotent. */
+export function downgradeOutputPublicationTurnTo102(db: DatabaseSync): { dropped: boolean } {
+  if (!db.prepare("SELECT 1 AS present FROM sqlite_schema WHERE type='table' AND name='output_publications'").get()) return { dropped: false };
+  const columns = (db.prepare("PRAGMA table_info(output_publications)").all() as Array<{ name: string }>).map(column => column.name);
+  if (!columns.includes("turn_id")) return { dropped: false };
+  db.exec("ALTER TABLE output_publications DROP COLUMN turn_id");
+  return { dropped: true };
+}
 interface Row { id: string; name: string; kind: ArtifactKind; mime: string; bytes: number; sha256: string; extension: string; created_at: number; bot_id: string; thread_id: string; run_id: string; source_root: string; relative_path: string; source_fingerprint: string; producer: string | null; publication_id: string | null }
 const blobName = (row: Pick<Row, "sha256" | "extension">) => {
   if (!/^[a-f0-9]{64}$/.test(row.sha256) || !/^\.[a-z0-9]{1,12}$/.test(row.extension)) fail(409, "Saved file identity is invalid.");
