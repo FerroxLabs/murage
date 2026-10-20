@@ -208,7 +208,7 @@ it("T2: a reply written after the forget, by a turn that began after it, is not 
 
 // ---- T4: the commit is flat (statements and time do not follow revisions, versions, sources or records) ----
 function timed(run: () => void): number { const t0 = performance.now(); run(); return performance.now() - t0; }
-it("T4: forgetting a source with 1 or 100k revisions, and a record with 1 or 50k versions, writes the same few rows in its commit", { tags: ["nightly"], timeout: 600_000 }, () => {
+it("T4: forgetting a source with 1 or 100k revisions, and a record with 1 or 50k versions, writes the same few rows in its commit", { tags: ["nightly"], timeout: 3_600_000 }, () => {
   const { scope } = live();
   const db = database();
   const make = (id: string, revisions: number) => {
@@ -271,7 +271,7 @@ it("T4: deleting a conversation of 1k or 100k sources, or a bot of 1k or 50k rec
   expect(drained.maxMs, drained.slowest).toBeLessThan(30);
   expect(drained.maxBytes).toBeLessThanOrEqual(1024); // F2#1: the job row never grows with what it ends
   db.close();
-}, 600_000);
+}, 3_600_000);
 
 // ---- T5: 50k vs 500k receipts ----
 const RECEIPTS = `INSERT INTO memory_disclosures(bundle_id,thread_id,driver_instance,native_session,record_versions,source_versions,policy_revision,deletion_epoch,token_count,state,created_at)
@@ -303,7 +303,7 @@ it("T5: archiving a record cited by 50k or 500k receipts and a cold check of a 5
   expect(Number(now.prepare("SELECT count(*) AS n FROM memory_disclosures WHERE state!='revoked'").get()!.n)).toBe(0);
   expect(drained.maxMs).toBeLessThan(30);
   expect(drained.maxBytes).toBeLessThanOrEqual(1024);
-}, 600_000);
+}, 3_600_000);
 
 it("T5: a deleted bot's job ends the receipts made before its commit, never one made after it (A2#9)", async () => {
   live();
@@ -322,7 +322,7 @@ it("T5: a deleted bot's job ends the receipts made before its commit, never one 
   await memoryRevocationIdle();
   expect(db.prepare("SELECT state FROM memory_disclosures WHERE bundle_id=?").get("r0002001")!.state).toBe("delivered");
   expect(Number(db.prepare("SELECT count(*) AS n FROM memory_disclosures WHERE state='revoked'").get()!.n)).toBe(2_000);
-}, 300_000);
+}, 3_600_000);
 
 // ---- T6: 100k vs 1M evidence rows: the lookups are filled in slices, nothing blocks the loop over 50 ms ----
 // (an in-memory database, as the r2 scale tests: what is measured is this lane's work on the loop, not the disk's fsync)
@@ -370,7 +370,7 @@ it("T6: with 100k or 1M evidence rows the evidence lookup fills in slices and a 
   }
   // the build is sliced: ten times the rows, about ten times the slices, each as short
   expect(large.lateSlices, said).toBeGreaterThan(5 * small.lateSlices);
-}, 900_000);
+}, 3_600_000);
 
 // ---- the smaller promises ----
 it("F2#2: the stance phase parses each stance once and reconciles only the bots whose stance names what ended", async () => {

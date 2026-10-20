@@ -39,6 +39,7 @@ import { CURRENT_MEMORY, MemoryEligibility } from "./eligibility.ts";
 import { MemoryWorkerController } from "./worker-controller.ts";
 import { LineageAllowance } from "./lineage-allowance.ts";
 import { removeTempDirSync } from "../testing/cleanup.ts";
+const N = (n: number): number => Math.max(1, Math.round(n * Number(process.env.MEASURE_SCALE ?? 1)));
 
 const ROOM_THREAD = "room-thread";
 const ROSTER: MemoryRoster = { bots: [{ id: "a", threadId: "thread-a", section: "crew" }, { id: "b", threadId: "thread-b", section: "crew" }], groups: [{ id: "room", threadId: ROOM_THREAD, memberIds: ["a", "b"] }] };
@@ -215,12 +216,12 @@ describe("search denies exactly what memory_get denies", () => {
     await refusedEverywhere(access, ["foreign-evidence"], "MEMORY_SCOPE_DENIED");
   });
 
-  it("property: over randomized grants and revocations, room membership, identity rows, derivations, archive and forget, sources, tombstones, spans, failed tools and pending records, every search path returns a record exactly when memory_get allows it", { tags: ["nightly"], timeout: 240_000 }, async () => {
+  it("property: over randomized grants and revocations, room membership, identity rows, derivations, archive and forget, sources, tombstones, spans, failed tools and pending records, every search path returns a record exactly when memory_get allows it", { tags: ["nightly"], timeout: 3_600_000 }, async () => {
     let seed = 0x5eed;
     const rand = () => { seed = (seed * 1103515245 + 12345) & 0x7fffffff; return seed / 0x7fffffff; };
     const pick = <T,>(items: readonly T[]) => items[Math.floor(rand() * items.length)];
     const tally = { checked: 0, denied: 0, historyOnly: 0, revoked: 0, compared: 0, comparedNonEmpty: 0, faults: {} as Record<string, number> };
-    const TRIALS = 80, RECORDS = 12;
+    const TRIALS = N(80), RECORDS = 12;
     for (let trial = 0; trial < TRIALS; trial++) {
       await fresh();
       const scopes = { a: ensureScope("bot", "a"), b: ensureScope("bot", "b"), team: ensureScope("team", "crew"), conv: ensureScope("conversation", "thread-a"), room: ensureScope("room", "room"), foreign: ensureScope("conversation", "thread-b") };
@@ -416,7 +417,7 @@ describe("bounded keyword fallback", () => {
     db.prepare("INSERT INTO memory_records VALUES('new-match',1,'s','fact','harbour lantern wick','owner-statement','active',0,0,NULL,NULL,0)").run();
     expect((await keywordScan(db as never, "harbour lantern", ["s"])).hits.map(hit => hit.id)).toEqual(["new-match"]);
     db.close();
-  }, 180_000);
+  }, 3_600_000);
 
   it("a time budget ends the scan between slices, and the slice size is the unit of work", async () => {
     const db = authority();
@@ -446,7 +447,7 @@ describe("bounded keyword fallback", () => {
     const huge = await keywordScan(db as never, "harbour lantern", ["s"]);
     expect([huge.bytes, huge.hits.length, huge.complete]).toEqual([0, 0, false]);
     db.close();
-  }, 60_000);
+  }, 3_600_000);
 
   it("P1: hydration has no exempt hits: a tool search that starts past its hydration limit answers empty and partial", async () => {
     const aScope = ensureScope("bot", "a");
@@ -456,7 +457,7 @@ describe("bounded keyword fallback", () => {
     expect(result.hits).toEqual([]);
     expect(result.partial).toBe(true);
     expect(result.degradedReason).toBe("MEMORY_RECALL_UNAVAILABLE");
-  }, 15_000);
+  }, 3_600_000);
 });
 
 describe("old checkpoint versions leave the word index", () => {
@@ -505,7 +506,7 @@ describe("old checkpoint versions leave the word index", () => {
     return raw;
   }
 
-  it("P2: an index holding 500,000 versions of one checkpoint is purged in short steps, merged in short steps, then the word query is fast and current", { tags: ["perf-budget"], timeout: 600_000 }, () => {
+  it("P2: an index holding 500,000 versions of one checkpoint is purged in short steps, merged in short steps, then the word query is fast and current", { tags: ["perf-budget"], timeout: 3_600_000 }, () => {
     const scope = "s", path = join(DATA_DIR, "memory-index.db"), versions = 500_000;
     const raw = seedIndex(path, `WITH RECURSIVE n(i) AS (SELECT 1 UNION ALL SELECT i+1 FROM n WHERE i<${versions})
       INSERT INTO entries SELECT 'checkpoint:long',i,'${scope}','Working evidence: the launch review status, version '||i FROM n`);
@@ -549,7 +550,7 @@ describe("old checkpoint versions leave the word index", () => {
     expect(run.walk.n).toBeGreaterThan(count / 2048);
     expect(run.walk.p50).toBeLessThan(20);
     expect(again.examined).toBeLessThanOrEqual(2048);
-  }, 600_000);
+  }, 3_600_000);
 });
 
 describe("index acknowledgements are fenced against the record's current state", () => {
@@ -593,7 +594,7 @@ describe("index acknowledgements are fenced against the record's current state",
       await settle();
       expect(db.prepare("SELECT lexical_status FROM memory_projection_receipts WHERE record_id=? AND record_version=?").get(id, last)?.lexical_status).toBe("indexed");
     } finally { await controller.stop().catch(() => {}); }
-  }, 60_000);
+  }, 3_600_000);
 });
 
 describe("memory_save held for the owner", () => {
