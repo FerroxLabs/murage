@@ -27,6 +27,7 @@ import {
   rustUrlEncode,
 } from "./conversation-deletion.ts";
 import { removeTempDirSync } from "./testing/cleanup.ts";
+import { windowsPerfBudget } from "./testing/windows-hosted.ts";
 
 const scratch = realpathSync.native(mkdtempSync(join(tmpdir(), "murage-delete-")));
 // Every messages.db a test opens is closed before the folder goes: Windows
@@ -618,7 +619,7 @@ describe("engine history off the main thread", () => {
     expect(existsSync(project)).toBe(true);
   });
 
-  it("rewrites a 100 MB Fuigo search index in a worker thread while the main loop stays free", async () => {
+  it("rewrites a 100 MB Fuigo search index in a worker thread while the main loop stays free", { timeout: 180_000, ...windowsPerfBudget() }, async () => {
     const data = fresh("data"), fuigoHome = fresh("fuigo"), db = messagesDb(data);
     const desk = join(data, "workspaces", BOT, "threads", THREAD);
     touch(join(desk, "a.md"));
@@ -653,7 +654,7 @@ describe("engine history off the main thread", () => {
     expect(writesWhileRunning).toEqual([]);
     expect(histogram.max / 1e6).toBeLessThan(50);
     expect(fileHas(index, "quetzalmarmot")).toBe(false);
-  }, 180_000);
+  });
 
   it("two deletions at once run one after the other, and both rewrites of the shared history survive", async () => {
     const data = fresh("data"), codexHome = fresh("codex"), db = messagesDb(data);

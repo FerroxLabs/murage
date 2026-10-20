@@ -285,7 +285,9 @@ describe("hand-off endings (R9-03, R9-04, R9-05, F3)", () => {
     expect(receipt.status).toBe("failed");
     expect(receipt.resultStatus).toEqual({ key: "delegated_turn_failed", data: { why: "auth" } });
     expect(outboundWords(statusFromStored(receipt.resultStatus!.key, receipt.resultStatus!.data)!)).toBe("Delegated turn did not finish: it is not signed in to its provider");
-    expect(JSON.stringify(receipt)).not.toContain("401");
+    // the diagnostic's words, not the digits "401" (a random id can hold them: 1.0.3 CI run 39361461617, "...631401b8...")
+    expect(JSON.stringify(receipt)).not.toContain("401 from the provider");
+    expect(JSON.stringify(receipt)).not.toMatch(/\b401\b/);
   });
 
   it("R9-04: 'Paused: N team steps' and the other fixed queue reasons keep their status key in the bot's receipt", () => {

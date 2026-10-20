@@ -147,7 +147,8 @@ describe("real cloud auth with a signed device factor", () => {
   });
 });
 describe("transport authority and early refusal", () => {
-  it("Unix anonymous cannot enter internal/gateway/extension; loopback TCP capabilities remain routable", async () => {
+  // the home's trusted proxy is a Unix socket at a file path (the Linux Cloud home); Windows cannot listen on one there
+  it.skipIf(process.platform === "win32")("Unix anonymous cannot enter internal/gateway/extension; loopback TCP capabilities remain routable", async () => {
     const socketPath=join(root,"p.sock"), port=await start(`unix:${socketPath}`);
     proxy=listenCloudProxy(upstream,socketPath)!; await once(proxy,"listening");
     for(const path of ["/api/internal/agents","/api/model-gateway/v1/models","/api/browser-extension/mcp"]) {

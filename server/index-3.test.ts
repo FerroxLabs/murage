@@ -29,7 +29,7 @@ import { removeTempDir, waitForExit } from "./testing/cleanup.ts";
 import { freePortBlock } from "./testing/ports.ts";
 import { openSse } from "./testing/sse.ts";
 import { BASE, FAKE_CLAUDE_CLI, FIXTURE_ENGINE_OVERRIDES, ROOT, SERVER_DIR, WEBHOOK_BASE, api, boxStubPort, browserFixturePrelude, browserMount, browserNativeEvents, browserRegisterDelayMs, browserRpc, browserSession, desktopApi, expectStoppedTestServerCleanly, fakeClaudeDump, home, privateDesktopHeaders, readJsonFileWhenReady, holdBoxSlowValidation, setBrowserRegisterDelayMs, startInternalFixtureTurn, storedMessageCount, waitForIsolatedServer } from "./testing/index-harness.ts";
-import { browserEngineRefusesHost } from "./testing/index-harness.ts";
+import { ISOLATED_START_MS, browserEngineRefusesHost } from "./testing/index-harness.ts";
 
 /** One spelling for a path on every OS: Windows hands out short (RUNNER~1) and long names and
  * ignores case, so compare the long, lower-cased form there. */
@@ -606,7 +606,7 @@ describe("harness HTTP API", () => {
       await removeTempDir(isolatedHome);
     }
     expectStoppedTestServerCleanly(isolatedChild, isolatedStderr);
-  }, 30_000);
+  }, 30_000 + ISOLATED_START_MS);
 
   it("reconciles a committed crash-stale bot reference before ACK and profile-id reuse", async () => {
     const isolatedHome = mkdtempSync(join(tmpdir(), "murage-browser-cleanup-restart-"));
@@ -716,7 +716,7 @@ describe("harness HTTP API", () => {
       await removeTempDir(isolatedHome);
     }
     expectStoppedTestServerCleanly(isolatedChild, isolatedStderr);
-  }, 30_000);
+  }, 30_000 + ISOLATED_START_MS);
 
   it.skipIf(browserEngineRefusesHost)("revokes live browser access even when clearing a removed profile reference cannot persist", async () => {
     const isolatedHome = mkdtempSync(join(tmpdir(), "murage-browser-reference-write-"));
@@ -843,7 +843,7 @@ describe("harness HTTP API", () => {
       await removeTempDir(isolatedHome);
     }
     expectStoppedTestServerCleanly(isolatedChild, isolatedStderr);
-  }, 30_000);
+  }, 30_000 + ISOLATED_START_MS);
 
   it.skipIf(browserEngineRefusesHost)("rejects bot deletion with no teardown when the cleanup journal is unreadable", async () => {
     const isolatedHome = mkdtempSync(join(tmpdir(), "murage-browser-bot-delete-journal-"));
@@ -944,7 +944,7 @@ describe("harness HTTP API", () => {
       await removeTempDir(isolatedHome);
     }
     expectStoppedTestServerCleanly(isolatedChild, isolatedStderr);
-  }, 30_000);
+  }, 30_000 + ISOLATED_START_MS);
 
   it("clears bot references when a named browser profile is removed", async () => {
     const bot = (await desktopApi("POST", "/api/bots")).body.bot;

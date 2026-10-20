@@ -114,7 +114,7 @@ function serverFiles(dir: string, out: string[] = []): string[] {
 it("no `nativeSession:` literal outside sessionKeyOf (type annotations aside)", () => {
   const offenders: string[] = [];
   for (const file of serverFiles(ROOT)) {
-    const rel = file.slice(ROOT.length + 1);
+    const rel = file.slice(ROOT.length + 1).replace(/\\/g, "/"); // '/' on every platform, as EXEMPT is written
     if (EXEMPT.has(rel)) continue;
     readFileSync(file, "utf8").split("\n").forEach((line, i) => {
       // a parameter or field type (`nativeSession: string`) is not a key being formed

@@ -293,7 +293,10 @@ it("marks a question left open by a previous run as expired, never silently drop
 
   await fixture.restart();
 
-  const swept = (await messages(bot.threadId)).find((message) => message.card?.requestId === requestId);
+  // the sweep of a previous run's cards runs after the server listens (index.ts sweepCardsOfDeadRun), so wait for it, not for the first read
+  const sweptCard = async () => (await messages(bot.threadId)).find((message) => message.card?.requestId === requestId);
+  await expect.poll(async () => (await sweptCard())?.card.expired, { timeout: 15000 }).toBe(true);
+  const swept = await sweptCard();
   expect(swept.card.expired).toBe(true);
   expect(swept.card.answered).toBe("expired");
   // it kept its questions, so the card can still be filled in and sent

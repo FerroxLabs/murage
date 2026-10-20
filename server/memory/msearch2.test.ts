@@ -33,6 +33,7 @@ afterEach(() => { closeMemoryIndexReader(); });
 
 /** An index of `count` records that all say the common words, a few of which also say a rare one. */
 function bigIndex(count: number, rare: number) {
+  closeMemoryIndexReader(); // a recall before this one left the cached reader open, and Windows will not remove an open file
   for (const suffix of ["", "-wal", "-shm"]) rmSync(`${INDEX_PATH()}${suffix}`, { force: true });
   const index = new MemoryIndex(INDEX_PATH());
   index.prepareModel("model");
@@ -96,8 +97,9 @@ describe("recall: per-recall cost follows the query, not the size of the memory"
 
 /** An index holding exactly these records (all version 1), in this order: the first is the oldest. */
 function indexOf(rows: Array<{ id: string; scope: string; text: string }>) {
-  for (const suffix of ["", "-wal", "-shm"]) rmSync(`${INDEX_PATH()}${suffix}`, { force: true });
+  // the reader lets go before the file goes: Windows will not remove a file another handle holds open
   closeMemoryIndexReader();
+  for (const suffix of ["", "-wal", "-shm"]) rmSync(`${INDEX_PATH()}${suffix}`, { force: true });
   const index = new MemoryIndex(INDEX_PATH());
   index.prepareModel("model");
   index.close();
