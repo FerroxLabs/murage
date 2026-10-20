@@ -22,7 +22,9 @@ const INDEX_PATH = () => join(DATA_DIR, "memory-index.db");
 const MAIN_PATH = () => join(DATA_DIR, "messages.db");
 const roster = { bots: [{ id: "a", threadId: "ta" }, { id: "b", threadId: "tb" }], groups: [] };
 beforeEach(() => { closeMemoryIndexReader(); closeDatabase(); removeTempDirSync(DATA_DIR); mkdirSync(DATA_DIR, { recursive: true }); reconcileMemoryRoster(roster); ownerSearchTrace.on = false; ownerSearchTrace.statements = []; ownerSearchTrace.times = []; });
-afterEach(() => { closeMemoryIndexReader(); });
+// every handle a test opens on the index is closed after it: Windows will not remove an open file, and the next beforeEach wipes the folder
+const opened: Array<{ close(): void }> = [];
+afterEach(() => { for (const handle of opened.splice(0)) try { handle.close(); } catch { /* already closed */ } closeMemoryIndexReader(); });
 
 const insert = (db: DatabaseSync, id: string, scope: string, at: number, text = `note ${id}`, state = "active", kind = "fact", pinned = 0) =>
   db.prepare("INSERT INTO memory_records VALUES(?,1,?,?,?,'owner-statement',?,?,?,NULL,NULL,?)").run(id, scope, kind, text, state, pinned, at, at);
@@ -44,13 +46,16 @@ async function allPages(input: OwnerListInput, limit = 200): Promise<string[][]>
 }
 /** The index as the helper writes it in age order: every FTS row at the record's age key. */
 function keyedIndex(db: DatabaseSync, rows: Array<{ id: string; version?: number; scopeId: string; text: string }>): MemoryIndex {
+  // the reader a previous page opened lets go first: Windows will not remove a file another handle holds open
+  closeMemoryIndexReader();
   for (const suffix of ["", "-wal", "-shm"]) rmSync(`${INDEX_PATH()}${suffix}`, { force: true });
-  const index = new MemoryIndex(INDEX_PATH());
+  const index = new MemoryIndex(INDEX_PATH()); opened.push(index);
   index.upsert(rows.map(row => ({ id: row.id, version: row.version ?? 1, scopeId: row.scopeId, text: row.text, deleted: false, ageKey: keyOf(db, row.id, row.version ?? 1) })));
   return index;
 }
 /** An index an earlier build wrote: automatic rowids in projection order, not in age order. */
 function legacyIndex(rows: Array<{ id: string; scopeId: string; text: string }>): void {
+  closeMemoryIndexReader();
   for (const suffix of ["", "-wal", "-shm"]) rmSync(`${INDEX_PATH()}${suffix}`, { force: true });
   const index = new MemoryIndex(INDEX_PATH());
   index.upsert(rows.map(row => ({ id: row.id, version: 1, scopeId: row.scopeId, text: row.text, deleted: false })));
@@ -375,7 +380,8 @@ describe("owner search and browse over the keyed streams", () => {
     legacyIndex(rows);
     const index = new MemoryIndex(INDEX_PATH()), main = new DatabaseSync(MAIN_PATH(), { readOnly: true });
     index.fillAgeIndex(main, { maxKeys: 300, maxMs: 1000 });
-    const frontier = ageFillBelow(new DatabaseSync(INDEX_PATH(), { readOnly: true }))!;
+    const peek = new DatabaseSync(INDEX_PATH(), { readOnly: true }); opened.push(peek);
+    const frontier = ageFillBelow(peek)!;
     const first = await list({ botId: "a", query: "durable" });
     expect(first.searchNotice).toContain(OWNER_REORDER_NOTICE);
     expect(ids(first)).toEqual(expected(db, "r.scope_id=? AND r.state!='deleted' AND k.age_key>=? AND instr(r.text,'durable')>0", [scope, frontier]).slice(0, 50));

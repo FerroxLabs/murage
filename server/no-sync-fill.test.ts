@@ -40,7 +40,7 @@ const sources = (dir: string): string[] => readdirSync(dir).flatMap((name) => {
 });
 
 it("the synchronous fill is called only from the background fill modules; every reader asserts the thread is prepared", () => {
-  const callers = sources(SERVER).filter((path) => /\b(prepareThreadSync|prepareSyncOn)\(/.test(readFileSync(path, "utf8")) ).map((path) => relative(SERVER, path)).sort();
+  const callers = sources(SERVER).filter((path) => /\b(prepareThreadSync|prepareSyncOn)\(/.test(readFileSync(path, "utf8")) ).map((path) => relative(SERVER, path).replace(/\\/g, "/")).sort(); // '/' on every platform
   expect(callers).toEqual(["branch-fill.ts", "branch-store.ts", "testing/bounded-reads.ts"]);
   // the three callers this guard was written for never import it again
   for (const file of ["project-digest.ts", "memory/branch-change.ts", "store.ts", "index.ts", "message-db.ts"]) expect(readFileSync(join(SERVER, file), "utf8"), file).not.toMatch(/prepareThreadSync|prepareSyncOn/);

@@ -27,6 +27,10 @@ afterEach(() => {
   rmSync(dir, { recursive: true, force: true });
 });
 
+// The stand-in shell is a #!/bin/sh script and the check rows exec /bin/sh for real; Windows runs
+// neither, so those rows run on POSIX. The Windows check path has its own row in env-check-again.test.ts.
+const posixShell = process.platform !== "win32";
+
 /** A stand-in account shell: each run numbers itself (RUN=n), and while `gateFile` is absent it waits. */
 function countingShell(): { shell: string; runs: () => number; release: () => void } {
   const counter = join(dir, "runs");
@@ -56,7 +60,7 @@ const waitFor = async (ok: () => boolean) => {
 };
 
 describe("the capture fence (Rule 74a)", () => {
-  it("a capture pending across an invalidation never publishes; its caller gets a new capture", async () => {
+  it.skipIf(!posixShell)("a capture pending across an invalidation never publishes; its caller gets a new capture", async () => {
     const fake = countingShell();
     const first = captureOwnerEnv({ shell: fake.shell });
     await waitFor(() => fake.runs() === 1);
@@ -69,7 +73,7 @@ describe("the capture fence (Rule 74a)", () => {
     expect(ownerEnvState()?.capture).toBe("session");
   });
 
-  it("a caller after the invalidation does not join the pending old capture", async () => {
+  it.skipIf(!posixShell)("a caller after the invalidation does not join the pending old capture", async () => {
     const fake = countingShell();
     const first = captureOwnerEnv({ shell: fake.shell });
     await waitFor(() => fake.runs() === 1);
@@ -82,7 +86,7 @@ describe("the capture fence (Rule 74a)", () => {
     expect(ownerEnvState()?.env.RUN).toBe("2");
   });
 
-  it("the next spawn after an invalidation captures again, and only once", async () => {
+  it.skipIf(!posixShell)("the next spawn after an invalidation captures again, and only once", async () => {
     const fake = countingShell();
     fake.release();
     expect((await captureOwnerEnv({ shell: fake.shell })).env.RUN).toBe("1");
@@ -102,7 +106,7 @@ describe("the check fence (Rule 74d)", () => {
   const handed = (): HandedEnv => ({ env: { PATH: "/usr/bin:/bin", HOME: dir, PAGER: "cat" }, absent: ["POSIXLY_CORRECT"], capture: "session", ownerStartup: {}, pins: new Map() });
   const shell = ["/bin/sh", "-c"] as const;
 
-  it("checks once per generation, and again after an invalidation", async () => {
+  it.skipIf(!posixShell)("checks once per generation, and again after an invalidation", async () => {
     const map = handed();
     expect(await execEnvNow("s1", shell, map, dir)).toMatchObject({ env: map.env, absent: ["POSIXLY_CORRECT"], cwd: dir });
     await execEnvNow("s1", shell, map, dir);
@@ -112,7 +116,7 @@ describe("the check fence (Rule 74d)", () => {
     expect(execChecks.runs).toBe(2);
   });
 
-  it("a check awaiting across an invalidation is not reported: it runs again", async () => {
+  it.skipIf(!posixShell)("a check awaiting across an invalidation is not reported: it runs again", async () => {
     const map = handed();
     const held = gate();
     execChecks.hold = held.promise;

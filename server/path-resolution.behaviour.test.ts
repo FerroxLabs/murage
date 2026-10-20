@@ -25,7 +25,7 @@ let proj: string;
 let outside: string;
 
 beforeEach(() => {
-  base = realpathSync(mkdtempSync(join(tmpdir(), "path-resolution-")));
+  base = realpathSync.native(mkdtempSync(join(tmpdir(), "path-resolution-")));
   proj = join(base, "proj");
   outside = join(base, "outside");
   mkdirSync(proj);

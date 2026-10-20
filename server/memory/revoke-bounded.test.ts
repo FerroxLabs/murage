@@ -27,6 +27,7 @@ import type { MemorySearchBridge } from "./search.ts";
 import { LineageAllowance } from "./lineage-allowance.ts";
 import { stampFreshSession } from "./testing/writetime-fixture.ts";
 import { removeTempDirSync } from "../testing/cleanup.ts";
+import { settleTestHandles } from "../test-handle-registry.ts";
 import { REVOKE_WRITE_BUDGET, resetRevokeWriteBudget } from "./revoke-budget.ts";
 import { storeAnchorMessage } from "./testing/anchor-message.ts";
 // 1.0.2: this test models a 1.0.1 file (legacy root-set rows) for the read-time judge, which still decides legacy data until S6.
@@ -467,7 +468,8 @@ it("revocation work survives a restart: the job row stays until it completes, an
   expect(jobRows(db)).toBe(1);
   const left = Number(db.prepare("SELECT count(*) AS n FROM memory_disclosures WHERE state!='revoked'").get()!.n);
   expect(left).toBeGreaterThan(10_000);
-  closeDatabase();
+  // the process ends: the server connection, then the WAL checkpointer's (which checkpoints this large log as it leaves)
+  await settleTestHandles(DATA_DIR);
   // the next start
   expect(jobRows(database())).toBe(1);
   await drain(database);

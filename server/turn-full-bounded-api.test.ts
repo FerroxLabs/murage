@@ -18,7 +18,7 @@ import { DatabaseSync } from "node:sqlite";
 import { fileURLToPath } from "node:url";
 import { afterAll, beforeAll, expect, it } from "vitest";
 import { launchVerificationServer, type VerificationServer } from "../scripts/control-murage.ts";
-import { countingInstrumentation, expectBounded, report, type Counts } from "./testing/bounded-reads.ts";
+import { countingInstrumentation, expectBounded, report, type Counts, sendCountCommand } from "./testing/bounded-reads.ts";
 import { refillThread, waitForMessageWalk } from "./testing/bounded-reads.ts";
 
 const STORE = fileURLToPath(new URL("./store.ts", import.meta.url));
@@ -28,7 +28,7 @@ const api = async (method: string, path: string, body?: unknown) => {
   return { status: response.status, body: await response.json().catch(() => null) as any };
 };
 const file = (name: string) => join(fixture.info.dataDir, name);
-const signal = (command: object) => { writeFileSync(file("count-control.json"), JSON.stringify(command)); process.kill(fixture.info.pid, "SIGUSR2"); };
+const signal = (command: object) => sendCountCommand(fixture.info.dataDir, command);
 const until = async (check: () => boolean, ms: number) => { const end = Date.now() + ms; while (!check()) { if (Date.now() > end) throw new Error("timed out"); await new Promise((r) => setTimeout(r, 25)); } };
 
 const createBot = async (name: string) => (await api("POST", "/api/bots", { name, modelSelection: { instanceId: "verification", model } })).body.bot as { id: string; threadId: string };

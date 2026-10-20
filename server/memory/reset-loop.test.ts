@@ -36,6 +36,7 @@ import { LineageAllowance } from "./lineage-allowance.ts";
 import { markSessionKnown } from "./testing/legacy-file-model.ts";
 import { isMurageVoice } from "../murage-voice.ts";
 import { removeTempDirSync } from "../testing/cleanup.ts";
+import { windowsPerfBudget } from "../testing/windows-hosted.ts";
 // 1.0.2: this test models a 1.0.1 file (legacy root-set rows) for the read-time judge, which still decides legacy data until S6.
 thawBeforeEach(() => thawRootSetWritesForTest(true));
 thawAfterEach(() => thawRootSetWritesForTest(false));
@@ -170,7 +171,7 @@ it("a content change after the reset still ends the new session: forgetting what
   expect(w.resets).toHaveLength(2);
 });
 
-it("the replay a reset turn carries on a long thread is bounded and quick to assemble (timed)", () => {
+it("the replay a reset turn carries on a long thread is bounded and quick to assemble (timed)", windowsPerfBudget(), () => {
   // 3,000 turns of about 1.5 KB a line (9 MB of history) in one engine
   // session, every reply linked to its turn's receipt, then an install-wide
   // revoke: the reset turn's replay as a direct owner turn assembles it.
