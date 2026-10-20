@@ -6,9 +6,10 @@
 // replaced or cut; a current ownership conflict wins over saved names; discovery inputs are compared by what they name and a
 // folder is removed entry by entry from its re-listing; a hold is atomic with the running count and needs a confirmed teardown;
 // a thrown retry arms the next one.
+import { fileURLToPath } from "node:url";
 import { appendFileSync, closeSync, existsSync, lstatSync, mkdirSync, mkdtempSync, openSync, readFileSync, readdirSync, realpathSync, writeFileSync, writeSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { join, sep } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { afterAll, afterEach, describe, expect, it } from "vitest";
 
@@ -50,6 +51,8 @@ const JSONL: Array<[string, JsonlCase]> = [
   ["Codex session_index.jsonl", { engine: "codex", file: (fx) => join(fx.homes[0]!.home, "session_index.jsonl"), ids: [] }],
   ["Kimi session_index.jsonl", { engine: "kimi", file: (fx) => join(fx.homes[0]!.home, "session_index.jsonl"), ids: [] }],
 ];
+
+const WINDOWS_MANDATORY_LOCK = new Set(["Fuigo unified.jsonl", "Codex history.jsonl"]);
 
 describe("A: a dropped row keeps its shape, and nothing about the file's handle lifecycle changes", () => {
   for (const [name, one] of JSONL) {
@@ -103,7 +106,10 @@ describe("A: a dropped row keeps its shape, and nothing about the file's handle 
 
   for (const [name, one] of JSONL) {
     for (const point of ["before the first pread", "between rows", "after the last write", "before the fsync"] as const) {
-      it(`${name}: a writer holding its own O_APPEND handle, appending ${point}, loses nothing and corrupts nothing`, () => {
+      // Fuigo's unified.jsonl and Codex's history.jsonl are cleared under the engine's own lock. On Windows that lock is a
+      // mandatory byte-range lock (LockFileEx), so a writer that skips the lock cannot write while it is held: its append inside
+      // the hold fails (the OS refuses it), which is what the engines' own writers, taking the lock first, never meet.
+      it.skipIf(process.platform === "win32" && WINDOWS_MANDATORY_LOCK.has(name) && point !== "before the first pread")(`${name}: a writer holding its own O_APPEND handle, appending ${point}, loses nothing and corrupts nothing`, () => {
         const fx = buildFixture(one.engine, scratch);
         const file = one.file(fx);
         const planned = planEngineHistory(job(fx));
@@ -209,7 +215,7 @@ describe("A: a dropped row keeps its shape, and nothing about the file's handle 
   });
 });
 
-function __dirname_(): string { return new URL(".", import.meta.url).pathname; }
+function __dirname_(): string { return fileURLToPath(new URL(".", import.meta.url)); }
 
 // ── B: a current ownership conflict wins over a saved name ────────────────────────────────────────────────────────────
 
@@ -321,7 +327,11 @@ describe("C: a changed input is stale, and nothing arriving later is deleted uns
     mutOps.rmdir = ((path: string) => { rmdirs.push(path); realRmdir(path); }) as typeof mutOps.rmdir;
     try { expect(executeEnginePlans(structuredClone(planned.plans!)).failed).toEqual([]); } finally { Object.assign(mutOps, { removeTree: realTree, unlink: realUnlink, rmdir: realRmdir }); }
     expect(trees, "nothing is removed recursively").toEqual([]);
-    expect(unlinked.some((path) => path.startsWith(`${listed}.murage-deleting/`)), "the files inside it are unlinked one by one").toBe(true);
+    const inside = `${listed}.murage-deleting${sep}`;
+    // On Windows a file inside goes when the handle that marked it for deletion closes, never by name (engine-exec.ts deleteTree);
+    // its folder's rmdir below succeeds only once every file is gone.
+    if (process.platform === "win32") expect(unlinked.filter((path) => path.startsWith(inside)), "no file inside it is unlinked by name").toEqual([]);
+    else expect(unlinked.some((path) => path.startsWith(inside)), "the files inside it are unlinked one by one").toBe(true);
     expect(rmdirs, "its folders go only as empty folders, the entry's own folder before the aside").toContain(`${listed}.murage-deleting`);
   });
 

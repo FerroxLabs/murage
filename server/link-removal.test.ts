@@ -8,6 +8,7 @@ import { afterAll, describe, expect, it, vi } from "vitest";
 import { NotALinkError, addonTreeRemove, installNoFollowRmSync, noFollowRmSync, nodeTreeFs, removeTreeWithoutFollowing, relinkDirectory, removeLink, removeLinkWithRetry, type LinkFs } from "./link-removal.ts";
 import { emulateElectronWindowsRmSync } from "./testing/electron-windows-rmsync.ts";
 import { removeTempDirSync } from "./testing/cleanup.ts";
+import { forgetExclusionAddon } from "./engine-exclusion.ts";
 
 const scratch = mkdtempSync(join(tmpdir(), "murage-link-removal-unit-"));
 afterAll(() => removeTempDirSync(scratch));
@@ -214,8 +215,23 @@ describe("noFollowRmSync with the addon's removeTree (Windows)", () => {
   });
 
   it("finds no removeTree in an addon build without it", () => {
-    // the suite's addon stand-in (testing/setup.ts) is a build without removeTree
-    expect(addonTreeRemove()).toBeNull();
+    // An addon build that loads on this platform but carries no removeTree: the suite's stand-in plus, on Windows, the handle
+    // functions the loader requires there (without them the loader would pass over it to the real build, which has removeTree).
+    const dir = mkdtempSync(join(tmpdir(), "murage-no-remove-tree-"));
+    const file = join(dir, "no-remove-tree.cjs");
+    const stub = join(import.meta.dirname, "testing", "engine-exclusion-stub.cjs");
+    const handles = ["openFile", "handleRead", "handleWrite", "handleSync", "handleLock", "handleMarkDelete", "handleId", "handleSize", "handleClose"];
+    writeFileSync(file, `const missing = () => { throw new Error("not in this build"); };\nmodule.exports = { ...require(${JSON.stringify(stub)}), ${handles.map((name) => `${name}: missing`).join(", ")} };\n`);
+    const before = process.env.MURAGE_ENGINE_EXCLUSION_PATH;
+    process.env.MURAGE_ENGINE_EXCLUSION_PATH = file;
+    forgetExclusionAddon();
+    try {
+      expect(addonTreeRemove()).toBeNull();
+    } finally {
+      process.env.MURAGE_ENGINE_EXCLUSION_PATH = before;
+      forgetExclusionAddon();
+      removeTempDirSync(dir);
+    }
   });
 });
 

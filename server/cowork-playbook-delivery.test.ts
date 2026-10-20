@@ -68,7 +68,11 @@ it("delivers imported and pinned Cowork guidance through server dispatch, includ
       if (restarted) { await fixture.restart(); await authenticate(); }
       await api("POST", `/api/bots/${bot.id}/tasks/${threadId}?messages=0`);
       await api("POST", `/api/bots/${bot.id}/messages`, { threadId, text: row.text });
-      await expect.poll(() => strings(dump()?.prompt).includes(row.text), { timeout: 10_000 }).toBe(true);
+      try { await expect.poll(() => strings(dump()?.prompt).includes(row.text), { timeout: 10_000 }).toBe(true); }
+      catch (error) {
+        const rows = (await api("GET", `/api/threads/${threadId}/messages`).catch(() => null)) as any;
+        throw new Error(`DIAG ${row.caseId}:${row.turnIndex} restarted=${restarted} dump=${JSON.stringify(dump())?.slice(0, 1500)} rows=${JSON.stringify(rows)?.slice(-2500)}`, { cause: error });
+      }
       const system = dump()!.systemPrompt ?? "", mounted = system.includes(book.instructions);
       observations.push({
         caseId: row.caseId, turnIndex: row.turnIndex, threadId, reusedThread, restarted,
