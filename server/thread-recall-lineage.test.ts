@@ -3,7 +3,7 @@
 //
 // Thread recall building blocks (THREAD-RECALL-DESIGN r6 rules 11(a), 12, 13): recordTurnReads, isTurnOpen and sourcesRoom.
 // (revokeInternalGeneration dropping its own turnOutputRoots entry lives in index.ts and is covered by its two-line guard only.)
-import { mkdirSync, rmSync } from "node:fs";
+import { mkdirSync } from "node:fs";
 import { afterAll, beforeEach, describe, expect, it } from "vitest";
 
 const { DATA_DIR } = await import("./config.ts");
@@ -17,6 +17,7 @@ const { addSourcesToRunningTurn, sourcesRoom } = await import("./steer-lineage.t
 import type { Message } from "./store.ts";
 import type { LineageRef } from "./memory/lineage-types.ts";
 import type { RunningTurnLineage, ShownLine } from "./steer-lineage.ts";
+import { removeTempDirSync } from "./testing/cleanup.ts";
 afterAll(() => closeMessageDb());
 
 type Row = Record<string, unknown>;
@@ -33,7 +34,7 @@ const sessionRows = () => db().prepare("SELECT driver_instance,native_session,fi
 
 beforeEach(() => {
   closeMessageDb(); closeDatabase();
-  rmSync(DATA_DIR, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 });
+  removeTempDirSync(DATA_DIR);
   mkdirSync(DATA_DIR, { recursive: true });
   for (const thread of ["chat", "other"]) { let turn; while ((turn = currentTurnLineage(thread))) closeTurnLineage(turn); }
 });

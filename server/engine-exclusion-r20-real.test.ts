@@ -324,8 +324,11 @@ describe.skipIf(!built || !posix)("T8: the addon lists every process, with the f
   });
 
   it("a second process is listed with its name, program, arguments and owner", () => {
-    const child = start(engineScript("sleeper", "setTimeout(()=>{},60000);"), {});
+    // The child marks itself up from its own code, so Node has finished starting (and naming its main thread) before it is listed.
+    const up = join(mkdtempSync(join(scratch, "sleeper-up-")), "up");
+    const child = start(engineScript("sleeper", `require("fs").writeFileSync(process.env.R_UP,"up");setTimeout(()=>{},60000);`), { R_UP: up });
     const addon = loadExclusionAddon()!;
+    expect(waitFor(() => existsSync(up))).toBe(true);
     expect(waitFor(() => addon.processes().some((item) => item.pid === child.pid && item.argv !== null && item.argv.length > 1))).toBe(true);
     const item = addon.processes().find((entry) => entry.pid === child.pid)!;
     expect(item.mine).toBe(true);

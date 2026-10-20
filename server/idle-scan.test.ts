@@ -79,32 +79,31 @@ describe("idle roster broadcasts", () => {
     expect(per).toEqual([0, 0]);
   });
 
-  it("a write to one thread costs one re-read of that thread, not of every thread", async () => {
-    const { store, writer, ids } = await reopenedStore(40);
+  // One process holds one Store, and every message write goes through it: the writes below are made by the same Store the
+  // broadcasts read, as the server's are (a second Store in one process is not a thing the server does).
+  it("a write to one thread costs no re-read of any thread, and the next broadcast shows it", async () => {
+    const { store, ids } = await reopenedStore(40);
     broadcast(store, ids);
-    writer.appendMessage(ids[7]!, { role: "bot", kind: "text", text: "new", at: 50_000 });
+    store.appendMessage(ids[7]!, { role: "bot", kind: "text", text: "new", at: 50_000 });
     const { count } = await countLastAtQueries(() => { for (let i = 0; i < 10; i++) broadcast(store, ids); });
-    expect(count).toBeLessThanOrEqual(1);
+    expect(count).toBe(0);
     expect(store.lastActivityAt(ids[7]!)).toBe(50_000);
+    expect(store.lastActivityAt(ids[8]!)).toBe(1_008);
   });
 
-  it("stays correct when a thread gains, rewrites or loses messages", async () => {
-    const { store, writer, ids } = await reopenedStore(2);
+  it("stays correct when a thread gains messages or is deleted", async () => {
+    const { store, ids } = await reopenedStore(3);
     const [a, b] = ids as [string, string];
     expect(store.lastActivityAt(a)).toBe(1_000);
-    writer.appendMessage(a, { role: "bot", kind: "text", text: "later", at: 9_000 });
+    store.appendMessage(a, { role: "bot", kind: "text", text: "later", at: 9_000 });
     expect(store.lastActivityAt(a)).toBe(9_000);
     expect(store.lastActivityAt(b)).toBe(1_001);
-    expect(store.lastActivityAt(b)).toBe(1_001);
-    const { updateMessage, deleteThread } = await import("./message-db.ts");
-    const last = { id: "x", role: "bot" as const, kind: "text" as const, text: "edited", at: 12_000 };
-    writer.appendMessage(b, { role: "bot", kind: "text", text: "tail", at: 2_000 });
-    const tail = (await import("./message-db.ts")).readThreadNewest(b, 1)!.messages[0]!;
-    updateMessage(b, { ...tail, at: 12_000 });
+    store.appendMessage(b, { role: "bot", kind: "text", text: "tail", at: 12_000 });
     expect(store.lastActivityAt(b)).toBe(12_000);
-    void last;
-    deleteThread(a);
+    const botId = store.bots.find((bot) => bot.tasks?.some((task) => task.threadId === a))!.id;
+    store.deleteTask(botId, a);
     expect(store.lastActivityAt(a)).toBeUndefined();
+    expect(store.lastActivityAt(b)).toBe(12_000);
   });
 });
 

@@ -1299,10 +1299,20 @@ describe("harness HTTP API", () => {
     // import, so it cannot be pulled into a unit test — same wiring-pin shape
     // as server/flux-surface.test.ts. The behaviour of the wrapper itself is
     // asserted here too, so this is not a purely syntactic pin.
+    // Every turn-failed banner, wherever it is raised, carries either the
+    // redacted failure text or one of Murage's own canned lines, never raw
+    // engine output.
     const indexSource = readFileSync(join(SERVER_DIR, "index.ts"), "utf8");
-    const notifyAt = indexSource.indexOf('buildNotification("turn-failed"');
-    expect(notifyAt).toBeGreaterThan(-1);
-    expect(indexSource.slice(notifyAt, notifyAt + 200)).toContain("redactSecretsInText(message)");
+    const calls = [...indexSource.matchAll(/buildNotification\("turn-failed",\s*bot,\s*threadId,\s*([^,]+?),/g)];
+    expect(calls.length).toBeGreaterThan(0);
+    expect(calls.some((call) => call[1]!.startsWith("redactSecretsInText("))).toBe(true);
+    for (const call of calls) {
+      const body = call[1]!.trim();
+      if (body.startsWith("redactSecretsInText(")) continue;
+      const before = indexSource.slice(Math.max(0, call.index! - 1500), call.index);
+      const defined = [...before.matchAll(new RegExp(`const ${body} = ([A-Za-z]+)\\(`, "g"))].at(-1)?.[1];
+      expect(["turnRefusedLine", "lateMemoryRefusalLine"], `turn-failed banner body ${body}`).toContain(defined);
+    }
     expect(redactSecretsInText("engine refused: Authorization: Bearer sk-ant-api03-AAAAAAAAAAAAAAAAAAAA"))
       .not.toContain("sk-ant-api03-AAAAAAAAAAAAAAAAAAAA");
   });

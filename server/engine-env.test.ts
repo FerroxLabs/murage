@@ -5,7 +5,7 @@
 // login capture (74a), the handed map with the pins written last (74a(3),
 // 74c), and the consistency check that can only remove (74d).
 
-import { chmodSync, mkdtempSync, readdirSync, readFileSync, realpathSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { chmodSync, mkdtempSync, readdirSync, readFileSync, realpathSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
@@ -13,6 +13,7 @@ import { ABSENT_PINS, valuePins, type PinRun } from "../shared/arg-vocabulary.ts
 import { compareCheck, execEnvNow, handEnv, noteStartupFileEvent } from "./engine-env.ts";
 import { askTouchesStartup } from "./startup-files.ts";
 import { captureOwnerEnv, invalidateEnvCapture, ownerEnvState, parseEnvBlock, readCapture, resetPathCacheForTests, setOwnerEnvStore } from "./env-path.ts";
+import { removeTempDirSync } from "./testing/cleanup.ts";
 
 let dir: string;
 /** The pin probes (`ssh -V`, `git config`) answered as on a machine with neither. */
@@ -22,7 +23,7 @@ beforeEach(() => {
   resetPathCacheForTests();
   invalidateEnvCapture("test start");
 });
-afterEach(() => rmSync(dir, { recursive: true, force: true }));
+afterEach(() => removeTempDirSync(dir));
 
 /** A stand-in account shell: prints rc-file noise around the real capture. */
 function fakeShell(body: string): string {

@@ -34,6 +34,7 @@ import { ROOM_REPLY_CHECKING, ROOM_REPLY_WITHHELD } from "./room-context.ts";
 import type { TranscriptEntry } from "./turn-context.ts";
 import type { ExternalUpdateMessage } from "./external-context-delivery.ts";
 import { humanRow } from "./testing/bot-row.ts";
+import { removeTempDirSync } from "./testing/cleanup.ts";
 
 const SERVER = import.meta.dirname;
 function sources(dir = SERVER): string[] {
@@ -54,7 +55,7 @@ const owner = (id: string, extra: Partial<Message> = {}): Message => ({ id, role
 const BOT: Viewer = { kind: "bot", botId: "bot-a" };
 const HUMAN: Viewer = { kind: "human" };
 
-function reset(): void { closeMessageDb(); closeDatabase(); rmSync(DATA_DIR, { recursive: true, force: true }); mkdirSync(DATA_DIR, { recursive: true }); }
+function reset(): void { closeMessageDb(); closeDatabase(); removeTempDirSync(DATA_DIR); mkdirSync(DATA_DIR, { recursive: true }); }
 const TEMPLATE = `${DATA_DIR}.bot-read.db`;
 beforeAll(() => {
   reset();

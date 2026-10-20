@@ -4,7 +4,7 @@
 // Section (d) of APP-GRANT-FIXPLAN-r6 (Rules 74a, 74d): one environment generation, bumped only by
 // invalidateEnvCapture, fences both the owner capture and the per-ask consistency check. A capture or a check
 // that started before an invalidation never publishes or reports its result.
-import { chmodSync, existsSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdtempSync, readFileSync, realpathSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -12,6 +12,7 @@ import { execChecks, gate, resetExecChecks } from "./testing/exec-check-spy.ts";
 import { execEnvHanded, execEnvNow, type HandedEnv } from "./engine-env.ts";
 import { isExecEnv } from "../shared/mount-identity.ts";
 import { captureOwnerEnv, envGeneration, invalidateEnvCapture, ownerEnvState, resetPathCacheForTests } from "./env-path.ts";
+import { removeTempDirSync } from "./testing/cleanup.ts";
 
 vi.mock("node:child_process", async (original) => (await import("./testing/exec-check-spy.ts")).withExecCheckSpy(await original()));
 
@@ -24,7 +25,7 @@ beforeEach(() => {
 });
 afterEach(() => {
   resetExecChecks();
-  rmSync(dir, { recursive: true, force: true });
+  removeTempDirSync(dir);
 });
 
 /** A stand-in account shell: each run numbers itself (RUN=n), and while `gateFile` is absent it waits. */

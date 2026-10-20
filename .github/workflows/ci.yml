@@ -194,6 +194,24 @@ jobs:
       # The model, Electron, backup fixtures, server bundle and native helpers
       # every Vitest run needs; nightly.yml runs the same steps.
       - uses: ./.github/actions/vitest-runtime
+      - name: Give the checkout the parents a Cloud home has
+        # The Cloud launcher (deploy/cloud-home/murage-turn-launch.py immutable_path) refuses an engine, and the node its
+        # MCP proxies run on (/usr/local/bin/node, followed to its real file), when any other user could write into its
+        # path; its tests (server/cloud-home/engine-*.test.ts) run real paths under the checkout and that node. A hosted
+        # runner keeps node under /opt (mode 775), which no Cloud home has, so those parents lose the write bit for group
+        # and others here, as the Linux package job does for /opt.
+        if: matrix.os == 'ubuntu-latest'
+        shell: bash
+        run: |
+          for start in "$GITHUB_WORKSPACE" "$(readlink -f /usr/local/bin/node)"; do
+            d="$start"
+            while [ "$d" != "/" ]; do
+              if [ ! -L "$d" ] && [ $(( 8#$(stat -c %a "$d") & 8#022 )) -ne 0 ]; then
+                echo "tightening $d ($(stat -c '%U:%G %a' "$d"))"; sudo chmod go-w "$d"
+              fi
+              d=$(dirname "$d")
+            done
+          done
       - name: Run Vitest shard
         if: inputs.vitest_file == ''
         shell: bash

@@ -5,10 +5,11 @@
 // owner ssh command text, OpenSSH identification, the resolved pins, the displaced-settings rule, the direct ssh row, the
 // per-command pin overrides (U19) and the per-repository core.sshCommand row.
 
-import { chmodSync, mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, mkdirSync, mkdtempSync, realpathSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { removeTempDirSync } from "../server/testing/cleanup.ts";
 import {
   DIRECT_SSH_REASON, SSH_REASONS, directSshMeetsRow, gitNetworkCommand, parseSshCommand, pinOverride, repoSshCommandMismatch,
   resetSshIdentityCacheForTests, resolvePins, sshPinCommand, valuePins, type PinRun,
@@ -52,7 +53,7 @@ beforeEach(() => {
   runs = [];
   resetSshIdentityCacheForTests();
 });
-afterEach(() => rmSync(dir, { recursive: true, force: true }));
+afterEach(() => removeTempDirSync(dir));
 
 const owner = (extra: Record<string, string> = {}) => ({ PATH: bin, HOME: home, ...extra });
 const resolveWith = (env: Record<string, string>, coreSshCommand?: string) =>

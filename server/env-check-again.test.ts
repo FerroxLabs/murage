@@ -4,12 +4,13 @@
 // Section (f) of APP-GRANT-FIXPLAN-r3 (R2-6, Rule 74a): the Engines panel's "Check again" (GET /api/instances?fresh=1)
 // invalidates the capture, awaits a new capture, awaits discovery, and only THEN reads the capture state. "kept" is
 // written only by a capture that failed, never by the invalidation itself.
-import { chmodSync, existsSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdtempSync, readFileSync, realpathSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { captureOwnerEnv, invalidateEnvCapture, ownerEnvAfterDiscovery, ownerEnvState, resetPathCacheForTests, setOwnerEnvStore } from "./env-path.ts";
+import { removeTempDirSync } from "./testing/cleanup.ts";
 
 let dir: string;
 beforeEach(() => {
@@ -18,7 +19,7 @@ beforeEach(() => {
   invalidateEnvCapture("test start");
   setOwnerEnvStore(join(dir, "env"));
 });
-afterEach(() => rmSync(dir, { recursive: true, force: true }));
+afterEach(() => removeTempDirSync(dir));
 
 /** A stand-in account shell that leaves a mark each time it runs a capture. */
 function markingShell(): { shell: string; mark: string } {

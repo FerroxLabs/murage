@@ -5,11 +5,12 @@
 // checked against what git itself prints on a fixture git created.
 
 import { execFileSync } from "node:child_process";
-import { mkdirSync, mkdtempSync, realpathSync, rmSync, symlinkSync, writeFileSync, appendFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, realpathSync, symlinkSync, writeFileSync, appendFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { diskFacts, readGitConfigText, repoConfigValues, type EnvStateLike } from "./disk-facts.ts";
+import { removeTempDirSync } from "../server/testing/cleanup.ts";
 
 let base: string;
 let home: string;
@@ -27,7 +28,7 @@ beforeEach(() => {
   gitEnv = { PATH: process.env.PATH, HOME: home, GIT_CONFIG_NOSYSTEM: "1" };
 });
 
-afterEach(() => rmSync(base, { recursive: true, force: true }));
+afterEach(() => removeTempDirSync(base));
 
 const facts = () => diskFacts(new Map([["HOME", home]]), { systemConfig: join(base, "no-system-config") });
 const toplevel = (cwd: string, env: EnvStateLike = plainEnv()) => facts().substitution({ name: "git", args: ["rev-parse", "--show-toplevel"] }, cwd, env);

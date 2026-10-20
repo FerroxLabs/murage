@@ -5,13 +5,14 @@
 // env on posix and win32 fixtures, one resolved pin map, T106's subset over the resolved values, the displaced-settings rule
 // reaching the pinned GIT_SSH_COMMAND, the owner's own git and ssh setup left byte-identical, and the structural owner rule.
 
-import { chmodSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { chmodSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { ABSENT_PINS, ENV_PINS, resetSshIdentityCacheForTests, valuePins, type PinRun } from "../shared/arg-vocabulary.ts";
 import { execEnvHanded, handedPinsOf, handEnv, promptFactsOf, sshPinNotes } from "./engine-env.ts";
+import { removeTempDirSync } from "./testing/cleanup.ts";
 
 let dir: string;
 let home: string;
@@ -33,7 +34,7 @@ beforeEach(() => {
   chmodSync(join(bin, "ssh"), 0o755);
   resetSshIdentityCacheForTests();
 });
-afterEach(() => rmSync(dir, { recursive: true, force: true }));
+afterEach(() => removeTempDirSync(dir));
 
 const ownerOf = (env: Record<string, string>) => ({ env: { PATH: bin, HOME: home, ...env }, capture: "session" as const });
 

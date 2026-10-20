@@ -83,9 +83,15 @@ export const split = (counts: Counts, keyedReads = false) => {
  * stops at the first row, and the table holds one row per conversation mid branch move (a handful, cleared in slices), never one per message; the per-source check
  * after it is a primary-key seek.
  * `learningScans`: scans of the small tables that hold learning (one row per feedback signal or lesson, not per message) are allowed.
+ * A reverse primary-key walk with a LIMIT (`... NOT INDEXED ORDER BY rowid DESC LIMIT ?`, memory/jobs.ts recentNewest) is allowed: SQLite names it a
+ * SCAN, but it reads the newest LIMIT rows by rowid and stops, whatever the table holds.
  * `keyedReads`: reads of one message by its id are held to a bound, not an equality (their number follows what recall named). */
+const boundedRowidWalk = (sql: string, scan: string): boolean => {
+  const table = /^SCAN (\w+)$/.exec(scan)?.[1];
+  return table !== undefined && new RegExp(`\\bFROM ${table} NOT INDEXED ORDER BY rowid DESC LIMIT \\?\\d*\\)`).test(sql);
+};
 export const expectBounded = (a: Counts, b: Counts, learningScans = false, keyedReads = false) => {
-  const unindexed = (counts: Counts) => Object.entries(counts.plans).map(([sql, scans]) => [sql, scans.filter((scan) => !(learningScans && /^SCAN memory_(feedback|lessons)\b/.test(scan)) && !/^SCAN (memory_deny|branch_change)\b/.test(scan))] as const).filter(([, scans]) => scans.length);
+  const unindexed = (counts: Counts) => Object.entries(counts.plans).map(([sql, scans]) => [sql, scans.filter((scan) => !(learningScans && /^SCAN memory_(feedback|lessons)\b/.test(scan)) && !/^SCAN (memory_deny|branch_change)\b/.test(scan) && !boundedRowidWalk(sql, scan))] as const).filter(([, scans]) => scans.length);
   // no whole-thread load or whole-thread read, named by where it came from
   expect((a as any).whole).toEqual([]);
   expect((b as any).whole).toEqual([]);
