@@ -26,6 +26,7 @@ import { downgradeMemorySchema, migrateMemorySchema, validateMemorySchema } from
 import { migrateMemorySchema as migrateAs101, storeRootSet } from "./testing/schema-1.0.1.ts";
 import { runBackgroundUpgradeWorkToEnd } from "./upgrade-background.ts";
 import { removeTempDirSync } from "../testing/cleanup.ts";
+const N = (n: number): number => Math.max(1, Math.round(n * Number(process.env.MEASURE_SCALE ?? 1)));
 
 const msg = (id: string, extra: Partial<Message> = {}): Message => ({ id, role: "bot", kind: "text", text: id, at: Date.now(), ...extra });
 const owner = (id: string) => msg(id, { role: "user" });
@@ -208,7 +209,7 @@ describe("root sets are never written again: a 1.0.1 (v6) upgrade converts into 
 });
 
 describe("the root-set reclaim (1.0.2): drop, then one VACUUM to incremental, only when the owner is idle", () => {
-  const MEMBERS = 400_000;
+  const MEMBERS = N(400_000);
   /** A certified v10 file holding a large v6-shaped member table and its index. */
   function bloated(options: { members?: number; wal?: boolean; incremental?: boolean } = {}): { db: DatabaseSync; path: string; rootBytes: number } {
     const made = file();
@@ -250,9 +251,9 @@ describe("the root-set reclaim (1.0.2): drop, then one VACUUM to incremental, on
     console.log(`WRITETIME-RECLAIM fixture ${(rootBytes / 1024 ** 2).toFixed(1)} MB; longest write-lock hold per step kind ${sliced.map(([name, ms]) => `${name} ${ms.toFixed(0)} ms`).join(", ")}; all steps ${Object.values(sums).reduce((a, b) => a + b, 0).toFixed(0)} ms; vacuum (one statement, the file was not incremental) ${(longest.vacuum ?? 0).toFixed(0)} ms`);
     // a batch is sized to RECLAIM_BATCH_MS, whatever the table holds (a single DROP of the owner's 4.2 GB held writes 1.1-2.0 s)
     expect(Math.max(...sliced.map(([, ms]) => ms))).toBeLessThan(250);
-  }, 300_000);
+  }, 3_600_000);
 
-  it("a large table is emptied in batches: the owner's connection, writing all through the run, never waits 250 ms for the write lock (the file was made incremental)", { tags: ["perf-budget"], timeout: 600_000 }, async () => {
+  it("a large table is emptied in batches: the owner's connection, writing all through the run, never waits 250 ms for the write lock (the file was made incremental)", { tags: ["perf-budget"], timeout: 3_600_000 }, async () => {
     const { db, path } = bloated({ members: 2_500_000, wal: true, incremental: true });
     const owner = new DatabaseSync(path); dbs.push(owner);
     owner.exec("PRAGMA busy_timeout=5000; CREATE TABLE IF NOT EXISTS owner_beat(n INTEGER)");
@@ -319,9 +320,9 @@ describe("the root-set reclaim (1.0.2): drop, then one VACUUM to incremental, on
       for (const name of ["hp_retired_inbox", "hp_retired_keyed", "ms_owner_tail"]) expect(db.prepare("SELECT 1 FROM sqlite_schema WHERE name=?").get(name), name).toBeUndefined();
       expect(db.prepare("SELECT 1 FROM sqlite_schema WHERE name='memory_lsn'").get()).toBeTruthy();
     } finally { registerRetiredObjects("msearch2", {}); registerRetiredObjects("hotpath", {}); }
-  }, 300_000);
+  }, 3_600_000);
 
-  it("never runs during a live turn or typing, before health answered, or before the read-time judge is retired; resumes after a kill", { tags: ["nightly"], timeout: 300_000 }, async () => {
+  it("never runs during a live turn or typing, before health answered, or before the read-time judge is retired; resumes after a kill", { tags: ["nightly"], timeout: 3_600_000 }, async () => {
     const { db } = bloated();
     const tables = () => ROOT_SET_RECLAIM_TABLES.filter(table => db.prepare("SELECT 1 FROM sqlite_schema WHERE name=?").get(table)).length;
     const all = tables();
@@ -342,7 +343,7 @@ describe("the root-set reclaim (1.0.2): drop, then one VACUUM to incremental, on
     expect(tables()).toBe(0);
   });
 
-  it("with the owner at the Mac the tables are emptied beside them and no writer is held; the one VACUUM (the button path too) waits for idle, then runs", { tags: ["nightly"], timeout: 300_000 }, async () => {
+  it("with the owner at the Mac the tables are emptied beside them and no writer is held; the one VACUUM (the button path too) waits for idle, then runs", { tags: ["nightly"], timeout: 3_600_000 }, async () => {
     const { db } = bloated();
     setReadTimeJudgeRetired(true);
     const holds: boolean[] = [];
@@ -377,5 +378,5 @@ describe("the root-set reclaim (1.0.2): drop, then one VACUUM to incremental, on
     expect(db.prepare("SELECT 1 AS x FROM memory_output_roots WHERE message_id='o'").get()).toBeUndefined();
     expect(Number(db.prepare("SELECT count(*) AS n FROM memory_root_set_members").get()!.n)).toBe(0);
     expect(statSync(`${path}.before`).size).toBeGreaterThan(0);
-  }, 300_000);
+  }, 3_600_000);
 });

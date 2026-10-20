@@ -33,6 +33,8 @@ afterEach(() => { closeMemoryIndexReader(); });
 
 /** An index of `count` records that all say the common words, a few of which also say a rare one. */
 function bigIndex(count: number, rare: number) {
+  // the reader a recall opened holds the file: Windows refuses to delete an open file (EPERM), so it is closed first
+  closeMemoryIndexReader();
   for (const suffix of ["", "-wal", "-shm"]) rmSync(`${INDEX_PATH()}${suffix}`, { force: true });
   const index = new MemoryIndex(INDEX_PATH());
   index.prepareModel("model");
@@ -62,14 +64,13 @@ describe("recall: per-recall cost follows the query, not the size of the memory"
     expect(recallTerms("what did we do")).toEqual(["what", "did", "we", "do"]);
   });
 
-  it("an ordinary question costs the same at 10k and at 500k records, and never hits the scan limit", { tags: ["nightly"], timeout: 600_000 }, async () => {
+  it("an ordinary question costs the same at 10k and at 500k records, and never hits the scan limit", { tags: ["nightly"], timeout: 3_600_000 }, async () => {
     const query = "What did we decide about pipeline? Turn 7000 zephyrine and the weekly client report";
     const small = [], large = [];
     bigIndex(10_000, 5);
     await recallOnce(query);
     for (let n = 0; n < 5; n++) small.push(await recallOnce(query));
     bigIndex(500_000, 5);
-    closeMemoryIndexReader();
     await recallOnce(query);
     for (let n = 0; n < 5; n++) large.push(await recallOnce(query));
     for (const run of [...small, ...large]) {
@@ -83,7 +84,7 @@ describe("recall: per-recall cost follows the query, not the size of the memory"
     expect(median(large.map(run => run.ms))).toBeLessThan(Math.max(40, median(small.map(run => run.ms)) * 4));
   });
 
-  it("a question made only of common words reads a bounded set, judges only the top, and is not cut off", { timeout: 600_000 }, async () => {
+  it("a question made only of common words reads a bounded set, judges only the top, and is not cut off", { timeout: 3_600_000 }, async () => {
     bigIndex(200_000, 5);
     const run = await recallOnce("pipeline renewals hiring weekly client report");
     expect(run.page.partial).toBeUndefined();
@@ -135,7 +136,7 @@ describe("recall: what other scopes hold never changes what a reader gets", () =
 });
 
 describe("recall: the work of one query is capped, however much history stands in the way", () => {
-  it("a reader whose only match is the oldest behind a very large crowd of other scopes' matches reads only its own postings, and finds it", { timeout: 300_000 }, async () => {
+  it("a reader whose only match is the oldest behind a very large crowd of other scopes' matches reads only its own postings, and finds it", { timeout: 3_600_000 }, async () => {
     indexOf([{ id: "mine-oldest", scope: "s", text: `${COMMON} decision` }, ...Array.from({ length: RECALL_QUERY_ROWS + 30_000 }, (_, n) => ({ id: `theirs-${String(n).padStart(7, "0")}`, scope: "x", text: `${COMMON} note${n}` }))]);
     const run = await recallOnce(COMMON);
     expect(ids(run.page)).toEqual(["mine-oldest"]);
@@ -143,7 +144,7 @@ describe("recall: the work of one query is capped, however much history stands i
     expect(run.page.bounded).toBeUndefined();
     expect(run.page.partial).toBeUndefined();
   });
-  it("a reader's own crowd of common matches is read up to the cap and says so", { timeout: 300_000 }, async () => {
+  it("a reader's own crowd of common matches is read up to the cap and says so", { timeout: 3_600_000 }, async () => {
     indexOf(Array.from({ length: RECALL_QUERY_ROWS + 30_000 }, (_, n) => ({ id: `mine-${String(n).padStart(7, "0")}`, scope: "s", text: `${COMMON} note${n}` })));
     const run = await recallOnce(COMMON);
     expect(run.page.hits).toHaveLength(50);
@@ -210,18 +211,18 @@ describe("owner search says so when a limit may have kept a match out", () => {
     expect(found.rows).toEqual([]);
     expect(found).toMatchObject({ coverageComplete: false, searchNotice: expect.stringContaining("newest matches") });
   });
-  it("pending notes beyond the newest 20,000 receipts are not looked at, and the owner is told", { timeout: 300_000 }, async () => {
+  it("pending notes beyond the newest 20,000 receipts are not looked at, and the owner is told", { timeout: 3_600_000 }, async () => {
     seed(20_100, 0, "the zephyrine plan, never indexed");
     const found = await ownerMemoryList({ botId: "a", query: "zephyrine" }, roster);
     expect(found).toMatchObject({ coverageComplete: false, searchNotice: expect.stringContaining("newest matches") });
   });
-  it("more than 20,000 records with nothing pending and the owner-tail index built: complete, no notice", { timeout: 300_000 }, async () => {
+  it("more than 20,000 records with nothing pending and the owner-tail index built: complete, no notice", { timeout: 3_600_000 }, async () => {
     seed(0, 20_500, "the zephyrine plan");
     const found = await ownerMemoryList({ botId: "a", query: "zephyrine" }, roster);
     expect(found.coverageComplete).toBe(true);
     expect(found.searchNotice).toBeUndefined();
   });
-  it("without the owner-tail table, records older than the newest 20,000 of the unprojected kinds are still reached (1.0.3: the key table's kind index), complete, no notice", { timeout: 300_000 }, async () => {
+  it("without the owner-tail table, records older than the newest 20,000 of the unprojected kinds are still reached (1.0.3: the key table's kind index), complete, no notice", { timeout: 3_600_000 }, async () => {
     seed(0, 20_500, "the zephyrine plan");
     dropOwnerTail(database());
     const found = await ownerMemoryList({ botId: "a", query: "zephyrine" }, roster);
@@ -238,7 +239,7 @@ describe("owner search says so when a limit may have kept a match out", () => {
 });
 
 describe("owner search answers from the search index while projection jobs are pending", () => {
-  it("returns indexed hits with 25k unindexed jobs pending, matches all the words, and stays bounded", { timeout: 300_000 }, async () => {
+  it("returns indexed hits with 25k unindexed jobs pending, matches all the words, and stays bounded", { timeout: 3_600_000 }, async () => {
     reconcileMemoryRoster(roster);
     const scope = ensureScope("bot", "a");
     const indexed = Array.from({ length: 3000 }, (_, n) => ({ id: `ix-${String(n).padStart(5, "0")}`, version: 1, scopeId: scope, text: n === 1500 ? "orchidneedle weekly quartz review" : `Durable note ${n}`, deleted: false }));

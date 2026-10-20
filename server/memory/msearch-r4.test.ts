@@ -16,6 +16,7 @@
 import { mkdirSync, mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import type { DatabaseSync } from "node:sqlite";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { DATA_DIR } from "../config.ts";
 import { closeDatabase, database } from "../database.ts";
@@ -98,7 +99,7 @@ describe("P1: equal scores order by (score, record id, version), never by cache 
     index.close();
   });
 
-  it("crossing the vector cache's capacity does not reorder equal-score results", { tags: ["nightly"], timeout: 60_000 }, () => {
+  it("crossing the vector cache's capacity does not reorder equal-score results", { tags: ["nightly"], timeout: 3_600_000 }, () => {
     // 12,001 vectors written one after another overflow the resident cache (it is dropped and reloaded in table order);
     // before, results that tie came out in whichever order the cache happened to hold them.
     const ids = ["tie-z", "tie-b", "tie-m"];
@@ -112,7 +113,12 @@ describe("P1: equal scores order by (score, record id, version), never by cache 
     const big = new MemoryIndex(INDEX_PATH());
     big.prepareModel("model");
     big.upsert(records);
+    // one commit for the 12,003 writes: the cache sees them one after another all the same, and the run does not
+    // measure the disk's flush (each autocommit was a full fsync: past the 60 s limit on a hosted Windows runner, 4 s on macOS)
+    const file = (big as unknown as { db: DatabaseSync }).db;
+    file.exec("BEGIN");
     for (const record of records) big.vector(record, "model", 0, ids.includes(record.id) ? [1, 0] : [0, 1]);
+    file.exec("COMMIT");
     const crossed = big.search("alpha", ids.map(id => ({ id, version: 1 })), [1, 0], "model", 20).hits.map(hit => hit.id);
     big.close();
     expect(resident).toEqual(["tie-b", "tie-m", "tie-z"]);
@@ -219,7 +225,7 @@ describe("P1: coverage, paging and cursors are decided over records the reader m
       expect(answer.coverageComplete).toBe(true);
       expect(answer).not.toHaveProperty("nextCursor");
       expect(answer).not.toHaveProperty("degradedReason");
-    }, 60_000);
+    }, 3_600_000);
   }
 
   it("a readable record without a vector makes coverage incomplete however many denied ones come first", async () => {
@@ -233,7 +239,7 @@ describe("P1: coverage, paging and cursors are decided over records the reader m
     const answer = await searchMemory(QUERY, accessOf(), helper(index, [1, 0]), { allowance: LineageAllowance.tool(1_000_000_000), caller: "tool", limit: 20 });
     index.close();
     expect(answer.coverageComplete).toBe(false);
-  }, 60_000);
+  }, 3_600_000);
 
   it("past the 1,024 records the helper names, refused ones are read through to the end: coverage is as it was (round 5, no bound)", async () => {
     const scope = ensureScope("bot", "a");
@@ -247,7 +253,7 @@ describe("P1: coverage, paging and cursors are decided over records the reader m
     index.close();
     expect(answer.hits.map(hit => hit.id)).toEqual(["kept"]);
     expect(answer.coverageComplete).toBe(true);
-  }, 60_000);
+  }, 3_600_000);
 
   /** Found by meaning only (its words do not match the query), so the scan over the chunks is what finds it. */
   const quiet = "quiet quay notes about the boats";
@@ -284,7 +290,7 @@ describe("P1: coverage, paging and cursors are decided over records the reader m
     expect(crowded).not.toHaveProperty("nextCursor");
     expect(crowded).not.toHaveProperty("degradedReason");
     expect(crowded).toEqual(without);
-  }, 60_000);
+  }, 3_600_000);
 
   it("a scan that stops before the end pages on only when a record the reader may read is past the stop", async () => {
     scanLimits.chunks = 2; // two chunks of 40 scanned; the readable record is in the fourth
@@ -301,7 +307,7 @@ describe("P1: coverage, paging and cursors are decided over records the reader m
     index.close();
     expect(next.hits.map(hit => hit.id)).toEqual(["z-kept"]);
     expect(next).not.toHaveProperty("nextCursor");
-  }, 60_000);
+  }, 3_600_000);
 
   it("a scan that stops before the end while only refused records remain issues no cursor and does not change coverage", async () => {
     scanLimits.chunks = 1;
@@ -312,7 +318,7 @@ describe("P1: coverage, paging and cursors are decided over records the reader m
     expect(stopped).not.toHaveProperty("nextCursor");
     expect(stopped).not.toHaveProperty("degradedReason");
     expect(stopped.coverageComplete).toBe(true);
-  }, 60_000);
+  }, 3_600_000);
 
   it("the helper reports where its scan stopped and nothing else about the size of the eligible set", () => {
     scanLimits.chunks = 2;

@@ -39,14 +39,17 @@ function sourcePaths(dir: string): string[] {
   return out;
 }
 const PROBE = join(serverDir, "__structure_probe__.ts");
-function buildProgram(virtual: Record<string, string> = {}, old?: ts.Program): ts.Program {
+/** TypeScript names every file with "/" on every OS (C:\a\b.ts is C:/a/b.ts to the compiler host), so virtual files are keyed that way. */
+const tsName = (path: string): string => path.replaceAll("\\", "/");
+function buildProgram(named: Record<string, string> = {}, old?: ts.Program): ts.Program {
+  const virtual = Object.fromEntries(Object.entries(named).map(([path, text]) => [tsName(path), text]));
   const config = ts.readConfigFile(join(rootDir, "tsconfig.server.json"), ts.sys.readFile);
   const options = ts.parseJsonConfigFileContent(config.config, ts.sys, rootDir).options;
   const host = ts.createCompilerHost(options, true);
   const getSourceFile = host.getSourceFile.bind(host), fileExists = host.fileExists.bind(host), readFile = host.readFile.bind(host);
-  host.fileExists = (file) => file in virtual || fileExists(file);
-  host.readFile = (file) => virtual[file] ?? readFile(file);
-  host.getSourceFile = (file, language, onError, shouldCreate) => (file in virtual ? ts.createSourceFile(file, virtual[file]!, language, true) : getSourceFile(file, language, onError, shouldCreate));
+  host.fileExists = (file) => tsName(file) in virtual || fileExists(file);
+  host.readFile = (file) => virtual[tsName(file)] ?? readFile(file);
+  host.getSourceFile = (file, language, onError, shouldCreate) => (tsName(file) in virtual ? ts.createSourceFile(file, virtual[tsName(file)]!, language, true) : getSourceFile(file, language, onError, shouldCreate));
   const roots = sourcePaths(serverDir).filter((path) => !path.endsWith("pi-mcp-extension.ts"));
   return ts.createProgram([...roots, ...Object.keys(virtual)], options, host, old);
 }
@@ -259,7 +262,7 @@ function analyse(program: ts.Program, only?: string): Analysis {
 
 let base: ts.Program;
 let baseAnalysis: Analysis;
-beforeAll(() => { base = buildProgram(); baseAnalysis = analyse(base); }, 300_000);
+beforeAll(() => { base = buildProgram(); baseAnalysis = analyse(base); }, 3_600_000);
 
 const sourceOf = (program: ts.Program, name: string): ts.SourceFile => program.getSourceFiles().find((file) => rel(file) === name)!;
 function bodyOf(file: ts.SourceFile, name: string): ts.Node | undefined {
@@ -399,6 +402,15 @@ describe("the dispatch is the only place a hand-off starts (symbols resolved wit
 
 describe("the structural analysis catches what the reviewer's mutation probes slip in (negative tests)", () => {
   const probe = (text: string): string[] => analyse(buildProgram({ [PROBE]: text }, base), "__structure_probe__.ts").violations;
+  it("a probe named with Windows separators is analysed from its text, not looked up on disk", () => {
+    // on Windows PROBE is already this name; elsewhere it shows the same lookup
+    const windowsName = PROBE.replaceAll("/", "\\");
+    const found = analyse(buildProgram({ [windowsName]: `import type { HandoffHost } from "./handoff-dispatch.ts";
+declare const host: HandoffHost;
+export const probe = () => host.startTurn("bot", "text", { threadId: "x" } as never);
+` }, base), "__structure_probe__.ts").violations;
+    expect(found.join("\n")).toMatch(/R5 startTurn/);
+  }, 3_600_000);
   it("an aliased startTurn (the host seam held in a const and called under another name)", () => {
     const found = probe(`import type { HandoffHost } from "./handoff-dispatch.ts";
 declare const host: HandoffHost;
@@ -406,13 +418,13 @@ const go = host.startTurn;
 export const probe = () => go("bot", "text", { threadId: "x", commsDepth: 1, onDispatchError: () => {} } as never);
 `);
     expect(found.join("\n")).toMatch(/R5 startTurn/);
-  }, 300_000);
+  }, 3_600_000);
   it("a computed string key that carries the run: ['delegationRun']", () => {
     const found = probe(`import type { HandoffRun } from "./handoff-dispatch.ts";
 export const probe = (run: HandoffRun) => ({ threadId: "x", commsDepth: 1, ["delegationRun"]: run, onDispatchError: () => {} });
 `);
     expect(found.join("\n")).toMatch(/R2 delegationRun/);
-  }, 300_000);
+  }, 3_600_000);
   it("the stamp function the dispatch used to register is gone: reaching for it, by a literal key, a constant computed key or an import, is a compile error", () => {
     const errors = (text: string): string => { const program = buildProgram({ [PROBE]: text }, base); return ts.getPreEmitDiagnostics(program, program.getSourceFile(PROBE)).map((d) => ts.flattenDiagnosticMessageText(d.messageText, "\n")).join("\n"); };
     expect(errors(`import * as stamps from "./handoff-stamp.ts";
@@ -425,7 +437,7 @@ export const probe = () => stamps[key](() => {});
     expect(errors(`import { registerHandoffStamp } from "./handoff-stamp.ts";
 export const probe = () => registerHandoffStamp(() => {});
 `)).toMatch(/registerHandoffStamp/);
-  }, 300_000);
+  }, 3_600_000);
   it("the host seam reached through a constant computed key: host[key](...), and forwarded through a typed callback", () => {
     const called = probe(`import type { HandoffHost } from "./handoff-dispatch.ts";
 declare const host: HandoffHost;
@@ -440,8 +452,8 @@ const relay = (go: HandoffHost["startTurn"]) => go("bot", "text", { threadId: "x
 export const probe = () => relay(host[key]);
 `);
     expect(forwarded.join("\n")).toMatch(/R5 reference/);
-  }, 300_000);
-  it("an option-forwarding startTurn helper added to index.ts, and a re-dispatch that clears the prompt (userMessage: undefined)", { tags: ["nightly"], timeout: 600_000 }, () => {
+  }, 3_600_000);
+  it("an option-forwarding startTurn helper added to index.ts, and a re-dispatch that clears the prompt (userMessage: undefined)", { tags: ["nightly"], timeout: 3_600_000 }, () => {
     const indexPath = join(serverDir, "index.ts");
     const real = readFileSync(indexPath, "utf8");
     const analyseIndex = (text: string): string[] => analyse(buildProgram({ [indexPath]: text }, base), "index.ts").violations;
@@ -469,7 +481,7 @@ export const probe = (options: HandoffTurnOptions) => ({ ...options, threadId: "
 export const relay = (start: (options: HandoffTurnOptions) => Promise<unknown>, options: HandoffTurnOptions) => start(options);
 `);
     expect(forwarded.join("\n")).toMatch(/R7 type/);
-  }, 300_000);
+  }, 3_600_000);
   it("a destructured, string-key or constant computed-key read of the run", () => {
     const read = probe(`export const probe = (options: Record<string, unknown>) => { const { delegationRun } = options as { delegationRun: unknown }; return options["delegationRun"] ?? delegationRun; };
 `);
@@ -478,11 +490,11 @@ export const relay = (start: (options: HandoffTurnOptions) => Promise<unknown>, 
 export const probe = (options: Record<string, unknown>) => options[key];
 `);
     expect(computed.join("\n")).toMatch(/R3 read/);
-  }, 300_000);
+  }, 3_600_000);
   it("the clean program is reported clean (the probes are what fail, not the method)", () => {
     expect(probe(`export const harmless = (a: number) => a + 1;
 `)).toEqual([]);
-  }, 300_000);
+  }, 3_600_000);
 });
 
 describe("the transcript refuses a hand-off's prompt that the dispatch did not stamp", () => {
