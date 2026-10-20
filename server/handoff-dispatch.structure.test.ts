@@ -39,20 +39,24 @@ function sourcePaths(dir: string): string[] {
   return out;
 }
 const PROBE = join(serverDir, "__structure_probe__.ts");
-function buildProgram(virtual: Record<string, string> = {}, old?: ts.Program): ts.Program {
+function buildProgram(given: Record<string, string> = {}, old?: ts.Program): ts.Program {
+  // the compiler asks for files with '/' on every platform; the probes are keyed by join() (with '\\' on Windows)
+  const norm = (file: string): string => file.replace(/\\/g, "/");
+  const virtual: Record<string, string> = Object.fromEntries(Object.entries(given).map(([file, text]) => [norm(file), text]));
   const config = ts.readConfigFile(join(rootDir, "tsconfig.server.json"), ts.sys.readFile);
   const options = ts.parseJsonConfigFileContent(config.config, ts.sys, rootDir).options;
   const host = ts.createCompilerHost(options, true);
   const getSourceFile = host.getSourceFile.bind(host), fileExists = host.fileExists.bind(host), readFile = host.readFile.bind(host);
-  host.fileExists = (file) => file in virtual || fileExists(file);
-  host.readFile = (file) => virtual[file] ?? readFile(file);
-  host.getSourceFile = (file, language, onError, shouldCreate) => (file in virtual ? ts.createSourceFile(file, virtual[file]!, language, true) : getSourceFile(file, language, onError, shouldCreate));
+  host.fileExists = (file) => norm(file) in virtual || fileExists(file);
+  host.readFile = (file) => virtual[norm(file)] ?? readFile(file);
+  host.getSourceFile = (file, language, onError, shouldCreate) => (norm(file) in virtual ? ts.createSourceFile(file, virtual[norm(file)]!, language, true) : getSourceFile(file, language, onError, shouldCreate));
   const roots = sourcePaths(serverDir).filter((path) => !path.endsWith("pi-mcp-extension.ts"));
   return ts.createProgram([...roots, ...Object.keys(virtual)], options, host, old);
 }
 
 /** The file a node is in, relative to server/ ("" outside it); the program also holds what the sources import (shared/, node_modules). */
-const rel = (file: ts.SourceFile): string => { const path = relative(serverDir, file.fileName); return path.startsWith("..") ? "" : path; };
+// relative names with '/' on every platform (Windows paths use '\\'), as the lists below are written
+const rel = (file: ts.SourceFile): string => { const path = relative(serverDir, file.fileName).replace(/\\/g, "/"); return path.startsWith("..") ? "" : path; };
 const isSource = (file: ts.SourceFile): boolean => { const r = rel(file); return r !== "" && !r.endsWith(".test.ts") && !r.endsWith(".d.ts") && !r.includes("node_modules"); };
 const inTesting = (name: string): boolean => name.startsWith("testing/");
 

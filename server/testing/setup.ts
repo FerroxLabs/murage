@@ -12,6 +12,7 @@ import { settleTestHandles } from "../test-handle-registry.ts";
 import { removeTempDir } from "./cleanup.ts";
 import { scrubAmbientMurageEnv } from "./murage-env.mjs";
 import { installSafeWipeGuard } from "./safe-wipe.mjs";
+import { installNoFollowRmSync } from "../link-removal.ts";
 
 // Ambient Murage runtime keys (a bot's own terminal, a server in another
 // window) never reach a test or a child it spawns: each test sets the keys it
@@ -26,6 +27,10 @@ process.env.MURAGE_TEST_ENV_SCRUBBED = "1";
 // directory another process holds a Murage installation lease on. A test
 // that computes the wrong path gets SafeWipeRefused, not a wiped profile.
 // Explicit fixture teardown goes through safeWipeSync / removeTempDir.
+// On Windows the server replaces fs.rmSync with its no-follow remove (link-removal.ts, installed when config.ts loads), and a
+// recursive remove there goes to the addon's removeTree without calling the rmSync it wrapped. Installed first here, as the
+// product installs it before its own data-dir guard, so this guard wraps it and still checks every recursive remove first.
+installNoFollowRmSync();
 installSafeWipeGuard({ protect: [ambient.MURAGE_DATA_DIR, ambient.MURAGE_COMPANION_DIR].filter((dir): dir is string => Boolean(dir)) });
 
 // The harness answers its conversation routes only to a caller that proved who

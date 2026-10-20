@@ -34,6 +34,7 @@ import { ROOM_REPLY_CHECKING, ROOM_REPLY_WITHHELD } from "./room-context.ts";
 import type { TranscriptEntry } from "./turn-context.ts";
 import type { ExternalUpdateMessage } from "./external-context-delivery.ts";
 import { humanRow } from "./testing/bot-row.ts";
+import { settleTestHandles } from "./test-handle-registry.ts";
 
 const SERVER = import.meta.dirname;
 function sources(dir = SERVER): string[] {
@@ -54,19 +55,20 @@ const owner = (id: string, extra: Partial<Message> = {}): Message => ({ id, role
 const BOT: Viewer = { kind: "bot", botId: "bot-a" };
 const HUMAN: Viewer = { kind: "human" };
 
-function reset(): void { closeMessageDb(); closeDatabase(); rmSync(DATA_DIR, { recursive: true, force: true }); mkdirSync(DATA_DIR, { recursive: true }); }
+// the WAL checkpointer's own connection leaves the file after closeDatabase returns (wal-maintenance.ts); Windows will not remove a file still open
+async function reset(): Promise<void> { closeMessageDb(); closeDatabase(); await settleTestHandles(DATA_DIR); rmSync(DATA_DIR, { recursive: true, force: true }); mkdirSync(DATA_DIR, { recursive: true }); }
 const TEMPLATE = `${DATA_DIR}.bot-read.db`;
-beforeAll(() => {
-  reset();
+beforeAll(async () => {
+  await reset();
   new WritetimeFixture(database()).cert(true);
   appendMessage("warm-up", owner("w1"));
   database().exec("UPDATE memory_scopes SET audience='[]' WHERE json_type(audience)<>'array'");
   rmSync(TEMPLATE, { force: true });
   database().prepare("VACUUM INTO ?").run(TEMPLATE);
-  reset();
+  await reset();
 });
-afterAll(() => { reset(); rmSync(TEMPLATE, { force: true }); });
-beforeEach(() => { reset(); copyFileSync(TEMPLATE, join(DATA_DIR, "messages.db")); });
+afterAll(async () => { await reset(); rmSync(TEMPLATE, { force: true }); });
+beforeEach(async () => { await reset(); copyFileSync(TEMPLATE, join(DATA_DIR, "messages.db")); });
 
 /** Every Murage-voice shape rule 1 names. */
 const CLASSIFIED: Record<string, Message> = {

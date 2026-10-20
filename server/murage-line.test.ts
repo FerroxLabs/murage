@@ -8,6 +8,7 @@
 // (an owner row, actorKind murage, a run card, a copy) or engine output naming its producing turn, or is a reviewed forward below. A
 // murageLine row is Murage's own only when it carries none of the model's words: one that quotes them (a prompt, an image) names the
 // producing turn, so it rests on that turn's inputs and is withheld with them.
+import { fileURLToPath } from "node:url";
 import { readdirSync, readFileSync, statSync } from "node:fs";
 import { join, relative } from "node:path";
 import { describe, expect, it } from "vitest";
@@ -19,7 +20,9 @@ import { RowSink, writeActivityRow, writeBotRow } from "./bot-egress.ts";
 import { status } from "./murage-status.ts";
 import type { Message } from "./store.ts";
 
-const ROOT = new URL(".", import.meta.url).pathname;
+const ROOT = fileURLToPath(new URL(".", import.meta.url));
+// relative names with '/' on every platform, as the allow lists below are written
+const relPath = (file: string): string => relative(ROOT, file).replace(/\\/g, "/");
 
 function sources(dir: string): string[] {
   return readdirSync(dir).flatMap(name => {
@@ -194,9 +197,9 @@ describe("every row Murage writes in its own voice goes through one rule", () =>
       for (const { line, row } of writes(source)) {
         if (MARKED.test(row)) continue; // proven below, with every other murageLine call
         if (row.startsWith("{") && provenLiteral(row)) continue;
-        const key = `${relative(ROOT, file)} :: ${row}`;
+        const key = `${relPath(file)} :: ${row}`;
         if (FORWARDS[key]) { forwarded.add(key); continue; }
-        unproven.push(`${relative(ROOT, file)}:${line} ${row.slice(0, 120)}`);
+        unproven.push(`${relPath(file)}:${line} ${row.slice(0, 120)}`);
       }
     }
     expect(unproven, "wrap the row in murageLine, or give engine output its producing turnId").toEqual([]);
@@ -209,10 +212,10 @@ describe("every row Murage writes in its own voice goes through one rule", () =>
     for (const file of sources(ROOT)) {
       const source = readFileSync(file, "utf8");
       for (const { row } of murageLines(source)) {
-        if (provenMurageLine(row, relative(ROOT, file))) continue;
-        const key = `${relative(ROOT, file)} :: murageLine(${row})`;
+        if (provenMurageLine(row, relPath(file))) continue;
+        const key = `${relPath(file)} :: murageLine(${row})`;
         if (MARKED_FORWARDS[key]) { forwarded.add(key); continue; }
-        const head = `${relative(ROOT, file)} :: ${row.slice(0, ROW_KEY)}`;
+        const head = `${relPath(file)} :: ${row.slice(0, ROW_KEY)}`;
         if (MURAGE_COPY[head] || OPEN_GAPS[head]) { forwarded.add(head); continue; }
         unproven.push(`${head}`);
       }

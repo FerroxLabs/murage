@@ -17,6 +17,7 @@ import { setExecutionStore } from "./execution-audience.ts";
 import { botDeletionKey, groupDeletionKey, recordOwnerDeletion } from "./owner-deletions.ts";
 import type { DatabaseSync } from "node:sqlite";
 import { removeTempDirSync } from "./testing/cleanup.ts";
+import { windowsNightly } from "./testing/windows-hosted.ts";
 
 beforeEach(() => { closeDatabase(); removeTempDirSync(DATA_DIR); mkdirSync(DATA_DIR, { recursive: true }); setExecutionStore(undefined as never); });
 afterEach(() => closeDatabase());
@@ -66,7 +67,7 @@ describe("backoff", () => {
 });
 
 describe("a sweep reads only what is due", () => {
-  it("10k retained requests x 10 bots: the first sweep retains them, later sweeps read at most one batch, flat from 1k to 10k", () => {
+  it("10k retained requests x 10 bots: the first sweep retains them, later sweeps read at most one batch, flat from 1k to 10k", windowsNightly(), () => {
     const perScale: number[] = [];
     for (const n of [1_000, 10_000]) {
       closeDatabase(); removeTempDirSync(DATA_DIR); mkdirSync(DATA_DIR, { recursive: true });

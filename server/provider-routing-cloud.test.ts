@@ -12,7 +12,10 @@ import { applyProviderRoute, grokResumeBinding, type ProviderTurnRoute } from ".
 import { TURN_RENDER, TURN_SCRATCH } from "./cloud-home/turn-process.ts";
 import { claudeEnvironment } from "./drivers/claude.ts";
 import { cloudHomeCopy } from "./cloud-home/copy.ts";
+
 import { removeTempDirSync } from "./testing/cleanup.ts";
+/** A path as a literal inside a RegExp, in the platform's spelling (a Windows path is full of backslashes). */
+const literal = (path: string) => path.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 const route: ProviderTurnRoute = { connectionId: "cloud-test", preset: "openai", protocol: "openai", baseUrl: "http://127.0.0.1:49999/v1", apiKey: "fixture-cloud-key", model: "fixture-model", revision: "r1" };
 beforeEach(() => {
   fixture.root = mkdtempSync(join(tmpdir(), "murage-cloud-route-"));
@@ -50,7 +53,7 @@ describe("cloud provider route custody", () => {
     const env: NodeJS.ProcessEnv = {};
     const binding = applyProviderRoute("fuigoAgent", env, route, { threadId: "cloud-thread" });
     try {
-      expect(env.FUIGO_HOME).toMatch(new RegExp(`^${fixture.root}/fuigoAgent/`));
+      expect(env.FUIGO_HOME).toMatch(new RegExp(`^${literal(join(fixture.root, "fuigoAgent"))}[\\\\/]`));
       expect(diskText(fixture.root)).not.toContain(route.apiKey);
       expect(env.MURAGE_PROVIDER_API_KEY).toBe(route.apiKey);
     } finally { binding.cleanup(); }
@@ -82,8 +85,8 @@ describe("cloud provider route custody", () => {
     const home = env.FUIGO_HOME!;
     expect(readdirSync(join(fixture.root, driver))).toEqual([]);
     expect(existsSync(home)).toBe(false);
-    expect(home).toMatch(new RegExp(`^${fixture.root}/${driver}/native/provider-turns/${driver}-[a-f0-9]{24}$`));
-    expect(JSON.parse(env[TURN_SCRATCH]!)).toEqual([home.slice(join(fixture.root, driver).length + 1)]);
+    expect(home).toMatch(new RegExp(`^${literal(join(fixture.root, driver, "native", "provider-turns"))}[\\\\/]${driver}-[a-f0-9]{24}$`));
+    expect(JSON.parse(env[TURN_SCRATCH]!)).toEqual([home.slice(join(fixture.root, driver).length + 1).replace(/\\/g, "/")]); // the launcher's relative form uses '/'
     const render = JSON.parse(env[TURN_RENDER]!);
     expect(render).toEqual({ route: { provider: expect.stringMatching(/^murage_[0-9a-f]{16}$/u), baseUrl: route.baseUrl, model: route.model, apiKey: route.apiKey, protocol: "openai" }, memoryTools: true });
     expect(() => binding.cleanup()).not.toThrow();

@@ -3,6 +3,7 @@
 //
 // The write-ahead log of messages.db is copied and shrunk without any connection but the server's ever holding the writer
 // lock (wal-maintenance.ts). Invariants I1 to I5 of the 1.0.2 design are each pinned here.
+import { fileURLToPath } from "node:url";
 import { monitorEventLoopDelay } from "node:perf_hooks";
 import { copyFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -220,7 +221,7 @@ it("no connection of the server process runs TRUNCATE or RESTART on messages.db 
     "memory/index.ts",                  // the memory child process's own file
     "memory/root-set-reclaim.ts",       // 1.0.2: idle-gated (10 min), sliced batches in a worker on its own connection; the one VACUUM holds owner writes asynchronously
   ]);
-  const root = new URL(".", import.meta.url).pathname;
+  const root = fileURLToPath(new URL(".", import.meta.url));
   const found: string[] = [];
   const walk = (dir: string) => {
     for (const entry of readdirSync(dir, { withFileTypes: true })) {
@@ -228,7 +229,7 @@ it("no connection of the server process runs TRUNCATE or RESTART on messages.db 
       if (entry.isDirectory()) { if (!["node_modules", "testing"].includes(entry.name)) walk(path); continue; }
       if (!/\.(ts|mjs)$/.test(entry.name) || /\.(test|bench)\./.test(entry.name)) continue;
       const text = readFileSync(path, "utf8");
-      if (/wal_checkpoint\(\s*(TRUNCATE|RESTART)|checkpointTruncate\(|truncateWal\b/.test(text)) found.push(path.slice(root.length));
+      if (/wal_checkpoint\(\s*(TRUNCATE|RESTART)|checkpointTruncate\(|truncateWal\b/.test(text)) found.push(path.slice(root.length).replace(/\\/g, "/")); // '/' on every platform, as the allow list is written
     }
   };
   walk(root);
