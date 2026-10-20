@@ -39,6 +39,9 @@ installSafeWipeGuard({ protect: [ambient.MURAGE_DATA_DIR, ambient.MURAGE_COMPANI
 // the request leaves and stops the stamp. A header a test sets itself wins.
 export const TEST_DOOR_TOKEN = "c".repeat(64);
 process.env.MURAGE_TEST_DOOR_TOKEN = TEST_DOOR_TOKEN;
+// A test server never reads the suite's own load as an overloaded owner's computer (index.ts, systemLoad.start):
+// children inherit it (childEnv keeps MURAGE_TEST_* keys); launchers with an explicit environment pass it themselves.
+process.env.MURAGE_TEST_IGNORE_SYSTEM_LOAD = "1";
 // Children a test spawns inherit it as their launch secret (childEnv adds it
 // too, because it strips every ambient MURAGE_ key).
 process.env.MURAGE_COMPANION_TOKEN = TEST_DOOR_TOKEN;

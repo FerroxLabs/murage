@@ -450,6 +450,8 @@ export async function launchVerificationServer(
     // The suite's stand-in for the native engine-exclusion addon (server/testing/engine-exclusion-stub.cjs), which a deletion of
     // an engine's files needs before it changes anything.
     ...(parentEnv.MURAGE_TEST_DOOR_TOKEN && parentEnv.MURAGE_ENGINE_EXCLUSION_PATH ? { MURAGE_ENGINE_EXCLUSION_PATH: parentEnv.MURAGE_ENGINE_EXCLUSION_PATH } : {}),
+    // A test run's server does not yield to the suite's own load (server/testing/setup.ts).
+    ...(parentEnv.MURAGE_TEST_IGNORE_SYSTEM_LOAD === "1" ? { MURAGE_TEST_IGNORE_SYSTEM_LOAD: "1" } : {}),
     ...(options.turnLog ? {
       FAKE_CLAUDE_DUMP_EACH_TURN: "1",
       FAKE_CLAUDE_DUMP_LOG: fixtureTurnLogPath,

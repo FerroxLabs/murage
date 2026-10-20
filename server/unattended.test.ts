@@ -130,6 +130,8 @@ posixOnly("unattended turns keep asking", () => {
         MURAGE_PORT: String(port),
         MURAGE_WEBHOOK_PORT: String(port + 1),
         MURAGE_ALLOW_DEV_DESKTOP_SECRET: "1",
+        // the suite's own load is not an owner's overloaded computer: webhook starts are not deferred by it (server/testing/setup.ts)
+        ...(process.env.MURAGE_TEST_IGNORE_SYSTEM_LOAD === "1" ? { MURAGE_TEST_IGNORE_SYSTEM_LOAD: "1" } : {}),
       },
       stdio: ["ignore", "pipe", "pipe"],
     });
