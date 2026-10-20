@@ -62,7 +62,9 @@ it("an owner action waits its second and then fails with a lock error the HTTP l
   const waited = performance.now() - started;
   expect(isDatabaseBusy(caught)).toBe(true);
   expect(waited).toBeGreaterThan(800);
-  expect(waited).toBeLessThan(2500);
+  // the bound separates the owner budget (1 s) from the old 5 s wait this replaced; a loaded runner adds
+  // seconds of scheduling on top, never four
+  expect(waited).toBeLessThan(4_000);
   expect(new DatabaseBusyError("x", 1).status).toBe(503); // never 409: clients read that as a conflict
   expect(new DatabaseBusyError("x", 1).code).toBe("DATABASE_BUSY");
   expect(new DatabaseBusyError("x", 1).message).toBe("Busy for a moment, try again");

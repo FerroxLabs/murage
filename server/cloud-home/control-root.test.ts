@@ -137,7 +137,8 @@ it("real run startup obtains authority without a home-ready cycle", () => {
   expect(result.requests.map(row => row.operation)).toEqual(["lease", "heartbeat", "desired"]);
   expect(result.files["state.json"]).toMatchObject({ homeId: "home-test", cpGeneration: 1 });
 });
-it("Linux helper compiles and executes actual read-only BOOTTIME/adjtimex protocol", () => {
+// murage-clock.c is Linux-only (CLOCK_BOOTTIME, adjtimex, /proc boot_id): it cannot compile on macOS or Windows.
+it.skipIf(process.platform !== "linux")("Linux helper compiles and executes actual read-only BOOTTIME/adjtimex protocol", () => {
   const root = mkdtempSync(join(process.cwd(), ".clock-fixture-")); chmodSync(root, 0o755);
   try {
     const helper = join(root, "murage-clock");

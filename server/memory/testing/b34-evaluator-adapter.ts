@@ -173,6 +173,9 @@ function diagnostics(ctx: B34AdapterContext, state: JourneyState): () => Promise
     await part("F", () => familyDetail(families(ctx)));
     await part("jobs", () => String(activeJobs(ctx)));
     await part("trig", () => String(pendingTriggers(ctx)));
+    // each pending trigger's status, reason, attempts and seconds until its retry: says why discovery has not expanded
+    await part("tq", () => all(ctx, "SELECT json_extract(intent,'$.status') AS s,json_extract(intent,'$.reason') AS r,json_extract(intent,'$.attempts') AS a,json_extract(intent,'$.retryAfter') AS t FROM memory_scope_bindings WHERE subject_type='system' AND subject_id='procedure-review-pending' AND json_extract(intent,'$.trigger') IS NOT NULL ORDER BY rowid")
+      .map(row => `${code(row.s)}:${code(row.r)}:${code(row.a ?? 0)}:${row.t == null ? "-" : Math.round((Number(row.t) - Date.now()) / 1000)}`).join(","));
     await part("rv", () => String(reviewRows(ctx).length));
     await part("m", () => { const row = one(ctx, "SELECT mode,policy_revision FROM memory_meta WHERE id=1"); return row ? `${code(row.mode)}/${code(row.policy_revision)}` : "none"; });
     if (state.runId) await part("run", async () => code(runIn(await get(ctx, ROUTINES_PATH, "routines"), state.runId!)?.status));

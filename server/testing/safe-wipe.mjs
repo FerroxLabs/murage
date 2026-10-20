@@ -215,7 +215,13 @@ function context(options) {
   const platform = options.platform ?? process.platform;
   const env = options.env ?? process.env;
   const tmp = canonicalPath(options.tmpdir ?? osTmpdir());
-  const underTmp = (p) => !isRoot(tmp) && sameOrInside(p, tmp, platform);
+  // macOS has two temp areas: the per-user os.tmpdir() under /var/folders and
+  // the system /tmp (/private/tmp), where Murage itself keeps short socket
+  // folders (sun_path is 104 bytes). Linux's /tmp is already os.tmpdir(), so
+  // this only gives macOS the same admission, for paths strictly inside
+  // it (never /tmp itself). The home and data-dir rules still apply.
+  const systemTmp = platform === "darwin" && options.tmpdir === undefined ? "/private/tmp" : null;
+  const underTmp = (p) => (!isRoot(tmp) && sameOrInside(p, tmp, platform)) || (systemTmp !== null && isInside(p, systemTmp, platform));
   const strictlyUnderTmp = (p) => !isRoot(tmp) && isInside(p, tmp, platform);
   const scratchMarked = (p) => p.split(/[\\/]+/).some(segment => SCRATCH_SEGMENT.test(segment));
   return { platform, env, underTmp, scratchMarked, homes: realHomes(options, strictlyUnderTmp), cwd: canonicalPath(options.cwd ?? process.cwd()), selfPid: options.selfPid ?? process.pid, protect: options.protect ?? [] };
