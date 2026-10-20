@@ -1,12 +1,13 @@
 // Copyright 2026 Ferrox Labs
 // SPDX-License-Identifier: AGPL-3.0-or-later
-import { mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, realpathSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
 import { OWN_UNASKED } from "../../shared/own-servers.ts";
 import { walkRoot } from "../../shared/in-project.ts";
+import { removeTempDirSync } from "../testing/cleanup.ts";
 import piPermissionGate, {
   DEFAULT_HOOKS,
   GATE_UNASKED,
@@ -46,7 +47,7 @@ beforeEach(() => {
   holder[MCP_TABLE_KEY] = new Map<string, McpToolEntry>();
 });
 afterEach(() => {
-  rmSync(root, { recursive: true, force: true });
+  removeTempDirSync(root);
   delete holder[MCP_TABLE_KEY];
   delete process.env.MURAGE_PI_GATE;
   delete process.env.MURAGE_PI_GATE_ONLY;

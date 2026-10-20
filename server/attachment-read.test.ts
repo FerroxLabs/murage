@@ -6,11 +6,12 @@
 // enqueue, stuck slots stay counted, late opens closed) and lossless identity.
 import { execFileSync } from "node:child_process";
 import type { BigIntStats } from "node:fs";
-import { appendFileSync, linkSync, mkdirSync, mkdtempSync, renameSync, rmSync, symlinkSync, truncateSync, unlinkSync, writeFileSync } from "node:fs";
+import { appendFileSync, linkSync, mkdirSync, mkdtempSync, renameSync, symlinkSync, truncateSync, unlinkSync, writeFileSync, rmdirSync } from "node:fs";
 import * as realFsp from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { removeTempDirSync } from "./testing/cleanup.ts";
 import {
   ATTACHMENT_IO_DEADLINE_MS, ATTACHMENT_IO_QUEUE, ATTACHMENT_READ_CEILING, __resetAttachmentPoolForTests, __setAttachmentFsForTests, __setAttachmentReadHookForTests,
   attachmentNameOf, attachmentPoolState, attachmentsHomeOf, probeAttachment, readAttachmentFile, sameIdentity, storedPathOf,
@@ -32,7 +33,7 @@ afterEach(() => {
   __setAttachmentReadHookForTests(undefined);
   vi.useRealTimers();
   vi.restoreAllMocks();
-  rmSync(root, { recursive: true, force: true });
+  removeTempDirSync(root);
 });
 
 /** Counts the real fs calls the module makes. */
@@ -104,7 +105,7 @@ describe("leaf checks", () => {
   it("refuses a directory, a hard-linked file and a folder that is a link", async () => {
     mkdirSync(join(folder, NAME));
     expect(await readAttachmentFile(home(), NAME, ATTACHMENT_READ_CEILING)).toEqual({ ok: false, reason: "not-regular" });
-    rmSync(join(folder, NAME), { recursive: true });
+    rmdirSync(join(folder, NAME));
     writeFileSync(join(folder, NAME), "x");
     linkSync(join(folder, NAME), join(root, "other.png"));
     const seen = countingFs();

@@ -2029,28 +2029,37 @@ describe("internal capability authority", () => {
       let received = "";
       permissionClient.on("data", chunk => { received += chunk.toString(); });
       const requestId = `n6-recipient-${recipient.id}`;
+      // The Read must sit OUTSIDE the recipient's own folder: a path inside it is allowed by the own-folder rule (decision source
+      // own-workspace, "Rule 63") before any Auto or manual verdict, so it would never reach an approval card.
       permissionClient.write(JSON.stringify({ t: "ask", id: requestId, tool: "Read",
-        input: { file_path: "N6_SYNTHETIC_PERMISSION_ONLY.txt" } }) + "\n");
+        input: { file_path: join(home, "n6-outside-recipient-folder", "N6_SYNTHETIC_PERMISSION_ONLY.txt") } }) + "\n");
       stage("permission sent; await recipient decision");
       const messages = async (id: string) => (await api("GET", "/api/bots?messages=100")).body.bots
         .find((bot: { id: string }) => bot.id === id).messages as Array<{
           card?: { requestId?: string; tool?: string; title?: string }; tool?: { name?: string };
         }>;
+      // The decision is made once; these polls only wait for it to be
+      // written down. The default 1 s poll budget is shorter than one
+      // transcript write on a loaded Windows or macOS runner (every other
+      // stage here takes 1-4 s there), so it read a slow write as a wrong
+      // answer. A wrong answer still fails: the held case asserts nothing
+      // came back on the broker, and the allowed case asserts an allow.
+      const settle = { timeout: 15_000, interval: 100 };
       if (recipientAuto) {
-        await expect.poll(() => received).toContain("\n");
+        await expect.poll(() => received, settle).toContain("\n");
         expect(JSON.parse(received.trim())).toMatchObject({ t: "answer", id: requestId, behavior: "allow" });
         await expect.poll(async () => (await messages(recipient.id))
-          .some(message => message.tool?.name?.includes("auto-approved Read"))).toBe(true);
+          .some(message => message.tool?.name?.includes("auto-approved Read")), settle).toBe(true);
         expect((await messages(recipient.id)).some(message => message.card?.requestId === requestId)).toBe(false);
       } else {
         await expect.poll(async () => (await messages(recipient.id))
-          .find(message => message.card?.requestId === requestId)?.card)
+          .find(message => message.card?.requestId === requestId)?.card, settle)
           .toMatchObject({ requestId, tool: "Read", title: "Approval needed" });
         expect(received).toBe("");
         stage("recipient card held with no answer; send owner deny");
         expect((await desktopApi("POST", `/api/threads/${recipient.threadId}/respond`, { requestId, behavior: "deny" })).status).toBe(200);
         stage("owner deny accepted; await broker reply");
-        await expect.poll(() => received).toContain("\n");
+        await expect.poll(() => received, settle).toContain("\n");
         expect(JSON.parse(received.trim())).toMatchObject({ t: "answer", id: requestId, behavior: "deny" });
       }
       stage("verify sender has no recipient approval");

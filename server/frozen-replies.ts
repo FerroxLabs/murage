@@ -11,9 +11,9 @@
 // again through the gate for the owner's audience, and only into the owner's own conversation.
 //
 // The frozen row is never edited (R8): the worker's row is appended beside it under `dres-<id>-restored`, so a second run finds it and does
-// nothing (idempotent). A row the gate reads as checking is registered as held (ports.hold) BEFORE it is written (R3: the receipt first, then
-// the row), flagged "checking", so no bot reads its words until the hold settle clears it. A held `dres-` row with a copy link and no receipt
-// (the receipts file write was lost, S24) is registered again.
+// nothing (idempotent). A row the gate reads as checking is left as it is: nothing is held for a delegation (NOHOLD-DELEGATION.md), so no
+// words are written and no receipt is made; a later start judges it again. A held `dres-` row an earlier 1.0.3 build left with a copy link and
+// no receipt (S24) is retired: rewritten as the no-answer row, its request completed or its asker woken once (ports.retire).
 //
 // The scan is bounded: each slice reads at most a window of rows by rowid and judges at most `rowsPerSlice` `dres-` rows, and the cursor file
 // keeps the last rowid reached, so a restart resumes where it stopped and a finished file scans only rows written since.
@@ -26,6 +26,7 @@ import { isPrepared } from "./branch-store.ts";
 import { DATA_DIR } from "./config.ts";
 import { findDelegationReceipt } from "./delegations.ts";
 import { HANDOFF_REPLY_PREFIX, handoffReplyId } from "./handoff-reply.ts";
+import type { RetiredHold } from "./held-replies.ts";
 import { readThreadAfter } from "./message-db.ts";
 import { botName, status } from "./murage-status.ts";
 import { delegationTurnKey } from "./pending-delegations-schema.ts";
@@ -41,18 +42,18 @@ export interface FrozenReplyPorts {
   /** The gate at the turn's originals, for the request the frozen row answered (when it carries one) and with the turn's words assembled as the finalizer
    * recorded them (`text`), so a turn of several replies is restored whole. */
   release: (origin: EgressOrigin, worker: string, sourceThreadId: string, fromBotId: string, requestId: string | undefined, text: WorkerText | undefined) => ReleasedResult;
-  /** index.ts: recordDelegationReceipt with the held mark; `text` is the words the receipt keeps (C3), absent when only the row is known (S24). Returns
-   * whether the receipt reached disk: when it did not, the recovery stops before this row and the next start judges it again (R3). */
-  hold: (input: { handoffId: string; sourceThreadId: string; messageId: string; toBotId: string; toBotName: string; copyOf: EgressOrigin; text?: ReleasedText; requestId?: string }) => boolean;
+  /** An earlier build's held row with no receipt: rewritten as the no-answer row and its request completed or its asker woken once
+   * (index.ts: held-replies.ts retireHeldRow, then the retirement's complete port). */
+  retire: (hold: RetiredHold, messageId: string) => void;
   /** C5, "the receipt follows": a restored reply's receipt, when it still exists, gets the words and the copy link back (index.ts: settleHeldReceipt). */
   restored: (handoffId: string, patch: { result: ReleasedText; copyOf: EgressOrigin }) => void;
 }
 
 export interface FrozenRepliesSlice {
-  more: boolean; scanned: number; restored: number; held: number; left: number;
-  /** A hold's receipt could not be written: the slice stopped before that row (the cursor stays there) and the caller stops the recovery; the next
-   * start carries on from the cursor. */
-  halted?: boolean;
+  more: boolean; scanned: number; restored: number; retired: number; left: number;
+  /** A frozen row whose check has not finished: the slice stopped before it (the cursor stays there) and the caller runs the recovery again once
+   * the revocation runner is idle, so the row is restored (or stays the withheld line) then. */
+  waiting?: boolean;
   /** A worker conversation whose line index is not filled yet: the slice stopped before the row that needs it (the cursor stays there), and
    * the caller prepares the thread (store.prepareThread, off the serving path) before the next slice. Additive to the frozen interface. */
   prepare?: string;
@@ -98,7 +99,7 @@ function isUnregisteredHeld(message: Message, handoffId: string): boolean {
     && findDelegationReceipt(handoffId) === null;
 }
 
-type Outcome = "restored" | "held" | "left" | "skip" | "halt" | { prepare: string };
+type Outcome = "restored" | "retired" | "left" | "skip" | "checking" | { prepare: string };
 
 function markUnread(store: Store, threadId: string): void {
   const bot = store.botByThread(threadId);
@@ -133,26 +134,26 @@ function provenOriginals(store: Store, workerId: string, handoffId: string, sour
   return null;
 }
 
+/** S24: an earlier build's held row (the words flagged "checking") that no receipt names is retired fail-closed, whoever's conversation it is in. */
+function retire(ports: FrozenReplyPorts, threadId: string, message: Message, handoffId: string): Outcome {
+  ports.retire({ id: handoffId, sourceThreadId: threadId, toBotId: message.from!.botId, toBotName: message.from!.name, ...(message.requestId ? { requestId: message.requestId } : {}) }, message.id);
+  return "retired";
+}
+
 function recoverRow(ports: FrozenReplyPorts, threadId: string, id: string): Outcome {
   const { store } = ports;
   const handoffId = id.slice(HANDOFF_REPLY_PREFIX.length);
   if (!handoffId || id.endsWith(RESTORED_SUFFIX)) return "skip";
   const message = store.messageById(threadId, id);
   if (!message) return "skip";
-  if (isUnregisteredHeld(message, handoffId)) {
-    if (!ports.ownerThread(threadId)) return "left";
-    return ports.hold({ handoffId, sourceThreadId: threadId, messageId: message.id, toBotId: message.from!.botId, toBotName: message.from!.name, copyOf: message.copyOf!,
-      ...(message.requestId ? { requestId: message.requestId } : {}) }) ? "held" : "halt";
-  }
+  if (isUnregisteredHeld(message, handoffId)) return retire(ports, threadId, message, handoffId);
   if (!isFrozen(message)) return "skip";
   const restoredId = restoredReplyId(handoffId);
   const restored = store.messageById(threadId, restoredId);
   if (restored) {
-    // done by an earlier run; a restored row still held whose receipt was lost is registered again, as S24 registers a held `dres-` row
+    // done by an earlier run; a restored row an earlier build still held with its receipt lost is retired, as an S24 held `dres-` row is
     if (!isUnregisteredHeld(restored, handoffId)) return "skip";
-    if (!ports.ownerThread(threadId)) return "left";
-    return ports.hold({ handoffId, sourceThreadId: threadId, messageId: restored.id, toBotId: restored.from!.botId, toBotName: restored.from!.name, copyOf: restored.copyOf!,
-      ...(restored.requestId ? { requestId: restored.requestId } : {}) }) ? "held" : "halt";
+    return retire(ports, threadId, restored, handoffId);
   }
   if (findDelegationReceipt(handoffId)?.notOwnerAudience === true || !ports.ownerThread(threadId)) return "left";
   const workerId = message.from!.botId;
@@ -170,17 +171,10 @@ function recoverRow(ports: FrozenReplyPorts, threadId: string, id: string): Outc
     markUnread(store, threadId);
     return "restored";
   }
-  if (gate.kind === "checking" && gate.held) {
-    // R3: the receipt reaches disk first, then the row; a crash in between leaves a receipt naming no row, which the hold settle drops, and
-    // the cursor (saved after the slice) brings this frozen row back on the next start.
-    const registered = ports.hold({ handoffId, sourceThreadId: threadId, messageId: restoredId, toBotId: worker.id, toBotName: worker.name, copyOf: gate.held.copyOf, text: gate.held.text,
-      ...(message.requestId ? { requestId: message.requestId } : {}) });
-    if (!registered) return "halt";
-    writeBotRow(ports.rows, threadId, { inboundKind: "action", from, withheldFromBots: "checking" }, status("replied_to_task", { name: botName(worker), reply: gate.held.text }), undefined, restoredId);
-    markUnread(store, threadId);
-    return "held";
-  }
-  return "left"; // withheld, gone, refused, or checking with nothing the owner may hold
+  // still being checked: nothing is held and nothing written; the slice stops before this row so it is judged again once the check finishes
+  // (index.ts runs the recovery again when the revocation runner goes idle), never left as the frozen line
+  if (gate.kind === "checking") return "checking";
+  return "left"; // withheld (the frozen row is that line), gone or refused
 }
 
 /** One bounded slice of the recovery. Call again while `more`; `prepare` names a thread to prepare first. */
@@ -191,7 +185,7 @@ export function recoverFrozenRepliesSlice(ports: FrozenReplyPorts, options: { ro
   const windowRows = rowsPerSlice * WINDOW_PER_JUDGED_ROW;
   const rows = ports.db().prepare("SELECT rowid AS r, thread_id AS t, id FROM messages WHERE rowid > ? ORDER BY rowid LIMIT ?")
     .all(cursor.rowid, windowRows) as Array<{ r: number | bigint; t: string; id: string }>;
-  const out: FrozenRepliesSlice = { more: false, scanned: 0, restored: 0, held: 0, left: 0 };
+  const out: FrozenRepliesSlice = { more: false, scanned: 0, restored: 0, retired: 0, left: 0 };
   let reached = cursor.rowid;
   let stopped = false;
   for (const row of rows) {
@@ -200,15 +194,15 @@ export function recoverFrozenRepliesSlice(ports: FrozenReplyPorts, options: { ro
       if (out.scanned >= rowsPerSlice) { stopped = true; break; }
       const outcome = recoverRow(ports, row.t, row.id);
       if (typeof outcome === "object") { out.prepare = outcome.prepare; stopped = true; break; }
-      if (outcome === "halt") { out.halted = true; stopped = true; break; }
+      if (outcome === "checking") { out.waiting = true; break; }
       out.scanned++;
       if (outcome === "restored") out.restored++;
-      else if (outcome === "held") out.held++;
+      else if (outcome === "retired") out.retired++;
       else if (outcome === "left") out.left++;
     }
     reached = rowid;
   }
-  out.more = stopped || rows.length === windowRows;
-  writeCursor(cursorFile, { rowid: reached, done: !out.more });
+  out.more = !out.waiting && (stopped || rows.length === windowRows);
+  writeCursor(cursorFile, { rowid: reached, done: !out.more && !out.waiting });
   return out;
 }

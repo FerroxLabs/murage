@@ -5,10 +5,11 @@
 // owner ssh command text, OpenSSH identification, the resolved pins, the displaced-settings rule, the direct ssh row, the
 // per-command pin overrides (U19) and the per-repository core.sshCommand row.
 
-import { chmodSync, mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, mkdirSync, mkdtempSync, realpathSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { removeTempDirSync } from "../server/testing/cleanup.ts";
 import {
   DIRECT_SSH_REASON, SSH_REASONS, directSshMeetsRow, gitNetworkCommand, parseSshCommand, pinOverride, repoSshCommandMismatch,
   resetSshIdentityCacheForTests, resolvePins, sshPinCommand, valuePins, type PinRun,
@@ -52,7 +53,7 @@ beforeEach(() => {
   runs = [];
   resetSshIdentityCacheForTests();
 });
-afterEach(() => rmSync(dir, { recursive: true, force: true }));
+afterEach(() => removeTempDirSync(dir));
 
 const owner = (extra: Record<string, string> = {}) => ({ PATH: bin, HOME: home, ...extra });
 const resolveWith = (env: Record<string, string>, coreSshCommand?: string) =>
@@ -114,7 +115,10 @@ describe("the strict one-command grammar (delta 5)", () => {
   });
 });
 
-describe("resolvePins: the owner's ssh setting is kept with BatchMode second, or replaced for engines only", () => {
+// These rows model a POSIX host on the real disk: a ':'-separated PATH, '/' paths and extensionless #! programs, resolved with
+// platform "linux". A Windows drive path splits on that ':' and its programs need an extension, so they cannot run there; the
+// win32 hand has its own rows in server/engine-env-pins.test.ts.
+describe.skipIf(process.platform === "win32")("resolvePins: the owner's ssh setting is kept with BatchMode second, or replaced for engines only", () => {
   it("keeps a setting that parses and whose program is OpenSSH, every word quoted and -o BatchMode=yes second", async () => {
     const kept: [string, string][] = [
       ["ssh", IDENT()],

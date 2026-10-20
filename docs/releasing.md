@@ -123,11 +123,12 @@ above it.
 
 ## CI must have passed on the commit
 
-The first job refuses to start a release from a commit the `CI` workflow
+The `ci-gate` job refuses to cut a draft from a commit the `CI` workflow
 (`ci.yml`) did not pass. `scripts/release-ci-gate.mjs` lists CI's runs for the
 pinned SHA and exits only when the newest attempt concluded `success`. A push
 to main starts CI and Release together, so a run still in progress is waited
-for (up to 75 minutes); no run at all is refused after a ten minute grace; a
+for (up to 4 hours; the builds run beside it and only the draft job waits on
+the verdict); no run at all is refused after a ten minute grace; a
 failed, cancelled or skipped one is refused straight away. Re-run CI on the
 commit (Actions, Re-run all jobs) and re-run the release to continue.
 

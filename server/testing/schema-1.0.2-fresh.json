@@ -1,0 +1,2471 @@
+{
+ "source": "afbf549ba (1.0.2), fresh data folder, started once and stopped",
+ "objects": [
+  {
+   "type": "index",
+   "name": "artifacts_bot_date",
+   "tbl_name": "artifacts",
+   "sql": "CREATE INDEX artifacts_bot_date ON artifacts(bot_id,created_at DESC)"
+  },
+  {
+   "type": "index",
+   "name": "artifacts_kind_date",
+   "tbl_name": "artifacts",
+   "sql": "CREATE INDEX artifacts_kind_date ON artifacts(kind,created_at DESC)"
+  },
+  {
+   "type": "index",
+   "name": "artifacts_scope_date",
+   "tbl_name": "artifacts",
+   "sql": "CREATE INDEX artifacts_scope_date ON artifacts(bot_id,source_root,thread_id,created_at DESC)"
+  },
+  {
+   "type": "index",
+   "name": "image_operations_awaiting",
+   "tbl_name": "image_operations",
+   "sql": "CREATE INDEX image_operations_awaiting ON image_operations(id) WHERE state='awaiting' AND result IS NULL"
+  },
+  {
+   "type": "index",
+   "name": "image_operations_inflight_hash",
+   "tbl_name": "image_operations",
+   "sql": "CREATE INDEX image_operations_inflight_hash ON image_operations(request_hash) WHERE state IN ('running','uncertain')"
+  },
+  {
+   "type": "index",
+   "name": "image_operations_pending",
+   "tbl_name": "image_operations",
+   "sql": "CREATE INDEX image_operations_pending ON image_operations(updated_at) WHERE state IN ('publish-pending','running','uncertain')"
+  },
+  {
+   "type": "index",
+   "name": "image_operations_pending_hash",
+   "tbl_name": "image_operations",
+   "sql": "CREATE INDEX image_operations_pending_hash ON image_operations(request_hash) WHERE state IN ('publish-pending','running','uncertain')"
+  },
+  {
+   "type": "index",
+   "name": "inbox_fill_deferred_thread_4",
+   "tbl_name": "inbox_fill_deferred",
+   "sql": "CREATE INDEX inbox_fill_deferred_thread_4 ON inbox_fill_deferred(thread_id)"
+  },
+  {
+   "type": "index",
+   "name": "inbox_items_l_all_4",
+   "tbl_name": "inbox_items",
+   "sql": "CREATE INDEX inbox_items_l_all_4 ON inbox_items(decision DESC,at DESC,source_key) WHERE live=1"
+  },
+  {
+   "type": "index",
+   "name": "inbox_items_l_approvals_4",
+   "tbl_name": "inbox_items",
+   "sql": "CREATE INDEX inbox_items_l_approvals_4 ON inbox_items(decision DESC,at DESC,source_key) WHERE owed_or_over=1 AND segment='approval' AND live=1"
+  },
+  {
+   "type": "index",
+   "name": "inbox_items_l_connections_4",
+   "tbl_name": "inbox_items",
+   "sql": "CREATE INDEX inbox_items_l_connections_4 ON inbox_items(decision DESC,at DESC,source_key) WHERE owed_or_over=1 AND segment='connection' AND live=1"
+  },
+  {
+   "type": "index",
+   "name": "inbox_items_l_decisions_4",
+   "tbl_name": "inbox_items",
+   "sql": "CREATE INDEX inbox_items_l_decisions_4 ON inbox_items(decision DESC,at DESC,source_key) WHERE expired=0 AND decision=1 AND live=1"
+  },
+  {
+   "type": "index",
+   "name": "inbox_items_l_questions_4",
+   "tbl_name": "inbox_items",
+   "sql": "CREATE INDEX inbox_items_l_questions_4 ON inbox_items(decision DESC,at DESC,source_key) WHERE owed_or_over=1 AND segment='question' AND live=1"
+  },
+  {
+   "type": "index",
+   "name": "inbox_items_l_results_4",
+   "tbl_name": "inbox_items",
+   "sql": "CREATE INDEX inbox_items_l_results_4 ON inbox_items(decision DESC,at DESC,source_key) WHERE decision=0 AND to_read=0 AND kind IN ('routine.run','goal.run','text') AND live=1"
+  },
+  {
+   "type": "index",
+   "name": "inbox_items_l_routines_4",
+   "tbl_name": "inbox_items",
+   "sql": "CREATE INDEX inbox_items_l_routines_4 ON inbox_items(decision DESC,at DESC,source_key) WHERE kind_segment='routine' AND live=1"
+  },
+  {
+   "type": "index",
+   "name": "inbox_items_l_to_read_4",
+   "tbl_name": "inbox_items",
+   "sql": "CREATE INDEX inbox_items_l_to_read_4 ON inbox_items(decision DESC,at DESC,source_key) WHERE to_read=1 AND (status<>'digest' OR read_version IS NULL) AND live=1"
+  },
+  {
+   "type": "index",
+   "name": "inbox_items_routine_at_4",
+   "tbl_name": "inbox_items",
+   "sql": "CREATE INDEX inbox_items_routine_at_4 ON inbox_items(at) WHERE kind_segment='routine'"
+  },
+  {
+   "type": "index",
+   "name": "inbox_items_snoozed_4",
+   "tbl_name": "inbox_items",
+   "sql": "CREATE INDEX inbox_items_snoozed_4 ON inbox_items(snoozed_until) WHERE snoozed_until IS NOT NULL"
+  },
+  {
+   "type": "index",
+   "name": "inbox_items_v_all_4",
+   "tbl_name": "inbox_items",
+   "sql": "CREATE INDEX inbox_items_v_all_4 ON inbox_items(decision DESC,at DESC,source_key)"
+  },
+  {
+   "type": "index",
+   "name": "inbox_items_v_approvals_4",
+   "tbl_name": "inbox_items",
+   "sql": "CREATE INDEX inbox_items_v_approvals_4 ON inbox_items(decision DESC,at DESC,source_key) WHERE owed_or_over=1 AND segment='approval'"
+  },
+  {
+   "type": "index",
+   "name": "inbox_items_v_connections_4",
+   "tbl_name": "inbox_items",
+   "sql": "CREATE INDEX inbox_items_v_connections_4 ON inbox_items(decision DESC,at DESC,source_key) WHERE owed_or_over=1 AND segment='connection'"
+  },
+  {
+   "type": "index",
+   "name": "inbox_items_v_decisions_4",
+   "tbl_name": "inbox_items",
+   "sql": "CREATE INDEX inbox_items_v_decisions_4 ON inbox_items(decision DESC,at DESC,source_key) WHERE expired=0 AND decision=1"
+  },
+  {
+   "type": "index",
+   "name": "inbox_items_v_questions_4",
+   "tbl_name": "inbox_items",
+   "sql": "CREATE INDEX inbox_items_v_questions_4 ON inbox_items(decision DESC,at DESC,source_key) WHERE owed_or_over=1 AND segment='question'"
+  },
+  {
+   "type": "index",
+   "name": "inbox_items_v_results_4",
+   "tbl_name": "inbox_items",
+   "sql": "CREATE INDEX inbox_items_v_results_4 ON inbox_items(decision DESC,at DESC,source_key) WHERE decision=0 AND to_read=0 AND kind IN ('routine.run','goal.run','text')"
+  },
+  {
+   "type": "index",
+   "name": "inbox_items_v_routines_4",
+   "tbl_name": "inbox_items",
+   "sql": "CREATE INDEX inbox_items_v_routines_4 ON inbox_items(decision DESC,at DESC,source_key) WHERE kind_segment='routine'"
+  },
+  {
+   "type": "index",
+   "name": "inbox_items_v_to_read_4",
+   "tbl_name": "inbox_items",
+   "sql": "CREATE INDEX inbox_items_v_to_read_4 ON inbox_items(decision DESC,at DESC,source_key) WHERE to_read=1 AND (status<>'digest' OR read_version IS NULL)"
+  },
+  {
+   "type": "index",
+   "name": "inbox_raw_rank_4",
+   "tbl_name": "inbox_raw",
+   "sql": "CREATE INDEX inbox_raw_rank_4 ON inbox_raw(source_key,terminal DESC,at DESC,source_row DESC)"
+  },
+  {
+   "type": "index",
+   "name": "keyed_card_family",
+   "tbl_name": "keyed_card",
+   "sql": "CREATE INDEX keyed_card_family ON keyed_card(family, thread_id)"
+  },
+  {
+   "type": "index",
+   "name": "keyed_card_id",
+   "tbl_name": "keyed_card",
+   "sql": "CREATE INDEX keyed_card_id ON keyed_card(thread_id, id)"
+  },
+  {
+   "type": "index",
+   "name": "memory_bindings_subject",
+   "tbl_name": "memory_scope_bindings",
+   "sql": "CREATE INDEX memory_bindings_subject ON memory_scope_bindings(subject_type,subject_id)"
+  },
+  {
+   "type": "index",
+   "name": "memory_deny_line_revoke",
+   "tbl_name": "memory_deny_line",
+   "sql": "CREATE INDEX memory_deny_line_revoke ON memory_deny_line(revoke_id)"
+  },
+  {
+   "type": "index",
+   "name": "memory_deny_memory_revoke",
+   "tbl_name": "memory_deny_memory",
+   "sql": "CREATE INDEX memory_deny_memory_revoke ON memory_deny_memory(revoke_id)"
+  },
+  {
+   "type": "index",
+   "name": "memory_deny_pending_revoke",
+   "tbl_name": "memory_deny_pending",
+   "sql": "CREATE INDEX memory_deny_pending_revoke ON memory_deny_pending(revoke_id)"
+  },
+  {
+   "type": "index",
+   "name": "memory_deny_pending_scope_revoke",
+   "tbl_name": "memory_deny_pending_scope",
+   "sql": "CREATE INDEX memory_deny_pending_scope_revoke ON memory_deny_pending_scope(revoke_id)"
+  },
+  {
+   "type": "index",
+   "name": "memory_deny_range_revoke",
+   "tbl_name": "memory_deny_range",
+   "sql": "CREATE INDEX memory_deny_range_revoke ON memory_deny_range(revoke_id)"
+  },
+  {
+   "type": "index",
+   "name": "memory_deny_session_revoke",
+   "tbl_name": "memory_deny_session",
+   "sql": "CREATE INDEX memory_deny_session_revoke ON memory_deny_session(revoke_id)"
+  },
+  {
+   "type": "index",
+   "name": "memory_derivations_child",
+   "tbl_name": "memory_derivations",
+   "sql": "CREATE INDEX memory_derivations_child ON memory_derivations(child_id,child_version)"
+  },
+  {
+   "type": "index",
+   "name": "memory_details_identity",
+   "tbl_name": "memory_record_details",
+   "sql": "CREATE INDEX memory_details_identity ON memory_record_details(record_id,record_version) WHERE partition='identity'"
+  },
+  {
+   "type": "index",
+   "name": "memory_disclosure_outputs_message",
+   "tbl_name": "memory_disclosure_outputs",
+   "sql": "CREATE INDEX memory_disclosure_outputs_message ON memory_disclosure_outputs(thread_id,message_id)"
+  },
+  {
+   "type": "index",
+   "name": "memory_disclosure_refs_bundle",
+   "tbl_name": "memory_disclosure_refs",
+   "sql": "CREATE INDEX memory_disclosure_refs_bundle ON memory_disclosure_refs(bundle_id)"
+  },
+  {
+   "type": "index",
+   "name": "memory_disclosure_refs_ref",
+   "tbl_name": "memory_disclosure_refs",
+   "sql": "CREATE INDEX memory_disclosure_refs_ref ON memory_disclosure_refs(kind,CAST(ref_id AS TEXT))"
+  },
+  {
+   "type": "index",
+   "name": "memory_disclosures_state",
+   "tbl_name": "memory_disclosures",
+   "sql": "CREATE INDEX memory_disclosures_state ON memory_disclosures(state)"
+  },
+  {
+   "type": "index",
+   "name": "memory_disclosures_thread",
+   "tbl_name": "memory_disclosures",
+   "sql": "CREATE INDEX memory_disclosures_thread ON memory_disclosures(thread_id,driver_instance,native_session)"
+  },
+  {
+   "type": "index",
+   "name": "memory_episodes_bot_group_week",
+   "tbl_name": "memory_episodes",
+   "sql": "CREATE INDEX memory_episodes_bot_group_week ON memory_episodes(bot_id,leakage_group,week)"
+  },
+  {
+   "type": "index",
+   "name": "memory_feedback_bot_created",
+   "tbl_name": "memory_feedback",
+   "sql": "CREATE INDEX memory_feedback_bot_created ON memory_feedback(bot_id,created_at)"
+  },
+  {
+   "type": "index",
+   "name": "memory_jobs_pending",
+   "tbl_name": "memory_jobs",
+   "sql": "CREATE INDEX memory_jobs_pending ON memory_jobs(status,retry_at)"
+  },
+  {
+   "type": "index",
+   "name": "memory_learning_events_created",
+   "tbl_name": "memory_learning_events",
+   "sql": "CREATE INDEX memory_learning_events_created ON memory_learning_events(created_at)"
+  },
+  {
+   "type": "index",
+   "name": "memory_learning_events_record",
+   "tbl_name": "memory_learning_events",
+   "sql": "CREATE INDEX memory_learning_events_record ON memory_learning_events(record_id,record_version)"
+  },
+  {
+   "type": "index",
+   "name": "memory_learning_events_source",
+   "tbl_name": "memory_learning_events",
+   "sql": "CREATE INDEX memory_learning_events_source ON memory_learning_events(source_id)"
+  },
+  {
+   "type": "index",
+   "name": "memory_lessons_bot_state",
+   "tbl_name": "memory_lessons",
+   "sql": "CREATE INDEX memory_lessons_bot_state ON memory_lessons(bot_id,state)"
+  },
+  {
+   "type": "index",
+   "name": "memory_line_lineage_msg",
+   "tbl_name": "memory_line_lineage",
+   "sql": "CREATE UNIQUE INDEX memory_line_lineage_msg ON memory_line_lineage(thread_no,message_id)"
+  },
+  {
+   "type": "index",
+   "name": "memory_open_turns_boot",
+   "tbl_name": "memory_open_turns",
+   "sql": "CREATE INDEX memory_open_turns_boot ON memory_open_turns(boot)"
+  },
+  {
+   "type": "index",
+   "name": "memory_open_turns_thread",
+   "tbl_name": "memory_open_turns",
+   "sql": "CREATE INDEX memory_open_turns_thread ON memory_open_turns(thread_id)"
+  },
+  {
+   "type": "index",
+   "name": "memory_outcomes_bot_created",
+   "tbl_name": "memory_outcomes",
+   "sql": "CREATE INDEX memory_outcomes_bot_created ON memory_outcomes(bot_id,created_at)"
+  },
+  {
+   "type": "index",
+   "name": "memory_output_roots_set",
+   "tbl_name": "memory_output_roots",
+   "sql": "CREATE INDEX memory_output_roots_set ON memory_output_roots(set_id)"
+  },
+  {
+   "type": "index",
+   "name": "memory_projection_pending",
+   "tbl_name": "memory_projection_receipts",
+   "sql": "CREATE INDEX memory_projection_pending ON memory_projection_receipts(lexical_status,record_id,record_version)"
+  },
+  {
+   "type": "index",
+   "name": "memory_records_canon",
+   "tbl_name": "memory_records",
+   "sql": "CREATE INDEX memory_records_canon ON memory_records(id,version) WHERE kind='character-canon'"
+  },
+  {
+   "type": "index",
+   "name": "memory_records_scope",
+   "tbl_name": "memory_records",
+   "sql": "CREATE INDEX memory_records_scope ON memory_records(scope_id,state)"
+  },
+  {
+   "type": "index",
+   "name": "memory_records_waiting_review",
+   "tbl_name": "memory_records",
+   "sql": "CREATE INDEX memory_records_waiting_review ON memory_records(scope_id,created_at,id) WHERE state='candidate' AND kind NOT IN ('continuity-brief','commitment','self-trait','relation','pip-proposal','pip-counter','concern','episode')"
+  },
+  {
+   "type": "index",
+   "name": "memory_root_set_parents_parent",
+   "tbl_name": "memory_root_set_parents",
+   "sql": "CREATE INDEX memory_root_set_parents_parent ON memory_root_set_parents(parent_id)"
+  },
+  {
+   "type": "index",
+   "name": "memory_scopes_owner",
+   "tbl_name": "memory_scopes",
+   "sql": "CREATE INDEX memory_scopes_owner ON memory_scopes(kind,owner_key)"
+  },
+  {
+   "type": "index",
+   "name": "memory_session_roots_set",
+   "tbl_name": "memory_session_roots",
+   "sql": "CREATE INDEX memory_session_roots_set ON memory_session_roots(set_id)"
+  },
+  {
+   "type": "index",
+   "name": "memory_sources_thread",
+   "tbl_name": "memory_sources",
+   "sql": "CREATE INDEX memory_sources_thread ON memory_sources(thread_id,message_id)"
+  },
+  {
+   "type": "index",
+   "name": "messages_at",
+   "tbl_name": "messages",
+   "sql": "CREATE INDEX messages_at ON messages(at DESC)"
+  },
+  {
+   "type": "index",
+   "name": "messages_inbox",
+   "tbl_name": "messages",
+   "sql": "CREATE INDEX messages_inbox ON messages(role,kind,thread_id,at)"
+  },
+  {
+   "type": "index",
+   "name": "messages_inbox_kind_thread_at",
+   "tbl_name": "messages",
+   "sql": "CREATE INDEX messages_inbox_kind_thread_at ON messages(kind,thread_id,at DESC)"
+  },
+  {
+   "type": "index",
+   "name": "messages_inbox_text_artifact",
+   "tbl_name": "messages",
+   "sql": "CREATE INDEX messages_inbox_text_artifact ON messages(thread_id,at)\n      WHERE role='bot' AND kind='text' AND json_extract(json,'$.artifactIds[0]') IS NOT NULL"
+  },
+  {
+   "type": "index",
+   "name": "messages_thread",
+   "tbl_name": "messages",
+   "sql": "CREATE INDEX messages_thread ON messages(thread_id)"
+  },
+  {
+   "type": "index",
+   "name": "output_publications_scope",
+   "tbl_name": "output_publications",
+   "sql": "CREATE INDEX output_publications_scope ON output_publications(bot_id,thread_id,run_id)"
+  },
+  {
+   "type": "index",
+   "name": "output_publications_stage",
+   "tbl_name": "output_publications",
+   "sql": "CREATE INDEX output_publications_stage ON output_publications(stage,updated_at)"
+  },
+  {
+   "type": "index",
+   "name": "output_publications_unannounced",
+   "tbl_name": "output_publications",
+   "sql": "CREATE INDEX output_publications_unannounced ON output_publications(bot_id,thread_id,run_id,created_at) WHERE producer='shell-output' AND stage='registered' AND message_id IS NULL AND artifact_id IS NOT NULL"
+  },
+  {
+   "type": "index",
+   "name": "owner_sends_age",
+   "tbl_name": "owner_sends",
+   "sql": "CREATE INDEX owner_sends_age ON owner_sends(status, updated_at)"
+  },
+  {
+   "type": "index",
+   "name": "owner_sends_open",
+   "tbl_name": "owner_sends",
+   "sql": "CREATE INDEX owner_sends_open ON owner_sends(thread_id, status, seq)"
+  },
+  {
+   "type": "index",
+   "name": "owner_sends_prunable",
+   "tbl_name": "owner_sends",
+   "sql": "CREATE INDEX owner_sends_prunable ON owner_sends(updated_at, seq) WHERE (status IN ('started','delivered','cancelled') OR (status IN ('unconfirmed','failed') AND message_id IS NOT NULL)) AND text=''"
+  },
+  {
+   "type": "index",
+   "name": "owner_sends_send",
+   "tbl_name": "owner_sends",
+   "sql": "CREATE UNIQUE INDEX owner_sends_send ON owner_sends(thread_id, send_id)"
+  },
+  {
+   "type": "index",
+   "name": "owner_sends_status",
+   "tbl_name": "owner_sends",
+   "sql": "CREATE INDEX owner_sends_status ON owner_sends(status, thread_id, seq)"
+  },
+  {
+   "type": "index",
+   "name": "pd_busy",
+   "tbl_name": "pending_delegations",
+   "sql": "CREATE INDEX pd_busy ON pending_delegations(to_bot_id, source_thread_id) WHERE phase='busy'"
+  },
+  {
+   "type": "index",
+   "name": "pd_due",
+   "tbl_name": "pending_delegations",
+   "sql": "CREATE INDEX pd_due ON pending_delegations(retry_at, id) WHERE retry_at IS NOT NULL"
+  },
+  {
+   "type": "index",
+   "name": "pd_from",
+   "tbl_name": "pending_delegations",
+   "sql": "CREATE INDEX pd_from ON pending_delegations(from_bot_id, phase)"
+  },
+  {
+   "type": "index",
+   "name": "pd_held",
+   "tbl_name": "pending_delegations",
+   "sql": "CREATE INDEX pd_held ON pending_delegations(id) WHERE phase='started' AND started_at IS NULL"
+  },
+  {
+   "type": "index",
+   "name": "pd_phase",
+   "tbl_name": "pending_delegations",
+   "sql": "CREATE INDEX pd_phase ON pending_delegations(phase, source_thread_id)"
+  },
+  {
+   "type": "index",
+   "name": "pd_started",
+   "tbl_name": "pending_delegations",
+   "sql": "CREATE INDEX pd_started ON pending_delegations(started_at) WHERE started_at IS NOT NULL"
+  },
+  {
+   "type": "index",
+   "name": "pd_thread",
+   "tbl_name": "pending_delegations",
+   "sql": "CREATE INDEX pd_thread ON pending_delegations(source_thread_id)"
+  },
+  {
+   "type": "index",
+   "name": "pd_thread_own",
+   "tbl_name": "pending_delegations",
+   "sql": "CREATE INDEX pd_thread_own ON pending_delegations(source_thread_id) WHERE phase<>'started' AND origin<>'shared'"
+  },
+  {
+   "type": "index",
+   "name": "pd_thread_shared",
+   "tbl_name": "pending_delegations",
+   "sql": "CREATE INDEX pd_thread_shared ON pending_delegations(source_thread_id) WHERE phase<>'started' AND origin='shared'"
+  },
+  {
+   "type": "index",
+   "name": "pd_to",
+   "tbl_name": "pending_delegations",
+   "sql": "CREATE INDEX pd_to ON pending_delegations(to_bot_id, phase)"
+  },
+  {
+   "type": "index",
+   "name": "project_activity_group_at",
+   "tbl_name": "project_activity",
+   "sql": "CREATE INDEX project_activity_group_at ON project_activity(group_id, at)"
+  },
+  {
+   "type": "index",
+   "name": "project_budgets_group",
+   "tbl_name": "project_budgets",
+   "sql": "CREATE INDEX project_budgets_group ON project_budgets(group_id, state)"
+  },
+  {
+   "type": "index",
+   "name": "project_budgets_one_goal",
+   "tbl_name": "project_budgets",
+   "sql": "CREATE UNIQUE INDEX project_budgets_one_goal ON project_budgets(goal_id) WHERE goal_id IS NOT NULL"
+  },
+  {
+   "type": "index",
+   "name": "project_budgets_one_period",
+   "tbl_name": "project_budgets",
+   "sql": "CREATE UNIQUE INDEX project_budgets_one_period ON project_budgets(group_id) WHERE period <> 'goal'"
+  },
+  {
+   "type": "index",
+   "name": "project_goals_group_state",
+   "tbl_name": "project_goals",
+   "sql": "CREATE INDEX project_goals_group_state ON project_goals(group_id, state)"
+  },
+  {
+   "type": "index",
+   "name": "project_goals_one_active",
+   "tbl_name": "project_goals",
+   "sql": "CREATE UNIQUE INDEX project_goals_one_active ON project_goals(group_id)\n  WHERE state IN ('planning','awaiting_plan_ok','working','awaiting_signoff','paused')"
+  },
+  {
+   "type": "index",
+   "name": "project_work_items_assignee",
+   "tbl_name": "project_work_items",
+   "sql": "CREATE INDEX project_work_items_assignee ON project_work_items(group_id, assignee_bot_id, position, created_at, id) WHERE archived_at IS NULL AND stale=0"
+  },
+  {
+   "type": "index",
+   "name": "project_work_items_group_state",
+   "tbl_name": "project_work_items",
+   "sql": "CREATE INDEX project_work_items_group_state ON project_work_items(group_id, state)"
+  },
+  {
+   "type": "index",
+   "name": "project_work_items_number",
+   "tbl_name": "project_work_items",
+   "sql": "CREATE UNIQUE INDEX project_work_items_number ON project_work_items(group_id, number)"
+  },
+  {
+   "type": "index",
+   "name": "push_events_collapse",
+   "tbl_name": "push_events",
+   "sql": "CREATE INDEX push_events_collapse ON push_events(binding_id, collapse_key, revision)"
+  },
+  {
+   "type": "index",
+   "name": "push_events_due",
+   "tbl_name": "push_events",
+   "sql": "CREATE INDEX push_events_due ON push_events(state, next_attempt_at)"
+  },
+  {
+   "type": "index",
+   "name": "push_events_request",
+   "tbl_name": "push_events",
+   "sql": "CREATE INDEX push_events_request ON push_events(binding_id, request_id, revision)"
+  },
+  {
+   "type": "index",
+   "name": "push_events_request_id",
+   "tbl_name": "push_events",
+   "sql": "CREATE INDEX push_events_request_id ON push_events(request_id, revision)"
+  },
+  {
+   "type": "index",
+   "name": "room_request_owed_due",
+   "tbl_name": "room_request_owed",
+   "sql": "CREATE INDEX room_request_owed_due ON room_request_owed(kind, retry_at, request_id)"
+  },
+  {
+   "type": "index",
+   "name": "room_request_owed_request",
+   "tbl_name": "room_request_owed",
+   "sql": "CREATE INDEX room_request_owed_request ON room_request_owed(request_id)"
+  },
+  {
+   "type": "index",
+   "name": "room_request_retry_due",
+   "tbl_name": "room_request_retry",
+   "sql": "CREATE INDEX room_request_retry_due ON room_request_retry(retry_at, request_id)"
+  },
+  {
+   "type": "index",
+   "name": "room_requests_fanout_held",
+   "tbl_name": "room_requests",
+   "sql": "CREATE INDEX room_requests_fanout_held ON room_requests(created_at, id) WHERE verb='owner_send' AND state='done' AND outcome_note='restored_fanout' AND COALESCE(refusal,'')<>'owner_words_kept'"
+  },
+  {
+   "type": "index",
+   "name": "room_requests_group_state",
+   "tbl_name": "room_requests",
+   "sql": "CREATE INDEX room_requests_group_state ON room_requests(group_id, state)"
+  },
+  {
+   "type": "index",
+   "name": "room_requests_owner_words",
+   "tbl_name": "room_requests",
+   "sql": "CREATE INDEX room_requests_owner_words ON room_requests(finished_at, id) WHERE verb='owner_send' AND state IN ('cancelled','failed','expired','unknown') AND COALESCE(outcome_note,'')<>'cancelled by you' AND COALESCE(refusal,'')<>'owner_words_kept' AND payload_text IS NOT NULL AND payload_text<>''"
+  },
+  {
+   "type": "index",
+   "name": "room_requests_parent",
+   "tbl_name": "room_requests",
+   "sql": "CREATE INDEX room_requests_parent ON room_requests(parent_id) WHERE parent_id IS NOT NULL"
+  },
+  {
+   "type": "index",
+   "name": "room_requests_queued_deadline",
+   "tbl_name": "room_requests",
+   "sql": "CREATE INDEX room_requests_queued_deadline ON room_requests(deadline_at, id) WHERE state='queued' AND deadline_at IS NOT NULL"
+  },
+  {
+   "type": "index",
+   "name": "room_requests_queued_wake",
+   "tbl_name": "room_requests",
+   "sql": "CREATE INDEX room_requests_queued_wake ON room_requests(to_bot_id, json_extract(execution_audience,'$.team'), created_at, id) WHERE state='queued' AND verb='wake' AND refusal IS NOT 'retained_unresolved' AND to_bot_id IS NOT NULL AND json_extract(execution_audience,'$.team') IS NOT NULL"
+  },
+  {
+   "type": "index",
+   "name": "room_requests_root",
+   "tbl_name": "room_requests",
+   "sql": "CREATE INDEX room_requests_root ON room_requests(root_id)"
+  },
+  {
+   "type": "index",
+   "name": "room_requests_runnable",
+   "tbl_name": "room_requests",
+   "sql": "CREATE INDEX room_requests_runnable ON room_requests(created_at, id) WHERE state='queued' AND refusal IS NOT 'retained_unresolved'"
+  },
+  {
+   "type": "index",
+   "name": "room_requests_runnable_bot",
+   "tbl_name": "room_requests",
+   "sql": "CREATE INDEX room_requests_runnable_bot ON room_requests(to_bot_id, created_at, id) WHERE state='queued' AND refusal IS NOT 'retained_unresolved' AND to_bot_id IS NOT NULL"
+  },
+  {
+   "type": "index",
+   "name": "room_requests_runnable_group",
+   "tbl_name": "room_requests",
+   "sql": "CREATE INDEX room_requests_runnable_group ON room_requests(group_id, created_at, id) WHERE state='queued' AND refusal IS NOT 'retained_unresolved'"
+  },
+  {
+   "type": "index",
+   "name": "room_requests_runnable_team",
+   "tbl_name": "room_requests",
+   "sql": "CREATE INDEX room_requests_runnable_team ON room_requests(to_bot_id, json_extract(execution_audience,'$.team'), created_at, id) WHERE state='queued' AND refusal IS NOT 'retained_unresolved' AND to_bot_id IS NOT NULL AND json_extract(execution_audience,'$.team') IS NOT NULL"
+  },
+  {
+   "type": "index",
+   "name": "room_requests_shared_team",
+   "tbl_name": "room_requests",
+   "sql": "CREATE INDEX room_requests_shared_team ON room_requests(to_bot_id, json_extract(execution_audience,'$.team'), created_at, id) WHERE state='queued' AND refusal IS NOT 'retained_unresolved' AND shared_work=1"
+  },
+  {
+   "type": "index",
+   "name": "room_requests_shared_wake",
+   "tbl_name": "room_requests",
+   "sql": "CREATE INDEX room_requests_shared_wake ON room_requests(to_bot_id, json_extract(execution_audience,'$.team'), created_at, id) WHERE state='queued' AND verb='wake' AND refusal IS NOT 'retained_unresolved' AND shared_work=1"
+  },
+  {
+   "type": "index",
+   "name": "room_requests_team_dispatch",
+   "tbl_name": "room_requests",
+   "sql": "CREATE INDEX room_requests_team_dispatch ON room_requests(to_bot_id, json_extract(execution_audience,'$.team'), dispatched_at) WHERE dispatched_at IS NOT NULL"
+  },
+  {
+   "type": "index",
+   "name": "room_requests_to_bot",
+   "tbl_name": "room_requests",
+   "sql": "CREATE INDEX room_requests_to_bot ON room_requests(to_bot_id, state) WHERE to_bot_id IS NOT NULL"
+  },
+  {
+   "type": "index",
+   "name": "room_requests_work_item",
+   "tbl_name": "room_requests",
+   "sql": "CREATE INDEX room_requests_work_item ON room_requests(work_item_id) WHERE work_item_id IS NOT NULL"
+  },
+  {
+   "type": "index",
+   "name": "seg_attach",
+   "tbl_name": "seg",
+   "sql": "CREATE INDEX seg_attach ON seg(key, attach)"
+  },
+  {
+   "type": "index",
+   "name": "setup_marks_message_4",
+   "tbl_name": "setup_marks",
+   "sql": "CREATE INDEX setup_marks_message_4 ON setup_marks(thread_id,message_id)"
+  },
+  {
+   "type": "index",
+   "name": "setup_marks_solid_4",
+   "tbl_name": "setup_marks",
+   "sql": "CREATE INDEX setup_marks_solid_4 ON setup_marks(thread_id,kind,solid)"
+  },
+  {
+   "type": "index",
+   "name": "setup_marks_tail_4",
+   "tbl_name": "setup_marks",
+   "sql": "CREATE INDEX setup_marks_tail_4 ON setup_marks(thread_id,kind,at DESC,source_row DESC)"
+  },
+  {
+   "type": "index",
+   "name": "shared_ready_bot_wait",
+   "tbl_name": "shared_ready_teams",
+   "sql": "CREATE INDEX shared_ready_bot_wait ON shared_ready_teams(bot_id, seq, team) WHERE waiting=1 AND wait_on='bot'"
+  },
+  {
+   "type": "index",
+   "name": "shared_ready_live",
+   "tbl_name": "shared_ready_teams",
+   "sql": "CREATE INDEX shared_ready_live ON shared_ready_teams(bot_id) WHERE waiting=0"
+  },
+  {
+   "type": "index",
+   "name": "shared_ready_order",
+   "tbl_name": "shared_ready_teams",
+   "sql": "CREATE INDEX shared_ready_order ON shared_ready_teams(bot_id, waiting, seq, team)"
+  },
+  {
+   "type": "index",
+   "name": "shared_ready_seq",
+   "tbl_name": "shared_ready_teams",
+   "sql": "CREATE INDEX shared_ready_seq ON shared_ready_teams(bot_id, seq)"
+  },
+  {
+   "type": "index",
+   "name": "shared_ready_thread",
+   "tbl_name": "shared_ready_teams",
+   "sql": "CREATE INDEX shared_ready_thread ON shared_ready_teams(thread_id, waiting) WHERE thread_id IS NOT NULL"
+  },
+  {
+   "type": "index",
+   "name": "sqlite_autoindex_artifacts_1",
+   "tbl_name": "artifacts",
+   "sql": null
+  },
+  {
+   "type": "index",
+   "name": "sqlite_autoindex_artifacts_2",
+   "tbl_name": "artifacts",
+   "sql": null
+  },
+  {
+   "type": "index",
+   "name": "sqlite_autoindex_event_log_forgets_1",
+   "tbl_name": "event_log_forgets",
+   "sql": null
+  },
+  {
+   "type": "index",
+   "name": "sqlite_autoindex_held_notice_lines_1",
+   "tbl_name": "held_notice_lines",
+   "sql": null
+  },
+  {
+   "type": "index",
+   "name": "sqlite_autoindex_image_operations_1",
+   "tbl_name": "image_operations",
+   "sql": null
+  },
+  {
+   "type": "index",
+   "name": "sqlite_autoindex_image_operations_2",
+   "tbl_name": "image_operations",
+   "sql": null
+  },
+  {
+   "type": "index",
+   "name": "sqlite_autoindex_inbox_item_state_1",
+   "tbl_name": "inbox_item_state",
+   "sql": null
+  },
+  {
+   "type": "index",
+   "name": "sqlite_autoindex_inbox_items_1",
+   "tbl_name": "inbox_items",
+   "sql": null
+  },
+  {
+   "type": "index",
+   "name": "sqlite_autoindex_inbox_raw_1",
+   "tbl_name": "inbox_raw",
+   "sql": null
+  },
+  {
+   "type": "index",
+   "name": "sqlite_autoindex_memory_backfill_cursors_1",
+   "tbl_name": "memory_backfill_cursors",
+   "sql": null
+  },
+  {
+   "type": "index",
+   "name": "sqlite_autoindex_memory_derivations_1",
+   "tbl_name": "memory_derivations",
+   "sql": null
+  },
+  {
+   "type": "index",
+   "name": "sqlite_autoindex_memory_disclosure_outputs_1",
+   "tbl_name": "memory_disclosure_outputs",
+   "sql": null
+  },
+  {
+   "type": "index",
+   "name": "sqlite_autoindex_memory_disclosures_1",
+   "tbl_name": "memory_disclosures",
+   "sql": null
+  },
+  {
+   "type": "index",
+   "name": "sqlite_autoindex_memory_episodes_1",
+   "tbl_name": "memory_episodes",
+   "sql": null
+  },
+  {
+   "type": "index",
+   "name": "sqlite_autoindex_memory_evidence_1",
+   "tbl_name": "memory_evidence",
+   "sql": null
+  },
+  {
+   "type": "index",
+   "name": "sqlite_autoindex_memory_feedback_1",
+   "tbl_name": "memory_feedback",
+   "sql": null
+  },
+  {
+   "type": "index",
+   "name": "sqlite_autoindex_memory_jobs_1",
+   "tbl_name": "memory_jobs",
+   "sql": null
+  },
+  {
+   "type": "index",
+   "name": "sqlite_autoindex_memory_jobs_2",
+   "tbl_name": "memory_jobs",
+   "sql": null
+  },
+  {
+   "type": "index",
+   "name": "sqlite_autoindex_memory_learning_events_1",
+   "tbl_name": "memory_learning_events",
+   "sql": null
+  },
+  {
+   "type": "index",
+   "name": "sqlite_autoindex_memory_learning_runs_1",
+   "tbl_name": "memory_learning_runs",
+   "sql": null
+  },
+  {
+   "type": "index",
+   "name": "sqlite_autoindex_memory_lessons_1",
+   "tbl_name": "memory_lessons",
+   "sql": null
+  },
+  {
+   "type": "index",
+   "name": "sqlite_autoindex_memory_outcomes_1",
+   "tbl_name": "memory_outcomes",
+   "sql": null
+  },
+  {
+   "type": "index",
+   "name": "sqlite_autoindex_memory_outcomes_2",
+   "tbl_name": "memory_outcomes",
+   "sql": null
+  },
+  {
+   "type": "index",
+   "name": "sqlite_autoindex_memory_output_roots_1",
+   "tbl_name": "memory_output_roots",
+   "sql": null
+  },
+  {
+   "type": "index",
+   "name": "sqlite_autoindex_memory_projection_receipts_1",
+   "tbl_name": "memory_projection_receipts",
+   "sql": null
+  },
+  {
+   "type": "index",
+   "name": "sqlite_autoindex_memory_record_details_1",
+   "tbl_name": "memory_record_details",
+   "sql": null
+  },
+  {
+   "type": "index",
+   "name": "sqlite_autoindex_memory_records_1",
+   "tbl_name": "memory_records",
+   "sql": null
+  },
+  {
+   "type": "index",
+   "name": "sqlite_autoindex_memory_root_sets_1",
+   "tbl_name": "memory_root_sets",
+   "sql": null
+  },
+  {
+   "type": "index",
+   "name": "sqlite_autoindex_memory_scope_bindings_1",
+   "tbl_name": "memory_scope_bindings",
+   "sql": null
+  },
+  {
+   "type": "index",
+   "name": "sqlite_autoindex_memory_scope_set_keys_2",
+   "tbl_name": "memory_scope_set_keys",
+   "sql": null
+  },
+  {
+   "type": "index",
+   "name": "sqlite_autoindex_memory_scopes_1",
+   "tbl_name": "memory_scopes",
+   "sql": null
+  },
+  {
+   "type": "index",
+   "name": "sqlite_autoindex_memory_session_no_1",
+   "tbl_name": "memory_session_no",
+   "sql": null
+  },
+  {
+   "type": "index",
+   "name": "sqlite_autoindex_memory_session_roots_1",
+   "tbl_name": "memory_session_roots",
+   "sql": null
+  },
+  {
+   "type": "index",
+   "name": "sqlite_autoindex_memory_source_versions_1",
+   "tbl_name": "memory_source_versions",
+   "sql": null
+  },
+  {
+   "type": "index",
+   "name": "sqlite_autoindex_memory_sources_1",
+   "tbl_name": "memory_sources",
+   "sql": null
+  },
+  {
+   "type": "index",
+   "name": "sqlite_autoindex_memory_thread_no_2",
+   "tbl_name": "memory_thread_no",
+   "sql": null
+  },
+  {
+   "type": "index",
+   "name": "sqlite_autoindex_memory_tombstones_1",
+   "tbl_name": "memory_tombstones",
+   "sql": null
+  },
+  {
+   "type": "index",
+   "name": "sqlite_autoindex_memory_tombstones_2",
+   "tbl_name": "memory_tombstones",
+   "sql": null
+  },
+  {
+   "type": "index",
+   "name": "sqlite_autoindex_messages_1",
+   "tbl_name": "messages",
+   "sql": null
+  },
+  {
+   "type": "index",
+   "name": "sqlite_autoindex_output_publications_1",
+   "tbl_name": "output_publications",
+   "sql": null
+  },
+  {
+   "type": "index",
+   "name": "sqlite_autoindex_output_publications_2",
+   "tbl_name": "output_publications",
+   "sql": null
+  },
+  {
+   "type": "index",
+   "name": "sqlite_autoindex_owner_deleted_threads_1",
+   "tbl_name": "owner_deleted_threads",
+   "sql": null
+  },
+  {
+   "type": "index",
+   "name": "sqlite_autoindex_owner_sends_1",
+   "tbl_name": "owner_sends",
+   "sql": null
+  },
+  {
+   "type": "index",
+   "name": "sqlite_autoindex_pending_delegations_1",
+   "tbl_name": "pending_delegations",
+   "sql": null
+  },
+  {
+   "type": "index",
+   "name": "sqlite_autoindex_project_activity_1",
+   "tbl_name": "project_activity",
+   "sql": null
+  },
+  {
+   "type": "index",
+   "name": "sqlite_autoindex_project_board_columns_1",
+   "tbl_name": "project_board_columns",
+   "sql": null
+  },
+  {
+   "type": "index",
+   "name": "sqlite_autoindex_project_briefs_1",
+   "tbl_name": "project_briefs",
+   "sql": null
+  },
+  {
+   "type": "index",
+   "name": "sqlite_autoindex_project_budgets_1",
+   "tbl_name": "project_budgets",
+   "sql": null
+  },
+  {
+   "type": "index",
+   "name": "sqlite_autoindex_project_card_delivery_owed_1",
+   "tbl_name": "project_card_delivery_owed",
+   "sql": null
+  },
+  {
+   "type": "index",
+   "name": "sqlite_autoindex_project_goals_1",
+   "tbl_name": "project_goals",
+   "sql": null
+  },
+  {
+   "type": "index",
+   "name": "sqlite_autoindex_project_member_state_1",
+   "tbl_name": "project_member_state",
+   "sql": null
+  },
+  {
+   "type": "index",
+   "name": "sqlite_autoindex_project_settings_1",
+   "tbl_name": "project_settings",
+   "sql": null
+  },
+  {
+   "type": "index",
+   "name": "sqlite_autoindex_project_summaries_1",
+   "tbl_name": "project_summaries",
+   "sql": null
+  },
+  {
+   "type": "index",
+   "name": "sqlite_autoindex_project_work_items_1",
+   "tbl_name": "project_work_items",
+   "sql": null
+  },
+  {
+   "type": "index",
+   "name": "sqlite_autoindex_project_work_items_2",
+   "tbl_name": "project_work_items",
+   "sql": null
+  },
+  {
+   "type": "index",
+   "name": "sqlite_autoindex_push_bindings_1",
+   "tbl_name": "push_bindings",
+   "sql": null
+  },
+  {
+   "type": "index",
+   "name": "sqlite_autoindex_push_bindings_2",
+   "tbl_name": "push_bindings",
+   "sql": null
+  },
+  {
+   "type": "index",
+   "name": "sqlite_autoindex_push_decisions_1",
+   "tbl_name": "push_decisions",
+   "sql": null
+  },
+  {
+   "type": "index",
+   "name": "sqlite_autoindex_push_events_1",
+   "tbl_name": "push_events",
+   "sql": null
+  },
+  {
+   "type": "index",
+   "name": "sqlite_autoindex_push_relay_removals_1",
+   "tbl_name": "push_relay_removals",
+   "sql": null
+  },
+  {
+   "type": "index",
+   "name": "sqlite_autoindex_push_risk_1",
+   "tbl_name": "push_risk",
+   "sql": null
+  },
+  {
+   "type": "index",
+   "name": "sqlite_autoindex_restore_holds_1",
+   "tbl_name": "restore_holds",
+   "sql": null
+  },
+  {
+   "type": "index",
+   "name": "sqlite_autoindex_room_request_backfills_1",
+   "tbl_name": "room_request_backfills",
+   "sql": null
+  },
+  {
+   "type": "index",
+   "name": "sqlite_autoindex_room_request_status_1",
+   "tbl_name": "room_request_status",
+   "sql": null
+  },
+  {
+   "type": "index",
+   "name": "sqlite_autoindex_room_requests_1",
+   "tbl_name": "room_requests",
+   "sql": null
+  },
+  {
+   "type": "index",
+   "name": "sqlite_autoindex_room_requests_2",
+   "tbl_name": "room_requests",
+   "sql": null
+  },
+  {
+   "type": "index",
+   "name": "sqlite_autoindex_shared_drain_sweep_1",
+   "tbl_name": "shared_drain_sweep",
+   "sql": null
+  },
+  {
+   "type": "index",
+   "name": "sqlite_autoindex_shared_request_events_1",
+   "tbl_name": "shared_request_events",
+   "sql": null
+  },
+  {
+   "type": "index",
+   "name": "sqlite_autoindex_shared_request_provenance_1",
+   "tbl_name": "shared_request_provenance",
+   "sql": null
+  },
+  {
+   "type": "index",
+   "name": "sqlite_autoindex_team_identities_1",
+   "tbl_name": "team_identities",
+   "sql": null
+  },
+  {
+   "type": "index",
+   "name": "sqlite_autoindex_thread_key_1",
+   "tbl_name": "thread_key",
+   "sql": null
+  },
+  {
+   "type": "index",
+   "name": "sqlite_autoindex_thread_snooze_1",
+   "tbl_name": "thread_snooze",
+   "sql": null
+  },
+  {
+   "type": "index",
+   "name": "sqlite_autoindex_thread_state_1",
+   "tbl_name": "thread_state",
+   "sql": null
+  },
+  {
+   "type": "index",
+   "name": "sqlite_autoindex_usage_ledger_1",
+   "tbl_name": "usage_ledger",
+   "sql": null
+  },
+  {
+   "type": "index",
+   "name": "team_identities_live_label",
+   "tbl_name": "team_identities",
+   "sql": "CREATE UNIQUE INDEX team_identities_live_label ON team_identities(label) WHERE retired_at IS NULL"
+  },
+  {
+   "type": "index",
+   "name": "turn_source_copies_copy",
+   "tbl_name": "turn_source_copies",
+   "sql": "CREATE INDEX turn_source_copies_copy ON turn_source_copies(thread_id, id)"
+  },
+  {
+   "type": "index",
+   "name": "turn_source_holds_thread",
+   "tbl_name": "turn_source_holds",
+   "sql": "CREATE INDEX turn_source_holds_thread ON turn_source_holds(thread_id, seq, position)"
+  },
+  {
+   "type": "index",
+   "name": "usage_ledger_goal",
+   "tbl_name": "usage_ledger",
+   "sql": "CREATE INDEX usage_ledger_goal ON usage_ledger(goal_id) WHERE goal_id IS NOT NULL"
+  },
+  {
+   "type": "index",
+   "name": "usage_ledger_group_at",
+   "tbl_name": "usage_ledger",
+   "sql": "CREATE INDEX usage_ledger_group_at ON usage_ledger(group_id, at)"
+  },
+  {
+   "type": "index",
+   "name": "usage_ledger_root",
+   "tbl_name": "usage_ledger",
+   "sql": "CREATE INDEX usage_ledger_root ON usage_ledger(root_id) WHERE root_id IS NOT NULL"
+  },
+  {
+   "type": "table",
+   "name": "app_write_revision",
+   "tbl_name": "app_write_revision",
+   "sql": "CREATE TABLE app_write_revision(\n  id INTEGER PRIMARY KEY CHECK(id=1), epoch TEXT NOT NULL, n INTEGER NOT NULL)"
+  },
+  {
+   "type": "table",
+   "name": "artifacts",
+   "tbl_name": "artifacts",
+   "sql": "CREATE TABLE artifacts (\n    id TEXT PRIMARY KEY, name TEXT NOT NULL, kind TEXT NOT NULL, mime TEXT NOT NULL, bytes INTEGER NOT NULL,\n    sha256 TEXT NOT NULL, extension TEXT NOT NULL, created_at INTEGER NOT NULL,\n    bot_id TEXT NOT NULL, thread_id TEXT NOT NULL, run_id TEXT NOT NULL, source_root TEXT NOT NULL,\n    relative_path TEXT NOT NULL, source_fingerprint TEXT NOT NULL, producer TEXT, publication_id TEXT,\n    UNIQUE(bot_id,thread_id,run_id,source_root,relative_path,sha256))"
+  },
+  {
+   "type": "table",
+   "name": "attachment_name",
+   "tbl_name": "attachment_name",
+   "sql": "CREATE TABLE attachment_name(name TEXT NOT NULL, thread_id TEXT NOT NULL, id TEXT NOT NULL, PRIMARY KEY(name, thread_id, id)) WITHOUT ROWID"
+  },
+  {
+   "type": "table",
+   "name": "branch_change",
+   "tbl_name": "branch_change",
+   "sql": "CREATE TABLE branch_change(thread_id TEXT PRIMARY KEY, from_id TEXT, to_id TEXT NOT NULL, leave_at TEXT, join_at TEXT, leave_done INTEGER NOT NULL DEFAULT 0, join_done INTEGER NOT NULL DEFAULT 0, all_cursor TEXT) WITHOUT ROWID"
+  },
+  {
+   "type": "table",
+   "name": "browser_check_pending",
+   "tbl_name": "browser_check_pending",
+   "sql": "CREATE TABLE browser_check_pending(thread_id TEXT NOT NULL, id TEXT NOT NULL, PRIMARY KEY(thread_id, id)) WITHOUT ROWID"
+  },
+  {
+   "type": "table",
+   "name": "direct_turn_inflight",
+   "tbl_name": "direct_turn_inflight",
+   "sql": "CREATE TABLE direct_turn_inflight(\n  thread_id TEXT NOT NULL, turn_id TEXT NOT NULL, started_at INTEGER NOT NULL, PRIMARY KEY(thread_id,turn_id)) WITHOUT ROWID"
+  },
+  {
+   "type": "table",
+   "name": "event_log_forgets",
+   "tbl_name": "event_log_forgets",
+   "sql": "CREATE TABLE event_log_forgets(thread_id TEXT NOT NULL, message_id TEXT NOT NULL, at INTEGER NOT NULL, PRIMARY KEY(thread_id, message_id))"
+  },
+  {
+   "type": "table",
+   "name": "fill_pending",
+   "tbl_name": "fill_pending",
+   "sql": "CREATE TABLE fill_pending(key INTEGER NOT NULL, parent INTEGER NOT NULL, mrow INTEGER NOT NULL, PRIMARY KEY(key, parent, mrow)) WITHOUT ROWID"
+  },
+  {
+   "type": "table",
+   "name": "held_notice_lines",
+   "tbl_name": "held_notice_lines",
+   "sql": "CREATE TABLE held_notice_lines (message_id TEXT PRIMARY KEY NOT NULL, delegation_id TEXT NOT NULL, source_thread_id TEXT NOT NULL)"
+  },
+  {
+   "type": "table",
+   "name": "image_operations",
+   "tbl_name": "image_operations",
+   "sql": "CREATE TABLE image_operations(id TEXT PRIMARY KEY, generation TEXT NOT NULL UNIQUE, request_hash TEXT NOT NULL, state TEXT NOT NULL, result TEXT, updated_at INTEGER NOT NULL)"
+  },
+  {
+   "type": "table",
+   "name": "inbox_counts",
+   "tbl_name": "inbox_counts",
+   "sql": "CREATE TABLE inbox_counts(thread_id TEXT PRIMARY KEY, v_all INTEGER NOT NULL DEFAULT 0, v_approvals INTEGER NOT NULL DEFAULT 0, v_decisions INTEGER NOT NULL DEFAULT 0, v_questions INTEGER NOT NULL DEFAULT 0, v_connections INTEGER NOT NULL DEFAULT 0, v_routines INTEGER NOT NULL DEFAULT 0, v_to_read INTEGER NOT NULL DEFAULT 0, v_results INTEGER NOT NULL DEFAULT 0, l_all INTEGER NOT NULL DEFAULT 0, l_approvals INTEGER NOT NULL DEFAULT 0, l_decisions INTEGER NOT NULL DEFAULT 0, l_questions INTEGER NOT NULL DEFAULT 0, l_connections INTEGER NOT NULL DEFAULT 0, l_routines INTEGER NOT NULL DEFAULT 0, l_to_read INTEGER NOT NULL DEFAULT 0, l_results INTEGER NOT NULL DEFAULT 0, o_approvals INTEGER NOT NULL DEFAULT 0, o_questions INTEGER NOT NULL DEFAULT 0, o_connections INTEGER NOT NULL DEFAULT 0, o_decisions INTEGER NOT NULL DEFAULT 0, o_unread INTEGER NOT NULL DEFAULT 0, owed_open INTEGER NOT NULL DEFAULT 0) WITHOUT ROWID"
+  },
+  {
+   "type": "table",
+   "name": "inbox_fill_deferred",
+   "tbl_name": "inbox_fill_deferred",
+   "sql": "CREATE TABLE inbox_fill_deferred(source_row INTEGER PRIMARY KEY, thread_id TEXT NOT NULL)"
+  },
+  {
+   "type": "table",
+   "name": "inbox_item_state",
+   "tbl_name": "inbox_item_state",
+   "sql": "CREATE TABLE inbox_item_state (\n    source_key TEXT PRIMARY KEY, read_version TEXT, read_at INTEGER, snoozed_until INTEGER, cleared_at INTEGER)"
+  },
+  {
+   "type": "table",
+   "name": "inbox_items",
+   "tbl_name": "inbox_items",
+   "sql": "CREATE TABLE inbox_items(source_key TEXT PRIMARY KEY, thread_id TEXT NOT NULL, message_id TEXT NOT NULL, source_row INTEGER NOT NULL,\n    at INTEGER NOT NULL, kind TEXT NOT NULL, expired INTEGER NOT NULL, run_id, routine_id, status TEXT, summary TEXT, title TEXT, kind_segment TEXT NOT NULL,\n    copies INTEGER NOT NULL, decision INTEGER NOT NULL, to_read INTEGER NOT NULL, segment TEXT NOT NULL, owed_or_over INTEGER NOT NULL,\n    read_version TEXT, snoozed_until INTEGER, cleared_at INTEGER, live INTEGER NOT NULL)"
+  },
+  {
+   "type": "table",
+   "name": "inbox_keys",
+   "tbl_name": "inbox_keys",
+   "sql": "CREATE TABLE inbox_keys(source_key TEXT PRIMARY KEY, copies INTEGER NOT NULL) WITHOUT ROWID"
+  },
+  {
+   "type": "table",
+   "name": "inbox_projection_state",
+   "tbl_name": "inbox_projection_state",
+   "sql": "CREATE TABLE inbox_projection_state(name TEXT PRIMARY KEY, done INTEGER NOT NULL, cursor INTEGER NOT NULL) WITHOUT ROWID"
+  },
+  {
+   "type": "table",
+   "name": "inbox_raw",
+   "tbl_name": "inbox_raw",
+   "sql": "CREATE TABLE inbox_raw(thread_id TEXT NOT NULL, message_id TEXT NOT NULL, source_row INTEGER NOT NULL, at INTEGER NOT NULL,\n    kind TEXT NOT NULL, expired INTEGER NOT NULL, run_id, routine_id, source_key TEXT NOT NULL, status TEXT, summary TEXT, title TEXT,\n    kind_segment TEXT NOT NULL, terminal INTEGER NOT NULL, decision INTEGER NOT NULL, PRIMARY KEY(thread_id,message_id))"
+  },
+  {
+   "type": "table",
+   "name": "keyed_card",
+   "tbl_name": "keyed_card",
+   "sql": "CREATE TABLE keyed_card(thread_id TEXT NOT NULL, family TEXT NOT NULL, key TEXT NOT NULL, id TEXT NOT NULL, PRIMARY KEY(thread_id, family, key, id)) WITHOUT ROWID"
+  },
+  {
+   "type": "table",
+   "name": "line",
+   "tbl_name": "line",
+   "sql": "CREATE TABLE line(key INTEGER NOT NULL, cls INTEGER NOT NULL, mrow INTEGER NOT NULL, PRIMARY KEY(key, cls, mrow)) WITHOUT ROWID"
+  },
+  {
+   "type": "table",
+   "name": "memory_backfill_cursors",
+   "tbl_name": "memory_backfill_cursors",
+   "sql": "CREATE TABLE memory_backfill_cursors (\n bot_id TEXT NOT NULL, thread_id TEXT NOT NULL, cursor_message_id TEXT, snapshot_message_id TEXT,\n pages INTEGER NOT NULL DEFAULT 0 CHECK(pages>=0), last_examined_at INTEGER,\n PRIMARY KEY(bot_id,thread_id))"
+  },
+  {
+   "type": "table",
+   "name": "memory_deny",
+   "tbl_name": "memory_deny",
+   "sql": "CREATE TABLE memory_deny (\n kind TEXT NOT NULL CHECK(kind IN ('thread','scope')), id TEXT NOT NULL, epoch INTEGER NOT NULL, created_at INTEGER NOT NULL,\n PRIMARY KEY(kind,id)) WITHOUT ROWID"
+  },
+  {
+   "type": "table",
+   "name": "memory_deny_line",
+   "tbl_name": "memory_deny_line",
+   "sql": "CREATE TABLE memory_deny_line (thread_id TEXT NOT NULL, lsn INTEGER NOT NULL, revoke_id INTEGER NOT NULL, mark_lsn INTEGER NOT NULL,\n reason TEXT NOT NULL, PRIMARY KEY(thread_id,lsn,revoke_id)) WITHOUT ROWID"
+  },
+  {
+   "type": "table",
+   "name": "memory_deny_memory",
+   "tbl_name": "memory_deny_memory",
+   "sql": "CREATE TABLE memory_deny_memory (kind TEXT NOT NULL CHECK(kind IN ('record','source','lesson','claim','note','card','summary','skill','file')), id TEXT NOT NULL,\n version INTEGER NOT NULL DEFAULT 0 CHECK(version>=0), revoke_id INTEGER NOT NULL, PRIMARY KEY(kind,id,version,revoke_id)) WITHOUT ROWID"
+  },
+  {
+   "type": "table",
+   "name": "memory_deny_pending",
+   "tbl_name": "memory_deny_pending",
+   "sql": "CREATE TABLE memory_deny_pending (thread_id TEXT NOT NULL, since_lsn INTEGER NOT NULL, revoke_id INTEGER NOT NULL,\n PRIMARY KEY(thread_id,since_lsn,revoke_id)) WITHOUT ROWID"
+  },
+  {
+   "type": "table",
+   "name": "memory_deny_pending_scope",
+   "tbl_name": "memory_deny_pending_scope",
+   "sql": "CREATE TABLE memory_deny_pending_scope (scope_id TEXT NOT NULL, since_lsn INTEGER NOT NULL, revoke_id INTEGER NOT NULL,\n PRIMARY KEY(scope_id,since_lsn,revoke_id)) WITHOUT ROWID"
+  },
+  {
+   "type": "table",
+   "name": "memory_deny_range",
+   "tbl_name": "memory_deny_range",
+   "sql": "CREATE TABLE memory_deny_range (thread_id TEXT NOT NULL, from_lsn INTEGER NOT NULL, until_turn_lsn INTEGER NOT NULL,\n revoke_id INTEGER NOT NULL, reason TEXT NOT NULL, PRIMARY KEY(thread_id,from_lsn,revoke_id)) WITHOUT ROWID"
+  },
+  {
+   "type": "table",
+   "name": "memory_deny_session",
+   "tbl_name": "memory_deny_session",
+   "sql": "CREATE TABLE memory_deny_session (thread_id TEXT NOT NULL, driver_instance TEXT NOT NULL, native_session TEXT NOT NULL,\n revoke_id INTEGER NOT NULL, PRIMARY KEY(thread_id,driver_instance,native_session,revoke_id)) WITHOUT ROWID"
+  },
+  {
+   "type": "table",
+   "name": "memory_derivations",
+   "tbl_name": "memory_derivations",
+   "sql": "CREATE TABLE memory_derivations (\n parent_id TEXT NOT NULL, parent_version INTEGER NOT NULL, child_id TEXT NOT NULL, child_version INTEGER NOT NULL,\n PRIMARY KEY(parent_id,parent_version,child_id,child_version),\n FOREIGN KEY(parent_id,parent_version) REFERENCES memory_records(id,version),\n FOREIGN KEY(child_id,child_version) REFERENCES memory_records(id,version))"
+  },
+  {
+   "type": "table",
+   "name": "memory_disclosure_outputs",
+   "tbl_name": "memory_disclosure_outputs",
+   "sql": "CREATE TABLE memory_disclosure_outputs (\n bundle_id TEXT NOT NULL, thread_id TEXT NOT NULL, message_id TEXT NOT NULL,\n PRIMARY KEY(bundle_id,message_id))"
+  },
+  {
+   "type": "table",
+   "name": "memory_disclosure_refs",
+   "tbl_name": "memory_disclosure_refs",
+   "sql": "CREATE TABLE memory_disclosure_refs (\n bundle_id TEXT NOT NULL, kind TEXT NOT NULL CHECK(kind IN ('record','source')), ref_id NOT NULL, ref_version)"
+  },
+  {
+   "type": "table",
+   "name": "memory_disclosures",
+   "tbl_name": "memory_disclosures",
+   "sql": "CREATE TABLE memory_disclosures (\n bundle_id TEXT PRIMARY KEY NOT NULL, thread_id TEXT NOT NULL, driver_instance TEXT NOT NULL, native_session TEXT,\n record_versions TEXT NOT NULL CHECK(json_valid(record_versions)), source_versions TEXT NOT NULL CHECK(json_valid(source_versions)),\n output_message_ids TEXT NOT NULL DEFAULT '[]' CHECK(json_valid(output_message_ids)),\n policy_revision INTEGER NOT NULL, deletion_epoch INTEGER NOT NULL, token_count INTEGER NOT NULL CHECK(token_count>=0),\n state TEXT NOT NULL CHECK(state IN ('prepared','delivered','revoked')), created_at INTEGER NOT NULL)"
+  },
+  {
+   "type": "table",
+   "name": "memory_episodes",
+   "tbl_name": "memory_episodes",
+   "sql": "CREATE TABLE memory_episodes (\n id TEXT PRIMARY KEY NOT NULL, bot_id TEXT NOT NULL, thread_id TEXT, start_message_id TEXT, end_message_id TEXT,\n kind TEXT, leakage_group TEXT, person_id TEXT, week TEXT,\n classification TEXT NOT NULL CHECK(classification IN ('owner','prospect')),\n eligible INTEGER NOT NULL DEFAULT 0 CHECK(eligible IN (0,1)), excluded_at INTEGER,\n source_revisions TEXT CHECK(source_revisions IS NULL OR json_valid(source_revisions)))"
+  },
+  {
+   "type": "table",
+   "name": "memory_evidence",
+   "tbl_name": "memory_evidence",
+   "sql": "CREATE TABLE memory_evidence (\n record_id TEXT NOT NULL, record_version INTEGER NOT NULL, source_id TEXT NOT NULL, source_revision INTEGER NOT NULL,\n start_byte INTEGER NOT NULL CHECK(start_byte>=0), end_byte INTEGER NOT NULL CHECK(end_byte>=start_byte),\n PRIMARY KEY(record_id,record_version,source_id,source_revision,start_byte),\n FOREIGN KEY(record_id,record_version) REFERENCES memory_records(id,version),\n FOREIGN KEY(source_id,source_revision) REFERENCES memory_source_versions(source_id,revision))"
+  },
+  {
+   "type": "table",
+   "name": "memory_evidence_by_source",
+   "tbl_name": "memory_evidence_by_source",
+   "sql": "CREATE TABLE memory_evidence_by_source (\n source_id TEXT NOT NULL, source_revision INTEGER NOT NULL, record_id TEXT NOT NULL, record_version INTEGER NOT NULL, start_byte INTEGER NOT NULL,\n PRIMARY KEY(source_id,source_revision,record_id,record_version,start_byte)) WITHOUT ROWID"
+  },
+  {
+   "type": "table",
+   "name": "memory_feedback",
+   "tbl_name": "memory_feedback",
+   "sql": "CREATE TABLE memory_feedback (\n id TEXT PRIMARY KEY NOT NULL, bot_id TEXT NOT NULL, thread_id TEXT, message_id TEXT, target_message_id TEXT,\n target_turn_id TEXT, target_action TEXT,\n polarity TEXT NOT NULL CHECK(polarity IN ('+','-')), strength INTEGER NOT NULL CHECK(strength IN (1,2,3)),\n correction TEXT, confidence REAL,\n state TEXT NOT NULL CHECK(state IN ('detected','lesson','ignored','unsure','expired')),\n scope TEXT NOT NULL CHECK(scope IN ('chat','bot')),\n acknowledged_at INTEGER, created_at INTEGER NOT NULL CHECK(created_at>=0),\n source_on_path_rev TEXT)"
+  },
+  {
+   "type": "table",
+   "name": "memory_jobs",
+   "tbl_name": "memory_jobs",
+   "sql": "CREATE TABLE memory_jobs (\n id TEXT PRIMARY KEY NOT NULL, source_id TEXT NOT NULL, source_revision INTEGER NOT NULL, stage TEXT NOT NULL,\n stage_version TEXT NOT NULL, status TEXT NOT NULL CHECK(status IN ('pending','leased','partial','deferred','complete','failed','cancelled')),\n cursor INTEGER NOT NULL DEFAULT 0 CHECK(cursor>=0), coverage TEXT NOT NULL DEFAULT '[]' CHECK(json_valid(coverage)),\n retry_at INTEGER NOT NULL DEFAULT 0, attempts INTEGER NOT NULL DEFAULT 0 CHECK(attempts>=0),\n lease_owner TEXT, lease_generation INTEGER NOT NULL DEFAULT 0 CHECK(lease_generation>=0), lease_until INTEGER NOT NULL DEFAULT 0,\n policy_revision INTEGER NOT NULL, deletion_epoch INTEGER NOT NULL, error TEXT,\n FOREIGN KEY(source_id,source_revision) REFERENCES memory_source_versions(source_id,revision),\n UNIQUE(source_id,source_revision,stage,stage_version))"
+  },
+  {
+   "type": "table",
+   "name": "memory_late_build",
+   "tbl_name": "memory_late_build",
+   "sql": "CREATE TABLE memory_late_build (\n name TEXT NOT NULL PRIMARY KEY CHECK(name IN ('evidence','origins')), ready INTEGER NOT NULL CHECK(ready IN (0,1)), cursor TEXT) WITHOUT ROWID"
+  },
+  {
+   "type": "table",
+   "name": "memory_learning_config",
+   "tbl_name": "memory_learning_config",
+   "sql": "CREATE TABLE memory_learning_config (\n id INTEGER PRIMARY KEY CHECK(id=1), revision INTEGER NOT NULL CHECK(revision>=0),\n settings TEXT NOT NULL CHECK(json_valid(settings) AND json_type(settings)='object'))"
+  },
+  {
+   "type": "table",
+   "name": "memory_learning_events",
+   "tbl_name": "memory_learning_events",
+   "sql": "CREATE TABLE memory_learning_events (\n id TEXT PRIMARY KEY NOT NULL, run_id TEXT, bot_id TEXT, scope_id TEXT NOT NULL,\n kind TEXT NOT NULL CHECK(kind IN ('activated','superseded','merged','retired-stale','retired-time','archived-contradicted','procedure-proposed','procedure-published','pruned-batch','connection-defaulted','settings-migrated','owner-undo','owner-keep','feedback-detected','outcome-marked','lesson-learned','lesson-edited','lesson-undone','guide-suggested','guide-applied','guide-undone','run-completed')),\n record_id TEXT, record_version INTEGER, prior_id TEXT, prior_version INTEGER,\n source_id TEXT, source_revision INTEGER,\n procedure_review_id TEXT, receipt_id TEXT, count INTEGER CHECK(count IS NULL OR count>=0),\n detail TEXT NOT NULL DEFAULT '{}' CHECK(json_valid(detail) AND json_type(detail)='object'),\n created_at INTEGER NOT NULL CHECK(created_at>=0), undone_at INTEGER, kept_at INTEGER, digest_day TEXT)"
+  },
+  {
+   "type": "table",
+   "name": "memory_learning_runs",
+   "tbl_name": "memory_learning_runs",
+   "sql": "CREATE TABLE memory_learning_runs (\n id TEXT PRIMARY KEY NOT NULL, bot_id TEXT NOT NULL, target TEXT CHECK(target IS NULL OR json_valid(target)),\n state TEXT NOT NULL, corpus_digest TEXT, holdout_digest TEXT,\n holdout_groups TEXT CHECK(holdout_groups IS NULL OR json_valid(holdout_groups)),\n definition_revision INTEGER, rubric_version TEXT, connection TEXT,\n usage TEXT CHECK(usage IS NULL OR json_valid(usage)), receipt_id TEXT, reason TEXT,\n created_at INTEGER NOT NULL CHECK(created_at>=0), finished_at INTEGER)"
+  },
+  {
+   "type": "table",
+   "name": "memory_lessons",
+   "tbl_name": "memory_lessons",
+   "sql": "CREATE TABLE memory_lessons (\n id TEXT NOT NULL, version INTEGER NOT NULL CHECK(version>=1), parent_id TEXT, bot_id TEXT NOT NULL,\n scope TEXT NOT NULL CHECK(scope IN ('thread','owner','bot','bots','team')),\n recipients TEXT CHECK(recipients IS NULL OR json_valid(recipients)),\n kind TEXT NOT NULL CHECK(kind IN ('style','note')),\n text TEXT NOT NULL CHECK(length(text)<=280),\n origin TEXT NOT NULL CHECK(origin IN ('feedback','edit','mark','typed','suggested')),\n state TEXT NOT NULL CHECK(state IN ('active','suggested','undone','retired','unsupported','stale')),\n evidence TEXT CHECK(evidence IS NULL OR json_valid(evidence)),\n prospect_derived INTEGER NOT NULL DEFAULT 0 CHECK(prospect_derived IN (0,1)), learning_event_id TEXT,\n created_at INTEGER NOT NULL CHECK(created_at>=0), decided_at INTEGER,\n spec TEXT CHECK(spec IS NULL OR json_valid(spec)),\n where_ TEXT CHECK(where_ IS NULL OR where_ IN ('everywhere','with-me','with-others')),\n thread_id TEXT, source_message_id TEXT, target_message_id TEXT,\n CHECK((kind='style')=(spec IS NOT NULL)),\n PRIMARY KEY(id,version))"
+  },
+  {
+   "type": "table",
+   "name": "memory_line_capture",
+   "tbl_name": "memory_line_capture",
+   "sql": "CREATE TABLE memory_line_capture (thread_no INTEGER NOT NULL, lsn INTEGER NOT NULL, source_id TEXT NOT NULL,\n PRIMARY KEY(thread_no,lsn,source_id)) WITHOUT ROWID"
+  },
+  {
+   "type": "table",
+   "name": "memory_line_lineage",
+   "tbl_name": "memory_line_lineage",
+   "sql": "CREATE TABLE memory_line_lineage (\n thread_no INTEGER NOT NULL, lsn INTEGER NOT NULL, message_id TEXT NOT NULL, turn_lsn INTEGER, mem_lsn INTEGER, footprint INTEGER,\n PRIMARY KEY(thread_no,lsn)) WITHOUT ROWID"
+  },
+  {
+   "type": "table",
+   "name": "memory_lineage_carry",
+   "tbl_name": "memory_lineage_carry",
+   "sql": "CREATE TABLE memory_lineage_carry (\n parent_thread_no INTEGER NOT NULL, to_lsn INTEGER NOT NULL, from_lsn INTEGER NOT NULL, child_kind INTEGER NOT NULL CHECK(child_kind BETWEEN 0 AND 3),\n child_ref TEXT NOT NULL, child_thread_no INTEGER NOT NULL DEFAULT 0,\n PRIMARY KEY(parent_thread_no,to_lsn,from_lsn,child_kind,child_ref,child_thread_no)) WITHOUT ROWID"
+  },
+  {
+   "type": "table",
+   "name": "memory_lineage_cert",
+   "tbl_name": "memory_lineage_cert",
+   "sql": "CREATE TABLE memory_lineage_cert (id INTEGER PRIMARY KEY CHECK(id=1), phase TEXT NOT NULL, cursor TEXT NOT NULL DEFAULT '',\n done INTEGER NOT NULL DEFAULT 0 CHECK(done>=0), total INTEGER NOT NULL DEFAULT 0 CHECK(total>=0), ready INTEGER NOT NULL CHECK(ready IN (0,1)))"
+  },
+  {
+   "type": "table",
+   "name": "memory_lineage_lsn_meta",
+   "tbl_name": "memory_lineage_lsn_meta",
+   "sql": "CREATE TABLE memory_lineage_lsn_meta (\n key TEXT PRIMARY KEY NOT NULL CHECK(key IN ('policy_bump_lsn','epoch_bump_lsn','deny_generation','lineage_upgrade_lsn','root_sets_dropped')), value INTEGER NOT NULL) WITHOUT ROWID"
+  },
+  {
+   "type": "table",
+   "name": "memory_lineage_meta",
+   "tbl_name": "memory_lineage_meta",
+   "sql": "CREATE TABLE memory_lineage_meta (\n id INTEGER PRIMARY KEY CHECK(id=1), since INTEGER NOT NULL CHECK(since>=0))"
+  },
+  {
+   "type": "table",
+   "name": "memory_lineage_thread_ready",
+   "tbl_name": "memory_lineage_thread_ready",
+   "sql": "CREATE TABLE memory_lineage_thread_ready (thread_id TEXT PRIMARY KEY NOT NULL, ready INTEGER NOT NULL CHECK(ready IN (0,1))) WITHOUT ROWID"
+  },
+  {
+   "type": "table",
+   "name": "memory_lsn",
+   "tbl_name": "memory_lsn",
+   "sql": "CREATE TABLE memory_lsn (id INTEGER PRIMARY KEY CHECK(id=1), next INTEGER NOT NULL CHECK(next>=1))"
+  },
+  {
+   "type": "table",
+   "name": "memory_meta",
+   "tbl_name": "memory_meta",
+   "sql": "CREATE TABLE memory_meta (\n id INTEGER PRIMARY KEY CHECK(id=1), schema_version INTEGER NOT NULL CHECK(schema_version=10),\n installation_id TEXT NOT NULL, policy_revision INTEGER NOT NULL DEFAULT 0 CHECK(policy_revision>=0),\n deletion_epoch INTEGER NOT NULL DEFAULT 0 CHECK(deletion_epoch>=0),\n data_revision INTEGER NOT NULL DEFAULT 0 CHECK(data_revision>=0),\n mode TEXT NOT NULL DEFAULT 'off' CHECK(mode IN ('off','capture','active','paused')))"
+  },
+  {
+   "type": "table",
+   "name": "memory_open_turns",
+   "tbl_name": "memory_open_turns",
+   "sql": "CREATE TABLE memory_open_turns (\n source_id TEXT PRIMARY KEY NOT NULL, thread_id TEXT, turn_id TEXT, boot INTEGER NOT NULL) WITHOUT ROWID"
+  },
+  {
+   "type": "table",
+   "name": "memory_open_turns_build",
+   "tbl_name": "memory_open_turns_build",
+   "sql": "CREATE TABLE memory_open_turns_build (\n id INTEGER PRIMARY KEY CHECK(id=1), boot INTEGER NOT NULL DEFAULT 0 CHECK(boot>=0), ready INTEGER NOT NULL CHECK(ready IN (0,1)), cursor TEXT,\n done INTEGER NOT NULL DEFAULT 0 CHECK(done>=0), started_at INTEGER, finished_at INTEGER)"
+  },
+  {
+   "type": "table",
+   "name": "memory_outcomes",
+   "tbl_name": "memory_outcomes",
+   "sql": "CREATE TABLE memory_outcomes (\n id TEXT PRIMARY KEY NOT NULL, bot_id TEXT NOT NULL, thread_id TEXT, episode_id TEXT,\n kind TEXT NOT NULL CHECK(kind IN ('won','lost','good','bad','open','metric')),\n label TEXT, reason TEXT, value_num REAL, currency TEXT, metric_key TEXT, metric_window TEXT,\n proposed_by TEXT NOT NULL CHECK(proposed_by IN ('owner','bot','app')),\n confirmed_by TEXT CHECK(confirmed_by IS NULL OR confirmed_by='owner'),\n source_event_key TEXT UNIQUE, guide_revision INTEGER, superseded_by TEXT, expires_at INTEGER,\n created_at INTEGER NOT NULL CHECK(created_at>=0), revoked_at INTEGER)"
+  },
+  {
+   "type": "table",
+   "name": "memory_output_roots",
+   "tbl_name": "memory_output_roots",
+   "sql": "CREATE TABLE memory_output_roots (\n thread_id TEXT NOT NULL, message_id TEXT NOT NULL, set_id TEXT NOT NULL,\n PRIMARY KEY(thread_id,message_id))"
+  },
+  {
+   "type": "table",
+   "name": "memory_owner_tail",
+   "tbl_name": "memory_owner_tail",
+   "sql": "CREATE TABLE memory_owner_tail (created_at INTEGER NOT NULL, record_id TEXT NOT NULL, record_version INTEGER NOT NULL,\n PRIMARY KEY(created_at,record_id,record_version)) WITHOUT ROWID"
+  },
+  {
+   "type": "table",
+   "name": "memory_owner_tail_build",
+   "tbl_name": "memory_owner_tail_build",
+   "sql": "CREATE TABLE memory_owner_tail_build (id INTEGER PRIMARY KEY CHECK(id=1), ready INTEGER NOT NULL CHECK(ready IN (0,1)), cursor_id TEXT, cursor_version INTEGER)"
+  },
+  {
+   "type": "table",
+   "name": "memory_projection_receipts",
+   "tbl_name": "memory_projection_receipts",
+   "sql": "CREATE TABLE memory_projection_receipts (\n record_id TEXT NOT NULL, record_version INTEGER NOT NULL, index_generation INTEGER NOT NULL,\n lexical_status TEXT NOT NULL, embedding_status TEXT NOT NULL, error TEXT,\n PRIMARY KEY(record_id,record_version,index_generation), FOREIGN KEY(record_id,record_version) REFERENCES memory_records(id,version))"
+  },
+  {
+   "type": "table",
+   "name": "memory_receipt_flips",
+   "tbl_name": "memory_receipt_flips",
+   "sql": "CREATE TABLE memory_receipt_flips (thread_no INTEGER NOT NULL, first_lsn INTEGER NOT NULL, bundle_id TEXT NOT NULL,\n PRIMARY KEY(thread_no,first_lsn,bundle_id)) WITHOUT ROWID"
+  },
+  {
+   "type": "table",
+   "name": "memory_receipt_lines",
+   "tbl_name": "memory_receipt_lines",
+   "sql": "CREATE TABLE memory_receipt_lines (bundle_id TEXT PRIMARY KEY NOT NULL, thread_no INTEGER NOT NULL, first_lsn INTEGER NOT NULL, session_no INTEGER) WITHOUT ROWID"
+  },
+  {
+   "type": "table",
+   "name": "memory_record_details",
+   "tbl_name": "memory_record_details",
+   "sql": "CREATE TABLE memory_record_details (\n record_id TEXT NOT NULL, record_version INTEGER NOT NULL,\n partition TEXT NOT NULL CHECK(partition IN ('working','episodic','semantic','procedural','identity')),\n attention TEXT NOT NULL CHECK(attention IN ('current','useful','historical')),\n claim_status TEXT NOT NULL CHECK(claim_status IN ('provisional','current','disputed')),\n entities TEXT NOT NULL DEFAULT '[]' CHECK(json_valid(entities) AND json_type(entities)='array'),\n confidence REAL CHECK(confidence IS NULL OR (confidence>=0 AND confidence<=1)),\n confidence_basis TEXT, observed_at INTEGER CHECK(observed_at IS NULL OR observed_at>=0),\n PRIMARY KEY(record_id,record_version), FOREIGN KEY(record_id,record_version) REFERENCES memory_records(id,version) ON DELETE CASCADE)"
+  },
+  {
+   "type": "table",
+   "name": "memory_record_lsn",
+   "tbl_name": "memory_record_lsn",
+   "sql": "CREATE TABLE memory_record_lsn (id TEXT NOT NULL, version INTEGER NOT NULL, created_lsn INTEGER NOT NULL, PRIMARY KEY(id,version)) WITHOUT ROWID"
+  },
+  {
+   "type": "table",
+   "name": "memory_records",
+   "tbl_name": "memory_records",
+   "sql": "CREATE TABLE memory_records (\n id TEXT NOT NULL, version INTEGER NOT NULL CHECK(version>=1), scope_id TEXT NOT NULL REFERENCES memory_scopes(id),\n kind TEXT NOT NULL, text TEXT NOT NULL, assertion TEXT NOT NULL,\n state TEXT NOT NULL CHECK(state IN ('candidate','active','superseded','archived','deleted')),\n owner_pinned INTEGER NOT NULL DEFAULT 0 CHECK(owner_pinned IN (0,1)), valid_from INTEGER NOT NULL,\n valid_to INTEGER, supersedes_id TEXT, created_at INTEGER NOT NULL, PRIMARY KEY(id,version))"
+  },
+  {
+   "type": "table",
+   "name": "memory_revocation_index_build",
+   "tbl_name": "memory_revocation_index_build",
+   "sql": "CREATE TABLE memory_revocation_index_build (\n id INTEGER PRIMARY KEY CHECK(id=1), ready INTEGER NOT NULL CHECK(ready IN (0,1)), cursor TEXT,\n done INTEGER NOT NULL DEFAULT 0 CHECK(done>=0), total INTEGER NOT NULL DEFAULT 0 CHECK(total>=0), started_at INTEGER, finished_at INTEGER)"
+  },
+  {
+   "type": "table",
+   "name": "memory_revocation_targets",
+   "tbl_name": "memory_revocation_targets",
+   "sql": "CREATE TABLE memory_revocation_targets (\n job_id TEXT NOT NULL, kind TEXT NOT NULL, id TEXT NOT NULL, rev INTEGER NOT NULL, PRIMARY KEY(job_id,kind,id,rev)) WITHOUT ROWID"
+  },
+  {
+   "type": "table",
+   "name": "memory_revoke_audience",
+   "tbl_name": "memory_revoke_audience",
+   "sql": "CREATE TABLE memory_revoke_audience (revoke_id INTEGER PRIMARY KEY NOT NULL)"
+  },
+  {
+   "type": "table",
+   "name": "memory_revoke_frontier",
+   "tbl_name": "memory_revoke_frontier",
+   "sql": "CREATE TABLE memory_revoke_frontier (revoke_id INTEGER NOT NULL, seq INTEGER NOT NULL, node TEXT NOT NULL,\n PRIMARY KEY(revoke_id,seq)) WITHOUT ROWID"
+  },
+  {
+   "type": "table",
+   "name": "memory_revoke_jobs",
+   "tbl_name": "memory_revoke_jobs",
+   "sql": "CREATE TABLE memory_revoke_jobs (revoke_id INTEGER PRIMARY KEY, kind TEXT NOT NULL, root TEXT NOT NULL, root_lsn INTEGER NOT NULL,\n started_lsn INTEGER NOT NULL, phase TEXT NOT NULL, cursor TEXT NOT NULL DEFAULT '', state TEXT NOT NULL)"
+  },
+  {
+   "type": "table",
+   "name": "memory_revoke_reached",
+   "tbl_name": "memory_revoke_reached",
+   "sql": "CREATE TABLE memory_revoke_reached (revoke_id INTEGER NOT NULL, thread_id TEXT NOT NULL, from_lsn INTEGER NOT NULL,\n PRIMARY KEY(revoke_id,thread_id)) WITHOUT ROWID"
+  },
+  {
+   "type": "table",
+   "name": "memory_root_set_compaction",
+   "tbl_name": "memory_root_set_compaction",
+   "sql": "CREATE TABLE memory_root_set_compaction (\n id INTEGER PRIMARY KEY CHECK(id=1), total INTEGER NOT NULL CHECK(total>=0), done INTEGER NOT NULL CHECK(done>=0),\n cursor TEXT NOT NULL DEFAULT '', started_at INTEGER NOT NULL, finished_at INTEGER, reclaimed_at INTEGER)"
+  },
+  {
+   "type": "table",
+   "name": "memory_root_set_members",
+   "tbl_name": "memory_root_set_members",
+   "sql": "CREATE TABLE memory_root_set_members (\n set_id TEXT NOT NULL, root_thread_id TEXT NOT NULL, root_message_id TEXT NOT NULL,\n PRIMARY KEY(set_id,root_thread_id,root_message_id)) WITHOUT ROWID"
+  },
+  {
+   "type": "table",
+   "name": "memory_root_set_parents",
+   "tbl_name": "memory_root_set_parents",
+   "sql": "CREATE TABLE memory_root_set_parents (\n set_id TEXT PRIMARY KEY NOT NULL, parent_id TEXT NOT NULL CHECK(parent_id<>set_id)) WITHOUT ROWID"
+  },
+  {
+   "type": "table",
+   "name": "memory_root_sets",
+   "tbl_name": "memory_root_sets",
+   "sql": "CREATE TABLE memory_root_sets (\n set_id TEXT PRIMARY KEY NOT NULL, size INTEGER NOT NULL CHECK(size>=0))"
+  },
+  {
+   "type": "table",
+   "name": "memory_scope_bindings",
+   "tbl_name": "memory_scope_bindings",
+   "sql": "CREATE TABLE memory_scope_bindings (\n id TEXT PRIMARY KEY NOT NULL, scope_id TEXT NOT NULL REFERENCES memory_scopes(id), subject_type TEXT NOT NULL,\n subject_id TEXT NOT NULL, revision INTEGER NOT NULL CHECK(revision>=0), state TEXT NOT NULL CHECK(state IN ('granted','pending','revoked')),\n intent TEXT NOT NULL CHECK(json_valid(intent)))"
+  },
+  {
+   "type": "table",
+   "name": "memory_scope_set_keys",
+   "tbl_name": "memory_scope_set_keys",
+   "sql": "CREATE TABLE memory_scope_set_keys (hash TEXT PRIMARY KEY NOT NULL, set_id INTEGER NOT NULL UNIQUE) WITHOUT ROWID"
+  },
+  {
+   "type": "table",
+   "name": "memory_scope_sets",
+   "tbl_name": "memory_scope_sets",
+   "sql": "CREATE TABLE memory_scope_sets (set_id INTEGER NOT NULL, scope_id TEXT NOT NULL, PRIMARY KEY(set_id,scope_id)) WITHOUT ROWID"
+  },
+  {
+   "type": "table",
+   "name": "memory_scopes",
+   "tbl_name": "memory_scopes",
+   "sql": "CREATE TABLE memory_scopes (\n id TEXT PRIMARY KEY NOT NULL, kind TEXT NOT NULL CHECK(kind IN ('conversation','bot','room','team','project','workspace','preferences')),\n owner_key TEXT NOT NULL, audience TEXT NOT NULL CHECK(json_valid(audience)), revision INTEGER NOT NULL CHECK(revision>=0))"
+  },
+  {
+   "type": "table",
+   "name": "memory_session_lineage",
+   "tbl_name": "memory_session_lineage",
+   "sql": "CREATE TABLE memory_session_lineage (thread_id TEXT NOT NULL, driver_instance TEXT NOT NULL, native_session TEXT NOT NULL,\n first_lsn INTEGER NOT NULL, last_lsn INTEGER NOT NULL, PRIMARY KEY(thread_id,driver_instance,native_session)) WITHOUT ROWID"
+  },
+  {
+   "type": "table",
+   "name": "memory_session_no",
+   "tbl_name": "memory_session_no",
+   "sql": "CREATE TABLE memory_session_no (thread_id TEXT NOT NULL, driver_instance TEXT NOT NULL, native_session TEXT NOT NULL, no INTEGER NOT NULL UNIQUE,\n PRIMARY KEY(thread_id,driver_instance,native_session)) WITHOUT ROWID"
+  },
+  {
+   "type": "table",
+   "name": "memory_session_roots",
+   "tbl_name": "memory_session_roots",
+   "sql": "CREATE TABLE memory_session_roots (\n thread_id TEXT NOT NULL, driver_instance TEXT NOT NULL, native_session TEXT NOT NULL, set_id TEXT NOT NULL,\n PRIMARY KEY(thread_id,driver_instance,native_session))"
+  },
+  {
+   "type": "table",
+   "name": "memory_source_origins",
+   "tbl_name": "memory_source_origins",
+   "sql": "CREATE TABLE memory_source_origins (\n origin_id TEXT NOT NULL, bring_in_id TEXT NOT NULL, PRIMARY KEY(origin_id,bring_in_id)) WITHOUT ROWID"
+  },
+  {
+   "type": "table",
+   "name": "memory_source_versions",
+   "tbl_name": "memory_source_versions",
+   "sql": "CREATE TABLE memory_source_versions (\n source_id TEXT NOT NULL REFERENCES memory_sources(id), revision INTEGER NOT NULL CHECK(revision>=0),\n content_hash TEXT NOT NULL, payload TEXT NOT NULL CHECK(json_valid(payload)), created_at INTEGER NOT NULL CHECK(created_at>=0),\n PRIMARY KEY(source_id,revision))"
+  },
+  {
+   "type": "table",
+   "name": "memory_sources",
+   "tbl_name": "memory_sources",
+   "sql": "CREATE TABLE memory_sources (\n id TEXT PRIMARY KEY NOT NULL, scope_id TEXT NOT NULL REFERENCES memory_scopes(id), thread_id TEXT,\n message_id TEXT, turn_id TEXT, revision INTEGER NOT NULL CHECK(revision>=0), content_hash TEXT NOT NULL,\n kind TEXT NOT NULL, speaker TEXT NOT NULL, outcome TEXT NOT NULL, branch_id TEXT,\n state TEXT NOT NULL CHECK(state IN ('active','retired','deleted')))"
+  },
+  {
+   "type": "table",
+   "name": "memory_thread_flow",
+   "tbl_name": "memory_thread_flow",
+   "sql": "CREATE TABLE memory_thread_flow (from_thread TEXT NOT NULL, to_thread TEXT NOT NULL, first_lsn INTEGER NOT NULL,\n PRIMARY KEY(from_thread,to_thread)) WITHOUT ROWID"
+  },
+  {
+   "type": "table",
+   "name": "memory_thread_no",
+   "tbl_name": "memory_thread_no",
+   "sql": "CREATE TABLE memory_thread_no (thread_id TEXT PRIMARY KEY NOT NULL, no INTEGER NOT NULL UNIQUE) WITHOUT ROWID"
+  },
+  {
+   "type": "table",
+   "name": "memory_tombstones",
+   "tbl_name": "memory_tombstones",
+   "sql": "CREATE TABLE memory_tombstones (\n id TEXT PRIMARY KEY NOT NULL, target_type TEXT NOT NULL CHECK(target_type IN ('source','record','import')),\n target_id TEXT NOT NULL, revision INTEGER, content_hash TEXT, epoch INTEGER NOT NULL CHECK(epoch>=0), reason TEXT NOT NULL,\n created_at INTEGER NOT NULL, UNIQUE(target_type,target_id,revision))"
+  },
+  {
+   "type": "table",
+   "name": "message_image",
+   "tbl_name": "message_image",
+   "sql": "CREATE TABLE message_image(thread_id TEXT NOT NULL, path TEXT NOT NULL, id TEXT NOT NULL, PRIMARY KEY(thread_id, path, id)) WITHOUT ROWID"
+  },
+  {
+   "type": "table",
+   "name": "messages",
+   "tbl_name": "messages",
+   "sql": "CREATE TABLE messages (\n      thread_id TEXT NOT NULL, id TEXT NOT NULL, at INTEGER NOT NULL, role TEXT NOT NULL,\n      kind TEXT NOT NULL, text TEXT, json TEXT NOT NULL, PRIMARY KEY(thread_id,id))"
+  },
+  {
+   "type": "table",
+   "name": "messages_fts",
+   "tbl_name": "messages_fts",
+   "sql": "CREATE VIRTUAL TABLE messages_fts USING fts5(t, tokenize='trigram', content='', contentless_delete=1, detail=none)"
+  },
+  {
+   "type": "table",
+   "name": "messages_fts_config",
+   "tbl_name": "messages_fts_config",
+   "sql": "CREATE TABLE 'messages_fts_config'(k PRIMARY KEY, v) WITHOUT ROWID"
+  },
+  {
+   "type": "table",
+   "name": "messages_fts_data",
+   "tbl_name": "messages_fts_data",
+   "sql": "CREATE TABLE 'messages_fts_data'(id INTEGER PRIMARY KEY, block BLOB)"
+  },
+  {
+   "type": "table",
+   "name": "messages_fts_docsize",
+   "tbl_name": "messages_fts_docsize",
+   "sql": "CREATE TABLE 'messages_fts_docsize'(id INTEGER PRIMARY KEY, sz BLOB, origin INTEGER)"
+  },
+  {
+   "type": "table",
+   "name": "messages_fts_idx",
+   "tbl_name": "messages_fts_idx",
+   "sql": "CREATE TABLE 'messages_fts_idx'(segid, term, pgno, PRIMARY KEY(segid, term)) WITHOUT ROWID"
+  },
+  {
+   "type": "table",
+   "name": "msg_branch",
+   "tbl_name": "msg_branch",
+   "sql": "CREATE TABLE msg_branch(mrow INTEGER PRIMARY KEY, seg INTEGER, ord BLOB, next INTEGER)"
+  },
+  {
+   "type": "table",
+   "name": "open_card",
+   "tbl_name": "open_card",
+   "sql": "CREATE TABLE open_card(thread_id TEXT NOT NULL, id TEXT NOT NULL, PRIMARY KEY(thread_id, id)) WITHOUT ROWID"
+  },
+  {
+   "type": "table",
+   "name": "output_publications",
+   "tbl_name": "output_publications",
+   "sql": "CREATE TABLE output_publications (\n    id TEXT PRIMARY KEY, producer TEXT NOT NULL, bot_id TEXT NOT NULL, thread_id TEXT NOT NULL, run_id TEXT NOT NULL,\n    path_token TEXT NOT NULL, sha256 TEXT NOT NULL, mime TEXT NOT NULL, bytes INTEGER NOT NULL, stage TEXT NOT NULL,\n    artifact_id TEXT, attachment_id TEXT, message_id TEXT, error_category TEXT,\n    created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL,\n    UNIQUE(producer,bot_id,thread_id,run_id,path_token,sha256))"
+  },
+  {
+   "type": "table",
+   "name": "owner_deleted_threads",
+   "tbl_name": "owner_deleted_threads",
+   "sql": "CREATE TABLE owner_deleted_threads (thread_id TEXT PRIMARY KEY, deleted_at INTEGER NOT NULL)"
+  },
+  {
+   "type": "table",
+   "name": "owner_sends",
+   "tbl_name": "owner_sends",
+   "sql": "CREATE TABLE owner_sends (\n  seq INTEGER PRIMARY KEY,\n  kind TEXT NOT NULL CHECK(kind IN ('bot','group')),\n  owner_id TEXT NOT NULL,\n  thread_id TEXT NOT NULL,\n  send_id TEXT,\n  queue_id TEXT NOT NULL UNIQUE,\n  fingerprint TEXT NOT NULL,\n  text TEXT,\n  prompt TEXT,\n  reply_to_id TEXT,\n  origin TEXT,\n  mode TEXT,\n  responder_id TEXT,\n  existing_message_id TEXT,\n  message_id TEXT,\n  status TEXT NOT NULL,\n  dispatched INTEGER NOT NULL DEFAULT 0,\n  created_at INTEGER NOT NULL,\n  updated_at INTEGER NOT NULL,\n  notice TEXT,\n  restore_held INTEGER NOT NULL DEFAULT 0,\n  restore_gen TEXT,\n  stopped INTEGER NOT NULL DEFAULT 0,\n  stop_gen TEXT,\n  action_id TEXT,\n  turn_id TEXT\n)"
+  },
+  {
+   "type": "table",
+   "name": "pending_delegations",
+   "tbl_name": "pending_delegations",
+   "sql": "CREATE TABLE pending_delegations (id TEXT PRIMARY KEY NOT NULL,\n  source_thread_id TEXT NOT NULL,\n  to_bot_id TEXT NOT NULL,\n  from_bot_id TEXT,\n  phase TEXT NOT NULL CHECK(phase IN ('fresh','busy','parked','started')),\n  retry_at INTEGER,\n  item TEXT NOT NULL,\n  origin TEXT NOT NULL DEFAULT 'legacy' CHECK(origin IN ('owner','room','shared','legacy')),\n  target_thread_id TEXT,\n  turn_key TEXT,\n  started_at INTEGER,\n  accepted_turn_id TEXT,\n  start_attempts INTEGER,\n  submitted_at INTEGER,\n  evidence_at INTEGER)"
+  },
+  {
+   "type": "table",
+   "name": "pending_delegations_import",
+   "tbl_name": "pending_delegations_import",
+   "sql": "CREATE TABLE pending_delegations_import (version INTEGER PRIMARY KEY NOT NULL)"
+  },
+  {
+   "type": "table",
+   "name": "project_activity",
+   "tbl_name": "project_activity",
+   "sql": "CREATE TABLE project_activity (\n  id TEXT PRIMARY KEY NOT NULL,\n  group_id TEXT NOT NULL,\n  at INTEGER NOT NULL,\n  kind TEXT NOT NULL CHECK(kind IN ('card_created','card_moved','card_reassigned','card_took_over','card_failed','card_result','brief_version','goal_state','criteria','decision_opened','decision_closed','budget_warned','budget_paused','budget_raised','member_error','routine_run','settings','work_roots','restore','close','reopen','deadline')),\n  actor TEXT NOT NULL,                                -- 'owner' | 'server' | botId\n  work_item_id TEXT, goal_id TEXT, request_id TEXT,\n  detail TEXT NOT NULL DEFAULT '{}' CHECK(json_valid(detail) AND length(detail) <= 2000))"
+  },
+  {
+   "type": "table",
+   "name": "project_board_columns",
+   "tbl_name": "project_board_columns",
+   "sql": "CREATE TABLE project_board_columns (\n  group_id TEXT NOT NULL,\n  id TEXT NOT NULL,\n  title TEXT NOT NULL CHECK(length(title) BETWEEN 1 AND 40),\n  state TEXT NOT NULL CHECK(state IN ('todo','doing','waiting','review','done')),\n  position REAL NOT NULL,\n  PRIMARY KEY(group_id, id))"
+  },
+  {
+   "type": "table",
+   "name": "project_briefs",
+   "tbl_name": "project_briefs",
+   "sql": "CREATE TABLE project_briefs (\n  group_id TEXT NOT NULL,\n  version INTEGER NOT NULL CHECK(version>=1),\n  summary TEXT NOT NULL DEFAULT '' CHECK(length(summary) <= 200),\n  done_means TEXT NOT NULL DEFAULT '' CHECK(length(done_means) <= 4000),\n  rules TEXT NOT NULL DEFAULT '' CHECK(length(rules) <= 12000),   -- = the existing setup.bulletin cap (fact 17), so migration never truncates\n  where_work_is TEXT NOT NULL DEFAULT '[]' CHECK(json_valid(where_work_is)),\n  decisions TEXT NOT NULL DEFAULT '[]' CHECK(json_valid(decisions)),\n  updated_by TEXT NOT NULL,                           -- 'owner' | botId (the lead) | 'migration'\n  change TEXT NOT NULL CHECK(change IN ('owner_edit','lead_decision','lead_note','restore_version','migration','member_proposal_accepted')),\n  updated_at INTEGER NOT NULL,\n  PRIMARY KEY(group_id, version))"
+  },
+  {
+   "type": "table",
+   "name": "project_budgets",
+   "tbl_name": "project_budgets",
+   "sql": "CREATE TABLE project_budgets (\n  id TEXT PRIMARY KEY NOT NULL,\n  group_id TEXT NOT NULL,\n  goal_id TEXT,                                       -- set iff period='goal'\n  period TEXT NOT NULL CHECK(period IN ('goal','day','week','month')),\n  tz TEXT NOT NULL,                                   -- IANA zone captured from the desktop at creation\n  period_start INTEGER NOT NULL,\n  max_work_minutes INTEGER NOT NULL CHECK(max_work_minutes BETWEEN 1 AND 100000),\n  max_tokens INTEGER CHECK(max_tokens IS NULL OR max_tokens>=1),\n  max_charge REAL,                                    -- stays NULL until a charge source exists (plan 3.6)\n  warn_at REAL NOT NULL DEFAULT 0.8 CHECK(warn_at>0 AND warn_at<1),\n  state TEXT NOT NULL DEFAULT 'ok' CHECK(state IN ('ok','warned','paused')),\n  revision INTEGER NOT NULL DEFAULT 0 CHECK(revision>=0),\n  raised_at INTEGER, raised_by TEXT CHECK(raised_by IS NULL OR raised_by IN ('owner')),\n  created_at INTEGER NOT NULL,\n  CHECK((period='goal') = (goal_id IS NOT NULL)))"
+  },
+  {
+   "type": "table",
+   "name": "project_card_delivery_owed",
+   "tbl_name": "project_card_delivery_owed",
+   "sql": "CREATE TABLE project_card_delivery_owed (request_id TEXT PRIMARY KEY REFERENCES room_requests(id) ON DELETE CASCADE, payload TEXT, created_at INTEGER NOT NULL)"
+  },
+  {
+   "type": "table",
+   "name": "project_goals",
+   "tbl_name": "project_goals",
+   "sql": "CREATE TABLE project_goals (\n  id TEXT PRIMARY KEY NOT NULL,\n  group_id TEXT NOT NULL,\n  title TEXT NOT NULL CHECK(length(title) BETWEEN 1 AND 200),\n  description TEXT NOT NULL DEFAULT '' CHECK(length(description) <= 2000),  -- owner text; the migration keeps the full old goal here\n  criteria TEXT NOT NULL DEFAULT '[]' CHECK(json_valid(criteria)),\n  state TEXT NOT NULL CHECK(state IN ('draft','planning','awaiting_plan_ok','working','awaiting_signoff','done','paused','stopped','failed')),\n  state_reason TEXT CHECK(state_reason IS NULL OR length(state_reason) <= 200),\n  plan_first INTEGER NOT NULL DEFAULT 0 CHECK(plan_first IN (0,1)),\n  review INTEGER NOT NULL DEFAULT 1 CHECK(review IN (0,1)),\n  replans INTEGER NOT NULL DEFAULT 0 CHECK(replans>=0),\n  no_progress INTEGER NOT NULL DEFAULT 0 CHECK(no_progress>=0),\n  lead_wakes INTEGER NOT NULL DEFAULT 0 CHECK(lead_wakes>=0),\n  revision INTEGER NOT NULL DEFAULT 0 CHECK(revision>=0),\n  created_at INTEGER NOT NULL, started_at INTEGER, finished_at INTEGER,\n  summary_message_id TEXT,\n  deadline_at INTEGER)"
+  },
+  {
+   "type": "table",
+   "name": "project_member_state",
+   "tbl_name": "project_member_state",
+   "sql": "CREATE TABLE project_member_state (\n  group_id TEXT NOT NULL,\n  bot_id TEXT NOT NULL,\n  transcript_cursor TEXT,                             -- id of the last room message this member's prompt included\n  joined_at INTEGER,                                  -- first project turn; the joining brief rides only while NULL\n  last_card_summary TEXT CHECK(last_card_summary IS NULL OR length(last_card_summary) <= 2000),  -- card-boundary summary for the desk thread\n  last_card_summary_sources TEXT NOT NULL DEFAULT '[]' CHECK(json_valid(last_card_summary_sources)),\n  stale INTEGER NOT NULL DEFAULT 0 CHECK(stale IN (0,1)),\n  updated_at INTEGER NOT NULL,\n  PRIMARY KEY(group_id, bot_id))"
+  },
+  {
+   "type": "table",
+   "name": "project_settings",
+   "tbl_name": "project_settings",
+   "sql": "CREATE TABLE project_settings (\n  group_id TEXT PRIMARY KEY NOT NULL,\n  mode TEXT NOT NULL DEFAULT 'conversation' CHECK(mode IN ('conversation','ongoing')),\n  lead_bot_id TEXT,                                   -- NULL = lead off (front bot answers)\n  parts TEXT NOT NULL DEFAULT '{}' CHECK(json_valid(parts)),\n  parallel_cards INTEGER NOT NULL DEFAULT 3 CHECK(parallel_cards BETWEEN 1 AND 5),\n  work_roots TEXT NOT NULL DEFAULT '[]' CHECK(json_valid(work_roots)),\n  work_profile TEXT NOT NULL DEFAULT 'ask' CHECK(work_profile IN ('ask','auto-in-roots')),\n  migrated_from TEXT CHECK(migrated_from IS NULL OR migrated_from IN ('channelProject','bulletin','both')),\n  owner_viewed_at INTEGER,                            -- \"since you left\" cursor (plan 3.9)\n  run_state TEXT NOT NULL DEFAULT 'running' CHECK(run_state IN ('running','paused')),\n  run_state_reason TEXT CHECK(run_state_reason IS NULL OR length(run_state_reason) <= 200),\n  closed_at INTEGER,                                  -- Close (lane N); NULL = open\n  ended_at INTEGER,                                   -- End project; NULL = the group is a project now\n  revision INTEGER NOT NULL DEFAULT 0 CHECK(revision>=0),\n  updated_at INTEGER NOT NULL)"
+  },
+  {
+   "type": "table",
+   "name": "project_summaries",
+   "tbl_name": "project_summaries",
+   "sql": "CREATE TABLE project_summaries (\n  group_id TEXT NOT NULL,\n  version INTEGER NOT NULL CHECK(version>=1),\n  text TEXT NOT NULL CHECK(length(text) <= 6000),\n  source_message_ids TEXT NOT NULL DEFAULT '[]' CHECK(json_valid(source_message_ids)),\n  made_by TEXT NOT NULL,                              -- botId | 'fallback'\n  at INTEGER NOT NULL,\n  stale INTEGER NOT NULL DEFAULT 0 CHECK(stale IN (0,1)),\n  PRIMARY KEY(group_id, version))"
+  },
+  {
+   "type": "table",
+   "name": "project_work_items",
+   "tbl_name": "project_work_items",
+   "sql": "CREATE TABLE project_work_items (\n  id TEXT PRIMARY KEY NOT NULL,\n  group_id TEXT NOT NULL,\n  goal_id TEXT,\n  number INTEGER NOT NULL CHECK(number>=1),           -- \"card 12\": per-group sequence\n  title TEXT NOT NULL CHECK(length(title) BETWEEN 1 AND 120),\n  description TEXT NOT NULL DEFAULT '' CHECK(length(description) <= 2000),\n  assignee_bot_id TEXT,\n  owner_took_over INTEGER NOT NULL DEFAULT 0 CHECK(owner_took_over IN (0,1)),\n  state TEXT NOT NULL CHECK(state IN ('todo','doing','waiting','review','done','failed','cancelled')),\n  column_id TEXT,                                     -- custom column; NULL = canonical column for state\n  position REAL NOT NULL,\n  revision INTEGER NOT NULL DEFAULT 0 CHECK(revision>=0),\n  generation INTEGER NOT NULL DEFAULT 0 CHECK(generation>=0),\n  attempt INTEGER NOT NULL DEFAULT 1 CHECK(attempt>=1),\n  failures INTEGER NOT NULL DEFAULT 0 CHECK(failures>=0),        -- consecutive, reset on done\n  waiting_on TEXT CHECK(waiting_on IS NULL OR json_valid(waiting_on)),\n  reason TEXT CHECK(reason IS NULL OR length(reason) <= 200),\n  needs TEXT NOT NULL DEFAULT '[]' CHECK(json_valid(needs)),     -- capability tags for assign checks (3.10)\n  touches TEXT NOT NULL DEFAULT '[]' CHECK(json_valid(touches)),\n  depends_on TEXT NOT NULL DEFAULT '[]' CHECK(json_valid(depends_on)),\n  writes INTEGER NOT NULL DEFAULT 1 CHECK(writes IN (0,1)),      -- may write: claims a work root (3.3 item 5)\n  work_root_index INTEGER,                            -- which work root it writes; NULL = its desk folder\n  request_id TEXT,\n  review_request_id TEXT,\n  desk_thread_id TEXT,\n  result_message_id TEXT,\n  source_message_ids TEXT NOT NULL DEFAULT '[]' CHECK(json_valid(source_message_ids)),\n  stale INTEGER NOT NULL DEFAULT 0 CHECK(stale IN (0,1)),\n  create_key TEXT UNIQUE,\n  due_at INTEGER,\n  created_by TEXT NOT NULL,                           -- 'owner' | 'server' | botId\n  created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL, done_at INTEGER, archived_at INTEGER)"
+  },
+  {
+   "type": "table",
+   "name": "push_bindings",
+   "tbl_name": "push_bindings",
+   "sql": "CREATE TABLE push_bindings (\n      binding_id TEXT PRIMARY KEY, device_id TEXT NOT NULL UNIQUE, publisher_token TEXT NOT NULL, created_at INTEGER NOT NULL, key_secret TEXT, preview_content INTEGER NOT NULL DEFAULT 0, token_expires_at INTEGER)"
+  },
+  {
+   "type": "table",
+   "name": "push_decisions",
+   "tbl_name": "push_decisions",
+   "sql": "CREATE TABLE push_decisions (\n      request_key TEXT PRIMARY KEY, decision TEXT NOT NULL CHECK (decision IN ('allow','deny')),\n      device_id TEXT NOT NULL, revision INTEGER NOT NULL, decided_at INTEGER NOT NULL, outcome TEXT)"
+  },
+  {
+   "type": "table",
+   "name": "push_events",
+   "tbl_name": "push_events",
+   "sql": "CREATE TABLE push_events (\n      event_ref TEXT PRIMARY KEY,\n      binding_id TEXT NOT NULL REFERENCES push_bindings(binding_id) ON DELETE CASCADE,\n      kind TEXT NOT NULL, category TEXT NOT NULL, bot_id TEXT NOT NULL, thread_id TEXT NOT NULL,\n      request_id TEXT, message_id TEXT, collapse_key TEXT NOT NULL, thread_group TEXT NOT NULL,\n      revision INTEGER NOT NULL, time_sensitive INTEGER NOT NULL, resolved_by TEXT,\n      created_at INTEGER NOT NULL, expires_at INTEGER NOT NULL, hold_until INTEGER NOT NULL,\n      state TEXT NOT NULL CHECK (state IN ('held','pending','sent','exhausted','dropped')),\n      attempts INTEGER NOT NULL DEFAULT 0, next_attempt_at INTEGER NOT NULL)"
+  },
+  {
+   "type": "table",
+   "name": "push_relay_removals",
+   "tbl_name": "push_relay_removals",
+   "sql": "CREATE TABLE push_relay_removals (\n      binding_id TEXT PRIMARY KEY, publisher_token TEXT NOT NULL, attempts INTEGER NOT NULL,\n      next_attempt_at INTEGER NOT NULL, created_at INTEGER NOT NULL)"
+  },
+  {
+   "type": "table",
+   "name": "push_risk",
+   "tbl_name": "push_risk",
+   "sql": "CREATE TABLE push_risk (\n      request_key TEXT PRIMARY KEY, risk TEXT NOT NULL CHECK (risk IN ('low','risky')), rated_at INTEGER NOT NULL, revision INTEGER)"
+  },
+  {
+   "type": "table",
+   "name": "restore_holds",
+   "tbl_name": "restore_holds",
+   "sql": "CREATE TABLE restore_holds (kind TEXT NOT NULL, row_id TEXT NOT NULL, generation TEXT NOT NULL, PRIMARY KEY (kind, row_id))"
+  },
+  {
+   "type": "table",
+   "name": "room_request_backfills",
+   "tbl_name": "room_request_backfills",
+   "sql": "CREATE TABLE room_request_backfills (\n  name TEXT PRIMARY KEY NOT NULL,\n  cursor INTEGER NOT NULL DEFAULT 0,\n  completed INTEGER NOT NULL DEFAULT 0 CHECK(completed IN (0,1)))"
+  },
+  {
+   "type": "table",
+   "name": "room_request_dismissal_receipts",
+   "tbl_name": "room_request_dismissal_receipts",
+   "sql": "CREATE TABLE room_request_dismissal_receipts (request_id TEXT PRIMARY KEY NOT NULL) WITHOUT ROWID"
+  },
+  {
+   "type": "table",
+   "name": "room_request_owed",
+   "tbl_name": "room_request_owed",
+   "sql": "CREATE TABLE room_request_owed (\n  kind TEXT NOT NULL CHECK(kind IN ('shared_delivery','fanout')),\n  request_id TEXT NOT NULL,\n  -- shared provenance, kept on the row so a moment of unavailable task or thread metadata can never erase the debt:\n  -- the requester's thread once the request is known to be shared work (shared=1), and the retry schedule for a delivery that could not be decided yet\n  shared INTEGER CHECK(shared IS NULL OR shared=1),\n  destination_thread_id TEXT,\n  attempts INTEGER NOT NULL DEFAULT 0,\n  retry_at INTEGER NOT NULL DEFAULT 0,\n  PRIMARY KEY(kind, request_id)) WITHOUT ROWID"
+  },
+  {
+   "type": "table",
+   "name": "room_request_retry",
+   "tbl_name": "room_request_retry",
+   "sql": "CREATE TABLE room_request_retry (\n  request_id TEXT PRIMARY KEY NOT NULL,\n  retry_at INTEGER NOT NULL,\n  attempts INTEGER NOT NULL DEFAULT 0) WITHOUT ROWID"
+  },
+  {
+   "type": "table",
+   "name": "room_request_status",
+   "tbl_name": "room_request_status",
+   "sql": "CREATE TABLE room_request_status (request_id TEXT PRIMARY KEY REFERENCES room_requests(id) ON DELETE CASCADE, status_key TEXT NOT NULL, status_data TEXT, diagnostic TEXT)"
+  },
+  {
+   "type": "table",
+   "name": "room_requests",
+   "tbl_name": "room_requests",
+   "sql": "CREATE TABLE room_requests (\n  id TEXT PRIMARY KEY NOT NULL,\n  root_id TEXT NOT NULL,                              -- = id for a root request\n  parent_id TEXT,                                     -- the request that caused this one\n  card_generation INTEGER CHECK(card_generation IS NULL OR card_generation>=0),  -- the card generation this request may affect (5.1)\n  attempt INTEGER NOT NULL DEFAULT 1 CHECK(attempt>=1),\n  group_id TEXT NOT NULL,\n  target_thread_id TEXT,                              -- NULL until resolved at dispatch for card runs\n  project_goal_id TEXT,\n  work_item_id TEXT,\n  verb TEXT NOT NULL CHECK(verb IN ('owner_send','room_turn','ask','assign','message','review','wake','routine')),\n  from_kind TEXT NOT NULL CHECK(from_kind IN ('owner','bot','murage','routine')),\n  from_bot_id TEXT, to_bot_id TEXT,\n  payload_text TEXT CHECK(payload_text IS NULL OR length(payload_text) <= 100000),\n  reply_to_id TEXT, send_id TEXT,\n  mode TEXT CHECK(mode IS NULL OR mode IN ('chat','goal')),\n  origin TEXT NOT NULL CHECK(origin IN ('desktop','companion','unproven','server')),\n  root_thread_id TEXT NOT NULL,\n  audience_fingerprint TEXT NOT NULL,\n  not_owner_audience INTEGER NOT NULL CHECK(not_owner_audience IN (0,1)),\n  unattended INTEGER NOT NULL CHECK(unattended IN (0,1)),\n  execution_audience TEXT CHECK(execution_audience IS NULL OR json_valid(execution_audience)),  -- lane X, section 17\n  source_message_id TEXT,\n  return_thread_id TEXT, return_bot_id TEXT,\n  admission_key TEXT NOT NULL UNIQUE,\n  priority TEXT NOT NULL DEFAULT 'work' CHECK(priority IN ('owner','coordinator','work')),\n  state TEXT NOT NULL CHECK(state IN ('queued','running','waiting_owner','waiting_bot','done','failed','cancelled','expired','unknown')),\n  refusal TEXT,                                       -- last arbiter refusal reason code (section 7.2)\n  created_at INTEGER NOT NULL, dispatched_at INTEGER, deadline_at INTEGER, finished_at INTEGER,\n  owner_wait_ms INTEGER NOT NULL DEFAULT 0 CHECK(owner_wait_ms>=0),   -- time spent in waiting_owner (not work, 5.4)\n  waiting_since INTEGER,                              -- set on entering waiting_owner, cleared on leaving\n  result_message_id TEXT,\n  outcome_note TEXT CHECK(outcome_note IS NULL OR length(outcome_note) <= 200), handoff INTEGER, shared_work INTEGER)"
+  },
+  {
+   "type": "table",
+   "name": "seg",
+   "tbl_name": "seg",
+   "sql": "CREATE TABLE seg(seg INTEGER PRIMARY KEY, key INTEGER NOT NULL, parent_seg INTEGER, attach INTEGER, lvl INTEGER NOT NULL, jump INTEGER, head INTEGER NOT NULL, tail INTEGER NOT NULL)"
+  },
+  {
+   "type": "table",
+   "name": "send_restore_generation",
+   "tbl_name": "send_restore_generation",
+   "sql": "CREATE TABLE send_restore_generation (id INTEGER PRIMARY KEY CHECK(id=1), token TEXT NOT NULL)"
+  },
+  {
+   "type": "table",
+   "name": "setup_marks",
+   "tbl_name": "setup_marks",
+   "sql": "CREATE TABLE setup_marks(source_row INTEGER PRIMARY KEY, thread_id TEXT NOT NULL, message_id TEXT NOT NULL, kind TEXT NOT NULL, solid INTEGER NOT NULL, at INTEGER NOT NULL, http_status, provider)"
+  },
+  {
+   "type": "table",
+   "name": "shared_drain_sweep",
+   "tbl_name": "shared_drain_sweep",
+   "sql": "CREATE TABLE shared_drain_sweep (bot_id TEXT PRIMARY KEY NOT NULL, due_at INTEGER NOT NULL, end_seq INTEGER)"
+  },
+  {
+   "type": "table",
+   "name": "shared_ready_teams",
+   "tbl_name": "shared_ready_teams",
+   "sql": "CREATE TABLE shared_ready_teams (\n  bot_id TEXT NOT NULL,\n  team TEXT NOT NULL,\n  thread_id TEXT,\n  seq INTEGER NOT NULL,\n  waiting INTEGER NOT NULL DEFAULT 0 CHECK(waiting IN (0,1)),\n  gen INTEGER NOT NULL DEFAULT 0,\n  wait_on TEXT,\n  PRIMARY KEY (bot_id, team)) WITHOUT ROWID"
+  },
+  {
+   "type": "table",
+   "name": "shared_request_events",
+   "tbl_name": "shared_request_events",
+   "sql": "CREATE TABLE shared_request_events (request_id TEXT PRIMARY KEY REFERENCES room_requests(id) ON DELETE CASCADE, event_id TEXT NOT NULL)"
+  },
+  {
+   "type": "table",
+   "name": "shared_request_provenance",
+   "tbl_name": "shared_request_provenance",
+   "sql": "CREATE TABLE shared_request_provenance (request_id TEXT PRIMARY KEY, origin TEXT NOT NULL CHECK(origin IN ('routine','none')), permission_mode TEXT, trigger_source TEXT)"
+  },
+  {
+   "type": "table",
+   "name": "team_identities",
+   "tbl_name": "team_identities",
+   "sql": "CREATE TABLE team_identities (\n    team_id TEXT PRIMARY KEY NOT NULL,\n    label TEXT NOT NULL CHECK(length(label) BETWEEN 1 AND 60),\n    created_at INTEGER NOT NULL,\n    retired_at INTEGER,\n    op TEXT CHECK(op IS NULL OR op IN ('rename','delete')),\n    op_label TEXT CHECK(op_label IS NULL OR length(op_label) BETWEEN 1 AND 200),\n    op_choice TEXT CHECK(op_choice IS NULL OR op_choice IN ('keep','archive')),\n    op_phase INTEGER CHECK(op_phase IS NULL OR op_phase BETWEEN 1 AND 6),\n    op_records TEXT CHECK(op_records IS NULL OR json_valid(op_records)),\n    op_since INTEGER,\n    memory_key TEXT CHECK(memory_key IS NULL OR length(memory_key) BETWEEN 1 AND 200),\n    updated_at INTEGER NOT NULL)"
+  },
+  {
+   "type": "table",
+   "name": "thread_key",
+   "tbl_name": "thread_key",
+   "sql": "CREATE TABLE thread_key(key INTEGER PRIMARY KEY, thread_id TEXT NOT NULL UNIQUE, root_seg INTEGER, state INTEGER NOT NULL DEFAULT 0, fill_cursor INTEGER NOT NULL DEFAULT 0)"
+  },
+  {
+   "type": "table",
+   "name": "thread_snooze",
+   "tbl_name": "thread_snooze",
+   "sql": "CREATE TABLE thread_snooze (\n    thread_id TEXT PRIMARY KEY, snoozed_until INTEGER NOT NULL, snoozed_at INTEGER NOT NULL, until_activity INTEGER)"
+  },
+  {
+   "type": "table",
+   "name": "thread_state",
+   "tbl_name": "thread_state",
+   "sql": "CREATE TABLE thread_state(thread_id TEXT PRIMARY KEY, active_leaf_id TEXT)"
+  },
+  {
+   "type": "table",
+   "name": "transcript_index_state",
+   "tbl_name": "transcript_index_state",
+   "sql": "CREATE TABLE transcript_index_state(name TEXT PRIMARY KEY, done INTEGER NOT NULL, cursor INTEGER NOT NULL, skipped INTEGER NOT NULL) WITHOUT ROWID"
+  },
+  {
+   "type": "table",
+   "name": "turn_first",
+   "tbl_name": "turn_first",
+   "sql": "CREATE TABLE turn_first(thread_id TEXT NOT NULL, turn_id TEXT NOT NULL, first_rowid INTEGER NOT NULL, PRIMARY KEY(thread_id, turn_id)) WITHOUT ROWID"
+  },
+  {
+   "type": "table",
+   "name": "turn_source_copies",
+   "tbl_name": "turn_source_copies",
+   "sql": "CREATE TABLE turn_source_copies (origin_thread TEXT NOT NULL, origin_id TEXT NOT NULL, thread_id TEXT NOT NULL, id TEXT NOT NULL, position INTEGER NOT NULL,\n  PRIMARY KEY(origin_thread, origin_id, thread_id, id)) WITHOUT ROWID"
+  },
+  {
+   "type": "table",
+   "name": "turn_source_holds",
+   "tbl_name": "turn_source_holds",
+   "sql": "CREATE TABLE turn_source_holds (seq INTEGER PRIMARY KEY, thread_id TEXT NOT NULL, position INTEGER NOT NULL)"
+  },
+  {
+   "type": "table",
+   "name": "usage_ledger",
+   "tbl_name": "usage_ledger",
+   "sql": "CREATE TABLE usage_ledger (\n  settle_key TEXT PRIMARY KEY NOT NULL,               -- 'turn:' || JSON [threadId, providerTurnId]; 'charge:<operation id>'; 'unknown:<requestId>'; 'rollup:...'\n  turn_id TEXT,                                       -- the provider's turn id, informational (thread-local, fact 19)\n  group_id TEXT, goal_id TEXT, work_item_id TEXT, request_id TEXT, root_id TEXT,\n  attempt INTEGER,\n  bot_id TEXT NOT NULL, thread_id TEXT NOT NULL,\n  engine TEXT NOT NULL, model TEXT,\n  input INTEGER, output INTEGER, cached_input INTEGER,\n  tokens_reported INTEGER NOT NULL CHECK(tokens_reported IN (0,1)),\n  charge REAL, charge_kind TEXT NOT NULL CHECK(charge_kind IN ('charge','estimate','none')),\n  work_ms INTEGER NOT NULL CHECK(work_ms>=0),\n  ok INTEGER NOT NULL CHECK(ok IN (0,1)),\n  audience TEXT CHECK(audience IS NULL OR json_valid(audience)),   -- lane X attribution (section 17)\n  rolled_up INTEGER NOT NULL DEFAULT 0 CHECK(rolled_up IN (0,1)),\n  at INTEGER NOT NULL)"
+  },
+  {
+   "type": "trigger",
+   "name": "inbox_deferred_reinserted",
+   "tbl_name": "messages",
+   "sql": "CREATE TRIGGER inbox_deferred_reinserted AFTER INSERT ON messages BEGIN\n    DELETE FROM inbox_fill_deferred WHERE source_row=NEW.rowid;\n  END"
+  },
+  {
+   "type": "trigger",
+   "name": "inbox_deferred_removed",
+   "tbl_name": "messages",
+   "sql": "CREATE TRIGGER inbox_deferred_removed AFTER DELETE ON messages BEGIN\n    DELETE FROM inbox_fill_deferred WHERE source_row=OLD.rowid;\n  END"
+  },
+  {
+   "type": "trigger",
+   "name": "inbox_deferred_updated",
+   "tbl_name": "messages",
+   "sql": "CREATE TRIGGER inbox_deferred_updated AFTER UPDATE ON messages BEGIN\n    DELETE FROM inbox_fill_deferred WHERE source_row=OLD.rowid;\n  END"
+  },
+  {
+   "type": "trigger",
+   "name": "inbox_item_added",
+   "tbl_name": "inbox_items",
+   "sql": "CREATE TRIGGER inbox_item_added AFTER INSERT ON inbox_items BEGIN\n    INSERT INTO inbox_counts(thread_id) SELECT NEW.thread_id WHERE NOT EXISTS (SELECT 1 FROM inbox_counts WHERE thread_id=NEW.thread_id);\n    UPDATE inbox_counts SET v_all=v_all+(CASE WHEN 1 THEN 1 ELSE 0 END),\n      v_approvals=v_approvals+(CASE WHEN NEW.owed_or_over=1 AND NEW.segment='approval' THEN 1 ELSE 0 END),\n      v_decisions=v_decisions+(CASE WHEN NEW.expired=0 AND NEW.decision=1 THEN 1 ELSE 0 END),\n      v_questions=v_questions+(CASE WHEN NEW.owed_or_over=1 AND NEW.segment='question' THEN 1 ELSE 0 END),\n      v_connections=v_connections+(CASE WHEN NEW.owed_or_over=1 AND NEW.segment='connection' THEN 1 ELSE 0 END),\n      v_routines=v_routines+(CASE WHEN NEW.kind_segment='routine' THEN 1 ELSE 0 END),\n      v_to_read=v_to_read+(CASE WHEN NEW.to_read=1 AND (NEW.status<>'digest' OR NEW.read_version IS NULL) THEN 1 ELSE 0 END),\n      v_results=v_results+(CASE WHEN NEW.decision=0 AND NEW.to_read=0 AND NEW.kind IN ('routine.run','goal.run','text') THEN 1 ELSE 0 END),\n      l_all=l_all+(CASE WHEN NEW.live=1 THEN 1 ELSE 0 END),\n      l_approvals=l_approvals+(CASE WHEN NEW.owed_or_over=1 AND NEW.segment='approval' AND NEW.live=1 THEN 1 ELSE 0 END),\n      l_decisions=l_decisions+(CASE WHEN NEW.expired=0 AND NEW.decision=1 AND NEW.live=1 THEN 1 ELSE 0 END),\n      l_questions=l_questions+(CASE WHEN NEW.owed_or_over=1 AND NEW.segment='question' AND NEW.live=1 THEN 1 ELSE 0 END),\n      l_connections=l_connections+(CASE WHEN NEW.owed_or_over=1 AND NEW.segment='connection' AND NEW.live=1 THEN 1 ELSE 0 END),\n      l_routines=l_routines+(CASE WHEN NEW.kind_segment='routine' AND NEW.live=1 THEN 1 ELSE 0 END),\n      l_to_read=l_to_read+(CASE WHEN NEW.to_read=1 AND (NEW.status<>'digest' OR NEW.read_version IS NULL) AND NEW.live=1 THEN 1 ELSE 0 END),\n      l_results=l_results+(CASE WHEN NEW.decision=0 AND NEW.to_read=0 AND NEW.kind IN ('routine.run','goal.run','text') AND NEW.live=1 THEN 1 ELSE 0 END),\n      o_approvals=o_approvals+(CASE WHEN NEW.decision=1 AND NEW.segment='approval' AND NEW.live=1 THEN 1 ELSE 0 END),\n      o_questions=o_questions+(CASE WHEN NEW.decision=1 AND NEW.segment='question' AND NEW.live=1 THEN 1 ELSE 0 END),\n      o_connections=o_connections+(CASE WHEN NEW.decision=1 AND NEW.segment='connection' AND NEW.live=1 THEN 1 ELSE 0 END),\n      o_decisions=o_decisions+(CASE WHEN NEW.decision=1 AND NEW.live=1 THEN 1 ELSE 0 END),\n      o_unread=o_unread+(CASE WHEN NEW.to_read=1 AND NEW.read_version IS NULL AND NEW.live=1 THEN 1 ELSE 0 END),\n      owed_open=owed_open+(CASE WHEN NEW.decision=1 AND NEW.expired=0 THEN 1 ELSE 0 END) WHERE thread_id=NEW.thread_id;\n  END"
+  },
+  {
+   "type": "trigger",
+   "name": "inbox_item_removed",
+   "tbl_name": "inbox_items",
+   "sql": "CREATE TRIGGER inbox_item_removed AFTER DELETE ON inbox_items BEGIN\n    UPDATE inbox_counts SET v_all=v_all-(CASE WHEN 1 THEN 1 ELSE 0 END),\n      v_approvals=v_approvals-(CASE WHEN OLD.owed_or_over=1 AND OLD.segment='approval' THEN 1 ELSE 0 END),\n      v_decisions=v_decisions-(CASE WHEN OLD.expired=0 AND OLD.decision=1 THEN 1 ELSE 0 END),\n      v_questions=v_questions-(CASE WHEN OLD.owed_or_over=1 AND OLD.segment='question' THEN 1 ELSE 0 END),\n      v_connections=v_connections-(CASE WHEN OLD.owed_or_over=1 AND OLD.segment='connection' THEN 1 ELSE 0 END),\n      v_routines=v_routines-(CASE WHEN OLD.kind_segment='routine' THEN 1 ELSE 0 END),\n      v_to_read=v_to_read-(CASE WHEN OLD.to_read=1 AND (OLD.status<>'digest' OR OLD.read_version IS NULL) THEN 1 ELSE 0 END),\n      v_results=v_results-(CASE WHEN OLD.decision=0 AND OLD.to_read=0 AND OLD.kind IN ('routine.run','goal.run','text') THEN 1 ELSE 0 END),\n      l_all=l_all-(CASE WHEN OLD.live=1 THEN 1 ELSE 0 END),\n      l_approvals=l_approvals-(CASE WHEN OLD.owed_or_over=1 AND OLD.segment='approval' AND OLD.live=1 THEN 1 ELSE 0 END),\n      l_decisions=l_decisions-(CASE WHEN OLD.expired=0 AND OLD.decision=1 AND OLD.live=1 THEN 1 ELSE 0 END),\n      l_questions=l_questions-(CASE WHEN OLD.owed_or_over=1 AND OLD.segment='question' AND OLD.live=1 THEN 1 ELSE 0 END),\n      l_connections=l_connections-(CASE WHEN OLD.owed_or_over=1 AND OLD.segment='connection' AND OLD.live=1 THEN 1 ELSE 0 END),\n      l_routines=l_routines-(CASE WHEN OLD.kind_segment='routine' AND OLD.live=1 THEN 1 ELSE 0 END),\n      l_to_read=l_to_read-(CASE WHEN OLD.to_read=1 AND (OLD.status<>'digest' OR OLD.read_version IS NULL) AND OLD.live=1 THEN 1 ELSE 0 END),\n      l_results=l_results-(CASE WHEN OLD.decision=0 AND OLD.to_read=0 AND OLD.kind IN ('routine.run','goal.run','text') AND OLD.live=1 THEN 1 ELSE 0 END),\n      o_approvals=o_approvals-(CASE WHEN OLD.decision=1 AND OLD.segment='approval' AND OLD.live=1 THEN 1 ELSE 0 END),\n      o_questions=o_questions-(CASE WHEN OLD.decision=1 AND OLD.segment='question' AND OLD.live=1 THEN 1 ELSE 0 END),\n      o_connections=o_connections-(CASE WHEN OLD.decision=1 AND OLD.segment='connection' AND OLD.live=1 THEN 1 ELSE 0 END),\n      o_decisions=o_decisions-(CASE WHEN OLD.decision=1 AND OLD.live=1 THEN 1 ELSE 0 END),\n      o_unread=o_unread-(CASE WHEN OLD.to_read=1 AND OLD.read_version IS NULL AND OLD.live=1 THEN 1 ELSE 0 END),\n      owed_open=owed_open-(CASE WHEN OLD.decision=1 AND OLD.expired=0 THEN 1 ELSE 0 END) WHERE thread_id=OLD.thread_id;\n    DELETE FROM inbox_counts WHERE thread_id=OLD.thread_id AND v_all<=0;\n  END"
+  },
+  {
+   "type": "trigger",
+   "name": "inbox_project_delete",
+   "tbl_name": "messages",
+   "sql": "CREATE TRIGGER inbox_project_delete AFTER DELETE ON messages WHEN (OLD.role='bot' AND (OLD.kind IN ('options','secret','connector','mcpSignIn','routine.run','goal.run','activity') OR (OLD.kind='text' AND instr(OLD.json,'artifactIds')>0))) BEGIN\n    DELETE FROM inbox_raw WHERE thread_id=OLD.thread_id AND message_id=OLD.id;\n  END"
+  },
+  {
+   "type": "trigger",
+   "name": "inbox_project_insert",
+   "tbl_name": "messages",
+   "sql": "CREATE TRIGGER inbox_project_insert AFTER INSERT ON messages BEGIN\n    DELETE FROM inbox_raw WHERE thread_id=NEW.thread_id AND message_id=NEW.id;\n    INSERT INTO inbox_raw(source_row,thread_id,message_id,at,kind,expired,run_id,routine_id,source_key,status,summary,title,kind_segment,terminal,decision) SELECT p.*, CASE WHEN p.status IN ('resolved','completed','failed','cancelled','stopped','missed') THEN 1 ELSE 0 END, CASE WHEN p.status IN ('pending','waiting','needs-input','needs-you') THEN 1 ELSE 0 END\n  FROM (SELECT m.rowid AS source_row, m.thread_id, m.id AS message_id, m.at, m.kind,\n    COALESCE(json_extract(m.json,'$.card.expired'),0) AS expired,\n    json_extract(m.json,'$.routineRun.runId') AS run_id, json_extract(m.json,'$.routineRun.routineId') AS routine_id,\n    json_array(m.thread_id,m.kind,CASE m.kind\n      WHEN 'options' THEN COALESCE(json_extract(m.json,'$.card.requestId'),json_extract(m.json,'$.card.routineRequest.requestId'),json_extract(m.json,'$.card.skillRequest.requestId'),m.id)\n      WHEN 'secret' THEN COALESCE(json_extract(m.json,'$.secret.requestKey'),m.id)\n      WHEN 'connector' THEN COALESCE(json_extract(m.json,'$.connector.resumeKey') || ':' || json_extract(m.json,'$.connector.slug'),m.id)\n      WHEN 'mcpSignIn' THEN COALESCE(json_extract(m.json,'$.mcpSignIn.resumeKey') || ':' || json_extract(m.json,'$.mcpSignIn.name'),m.id)\n      WHEN 'routine.run' THEN COALESCE(json_extract(m.json,'$.routineRun.runId'),m.id)\n      WHEN 'goal.run' THEN COALESCE(json_extract(m.json,'$.goalRun.runId'),m.id)\n      WHEN 'text' THEN json_extract(m.json,'$.artifactIds[0]')\n      -- RULE 3, WHERE THE GROUPING ALREADY HAPPENS. An engine that is not\n      -- signed in writes one of these every time a turn tries to use it, and\n      -- they were keyed by message id, so twenty attempts were twenty rows\n      -- saying the same sentence. One key per thread per cause makes them one\n      -- row carrying the count.\n      WHEN 'activity' THEN CASE\n        WHEN json_extract(m.json,'$.tool.authRequired')=1 OR json_extract(m.json,'$.tool.setup')=1 THEN 'connection'\n        ELSE m.id END\n      ELSE m.id END) AS source_key,\n    CASE m.kind\n      WHEN 'options' THEN CASE\n        WHEN json_extract(m.json,'$.card.expired')=1 AND json_extract(m.json,'$.card.unattended')=1\n          AND COALESCE(json_extract(m.json,'$.card.sentAsMessage'),0)=0 AND COALESCE(json_extract(m.json,'$.card.dismissed'),0)=0 THEN 'missed'\n        WHEN json_type(m.json,'$.card.answered')='text' OR json_extract(m.json,'$.card.dismissed')=1 THEN 'resolved'\n        -- D7: an approval whose request died with a previous process\n        -- (index.ts boot sweep) is not waiting on anyone any more.\n        WHEN json_extract(m.json,'$.card.orphaned')=1 THEN 'resolved' ELSE 'pending' END\n      WHEN 'secret' THEN CASE WHEN json_extract(m.json,'$.secret.provided')=1 OR json_extract(m.json,'$.secret.dismissed')=1 THEN 'resolved' ELSE 'pending' END\n      WHEN 'connector' THEN CASE WHEN json_extract(m.json,'$.connector.status')='connected' OR json_extract(m.json,'$.connector.dismissed')=1 THEN 'resolved' ELSE 'pending' END\n      -- A link server's sign-in that ended mid-turn (MCP-LINK 3.12): owed until\n      -- the owner signs in again or sets the card aside.\n      WHEN 'mcpSignIn' THEN CASE WHEN json_extract(m.json,'$.mcpSignIn.status')='signed-in' OR json_extract(m.json,'$.mcpSignIn.dismissed')=1 THEN 'resolved' ELSE 'pending' END\n      WHEN 'routine.run' THEN COALESCE(json_extract(m.json,'$.routineRun.goalStatus'),json_extract(m.json,'$.routineRun.status'))\n      WHEN 'activity' THEN CASE WHEN json_extract(m.json,'$.actorKind')='murage' AND json_extract(m.json,'$.murage.kind')='status' AND json_type(m.json,'$.murage.digestDay')='text' THEN 'digest' ELSE 'failed' END\n      WHEN 'goal.run' THEN json_extract(m.json,'$.goalRun.status') WHEN 'text' THEN 'completed' ELSE 'failed' END AS status,\n    -- The projection keeps a PREVIEW (the list shows 280 characters, a digest 1000): capped in SQL so the full text of a huge message is never copied into the projection.\n    substr(CASE m.kind WHEN 'activity' THEN CASE WHEN json_extract(m.json,'$.actorKind')='murage' AND json_extract(m.json,'$.murage.kind')='status' AND json_type(m.json,'$.murage.digestDay')='text' THEN COALESCE(json_extract(m.json,'$.tool.name'),'') ELSE '' END\n      WHEN 'routine.run' THEN COALESCE(json_extract(m.json,'$.routineRun.summary'),json_extract(m.json,'$.routineRun.error'),'')\n      WHEN 'goal.run' THEN COALESCE(json_extract(m.json,'$.goalRun.detail'),'') WHEN 'text' THEN COALESCE(json_extract(m.json,'$.text'),'Saved file')\n      WHEN 'mcpSignIn' THEN COALESCE(json_extract(m.json,'$.mcpSignIn.body'),'') ELSE '' END, 1, 2048) AS summary,\n    substr(CASE m.kind WHEN 'options' THEN CASE\n      WHEN json_type(m.json,'$.card.routineRequest')='object' THEN 'Routine proposal'\n      WHEN json_type(m.json,'$.card.skillRequest')='object' THEN 'Skill proposal'\n      -- Expired is checked before the tool, so every expired card called\n      -- itself a question. Under a tab named Approvals that reads as though\n      -- the wrong row arrived, and \"whether it has expired\" was the exact\n      -- thing reported as impossible to tell.\n      WHEN json_extract(m.json,'$.card.expired')=1 THEN\n        CASE WHEN json_type(m.json,'$.card.tool')='text' THEN 'Approval expired' ELSE 'Question expired' END\n      WHEN json_type(m.json,'$.card.tool')='text' THEN 'Approval requested' ELSE 'Question needs an answer' END\n      WHEN 'secret' THEN 'Credential setup requested' WHEN 'connector' THEN 'Connection setup'\n      WHEN 'mcpSignIn' THEN 'Sign in to ' || COALESCE(json_extract(m.json,'$.mcpSignIn.host'),'a server')\n      WHEN 'routine.run' THEN COALESCE(json_extract(m.json,'$.routineRun.routineName'),'Routine result')\n      WHEN 'goal.run' THEN 'Team goal result' WHEN 'text' THEN 'Saved file'\n      -- A provider having a bad morning and an engine that is not signed in\n      -- are not the same news, and only one of them is anybody's job.\n      WHEN 'activity' THEN CASE\n        WHEN json_extract(m.json,'$.actorKind')='murage' AND json_extract(m.json,'$.murage.kind')='status' AND json_type(m.json,'$.murage.digestDay')='text' THEN 'Daily digest'\n        WHEN json_extract(m.json,'$.tool.authRequired')=1 THEN 'Sign in needed'\n        WHEN json_extract(m.json,'$.tool.setup')=1 THEN 'Setup needed'\n        ELSE 'Provider needs attention' END\n      ELSE 'Provider needs attention' END, 1, 2048) AS title,\n    -- WHICH OF THE FIVE LISTS THIS BELONGS IN.\n    --\n    -- The kind column says what SHAPE the message is. This says what it\n    -- costs the owner to ignore it, which is the only question the Inbox is\n    -- sorted on.\n    --\n    -- The split inside 'options' is the one the owner asked for: a card\n    -- carrying a TOOL is permission to perform a specific, already drafted\n    -- act (\"send these four emails\"), and everything else of that shape is a\n    -- question wanting a judgement (\"should this become a routine?\"). They\n    -- read the same in a list and are nothing alike to answer.\n    --\n    -- An 'activity' row that is a missing login or an unfinished setup is a\n    -- CONNECTION, not provider news: it needs the owner's hands and no\n    -- amount of waiting fixes it. A provider simply erroring is news.\n    CASE m.kind\n      WHEN 'options' THEN CASE WHEN json_type(m.json,'$.card.tool')='text' THEN 'approval' ELSE 'question' END\n      WHEN 'secret' THEN 'connection' WHEN 'connector' THEN 'connection' WHEN 'mcpSignIn' THEN 'connection'\n      WHEN 'activity' THEN CASE WHEN json_extract(m.json,'$.actorKind')='murage' AND json_extract(m.json,'$.murage.kind')='status' AND json_type(m.json,'$.murage.digestDay')='text' THEN 'result' WHEN json_extract(m.json,'$.tool.authRequired')=1 OR json_extract(m.json,'$.tool.setup')=1 THEN 'connection' ELSE 'routine' END\n      WHEN 'routine.run' THEN 'routine' WHEN 'goal.run' THEN 'routine'\n      ELSE 'result' END AS kind_segment\n    FROM messages m WHERE m.rowid=NEW.rowid AND m.role='bot' AND m.kind IN ('options','secret','connector','mcpSignIn','routine.run','goal.run','activity','text') AND CASE WHEN json_valid(m.json) THEN CASE m.kind\n      WHEN 'options' THEN json_type(m.json,'$.card.requestId')='text' OR json_type(m.json,'$.card.routineRequest')='object' OR json_type(m.json,'$.card.skillRequest')='object'\n      WHEN 'secret' THEN json_type(m.json,'$.secret')='object'\n      WHEN 'connector' THEN json_type(m.json,'$.connector')='object'\n      WHEN 'mcpSignIn' THEN json_type(m.json,'$.mcpSignIn')='object'\n      WHEN 'routine.run' THEN json_extract(m.json,'$.routineRun.status') NOT IN ('queued','running')\n      WHEN 'goal.run' THEN json_extract(m.json,'$.goalRun.status')!='working'\n      WHEN 'activity' THEN (json_extract(m.json,'$.actorKind')='murage' AND json_extract(m.json,'$.murage.kind')='status' AND json_type(m.json,'$.murage.digestDay')='text') OR (json_extract(m.json,'$.tool.ok')=0 AND (json_extract(m.json,'$.tool.setup')=1 OR json_extract(m.json,'$.tool.authRequired')=1 OR json_type(m.json,'$.tool.providerError')='object'))\n      WHEN 'text' THEN json_type(m.json,'$.artifactIds[0]')='text' AND length(json_extract(m.json,'$.artifactIds[0]'))=36\n    END ELSE 0 END) p;\n  END"
+  },
+  {
+   "type": "trigger",
+   "name": "inbox_project_update",
+   "tbl_name": "messages",
+   "sql": "CREATE TRIGGER inbox_project_update AFTER UPDATE ON messages WHEN (OLD.role='bot' AND (OLD.kind IN ('options','secret','connector','mcpSignIn','routine.run','goal.run','activity') OR (OLD.kind='text' AND instr(OLD.json,'artifactIds')>0))) OR (NEW.role='bot' AND (NEW.kind IN ('options','secret','connector','mcpSignIn','routine.run','goal.run','activity') OR (NEW.kind='text' AND instr(NEW.json,'artifactIds')>0))) BEGIN\n    DELETE FROM inbox_raw WHERE thread_id=OLD.thread_id AND message_id=OLD.id;\n    INSERT INTO inbox_raw(source_row,thread_id,message_id,at,kind,expired,run_id,routine_id,source_key,status,summary,title,kind_segment,terminal,decision) SELECT p.*, CASE WHEN p.status IN ('resolved','completed','failed','cancelled','stopped','missed') THEN 1 ELSE 0 END, CASE WHEN p.status IN ('pending','waiting','needs-input','needs-you') THEN 1 ELSE 0 END\n  FROM (SELECT m.rowid AS source_row, m.thread_id, m.id AS message_id, m.at, m.kind,\n    COALESCE(json_extract(m.json,'$.card.expired'),0) AS expired,\n    json_extract(m.json,'$.routineRun.runId') AS run_id, json_extract(m.json,'$.routineRun.routineId') AS routine_id,\n    json_array(m.thread_id,m.kind,CASE m.kind\n      WHEN 'options' THEN COALESCE(json_extract(m.json,'$.card.requestId'),json_extract(m.json,'$.card.routineRequest.requestId'),json_extract(m.json,'$.card.skillRequest.requestId'),m.id)\n      WHEN 'secret' THEN COALESCE(json_extract(m.json,'$.secret.requestKey'),m.id)\n      WHEN 'connector' THEN COALESCE(json_extract(m.json,'$.connector.resumeKey') || ':' || json_extract(m.json,'$.connector.slug'),m.id)\n      WHEN 'mcpSignIn' THEN COALESCE(json_extract(m.json,'$.mcpSignIn.resumeKey') || ':' || json_extract(m.json,'$.mcpSignIn.name'),m.id)\n      WHEN 'routine.run' THEN COALESCE(json_extract(m.json,'$.routineRun.runId'),m.id)\n      WHEN 'goal.run' THEN COALESCE(json_extract(m.json,'$.goalRun.runId'),m.id)\n      WHEN 'text' THEN json_extract(m.json,'$.artifactIds[0]')\n      -- RULE 3, WHERE THE GROUPING ALREADY HAPPENS. An engine that is not\n      -- signed in writes one of these every time a turn tries to use it, and\n      -- they were keyed by message id, so twenty attempts were twenty rows\n      -- saying the same sentence. One key per thread per cause makes them one\n      -- row carrying the count.\n      WHEN 'activity' THEN CASE\n        WHEN json_extract(m.json,'$.tool.authRequired')=1 OR json_extract(m.json,'$.tool.setup')=1 THEN 'connection'\n        ELSE m.id END\n      ELSE m.id END) AS source_key,\n    CASE m.kind\n      WHEN 'options' THEN CASE\n        WHEN json_extract(m.json,'$.card.expired')=1 AND json_extract(m.json,'$.card.unattended')=1\n          AND COALESCE(json_extract(m.json,'$.card.sentAsMessage'),0)=0 AND COALESCE(json_extract(m.json,'$.card.dismissed'),0)=0 THEN 'missed'\n        WHEN json_type(m.json,'$.card.answered')='text' OR json_extract(m.json,'$.card.dismissed')=1 THEN 'resolved'\n        -- D7: an approval whose request died with a previous process\n        -- (index.ts boot sweep) is not waiting on anyone any more.\n        WHEN json_extract(m.json,'$.card.orphaned')=1 THEN 'resolved' ELSE 'pending' END\n      WHEN 'secret' THEN CASE WHEN json_extract(m.json,'$.secret.provided')=1 OR json_extract(m.json,'$.secret.dismissed')=1 THEN 'resolved' ELSE 'pending' END\n      WHEN 'connector' THEN CASE WHEN json_extract(m.json,'$.connector.status')='connected' OR json_extract(m.json,'$.connector.dismissed')=1 THEN 'resolved' ELSE 'pending' END\n      -- A link server's sign-in that ended mid-turn (MCP-LINK 3.12): owed until\n      -- the owner signs in again or sets the card aside.\n      WHEN 'mcpSignIn' THEN CASE WHEN json_extract(m.json,'$.mcpSignIn.status')='signed-in' OR json_extract(m.json,'$.mcpSignIn.dismissed')=1 THEN 'resolved' ELSE 'pending' END\n      WHEN 'routine.run' THEN COALESCE(json_extract(m.json,'$.routineRun.goalStatus'),json_extract(m.json,'$.routineRun.status'))\n      WHEN 'activity' THEN CASE WHEN json_extract(m.json,'$.actorKind')='murage' AND json_extract(m.json,'$.murage.kind')='status' AND json_type(m.json,'$.murage.digestDay')='text' THEN 'digest' ELSE 'failed' END\n      WHEN 'goal.run' THEN json_extract(m.json,'$.goalRun.status') WHEN 'text' THEN 'completed' ELSE 'failed' END AS status,\n    -- The projection keeps a PREVIEW (the list shows 280 characters, a digest 1000): capped in SQL so the full text of a huge message is never copied into the projection.\n    substr(CASE m.kind WHEN 'activity' THEN CASE WHEN json_extract(m.json,'$.actorKind')='murage' AND json_extract(m.json,'$.murage.kind')='status' AND json_type(m.json,'$.murage.digestDay')='text' THEN COALESCE(json_extract(m.json,'$.tool.name'),'') ELSE '' END\n      WHEN 'routine.run' THEN COALESCE(json_extract(m.json,'$.routineRun.summary'),json_extract(m.json,'$.routineRun.error'),'')\n      WHEN 'goal.run' THEN COALESCE(json_extract(m.json,'$.goalRun.detail'),'') WHEN 'text' THEN COALESCE(json_extract(m.json,'$.text'),'Saved file')\n      WHEN 'mcpSignIn' THEN COALESCE(json_extract(m.json,'$.mcpSignIn.body'),'') ELSE '' END, 1, 2048) AS summary,\n    substr(CASE m.kind WHEN 'options' THEN CASE\n      WHEN json_type(m.json,'$.card.routineRequest')='object' THEN 'Routine proposal'\n      WHEN json_type(m.json,'$.card.skillRequest')='object' THEN 'Skill proposal'\n      -- Expired is checked before the tool, so every expired card called\n      -- itself a question. Under a tab named Approvals that reads as though\n      -- the wrong row arrived, and \"whether it has expired\" was the exact\n      -- thing reported as impossible to tell.\n      WHEN json_extract(m.json,'$.card.expired')=1 THEN\n        CASE WHEN json_type(m.json,'$.card.tool')='text' THEN 'Approval expired' ELSE 'Question expired' END\n      WHEN json_type(m.json,'$.card.tool')='text' THEN 'Approval requested' ELSE 'Question needs an answer' END\n      WHEN 'secret' THEN 'Credential setup requested' WHEN 'connector' THEN 'Connection setup'\n      WHEN 'mcpSignIn' THEN 'Sign in to ' || COALESCE(json_extract(m.json,'$.mcpSignIn.host'),'a server')\n      WHEN 'routine.run' THEN COALESCE(json_extract(m.json,'$.routineRun.routineName'),'Routine result')\n      WHEN 'goal.run' THEN 'Team goal result' WHEN 'text' THEN 'Saved file'\n      -- A provider having a bad morning and an engine that is not signed in\n      -- are not the same news, and only one of them is anybody's job.\n      WHEN 'activity' THEN CASE\n        WHEN json_extract(m.json,'$.actorKind')='murage' AND json_extract(m.json,'$.murage.kind')='status' AND json_type(m.json,'$.murage.digestDay')='text' THEN 'Daily digest'\n        WHEN json_extract(m.json,'$.tool.authRequired')=1 THEN 'Sign in needed'\n        WHEN json_extract(m.json,'$.tool.setup')=1 THEN 'Setup needed'\n        ELSE 'Provider needs attention' END\n      ELSE 'Provider needs attention' END, 1, 2048) AS title,\n    -- WHICH OF THE FIVE LISTS THIS BELONGS IN.\n    --\n    -- The kind column says what SHAPE the message is. This says what it\n    -- costs the owner to ignore it, which is the only question the Inbox is\n    -- sorted on.\n    --\n    -- The split inside 'options' is the one the owner asked for: a card\n    -- carrying a TOOL is permission to perform a specific, already drafted\n    -- act (\"send these four emails\"), and everything else of that shape is a\n    -- question wanting a judgement (\"should this become a routine?\"). They\n    -- read the same in a list and are nothing alike to answer.\n    --\n    -- An 'activity' row that is a missing login or an unfinished setup is a\n    -- CONNECTION, not provider news: it needs the owner's hands and no\n    -- amount of waiting fixes it. A provider simply erroring is news.\n    CASE m.kind\n      WHEN 'options' THEN CASE WHEN json_type(m.json,'$.card.tool')='text' THEN 'approval' ELSE 'question' END\n      WHEN 'secret' THEN 'connection' WHEN 'connector' THEN 'connection' WHEN 'mcpSignIn' THEN 'connection'\n      WHEN 'activity' THEN CASE WHEN json_extract(m.json,'$.actorKind')='murage' AND json_extract(m.json,'$.murage.kind')='status' AND json_type(m.json,'$.murage.digestDay')='text' THEN 'result' WHEN json_extract(m.json,'$.tool.authRequired')=1 OR json_extract(m.json,'$.tool.setup')=1 THEN 'connection' ELSE 'routine' END\n      WHEN 'routine.run' THEN 'routine' WHEN 'goal.run' THEN 'routine'\n      ELSE 'result' END AS kind_segment\n    FROM messages m WHERE m.rowid=NEW.rowid AND m.role='bot' AND m.kind IN ('options','secret','connector','mcpSignIn','routine.run','goal.run','activity','text') AND CASE WHEN json_valid(m.json) THEN CASE m.kind\n      WHEN 'options' THEN json_type(m.json,'$.card.requestId')='text' OR json_type(m.json,'$.card.routineRequest')='object' OR json_type(m.json,'$.card.skillRequest')='object'\n      WHEN 'secret' THEN json_type(m.json,'$.secret')='object'\n      WHEN 'connector' THEN json_type(m.json,'$.connector')='object'\n      WHEN 'mcpSignIn' THEN json_type(m.json,'$.mcpSignIn')='object'\n      WHEN 'routine.run' THEN json_extract(m.json,'$.routineRun.status') NOT IN ('queued','running')\n      WHEN 'goal.run' THEN json_extract(m.json,'$.goalRun.status')!='working'\n      WHEN 'activity' THEN (json_extract(m.json,'$.actorKind')='murage' AND json_extract(m.json,'$.murage.kind')='status' AND json_type(m.json,'$.murage.digestDay')='text') OR (json_extract(m.json,'$.tool.ok')=0 AND (json_extract(m.json,'$.tool.setup')=1 OR json_extract(m.json,'$.tool.authRequired')=1 OR json_type(m.json,'$.tool.providerError')='object'))\n      WHEN 'text' THEN json_type(m.json,'$.artifactIds[0]')='text' AND length(json_extract(m.json,'$.artifactIds[0]'))=36\n    END ELSE 0 END) p;\n  END"
+  },
+  {
+   "type": "trigger",
+   "name": "inbox_raw_added",
+   "tbl_name": "inbox_raw",
+   "sql": "CREATE TRIGGER inbox_raw_added AFTER INSERT ON inbox_raw BEGIN\n    UPDATE inbox_keys SET copies=copies+1 WHERE source_key=NEW.source_key;\n    INSERT INTO inbox_keys(source_key,copies) SELECT NEW.source_key,1 WHERE NOT EXISTS (SELECT 1 FROM inbox_keys WHERE source_key=NEW.source_key);\n    DELETE FROM inbox_items WHERE source_key=NEW.source_key;\n    INSERT INTO inbox_items(source_key,thread_id,message_id,source_row,at,kind,expired,run_id,routine_id,status,summary,title,kind_segment,copies,decision,to_read,segment,owed_or_over,read_version,snoozed_until,cleared_at,live)\n    SELECT h.source_key, h.thread_id, h.message_id, h.source_row, h.at, h.kind, h.expired, h.run_id, h.routine_id, h.status, h.summary, h.title, h.kind_segment, k.copies,\n      CASE WHEN h.status IN ('pending','waiting','needs-input','needs-you') THEN 1 ELSE 0 END,\n      CASE WHEN h.status IN ('blocked','limit-reached','failed','missed','paused','digest') THEN 1 ELSE 0 END,\n      CASE WHEN h.kind_segment='routine' AND h.status IN ('pending','waiting','needs-input','needs-you') THEN 'question' ELSE h.kind_segment END,\n      CASE WHEN h.status IN ('pending','waiting','needs-input','needs-you') OR h.status IN ('blocked','limit-reached','failed','missed','paused','digest') THEN 1 ELSE 0 END,\n      s.read_version, s.snoozed_until, s.cleared_at,\n      CASE WHEN s.cleared_at IS NULL OR h.at>s.cleared_at THEN 1 ELSE 0 END\n    FROM inbox_raw h JOIN inbox_keys k ON k.source_key=h.source_key LEFT JOIN inbox_item_state s ON s.source_key=h.source_key\n    WHERE h.rowid=(SELECT x.rowid FROM inbox_raw x WHERE x.source_key=NEW.source_key ORDER BY x.terminal DESC,x.at DESC,x.source_row DESC LIMIT 1)\n      AND NOT(h.status='completed' AND length(trim(h.summary))=0);\n  END"
+  },
+  {
+   "type": "trigger",
+   "name": "inbox_raw_removed",
+   "tbl_name": "inbox_raw",
+   "sql": "CREATE TRIGGER inbox_raw_removed AFTER DELETE ON inbox_raw BEGIN\n    UPDATE inbox_keys SET copies=copies-1 WHERE source_key=OLD.source_key;\n    DELETE FROM inbox_keys WHERE source_key=OLD.source_key AND copies<=0;\n    DELETE FROM inbox_items WHERE source_key=OLD.source_key;\n    INSERT INTO inbox_items(source_key,thread_id,message_id,source_row,at,kind,expired,run_id,routine_id,status,summary,title,kind_segment,copies,decision,to_read,segment,owed_or_over,read_version,snoozed_until,cleared_at,live)\n    SELECT h.source_key, h.thread_id, h.message_id, h.source_row, h.at, h.kind, h.expired, h.run_id, h.routine_id, h.status, h.summary, h.title, h.kind_segment, k.copies,\n      CASE WHEN h.status IN ('pending','waiting','needs-input','needs-you') THEN 1 ELSE 0 END,\n      CASE WHEN h.status IN ('blocked','limit-reached','failed','missed','paused','digest') THEN 1 ELSE 0 END,\n      CASE WHEN h.kind_segment='routine' AND h.status IN ('pending','waiting','needs-input','needs-you') THEN 'question' ELSE h.kind_segment END,\n      CASE WHEN h.status IN ('pending','waiting','needs-input','needs-you') OR h.status IN ('blocked','limit-reached','failed','missed','paused','digest') THEN 1 ELSE 0 END,\n      s.read_version, s.snoozed_until, s.cleared_at,\n      CASE WHEN s.cleared_at IS NULL OR h.at>s.cleared_at THEN 1 ELSE 0 END\n    FROM inbox_raw h JOIN inbox_keys k ON k.source_key=h.source_key LEFT JOIN inbox_item_state s ON s.source_key=h.source_key\n    WHERE h.rowid=(SELECT x.rowid FROM inbox_raw x WHERE x.source_key=OLD.source_key ORDER BY x.terminal DESC,x.at DESC,x.source_row DESC LIMIT 1)\n      AND NOT(h.status='completed' AND length(trim(h.summary))=0);\n  END"
+  },
+  {
+   "type": "trigger",
+   "name": "inbox_state_added",
+   "tbl_name": "inbox_item_state",
+   "sql": "CREATE TRIGGER inbox_state_added AFTER INSERT ON inbox_item_state BEGIN DELETE FROM inbox_items WHERE source_key=NEW.source_key;\n    INSERT INTO inbox_items(source_key,thread_id,message_id,source_row,at,kind,expired,run_id,routine_id,status,summary,title,kind_segment,copies,decision,to_read,segment,owed_or_over,read_version,snoozed_until,cleared_at,live)\n    SELECT h.source_key, h.thread_id, h.message_id, h.source_row, h.at, h.kind, h.expired, h.run_id, h.routine_id, h.status, h.summary, h.title, h.kind_segment, k.copies,\n      CASE WHEN h.status IN ('pending','waiting','needs-input','needs-you') THEN 1 ELSE 0 END,\n      CASE WHEN h.status IN ('blocked','limit-reached','failed','missed','paused','digest') THEN 1 ELSE 0 END,\n      CASE WHEN h.kind_segment='routine' AND h.status IN ('pending','waiting','needs-input','needs-you') THEN 'question' ELSE h.kind_segment END,\n      CASE WHEN h.status IN ('pending','waiting','needs-input','needs-you') OR h.status IN ('blocked','limit-reached','failed','missed','paused','digest') THEN 1 ELSE 0 END,\n      s.read_version, s.snoozed_until, s.cleared_at,\n      CASE WHEN s.cleared_at IS NULL OR h.at>s.cleared_at THEN 1 ELSE 0 END\n    FROM inbox_raw h JOIN inbox_keys k ON k.source_key=h.source_key LEFT JOIN inbox_item_state s ON s.source_key=h.source_key\n    WHERE h.rowid=(SELECT x.rowid FROM inbox_raw x WHERE x.source_key=NEW.source_key ORDER BY x.terminal DESC,x.at DESC,x.source_row DESC LIMIT 1)\n      AND NOT(h.status='completed' AND length(trim(h.summary))=0); END"
+  },
+  {
+   "type": "trigger",
+   "name": "inbox_state_changed",
+   "tbl_name": "inbox_item_state",
+   "sql": "CREATE TRIGGER inbox_state_changed AFTER UPDATE ON inbox_item_state BEGIN DELETE FROM inbox_items WHERE source_key=NEW.source_key;\n    INSERT INTO inbox_items(source_key,thread_id,message_id,source_row,at,kind,expired,run_id,routine_id,status,summary,title,kind_segment,copies,decision,to_read,segment,owed_or_over,read_version,snoozed_until,cleared_at,live)\n    SELECT h.source_key, h.thread_id, h.message_id, h.source_row, h.at, h.kind, h.expired, h.run_id, h.routine_id, h.status, h.summary, h.title, h.kind_segment, k.copies,\n      CASE WHEN h.status IN ('pending','waiting','needs-input','needs-you') THEN 1 ELSE 0 END,\n      CASE WHEN h.status IN ('blocked','limit-reached','failed','missed','paused','digest') THEN 1 ELSE 0 END,\n      CASE WHEN h.kind_segment='routine' AND h.status IN ('pending','waiting','needs-input','needs-you') THEN 'question' ELSE h.kind_segment END,\n      CASE WHEN h.status IN ('pending','waiting','needs-input','needs-you') OR h.status IN ('blocked','limit-reached','failed','missed','paused','digest') THEN 1 ELSE 0 END,\n      s.read_version, s.snoozed_until, s.cleared_at,\n      CASE WHEN s.cleared_at IS NULL OR h.at>s.cleared_at THEN 1 ELSE 0 END\n    FROM inbox_raw h JOIN inbox_keys k ON k.source_key=h.source_key LEFT JOIN inbox_item_state s ON s.source_key=h.source_key\n    WHERE h.rowid=(SELECT x.rowid FROM inbox_raw x WHERE x.source_key=NEW.source_key ORDER BY x.terminal DESC,x.at DESC,x.source_row DESC LIMIT 1)\n      AND NOT(h.status='completed' AND length(trim(h.summary))=0); END"
+  },
+  {
+   "type": "trigger",
+   "name": "inbox_state_removed",
+   "tbl_name": "inbox_item_state",
+   "sql": "CREATE TRIGGER inbox_state_removed AFTER DELETE ON inbox_item_state BEGIN DELETE FROM inbox_items WHERE source_key=OLD.source_key;\n    INSERT INTO inbox_items(source_key,thread_id,message_id,source_row,at,kind,expired,run_id,routine_id,status,summary,title,kind_segment,copies,decision,to_read,segment,owed_or_over,read_version,snoozed_until,cleared_at,live)\n    SELECT h.source_key, h.thread_id, h.message_id, h.source_row, h.at, h.kind, h.expired, h.run_id, h.routine_id, h.status, h.summary, h.title, h.kind_segment, k.copies,\n      CASE WHEN h.status IN ('pending','waiting','needs-input','needs-you') THEN 1 ELSE 0 END,\n      CASE WHEN h.status IN ('blocked','limit-reached','failed','missed','paused','digest') THEN 1 ELSE 0 END,\n      CASE WHEN h.kind_segment='routine' AND h.status IN ('pending','waiting','needs-input','needs-you') THEN 'question' ELSE h.kind_segment END,\n      CASE WHEN h.status IN ('pending','waiting','needs-input','needs-you') OR h.status IN ('blocked','limit-reached','failed','missed','paused','digest') THEN 1 ELSE 0 END,\n      s.read_version, s.snoozed_until, s.cleared_at,\n      CASE WHEN s.cleared_at IS NULL OR h.at>s.cleared_at THEN 1 ELSE 0 END\n    FROM inbox_raw h JOIN inbox_keys k ON k.source_key=h.source_key LEFT JOIN inbox_item_state s ON s.source_key=h.source_key\n    WHERE h.rowid=(SELECT x.rowid FROM inbox_raw x WHERE x.source_key=OLD.source_key ORDER BY x.terminal DESC,x.at DESC,x.source_row DESC LIMIT 1)\n      AND NOT(h.status='completed' AND length(trim(h.summary))=0); END"
+  },
+  {
+   "type": "trigger",
+   "name": "memory_disclosure_outputs_delete",
+   "tbl_name": "memory_disclosures",
+   "sql": "CREATE TRIGGER memory_disclosure_outputs_delete AFTER DELETE ON memory_disclosures BEGIN\n DELETE FROM memory_disclosure_outputs WHERE bundle_id=OLD.bundle_id;\nEND"
+  },
+  {
+   "type": "trigger",
+   "name": "memory_disclosure_outputs_insert",
+   "tbl_name": "memory_disclosures",
+   "sql": "CREATE TRIGGER memory_disclosure_outputs_insert AFTER INSERT ON memory_disclosures BEGIN\n INSERT OR IGNORE INTO memory_disclosure_outputs(bundle_id,thread_id,message_id)\n SELECT NEW.bundle_id,NEW.thread_id,value FROM json_each(NEW.output_message_ids) WHERE type='text';\nEND"
+  },
+  {
+   "type": "trigger",
+   "name": "memory_disclosure_outputs_update",
+   "tbl_name": "memory_disclosures",
+   "sql": "CREATE TRIGGER memory_disclosure_outputs_update AFTER UPDATE OF output_message_ids,thread_id,bundle_id ON memory_disclosures BEGIN\n DELETE FROM memory_disclosure_outputs WHERE bundle_id=OLD.bundle_id AND (bundle_id!=NEW.bundle_id OR thread_id!=NEW.thread_id\n  OR message_id NOT IN (SELECT value FROM json_each(NEW.output_message_ids) WHERE type='text'));\n INSERT OR IGNORE INTO memory_disclosure_outputs(bundle_id,thread_id,message_id)\n SELECT NEW.bundle_id,NEW.thread_id,value FROM json_each(NEW.output_message_ids) WHERE type='text';\nEND"
+  },
+  {
+   "type": "trigger",
+   "name": "memory_disclosure_refs_delete",
+   "tbl_name": "memory_disclosures",
+   "sql": "CREATE TRIGGER memory_disclosure_refs_delete AFTER DELETE ON memory_disclosures BEGIN\n DELETE FROM memory_disclosure_refs WHERE bundle_id=OLD.bundle_id;\nEND"
+  },
+  {
+   "type": "trigger",
+   "name": "memory_disclosure_refs_insert",
+   "tbl_name": "memory_disclosures",
+   "sql": "CREATE TRIGGER memory_disclosure_refs_insert AFTER INSERT ON memory_disclosures WHEN NEW.state!='revoked' BEGIN\n INSERT INTO memory_disclosure_refs(bundle_id,kind,ref_id,ref_version) SELECT NEW.bundle_id,'record',json_extract(j.value,'$.id'),json_extract(j.value,'$.version') FROM json_each(NEW.record_versions) j WHERE NEW.state!='revoked' AND json_extract(j.value,'$.id') IS NOT NULL\n UNION ALL SELECT NEW.bundle_id,'source',json_extract(j.value,'$.id'),json_extract(j.value,'$.revision') FROM json_each(NEW.source_versions) j WHERE NEW.state!='revoked' AND json_extract(j.value,'$.id') IS NOT NULL;\nEND"
+  },
+  {
+   "type": "trigger",
+   "name": "memory_disclosure_refs_update",
+   "tbl_name": "memory_disclosures",
+   "sql": "CREATE TRIGGER memory_disclosure_refs_update AFTER UPDATE OF bundle_id,state,record_versions,source_versions ON memory_disclosures\n WHEN OLD.bundle_id IS NOT NEW.bundle_id OR (OLD.state='revoked') IS NOT (NEW.state='revoked') OR OLD.record_versions IS NOT NEW.record_versions OR OLD.source_versions IS NOT NEW.source_versions BEGIN\n DELETE FROM memory_disclosure_refs WHERE bundle_id=OLD.bundle_id;\n INSERT INTO memory_disclosure_refs(bundle_id,kind,ref_id,ref_version) SELECT NEW.bundle_id,'record',json_extract(j.value,'$.id'),json_extract(j.value,'$.version') FROM json_each(NEW.record_versions) j WHERE NEW.state!='revoked' AND json_extract(j.value,'$.id') IS NOT NULL\n UNION ALL SELECT NEW.bundle_id,'source',json_extract(j.value,'$.id'),json_extract(j.value,'$.revision') FROM json_each(NEW.source_versions) j WHERE NEW.state!='revoked' AND json_extract(j.value,'$.id') IS NOT NULL;\nEND"
+  },
+  {
+   "type": "trigger",
+   "name": "memory_evidence_by_source_delete",
+   "tbl_name": "memory_evidence",
+   "sql": "CREATE TRIGGER memory_evidence_by_source_delete AFTER DELETE ON memory_evidence BEGIN\n DELETE FROM memory_evidence_by_source WHERE source_id=OLD.source_id AND source_revision=OLD.source_revision AND record_id=OLD.record_id AND record_version=OLD.record_version AND start_byte=OLD.start_byte;\nEND"
+  },
+  {
+   "type": "trigger",
+   "name": "memory_evidence_by_source_insert",
+   "tbl_name": "memory_evidence",
+   "sql": "CREATE TRIGGER memory_evidence_by_source_insert AFTER INSERT ON memory_evidence BEGIN\n INSERT OR IGNORE INTO memory_evidence_by_source VALUES(NEW.source_id,NEW.source_revision,NEW.record_id,NEW.record_version,NEW.start_byte);\nEND"
+  },
+  {
+   "type": "trigger",
+   "name": "memory_flow_brought",
+   "tbl_name": "memory_source_versions",
+   "sql": "CREATE TRIGGER memory_flow_brought AFTER INSERT ON memory_source_versions WHEN json_type(NEW.payload,'$.broughtFrom.sources')='array' BEGIN\n INSERT OR IGNORE INTO memory_thread_flow(from_thread,to_thread,first_lsn) SELECT 'scope:'||o.scope_id,'scope:'||n.scope_id,coalesce((SELECT next FROM memory_lsn WHERE id=1),0)\n  FROM json_each(NEW.payload,'$.broughtFrom.sources') j JOIN memory_sources o ON o.id=json_extract(j.value,'$.id') JOIN memory_sources n ON n.id=NEW.source_id\n  WHERE json_type(j.value,'$.id')='text' AND o.scope_id<>n.scope_id;\nEND"
+  },
+  {
+   "type": "trigger",
+   "name": "memory_flow_capture",
+   "tbl_name": "memory_sources",
+   "sql": "CREATE TRIGGER memory_flow_capture AFTER INSERT ON memory_sources WHEN NEW.thread_id IS NOT NULL BEGIN\n INSERT OR IGNORE INTO memory_thread_flow(from_thread,to_thread,first_lsn) VALUES(NEW.thread_id,'scope:'||NEW.scope_id,coalesce((SELECT next FROM memory_lsn WHERE id=1),0));\nEND"
+  },
+  {
+   "type": "trigger",
+   "name": "memory_flow_derivation",
+   "tbl_name": "memory_derivations",
+   "sql": "CREATE TRIGGER memory_flow_derivation AFTER INSERT ON memory_derivations BEGIN\n INSERT OR IGNORE INTO memory_thread_flow(from_thread,to_thread,first_lsn) SELECT 'scope:'||p.scope_id,'scope:'||c.scope_id,coalesce((SELECT next FROM memory_lsn WHERE id=1),0)\n  FROM memory_records p, memory_records c WHERE p.id=NEW.parent_id AND p.version=NEW.parent_version AND c.id=NEW.child_id AND c.version=NEW.child_version AND p.scope_id<>c.scope_id;\nEND"
+  },
+  {
+   "type": "trigger",
+   "name": "memory_flow_evidence",
+   "tbl_name": "memory_evidence",
+   "sql": "CREATE TRIGGER memory_flow_evidence AFTER INSERT ON memory_evidence BEGIN\n INSERT OR IGNORE INTO memory_thread_flow(from_thread,to_thread,first_lsn) SELECT 'scope:'||s.scope_id,'scope:'||r.scope_id,coalesce((SELECT next FROM memory_lsn WHERE id=1),0)\n  FROM memory_sources s, memory_records r WHERE s.id=NEW.source_id AND r.id=NEW.record_id AND r.version=NEW.record_version AND s.scope_id<>r.scope_id;\nEND"
+  },
+  {
+   "type": "trigger",
+   "name": "memory_flow_record_scope",
+   "tbl_name": "memory_records",
+   "sql": "CREATE TRIGGER memory_flow_record_scope AFTER UPDATE OF scope_id ON memory_records WHEN OLD.scope_id<>NEW.scope_id BEGIN\n INSERT OR IGNORE INTO memory_thread_flow(from_thread,to_thread,first_lsn) VALUES('scope:'||OLD.scope_id,'scope:'||NEW.scope_id,coalesce((SELECT next FROM memory_lsn WHERE id=1),0));\nEND"
+  },
+  {
+   "type": "trigger",
+   "name": "memory_flow_source_scope",
+   "tbl_name": "memory_sources",
+   "sql": "CREATE TRIGGER memory_flow_source_scope AFTER UPDATE OF scope_id ON memory_sources WHEN OLD.scope_id<>NEW.scope_id BEGIN\n INSERT OR IGNORE INTO memory_thread_flow(from_thread,to_thread,first_lsn) VALUES('scope:'||OLD.scope_id,'scope:'||NEW.scope_id,coalesce((SELECT next FROM memory_lsn WHERE id=1),0));\nEND"
+  },
+  {
+   "type": "trigger",
+   "name": "memory_open_turns_close",
+   "tbl_name": "memory_sources",
+   "sql": "CREATE TRIGGER memory_open_turns_close AFTER UPDATE OF id,kind,outcome ON memory_sources WHEN NOT (NEW.kind='turn' AND NEW.outcome='working') BEGIN\n DELETE FROM memory_open_turns WHERE source_id=OLD.id;\nEND"
+  },
+  {
+   "type": "trigger",
+   "name": "memory_open_turns_delete",
+   "tbl_name": "memory_sources",
+   "sql": "CREATE TRIGGER memory_open_turns_delete AFTER DELETE ON memory_sources BEGIN\n DELETE FROM memory_open_turns WHERE source_id=OLD.id;\nEND"
+  },
+  {
+   "type": "trigger",
+   "name": "memory_open_turns_insert",
+   "tbl_name": "memory_sources",
+   "sql": "CREATE TRIGGER memory_open_turns_insert AFTER INSERT ON memory_sources WHEN NEW.kind='turn' AND NEW.outcome='working' BEGIN\n INSERT OR REPLACE INTO memory_open_turns(source_id,thread_id,turn_id,boot) VALUES(NEW.id,NEW.thread_id,NEW.turn_id,COALESCE((SELECT boot FROM memory_open_turns_build WHERE id=1),0));\nEND"
+  },
+  {
+   "type": "trigger",
+   "name": "memory_open_turns_keep",
+   "tbl_name": "memory_sources",
+   "sql": "CREATE TRIGGER memory_open_turns_keep AFTER UPDATE OF id,kind,outcome,thread_id,turn_id ON memory_sources WHEN NEW.kind='turn' AND NEW.outcome='working' BEGIN\n DELETE FROM memory_open_turns WHERE source_id=OLD.id AND OLD.id IS NOT NEW.id;\n INSERT INTO memory_open_turns(source_id,thread_id,turn_id,boot) VALUES(NEW.id,NEW.thread_id,NEW.turn_id,COALESCE((SELECT boot FROM memory_open_turns_build WHERE id=1),0))\n  ON CONFLICT(source_id) DO UPDATE SET thread_id=excluded.thread_id, turn_id=excluded.turn_id;\nEND"
+  },
+  {
+   "type": "trigger",
+   "name": "memory_owner_tail_delete",
+   "tbl_name": "memory_records",
+   "sql": "CREATE TRIGGER memory_owner_tail_delete AFTER DELETE ON memory_records BEGIN\n DELETE FROM memory_owner_tail WHERE created_at=OLD.created_at AND record_id=OLD.id AND record_version=OLD.version; END"
+  },
+  {
+   "type": "trigger",
+   "name": "memory_owner_tail_insert",
+   "tbl_name": "memory_records",
+   "sql": "CREATE TRIGGER memory_owner_tail_insert AFTER INSERT ON memory_records WHEN (NEW.kind IN ('continuity-brief','commitment','self-trait','relation','pip-proposal','pip-counter','concern','episode') OR (NEW.kind='checkpoint' AND NEW.state!='active')) BEGIN\n INSERT OR IGNORE INTO memory_owner_tail VALUES(NEW.created_at,NEW.id,NEW.version); END"
+  },
+  {
+   "type": "trigger",
+   "name": "memory_owner_tail_update",
+   "tbl_name": "memory_records",
+   "sql": "CREATE TRIGGER memory_owner_tail_update AFTER UPDATE ON memory_records BEGIN\n DELETE FROM memory_owner_tail WHERE created_at=OLD.created_at AND record_id=OLD.id AND record_version=OLD.version;\n INSERT OR IGNORE INTO memory_owner_tail SELECT NEW.created_at,NEW.id,NEW.version WHERE (NEW.kind IN ('continuity-brief','commitment','self-trait','relation','pip-proposal','pip-counter','concern','episode') OR (NEW.kind='checkpoint' AND NEW.state!='active')); END"
+  },
+  {
+   "type": "trigger",
+   "name": "memory_receipt_flip",
+   "tbl_name": "memory_disclosures",
+   "sql": "CREATE TRIGGER memory_receipt_flip AFTER UPDATE OF state ON memory_disclosures WHEN NEW.state='revoked' AND OLD.state IS NOT 'revoked' BEGIN\n INSERT OR IGNORE INTO memory_receipt_flips(thread_no,first_lsn,bundle_id) SELECT thread_no,first_lsn,bundle_id FROM memory_receipt_lines WHERE bundle_id=NEW.bundle_id;\nEND"
+  },
+  {
+   "type": "trigger",
+   "name": "memory_record_details_insert",
+   "tbl_name": "memory_records",
+   "sql": "CREATE TRIGGER memory_record_details_insert AFTER INSERT ON memory_records BEGIN\n INSERT INTO memory_record_details(record_id,record_version,partition,attention,claim_status,observed_at)\n VALUES(NEW.id,NEW.version,CASE NEW.kind WHEN 'source' THEN 'episodic' WHEN 'checkpoint' THEN 'working'\n WHEN 'procedure' THEN 'procedural' WHEN 'identity' THEN 'identity' ELSE 'semantic' END,\n CASE WHEN NEW.state IN ('archived','superseded','deleted') THEN 'historical' ELSE 'useful' END,\n CASE WHEN NEW.state='candidate' THEN 'provisional' ELSE 'current' END,NULL);\nEND"
+  },
+  {
+   "type": "trigger",
+   "name": "memory_record_details_state",
+   "tbl_name": "memory_records",
+   "sql": "CREATE TRIGGER memory_record_details_state AFTER UPDATE OF state ON memory_records BEGIN\n UPDATE memory_record_details SET\n attention=CASE WHEN NEW.state IN ('archived','superseded','deleted') THEN 'historical' ELSE 'useful' END,\n claim_status=CASE WHEN NEW.state='candidate' THEN 'provisional' WHEN OLD.state='candidate' AND NEW.state='active' THEN 'current' ELSE claim_status END,\n entities=CASE WHEN NEW.state='deleted' THEN '[]' ELSE entities END,\n confidence=CASE WHEN NEW.state='deleted' THEN NULL ELSE confidence END,\n confidence_basis=CASE WHEN NEW.state='deleted' THEN NULL ELSE confidence_basis END,\n observed_at=CASE WHEN NEW.state='deleted' THEN NULL ELSE observed_at END\n WHERE record_id=NEW.id AND record_version=NEW.version;\nEND"
+  },
+  {
+   "type": "trigger",
+   "name": "memory_record_lsn_insert",
+   "tbl_name": "memory_records",
+   "sql": "CREATE TRIGGER memory_record_lsn_insert AFTER INSERT ON memory_records BEGIN\n INSERT OR IGNORE INTO memory_record_lsn(id,version,created_lsn) SELECT NEW.id,NEW.version,next FROM memory_lsn WHERE id=1;\nEND"
+  },
+  {
+   "type": "trigger",
+   "name": "memory_source_origins_insert",
+   "tbl_name": "memory_source_versions",
+   "sql": "CREATE TRIGGER memory_source_origins_insert AFTER INSERT ON memory_source_versions WHEN json_type(NEW.payload,'$.broughtFrom.sources')='array' BEGIN\n INSERT OR IGNORE INTO memory_source_origins SELECT json_extract(j.value,'$.id'),NEW.source_id FROM json_each(NEW.payload,'$.broughtFrom.sources') j WHERE json_type(j.value,'$.id')='text';\nEND"
+  },
+  {
+   "type": "trigger",
+   "name": "memory_watermark_bump",
+   "tbl_name": "memory_meta",
+   "sql": "CREATE TRIGGER memory_watermark_bump AFTER UPDATE OF policy_revision,deletion_epoch ON memory_meta\n WHEN NEW.policy_revision IS NOT OLD.policy_revision OR NEW.deletion_epoch IS NOT OLD.deletion_epoch BEGIN\n UPDATE memory_lsn SET next=next+1 WHERE id=1;\n UPDATE memory_lineage_lsn_meta SET value=max(value,coalesce((SELECT next FROM memory_lsn WHERE id=1),0))\n  WHERE (key='policy_bump_lsn' AND NEW.policy_revision IS NOT OLD.policy_revision) OR (key='epoch_bump_lsn' AND NEW.deletion_epoch IS NOT OLD.deletion_epoch);\n UPDATE memory_lineage_lsn_meta SET value=value+1 WHERE key='deny_generation';\nEND"
+  },
+  {
+   "type": "trigger",
+   "name": "pending_delegation_live_pair",
+   "tbl_name": "pending_delegations",
+   "sql": "CREATE TRIGGER pending_delegation_live_pair BEFORE DELETE ON pending_delegations\nWHEN OLD.phase<>'started' AND EXISTS (SELECT 1 FROM room_requests WHERE id=OLD.id AND group_id<>'owner-handoff' AND state IN ('queued','running','waiting_owner','waiting_bot'))\nBEGIN SELECT RAISE(ABORT, 'HANDOFF_PAIR_LIVE: a hand-off is not removed while its request is live'); END"
+  },
+  {
+   "type": "trigger",
+   "name": "pending_delegation_mark_request",
+   "tbl_name": "pending_delegations",
+   "sql": "CREATE TRIGGER pending_delegation_mark_request AFTER INSERT ON pending_delegations\nBEGIN UPDATE room_requests SET handoff=1 WHERE id=NEW.id AND handoff IS NOT 1; END"
+  },
+  {
+   "type": "trigger",
+   "name": "room_request_dismissal_gone",
+   "tbl_name": "room_requests",
+   "sql": "CREATE TRIGGER room_request_dismissal_gone AFTER DELETE ON room_requests\n  BEGIN DELETE FROM room_request_dismissal_receipts WHERE request_id=OLD.id; END"
+  },
+  {
+   "type": "trigger",
+   "name": "room_request_mark_handoff",
+   "tbl_name": "room_requests",
+   "sql": "CREATE TRIGGER room_request_mark_handoff AFTER INSERT ON room_requests\nWHEN EXISTS (SELECT 1 FROM pending_delegations WHERE id=NEW.id)\nBEGIN UPDATE room_requests SET handoff=1 WHERE id=NEW.id; END"
+  },
+  {
+   "type": "trigger",
+   "name": "room_request_mark_shared",
+   "tbl_name": "room_requests",
+   "sql": "CREATE TRIGGER room_request_mark_shared AFTER INSERT ON room_requests\nWHEN (NEW.verb IN ('ask','message') AND EXISTS (SELECT 1 FROM shared_request_provenance p WHERE p.request_id=NEW.id))\n  OR (NEW.verb='wake' AND NEW.parent_id IS NOT NULL AND EXISTS (SELECT 1 FROM shared_request_provenance p WHERE p.request_id=NEW.parent_id))\nBEGIN UPDATE room_requests SET shared_work=1 WHERE id=NEW.id; END"
+  },
+  {
+   "type": "trigger",
+   "name": "room_request_owed_classify",
+   "tbl_name": "room_request_owed",
+   "sql": "CREATE TRIGGER room_request_owed_classify AFTER INSERT ON room_request_owed WHEN NEW.kind='shared_delivery'\n  BEGIN\n    DELETE FROM room_request_owed WHERE kind='shared_delivery' AND request_id=NEW.request_id AND shared IS NOT 1\n      AND NOT EXISTS (SELECT 1 FROM room_requests r JOIN shared_request_provenance p ON p.request_id=r.id WHERE r.id=NEW.request_id AND r.verb IN ('ask','message'));\n    UPDATE room_request_owed SET shared=1, destination_thread_id=COALESCE(destination_thread_id,\n        (SELECT COALESCE((SELECT t.target_thread_id FROM room_requests t WHERE t.id=r.parent_id), r.return_thread_id, r.root_thread_id) FROM room_requests r WHERE r.id=NEW.request_id))\n      WHERE kind='shared_delivery' AND request_id=NEW.request_id;\n  END"
+  },
+  {
+   "type": "trigger",
+   "name": "room_request_owed_fanout_child",
+   "tbl_name": "room_requests",
+   "sql": "CREATE TRIGGER room_request_owed_fanout_child AFTER INSERT ON room_requests WHEN NEW.root_id <> NEW.id\n  BEGIN DELETE FROM room_request_owed WHERE kind='fanout' AND request_id=NEW.root_id; END"
+  },
+  {
+   "type": "trigger",
+   "name": "room_request_owed_fanout_ins",
+   "tbl_name": "room_requests",
+   "sql": "CREATE TRIGGER room_request_owed_fanout_ins AFTER INSERT ON room_requests WHEN NEW.verb='owner_send' AND NEW.state='done' AND NEW.result_message_id IS NOT NULL\n  BEGIN INSERT OR IGNORE INTO room_request_owed(kind, request_id) VALUES('fanout', NEW.id); END"
+  },
+  {
+   "type": "trigger",
+   "name": "room_request_owed_fanout_upd",
+   "tbl_name": "room_requests",
+   "sql": "CREATE TRIGGER room_request_owed_fanout_upd AFTER UPDATE OF state, result_message_id, verb ON room_requests WHEN NEW.verb='owner_send' AND NEW.state='done' AND NEW.result_message_id IS NOT NULL\n  BEGIN INSERT OR IGNORE INTO room_request_owed(kind, request_id) VALUES('fanout', NEW.id); END"
+  },
+  {
+   "type": "trigger",
+   "name": "room_request_owed_gone",
+   "tbl_name": "room_requests",
+   "sql": "CREATE TRIGGER room_request_owed_gone AFTER DELETE ON room_requests\n  BEGIN DELETE FROM room_request_owed WHERE request_id=OLD.id; END"
+  },
+  {
+   "type": "trigger",
+   "name": "room_request_owed_shared_clear",
+   "tbl_name": "room_requests",
+   "sql": "CREATE TRIGGER room_request_owed_shared_clear AFTER UPDATE OF state, refusal ON room_requests WHEN NEW.refusal IS 'delivered' OR NEW.state NOT IN ('done','failed')\n  BEGIN DELETE FROM room_request_owed WHERE kind='shared_delivery' AND request_id=NEW.id; END"
+  },
+  {
+   "type": "trigger",
+   "name": "room_request_owed_shared_ins",
+   "tbl_name": "room_requests",
+   "sql": "CREATE TRIGGER room_request_owed_shared_ins AFTER INSERT ON room_requests WHEN NEW.state IN ('done','failed') AND NEW.verb!='wake' AND NEW.target_thread_id IS NOT NULL AND NEW.refusal IS NOT 'delivered'\n  BEGIN INSERT OR IGNORE INTO room_request_owed(kind, request_id) VALUES('shared_delivery', NEW.id); END"
+  },
+  {
+   "type": "trigger",
+   "name": "room_request_owed_shared_upd",
+   "tbl_name": "room_requests",
+   "sql": "CREATE TRIGGER room_request_owed_shared_upd AFTER UPDATE OF state, target_thread_id, refusal, verb ON room_requests WHEN NEW.state IN ('done','failed') AND NEW.verb!='wake' AND NEW.target_thread_id IS NOT NULL AND NEW.refusal IS NOT 'delivered'\n  BEGIN INSERT OR IGNORE INTO room_request_owed(kind, request_id) VALUES('shared_delivery', NEW.id); END"
+  },
+  {
+   "type": "trigger",
+   "name": "room_request_retry_gone",
+   "tbl_name": "room_requests",
+   "sql": "CREATE TRIGGER room_request_retry_gone AFTER DELETE ON room_requests\n  BEGIN DELETE FROM room_request_retry WHERE request_id=OLD.id; END"
+  },
+  {
+   "type": "trigger",
+   "name": "room_request_retry_left",
+   "tbl_name": "room_requests",
+   "sql": "CREATE TRIGGER room_request_retry_left AFTER UPDATE OF state ON room_requests WHEN NEW.state<>'queued'\n  BEGIN DELETE FROM room_request_retry WHERE request_id=NEW.id; END"
+  },
+  {
+   "type": "trigger",
+   "name": "setup_marks_delete",
+   "tbl_name": "messages",
+   "sql": "CREATE TRIGGER setup_marks_delete AFTER DELETE ON messages WHEN (instr(OLD.json,'turnTerminal')>0 OR instr(OLD.json,'providerError')>0) BEGIN\n    DELETE FROM setup_marks WHERE thread_id=OLD.thread_id AND message_id=OLD.id;\n  END"
+  },
+  {
+   "type": "trigger",
+   "name": "setup_marks_insert",
+   "tbl_name": "messages",
+   "sql": "CREATE TRIGGER setup_marks_insert AFTER INSERT ON messages BEGIN\n    DELETE FROM setup_marks WHERE thread_id=NEW.thread_id AND message_id=NEW.id;\n    INSERT INTO setup_marks(source_row,thread_id,message_id,kind,solid,at,http_status,provider) SELECT m.rowid, m.thread_id, m.id,\n    CASE m.kind WHEN 'text' THEN 'reply' ELSE 'refusal' END,\n    CASE WHEN m.kind='text' AND trim(COALESCE(m.text,''),char(32,9,10,11,12,13,160))<>'' THEN 1 ELSE 0 END, m.at,\n    CASE WHEN m.kind='activity' THEN json_extract(m.json,'$.tool.providerError.httpStatus') END,\n    CASE WHEN m.kind='activity' THEN json_extract(m.json,'$.tool.providerError.provider') END\n  FROM messages m WHERE m.rowid=NEW.rowid AND m.kind IN ('text','activity') AND (instr(m.json,'turnTerminal')>0 OR instr(m.json,'providerError')>0) AND CASE WHEN json_valid(m.json) THEN CASE m.kind\n      WHEN 'text' THEN m.role='bot' AND json_extract(m.json,'$.turnTerminal')=1\n      WHEN 'activity' THEN json_type(m.json,'$.tool.providerError')='object'\n    END ELSE 0 END;\n  END"
+  },
+  {
+   "type": "trigger",
+   "name": "setup_marks_update",
+   "tbl_name": "messages",
+   "sql": "CREATE TRIGGER setup_marks_update AFTER UPDATE ON messages WHEN (instr(OLD.json,'turnTerminal')>0 OR instr(OLD.json,'providerError')>0) OR (instr(NEW.json,'turnTerminal')>0 OR instr(NEW.json,'providerError')>0) BEGIN\n    DELETE FROM setup_marks WHERE thread_id=OLD.thread_id AND message_id=OLD.id;\n    INSERT INTO setup_marks(source_row,thread_id,message_id,kind,solid,at,http_status,provider) SELECT m.rowid, m.thread_id, m.id,\n    CASE m.kind WHEN 'text' THEN 'reply' ELSE 'refusal' END,\n    CASE WHEN m.kind='text' AND trim(COALESCE(m.text,''),char(32,9,10,11,12,13,160))<>'' THEN 1 ELSE 0 END, m.at,\n    CASE WHEN m.kind='activity' THEN json_extract(m.json,'$.tool.providerError.httpStatus') END,\n    CASE WHEN m.kind='activity' THEN json_extract(m.json,'$.tool.providerError.provider') END\n  FROM messages m WHERE m.rowid=NEW.rowid AND m.kind IN ('text','activity') AND (instr(m.json,'turnTerminal')>0 OR instr(m.json,'providerError')>0) AND CASE WHEN json_valid(m.json) THEN CASE m.kind\n      WHEN 'text' THEN m.role='bot' AND json_extract(m.json,'$.turnTerminal')=1\n      WHEN 'activity' THEN json_type(m.json,'$.tool.providerError')='object'\n    END ELSE 0 END;\n  END"
+  },
+  {
+   "type": "trigger",
+   "name": "shared_provenance_mark_request",
+   "tbl_name": "shared_request_provenance",
+   "sql": "CREATE TRIGGER shared_provenance_mark_request AFTER INSERT ON shared_request_provenance\nBEGIN\n  UPDATE room_requests SET shared_work=1 WHERE id=NEW.request_id AND verb IN ('ask','message') AND shared_work IS NOT 1;\n  UPDATE room_requests SET shared_work=1 WHERE parent_id=NEW.request_id AND verb='wake' AND shared_work IS NOT 1;\nEND"
+  },
+  {
+   "type": "trigger",
+   "name": "shared_ready_insert",
+   "tbl_name": "room_requests",
+   "sql": "CREATE TRIGGER shared_ready_insert AFTER INSERT ON room_requests\nWHEN NEW.state='queued' AND NEW.refusal IS NOT 'retained_unresolved' AND NEW.to_bot_id IS NOT NULL AND json_extract(NEW.execution_audience,'$.team') IS NOT NULL\nBEGIN\n  INSERT OR IGNORE INTO shared_ready_teams(bot_id,team,thread_id,seq,waiting) SELECT NEW.to_bot_id, json_extract(NEW.execution_audience,'$.team'), NEW.target_thread_id, (SELECT COALESCE(MAX(s.seq),0)+1 FROM shared_ready_teams s WHERE s.bot_id=NEW.to_bot_id), 0 WHERE 1;\n  UPDATE shared_ready_teams SET seq=CASE WHEN waiting=1 THEN (SELECT COALESCE(MAX(s.seq),0)+1 FROM shared_ready_teams s WHERE s.bot_id=NEW.to_bot_id) ELSE seq END, waiting=0, wait_on=NULL, gen=gen+1, thread_id=COALESCE(\n  (SELECT h.target_thread_id FROM room_requests h WHERE h.state='queued' AND h.verb='wake' AND h.refusal IS NOT 'retained_unresolved' AND h.shared_work=1 AND h.to_bot_id=NEW.to_bot_id AND json_extract(h.execution_audience,'$.team')=json_extract(NEW.execution_audience,'$.team') ORDER BY h.created_at, h.id LIMIT 1),\n  (SELECT h.target_thread_id FROM room_requests h WHERE h.state='queued' AND h.refusal IS NOT 'retained_unresolved' AND h.shared_work=1 AND h.to_bot_id=NEW.to_bot_id AND json_extract(h.execution_audience,'$.team')=json_extract(NEW.execution_audience,'$.team') ORDER BY h.created_at, h.id LIMIT 1),\n  thread_id) WHERE bot_id=NEW.to_bot_id AND team=json_extract(NEW.execution_audience,'$.team') AND (NEW.verb='wake' OR NOT EXISTS (SELECT 1 FROM room_requests r WHERE r.state='queued' AND r.refusal IS NOT 'retained_unresolved' AND r.to_bot_id=NEW.to_bot_id AND json_extract(r.execution_audience,'$.team')=json_extract(NEW.execution_audience,'$.team') AND r.id<>NEW.id));\nEND"
+  },
+  {
+   "type": "trigger",
+   "name": "shared_ready_park",
+   "tbl_name": "room_requests",
+   "sql": "CREATE TRIGGER shared_ready_park AFTER UPDATE OF refusal ON room_requests\nWHEN NEW.refusal IS 'retained_unresolved' AND OLD.refusal IS NOT 'retained_unresolved' AND NEW.state='queued' AND NEW.to_bot_id IS NOT NULL AND json_extract(NEW.execution_audience,'$.team') IS NOT NULL\nBEGIN\n  DELETE FROM shared_ready_teams WHERE bot_id=NEW.to_bot_id AND team=json_extract(NEW.execution_audience,'$.team') AND NOT EXISTS (SELECT 1 FROM room_requests r WHERE r.state='queued' AND r.refusal IS NOT 'retained_unresolved' AND r.to_bot_id=NEW.to_bot_id AND json_extract(r.execution_audience,'$.team')=json_extract(NEW.execution_audience,'$.team'));\n  UPDATE shared_ready_teams SET seq=CASE WHEN waiting=1 THEN (SELECT COALESCE(MAX(s.seq),0)+1 FROM shared_ready_teams s WHERE s.bot_id=NEW.to_bot_id) ELSE seq END, waiting=0, wait_on=NULL, gen=gen+1, thread_id=COALESCE(\n  (SELECT h.target_thread_id FROM room_requests h WHERE h.state='queued' AND h.verb='wake' AND h.refusal IS NOT 'retained_unresolved' AND h.shared_work=1 AND h.to_bot_id=NEW.to_bot_id AND json_extract(h.execution_audience,'$.team')=json_extract(NEW.execution_audience,'$.team') ORDER BY h.created_at, h.id LIMIT 1),\n  (SELECT h.target_thread_id FROM room_requests h WHERE h.state='queued' AND h.refusal IS NOT 'retained_unresolved' AND h.shared_work=1 AND h.to_bot_id=NEW.to_bot_id AND json_extract(h.execution_audience,'$.team')=json_extract(NEW.execution_audience,'$.team') ORDER BY h.created_at, h.id LIMIT 1),\n  thread_id) WHERE bot_id=NEW.to_bot_id AND team=json_extract(NEW.execution_audience,'$.team');\nEND"
+  },
+  {
+   "type": "trigger",
+   "name": "shared_ready_state",
+   "tbl_name": "room_requests",
+   "sql": "CREATE TRIGGER shared_ready_state AFTER UPDATE OF state ON room_requests\nWHEN OLD.state IS NOT NEW.state AND NEW.state NOT IN ('running','waiting_owner','waiting_bot') AND NEW.to_bot_id IS NOT NULL AND json_extract(NEW.execution_audience,'$.team') IS NOT NULL\nBEGIN\n  INSERT OR IGNORE INTO shared_ready_teams(bot_id,team,thread_id,seq,waiting) SELECT NEW.to_bot_id, json_extract(NEW.execution_audience,'$.team'), NEW.target_thread_id, (SELECT COALESCE(MAX(s.seq),0)+1 FROM shared_ready_teams s WHERE s.bot_id=NEW.to_bot_id), 0 WHERE EXISTS (SELECT 1 FROM room_requests r WHERE r.state='queued' AND r.refusal IS NOT 'retained_unresolved' AND r.to_bot_id=NEW.to_bot_id AND json_extract(r.execution_audience,'$.team')=json_extract(NEW.execution_audience,'$.team'));\n  UPDATE shared_ready_teams SET seq=CASE WHEN waiting=1 THEN (SELECT COALESCE(MAX(s.seq),0)+1 FROM shared_ready_teams s WHERE s.bot_id=NEW.to_bot_id) ELSE seq END, waiting=0, wait_on=NULL, gen=gen+1, thread_id=COALESCE(\n  (SELECT h.target_thread_id FROM room_requests h WHERE h.state='queued' AND h.verb='wake' AND h.refusal IS NOT 'retained_unresolved' AND h.shared_work=1 AND h.to_bot_id=NEW.to_bot_id AND json_extract(h.execution_audience,'$.team')=json_extract(NEW.execution_audience,'$.team') ORDER BY h.created_at, h.id LIMIT 1),\n  (SELECT h.target_thread_id FROM room_requests h WHERE h.state='queued' AND h.refusal IS NOT 'retained_unresolved' AND h.shared_work=1 AND h.to_bot_id=NEW.to_bot_id AND json_extract(h.execution_audience,'$.team')=json_extract(NEW.execution_audience,'$.team') ORDER BY h.created_at, h.id LIMIT 1),\n  thread_id) WHERE bot_id=NEW.to_bot_id AND team=json_extract(NEW.execution_audience,'$.team');\n  -- a running request of the bot ended: one of the bot's slots is free, so the oldest teams waiting on the bot are ready again (directly, not by a page or the sweep)\n  UPDATE shared_ready_teams SET seq=CASE WHEN waiting=1 THEN (SELECT COALESCE(MAX(s.seq),0)+1 FROM shared_ready_teams s WHERE s.bot_id=NEW.to_bot_id) ELSE seq END, waiting=0, wait_on=NULL, gen=gen+1 WHERE bot_id=NEW.to_bot_id AND OLD.state IN ('running','waiting_owner','waiting_bot') AND team IN (SELECT w.team FROM shared_ready_teams w WHERE w.bot_id=NEW.to_bot_id AND w.waiting=1 AND w.wait_on='bot' ORDER BY w.seq, w.team LIMIT 8);\nEND"
+  },
+  {
+   "type": "trigger",
+   "name": "shared_ready_unpark",
+   "tbl_name": "room_requests",
+   "sql": "CREATE TRIGGER shared_ready_unpark AFTER UPDATE OF refusal ON room_requests\nWHEN OLD.refusal IS 'retained_unresolved' AND NEW.refusal IS NOT 'retained_unresolved' AND NEW.state='queued' AND NEW.to_bot_id IS NOT NULL AND json_extract(NEW.execution_audience,'$.team') IS NOT NULL\nBEGIN\n  INSERT OR IGNORE INTO shared_ready_teams(bot_id,team,thread_id,seq,waiting) SELECT NEW.to_bot_id, json_extract(NEW.execution_audience,'$.team'), NEW.target_thread_id, (SELECT COALESCE(MAX(s.seq),0)+1 FROM shared_ready_teams s WHERE s.bot_id=NEW.to_bot_id), 0 WHERE 1;\n  UPDATE shared_ready_teams SET seq=CASE WHEN waiting=1 THEN (SELECT COALESCE(MAX(s.seq),0)+1 FROM shared_ready_teams s WHERE s.bot_id=NEW.to_bot_id) ELSE seq END, waiting=0, wait_on=NULL, gen=gen+1, thread_id=COALESCE(\n  (SELECT h.target_thread_id FROM room_requests h WHERE h.state='queued' AND h.verb='wake' AND h.refusal IS NOT 'retained_unresolved' AND h.shared_work=1 AND h.to_bot_id=NEW.to_bot_id AND json_extract(h.execution_audience,'$.team')=json_extract(NEW.execution_audience,'$.team') ORDER BY h.created_at, h.id LIMIT 1),\n  (SELECT h.target_thread_id FROM room_requests h WHERE h.state='queued' AND h.refusal IS NOT 'retained_unresolved' AND h.shared_work=1 AND h.to_bot_id=NEW.to_bot_id AND json_extract(h.execution_audience,'$.team')=json_extract(NEW.execution_audience,'$.team') ORDER BY h.created_at, h.id LIMIT 1),\n  thread_id) WHERE bot_id=NEW.to_bot_id AND team=json_extract(NEW.execution_audience,'$.team');\nEND"
+  },
+  {
+   "type": "trigger",
+   "name": "turn_source_copy_d",
+   "tbl_name": "messages",
+   "sql": "CREATE TRIGGER turn_source_copy_d AFTER DELETE ON messages\n BEGIN\n  INSERT INTO turn_source_holds(thread_id, position) SELECT thread_id, position FROM turn_source_copies WHERE origin_thread=OLD.thread_id AND origin_id=OLD.id;\n  DELETE FROM turn_source_copies WHERE origin_thread=OLD.thread_id AND origin_id=OLD.id;\n  DELETE FROM turn_source_copies WHERE thread_id=OLD.thread_id AND id=OLD.id;\n END"
+  },
+  {
+   "type": "trigger",
+   "name": "turn_source_copy_i",
+   "tbl_name": "messages",
+   "sql": "CREATE TRIGGER turn_source_copy_i AFTER INSERT ON messages\n WHEN instr(NEW.json,'copyOf')>0 AND json_valid(NEW.json) AND json_type(NEW.json,'$.copyOf.messageIds')='array'\n BEGIN\n  INSERT OR REPLACE INTO turn_source_copies(origin_thread, origin_id, thread_id, id, position)\n   SELECT json_extract(NEW.json,'$.copyOf.threadId'), j.value, NEW.thread_id, NEW.id, NEW.rowid FROM json_each(NEW.json,'$.copyOf.messageIds') j\n   WHERE j.type='text' AND json_type(NEW.json,'$.copyOf.threadId')='text';\n  INSERT OR REPLACE INTO turn_source_copies(origin_thread, origin_id, thread_id, id, position)\n   SELECT c.origin_thread, c.origin_id, NEW.thread_id, NEW.id, NEW.rowid FROM json_each(NEW.json,'$.copyOf.messageIds') j\n   JOIN turn_source_copies c ON c.thread_id=json_extract(NEW.json,'$.copyOf.threadId') AND c.id=j.value WHERE j.type='text';\n END"
+  },
+  {
+   "type": "trigger",
+   "name": "turn_source_hold_r",
+   "tbl_name": "messages",
+   "sql": "CREATE TRIGGER turn_source_hold_r BEFORE INSERT ON messages\n WHEN EXISTS (SELECT 1 FROM messages o WHERE o.thread_id=NEW.thread_id AND o.id=NEW.id AND o.role IS NOT 'user')\n BEGIN\n  INSERT INTO turn_source_holds(thread_id, position) SELECT thread_id, rowid FROM messages WHERE thread_id=NEW.thread_id AND id=NEW.id;\n  INSERT INTO turn_source_holds(thread_id, position) SELECT thread_id, position FROM turn_source_copies WHERE origin_thread=NEW.thread_id AND origin_id=NEW.id;\n END"
+  },
+  {
+   "type": "trigger",
+   "name": "turn_source_hold_u",
+   "tbl_name": "messages",
+   "sql": "CREATE TRIGGER turn_source_hold_u AFTER UPDATE ON messages\n WHEN NEW.role IS NOT 'user' AND (OLD.json IS NOT NEW.json AND (instr(OLD.json,'withheldFromBots')>0 OR instr(NEW.json,'withheldFromBots')>0 OR instr(OLD.json,'copyOf')>0 OR instr(NEW.json,'copyOf')>0)\n   AND CASE WHEN json_valid(OLD.json) AND json_valid(NEW.json)\n     THEN json_extract(OLD.json,'$.copyOf') IS NOT json_extract(NEW.json,'$.copyOf') OR json_extract(OLD.json,'$.withheldFromBots') IS NOT json_extract(NEW.json,'$.withheldFromBots')\n     ELSE 1 END)\n  AND NOT CASE WHEN json_valid(OLD.json) AND json_valid(NEW.json)\n   THEN json_extract(OLD.json,'$.copyOf') IS json_extract(NEW.json,'$.copyOf') AND COALESCE(json_extract(NEW.json,'$.withheldFromBots'),0) IN (0) ELSE 0 END\n BEGIN\n  INSERT INTO turn_source_holds(thread_id, position) VALUES (NEW.thread_id, NEW.rowid);\n  INSERT INTO turn_source_holds(thread_id, position) SELECT thread_id, position FROM turn_source_copies WHERE origin_thread=NEW.thread_id AND origin_id=NEW.id;\n END"
+  }
+ ]
+}

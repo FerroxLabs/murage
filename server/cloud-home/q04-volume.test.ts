@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import { spawnSync } from "node:child_process";
-import { mkdtempSync, readFileSync } from "node:fs";
+import { mkdtempSync, readFileSync, realpathSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -69,7 +69,7 @@ except Exception:code=1
 print(json.dumps({"code":code,"commands":commands,"deviceChecks":device_checks,"ticks":ticks[0]}));sys.exit(code)
 `;
 function run(scenario: string) {
-  const root = mkdtempSync(join(tmpdir(), "q04-volume-"));
+  const root = realpathSync(mkdtempSync(join(tmpdir(), "q04-volume-")));
   try {
     const result = spawnSync("python3", ["-I", "-c", wrapper, program, root, scenario], { encoding: "utf8" });
     expect(result.stderr.split("\n").filter(l => l && !l.startsWith("murage-enroll: volume sample "))).toEqual([]); return {status:result.status,...JSON.parse(result.stdout)};
@@ -141,7 +141,7 @@ try:m.volume_sample_zero(path,"home-test");print("ok")
 except ValueError as e:print("refused",e)
 `;
 it.each([["clean", "ok"], ["first", "refused"], ["last", "refused"], ["random", "refused"]])("zero sample on a 300 MiB device: %s", (where, expected) => {
-  const root = mkdtempSync(join(tmpdir(), "q04-sample-"));
+  const root = realpathSync(mkdtempSync(join(tmpdir(), "q04-sample-")));
   try {
     const result = spawnSync("python3", ["-I", "-c", sampleScript, program, join(root, "disk"), where], { encoding: "utf8" });
     expect(result.stdout.startsWith(expected)).toBe(true);

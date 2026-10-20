@@ -6,9 +6,10 @@
 // engine, and tears the server down after the file. Split out of
 // server/index.test.ts so no one file outlasts a Windows Vitest shard (L18).
 import { spawn, type ChildProcess } from "node:child_process";
+import { browserEngineRefusesHost } from "./browser-host.ts";
 import { once } from "node:events";
 import { createServer, request, type Server } from "node:http";
-import { existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
@@ -115,12 +116,7 @@ export const browserCapabilityCalls: Array<{ operation: string; authorization?: 
 export let browserRevokeFailuresRemaining = 0;
 export let browserRegisterDelayMs = 0;
 export const browserNativeEvents: Array<{ operation: string; session: string }> = [];
-/** The browser engine refuses root and container hosts on Linux (browser-engine.ts,
- * agentBrowserIntegration), so a turn there runs without the browser tool and a
- * test that needs the mount cannot pass. The product behaviour is deliberate;
- * these tests run on a non-container Linux, macOS and Windows. */
-export const browserEngineRefusesHost = process.platform === "linux"
-  && (process.getuid?.() === 0 || ["/.dockerenv", "/run/.containerenv"].some((file) => { try { return lstatSync(file).isFile(); } catch { return false; } }));
+export { browserEngineRefusesHost };
 export const browserFixturePrelude = pathToFileURL(join(SERVER_DIR, "testing", "unified-browser-fixture.mjs")).href;
 export const browserSession = (botId: string, profile = "") => browserSessionId(botId, profile, "original-installation");
 export const browserRpc = (token: string, base = BASE) => fetch(`${base}/api/internal/unified-browser`, {
@@ -148,12 +144,15 @@ export const expectStoppedTestServerCleanly = (serverChild: ChildProcess, captur
   expect(serverChild.exitCode === 0 || requestedWindowsStop, capturedStderr).toBe(true);
 };
 
+/** A second server's cold start (index.ts loaded fresh, TypeScript stripped, the database opened). The hosted Windows runner,
+ * with the shard's other servers beside it, has taken over 20 s (1.0.3 CI 39342836766, index-3: no output before the deadline). */
+export const ISOLATED_START_MS = process.platform === "win32" ? 60_000 : 20_000;
 export const waitForIsolatedServer = async (
   serverChild: ChildProcess,
   port: number,
   capturedStderr: () => string,
 ): Promise<void> => {
-  const deadline = Date.now() + 20_000;
+  const deadline = Date.now() + ISOLATED_START_MS;
   let lastObservedHealth = "none";
   for (;;) {
     if (serverChild.exitCode !== null || serverChild.signalCode !== null) {
@@ -274,7 +273,8 @@ export const phoneApi = async (method: string, path: string, body?: unknown): Pr
   return { status: res.status, body: await res.json() };
 };
 
-export const readJsonFileWhenReady = async <T = unknown>(file: string, timeout = 5_000): Promise<T> => {
+// a fake engine's first turn: on the hosted Windows runner the engine's spawn alone can pass 5 s under a shard's load
+export const readJsonFileWhenReady = async <T = unknown>(file: string, timeout = process.platform === "win32" ? 20_000 : 5_000): Promise<T> => {
   let parsed: unknown;
   await expect.poll(() => {
     try {

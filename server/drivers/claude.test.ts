@@ -4061,7 +4061,7 @@ describe("Claude gate: overlay, in-project check, wrapper (Rules 63, 69, 74b)", 
       rmSync(join(proj, ".env"));
       expect(claudeInProjectAllow("Glob", { pattern: "*.ts" }, proj)).toBe(true);
     } finally {
-      rmSync(proj, { recursive: true, force: true });
+      removeTempDirSync(proj);
     }
   });
 
@@ -4101,7 +4101,7 @@ describe("Claude gate: overlay, in-project check, wrapper (Rules 63, 69, 74b)", 
       expect(existsSync(marker)).toBe(false);
       expect(run("true", join(proj, "missing")).status).toBe(126);
     } finally {
-      rmSync(proj, { recursive: true, force: true });
+      removeTempDirSync(proj);
     }
   });
 });

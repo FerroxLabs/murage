@@ -2,6 +2,7 @@ import { downgradeTranscriptSeqTo102 } from "./transcript-seq.ts";
 import { existsSync, lstatSync, readFileSync, rmSync, unlinkSync } from "node:fs";
 import { downgradePushRetentionIndexesTo102 } from "./mobile-push-store.ts";
 import { downgradeMessageIdIndexTo102 } from "./message-id-index.ts";
+import { downgradeOutputPublicationTurnTo102 } from "./artifacts.ts";
 import { dirname, join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { acquireDataDirLeaseForProcess, dataDirLeasePaths } from "../electron/data-dir-lease.mjs";
@@ -100,9 +101,10 @@ export function resetIncarnatedSessionCursors(root: string, db: DatabaseSync): n
  * (BACKUP_UNCLASSIFIED_COMPONENT), so after "Prepare to reinstall" 1.0.2 could take no backup. Each is a derived note or a cache that 1.0.3
  * writes again (data-dir-inventory.ts says why each is never restored): the repairs note and its unfinished write (the repairs run again and change nothing), the
  * model catch-up marker (re-queues only records still owed), this month's "Leave paused" choice (the item is asked again), the kept login-shell
- * environment (the next capture writes it), approvals still waiting for their answer (asked again; none was ever a grant) and the
- * first-run backup record (missing means not owed). The Cloud-only names are never on a desktop that reinstalls 1.0.2. */
-export const DATA_DIR_NAMES_AFTER_102 = ["env", "learning-paused-left.json", "memory-model-adopted.json", "memory-model-adopted.json.tmp", "memory-repairs.json", "memory-repairs.json.tmp", "pending-grants.json", "setup-backup.json"] as const;
+ * environment (the next capture writes it), approvals still waiting for their answer (asked again; none was ever a grant), the
+ * first-run backup record (missing means not owed) and the frozen-replies recovery cursor (a later 1.0.3 start reads again from the start and
+ * changes nothing a second time). The Cloud-only names are never on a desktop that reinstalls 1.0.2. */
+export const DATA_DIR_NAMES_AFTER_102 = ["env", "frozen-replies-recovery.json", "learning-paused-left.json", "memory-model-adopted.json", "memory-model-adopted.json.tmp", "memory-repairs.json", "memory-repairs.json.tmp", "pending-grants.json", "setup-backup.json"] as const;
 /** Removes those names from the data folder (a link is removed, never followed). Idempotent; returns the names removed. */
 export function removeDataDirNamesAfter102(root: string): string[] {
   const removed: string[] = [];
@@ -152,6 +154,8 @@ export function downgradeInstallationMemorySchema(dataDir: string, to: MemoryDow
       downgradePushRetentionIndexesTo102(db);
       // every older build lacks the message-id index (1.0.3): it leaves first, whatever the target (message-id-index.ts)
       downgradeMessageIdIndexTo102(db);
+      // every older build holds output_publications to its text without turn_id (1.0.3): the column leaves first, whatever the target (artifacts.ts)
+      downgradeOutputPublicationTurnTo102(db);
       const app = to <= 6 ? downgradeApplicationSchemaTo101(db, dirname(file)) : { exported: 0, interrupted: 0, dropped: 0, rebuilt: 0 };
       // before the memory step, so a stopped run finds the marker again and does it again
       if (to < 10 && reclaimHasRun(db)) resetRetainedSessionCursors(dirname(file));

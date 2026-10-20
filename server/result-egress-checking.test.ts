@@ -163,14 +163,15 @@ it("S7: a deny table the lookup cannot read makes the reply checking, not withhe
   } finally { database().exec("ALTER TABLE memory_deny_pending_gone RENAME TO memory_deny_pending"); }
 });
 
-it("S9: wait_delegation and check_delegation answer a checking result with the checking line, never withheld", () => {
+it("S9: wait_delegation and check_delegation answer a checking result with the no-answer line (never held, NOHOLD-DELEGATION.md), never withheld", () => {
   const { reply, release } = world();
   // the owner's action lands while the worker's turn runs (its prompt was built first): the reply is in the revoke's window
   const message = reply(WORDS, [], openPendingWindow);
   const released = release(message.id);
   const shown = receiptResultShown(released, { copyOf: { threadId: "t", messageIds: [message.id] } });
   expect(shown.reason).toBeUndefined();
-  expect(outboundWords(shown.result)).toBe(CHECKING);
+  expect(outboundWords(shown.result)).toBe("(no answer: that memory is still being checked, try again later)");
+  expect(outboundWords(shown.result)).not.toContain(WORDS);
   drainRevokeMarker(database());
   expect(outboundWords(receiptResultShown(release(message.id), {}).result)).toBe(WORDS);
 });

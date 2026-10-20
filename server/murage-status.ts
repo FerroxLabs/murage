@@ -117,6 +117,8 @@ const TABLE = {
   withheld: () => `[${ROOM_REPLY_WITHHELD}]`,
   // a result left out only until an earlier check finishes (REPLY-WITHHELD-CONTRACT C1): nothing was withdrawn
   checking: () => `[${ROOM_REPLY_CHECKING}]`,
+  // a delegation result whose check has not finished: the asking bot's final answer for that request (lanes/release103/NOHOLD-DELEGATION.md)
+  no_answer_checking: () => "(no answer: that memory is still being checked, try again later)",
   origin_unconfirmed: () => RECEIPT_ORIGIN_UNCONFIRMED_LINE,
   request_finished: () => "The request finished.",
   request_failed: () => "The request did not finish.",
@@ -221,14 +223,14 @@ const KEPT: Readonly<Record<string, Readonly<Record<string, ParamKind>>>> = {
   delegated_turn_could_not_start: { why: "code" }, delegated_turn_completed: {}, delegated_turn_stalled: {}, delegated_turn_stopped: {},
   delegated_turn_settings_changed: {}, delegated_turn_engine_changed: {}, turn_failed_note: { code: "code" }, row_failed_to_run: { why: "code" }, turn_failed: { code: "code" },
   queue_paused_steps: { steps: "count" }, queue_closed: { name: "bot", why: "close" },
-  withheld: {}, checking: {}, card_result_line: { desk: "bot", lead: "bot", card: "card" }, criteria_claim_corrected: { met: "count", total: "count" }, call_ended: { minutes: "count" },
+  withheld: {}, checking: {}, no_answer_checking: {}, card_result_line: { desk: "bot", lead: "bot", card: "card" }, criteria_claim_corrected: { met: "count", total: "count" }, call_ended: { minutes: "count" },
   setup_confirmed: {},
 };
 const PERSISTABLE = new Set<string>(Object.keys(KEPT));
 
 /** The status lines a bot may read (LINEAGE-DESIGN-S6 rule 14), each rendered fresh from what its row keeps. Every other line in the table is
  * the owner's only: a bot reading a row that carries one reads nothing there. Each key here is one a row keeps (KEPT). */
-export const BOT_VISIBLE_STATUS: ReadonlySet<StatusKey> = new Set<StatusKey>(["withheld", "checking", "request_finished", "result_unavailable", "card_result_line", "criteria_claim_corrected", "call_ended", "setup_confirmed"]);
+export const BOT_VISIBLE_STATUS: ReadonlySet<StatusKey> = new Set<StatusKey>(["withheld", "checking", "no_answer_checking", "request_finished", "result_unavailable", "card_result_line", "criteria_claim_corrected", "call_ended", "setup_confirmed"]);
 
 /** Is this a bot on the roster now? Supplied once by the server; with none, no kept line naming a bot is written again (fail closed). */
 let rosterHas: ((name: string) => boolean) | undefined;

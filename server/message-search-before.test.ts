@@ -1,17 +1,18 @@
 // Copyright 2026 Ferrox Labs
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // `before` is a walk start on every search path: rows at or above it are never returned (thread recall r6 rule 5).
-import { mkdirSync, rmSync } from "node:fs";
+import { mkdirSync } from "node:fs";
 import { beforeEach, expect, it, vi } from "vitest";
 
 import { DATA_DIR } from "./config.ts";
 import { database } from "./database.ts";
 import { closeMessageDb, searchMessagesWithMeta, TRIGRAM_CANDIDATE_CAP } from "./message-db.ts";
 import { rebuildMessageSearchIndex } from "./message-search-index.ts";
+import { removeTempDirSync } from "./testing/cleanup.ts";
 
 beforeEach(() => {
   closeMessageDb();
-  rmSync(DATA_DIR, { recursive: true, force: true });
+  removeTempDirSync(DATA_DIR);
   mkdirSync(DATA_DIR, { recursive: true });
 });
 

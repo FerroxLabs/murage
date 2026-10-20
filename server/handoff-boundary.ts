@@ -12,8 +12,8 @@ import { authorizeStatus, peerApprovalStatus, resolveTaskSealed, type BoundaryCo
 import { newId } from "./contracts.ts";
 import { MAX_HANDOFFS_PER_TURN, coordinationRefusalText, type CoordinationBudget, type CoordinationTrace } from "./coordination-budget.ts";
 import { resolveCoordinationTarget } from "./coordination-target.ts";
-import { finishHandoff, formatDelegationElapsed, handoffRow, recordDelegationReceipt, repeatedHandoffReply, summarizeDelegatedActivity, type QueueResult, type ReleasedActivityRow } from "./delegations.ts";
-import { decodeHandoffReceipt, type EventActionHandle, type EventActionSpec } from "./event-limit.ts";
+import { finishHandoff, formatDelegationElapsed, handoffRow, recordDelegationReceipt, releaseOwedReply, repeatedHandoffReply, summarizeDelegatedActivity, type QueueResult, type ReleasedActivityRow } from "./delegations.ts";
+import { decodeHandoffReceipt, noAnswerReceipt, type EventActionHandle, type EventActionSpec } from "./event-limit.ts";
 import { defaultThreadId, issueWorkAudience, requestSourceThread, sharedWithTeam } from "./execution-audience.ts";
 import { cardRoomIds } from "./fold-steps.ts";
 import { formatHandoff } from "./handoff-outcome.ts";
@@ -24,7 +24,7 @@ import { requestPeerApproval, type ApprovalBus } from "./peer-approval.ts";
 import type { ContinuationResultLine } from "./project-prompt.ts";
 import { projectMainThread } from "./project-routines.ts";
 import { releaseAskReply, releaseMessage, releaseStoredResult, type ReleasedResult } from "./result-egress.ts";
-import { WorkerText, type EgressOrigin, type ReleasedText } from "./released-text.ts";
+import { WorkerText, type ReleasedText } from "./released-text.ts";
 import { MurageStatus, botName, type BotName, status, type FailureCode, type Outbound } from "./murage-status.ts";
 import { type RowSink, botBody, botReply, sendBot, writeActivityRow, writeBotRow, type BotBodyInput, type BotReply } from "./bot-egress.ts";
 import { isTerminalRoomRequestState, type completeRequest, type ContinuationResult, type RoomRequest } from "./room-requests.ts";
@@ -57,9 +57,11 @@ export interface AskerWakeAsker {
   routineAuthority?: RoutinePeerSource;
 }
 export interface AskerWakePort {
-  register: (taskId: string, asker: AskerWakeAsker) => void;
+  /** False when the intent did not reach disk: the hand-off is then not acknowledged (NOHOLD-DELEGATION.md, the asker's one wake). */
+  register: (taskId: string, asker: AskerWakeAsker) => boolean | void;
   consume: (taskId: string) => void;
-  returned: (taskId: string, threadId: string, result: { toBotId: string; toBotName: string; ok: boolean; messageId: string }) => void;
+  /** False while the wake it owes is not on disk yet: the caller keeps its own recovery state (an owed reply, an owed delivery) until it is. */
+  returned: (taskId: string, threadId: string, result: { toBotId: string; toBotName: string; ok: boolean; messageId: string }) => boolean | void;
 }
 
 export type AskBotOutcome = {
@@ -111,7 +113,7 @@ export interface BoundaryPorts {
   /** The request's terminal write alone, inside the caller's transaction (the caller runs afterRoomCompletion once that transaction commits). */
   completeRoomAsk: (requestId: string, outcome: { state: "done" | "failed"; resultMessageId?: string; ending?: MurageStatus; diagnostic?: string }) => ReturnType<typeof completeRequest> | undefined;
   /** The line the source conversation is owed by a finished hand-off, as plain words kept on the receipt until the final commit lands (server/handoff-reply.ts). */
-owedReply: (input: { ok: boolean; reply: Outbound | undefined; targetName: string; failureName: Outbound; stopped: boolean; held?: EgressOrigin }) => OwedReply;
+owedReply: (input: { ok: boolean; reply: Outbound | undefined; targetName: string; failureName: Outbound; stopped: boolean }) => OwedReply;
 afterRoomCompletion: (result: { request: RoomRequest; wakes: RoomRequest[] }) => void;
   settleRoomAsk: (requestId: string | undefined, outcome: { state: "done" | "failed" | "cancelled" | "expired"; resultMessageId?: string; note?: "delivered"; ending?: MurageStatus; }) => void;
   sharedApprovedRequests: Set<string>;
@@ -181,24 +183,23 @@ export function runFinalizeDelegationWatch(
   const target = store.bot(watched.toBotId);
   const targetName = store.nameOf(watched.toBotId);
   const source = delegationSource(watched.sourceThreadId);
-  // HELD (REPLY-WITHHELD-CONTRACT C3, R3, R5): the gate could not finish its check (a revoke still being walked, lineage not ready), so the reply is
-  // neither shown nor withdrawn. For the owner's own audience, with a stable id to hold it under, the source conversation keeps the words as the
-  // worker's row flagged "checking" (the owner reads them, every bot reads the checking line), the receipt keeps them with the hold, and the hold is
-  // judged again until it settles (server/held-replies.ts). The leader is not told a reply arrived and a room hand-off's request is not completed
-  // until then. A checking answer with nothing to hold (a not-owner audience, no stable id) is the checking line, as a withheld one is its line.
-  const held = gate?.kind === "checking" && gate.held && ok && recorded.present && source && watched.taskId && watched.sourceThreadId && watched.notOwnerAudience !== true ? gate.held : undefined;
-  const reply: Outbound | undefined = deliverRefused ? undefined : gate?.kind === "text" ? gate.text : held ? held.text
-    : gate && gate.kind !== "refused" && succeeded && recorded.present ? (gate.kind === "withheld" || gate.kind === "checking" ? gate.line : status("withheld")) : undefined;
+  // NO HOLD (lanes/release103/NOHOLD-DELEGATION.md): a reply the gate is still checking is never held for a delegation. The asking bot's final
+  // answer for this request is the no-answer line, written, completed and woken exactly as any other result; the worker's words stay in the
+  // worker's own conversation (the owner reads them there) and reach no row, receipt, owed reply or wake from here.
+  const noAnswer = gate?.kind === "checking" && succeeded && recorded.present && !deliverRefused;
+  const reply: Outbound | undefined = deliverRefused ? undefined : gate?.kind === "text" ? gate.text : noAnswer ? status("no_answer_checking")
+    : gate && gate.kind !== "refused" && succeeded && recorded.present ? (gate.kind === "withheld" ? gate.line : status("withheld")) : undefined;
   const failureName: Outbound = deliverAllowed && !deliverAllowed.ok ? deliverAllowed.line : gate?.kind === "refused" ? gate.line : failure;
-  const copyOf = gate?.kind === "text" ? gate.copyOf : held ? held.copyOf : undefined;
-  const heldId = held && watched.taskId ? handoffReplyId(watched.taskId) : undefined;
+  const copyOf = gate?.kind === "text" ? gate.copyOf : undefined;
   // The receipt, the removal of the hand-off's row, the result in the source conversation and the request's terminal state are ONE transaction: a failure in any
   // of them (a busy database, a completion hook) leaves every record as it was, with the receipt kept on disk, and the next dispatch or the boot sweep settles the
   // row and the request together through the receipt (delegations.ts settleReceipted). The follow-ups (wakes, unread marks) run after the commit.
   let completion: ReturnType<typeof completeRoomAsk> | undefined;
   let afterCommitted: (() => void) | undefined;
   // the line the source conversation is owed: kept on the receipt until the final commit lands, so a crash in between still delivers it (handoff-reply.ts)
-  const owed = source && watched.sourceThreadId ? owedReply({ ok, reply, targetName, failureName, stopped, ...(held ? { held: held.copyOf } : {}) }) : undefined;
+  const owed = source && watched.sourceThreadId ? owedReply({ ok, reply, targetName, failureName, stopped }) : undefined;
+  // a direct hand-off's owed reply stays on its receipt until its asker's wake is on disk (NOHOLD-DELEGATION.md, the asker's one wake)
+  const wakeOwed = Boolean(askerWake && owed && source?.kind === "bot" && !askRequestId && watched.taskId && !stopped);
   try {
   finishHandoff(watched.taskId && watched.sourceThreadId ? {
       id: watched.taskId,
@@ -212,7 +213,6 @@ export function runFinalizeDelegationWatch(
       ...(askRequestId ? { requestId: askRequestId } : {}),
       ...(watched.notOwnerAudience ? { notOwnerAudience: true as const } : {}),
       ...(owed ? { reply: owed } : {}),
-      ...(heldId ? { held: { messageId: heldId, since: Date.now() } } : {}),
     } : undefined, () => {
   if (source && watched.sourceThreadId) {
     let appended: Message;
@@ -224,8 +224,8 @@ export function runFinalizeDelegationWatch(
         ...(askRequestId ? { requestId: askRequestId, actorKind: "bot" as const } : {}),
         // the producing bot, named even when it was removed since: the copy is its row (LINEAGE-DESIGN-S6 rule 5)
         from: target ? { botId: target.id, name: target.name, color: target.color } : { botId: watched.toBotId, name: String(targetName), color: "" },
-        ...(held ? { withheldFromBots: "checking" as const } : {}),
-      }, status("replied_to_task", { name: targetName, reply }), undefined, watched.taskId ? handoffReplyId(watched.taskId) : undefined);
+        // the no-answer line is the row's own kept status, so the asking bot reads it in its conversation (a wrapped line is the owner's only)
+      }, noAnswer ? reply : status("replied_to_task", { name: targetName, reply }), undefined, watched.taskId ? handoffReplyId(watched.taskId) : undefined);
     } else {
       // under the hand-off's stable line id: the settle that recovers a receipt whose commit never landed writes this same line, never a second one
       appended = writeActivityRow(rows, watched.sourceThreadId, askRequestId ? { requestId: askRequestId, actorKind: "murage" as const } : {}, ok ? status("delegation_completed_no_text", { name: targetName })
@@ -237,13 +237,14 @@ export function runFinalizeDelegationWatch(
     // time - so the external-context marker has no consumer there. Unread
     // is the whole job, and it is what the room path itself sets.
     const appendedId = appended.id;
-    // a held reply is delivered when its hold settles (held-replies.ts, the same ports): nothing for the leader to read yet but the checking
-    // line, and its asker is woken then (index.ts complete port: wakeAfterHeldSettle), not now
-    if (!held) afterCommitted = () => {
+    afterCommitted = () => {
       if (source.kind === "bot") markTaskContextExternallyUpdated(source.bot, watched.sourceThreadId!, appendedId); else store.markGroupUnread(source.group.id);
       // A direct chat has no request tree to wake its asker through (rooms do, below): the asker of a hand-off is woken once its
       // turn is idle, after the result is recorded as owed to it (lane 0163-delegate-wake). A stopped hand-off restarts nobody.
-      if (source.kind === "bot" && !askRequestId && watched.taskId && !stopped) askerWake?.returned(watched.taskId, watched.sourceThreadId!, { toBotId: watched.toBotId, toBotName: targetName, ok, messageId: appendedId });
+      if (source.kind === "bot" && !askRequestId && watched.taskId && !stopped) {
+        const kept = askerWake?.returned(watched.taskId, watched.sourceThreadId!, { toBotId: watched.toBotId, toBotName: targetName, ok, messageId: appendedId });
+        if (wakeOwed && kept !== false) releaseOwedReply(watched.taskId);
+      }
     };
     // A handoff a room turn made: its result wakes the asker (lane E1).
     if (askRequestId) {
@@ -251,32 +252,32 @@ export function runFinalizeDelegationWatch(
       // the result answers what the asker was answering, in this thread (SPEC-P 10)
       const replyToId = ask && !appended.replyToId ? store.replyTarget(ask, (id) => store.hasMessage(watched.sourceThreadId!, id)) : undefined;
       if (ask?.fromBotId || replyToId) store.linkMessage(watched.sourceThreadId, appended.id, { ...(ask?.fromBotId ? { to: [ask.fromBotId] } : {}), ...(replyToId ? { replyToId } : {}) });
-      // held: the request completes at settle (R5); meanwhile the asker's wait reads the receipt (done, the checking line)
-      if (!held) completion = completeRoomAsk(askRequestId, ok ? { state: "done", resultMessageId: appended.id } : { state: "failed", resultMessageId: appended.id, ending: stopped ? status("turn_stopped_early") : endingOf(failureName) });
+      completion = completeRoomAsk(askRequestId, ok ? { state: "done", resultMessageId: appended.id } : { state: "failed", resultMessageId: appended.id, ending: stopped ? status("turn_stopped_early") : endingOf(failureName) });
     }
   } else if (askRequestId) {
     completion = completeRoomAsk(askRequestId, ok ? { state: "done" } : { state: "failed", ending: stopped ? status("turn_stopped_early") : endingOf(failureName) });
   }
-  });
+  }, { keepOwed: wakeOwed });
   } finally { if (watched.taskId) finalizingDelegations.delete(watched.taskId); }
   try { afterCommitted?.(); } catch (error) { console.error("delegations: could not mark the source conversation updated", error); }
   if (completion) afterRoomCompletion(completion);
   const channel = watched.channelId ? store.group(watched.channelId) : undefined;
   if (!target || !channel) return true;
-  // the channel is read by bots: a held reply is mirrored as the checking line, with no link to its originals
-  if (held && gate?.kind === "checking") comms.reply(target, gate.line, channel, undefined, "action");
+  // the channel copy is unchanged: a reply still being checked is mirrored as the checking line, with no link to its originals
+  if (noAnswer && gate?.kind === "checking") comms.reply(target, gate.line, channel, undefined, "action");
   else if (ok && reply) comms.reply(target, reply, channel, copyOf, "action");
   else if (ok) comms.activity(target, channel, status("delegated_turn_completed"), true);
   else comms.activity(target, channel, failureName, false);
   return true;
 }
 
-/** What check/wait_delegation hands back for a receipt's released result: the words, the withheld line, the checking line (a check still
- * running is never "deleted or changed", REPLY-WITHHELD-CONTRACT C6), how a status-only receipt ended, or a refusal with its code. */
+/** What check/wait_delegation hands back for a receipt's released result: the words, the withheld line, the no-answer line for a check still
+ * running (never "deleted or changed", REPLY-WITHHELD-CONTRACT C6; never held, NOHOLD-DELEGATION.md), how a status-only receipt ended, or a refusal. */
 export function receiptResultShown(released: ReleasedResult, receipt: { copyOf?: { threadId: string; messageIds: string[] }; ended?: Outbound }): { result: Outbound; reason?: string } {
   if (released.kind === "text") return { result: released.text };
   if (released.kind === "gone") return { result: receipt.copyOf ? status("result_unavailable") : status("nothing") };
-  if (released.kind === "withheld" || released.kind === "checking") return { result: released.line };
+  if (released.kind === "withheld") return { result: released.line };
+  if (released.kind === "checking") return { result: status("no_answer_checking") };
   if (released.kind === "status") return { result: receipt.ended ?? status("request_finished") };
   return { result: released.line, reason: released.code };
 }
@@ -315,13 +316,36 @@ export function continuationOutcome(bx: ContinuationPorts, wake: RoomRequest, th
   let released = ask(source.targetThreadId ?? threadId);
   if (released.kind === "gone" && source.targetThreadId && source.targetThreadId !== threadId) released = ask(threadId);
   if (released.kind === "refused") return null;
-  // a result still being checked wakes the asker with the checking line, never with "deleted or changed" (REPLY-WITHHELD-CONTRACT R10)
-  return { answer: released.kind === "text" ? released.text : released.kind === "withheld" || released.kind === "checking" ? released.line : status("result_unavailable") };
+  // a result still being checked wakes the asker with the no-answer line, never with "deleted or changed" (R10) and never its words (NOHOLD-DELEGATION.md)
+  return { answer: released.kind === "text" ? released.text : released.kind === "withheld" ? released.line : released.kind === "checking" ? status("no_answer_checking") : status("result_unavailable") };
 }
 
-export type DeliverSharedResultPorts = Pick<BoundaryPorts, "comms" | "store" | "rows">;
+export type DeliverSharedResultPorts = Pick<BoundaryPorts, "comms" | "store" | "rows"> & {
+  /** A parentless request's asker (a direct chat) is woken at the delivered row (index.ts marks it an external update first, then askerWake.returned).
+   * False while that wake is not on disk: the request is not marked delivered, so the owed-delivery pass calls again (deduped). */
+  returned?: (request: RoomRequest, messageId: string) => boolean;
+};
+
+export type SharedResultReturnedPorts = Pick<BoundaryPorts, "delegationSource" | "markTaskContextExternallyUpdated" | "store"> & {
+  askerWake: AskerWakePort;
+  /** The asker wakes as kept (server/asker-wake.ts AskerWakes): whether a request owes a wake, and whether a thread's wakes are on disk. */
+  wakes: { intends(taskId: string): boolean; durable(threadId: string): boolean };
+};
+/** A parentless shared request asked from a direct chat wakes its asker at the delivered row, once (NOHOLD-DELEGATION.md, the asker's one wake): the
+ * row becomes an external update of the asker's conversation first (what a wake may point at), then the wake is delivered (AskerWakes dedupes it).
+ * True once nothing it owes is left off disk; a request that registered no wake (a room's, one answered in its own turn) owes nothing here. */
+export function sharedResultReturned(bx: SharedResultReturnedPorts, request: RoomRequest, messageId: string): boolean {
+  const { askerWake, delegationSource, markTaskContextExternallyUpdated, store, wakes } = bx;
+  const destination = requestSourceThread(request.id);
+  const source = destination ? delegationSource(destination) : null;
+  if (!destination || source?.kind !== "bot") return true;
+  if (!wakes.intends(request.id)) return wakes.durable(destination);
+  markTaskContextExternallyUpdated(source.bot, destination, messageId);
+  const worker = request.toBotId ? store.bot(request.toBotId) : undefined;
+  return askerWake.returned(request.id, destination, { toBotId: request.toBotId ?? "", toBotName: worker?.name ?? "", ok: request.state === "done", messageId }) !== false;
+}
 export function runDeliverSharedResult(bx: DeliverSharedResultPorts, request: RoomRequest): void {
-  const { comms, store , rows } = bx;
+  const { comms, store , rows, returned } = bx;
   const target = request.toBotId && store.bot(request.toBotId), destination = requestSourceThread(request.id);
   if (!target || !destination) return;
   // The result leaves through the one gate, asked again on every attempt and before the copy, the mirror and the receipt: delivery
@@ -331,50 +355,35 @@ export function runDeliverSharedResult(bx: DeliverSharedResultPorts, request: Ro
     target.id, destination, { fromBotId: request.fromBotId ?? "" }, request.notOwnerAudience === true);
   if (released.kind === "refused") return;
   const finished = request.state === "done";
-  // HELD (REPLY-WITHHELD-CONTRACT C3, R9, S23): a finished request's answer the gate is still checking is written for the owner flagged "checking"
-  // under a stable id, its receipt (id = the request's) holding it, first on disk (R3); bots read the checking line until the hold settles.
-  if (released.kind === "checking" && released.held && finished && request.notOwnerAudience !== true) {
-    deliverHeldShared(bx, request, target, destination, released.held, released.line);
-    return;
-  }
-  const result = released.kind === "text" && released.copyOf ? released.text : undefined;
+  // The request id is a durable delivery receipt; a terminal replay cannot copy twice.
+  const existing = store.terminalFor(destination, request);
+  // NO HOLD (NOHOLD-DELEGATION.md): a finished request's answer the gate is still checking is the asker's final no-answer line, written as
+  // the result row (its own kept status, so the asker reads it) and kept on the receipt; the pair room is told the checking line, never the words.
+  // Final: a delivery asked again after a crash keeps the no-answer it already wrote, whatever the originals read now.
+  const noAnswer = finished && (existing?.noAnswer === true || released.kind === "checking");
+  const result = released.kind === "text" && released.copyOf && !noAnswer ? released.text : undefined;
   const endLine = sharedEndingLine(released, request, store.requestEnding(request));
   // A run that did not finish never reads as finished: what it wrote before it stopped goes with how it ended, marked as a partial reply.
   const answer: Outbound | undefined = result && !finished ? status("unfinished_partial", { ending: endLine, partial: result }) : result;
-  const ending: Outbound = answer ?? endLine;
-  // The request id is a durable delivery receipt; a terminal replay cannot copy twice.
-  if (!store.hasTerminalFor(destination, request)) {
+  const ending: Outbound = answer ?? (noAnswer ? status("no_answer_checking") : endLine);
+  let delivered = existing?.id;
+  if (!delivered) {
     const extra = { requestId: request.id, inboundKind: request.verb === "ask" ? "question" as const : "action" as const, turnTerminal: true as const, from: { botId: target.id, name: target.name, color: target.color } };
-    if (answer) writeBotRow(rows, destination, extra, answer);
-    else writeActivityRow(rows, destination, extra, ending, finished);
+    if (answer) delivered = writeBotRow(rows, destination, extra, answer).id;
+    else if (noAnswer) delivered = writeBotRow(rows, destination, extra, ending).id;
+    else delivered = writeActivityRow(rows, destination, extra, ending, finished).id;
     if (answer && result) comms.reply(target, answer, store.group(request.groupId), result.copyOf, request.verb === "ask" ? "question" : "action");
+    else if (noAnswer) comms.reply(target, status("checking"), store.group(request.groupId), undefined, request.verb === "ask" ? "question" : "action");
   }
-  // Delivered state lives on the row (the room_requests DDL is frozen, so the terminal row's unused
-  // arbiter-refusal field carries it): the boot replays only rows still owed (N1).
-  store.markSharedDelivered(request.id);
   recordDelegationReceipt({ id: request.id, sourceThreadId: destination, toBotId: target.id, toBotName: target.name,
     // a failed run's receipt keeps how it ended as its own line (the partial reply is in the conversation, marked as one)
-    status: finished ? "done" : "failed", result: !finished ? endLine : result ?? (released.kind === "withheld" || released.kind === "checking" ? released.line : ending), lineage: true, requestId: request.id,
+    status: finished ? "done" : "failed", result: !finished ? endLine : result ?? (released.kind === "withheld" ? released.line : ending), lineage: true, requestId: request.id,
     ...(finished && result?.copyOf ? { copyOf: { threadId: result.copyOf.threadId, messageIds: [...result.copyOf.messageIds] } } : {}) });
-  comms.clearFinishing(target.id, { requestId: request.id });
-}
-
-/** A shared answer held for the owner (runDeliverSharedResult): the receipt with its hold reaches the file first, then the row under its stable id,
- * flagged "checking", then the delivered mark. The pair room is told the checking line, never the words. */
-function deliverHeldShared(bx: DeliverSharedResultPorts, request: RoomRequest, target: BotRecord, destination: string, held: { text: ReleasedText; copyOf: EgressOrigin }, line: MurageStatus): void {
-  const { comms, store, rows } = bx;
-  const heldId = handoffReplyId(request.id);
-  // The row (flagged "checking": no bot reads it) and the pair room's line first, the receipt with its hold second: a process that dies in between
-  // leaves a held row with no receipt, which the boot recovery registers again (frozen-replies.ts, S24). A receipt written first would carry an owed
-  // reply that the record itself replays (delegations.ts settleReceipted) in the hand-off's row shape, not this delivery's, and would skip the mirror.
-  if (!store.hasTerminalFor(destination, request) && !store.hasMessage(destination, heldId)) {
-    const extra = { requestId: request.id, inboundKind: request.verb === "ask" ? "question" as const : "action" as const, turnTerminal: true as const,
-      from: { botId: target.id, name: target.name, color: target.color }, withheldFromBots: "checking" as const };
-    writeBotRow(rows, destination, extra, held.text, undefined, heldId);
-    comms.reply(target, line, store.group(request.groupId), undefined, request.verb === "ask" ? "question" : "action");
-  }
-  recordDelegationReceipt({ id: request.id, sourceThreadId: destination, toBotId: target.id, toBotName: target.name, status: "done", result: held.text, lineage: true, requestId: request.id,
-    copyOf: { threadId: held.copyOf.threadId, messageIds: [...held.copyOf.messageIds] }, held: { messageId: heldId, since: Date.now() } });
+  // the asker of a parentless request (a direct chat) is woken at the delivered row; until that wake is on disk the delivery stays owed, and the
+  // owed-delivery pass calls again (the row and the receipt are written once more under the same ids, the wake is deduped)
+  if (!request.parentId && returned && returned(request, delivered) === false) return;
+  // Delivered state lives on the row (the room_requests DDL is frozen, so the terminal row's unused
+  // arbiter-refusal field carries it): the boot replays only rows still owed (N1).
   store.markSharedDelivered(request.id);
   comms.clearFinishing(target.id, { requestId: request.id });
 }
@@ -539,11 +548,14 @@ export async function askBotRoute(bx: AskBotRouteContext): Promise<void> {
       fromThreadId,
     );
     if (queued.result !== "ok" || !queued.id) { unrun(); return botReply(200, { busy: true }); }
-    record(`delegation:${queued.id}`);
     const sharedRequestId = beginRoomAsk(fromBotId, toBotId, fromThreadId, message, `ask:delegation:${queued.id}`, "queued", undefined, internalEventId);
     if (sharedRequestId && (approvalAlreadyGranted || peerCardWaived)) sharedApprovedRequests.add(sharedRequestId);
-    // no request carries this hand-off: its result wakes the asker directly (lane 0163-delegate-wake)
-    if (!sharedRequestId) askerWake?.register(queued.id, askerWakeIntent(bx, fromBotId, fromThreadId, depth));
+    // its result wakes the asker through its request tree, or directly when no tree carries it (lane 0163-delegate-wake, NOHOLD-DELEGATION.md)
+    if (!admitAskerWake(bx, queued.id, sharedRequestId, fromThreadId, () => askerWakeIntent(bx, fromBotId, fromThreadId, depth))) {
+      unrun();
+      return botReply(200, { error: status("could_not_start", { why: "other" }) });
+    }
+    record(`delegation:${queued.id}`);
     handoffSlot.commit();
     return botReply(200, { busy: true, taskId: queued.id, toBotName: botName(target) });
   };
@@ -585,18 +597,32 @@ export async function askBotRoute(bx: AskBotRouteContext): Promise<void> {
       now: Date.now(), parentRequestId: roomAskParent(fromBotId, fromThreadId)?.id, tag: sourceExecutionAudience(fromBotId, fromThreadId), routineAuthority: routinePeerSource(fromThreadId, fromBotId), unattended: isUnattended(fromThreadId), ...(internalEventId ? { eventId: internalEventId } : {}) });
     // Refused before anything was queued: nothing ran, so nothing is charged.
     if (!queued.ok) { unrun(); return botReply(409, { error: queued.refusal, code: queued.code }); }
+    // a shared hand-off from a direct chat (no parent request) has no request tree to wake its asker through: when the asker does not get the answer
+    // in its own turn (in line, or past its wait), the delivery wakes it directly (NOHOLD-DELEGATION.md, the asker's one wake). Only then is a wake
+    // registered, so an answer read in the asker's own turn never owes one. One in line whose wake could not be written is cancelled before it runs.
+    const wakesDirect = !queued.request.parentId && askerWake !== undefined && store.botByThread(fromThreadId) !== undefined;
     sharedApprovedRequests.add(queued.request.id); handoffSlot.commit(); drainSharedWork(toBotId);
-    if (store.roomRequest(queued.request.id)?.state === "queued") { record(`delegation:${queued.request.id}`); return botReply(200, { busy: true, taskId: queued.request.id, toBotName: botName(currentTarget), note: status("in_line", { name: botName(currentTarget) }) }); }
+    if (store.roomRequest(queued.request.id)?.state === "queued") {
+      if (wakesDirect && askerWake!.register(queued.request.id, askerWakeIntent(bx, fromBotId, fromThreadId, depth)) === false) {
+        askerWake!.consume(queued.request.id);
+        settleRoomAsk(queued.request.id, { state: "cancelled" });
+        unrun();
+        return botReply(200, { error: status("could_not_start", { why: "other" }) });
+      }
+      record(`delegation:${queued.request.id}`); return botReply(200, { busy: true, taskId: queued.request.id, toBotName: botName(currentTarget), note: status("in_line", { name: botName(currentTarget) }) });
+    }
     const settled = await waitSharedRequest(queued.request.id);
     requireActiveInternal();
-    if (!settled) { record(`timeout:${queued.request.id}`); return botReply(200, { timeout: true, taskId: queued.request.id, toBotName: botName(currentTarget) }); }
+    if (!settled) { if (wakesDirect) askerWake!.register(queued.request.id, askerWakeIntent(bx, fromBotId, fromThreadId, depth)); record(`timeout:${queued.request.id}`); return botReply(200, { timeout: true, taskId: queued.request.id, toBotName: botName(currentTarget) }); }
     // The answer is handed back only through the one result gate: authorization for this request and every rule that can withhold the
     // message are asked again now, so a result since forgotten, withdrawn or no longer shareable comes back as the withheld line.
     const released = releaseStoredResult({ requestId: settled.id, ...(settled.targetThreadId && settled.resultMessageId ? { origin: { threadId: settled.targetThreadId, messageIds: [settled.resultMessageId] } } : {}) },
       toBotId, fromThreadId, { fromBotId }, internalClaim.notOwnerAudience === true);
     if (released.kind === "refused") return botReply(403, { error: released.line, code: released.code });
-    const replyText: Outbound = released.kind === "text" ? released.text : released.kind === "withheld" || released.kind === "checking" ? released.line : sharedEndingLine(released, settled, store.requestEnding(settled));
-    if (settled.targetThreadId && settled.resultMessageId) record(`answer:${settled.targetThreadId}:${settled.resultMessageId}:${settled.id}`);
+    const replyText: Outbound = released.kind === "text" ? released.text : released.kind === "withheld" ? released.line : released.kind === "checking" ? status("no_answer_checking") : sharedEndingLine(released, settled, store.requestEnding(settled));
+    // a no-answer or withheld result is final for this request: a repeat in the same event replays the line, never the originals read again
+    if (released.kind === "checking" || released.kind === "withheld") record(noAnswerReceipt(released.kind));
+    else if (settled.targetThreadId && settled.resultMessageId) record(`answer:${settled.targetThreadId}:${settled.resultMessageId}:${settled.id}`);
     return botReply(200, { botName: botName(currentTarget), text: replyText });
   }
   const channel = comms.channel(currentFrom, currentTarget, fromThreadId, sourceExecutionAudience(fromBotId,fromThreadId));
@@ -686,6 +712,9 @@ export async function askBotRoute(bx: AskBotRouteContext): Promise<void> {
   const shown: Outbound = answer.withheld || outcome.hasText ? answer.text : status(outcome.status === "timeout" ? "wait_timed_out" : "no_reply");
   // a withheld or still-checking answer is mirrored as its line, with no link to the originals (REPLY-WITHHELD-CONTRACT R9)
   const written = comms.reply(currentTarget, shown, channel, answer.withheld ? undefined : answer.copyOf);
+  // the asking bot's answer: a reply still being checked is the final no-answer line for this request (NOHOLD-DELEGATION.md), and a repeat in
+  // the same event replays that line (or the withheld one), never the originals read again
+  if (answer.withheld) { record(noAnswerReceipt(answer.checking ? "checking" : "withheld")); return botReply(200, { botName: botName(currentTarget), text: answer.checking ? status("no_answer_checking") : shown }); }
   if (written) record(`answer:${channel.threadId}:${written}${askRequestId ? `:${askRequestId}` : ""}`);
   return botReply(200, { botName: botName(currentTarget), text: shown });
   } finally {
@@ -696,6 +725,23 @@ export async function askBotRoute(bx: AskBotRouteContext): Promise<void> {
   } finally { handoffSlot.release(); }
   });
   return sendBot(res, asked.status, asked.body);
+}
+
+/** Keeps the asker's one wake on disk before a queued hand-off is acknowledged (NOHOLD-DELEGATION.md, the asker's one wake). A hand-off with no
+ * request (the owner's direct chat) and a shared one from a direct chat (a request with no parent: no request tree wakes its asker) register it; a
+ * room's request wakes its asker through the tree. False when the wake could not be written: the hand-off is dropped before it runs (its shared
+ * request cancelled) and the caller gives the charge back and tells the bot it could not start. */
+export function admitAskerWake(bx: Pick<BoundaryPorts, "askerWake" | "comms" | "settleRoomAsk" | "store">, queuedId: string, requestId: string | undefined, fromThreadId: string, intent: () => AskerWakeAsker): boolean {
+  const { askerWake, comms, settleRoomAsk, store } = bx;
+  const sharedDirect = requestId !== undefined && !store.roomRequest(requestId)?.parentId && store.botByThread(fromThreadId) !== undefined;
+  if (!askerWake || (requestId !== undefined && !sharedDirect)) return true;
+  const wakeId = requestId ?? queuedId;
+  if (askerWake.register(wakeId, intent()) !== false) return true;
+  const dropped = comms.dropQueuedDelegation(queuedId, status("could_not_start", { why: "other" }));
+  if (!sharedDirect && !dropped) return true; // already running: its result still wakes through the finalizer's own path
+  askerWake.consume(wakeId);
+  if (sharedDirect) settleRoomAsk(requestId, { state: "cancelled" });
+  return false;
 }
 
 /** What the asker was when it handed work off, so its wake widens nothing (server/asker-wake.ts): its audience, its
@@ -721,14 +767,6 @@ export function wakeAfterRecoveredReceipt(askerWake: AskerWakePort | undefined, 
   if (receipt.status !== "done" && receipt.status !== "failed") { askerWake.consume(receipt.id); return; }
   if (!deliveredId) return;
   askerWake.returned(receipt.id, receipt.sourceThreadId, { toBotId: receipt.toBotId, toBotName: receipt.toBotName, ok: receipt.status === "done", messageId: deliveredId });
-}
-
-/** A held reply (held-replies.ts) settled: shown, withheld or ended as checking. A direct hand-off's asker was not woken when the reply was
- * held (there was nothing for it to read but the checking line), so it is woken now, once, at the held row. A room hand-off's asker wakes
- * through its request when the settle completes it (completeRoomAsk), so nothing is done here for a receipt with a request. */
-export function wakeAfterHeldSettle(askerWake: AskerWakePort | undefined, receipt: { id: string; sourceThreadId: string; toBotId: string; toBotName: string; status: string; requestId?: string; held?: { messageId: string } }): void {
-  if (receipt.requestId) return;
-  wakeAfterRecoveredReceipt(askerWake, receipt, receipt.held?.messageId);
 }
 
 /** How many of a running delegation's latest steps a bot is told. */
@@ -763,9 +801,9 @@ export async function checkDelegationRoute(bx: CheckDelegationRouteContext): Pro
       // result gate: the delivery authorization is asked again now (sharing removed since delivery returns the status and the reason, no text),
       // and a result whose original is withheld, forgotten or no longer shareable, or that a turn made as the owner's audience and a turn that
       // is not asks for, comes back as the withheld line. A receipt written before results carried their origin cannot be checked, so its text is withheld.
-      // a receipt whose result is the checking line and that names no originals to judge again (a not-owner audience, REPLY-WITHHELD-CONTRACT S6):
-      // it stays the checking line, never "deleted or changed" (C6)
-      if (!receipt.copyOf && receipt.ended?.key === "checking") return sendBot(res, 200, botBody({ status: receipt.status, toBotName: store.nameOf(receipt.toBotId), result: receipt.ended }));
+      // a receipt whose result is the checking or no-answer line and that names no originals to judge again: the no-answer line, never "deleted or
+      // changed" (C6) and never words (NOHOLD-DELEGATION.md)
+      if (!receipt.copyOf && (receipt.ended?.key === "checking" || receipt.ended?.key === "no_answer_checking")) return sendBot(res, 200, botBody({ status: receipt.status, toBotName: store.nameOf(receipt.toBotId), result: status("no_answer_checking") }));
       const binding = resolveReceiptBinding(receipt, { byId: (id) => store.roomRequest(id), byKey: (key) => store.roomRequestByKey(key) });
       const released = releaseStoredResult({
         ...(receipt.copyOf ? { origin: receipt.copyOf } : {}),
@@ -827,9 +865,9 @@ export async function checkDelegationRoute(bx: CheckDelegationRouteContext): Pro
   }
 }
 
-export type DelegateBotRouteContext = Pick<BoundaryPorts, "MAX_COMMS_DEPTH" | "askerWake" | "beginRoomAsk" | "comms" | "connectorThread" | "coordinationBudget" | "fullAccessSkipsPeerCard" | "internalCapabilities" | "isUnattended" | "ownerSurfacesByThread" | "resultEgressDeps" | "roomAskDuplicate" | "roomAskParent" | "roomAskRefused" | "routinePeerSource" | "sourceExecutionAudience" | "store" | "taskResolutionDeps"> & Pick<RouteLocals, "eventAction" | "internalClaim" | "internalEventId" | "internalOwner" | "readInternalBody" | "res">;
+export type DelegateBotRouteContext = Pick<BoundaryPorts, "MAX_COMMS_DEPTH" | "askerWake" | "beginRoomAsk" | "comms" | "connectorThread" | "coordinationBudget" | "fullAccessSkipsPeerCard" | "internalCapabilities" | "isUnattended" | "ownerSurfacesByThread" | "resultEgressDeps" | "roomAskDuplicate" | "roomAskParent" | "roomAskRefused" | "routinePeerSource" | "settleRoomAsk" | "sourceExecutionAudience" | "store" | "taskResolutionDeps"> & Pick<RouteLocals, "eventAction" | "internalClaim" | "internalEventId" | "internalOwner" | "readInternalBody" | "res">;
 export async function delegateBotRoute(bx: DelegateBotRouteContext): Promise<void> {
-  const { MAX_COMMS_DEPTH, askerWake, beginRoomAsk, comms, connectorThread, coordinationBudget, eventAction, fullAccessSkipsPeerCard, internalCapabilities, internalClaim, internalEventId, internalOwner, isUnattended, ownerSurfacesByThread, readInternalBody, res, roomAskDuplicate, roomAskParent, roomAskRefused, routinePeerSource, sourceExecutionAudience, store } = bx;
+  const { MAX_COMMS_DEPTH, beginRoomAsk, comms, connectorThread, coordinationBudget, eventAction, fullAccessSkipsPeerCard, internalCapabilities, internalClaim, internalEventId, internalOwner, isUnattended, ownerSurfacesByThread, readInternalBody, res, roomAskDuplicate, roomAskParent, roomAskRefused, routinePeerSource, sourceExecutionAudience, store } = bx;
   const body = await readInternalBody();
   const fromBotId = String(body.fromBotId ?? "");
   const senderForResolution = store.bot(fromBotId);
@@ -896,11 +934,16 @@ export async function delegateBotRoute(bx: DelegateBotRouteContext): Promise<voi
     };
     return botReply(200, { error: said[queued.result === "ok" ? "no_target" : queued.result] });
   }
+  // its result comes back to this bot's room turn (lane E1); with no request (a direct chat) it wakes the asker directly (lane 0163-delegate-wake).
+  // That wake is kept on disk before the hand-off is acknowledged: a hand-off whose intent could not be written is dropped (it has not started: a
+  // direct queue drains when the asking turn ends), its charge given back, and the bot told it could not start (NOHOLD-DELEGATION.md).
+  const handoffRequest = beginRoomAsk(fromBotId, toBotId, fromThreadId, message, `ask:delegation:${queued.id}`, "queued", undefined, internalEventId);
+  if (!admitAskerWake(bx, queued.id, handoffRequest, fromThreadId, () => askerWakeIntent(bx, fromBotId, fromThreadId, depth))) {
+    unrun();
+    return botReply(200, { error: status("could_not_start", { why: "other" }) });
+  }
   handoffSlot.commit();
   record(`delegation:${queued.id}`);
-  // its result comes back to this bot's room turn (lane E1); with no request (a direct chat) it wakes the asker directly (lane 0163-delegate-wake)
-  const handoffRequest = beginRoomAsk(fromBotId, toBotId, fromThreadId, message, `ask:delegation:${queued.id}`, "queued", undefined, internalEventId);
-  if (!handoffRequest) askerWake?.register(queued.id, askerWakeIntent(bx, fromBotId, fromThreadId, depth));
   const targetName = store.nameOf(toBotId);
   return botReply(200, {
     queued: true,

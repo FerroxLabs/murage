@@ -24,7 +24,8 @@ import { observeVerifiedHuman, linkHumanBinding, resolveHumanBinding, bindHumanT
 import { ownerMemoryTicket } from "./memory/authority.ts";
 import { standingContextParts } from "./standing-context.ts";
 import { partitionFileRefusal } from "./partition-files.ts";
-import { autoVerdict } from "./auto-approve.ts";
+import { autoVerdict, isCommandTool } from "./auto-approve.ts";
+import { windowRuntimeEvent } from "./runtime-event-out.ts";
 import { noteStartupFileEvent } from "./engine-env.ts";
 import { removeTempDirSync } from "./testing/cleanup.ts";
 
@@ -159,6 +160,8 @@ it("R2.7 real permission event denies cross-partition writes before Full access 
   const fold = seam("foldRuntimeEvent", { fluxFirstTokenProbe: { begin() {}, observe() {} }, providerReplyOf: () => undefined, accountProjectEvent: vi.fn(), shouldIgnoreProviderEvent: () => false, accountPresentedProjectEvent: () => true, presentedRequests: { publish: vi.fn() }, localVmThreadTargets: new Map(), groupGoalCoordinatorTurns: new Map(), groupGoalCoordinatorTurnForEvent: () => undefined, broadcast: vi.fn(), routines: null, store: f.store, botForDirectThread: () => f.iris, partitionFileRefusal, turnCwdByThread: new Map(), turnEngineByThread: new Map(), registry: { get: () => ({ adapter: { respondToRequest } }) }, autoVerdict: judged,
     // index.ts imports it from engine-env.ts and calls it for every permission event (Rule 74a): the real one, as in production
     noteStartupFileEvent,
+    // the window's copy of every runtime event and the command-tool test, the real ones, as index.ts imports them
+    windowRuntimeEvent, isCommandTool,
     // lane PF's reply speaker guard: not a project room here, so it guards nothing
     replyGuardContext: () => null, replySpeakerTurns: { started: vi.fn(), completed: vi.fn(), delta: vi.fn(), item: vi.fn(), removalRow: vi.fn() } });
   fold({ type: "request.opened", eventId: "event", threadId: f.work.threadId, requestId: "ask", requestType: "permission", tool: "write_file", filePaths: [join(DATA_DIR, "workspaces", f.iris.id, "MEMORY.md")] });

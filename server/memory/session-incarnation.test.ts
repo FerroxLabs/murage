@@ -6,7 +6,7 @@
 // written between them, and a restart between them, get distinct keys and fresh stamps, while the old key's deny marks, disclosures and
 // session number stay; a pre-1.0.3 id (a lineage row, no allocator row) counts as n = 1; a resume forms the same key from the stored
 // incarnation; and one helper forms every SessionKey (no `nativeSession:` literal outside it).
-import { mkdirSync, readdirSync, readFileSync, rmSync, statSync } from "node:fs";
+import { mkdirSync, readdirSync, readFileSync, statSync } from "node:fs";
 import { join } from "node:path";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { DATA_DIR } from "../config.ts";
@@ -17,8 +17,9 @@ import type { TurnLineage } from "./lineage-types.ts";
 import { noteReceiptOutput, noteReceiptSession, receiptStart } from "./receipt-outputs.ts";
 import { latestIncarnation, sessionKeyOf, startFreshSession } from "./session-incarnation.ts";
 import { WritetimeFixture } from "./testing/writetime-fixture.ts";
+import { removeTempDirSync } from "../testing/cleanup.ts";
 
-beforeEach(() => { vi.spyOn(console, "warn").mockImplementation(() => {}); closeDatabase(); rmSync(DATA_DIR, { recursive: true, force: true }); mkdirSync(DATA_DIR, { recursive: true }); });
+beforeEach(() => { vi.spyOn(console, "warn").mockImplementation(() => {}); closeDatabase(); removeTempDirSync(DATA_DIR); mkdirSync(DATA_DIR, { recursive: true }); });
 afterEach(() => { vi.restoreAllMocks(); closeDatabase(); });
 const app = () => new WritetimeFixture(database());
 const turn = (turnLsn: number): TurnLineage => ({ threadId: "T", turnId: `turn-${turnLsn}`, turnLsn, parents: [], denyGeneration: 0 });
@@ -114,7 +115,7 @@ function serverFiles(dir: string, out: string[] = []): string[] {
 it("no `nativeSession:` literal outside sessionKeyOf (type annotations aside)", () => {
   const offenders: string[] = [];
   for (const file of serverFiles(ROOT)) {
-    const rel = file.slice(ROOT.length + 1);
+    const rel = file.slice(ROOT.length + 1).replace(/\\/g, "/"); // '/' on every platform, as EXEMPT is written
     if (EXEMPT.has(rel)) continue;
     readFileSync(file, "utf8").split("\n").forEach((line, i) => {
       // a parameter or field type (`nativeSession: string`) is not a key being formed

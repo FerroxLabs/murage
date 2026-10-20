@@ -16,11 +16,14 @@ import { routineTurnApproval } from "./routine-permissions.ts";
 const unlimited = { autoApprove: true, fullAccess: true, noLimits: true, alwaysAllow: [] };
 const full = { autoApprove: true, fullAccess: true, alwaysAllow: [] };
 const auto = { autoApprove: true, fullAccess: false, alwaysAllow: [] };
-const tools: Array<[string, string]> = [
-  ["composio__COMPOSIO_GET_TOOL_SCHEMAS", "Read a connected-app tool's details"],
-  ["composio__COMPOSIO_MULTI_EXECUTE_TOOL", "Run a connected-app action"],
-  ["composio__COMPOSIO_REMOTE_WORKBENCH", "Run code for a connected app"],
+// Each ask carries the call the engine sent, as a real one does: an execute
+// call names its actions, and one that does not is never answered by a mode.
+const tools: Array<[string, string, Record<string, unknown>]> = [
+  ["composio__COMPOSIO_GET_TOOL_SCHEMAS", "Read a connected-app tool's details", { tool_slugs: ["GMAIL_SEND_EMAIL"] }],
+  ["composio__COMPOSIO_MULTI_EXECUTE_TOOL", "Run a connected-app action", { tools: [{ tool_slug: "GMAIL_FETCH_EMAILS", account: "a", arguments: { max_results: 5 } }] }],
+  ["composio__COMPOSIO_REMOTE_WORKBENCH", "Run code for a connected app", { code_to_execute: "print(1)" }],
 ];
+const call = (tool: string, input: Record<string, unknown>) => ({ toolCall: { name: tool, input } });
 
 afterEach(() => vi.restoreAllMocks());
 
@@ -29,12 +32,12 @@ describe("an automatic permission answer", () => {
     const fetchSpy = vi.spyOn(globalThis, "fetch").mockImplementation(() => { throw new Error("a permission decision reached the network"); });
     const started = performance.now();
     for (let round = 0; round < 2_000; round++) {
-      for (const [tool, summary] of tools) {
-        const result = routineTurnApproval({ bot: unlimited, tool, summary, context: { stopLine: null } });
+      for (const [tool, summary, input] of tools) {
+        const result = routineTurnApproval({ bot: unlimited, tool, summary, context: { stopLine: null, call: call(tool, input) } });
         expect(result.verdict).not.toBeInstanceOf(Promise);
         expect(result.verdict.approve).toBeTruthy();
         expect(result.verdict.source).toBe("no-limits");
-        expect(routineTurnApproval({ bot: full, tool, summary, context: { stopLine: null } }).verdict.source).toBe("full-access");
+        expect(routineTurnApproval({ bot: full, tool, summary, context: { stopLine: null, call: call(tool, input) } }).verdict.source).toBe("full-access");
       }
     }
     const perDecisionMs = (performance.now() - started) / (2_000 * tools.length * 2);
@@ -45,8 +48,15 @@ describe("an automatic permission answer", () => {
 
   it("No limits lets a message to someone new go; Auto still asks", () => {
     const message = { kind: "message" as const, place: "ada@example.com", what: "Send a message to someone new: ada@example.com" };
-    expect(routineTurnApproval({ bot: unlimited, tool: tools[1]![0], summary: "send", context: { stopLine: message as never } }).verdict.source).toBe("no-limits");
-    expect(routineTurnApproval({ bot: auto, tool: tools[1]![0], summary: "send", context: { stopLine: message as never } }).verdict.approve).toBeFalsy();
+    const send = call(tools[1]![0], { tools: [{ tool_slug: "GMAIL_SEND_EMAIL", account: "a", arguments: { recipient_email: "ada@example.com" } }] });
+    expect(routineTurnApproval({ bot: unlimited, tool: tools[1]![0], summary: "send", context: { stopLine: message as never, call: send } }).verdict.source).toBe("no-limits");
+    expect(routineTurnApproval({ bot: auto, tool: tools[1]![0], summary: "send", context: { stopLine: message as never, call: send } }).verdict.approve).toBeFalsy();
+  });
+
+  it("an execute call whose actions cannot be read is held, even in No limits", () => {
+    const verdict = routineTurnApproval({ bot: unlimited, tool: tools[1]![0], summary: "run", context: { stopLine: null, call: call(tools[1]![0], {}) } }).verdict;
+    expect(verdict.approve).toBeFalsy();
+    expect(verdict.source).toBe("unread-call");
   });
 
   it("is answered before the push risk rating, which is written only for a card a person sees", () => {
