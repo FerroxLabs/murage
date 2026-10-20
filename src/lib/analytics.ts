@@ -11,9 +11,14 @@
 // library never opens a connection. The upstream fork shipped a hardcoded
 // token pointing at its own project, which meant every install's events and
 // every submitted email landed in someone else's account.
-import posthog from "posthog-js";
-
+//
+// posthog-js is about a fifth of a megabyte, so it is not part of the first
+// paint (src/first-paint.test.ts): initAnalytics() imports it, and only on a
+// window allowed to start it, so an opted-out install or the phone app never
+// downloads it at all.
 import { inNativeShell } from "./native-shell";
+
+type PostHog = typeof import("posthog-js").default;
 
 const TOKEN = (import.meta.env?.VITE_POSTHOG_KEY as string | undefined)?.trim() ?? "";
 const API_HOST =
@@ -27,6 +32,10 @@ const API_HOST =
 const OPT_OUT_KEY = "murage-analytics-opt-out";
 
 let ready = false;
+/** The running client, set together with `ready`. */
+let client: PostHog | null = null;
+/** True while initAnalytics() waits for the library to load. */
+let loading = false;
 
 // The choice as made in THIS process, which outranks storage. Without it a
 // rejected write silently loses an opt-out: the setter would swallow the
@@ -64,10 +73,10 @@ export function setAnalyticsEnabled(enabled: boolean) {
   }
   switch (optAction(enabled, ready)) {
     case "opt-out":
-      posthog.opt_out_capturing(); // also drops whatever is still queued
+      client?.opt_out_capturing(); // also drops whatever is still queued
       break;
     case "opt-in":
-      posthog.opt_in_capturing();
+      client?.opt_in_capturing();
       break;
     case "init":
       initAnalytics(); // first opt-in of a session that started opted out
@@ -85,8 +94,24 @@ export function analyticsAllowed(facts: { token: string; enabled: boolean; nativ
   return facts.token !== "" && facts.enabled && !facts.nativeShell;
 }
 
+const allowedHere = () => analyticsAllowed({ token: TOKEN, enabled: analyticsEnabled(), nativeShell: inNativeShell() });
+
 export function initAnalytics() {
-  if (ready || !analyticsAllowed({ token: TOKEN, enabled: analyticsEnabled(), nativeShell: inNativeShell() })) return;
+  if (ready || loading || !allowedHere()) return;
+  loading = true;
+  void import("posthog-js").then(
+    ({ default: posthog }) => {
+      loading = false;
+      // The switch can be turned off while the library loads: an opt-out made
+      // then must still keep init() from running.
+      if (ready || !allowedHere()) return;
+      start(posthog);
+    },
+    () => { loading = false; /* no library, no analytics; a later opt-in tries again */ },
+  );
+}
+
+function start(posthog: PostHog) {
   posthog.init(TOKEN, {
     api_host: API_HOST,
     autocapture: false, // never capture clicked-element text (conversation leak)
@@ -99,6 +124,7 @@ export function initAnalytics() {
   // every capture below while the switch says on. Clear the stale flag
   // before the first capture of the session.
   if (posthog.has_opted_out_capturing()) posthog.opt_in_capturing();
+  client = posthog;
   ready = true;
   const platform = navigator.userAgent.includes("Electron") ? "desktop" : "browser";
   // one-time install marker — app_first_open counts installs (the closest
@@ -113,7 +139,7 @@ export function initAnalytics() {
 
 export function track(event: string, props?: Record<string, unknown>) {
   if (!ready || !analyticsEnabled()) return;
-  posthog.capture(event, props);
+  client?.capture(event, props);
 }
 
 // Checked here as well as in track(): this is the one call that would send a
@@ -122,8 +148,8 @@ export function track(event: string, props?: Record<string, unknown>) {
 // stops it from being reported, not from being used.
 export function identifyEmail(email: string) {
   if (!ready || !analyticsEnabled()) return;
-  posthog.identify(email, { email });
-  posthog.capture("email_submitted");
+  client?.identify(email, { email });
+  client?.capture("email_submitted");
 }
 
 // first-run email gate state

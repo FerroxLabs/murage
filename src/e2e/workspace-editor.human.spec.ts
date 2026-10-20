@@ -183,6 +183,19 @@ async function selectBot(page: Page, who: Bot) {
 }
 const pane = (page: Page) => page.getByTestId("workspace-pane");
 const transcriptCard = (page: Page, artifactId: string) => page.locator("main").locator(`[data-artifact-id="${artifactId}"]`);
+/** The card for `artifactId`, once it is mounted. The transcript mounts only the rows on screen and near it (VirtualTranscript,
+ * 05683e461), and the fixture engine's replies quote the whole prompt, remembered notes included, so an older card can sit
+ * screens above the newest row: wheel up through the conversation, as a reader does, until the card mounts. */
+async function scrolledToCard(page: Page, artifactId: string) {
+  const card = transcriptCard(page, artifactId), scroller = page.locator("main").getByTestId("chat-scroll");
+  await scroller.hover();
+  await expect.poll(async () => {
+    if (await card.count() > 0) return true;
+    await page.mouse.wheel(0, -400);
+    return false;
+  }, { timeout: 20_000, intervals: [100] }).toBe(true);
+  return card;
+}
 const tabNamed = (page: Page, name: string) => page.getByTestId("workspace-tab").filter({ has: page.getByRole("tab", { name: new RegExp(`^${name.replace(/\./g, "\\.")}`) }) });
 const sourceBox = (page: Page) => page.getByRole("textbox", { name: "Markdown source" });
 const fileStatus = (page: Page) => page.getByTestId("markdown-file-status");
@@ -369,8 +382,8 @@ test("Edit and Save writes the owner's bytes and keeps the replaced revision; a 
   expect(await hostCards(bot)).toHaveLength(2);
   expect(await artifactsOf(otherBot)).toEqual([]);
   // Two cards in the conversation, both over their own saved version.
-  await expect(transcriptCard(page, firstCard.artifactId)).toHaveCount(1);
   await expect(transcriptCard(page, secondCard.artifactId)).toHaveCount(1);
+  await expect(await scrolledToCard(page, firstCard.artifactId)).toHaveCount(1);
 });
 
 test("after a restart the cards, the saved versions and the working file's current revision are all retained, and a further edit saves without conflict", async ({ page }, testInfo) => {
@@ -396,9 +409,10 @@ test("after a restart the cards, the saved versions and the working file's curre
   // the retained bytes, not the working file.
   await openApp(page);
   await selectBot(page, bot);
-  const first = transcriptCard(page, firstCard.artifactId), second = transcriptCard(page, secondCard.artifactId);
-  await expect(first).toContainText("Original file has changed. The saved version is retained.");
+  const second = transcriptCard(page, secondCard.artifactId);
   await expect(second).toContainText("Original file has changed. The saved version is retained.");
+  const first = await scrolledToCard(page, firstCard.artifactId);
+  await expect(first).toContainText("Original file has changed. The saved version is retained.");
   await expect(first.getByRole("button", { name: /^Open the working file/ })).toHaveCount(0);
   // INLINE1: the retained bytes are rendered inside the card itself, not the
   // working file, and the card offers no Preview that leaves the chat.
