@@ -33,6 +33,8 @@ afterEach(() => { closeMemoryIndexReader(); });
 
 /** An index of `count` records that all say the common words, a few of which also say a rare one. */
 function bigIndex(count: number, rare: number) {
+  // the reader a recall opened holds the file: Windows refuses to delete an open file (EPERM), so it is closed first
+  closeMemoryIndexReader();
   for (const suffix of ["", "-wal", "-shm"]) rmSync(`${INDEX_PATH()}${suffix}`, { force: true });
   const index = new MemoryIndex(INDEX_PATH());
   index.prepareModel("model");
@@ -69,7 +71,6 @@ describe("recall: per-recall cost follows the query, not the size of the memory"
     await recallOnce(query);
     for (let n = 0; n < 5; n++) small.push(await recallOnce(query));
     bigIndex(500_000, 5);
-    closeMemoryIndexReader();
     await recallOnce(query);
     for (let n = 0; n < 5; n++) large.push(await recallOnce(query));
     for (const run of [...small, ...large]) {

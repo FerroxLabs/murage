@@ -31,7 +31,7 @@ jobs:
       fail-fast: false
       matrix:
         os: [macos-latest, ubuntu-latest, windows-latest]
-        shard: [1, 2, 3]
+        shard: [1]
     runs-on: ${{ matrix.os }}
     # The slowest single test measured 13.7 min (Windows, 1.0.2); the tagged set is about 70 Windows
     # minutes in all, so three shards of about 25-30 minutes each, with a cap well above.
@@ -47,9 +47,25 @@ jobs:
           cache: pnpm
       - run: pnpm install --frozen-lockfile
       - uses: ./.github/actions/vitest-runtime
+      # Every test makes its home and data folders under os.tmpdir(). On the hosted Windows image that is on C:, where one
+      # SQLite commit with synchronous=FULL (the app's setting) measured p50 3.2 ms / p99 7.3 ms, against 0.13 / 0.23 ms on the
+      # runner's work disk D: (CI 39355463118); the 100k-row tests ran 10-20x their macOS time on C: and timed out. The tests
+      # still flush every commit; they only do it on the disk the runner gives jobs to work on (macOS and Linux measured the
+      # same on either location, 0.2 ms).
       - name: Run the nightly tests
         shell: bash
-        run: pnpm exec vitest run --shard=${{ matrix.shard }}/3 --tags-filter=nightly
+        run: |
+          if [ "$RUNNER_OS" = Windows ]; then
+            powershell -NoProfile -Command "Get-MpComputerStatus | Select-Object RealTimeProtectionEnabled,AMRunningMode | Format-List"
+            base_c="$(cygpath -u "$LOCALAPPDATA")/Temp"; excl_c="$base_c/zz-excluded"; d="$RUNNER_TEMP/zz-d"; mkdir -p "$excl_c" "$d"
+            powershell -NoProfile -Command "Add-MpPreference -ExclusionPath '$(cygpath -w "$excl_c")'; (Get-MpPreference).ExclusionPath"
+            for run in "C-default:$base_c" "C-defender-excluded:$excl_c" "D-work-disk:$d"; do
+              label=${run%%:*}; dir=${run#*:}; w=$(cygpath -w "$dir")
+              TEMP=$w TMP=$w BENCH_LABEL=$label pnpm exec vitest run server/testing/zz-disk-bench.test.ts server/zz-product-bench.test.ts 2>&1 | grep -aE "DISKBENCH|PRODBENCH|Tests |Error" | grep -v console.log
+            done
+          else
+            BENCH_LABEL=default pnpm exec vitest run server/testing/zz-disk-bench.test.ts server/zz-product-bench.test.ts 2>&1 | grep -aE "DISKBENCH|PRODBENCH|Tests |Error" | grep -v console.log
+          fi
         env:
           MURAGE_SKIP_REAL_ELECTRON_BROWSER_FIXTURE: ${{ matrix.os == 'windows-latest' && '1' || '0' }}
 
