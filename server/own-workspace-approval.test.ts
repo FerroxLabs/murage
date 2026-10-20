@@ -267,16 +267,12 @@ describe("segments compare exactly, never folded", () => {
     expect(isOwnWorkspaceBookkeeping({ ...ghostScope(ghost), paths: [join(ghost, "workspaces", "ABC", "MEMORY.md")] })).toBe(false);
   });
 
-  it("agrees with the filesystem about a case-variant of a folder that exists", () => {
-    // On a case-insensitive volume this path IS the bot's own MEMORY.md and
-    // the kernel says so; on a case-sensitive one it is a different folder
-    // and is refused. Either way the answer comes from the filesystem, not
-    // from this module lowercasing anything. `realpathSync.native` is the
-    // authority here — and the one the boundary itself resolves with —
-    // because only the libc call reports the on-disk casing of a component.
+  it("never approves a case-variant of a folder that exists, even where the filesystem folds it", () => {
+    // isOwnWorkspaceBookkeeping's contract: "a different spelling" is false, and false raises the
+    // approval card as before. On a case-insensitive volume (APFS) the kernel resolves this to the
+    // bot's own MEMORY.md, but the placement is exact by segment first, so it still asks; on a
+    // case-sensitive one it is another folder and asks too. Never folded either way.
     const variant = join(dataDir, "WORKSPACES", BOT, "MEMORY.md");
-    let sameFile = false;
-    try { sameFile = realpathSync.native(variant) === realpathSync.native(join(botDir, "MEMORY.md")); } catch { sameFile = false; }
-    expect(asks([variant])).toBe(sameFile);
+    expect(asks([variant])).toBe(false);
   });
 });

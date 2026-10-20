@@ -610,7 +610,7 @@
  },
  {
   "file": "server/cloud-home/engine-launch-fixture.ts",
-  "function": "launcherRig",
+  "function": "fixtureEngineBytes",
   "callee": "readFileSync",
   "root": "cloud-home",
   "count": 1

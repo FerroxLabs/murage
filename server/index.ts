@@ -5400,7 +5400,10 @@ ioBudget.setOnScale(() => broadcast({ kind: "inbox.changed", pollScale: ioBudget
 ioBudget.setIsIdle(() => !store.bots.some(bot=>bot.busy)&&!store.groups.some(groupIsWorking)&&!activeProviderSelections.size&&!directTurnDispatchClaims.size&&!internalTurnOwners.size&&!groupTurnOperations.size&&!coordinationSlots.size&&!routines?.listRuns().some(run=>isLiveRoutineRunStatus(run.status)));
 ioBudget.start();
 // The whole computer's load (load average, all cores busy): read by the I/O budget and the owner-first gate.
-systemLoad.start();
+// A test's isolated server shares its host with the suite driving it (a 3-core macOS CI runner sits above its load bound for
+// whole files): MURAGE_TEST_IGNORE_SYSTEM_LOAD=1 keeps that suite's own load from deferring the very work a test waits for
+// (webhook and routine starts, idle learning) by up to OWNER_FIRST_MAX_DEFER_MS. Unset, nothing changes.
+if (process.env.MURAGE_TEST_IGNORE_SYSTEM_LOAD !== "1") systemLoad.start();
 
 // ── server-side event folding (upstream's ingestion worker, miniature) ──
 // The canonical stream is the source of truth; the persisted transcript

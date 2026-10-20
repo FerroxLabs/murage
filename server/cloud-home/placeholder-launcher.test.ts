@@ -60,7 +60,8 @@ describe("fixture 1: MASK_NAMES is the union and every engine masks it", () => {
   });
 });
 
-describe("fixture 2: ensure_placeholder", () => {
+// ensure_placeholder sets the immutable flag with the Linux FS_IOC_SETFLAGS ioctl (ENOTTY elsewhere)
+describe.skipIf(process.platform !== "linux")("fixture 2: ensure_placeholder", () => {
   it("makes an absent name a 0555 directory of the launcher's uid with the flag requested once", () => {
     const out = ensure(`${rig.workspaces}/ws`, ".claude");
     expect(out.error).toBeUndefined();
@@ -107,7 +108,8 @@ describe("fixture 2: ensure_placeholder", () => {
   });
 });
 
-it("fixture 3: a settings.json planted after the plan, then a rename of the placeholder, leaves the view on the tmpfs and the flag on the original inode", () => {
+// ensure_placeholder reads the inode flags with FS_IOC_GETFLAGS, a Linux ioctl (macOS answers ENOTTY): these three run on Linux only, like fixture 2.
+it.skipIf(process.platform !== "linux")("fixture 3: a settings.json planted after the plan, then a rename of the placeholder, leaves the view on the tmpfs and the flag on the original inode", () => {
   const ws = `${rig.workspaces}/ws`, cwd = `${ws}/proj/sub`;
   const out = JSON.parse(rig.py(`
 import errno,tempfile
@@ -152,7 +154,7 @@ print(json.dumps({"results":results,"view":view,"original":original,"now":os.lst
   expect(out.frozen).toContain(out.original);
 });
 
-it("places a placeholder at every MASK_NAMES name under the cwd and under each --add-dir of a Claude turn", () => {
+it.skipIf(process.platform !== "linux")("places a placeholder at every MASK_NAMES name under the cwd and under each --add-dir of a Claude turn", () => {
   const ws = `${rig.workspaces}/ws`, cwd = `${ws}/proj/sub`, extra = `${rig.workspaces}/other`, extra2 = `${ws}/proj`;
   mkdirSync(extra);
   const plan = rig.plan(rig.request("claudeAgent", { cwd, args: [...MINIMAL_ARGV.claudeAgent, "--add-dir", extra, `--add-dir=${extra2}`] }), { place: true }).ok!;
@@ -165,7 +167,7 @@ it("places a placeholder at every MASK_NAMES name under the cwd and under each -
   }
 });
 
-it("places no placeholder in the engine home (cwd == home) and only the cwd's for an engine without --add-dir", () => {
+it.skipIf(process.platform !== "linux")("places no placeholder in the engine home (cwd == home) and only the cwd's for an engine without --add-dir", () => {
   expect(rig.plan(rig.request("codex"), { place: true }).ok!.placed).toEqual([]);
   const cwd = `${rig.workspaces}/ws/proj`;
   const plan = rig.plan(rig.request("grokAgent", { cwd }), { place: true }).ok!;

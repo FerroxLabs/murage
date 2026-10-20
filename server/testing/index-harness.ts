@@ -678,6 +678,8 @@ beforeAll(async () => {
       USERPROFILE: home,
       MURAGE_PORT: String(PORT),
       MURAGE_WEBHOOK_PORT: String(WEBHOOK_PORT),
+      // the suite's own load is not an owner's overloaded computer (server/testing/setup.ts)
+      ...(process.env.MURAGE_TEST_IGNORE_SYSTEM_LOAD === "1" ? { MURAGE_TEST_IGNORE_SYSTEM_LOAD: "1" } : {}),
       MURAGE_BOX_API: `http://127.0.0.1:${boxStubPort}`,
       // Connected apps run through Flux Router only. A test file that needs
       // them sets MURAGE_TEST_FAKE_FLUX_BROKER=1 before this harness starts,

@@ -12,7 +12,7 @@
 //    the mcp-access.token finding).
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
-import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import { launchVerificationServer, type VerificationServer } from "../scripts/control-murage.ts";
 
 const posixOnly = describe.skipIf(process.platform === "win32");
@@ -244,8 +244,8 @@ posixOnly("local access: archived rooms, saved images and script grants", () => 
     const sendToken = (sender.body as { token: string; id: string }).token;
     const sendId = (sender.body as { id: string }).id;
     expect((await call("POST", `/api/bots/${mine.id}/messages`, as(sendToken), { text: "from a script" })).status).toBeLessThan(300);
-    const after = await call("GET", `/api/threads/${mine.threadId}/messages`, desktop);
-    expect(after.text).toContain("from a script");
+    // A send to a bot still busy (its first greeting on a slow runner) is accepted as queued and lands when the turn ends.
+    await vi.waitFor(async () => expect((await call("GET", `/api/threads/${mine.threadId}/messages`, desktop)).text).toContain("from a script"), { timeout: 20_000, interval: 200 });
     expect((await call("POST", `/api/bots/${other.id}/messages`, as(sendToken), { text: "nope" })).status).toBe(404);
     expect((await call("GET", `/api/threads/${other.threadId}/messages`, desktop)).text).not.toContain("nope");
 
