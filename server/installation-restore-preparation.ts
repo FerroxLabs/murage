@@ -21,6 +21,7 @@ import { RESTORED_CONNECTIONS_FILE } from "../electron/restored-connections.mjs"
 import { RESTORE_REVIEW_FILE } from "../electron/restore-review.mjs";
 import { notificationPreferencesSchema } from "../shared/notification-preferences.ts";
 import { hermesProfileCarry } from "../shared/hermes-profile-name.ts";
+import { isReservedBotId } from "../shared/bot-identity.ts";
 import { mapRoutineRuns, routinesCommit } from "./routine-runs-journal.ts";
 import { bumpWriteEpoch } from "./app-write-revision.ts";
 import { neutralizeRestoredSends } from "./send-store.ts";
@@ -172,6 +173,8 @@ export async function prepareInstallationRestore(archive: string, outputParent: 
       const ids = new Set<string>();
       const prepared = records.map(value => {
         if (!object(value) || !id(value.id) || !id(value.threadId) || ids.has(value.id)) fail("INVALID_RESTORE_ROSTER");
+        // The Cloud home's own browser check lives under this prefix; no restored bot or group may name it.
+        if (isReservedBotId(value.id)) fail("RESERVED_RESTORE_ID");
         ids.add(value.id);
         if (path === "bots.json") botIds.add(value.id);
         const owner = `${path}:${value.id}`;

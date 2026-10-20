@@ -543,12 +543,23 @@ no source file was copied whole.
     call window through ONNX Runtime Web (onnxruntime-web, MIT License).
     Murage: src/lib/silero-vad.ts, src/lib/call-mic.ts
 
+  ONNX Runtime Web (onnxruntime-web, https://github.com/microsoft/onnxruntime),
+    MIT License, Copyright (c) Microsoft Corporation. Its Node build and
+    WebAssembly binary run the local memory model where the native ONNX
+    Runtime binding is unavailable (Intel Macs). Shipped as
+    server/memory/ort-wasm with the package README.
+    Murage: server/memory/embedding-runtime.ts
+
   KaTeX (https://katex.org), MIT License. Math in chat.
     Murage: src/lib/chat-math.ts, src/components/ChatMath.tsx
   Mermaid (https://mermaid.js.org), MIT License. Diagrams in chat, drawn in
     a sandboxed frame. Murage: src/mermaid-frame/, src/components/MermaidDiagram.tsx
   DOMPurify (https://github.com/cure53/DOMPurify), Apache-2.0 OR MPL-2.0
     (used under Apache-2.0). Cleans math and diagram output.
+  xterm.js (https://github.com/xtermjs/xterm.js, npm "@xterm/xterm" 6.0.0), MIT
+    License. Shows the vendor CLI's sign-in terminal for a Cloud home; see
+    third_party/xterm/. Murage: src/components/EngineLoginTerminal.tsx,
+    src/lib/engine-login-terminal.ts
 
 --------------------------------------------------------------------------
 

@@ -686,6 +686,186 @@ export const HELP_INDEX: readonly HelpEntry[] = [
     "text": "- A wide set of everyday improvements. Up to eight per-bot desktops, MCP tools that start from Windows command shims, remote MCP servers that get 30 seconds to list their tools, phone pairing that picks your real Wi-Fi or Ethernet address, chats that follow the newest message after you switch threads, routines that keep their detailed error, and settings files saved with a byte order mark all work as you would expect.\n- Every release is checked on Intel Macs. Each build now starts on a real Intel Mac and checks its WhatsApp connection before it is published."
   },
   {
+    "id": "changelog/v1-0-3#always-ask-in-1-0-3",
+    "title": "What changed in Murage 1.0.3",
+    "description": "Always ask reads commands before they run, apps get grants you control, approval cards reach your phone and calls, memory and rooms stay quick and private, and Murage comes with Fuigo 1.0.30.",
+    "heading": "Always ask in 1.0.3",
+    "breadcrumb": "Murage docs → Changelog → What changed in Murage 1.0.3",
+    "where": "Murage docs → Changelog → What changed in Murage 1.0.3",
+    "url": "https://murage.app/docs/changelog/v1-0-3#always-ask-in-1-0-3",
+    "text": "- Always ask reads each command before it runs. If the text names your home folder, a system folder, a whole disk or a mounted volume, Murage asks first, at every access level, including Full access and No limits.\n- It covers more than the shell. The same check reads PowerShell, Command Prompt, Windows Subsystem for Linux, and code run through Python, Node and similar tools.\n- Raw writes to a disk always ask. Any write to a storage device asks first, whatever the device is called."
+  },
+  {
+    "id": "changelog/v1-0-3#apps-and-engine-settings-in-1-0-3",
+    "title": "What changed in Murage 1.0.3",
+    "description": "Always ask reads commands before they run, apps get grants you control, approval cards reach your phone and calls, memory and rooms stay quick and private, and Murage comes with Fuigo 1.0.30.",
+    "heading": "Apps and engine settings in 1.0.3",
+    "breadcrumb": "Murage docs → Changelog → What changed in Murage 1.0.3",
+    "where": "Murage docs → Changelog → What changed in Murage 1.0.3",
+    "url": "https://murage.app/docs/changelog/v1-0-3#apps-and-engine-settings-in-1-0-3",
+    "text": "- Each app gets only the grants you give it. A connected app asks before it reaches a new tool, and what you allow stays with that app and that bot.\n- A routine's remembered approvals stay with the bot that runs it. Another bot cannot borrow them.\n- The settings that decide what an engine may do are protected. A bot cannot change them from inside a turn; you change them in Settings."
+  },
+  {
+    "id": "changelog/v1-0-3#approvals-on-your-phone-and-in-calls-in-1-0-3",
+    "title": "What changed in Murage 1.0.3",
+    "description": "Always ask reads commands before they run, apps get grants you control, approval cards reach your phone and calls, memory and rooms stay quick and private, and Murage comes with Fuigo 1.0.30.",
+    "heading": "Approvals on your phone and in calls in 1.0.3",
+    "breadcrumb": "Murage docs → Changelog → What changed in Murage 1.0.3",
+    "where": "Murage docs → Changelog → What changed in Murage 1.0.3",
+    "url": "https://murage.app/docs/changelog/v1-0-3#approvals-on-your-phone-and-in-calls-in-1-0-3",
+    "text": "- Approval cards reach your phone. Allow or deny from the phone and the waiting bot carries on.\n- Calls announce what is waiting. A call tells you how many approvals are waiting and lets you answer by voice, with the plain words spoken back to you.\n- The composer keeps your draft while an approval card is open, and returns with it when you are done."
+  },
+  {
+    "id": "changelog/v1-0-3#spending-ceiling-and-setup-backup-in-1-0-3",
+    "title": "What changed in Murage 1.0.3",
+    "description": "Always ask reads commands before they run, apps get grants you control, approval cards reach your phone and calls, memory and rooms stay quick and private, and Murage comes with Fuigo 1.0.30.",
+    "heading": "Spending ceiling and setup backup in 1.0.3",
+    "breadcrumb": "Murage docs → Changelog → What changed in Murage 1.0.3",
+    "where": "Murage docs → Changelog → What changed in Murage 1.0.3",
+    "url": "https://murage.app/docs/changelog/v1-0-3#spending-ceiling-and-setup-backup-in-1-0-3",
+    "text": "- The monthly learning ceiling holds. Replies that report no usage are counted as unmetered, and learning stops at the ceiling you set.\n- First-run backup ends verified. Setup finishes only when your first backup has run and checked out, or when you have turned backups off yourself. A lost record of either no longer lets setup finish early."
+  },
+  {
+    "id": "changelog/v1-0-3#rooms-and-memory-in-1-0-3",
+    "title": "What changed in Murage 1.0.3",
+    "description": "Always ask reads commands before they run, apps get grants you control, approval cards reach your phone and calls, memory and rooms stay quick and private, and Murage comes with Fuigo 1.0.30.",
+    "heading": "Rooms and memory in 1.0.3",
+    "breadcrumb": "Murage docs → Changelog → What changed in Murage 1.0.3",
+    "where": "Murage docs → Changelog → What changed in Murage 1.0.3",
+    "url": "https://murage.app/docs/changelog/v1-0-3#rooms-and-memory-in-1-0-3",
+    "text": "- A room with memory off works as it should. A room member whose memory is off keeps its place in the conversation, and Keep all lets every turn run.\n- Rooms keep their order. Each message in a room has one place in the conversation, on every window and on your phone.\n- Search and browse show your newest memories first."
+  },
+  {
+    "id": "changelog/v1-0-3#thread-recall-in-1-0-3",
+    "title": "What changed in Murage 1.0.3",
+    "description": "Always ask reads commands before they run, apps get grants you control, approval cards reach your phone and calls, memory and rooms stay quick and private, and Murage comes with Fuigo 1.0.30.",
+    "heading": "Thread recall in 1.0.3",
+    "breadcrumb": "Murage docs → Changelog → What changed in Murage 1.0.3",
+    "where": "Murage docs → Changelog → What changed in Murage 1.0.3",
+    "url": "https://murage.app/docs/changelog/v1-0-3#thread-recall-in-1-0-3",
+    "text": "- A bot can recall an earlier thread. Ask it to find what was said in another conversation and it reads that thread, within what it is allowed to see.\n- It works with memory off or paused, because it reads the conversation itself."
+  },
+  {
+    "id": "changelog/v1-0-3#bots-read-only-what-they-may-in-1-0-3",
+    "title": "What changed in Murage 1.0.3",
+    "description": "Always ask reads commands before they run, apps get grants you control, approval cards reach your phone and calls, memory and rooms stay quick and private, and Murage comes with Fuigo 1.0.30.",
+    "heading": "Bots read only what they may in 1.0.3",
+    "breadcrumb": "Murage docs → Changelog → What changed in Murage 1.0.3",
+    "where": "Murage docs → Changelog → What changed in Murage 1.0.3",
+    "url": "https://murage.app/docs/changelog/v1-0-3#bots-read-only-what-they-may-in-1-0-3",
+    "text": "- Each memory remembers where it came from. Murage tracks the conversation a memory was learned in, so a bot reads only the memories from conversations it was part of.\n- Switching a bot's engine keeps that line. The new engine picks up the same boundaries."
+  },
+  {
+    "id": "changelog/v1-0-3#faster-memory-cleanup-in-1-0-3",
+    "title": "What changed in Murage 1.0.3",
+    "description": "Always ask reads commands before they run, apps get grants you control, approval cards reach your phone and calls, memory and rooms stay quick and private, and Murage comes with Fuigo 1.0.30.",
+    "heading": "Faster memory cleanup in 1.0.3",
+    "breadcrumb": "Murage docs → Changelog → What changed in Murage 1.0.3",
+    "where": "Murage docs → Changelog → What changed in Murage 1.0.3",
+    "url": "https://murage.app/docs/changelog/v1-0-3#faster-memory-cleanup-in-1-0-3",
+    "text": "- Removing a memory or a person's access is one quick pass. Murage handles the whole backlog together instead of one receipt at a time.\n- Cleanup counts the real work it does, so it stays inside its budget.\n- No long freezes while memory builds. The memory index builds and updates in small steps that always finish, so Murage stays smooth on a very long history.\n- Idle checks only visit threads with work waiting."
+  },
+  {
+    "id": "changelog/v1-0-3#attachments-in-1-0-3",
+    "title": "What changed in Murage 1.0.3",
+    "description": "Always ask reads commands before they run, apps get grants you control, approval cards reach your phone and calls, memory and rooms stay quick and private, and Murage comes with Fuigo 1.0.30.",
+    "heading": "Attachments in 1.0.3",
+    "breadcrumb": "Murage docs → Changelog → What changed in Murage 1.0.3",
+    "where": "Murage docs → Changelog → What changed in Murage 1.0.3",
+    "url": "https://murage.app/docs/changelog/v1-0-3#attachments-in-1-0-3",
+    "text": "- Attachments are checked as they are read. Murage confirms the file is the one you attached, a regular file of a sensible size, and unchanged since it was saved, before a bot reads it."
+  },
+  {
+    "id": "changelog/v1-0-3#engines-in-1-0-3",
+    "title": "What changed in Murage 1.0.3",
+    "description": "Always ask reads commands before they run, apps get grants you control, approval cards reach your phone and calls, memory and rooms stay quick and private, and Murage comes with Fuigo 1.0.30.",
+    "heading": "Engines in 1.0.3",
+    "breadcrumb": "Murage docs → Changelog → What changed in Murage 1.0.3",
+    "where": "Murage docs → Changelog → What changed in Murage 1.0.3",
+    "url": "https://murage.app/docs/changelog/v1-0-3#engines-in-1-0-3",
+    "text": "- Fuigo 1.0.30. Murage 1.0.3 comes with Fuigo 1.0.30 bundled."
+  },
+  {
+    "id": "changelog/v1-0-3#murage-cloud-in-1-0-3",
+    "title": "What changed in Murage 1.0.3",
+    "description": "Always ask reads commands before they run, apps get grants you control, approval cards reach your phone and calls, memory and rooms stay quick and private, and Murage comes with Fuigo 1.0.30.",
+    "heading": "Murage Cloud in 1.0.3",
+    "breadcrumb": "Murage docs → Changelog → What changed in Murage 1.0.3",
+    "where": "Murage docs → Changelog → What changed in Murage 1.0.3",
+    "url": "https://murage.app/docs/changelog/v1-0-3#murage-cloud-in-1-0-3",
+    "text": "- Your Cloud home runs the engines Murage offers on your computer, with the same approvals, the same settings pages and the same memory.\n- Settings in a Cloud window show what applies there. Pages about your computer say so and point you to the desktop app.\n- The Cloud browser stops by itself when idle, so a browser you left open does not keep running."
+  },
+  {
+    "id": "changelog/v1-0-3#delegated-team-replies-in-1-0-3",
+    "title": "What changed in Murage 1.0.3",
+    "description": "Always ask reads commands before they run, apps get grants you control, approval cards reach your phone and calls, memory and rooms stay quick and private, and Murage comes with Fuigo 1.0.30.",
+    "heading": "Delegated team replies in 1.0.3",
+    "breadcrumb": "Murage docs → Changelog → What changed in Murage 1.0.3",
+    "where": "Murage docs → Changelog → What changed in Murage 1.0.3",
+    "url": "https://murage.app/docs/changelog/v1-0-3#delegated-team-replies-in-1-0-3",
+    "text": "- Replies are held and checked before they reach your bots, then released automatically. While Murage checks a delegated reply against what its bots may read, you see the words with the note \"Bots will see this reply once earlier memory is checked\", and your bots read that the reply is left out for now. When the check finishes, the reply is released to them on its own, with no step from you.\n- A reply is marked as using something you deleted or changed only when that is true. A check that is still running reads as checking, never as a removed source.\n- Earlier replies come back.…"
+  },
+  {
+    "id": "changelog/v1-0-3#windows-in-1-0-3",
+    "title": "What changed in Murage 1.0.3",
+    "description": "Always ask reads commands before they run, apps get grants you control, approval cards reach your phone and calls, memory and rooms stay quick and private, and Murage comes with Fuigo 1.0.30.",
+    "heading": "Windows in 1.0.3",
+    "breadcrumb": "Murage docs → Changelog → What changed in Murage 1.0.3",
+    "where": "Murage docs → Changelog → What changed in Murage 1.0.3",
+    "url": "https://murage.app/docs/changelog/v1-0-3#windows-in-1-0-3",
+    "text": "- On Windows, Codex sessions start cleanly. Murage hands Codex its session hook in a form the Windows command line reads exactly, so every Codex session starts with its approval check connected.\n- On Windows, in-project files are recognized even under short folder names. Murage reads every part of a path by its full folder name, so a path written in the short form (such as RUNNER~1) is still known to be inside your project.\n- Engines on Windows always get the live environment. Every engine start reads Murage's current environment, so a value Murage sets or removes later reaches the next engine.\n- Skill links are replaced in place.…"
+  },
+  {
+    "id": "changelog/v1-0-3#moving-to-1-0-2-and-back-in-1-0-3",
+    "title": "What changed in Murage 1.0.3",
+    "description": "Always ask reads commands before they run, apps get grants you control, approval cards reach your phone and calls, memory and rooms stay quick and private, and Murage comes with Fuigo 1.0.30.",
+    "heading": "Moving to 1.0.2 and back in 1.0.3",
+    "breadcrumb": "Murage docs → Changelog → What changed in Murage 1.0.3",
+    "where": "Murage docs → Changelog → What changed in Murage 1.0.3",
+    "url": "https://murage.app/docs/changelog/v1-0-3#moving-to-1-0-2-and-back-in-1-0-3",
+    "text": "- Downgrade to 1.0.2 and back keeps all data. \"Prepare to reinstall\" leaves a folder that 1.0.2 opens and can back up, including your memory file. When you return to 1.0.3, it rebuilds what 1.0.2 does not keep and carries on the memory work where it stopped."
+  },
+  {
+    "id": "changelog/v1-0-3#also-in-1-0-3",
+    "title": "What changed in Murage 1.0.3",
+    "description": "Always ask reads commands before they run, apps get grants you control, approval cards reach your phone and calls, memory and rooms stay quick and private, and Murage comes with Fuigo 1.0.30.",
+    "heading": "Also in 1.0.3",
+    "breadcrumb": "Murage docs → Changelog → What changed in Murage 1.0.3",
+    "where": "Murage docs → Changelog → What changed in Murage 1.0.3",
+    "url": "https://murage.app/docs/changelog/v1-0-3#also-in-1-0-3",
+    "text": "- Forgetting a memory is quick and complete. Removing a memory costs only its own deletion, and the memory helper starts with the server's data directory, so it always works on the right store.\n- Memory changes settle in the background at a steady pace. Changes to what a bot may remember are applied in measured slices under a per-minute budget, so your rooms keep responding while the work completes.\n- The memory panel and review section draw on first open, and markup drawn before the sanitizer loaded is drawn again once it is ready.\n- First paint is back under budget, with the engine sign-in work moved out of the way.\n- Routines due at boot run.…"
+  },
+  {
+    "id": "changelog/v1-0-3#known-limits-in-1-0-3",
+    "title": "What changed in Murage 1.0.3",
+    "description": "Always ask reads commands before they run, apps get grants you control, approval cards reach your phone and calls, memory and rooms stay quick and private, and Murage comes with Fuigo 1.0.30.",
+    "heading": "Known limits in 1.0.3",
+    "breadcrumb": "Murage docs → Changelog → What changed in Murage 1.0.3",
+    "where": "Murage docs → Changelog → What changed in Murage 1.0.3",
+    "url": "https://murage.app/docs/changelog/v1-0-3#known-limits-in-1-0-3",
+    "text": "Always ask reads a command as it is written. It is a strong first line, and a few command shapes still get past it. A per-command sandbox, which stops the write itself, is the planned next step.\n- A folder named in a setting, a variable or another command's output is not followed, because Always ask reads only what the text spells out. Deleting or mirroring into a folder held in a variable still asks.\n- Routines keep their 1.0.2 behaviour for writes whose folder sits in a variable. On a scheduled or manual routine run, such a write runs without a card and the run history records a line for it. Owner turns, webhooks and every other rule are unchanged.…"
+  },
+  {
+    "id": "changelog/v1-0-3#delegate-follow-through",
+    "title": "What changed in Murage 1.0.3",
+    "description": "Always ask reads commands before they run, apps get grants you control, approval cards reach your phone and calls, memory and rooms stay quick and private, and Murage comes with Fuigo 1.0.30.",
+    "heading": "Delegate follow-through",
+    "breadcrumb": "Murage docs → Changelog → What changed in Murage 1.0.3",
+    "where": "Murage docs → Changelog → What changed in Murage 1.0.3",
+    "url": "https://murage.app/docs/changelog/v1-0-3#delegate-follow-through",
+    "text": "- A follow-through is automatic at most once. If a follow-through had started when Murage stopped unexpectedly, it is not replayed. Its reply is kept as context for the bot's next turn.\n- A cancellation can need a second stop. If the disk refuses the write that records a cancellation and Murage then stops unexpectedly, the cancellation may not survive the restart, and the follow-through can still run once. Stopping the bot again cancels it."
+  },
+  {
+    "id": "changelog/v1-0-3#memory-change-settling",
+    "title": "What changed in Murage 1.0.3",
+    "description": "Always ask reads commands before they run, apps get grants you control, approval cards reach your phone and calls, memory and rooms stay quick and private, and Murage comes with Fuigo 1.0.30.",
+    "heading": "Memory change settling",
+    "breadcrumb": "Murage docs → Changelog → What changed in Murage 1.0.3",
+    "where": "Murage docs → Changelog → What changed in Murage 1.0.3",
+    "url": "https://murage.app/docs/changelog/v1-0-3#memory-change-settling",
+    "text": "- After upgrading a large install, earlier memory finishes its background check over a few hours. On a large real install it took about 3 hours, at about 17 MiB a minute. Rooms can answer a little slower until it finishes.\n- Delegated replies from turns that began before a change wait for that check. New turns are not held.\n- The per-minute budget is a steady, bounded pace, not an exact write limit. It counts the work Murage charges, not exact bytes written or all disk activity.\n- An in-line change by you is charged at an estimate. Its real bytes commit with that change and are not measured, so they can land after the charge has expired if it stays open longer than a minute.…"
+  },
+  {
     "id": "computers/cloud-and-vps#box-cloud-computer",
     "title": "Cloud computer and your own VPS",
     "description": "Choose a managed Box desktop or a hardened container on a Linux server you own.",
@@ -1056,7 +1236,7 @@ export const HELP_INDEX: readonly HelpEntry[] = [
     "breadcrumb": "Murage docs → Features → Approvals and inspector",
     "where": "Bot settings → Permissions → Approvals",
     "url": "https://murage.app/docs/features/approvals-and-inspector#approval-levels-ask-auto-full-access-and-no-limits",
-    "text": "Choose how a conversation is approved from the permission chip beside the message box. The menu asks \"How should this bot's actions be approved?\" and offers four levels:\n- Ask (Ask for approval): ask before actions that need your permission.\n- Auto (Auto mode): keep going automatically; destructive and sensitive actions still ask.\n- Full access: keeps going without asking, but stops before deleting outside its folder, paying, messaging someone new, or reading your keys.\n- No limits: does anything without asking, except reading your keys and passwords.\n\nThe chip changes the level for this conversation. To set the level new conversations start at, open Bot settings → Permissions → Approvals.…"
+    "text": "Choose how a conversation is approved from the permission chip beside the message box. The menu asks \"How should this bot's actions be approved?\" and offers four levels:\n- Ask (Ask for approval): ask before actions that need your permission.\n- Auto (Auto mode): keep going automatically; destructive and sensitive actions still ask.\n- Full access: keeps going without asking, but stops before deleting outside its folder, paying, messaging someone new, or reading your keys.\n- No limits: runs everything without asking, except reading your keys and passwords and commands Murage recognizes as able to wipe your computer, which ask first.\n\nThe chip changes the level for this conversation.…"
   },
   {
     "id": "features/approvals-and-inspector#full-access-and-the-stop-line",
@@ -1076,7 +1256,7 @@ export const HELP_INDEX: readonly HelpEntry[] = [
     "breadcrumb": "Murage docs → Features → Approvals and inspector",
     "where": "Bot settings → Permissions → Images",
     "url": "https://murage.app/docs/features/approvals-and-inspector#no-limits",
-    "text": "No limits lets deleting, paying and messaging go ahead without asking. It still asks before reading your keys and passwords. Choose it when you want the behaviour Full access had before 0.1.59.\n\nFull access and No limits can be switched on only in the desktop app. The first time for each bot you confirm a one-time warning (\"Give @bot full access?\" or \"Give @bot no limits?\", with Turn on full access or Turn on no limits). Switch back to Auto or Ask at any time.\n\nSome things still ask under Full access and No limits. A turn started by a webhook asks as it would under Auto.…"
+    "text": "No limits lets deleting, paying and messaging go ahead without asking. It still asks before reading your keys and passwords, and before a command Murage recognizes as able to wipe your computer. Choose it when you want the behaviour Full access had before 0.1.59.\n\nFull access and No limits can be switched on only in the desktop app. The first time for each bot you confirm a one-time warning (\"Give @bot full access?\" or \"Give @bot no limits?\", with Turn on full access or Turn on no limits). Switch back to Auto or Ask at any time.\n\nSome things still ask under Full access and No limits. A turn started by a webhook asks as it would under Auto.…"
   },
   {
     "id": "features/approvals-and-inspector#images",
@@ -2423,7 +2603,7 @@ export const HELP_INDEX: readonly HelpEntry[] = [
     "breadcrumb": "Murage docs → Features → Where to find things in Settings",
     "where": "Murage docs → Features → Where to find things in Settings",
     "url": "https://murage.app/docs/features/settings-guide#app-settings-messaging-and-app",
-    "text": "Messaging & phone: Messaging apps (Telegram, Slack and Discord, see Telegram, Slack and Discord) and Phone and other devices (see The Murage phone app). App: Backups, Usage (how much each bot has used), Help & updates, and Experimental (early features you can try, which may change)."
+    "text": "Messaging & phone: Messaging apps (Telegram, Slack and Discord, see Telegram, Slack and Discord) and Phone and other devices (see The Murage phone app). App: Backups, Usage (how much each bot has used), About & updates, and Experimental (early features you can try, which may change)."
   },
   {
     "id": "features/settings-guide#bot-settings",
@@ -2652,7 +2832,7 @@ export const HELP_INDEX: readonly HelpEntry[] = [
     "breadcrumb": "Murage docs → Features → What's new and the tray",
     "where": "Murage docs → Features → What's new and the tray",
     "url": "https://murage.app/docs/features/whats-new-and-tray#what-s-new",
-    "text": "After an update, Murage shows What's new once: a few cards about what changed. Click any card to try that feature right away. Next moves through the cards, and Read the full release notes opens the notes for the release.\n\nTo see it again later, open the menu under your name at the bottom of the sidebar and choose What's new, or open Settings > Help & updates. It is there in the desktop app whenever the current version has a What's new page."
+    "text": "After an update, Murage shows What's new once: a few cards about what changed. Click any card to try that feature right away. Next moves through the cards, and Read the full release notes opens the notes for the release.\n\nTo see it again later, open the menu under your name at the bottom of the sidebar and choose What's new, or open Settings > About & updates. It is there in the desktop app whenever the current version has a What's new page."
   },
   {
     "id": "features/whats-new-and-tray#announcements",
@@ -2660,9 +2840,9 @@ export const HELP_INDEX: readonly HelpEntry[] = [
     "description": "See what changed after an update, reopen What's new, and use the menu-bar or tray icon to answer approvals and message a bot.",
     "heading": "Announcements",
     "breadcrumb": "Murage docs → Features → What's new and the tray",
-    "where": "Settings → Help & updates → Announcements",
+    "where": "Settings → About & updates → Announcements",
     "url": "https://murage.app/docs/features/whats-new-and-tray#announcements",
-    "text": "Settings → Help & updates → Announcements shows short notes from the Murage team: new features, a service problem, a fix to install. Switch off Show announcements to hide them. Security notices always show, even when this is off."
+    "text": "Settings → About & updates → Announcements shows short notes from the Murage team: new features, a service problem, a fix to install. Switch off Show announcements to hide them. Security notices always show, even when this is off."
   },
   {
     "id": "features/whats-new-and-tray#tray-and-menu-bar",

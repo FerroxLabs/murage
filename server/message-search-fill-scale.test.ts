@@ -5,15 +5,16 @@
 // index has not seen, or a thread written straight into the file). A piece of it must cost its own rows and never the history: the piece
 // read used to go through the (kind, thread, at) index and sort every text and activity row past the cursor, which held the event loop
 // for 0.1 to 1.3 s per piece on the owner's 103k-message history and for ~150 ms per piece on a 200k-row thread here.
-import { mkdirSync, rmSync } from "node:fs";
+import { mkdirSync } from "node:fs";
 import { beforeEach, expect, it } from "vitest";
 import { DATA_DIR } from "./config.ts";
 import { closeDatabase, database } from "./database.ts";
 import { prepareMessageSearchBackfill, stepMessageSearchBackfill } from "./message-search-index.ts";
+import { removeTempDirSync } from "./testing/cleanup.ts";
 
-beforeEach(() => { closeDatabase(); rmSync(DATA_DIR, { recursive: true, force: true }); mkdirSync(DATA_DIR, { recursive: true }); });
+beforeEach(() => { closeDatabase(); removeTempDirSync(DATA_DIR); mkdirSync(DATA_DIR, { recursive: true }); });
 
-it("each step of the search fill over a 200,000-row history stays short, crosses a long run of rows with nothing to index, and indexes every searchable row", () => {
+it("each step of the search fill over a 200,000-row history stays short, crosses a long run of rows with nothing to index, and indexes every searchable row", { tags: ["perf-budget"], timeout: 120_000 }, () => {
   const db = database();
   db.exec("DELETE FROM messages_fts; DELETE FROM transcript_index_state WHERE name='search_fts'; DELETE FROM messages");
   // rows 1..200000 in one thread: text rows, an activity row every 7th, and rows 100001..110000 frames with nothing to index
@@ -42,7 +43,7 @@ it("each step of the search fill over a 200,000-row history stays short, crosses
   const state = db.prepare("SELECT done, cursor FROM transcript_index_state WHERE name='search_fts'").get() as { done: number; cursor: number };
   expect(Number(state.done)).toBe(1);
   expect(Number(state.cursor)).toBe(200000);
-}, 120_000);
+});
 
 it("a step counts its indexing and its commit in its time: long rows (a pasted document each) never hold the loop past the bound", () => {
   const db = database();

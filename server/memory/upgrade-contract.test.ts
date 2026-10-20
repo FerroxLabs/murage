@@ -4,7 +4,7 @@
 // The producers of the upgrade contract (shared/upgrade-contract.mjs): every one of them gives a state that parses, says "unknown" rather than guessing,
 // counts only what it can count exactly, measures time awake, and cannot publish progress a restart would not read back. Lanes/upgui-review r1 and r2,
 // plus upgfast r2 R2-05 (the ownership proof) and R2-09 (published progress is persisted progress).
-import { existsSync, mkdirSync, readFileSync, rmSync, mkdtempSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createServer } from "node:http";
@@ -29,9 +29,10 @@ import { memoryOwnerStatus } from "./settings.ts";
 import { ownerMemoryTicket } from "./authority.ts";
 import { walkMessagesChunk } from "../message-walker.ts";
 import { memoryCaptures, memoryRecalls } from "./capture-gate.ts";
+import { removeTempDirSync } from "../testing/cleanup.ts";
 
 const roster = { bots: [{ id: "a", threadId: "thread-a" }], groups: [] };
-beforeEach(() => { closeDatabase(); rmSync(DATA_DIR, { recursive: true, force: true }); mkdirSync(DATA_DIR, { recursive: true }); reconcileMemoryRoster(roster); });
+beforeEach(() => { closeDatabase(); removeTempDirSync(DATA_DIR); mkdirSync(DATA_DIR, { recursive: true }); reconcileMemoryRoster(roster); });
 afterEach(() => closeDatabase());
 const sleep = (ms: number) => new Promise<void>(resolve => setTimeout(resolve, ms));
 const ok = (value: unknown): UpgradeState => { const parsed = parseUpgradeState(value); if (!parsed.ok) throw new Error(`not a valid upgrade state: ${parsed.reason}`); return parsed.state; };
@@ -85,7 +86,7 @@ it("contract: every producer's reading parses (tracker, idle, blocked, unknown s
     const emptyNote = ok(JSON.parse(readFileSync(file, "utf8")).upgrade);
     beat2.end();
     expect([emptyNote.phase, emptyNote.overall, emptyNote.held]).toEqual(["unknown", "unknown", "unknown"]);
-  } finally { rmSync(dir, { recursive: true, force: true }); }
+  } finally { removeTempDirSync(dir); }
 });
 
 it("R2-05: the responder answers a probe with an HMAC over its challenge and status fields; launch is only a label; the contract's launch is the same label", async () => {
@@ -146,7 +147,7 @@ it("UX-11 / r2-7: only a counted phase has a counted step, and only from exact f
   expect(step("message-index", 5000, 90_000, 5).step).toMatchObject({ unit: "messages", done: 5, total: 40 });
   expect(step("message-index", 9000, 90_000, 41).step).toMatchObject({ done: 41, total: 41 }); // live writes moved the total: it is never below what was done
   expect(step("message-index", 9000, 90_000, null).step.unit, "a walk that began before the count was kept").toBe("none");
-  expect(Object.keys(COUNTED_UNITS).sort()).toEqual(["copying", "lineage", "message-index", "storage"]);
+  expect(Object.keys(COUNTED_UNITS).sort()).toEqual(["copying", "lineage", "marker", "message-index", "storage"]);
   // counts: exact or nothing
   expect(ok(tracker.snapshot(true).upgrade).counts).toEqual({ exact: true, messages: 40, conversations: 3, memoryRecords: 1, firstMessageAt: 1 });
 });
@@ -252,7 +253,7 @@ it("R2-09: what is published never exceeds what a restart reads back (40% saved,
     // the end is written at once
     tracker.update("references", 100, 100, true);
     expect(tracker.snapshot(false).overall).toBe(1);
-  } finally { rmSync(dir, { recursive: true, force: true }); }
+  } finally { removeTempDirSync(dir); }
 });
 
 it("R2-09: a failed save leaves the last saved value on show", () => {
@@ -294,4 +295,25 @@ it("r3-2: a heartbeat does not revalidate an estimate made before a sleep, and t
   const second = high.snapshot(true); // a newer snapshot: the tracker has touched only once more
   const after = stamp2(second, null).step.awakeElapsedMs;
   expect(after).toBeGreaterThanOrEqual(shown);
+});
+
+it("honest time left: a fixed-total phase may carry minutes; the open-ended marker phase carries a count and never a total, percent source or time left", () => {
+  let clock = 0;
+  const tracker = new UpgradeProgressTracker("background", upgradeCounts(null), [{ id: "lineage", weight: 1 }, { id: "marker", weight: 1 }], () => clock);
+  // fixed total: steady progress for long enough to measure a rate
+  for (let i = 1; i <= 10; i++) { clock = i * 1000; tracker.update("lineage", i * 5, 100); }
+  const fixed = ok(tracker.snapshot(true).upgrade);
+  expect(fixed.step).toMatchObject({ unit: "conversations", done: 50, total: 100 });
+  expect(fixed.eta.stable).toBe(true);
+  // open-ended: the total slides with the count (done plus what is known to remain), so the figures are real only as "so far"
+  tracker.update("lineage", 100, 100, true);
+  for (let i = 1; i <= 10; i++) { clock = 20_000 + i * 1000; tracker.update("marker", i * 1000, i * 1000 + 200_002); }
+  const shot = tracker.snapshot(true);
+  const open = ok(shot.upgrade);
+  expect(open.phase).toBe("marker");
+  expect(open.step).toMatchObject({ unit: "open", done: 10_000 });
+  expect("total" in open.step).toBe(false);
+  expect(open.eta).toEqual({ stable: false });
+  expect(shot.etaSeconds).toBeNull();
+  expect(shot.etaMs).toBeNull();
 });

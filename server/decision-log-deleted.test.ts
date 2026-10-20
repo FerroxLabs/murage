@@ -1,14 +1,15 @@
 // Copyright 2026 Ferrox Labs
 // SPDX-License-Identifier: AGPL-3.0-or-later
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterAll, expect, it } from "vitest";
 
 import { DELETED_CONVERSATION, appendDecision, flushDecisionLog, readDecisions, redactDecisionsForThreads } from "./decision-log.ts";
+import { removeTempDirSync } from "./testing/cleanup.ts";
 
 const dir = mkdtempSync(join(tmpdir(), "murage-decisions-"));
-afterAll(() => rmSync(dir, { recursive: true, force: true }));
+afterAll(() => removeTempDirSync(dir));
 
 it("keeps that an approval happened but not what it said or where", async () => {
   const row = (threadId: string, summary: string) => JSON.stringify({ at: "2026-09-25T10:00:00.000Z", threadId, requestId: "r1", botId: "b1", botName: "Ember", tool: "Bash", summary, decision: "user-allowed", source: "user", rule: `Bash(${summary})` });

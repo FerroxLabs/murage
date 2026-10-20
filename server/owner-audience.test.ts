@@ -7,7 +7,7 @@
 // person's thread started (the task humanTask binds to that person), and in
 // an owner thread whose chain a channel person started.
 import { sharedLoadPrompt } from "./shared-bots-roster.ts";
-import { mkdirSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { mkdirSync, readdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import { join, relative } from "node:path";
 import ts from "typescript";
 import { beforeEach, describe, expect, it } from "vitest";
@@ -30,12 +30,13 @@ import { projectRosterLine } from "./project-roster.ts";
 import { insertProjectBriefVersion } from "./project-records.ts";
 import { channelToProjectRows } from "./project-settings.ts";
 import { LineageAllowance } from "./memory/lineage-allowance.ts";
+import { removeTempDirSync } from "./testing/cleanup.ts";
 
 const ROOT = join(import.meta.dirname, "..");
 
 beforeEach(() => {
   closeDatabase();
-  rmSync(DATA_DIR, { recursive: true, force: true });
+  removeTempDirSync(DATA_DIR);
   mkdirSync(DATA_DIR, { recursive: true });
 });
 
@@ -72,7 +73,7 @@ function surfaceProject(botId: string) {
 }
 
 /** What each registered surface puts in a turn, with its content present. */
-const SURFACE_TEXT: Record<OwnerAudienceSurface, (bot: { id: string; section?: string }, ownerAudience: boolean) => string> = {
+const SURFACE_TEXT: Record<OwnerAudienceSurface, (bot: { id: string; section?: string; threadId?: string }, ownerAudience: boolean) => string> = {
   "about-me": (bot, owner) => standingContextParts(bot, { ownerAudience: owner, fileTools: true }).aboutMe,
   "memory-md": (bot, owner) => standingContextParts(bot, { ownerAudience: owner, fileTools: true }).memory,
   "team-brief": (bot, owner) => standingContextParts(bot, { ownerAudience: owner, fileTools: true }).teamBrief,
@@ -85,9 +86,11 @@ const SURFACE_TEXT: Record<OwnerAudienceSurface, (bot: { id: string; section?: s
   "project-roster-apps": (bot, owner) => projectRosterLine({ id: bot.id, name: "Dax", tags: ["app:gmail"], apps: ["gmail"], limits: [], role: "member" }, owner).includes("gmail") ? "apps" : "",
   "shared-load": (_bot, owner) => sharedLoadPrompt(owner, { name: "Iris", home: "Design", team: "Sales", waiting: 2 }),
   "working-context": (bot, owner) => {
-    const thread = `wc-${bot.id}`;
-    appendMessage(thread, { id: `wc-${bot.id}-${Math.random()}`, role: "bot", kind: "text", text: "WORK_CANARY sent the follow-up", at: 1 });
-    return workingContextPrompt(LineageAllowance.tool(1_000_000_000), owner, { botId: bot.id, currentThreadId: "none", bots: [{ id: bot.id, threadId: thread }], groups: [], routines: [], now: 2 });
+    // the bot's own reply in its direct chat, the thread the block always looks at (a thread it is not in is never read; S6 rule 1 quotes no
+    // Murage line, so the canary is the only reply the block can carry)
+    const thread = bot.threadId!;
+    appendMessage(thread, { id: `wc-${bot.id}-${Math.random()}`, role: "bot", kind: "text", text: "WORK_CANARY sent the follow-up", at: Date.now(), from: { botId: bot.id, name: "Dax", color: "blue" } });
+    return workingContextPrompt(LineageAllowance.tool(1_000_000_000), owner, { botId: bot.id, currentThreadId: "none", bots: [{ id: bot.id, threadId: thread }], groups: [], routines: [], now: Date.now() + 1 });
   },
 };
 
@@ -139,7 +142,7 @@ describe("every registered owner-only surface", () => {
     ];
     for (const surface of Object.keys(OWNER_AUDIENCE_SURFACES) as OwnerAudienceSurface[]) {
       for (const { name, bot: who, owner, expected } of cases) {
-        const text = SURFACE_TEXT[surface]({ id: who.id, section: "Ops" }, owner);
+        const text = SURFACE_TEXT[surface]({ id: who.id, section: "Ops", threadId: who.threadId }, owner);
         expect(text.length > 0, `${surface} in ${name}`).toBe(expected);
       }
     }

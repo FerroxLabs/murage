@@ -22,7 +22,7 @@ describe("composer approval-level menu", () => {
   });
 
   it("offers No limits with its plain description, on the desktop only", () => {
-    expect(item(render(true), "No limits")).toContain("Does anything without asking, except reading your keys and passwords.");
+    expect(item(render(true), "No limits")).toContain("Runs everything without asking, except reading your keys and passwords and commands Murage recognizes as able to wipe your computer, which ask first.");
     const remote = item(render(false), "No limits");
     expect(remote).toContain(' disabled=""');
     expect(remote).toContain("No limits can only be turned on in the Murage desktop app.");

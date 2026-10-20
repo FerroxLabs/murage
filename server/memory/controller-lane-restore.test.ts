@@ -1,7 +1,7 @@
 // The mobile lane's pacing, restored on the combined head: a cycle's claim and its deferred idle prefix
 // are one measurement (costs add, they do not overlap), and idle consolidation is eligible at most once a
 // second on its own deadline while capture wakes stay prompt.
-import { mkdirSync, rmSync } from "node:fs";
+import { mkdirSync } from "node:fs";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { DATA_DIR } from "../config.ts";
 import { closeDatabase } from "../database.ts";
@@ -11,6 +11,7 @@ import { resetParkSweep } from "./park.ts";
 import { setMemoryMode } from "./repository.ts";
 import { MemoryWorkerController } from "./worker-controller.ts";
 import type { MemoryWork } from "./worker-protocol.ts";
+import { removeTempDirSync } from "../testing/cleanup.ts";
 
 const state = vi.hoisted(() => ({ claimCost: 0, cost: 0 }));
 vi.mock("./jobs.ts", async importOriginal => {
@@ -34,7 +35,7 @@ const build = (options: ConstructorParameters<typeof MemoryWorkerController>[0] 
   internals.ready = true;
 };
 beforeEach(() => {
-  closeDatabase(); rmSync(DATA_DIR, { recursive: true, force: true }); mkdirSync(DATA_DIR, { recursive: true }); setMemoryMode("capture"); resetParkSweep();
+  closeDatabase(); removeTempDirSync(DATA_DIR); mkdirSync(DATA_DIR, { recursive: true }); setMemoryMode("capture"); resetParkSweep();
   state.claimCost = 0; state.cost = 0; sent = [];
   vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout", "setInterval", "clearInterval", "setImmediate", "clearImmediate", "Date"] });
   vi.spyOn(performance, "now").mockImplementation(() => Date.now() + state.cost);

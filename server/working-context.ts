@@ -40,6 +40,8 @@ import { executionStore, homeThread, sameThreadPartition, isHomePartition, threa
 //    see it. A verdict the judge could not prove is not shown and not kept:
 //    the next turn asks again. So a change to a message, to memory or to a
 //    room's scope is seen on the next turn, whatever path made it.
+import { botViewer, doorReader, rowsShown } from "./bot-read.ts";
+import { isMurageVoice } from "./murage-voice.ts";
 import type { DatabaseSync } from "node:sqlite";
 import { projectTableExists } from "./project-turn-engine.ts";
 import { database } from "./database.ts";
@@ -49,7 +51,7 @@ import { ownerOnly } from "./owner-audience.ts";
 import { copiedFromOwner } from "./memory/bring-in.ts";
 import type { MemoryRoster } from "./memory/policy.ts";
 import { redactSecretsInText } from "./redact.ts";
-import { titleFromMessage, UNTITLED_TASK } from "./store.ts";
+import { titleFromMessage, UNTITLED_TASK, type Message } from "./store.ts";
 import { threadActivitySeq, threadsChangedSince } from "./thread-activity.ts";
 import { ioBudget } from "./io-budget.ts";
 import type { LineageRef, PromptPart } from "./memory/lineage-types.ts";
@@ -209,6 +211,7 @@ type MessageRow = { id: string; text: string | null; json: string };
 function ownReply(row: MessageRow, botId: string): { text: string; withheld: boolean; copy: boolean } | null {
   let message: { from?: { botId?: string }; withheldFromBots?: unknown; copyOf?: unknown } = {};
   try { message = JSON.parse(row.json); } catch { return null; }
+  if (isMurageVoice(message)) return null;
   if (message.from?.botId && message.from.botId !== botId) return null;
   const text = typeof row.text === "string" ? row.text : "";
   if (!text.trim()) return null;
@@ -216,10 +219,10 @@ function ownReply(row: MessageRow, botId: string): { text: string; withheld: boo
 }
 
 /** DISCOVERY: which message is the bot's own last reply with words in the thread (or null: none). Not a verdict:
- *  whether it may be shown is judged on every build (shownLine). */
-function lastOwnReplyId(db: DatabaseSync, threadId: string, botId: string): string | null {
+ *  whether it may be shown is judged on every build (candidateLine, shownLines). The row it read is judged on the build that found it, and read again by id on later builds. */
+function lastOwnReply(db: DatabaseSync, threadId: string, botId: string): MessageRow | null {
   const rows = db.prepare("SELECT id, text, json FROM messages WHERE thread_id=? AND role='bot' AND kind='text' ORDER BY rowid DESC LIMIT 20").all(threadId) as MessageRow[];
-  for (const row of rows) if (ownReply(row, botId)) return row.id;
+  for (const row of rows) if (ownReply(row, botId)) return row;
   return null;
 }
 
@@ -367,29 +370,57 @@ function recentThreads(input: WorkingContextInput, db: DatabaseSync, who: Subjec
   return sortRecent(found).slice(0, MAX_CONSIDERED);
 }
 
-/** The line a thread gives on THIS build, judged now: the thread may be named, its last own reply still exists, is
- *  still the bot's, not withheld from bots, and the lineage judge lets bots see it. Its words are the ones it has now. */
-function shownLine(allowance: LineageAllowance, input: WorkingContextInput, db: DatabaseSync, kept: Kept, eligible: Eligible, excluded: ReadonlySet<string>, threadId: string, at: number): { line: string; messageId: string } | null {
+/** The line a thread may give on THIS build, judged now: the thread may be named, its last own reply still exists, is
+ *  still the bot's, not withheld from bots, and the lineage judge lets bots see it. Its words are the ones it has now. The reader door
+ *  judges the row it carries, with every other candidate of the build, in one operation (shownLines). */
+type QuoteCandidate = { threadId: string; line: string; messageId: string; row: Message };
+function candidateLine(allowance: LineageAllowance, input: WorkingContextInput, db: DatabaseSync, kept: Kept, eligible: Eligible, excluded: ReadonlySet<string>, threadId: string, at: number): QuoteCandidate | null {
   const item = eligible(threadId);
   if (!item) return null;
   let messageId = kept.replies.get(threadId);
-  if (messageId === undefined) { messageId = lastOwnReplyId(db, threadId, input.botId); kept.replies.set(threadId, messageId); }
+  let row: MessageRow | undefined;
+  if (messageId === undefined) { row = lastOwnReply(db, threadId, input.botId) ?? undefined; messageId = row?.id ?? null; kept.replies.set(threadId, messageId); }
   if (messageId === null) return null;
-  let row = db.prepare("SELECT id, text, json FROM messages WHERE thread_id=? AND id=?").get(threadId, messageId) as MessageRow | undefined;
+  row ??= db.prepare("SELECT id, text, json FROM messages WHERE thread_id=? AND id=?").get(threadId, messageId) as MessageRow | undefined;
   let reply = row ? ownReply(row, input.botId) : null;
   if (!reply) {
     // the kept reply was deleted or emptied: find the last one again
-    messageId = lastOwnReplyId(db, threadId, input.botId);
+    row = lastOwnReply(db, threadId, input.botId) ?? undefined;
+    messageId = row?.id ?? null;
     kept.replies.set(threadId, messageId);
-    row = messageId === null ? undefined : db.prepare("SELECT id, text, json FROM messages WHERE thread_id=? AND id=?").get(threadId, messageId) as MessageRow | undefined;
     reply = row ? ownReply(row, input.botId) : null;
     if (!reply) return null;
   }
   if (reply.withheld) return null;
   if (judgeReply(allowance, db, threadId, messageId!, reply.copy, input as unknown as MemoryRoster, excluded) !== "shown") return null;
+  let stored: unknown;
+  try { stored = JSON.parse(row!.json); } catch { return null; }
+  if (!stored || typeof stored !== "object" || Array.isArray(stored)) return null;
   const saidIn = input.groups.some(group => group.channelProject && (group.threadId === threadId || taskIndex(group.tasks).has(threadId)))
     || input.bots.some(bot => taskIndex(bot.tasks).get(threadId)?.channelProjectDesk);
-  return { line: `- ${saidIn ? "Said in " : ""}${label(db, item)}, ${ago(at, input.now)}: ${quote(clip(reply.text))}`, messageId: messageId! };
+  return { threadId, line: `- ${saidIn ? "Said in " : ""}${label(db, item)}, ${ago(at, input.now)}: ${quote(clip(reply.text))}`, messageId: messageId!, row: { ...stored, id: messageId! } as Message };
+}
+
+/** The lines the recent threads give, newest first, at most `room`: candidates are gathered until there is room for no more, and the reader
+ *  door (LINEAGE-DESIGN-S6 rule 16) judges the rows they carry in one operation (bot-read.ts rowsShown: no row read again, the per-operation
+ *  state read once). Only when the door leaves some out are the next threads' candidates gathered and judged, so the work follows the lines
+ *  shown, never the history. */
+function shownLines(allowance: LineageAllowance, input: WorkingContextInput, db: DatabaseSync, kept: Kept, eligible: Eligible, excluded: ReadonlySet<string>, room: number): QuoteCandidate[] {
+  const shown: QuoteCandidate[] = [];
+  const viewer = botViewer(input.botId);
+  let next = 0;
+  while (shown.length < room && next < kept.recent.length) {
+    const batch: QuoteCandidate[] = [];
+    while (shown.length + batch.length < room && next < kept.recent.length) {
+      const { threadId, at } = kept.recent[next++]!;
+      const candidate = candidateLine(allowance, input, db, kept, eligible, excluded, threadId, at);
+      if (candidate) batch.push(candidate);
+    }
+    if (!batch.length) break;
+    const verdicts = rowsShown(db, viewer, batch);
+    batch.forEach((candidate, index) => { if (verdicts[index]) shown.push(candidate); });
+  }
+  return shown;
 }
 
 /** Whether a thread's human is the owner, kept per thread. Only asked of a thread that already has messages (its
@@ -414,7 +445,7 @@ function threadAllowed(db: DatabaseSync, threadId: string, excluded: ReadonlySet
 function shownMemoryRefs(db: DatabaseSync, refs: readonly MemoryRef[]): Set<string> {
   if (!refs.length) return new Set();
   try {
-    const verdicts = memoryLookup(db, refs, { audience: null });
+    const verdicts = memoryLookup(db, refs, doorReader());
     return new Set(refs.map(memoryRefKey).filter(key => verdicts.get(key)?.state === "shown"));
   } catch { return new Set(); }
 }
@@ -454,12 +485,9 @@ function buildWorkingContext(allowance: LineageAllowance, input: WorkingContextI
   }
   const quoted: WorkingContextQuote[] = [];
   const kept = discovered(input, db, who, eligible, excluded);
-  for (const { threadId, at } of kept.recent) {
-    if (lines.length === MAX_THREADS) break;
-    const shown = shownLine(allowance, input, db, kept, eligible, excluded, threadId, at);
-    if (!shown) continue;
+  for (const shown of shownLines(allowance, input, db, kept, eligible, excluded, MAX_THREADS - lines.length)) {
     lines.push(shown.line);
-    quoted.push({ threadId, messageId: shown.messageId });
+    quoted.push({ threadId: shown.threadId, messageId: shown.messageId });
   }
   const files = recentFiles(db, input.botId, eligible, refs);
   const routineList = typeof input.routines === "function" ? input.routines() : input.routines;

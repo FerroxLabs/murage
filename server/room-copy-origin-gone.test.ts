@@ -3,21 +3,24 @@
 //
 // Review round 7, R7-01: a copy of a worker's answer, mirrored into the pair room, is shown to a bot's next turn only while the original it was
 // copied from is still stored and still shareable. The check is the same one the result gate makes, and it holds when memory is off.
-import { rmSync } from "node:fs";
+
 import { beforeEach, describe, expect, it } from "vitest";
 import { DATA_DIR } from "./config.ts";
 import type { ModelSelection } from "./contracts.ts";
 import { closeDatabase, database } from "./database.ts";
 import { getOrCreateChannel, mirrorReply } from "./comms-visibility.ts";
 import { closeMessageDb, deleteThread } from "./message-db.ts";
-import { partitionTranscriptMessages } from "./partition-sources.ts";
+import { botMessages, botViewer } from "./bot-read.ts";
 import { roomTranscriptWithoutMemory } from "./room-transcript.ts";
 import { Store } from "./store.ts";
 import { released } from "./testing/released.ts";
 import { LineageAllowance } from "./memory/lineage-allowance.ts";
+import { lineageLive } from "./memory/deny-read.ts";
+import { commitRevoke } from "./memory/revoke-commit.ts";
+import { removeTempDirSync } from "./testing/cleanup.ts";
 
 const selection = (): ModelSelection => ({ instanceId: "claude", model: "fake-model" });
-beforeEach(() => { closeMessageDb(); closeDatabase(); rmSync(DATA_DIR, { recursive: true, force: true }); });
+beforeEach(() => { closeMessageDb(); closeDatabase(); removeTempDirSync(DATA_DIR); });
 
 function mirrored() {
   const store = new Store(selection);
@@ -36,7 +39,7 @@ describe("memory off: a surviving mirror does not outlive its original", () => {
     const { asker, channel, room } = mirrored();
     const floor = roomTranscriptWithoutMemory(LineageAllowance.tool(), channel.threadId, room(), true);
     expect(texts(floor!.messages)).toContain("DELETED ANSWER");
-    expect(texts(partitionTranscriptMessages(database(), asker.id, channel.threadId, floor!.messages))).toContain("DELETED ANSWER");
+    expect(texts(botMessages(database(), botViewer(asker.id), channel.threadId, floor!.messages))).toContain("DELETED ANSWER");
   });
 
   it("the owner deletes the worker's conversation: the next turn's transcript no longer carries the answer", () => {
@@ -49,14 +52,22 @@ describe("memory off: a surviving mirror does not outlive its original", () => {
     const other = roomTranscriptWithoutMemory(LineageAllowance.tool(), channel.threadId, room(), false);
     expect(texts(other!.messages)).not.toContain("DELETED ANSWER");
     // and the prompt's own filter agrees, for a bot with no partition
-    expect(texts(partitionTranscriptMessages(database(), asker.id, channel.threadId, room()))).not.toContain("DELETED ANSWER");
+    expect(texts(botMessages(database(), botViewer(asker.id), channel.threadId, room()))).not.toContain("DELETED ANSWER");
   });
 
-  it("an original withheld from bots takes its mirror with it", () => {
-    const { asker, store, worker, channel, original, room } = mirrored();
+  it("an original withheld from bots takes its mirror out of the room floor", () => {
+    const { store, worker, channel, original, room } = mirrored();
     store.patchMessage(worker.threadId, original.id, { withheldFromBots: true });
     const floor = roomTranscriptWithoutMemory(LineageAllowance.tool(), channel.threadId, room(), false);
     expect(texts(floor!.messages)).not.toContain("DELETED ANSWER");
-    expect(texts(partitionTranscriptMessages(database(), asker.id, channel.threadId, room()))).not.toContain("DELETED ANSWER");
+  });
+
+  it("the door judges the original by its lineage verdicts, not the owner's note: the owner's revoke takes the mirror with it", () => {
+    const { asker, store, worker, channel, original, room } = mirrored();
+    store.patchMessage(worker.threadId, original.id, { withheldFromBots: true });
+    expect(lineageLive(database()), "the mirror's writers write line lineage").toBe(true);
+    expect(texts(botMessages(database(), botViewer(asker.id), channel.threadId, room()))).toContain("DELETED ANSWER");
+    commitRevoke(database(), { kind: "line", threadId: worker.threadId, messageIds: [original.id], cause: "hide" });
+    expect(texts(botMessages(database(), botViewer(asker.id), channel.threadId, room()))).not.toContain("DELETED ANSWER");
   });
 });

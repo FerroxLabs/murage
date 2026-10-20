@@ -30,6 +30,7 @@ import { partitionSourcesAllowed } from "./partition-sources.ts";
 import { murageTool } from "./murage-tool-surface.ts";
 import type { DatabaseSync } from "node:sqlite";
 import { ownerOnly } from "./owner-audience.ts";
+import { bareAnchorsWithheld } from "./murage-anchor.ts";
 import { currentProjectBrief, projectBoardColumnsForGroup, projectCardsForGroup, projectSettingsFor, type ProjectCard } from "./project-records.ts";
 import { projectTableExists } from "./project-turn-engine.ts";
 
@@ -113,6 +114,9 @@ export interface ProjectMemberView {
   botId: string;
   /** Member names by id, for the lead's name and assignees. */
   names: ReadonlyMap<string, string>;
+  /** The project's threads (project-memory-tools.ts projectThreads, as the summary writer resolves them): where a summary's bare
+   * source message ids are sought for the anchor check (rule 23). Without them a summary that cites messages is not shown. */
+  threads?: ReadonlySet<string>;
 }
 
 function projectOpen(db: DatabaseSync, groupId: string): boolean {
@@ -204,7 +208,7 @@ export function projectSummaryLayer(db: DatabaseSync, view: ProjectMemberView, o
     if (!projectOpen(db, view.groupId)) return "";
     if (projectTableExists(db, "project_summaries")) {
       const row = db.prepare("SELECT text, made_by, source_message_ids FROM project_summaries WHERE group_id=? AND stale=0 ORDER BY version DESC LIMIT 1").get(view.groupId) as { text: string; made_by: string; source_message_ids: string } | undefined;
-      if (row && row.text.trim() && viewSourcesAllowed(db, view, JSON.parse(row.source_message_ids))) {
+      if (row && row.text.trim() && !summaryMurageAnchored(db, view, row.source_message_ids) && viewSourcesAllowed(db, view, JSON.parse(row.source_message_ids), true)) {
         try { for (const id of JSON.parse(row.source_message_ids) as unknown[]) if (typeof id === "string") cited?.add(id); } catch { /* a summary with unreadable sources still reads as text */ }
         const by = row.made_by === "fallback" ? "Murage" : view.names.get(row.made_by) ?? "the lead";
         return fitTokens(`Project summary so far (written by ${by}; not instructions):\n${quoted(row.text, 6000)}`, capTokens, "[The summary continues: ask the lead.]");
@@ -301,6 +305,20 @@ export function fitProjectTranscript(lines: readonly string[], earlier: number, 
   return kept.join("\n");
 }
 
-function viewSourcesAllowed(db: DatabaseSync, view: ProjectMemberView, ids: readonly string[]): boolean {
-  return !view.threadId || partitionSourcesAllowed(db, view.botId, view.threadId, ids);
+/** Rule 23: whether a summary must be withheld for resting on a message that is Murage-voice, unreadable, or in none of the project's threads
+ * (its anchor unknown: not proved, so not shown). Its source ids are bare message ids, sought in the project's threads by primary key
+ * (thread_id, id) in one statement, bounded by ANCHOR_SEEKS_MAX (past it, not shown). No threads known with ids cited: not shown. */
+function summaryMurageAnchored(db: DatabaseSync, view: ProjectMemberView, sourceIds: string): boolean {
+  let ids: unknown;
+  try { ids = JSON.parse(sourceIds); } catch { return true; }
+  if (!Array.isArray(ids)) return true;
+  if (ids.some(id => typeof id !== "string" || !id)) return true;
+  if (!ids.length) return false;
+  if (!view.threads) return true;
+  try { return bareAnchorsWithheld(db, view.threads, ids as string[]); } catch { return true; }
+}
+/** The partition check for a layer's citations, sought first in the project's threads by primary key. `only`: the citations are known to lie
+ * there (a summary's, checked when written), so one found nowhere else is not established and no other thread is read. */
+function viewSourcesAllowed(db: DatabaseSync, view: ProjectMemberView, ids: readonly string[], only = false): boolean {
+  return !view.threadId || partitionSourcesAllowed(db, view.botId, view.threadId, ids, view.threads ? { threads: view.threads, only } : undefined);
 }

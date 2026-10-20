@@ -20,10 +20,11 @@ import { planEngineHistory, removeEngineHistoryFiles, runEngineHistoryJob } from
 import { hasContentSteps, homeKey } from "./engine-plan-core.ts";
 import { buildFixture, canaryHits, hasZstd, THREAD, treeDigest, type Fixture } from "./testing/engine-history-fixtures.ts";
 import type { DeletionEngine } from "./conversation-deletion.ts";
+import { removeTempDirSync } from "./testing/cleanup.ts";
 
 const scratch = realpathSync.native(mkdtempSync(join(tmpdir(), "murage-plan-")));
 const openDatabases: DatabaseSync[] = [];
-afterAll(() => { for (const db of openDatabases) db.close(); rmSync(scratch, { recursive: true, force: true }); });
+afterAll(() => { for (const db of openDatabases) db.close(); removeTempDirSync(scratch); });
 afterEach(() => { for (const name of Object.keys(engineHistoryTestHooks)) delete (engineHistoryTestHooks as Record<string, unknown>)[name]; });
 
 const dump = (value: unknown) => `${JSON.stringify(value)}\n`;

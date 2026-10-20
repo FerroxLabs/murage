@@ -12,7 +12,7 @@ export const LOCAL_COMPUTER_FULL_ACCESS_WARNING =
   "Full access will let this bot click, type, and run tools on this computer without asking first. It still asks before deleting outside its folder, paying, messaging someone new, and reading your keys. Continue only if you are watching.";
 
 export const LOCAL_COMPUTER_NO_LIMITS_WARNING =
-  "No limits will let this bot click, type, and run anything on this computer without asking first, except reading your keys and passwords. Continue only if you are watching.";
+  "No limits will let this bot click, type, and run anything on this computer without asking first, except reading your keys and passwords and commands Murage recognizes as able to wipe your computer, which ask first. Continue only if you are watching.";
 
 export function LocalComputerAutoWarning({
   open,

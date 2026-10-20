@@ -34,7 +34,9 @@ import { forgetRootSetHandles, handleFor, handleKeys, layeredOf, LayeredRoots, s
 import { heldStep } from "../observe.ts";
 import { copyFieldsChanged } from "../message-copy-fields.ts";
 import { DENIED_RECORD_SCOPE, DENIED_SOURCE } from "./deny.ts";
-import { denyLookup, memoryLookup } from "./deny-read.ts";
+import { denyLookup, lineageLive, memoryLookup } from "./deny-read.ts";
+import { chainJudge } from "../bot-read.ts";
+import type { Message } from "../store.ts";
 import { readTimeRetired, withoutDroppedTableTriggers } from "./read-time-retired.ts";
 import { memoryRefKey } from "./lineage-types.ts";
 type DatabaseLike = ReturnType<typeof database>;
@@ -191,12 +193,23 @@ export function messageCopy(threadId: string, messageId: string): MessageCopy | 
   } catch { return undefined; }
 }
 
-/** A copy's original is not there to be copied from: the stored message is gone (its conversation was deleted) or is withheld from bots.
- * A copy never outlives the original it was made from, whatever memory is doing. */
+/** A copy's original is not there to be copied from, judged by the reader door's chain judge (bot-read.ts chainJudge, LINEAGE-DESIGN-S6 rules 9
+ * and 16): gone (its conversation was deleted), unreadable, classified, not a bot or owner row, its own chain failing, or reading withheld under
+ * the lineage verdicts. A copy never outlives the original it was made from, whatever memory is doing. While no line lineage is written on
+ * this file the verdicts read nothing, and the owner's note stays this reader's own read-time judge (rule 29). */
 export function copyOriginUnavailable(threadId: string, messageId: string): boolean {
   dirtyMessage(threadId, messageId);
-  const row = stmt(database(), "SELECT json_extract(json,'$.withheldFromBots') AS withheld FROM messages WHERE thread_id=? AND id=?").get(threadId, messageId);
+  const db = database();
+  const probe = { id: COPY_ORIGIN_PROBE, role: "user", kind: "text", at: 0, copyOf: { threadId, messageIds: [messageId] } } as Message;
+  const chain = chainJudge(db, threadId, null);
+  // a chain that fails only on unknowns (a source still checking) is a check that could not finish, not a mark: counted so the copy reads
+  // checking (replayExclusionsWith, REPLY-WITHHELD-CONTRACT R1)
+  if (!chain(probe)) { if (chain.checking()) unfinished++; return true; }
+  if (lineageLive(db)) return false;
+  const row = stmt(db, "SELECT json_extract(json,'$.withheldFromBots') AS withheld FROM messages WHERE thread_id=? AND id=?").get(threadId, messageId);
   if (!row) return true;
+  // a held original (flagged "checking") is a check that has not finished, not a mark: counted so the copy reads checking (contract C1)
+  if (row.withheld === "checking") { unfinished++; return true; }
   return row.withheld !== null && row.withheld !== undefined && row.withheld !== 0 && row.withheld !== "false";
 }
 
@@ -1509,7 +1522,11 @@ function replayExclusionsWith(judge: ReturnType<typeof lineageJudge>, threadId: 
   // A copy is withheld with its original.
   for(const message of messages){
     if(!message.copyOf||excluded.has(message.id))continue;
-    try { if(judge.originBad(message.copyOf,1,0,true))excluded.add(message.id); }
+    // a copy whose originals are bad only because a check could not finish (a set whose proof is still being built: deferSet) is an unknown,
+    // not a mark (REPLY-WITHHELD-CONTRACT R1): the walk stops at its first bad answer, so a check left unfinished during it is what made it bad.
+    // A cycle met on the way stays withheld (R1, S26)
+    const before = unfinished, cyclesBefore = cycles, thrownBefore = cycleThrown;
+    try { if(judge.originBad(message.copyOf,1,0,true)){ excluded.add(message.id); if (unfinished !== before && cycles === cyclesBefore && cycleThrown === thrownBefore) checking.add(message.id); } }
     catch (error) { if(!failClosed||error instanceof LineageControl)throw error; noteWithheldOnError(error); excluded.add(message.id); if (isLineageLimit(error)) checking.add(message.id); }
   }
   // a line withdrawn by anything that was proven stays withdrawn: only a line left out for lack of room alone is `checking`
@@ -2758,6 +2775,15 @@ export const COPY_ORIGIN_PROBE = "copy-origin-probe";
 export function copyOriginWithheld(allowance: LineageAllowance, copy: MessageCopy): boolean {
   try { return replayExclusions(allowance, copy.threadId, [{ id: COPY_ORIGIN_PROBE, role: "user", copyOf: copy }], null, { failClosed: true }).size > 0; }
   catch { return true; }
+}
+/** The same answer with why (REPLY-WITHHELD-CONTRACT R1): `unproven` when the copy's originals are withheld only because a check could not
+ * finish (a budget, a pending set, an error), so the result gate reads them as checking rather than deleted or changed. */
+export function copyOriginVerdict(allowance: LineageAllowance, copy: MessageCopy): { withheld: boolean; unproven: boolean } {
+  const checking = new Set<string>();
+  try {
+    const withheld = replayExclusions(allowance, copy.threadId, [{ id: COPY_ORIGIN_PROBE, role: "user", copyOf: copy }], null, { failClosed: true, checking }).size > 0;
+    return { withheld, unproven: withheld && checking.has(COPY_ORIGIN_PROBE) };
+  } catch { return { withheld: true, unproven: true }; }
 }
 
 /** Whether a captured reply is withheld only because a check could not finish yet (a large set it rests on is still being proven, or a check that

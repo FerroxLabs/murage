@@ -5,7 +5,7 @@
 //  c. every handoff has its durable ask:delegation record, owner-conversation ones included, so none starts twice;
 //  d. going back to 1.0.1 returns the waiting handoffs to delegations.json in the shape 1.0.1 loads, and a later upgrade imports them once.
 import { execFile } from "node:child_process";
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -30,6 +30,7 @@ import { listRoomRequests, reconcileRoomRequestsAtBoot, roomRequestByKey } from 
 import { Store } from "./store.ts";
 import { status } from "./murage-status.ts";
 import { released } from "./testing/released.ts";
+import { removeTempDirSync } from "./testing/cleanup.ts";
 
 const exec = promisify(execFile);
 const cli = fileURLToPath(new URL("../scripts/installation-recovery.ts", import.meta.url));
@@ -42,7 +43,7 @@ const legacyFile = () => join(DATA_DIR, "delegations.json");
 const pendingRows = () => Number((database().prepare("SELECT COUNT(*) AS n FROM pending_delegations").get() as { n: number }).n);
 const requestRows = () => Number((database().prepare("SELECT COUNT(*) AS n FROM room_requests").get() as { n: number }).n);
 
-beforeEach(() => { closeDatabase(); rmSync(DATA_DIR, { recursive: true, force: true }); mkdirSync(DATA_DIR, { recursive: true }); _resetPending(); });
+beforeEach(() => { closeDatabase(); removeTempDirSync(DATA_DIR); mkdirSync(DATA_DIR, { recursive: true }); _resetPending(); });
 afterEach(() => { _resetPending(); closeDatabase(); });
 
 const exportForDowngrade = (db: DatabaseSync, dataDir = DATA_DIR) => { const r = downgradeApplicationSchemaTo101(db, dataDir); return { exported: r.exported, started: r.interrupted }; };
@@ -255,7 +256,8 @@ describe("c. the queue row owns its handoff: none starts twice, and an owner-con
     const s = setup();
     queueDelegation(s.b, s.from, { toBotId: s.target.id, message: "visible", depth: 0 }, 2);
     const chips = s.store.messagesFor(s.from.threadId).map((m) => (m as { tool?: { name?: string } }).tool?.name).filter(Boolean);
-    expect(chips).toEqual(["Delegated to @Helper"]);
+    // LINEAGE-DESIGN-S6 rule 6: the queue transaction also writes the sender's "Messaged @target" row, the source the room copy names
+    expect(chips).toEqual(["Messaged @Helper", "Delegated to @Helper"]);
   });
 });
 
@@ -388,6 +390,6 @@ describe("d. going back to 1.0.1 keeps the waiting handoffs", () => {
         expect(importLegacyDelegations(after, { dataDir: copy })).toBe(3);
         expect(Object.keys(queuedDelegationsByThread(after)).sort()).toEqual(["thread-a", "thread-b"]);
       } finally { after.close(); }
-    } finally { rmSync(root, { recursive: true, force: true }); }
+    } finally { removeTempDirSync(root); }
   }, 120_000);
 });

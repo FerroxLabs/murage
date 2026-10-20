@@ -16,9 +16,10 @@
 //     message to them is a reply-in-kind rather than "someone new". Durable,
 //     one small JSON file per bot under the data dir, on this desktop only.
 import { existsSync, mkdirSync, readFileSync, renameSync, statSync, writeFileSync } from "node:fs";
-import { dirname, isAbsolute, join } from "node:path";
+import { dirname, sep } from "node:path";
 
-import { canonPath, nativePath, normalizeRecipient, stopLineKeyCovers, type StopHit } from "./stop-line.ts";
+import { joinReal, realDir, realPathInOrder } from "../shared/in-project.ts";
+import { canonPath, nativePath, normalizeRecipient, stopLineKey, stopLineKeyCovers, type StopHit } from "./stop-line.ts";
 
 export const TASK_ALLOWANCE_TTL_MS = 12 * 60 * 60_000;
 const MAX_ALLOWANCES_PER_TASK = 50;
@@ -51,6 +52,11 @@ export class TaskAllowances {
   covering(botId: string, threadId: string, hit: StopHit): string | undefined {
     return this.live(botId, threadId).find((item) => stopLineKeyCovers(item.key, hit))?.key;
   }
+  /** Every live allowance for this task, so a connector batch's findings are
+   * each covered on their own (AMEND-13 Rule 79b). */
+  keys(botId: string, threadId: string): string[] {
+    return this.live(botId, threadId).map((item) => item.key);
+  }
   /** A reset or deleted conversation is a new task. */
   clearThread(threadId: string): void {
     for (const id of [...this.byTask.keys()]) if (id.endsWith(`:${threadId}`)) this.byTask.delete(id);
@@ -59,8 +65,12 @@ export class TaskAllowances {
 
 const BOT_ID = /^[\w-]{1,128}$/;
 
+/** Murage's own record folder under its data dir (a fixed name, never a
+ * path a tool call named). */
+const recipientsDir = (dataDir: string) => [dataDir, "stop-line", "recipients"].join(sep);
+
 function recipientsFile(dataDir: string, botId: string): string | undefined {
-  return BOT_ID.test(botId) ? join(dataDir, "stop-line", "recipients", `${botId}.json`) : undefined;
+  return BOT_ID.test(botId) ? [recipientsDir(dataDir), `${botId}.json`].join(sep) : undefined;
 }
 
 /** Everyone this bot has already sent a message to. A missing or unreadable
@@ -85,7 +95,7 @@ export function rememberRecipients(dataDir: string, botId: string, recipients: r
   if (!file || !fresh.length) return;
   const known = [...knownRecipients(dataDir, botId)].filter((item) => !fresh.includes(item));
   const next = [...known, ...new Set(fresh)].slice(-MAX_RECIPIENTS);
-  mkdirSync(join(dataDir, "stop-line", "recipients"), { recursive: true, mode: 0o700 });
+  mkdirSync(recipientsDir(dataDir), { recursive: true, mode: 0o700 });
   const temp = `${file}.${process.pid}.tmp`;
   writeFileSync(temp, JSON.stringify({ recipients: next }), { mode: 0o600 });
   renameSync(temp, file);
@@ -126,7 +136,7 @@ export function chatAllowance(
   request: ChatAllowanceRequest,
   ownerText: string,
   home: string,
-  realpath: (path: string) => string = (path) => path,
+  realpath: (path: string) => string | null = (path) => path,
 ): { ok: true; key: string; note: string } | { ok: false; error: string } {
   const said = ownerText.toLowerCase();
   const place = request.place.trim();
@@ -151,7 +161,10 @@ export function chatAllowance(
     if (![place, clean, tilde, nativePath(clean)].some((form) => namesWholePath(said, form.toLowerCase()))) {
       return { ok: false, error: "The owner's latest message does not name that folder. Ask the owner to say it in their own words." };
     }
-    return { ok: true, key: `stop:delete:${canonPath(realpath(nativePath(clean)))}`, note: `You allowed deleting anything in ${tilde} for the rest of this task.` };
+    let real: string | null;
+    try { real = realpath(nativePath(clean)); } catch { real = null; }
+    if (real === null) return { ok: false, error: "Murage cannot place that folder on this computer. Ask the owner to name a folder that exists." };
+    return { ok: true, key: `stop:delete:${canonPath(real)}`, note: `You allowed deleting anything in ${tilde} for the rest of this task.` };
   }
   const who = normalizeRecipient(place);
   const bare = who.replace(/^[@#]/, "");
@@ -159,7 +172,10 @@ export function chatAllowance(
     return { ok: false, error: `The owner's latest message does not name ${place}. Ask the owner to say it in their own words.` };
   }
   if (request.kind === "message") {
-    return { ok: true, key: `stop:message:${who}`, note: `You allowed messaging ${place} for the rest of this task.` };
+    // through the one key builder: one recipient, never a combined place (A13-FIX-DESIGN C2)
+    const key = stopLineKey({ kind: "message", place: who, what: "" });
+    if (!key) return { ok: false, error: "Name one person at a time. Ask the owner to say each one in their own words." };
+    return { ok: true, key, note: `You allowed messaging ${place} for the rest of this task.` };
   }
   const app = request.app?.trim().toLowerCase();
   if (!app || !/^[a-z0-9_-]{1,60}$/.test(app)) return { ok: false, error: "Say which payment app, such as stripe." };
@@ -185,30 +201,69 @@ export function githubRepoFromGitConfig(config: string): string | undefined {
 
 /** The GitHub repository a folder belongs to, read from its git config
  * without running git: walk up to `.git`, follow a worktree's `gitdir:` and
- * `commondir`. Undefined for anything unusual; the post then stops with no
+ * `commondir`. Every path is placed in order (shared/in-project.ts), so a
+ * `gitdir: link/../g` is read where the link leads. Undefined for anything
+ * unusual or anything that cannot be placed; the post then stops with no
  * repository-scoped grant. */
 export function githubRepoOf(dir: string): string | undefined {
-  let current = dir;
+  let current = realDir(dir);
+  if (!current) return undefined;
   for (let i = 0; i < 40; i += 1) {
-    const dotGit = join(current, ".git");
+    const dotGit = joinReal(current, ".git");
+    if ("cannot" in dotGit) return undefined;
+    let found = true;
     try {
-      let gitDir = dotGit;
-      if (!statSync(dotGit).isDirectory()) {
-        const pointer = /^gitdir:\s*(.+)$/m.exec(readFileSync(dotGit, "utf8"))?.[1]?.trim();
-        if (!pointer) return undefined;
-        gitDir = isAbsolute(pointer) ? pointer : join(current, pointer);
-        const common = join(gitDir, "commondir");
-        if (existsSync(common)) {
-          const shared = readFileSync(common, "utf8").trim();
-          gitDir = isAbsolute(shared) ? shared : join(gitDir, shared);
-        }
-      }
-      return githubRepoFromGitConfig(readFileSync(join(gitDir, "config"), "utf8"));
+      statSync(dotGit.path);
     } catch {
-      const parent = dirname(current);
-      if (parent === current) return undefined;
-      current = parent;
+      found = false;
     }
+    if (found) {
+      try {
+        let gitDir = realDir(dotGit.path);
+        if (!statSync(dotGit.path).isDirectory()) {
+          const pointer = /^gitdir:\s*(.+)$/m.exec(readFileSync(dotGit.path, "utf8"))?.[1]?.trim();
+          if (!pointer) return undefined;
+          const placed = realPathInOrder(pointer, current);
+          if ("cannot" in placed) return undefined;
+          gitDir = placed.real;
+          const common = joinReal(placed.real, "commondir");
+          if ("cannot" in common) return undefined;
+          if (existsSync(common.path)) {
+            const shared = realPathInOrder(readFileSync(common.path, "utf8").trim(), placed.real);
+            if ("cannot" in shared) return undefined;
+            gitDir = shared.real;
+          }
+        }
+        if (!gitDir) return undefined;
+        const config = joinReal(gitDir, "config");
+        return "cannot" in config ? undefined : githubRepoFromGitConfig(readFileSync(config.path, "utf8"));
+      } catch {
+        return undefined;
+      }
+    }
+    const parent = realDir(dirname(current));
+    if (!parent || parent === current) return undefined;
+    current = parent;
   }
   return undefined;
+}
+
+/** The stop line's resolver (server/stop-line.ts `StopLinePlace.realpath`):
+ * the real path, every part resolved in order and a missing tail kept as
+ * written, or null when it cannot be placed. Never a path as written. */
+export function stopLineRealpath(path: string): string | null {
+  const placed = realPathInOrder(path, "/");
+  return "cannot" in placed ? null : placed.real;
+}
+
+/** The stop line's roots, each by its real path. A root that does not
+ * resolve is dropped, so it never widens what counts as inside. */
+export function stopLineRoots(roots: readonly (string | undefined)[]): string[] {
+  const out: string[] = [];
+  for (const root of roots) {
+    if (typeof root !== "string" || !root) continue;
+    const real = realDir(root);
+    if (real && !out.includes(real)) out.push(real);
+  }
+  return out;
 }

@@ -11,7 +11,7 @@
 // phone gets a full-bleed sheet with a grouped strip and nothing clipped
 // sideways, and Settings search still finds pages across the groups.
 // Screenshots land in NAV_SHOTS_DIR when set, else the test's output dir.
-import { test, expect, type Page } from "@playwright/test";
+import { test, expect, type Page } from "./page-error-guard";
 import { createServer, type ViteDevServer } from "vite";
 import react from "@vitejs/plugin-react";
 import tailwindcss from "@tailwindcss/vite";
@@ -104,7 +104,7 @@ for (const [width, height] of [[1440, 900], [1280, 720], [1280, 560]] as const) 
   await accountMenuTrigger(sidebar).click();
   const menu = page.getByRole("menu", { name: "Your menu" });
   await expect(menu).toBeVisible();
-  await expect(menu.getByRole("menuitem")).toHaveText([/About me/, /Phone/, ...(HAS_WHATS_NEW ? [/What's new/] : []), /Keyboard shortcuts/, /Get set up/, /Settings/]);
+  await expect(menu.getByRole("menuitem")).toHaveText([/About me/, /Phone/, ...(HAS_WHATS_NEW ? [/What's new/] : []), /^Murage \d/, /Keyboard shortcuts/, /Get set up/, /Settings/]);
   await expect(menu.getByRole("menuitem").first()).toBeFocused();
   await page.keyboard.press("ArrowDown");
   await expect(menu.getByRole("menuitem").nth(1)).toBeFocused();
@@ -117,8 +117,10 @@ for (const [width, height] of [[1440, 900], [1280, 720], [1280, 560]] as const) 
   await page.keyboard.press("ControlOrMeta+,");
   await expect(settings(page)).toBeVisible();
   const nav = settings(page).getByRole("navigation", { name: "Settings sections" });
-  await expect(nav.getByRole("group")).toHaveCount(6);
-  await expect(nav.getByRole("group", { name: "Tools" }).getByRole("button")).toHaveText(["Images", "Web search", "Voice", "Connected apps", "Computer & browser"]);
+  // 1.0.3: twelve pages in five groups (You, Bots, AI, Reach, App)
+  await expect(nav.getByRole("group")).toHaveCount(5);
+  await expect(nav.getByRole("group", { name: "AI" }).getByRole("button")).toHaveText(["Models & engines", "Tools"]);
+  await expect(nav.getByRole("group", { name: "Reach" }).getByRole("button")).toHaveText(["Connected apps", "Messaging apps", "Devices"]);
   const shape = await scrollShape(page);
   expect(shape).toMatchObject({ dialogClips: true, dialogFits: true, navOverflowY: "auto", pageOverflowY: "auto" });
   if (width === 1440) expect(shape.navScrolls).toBe(false);
@@ -129,12 +131,12 @@ for (const [width, height] of [[1440, 900], [1280, 720], [1280, 560]] as const) 
   await page.screenshot({ path: join(dir, `settings-${width}x${height}.png`) });
 
   // Up/Down move between sections; headings are not stops
-  await nav.getByRole("button", { name: "About me", exact: true }).focus();
+  await nav.getByRole("button", { name: "General", exact: true }).focus();
   await page.keyboard.press("ArrowDown");
-  await expect(nav.getByRole("button", { name: "Bot defaults", exact: true })).toBeFocused();
+  await expect(nav.getByRole("button", { name: "Bots", exact: true })).toBeFocused();
 
   // the last section is reachable at every height, the header stays put
-  const experimental = nav.getByRole("button", { name: "Experimental", exact: true });
+  const experimental = nav.getByRole("button", { name: "About & updates", exact: true });
   await experimental.scrollIntoViewIfNeeded();
   await experimental.click();
   await expect(experimental).toHaveAttribute("aria-current", "page");
@@ -142,7 +144,7 @@ for (const [width, height] of [[1440, 900], [1280, 720], [1280, 560]] as const) 
   await page.screenshot({ path: join(dir, `settings-bottom-${width}x${height}.png`) });
 
   // Images: two levels deep, Setup and Library tabs; its page scrolls alone
-  await nav.getByRole("button", { name: "Images", exact: true }).click();
+  await nav.getByRole("button", { name: "Tools", exact: true }).click();
   await expect(settings(page).getByRole("tab", { name: "Setup" })).toHaveAttribute("aria-selected", "true");
   await expect(settings(page).locator('section[aria-labelledby="image-settings-heading"]')).toBeVisible();
   await page.screenshot({ path: join(dir, `settings-images-${width}x${height}.png`) });
@@ -151,10 +153,11 @@ for (const [width, height] of [[1440, 900], [1280, 720], [1280, 560]] as const) 
 
   // search still finds pages across the groups
   const search = settings(page).getByRole("textbox", { name: "Search settings" });
+  // (1.0.3: search lists cards and rows, each with the page it lives on)
   await search.fill("tavily");
-  await expect(nav.getByRole("button")).toHaveText(["Web search"]);
+  await expect(settings(page).locator('[data-settings-result="webSearch.search"]')).toContainText("Tools");
   await search.fill("vps");
-  await expect(nav.getByRole("button")).toHaveText(["Computer & browser"]);
+  await expect(settings(page).locator('[data-settings-result="companion.vps"]')).toContainText("Devices");
   await search.fill("");
   expect(await noSideScroll(page)).toBe(true);
 });
@@ -165,6 +168,8 @@ test("Settings > General > Appearance picks the sidebar density", async ({ page 
   const sidebar = await openSidebar(page);
   await sidebar.getByRole("button", { name: "App settings", exact: true }).click();
   await settings(page).getByRole("navigation").getByRole("button", { name: "General", exact: true }).click();
+  // 1.0.3: sidebar density sits under General's one Advanced
+  await settings(page).getByRole("button", { name: /^Advanced/ }).click();
   const density = settings(page).getByRole("radiogroup", { name: "Sidebar" });
   await expect(density.getByRole("radio", { name: "Standard" })).toHaveAttribute("aria-checked", "true");
   await density.getByRole("radio", { name: "Roomy" }).click();
@@ -190,9 +195,10 @@ test("a narrow desktop window folds the sidebar to the rail, and one click opens
   await page.reload();
   await expect(page.getByRole("complementary", { name: "Bots and navigation" })).toHaveCSS("width", "280px");
   await expect(page.getByText("Iris", { exact: true }).first()).toBeAttached({ timeout: 30_000 });
-  // Settings at the Electron minimum: the list scrolls, the dialog fits
+  // Settings at the Electron minimum: the dialog fits, and the list (twelve pages in 1.0.3, so it now fits 600px) is
+  // still its own scroller, so a shorter window scrolls it instead of clipping
   await sidebar.getByRole("button", { name: "App settings", exact: true }).click();
-  expect(await scrollShape(page)).toMatchObject({ dialogClips: true, dialogFits: true, navScrolls: true, navOverflowY: "auto" });
+  expect(await scrollShape(page)).toMatchObject({ dialogClips: true, dialogFits: true, navOverflowY: "auto" });
   await page.screenshot({ path: join(dir, "settings-900x600.png") });
 });
 
@@ -224,7 +230,7 @@ for (const skin of ["dark", "light"]) test(`phone: drawer, strip and Settings sh
   expect(shape).toMatchObject({ dialogClips: true, dialogFits: true, navOverflowX: "auto", pageOverflowY: "auto" });
   // the strip is grouped: a heading before each group's chips
   const nav = dialog.getByRole("navigation", { name: "Settings sections" });
-  await expect(nav.getByRole("group")).toHaveCount(6);
+  await expect(nav.getByRole("group")).toHaveCount(5);
   await expect(nav.getByText("Tools", { exact: true })).toBeAttached();
   await page.screenshot({ path: join(dir, `settings-390x844-${skin}.png`) });
   // a chip at the far end is one swipe away, then the page shows it
@@ -237,7 +243,7 @@ for (const skin of ["dark", "light"]) test(`phone: drawer, strip and Settings sh
   expect(chip.height).toBeGreaterThanOrEqual(44);
   expect(await noSideScroll(page)).toBe(true);
   await page.screenshot({ path: join(dir, `settings-usage-390x844-${skin}.png`) });
-  await nav.getByRole("button", { name: "Images", exact: true }).click();
+  await nav.getByRole("button", { name: "Tools", exact: true }).click();
   await page.screenshot({ path: join(dir, `settings-images-390x844-${skin}.png`) });
   expect(await noSideScroll(page)).toBe(true);
 });

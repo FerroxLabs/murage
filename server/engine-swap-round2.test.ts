@@ -1,6 +1,6 @@
 import { isRestoreHeld, releaseHeldContinuation, runnableContinuation } from "./restore-fence.ts";
 import { heldScanYield } from "./held-scan.ts";
-import { readFileSync, rmSync } from "node:fs";
+import { readFileSync } from "node:fs";
 import { stripTypeScriptTypes } from "node:module";
 import { runInNewContext } from "node:vm";
 import { beforeEach, expect, it, vi } from "vitest";
@@ -22,6 +22,8 @@ import { sharedEndingLine } from "./handoff-boundary.ts";
 import { outboundWords, status, statusFromLegacyNote, statusFromNote, type Outbound } from "./murage-status.ts";
 import { released } from "./testing/released.ts";
 import { releaseStoredResult as releaseThroughTheGate, type ResultEgressDeps } from "./result-egress.ts";
+import { sourced } from "./testing/bot-row.ts";
+import { removeTempDirSync } from "./testing/cleanup.ts";
 
 const source = readFileSync(new URL("./index.ts", import.meta.url), "utf8");
 const boundarySource = readFileSync(new URL("./handoff-boundary.ts", import.meta.url), "utf8");
@@ -37,7 +39,7 @@ function definition(name: string, end: string) {
   return source.slice(start, source.indexOf(end, start));
 }
 const noop = () => undefined;
-beforeEach(() => { closeDatabase(); rmSync(DATA_DIR, { recursive: true, force: true }); });
+beforeEach(() => { closeDatabase(); removeTempDirSync(DATA_DIR); });
 function fixture() {
   const store = new Store(() => ({ instanceId: "a", model: "one" }));
   return { store, bot: store.createBot({}, { seedMessages: false }) };
@@ -48,7 +50,7 @@ it("N1 queued questions dispatch as questions and tool work resumes the original
   const request: any = { id: "original", groupId: group.id, targetThreadId: group.threadId, toBotId: bot.id, verb: "room_turn", state: "running" };
   const pending = new Map(), queues = new Map(), rounds = new Map(), accepted: string[] = [];
   let tools = false;
-  const scope: any = { store, turnIsBackground, pendingRoomTurnRequests: pending, groupQueues: queues, roomRounds: rounds,
+  const scope: any = { store, homeExecutionGate: undefined, pendingRoomTurnRequests: pending, groupQueues: queues, roomRounds: rounds,
     roomTurnRequestKey: (thread: string, bot: string) => `${thread}:${bot}`, roomRoots: new Map(),
     registry: { get: () => ({ adapter: { capabilities: { tools } } }) }, routeHasTools: (caps: any) => caps?.tools,
     threadHumanPrincipal: () => "owner", botPermissionMode: () => "ask", database: noop, noteHeldQueue: noop, runnableContinuation, isRestoreHeld, releaseHeldContinuation, currentRestoreGeneration: () => null,
@@ -56,6 +58,8 @@ it("N1 queued questions dispatch as questions and tool work resumes the original
     roomRequest: () => null,
     // the turn-source recorder (steer-lineage.ts) wraps the wake prompt; with no lineage here it just builds it
     promptForTurn: (_thread: string, _bot: string, build: () => string) => build(),
+    // a queued dispatch now inherits routine/background provenance (the real helper is run below)
+    turnIsBackground,
     requeueRoomRequest: (_db: any, id: string) => { expect(id).toBe(request.id); request.state = "queued"; },
     wakeContinuationPrompt: () => "Continue the action", routineRoomTurnPrompt: (text: string) => text, queuedRoomTurnPrompt: () => "What format?",
     wakeGoalAction: () => null, wakeRedirectText: () => null, markUnattended: noop, clearUnattended: noop,
@@ -95,7 +99,7 @@ it("N1 queued questions dispatch as questions and tool work resumes the original
 });
 
 it("N2 final fitting delivers row identities and only delivered debt is consumed", () => {
-  const rows = [{ id: "large", role: "assistant" as const, text: "x".repeat(5000) }, { id: "small", role: "assistant" as const, text: "hello" }];
+  const rows = sourced([{ id: "large", role: "assistant" as const, text: "x".repeat(5000) }, { id: "small", role: "assistant" as const, text: "hello" }]);
   const fitted = fitRenderedReplay(rows, "a", 0, 1500);
   expect(fitted.transcript.map(row => row.id)).toEqual(["small"]);
   const plan = planExternalDelivery({ pending: rows, branchReplay: { carriedIds: rows.map(row => row.id) } });
@@ -104,7 +108,8 @@ it("N2 final fitting delivers row identities and only delivered debt is consumed
 
   const replay = source.slice(source.indexOf("  const externalDelivery ="), source.indexOf("  const skillAuthoring =", source.indexOf("  const externalDelivery =")));
   const produced = execute(replay + "\nexternalDelivery;", { planExternalDelivery, turnRouteHasTools: true, task: { externalUpdates: ["large", "small"] }, rewound: true, fresh: true,
-    transcript: fitted.transcript, replayedMessages: rows, messagesById: new Map(rows.map(row => [row.id, { ...row, kind: "text" }])), memoryNotOwner: false });
+    transcript: fitted.transcript, replayedMessages: rows, messagesById: new Map(rows.map(row => [row.id, { ...row, kind: "text" }])), memoryNotOwner: false,
+    botRowOf: (row: { source?: unknown }) => row.source, botViewer: () => ({ kind: "bot", botId: "b" }), bot: { id: "b" } });
   expect(produced.preamble).toContain(rows[0].text);
   expect(deliveredExternalIds(plan, fitted.transcript)).toEqual(["small"]);
   expect(deliveredExternalIds(mixed, fitted.transcript)).toEqual(["large", "small"]);
@@ -274,7 +279,8 @@ it.each([false, true])("P7 counts original eligible history with memory inactive
   const replayedMessages = replayWindow(replayableMessages, replayOptions);
   const replay = execute(source.slice(begin, end) + "\n({transcript, omitted: replayOmitted});", { opts: undefined, replayFloor: { messages: [] }, activeMessages: original,
     skipTranscript, replayOptions, replayableMessages, replayedMessages, fitRenderedReplay, messagesById: new Map(), instanceId: "a", cfg: {}, replayMore: false,
-    replayEntry: (row: any, text: string) => ({ id: row.id, role: row.role, text }), transcriptText: (row: any) => row.text });
+    replayLines: (_viewer: unknown, _shown: unknown, rows: any[], text: (row: any) => string) => rows.map(row => ({ id: row.id, role: row.role, text: text(row) })),
+    botViewer: () => ({ kind: "bot", botId: "b" }), bot: { id: "b" }, transcriptText: (row: any) => row.text });
   expect(replay.omitted).toBe(1);
   expect(buildTurnContext({ ...replay, text: "now", fresh: true, rewound: false, externallyUpdated: false, replaysNatively }).turnText).toContain("1 earlier line");
 });

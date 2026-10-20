@@ -1,18 +1,21 @@
-import { existsSync, mkdtempSync, readFileSync, readdirSync, rmSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, readdirSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { afterEach, describe, expect, it } from "vitest";
 
 import { initializeArtifacts } from "../artifacts.ts";
+import { isEngineOutput } from "../message-db.ts";
+import { isMurageLine } from "../murage-line.ts";
 import type { AppConfig } from "../config.ts";
 import { createVoiceNote, VOICE_NOTE_MAX_CHARS, voiceNotePieces, type VoiceNoteDeps } from "./voice-notes.ts";
+import { removeTempDirSync } from "../testing/cleanup.ts";
 
 const roots: string[] = [];
 const databases: DatabaseSync[] = [];
 afterEach(() => {
   for (const db of databases.splice(0)) db.close();
-  for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true });
+  for (const root of roots.splice(0)) removeTempDirSync(root);
 });
 
 function fixture(voice = { voice: "eve", voiceProvider: "xai" as const }) {
@@ -45,6 +48,18 @@ function fixture(voice = { voice: "eve", voiceProvider: "xai" as const }) {
 }
 
 describe("voice notes", () => {
+  it("a note from a turn is that turn's engine output; with no turn it stays a Murage line", async () => {
+    const f = fixture();
+    await createVoiceNote(f.deps, { botId: "bot-1", threadId: "thread-1", runId: "run-1", turnId: "prov-1", text: "From a turn." });
+    await createVoiceNote(f.deps, { botId: "bot-1", threadId: "thread-1", runId: "run-1", text: "A replay." });
+    expect(f.messages[0]).toMatchObject({ turnId: "prov-1" });
+    expect(isMurageLine(f.messages[0])).toBe(false);
+    expect(isEngineOutput({ id: "x", at: 1, ...f.messages[0] })).toBe(true);
+    expect(f.messages[1].turnId).toBeUndefined();
+    expect(isMurageLine(f.messages[1])).toBe(true);
+    expect(isEngineOutput({ id: "y", at: 1, ...f.messages[1] })).toBe(false);
+  });
+
   it("says the text in the bot's own voice and leaves it in the chat as a playable audio file", async () => {
     const f = fixture();
     const note = await createVoiceNote(f.deps, { botId: "bot-1", threadId: "thread-1", runId: "run-1", text: "Morning, boss.  Two approvals are waiting." });

@@ -6,10 +6,11 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { BrowserExtensionSites, BrowserExtensionSitesError } from "./browser-extension-sites.ts";
 import { BROWSER_EXTENSION_FILES, classifyDataDirEntry } from "./data-dir-inventory.ts";
 import { makePrivateTestSubdirectory, writePrivateTestFile } from "./testing/private-test-dir.ts";
+import { removeTempDirSync } from "./testing/cleanup.ts";
 
 let dir: string, file: string;
 beforeEach(() => { dir = mkdtempSync(join(tmpdir(), "sites-")); file = join(dir, "browser-extension", "sites.json"); });
-afterEach(() => { rmSync(dir, { recursive: true, force: true }); });
+afterEach(() => { removeTempDirSync(dir); });
 
 describe("approved sites store", () => {
   it("keeps one rule per bot, profile and origin, and survives a reload", () => {

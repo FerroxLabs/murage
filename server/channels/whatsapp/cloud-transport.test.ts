@@ -1,12 +1,13 @@
 // Copyright 2026 Ferrox Labs
 // SPDX-License-Identifier: AGPL-3.0-or-later
-import { mkdtempSync, rmSync, readdirSync } from "node:fs";
+import { mkdtempSync, readdirSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { expect, it, vi } from "vitest";
 import { ChannelSendError } from "../durable-delivery.ts";
 import { CLOUD_API_CAPABILITIES, CLOUD_API_MESSAGE, CLOUD_API_NOT_AVAILABLE, CloudApiNotAvailable, CloudApiTransport } from "./cloud-transport.ts";
 import { WhatsAppService } from "./service.ts";
+import { removeTempDirSync } from "../../testing/cleanup.ts";
 
 it("describes what the official route could do without pretending it can do it today", () => {
   expect(CLOUD_API_CAPABILITIES).toEqual({ linking: "token", groups: false, presence: false, readReceipts: false, lidResolution: false, ownSendEcho: false });
@@ -47,5 +48,5 @@ it("the service on the cloud backend says so and changes nothing on disk", async
     expect(service.status()).toMatchObject({ state: "blocked", error: CLOUD_API_NOT_AVAILABLE });
     expect(transport).not.toHaveBeenCalled(); expect(wipeData).not.toHaveBeenCalled();
     expect(readdirSync(dir)).toEqual([]);
-  } finally { rmSync(dir, { recursive: true, force: true }); }
+  } finally { removeTempDirSync(dir); }
 });

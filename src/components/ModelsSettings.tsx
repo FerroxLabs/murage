@@ -1,5 +1,6 @@
 import { Suspense, lazy, useEffect, useRef, useState } from "react";
-import { Switch } from "./SettingsPrimitives";
+import { Card, InAdvanced, Switch } from "./SettingsPrimitives";
+import { fluxDesktopSigninEnabled } from "@/lib/feature-flags";
 import { api, useStore, type ConfigStatus } from "@/state/store";
 import { extractKeys, modelProviderCandidates } from "../../shared/key-extract";
 import type { KeyProviderPreset, ProviderCatalog, ProviderConnectionMutation, ProviderModel, ProviderPreset, PublicProviderConnection } from "../../shared/provider-connections";
@@ -27,7 +28,6 @@ function failureMessage(error: unknown, action: string): string {
   if (/different provider|does not match/i.test(message)) return "The key does not match this provider. Check the provider and try again.";
   return `Could not ${action}. Check the connection and try again.`;
 }
-const money = (value: number) => new Intl.NumberFormat(undefined, { style: "currency", currency: "USD", maximumFractionDigits: 6 }).format(value);
 
 /** This editor updates the existing slot; it never reads or copies its saved key. */
 function ExistingKey({ id, label, configured, onSaved }: { id: string; label: string; configured: boolean; onSaved: (status: ConfigStatus) => void }) {
@@ -97,7 +97,7 @@ export function ModelsSettings() {
     }
     const candidates = detected.filter(preset => preset !== "flux");
     setHasKey(Boolean(raw)); setHints(candidates); setChosen(candidates.length === 1 ? candidates[0] : null); setError("");
-    setKeyIssue(extracted.length > 1 ? "Paste one API key at a time." : extracted.length === 1 && !candidates.length ? "This key is not a supported model key. Use Paste any keys below for service keys." : "");
+    setKeyIssue(extracted.length > 1 ? "Paste one API key at a time." : extracted.length === 1 && !candidates.length ? "This key is not a supported model key. Use Add a key below for service keys." : "");
   };
   const mutate = async (change: ProviderConnectionMutation): Promise<Snapshot> => {
     if (window.muragebox) {
@@ -161,11 +161,20 @@ export function ModelsSettings() {
   return <div className="min-w-0 space-y-5">
     <FluxRouterConnection configured={flux?.configured ?? null} conflict={flux?.conflict} choices={flux?.choices}
       onSave={async key => { if (!flux) throw new Error("Flux status is unavailable"); await fluxChanged({ action: flux.configured ? "replace" : "connect", revision: flux.revision, key }); }}
+      onSignin={fluxDesktopSigninEnabled(state.config) && window.muragebox?.fluxSignin ? async () => {
+        if (!flux) throw new Error("Flux status is unavailable");
+        const result = await window.muragebox!.fluxSignin!.start({ action: flux.configured ? "replace" : "connect", revision: flux.revision });
+        if (!result.ok) throw new Error(result.message);
+        setFlux(result.status);
+        if (state.config) dispatch({ type: "configStatus", config: { ...state.config, flux: { configured: result.status.configured } } });
+        notifyConnectionsChanged();
+      } : undefined}
+      onCancelSignin={() => window.muragebox?.fluxSignin?.cancel()}
       onSelect={async connectionId => { if (!flux) throw new Error("Flux status is unavailable"); await fluxChanged({ action: "select", revision: flux.revision, connectionId }); }}
       onTest={fluxTest}
       onDisconnect={async () => { if (!flux) throw new Error("Flux status is unavailable"); await fluxChanged({ action: "disconnect", revision: flux.revision }); }}>
       {fluxError && <p role="alert" className="mt-2 text-[12px] leading-relaxed text-danger">{fluxError}</p>}
-      {flux?.configured && !flux.conflict && fluxConnection && <details className="mt-3" open={search ? true : undefined}><summary className={`min-h-11 cursor-pointer py-3 text-[13px] ${focus}`}>{fluxModels.length} matching Flux chat models</summary><div className="max-h-80 overflow-y-auto">{fluxModels.map(model => <div key={model.id} className="border-t border-hairline/30 py-3"><p className="break-words text-[13px]">{model.label}</p><p className="break-all text-[11px] text-ink-secondary">{model.id}</p><p className="mt-1 text-[11px] text-ink-secondary">{model.pricing ? `Input ${model.pricing.inputPerMillion === undefined ? "not listed" : money(model.pricing.inputPerMillion)} · output ${model.pricing.outputPerMillion === undefined ? "not listed" : money(model.pricing.outputPerMillion)} per 1M tokens` : "Price not listed"}</p></div>)}</div>{fluxConnection.catalog.error && <p className="mt-2 text-[12px] text-danger">{fluxConnection.catalog.error.message}</p>}{fluxConnection.catalog.stale && <p className="mt-2 text-[12px] text-ink-secondary">Showing the last saved catalog. Test connection to check for updates.</p>}</details>}
+      {flux?.configured && !flux.conflict && fluxConnection && <InAdvanced><section aria-label="Flux Router models" className="rounded-xl bg-card p-4"><h4 className="text-[14px] font-medium text-ink">{fluxModels.length} matching Flux chat models</h4><div className="mt-2 max-h-80 overflow-y-auto">{fluxModels.map(model => <div key={model.id} className="border-t border-hairline/30 py-3"><p className="break-words text-[13px]">{model.label}</p><p className="break-all text-[11px] text-ink-secondary">{model.id}</p></div>)}</div>{fluxConnection.catalog.error && <p className="mt-2 text-[12px] text-danger">{fluxConnection.catalog.error.message}</p>}{fluxConnection.catalog.stale && <p className="mt-2 text-[12px] text-ink-secondary">Showing the last saved catalog. Test connection to check for updates.</p>}</section></InAdvanced>}
     </FluxRouterConnection>
     <Suspense fallback={null}><SubscriptionSignIn connections={snapshot?.connections ?? []} onChanged={() => { notifyConnectionsChanged(); void reload(); }} /></Suspense>
     <section aria-labelledby="models-heading" className="rounded-xl border border-hairline/40 p-4">
@@ -181,7 +190,8 @@ export function ModelsSettings() {
       </form>
       <p className="mt-3 text-[11px] leading-relaxed text-ink-secondary">{snapshot?.storage === "encrypted" ? "New connections are encrypted by your operating system. Saved keys are never shown." : snapshot ? "Development mode uses local configuration storage, not OS encryption." : "Loading connection storage…"}</p>
     </section>
-    <div className="flex flex-wrap gap-2"><label className="min-w-0 flex-1"><span className="sr-only">Search chat models</span><input value={query} onChange={event => setQuery(event.target.value)} aria-label="Search chat models" placeholder="Search chat models or accounts" className={input} /></label><button type="button" disabled={Boolean(busy)} onClick={() => void reload()} className={button}>Refresh connections</button></div>
+    <InAdvanced><div id="model-catalogs-heading" tabIndex={-1} className="outline-none"><Card title="Model catalogs" subtitle="The chat models each connection lists. Search them here, or refresh a connection to fetch its newest list."><label className="block min-w-0"><span className="sr-only">Search chat models</span><input value={query} onChange={event => setQuery(event.target.value)} aria-label="Search chat models" placeholder="Search chat models or accounts" className={input} /></label></Card></div></InAdvanced>
+    <div className="flex flex-wrap gap-2"><button type="button" disabled={Boolean(busy)} onClick={() => void reload()} className={button}>Refresh connections</button></div>
     {notice && <p role="status" className="text-[12px] text-success">{notice}</p>}{error && <p role="alert" className="text-[12px] text-danger">{error}</p>}
     {snapshot?.connections.length === 0 && <p className="text-[13px] text-ink-secondary">No additional model connections yet. Existing default keys are managed below.</p>}
     {!flux && snapshot?.connections.filter(connection => connection.preset === "flux").map(connection => <p key={connection.id} className="text-[12px] text-ink-secondary">Saved Flux connection: {connection.label}. Refresh connections to manage it in the Flux Router card.</p>)}
@@ -195,12 +205,12 @@ export function ModelsSettings() {
         <div className="mt-3 flex flex-wrap gap-2"><button type="button" className={button} disabled={Boolean(busy)} onClick={() => void refresh(connection.id)}>Refresh models for {connection.label}</button>{connection.legacy ? <a href="#existing-model-keys" className={`flex min-h-11 items-center rounded-lg px-3 text-[12px] text-accent ${focus}`}>Manage existing key below</a> : connection.signIn ? <a href="#signin-heading" className={`flex min-h-11 items-center rounded-lg px-3 text-[12px] text-accent ${focus}`}>{t("modelSignIn.rowManage")}</a> : <><button type="button" className={button} disabled={Boolean(busy)} onClick={() => setEditing(connection.id)}>Rename {connection.label}</button><button type="button" className={button} disabled={Boolean(busy)} onClick={() => setRemoving({ id: connection.id, label: connection.label, revision: connection.revision })}>Remove {connection.label}</button></>}</div>
         {editing === connection.id && <form className="mt-3 flex flex-wrap gap-2" onSubmit={event => { event.preventDefault(); const value = rename.current?.value.trim(); if (value) void changeConnection({ action: "update", id: connection.id, revision: connection.revision, label: value }); }}><input ref={rename} aria-label={`New name for ${connection.label}`} defaultValue={connection.label} maxLength={80} className={`${input} flex-1`} disabled={Boolean(busy)} /><button className={button} disabled={Boolean(busy)}>Save name</button><button type="button" className={button} onClick={() => setEditing(null)}>Cancel rename</button></form>}
         {removing?.id === connection.id && <div className="mt-3 rounded-lg bg-card p-3 text-[12px]"><p>Remove {removing.label}? Its saved key will be removed. Bots using it will need another connection.</p><div className="mt-2 flex flex-wrap gap-2"><button type="button" className={button} disabled={Boolean(busy)} onClick={() => void changeConnection({ action: "remove", id: removing.id, revision: removing.revision })}>Remove saved connection</button><button type="button" className={button} onClick={() => setRemoving(null)}>Cancel removal</button></div></div>}
-        <details className="mt-3" open={search ? true : undefined}><summary className={`min-h-11 cursor-pointer py-3 text-[13px] ${focus}`}>{matching.length} matching chat models</summary><div className="max-h-80 overflow-y-auto">{matching.map(model => <div key={model.id} className="border-t border-hairline/30 py-3"><p className="break-words text-[13px]">{model.label}</p><p className="break-all text-[11px] text-ink-secondary">{model.id}</p><p className="mt-1 text-[11px] text-ink-secondary">{model.contextWindow ? `${model.contextWindow.toLocaleString()} context tokens` : "Context not listed"}{model.capabilities.tools ? " · Tools" : ""}{model.capabilities.vision ? " · Image input" : ""}</p><p className="mt-1 text-[11px] text-ink-secondary">{model.pricing ? `${model.pricing.inputPerMillion === undefined ? "Input price not listed" : `Input ${money(model.pricing.inputPerMillion)}`} · ${model.pricing.outputPerMillion === undefined ? "output price not listed" : `output ${money(model.pricing.outputPerMillion)}`} per 1M tokens` : "Price not listed"}</p>{model.pricing && <p className="mt-1 break-words text-[11px] text-ink-secondary">Source: {model.pricing.source} · {new Date(model.pricing.updatedAt).toLocaleDateString()}</p>}</div>)}</div></details>
+        <InAdvanced><section aria-label={`${connection.label} models`} className="rounded-xl bg-card p-4"><h4 className="text-[14px] font-medium text-ink">{connection.label}: {matching.length} matching chat models</h4><div className="mt-2 max-h-80 overflow-y-auto">{matching.map(model => <div key={model.id} className="border-t border-hairline/30 py-3"><p className="break-words text-[13px]">{model.label}</p><p className="break-all text-[11px] text-ink-secondary">{model.id}</p><p className="mt-1 text-[11px] text-ink-secondary">{model.contextWindow ? `${model.contextWindow.toLocaleString()} context tokens` : "Context not listed"}{model.capabilities.tools ? " · Tools" : ""}{model.capabilities.vision ? " · Image input" : ""}</p></div>)}</div></section></InAdvanced>
         <p className="mt-2 text-[11px] leading-relaxed text-ink-secondary">Catalog information is not a successful model test. Image and video models are excluded from this chat list.</p>
       </section>;
     })}
     {/* Spec V1: permanent, never conditional on anything having been detected. */}
-    <LocalModelsSettings />
+    <InAdvanced><LocalModelsSettings /></InAdvanced>
     <section id="existing-model-keys" aria-labelledby="existing-keys-heading" className="rounded-xl border border-hairline/40 p-4">
       <h3 id="existing-keys-heading" className="text-[14px] font-medium">Existing/default connections</h3><p className="mt-1 text-[12px] leading-relaxed text-ink-secondary">These update the keys already used by existing setups. No keys are copied into new connections. Saving can reload engines and interrupt running tasks.</p>
       <ExistingKey id="opencode" label="OpenCode provider" configured={state.config?.opencodeGo?.configured ?? false} onSaved={existingSaved} />

@@ -22,6 +22,7 @@ import { setMemoryMode } from "./repository.ts";
 import { searchMemory, type MemorySearchBridge } from "./search.ts";
 import type { MemorySearchInput } from "./worker-protocol.ts";
 import { LineageAllowance } from "./lineage-allowance.ts";
+import { removeTempDirSync } from "../testing/cleanup.ts";
 
 const ROSTER: MemoryRoster = { bots: [{ id: "a", threadId: "thread-a", section: "crew" }, { id: "b", threadId: "thread-b", section: "crew" }], groups: [] };
 const INDEX_PATH = () => join(DATA_DIR, "memory-index.db");
@@ -29,7 +30,7 @@ const QUERY = "harbour lantern";
 
 function fresh() {
   closeMemoryIndexReader(); closeDatabase();
-  rmSync(DATA_DIR, { recursive: true, force: true }); mkdirSync(DATA_DIR, { recursive: true });
+  removeTempDirSync(DATA_DIR); mkdirSync(DATA_DIR, { recursive: true });
   reconcileMemoryRoster(ROSTER); setMemoryMode("active");
 }
 beforeEach(fresh);
@@ -244,13 +245,18 @@ describe("round 3 P2: a rollover deletion is the stepped maintenance's work, not
     index.close();
   });
 
-  it("a forget still cleans up at once", () => {
+  // 1.0.3 rehearsal 2: a forget used to merge the whole word index and truncate the log in its own batch, about 47 MB per 16
+  // deletions on the owner's index. It now owes the merge to the same stepped maintenance a rollover does.
+  it("a forget owes the stepped merge too: no whole-index pass and no truncating checkpoint in its batch", () => {
     const index = new MemoryIndex(INDEX_PATH());
     seedRolled(index);
     const statements = sqlLog(index);
     index.upsert([{ id: "checkpoint:t", version: 3, scopeId: "s", text: "", deleted: true }]);
-    expect(statements.some(sql => /optimize/i.test(sql))).toBe(true);
-    expect(statements.some(sql => /wal_checkpoint/i.test(sql))).toBe(true);
+    expect(statements.filter(sql => /optimize|wal_checkpoint/i.test(sql))).toEqual([]);
+    expect(index.maintenanceOwed()).toBe(true);
+    let steps = 0;
+    while (!index.purgeRolledCheckpoints().done) if (++steps > 10_000) throw new Error("the stepped maintenance did not finish");
+    expect(index.maintenanceOwed()).toBe(false);
     index.close();
   });
 

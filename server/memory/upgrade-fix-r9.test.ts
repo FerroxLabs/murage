@@ -6,7 +6,7 @@
 // chained set; a proof in progress is never evicted for room; a proof slice counts nested work, hands back within its time and runs only when no owner
 // turn waits; no background slice reads a history-sized list in one go; the background upgrade waits while the I/O budget holds it back; and a file a
 // preview wrote with the proof table restores, upgrades and downgrades.
-import { mkdirSync, mkdtempSync, rmSync } from "node:fs";
+import { mkdirSync, mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
@@ -25,8 +25,10 @@ import { UPGRADE_DERIVED_TABLES, legacyReplyRootsSteps, rebuildOutputIndexSlice 
 import { stepIntegrityPass } from "./integrity-pass.ts";
 import { beginIntegrityPass, integrityHoldOf, readIntegrityPass } from "./integrity-state.ts";
 import { startBackgroundUpgradeWork } from "./upgrade-background.ts";
+import { removeTempDirSync } from "../testing/cleanup.ts";
+import { stampFreshSession } from "./testing/writetime-fixture.ts";
 
-const fresh = () => { closeDatabase(); forgetKeptLineageForTest(); rmSync(DATA_DIR, { recursive: true, force: true }); mkdirSync(DATA_DIR, { recursive: true }); };
+const fresh = () => { closeDatabase(); forgetKeptLineageForTest(); removeTempDirSync(DATA_DIR); mkdirSync(DATA_DIR, { recursive: true }); };
 beforeEach(fresh);
 afterEach(() => { setRootSetCeilingForTest(null); setVerdictLimitForTest(null); });
 
@@ -57,7 +59,8 @@ function chainedSet(db: DatabaseSync, id: string, parent: string, parentSize: nu
   db.prepare("INSERT INTO memory_root_set_parents(set_id,parent_id) VALUES(?,?)").run(id, parent);
   db.prepare("WITH RECURSIVE k(i) AS (SELECT 1 UNION ALL SELECT i+1 FROM k WHERE i<?2) INSERT INTO memory_root_set_members(set_id,root_thread_id,root_message_id) SELECT ?1,'tc','a'||printf('%07d',i) FROM k").run(id, added);
 }
-const retain = (db: DatabaseSync, setId: string) => db.prepare("INSERT INTO memory_session_roots(thread_id,driver_instance,native_session,set_id) VALUES('C','d','sess',?)").run(setId);
+// the session started fresh under 1.0.3 (S6 rule 26: stamped at the door epoch), so the root-set proof alone decides
+const retain = (db: DatabaseSync, setId: string) => { stampFreshSession(db, "C", "d", "sess"); db.prepare("INSERT INTO memory_session_roots(thread_id,driver_instance,native_session,set_id) VALUES('C','d','sess',?)").run(setId); };
 const sessionCheck = () => { const why: { reason?: string } = {}; const bad = retainedSessionInvalid(LineageAllowance.turn(1e9), "C", "d", "sess", why); return { bad, reason: why.reason }; };
 function passes(limit = 400, budget = 4_000): number[] {
   const members: number[] = [];
@@ -288,7 +291,7 @@ it("r9 (Astra r8 #5): an archive of a preview file with the proof table (either 
     for (const shape of ["early", "late"] as const) {
       const db = new DatabaseSync(join(scratch, `${shape}.db`));
       initializeMessageTables(db);
-      db.prepare("INSERT INTO messages VALUES (?,?,?,?,?,?,?)").run("t", "m", 1, "user", "text", "hi", JSON.stringify({ id: "m", at: 1, role: "user", kind: "text", text: "hi" }));
+      db.prepare("INSERT INTO messages(thread_id,id,at,role,kind,text,json) VALUES (?,?,?,?,?,?,?)").run("t", "m", 1, "user", "text", "hi", JSON.stringify({ id: "m", at: 1, role: "user", kind: "text", text: "hi" }));
       db.exec("INSERT INTO thread_state VALUES ('t','m')");
       if (shape === "early") {
         db.exec(`CREATE TABLE ${LEGACY_ROOT_SET_PROOFS_TABLE}(\n  set_id TEXT PRIMARY KEY NOT NULL, size INTEGER NOT NULL, lineage_stamp TEXT NOT NULL, cursor INTEGER NOT NULL) WITHOUT ROWID`);
@@ -301,6 +304,6 @@ it("r9 (Astra r8 #5): an archive of a preview file with the proof table (either 
       expect(inspectInstallationDatabase(db)).toMatchObject({ messages: 1, threads: 1 });
       db.close();
     }
-  } finally { rmSync(scratch, { recursive: true, force: true }); }
+  } finally { removeTempDirSync(scratch); }
   expect(UPGRADE_DERIVED_TABLES as readonly string[]).toContain(LEGACY_ROOT_SET_PROOFS_TABLE);
 });

@@ -1,17 +1,18 @@
 import { createHash, randomUUID } from "node:crypto";
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, expect, it } from "vitest";
 import { acquireDataDirLease } from "../electron/data-dir-lease.mjs";
 import { commitPackageImportFiles, recoverPackageImportTransaction } from "./package-import-transaction.ts";
+import { removeTempDirSync } from "./testing/cleanup.ts";
 
 const cleanup: Array<() => void> = [];
 afterEach(() => { for (const close of cleanup.splice(0).reverse()) close(); });
 const sha = (bytes: Buffer) => createHash("sha256").update(bytes).digest("hex");
 it("permits absent first-use state without replacing unsafe existing roots", () => {
   const parent = mkdtempSync(join(tmpdir(), "murage-first-use-"));
-  cleanup.push(() => rmSync(parent, { recursive: true, force: true }));
+  cleanup.push(() => removeTempDirSync(parent));
   const missing = join(parent, "missing");
   const options = { assertOwned() {} };
   expect(recoverPackageImportTransaction(missing, options)).toEqual({ status: "none" });
@@ -28,7 +29,7 @@ it("permits absent first-use state without replacing unsafe existing roots", () 
 });
 function fixture() {
   const root = mkdtempSync(join(tmpdir(), "murage-package-transaction-"));
-  cleanup.push(() => rmSync(root, { recursive: true, force: true }));
+  cleanup.push(() => removeTempDirSync(root));
   const lease = acquireDataDirLease(root); cleanup.push(() => { lease.release(); });
   const assertOwned = () => { lease.utilityServerLeaseEnvironment(); };
   const botId = randomUUID();
@@ -134,7 +135,7 @@ it("enforces the payload byte budget and caller ownership before mutation", () =
 
 it.skipIf(process.platform === "win32")("refuses symlinked payload parents without following them", () => {
   const f = fixture();
-  const external = mkdtempSync(join(tmpdir(), "murage-transaction-external-")); cleanup.push(() => rmSync(external, { recursive: true, force: true }));
+  const external = mkdtempSync(join(tmpdir(), "murage-transaction-external-")); cleanup.push(() => removeTempDirSync(external));
   symlinkSync(external, join(f.root, "workspaces"));
   expect(() => commitPackageImportFiles(f.root, f.replacements, f.expected, f.options)).toThrow("UNSAFE_PACKAGE_IMPORT_PATH");
   expect(existsSync(join(external, f.botId))).toBe(false);

@@ -12,6 +12,7 @@ import { Store } from "./store.ts";
 import { assertConnectedAppCall, reviewBotAccess } from "./bot-access.ts";
 import { LEGACY_DAILY_LIMIT } from "../shared/connected-app-calls.ts";
 import { exposedToolName, LEGACY_NAMES_ENV } from "../shared/connected-app-names.ts";
+import { removeTempDirSync } from "./testing/cleanup.ts";
 
 const ENTRY = join(dirname(fileURLToPath(import.meta.url)), "connector-proxy.ts");
 let child: ChildProcessWithoutNullStreams | null = null;
@@ -596,7 +597,7 @@ describe("connector MCP bridge", () => {
   describe("tools/list never waits on a slow upstream", () => {
     const dirs: string[] = [];
     const cacheDir = () => { const dir = mkdtempSync(join(tmpdir(), "murage-tools-cache-")); dirs.push(dir); return dir; };
-    afterEach(() => { for (const dir of dirs.splice(0)) rmSync(dir, { recursive: true, force: true }); });
+    afterEach(() => { for (const dir of dirs.splice(0)) removeTempDirSync(dir); });
 
     const listReq = (id: number) => `${JSON.stringify({ jsonrpc: "2.0", id, method: "tools/list" })}\n`;
     const realTools = (label: string) => [{ name: `REAL_${label}`, description: "d", inputSchema: { type: "object", properties: {} } }];
@@ -1341,7 +1342,7 @@ syncBuiltinESMExports();
 
 describe("the first tools/list is never an error or an empty list", () => {
   const dirs: string[] = [];
-  afterEach(() => { for (const dir of dirs.splice(0)) rmSync(dir, { recursive: true, force: true }); });
+  afterEach(() => { for (const dir of dirs.splice(0)) removeTempDirSync(dir); });
   const ID = "c".repeat(32);
   const listReq = (id: number) => `${JSON.stringify({ jsonrpc: "2.0", id, method: "tools/list" })}\n`;
   const SEVEN = ["SEARCH_TOOLS", "GET_TOOL_SCHEMAS", "MULTI_EXECUTE_TOOL", "MANAGE_CONNECTIONS", "REMOTE_WORKBENCH", "REMOTE_BASH_TOOL", "WAIT_FOR_CONNECTIONS"].map((name) => ({ name: `COMPOSIO_${name}`, description: "d", inputSchema: { type: "object", properties: {} } }));

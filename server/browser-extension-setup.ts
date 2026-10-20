@@ -2,6 +2,7 @@
 import { randomUUID } from "node:crypto";
 import { readBrowserSetupCard, type BrowserSetupCardData } from "../shared/browser-setup-card.ts";
 import { isOwnerOrigin, type Store, type BotRecord } from "./store.ts";
+import { murageLine } from "./murage-line.ts";
 type SetupStore = Pick<Store,"keyedCards"|"keyedCardsEverywhere"|"messageById"|"newestMatching"|"appendMessage"|"patchMessage"|"bots"|"groups">;
 export type BrowserSetupStatus = { profiles: {profileId:string;browser:string}[]; bindings: {bindingId?:string;botId:string;threadId:string;profileId:string;state:string}[] };
 type Options = {
@@ -14,6 +15,8 @@ type Options = {
   continueTask: (setup:BrowserSetupCardData)=>Promise<void>;
   /** The owner pressed Continue on the setup card while the task they stopped is still the newest: start a new task (a new binding, no grants). */
   startNewTask?: (bindingId:string)=>Promise<unknown>;
+  /** The provider turn running in this conversation now (internal-capabilities.ts providerTurnOf), from the server's own turn state, never a request. The card quotes the bot's reason, so it names that turn. */
+  turnOf?: (threadId:string)=>string|undefined;
 };
 function refusal(message:string):never{throw Object.assign(new Error(message),{status:409});}
 export class BrowserExtensionSetup {
@@ -33,9 +36,9 @@ export class BrowserExtensionSetup {
     // and no browser question, only the check before its task continues.
     const remembered:Partial<BrowserSetupCardData>=bot.useMyChrome&&bot.browserTransport==='extension'&&bot.browserExtensionProfileId?{decision:'accepted',remembered:true,profileId:bot.browserExtensionProfileId,...(bot.browserExtensionBrowser?{browser:bot.browserExtensionBrowser}:{})}:{};
     const browserSetup:BrowserSetupCardData={requestKey:randomUUID(),botId,threadId,ownerMessageId:ownerMessage.id,...remembered};
-    const message=this.options.store.appendMessage(threadId,{role:'bot',kind:'options',from:{botId:bot.id,name:bot.name,color:bot.color},card:remembered.decision
+    const message=this.options.store.appendMessage(threadId,murageLine({role:'bot',kind:'options',turnId:this.options.turnOf?.(threadId),from:{botId:bot.id,name:bot.name,color:bot.color},card:remembered.decision
       ?{title:'Continue with your browser?',subtitle:reason.trim().slice(0,240)||'Your browser connection is remembered for this bot. Check it, then continue.',options:['Check connection and continue','Not now'],browserSetup}
-      :{title:'Use your browser for this task?',subtitle:reason.trim().slice(0,240)||'You can connect your signed-in browser, or keep using Murage without it.',options:['Set up','Not now'],browserSetup}});
+      :{title:'Use your browser for this task?',subtitle:reason.trim().slice(0,240)||'You can connect your signed-in browser, or keep using Murage without it.',options:['Set up','Not now'],browserSetup}}));
     return {messageId:message.id,pending:true};
   }
   private card(threadId:string,messageId:string){const message=this.options.store.messageById(threadId,messageId);const setup=readBrowserSetupCard(message?.card);if(!message?.card||!setup||setup.threadId!==threadId||!this.options.owner(setup.botId,threadId))refusal("This browser setup request is no longer available.");return {message,setup};}

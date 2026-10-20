@@ -10,6 +10,7 @@ import { channelToProjectRows } from './project-settings.ts';
 import { canonicalProjectRoots } from './project-work-profile.ts';
 import { exportProjectBrief } from './project-export.ts';
 import { projectLifecycleFailure } from './project-close.ts';
+import { removeTempDirSync } from "./testing/cleanup.ts";
 it('exports only inside the selected unchanged root, without overwriting', () => {
   const root=mkdtempSync(join(tmpdir(),'project-export-'));const db=new DatabaseSync(':memory:');initializeProjectTables(db);
   try {
@@ -22,7 +23,7 @@ it('exports only inside the selected unchanged root, without overwriting', () =>
     expect(()=>exportProjectBrief(db,'g',0)).toThrow();
     rmSync(first);symlinkSync(join(root,'outside'),first);
     expect(()=>exportProjectBrief(db,'g',0)).toThrow();
-  } finally {db.close();rmSync(root,{recursive:true,force:true});}
+  } finally {db.close();removeTempDirSync(root);}
 });
 
 it('R2 refuses and removes a file when the parent is swapped just before open', () => {
@@ -33,7 +34,7 @@ it('R2 refuses and removes a file when the parent is swapped just before open', 
     const roots=canonicalProjectRoots([{path:selected}],{dataDir:join(root,'data')});db.prepare('UPDATE project_settings SET work_roots=?').run(JSON.stringify(roots));
     expect(()=>exportProjectBrief(db,'g',0,{beforeOpen:()=>{renameSync(selected,join(root,'moved'));symlinkSync(other,selected);}})).toThrow('The work folder changed. Choose it again.');
     expect(existsSync(join(other,'project-brief-g-v1.md'))).toBe(false);
-  }finally{db.close();rmSync(root,{recursive:true,force:true});}
+  }finally{db.close();removeTempDirSync(root);}
 });
 
 function raceFixture(name: string) {
@@ -41,7 +42,7 @@ function raceFixture(name: string) {
   const selected=join(root,'selected'),other=join(root,'other');mkdirSync(selected);mkdirSync(other);
   channelToProjectRows(db,{groupId:'g',bulletin:'Private brief',leadBotId:null,now:1});
   const roots=canonicalProjectRoots([{path:selected}],{dataDir:join(root,'data')});db.prepare('UPDATE project_settings SET work_roots=?').run(JSON.stringify(roots));
-  return {root,db,selected,other,done:()=>{db.close();chmodSync(selected,0o700);rmSync(root,{recursive:true,force:true});}};
+  return {root,db,selected,other,done:()=>{db.close();chmodSync(selected,0o700);removeTempDirSync(root);}};
 }
 it('R2 refuses a parent swapped away for the open and swapped back before the check, and writes nothing', () => {
   const {root,db,selected,other,done}=raceFixture('project-export-swapback-');

@@ -10,7 +10,7 @@
 //   to the budget, so a frame citing many replies of a long session is fast.
 // - L1: a line quoted from far back never takes a newer line's place.
 // - L3: the receipt budget withholds a direct line instead of failing.
-import { mkdirSync, rmSync } from "node:fs";
+import { mkdirSync } from "node:fs";
 import { beforeEach, expect, it } from "vitest";
 import { afterEach as thawAfterEach, beforeEach as thawBeforeEach } from "vitest";
 import { thawRootSetWritesForTest } from "./replay-lineage.ts";
@@ -21,11 +21,12 @@ import { ensureScope, memoryAccess, reconcileMemoryRoster, type MemoryRoster } f
 import { continuationMemoryRevoked, filterDirectReplay, filterMemoryReplay } from "./disclosures.ts";
 import { recordSessionRoots, REPLAY_RECEIPT_BUDGET, replayRowsRead, resetReplayRowsRead } from "./replay-lineage.ts";
 import { LineageAllowance } from "./lineage-allowance.ts";
+import { removeTempDirSync } from "../testing/cleanup.ts";
 // 1.0.2: this test models a 1.0.1 file (legacy root-set rows) for the read-time judge, which still decides legacy data until S6.
 thawBeforeEach(() => thawRootSetWritesForTest(true));
 thawAfterEach(() => thawRootSetWritesForTest(false));
 
-beforeEach(() => { closeDatabase(); rmSync(DATA_DIR, { recursive: true, force: true }); mkdirSync(DATA_DIR, { recursive: true }); });
+beforeEach(() => { closeDatabase(); removeTempDirSync(DATA_DIR); mkdirSync(DATA_DIR, { recursive: true }); });
 function fixture(threadId = "private", notOwnerAudience = false) {
   const roster: MemoryRoster = { bots: [{ id: "bot", threadId: "private", section: "secret-team" }], groups: [] };
   reconcileMemoryRoster(roster);
@@ -64,6 +65,8 @@ it("M1: a resumed session whose receipt cites a withheld reply is reset, though 
   // S-B is a session v6 started (its lineage row): its fixture timestamps
   // predate lineage, and an unproven pre-v6 session resets (Astra r4 #5)
   recordSessionRoots("private", "fuigo", "S-B", { roots: new Set(), over: false });
+  database().prepare("INSERT OR IGNORE INTO memory_session_lineage(thread_id,driver_instance,native_session,first_lsn,last_lsn,door_epoch) SELECT ?,?,?,0,0,value FROM memory_lineage_lsn_meta WHERE key='reader_door_epoch'").run("private", "fuigo", "S-A"); // a 1.0.3 fresh start stamped it (S6 rule 26)
+  database().prepare("INSERT OR IGNORE INTO memory_session_lineage(thread_id,driver_instance,native_session,first_lsn,last_lsn,door_epoch) SELECT ?,?,?,0,0,value FROM memory_lineage_lsn_meta WHERE key='reader_door_epoch'").run("private", "fuigo", "S-B"); // a 1.0.3 fresh start stamped it (S6 rule 26)
   const messages: M[] = [bot("x-old"), bot("a-old")];
   for (let i = 0; i < 60; i++) messages.push(owner(`o-${i}`), bot(`b-${i}`)); // another engine's turns
   filterDirectReplay(LineageAllowance.tool(), "private", messages, a, new Set());
@@ -76,13 +79,14 @@ it("M1: a resumed session whose receipt cites a withheld reply is reset, though 
 
 it("M1 (1.0.1.1): a cited reply whose receipt was revoked on state alone ends the session for a reader not proven the owner, never the owner's own chat", () => {
   for (const notOwner of [false, true]) {
-    closeDatabase(); rmSync(DATA_DIR, { recursive: true, force: true }); mkdirSync(DATA_DIR, { recursive: true });
+    closeDatabase(); removeTempDirSync(DATA_DIR); mkdirSync(DATA_DIR, { recursive: true });
     const a = fixture("private", notOwner); const scope = ensureScope("bot", "bot");
     // x-old: its receipt revoked by an install-wide change; its content intact
     botSource(scope, "x-old");
     insertReceipt(a, "R-x", null, [], ["x-old"], "revoked", 1);
     insertReceipt(a, "R-s", "S-A", ["message:private:x-old"], ["a-old"], "delivered", 2);
     recordSessionRoots("private", "fuigo", "S-A", { roots: new Set(), over: false });
+    database().prepare("INSERT OR IGNORE INTO memory_session_lineage(thread_id,driver_instance,native_session,first_lsn,last_lsn,door_epoch) SELECT ?,?,?,0,0,value FROM memory_lineage_lsn_meta WHERE key='reader_door_epoch'").run("private", "fuigo", "S-A"); // a 1.0.3 fresh start stamped it (S6 rule 26)
     expect(continuationMemoryRevoked(LineageAllowance.tool(), "private", "fuigo", "S-A", a)).toBe(notOwner);
     expect(state("R-s")).toBe("delivered");
   }

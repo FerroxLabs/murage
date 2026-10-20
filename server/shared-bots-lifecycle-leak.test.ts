@@ -1,6 +1,6 @@
 // Copyright 2026 Ferrox Labs
 // SPDX-License-Identifier: AGPL-3.0-or-later
-import { mkdirSync, rmSync } from "node:fs";
+import { mkdirSync } from "node:fs";
 import { beforeEach, expect, it } from "vitest";
 import { DATA_DIR } from "./config.ts";
 import { closeDatabase, database } from "./database.ts";
@@ -9,13 +9,15 @@ import { teamIdFor } from "./team-identities.ts";
 import { enqueueSharedWork, changeSharing } from "./shared-work.ts";
 import { authorizeWork, threadPartition } from "./execution-audience.ts";
 import { getOrCreateChannel } from "./comms-visibility.ts";
-import { continuationResultsForThread, requestReturnsTo, partitionTranscriptMessages } from "./partition-sources.ts";
+import { continuationResultsForThread, requestReturnsTo } from "./partition-sources.ts";
+import { botMessages, botViewer } from "./bot-read.ts";
 import { backgroundMemoryScopes, ensureScope } from "./memory/policy.ts";
 import { renameTeam, deleteTeam, teamRevision } from "./team-sections.ts";
 import { ownerMemoryTicket } from "./memory/authority.ts";
 import { repairRestoredSharing } from "./sharing-restore.ts";
 import { roomRequest } from "./room-requests.ts";
-beforeEach(()=>{closeDatabase();rmSync(DATA_DIR,{recursive:true,force:true});mkdirSync(DATA_DIR,{recursive:true});});
+import { removeTempDirSync } from "./testing/cleanup.ts";
+beforeEach(()=>{closeDatabase();removeTempDirSync(DATA_DIR);mkdirSync(DATA_DIR,{recursive:true});});
 const deps={memoryTicket:ownerMemoryTicket(),leadershipError:()=>null,groupWorking:()=>false,channelArchived:()=>{},reachabilityChanged:()=>{}};
 function fixture(){
  const store=new Store(()=>({instanceId:"fixture",model:"fixture"}));const make=(name:string,section:string,lead=false)=>{const b=store.createBot();store.patchBot(b.id,{name,section,chiefOfStaff:lead});return b;};
@@ -40,6 +42,6 @@ it.each(["live","revoked","renamed","deleted","restored"])("Sales remains unreac
  const wake={...f.b,verb:"wake" as const,payloadText:JSON.stringify([{requestId:f.a.id,botId:f.iris.id,state:"done",messageId:f.result.id,note:"CANARY_SALES_PRIVATE"}])};
  expect(continuationResultsForThread(database(),wake,f.b.targetThreadId!)).toEqual([]);
  const forged=f.store.appendMessage(f.b.targetThreadId!,{role:"bot",kind:"activity",tool:{name:"CANARY_SALES_ACTIVITY"},copyOf:{threadId:f.a.targetThreadId!,messageIds:[f.result.id]}});
- expect(partitionTranscriptMessages(database(),f.iris.id,f.b.targetThreadId!,[forged])).toEqual([]);
+ expect(botMessages(database(),botViewer(f.iris.id),f.b.targetThreadId!,[forged])).toEqual([]);
  expect(roomRequest(database(),f.a.id)?.payloadText).toBe("CANARY_SALES_PRIVATE");
 });

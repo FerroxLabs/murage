@@ -15,55 +15,75 @@
 //      their original); a cycle, a walk past its limits, or an error means withheld.
 //   3. for every message on that walk: withheld from bots, a captured message, a forgotten source, memory a non-owner audience may not see,
 //      and partition ancestry: the withheld line, never the text.
+//   4. three states, never two (REPLY-WITHHELD-CONTRACT C1, R1): a real mark on the walk is `withheld` ("it used something you deleted or
+//      changed"); a check that could not finish (a pending revoke window, a thread whose lineage is not ready, a line with no lineage row,
+//      an unproven captured or copy check, a partition check past its budget, a walk past its limits, an exception) is `checking`, and the
+//      words are held for the owner's own conversation (`held`) until the check settles (server/held-replies.ts). A bot reads the checking
+//      line either way. withheld beats checking beats shown; only a cycle on the walk reads withheld without a mark.
 import { RECEIPT_ORIGIN_UNCONFIRMED_LINE } from "./card-result-source.ts";
 import { hostLine } from "./host-words.ts";
 import type { FailureCode } from "./failure-code.ts";
 import { MurageStatus, status } from "./murage-status.ts";
-import { ReleasedText, WorkerText, type EgressOrigin, type SourceRange, type TextLineage } from "./released-text.ts";
+import { ReleasedText, WorkerText, type EgressOrigin, type TextLineage } from "./released-text.ts";
 import type { WorkerMessage } from "./worker-message.ts";
 import type { DatabaseSync } from "node:sqlite";
 import { denyLookup, lineageLive } from "./memory/deny-read.ts";
 import { addTurnParents, currentTurnLineage } from "./memory/lineage-write.ts";
 
 export type { EgressOrigin };
-export interface EgressMessage { id: string; text?: string; copyOf?: { threadId: string; messageIds: string[] }; withheldFromBots?: boolean | "forgotten" | "checking" }
+/** What a line check answers: shown, withheld (a real mark) or checking (an unknown). A boolean answer keeps its old meaning. */
+export type LineVerdictState = "shown" | "withheld" | "checking";
+/** A check's answer with why: withheld, and whether only because it could not finish. */
+export type CheckVerdict = { withheld: boolean; unproven: boolean };
+export interface EgressMessage { id: string; text?: string; copyOf?: { threadId: string; messageIds: string[] }; withheldFromBots?: boolean | "forgotten" | "checking"; murageLine?: boolean }
 
 /** What the egress needs to ask about, supplied once by the server (and by tests). */
 export interface ResultEgressDeps {
   message: (threadId: string, messageId: string) => EgressMessage | undefined;
-  /** The stored messages of a thread, for finding which of them hold a given piece of text (`textHolders`). Absent: none are found. */
-  threadMessages?: (threadId: string) => readonly EgressMessage[];
   authorize: (requestId: string, worker: string, destinationThreadId: string) => { ok: true } | { ok: false; code: string; line: string };
-  copyOriginWithheld: (copy: EgressOrigin) => boolean;
-  capturedMessageWithheld: (threadId: string, messageId: string) => boolean;
+  /** true, or `{ withheld: true }`, is withheld; `{ withheld: true, unproven: true }` is checking (replay-lineage.ts copyOriginVerdict). */
+  copyOriginWithheld: (copy: EgressOrigin) => boolean | CheckVerdict;
+  /** The same shape (replay-lineage.ts capturedMessageVerdict). */
+  capturedMessageWithheld: (threadId: string, messageId: string) => boolean | CheckVerdict;
   messageSourceForgotten: (threadId: string, messageId: string) => boolean;
   messageMadeWithMemory: (threadId: string, messageId: string) => boolean;
-  partitionAllowed: (workerBotId: string, threadId: string, messageIds: string[]) => boolean;
+  /** false is withheld; "checking" is a check past its budget. */
+  partitionAllowed: (workerBotId: string, threadId: string, messageIds: string[]) => boolean | LineVerdictState;
   /** Both sides are positively the owner's own unshared conversations (the origin of the result is given when there is one). */
   ownUnsharedWork: (who: { fromBotId: string; toBotId: string; fromThreadId: string }, origin: EgressOrigin | undefined) => boolean;
   /** The words a withheld result is replaced by; the status table's own `withheld` line when absent. */
   withheldLine?: string;
-  /** Whether every line of a conversation up to a message still stands since a hold-log entry (server/turn-source-holds.ts rangeHolds).
-   * Absent: no range can be checked, so text that rests on one is not shown. */
-  rangeHolds?: (range: SourceRange) => boolean;
+  /** The words a result still being checked is replaced by for a bot; the status table's own `checking` line when absent. */
+  checkingLine?: string;
   /** Write-time (DESIGN-WRITETIME 6 k, S4): whether every one of these lines of one thread reads shown to the result's reader. The lines'
    * carries already hold the copy chain, so this replaces the walk's per-message rules once the read-time judge goes (S6); until then both
    * apply. index.ts supplies `writetimeLinesShown(database)`. Absent: the read-time rules alone. */
-  linesShown?: (threadId: string, messageIds: readonly string[], notOwnerAudience: boolean) => boolean;
+  linesShown?: (threadId: string, messageIds: readonly string[], notOwnerAudience: boolean) => boolean | LineVerdictState;
+  /** The reader door (server/bot-read.ts doorEgress, LINEAGE-DESIGN-S6 rule 16): whether these stored lines of one thread read as stored to the
+   * bot the result is released to, judged as every bot-facing read is (classified rows, copy and hand-off chains, the row check, lineage
+   * verdicts). index.ts supplies `doorEgress(database)`. Absent: the gate's own rules alone (the tests of those rules). */
+  doorShown?: (readerBotId: string, threadId: string, messageIds: readonly string[], notOwnerAudience: boolean) => boolean | LineVerdictState;
 }
 
 /** The write-time lookup on a result's lines, for ResultEgressDeps.linesShown: one page lookup per thread. A not-owner audience is judged
  * with no scopes of its own, so any memory footprint withholds (as messageMadeWithMemory does today); the owner audience skips the footprint.
  * Until write-time lineage is written on this file the read-time rules decide alone. */
-export function writetimeLinesShown(db: () => DatabaseSync): NonNullable<ResultEgressDeps["linesShown"]> {
+export function writetimeLinesShown(db: () => DatabaseSync): (threadId: string, messageIds: readonly string[], notOwnerAudience: boolean) => LineVerdictState {
   return (threadId, messageIds, notOwnerAudience) => {
     const file = db();
-    if (!messageIds.length || !lineageLive(file)) return true;
+    if (!messageIds.length || !lineageLive(file)) return "shown";
     // Only policy/epoch age is exempt for the owner's own chat: a roster change alone must not hide a Chief's delegated reply.
     // Keep the owner audience explicit so receipt revocations, content marks and pending checks still bind the result.
     const verdicts = denyLookup(file, { threadId, lines: messageIds.map(messageId => ({ messageId, author: "generated" as const })) },
       { audience: { owner: !notOwnerAudience, scopeIds: [] } }, { ownerOwnChat: !notOwnerAudience });
-    return messageIds.every(id => verdicts.get(id)?.state === "shown");
+    // the worst state over the lines: a mark anywhere withholds; otherwise an unknown anywhere is checking
+    let worst: LineVerdictState = "shown";
+    for (const id of messageIds) {
+      const state = verdicts.get(id)?.state ?? "checking";
+      if (state === "withheld") return "withheld";
+      if (state === "checking") worst = "checking";
+    }
+    return worst;
   };
 }
 
@@ -81,7 +101,7 @@ export interface StoredResultRef {
    * that way. With it, a not-owner reader is no reason on its own to refuse an unbound reply: the reply must still be the owner's own
    * unshared work, and every message-level rule below still judges it for a not-owner audience. */
   peerTurnNotOwner?: true;
-  /** A receipt written before results carried their lineage: its text cannot be checked, so it is withheld. */
+  /** A receipt written before results carried their lineage: its text cannot be checked, so it reads checking (never shown, never withheld). */
   lineageUnknown?: boolean;
   /** The record is Murage's own account of how a request ended (a stop, a refusal, a failure to start), not a worker's words. It references no
    * message and carries no text through the gate: after authorization the gate answers `status`, and the caller writes its own status line. */
@@ -91,6 +111,9 @@ export interface StoredResultRef {
 export type ReleasedResult =
   | { kind: "text"; text: ReleasedText; copyOf?: EgressOrigin }
   | { kind: "withheld"; line: MurageStatus }
+  /** A check on the walk could not finish: a bot reads `line`; for the owner's own audience the words are `held` (with their originals) so
+   * the owner's conversation can keep them flagged "checking" until the hold settles (REPLY-WITHHELD-CONTRACT C3). */
+  | { kind: "checking"; line: MurageStatus; held?: { text: ReleasedText; copyOf: EgressOrigin } }
   | { kind: "refused"; line: MurageStatus; code: string }
   | { kind: "status" }
   | { kind: "gone" };
@@ -103,16 +126,17 @@ export function configureResultEgress(deps: ResultEgressDeps | undefined): void 
 export const COPY_WALK_MAX_DEPTH = 8;
 export const COPY_WALK_MAX_NODES = 64;
 
-type Walk = { ok: true; nodes: Array<{ threadId: string; message: EgressMessage }> } | { ok: false; why: "gone" | "withheld" };
+type Walk = { ok: true; nodes: Array<{ threadId: string; message: EgressMessage }> } | { ok: false; why: "gone" | "withheld" | "checking" };
 
-/** Every message the result stands on and every message those were copied from. A missing one is `gone`; a cycle, a limit or an error is `withheld`. */
+/** Every message the result stands on and every message those were copied from. A missing one is `gone`; a cycle is `withheld`; a limit or an
+ * error is `checking` (the walk could not finish: nothing proves a mark, nothing proves its absence). */
 function walkCopies(deps: ResultEgressDeps, origin: EgressOrigin): Walk {
   const nodes: Array<{ threadId: string; message: EgressMessage }> = [];
   const seen = new Set<string>();
   let level: EgressOrigin[] = [origin];
   try {
     for (let depth = 0; level.length; depth += 1) {
-      if (depth > COPY_WALK_MAX_DEPTH) return { ok: false, why: "withheld" };
+      if (depth > COPY_WALK_MAX_DEPTH) return { ok: false, why: "checking" };
       const next: EgressOrigin[] = [];
       for (const group of level) {
         for (const id of group.messageIds) {
@@ -123,7 +147,7 @@ function walkCopies(deps: ResultEgressDeps, origin: EgressOrigin): Walk {
             continue;
           }
           seen.add(key);
-          if (nodes.length >= COPY_WALK_MAX_NODES) return { ok: false, why: "withheld" };
+          if (nodes.length >= COPY_WALK_MAX_NODES) return { ok: false, why: "checking" };
           const message = deps.message(group.threadId, id);
           if (!message) return { ok: false, why: "gone" };
           nodes.push({ threadId: group.threadId, message });
@@ -132,7 +156,7 @@ function walkCopies(deps: ResultEgressDeps, origin: EgressOrigin): Walk {
       }
       level = next;
     }
-  } catch { return { ok: false, why: "withheld" }; }
+  } catch { return { ok: false, why: "checking" }; }
   return { ok: true, nodes };
 }
 
@@ -158,6 +182,15 @@ function cyclesBack(deps: ResultEgressDeps, from: EgressOrigin, threadId: string
 const withheldResult = (deps: ResultEgressDeps): ReleasedResult => ({ kind: "withheld", line: withheldLine(deps) });
 /** The line a withheld result is replaced by: the server's own words for it when it supplies them, otherwise the status table's. */
 const withheldLine = (deps: ResultEgressDeps | undefined): MurageStatus => deps?.withheldLine === undefined ? status("withheld") : hostLine(deps.withheldLine);
+/** The line a bot reads for a result still being checked. */
+const checkingLine = (deps: ResultEgressDeps | undefined): MurageStatus => deps?.checkingLine === undefined ? status("checking") : hostLine(deps.checkingLine);
+/** One check's answer folded into the walk's two flags (withheld wins over checking). */
+function fold(answer: boolean | LineVerdictState | CheckVerdict | undefined, flags: { withheld: boolean; checking: boolean }, meaning: "withheld-when-true" | "withheld-when-false"): void {
+  if (answer === undefined) return;
+  if (typeof answer === "boolean") { if (meaning === "withheld-when-true" ? answer : !answer) flags.withheld = true; return; }
+  if (typeof answer === "string") { if (answer === "withheld") flags.withheld = true; else if (answer === "checking") flags.checking = true; return; }
+  if (answer.withheld) { if (answer.unproven) flags.checking = true; else flags.withheld = true; }
+}
 
 /** `worker`: the bot that produced the result. `authority.fromBotId` and `destinationThreadId`: who is asking and where the text would go.
  * `text`: the text as it was recorded (a receipt, or the reply just written); read from the stored message when absent. */
@@ -184,32 +217,52 @@ export function releaseStoredResult(
   // A status-only record is Murage's own account of how a request ended: it references no worker message and carries no worker text.
   if (ref.statusOnly === true) return { kind: "status" };
   // 2. the stored messages, as read now: gone means gone, whatever text was recorded beside them
-  if (origin && walk && !walk.ok) return walk.why === "gone" ? { kind: "gone" } : withheldResult(deps);
+  if (origin && walk && !walk.ok) {
+    if (walk.why === "gone") return { kind: "gone" };
+    if (walk.why === "withheld") return withheldResult(deps);
+    // a walk that could not finish (a limit, a read that threw) is an unknown: the owner's own conversation keeps the recorded words beside the
+    // originals while the check runs, as any other checking answer does (REPLY-WITHHELD-CONTRACT C3, R1)
+    const held = !notOwnerAudience && recorded !== undefined && ids.length ? { text: mint(recorded, { threadId: origin.threadId, messageIds: [...ids] }), copyOf: { threadId: origin.threadId, messageIds: [...ids] } } : undefined;
+    return { kind: "checking", line: checkingLine(deps), ...(held ? { held } : {}) };
+  }
   if (origin && (ids.length === 0 && recorded === undefined)) return { kind: "gone" };
   const body = recorded ?? stored?.text;
   if (body === undefined) return { kind: "gone" };
-  // Worker text that names no stored message has no origin the rules above could read, so none of them has been applied to it: it is withheld.
-  if (recorded !== undefined && ids.length === 0) return withheldResult(deps);
-  // 3. the message-level rules, for every message on the walk
-  let withheld = ref.lineageUnknown === true || (ref.recordedNotOwner === false && notOwnerAudience);
+  // Worker text that names no stored message has no origin the rules above could read, so none of them has been applied to it: no mark is
+  // known, so it is an unknown and reads checking (REPLY-WITHHELD-CONTRACT C1). Its words reach no one from here: with no original there is
+  // nothing to hold beside, so every audience gets the checking line alone.
+  // (words made for the owner, asked for by a reader who is not, are a real mark and stay withheld)
+  if (recorded !== undefined && ids.length === 0) return ref.recordedNotOwner === false && notOwnerAudience ? withheldResult(deps) : { kind: "checking", line: checkingLine(deps) };
+  // 3. the message-level rules, for every message on the walk: a mark is withheld, an unknown is checking, withheld wins. A receipt written
+  // before results carried their lineage is an unknown too (C1): checking, never "deleted or changed"
+  const flags = { withheld: ref.recordedNotOwner === false && notOwnerAudience, checking: ref.lineageUnknown === true };
   try {
     if (origin && walk?.ok) {
       for (const { threadId, message } of walk.nodes) {
-        if (message.withheldFromBots !== undefined && message.withheldFromBots !== false) withheld = true;
-        if (message.copyOf && deps.copyOriginWithheld(message.copyOf)) withheld = true;
-        if (deps.capturedMessageWithheld(threadId, message.id) || deps.messageSourceForgotten(threadId, message.id) || (notOwnerAudience && deps.messageMadeWithMemory(threadId, message.id))) withheld = true;
-        if (!deps.partitionAllowed(worker, message.copyOf?.threadId ?? threadId, message.copyOf?.messageIds ?? [message.id])) withheld = true;
+        // a row flagged "checking" is held, not withdrawn (REPLY-WITHHELD-CONTRACT R2); any other flag is a mark
+        if (message.withheldFromBots === "checking") flags.checking = true;
+        else if (message.withheldFromBots !== undefined && message.withheldFromBots !== false) flags.withheld = true;
+        if (message.copyOf) fold(deps.copyOriginWithheld(message.copyOf), flags, "withheld-when-true");
+        fold(deps.capturedMessageWithheld(threadId, message.id), flags, "withheld-when-true");
+        if (deps.messageSourceForgotten(threadId, message.id) || (notOwnerAudience && deps.messageMadeWithMemory(threadId, message.id))) flags.withheld = true;
+        fold(deps.partitionAllowed(worker, message.copyOf?.threadId ?? threadId, message.copyOf?.messageIds ?? [message.id]), flags, "withheld-when-false");
       }
-      if (ids.length && deps.copyOriginWithheld(origin)) withheld = true;
-      // write-time: every line on the walk, by thread (a page lookup each)
-      if (deps.linesShown) {
-        const byThread = new Map<string, string[]>();
-        for (const { threadId, message } of walk.nodes) byThread.set(threadId, [...(byThread.get(threadId) ?? []), message.id]);
-        for (const [threadId, lineIds] of byThread) if (!deps.linesShown(threadId, lineIds, notOwnerAudience)) withheld = true;
+      if (ids.length) fold(deps.copyOriginWithheld(origin), flags, "withheld-when-true");
+      // write-time and the reader door: every line on the walk, by thread (a page lookup each)
+      const byThread = new Map<string, string[]>();
+      for (const { threadId, message } of walk.nodes) byThread.set(threadId, [...(byThread.get(threadId) ?? []), message.id]);
+      for (const [threadId, lineIds] of byThread) {
+        if (deps.linesShown) fold(deps.linesShown(threadId, lineIds, notOwnerAudience), flags, "withheld-when-false");
+        if (deps.doorShown) fold(deps.doorShown(authority.fromBotId, threadId, lineIds, notOwnerAudience), flags, "withheld-when-false");
       }
     }
-  } catch { withheld = true; }
-  if (withheld) return withheldResult(deps);
+  } catch { flags.checking = true; }
+  if (flags.withheld) return withheldResult(deps);
+  if (flags.checking) {
+    // the owner's own conversation keeps the words beside the originals while the check runs; any other audience gets the line alone
+    const held = !notOwnerAudience && origin && ids.length ? { text: mint(body, { threadId: origin.threadId, messageIds: [...ids] }), copyOf: { threadId: origin.threadId, messageIds: [...ids] } } : undefined;
+    return { kind: "checking", line: checkingLine(deps), ...(held ? { held } : {}) };
+  }
   // write-time (DESIGN-WRITETIME 2.4: hand-off, ask and delegate results): the released words rest on every line of the walk. A turn running
   // on the destination thread is handed them now, so they join its parents (its replies, notes and session carry them). Outside a turn
   // nothing is recorded here: a copy written into the thread carries its originals itself (message-db.ts).
@@ -224,7 +277,9 @@ export function releaseStoredResult(
  * withheld or gone comes back as the withheld line with no link to its original; a refusal carries the reason and nothing else. */
 export type ReleasedAskReply =
   | { ok: true; text: ReleasedText; copyOf?: EgressOrigin; withheld: false }
-  | { ok: true; text: MurageStatus; withheld: true }
+  | { ok: true; text: MurageStatus; withheld: true; checking?: false }
+  /** Left out only until a check finishes: the asking turn reads the checking line, never "deleted or changed" (REPLY-WITHHELD-CONTRACT C6). */
+  | { ok: true; text: MurageStatus; withheld: true; checking: true }
   | { ok: false; line: MurageStatus; code: string };
 
 export function releaseAskReply(
@@ -234,6 +289,7 @@ export function releaseAskReply(
   const released = releaseStoredResult(ref, worker, destinationThreadId, authority, notOwnerAudience, text, deps);
   if (released.kind === "text") return { ok: true, text: released.text, ...(released.copyOf ? { copyOf: released.copyOf } : {}), withheld: false };
   if (released.kind === "refused") return { ok: false, line: released.line, code: released.code };
+  if (released.kind === "checking") return { ok: true, text: released.line, withheld: true, checking: true };
   return { ok: true, text: released.kind === "withheld" ? released.line : withheldLine(deps ?? configured), withheld: true };
 }
 
@@ -260,69 +316,7 @@ export function releaseMessage(
   return row;
 }
 
-/** At most this many stored lines a piece of worker text's sources may name (server/steer-lineage.ts TURN_SOURCES_MAX). */
-export const SOURCES_MAX = 1600;
-
 /** The same released words, resting on more: a reader shown them takes that into its own turn's sources (server/steer-lineage.ts). */
 export function releasedWithLineage(text: ReleasedText, lineage: Partial<TextLineage>): ReleasedText { return mint(text, undefined, lineage); }
 
-/** Whether every stored line the writing turn carried (its sources) still stands, by the same message rules the gate applies to the message
- * itself: one gone (deleted), withheld from bots, a copy whose original is withheld, captured and withheld on content, forgotten, or (for a
- * reader who is not the owner's audience) made with memory, and the text derived from that turn is not shown. `ranges` are the stretches of
- * conversations it carried: each is one indexed question (no line of it withheld, forgotten or deleted since the turn took it), however long
- * the conversation. Past the limit, or any check that cannot finish: not shown. */
-export function turnSourcesHold(sources: ReadonlyArray<EgressOrigin>, notOwnerAudience: boolean, deps: ResultEgressDeps | undefined = configured,
-  ranges: ReadonlyArray<SourceRange> = []): boolean {
-  if (!deps) return false;
-  let count = 0;
-  try {
-    if (ranges.length && (!deps.rangeHolds || ranges.length > 64)) return false;
-    for (const range of ranges) if (!deps.rangeHolds!(range)) return false;
-    for (const group of sources) for (const id of group.messageIds) {
-      if (++count > SOURCES_MAX) return false;
-      const message = deps.message(group.threadId, id);
-      if (!message) return false;
-      if (message.withheldFromBots !== undefined && message.withheldFromBots !== false) return false;
-      if (message.copyOf && deps.copyOriginWithheld(message.copyOf)) return false;
-      if (deps.capturedMessageWithheld(group.threadId, id) || deps.messageSourceForgotten(group.threadId, id)) return false;
-      if (notOwnerAudience && deps.messageMadeWithMemory(group.threadId, id)) return false;
-    }
-  } catch { return false; }
-  return true;
-}
-
 void RECEIPT_ORIGIN_UNCONFIRMED_LINE;
-
-const squash = (text: string) => text.replace(/\s+/g, " ").trim().toLowerCase();
-/** A stretch of a note this long, found in a message, ties the note to it. */
-const HOLDER_SPAN = 24;
-const HOLDER_STEP = 4;
-const HOLDER_THREADS = 4;
-const HOLDER_MESSAGES = 8;
-const HOLDER_SCAN = 2000;
-
-/** The stored messages that hold words of `text`: the provenance of a piece of worker text that was written down apart from its message (a
- * note on a card). A message holds the note when any stretch of 24 characters of it (or all of it, if shorter) is in the message, or when a
- * message of that length or more is wholly in the note. Newest first, at most eight a thread and four threads. A note that matches nothing has
- * no checkable origin, and the caller leaves it out (server/project-notes.ts). */
-export function textHolders(threadIds: ReadonlyArray<string | null | undefined>, text: string, deps: ResultEgressDeps | undefined = configured): EgressOrigin[] {
-  if (!deps?.threadMessages) return [];
-  const note = squash(text);
-  if (!note) return [];
-  const spans: string[] = [];
-  if (note.length <= HOLDER_SPAN) spans.push(note);
-  else for (let at = 0; at + HOLDER_SPAN <= note.length; at += HOLDER_STEP) spans.push(note.slice(at, at + HOLDER_SPAN));
-  const found: EgressOrigin[] = [];
-  for (const threadId of [...new Set(threadIds.filter((id): id is string => typeof id === "string" && id !== ""))].slice(0, HOLDER_THREADS)) {
-    const rows = deps.threadMessages(threadId);
-    const ids: string[] = [];
-    for (let index = rows.length - 1; index >= Math.max(0, rows.length - HOLDER_SCAN) && ids.length < HOLDER_MESSAGES; index--) {
-      const body = rows[index]!.text;
-      if (typeof body !== "string") continue;
-      const flat = squash(body);
-      if (flat && (spans.some(span => flat.includes(span)) || (flat.length >= 16 && note.includes(flat)))) ids.push(rows[index]!.id);
-    }
-    if (ids.length) found.push({ threadId, messageIds: ids });
-  }
-  return found;
-}

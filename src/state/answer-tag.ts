@@ -11,6 +11,9 @@ export const ANSWER_TTL_MS = 10 * 60_000;
 /** The origin of a bot-record action built from an HTTP answer. */
 export interface HttpOrigin { source: "http"; sentAt: number; expired: boolean }
 
+/** Where a room statement came from (ROOM-ORDER-DESIGN §2.1): an HTTP answer, which has a life, or the stream, which has none. */
+export type RoomOrigin = HttpOrigin | { source: "stream" };
+
 const SENT_AT = new WeakMap<object, number>();
 
 const monotonicNow = (): number => (typeof performance !== "undefined" && typeof performance.now === "function" ? performance.now() : Date.now());
@@ -22,13 +25,20 @@ function tag(value: unknown, sentAt: number): void {
   if (value && typeof value === "object" && !SENT_AT.has(value)) SENT_AT.set(value, sentAt);
 }
 
-/** Stamp an answer body, its `bot`, and each record of `bots`, `archivedBots` and `removed` with the send time. */
+/** Stamp an answer body, its `bot` and `group`, and each record of `bots`, `archivedBots`, `removed`, `groups`, `removedGroups` and
+ * `changed.groups` with the send time. */
 export function tagAnswer(body: unknown, sentAt: number): void {
   if (!body || typeof body !== "object") return;
   tag(body, sentAt);
   const record = body as Record<string, unknown>;
   tag(record.bot, sentAt);
-  for (const key of ["bots", "archivedBots", "removed"]) {
+  tag(record.group, sentAt);
+  const changed = record.changed;
+  if (changed && typeof changed === "object") {
+    const rows = (changed as Record<string, unknown>).groups;
+    if (Array.isArray(rows)) for (const item of rows) tag(item, sentAt);
+  }
+  for (const key of ["bots", "archivedBots", "removed", "groups", "removedGroups"]) {
     const list = record[key];
     if (Array.isArray(list)) for (const item of list) tag(item, sentAt);
   }

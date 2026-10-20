@@ -3,7 +3,7 @@
 //
 // Round 8 (Astra r7 P1): the words of a deleted conversation never come back as a chip. Deleting the thread scrubs
 // its room requests, chip creation refuses a conversation that is gone, and startup purges what was already orphaned.
-import { mkdirSync, rmSync } from "node:fs";
+import { mkdirSync } from "node:fs";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { DATA_DIR } from "./config.ts";
 import { database } from "./database.ts";
@@ -15,6 +15,7 @@ import { sendFingerprint } from "./send-idempotency.ts";
 import {
   completeRequest, insertRoomRequest, ownerSendsOwingWords, roomRequest, scrubOwnerSendsOfGoneThreads, markOwnerWordsKept, type RoomRequest,
 } from "./room-requests.ts";
+import { removeTempDirSync } from "./testing/cleanup.ts";
 
 const WORDS = "R8_WORDS the person typed";
 const lineage = { rootThreadId: "t-del", origin: "desktop" as const, audienceFingerprint: "owner", notOwnerAudience: false, unattended: false };
@@ -35,7 +36,7 @@ function keep(request: RoomRequest): void {
 
 beforeEach(() => {
   closeMessageDb();
-  rmSync(DATA_DIR, { recursive: true, force: true });
+  removeTempDirSync(DATA_DIR);
   mkdirSync(DATA_DIR, { recursive: true });
   initializeProjectTables(database());
   sendStore.use(() => database());

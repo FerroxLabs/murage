@@ -1,14 +1,15 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // F10: a version 1 state.json becomes approved-sites rows and one-task grants (spec section 8).
-import { mkdtempSync, readFileSync, rmSync, statSync } from "node:fs";
+import { mkdtempSync, readFileSync, statSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { BrowserExtensionSites, BrowserExtensionSitesError } from "./browser-extension-sites.ts";
+import { removeTempDirSync } from "./testing/cleanup.ts";
 
 let dir: string, file: string;
 beforeEach(() => { dir = mkdtempSync(join(tmpdir(), "sites-migration-")); file = join(dir, "browser-extension", "sites.json"); });
-afterEach(() => { rmSync(dir, { recursive: true, force: true }); });
+afterEach(() => { removeTempDirSync(dir); });
 
 const binding = (over: Record<string, unknown> = {}, sites: Record<string, string> = {}, extra: Record<string, unknown> = {}) => ({
   context: { workspaceId: "ws", botId: "bot1", profileId: "profA", bindingId: "bind1", generation: 3, ...over }, state: "active", sites, ...extra,

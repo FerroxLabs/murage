@@ -1,12 +1,13 @@
-import { appendFileSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { appendFileSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { DATA_DIR } from "./config.ts";
 import { Store, type BotRecord, type GroupRecord } from "./store.ts";
 import { RoutineManager, type Routine } from "./routines.ts";
 import { routineRunsDir, routineRunsFileName } from "./routine-runs-journal.ts";
+import { removeTempDirSync } from "./testing/cleanup.ts";
 
-beforeEach(() => rmSync(DATA_DIR, { recursive: true, force: true }));
+beforeEach(() => removeTempDirSync(DATA_DIR));
 function fixture() {
   const store = new Store(() => ({ instanceId: "fixture", model: "fixture-model" }));
   const existing = store.createBot();

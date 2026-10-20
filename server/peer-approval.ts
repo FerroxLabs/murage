@@ -19,6 +19,7 @@ import { messagesHighWater, openToolCardPage, openToolCardRowsInRange, openToolC
 import { peerAllowKey, type PeerAction } from "./peer-approval-key.ts";
 import type { BotRecord, Message, Store } from "./store.ts";
 import type { RoutinePeerSource } from "./routine-permissions.ts";
+import { murageLine } from "./murage-line.ts";
 
 export { peerAllowKey } from "./peer-approval-key.ts";
 
@@ -49,6 +50,9 @@ export interface ApprovalBus {
   store: Store;
   /** SSE broadcast (kind: "message" envelope). */
   broadcast: (payload: Record<string, unknown>) => void;
+  /** The provider turn running in a conversation now (internal-capabilities.ts providerTurnOf), from the server's own turn state, never a request.
+   * A card that quotes a bot's message or names its choices names that turn, so revoking the turn's inputs withholds it. */
+  turnOf?: (threadId: string) => string | undefined;
   onApproval?: (botId: string, threadId: string, requestId: string, messageId: string) => void;
   /** Does the current sender still cover the queued contact's ceiling? */
   fullAccessStanding?: (botId: string, threadId: string, routineAuthority?: RoutinePeerSource) => boolean;
@@ -137,9 +141,10 @@ function pushApprovalCard(
   sourceThreadId: string,
 ): Message {
   const subtitle = message.length > 200 ? `${message.slice(0, 200)}…` : message;
-  const note = bus.store.appendMessage(sourceThreadId, {
+  const note = bus.store.appendMessage(sourceThreadId, murageLine({
     role: "bot",
     kind: "options",
+    turnId: bus.turnOf?.(sourceThreadId),
     card: {
       title: `@${from.name} wants to ${action === "ask_bot" ? "contact" : "delegate to"} @${target.name}`,
       subtitle,
@@ -148,7 +153,7 @@ function pushApprovalCard(
       tool: action,
       allowKey: peerAllowKey(action, target.id),
     },
-  });
+  }));
   return note;
 }
 
@@ -250,9 +255,10 @@ export function requestEventLimitApproval(
     ? `This run has handed off ${plural(done, "task", "tasks")}, the most it can without you. Next it wants to ask @${targetName ?? "another bot"}. Allow lets this run hand off up to ${more} more${last}. Not now stops hand-offs for the rest of this run. Work already handed off carries on.`
     : `This run has added ${plural(done, "bot", "bots")}, the most it can without you. Next it wants to add @${targetName ?? "another bot"}. Allow lets this run add up to ${more} more${last}. Not now stops new bots for the rest of this run.`;
   return waitOnCard(bus, from.id, from.id, title, `event_limit:${eventId}:${kind}`, sourceThreadId, undefined, (requestId) =>
-    bus.store.appendMessage(sourceThreadId, {
+    bus.store.appendMessage(sourceThreadId, murageLine({
       role: "bot",
       kind: "options",
+      turnId: bus.turnOf?.(sourceThreadId),
       card: {
         title,
         subtitle: body,
@@ -260,7 +266,7 @@ export function requestEventLimitApproval(
         requestId,
         tool: kind === "handoff" ? "more_handoffs" : "more_new_bots",
       },
-    }));
+    })));
 }
 
 /** Called by the respond endpoints BEFORE forwarding to the provider
@@ -281,6 +287,16 @@ export function resolvePeerComms(
   closeHeld(pending, allow ? "allow" : "deny");
   pending.resolve(allow ? "allow" : "deny");
   return true;
+}
+
+/** The bus holds this request (a bot-to-bot contact card is waiting on
+ * it): where its card lives and which bot asked, so the approval choke
+ * point (server/grant-choke.ts, A13-FIX-DESIGN C1b) can prove the card's
+ * "Always allow" names the asking bot's own request before it saves and
+ * answers through resolvePeerComms. */
+export function peerApprovalHolder(requestId: string): { threadId: string; fromBotId: string; allowKey: string } | undefined {
+  const pending = pendingComms.get(requestId);
+  return pending ? { threadId: pending.threadId, fromBotId: pending.fromBotId, allowKey: pending.allowKey } : undefined;
 }
 
 /** Drop every approval waiting on a bot that no longer exists (or is being

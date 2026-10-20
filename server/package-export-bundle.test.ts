@@ -1,12 +1,13 @@
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { createBotPackageExportBundle, type BotPackageBundleInput, type SelectedExportSkill } from "./package-export-bundle.ts";
 import { readBotPackageArchive, writeBotPackageArchive } from "./bot-package-archive.ts";
+import { removeTempDirSync } from "./testing/cleanup.ts";
 
 const roots: string[] = [];
-afterEach(() => { for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true }); });
+afterEach(() => { for (const root of roots.splice(0)) removeTempDirSync(root); });
 function fixture(): BotPackageBundleInput {
   return { exportInput: { name: "Selected crew", bots: ["first", "second"].map(id => ({ id, name: "Scout", title: "Research", description: "Review supplied notes", threadId: `runtime-${id}`, color: "green", notifications: true, unread: false, createdAt: 1,
     modelSelection: { instanceId: "private-engine", model: "private-model" }, resumeCursors: { engine: "private-session" }, autoApprove: true, alwaysAllow: ["private-grant"], cwd: "/private/workspace" })),

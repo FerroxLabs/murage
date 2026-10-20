@@ -4,7 +4,7 @@
 // Write-time privacy, 1.0.2 S6: the read-time lineage judge is retired on a file where lineage is written (read-time-retired.ts). Every entry
 // point it had answers from the write-time lookups, and none reads a root-set table: the tables are handed back by the idle reclaim, so they are
 // dropped from the file in these tests before the readers are asked.
-import { mkdirSync, rmSync } from "node:fs";
+import { mkdirSync } from "node:fs";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { DATA_DIR } from "../config.ts";
 import { closeDatabase, database } from "../database.ts";
@@ -15,16 +15,18 @@ import { continuationMemoryRevoked, resetSessionHolds } from "./disclosures.ts";
 import { closeMemoryIndexReader } from "./index-reader.ts";
 import { accessFor, freshDataDir } from "./testing/recall-fixture.ts";
 import { LineageAllowance } from "./lineage-allowance.ts";
+import { stampFreshSession } from "./testing/writetime-fixture.ts";
 import { drainRevokeMarker } from "./memory-revocation.ts";
 import { provenanceTriggersInstalled } from "./provenance-stamp.ts";
 import { readTimeRetired } from "./read-time-retired.ts";
 import { capturedMessageVerdict, lineageTriggersInstalled, messageMadeWithMemory, outputRootsBad, outputRootsFor, replayExclusions, sessionLineageBad, sessionOutputRoots, setTurnLineageNodesForTest, threadHoldsMemoryLines } from "./replay-lineage.ts";
 import { commitRevoke } from "./revoke-commit.ts";
 import { ROOT_SET_RECLAIM_TABLES, runReclaimStep } from "./root-set-reclaim.ts";
+import { removeTempDirSync } from "../testing/cleanup.ts";
 
 const msg = (id: string, extra: Partial<Message> = {}): Message => ({ id, role: "bot", kind: "text", text: id, at: Date.now(), ...extra });
 const owner = (id: string) => msg(id, { role: "user" });
-function reset(): void { closeMessageDb(); closeDatabase(); rmSync(DATA_DIR, { recursive: true, force: true }); mkdirSync(DATA_DIR, { recursive: true }); }
+function reset(): void { closeMessageDb(); closeDatabase(); removeTempDirSync(DATA_DIR); mkdirSync(DATA_DIR, { recursive: true }); }
 const allowance = () => LineageAllowance.tool(Number.MAX_SAFE_INTEGER);
 
 /** The root sets handed back, as the idle reclaim does it. */
@@ -115,6 +117,7 @@ describe("the continuation check of a resumed session asks the write-time sessio
     // lineage is written on this file (a line row), and the session has its write-time row
     appendMessage(access.threadId, owner("o1"));
     database().prepare("INSERT INTO memory_session_lineage(thread_id,driver_instance,native_session,first_lsn,last_lsn) VALUES(?,?,?,1,1)").run(access.threadId, "claude", SESSION);
+    stampFreshSession(database(), access.threadId, "claude", SESSION); // stamped as a 1.0.3 fresh start leaves it (S6 rule 26)
     const why: { reason?: string } = {};
     expect(continuationMemoryRevoked(LineageAllowance.tool(), access.threadId, "claude", SESSION, access, why), JSON.stringify(why)).toBe(false);
     // the first check passed: a hold now answers "nothing moved" for the next turn

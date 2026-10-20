@@ -53,6 +53,7 @@ posixOnly("a room turn from words nobody proved are the owner's", () => {
     // An owner pin in Alpha's own bot memory.
     const writer = new DatabaseSync(join(fixture.info.dataDir, "messages.db"));
     try {
+      writer.exec("PRAGMA busy_timeout=5000");
       const scope = writer.prepare("SELECT id FROM memory_scopes WHERE kind='bot' AND owner_key=?").get(alpha.id) as { id: string } | undefined;
       expect(scope).toBeTruthy();
       writer.prepare("INSERT INTO memory_records VALUES('t2-pin',1,?,'fact','The vault code is VAULT-5521.','owner-statement','active',1,?,NULL,NULL,?)").run(scope!.id, Date.now(), Date.now());

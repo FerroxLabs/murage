@@ -27,10 +27,11 @@ import { violations } from "./engine-structure-check.ts";
 import { builtAddonPath, proc, useFakeExclusion, type FakeExclusion } from "./testing/engine-exclusion-fake.ts";
 import { asExclusive, buildFixture, canaryHits, walDatabase, type Fixture } from "./testing/engine-history-fixtures.ts";
 import { loadEngineExclusionResource, validateEngineExclusionResource } from "../scripts/engine-exclusion-resource.mjs";
+import { removeTempDirSync } from "./testing/cleanup.ts";
 
 const scratch = realpathSync.native(mkdtempSync(join(tmpdir(), "murage-r20-")));
 const openDatabases: DatabaseSync[] = [];
-afterAll(() => { for (const db of openDatabases) db.close(); rmSync(scratch, { recursive: true, force: true }); });
+afterAll(() => { for (const db of openDatabases) db.close(); removeTempDirSync(scratch); });
 
 let fake: FakeExclusion;
 beforeEach(() => { fake = useFakeExclusion(); });
@@ -464,7 +465,7 @@ describe("T4: a pause of 600 ms injected at every call of a step aborts before a
         virtual += 11_001;
         const old = new Date(Date.now() - 11_001);
         utimesSync(lock, old, old);
-        renameSync(lock, `${lock}.engine-tmp`); rmSync(`${lock}.engine-tmp`, { recursive: true }); mkdirSync(lock);
+        renameSync(lock, `${lock}.engine-tmp`); removeTempDirSync(`${lock}.engine-tmp`); mkdirSync(lock);
         appendFileSync(claudeHistory(fx), `${JSON.stringify({ sessionId: "sess-new", project: "/other", display: "x", pastedContents: { 1: { contentHash: hash } } })}\n`);
       }
       return realMtime(path);
@@ -490,7 +491,7 @@ describe("T5: a lock replaced by another between any two calls of acquiring, rep
       state.calls++;
       if (replaceAt !== null && state.calls === replaceAt) {
         state.replaced = true;
-        rmSync(lock, { recursive: true, force: true });
+        removeTempDirSync(lock);
         mkdirSync(lock);
         writeFileSync(join(lock, "foreign"), "foreign lock");
       }

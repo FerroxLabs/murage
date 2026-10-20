@@ -3,6 +3,7 @@
 // official GitHub assets on 2026-09-06, except the explicitly versioned Windows
 // vendor build below. Update pins through a reviewed native end-to-end run.
 // The Dockerfile retains the official Linux version.
+import { CLOUD_BROWSER_PINS } from "./cloud-home/browser-pins.ts";
 export const AGENT_BROWSER_VERSION = "0.36.0";
 
 export interface AgentBrowserReleaseAsset {
@@ -68,6 +69,15 @@ export function resolveAgentBrowserReleaseAsset(
   arch: string = process.arch,
   musl = false,
 ): AgentBrowserReleaseAsset | null {
+  if (process.env.MURAGE_CLOUD_ROLE === "home" && platform === "linux" && arch === "x64" && !musl) {
+    return { target: "linux-x64", asset: "agent-browser-linux-x64", version: CLOUD_BROWSER_PINS.agentVersion,
+      url: CLOUD_BROWSER_PINS.agentUrl, bytes: CLOUD_BROWSER_PINS.agentBytes, sha256: CLOUD_BROWSER_PINS.agentSha256 };
+  }
+  if (process.env.MURAGE_CLOUD_ROLE === "home" && platform === "linux" && arch === "arm64" && !musl) {
+    const arm = CLOUD_BROWSER_PINS.arm64;
+    return { target: "linux-arm64", asset: "agent-browser-linux-arm64", version: CLOUD_BROWSER_PINS.agentVersion,
+      url: arm.agentUrl, bytes: arm.agentBytes, sha256: arm.agentSha256 };
+  }
   const key = platform === "linux" && musl ? `linux-musl-${arch}` : `${platform}-${arch}`;
   return RELEASES.get(key) ?? null;
 }

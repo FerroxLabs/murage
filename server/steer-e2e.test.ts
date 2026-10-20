@@ -7,13 +7,15 @@
 //
 // POSIX-gated like the other CLI e2es (the fakes are shebang scripts).
 import { spawn, type ChildProcess } from "node:child_process";
-import { chmodSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { freePortBlock } from "./testing/ports.ts";
 import { MEMORY_REFERENCE_CLOSE, MEMORY_REFERENCE_OPEN, MEMORY_REFERENCE_PREAMBLE } from "../shared/memory.ts";
+import { THREAD_RECALL_LINE } from "./murage-tool-surface.ts";
+import { removeTempDirSync } from "./testing/cleanup.ts";
 
 const SERVER_DIR = dirname(fileURLToPath(import.meta.url));
 const FAKE_CLAUDE = join(SERVER_DIR, "testing", "fake-claude-cli.ts");
@@ -35,6 +37,8 @@ function currentRequestEcho(text: string): string {
 }
 function requestEcho(text: string): string {
   const prefix = "bot:reply to: ";
+  // An owner turn that can read its past threads opens with the thread recall line (r6 rule 22).
+  if (text.startsWith(prefix + THREAD_RECALL_LINE + "\n\n")) text = prefix + text.slice(prefix.length + THREAD_RECALL_LINE.length + 2);
   if (!text.startsWith(prefix + memoryPreamble)) return text;
   const start = prefix.length + memoryPreamble.length;
   const end = text.indexOf(memoryClose + currentRequestMarker, start);
@@ -174,7 +178,7 @@ posixOnly("mid-turn steering e2e", () => {
       child.on("close", () => resolve());
       setTimeout(() => (child.kill("SIGKILL"), resolve()), 5_000).unref?.();
     });
-    rmSync(home, { recursive: true, force: true });
+    removeTempDirSync(home);
   });
 
   it(

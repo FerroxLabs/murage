@@ -1,4 +1,4 @@
-import { mkdirSync, rmSync } from "node:fs";
+import { mkdirSync } from "node:fs";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { DATA_DIR } from "../config.ts";
 import { closeDatabase, database, transaction } from "../database.ts";
@@ -11,8 +11,9 @@ import { archiveMemoryRecord } from "./retention.ts";
 import { ownerMemoryTicket } from "./authority.ts";
 import { enqueueProcedureCorrectionReview, pendingProcedureReviews, processProcedureReview, procedureCandidateHash,
   procedureSnapshotDigest, procedureTargetDigest, type ProcedureEvaluationReceipt, type ProcedureReviewHost, type ProcedureReviewSnapshot, type ProcedureReviewTarget } from "./procedure-review.ts";
+import { removeTempDirSync } from "../testing/cleanup.ts";
 
-beforeEach(()=>{vi.useFakeTimers({toFake:["Date"]});vi.setSystemTime(new Date("2026-09-14T12:00:00Z"));closeDatabase();rmSync(DATA_DIR,{recursive:true,force:true});mkdirSync(DATA_DIR,{recursive:true});setMemoryCaptureRoster(()=>({bots:[{id:"bot",threadId:"thread"}],groups:[]}));reconcileMemoryRoster({bots:[{id:"bot",threadId:"thread"}],groups:[]});setMemoryMode("capture");});
+beforeEach(()=>{vi.useFakeTimers({toFake:["Date"]});vi.setSystemTime(new Date("2026-09-14T12:00:00Z"));closeDatabase();removeTempDirSync(DATA_DIR);mkdirSync(DATA_DIR,{recursive:true});setMemoryCaptureRoster(()=>({bots:[{id:"bot",threadId:"thread"}],groups:[]}));reconcileMemoryRoster({bots:[{id:"bot",threadId:"thread"}],groups:[]});setMemoryMode("capture");});
 afterEach(()=>{vi.useRealTimers();setMemoryCaptureRoster(null);});
 const signal=()=>new AbortController().signal;
 function scope(){return String(database().prepare("SELECT id FROM memory_scopes WHERE kind='conversation' AND owner_key='thread'").get()!.id);}

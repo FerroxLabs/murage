@@ -6,7 +6,7 @@
 // forgot the reply itself) and checking (earlier context is still being checked). A reply that is "checking" says so in the room line a member
 // reads, under the reply for its owner, and in one note over the conversation; it is cleared as soon as a later check can prove the reply.
 import { readFileSync } from "node:fs";
-import { mkdirSync, rmSync } from "node:fs";
+import { mkdirSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { beforeEach, expect, it } from "vitest";
@@ -20,11 +20,12 @@ import { setMemoryMode } from "./repository.ts";
 import { chainStore } from "./schema.ts";
 import { forgetKeptLineageForTest, replayExclusions } from "./replay-lineage.ts";
 import { LineageAllowance } from "./lineage-allowance.ts";
+import { removeTempDirSync } from "../testing/cleanup.ts";
 
 const thread = "check-room", driver = "drv", session = "sess";
 const here = dirname(fileURLToPath(import.meta.url));
 const source = (reply: number) => `message:${thread}:r${reply}`;
-beforeEach(() => { closeDatabase(); forgetKeptLineageForTest(); rmSync(DATA_DIR, { recursive: true, force: true }); mkdirSync(DATA_DIR, { recursive: true }); });
+beforeEach(() => { closeDatabase(); forgetKeptLineageForTest(); removeTempDirSync(DATA_DIR); mkdirSync(DATA_DIR, { recursive: true }); });
 
 /** A room of `n` replies, each resting on the one before it (receipt cites the previous reply as a source). */
 function room(n: number): Message[] {

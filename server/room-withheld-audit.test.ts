@@ -4,10 +4,11 @@
 // 0.1.61 cross-audit (Astra round 1): the ways a withheld reply, a
 // copy of it or a member's private memory still reached a bot after the
 // first T2 commits, each reproduced here and closed.
-import { mkdirSync, rmSync } from "node:fs";
+import { mkdirSync } from "node:fs";
 import { beforeEach, expect, it, vi } from "vitest";
 import { afterEach as thawAfterEach, beforeEach as thawBeforeEach } from "vitest";
 import { thawRootSetWritesForTest } from "./memory/replay-lineage.ts";
+import { removeTempDirSync } from "./testing/cleanup.ts";
 // 1.0.2: this test models a 1.0.1 file (legacy root-set rows) for the read-time judge, which still decides legacy data until S6.
 thawBeforeEach(() => thawRootSetWritesForTest(true));
 thawAfterEach(() => thawRootSetWritesForTest(false));
@@ -52,7 +53,7 @@ const roster: MemoryRoster = {
     { id: "pair", threadId: "pair-chat", memberIds: ["finch", "dax"] },
   ],
 };
-beforeEach(() => { closeDatabase(); rmSync(DATA_DIR, { recursive: true, force: true }); mkdirSync(DATA_DIR, { recursive: true }); });
+beforeEach(() => { closeDatabase(); removeTempDirSync(DATA_DIR); mkdirSync(DATA_DIR, { recursive: true }); });
 
 function access(botId: string, thread: string, notOwnerAudience = false) {
   reconcileMemoryRoster(roster);
@@ -329,12 +330,13 @@ it("R2-1/9/10: a turn that is not the owner's gets no standing material, no owed
   expect(messageMadeWithMemory("dax-direct", "m-answer")).toBe(true);
   expect(messageMadeWithMemory("dax-direct", "m-plain")).toBe(false);
   const source = indexSource();
+  // S6 rules 18a and 18b: the reply and a room line are built from the door's rows (botMessages, BotRow source); the audience tests are unchanged
   // next: the owner's standing material follows the full owner-audience predicate
   expect(source).toContain("const standing = standingContextParts(bot, { partition: bot.partitionedAt === undefined ? undefined : threadPartition(bot, threadId), ownerAudience: surfacesForOwner,");
   expect(source).toContain("const memoryNotOwner = !humanIsOwner || !surfacesForOwner || opts?.notOwnerAudience === true;");
   expect(source).toContain("const verdict = memoryNotOwner ? { withheld: true, unproven: false } : capturedMessageVerdict(allowance, threadId, id);");
-  expect(source).toContain("if (verdict.withheld) { pendingWithheld.add(id); return { id, text: withheldRoomLine(message, false, verdict.unproven) }; }");
-  expect(source).toContain("replyForPrompt(threadId, opts?.replyTo && promptRows([opts.replyTo], turnRouteHasTools, task.externalUpdates)[0], memoryNotOwner),");
+  expect(source).toContain("if (verdict.withheld) { pendingWithheld.add(id); return { id, text: withheldRoomLine(message, false, verdict.unproven), source }; }");
+  expect(source).toContain("replyForPrompt(threadId, opts?.replyTo && promptRows(botMessages(database(), botViewer(bot.id), threadId, [opts.replyTo]), turnRouteHasTools, task.externalUpdates)[0], memoryNotOwner),");
   // recall leaves the notebook and brief out by the thread's audience, never
   // the turn's: a turn not shown them cannot recall them (next's authz rule)
   // three: the direct turn, the room turn, and the direct turn's early (overlapped) bundle,

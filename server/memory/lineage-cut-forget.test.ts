@@ -8,7 +8,7 @@
 //   - once given room again, converges to exactly the reference,
 // whatever is forgotten, revised or revoked between its slices. 100 histories x 8 mutation steps x 2 comparisons = 1,600 comparisons.
 // The warmer's slices are interleaved the same way, and "forgetting between warming slices withholds every affected reply" is pinned on a chain.
-import { mkdirSync, rmSync } from "node:fs";
+import { mkdirSync } from "node:fs";
 import { afterEach, beforeEach, expect, it } from "vitest";
 import { DATA_DIR } from "../config.ts";
 import { closeDatabase, database } from "../database.ts";
@@ -17,11 +17,12 @@ import { setMemoryMode } from "./repository.ts";
 import { chainStore } from "./schema.ts";
 import { forgetKeptLineageForTest, replayExclusions, setReplayNodeBudgetForTest, warmReplies, type ReplayAudience, type ReplayMessage } from "./replay-lineage.ts";
 import { LineageAllowance } from "./lineage-allowance.ts";
+import { removeTempDirSync } from "../testing/cleanup.ts";
 
 const thread = "cut-direct";
 const key = (message: string) => `${thread}\u0000${message}`;
 const messageSource = (message: string) => `message:${thread}:${message}`;
-function reset(): void { closeDatabase(); forgetKeptLineageForTest(); rmSync(DATA_DIR, { recursive: true, force: true }); mkdirSync(DATA_DIR, { recursive: true }); }
+function reset(): void { closeDatabase(); forgetKeptLineageForTest(); removeTempDirSync(DATA_DIR); mkdirSync(DATA_DIR, { recursive: true }); }
 beforeEach(reset);
 afterEach(() => setReplayNodeBudgetForTest(null));
 

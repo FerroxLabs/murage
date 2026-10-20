@@ -1,8 +1,8 @@
 import { createHash } from "node:crypto";
 import { readFileSync } from "node:fs";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { parse } from "yaml";
-import { requireBrowserSignature, verifyWindowsBrowserImage, WINDOWS_BROWSER_PUBLISHER, windowsBrowserSignatureScript, type UnsignedPePin } from "./browser-windows-identity.ts";
+import { nativeAuthenticodeIn, requireBrowserSignature, verifyWindowsBrowserImage, verifyWindowsBrowserSignatures, WINDOWS_BROWSER_PUBLISHER, windowsBrowserSignatureScript, windowsSignaturePowerShell, type UnsignedPePin } from "./browser-windows-identity.ts";
 
 function fixture() {
   const original = Buffer.alloc(512, 0x41), pe = 64, optional = pe + 24, security = optional + 144;
@@ -49,6 +49,33 @@ describe("Windows browser original-byte binding", () => {
     expect(script.startsWith(String.raw`$env:PSModulePath=$PSHOME+'\Modules';`)).toBe(true);
     expect(script).toContain("Get-AuthenticodeSignature -LiteralPath $file");
     expect(script).toContain("browser''s.exe");
+  });
+  it("starts Windows PowerShell hidden, with no profile and no prompt", () => {
+    const run = windowsSignaturePowerShell("Write-Output 1", "D:\\Win");
+    expect(run.command.replaceAll("/", "\\")).toBe("D:\\Win\\System32\\WindowsPowerShell\\v1.0\\powershell.exe");
+    expect(run.args.slice(0, 5)).toEqual(["-NoProfile", "-NonInteractive", "-WindowStyle", "Hidden", "-EncodedCommand"]);
+    expect(Buffer.from(run.args[5], "base64").toString("utf16le")).toBe("Write-Output 1");
+    expect(run.options).toMatchObject({ windowsHide: true, timeout: 20_000 });
+  });
+  it("the native check needs no PowerShell and is exactly as strict", async () => {
+    const answers: Record<string, unknown> = {
+      "C:\\ok.exe": { status: "Valid", publisher: WINDOWS_BROWSER_PUBLISHER, code: 0 },
+      "C:\\unsigned.exe": { status: "NotSigned", publisher: "", code: 0x800b0100 },
+      "C:\\other.exe": { status: "Valid", publisher: "Other Publisher", code: 0 },
+      "C:\\tampered.exe": { status: "HashMismatch", publisher: "", code: 0x80096010 },
+    };
+    const native = { authenticode: vi.fn(async (file: string) => answers[file]) };
+    // A PowerShell run would need a real Windows; a native answer never reaches it.
+    await expect(verifyWindowsBrowserSignatures(["C:\\ok.exe", "C:\\ok.exe"], "C:\\NoWindows", native)).resolves.toBeUndefined();
+    expect(native.authenticode).toHaveBeenCalledTimes(2);
+    for (const [file, status] of [["C:\\unsigned.exe", "NotSigned"], ["C:\\other.exe", "publisher"], ["C:\\tampered.exe", "HashMismatch"]] as const)
+      await expect(verifyWindowsBrowserSignatures(["C:\\ok.exe", file], "C:\\NoWindows", native)).rejects.toMatchObject({ signatureStatus: status });
+    native.authenticode.mockRejectedValueOnce(new Error("did not finish"));
+    await expect(verifyWindowsBrowserSignatures(["C:\\ok.exe"], "C:\\NoWindows", native)).rejects.toThrow("did not finish");
+  });
+  it("finds no native check off Windows or without the app's addon", () => {
+    expect(nativeAuthenticodeIn(undefined)).toBeNull();
+    expect(nativeAuthenticodeIn("/no/such/resources")).toBeNull();
   });
   it("requires OS-valid signature and the exact configured Azure publisher", () => {
     const config = parse(readFileSync(new URL("../electron-builder.yml", import.meta.url), "utf8"));

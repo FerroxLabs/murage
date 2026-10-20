@@ -13,7 +13,7 @@ import type { ExecutionAudience } from "./work-admission.ts";
 // Async peer handoff (delegate_bot).
 //
 // A bot that finishes one task can hand the NEXT task to a peer without
-// blocking its own turn — the source bot's turn.completed fires after it
+// blocking its own turn - the source bot's turn.completed fires after it
 // settles, and the queued delegation runs then. The peer gets a fresh
 // depth-1 turn (depth cap still blocks A→B→C chains, see index.ts).
 //
@@ -28,10 +28,10 @@ import { readFileSync } from "node:fs";
 import { join } from "node:path";
 
 import { MurageStatus, outboundWords, status, storedStatusShapeOk, type BotName, type FailureCode, type Outbound } from "./murage-status.ts";
-import { ReleasedText } from "./released-text.ts";
+import { ReleasedText, type EgressOrigin } from "./released-text.ts";
 import { writeFileAtomic } from "./atomic.ts";
 import { coordinationTraceSchema, MAX_HANDOFFS_PER_TURN, type CoordinationTrace } from "./coordination-budget.ts";
-import type { CommsBus } from "./comms-visibility.ts";
+import { messagedRow, type CommsBus } from "./comms-visibility.ts";
 import { DATA_DIR } from "./config.ts";
 import { newId } from "./contracts.ts";
 import type { ApprovalBus } from "./peer-approval.ts";
@@ -39,6 +39,7 @@ import { ROUTINE_PERMISSION_MODES, type RoutinePeerSource } from "./routine-perm
 
 import type { BotRecord, Store } from "./store.ts";
 import type { OwedReply } from "./handoff-reply.ts";
+import { murageLine } from "./murage-line.ts";
 
 /** Every row a handoff leaves in its source conversation names who handed
  * off when that conversation is a room. Several bots delegate in a room, and
@@ -52,7 +53,9 @@ export function appendDelegationRow(
   message: Parameters<CommsBus["store"]["appendMessage"]>[1],
 ): ReturnType<CommsBus["store"]["appendMessage"]> {
   const sender = senderId && bus.store.groupByThread(threadId) ? bus.store.bot(senderId) : undefined;
-  return bus.store.appendMessage(threadId, sender ? { ...message, from: { botId: sender.id, name: sender.name, color: sender.color } } : message);
+  // every row a delegation writes here is Murage's own chip about the hand-off, never a turn's engine output (murage-line.ts)
+  const row = murageLine(message);
+  return bus.store.appendMessage(threadId, sender ? { ...row, from: { botId: sender.id, name: sender.name, color: sender.color } } : row);
 }
 
 export interface DelegationItem {
@@ -65,7 +68,7 @@ export interface DelegationItem {
    * fallback handoff must not ask them to approve the same action twice. */
   approvalAlreadyGranted?: boolean;
   /** Queued from a Full access turn the owner started, so the contact card
-   * is skipped at drain time — if the sender's conversation is still on
+   * is skipped at drain time - if the sender's conversation is still on
    * Full access then. Never set for a webhook, channel or routine turn. */
   fullAccessWaived?: boolean;
   /** Queued by a turn that was not owner audience (owner-audience.ts): the
@@ -75,6 +78,13 @@ export interface DelegationItem {
    *  peer's turn runs unattended too, after a restart too, so Full access
    *  keeps the owner's cards for it. */
   unattended?: boolean;
+  /** The provider turn that queued this hand-off, read from the server's own turn state when it is queued (never from the item a caller passes). The
+   * hand-off can start after that turn ended, and the room copy of the message names this turn so revoking its inputs withholds the copy. `null`
+   * when no turn was running (the message rests on none). A queue row from before it was kept has the field absent: its room copy is withheld. */
+  senderTurnId?: string | null;
+  /** The sender's "Messaged @target" row, written into the source conversation in the queue transaction as the sending turn's engine row
+   * (LINEAGE-DESIGN-S6 rule 6): the room copy names it by copyOf. Absent on a queue row from before it was kept: its room copy is withheld. */
+  sourceMessageId?: string;
   /** The effective parent routine ceiling, captured before its turn ends. */
   routineAuthority?: RoutinePeerSource;
   /** Trusted originating event identity. Survives handoff/retry/restart so
@@ -88,17 +98,17 @@ export interface DelegationItem {
 }
 
 export interface PendingDelegationItem extends DelegationItem {
-  /** Stable acknowledgement key for crash-safe removal from the queue —
+  /** Stable acknowledgement key for a removal from the queue that survives a crash,
    * and the task id the delegating bot uses with check/wait_delegation. */
   id: string;
   /** Who queued this handoff. A 1:1 source thread identifies its owner, so
-   * the drain used to recover the sender with botByThread alone — which is
+   * the drain used to recover the sender with botByThread alone - which is
    * null for a ROOM thread, and the whole queue was then deleted with no
    * receipt and no turn. Persisted so that survives a restart too. */
   fromBotId?: string;
   /** Busy-target retries so far. The item stays queued (not canceled) while
    * the target is busy, and is retried when any of the target's turns
-   * settles — up to MAX_BUSY_ATTEMPTS. */
+   * settles - up to MAX_BUSY_ATTEMPTS. */
   attempts: number;
   /** True after this item observed the target's current busy period. Other
    * queue activity must not count that same period again; the target's idle
@@ -142,7 +152,7 @@ export function unknownTargetBackoffMs(attempts: number): number {
 export type DelegationOutcome = typeof DELEGATION_OUTCOMES[number];
 
 /** The durable terminal record of one handoff: what the delegating bot reads
- * back with check_delegation / wait_delegation. Bounded and pruned — this is
+ * back with check_delegation / wait_delegation. Bounded and pruned - this is
  * a receipt drawer, not a transcript. */
 export interface DelegationReceipt {
   id: string;
@@ -167,6 +177,10 @@ export interface DelegationReceipt {
   /** The line the source conversation is owed by a finished hand-off (handoff-reply.ts), kept only until the final commit lands (finishHandoff): a receipt
    * that reached disk without that commit (the process died in between) still carries it, and the settle that recovers the hand-off writes it then. */
   reply?: OwedReply;
+  /** The reply is HELD (REPLY-WITHHELD-CONTRACT C3, R3): the gate read it as checking, so the source conversation keeps the words flagged "checking"
+   * under `messageId` (the owner reads them, bots read the checking line) until the hold settles (server/held-replies.ts). `since`: when the hold
+   * began; `judgedAt`: the last time it was judged again. A held receipt is never replaced by a later outcome and never pruned while held. */
+  held?: { messageId: string; since: number; judgedAt?: number };
   finishedAt: number;
 }
 
@@ -398,6 +412,11 @@ export function onOwedHandoffReply(writer: ((receipt: DelegationReceipt) => Owed
 }
 /** A receipt that still owes its source conversation a line. It never expires and is never pruned: only its delivery (replyDelivered) ends the obligation. */
 const owes = (receipt: DelegationReceipt): boolean => receipt.reply !== undefined;
+/** How long a reply may stay held before its hold is settled finally as checking (REPLY-WITHHELD-CONTRACT C4, R3): the row keeps its flag, no
+ * words reach a bot, the request completes with the checking line, and the owner's note says the check did not finish. */
+export const HELD_MAX_AGE_MS = 24 * 60 * 60 * 1000;
+/** A receipt whose reply is still held: kept until its hold settles, whatever its age or the count. */
+const holds = (receipt: DelegationReceipt): boolean => receipt.held !== undefined;
 /** The owed line is in the source conversation (its commit landed): the receipt no longer owes it, on disk as well, and may now age out like any other. */
 function replyDelivered(id: string): void {
   const kept = receipts.find((receipt) => receipt.id === id);
@@ -405,10 +424,11 @@ function replyDelivered(id: string): void {
   delete kept.reply;
   saveReceipts();
 }
-/** Age and count pruning of the receipt drawer: a receipt that still owes a line is kept whatever its age, and does not count against the bound. */
+/** Age and count pruning of the receipt drawer: a receipt that still owes a line, or whose reply is still held, is kept whatever its age, and does not
+ * count against the bound (a held one is settled finally by the hold sweep after HELD_MAX_AGE_MS, server/held-replies.ts). */
 function pruneReceipts(list: DelegationReceipt[], now: number): DelegationReceipt[] {
-  const owed = list.filter(owes);
-  const rest = list.filter((receipt) => !owes(receipt) && now - receipt.finishedAt <= RECEIPT_MAX_AGE_MS).slice(0, MAX_RECEIPTS);
+  const owed = list.filter((receipt) => owes(receipt) || holds(receipt));
+  const rest = list.filter((receipt) => !owes(receipt) && !holds(receipt) && now - receipt.finishedAt <= RECEIPT_MAX_AGE_MS).slice(0, MAX_RECEIPTS);
   const keep = new Set([...owed, ...rest]);
   return list.filter((receipt) => keep.has(receipt));
 }
@@ -421,6 +441,10 @@ function markHandoffRequest(id: string): void {
  * drawer can never grow without bound. Returns whether the receipt reached disk. */
 export function recordDelegationReceipt(receipt: Omit<DelegationReceipt, "finishedAt" | "result" | "resultStatus"> & { result?: Outbound; finishedAt?: number }): boolean {
   const now = Date.now();
+  // A held receipt is never replaced by a later outcome that is not itself a hold (a restart's "interrupted", a stop): the hand-off finished and its reply
+  // is held for the owner; only the hold settle (settleHeldReceipt) changes it (REPLY-WITHHELD-CONTRACT S17). Looked at first: nothing of the later
+  // outcome is read.
+  if (!validHold(receipt.held) && receipts.some((existing) => existing.id === receipt.id && holds(existing))) return true;
   const bounded: DelegationReceipt = {
     id: receipt.id,
     sourceThreadId: receipt.sourceThreadId,
@@ -439,10 +463,12 @@ export function recordDelegationReceipt(receipt: Omit<DelegationReceipt, "finish
   if (receipt.notOwnerAudience === true) bounded.notOwnerAudience = true;
   if (receipt.lineage === true) bounded.lineage = true;
   if (validOwedReply(receipt.reply)) bounded.reply = receipt.reply;
+  const held = validHold(receipt.held);
+  if (held) bounded.held = held;
   // A receipt that still owes its source conversation a line is never replaced by a later outcome for the same hand-off (a restart's "interrupted"): the
   // hand-off finished, and its line is delivered first. The kept receipt is settled instead.
   const owing = receipts.find((existing) => existing.id === bounded.id && owes(existing));
-  if (owing && !owes(bounded)) { settleReceipted(owing); return true; }
+  if (owing && !owes(bounded) && !holds(bounded)) { settleReceipted(owing); return true; }
   receipts = pruneReceipts([bounded, ...receipts.filter((existing) => existing.id !== bounded.id)], now);
   const persisted = saveReceipts();
   // a request with a hand-off receipt is a hand-off's: its row says so for its whole life (room_requests.handoff, the identity the hand-back prefilter reads)
@@ -481,7 +507,51 @@ export function finishHandoff<T>(receipt: Parameters<typeof recordDelegationRece
 function validOwedReply(value: unknown): value is OwedReply {
   if (!value || typeof value !== "object" || Array.isArray(value)) return false;
   const owed = value as Record<string, unknown>;
-  return typeof owed.text === "string" ? Object.keys(owed).length === 1 : typeof owed.line === "string" && typeof owed.ok === "boolean" && Object.keys(owed).length === 2;
+  if (typeof owed.text === "string") {
+    if (Object.keys(owed).length === 1) return true;
+    // a held reply (REPLY-WITHHELD-CONTRACT R3): the words and the originals they rest on, written flagged "checking"
+    const hold = owed.held as { copyOf?: unknown } | undefined;
+    return Object.keys(owed).length === 2 && Boolean(hold) && typeof hold === "object" && validOrigin(hold!.copyOf);
+  }
+  return typeof owed.line === "string" && typeof owed.ok === "boolean" && Object.keys(owed).length === 2;
+}
+function validOrigin(value: unknown): value is { threadId: string; messageIds: string[] } {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return false;
+  const origin = value as { threadId?: unknown; messageIds?: unknown };
+  return typeof origin.threadId === "string" && Array.isArray(origin.messageIds) && origin.messageIds.length > 0 && origin.messageIds.every((id) => typeof id === "string");
+}
+function validHold(value: unknown): DelegationReceipt["held"] | undefined {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return undefined;
+  const hold = value as { messageId?: unknown; since?: unknown; judgedAt?: unknown };
+  if (typeof hold.messageId !== "string" || !hold.messageId || typeof hold.since !== "number" || !Number.isFinite(hold.since)) return undefined;
+  return { messageId: hold.messageId, since: hold.since, ...(typeof hold.judgedAt === "number" && Number.isFinite(hold.judgedAt) ? { judgedAt: hold.judgedAt } : {}) };
+}
+
+/** The receipts whose reply is still held (REPLY-WITHHELD-CONTRACT C4, R11): never judged first (oldest hold first), then least recently judged, so
+ * a hold that stays checking never takes a pass ahead of a newer one. */
+export function heldReceipts(): DelegationReceipt[] {
+  return receipts.filter(holds).sort((a, b) => {
+    const aj = a.held!.judgedAt, bj = b.held!.judgedAt;
+    if (aj === undefined || bj === undefined) return aj === undefined && bj === undefined ? a.held!.since - b.held!.since : aj === undefined ? -1 : 1;
+    return aj - bj;
+  });
+}
+
+/** One hold's settle on its receipt (server/held-replies.ts), saved at once: `judgedAt` records a judgement that left it held; `held: null` ends the hold;
+ * `result` (a withheld, refused or checking line) replaces the words the receipt kept; `copyOf` replaces the originals. */
+export function settleHeldReceipt(id: string, patch: { judgedAt?: number; held?: null; reply?: null; result?: Outbound; copyOf?: EgressOrigin }): void {
+  const kept = receipts.find((receipt) => receipt.id === id);
+  if (!kept) return;
+  if (patch.judgedAt !== undefined && kept.held) kept.held = { ...kept.held, judgedAt: patch.judgedAt };
+  if (patch.held === null) delete kept.held;
+  if (patch.reply === null) delete kept.reply; // the held row it owed is in the conversation
+  if (patch.result !== undefined) {
+    kept.result = outboundWords(patch.result).slice(0, RESULT_MAX_CHARS);
+    if (MurageStatus.is(patch.result) && !ReleasedText.is(patch.result)) kept.resultStatus = { key: patch.result.key, ...(patch.result.data ? { data: { ...patch.result.data } } : {}) };
+    else delete kept.resultStatus;
+  }
+  if (patch.copyOf) kept.copyOf = { threadId: patch.copyOf.threadId, messageIds: patch.copyOf.messageIds.slice(0, 65) };
+  saveReceipts();
 }
 /** Finished hand-offs whose final commit failed in this process: their row and receipt are still there, waiting to be settled together. */
 const stranded = new Set<string>();
@@ -567,8 +637,8 @@ export function forgetDelegationsForThreads(threadIds: readonly string[]): void 
 export function findDelegationReceipt(id: string): DelegationReceipt | null {
   // A receipt past its retention is gone on read too, so an idle process never serves one that a write would have pruned.
   const found = receipts.find((receipt) => receipt.id === id);
-  // ...except one that still owes its source conversation a line: that never expires, however long Murage was closed.
-  return found && (owes(found) || Date.now() - found.finishedAt <= RECEIPT_MAX_AGE_MS) ? found : null;
+  // ...except one that still owes its source conversation a line, or whose reply is still held: that never expires, however long Murage was closed.
+  return found && (owes(found) || holds(found) || Date.now() - found.finishedAt <= RECEIPT_MAX_AGE_MS) ? found : null;
 }
 
 /** A still-queued task's routing info, or null once it dispatched/settled. */
@@ -609,7 +679,7 @@ function waitingPage(toBotId: string): Array<{ pos: number; id: string; source_t
   const more = stmts().waitingAfter.all(toBotId, at?.thread ?? "", IDLE_RELEASE_BATCH - rest.length) as unknown as Row[];
   return rest.concat(more);
 }
-/** The source threads of the next bounded page of hand-offs waiting for this busy bot — the set its idle transition re-drains. A read: it does not move the pass's cursor.
+/** The source threads of the next bounded page of hand-offs waiting for this busy bot - the set its idle transition re-drains. A read: it does not move the pass's cursor.
  * Fresh items are excluded: they run when their SOURCE turn settles, and draining them early would start the peer too soon. */
 export function threadsWaitingOn(toBotId: string): string[] {
   return [...new Set(waitingPage(toBotId).map((row) => row.source_thread_id))];
@@ -884,6 +954,9 @@ export function parsePendingItem(value: unknown): PendingDelegationItem | null {
     ...(item.executionAudience ? { executionAudience: item.executionAudience } : {}),
     ...(item.coordination ? { coordination: coordinationTraceSchema.parse(item.coordination) } : {}),
   };
+  if (typeof item.senderTurnId === "string" && item.senderTurnId) loaded.senderTurnId = item.senderTurnId;
+  else if (item.senderTurnId === null) loaded.senderTurnId = null;
+  if (typeof item.sourceMessageId === "string" && item.sourceMessageId) loaded.sourceMessageId = item.sourceMessageId;
   if (item.approvalAlreadyGranted === true) loaded.approvalAlreadyGranted = true;
   if (item.fullAccessWaived === true) loaded.fullAccessWaived = true;
   // fails closed: anything but an explicit false-by-absence keeps the mark
@@ -939,7 +1012,7 @@ export function _loadPending(): void {
         if (typeof sourceThreadId !== "string" || typeof toBotId !== "string") continue;
         if (typeof toBotName !== "string" || typeof status !== "string") continue;
         // an old receipt is dropped, unless it still owes its source conversation a line: that one is delivered at this start, then ages out
-        if (!Number.isFinite(finishedAt) || (now - finishedAt! > RECEIPT_MAX_AGE_MS && !validOwedReply(candidate.reply))) continue;
+        if (!Number.isFinite(finishedAt) || (now - finishedAt! > RECEIPT_MAX_AGE_MS && !validOwedReply(candidate.reply) && !validHold(candidate.held))) continue;
         const receipt: DelegationReceipt = { id, sourceThreadId, toBotId, toBotName, status, finishedAt: finishedAt! };
         if (typeof result === "string") receipt.result = result;
         // the line's key and plain values come back with it, so a failure keeps its reason after a restart; one that no longer reads back as a line is dropped
@@ -956,6 +1029,8 @@ export function _loadPending(): void {
         if (candidate.notOwnerAudience === true) receipt.notOwnerAudience = true;
         if (candidate.lineage === true) receipt.lineage = true;
         if (validOwedReply(candidate.reply)) receipt.reply = candidate.reply;
+        const held = validHold(candidate.held);
+        if (held) receipt.held = held;
         loaded.push(receipt);
       }
       receipts = pruneReceipts(loaded, now);
@@ -1023,7 +1098,9 @@ export function queueDelegation(
   const id = newId();
   const executionAudience = issueWorkAudience(from.id, item.toBotId, sourceThreadId, item.executionAudience ?? issueExecutionAudience(from.id, sourceThreadId, id), id, item.notOwnerAudience !== true);
   if (executionAudience && !validExecutionAudience(executionAudience)) throw new Error("Invalid execution audience");
+  const senderTurnId = bus.turnOf?.(sourceThreadId) ?? null;
   const queued: PendingDelegationItem = { ...item, ...(executionAudience ? { executionAudience } : {}), id, attempts: 0, fromBotId: from.id };
+  queued.senderTurnId = senderTurnId;
   // The room request that tracks this handoff and the queue row are accepted together or not at all.
   let inserting = false;
   try {
@@ -1032,6 +1109,8 @@ export function queueDelegation(
       // Shared work already names the conversation it runs in when it is queued; the row stores that destination from the start (the other origins
       // resolve theirs once, at their first admission, and store it then: server/handoff-dispatch.ts).
       const destination = origin === "shared" ? handoffRequest(database(), id)?.targetThreadId ?? null : null;
+      // the source row, in this transaction: its lineage keeps the sending turn before that turn ends or is evicted (rule 6)
+      queued.sourceMessageId = bus.store.appendMessage(sourceThreadId, messagedRow(from, target, senderTurnId ?? undefined)).id;
       inserting = true;
       persistWrites++;
       stmts().insert.run(id, sourceThreadId, queued.toBotId, from.id, "fresh", null, itemJson(queued), origin, delegationTurnKey(id), destination);
@@ -1106,7 +1185,7 @@ export function drainDelegations(bus: CommsBus, approvalBus: ApprovalBus, thread
     drainingThreads.delete(threadId);
     // A later turn may have queued and settled while this thread was
     // waiting for approval. Only items OUTSIDE what this drain walked warrant a
-    // fresh drain — re-draining a just-requeued item would burn its bounded
+    // fresh drain - re-draining a just-requeued item would burn its bounded
     // busy retries in milliseconds instead of once per target settle.
     const redrainRequested = queuedRedrains.delete(threadId);
     const hasNewItems = redrainRequested ? false : queuedBeyond(threadId, ownFirst, seen);
@@ -1414,8 +1493,8 @@ export const heldLineId = (id: string): string => `held-${id}`.slice(0, 160);
 export function appendHeldLine(store: Pick<Store, "botByThread" | "groupByThread" | "bot" | "appendMessage">, held: HeldDelegation): void {
   if (!store.botByThread(held.sourceThreadId) && !store.groupByThread(held.sourceThreadId)) return;
   const sender = held.fromBotId && store.groupByThread(held.sourceThreadId) ? store.bot(held.fromBotId) : undefined;
-  store.appendMessage(held.sourceThreadId, { role: "bot", kind: "activity", tool: { name: held.text, ok: false }, delegationHeld: { id: held.id },
-    ...(sender ? { from: { botId: sender.id, name: sender.name, color: sender.color } } : {}) }, heldLineId(held.id), () => registerHeldLine(held));
+  store.appendMessage(held.sourceThreadId, murageLine({ role: "bot", kind: "activity", tool: { name: held.text, ok: false }, delegationHeld: { id: held.id },
+    ...(sender ? { from: { botId: sender.id, name: sender.name, color: sender.color } } : {}) }), heldLineId(held.id), () => registerHeldLine(held));
 }
 /** Registers the owner-facing line of a held hand-off in the queue (`held_notice_lines`). Called as the line is written, by the line's own `within`, so the line and
  * its registration commit together or not at all. Idempotent. */
@@ -1572,8 +1651,8 @@ export function discardDelegations(bus: CommsBus, threadId: string, fromBotId?: 
   const all = queuedItems(threadId);
   if (!all.length) return;
   const owns = (item: PendingDelegationItem) => {
-    // An item that has already outlived a turn — retried, or parked waiting
-    // for a busy target — cannot belong to the turn that just failed, so no
+    // An item that has already outlived a turn - retried, or parked waiting
+    // for a busy target - cannot belong to the turn that just failed, so no
     // interruption may drop it. This is what protects a room: Ember queues a
     // handoff, Rex is busy, it parks; Nia speaks in the same room and hits
     // Stop, and Ember's handoff is not collateral.
@@ -1598,7 +1677,7 @@ export function discardDelegations(bus: CommsBus, threadId: string, fromBotId?: 
     });
   }
   // The chip lands in the source conversation, which is a bot's own thread
-  // OR a room it spoke in — botByThread alone silenced the room case.
+  // OR a room it spoke in - botByThread alone silenced the room case.
   if (!bus.store.botByThread(threadId) && !bus.store.groupByThread(threadId)) return;
   appendDelegationRow(bus, threadId, fromBotId ?? list[0]?.fromBotId, {
     role: "bot",
@@ -1738,7 +1817,7 @@ export function formatDelegationElapsed(elapsedMs: number): string {
 }
 
 /** Recent, bounded activity from the peer's thread since the delegated
- * turn started — newest last. Empty means the peer has produced nothing
+ * turn started - newest last. Empty means the peer has produced nothing
  * visible since dispatch, which reads as "maybe stuck" to the caller. */
 /** One row of a delegated turn's conversation after the result gate: the words of each field it would render, released together (server/result-egress.ts
  * `releaseMessage`), or no row at all. */

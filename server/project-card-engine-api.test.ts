@@ -1,11 +1,12 @@
 // Copyright 2026 Ferrox Labs
 // SPDX-License-Identifier: AGPL-3.0-or-later
-import { chmodSync, existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { chmodSync, existsSync, mkdtempSync, readFileSync } from "node:fs";
 import { DatabaseSync } from "node:sqlite";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { afterAll, beforeAll, expect, it, vi } from "vitest";
 import { launchVerificationServer, type VerificationServer } from "../scripts/control-murage.ts";
+import { removeTempDirSync } from "./testing/cleanup.ts";
 let fixture: VerificationServer;
 let proof: string;
 let fixtureRoot: string;
@@ -28,7 +29,7 @@ beforeAll(async () => {
   ` });
   proof = (await (await fetch(`${fixture.info.url}/api/desktop-secret`)).json() as { secret: string }).secret;
 }, 30000);
-afterAll(async () => { await fixture?.close(); if (fixtureRoot) rmSync(fixtureRoot, { recursive: true, force: true }); vi.unstubAllEnvs(); });
+afterAll(async () => { await fixture?.close(); if (fixtureRoot) removeTempDirSync(fixtureRoot); vi.unstubAllEnvs(); });
 it("an owner-started card runs in its bot desk and returns one result to the room", async () => {
   const instances = (await api("GET", "/api/instances")).body.instances;
   const engine = instances.find((instance: any) => instance.instanceId === "verification");

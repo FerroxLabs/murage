@@ -4,11 +4,12 @@
 // S5 (DESIGN-WRITETIME 4): the lineage backfill of an upgraded history, killed and resumed; its per-slice cost at 1k and 100k messages;
 // the promoted thread first; U2 blocked on the S0 revoke stub (nothing ready, nothing shown) and finished with a working commit; the
 // sliced v10 -> v9 downgrade marking every post-upgrade generated line unprovable for the older build; and the upgrade screen's progress.
-import { mkdirSync, rmSync } from "node:fs";
+import { mkdirSync } from "node:fs";
 import type { DatabaseSync, StatementSync } from "node:sqlite";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { stopWalMaintenance } from "../wal-maintenance.ts";
 import type { RevokeRoot } from "./lineage-types.ts";
+import { removeTempDirSync } from "../testing/cleanup.ts";
 
 // the S0 stub answers 0; a test that needs U2 to finish switches in a commit that records its roots
 const mock = { works: false };
@@ -26,7 +27,7 @@ const { backgroundJobsPending, backgroundStatus, startBackgroundUpgradeWork } = 
 // closeDatabase stops the WAL checkpointer without waiting: a checkpointer still alive when the data dir is deleted and rebuilt closes its
 // connection to the deleted file later and removes the NEW file's -wal and -shm by path, so the fresh connection loses everything it wrote
 // (it reads an empty history). The checkpointer is awaited after every close.
-async function reset(): Promise<void> { closeDatabase(); await stopWalMaintenance(); resetLineageBackfillForTest(); rmSync(DATA_DIR, { recursive: true, force: true }); mkdirSync(DATA_DIR, { recursive: true }); commits.length = 0; mock.works = false; }
+async function reset(): Promise<void> { closeDatabase(); await stopWalMaintenance(); resetLineageBackfillForTest(); removeTempDirSync(DATA_DIR); mkdirSync(DATA_DIR, { recursive: true }); commits.length = 0; mock.works = false; }
 beforeEach(async () => { await reset(); });
 afterEach(() => { mock.works = false; });
 
@@ -313,6 +314,45 @@ describe("v10 -> v9 downgrade", () => {
     db.prepare("UPDATE memory_lsn SET next=6 WHERE id=1").run();
     expect(downgradeMemorySchema(db, 9).status).toBe("downgraded");
     expect(db.prepare("SELECT set_id FROM memory_output_roots WHERE thread_id=? AND message_id='late'").get(thread)?.set_id).toBe("");
+  });
+
+  // S6 rule 30 (test 36, the downgrade part): only the owner's revoke writes a denial; the downgrade hide mirrors the deny marks already there
+  const DENY_TABLES = ["memory_deny_line", "memory_deny_range", "memory_deny_session", "memory_deny_memory", "memory_deny_pending", "memory_deny_pending_scope", "memory_deny", "memory_revoke_jobs"];
+  const denyState = (db: DatabaseSync) => ({
+    hw: Number(db.prepare("SELECT next FROM memory_lsn WHERE id=1").get()!.next),
+    gen: Number(db.prepare("SELECT value FROM memory_lineage_lsn_meta WHERE key='deny_generation'").get()!.value),
+    tables: Object.fromEntries(DENY_TABLES.map(table => [table, JSON.stringify(db.prepare(`SELECT * FROM ${table}`).all().map(row => JSON.stringify(row)).sort())])),
+    untils: db.prepare("SELECT thread_id,from_lsn,revoke_id,until_turn_lsn FROM memory_deny_range ORDER BY thread_id,from_lsn,revoke_id").all(),
+  });
+  const marks = (db: DatabaseSync) => ({
+    flags: db.prepare("SELECT thread_id,id,json FROM messages ORDER BY thread_id,id").all(),
+    roots: db.prepare("SELECT * FROM memory_output_roots ORDER BY thread_id,message_id").all(),
+    sessions: db.prepare("SELECT * FROM memory_session_roots ORDER BY thread_id,driver_instance,native_session").all(),
+  });
+  it("S6 rule 30: the hide is a mirror: writtenState, every deny table and every until_turn_lsn are unchanged, and a second run is a no-op", () => {
+    const db = database();
+    const { history, oldBot } = writtenByNewBuild(db);
+    const before = denyState(db);
+    let slices = 0;
+    while (!lineageDowngradeSlice(db, { budgetMs: 3, now: ticking() }).done) if (++slices > 1_000_000) throw new Error("no end");
+    expect(denyState(db)).toEqual(before);
+    // it wrote the older build's note on exactly the covered lines (deny_line names oldBot[0]; the range starts at oldBot[2])
+    expect(flag(db, history.threads[1]!, oldBot[0]!.id)).toBe(1);
+    expect(flag(db, history.threads[1]!, oldBot[1]!.id)).toBe(null);
+    const marked = marks(db);
+    // a second run: every mark is written already, nothing moved, nothing more is written
+    expect(lineageDowngradeSlice(db, { budgetMs: 1_000, now: ticking() }).done).toBe(true);
+    expect(marks(db)).toEqual(marked);
+    expect(denyState(db)).toEqual(before);
+  });
+  it("S6 rule 30: lineageDowngradeSlice calls no denial writer and inserts no deny row", async () => {
+    const { readFileSync } = await import("node:fs");
+    const source = readFileSync(new URL("./lineage-backfill.ts", import.meta.url), "utf8");
+    const body = source.slice(source.indexOf("export function lineageDowngradeSlice"), source.indexOf("export function lineageDowngradeMarked"));
+    const WRITERS = /\b(commitRevoke|takeCommitLsn|bumpDenyGeneration|writeLine|writeRange|seedFlow|markPending)\b|INSERT\s+(?:OR\s+\w+\s+)?INTO\s+memory_deny|UPDATE\s+memory_deny|deny_generation'\s*,|SET\s+value\s*=\s*value\s*\+/gi;
+    expect("x; commitRevoke(tx); INSERT INTO memory_deny_line(a) VALUES(1)".match(WRITERS)).toHaveLength(2); // the matcher is not vacuous
+    expect(body.length).toBeGreaterThan(1000);
+    expect(body.match(WRITERS)).toBeNull();
   });
 });
 

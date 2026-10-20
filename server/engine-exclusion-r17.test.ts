@@ -7,7 +7,7 @@
 // The exclusion is modelled here (testing/engine-exclusion-fake.ts); engine-exclusion.test.ts runs the same flows against the real
 // addon and real second processes.
 import { EventEmitter } from "node:events";
-import { appendFileSync, existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, realpathSync, rmSync, writeFileSync } from "node:fs";
+import { appendFileSync, existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, realpathSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
@@ -23,10 +23,11 @@ import { clearEdits, hasContentSteps, homeKey, isCleared, JSONL_FORMAT, type Ste
 import { qwenProjectKey } from "./engine-history-deletion.ts";
 import { useFakeExclusion, type FakeExclusion } from "./testing/engine-exclusion-fake.ts";
 import { asExclusive, buildFixture, canaryHits, treeDigest, type Fixture } from "./testing/engine-history-fixtures.ts";
+import { removeTempDirSync } from "./testing/cleanup.ts";
 
 const scratch = realpathSync.native(mkdtempSync(join(tmpdir(), "murage-r17-")));
 const openDatabases: DatabaseSync[] = [];
-afterAll(() => { for (const db of openDatabases) db.close(); rmSync(scratch, { recursive: true, force: true }); });
+afterAll(() => { for (const db of openDatabases) db.close(); removeTempDirSync(scratch); });
 
 let fake: FakeExclusion;
 beforeEach(() => { fake = useFakeExclusion(); });

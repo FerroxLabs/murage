@@ -1,10 +1,11 @@
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { basename, join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 
 import { parseTeamManifest } from "./team-manifest.ts";
 import { scoutProject, suggestTeam, type ProjectProfile } from "./project-scout.ts";
+import { removeTempDirSync } from "./testing/cleanup.ts";
 
 let dirs: string[] = [];
 
@@ -20,7 +21,7 @@ function project(files: Record<string, string>): string {
 }
 
 afterEach(() => {
-  for (const dir of dirs) rmSync(dir, { recursive: true, force: true });
+  for (const dir of dirs) removeTempDirSync(dir);
   dirs = [];
 });
 

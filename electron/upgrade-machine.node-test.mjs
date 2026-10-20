@@ -334,3 +334,27 @@ test("r9 (Fable r8 #7): one minute with no advance is a stall, early in a run as
   ctx = reduce(ctx, read(at(200), withEta(25 * 60_000, 9000 + 200_000, { overall: 0.02 })));
   assert.equal(selectWindow(ctx).late, false);
 });
+
+test("honest time left: a fixed total with a measured rate gets minutes; an open-ended step (a sliding total) gets no percent and no minutes", () => {
+  const fixed = (awake) => withEta(360_000, awake, { phase: "lineage", overall: 0.94, step: { awakeElapsedMs: awake, unit: "conversations", done: 50, total: 100 } });
+  let ctx = run([read(at(0), fixed(9000)), read(at(2), fixed(11_000))]);
+  assert.equal(selectStrip(ctx).left, 6, "a fixed total and a steady measured rate show minutes");
+  assert.equal(selectStrip(ctx).percent, 94);
+  const open = (awake, done) => withEta(360_000, awake, { phase: "marker", overall: 0.94, step: { awakeElapsedMs: awake, unit: "open", done } });
+  ctx = run([read(at(0), open(9000, 4000)), read(at(2), open(11_000, 6000)), read(at(4), open(13_000, 8000))], "window");
+  const strip = selectStrip(ctx), view = selectWindow(ctx);
+  assert.equal(strip.left, null, "no minutes, however steady the server's estimate looks");
+  assert.equal(strip.percent, null, "no percent for a step whose end moves");
+  assert.deepEqual(strip.counter, { unit: "open", done: 8000 });
+  assert.equal(view.etaMinutes, null);
+  assert.equal(view.percent, null);
+  assert.equal(view.indeterminate, true);
+});
+
+test("an open-ended step carries a count and nothing else: a total or a missing count is refused", () => {
+  const base = state({ stage: "background", phase: "marker", step: { awakeElapsedMs: 1000, unit: "open", done: 5 } });
+  assert.equal(parseUpgradeState(base).ok, true);
+  assert.equal(parseUpgradeState({ ...base, step: { awakeElapsedMs: 1000, unit: "open", done: 5, total: 9 } }).ok, false);
+  assert.equal(parseUpgradeState({ ...base, step: { awakeElapsedMs: 1000, unit: "open" } }).ok, false);
+  assert.equal(parseUpgradeState({ ...base, phase: "lineage" }).ok, false, "only the phase that is open-ended may say so");
+});

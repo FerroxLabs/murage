@@ -148,7 +148,7 @@ export function canaryHits(root: string, canaries: string[]): string[] {
 /** Where an identifier of the conversation is still readable outside the files that keep their rows' ids. */
 export function idHits(fx: Fixture): string[] {
   if (!fx.ids.length) return [];
-  return canaryHits(fx.root, fx.ids).filter((hit) => !fx.idsMayRemainIn.some((name) => hit.split(": ")[0]!.endsWith(`/${name}`)));
+  return canaryHits(fx.root, fx.ids).filter((hit) => !fx.idsMayRemainIn.some((name) => hit.split(": ")[0]!.endsWith(`${path.sep}${name}`)));
 }
 
 export function hasZstd(): boolean {

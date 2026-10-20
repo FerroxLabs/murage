@@ -31,7 +31,9 @@ it("is applied where engine events become messages, so cards, activity, Inbox an
   const push = index.slice(start, index.indexOf("\n  if (coordinatorVisibleText)", start));
   // Tool-action stamping now happens inside the normalization call. Every
   // append still consumes the normalized message, including non-tool rows.
-  expect(push).toMatch(/const m = plainConnectedAppMessage\(\{ \.\.\.raw, [^\n]+\}\);/);
+  expect(push).toMatch(/const plain = plainConnectedAppMessage\(\{ \.\.\.raw, [^\n]+\}\);/);
+  // The stored row is built from m, which is derived from the normalized `plain` (murageLine only stamps it).
+  expect(push).toMatch(/const m = [^\n]*\? murageLine\(plain\) : plain;/);
   // A row is stored from the normalized message, appended or written ahead
   // of a hosted tool row (insertMessageBefore), never from the raw one.
   expect(push).toContain('const stored = { ...(group && m.role === "bot" ? { ...m, from: speaker } : m),');

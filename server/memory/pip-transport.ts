@@ -56,7 +56,23 @@ export interface TextOnlyTurnInput {
     bootEpoch?: BootEpoch; deadlineAt?: number; hooks?: TransportHooks;
     /** Prior misses recorded under this route fingerprint (A.6 escalation). */
     history?: MissHistory;
+    /** The admission fence (PIP-REDESIGN r3 2.3): synchronous, called by each adapter after its last await and immediately before the
+     *  request leaves or the process starts. Anything but "none" means what the request carries is no longer admissible as read; the
+     *  adapter throws readMoved() before anything is sent or spawned. */
+    fence?: () => AdmissionFenceAnswer;
   };
+}
+/** "paid-cap": the caller's family has spent its paid calls (pip-reflect MAX_PAID_CALLS); like a move, nothing is sent. */
+export type AdmissionFenceAnswer = "none" | "moved" | "off" | "paid-cap";
+/** A read the request was built from moved before dispatch: nothing was sent and no process exists. Like `cancelled`, a typed error. */
+export interface ReadMovedError extends Error { name: "read-moved"; kind: Exclude<AdmissionFenceAnswer, "none"> }
+export const readMoved = (kind: Exclude<AdmissionFenceAnswer, "none">): ReadMovedError => Object.assign(new Error("read-moved"), { name: "read-moved" as const, kind });
+export const isReadMoved = (error: unknown): error is ReadMovedError => (error as { name?: unknown } | null)?.name === "read-moved";
+/** Calls the fence of `turn` (if any) and throws readMoved() when it answers anything but "none". */
+export function runAdmissionFence(fence: (() => AdmissionFenceAnswer) | undefined): void {
+  if (!fence) return;
+  const answer = fence();
+  if (answer !== "none") throw readMoved(answer);
 }
 
 /** One terminal state per attempt (A.6 and the section 3.1 table). */

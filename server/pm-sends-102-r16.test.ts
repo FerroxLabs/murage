@@ -2,7 +2,7 @@
 // (2) a queued shared continuation whose task metadata is missing is not cancelled as "the room is gone" without a recorded deletion;
 // (3) work addressed to a bot or room the registry cannot show is settled only with the owner's recorded deletion (the delegation case is
 // in delegations.test.ts; the authorization seam is here).
-import { mkdirSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
@@ -17,8 +17,9 @@ import { initializeProjectTables } from "./project-tables.ts";
 import { insertRoomRequest, roomRequest } from "./room-requests.ts";
 import { createWorkAdmission } from "./work-admission.ts";
 import { authorizeWork, setExecutionStore } from "./execution-audience.ts";
+import { removeTempDirSync } from "./testing/cleanup.ts";
 
-beforeEach(() => { closeDatabase(); rmSync(DATA_DIR, { recursive: true, force: true }); mkdirSync(DATA_DIR, { recursive: true }); });
+beforeEach(() => { closeDatabase(); removeTempDirSync(DATA_DIR); mkdirSync(DATA_DIR, { recursive: true }); });
 afterEach(() => closeDatabase());
 
 const blockFor = (ms: number) => Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
@@ -56,7 +57,7 @@ describe("(1) the owed backfill runs under the blocking heartbeat", () => {
       expect(note.step).toBe("backfill"); expect(note.phase).toBe("indexing");
       stamps.push(note.updatedAt);
       expect(Date.now() - note.updatedAt).toBeLessThan(600);
-    } finally { rmSync(dir, { recursive: true, force: true }); }
+    } finally { removeTempDirSync(dir); }
   });
   it("a heartbeat that cannot start leaves the backfill exactly as it was", () => {
     const db = database();

@@ -16,7 +16,7 @@
 
 /** A fenced block becomes a mention of itself, with its language if known. */
 import { connectedAppNames } from "../../shared/connected-app-calls.ts";
-import { delegationLiveLine } from "../../shared/delegation-tool.ts";
+import { delegationLiveLine, type DelegationRoster } from "../../shared/delegation-tool.ts";
 import { canonicalConnectedAppToolName } from "../../shared/connected-app-names.ts";
 
 function describeCodeBlock(fence: string): string {
@@ -341,10 +341,10 @@ function wrappedTool(toolName: string, input: unknown): { name: string; input: u
 
 /** A tool-activity chip as a spoken progress line ("reading core.ts").
  * Returns null for chips not worth interrupting the ear for. */
-export function narrateTool(toolName: string, input?: unknown): string | null {
+export function narrateTool(toolName: string, input?: unknown, roster?: DelegationRoster): string | null {
   // An engine's tool wrapper (Grok's `use_tool`) names the real tool inside.
   const wrapped = wrappedTool(toolName, input);
-  if (wrapped) return narrateTool(wrapped.name, wrapped.input);
+  if (wrapped) return narrateTool(wrapped.name, wrapped.input, roster);
   // The connected-app tools by one name, whichever the engine was shown.
   const name = canonicalConnectedAppToolName(toolName.trim()).replace(/^mcp__[^_]+__/, "").trim();
   if (!name) return null;
@@ -357,7 +357,7 @@ export function narrateTool(toolName: string, input?: unknown): string | null {
   // the harness writes these as chips too; they are already spoken elsewhere
   if (/^(auto-approved|error):/i.test(name)) return null;
   // a hand-off to another bot, under any engine's spelling of the tool
-  const delegation = delegationLiveLine(name, input);
+  const delegation = delegationLiveLine(name, input, roster);
   if (delegation) return delegation;
 
   const bare = name.toLowerCase().replace(/^composio__/, "");

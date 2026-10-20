@@ -28,9 +28,9 @@ const world = (message: EgressMessage | undefined, over: Partial<ResultEgressDep
 });
 const ref: StoredResultRef = { requestId: "r1", origin: { threadId: "work", messageIds: ["m1"] } };
 // results read back as plain values: released words and status lines become their strings
-type Plain = { kind: "text"; text: string; copyOf?: { threadId: string; messageIds: string[] } } | { kind: "withheld"; line: string } | { kind: "refused"; line: string; code: string } | { kind: "status" } | { kind: "gone" };
+type Plain = { kind: "text"; text: string; copyOf?: { threadId: string; messageIds: string[] } } | { kind: "withheld"; line: string } | { kind: "checking"; line: string } | { kind: "refused"; line: string; code: string } | { kind: "status" } | { kind: "gone" };
 const plain = (result: ReleasedResult): Plain => result.kind === "text" ? { kind: "text", text: words(result.text), ...(result.copyOf ? { copyOf: result.copyOf } : {}) }
-  : result.kind === "withheld" ? { kind: "withheld", line: outboundWords(result.line) } : result.kind === "refused" ? { kind: "refused", line: outboundWords(result.line), code: result.code } : result;
+  : result.kind === "withheld" || result.kind === "checking" ? { kind: result.kind, line: outboundWords(result.line) } : result.kind === "refused" ? { kind: "refused", line: outboundWords(result.line), code: result.code } : result;
 const release = (deps: ResultEgressDeps, over: Partial<StoredResultRef> = {}, notOwner = false, text?: string): Plain =>
   plain(releaseStoredResult({ ...ref, ...over }, "worker", "asker-thread", { fromBotId: "asker" }, notOwner, text === undefined ? undefined : new WorkerText(text), deps));
 
@@ -100,16 +100,30 @@ describe("the one gate for a stored result", () => {
     expect(release(world({ id: "m1", text: SECRET }, { messageMadeWithMemory: () => true }), {}, false).kind).toBe("text");
   });
 
-  it("a receipt's recorded text is withheld when its lineage is unknown or it was made as the owner for a reader who is not", () => {
+  it("a receipt whose lineage is unknown reads checking, never deleted or changed (C1, Astra delta Medium 5); one made as the owner for a reader who is not is withheld", () => {
     const none = world(undefined);
-    expect(release(none, { origin: undefined, lineageUnknown: true }, false, SECRET)).toEqual({ kind: "withheld", line: "[withheld]" });
+    const unknown = release(none, { origin: undefined, lineageUnknown: true }, false, SECRET);
+    expect(unknown).toMatchObject({ kind: "checking" });
+    expect(unknown).not.toHaveProperty("held");
+    expect(JSON.stringify(unknown)).not.toContain(SECRET);
+    // with its originals stored and unmarked, the unknown lineage still holds it: the owner keeps the words beside the originals, no bot reads them
+    const raw = (notOwner: boolean) => releaseStoredResult({ ...ref, lineageUnknown: true }, "worker", "asker-thread", { fromBotId: "asker" }, notOwner, new WorkerText(SECRET), world({ id: "m1", text: SECRET }));
+    expect(raw(false)).toMatchObject({ kind: "checking", held: { copyOf: ref.origin } });
+    expect(raw(true)).toMatchObject({ kind: "checking" });
+    expect(raw(true)).not.toHaveProperty("held");
+    // a real mark still wins over the unknown
+    expect(release(world({ id: "m1", text: SECRET, withheldFromBots: "forgotten" }), { origin: ref.origin, lineageUnknown: true }, false, SECRET).kind).toBe("withheld");
     expect(release(none, { origin: undefined, recordedNotOwner: false }, true, SECRET).kind).toBe("withheld");
   });
 
-  it("worker text with no stored message behind it is withheld, whether the origin is missing or names nothing", () => {
+  it("worker text with no stored message behind it reads checking with no words, whether the origin is missing or names nothing (C1, Astra delta Medium 5)", () => {
     const none = world(undefined);
-    expect(release(none, { origin: undefined, recordedNotOwner: false }, false, SECRET)).toEqual({ kind: "withheld", line: "[withheld]" });
-    expect(release(none, { origin: { threadId: "work", messageIds: [] }, recordedNotOwner: false }, false, SECRET)).toEqual({ kind: "withheld", line: "[withheld]" });
+    for (const origin of [undefined, { threadId: "work", messageIds: [] }]) {
+      const result = release(none, { origin, recordedNotOwner: false }, false, SECRET);
+      expect(result).toMatchObject({ kind: "checking" });
+      expect(result).not.toHaveProperty("held");
+      expect(JSON.stringify(result)).not.toContain(SECRET);
+    }
     expect(release(world({ id: "m1", text: SECRET }), { origin: ref.origin }, false, SECRET)).toMatchObject({ kind: "text", copyOf: ref.origin });
   });
 
@@ -237,22 +251,22 @@ describe("R6-01: the whole copy chain is read before any word leaves", () => {
   it("a copy that points back at itself (a to b to a) is withheld", () => {
     expect(run(chain([at("a", "b"), at("b", "a")]), "a")).toMatchObject({ kind: "withheld" });
   });
-  it("a chain nine copies deep is withheld, eight is allowed", () => {
+  it("a chain nine copies deep is checking (the walk could not finish, REPLY-WITHHELD-CONTRACT R1), eight is allowed", () => {
     const deep = (n: number) => Array.from({ length: n + 1 }, (_, i) => at(`c${i}`, i < n ? `c${i + 1}` : undefined));
-    expect(run(chain(deep(9)), "c0")).toMatchObject({ kind: "withheld" });
+    expect(run(chain(deep(9)), "c0")).toMatchObject({ kind: "checking" });
     expect(run(chain(deep(8)), "c0")).toMatchObject({ kind: "text" });
   });
   it("a flagged message two copies back withholds the result", () => {
     expect(run(chain([at("m0", "m1"), at("m1", "m2"), at("m2", undefined, { withheldFromBots: "forgotten" })]), "m0")).toMatchObject({ kind: "withheld" });
   });
-  it("a chain with more than 64 messages is withheld", () => {
+  it("a chain with more than 64 messages is checking: nothing of it leaves, and nothing reads as deleted", () => {
     const wide = [{ id: "root", copyOf: undefined as undefined, text: "x" }, ...Array.from({ length: 70 }, (_, i) => ({ id: `n${i}`, text: "x" }))];
     const group = { threadId: "t", messageIds: wide.slice(1).map(row => row.id) };
     const deps = chain(wide.map(row => ({ ...row })), { message: (_thread, id) => id === "root" ? { id, text: "x", copyOf: group } : wide.find(row => row.id === id) });
-    expect(run(deps, "root")).toMatchObject({ kind: "withheld" });
+    expect(run(deps, "root")).toMatchObject({ kind: "checking" });
   });
-  it("an error while reading is withheld, not thrown", () => {
-    expect(run(chain([at("m0")], { message: () => { throw new Error("db"); } }), "m0")).toMatchObject({ kind: "withheld" });
+  it("an error while reading is checking, not thrown and not deleted-or-changed", () => {
+    expect(run(chain([at("m0")], { message: () => { throw new Error("db"); } }), "m0")).toMatchObject({ kind: "checking" });
   });
   it("cached receipt words are used only when every message on the chain passes", () => {
     const deps = chain([at("m0", "m1"), at("m1")], { messageSourceForgotten: (_thread, id) => id === "m1" });

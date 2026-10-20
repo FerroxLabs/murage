@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 
-import { intakeFiles, type Attachment } from "./composer-attachments";
+import { intakeFiles, noticeOffersStorage, type Attachment } from "./composer-attachments";
+import { DISK_FULL_MESSAGE } from "../../shared/attachment-storage.ts";
 
 type Fake = { name: string; size: number; type: string; text: () => Promise<string> };
 const file = (name: string, type: string, size = 10): Fake => ({
@@ -82,6 +83,27 @@ describe("intakeFiles", () => {
       },
     });
     expect(out.attachments).toHaveLength(1);
-    expect(out.notice).toMatch(/bad\.png: too large/);
+    expect(out.notice).toBe("bad.png was not attached. too large");
+  });
+
+  // 1.0.3: four photos refused by a full disk were four repeated sentences.
+  it("gives one line for a batch refused for the same reason, and flags the storage action", async () => {
+    const out = await intakeFiles(["a.jpg", "b.jpg", "c.jpg", "d.jpg"].map((name) => file(name, "image/jpeg")), {
+      allowImages: true,
+      getPath: onDisk,
+      uploadImage: async () => { throw new Error(DISK_FULL_MESSAGE); },
+    });
+    expect(out.notice).toBe(`4 images were not attached. ${DISK_FULL_MESSAGE}`);
+    expect(noticeOffersStorage(out.notice)).toBe(true);
+    expect(noticeOffersStorage("bad.png was not attached. too large")).toBe(false);
+  });
+
+  it("still gives each distinct reason its own clause", async () => {
+    const out = await intakeFiles([file("a.png", "image/png"), file("b.png", "image/png"), file("c.png", "image/png")], {
+      allowImages: true,
+      getPath: onDisk,
+      uploadImage: async (f) => { throw new Error(f.name === "c.png" ? "That image is too large." : DISK_FULL_MESSAGE); },
+    });
+    expect(out.notice).toBe(`2 images were not attached. ${DISK_FULL_MESSAGE} c.png was not attached. That image is too large.`);
   });
 });

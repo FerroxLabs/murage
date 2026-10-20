@@ -39,11 +39,13 @@ export function restartLegacy(): DatabaseSync {
   return legacyFile(database());
 }
 
-/** What index.ts does when a session starts or resumes in 1.0.2 (retainSession): writes the session's lineage row inside an open turn. The read-time
- * judge tells a session 1.0.2 started from a legacy one by this row (replay-lineage.ts sessionLineageKnown); recordSessionRoots no longer writes it. */
+/** What index.ts does when a session starts or resumes (retainSession): writes the session's lineage row inside an open turn. The read-time
+ * judge tells a session 1.0.2 started from a legacy one by this row (replay-lineage.ts sessionLineageKnown); recordSessionRoots no longer writes it.
+ * The first call for a session is its fresh start in this build, so the row it inserts carries the door epoch stamp (S6 rule 26); a later call
+ * is a resume and, as in index.ts, leaves the stamp alone (writeSessionLineage stamps only on INSERT). */
 export function markSessionKnown(threadId: string, driverInstance: string, nativeSession: string, botId = "bot"): void {
   const turn = openTurnLineage(database(), { threadId, turnId: memberTurnId(botId) });
-  try { transaction(tx => writeSessionLineage(tx, { threadId, driverInstance, nativeSession }, turn)); } finally { closeTurnLineage(turn); }
+  try { transaction(tx => writeSessionLineage(tx, { threadId, driverInstance, nativeSession }, turn, true)); } finally { closeTurnLineage(turn); }
 }
 
 /** What index.ts does around a bot's turn that was shown memory (write-time privacy, DESIGN-WRITETIME 2.2): the turn opens when its prompt is

@@ -14,7 +14,7 @@
 //
 // Parsing, not grepping: an `if:` in the wrong place still greps fine.
 
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
@@ -23,6 +23,7 @@ import { dirname, join } from "node:path";
 
 import { beforeAll, describe, expect, it } from "vitest";
 import { parse } from "yaml";
+import { removeTempDirSync } from "../server/testing/cleanup.ts";
 
 describe("WhatsApp final release evidence", () => {
   const jobs = parse(readFileSync(new URL("../.github/workflows/release.yml", import.meta.url), "utf8")).jobs;
@@ -30,7 +31,7 @@ describe("WhatsApp final release evidence", () => {
     const steps = jobs[job].steps;
     const evidence = steps.find(step => step.with?.name === `${job}-whatsapp-gepa-evidence`);
     expect(evidence.if).toBe("always()");
-    expect(evidence.with.path).toBe("qualification-evidence/whatsapp-*");
+    expect(evidence.with.path).toBe(job === "mac-x64" ? "qualification-evidence/whatsapp-*\nqualification-evidence/memory-*\n" : "qualification-evidence/whatsapp-*");
     for (const gate of steps.filter(step => step.run?.includes("scripts/smoke-whatsapp-packaged.mjs"))) {
       expect(gate.if).toBeUndefined(); expect(gate["continue-on-error"]).toBeUndefined();
       expect(gate.run).toMatch(/2> qualification-evidence\/whatsapp-[\w-]+-probe\.log/);
@@ -48,7 +49,7 @@ describe("WhatsApp final release evidence", () => {
     if (job === "mac-x64") expect(jobs["mac-x64"].needs).toContain("mac");
     const evidence = steps.find(step => step.with?.name === `${job}-whatsapp-gepa-evidence`);
     expect(evidence.if).toBe("always()");
-    expect(evidence.with.path).toBe("qualification-evidence/whatsapp-*");
+    expect(evidence.with.path).toBe(job === "mac-x64" ? "qualification-evidence/whatsapp-*\nqualification-evidence/memory-*\n" : "qualification-evidence/whatsapp-*");
     expect(steps.indexOf(evidence)).toBeGreaterThan(steps.indexOf(bind));
     const targets = job === "mac" ? ["darwin-arm64"] : job === "mac-x64" ? ["darwin-x64"] : [job === "windows" ? "win32-x64" : "linux-x64"];
     for (const target of targets) {
@@ -78,10 +79,17 @@ describe("WhatsApp final release evidence", () => {
       await bindWhatsAppArtifacts(report, [dmg, zip]); expect(readFileSync(report, "utf8")).toBe(bytes);
       await expect(bindWhatsAppArtifacts(report, [dmg, join(dir, "missing.zip")])).rejects.toThrow();
       expect(readFileSync(report, "utf8")).toBe(bytes);
-    } finally { rmSync(dir, { recursive: true, force: true }); }
+    } finally { removeTempDirSync(dir); }
   });
-  it("no job installs or depends on Rosetta any more", () => {
-    expect(JSON.stringify(jobs)).not.toContain("install-rosetta");
+  // The x64 package step on the arm64 runner runs the x64 app through Rosetta
+  // (1.0.2). It is installed only when the runner lacks it, then verified.
+  it("installs Rosetta only when missing, and verifies it before packaging", () => {
+    const steps = Object.values(jobs).flatMap((job) => job?.steps ?? []).filter((step) => String(step?.run ?? "").includes("install-rosetta"));
+    expect(steps.length).toBeLessThanOrEqual(1);
+    for (const step of steps) {
+      expect(step.run).toMatch(/if ! \/usr\/bin\/arch -x86_64 \/usr\/bin\/true[^\n]*; then\n\s*sudo softwareupdate --install-rosetta/);
+      expect(step.run).toMatch(/\/usr\/bin\/arch -x86_64 \/usr\/bin\/true && echo "Rosetta ready"/);
+    }
   });
 });
 
@@ -312,11 +320,16 @@ describe("scoped CI confirmation", () => {
     const vitest = workflow.jobs.vitest;
     expect(vitest.needs).toBe("quality");
     expect(vitest.name).toContain("Scoped Vitest confirmation");
-    expect(vitest.strategy.matrix.vitest_shard).toBe("${{ fromJSON(inputs.vitest_file && '[1]' || '[1,2,3,4,5,6]') }}");
+    expect(vitest.strategy.matrix.vitest_shard).toBe("${{ fromJSON(inputs.vitest_file && '[1]' || '[1,2,3,4,5,6,7,8,9,10]') }}");
     const full = vitest.steps.find(step => step.name === "Run Vitest shard");
     expect(full.if).toBe("inputs.vitest_file == ''");
-    expect(full.run).toBe("pnpm exec vitest run --shard=${{ matrix.vitest_shard }}/6");
+    expect(full.run).toBe("pnpm exec vitest run --shard=${{ matrix.vitest_shard }}/10 --tags-filter='!nightly && !perf-budget' --exclude server/cloud-home/app-health.test.ts");
     expect(full.env.MURAGE_SKIP_REAL_ELECTRON_BROWSER_FIXTURE).toBe("${{ matrix.os == 'windows-latest' && '1' || '0' }}");
+    // The one file the shards exclude runs as root on one Linux shard of the full run, so nothing is skipped.
+    const root = vitest.steps.find(step => step.name === "Run the root-only app-health test as root");
+    expect(root.if).toBe("inputs.vitest_file == '' && matrix.os == 'ubuntu-latest' && matrix.vitest_shard == 1");
+    expect(root.run).toContain("node_modules/vitest/vitest.mjs run server/cloud-home/app-health.test.ts");
+    expect(root.run.startsWith("sudo -E ")).toBe(true);
     const scoped = vitest.steps.find(step => step.name === "Scoped Vitest confirmation");
     expect(scoped.if).toBe("inputs.vitest_file != ''");
     expect(scoped.env.VITEST_FILE).toBe("${{ inputs.vitest_file }}");
@@ -402,7 +415,7 @@ describe("scoped Windows confirmation", () => {
     const ci = load("ci.yml");
     expect(triggers(ci).workflow_dispatch.inputs.windows_only.default).toBe(false);
     for (const job of ["quality", "vitest"]) expect(ci.jobs[job].strategy.matrix.os, job).toBe('${{ fromJSON(inputs.windows_only && \'["windows-latest"]\' || \'["macos-latest","ubuntu-latest","windows-latest"]\') }}');
-    expect(ci.jobs.vitest.steps.find(step => step.name === "Run Vitest shard").run).toBe("pnpm exec vitest run --shard=${{ matrix.vitest_shard }}/6");
+    expect(ci.jobs.vitest.steps.find(step => step.name === "Run Vitest shard").run).toBe("pnpm exec vitest run --shard=${{ matrix.vitest_shard }}/10 --tags-filter='!nightly && !perf-budget' --exclude server/cloud-home/app-health.test.ts");
     expect(ci.jobs.quality.steps.some(step => step.run === "pnpm test:electron")).toBe(true);
     expect(ci.jobs['control-plane'].if).toBe('${{ !inputs.windows_only && !inputs.human_files }}');
     expect(ci.jobs['package-linux'].if).toBe('${{ !inputs.windows_only && !inputs.human_files }}');
@@ -590,5 +603,51 @@ describe("release-ci-gate verdict (audit C8)", () => {
     expect(ciVerdict([run({ head_sha: "b".repeat(40) })], SHA).state).toBe("none");
     expect(ciVerdict([run({ conclusion: "cancelled" })], SHA).state).toBe("fail");
     expect(ciVerdict([run({ conclusion: "skipped" })], SHA).state).toBe("fail");
+  });
+});
+
+describe("tests CI's shards leave out still run (nightly.yml)", () => {
+  const ci = load("ci.yml");
+  const nightly = load("nightly.yml");
+  const root = dirname(workflows).replace(/[\\/]\.github$/, "");
+  const viteConfig = readFileSync(join(root, "vite.config.ts"), "utf8");
+
+  it("CI's shards leave out exactly the two tags vite.config.ts defines, and nightly runs each of them", () => {
+    for (const tag of ["nightly", "perf-budget"]) expect(viteConfig).toContain(`name: "${tag}"`);
+    const shard = ci.jobs.vitest.steps.find(step => step.name === "Run Vitest shard");
+    expect(shard.run).toContain("--tags-filter='!nightly && !perf-budget'");
+    const slow = nightly.jobs.slow;
+    expect(slow.strategy.matrix.os).toEqual(["macos-latest", "ubuntu-latest", "windows-latest"]);
+    expect(slow.steps.some(step => step.uses === "./.github/actions/vitest-runtime")).toBe(true);
+    expect(slow.steps.find(step => step.name === "Run the nightly tests").run).toContain("--tags-filter=nightly");
+    // The perf-budget job needs host and SSH secrets, so it lives in a private-only workflow that the public
+    // scrub removes (scrub.sh). Public nightly.yml must never hold it; when the private file exists, check it.
+    expect(nightly.jobs).not.toHaveProperty("perf-budget");
+    const perfPath = join(workflows, "nightly-perf.yml");
+    if (existsSync(perfPath)) {
+      const perf = load("nightly-perf.yml").jobs["perf-budget"].steps.find(step => step.name === "Run the perf-budget tests on dedicated hardware");
+      expect(perf.run).toContain("scripts/scale/hz-vitest.sh");
+      expect(perf.run).toMatch(/ perf-budget$/m);
+    }
+  });
+
+  it("runs nightly and on demand, and its one result fails when the slow job fails", () => {
+    expect(triggers(nightly).schedule?.length).toBeGreaterThan(0);
+    expect(triggers(nightly)).toHaveProperty("workflow_dispatch");
+    expect(nightly.jobs.nightly.needs).toEqual(["slow"]);
+    expect(nightly.jobs.nightly.if).toBe("${{ always() }}");
+    expect(nightly.jobs.nightly.steps[0].run).toContain('test "$SLOW" = success');
+  });
+
+  it("the release gate reads this workflow", () => {
+    const release = load("release.yml");
+    const gate = release.jobs["ci-gate"].steps.find(step => step.id === "gate");
+    expect(gate.env.NIGHTLY_WORKFLOW).toBe("nightly.yml");
+  });
+
+  it("shard caps sit above the slowest expected shard, and a cancelled shard is never the plan", () => {
+    expect(ci.jobs.vitest.strategy.matrix.vitest_shard).toContain("[1,2,3,4,5,6,7,8,9,10]");
+    expect(ci.jobs.vitest["timeout-minutes"]).toBe("${{ matrix.os == 'windows-latest' && 60 || matrix.os == 'macos-latest' && 45 || 40 }}");
+    expect(nightly.jobs.slow["timeout-minutes"]).toBeGreaterThanOrEqual(120);
   });
 });

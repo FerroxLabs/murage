@@ -81,6 +81,7 @@ export async function requestCleanup(
   try {
     const res = await fetchImpl("/api/voice/cleanup", {
       method: "POST",
+      redirect: "error",
       headers: { "content-type": "application/json", ...desktopCallerHeaders() },
       body: JSON.stringify({ text, ...(target.botId ? { botId: target.botId } : {}), ...(target.groupId ? { groupId: target.groupId } : {}) }),
       signal: AbortSignal.timeout(CLIENT_TIMEOUT_MS),

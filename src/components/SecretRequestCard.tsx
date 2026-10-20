@@ -3,7 +3,10 @@ import { Check, ExternalLink, KeyRound, Loader2, LockKeyhole, RefreshCw, X } fro
 
 import { credentialConfigPatch, credentialResumeOutcome } from "../../shared/credential-request";
 import { cn } from "@/lib/cn";
+import { useAction } from "@/lib/use-action";
+import { ActionStatus } from "./ActionButton";
 import { api, useStore, type ConfigStatus, type Message } from "@/state/store";
+import { opensPurchasePages } from "@/lib/native-shell";
 
 export function SecretRequestCard({
   botId,
@@ -22,6 +25,9 @@ export function SecretRequestCard({
   const [localError, setLocalError] = useState<string | null>(null);
   const endpoint = `/api/bots/${encodeURIComponent(botId)}/secret-cards/${encodeURIComponent(message.id)}`;
   const error = localError ?? secret.error;
+  const dismissAction = useAction(async () => {
+    await api(`${endpoint}/dismiss`, { method: "POST", body: JSON.stringify({ threadId }) });
+  }, { pending: "Dismissing…", success: "Dismissed", failure: "Could not dismiss this request. Try again." });
   const outcome = credentialResumeOutcome(secret);
   const provided = outcome === "provided";
   const declined = outcome === "dismissed";
@@ -93,13 +99,6 @@ export function SecretRequestCard({
     }
   };
 
-  const dismiss = () => {
-    void api(`${endpoint}/dismiss`, {
-      method: "POST",
-      body: JSON.stringify({ threadId }),
-    }).catch(() => {});
-  };
-
   return (
     <div className="flex w-full justify-start">
       <div className="w-full max-w-[520px] overflow-hidden rounded-2xl border border-hairline/50 bg-card shadow-sm">
@@ -125,15 +124,18 @@ export function SecretRequestCard({
               </p>
             )}
             {error && <p role="alert" className="mt-2 text-[12px] text-danger">{error}</p>}
+            <ActionStatus action={dismissAction} className="mt-2" />
           </div>
           {!provided && !declined && (
             <button
-              onClick={dismiss}
-              aria-label="Not now"
+              onClick={() => void dismissAction.run()}
+              disabled={dismissAction.pending}
+              aria-busy={dismissAction.pending}
+              aria-label={dismissAction.pending ? "Dismissing" : "Not now"}
               title="Not now"
-              className="rounded-md p-1 text-ink-secondary hover:bg-control hover:text-ink"
+              className="rounded-md p-1 text-ink-secondary hover:bg-control hover:text-ink disabled:opacity-50"
             >
-              <X size={15} />
+              {dismissAction.pending ? <Loader2 size={15} className="animate-spin" /> : <X size={15} />}
             </button>
           )}
         </div>
@@ -160,14 +162,14 @@ export function SecretRequestCard({
                 {savedLocally ? "Continue task" : "Save securely"}
               </button>
             </div>
-            <a
+            {opensPurchasePages() && <a
               href={secret.helpUrl}
               target="_blank"
               rel="noopener noreferrer"
               className="mt-2 inline-flex items-center gap-1 text-[11.5px] text-accent hover:underline"
             >
               Where to get this key <ExternalLink size={11} />
-            </a>
+            </a>}
           </form>
         )}
         {(provided || declined) && (

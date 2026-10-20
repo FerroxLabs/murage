@@ -4,7 +4,7 @@
 // one deduplicated root set: a long conversation stays visible however many
 // roots it gathers, and is withheld as a whole when a root's source is
 // revoked. A retained session whose set nears the one hard ceiling resets.
-import { mkdirSync, rmSync } from "node:fs";
+import { mkdirSync } from "node:fs";
 import { afterEach, beforeEach, expect, it } from "vitest";
 import { afterEach as thawAfterEach, beforeEach as thawBeforeEach } from "vitest";
 import { thawRootSetWritesForTest } from "./replay-lineage.ts";
@@ -22,6 +22,8 @@ import { roomTranscriptWithoutMemory } from "../room-transcript.ts";
 import type { Message } from "../store.ts";
 import { setMemoryMode } from "./repository.ts";
 import { LineageAllowance } from "./lineage-allowance.ts";
+import { stampFreshSession } from "./testing/writetime-fixture.ts";
+import { removeTempDirSync } from "../testing/cleanup.ts";
 // 1.0.2: this test models a 1.0.1 file (legacy root-set rows) for the read-time judge, which still decides legacy data until S6.
 thawBeforeEach(() => thawRootSetWritesForTest(true));
 thawAfterEach(() => thawRootSetWritesForTest(false));
@@ -31,7 +33,7 @@ const thread = "dax-direct";
 // These tests commit thousands of rows one by one; the default synchronous=FULL makes that fsync-bound
 // (over 20 s on a Windows runner). Durability is not what they check.
 function noFsync() { database().exec("PRAGMA synchronous=OFF"); }
-beforeEach(() => { closeDatabase(); rmSync(DATA_DIR, { recursive: true, force: true }); mkdirSync(DATA_DIR, { recursive: true }); setMemoryMode("active"); reconcileMemoryRoster(roster); noFsync(); });
+beforeEach(() => { closeDatabase(); removeTempDirSync(DATA_DIR); mkdirSync(DATA_DIR, { recursive: true }); setMemoryMode("active"); reconcileMemoryRoster(roster); noFsync(); });
 function access(): MemoryAccess {
   const registry = new InternalCapabilities(); registry.begin("dax", thread, "g");
   return memoryAccess(registry, registry.resolve(`Bearer ${registry.mint({ botId: "dax", threadId: thread, generation: "g", depth: 0, kind: "memory", skillAuthoring: false })}`)!, () => roster);
@@ -132,6 +134,7 @@ it("at the ceiling the retained session resets instead of withholding the reply"
   expect(context.over).toBe(false);
   // the session has taken in 19 roots: within the headroom of the ceiling of 20
   recordSessionRoots(thread, "claude", "s-full", context);
+  stampFreshSession(database(), thread, "claude", "s-full");
   recordOutputRoots(thread, "reply", context);
   const why: { reason?: string } = {};
   expect(retainedSessionInvalid(LineageAllowance.tool(), thread, "claude", "s-full", why)).toBe(true);
@@ -140,6 +143,7 @@ it("at the ceiling the retained session resets instead of withholding the reply"
   expect([...withheld(["reply"])]).toEqual([]);
   // a fresh session starts small and holds
   recordSessionRoots(thread, "claude", "s-fresh", outputRootsFor(LineageAllowance.tool(1_000_000_000), [bot("m-0")]));
+  stampFreshSession(database(), thread, "claude", "s-fresh");
   expect(retainedSessionInvalid(LineageAllowance.tool(), thread, "claude", "s-fresh")).toBe(false);
   // only a reply whose own context alone passes the ceiling is unprovable
   for (let i = 19; i < 25; i++) receipt.output(`m-${i}`);
@@ -156,9 +160,11 @@ it("a pre-v6 session resets before its first v6 continuation whatever the counte
   database().prepare("DELETE FROM memory_session_roots WHERE thread_id=? AND driver_instance='claude' AND native_session='s-active'").run(thread);
   const why: { reason?: string } = {};
   expect(retainedSessionInvalid(LineageAllowance.tool(), thread, "claude", "s-active", why)).toBe(true);
-  expect(why.reason).toBe("pre-lineage");
-  // the session v6 starts in its place gets its row (session.started), even with no roots
+  // S6: the door epoch is judged first (a legacy session has no stamped row), and the session still resets
+  expect(why.reason).toBe("writetime-door-epoch");
+  // the session v6 starts in its place gets its row (session.started), even with no roots, stamped as a 1.0.3 fresh start (S6 rule 26)
   recordSessionRoots(thread, "claude", "s-active", outputRootsFor(LineageAllowance.tool(1_000_000_000), []));
+  stampFreshSession(database(), thread, "claude", "s-active");
   expect(retainedSessionInvalid(LineageAllowance.tool(), thread, "claude", "s-active")).toBe(false);
 });
 
@@ -203,6 +209,7 @@ it("an OFF engine session that was shown a memory-derived reply is not resumed a
   setMemoryMode("off");
   // a fresh OFF session replayed X'; it holds no receipt of its own
   recordSessionRoots(thread, "claude", "s-off", outputRootsFor(LineageAllowance.tool(1_000_000_000), [bot("x-prime")]));
+  stampFreshSession(database(), thread, "claude", "s-off");
   expect(retainedSessionInvalid(LineageAllowance.tool(), thread, "claude", "s-off")).toBe(false);
   forgetMemory(ownerMemoryTicket(), { kind: "source", id: "src-x", revision: 1 });
   const why: { reason?: string } = {};

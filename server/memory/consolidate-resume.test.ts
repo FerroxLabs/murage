@@ -1,4 +1,5 @@
-import { mkdirSync, rmSync } from "node:fs";
+import { learningSpendLedgerId, learningSpendMonth } from "../../shared/memory-learning-contract.ts";
+import { mkdirSync } from "node:fs";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { DATA_DIR } from "../config.ts";
 import { closeDatabase, database } from "../database.ts";
@@ -8,15 +9,17 @@ import { captureWork } from "./chunks.ts";
 import { consolidateMemorySource, pendingMemoryConsolidationJobs } from "./consolidate.ts";
 import { reconcileMemoryRoster } from "./policy.ts";
 import { setMemoryMode } from "./repository.ts";
+import { removeTempDirSync } from "../testing/cleanup.ts";
+import { storeAnchorMessage } from "./testing/anchor-message.ts";
 
 beforeEach(()=>{
   vi.useFakeTimers({toFake:["Date"]});vi.setSystemTime(new Date("2026-09-07T12:00:00Z"));
-  closeDatabase();rmSync(DATA_DIR,{recursive:true,force:true});mkdirSync(DATA_DIR,{recursive:true});
+  closeDatabase();removeTempDirSync(DATA_DIR);mkdirSync(DATA_DIR,{recursive:true});
   reconcileMemoryRoster({bots:[{id:"bot",threadId:"thread"}],groups:[]});setMemoryMode("capture");
 });
 afterEach(()=>vi.useRealTimers());
 function complete(text:string){
-  captureSource(database(),{id:"resume-source",threadId:"thread",messageId:"source-message",origin:{kind:"attended"},kind:"text",speaker:"owner",outcome:"recorded",text});
+  storeAnchorMessage(database(), "thread", "source-message", text); captureSource(database(),{id:"resume-source",threadId:"thread",messageId:"source-message",origin:{kind:"attended"},kind:"text",speaker:"owner",outcome:"recorded",text});
   let id="";
   for(;;){
     const work=claimMemoryJob("resume-fixture");if(!work)throw Error("fixture source not captured completely");
@@ -63,16 +66,18 @@ it("rolls back candidate and cursor together, then retries an expired interrupte
   expect(database().prepare("SELECT count(*) AS n FROM memory_records WHERE state='candidate'").get()?.n).toBe(2);
 });
 
-it("keeps large sources resumable across the v2 daily budget without spending on refusal",async()=>{
+it("keeps large sources resumable across the monthly learning ceiling without spending on refusal",async()=>{
   const job=complete("b".repeat(80000));let calls=0;
   const extractor=async()=>{calls++;return "[]";};
   const first=await consolidateMemorySource(job,extractor,new AbortController().signal);
   expect(first).toMatchObject({status:"partial",cursor:16384});
-  database().prepare("UPDATE memory_scope_bindings SET intent=json_set(intent,'$.input',400000) WHERE id=?").run("extract-budget:2026-09-07");
+  // 1.0.3: the month ledger at the ceiling refuses with spend-ceiling until the server-local 1st of next month
+  database().prepare("UPDATE memory_scope_bindings SET intent=json_set(intent,'$.input',100000000) WHERE id=?").run(learningSpendLedgerId(learningSpendMonth()));
+  const nextMonth=new Date(new Date().getFullYear(),new Date().getMonth()+1,1).getTime();
   const stopped=await consolidateMemorySource(job,extractor,new AbortController().signal);
-  expect(stopped).toMatchObject({status:"deferred",reason:"budget-exhausted",cursor:16384,retryAfter:Date.parse("2026-09-08T00:00:00Z")});
+  expect(stopped).toMatchObject({status:"deferred",reason:"spend-ceiling",cursor:16384,retryAfter:nextMonth});
   expect(calls).toBe(1);expect(pendingMemoryConsolidationJobs()).not.toContain(job);
-  vi.setSystemTime(new Date("2026-09-08T00:00:01Z"));
+  vi.setSystemTime(new Date(nextMonth+1000));
   expect(pendingMemoryConsolidationJobs()).toContain(job);
   const resumed=await consolidateMemorySource(job,extractor,new AbortController().signal);
   expect(resumed).toMatchObject({status:"partial",cursor:32768});expect(calls).toBe(2);
