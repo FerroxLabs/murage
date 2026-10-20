@@ -34,7 +34,7 @@ async function until(done: () => boolean, ms = 120_000): Promise<void> {
   const deadline = Date.now() + ms;
   while (!done()) { if (Date.now() > deadline) throw new Error("timed out"); await tick(); }
 }
-const settle = async (): Promise<void> => { await until(() => _drainingCount() === 0); await tick(); await tick(); };
+const settle = async (ms?: number): Promise<void> => { await until(() => _drainingCount() === 0, ms); await tick(); await tick(); };
 const count = (sql: string, ...args: string[]) => Number((database().prepare(sql).get(...args) as { n: number }).n);
 const rowOf = (id: string) => database().prepare("SELECT phase, origin, started_at, submitted_at, accepted_turn_id, start_attempts, target_thread_id, evidence_at, item FROM pending_delegations WHERE id=?").get(id) as Record<string, unknown> | undefined;
 const heldReasonOf = (id: string): unknown => { const row = rowOf(id); return row ? (JSON.parse(String(row.item)) as { heldReason?: unknown }).heldReason : undefined; };
@@ -359,7 +359,10 @@ describe("5. every recovery, release and drain loop does a bounded amount of wor
     expect(opened).toBe(1);
   }, 240_000);
 
-  it("a queue of 100,000 on ONE source conversation is drained a page per pass", { tags: ["nightly"], timeout: 300_000 }, async () => {
+  // Measured (whole drain): Linux 101 s on a hosted runner (nightly 39345477364), macOS 62-92 s, Windows up to 222 s for this file's
+  // two nightly tests (CI 39357825825). The wait for the drain used to stop at 120 s, below the test's own limit, so a slower
+  // runner failed inside the limit; it now waits as long as the test may run.
+  it("a queue of 100,000 on ONE source conversation is drained a page per pass", { tags: ["nightly"], timeout: 600_000 }, async () => {
     const w = ownerWorld("owner");
     w.knobs.capacity = false;                                                             // every dispatch waits (capacity): no write, no turn
     let asks = 0;
@@ -372,7 +375,7 @@ describe("5. every recovery, release and drain loop does a bounded amount of wor
     let over = false;
     const watch = worstPerPass(() => asks, () => over);
     drainDelegations(w.bus, w.approvalBus, w.from.threadId);
-    await settle();
+    await settle(570_000);
     over = true;
     await watch.finished;
     expect(asks).toBe(100_000);                                                           // every hand-off was looked at
@@ -398,7 +401,9 @@ describe("7. a held line that could not be cleared is tried again, and the sweep
     const line = database().prepare("SELECT json FROM messages WHERE thread_id=? AND id=?").get(w.from.threadId, heldLineId("ghost")) as { json: string };
     expect((JSON.parse(line.json) as { delegationHeld?: unknown }).delegationHeld).toBeUndefined();
   });
-  it("100,000 registered lines: a page of 100 per pass, and a control a held row still backs is left alone", { tags: ["nightly"], timeout: 240_000 }, async () => {
+  // Measured: Linux 42 s on a hosted runner (nightly 39345477364), macOS 14-31 s, Windows up to 222 s for this file's two nightly
+  // tests (CI 39357825825); 240 s left no room on Windows.
+  it("100,000 registered lines: a page of 100 per pass, and a control a held row still backs is left alone", { tags: ["nightly"], timeout: 480_000 }, async () => {
     const w = ownerWorld("owner");
     database().exec(`WITH RECURSIVE n(i) AS (SELECT 1 UNION ALL SELECT i+1 FROM n WHERE i<100000)
       INSERT INTO held_notice_lines(message_id, delegation_id, source_thread_id) SELECT 'held-g'||i, 'g'||i, 't'||(i%100) FROM n`);

@@ -610,7 +610,7 @@
  },
  {
   "file": "server/cloud-home/engine-launch-fixture.ts",
-  "function": "launcherRig",
+  "function": "fixtureEngineBytes",
   "callee": "readFileSync",
   "root": "cloud-home",
   "count": 1
@@ -1358,6 +1358,13 @@
   "count": 1
  },
  {
+  "file": "server/frozen-replies.ts",
+  "function": "readCursor",
+  "callee": "readFileSync",
+  "root": "data-dir",
+  "count": 1
+ },
+ {
   "file": "server/fuigo-native-update.ts",
   "function": "managedFuigoReceipt",
   "callee": "readFile",
@@ -2102,6 +2109,13 @@
  {
   "file": "server/memory/testing/b34-evaluator-adapter.ts",
   "function": "bundleAt",
+  "callee": "readFileSync",
+  "root": "test-harness",
+  "count": 1
+ },
+ {
+  "file": "server/memory/testing/b34-evaluator-adapter.ts",
+  "function": "diagnostics",
   "callee": "readFileSync",
   "root": "test-harness",
   "count": 1

@@ -7,7 +7,8 @@ const source = (name: string) => readFileSync(new URL(`../../deploy/cloud-home/$
 const helper = fileURLToPath(new URL("../../deploy/cloud-home/murage-browser-namespace.py", import.meta.url));
 const fixture = fileURLToPath(new URL("./browser-namespace.fixture.py", import.meta.url));
 for (const scenario of ["reuse", "identity", "registry", "stop", "retry", "creation", "fresh", "parent-race", "parent", "manager", "join", "join-child", "network-argv", "kill-scopes"]) {
-  it(`actual namespace helper: ${scenario} with privileged operations replaced`, () => {
+  // the helper calls os.pidfd_open and os.pipe2, which Python has only on Linux
+  it.skipIf(process.platform !== "linux")(`actual namespace helper: ${scenario} with privileged operations replaced`, () => {
     expect(execFileSync("python3", ["-I", fixture, helper, scenario], { encoding: "utf8", timeout: 10_000, stdio: ["ignore", "pipe", "pipe"] })).toBe(`OK ${scenario}\n`);
   });
 }

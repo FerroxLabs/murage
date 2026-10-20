@@ -11,7 +11,7 @@
 //     held for 3 s, and the setup still runs (after the answer).
 import { existsSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { refillThread } from "./testing/bounded-reads.ts";
+import { countControlSource, refillThread, sendCountCommand } from "./testing/bounded-reads.ts";
 import { DatabaseSync } from "node:sqlite";
 import { fileURLToPath } from "node:url";
 import { afterAll, beforeAll, expect, it } from "vitest";
@@ -25,12 +25,12 @@ const api = async (method: string, path: string, body?: unknown) => {
   return { status: response.status, body: await response.json().catch(() => null) as any };
 };
 const file = (name: string) => join(fixture.info.dataDir, name);
-const signal = (command: object) => { writeFileSync(file("count-control.json"), JSON.stringify(command)); process.kill(fixture.info.pid, "SIGUSR2"); };
+const signal = (command: object) => sendCountCommand(fixture.info.dataDir, command);
 const dumpWall = (): number | null => { try { return JSON.parse(readFileSync(fixture.fixtureDumpPath, "utf8")).promptWallMs ?? null; } catch { return null; } };
 const until = async (check: () => boolean, ms: number) => { const end = Date.now() + ms; while (!check()) { if (Date.now() > end) throw new Error("timed out"); await new Promise((r) => setTimeout(r, 25)); } };
 
 // Counts, in the server process, every statement bound to the watched thread
-// id and the rows it returned; SIGUSR2 starts a window or writes the counts.
+// id and the rows it returned; a count-control command starts a window or writes the counts.
 // A marker file holds the turn's setup (RoutineManager.notePinnedBundle, which
 // every direct turn's setup calls) for 3 s, the way a slow setup does.
 const instrumentation = `
@@ -43,9 +43,9 @@ const instrumentation = `
       const rows=name==='all'?result.length:name==='get'?(result?1:0):0;counts.rows+=rows;
       const key=String(this.sourceSQL).replace(/\\s+/g,' ').slice(0,160);const entry=counts.bySql[key]??={statements:0,rows:0};entry.statements++;entry.rows+=rows;}
     return result;};}
-  process.on('SIGUSR2',()=>{const command=JSON.parse(fs.readFileSync(path.join(dir,'count-control.json'),'utf8'));
+  ${countControlSource(`(command)=>{
     if(command.start){watched=command.start;frozen=false;counts={statements:0,rows:0,bySql:{}};fs.writeFileSync(path.join(dir,'window-open'),String(command.start));}
-    else{fs.writeFileSync(path.join(dir,'counts.json'),JSON.stringify(counts));watched=null;}});
+    else{fs.writeFileSync(path.join(dir,'counts.json'),JSON.stringify(counts));watched=null;}}`)}
   // The window ends where the turn hands its prompt to the engine (the turn hold's release), not at the dump signal: what the memory worker
   // publishes after that point (it waits for the hold) lands a variable moment later and is not the turn start's cost.
   const {MemoryWorkerController}=await import(pathToFileURL(${JSON.stringify(WORKER)}).href);
@@ -86,7 +86,7 @@ async function measuredSend(bot: { id: string; threadId: string }) {
   rmSync(file("counts.json"), { force: true });
   rmSync(file("window-open"), { force: true });
   signal({ start: bot.threadId });
-  // SIGUSR2 can run after the POST when the loop is busy: post only once the server has opened the window
+  // the command can run after the POST when the loop is busy: post only once the server has opened the window
   await until(() => existsSync(file("window-open")), 15_000);
   const posted = await api("POST", `/api/bots/${bot.id}/messages`, { text: PROBE_TEXT, threadId: bot.threadId });
   expect(posted.status).toBe(202);

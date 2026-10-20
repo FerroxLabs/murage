@@ -2,7 +2,7 @@
 // Cloud homes are reached only through an outbound Cloudflare Tunnel. Text
 // assertions over the deploy files plus one behavioural run of murage-enroll --tunnel.
 import { spawnSync } from "node:child_process";
-import { chmodSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import { chmodSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -190,7 +190,7 @@ if os.path.exists(path):
     st=os.stat(path);info.update(mode=stat.S_IMODE(st.st_mode),uid_ok=st.st_uid==os.getuid(),token=open(path).read().strip())
 print(json.dumps(info))`;
   function run(scenario: string) {
-    const root = mkdtempSync(join(tmpdir(), "murage-tunnel-"));
+    const root = realpathSync(mkdtempSync(join(tmpdir(), "murage-tunnel-"))); // enrollment walks with O_NOFOLLOW; macOS temp sits behind /var
     try {
       const state = join(root, "state"), config = join(root, "config"), runtime = join(root, "run");
       mkdirSync(state, { mode: 0o700 }); mkdirSync(config, { mode: 0o700 }); chmodSync(state, 0o700); chmodSync(config, 0o700);

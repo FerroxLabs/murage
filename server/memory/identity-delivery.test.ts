@@ -123,6 +123,9 @@ posixOnly("B28 personality imprint and continuity in actual dispatch payloads", 
     const before = await snapshot();
     expect(before.map((record: any) => record.kind).sort()).toEqual(["character-canon", "continuity-brief", "reveal-state"]);
     await fixture.restart(); await authenticate();
+    // memory reopens after the server answers: a turn sent before it is active dispatches without a bundle (index.ts direct
+    // turn), so the restart is complete for this test when memory is active again, as beforeAll requires the first time
+    await expect.poll(async () => (await api("GET", "/api/memory/status")).mode, { timeout: 30000 }).toBe("active");
     expect(await snapshot()).toEqual(before);
     expect((await api("GET", "/api/bots?messages=0")).bots.find((bot: any) => bot.id === keeper.id).persona).toBe(PERSONA);
     expectKeeperContinuity(await claudeTurn(keeper.id, keeper.threadId));

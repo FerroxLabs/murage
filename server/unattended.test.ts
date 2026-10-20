@@ -215,13 +215,19 @@ posixOnly("unattended turns keep asking", () => {
     }
     // Reached only when the body passed: a leaked busy bot would break the next test.
     expect(cleanupFailures).toEqual([]);
-  }, 60_000);
+    // The budget covers the waits inside it: two webhook runs, each up to
+    // 20 s for its task and 30 s for its card, plus the notification frame
+    // and the cleanup. At 60 s a slow runner timed the body out while its
+    // own waits were still in bounds, and the bots it had not yet cleaned up
+    // leaked into the tests after it.
+  }, 150_000);
 
   it(
     "still asks a human when a webhook starts the turn, even with auto mode on",
     async () => {
-      const bots = await api("GET", "/api/bots");
-      const bot = bots.body.bots[0];
+      // Its own bot: borrowing bots[0] inherits whatever an earlier test
+      // left running, and a busy bot answers a settings edit with 409.
+      const bot = await makeBot("grok");
       // auto mode ON: an attended turn would sail straight through
       expect(
         (
@@ -270,6 +276,12 @@ posixOnly("unattended turns keep asking", () => {
       // A runs the webhook and delegates; B does the acting. Without the
       // mark crossing the hop, the gate protects the bot that READ the
       // payload and releases the bot that ACTS on it.
+      // The fake delegates to whichever peer list_bots returns first, so
+      // everything else is hidden to make the Teammate the target: without
+      // this an earlier test's bot can take the hand-off and the Teammate
+      // never gets a turn, which reads exactly like the gate failing.
+      const existing = await api("GET", "/api/bots");
+      for (const b of existing.body.bots) expect((await desktopApi("PATCH", `/api/bots/${b.id}`, { hidden: true })).status).toBe(200);
       const teammate = await makeBot("grok");
       expect((await desktopApi("PATCH", `/api/bots/${teammate.id}`, { name: "Teammate", autoApprove: true, acknowledgeLocalAuto: true })).status).toBe(200);
 
@@ -278,6 +290,7 @@ posixOnly("unattended turns keep asking", () => {
         name: "Delegator",
         autoApprove: true,
         acknowledgeLocalAuto: true,
+        hidden: true, // keep it out of its own peer list's way
         modelSelection: { instanceId: "delegator", model: "fake-model" },
       })).status).toBe(200);
 

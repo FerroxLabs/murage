@@ -176,6 +176,7 @@ it("the direct turn replays through filterDirectReplay and resets a retained ses
   const direct = source.slice(source.indexOf("      let memoryReceipt: MemoryDispatchReceipt | undefined;"), source.indexOf("      if (!markDirectTurnDispatching"));
   expect(direct).toContain("filterDirectReplay(allowance,threadId,activeMessages,access,skipTranscript,replayOptions)");
   expect(direct).toMatch(/needsReplay=!resumeCursor \|\| revoked/);
-  expect(direct).toContain("retainedSessionInvalid(allowance, threadId, instanceId, String(resumeCursor), offWhy)");
+  // the retained session is checked under this turn's allowance (the session id argument's spelling is not the point)
+  expect(direct).toMatch(/if \(resumeCursor && retainedSessionInvalid\(allowance, threadId, instanceId, [^,]+, offWhy\b/);
   expect(direct).toContain("MEMORY_SESSION_RESET_UNAVAILABLE");
 });

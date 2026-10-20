@@ -4,7 +4,7 @@
 // Section (c) of APP-GRANT-FIXPLAN-r6 (Rules 35, 74a, 74d): an approved write to a startup file is recognized by the
 // file's RESOLVED identity, never by its spelling, and moves the environment generation (server/env-path.ts).
 
-import { linkSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { linkSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
@@ -14,17 +14,19 @@ import { handEnv, noteStartupFileEvent } from "./engine-env.ts";
 /** The pin probes answered as on a machine with no ssh and no git config. */
 const noRun: PinRun = async () => ({ ok: false, stdout: "", stderr: "" });
 import { envGeneration } from "./env-path.ts";
+import { removeTempDirSync } from "./testing/cleanup.ts";
 
 let dir: string;
 let home: string;
 let seq = 0;
 
 beforeEach(() => {
-  dir = realpathSync(mkdtempSync(join(tmpdir(), "startup-files-")));
+  // the native real path: on Windows it reads an 8.3 short name (RUNNER~1) as its long name, as the product's placement does
+  dir = realpathSync.native(mkdtempSync(join(tmpdir(), "startup-files-")));
   home = join(dir, "h");
   mkdirSync(home, { recursive: true });
 });
-afterEach(() => rmSync(dir, { recursive: true, force: true }));
+afterEach(() => removeTempDirSync(dir));
 
 /** The owner map as captured, before the pins; the hand pins ZDOTDIR and removes BASH_ENV, ENV and CLAUDE_ENV_FILE. */
 async function hand(extraOwner: Record<string, string> = {}) {
@@ -45,6 +47,10 @@ function approve(ask: Record<string, unknown>): boolean {
 
 const shellAsk = (command: string, cwd = dir) => ({ toolCall: { name: "shell", input: { command, cwd } }, execEnv: { env: {}, absent: [], cwd, shell: ["/bin/sh", "-c"], capture: "session" } });
 const fileAsk = (path: string, cwd = dir) => ({ filePaths: [path], execEnv: { env: {}, absent: [], cwd, shell: ["/bin/sh", "-c"], capture: "session" } });
+
+/** On Windows the POSIX system startup files (/etc/profile, ...) are rooted paths with no drive, which cannot be placed, so
+ *  the startup set is unreadable and every file ask counts as touching: an approved write re-captures (fails closed). */
+const fileAskFailsClosed = process.platform === "win32";
 
 describe("startup files by resolved identity", () => {
   it("handEnv keeps the owner's startup names from before the pins beside the pinned map", async () => {
@@ -95,7 +101,7 @@ describe("startup files by resolved identity", () => {
     await hand({ BASH_ENV: join(dir, "startup") });
     expect(approve(shellAsk(`echo >> ${join(dir, "startup")}`))).toBe(true);
     expect(approve(fileAsk(join(dir, "startup")))).toBe(true);
-    expect(approve(fileAsk(join(dir, "other")))).toBe(false);
+    expect(approve(fileAsk(join(dir, "other")))).toBe(fileAskFailsClosed);
   });
 
   it("a destination a copy derives from a folder operand is a target (Astra r6 item 5)", async () => {
@@ -114,7 +120,7 @@ describe("startup files by resolved identity", () => {
     mkdirSync(join(home, ".config"), { recursive: true });
     expect(approve(shellAsk(`cp -r ${join(dir, "src", "fish")} ${join(home, ".config")}`))).toBe(true);
     // a file copy that names no startup file does not
-    expect(approve({ filePaths: [join(home, "plain")] })).toBe(false);
+    expect(approve({ filePaths: [join(home, "plain")] })).toBe(fileAskFailsClosed);
   });
 
   it("a target that cannot be placed, or a command that cannot be read whole, counts as touching", async () => {
@@ -149,8 +155,8 @@ describe("startup files by resolved identity", () => {
     noteStartupFileEvent({ type: "request.resolved", threadId: "t-sf", requestId, behavior: "deny" });
     expect(envGeneration()).toBe(before);
     // a file ask is still placed by identity
-    expect(approve(fileAsk(join(dir, "other")))).toBe(false);
-    expect(approve({ toolCall: { name: "edit", input: { file_path: join(dir, "src", "app.ts") } } })).toBe(false);
+    expect(approve(fileAsk(join(dir, "other")))).toBe(fileAskFailsClosed);
+    expect(approve({ toolCall: { name: "edit", input: { file_path: join(dir, "src", "app.ts") } } })).toBe(fileAskFailsClosed);
   });
 
   it("startupSet lists resolved identities: an existing file carries its device and inode, a missing one is its real parent and name", async () => {

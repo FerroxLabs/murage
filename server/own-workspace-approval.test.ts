@@ -263,8 +263,11 @@ describe("segments compare exactly, never folded", () => {
     // Rule 63: placement is by real path, so the folders must exist to be placed
     mkdirSync(join(ghost, "workspaces", "abc"), { recursive: true });
     expect(isOwnWorkspaceBookkeeping({ ...ghostScope(ghost), paths: [join(ghost, "workspaces", "abc", "MEMORY.md")] })).toBe(true);
-    expect(isOwnWorkspaceBookkeeping({ ...ghostScope(ghost), paths: [join(ghost, "WORKSPACES", "abc", "MEMORY.md")] })).toBe(false);
-    expect(isOwnWorkspaceBookkeeping({ ...ghostScope(ghost), paths: [join(ghost, "workspaces", "ABC", "MEMORY.md")] })).toBe(false);
+    // Windows places every existing part by its real spelling (NTFS names one folder whatever the case), so there another case IS the
+    // bot's own folder; elsewhere the parts are compared as written
+    const folded = process.platform === "win32";
+    expect(isOwnWorkspaceBookkeeping({ ...ghostScope(ghost), paths: [join(ghost, "WORKSPACES", "abc", "MEMORY.md")] })).toBe(folded);
+    expect(isOwnWorkspaceBookkeeping({ ...ghostScope(ghost), paths: [join(ghost, "workspaces", "ABC", "MEMORY.md")] })).toBe(folded);
   });
 
   it("agrees with the filesystem about a case-variant of a folder that exists", () => {

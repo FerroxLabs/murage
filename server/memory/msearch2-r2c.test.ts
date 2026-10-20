@@ -120,7 +120,10 @@ describe("recall: the postings of an index made before them", () => {
     // stopped here (the helper killed): a new handle resumes from the recorded rowid
     index.close();
     const resumed = new MemoryIndex(INDEX_PATH());
-    const below = Number((new DatabaseSync(INDEX_PATH(), { readOnly: true }).prepare("SELECT value FROM index_meta WHERE key=?").get(POSTINGS_BELOW) as { value: string }).value);
+    const meta = new DatabaseSync(INDEX_PATH(), { readOnly: true });
+    const below = Number((meta.prepare("SELECT value FROM index_meta WHERE key=?").get(POSTINGS_BELOW) as { value: string }).value);
+    // closed here, not left to the collector: an open handle keeps Windows from removing the folder before the next test
+    meta.close();
     expect(below).toBeGreaterThan(1);
     for (;;) { steps++; const step = resumed.fillPostings({ maxMs: 5, maxRows: 256 }); if (step.done) break; }
     expect(steps).toBeGreaterThan(3);

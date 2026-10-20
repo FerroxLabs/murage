@@ -19,6 +19,7 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
 import { applyManagedBrokerMessage, bumpAccessRevisionForTests, primeBrokerReadiness, relayMcp, resetManagedBrokerState, setColdToolsListWaitMsForTests } from "./composio.ts";
 import type { AppConfig } from "./config.ts";
+import { windowsPerfBudget } from "./testing/windows-hosted.ts";
 
 /** The bridge lists its own outcome-check tool beside the service tools (1.0.2 tool latency); these assertions are about the service tools. */
 const notStatusTool = (tool: { name?: string }) => tool.name !== "CHECK_CONNECTED_APP_ACTION";
@@ -155,7 +156,7 @@ async function timeToReady(): Promise<{ initializeMs: number; readyMs: number; t
 
 describe("connected apps time to ready under CPU load", () => {
   for (const busyLoops of [2, 4]) {
-    it(`answers initialize at once and is ready within its budgets (${busyLoops} busy loops)`, async () => {
+    it(`answers initialize at once and is ready within its budgets (${busyLoops} busy loops)`, { timeout: 90_000, ...windowsPerfBudget() }, async () => {
       for (let i = 0; i < busyLoops; i++) loops.push(spawn(process.execPath, ["-e", "for(;;){}"], { stdio: "ignore" }));
       try {
         await freshApp();
@@ -183,7 +184,7 @@ describe("connected apps time to ready under CPU load", () => {
         for (const loop of loops.splice(0)) loop.kill("SIGKILL");
         toolsListDelayMs = BROKER_TOOLS_LIST_MS;
       }
-    }, 90_000);
+    });
   }
 });
 

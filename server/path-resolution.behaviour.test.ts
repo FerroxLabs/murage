@@ -10,7 +10,7 @@
 //
 // The win32 rows are in shared/path-resolution.win32.test.ts.
 
-import { mkdirSync, mkdtempSync, realpathSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, realpathSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
@@ -19,13 +19,14 @@ import { diskFacts, type EnvStateLike } from "../shared/disk-facts.ts";
 import { HookDecisionTable, routeDelivery } from "./drivers/codex-hook.ts";
 import { classifyStopLine, type StopLinePlace } from "./stop-line.ts";
 import * as stopLineState from "./stop-line-state.ts";
+import { removeTempDirSync } from "./testing/cleanup.ts";
 
 let base: string;
 let proj: string;
 let outside: string;
 
 beforeEach(() => {
-  base = realpathSync(mkdtempSync(join(tmpdir(), "path-resolution-")));
+  base = realpathSync.native(mkdtempSync(join(tmpdir(), "path-resolution-")));
   proj = join(base, "proj");
   outside = join(base, "outside");
   mkdirSync(proj);
@@ -33,7 +34,7 @@ beforeEach(() => {
   symlinkSync(outside, join(proj, "link"));
 });
 
-afterEach(() => rmSync(base, { recursive: true, force: true }));
+afterEach(() => removeTempDirSync(base));
 
 describe("Rule 67: a file change is matched by where it really lands", () => {
   it("an allow for proj/x does not cover a started change naming link/../x, which lands beside the link's target", () => {

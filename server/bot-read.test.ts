@@ -34,6 +34,8 @@ import { ROOM_REPLY_CHECKING, ROOM_REPLY_WITHHELD } from "./room-context.ts";
 import type { TranscriptEntry } from "./turn-context.ts";
 import type { ExternalUpdateMessage } from "./external-context-delivery.ts";
 import { humanRow } from "./testing/bot-row.ts";
+import { removeTempDirSync } from "./testing/cleanup.ts";
+import { settleTestHandles } from "./test-handle-registry.ts";
 
 const SERVER = import.meta.dirname;
 function sources(dir = SERVER): string[] {
@@ -54,19 +56,20 @@ const owner = (id: string, extra: Partial<Message> = {}): Message => ({ id, role
 const BOT: Viewer = { kind: "bot", botId: "bot-a" };
 const HUMAN: Viewer = { kind: "human" };
 
-function reset(): void { closeMessageDb(); closeDatabase(); rmSync(DATA_DIR, { recursive: true, force: true }); mkdirSync(DATA_DIR, { recursive: true }); }
+// the WAL checkpointer's own connection leaves the file after closeDatabase returns (wal-maintenance.ts); Windows will not remove a file still open
+async function reset(): Promise<void> { closeMessageDb(); closeDatabase(); await settleTestHandles(DATA_DIR); removeTempDirSync(DATA_DIR); mkdirSync(DATA_DIR, { recursive: true }); }
 const TEMPLATE = `${DATA_DIR}.bot-read.db`;
-beforeAll(() => {
-  reset();
+beforeAll(async () => {
+  await reset();
   new WritetimeFixture(database()).cert(true);
   appendMessage("warm-up", owner("w1"));
   database().exec("UPDATE memory_scopes SET audience='[]' WHERE json_type(audience)<>'array'");
   rmSync(TEMPLATE, { force: true });
   database().prepare("VACUUM INTO ?").run(TEMPLATE);
-  reset();
+  await reset();
 });
-afterAll(() => { reset(); rmSync(TEMPLATE, { force: true }); });
-beforeEach(() => { reset(); copyFileSync(TEMPLATE, join(DATA_DIR, "messages.db")); });
+afterAll(async () => { await reset(); rmSync(TEMPLATE, { force: true }); });
+beforeEach(async () => { await reset(); copyFileSync(TEMPLATE, join(DATA_DIR, "messages.db")); });
 
 /** Every Murage-voice shape rule 1 names. */
 const CLASSIFIED: Record<string, Message> = {
@@ -242,7 +245,7 @@ describe("18e: viewer and judge literals", () => {
     expect(statSync(join(SERVER, "bot-read.ts")).isFile()).toBe(true);
     const found: string[] = [];
     for (const file of sources()) {
-      const rel = relative(SERVER, file);
+      const rel = relative(SERVER, file).replace(/\\/g, "/"); // the allow list is written with "/"
       if (HUMAN_ALLOW.get(rel) === null) continue;
       const only = HUMAN_ALLOW.get(rel);
       for (const { line, code } of codeLines(readFileSync(file, "utf8"))) if (/kind:\s*["']human["']/.test(code) && !only?.test(code)) found.push(`${rel}:${line}`);
@@ -304,7 +307,7 @@ describe("16: every bot-facing read goes through the door", () => {
     expect(readFileSync(join(SERVER, "project-memory-tools.ts"), "utf8")).not.toMatch(/json_extract\(json,'\$\.actorKind'\)='murage'/);
     const found: string[] = [];
     for (const file of sources()) {
-      const rel = relative(SERVER, file);
+      const rel = relative(SERVER, file).replace(/\\/g, "/"); // "/" on every platform
       if (rel === "bot-read.ts") continue;
       for (const { line, code } of codeLines(readFileSync(file, "utf8"))) if (/partitionTranscript(Messages|Window)\b/.test(code)) found.push(`${rel}:${line}`);
     }
@@ -344,7 +347,7 @@ describe("18a: raw reads of stored rows only in the allowlist", () => {
   it("every FROM messages, messageById, scanSince and rowsSince outside the door is counted in RAW_READS", () => {
     const counts: Record<string, number> = {};
     for (const file of sources()) {
-      const rel = relative(SERVER, file);
+      const rel = relative(SERVER, file).replace(/\\/g, "/"); // '/' on every platform, as RAW_READS is written
       if (rel === "bot-read.ts") continue;
       let n = 0;
       for (const { code } of codeLines(readFileSync(file, "utf8"))) n += (code.match(/FROM messages\b|messageById\(|scanSince\(|rowsSince\(/g) ?? []).length;

@@ -770,7 +770,8 @@ describe("r16: symlinks are verified in every mode; generated files come only fr
     expect(readdirSync(kept).map((n) => readFileSync(join(kept, n), "utf8"))).toContain("ORPHAN-LOGIN"); // its login is retained
   });
 
-  it("P2: a generated copy that cannot be made rejects the launch (retryable); an older generation's copy is never used instead", () => {
+  // chmod 000 is what makes the copy unreadable; on Windows chmod only sets read-only, so the file stays readable there.
+  it.skipIf(process.platform === "win32")("P2: a generated copy that cannot be made rejects the launch (retryable); an older generation's copy is never used instead", () => {
     const codex = tmp("iso16-copy-");
     writeFileSync(join(codex, "auth.json"), "T1");
     writeFileSync(join(codex, "config.toml"), 'model = "V1-PROVIDER"\n');

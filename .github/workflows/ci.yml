@@ -82,6 +82,11 @@ jobs:
       - name: Validate locale catalogs
         if: matrix.os == 'ubuntu-latest'
         run: pnpm i18n:check
+      - name: Every Vitest file is classified GATE or EXTENDED
+        # A new test file must be added to ci/gate-tests.txt (with its OSes and the user failure it prevents) or
+        # to ci/extended-tests.txt; docs/testing.md has the rule.
+        if: matrix.os == 'ubuntu-latest'
+        run: node scripts/ci-test-tiers.mjs check
       - name: Validate the bundled model metadata snapshot
         # Offline on purpose: this compares the committed snapshot against what
         # scripts/build-model-metadata.mjs renders from it, and checks its
@@ -194,22 +199,52 @@ jobs:
       # The model, Electron, backup fixtures, server bundle and native helpers
       # every Vitest run needs; nightly.yml runs the same steps.
       - uses: ./.github/actions/vitest-runtime
+      - name: Give the checkout the parents a Cloud home has
+        # The Cloud launcher (deploy/cloud-home/murage-turn-launch.py immutable_path) refuses an engine, and the node its
+        # MCP proxies run on (/usr/local/bin/node, followed to its real file), when any other user could write into its
+        # path; its tests (server/cloud-home/engine-*.test.ts) run real paths under the checkout and that node. A hosted
+        # runner keeps node under /opt (mode 775), which no Cloud home has, so those parents lose the write bit for group
+        # and others here, as the Linux package job does for /opt.
+        if: matrix.os == 'ubuntu-latest'
+        shell: bash
+        run: |
+          for start in "$GITHUB_WORKSPACE" "$(readlink -f /usr/local/bin/node)"; do
+            d="$start"
+            while [ "$d" != "/" ]; do
+              if [ ! -L "$d" ] && [ $(( 8#$(stat -c %a "$d") & 8#022 )) -ne 0 ]; then
+                echo "tightening $d ($(stat -c '%U:%G %a' "$d"))"; sudo chmod go-w "$d"
+              fi
+              d=$(dirname "$d")
+            done
+          done
+      # Every test makes its home and data folders under os.tmpdir(). On the hosted Windows image that is on C:, where one
+      # SQLite commit with synchronous=FULL (the app's setting) measured p50 3.2 ms / p99 7.3 ms, against 0.13 / 0.23 ms on the
+      # runner's work disk D: (CI 39355463118). nightly.yml does the same; the tests still flush every commit.
+      - name: Keep the Windows test folders on the runner's work disk
+        if: matrix.os == 'windows-latest'
+        shell: bash
+        run: |
+          dir="$RUNNER_TEMP/murage-test-tmp"; mkdir -p "$dir"; win=$(cygpath -w "$dir")
+          { echo "TEMP=$win"; echo "TMP=$win"; } >> "$GITHUB_ENV"
       - name: Run Vitest shard
         if: inputs.vitest_file == ''
         shell: bash
-        # nightly and perf-budget tests are not skipped: nightly.yml runs them,
-        # and the release gate needs its latest run green (vite.config.ts tags).
-        # server/cloud-home/app-health.test.ts is left out here and run as root in the next step: its volume cases need
-        # root and a /dev/shm mount and fail loudly (by design) for any other user. Nothing skips it.
-        run: pnpm exec vitest run --shard=${{ matrix.vitest_shard }}/10 --tags-filter='!nightly && !perf-budget' --exclude server/cloud-home/app-health.test.ts
+        # Only GATE files block (ci/gate-tests.txt, rule in docs/testing.md), and each only on the OSes where its
+        # behaviour exists: Cloud home is Linux server code, so its tests run on ubuntu alone. The EXTENDED files run
+        # in the non-blocking "extended" job below. nightly and perf-budget tests are not skipped: nightly.yml runs
+        # them, and the release gate needs its latest run green (vite.config.ts tags). Vitest is started with node,
+        # not pnpm's Windows .cmd shim, so a shard's file list is not cut by cmd.exe's 8191-character limit.
         env:
           MURAGE_SKIP_REAL_ELECTRON_BROWSER_FIXTURE: ${{ matrix.os == 'windows-latest' && '1' || '0' }}
-      - name: Run the root-only app-health test as root
-        # Linux job only; one shard carries it (the file is excluded from every shard above). Same node and vitest as the
-        # shard run: sudo -E keeps the environment, and PATH is passed through because sudo resets it.
-        if: inputs.vitest_file == '' && matrix.os == 'ubuntu-latest' && matrix.vitest_shard == 1
-        shell: bash
-        run: sudo -E env "PATH=$PATH" "$(command -v node)" node_modules/vitest/vitest.mjs run server/cloud-home/app-health.test.ts
+          RUNNER_OS_NAME: ${{ matrix.os }}
+          SHARD: ${{ matrix.vitest_shard }}/10
+        run: |
+          case "$RUNNER_OS_NAME" in ubuntu-*) os=linux ;; macos-*) os=mac ;; windows-*) os=windows ;; *) exit 1 ;; esac
+          node scripts/ci-test-tiers.mjs list --tier gate --os "$os" --shard "$SHARD" > "$RUNNER_TEMP/vitest-args.txt"
+          args=(); while IFS= read -r arg; do args+=("${arg%$'\r'}"); done < "$RUNNER_TEMP/vitest-args.txt"
+          test "${#args[@]}" -gt 0 || { echo "::error::no GATE files selected for $os shard $SHARD"; exit 1; }
+          echo "GATE files for $os, shard $SHARD: ${#args[@]} arguments"
+          node node_modules/vitest/vitest.mjs run --tags-filter='!nightly && !perf-budget' "${args[@]}"
       - name: Scoped Vitest confirmation
         if: inputs.vitest_file != ''
         shell: bash
@@ -289,6 +324,49 @@ jobs:
             ${{ runner.temp }}/murage-e2e-scratch/isolated-results
           if-no-files-found: ignore
           retention-days: 7
+
+  extended:
+    # EXTENDED tests (ci/extended-tests.txt): Linux only, visible, never blocking. Job-level continue-on-error keeps
+    # a failed or timed-out shard from failing the run's conclusion, which is what scripts/release-ci-gate.mjs reads;
+    # `required` does not list this job. Their failures are follow-up work, not release blockers.
+    if: ${{ !inputs.windows_only && !inputs.human_files && !inputs.vitest_file }}
+    name: extended (non-blocking) ${{ matrix.extended_shard }}/5 (Ubuntu)
+    continue-on-error: true
+    strategy:
+      fail-fast: false
+      matrix:
+        extended_shard: [1, 2, 3, 4, 5]
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: pnpm/action-setup@ff378ebe6b225b0680b81c1ad4498ae0d1d3a5e3 # v6.0.10
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 24
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - uses: ./.github/actions/vitest-runtime
+      - name: Run extended shard
+        shell: bash
+        # server/cloud-home/app-health.test.ts is left out here and run as root in the next step: its volume cases need
+        # root and a /dev/shm mount and fail loudly (by design) for any other user. Nothing skips it.
+        env:
+          MURAGE_SKIP_REAL_ELECTRON_BROWSER_FIXTURE: "0"
+          SHARD: ${{ matrix.extended_shard }}/5
+        run: |
+          node scripts/ci-test-tiers.mjs list --tier extended --shard "$SHARD" --skip server/cloud-home/app-health.test.ts > "$RUNNER_TEMP/vitest-args.txt"
+          args=(); while IFS= read -r arg; do args+=("$arg"); done < "$RUNNER_TEMP/vitest-args.txt"
+          test "${#args[@]}" -gt 0 || { echo "::error::no EXTENDED files selected for shard $SHARD"; exit 1; }
+          node node_modules/vitest/vitest.mjs run --tags-filter='!nightly && !perf-budget' "${args[@]}"
+      - name: Run the root-only app-health test as root
+        # One shard carries it. Same node and vitest as the shard run: sudo -E keeps the environment, and PATH is
+        # passed through because sudo resets it.
+        if: ${{ !cancelled() && matrix.extended_shard == 1 }}
+        shell: bash
+        run: sudo -E env "PATH=$PATH" "$(command -v node)" node_modules/vitest/vitest.mjs run server/cloud-home/app-health.test.ts
 
   required:
     if: ${{ always() && !inputs.windows_only && !inputs.vitest_file && !inputs.human_files }}

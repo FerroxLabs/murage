@@ -5,6 +5,7 @@ import { B08_CASES } from "../src/e2e/b08-template-behavior-fixture.ts";
 import { launchVerificationServer } from "../scripts/control-murage.ts";
 import { parseBotPackage } from "./bot-package.ts";
 import { installedPlaybookInstructions, selectInstalledPlaybooks } from "./installed-playbooks.ts";
+import { windowsNightly } from "./testing/windows-hosted.ts";
 
 const coworkPlan = () => parseBotPackage(JSON.parse(readFileSync(new URL("../bot-library/builtins/cowork.json", import.meta.url), "utf8"))).package.playbooks![0]!;
 const turns = B08_CASES.filter(row => row.template === "cowork").flatMap(row => row.turns.map((text, turnIndex) => ({
@@ -22,7 +23,8 @@ it("selects Cowork guidance for all frozen brief and recovery turns, not the unr
   }
 });
 
-it("delivers imported and pinned Cowork guidance through server dispatch, including same-thread restart continuations", async () => {
+// two server restarts: 8 s on Ubuntu, 48-60+ s on the hosted Windows runner (each cold start is most of it)
+it("delivers imported and pinned Cowork guidance through server dispatch, including same-thread restart continuations", { timeout: 60_000, ...windowsNightly() }, async () => {
   const fixture = await launchVerificationServer({}, undefined, { instrumentationSource: "process.env.FAKE_CLAUDE_DUMP_EACH_TURN='1';" });
   let headers: Record<string, string> = {}, complete = false;
   const observations: Record<string, unknown>[] = [];
@@ -95,4 +97,4 @@ it("delivers imported and pinned Cowork guidance through server dispatch, includ
       observations, fixtureClosed: true, paidCalls: 0,
     }, null, 2) + "\n", { flag: "wx", mode: 0o600 });
   }
-}, 60_000);
+});
