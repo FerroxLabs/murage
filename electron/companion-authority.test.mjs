@@ -3,6 +3,7 @@ import { readFileSync } from "node:fs";
 import { expect, it } from "vitest";
 import { packagedGepaManifestEnvironment } from "./harness-resources.mjs";
 import { launchSecretVia } from "./launch-secret.mjs";
+import { closedControlDirectory } from "./backup-closed-controller.mjs";
 
 it("the real main-process launch blocks share one fresh private token without mutating ambient env", async () => {
   const source = readFileSync(new URL("./main.mjs",import.meta.url),"utf8");
@@ -23,7 +24,7 @@ it("the real main-process launch blocks share one fresh private token without mu
   // startServerOn awaits the port check (electron/port-availability.mjs), so
   // the extracted body runs in an async function with the port reported free.
   const AsyncFunction = (async () => {}).constructor;
-  const launch = new AsyncFunction("randomBytes","process","path","app","packagedGepaManifestEnvironment","launchSecretVia",`
+  const launch = new AsyncFunction("randomBytes","process","path","app","packagedGepaManifestEnvironment","launchSecretVia","closedControlDirectory",`
     const portAvailable=async()=>true;
     const SERVER_PORT=8799;
     const remoteAccessLaunch=()=>null, slog=()=>{};
@@ -49,7 +50,7 @@ it("the real main-process launch blocks share one fresh private token without mu
   const ambient = {MURAGE_COMPANION_TOKEN:"untrusted-ambient-value"};
   const process = {env:ambient,resourcesPath:"/fixture/resources"};
   // The real GEPA manifest pin helper: an unpackaged launch publishes an empty pin.
-  const invoke = () => launch(randomBytes,process,{join:(...parts)=>parts.join("/")},{isPackaged:false,getPath:()=>"/fixture/user-data",getAppPath:()=>"/fixture/app",getVersion:()=>"1.0.0-fixture"},packagedGepaManifestEnvironment,launchSecretVia);
+  const invoke = () => launch(randomBytes,process,{join:(...parts)=>parts.join("/")},{isPackaged:false,getPath:()=>"/fixture/user-data",getAppPath:()=>"/fixture/app",getVersion:()=>"1.0.0-fixture"},packagedGepaManifestEnvironment,launchSecretVia,closedControlDirectory);
   const first = await invoke();
   const second = await invoke();
   // The token reaches the harness over the private parent port, never the
@@ -67,6 +68,8 @@ it("the real main-process launch blocks share one fresh private token without mu
   expect(second.env.MURAGE_MODEL_PROVIDER_COMMIT_TOKEN).not.toBe(first.env.MURAGE_MODEL_PROVIDER_COMMIT_TOKEN);
   expect(first.env.MURAGE_INTERNAL_DATA_DIR_LEASE).toBe("private-lease-fixture");
   expect(first.env.MURAGE_DATA_DIR).toBe("/fixture/canonical-installation");
+  // The server is told where the closed-app backup controller keeps its state.
+  expect(first.env.MURAGE_BACKUP_CONTROL_DIR).toBe(closedControlDirectory("/fixture/canonical-installation"));
   expect(first.env.MURAGE_GEPA_MANIFEST_SHA256).toBe("");
   expect(first.options.MURAGE_INTERNAL_DATA_DIR_LEASE).toBeUndefined();
   expect(secondToken).not.toBe(firstToken);

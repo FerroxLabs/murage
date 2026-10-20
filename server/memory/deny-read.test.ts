@@ -221,6 +221,27 @@ describe("lines (denyLookup)", () => {
     f.db.exec("DROP TABLE memory_deny_range");
     expect(page(f, "T", gen("g1"))).toEqual({ g1: C("lookup-error") });
   });
+
+  it("a stored \"checking\" (left on disk by 1.0.2 or an earlier process: a restart before the drain) is no note: a plain row and a copy are judged live (R2)", () => {
+    // rehearsal 4 on 1.0.3: a reply noted "checking" in the `*` pending window of the upgrade's revoke read its own note back as "checking"
+    // for good once the revoke had drained, through every reader and every later turn. "checking" is now never stored; one found on disk
+    // is read as no note, and the line's own marks and windows decide, as they do for a row with no note at all.
+    const DOOR = { audience: { owner: false, scopeIds: ["s-room", "s-bot"] }, ownFlag: false } as const;
+    const f = make().message("T", "n1", "bot", { withheldFromBots: "checking" }).lineage("T", "n1", 10, { generated: true, turnLsn: 9 })
+      .message("T", "c1", "bot", { withheldFromBots: "checking", copyOf: { threadId: "U", messageIds: ["u1"] } }).lineage("T", "c1", 11, { generated: true, turnLsn: 9 })
+      .reply("T", "g1", 12, { turnLsn: 9 })
+      .pending("*", 5).job(1, 100);
+    // in the window every one of them reads checking, live, from the window (the same as the unnoted row g1)
+    for (const reader of [CONTENT, MEMBER, OWNER, DOOR]) expect(page(f, "T", gen("n1", "c1", "g1"), reader)).toEqual({ n1: C("pending"), c1: C("pending"), g1: C("pending") });
+    // drained (and this process never saw the note written: nothing in memory): all three are shown on their clean lineage
+    f.db.exec("DELETE FROM memory_deny_pending; UPDATE memory_revoke_jobs SET state='done'");
+    for (const reader of [CONTENT, MEMBER, OWNER, DOOR]) expect(page(f, "T", gen("n1", "c1", "g1"), reader)).toEqual({ n1: SHOWN, c1: SHOWN, g1: SHOWN });
+    // a mark still withholds a noted row (fail closed): a line that used revoked content never shows on a stale note
+    f.denyLine("T", 10).denyLine("T", 11);
+    expect(page(f, "T", gen("n1", "c1"), MEMBER)).toEqual({ n1: W("deny-line"), c1: W("deny-line") });
+    // the owner's own flag, and the caller's, keep their meaning on a noted row
+    expect(page(f, "T", [{ messageId: "g1", author: "generated", withheldFromBots: true }], MEMBER)).toEqual({ g1: W("own-flag") });
+  });
 });
 
 describe("memory objects (memoryLookup)", () => {

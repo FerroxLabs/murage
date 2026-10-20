@@ -1730,9 +1730,12 @@ createInterface({ input: process.stdin }).on("line", line => {
 
   // MOCA-260 (upstream #1920): a quiet `sleep` or build sends nothing while
   // it runs, and the guard used to stop the turn as if the agent had hung.
+  // The guard is armed when the prompt is written, before the agent can report its tool: that first round trip
+  // (pipe, the fake's event loop, the reply) is guarded silence with no tool running, and on a loaded macOS runner
+  // it passed 150 ms. The window leaves it 1 s; the tool still outlasts three whole windows of silence.
   it("does not expire an agent while a tool it started is still running", async () => {
-    process.env.MURAGE_ACP_PROMPT_IDLE_MS = "150";
-    process.env.FAKE_ACP_TOOL_MS = "600";
+    process.env.MURAGE_ACP_PROMPT_IDLE_MS = "1000";
+    process.env.FAKE_ACP_TOOL_MS = "3500";
     try {
       await create(GrokAgentDriver, "slow-tool");
       await instance.adapter.sendTurn({ threadId: "t-slow-tool", text: "go" });

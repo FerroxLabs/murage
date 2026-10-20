@@ -464,8 +464,9 @@ describe("rows withheld from bots", () => {
       const owner = searchMessagesWithMeta(needle, 40, undefined, { owner: true }).hits.map((hit) => hit.messageId).sort();
       expect(owner).toEqual(["check-1", "cleared-1", "forgot-1", "held-1", "open-1", "open-2"]);
       for (const scope of [undefined, "t"]) {
+        // a "checking" left on disk is no note (never a stored verdict, R2): the row is a hit for every reader
         const other = searchMessagesWithMeta(needle, 40, scope).hits.map((hit) => hit.messageId).sort();
-        expect(other).toEqual(["cleared-1", "open-1", "open-2"]);
+        expect(other).toEqual(["check-1", "cleared-1", "open-1", "open-2"]);
         // a page of one: LIMIT counts rows this reader may get
         expect(searchMessagesWithMeta(needle, 1, scope).hits.map((hit) => hit.messageId)).toEqual(["cleared-1"]);
       }

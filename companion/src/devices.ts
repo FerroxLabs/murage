@@ -1354,6 +1354,9 @@ export class DeviceRegistry {
         devices: this.byLastSeen().map(({ name, lastSeenAt }) => ({ name, lastSeenAt })),
       };
     }
+    // Named before the window is spent: a name that cannot be cleaned throws
+    // here, with the code still live for the person holding it.
+    const deviceName = this.demoSafeName(cleanDeviceName(name));
     // Consume the window without clearing a possible replay. `closePairing`
     // is the explicit cancel operation and intentionally clears both.
     if (!demoPairing) this.spend("used");
@@ -1361,7 +1364,7 @@ export class DeviceRegistry {
     const token = `murage_${randomBytes(32).toString("base64url")}`;
     const device: DeviceRecord = {
       id: randomUUID(),
-      name: this.demoSafeName(cleanDeviceName(name)),
+      name: deviceName,
       tokenHash: sha256(token),
       createdAt: Date.now(),
       lastSeenAt: Date.now(),

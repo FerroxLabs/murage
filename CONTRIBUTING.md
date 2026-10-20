@@ -110,6 +110,26 @@ House rules for tests:
 - Fake CLI shebang scripts must be launched through `spawnCli`/`execCli`, which resolve them through
   Node on Windows. Only gate a test when the behavior itself is genuinely platform-specific.
 
+### GATE and EXTENDED tests
+
+A release is blocked only by the tests that protect users. Every Vitest file is in exactly one of two lists,
+and CI fails on a file that is in neither (`node scripts/ci-test-tiers.mjs check`):
+
+- **GATE** — [`ci/gate-tests.txt`](ci/gate-tests.txt). CI's Vitest shards run these, and a red one blocks the
+  run and the release. Each line is `path<TAB>OSes<TAB>the user failure it prevents`.
+- **EXTENDED** — [`ci/extended-tests.txt`](ci/extended-tests.txt). The "extended (non-blocking)" job runs these
+  on Linux. Their failures show on the run but never block it; fix them as follow-up work.
+
+The GATE rule: a new GATE test must name the **user failure it prevents** (what a user would lose or see go
+wrong, not what the code does) and the **OSes where that behaviour exists**: `all`, or `linux`, `mac`,
+`windows` joined by `+`. Cloud home and anything that spawns Linux-only binaries is `linux`; a test whose
+behaviour exists on every desktop is `all`. When unsure, use `all`. If you cannot name a user failure, the
+test is EXTENDED.
+
+Tests over 60 s on a hosted runner, or with a wall-clock budget, also carry the `nightly` or `perf-budget`
+tag (`vite.config.ts`): CI's shards leave them out and [`nightly.yml`](.github/workflows/nightly.yml) runs
+them. Human specs, the control-plane tests and the package smoke are real user flows and always block.
+
 ## Adding a provider driver
 
 The SPI in [`server/contracts.ts`](server/contracts.ts) is deliberately small. A driver PR should:

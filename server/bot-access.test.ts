@@ -118,16 +118,17 @@ it("a migrated legacy journal row is incomplete, so a restricted CHECK / run_aga
  const {mkdtempSync}=await import("node:fs");const {tmpdir}=await import("node:os");const {join}=await import("node:path");const {DatabaseSync}=await import("node:sqlite");
  const {SqliteOperationJournal}=await import("./connected-app-journal.ts");const {ConnectedAppOperations}=await import("./connected-app-operations.ts");
  const dir=mkdtempSync(join(tmpdir(),"legacy-"));
+ let journal:InstanceType<typeof SqliteOperationJournal>|undefined;
  try{
   const file=join(dir,"ledger.db");const old=new DatabaseSync(file);
   old.exec("CREATE TABLE connected_app_ops (handle TEXT PRIMARY KEY, scope TEXT NOT NULL, key TEXT NOT NULL, label TEXT, started_at INTEGER NOT NULL, state TEXT NOT NULL, cause TEXT, delivered_at INTEGER, requirements TEXT NOT NULL)");
   old.prepare("INSERT INTO connected_app_ops VALUES ('h-old','s','k',NULL,1,'unknown','no-answer',NULL,?)").run(JSON.stringify([{tool:"GMAIL_SEND_EMAIL",account:"ca_fixture_owned"}]));
   old.close();
-  const op=new ConnectedAppOperations(Date.now,new SqliteOperationJournal(file)).byHandle("s","h-old")!;
+  const op=new ConnectedAppOperations(Date.now,journal=new SqliteOperationJournal(file)).byHandle("s","h-old")!;
   expect(op.requirementsComplete).toBe(false);
   const f=setup();enable(f);
   expect(()=>assertStoredConnectedAppAccess(f.bot,{requirements:op.requirements,complete:op.requirementsComplete})).toThrow("cannot be matched");
- }finally{removeTempDirSync(dir);}
+ }finally{journal?.close();removeTempDirSync(dir);}
 });
 it("the bridge's list scope: a restricted bot's initial list holds only approved accounts, and the revision moves with access",()=>{
  const f=setup();

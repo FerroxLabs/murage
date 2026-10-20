@@ -50,9 +50,10 @@ export function scanDataDirWrites(files = sourceFiles()): Hit[] {
     for (const match of source.matchAll(/([A-Za-z_$][\w$.]*)\s*(?::\s*string)?\s*(?:=|\?\?=?)\s*DATA_DIR\b/g)) roots.add(match[1]);
     for (const match of source.matchAll(/([A-Za-z_$][\w$.]*)\s*\?\?\s*DATA_DIR\b/g)) roots.add(match[1]);
     if (/\bDATA_DIR\b/.test(source)) { roots.add("this.dir"); roots.add("this.root"); }
-    for (const match of source.matchAll(/\b(?:join|resolve)\(\s*([\w$.]+)\s*,\s*(?:(["'`])([^"'`\n]*)\2|([A-Za-z_$][\w$]*)\s*[,)])/g)) {
-      if (!roots.has(match[1])) continue;
-      const literal = match[3] ?? constants.get(match[4]) ?? `<<${match[4]}>>`;
+    // The folder may be given with a fallback, `join(deps.dataDir ?? DATA_DIR, "own-server")`: either side naming the data folder counts.
+    for (const match of source.matchAll(/\b(?:join|resolve)\(\s*([\w$.]+)(?:\s*(?:\?\?|\|\|)\s*([\w$.]+))?\s*,\s*(?:(["'`])([^"'`\n]*)\3|([A-Za-z_$][\w$]*)\s*[,)])/g)) {
+      if (!roots.has(match[1]) && !(match[2] && roots.has(match[2]))) continue;
+      const literal = match[4] ?? constants.get(match[5]) ?? `<<${match[5]}>>`;
       hits.push({ file, name: literal.split("/")[0] });
     }
   }

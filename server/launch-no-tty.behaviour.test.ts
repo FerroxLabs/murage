@@ -9,7 +9,7 @@
 // The outer test runs this same file again under python3's pty.fork (a new session whose controlling terminal is the
 // PTY); the inner run does the checks.
 import { execFileSync, spawn, spawnSync } from "node:child_process";
-import { chmodSync, closeSync, mkdtempSync, openSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, closeSync, mkdtempSync, openSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -18,6 +18,7 @@ import { afterAll, describe, expect, it } from "vitest";
 import { fetchHermesAcpModels } from "./drivers/acp/hermes.ts";
 import { execCli, spawnCli } from "./procs.ts";
 import { resetPathCache, resolveFuigoCli } from "./env-path.ts";
+import { removeTempDirSync } from "./testing/cleanup.ts";
 
 const here = fileURLToPath(import.meta.url);
 const root = join(dirname(here), "..");
@@ -69,12 +70,12 @@ describe.skipIf(!posix || INNER)("engine processes have no controlling terminal 
 
 describe.skipIf(!posix || !INNER)("engine processes have no controlling terminal (inner, under the PTY)", () => {
   const dir = mkdtempSync(join(tmpdir(), "launch-no-tty-"));
-  afterAll(() => rmSync(dir, { recursive: true, force: true }));
+  afterAll(() => removeTempDirSync(dir));
   const engine = join(dir, "fake-engine");
   writeFileSync(engine, [
     "#!/bin/sh",
     "out=\"$FAKE_OUT\"",
-    "ps -o sid= -p $$ | tr -d ' ' > \"$out.sid\"",
+    "python3 -c 'import os,sys; print(os.getsid(int(sys.argv[1])))' $$ > \"$out.sid\"",
     "sh -c 'exec 3<>/dev/tty' 2>/dev/null; echo $? > \"$out.tty\"",
     "sh -c 'sh -c \"exec 3<>/dev/tty\"' 2>/dev/null; echo $? > \"$out.desc\"",
     "",
@@ -86,7 +87,8 @@ describe.skipIf(!posix || !INNER)("engine processes have no controlling terminal
     tty: readFileSync(join(dir, `${out}.tty`), "utf8").trim(),
     desc: readFileSync(join(dir, `${out}.desc`), "utf8").trim(),
   });
-  const parentSid = () => execFileSync("ps", ["-o", "sid=", "-p", String(process.pid)], { encoding: "utf8" }).trim();
+  // getsid(2) through python3: BSD ps (macOS) has no `sid` keyword, and node does not expose getsid
+  const parentSid = () => execFileSync("python3", ["-c", "import os,sys; print(os.getsid(int(sys.argv[1])))", String(process.pid)], { encoding: "utf8" }).trim();
   const closed = (child: { once: (event: "close", fn: () => void) => unknown }) => new Promise<void>((resolve) => { child.once("close", () => resolve()); });
 
   it("the fixture can see a terminal: the parent and a raw spawn without detached open /dev/tty", async () => {
@@ -123,7 +125,7 @@ describe.skipIf(!posix || !INNER)("engine processes have no controlling terminal
     const fake = (at: string, out: string) => {
       writeFileSync(at, [
         "#!/bin/sh",
-        `ps -o sid= -p $$ | tr -d ' ' > "${join(dir, out)}.sid"`,
+        `python3 -c 'import os,sys; print(os.getsid(int(sys.argv[1])))' $$ > "${join(dir, out)}.sid"`,
         `sh -c 'exec 3<>/dev/tty' 2>/dev/null; echo $? > "${join(dir, out)}.tty"`,
         `sh -c 'sh -c "exec 3<>/dev/tty"' 2>/dev/null; echo $? > "${join(dir, out)}.desc"`,
         "echo 'fuigo 1.0.0'",

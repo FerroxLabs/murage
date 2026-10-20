@@ -351,9 +351,12 @@ export function rowsShown(db: DatabaseSync, viewer: Viewer, held: ReadonlyArray<
 
 /** The door as the result gate asks it (ResultEgressDeps.doorShown): the bot the result is released to reads every line of its walk, under the
  * audience it is released for (an owner audience as the owner's own chat, as the gate's write-time lookup). */
-export function doorEgress(db: () => DatabaseSync): (readerBotId: string, threadId: string, messageIds: readonly string[], notOwnerAudience: boolean) => LineVerdictState {
+/** `ownerConversation`: as result-egress.ts writetimeLinesShown, lines of the owner's own direct conversation released to the owner's own
+ * audience are read as that conversation reads them (content reader); every other thread keeps the explicit owner audience. */
+export function doorEgress(db: () => DatabaseSync, ownerConversation?: (threadId: string) => boolean): (readerBotId: string, threadId: string, messageIds: readonly string[], notOwnerAudience: boolean) => LineVerdictState {
   return (readerBotId, threadId, messageIds, notOwnerAudience) => storedRowsVerdict(db(), botViewer(readerBotId), threadId, messageIds,
-    { audience: { owner: !notOwnerAudience, scopeIds: [] }, ownerOwnChat: !notOwnerAudience });
+    !notOwnerAudience && ownerConversation?.(threadId) === true ? { audience: null }
+      : { audience: { owner: !notOwnerAudience, scopeIds: [] }, ownerOwnChat: !notOwnerAudience });
 }
 
 /** A projection as a row a renderer can carry: its fixed words and who it is, no other stored field. */

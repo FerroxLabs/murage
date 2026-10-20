@@ -1,6 +1,6 @@
 ---
 title: What changed in Murage 1.0.3
-description: Always ask reads commands before they run, apps get grants you control, approval cards reach your phone and calls, memory and rooms stay quick and private, and Murage comes with Fuigo 1.0.30.
+description: Always ask reads commands before they run, apps get grants you control, approval cards reach your phone and calls, memory and rooms stay quick and private, and Murage comes with Fuigo 1.0.31.
 icon: Clock
 ---
 
@@ -56,7 +56,7 @@ icon: Clock
 
 ## Engines in 1.0.3
 
-- **Fuigo 1.0.30.** Murage 1.0.3 comes with Fuigo 1.0.30 bundled.
+- **Fuigo 1.0.31.** Murage 1.0.3 comes with Fuigo 1.0.31 bundled.
 
 ## Murage Cloud in 1.0.3
 
@@ -66,9 +66,13 @@ icon: Clock
 
 ## Delegated team replies in 1.0.3
 
-- **Replies are held and checked before they reach your bots, then released automatically.** While Murage checks a delegated reply against what its bots may read, you see the words with the note "Bots will see this reply once earlier memory is checked", and your bots read that the reply is left out for now. When the check finishes, the reply is released to them on its own, with no step from you.
+- **Replies are held and checked before they reach a channel, then released automatically.** While Murage checks a delegated reply against what its bots may read, you see the words with the note "Bots will see this reply once earlier memory is checked", and your bots read that the reply is left out for now. When the check finishes, the reply is released to them on its own, with no step from you.
 - **A reply is marked as using something you deleted or changed only when that is true.** A check that is still running reads as checking, never as a removed source.
-- **Earlier replies come back.** When Murage starts, it finds delegated replies that earlier versions marked as withheld in your own conversations, checks them again, and restores each one whose words are still stored.
+- **Hand-offs return your teammate's words after memory-settings or team changes.** Change a bot's memory settings, add or remove a teammate, or switch permissions, and the next hand-off still brings the teammate's answer straight back to the asking bot.
+- **Hand-offs never hold.** Delegating to a teammate always answers the asker at once, with the teammate's words or a plain line saying what happened.
+- **The asker is woken when a shared teammate answers.** A hand-off from a direct chat to a shared teammate starts the asker's next turn when the answer arrives, so the bot carries on without a nudge.
+- **A clean reply goes through as written.** A reply from a turn that began after a change is no longer caught by the earlier memory check, so it reaches the channel when it is sent.
+- **Earlier replies come back.** Replies that 1.0.2 saved as withheld in your own conversations are restored after the upgrade. When Murage starts, it checks them again and restores each one whose words are still stored.
 - **Your roster, permissions and settings stay yours to change.** A change holds only the replies of turns that began before it; new turns go straight through.
 - **Delegating bots follow through.** When a bot hands work to a teammate, the follow-through starts when the reply arrives, at the level the asker asked under, and Murage asks again if your authority has changed since. Each owed follow-through is one durable record, so a restart does not lose it.
 

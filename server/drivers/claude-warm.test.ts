@@ -760,7 +760,8 @@ describe("ClaudeDriver warm process (fake CLI)", () => {
     // queue the steer while the launch is pre-init (a settled-false answer means it was not queued yet)
     const pending = Symbol("pending");
     let steered: Promise<boolean | SteerDelivery> | null = null;
-    for (let i = 0; i < 2000 && !steered; i++) {
+    // bounded by time, not by a count of ticks: a slower spawn (Windows) opens the pre-init window after more ticks than a fast one
+    for (const deadline = Date.now() + 10_000; !steered && Date.now() < deadline;) {
       const attempt = instance.adapter.steer!("t-steer-retry", "STEER-STRANDED");
       if ((await Promise.race([attempt, Promise.resolve(pending)])) === pending) steered = attempt;
       else await new Promise((resolve) => setImmediate(resolve));
@@ -1382,7 +1383,9 @@ describe("ClaudeDriver warm process (stale frames and shutdown)", () => {
     expect(mine().every((pid) => !alive(pid))).toBe(true);
   }, 30_000);
 
-  it("reset confirms EVERY older retiring process: A retiring, B current, A alive after reset keeps the thread quarantined so C cannot launch", async () => {
+  // A must outlive the reset's stop. On Windows a stop is TerminateProcess, which no process can ignore, so A is gone and
+  // the thread is rightly free; the quarantine this row proves exists only where a process can ignore SIGTERM.
+  it.skipIf(process.platform === "win32")("reset confirms EVERY older retiring process: A retiring, B current, A alive after reset keeps the thread quarantined so C cannot launch", async () => {
     process.env.MINI_STUBBORN = "1";
     await create();
     await turn("t-older", "one");
@@ -1442,7 +1445,8 @@ describe("ClaudeDriver warm process (stale frames and shutdown)", () => {
     // A was released: the thread must not be quarantined on it again
     const sent = await instance.adapter.sendTurn({ threadId: "t-interleave", text: "three", warmIdentity: identity, resumeCursor: "mini-session" }).then(() => "sent", (error: unknown) => String(error));
     expect(sent).toBe("sent");
-    process.kill(old!, "SIGKILL"); // the fixture's own stubborn process
+    // the fixture's own stubborn process (on Windows the reset's stop already ended it)
+    try { process.kill(old!, "SIGKILL"); } catch (error) { if ((error as NodeJS.ErrnoException).code !== "ESRCH") throw error; }
   }, 40_000);
 });
 

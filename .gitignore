@@ -77,3 +77,4 @@ docs/plans/**
 # written by `git ls-files -z > server/testing/.git-ls-files.fixture` for container runs with no .git (server/testing/data-safety.test.ts)
 server/testing/.git-ls-files.fixture
 /.v101-ref/
+/.v102-ref/

@@ -28,11 +28,15 @@ afterEach(async () => { await new Promise(resolve => server.close(resolve)); ser
 // A per-bot sign-in must name its bot, so every engine but Claude defaults to one.
 const open = (engine = "codex", query = engine === "claudeAgent" ? "" : "?bot=atlas") => new Promise<WebSocket>((resolve, reject) => {
   const ws = new WebSocket(`ws://127.0.0.1:${port}/api/engine-login/${engine}${query}`);
-  ws.once("open", () => resolve(ws)); ws.once("unexpected-response", (_r, res) => reject(Object.assign(new Error("refused"), { status: res.statusCode })));
+  ws.once("open", () => resolve(ws)); ws.once("unexpected-response", (_r, res) => reject(Object.assign(new Error(`refused ${res.statusCode}`), { status: res.statusCode })));
   ws.once("error", reject);
 });
 const closed = (ws: WebSocket) => new Promise<number>(resolve => ws.once("close", code => resolve(code)));
 const message = (ws: WebSocket) => new Promise<string>(resolve => ws.once("message", data => resolve(String(data))));
+/** Sessions the relay has finished for one engine: it frees that engine's slot, then logs the end line. Counted per engine,
+ * so a session an earlier test left ending (another engine's slot) is never taken for this one's. */
+const ended = (engine: string) => logs.filter(line => line.startsWith(`engine-login end engine=${engine} `)).length;
+const settled = (engine: string, before: number) => vi.waitFor(() => expect(ended(engine)).toBe(before + 1), { timeout: 5_000 });
 const gone = async (pid: number) => { for (let i = 0; i < 40; i++) { try { process.kill(pid, 0); } catch { return true; } await new Promise(r => setTimeout(r, 50)); } return false; };
 
 describe("engine login relay", () => {
@@ -132,7 +136,8 @@ describe("engine login relay", () => {
     await start();
     for (const engine of ["grokAgent", "kimiAgent"]) {
       for (const action of ["login", "logout"]) {
-        const ws = await open(engine, `?action=${action}&bot=atlas`); const done = closed(ws); ws.close(); await done;
+        const before = ended(engine); const ws = await open(engine, `?action=${action}&bot=atlas`); const done = closed(ws); ws.close(); await done;
+        await settled(engine, before); // the engine's one slot frees when its launcher has exited, not when the socket closes
       }
     }
     await expect(open("kimiAgent", "?action=status&bot=atlas")).rejects.toMatchObject({ status: 400 });
@@ -159,7 +164,8 @@ describe("engine login relay", () => {
   it("takes opencodeGo sign-in with a bot and logout with or without one", async () => {
     await start();
     for (const query of ["?action=login&bot=atlas", "?action=logout&bot=atlas", "?action=logout"]) {
-      const ws = await open("opencodeGo", query); const done = closed(ws); ws.close(); await done;
+      const before = ended("opencodeGo"); const ws = await open("opencodeGo", query); const done = closed(ws); ws.close(); await done;
+      await settled("opencodeGo", before); // the slot frees when the launcher has exited
     }
     expect(launches.map(item => `${item.engine}:${item.action}:${item.extra.bot ?? ""}`)).toEqual(["opencodeGo:login:atlas", "opencodeGo:logout:atlas", "opencodeGo:logout:"]);
   });

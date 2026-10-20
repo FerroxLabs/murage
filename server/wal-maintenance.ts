@@ -58,7 +58,10 @@ export function readWalHeader(walFile: string): WalState {
   try {
     if (walMaintenanceTestHooks.unreadableReads > 0) { walMaintenanceTestHooks.unreadableReads--; throw Object.assign(new Error("EMFILE: too many open files"), { code: "EMFILE" }); }
     fd = openSync(walFile, "r");
-    const size = fstatSync(fd).size;
+    const stat = fstatSync(fd);
+    // Windows opens a directory for reading (size 0); only a regular file can be the log, so anything else is unknown, never empty
+    if (!stat.isFile()) return { unknown: true, aligned: false, frames: 0, header: null, last: null };
+    const size = stat.size;
     if (size === 0) return { aligned: true, frames: 0, header: null, last: null };
     const head = Buffer.alloc(32);
     if (size < 32 || readSync(fd, head, 0, 32, 0) !== 32) return { aligned: false, frames: 0, header: null, last: null };

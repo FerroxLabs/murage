@@ -688,7 +688,7 @@ export const HELP_INDEX: readonly HelpEntry[] = [
   {
     "id": "changelog/v1-0-3#always-ask-in-1-0-3",
     "title": "What changed in Murage 1.0.3",
-    "description": "Always ask reads commands before they run, apps get grants you control, approval cards reach your phone and calls, memory and rooms stay quick and private, and Murage comes with Fuigo 1.0.30.",
+    "description": "Always ask reads commands before they run, apps get grants you control, approval cards reach your phone and calls, memory and rooms stay quick and private, and Murage comes with Fuigo 1.0.31.",
     "heading": "Always ask in 1.0.3",
     "breadcrumb": "Murage docs → Changelog → What changed in Murage 1.0.3",
     "where": "Murage docs → Changelog → What changed in Murage 1.0.3",
@@ -698,7 +698,7 @@ export const HELP_INDEX: readonly HelpEntry[] = [
   {
     "id": "changelog/v1-0-3#apps-and-engine-settings-in-1-0-3",
     "title": "What changed in Murage 1.0.3",
-    "description": "Always ask reads commands before they run, apps get grants you control, approval cards reach your phone and calls, memory and rooms stay quick and private, and Murage comes with Fuigo 1.0.30.",
+    "description": "Always ask reads commands before they run, apps get grants you control, approval cards reach your phone and calls, memory and rooms stay quick and private, and Murage comes with Fuigo 1.0.31.",
     "heading": "Apps and engine settings in 1.0.3",
     "breadcrumb": "Murage docs → Changelog → What changed in Murage 1.0.3",
     "where": "Murage docs → Changelog → What changed in Murage 1.0.3",
@@ -708,7 +708,7 @@ export const HELP_INDEX: readonly HelpEntry[] = [
   {
     "id": "changelog/v1-0-3#approvals-on-your-phone-and-in-calls-in-1-0-3",
     "title": "What changed in Murage 1.0.3",
-    "description": "Always ask reads commands before they run, apps get grants you control, approval cards reach your phone and calls, memory and rooms stay quick and private, and Murage comes with Fuigo 1.0.30.",
+    "description": "Always ask reads commands before they run, apps get grants you control, approval cards reach your phone and calls, memory and rooms stay quick and private, and Murage comes with Fuigo 1.0.31.",
     "heading": "Approvals on your phone and in calls in 1.0.3",
     "breadcrumb": "Murage docs → Changelog → What changed in Murage 1.0.3",
     "where": "Murage docs → Changelog → What changed in Murage 1.0.3",
@@ -718,7 +718,7 @@ export const HELP_INDEX: readonly HelpEntry[] = [
   {
     "id": "changelog/v1-0-3#spending-ceiling-and-setup-backup-in-1-0-3",
     "title": "What changed in Murage 1.0.3",
-    "description": "Always ask reads commands before they run, apps get grants you control, approval cards reach your phone and calls, memory and rooms stay quick and private, and Murage comes with Fuigo 1.0.30.",
+    "description": "Always ask reads commands before they run, apps get grants you control, approval cards reach your phone and calls, memory and rooms stay quick and private, and Murage comes with Fuigo 1.0.31.",
     "heading": "Spending ceiling and setup backup in 1.0.3",
     "breadcrumb": "Murage docs → Changelog → What changed in Murage 1.0.3",
     "where": "Murage docs → Changelog → What changed in Murage 1.0.3",
@@ -728,7 +728,7 @@ export const HELP_INDEX: readonly HelpEntry[] = [
   {
     "id": "changelog/v1-0-3#rooms-and-memory-in-1-0-3",
     "title": "What changed in Murage 1.0.3",
-    "description": "Always ask reads commands before they run, apps get grants you control, approval cards reach your phone and calls, memory and rooms stay quick and private, and Murage comes with Fuigo 1.0.30.",
+    "description": "Always ask reads commands before they run, apps get grants you control, approval cards reach your phone and calls, memory and rooms stay quick and private, and Murage comes with Fuigo 1.0.31.",
     "heading": "Rooms and memory in 1.0.3",
     "breadcrumb": "Murage docs → Changelog → What changed in Murage 1.0.3",
     "where": "Murage docs → Changelog → What changed in Murage 1.0.3",
@@ -738,7 +738,7 @@ export const HELP_INDEX: readonly HelpEntry[] = [
   {
     "id": "changelog/v1-0-3#thread-recall-in-1-0-3",
     "title": "What changed in Murage 1.0.3",
-    "description": "Always ask reads commands before they run, apps get grants you control, approval cards reach your phone and calls, memory and rooms stay quick and private, and Murage comes with Fuigo 1.0.30.",
+    "description": "Always ask reads commands before they run, apps get grants you control, approval cards reach your phone and calls, memory and rooms stay quick and private, and Murage comes with Fuigo 1.0.31.",
     "heading": "Thread recall in 1.0.3",
     "breadcrumb": "Murage docs → Changelog → What changed in Murage 1.0.3",
     "where": "Murage docs → Changelog → What changed in Murage 1.0.3",
@@ -748,7 +748,7 @@ export const HELP_INDEX: readonly HelpEntry[] = [
   {
     "id": "changelog/v1-0-3#bots-read-only-what-they-may-in-1-0-3",
     "title": "What changed in Murage 1.0.3",
-    "description": "Always ask reads commands before they run, apps get grants you control, approval cards reach your phone and calls, memory and rooms stay quick and private, and Murage comes with Fuigo 1.0.30.",
+    "description": "Always ask reads commands before they run, apps get grants you control, approval cards reach your phone and calls, memory and rooms stay quick and private, and Murage comes with Fuigo 1.0.31.",
     "heading": "Bots read only what they may in 1.0.3",
     "breadcrumb": "Murage docs → Changelog → What changed in Murage 1.0.3",
     "where": "Murage docs → Changelog → What changed in Murage 1.0.3",
@@ -758,7 +758,7 @@ export const HELP_INDEX: readonly HelpEntry[] = [
   {
     "id": "changelog/v1-0-3#faster-memory-cleanup-in-1-0-3",
     "title": "What changed in Murage 1.0.3",
-    "description": "Always ask reads commands before they run, apps get grants you control, approval cards reach your phone and calls, memory and rooms stay quick and private, and Murage comes with Fuigo 1.0.30.",
+    "description": "Always ask reads commands before they run, apps get grants you control, approval cards reach your phone and calls, memory and rooms stay quick and private, and Murage comes with Fuigo 1.0.31.",
     "heading": "Faster memory cleanup in 1.0.3",
     "breadcrumb": "Murage docs → Changelog → What changed in Murage 1.0.3",
     "where": "Murage docs → Changelog → What changed in Murage 1.0.3",
@@ -768,7 +768,7 @@ export const HELP_INDEX: readonly HelpEntry[] = [
   {
     "id": "changelog/v1-0-3#attachments-in-1-0-3",
     "title": "What changed in Murage 1.0.3",
-    "description": "Always ask reads commands before they run, apps get grants you control, approval cards reach your phone and calls, memory and rooms stay quick and private, and Murage comes with Fuigo 1.0.30.",
+    "description": "Always ask reads commands before they run, apps get grants you control, approval cards reach your phone and calls, memory and rooms stay quick and private, and Murage comes with Fuigo 1.0.31.",
     "heading": "Attachments in 1.0.3",
     "breadcrumb": "Murage docs → Changelog → What changed in Murage 1.0.3",
     "where": "Murage docs → Changelog → What changed in Murage 1.0.3",
@@ -778,17 +778,17 @@ export const HELP_INDEX: readonly HelpEntry[] = [
   {
     "id": "changelog/v1-0-3#engines-in-1-0-3",
     "title": "What changed in Murage 1.0.3",
-    "description": "Always ask reads commands before they run, apps get grants you control, approval cards reach your phone and calls, memory and rooms stay quick and private, and Murage comes with Fuigo 1.0.30.",
+    "description": "Always ask reads commands before they run, apps get grants you control, approval cards reach your phone and calls, memory and rooms stay quick and private, and Murage comes with Fuigo 1.0.31.",
     "heading": "Engines in 1.0.3",
     "breadcrumb": "Murage docs → Changelog → What changed in Murage 1.0.3",
     "where": "Murage docs → Changelog → What changed in Murage 1.0.3",
     "url": "https://murage.app/docs/changelog/v1-0-3#engines-in-1-0-3",
-    "text": "- Fuigo 1.0.30. Murage 1.0.3 comes with Fuigo 1.0.30 bundled."
+    "text": "- Fuigo 1.0.31. Murage 1.0.3 comes with Fuigo 1.0.31 bundled."
   },
   {
     "id": "changelog/v1-0-3#murage-cloud-in-1-0-3",
     "title": "What changed in Murage 1.0.3",
-    "description": "Always ask reads commands before they run, apps get grants you control, approval cards reach your phone and calls, memory and rooms stay quick and private, and Murage comes with Fuigo 1.0.30.",
+    "description": "Always ask reads commands before they run, apps get grants you control, approval cards reach your phone and calls, memory and rooms stay quick and private, and Murage comes with Fuigo 1.0.31.",
     "heading": "Murage Cloud in 1.0.3",
     "breadcrumb": "Murage docs → Changelog → What changed in Murage 1.0.3",
     "where": "Murage docs → Changelog → What changed in Murage 1.0.3",
@@ -798,17 +798,17 @@ export const HELP_INDEX: readonly HelpEntry[] = [
   {
     "id": "changelog/v1-0-3#delegated-team-replies-in-1-0-3",
     "title": "What changed in Murage 1.0.3",
-    "description": "Always ask reads commands before they run, apps get grants you control, approval cards reach your phone and calls, memory and rooms stay quick and private, and Murage comes with Fuigo 1.0.30.",
+    "description": "Always ask reads commands before they run, apps get grants you control, approval cards reach your phone and calls, memory and rooms stay quick and private, and Murage comes with Fuigo 1.0.31.",
     "heading": "Delegated team replies in 1.0.3",
     "breadcrumb": "Murage docs → Changelog → What changed in Murage 1.0.3",
     "where": "Murage docs → Changelog → What changed in Murage 1.0.3",
     "url": "https://murage.app/docs/changelog/v1-0-3#delegated-team-replies-in-1-0-3",
-    "text": "- Replies are held and checked before they reach your bots, then released automatically. While Murage checks a delegated reply against what its bots may read, you see the words with the note \"Bots will see this reply once earlier memory is checked\", and your bots read that the reply is left out for now. When the check finishes, the reply is released to them on its own, with no step from you.\n- A reply is marked as using something you deleted or changed only when that is true. A check that is still running reads as checking, never as a removed source.\n- Earlier replies come back.…"
+    "text": "- Replies are held and checked before they reach a channel, then released automatically. While Murage checks a delegated reply against what its bots may read, you see the words with the note \"Bots will see this reply once earlier memory is checked\", and your bots read that the reply is left out for now. When the check finishes, the reply is released to them on its own, with no step from you.\n- A reply is marked as using something you deleted or changed only when that is true. A check that is still running reads as checking, never as a removed source.\n- Hand-offs return your teammate's words after memory-settings or team changes.…"
   },
   {
     "id": "changelog/v1-0-3#windows-in-1-0-3",
     "title": "What changed in Murage 1.0.3",
-    "description": "Always ask reads commands before they run, apps get grants you control, approval cards reach your phone and calls, memory and rooms stay quick and private, and Murage comes with Fuigo 1.0.30.",
+    "description": "Always ask reads commands before they run, apps get grants you control, approval cards reach your phone and calls, memory and rooms stay quick and private, and Murage comes with Fuigo 1.0.31.",
     "heading": "Windows in 1.0.3",
     "breadcrumb": "Murage docs → Changelog → What changed in Murage 1.0.3",
     "where": "Murage docs → Changelog → What changed in Murage 1.0.3",
@@ -818,7 +818,7 @@ export const HELP_INDEX: readonly HelpEntry[] = [
   {
     "id": "changelog/v1-0-3#moving-to-1-0-2-and-back-in-1-0-3",
     "title": "What changed in Murage 1.0.3",
-    "description": "Always ask reads commands before they run, apps get grants you control, approval cards reach your phone and calls, memory and rooms stay quick and private, and Murage comes with Fuigo 1.0.30.",
+    "description": "Always ask reads commands before they run, apps get grants you control, approval cards reach your phone and calls, memory and rooms stay quick and private, and Murage comes with Fuigo 1.0.31.",
     "heading": "Moving to 1.0.2 and back in 1.0.3",
     "breadcrumb": "Murage docs → Changelog → What changed in Murage 1.0.3",
     "where": "Murage docs → Changelog → What changed in Murage 1.0.3",
@@ -828,7 +828,7 @@ export const HELP_INDEX: readonly HelpEntry[] = [
   {
     "id": "changelog/v1-0-3#also-in-1-0-3",
     "title": "What changed in Murage 1.0.3",
-    "description": "Always ask reads commands before they run, apps get grants you control, approval cards reach your phone and calls, memory and rooms stay quick and private, and Murage comes with Fuigo 1.0.30.",
+    "description": "Always ask reads commands before they run, apps get grants you control, approval cards reach your phone and calls, memory and rooms stay quick and private, and Murage comes with Fuigo 1.0.31.",
     "heading": "Also in 1.0.3",
     "breadcrumb": "Murage docs → Changelog → What changed in Murage 1.0.3",
     "where": "Murage docs → Changelog → What changed in Murage 1.0.3",
@@ -838,7 +838,7 @@ export const HELP_INDEX: readonly HelpEntry[] = [
   {
     "id": "changelog/v1-0-3#known-limits-in-1-0-3",
     "title": "What changed in Murage 1.0.3",
-    "description": "Always ask reads commands before they run, apps get grants you control, approval cards reach your phone and calls, memory and rooms stay quick and private, and Murage comes with Fuigo 1.0.30.",
+    "description": "Always ask reads commands before they run, apps get grants you control, approval cards reach your phone and calls, memory and rooms stay quick and private, and Murage comes with Fuigo 1.0.31.",
     "heading": "Known limits in 1.0.3",
     "breadcrumb": "Murage docs → Changelog → What changed in Murage 1.0.3",
     "where": "Murage docs → Changelog → What changed in Murage 1.0.3",
@@ -848,7 +848,7 @@ export const HELP_INDEX: readonly HelpEntry[] = [
   {
     "id": "changelog/v1-0-3#delegate-follow-through",
     "title": "What changed in Murage 1.0.3",
-    "description": "Always ask reads commands before they run, apps get grants you control, approval cards reach your phone and calls, memory and rooms stay quick and private, and Murage comes with Fuigo 1.0.30.",
+    "description": "Always ask reads commands before they run, apps get grants you control, approval cards reach your phone and calls, memory and rooms stay quick and private, and Murage comes with Fuigo 1.0.31.",
     "heading": "Delegate follow-through",
     "breadcrumb": "Murage docs → Changelog → What changed in Murage 1.0.3",
     "where": "Murage docs → Changelog → What changed in Murage 1.0.3",
@@ -858,7 +858,7 @@ export const HELP_INDEX: readonly HelpEntry[] = [
   {
     "id": "changelog/v1-0-3#memory-change-settling",
     "title": "What changed in Murage 1.0.3",
-    "description": "Always ask reads commands before they run, apps get grants you control, approval cards reach your phone and calls, memory and rooms stay quick and private, and Murage comes with Fuigo 1.0.30.",
+    "description": "Always ask reads commands before they run, apps get grants you control, approval cards reach your phone and calls, memory and rooms stay quick and private, and Murage comes with Fuigo 1.0.31.",
     "heading": "Memory change settling",
     "breadcrumb": "Murage docs → Changelog → What changed in Murage 1.0.3",
     "where": "Murage docs → Changelog → What changed in Murage 1.0.3",

@@ -1084,6 +1084,8 @@ function handle(msg: any) {
       }
       const loadServers = JSON.stringify(msg.params?.mcpServers ?? []);
       if (Array.isArray(msg.params?.mcpServers)) memoryMcp = memoryServerOf(msg.params.mcpServers) ?? memoryMcp;
+      // a respawned agent loading its session gets the agents server there too (a real CLI mounts whatever session/load names)
+      if (Array.isArray(msg.params?.mcpServers)) agentsMcp = (msg.params.mcpServers as McpEntry[]).find((s: any) => s?.name === "agents" || /^murage-agents-[a-f0-9]{20}$/.test(String(s?.name))) ?? agentsMcp;
       const serversChanged = !resident || loadServers !== liveServers;
       if (resident && Array.isArray(msg.params?.mcpServers)) {
         // Fuigo's reconnect: the resident session takes the new servers

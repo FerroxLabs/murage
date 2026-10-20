@@ -23,7 +23,9 @@
 // the wall-clock budget tests on the build host perf job, tagged out of CI's
 // shards in vite.config.ts) must be green too: its newest completed run must
 // have concluded success, on the pinned commit or one of its ancestors, and be
-// no older than NIGHTLY_MAX_AGE_HOURS (72). No waiver covers it.
+// no older than NIGHTLY_MAX_AGE_HOURS (72). No waiver covers it. The release
+// builds run beside CI, so both checks wait (CI_WAIT_MINUTES, default 240) for
+// a still-running CI or nightly run on the pinned commit to complete.
 import { createHash } from "node:crypto";
 import { appendFileSync } from "node:fs";
 import { spawnSync } from "node:child_process";
@@ -57,6 +59,24 @@ export function nightlyVerdict(runs, sha, { ancestor, now = Date.now(), maxAgeHo
   const ageHours = (now - Date.parse(newest.created_at ?? 0)) / 3_600_000;
   if (!(ageHours <= maxAgeHours)) return { ok: false, run: newest, reason: `the latest ${where} is ${Math.round(ageHours)} h old (limit ${maxAgeHours} h)` };
   return { ok: true, run: newest, reason: `the latest ${where} concluded success` };
+}
+
+/**
+ * Whether a nightly run for exactly `sha` has not completed yet. The gate waits
+ * for it (its verdict is the one that matters for this commit) instead of
+ * judging an older completed run.
+ */
+export function nightlyPending(runs, sha) {
+  return (Array.isArray(runs) ? runs : []).some(run => run?.head_sha === sha && run.status !== "completed");
+}
+
+/**
+ * A nightly verdict worth polling again: nothing completed yet, not on this
+ * history, or too old (someone can still dispatch a fresh nightly while the
+ * builds run). A completed red run is final and never retried.
+ */
+export function nightlyRetryable(verdict) {
+  return !verdict.ok && (!verdict.run || verdict.run.conclusion === "success");
 }
 
 // Who may sign a waiver. Sean approves every release exception.
@@ -131,8 +151,8 @@ function listRuns({ repository, workflow, sha }) {
   return JSON.parse(result.stdout || "[]");
 }
 
-function listCompletedRuns({ repository, workflow }) {
-  const result = spawnSync("gh", ["api", `repos/${repository}/actions/workflows/${workflow}/runs?status=completed&per_page=20`, "--jq", ".workflow_runs"], { encoding: "utf8" });
+function listNightlyRuns({ repository, workflow }) {
+  const result = spawnSync("gh", ["api", `repos/${repository}/actions/workflows/${workflow}/runs?per_page=30`, "--jq", ".workflow_runs"], { encoding: "utf8" });
   if (result.status !== 0) throw new Error(`gh api failed: ${(result.stderr || result.stdout).trim()}`);
   return JSON.parse(result.stdout || "[]");
 }
@@ -168,23 +188,54 @@ async function main() {
     process.exit(1);
   }
   const nightlyWorkflow = process.env.NIGHTLY_WORKFLOW || "nightly.yml";
-  const nightly = nightlyVerdict(listCompletedRuns({ repository, workflow: nightlyWorkflow }), sha, {
-    ancestor: runSha => /^[0-9a-f]{40}$/.test(String(runSha)) && isAncestor(runSha, sha),
-    maxAgeHours: Number(process.env.NIGHTLY_MAX_AGE_HOURS ?? 72),
-  });
-  if (!nightly.ok) {
-    console.error(`::error::${nightly.reason}; a release needs the latest ${nightlyWorkflow} green (run it on this commit with workflow_dispatch)`);
-    process.exit(1);
-  }
-  console.log(`ok: ${nightly.reason}`);
-  record([`Nightly gate: ${nightly.reason}`], {});
-  const waitMs = Number(process.env.CI_WAIT_MINUTES ?? 75) * 60_000;
+  const waitMs = Number(process.env.CI_WAIT_MINUTES ?? 240) * 60_000;
   const graceMs = Number(process.env.CI_GRACE_MINUTES ?? 10) * 60_000;
   const started = Date.now();
+  const judgeNightly = () => {
+    const nightlyRuns = listNightlyRuns({ repository, workflow: nightlyWorkflow });
+    return {
+      nightlyRuns,
+      pending: nightlyPending(nightlyRuns, sha),
+      nightly: nightlyVerdict(nightlyRuns, sha, {
+        ancestor: runSha => /^[0-9a-f]{40}$/.test(String(runSha)) && isAncestor(runSha, sha),
+        maxAgeHours: Number(process.env.NIGHTLY_MAX_AGE_HOURS ?? 72),
+      }),
+    };
+  };
+  // Judged again right before the gate passes: CI may have taken hours, and a
+  // nightly that was fresh and green at the start can have aged out or been
+  // beaten by a newer red one. Strict: no waiting here.
+  const recheckNightly = () => {
+    const { pending, nightly } = judgeNightly();
+    if (nightly.ok && !pending) return;
+    console.error(`::error::${pending ? `a ${nightlyWorkflow} run for ${sha} has not completed` : nightly.reason} (rechecked after CI); refusing`);
+    process.exit(1);
+  };
+  // The builds run beside CI, so the nightly may still be running (or about to
+  // be dispatched) when this starts: wait, bounded, for it to complete. Only a
+  // completed, green, recent nightly on this history passes; a completed red
+  // one fails at once.
+  for (;;) {
+    const { pending, nightly } = judgeNightly();
+    if (nightly.ok && !pending) {
+      console.log(`ok: ${nightly.reason}`);
+      record([`Nightly gate: ${nightly.reason}`], {});
+      break;
+    }
+    const final = !nightly.ok && !pending && !nightlyRetryable(nightly);
+    const elapsed = Date.now() - started;
+    if (final || elapsed >= waitMs) {
+      console.error(`::error::${pending ? `a ${nightlyWorkflow} run for ${sha} has not completed` : nightly.reason}${elapsed >= waitMs ? ` after ${Math.round(elapsed / 60000)} minutes` : ""}; a release needs the latest ${nightlyWorkflow} green (run it on this commit with workflow_dispatch)`);
+      process.exit(1);
+    }
+    console.log(`${pending ? `a ${nightlyWorkflow} run for ${sha} is still running` : nightly.reason}; checking again in 60s`);
+    await new Promise(resolve => setTimeout(resolve, 60_000));
+  }
   for (;;) {
     const runs = listRuns({ repository, workflow, sha });
     const verdict = ciVerdict(runs, sha);
     if (verdict.state === "pass") {
+      recheckNightly();
       console.log(`ok: ${verdict.reason}`);
       record([`CI gate: ${verdict.reason}${waiverPath ? ` (waiver ${waiverPath} not needed)` : ""}`], { waived: "false" });
       return;
@@ -198,6 +249,7 @@ async function main() {
       if (!isAncestor(sha, waiverFrom)) { console.error(`::error::${verdict.reason}; waiver refused: dispatch commit ${waiverFrom} does not descend from the pinned ${sha}`); process.exit(1); }
       const result = waiverVerdict({ eventName, waiverPath, waiverText: readCommitted(waiverFrom, waiverPath), sha, runs });
       if (!result.ok) { console.error(`::error::${verdict.reason}; waiver refused: ${result.reason}`); process.exit(1); }
+      recheckNightly();
       const { waiver } = result;
       console.log(`::warning::${result.reason}`);
       record([

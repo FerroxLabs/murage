@@ -11,8 +11,9 @@ import { beforeEach, expect, it } from "vitest";
 import { DATA_DIR } from "./config.ts";
 import { closeDatabase } from "./database.ts";
 import { Store, threadSealed } from "./store.ts";
+import { removeTempDirSync } from "./testing/cleanup.ts";
 
-beforeEach(() => { closeDatabase(); rmSync(DATA_DIR, { recursive: true, force: true }); mkdirSync(DATA_DIR, { recursive: true }); });
+beforeEach(() => { closeDatabase(); removeTempDirSync(DATA_DIR); mkdirSync(DATA_DIR, { recursive: true }); });
 const fresh = () => new Store(() => ({ instanceId: "engine-one", model: "one", effort: "medium", connectionId: "account-one" }));
 const onDisk = (botId: string, threadId: string) =>
   (JSON.parse(readFileSync(join(DATA_DIR, "bots.json"), "utf8")) as any[]).find((bot) => bot.id === botId).tasks.find((task: any) => task.threadId === threadId);

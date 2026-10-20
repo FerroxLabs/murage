@@ -21,20 +21,17 @@
 // last await both the direct path (startTurn) and the room path
 // (runGroupMemberTurn) take before minting the memory token — armed for one
 // thread and released by the test after the late terminal event was emitted.
-import { existsSync, lstatSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { launchVerificationServer, type VerificationServer } from "../scripts/control-murage.ts";
 import { hostStoppedReason } from "../shared/host-stop.ts";
+import { browserEngineRefusesHost } from "./testing/browser-host.ts";
 
 // The fixture stubs only verifyAgentBrowserBinary; the browser engine still refuses a root or container host before it
-// (server/browser-engine.ts), so the hold never arms there. Same rule as browserEngineRefusesHost in
-// server/testing/index-harness.ts, inlined because importing that harness starts its own server.
-const browserEngineRefusesHost = process.platform === "linux"
-  && (process.getuid?.() === 0 || ["/.dockerenv", "/run/.containerenv"].some((file) => { try { return lstatSync(file).isFile(); } catch { return false; } }));
-
+// (server/browser-engine.ts), so the hold never arms there.
 const SERVER_DIR = dirname(fileURLToPath(import.meta.url));
 const posixOnly = describe.skipIf(process.platform === "win32");
 let fixture: VerificationServer, headers: Record<string, string>;

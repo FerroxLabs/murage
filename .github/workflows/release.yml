@@ -132,7 +132,8 @@ jobs:
     needs: prepare
     if: needs.prepare.outputs.should_release == 'true'
     runs-on: ubuntu-24.04
-    timeout-minutes: 90
+    # Up to 4 h of waiting for CI and the nightly, plus the checks themselves.
+    timeout-minutes: 270
     # actions: read lets the gate list CI's runs; nothing here writes.
     permissions:
       contents: read

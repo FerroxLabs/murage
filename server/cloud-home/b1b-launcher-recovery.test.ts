@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import { execFileSync } from "node:child_process";
-import { mkdtempSync } from "node:fs";
+import { mkdtempSync, realpathSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { fileURLToPath } from "node:url";
@@ -9,7 +9,7 @@ import { removeTempDirSync } from "../testing/cleanup.ts";
 const launcher=fileURLToPath(new URL("../../deploy/cloud-home/murage-turn-launch.py",import.meta.url));
 describe("actual privileged launcher cleanup function with disposable UID fixture",()=>{
   it("erases only known credentials, preserves config/data and never follows symlink parents",()=>{
-    const root=mkdtempSync(join(tmpdir(),"b1b-launcher-"));
+    const root=realpathSync(mkdtempSync(join(tmpdir(),"b1b-launcher-")));  // the launcher walks with O_NOFOLLOW; macOS temp sits behind /var
     try {
       const output=execFileSync("python3",["-I","-c",`
 import os, sys, json, runpy
@@ -81,7 +81,7 @@ print('credential cleanup fixture passed')
   // prepare_credential_dirs creates are root's (uid 0); what the CLIs write is the turn
   // user's (uid 2002). Unprivileged, so st_uid comes from a stat overlay keyed by (dev, ino).
   it("erases every engine's credentials under root-owned credential directories, and still refuses a foreign or root token",()=>{
-    const root=mkdtempSync(join(tmpdir(),"b1b-layout-"));
+    const root=realpathSync(mkdtempSync(join(tmpdir(),"b1b-layout-")));
     try {
       const output=execFileSync("python3",["-I","-c",`
 import os, sys, runpy

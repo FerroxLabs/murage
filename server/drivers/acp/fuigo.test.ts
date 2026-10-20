@@ -96,7 +96,6 @@ Available models:
  */
 const FAKE_SOURCE = `import { appendFileSync, existsSync, readFileSync, unlinkSync, writeFileSync } from "node:fs";
 import { createHash } from "node:crypto";
-import { spawn as spawnHolder } from "node:child_process";
 import { delimiter, join } from "node:path";
 const argv = process.argv.slice(2);
 const kind = argv.includes("--version") ? "version" : argv[0] === "models" ? "models" : "agent";
@@ -186,19 +185,20 @@ const lockHeld = () => {
   if (!lockFile || !existsSync(lockFile)) return false;
   const body = readFileSync(lockFile, "utf8");
   if (body.startsWith("free-at:")) return Date.now() < Number(body.slice(8));
+  // "after:<pid>:<ms>": held while that process lives, and for <ms> after the first look that finds it gone
+  if (body.startsWith("after:")) {
+    const [, pid, ms] = body.split(":");
+    try { process.kill(Number(pid), 0); return true; } catch { writeFileSync(lockFile, "free-at:" + (Date.now() + Number(ms))); return true; }
+  }
   try { process.kill(Number(body), 0); return true; } catch { return false; }
 };
-// FUIGO_FAKE_HOLD_AFTER_EXIT_MS: a separate holder process keeps the lock until that long AFTER this process is gone,
-// however it died (SIGTERM, SIGKILL, taskkill /F), so "the old session is still busy" does not depend on a signal handler.
+// FUIGO_FAKE_HOLD_AFTER_EXIT_MS: the lock stays held until that long AFTER this process is gone, however it died (SIGTERM,
+// SIGKILL, taskkill /F), so "the old session is still busy" does not depend on a signal handler. It is written into the lock
+// itself, not kept by a holder process: Windows' taskkill /T ends every process this one started, a holder included.
 const holdAfterExitMs = Number(process.env.FUIGO_FAKE_HOLD_AFTER_EXIT_MS ?? 0);
-const holderSource = "const ppid = Number(process.argv[1]); const hold = Number(process.argv[2]); const t = setInterval(() => { try { process.kill(ppid, 0); } catch { clearInterval(t); setTimeout(() => process.exit(0), hold); } }, 25);";
 const holdLock = () => {
   if (!lockFile) return;
-  if (holdAfterExitMs > 0) {
-    const holder = spawnHolder(process.execPath, ["-e", holderSource, String(process.pid), String(holdAfterExitMs)], { detached: true, stdio: "ignore" });
-    holder.unref();
-    writeFileSync(lockFile, String(holder.pid));
-  } else writeFileSync(lockFile, String(process.pid));
+  writeFileSync(lockFile, holdAfterExitMs > 0 ? "after:" + process.pid + ":" + holdAfterExitMs : String(process.pid));
 };
 // FUIGO_FAKE_LOCK_LAG_MS: the lock is freed that long AFTER the process has exited (1.0.30 was seen lagging about 2 s).
 const lagMs = Number(process.env.FUIGO_FAKE_LOCK_LAG_MS ?? 0);
@@ -1482,8 +1482,10 @@ describe("fuigo waits for MCP readiness before the first prompt", () => {
     onTestFinished(() => removeTempDirSync(dir));
     const identity = "d".repeat(32);
     const threadId = `t-fuigo-standin-${Date.now()}`;
-    markMountIncomplete({ cache: cacheEnvFromProcess({ MURAGE_CONNECTOR_TOOLS_CACHE_DIR: dir }), identity, revision: "rev-1", thread: threadId });
-    const composio = { composio: { command: process.execPath, args: ["/fake/composio-mcp.js"], env: { MURAGE_CONNECTOR_IDENTITY: identity, MURAGE_CONNECTOR_REVISION: "rev-1", MURAGE_CONNECTOR_TOOLS_CACHE_DIR: dir } } } as unknown as NonNullable<SendTurnInput["integrations"]>;
+    // the harness hands a cache folder with MURAGE_CONNECTOR_TOOLS_CACHE_PRIVATE=1 once it has checked the folder's ACL; on Windows a
+    // folder without that is never used (connector-cache.ts privateCacheDir), so the test hands it the same way
+    markMountIncomplete({ cache: cacheEnvFromProcess({ MURAGE_CONNECTOR_TOOLS_CACHE_DIR: dir, MURAGE_CONNECTOR_TOOLS_CACHE_PRIVATE: "1" }), identity, revision: "rev-1", thread: threadId });
+    const composio = { composio: { command: process.execPath, args: ["/fake/composio-mcp.js"], env: { MURAGE_CONNECTOR_IDENTITY: identity, MURAGE_CONNECTOR_REVISION: "rev-1", MURAGE_CONNECTOR_TOOLS_CACHE_DIR: dir, MURAGE_CONNECTOR_TOOLS_CACHE_PRIVATE: "1" } } } as unknown as NonNullable<SendTurnInput["integrations"]>;
     const { turnId } = await start({ FUIGO_FAKE_MCP: "ready", FUIGO_FAKE_MCP_LIST: JSON.stringify({ murage_connectors: "ready" }) }, composio, FuigoAgentDriver, threadId);
     const done = await recorder!.until((e) => e.type === "turn.completed");
     expect(done).toMatchObject({ ok: true });
