@@ -1358,6 +1358,13 @@
   "count": 1
  },
  {
+  "file": "server/frozen-replies.ts",
+  "function": "readCursor",
+  "callee": "readFileSync",
+  "root": "data-dir",
+  "count": 1
+ },
+ {
   "file": "server/fuigo-native-update.ts",
   "function": "managedFuigoReceipt",
   "callee": "readFile",
