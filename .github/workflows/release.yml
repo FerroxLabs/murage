@@ -741,10 +741,10 @@ jobs:
           # Our backup helper still requires a valid Ferrox signature.
           $verifyBackup = @'
           import { verifyWindowsBackupTools } from './scripts/prepare-windows-backup-tools.mjs';
-          import { verifyWindowsBrowserSignatures } from './server/browser-windows-identity.ts';
+          import { nativeAuthenticodeIn, verifyWindowsBrowserSignatures } from './server/browser-windows-identity.ts';
           const backup = 'release/win-unpacked/resources/backup-tools/x64';
           verifyWindowsBackupTools(backup);
-          await verifyWindowsBrowserSignatures([backup + '/murage-backup-age.exe'], process.env.SystemRoot);
+          await verifyWindowsBrowserSignatures([backup + '/murage-backup-age.exe'], process.env.SystemRoot, nativeAuthenticodeIn('release/win-unpacked/resources'));
           '@
           & node --input-type=module -e $verifyBackup
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }

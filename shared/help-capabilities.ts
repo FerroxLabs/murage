@@ -588,6 +588,12 @@ export const HELP_CAPABILITIES: readonly Capability[] = [
   },
   {
     "kind": "route",
+    "name": "/api/browser",
+    "term": "browser",
+    "source": "server/index.ts"
+  },
+  {
+    "kind": "route",
     "name": "/api/browser-extension",
     "term": "browser extension",
     "source": "server/index.ts"

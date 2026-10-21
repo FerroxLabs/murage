@@ -13,6 +13,7 @@
 // a pass every ask is computed fresh, as before.
 import type { DatabaseSync, StatementSync } from "node:sqlite";
 import { withStatementReuse, writeStamp } from "../io-budget.ts";
+import { withBindingScope } from "../human-principals.ts";
 
 interface Pass { db: DatabaseSync; changes: number; roster: object | null; groups: object | null; shape: string; answers: Map<string, string[]>; lookups: Map<string, unknown>; lookupChanges: number }
 let active: Pass | null = null;
@@ -34,7 +35,8 @@ export function eligibilityPassActive(): boolean { return active !== null; }
 export function inEligibilityPass<T>(db: DatabaseSync, work: () => T): T {
   if (active) return work();
   active = { db, changes: totalChanges(db), roster: null, groups: null, shape: "", answers: new Map(), lookups: new Map(), lookupChanges: -1 };
-  try { return withStatementReuse(work); } finally { active = null; }
+  // (thread bindings are remembered inside the pass too: human-principals.ts withBindingScope)
+  try { return withBindingScope(() => withStatementReuse(work)); } finally { active = null; }
 }
 
 /** The remembered answer for `key` under this roster, or `compute()` (remembered when nothing changed meanwhile). */

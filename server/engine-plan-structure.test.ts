@@ -29,6 +29,8 @@ describe("engine-history deletion structure", () => {
     expect(using("node:zlib")).toEqual(["engine-fs.ts"]);
     // the strict reader, the loader of the native addon (it only looks for the file), and the audited leaf that finds the worker
     expect(using("node:fs")).toEqual(["engine-exclusion.ts", "engine-fs.ts", "proxy-paths.ts"]);
+    // proxy-paths.ts reads its name list from shared/spawned-proxies.mjs: that file must stay import-free data
+    expect(importsOf(readFileSync(join(SERVER, "..", "shared", "spawned-proxies.mjs"), "utf8")).modules).toEqual([]);
   });
 
   it("the import graph is closed: no planner reaches the reader or the executor, and the app's thread reaches no deletion module", () => {

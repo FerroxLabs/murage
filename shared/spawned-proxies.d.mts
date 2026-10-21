@@ -1,0 +1,25 @@
+export declare const SPAWNED_PROXY_FILES: Readonly<{
+  memory: string;
+  memoryWorker: string;
+  whatsappBridge: string;
+  importGuardWorker: string;
+  engineHistoryWorker: string;
+  transcriptReadWorker: string;
+  inboxFillWorker: string;
+  computer: string;
+  permission: string;
+  containerMcp: string;
+  vpsContainerMcp: string;
+  vpsRelayMcp: string;
+  agents: string;
+  dweb: string;
+  connectors: string;
+  remoteMcp: string;
+  phone: string;
+  browser: string;
+  headlessBrowser: string;
+  unifiedBrowser: string;
+  hostComputer: string;
+  piMcpExtension: string;
+  piPermissionGate: string;
+}>;

@@ -54,6 +54,8 @@ const ENTRY_POINTS = [
   "inbox-fill-worker.ts",
   "transcript-read-worker.ts",
   "memory/restore.ts",
+  // The Cloud launcher runs this as the browser user (modes browser-restore / browser-restore-mark).
+  "browser-restore-cli.ts",
   "drivers/memory-proxy.ts",
   "index.ts",
   // The packaged smoke probe imports this manifest directly. Importing the
@@ -195,6 +197,3 @@ copyFileSync(piMcpExtSrc, piMcpExtDest);
 // pi-permission-gate.ts rides along the same way: pi loads it with `-e`.
 copyFileSync(join(server, "drivers", "pi-permission-gate.ts"), join(root, "dist-server", "drivers", "pi-permission-gate.ts"));
 
-// PowerShell owns Windows reflection jobs in both launch and restart recovery.
-mkdirSync(join(root, "dist-server", "memory"), { recursive: true });
-copyFileSync(join(server, "memory", "pip-job-supervisor.ps1"), join(root, "dist-server", "memory", "pip-job-supervisor.ps1"));

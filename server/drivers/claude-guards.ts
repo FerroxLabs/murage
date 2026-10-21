@@ -89,27 +89,38 @@ export function claudeExecutableIdentity(cli: string, env: NodeJS.ProcessEnv): s
   return [cli, ...files].join("\n");
 }
 
+/** The X.Y.Z of the `--version` answer last probed for `cli`, or null when none is known (never probes). */
+export async function knownClaudeCliVersion(cli: string): Promise<string | null> {
+  const entry = versionCache.get(cli);
+  if (!entry) return null;
+  const answer = await entry.version;
+  return answer?.match(/\d+\.\d+\.\d+/)?.[0] ?? null;
+}
+
 /** Throws ClaudeUpdateRequired when `cli --version` reports less than the minimum. The answer is held
  * per executable identity (claudeExecutableIdentity): an unchanged CLI is probed once. A probe that
  * fails (no answer, timeout) or prints no version lets the launch go ahead, logged, and a failure is
  * not probed again for VERSION_FAILURE_BACKOFF_MS: a previously working owner keeps chatting, and the
  * CLI's own refusal of an unknown flag (claudeLaunchRefusal) still stands behind it. `signal` (the
  * turn's Stop) ends the wait at once without throwing; the caller's own stop check takes over. */
-export async function requireClaudeCliVersion(cli: string, env: NodeJS.ProcessEnv, signal?: AbortSignal, run: typeof execCli = execCli): Promise<void> {
+export async function requireClaudeCliVersion(cli: string, env: NodeJS.ProcessEnv, signal?: AbortSignal, run: typeof execCli = execCli, probeEnv?: () => Promise<NodeJS.ProcessEnv>): Promise<void> {
   if (signal?.aborted) return;
   const now = Date.now();
   const identity = claudeExecutableIdentity(cli, env);
   let entry = versionCache.get(cli);
   if (!entry || entry.identity !== identity || now - entry.at > (entry.failed ? VERSION_FAILURE_BACKOFF_MS : VERSION_SUCCESS_TTL_MS)) {
     const fresh: VersionEntry = { identity, at: now, version: Promise.resolve(null) };
-    fresh.version = new Promise<string | null>((resolveVersion) => {
-      run(cli, ["--version"], { timeout: 8000, env }, (err, stdout) => {
+    // the probe runs on `probeEnv` when given (the handed map a turn gets); a hand that cannot be made is a failed probe
+    fresh.version = (probeEnv ? probeEnv().catch(() => null) : Promise.resolve(env)).then((spawnEnv) => new Promise<string | null>((resolveVersion) => {
+      const failed = () => { fresh.failed = true; fresh.at = Date.now(); resolveVersion(null); };
+      if (!spawnEnv) return failed();
+      run(cli, ["--version"], { timeout: 8000, env: spawnEnv }, (err, stdout) => {
         const answer = err ? null : String(stdout ?? "").trim();
         // the backoff runs from the failure, not from when the probe started
-        if (answer === null) { fresh.failed = true; fresh.at = Date.now(); }
+        if (answer === null) return failed();
         resolveVersion(answer);
       });
-    });
+    }));
     entry = fresh;
     versionCache.set(cli, entry);
   }

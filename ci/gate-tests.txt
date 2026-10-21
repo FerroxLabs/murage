@@ -149,6 +149,7 @@ server/attachment-read.test.ts	all	attachment reads refuse unsafe names and link
 server/attachments-http.test.ts	all	uploads stream, retry and serve correct bytes
 server/attachments.test.ts	all	attachment mime refusal and safe storage
 server/authorize-work.test.ts	all	Partitioned bots refuse cross-person work
+server/auto-approve-own-always-ask.test.ts	all	a remembered, task or routine grant never runs publish_site and the other always-ask own tools
 server/auto-approve-prompt.test.ts	all	prompt-capable commands hold ahead of standing answers
 server/auto-approve-u20.test.ts	all	failed environment check holds ask at every level
 server/auto-approve.test.ts	all	Auto mode stops destructive and sensitive commands
@@ -166,6 +167,7 @@ server/backup-imported-transcript.test.ts	all	backup and restore (a 1.0.2 import
 server/backup-kimi-audit.test.ts	all	restore stays inside data folder; copy owner rules
 server/backup-local-work-windows.test.ts	all	Windows backup work folder owner-only
 server/backup-paused-recovery.test.ts	all	Paused backups recover after update
+server/backup-remote-account-unknown.test.ts	all	backup password window shows the fix-it sentence for an unidentifiable Windows account
 server/backup-remote-host-sftp.test.ts	all	SFTP backup destination key, fingerprint trust, refusals
 server/backup-remote-host.test.ts	all	remote backup host saved without exposing credentials
 server/backup-restart-admission-api.test.ts	all	restart claim blocks dispatch during backup
@@ -260,6 +262,7 @@ server/browser-floor-cls.test.ts	all	never auto-click agree or consent controls
 server/browser-floor-facts.test.ts	all	Floor facts for clicks decide consequential actions
 server/browser-floor-negative-corpus.test.ts	all	payment-like labels must not trip floor falsely
 server/browser-floor.test.ts	all	consent and payment controls stay floor in all languages
+server/browser-handback.test.ts	all	bot gets its browser back after the engine stops: Return and Reopen work
 server/browser-intent.test.ts	all	Intent check blocks floor actions
 server/browser-levels-cls.test.ts	all	owner-only actions stay with owner despite Full
 server/browser-levels.test.ts	all	browser action levels by effect
@@ -269,6 +272,9 @@ server/browser-macos-identity.test.ts	linux+mac	packaged browser helper identity
 server/browser-output-redaction.test.ts	all	page output redacts secrets and credentials
 server/browser-owner-api.test.ts	all	Browser relay rejects anonymous and forged owner
 server/browser-recipient-secrets.test.ts	all	recipient scan never returns secret field values
+server/browser-restore-store.test.ts	all	saved browser session restores within the command bound, storage kept per site
+server/browser-sandbox-linux-engine.test.ts	linux	AppImage Enable browser installs the right AppArmor profile for a verified browser copy
+server/browser-sandbox.test.ts	linux+windows	bot browser unusable on Ubuntu 24.04 with a generic error, or started without its sandbox; on Windows, the AppContainer read grant made through icacls, never PowerShell
 server/browser-unavailable-turn-api.test.ts	all	turn completes without browser tools when check fails
 server/browser-untrusted.test.ts	all	untrusted page text fenced against injection
 server/browser-windows-identity.test.ts	all	Windows browser binary identity pinned
@@ -345,6 +351,7 @@ server/cloud-home/engine-render-launcher.test.ts	linux	typed render params, neve
 server/cloud-home/enroll.test.ts	linux	home enrollment, stale generation refused
 server/cloud-home/fresh-home-launcher.test.ts	linux	turn starts with nothing from previous turn
 server/cloud-home/home-commands.test.ts	linux	restart and safe-mode commands run once
+server/cloud-home/launcher-driver-argv.test.ts	linux	Cloud launcher accepts the argv the 1.0.3 drivers send, per engine
 server/cloud-home/launcher-validation.test.ts	linux	executable digest validated, LD vars stripped
 server/cloud-home/model-signin-account.test.ts	linux	account deletion blocks sign-in start
 server/cloud-home/model-signin-api.test.ts	linux	sign-in HTTP boundary needs paired factors
@@ -428,30 +435,48 @@ server/discord-config.test.ts	all	Discord token, owner identity and private auth
 server/downgrade-102-data-dir.test.ts	all	downgrade to 1.0.2 handles new data folders
 server/downgrade-102-schema.test.ts	all	Downgrade leaves exact 1.0.2 schema
 server/drafts.test.ts	all	rejected send restored into draft (data loss)
+server/drivers/acp-launch-binary.test.ts	linux+mac	ACP engine turns ran an older CLI from the shell PATH than the one Murage version-checked
 server/drivers/acp/acp.test.ts	all	ACP engine turn lifecycle
 server/drivers/acp/engine-isolation.test.ts	all	OpenCode personal setup isolated from bot
 server/drivers/acp/fuigo-memory-permission.test.ts	all	Fuigo memory permission exact identity
 server/drivers/acp/fuigo.test.ts	all	Fuigo engine turn behaviour
 server/drivers/acp/gemini-qwen-isolation.test.ts	all	Gemini personal setup isolated per bot
+server/drivers/acp/grok-ask.test.ts	linux+mac	Grok at Ask runs shell commands and writes files with no approval card
 server/drivers/acp/grok-isolation.test.ts	all	Grok personal plugins and compat closed
+server/drivers/acp/grok-own-tools.test.ts	all	Murage own tools on Grok Build never hold an approval card at Auto or Full access
 server/drivers/acp/grok-provider.test.ts	all	Grok provider identity and history replay
+server/drivers/acp/hermes-own-tools.test.ts	linux+mac	Hermes runs Murage's own unasked tools with no card; a look-alike server still asks
 server/drivers/acp/hermes.test.ts	all	routeAsks overrides skip-all permissions; bearer token private; upgrade pin
+server/drivers/acp/host-action-ask.test.ts	all	a host-computer action asks the owner at Ask before it runs
+server/drivers/acp/droid-host-computer.test.ts	all	Droid host-computer actions are asked by Murage, not skipped
 server/drivers/acp/openclaw.test.ts	all	no Flux or foreign key reaches the child (secrets)
+server/drivers/ask-stop.test.ts	all	at Ask, Cursor/OpenClaw/agy refuse every change before it runs; Auto unchanged
 server/drivers/acp/own-workspace-paths.test.ts	all	permission requests judged on file paths
 server/drivers/acp/pool.test.ts	all	ACP process pool turn reuse and teardown
 server/drivers/acp/qwen.test.ts	all	Qwen Flux routing, workspace key never leaked
 server/drivers/agents-proxy.test.ts	all	agents MCP tool surface and rule rows
 server/drivers/agents-result.test.ts	all	credential masked in parked copy (secrets)
+server/drivers/antigravity-denied.test.ts	linux+mac	a command denied at Auto shows a plain line, never a blank reply
 server/drivers/antigravity-scope.test.ts	all	scoped home never writes owner files
 server/drivers/antigravity.test.ts	all	never skips permissions for Ask/Auto bots; strips credentials
 server/drivers/browser-extension-mcp-deadline.test.ts	all	owner approval card answerable after wait
 server/drivers/browser-extension-mcp.test.ts	all	does not forward approval or identity methods
 server/drivers/captured-env-routing.test.ts	all	subscription turn not routed to shell provider
 server/drivers/child-teardown.test.ts	all	engine child processes torn down confirmed
+server/drivers/claude-launch-binary.test.ts	linux+mac	Claude turns ran an older claude from the shell PATH than the one Murage version-checked
+server/drivers/claude-emptypin.test.ts	all	Claude without Git Bash: an owner's unset routing name pinned to "" breaking instance-role sign-in
+server/drivers/claude-ng.test.ts	all	Claude without Git Bash: one empty-pin rule from the CLI's settings-env allowlist; the sign-in card remembers
+server/drivers/claude-nobash-final.test.ts	all	Claude without Git Bash: login and routing names pinned every turn, probes handed the pins, PowerShell card
+server/drivers/claude-nobash.test.ts	all	Claude on Windows without Git Bash failing to start instead of running on its PowerShell tool
+server/drivers/claude-nobash-fix2.test.ts	all	Claude without Git Bash: gate record and review fixes that keep every tool call under Murage's approval
+server/drivers/claude-nobash-fix3.test.ts	all	Claude without Git Bash: round-2 simplifications that must not loosen the approval gate
+server/drivers/claude-nopin.test.ts	all	Claude without Git Bash: the settings overlay pinning a name to "" that the CLI then copies into its own environment
+server/drivers/claude-private.test.ts	all	the Claude private-tool record leaking or being forged (hashed 0600 gate record)
 server/drivers/claude-warm.test.ts	all	Claude warm process turn reuse
 server/drivers/claude.test.ts	all	Claude engine turn behaviour
 server/drivers/codex-hook.test.ts	all	Codex approval policy per version
 server/drivers/codex-isolation.test.ts	all	Codex personal setup isolated per bot
+server/drivers/codex-launch-binary.test.ts	linux+mac	Codex turns refused the default model (an older codex on the shell PATH ran)
 server/drivers/codex-warm.test.ts	all	Codex warm app-server turns
 server/drivers/codex.test.ts	all	Codex engine turn behaviour
 server/drivers/flux-header-matrix.test.ts	all	Flux headers identity, user headers never ride
@@ -463,8 +488,10 @@ server/drivers/host-computer-proxy.test.ts	all	Stop withdraws in-flight host act
 server/drivers/lifecycle-diagnostic.test.ts	all	refuses secret-shaped identity in diagnostics (secrets)
 server/drivers/local-inject-matrix.test.ts	all	host credentials in settings.env, not model rows or argv
 server/drivers/local-inject.test.ts	all	credentials never on argv (secrets)
+server/drivers/murage-exec-mcp.test.ts	linux+mac	every Claude turn reaches its MCP servers (permission cards, memory, agents)
 server/drivers/openai-chat.test.ts	all	chat engine stream contract
 server/drivers/pi-isolation.test.ts	all	Pi personal setup isolated per bot
+server/drivers/pi-launch-binary.test.ts	linux+mac	pi turns ran an older pi from the shell PATH than the one Murage version-checked
 server/drivers/pi-permission-gate.test.ts	all	Pi permission gate blocks unknown tools
 server/drivers/pi.test.ts	all	permission asks brokered; credentials scrubbed from child env
 server/drivers/retry.test.ts	all	replay only before message written
@@ -479,6 +506,7 @@ server/drivers/turn-refusal.test.ts	all	refusal denies every later allow
 server/engine-change-and-close.test.ts	all	engine change or app close mid-wait handled
 server/engine-env-pins.test.ts	all	credential prompts and askpass pinned off
 server/engine-env.test.ts	all	Engine environment capture keeps last valid map
+server/engine-exclusion-called-exports.test.ts	all	packaged native addon missing a call the app makes (removeTree) is refused at build
 server/engine-exclusion-r17.test.ts	all	files changed only while engine cannot write
 server/engine-exclusion-r19.test.ts	all	engine files changed only while engine closed
 server/engine-exclusion-r20-real.test.ts	all	Real engines respect Murage's history lock
@@ -753,6 +781,7 @@ server/memory/resume-after-recall.test.ts	all	Protects forget/revoke, upgrade or
 server/memory/reveal-capture.test.ts	all	does not resurrect forgotten canon (forget)
 server/memory/revocation-index.test.ts	all	Protects forget/revoke, upgrade or privacy-withholding correctness
 server/memory/revoke-bounded.test.ts	all	Protects forget/revoke, upgrade or privacy-withholding correctness
+server/memory/revoke-cover.test.ts	all	Protects forget/revoke: a revoke that relies on another's walk withholds the same as walking alone
 server/memory/revoke-fold-roundtrip.test.ts	all	Protects forget/revoke, upgrade or privacy-withholding correctness
 server/memory/revoke-fold-t5.test.ts	all	Protects forget/revoke: a fold bulk walks with its members' cap
 server/memory/revoke-fold.test.ts	all	Protects forget/revoke, upgrade or privacy-withholding correctness
@@ -861,6 +890,9 @@ server/pm-sends-102-r32.test.ts	all	old-schema stopped row not stuck on restart
 server/pm-sends-102-r4.test.ts	all	Restore holds every retryable send
 server/pm-sends-102-r6.test.ts	all	owed owner words survive restore and pruning
 server/pm-sends-102.test.ts	all	legacy queued messages import keeps data
+server/powershell-fail-closed-104.test.ts	all	unreadable PowerShell commands ask instead of auto-approving (approval boundary)
+server/powershell-gate-104.test.ts	all	PowerShell read as a command tool, grants keyed by program, card arguments redacted
+server/powershell-nobash-103.test.ts	all	a Claude turn on Windows without Git Bash running PowerShell outside Murage's permission check
 server/private-screen-capture.test.ts	all	no capture while person is driving
 server/procedure-bundles.test.ts	all	migration preserves unknown native files (migration, data loss)
 server/procedure-landing.test.ts	all	automatic skill change undoable; routines contained
@@ -1213,3 +1245,12 @@ src/state/store.test.ts	all	core store: stream, transcript, delivery state
 src/state/surface-refusal.test.ts	all	surface stops after permanent refusal
 src/state/thread-settings-writes.test.ts	all	send waits for thread settings, safe retry
 src/state/transcript-seq.test.ts	all	transcript ordering keeps every message in place
+server/no-powershell-spawn.test.ts	all	Murage starting PowerShell by itself on Windows (an antivirus notice and a visible window on every launch, murage-releases #1)
+server/execution-audience-hotpath.test.ts	all	a task's audience being wrong or re-written after a revoke while the hot path stops scanning every task
+server/human-principals-hotpath.test.ts	all	a thread's human binding read stale or wrong while it is read once per synchronous run
+server/cloud-home/browser-restore-launcher.test.ts	linux	the Cloud home losing a bot's saved browser session on restore (Linux server code)
+server/cloud-home/browser-restore.test.ts	linux	the Cloud home losing a bot's saved browser session on restore (Linux server code)
+server/cloud-home/runnable-engines.test.ts	linux	a Cloud home offering an engine it cannot run (no launcher rule or image install), so the bot fails on create or switch
+server/stale-engine-model.test.ts	all	a bot staying on a model its engine no longer lists, so every turn fails
+scripts/windows-native-imports.test.mjs	all	a Windows build whose native addon imports a DLL beyond system DLLs (the /MT addon failing to load on a clean Windows)
+server/browser-windows-identity-admission.test.ts	all	a signed or tampered Windows browser image admitted or refused on the wrong path, so the browser fails to start or runs unverified

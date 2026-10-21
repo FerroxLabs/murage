@@ -59,7 +59,36 @@ const MURAGE_TOOLS: Record<string, string> = {
   request_browser_connection: "connect to your browser",
   request_bot_access: "ask for access to another bot",
   web_search: "search the web",
+  // Murage's own reads, named when an engine asks for them (an ACP engine
+  // files every MCP call through its dispatcher)
+  list_bots: "see your bots",
+  get_bot: "look at one of your bots",
+  list_routines: "see your routines",
+  skills_list: "see its skills",
+  murage_help: "look up how Murage works",
+  memory_search: "search its memory",
+  memory_get: "read from its memory",
+  memory_save: "save a note to its memory",
+  memory_propose_correction: "suggest a fix to its memory",
+  thread_search: "search past conversations",
+  thread_list: "list past conversations",
+  thread_read: "read a past conversation",
 };
+
+/** A dispatcher's call (Fuigo's and Grok Build's `use_tool`: `{variant,
+ * tool_name, tool_input}`): the tool it runs and that tool's arguments, so
+ * the card names the real tool, never "Variant: UseTool". Anything with
+ * another field, or without exactly one name and one object input, is not
+ * opened. */
+function dispatched(input: Json): { name: string; input: Json } | undefined {
+  const names = ["tool_name", "toolName"].filter((key) => input[key] !== undefined);
+  const inputs = ["tool_input", "toolInput"].filter((key) => input[key] !== undefined);
+  if (names.length !== 1 || inputs.length !== 1) return undefined;
+  if (Object.keys(input).some((key) => key !== names[0] && key !== inputs[0] && key !== "variant")) return undefined;
+  const name = input[names[0]!];
+  const inner = object(input[inputs[0]!]);
+  return typeof name === "string" && name.trim() && inner ? { name: name.trim(), input: inner } : undefined;
+}
 
 /** Cards Murage raises itself (a peer bot's message, a browser step, an
  * image, a routine, a skill, a hand-off limit): their text is written for the
@@ -235,6 +264,11 @@ export function plainApproval(tool: string | undefined, detail: string | undefin
   let input: Json | undefined;
   if (body.trim().startsWith("{")) {
     try { input = object(JSON.parse(body)); } catch { input = undefined; }
+  }
+  // A dispatcher's call reads as the tool it runs (bounded by the JSON's own depth).
+  const inner = input ? dispatched(input) : undefined;
+  if (inner) {
+    return plainApproval(inner.name, `${JSON.stringify(inner.input)}${reasonAt < 0 ? "" : detail.slice(reasonAt)}`);
   }
   const bare = bareName(tool);
   const key = bare.toLowerCase();

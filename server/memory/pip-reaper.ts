@@ -11,6 +11,8 @@ import { stopWindowsJob, type JobHelperRunner } from "./pip-job.ts";
 import { execFile } from "node:child_process";
 import { readFileSync, readdirSync, unlinkSync } from "node:fs";
 import { join } from "node:path";
+import { nativeProcessList } from "../drivers/win-process-table.ts";
+import type { NativeProcess } from "../engine-exclusion.ts";
 import { removeTempRoot, RUN_BOUND_MS, type AttemptTransport, type BootEpoch, type TransportChild } from "./pip-transport.ts";
 
 export const REAPER_TERM_GRACE_MS = 3_000;
@@ -40,8 +42,13 @@ const run = (cmd: string, args: string[], abort?: AbortSignal): Promise<RunResul
 /** What one look at a process found. "unknown" is a failed look, never evidence the process is gone. */
 export type Observation = { state: "absent" } | { state: "present"; startTime: string } | { state: "unknown" };
 
-/** Linux /proc/<pid>/stat field 22; macOS `ps -o lstart= -p`; Windows Get-Process StartTime. Distinguishes absence from a failed read. */
-export async function observeProcess(pid: number, platform: NodeJS.Platform = process.platform, abort?: AbortSignal): Promise<Observation> {
+/** The Windows process list: the app's own native addon (Toolhelp32 + GetProcessTimes + the process's command line), never PowerShell.
+ *  Null when it cannot be read in full; every caller treats that as a failed look. The parameter is the test seam. */
+export type WindowsProcessSource = () => readonly NativeProcess[] | null;
+
+/** Linux /proc/<pid>/stat field 22; macOS `ps -o lstart= -p`; Windows the creation FILETIME (ticks, as text) from the native process list.
+ *  Distinguishes absence from a failed read. */
+export async function observeProcess(pid: number, platform: NodeJS.Platform = process.platform, abort?: AbortSignal, windowsList: WindowsProcessSource = nativeProcessList): Promise<Observation> {
   if (!Number.isInteger(pid) || pid <= 1 || abort?.aborted) return { state: "unknown" };
   if (platform === "linux") {
     try {
@@ -55,9 +62,12 @@ export async function observeProcess(pid: number, platform: NodeJS.Platform = pr
     }
   }
   if (platform === "win32") {
-    const r = await run("powershell.exe", ["-NoProfile", "-Command", `$p = Get-Process -Id ${pid} -ErrorAction SilentlyContinue; if ($p) { $p.StartTime.ToUniversalTime().ToString('o') }`], abort);
-    if (!r.ok) return { state: "unknown" };
-    return r.out.trim() ? { state: "present", startTime: r.out.trim() } : { state: "absent" };
+    const list = windowsList();
+    if (!list || abort?.aborted) return { state: "unknown" };
+    const found = list.find((entry) => entry.pid === pid);
+    if (!found) return { state: "absent" };
+    // a process whose creation time cannot be read is a failed look, never an identity
+    return typeof found.start === "number" && found.start > 0 ? { state: "present", startTime: String(Math.round(found.start * 1e7)) } : { state: "unknown" };
   }
   const r = await run("ps", ["-o", "lstart=", "-p", String(pid)], abort);
   if (r.ok) return r.out.trim() ? { state: "present", startTime: r.out.trim() } : { state: "unknown" };
@@ -149,7 +159,7 @@ export const PROC_SWEEP_BATCH = 64;
 /** Argv sweep: processes whose command line contains the temp root. Never matches the running process. Null when the process list could not
  *  be read, or when `abort` stopped the look. Linux reads /proc in batches of PROC_SWEEP_BATCH with the loop handed back between them, so a
  *  stop (a timer, a controller) reaches it; `procRoot` is a test seam. */
-export async function sweepByArgv(needle: string, platform: NodeJS.Platform = process.platform, abort?: AbortSignal, procRoot = "/proc"): Promise<number[] | null> {
+export async function sweepByArgv(needle: string, platform: NodeJS.Platform = process.platform, abort?: AbortSignal, procRoot = "/proc", windowsList: WindowsProcessSource = nativeProcessList): Promise<number[] | null> {
   if (!needle) return [];
   if (abort?.aborted) return null;
   const self = process.pid;
@@ -174,9 +184,13 @@ export async function sweepByArgv(needle: string, platform: NodeJS.Platform = pr
     return abort?.aborted ? null : pids;
   }
   if (platform === "win32") {
-    const r = await run("powershell.exe", ["-NoProfile", "-Command", `Get-CimInstance Win32_Process | Where-Object { $_.CommandLine -like '*${needle.replace(/'/g, "''")}*' } | ForEach-Object { $_.ProcessId }`], abort);
-    if (!r.ok) return null;
-    return r.out.split(/\s+/).filter(Boolean).map(Number).filter((n) => Number.isInteger(n) && n !== self);
+    const list = windowsList();
+    if (!list || abort?.aborted) return null;
+    // Windows matches the command line case-insensitively (the old CIM -like did too); the native list gives it split into arguments
+    const wanted = needle.toLowerCase();
+    return list
+      .filter((entry) => entry.pid !== self && entry.exe !== "" && entry.argv !== null && entry.argv.join(" ").toLowerCase().includes(wanted))
+      .map((entry) => entry.pid);
   }
   const r = await run("ps", ["-axo", "pid=,command="], abort);
   if (!r.ok) return null;

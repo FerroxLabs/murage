@@ -149,6 +149,8 @@ export const DATA_DIR_ENTRIES: Readonly<Record<string, DataDirEntry>> = Object.f
   "frozen-replies-recovery.json": excluded("Start-up note saying how far the recovery of earlier withheld delegated replies has read; read again from the start when absent, changing nothing a second time"),
   "memory-upgrade-status.json": excluded("Start-up note written while the memory upgrade runs (progress, or why it could not run); removed when the upgrade finishes"),
   "native": excluded(RUNTIME), "decider-log": excluded("Decision-model call log (no message text); regenerates and expires after 180 days"), "pending-deletions.json": excluded(RUNTIME), "memory-index": excluded(RUNTIME),
+  // The settings overlays of running Claude turns (claude-private.ts): restated values, removed at turn end and at startup.
+  "claude-private": excluded("Settings of a running Claude turn, removed when it ends and at startup; not restored"),
   "models": excluded(RUNTIME), "logs": excluded(RUNTIME), "tmp": excluded(RUNTIME), "connector-tools-cache": excluded(DOWNLOADED), "browser-profiles": excluded(RUNTIME),
   "browser-engine": excluded(RUNTIME),
   "engine-redo": excluded("Crash journal of a coding-engine history rewrite (offsets and fill kinds, never any text); finished at the next start and removed; not restored"),
