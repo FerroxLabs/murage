@@ -10,6 +10,23 @@
 # from a NUL-separated name=value file Murage writes for the turn (its path
 # is MURAGE_EXEC_ENV_FILE). Its content is read as data: never sourced,
 # never evaluated. Two reserved entries carry the directory and the shell.
+#
+# Claude also starts every stdio MCP server through this prefix, handing it that
+# server's own mcp.json `env` in this process's environment. Murage names those
+# variables in MURAGE_EXEC_KEEP (a comma list, set only on MCP servers, never in
+# Claude's own environment), and only they are carried over, on top of the turn's
+# map. A Bash command never has MURAGE_EXEC_KEEP, so it gains nothing. Read first,
+# before this script sets any variable of its own.
+murage_exec_kept=()
+if [ -n "${MURAGE_EXEC_KEEP-}" ]; then
+  IFS=',' read -r -a murage_exec_names <<< "$MURAGE_EXEC_KEEP"
+  for murage_exec_name in "${murage_exec_names[@]}"; do
+    case "$murage_exec_name" in MURAGE_EXEC_*|murage_exec_*) continue ;; esac
+    [[ "$murage_exec_name" =~ ^[A-Za-z_][A-Za-z0-9_]*$ ]] || continue
+    [ -n "${!murage_exec_name+set}" ] || continue
+    murage_exec_kept+=("$murage_exec_name=${!murage_exec_name}")
+  done
+fi
 f="$MURAGE_EXEC_ENV_FILE"
 if [ -z "$f" ] || [ ! -r "$f" ]; then
   echo "murage-exec: the turn environment is not available" >&2
@@ -33,6 +50,8 @@ if [ -z "$cwd" ] || [ -z "$shell" ]; then
   echo "murage-exec: the turn environment is incomplete" >&2
   exit 126
 fi
+# An MCP server's own values come last, so they win over the turn's (env -i keeps the last of a name).
+args+=("${murage_exec_kept[@]}")
 # Windows (Claude runs Bash through Git Bash): the file holds Windows spellings. The directory, the shell and the
 # search path are turned into the MSYS form here, and only here, so the command sees the same map either way.
 case "$(uname -s 2>/dev/null)" in

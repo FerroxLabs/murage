@@ -78,3 +78,27 @@ export function writeExecEnvFile(key: string, env: Readonly<Record<string, strin
   renameSync(temp, path);
   return path;
 }
+
+/** Set only on an MCP server's own env in the mcp.json: the names of that env, comma separated. Claude starts each stdio
+ *  server through the shell prefix with that env on the prefix process, and the wrapper carries exactly these names over
+ *  its `env -i`. Never in Claude's own environment, so a Bash command gains nothing from it. */
+export const EXEC_KEEP = "MURAGE_EXEC_KEEP";
+const KEEPABLE_NAME = /^[A-Za-z_][A-Za-z0-9_]*$/;
+
+/** The same servers with MURAGE_EXEC_KEEP on every stdio server (one with a `command`) that has env of its own, naming
+ *  exactly that env (its ELECTRON_RUN_AS_NODE, its credential-file names, an owner server's own variables). */
+export function withExecKeep(servers: Record<string, unknown>): Record<string, unknown> {
+  const out: Record<string, unknown> = {};
+  for (const [name, server] of Object.entries(servers)) {
+    const stanza = server as { command?: unknown; env?: unknown } | null;
+    if (!stanza || typeof stanza !== "object" || typeof stanza.command !== "string" || !stanza.env || typeof stanza.env !== "object") {
+      out[name] = server;
+      continue;
+    }
+    const env = { ...(stanza.env as Record<string, string>) };
+    delete env[EXEC_KEEP];
+    const names = Object.keys(env).filter((key) => KEEPABLE_NAME.test(key) && !key.startsWith("MURAGE_EXEC_"));
+    out[name] = names.length ? { ...stanza, env: { ...env, [EXEC_KEEP]: names.join(",") } } : { ...stanza, env };
+  }
+  return out;
+}
