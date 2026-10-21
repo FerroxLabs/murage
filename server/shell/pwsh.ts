@@ -18,7 +18,7 @@
 // that is not a recognized delete or disk command is ordinary.
 
 import { isPlain, literalText, MAX_TEXT_CHARS, Unreadable, type Part, type Quote, type Word } from "./lex.ts";
-import { candidatesOf, expandWord, fork, fromFileWord, MAX_DEPTH, PHYSICAL_DRIVE, resolveName, resolveWritten, runsRemote, simpleCommand, walkForeignExecutor, type Provenance, type Visitor, type WalkContext } from "./walk.ts";
+import { candidatesOf, expandWord, fork, fromFileWord, INLINE_CODE, interpreterKey, INTERPRETER_VALUES, MAX_DEPTH, PHYSICAL_DRIVE, resolveName, resolveWritten, runsRemote, simpleCommand, walkForeignExecutor, type Provenance, type Visitor, type WalkContext } from "./walk.ts";
 
 export const POWERSHELLS = new Set(["powershell", "powershell.exe", "pwsh", "pwsh.exe"]);
 const CMDS = new Set(["cmd", "cmd.exe"]);
@@ -29,6 +29,12 @@ const DELETE_ALIASES: Record<string, "remove-item" | "rd" | "del"> = {
 };
 const BLANK = " \t\r";
 const VAR_CHAR = /[A-Za-z0-9_:]/;
+/** PowerShell reads the typographic quotes as quotes, and the typographic
+ * dashes as `-` (its tokenizer's own tables): `Remove-Item “$HOME” –Recurse`
+ * is `Remove-Item "$HOME" -Recurse`. */
+const SINGLE_QUOTES = "'\u2018\u2019\u201A\u201B";
+const DOUBLE_QUOTES = '"\u201C\u201D\u201E';
+const DASHES = "\u2013\u2014\u2015";
 
 /** A statement, and whether a pipe joined it to the one before. */
 interface Statement {
@@ -40,6 +46,76 @@ interface Lexed {
   statements: Statement[];
   /** subexpressions and script blocks, each a script of its own */
   nested: string[];
+}
+
+/** `"~"`, `'~\x'`: a provider path PowerShell resolves to the home folder,
+ * quoted or not (Remove-Item, Get-ChildItem and every path parameter). The
+ * word is read with a home part, as the bare `~` is. */
+function quotedHome(word: Word): Word {
+  const first = word.parts[0];
+  // quoted, or unquoted after a comma (`C:\x,~`)
+  if (!first || first.kind !== "lit" || !/^~(?:$|[\\/])/.test(first.text)) return word;
+  const rest = first.text.slice(1);
+  return { parts: [{ kind: "tilde", user: "" }, ...(rest ? [{ ...first, text: rest }] : []), ...word.parts.slice(1)] };
+}
+
+/** The elements a word stands for when it is a PowerShell array written with
+ * unquoted commas (`~,C:\x`, `'a','b'`): each element a word of its own. A
+ * word with no comma is itself. */
+function commaElements(word: Word): Word[] {
+  const out: Word[] = [];
+  let parts: Part[] = [];
+  for (const part of word.parts) {
+    if (part.kind !== "lit" || part.quote !== "none" || !part.text.includes(",")) { parts.push(part); continue; }
+    const pieces = part.text.split(",");
+    pieces.forEach((piece, k) => {
+      if (piece) parts.push({ ...part, text: piece });
+      if (k < pieces.length - 1) { if (parts.length) out.push(quotedHome({ parts })); parts = []; }
+    });
+  }
+  if (parts.length) out.push(quotedHome({ parts }));
+  return out;
+}
+
+/** A command's arguments with every array written out (`ri ~, C:\x` names
+ * two paths). */
+export function splitCommas(words: Word[]): Word[] {
+  return words.flatMap(commaElements);
+}
+
+/** The elements of words that form one comma list (`'a', 'b'`, `'a','b'`),
+ * or undefined when they are not one (no comma, or two words with no comma
+ * between them). */
+function commaList(words: Word[]): Word[] | undefined {
+  const out: Word[] = [];
+  let comma = false;
+  let open = false;
+  for (const word of words) {
+    const head = word.parts[0];
+    const leads = head?.kind === "lit" && head.quote === "none" && head.text.startsWith(",");
+    // two words in a row with no comma between them are a command and its argument
+    if (open && !leads) return undefined;
+    const elements = commaElements(word);
+    out.push(...elements);
+    const last = word.parts[word.parts.length - 1];
+    open = !(last?.kind === "lit" && last.quote === "none" && last.text.endsWith(","));
+    if (word.parts.some((part) => part.kind === "lit" && part.quote === "none" && part.text.includes(","))) comma = true;
+  }
+  return comma ? out : undefined;
+}
+
+/** The elements of `@(…)` when its body is a literal list (`@('~')`,
+ * `@("a", $HOME)`): literal text, home parts, globs and plain variables
+ * only. Undefined for anything that runs (`@(Get-ChildItem)`). */
+function literalArray(inner: string): Word[] | undefined {
+  let lexed: Lexed;
+  try { lexed = lexPwsh(inner); } catch (error) { if (error instanceof Unreadable) return undefined; throw error; }
+  if (lexed.nested.length || lexed.statements.length > 1) return undefined;
+  const words = lexed.statements[0]?.words ?? [];
+  const elements = words.length === 1 ? commaElements(words[0]!) : commaList(words);
+  if (!elements) return undefined;
+  const plain = (word: Word) => word.parts.every((part) => part.kind === "lit" || part.kind === "tilde" || part.kind === "glob" || (part.kind === "var" && part.op === undefined));
+  return elements.every(plain) ? elements : undefined;
 }
 
 function lexPwsh(s: string): Lexed {
@@ -54,7 +130,7 @@ function lexPwsh(s: string): Lexed {
     else parts.push({ kind: "lit", text, quote });
   };
   const endWord = () => {
-    if (parts.length) words.push({ parts });
+    if (parts.length) words.push(quotedHome({ parts }));
     parts = [];
   };
   // the next statement reads what the one before it writes
@@ -67,14 +143,19 @@ function lexPwsh(s: string): Lexed {
     words = [];
     piped = pipe;
   };
+  /** The index of the quote that closes one opened at `from - 1`. */
+  const closing = (quotes: string, from: number): number => {
+    for (let j = from; j < s.length; j++) if (quotes.includes(s[j]!)) return j;
+    return -1;
+  };
   const matching = (open: string, close: string, from: number): number => {
     let depth = 1;
     let j = from;
     while (j < s.length) {
       const c = s[j]!;
       if (c === "`") { j += 2; continue; }
-      if (c === "'" || c === '"') {
-        const end = s.indexOf(c, j + 1);
+      if (SINGLE_QUOTES.includes(c) || DOUBLE_QUOTES.includes(c)) {
+        const end = closing(SINGLE_QUOTES.includes(c) ? SINGLE_QUOTES : DOUBLE_QUOTES, j + 1);
         if (end < 0) throw new Unreadable("quote", c);
         j = end + 1;
         continue;
@@ -108,13 +189,13 @@ function lexPwsh(s: string): Lexed {
     i = j;
   };
   /** Inside `"…"` (to its closing quote) or a `@"…"@` body (to `end`):
-   * backticks escape, `$` expands, `""` is a quote. */
+   * backticks escape, `$` expands, two quotes are one. */
   const doubleQuoted = (end?: number): void => {
     for (;;) {
       if (end !== undefined && i >= end) return;
       const d = s[i];
       if (d === undefined) throw new Unreadable("quote", '"');
-      if (d === '"' && end === undefined) { if (s[i + 1] === '"') { lit('"', "double"); i += 2; continue; } i++; return; }
+      if (DOUBLE_QUOTES.includes(d) && end === undefined) { if (DOUBLE_QUOTES.includes(s[i + 1] ?? "\0")) { lit(s[i + 1]!, "double"); i += 2; continue; } i++; return; }
       if (d === "`") { lit(s[i + 1] ?? "", "double"); i += 2; continue; }
       if (d === "$") { dollar("double"); continue; }
       lit(d, "double");
@@ -158,6 +239,8 @@ function lexPwsh(s: string): Lexed {
       continue;
     }
     const afterEquals = parts.length > 0 && (() => { const last = parts[parts.length - 1]!; return last.kind === "lit" && last.quote === "none" && last.text.endsWith("="); })();
+    // a here-string opened with a typographic quote: not modelled
+    if (c === "@" && (parts.length === 0 || afterEquals) && /[\u2018\u2019\u201A\u201B\u201C\u201D\u201E]/.test(s[i + 1] ?? "")) throw new Unreadable("quote", "@ with a typographic quote");
     if ((s.startsWith("@'", i) || s.startsWith('@"', i)) && (parts.length === 0 || afterEquals)) {
       // `$p=@"…"@`: the here-string is the value, a word of its own
       if (afterEquals) endWord();
@@ -177,21 +260,38 @@ function lexPwsh(s: string): Lexed {
       i = end + close.length;
       continue;
     }
-    if (c === "'") {
+    // `@(…)`: an array. A literal list (`@('~')`) is its elements, each a
+    // word as written; anything else is a value, its body walked as a script
+    if (c === "@" && s[i + 1] === "(" && parts.length === 0) {
+      const end = matching("(", ")", i + 2);
+      const inner = s.slice(i + 2, end);
+      nested.push(inner);
+      const elements = literalArray(inner);
+      const glued = end + 1 < s.length && !/[\s;|&,)}]/.test(s[end + 1]!);
+      if (elements && !glued) {
+        endWord();
+        elements.forEach((element, k) => words.push(k < elements.length - 1 ? { parts: [...element.parts, { kind: "lit", text: ",", quote: "none" }] } : element));
+      } else {
+        parts.push({ kind: "subst", text: inner, quote: "none" });
+      }
+      i = end + 1;
+      continue;
+    }
+    if (SINGLE_QUOTES.includes(c)) {
       let j = i + 1;
       let text = "";
       for (;;) {
-        const end = s.indexOf("'", j);
+        const end = closing(SINGLE_QUOTES, j);
         if (end < 0) throw new Unreadable("quote", "'");
         text += s.slice(j, end);
-        if (s[end + 1] === "'") { text += "'"; j = end + 2; continue; }
+        if (SINGLE_QUOTES.includes(s[end + 1] ?? "\0")) { text += s[end + 1]; j = end + 2; continue; }
         i = end + 1;
         break;
       }
       lit(text, "single");
       continue;
     }
-    if (c === '"') {
+    if (DOUBLE_QUOTES.includes(c)) {
       i++;
       doubleQuoted();
       continue;
@@ -203,11 +303,23 @@ function lexPwsh(s: string): Lexed {
       continue;
     }
     if (c === "$") { dollar("none"); continue; }
-    if ((c === "(" || c === "{") && parts.length === 0) {
+    if (c === "(" || c === "{") {
       const close = c === "(" ? ")" : "}";
       const end = matching(c, close, i + 1);
-      nested.push(s.slice(i + 1, end));
-      parts.push({ kind: "subst", text: s.slice(i + 1, end), quote: "none" });
+      const body = s.slice(i + 1, end);
+      const last = parts[parts.length - 1];
+      // `@{a = Remove-Item …}`: a hashtable's values are statements; its
+      // keys are walked away so each value is read as the statement it is
+      const hashtable = c === "{" && last?.kind === "lit" && last.quote === "none" && last.text.endsWith("@");
+      nested.push(hashtable ? body.replace(/(^|[;\n])\s*('[^']*'|"[^"]*"|[\w.-]+)\s*=(?!=)/g, "$1") : body);
+      if (parts.length === 0) {
+        parts.push({ kind: "subst", text: s.slice(i + 1, end), quote: "none" });
+      } else {
+        // inside a word (`[void](…)`, `.Delete(…)`, `@{a=…}`): its body is
+        // walked as a script, and the word keeps the text as written so a
+        // .NET call stays visible
+        lit(s.slice(i, end + 1), "none");
+      }
       i = end + 1;
       continue;
     }
@@ -216,12 +328,19 @@ function lexPwsh(s: string): Lexed {
       i++;
       continue;
     }
+    // `??=` and `??` open a word as operators; a lone `?` is Where-Object
+    if (c === "?" && parts.length === 0 && (s[i + 1] === "?" || i + 1 >= s.length || BLANK.includes(s[i + 1]!) || s[i + 1] === "{")) {
+      const op = s[i + 1] === "?" ? "??" : "?";
+      lit(op, "none");
+      i += op.length;
+      continue;
+    }
     if (c === "*" || c === "?") {
       parts.push({ kind: "glob", text: c });
       i++;
       continue;
     }
-    lit(c, "none");
+    lit(DASHES.includes(c) ? "-" : c, "none");
     i++;
   }
   endStatement();
@@ -247,32 +366,49 @@ const ASSIGNMENT_OP = /^(\+=|-=|\*=|\/=|%=|\?\?=|=)(?!=)/;
 const DOTNET_CALL = /::|\.[A-Za-z_]\w*\s*\(/;
 const NUMBER = /^-?\d+(\.\d+)?(kb|mb|gb|tb|pb|l|d)?$/i;
 
-/** The words after an assignment operator in this statement, when it has
- * one: `$x = …`, `$x=…`, `$x +=…`, `$x.Name = …`. Undefined when there is
- * no assignment. */
-function assignmentRhs(words: Word[]): { rhs: Word[]; op: string; glued: boolean } | undefined {
-  const after = (text: string, rest: Part[]): Word[] => {
+/** An assignment: what is left of its operator, the operator, and the
+ * words on its right. The operator sits inside the first word (`$x=…`,
+ * `$x.Name=…`, `$x+=1`) or opens a later word (`$x = …`, `$x =Remove-Item`);
+ * `at` is that word's index (0 inside the first word). */
+interface Assignment { lhs: Part[]; op: string; rhs: Word[]; at: number }
+
+function assignmentRhs(words: Word[]): Assignment | undefined {
+  const tail = (text: string, rest: Part[]): Word[] => {
     const parts: Part[] = [...(text ? [{ kind: "lit", text, quote: "none" } as Part] : []), ...rest];
     return parts.length ? [{ parts }] : [];
   };
   const first = words[0]!;
-  // the operator glued to the name: `$x=Remove-Item`, `$x+=1`
-  const glued = first.parts[0]?.kind === "var" ? first.parts[1] : undefined;
-  if (glued && glued.kind === "lit" && glued.quote === "none") {
-    const op = ASSIGNMENT_OP.exec(glued.text);
-    if (op) return { rhs: [...after(glued.text.slice(op[0].length), first.parts.slice(2)), ...words.slice(1)], op: op[1]!, glued: true };
+  for (let p = 1; p < first.parts.length; p++) {
+    const part = first.parts[p]!;
+    if (part.kind !== "lit" || part.quote !== "none") continue;
+    const m = /(\?\?|[+\-*/%])?=(?!=)/.exec(part.text);
+    if (!m) continue;
+    const lhs = [...first.parts.slice(0, p), ...(m.index ? [{ ...part, text: part.text.slice(0, m.index) }] : [])];
+    return { lhs, op: m[0], rhs: [...tail(part.text.slice(m.index + m[0].length), first.parts.slice(p + 1)), ...words.slice(1)], at: 0 };
   }
-  // the operator as a word of its own or glued to the value: `$x = …`,
-  // `$x.Name = 1`, `$x =Remove-Item`
   for (let i = 1; i < words.length; i++) {
     const lead = words[i]!.parts[0];
     if (!lead || lead.kind !== "lit" || lead.quote !== "none") continue;
     const op = ASSIGNMENT_OP.exec(lead.text);
-    if (op) return { rhs: [...after(lead.text.slice(op[0].length), words[i]!.parts.slice(1)), ...words.slice(i + 1)], op: op[1]!, glued: false };
+    if (op) return { lhs: words.slice(0, i).flatMap((word) => word.parts), op: op[1]!, rhs: [...tail(lead.text.slice(op[0].length), words[i]!.parts.slice(1)), ...words.slice(i + 1)], at: i };
   }
   return undefined;
 }
 
+/** The statement's assignment, when it is one PowerShell makes: a variable
+ * or a cast on the left (`$x`, `$x.Name`, `$x[0]`, `[int]$x`) and the
+ * operator right after it. An `=` later in a command (`npm config set a =
+ * b`) is an argument, so a command is no assignment. An expression with an
+ * operator the reader cannot place (`$a, $b = …`) asks. */
+function assignmentOf(words: Word[]): Assignment | undefined {
+  const found = assignmentRhs(words);
+  if (!found) return undefined;
+  const lead = words[0]!.parts[0];
+  const leftSide = lead?.kind === "var" || (lead?.kind === "lit" && lead.quote === "none" && lead.text.startsWith("["));
+  if (leftSide && found.at <= 1) return found;
+  if (lead?.kind === "var" || lead?.kind === "subst") throw new Unreadable("pwsh", "an assignment the reader does not model");
+  return undefined;
+}
 
 /** A right side that runs nothing: one number, or one word of quoted text
  * and variables only (`'a'`, `"$y"`, `"${y}0"`, `"$($y)"`, `$y`), with a
@@ -285,6 +421,8 @@ function bindable(rhs: Word[]): Word | undefined {
   const parts: Part[] = [];
   for (const part of word.parts) {
     if (part.kind === "lit" && part.quote !== "none") { parts.push(part); continue; }
+    // `"~"`: the home folder, as a provider path reads it (`quotedHome`)
+    if (part.kind === "tilde") { parts.push(part); continue; }
     if (part.kind === "var" && part.op === undefined) { parts.push(part); continue; }
     if (part.kind === "subst") {
       const one = /^\s*\$(?:\{([^}]+)\}|([A-Za-z0-9_:]+))\s*$/.exec(part.text);
@@ -319,13 +457,10 @@ function redirectTargets(words: Word[]): Word[] {
   return targets;
 }
 
-/** The name a statement binds: `$x = …` and `$x=…`, not `$x.Name = …`. */
-function assignedName(words: Word[], glued: boolean): string | undefined {
-  const first = words[0]!;
-  const named = first.parts[0];
-  if (!named || named.kind !== "var" || named.op !== undefined) return undefined;
-  if (glued ? first.parts.length >= 2 : first.parts.length === 1) return named.name;
-  return undefined;
+/** The name an assignment binds: `$x = …` and `$x=…`, not `$x.Name = …`. */
+function assignedName(lhs: Part[]): string | undefined {
+  const only = lhs.length === 1 ? lhs[0]! : undefined;
+  return only?.kind === "var" && only.op === undefined ? only.name : undefined;
 }
 
 /** `Set-Variable d value`, `sv -Name d -Value value`: the name and value, when
@@ -514,14 +649,13 @@ export function nestedProgram(program: string, args: Word[]): NestedProgram {
  * or a script file. Input it reads as code that the text does not fix asks
  * when the shell was told to read it (`-Command -`); a shell left to read
  * an interactive terminal runs nothing this text says. A script this text
- * wrote is walked as written; one it did not write is a file on disk. */
+ * wrote is walked as written; any other script file is one the reader does
+ * not see, and asks (1.0.4 F1: fail closed). */
 export function walkNestedInput<H>(pwsh: boolean, program: NestedProgram & { kind: "stdin" | "file" }, stdin: Provenance | undefined, ctx: WalkContext, visitor: Visitor<H>): H | null {
   if (program.kind === "file") {
     const path = literalText(program.word);
-    if (path === undefined) {
-      if (ctx.written.size) throw new Unreadable("expansion", "a shell runs a file a value names, after this text wrote files");
-      return null;
-    }
+    if (path === undefined) throw new Unreadable("expansion", "a shell runs a script a value names");
+    if (!ctx.written.has(resolveWritten(ctx, path))) throw new Unreadable("pwsh", "a shell runs a script file the reader does not see");
     return walkShellInput(pwsh, { kind: "file", path }, ctx, visitor);
   }
   if (stdin) return walkShellInput(pwsh, stdin, ctx, visitor);
@@ -563,6 +697,151 @@ function pipelineOperands(stdin: Provenance, ctx: WalkContext, hops = 0): Word[]
   }
 }
 
+// ── What the PowerShell reader models, and what it does not (1.0.4 F1) ──
+//
+// FAIL CLOSED: the reader approves only what it models in full. A program
+// that hands what it is given to something the reader cannot see (another
+// process, a scheduler, a service, WMI, a Linux distribution, an
+// interpreter's code, a script file) is not modelled: the command asks, at
+// every level, No limits included. This is ONE list: the "Always allow" keys
+// (server/auto-approve.ts) and the verdict both read it, so they cannot drift.
+
+/** How the reader takes a runner:
+ *  - `launcher`: runs something the reader cannot see. Asks, always.
+ *  - `interpreter`: a language runtime. Its inline code, a script file or
+ *    code on its input asks; on its own (`python -m pytest`,
+ *    `node --version`) it is an ordinary program.
+ *  - `read`: a keyword or cmdlet whose operands the reader walks itself
+ *    (`foreach`, `ForEach-Object { … }`, `return <pipeline>`).
+ * Every runner, whatever its kind, has no "Always allow" key: a grant to one
+ * would be a grant to whatever it is handed. */
+export type PowerShellRunner = "launcher" | "interpreter" | "read";
+
+const LAUNCHERS = new Set([
+  // text or a script block run as code
+  "invoke-expression", "iex", "invoke-command", "icm", "invoke-history", "ihy", "r", "add-type",
+  // another process, a job, an item's own program
+  "start-process", "saps", "start", "start-job", "sajb", "start-threadjob", "invoke-item", "ii", "invoke-pester",
+  // WMI and CIM, the scheduler, services, remoting, events
+  "invoke-wmimethod", "iwmi", "invoke-cimmethod", "set-wmiinstance", "swmi", "register-wmievent", "register-cimindicationevent",
+  "register-objectevent", "register-engineevent", "register-scheduledtask", "register-scheduledjob", "new-scheduledtaskaction",
+  "set-scheduledtask", "start-scheduledtask", "new-service", "new-pssession", "enter-pssession",
+  // names that change what a later name runs
+  "set-alias", "sal", "new-alias", "nal", "import-alias", "ipal", "import-module", "ipmo",
+  // native launchers
+  "wmic", "schtasks", "at", "sc", "forfiles", "runas", "sudo", "gsudo", "conhost", "wt", "wsl", "wslhost", "bash", "sh", "zsh", "fish", "dash",
+  "ksh", "csh", "tcsh", "ash", "mksh", "cscript", "wscript", "mshta", "rundll32", "regsvr32", "msiexec", "installutil", "msbuild",
+  "regasm", "regsvcs", "cmstp", "pcalua", "bitsadmin", "explorer", "powershell_ise", "pwsh-preview",
+]);
+/** A WSL distribution's own launcher (`ubuntu2204.exe run …`). */
+const DISTRO_LAUNCHER = /^(ubuntu[\d.]*|debian|kali(-linux)?|opensuse.*|sles.*|suse.*|alpine|fedora.*|oraclelinux.*|almalinux.*|rockylinux.*|centos.*|archlinux|arch|pengwin|wlinux|clear-linux.*)$/;
+const PIPELINE_KEYWORDS = new Set(["return", "throw", "exit"]);
+const READ_RUNNERS = new Set([
+  "foreach-object", "%", "where-object", "?", "new-object", "receive-job", "measure-command", "trace-command",
+  ...PIPELINE_KEYWORDS, "break", "continue", "trap", "try", "catch", "finally", "using", "param", "filter", "workflow", "parallel", "sequence",
+  "inlinescript", "data", "dynamicparam", "begin", "process", "end", "class", "enum", "configuration", "foreach", "switch", "if", "elseif",
+  "else", "while", "do", "until", "for", "function",
+]);
+
+/** A name with its folder and its `.exe`/`.com`/`.cmd`/`.bat` taken off, lower case. */
+function programBase(name: string): string {
+  return name.toLowerCase().replace(/^.*[\\/]/, "").replace(/\.(exe|com|cmd|bat)$/, "");
+}
+
+/** The interpreter a name is, by its language key, or undefined. */
+function interpreterOf(base: string): string | undefined {
+  if (/^(py|pyw|pythonw[0-9.]*)$/.test(base)) return "python";
+  return interpreterKey(base);
+}
+
+/** What the reader does with a program name, or undefined for an ordinary one. */
+export function powershellRunner(name: string): PowerShellRunner | undefined {
+  const base = programBase(name);
+  if (LAUNCHERS.has(base) || DISTRO_LAUNCHER.test(base)) return "launcher";
+  if (interpreterOf(base) !== undefined) return "interpreter";
+  if (READ_RUNNERS.has(base)) return "read";
+  return undefined;
+}
+
+/** Why an interpreter runs code the reader cannot see, or undefined when it
+ * runs none: inline code, code from its input, or a script file. */
+function interpreterRuns(base: string, args: Word[], stdin: Provenance | undefined): string | undefined {
+  const key = interpreterOf(base)!;
+  const inline = INLINE_CODE[key];
+  for (let i = 0; i < args.length; i++) {
+    const text = literalText(args[i]!);
+    if (text === undefined) return "an interpreter given a value";
+    if (key === "python" && /^-[A-Za-z]*c/.test(text)) return "inline code";
+    if (inline && text !== "" && inline.test(text)) return "inline code";
+    if (text === "-") return "code from its input";
+    if (key === "python" && text === "-m") return undefined;
+    if (text === "--") return args[i + 1] ? "a script file" : undefined;
+    if (text.startsWith("-")) { if (INTERPRETER_VALUES.has(text)) i++; continue; }
+    // deno and bun take a subcommand (`bun install`, `deno test`); `run`
+    // names a package script, or a file when it has a folder or an extension
+    if (key === "deno" || key === "bun") {
+      if (text !== "run") return /[\\/.]/.test(text) ? "a script file" : undefined;
+      const target = args[i + 1] ? literalText(args[i + 1]!) : undefined;
+      return target === undefined || /[\\/.]/.test(target) ? "a script file" : undefined;
+    }
+    return "a script file";
+  }
+  return stdin ? "code from its input" : undefined;
+}
+
+/** `ForEach-Object Delete`, `% -MemberName Kill`: a member called on every
+ * piped item (a .NET call by name). Script blocks are walked as scripts. */
+function callsMember(args: Word[]): boolean {
+  for (let i = 0; i < args.length; i++) {
+    const word = args[i]!;
+    const text = literalText(word);
+    if (text === undefined) {
+      if (word.parts.length === 1 && word.parts[0]!.kind === "subst") continue;
+      return true;
+    }
+    const option = text.toLowerCase().replace(/:.*$/, "");
+    if (!option.startsWith("-")) return true;
+    if (abbreviates(option, "-membername")) return true;
+    if (["-throttlelimit", "-timeoutseconds", "-inputobject"].some((full) => abbreviates(option, full, 3)) && !text.includes(":")) i++;
+  }
+  return false;
+}
+
+/** Program names that are a file the reader cannot read: a name with a
+ * folder (`.\w.ps1`, `.\w`, `C:\x\run.bat`) unless it is a native `.exe`
+ * or `.com`; under cmd also a bare name with a script extension, since cmd
+ * looks in the current folder first. A bare name under PowerShell is looked
+ * up on PATH only, as `npm` and `git` are. */
+const SCRIPT_EXTENSION = /\.(ps1|psm1|psd1|bat|cmd|vbs|vbe|js|jse|mjs|cjs|wsf|wsh|py|pyw|pyz|sh|bash|rb|pl|php|lua|hta|msc|lnk|scr|pif|cpl|jar|reg|inf|url)$/i;
+function scriptFile(spelled: string, name: string, dialect: "pwsh" | "cmd"): boolean {
+  if (/[\\/]/.test(spelled) || spelled.startsWith("~")) return !/\.(exe|com)$/i.test(name);
+  return dialect === "cmd" && SCRIPT_EXTENSION.test(name);
+}
+
+/** Throws when a program, as the reader resolved it, is one it does not
+ * model: a launcher, an interpreter running code, a script file. */
+function unmodelled(name: string, spelled: string, args: Word[], stdin: Provenance | undefined, dialect: "pwsh" | "cmd"): void {
+  const runner = powershellRunner(name);
+  if (runner === "launcher") throw new Unreadable(dialect, `${name} runs something the reader does not see`);
+  if (runner === "interpreter") {
+    const why = interpreterRuns(programBase(name), args, stdin);
+    if (why) throw new Unreadable(dialect, `${name}: ${why}`);
+  }
+  if (scriptFile(spelled, name, dialect)) throw new Unreadable(dialect, `${spelled} is a script file the reader does not see`);
+}
+
+/** The dialect a driver's pinned shell form runs command text in: `pwsh`
+ * for `powershell.exe -Command` (Codex and every ACP engine on Windows), or
+ * undefined for a POSIX shell. The driver stamps it on its ask, so the text
+ * is read as PowerShell whatever it starts with. */
+export function shellDialectOf(form: readonly string[] | undefined): "pwsh" | undefined {
+  const program = form?.[0];
+  return program !== undefined && (programBase(program) === "powershell" || programBase(program) === "pwsh") ? "pwsh" : undefined;
+}
+
+/** PowerShell's expression operators: `"a" -f $x`, `'x' + $y`. */
+const EXPRESSION_OPERATOR = /^(-[ci]?(eq|ne|gt|ge|lt|le|like|notlike|match|notmatch|replace|contains|notcontains|in|notin|split)|-(is|isnot|as|and|or|xor|not|band|bor|bxor|bnot|shl|shr|join|f)|[+*/%]|-|\.\.)$/i;
+
 export function walkPwsh<H>(text: string, ctx: WalkContext, visitor: Visitor<H>): H | null {
   if (ctx.depth > MAX_DEPTH) throw new Unreadable("depth");
   if (text.length > MAX_TEXT_CHARS) throw new Unreadable("length");
@@ -576,9 +855,12 @@ export function walkPwsh<H>(text: string, ctx: WalkContext, visitor: Visitor<H>)
   for (const statement of statements) {
     // a statement no pipe feeds reads what this shell was given (a nested
     // `pwsh -Command` or `cmd /c` reached by a pipe, UPSEC 10.6)
-    let stdin = statement.piped ? carried : ctx.stdin;
-    carried = pwshOutputOf(statement.words, stdin, ctx);
-    let words = statement.words;
+    const stdin = statement.piped ? carried : ctx.stdin;
+    const words = statement.words;
+    // an assignment writes what its right side writes
+    const rhs = assignmentOf(words)?.rhs;
+    const output = rhs ? rhs : words;
+    carried = output.length ? pwshOutputOf(output, stdin, ctx) : valueOutput("an empty right side");
     // a redirect: its target read through the names this text bound
     if (visitor.pwshRedirect) {
       for (const target of redirectTargets(words)) {
@@ -596,78 +878,117 @@ export function walkPwsh<H>(text: string, ctx: WalkContext, visitor: Visitor<H>)
       }
       throw new Unreadable("pwsh", "a .NET call");
     }
-    // `$x = 'a'`, `$x = "$y"` bind a value that runs nothing; any other right
-    // side (`$x = Remove-Item …`, `$x = (…)`) is not followed
-    const assignment = assignmentRhs(words);
-    if (assignment) {
-      const value = bindable(assignment.rhs);
-      if (!value) throw new Unreadable("pwsh", "an assignment whose right side is not literal");
-      const name = assignedName(words, assignment.glued);
-      if (name !== undefined) {
-        if (assignment.op === "=") { ctx.bound.set(name, expandWord(value, ctx)); ctx.arrays.delete(name); } else ctx.bound.set(name, null);
-      }
-      continue;
-    }
-    const first = literalText(words[0]!);
-    if (first === "&" || first === ".") words = words.slice(1);
-    if (words.length === 0) continue;
-    // `$_.Length -gt 1mb`, `(Get-Item x).Name`: an expression, not a call
-    // (calling a value takes `&`, which is read above and asks)
-    const lead = words[0]!.parts[0];
-    if (first !== "&" && first !== "." && lead && (lead.kind === "var" || lead.kind === "subst")) continue;
-    // `'text'`, `@'…'@`: a string expression, written down the pipe
-    if (first !== "&" && first !== "." && stringExpression(words[0]!)) continue;
-    const name = resolveName(words[0]!);
-    if (name === undefined) throw new Unreadable("dynamic-name", renderPwshWord(words[0]!));
-    let program = name.replace(/\.(exe|com|cmd|bat)$/, "");
-    if (EVALS.has(program)) throw new Unreadable("dynamic-eval", program);
-    const args = words.slice(1);
-    if (program === "set-variable" || program === "sv") {
-      const set = setVariable(args);
-      if (!set) throw new Unreadable("pwsh", "Set-Variable with a value the reader does not follow");
-      ctx.bound.set(set.name, expandWord(set.value, ctx));
-      ctx.arrays.delete(set.name);
-      continue;
-    }
-    const alias = DELETE_ALIASES[program];
-    if (alias) {
-      // `rmdir -Recurse -Force ~` is Remove-Item under its alias; `rd /s` is cmd's
-      const texts = args.map(literalText);
-      const dashed = texts.some((text) => text !== undefined && /^-[A-Za-z]/.test(text));
-      const slashed = texts.some((text) => text !== undefined && /^\/[a-z]+$/i.test(text));
-      if (dashed && slashed) throw new Unreadable("pwsh", `${program} with both -Parameters and /switches`);
-      // given piped items, the alias is PowerShell's: cmd's delete takes no pipe
-      program = dashed || (stdin && !slashed) ? "remove-item" : alias;
-    }
-    if (POWERSHELLS.has(program) || CMDS.has(program)) {
-      const pwsh = POWERSHELLS.has(program);
-      const run = nestedProgram(program, args);
-      if (run.kind === "text") {
-        // the text the inner shell runs has to be fixed by this text
-        if (run.words.some((word) => !word.parts.every((part) => part.kind === "lit" || part.kind === "tilde"))) throw new Unreadable("expansion", `a value in text ${program} runs`);
-        const inner = run.words.map(renderPwshWord).join(" ");
-        const nested = fork(ctx, true);
-        if (stdin) nested.stdin = stdin;
-        const hit = pwsh ? walkPwsh(inner, nested, visitor) : walkCmd(inner, nested, visitor);
-        if (hit) return hit;
-        continue;
-      }
-      // `-Command -`, `-File`, or nothing to run: its input or its script
-      const hit = walkNestedInput(pwsh, run, stdin, ctx, visitor);
-      if (hit) return hit;
-      continue;
-    }
-    // `bash -c …`, `python -c …`, `wsl …`: walked as the POSIX reader walks
-    // them, reading what the pipe before them writes
-    const foreign = walkForeignExecutor(program, args, ctx, visitor, stdin);
-    if (foreign !== undefined) { if (foreign) return foreign; continue; }
-    // piped items are the operands of a delete, move, rename or ACL cmdlet that names no path
-    const operands = stdin && PIPELINE_TARGETS.has(program) && !namesPath(args) ? [...args, ...pipelineOperands(stdin, ctx)] : args;
-    const spelled = literalText(words[0]!);
-    const hit = visitor.command(simpleCommand(program, operands, ctx, spelled !== undefined ? { program: { text: spelled, dialect: "windows" } } : {}), ctx);
+    const hit = pwshStatement(words, stdin, ctx, visitor, 0);
     if (hit) return hit;
   }
   return null;
+}
+
+/** One statement: an assignment, an expression, or a call. */
+function pwshStatement<H>(words: Word[], stdin: Provenance | undefined, ctx: WalkContext, visitor: Visitor<H>, hops: number): H | null {
+  if (hops > MAX_DEPTH) throw new Unreadable("depth");
+  if (!words.length) return null;
+  // `$x = 'a'`, `$x = "$y"`, `$x = 'a', 'b'` bind a value that runs nothing;
+  // any other right side (`$x = Get-ChildItem`, `$x ??= Remove-Item …`) is
+  // read as the statement it is, and the name holds a value the reader does
+  // not follow
+  const assignment = assignmentOf(words);
+  if (assignment) {
+    const name = assignedName(assignment.lhs);
+    // `$x.Name = …`, `$x[0] = …`, `[int]$x = …`: a name the reader does
+    // not rebind holds a value it does not follow from here on
+    if (name === undefined) for (const part of assignment.lhs) if (part.kind === "var") { ctx.bound.set(part.name, null); ctx.arrays.delete(part.name); }
+    const value = bindable(assignment.rhs);
+    const list = value ? undefined : commaList(assignment.rhs);
+    const elements = list?.map((element) => bindable([element]));
+    if (value || (elements && elements.every((element) => element !== undefined))) {
+      if (name !== undefined) {
+        if (assignment.op !== "=") ctx.bound.set(name, null);
+        else if (value) { ctx.bound.set(name, expandWord(value, ctx)); ctx.arrays.delete(name); }
+        else { ctx.bound.set(name, elements!.flatMap((element) => expandWord(element!, ctx))); ctx.arrays.add(name); }
+      }
+      return null;
+    }
+    if (name !== undefined) { ctx.bound.set(name, null); ctx.arrays.delete(name); }
+    return pwshStatement(assignment.rhs, stdin, ctx, visitor, hops + 1);
+  }
+  const first = literalText(words[0]!);
+  const called = first === "&" || first === ".";
+  const call = called ? words.slice(1) : words;
+  if (call.length === 0) return null;
+  if (!called) {
+    const lead = call[0]!.parts[0];
+    // `$_.Length -gt 1mb`, `(Get-Item x).Name`: an expression, not a call
+    // (calling a value takes `&`, which is read below and asks)
+    if (lead && (lead.kind === "var" || lead.kind === "subst")) return null;
+    // `[int]$x`, `[void](…)`: a cast or a type, its subexpressions walked
+    if (lead?.kind === "lit" && lead.quote === "none" && lead.text.startsWith("[")) return null;
+    // `1 + 2`, `-1`
+    const text = literalText(call[0]!);
+    if (text !== undefined && NUMBER.test(text)) return null;
+    if (stringExpression(call[0]!)) {
+      // `'text'`, `"a" -f $x`: a string expression, written down the pipe
+      if (call.length === 1 || EXPRESSION_OPERATOR.test(literalText(call[1]!) ?? "")) return null;
+      // `"cmd" /c …`: a quoted name with words after it. PowerShell refuses
+      // it as an expression; the reader does not guess, it reads the shell
+      // the name spells, and asks for any other name
+      const quoted = resolveName(call[0]!);
+      if (quoted === undefined || !(POWERSHELLS.has(programBase(quoted)) || CMDS.has(programBase(quoted)))) {
+        throw new Unreadable("dynamic-name", `a quoted program name ${renderPwshWord(call[0]!)}`);
+      }
+    }
+  }
+  const name = resolveName(call[0]!);
+  if (name === undefined) throw new Unreadable("dynamic-name", renderPwshWord(call[0]!));
+  let program = name.replace(/\.(exe|com|cmd|bat)$/, "");
+  if (EVALS.has(program)) throw new Unreadable("dynamic-eval", program);
+  // `return Remove-Item x`: the keyword's operand is a pipeline of its own
+  if (!called && PIPELINE_KEYWORDS.has(program)) return pwshStatement(call.slice(1), stdin, ctx, visitor, hops + 1);
+  const args = splitCommas(call.slice(1));
+  if (program === "set-variable" || program === "sv") {
+    const set = setVariable(args);
+    if (!set) throw new Unreadable("pwsh", "Set-Variable with a value the reader does not follow");
+    ctx.bound.set(set.name, expandWord(set.value, ctx));
+    ctx.arrays.delete(set.name);
+    return null;
+  }
+  const alias = DELETE_ALIASES[program];
+  if (alias) {
+    // `rmdir -Recurse -Force ~` is Remove-Item under its alias; `rd /s` is cmd's
+    const texts = args.map(literalText);
+    const dashed = texts.some((text) => text !== undefined && /^-[A-Za-z]/.test(text));
+    const slashed = texts.some((text) => text !== undefined && /^\/[a-z]+$/i.test(text));
+    if (dashed && slashed) throw new Unreadable("pwsh", `${program} with both -Parameters and /switches`);
+    // given piped items, the alias is PowerShell's: cmd's delete takes no pipe
+    program = dashed || (stdin && !slashed) ? "remove-item" : alias;
+  }
+  if (POWERSHELLS.has(program) || CMDS.has(program)) {
+    const pwsh = POWERSHELLS.has(program);
+    const run = nestedProgram(program, args);
+    if (run.kind === "text") {
+      // the text the inner shell runs has to be fixed by this text
+      if (run.words.some((word) => !word.parts.every((part) => part.kind === "lit" || part.kind === "tilde"))) throw new Unreadable("expansion", `a value in text ${program} runs`);
+      const inner = run.words.map(renderPwshWord).join(" ");
+      const nestedCtx = fork(ctx, true);
+      if (stdin) nestedCtx.stdin = stdin;
+      return pwsh ? walkPwsh(inner, nestedCtx, visitor) : walkCmd(inner, nestedCtx, visitor);
+    }
+    // `-Command -`, `-File`, or nothing to run: its input or its script
+    return walkNestedInput(pwsh, run, stdin, ctx, visitor);
+  }
+  // a launcher, an interpreter's code, a script file: not modelled, so it asks
+  unmodelled(name, renderPwshWord(call[0]!), args, stdin, "pwsh");
+  if ((program === "foreach-object" || program === "%") && callsMember(args)) throw new Unreadable("pwsh", "ForEach-Object calls a member on every item");
+  // `env …`, `sudo`-style wrappers: walked as the POSIX reader walks them,
+  // reading what the pipe before them writes
+  if (powershellRunner(name) !== "interpreter") {
+    const foreign = walkForeignExecutor(program, args, ctx, visitor, stdin);
+    if (foreign !== undefined) return foreign;
+  }
+  // piped items are the operands of a delete, move, rename or ACL cmdlet that names no path
+  const operands = stdin && PIPELINE_TARGETS.has(program) && !namesPath(args) ? [...args, ...pipelineOperands(stdin, ctx)] : args;
+  const spelled = literalText(call[0]!);
+  return visitor.command(simpleCommand(program, operands, ctx, spelled !== undefined ? { program: { text: spelled, dialect: "windows" } } : {}), ctx);
 }
 
 // cmd: its own language, with its own tokenizer (UPSEC 3.5).
@@ -680,6 +1001,8 @@ type CmdToken =
 const CMD_BLANK = " \t\r";
 /** cmd keywords the reader does not model: they ask. */
 const CMD_UNMODELED = new Set(["goto", "setlocal", "endlocal", "shift", "set"]);
+/** cmd's folder changes; `cd /d` takes the drive along. */
+const CD_NAMES = new Set(["cd", "chdir", "pushd"]);
 const START_FLAGS = new Set(["/b", "/wait", "/min", "/max", "/low", "/normal", "/high", "/realtime", "/abovenormal", "/belownormal", "/i", "/separate", "/shared"]);
 
 /** cmd text as cmd reads it: `rem` and `::` at a statement start comment to
@@ -887,10 +1210,12 @@ export function walkCmd<H>(text: string, ctx: WalkContext, visitor: Visitor<H>):
   const forStatement = (state: WalkContext): H | null => {
     pos++;
     let unknown = false;
+    let lines = false;
     while (tokens[pos]?.kind === "word" && (bareCmd(tokens[pos]) ?? "").startsWith("/")) {
       const option = bareCmd(tokens[pos])!;
       pos++;
       if (/^\/[fdrl]$/.test(option)) unknown = true;
+      if (option === "/f") lines = true;
       // `/f "options"`, `/r folder`: a value before the variable
       if ((option === "/f" || option === "/r") && tokens[pos]?.kind === "word" && !((tokens[pos] as { word: Word }).word.parts[0]?.kind === "var")) pos++;
     }
@@ -910,6 +1235,8 @@ export function walkCmd<H>(text: string, ctx: WalkContext, visitor: Visitor<H>):
       pos++;
       if (next.kind === "op" && next.op === ")") break;
       if (next.kind !== "word") throw new Unreadable("cmd", "for list");
+      // `for /f %i in ('command')`: the list is a command's output, a command the reader does not run
+      if (lines && /^['`]/.test(renderCmdWord(next.word))) throw new Unreadable("cmd", "for /f runs a command");
       // items are separated by blanks, commas and semicolons (outside quotes)
       for (const item of cmdForItems(next.word)) items.push(item);
     }
@@ -983,12 +1310,18 @@ export function walkCmd<H>(text: string, ctx: WalkContext, visitor: Visitor<H>):
         return pwsh ? walkPwsh(innerText, nested, visitor) : walkCmd(innerText, nested, visitor);
       }
       const program = name === "rmdir" ? "rd" : name === "erase" ? "del" : name;
-      // `bash -c …`, `python -c …`, `wsl …`: walked as the POSIX reader walks them
+      // a launcher, an interpreter's code, a script file: not modelled, so it asks
+      unmodelled(resolved, renderCmdWord(rest[0]!), args, stdin, "cmd");
+      // `cd /d C:\x`: `/d` also changes the drive; the folder is the operand after it
+      const operands = CD_NAMES.has(program) ? args.filter((arg) => !/^\/d$/i.test(literalText(arg) ?? "")) : args;
+      // `env …`, `sudo`-style wrappers: walked as the POSIX reader walks them
       // cmd's own delete commands take no piped paths, so nothing is appended
-      const foreign = walkForeignExecutor(program, args, state, visitor, stdin);
-      if (foreign !== undefined) return foreign;
+      if (powershellRunner(resolved) !== "interpreter") {
+        const foreign = walkForeignExecutor(program, operands, state, visitor, stdin);
+        if (foreign !== undefined) return foreign;
+      }
       const spelled = literalText(rest[0]!);
-      return visitor.command(simpleCommand(program, args.map((arg) => forItemWord(arg, state)), state, spelled !== undefined ? { program: { text: spelled, dialect: "windows" } } : {}), state);
+      return visitor.command(simpleCommand(program, operands.map((arg) => forItemWord(arg, state)), state, spelled !== undefined ? { program: { text: spelled, dialect: "windows" } } : {}), state);
     }
   };
 

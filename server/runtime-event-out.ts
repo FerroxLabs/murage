@@ -47,6 +47,9 @@ const REQUEST_OPENED_OUT: Record<keyof RequestOpened, boolean> = {
   mcpMounts: false,
   toolEngine: true,
   toolInputMissing: true,
+  localHold: false,
+  // how the gates read the command text: server-side only
+  commandShell: false,
   // the map handed to the engine process: credentials
   execEnv: false,
   toolInputTruncated: true,

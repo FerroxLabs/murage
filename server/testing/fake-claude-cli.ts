@@ -92,7 +92,7 @@
 // Keep this file dependency-free — it runs as a bare `node` subprocess.
 import { fixtureDumpEnvironment } from "./fixture-dump.ts";
 import { fakeReviewReply } from "./fake-review.ts";
-import { callFirstCustomTool, customToolReply, customToolServer } from "./fake-custom-tool.ts";
+import { callFirstCustomTool, claudeMcpLaunch, customToolReply, customToolServer, lostServerEnv } from "./fake-custom-tool.ts";
 import { spawn } from "node:child_process";
 import { appendFileSync, existsSync, mkdirSync, readdirSync, readFileSync, realpathSync, unlinkSync, writeFileSync } from "node:fs";
 import { dirname, join, sep } from "node:path";
@@ -419,7 +419,9 @@ const callPermissionPromptTool = (args: Record<string, unknown>): Promise<string
   const server = config.mcpServers?.[match[1]!];
   if (!server) return Promise.resolve(null);
   return new Promise((resolve, reject) => {
-    const child = spawn(server.command, server.args ?? [], { env: { ...process.env, ...server.env }, stdio: ["pipe", "pipe", "ignore"] });
+    // started as the real CLI starts it: through CLAUDE_CODE_SHELL_PREFIX when one is set (claudeMcpLaunch)
+    const launch = claudeMcpLaunch({ command: server.command, args: server.args ?? [], env: server.env ?? {} });
+    const child = spawn(launch.command, launch.args, { env: { ...process.env, ...launch.env }, stdio: ["pipe", "pipe", "ignore"] });
     let buffered = "";
     const send = (message: unknown) => child.stdin.write(JSON.stringify(message) + "\n");
     child.on("error", reject);
@@ -437,6 +439,13 @@ const callPermissionPromptTool = (args: Record<string, unknown>): Promise<string
           continue;
         }
         if (message.id === 1) {
+          // what the real CLI reports when the server's own env was lost on the way (1.0.3: no MCP server came up)
+          const lost = lostServerEnv(child.pid, server.env ?? {});
+          if (lost.length) {
+            child.kill();
+            process.stderr.write(`Error: MCP tool ${promptTool} not found. Available MCP tools: none (the ${match[1]} server lost ${lost.join(", ")})\n`, () => process.exit(1));
+            return;
+          }
           send({ jsonrpc: "2.0", method: "notifications/initialized" });
           send({ jsonrpc: "2.0", id: 2, method: "tools/call", params: { name: match[2], arguments: args } });
         } else if (message.id === 2) {
@@ -518,7 +527,8 @@ const playCustomTool = async (name: string, prompt: JsonValue): Promise<void> =>
   }
   const toolUseId = `toolu_fake_custom_${process.pid}_${Date.now()}`;
   const outcome = server
-    ? await callFirstCustomTool("claude", name, { command: server.command, args: server.args ?? [], env: server.env ?? {} }, promptText(prompt))
+    ? await callFirstCustomTool("claude", name, { command: server.command, args: server.args ?? [], env: server.env ?? {} }, promptText(prompt),
+      claudeMcpLaunch({ command: server.command, args: server.args ?? [], env: server.env ?? {} }))
     : { tools: [], text: `no ${name} server was mounted`, isError: true };
   out({ type: "assistant", message: { content: [{ type: "tool_use", id: toolUseId, name: `mcp__${name}__${outcome.tool ?? "unknown"}`, input: {} }] } });
   out({ type: "user", message: { content: [{ type: "tool_result", tool_use_id: toolUseId, is_error: outcome.isError, content: outcome.text }] } });

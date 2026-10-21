@@ -53,7 +53,7 @@ import { recordMemorySettlement, type MemoryTurnOutcome } from "./memory/settlem
 import { workspaceDir } from "./workspace.ts";
 import { newId, type CloudBackend, type ModelSelection, type ThreadId } from "./contracts.ts";
 import { pickBotName, DEFAULT_BOT_COLOR } from "./names.ts";
-import { redactSecretsInText } from "./redact.ts";
+import { redactSecretsForCard, redactSecretsInText } from "./redact.ts";
 import { queueExternalUpdate } from "./external-context-delivery.ts";
 import { botAvatarProfile, type BotAvatarCrop } from "../shared/bot-avatar.ts";
 import { BOT_PROFILE_LIMITS } from "../shared/bot-profile.ts";
@@ -68,7 +68,7 @@ import type { SetupCardData } from "../shared/setup-card.ts";
 import type { InstalledPackageMetadata } from "../shared/installed-package.ts";
 import { openingLine } from "../shared/bot-openers.ts";
 import { readPublishedSites } from "../shared/published-sites.ts";
-import { withoutQuestionGrants } from "./auto-approve.ts";
+import { withoutBareCommandGrants, withoutQuestionGrants } from "./auto-approve.ts";
 import { withoutPreSchemaGrants, withoutStaleGrants } from "../shared/app-action-words.ts";
 import { parseAcpToolKey } from "../shared/mount-identity.ts";
 import { imageApprovalOf, imageAskAfterOf } from "../shared/image-approval-setting.ts";
@@ -736,6 +736,15 @@ function redactBotAuthored<T extends Omit<Message, "id" | "at"> & { at?: number 
     if (typeof card.subtitle === "string") card.subtitle = redactSecretsInText(card.subtitle);
     if (typeof card.summary === "string") card.summary = redactSecretsInText(card.summary);
     if (typeof card.held === "string") card.held = redactSecretsInText(card.held);
+    // A connected-app card's rows carry the arguments the bot proposed
+    // (1.0.4, 09-3): kept with the card, so scrubbed like its summary.
+    const grantCard = card as { grantRequest?: { rows?: unknown } };
+    if (grantCard.grantRequest && Array.isArray(grantCard.grantRequest.rows)) {
+      grantCard.grantRequest = {
+        ...grantCard.grantRequest,
+        rows: grantCard.grantRequest.rows.map((row) => row && typeof row === "object" && "arguments" in row ? { ...row, arguments: redactSecretsForCard((row as { arguments: unknown }).arguments) } : row),
+      };
+    }
     // The push text is built from the raw summary by whoever writes the card
     // and goes to the lock screen, APNs/FCM and desktop notifications.
     const pushCard = card as { pushBody?: unknown };
@@ -1833,7 +1842,9 @@ export class Store {
         // ...and any connected-app grant not in a shape the current key
         // builder writes: every action at once, every "other" tool, Pi's label
         // (shared/app-action-grant.ts). The owner is asked again, per action.
-        const kept = withoutPreSchemaGrants(withoutStaleGrants(withoutQuestionGrants(holder.alwaysAllow)), b.grantSchema);
+        // ...and a command tool's bare name (an older PowerShell grant): its
+        // next command asks again and is remembered by program (1.0.4 G09-3)
+        const kept = withoutBareCommandGrants(withoutPreSchemaGrants(withoutStaleGrants(withoutQuestionGrants(holder.alwaysAllow)), b.grantSchema));
         if (kept.length === holder.alwaysAllow.length) continue;
         holder.alwaysAllow = kept;
         botsMigrated = true;

@@ -83,7 +83,9 @@ export interface StopLinePlace {
  * are never "a connected app" for this line. */
 const MURAGE_SERVERS = new Set(["murage-memory", "agents", "muragebox", "computer", "browser", "phone", "dweb"]);
 
-const COMMAND_TOOLS = new Set(["bash", "shell", "execute", "exec_command", "run_command", "computer_exec", "terminal", "run_shell_command", "run_terminal_cmd"]);
+const COMMAND_TOOLS = new Set(["bash", "shell", "execute", "exec_command", "run_command", "computer_exec", "terminal", "run_shell_command", "run_terminal_cmd", "powershell", "pwsh"]);
+/** An engine's PowerShell tool: its commands are PowerShell's on any host. */
+const POWERSHELL_TOOLS = new Set(["powershell", "pwsh"]);
 
 const PAYMENT_APPS = /^(stripe|paypal|square|squareup|braintree|adyen|wise|transferwise|venmo|cashapp|coinbase|plaid|revolut|mollie|razorpay|gocardless|klarna|paddle|lemonsqueezy|chargebee|recurly|mercury|brex|ramp)$/;
 const PUBLIC_APPS = /^(twitter|x|linkedin|facebook|instagram|reddit|mastodon|bluesky|bsky|threads|tiktok|youtube|medium|wordpress|ghost|substack|tumblr|pinterest|producthunt|devto|hashnode)$/;
@@ -998,7 +1000,8 @@ function psHit(line: string, place: StopLinePlace, depth = 0): StopHit | null {
     }
   };
   let previous: { name: string; paths: Word[] } | undefined;
-  for (const { words: raw, piped } of commands) {
+  for (const { words: statement, piped } of commands) {
+    let raw = statement;
     const first = raw[0]?.text.replace(/^\[[\w.]+\]/, "") ?? "";
     const variable = /^\$(?:\{(?:(?:global|script|local|private):)?([^}]+)\}|(?:(?:global|script|local|private):)?([A-Za-z_]\w*))$/i.exec(first);
     if (variable) {
@@ -1013,7 +1016,11 @@ function psHit(line: string, place: StopLinePlace, depth = 0): StopHit | null {
         }
       }
       previous = undefined;
-      continue;
+      // `$x = Remove-Item -Recurse ~` runs the command on its right (1.0.4,
+      // G09-1): read the right side as a command too. A literal value read
+      // that way names no delete, so it changes nothing.
+      if (raw[1]?.text !== "=" || raw.length < 3) continue;
+      raw = raw.slice(2);
     }
     const cmd = expandAll(raw);
     let at = 0;
@@ -1024,7 +1031,9 @@ function psHit(line: string, place: StopLinePlace, depth = 0): StopHit | null {
     const args = cmd.slice(at + 1);
     if (/^(set-variable|sv|new-variable|nv|clear-variable|clv|remove-variable|rv)$/.test(name)) { vars.clear(); continue; }
     if (PS_DELETE.has(name)) {
-      const paths = psPaths(args);
+      // `rd /s /q src`: cmd's switches, as the always-ask reader reads the slashed form, never paths
+      const slashed = /^(rd|rmdir|del|erase)$/.test(name) && args.some((a) => !a.dynamic && /^\/[A-Za-z?]$/.test(a.text));
+      const paths = psPaths(slashed ? args.filter((a) => a.dynamic || !/^\/[A-Za-z?]$/.test(a.text)) : args);
       if (!paths.length && piped && previous && PS_LIST.has(previous.name)) {
         // `Get-ChildItem <dir> | Remove-Item`: the items under that folder
         const listed = previous.paths.length ? previous.paths : [{ text: ".", dynamic: false }];
@@ -1683,8 +1692,9 @@ function canonPlace(place: StopLinePlace): StopLinePlace {
 export function classifyStopLine(tool: string, input: unknown, summary: string, given: StopLinePlace): StopHit | null {
   const place = canonPlace(given);
   const command = commandText(tool, input, summary);
-  // a Windows engine's commands run in PowerShell
-  if (command !== undefined) return WIN_CANON.test(place.home) ? psHit(command, place) : shellHit(command, place);
+  // a Windows engine's commands run in PowerShell, and so do a PowerShell tool's anywhere
+  const powershell = POWERSHELL_TOOLS.has(tool.toLowerCase().replace(/^mcp__.+__/, "").split(/[./]/).pop()!);
+  if (command !== undefined) return powershell || WIN_CANON.test(place.home) ? psHit(command, place) : shellHit(command, place);
   const paths = deleteToolPaths(tool, input);
   if (paths) {
     const found: Collected = { deletes: [] };

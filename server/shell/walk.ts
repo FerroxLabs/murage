@@ -1664,7 +1664,7 @@ function shellScript(args: Word[], stdin: Provenance | undefined, ctx: WalkConte
 }
 
 /** Inline-code options of the interpreters (`INTERPRETERS`). */
-const INLINE_CODE: Record<string, RegExp> = {
+export const INLINE_CODE: Record<string, RegExp> = {
   python: /^-[A-Za-z]*c$/,
   node: /^(-e|--eval|-p|--print)$/,
   deno: /^(eval)$/,
@@ -1678,7 +1678,7 @@ const INLINE_CODE: Record<string, RegExp> = {
   tclsh: /^$/,
 };
 /** Interpreter options that take the next word as a value. */
-const INTERPRETER_VALUES = new Set(["-W", "-X", "-r", "--require", "--import", "--loader", "-C", "--conditions", "-I", "-M", "-l", "-x"]);
+export const INTERPRETER_VALUES = new Set(["-W", "-X", "-r", "--require", "--import", "--loader", "-C", "--conditions", "-I", "-M", "-l", "-x"]);
 
 export function interpreterKey(name: string): string | undefined {
   if (/^python[0-9.]*$/.test(name)) return "python";
