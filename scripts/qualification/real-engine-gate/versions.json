@@ -1,0 +1,11 @@
+{
+  "_note": "Pins for the release gate. Set when the RC is cut. null = record the version in result.json, assert nothing. fuigo = the BUNDLED binary (scripts/prepare-fuigo.mjs FUIGO_VERSION at 750518f6c is 1.0.31; the design doc said 1.0.30).",
+  "engines": {
+    "claude": "2.1.305",
+    "codex": "0.163.0",
+    "fuigo": "1.0.31",
+    "grokcli": null, "kimi": null, "droid": null, "cursor": null, "opencode": null,
+    "qwen": null, "hermes": null, "openclaw": null, "pi": null, "antigravity": null,
+    "gemini": null
+  }
+}

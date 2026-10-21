@@ -23,7 +23,7 @@ export function MyChromeConsent({ botName, pending, onConfirm, onCancel }: { bot
     <div className="flex gap-2"><button disabled={pending} onClick={onConfirm} className="rounded-lg bg-accent px-3 py-2 text-sm text-accent-ink disabled:opacity-40 focus-visible:ring-2 focus-visible:ring-accent">Use my Chrome</button><button onClick={onCancel} className="rounded-lg bg-control px-3 py-2 text-sm focus-visible:ring-2 focus-visible:ring-accent">Cancel</button></div>
   </div>;
 }
-type Status = { owned?: boolean; canReclaim?: boolean; generation: number; held: boolean; connected: boolean; protectedDocument: boolean; protectedReason?: "owner-input" | "sensitive-page" | null; url: string };
+type Status = { owned?: boolean; canReclaim?: boolean; generation: number; held: boolean; connected: boolean; protectedDocument: boolean; protectedReason?: "owner-input" | "sensitive-page" | null; url: string; notRunning?: boolean; problem?: string };
 /** The locked-page note, in the owner's words: why the bot cannot use the
  * page and the one step that gives it back. */
 export function ProtectedBrowserNotice({ botName, reason, held, pending, onReopen }: { botName: string; reason?: Status["protectedReason"]; held: boolean; pending: boolean; onReopen: () => void }) {
@@ -31,6 +31,17 @@ export function ProtectedBrowserNotice({ botName, reason, held, pending, onReope
     ? `${botName} can't use this page because it has a password, code or card field, an embedded frame, or content Murage can't check. ${botName} can open a different page itself, or you can take control and reopen a blank page to give ${botName} its browser back.`
     : `${botName} can't use this page because you typed or clicked in it. Take control, then reopen a blank page to give ${botName} its browser back.`;
   return <div role="status" className="rounded-lg bg-card p-3 text-xs text-ink-secondary">{why}<button disabled={!held || pending} onClick={onReopen} className="mt-2 flex items-center gap-2 rounded bg-control px-2 py-1 text-ink disabled:opacity-40 focus-visible:ring-2 focus-visible:ring-accent"><RotateCcw size={12} />Reopen blank page</button></div>;
+}
+/** The bot's browser stopped answering and no page lock is showing: the one
+ * step that restarts it, offered where the owner is already looking. */
+export function BrowserRestartNotice({ botName, held, pending, onReopen }: { botName: string; held: boolean; pending: boolean; onReopen: () => void }) {
+  return <div role="status" className="rounded-lg bg-card p-3 text-xs text-ink-secondary">{held ? `Reopen a blank page to restart ${botName}'s browser.` : `Take control, then reopen a blank page to restart ${botName}'s browser.`}<button disabled={!held || pending} onClick={onReopen} className="mt-2 flex items-center gap-2 rounded bg-control px-2 py-1 text-ink disabled:opacity-40 focus-visible:ring-2 focus-visible:ring-accent"><RotateCcw size={12} />Reopen blank page</button></div>;
+}
+/** The bot's browser engine is not running (often after it stopped while
+ * idle and could not start again in time). Its own state, never a page lock:
+ * the one step is Restart browser, with no need to take control first. */
+export function BrowserNotRunningNotice({ botName, pending, onRestart }: { botName: string; pending: boolean; onRestart: () => void }) {
+  return <div role="status" className="rounded-lg bg-card p-3 text-xs text-ink-secondary">{`${botName}'s browser is not running. Restart it to give ${botName} its browser back.`}<button disabled={pending} onClick={onRestart} className="mt-2 flex items-center gap-2 rounded bg-control px-2 py-1 text-ink disabled:opacity-40 focus-visible:ring-2 focus-visible:ring-accent"><RotateCcw size={12} />Restart browser</button></div>;
 }
 /** The panel's alerts. A refused browser choice ("only one bot at a time")
  * is the person's answer and comes first, on its own: a connection problem
@@ -124,12 +135,14 @@ function LegacyBrowserPanel({ bot, size = "compact", onExpand }: UnifiedBrowserP
       <input aria-label="Web address" value={address} onChange={e => setAddress(e.target.value)} placeholder={status?.url || "https://example.com"} disabled={!status?.held || pending} className="min-w-0 flex-1 rounded-lg bg-inset px-3 py-2 text-sm outline-none focus-visible:ring-2 focus-visible:ring-accent" />
       <button disabled={!status?.held || pending || !address.trim()} className="rounded-lg bg-control px-3 text-sm disabled:opacity-40 focus-visible:ring-2 focus-visible:ring-accent">Go</button>
     </form>
-    <div className="relative overflow-hidden rounded-xl border border-hairline"><BrowserLiveView frame={frame} generation={status?.generation ?? 0} held={!!status?.held && status.owned !== false && !pending} onInput={input} />{!frame && <div className="pointer-events-none absolute inset-0 flex items-center justify-center text-sm text-ink-secondary" role="status">{connectionError ? "Browser unavailable" : status?.connected ? "Waiting for the page…" : "Connecting to browser…"}</div>}</div>
+    <div className="relative overflow-hidden rounded-xl border border-hairline"><BrowserLiveView frame={frame} generation={status?.generation ?? 0} held={!!status?.held && status.owned !== false && !pending} onInput={input} />{!frame && <div className="pointer-events-none absolute inset-0 flex items-center justify-center text-sm text-ink-secondary" role="status">{status?.notRunning ? "Browser not running" : connectionError || status?.problem ? "Browser unavailable" : status?.connected ? "Waiting for the page…" : "Connecting to browser…"}</div>}</div>
     {status?.held && status.owned !== false && <form className="flex gap-2" onSubmit={event => { event.preventDefault(); if(pageText){input({type:"input_keyboard",eventType:"char",text:pageText});setPageText("");} }}>
       <input type="password" autoComplete="off" aria-label="Text for focused browser field" placeholder="Focus a page field, then type here" maxLength={100} value={pageText} onChange={event => setPageText(event.target.value)} className="min-w-0 flex-1 rounded-lg bg-inset px-3 py-2 text-sm outline-none focus-visible:ring-2 focus-visible:ring-accent" />
       <button disabled={!pageText || pending} className="rounded-lg bg-control px-3 text-sm disabled:opacity-40 focus-visible:ring-2 focus-visible:ring-accent">Send text</button>
     </form>}
-    <div className="flex flex-wrap items-center justify-between gap-2"><span role="status" className="text-xs text-ink-secondary">{connectionError ? "Unavailable" : status?.connected ? "Live" : "Disconnected"} · {status?.held ? "Human control" : "Bot control"}</span><button disabled={!status || pending || (status.held && status.owned === false && !status.canReclaim)} onClick={() => void action(status?.held && status.owned === false ? "reclaim" : status?.held ? "release" : "take")} className="flex items-center gap-2 rounded-lg bg-accent px-3 py-2 text-sm text-accent-ink disabled:opacity-40 focus-visible:ring-2 focus-visible:ring-accent"><Hand size={14} />{pending ? "Please wait…" : status?.held && status.owned === false ? "Take control here" : status?.held ? "Return to bot" : "Take control"}</button></div>
+    <div className="flex flex-wrap items-center justify-between gap-2"><span role="status" className="text-xs text-ink-secondary">{status?.notRunning ? "Not running" : connectionError || status?.problem ? "Unavailable" : status?.connected ? "Live" : "Disconnected"} · {status?.held ? "Human control" : "Bot control"}</span><button disabled={!status || pending || (status.held && status.owned === false && !status.canReclaim)} onClick={() => void action(status?.held && status.owned === false ? "reclaim" : status?.held ? "release" : "take")} className="flex items-center gap-2 rounded-lg bg-accent px-3 py-2 text-sm text-accent-ink disabled:opacity-40 focus-visible:ring-2 focus-visible:ring-accent"><Hand size={14} />{pending ? "Please wait…" : status?.held && status.owned === false ? "Take control here" : status?.held ? "Return to bot" : "Take control"}</button></div>
+    {status?.notRunning && !bot.useMyChrome && status.owned !== false && <BrowserNotRunningNotice botName={bot.name} pending={pending} onRestart={() => void action("restart")} />}
+    {status?.problem && !status.notRunning && !status.protectedDocument && status.owned !== false && <BrowserRestartNotice botName={bot.name} held={status.held} pending={pending} onReopen={() => void action("reopen")} />}
     {status?.protectedDocument && <ProtectedBrowserNotice botName={bot.name} reason={status.protectedReason} held={status.held} pending={pending} onReopen={() => void action("reopen")} />}
     <label className="flex min-w-0 items-center gap-2 text-sm">Profile<select aria-label="Browser profile" value={confirmMyBrowser ? MY_BROWSER : confirmMyChrome || bot.useMyChrome ? MY_CHROME : bot.browserProfile ?? ""} disabled={bot.busy || pending || status?.held} className="min-w-0 flex-1 rounded bg-inset p-2 focus-visible:ring-2 focus-visible:ring-accent" onChange={event => {
       const patch = browserChoicePatch(bot, event.target.value);
@@ -142,6 +155,6 @@ function LegacyBrowserPanel({ bot, size = "compact", onExpand }: UnifiedBrowserP
     {confirmMyChrome && !bot.useMyChrome && <MyChromeConsent botName={bot.name} pending={pending} onConfirm={() => void chooseBrowser({ useMyChrome: true, browserTransport: null, browserExtensionProfileId: null })} onCancel={() => setConfirmMyChrome(false)} />}
     {bot.useMyChrome && <p className="text-xs text-ink-secondary">Using your Chrome, signed in as you. {bot.name} can see your open tabs.</p>}
     <p className="text-xs text-ink-secondary">Take control before interacting. Disconnecting keeps human control until you return it. Tab leaves the browser page.</p>
-    <BrowserPanelAlerts refusal={refusal} problem={connectionError || error} />
+    <BrowserPanelAlerts refusal={refusal} problem={connectionError || error || status?.problem || ""} />
   </div>;
 }
