@@ -112,7 +112,7 @@ import { gitBashPath } from "../tool-discovery.ts";
 import { TurnRefusal } from "./turn-refusal.ts";
 import { NarrowDenials } from "../narrow-denials.ts";
 import { appendDecision } from "../decision-log.ts";
-import { EXEC_ENV_FILE, murageExecPrefix, writeExecEnvFile } from "./murage-exec.ts";
+import { EXEC_ENV_FILE, EXEC_KEEP, murageExecPrefix, withExecKeep, writeExecEnvFile } from "./murage-exec.ts";
 
 /** Whether `claude` has been signed in.
  *
@@ -197,8 +197,9 @@ export function claudeEnvironment(
   fluxMemory: FluxMemoryDecision = fluxMemoryDecision(),
 ): NodeJS.ProcessEnv {
   const env: NodeJS.ProcessEnv = { ...cloudTurnEnvironment("claudeAgent", source, process.env.MURAGE_CLOUD_ROLE === "home" ? [] : ["CLAUDE_CODE_OAUTH_TOKEN"]), PATH: augmentedPath(), NPM_CONFIG_LOGLEVEL: "error" };
-  delete env.CLAUDECODE;
-  delete env.CLAUDE_CODE_ENTRYPOINT;
+  // A Murage started from a terminal running Claude Code inherits that session's own names (its id, entrypoint,
+  // messaging socket and token, AI_AGENT); none of them are this turn's.
+  stripClaudeSessionEnv(env);
   // Plugins loaded from this variable need no settings entry, so the isolation's per-id disable
   // cannot reach them (claudeIsolation also sets it empty at flag level, over a settings `env`).
   delete env.CLAUDE_CODE_PLUGIN_DIRS;
@@ -227,6 +228,26 @@ export function claudeEnvironment(
   return env;
 }
 
+/** CLAUDE_CODE_* names kept from the inherited environment: the login and provider names an owner sets on purpose
+ * (CLAUDE_ACCOUNT_ENV_KEYS, decided by the account environment) and the names Murage itself sets for a turn. */
+const CLAUDE_CODE_KEPT_NAMES: ReadonlySet<string> = new Set([
+  ...(CLAUDE_ACCOUNT_ENV_KEYS as readonly string[]).filter((name) => name.startsWith("CLAUDE_CODE_")),
+  "CLAUDE_CODE_DISABLE_AUTO_MEMORY", "CLAUDE_CODE_MCP_STARTUP_WAIT_MS", "CLAUDE_CODE_SHELL_PREFIX", "CLAUDE_CODE_SHELL",
+  "CLAUDE_CODE_GIT_BASH_PATH", "CLAUDE_CODE_MAX_OUTPUT_TOKENS", "CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC",
+  "CLAUDE_CODE_DISABLE_EXPERIMENTAL_BETAS", "CLAUDE_CODE_ATTRIBUTION_HEADER",
+]);
+
+/** Remove (in place) what a running Claude Code session hands its children: CLAUDECODE, AI_AGENT, CLAUDE_PID,
+ * CLAUDE_EFFORT and every CLAUDE_CODE_* name (session id, entrypoint, exec path, messaging socket and token, ...)
+ * except CLAUDE_CODE_KEPT_NAMES. Names are matched as spelled and upper-cased (Windows names ignore case). */
+export function stripClaudeSessionEnv(map: Record<string, string | undefined>): void {
+  for (const name of Object.keys(map)) {
+    const upper = name.toUpperCase();
+    if (upper === "CLAUDECODE" || upper === "AI_AGENT" || upper === "CLAUDE_PID" || upper === "CLAUDE_EFFORT"
+      || (upper.startsWith("CLAUDE_CODE_") && !CLAUDE_CODE_KEPT_NAMES.has(upper))) delete map[name];
+  }
+}
+
 /** Every name claudeEnvironment and the account environment decide for a turn, removed from the owner's CAPTURED shell
  * map before the turn's own names are written back (in place). The capture can hold names this process never had (a
  * Finder launch: a provider switcher's ANTHROPIC_BASE_URL and ANTHROPIC_AUTH_TOKEN exported only in the shell), and
@@ -234,7 +255,8 @@ export function claudeEnvironment(
  * subscription conversation went to the shell's provider. With a named account its login names are the account's. */
 export function stripClaudeOwnedEnv(map: Record<string, string | undefined>, configDir?: string, platform: NodeJS.Platform = process.platform): void {
   stripCapturedProviderEnv(map, platform);
-  for (const name of ["CLAUDECODE", "CLAUDE_CODE_ENTRYPOINT", "CLAUDE_CODE_PLUGIN_DIRS"]) delete map[name];
+  stripClaudeSessionEnv(map);
+  delete map.CLAUDE_CODE_PLUGIN_DIRS;
   if (!configDir?.trim()) return;
   for (const name of Object.keys(map)) {
     const upper = name.toUpperCase();
@@ -2483,6 +2505,8 @@ export const ClaudeDriver: ProviderDriver<ClaudeConfig> = {
       const execShell = await claudeExecShell(process.platform, handed.env, envGeneration());
       const shellRefusal = claudeShellRefusal(process.platform, execShell);
       if (shellRefusal) throw new ClaudeTurnRefused(shellRefusal);
+      // MURAGE_EXEC_KEEP belongs on MCP server stanzas only: in Claude's own environment it would reach every Bash command.
+      delete handed.env[EXEC_KEEP];
       if (execShell) {
         handed.env.CLAUDE_CODE_SHELL_PREFIX = murageExecPrefix();
         handed.env.CLAUDE_CODE_SHELL = execShell;
@@ -2909,7 +2933,10 @@ export const ClaudeDriver: ProviderDriver<ClaudeConfig> = {
         }
         // Write once, only after the broker has selected its real endpoint.
         if (mcpConfigPath) {
-          const mcpJson = JSON.stringify({ mcpServers: cred ? bindCredentialPath(stableServers, cred.path) : stableServers });
+          // Claude starts each stdio server through the shell prefix (murage-exec), whose `env -i` keeps only the names
+          // MURAGE_EXEC_KEEP lists: without it ELECTRON_RUN_AS_NODE and the credential-file names are lost (1.0.3).
+          const bound = cred ? bindCredentialPath(stableServers, cred.path) : stableServers;
+          const mcpJson = JSON.stringify({ mcpServers: execShell ? withExecKeep(bound) : bound });
           if (process.env.MURAGE_CLOUD_ROLE === "home") cloudTurnRender(env, "mcp", cloudRenderMcp(stableServers));
           else writeFileSync(mcpConfigPath, mcpJson, { mode: 0o600 });
         }
