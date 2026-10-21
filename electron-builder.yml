@@ -50,6 +50,7 @@ files:
   - shared/upgrade-wait.mjs
   - shared/upgrade-contract.mjs
   - shared/boot-proof.mjs
+  - shared/spawned-proxies.mjs
   - shared/upgrade-machine.mjs
   - shared/closed-volume-sentences.mjs
   - shared/backup-folder-refusals.mjs
