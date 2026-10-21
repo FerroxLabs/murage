@@ -82,16 +82,29 @@ export function memoDeps<T>(name: string, key: string, build: () => T): T {
   return value;
 }
 
-/** "<resolved path>:<mtime>:<size>" of a CLI, found on PATH when it is a bare name; "unresolved" when not found. */
-export function cliSig(cli: string, env: Record<string, string | undefined> = process.env): string {
+/** The file a CLI resolves to on `env`'s PATH (itself when it already names a path) with its "<mtime>:<size>"; null when not found. */
+function cliFileSig(cli: string, env: Record<string, string | undefined>): { path: string; sig: string } | null {
   const candidates = isAbsolute(cli) || /[\\/]/.test(cli)
     ? [cli]
     : (env.PATH ?? "").split(delimiter).filter(Boolean).flatMap((dir) => process.platform === "win32" ? [".exe", ".cmd", ""].map((ext) => join(dir, cli + ext)) : [join(dir, cli)]);
   for (const path of candidates) {
     const sig = pathSig(path);
-    if (sig !== "missing") return `${path}:${sig}`;
+    if (sig !== "missing") return { path, sig };
   }
-  return "unresolved";
+  return null;
+}
+
+/** "<resolved path>:<mtime>:<size>" of a CLI, found on PATH when it is a bare name; "unresolved" when not found. */
+export function cliSig(cli: string, env: Record<string, string | undefined> = process.env): string {
+  const found = cliFileSig(cli, env);
+  return found ? `${found.path}:${found.sig}` : "unresolved";
+}
+
+/** The file cliSig signs for `cli` on `env`'s PATH, or null when none is found: the binary whose `--version` a driver
+ *  probed. A spawn handed another PATH (the owner's captured shell PATH, engine-env.ts) launches this file, so the
+ *  version the driver gated on and the catalog it showed belong to the process that runs. */
+export function cliFile(cli: string, env: Record<string, string | undefined> = process.env): string | null {
+  return cliFileSig(cli, env)?.path ?? null;
 }
 
 // A `--version` probe that fails (times out, exits non-zero, prints nothing)

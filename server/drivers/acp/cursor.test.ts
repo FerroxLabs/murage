@@ -1,23 +1,29 @@
-import { chmodSync, mkdtempSync, readFileSync } from "node:fs";
+import { chmodSync, existsSync, lstatSync, mkdtempSync, readFileSync, readlinkSync, writeFileSync } from "node:fs";
 import { fixtureCredentialFingerprint } from "../../testing/fixture-dump.ts";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { afterEach, describe, expect, it } from "vitest";
 
-import { ensureDirs } from "../../config.ts";
+import { DATA_DIR, ensureDirs } from "../../config.ts";
+import type { SendTurnInput } from "../../contracts.ts";
+import { OWN_READS } from "../../../shared/own-servers.ts";
 import { recordEvents } from "../../testing/events.ts";
 import { removeTempDir } from "../../testing/cleanup.ts";
 import {
   classifyCursorError,
   createCursorAgentDriver,
   CursorAgentDriver,
+  CURSOR_HOST_COMPUTER_ALLOW,
+  cursorOwnReadAllow,
+  cursorSupport,
   decodeCursorAuthStatus,
   decodeCursorAuthText,
   decodeCursorModelCatalog,
   decodeCursorModelText,
   STATIC_CURSOR_MODELS,
   resolveCursorAcpModelId,
+  fetchCursorModels,
 } from "./cursor.ts";
 
 const FAKE_CLI = join(dirname(fileURLToPath(import.meta.url)), "..", "..", "testing", "fake-acp-cli.ts");
@@ -424,5 +430,129 @@ describe("cursor ACP model namespace (NS: set_model wiring)", () => {
       await instance.dispose();
       delete process.env.FAKE_ACP_MODE;
     }
+  });
+});
+
+describe("cursor model source", () => {
+  it("a failed or timed-out list is static, so nothing is rewritten from it", async () => {
+    const failing = ((_cli: string, _args: string[], _opts: unknown, cb: (e: Error | null, out: string) => void) => cb(new Error("timeout"), "")) as never;
+    expect((await fetchCursorModels("cursor-agent", {}, failing)).source).toBe("static");
+    const ok = ((_cli: string, _args: string[], _opts: unknown, cb: (e: Error | null, out: string) => void) => cb(null, "auto - Auto\ngpt-5 - GPT 5\n")) as never;
+    expect((await fetchCursorModels("cursor-agent", {}, ok)).source).toBe("live");
+  });
+});
+
+describe("host-computer turns run Murage's computer tools unasked by the engine (Murage asks per action)", () => {
+  const cleanup: string[] = [];
+  afterEach(async () => { while (cleanup.length) await removeTempDir(cleanup.pop()!); });
+  const realConfig = () => { const d = mkdtempSync(join(tmpdir(), "cursor-real-cfg-")); cleanup.push(d); return d; };
+  const turn = (integrations: Record<string, unknown>, botId = "bot-1") =>
+    ({ text: "x", integrations, warmIdentity: { botId, audience: "owner" } }) as unknown as SendTurnInput;
+  const host = { command: "node", args: [], env: {}, scope: "local-computer" };
+  const argsOf = (t: SendTurnInput, env: Record<string, string | undefined>) =>
+    cursorSupport(async () => "" as never).spawnArgs({ fullAuto: false } as never, t, { env });
+
+  it("declares that Murage asks for the host computer", () => {
+    expect(cursorSupport(async () => "" as never).hostComputerAskedByMurage).toBe(true);
+  });
+
+  it("points a host-computer child at a Murage-owned config dir that allows only the computer server", () => {
+    const real = realConfig();
+    const env: Record<string, string | undefined> = { CURSOR_CONFIG_DIR: real };
+    expect(argsOf(turn({ localComputer: host }), env)).toEqual(["acp"]);
+    const dir = env.CURSOR_CONFIG_DIR!;
+    expect(dir).toBe(join(DATA_DIR, "native", "cursor-host-config", "bot-1"));
+    const cfg = JSON.parse(readFileSync(join(dir, "cli-config.json"), "utf8"));
+    expect(cfg.permissions).toEqual({ allow: [CURSOR_HOST_COMPUTER_ALLOW], deny: [] });
+    expect(CURSOR_HOST_COMPUTER_ALLOW).toBe("Mcp(computer:*)");
+    expect(cfg.approvalMode).toBe("allowlist");
+    // sessions stay where the owner's CLI keeps them; nothing else of the owner's folder is touched or copied
+    expect(lstatSync(join(dir, "acp-sessions")).isSymbolicLink()).toBe(true);
+    expect(readlinkSync(join(dir, "acp-sessions"))).toBe(join(real, "acp-sessions"));
+    expect(existsSync(join(real, "cli-config.json"))).toBe(false);
+  });
+
+  it("is idempotent and keeps what the CLI wrote to its own config", () => {
+    const real = realConfig();
+    const first: Record<string, string | undefined> = { CURSOR_CONFIG_DIR: real };
+    argsOf(turn({ localComputer: host }), first);
+    const file = join(first.CURSOR_CONFIG_DIR!, "cli-config.json");
+    const written = JSON.parse(readFileSync(file, "utf8"));
+    writeFileSync(file, JSON.stringify({ ...written, model: { modelId: "m" } }));
+    const second: Record<string, string | undefined> = { CURSOR_CONFIG_DIR: real };
+    argsOf(turn({ localComputer: host }), second);
+    const after = JSON.parse(readFileSync(file, "utf8"));
+    expect(after.model).toEqual({ modelId: "m" });
+    expect(after.permissions.allow).toEqual([CURSOR_HOST_COMPUTER_ALLOW]);
+  });
+
+  it("never pre-allows a VM or cloud computer, a host-less turn, or a local computer that is not the host desktop", () => {
+    for (const integrations of [
+      { computer: { boxId: "b", token: "t" } },
+      { localComputer: { command: "node", args: [], env: {} } },
+      {},
+    ]) {
+      const env: Record<string, string | undefined> = { CURSOR_CONFIG_DIR: "/owner/cfg" };
+      argsOf(turn(integrations), env);
+      expect(env.CURSOR_CONFIG_DIR).toBe("/owner/cfg");
+    }
+  });
+});
+
+describe("Murage's own reads run unasked by cursor on every turn (real-engine gate: list_bots held the turn)", () => {
+  // Real cursor-agent 2026.10.19 (Linux gate, rc 20db986c7): Murage's own read asks as
+  // session/request_permission {title: "agents-list_bots: list_bots", kind: "other"}, no stamp,
+  // which is unproven (Rule 9), so it was held at every level and step 2 hung on the card.
+  const cleanup: string[] = [];
+  afterEach(async () => { while (cleanup.length) await removeTempDir(cleanup.pop()!); });
+  const realConfig = () => { const d = mkdtempSync(join(tmpdir(), "cursor-real-cfg-")); cleanup.push(d); return d; };
+  const turn = (integrations: Record<string, unknown>, botId = "bot-r") =>
+    ({ text: "x", integrations, warmIdentity: { botId, audience: "owner" } }) as unknown as SendTurnInput;
+  const own = { agents: { command: "node", args: [], env: {} }, memory: { command: "node", args: [], env: {} } };
+  const argsOf = (t: SendTurnInput, env: Record<string, string | undefined>) =>
+    cursorSupport(async () => "" as never).spawnArgs({ fullAuto: false } as never, t, { env });
+  const reads = (mount: string) => OWN_READS.find((row) => row.mount === mount)!.tools;
+
+  it("allows exactly the own reads of the mounts the turn hands, by server and tool", () => {
+    const allow = cursorOwnReadAllow(turn(own));
+    expect(allow).toEqual([
+      ...reads("own:agents").map((tool) => `Mcp(agents:${tool})`),
+      ...reads("own:memory").map((tool) => `Mcp(murage-memory:${tool})`),
+    ]);
+    expect(allow).toContain("Mcp(agents:list_bots)");
+    expect(allow).toContain("Mcp(murage-memory:memory_search)");
+    // a tool that acts keeps cursor's own ask (and Murage's card)
+    for (const acts of ["ask_bot", "delegate_bot", "publish_site", "create_bot", "memory_save"]) {
+      expect(allow.some((entry) => entry.endsWith(`:${acts})`))).toBe(false);
+    }
+    expect(allow.some((entry) => entry.includes("*"))).toBe(false);
+  });
+
+  it("names the agents server the turn mounts (a proposal turn's own name)", () => {
+    expect(cursorOwnReadAllow(turn({ agents: { ...own.agents, serverName: "chief_proposal" } }))).toContain("Mcp(chief_proposal:list_bots)");
+    expect(cursorOwnReadAllow(turn({}))).toEqual([]);
+  });
+
+  it("an ordinary turn with Murage's own servers runs on a Murage-owned config that allows their reads", () => {
+    const real = realConfig();
+    const env: Record<string, string | undefined> = { CURSOR_CONFIG_DIR: real };
+    expect(argsOf(turn(own), env)).toEqual(["acp"]);
+    expect(env.CURSOR_CONFIG_DIR).toBe(join(DATA_DIR, "native", "cursor-host-config", "bot-r"));
+    const cfg = JSON.parse(readFileSync(join(env.CURSOR_CONFIG_DIR!, "cli-config.json"), "utf8"));
+    expect(cfg.approvalMode).toBe("allowlist");
+    expect(cfg.permissions).toEqual({ allow: cursorOwnReadAllow(turn(own)), deny: [] });
+    expect(existsSync(join(real, "cli-config.json"))).toBe(false);
+  });
+
+  it("a host-computer turn adds the computer server to the reads, and a later turn without it drops it", () => {
+    const real = realConfig();
+    const host = { command: "node", args: [], env: {}, scope: "local-computer" };
+    const first: Record<string, string | undefined> = { CURSOR_CONFIG_DIR: real };
+    argsOf(turn({ ...own, localComputer: host }), first);
+    const file = join(first.CURSOR_CONFIG_DIR!, "cli-config.json");
+    expect(JSON.parse(readFileSync(file, "utf8")).permissions.allow).toEqual([...cursorOwnReadAllow(turn(own)), CURSOR_HOST_COMPUTER_ALLOW]);
+    const second: Record<string, string | undefined> = { CURSOR_CONFIG_DIR: real };
+    argsOf(turn(own), second);
+    expect(JSON.parse(readFileSync(file, "utf8")).permissions.allow).toEqual(cursorOwnReadAllow(turn(own)));
   });
 });

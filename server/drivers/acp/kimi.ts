@@ -553,6 +553,8 @@ function readKimiModelCatalog(env: Record<string, string | undefined>): ModelCat
   return { default: STATIC_KIMI_MODELS.default, options };
 }
 
+export const KIMI_LOGIN_NOTE = "Kimi Code CLI is not signed in. Outside mainland China: kimi login --region global. Mainland China: kimi login --region mainland-cn. Run one in a terminal.";
+
 const support: AcpSupport = {
   driverKind: "kimiAgent",
   // Kimi answers initialize with mcpCapabilities and takes the servers handed
@@ -565,7 +567,9 @@ const support: AcpSupport = {
   resolveModels: (env) => mergeLocalInject(readKimiModelCatalog(env), env),
   defaultCli: "kimi",
   nativeSource: "kimi.acp",
-  loginNote: "Kimi Code CLI is not signed in: run `kimi login` in a terminal",
+  // Kimi Code 2.2.0 signs in to the mainland-cn region (kimi.com) by default, so
+  // a user outside China needs --region global (kimi.ai). Both are offered.
+  loginNote: KIMI_LOGIN_NOTE,
 
   // Official installers put the binary on PATH without requiring an existing
   // Node install. Keep the commands platform-specific so Windows never gets a
@@ -577,7 +581,8 @@ const support: AcpSupport = {
       win32: "irm https://code.kimi.com/kimi-code/install.ps1 | iex",
     },
     docsUrl: "https://moonshotai.github.io/kimi-code/en/guides/getting-started.html",
-    signInCommand: "kimi login",
+    // Murage types this command for the person, so it defaults to global (kimi.ai).
+    signInCommand: "kimi login --region global",
   },
 
   // -m is a global commander option and must precede the `acp` subcommand

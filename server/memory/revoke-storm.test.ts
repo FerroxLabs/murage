@@ -51,7 +51,7 @@ describe("M5: one drain of the receipt flips is one audience bulk", () => {
     } finally { fx.close(); }
   });
 
-  it("a content forget after an audience mark still withholds, and undoing the audience bulk leaves it in force", () => {
+  it("a content forget after an audience mark still withholds, and the audience bulk is never undone (DRAIN-104 2.5)", () => {
     const fx = storm(12);
     try {
       flipAll(fx);
@@ -70,9 +70,10 @@ describe("M5: one drain of the receipt flips is one audience bulk", () => {
       expect(num(fx, "SELECT count(*) AS n FROM memory_deny_memory WHERE kind='record' AND id=? AND revoke_id=?", SHARED.id, F)).toBe(1);
       drainAll(fx);
       expect(refsLookup(fx.db, [shared], CONTENT).state).toBe("withheld");
-      slice(fx, () => undoRevoke(fx.db, jobs[0]!.r));
+      // an audience-only revoke is never undone (DRAIN-104 2.5): its marks may be what another audience job skipped under
+      expect(() => slice(fx, () => undoRevoke(fx.db, jobs[0]!.r))).toThrow("MEMORY_REVOKE_UNDO_BULK");
       drainAll(fx);
-      expect(num(fx, "SELECT count(*) AS n FROM memory_deny_memory WHERE revoke_id=?", jobs[0]!.r)).toBe(0);
+      expect(num(fx, "SELECT count(*) AS n FROM memory_deny_memory WHERE revoke_id=?", jobs[0]!.r)).toBe(1);
       expect(refsLookup(fx.db, [shared], CONTENT).state).toBe("withheld");
       expect(refsLookup(fx.db, [shared], OWNER).state).toBe("withheld");
     } finally { fx.close(); }

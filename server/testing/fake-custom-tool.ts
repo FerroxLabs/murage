@@ -47,8 +47,33 @@ const textOf = (result: unknown): string => {
   return Array.isArray(content) ? content.filter((part) => part?.type === "text").map((part) => String(part.text ?? "")).join("\n") : "";
 };
 
-/** Start the server, call its first tool, and return what came back. Never throws. */
-export function callFirstCustomTool(engine: string, name: string, launch: CustomToolLaunch, prompt = ""): Promise<CustomToolOutcome> {
+const shellQuote = (word: string): string => `'${word.replace(/'/g, "'\\''")}'`;
+
+/** How Claude Code (2.1.305) starts a stdio MCP server when CLAUDE_CODE_SHELL_PREFIX is set: through its shell, as
+ * `<prefix> '<the server's whole command line, quoted>'`, with the server's mcp.json env on that process. With no
+ * prefix the server is started directly. The fake Claude CLI starts every server it calls this way, so each fake turn
+ * runs the real murage-exec in front of its MCP servers, as a real turn does. */
+export function claudeMcpLaunch(launch: CustomToolLaunch, env: NodeJS.ProcessEnv = process.env): CustomToolLaunch {
+  const prefix = env.CLAUDE_CODE_SHELL_PREFIX;
+  if (!prefix) return launch;
+  const line = [launch.command, ...launch.args].map(shellQuote).join(" ");
+  return { command: env.CLAUDE_CODE_SHELL || "/bin/sh", args: ["-c", `${shellQuote(prefix)} ${shellQuote(line)}`], env: launch.env };
+}
+
+/** Linux (/proc): the names of the server's mcp.json `env` its started process does not hold with that value. A lost
+ * variable stops the real server coming up (the Murage binary without ELECTRON_RUN_AS_NODE starts as the app, and
+ * Claude reports no MCP tools); under node it would otherwise go unseen, so the fakes treat it as that failure. */
+export function lostServerEnv(pid: number | undefined, expected: Readonly<Record<string, string>>): string[] {
+  if (!pid) return [];
+  let text: string;
+  try { text = readFileSync(`/proc/${pid}/environ`, "utf8"); } catch { return []; }
+  const have = new Map(text.split("\0").filter(Boolean).map((pair) => [pair.slice(0, pair.indexOf("=")), pair.slice(pair.indexOf("=") + 1)] as const));
+  return Object.entries(expected).filter(([name, value]) => name !== "MURAGE_EXEC_KEEP" && have.get(name) !== value).map(([name]) => name);
+}
+
+/** Start the server, call its first tool, and return what came back. Never throws. `spawnAs` is the process actually
+ * started (claudeMcpLaunch), when it is not the server's own command line; the log keeps the server's. */
+export function callFirstCustomTool(engine: string, name: string, launch: CustomToolLaunch, prompt = "", spawnAs: CustomToolLaunch = launch): Promise<CustomToolOutcome> {
   const env: Record<string, string> = {};
   for (const [key, value] of Object.entries(process.env)) if (typeof value === "string") env[key] = value;
   Object.assign(env, launch.env);
@@ -79,7 +104,7 @@ export function callFirstCustomTool(engine: string, name: string, launch: Custom
       setTimeout(() => { try { child.kill(); } catch { /* gone */ } }, 200).unref?.();
       resolve(done({ tools, ...(tool ? { tool } : {}), ...outcome }));
     };
-    const child = spawn(launch.command, launch.args, { env, stdio: ["pipe", "pipe", "ignore"] });
+    const child = spawn(spawnAs.command, spawnAs.args, { env: spawnAs === launch ? env : { ...env, ...spawnAs.env }, stdio: ["pipe", "pipe", "ignore"] });
     const timer = setTimeout(() => finish({ text: "custom tool: no answer in time", isError: true }), Number(process.env.FAKE_CUSTOM_TOOL_TIMEOUT_MS) || 90_000);
     child.on("error", (error) => finish({ text: `custom tool: could not start (${error.message})`, isError: true }));
     child.on("exit", () => finish({ text: "custom tool: the server closed", isError: true }));
@@ -96,6 +121,8 @@ export function callFirstCustomTool(engine: string, name: string, launch: Custom
         try { message = JSON.parse(line); } catch { continue; }
         if (message.id === 1) {
           if (message.error) return finish({ text: `custom tool: initialize failed (${message.error.message ?? ""})`, isError: true });
+          const lost = lostServerEnv(child.pid, launch.env);
+          if (lost.length) return finish({ text: `custom tool: the server did not come up (its environment lost ${lost.join(", ")})`, isError: true });
           send({ jsonrpc: "2.0", method: "notifications/initialized" });
           send({ jsonrpc: "2.0", id: 2, method: "tools/list", params: {} });
         } else if (message.id === 2) {

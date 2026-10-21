@@ -608,6 +608,9 @@ export interface PiGateAsk {
   truncated?: true;
   /** F5: a field the contract needs was absent on the wire. */
   toolInputMissing?: string;
+  /** 1.0.4 09-1: the gate held this call as a key file (it resolves links
+   * itself); the rule it named. Only ever adds a hold. */
+  localHold?: string;
   /** Rule 13/16: a mounted MCP tool is filed as `{namespace: "mcp", name:
    * "<engineName>__<mcpTool>"}`, resolved against F4 by exact engineName; a
    * call the gate could not tie to a mount is `{namespace: "", name: ""}`
@@ -633,6 +636,14 @@ const PI_GATE_CUT_REASON = "Murage could not read this call whole, so it did not
  * as if that named the tool (Astra r3).
  */
 export function piGateAsk(message: string, mounts: readonly McpMountRecord[] = []): PiGateAsk {
+  const ask = piGateCall(message, mounts);
+  // 1.0.4 09-1: the gate's own key-file verdict (it follows links); it can only add a hold
+  let hold: unknown;
+  try { hold = (JSON.parse(message) as { sensitive?: unknown } | null)?.sensitive; } catch { hold = undefined; }
+  return typeof hold === "string" && hold ? { ...ask, localHold: hold.slice(0, 80) } : ask;
+}
+
+function piGateCall(message: string, mounts: readonly McpMountRecord[]): PiGateAsk {
   let parsed: { tool?: unknown; input?: unknown; truncated?: unknown; mount?: unknown; mcpTool?: unknown; note?: unknown } = {};
   let readable = false;
   try {
@@ -1187,6 +1198,8 @@ export const PiDriver: ProviderDriver<PiConfig> = {
                   ...(gate?.truncated ? { toolInputTruncated: true } : {}),
                   // F5: a field the contract needs was absent; nothing stands in for it
                   ...(gate?.toolInputMissing ? { toolInputMissing: gate.toolInputMissing } : {}),
+                  // 1.0.4 09-1: the gate's own key-file verdict, kept so no mode answers it
+                  ...(gate?.localHold ? { localHold: gate.localHold } : {}),
                   // Rule 54: the servers in the mcp.json this turn wrote, no external records
                   // Rule 13: a permission that did not come from this turn's gate
                   // (any other extension's confirm) is unproven: no grant, stop,

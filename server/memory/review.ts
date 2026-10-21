@@ -25,6 +25,7 @@ import { ELIGIBILITY_RULE_VERSION, eligibilityLine, evidenceStillThere, memoryEl
 import { waitingEpoch, waitingRevision } from "./waiting-epoch.ts";
 import { WAITING_REVIEW_INDEX } from "./schema.ts";
 import { optionalIndexReady } from "./optional-index.ts";
+import { inheritEdges } from "./revoke-commit.ts";
 
 export const LATER_ROW = "memory-review-later";
 const LATER_CAP = 5000;
@@ -415,6 +416,7 @@ function saveWaitingVersion(db: DatabaseSync, row: Record<string, any>, text: st
   db.prepare("INSERT INTO memory_evidence SELECT record_id,?,source_id,source_revision,start_byte,end_byte FROM memory_evidence WHERE record_id=? AND record_version=?").run(next, row.id, row.version);
   db.prepare("INSERT INTO memory_derivations SELECT parent_id,parent_version,child_id,? FROM memory_derivations WHERE child_id=? AND child_version=?").run(next, row.id, row.version);
   db.prepare("INSERT INTO memory_derivations VALUES(?,?,?,?)").run(row.id, row.version, row.id, next);
+  inheritEdges(db, { id: row.id, version: next }); // the copied evidence and derivations, and the new version's own parent (DRAIN-104 2.11)
   return next;
 }
 

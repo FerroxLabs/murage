@@ -370,7 +370,7 @@ describe.skipIf(!built || !posix)("T8: the addon lists every process, with the f
 describe.skipIf(!built || process.platform !== "win32")("T9 (Windows): the built addon loads and lists a spawned child with its owner and its arguments split as CommandLineToArgvW splits them", () => {
   it("lists a child with mine true and exact arguments", () => {
     const addon = loadExclusionAddon()!;
-    expect(addon.version()).toBe(7);
+    expect(addon.version()).toBe(8);
     const child = spawn(process.execPath, ["-e", "setTimeout(()=>{},20000)", "a b", 'c"d', "e\\\\", "--x"], { stdio: "ignore" });
     children.push(child);
     expect(waitFor(() => addon.processes().some((item) => item.pid === child.pid && item.argv !== null))).toBe(true);

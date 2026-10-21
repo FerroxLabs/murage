@@ -104,6 +104,7 @@ import { redactSecretsInText } from "../../redact.ts";
 import { toolFilePaths } from "../../own-workspace-approval.ts";
 import type { ExecEnv, McpMountRecord } from "../../../shared/mount-identity.ts";
 import { execEnvHanded, execEnvNow, handedEngineEnv, type HandedEnv } from "../../engine-env.ts";
+import { shellDialectOf } from "../../shell/pwsh.ts";
 
 /** Built-in ACP tool kinds that name what they do. None of them is a call
  * into the computer MCP server, which reaches the engine as an MCP tool. */
@@ -164,6 +165,46 @@ export function acpStampedIdentity(toolCall: unknown): { namespace: string; name
   return { namespace: "", name: "" };
 }
 
+/** An engine that stamps its tools under a key of its own. Grok Build, the
+ * code Fuigo is built from, stamps `_meta["x.ai/tool"]` with the namespace
+ * `grok_build` where Fuigo stamps `_meta["fuigo/tool"]` with `fuigo_build`
+ * (the same CanonicalToolMeta, read in both 1.0.x binaries). */
+export interface AcpToolStamp {
+  /** the `_meta` key this engine stamps its identity under */
+  key: string;
+  /** its own namespaces, said as the Fuigo namespaces every reader knows */
+  namespaces: Readonly<Record<string, string>>;
+}
+
+/** One `_meta` object, restamped in place under `fuigo/tool`, so every reader
+ * (acpStampedIdentity, the grant gate, the proposal turn) judges this
+ * engine's stamp exactly as it judges Fuigo's. The engine's own key wins over
+ * any `fuigo/tool` beside it. A stamp that is not an object is passed on as it
+ * came, which every reader holds as unproven; only the engine's own
+ * namespaces are renamed, so anything else stays as unproven as it was. */
+function restampMeta(meta: unknown, stamp: AcpToolStamp): void {
+  if (!meta || typeof meta !== "object" || Array.isArray(meta)) return;
+  const body = meta as Record<string, unknown>;
+  if (!Object.hasOwn(body, stamp.key)) return;
+  const own = body[stamp.key];
+  delete body[stamp.key];
+  if (!own || typeof own !== "object" || Array.isArray(own)) { body["fuigo/tool"] = own; return; }
+  const copy = { ...(own as Record<string, unknown>) };
+  if (typeof copy.namespace === "string" && Object.hasOwn(stamp.namespaces, copy.namespace)) copy.namespace = stamp.namespaces[copy.namespace];
+  body["fuigo/tool"] = copy;
+}
+
+/** Restamp the two places an ACP frame carries a tool identity: a permission
+ * ask's `params.toolCall._meta` and a session update's `params.update._meta`. */
+export function acpRestampFrame(msg: unknown, stamp: AcpToolStamp | undefined): void {
+  if (!stamp || !msg || typeof msg !== "object") return;
+  const params = (msg as { params?: unknown }).params;
+  if (!params || typeof params !== "object") return;
+  const { toolCall, update } = params as { toolCall?: { _meta?: unknown }; update?: { _meta?: unknown } };
+  if (toolCall && typeof toolCall === "object") restampMeta(toolCall._meta, stamp);
+  if (update && typeof update === "object") restampMeta(update._meta, stamp);
+}
+
 /** The files an ACP permission request names, for the own-workspace check.
  *
  * A bot's writes inside its OWN managed folders no longer ask, but only
@@ -182,6 +223,8 @@ export function acpStampedIdentity(toolCall: unknown): { namespace: string; name
  * caller treats that as "ask" — never as "allow". */
 /** The shell form an ACP engine's commands are checked under (Rule 74d): the platform's own, like Codex's. */
 const acpShellForm: readonly string[] = process.platform === "win32" ? ["powershell.exe", "-NoProfile", "-Command"] : [process.env.SHELL || "/bin/sh", "-c"];
+/** 1.0.4 F1: the dialect that form runs command text in; the gates read every ACP engine's command in it. */
+const acpCommandShell = shellDialectOf(acpShellForm);
 
 const isPlainInput = (value: unknown): value is Record<string, unknown> => !!value && typeof value === "object" && !Array.isArray(value);
 
@@ -766,6 +809,7 @@ import { createPrewarmGate, createTurnMemory, spawnInputsOf, TAKEOVER_FAILED_MES
 import { backgroundCapNote, backgroundWaitCapMs, SubtaskTracker } from "../../subtasks.ts";
 import { awaitScopeStart, withScopeRetry } from "../scoped-cli-home.ts";
 import { connectedAppsServerName, isConnectedAppsServer } from "../../../shared/connected-app-names.ts";
+import { AskStopRefusal, ASK_STOP_NOTE, ASK_STOP_PROMPT, askStopChangeKind, askStopRefusesKind, askStopUnavailableLine, replyCarriesAskStopNote } from "../ask-stop.ts";
 
 /** Fuigo runs an interjection that missed its turn's final drain as its own
  *  prompt turn under this id prefix (fuigo-shell interjection.rs). */
@@ -798,6 +842,28 @@ export interface AcpSupport {
    * no teammates, memory, computer, browser or connected-apps tool is
    * promised, and Murage's stop-line is not claimed. */
   ownTools?: boolean;
+  /** The engine's own permission ask names a host-computer tool only by its
+   * title (no kind, or kind "other"), which is never trusted (Rule 9), so the
+   * engine is configured to run Murage's own `computer` mount without asking
+   * (in spawnArgs / env, only on a turn that mounts the host computer) and
+   * Murage's computer service asks here instead, per action, by the exact
+   * tool it was sent (adapter.askHostAction): one card, judged as a proven
+   * call on this turn's own mount. */
+  hostComputerAskedByMurage?: boolean;
+  /** The engine cannot ask before every change (Cursor, OpenClaw: server/drivers/ask-stop.ts). On an Ask turn
+   * (`turn.askLevel`) the core runs it read-only: a permission request that is not a read, search, think or fetch
+   * is refused with no card, the prompt says what the bot can do, a change the engine reports as done stops the
+   * turn, and the bot shows ASK_STOP_NOTE once when something was refused. Auto and Full access are unchanged. */
+  askStop?: {
+    /** An ACP session mode that makes the engine read-only (Cursor: "ask"). Set on every Ask turn; a turn that
+     *  cannot set it does not run. A later turn that is not at Ask puts a session Murage set (or one that reports
+     *  the read-only mode as current) back to `normal`. */
+    sessionMode?: { readOnly: string; normal: string };
+    /** A read-only switch outside ACP (OpenClaw: the Gateway session's permission mode), called on every turn
+     *  before the prompt: at Ask it must set read-only or throw (the turn then does not run); otherwise it puts
+     *  back whatever an earlier Ask turn replaced. */
+    apply?(ctx: { env: Record<string, string | undefined>; config: AcpConfig; turn: SendTurnInput; askLevel: boolean }): Promise<void>;
+  };
   /** Extra `_meta` on every session/prompt (Fuigo: `verbatim`, so the
    * engine does not cut a long prompt and offload the rest to a file). */
   promptMeta?: Record<string, unknown>;
@@ -832,6 +898,9 @@ export interface AcpSupport {
   ): ModelCatalog | Promise<ModelCatalog>;
   /** Native-protocol log label, e.g. "grok.acp". */
   nativeSource: string;
+  /** The engine stamps its tool identity under a key of its own (Grok Build:
+   * `x.ai/tool`); read as Fuigo's `fuigo/tool` stamp (acpRestampFrame). */
+  toolStamp?: AcpToolStamp;
   /** Whether models behind this ACP harness can consume a referenced image.
    * Most coding agents can open local files; opt out for text-only agents. */
   images?: boolean;
@@ -1331,6 +1400,8 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
   // without the action when nobody answered the card in time.
   const DENY_TIMEOUT_FOLLOWUP =
     "Nobody answered this permission request in time. Do not retry it or perform an equivalent action through another tool. Finish what you can without it and say what was skipped.";
+  /** Sessions an Ask turn put in the engine's read-only session mode (support.askStop.sessionMode). */
+  const askStopModeSessions = new Set<string>();
 
   return {
     driverKind: DRIVER_KIND,
@@ -1389,6 +1460,8 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
         interrupt: () => void;
         turnId: string;
         asks: Map<string, AcpAskFinish>;
+        /** A host-computer action the service asks for (support.hostComputerAskedByMurage). */
+        askHostAction?: (call: { name: string; arguments?: unknown }, signal?: AbortSignal) => Promise<"allow" | "deny">;
         /** Fuigo only: put a message into this running turn (`_fuigo/interject`). */
         interject?: (text: string, beforeWrite?: () => void, interjectionId?: string) => Promise<SteerDelivery>;
       }
@@ -2060,6 +2133,29 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
         // this turn as a normal one (argv, session mode, permission replies)
         // and Murage answers every ask that is not one of the three at once.
         const turnConfig: AcpConfig = (turn.stopLine || turn.routeAsks) && config.fullAuto ? { ...config, fullAuto: false } : config;
+        // The Ask hard stop (ask-stop.ts): this engine cannot ask before every change, so at Ask it runs read-only.
+        const askStop = support.askStop !== undefined && turn.askLevel === true;
+        /** Something was refused at Ask (an ask with no card, a failed change, a change that ran): the note is due. */
+        let askStopRefused = false;
+        /** The whole reply this turn, to tell whether it already carries the note. */
+        let askStopReply = "";
+        /** Each tool call's kind, kept from its opening tool_call (an update need not repeat it). */
+        const askStopKinds = new Map<string, string>();
+        /** A change the engine reports on an Ask turn: failed means its read-only switch refused it (the note is due);
+         *  completed means the switch did not hold, so the turn is stopped at once, before anything else runs. */
+        const noteAskStopTool = (u: { toolCallId?: unknown; kind?: unknown; status?: unknown }) => {
+          const id = typeof u.toolCallId === "string" ? u.toolCallId : undefined;
+          if (id && typeof u.kind === "string" && askStopKinds.size < 512) askStopKinds.set(id, u.kind);
+          const kind = typeof u.kind === "string" ? u.kind : id ? askStopKinds.get(id) : undefined;
+          if (!askStopChangeKind(kind)) return;
+          if (u.status === "failed") askStopRefused = true;
+          else if (u.status === "completed" && !state.settled && !state.cancelRequested) {
+            askStopRefused = true;
+            console.warn(`${ENGINE} ask stop: a ${kind} ran on an Ask turn; stopping the turn`);
+            appendNative(threadId, { dir: "in", source: SOURCE, msg: { askStop: "ran", kind } });
+            interrupt();
+          }
+        };
         if (active.has(threadId)) throw new Error("a turn is already running on this thread");
         if (support.driverKind === "grokAgent" || support.driverKind === "fuigoAgent") {
           // Fuigo 1.0.30 lets one process hold a session (session_writer.lock), so its
@@ -2109,7 +2205,8 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
         }
         if (turn.providerRoute) validateProviderTurnRoute(support.driverKind, turn.providerRoute);
         const providerBinding = turn.providerRoute ? applyProviderRoute(support.driverKind, env, turn.providerRoute, { threadId, memoryTools: Boolean(turn.integrations?.memory), nativeProfile: support.boundProfile?.(config) ?? null }) : null;
-        const grokBinding = support.driverKind === "grokAgent" ? grokResumeBinding(threadId, providerBinding?.identity ?? null, turn.resumeCursor) : null;
+        // A plain subscription turn on a Cloud home has no provider route: skip the route receipts (refused there).
+        const grokBinding = support.driverKind === "grokAgent" && (providerBinding || process.env.MURAGE_CLOUD_ROLE !== "home") ? grokResumeBinding(threadId, providerBinding?.identity ?? null, turn.resumeCursor) : null;
         if (grokBinding?.replay && !turn.transcript) throw new Error("Grok provider binding changed. Reload the conversation before continuing.");
         const replayTurn = (preamble: string) => ({ ...turn, text: [preamble, "",
           renderDriverReplay(turn.transcript ?? [], turn.replayMetadata), "", "[Latest message:]", turn.text].join("\n") });
@@ -2550,6 +2647,12 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
             parkProcess(threadId, proc!, sessionId!, turn.prewarm === true);
           }
           flushAssistantText();
+          // The Ask hard stop's one note, when something was refused and the reply does not already say it.
+          if (askStopRefused && !replyCarriesAskStopNote(askStopReply)) {
+            const itemId = `ask-stop-${turnId}`;
+            emit({ ...base(threadId, turnId), type: "item.started", itemId, itemType: "tool", origin: "murage", title: ASK_STOP_NOTE, toolKind: "notice" });
+            emit({ ...base(threadId, turnId), type: "item.completed", itemId, itemType: "tool", ok: true });
+          }
           emit({ ...base(threadId, turnId), type: "turn.completed", ok, stopReason, cost: null, ...(settledUsage ? { usage: settledUsage } : {}), ...(settledCharge !== undefined ? { charge: settledCharge } : {}), ...(state.toolsUnavailable.length ? { toolsUnavailable: state.toolsUnavailable } : {}), ...(state.mcpReadiness ? { mcpReadiness: state.mcpReadiness } : {}) });
           if (!park) stop(cause); // the agent process does not exit on its own
           forgetPrewarm();
@@ -2786,6 +2889,13 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
             if (allow) return send({ jsonrpc: "2.0", id: msg.id,
               result: { outcome: { outcome: "selected", optionId: allow } } });
           }
+          // The Ask hard stop: anything that is not a read, search, think or fetch is refused here, with no card.
+          if (askStop && !questionTool && askStopRefusesKind(toolCall.kind)) {
+            askStopRefused = true;
+            const reject = optionFor("reject");
+            appendNative(threadId, { dir: "out", source: SOURCE, msg: { askStop: "refused", kind: kind || null } });
+            return send({ jsonrpc: "2.0", id: msg.id, result: reject ? { outcome: { outcome: "selected", optionId: reject } } : cancelled });
+          }
           if (turnConfig.fullAuto && !questionTool) {
             const allow = optionFor("allow", true);
             if (!allow) missing("allow");
@@ -2888,6 +2998,7 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
             // session/new, no external records.
             mcpMounts: acpMountRecords(turn, mcpServers, ownedMemoryAlias ?? "murage-memory"),
             toolEngine: "acp" as const,
+            ...(acpCommandShell ? { commandShell: acpCommandShell } : {}),
             // F5: no kind on the wire means nothing to resolve the call by;
             // the title is never a name.
             ...(!questionTool && !kind ? { toolInputMissing: "kind" } : {}),
@@ -3241,6 +3352,7 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
                 const startMs = p._meta?.streamStartMs ?? u._meta?.streamStartMs;
                 splitAtNewResponse(startMs);
                 state.text += delta;
+                if (askStop && askStopReply.length < 65_536) askStopReply += delta;
                 recordSeg("text", delta, startMs);
                 // live only: the committed items are split at the tool row
                 if (liveBreak) { liveBreak = false; if (state.text.length > delta.length) emit({ ...base(threadId, turnId), type: "content.delta", streamKind: "assistant_text", delta: "\n\n" }); }
@@ -3275,6 +3387,7 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
             }
             case "tool_call": {
               traceToolOpen(u.toolCallId);
+              if (askStop) noteAskStopTool(u);
               {
                 const startMs = p._meta?.streamStartMs ?? u._meta?.streamStartMs;
                 const backend = p._meta?.backend === true || u._meta?.backend === true;
@@ -3317,6 +3430,7 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
             case "tool_call_update": {
               // a row a discard already closed as interrupted stays closed
               if (typeof u.toolCallId === "string" && interruptedRows.has(u.toolCallId)) break;
+              if (askStop) noteAskStopTool(u);
               if (u.status === "completed" || u.status === "failed") hostedRows.delete(u.toolCallId);
               trackRunningTool(runningTools, u);
               if (u.status === "completed" || u.status === "failed") {
@@ -3367,6 +3481,8 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
             return;
           }
           appendNative(threadId, { dir: "in", source: SOURCE, msg: nativeLogMessage(msg) });
+          // after the native log, which keeps the frame as the engine sent it
+          acpRestampFrame(msg, support.toolStamp);
           // Any inbound line proves the child is alive and making progress, so
           // every idle deadline restarts. Only total silence trips one.
           for (const pending of rpcPending.values()) pending.armIdle();
@@ -3676,10 +3792,54 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
           Object.assign(env, handed.env);
           handedEnv = handed;
         }
+        /** support.hostComputerAskedByMurage: the engine runs Murage's `computer`
+         *  mount unasked, so the host-computer route asks here before each call
+         *  reaches the computer, with the tool's exact name and arguments. The
+         *  card is the one a stamped MCP call on this turn's own mount gets;
+         *  a deny, a timeout or the turn ending (asks are cancelled) stops it. */
+        const askHostAction = (call: { name: string; arguments?: unknown }, signal?: AbortSignal): Promise<"allow" | "deny"> => new Promise((resolveAsk) => {
+          if (signal?.aborted || state.settled || state.cancelRequested || !controlsHost || !/^[A-Za-z0-9_.-]{1,128}$/.test(call.name)) return resolveAsk("deny");
+          const requestId = newId();
+          const finish: AcpAskFinish = (behavior, source = "user") => {
+            if (!asks.delete(requestId)) return false;
+            traceClose("permission.wait", requestId, behavior);
+            clearTimeout(timer);
+            signal?.removeEventListener("abort", withdrawn);
+            const allow = behavior === "allow";
+            resolveAsk(allow ? "allow" : "deny");
+            emit({ ...base(threadId, turnId), type: "request.resolved", requestId, behavior: allow ? "allow" : "deny", source: allow || behavior === "deny" ? source : "system", approvalScope: "local-computer" });
+            return true;
+          };
+          const timer = turn.holdPermissionAsks ? undefined : setTimeout(() => { finish("deny", "timeout"); }, permissionDenyMs());
+          timer?.unref?.();
+          // the engine withdrew the call (its proxy request closed): the card closes, nothing runs
+          const withdrawn = () => { finish("cancel", "system"); };
+          signal?.addEventListener("abort", withdrawn, { once: true });
+          traceOpen("permission.wait", requestId);
+          asks.set(requestId, finish);
+          const tool = `mcp__computer__${call.name}`;
+          const input = call.arguments ?? {};
+          const toolInput = boundedToolInput(input);
+          emit({
+            ...base(threadId, turnId),
+            type: "request.opened",
+            requestId,
+            requestType: "permission",
+            tool,
+            summary: approvalSummary(call.name),
+            ...(toolInput ? { toolInput } : {}),
+            approvalScope: "local-computer",
+            // Murage's own service names the call: the tool it was sent, on the mount it serves
+            toolIdentity: { namespace: "mcp", name: `computer__${call.name}` },
+            mcpMounts: acpMountRecords(turn, mcpServers, ownedMemoryAlias ?? "murage-memory"),
+            toolEngine: "acp" as const,
+            toolCall: { name: tool, input },
+          });
+        });
         const start = () => {
           if (started) return;
           started = true;
-          active.set(threadId, { stop, interrupt, turnId, asks, ...(support.driverKind === "fuigoAgent" ? { interject } : {}) });
+          active.set(threadId, { stop, interrupt, turnId, asks, ...(support.hostComputerAskedByMurage && controlsHost ? { askHostAction } : {}), ...(support.driverKind === "fuigoAgent" ? { interject } : {}) });
           emit({ ...base(threadId, turnId), type: "turn.started" });
         };
 
@@ -4169,6 +4329,41 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
                 // report the slug we set so the UI does not claim otherwise.
                 if (!selectedModel && cliTurn.model) selectedModel = cliTurn.model;
               }
+              // The Ask hard stop (ask-stop.ts): the engine's own read-only switch, set before anything is prompted.
+              // At Ask a switch that cannot be set refuses the turn; otherwise what an earlier Ask turn set is put back.
+              const readOnlyMode = support.askStop?.sessionMode;
+              if (readOnlyMode && sessionId) {
+                const modes = sessionResult?.modes as { currentModeId?: unknown; availableModes?: Array<{ id?: unknown }> } | undefined;
+                if (askStop) {
+                  const listed = Array.isArray(modes?.availableModes) ? modes!.availableModes.some((m) => m?.id === readOnlyMode.readOnly) : true;
+                  try {
+                    if (!listed) throw new Error(`no ${readOnlyMode.readOnly} mode`);
+                    await request("session/set_mode", { sessionId, modeId: readOnlyMode.readOnly }, SESSION_CONFIG_TIMEOUT);
+                  } catch (error) {
+                    console.warn(`${ENGINE} ask stop: read-only mode not set (${(error as Error)?.message ?? error})`);
+                    throw new Error(askStopUnavailableLine(ENGINE));
+                  }
+                  askStopModeSessions.add(sessionId);
+                } else if (askStopModeSessions.has(sessionId) || modes?.currentModeId === readOnlyMode.readOnly) {
+                  try {
+                    await request("session/set_mode", { sessionId, modeId: readOnlyMode.normal }, SESSION_CONFIG_TIMEOUT);
+                    askStopModeSessions.delete(sessionId);
+                  } catch (error) {
+                    // Left read-only: the bot can still read and plan; the next turn tries again.
+                    console.warn(`${ENGINE} ask stop: ${readOnlyMode.normal} mode not restored (${(error as Error)?.message ?? error})`);
+                  }
+                }
+              }
+              if (support.askStop?.apply) {
+                try {
+                  await support.askStop.apply({ env, config: turnConfig, turn, askLevel: askStop });
+                } catch (error) {
+                  if (!askStop) throw error;
+                  if (error instanceof AskStopRefusal) throw error;
+                  console.warn(`${ENGINE} ask stop: read-only not set (${(error as Error)?.message ?? error})`);
+                  throw new Error(askStopUnavailableLine(ENGINE));
+                }
+              }
             } catch (error) {
               // session.started is the only place the resume cursor is recorded,
               // so a rejected setting must not orphan a session we just created.
@@ -4342,7 +4537,8 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
               : requiredMissing === null && mcpOutcome === "timeout" && requiredMcpNames.length ? toolsMayBeLoadingNotice(unavailableLabels(requiredMcpNames)) : null;
             const loadingNotice = turn.engineCommand ? null : [failedNotice, looseNotice].filter(Boolean).join("\n\n") || null;
             if (!turn.engineCommand && (absentRequired.length || (requiredMissing === null && mcpOutcome === "timeout" && requiredMcpNames.length))) state.mcpReadiness = "unknown";
-            const noticedTurn = loadingNotice ? { ...promptTurn, text: `${loadingNotice}\n\n${promptTurn.text}` } : promptTurn;
+            const askedTurn = askStop && !turn.engineCommand ? { ...promptTurn, text: `${ASK_STOP_PROMPT}\n\n${promptTurn.text}` } : promptTurn;
+            const noticedTurn = loadingNotice ? { ...askedTurn, text: `${loadingNotice}\n\n${askedTurn.text}` } : askedTurn;
             const textTurn = stackAlreadySent ? { ...noticedTurn, system: undefined } : noticedTurn;
             const text = turn.engineCommand
               ? engineCommandText(turn.engineCommand)
@@ -4707,6 +4903,10 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
             if (!closed.closeConfirmed) throw new ProviderStopUnconfirmedError(DRIVER_KIND, closed);
           },
           awaitTurnTeardown: (threadId, turnId) => teardowns.wait(threadId, turnId, acpStopBudget()),
+          askHostAction: async (threadId, call, signal) => {
+            const turn = active.get(threadId);
+            return turn?.askHostAction ? turn.askHostAction(call, signal) : null;
+          },
           respondToRequest: async (threadId, requestId, decision) => {
             const turn = active.get(threadId);
             const finish = turn?.asks.get(requestId);

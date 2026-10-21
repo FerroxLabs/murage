@@ -10,18 +10,21 @@ export const CLOUD_BROWSER_BOT = "MURAGE_CLOUD_BROWSER_BOT";
 let admit: ((bot: string) => boolean) | undefined;
 export function setCloudBrowserAdmission(check: (bot: string) => boolean): void { admit = check; }
 const BROWSER_SETTINGS = ["AGENT_BROWSER_SESSION", "AGENT_BROWSER_ENCRYPTION_KEY", "AGENT_BROWSER_RESTORE_SAVE", "AGENT_BROWSER_RESTORE"];
-function browserRequest(bot: string, args: string[], env: NodeJS.ProcessEnv) {
+/** The launcher modes a bot's browser request can take. The two restore modes run the saved-session split and its
+ * visit mark as the browser user (server/browser-restore-cli.ts); the others run the browser. */
+export type CloudBrowserMode = "browser" | "browser-restore" | "browser-restore-mark";
+function browserRequest(bot: string, args: string[], env: NodeJS.ProcessEnv, mode: CloudBrowserMode = "browser") {
   const settings: Record<string, string> = {};
   for (const key of BROWSER_SETTINGS) {
     if (env[key] !== undefined) settings[key] = env[key]!;
   }
-  return { mode: "browser", bot, args, settings, instance: SERVER_INSTANCE };
+  return { mode, bot, args, settings, instance: SERVER_INSTANCE };
 }
 /** A bot's browser request. The reserved namespace belongs to the system (the UI canary), so a bot can never name it. */
-export function cloudBrowserRequest(args: string[], env: NodeJS.ProcessEnv) {
+export function cloudBrowserRequest(args: string[], env: NodeJS.ProcessEnv, mode: CloudBrowserMode = "browser") {
   const bot = env[CLOUD_BROWSER_BOT];
   if (!bot || !/^[\w-]+$/.test(bot) || isReservedBotId(bot)) throw new Error(cloudHomeCopy.invalidCloudBrowserIdentity);
-  return browserRequest(bot, args, env);
+  return browserRequest(bot, args, env, mode);
 }
 function spawnLauncher(request: object): ChildProcessWithoutNullStreams {
   // Before any browser launch the current instance must be readable by the launcher (no-op after the first success).
@@ -34,9 +37,9 @@ function spawnLauncher(request: object): ChildProcessWithoutNullStreams {
   pipe.end(JSON.stringify(request));
   return child;
 }
-export function spawnCloudBrowser(args: string[], env: NodeJS.ProcessEnv): ChildProcessWithoutNullStreams | null {
+export function spawnCloudBrowser(args: string[], env: NodeJS.ProcessEnv, mode: CloudBrowserMode = "browser"): ChildProcessWithoutNullStreams | null {
   if (process.env.MURAGE_CLOUD_ROLE !== "home") return null;
-  const request = cloudBrowserRequest(args, env);
+  const request = cloudBrowserRequest(args, env, mode);
   if (admit && !admit(request.bot)) throw new Error(cloudHomeCopy.profileCleanupPending);
   const child = spawnLauncher(request);
   child.once("close", code => { noteBrowserRefusal(code); });

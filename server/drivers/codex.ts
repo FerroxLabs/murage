@@ -30,7 +30,7 @@ import { CODEX_APPROVAL_PIN_ARGS, codexIsolationArgs, codexTurnPolicy, scopedCod
 import { ScopeUnavailableError, engineUpdateRequired, scopeLocalFailureOf, withScopeRetry } from "./scoped-cli-home.ts";
 import {
   CODEX_GATE_MIN, CodexHookGate, HOOK_ASK_BOUND_MS, HOOK_LIVENESS_MS, HookDecisionTable, codexGatePlan, codexShellFormArgs,
-  CODEX_HOOK_LAUNCH_ENV, hookConfigOf, hookLaunchLine, newHookToken, routeDelivery, tripwireLine, trustHooks, versionAtLeast, writeHookFiles,
+  CODEX_HOOK_LAUNCH_ENV, hookConfigOf, hookWindowsLaunchValue, newHookToken, routeDelivery, tripwireLine, trustHooks, versionAtLeast, writeHookFiles,
   type CodexGatePlan, type HookAnswer, type HookDelivery, type HookRoute,
 } from "./codex-hook.ts";
 import { execEnvHanded, execEnvNow, handedEngineEnv, ownedTurnNames, type HandedEnv } from "../engine-env.ts";
@@ -39,7 +39,7 @@ import { HookProof, TurnRefusal, hookDidNotStartLine } from "./turn-refusal.ts";
 import { appendDecision } from "../decision-log.ts";
 import { awaitScopeStart } from "./scoped-cli-home.ts";
 import { renderDriverReplay } from "../turn-context.ts";
-import { cliSig, knownCliVersion, noteVersionProbe, rememberCliVersion, versionProbeAllowed } from "./isolation-cache.ts";
+import { cliFile, cliSig, knownCliVersion, noteVersionProbe, rememberCliVersion, versionProbeAllowed } from "./isolation-cache.ts";
 import { customMountEntries } from "../custom-mcp-mounts.ts";
 import { codexConfigMcpServerNames, externalMcpRecords, mountedMcpServerNames } from "./codex-mcp-names.ts";
 import type { ExecEnv, McpMountRecord } from "../../shared/mount-identity.ts";
@@ -86,6 +86,7 @@ import { engineClosedLine, plainDuration } from "./stop-copy.ts";
 import { boundedToolInput, codexApprovalText } from "../approval-text.ts";
 import { acpEngineExitStderrText } from "./acp/core.ts";
 import { backgroundCapNote, backgroundWaitCapMs, SubtaskTracker } from "../subtasks.ts";
+import { shellDialectOf } from "../shell/pwsh.ts";
 
 export { decodeCodexSelection, readCodexModelCatalog, STATIC_CODEX_MODELS } from "./codex-catalog.ts";
 
@@ -255,6 +256,9 @@ function mountMcpServer(
   name: string,
   server: StdioMcpServer,
   preApproved = true,
+  // Rule 68 gated turns: the PreToolUse hook is the one ask for Murage's own mounts, so codex's own MCP
+  // approval elicitation is turned off for them ("approve"); otherwise "auto" (codex 0.163 elicits anyway).
+  hookGated = false,
 ): void {
   // The credential file's path and the server's name inside it are not
   // secrets and differ per server, so they ride the server's own `env` table
@@ -277,7 +281,7 @@ function mountMcpServer(
   // Harness-owned servers are pre-quieted; a user-configured server keeps
   // codex's on-request policy so its tool calls become approval cards.
   if (preApproved) {
-    appServerArgs.push("-c", `${prefix}.default_tools_approval_mode="auto"`);
+    appServerArgs.push("-c", `${prefix}.default_tools_approval_mode="${hookGated ? "approve" : "auto"}"`);
     appServerArgs.push("-c", `${prefix}.startup_timeout_sec=${CODEX_MURAGE_MCP_STARTUP_TIMEOUT_SEC}`);
   } else {
     // A user's server often downloads what it runs (npx, uvx, docker) on its
@@ -599,6 +603,12 @@ export const CodexDriver: ProviderDriver<CodexConfig> = {
       };
       const launchAttempt = async (attempt: number): Promise<void> => {
         const env = childEnv();
+        // The app-server is the codex whose `--version` this env probed (codexVersionForTurn) and whose catalog the picker shows,
+        // resolved here, before env becomes the handed map: the owner's captured shell PATH can find another codex first (1.0.3
+        // gate: an older Homebrew 0.144.4 ahead of 0.163.0), which ChatGPT refuses the current models to and which the version
+        // gates never checked. Windows already resolves on Murage's own PATH (env-path.ts whichWin); a Cloud home runs the
+        // image's codex by name.
+        const launchCli = process.platform === "win32" || process.env.MURAGE_CLOUD_ROLE === "home" ? config.cli : cliFile(config.cli, env) ?? config.cli;
         // The launcher scopes this turn's state (conversation files, the bot's own sign-in) by bot.
         cloudTurnBot(env, turn.warmIdentity?.botId);
         // Flux Router's Responses surface. This slot is the only correct one:
@@ -762,7 +772,7 @@ export const CodexDriver: ProviderDriver<CodexConfig> = {
           const phone = turn.integrations?.phone ? cloudMcpStanza(turn.integrations.phone) : null;
           if (phone) stanzas[CODEX_PHONE_MOUNT] = phone;
           cloudTurnRender(env, "mcp", Object.keys(stanzas).length ? stanzas : undefined);
-        } else for (const m of mounts) mountMcpServer(appServerArgs, env, m.name, stableServers[m.name] as StdioMcpServer, m.preApproved);
+        }
         // The owner's global AGENTS.md / AGENTS.override.md and personal skills
         // folder out of this app-server: a scoped CODEX_HOME on a proven Codex
         // (codex-isolation.ts). Set on the child's env only after every read of
@@ -819,6 +829,8 @@ export const CodexDriver: ProviderDriver<CodexConfig> = {
           endPrewarm(); forgetPrewarm();
           return;
         }
+        // Mounted once the gate plan is known: a gated turn's own servers stop codex's second (elicitation) card.
+        if (!cloudHome) for (const m of mounts) mountMcpServer(appServerArgs, env, m.name, stableServers[m.name] as StdioMcpServer, m.preApproved, gatePlan.mode === "gated");
         // The owner's own servers and personal skills off for this app-server (codex-isolation.ts).
         // (A Cloud home renders its own config.toml through the launcher: no owner servers or skills to turn off there.)
         if (!cloudHome) appServerArgs.push(...codexIsolationArgs(env, declaredInCodexConfig,
@@ -892,6 +904,9 @@ export const CodexDriver: ProviderDriver<CodexConfig> = {
         Object.assign(env, handed.env);
         if (scopedHome) env.CODEX_HOME = scopedHome;
         const shellForm: readonly string[] = process.platform === "win32" ? ["powershell.exe", "-NoProfile", "-Command"] : [handed.env.SHELL || "/bin/sh", "-c"];
+        // 1.0.4 F1: every command runs under this form, so the gates read its
+        // text in this form's dialect (PowerShell on Windows)
+        const commandShell = shellDialectOf(shellForm);
         // F4 (Rule 54): the mounts this app-server loads, read from the Codex
         // home in effect for the spawn. A config.toml that cannot be read
         // leaves the list unstated, so no MCP ask on this turn is proven.
@@ -995,9 +1010,9 @@ export const CodexDriver: ProviderDriver<CodexConfig> = {
           await hookGate.listen();
         }
         const hookFiles = gated && hookGate ? writeHookFiles(scopedHome!, hookGate.path, hookToken) : null;
-        // Windows: the hooks.json command is `%MURAGE_CODEX_HOOK%` (codex-hook.ts); the launch line it expands to rides in this
-        // process's environment, which Codex hands each hook it runs.
-        if (hookFiles && !reuse && process.platform === "win32") env[CODEX_HOOK_LAUNCH_ENV] = hookLaunchLine(process.execPath, hookFiles.script);
+        // Windows: the hooks.json command is `<system cmd.exe> /d /v:off /c %MURAGE_CODEX_HOOK%` (codex-hook.ts), the same in cmd and
+        // PowerShell; the launch line it expands to rides in this process's environment, which Codex hands each hook it runs.
+        if (hookFiles && !reuse && process.platform === "win32") env[CODEX_HOOK_LAUNCH_ENV] = hookWindowsLaunchValue(process.execPath, hookFiles.script);
         // the process's SessionStart proof, kept with it between turns
         const proof: HookProof | undefined = reuse?.proof ?? (gated ? new HookProof(hookConfigOf(scopedHome!)) : undefined);
         // On a home the launcher stages only the rollout this process will thread/resume (its
@@ -1010,7 +1025,7 @@ export const CodexDriver: ProviderDriver<CodexConfig> = {
         }
         let child: ReturnType<typeof spawnCli>;
         try {
-          child = reuse ? reuse.child : spawnCli(config.cli, spawnArgs, {
+          child = reuse ? reuse.child : spawnCli(launchCli, spawnArgs, {
             cwd: turnCwd,
             env,
             stdio: ["pipe", "pipe", "pipe"],
@@ -1320,6 +1335,7 @@ export const CodexDriver: ProviderDriver<CodexConfig> = {
             toolEngine: "codex" as const,
             ...(mcpMountRecords ? { mcpMounts: mcpMountRecords } : {}),
             ...(route.toolInputMissing ? { toolInputMissing: route.toolInputMissing } : {}),
+            ...(commandShell ? { commandShell } : {}),
             ...(execEnv ? { execEnv } : {}),
             requestType: "permission",
             tool: route.tool,
@@ -1537,6 +1553,7 @@ export const CodexDriver: ProviderDriver<CodexConfig> = {
           toolEngine: "codex" as const,
           ...(mcpMountRecords ? { mcpMounts: mcpMountRecords } : {}),
           ...(inputMissing ? { toolInputMissing: inputMissing } : {}),
+          ...(commandShell ? { commandShell } : {}),
           ...(execEnv ? { execEnv } : {}),
           requestType: questions ? "question" : "permission",
           tool,

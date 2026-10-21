@@ -228,11 +228,11 @@ export function treeRss(listing: string, roots: number[]): Map<number, number> {
 }
 
 /** Per-root tree sums of working-set bytes from the Windows process table
- * (the same single Win32_Process listing the process-tree probes use). A
+ * (the native process list the process-tree probes use, plus tasklist for the sizes). A
  * process whose working set Windows withholds counts as 0; a root it does
  * not list stays unmeasured. */
 export async function windowsMeasure(pids: number[]): Promise<Map<number, number> | null> {
-  const rows = await windowsListing();
+  const rows = await windowsListing({ memory: true });
   if (!rows) return null;
   return treeRss(rows.map((row) => `${row.pid} ${row.ppid} ${Math.floor((row.rssBytes ?? 0) / 1024)}`).join("\n"), pids);
 }
