@@ -409,7 +409,6 @@ function ExperimentalFeaturesRow() {
   const skillRecorder = skillRecorderEnabled(state.config);
   const browser = builtInBrowserEnabled(state.config);
   const desktopBrowser = Boolean(window.muragebox?.browser);
-  const browserBlockedOnWindows = window.muragebox?.platform === "win32" && !desktopBrowser;
   const [saving, setSaving] = useState<"skillRecorder" | "browser" | null>(null);
   const [error, setError] = useState("");
 
@@ -458,9 +457,7 @@ function ExperimentalFeaturesRow() {
               ? browser
                 ? "Enabled for this workspace. Each bot also has its own browser switch."
                 : "Off by default. Enable it to let supported bots use a browser tab you can watch and take over."
-              : browserBlockedOnWindows
-                ? "Temporarily unavailable on Windows while Electron's production sandbox support is being verified."
-                : "Needs the Murage desktop app."}
+              : "Needs the Murage desktop app."}
           </div>
         </div>
         <Switch

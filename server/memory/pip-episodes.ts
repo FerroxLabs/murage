@@ -9,6 +9,7 @@ import { redactSecretsInText } from "../redact.ts";
 import { invalidatePipRender } from "./identity.ts";
 import { pipEpisodeId } from "./pip-kinds.ts";
 import type { AdmittedSource } from "./pip-admission.ts";
+import { inheritEdge } from "./revoke-commit.ts";
 
 export const EPISODE_MAX_BYTES = 700;
 export const TRACE_MAX_BYTES = 300;
@@ -41,7 +42,7 @@ function write(db: DatabaseSync, o: { botId: string; scopeId: string; id: string
   const now = Date.now();
   db.prepare("INSERT INTO memory_records VALUES(?,1,?,'episode',?,'assistant-inference','active',0,?,NULL,NULL,?)").run(o.id, o.scopeId, redactSecretsInText(o.text), now, now);
   db.prepare("UPDATE memory_record_details SET partition='identity',attention='useful',confidence_basis=?,entities=? WHERE record_id=? AND record_version=1").run(EPISODE_BASIS, JSON.stringify(o.entities), o.id);
-  for (const h of o.handles) db.prepare("INSERT OR IGNORE INTO memory_evidence VALUES(?,1,?,?,?,?)").run(o.id, h.sourceId, h.revision, h.start, h.end);
+  for (const h of o.handles) { db.prepare("INSERT OR IGNORE INTO memory_evidence VALUES(?,1,?,?,?,?)").run(o.id, h.sourceId, h.revision, h.start, h.end); inheritEdge(db, { kind: "record", id: o.id, version: 1 }, { kind: "source", id: h.sourceId }); }
   invalidatePipRender(db, o.botId);
   return true;
 }

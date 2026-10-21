@@ -13,6 +13,7 @@ import { redactSecretsInText } from "../redact.ts";
 import { isMemoryTopicName, MEMORY_SEED } from "../workspace.ts";
 import { scopeRow } from "./scope-id.ts";
 import { revokeAllDisclosures } from "./revocation.ts";
+import { inheritEdge } from "./revoke-commit.ts";
 
 export type ImportSelection = {kind:"bot";botId:string;topic?:string}|{kind:"section";section:string}|{kind:"partition";botId:string;partition:Partition;topic?:string};
 interface ImportItem {selection:ImportSelection;path:string;hash:string;bytes:number;text:string;scopeId:string;scopeLabel:string;alreadyImported:boolean}
@@ -183,6 +184,7 @@ function commitImportItems(items:ImportItem[], track=false, retryLater=false){
         const recordId=`${id}:chunk:${index}`;recordIds.push(recordId);
         db.prepare("INSERT INTO memory_records VALUES(?,?,?,'evidence',?,'unverified-import','active',0,?,NULL,NULL,?)").run(recordId,revision,item.scopeId,chunk.text,Date.now(),Date.now());
         db.prepare("INSERT INTO memory_evidence VALUES(?,?,?,?,?,?)").run(recordId,revision,id,revision,chunk.startByte,chunk.endByte);
+        inheritEdge(db,{kind:"record",id:recordId,version:revision},{kind:"source",id});
         db.prepare("INSERT INTO memory_projection_receipts VALUES(?,?,0,'pending','pending',NULL)").run(recordId,revision);
       }
       imported++;

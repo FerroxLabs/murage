@@ -175,19 +175,38 @@ try {
 /** The hook's launch line: Murage's node running the script, each path quoted. */
 export const hookLaunchLine = (execPath: string, scriptPath: string): string => `"${execPath}" "${scriptPath}"`;
 
-/** Windows: Codex runs a handler as `cmd.exe /C <command>`, and Codex 0.153.3 escapes the inner quotes of a quoted launch line as `\"`,
- *  which cmd cannot read (rig: "hook exited with code 1", so no SessionStart proof and every gated turn refused). The Windows command
- *  therefore holds no path and no quote: cmd expands this variable, which the driver sets in the app-server's environment to the
- *  launch line, and then reads the quotes itself. It survives both the escaped form and the raw `"<command>"` form of later builds. */
+/** Windows (F3, 1.0.3 gate): Codex picks the shell a hook runs in, and Murage cannot. Every gated build (0.149.0 .. 0.163.0, source
+ *  hooks/src/engine/command_runner.rs `build_command`, core/src/session/mod.rs `build_hooks_config`) runs the handler string under the
+ *  turn's user shell, which on Windows is PowerShell (`pwsh`, else `powershell`) as `-NoProfile -Command <command>`, with cmd.exe
+ *  `/c` when no PowerShell is found, and `%COMSPEC% /C "<command>"` when the turn has no environment. There is no argv form: the
+ *  handler is a string. So the string must mean the same thing in cmd and in PowerShell:
+ *  - its program is cmd.exe by a bare absolute path with no space, no quote and no variable (both shells run a bare path the same way;
+ *    an absolute path keeps cmd's current-folder lookup out of it, so a project cannot plant a `cmd.exe` of its own);
+ *  - its arguments hold no character either shell treats specially, except the one `%MURAGE_CODEX_HOOK%`, which PowerShell hands to
+ *    cmd unread and cmd expands (the old bare `%MURAGE_CODEX_HOOK%` was a cmd-only string: PowerShell never expanded it, so the hook
+ *    never started and every Codex turn was refused);
+ *  - `/d` skips the AutoRun commands of the registry, `/v:off` keeps a `!` in a path literal.
+ *  The variable holds the launch line behind an `@` (hookWindowsLaunchValue): when the OUTER shell is cmd it expands the variable
+ *  first, and a line that started with a quote would lose its first and last quote to the inner cmd's `/c` rule. */
 export const CODEX_HOOK_LAUNCH_ENV = "MURAGE_CODEX_HOOK";
-export const CODEX_HOOK_WINDOWS_COMMAND = `%${CODEX_HOOK_LAUNCH_ENV}%`;
+const PLAIN_SYSTEM_ROOT = /^[A-Za-z]:\\[A-Za-z0-9_.-]+(?:\\[A-Za-z0-9_.-]+)*$/;
+/** The system cmd.exe by absolute path. A system folder that is not a plain path falls back to the default one, which then fails
+ *  closed (no hook starts, no SessionStart proof, the turn is refused) rather than putting a space or a quote in the command. */
+export function windowsCmdPath(systemRoot: string | undefined = process.env.SystemRoot ?? process.env.SYSTEMROOT): string {
+  return `${systemRoot && PLAIN_SYSTEM_ROOT.test(systemRoot) ? systemRoot : "C:\\Windows"}\\System32\\cmd.exe`;
+}
+export function codexHookWindowsCommand(systemRoot?: string): string {
+  return `${windowsCmdPath(systemRoot)} /d /v:off /c %${CODEX_HOOK_LAUNCH_ENV}%`;
+}
+/** The value of MURAGE_CODEX_HOOK: the launch line, led by `@` so it never starts with a quote. */
+export const hookWindowsLaunchValue = (execPath: string, scriptPath: string): string => `@${hookLaunchLine(execPath, scriptPath)}`;
 
 /** Rule 68a: the hooks.json of the scope. One matcher-free PreToolUse handler and one SessionStart handler, each a `command`
  *  handler running the script with Murage's own node. The content never changes between turns (the hash stays stable), so trust
  *  survives; the socket path and the token live in the env file. */
 export function codexHooksJson(execPath: string, scriptPath: string): string {
   const command = hookLaunchLine(execPath, scriptPath);
-  const handler = { type: "command", command, command_windows: CODEX_HOOK_WINDOWS_COMMAND, timeout: HOOK_TIMEOUT_SEC };
+  const handler = { type: "command", command, command_windows: codexHookWindowsCommand(), timeout: HOOK_TIMEOUT_SEC };
   return JSON.stringify({ hooks: { PreToolUse: [{ hooks: [handler] }], SessionStart: [{ hooks: [handler] }] } }, null, 2) + "\n";
 }
 

@@ -30,7 +30,7 @@ import { CODEX_APPROVAL_PIN_ARGS, codexIsolationArgs, codexTurnPolicy, scopedCod
 import { ScopeUnavailableError, engineUpdateRequired, scopeLocalFailureOf, withScopeRetry } from "./scoped-cli-home.ts";
 import {
   CODEX_GATE_MIN, CodexHookGate, HOOK_ASK_BOUND_MS, HOOK_LIVENESS_MS, HookDecisionTable, codexGatePlan, codexShellFormArgs,
-  CODEX_HOOK_LAUNCH_ENV, hookConfigOf, hookLaunchLine, newHookToken, routeDelivery, tripwireLine, trustHooks, versionAtLeast, writeHookFiles,
+  CODEX_HOOK_LAUNCH_ENV, hookConfigOf, hookWindowsLaunchValue, newHookToken, routeDelivery, tripwireLine, trustHooks, versionAtLeast, writeHookFiles,
   type CodexGatePlan, type HookAnswer, type HookDelivery, type HookRoute,
 } from "./codex-hook.ts";
 import { execEnvHanded, execEnvNow, handedEngineEnv, ownedTurnNames, type HandedEnv } from "../engine-env.ts";
@@ -86,6 +86,7 @@ import { engineClosedLine, plainDuration } from "./stop-copy.ts";
 import { boundedToolInput, codexApprovalText } from "../approval-text.ts";
 import { acpEngineExitStderrText } from "./acp/core.ts";
 import { backgroundCapNote, backgroundWaitCapMs, SubtaskTracker } from "../subtasks.ts";
+import { shellDialectOf } from "../shell/pwsh.ts";
 
 export { decodeCodexSelection, readCodexModelCatalog, STATIC_CODEX_MODELS } from "./codex-catalog.ts";
 
@@ -892,6 +893,9 @@ export const CodexDriver: ProviderDriver<CodexConfig> = {
         Object.assign(env, handed.env);
         if (scopedHome) env.CODEX_HOME = scopedHome;
         const shellForm: readonly string[] = process.platform === "win32" ? ["powershell.exe", "-NoProfile", "-Command"] : [handed.env.SHELL || "/bin/sh", "-c"];
+        // 1.0.4 F1: every command runs under this form, so the gates read its
+        // text in this form's dialect (PowerShell on Windows)
+        const commandShell = shellDialectOf(shellForm);
         // F4 (Rule 54): the mounts this app-server loads, read from the Codex
         // home in effect for the spawn. A config.toml that cannot be read
         // leaves the list unstated, so no MCP ask on this turn is proven.
@@ -995,9 +999,9 @@ export const CodexDriver: ProviderDriver<CodexConfig> = {
           await hookGate.listen();
         }
         const hookFiles = gated && hookGate ? writeHookFiles(scopedHome!, hookGate.path, hookToken) : null;
-        // Windows: the hooks.json command is `%MURAGE_CODEX_HOOK%` (codex-hook.ts); the launch line it expands to rides in this
-        // process's environment, which Codex hands each hook it runs.
-        if (hookFiles && !reuse && process.platform === "win32") env[CODEX_HOOK_LAUNCH_ENV] = hookLaunchLine(process.execPath, hookFiles.script);
+        // Windows: the hooks.json command is `<system cmd.exe> /d /v:off /c %MURAGE_CODEX_HOOK%` (codex-hook.ts), the same in cmd and
+        // PowerShell; the launch line it expands to rides in this process's environment, which Codex hands each hook it runs.
+        if (hookFiles && !reuse && process.platform === "win32") env[CODEX_HOOK_LAUNCH_ENV] = hookWindowsLaunchValue(process.execPath, hookFiles.script);
         // the process's SessionStart proof, kept with it between turns
         const proof: HookProof | undefined = reuse?.proof ?? (gated ? new HookProof(hookConfigOf(scopedHome!)) : undefined);
         // On a home the launcher stages only the rollout this process will thread/resume (its
@@ -1320,6 +1324,7 @@ export const CodexDriver: ProviderDriver<CodexConfig> = {
             toolEngine: "codex" as const,
             ...(mcpMountRecords ? { mcpMounts: mcpMountRecords } : {}),
             ...(route.toolInputMissing ? { toolInputMissing: route.toolInputMissing } : {}),
+            ...(commandShell ? { commandShell } : {}),
             ...(execEnv ? { execEnv } : {}),
             requestType: "permission",
             tool: route.tool,
@@ -1537,6 +1542,7 @@ export const CodexDriver: ProviderDriver<CodexConfig> = {
           toolEngine: "codex" as const,
           ...(mcpMountRecords ? { mcpMounts: mcpMountRecords } : {}),
           ...(inputMissing ? { toolInputMissing: inputMissing } : {}),
+          ...(commandShell ? { commandShell } : {}),
           ...(execEnv ? { execEnv } : {}),
           requestType: questions ? "question" : "permission",
           tool,

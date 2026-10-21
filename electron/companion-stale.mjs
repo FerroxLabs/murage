@@ -171,9 +171,14 @@ export function procListeningPids(port, procfs = {
 export async function listeningPid(port, platform = process.platform, runCommand = run, procfs = undefined) {
   const pids = new Set();
   if (platform === "win32") {
-    const out = await runCommand("powershell.exe", ["-NoProfile", "-NonInteractive", "-Command",
-      `Get-NetTCPConnection -LocalPort ${Number(port)} -State Listen -ErrorAction SilentlyContinue | Select-Object -ExpandProperty OwningProcess`]);
-    for (const line of out.split(/\r?\n/)) if (/^\d+$/.test(line.trim())) pids.add(Number(line.trim()));
+    // netstat.exe is a plain program: a listening socket is the row whose foreign address is port 0 (the state word is translated
+    // on a non-English Windows, so it is not read). Local address ends in :<port>, the last column is the owning pid.
+    const system = process.env.SystemRoot ?? process.env.windir ?? "C:\\Windows";
+    const out = await runCommand(`${system}\\System32\\netstat.exe`, ["-ano", "-p", "tcp"]);
+    for (const line of out.split(/\r?\n/)) {
+      const fields = line.trim().split(/\s+/);
+      if (fields.length >= 5 && /^TCP$/i.test(fields[0]) && /:0$/.test(fields[2]) && fields[1].endsWith(`:${Number(port)}`) && /^\d+$/.test(fields.at(-1))) pids.add(Number(fields.at(-1)));
+    }
   } else {
     const out = await runCommand("lsof", ["-nP", `-tiTCP:${Number(port)}`, "-sTCP:LISTEN"]);
     for (const line of out.split(/\n/)) if (/^\d+$/.test(line.trim())) pids.add(Number(line.trim()));

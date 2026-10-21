@@ -29,7 +29,7 @@ import { ERROR_MESSAGE_MAX, ENGINE_ERROR_CATEGORIES } from "../../../shared/prov
 import { GrokAgentDriver } from "./grok.ts";
 import { FuigoAgentDriver } from "./fuigo.ts";
 import { GeminiAgentDriver } from "./gemini.ts";
-import { KimiAgentDriver } from "./kimi.ts";
+import { KimiAgentDriver, KIMI_LOGIN_NOTE } from "./kimi.ts";
 import { DroidAgentDriver } from "./droid.ts";
 import { CursorAgentDriver } from "./cursor.ts";
 import { removeTempDir } from "../../testing/cleanup.ts";
@@ -157,7 +157,11 @@ describe("ACP decodeConfig", () => {
       linux: expect.stringContaining("install.sh"),
       win32: expect.stringContaining("install.ps1"),
     });
-    expect(KimiAgentDriver.install?.signInCommand).toBe("kimi login");
+    expect(KimiAgentDriver.install?.signInCommand).toBe("kimi login --region global");
+    for (const cmd of ["Outside mainland China: kimi login --region global", "Mainland China: kimi login --region mainland-cn"]) {
+      expect(KIMI_LOGIN_NOTE).toContain(cmd);
+    }
+    expect(KIMI_LOGIN_NOTE).not.toContain("—");
   });
   it("droid defaults to the droid binary and declares cross-platform setup", () => {
     expect(DroidAgentDriver.decodeConfig(undefined)).toEqual({ cli: "droid", fullAuto: false, workspace: undefined });

@@ -11,8 +11,8 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
 import {
   CODEX_FLOORS, CODEX_GATE_MIN, CODEX_HOOK_SCRIPT, CODEX_LOCAL_ORDINARY, CODEX_SHELL_FORM_FEATURES, CODEX_UNTRUSTED_RETIRED_MIN,
-  CODEX_HOOK_LAUNCH_ENV, CODEX_HOOK_WINDOWS_COMMAND, CodexHookGate, HOOK_ASK_BOUND_MS, HOOK_SCRIPT_DEADLINE_MS, HOOK_TIMEOUT_SEC, HookDecisionTable, codexGatePlan, codexHooksJson, codexShellFormArgs,
-  hookConfigOf, hookLaunchLine, hookSocketPath, parseApplyPatch, routeDelivery, stripOwnerHooks, tripwireLine, trustHooks, writeHookFiles,
+  CODEX_HOOK_LAUNCH_ENV, CodexHookGate, HOOK_ASK_BOUND_MS, HOOK_SCRIPT_DEADLINE_MS, HOOK_TIMEOUT_SEC, HookDecisionTable, codexGatePlan, codexHooksJson, codexShellFormArgs,
+  codexHookWindowsCommand, hookConfigOf, hookLaunchLine, hookSocketPath, hookWindowsLaunchValue, windowsCmdPath, parseApplyPatch, routeDelivery, stripOwnerHooks, tripwireLine, trustHooks, writeHookFiles,
   type HookAnswer, type HookDelivery, type RouteContext,
 } from "./codex-hook.ts";
 import { codexTurnPolicy } from "./codex-isolation.ts";
@@ -84,11 +84,10 @@ describe("T100a: what Murage writes into the scoped home", () => {
       const handler = json.hooks[event][0].hooks[0];
       expect(handler.type).toBe("command");
       expect(handler.command).toBe(`"/usr/bin/node" "${files.script}"`);
-      // Windows: cmd.exe /C drops a command whose quoted paths Codex escapes (rig, Codex 0.153.3: "hook exited with code 1"), so the
-      // Windows command names no path and no quote; the launch line rides in the app-server's environment and cmd expands it.
-      expect(handler.command_windows).toBe(CODEX_HOOK_WINDOWS_COMMAND);
-      expect(handler.command_windows).toBe(`%${CODEX_HOOK_LAUNCH_ENV}%`);
-      expect(handler.command_windows).not.toMatch(/["\s]/);
+      // Windows: the command names no quote and no spaced path (Codex escapes inner quotes, rig 0.153.3) and reads the same in cmd and
+      // PowerShell (F3: Codex 0.163.0 runs it under `powershell -NoProfile -Command`); the launch line rides in the environment.
+      expect(handler.command_windows).toBe(codexHookWindowsCommand());
+      expect(handler.command_windows).not.toMatch(/"/);
       expect(handler.timeout).toBe(HOOK_TIMEOUT_SEC);
     }
     expect(HOOK_TIMEOUT_SEC).toBe(Math.ceil(HOOK_ASK_BOUND_MS / 1000) + 30);
@@ -108,7 +107,40 @@ describe("T100a: what Murage writes into the scoped home", () => {
     expect(hookConfigOf(home, "/usr/bin/node")).not.toBe(hookConfigOf(home, "/opt/node/bin/node"));
   });
 
-  it.runIf(process.platform === "win32")("runs the Windows command under cmd.exe /C both ways Codex quotes it, from a node path with a space", async () => {
+  // F3 (1.0.3 Windows gate): Codex picks the hook's shell (PowerShell `-NoProfile -Command`, cmd `/c`, or `%COMSPEC% /C "<command>"`;
+  // codex-rs hooks/src/engine/command_runner.rs build_command). A string is shell-independent when its program is a bare absolute path
+  // (no space, quote or variable: both shells run it the same way) and its arguments hold nothing special to PowerShell's argument
+  // mode or to cmd outside quotes, except the one launch variable, which PowerShell passes on unread and the inner cmd expands.
+  const shellIndependent = (command: string): boolean => {
+    const [program, ...args] = command.split(" ");
+    if (!program || !/^[A-Za-z]:\\[A-Za-z0-9_.\\-]+\.exe$/i.test(program)) return false;
+    const launch = `%${CODEX_HOOK_LAUNCH_ENV}%`;
+    if (!args.every((arg) => arg === launch || /^[A-Za-z0-9_/:.\\-]+$/.test(arg))) return false;
+    // the variable is read by an explicit inner cmd (`/c` right before it), never by whichever shell Codex picked
+    return /\\cmd\.exe$/i.test(program) && args.at(-1) === launch && args.at(-2)?.toLowerCase() === "/c" && args.includes("/d");
+  };
+
+  it("hands Codex a Windows hook command that means the same in cmd and in PowerShell (F3)", () => {
+    // the 1.0.3-rc command: cmd expanded it, PowerShell ran `%` (ForEach-Object) and the hook never started
+    expect(shellIndependent(`%${CODEX_HOOK_LAUNCH_ENV}%`)).toBe(false);
+    expect(shellIndependent(`& "C:\\Program Files\\nodejs\\node.exe" "x.mjs"`)).toBe(false);
+    expect(shellIndependent(`"C:\\Program Files\\nodejs\\node.exe" "x.mjs"`)).toBe(false);
+    const written = JSON.parse(codexHooksJson("C:\\Users\\Jo Smith\\node.exe", "C:\\Users\\Jo Smith\\scope\\murage-hook.mjs")).hooks;
+    for (const event of ["PreToolUse", "SessionStart"]) expect(shellIndependent(written[event][0].hooks[0].command_windows)).toBe(true);
+    expect(codexHookWindowsCommand("D:\\WINNT")).toBe(`D:\\WINNT\\System32\\cmd.exe /d /v:off /c %${CODEX_HOOK_LAUNCH_ENV}%`);
+    // a system folder that is not a plain path never reaches the command
+    for (const odd of ["C:\\Win dows", "C:\\W\"in", "%SystemRoot%", "C:\\$x", "relative", ""]) {
+      expect(windowsCmdPath(odd)).toBe("C:\\Windows\\System32\\cmd.exe");
+      expect(shellIndependent(codexHookWindowsCommand(odd))).toBe(true);
+    }
+    // the launch line never starts with a quote, so the inner cmd's /c rule cannot strip its first and last quote when an outer cmd
+    // expanded the variable first
+    const value = hookWindowsLaunchValue("C:\\Program Files\\nodejs\\node.exe", "C:\\Users\\Jo Smith\\scope\\murage-hook.mjs");
+    expect(value).toBe(`@"C:\\Program Files\\nodejs\\node.exe" "C:\\Users\\Jo Smith\\scope\\murage-hook.mjs"`);
+    expect(value.startsWith("\"")).toBe(false);
+  });
+
+  it.runIf(process.platform === "win32")("runs the Windows command under cmd.exe /C both ways Codex quotes it and under PowerShell -NoProfile -Command, from a node path with a space", async () => {
     const home = join(dir, "scope win");
     const gate = new CodexHookGate(hookSocketPath());
     await gate.listen();
@@ -117,17 +149,19 @@ describe("T100a: what Murage writes into the scoped home", () => {
       const sessions: string[] = [];
       gate.arm({ token: "win-token", onSession: (id) => { sessions.push(id); }, onPreTool: async () => ({ decision: "allow" }) });
       const command = JSON.parse(readFileSync(files.hooksJson, "utf8")).hooks.SessionStart[0].hooks[0].command_windows as string;
-      const env = { ...process.env, [CODEX_HOOK_LAUNCH_ENV]: hookLaunchLine(process.execPath, files.script) };
+      const env = { ...process.env, [CODEX_HOOK_LAUNCH_ENV]: hookWindowsLaunchValue(process.execPath, files.script) };
       const comspec = process.env.COMSPEC ?? "cmd.exe";
-      const runCmd = (args: string[], verbatim: boolean, id: string) => new Promise<number | null>((resolve) => {
-        const child = spawn(comspec, args, { env, windowsVerbatimArguments: verbatim, stdio: ["pipe", "ignore", "ignore"] });
+      const runCmd = (args: string[], verbatim: boolean, id: string, program = comspec) => new Promise<number | null>((resolve) => {
+        const child = spawn(program, args, { env, windowsVerbatimArguments: verbatim, stdio: ["pipe", "ignore", "ignore"] });
         child.on("close", (code) => resolve(code));
         child.stdin.end(JSON.stringify({ hook_event_name: "SessionStart", session_id: id, source: "startup" }));
       });
       // Codex 0.153.3 (std arg escaping) and the raw `"<command>"` form of later builds
       expect(await runCmd(["/C", command], false, "escaped")).toBe(0);
       expect(await runCmd(["/C", `"${command}"`], true, "raw")).toBe(0);
-      expect(sessions).toEqual(["escaped", "raw"]);
+      // Codex 0.163.0 with PowerShell as the user shell (F3)
+      expect(await runCmd(["-NoProfile", "-Command", command], false, "powershell", "powershell.exe")).toBe(0);
+      expect(sessions).toEqual(["escaped", "raw", "powershell"]);
     } finally { gate.close(); }
   });
 

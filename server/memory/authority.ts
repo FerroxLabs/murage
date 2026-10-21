@@ -13,6 +13,7 @@ import { assertMemoryAccess, type MemoryAccess } from "./policy.ts";
 import { enqueueProcedureCorrectionReview } from "./procedure-review.ts";
 import { isPipKind } from "./pip-kinds.ts";
 import { revokeAllDisclosures, revokeRecordDisclosures } from "./revocation.ts";
+import { inheritEdge, inheritEdges } from "./revoke-commit.ts";
 
 const ownerTickets = new WeakSet<object>();
 /** Mint only after the HTTP desktop-authority check; not exposed as an agent tool. */
@@ -80,7 +81,7 @@ function saveCandidate(text: string, evidence: MemoryEvidenceHandle[], key: stri
       return id;
     }
     db.prepare("INSERT INTO memory_records VALUES(?,1,?,'fact',?,'assistant-inference','candidate',0,?,NULL,NULL,?)").run(id,scope,safeText,Date.now(),Date.now());
-    for (const h of evidence) db.prepare("INSERT INTO memory_evidence VALUES(?,1,?,?,?,?)").run(id,h.sourceId,h.revision,h.startByte,h.endByte);
+    for (const h of evidence) { db.prepare("INSERT INTO memory_evidence VALUES(?,1,?,?,?,?)").run(id,h.sourceId,h.revision,h.startByte,h.endByte); inheritEdge(db,{kind:"record",id,version:1},{kind:"source",id:h.sourceId}); }
     if (!candidateScope) activateGroundedMemory(db,id,claimType);
     return id;
   });
@@ -139,7 +140,7 @@ export async function saveGroundedMemory(text:string,evidence:MemoryEvidenceHand
       if(!current||db.prepare("SELECT 1 FROM memory_tombstones WHERE target_type='source' AND target_id=? AND (revision IS NULL OR revision=?)").get(ownerInvitation.sourceId,ownerInvitation.revision))throw new Error("MEMORY_INVITATION_UNAVAILABLE");
     }
     const activated=activateGroundedMemory(db,id,claimType,support?{...support,ownerInvitation:invitation,ownerInvitationSourceId:ownerInvitation?.sourceId}:undefined,{botId:access.botId,connection:extractor?.learningConnection,reviewOnly:needsGrounding&&extractor?.reviewOnly});
-    if(activated&&ownerInvitation)db.prepare("INSERT OR IGNORE INTO memory_evidence VALUES(?,1,?,?,?,?)").run(id,ownerInvitation.sourceId,ownerInvitation.revision,ownerInvitation.startByte,ownerInvitation.endByte);
+    if(activated&&ownerInvitation){db.prepare("INSERT OR IGNORE INTO memory_evidence VALUES(?,1,?,?,?,?)").run(id,ownerInvitation.sourceId,ownerInvitation.revision,ownerInvitation.startByte,ownerInvitation.endByte);inheritEdge(db,{kind:"record",id,version:1},{kind:"source",id:ownerInvitation.sourceId});}
     if(!activated&&support&&!db.prepare("SELECT 1 FROM memory_record_details WHERE record_id=? AND confidence_basis IS NOT NULL").get(id))db.prepare("UPDATE memory_record_details SET confidence_basis=? WHERE record_id=? AND record_version=1 AND claim_status='provisional'").run(support.reason,id);
     return id;
   });
@@ -236,6 +237,7 @@ export function approveMemory(ticket: object, id: string, version: number, optio
       const copy = randomUUID();
       db.prepare("INSERT INTO memory_records VALUES(?,1,?,?,?,'owner-statement','active',?,?,NULL,NULL,?)").run(copy,options.scopeId,record.kind,record.text,options.pin?1:0,Date.now(),Date.now());
       db.prepare("INSERT INTO memory_derivations VALUES(?,?,?,1)").run(id,version,copy);
+      inheritEdge(db,{kind:"record",id:copy,version:1},{kind:"record",id,version});
       return copy;
     }
     db.prepare("UPDATE memory_records SET state='active',owner_pinned=? WHERE id=? AND version=?").run(options.pin?1:0,id,version);
@@ -260,16 +262,19 @@ export function correctMemory(ticket: object, id: string, version: number, text:
         .run(id,next,row.scope_id,row.kind,redactSecretsInText(text),Date.now(),row.supersedes_id,Date.now());
       db.prepare("INSERT INTO memory_evidence SELECT record_id,?,source_id,source_revision,start_byte,end_byte FROM memory_evidence WHERE record_id=? AND record_version=?").run(next,id,version);
       db.prepare("INSERT INTO memory_derivations SELECT parent_id,parent_version,child_id,? FROM memory_derivations WHERE child_id=? AND child_version=?").run(next,id,version);
+      inheritEdges(db,{id,version:next});
       const edited=db.prepare("SELECT * FROM memory_records WHERE id=? AND version=?").get(id,next)!;
       approveCorrection(db,edited,correction,options);
       db.prepare("UPDATE memory_records SET state='superseded',valid_to=? WHERE id=? AND version=?").run(Date.now(),id,version);
       db.prepare("INSERT INTO memory_derivations VALUES(?,?,?,?)").run(id,version,id,next);
+      inheritEdge(db,{kind:"record",id,version:next},{kind:"record",id,version});
       return next;
     }else if(options.correctionPin!==undefined)throw new Error("MEMORY_CORRECTION_PIN_CHOICE_INVALID");
     db.prepare("UPDATE memory_records SET state='superseded',valid_to=? WHERE id=? AND version=?").run(Date.now(),id,version);
     db.prepare("INSERT INTO memory_records VALUES(?,?,?,?,?,'owner-statement','active',?,?,NULL,?,?)")
       .run(id,version+1,row.scope_id,row.kind,redactSecretsInText(text),row.owner_pinned,Date.now(),id,Date.now());
     db.prepare("INSERT INTO memory_derivations VALUES(?,?,?,?)").run(id,version,id,version+1);
+    inheritEdge(db,{kind:"record",id,version:version+1},{kind:"record",id,version});
     db.exec("UPDATE memory_meta SET data_revision=data_revision+1 WHERE id=1");
     revokeRecordDisclosures(db,"correct",{recordIds:[id]});
     enqueueProcedureCorrectionReview(db,id,version+1,{ownerAuthorized:true});
