@@ -379,14 +379,35 @@
  },
  {
   "file": "server/browser-native-relay.ts",
-  "function": "close",
+  "function": "daemonStartCheck",
   "callee": "readFileSync",
   "root": "browser",
-  "count": 2
+  "count": 1
  },
  {
   "file": "server/browser-native-relay.ts",
-  "function": "command",
+  "function": "endpoint",
+  "callee": "readFileSync",
+  "root": "browser",
+  "count": 1
+ },
+ {
+  "file": "server/browser-native-relay.ts",
+  "function": "run",
+  "callee": "readFileSync",
+  "root": "browser",
+  "count": 1
+ },
+ {
+  "file": "server/browser-native-relay.ts",
+  "function": "sessionPid",
+  "callee": "readFileSync",
+  "root": "browser",
+  "count": 1
+ },
+ {
+  "file": "server/browser-restore-store.ts",
+  "function": "readJson",
   "callee": "readFileSync",
   "root": "browser",
   "count": 1
@@ -397,6 +418,13 @@
   "callee": "readFileSync",
   "root": "browser",
   "count": 2
+ },
+ {
+  "file": "server/browser-sandbox.ts",
+  "function": "readKernelSetting",
+  "callee": "readFileSync",
+  "root": "browser",
+  "count": 1
  },
  {
   "file": "server/calendar-calls.ts",

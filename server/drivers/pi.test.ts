@@ -1535,6 +1535,12 @@ describe("piGateAsk", () => {
       tool: "Write", summary: "Write /Users/owner/notes.md", toolCall: { name: "write", input }, gateInput: input, filePaths: ["/Users/owner/notes.md"],
     });
   });
+  it("1.0.4 09-1: the gate's key-file verdict rides on the ask; nothing else adds one", () => {
+    const input = { path: "config-link" };
+    expect(piGateAsk(JSON.stringify({ tool: "read", input, sensitive: "credential-files" }))).toMatchObject({ tool: "read", localHold: "credential-files" });
+    expect(piGateAsk(JSON.stringify({ tool: "read", input }))).not.toHaveProperty("localHold");
+    expect(piGateAsk(JSON.stringify({ tool: "read", input, sensitive: 5 }))).not.toHaveProperty("localHold");
+  });
   it("T12: a mounted tool is an mcp identity resolved by exact engineName, whatever its suffixed piName", () => {
     const tools = [{ tool_slug: "GMAIL_SEND_EMAIL", arguments: { recipient_email: "new@example.com" } }];
     const ask = piGateAsk(mcp("murage_connectors_apps_multi_execute_tool_2", "murage_connectors", "APPS_MULTI_EXECUTE_TOOL", { input: { tools } }), records);

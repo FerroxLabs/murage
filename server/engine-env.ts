@@ -191,6 +191,9 @@ function checkExecEnv(at: number, session: string, shell: readonly string[], han
     if (!program) return resolve({ ok: false, why: "no shell form" });
     // A Cloud home's launcher builds the engine's environment itself (pinned names win, others dropped) and runs only
     // manifest engines, so the server cannot run the pinned form there: the record is U20, never the hand read as checked.
+    // The check's script is a POSIX one (`env -0; printf; pwd`). PowerShell, the Windows shell form, cannot run it, so starting it only
+    // ever produced the same U20 after a hidden PowerShell start (murage-releases #1): the record is U20 without starting anything.
+    if (/(?:^|[\\/])(?:powershell|pwsh)(?:\.exe)?$/i.test(program)) return resolve({ ok: false, why: "the shell form is PowerShell, which the environment check cannot read" });
     if (process.env.MURAGE_CLOUD_ROLE === "home") return resolve({ ok: false, why: "a Cloud home's launcher sets the engine's environment" });
     // Through the shared launcher (Rule 74c): the engine's shell form runs with no controlling terminal.
     execCli(program, [...args, "env -0; printf '\\0'; pwd"], { env: handed.env, cwd, timeout: CHECK_MS, maxBuffer: CHECK_BYTES }, (error, stdout) => {
@@ -231,9 +234,11 @@ export async function execEnvNow(session: string, shell: readonly string[], hand
   return execEnvOf(handed, cwd, shell, { ok: false, why: CHANGED_WHILE_CHECKED });
 }
 
-/** The F12 record of an ask that runs no command: the handed map, unchecked. */
-export function execEnvHanded(handed: HandedEnv, cwd: string, shell: readonly string[]): ExecEnv {
-  return execEnvOf(handed, cwd, shell);
+/** The F12 record of an ask that runs no command: the handed map, unchecked. A Claude PowerShell command on the inherit path
+ *  (WIN-NOBASH-DESIGN-r2 3.5) opens with this too, carrying `provenance`: informational, read by no verdict, so its prompts
+ *  are those of a Bash command whose check passed with nothing removed (never U20). */
+export function execEnvHanded(handed: HandedEnv, cwd: string, shell: readonly string[], info: Pick<ExecEnv, "provenance" | "managedEnv"> = {}): ExecEnv {
+  return { ...execEnvOf(handed, cwd, shell), ...(info.provenance ? { provenance: info.provenance } : {}), ...(info.managedEnv?.length ? { managedEnv: info.managedEnv } : {}) };
 }
 
 /** The names a driver's own sanitizing decides for a turn (its routing, credential and account names) belong to the turn,

@@ -9,6 +9,7 @@ import { groundMemoryClaim, type TextOnlyExtractor } from "./extract.ts";
 import { readMemoryLearning } from "./learning-policy.ts";
 import type { MemoryRoster } from "./policy.ts";
 import { revokeRecordDisclosures } from "./revocation.ts";
+import { inheritEdge } from "./revoke-commit.ts";
 
 type Receipt={cursor:string;status:"pending"|"complete";retryAt:number;reason?:string;attempts?:number};
 /** A minute, doubling while the SAME reason keeps coming back, up to an hour.
@@ -303,7 +304,9 @@ export async function captureBotReveals(jobId:string,roster:()=>MemoryRoster,ext
         db.prepare("UPDATE memory_record_details SET partition='identity',attention='current',confidence_basis=?,entities=? WHERE record_id=? AND record_version=?")
           .run(`Observed terminal disclosure (${support.reason}); fictional continuity only, not world truth`,JSON.stringify(["owner-private",canon.id]),id,version);
         db.prepare("INSERT INTO memory_derivations VALUES(?,?,?,?)").run(canon.id,canon.version,id,version);
+        inheritEdge(db,{kind:"record",id,version},{kind:"record",id:String(canon.id),version:Number(canon.version)});
         db.prepare("INSERT INTO memory_evidence VALUES(?,?,?,?,0,?)").run(id,version,current.source.id,current.source.revision,Buffer.byteLength(current.text));
+        inheritEdge(db,{kind:"record",id,version},{kind:"source",id:String(current.source.id)});
         db.prepare("INSERT INTO memory_projection_receipts VALUES(?,?,0,'pending','pending',NULL)").run(id,version);
         db.exec("UPDATE memory_meta SET data_revision=data_revision+1");
         revokeRecordDisclosures(db,"reveal-capture",{recordIds:[id],viaSources:false});

@@ -44,8 +44,10 @@ export function promptVerdict(text: string, facts: PromptFacts | undefined): Pro
  *  body, a substitution), that sets a PIN_NAMES name to anything but the hand's pin or carries a listed option. `pins` is
  *  the requesting engine's handed pin map. Returns pinOverride's reason, or null. It never reads what it cannot split: the
  *  prompt reader holds that text on its own. */
-export function pinOverrideIn(text: string, pins: ReadonlyMap<string, string>): string | null {
-  return pinTouch(text, pins) ?? judgeText(text, { pins }, false, 0)?.note ?? null;
+export function pinOverrideIn(text: string, pins: ReadonlyMap<string, string>, shell?: "pwsh"): string | null {
+  // Section 11 D2: a PowerShell command (Claude's PowerShell tool, Codex and ACP commands under `powershell.exe -Command`) is
+  // read with PowerShell's own spellings first, then as every command is
+  return (shell === "pwsh" ? pwshPinTouch(text) : null) ?? pinTouch(text, pins) ?? judgeText(text, { pins }, false, 0)?.note ?? null;
 }
 
 /** The pin mode of the reader: judges only Rule 68f case 1, never a prompt row. */
@@ -460,6 +462,117 @@ const ENV_KEEPING_LONG_PREFIX = ["--chdir=", "--ignore-signal", "--default-signa
 const firstName = (text: string): string | undefined => new RegExp(PINNED_NAME.source).exec(text)?.[0];
 const named = (name: string) => `${name} is set, removed or named on this line, so Murage's pin may not hold`;
 const cleared = (form: string) => `${form} changes the environment the command inherits, so Murage's pin may not hold`;
+
+// ---- section 11 D2: PowerShell's spellings of setting, removing or naming an environment variable -----------------------------
+// MurageMain's ruling (2026-10-21): PowerShell's semantics are not modelled. A command that mentions the env: provider
+// (`env:`, `$env:`, `${env:}`, `Environment::`), `[Environment]`/`[System.Environment]` with a variable-name method, or
+// SetEnvironmentVariable, whose variable name is not a plain static literal, holds (U19 class, every level): a name with `$`, a
+// backtick, a subexpression, quote concatenation, a wildcard (`*`, `?`, `[`) or splatting is never resolved. Only a fully
+// static literal name is read, and it holds when it is pinned. A benign static name (`$env:FOO=1`) and a read of the whole
+// drive (`Get-ChildItem env:`) do not hold; the bare drive handed to a cmdlet that writes does.
+
+/** Cmdlets and their aliases that write, remove, rename or copy an item, its content, a property or a variable. */
+const PWSH_WRITER = /(?<![\w-])(?:new-item|ni|set-item|si|remove-item|ri|rm|rmdir|rd|del|erase|clear-item|cli|rename-item|rni|ren|move-item|mi|move|mv|copy-item|cpi|copy|cp|set-content|sc|add-content|ac|clear-content|clc|set-itemproperty|sp|new-itemproperty|remove-itemproperty|rp|clear-itemproperty|clp|rename-itemproperty|rnp|copy-itemproperty|cpp|move-itemproperty|mp)(?![\w-])/i;
+const PINNED_UPPER = new Set(PINNED_NAMES.map((name) => name.toUpperCase()));
+const pinnedAnyCase = (name: string): string | undefined => {
+  const upper = name.toUpperCase();
+  return PINNED_UPPER.has(upper) ? PINNED_NAMES.find((pin) => pin.toUpperCase() === upper) : upper.startsWith("GIT_CONFIG") ? upper : undefined;
+};
+const unclear = (form: string) => `${form} could not be read with certainty, so Murage's pin may not hold`;
+
+/** U19 for a PowerShell line, or null. The line is read as written and with its backtick escapes taken away (`P`A`GER`
+ * outside a name is PAGER); a hold in either reading holds. */
+function pwshPinTouch(text: string): string | null {
+  const plain = text.replace(/`([^\r\n])/g, "$1");
+  for (const line of plain === text ? [text] : [text, plain]) {
+    const found = providerPathTouch(line) ?? envDriveTouch(line) ?? environmentMethodTouch(line);
+    if (found) return found;
+  }
+  return null;
+}
+
+/** The provider-qualified spelling of the drive (`Environment::PAGER`, `Microsoft.PowerShell.Core\Environment::PAGER`) is
+ * never resolved. `[Environment]::` (the .NET class) is environmentMethodTouch's. */
+function providerPathTouch(text: string): string | null {
+  return /(?<![\]\w])environment::/i.test(text) ? unclear("the Environment provider path") : null;
+}
+
+/** Whether the text after a static name ends that name: in a variable (`$env:NAME`) an operator, a member access or a closing
+ * mark or a path separator; in a path (`env:NAME`) only whitespace, a closing mark or a closing quote that no `+` follows. */
+function staticNameEnd(after: string, variable: boolean): boolean {
+  if (after === "") return true;
+  const c = after.charAt(0);
+  if (/[\s;|),}]/.test(c)) return true;
+  // a closing quote ends the name only when the word ends with it (`env:pa"ger"` is one word, PAGER)
+  if (PWSH_QUOTE.test(c)) return /^.(?:$|[\s;|),}\].])/.test(after) && !/^.\s*\+/.test(after);
+  return variable && /[=.+\-*/%[\]\\]/.test(c);
+}
+
+/** PowerShell's quote characters (its typographic ones included). */
+const PWSH_QUOTE = /['"\u2018\u2019\u201A\u201B\u201C\u201D\u201E]/;
+const PWSH_QUOTES = /['"\u2018\u2019\u201A\u201B\u201C\u201D\u201E]/g;
+const PINNED_ANY_CASE = new RegExp(`(?<![A-Za-z0-9_])(?:${PINNED_ALTERNATION})(?![A-Za-z0-9_])`, "i");
+
+/** 14.2 #2: an env: path's word (up to whitespace, a separator, or the quote that closes it) holds when a quote or a caret
+ * escape stands anywhere in it, and when any case variant of a pinned name stands in it, quotes and escapes read away. */
+function envPathWordTouch(word: string): string | null {
+  const close = /['"\u2018\u2019\u201A\u201B\u201C\u201D\u201E](?:$|[\s)}\];,.|])/.exec(word);
+  const body = close ? word.slice(0, close.index) : word;
+  if (PWSH_QUOTE.test(body) || body.includes("^")) return unclear(`env:${body}`);
+  const hit = PINNED_ANY_CASE.exec(body.replace(PWSH_QUOTES, "").replace(/[\^`]/g, ""));
+  return hit ? named(pinnedAnyCase(hit[0]) ?? hit[0]) : null;
+}
+
+function envDriveTouch(text: string): string | null {
+  const writes = PWSH_WRITER.test(text);
+  for (const match of text.matchAll(/(?<![A-Za-z0-9_])env:/gi)) {
+    const start = match.index!;
+    const braced = text.slice(Math.max(0, start - 2), start) === "${";
+    const variable = braced || text.charAt(start - 1) === "$";
+    let at = start + match[0].length;
+    if (!variable && /[\\/]/.test(text.charAt(at))) at += 1;
+    if (!variable) {
+      const word = envPathWordTouch(/^[^\s;|,]*/.exec(text.slice(at))![0]);
+      if (word) return word;
+    }
+    const name = /^[A-Za-z0-9_]*/.exec(text.slice(at))![0];
+    const after = text.slice(at + name.length);
+    if (braced) {
+      if (after.charAt(0) !== "}") return unclear("${env:");
+    } else if (!staticNameEnd(after, variable)) {
+      return unclear(`env:${name}${after.charAt(0)}`);
+    }
+    if (!name) {
+      // the drive itself: a read of it is benign, a cmdlet that writes given it is not
+      if (variable || writes) return cleared("a cmdlet that writes, given the env: drive");
+      continue;
+    }
+    const pinned = pinnedAnyCase(name);
+    if (pinned) return named(pinned);
+  }
+  return null;
+}
+
+/** `[Environment]::SetEnvironmentVariable(...)` (and Get, and any spelling that names SetEnvironmentVariable): the first
+ * argument must be a plain quoted literal; a pinned one holds a setter. */
+function environmentMethodTouch(text: string): string | null {
+  for (const match of text.matchAll(/(set|get)environmentvariables?\b/gi)) {
+    const setter = match[1]!.toLowerCase() === "set";
+    const after = text.slice(match.index! + match[0].length);
+    if (!setter && /s$/i.test(match[0])) continue; // GetEnvironmentVariables(): the whole block, read
+    const literal = /^\s*\(\s*(['"])([A-Za-z0-9_]+)\1\s*[,)]/.exec(after);
+    if (!literal) {
+      if (setter) return unclear("SetEnvironmentVariable with a name that is not a plain literal");
+      if (/^\s*\(\s*\)/.test(after)) continue;
+      return unclear("GetEnvironmentVariable with a name that is not a plain literal");
+    }
+    if (setter) {
+      const pinned = pinnedAnyCase(literal[2]!);
+      if (pinned) return named(pinned);
+    }
+  }
+  return null;
+}
 
 /** A parameter expansion that assigns a pinned name (`${NAME=x}`, `${NAME:=x}`), wherever it stands. */
 const ASSIGNING_EXPANSION = new RegExp(`\\$\\{(${PINNED_ALTERNATION})(?![A-Za-z0-9_]):?=`);

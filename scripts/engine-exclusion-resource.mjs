@@ -75,6 +75,12 @@ export function validateEngineExclusionResource(resources, platform, arch = proc
   return file;
 }
 
+/** Windows: the calls that replaced every PowerShell Murage started itself (murage-releases #1), plus the handle calls. A Windows package
+ * whose addon lacks one is refused (ENGINE_EXCLUSION_RESOURCE_FUNCTIONS): a missing call must fail the build, never degrade the app.
+ * Kept equal to server/engine-exclusion.ts's HANDLE_FUNCTIONS + WINDOWS_NATIVE_FUNCTIONS (engine-exclusion-r20.test.ts). */
+export const WINDOWS_ADDON_FUNCTIONS = ["openFile", "handleRead", "handleWrite", "handleSync", "handleLock", "handleMarkDelete", "handleId", "handleSize", "handleClose", "removeTree",
+  "authenticode", "jobCreate", "jobAssign", "jobClose", "jobStop", "processStart", "driveInfo", "fileOwnerSid", "accountSid", "machineSid", "domainSids", "speechVoices", "speechToWave"];
+
 /** Loads the addon at `file` for real, with the TARGET package's own runtime, and checks that it answers with the version this build
  * expects, offers its functions and lists this very process among the machine's processes (a stub with a valid header cannot). `binary`
  * is the packaged Electron executable, run as Node (ELECTRON_RUN_AS_NODE=1); a macOS package for the other architecture is run through
@@ -83,7 +89,7 @@ export function validateEngineExclusionResource(resources, platform, arch = proc
  * the output; it throws when the process fails. Returns "loaded". Throws ENGINE_EXCLUSION_RESOURCE_UNLOADABLE / _VERSION / _UNTESTED. */
 export function loadEngineExclusionResource(file, platform, arch, expectedVersion, run, binary, host = { platform: process.platform, arch: process.arch }) {
   if (!binary || typeof run !== "function") throw new Error("ENGINE_EXCLUSION_RESOURCE_UNTESTED");
-  const code = "const a=require(process.argv[1]);const l=a.processes();process.stdout.write(JSON.stringify([a.version(),typeof a.processes,typeof a.lock,typeof a.renameNoReplace,Array.isArray(l)&&l.some(p=>p&&p.pid===process.pid)]))";
+  const code = "const a=require(process.argv[1]);const l=a.processes();const w=" + JSON.stringify(platform === "win32" ? WINDOWS_ADDON_FUNCTIONS : []) + ";process.stdout.write(JSON.stringify([a.version(),typeof a.processes,typeof a.lock,typeof a.renameNoReplace,Array.isArray(l)&&l.some(p=>p&&p.pid===process.pid),w.filter(n=>typeof a[n]!==\"function\")]))";
   let command = binary, args = ["-e", code, file];
   if (platform !== host.platform) throw new Error("ENGINE_EXCLUSION_RESOURCE_UNTESTED");
   if (arch !== host.arch) {
@@ -95,5 +101,6 @@ export function loadEngineExclusionResource(file, platform, arch, expectedVersio
   let answer;
   try { answer = JSON.parse(String(out)); } catch { console.error("engine-exclusion answer unreadable:", JSON.stringify(String(out).slice(0, 4000))); throw new Error("ENGINE_EXCLUSION_RESOURCE_UNLOADABLE"); }
   if (answer[0] !== expectedVersion || answer[1] !== "function" || answer[2] !== "function" || answer[3] !== "function" || answer[4] !== true) throw new Error("ENGINE_EXCLUSION_RESOURCE_VERSION");
+  if (platform === "win32" && !(Array.isArray(answer[5]) && answer[5].length === 0)) { console.error("engine-exclusion addon lacks:", JSON.stringify(answer[5])); throw new Error("ENGINE_EXCLUSION_RESOURCE_FUNCTIONS"); }
   return "loaded";
 }

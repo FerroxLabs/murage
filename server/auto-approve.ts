@@ -10,7 +10,7 @@
 // backstop for the obvious catastrophes. Real containment is the
 // sandbox and the bot's own computer, not a regex.
 
-import { sameToolGrant } from "../shared/connected-app-names.ts";
+import { CONNECTED_APPS_SERVER, sameToolGrant } from "../shared/connected-app-names.ts";
 import { actionGrantKey, actionGrantRead, actionGrantSet, commandArgument, placeArgumentScan, resolveCall, type GrantCall } from "../shared/app-action-grant.ts";
 import { isStopLineKey, stopFindings, stopLineKey, stopLineKeyCovers, type StopHit } from "./stop-line.ts";
 import { redactSecretsInText } from "./redact.ts";
@@ -18,7 +18,13 @@ import { alwaysAskCommand, alwaysAskNote, alwaysAskRoutineCommand, type CarvedTa
 import { commandCwdFromToolInput, commandFromToolInput, exactCommandKey, isExactCommandKey, routineExactGrantCovers, type ExactCommand } from "../shared/exact-command.ts";
 import { approvalSummaryIsCut } from "../shared/approval-summary.ts";
 import { SENSITIVE_RULES } from "../shared/sensitive-paths.ts";
+import { globKeyRead } from "../shared/sensitive-globs.ts";
+import { powershellRunner } from "./shell/pwsh.ts";
 import { requiredFields } from "./drivers/contracts.ts";
+import { homedir } from "node:os";
+import { realPathInOrder, type PlaceOptions } from "../shared/in-project.ts";
+import { isOwnRead, isOwnUnasked } from "../shared/own-servers.ts";
+import { APP_LOOKUPS, ownAppTool } from "../shared/app-action-words.ts";
 import { pinOverrideIn, promptVerdict, type PromptFacts } from "../shared/prompt-capable.ts";
 
 /** The plain `rm` rule, the one a delete placed inside the bot's own roots
@@ -28,8 +34,18 @@ const RM_RULE = /\brm\s+(-[a-z]*\s+)*-[a-z]*[rf]/i;
  * kills something is guarded whatever else it deletes. */
 const KILLS = /\b(pkill|killall|kill)\b/;
 
+/** PowerShell's and cmd's `rm -r`/`rm -f` (1.0.4 F1): Remove-Item under any
+ * of its names with `-Recurse` or `-Force` (any prefix PowerShell accepts,
+ * typographic dashes included), and cmd's `rd`/`del` with `/s`. Auto cards it
+ * as it cards `rm -rf`; a delete placed inside the bot's own roots is excused
+ * the same way. */
+const PS_RM_RULE = /(?:^|[\s;|&(){}])(?:remove-item|ri|rm|rmdir|rd|del|erase)(?:\.exe)?\s(?:[^;|&\n]*\s)?(?:[-\u2013\u2014\u2015](?:r(?:e(?:c(?:u(?:r(?:s(?:e)?)?)?)?)?)?|fo(?:r(?:c(?:e)?)?)?)(?=[\s:;|&)]|$)|\/s(?=[\s;|&)]|$))/i;
+/** The delete rules a delete placed inside the bot's own roots is excused from. */
+const EXCUSED_RULES: readonly RegExp[] = [RM_RULE, PS_RM_RULE];
+
 const DESTRUCTIVE = [
   RM_RULE, // rm -rf, rm -fr, rm -r -f
+  PS_RM_RULE, // Remove-Item -Recurse -Force, ri -r -fo, rd /s
   /\bmkfs\b|\bdiskutil\s+erase|\bdd\s+[^|]*\bof=\/dev\//i,
   /\bshutdown\b|\breboot\b|\bhalt\b/i,
   /:\(\)\s*\{.*\}\s*;?\s*:/, // fork bomb
@@ -100,6 +116,20 @@ export function withoutQuestionGrants(keys: string[]): string[] {
   return keys.filter((key) => !isQuestionGrant(key));
 }
 
+/** Is this remembered key a command tool's bare name (`PowerShell`, `Bash`,
+ * `local-computer:PowerShell`)? A command tool's grant is keyed by program
+ * (`PowerShell:git`), so a bare one would be a standing shell. 1.0.3 and
+ * earlier wrote one for PowerShell, which was not read as a command tool:
+ * such a key is dropped at load, refused at the grant routes, and answers
+ * nothing in `autoVerdict` regardless. */
+export function isBareCommandGrant(key: string): boolean {
+  return isCommandTool(key.replace(/^local-computer:/, ""));
+}
+
+export function withoutBareCommandGrants(keys: string[]): string[] {
+  return keys.filter((key) => !isBareCommandGrant(key));
+}
+
 /** First matching pattern's source, so a verdict can NAME the rule that
  * made it — the decision log's whole value is "which rule", and deriving
  * the match a second time at the call site is how the log and the verdict
@@ -130,8 +160,15 @@ export function looksDestructive(text: string): boolean {
  * This narrows remembered permission, not execution: program arguments,
  * config, PATH and env can still change what a program does. Containment
  * remains the sandbox's job, and explicit Auto mode is unchanged. */
-const COMMAND_TOOLS = new Set(["bash", "shell", "execute", "exec_command", "run_command", "computer_exec", "terminal"]);
+const COMMAND_TOOLS = new Set(["bash", "shell", "execute", "exec_command", "run_command", "computer_exec", "terminal", "powershell", "pwsh"]);
+/** Pi's and Claude Code's (on Windows) PowerShell tool, under any spelling. */
+const POWERSHELL_TOOLS = new Set(["powershell", "pwsh"]);
 
+/** PowerShell's runners (launchers, interpreters, keywords and cmdlets that
+ * run what they are handed) are ONE list, server/shell/pwsh.ts
+ * `powershellRunner`: the always-ask reader asks on the ones it does not
+ * model, and none of them gets an "Always allow" key here, so the two cannot
+ * drift. A grant to one would be a grant to whatever it is handed. */
 // A grant to one of these is effectively a grant to a command interpreter
 // or another dispatcher. Do not infer the wrapped program from its arguments.
 const COMMAND_DISPATCHERS = /^(?:sh|bash|zsh|fish|dash|ksh|csh|tcsh|ash|pwsh|powershell|cmd|python(?:\d+(?:\.\d+)*)?|node|nodejs|perl|ruby|php|lua(?:\d+(?:\.\d+)*)?|deno|bun|osascript|eval|exec|source|\.|env|command|builtin|xargs|time|timeout|nohup|nice|doas|su|if|then|else|elif|fi|for|while|until|do|done|case|esac|function|select|coproc)$/i;
@@ -140,13 +177,15 @@ const COMMAND_DISPATCHERS = /^(?:sh|bash|zsh|fish|dash|ksh|csh|tcsh|ash|pwsh|pow
  * Quotes may contain literal operators, but expansion, escaping, redirects,
  * comments and control syntax fail closed. This is deliberately not a shell
  * parser: unsupported forms must ask instead of sharing a first-word grant. */
-function simpleProgram(summary: string): string | undefined {
+function simpleProgram(summary: string, dialect: "posix" | "pwsh" = "posix"): string | undefined {
   if (/[\x00-\x08\x0a-\x1f\x7f]/.test(summary)) return undefined;
+  // PowerShell reads the typographic quotes and dashes as quotes and `-`
+  if (dialect === "pwsh" && /[\u2018-\u201E\u2013-\u2015]/.test(summary)) return undefined;
   // Generic shell tools do not identify their dialect. Windows expands %
   // and ! and uses ^ for escaping, including forms POSIX quotes would hide.
   // Unsupported syntax asks even when those characters might be literal.
   if (/[%^!]/.test(summary)) return undefined;
-  const words: { value: string; assignment: boolean }[] = [];
+  const words: { value: string; assignment: boolean; quoted: boolean }[] = [];
   let i = 0;
   while (i < summary.length) {
     if (summary[i] === " " || summary[i] === "\t") {
@@ -154,6 +193,7 @@ function simpleProgram(summary: string): string | undefined {
       continue;
     }
     const assignment = /^[A-Za-z_][A-Za-z0-9_]*=/.test(summary.slice(i));
+    const quoted = summary[i] === "'" || summary[i] === '"';
     let value = "";
     let quote: "'" | '"' | undefined;
     while (i < summary.length) {
@@ -175,9 +215,13 @@ function simpleProgram(summary: string): string | undefined {
       i += 1;
     }
     if (quote) return undefined;
-    words.push({ value, assignment });
+    words.push({ value, assignment, quoted });
   }
   let next = 0;
+  // PowerShell has no `NAME=value` prefix (that is a program named so) and
+  // no `sudo -n`: the first word is the program, or there is no key.
+  // A quoted name (`"cmd" /c …`) is not a call PowerShell makes as written.
+  if (dialect === "pwsh" && (words[0]?.assignment || words[0]?.quoted || words[0]?.value.toLowerCase() === "sudo")) return undefined;
   // Literal assignments are looked past. `sudo` only in its non-interactive
   // form (`sudo -n <program>`): a bare `sudo` can ask for the owner's
   // password (Rule 68f, prompt-capable), so a `Bash:<program>` grant never
@@ -198,12 +242,28 @@ function simpleProgram(summary: string): string | undefined {
   // into a per-program grant. Keep ordinary keys (e.g. git.exe) unchanged.
   const dispatcher = program.replace(/\.(?:exe|com|cmd|bat)$/i, "");
   if (COMMAND_DISPATCHERS.test(dispatcher) || dispatcher.toLowerCase() === "sudo") return undefined;
+  // a launcher, an interpreter or a runner, under either shell (`wsl`,
+  // `schtasks`, `py`, `ubuntu2204.exe`): no key
+  if (powershellRunner(program) !== undefined) return undefined;
+  // a script or a file by path (`./w.ps1`): the reader asks for it, and it
+  // gets no key
+  if (dialect === "pwsh" && executable.includes("/") && !/\.(exe|com)$/i.test(executable)) return undefined;
   return program;
 }
 
 /** Is this one of the tools that runs a shell command? */
 export function isCommandTool(tool: string): boolean {
-  return COMMAND_TOOLS.has(tool.toLowerCase().replace(/^mcp__.+__/, "").split(".").pop()!);
+  return COMMAND_TOOLS.has(bareToolName(tool));
+}
+
+/** Is this a PowerShell tool? Its command text is PowerShell's, whatever it
+ * starts with, and it is read by the PowerShell readers. */
+export function isPowerShellTool(tool: string): boolean {
+  return POWERSHELL_TOOLS.has(bareToolName(tool));
+}
+
+function bareToolName(tool: string): string {
+  return tool.toLowerCase().replace(/^mcp__.+__/, "").split(".").pop()!;
 }
 
 export function approvalKey(tool: string, summary: string, scope?: "local-computer", call?: GrantCall): string | undefined {
@@ -220,7 +280,7 @@ export function approvalKey(tool: string, summary: string, scope?: "local-comput
   const action = actionGrantKey(tool, call);
   if (action !== undefined) return action === null ? undefined : scope ? `${scope}:${action}` : action;
   if (!isCommandTool(tool)) return scope ? `${scope}:${tool}` : tool;
-  const program = simpleProgram(summary);
+  const program = simpleProgram(summary, isPowerShellTool(tool) || call?.commandShell === "pwsh" ? "pwsh" : "posix");
   if (!program) return undefined;
   const key = `${tool}:${program}`;
   return scope ? `${scope}:${key}` : key;
@@ -335,6 +395,15 @@ export type AutoVerdictSource =
    * (server/own-tool-results.ts). Not a grant and not a mode. */
   | "own-tool-results"
   | "project-work-roots"
+  /** One of Murage's own tools that runs unasked on Claude and Codex
+   * (shared/own-servers.ts OWN_UNASKED), asked for by an ACP engine whose
+   * dispatcher files every MCP call as a permission. A read (OWN_READS, or a
+   * connected-app lookup) is answered at every level, Ask included; any other
+   * row whenever the bot is at Auto, on every turn, unattended ones (a
+   * routine, a webhook, a channel event) included, as Claude and Codex run
+   * them. Only when the grant gate proved the call runs on one of
+   * this turn's own mounts. Its activity row already names it, so it adds no chip. */
+  | "own-unasked"
   /** The stop line (server/stop-line.ts): deleting outside its folder,
    * paying, or messaging someone new. Full access stops here too. */
   | "stop-line"
@@ -416,6 +485,17 @@ export interface AutoContext {
   commandText?: string;
   /** the folder the engine says `commandText` runs in, when it names one */
   commandCwd?: string;
+  /** Where the paths this call names really are, links followed
+   * (`realKeyPaths`): the key guard reads them, so a harmless name that links
+   * to a key file is held as that file (1.0.4, 09-1). */
+  realPaths?: readonly string[];
+  /** A path this call names could not be followed to where it lands
+   * (`realKeyPaths` cannot): the key guard holds it as a key read. */
+  realPathCannot?: string;
+  /** The engine's own gate already held this call as a key file (Pi's gate,
+   * which resolves links itself): the rule it named. The key guard keeps
+   * that verdict at every level; it can only add a hold, never clear one. */
+  localHold?: string;
   /** the card's tool input or summary was cut, so the owner cannot see all
    * of it (server/approval-text.ts approvalIsCut); no routine carve-out then */
   inputCut?: boolean;
@@ -520,7 +600,7 @@ export interface AutoContext {
  * bot's own roots? Every other rule, and any process kill, still counts. */
 function excusedDelete(text: string, context: AutoContext | undefined): boolean {
   if (context?.deletesInside !== true || KILLS.test(text)) return false;
-  return DESTRUCTIVE.every((rule) => rule === RM_RULE || !rule.test(text));
+  return DESTRUCTIVE.every((rule) => EXCUSED_RULES.includes(rule) || !rule.test(text));
 }
 
 /** The standing answer a grant or Auto mode would give, before any block:
@@ -637,6 +717,10 @@ export function autoVerdict(
   // after the cut), and a non-command tool's summary is read as text, where
   // an apostrophe in a file name is not an unterminated quote.
   const commandTool = isCommandTool(tool);
+  // a PowerShell tool's text is PowerShell's, however it starts, and so is
+  // the text of a command tool whose driver runs it under PowerShell (Codex
+  // and every ACP engine on Windows, `powershell.exe -Command`)
+  const shell = isPowerShellTool(tool) || (commandTool && context?.call?.commandShell === "pwsh") ? "pwsh" : undefined;
   const text = context?.commandText ?? context?.exactCommand?.command;
   const cwd = context?.commandCwd ?? context?.exactCommand?.cwd;
   // The owner's routine carve-out (1.0.3): on a scheduled or manual routine
@@ -649,13 +733,13 @@ export function autoVerdict(
   let catastrophe: AlwaysAskHit | null;
   let valueTarget: CarvedTarget[] | undefined;
   if (routineCarve) {
-    ({ hit: catastrophe, valueTarget } = alwaysAskRoutineCommand(text, cwd));
+    ({ hit: catastrophe, valueTarget } = alwaysAskRoutineCommand(text, cwd, shell));
   } else {
     catastrophe = text !== undefined
-      ? alwaysAskCommand(text, cwd, "command")
+      ? alwaysAskCommand(text, cwd, "command", shell)
       : commandTool && approvalSummaryIsCut(summary)
         ? unreadableHit()
-        : alwaysAskCommand(summary, cwd, commandTool ? "command" : "text");
+        : alwaysAskCommand(summary, cwd, commandTool ? "command" : "text", shell);
   }
   if (catastrophe) return { approve: null, source: "always-ask", rule: catastrophe.rule, note: alwaysAskNote(catastrophe) };
   // a carved command is guarded on its whole text too, so a key or a
@@ -701,7 +785,10 @@ function verdictPastAlwaysAsk(bot: AutoApprover, tool: string, summary: string, 
   // anything but the hand's pin, or carries an option that overrides one. Read before every standing answer.
   const commandParts = [context?.exactCommand?.command, innerCommand].filter((part): part is string => part !== undefined);
   const promptText = commandParts.length ? commandParts.join("\n") : isCommandTool(tool) ? summary : undefined;
-  const pinUnknown = promptText === undefined ? null : pinOverrideIn(promptText, context?.handedPins ?? NO_PINS);
+  // Section 11 D2: PowerShell's own spellings (`$env:PAGER='x'`, `Set-Item env:GIT_EDITOR`, ...) on a PowerShell tool and on a
+  // command a driver runs under PowerShell (Codex and the ACP engines on Windows)
+  const pinShell = isPowerShellTool(tool) || (isCommandTool(tool) && context?.call?.commandShell === "pwsh") ? "pwsh" : undefined;
+  const pinUnknown = promptText === undefined ? null : pinOverrideIn(promptText, context?.handedPins ?? NO_PINS, pinShell);
   const unread = context?.envUnread ? `${U20_WORDS}: ${context.envUnread}`
     : pinUnknown ? `${U19_WORDS}: ${pinUnknown}`
     : context?.call?.truncated ? "the call was cut before it could be checked"
@@ -710,8 +797,13 @@ function verdictPastAlwaysAsk(bot: AutoApprover, tool: string, summary: string, 
     : grantRead?.unread ? `Murage could not read every action in this call: ${grantRead.unread}`
     : contract.ok ? null
     : `the call does not carry what this tool needs (${contract.field})`;
-  const keyText = `${guarded}\n${scan.text}`;
-  const keyHit = (): string | null => unread ?? matchFirst(SENSITIVE, keyText);
+  const keyText = [guarded, scan.text, ...(context?.realPaths ?? [])].join("\n");
+  const localHold = context?.localHold ? `the engine's own check held this as a key file (${context.localHold})`
+    : context?.realPathCannot ? `a path this call names could not be followed to where it lands, so it is held as a key file (${context.realPathCannot.slice(0, 200)})` : null;
+  // 09-1: a glob in the command text that could match a key file
+  // (`cat ~/.aw?/credentials`, `Get-Content ~\.aws\cred*`) is a read of it
+  const commandGlobText = isCommandTool(tool) || commandParts.length || wholeText !== undefined ? [isCommandTool(tool) ? summary : "", ...commandParts, wholeText ?? "", context?.commandText ?? ""].join("\n") : "";
+  const keyHit = (): string | null => unread ?? localHold ?? matchFirst(SENSITIVE, keyText) ?? globKeyRead(commandGlobText);
   const sensitive = destructive ? null : keyHit();
   const sensitiveSource: AutoVerdictSource = unread ? "unread-call" : "sensitive-guard";
   // The stop line outranks every mode, Full access included: deleting
@@ -821,6 +913,27 @@ function verdictPastAlwaysAsk(bot: AutoApprover, tool: string, summary: string, 
   if (context?.ownToolResults === true && !destructive && !sensitive && !context.scope) {
     return { approve: "read its own saved tool result", source: "own-tool-results" };
   }
+  // Murage's own tools that never ask on Claude or Codex (OWN_UNASKED) reach
+  // here from an ACP engine (Fuigo, Grok Build), whose dispatcher asks for
+  // every MCP call. They run without a card, on any turn, as they do on those
+  // engines: a read (the roster, memory search, the app-tool lookup) at every
+  // level, Ask included; any other row (ask_bot, memory_save) whenever the bot
+  // is at Auto, unattended turns included, since Claude and Codex never ask
+  // for them on any turn. Placed ahead of the unattended block on purpose: the
+  // block stops a mode or grant standing in for a person, and these rows are
+  // neither (OWN_UNASKED names the boundary that stands in for each). Always behind the guards
+  // (a call that was cut, could not be proven, or names a key file is held
+  // above), never for a host-scoped ask, and only for a call resolveCall
+  // proved against this turn's own mount records, never one named by a title
+  // or its arguments. publish_site and the other OWN_ALWAYS_ASK tools are in
+  // neither table, so they keep asking.
+  if (!destructive && !sensitive && !context?.scope && resolved.kind === "mcp" && resolved.provenance === "own") {
+    const app = resolved.own ? ownAppTool(`mcp__${CONNECTED_APPS_SERVER}__${resolved.tool}`) : undefined;
+    const read = app !== undefined ? APP_LOOKUPS[app] !== undefined : isOwnRead(resolved.mountId, resolved.tool);
+    if (read || (bot.autoApprove && isOwnUnasked(resolved.mountId, resolved.tool))) {
+      return { approve: `auto-approved ${resolved.name} (Murage's own tool)`, source: "own-unasked", rule: `${resolved.mountId}/${resolved.tool}` };
+    }
+  }
   // The grant is computed even when a hard block will refuse it: the row
   // worth auditing is "this WOULD have auto-approved, and only the block
   // stood in the way", which cannot be told apart from an ordinary
@@ -852,6 +965,44 @@ function verdictPastAlwaysAsk(bot: AutoApprover, tool: string, summary: string, 
   if (sensitive) return { approve: null, source: sensitiveSource, rule: sensitive };
   if (grant) return { approve: grant.approve, source: grant.source, rule: grant.rule };
   return { approve: null, source: "no-grant" };
+}
+
+/** Field names an engine's file tool names its path under. */
+const PATH_FIELDS = ["path", "file_path", "filePath", "notebook_path", "paths", "file", "files", "target", "directory", "dir"];
+
+/** What `realKeyPaths` found: the real place of every path this call names
+ * whose real place differs from its spelling, and the first one that could
+ * not be followed, if any. */
+export interface RealKeyPaths { paths: string[]; cannot: string | null }
+
+/** Where each path this call names really lands, links followed, resolved
+ * part by part in order (shared/in-project.ts `realPathInOrder`, so `\` and
+ * `/` both separate parts on Windows). A relative path is placed from `cwd`.
+ * A missing tail is kept as written beneath its real folder, so a missing
+ * path is not an error. A path that cannot be followed (a link loop, an
+ * unreadable part, a climb past a missing folder, a relative path with no
+ * folder) is `cannot`, and the key guard holds the call as a key read. */
+export function realKeyPaths(input: unknown, filePaths: readonly string[] | undefined, cwd: string | undefined, opts: PlaceOptions = {}): RealKeyPaths {
+  const given: string[] = [...(filePaths ?? [])];
+  if (input && typeof input === "object" && !Array.isArray(input)) {
+    const obj = input as Record<string, unknown>;
+    for (const field of PATH_FIELDS) {
+      const value = obj[field];
+      for (const item of Array.isArray(value) ? value : [value]) if (typeof item === "string" && item) given.push(item);
+    }
+  }
+  const home = opts.home ?? homedir();
+  const paths: string[] = [];
+  let cannot: string | null = given.length > 64 ? "the call names more paths than the key guard follows" : null;
+  for (const path of given.slice(0, 64)) {
+    const placed = realPathInOrder(path, cwd ?? "", { ...opts, home });
+    if ("cannot" in placed) {
+      cannot ??= `${path}: ${placed.cannot}`;
+      continue;
+    }
+    if (placed.real !== path && !paths.includes(placed.real)) paths.push(placed.real);
+  }
+  return { paths, cannot };
 }
 
 /** Why this request may be answered without the human, or null to ask. */

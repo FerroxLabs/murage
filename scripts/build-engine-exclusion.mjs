@@ -47,7 +47,7 @@ export function buildEngineExclusion({platform=process.platform,exec=execFileSyn
    writeFileSync(def,"LIBRARY node.exe\nEXPORTS\n"+names.map(name=>"  "+name).join("\n")+"\n");
    const run=(tool,args,timeout)=>{const c=msvcCommand(tool,args,{env,environmentFile});exec(c.command,c.args,{timeout,stdio:"inherit",...(c.verbatim?{windowsVerbatimArguments:true}:{})});};
    run("lib.exe",["/nologo","/def:"+def,"/machine:"+(arch==="arm64"?"arm64":"x64"),"/out:"+lib],60000);
-   run("cl.exe",["/nologo","/O2","/W3","/MD","/LD","/DNAPI_VERSION=9","/I"+headerDirectory,source,"/Fo"+path.join(directory,"exclusion.obj"),"/Fe"+output,"/link","/DELAYLOAD:node.exe","delayimp.lib","Advapi32.lib","Shell32.lib",lib],120000);
+   run("cl.exe",["/nologo","/O2","/W3","/MD","/LD","/DNAPI_VERSION=9","/I"+headerDirectory,source,"/Fo"+path.join(directory,"exclusion.obj"),"/Fe"+output,"/link","/DELAYLOAD:node.exe","delayimp.lib","Advapi32.lib","Shell32.lib","Ole32.lib",lib],120000);
   }else throw Error("ENGINE_EXCLUSION_PLATFORM_UNSUPPORTED: "+platform);
   const receipt={version:1,target:platform+"-"+arch,napiVersion:9,sourceSha256,sha256:createHash("sha256").update(readFileSync(output)).digest("hex")};
   writeFileSync(path.join(directory,"build.json"),JSON.stringify(receipt,null,2)+"\n");outputs.push(receipt);

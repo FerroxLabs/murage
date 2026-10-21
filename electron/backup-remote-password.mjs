@@ -3,6 +3,7 @@ import {constants,openSync,closeSync,lstatSync,fstatSync,readSync,realpathSync,w
 import path from "node:path";
 import {restrictToOwnerAsync,assertPrivateToOwnerAsync,volumeKeepsAclsAsync} from "./backup-windows-acl.mjs";
 import {hostCloudFolder} from "./backup-recovery-key.mjs";
+import {UNKNOWN_ACCOUNT_FIX} from "../shared/windows-sddl.mjs";
 // Windows has no uid or mode bits: its files are made owner-only by ACL instead.
 const posix=()=>process.platform!=="win32";
 export const BACKUP_REMOTE_PASSWORDS_KEY="backupRemotePasswordReferences";
@@ -10,8 +11,12 @@ export const BACKUP_REMOTE_PASSWORDS_KEY="backupRemotePasswordReferences";
 const refuse=(code="BACKUP_REMOTE_PASSWORD_UNAVAILABLE",cause)=>{throw cause===undefined||cause?.message===code?Error(code):Error(code,{cause});};
 // Refusals a person can act on keep their own name all the way to the window,
 // instead of the bare "could not be confirmed" every one of them used to become.
-const NAMED=new Set(["BACKUP_REMOTE_CONTROL_UNAVAILABLE","BACKUP_REMOTE_PASSWORD_FILE_PLACE","BACKUP_REMOTE_PASSWORD_FILE_KIND","BACKUP_REMOTE_PASSWORD_FILE_SHARED","BACKUP_REMOTE_PASSWORD_FILE_SHARED_WINDOWS","BACKUP_REMOTE_PASSWORD_FILE_FORMAT","BACKUP_REMOTE_PASSWORD_FILE_UNREADABLE"]);
-const named=error=>error instanceof Error&&NAMED.has(error.message)?error.message:"BACKUP_REMOTE_PASSWORD_UNAVAILABLE";
+// Windows lists an account on the file (or on the folder a copy goes to) that Murage cannot identify: the refusal keeps its own
+// name to the window, which shows the fix-it sentence (shared/windows-sddl.mjs UNKNOWN_ACCOUNT_FIX).
+const ACCOUNT_UNKNOWN="BACKUP_REMOTE_PASSWORD_ACCOUNT_UNKNOWN_WINDOWS";
+const accountUnknown=error=>error instanceof Error&&(error.message===ACCOUNT_UNKNOWN||error.fix===UNKNOWN_ACCOUNT_FIX||accountUnknown(error.cause));
+const NAMED=new Set(["BACKUP_REMOTE_CONTROL_UNAVAILABLE","BACKUP_REMOTE_PASSWORD_FILE_PLACE","BACKUP_REMOTE_PASSWORD_FILE_KIND","BACKUP_REMOTE_PASSWORD_FILE_SHARED","BACKUP_REMOTE_PASSWORD_FILE_SHARED_WINDOWS","BACKUP_REMOTE_PASSWORD_FILE_FORMAT","BACKUP_REMOTE_PASSWORD_FILE_UNREADABLE",ACCOUNT_UNKNOWN]);
+const named=error=>error instanceof Error&&NAMED.has(error.message)?error.message:accountUnknown(error)?ACCOUNT_UNKNOWN:"BACKUP_REMOTE_PASSWORD_UNAVAILABLE";
 /** Murage's own private folders, checked first: when they can't be prepared
  * the refusal says so, not that the chosen or created file was wrong. */
 const roots=excludedRoots=>{try{return excludedRoots();}catch(error){return refuse("BACKUP_REMOTE_CONTROL_UNAVAILABLE",error);}};
@@ -27,7 +32,7 @@ const identity=stat=>["dev","ino","size","uid","mode","mtimeNs","ctimeNs"].map(k
 async function windowsPrivate(file,checkPrivate){
  if(posix()||typeof file!=="string"||!path.isAbsolute(file)||/[\x00-\x1f\x7f]/.test(file))return;
  let resolved;try{resolved=realpathSync.native(file);}catch{return refuse("BACKUP_REMOTE_PASSWORD_FILE_UNREADABLE");}
- try{await checkPrivate(resolved);}catch(error){return refuse(error?.message==="BACKUP_WINDOWS_ACL_SHARED"?"BACKUP_REMOTE_PASSWORD_FILE_SHARED_WINDOWS":"BACKUP_REMOTE_PASSWORD_FILE_UNREADABLE",error);}
+ try{await checkPrivate(resolved);}catch(error){return refuse(error?.message==="BACKUP_WINDOWS_ACL_SHARED"?"BACKUP_REMOTE_PASSWORD_FILE_SHARED_WINDOWS":accountUnknown(error)?ACCOUNT_UNKNOWN:"BACKUP_REMOTE_PASSWORD_FILE_UNREADABLE",error);}
 }
 function readFile(file,excludedRoots,uid,hold=false){
  if((posix()&&(!Number.isSafeInteger(uid)||uid<1))||typeof file!=="string"||!path.isAbsolute(file)||/[\x00-\x1f\x7f]/.test(file))refuse();
@@ -152,7 +157,7 @@ export function createRemotePasswordStore({chooseFile,excludedRoots,readProtecte
     file=await writeNewFile(createFolders(),excluded,uid,bytes,written,cloudFolder);
     try{selected=await read(file,excluded);}catch(error){try{unlinkSync(file);}catch{/* reported below */}throw error;}
     return{passwordRef:await register(selected),path:selected.path};
-   }catch(error){return refuse(error instanceof Error&&error.message==="BACKUP_REMOTE_CONTROL_UNAVAILABLE"?error.message:undefined,error);}finally{bytes?.fill(0);selected?.password.fill(0);}
+   }catch(error){return refuse(error instanceof Error&&error.message==="BACKUP_REMOTE_CONTROL_UNAVAILABLE"?error.message:accountUnknown(error)?ACCOUNT_UNKNOWN:undefined,error);}finally{bytes?.fill(0);selected?.password.fill(0);}
   },
   /** A second copy where the person chooses, never inside Murage's folders or the backup folder. */
   async saveCopy(passwordRef){
@@ -171,7 +176,7 @@ export function createRemotePasswordStore({chooseFile,excludedRoots,readProtecte
     if(!posix()&&!(await keepsAcls(folder)))writeFileSync(destination,bytes,{flag:"wx",flush:true});
     else{const copied=await writeOwnerOnly(folder,[path.basename(target)],bytes,written);if(copied!==destination)refuse();}
     return{saved:true,path:destination};
-   }catch{return refuse();}finally{bytes?.fill(0);selected?.password.fill(0);}
+   }catch(error){return refuse(accountUnknown(error)?ACCOUNT_UNKNOWN:undefined,error);}finally{bytes?.fill(0);selected?.password.fill(0);}
   },
   async select(){
    let selected;

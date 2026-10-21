@@ -324,7 +324,8 @@ it("tells the bot and the panel how to turn remote debugging back on, or to clic
     expect(offBody.error).toContain(USER_CHROME_SETUP_MESSAGE);
     expect(offBody.error).toContain("chrome://inspect/#remote-debugging");
     const panel = await api("GET", `/api/bots/${bot.id}/browser`);
-    expect(panel).toMatchObject({ status: 409, body: { error: USER_CHROME_SETUP_MESSAGE } });
+    // The panel keeps the hold and generation (so control can be handed back) and says the same words.
+    expect(panel).toMatchObject({ status: 200, body: { connected: false, problem: USER_CHROME_SETUP_MESSAGE } });
     // Chrome listening but refusing or still waiting on Allow
     enableRemoteDebugging((listener.address() as { port: number }).port);
     const allow = await browserCall(mounted.env.MURAGE_CONTROL_TOKEN);

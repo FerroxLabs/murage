@@ -51,6 +51,7 @@ afterEach(() => {
   delete holder[MCP_TABLE_KEY];
   delete process.env.MURAGE_PI_GATE;
   delete process.env.MURAGE_PI_GATE_ONLY;
+  delete (globalThis as Record<symbol, unknown>)[Symbol.for("murage.piGate")];
 });
 
 interface Rig {
@@ -142,13 +143,39 @@ describe("Rule 14: three trusted sets, nothing else", () => {
     expect(gate.asked).toHaveLength(1);
   });
 
-  it("without the secret the gate registers nothing, and it removes the secret from the environment", () => {
-    delete process.env.MURAGE_PI_GATE;
-    const on: string[] = [];
-    piPermissionGate({ on: (name: string) => on.push(name) } as never);
-    expect(on).toEqual([]);
+  it("removes the secret from the environment, so the commands pi runs never inherit it", () => {
     rig();
     expect(process.env.MURAGE_PI_GATE).toBeUndefined();
+    expect(process.env.MURAGE_PI_GATE_ONLY).toBeUndefined();
+  });
+
+  // Real pi 1.3.0 in RPC mode runs every extension's factory again on `new_session`, in the same process and with the
+  // handlers of the first load dropped; the driver sends `new_session` before every prompt. Seen on the real CLI
+  // (remote probe, 2026-10-21): `{"type":"new_session"}` then a bash call ran with no `extension_ui_request` at all,
+  // while the same pi without `new_session` asked with method "editor" and title "murage-gate:<secret>". The second
+  // load found the secret already removed from the environment and registered nothing: Ask let bash and the host
+  // computer run with no card (real-engine gate, pi C1 and A1).
+  it("a second load in the same process (pi's new_session) still asks, with the first load's secret and proposal tool", async () => {
+    (holder[MCP_TABLE_KEY] as Map<string, McpToolEntry>).set("agents_project_propose", { piName: "agents_project_propose", mount: "agents", mcpTool: "project_propose", mountId: "own:agents" });
+    rig({ only: "agents_project_propose" });
+    expect(process.env.MURAGE_PI_GATE).toBeUndefined();
+    const reloaded = new Map<string, Handler>();
+    piPermissionGate({ on: (name: string, handler: Handler) => reloaded.set(name, handler) } as never);
+    const asked: string[] = [];
+    const ctx = { cwd: project, hasUI: true, ui: { editor: async (title: string) => { asked.push(title); return JSON.stringify({ deny: true, reason: "no" }); } } };
+    expect(await reloaded.get("tool_call")!({ toolCallId: "c2", toolName: "bash", input: { command: "echo hi" } }, ctx)).toEqual({ block: true, reason: "no" });
+    expect(asked).toEqual([`${PI_GATE_TITLE_PREFIX}${SECRET}`]);
+    expect(await reloaded.get("tool_call")!({ toolCallId: "c3", toolName: "agents_project_propose", input: {} }, ctx)).toBeUndefined();
+  });
+
+  it("loaded with no secret at all, every tool call is blocked, never run unasked", async () => {
+    delete process.env.MURAGE_PI_GATE;
+    delete (globalThis as Record<symbol, unknown>)[Symbol.for("murage.piGate")];
+    const on = new Map<string, Handler>();
+    piPermissionGate({ on: (name: string, handler: Handler) => on.set(name, handler) } as never);
+    const ctx = { cwd: project, hasUI: true, ui: { editor: async () => JSON.stringify({ allow: true, input: { command: "ls" } }) } };
+    expect(await on.get("tool_call")!({ toolCallId: "c1", toolName: "bash", input: { command: "ls" } }, ctx)).toEqual({ block: true, reason: PI_GATE_UNCHECKED });
+    expect(await on.get("tool_call")!({ toolCallId: "c2", toolName: "read", input: { path: "README.md" } }, ctx)).toEqual({ block: true, reason: PI_GATE_UNCHECKED });
   });
 });
 
@@ -212,7 +239,17 @@ describe("Rules 60 and 63: reads and searches", () => {
     symlinkSync(join(outside, ".ssh", "id_rsa"), join(project, "link.txt"));
     for (const path of [".env", join(outside, "plain.txt"), "link.txt", "a\u0000b"]) await gate.call({ toolName: "read", input: { path } });
     expect(gate.asked).toHaveLength(4);
-    expect(JSON.parse(gate.asked[0]!.prefill)).toEqual({ tool: "read", input: { path: ".env" } });
+    expect(JSON.parse(gate.asked[0]!.prefill)).toEqual({ tool: "read", input: { path: ".env" }, sensitive: "env" });
+  });
+
+  it("1.0.4 09-1: a link to a key file asks with the gate's own verdict, so no mode answers it as an ordinary read", async () => {
+    symlinkSync(join(outside, ".ssh", "id_rsa"), join(project, "config-link"));
+    const gate = rig();
+    await gate.call({ toolName: "read", input: { path: "config-link" } });
+    await gate.call({ toolName: "read", input: { path: join(outside, "plain.txt") } });
+    expect(JSON.parse(gate.asked[0]!.prefill)).toEqual({ tool: "read", input: { path: "config-link" }, sensitive: "ssh" });
+    // outside the project is not a key file: no verdict rides along
+    expect(JSON.parse(gate.asked[1]!.prefill)).toEqual({ tool: "read", input: { path: join(outside, "plain.txt") } });
   });
 
   it("T86: link/../x climbs from the link's target and is outside", async () => {

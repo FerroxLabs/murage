@@ -89,6 +89,14 @@ export function claudeExecutableIdentity(cli: string, env: NodeJS.ProcessEnv): s
   return [cli, ...files].join("\n");
 }
 
+/** The X.Y.Z of the `--version` answer last probed for `cli`, or null when none is known (never probes). */
+export async function knownClaudeCliVersion(cli: string): Promise<string | null> {
+  const entry = versionCache.get(cli);
+  if (!entry) return null;
+  const answer = await entry.version;
+  return answer?.match(/\d+\.\d+\.\d+/)?.[0] ?? null;
+}
+
 /** Throws ClaudeUpdateRequired when `cli --version` reports less than the minimum. The answer is held
  * per executable identity (claudeExecutableIdentity): an unchanged CLI is probed once. A probe that
  * fails (no answer, timeout) or prints no version lets the launch go ahead, logged, and a failure is

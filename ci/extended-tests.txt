@@ -1378,3 +1378,7 @@ tools/flux-stream-conformance/pack.test.ts	extended
 tools/flux-stream-conformance/wer.test.ts	delete (pending review; runs here until then)
 tools/flux-stream-sim/providers/assemblyai.test.ts	extended
 tools/flux-stream-sim/sim.test.ts	extended
+server/drivers/win-process-table.test.ts	extended
+server/memory/pip-reaper-win32.test.ts	extended
+server/memory/record-keys-budget.test.ts	the record-keys backfill write budget (perf-shaped io-hotpath check)
+server/browser-restore-real.test.ts	real engine against a 120-origin saved session (needs the bundled browser)

@@ -81,6 +81,12 @@ async function windowsSelect(t,acl){
   checkPrivate:target=>{checked.push(target);if(acl instanceof Error)throw acl;if(!aclIsPrivateToOwner(acl,ME))throw Error("BACKUP_WINDOWS_ACL_SHARED");}});
  return{store,checked,file,document:()=>document};
 }
+test("Windows: a file listing an account Murage cannot identify is refused by name, so the window shows the fix-it sentence (nops B)",async t=>{
+ const {aclFail,UNKNOWN_ACCOUNT_FIX}=await import("../shared/windows-sddl.mjs");
+ const f=await windowsSelect(t,aclFail(UNKNOWN_ACCOUNT_FIX));
+ await assert.rejects(f.store.select(),/^Error: BACKUP_REMOTE_PASSWORD_ACCOUNT_UNKNOWN_WINDOWS$/);
+ assert.deepEqual(f.document(),{});
+});
 test("Windows: a chosen password file other accounts can open is refused by name (W-A5)",async t=>{
  const f=await windowsSelect(t,PUBLIC_ACL);
  await assert.rejects(f.store.select(),/^Error: BACKUP_REMOTE_PASSWORD_FILE_SHARED_WINDOWS$/);
