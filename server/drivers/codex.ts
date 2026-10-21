@@ -86,6 +86,7 @@ import { engineClosedLine, plainDuration } from "./stop-copy.ts";
 import { boundedToolInput, codexApprovalText } from "../approval-text.ts";
 import { acpEngineExitStderrText } from "./acp/core.ts";
 import { backgroundCapNote, backgroundWaitCapMs, SubtaskTracker } from "../subtasks.ts";
+import { shellDialectOf } from "../shell/pwsh.ts";
 
 export { decodeCodexSelection, readCodexModelCatalog, STATIC_CODEX_MODELS } from "./codex-catalog.ts";
 
@@ -892,6 +893,9 @@ export const CodexDriver: ProviderDriver<CodexConfig> = {
         Object.assign(env, handed.env);
         if (scopedHome) env.CODEX_HOME = scopedHome;
         const shellForm: readonly string[] = process.platform === "win32" ? ["powershell.exe", "-NoProfile", "-Command"] : [handed.env.SHELL || "/bin/sh", "-c"];
+        // 1.0.4 F1: every command runs under this form, so the gates read its
+        // text in this form's dialect (PowerShell on Windows)
+        const commandShell = shellDialectOf(shellForm);
         // F4 (Rule 54): the mounts this app-server loads, read from the Codex
         // home in effect for the spawn. A config.toml that cannot be read
         // leaves the list unstated, so no MCP ask on this turn is proven.
@@ -1320,6 +1324,7 @@ export const CodexDriver: ProviderDriver<CodexConfig> = {
             toolEngine: "codex" as const,
             ...(mcpMountRecords ? { mcpMounts: mcpMountRecords } : {}),
             ...(route.toolInputMissing ? { toolInputMissing: route.toolInputMissing } : {}),
+            ...(commandShell ? { commandShell } : {}),
             ...(execEnv ? { execEnv } : {}),
             requestType: "permission",
             tool: route.tool,
@@ -1537,6 +1542,7 @@ export const CodexDriver: ProviderDriver<CodexConfig> = {
           toolEngine: "codex" as const,
           ...(mcpMountRecords ? { mcpMounts: mcpMountRecords } : {}),
           ...(inputMissing ? { toolInputMissing: inputMissing } : {}),
+          ...(commandShell ? { commandShell } : {}),
           ...(execEnv ? { execEnv } : {}),
           requestType: questions ? "question" : "permission",
           tool,

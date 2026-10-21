@@ -128,6 +128,30 @@ describe("OpenCode personal setup isolation", () => {
     expect(mounted.some((server) => server.args.includes("fixture-agents"))).toBe(true);
     expect(mounted.some((server) => server.args.includes("fixture-memory"))).toBe(true);
   }, 30000);
+
+  // Real-engine gate (Linux, OpenCode 1.19.3, 2026-10-21): at Ask, OpenCode ran shell commands and the host computer's
+  // tools with no card, and a denied card stopped nothing (A1: no card ever came). OpenCode's own permission defaults
+  // allow bash, edit and every MCP tool, so it never sent session/request_permission. With `permission` set, the same
+  // CLI asks, e.g. `{"method":"session/request_permission","params":{"toolCall":{"title":"computer_click","kind":"other",
+  // "rawInput":{}},"options":[{"optionId":"once","kind":"allow_once"},{"optionId":"always","kind":"allow_always"},
+  // {"optionId":"reject","kind":"reject_once"}]}}` (remote probe, real CLI), and Murage's level decides.
+  it("hands OpenCode a permission set where everything but reads asks Murage, and in-project key files ask too", async () => {
+    const home = ownerHome();
+    const driver = createOpenCodeDriver(async () => ({ default: "fixture-model", options: [{ id: "fixture-model", label: "Fixture" }] }));
+    const { spawned } = await bootTurn(driver, home, { OPENCODE_API_KEY: "fixture-only", OPENCODE_CONFIG_CONTENT: JSON.stringify({ permission: { bash: "allow", "*": "allow" } }) });
+    const permission = JSON.parse(spawned.env.OPENCODE_CONFIG_CONTENT!).permission;
+    // the owner's own permission choices never decide a bot's approvals
+    expect(permission["*"]).toBe("ask");
+    expect(permission.bash).toBe("ask");
+    for (const tool of ["glob", "grep", "list", "todowrite", "todoread"]) expect(permission[tool], tool).toBe("allow");
+    expect(permission.read["*"]).toBe("allow");
+    for (const key of ["*.env", "*.env.*", "*credentials.json", "*.ssh/*", "*.aws/credentials", "*.git/config"]) expect(permission.read[key], key).toBe("ask");
+    // an agent's own permission outranks the top-level one: an owner's `agent.build.permission.bash: "allow"` ran bash
+    // unasked on the real CLI, so OpenCode's own agents carry the same set and a turn starts on `build`
+    const config = JSON.parse(spawned.env.OPENCODE_CONFIG_CONTENT!);
+    for (const name of ["build", "plan", "general", "explore"]) expect(config.agent[name].permission, name).toEqual(permission);
+    expect(config.default_agent).toBe("build");
+  }, 30000);
 });
 
 describe("Fuigo personal setup isolation", () => {

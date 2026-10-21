@@ -1,0 +1,3 @@
+secret file (1) & x.txt
+D:AI(A;ID;0x1301bf;;;S-1-5-21-4444444444-5555555555-6666666666-1013)(A;ID;FA;;;BA)(A;ID;FA;;;SY)(A;ID;0x1301bf;;;AU)(A;ID;0x1200a9;;;BU)
+

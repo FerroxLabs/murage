@@ -166,6 +166,7 @@ server/backup-imported-transcript.test.ts	all	backup and restore (a 1.0.2 import
 server/backup-kimi-audit.test.ts	all	restore stays inside data folder; copy owner rules
 server/backup-local-work-windows.test.ts	all	Windows backup work folder owner-only
 server/backup-paused-recovery.test.ts	all	Paused backups recover after update
+server/backup-remote-account-unknown.test.ts	all	backup password window shows the fix-it sentence for an unidentifiable Windows account
 server/backup-remote-host-sftp.test.ts	all	SFTP backup destination key, fingerprint trust, refusals
 server/backup-remote-host.test.ts	all	remote backup host saved without exposing credentials
 server/backup-restart-admission-api.test.ts	all	restart claim blocks dispatch during backup
@@ -269,6 +270,7 @@ server/browser-macos-identity.test.ts	linux+mac	packaged browser helper identity
 server/browser-output-redaction.test.ts	all	page output redacts secrets and credentials
 server/browser-owner-api.test.ts	all	Browser relay rejects anonymous and forged owner
 server/browser-recipient-secrets.test.ts	all	recipient scan never returns secret field values
+server/browser-sandbox.test.ts	linux+windows	bot browser unusable on Ubuntu 24.04 with a generic error, or started without its sandbox; on Windows, the AppContainer read grant made through icacls, never PowerShell
 server/browser-unavailable-turn-api.test.ts	all	turn completes without browser tools when check fails
 server/browser-untrusted.test.ts	all	untrusted page text fenced against injection
 server/browser-windows-identity.test.ts	all	Windows browser binary identity pinned
@@ -345,6 +347,7 @@ server/cloud-home/engine-render-launcher.test.ts	linux	typed render params, neve
 server/cloud-home/enroll.test.ts	linux	home enrollment, stale generation refused
 server/cloud-home/fresh-home-launcher.test.ts	linux	turn starts with nothing from previous turn
 server/cloud-home/home-commands.test.ts	linux	restart and safe-mode commands run once
+server/cloud-home/launcher-driver-argv.test.ts	linux	Cloud launcher accepts the argv the 1.0.3 drivers send, per engine
 server/cloud-home/launcher-validation.test.ts	linux	executable digest validated, LD vars stripped
 server/cloud-home/model-signin-account.test.ts	linux	account deletion blocks sign-in start
 server/cloud-home/model-signin-api.test.ts	linux	sign-in HTTP boundary needs paired factors
@@ -463,6 +466,7 @@ server/drivers/host-computer-proxy.test.ts	all	Stop withdraws in-flight host act
 server/drivers/lifecycle-diagnostic.test.ts	all	refuses secret-shaped identity in diagnostics (secrets)
 server/drivers/local-inject-matrix.test.ts	all	host credentials in settings.env, not model rows or argv
 server/drivers/local-inject.test.ts	all	credentials never on argv (secrets)
+server/drivers/murage-exec-mcp.test.ts	linux+mac	every Claude turn reaches its MCP servers (permission cards, memory, agents)
 server/drivers/openai-chat.test.ts	all	chat engine stream contract
 server/drivers/pi-isolation.test.ts	all	Pi personal setup isolated per bot
 server/drivers/pi-permission-gate.test.ts	all	Pi permission gate blocks unknown tools
@@ -479,6 +483,7 @@ server/drivers/turn-refusal.test.ts	all	refusal denies every later allow
 server/engine-change-and-close.test.ts	all	engine change or app close mid-wait handled
 server/engine-env-pins.test.ts	all	credential prompts and askpass pinned off
 server/engine-env.test.ts	all	Engine environment capture keeps last valid map
+server/engine-exclusion-called-exports.test.ts	all	packaged native addon missing a call the app makes (removeTree) is refused at build
 server/engine-exclusion-r17.test.ts	all	files changed only while engine cannot write
 server/engine-exclusion-r19.test.ts	all	engine files changed only while engine closed
 server/engine-exclusion-r20-real.test.ts	all	Real engines respect Murage's history lock
@@ -753,6 +758,7 @@ server/memory/resume-after-recall.test.ts	all	Protects forget/revoke, upgrade or
 server/memory/reveal-capture.test.ts	all	does not resurrect forgotten canon (forget)
 server/memory/revocation-index.test.ts	all	Protects forget/revoke, upgrade or privacy-withholding correctness
 server/memory/revoke-bounded.test.ts	all	Protects forget/revoke, upgrade or privacy-withholding correctness
+server/memory/revoke-cover.test.ts	all	Protects forget/revoke: a revoke that relies on another's walk withholds the same as walking alone
 server/memory/revoke-fold-roundtrip.test.ts	all	Protects forget/revoke, upgrade or privacy-withholding correctness
 server/memory/revoke-fold-t5.test.ts	all	Protects forget/revoke: a fold bulk walks with its members' cap
 server/memory/revoke-fold.test.ts	all	Protects forget/revoke, upgrade or privacy-withholding correctness
@@ -1213,3 +1219,19 @@ src/state/store.test.ts	all	core store: stream, transcript, delivery state
 src/state/surface-refusal.test.ts	all	surface stops after permanent refusal
 src/state/thread-settings-writes.test.ts	all	send waits for thread settings, safe retry
 src/state/transcript-seq.test.ts	all	transcript ordering keeps every message in place
+server/no-powershell-spawn.test.ts	all	Murage starting PowerShell by itself on Windows (an antivirus notice and a visible window on every launch, murage-releases #1)
+server/drivers/acp/grok-own-tools.test.ts	all	Grok Build's own-tool stamp read, so Murage's own tools run without a spurious approval card
+server/drivers/claude-nobash.test.ts	all	Claude on Windows without Git Bash failing to start instead of running on its PowerShell tool
+server/drivers/claude-nobash-fix2.test.ts	all	Claude without Git Bash: gate record and review fixes that keep every tool call under Murage's approval
+server/drivers/claude-nobash-fix3.test.ts	all	Claude without Git Bash: round-2 simplifications that must not loosen the approval gate
+server/drivers/claude-private.test.ts	all	the Claude private-tool record leaking or being forged (hashed 0600 gate record)
+server/powershell-nobash-103.test.ts	all	a Claude turn on Windows without Git Bash running PowerShell outside Murage's permission check
+server/powershell-gate-104.test.ts	all	a PowerShell command running without Murage's approval, or a link-followed key being read
+server/powershell-fail-closed-104.test.ts	all	an unreadable PowerShell permission setting letting a command through instead of asking
+server/stale-engine-model.test.ts	all	a bot staying on a model its engine no longer lists, so every turn fails
+server/execution-audience-hotpath.test.ts	all	a task's audience being wrong or re-written after a revoke while the hot path stops scanning every task
+server/human-principals-hotpath.test.ts	all	a thread's human binding read stale or wrong while it is read once per synchronous run
+server/browser-handback.test.ts	all	a bot's browser hand-back failing while its browser engine is down
+server/browser-restore-store.test.ts	all	a bot's browser stalling after its idle stop because of a large saved session
+server/cloud-home/browser-restore-launcher.test.ts	linux	the Cloud home losing a bot's saved browser session on restore (Linux server code)
+server/cloud-home/browser-restore.test.ts	linux	the Cloud home losing a bot's saved browser session on restore (Linux server code)

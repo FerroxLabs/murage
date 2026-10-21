@@ -5,7 +5,7 @@
 // Stream. The shapes and names are kept so the two codebases stay mutually
 // readable.
 
-import type { ExecEnv, McpMountRecord } from "../shared/mount-identity.ts";
+import type { ExecEnv, ExecEnvInfo, McpMountRecord } from "../shared/mount-identity.ts";
 import type { EngineKind } from "../shared/app-action-grant.ts";
 import type { LocalSetupFailure, ProviderErrorInfo } from "../shared/provider-error.ts";
 import type { RuntimeErrorDiagnostic } from "../shared/error-diagnostic.ts";
@@ -275,11 +275,24 @@ export type RuntimeEvent = RuntimeEventBase &
         /** Additive (1.0.3), F5: a field the driver's contract needs was
          * absent on the wire; the driver never substitutes one. */
         toolInputMissing?: string;
+        /** Additive (1.0.4, 09-1): the driver's own gate held this call as a
+         * key file (Pi's gate resolves links itself); the rule it named. It
+         * only ever adds a hold. Server-side only. */
+        localHold?: string;
+        /** Additive (1.0.4, F1): the driver runs this command's text under
+         * PowerShell (`powershell.exe -Command`, Codex and ACP on Windows),
+         * so the gates read it as PowerShell whatever it starts with. */
+        commandShell?: "pwsh";
         /** Additive (1.0.3), F12 (Rule 74): the exact environment the driver
          * handed the engine process, the names it removed, the command's
          * starting directory, the pinned shell form, and where the map came
          * from. Server-side only. */
         execEnv?: ExecEnv;
+        /** Additive (1.0.3, Astra #9): the value-free projection of
+         * `execEnv` (names, shell form, capture, provenance, managed names;
+         * shared/mount-identity.ts envInfoOf), the one part of the F12
+         * record that leaves the server (card, log). */
+        envInfo?: ExecEnvInfo;
         /** Additive (1.0.3): the driver could not report the call whole (Pi's
          * gate sends a call past its size cap without its input). What the
          * card shows is then not the whole call: it offers no standing grant

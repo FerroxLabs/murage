@@ -357,7 +357,7 @@ test("actual updater wiring omits verification hooks on darwin/win32 and sets th
         factoryCalls++;
         assert.equal(options.packageType, packageType === "deb" ? "deb" : "AppImage");
         return async () => {};
-      }, electronIpcMain: {},
+      }, electronIpcMain: {}, installWindowsUpdateVerifier: () => false,
     });
     vm.runInContext(source + "\nstartUpdater({ scheduleChecks: false });", context);
     assert.equal(Object.hasOwn(received, "verifyDownload"), platform === "linux");

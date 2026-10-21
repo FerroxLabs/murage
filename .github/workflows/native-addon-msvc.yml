@@ -1,0 +1,47 @@
+name: Native addon MSVC compile
+
+# Compile-only check of native/engine-exclusion with the real MSVC toolchain and Windows SDK (the same scripts/build-engine-exclusion.mjs
+# the Windows package uses). mingw accepts header mixes (<winternl.h> with <ntsecapi.h>) that MSVC rejects with C2371, so this runs on
+# every PR and push that touches native/ or the build script, ahead of the 90-minute Package Windows run. No packaging, no signing.
+on:
+  pull_request:
+    paths:
+      - 'native/**'
+      - 'scripts/build-engine-exclusion.mjs'
+      - '.github/workflows/native-addon-msvc.yml'
+  push:
+    paths:
+      - 'native/**'
+      - 'scripts/build-engine-exclusion.mjs'
+      - '.github/workflows/native-addon-msvc.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: native-addon-msvc-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  compile:
+    name: engine-exclusion addon (cl.exe)
+    runs-on: windows-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 24
+      - name: Node headers for the engine-exclusion addon
+        shell: bash
+        run: |
+          v=$(node -p process.version)
+          dir="$(cygpath -u "$RUNNER_TEMP")/node-headers"; mkdir -p "$dir"
+          curl -fsSL "https://nodejs.org/dist/$v/node-$v-headers.tar.gz" -o "$dir/h.tgz"
+          curl -fsSL "https://nodejs.org/dist/$v/SHASUMS256.txt" -o "$dir/sums"
+          (cd "$dir" && want=$(grep " node-$v-headers.tar.gz\$" sums | cut -d' ' -f1) && echo "$want  h.tgz" | sha256sum -c - && tar xzf h.tgz)
+          echo "NODE_HEADERS_DIR=$(cygpath -w "$dir/node-$v/include/node")" >> "$GITHUB_ENV"
+      - name: Compile the addon with MSVC
+        shell: bash
+        run: node scripts/build-engine-exclusion.mjs

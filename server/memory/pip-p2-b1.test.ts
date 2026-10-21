@@ -176,7 +176,7 @@ describe("PIP kind list", () => {
       // notebook fix: memory-revocation.ts supersede phase reads one record's state, pin and assertion by id and version (point lookup, no text)
       // write-time S3: the revoke commit reads a record's scope by id; the marker reads one record's kind (a room's notes keep what
       // they quoted), and a denied scope's record ids and versions in key windows (ids, never text)
-      "memory/revoke-commit.ts": 1, "memory/revoke-marker.ts": 3,
+      "memory/revoke-commit.ts": 3, "memory/revoke-marker.ts": 3,
       // write-time S4: the read predicate's point lookups (a record's scope, created lsn, deny mark and tombstone; never text)
       "memory/deny-read.ts": 3,
       // write-time S5 and integration: the backfill folds a receipt's record scopes and walks evidence and derivations for scope -> scope

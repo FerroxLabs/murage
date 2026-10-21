@@ -42,6 +42,8 @@ vi.mock("../server/browser-windows-identity.ts", async importOriginal => ({
   ...await importOriginal(),
   verifyWindowsBrowserImage: vi.fn(() => ({ signed: true })),
   verifyWindowsBrowserSignatures: vi.fn(async () => {}),
+  // the packaged addon's WinVerifyTrust check (no PowerShell fallback exists any more)
+  nativeAuthenticodeIn: vi.fn(resources => ({ resources, authenticode: async () => ({ status: "Valid", publisher: "Ferrox Labs, LLC" }) })),
 }));
 import { verifyWindowsBrowserImage, verifyWindowsBrowserSignatures } from "../server/browser-windows-identity.ts";
 import afterPack from "./after-pack.mjs";
@@ -137,7 +139,7 @@ it("verifies pinned inventory before signing engines and updater helper", async 
   expect(fs.readFileSync(recovery, "utf8")).toBe("recovery fixture signed fixture");
   expect(fs.readFileSync(browser.engine, "utf8")).toBe("pinned browser engine signed fixture");
   expect(fs.readFileSync(browser.chrome, "utf8")).toBe("pinned browser chrome signed fixture");
-  expect(verifyWindowsBrowserSignatures).toHaveBeenCalledWith([browser.engine, browser.chrome, recovery, backupHelper, helper], process.env.SystemRoot);
+  expect(verifyWindowsBrowserSignatures).toHaveBeenCalledWith([browser.engine, browser.chrome, recovery, backupHelper, helper], process.env.SystemRoot, expect.objectContaining({ resources: path.join(context.appOutDir, "resources") }));
   verifyWindowsBackupTools(backupDirectory);
   expect(JSON.parse(fs.readFileSync(helperManifest, "utf8")).binarySha256).toBe(createHash("sha256").update(fs.readFileSync(helper)).digest("hex"));
   expect(fs.readFileSync(executable, "utf8")).toBe("pinned fixture signed fixture");
@@ -230,10 +232,12 @@ it("release signature gate exempts only exact verified upstream paths and still 
   expect(gate).toContain("@('Murage.exe', 'Murage-*-setup.exe', 'fuigo.exe', 'murage-browser-host.exe')");
   const snippet = /\$verifyBackup = @'\n([\s\S]*?)\n'@/.exec(gate)?.[1]; expect(snippet).toBeTruthy();
   const AsyncFunction = Object.getPrototypeOf(async function () {}).constructor;
-  const executeNodePart = new AsyncFunction("verifyWindowsBackupTools", "verifyWindowsBrowserSignatures", "process", snippet.replace(/^import .*;\n/gm, ""));
+  const executeNodePartWith = new AsyncFunction("verifyWindowsBackupTools", "verifyWindowsBrowserSignatures", "process", "nativeAuthenticodeIn", snippet.replace(/^import .*;\n/gm, ""));
+  // the gate hands the packaged resources folder's own addon to the check
+  const executeNodePart = (raw, signed, proc) => executeNodePartWith(raw, signed, proc, resources => { expect(resources).toBe("release/win-unpacked/resources"); return { resources }; });
   const f = fixture();
   const verifyRaw = directory => { expect(directory).toBe(fixed); verifyWindowsBackupTools(f.backupDirectory); };
-  const verifySigned = vi.fn(async (files, systemRoot) => { expect(files).toEqual([`${fixed}/murage-backup-age.exe`]); await verifyWindowsBrowserSignatures([f.backupHelper], systemRoot); });
+  const verifySigned = vi.fn(async (files, systemRoot, native) => { expect(files).toEqual([`${fixed}/murage-backup-age.exe`]); expect(native).toEqual({ resources: "release/win-unpacked/resources" }); await verifyWindowsBrowserSignatures([f.backupHelper], systemRoot, native); });
   await executeNodePart(verifyRaw, verifySigned, { env: { SystemRoot: "C:\\Windows" } }); expect(verifySigned).toHaveBeenCalledOnce();
   verifySigned.mockClear(); fs.rmSync(path.join(f.backupDirectory, "LICENSE"));
   await expect(executeNodePart(verifyRaw, verifySigned, { env: {} })).rejects.toThrow(); expect(verifySigned).not.toHaveBeenCalled();
@@ -242,8 +246,8 @@ it("release signature gate exempts only exact verified upstream paths and still 
   fs.writeFileSync(path.join(f.backupDirectory, "age.exe"), "raw age fixture");
   verifyWindowsBrowserSignatures.mockRejectedValueOnce(new Error("Windows browser requires a valid Ferrox Labs signature"));
   await expect(executeNodePart(verifyRaw, verifySigned, { env: {} })).rejects.toThrow("valid Ferrox Labs signature");
-  // This exercises the embedded Node gate and checks PowerShell source shape;
-  // it does not claim native PowerShell or a real Authenticode verification.
+  // This exercises the embedded Node gate and checks the CI step's source shape;
+  // it does not claim a real Authenticode verification.
 });
 
 
