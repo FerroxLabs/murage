@@ -20,6 +20,7 @@ import { closeTurnLineage, openTurnLineage } from "./lineage-write.ts";
 import { drainRevokeMarker } from "./memory-revocation.ts";
 import { commitRevoke } from "./revoke-commit.ts";
 import { REVOKE_FOLD } from "./revoke-fold.ts";
+import { REVOKE_COVER } from "./revoke-marker.ts";
 import { lineageStorageStatus } from "./root-set-compaction.ts";
 import { fileAndLiveBytes, lastReclaimStats, reclaimShortOfDisk, reclaimWorkerSourceForTest, RECLAIM_MAX_BATCH_PAGES, RECLAIM_MAX_BATCH_ROWS, nextReclaimStep, reclaimRootSetsWhenIdle, reclaimVacuumWaiting, registeredRetiredObjects, registerRetiredObjects, ROOT_SET_RECLAIM_TABLES, runReclaimStep, setReadTimeJudgeRetired, type ReclaimGate } from "./root-set-reclaim.ts";
 import { downgradeMemorySchema, migrateMemorySchema, validateMemorySchema } from "./schema.ts";
@@ -84,12 +85,13 @@ describe("receipts: every path that revokes one reaches the lines it produced (f
     receiptThread();
     // every one of the 70 revokes walks on its own id, so the thread holds more than DENY_RANGE_COALESCE range rows: the inline walks
     // beyond the minute's write budget (revoke-budget.ts) are left to the drain, and the 1.0.3 revoke fold, which would take those over
-    // as one bulk with one range row, is off here (its own tests cover it: revoke-fold.test.ts)
-    REVOKE_FOLD.enabled = false;
+    // as one bulk with one range row, is off here (its own tests cover it: revoke-fold.test.ts), and so is the 1.0.4 audience cover, under
+    // which every later job point-passes the thread the first walked and writes no range row (revoke-cover.test.ts)
+    REVOKE_FOLD.enabled = false; REVOKE_COVER.enabled = false;
     try {
       for (let k = 0; k < 70; k++) commitRevoke(database(), { kind: "receipt", bundleId: "rc", cause: "receipt-revoked" }); // past DENY_RANGE_COALESCE
       drainRevokeMarker(database());
-    } finally { REVOKE_FOLD.enabled = true; }
+    } finally { REVOKE_FOLD.enabled = true; REVOKE_COVER.enabled = true; }
     const ids = database().prepare("SELECT DISTINCT revoke_id AS r FROM memory_deny_range WHERE thread_id='t'").all().map(row => Number(row.r));
     expect(ids).toContain(-2);
     expect(ids).not.toContain(-1);

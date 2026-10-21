@@ -62,4 +62,20 @@ function createCuaConnectionStore({
   });
 }
 
-module.exports = { createCuaConnectionStore };
+/** What localControl.status() reports on macOS. Mac has no Linux runtime, so
+ * the Linux status channel used to answer "unsupported-platform" even while
+ * computer use worked; this derives the real state from the same connection
+ * descriptor the harness mounts from. */
+function macLocalControlStatus(connection) {
+  const ready = connection?.mode === "embedded" || connection?.mode === "standalone";
+  return ready
+    ? { enabled: true, status: "ready" }
+    : {
+        enabled: false,
+        status: "unavailable",
+        reasonCode: "permissions-required",
+        ...(typeof connection?.reason === "string" ? { message: connection.reason } : {}),
+      };
+}
+
+module.exports = { createCuaConnectionStore, macLocalControlStatus };

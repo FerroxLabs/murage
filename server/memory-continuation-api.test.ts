@@ -26,7 +26,7 @@ const api = async (method: string, path: string, body?: unknown) => {
 const messages = async (threadId: string) => (await api("GET", `/api/threads/${threadId}/messages?limit=100`)).body.messages as any[];
 const replies = async (threadId: string) => (await messages(threadId)).filter(message => message.role === "bot" && message.kind === "text" && message.text);
 
-type Turn = { id: string; resumed?: boolean; built: number };
+type Turn = { id: string; resumed?: boolean; built: number; refused?: boolean };
 /** Every traced dispatch that reached memory assembly, in order. */
 const turns = (): Turn[] => {
   const byId = new Map<string, Turn>(), order: string[] = [];
@@ -39,8 +39,11 @@ const turns = (): Turn[] => {
     if (!turn) { turn = { id: id!, built: 0 }; byId.set(id!, turn); order.push(id!); }
     if (phase === "memory.bundle.built") turn.built++;
     if (phase === "memory.assemble") turn.resumed = /resumed=true/.test(rest!);
+    if (phase === "turn.done" && /outcome=setup-failed/.test(rest!)) turn.refused = true;
   }
-  return order.map(id => byId.get(id)!).filter(turn => turn.resumed !== undefined);
+  // (a dispatch the send fence refused before anything was submitted is re-prepared as a fresh dispatch of the same turn: a content
+  // revoke's * window behind a spent write budget can do that; the turn is the attempt that ran)
+  return order.map(id => byId.get(id)!).filter(turn => turn.resumed !== undefined && !turn.refused);
 };
 
 posixOnly("a memory-active thread keeps its engine session across ordinary turns", () => {

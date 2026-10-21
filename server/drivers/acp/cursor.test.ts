@@ -18,6 +18,7 @@ import {
   decodeCursorModelText,
   STATIC_CURSOR_MODELS,
   resolveCursorAcpModelId,
+  fetchCursorModels,
 } from "./cursor.ts";
 
 const FAKE_CLI = join(dirname(fileURLToPath(import.meta.url)), "..", "..", "testing", "fake-acp-cli.ts");
@@ -424,5 +425,14 @@ describe("cursor ACP model namespace (NS: set_model wiring)", () => {
       await instance.dispose();
       delete process.env.FAKE_ACP_MODE;
     }
+  });
+});
+
+describe("cursor model source", () => {
+  it("a failed or timed-out list is static, so nothing is rewritten from it", async () => {
+    const failing = ((_cli: string, _args: string[], _opts: unknown, cb: (e: Error | null, out: string) => void) => cb(new Error("timeout"), "")) as never;
+    expect((await fetchCursorModels("cursor-agent", {}, failing)).source).toBe("static");
+    const ok = ((_cli: string, _args: string[], _opts: unknown, cb: (e: Error | null, out: string) => void) => cb(null, "auto - Auto\ngpt-5 - GPT 5\n")) as never;
+    expect((await fetchCursorModels("cursor-agent", {}, ok)).source).toBe("live");
   });
 });
