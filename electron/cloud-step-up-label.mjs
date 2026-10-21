@@ -51,6 +51,7 @@ export const STEP_UP_LABELS = Object.freeze([
   { methods: ANY, path: rx(`/api/bots/${ID}/local-computer(?:/run|/stop|/remove|/screenshot)?`), label: "Control a bot's host computer" },
   { methods: ANY, path: /^\/api\/bots\/[^/]+\/browser-extension\/(?:activity|mode|sites|check|start-task)$/, label: "Change a bot's browser access" },
   { methods: ANY, path: rx("/api/browser-extension/clients"), label: "Pair or remove a browser client" },
+  { methods: ANY, path: rx("/api/browser/linux-sandbox/enable"), label: "Enable the bot browser on this Linux computer" },
 
   // Teams, projects and groups.
   { methods: ["PATCH"], path: rx(`/api/groups/${ID}/project/budget`), label: "Change a project's budget", summary: "settings" },

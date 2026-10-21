@@ -6,6 +6,7 @@
 // that fails to parse on next boot and is silently treated as empty state.
 import { randomUUID } from "node:crypto";
 import { chmodSync, closeSync, fsyncSync, lstatSync, openSync, renameSync, unlinkSync, writeFileSync } from "node:fs";
+import { dirname } from "node:path";
 import { registerTestHandle } from "./test-handle-registry.ts";
 
 // Windows refuses a rename onto an existing path while anything else holds a
@@ -58,12 +59,30 @@ export function renameWithRetry(
 const atomicWriteCounts = new Map<string, number>();
 export function atomicWriteCount(path: string): number { return atomicWriteCounts.get(path) ?? 0; }
 
-export function writeFileAtomic(path: string, data: string | Uint8Array, options: { mode?: number } = {}): void {
+// A filesystem that cannot sync a directory says so with one of these; the file itself is already synced.
+const DIRECTORY_SYNC_UNSUPPORTED = new Set(["EINVAL", "ENOTSUP", "EOPNOTSUPP", "EISDIR"]);
+
+/** fsync the directory holding `path`, so the rename that put the file there survives a power loss too.
+ * Windows cannot open a directory for fsync, so there it is skipped; a filesystem that refuses a directory
+ * sync is skipped the same way. Any other failure (an I/O error) is thrown like a failed write. */
+function syncParentDirectory(path: string, platform: NodeJS.Platform = process.platform): void {
+  if (platform === "win32") return;
+  let fd: number;
+  try { fd = openSync(dirname(path), "r"); }
+  catch (error) { if (DIRECTORY_SYNC_UNSUPPORTED.has(String((error as { code?: unknown } | null)?.code))) return; throw error; }
+  try { fsyncSync(fd); }
+  catch (error) { if (!DIRECTORY_SYNC_UNSUPPORTED.has(String((error as { code?: unknown } | null)?.code))) throw error; }
+  finally { closeSync(fd); }
+}
+
+/** `syncDir` (opt-in): also fsync the parent directory after the rename, for stores whose loss across a power
+ * cut matters (the browser restore store). Off by default: every other caller keeps the file-only fsync. */
+export function writeFileAtomic(path: string, data: string | Uint8Array, options: { mode?: number; syncDir?: boolean } = {}): void {
   writeFileAtomicInner(path, data, options);
   atomicWriteCounts.set(path, (atomicWriteCounts.get(path) ?? 0) + 1);
 }
 
-function writeFileAtomicInner(path: string, data: string | Uint8Array, options: { mode?: number } = {}): void {
+function writeFileAtomicInner(path: string, data: string | Uint8Array, options: { mode?: number; syncDir?: boolean } = {}): void {
   const tmp = `${path}.${process.pid}.${randomUUID()}.tmp`;
   let fd: number | null = null;
   try {
@@ -91,6 +110,8 @@ function writeFileAtomicInner(path: string, data: string | Uint8Array, options: 
     }
     throw e;
   }
+  // After the try: the file is in place, so a failed directory sync never unlinks anything.
+  if (options.syncDir) syncParentDirectory(path);
 }
 
 /** Owner state written by a release that passed no mode (or loosened by hand)

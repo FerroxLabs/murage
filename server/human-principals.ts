@@ -1,11 +1,11 @@
 import { homeThread } from "./execution-audience.ts";
 import type { Store } from "./store.ts";
 import { createHash, randomUUID } from "node:crypto";
-import type { DatabaseSync } from "node:sqlite";
+import type { DatabaseSync, StatementSync } from "node:sqlite";
 import { database, transaction } from "./database.ts";
 import { requireMemoryOwner } from "./memory/authority.ts";
 import { scopeRow } from "./memory/scope-id.ts";
-import { passLookup } from "./memory/eligibility-pass.ts";
+import { bindingRowsStamp } from "./io-budget.ts";
 import { revokeAllDisclosures } from "./memory/revocation.ts";
 
 export const WORKSPACE_OWNER = "workspace-owner";
@@ -116,12 +116,81 @@ export function assertHumanPrincipal(principal: HumanPrincipal) {
   const current = resolveHumanBinding(principal.bindingId);
   if (JSON.stringify(current) !== JSON.stringify(principal)) throw new Error("HUMAN_BINDING_REVOKED");
 }
-export function threadHumanPrincipal(threadId: string, db = database()): HumanPrincipal {
-  // Inside an eligibility pass the binding is read once; any write ends the memo, so a revoked binding is seen at once.
-  return passLookup(db, "human-thread:" + threadId, () => {
-    const row = db.prepare("SELECT intent FROM memory_scope_bindings WHERE id=? AND subject_type='human-thread'").get("human-thread:" + threadId);
-    return row ? Object.freeze(JSON.parse(String(row.intent))) as HumanPrincipal : OWNER;
+/** A thread's human binding, remembered (1.0.3: about 10,000 reads a second of
+ * `SELECT intent FROM memory_scope_bindings WHERE id=? AND subject_type='human-thread'`, one per task/thread per route). The memory is
+ * used only inside an explicit synchronous scope (withBindingScope, entered by the hot callers: homeThread, projectBotForTask, the
+ * working-context build, an eligibility pass); outside one every ask reads the row, so a callback queued anywhere never meets a memory
+ * made by someone else's run (Astra iohot2 Low #4). Inside a scope a memory is trusted only while (1) this connection has not written
+ * memory_scope_bindings since it was made (an insert, update, delete, a failed binding write, a rollback, an aborted transaction:
+ * bindingRowsStamp, checked on every ask) and (2) no other connection has committed since (SQLite's `PRAGMA data_version`, which moves on
+ * any other connection's commit and never on this one's, read on the first ask of every scope): within one scope it answers as a read at
+ * the scope's first ask would. A handle that is not instrumented has no stamp and is read every time. Many distinct threads switch to one
+ * read of every binding, when there are at most BULK_MAX of them; past that the memory holds at most POINT_MAX threads, each read once.
+ * One memory per handle: a replaced memory is emptied at once. */
+interface BindingMemo { stamp: number; version: number; run: number; byThread: Map<string, HumanPrincipal | null>; misses: number; all: boolean }
+const bindingMemos = new WeakMap<object, BindingMemo>();
+/** The open scope (0: none). Each outermost scope takes a new number, so data_version is read once per scope. */
+let bindingScope = 0, bindingScopeDepth = 0, bindingScopes = 0;
+/** Runs `work` (synchronous) with thread bindings remembered inside it. Nested scopes share the outer one. The scope ends when `work`
+ * returns: anything it left to run later (a promise's continuation, a timer) runs outside it and reads every binding directly. */
+export function withBindingScope<T>(work: () => T): T {
+  if (bindingScopeDepth++ === 0) bindingScope = ++bindingScopes;
+  try { return work(); } finally { if (--bindingScopeDepth === 0) bindingScope = 0; }
+}
+const BULK_AFTER_MISSES = 8;
+/** The most bindings one bulk read loads, and the most threads a point memory holds. */
+export const BINDING_MEMO_LIMITS = { BULK_MAX: 20_000, POINT_MAX: 4_096 };
+const memoStatements = new WeakMap<object, { point: StatementSync; bulk: StatementSync; version: StatementSync }>();
+function memoStatementsOf(db: DatabaseSync) {
+  let held = memoStatements.get(db);
+  if (!held) memoStatements.set(db, held = {
+    point: db.prepare("SELECT intent FROM memory_scope_bindings WHERE id=? AND subject_type='human-thread'"),
+    bulk: db.prepare("SELECT id, intent FROM memory_scope_bindings WHERE subject_type='human-thread' LIMIT ?"),
+    version: db.prepare("PRAGMA data_version"),
   });
+  return held;
+}
+const principalOf = (intent: unknown): HumanPrincipal | null => intent === undefined || intent === null ? null : Object.freeze(JSON.parse(String(intent))) as HumanPrincipal;
+function bindingOf(db: DatabaseSync, threadId: string): HumanPrincipal | null {
+  const stamp = bindingRowsStamp(db);
+  if (stamp === undefined) return principalOf(db.prepare("SELECT intent FROM memory_scope_bindings WHERE id=? AND subject_type='human-thread'").get("human-thread:" + threadId)?.intent);
+  const statements = memoStatementsOf(db);
+  // outside a scope: the row as it is now, and no memory made or kept
+  if (bindingScope === 0) return principalOf(statements.point.get("human-thread:" + threadId)?.intent);
+  let memo = bindingMemos.get(db);
+  // (another connection's commit: data_version, read on the first ask of each scope and whenever there is no memory to trust)
+  const version = memo && memo.run === bindingScope && memo.stamp === stamp ? memo.version : Number(statements.version.get()?.data_version);
+  if (!memo || memo.stamp !== stamp || memo.version !== version) {
+    if (memo) { memo.byThread.clear(); memo.all = false; }
+    memo = { stamp, version, run: bindingScope, byThread: new Map(), misses: 0, all: false };
+    bindingMemos.set(db, memo);
+  }
+  memo.run = bindingScope;
+  const known = memo.byThread.get(threadId);
+  if (known !== undefined) return known;
+  if (memo.all) return null;  // every binding was read: a thread not among them has none
+  let principal: HumanPrincipal | null;
+  if (++memo.misses === BULK_AFTER_MISSES + 1) {
+    const rows = statements.bulk.all(BINDING_MEMO_LIMITS.BULK_MAX + 1);
+    if (rows.length <= BINDING_MEMO_LIMITS.BULK_MAX) {
+      memo.byThread.clear();
+      for (const row of rows) {
+        const id = String(row.id);
+        if (id.startsWith("human-thread:")) memo.byThread.set(id.slice("human-thread:".length), principalOf(row.intent));
+      }
+      memo.all = true;
+      principal = memo.byThread.get(threadId) ?? null;
+    } else principal = principalOf(statements.point.get("human-thread:" + threadId)?.intent);  // too many to hold: point reads, bounded
+  } else principal = principalOf(statements.point.get("human-thread:" + threadId)?.intent);
+  if (!memo.all) {
+    if (memo.byThread.size >= BINDING_MEMO_LIMITS.POINT_MAX) memo.byThread.clear();
+    memo.byThread.set(threadId, principal);
+  }
+  if (bindingRowsStamp(db) !== stamp) { memo.byThread.clear(); memo.all = false; bindingMemos.delete(db); }  // the read itself wrote: not remembered
+  return principal;
+}
+export function threadHumanPrincipal(threadId: string, db = database()): HumanPrincipal {
+  return bindingOf(db, threadId) ?? OWNER;
 }
 export function bindHumanThread(threadId: string, principal: HumanPrincipal) {
   assertHumanPrincipal(principal);
@@ -142,7 +211,7 @@ export function humanTask(store: Store, botId: string, principal: HumanPrincipal
   assertHumanPrincipal(principal);
   const bot=store.bot(botId); if(!bot)return null;
   if (isLocalOwner(principal)) return homeThread(bot);
-  const exact=(threadId:string)=>JSON.stringify(threadHumanPrincipal(threadId))===JSON.stringify(principal);
+  const want=JSON.stringify(principal),exact=(threadId:string)=>{const found=threadHumanPrincipal(threadId);return found.personId===principal.personId&&JSON.stringify(found)===want;};
   let task=bot.tasks?.find(task=>exact(task.threadId));
   if(!task){task=store.createTask(botId,"Channel conversation",false)??undefined;if(!task)return null;bindHumanThread(task.threadId,principal);}
   if(!isWorkspaceOwner(principal))store.patchTask(botId,task.threadId,{autoApprove:false,alwaysAllow:[]});

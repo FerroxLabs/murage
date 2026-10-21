@@ -10,7 +10,8 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { ABSENT_PINS, valuePins, type PinRun } from "../shared/arg-vocabulary.ts";
-import { compareCheck, execEnvNow, handEnv, noteStartupFileEvent } from "./engine-env.ts";
+import { compareCheck, execEnvHanded, execEnvNow, handedPinsOf, handEnv, noteStartupFileEvent, type HandedEnv } from "./engine-env.ts";
+import { isExecEnv } from "../shared/mount-identity.ts";
 import { askTouchesStartup } from "./startup-files.ts";
 import { captureOwnerEnv, invalidateEnvCapture, ownerEnvState, parseEnvBlock, readCapture, resetPathCacheForTests, setOwnerEnvStore } from "./env-path.ts";
 import { removeTempDirSync } from "./testing/cleanup.ts";
@@ -156,5 +157,27 @@ describe("re-capture after an approved startup-file write", () => {
     const again = await captureOwnerEnv({ shell });
     expect(again.capture).toBe("session");
     expect(again.env.RECAPTURED).toBe("1");
+  });
+});
+
+// WIN-NOBASH-DESIGN-r2 3.5: the inherit path's F12 record is the hand with an informational provenance, never U20
+describe("execEnvHanded with provenance (powershell-inherit)", () => {
+  it("is a well-formed record with no unread, and its pins equal the Bash case's", () => {
+    const env: Record<string, string> = { PATH: "C:\\Windows\\System32", USERPROFILE: "C:\\Users\\o" };
+    for (const [name, value] of valuePins("win32")) env[name] = value;
+    const handed: HandedEnv = { env, absent: [...ABSENT_PINS], capture: "session", ownerStartup: [], pins: [] } as unknown as HandedEnv;
+    const provenance = { kind: "inherited" as const, cli: "2.1.305", adds: ["CLAUDECODE", "NO_COLOR"], unenforceable: ["POSIXLY_CORRECT", "GIT_SSH"] };
+    const form = ["powershell.exe", "-NoProfile", "-NonInteractive", "-Command"];
+    const inherited = execEnvHanded(handed, "C:\\w", form, { provenance });
+    expect(isExecEnv(inherited)).toBe(true);
+    expect(inherited.unread).toBeUndefined();
+    expect(inherited.provenance).toEqual(provenance);
+    expect(inherited.env).toEqual(env);
+    const bash = execEnvHanded(handed, "C:\\w", ["C:\\Program Files\\Git\\bin\\bash.exe", "-c"]);
+    expect([...handedPinsOf(inherited, "win32")]).toEqual([...handedPinsOf(bash, "win32")]);
+    // a malformed provenance is not trusted
+    expect(isExecEnv({ ...inherited, provenance: { kind: "inherited", cli: 1, adds: [], unenforceable: [] } })).toBe(false);
+    expect(isExecEnv({ ...inherited, managedEnv: ["PAGER"] })).toBe(true);
+    expect(isExecEnv({ ...inherited, managedEnv: [1] })).toBe(false);
   });
 });

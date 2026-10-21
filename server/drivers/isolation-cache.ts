@@ -12,6 +12,7 @@
 // version). `isolationStats` counts builds and hits per cache, for the tests.
 import { existsSync, readFileSync, readdirSync, statSync } from "node:fs";
 import { delimiter, isAbsolute, join } from "node:path";
+import { splitCliString } from "../env-path.ts";
 
 type Recorder = (path: string) => void;
 let recorder: Recorder | null = null;
@@ -82,16 +83,60 @@ export function memoDeps<T>(name: string, key: string, build: () => T): T {
   return value;
 }
 
-/** "<resolved path>:<mtime>:<size>" of a CLI, found on PATH when it is a bare name; "unresolved" when not found. */
-export function cliSig(cli: string, env: Record<string, string | undefined> = process.env): string {
+/** The file a CLI resolves to on `env`'s PATH (itself when it already names a path) with its "<mtime>:<size>"; null when not found. */
+function cliFileSig(cli: string, env: Record<string, string | undefined>): { path: string; sig: string } | null {
   const candidates = isAbsolute(cli) || /[\\/]/.test(cli)
     ? [cli]
     : (env.PATH ?? "").split(delimiter).filter(Boolean).flatMap((dir) => process.platform === "win32" ? [".exe", ".cmd", ""].map((ext) => join(dir, cli + ext)) : [join(dir, cli)]);
   for (const path of candidates) {
     const sig = pathSig(path);
-    if (sig !== "missing") return `${path}:${sig}`;
+    if (sig !== "missing") return { path, sig };
   }
-  return "unresolved";
+  return null;
+}
+
+/** "<resolved path>:<mtime>:<size>" of a CLI, found on PATH when it is a bare name; "unresolved" when not found. */
+export function cliSig(cli: string, env: Record<string, string | undefined> = process.env): string {
+  const found = cliFileSig(cli, env);
+  return found ? `${found.path}:${found.sig}` : "unresolved";
+}
+
+/** The file cliSig signs for `cli` on `env`'s PATH, or null when none is found: the binary whose `--version` a driver
+ *  probed. A spawn handed another PATH (the owner's captured shell PATH, engine-env.ts) launches this file, so the
+ *  version the driver gated on and the catalog it showed belong to the process that runs. */
+export function cliFile(cli: string, env: Record<string, string | undefined> = process.env): string | null {
+  return cliFileSig(cli, env)?.path ?? null;
+}
+
+/** The engine executable a turn spawns: on macOS and Linux, a bare command name (the whole cli, or the head word of a
+ *  cli that carries fixed arguments, `ag claude agp`) becomes the file cliFile finds on `env`, the env the driver's
+ *  `--version` probe ran on (Murage's own PATH), so the handed map's PATH (the owner's captured shell PATH, which the
+ *  child keeps for its own lookups) never picks a different, older build than the one Murage version-checked. A cli that
+ *  already names a path is spawned as it is (spawn reports its own ENOENT). Windows already resolves on Murage's PATH
+ *  (env-path.ts whichWin, .cmd shims included) and a Cloud home runs the image's CLI by name: both keep `cli`. A bare name
+ *  found nowhere on `env` throws ENOENT; it never falls back to whatever the shell PATH would find. */
+export function engineLaunchFile(cli: string, env: Record<string, string | undefined>): string {
+  if (process.platform === "win32" || process.env.MURAGE_CLOUD_ROLE === "home") return cli;
+  const trimmed = cli.trim();
+  // resolveCliSpawn's own order: an existing file whose path has spaces is one word, never split
+  if (trimmed.includes(" ") && existsSync(trimmed)) return cli;
+  const [head, ...fixed] = splitCliString(cli);
+  if (!head || /[\\/]/.test(head)) return cli;
+  const file = cliFile(head, env);
+  if (!file) {
+    const error: NodeJS.ErrnoException = new Error(`spawn ${head} ENOENT`);
+    error.code = "ENOENT";
+    error.errno = -2;
+    error.syscall = `spawn ${head}`;
+    error.path = head;
+    throw error;
+  }
+  if (fixed.length === 0) return file;
+  // Re-quoted for resolveCliSpawn's one tokenizer pass (splitCliString), which strips the quotes again.
+  const quote = (token: string): string => !token.includes("'") ? `'${token}'` : !token.includes('"') ? `"${token}"` : (() => {
+    throw new Error(`the engine command ${JSON.stringify(cli)} has an argument with both quote characters; Murage cannot launch it`);
+  })();
+  return [file, ...fixed].map(quote).join(" ");
 }
 
 // A `--version` probe that fails (times out, exits non-zero, prints nothing)

@@ -73,8 +73,9 @@ bool readAll(HANDLE handle,BYTE* data,DWORD size){while(size){DWORD done=0;if(!R
 std::vector<BYTE> stdinValue(){DWORD size=0;need(readAll(GetStdHandle(STD_INPUT_HANDLE),reinterpret_cast<BYTE*>(&size),4)&&size<=limit);std::vector<BYTE> bytes(size);need(readAll(GetStdHandle(STD_INPUT_HANDLE),bytes.data(),size));return bytes;}
 void makePrivateDirectory(const std::wstring& path){auto parents=pinDirectories(parentPath(path));Security security(currentSid(),true);if(!CreateDirectoryW(path.c_str(),&security.attributes))need(GetLastError()==ERROR_ALREADY_EXISTS);auto dirs=pinDirectories(path);privateAcl(dirs.back()->value,currentSid());}
 void writePrivate(const std::wstring& path,const std::vector<BYTE>& bytes){
+ // Write-only (WIN-NOBASH-DESIGN-r2 14.2 #3): the destination is never opened, read or checked; a CREATE_NEW temp with the
+ // owner-only descriptor is written whole and renamed over it.
  auto parents=pinDirectories(parentPath(path));const auto sid=currentSid();privateAcl(parents.back()->value,sid);
- if(GetFileAttributesW(path.c_str())!=INVALID_FILE_ATTRIBUTES)(void)readPrivate(path);
  const auto temporary=path+L".new-"+std::to_wstring(GetCurrentProcessId());Security security(sid);
  bool created=false;
  try { {Handle file(CreateFileW(temporary.c_str(),GENERIC_WRITE|READ_CONTROL,0,&security.attributes,CREATE_NEW,FILE_ATTRIBUTE_NORMAL,nullptr));created=true;privateAcl(file.value,sid);writeAll(file.value,bytes.data(),static_cast<DWORD>(bytes.size()));win(FlushFileBuffers(file.value));}

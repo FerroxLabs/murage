@@ -9,6 +9,7 @@
 // 7c82592ff8b1; Murage binds an exact creation identity instead of wall time.
 // This helper never creates, migrates, renames or replaces the installation.
 import { execFileSync } from "node:child_process";
+import { windowsNative } from "./windows-native.mjs";
 import { createHash, randomUUID } from "node:crypto";
 import {
   closeSync, constants, fstatSync, fsyncSync, linkSync, lstatSync, mkdirSync,
@@ -16,7 +17,7 @@ import {
 } from "node:fs";
 import { hostname, uptime } from "node:os";
 import { isMainThread } from "node:worker_threads";
-import { dirname, isAbsolute, join, parse, resolve, sep, win32 } from "node:path";
+import { dirname, isAbsolute, join, parse, resolve, sep } from "node:path";
 
 const CHILD_LEASE_ENV = "MURAGE_INTERNAL_DATA_DIR_LEASE";
 const NO_CAPABILITY = Symbol("no private lease capability");
@@ -87,15 +88,13 @@ function ownerIsAlive(owner, recordPath) {
 // the file has exact evidence that the owner is gone, found with one native
 // open and no PowerShell (murage-releases #1: an antivirus notice on every
 // launch). Version 1 identities (an exact kernel creation FILETIME, from
-// 1.0.2) are still checked the old way, which only runs when a lease is
-// contested. Only a successful, well-formed, different answer proves death;
+// 1.0.2) are checked against the process's creation time from the
+// engine-exclusion addon, only when a lease is contested. Only a successful, well-formed, different answer proves death;
 // every unavailable, slow, denied, busy or missing probe keeps PID exclusion.
 const WINDOWS_START = /^[1-9][0-9]{0,19}$/;
 const MAX_FILETIME = 0x7fffffffffffffffn;
 const IDENTITY_KEYS = ["version", "pid", "token", "start"];
 const HELD_IDENTITY_KEYS = ["version", "pid", "token"];
-const IDENTITY_OUTPUT_BYTES = 64;
-const CHECK_PROBE_TIMEOUT_MS = 5_000;
 const MAX_DISPROVED = 64;
 const disproved = new Set();
 const validStart = (value) => typeof value === "string" && WINDOWS_START.test(value) && BigInt(value) <= MAX_FILETIME;
@@ -122,34 +121,15 @@ function ownerStillHolds(recordPath, owner) {
 }
 const ownHeld = new Map();
 
-function windowsProcessStartQuery(pid) {
-  const root = process.env.SystemRoot;
-  if (!isPid(pid) || typeof root !== "string" || !/^[A-Za-z]:\\[^\0\r\n"]*$/.test(root)) return null;
-  // Same trusted Windows PowerShell 5.1 shape as the browser signature probe.
-  const script = String.raw`$env:PSModulePath=$PSHOME+'\Modules'; $ErrorActionPreference='Stop'; `
-    + `$p=[System.Diagnostics.Process]::GetProcessById(${pid}); [Console]::Out.Write(([string]$p.Id)+':'+([string]($p.StartTime.ToFileTimeUtc())))`;
-  return {
-    command: win32.join(root, "System32", "WindowsPowerShell", "v1.0", "powershell.exe"),
-    args: ["-NoProfile", "-NonInteractive", "-WindowStyle", "Hidden", "-EncodedCommand", Buffer.from(script, "utf16le").toString("base64")],
-  };
-}
-
-function parseProcessStart(pid, output) {
-  if (typeof output !== "string" || output.length > IDENTITY_OUTPUT_BYTES) return null;
-  const match = /^([1-9][0-9]{0,9}):([0-9]+)$/.exec(output.replace(/^\uFEFF/, "").trim());
-  return match && Number(match[1]) === pid && validStart(match[2]) ? match[2] : null;
-}
-
-function probeProcessStartSync(pid) {
-  const query = windowsProcessStartQuery(pid);
-  if (!query) return null;
+/** The process's exact creation FILETIME (decimal) from the engine-exclusion addon, as 1.0.2 recorded it ($p.StartTime.ToFileTimeUtc()),
+ * or null: not there, unreadable or malformed. null keeps PID exclusion. No PowerShell (murage-releases #1). */
+function probeProcessStartSync(pid, native = windowsNative()) {
+  if (!isPid(pid) || typeof native?.processStart !== "function") return null;
   try {
-    return parseProcessStart(pid, execFileSync(query.command, query.args, {
-      encoding: "utf8", timeout: CHECK_PROBE_TIMEOUT_MS, maxBuffer: IDENTITY_OUTPUT_BYTES, windowsHide: true, stdio: ["ignore", "pipe", "ignore"],
-    }));
+    const start = native.processStart(pid);
+    return validStart(start) ? start : null;
   } catch { return null; }
 }
-
 
 function readIdentity(recordPath, owner) {
   try {

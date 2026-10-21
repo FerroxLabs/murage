@@ -91,6 +91,14 @@ it("names why an off-site password step was refused instead of a bare 'could not
  expect(remoteBackupError(Error("SOMETHING_ELSE"))).not.toMatch(/could not be confirmed/);
 });
 
+it("an account Windows lists that Murage cannot identify shows the check's own fix-it sentence (W-A5)",async()=>{
+ const {UNKNOWN_ACCOUNT_FIX}=await import("../../shared/windows-sddl.mjs");
+ const shown=remoteBackupError(Error("Error invoking remote method 'backupRemote:selectPassword': Error: BACKUP_REMOTE_PASSWORD_ACCOUNT_UNKNOWN_WINDOWS"));
+ expect(shown).toBe(UNKNOWN_ACCOUNT_FIX);
+ expect(shown).toMatch(/Properties, Security tab/);
+ expect(leavesStatusCurrent(Error("Error invoking remote method 'backupRemote:saveCopy': Error: BACKUP_REMOTE_PASSWORD_ACCOUNT_UNKNOWN_WINDOWS"))).toBe(true);
+});
+
 it("a refused password file leaves the page usable; everything else asks for a refresh (W-A5)",()=>{
     for(const code of ["BACKUP_REMOTE_PASSWORD_FILE_SHARED_WINDOWS","BACKUP_REMOTE_PASSWORD_FILE_SHARED","BACKUP_REMOTE_PASSWORD_FILE_KIND","BACKUP_REMOTE_PASSWORD_FILE_PLACE","BACKUP_REMOTE_PASSWORD_FILE_FORMAT","BACKUP_REMOTE_PASSWORD_FILE_UNREADABLE"])
       expect(leavesStatusCurrent(Error(`Error invoking remote method 'backupRemote:selectPassword': Error: ${code}`)),code).toBe(true);

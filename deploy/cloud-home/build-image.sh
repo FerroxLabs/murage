@@ -284,6 +284,11 @@ for relative in ["permission-proxy", "drivers/agents-proxy", "drivers/memory-pro
     path = "/opt/murage/dist-server/" + relative + ".js"
     with open(path, "rb") as stream:
         manifest["mcpProxies"].append({"path": path, "sha256": hashlib.file_digest(stream, "sha256").hexdigest()})
+# The saved-browser-session step the launcher runs as the browser user (browser-restore modes): node plus
+# this one bundled script, pinned by digest like a proxy.
+path = "/opt/murage/dist-server/browser-restore-cli.js"
+with open(path, "rb") as stream:
+    manifest["browserRestore"] = [{"path": path, "sha256": hashlib.file_digest(stream, "sha256").hexdigest()}]
 manifest["browser"] = []
 for path in ["/opt/murage/resources/browser-engine/agent-browser", "/opt/murage/resources/browser-engine/chrome/%s/chrome-headless-shell" % chrome_dir]:
     with open(path, "rb") as stream:

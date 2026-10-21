@@ -256,6 +256,8 @@ export interface DirectTurnShapeInput {
   computerKind: "box" | "vps" | "vm" | "local" | null;
   /** The bot has a computer destination this engine cannot mount this turn. */
   computerUnavailable?: boolean;
+  /** The bot is set to "this computer" but local control is not enabled yet. */
+  localControlOff?: boolean;
   /** Set for a delegated or peer-ask turn on a text-only engine (peerTaskPrompt). */
   peerTask?: string;
   /** Local VM mode is per-bot rather than shared. */
@@ -288,6 +290,9 @@ export interface DirectTurnShapeInput {
 /** Said when the bot has a computer destination but this engine cannot mount it. */
 export const COMPUTER_UNAVAILABLE = " You cannot control the computer this turn. Do not claim to have taken, or to be able to take, any computer actions; if asked, say plainly that you can't do that here.";
 
+/** Said when the bot is set to "this computer" but local control is not enabled: the turn still runs. */
+export const COMPUTER_LOCAL_CONTROL_OFF = " This bot is set to use this computer, but local control is not enabled yet, so you cannot control it this turn. Do not claim to have taken, or to be able to take, any computer actions. If the person asks for one, tell them plainly: turn on local control in Settings > Computer, then ask again. Everything else you can still do as usual.";
+
 const PEER_TASK_PREAMBLE = /^\[(?:Message from|Delegated by) @([^,\]\n]+),/;
 /** A delegated message or peer ask opens with a "[Delegated by @X ...]" line.
  * Engines without team tools get no instruction about it, so a bot in a
@@ -305,6 +310,7 @@ export function directTurnLayers(v: DirectTurnShapeInput): ShapeLayer[] {
     : kind === "box" && v.driverKind !== "boxAgent" ? COMPUTER.box
     : kind === "vps" ? COMPUTER.vps
     : kind === "local" ? COMPUTER.local
+    : v.localControlOff ? COMPUTER_LOCAL_CONTROL_OFF
     : v.computerUnavailable ? COMPUTER_UNAVAILABLE
     : "";
   return [

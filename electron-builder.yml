@@ -50,6 +50,7 @@ files:
   - shared/upgrade-wait.mjs
   - shared/upgrade-contract.mjs
   - shared/boot-proof.mjs
+  - shared/spawned-proxies.mjs
   - shared/upgrade-machine.mjs
   - shared/closed-volume-sentences.mjs
   - shared/backup-folder-refusals.mjs
@@ -57,6 +58,7 @@ files:
   - shared/remote-mcp-url.mjs
   - shared/guarded-http.mjs
   - shared/flux-desktop-signin-default.mjs
+  - shared/windows-sddl.mjs
   - installer/lib/systemd.mjs
   - installer/lib/private-files.mjs
   - installer/lib/service-account.mjs
@@ -140,7 +142,6 @@ extraResources:
     to: licenses/fuigo
   - from: dist
     to: ui
-  # Includes memory/pip-job-supervisor.ps1 outside ASAR for Windows reflection.
   - from: dist-server
     to: server
   # Source-built optional browser helpers; preparation does not register a host.
@@ -438,6 +439,10 @@ deb:
   # dpkg can preserve legacy directory modes during an upgrade. This
   # idempotent hook repairs only the exact package-owned CUA path.
   afterInstall: build/linux-after-install.sh
+  # Replaces electron-builder's default profile, which names only
+  # /opt/Murage/murage, with one that also names the bundled Chrome the bot
+  # browser launches. Without it Chrome finds no sandbox on Ubuntu 24.04.
+  appArmorProfile: build/linux-apparmor-profile.tpl
 
 # Static AppImage runtime: Ubuntu 24.04 can launch it without legacy FUSE 2.
 toolsets:

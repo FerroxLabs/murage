@@ -5,6 +5,8 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { afterEach, describe, expect, it } from "vitest";
 import { parse } from "yaml";
+import { browserBundleSpec } from "../server/browser-bundle-release.ts";
+import { linuxDebChromePath, LINUX_APPARMOR_PROFILE_FILE } from "../server/browser-sandbox.ts";
 import { removeTempDirSync } from "../server/testing/cleanup.ts";
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
@@ -30,8 +32,10 @@ function fixture() {
   return { appRoot, resources, cuaRoot, chromiumSandbox, link: path.join(appRoot, "system", "usr", "bin", "murage") };
 }
 
-// What electron-builder ships in resources/apparmor-profile for Murage.
-const APPARMOR_PROFILE = 'abi <abi/4.0>,\ninclude <tunables/global>\n\nprofile "murage" "/opt/Murage/murage" flags=(unconfined) {\n  userns,\n}\n';
+// What electron-builder ships in resources/apparmor-profile for Murage: the
+// deb's appArmorProfile template, which has no macros to expand.
+const APPARMOR_TEMPLATE = path.join(root, "build", "linux-apparmor-profile.tpl");
+const APPARMOR_PROFILE = fs.readFileSync(APPARMOR_TEMPLATE, "utf8");
 
 /** Stand-ins for the system tools the default hook calls. Each logs its name
  *  and arguments; update-alternatives also notes whether the link existed. */
@@ -75,6 +79,49 @@ it("targets the packaged product directory rather than the upstream brand", () =
   const installRoot = /^  APP_ROOT=(.+)$/m.exec(fs.readFileSync(hook, "utf8"))?.[1];
   expect(productName).toBe("Murage");
   expect(installRoot).toBe(`/opt/${productName}`);
+});
+
+/** Each `profile NAME PATH flags=(...) { ... }` block of an AppArmor file. */
+function profiles(text) {
+  return [...text.matchAll(/^profile (\S+) (\S+) flags=\(([^)]*)\) \{\n([\s\S]*?)^\}/gm)]
+    .map(([, name, attach, flags, body]) => ({ name, attach, flags, rules: body.split("\n").map((line) => line.trim()).filter((line) => line && !line.startsWith("#")) }));
+}
+
+describe("Linux AppArmor profile", () => {
+  const config = parse(fs.readFileSync(path.join(root, "electron-builder.yml"), "utf8"));
+
+  it("is the profile the deb ships, through electron-builder's appArmorProfile", () => {
+    expect(config.deb?.appArmorProfile).toBe("build/linux-apparmor-profile.tpl");
+    // electron-builder expands ${name} macros and throws on unknown ones.
+    expect(APPARMOR_PROFILE).not.toMatch(/\$\{|<%=/);
+    expect(APPARMOR_PROFILE.startsWith("abi <abi/4.0>,\ninclude <tunables/global>\n")).toBe(true);
+  });
+
+  it("names Murage and the bundled Chrome, each allowed user namespaces and nothing confined", () => {
+    const chrome = `/opt/Murage/resources/browser-engine/${browserBundleSpec("linux-x64").chrome.executable}`;
+    expect(linuxDebChromePath()).toBe(chrome);
+    expect(profiles(APPARMOR_PROFILE)).toEqual([
+      { name: "murage", attach: "/opt/Murage/murage", flags: "unconfined", rules: ["userns,", "include if exists <local/murage>"] },
+      { name: "murage-browser", attach: chrome, flags: "unconfined", rules: ["userns,", "include if exists <local/murage-browser>"] },
+    ]);
+  });
+
+  it("attaches to the paths the deb installs, which the after-install hook and the browser's message name", () => {
+    const productName = /^productName: (.+)$/m.exec(fs.readFileSync(path.join(root, "electron-builder.yml"), "utf8"))?.[1];
+    const executable = config.linux.executableName;
+    for (const { attach } of profiles(APPARMOR_PROFILE)) expect(attach.startsWith(`/opt/${productName}/`)).toBe(true);
+    expect(profiles(APPARMOR_PROFILE)[0].attach).toBe(`/opt/${productName}/${executable}`);
+    expect(fs.readFileSync(hook, "utf8")).toContain("target=$directory/murage\n");
+    expect(LINUX_APPARMOR_PROFILE_FILE).toBe(`/etc/apparmor.d/${executable}`);
+    // The bundled browser's directory name is what extraResources stages it as.
+    expect(config.linux.extraResources.some((entry) => entry.to === "browser-engine")).toBe(true);
+  });
+
+  const parser = ["/usr/sbin/apparmor_parser", "/sbin/apparmor_parser"].find((file) => fs.existsSync(file));
+  it.skipIf(!parser)("parses with this system's AppArmor", () => {
+    const result = spawnSync(parser, ["--skip-kernel-load", "--skip-cache", "--debug", APPARMOR_TEMPLATE], { encoding: "utf8" });
+    expect(result.status, result.stderr).toBe(0);
+  });
 });
 
 describe("Linux package dependencies", () => {

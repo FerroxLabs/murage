@@ -45,7 +45,7 @@ const ROWS: Row[] = [
   { cmd: "pwsh -Command -", rule: "unreadable", why: "3 -Command - with no input the text fixes" },
   { cmd: "echo abc | pwsh -EncodedCommand -", rule: "unreadable", why: "3 encoded command from input" },
   { cmd: "echo 'Get-ChildItem' | pwsh -Command -", rule: null, why: "3 benign piped code stays ordinary" },
-  { cmd: "pwsh -File build.ps1", rule: null, why: "3 a script on disk stays ordinary" },
+  { cmd: "pwsh -File build.ps1", rule: "unreadable", why: "3 a PowerShell script file the reader does not see asks (1.0.4 F1)" },
 
   // 4. stem families by substring, judged by the call's own arguments (10.3)
   { cmd: "python3 -c \"import tool; tool.xrmall('/')\"", rule: "unreadable", why: "4 a short stem inside an identifier" },

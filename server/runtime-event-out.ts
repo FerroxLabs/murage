@@ -12,6 +12,7 @@
 // below as out (true) or kept in the server (false), so a field added to the
 // contract later does not compile until someone decides which it is.
 import type { RuntimeEvent } from "./contracts.ts";
+import { envInfoOf, isExecEnv } from "../shared/mount-identity.ts";
 
 type RequestOpened = Extract<RuntimeEvent, { type: "request.opened" }>;
 
@@ -47,16 +48,28 @@ const REQUEST_OPENED_OUT: Record<keyof RequestOpened, boolean> = {
   mcpMounts: false,
   toolEngine: true,
   toolInputMissing: true,
+  localHold: false,
+  // how the gates read the command text: server-side only
+  commandShell: false,
   // the map handed to the engine process: credentials
   execEnv: false,
+  // its value-free projection (names, shell, provenance, managed names): out (Astra #9)
+  envInfo: true,
   toolInputTruncated: true,
 };
 
 const OUT_FIELDS = Object.entries(REQUEST_OPENED_OUT).filter(([, out]) => out).map(([name]) => name);
 
+/** The ask with `envInfo` derived from its F12 record (never taken from the event as given: only the projection of a
+ * well-formed record goes out). */
+function withExecEnvInfo(event: RequestOpened): RequestOpened {
+  const { envInfo: _given, ...rest } = event;
+  return isExecEnv(event.execEnv) ? { ...rest, envInfo: envInfoOf(event.execEnv) } as RequestOpened : rest as RequestOpened;
+}
+
 /** The ask as it leaves the server: the allowlisted fields only. */
 export function requestOpenedOut(event: RequestOpened): RequestOpened {
-  const source = event as unknown as Record<string, unknown>;
+  const source = withExecEnvInfo(event) as unknown as Record<string, unknown>;
   const out: Record<string, unknown> = {};
   for (const name of OUT_FIELDS) if (Object.hasOwn(source, name) && source[name] !== undefined) out[name] = source[name];
   return out as unknown as RequestOpened;
@@ -72,9 +85,10 @@ export function windowRuntimeEvent(event: RuntimeEvent): RuntimeEvent {
 }
 
 /** The record the thread's event log keeps: everything a bug report needs,
- * never the map handed to the engine process. */
+ * never the map handed to the engine process (its value-free projection
+ * instead, Astra #9). */
 export function loggedRuntimeEvent<T>(event: T): T {
   if (!event || typeof event !== "object" || (event as { type?: unknown }).type !== "request.opened" || !Object.hasOwn(event, "execEnv")) return event;
-  const { execEnv: _handed, ...rest } = event as T & { execEnv?: unknown };
-  return rest as T;
+  const { execEnv: handed, envInfo: _given, ...rest } = event as T & { execEnv?: unknown; envInfo?: unknown };
+  return (isExecEnv(handed) ? { ...rest, envInfo: envInfoOf(handed) } : rest) as T;
 }
