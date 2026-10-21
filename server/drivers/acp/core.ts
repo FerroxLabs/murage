@@ -104,6 +104,7 @@ import { redactSecretsInText } from "../../redact.ts";
 import { toolFilePaths } from "../../own-workspace-approval.ts";
 import type { ExecEnv, McpMountRecord } from "../../../shared/mount-identity.ts";
 import { execEnvHanded, execEnvNow, handedEngineEnv, type HandedEnv } from "../../engine-env.ts";
+import { shellDialectOf } from "../../shell/pwsh.ts";
 
 /** Built-in ACP tool kinds that name what they do. None of them is a call
  * into the computer MCP server, which reaches the engine as an MCP tool. */
@@ -164,6 +165,46 @@ export function acpStampedIdentity(toolCall: unknown): { namespace: string; name
   return { namespace: "", name: "" };
 }
 
+/** An engine that stamps its tools under a key of its own. Grok Build, the
+ * code Fuigo is built from, stamps `_meta["x.ai/tool"]` with the namespace
+ * `grok_build` where Fuigo stamps `_meta["fuigo/tool"]` with `fuigo_build`
+ * (the same CanonicalToolMeta, read in both 1.0.x binaries). */
+export interface AcpToolStamp {
+  /** the `_meta` key this engine stamps its identity under */
+  key: string;
+  /** its own namespaces, said as the Fuigo namespaces every reader knows */
+  namespaces: Readonly<Record<string, string>>;
+}
+
+/** One `_meta` object, restamped in place under `fuigo/tool`, so every reader
+ * (acpStampedIdentity, the grant gate, the proposal turn) judges this
+ * engine's stamp exactly as it judges Fuigo's. The engine's own key wins over
+ * any `fuigo/tool` beside it. A stamp that is not an object is passed on as it
+ * came, which every reader holds as unproven; only the engine's own
+ * namespaces are renamed, so anything else stays as unproven as it was. */
+function restampMeta(meta: unknown, stamp: AcpToolStamp): void {
+  if (!meta || typeof meta !== "object" || Array.isArray(meta)) return;
+  const body = meta as Record<string, unknown>;
+  if (!Object.hasOwn(body, stamp.key)) return;
+  const own = body[stamp.key];
+  delete body[stamp.key];
+  if (!own || typeof own !== "object" || Array.isArray(own)) { body["fuigo/tool"] = own; return; }
+  const copy = { ...(own as Record<string, unknown>) };
+  if (typeof copy.namespace === "string" && Object.hasOwn(stamp.namespaces, copy.namespace)) copy.namespace = stamp.namespaces[copy.namespace];
+  body["fuigo/tool"] = copy;
+}
+
+/** Restamp the two places an ACP frame carries a tool identity: a permission
+ * ask's `params.toolCall._meta` and a session update's `params.update._meta`. */
+export function acpRestampFrame(msg: unknown, stamp: AcpToolStamp | undefined): void {
+  if (!stamp || !msg || typeof msg !== "object") return;
+  const params = (msg as { params?: unknown }).params;
+  if (!params || typeof params !== "object") return;
+  const { toolCall, update } = params as { toolCall?: { _meta?: unknown }; update?: { _meta?: unknown } };
+  if (toolCall && typeof toolCall === "object") restampMeta(toolCall._meta, stamp);
+  if (update && typeof update === "object") restampMeta(update._meta, stamp);
+}
+
 /** The files an ACP permission request names, for the own-workspace check.
  *
  * A bot's writes inside its OWN managed folders no longer ask, but only
@@ -182,6 +223,8 @@ export function acpStampedIdentity(toolCall: unknown): { namespace: string; name
  * caller treats that as "ask" — never as "allow". */
 /** The shell form an ACP engine's commands are checked under (Rule 74d): the platform's own, like Codex's. */
 const acpShellForm: readonly string[] = process.platform === "win32" ? ["powershell.exe", "-NoProfile", "-Command"] : [process.env.SHELL || "/bin/sh", "-c"];
+/** 1.0.4 F1: the dialect that form runs command text in; the gates read every ACP engine's command in it. */
+const acpCommandShell = shellDialectOf(acpShellForm);
 
 const isPlainInput = (value: unknown): value is Record<string, unknown> => !!value && typeof value === "object" && !Array.isArray(value);
 
@@ -832,6 +875,9 @@ export interface AcpSupport {
   ): ModelCatalog | Promise<ModelCatalog>;
   /** Native-protocol log label, e.g. "grok.acp". */
   nativeSource: string;
+  /** The engine stamps its tool identity under a key of its own (Grok Build:
+   * `x.ai/tool`); read as Fuigo's `fuigo/tool` stamp (acpRestampFrame). */
+  toolStamp?: AcpToolStamp;
   /** Whether models behind this ACP harness can consume a referenced image.
    * Most coding agents can open local files; opt out for text-only agents. */
   images?: boolean;
@@ -2888,6 +2934,7 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
             // session/new, no external records.
             mcpMounts: acpMountRecords(turn, mcpServers, ownedMemoryAlias ?? "murage-memory"),
             toolEngine: "acp" as const,
+            ...(acpCommandShell ? { commandShell: acpCommandShell } : {}),
             // F5: no kind on the wire means nothing to resolve the call by;
             // the title is never a name.
             ...(!questionTool && !kind ? { toolInputMissing: "kind" } : {}),
@@ -3367,6 +3414,8 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
             return;
           }
           appendNative(threadId, { dir: "in", source: SOURCE, msg: nativeLogMessage(msg) });
+          // after the native log, which keeps the frame as the engine sent it
+          acpRestampFrame(msg, support.toolStamp);
           // Any inbound line proves the child is alive and making progress, so
           // every idle deadline restarts. Only total silence trips one.
           for (const pending of rpcPending.values()) pending.armIdle();

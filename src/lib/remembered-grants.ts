@@ -18,7 +18,7 @@ export function rememberedGrants(bot: { alwaysAllow?: string[]; tasks?: { always
   return [...new Set([...(bot.alwaysAllow ?? []), ...taskGrantKeys(bot)])];
 }
 
-const PROGRAM_GRANT = /^(?:mcp__.+__)?(?:[\w-]+\.)?(?:bash|shell|execute|exec_command|run_command|computer_exec|terminal):([^:\s]+)$/i;
+const PROGRAM_GRANT = /^(?:mcp__.+__)?(?:[\w-]+\.)?(?:bash|shell|execute|exec_command|run_command|computer_exec|terminal|powershell|pwsh):([^:\s]+)$/i;
 
 export function describeGrant(key: string, engines: readonly { instanceId: string; displayName: string }[]): GrantDescription {
   const exact = parseExactCommandKey(key);
